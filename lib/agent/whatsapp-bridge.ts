@@ -1,4 +1,5 @@
 import { tryRunWorkspaceDriveContext } from './workspace-drive-context'
+import { tryAccountSiteSignInGate } from './account-site-gate'
 import { tryTypedTimeRouting } from './typed-time-routing'
 import { executeApprovedCalendarUpdate } from './calendar-update'
 import { executeApprovedReminderUpdate } from './reminder-update'
@@ -103,7 +104,7 @@ async function withWhatsAppBrowserBudget<T>(actor: AgentActor, task: Promise<T>)
     timer = setTimeout(() => {
       void pauseRecentTimedOutBrowserRun(actor).catch((err:any) => console.error('WHATSAPP_BROWSER_TIMEOUT_CLEANUP_FAILED:', err?.message || err))
       resolve({
-        text: `I kept your booking/provider context, but the provider site took longer than WhatsApp's safe response window to inspect. I stopped waiting here rather than leave you with silence. No booking, confirmation, purchase, payment or approval was created.`,
+        text: `That site took too long to load, so I stopped waiting. Nothing was bought, booked or submitted. Try again in a minute, or ask me on the dashboard where I can wait longer: https://app.askgogo.in/dashboard/chat`,
         status: 'paused',
         handledBy: 'whatsapp-browser-timeout',
       })
@@ -396,6 +397,10 @@ export async function tryRunWhatsAppAgent(params: {
     const approval = await resolveLatestApproval(actor, decision)
     if (approval) return approval
   }
+
+  // "Check my last Amazon order" with no Amazon sign-in: say so with the Settings link, before any browser work.
+  const accountGate = await tryAccountSiteSignInGate({ telegramId: actor.legacyTelegramId, text: params.text })
+  if (accountGate) return { text: accountGate.text, status: accountGate.status, handledBy: accountGate.handledBy }
 
   const goal = await tryCreateGoal(actor, params.text)
   if (goal) return goal

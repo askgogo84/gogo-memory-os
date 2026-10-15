@@ -21,6 +21,7 @@ import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/
 import { isPublicTravelResearchRequest, isTravelResearchDetailsReply, tryRunTravelResearch } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
+import { tryAccountSiteSignInGate } from '@/lib/agent/account-site-gate'
 import { isStandaloneWorkspaceMeetingPrep, tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
@@ -333,6 +334,12 @@ export async function POST(req: NextRequest) {
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'jev-clarification-guard',actualCapability:null,status:'paused'}).catch(()=>{})
       await saveConversation(user.telegram_id, text, jevClarify)
       return NextResponse.json({ text: jevClarify, handledBy: 'jev-clarification-guard', status: 'paused' })
+    }
+
+    const accountGate = await tryAccountSiteSignInGate({ telegramId: user.telegram_id, text })
+    if (accountGate) {
+      await saveConversation(user.telegram_id, text, accountGate.text)
+      return NextResponse.json({ text: accountGate.text, handledBy: accountGate.handledBy, status: accountGate.status })
     }
 
     const mission = await tryRunGeneralPlan({
