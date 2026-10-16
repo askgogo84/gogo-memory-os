@@ -343,10 +343,15 @@ export function productPagePriceEvidence(objective:string,title:string,pageText:
   const text=String(pageText||'').replace(/\s+/g,' ')
   const at=text.indexOf(heading)
   if(at<0)return null
-  const price=text.slice(at+heading.length,at+heading.length+1500).match(/₹\s?\d[\d,]*(?:\.\d{1,2})?[^₹]{0,60}/)
-  if(!price)return null
-  const span=price[0].trim()
-  return span.length>=12?[heading,span]:null
+  // 16 Oct 9:02 pm live: the first ₹ after the name was not the selling price. Prefer the price marked
+  // "(Incl. all Taxes)"; otherwise the first ₹ that is not an EMI, saving, MRP or "off" figure.
+  const after=text.slice(at+heading.length,at+heading.length+1500)
+  const spans=[...after.matchAll(/₹\s?\d[\d,]*(?:\.\d{1,2})?[^₹]{0,60}/g)].map(m=>({span:m[0].trim(),before:after.slice(Math.max(0,m.index!-25),m.index!)}))
+  const listed=spans.find(x=>/^₹\s?\d[\d,]*(?:\.\d{1,2})?\s*\(?\s*Incl/i.test(x.span))
+    ||spans.find(x=>!/\b(?:MRP|save|saving|EMI|off|from|starting|cashback|discount)\b[^₹]*$/i.test(x.before)&&!/^₹\s?\d[\d,]*(?:\.\d{1,2})?\s*(?:\/\s*m(?:o|onth)?\b|per month|off\b|EMI\b)/i.test(x.span))
+  if(!listed)return null
+  const span=listed.span.replace(/\s+(?:MRP|M\.R\.P)\b.*$/i,'').trim()
+  return span.length>=6&&text.includes(span)?[heading,span]:null
 }
 
 const VAULT_CODE_SCRIPT=String.raw`
