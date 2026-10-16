@@ -50,6 +50,8 @@ export type ProviderObservation = {
   runId?: string; startedAt?: string; checkedAt?: string; sourceUrl?: string; startUrl?: string;
   /** From the quick web look at request time: a product page to start from, and the price its search result showed (never evidence). */
   leadUrl?: string; quickPrice?: string;
+  /** Reads tried for this store; a failed read is retried on our side before it is reported. */
+  attempts?: number;
   evidence?: string; reason?: string; needsInput?: boolean;
 }
 export type PriceComparison = {
@@ -213,10 +215,10 @@ export function providerObservation(provider: ComparisonProvider, child: any, st
 // Retain the exact failure family in a fixed, user-facing phrase. Never copy a raw
 // browser error (it can carry page text or private URLs) and never imply a price.
 function comparisonFailureReason(code: string) {
-  if (code === 'browser_read_deadline') return 'the store page didn’t finish loading in time.'
-  if (code === 'browser_objective_unverified' || code === 'browser_planning_failed') return 'couldn’t confirm a price on its product page.'
+  if (code === 'browser_read_deadline') return 'I tried a few times but the page wouldn’t load for me. Open it directly to check.'
+  if (code === 'browser_objective_unverified' || code === 'browser_planning_failed') return 'I couldn’t find a confirmed price for this exact item after a few tries.'
   if (code.includes('browser_live_session_expired')) return 'the page expired before I could read a price.'
-  if (code.startsWith('secure_browser_action_failed') || code.startsWith('secure_browser_action_empty')) return 'my browser couldn’t read the store page.'
+  if (code.startsWith('secure_browser_action_failed') || code.startsWith('secure_browser_action_empty')) return 'I tried a few times but couldn’t read the page. Open it directly to check.'
   return 'couldn’t confirm the item and price.'
 }
 
@@ -244,7 +246,7 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
   // One model code must appear as written: "xm5" is in "WH-1000XM5" but not in the camera "X-M5".
   if (requested.length === 1 && !heading.toLowerCase().includes(requested[0].toLowerCase())) return null
   // A different phone tier is not the requested variant, even if all base words match.
-  if (/\biPhone\b/i.test(subject) && ['max', 'plus', 'mini'].some(tier => new RegExp('\\b'+tier+'\\b','i').test(heading) && !new RegExp('\\b'+tier+'\\b','i').test(subject))) return null
+  if (/\biPhone\b/i.test(subject) && ['max', 'plus', 'mini', 'pro', 'air'].some(tier => new RegExp('\\b'+tier+'\\b','i').test(heading) && !new RegExp('\\b'+tier+'\\b','i').test(subject))) return null
   const text = evidence.replace(/\s+/g, ' ').trim()
   const headingCapacity = compact(heading.match(/\b\d+\s*(?:GB|TB)\b/i)?.[0] || '')
   const money = [...text.matchAll(/(?:₹\s*|\b(?:INR|Rs\.?)\s*)(\d[\d,]*(?:\.\d{1,2})?)/gi)]

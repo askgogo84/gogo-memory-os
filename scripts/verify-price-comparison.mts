@@ -114,8 +114,8 @@ for (const provider of ['instamart', 'swiggy', 'zomato', 'blinkit'] as const) {
   assert.equal(model.comparisonState([busy, {provider: 'amazon', status: 'observed'} as any]), 'paused', provider)
 }
 // Terminal read failures keep a specific, distinguished reason and never a price.
-assert.match(model.providerObservation('amazon', {id: 'c1', status: 'failed', error: 'browser_read_deadline', updated_at: 'x'}, null).reason!, /read time|finish loading/i)
-assert.match(model.providerObservation('amazon', {id: 'c2', status: 'failed', error: 'browser_objective_unverified', updated_at: 'x'}, null).reason!, /couldn’t confirm a price/i)
+assert.match(model.providerObservation('amazon', {id: 'c1', status: 'failed', error: 'browser_read_deadline', updated_at: 'x'}, null).reason!, /tried a few times.*load/i)
+assert.match(model.providerObservation('amazon', {id: 'c2', status: 'failed', error: 'browser_objective_unverified', updated_at: 'x'}, null).reason!, /confirmed price/i)
 assert.equal(model.providerObservation('amazon', {id: 'c3', status: 'failed', error: 'browser_read_deadline', updated_at: 'x'}, null).evidence, undefined)
 // A paused provider awaiting account/location stays a blocked needs-input card.
 const blocked = model.providerObservation('zepto', {id: 'c4', status: 'paused', error: 'delivery_location_required', updated_at: 'x'}, null)
