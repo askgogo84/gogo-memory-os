@@ -294,7 +294,7 @@ async function model(page){
     const out=await model(page);
     out.vaultLogin={usernameFilled,passwordFilled,submitted,ambiguous,openerClicked,...(phoneCode?{phoneCode:true}:{})};
     // Field shapes only (type, name, placeholder): never values. Used to fix sites whose login is not found.
-    if(!usernameFilled){ out.vaultLogin.openerLabel=openerLabel; out.vaultLogin.headerCues=await page.evaluate(()=>{const t=String(document.body?.innerText||'');return {signIn:/\bsign\s*in\b/i.test(t),account:/\b(?:profile|my account|orders|logout|log out)\b/i.test(t),dialog:!!document.querySelector('[role="dialog"],[aria-modal="true"]'),inputs:document.querySelectorAll('input').length}}).catch(()=>null); }
+    if(!usernameFilled){ out.vaultLogin.openerLabel=openerLabel; out.vaultLogin.headerCues=await page.evaluate(()=>({signIn:/\bsign\s*in\b/i.test(String(document.body?.innerText||'')),account:/\b(?:profile|my account|orders|logout|log out)\b/i.test(String(document.body?.innerText||'')),dialog:!!document.querySelector('[role="dialog"],[aria-modal="true"]'),inputs:document.querySelectorAll('input').length})).catch(()=>null); }
     if(!usernameFilled) out.vaultLogin.fieldsSeen=await page.evaluate(()=>Array.from(document.querySelectorAll('input')).filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0}).slice(0,8).map(el=>[el.type,el.name,el.placeholder,el.autocomplete].map(v=>String(v||'').slice(0,40)).join('|'))).catch(()=>[]);
     console.log(JSON.stringify(out));
   } finally { if(attached)await attached.close();else await context.close(); }
