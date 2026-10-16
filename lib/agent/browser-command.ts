@@ -412,7 +412,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   try{
     const bookingPhone=providerBooking?indianMobileFromWhatsApp(params.actor.whatsappId):null
     const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,runId:params.runId,accountCreation,
-      ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),...(params.loginCode?{loginCode:params.loginCode}:{}),url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
+      ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),...(params.loginCode?{loginCode:params.loginCode}:{}),...(vaultAccountRead&&indianMobileFromWhatsApp(params.actor.whatsappId)?{phoneLogin:{number:indianMobileFromWhatsApp(params.actor.whatsappId)!,telegramId:String(tg)}}:{}),url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
     pendingHandoffReservation=result.handoffReservation
     // Why a run stopped, without page text, selectors or values: answers "why was it blocked?".
     try{console.log('BROWSER_RUN_RESULT:',JSON.stringify({runId:params.runId,status:result.status,blockReason:(result as any).blockReason||null,authReason:(result as any).authReason||null,host:(()=>{try{return new URL(String(result.url||'')).hostname}catch{return null}})(),title:String(result.title||'').slice(0,80),steps:(result.actions||[]).slice(0,20).map((a:any)=>`${a.kind}:${a.status}`),signupVault:(result as any).signupVault||null}))}catch{}
@@ -460,7 +460,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
             const attempts=Number(runMetadata.login_code?.attempts||0)+(result.otpRejected?1:0)
             const tooMany=attempts>=3
             const site=new URL(params.command.url).hostname.replace(/^www\./,'')
-            const text=loginCodeMessage({site,rejected:result.otpRejected===true,tooMany,takeoverUrl:resumeUrl})
+            const text=loginCodeMessage({site,rejected:result.otpRejected===true,tooMany,takeoverUrl:resumeUrl,whatsappNumber:result.phoneLoginViaWhatsApp?indianMobileFromWhatsApp(params.actor.whatsappId):null})
             await supabaseAdmin.from('agent_runs').update({summary:safe(text.split('\n')[0],600),metadata_json:{...runMetadata,handoff,login_code:tooMany?null:{requested_at:new Date().toISOString(),attempts}}}).eq('id',params.runId).eq('telegram_id',String(tg))
             return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text,blockedReason:blockReason,loginCodeStage:!tooMany,handledBy:'secure-browser' as const}
           }
@@ -819,11 +819,13 @@ export async function claimBookingOtpRun(tg:number,runId:string){
   return Boolean(claimed?.id)
 }
 
-export function loginCodeMessage(params:{site:string;rejected?:boolean;tooMany?:boolean;takeoverUrl:string}){
+export function loginCodeMessage(params:{site:string;rejected?:boolean;tooMany?:boolean;takeoverUrl:string;whatsappNumber?:string|null}){
   if(params.tooMany)return `${params.site} didn't accept the code three times, so I stopped there. Open this, tap Take control and sign in yourself, then tap Resume:\n${params.takeoverUrl}`
   const lead=params.rejected
     ?`${params.site} didn't accept that code. Send me the newest code from your SMS (tap Resend on the site first if it expired).`
-    :`${params.site} sent a sign-in code to your phone.`
+    :params.whatsappNumber
+      ?`I'm signing in to ${params.site} with your WhatsApp number ending ${String(params.whatsappNumber).slice(-4)}, and it sent a sign-in code to that phone.`
+      :`${params.site} sent a sign-in code to your phone.`
   return `${lead}\n\nReply here with just the code, for example *482913*. I'll type it in and carry on with your question. I use it once and never save it.\n\nPrefer to type it yourself? Open this, tap Take control, enter it, then tap Resume:\n${params.takeoverUrl}`
 }
 
