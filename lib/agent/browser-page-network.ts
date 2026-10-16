@@ -31,6 +31,9 @@ const FLIPKART_PAGE_DEPENDENCIES = ['static-assets-web.flixcart.com','rukminim2.
 // 6 Oct probe: croma.com had no entry at all, so its OWN CDN/API (assets.croma.com,
 // media-ik.croma.com, api.croma.com) were aborted and the SPA failed to render. First-party
 // croma.com hosts only; third-party (adobedtm/fullstory/rudderlabs/appdynamics/go-mpulse) stay blocked.
+// 16 Oct live: Reliance Digital loaded blank (69 characters of text) in the cloud browser. A real Chrome shows its theme
+// scripts and styles come from cdn.jiostore.online and its catalogue from its own /ext/raven-api; only that CDN was missing.
+const RELIANCE_PAGE_DEPENDENCIES = ['cdn.jiostore.online']
 const CROMA_PAGE_DEPENDENCIES = ['assets.croma.com','media-ik.croma.com','api.croma.com']
 // 7 Oct live flight read: the broker aborted these script/font hosts 12 times.
 // Grant only the observed hosts for Google Flights, never wildcard Google egress.
@@ -73,6 +76,7 @@ export function browserPageAllowlist(url:string):Record<string,string[]>{
   if(host==='www.zomato.com'||host==='zomato.com')hosts.push('b.zmtcdn.com','zwstatic.zomato.com')
   if(host==='www.flipkart.com'||host==='flipkart.com')hosts.push(...FLIPKART_PAGE_DEPENDENCIES)
   if(host==='www.croma.com'||host==='croma.com')hosts.push(...CROMA_PAGE_DEPENDENCIES)
+  if(host==='www.reliancedigital.in'||host==='reliancedigital.in')hosts.push(...RELIANCE_PAGE_DEPENDENCIES)
   if(host==='www.swiggy.com'||host==='swiggy.com')hosts.push(...SWIGGY_PAGE_DEPENDENCIES)
   if(host==='www.zepto.com'||host==='zepto.com')hosts.push(...ZEPTO_PAGE_DEPENDENCIES)
   if((host==='www.google.com'||host==='google.com') && /^\/travel\/flights(?:\/|$)/.test(target.pathname))
