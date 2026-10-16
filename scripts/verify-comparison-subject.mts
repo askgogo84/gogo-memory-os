@@ -29,3 +29,22 @@ console.log('verify-comparison-subject: subject, search start and product goto o
   assert.doesNotMatch(pc, /India-scoped web search|leads, not confirmed/)
   console.log('verify-comparison-subject: variant rule, incomplete reason and plain wording ok')
 }
+// 16 Oct 6:56 pm live: "iPhone 16" opened the iPhone 16e page; Croma's page was judged against the two-store request.
+{
+  const m = await import('../lib/commerce/comparison-model')
+  assert.equal(m.tokensEndWords('Apple iPhone 16e (White, 128 GB)', ['iPhone', '16']), false)
+  assert.equal(m.tokensEndWords('Apple iPhone 16 (128 GB Storage)', ['iPhone', '16']), true)
+  assert.equal(m.tokensEndWords('Sony WH-1000XM5 Headphones', ['xm5']), true, 'a model code inside a longer code still fits')
+  assert.equal(m.comparisonProductLead('flipkart', 'iPhone 16', [
+    { url: 'https://www.flipkart.com/apple-iphone-16e-white-128-gb/p/itm7971f594b0906', title: 'Apple iPhone 16e (White, 128 GB)' },
+    { url: 'https://www.flipkart.com/apple-iphone-16-black-128-gb/p/itm3c9366c8c93cb', title: 'Apple iPhone 16 (Black, 128 GB)' }]),
+    'https://www.flipkart.com/apple-iphone-16-black-128-gb/p/itm3c9366c8c93cb')
+  assert.equal(m.comparisonProductLead('flipkart', 'iPhone 16', [{ url: 'https://www.flipkart.com/apple-iphone-16e-white-128-gb/p/itm7971f594b0906' }]), null, 'untitled 16e URL refused too')
+  const e16: any = { provider: 'flipkart', status: 'observed', sourceUrl: 'https://www.flipkart.com/apple-iphone-16e-white-128-gb/p/itm7971f594b0906', evidence: 'Apple iPhone 16e (White, 128 GB)\n₹59,900' }
+  assert.equal(m.comparisonQuote('iPhone 16', e16), null, 'a 16e price is never quoted as an iPhone 16 price')
+  const obj = m.comparisonObjective({ metadata_json: { request: 'compare price of iPhone 16 on Flipkart and Croma', subject: 'iPhone 16', providers: [] } } as any, 'croma')
+  assert.match(obj, /^Find the listed price of this product on Croma: "iPhone 16"\. This read is only about Croma; other stores are checked separately/)
+  assert.doesNotMatch(obj, /Flipkart/, 'the store read never sees the other stores')
+  assert.match(obj, /"16e", "16 Plus", "16 Pro" when "16" was asked\) is a different product/)
+  console.log('verify-comparison-subject: whole model numbers and per-store question ok')
+}

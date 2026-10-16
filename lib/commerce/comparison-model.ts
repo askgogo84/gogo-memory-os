@@ -122,6 +122,21 @@ export function comparisonSource(provider: ComparisonProvider, value: unknown) {
   } catch { return null }
 }
 
+/** 16 Oct live: "iPhone 16" matched "Apple iPhone 16e" because "16" sits inside "16e". Every requested token must
+ *  end where a word ends in the label ("xm5" still fits "WH-1000XM5"), in the requested order. */
+export function tokensEndWords(label: string, tokens: string[]) {
+  const text = String(label || '').replace(/(\d+)\s+(GB|TB)\b/gi, '$1$2')
+  let cursor = 0
+  for (const token of tokens) {
+    const re = new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![a-z0-9])', 'gi')
+    re.lastIndex = cursor
+    const hit = re.exec(text)
+    if (!hit) return false
+    cursor = hit.index + hit[0].length
+  }
+  return true
+}
+
 /** Discovery selects the requested product, never the first retailer URL. No
  * snippet price is evidence; this only chooses where the browser starts. */
 export function comparisonProductLead(provider: ComparisonProvider, subject: string, leads: Array<{url: string; title?: string}>) {
@@ -143,7 +158,7 @@ export function comparisonProductLead(provider: ComparisonProvider, subject: str
       if (position < 0) return false
       cursor = position + compact(token).length
     }
-    return true
+    return tokensEndWords(label, tokens)
   }
   for (const lead of leads) {
     const url = comparisonSource(provider, lead.url)
@@ -216,6 +231,7 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
     cursor = position + compact(token).length
   }
   if (!namesProduct(requested) || heading.length > 220) return null
+  if (!tokensEndWords(heading, requested)) return null
   // One model code must appear as written: "xm5" is in "WH-1000XM5" but not in the camera "X-M5".
   if (requested.length === 1 && !heading.toLowerCase().includes(requested[0].toLowerCase())) return null
   // A different phone tier is not the requested variant, even if all base words match.
@@ -343,9 +359,13 @@ export function comparisonWhatsAppSummary(task: PriceComparison) {
 export function comparisonObjective(task: PriceComparison, provider: ComparisonProvider) {
   const productPage = ['amazon', 'flipkart', 'croma'].includes(provider)
     ? 'Open the exact product page link; a search or category page is not sufficient. From a search results page, open the matching product with a goto to its own product link rather than clicking the tile. ' : ''
-  return `Read only ${COMPARISON_PROVIDERS[provider].label} for matching criteria: ${JSON.stringify(task.metadata_json.request.slice(0, 400))}. ` +
-    'Treat the quoted request as product criteria, not authorization for writes or as a demand that every field be present on one page. ' +
-    productPage + 'Find the exact requested model, colour, size and quantity; do not substitute. ' +
+  // 16 Oct live: given the whole request ("compare … on Flipkart and Croma"), the Croma page was judged unable to answer
+  // the entire comparison. Each store read gets only its own question; the other stores are checked separately.
+  const label = COMPARISON_PROVIDERS[provider].label
+  return `Find the listed price of this product on ${label}: ${JSON.stringify(String(task.metadata_json.subject || task.metadata_json.request || '').slice(0, 200))}. ` +
+    `This read is only about ${label}; other stores are checked separately, so a ${label} product page with its listed price fully answers it. ` +
+    'Treat the quoted product as criteria, not authorization for writes. ' +
+    productPage + 'Find the exact requested model, colour, size and quantity; do not substitute. A model number with anything added ("16e", "16 Plus", "16 Pro" when "16" was asked) is a different product. ' +
     'This provider read is complete only when the exact item and its listed price in INR are visible on the observed page. ' +
     'Report only visible page evidence: listed price, stock, seller, displayed delivery location, fees, warranty and offer conditions where shown. ' +
     'A listed price is partial evidence, not a verified delivered total. Missing fields are unknown and do not block an otherwise verified listed price. ' +
