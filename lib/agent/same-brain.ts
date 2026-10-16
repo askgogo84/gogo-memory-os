@@ -40,17 +40,46 @@ function isWorkspaceDisconnect(text:string) {
 
 async function disconnectWorkspace(actor:AgentActor) {
   const {data,error}=await supabaseAdmin.from('users')
-    .select('gmail_access_token,gmail_refresh_token,gmail_connected')
+    .select('gmail_access_token,gmail_refresh_token,gmail_connected,google_refresh_token,google_calendar_connected')
     .eq('telegram_id',actor.legacyTelegramId)
     .maybeSingle()
   if(error)throw new Error(`workspace_disconnect_read_failed:${error.message}`)
-  if(!data?.gmail_connected && !data?.gmail_access_token && !data?.gmail_refresh_token) {
-    return 'Google Workspace is already disconnected from AskGogo.'
+
+  // Extra linked Google Calendar accounts live in their own table. A missing table
+  // (older environments) simply yields no extras — never block the disconnect.
+  const {data:extraAccountsData}=await supabaseAdmin.from('google_calendar_accounts')
+    .select('email,refresh_token')
+    .eq('telegram_id',String(actor.legacyTelegramId))
+  const extraAccounts=Array.isArray(extraAccountsData)?extraAccountsData:[]
+
+  const gmailConnected=!!(data?.gmail_connected||data?.gmail_access_token||data?.gmail_refresh_token)
+  const calendarConnected=!!(data?.google_calendar_connected||data?.google_refresh_token||extraAccounts.length)
+  if(!gmailConnected && !calendarConnected) {
+    return 'Google is already disconnected from AskGogo.'
   }
 
+  // Gmail and Google Calendar are authorised under the SAME Google OAuth client
+  // (GOOGLE_CLIENT_ID) but AskGogo stores a SEPARATE refresh token for each:
+  // Gmail in users.gmail_refresh_token, the primary Calendar account in
+  // users.google_refresh_token, and any extra calendars in google_calendar_accounts.
+  // "Disconnect my Google account" must revoke EVERY stored Google token and clear
+  // BOTH the Gmail and Calendar state. Clearing only Gmail (the old behaviour) left
+  // the account reading as calendar-connected and kept a live calendar token — Bug F.
   const stored=String(data?.gmail_refresh_token||data?.gmail_access_token||'')
   const token=stored ? decryptGoogleToken(stored) : ''
   const revoked=await revokeGoogleToken(token)
+
+  const revokeStoredToken=async (value?:string|null)=>{
+    const raw=String(value||'')
+    if(!raw)return true
+    try { return await revokeGoogleToken(decryptGoogleToken(raw)) } catch { return false }
+  }
+  const calendarRevoked=await revokeStoredToken(data?.google_refresh_token)
+  let extrasRevoked=true
+  for(const acc of extraAccounts) {
+    if(!(await revokeStoredToken((acc as any)?.refresh_token))) extrasRevoked=false
+  }
+
   const {error:clearError}=await supabaseAdmin.from('users').update({
     gmail_access_token:null,
     gmail_refresh_token:null,
@@ -59,12 +88,29 @@ async function disconnectWorkspace(actor:AgentActor) {
     gmail_email:null,
     gmail_send_connected:false,
     gmail_send_connected_at:null,
+    google_refresh_token:null,
+    google_calendar_connected:false,
   }).eq('telegram_id',actor.legacyTelegramId)
   if(clearError)throw new Error(`workspace_disconnect_clear_failed:${clearError.message}`)
 
-  return revoked
-    ? 'Google Workspace is disconnected. I removed the stored Google tokens and account link from AskGogo.'
-    : 'Google Workspace is disconnected from AskGogo and I removed the stored tokens here. Google did not confirm remote revocation, so you can also remove AskGogo from your Google Account permissions for certainty.'
+  if(extraAccounts.length) {
+    const {error:extraClearError}=await supabaseAdmin.from('google_calendar_accounts')
+      .delete().eq('telegram_id',String(actor.legacyTelegramId))
+    if(extraClearError)throw new Error(`workspace_disconnect_extra_clear_failed:${extraClearError.message}`)
+  }
+
+  // Purge the transient typed-object cache (stored as agent_activity rows). It can
+  // hold Gmail/Calendar-derived subjects and ids for ~30 minutes; after "disconnect"
+  // it must not linger. One scoped delete alongside the token clears.
+  await supabaseAdmin.from('agent_activity')
+    .delete()
+    .eq('telegram_id',String(actor.legacyTelegramId))
+    .eq('event_type','typed_object_context')
+
+  const allRevoked=revoked && calendarRevoked && extrasRevoked
+  return allRevoked
+    ? 'Google is disconnected from AskGogo. I removed the Gmail and Google Calendar access stored here.'
+    : 'Google is disconnected from AskGogo — I removed the Gmail and Google Calendar access stored here. Google did not confirm remote revocation for every token, so also remove AskGogo from your Google Account permissions for certainty.'
 }
 
 function isEmailRead(text:string) {
