@@ -372,6 +372,23 @@ async function signupHandbackText(params:{ownerId:string;runId:string;command:Br
     vault:saved.vault,vaultLabel:saved.label,vaultUrl:`${appBaseUrl()}/dashboard/you/vault`,takeoverUrl:params.takeoverUrl||null})
 }
 
+async function releaseOlderReadHandoffs(tg:number,userId:string,exceptRunId:string){
+  const {data}=await supabaseAdmin.from('agent_runs').select('id,metadata_json').eq('telegram_id',String(tg)).eq('type','secure_browser').eq('status','paused')
+    .neq('id',exceptRunId).not('metadata_json->handoff','is',null).order('updated_at',{ascending:false}).limit(10)
+  for(const run of (data||[]) as any[]){
+    const meta=run.metadata_json||{}
+    if(String(meta.mode||'read')!=='read'||meta.flow||meta.commerce_parent_id||meta.comparison_parent_id||meta.site_session)continue
+    const handoff=meta.handoff
+    if(handoff?.token&&handoff?.releaseUrl){
+      const {cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
+      await cancelProviderBrowserHandoff(userId,handoff).catch(()=>{})
+    }
+    const {handoff:_h,login_code:_c,...rest}=meta
+    await supabaseAdmin.from('agent_runs').update({metadata_json:{...rest,state:'closed_stale'},summary:'Replaced by your newer request.',updated_at:new Date().toISOString()})
+      .eq('id',run.id).eq('telegram_id',String(tg)).eq('status','paused')
+  }
+}
+
 async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:string;command:BrowserCommand;mode:BrowserMode;approved?:boolean;bookingOtp?:string|null;loginCode?:string|null}){
   const tg=params.actor.legacyTelegramId
   const sentinel=evaluateAgentSentinel({
@@ -396,6 +413,10 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     ? await (await import('./post-auth-outcome')).inspectPostAuthRun(String(tg),params.runId,runMetadata):undefined
   if(reconciledResult===null)return {runId:params.runId,status:'outcome_unknown' as const,capability:'browser' as const,risk:params.command.risk,text:'The browser session is unavailable. Verify the outcome directly with the provider; Gogo will not repeat the action.',handledBy:'secure-browser' as const}
   if(reconciledResult?.status==='blocked')return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text:reconciledResult.summary,handledBy:'secure-browser' as const}
+  // 16 Oct live: a Swiggy read still waiting for its sign-in code held the browser, so the next "Check my Swiggy
+  // account" failed with browser_handoff_in_use. A new read on the person's own browser closes older reads that are
+  // only waiting (never bookings, sign-ups, comparisons or approved actions).
+  if(params.mode==='read'&&browserOwner===params.actor.userId)await releaseOlderReadHandoffs(tg,params.actor.userId,params.runId).catch((err:any)=>console.error('OLDER_READ_HANDOFF_RELEASE_FAILED:',String(err?.message||err).slice(0,120)))
   if(runMetadata.handoff?.releaseUrl){
     // Release the human browser's profile lock only after permission/approval checks.
     const {releaseBrowserHandoff}=await import('./browser-handoff')
