@@ -1286,6 +1286,18 @@ return receiptCount(after)>receiptCount(before);
     // Search Enter can return while the next document is still empty. Settle
     // within the existing bounded readiness wait BEFORE capturing its evidence.
     const pageLoad=await pageReadiness.read(payload.mode==='read');
+    // 16 Oct live: signed in to Swiggy, Gogo opened My Account and read it while the orders were still loading
+    // (the page shell has text, so readiness saw it as loaded). In read mode, let the network go quiet and the
+    // visible text stop changing before reading. Bounded: at most about 12 seconds.
+    if(payload.mode==='read'&&typeof page.waitForLoadState==='function'&&typeof page.waitForTimeout==='function'){
+      await page.waitForLoadState('networkidle',{timeout:6000}).catch(()=>{});
+      let lastLen=-1,steady=0;
+      for(let i=0;i<12&&steady<3;i++){
+        const len=Number(await page.evaluate(function(){ return (document.body&&document.body.innerText||'').length; }).catch(()=>0));
+        steady=len===lastLen?steady+1:0; lastLen=len;
+        await page.waitForTimeout(500);
+      }
+    }
     const out=await model(page); out.pageLoad=pageLoad; out.draftVerified=draftVerified; out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; out.blockedHosts=__blocked;
     // Screenshot fallback: the visible viewport in CSS pixels, so the model's x/y map to page.mouse.
     if(payload.screenshot&&payload.bookingFlow){try{const vp=await page.evaluate(()=>({w:innerWidth,h:innerHeight}));const img=await page.screenshot({type:'jpeg',quality:55,scale:'css',fullPage:false,timeout:8000});out.shot=img.toString('base64');out.viewport=vp;}catch{}}
@@ -2546,6 +2558,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         // Where the run ended (path only, no query) and whether the page still offered a sign-in.
         at:(()=>{try{const u=new URL(String(page.url||''));return u.hostname+u.pathname.slice(0,80)}catch{return null}})(),title:safeText(page.title,80),
         signInEntry:hasSignInEntry(page),loginForm:pageLooksLikeLogin(page),
+        // Shape of what was on screen (no page text): how much text, and which account words appeared.
+        textLen:String(page.text||'').length,cues:['order','delivered','address','payment','logout','account'].filter(w=>new RegExp('\\b'+w,'i').test(String(page.text||''))),
         ...(googleFlightReadProgress(page)?{flight:{...googleFlightReadProgress(page),selectedControls:page.flightEvidence?.searchControls?.length||0,observedRows:page.flightEvidence?.resultLabels?.length||0}}:{}),
       }))
       throw new Error('browser_objective_unverified')
