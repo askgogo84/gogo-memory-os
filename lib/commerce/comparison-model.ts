@@ -102,7 +102,9 @@ export function comparisonSource(provider: ComparisonProvider, value: unknown) {
     // Electronics require a retailer product page; search/category pages cannot
     // substantiate an exact-item quote even if they display a promotional price.
     const productPath = provider === 'amazon' ? /\/(?:dp|gp\/product)\/[A-Z0-9]{10}(?:\/|$)/i
-      : provider === 'flipkart' || provider === 'croma' || provider === 'reliance' ? /\/p\/[^/]+(?:\/|$)/i : null
+      : provider === 'flipkart' || provider === 'croma' ? /\/p\/[^/]+(?:\/|$)/i
+      // 16 Oct live: Reliance Digital product pages are /product/<name>-<code>, not /p/.
+      : provider === 'reliance' ? /\/product\/[a-z0-9-]+(?:\/|$)/i : null
     if (url.protocol !== 'https:' || url.username || url.password || url.hash ||
       !(url.hostname === domain || url.hostname.endsWith('.' + domain)) || url.pathname === '/' ||
       /redacted|withheld|login|signin/i.test(url.pathname) ||
