@@ -427,7 +427,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   // typed into the same page when the person sends it (16 Oct). Same owner as ordinary reads: same saved cookies.
   const vaultAccountRead=params.mode==='read'&&!persistentCommerce&&(()=>{try{return Boolean(findVaultProviderForDomain(new URL(params.command.url).hostname))}catch{return false}})()
   const persistentAccountSession=accountCreation||providerBooking||vaultAccountRead
-  const browserOwner=persistentCommerce?params.actor.userId+':commerce':accountCreation?params.actor.userId+':account:'+params.runId:providerBooking?params.actor.userId+':booking:'+params.runId:params.actor.userId
+  const browserOwner=persistentCommerce?linkedBrowserOwner(params.actor.userId,{...runMetadata,url:runMetadata.url||params.command.url}):accountCreation?params.actor.userId+':account:'+params.runId:providerBooking?params.actor.userId+':booking:'+params.runId:params.actor.userId
   const resumePage=(persistentCommerce||persistentAccountSession)&&Boolean(runMetadata.handoff)
   const reconciledResult=runMetadata.browser_safe_to_retry===false
     ? await (await import('./post-auth-outcome')).inspectPostAuthRun(String(tg),params.runId,runMetadata):undefined
@@ -652,7 +652,7 @@ export async function restoreReadBrowserHandoff(params:{actor:AgentActor;runId:s
   const {browserHandoffIsLive}=await import('./browser-handoff-health')
   if(run.status==='paused'&&await browserHandoffIsLive(meta.handoff?.takeoverUrl))return
   const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
-  const browserOwner=linked?params.actor.userId+':commerce':params.actor.userId
+  const browserOwner=linked?linkedBrowserOwner(params.actor.userId,meta):params.actor.userId
   const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:target.toString(),sessionTaskId:run.id,...(linked?{keepAlive:true}:{})})
   let update=supabaseAdmin.from('agent_runs').update({status:'paused',metadata_json:{...meta,handoff},summary:'Complete the human step in the provider browser, then resume this same task. Do not send login codes in chat.',completed_at:null,updated_at:new Date().toISOString()})
     .eq('id',run.id).eq('telegram_id',owner).eq('status',run.status)
@@ -665,6 +665,17 @@ export async function restoreReadBrowserHandoff(params:{actor:AgentActor;runId:s
 // Commerce's direct take-control action must remain tied to its saved parent.
 export async function takeControlOfCommerceRead(params:{actor:AgentActor;runId:string}){
   return restoreReadBrowserHandoff({...params,linkedOnly:true})
+}
+
+// Electronics comparison stores each get their own browser so they can be read at the same time (16 Oct);
+// grocery and food stores keep the shared commerce browser that remembers the delivery location.
+function linkedBrowserOwner(userId:string,meta:any){
+  if(meta?.comparison_parent_id){
+    try{const host=new URL(String(meta.url||'')).hostname.replace(/^www\./,'')
+      const store=host==='amazon.in'?'amazon':host==='flipkart.com'?'flipkart':host==='croma.com'?'croma':null
+      if(store)return userId+':commerce:'+store}catch{}
+  }
+  return userId+':commerce'
 }
 
 // An overlapping read must point at the existing task, not create a second
