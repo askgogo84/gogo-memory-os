@@ -8,7 +8,7 @@ assert.equal(parsePriceComparison('compare amul butter on blinkit and zepto')?.s
 assert.equal(parsePriceComparison('compare prices for iphone 16 128GB on amazon and croma')?.subject, 'iphone 16 128GB')
 assert.equal(comparisonProductLead('flipkart', 'iPhone 16', [{ url: 'https://www.flipkart.com/apple-iphone-16-black-128-gb/p/itmb07d67f995271', title: 'Apple iPhone 16 (Black, 128 GB)' }]), 'https://www.flipkart.com/apple-iphone-16-black-128-gb/p/itmb07d67f995271')
 // With no product page from web search, start from the store's own search results.
-assert.equal(comparisonSearchUrl('croma', 'iPhone 16'), 'https://www.croma.com/searchB?q=iPhone%2016%3Arelevance&text=iPhone%2016')
+assert.equal(comparisonSearchUrl('croma', 'iPhone 16'), 'https://www.croma.com/searchB?q=iPhone%2016%20128GB%3Arelevance&text=iPhone%2016%20128GB')
 assert.equal(comparisonSearchUrl('flipkart', 'iPhone 16'), 'https://www.flipkart.com/search?q=iPhone%2016')
 assert.equal(comparisonSearchUrl('amazon', 'iPhone 16'), 'https://www.amazon.in/s?k=iPhone%2016')
 assert.equal(comparisonSearchUrl('blinkit', 'milk'), null)

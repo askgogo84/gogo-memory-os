@@ -12,8 +12,11 @@ export type ComparisonProvider = keyof typeof COMPARISON_PROVIDERS
 
 /** The store's own search results for the product, used when web search finds no product page. */
 export function comparisonSearchUrl(provider: ComparisonProvider, subject: string) {
-  const q = encodeURIComponent(String(subject || '').trim().slice(0, 120))
-  if (!q) return null
+  // 16 Oct live: Croma's search opened the 512GB iPhone, which showed no price. Ask for the base size when none is named.
+  const raw = String(subject || '').trim().slice(0, 120)
+  const withSize = provider === 'croma' && /\biphone\b/i.test(raw) && !/\d\s*(?:gb|tb)\b/i.test(raw) ? `${raw} 128GB` : raw
+  const q = encodeURIComponent(withSize)
+  if (!raw) return null
   if (provider === 'flipkart') return `https://www.flipkart.com/search?q=${q}`
   if (provider === 'amazon') return `https://www.amazon.in/s?k=${q}`
   if (provider === 'croma') return `https://www.croma.com/searchB?q=${q}%3Arelevance&text=${q}`

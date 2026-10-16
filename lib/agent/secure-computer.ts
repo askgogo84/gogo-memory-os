@@ -329,16 +329,17 @@ async function model(page){
 /** Product name + first price after it, as exact page text, when the page is the requested model's product page. */
 export function productPagePriceEvidence(objective:string,title:string,pageText:string):string[]|null{
   const ask=String(objective||'').match(/^Find the listed price of this product on [^:]{2,40}: "([^"]{2,200})"/)
-  if(!ask)return null
+  const skip=(why:string,extra?:string)=>{if(/^Find the listed price of this product/.test(String(objective||'')))console.warn('PRODUCT_PRICE_DIRECT_SKIP:',JSON.stringify({why,extra:extra||'',title:String(title||'').slice(0,120),objective:String(objective||'').slice(0,160)}));return null}
+  if(!ask)return skip('objective_no_match')
   const heading=String(title||'').replace(/^Buy\s+/i,'').replace(/\s*(?:\s:\s*Amazon\.in\b.*|\sOnline\b.*|\s-\s*Croma\b.*|\s\|.*)$/i,'').trim()
-  if(heading.length<12)return null
+  if(heading.length<12)return skip('short_heading',heading)
   // Every requested word must end where a word ends ("16" is not "16e"), in order.
   const tokens=ask[1].replace(/(\d+)\s+(GB|TB)\b/gi,'$1$2').match(/[a-z0-9]+/gi)||[]
   const named=heading.replace(/(\d+)\s+(GB|TB)\b/gi,'$1$2')
   let cursor=0
   for(const token of tokens){
     const re=new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?![a-z0-9])','gi');re.lastIndex=cursor
-    const hit=re.exec(named);if(!hit)return null;cursor=hit.index+hit[0].length
+    const hit=re.exec(named);if(!hit)return skip('token_mismatch',token+' | '+named);cursor=hit.index+hit[0].length
   }
   const text=String(pageText||'').replace(/\s+/g,' ')
   const at=text.indexOf(heading)
