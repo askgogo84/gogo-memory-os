@@ -867,6 +867,31 @@ export async function findLoginCodeRun(tg:number|string){
   return String(data.id)
 }
 
+/**
+ * 16 Oct 12:52 live: the SMS reached him before Gogo had saved that it was waiting (the code arrived 4 seconds early)
+ * and went to the chat model. While a read for this person is still running or just paused, wait briefly for it.
+ */
+/** A browser task for this person ran in the last few minutes (a bare number is then very likely a sign-in code). */
+export async function hasRecentBrowserRun(tg:number|string,withinMs=15*60_000){
+  const {data}=await supabaseAdmin.from('agent_runs').select('id').eq('telegram_id',String(tg)).eq('type','secure_browser')
+    .gte('updated_at',new Date(Date.now()-withinMs).toISOString()).limit(1)
+  return Boolean(data?.length)
+}
+
+export async function waitForLoginCodeRun(tg:number|string,maxMs=24_000){
+  const since=new Date(Date.now()-3*60_000).toISOString()
+  const {data:active}=await supabaseAdmin.from('agent_runs').select('id').eq('telegram_id',String(tg)).eq('type','secure_browser')
+    .in('status',['running','paused']).gte('updated_at',since).limit(1)
+  if(!active?.length)return null
+  const deadline=Date.now()+maxMs
+  while(Date.now()<deadline){
+    const runId=await findLoginCodeRun(tg)
+    if(runId)return runId
+    await new Promise(resolve=>setTimeout(resolve,2000))
+  }
+  return null
+}
+
 /** Use the code once: whichever request clears requested_at first owns it. The run stays paused for the resume. */
 export async function claimLoginCodeRun(tg:number|string,runId:string){
   const {data:run}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',runId).eq('telegram_id',String(tg)).eq('status','paused').maybeSingle()

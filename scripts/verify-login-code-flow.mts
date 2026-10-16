@@ -82,3 +82,12 @@ assert.match(sc, /vaultFill\.phoneCode&&vaultFill\.codeRequested\)\)\)/)
 assert.match(sc, /VAULT_CODE_NOT_SHOWN:/)
 assert.match(sc, /m\[0\]\.replace\(\/\\d\{4,\}\/g,'••'\)/)
 console.log('verify-login-code-flow: code screen verified')
+
+// 16 Oct 12:52 live: the SMS code reached WhatsApp 4 seconds before Gogo marked the run as waiting, went to the chat
+// model, and it replied "Using that code to sign in now" (untrue). An early code now waits for the run, and a bare
+// code with nothing waiting never reaches the chat model.
+const waRoute = read('app/api/webhooks/whatsapp/route.ts')
+assert.match(waRoute, /const codeRunId = await findLoginCodeRun\(resolvedUser\.telegramId\) \|\| await waitForLoginCodeRun\(resolvedUser\.telegramId\)/)
+assert.match(waRoute, /if \(await hasRecentBrowserRun\(resolvedUser\.telegramId\)\) \{\n\s+const notUsed = "I'm not waiting for a sign-in code right now, so I didn't use that one\./)
+assert.match(bc, /export async function waitForLoginCodeRun\(tg:number\|string,maxMs=24_000\)/)
+console.log('verify-login-code-flow: early code ok')
