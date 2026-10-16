@@ -10,6 +10,16 @@ export const COMPARISON_PROVIDERS = {
 } as const
 export type ComparisonProvider = keyof typeof COMPARISON_PROVIDERS
 
+/** The store's own search results for the product, used when web search finds no product page. */
+export function comparisonSearchUrl(provider: ComparisonProvider, subject: string) {
+  const q = encodeURIComponent(String(subject || '').trim().slice(0, 120))
+  if (!q) return null
+  if (provider === 'flipkart') return `https://www.flipkart.com/search?q=${q}`
+  if (provider === 'amazon') return `https://www.amazon.in/s?k=${q}`
+  if (provider === 'croma') return `https://www.croma.com/searchB?q=${q}%3Arelevance&text=${q}`
+  return null
+}
+
 // A single-retailer price/stock read ("live price of X on flipkart.com") should open the
 // commerce browser even without the word "compare" — but must NOT hijack unrelated messages
 // that merely contain "price" (gold price, upgrade price, bitcoin price). Requires BOTH a
@@ -65,6 +75,9 @@ export function parsePriceComparison(text: string) {
     .replace(/^\s*(?:(?:what(?:'s| is)|check|find|show|tell me)\s+(?:me\s+)?(?:the\s+)?(?:live\s+)?(?:price|cost|availability|stock)\s+(?:of\s+|for\s+)?|(?:is|are)\s+the\s+|(?:how much (?:is|does)\s+))/i, '')
     .split(/\s+(?:on|across|between|from)\s+(?:amazon|flipkart|croma|instamart|swiggy|zepto|blinkit|zomato)\b/i)[0]
     .replace(/[?.!]+$/g, '').split(/[.!?]\s/)[0]
+    // 16 Oct live: "compare price of iPhone 16 on Flipkart and Croma" kept "price of" in the product name,
+    // so no product page title matched and both stores failed.
+    .replace(/^\s*(?:the\s+)?(?:live\s+|current\s+)?(?:prices?|pricing|costs?|rates?)\s+(?:of|for)\s+(?:the\s+|an?\s+)?/i, '')
     // "xm5 price on amazon": the word "price" asks for a price, it is not part of the product name.
     .replace(/\s+(?:prices?|pricing|cost|rates?)\s*$/i, '').trim().slice(0, 180)
   return {subject: subject || 'Price comparison', request: text.slice(0, 2000), providers}
@@ -315,7 +328,7 @@ export function comparisonWhatsAppSummary(task: PriceComparison) {
 
 export function comparisonObjective(task: PriceComparison, provider: ComparisonProvider) {
   const productPage = ['amazon', 'flipkart', 'croma'].includes(provider)
-    ? 'Open the exact product page link; a search or category page is not sufficient. ' : ''
+    ? 'Open the exact product page link; a search or category page is not sufficient. From a search results page, open the matching product with a goto to its own product link rather than clicking the tile. ' : ''
   return `Read only ${COMPARISON_PROVIDERS[provider].label} for matching criteria: ${JSON.stringify(task.metadata_json.request.slice(0, 400))}. ` +
     'Treat the quoted request as product criteria, not authorization for writes or as a demand that every field be present on one page. ' +
     productPage + 'Find the exact requested model, colour, size and quantity; do not substitute. ' +
