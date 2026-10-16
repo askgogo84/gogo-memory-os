@@ -1,3 +1,4 @@
+import { qaTraceReply } from './qa-trace'
 import twilio from 'twilio'
 import { deliveryCallbackUrl, persistAcceptedChunk } from '@/lib/services/delivery-callback'
 
@@ -89,6 +90,7 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
   const to = normalizeWhatsAppAddress(toNumber)
 
   const chunks = splitIntoChunks(sanitizeMarkdownForWhatsApp(text || ''))
+  qaTraceReply(chunks.join('\n\n'))
   let lastMessage: any = null
 
   for (let i = 0; i < chunks.length; i++) {

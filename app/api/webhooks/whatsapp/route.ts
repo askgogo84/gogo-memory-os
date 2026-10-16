@@ -20,6 +20,7 @@ import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
 import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { auditInboundTwilioSignature } from '@/lib/security/webhook-signature'
+import { runWithQaTrace } from '@/lib/qa-trace'
 import { sendWhatsAppMessage, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
 import { isStopMessage, suppressAllForRecipient } from '@/lib/bot/handlers/reminder-optout'
@@ -242,6 +243,12 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  // QA: replies to simulated messages (MessageSid SMqa…) are logged as QA_REPLY.
+  const qaSid=String((await req.clone().formData().catch(()=>null))?.get('MessageSid')||'')
+  return runWithQaTrace(qaSid,()=>handleWhatsAppPost(req))
+}
+
+async function handleWhatsAppPost(req: NextRequest) {
   // Hoisted out of the try so the catch can reach it to send a user-facing error reply.
   // Empty until we've parsed the inbound number; the catch guards on it.
   let from = ''

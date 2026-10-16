@@ -51,6 +51,7 @@ const twilioClient = {
   messages: { create: async (payload: any) => { messages.push(payload); return { sid: 'SM1', status: 'queued' } } },
 }
 const wlib = load('lib/whatsapp.ts', {
+  './qa-trace': { qaTraceReply: () => {} },
   twilio: { default: () => twilioClient },
   '@/lib/services/delivery-callback': { deliveryCallbackUrl: () => '', persistAcceptedChunk: async () => {} },
 }, { TWILIO_ACCOUNT_SID: 'ACtest', TWILIO_AUTH_TOKEN: 'test', TWILIO_WHATSAPP_NUMBER: '+15555550100' })

@@ -295,6 +295,7 @@ const webhook=executeModule('app/api/webhooks/whatsapp/route.ts',{
   ...actual,
   'next/server':{NextResponse:Response},
   '@/lib/security/webhook-signature':signature,
+  '@/lib/qa-trace':{runWithQaTrace:(_sid:string,fn:()=>Promise<any>)=>fn()},
   '@/lib/feature-intents':realFeature,
   '@/lib/services/whatsapp-preview-routing':previewRouting,
   '@/lib/bot/process-message':{processIncomingMessage:exports.processIncomingMessage},

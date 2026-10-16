@@ -24,6 +24,7 @@ async function main() {
   // Live meeting reminder failed with Twilio ContentVariables error: newline in label.
   const payloads=[],accepted=[]
   const whatsapp=load('lib/whatsapp.ts',{
+    './qa-trace':{qaTraceReply(){}},
     twilio:{default:()=>({messages:{create:async payload=>{
       const label=JSON.parse(payload.contentVariables)['1']
       assert.doesNotMatch(label,/[\r\n\t]| {5,}/,'template values must satisfy WhatsApp whitespace constraints')
