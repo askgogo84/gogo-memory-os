@@ -60,3 +60,9 @@ assert.match(read('lib/agent/account-site-gate.ts'), /if \(\(provider\?\.phoneLo
 assert.match(script, /candidates=page\.locator\('button, a, \[role="button"\], input\[type="submit"\]'\)/)
 assert.match(script, /await page\.keyboard\.press\('Enter'\)/)
 console.log('verify-login-code-flow: whatsapp number ok')
+
+// 16 Oct 09:57 live: the earlier Swiggy read waiting for its code held the browser (browser_handoff_in_use).
+assert.ok(bc.indexOf('await releaseOlderReadHandoffs(tg,params.actor.userId,params.runId)') < bc.indexOf("if(runMetadata.handoff?.releaseUrl){"), 'older waiting reads are released first')
+assert.match(bc, /if\(String\(meta\.mode\|\|'read'\)!=='read'\|\|meta\.flow\|\|meta\.commerce_parent_id\|\|meta\.comparison_parent_id\|\|meta\.site_session\)continue/, 'never bookings, sign-ups, comparisons or Settings sign-ins')
+assert.match(bc, /metadata_json:\{\.\.\.rest,state:'closed_stale'\},summary:'Replaced by your newer request\.'/)
+console.log('verify-login-code-flow: older reads released')
