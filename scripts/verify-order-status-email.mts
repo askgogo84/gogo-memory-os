@@ -73,3 +73,27 @@ const swiggy = formatOrderEmailAnswer(findCatalogueSite('swiggy')!, [{ subject: 
 assert.match(swiggy, /\nFrom Priyadarshini Grand · delivered in 12 mins/)
 assert.doesNotMatch(swiggy, /Siddhaiah|560020|1475/)
 console.log('verify-order-status-email: swiggy summary ok')
+
+// 16 Oct live: "Show my last 3 Swiggy orders" was answered as one latest update with bare subjects underneath.
+{
+  const { requestedOrderCount, formatOrderEmailAnswer: fmt } = await import('../lib/agent/order-email-status')
+  assert.equal(requestedOrderCount('Show my last 3 Swiggy orders'), 3)
+  assert.equal(requestedOrderCount('my last two amazon orders'), 2)
+  assert.equal(requestedOrderCount('show my recent Swiggy orders'), 3)
+  assert.equal(requestedOrderCount('where is my swiggy order'), 1)
+  assert.equal(requestedOrderCount('last 20 orders'), 5)
+  const site: any = { name: 'Swiggy' }
+  const mail = (subject: string, date: string, place: string) => ({ subject, date, snippet: `ORDER JOURNEY ${place} 315, Siddhaiah Road Delivery in 12 mins` })
+  const msgs = [mail('Your Swiggy order was delivered on time', 'Wed, 14 Oct 2026 02:42:00 +0000', 'Priyadarshini Grand'),
+    mail('Your Swiggy order was delivered on time', 'Sat, 03 Oct 2026 02:40:00 +0000', 'Vidyarthi Bhavan'),
+    mail('Your Swiggy order was successfully delivered', 'Sun, 13 Sep 2026 03:32:00 +0000', 'CTR')]
+  const list = fmt(site, msgs, 3)!
+  assert.match(list, /^Your last 3 Swiggy orders, from your Swiggy emails:/)
+  assert.match(list, /1\. \*Your Swiggy order was delivered on time\*/)
+  for (const place of ['Priyadarshini Grand', 'Vidyarthi Bhavan', 'CTR']) assert.ok(list.includes(`From ${place}`), place)
+  assert.match(fmt(site, msgs.slice(0, 2), 3)!, /^I found 2 Swiggy orders in your emails:/)
+  const single = fmt(site, msgs, 1)!
+  assert.match(single, /^From your Swiggy emails, the latest order update:/)
+  assert.match(single, /• Your Swiggy order was delivered on time \(.+\) · From Vidyarthi Bhavan/, 'earlier orders name the restaurant')
+  console.log('verify-order-status-email: last N orders ok')
+}
