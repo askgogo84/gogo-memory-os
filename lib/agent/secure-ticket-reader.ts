@@ -26,7 +26,7 @@ export type SecureTicketReadResult = {
   usefulLinks: Array<{ text: string; href: string }>
   credential?: TicketCredential
   blockReason?: 'human_auth_required' | 'provider_cloudflare_challenge'
-  authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'
+  authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'|'login_unavailable'
   handoff?: 'device_handoff_required'
   authHandoff?: Awaited<ReturnType<typeof startProviderBrowserHandoff>>
   authHandoffPending?: boolean

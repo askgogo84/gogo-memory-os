@@ -66,3 +66,10 @@ assert.ok(bc.indexOf('await releaseOlderReadHandoffs(tg,params.actor.userId,para
 assert.match(bc, /if\(String\(meta\.mode\|\|'read'\)!=='read'\|\|meta\.flow\|\|meta\.commerce_parent_id\|\|meta\.comparison_parent_id\|\|meta\.site_session\)continue/, 'never bookings, sign-ups, comparisons or Settings sign-ins')
 assert.match(bc, /metadata_json:\{\.\.\.rest,state:'closed_stale'\},summary:'Replaced by your newer request\.'/)
 console.log('verify-login-code-flow: older reads released')
+
+// 16 Oct live: Swiggy's sign-in panel did not open; hand over the same browser instead of "couldn't find that".
+assert.match(sc, /if\(!vaultFilled&&params\.mode==='read'\)savedLoginMissed=true/)
+assert.match(sc, /if\(savedLoginMissed&&params\.reserveHumanHandoff===true&&!providerBooking\)\{/)
+assert.match(bc, /if\(result\.authReason==='login_unavailable'\)\{/)
+assert.match(bc, /Open this, tap Take control and sign in, then tap Resume\. I'll carry on with your question from there/)
+console.log('verify-login-code-flow: login handover ok')

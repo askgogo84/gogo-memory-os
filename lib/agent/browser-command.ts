@@ -476,6 +476,12 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
           }
           const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
           const resumeUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
+          if(result.authReason==='login_unavailable'){
+            const site=new URL(params.command.url).hostname.replace(/^www\./,'')
+            const text=`I couldn't open the sign-in on ${site} myself, so I stopped before entering anything.\n\nOpen this, tap Take control and sign in, then tap Resume. I'll carry on with your question from there:\n${resumeUrl}`
+            await supabaseAdmin.from('agent_runs').update({summary:safe(text.split('\n')[0],600)}).eq('id',params.runId).eq('telegram_id',String(tg))
+            return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text,blockedReason:blockReason,handledBy:'secure-browser' as const}
+          }
           if(result.loginCodeStage){
             // The person may send the code in chat or on WhatsApp for 10 minutes; three wrong codes hand over.
             const attempts=Number(runMetadata.login_code?.attempts||0)+(result.otpRejected?1:0)
