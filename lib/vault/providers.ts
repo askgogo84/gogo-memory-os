@@ -10,6 +10,8 @@ export type VaultProvider = {
   note:string
   // The site signs in only with a phone number and a texted code (no passwords).
   phoneOnly?:boolean
+  // The site also signs in with a mobile number and a texted code, so Gogo can use the WhatsApp number it already has.
+  phoneLogin?:boolean
 }
 
 export const VAULT_PROVIDERS:Record<string,VaultProvider>={
@@ -34,13 +36,13 @@ export const VAULT_PROVIDERS:Record<string,VaultProvider>={
   amazon:{
     key:'amazon',label:'Amazon India',aliases:['amazon','amazon india'],domains:['amazon.in'],
     loginUrl:'https://www.amazon.in/ap/signin',
-    usernameLabel:'Email or mobile number',secretLabel:'Password',
+    usernameLabel:'Email or mobile number',secretLabel:'Password',phoneLogin:true,
     note:'Used only on amazon.in through Gogo’s secure browser.',
   },
   flipkart:{
     key:'flipkart',label:'Flipkart',aliases:['flipkart'],domains:['flipkart.com'],
     loginUrl:'https://www.flipkart.com/account/login',
-    usernameLabel:'Email or mobile number',secretLabel:'Password',
+    usernameLabel:'Email or mobile number',secretLabel:'Password',phoneLogin:true,
     note:'Used only on flipkart.com through Gogo’s secure browser.',
   },
   irctc:{
@@ -59,7 +61,7 @@ export const VAULT_PROVIDERS:Record<string,VaultProvider>={
   swiggy:{
     key:'swiggy',label:'Swiggy',aliases:['swiggy'],domains:['swiggy.com'],
     loginUrl:'https://www.swiggy.com/',
-    usernameLabel:'Mobile number',secretLabel:'Password',phoneOnly:true,
+    usernameLabel:'Mobile number',secretLabel:'Password',phoneOnly:true,phoneLogin:true,
     note:'Used only on swiggy.com through Gogo’s secure browser.',
   },
   zomato:{
@@ -103,4 +105,10 @@ export function findVaultProviderInText(text:string){
       return normalized.includes(' '+a+' ')
     })
   )||null
+}
+
+/** Sites Gogo signs in to with the person's WhatsApp number and a texted code, without a saved login (16 Oct). */
+export function phoneLoginProviderForDomain(domain:string){
+  const provider=findVaultProviderForDomain(domain)
+  return provider&&(provider.phoneLogin||provider.phoneOnly)?provider:null
 }

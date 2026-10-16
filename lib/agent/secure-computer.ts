@@ -17,7 +17,7 @@ import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-own
 import { recordVaultBrowserOutcome, resolveVaultCredentialForBrowser } from '@/lib/vault/credential-store'
 import { beginSignupCredential, resolveSignupCredential, resumeSignupCredential, type BegunSignup, type SignupVaultResult } from '@/lib/vault/signup-credential'
 import { upsertVaultSession, listVaultSessions } from '@/lib/vault/session-store'
-import { findVaultProviderForDomain } from '@/lib/vault/providers'
+import { findVaultProviderForDomain, phoneLoginProviderForDomain } from '@/lib/vault/providers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_GENERATION, SANDBOX_IMAGE, SANDBOX_WORKDIR, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 import { canAuthorizeConsequentialAction, type TrustClass } from './trust'
@@ -118,6 +118,8 @@ export type SecureBrowserResult = {
   otpRejected?: boolean
   // A saved phone login asked the site for a text code; the person can send it in chat or on WhatsApp.
   loginCodeStage?: boolean
+  // The code was asked for with the person's WhatsApp number (no saved login).
+  phoneLoginViaWhatsApp?: boolean
   // Where the site sent the login code (12 Oct: Playo's email login sent it by email).
   otpChannel?: 'sms'|'email'
   // 13 Oct safeguards: Gogo refused to switch login method / stopped at account creation.
@@ -318,12 +320,22 @@ const visible = async loc => { try { return await loc.isVisible(); } catch { ret
       codeEntered=true;
       await page.waitForTimeout(900);
       // Many sites submit by themselves once the last digit is in; otherwise press their verify control. Never a pay control.
-      const verify=['Verify','Verify OTP','Verify code','Continue','Submit','Login','Log in','Sign in','Confirm','Next','Proceed'];
-      for(const t of verify){
-        const b=page.getByRole('button',{name:t,exact:true}).first();
-        if(await visible(b) && await b.isEnabled().catch(()=>false)){ await b.click({timeout:10000}).catch(()=>{}); submitted=true; break; }
-      }
-      await page.waitForTimeout(2500);
+      // 16 Oct live: Swiggy's "VERIFY OTP" is an upper-case link, not a button, so match links and any case.
+      const stillOnCode=async()=>visible(target);
+      if(await stillOnCode()){
+        const label=/^\s*(?:verify(?:\s+(?:otp|code|&\s*continue|and\s+continue))?|continue|submit(?:\s+otp)?|log\s*in|login|sign\s*in|confirm(?:\s+otp)?|next|proceed)\s*$/i;
+        const candidates=page.locator('button, a, [role="button"], input[type="submit"]');
+        const n=Math.min(await candidates.count().catch(()=>0),80);
+        for(let i=0;i<n;i++){
+          const c=candidates.nth(i);
+          const text=String(await c.evaluate(el=>(el.innerText||el.value||el.getAttribute('aria-label')||'').trim()).catch(()=>''));
+          if(!label.test(text)||/\b(?:pay|payment|place order|buy)\b/i.test(text)) continue;
+          if(!(await visible(c))) continue;
+          await c.click({timeout:10000}).catch(()=>{}); submitted=true; break;
+        }
+        if(!submitted){ await page.keyboard.press('Enter').catch(()=>{}); submitted=true; }
+      } else submitted=true;
+      await page.waitForTimeout(3000);
     }
     const out={url:page.url(),title:await page.title().catch(()=>''),text:String(await page.evaluate(()=>document.body?.innerText||'').catch(()=>'')).replace(/[^\S\n]+/g,' ').trim().slice(0,18000),forms:[],controls:[],links:[]};
     out.vaultCode={codeEntered,submitted};
@@ -1811,7 +1823,7 @@ function normalizeActionLog(values:any[]){
   return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const,consequential:a.consequential===true}))
 }
 
-export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;loginCode?:string|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
+export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;loginCode?:string|null;phoneLogin?:{number:string;telegramId:string}|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
   let publicFlightRead=false
   try{const target=new URL(params.url);publicFlightRead=params.recoverFlightSearch===true&&target.protocol==='https:'&&['google.com','www.google.com'].includes(target.hostname)&&/^\/travel\/flights(?:\/|$)/.test(target.pathname)}catch{}
   const readDeadline=params.mode==='read'?Math.min(Date.now()+(publicFlightRead?FLIGHT_READ_BUDGET_MS:READ_BUDGET_MS),Number.isFinite(params.readDeadline)?params.readDeadline!:Infinity):undefined
@@ -1856,12 +1868,12 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     let missingActionEvidence=false
     let vaultAttempted=false,vaultEntryChecked=false
     // Phone-and-code sign-in (16 Oct): the saved number asked for a code, and the code the person sent is used once.
-    let vaultPhoneCodeRequested=false,loginCodeUsed=false
+    let vaultPhoneCodeRequested=false,loginCodeUsed=false,phoneLoginViaWhatsApp=false
     const codeStop=async(rejected:boolean):Promise<SecureBrowserResult>=>({
       status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,
       handoffReservation:params.reserveHumanHandoff===true?await releaseOwnerLock!.reserveHandoff():undefined,
       title:safeText(page.title,300),summary:'The site sent a sign-in code to your phone.',pageText:'Gogo is waiting for the sign-in code. The code is never stored.',
-      forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:'otp',loginCodeStage:true,otpRejected:rejected})
+      forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:'otp',loginCodeStage:true,otpRejected:rejected,...(phoneLoginViaWhatsApp?{phoneLoginViaWhatsApp:true}:{})})
     let credentialSelectionRequired=false
     let readAnswer:string|null=null
     let assessedReadPage:any=null
@@ -1932,7 +1944,9 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         // Signed in: next time Gogo starts from this live session instead of asking for a code again.
         try{
           const codeHost=new URL(codeUrl).hostname
-          const credential=await resolveVaultCredentialForBrowser(params.userId,codeHost,params.vaultCredentialId||null).catch(()=>null)
+          const saved=await resolveVaultCredentialForBrowser(params.userId,codeHost,params.vaultCredentialId||null).catch(()=>null)
+          const viaPhone=!saved&&params.phoneLogin?.telegramId?phoneLoginProviderForDomain(codeHost):null
+          const credential:any=saved||(viaPhone?{telegramId:params.phoneLogin!.telegramId,provider:viaPhone.key,domain:viaPhone.domains[0],credentialId:null}:null)
           if(credential)await upsertVaultSession({telegramId:credential.telegramId,provider:credential.provider,domain:credential.domain,credentialId:credential.credentialId,
             sandboxName:first.name,profileGeneration:SANDBOX_GENERATION,status:'active',authMethod:'vault_credential',metadata:{source:'secure_browser',via:'login_code'}})
         }catch(err:any){console.error('VAULT_CODE_SESSION_UPSERT_FAILED:',String(err?.message||err).slice(0,120))}
@@ -2004,7 +2018,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         const entryHost=(()=>{try{return new URL(String(page.url||target.toString())).hostname}catch{return ''}})()
         // typeof guard: browser test harnesses stub the vault modules with empty objects.
         const phoneSite=entryHost&&typeof findVaultProviderForDomain==='function'?findVaultProviderForDomain(entryHost):null
-        if(phoneSite?.phoneOnly){
+        if(phoneSite?.phoneOnly||(phoneSite?.phoneLogin&&params.phoneLogin?.number)){
           vaultEntryChecked=true
           const sessions=typeof listVaultSessions==='function'?await listVaultSessions(String(params.userId)).catch(()=>null):null
           signedOutEntry=!!sessions&&!sessions.some(row=>row.status==='active'&&phoneSite.domains.some(d=>row.domain===d||row.domain.endsWith('.'+d)))
@@ -2015,7 +2029,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       const currentUrl=String(page.url||target.toString())
         let host=''
         try{host=new URL(currentUrl).hostname}catch{}
-        const credential=host
+        let credential:any=host
           ? await resolveVaultCredentialForBrowser(params.userId,host,params.vaultCredentialId||null).catch((err:any)=>{
               const reason=String(err?.message||'')
               if(reason==='vault_credential_ambiguous'){
@@ -2026,6 +2040,10 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
               return null
             })
           : null
+        // No saved login: sites that sign in with a mobile number use the person's WhatsApp number (16 Oct, his ask).
+        // Nothing is stored; the site texts a code and the person sends it in chat.
+        const whatsappPhoneProvider=!credential&&!credentialSelectionRequired&&host&&params.phoneLogin?.number&&typeof phoneLoginProviderForDomain==='function'?phoneLoginProviderForDomain(host):null
+        if(whatsappPhoneProvider)credential={username:params.phoneLogin!.number,secret:'',provider:whatsappPhoneProvider.key,domain:whatsappPhoneProvider.domains[0],telegramId:params.phoneLogin!.telegramId,credentialId:'',viaWhatsAppNumber:true} as any
 
         if(credential){
           vaultAttempted=true
@@ -2040,7 +2058,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
             })
             const vaultFill=page?.vaultLogin||{}
             if(!vaultFill.usernameFilled)console.warn('VAULT_LOGIN_NOT_FILLED:',JSON.stringify({host,openerClicked:!!vaultFill.openerClicked,phoneCode:!!vaultFill.phoneCode,fieldsSeen:vaultFill.fieldsSeen||[],title:safeText(page?.title,80)}))
-            if(vaultFill.phoneCode&&vaultFill.codeRequested)vaultPhoneCodeRequested=true
+            if(vaultFill.phoneCode&&vaultFill.codeRequested){vaultPhoneCodeRequested=true;if(credential.viaWhatsAppNumber)phoneLoginViaWhatsApp=true}
             const vaultFilled=Boolean(vaultFill.usernameFilled&&(vaultFill.passwordFilled||vaultFill.phoneCode))
             actionLog.push(vaultFilled
               ?{kind:'vault_login',detail:vaultFill.phoneCode?`Entered your saved ${credential.provider} number and asked for a text code`:`Used the saved ${credential.provider} login`,status:'done'}
@@ -2053,7 +2071,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
             const explicitFailure=/\b(?:incorrect|wrong|invalid)\s+(?:username|email|phone|password|credentials?)\b|\b(?:username|email|phone|password|credentials?)\s+(?:is\s+|are\s+)?(?:incorrect|wrong|invalid)\b|\bcredentials?\s+(?:do\s+not\s+match|not\s+recognized)\b/.test(loginText)
 
             if(!authGate.required&&!stillLogin){
-              await recordVaultBrowserOutcome({
+              if(credential.credentialId)await recordVaultBrowserOutcome({
                 telegramId:credential.telegramId,credentialId:credential.credentialId,
                 provider:credential.provider,domain:credential.domain,outcome:'login_success',
               }).catch(()=>{})
@@ -2061,7 +2079,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
                 telegramId:credential.telegramId,
                 provider:credential.provider,
                 domain:credential.domain,
-                credentialId:credential.credentialId,
+                credentialId:credential.credentialId||null,
                 sandboxName:first.name,
                 profileGeneration:SANDBOX_GENERATION,
                 status:'active',
@@ -2069,13 +2087,13 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
                 metadata:{source:'secure_browser'},
               }).catch((err:any)=>console.error('VAULT_SESSION_UPSERT_FAILED:',String(err?.message||err).slice(0,180)))
             }else if(explicitFailure){
-              await recordVaultBrowserOutcome({
+              if(credential.credentialId)await recordVaultBrowserOutcome({
                 telegramId:credential.telegramId,credentialId:credential.credentialId,
                 provider:credential.provider,domain:credential.domain,outcome:'login_failed',
                 reason:'provider_rejected_credentials',
               }).catch(()=>{})
             }else{
-              await recordVaultBrowserOutcome({
+              if(credential.credentialId)await recordVaultBrowserOutcome({
                 telegramId:credential.telegramId,credentialId:credential.credentialId,
                 provider:credential.provider,domain:credential.domain,outcome:'human_challenge',
                 reason:authGate.reason||'login_not_completed',
@@ -2084,7 +2102,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
                 telegramId:credential.telegramId,
                 provider:credential.provider,
                 domain:credential.domain,
-                credentialId:credential.credentialId,
+                credentialId:credential.credentialId||null,
                 sandboxName:first.name,
                 profileGeneration:SANDBOX_GENERATION,
                 status:'human_challenge',

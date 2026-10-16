@@ -19,7 +19,7 @@ assert.equal(otpReply('where is my order'), null)
 
 const sc = read('lib/agent/secure-computer.ts')
 // The browser side: stop for the code after the saved number asked for one; use the code once on the code screen.
-assert.match(sc, /if\(vaultFill\.phoneCode&&vaultFill\.codeRequested\)vaultPhoneCodeRequested=true/)
+assert.match(sc, /if\(vaultFill\.phoneCode&&vaultFill\.codeRequested\)\{vaultPhoneCodeRequested=true;/)
 assert.match(sc, /if\(vaultPhoneCodeRequested&&!params\.loginCode&&!providerBooking\)return await codeStop\(false\)/)
 assert.match(sc, /if\(params\.loginCode&&!loginCodeUsed&&!providerBooking&&\(wave===0\|\|bookingOtpPrompt\(page\)\|\|detectHumanAuthGate\(page\)\.reason==='otp'\)\)\{\n\s+loginCodeUsed=true/)
 assert.match(sc, /if\(!entered\|\|bookingOtpPrompt\(page\)\|\|detectHumanAuthGate\(page\)\.reason==='otp'\)return await codeStop\(entered\)/, 'a refused code asks again')
@@ -44,3 +44,19 @@ assert.match(wa, /const trigger = await triggerLoginCodeResume\(codeRunId, booki
 assert.match(wa, /saveConversation\(resolvedUser\.telegramId, 'user', '\[sign-in code sent\]'\)/)
 assert.match(read('app/api/agent/approved-browser/route.ts'), /runLoginCodeResume\(runId, loginCode\)/)
 console.log('verify-login-code-flow: ok')
+
+// 16 Oct (his ask): sites that sign in with a mobile number use the WhatsApp number Gogo already has. No Connect page.
+const { phoneLoginProviderForDomain } = await import('../lib/vault/providers')
+assert.equal(phoneLoginProviderForDomain('www.swiggy.com')?.key, 'swiggy')
+assert.equal(phoneLoginProviderForDomain('www.amazon.in')?.key, 'amazon')
+assert.equal(phoneLoginProviderForDomain('www.flipkart.com')?.key, 'flipkart')
+assert.equal(phoneLoginProviderForDomain('www.irctc.co.in'), null, 'IRCTC signs in with a user ID')
+assert.equal(phoneLoginProviderForDomain('www.booking.com'), null)
+assert.match(loginCodeMessage({ site: 'swiggy.com', takeoverUrl: 'u', whatsappNumber: '8884501501' }), /^I'm signing in to swiggy\.com with your WhatsApp number ending 1501, and it sent a sign-in code to that phone\./)
+assert.match(sc, /if\(whatsappPhoneProvider\)credential=\{username:params\.phoneLogin!\.number,secret:'',/, 'nothing secret, nothing stored')
+assert.match(bc, /phoneLogin:\{number:indianMobileFromWhatsApp\(params\.actor\.whatsappId\)!,telegramId:String\(tg\)\}/)
+assert.match(read('lib/agent/account-site-gate.ts'), /if \(\(provider\?\.phoneLogin \|\| provider\?\.phoneOnly\) && indianMobileFromWhatsApp\(actor\.whatsappId\)\) gate = null/)
+// 16 Oct live: the code was typed but Swiggy's upper-case "VERIFY OTP" link was never pressed.
+assert.match(script, /candidates=page\.locator\('button, a, \[role="button"\], input\[type="submit"\]'\)/)
+assert.match(script, /await page\.keyboard\.press\('Enter'\)/)
+console.log('verify-login-code-flow: whatsapp number ok')

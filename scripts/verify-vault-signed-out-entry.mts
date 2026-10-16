@@ -25,7 +25,7 @@ assert.doesNotMatch(src, /fieldsSeen=[^\n]*el\.value/, 'never logs what is typed
 console.log('verify-vault-signed-out-entry: diag ok')
 // Third live run: the planner went to a page with no "Log in" link and the saved login was never tried. Phone-code
 // sites sign in once at the start unless an active vault session exists for that site.
-assert.match(src, /if\(phoneSite\?\.phoneOnly\)\{/)
+assert.match(src, /if\(phoneSite\?\.phoneOnly\|\|\(phoneSite\?\.phoneLogin&&params\.phoneLogin\?\.number\)\)\{/)
 assert.match(src, /signedOutEntry=!!sessions&&!sessions\.some\(row=>row\.status==='active'/)
 assert.match(src, /signInEntry:hasSignInEntry\(page\),loginForm:pageLooksLikeLogin\(page\)/)
 console.log('verify-vault-signed-out-entry: start-of-run ok')

@@ -5,7 +5,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from '@/lib/agent/actor'
 import { listVaultSessions, upsertVaultSession, markVaultSessionStatus } from '@/lib/vault/session-store'
-import { CONNECTION_CATALOGUE, catalogueDomain, findCatalogueSite, type CatalogueSite } from './connection-catalogue'
+import { CONNECTION_CATALOGUE, VAULT_CONNECT_SITES, catalogueDomain, findCatalogueSite, type CatalogueSite } from './connection-catalogue'
 
 export type SiteConnection = { siteId: string; name: string; domain: string; status: string; since: string | null; via?: 'session' | 'vault' }
 
@@ -130,8 +130,10 @@ export async function listSiteConnections(telegramId: string): Promise<SiteConne
   const { listVaultCredentials } = await import('@/lib/vault/credential-store')
   const saved = await listVaultCredentials(telegramId).catch(() => [])
   for (const item of saved) {
-    if (item.status === 'revoked') continue
-    const site = CONNECTION_CATALOGUE.find(entry => (item.allowedDomains || []).some((d: string) => d === catalogueDomain(entry) || d.endsWith('.' + catalogueDomain(entry))))
+    if (item.status === 'revoked' || String(item.provider || '').startsWith('commerce_oauth:')) continue
+    const matches = CONNECTION_CATALOGUE.filter(entry => (item.allowedDomains || []).some((d: string) => d === catalogueDomain(entry) || d.endsWith('.' + catalogueDomain(entry))))
+    // swiggy.com is shared by Swiggy and Instamart; a saved login belongs to the site it was connected for (16 Oct).
+    const site = matches.find(entry => VAULT_CONNECT_SITES[entry.id] === item.provider) || matches[0]
     if (!site || out.some(row => row.siteId === site.id)) continue
     out.push({ siteId: site.id, name: site.name, domain: catalogueDomain(site), status: 'active', since: item.updatedAt, via: 'vault' })
   }

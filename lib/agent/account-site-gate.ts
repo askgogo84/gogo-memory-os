@@ -78,7 +78,15 @@ export async function tryAccountSiteAnswer(actor: import('./actor').AgentActor, 
         : { text: `I couldn't find any ${site.name} order emails in your Gmail from the last 45 days. ${APP_ONLY_ORDER_SITES[site.id]}`, status: 'completed' as const, handledBy: 'account-site-app-only', siteId: site.id }
     }
   }
-  const gate = await tryAccountSiteSignInGate({ telegramId: actor.legacyTelegramId, text })
+  let gate = await tryAccountSiteSignInGate({ telegramId: actor.legacyTelegramId, text })
+  // Sites that sign in with a mobile number need no Connect step: Gogo uses the WhatsApp number it already has and
+  // asks for the texted code in chat (16 Oct, his ask). The Connect page stays for passwords or a different number.
+  if (gate && VAULT_CONNECT_SITES[site.id]) {
+    const { getVaultProvider } = await import('@/lib/vault/providers')
+    const { indianMobileFromWhatsApp } = await import('./provider-booking')
+    const provider = getVaultProvider(VAULT_CONNECT_SITES[site.id])
+    if ((provider?.phoneLogin || provider?.phoneOnly) && indianMobileFromWhatsApp(actor.whatsappId)) gate = null
+  }
   const { tryOrderStatusFromEmail } = await import('./order-email-status')
   const fromEmail = await tryOrderStatusFromEmail(actor, site, text).catch(() => null)
   if (fromEmail) {
