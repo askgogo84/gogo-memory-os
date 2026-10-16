@@ -58,3 +58,15 @@ console.log('verify-comparison-subject: subject, search start and product goto o
   assert.equal(searchUrl('reliance', 'iPhone 16'), 'https://www.reliancedigital.in/products?q=iPhone%2016')
   console.log('verify-comparison-subject: reliance digital is a store')
 }
+
+// 16 Oct live: the lead for "iPhone 16" on Croma was the discontinued 512GB page, which has no price.
+{
+  const {comparisonProductLead: lead} = await import('../lib/commerce/comparison-model')
+  const pages = [
+    {url: 'https://www.croma.com/apple-iphone-16-512gb-teal-/p/309706', title: 'Buy Apple iPhone 16 (512GB, Teal) Online - Croma'},
+    {url: 'https://www.croma.com/apple-iphone-16-128gb-teal-/p/309695', title: 'Buy Apple iPhone 16 (128GB, Teal) Online - Croma'},
+  ]
+  assert.equal(lead('croma', 'iPhone 16', pages), pages[1].url)
+  assert.equal(lead('croma', 'iPhone 16 512GB', pages), pages[0].url)
+  console.log('verify-comparison-subject: base-size lead ok')
+}
