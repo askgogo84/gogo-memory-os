@@ -230,7 +230,7 @@ async function model(page){
   const attached=__env.GOGO_BROWSER_CDP_URL||__env.GOGO_BROWSER_KEEP_ALIVE==='true'?await chromium.connectOverCDP(__env.GOGO_BROWSER_CDP_URL||'${COMMERCE_CDP_URL}').catch(()=>{throw Error('browser_connection_failed')}):null;
   const context=attached?attached.contexts()[0]:await chromium.launchPersistentContext(profile,{headless:true,viewport:{width:1280,height:900},args:['--disable-http2'],...(__proxy?{proxy:__proxy}:{})});
   const page=context.pages()[0]||await context.newPage();
-  let usernameFilled=false,passwordFilled=false,submitted=false,openerClicked=false,openerLabel='';
+  let usernameFilled=false,passwordFilled=false,submitted=false,openerClicked=false,openerLabel='',openerClicks=0;
   const ambiguous=[];
   try{
     await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000}).catch(async e=>{
@@ -248,9 +248,18 @@ async function model(page){
       const target=opener||plain;
       if(target){
         openerClicked=true; openerLabel=String(await target.evaluate(el=>el.tagName+':'+(el.innerText||el.textContent||'').trim().slice(0,30)).catch(()=>'?'));
-        await target.click({timeout:10000}).catch(()=>{});
-        // 16 Oct live: Swiggy's sign-in panel slides in and loads its form late; 2 seconds was not always enough.
-        for(let i=0;i<20;i++){ await page.waitForTimeout(500); if((await visibleFields(page,USER_FIELDS)).length) break; }
+        // 16 Oct live (his screenshot): Swiggy's "Sign in" was on screen and was clicked, but nothing opened. The page is
+        // drawn before its scripts are ready, so an early click does nothing. Wait for the page to settle, then click,
+        // and click again (up to 3 times) when the login box has not appeared.
+        await page.waitForLoadState('networkidle',{timeout:10000}).catch(()=>{});
+        for(let attempt=0;attempt<3;attempt++){
+          openerClicks=attempt+1;
+          await target.click({timeout:10000}).catch(()=>{});
+          let shown=false;
+          for(let i=0;i<12;i++){ await page.waitForTimeout(500); if((await visibleFields(page,USER_FIELDS)).length){ shown=true; break; } }
+          if(shown) break;
+          await page.waitForTimeout(1500);
+        }
       }
     }
     const PASS_FIELDS='input[type="password"]';
@@ -309,7 +318,7 @@ async function model(page){
     const out=await model(page);
     out.vaultLogin={usernameFilled,passwordFilled,submitted,ambiguous,openerClicked,...(phoneCode?{phoneCode:true}:{})};
     // Field shapes only (type, name, placeholder): never values. Used to fix sites whose login is not found.
-    if(!usernameFilled){ out.vaultLogin.openerLabel=openerLabel; out.vaultLogin.headerCues=await page.evaluate(()=>({signIn:/\bsign\s*in\b/i.test(String(document.body?.innerText||'')),account:/\b(?:profile|my account|orders|logout|log out)\b/i.test(String(document.body?.innerText||'')),dialog:!!document.querySelector('[role="dialog"],[aria-modal="true"]'),inputs:document.querySelectorAll('input').length})).catch(()=>null); }
+    if(!usernameFilled){ out.vaultLogin.openerLabel=openerLabel; out.vaultLogin.openerClicks=openerClicks; out.vaultLogin.headerCues=await page.evaluate(()=>({signIn:/\bsign\s*in\b/i.test(String(document.body?.innerText||'')),account:/\b(?:profile|my account|orders|logout|log out)\b/i.test(String(document.body?.innerText||'')),dialog:!!document.querySelector('[role="dialog"],[aria-modal="true"]'),inputs:document.querySelectorAll('input').length})).catch(()=>null); }
     if(!usernameFilled) out.vaultLogin.fieldsSeen=await page.evaluate(()=>Array.from(document.querySelectorAll('input')).filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0}).slice(0,8).map(el=>[el.type,el.name,el.placeholder,el.autocomplete].map(v=>String(v||'').slice(0,40)).join('|'))).catch(()=>[]);
     console.log(JSON.stringify(out));
   } finally { if(attached)await attached.close();else await context.close(); }
@@ -2087,7 +2096,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
               managedEnv:first.managed?.env,
             })
             const vaultFill=page?.vaultLogin||{}
-            if(!vaultFill.usernameFilled)console.warn('VAULT_LOGIN_NOT_FILLED:',JSON.stringify({host,openerClicked:!!vaultFill.openerClicked,openerLabel:vaultFill.openerLabel||null,headerCues:vaultFill.headerCues||null,phoneCode:!!vaultFill.phoneCode,fieldsSeen:vaultFill.fieldsSeen||[],title:safeText(page?.title,80)}))
+            if(!vaultFill.usernameFilled)console.warn('VAULT_LOGIN_NOT_FILLED:',JSON.stringify({host,openerClicked:!!vaultFill.openerClicked,openerLabel:vaultFill.openerLabel||null,openerClicks:vaultFill.openerClicks||0,headerCues:vaultFill.headerCues||null,phoneCode:!!vaultFill.phoneCode,fieldsSeen:vaultFill.fieldsSeen||[],title:safeText(page?.title,80)}))
             if(vaultFill.phoneCode&&vaultFill.codeRequested){vaultPhoneCodeRequested=true;if(credential.viaWhatsAppNumber)phoneLoginViaWhatsApp=true}
             const vaultFilled=Boolean(vaultFill.usernameFilled&&(vaultFill.passwordFilled||(vaultFill.phoneCode&&vaultFill.codeRequested)))
             if(vaultFill.phoneCode&&vaultFill.usernameFilled&&!vaultFill.codeRequested)console.warn('VAULT_CODE_NOT_SHOWN:',JSON.stringify({host,submitted:!!vaultFill.submitted,errorCue:safeText(vaultFill.errorCue,120)}))
