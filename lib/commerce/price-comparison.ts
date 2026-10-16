@@ -2,7 +2,7 @@ import {supabaseAdmin} from '@/lib/supabase-admin'
 import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-runtime-guard'
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
-import {COMPARISON_PROVIDERS, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
+import {COMPARISON_PROVIDERS, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
 const TYPE = 'price_comparison'
@@ -23,7 +23,10 @@ export async function readPriceComparison(owner: string, id: string): Promise<Pr
       .select('id,status,summary,error,updated_at,metadata_json').eq('id', row.runId).eq('telegram_id', owner).eq('type', 'secure_browser').maybeSingle()
     if (childError) throw new Error('comparison_child_read_failed')
     if (!child || child.metadata_json?.comparison_parent_id !== id || child.metadata_json?.mode !== 'read' ||
-      child.metadata_json?.url !== (comparisonSource(row.provider, row.startUrl) || COMPARISON_PROVIDERS[row.provider].url)) {
+      child.metadata_json?.url !== (comparisonSource(row.provider, row.startUrl)
+        // A run may also start from the store's own search page for this subject (never any other URL).
+        || (row.startUrl && row.startUrl === comparisonSearchUrl(row.provider, task.metadata_json.subject) ? row.startUrl : null)
+        || COMPARISON_PROVIDERS[row.provider].url)) {
       rows.push({...row, status: 'failed' as const, evidence: undefined, sourceUrl: undefined, reason: 'The saved provider task is unavailable.'}); continue
     }
     if (row.status === 'checking' && !child.error && ['paused', 'running'].includes(child.status)) {
@@ -191,7 +194,10 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
         // Discovery is not price evidence. Only observed retailer URLs are used;
         // never synthesize a product ID or trust a search snippet's price.
         const candidate = comparisonProductLead(next.provider, task.metadata_json.subject, leads)
+        // 16 Oct live: with no product page found, Croma's home-page search box never ran the search.
+        // Start from the store's own results page instead; the product page is still required as evidence.
         if (candidate) startUrl = candidate
+        else startUrl = comparisonSearchUrl(next.provider, task.metadata_json.subject) || startUrl
       }
       try {
         childId = await prepareLinkedBrowserRead({actor, surface: 'web', parentRunId: task.id, parentKind: 'comparison',
