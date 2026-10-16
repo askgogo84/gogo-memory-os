@@ -18,3 +18,14 @@ assert.match(comparisonObjective({ metadata_json: { request: 'x', subject: 'iPho
 assert.match(pc, /row\.startUrl === comparisonSearchUrl\(row\.provider, task\.metadata_json\.subject\)/)
 assert.match(pc, /row\.startUrl === comparisonSearchUrl\(row\.provider, task\.metadata_json\.subject\)/, 'a search-page start passes the saved-task check')
 console.log('verify-comparison-subject: subject, search start and product goto ok')
+// 16 Oct live: Croma's iPhone 16 (256GB) page was judged incomplete with no trace, and the reply used jargon.
+{
+  const sc = readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
+  assert.match(sc, /the listed price of any variant of exactly that model answers it/)
+  assert.match(sc, /A delivery-pincode or location box beside a visible listed price does not block a listed-price answer/)
+  assert.match(sc, /console\.warn\('BROWSER_ASSESSMENT_INCOMPLETE:'/)
+  const model = readFileSync(new URL('../lib/commerce/comparison-model.ts', import.meta.url), 'utf8')
+  assert.doesNotMatch(model, /did not expose the requested item|unverified unless stated above/)
+  assert.doesNotMatch(pc, /India-scoped web search|leads, not confirmed/)
+  console.log('verify-comparison-subject: variant rule, incomplete reason and plain wording ok')
+}

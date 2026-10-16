@@ -60,9 +60,12 @@ export async function comparisonWebFallback(task: PriceComparison): Promise<stri
     const scoped = indiaShoppingSearch(`${task.metadata_json.subject} price on ${provider.label}`)
     const results = await searchWebResults(scoped.query, {includeDomains: [provider.domain], timeoutMs: 10_000})
     const product = comparisonProductLead(row.provider, task.metadata_json.subject, results)
-    if (product) lines.push(`${provider.label} product-page lead: ${product}`)
+    if (product) lines.push(`${provider.label}: ${product}`)
   }
-  return `The browser could not verify a live price, so I checked India-scoped web search. Search links are leads, not confirmed prices or stock.${lines.length ? '\n' + lines.join('\n') : ' No matching product page was found.'}`
+  // Plain wording (16 Oct): the old fallback text read as jargon on WhatsApp.
+  return lines.length
+    ? `The browser could not verify a live price there, so here is the product page from a web search. Open it to check the price yourself:\n${lines.join('\n')}`
+    : ''
 }
 
 export async function tryPriceComparison(params: {telegramId: number; text: string; surface?: string}) {
