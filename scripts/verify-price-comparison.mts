@@ -115,7 +115,7 @@ for (const provider of ['instamart', 'swiggy', 'zomato', 'blinkit'] as const) {
 }
 // Terminal read failures keep a specific, distinguished reason and never a price.
 assert.match(model.providerObservation('amazon', {id: 'c1', status: 'failed', error: 'browser_read_deadline', updated_at: 'x'}, null).reason!, /read time|finish loading/i)
-assert.match(model.providerObservation('amazon', {id: 'c2', status: 'failed', error: 'browser_objective_unverified', updated_at: 'x'}, null).reason!, /did not expose|verifiable/i)
+assert.match(model.providerObservation('amazon', {id: 'c2', status: 'failed', error: 'browser_objective_unverified', updated_at: 'x'}, null).reason!, /couldn’t confirm a price/i)
 assert.equal(model.providerObservation('amazon', {id: 'c3', status: 'failed', error: 'browser_read_deadline', updated_at: 'x'}, null).evidence, undefined)
 // A paused provider awaiting account/location stays a blocked needs-input card.
 const blocked = model.providerObservation('zepto', {id: 'c4', status: 'paused', error: 'delivery_location_required', updated_at: 'x'}, null)
@@ -190,7 +190,7 @@ const service = load('lib/commerce/price-comparison.ts', {'@/lib/supabase-admin'
     return [{url: 'https://evil.test/p/fake', snippet: '₹1 free delivery'}]
   }}})
 const fallback = await service.comparisonWebFallback({metadata_json: {subject: 'Sony WH-1000XM5', providers: [{provider: 'croma', status: 'failed'}]}} as any)
-assert.match(fallback, /browser could not verify a live price/i)
+assert.match(fallback, /browser could not verify a live price there/i)
 assert.match(fallback, /croma\.com\/sony-wh-1000xm5\/p\/251234/)
 assert.doesNotMatch(fallback, /blogs|28,990|29,990|unverified search snippet/i)
 const start = await service.tryPriceComparison({telegramId: 42, text: request, surface: 'web'})

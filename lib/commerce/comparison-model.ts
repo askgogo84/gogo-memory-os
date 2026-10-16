@@ -188,7 +188,7 @@ export function providerObservation(provider: ComparisonProvider, child: any, st
 // browser error (it can carry page text or private URLs) and never imply a price.
 function comparisonFailureReason(code: string) {
   if (code === 'browser_read_deadline') return 'The provider page did not finish loading within the safe read time; no price was read.'
-  if (code === 'browser_objective_unverified' || code === 'browser_planning_failed') return 'The provider page loaded but did not expose the requested item and a verifiable price to a read-only check.'
+  if (code === 'browser_objective_unverified' || code === 'browser_planning_failed') return 'I opened the store but couldn’t confirm a price for this item on its product page.'
   if (code.includes('browser_live_session_expired')) return 'The live browser page expired before a price was verified; no provider action was taken.'
   if (code.startsWith('secure_browser_action_failed') || code.startsWith('secure_browser_action_empty')) return 'The secure browser could not read this provider page; no price was verified.'
   return 'The browser could not verify the requested item and price.'
@@ -323,7 +323,7 @@ export function comparisonWhatsAppSummary(task: PriceComparison) {
   // A lone model code ("xm5") fits several products; say what it was matched on.
   const loneCode = (task.metadata_json.subject.match(/[a-z0-9]+/gi) || []).length === 1
   const matchedOnCode = loneCode && task.metadata_json.providers.some(row => row.status === 'observed')
-  return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\n${pending ? 'I’ll send the results when the remaining checks finish.\n' : ''}${matchedOnCode ? 'I matched this on the model code only. If it is not the product you meant, send the full name, for example "Sony WH-1000XM5 price on amazon".\n' : ''}Delivery charges, location availability and conditional offers are unverified unless stated above.`
+  return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\n${pending ? 'I’ll send the results when the remaining checks finish.\n' : ''}${matchedOnCode ? 'I matched this on the model code only. If it is not the product you meant, send the full name, for example "Sony WH-1000XM5 price on amazon".\n' : ''}Prices are the listed prices; delivery charges and bank or card offers aren’t included unless shown above.`
 }
 
 export function comparisonObjective(task: PriceComparison, provider: ComparisonProvider) {
