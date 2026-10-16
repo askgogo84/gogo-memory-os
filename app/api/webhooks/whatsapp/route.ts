@@ -1,7 +1,7 @@
 import { isSportsVenueRequest } from '@/lib/agent/appointment-research'
 import { unsupportedCapability } from '@/lib/bot/unsupported-capabilities'
 import { otpReply } from '@/lib/agent/provider-booking'
-import { claimBookingOtpRun, claimLoginCodeRun, findBookingAwaitingOtp, findLoginCodeRun } from '@/lib/agent/browser-command'
+import { claimBookingOtpRun, claimLoginCodeRun, findBookingAwaitingOtp, findLoginCodeRun, hasRecentBrowserRun, waitForLoginCodeRun } from '@/lib/agent/browser-command'
 import { triggerBookingOtpResume, triggerLoginCodeResume } from '@/lib/agent/approved-browser-worker'
 import { subscriptionReviewText } from '@/lib/agent/general-planner'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
@@ -363,7 +363,7 @@ export async function POST(req: NextRequest) {
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
       // A sign-in code for a read waiting for it (Swiggy, Amazon…): same rules, never saved or logged.
-      const codeRunId = await findLoginCodeRun(resolvedUser.telegramId)
+      const codeRunId = await findLoginCodeRun(resolvedUser.telegramId) || await waitForLoginCodeRun(resolvedUser.telegramId)
       if (codeRunId && await claimLoginCodeRun(resolvedUser.telegramId, codeRunId)) {
         const trigger = await triggerLoginCodeResume(codeRunId, bookingCode)
         const reply = trigger === 'dispatched'
@@ -373,6 +373,16 @@ export async function POST(req: NextRequest) {
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         await sendWhatsAppMessage(from, reply)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+      // A bare code with nothing waiting for it never reaches the chat model (12:52 it replied "Using that code to sign
+      // in now", which was not true). Say plainly that it was not used. Other numbers (a PIN code, an amount) carry on
+      // as usual when no browser task ran recently.
+      if (await hasRecentBrowserRun(resolvedUser.telegramId)) {
+      const notUsed = "I'm not waiting for a sign-in code right now, so I didn't use that one. If you asked me to check a site, ask again and send the new code when I say it was sent."
+      await saveConversation(resolvedUser.telegramId, 'user', '[code-like message not used]')
+      await saveConversation(resolvedUser.telegramId, 'assistant', notUsed)
+      await sendWhatsAppMessage(from, notUsed)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
 
