@@ -29,3 +29,8 @@ assert.match(src, /if\(phoneSite\?\.phoneOnly\|\|\(phoneSite\?\.phoneLogin&&para
 assert.match(src, /signedOutEntry=!!sessions&&!sessions\.some\(row=>row\.status==='active'/)
 assert.match(src, /signInEntry:hasSignInEntry\(page\),loginForm:pageLooksLikeLogin\(page\)/)
 console.log('verify-vault-signed-out-entry: start-of-run ok')
+// 16 Oct 10:13 live: Swiggy's panel opened after Gogo looked for the phone box (fieldsSeen: only the location box).
+assert.match(src, /for\(let i=0;i<20;i\+\+\)\{ await page\.waitForTimeout\(500\); if\(\(await visibleFields\(page,USER_FIELDS\)\)\.length\) break; \}/)
+// 16 Oct 10:12 live: one proxy tunnel error failed the whole read; the first navigation is retried once.
+assert.equal((src.match(/ERR_TUNNEL_CONNECTION_FAILED\|ERR_PROXY_CONNECTION_FAILED\|ERR_CONNECTION_RESET/g) || []).length, 2)
+console.log('verify-vault-signed-out-entry: panel wait ok')
