@@ -389,6 +389,26 @@ async function releaseOlderReadHandoffs(tg:number,userId:string,exceptRunId:stri
   }
 }
 
+// 16 Oct live: a Blinkit comparison read stopped for a delivery location and its handoff held the shared commerce
+// browser, so the next comparison never started. A new comparison read releases older comparison handoffs from
+// other comparisons; those stores are already reported to the person as blocked.
+async function releaseOlderComparisonHandoffs(tg:number,userId:string,exceptRunId:string,parentId:string){
+  const {data}=await supabaseAdmin.from('agent_runs').select('id,metadata_json').eq('telegram_id',String(tg)).eq('type','secure_browser').eq('status','paused')
+    .neq('id',exceptRunId).not('metadata_json->handoff','is',null).order('updated_at',{ascending:false}).limit(10)
+  for(const run of (data||[]) as any[]){
+    const meta=run.metadata_json||{}
+    if(!meta.comparison_parent_id||meta.comparison_parent_id===parentId)continue
+    const handoff=meta.handoff
+    if(handoff?.token&&handoff?.releaseUrl){
+      const {cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
+      await cancelProviderBrowserHandoff(userId,handoff).catch(()=>{})
+    }
+    const {handoff:_h,...rest}=meta
+    await supabaseAdmin.from('agent_runs').update({metadata_json:{...rest,state:'closed_stale'},summary:'Released for a newer comparison.',updated_at:new Date().toISOString()})
+      .eq('id',run.id).eq('telegram_id',String(tg)).eq('status','paused')
+  }
+}
+
 async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:string;command:BrowserCommand;mode:BrowserMode;approved?:boolean;bookingOtp?:string|null;loginCode?:string|null}){
   const tg=params.actor.legacyTelegramId
   const sentinel=evaluateAgentSentinel({
@@ -416,6 +436,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   // 16 Oct live: a Swiggy read still waiting for its sign-in code held the browser, so the next "Check my Swiggy
   // account" failed with browser_handoff_in_use. A new read on the person's own browser closes older reads that are
   // only waiting (never bookings, sign-ups, comparisons or approved actions).
+  if(params.mode==='read'&&runMetadata.comparison_parent_id&&!runMetadata.handoff)await releaseOlderComparisonHandoffs(tg,params.actor.userId,params.runId,String(runMetadata.comparison_parent_id)).catch((err:any)=>console.error('OLDER_COMPARISON_HANDOFF_RELEASE_FAILED:',String(err?.message||err).slice(0,120)))
   if(params.mode==='read'&&browserOwner===params.actor.userId)await releaseOlderReadHandoffs(tg,params.actor.userId,params.runId).catch((err:any)=>console.error('OLDER_READ_HANDOFF_RELEASE_FAILED:',String(err?.message||err).slice(0,120)))
   if(runMetadata.handoff?.releaseUrl){
     // Release the human browser's profile lock only after permission/approval checks.

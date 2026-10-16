@@ -440,6 +440,12 @@ export function isAutomatedGmailMessage(message:any){
   const text=clean(`${message?.subject||''} ${message?.snippet||''}`,600)
   if(/\b(?:debited|credited)\b.{0,80}\b(?:a\/c|account|card|upi)\b|\b(?:a\/c|account|card)\b.{0,80}\b(?:debited|credited)\b|\bone[- ]time password\b|\bOTP\b|\bshare your (?:experience|feedback)\b|\brate (?:us|your (?:experience|order))\b|\bhow (?:was|did we do)\b/i.test(text))return true
   if(clean(message?.listId,240))return true
+  // 16 Oct live pulse: a ResellerClub price notice, a marketing "you're signed up" mail and a demat statement were
+  // offered as emails to reply to. Gmail's own Promotions/Updates/Social/Forums tabs and an unsubscribe header mark bulk mail.
+  const labels=Array.isArray(message?.labelIds)?message.labelIds:[]
+  if(labels.some((l:string)=>['CATEGORY_PROMOTIONS','CATEGORY_UPDATES','CATEGORY_SOCIAL','CATEGORY_FORUMS'].includes(l)))return true
+  if(clean(message?.listUnsubscribe,400))return true
+  if(/\b(?:statement of (?:your )?|account statement|price revision|redeem|unsubscribe|% (?:off|of your first)|promo code|coupon)\b/i.test(text))return true
   if(/\b(?:bulk|list|junk)\b/i.test(clean(message?.precedence,80)))return true
   const auto=clean(message?.autoSubmitted,120).toLowerCase()
   if(auto&&auto!=='no')return true

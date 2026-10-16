@@ -260,6 +260,9 @@ async function sendPulse(telegramId:string){
     '',
     'If you want the full status, ask *what are you working on for me?*',
   ].join('\n'))
+    // 16 Oct live: a demat statement's subject put the full account number on WhatsApp. Long digit runs
+    // (account, folio, card numbers) show only their last four.
+    .replace(/\b\d{9,20}\b/g,(digits:string)=>'••••'+digits.slice(-4))
   // Use natural free-form copy while the WhatsApp service window is open.
   // Outside the window we must fall back to an approved Utility template.
   const activeSession=await hasRecentWhatsAppSession(telegramId)
