@@ -336,7 +336,7 @@ const visible = async loc => { try { return await loc.isVisible(); } catch { ret
   const attached=await chromium.connectOverCDP(__env.GOGO_BROWSER_CDP_URL||'${COMMERCE_CDP_URL}').catch(()=>{throw Error('browser_connection_failed')});
   const context=attached.contexts()[0];
   const page=context.pages()[context.pages().length-1];
-  let codeEntered=false,submitted=false;
+  let codeEntered=false,submitted=false,outcome='unclear',errorCue='',pressed='',valueLength=0,boxName='';
   try{
     // The code box: labelled for a one-time code, else the first of several one-digit boxes, else the only short input.
     const named=page.locator('input[autocomplete="one-time-code"], input[name*="otp" i], input[id*="otp" i], input[placeholder*="otp" i], input[aria-label*="otp" i], input[placeholder*="code" i], input[name*="code" i], input[aria-label*="code" i]');
@@ -348,6 +348,7 @@ const visible = async loc => { try { return await loc.isVisible(); } catch { ret
       if(seen.length>=4) target=seen[0];
     }
     if(target){
+      boxName=String(await target.evaluate(function(el){ return [el.name,el.id,el.placeholder,el.getAttribute('autocomplete')].filter(Boolean).join('|'); }).catch(()=>'')).replace(/\d/g,'#').slice(0,80);
       await target.click({timeout:10000});
       await target.fill('',{timeout:3000}).catch(()=>{});
       await page.keyboard.type(code,{delay:90});
@@ -355,7 +356,10 @@ const visible = async loc => { try { return await loc.isVisible(); } catch { ret
       await page.waitForTimeout(900);
       // Many sites submit by themselves once the last digit is in; otherwise press their verify control. Never a pay control.
       // 16 Oct live: Swiggy's "VERIFY OTP" is an upper-case link, not a button, so match links and any case.
-      const stillOnCode=async()=>visible(target);
+      // 16 Oct live: the code went in and Verify was pressed, but the page text still mentioned the code
+      // (a closed side panel can stay in the page). Judge by the code box itself: on screen or gone.
+      const stillOnCode=async()=>{ if(!(await visible(target))) return false; return Boolean(await target.evaluate(function(el){ const r=el.getBoundingClientRect(); return el.isConnected&&r.width>0&&r.height>0&&r.right>0&&r.bottom>0&&r.left<window.innerWidth&&r.top<window.innerHeight; }).catch(()=>false)); };
+      valueLength=String(await target.inputValue().catch(()=>'')).replace(/\D/g,'').length;
       if(await stillOnCode()){
         const label=/^\s*(?:verify(?:\s+(?:otp|code|&\s*continue|and\s+continue))?|continue|submit(?:\s+otp)?|log\s*in|login|sign\s*in|confirm(?:\s+otp)?|next|proceed)\s*$/i;
         const candidates=page.locator('button, a, [role="button"], input[type="submit"]');
@@ -365,14 +369,23 @@ const visible = async loc => { try { return await loc.isVisible(); } catch { ret
           const text=String(await c.evaluate(el=>(el.innerText||el.value||el.getAttribute('aria-label')||'').trim()).catch(()=>''));
           if(!label.test(text)||/\b(?:pay|payment|place order|buy)\b/i.test(text)) continue;
           if(!(await visible(c))) continue;
-          await c.click({timeout:10000}).catch(()=>{}); submitted=true; break;
+          await c.click({timeout:10000}).catch(()=>{}); submitted=true; pressed=text.slice(0,30); break;
         }
-        if(!submitted){ await page.keyboard.press('Enter').catch(()=>{}); submitted=true; }
-      } else submitted=true;
-      await page.waitForTimeout(3000);
+        if(!submitted){ await page.keyboard.press('Enter').catch(()=>{}); submitted=true; pressed='Enter'; }
+      } else { submitted=true; pressed='auto'; }
+      // Wait for the site's answer: the code box leaves the screen (accepted) or an error shows (rejected).
+      const errorRe=/\b(?:invalid|incorrect|wrong|expired|not valid|didn'?t match|does not match|try again)\b/i;
+      for(let t=0;t<30;t++){
+        if(!(await stillOnCode())){ outcome='accepted'; break; }
+        const bodyText=String(await page.evaluate(function(){ return document.body ? document.body.innerText : ''; }).catch(()=>''));
+        const line=bodyText.split('\n').find(l=>errorRe.test(l)&&/\b(?:otp|code|password)\b/i.test(l));
+        if(line){ outcome='rejected'; errorCue=line.replace(/\d/g,'#').trim().slice(0,100); break; }
+        await page.waitForTimeout(500);
+      }
+      if(outcome==='accepted') await page.waitForTimeout(1500);
     }
     const out={url:page.url(),title:await page.title().catch(()=>''),text:String(await page.evaluate(()=>document.body?.innerText||'').catch(()=>'')).replace(/[^\S\n]+/g,' ').trim().slice(0,18000),forms:[],controls:[],links:[]};
-    out.vaultCode={codeEntered,submitted};
+    out.vaultCode={codeEntered,submitted,outcome,errorCue,pressed,valueLength,boxName};
     console.log(JSON.stringify(out));
   } finally { await attached.close(); }
 })().catch(e=>{console.error(String(e&&e.message||e).slice(0,200));process.exit(1)});
@@ -1907,7 +1920,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     let missingActionEvidence=false
     let vaultAttempted=false,vaultEntryChecked=false
     // Phone-and-code sign-in (16 Oct): the saved number asked for a code, and the code the person sent is used once.
-    let vaultPhoneCodeRequested=false,loginCodeUsed=false,phoneLoginViaWhatsApp=false,savedLoginMissed=false
+    let vaultPhoneCodeRequested=false,loginCodeUsed=false,loginCodeAccepted=false,phoneLoginViaWhatsApp=false,savedLoginMissed=false
     const codeStop=async(rejected:boolean):Promise<SecureBrowserResult>=>({
       status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,
       handoffReservation:params.reserveHumanHandoff===true?await releaseOwnerLock!.reserveHandoff():undefined,
@@ -1978,8 +1991,13 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         page=await attemptVaultCode({sandbox:first.sandbox,url:codeUrl,code:params.loginCode,managedEnv:first.managed?.env})
         const entered=Boolean(page?.vaultCode?.codeEntered)
         actionLog.push({kind:'login_code',detail:entered?'Entered the code you sent':'Could not find the code box on the page',status:entered?'done':'failed'})
-        console.log('VAULT_LOGIN_CODE:',JSON.stringify({entered,submitted:Boolean(page?.vaultCode?.submitted),stillCode:bookingOtpPrompt(page)}))
-        if(!entered||bookingOtpPrompt(page)||detectHumanAuthGate(page).reason==='otp')return await codeStop(entered)
+        // The worker watched the code box itself; page text alone can still mention the code after success.
+        const codeOutcome=String(page?.vaultCode?.outcome||'unclear')
+        const stillCode=codeOutcome==='accepted'?false:codeOutcome==='rejected'?true:(bookingOtpPrompt(page)||detectHumanAuthGate(page).reason==='otp')
+        console.log('VAULT_LOGIN_CODE:',JSON.stringify({entered,submitted:Boolean(page?.vaultCode?.submitted),outcome:codeOutcome,stillCode,
+          pressed:page?.vaultCode?.pressed||'',valueLength:page?.vaultCode?.valueLength||0,boxName:page?.vaultCode?.boxName||'',errorCue:page?.vaultCode?.errorCue||''}))
+        if(!entered||stillCode)return await codeStop(entered)
+        loginCodeAccepted=codeOutcome==='accepted'
         // Signed in: next time Gogo starts from this live session instead of asking for a code again.
         try{
           const codeHost=new URL(codeUrl).hostname
@@ -2158,6 +2176,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       }
 
       authGate=detectHumanAuthGate(page)
+      // The code was accepted: code wording left in the page (a closed panel) is not a new request for one.
+      if(loginCodeAccepted&&authGate.reason==='otp')authGate={...authGate,required:false,reason:undefined as any}
       // The saved number asked the site for a text code: stop here and ask the person for it (chat or WhatsApp).
       if(vaultPhoneCodeRequested&&!params.loginCode&&!providerBooking)return await codeStop(false)
       // 16 Oct live: Gogo pressed Swiggy's "Sign in" and the panel never opened, so the read ended with "couldn't find
@@ -2479,7 +2499,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
 
     // The final action wave can itself open MFA. Non-read flows have only one
     // wave, so this page must be checked before completion or sandbox teardown.
-    const finalAuthGate=detectHumanAuthGate(page)
+    let finalAuthGate=detectHumanAuthGate(page)
+    if(loginCodeAccepted&&finalAuthGate.reason==='otp')finalAuthGate={...finalAuthGate,required:false,reason:undefined as any}
     const finalSignupPasswordField=params.accountCreation===true&&(!finalAuthGate.required||finalAuthGate.reason==='password')
     if(!finalSignupPasswordField&&(finalAuthGate.required||pageLooksLikeLogin(page))){
       const handoffReservation=(finalAuthGate.reason&&finalAuthGate.reason!=='password'||params.reservePasswordHandoff===true)&&params.reserveHumanHandoff===true?await releaseOwnerLock.reserveHandoff():undefined
