@@ -1265,6 +1265,38 @@ export async function tryCreateWebWatchFromCommand(params: {
     }
   }
 
+  // Dedup: a repeated identical web search (including the synthetic query that
+  // finalizePriceWatch funnels through here) must not create a second active row.
+  // Mirror the product_stock existing-active guard. Contextual (itinerary-owned)
+  // watchers are excluded — they are not user-issued web searches.
+  const normalizeQuery = (q: string) => clean(q, 2000).toLowerCase().replace(/\s+/g, ' ').trim()
+  const wantedQuery = normalizeQuery(parsed.query)
+  const { data: existingWeb, error: existingWebError } = await supabaseAdmin.from('agent_watchers')
+    .select('id, condition_json, created_at')
+    .eq('telegram_id', tg)
+    .eq('type', 'web_search')
+    .eq('active', true)
+  if (existingWebError) throw new Error(`agent_watcher_read_failed:${existingWebError.message}`)
+  const duplicateWeb = (existingWeb || []).find((row:any) => {
+    if ((row.condition_json as any)?.contextual === true) return false
+    const existingCondition = normalizeWebSearchWatcher(row.condition_json)
+    return existingCondition && normalizeQuery(existingCondition.query) === wantedQuery
+  })
+  if (duplicateWeb) {
+    const setupAt = new Date(String((duplicateWeb as any).created_at || ''))
+    const setupPhrase = Number.isNaN(setupAt.getTime())
+      ? ''
+      : ` (set up ${setupAt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })})`
+    return {
+      runId: `web-watch-existing-${duplicateWeb.id}`,
+      status: 'completed' as const,
+      capability: 'browser' as const,
+      risk: 'low' as const,
+      text: `You’re already watching “${parsed.query}”${setupPhrase}, so I haven’t created a duplicate. I’ll send the first relevant result with its source link when something changes. Say “show my watches” for status or stop it by name.`,
+      handledBy: 'background-web-watch',
+    }
+  }
+
   const urgent = isUrgentWatchRequest(params.text)
   const cadenceMinutes = initialWatcherCadence({
     budget,
