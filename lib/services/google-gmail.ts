@@ -363,6 +363,7 @@ export type GmailAttentionMessage = {
   labelIds:string[]
   isUnread:boolean
   listId:string
+  listUnsubscribe:string
   precedence:string
   autoSubmitted:string
 }
@@ -389,7 +390,7 @@ async function listAttentionMessageRefs(accessToken:string,maxResults=40){
 async function fetchAttentionThread(accessToken:string,threadId:string):Promise<GmailAttentionThread|null>{
   const res=await gmailFetchJson(
     accessToken,
-    `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID&metadataHeaders=List-Id&metadataHeaders=Precedence&metadataHeaders=Auto-Submitted`
+    `https://gmail.googleapis.com/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID&metadataHeaders=List-Id&metadataHeaders=List-Unsubscribe&metadataHeaders=Precedence&metadataHeaders=Auto-Submitted`
   )
   if(!res.ok){
     console.error('Gmail attention thread fetch failed:',threadId,res.status)
@@ -411,6 +412,7 @@ async function fetchAttentionThread(accessToken:string,threadId:string):Promise<
       labelIds,
       isUnread:labelIds.includes('UNREAD'),
       listId:getHeader(headers,'List-Id')||'',
+      listUnsubscribe:getHeader(headers,'List-Unsubscribe')||'',
       precedence:getHeader(headers,'Precedence')||'',
       autoSubmitted:getHeader(headers,'Auto-Submitted')||'',
     } satisfies GmailAttentionMessage

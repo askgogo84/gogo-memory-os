@@ -13,6 +13,9 @@ const ZEPTO_PAGE_DEPENDENCIES = [
   '277df17f54ea.f4d9c26b.ap-south-1.token.awswaf.com',
   // 2 Oct live control: stylesheet and application scripts load from this CDN.
   'cdn.zeptonow.com',
+  // 16 Oct live comparison: Zepto's own search API (bff-gateway.zepto.com, 4 blocked calls) was aborted, so
+  // the results page stayed at 101 characters. First-party Zepto API host only.
+  'bff-gateway.zepto.com',
 ]
 
 // 3 Oct electronics diagnostics: these stylesheet/bootstrap/image hosts were

@@ -158,7 +158,10 @@ async function sharedBrowserHandoffPending(owner: string) {
     .order('updated_at', {ascending: false}).limit(25)
   if (error) throw new Error('comparison_lease_probe_failed')
   const {browserHandoffIsLive} = await import('@/lib/agent/browser-handoff-health')
-  const probes = (data || []).filter((row: any) => Boolean(row.metadata_json?.handoff?.takeoverUrl))
+  // 16 Oct live: Blinkit asked for a delivery location during one comparison and its paused handoff kept a
+  // later iPhone comparison "still checking" with no browser run at all. A comparison store that stopped
+  // for location or sign-in is already reported as blocked; it must not hold every other comparison.
+  const probes = (data || []).filter((row: any) => Boolean(row.metadata_json?.handoff?.takeoverUrl) && !row.metadata_json?.comparison_parent_id)
   const live = await Promise.all(probes.map((row: any) => browserHandoffIsLive(row.metadata_json.handoff.takeoverUrl)))
   return live.some(Boolean)
 }
