@@ -270,3 +270,22 @@ export async function triggerApprovedBrowserRun(runId: string): Promise<'dispatc
     return 'failed'
   }
 }
+
+/** Start a new price comparison at once on the internal route (300s budget). Read-only store checks. */
+export async function triggerComparisonRun(runId: string): Promise<'dispatched' | 'failed'> {
+  // Policy gate: store checks are browser reads, allowed only while the person's browser permission allows reads.
+  const { data: run } = await supabaseAdmin.from('agent_runs').select('telegram_id,type').eq('id', runId).maybeSingle()
+  if (!run || run.type !== 'price_comparison') return 'failed'
+  const { data: perm } = await supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id', String(run.telegram_id)).eq('capability', 'browser').maybeSingle()
+  const policy = evaluateAgentExecutionPolicy({ capability: 'browser', permissionLevel: (perm?.level as any) || 'ask', mode: 'read', risk: 'low', irreversible: false, approvalStatus: null })
+  if (!policy.allowed) { console.error('COMPARISON_TRIGGER_POLICY_BLOCKED:', runId, policy.reason); return 'failed' }
+  const secret = process.env.CRON_SECRET
+  if (!secret) return 'failed'
+  try {
+    const res = await fetch(`${appBaseUrl()}/api/agent/approved-browser`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+      body: JSON.stringify({ runId, comparison: true }), signal: AbortSignal.timeout(8_000),
+    })
+    return res.ok ? 'dispatched' : 'failed'
+  } catch { return 'failed' }
+}

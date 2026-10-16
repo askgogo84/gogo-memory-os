@@ -3,7 +3,7 @@ import {deliverNotification} from '@/lib/services/notification-delivery'
 import {sendWhatsApp} from '@/lib/whatsapp'
 import type {AgentActor} from '@/lib/agent/actor'
 import {comparisonState, comparisonWhatsAppSummary, type PriceComparison} from './comparison-model'
-import {comparisonLink, comparisonWebFallback, readPriceComparison} from './price-comparison'
+import {comparisonWebFallback, readPriceComparison} from './price-comparison'
 
 /** The notification outbox owns retries and callback receipts for a finished read. */
 export async function deliverCompletedComparison(task: PriceComparison, actor: AgentActor, deadline: number) {
@@ -13,7 +13,7 @@ export async function deliverCompletedComparison(task: PriceComparison, actor: A
     const current=await readPriceComparison(String(owner),task.id)
     if(!current||current.source!=='web'||comparisonState(current.metadata_json.providers)==='queued')return 'skipped'
     const fallback=await comparisonWebFallback(current)
-    const content=comparisonWhatsAppSummary(current)+(fallback?'\n\n'+fallback:'')+'\n\nFull saved report: '+comparisonLink(task.id)
+    const content=comparisonWhatsAppSummary(current)+(fallback?'\n\n'+fallback:'')
     if(Date.now()>=deadline)return 'skipped'
     // Publish and mark notified in one transaction. Overlapping workers cannot
     // duplicate history or lose the result between two database writes.
@@ -33,8 +33,7 @@ export async function deliverCompletedComparison(task: PriceComparison, actor: A
       current = await readPriceComparison(String(owner), task.id)
       if (!current || comparisonState(current.metadata_json.providers) === 'queued') throw new Error('comparison_not_terminal')
       const fallback = await comparisonWebFallback(current)
-      message = comparisonWhatsAppSummary(current) + (fallback ? '\n\n' + fallback : '') +
-        '\n\nFull saved report: ' + comparisonLink(task.id)
+      message = comparisonWhatsAppSummary(current) + (fallback ? '\n\n' + fallback : '')
     },
     ready: async () => {
       if (!recipient) return false

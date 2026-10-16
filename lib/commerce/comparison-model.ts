@@ -43,6 +43,8 @@ export function namesRetailerPriceRead(text: string): boolean {
 export type ProviderObservation = {
   provider: ComparisonProvider; status: 'pending'|'checking'|'observed'|'blocked'|'failed';
   runId?: string; startedAt?: string; checkedAt?: string; sourceUrl?: string; startUrl?: string;
+  /** From the quick web look at request time: a product page to start from, and the price its search result showed (never evidence). */
+  leadUrl?: string; quickPrice?: string;
   evidence?: string; reason?: string; needsInput?: boolean;
 }
 export type PriceComparison = {
@@ -165,7 +167,7 @@ export function providerObservation(provider: ComparisonProvider, child: any, st
     // still an incomplete comparison, never an observed retailer quote.
     const hasPrice = /(?:\u20b9\s*[\d,]+(?:\.\d{1,2})?|\b(?:INR|Rs\.?)\s*[\d,]+(?:\.\d{1,2})?)/i.test(evidence)
     if (sourceUrl && evidence && hasPrice) return {...base, status: 'observed', sourceUrl, evidence: evidence.slice(0, 1800)}
-    return {...base, status: 'failed', reason: 'The provider page did not yield an exact product source and verifiable item price.'}
+    return {...base, status: 'failed', reason: 'couldn’t find this exact item with a price on its product page.'}
   }
   const reason = String(child.error || '')
   // Browser-ownership contention is not a provider verdict: the shared browser was
@@ -176,10 +178,10 @@ export function providerObservation(provider: ComparisonProvider, child: any, st
   // comparisons avoid this path entirely: advancePriceComparison's handoff gate keeps
   // genuinely unstarted providers pending until the shared browser is free.
   if (reason === 'browser_handoff_in_use') return {...base, status: 'blocked', needsInput: false,
-    reason: 'Another task was using the shared secure browser, so this store was not checked. Ask again once it is free.'}
+    reason: 'my browser was busy with another task, so I didn’t check this store. Ask again in a minute.'}
   const needsInput = ['human_auth_required', 'delivery_location_required'].includes(reason)
   if (child.status === 'paused') return {...base, status: 'blocked', needsInput,
-    reason: needsInput ? 'Choose your account or delivery location in this same browser task.' : 'The provider limited access; prices remain unverified.'}
+    reason: needsInput ? 'it needs your delivery location or sign-in before it shows prices.' : 'the store blocked my browser, so I couldn’t read a price.'}
   if (child.status === 'running') return {...base, status: 'checking'}
   return {...base, status: 'failed', reason: comparisonFailureReason(reason)}
 }
@@ -187,11 +189,11 @@ export function providerObservation(provider: ComparisonProvider, child: any, st
 // Retain the exact failure family in a fixed, user-facing phrase. Never copy a raw
 // browser error (it can carry page text or private URLs) and never imply a price.
 function comparisonFailureReason(code: string) {
-  if (code === 'browser_read_deadline') return 'The provider page did not finish loading within the safe read time; no price was read.'
-  if (code === 'browser_objective_unverified' || code === 'browser_planning_failed') return 'I opened the store but couldn’t confirm a price for this item on its product page.'
-  if (code.includes('browser_live_session_expired')) return 'The live browser page expired before a price was verified; no provider action was taken.'
-  if (code.startsWith('secure_browser_action_failed') || code.startsWith('secure_browser_action_empty')) return 'The secure browser could not read this provider page; no price was verified.'
-  return 'The browser could not verify the requested item and price.'
+  if (code === 'browser_read_deadline') return 'the store page didn’t finish loading in time.'
+  if (code === 'browser_objective_unverified' || code === 'browser_planning_failed') return 'couldn’t confirm a price on its product page.'
+  if (code.includes('browser_live_session_expired')) return 'the page expired before I could read a price.'
+  if (code.startsWith('secure_browser_action_failed') || code.startsWith('secure_browser_action_empty')) return 'my browser couldn’t read the store page.'
+  return 'couldn’t confirm the item and price.'
 }
 
 export function comparisonState(rows: ProviderObservation[]) {
@@ -300,30 +302,42 @@ export function comparisonSummary(task: PriceComparison) {
   return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\n${pending ? 'Remaining store checks are queued.' : 'This check has finished; blocked stores are not being retried automatically.'}\nItem observations are not a verified delivered-total ranking. Fees, location-specific prices and conditional offers remain unverified unless explicitly shown in the evidence.`
 }
 
-/** Short phone update; the saved report keeps the complete browser evidence. */
+/** Short phone update (16 Oct: "make the answer crisp"); the saved report keeps the complete browser evidence. */
 export function comparisonWhatsAppSummary(task: PriceComparison) {
+  const priced: Array<{label: string; value: number; price: string}> = []
   const lines = task.metadata_json.providers.map(row => {
     const label = COMPARISON_PROVIDERS[row.provider].label
     if (row.status === 'observed' && row.sourceUrl && row.evidence) {
       const quote = comparisonQuote(task.metadata_json.subject, row)
-      const checked = row.checkedAt && Number.isFinite(Date.parse(row.checkedAt))
-        ? new Intl.DateTimeFormat('en-IN', {timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true}).format(new Date(row.checkedAt)) + ' IST'
-        : 'time unavailable'
-      const product = quote ? String(row.evidence || '').split('\n')[0].replace(/\s+/g, ' ').trim() : ''
+      if (!quote) return `• *${label}*: I read the page but couldn’t pick out one price for this exact item.\n  ${row.sourceUrl}`
+      priced.push({label, value: Number(quote.price.replace(/[^\d.]/g, '')), price: quote.price})
+      // "Apple iPhone 16 (128 GB Storage) Online at Best Price On Flipkart.com" → "Apple iPhone 16 (128 GB Storage)"
+      const product = String(row.evidence || '').split('\n')[0].replace(/\s+/g, ' ').trim()
+        .replace(/^Buy\s+/i, '').replace(/\s*(?:\s:\s*Amazon\.in\b.*|\sOnline\b.*|\s-\s*Croma\b.*|\s\|.*)$/i, '')
       const productLine = product.length > 90 ? product.slice(0, 90).replace(/\s+\S*$/, '') + '…' : product
-      const price = quote ? `${quote.price}${quote.taxesIncluded ? ' including taxes' : ''}${quote.fee ? '\nAdditional fee shown: '+quote.fee : ''}`
-        : 'The page was read, but one exact item price could not be isolated. See the saved report.'
-      return `*${label}* · checked ${checked}${productLine ? '\n' + productLine : ''}\n${price}\nProduct page: ${row.sourceUrl}`
+      const fee = quote.fee ? ` + ${quote.fee}` : ''
+      // When it was read keeps the price honest: just the time today, the date too for an older check.
+      const at = row.checkedAt && Number.isFinite(Date.parse(row.checkedAt)) ? new Date(row.checkedAt) : null
+      const ist = (d: Date, o: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-IN', {timeZone: 'Asia/Kolkata', ...o}).format(d)
+      const checked = at ? ' · checked ' + (ist(at, {day: 'numeric', month: 'short'}) === ist(new Date(), {day: 'numeric', month: 'short'})
+        ? ist(at, {hour: 'numeric', minute: '2-digit', hour12: true}) : ist(at, {day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true})) : ''
+      return `• *${label}*: ${quote.price}${fee}${checked}${productLine ? `\n  ${productLine}` : ''}\n  ${row.sourceUrl}`
     }
-    const reason = row.reason || (row.status === 'pending' || row.status === 'checking'
-      ? 'Still checking the store.' : 'No product-page price was verified.')
-    return `*${label}* · ${reason}`
+    if (row.status === 'pending' || row.status === 'checking') return `• *${label}*: still checking…`
+    return `• *${label}*: ${row.reason || 'couldn’t confirm a price on its product page.'}`
   })
   const pending = task.metadata_json.providers.some(row => ['pending','checking'].includes(row.status))
+  const cheapest = priced.length > 1 ? priced.reduce((low, row) => row.value < low.value ? row : low) : null
   // A lone model code ("xm5") fits several products; say what it was matched on.
   const loneCode = (task.metadata_json.subject.match(/[a-z0-9]+/gi) || []).length === 1
   const matchedOnCode = loneCode && task.metadata_json.providers.some(row => row.status === 'observed')
-  return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\n${pending ? 'I’ll send the results when the remaining checks finish.\n' : ''}${matchedOnCode ? 'I matched this on the model code only. If it is not the product you meant, send the full name, for example "Sony WH-1000XM5 price on amazon".\n' : ''}Prices are the listed prices; delivery charges and bank or card offers aren’t included unless shown above.`
+  return [
+    `*${task.metadata_json.subject}*`, '', ...lines, '',
+    ...(cheapest ? [`Lowest listed price: ${cheapest.label}, ${cheapest.price}.`] : []),
+    ...(pending ? ['I’ll send the rest here when it’s done.'] : []),
+    ...(matchedOnCode ? ['I matched this on the model code only. If it’s not the product you meant, send the full name.'] : []),
+    'Listed prices only; delivery and bank offers not included.',
+  ].join('\n')
 }
 
 export function comparisonObjective(task: PriceComparison, provider: ComparisonProvider) {

@@ -19,6 +19,18 @@ export async function POST(request: Request) {
   const body: any = await request.json().catch(() => null)
   const runId = String(body?.runId || '').trim()
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(runId)) return NextResponse.json({ error: 'invalid_run_id' }, { status: 400 })
+  // A new price comparison: open every store now (in parallel where possible) instead of on the next cron minute.
+  if (body?.comparison === true) {
+    after(async () => {
+      try {
+        const {runComparisonNow} = await import('@/lib/commerce/price-comparison')
+        console.log('COMPARISON_RUN_NOW_DONE:', runId, await runComparisonNow(runId))
+      } catch (err: any) {
+        console.error('COMPARISON_RUN_NOW_CRASHED:', runId, String(err?.message || '').slice(0, 120))
+      }
+    })
+    return NextResponse.json({ accepted: true, runId }, { status: 202 })
+  }
   // A public read started from WhatsApp, run here with the longer budget.
   if (body?.read === true) {
     after(async () => {

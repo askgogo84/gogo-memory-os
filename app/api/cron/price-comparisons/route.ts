@@ -1,7 +1,7 @@
 import {NextResponse} from 'next/server'
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {resolveAgentActor} from '@/lib/agent/actor'
-import {advancePriceComparison, readPriceComparison} from '@/lib/commerce/price-comparison'
+import {advancePriceComparisonAll, readPriceComparison} from '@/lib/commerce/price-comparison'
 import {deliverCompletedComparison} from '@/lib/commerce/comparison-delivery'
 
 export const dynamic = 'force-dynamic'
@@ -20,7 +20,7 @@ export async function GET(request: Request) {
       if (Date.now() >= deadline) break
       try {
         const actor = await resolveAgentActor({telegramId: String(row.telegram_id), surface: 'web'})
-        await advancePriceComparison(actor, row.id)
+        await advancePriceComparisonAll(actor, row.id)
       } catch (error) {
         advanceFailures++
         console.error('PRICE_COMPARISON_ADVANCE_FAILED:', {runId: row.id, error: error instanceof Error ? error.message : 'unknown'})

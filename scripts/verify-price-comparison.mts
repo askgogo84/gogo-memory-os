@@ -27,12 +27,12 @@ assert.equal(model.parsePriceComparison('what is the price of iPhone 15 128GB on
   assert.equal(model.comparisonQuote('xm5', {...wf, provider:'flipkart', sourceUrl:'https://www.flipkart.com/sony-wf-1000xm5/p/itm1?pid=A'}), null, 'the rule is Amazon only')
   assert.equal(model.comparisonQuote('xm5', {...wf, evidence: wf.evidence.replace(/₹21,990 \. 00/g, '')}), null, 'no repeated first price, still ambiguous')
   const waWf = model.comparisonWhatsAppSummary({metadata_json:{subject:'xm5',request:'xm5 price on amazon',providers:[{...wf,checkedAt:'2026-10-13T12:16:00Z'}]}} as any)
-  assert.match(waWf, /Sony WF-1000XM5[^\n]*\n₹21,990\n/); assert.match(waWf, /matched this on the model code only/)
-  assert.match(waWf, /Sony WF-1000XM5 Best Active Noise Cancelling Wireless Bluetooth Earbuds with Mic, TWS, Up…\n/, 'a long product name is cut at a word, not mid-word')
+  assert.match(waWf, /• \*Amazon India\*: ₹21,990 · checked [^\n]*\n  Sony WF-1000XM5/); assert.match(waWf, /matched this on the model code only/)
+  assert.match(waWf, /Sony WF-1000XM5 Best Active Noise Cancelling Wireless Bluetooth Earbuds with Mic, TWS, Up…\n  https:\/\/www\.amazon\.in\//, 'a long product name is cut at a word, not mid-word')
   assert.doesNotMatch(model.comparisonWhatsAppSummary({metadata_json:{subject:'Sony WH-1000XM5',request:'x',providers:[{...wf,checkedAt:'2026-10-13T12:16:00Z'}]}} as any), /model code only/)
   const camera = {...row, sourceUrl:'https://www.amazon.in/Fujifilm-mirrorless-vlogging-Recording-Lifestyle/dp/B0DJC4NBV8', evidence:'Fujifilm X-M5 26.1MP APS-C X-Trans CMOS 4 Mirrorless Camera\nListed price ₹79,999'}
   const wa = model.comparisonWhatsAppSummary({metadata_json:{subject:'xm5',request:'xm5 price on amazon',providers:[{...row,checkedAt:'2026-10-13T11:57:00Z'}]}} as any)
-  assert.match(wa, /Sony WH-1000XM5 Best Active Noise Cancelling[^\n]*\n₹24,990/, 'the reply names the product it priced')
+  assert.match(wa, /₹24,990 · checked [^\n]*\n  Sony WH-1000XM5 Best Active Noise Cancelling/, 'the reply names the product it priced')
   assert.equal(model.comparisonQuote('xm5', camera), null, 'a camera called X-M5 is not the XM5 headphones')
   assert.equal(model.comparisonProductLead('amazon', 'xm5', [{url: camera.sourceUrl, title: 'Fujifilm X-M5 Mirrorless Camera'}]), null)
   assert.equal(model.comparisonProductLead('amazon', 'xm5', [{url: row.sourceUrl, title: 'Sony WH-1000XM5 Headphones'}]), row.sourceUrl)
@@ -93,14 +93,14 @@ assert.equal(model.comparisonProductLead('flipkart','iPhone 17 Pro 256GB',[{url:
 const contention = model.providerObservation('blinkit', {id: 'child-contend', status: 'failed', error: 'browser_handoff_in_use', updated_at: '2026-10-05T00:00:00.000Z'}, null)
 assert.equal(contention.status, 'blocked')
 assert.equal(contention.evidence, undefined)
-assert.match(contention.reason!, /shared secure browser|was not checked/i)
+assert.match(contention.reason!, /browser was busy|didn’t check this store/i)
 assert.doesNotMatch(contention.reason!, /unavailable|not verified/i)
 // A finished comparison carrying a historical contention child stays terminal, not 'queued'.
 assert.equal(model.comparisonState([contention, {provider: 'instamart', status: 'observed'} as any]), 'paused')
 // The specific blocker reaches the user instead of a flat "not verified".
 const contentionSummary = model.comparisonSummary({updated_at: 'x', id: 'x', status: 'paused', title: 'x', source: 'x',
   metadata_json: {subject: 'Blinkit check', request: 'x', providers: [contention]}} as any)
-assert.match(contentionSummary, /shared secure browser|was not checked/i)
+assert.match(contentionSummary, /browser was busy|didn’t check this store/i)
 assert.doesNotMatch(contentionSummary, /Blinkit: not verified/)
 // Same shared-browser mechanism for the grocery/food providers: Instamart, Swiggy, Zomato
 // and Blinkit all open the store (no product-page discovery) and need a delivery-location
@@ -194,7 +194,8 @@ assert.match(fallback, /browser could not verify a live price there/i)
 assert.match(fallback, /croma\.com\/sony-wh-1000xm5\/p\/251234/)
 assert.doesNotMatch(fallback, /blogs|28,990|29,990|unverified search snippet/i)
 const start = await service.tryPriceComparison({telegramId: 42, text: request, surface: 'web'})
-assert.equal(start.status, 'queued'); assert.match(start.text, /Saved comparison:/)
+assert.equal(start.status, 'queued'); assert.match(start.text, /^Checking \*Logitech M185[^*]*\* on Amazon India and Flipkart now\./)
+assert.doesNotMatch(start.text, /app\.askgogo\.in|Saved comparison/, '16 Oct: no dashboard link in the reply')
 assert.doesNotMatch(start.text, /₹|free delivery|in stock/i)
 const repeat = await service.tryPriceComparison({telegramId: 42, text: request, surface: 'whatsapp'})
 assert.equal(start.runId, repeat.runId, 'same request must retain the same in-flight task across channels')
@@ -297,31 +298,34 @@ assert.ok(JSON.parse(readFileSync('vercel.json', 'utf8')).crons.some((cron: any)
 const grocery = await service.tryPriceComparison({telegramId: 42, text: 'Compare Amul Taaza 1 litre on Zepto and Blinkit'})
 const food = await service.tryPriceComparison({telegramId: 42, text: 'Compare vegetarian burger on Swiggy and Zomato'})
 const grouped = await service.tryPriceComparison({telegramId: 42, text: 'Show the final status of my latest grocery and food comparisons. Do not retry anything.'})
-assert.match(grouped.text, new RegExp(grocery.runId))
-assert.match(grouped.text, new RegExp(food.runId))
+// 16 Oct: replies carry no dashboard link, so a saved report is identified by its subject heading.
+const heading = (runId: string) => '*' + tables.agent_runs.find((r: any) => r.id === runId).metadata_json.subject + '*'
+assert.ok(grouped.text.includes(heading(grocery.runId)))
+assert.ok(grouped.text.includes(heading(food.runId)))
 assert.doesNotMatch(grouped.text, /Logitech M185/)
 const beforeFourStatus = tables.agent_runs.length
 const allFour = await service.tryPriceComparison({telegramId: 42, text: 'Show the final status of my latest grocery, food, Sony and mouse comparisons. Name each verified provider and each blocked provider. Do not retry anything or create a new comparison.'})
-for(const runId of [grocery.runId,food.runId,interrupted.runId,start.runId]) assert.match(allFour.text,new RegExp(runId))
-assert.ok(allFour.text.indexOf(grocery.runId)<allFour.text.indexOf(food.runId))
-assert.ok(allFour.text.indexOf(food.runId)<allFour.text.indexOf(interrupted.runId))
-assert.ok(allFour.text.indexOf(interrupted.runId)<allFour.text.indexOf(start.runId))
+for(const runId of [grocery.runId,food.runId,interrupted.runId,start.runId]) assert.ok(allFour.text.includes(heading(runId)), runId)
+assert.ok(allFour.text.indexOf(heading(grocery.runId))<allFour.text.indexOf(heading(food.runId)))
+assert.ok(allFour.text.indexOf(heading(food.runId))<allFour.text.indexOf(heading(interrupted.runId)))
+assert.ok(allFour.text.indexOf(heading(interrupted.runId))<allFour.text.indexOf(heading(start.runId)))
 assert.equal(tables.agent_runs.length,beforeFourStatus,'multi-subject status readback cannot create another comparison')
 
 // Browser-ownership handoff gate: while a paused handoff reserves the shared
 // browser, queued providers must stay queued — not spin into browser_handoff_in_use
 // and get recorded as failed retailers. They resume once the handoff is released.
-const gated = await service.tryPriceComparison({telegramId: 42, text: 'Compare Sony WH-1000XM5 on Amazon India and Croma. Do not create a watch.'})
+// 16 Oct: only the shared grocery/food browser is gated; electronics stores each have their own browser.
+const gated = await service.tryPriceComparison({telegramId: 42, text: 'Compare Amul butter on Zepto and Blinkit. Do not create a watch.'})
 liveHandoff = true
 tables.agent_runs.push({id: id(), telegram_id: '42', type: 'secure_browser', status: 'paused',
-  metadata_json: {comparison_parent_id: 'another-parent', mode: 'read', url: 'https://www.zepto.com/', handoff: {takeoverUrl: 'https://sb-active.vercel.run/?token=x', releaseUrl: 'https://sb-active.vercel.run/release?token=x'}}})
+  metadata_json: {mode: 'read', url: 'https://www.zepto.com/', handoff: {takeoverUrl: 'https://sb-active.vercel.run/?token=x', releaseUrl: 'https://sb-active.vercel.run/release?token=x'}}})
 const callsBeforeGate = calls
 const beforeGateRuns = tables.agent_runs.length
 const gatedTask = await service.advancePriceComparison(actor, gated.runId)
 assert.equal(calls, callsBeforeGate, 'queued providers must not spin while a handoff reserves the shared browser')
 assert.equal(tables.agent_runs.length, beforeGateRuns, 'no provider child is created while the browser is reserved')
 assert.ok(gatedTask.metadata_json.providers.every((p: any) => p.status === 'pending'), 'providers stay queued, not failed')
-assert.match(gatedTask.metadata_json.providers[0].reason, /Waiting for the shared secure browser/)
+assert.match(gatedTask.metadata_json.providers[0].reason, /waiting for my browser to be free/)
 assert.equal(model.comparisonState(gatedTask.metadata_json.providers), 'queued')
 // Once the handoff is released, the same queued providers advance normally.
 failStart = false
@@ -346,7 +350,7 @@ tables.agent_runs.push({id: dormantChild, telegram_id: '42', type: 'secure_brows
 const dormant = await service.readPriceComparison('42', dormantParent)
 assert.notEqual(dormant.status, 'queued', 'a finished comparison must not resurrect to queued from a historical contention child')
 assert.equal(dormant.metadata_json.providers[1].status, 'blocked')
-assert.match(model.comparisonSummary(dormant), /shared secure browser|was not checked/i)
+assert.match(model.comparisonSummary(dormant), /browser was busy|didn’t check this store/i)
 assert.doesNotMatch(model.comparisonSummary(dormant), /Remaining store checks are queued/)
 const {data: dormantQueue} = await db.from('agent_runs').select('id').eq('type', 'price_comparison').in('status', ['queued', 'running']).order('updated_at').limit(50)
 assert.ok(!(dormantQueue || []).some((r: any) => r.id === dormantParent), 'the cron worker must not pick up the finished comparison')
@@ -407,7 +411,7 @@ assert.deepEqual(model.comparisonQuote('iPhone 17 Pro 256GB',{...phoneRow,eviden
 const shortPhone = model.comparisonWhatsAppSummary({metadata_json:{subject:'iPhone 17 Pro 256GB',providers:[phoneRow]}} as any)
 assert.match(shortPhone,/₹1,34,900/);assert.match(shortPhone,/₹299 Protect Promise Fee/)
 assert.doesNotMatch(shortPhone,/47,999|19,999|54,900|74,900|30,900|Maroon|AD |page excerpt/)
-assert.match(shortPhone,/7 Oct.*IST/)
+assert.match(shortPhone,/checked 7 Oct/)
 const cromaRow:model.ProviderObservation = {provider:'croma',status:'observed',sourceUrl:'https://www.croma.com/sony-wh-1000xm5/p/262566',
   evidence:'Buy Sony WH-1000XM5 Bluetooth Headset with Mic (Over Ear, Silver) Online - Croma\nCompare Connect to Store 4.3 (8 Ratings & 7 Reviews) ₹29,990.00 (Incl. all Taxes) MRP: ₹34,990.00 (Save ₹5,000, 14.29% off)'}
 assert.deepEqual(model.comparisonQuote('Sony WH-1000XM5',cromaRow),{price:'₹29,990',taxesIncluded:true})
@@ -423,8 +427,8 @@ for(const row of [{...phoneRow,status:'failed' as const},{...phoneRow,sourceUrl:
   {...phoneRow,evidence:'Apple iPhone 17 Pro (Cosmic Orange, 256 GB)\n₹1,34,900 or ₹1,30,900'}])
   assert.equal(model.comparisonQuote('iPhone 17 Pro 256GB',row),null,JSON.stringify(row))
 const ambiguous = model.comparisonWhatsAppSummary({metadata_json:{subject:'iPhone 17 Pro 256GB',providers:[{...phoneRow,evidence:phoneRow.evidence!.split('\n')[0]+'\n₹1,34,900 or ₹1,30,900'}]}} as any)
-assert.match(ambiguous,/could not be isolated/);assert.doesNotMatch(ambiguous,/₹/,'ambiguity does not choose the cheaper offer')
-assert.match(model.comparisonWhatsAppSummary({metadata_json:{subject:'Sony',providers:[{provider:'croma',status:'pending'}]}} as any),/send the results/)
+assert.match(ambiguous,/couldn’t pick out one price/);assert.doesNotMatch(ambiguous,/₹/,'ambiguity does not choose the cheaper offer')
+assert.match(model.comparisonWhatsAppSummary({metadata_json:{subject:'Sony',providers:[{provider:'croma',status:'pending'}]}} as any),/send the rest here when it’s done/)
 assert.equal(sonyObservation.status, 'observed')
 const sonySummary = model.comparisonSummary({updated_at: 'x', id: 'sony-parent', status: 'paused', title: 'Sony', source: 'whatsapp',
   metadata_json: {subject: 'Sony WH-1000XM5 black', request: 'Compare Sony', providers: [sonyObservation]}} as any)
@@ -484,13 +488,13 @@ rejectSend = false
 assert.equal(await delivery.deliverCompletedComparison(deliveryTask, actor, Date.now() + 30_000), 'provider_accepted')
 assert.equal(deliveryTask.metadata_json.notified, true)
 assert.equal(acceptedSends, 1)
-assert.match(tables.conversations.at(-1).content, /Full saved report:/)
+assert.doesNotMatch(tables.conversations.at(-1).content, /Full saved report:|app\.askgogo\.in\/dashboard/, '16 Oct: no dashboard link')
 let webWriteFails=true,webWrites=0
 const webDeliveryTask={...structuredClone(deliveryTask),id:id(),source:'web',metadata_json:{...deliveryTask.metadata_json,notified:undefined}}
 const webDelivery=load('lib/commerce/comparison-delivery.ts',{
   '@/lib/supabase-admin':{supabaseAdmin:{rpc:async(name:string,args:any)=>{
     assert.equal(name,'publish_web_comparison_result');assert.equal(args.p_owner,'42');assert.equal(args.p_run_id,webDeliveryTask.id)
-    assert.match(args.p_content,/₹28,926/);assert.match(args.p_content,/Full saved report:/)
+    assert.match(args.p_content,/₹28,926/);assert.doesNotMatch(args.p_content,/Full saved report:/)
     if(webWriteFails)return {error:{message:'fixture failure'}}
     if(webDeliveryTask.metadata_json.notified)return {data:false,error:null}
     webDeliveryTask.metadata_json.notified=true;webWrites++;tables.conversations.push({content:args.p_content});return {data:true,error:null}
