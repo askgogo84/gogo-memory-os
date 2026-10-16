@@ -352,7 +352,7 @@ export function productPagePriceEvidence(objective:string,title:string,pageText:
   const after=text.slice(at+heading.length,at+heading.length+6000)
   const spans=[...after.matchAll(/₹\s?\d[\d,]*(?:\.\d{1,2})?[^₹]{0,60}/g)].map(m=>({span:m[0].trim(),before:after.slice(Math.max(0,m.index!-25),m.index!)}))
   const listed=spans.find(x=>/^₹\s?\d[\d,]*(?:\.\d{1,2})?\s*\(?\s*Incl/i.test(x.span))
-    ||spans.find(x=>!/\b(?:MRP|save|saving|EMI|off|from|starting|cashback|discount)\b[^₹]*$/i.test(x.before)&&!/^₹\s?\d[\d,]*(?:\.\d{1,2})?\s*(?:\/\s*m(?:o|onth)?\b|per month|off\b|EMI\b)/i.test(x.span))
+    ||spans.find(x=>!/\b(?:MRP|save|saving|EMI|off|from|starting|cashback|discount)\b[^₹]*$/i.test(x.before)&&!/^₹\s?\d[\d,]*(?:\.\d{1,2})?\s*(?:\/\s*m(?:o|onth)?\b|per month|off\b|EMI\b|or\b|x\s?\d)/i.test(x.span))
   if(!listed)return miss('no_price_after_heading')
   const span=listed.span.replace(/\s+(?:MRP|M\.R\.P)\b.*$/i,'').trim()
   return span.length>=6&&text.includes(span)?[heading,span]:miss('span_not_in_text')
@@ -1846,10 +1846,8 @@ export async function assessReadOutcome(objective:string,page:any,diagnose:(even
     const flat=pageText.replace(/\s+/g,' ')
     const direct=verifiedBrowserAnswer({complete:true,evidence:directPrice},flat,title)||verifiedBrowserAnswer({complete:true,evidence:directPrice},pageText,title)
     if(direct){diagnose({phase:'assessment',reason:'verified',pageChars:pageText.length});return direct}
-    // Both pieces were taken from the page text itself (the reader checked each is present), so when the generic
-    // verifier still refuses, log it and return the same excerpts rather than lose a price that is on the page.
-    console.warn('PRODUCT_PRICE_DIRECT_UNVERIFIED:',JSON.stringify({evidence:directPrice.map(x=>x.slice(0,80)),title:title.slice(0,80)}))
-    if(flat.includes(directPrice[0])&&flat.includes(directPrice[1])){diagnose({phase:'assessment',reason:'verified',pageChars:pageText.length});return directPrice.join('\n')}
+    // Logged for diagnosis only; an unverified price is never returned.
+    {const i=flat.indexOf(directPrice[0]);console.warn('PRODUCT_PRICE_DIRECT_UNVERIFIED:',JSON.stringify({evidence:directPrice.map(x=>x.slice(0,80)),title:title.slice(0,80),spans:[...flat.slice(Math.max(0,i),i+6000).matchAll(/₹\s?\d[\d,]*(?:\.\d{1,2})?/g)].slice(0,10).map(m=>flat.slice(Math.max(0,i)+Math.max(0,m.index!-45),Math.max(0,i)+m.index!+45))}))}
   }
   const raw=await completeAgentPlanPrompt(
     JSON.stringify({objective:objective.slice(0,1600),observation:{url:safeText(page.url,1200),title,text:pageText}}),undefined,
