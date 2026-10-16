@@ -71,5 +71,14 @@ console.log('verify-login-code-flow: older reads released')
 assert.match(sc, /if\(!vaultFilled&&params\.mode==='read'\)savedLoginMissed=true/)
 assert.match(sc, /if\(savedLoginMissed&&params\.reserveHumanHandoff===true&&!providerBooking\)\{/)
 assert.match(bc, /if\(result\.authReason==='login_unavailable'\)\{/)
-assert.match(bc, /Open this, tap Take control and sign in, then tap Resume\. I'll carry on with your question from there/)
+assert.match(bc, /Open this, tap Take control and sign in yourself, then tap Resume\. I'll carry on with your question from there/)
 console.log('verify-login-code-flow: login handover ok')
+
+// 16 Oct 11:31 live: "swiggy.com sent a sign-in code" but no SMS arrived. A code is claimed only when the site shows
+// its code screen; otherwise Gogo hands over and logs the site's own error line (digits masked).
+assert.match(sc, /codeRequested=codeScreen;/)
+assert.doesNotMatch(sc, /else if\(!passFields\.length\) codeRequested=true;/)
+assert.match(sc, /vaultFill\.phoneCode&&vaultFill\.codeRequested\)\)\)/)
+assert.match(sc, /VAULT_CODE_NOT_SHOWN:/)
+assert.match(sc, /m\[0\]\.replace\(\/\\d\{4,\}\/g,'••'\)/)
+console.log('verify-login-code-flow: code screen verified')
