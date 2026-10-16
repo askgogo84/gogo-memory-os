@@ -325,7 +325,11 @@ export function comparisonWhatsAppSummary(task: PriceComparison) {
     const label = COMPARISON_PROVIDERS[row.provider].label
     if (row.status === 'observed' && row.sourceUrl && row.evidence) {
       const quote = comparisonQuote(task.metadata_json.subject, row)
-      if (!quote) return `• *${label}*: I read the page but couldn’t pick out one price for this exact item.\n  ${row.sourceUrl}`
+      if (!quote) {
+        // Public product-page text only (no personal data): shows why no single price was picked.
+        console.warn('COMPARISON_QUOTE_UNPARSED:', JSON.stringify({provider: row.provider, evidence: String(row.evidence || '').replace(/\s+/g, ' ').slice(0, 400)}))
+        return `• *${label}*: I read the page but couldn’t pick out one price for this exact item.\n  ${row.sourceUrl}`
+      }
       priced.push({label, value: Number(quote.price.replace(/[^\d.]/g, '')), price: quote.price})
       // "Apple iPhone 16 (128 GB Storage) Online at Best Price On Flipkart.com" → "Apple iPhone 16 (128 GB Storage)"
       const product = String(row.evidence || '').split('\n')[0].replace(/\s+/g, ' ').trim()
