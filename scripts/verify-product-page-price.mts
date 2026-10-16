@@ -21,3 +21,10 @@ const far = 'Apple iPhone 16 (128GB, Black) ' + 'Key features and gallery text. 
 assert.deepEqual(productPagePriceEvidence(obj, 'Buy Apple iPhone 16 (128GB, Black) Online - Croma', far), ['Apple iPhone 16 (128GB, Black)', '₹ 69,900 (Incl. all Taxes)'])
 assert.deepEqual(comparisonQuote('iPhone 16', { provider: 'croma', status: 'observed', sourceUrl: 'https://www.croma.com/apple-iphone-16-128gb-black-/p/309621', evidence: 'Apple iPhone 16 (128GB, Black)\n₹ 69,900 (Incl. all Taxes)' } as any), { price: '₹69,900', taxesIncluded: true })
 console.log('verify-product-page-price: direct product-page price ok')
+
+// 16 Oct live: Reliance prints the MRP with "(Inclusive of all taxes)"; the selling price comes first.
+{
+  const text = 'Apple iPhone 16 128 GB, Ultramarine ₹69,900.00 You save ₹20,000 MRP ₹89,900.00 (Inclusive of all taxes) Currently unavailable online'
+  const r = productPagePriceEvidence('Find Apple iPhone 16 price', 'Apple iPhone 16 128 GB, Ultramarine', text)
+  assert.ok(!r || !/89,900/.test(JSON.stringify(r)), 'MRP must not be returned as the price')
+}

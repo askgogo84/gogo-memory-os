@@ -38,7 +38,7 @@ export async function readPriceComparison(owner: string, id: string): Promise<Pr
     const {data: step, error: stepError} = await supabaseAdmin.from('agent_steps').select('status,output_json')
       .eq('run_id', child.id).eq('telegram_id', owner).eq('tool_name', 'secure_browser').limit(1).maybeSingle()
     if (stepError) throw new Error('comparison_evidence_read_failed')
-    rows.push({...providerObservation(row.provider, child, step), startUrl: row.startUrl})
+    rows.push({...providerObservation(row.provider, child, step), startUrl: row.startUrl, ...(row.attempts ? {attempts: row.attempts} : {}), ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})})
   }
   task.metadata_json = {...task.metadata_json, providers: rows}
   task.status = comparisonState(rows)
@@ -200,6 +200,7 @@ async function sharedBrowserHandoffPending(owner: string) {
 
 // Electronics stores are public product pages, each read in its own browser, so they run at the same time.
 // Grocery and food stores share one browser that keeps the person's delivery location, so they run one by one.
+const MAX_STORE_ATTEMPTS = 3
 export const PARALLEL_COMPARISON_PROVIDERS = new Set(['amazon', 'flipkart', 'croma', 'reliance'])
 
 async function withComparisonState<T>(id: string, fn: () => Promise<T>): Promise<T | null> {
@@ -238,7 +239,8 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     let startUrl: string = COMPARISON_PROVIDERS[next.provider].url
     if (parallel) {
       // The quick web look at request time may already have found the product page.
-      const known = next.leadUrl && comparisonSource(next.provider, next.leadUrl)
+      // A retry alternates between the found product page and the store's own search, so a bad start is not repeated.
+      const known = (next.attempts || 1) % 2 === 1 && next.leadUrl && comparisonSource(next.provider, next.leadUrl)
       let candidate: string | null = known || null
       if (!candidate) {
         const {searchWebResults} = await import('@/lib/web-search')
@@ -288,6 +290,10 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
   return withComparisonState(id, async () => {
     const task = await readPriceComparison(owner, id)
     if (!task) throw new Error('comparison_missing_after_read')
+    // 16 Oct: "the page didn't finish loading" is not an answer. A store that failed is tried again (up to
+    // three reads) before it is reported; one that needs the person's input or sign-in is not retried.
+    task.metadata_json.providers = task.metadata_json.providers.map(row => row.status === 'failed' && (row.attempts || 1) < MAX_STORE_ATTEMPTS
+      ? {provider: row.provider, status: 'pending' as const, attempts: (row.attempts || 1) + 1, ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})} : row)
     await saveProgress(owner, task)
     return task
   })

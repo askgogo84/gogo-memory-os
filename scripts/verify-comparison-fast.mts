@@ -26,7 +26,7 @@ assert.match(bc, /const browserOwner=persistentCommerce\?linkedBrowserOwner\(/)
 assert.match(bc, /const browserOwner=linked\?linkedBrowserOwner\(params\.actor\.userId,meta\)/)
 // Quick look: labelled as a web search, never as confirmed; its product page is reused as the start.
 assert.match(pc, /Quick look from a web search \(not yet confirmed on the store pages\):/)
-assert.match(pc, /const known = next\.leadUrl && comparisonSource\(next\.provider, next\.leadUrl\)/)
+assert.match(pc, /const known = \(next\.attempts \|\| 1\) % 2 === 1 && next\.leadUrl && comparisonSource\(next\.provider, next\.leadUrl\)/)
 // No dashboard link in replies or deliveries.
 assert.doesNotMatch(pc, /'\\n\\nSaved comparison: '/)
 assert.doesNotMatch(read('lib/commerce/comparison-delivery.ts'), /Full saved report/)
