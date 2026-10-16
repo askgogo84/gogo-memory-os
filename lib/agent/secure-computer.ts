@@ -111,7 +111,7 @@ export type SecureBrowserResult = {
   actions:Array<{kind:string;detail:string;status:'done'|'skipped'|'failed';consequential?:boolean}>
   sandboxName:string
   blockReason?: 'human_auth_required'|'provider_access_limited'|'delivery_location_required'|'account_already_exists'
-  authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'
+  authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'|'login_unavailable'
   credentialSelectionRequired?: boolean
   // Provider booking: where Gogo handed over (OTP needed, payment, or anything else).
   bookingStage?: BookingStage
@@ -1883,7 +1883,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     let missingActionEvidence=false
     let vaultAttempted=false,vaultEntryChecked=false
     // Phone-and-code sign-in (16 Oct): the saved number asked for a code, and the code the person sent is used once.
-    let vaultPhoneCodeRequested=false,loginCodeUsed=false,phoneLoginViaWhatsApp=false
+    let vaultPhoneCodeRequested=false,loginCodeUsed=false,phoneLoginViaWhatsApp=false,savedLoginMissed=false
     const codeStop=async(rejected:boolean):Promise<SecureBrowserResult>=>({
       status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,
       handoffReservation:params.reserveHumanHandoff===true?await releaseOwnerLock!.reserveHandoff():undefined,
@@ -2075,6 +2075,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
             if(!vaultFill.usernameFilled)console.warn('VAULT_LOGIN_NOT_FILLED:',JSON.stringify({host,openerClicked:!!vaultFill.openerClicked,openerLabel:vaultFill.openerLabel||null,headerCues:vaultFill.headerCues||null,phoneCode:!!vaultFill.phoneCode,fieldsSeen:vaultFill.fieldsSeen||[],title:safeText(page?.title,80)}))
             if(vaultFill.phoneCode&&vaultFill.codeRequested){vaultPhoneCodeRequested=true;if(credential.viaWhatsAppNumber)phoneLoginViaWhatsApp=true}
             const vaultFilled=Boolean(vaultFill.usernameFilled&&(vaultFill.passwordFilled||vaultFill.phoneCode))
+            if(!vaultFilled&&params.mode==='read')savedLoginMissed=true
             actionLog.push(vaultFilled
               ?{kind:'vault_login',detail:vaultFill.phoneCode?`Entered your saved ${credential.provider} number and asked for a text code`:`Used the saved ${credential.provider} login`,status:'done'}
               :{kind:'vault_login',detail:Array.isArray(vaultFill.ambiguous)&&vaultFill.ambiguous.length
@@ -2134,6 +2135,13 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       authGate=detectHumanAuthGate(page)
       // The saved number asked the site for a text code: stop here and ask the person for it (chat or WhatsApp).
       if(vaultPhoneCodeRequested&&!params.loginCode&&!providerBooking)return await codeStop(false)
+      // 16 Oct live: Gogo pressed Swiggy's "Sign in" and the panel never opened, so the read ended with "couldn't find
+      // that information". When a saved or WhatsApp-number sign-in can't be started, hand the same browser over instead.
+      if(savedLoginMissed&&params.reserveHumanHandoff===true&&!providerBooking){
+        return {status:'blocked',url:safeText(page.url||target,1200),originalUrl:params.url,handoffReservation:await releaseOwnerLock.reserveHandoff(),
+          title:safeText(page.title,300),summary:"I couldn't open the sign-in on this site myself.",pageText:'Gogo paused before signing in. Nothing was entered or changed.',
+          forms:[],actions:normalizeActionLog(actionLog),sandboxName:first.name,blockReason:'human_auth_required',authReason:'login_unavailable'}
+      }
       // 10 Oct live run: the Hugging Face sign-up form (email + password) was read as a sign-in
       // wall and the run stopped before filling anything. While creating an account, a password
       // field is expected; only non-password human steps (OTP, passkey, device approval) pause here.
