@@ -54,7 +54,7 @@ import {
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
-import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
+import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppAccountSite, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, parseLooseAccountProfile, tryRunExternalAccountFlow } from '@/lib/agent/external-account'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
@@ -1388,6 +1388,17 @@ _"${originalText}"_
     // High-confidence semantic ambiguity must stop before any broad legacy/router
     // fallback gets a chance to act on the wrong object. This does not grant Jev
     // execution authority; it only asks for the missing identifying detail.
+    // A question about a named site account ("Check my Swiggy account") is not ambiguous: answer it (email, connect
+    // link, or a background read of that site) before the ambiguity guard (16 Oct live miss).
+    if(!preserveFriendFlow){
+      const accountReply=await tryRunWhatsAppAccountSite({user:resolvedUser,text}).catch((err:any)=>{console.error('WHATSAPP_ACCOUNT_SITE_FAILED:',String(err?.message||err).slice(0,120));return null})
+      if(accountReply){
+        await saveConversation(resolvedUser.telegramId,'user',text)
+        await saveConversation(resolvedUser.telegramId,'assistant',accountReply.text)
+        await sendWhatsAppMessage(from,accountReply.text)
+        return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
     const jevClarify=jevClarificationReply(brainObservation?.jev)
     if(jevClarify && !preserveFriendFlow){
       await recordShadowRouterOutcome({

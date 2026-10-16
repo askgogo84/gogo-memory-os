@@ -244,6 +244,17 @@ async function accountSiteReply(actor: AgentActor, text: string): Promise<WhatsA
   return { text:`Checking your ${accountSite.name} account now. I'll send the answer here in a minute or two. If ${accountSite.name} asks for a code or a check only you can do, I'll send you a link to finish it.`, status:'running', handledBy:'account-site-background-read' } as any
 }
 
+/**
+ * "Check my Swiggy account", "Where is my Amazon order?": the person named the site, so nothing is ambiguous.
+ * 16 Oct live: on WhatsApp the ambiguity guard answered "I'm not certain which item you mean" before this ran.
+ */
+export async function tryRunWhatsAppAccountSite(params:{user:ResolvedUser;text:string}):Promise<WhatsAppAgentResult|null>{
+  if(!accountSiteFromText(params.text))return null
+  const actor=actorFromResolvedUser(params.user)
+  if(!actor)return null
+  return accountSiteReply(actor,params.text)
+}
+
 export async function tryRunWhatsAppJevSpecialist(params:{
   user:ResolvedUser
   text:string
