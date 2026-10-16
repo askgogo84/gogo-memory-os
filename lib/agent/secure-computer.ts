@@ -233,7 +233,11 @@ async function model(page){
   let usernameFilled=false,passwordFilled=false,submitted=false,openerClicked=false;
   const ambiguous=[];
   try{
-    await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
+    await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000}).catch(async e=>{
+      if(!/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_CONNECTION_RESET/.test(String(e&&e.message||e)))throw e;
+      await page.waitForTimeout(1500);
+      return page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
+    });
     await page.waitForTimeout(800);
     const USER_FIELDS='input[autocomplete="username"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[type="tel"], input[name*="mobile" i], input[name*="phone" i], input[placeholder*="phone" i], input[placeholder*="mobile" i]';
     // Sites like Swiggy and Zomato keep the login in a panel opened from the header.
@@ -242,7 +246,11 @@ async function model(page){
       // Some headers render "Log in" as plain text with a click handler (no link or button).
       const plain=opener?null:await (async()=>{ for(const t of ['Log in','Login','Sign in','Sign In','Log In']){ const loc=page.getByText(t,{exact:true}).first(); if(await visible(loc)) return loc; } return null; })();
       const target=opener||plain;
-      if(target){ openerClicked=true; await target.click({timeout:10000}).catch(()=>{}); await page.waitForTimeout(2000); }
+      if(target){
+        openerClicked=true; await target.click({timeout:10000}).catch(()=>{});
+        // 16 Oct live: Swiggy's sign-in panel slides in and loads its form late; 2 seconds was not always enough.
+        for(let i=0;i<20;i++){ await page.waitForTimeout(500); if((await visibleFields(page,USER_FIELDS)).length) break; }
+      }
     }
     const PASS_FIELDS='input[type="password"]';
     const userFields=await visibleFields(page,USER_FIELDS);
@@ -283,7 +291,7 @@ async function model(page){
       if(submit){ await submit.click({timeout:10000}); submitted=true; await page.waitForTimeout(1800); }
     }
     const out=await model(page);
-    out.vaultLogin={usernameFilled,passwordFilled,submitted,ambiguous,openerClicked};
+    out.vaultLogin={usernameFilled,passwordFilled,submitted,ambiguous,openerClicked,...(phoneCode?{phoneCode:true}:{})};
     // Field shapes only (type, name, placeholder): never values. Used to fix sites whose login is not found.
     if(!usernameFilled) out.vaultLogin.fieldsSeen=await page.evaluate(()=>Array.from(document.querySelectorAll('input')).filter(el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0}).slice(0,8).map(el=>[el.type,el.name,el.placeholder,el.autocomplete].map(v=>String(v||'').slice(0,40)).join('|'))).catch(()=>[]);
     console.log(JSON.stringify(out));
@@ -831,7 +839,12 @@ async function clickPastOverlay(page,selector){
       if(payload.reusePage){if(active!==payload.taskId||!page.url().startsWith('http'))throw new Error('browser_live_session_expired');reuse=true;}
       if(!reuse)fs.writeFileSync('${SANDBOX_WORKDIR}/commerce-active-task',payload.taskId||'');
     }
-    if(!reuse)await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
+    // 16 Oct live: one ERR_TUNNEL_CONNECTION_FAILED from the India proxy failed a whole Swiggy read; retry it once.
+    if(!reuse)await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout}).catch(async e=>{
+      if(!/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_CONNECTION_RESET/.test(String(e&&e.message||e)))throw e;
+      await page.waitForTimeout(1500);
+      return page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
+    });
     await page.waitForTimeout(900);
     await pageReadiness.read(true);
     for(const a of (payload.actions||[])){
