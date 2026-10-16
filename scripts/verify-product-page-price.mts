@@ -16,4 +16,8 @@ const busy = 'Apple iPhone 16 (128GB, Black) No Cost EMI from ₹3,329/month Sav
 assert.deepEqual(productPagePriceEvidence(obj, 'Buy Apple iPhone 16 (128GB, Black) Online - Croma', busy), ['Apple iPhone 16 (128GB, Black)', '₹69,900.00 (Incl. all Taxes) Delivery'])
 const plain = 'Apple iPhone 16 (128GB, Black) Save ₹10,000 ₹69,900 in stock'
 assert.deepEqual(productPagePriceEvidence(obj, 'Buy Apple iPhone 16 (128GB, Black) Online - Croma', plain), ['Apple iPhone 16 (128GB, Black)', '₹69,900 in stock'])
+// 9:18 pm live: the price sat more than 1,500 characters after the name; Croma writes "₹ 69,900 (Incl. all Taxes)".
+const far = 'Apple iPhone 16 (128GB, Black) ' + 'Key features and gallery text. '.repeat(80) + 'Save ₹10,000 ₹ 69,900 (Incl. all Taxes) MRP: ₹79,900'
+assert.deepEqual(productPagePriceEvidence(obj, 'Buy Apple iPhone 16 (128GB, Black) Online - Croma', far), ['Apple iPhone 16 (128GB, Black)', '₹ 69,900 (Incl. all Taxes)'])
+assert.deepEqual(comparisonQuote('iPhone 16', { provider: 'croma', status: 'observed', sourceUrl: 'https://www.croma.com/apple-iphone-16-128gb-black-/p/309621', evidence: 'Apple iPhone 16 (128GB, Black)\n₹ 69,900 (Incl. all Taxes)' } as any), { price: '₹69,900', taxesIncluded: true })
 console.log('verify-product-page-price: direct product-page price ok')
