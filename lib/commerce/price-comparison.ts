@@ -197,7 +197,7 @@ async function sharedBrowserHandoffPending(owner: string) {
 
 // Electronics stores are public product pages, each read in its own browser, so they run at the same time.
 // Grocery and food stores share one browser that keeps the person's delivery location, so they run one by one.
-export const PARALLEL_COMPARISON_PROVIDERS = new Set(['amazon', 'flipkart', 'croma'])
+export const PARALLEL_COMPARISON_PROVIDERS = new Set(['amazon', 'flipkart', 'croma', 'reliance'])
 
 async function withComparisonState<T>(id: string, fn: () => Promise<T>): Promise<T | null> {
   // Parallel store checks update one saved comparison; every read-modify-write holds this short lease.
