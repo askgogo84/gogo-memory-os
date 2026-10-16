@@ -70,3 +70,12 @@ console.log('verify-comparison-subject: subject, search start and product goto o
   assert.equal(lead('croma', 'iPhone 16 512GB', pages), pages[0].url)
   console.log('verify-comparison-subject: base-size lead ok')
 }
+
+// 16 Oct live: the Reliance product page was read but its /product/<slug> address was refused as a source.
+{
+  const {comparisonSource: source} = await import('../lib/commerce/comparison-model')
+  assert.equal(source('reliance', 'https://www.reliancedigital.in/product/apple-iphone-16-128-gb-black-m0xrrm-8590265'),
+    'https://www.reliancedigital.in/product/apple-iphone-16-128-gb-black-m0xrrm-8590265')
+  assert.equal(source('reliance', 'https://www.reliancedigital.in/products?q=iphone'), null)
+  console.log('verify-comparison-subject: reliance product address ok')
+}
