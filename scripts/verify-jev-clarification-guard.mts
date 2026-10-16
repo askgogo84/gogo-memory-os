@@ -23,3 +23,11 @@ assert.ok(legacyPos>guardPos,'clarification guard must run before broad feature 
 assert.match(wa,/actualHandler:'jev-clarification-guard'/)
 
 console.log('Jev clarification guard fail-closed routing passed')
+
+// 16 Oct live: "Check my Swiggy account" on WhatsApp got "I'm not certain which item you mean" because the guard ran
+// before the site-account check. A named site account is answered first.
+const accountPos=wa.indexOf('const accountReply=await tryRunWhatsAppAccountSite({user:resolvedUser,text})')
+assert.ok(accountPos>=0&&accountPos<guardPos,'site-account questions are answered before the ambiguity guard')
+const bridge=readFileSync(new URL('../lib/agent/whatsapp-bridge.ts',import.meta.url),'utf8')
+assert.match(bridge,/export async function tryRunWhatsAppAccountSite\(params:\{user:ResolvedUser;text:string\}\)[\s\S]{0,120}if\(!accountSiteFromText\(params\.text\)\)return null/)
+console.log('Site-account questions answered before the clarification guard')
