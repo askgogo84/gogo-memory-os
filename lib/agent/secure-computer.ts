@@ -361,16 +361,30 @@ const visible = async loc => { try { return await loc.isVisible(); } catch { ret
       const stillOnCode=async()=>{ if(!(await visible(target))) return false; return Boolean(await target.evaluate(function(el){ const r=el.getBoundingClientRect(); return el.isConnected&&r.width>0&&r.height>0&&r.right>0&&r.bottom>0&&r.left<window.innerWidth&&r.top<window.innerHeight; }).catch(()=>false)); };
       valueLength=String(await target.inputValue().catch(()=>'')).replace(/\D/g,'').length;
       if(await stillOnCode()){
-        const label=/^\s*(?:verify(?:\s+(?:otp|code|&\s*continue|and\s+continue))?|continue|submit(?:\s+otp)?|log\s*in|login|sign\s*in|confirm(?:\s+otp)?|next|proceed)\s*$/i;
+        // 16 Oct live: the header "Sign in" link came first in the page and was pressed instead of Swiggy's
+        // "VERIFY OTP". Verify-type labels win; generic ones (continue, log in) count only inside the code box's own panel.
+        const strong=/^\s*(?:verify(?:\s+(?:otp|code|&\s*continue|and\s+continue|and\s+proceed))?|submit\s+otp|confirm(?:\s+otp)?|verify\s+&\s+proceed)\s*$/i;
+        const weak=/^\s*(?:continue|submit|log\s*in|login|sign\s*in|next|proceed)\s*$/i;
+        const handle=await target.elementHandle().catch(()=>null);
         const candidates=page.locator('button, a, [role="button"], input[type="submit"]');
-        const n=Math.min(await candidates.count().catch(()=>0),80);
+        const n=Math.min(await candidates.count().catch(()=>0),120);
+        let best=null,bestRank=0,bestText='';
         for(let i=0;i<n;i++){
           const c=candidates.nth(i);
           const text=String(await c.evaluate(el=>(el.innerText||el.value||el.getAttribute('aria-label')||'').trim()).catch(()=>''));
-          if(!label.test(text)||/\b(?:pay|payment|place order|buy)\b/i.test(text)) continue;
+          if(/\b(?:pay|payment|place order|buy)\b/i.test(text)) continue;
+          const isStrong=strong.test(text), isWeak=!isStrong&&weak.test(text);
+          if(!isStrong&&!isWeak) continue;
           if(!(await visible(c))) continue;
-          await c.click({timeout:10000}).catch(()=>{}); submitted=true; pressed=text.slice(0,30); break;
+          // Same panel: the control and the code box share an ancestor within five levels of the box.
+          const near=handle?Boolean(await c.evaluate(function(el,box){ let a=box; for(let d=0;d<6&&a;d++){ if(a.contains(el)) return true; a=a.parentElement; } return false; },handle).catch(()=>false)):false;
+          const rank=isStrong?(near?4:3):(near?2:0);
+          if(rank>bestRank){ best=c; bestRank=rank; bestText=text; }
+          if(rank===4) break;
         }
+        // Some sites draw Verify as a plain clickable block, not a button or link.
+        if(bestRank<3){ const plain=page.getByText(strong).last(); if(await visible(plain)){ best=plain; bestRank=3; bestText=String(await plain.innerText().catch(()=>'verify')); } }
+        if(best){ await best.click({timeout:10000}).catch(()=>{}); submitted=true; pressed=bestText.slice(0,30); }
         if(!submitted){ await page.keyboard.press('Enter').catch(()=>{}); submitted=true; pressed='Enter'; }
       } else { submitted=true; pressed='auto'; }
       // Wait for the site's answer: the code box leaves the screen (accepted) or an error shows (rejected).
@@ -1996,7 +2010,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         const stillCode=codeOutcome==='accepted'?false:codeOutcome==='rejected'?true:(bookingOtpPrompt(page)||detectHumanAuthGate(page).reason==='otp')
         console.log('VAULT_LOGIN_CODE:',JSON.stringify({entered,submitted:Boolean(page?.vaultCode?.submitted),outcome:codeOutcome,stillCode,
           pressed:page?.vaultCode?.pressed||'',valueLength:page?.vaultCode?.valueLength||0,boxName:page?.vaultCode?.boxName||'',errorCue:page?.vaultCode?.errorCue||''}))
-        if(!entered||stillCode)return await codeStop(entered)
+        // Only a refusal the site showed is reported as "didn't accept that code".
+        if(!entered||stillCode)return await codeStop(entered&&codeOutcome==='rejected')
         loginCodeAccepted=codeOutcome==='accepted'
         // Signed in: next time Gogo starts from this live session instead of asking for a code again.
         try{
