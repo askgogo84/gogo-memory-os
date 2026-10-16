@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs'
 const read = (p: string) => readFileSync(new URL('../' + p, import.meta.url), 'utf8')
 const pc = read('lib/commerce/price-comparison.ts')
 // Electronics stores run at the same time in their own browser lanes; grocery/food share one browser, one at a time.
-assert.match(pc, /PARALLEL_COMPARISON_PROVIDERS = new Set\(\['amazon', 'flipkart', 'croma'\]\)/)
+assert.match(pc, /PARALLEL_COMPARISON_PROVIDERS = new Set\(\['amazon', 'flipkart', 'croma', 'reliance'\]\)/)
 assert.match(pc, /row\.status === 'pending' && \(PARALLEL_COMPARISON_PROVIDERS\.has\(row\.provider\) \|\| !sharedBusy\)/)
 assert.match(pc, /const laneKey = 'commerce-browser:' \+ owner \+ \(parallel \? ':' \+ provider : ''\)/)
 // Every read-modify-write of the saved comparison holds the state lease, so parallel lanes never overwrite each other.

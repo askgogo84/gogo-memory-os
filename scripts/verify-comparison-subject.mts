@@ -48,3 +48,13 @@ console.log('verify-comparison-subject: subject, search start and product goto o
   assert.match(obj, /"16e", "16 Plus", "16 Pro" when "16" was asked\) is a different product/)
   console.log('verify-comparison-subject: whole model numbers and per-store question ok')
 }
+
+// 16 Oct live: "Flipkart and Croma and reliance digital" never considered Reliance Digital.
+{
+  const {parsePriceComparison, comparisonSearchUrl: searchUrl} = await import('../lib/commerce/comparison-model')
+  const parsed: any = (parsePriceComparison as any)('compare price of iPhone 16 on Flipkart and Croma and reliance digital')
+  const keys = (parsed?.providers || parsed?.metadata_json?.providers || []).map((x: any) => x.provider || x)
+  assert.ok(keys.includes('reliance'), 'reliance digital is one of the stores: ' + JSON.stringify(parsed).slice(0, 300))
+  assert.equal(searchUrl('reliance', 'iPhone 16'), 'https://www.reliancedigital.in/products?q=iPhone%2016')
+  console.log('verify-comparison-subject: reliance digital is a store')
+}
