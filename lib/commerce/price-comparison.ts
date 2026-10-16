@@ -69,7 +69,10 @@ function startedText(subject: string, providers: ComparisonProvider[], looks: Re
   const names = providers.map(p => COMPARISON_PROVIDERS[p].label)
   const list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0]
   const quick = providers.filter(p => looks[p]?.quickPrice).map(p => `• ${COMPARISON_PROVIDERS[p].label}: about ${looks[p].quickPrice}`)
-  return [`Checking *${subject}* on ${list} now. I’ll send the confirmed prices here in about 2 minutes.`,
+  // 16 Oct: say which variant is compared (the base model when no size was named) and the pincode used, so the person can correct it.
+  const pin = /^\d{6}$/.test(String(process.env.COMPARISON_PINCODE || '')) ? ` for PIN ${process.env.COMPARISON_PINCODE}` : ''
+  const base = /\biPhone\b/i.test(subject) && !/\d\s*(?:gb|tb)\b/i.test(subject) ? ' (base 128GB model, any colour; reply with a size or colour to change)' : ''
+  return [`Checking *${subject}*${base} on ${list}${pin} now. I’ll send the confirmed prices here in about 2 minutes.`,
     ...(quick.length ? ['', 'Quick look from a web search (not yet confirmed on the store pages):', ...quick] : [])].join('\n')
 }
 
