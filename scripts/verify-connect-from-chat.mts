@@ -33,7 +33,7 @@ assert.match(api, /error:'invalid_phone'/)
 const browser = read('lib/agent/secure-computer.ts')
 assert.match(browser, /const phoneCode = !secret;/)
 assert.match(browser, /'a:has-text\("Get an OTP"\)'/)
-assert.match(browser, /out\.vaultLogin=\{usernameFilled,passwordFilled:false,submitted,ambiguous,phoneCode:true,codeRequested,openerClicked\};/)
+assert.match(browser, /out\.vaultLogin=\{usernameFilled,passwordFilled:false,submitted,ambiguous,phoneCode:true,codeRequested,openerClicked,\.\.\.\(codeRequested\?\{\}:\{errorCue\}\)\};/)
 
 // The connect page and chat: method choice, back to chat with the question, Connect button, auto-send once.
 const form = read('components/dashboard/connect-site-form.tsx')

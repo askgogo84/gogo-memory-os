@@ -478,7 +478,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
           const resumeUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
           if(result.authReason==='login_unavailable'){
             const site=new URL(params.command.url).hostname.replace(/^www\./,'')
-            const text=`I couldn't open the sign-in on ${site} myself, so I stopped before entering anything.\n\nOpen this, tap Take control and sign in, then tap Resume. I'll carry on with your question from there:\n${resumeUrl}`
+            const text=`I couldn't get ${site} to send you a sign-in code, so I stopped there. Nothing else was entered or changed.\n\nOpen this, tap Take control and sign in yourself, then tap Resume. I'll carry on with your question from there:\n${resumeUrl}`
             await supabaseAdmin.from('agent_runs').update({summary:safe(text.split('\n')[0],600)}).eq('id',params.runId).eq('telegram_id',String(tg))
             return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text,blockedReason:blockReason,handledBy:'secure-browser' as const}
           }

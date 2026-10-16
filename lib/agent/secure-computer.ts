@@ -274,10 +274,25 @@ async function model(page){
         'button:has-text("Send OTP")','button:has-text("Send One Time Password")','a:has-text("Send OTP")','button:has-text("Request OTP")','a:has-text("Sign in with OTP")',
         'button:has-text("Login with OTP")','a:has-text("Login with OTP")','button:has-text("Send code")','input[type="submit"][value*="OTP" i]'
       ]);
-      if(codeButton){ await codeButton.click({timeout:10000}); submitted=true; codeRequested=true; await page.waitForTimeout(1800); }
-      else if(!passFields.length) codeRequested=true;
+      if(codeButton){ await codeButton.click({timeout:10000}); submitted=true; }
+      // 16 Oct live: Gogo told him "Swiggy sent a code" but no SMS came. Only say so when the site shows its code screen.
+      let codeScreen=false,errorCue='';
+      if(codeButton||!passFields.length){
+        for(let i=0;i<16&&!codeScreen;i++){
+          await page.waitForTimeout(500);
+          codeScreen=await page.evaluate(function(){
+            const vis=el=>{const r=el.getBoundingClientRect();return r.width>0&&r.height>0};
+            const inputs=Array.from(document.querySelectorAll('input')).filter(vis);
+            if(inputs.some(el=>/one-time-code/i.test(el.autocomplete||'')||/otp|code/i.test((el.name||'')+' '+(el.id||'')+' '+(el.placeholder||'')+' '+(el.getAttribute('aria-label')||''))))return true;
+            if(inputs.filter(el=>el.maxLength===1).length>=4)return true;
+            return /\b(?:enter|verify)\s+(?:the\s+)?(?:otp|code|one[- ]time)|\b(?:otp|code)\s+(?:has been\s+|was\s+)?sent\b|\bsent\s+(?:an?\s+|the\s+)?(?:otp|code)\b|\bresend\s+(?:otp|code)\b/i.test(String(document.body?.innerText||'').slice(0,20000));
+          }).catch(()=>false);
+        }
+        if(!codeScreen) errorCue=String(await page.evaluate(function(){const m=String(document.body?.innerText||'').match(/[^.\n]{0,60}\b(?:too many|try again|limit|blocked|captcha|not registered|invalid|something went wrong|unable)\b[^.\n]{0,60}/i);return m?m[0].replace(/\d{4,}/g,'••'):''}).catch(()=>'')).trim().slice(0,120);
+      }
+      codeRequested=codeScreen;
       const out=await model(page);
-      out.vaultLogin={usernameFilled,passwordFilled:false,submitted,ambiguous,phoneCode:true,codeRequested,openerClicked};
+      out.vaultLogin={usernameFilled,passwordFilled:false,submitted,ambiguous,phoneCode:true,codeRequested,openerClicked,...(codeRequested?{}:{errorCue})};
       console.log(JSON.stringify(out));
       return;
     }
@@ -2074,7 +2089,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
             const vaultFill=page?.vaultLogin||{}
             if(!vaultFill.usernameFilled)console.warn('VAULT_LOGIN_NOT_FILLED:',JSON.stringify({host,openerClicked:!!vaultFill.openerClicked,openerLabel:vaultFill.openerLabel||null,headerCues:vaultFill.headerCues||null,phoneCode:!!vaultFill.phoneCode,fieldsSeen:vaultFill.fieldsSeen||[],title:safeText(page?.title,80)}))
             if(vaultFill.phoneCode&&vaultFill.codeRequested){vaultPhoneCodeRequested=true;if(credential.viaWhatsAppNumber)phoneLoginViaWhatsApp=true}
-            const vaultFilled=Boolean(vaultFill.usernameFilled&&(vaultFill.passwordFilled||vaultFill.phoneCode))
+            const vaultFilled=Boolean(vaultFill.usernameFilled&&(vaultFill.passwordFilled||(vaultFill.phoneCode&&vaultFill.codeRequested)))
+            if(vaultFill.phoneCode&&vaultFill.usernameFilled&&!vaultFill.codeRequested)console.warn('VAULT_CODE_NOT_SHOWN:',JSON.stringify({host,submitted:!!vaultFill.submitted,errorCue:safeText(vaultFill.errorCue,120)}))
             if(!vaultFilled&&params.mode==='read')savedLoginMissed=true
             actionLog.push(vaultFilled
               ?{kind:'vault_login',detail:vaultFill.phoneCode?`Entered your saved ${credential.provider} number and asked for a text code`:`Used the saved ${credential.provider} login`,status:'done'}
