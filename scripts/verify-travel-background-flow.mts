@@ -187,8 +187,8 @@ assert.equal(browser.googleFlightOptionsFromEvidence({...observedGoogle,flightEv
 assert.equal(browser.browserFlightContextVisible([selected[1],selected[0],...selected.slice(2)].join('\n'),context),false,'unstructured prose keeps its direction boundary')
 assert.equal(exactRows[0].departure,'3:45 AM');assert.equal(exactRows[0].evidence,googleLabel)
 const formattedFlight=browser.formatBrowserFlightResult(context,exactRows,observedGoogle.url)
-assert.match(formattedFlight,/₹4,423/);assert.match(formattedFlight,/Open source: https:\/\/www.google.com\/travel\/flights\/search/)
-assert.match(formattedFlight,/Nothing booked or paid/);assert.match(formattedFlight,/Baggage and optional charges/)
+assert.match(formattedFlight,/Cheapest: ₹4,423 on IndiGo, non-stop\./);assert.match(formattedFlight,/https:\/\/www\.google\.com\/travel\/flights\?hl=en&gl=in&curr=INR&q=Flights%20from%20BLR%20to%20BOM/)
+assert.match(formattedFlight,/Baggage and optional charges/)
 const partyContext={...context,adults:2}
 const partyGoogle={...observedGoogle,pageText:'Prices include required taxes + fees for 2 adults.',flightEvidence:{searchControls:selected.map(label=>label.replace('1 passenger','2 passengers')),resultLabels:[googleLabel.replace('4423','8846')]}}
 const partyOptions=browser.googleFlightOptionsFromEvidence(partyGoogle,partyContext)

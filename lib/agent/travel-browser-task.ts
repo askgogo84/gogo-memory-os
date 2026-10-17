@@ -45,8 +45,23 @@ export function formatBrowserFlightResult(context:BrowserFlightContext,options:B
   const url=new URL(sourceUrl)
   if(url.protocol!=='https:'||!['google.com','www.google.com'].includes(url.hostname)||!/^\/travel\/flights(?:\/|$)/.test(url.pathname))throw new Error('flight_result_source_unverified')
   const passengers=context.adults||1
-  const rows=options.slice(0,8).map((f,i)=>`${i+1}. ${f.airline} · ${f.departure} → ${f.arrival} · ${f.stops===null?'stops not verified':f.stops===0?'non-stop':`${f.stops} stop${f.stops===1?'':'s'}`} · ${f.fareInr?`₹${f.fareInr.toLocaleString('en-IN')}${f.fareBasis==='party_total'&&f.farePassengers===passengers?` total for ${passengers} adult${passengers===1?'':'s'}`:passengers>1?' displayed fare; party total not verified':''}`:'fare not verified'}`)
-  return `Flight check · ${context.routeLabel} · ${context.whenLabel}\n${context.adults||1} adult${context.adults===1?'':'s'} · ${(context.cabin||'economy').replace(/_/g,' ')}\nSource: Google Flights, read from the live browser page\n\n${rows.join('\n')}\n\nOpen source: ${sourceUrl}\nBaggage and optional charges need final verification. Nothing booked or paid.`
+  // 17 Oct: same shape as the round trip — cheapest first, one verdict, layovers, the exact search link.
+  const sorted=oneWayDisplayOrder(options)
+  const money=(n:number)=>`₹${n.toLocaleString('en-IN')}`
+  const stops=(f:BrowserFlightOption)=>f.stops===null?'stops not verified':f.stops===0?'non-stop':`${f.stops} stop${f.stops===1?'':'s'}${f.layover?` (${f.layover})`:''}`
+  const basis=(f:BrowserFlightOption)=>f.fareBasis==='party_total'&&f.farePassengers===passengers?(passengers>1?` total for ${passengers} adults`:''):passengers>1?' (party total not verified)':''
+  const rows=sorted.map((f,i)=>`${i+1}. ${f.fareInr?money(f.fareInr):'fare not verified'}${f.fareInr?basis(f):''} · ${f.airline}\n   ${f.departure} → ${f.arrival} · ${stops(f)}`)
+  const best=sorted.find(f=>f.fareInr), nonstop=sorted.find(f=>f.stops===0&&f.fareInr)
+  const verdict=best?[`Cheapest: ${money(best.fareInr!)} on ${best.airline}, ${best.stops===0?'non-stop':`${best.stops} stop${best.stops===1?'':'s'}`}.`,
+    ...(nonstop&&nonstop!==best?[`Cheapest non-stop: ${money(nonstop.fareInr!)} on ${nonstop.airline}.`]:[])]:[]
+  return [`*${context.routeLabel}* · ${context.whenLabel}`,`${passengers} adult${passengers===1?'':'s'} · ${(context.cabin||'economy').replace(/_/g,' ')} · one-way`,'',...verdict,'',...rows,'',
+    'Fares from Google Flights, read just now; they move, so open the link to confirm. Baggage and optional charges are extra. Say “book the cheapest” to book.',
+    context.origin?.code&&context.destination?.code&&context.startDate?oneWaySearchLink(context):sourceUrl].join('\n')
+}
+
+/** The order the person sees for a one-way result: cheapest first, top five. "Book #2" refers to this list. */
+export function oneWayDisplayOrder(options:BrowserFlightOption[]){
+  return [...options].sort((a,b)=>(a.fareInr??Infinity)-(b.fareInr??Infinity)).slice(0,5)
 }
 
 export function browserFlightContextVisible(pageText: string, context: BrowserFlightContext) {
@@ -127,13 +142,45 @@ export function browserFlightControlsMatch(values:unknown,context:BrowserFlightC
   if(!from||!to||!context.origin?.code||!context.destination?.code)return false
   if(!new RegExp(`\\b${context.origin.code}\\b`,'i').test(from)||!new RegExp(`\\b${context.destination.code}\\b`,'i').test(to))return false
   if(!labels.some(label=>/Change ticket type\. One way/i.test(label)))return false
-  // Controls are sorted for planner relevance. Their array order is not route
-  // direction; use explicit observed field identities before prose validation.
-  return browserFlightContextVisible([from,to,...labels.filter(label=>label!==from&&label!==to)].join('\n'),context)
+  // 17 Oct: the departure day is verified on every row; the selected cabin must be visibly shown.
+  const cabin=(context.cabin||'economy').replace(/_/g,' ')
+  if(!labels.some(label=>new RegExp(`seating class\\.\\s*${cabin}\\b`,'i').test(label)))return false
+  // The passenger count shown must be the one asked for, and a "Track prices … departing" label, when Google
+  // shows one, must carry the requested date.
+  const people=labels.find(label=>/^\d+ passengers?\b/i.test(label))
+  if(people&&Number(people.match(/^(\d+)/)![1])!==(context.adults||1))return false
+  const track=labels.find(label=>/^Track prices from .+ departing \d{4}-\d{2}-\d{2}/i.test(label))
+  if(track&&!track.includes(`departing ${context.startDate}`))return false
+  return true
 }
 
 // Google renders each result as an accessible link containing the complete
 // observed row. These exact labels preserve fares/times that prose can reorder.
+/**
+ * 17 Oct (live, Chrome): Google Flights ignores a q= that STARTS with "One-way flights from …" and shows its
+ * home page, so the cloud browser spent its whole budget toggling the trip type. "Flights from BLR to DEL on
+ * 2026-11-06 one way for 1 adult in economy" opens the results directly (64 rows read in Chrome).
+ */
+// Google names the airport, not always the city ("Indira Gandhi International Airport" for Delhi).
+const AIRPORT_NAMES:Record<string,RegExp>={DEL:/indira gandhi/i,BOM:/chhatrapati shivaji/i,BLR:/kempegowda/i,MAA:/chennai/i,HYD:/rajiv gandhi/i,
+  CCU:/netaji subhash/i,GOI:/\bgoa\b|mopa|dabolim|manohar/i,GOX:/mopa|manohar/i,COK:/cochin/i,AMD:/sardar vallabhbhai/i,PNQ:/pune/i,JAI:/jaipur/i,
+  LKO:/chaudhary charan singh|lucknow/i,TRV:/thiruvananthapuram|trivandrum/i,IXC:/chandigarh/i,SIN:/changi/i,DXB:/dubai/i,BKK:/suvarnabhumi/i,
+  KUL:/kuala lumpur/i,LHR:/heathrow/i,JFK:/john f\.? kennedy/i}
+export function airportMatches(text:string,place:BrowserFlightContext['origin']){
+  const t=String(text||'').toLowerCase()
+  if(!place)return false
+  if(place.label&&t.includes(place.label.toLowerCase()))return true
+  const known=place.code?AIRPORT_NAMES[place.code.toUpperCase()]:undefined
+  return Boolean(known&&known.test(t))
+}
+
+export function oneWayQuery(context:BrowserFlightContext){
+  return `Flights from ${context.origin!.code} to ${context.destination!.code} on ${context.startDate} one way${context.nonStop?' nonstop':''} for ${context.adults||1} adult${(context.adults||1)===1?'':'s'} in ${(context.cabin||'economy').replace(/_/g,' ')}`
+}
+export function oneWaySearchLink(context:BrowserFlightContext){
+  return `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(oneWayQuery(context))}`
+}
+
 export function googleFlightOptionsFromEvidence(result:any,context:BrowserFlightContext):BrowserFlightOption[]{
   try{const url=new URL(result.url);if(url.protocol!=='https:'||!['google.com','www.google.com'].includes(url.hostname)||!/^\/travel\/flights(?:\/|$)/.test(url.pathname))return []}catch{return []}
   const evidence=result.flightEvidence
@@ -150,10 +197,14 @@ export function googleFlightOptionsFromEvidence(result:any,context:BrowserFlight
   return evidence.resultLabels.flatMap((raw:any)=>{
     if(typeof raw!=='string')return []
     const label=raw.replace(/\s+/g,' ').trim()
-    const match=label.match(/^From ([\d,]+) Indian rupees\. Nonstop flight with (.+?)\. Leaves (.+?) at (\d{1,2}:\d{2} [AP]M) (on .+?) and arrives at (.+?) at (\d{1,2}:\d{2} [AP]M) (on .+?)\. Total duration /i)
-    if(!match||!departureDay.test(match[5])||!match[3].toLowerCase().includes(context.origin!.label.toLowerCase())||!match[6].toLowerCase().includes(context.destination!.label.toLowerCase()))return []
+    // 17 Oct: one-stop rows count too (cheapest is often 1 stop); the layover is kept for the reply.
+    const match=label.match(/^From ([\d,]+) Indian rupees\. (Nonstop|[1-4] stops?) flight with (.+?)\. Leaves (.+?) at (\d{1,2}:\d{2} [AP]M) (on .+?) and arrives at (.+?) at (\d{1,2}:\d{2} [AP]M) (on .+?)\. Total duration .*?(?:Layover \(1 of \d\) is an? (.+?) layover at (.+?)(?: in ([^.]+?))?\.)?(?:\s*Select flight)?\s*$/i)
+    if(!match||!departureDay.test(match[6])||!airportMatches(match[4],context.origin)||!airportMatches(match[7],context.destination))return []
     const fareInr=Number(match[1].replace(/,/g,''));if(!Number.isFinite(fareInr)||fareInr<=0)return []
-    return [{airline:match[2],departure:match[4],arrival:`${match[7]}${match[5]!==match[8]?` ${match[8]}`:''}`,stops:0,fareInr,
+    const stops=/^nonstop$/i.test(match[2])?0:Number(match[2][0])
+    if(context.nonStop&&stops!==0)return []
+    return [{airline:match[3],departure:match[5],arrival:`${match[8]}${match[6]!==match[9]?` ${match[9].replace(/^on \w+, /i,'')}`:''}`,stops,fareInr,
+      ...(match[10]?{layover:`${match[10]} in ${match[12]||match[11].replace(/\s+(?:International )?Airport.*$/i,'')}`}:{}),
       fareBasis:partyTotal?'party_total' as const:'unverified' as const,...(partyTotal?{farePassengers}:{}),route:context.routeLabel,evidence:label}]
   })
 }
@@ -170,7 +221,7 @@ export async function runLiveFlightBrowserTask(params: {
   const round = context.roundTrip === true && Boolean(context.returnDate)
   const query = round
     ? roundTripQuery(context)
-    : `One-way ${context.nonStop ? 'non-stop ' : ''}flights from ${context.origin.code} to ${context.destination.code} on ${context.startDate} for ${context.adults || 1} adult${context.adults === 1 ? '' : 's'} in ${(context.cabin || 'economy').replace(/_/g, ' ')}`
+    : oneWayQuery(context)
   const url = `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(query)}`
   let result: Awaited<ReturnType<typeof runSecureBrowser>>
   try { result = await runSecureBrowser({
@@ -226,7 +277,7 @@ export function googleRoundTripOptionsFromEvidence(result:any,context:BrowserFli
     if(typeof raw!=='string')return []
     const label=raw.replace(/\s+/g,' ').trim()
     const m=label.match(/^From ([\d,]+) Indian rupees round trip total\. (Nonstop|[1-4] stops?) flight with (.+?)\. Leaves (.+?) at (\d{1,2}:\d{2} [AP]M) (on .+?) and arrives at (.+?) at (\d{1,2}:\d{2} [AP]M) (on .+?)\. Total duration .*?(?:Layover \(1 of \d\) is an? (.+?) layover at (.+?)(?: in ([^.]+?))?\.)?(?: Select flight)?\s*$/i)
-    if(!m||!departureDay.test(m[6])||!m[4].toLowerCase().includes(context.origin!.label.toLowerCase())||!m[7].toLowerCase().includes(context.destination!.label.toLowerCase()))return []
+    if(!m||!departureDay.test(m[6])||!airportMatches(m[4],context.origin)||!airportMatches(m[7],context.destination))return []
     const fareInr=Number(m[1].replace(/,/g,''));if(!Number.isFinite(fareInr)||fareInr<=0)return []
     const stops=/^nonstop$/i.test(m[2])?0:Number(m[2][0])
     if(context.nonStop&&stops!==0)return []
