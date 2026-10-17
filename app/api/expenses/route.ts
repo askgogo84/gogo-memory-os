@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   if (!saved) return NextResponse.json({ reply: "I couldn't save that expense just now, so nothing was logged. Please try again in a minute." })
 
   // Get today's total for context
-  const today = await getTodayExpenses(telegramId)
+  const today = await getTodayExpenses(telegramId, phone || null)
 
   const catEmoji: Record<string, string> = {
     Food: '🍜', Transport: '🚗', Bills: '⚡', Shopping: '🛍️',
@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (period === 'today') {
-    const today = await getTodayExpenses(telegramId)
+    const today = await getTodayExpenses(telegramId, phone || null)
 
     if (today.count === 0) {
       return NextResponse.json({ reply: "No expenses logged today yet.\n\nSay *spent 200 on lunch* to start tracking! 💰" })
@@ -120,7 +120,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Week or month
-  const data = await getPeriodExpenses(telegramId, period)
+  const data = await getPeriodExpenses(telegramId, period, phone || null)
   if (!data) {
     return NextResponse.json({ reply: `No expenses logged this ${period} yet.` })
   }
