@@ -113,6 +113,17 @@ export function parseClaudeResponse(raw: string): ClaudeAction {
     }
   }
 
+  // 17 Oct live: the model wrote a sentence first and "SEARCH: …" on a later line, and the raw control line
+  // reached the person. A SEARCH line anywhere is the search; the rest stays as the reply text.
+  const later = lines.findIndex((line, i) => i > 0 && /^\s*SEARCH:/.test(line))
+  if (later > 0) {
+    return {
+      type: 'search',
+      query: lines[later].replace(/^\s*SEARCH:/, '').trim(),
+      replyText: cleanReply(lines.filter((_, i) => i !== later)),
+    }
+  }
+
   return { type: 'none' }
 }
 

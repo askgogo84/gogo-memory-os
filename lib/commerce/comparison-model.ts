@@ -77,6 +77,17 @@ export function parsePriceComparison(text: string) {
     if (key === 'zomato') return compares && /\bzomato\b/.test(lower)
     return new RegExp('\\b' + key + '\\b').test(lower) || lower.includes(COMPARISON_PROVIDERS[key].domain)
   }) : priceReadProviders(text)
+  // 17 Oct live: "compare iPhone 17 256GB" named no store and went to a plain web search with wrong prices.
+  // With no store named, compare the usual ones (Wajo-style default, stated in the start message):
+  // groceries on the quick-commerce apps, everything else on the big electronics/retail stores.
+  // Two products against each other ("iPhone 17 vs Pixel 10") is a spec comparison, not a price read.
+  if (compares && providers.length === 0 && !/\b(?:vs\.?|versus)\b|\bor\b|\bwith\s+(?:the\s+)?(?:iphone|pixel|galaxy|oneplus|samsung)\b/i.test(text)
+    && /\bcompar(?:e|ison)\s+(?:the\s+)?(?:prices?\s+(?:of|for)\s+)?[a-z0-9]/i.test(text)
+    && !/\b(?:my|our|options?|plans?|insurance|policy|policies|loans?|credit cards?|cards?|banks?|schools?|colleges?|courses?|jobs?|salary|cities|hotels?|flights?|trains?|funds?|stocks?|shares|schemes?|offers|tariffs?|recharge|vs)\b/i.test(text)
+    && text.trim().split(/\s+/).length <= 9) {
+    const grocery = /\b(?:butter|milk|ghee|curd|paneer|atta|rice|dal|oil|sugar|eggs?|bread|biscuits?|chips|maggi|noodles|tea|coffee|detergent|shampoo|soap|toothpaste|fruits?|vegetables?|onions?|tomato(?:es)?|potato(?:es)?|grocer(?:y|ies)|amul|nestle|britannia|aashirvaad|tata salt|surf excel|colgate)\b/i.test(text)
+    providers.push(...(grocery ? ['zepto', 'blinkit', 'instamart'] : ['amazon', 'flipkart', 'croma', 'reliance']) as ComparisonProvider[])
+  }
   if (providers.length < (compares ? 2 : 1)) return null
   // Preserve all original criteria separately. This is a display label, never a
   // model-extracted product specification or a substitute for the full request.

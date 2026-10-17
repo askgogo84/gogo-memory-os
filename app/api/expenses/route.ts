@@ -65,10 +65,13 @@ export async function GET(req: NextRequest) {
   const period = (req.nextUrl.searchParams.get('period') || 'today') as 'today' | 'week' | 'month'
   const insight = req.nextUrl.searchParams.get('insight') === '1'
 
-  if (!phone) return NextResponse.json({ error: 'phone required' }, { status: 400 })
+  if (!phone && !req.nextUrl.searchParams.get('telegramId')) return NextResponse.json({ error: 'phone required' }, { status: 400 })
 
-  const telegramId = await resolveUser(phone)
-  if (!telegramId) return NextResponse.json({ reply: "Account not found." })
+  // 17 Oct: from the web chat the phone did not match the stored WhatsApp id ("Account not found").
+  // The trusted caller now passes the owner's telegramId as well, as POST already allows.
+  const directTelegramId = req.nextUrl.searchParams.get('telegramId')
+  const telegramId = (directTelegramId && /^\d+$/.test(directTelegramId) ? Number(directTelegramId) : null) || await resolveUser(phone)
+  if (!telegramId) return NextResponse.json({ reply: "I couldn't find your expenses yet. Log one like “spent 450 on lunch”." })
 
   const catEmoji: Record<string, string> = {
     Food: '🍜', Transport: '🚗', Bills: '⚡', Shopping: '🛍️',
