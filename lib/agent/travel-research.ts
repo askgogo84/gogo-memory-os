@@ -238,7 +238,7 @@ export function googleFlightsSearchUrl(context: TravelContext, date?: string): s
   const cabin = (context.cabin || 'economy').replace(/_/g, ' ')
   const adults = context.adults || 1
   const q = `One-way ${context.nonStop ? 'non-stop ' : ''}flights from ${origin} to ${destination} on ${when} for ${adults} adult${adults === 1 ? '' : 's'} in ${cabin}`
-  return `https://www.google.com/travel/flights?hl=en&curr=INR&q=${encodeURIComponent(q)}`
+  return `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(q)}`
 }
 
 export function verifiedProviderFlights(rows: CreditIQFlightResult[], context: TravelContext) {
