@@ -12,6 +12,9 @@ export function isFoodComparisonRequest(text:string){
     && /\b(?:burger|pizza|biryani|food|meal|dosa|sandwich|restaurant)s?\b/i.test(text)
     && /\b(?:near|nearest|nearby|delivery|swiggy|zomato|magicpin)\b/i.test(text)
     && !/\b(?:remind|remember|recipe|cook|book a table|reserve)\b/i.test(text)
+    // 18 Oct live: "best biryani places near Rajajinagar" is a where-to-eat question, not a delivery price
+    // comparison, and asked for a PIN code. Places/spots without an order word go to the normal answer.
+    && !(/\b(?:places?|spots?|joints?|outlets?|where to eat|dine|dining|eat out)\b/i.test(text) && !/\b(?:deliver(?:y|s|ed)?|order|swiggy|zomato|magicpin|cheapest|compare|price)\b/i.test(text))
 }
 
 export function foodLocationReply(text:string){

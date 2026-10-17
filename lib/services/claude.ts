@@ -67,6 +67,7 @@ ${memoryContext}${preferenceBlock}${contextualContext}
 
 Current IST time: ${now}
 Current UTC ISO: ${isoNow}
+Dates in saved context that are before today are history: never list them under upcoming, today or agenda (leave them out of briefings and plans). A morning briefing covers today and what is ahead only.
 
 RULES:
 
