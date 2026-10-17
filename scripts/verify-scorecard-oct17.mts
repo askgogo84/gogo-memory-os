@@ -65,3 +65,6 @@ assert.match(sum, /From people \(1\)\*\n1\. Srini J: Board deck review/); assert
 const pm = readFileSync('lib/bot/process-message.ts', 'utf8')
 assert.match(pm, /parseGmailReadFilter\(incomingText\),\/\\bsummar/, '"summarise my inbox" asks for a summary')
 console.log('inbox summary ok')
+const vault = readFileSync('lib/vault/credential-store.ts', 'utf8')
+assert.match(vault, /const raw=String\(ownerId\|\|''\)\.trim\(\)\.split\(':'\)\[0\]/, 'a slot-check browser id resolves to its owner')
+console.log('slot check owner ok')
