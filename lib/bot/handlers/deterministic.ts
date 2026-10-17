@@ -89,9 +89,10 @@ export async function buildDeterministicWeatherReply(userText: string, fallbackL
 
 export async function buildDeterministicGoldReply(userText: string) {
   const t = normalize(userText)
-  const query = t.includes('silver')
-    ? 'silver price today in india'
-    : 'gold price today in india'
+  const place = t.match(/\bin\s+([a-z][a-z ]{2,30}?)\s*(?:today|now|\?|$)/i)?.[1]?.trim() || 'india'
+  const query = t.toLowerCase().includes('silver')
+    ? `silver price today in ${place}`
+    : `22 carat and 24 carat gold rate per gram today in ${place}`
 
   const context = await searchWeb(query)
 

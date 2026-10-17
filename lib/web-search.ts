@@ -74,6 +74,9 @@ export async function searchWebResults(query: string, opts: WebSearchOptions = {
 const SHOPPING_RE = /\b(price|cost|cheapest|deal|deals|discount|how much|in stock|availability|buy)\b/i
 export function indiaShoppingSearch(query: string): { query: string; includeDomains: string[] } {
   if (!SHOPPING_RE.test(query)) return { query, includeDomains: [] }
+  // 18 Oct live: "petrol price in Bangalore today" was searched on Amazon/Flipkart only and returned iPhones.
+  // Fuel, metal, share, currency, fare and other market prices are not retailer products.
+  if (/\b(?:petrol|diesel|cng|lpg|fuel|gold|silver|platinum|stock|shares?|sensex|nifty|crypto|bitcoin|dollar|usd|euro|rupee rate|exchange rate|onion|tomato|vegetable|mandi|electricity|ticket|fare|flight|train|bus|rent|property|land|toll|fees?)\b/i.test(query)) return { query, includeDomains: [] }
   const q = /\b(india|inr|₹|rupee|rupees)\b/i.test(query) ? query : `${query} price in India in INR`
   return { query: q, includeDomains: ['amazon.in', 'flipkart.com', 'croma.com', 'reliancedigital.in'] }
 }

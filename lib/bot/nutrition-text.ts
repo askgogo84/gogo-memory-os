@@ -42,6 +42,9 @@ export function isNutritionLogText(text: string): boolean {
 
   // Calorie / macro vocabulary is a nutrition signal on its own (word-boundary,
   // so "carbon" ⊄ carb).
+  // 17 Oct scorecard: "calories in 2 idlis and sambar" is a question, not a meal eaten; it logged a meal.
+  // Questions about calories are answered, not logged.
+  if (/^(?:how\s+many|how\s+much|what(?:'s|\s+is|\s+are)?|calories\s+in|kcal\s+in|protein\s+in|carbs\s+in|is\s+there|does|do)\b/i.test(lower) || /\?\s*$/.test(lower)) return false
   if (/\b(calories?|kcal|protein|carbs?|macros?)\b/i.test(lower)) return true
 
   // Otherwise require an eating verb AND a recognised food word. An eating verb

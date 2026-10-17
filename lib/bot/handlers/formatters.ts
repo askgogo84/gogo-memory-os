@@ -12,17 +12,14 @@ function getBlocks(searchContext: string) {
 function extractPrices(text: string) {
   const cleaned = normalize(text)
 
-  const price24 =
-    cleaned.match(/24\s*K[T]?\s*(?:Gold)?[^₹]{0,40}₹\s?([\d,]+(?:\.\d+)?)/i) ||
-    cleaned.match(/24\s*karat[^₹]{0,40}₹\s?([\d,]+(?:\.\d+)?)/i)
-
-  const price22 =
-    cleaned.match(/22\s*K[T]?\s*(?:Gold)?[^₹]{0,40}₹\s?([\d,]+(?:\.\d+)?)/i) ||
-    cleaned.match(/22\s*karat[^₹]{0,40}₹\s?([\d,]+(?:\.\d+)?)/i)
-
-  const price18 =
-    cleaned.match(/18\s*K[T]?\s*(?:Gold)?[^₹]{0,40}₹\s?([\d,]+(?:\.\d+)?)/i) ||
-    cleaned.match(/18\s*karat[^₹]{0,40}₹\s?([\d,]+(?:\.\d+)?)/i)
+  // 18 Oct live: "gold rate today in Bangalore" found results but no rate — sites write "24 Carat",
+  // "Rs." or "INR" and put the rate further from the label. Accept all of those.
+  const cur = '(?:₹|rs\\.?|inr)'
+  const rate = (k: string) =>
+    cleaned.match(new RegExp(`${k}\\s*(?:k|kt|karat|carat|ct)\\b[^₹]{0,80}?${cur}\\s?([\\d,]{3,}(?:\\.\\d+)?)`, 'i'))
+  const price24 = rate('24')
+  const price22 = rate('22')
+  const price18 = rate('18')
 
   const silver =
     cleaned.match(/silver[^₹]{0,60}₹\s?([\d,]+(?:\.\d+)?)/i) ||
@@ -69,11 +66,16 @@ export function formatGoldAnswer(userText: string, searchContext: string) {
   if (prices.p22) lines.push(`22K: ₹${prices.p22}`)
   if (prices.p18) lines.push(`18K: ₹${prices.p18}`)
 
+  const place = userText.match(/\bin\s+([a-z][a-z ]{2,30}?)\s*(?:today|now|\?|$)/i)?.[1]?.trim()
+  const where = place && !/^india$/i.test(place) ? place.replace(/\b\w/g, c => c.toUpperCase()) : 'India'
   if (!lines.length) {
-    return `I found live gold results, but couldn't cleanly extract the latest rates.`
+    const firstUseful = blocks.slice(0, 2).map(b => normalize(b.split('\n').filter(l => !/^Source:/i.test(l)).join(' ')).slice(0, 220)).filter(Boolean)
+    return firstUseful.length
+      ? `*Gold rate results (${where}):*\n${firstUseful.map(x => `• ${x}`).join('\n')}\n\nThe pages did not state a clean per-gram rate, so check the jeweller's own board before buying.`
+      : `I found live gold results, but couldn't cleanly extract the latest rates.`
   }
 
-  return `*Gold price today in India:*\n${lines.join('\n')}`
+  return `*Gold price today in ${where}:*\n${lines.join('\n')}`
 }
 
 export function formatIplStandingsAnswer(searchContext: string) {

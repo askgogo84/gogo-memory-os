@@ -29,4 +29,8 @@ const src = readFileSync('lib/agent/flight-booking.ts', 'utf8')
 assert.match(src, /approvalAction: 'booking' as const, flow: 'provider_booking'/, 'goes through the approved provider_booking path')
 assert.match(src, /Reply \*APPROVE\*/)
 assert.doesNotMatch(src, /console\.log/, 'no passenger data in logs')
+// 18 Oct: one-way results can be booked too.
+const oneWayObj = b.flightBookingObjective({context: {origin: {code: 'BLR'}, destination: {code: 'DEL'}, startDate: '2026-11-06', cabin: 'economy', adults: 1}, option: {airline: 'Air India Express', departure: '9:15 PM', stops: 1, fareInr: 14448} as any, travellers: p.travellers.slice(0, 1)})
+assert.match(oneWayObj, /one-way BLR to DEL, depart 2026-11-06, 1 adult/); assert.doesNotMatch(oneWayObj, /return/)
+assert.match(src, /oneWayDisplayOrder\(flights/, 'a one-way result is booked from the list the person saw')
 console.log('flight booking ok')

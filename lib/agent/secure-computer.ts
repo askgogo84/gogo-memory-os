@@ -611,7 +611,7 @@ async function model(page){
         .map(c=>c.label).concat(Array.from(document.querySelectorAll('[role="switch"][aria-label]')).filter(visible)
           .map(el=>clean(el.getAttribute('aria-label'))).filter(label=>/^Track prices from .+ to .+ departing \d{4}-\d{2}-\d{2}(?: and returning \d{4}-\d{2}-\d{2})?$/i.test(label))),
       resultLabels:Array.from(document.querySelectorAll('[role="link"][aria-label]')).filter(visible)
-        .map(el=>clean(el.getAttribute('aria-label'))).filter(label=>/^From [\d,]+ Indian rupees(?: round trip total)?\. .+ flight with .+\. Leaves .+ and arrives at .+\. Total duration /i.test(label)).slice(0,40)
+        .map(el=>clean(el.getAttribute('aria-label'))).filter(label=>/^From [\d,]+ Indian rupees(?: round trip total)?\. .+ flight with .+\. Leaves .+ and arrives at .+\. Total duration /i.test(label)).slice(0,80)
     }:undefined;
     return {
       url:location.href,title:document.title,

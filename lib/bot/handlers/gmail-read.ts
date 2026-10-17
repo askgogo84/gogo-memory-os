@@ -58,7 +58,24 @@ function matchesFilter(row: any, filter?: GmailReadFilter) {
   return true
 }
 
-export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unread'='latest',maxResults=5,filter?:GmailReadFilter){
+// 17 Oct scorecard: "summarise my inbox" listed five raw emails. A summary groups them: what needs the person,
+// and how many are promotions/notifications (by sender), from the latest 15.
+const AUTOMATED_SENDER=/\b(?:no-?reply|noreply|do-?not-?reply|promo|promotions?|newsletter|offers?|marketing|deals|notifications?|alerts?|updates?|mailer|info@|news@)\b/i
+export function summariseInbox(rows:any[]){
+  const automated=rows.filter(row=>AUTOMATED_SENDER.test(String(row.from||'')))
+  const people=rows.filter(row=>!automated.includes(row))
+  const name=(from:string)=>clean(String(from||'').replace(/<[^>]*>/g,'').replace(/"/g,''),40)||'Unknown sender'
+  const senders=Array.from(new Set(automated.map(row=>name(row.from)))).slice(0,6)
+  const lines=[`📧 *Inbox summary* (latest ${rows.length})`]
+  if(people.length){
+    lines.push('',`*From people (${people.length})*`)
+    people.slice(0,6).forEach((row,i)=>lines.push(`${i+1}. ${name(row.from)}: ${clean(redactEmailAuthSecrets(String(row.subject||'(no subject)')),110)}`))
+  } else lines.push('','Nothing from a person; all automated mail.')
+  if(automated.length)lines.push('',`*Promotions and notifications (${automated.length})*: ${senders.join(', ')}${automated.length>senders.length?' and others':''}`)
+  return lines.join('\n')
+}
+
+export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unread'='latest',maxResults=5,filter?:GmailReadFilter,summarise=false){
   const access=await gmailAccess(telegramId)
   if(access.disabled)return 'Google Workspace access is turned off in your privacy settings.'
   if(!access.connected){
@@ -81,6 +98,10 @@ export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unrea
     return mode==='unread'?'You have no unread emails in the current Gmail view.':'I could not find recent Gmail messages.'
   }
 
+  if(summarise&&!filtered){
+    const more=mode==='unread'?await fetchUnreadEmails(access.accessToken,15):await fetchLatestEmails(access.accessToken,15)
+    return `${summariseInbox(more.length?more:rows)}\n\nSay “show my latest emails” for the full list. I have not sent, deleted, archived or modified anything.`
+  }
   const heading=mode==='unread'?'📧 *Unread emails*':filtered?'📧 *Matching emails*':'📧 *Latest emails*'
   const lines=rows.map((row:any,index:number)=>{
     const from=clean(row.from,120)
