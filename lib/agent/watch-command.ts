@@ -708,6 +708,7 @@ export function parseWebWatchCommand(text: string) {
     delivery: 'both',
     // News changes over hours, not minutes; a 15-minute search cadence would only add cost.
     cadenceMinutes: /\b(?:every\s+(?:day|morning|evening|night)|each\s+(?:day|morning)|daily)\b/i.test(raw) ? 1440 : news ? 180 : 15,
+    ...(/\b(?:every\s+(?:day|morning|evening|night)|each\s+(?:day|morning)|daily)\b/i.test(raw) ? { requestedCadenceMinutes: 1440 } : {}),
     originalRequest:raw,
     notifyOnFirstMatch:true,
   })
@@ -1301,11 +1302,11 @@ export async function tryCreateWebWatchFromCommand(params: {
   }
 
   const urgent = isUrgentWatchRequest(params.text)
-  const cadenceMinutes = initialWatcherCadence({
+  const cadenceMinutes = Math.max(initialWatcherCadence({
     budget,
     urgent,
     activeWatcherCount: activeWatcherCount + 1,
-  })
+  }), Number((parsed as any).requestedCadenceMinutes) || 0)
   const burstUntil = urgent && budget.burstHours > 0
     ? new Date(Date.now() + budget.burstHours * 3600_000).toISOString()
     : null

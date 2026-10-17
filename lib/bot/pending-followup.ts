@@ -90,7 +90,8 @@ export function resolvePendingCalendar(ctx: PendingCalendarCtx, answerRaw: strin
 }
 
 const NEW_COMMAND_VERB =
-  /^(?:remind|add|show|view|open|create|schedule|book|set\s+up|put|delete|cancel|remove|clear|list|check|uncheck|mark|connect|plan|log|track|save|remember|find|search|invite|refer|upgrade|subscribe|help|menu|dashboard)\b/i
+  // 17 Oct scorecard: "draft an email to … moved to Tuesday" was read as the date for a pending meeting.
+  /^(?:remind|add|show|view|open|create|schedule|book|set\s+up|put|delete|cancel|remove|clear|list|check|uncheck|mark|connect|plan|log|track|save|remember|find|search|invite|refer|upgrade|subscribe|help|menu|dashboard|draft|write|send|email|mail|compose|reply|make|compare|research|watch|summari[sz]e|translate|explain)\b/i
 
 export function looksLikeNewCommand(text: string): boolean {
   const l = (text || '').toLowerCase().trim()

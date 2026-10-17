@@ -14,22 +14,31 @@ function getTodayRange(tz = 'Asia/Kolkata') {
 export async function saveExpense(params: {
   telegramId: number
   expense: ExpenseEntry
+  whatsappId?: string | null
 }) {
-  const { error, data } = await supabaseAdmin
-    .from('expenses')
-    .insert({
-      telegram_id: params.telegramId,
-      amount: params.expense.amount,
-      category: params.expense.category,
-      description: params.expense.description,
-      raw_text: params.expense.rawText,
-      logged_at: new Date().toISOString(),
-    })
-    .select('id')
-    .single()
-
-  if (error) console.error('[expense-storage] save failed:', error.message)
-  return data
+  const row: Record<string, unknown> = {
+    telegram_id: params.telegramId,
+    // The original table requires whatsapp_id; the owner is still identified by telegram_id.
+    whatsapp_id: params.whatsappId || String(params.telegramId),
+    amount: params.expense.amount,
+    category: params.expense.category,
+    description: params.expense.description,
+    raw_text: params.expense.rawText,
+    logged_at: new Date().toISOString(),
+  }
+  // 17 Oct live: production never got the raw_text column (expenses-v2.sql), so every insert failed.
+  // A column the table does not have is dropped and the insert retried, once per missing column.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const { error, data } = await supabaseAdmin.from('expenses').insert(row).select('id').single()
+    if (!error) return data
+    const missing = String(error.message || '').match(/Could not find the '([a-z_]+)' column/)
+    if (!missing || !(missing[1] in row) || missing[1] === 'amount' || missing[1] === 'telegram_id') {
+      console.error('[expense-storage] save failed:', error.message)
+      return null
+    }
+    delete row[missing[1]]
+  }
+  return null
 }
 
 // ── Get today's expenses ──────────────────────────────────────────────────────

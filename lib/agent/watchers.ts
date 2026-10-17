@@ -183,6 +183,8 @@ export function normalizeWebSearchWatcher(input: any): WebSearchWatcherCondition
     notifyOnFirstMatch:input?.notifyOnFirstMatch===true && input?.contextual!==true,
     priceRule:normalizePriceRule(input?.priceRule)||undefined,
     originalRequest:String(input?.originalRequest||'').trim().slice(0,2000)||undefined,
+    // A cadence the person asked for ("every morning") is a floor the adaptive schedule never goes below.
+    ...(Number(input?.requestedCadenceMinutes)>=60?{requestedCadenceMinutes:Math.min(24*60,Math.floor(Number(input.requestedCadenceMinutes)))}:{}),
     ...normalizeContextualMeta(input) }
 }
 
@@ -1052,7 +1054,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
 
   if (!results.length) {
     const quietChecks = currentQuiet + 1
-    const cadenceMinutes = adaptiveWatcherCadence({
+    const cadenceMinutes = Math.max(adaptiveWatcherCadence({
       budget,
       activeWatcherCount:activeCount,
       quietChecks,
@@ -1060,7 +1062,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       usageRatio:allowance.state?.usageRatio || 0,
       burstUntil:condition.burstUntil,
       now,
-    })
+    }), Number((condition as any).requestedCadenceMinutes)||0)
     await supabaseAdmin.from('agent_watchers').update({
       cadence_minutes:cadenceMinutes,
       condition_json:{ ...condition, cadenceMinutes },
@@ -1160,7 +1162,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
   const suppressedReason = !isBaseline && !candidate && sawUnverified ? 'unverified_context'
     : !isBaseline && candidate && !alertGate.allowed ? alertGate.reason : null
   const quietChecks = material || isBaseline ? 0 : currentQuiet + 1
-  const cadenceMinutes = adaptiveWatcherCadence({
+  const cadenceMinutes = Math.max(adaptiveWatcherCadence({
     budget,
     activeWatcherCount:activeCount,
     quietChecks,
@@ -1168,7 +1170,7 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     usageRatio:allowance.state?.usageRatio || 0,
     burstUntil:condition.burstUntil,
     now,
-  })
+  }), Number((condition as any).requestedCadenceMinutes)||0)
 
   let notificationAccepted = condition.delivery === 'app'
   if (material && candidate) {

@@ -226,7 +226,8 @@ export function parseSplitIntent(input: string): SplitIntent {
     if (headCount && Number(headCount[1]) >= 2) {
       members = ['Me', ...Array.from({ length: Number(headCount[1]) - 1 }, (_, i) => `Person ${i + 2}`)]
       // A quick head-count split is its own bill, not an addition to the last trip group.
-      if (!groupName) groupName = `Split ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}`
+      // Two quick splits on the same day must not merge their Person 2/3 balances, so the name carries the time.
+      if (!groupName) groupName = `Split ${new Date().toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }).replace(/,/g, '')}`
     }
 
     if (allocationResult.allocations.length) members = allocationResult.allocations.map((a) => a.member)
