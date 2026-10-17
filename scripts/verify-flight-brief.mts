@@ -86,7 +86,7 @@ for (const leg of legs) assert.equal(t.isPublicTravelResearchRequest(leg.text), 
 const legPrefs = t.flightSearchPreferences(legs[0].text)
 assert.deepEqual([legPrefs.adults, legPrefs.cabin], [2, 'business'])
 assert.match(t.flightSearchStartedText(step.brief), /exactly these dates/)
-assert.match(t.flightSearchStartedText(step.brief), /never book, pay or enter traveller details/)
+assert.match(t.flightSearchStartedText(step.brief), /book the cheapest/)
 
 // 6. "go" skips the optional questions with stated defaults; a bare number answers travellers.
 const defaults = t.applyFlightBriefReply(first, ['trip', 'travellers', 'cabin'], 'go', now, tz)

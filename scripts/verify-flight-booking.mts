@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict'
+process.env.ANTHROPIC_API_KEY ||= 'test'
+const b = await import('../lib/agent/flight-booking.ts')
+const r = b.flightBookingRequest
+assert.deepEqual(r('book the cheapest'), {kind: 'cheapest'})
+assert.deepEqual(r('Yes go ahead and book the cheapest one'), {kind: 'cheapest'})
+assert.deepEqual(r('book #2'), {kind: 'number', n: 2})
+assert.deepEqual(r('book option 3'), {kind: 'number', n: 3})
+assert.deepEqual(r('please book the second one'), {kind: 'number', n: 2})
+assert.deepEqual(r('book the non-stop'), {kind: 'nonstop'})
+assert.deepEqual(r('book it'), {kind: 'cheapest'})
+for (const no of ['book a table at Toit', 'book a cab to airport', 'book a hotel in Singapore', 'book a doctor appointment', 'book https://x.com/a', 'what is the weather', 'I booked already']) assert.equal(r(no), null, no)
+const p = b.parseTravellers('Asha Rao, 12 Mar 1985\nRavi Kumar S 03/11/1990', new Date('2026-10-17'))
+assert.deepEqual(p.travellers, [{name: 'Asha Rao', dob: '12 Mar 1985'}, {name: 'Ravi Kumar S', dob: '3 Nov 1990'}])
+assert.equal(p.problems.length, 0)
+assert.equal(b.parseTravellers('Asha, 12 Mar 1985').problems.length, 1, 'single name refused')
+assert.equal(b.parseTravellers('Asha Rao').problems.length, 1, 'missing dob refused')
+assert.equal(b.parseTravellers('Asha Rao 31 Feb 1985').problems.length, 1, 'impossible date refused')
+assert.equal(b.parseTravellers('Asha Rao 12 Mar 2030', new Date('2026-10-17')).problems.length, 1, 'future dob refused')
+const context: any = {origin: {code: 'BLR'}, destination: {code: 'SIN'}, startDate: '2026-10-28', returnDate: '2026-11-02', cabin: 'economy', adults: 1}
+const option: any = {airline: 'Air India', departure: '7:00 PM', stops: 1, fareInr: 28443}
+const obj = b.flightBookingObjective({context, option, travellers: p.travellers.slice(0, 1)})
+assert.ok(obj.length < 1700)
+assert.match(obj, /never pay, never enter card, UPI or bank details, never press Pay/)
+assert.match(obj, /more than 10% above/)
+assert.match(obj, /Asha Rao/)
+const { readFileSync } = await import('node:fs')
+const src = readFileSync('lib/agent/flight-booking.ts', 'utf8')
+assert.match(src, /approvalAction: 'booking' as const, flow: 'provider_booking'/, 'goes through the approved provider_booking path')
+assert.match(src, /Reply \*APPROVE\*/)
+assert.doesNotMatch(src, /console\.log/, 'no passenger data in logs')
+console.log('flight booking ok')

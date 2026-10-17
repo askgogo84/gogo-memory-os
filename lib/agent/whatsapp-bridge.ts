@@ -1,4 +1,5 @@
 import { tryRunWorkspaceDriveContext } from './workspace-drive-context'
+import {tryFlightBooking} from './flight-booking'
 import { tryAccountSiteAnswer, accountSiteFromText } from './account-site-gate'
 import { tryTypedTimeRouting } from './typed-time-routing'
 import { executeApprovedCalendarUpdate } from './calendar-update'
@@ -386,6 +387,11 @@ async function learnedReturn(actor:AgentActor,text:string,result:any,fallbackHan
 // that question. It is not a vague reference to some other item, so it gets first refusal before the
 // semantic ambiguity guard. Only a fresh, owner-bound pending question can claim it.
 export async function tryAnswerOpenFlightQuestion(params:{user:ResolvedUser;text:string}){
+  const bookingActor=actorFromResolvedUser(params.user)
+  if(bookingActor){
+    const booking=await tryFlightBooking({actor:bookingActor,surface:'whatsapp',text:params.text})
+    if(booking)return booking as any
+  }
   if(!isTravelResearchDetailsReply(params.text))return null
   const actor=actorFromResolvedUser(params.user)
   if(!actor)return null

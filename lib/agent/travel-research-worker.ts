@@ -1,10 +1,12 @@
 import {supabaseAdmin} from '@/lib/supabase-admin'
+import {purgeFlightBookingPii} from './flight-booking'
 import {resolveAgentActor} from './actor'
 import {runQueuedTravelResearch} from './travel-research-queue'
 import {deliverNotification} from '@/lib/services/notification-delivery'
 import {sendWhatsApp} from '@/lib/whatsapp'
 
 export async function processTravelResearchQueue(deadline: number) {
+  await purgeFlightBookingPii().catch(() => 0)
   const staleBefore = new Date(Date.now()-10*60_000).toISOString()
   const {data:stale,error:staleError} = await supabaseAdmin.from('agent_runs').select('id,metadata_json,updated_at')
     .eq('type','travel_research').eq('metadata_json->>background_travel','true').eq('status','running')

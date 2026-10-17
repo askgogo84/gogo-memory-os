@@ -236,12 +236,17 @@ export function googleRoundTripOptionsFromEvidence(result:any,context:BrowserFli
   })
 }
 
+/** The order the person sees: cheapest first, top five. "Book #2" refers to this list. */
+export function roundTripDisplayOrder(options:BrowserFlightOption[]){
+  return [...options].filter(o=>o.fareInr).sort((a,b)=>a.fareInr!-b.fareInr!).slice(0,5)
+}
+
 /** Cheapest first, one plain verdict. Prices are Google's round-trip totals and move between reads. */
 export function formatRoundTripResult(context:BrowserFlightContext,options:BrowserFlightOption[],sourceUrl:string){
   const url=new URL(sourceUrl)
   if(url.protocol!=='https:'||!['google.com','www.google.com'].includes(url.hostname)||!/^\/travel\/flights(?:\/|$)/.test(url.pathname))throw new Error('flight_result_source_unverified')
   const passengers=context.adults||1
-  const sorted=[...options].filter(o=>o.fareInr).sort((a,b)=>a.fareInr!-b.fareInr!).slice(0,5)
+  const sorted=roundTripDisplayOrder(options)
   const money=(n:number)=>`₹${n.toLocaleString('en-IN')}`
   const basis=(o:BrowserFlightOption)=>o.fareBasis==='party_total'&&o.farePassengers===passengers?(passengers>1?` total for ${passengers} adults`:''):' (party total not verified)'
   const stops=(o:BrowserFlightOption)=>o.stops===null?'stops not verified':o.stops===0?'non-stop':`${o.stops} stop${o.stops===1?'':'s'}${o.layover?` (${o.layover})`:''}`
