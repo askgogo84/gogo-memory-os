@@ -71,7 +71,11 @@ function startedText(subject: string, providers: ComparisonProvider[], looks: Re
   const quick = providers.filter(p => looks[p]?.quickPrice).map(p => `• ${COMPARISON_PROVIDERS[p].label}: about ${looks[p].quickPrice}`)
   // 16 Oct: say which variant is compared (the base model when no size was named) and the pincode used, so the person can correct it.
   const pin = /^\d{6}$/.test(String(process.env.COMPARISON_PINCODE || '')) ? ` for PIN ${process.env.COMPARISON_PINCODE}` : ''
-  const base = /\biPhone\b/i.test(subject) && !/\d\s*(?:gb|tb)\b/i.test(subject) ? ' (base 128GB model, any colour; reply with a size or colour to change)' : ''
+  // Default and say so: no size → 128GB; no tier word → the base model, never Pro/Pro Max/Air.
+  const isPhone = /\biPhone\b/i.test(subject)
+  const plainModel = isPhone && !/\b(?:pro|max|plus|mini|air|e)\b/i.test(subject)
+  const base = isPhone && (plainModel || !/\d\s*(?:gb|tb)\b/i.test(subject))
+    ? ` (${plainModel ? 'the standard model, not Pro/Pro Max/Air' : 'this model'}${/\d\s*(?:gb|tb)\b/i.test(subject) ? '' : ', 128GB'}, any colour; to change it, send the full name like “compare iPhone 17 Pro 256GB”)` : ''
   return [`Checking *${subject}*${base} on ${list}${pin} now. I’ll send the confirmed prices here in about 2 minutes.`,
     ...(quick.length ? ['', 'Quick look from a web search (not yet confirmed on the store pages):', ...quick] : [])].join('\n')
 }
