@@ -2340,6 +2340,15 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // One bounded recovery for the actual travel adapter: use only an
       // observed public Search control after both airports/date are populated.
       // It still passes the worker's read action gates and final evidence checks.
+      // 17 Oct 10:44: the planner clicked a flight row, Google moved to the return-leg picker ("Singapore to
+      // Bengaluru") and no round-trip prices were left to read. A public fare read never opens a result.
+      if(publicFlightRead){
+        for(let i=actions.length-1;i>=0;i--){
+          const a:any=actions[i]
+          const label=a.kind==='click_text'?String(a.text||''):a.kind==='click'?String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||''):''
+          if(label&&/^From [\d,]+ Indian rupees|\bflight with\b|^Select flight|\bSelect (?:this )?flight\b|^Book\b|^Continue\b/i.test(label))actions.splice(i,1)
+        }
+      }
       if(params.mode==='read'&&params.recoverFlightSearch&&!actions.length&&!flightSearchRecoveryUsed){
         const recovery=recoverGoogleFlightSearch(page)
         if(recovery){actions.push(recovery);flightSearchRecoveryUsed=true}
