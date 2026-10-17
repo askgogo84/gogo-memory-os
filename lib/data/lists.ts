@@ -41,6 +41,19 @@ export type AddToListResult = {
 // "already there" rather than silently stacking a duplicate. addToList() is the thin
 // items-only wrapper kept for the machine-generated callers (reels, tickets, notes…)
 // that only want the array back.
+const ONE_ITEM_PAIRS = /^(?:salt and pepper|mac and cheese|bread and butter|fish and chips|rock and roll|black and white|sweet and sour|peanut butter and jelly|pros and cons|dal and rice)$/i
+/** Short grocery-style phrases joined by commas or "and" are separate items; longer tasks stay whole. */
+export function splitListItems(items: string[]) {
+  return items.flatMap(item => {
+    const text = String(item || '').trim()
+    if (!text || ONE_ITEM_PAIRS.test(text)) return [text]
+    const parts = text.split(/\s*,\s*|\s+(?:and|&)\s+/i).map(part => part.trim()).filter(Boolean)
+    // Only split short noun phrases ("milk and eggs"), never sentences ("call mom and ask about dinner").
+    if (parts.length < 2 || parts.some(part => part.split(/\s+/).length > 3) || /\b(?:call|email|ask|tell|book|pay|send|meet|check|buy|pick|drop|go|visit)\b/i.test(text)) return [text]
+    return parts
+  }).filter(Boolean)
+}
+
 export async function addToListDetailed(
   telegramId: number,
   listName: string,
@@ -51,6 +64,8 @@ export async function addToListDetailed(
   // label across days — never dedupe those (see DEDUPE_EXEMPT_BUCKETS). Only user-facing
   // lists (grocery, weekend, todo…) get the "already there" / reactivate treatment.
   const dedupe = !DEDUPE_EXEMPT_BUCKETS.has(name)
+  // 17 Oct scorecard: "add milk and eggs to my shopping list" saved one item "milk and eggs".
+  if (dedupe) items = splitListItems(items)
 
   const { data: existing } = await supabaseAdmin
     .from('lists')
