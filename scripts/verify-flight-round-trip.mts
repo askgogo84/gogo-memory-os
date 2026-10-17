@@ -36,3 +36,10 @@ assert.ok(text.indexOf('₹28,443') < text.indexOf('₹39,203'), 'cheapest first
 assert.doesNotMatch(text, /CreditIQ|reward|points/i)
 assert.throws(() => t.formatRoundTripResult(context, options, 'https://www.google.com.evil.example/travel/flights'))
 console.log('verify-flight-round-trip: ok')
+// 17 Oct: the cloud browser runs outside India and Google priced the search for the US (the cheaper Air India
+// fares were missing). The search link must set India as the country, with INR.
+import { readFileSync } from 'node:fs'
+assert.match(readFileSync('lib/agent/travel-browser-task.ts', 'utf8'), /travel\/flights\?hl=en&gl=in&curr=INR/)
+assert.match(readFileSync('lib/agent/travel-research.ts', 'utf8'), /travel\/flights\?hl=en&gl=in&curr=INR/)
+// The reply links to the exact search (both dates, India pricing), not the bare Google Flights home.
+assert.match(text, /https:\/\/www\.google\.com\/travel\/flights\?hl=en&gl=in&curr=INR&q=Round%20trip%20flights%20from%20BLR%20to%20SIN%20departing%202026-10-28%20returning%202026-11-02/)

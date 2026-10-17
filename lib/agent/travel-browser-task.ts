@@ -33,6 +33,14 @@ export type BrowserFlightOption = {
   evidence: string
 }
 
+/** The exact search the person can open themselves: same route, both dates, passengers, cabin, India pricing. */
+export function roundTripQuery(context:BrowserFlightContext){
+  return `Round trip ${context.nonStop ? 'non-stop ' : ''}flights from ${context.origin?.code} to ${context.destination?.code} departing ${context.startDate} returning ${context.returnDate} for ${context.adults || 1} adult${context.adults === 1 ? '' : 's'} in ${(context.cabin || 'economy').replace(/_/g, ' ')}`
+}
+export function roundTripSearchLink(context:BrowserFlightContext){
+  return `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(roundTripQuery(context))}`
+}
+
 export function formatBrowserFlightResult(context:BrowserFlightContext,options:BrowserFlightOption[],sourceUrl:string){
   const url=new URL(sourceUrl)
   if(url.protocol!=='https:'||!['google.com','www.google.com'].includes(url.hostname)||!/^\/travel\/flights(?:\/|$)/.test(url.pathname))throw new Error('flight_result_source_unverified')
@@ -161,9 +169,9 @@ export async function runLiveFlightBrowserTask(params: {
 
   const round = context.roundTrip === true && Boolean(context.returnDate)
   const query = round
-    ? `Round trip ${context.nonStop ? 'non-stop ' : ''}flights from ${context.origin.code} to ${context.destination.code} departing ${context.startDate} returning ${context.returnDate} for ${context.adults || 1} adult${context.adults === 1 ? '' : 's'} in ${(context.cabin || 'economy').replace(/_/g, ' ')}`
+    ? roundTripQuery(context)
     : `One-way ${context.nonStop ? 'non-stop ' : ''}flights from ${context.origin.code} to ${context.destination.code} on ${context.startDate} for ${context.adults || 1} adult${context.adults === 1 ? '' : 's'} in ${(context.cabin || 'economy').replace(/_/g, ' ')}`
-  const url = `https://www.google.com/travel/flights?hl=en&curr=INR&q=${encodeURIComponent(query)}`
+  const url = `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(query)}`
   let result: Awaited<ReturnType<typeof runSecureBrowser>>
   try { result = await runSecureBrowser({
     userId:params.actor.userId,
@@ -245,5 +253,5 @@ export function formatRoundTripResult(context:BrowserFlightContext,options:Brows
   return [`*${context.routeLabel}* · ${dayLabel(context.startDate!)} → back ${dayLabel(context.returnDate!)}`,
     `${passengers} adult${passengers===1?'':'s'} · ${(context.cabin||'economy').replace(/_/g,' ')} · round trip`,'',...verdict,'',...rows,'',
     'Round-trip totals from Google Flights, read just now; fares move, so open the link to confirm before you book. You pick the return flight on the next page. Baggage and optional charges are extra.',
-    sourceUrl].join('\n')
+    roundTripSearchLink(context)].join('\n')
 }
