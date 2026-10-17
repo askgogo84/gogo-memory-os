@@ -89,7 +89,10 @@ export function browserPageAllowlist(url:string):Record<string,string[]>{
     hosts.push(...GOOGLE_FLIGHTS_PAGE_DEPENDENCIES)
   // 17 Oct 12:06: on Google Flights' booking page, "Continue to book with IndiGo" opens the airline. A booking
   // follows that one hand-off, so the airlines and Indian agencies Google lists there are reachable from it.
-  if((host==='www.google.com'||host==='google.com') && /^\/travel\/flights\/booking(?:\/|$)/.test(target.pathname))
+  // 17 Oct 16:52: the managed browser fixes its allowlist from the FIRST url of the run (the search, not
+  // /travel/flights/booking), so IndiGo's flight-select-redirection page was refused. Any Google Flights page
+  // may hand off to these sites; a fare read still never clicks a result or leaves Google.
+  if((host==='www.google.com'||host==='google.com') && /^\/travel\/flights(?:\/|$)/.test(target.pathname))
     for(const site of FLIGHT_BOOKING_HANDOFF_SITES)hosts.push(site,`*.${site}`)
   if(host==='huggingface.co'||host==='www.huggingface.co')hosts.push(...HUGGING_FACE_PAGE_DEPENDENCIES)
   if(host==='playo.co'||host==='www.playo.co')hosts.push(...PLAYO_PAGE_DEPENDENCIES)
