@@ -14,6 +14,8 @@ type BrowserFlightContext = {
   cabin?: string
   adults?: number
   nonStop?: boolean
+  returnDate?: string
+  roundTrip?: boolean
 }
 
 export type BrowserFlightOption = {
@@ -22,6 +24,9 @@ export type BrowserFlightOption = {
   arrival: string
   stops: number | null
   fareInr: number | null
+  /** Round-trip fares are the airline total for both directions, as Google shows it. */
+  roundTrip?: boolean
+  layover?: string
   fareBasis?: 'party_total' | 'unverified'
   farePassengers?: number
   route: string
@@ -154,13 +159,16 @@ export async function runLiveFlightBrowserTask(params: {
   const { context } = params
   if (!context.origin?.code || !context.destination?.code || !context.startDate) return null
 
-  const query = `One-way ${context.nonStop ? 'non-stop ' : ''}flights from ${context.origin.code} to ${context.destination.code} on ${context.startDate} for ${context.adults || 1} adult${context.adults === 1 ? '' : 's'} in ${(context.cabin || 'economy').replace(/_/g, ' ')}`
+  const round = context.roundTrip === true && Boolean(context.returnDate)
+  const query = round
+    ? `Round trip ${context.nonStop ? 'non-stop ' : ''}flights from ${context.origin.code} to ${context.destination.code} departing ${context.startDate} returning ${context.returnDate} for ${context.adults || 1} adult${context.adults === 1 ? '' : 's'} in ${(context.cabin || 'economy').replace(/_/g, ' ')}`
+    : `One-way ${context.nonStop ? 'non-stop ' : ''}flights from ${context.origin.code} to ${context.destination.code} on ${context.startDate} for ${context.adults || 1} adult${context.adults === 1 ? '' : 's'} in ${(context.cabin || 'economy').replace(/_/g, ' ')}`
   const url = `https://www.google.com/travel/flights?hl=en&curr=INR&q=${encodeURIComponent(query)}`
   let result: Awaited<ReturnType<typeof runSecureBrowser>>
   try { result = await runSecureBrowser({
     userId:params.actor.userId,
     url,
-    objective:`Read actual flight rows for ${query}. Before Search, explicitly set ${context.adults||1} adult${context.adults===1?'':'s'}, one-way and ${(context.cabin||'economy').replace(/_/g,' ')} using the observed controls; query URL prose does not set them. User research criteria: ${params.objective}. Verify the selected route, departure date, passengers and cabin using visible search controls. For the party total, read the visible "Prices include required taxes + fees for ... adults" statement; do not multiply a per-person or unknown fare. Report airline, departure, arrival and INR fare evidence. Do not book, purchase, sign in or submit passenger/payment information.`,
+    objective:`Read actual flight rows for ${query}. Before Search, explicitly set ${context.adults||1} adult${context.adults===1?'':'s'}, ${round?'round trip with the exact departure and return dates':'one-way'} and ${(context.cabin||'economy').replace(/_/g,' ')} using the observed controls; query URL prose does not set them. User research criteria: ${params.objective}. Verify the selected route, departure date, passengers and cabin using visible search controls. For the party total, read the visible "Prices include required taxes + fees for ... adults" statement; do not multiply a per-person or unknown fare. Report airline, departure, arrival and INR fare evidence. Do not book, purchase, sign in or submit passenger/payment information.`,
     mode:'read',recoverFlightSearch:true,
     readDeadline:Number.isFinite(params.deadline)?params.deadline!-30_000:undefined,
   }) } catch (error: any) {
@@ -174,11 +182,68 @@ export async function runLiveFlightBrowserTask(params: {
   if (result.status === 'blocked') {
     return { status:'blocked' as const, options:[] as BrowserFlightOption[], browser:result, source:'google-flights-browser' as const }
   }
-  const observedOptions=googleFlightOptionsFromEvidence(result,context)
-  const options = (observedOptions.length?observedOptions:await extractFlightOptions(result.pageText, context)).filter(option => !context.nonStop || option.stops === 0)
+  const observedOptions=round?googleRoundTripOptionsFromEvidence(result,context):googleFlightOptionsFromEvidence(result,context)
+  const options = (observedOptions.length||round?observedOptions:await extractFlightOptions(result.pageText, context)).filter(option => !context.nonStop || option.stops === 0)
   console.log('TRAVEL_BROWSER_EVIDENCE:',JSON.stringify({status:result.status,observedRows:result.flightEvidence?.resultLabels?.length||0,
     selectedControls:result.flightEvidence?.searchControls?.length||0,contextMatches:browserFlightControlsMatch(result.flightEvidence?.searchControls,context),
     orderedTextContextMatches:browserFlightContextVisible(result.flightEvidence?.searchControls?.join('\n')||result.pageText,context),
     dateMatches:result.flightEvidence?.searchControls?.some(label=>label.includes(context.startDate||'invalid-date'))===true,verifiedRows:options.length}))
   return { status:'completed' as const, options, browser:result, source:'google-flights-browser' as const }
+}
+
+/**
+ * 17 Oct: a round trip is read as ONE Google Flights search for the exact dates. Each row is a link labelled
+ * "From 28443 Indian rupees round trip total. 1 stop flight with Air India. Leaves ... at 7:00 PM on Wednesday,
+ * October 28 and arrives at ... Total duration 11 hr 10 min. Layover (1 of 1) is a 3 hr 15 min layover at ...".
+ * The price is the round-trip total; one-way labels and rows for another day are refused.
+ */
+export function googleRoundTripOptionsFromEvidence(result:any,context:BrowserFlightContext):BrowserFlightOption[]{
+  try{const url=new URL(result.url);if(url.protocol!=='https:'||!['google.com','www.google.com'].includes(url.hostname)||!/^\/travel\/flights(?:\/|$)/.test(url.pathname))return []}catch{return []}
+  const evidence=result.flightEvidence
+  if(!context.roundTrip||!context.startDate||!context.returnDate||!context.origin?.code||!context.destination?.code)return []
+  if(!Array.isArray(evidence?.searchControls)||!Array.isArray(evidence?.resultLabels))return []
+  const labels=evidence.searchControls.filter((v:any)=>typeof v==='string') as string[]
+  const from=labels.find(l=>/^Where from\?/i.test(l)),to=labels.find(l=>/^Where to\?/i.test(l))
+  if(!from||!to||!new RegExp(`\\b${context.origin.code}\\b`,'i').test(from)||!new RegExp(`\\b${context.destination.code}\\b`,'i').test(to))return []
+  if(!labels.some(l=>/Change ticket type\. Round trip/i.test(l)))return []
+  // The dates are verified from Google's own label for this search, not from the URL we asked for.
+  if(!labels.some(l=>l.includes(`departing ${context.startDate} and returning ${context.returnDate}`)))return []
+  const date=new Date(`${context.startDate}T00:00:00Z`)
+  const basis=String(evidence.fareBasisLabel||result.pageText||'').match(/Prices include required taxes\s*\+\s*fees for (one|[1-9]) adults?\b/i)
+  const farePassengers=basis?.[1]?.toLowerCase()==='one'?1:Number(basis?.[1])
+  const partyTotal=Number.isInteger(farePassengers)&&farePassengers===(context.adults||1)
+  const month=new Intl.DateTimeFormat('en',{month:'long',timeZone:'UTC'}).format(date)
+  const departureDay=new RegExp(`\\bon \\w+, ${month} ${date.getUTCDate()}$`,'i')
+  return evidence.resultLabels.flatMap((raw:any)=>{
+    if(typeof raw!=='string')return []
+    const label=raw.replace(/\s+/g,' ').trim()
+    const m=label.match(/^From ([\d,]+) Indian rupees round trip total\. (Nonstop|[1-4] stops?) flight with (.+?)\. Leaves (.+?) at (\d{1,2}:\d{2} [AP]M) (on .+?) and arrives at (.+?) at (\d{1,2}:\d{2} [AP]M) (on .+?)\. Total duration .*?(?:Layover \(1 of \d\) is an? (.+?) layover at (.+?)(?: in ([^.]+?))?\.)?(?: Select flight)?\s*$/i)
+    if(!m||!departureDay.test(m[6])||!m[4].toLowerCase().includes(context.origin!.label.toLowerCase())||!m[7].toLowerCase().includes(context.destination!.label.toLowerCase()))return []
+    const fareInr=Number(m[1].replace(/,/g,''));if(!Number.isFinite(fareInr)||fareInr<=0)return []
+    const stops=/^nonstop$/i.test(m[2])?0:Number(m[2][0])
+    if(context.nonStop&&stops!==0)return []
+    return [{airline:m[3],departure:m[5],arrival:`${m[8]}${m[6]!==m[9]?` ${m[9].replace(/^on \w+, /i,'')}`:''}`,stops,fareInr,roundTrip:true,
+      ...(m[10]?{layover:`${m[10]} in ${m[12]||m[11].replace(/\s+(?:International )?Airport.*$/i,'')}`}:{}),
+      fareBasis:partyTotal?'party_total' as const:'unverified' as const,...(partyTotal?{farePassengers}:{}),route:context.routeLabel,evidence:label}]
+  })
+}
+
+/** Cheapest first, one plain verdict. Prices are Google's round-trip totals and move between reads. */
+export function formatRoundTripResult(context:BrowserFlightContext,options:BrowserFlightOption[],sourceUrl:string){
+  const url=new URL(sourceUrl)
+  if(url.protocol!=='https:'||!['google.com','www.google.com'].includes(url.hostname)||!/^\/travel\/flights(?:\/|$)/.test(url.pathname))throw new Error('flight_result_source_unverified')
+  const passengers=context.adults||1
+  const sorted=[...options].filter(o=>o.fareInr).sort((a,b)=>a.fareInr!-b.fareInr!).slice(0,5)
+  const money=(n:number)=>`₹${n.toLocaleString('en-IN')}`
+  const basis=(o:BrowserFlightOption)=>o.fareBasis==='party_total'&&o.farePassengers===passengers?(passengers>1?` total for ${passengers} adults`:''):' (party total not verified)'
+  const stops=(o:BrowserFlightOption)=>o.stops===null?'stops not verified':o.stops===0?'non-stop':`${o.stops} stop${o.stops===1?'':'s'}${o.layover?` (${o.layover})`:''}`
+  const rows=sorted.map((o,i)=>`${i+1}. ${money(o.fareInr!)}${basis(o)} · ${o.airline}\n   Out ${o.departure} → ${o.arrival} · ${stops(o)}`)
+  const best=sorted[0], nonstop=sorted.find(o=>o.stops===0)
+  const verdict=best?[`Cheapest round trip: ${money(best.fareInr!)} on ${best.airline}, ${best.stops===0?'non-stop':`${best.stops} stop${best.stops===1?'':'s'}`}.`,
+    ...(nonstop&&nonstop!==best?[`Cheapest non-stop: ${money(nonstop.fareInr!)} on ${nonstop.airline}.`]:[])]:[]
+  const dayLabel=(iso:string)=>new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(`${iso}T00:00:00Z`))
+  return [`*${context.routeLabel}* · ${dayLabel(context.startDate!)} → back ${dayLabel(context.returnDate!)}`,
+    `${passengers} adult${passengers===1?'':'s'} · ${(context.cabin||'economy').replace(/_/g,' ')} · round trip`,'',...verdict,'',...rows,'',
+    'Round-trip totals from Google Flights, read just now; fares move, so open the link to confirm before you book. You pick the return flight on the next page. Baggage and optional charges are extra.',
+    sourceUrl].join('\n')
 }

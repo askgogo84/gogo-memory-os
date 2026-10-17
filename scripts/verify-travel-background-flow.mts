@@ -290,14 +290,13 @@ turn=await say('yes')
 // 17 Oct: travellers, cabin and time are not asked; the search starts with 1 adult, economy, any time and says so.
 assert.equal(turn.handledBy,'travel-research-queued');assert.match(turn.text,/1 adult, economy, round trip/);assert.match(turn.text,/exactly these dates/);assert.match(turn.text,/never book, pay/)
 assert.doesNotMatch(turn.text,/CreditIQ|reward/i)
-assert.equal(tables.agent_runs.length,2,'one saved search per direction')
-const legInputs=tables.agent_runs.map((row:any)=>row.metadata_json.input_text).sort()
-assert.deepEqual(legInputs,['Compare flights from BLR to SIN on 2026-10-27 for 1 adult in economy. Research only; do not book or pay.','Compare flights from SIN to BLR on 2026-11-02 for 1 adult in economy. Research only; do not book or pay.'])
-const outbound=tables.agent_runs.find((row:any)=>row.metadata_json.context.origin.code==='BLR').metadata_json.context
-assert.equal(outbound.destination.code,'SIN');assert.equal(outbound.adults,1);assert.equal(outbound.cabin,'economy');assert.equal(outbound.startDate,'2026-10-27')
+assert.equal(tables.agent_runs.length,1,'a round trip is one saved search for both exact dates')
+assert.equal(tables.agent_runs[0].metadata_json.input_text,'Compare round trip flights from BLR to SIN departing 2026-10-27 returning 2026-11-02 for 1 adult in economy. Research only; do not book or pay.')
+const outbound=tables.agent_runs[0].metadata_json.context
+assert.equal(outbound.origin.code,'BLR');assert.equal(outbound.destination.code,'SIN');assert.equal(outbound.adults,1);assert.equal(outbound.cabin,'economy');assert.equal(outbound.startDate,'2026-10-27');assert.equal(outbound.returnDate,'2026-11-02');assert.equal(outbound.roundTrip,true)
 // Once searched, a stray "yes" or an unrelated message is not read as an answer.
 assert.equal(await queue.enqueueTravelResearch({actor,surface:'web',text:'yes'}),null)
-assert.equal(tables.agent_runs.length,2)
+assert.equal(tables.agent_runs.length,1)
 tables.agent_runs.length=0;tables.conversations.length=0
 // The mobile/agent API must persist its clarification too: follow-up requests
 // and cross-surface replies share the same owned conversation boundary.
@@ -338,7 +337,7 @@ assert.equal(tables.agent_runs[0].status,'queued')
 assert.equal(browserAttempts,0)
 failPublish=true
 await Promise.all([worker.processTravelResearchQueue(Clock.now()+270000),worker.processTravelResearchQueue(Clock.now()+270000)])
-assert.equal(browserAttempts,1);assert.ok(searches>0);assert.equal(tables.agent_runs[0].status,'completed')
+assert.equal(browserAttempts,3,'17 Oct: an unreadable flight page is retried up to 3 reads before falling back');assert.ok(searches>0);assert.equal(tables.agent_runs[0].status,'completed')
 assert.equal(browserDeadline,Clock.now()+240000,'real worker → queue → research → adapter retains 30s for completion')
 assert.equal(tables.agent_runs[0].metadata_json.notified,undefined,'failed publication stays eligible')
 assert.doesNotMatch(tables.agent_runs[0].metadata_json.result_text,/₹4,999/,'undated fallback fare is withheld')

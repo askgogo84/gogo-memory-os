@@ -79,9 +79,9 @@ assert.deepEqual(t.flightBriefSlots(step.brief), [])
 
 // 5. Each direction is a complete search of its own.
 const legs = t.flightLegs(step.brief)
-assert.equal(legs.length, 2)
-assert.equal(legs[0].text, 'Compare flights from BLR to SIN on 2026-10-27 for 2 adults in business, departing in the morning. Research only; do not book or pay.')
-assert.equal(legs[1].text, 'Compare flights from SIN to BLR on 2026-11-02 for 2 adults in business, departing in the morning. Research only; do not book or pay.')
+// 17 Oct: a round trip is ONE search for both exact dates; Google returns the round-trip total.
+assert.equal(legs.length, 1)
+assert.equal(legs[0].text, 'Compare round trip flights from BLR to SIN departing 2026-10-27 returning 2026-11-02 for 2 adults in business, departing in the morning. Research only; do not book or pay.')
 for (const leg of legs) assert.equal(t.isPublicTravelResearchRequest(leg.text), true, leg.text)
 const legPrefs = t.flightSearchPreferences(legs[0].text)
 assert.deepEqual([legPrefs.adults, legPrefs.cabin], [2, 'business'])
