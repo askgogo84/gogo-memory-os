@@ -42,3 +42,7 @@ assert.match(text, /• \*Croma\*: ₹67,900 · checked [^\n]+\n  Apple iPhone 1
 assert.match(text, /Lowest listed price: Croma, ₹67,900\./)
 assert.doesNotMatch(text, /app\.askgogo\.in|read-only|verifiable|provider page/)
 console.log('verify-comparison-fast: parallel lanes, immediate start, quick look and crisp reply ok')
+
+// 17 Oct: default and say so; never imply a reply flow that does not exist.
+assert.match(pc, /the standard model, not Pro\/Pro Max\/Air/)
+assert.doesNotMatch(pc, /reply with a size or colour to change/)

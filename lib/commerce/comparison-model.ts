@@ -368,6 +368,7 @@ export function comparisonWhatsAppSummary(task: PriceComparison) {
     ...(pending ? ['I’ll send the rest here when it’s done.'] : []),
     ...(matchedOnCode ? ['I matched this on the model code only. If it’s not the product you meant, send the full name.'] : []),
     'Listed prices only; delivery and bank offers not included.',
+    'Want another model or size? Send it in full, like “compare iPhone 17 Pro 256GB”.',
   ].join('\n')
 }
 
