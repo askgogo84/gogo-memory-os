@@ -295,7 +295,8 @@ export async function executeTravelResearch(params:{actor:AgentActor;surface:Age
   let browserReadDiagnostics: BrowserReadDiagnostic[] = []
   try{
     await supabaseAdmin.from('agent_runs').update({summary:'Checking live provider inventory.',progress:25,updated_at:new Date().toISOString()}).eq('id',runId)
-    const live=await tryCreditIQLive(context,params.actor)
+    // 17 Oct: flight searches read the flight sites directly (Google Flights); CreditIQ rewards are not part of a fare search.
+    const live=context.kind==='flight'?null:await tryCreditIQLive(context,params.actor)
     console.log('TRAVEL_INVENTORY_RESULT:',{runId,source:live?.source||'unavailable',live:live?.live===true,
       eligibleCount:live?.flights.length||0,requiresServiceAuth:live?.requiresServiceAuth===true})
     if(live?.live&&live.flights.length){const completedAt=new Date().toISOString();const timedLive=applyTimeOfDay(live.flights,(f:any)=>f.departure,context.timeOfDay);const top=timedLive.rows.slice(0,8);const rewardsLine=live.identity?.pointsAware?`Rewards: linked CreditIQ wallet · ${live.identity.verifiedBalances} verified balance${live.identity.verifiedBalances===1?'':'s'}`:live.identity?.linked?'Rewards: CreditIQ is linked, but wallet balances were unavailable for this search':'Rewards: CreditIQ account not linked';const text=`Flight task completed · ${context.routeLabel} · ${context.whenLabel}\n${rewardsLine}\n\n${timedLive.note}${top.map(formatLiveFlight).join('\n\n')}`;await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context,liveInventory:live,source:'creditiq',inventoryType:'live-provider'},completed_at:completedAt}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed',`Task completed with ${top.length} live provider options.`,{travel_engine:'creditiq'});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'creditiq-travel' as const}}
@@ -493,11 +494,10 @@ export function flightBriefSlots(brief: FlightBrief): FlightBriefSlot[] {
   if (slots.length) return slots
   if (brief.returnSuggestion && !brief.returnDate) slots.push('return_confirm')
   if (brief.useDefaults) return slots
+  // 17 Oct: travellers, cabin and time are never asked up front. They default to 1 adult, economy, any time,
+  // are stated in the reply, and can be set in the request itself. Only a missing trip type or return date blocks.
   if (!brief.tripType) slots.push('trip')
   else if (brief.tripType === 'round_trip' && !brief.returnDate && !brief.returnSuggestion) slots.push('return')
-  if (brief.adults === undefined) slots.push('travellers')
-  if (!brief.cabin) slots.push('cabin')
-  if (!brief.timeOfDay) slots.push('time')
   return slots
 }
 
@@ -557,5 +557,5 @@ export function flightSearchStartedText(brief: FlightBrief): string {
   const perAdult = b.children || b.infants ? ' Fares are per adult; child and infant fares can differ.' : ''
   return `Searching ${cityOf(b, 'origin')} to ${cityOf(b, 'destination')}, ${when}: ${travellersLabel(b)}, ${CABIN_TEXT[b.cabin!]}, ${b.timeOfDay && b.timeOfDay !== 'any' ? `${b.timeOfDay} departures, ` : ''}${round ? 'round trip' : 'one-way'}.\n\n` +
     `${round ? 'Outbound and return are searched separately, so I will send two results; two one-way fares added together can differ from an airline round-trip fare. ' : ''}` +
-    `I'm checking in the background and will send the options with prices here when it finishes. I only read fares. I never book, pay or enter traveller details.${perAdult}`
+    `I'm checking the flight sites for exactly these dates and will send the cheapest options here when it finishes. To change travellers or cabin, send the request again, like “flights BLR to SIN 28 Oct, back 2 Nov, 2 adults, business”. I only read fares. I never book, pay or enter traveller details.${perAdult}`
 }
