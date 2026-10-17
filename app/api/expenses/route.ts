@@ -32,7 +32,9 @@ export async function POST(req: NextRequest) {
   const expense = await parseExpenseText(text)
   if (!expense) return NextResponse.json({ understood: false, reply: null })
 
-  await saveExpense({ telegramId, expense })
+  // 17 Oct live: the insert failed (production table lacks raw_text) and the reply still said "Logged".
+  const saved = await saveExpense({ telegramId, expense, whatsappId: phone || null })
+  if (!saved) return NextResponse.json({ reply: "I couldn't save that expense just now, so nothing was logged. Please try again in a minute." })
 
   // Get today's total for context
   const today = await getTodayExpenses(telegramId)
@@ -70,7 +72,7 @@ export async function GET(req: NextRequest) {
   // 17 Oct: from the web chat the phone did not match the stored WhatsApp id ("Account not found").
   // The trusted caller now passes the owner's telegramId as well, as POST already allows.
   const directTelegramId = req.nextUrl.searchParams.get('telegramId')
-  const telegramId = (directTelegramId && /^\d+$/.test(directTelegramId) ? Number(directTelegramId) : null) || await resolveUser(phone)
+  const telegramId = (directTelegramId && /^-?\d+$/.test(directTelegramId) ? Number(directTelegramId) : null) || await resolveUser(phone)
   if (!telegramId) return NextResponse.json({ reply: "I couldn't find your expenses yet. Log one like “spent 450 on lunch”." })
 
   const catEmoji: Record<string, string> = {

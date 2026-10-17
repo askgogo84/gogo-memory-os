@@ -153,6 +153,18 @@ function formatClock12(t: { hour: number; minute: number } | null | undefined) {
   return `${h}:${String(t.minute).padStart(2, '0')} ${mer}`
 }
 
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+export function weekdayDateParts(lower: string) {
+  const m = lower.match(/\b(?:on\s+|this\s+|next\s+|coming\s+)?(sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)(?:day|nesday|sday|urday|rsday)?\b/)
+  if (!m || /\bevery\b/.test(lower)) return null
+  const want = WEEKDAYS.findIndex(d => d.startsWith(m[1].slice(0, 3)))
+  if (want < 0) return null
+  const todayName = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', weekday: 'long' }).format(new Date()).toLowerCase()
+  const today = WEEKDAYS.indexOf(todayName)
+  const ahead = ((want - today + 7) % 7) || 7
+  return istDatePartsPlusDays(ahead)
+}
+
 function targetParts(target: CalendarDateTarget) {
   if (target === 'tomorrow') return istDatePartsPlusDays(1)
   if (target === 'day_after_tomorrow') return istDatePartsPlusDays(2)
@@ -419,7 +431,9 @@ export function parseCalendarCreate(text: string) {
   // A calendar CREATE with a time but NO explicit date must ASK for the date — never silently
   // default to today (which produced a wrong-day event the user then approved). An explicit date is
   // an absolute date OR an explicit relative day; targetFromText's "today" default does NOT count.
-  const absolute = parseAbsoluteDate(text)
+  // 17 Oct scorecard: "add a meeting with Srini on Monday at 5pm" asked "which date?". A weekday names the
+  // next such day in India time ("next Monday" too); today's weekday means the same day next week.
+  const absolute = parseAbsoluteDate(text) || weekdayDateParts(lower)
   const hasExplicitRelativeDay = /\b(?:today|tonight|tomorrow|day after tomorrow)\b/i.test(lower)
   if (!absolute && !hasExplicitRelativeDay) {
     return { needsDate: true, time, title: conciseAppointmentTitle(text) }
