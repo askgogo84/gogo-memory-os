@@ -46,7 +46,16 @@ export function redactSecretShapedText(content: string): string {
   let out = String(content)
 
   // Preserve the label/context and replace only its value.
-  out = out.replace(LABELED_SECRET_VALUE_RE, (_match, label) => `${label} [sensitive detail withheld]`)
+  // 18 Oct live: "my passport expires in March 2028" became "my passport [sensitive detail withheld]" (the /i
+  // flag let any word count as a value). Only an identifier-shaped value — with a digit, not a sentence about
+  // dates — is withheld.
+  out = out.replace(LABELED_SECRET_VALUE_RE, (match, label, value) => {
+    const v = String(value || '')
+    const sentence = /\b(?:expires?|expiry|expired|valid|renew(?:al|ed)?|issued|until|till|due|in|on|from|at)\b/i.test(v.split(/\s+/).slice(0, 2).join(' '))
+    // Passwords, keys and the like are always withheld; only passport/PIN-style labels need an identifier value.
+    if (!/^(?:passport|pin)\b/i.test(String(label))) return `${label} [sensitive detail withheld]`
+    return /\d/.test(v) && !sentence ? `${label} [sensitive detail withheld]` : match
+  })
 
   // Generated authenticated report links carry UUIDs, whose first group can be
   // all digits. Preserve only these exact first-party routes, never arbitrary

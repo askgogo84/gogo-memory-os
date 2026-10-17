@@ -313,6 +313,16 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
       const score=tokens.filter(t=>labelTokens.has(t)).length
       return {row,label,score}
     }).filter((x:any)=>x.score>0).sort((a:any,b:any)=>b.score-a.score)
+    // 18 Oct live: "stop watching Infosys news" (no Infosys watch) listed Tata Motors and AI news because both
+    // share "news". A generic word alone never picks a watch when the name has a distinctive word.
+    const GENERIC=new Set(['news','price','prices','alert','alerts','update','updates','watch','daily','latest','web','search'])
+    const distinctive=tokens.filter(t=>!GENERIC.has(t))
+    if(distinctive.length){
+      for(let i=ranked.length-1;i>=0;i--){
+        const labelTokens=new Set(watcherIdentityTokens(String(ranked[i].label)))
+        if(!distinctive.some(t=>labelTokens.has(t)))ranked.splice(i,1)
+      }
+    }
     const best:any=ranked[0],second:any=ranked[1]
     if(best&&second?.score===best.score){
       const tied=ranked.filter((x:any)=>x.score===best.score)

@@ -1192,7 +1192,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if (intent.type === 'list_show') {
     const listName = extractListNameFromText(incomingText)
     const list = await getList(resolvedUser.telegramId, listName)
-    const reply = list ? formatList(list.list_name, list.items || []) : `I could not find a list called "${listName}".`
+    const reply = list ? formatList(list.list_name, list.items || []) : (await goalsReplyFor(resolvedUser.telegramId, listName)) || `I could not find a list called "${listName}".`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -1466,7 +1466,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   if (parsed.type === 'list_show') {
     const list = await getList(resolvedUser.telegramId, parsed.listName)
-    finalReply = list ? formatList(list.list_name, list.items || []) : `I could not find a list called "${parsed.listName}".`
+    finalReply = list ? formatList(list.list_name, list.items || []) : (await goalsReplyFor(resolvedUser.telegramId, parsed.listName)) || `I could not find a list called "${parsed.listName}".`
   }
   if (parsed.type === 'list_check' || parsed.type === 'list_uncheck') {
     const done = parsed.type === 'list_check'
@@ -1525,3 +1525,16 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
 
 
+
+
+// 18 Oct live: "show my goals" answered "I could not find a list called goals" although a goal was active.
+// Goals live in agent_goals, not in lists.
+async function goalsReplyFor(telegramId: number, listName: string): Promise<string | null> {
+  if (!/^(?:my\s+)?(?:active\s+)?goals?$/i.test(String(listName || '').trim())) return null
+  const { supabaseAdmin } = await import('@/lib/supabase-admin')
+  const { data, error } = await supabaseAdmin.from('agent_goals').select('title,status')
+    .eq('telegram_id', String(telegramId)).in('status', ['active', 'blocked', 'waiting']).order('updated_at', { ascending: false }).limit(10)
+  if (error) return null
+  if (!data?.length) return 'You have no active goals. Start one like “set a goal to walk 8000 steps daily”.'
+  return `🎯 *Your goals*\n\n${data.map((g: any, i: number) => `${i + 1}. ${g.title}${g.status === 'active' ? '' : ` (${g.status})`}`).join('\n')}\n\nProgress is in *Dashboard → Goals*.`
+}

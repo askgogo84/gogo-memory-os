@@ -53,7 +53,9 @@ export async function askClaude(
     ? `\n\nWhat you remember about ${userName}:\n${memories.map((m, i) => `${i + 1}. ${m}`).join('\n')}`
     : ''
 
-  const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+  // 18 Oct live: "18/10/2026, 1:10 am" carried no weekday and the model called Sunday "Saturday" in the
+  // morning briefing and "plan my week". The weekday is spelled out.
+  const now = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date())
   const isoNow = new Date().toISOString()
 
   const contextualContext = contextualBlock ? `\n\n${contextualBlock}` : ''
