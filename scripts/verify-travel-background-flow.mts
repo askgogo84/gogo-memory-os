@@ -97,7 +97,7 @@ queue = load('lib/agent/travel-research-queue.ts',{
   './brain-runtime-guard':{acquireBrainUserLease:async()=>({ownerToken:'fixture'}),releaseBrainUserLease:async()=>{}},
 })
 const worker = load('lib/agent/travel-research-worker.ts',{
-  '@/lib/supabase-admin':{supabaseAdmin:db},'./actor':{resolveAgentActor:async()=>actor},'./travel-research-queue':queue,
+  '@/lib/supabase-admin':{supabaseAdmin:db},'./actor':{resolveAgentActor:async()=>actor},'./travel-research-queue':queue,'./flight-booking':{purgeFlightBookingPii:async()=>0},
   '@/lib/whatsapp':{sendWhatsApp:async()=>{sent++;return {sid:'SMfixture'}}},
   '@/lib/services/notification-delivery':{deliverNotification:async(job:any)=>{
     if(notifications.has(job.key))return 'skipped'
@@ -288,7 +288,7 @@ turn=await say('27th October to 2nd October back')
 assert.match(turn.text,/Did you mean 2 Nov 2026\? Reply yes/)
 turn=await say('yes')
 // 17 Oct: travellers, cabin and time are not asked; the search starts with 1 adult, economy, any time and says so.
-assert.equal(turn.handledBy,'travel-research-queued');assert.match(turn.text,/1 adult, economy, round trip/);assert.match(turn.text,/exactly these dates/);assert.match(turn.text,/never book, pay/)
+assert.equal(turn.handledBy,'travel-research-queued');assert.match(turn.text,/1 adult, economy, round trip/);assert.match(turn.text,/exactly these dates/);assert.match(turn.text,/book the cheapest/)
 assert.doesNotMatch(turn.text,/CreditIQ|reward/i)
 assert.equal(tables.agent_runs.length,1,'a round trip is one saved search for both exact dates')
 assert.equal(tables.agent_runs[0].metadata_json.input_text,'Compare round trip flights from BLR to SIN departing 2026-10-27 returning 2026-11-02 for 1 adult in economy. Research only; do not book or pay.')

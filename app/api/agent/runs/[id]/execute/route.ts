@@ -8,6 +8,7 @@ import { executeApprovedAgentRun } from '@/lib/agent/orchestrator'
 import { executeApprovedTravelCalendarPlan } from '@/lib/agent/travel-calendar-plan'
 import { resumeApprovedGeneralPlan } from '@/lib/agent/general-planner'
 import { executeApprovedBrowserCommand } from '@/lib/agent/browser-command'
+import { purgeFlightBookingPii } from '@/lib/agent/flight-booking'
 import { finalizeApprovedAppointmentRun } from '@/lib/agent/appointment-followup'
 import { executeApprovedWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-approval'
 import { executeApprovedLifeEventCheckin } from '@/lib/agent/life-event-execution'
@@ -53,6 +54,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       // appointment_selection metadata; those are fail-closed here and only become
       // Life Events when provider confirmation plus an exact slot are verified.
       result = await finalizeApprovedAppointmentRun({ actor, runId: id, result: browserResult })
+      if (['completed', 'failed', 'cancelled'].includes(String((result as any)?.status))) await purgeFlightBookingPii({ runId: id }).catch(() => 0)
     } else if (planType === 'general_multi_tool') {
       result = await resumeApprovedGeneralPlan({ actor, runId: id })
     } else if (planType === 'workspace_meeting_prep') {
