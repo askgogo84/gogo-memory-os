@@ -1,3 +1,4 @@
+import { worldTimeReply } from './world-time'
 import { createImage, imageRequest, imageRequestRefusal } from '@/lib/services/image-reply'
 import { createPodcast, createVoiceNote, podcastRequest, wantsVoiceReply } from '@/lib/services/voice-reply'
 import { unsupportedCapability } from './unsupported-capabilities'
@@ -1413,13 +1414,19 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   // Deterministic memory save: "remember X" / "remember that X" always persists
   // (and, via awaited indexMemory inside saveMemory, always gets embedded for search).
+  const worldTime = worldTimeReply(incomingText)
+  if (worldTime) {
+    await saveConversation(resolvedUser.telegramId, 'assistant', worldTime)
+    return { text: formatOutgoingText(params.channel, worldTime), resolvedUser }
+  }
+
   if (intent.type === 'save_memory') {
     const fact = incomingText
       .replace(/^\s*(?:please\s+)?remember(?:\s+that)?\s+/i, '')
       .replace(/^\s*save this memory[:\s]*/i, '')
       .trim() || incomingText.trim()
     await saveMemory(resolvedUser.telegramId, fact)
-    const reply = `Got it \u2014 I'll remember that ${fact}.`
+    const reply = `Got it \u2014 I'll remember that ${rememberedForReply(fact)}.`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -1537,4 +1544,14 @@ async function goalsReplyFor(telegramId: number, listName: string): Promise<stri
   if (error) return null
   if (!data?.length) return 'You have no active goals. Start one like “set a goal to walk 8000 steps daily”.'
   return `🎯 *Your goals*\n\n${data.map((g: any, i: number) => `${i + 1}. ${g.title}${g.status === 'active' ? '' : ` (${g.status})`}`).join('\n')}\n\nProgress is in *Dashboard → Goals*.`
+}
+
+// 18 Oct live: "remember that my gym locker number is 42" was echoed as "I'll remember that my gym locker…".
+// The saved fact keeps the user's words; only the reply speaks to them.
+export function rememberedForReply(fact: string): string {
+  const swap: Record<string, string> = { i: 'you', "i'm": "you're", 'i’m': 'you’re', me: 'you', my: 'your', mine: 'yours', myself: 'yourself', am: 'are', "i've": "you've", "i'll": "you'll" }
+  return String(fact).replace(/\b(?:i'm|i’m|i've|i'll|i|me|my|mine|myself)\b/gi, w => {
+    const out = swap[w.toLowerCase()] || w
+    return w[0] === w[0].toUpperCase() && w.toLowerCase() !== 'i' ? out[0].toUpperCase() + out.slice(1) : out
+  }).replace(/\byou am\b/gi, 'you are').replace(/\byou was\b/gi, 'you were')
 }
