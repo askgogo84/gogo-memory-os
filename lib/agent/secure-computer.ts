@@ -2301,7 +2301,10 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         assessedReadPage=page
         if(readAnswer)break
       }
-      const loginFirst=Boolean(providerBooking&&params.bookingPhone&&!bookingLoggedIn&&!otpWaiting&&loggedOutCue(page))
+      // 17 Oct 11:33: a flight booking starts on Google Flights, whose "Sign in" is a Google account
+      // login, never the provider's. Logging in first there opened accounts.google.com and stopped the run.
+      const onGoogle=(()=>{try{return /(^|\.)google\.com$/i.test(new URL(String(page.url||params.url)).hostname)}catch{return false}})()
+      const loginFirst=Boolean(providerBooking&&params.bookingPhone&&!bookingLoggedIn&&!otpWaiting&&!onGoogle&&loggedOutCue(page))
       const bookingPlan=providerBooking?{otpAvailable:Boolean(otpWaiting&&params.bookingOtp&&!otpUsed),phoneAvailable:Boolean(params.bookingPhone),rehearsal:params.rehearsal===true,mismatch:bookingMismatch,loginFirst}:undefined
       // 12 Oct live run: the Playo login box was open, but its mobile input has no label of its own
       // ("+91" beside it, "Enter Mobile No" above) and Send OTP stays disabled until a number is typed,
@@ -2340,6 +2343,14 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // One bounded recovery for the actual travel adapter: use only an
       // observed public Search control after both airports/date are populated.
       // It still passes the worker's read action gates and final evidence checks.
+      // On Google Flights a booking never signs in to a Google account.
+      if(providerBooking&&onGoogle){
+        for(let i=actions.length-1;i>=0;i--){
+          const a:any=actions[i]
+          const label=a.kind==='click_text'?String(a.text||''):a.kind==='click'?String((page.controls||[]).find((c:any)=>c.selector===a.selector)?.label||''):''
+          if((label&&/^sign in\b|\bgoogle account\b/i.test(label))||(a.kind==='goto'&&/accounts\.google\.com/i.test(String(a.url||''))))actions.splice(i,1)
+        }
+      }
       // 17 Oct 10:44: the planner clicked a flight row, Google moved to the return-leg picker ("Singapore to
       // Bengaluru") and no round-trip prices were left to read. A public fare read never opens a result.
       if(publicFlightRead){
