@@ -11,7 +11,10 @@ assert.equal(comparisonProductLead('flipkart', 'iPhone 16', [{ url: 'https://www
 assert.equal(comparisonSearchUrl('croma', 'iPhone 16'), 'https://www.croma.com/searchB?q=iPhone%2016%20128GB%3Arelevance&text=iPhone%2016%20128GB')
 assert.equal(comparisonSearchUrl('flipkart', 'iPhone 16'), 'https://www.flipkart.com/search?q=iPhone%2016')
 assert.equal(comparisonSearchUrl('amazon', 'iPhone 16'), 'https://www.amazon.in/s?k=iPhone%2016')
-assert.equal(comparisonSearchUrl('blinkit', 'milk'), null)
+// 18 Oct: grocery stores start on their own search results too (home page led to the wrong item).
+assert.equal(comparisonSearchUrl('blinkit', 'milk'), 'https://blinkit.com/s/?q=milk')
+assert.equal(comparisonSearchUrl('zepto', 'Amul butter 500g'), 'https://www.zepto.com/search?query=Amul%20butter%20500g')
+assert.equal(comparisonSearchUrl('swiggy', 'biryani'), null, 'food delivery keeps its own flow')
 const pc = readFileSync(new URL('../lib/commerce/price-comparison.ts', import.meta.url), 'utf8')
 assert.match(pc, /else startUrl = comparisonSearchUrl\(next\.provider, task\.metadata_json\.subject\) \|\| startUrl/)
 assert.match(comparisonObjective({ metadata_json: { request: 'x', subject: 'iPhone 16', providers: [] } } as any, 'flipkart'), /goto to its own product link rather than clicking the tile/)

@@ -22,6 +22,11 @@ export function comparisonSearchUrl(provider: ComparisonProvider, subject: strin
   if (provider === 'amazon') return `https://www.amazon.in/s?k=${q}`
   if (provider === 'croma') return `https://www.croma.com/searchB?q=${q}%3Arelevance&text=${q}`
   if (provider === 'reliance') return `https://www.reliancedigital.in/products?q=${q}`
+  // 18 Oct: grocery stores started on their home page and the browser picked the wrong item (Amul Lite spread
+  // for "Amul butter 500g") until it ran out of time. Their own search results page is the start instead.
+  if (provider === 'zepto') return `https://www.zepto.com/search?query=${q}`
+  if (provider === 'blinkit') return `https://blinkit.com/s/?q=${q}`
+  if (provider === 'instamart') return `https://www.swiggy.com/instamart/search?custom_back=true&query=${q}`
   return null
 }
 

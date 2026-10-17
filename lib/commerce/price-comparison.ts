@@ -257,7 +257,7 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
       // Start from the store's own results page instead; the product page is still required as evidence.
       if (candidate) startUrl = candidate
       else startUrl = comparisonSearchUrl(next.provider, task.metadata_json.subject) || startUrl
-    }
+    } else startUrl = comparisonSearchUrl(next.provider, task.metadata_json.subject) || startUrl
     let childId: string
     try {
       childId = await prepareLinkedBrowserRead({actor, surface: 'web', parentRunId: task.id, parentKind: 'comparison',
@@ -309,8 +309,23 @@ export async function advancePriceComparisonAll(actor: AgentActor, id: string) {
   for (let round = 0; round < 4; round++) {
     const task = await readPriceComparison(owner, id)
     if (!task) return null
-    const pending = task.metadata_json.providers.filter(row => row.status === 'pending')
-    if (!pending.length) return task
+    let pending = task.metadata_json.providers.filter(row => row.status === 'pending')
+    if (!pending.length) {
+      // 18 Oct: a store whose browser was cut off at the 300 s limit is read back as "interrupted" but was never
+      // saved, so the comparison stayed "running" forever and the one-at-a-time cron kept picking it. Save it,
+      // and give a store that has tries left another go.
+      const settled = await withComparisonState(id, async () => {
+        const fresh = await readPriceComparison(owner, id)
+        if (!fresh) return null
+        fresh.metadata_json.providers = fresh.metadata_json.providers.map(row => row.status === 'failed' && !row.evidence && (row.attempts || 1) < MAX_STORE_ATTEMPTS
+          && /interrupted|lost/.test(String(row.reason || '')) ? {provider: row.provider, status: 'pending' as const, attempts: (row.attempts || 1) + 1, ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})} : row)
+        await saveProgress(owner, fresh)
+        return fresh
+      })
+      if (!settled) return task
+      pending = settled.metadata_json.providers.filter(row => row.status === 'pending')
+      if (!pending.length) return settled
+    }
     const lanes = pending.filter(row => PARALLEL_COMPARISON_PROVIDERS.has(row.provider)).length
       + (pending.some(row => !PARALLEL_COMPARISON_PROVIDERS.has(row.provider)) ? 1 : 0)
     await Promise.all(Array.from({length: Math.max(1, lanes)}, () => advancePriceComparison(actor, id).catch((error: any) => {

@@ -13,7 +13,7 @@ export async function GET(request: Request) {
     const deadline = Date.now() + 270_000
     const {data: rows, error} = await supabaseAdmin.from('agent_runs').select('id,telegram_id')
       .eq('type', 'price_comparison').in('status', ['queued', 'running'])
-      .order('updated_at', {ascending: true}).limit(1)
+      .order('updated_at', {ascending: true}).limit(3)
     if (error) throw new Error('comparison_queue_read_failed')
     let advanceFailures = 0
     for (const row of rows || []) {
