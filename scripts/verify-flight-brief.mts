@@ -24,8 +24,11 @@ const first = t.parseFlightBriefText('Check Singapore flight from Bangalore on 2
 assert.deepEqual([first.originCode, first.destinationCode, first.departDate], ['BLR', 'SIN', '2026-10-27'])
 assert.equal(first.tripType, undefined); assert.equal(first.adults, undefined); assert.equal(first.cabin, undefined)
 // 17 Oct: only a blocking question is asked; travellers, cabin and time default (1 adult, economy, any time).
-assert.deepEqual(t.flightBriefSlots(first), ['trip'])
-const ask = t.askFlightBrief(first, t.flightBriefSlots(first))
+// 17 Oct scorecard: one date means one-way, searched at once (no "one-way or round trip?" question).
+assert.deepEqual(t.flightBriefSlots(first), [])
+assert.match(t.flightSearchStartedText(first), /one-way\./); assert.match(t.flightSearchStartedText(first), /back <date>/)
+// The trip question (still used when the person replies to an old one) keeps its wording and buttons.
+const ask = t.askFlightBrief(first, ['trip'])
 assert.match(ask, /Bengaluru to Singapore on 27 Oct 2026/)
 assert.match(ask, /\nOne-way or round trip\?\n/)
 assert.doesNotMatch(ask, /Travellers|Cabin/, 'one question at a time so each can be a tap')

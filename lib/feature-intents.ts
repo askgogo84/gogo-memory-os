@@ -199,6 +199,9 @@ async function tryHandleCalendarAccountChoice(telegramId:number,text:string):Pro
   }
   const accounts=(await getAllCalendarAccountAccess(telegramId).catch(()=>[])).filter(a=>a.email)
   const numbered=answer.match(/^([1-9])[.)]?$/)
+  // 17 Oct live: "draft an email to <gmail> saying ..." was taken as choosing the Gmail calendar. A reply that
+  // picks a calendar is short ("1", "the gmail one", "goverdhan.md@gmail.com"); a new request is not an answer.
+  if(!numbered&&(answer.split(/\s+/).length>5||looksLikeNewCommand(answer)||/^(?:draft|write|send|email|mail|compose|reply|remind|book|find|search|compare|show|what|how|create|add|make)\b/i.test(answer)))return null
   const chosen=numbered?accounts[Number(numbered[1])-1]:pickCalendarAccountFromText(accounts,answer)
   if(!chosen)return null
   await clearFollowupState(telegramId,'calendar_create_account_choice')

@@ -208,17 +208,26 @@ export function parseSplitIntent(input: string): SplitIntent {
   // Requiring an explicit split/expense signal prevents a sentence like
   // "would 28 September at 8:30 PM be good for dinner?" from being mutated into
   // an expense merely because it contains "dinner" + a number.
-  const explicitSplitExpense = /\bsplit\b|\bexpense\b|\bpaid\s+by\b/i.test(text)
+  // 17 Oct live: "add expense 300 coffee" (a personal expense) went into a shared split group. "expense"
+  // alone is a personal log; a split needs split / paid by / with, among or between someone.
+  const explicitSplitExpense = /\bsplit\b|\bpaid\s+by\b/i.test(text) || (/\bexpense\b/i.test(text) && /\b(?:with|among|between)\s+[a-z0-9]/i.test(text))
   if (amount && explicitSplitExpense) {
     const paidMatch = text.match(/paid\s+by\s+([a-zA-Z][\w\s]*?)(?:\s+(?:split|with|among|between|in|for)|,|$)/i)
     const paidBy = normalizeMemberName(paidMatch?.[1] || (/\bpaid\b/i.test(text) ? 'Me' : 'Me'))
 
     const inMatch = text.match(/\s+in\s+([a-zA-Z][\w\s-]*?)(?:\s+split|\s+with|\s+among|\s+between|,|$)/i)
-    const groupName = cleanGroupName(inMatch?.[1])
+    let groupName = cleanGroupName(inMatch?.[1])
 
     const allocationResult = parseAllocationSegments(text)
     const membersMatch = text.match(/(?:split\s+(?:equally\s+)?(?:with|among|between)|with|among|between)\s+(.+?)(?:\s+for\s+|\s+in\s+|$)/i)
     let members = splitMembers(membersMatch?.[1] || '')
+    // "split 1200 among 4 people" names a head count, not a person called "4 People".
+    const headCount = (membersMatch?.[1] || '').match(/^(\d{1,2})\s*(?:people|persons?|friends|of us|members|ways?)?\s*$/i)
+    if (headCount && Number(headCount[1]) >= 2) {
+      members = ['Me', ...Array.from({ length: Number(headCount[1]) - 1 }, (_, i) => `Person ${i + 2}`)]
+      // A quick head-count split is its own bill, not an addition to the last trip group.
+      if (!groupName) groupName = `Split ${new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}`
+    }
 
     if (allocationResult.allocations.length) members = allocationResult.allocations.map((a) => a.member)
     if (!members.length || /\ball\b/i.test(membersMatch?.[1] || '')) members = []

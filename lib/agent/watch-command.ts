@@ -675,6 +675,9 @@ export function parseWebWatchCommand(text: string) {
     /^(?:please\s+)?let\s+me\s+know\s+(?:when|if|whenever)\s+there(?:'s|\s+is|\s+are)\s+(?:any\s+|new\s+|breaking\s+|fresh\s+)*news\s+(?:on|about|regarding|for|around)\s+(.+)$/i,
     /^(?:please\s+)?(?:alert|notify|ping)\s+me\s+(?:on|about)\s+(?:any\s+|new\s+|breaking\s+)*news\s+(?:on|about|regarding|for)\s+(.+)$/i,
     /^(?:please\s+)?send\s+me\s+(?:news\s+)?(?:updates?|alerts?)\s+(?:on|about|regarding|for)\s+(.+)$/i,
+    // 17 Oct live: "send me news about Tata Motors every morning" was answered once with a raw SEARCH line.
+    /^(?:please\s+)?(?:send|give|get)\s+me\s+(?:the\s+)?(?:latest\s+|daily\s+|top\s+)?news\s+(?:on|about|regarding|for|around)\s+(.+?)\s+(?:every\s+(?:day|morning|evening|night)|each\s+(?:day|morning)|daily|every\s+\d+\s+hours?)\b.*$/i,
+    /^(?:please\s+)?(?:every\s+(?:day|morning|evening)|each\s+morning|daily)\s*,?\s+(?:send|give|tell)\s+me\s+(?:the\s+)?(?:latest\s+)?(?:news\s+(?:on|about|regarding|for)\s+)?(.+?)(?:\s+news)?$/i,
   ]
   let query = ''
   for (const re of patterns) {
@@ -696,7 +699,7 @@ export function parseWebWatchCommand(text: string) {
     ? keywordMatch[1].split(/,|\bor\b/i).map(x => x.trim()).filter(x => x.length >= 2).slice(0, 8)
     : []
 
-  query = query.replace(/[.!?,;:\s]+$/, '').trim()
+  query = query.replace(/\s+(?:every\s+(?:day|morning|evening|night)|each\s+(?:day|morning)|daily)\b.*$/i, '').replace(/[.!?,;:\s]+$/, '').trim()
   if (query.length < 3) return null
   return normalizeWebSearchWatcher({
     title: `${news ? 'News' : 'Watch'}: ${query.slice(0, 120)}`,
@@ -704,7 +707,7 @@ export function parseWebWatchCommand(text: string) {
     triggerKeywords,
     delivery: 'both',
     // News changes over hours, not minutes; a 15-minute search cadence would only add cost.
-    cadenceMinutes: news ? 180 : 15,
+    cadenceMinutes: /\b(?:every\s+(?:day|morning|evening|night)|each\s+(?:day|morning)|daily)\b/i.test(raw) ? 1440 : news ? 180 : 15,
     originalRequest:raw,
     notifyOnFirstMatch:true,
   })

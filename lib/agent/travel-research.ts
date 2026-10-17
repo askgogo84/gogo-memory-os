@@ -507,8 +507,9 @@ export function flightBriefSlots(brief: FlightBrief): FlightBriefSlot[] {
   if (brief.useDefaults) return slots
   // 17 Oct: travellers, cabin and time are never asked up front. They default to 1 adult, economy, any time,
   // are stated in the reply, and can be set in the request itself. Only a missing trip type or return date blocks.
-  if (!brief.tripType) slots.push('trip')
-  else if (brief.tripType === 'round_trip' && !brief.returnDate && !brief.returnSuggestion) slots.push('return')
+  // 17 Oct (his scorecard): a single date means one-way. It is searched straight away and the reply says how to
+  // add a return, instead of asking "one-way or round trip?" first.
+  if (brief.tripType === 'round_trip' && !brief.returnDate && !brief.returnSuggestion) slots.push('return')
   return slots
 }
 
@@ -568,6 +569,6 @@ export function flightSearchStartedText(brief: FlightBrief): string {
   const when = round ? `${dayLabel(b.departDate!)} and back ${dayLabel(b.returnDate!)}` : dayLabel(b.departDate!)
   const perAdult = b.children || b.infants ? ' Fares are per adult; child and infant fares can differ.' : ''
   return `Searching ${cityOf(b, 'origin')} to ${cityOf(b, 'destination')}, ${when}: ${travellersLabel(b)}, ${CABIN_TEXT[b.cabin!]}, ${b.timeOfDay && b.timeOfDay !== 'any' ? `${b.timeOfDay} departures, ` : ''}${round ? 'round trip' : 'one-way'}.\n\n` +
-    `${round ? 'I search the round trip as one booking for both dates, so the price is the round-trip total. ' : ''}` +
+    `${round ? 'I search the round trip as one booking for both dates, so the price is the round-trip total. ' : 'One-way, since you gave one date; for a return, send it again with “back <date>”. '}` +
     `I'm checking the flight sites for exactly these dates and will send the cheapest options here when it finishes. To change travellers or cabin, send the request again, like “flights BLR to SIN 28 Oct, back 2 Nov, 2 adults, business”. When it finishes, say “book the cheapest” and I will take it to the payment page; you pay yourself.${perAdult}`
 }

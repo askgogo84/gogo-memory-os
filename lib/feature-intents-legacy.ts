@@ -210,22 +210,23 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   // ── EXPENSES ───────────────────────────────────────────────────────────
   // Log: "spent 450 on lunch", "250 on uber", "lunch 180", "₹80 coffee"
   const isExpenseLog = (
-    /^(spent|paid|expensed?|cost)\s/i.test(t) ||
+    /^(?:i\s+(?:just\s+)?)?(spent|paid|expensed?|cost)\s/i.test(t) ||
+    /^(?:add|log|record)\s+(?:an?\s+)?expense\s/i.test(t) ||
     /^[₹]\s*\d/i.test(t) ||
     /^(rs|inr)\.?\s*\d/i.test(t) ||
     (/^\d+\s+(on|for)\s+/i.test(t)) ||
     (/^[a-z][\w\s]+\s+\d{2,5}$/i.test(t) && t.split(' ').length <= 4 && !/^(remind|set|add|show|my|get|how|what|when|tasks?|notes?)/i.test(t))
   )
   if (isExpenseLog && may('money', 'legacy_expense_log')) {
-    const expReply = (await post('/api/expenses', { phone, text }))?.reply
+    const expReply = (await post('/api/expenses', { phone, text, ...(extra?.telegramId ? { telegramId: extra.telegramId } : {}) }))?.reply
     if (expReply) return expReply
   }
 
   // Query: "expenses today", "expense insight", "my spending this week"
-  if (/^(my expenses?|expenses? today|spending today|expense (report|insight|summary)|how much.*(spend|spent)|analyse.*spend)/i.test(t) && may('money', 'legacy_expense_query')) {
+  if (/^(my expenses?|expenses? today|spending today|expense (report|insight|summary)|how much.*(spend|spent)|analy[sz]e.*spend|what did i spend|where did my money go|my spending)/i.test(t) && may('money', 'legacy_expense_query')) {
     const insight = /insight|analys|ai/i.test(t) ? '1' : '0'
     const period = /month/i.test(t) ? 'month' : /week/i.test(t) ? 'week' : 'today'
-    return (await get('/api/expenses', { phone, period, insight }))?.reply ?? null
+    return (await get('/api/expenses', { phone, period, insight, ...(extra?.telegramId ? { telegramId: String(extra.telegramId) } : {}) }))?.reply ?? null
   }
 
   // ── TODOS ──────────────────────────────────────────────────────────────

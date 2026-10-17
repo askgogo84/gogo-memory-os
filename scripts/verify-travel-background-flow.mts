@@ -121,8 +121,10 @@ for(const input of ['Search flights from BLR to BOM on 2027-02-30','Search fligh
 }
 assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:'Compare flights from BLR to BOM on 1 October 2026'})).text,/past/)
 assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:'Compare flights to Mumbai'})).text,/departure city.*travel date/)
-// Children are understood (fares are per adult), and the one open choice is asked before searching.
-assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:text.replace('one-way ','').replace('1 adult','2 adults and 1 child')})).text,/One-way or round trip\?/)
+// Children are understood (fares are per adult); one date is searched one-way at once (17 Oct scorecard).
+assert.match((await queue.enqueueTravelResearch({actor,surface:'web',text:text.replace('one-way ','').replace('1 adult','2 adults and 1 child')})).text,/2 adults, 1 child, economy, one-way\.[\s\S]*Fares are per adult/)
+// That valid search is not part of the invalid-request checks below.
+for(const name of ['agent_runs','agent_steps','agent_activity'])tables[name].length=0
 const dashScope=travel.buildTravelResearchContext('On 20 October 2026, compare flights from BLR to Mumbai - research only; do not book or pay',fixedNow)
 const negativeRoute=travel.buildTravelResearchContext('On 20 October 2026, compare flights to Mumbai. Do not book from any site.',fixedNow)
 assert.equal(negativeRoute.origin,undefined,'route markers inside a negated safety clause are not departure cities')
@@ -279,10 +281,12 @@ assert.equal(retained.startDate,'2026-10-20','multiple clarifications retain the
 // The 14 Oct phone conversation, end to end: ask once for what is missing, remember each answer, search per direction.
 tables.agent_runs.length=0;tables.conversations.length=0
 const say=async(value:string)=>(await (await postDetails(value)).json())
+// 17 Oct scorecard: one date is a one-way search at once, with no "one-way or round trip?" question.
 let turn=await say('Check Singapore flight from Bangalore on 27th October')
-assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/\nOne-way or round trip\?\n/);assert.doesNotMatch(turn.text,/Travellers|Cabin/,'one question at a time, so each can be a tap')
-assert.equal(tables.agent_runs.length,0,'nothing is searched before the open choices are answered')
-turn=await say('Round trip')
+assert.equal(turn.handledBy,'travel-research-queued');assert.match(turn.text,/1 adult, economy, one-way\./)
+assert.equal(tables.agent_runs.length,1)
+tables.agent_runs.length=0;tables.conversations.length=0
+turn=await say('Check Singapore flight from Bangalore on 27th October, round trip')
 assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/Return date: which day are you coming back\?/);assert.doesNotMatch(turn.text,/One-way or round trip/)
 turn=await say('27th October to 2nd October back')
 assert.match(turn.text,/Did you mean 2 Nov 2026\? Reply yes/)
