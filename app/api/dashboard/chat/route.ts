@@ -26,6 +26,7 @@ import { otpReply } from '@/lib/agent/provider-booking'
 import { claimLoginCodeRun, findLoginCodeRun, resumePausedBrowserRun } from '@/lib/agent/browser-command'
 import { isStandaloneWorkspaceMeetingPrep, tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
 import { resolveAgentActor } from '@/lib/agent/actor'
+import { tryFlightBooking } from '@/lib/agent/flight-booking'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
 import { isGroundedReminderCommand, jevClarificationReply } from '@/lib/agent/jev-router'
 import { parseApproxLocation } from '@/lib/dashboard/approx-location'
@@ -212,6 +213,12 @@ export async function POST(req: NextRequest) {
     if(foodComparison){
       await saveConversation(user.telegram_id,text,foodComparison.text)
       return NextResponse.json(foodComparison)
+    }
+    // "book the cheapest" after a flight result, and the traveller details that follow (same as WhatsApp).
+    const flightBooking=await tryFlightBooking({actor,surface:'web',text})
+    if(flightBooking){
+      await saveConversation(user.telegram_id,text,flightBooking.text)
+      return NextResponse.json(flightBooking)
     }
     const typedReply = await tryTypedTimeRouting({actor,text,surface:'web',messageId:`web-${randomUUID()}`})
     if(typedReply){
