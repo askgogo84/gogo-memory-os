@@ -834,7 +834,10 @@ async function clickFollowingNewTab(page,doClick){
 let __handoff=null;
 function isGoogleBooking(page){try{return /^https:\/\/(?:www\.)?google\.com\/travel\/flights\/booking/i.test(page.url())}catch{return false}}
 async function followHandoffTab(page,tab){
-  const trace={opened:true,seen:[]};__handoff=trace;
+  const trace={opened:true,seen:[],failed:[]};__handoff=trace;
+  // 17 Oct 15:01: the tab went google.com -> a Chrome error page; record which host the redirect was refused.
+  try{tab.on('requestfailed',(r)=>{try{if(trace.failed.length<6){const u=new URL(r.url());trace.failed.push(u.hostname+u.pathname.slice(0,40)+' '+String(r.failure()&&r.failure().errorText||'').slice(0,40))}}catch{}})}catch{}
+  try{tab.on('framenavigated',(f)=>{try{if(f===tab.mainFrame()){const h=new URL(f.url()).hostname;if(h&&trace.seen[trace.seen.length-1]!==h)trace.seen.push(h)}}catch{}})}catch{}
   try{
     const deadline=Date.now()+25000;
     while(Date.now()<deadline){
