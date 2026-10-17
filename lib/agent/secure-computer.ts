@@ -817,6 +817,7 @@ async function clickFollowingNewTab(page,doClick){
   try{ctx.on('page',on);}catch{}
   try{await doClick();await page.waitForTimeout(1200);}finally{try{ctx.off('page',on);}catch{}}
   if(!popup)return;
+  if(isGoogleBooking(page)){await followHandoffTab(page,popup);return;}
   try{
     await popup.waitForLoadState('domcontentloaded',{timeout:8000}).catch(()=>{});
     const url=popup.url();
@@ -828,28 +829,42 @@ async function clickFollowingNewTab(page,doClick){
 // 17 Oct 12:06: Google Flights' "Continue to book with IndiGo" opens the airline in a NEW tab, so the run
 // stayed on Google and stopped. This one hand-off from a Google Flights booking page to the airline or
 // agency it names is followed in this tab; any other cross-site tab is still ignored.
+// 17 Oct 13:28: the tab opens as about:blank and posts to Google before it lands on the airline, so wait
+// past about:blank and google.com. What happened is kept in __handoff for the run log.
+let __handoff=null;
+function isGoogleBooking(page){try{return /^https:\/\/(?:www\.)?google\.com\/travel\/flights\/booking/i.test(page.url())}catch{return false}}
+async function followHandoffTab(page,tab){
+  const trace={opened:true,seen:[]};__handoff=trace;
+  try{
+    const deadline=Date.now()+25000;
+    while(Date.now()<deadline){
+      let u='';try{u=tab.url()}catch{}
+      let host='';try{host=new URL(u).hostname}catch{}
+      if(host&&trace.seen[trace.seen.length-1]!==host)trace.seen.push(host);
+      if(/^https:/.test(u)&&host&&!/(^|\.)google\.com$/i.test(host))break;
+      await tab.waitForTimeout(500).catch(()=>{});
+    }
+    const url=tab.url();
+    await tab.close().catch(()=>{});
+    let host='';try{host=new URL(url).hostname}catch{}
+    trace.finalHost=host||null;
+    if(/^https:/.test(url)&&host&&!/(^|\.)google\.com$/i.test(host)){
+      await page.goto(url,{waitUntil:'domcontentloaded',timeout:navTimeout});await page.waitForTimeout(2500);
+      trace.followed=true;
+    }
+  }catch(e){trace.error=String(e&&e.message||e).slice(0,120)}
+}
 async function watchGoogleBookingHandoff(page,payload,selector){
-  if(!payload.bookingFlow||!/^https:\/\/(?:www\.)?google\.com\/travel\/flights\/booking/i.test(page.url()))return null;
+  if(!payload.bookingFlow||!isGoogleBooking(page))return null;
   const named=await page.locator(selector).first().evaluate(el=>/^Continue to book with\b/i.test((el.getAttribute('aria-label')||el.textContent||'').trim())).catch(()=>false);
   if(!named)return null;
   const ctx=page.context();let tab=null;const on=(p)=>{tab=p};
   try{ctx.on('page',on);}catch{}
   return async()=>{
-    await page.waitForTimeout(2000);
+    for(let i=0;i<10&&!tab;i++)await page.waitForTimeout(500);
     try{ctx.off('page',on);}catch{}
-    if(!tab)return;
-    try{
-      await tab.waitForLoadState('domcontentloaded',{timeout:20000}).catch(()=>{});
-      // Google's click-out redirects through google.com before it lands on the airline.
-      const deadline=Date.now()+15000;
-      while(Date.now()<deadline&&/(^|\.)google\.com$/i.test(new URL(tab.url()).hostname))await tab.waitForTimeout(500);
-      const url=tab.url();
-      await tab.close().catch(()=>{});
-      if(/^https:/.test(url)&&!/(^|\.)google\.com$/i.test(new URL(url).hostname)){
-        console.log('BOOKING_GOOGLE_HANDOFF:',JSON.stringify({host:new URL(url).hostname}));
-        await page.goto(url,{waitUntil:'domcontentloaded',timeout:navTimeout});await page.waitForTimeout(2500);
-      }
-    }catch{}
+    if(!tab){__handoff={opened:false};return;}
+    await followHandoffTab(page,tab);
   };
 }
 async function pressText(page,wanted){
@@ -1361,7 +1376,7 @@ return receiptCount(after)>receiptCount(before);
         await page.waitForTimeout(500);
       }
     }
-    const out=await model(page); out.pageLoad=pageLoad; out.draftVerified=draftVerified; out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; out.blockedHosts=__blocked;
+    const out=await model(page); out.pageLoad=pageLoad; out.draftVerified=draftVerified; out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; out.blockedHosts=__blocked; if(__handoff)out.handoff=__handoff;
     // Screenshot fallback: the visible viewport in CSS pixels, so the model's x/y map to page.mouse.
     if(payload.screenshot&&payload.bookingFlow){try{const vp=await page.evaluate(()=>({w:innerWidth,h:innerHeight}));const img=await page.screenshot({type:'jpeg',quality:55,scale:'css',fullPage:false,timeout:8000});out.shot=img.toString('base64');out.viewport=vp;}catch{}}
     console.log(JSON.stringify(out));
@@ -2515,7 +2530,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       const stdout=await result.stdout();const lines=String(stdout||'').trim().split('\n').filter(Boolean)
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
       const previousPage=page
-      page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]));mergeBlocked(page)
+      page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]));mergeBlocked(page);if(page?.handoff)console.log('BOOKING_GOOGLE_HANDOFF:',JSON.stringify({runId:params.sessionTaskId||null,...page.handoff}))
       // The screenshot is kept only for the next vision step; it never reaches logs or results.
       lastShot=typeof page.shot==='string'?page.shot:null;lastViewport=page.viewport||null;delete page.shot;delete page.viewport
       try{lastPageMeta={title:safeText(page.title,80),path:new URL(String(page.url||currentUrl)).pathname.slice(0,80)}}catch{}
