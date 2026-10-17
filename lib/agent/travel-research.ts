@@ -6,7 +6,7 @@ import { rememberTypedObjects } from './typed-object-context'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { searchCreditIQLiveFlights } from '@/lib/integrations/creditiq-travel'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
-import { formatBrowserFlightResult, runLiveFlightBrowserTask } from './travel-browser-task'
+import { formatBrowserFlightResult, formatRoundTripResult, runLiveFlightBrowserTask } from './travel-browser-task'
 import { sanitizeBrowserReadDiagnostics, type BrowserReadDiagnostic } from './browser-read-diagnostics'
 import {enqueueTravelResearch} from './travel-research-queue'
 import type { CreditIQFlightResult } from '@/lib/integrations/creditiq-travel'
@@ -28,6 +28,9 @@ type TravelContext = {
   routeLabel: string
   startDate?: string
   endDate?: string
+  /** A round trip is one search for both dates: set when the request says "departing D returning R". */
+  returnDate?: string
+  roundTrip?: boolean
   cabin?: 'economy' | 'premium_economy' | 'business' | 'first'
   adults?: number
   nonStop?: boolean
@@ -94,8 +97,8 @@ function routeText(text:string) {
   return text.replace(/\b(?:do\s+not|don't)\s+(?!forget\b)[^.!?;\n]*?(?=[.!?;\n]|\b(?:but|then)\b|,\s*(?:just|please|instead)\b|$)[.!?;]?/gi,' ').trim().replace(/(?:[.!?;,]\s*)+$/,'').trim()
 }
 function extractSegment(text:string,marker:'from'|'to'|'in') {
-  const markers=marker==='from'?'to|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip'
-    :marker==='to'?'from|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip'
+  const markers=marker==='from'?'to|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip|departing|returning'
+    :marker==='to'?'from|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip|departing|returning'
     :'next|this|tomorrow|on|for|under|below|with|from|to'
   // A separate safety instruction is not part of the city. Keep the full
   // request available so route/date details after that clause still survive.
@@ -190,7 +193,9 @@ export function flightSearchPreferences(text: string) {
   const adultText = text.match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine)\s+adults?\b/i)?.[1]?.toLowerCase()
   const adults = adultText ? words[adultText] ?? Number(adultText) : 1
   const timeOfDay = timeOfDayFrom(text)
-  return {cabin, adults, nonStop: /\b(?:non[- ]?stop|direct flights?)\b/i.test(text), ...(timeOfDay ? { timeOfDay } : {})}
+  const dates = text.match(/\bround trip\b.*?\bdeparting (\d{4}-\d{2}-\d{2}) returning (\d{4}-\d{2}-\d{2})\b/i)
+  return {cabin, adults, nonStop: /\b(?:non[- ]?stop|direct flights?)\b/i.test(text), ...(timeOfDay ? { timeOfDay } : {}),
+    ...(dates ? { roundTrip: true, startDate: dates[1], returnDate: dates[2] } : {})}
 }
 
 export function timeOfDayFrom(text: string): TimeOfDay | undefined {
@@ -272,8 +277,9 @@ export async function executeTravelResearch(params:{actor:AgentActor;surface:Age
   if(!isPublicTravelResearchRequest(effectiveText))return null
   const context=params.context || {...buildTravelResearchContext(effectiveText),...flightSearchPreferences(effectiveText)};const queries=buildQueries(context,effectiveText);const tg=params.actor.legacyTelegramId;const now=new Date().toISOString()
   if(context.kind === 'flight') {
+    const roundTripRequest = context.roundTrip === true && Boolean(context.returnDate) && Boolean(context.startDate)
     const missing = [!context.origin && 'departure city', !context.destination && 'destination', !context.startDate && 'travel date'].filter(Boolean)
-    const unsupported = /\b(?:children|child|infants?|round[- ]trip|return(?:ing)?(?:\s+on|\s+flight|\s+date)?)\b/i.test(effectiveText)
+    const unsupported = /\b(?:children|child|infants?|round[- ]trip|return(?:ing)?(?:\s+on|\s+flight|\s+date)?)\b/i.test(roundTripRequest ? effectiveText.replace(/\bround trip\b|\breturning\b/gi, '') : effectiveText)
       || !Number.isInteger(context.adults) || context.adults! < 1 || context.adults! > 9
     if(missing.length || unsupported) return {runId: undefined, status:'waiting_user' as const, capability:'travel' as const, risk:'low' as const,
       handledBy:'travel-details' as const, text: missing.length
@@ -304,9 +310,14 @@ export async function executeTravelResearch(params:{actor:AgentActor;surface:Age
       await supabaseAdmin.from('agent_runs').update({summary:'Live inventory was unavailable. Gogo is now working through the browser.',progress:45,updated_at:new Date().toISOString()}).eq('id',runId)
       await supabaseAdmin.from('agent_steps').update({title:'Work through live flight search in secure browser'}).eq('id',String(step.id))
       await addActivity(tg,runId,'browser_research_started','Gogo opened a secure browser to complete the flight-search task.',{route:context.routeLabel})
-      const browserTask=await runLiveFlightBrowserTask({actor:params.actor,context,objective:effectiveText,deadline:params.deadline})
+      // 17 Oct: a page that did not load is tried again (up to 3 reads) while there is time, before anything is reported.
+      let browserTask=await runLiveFlightBrowserTask({actor:params.actor,context,objective:effectiveText,deadline:params.deadline})
+      for(let attempt=2;attempt<=3&&!browserTask?.options?.length&&(!Number.isFinite(params.deadline)||params.deadline!-Date.now()>120_000);attempt++){
+        await addActivity(tg,runId,'browser_research_retry',`The flight page did not give readable fares; trying again (${attempt} of 3).`,{attempt})
+        browserTask=await runLiveFlightBrowserTask({actor:params.actor,context,objective:effectiveText,deadline:params.deadline})
+      }
       browserReadDiagnostics=sanitizeBrowserReadDiagnostics(browserTask && 'browserReadDiagnostics' in browserTask ? browserTask.browserReadDiagnostics : [])
-      if(browserTask?.options?.length){const completedAt=new Date().toISOString();const timedBrowser=applyTimeOfDay(browserTask.options,(f:any)=>f.departure,context.timeOfDay);const top=timedBrowser.rows.slice(0,8);const text=timedBrowser.note+formatBrowserFlightResult(context,top,browserTask.browser?.sourceUrl||browserTask.browser?.url||'');await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context,source:'browser-live',inventoryType:'browser-verified',browser:browserTask.browser,flights:top},completed_at:completedAt}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed',`Task completed with ${top.length} browser-verified flight options.`,{travel_engine:'secure-browser',result_count:top.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'browser-flight-task' as const}}
+      if(browserTask?.options?.length){const completedAt=new Date().toISOString();const timedBrowser=applyTimeOfDay(browserTask.options,(f:any)=>f.departure,context.timeOfDay);const top=timedBrowser.rows.slice(0,8);const text=timedBrowser.note+(context.roundTrip&&context.returnDate?formatRoundTripResult(context,top,browserTask.browser?.sourceUrl||browserTask.browser?.url||''):formatBrowserFlightResult(context,top,browserTask.browser?.sourceUrl||browserTask.browser?.url||''));await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context,source:'browser-live',inventoryType:'browser-verified',browser:browserTask.browser,flights:top},completed_at:completedAt}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed',`Task completed with ${top.length} browser-verified flight options.`,{travel_engine:'secure-browser',result_count:top.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'browser-flight-task' as const}}
       console.warn('TRAVEL_BROWSER_DIAGNOSTICS:',JSON.stringify({runId,status:browserTask?.status||'no_result',browserReadDiagnostics}))
       await addActivity(tg,runId,'browser_research_incomplete','The browser could not produce verified flight rows; falling back to public sources.',{status:browserTask?.status||'no_result',browserReadDiagnostics})
     }
@@ -545,9 +556,10 @@ export function flightLegs(brief: FlightBrief): FlightLeg[] {
   })
   const origin = b.originCode || b.originLabel || ''
   const destination = b.destinationCode || b.destinationLabel || ''
-  const legs = [make(origin, destination, b.departDate!)]
-  if (b.tripType === 'round_trip' && b.returnDate) legs.push(make(destination, origin, b.returnDate))
-  return legs
+  // 17 Oct: a round trip is ONE search for the exact dates (Google returns the round-trip total).
+  if (b.tripType === 'round_trip' && b.returnDate) return [{ from: origin, to: destination, date: b.departDate!, label: `${origin} to ${destination}, ${dayLabel(b.departDate!)} and back ${dayLabel(b.returnDate)}`,
+    text: `Compare ${b.nonStop ? 'non-stop ' : ''}round trip flights from ${origin} to ${destination} departing ${b.departDate} returning ${b.returnDate} for ${adults} adult${adults === 1 ? '' : 's'} in ${CABIN_TEXT[b.cabin!]}${b.timeOfDay && b.timeOfDay !== 'any' ? `, departing in the ${b.timeOfDay}` : ''}. Research only; do not book or pay.` }]
+  return [make(origin, destination, b.departDate!)]
 }
 
 export function flightSearchStartedText(brief: FlightBrief): string {
@@ -556,6 +568,6 @@ export function flightSearchStartedText(brief: FlightBrief): string {
   const when = round ? `${dayLabel(b.departDate!)} and back ${dayLabel(b.returnDate!)}` : dayLabel(b.departDate!)
   const perAdult = b.children || b.infants ? ' Fares are per adult; child and infant fares can differ.' : ''
   return `Searching ${cityOf(b, 'origin')} to ${cityOf(b, 'destination')}, ${when}: ${travellersLabel(b)}, ${CABIN_TEXT[b.cabin!]}, ${b.timeOfDay && b.timeOfDay !== 'any' ? `${b.timeOfDay} departures, ` : ''}${round ? 'round trip' : 'one-way'}.\n\n` +
-    `${round ? 'Outbound and return are searched separately, so I will send two results; two one-way fares added together can differ from an airline round-trip fare. ' : ''}` +
+    `${round ? 'I search the round trip as one booking for both dates, so the price is the round-trip total. ' : ''}` +
     `I'm checking the flight sites for exactly these dates and will send the cheapest options here when it finishes. To change travellers or cabin, send the request again, like “flights BLR to SIN 28 Oct, back 2 Nov, 2 adults, business”. I only read fares. I never book, pay or enter traveller details.${perAdult}`
 }
