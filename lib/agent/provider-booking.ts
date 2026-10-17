@@ -94,6 +94,8 @@ export function bookingRobotCheck(text: string | null | undefined): boolean {
 export function bookingDirectUrl(observed: string | null | undefined, approved: string | null | undefined): string | null {
   const clean = (u: string | null | undefined) => { try { const x = new URL(String(u || '')); if (x.protocol !== 'https:' || x.username || x.password) return null; return x } catch { return null } }
   const a = clean(approved), o = clean(observed)
+  // A flight booking starts from one exact Google Flights search; that search (with its dates) is the link to share.
+  if (a && /(^|\.)google\.com$/i.test(a.hostname) && /^\/travel\/flights/.test(a.pathname)) return a.href
   const site = (h: string) => h.replace(/^www\./, '').split('.').slice(-2).join('.')
   const pick = o && a && site(o.hostname) === site(a.hostname) && !/\/(?:login|signin|sign-in|auth|otp|checkout|payment|cart)\b/i.test(o.pathname) ? o : a
   return pick ? `${pick.origin}${pick.pathname}` : null
@@ -114,9 +116,10 @@ export function bookingSlotLine(target: BookingTarget | null | undefined): strin
  * own browser or the provider's app, where they are usually logged in and the robot check passes.
  * Gogo's browser link stays only as a secondary option.
  */
-export function bookingReviewMessage(params: { host: string; summary?: string; takeoverUrl: string; directUrl?: string | null; target?: BookingTarget | null; robotCheck?: boolean; loginSwitchRefused?: boolean; accountCreationRefused?: boolean }) {
+export function bookingReviewMessage(params: { host: string; summary?: string; takeoverUrl: string; directUrl?: string | null; target?: BookingTarget | null; robotCheck?: boolean; loginSwitchRefused?: boolean; accountCreationRefused?: boolean; flightSteps?: string }) {
   const slot = bookingSlotLine(params.target)
-  const steps = `Tap Book Now${slot ? `, choose ${slot}` : ' and pick your slot'}, select a court and pay there.`
+  // 17 Oct 12:07: a flight hand-off said "select a court". A flight booking names the flights to pick instead.
+  const steps = params.flightSteps || `Tap Book Now${slot ? `, choose ${slot}` : ' and pick your slot'}, select a court and pay there.`
   const own = params.directUrl
     ? `Book it yourself here. It opens in your own browser or the ${params.host.replace(/\.(?:co|com|in)$/, '')} app, where you're usually logged in already:\n${params.directUrl}\n\n${steps}`
     : ''

@@ -60,6 +60,10 @@ const HUGGING_FACE_PAGE_DEPENDENCIES = ['*.awswaf.com', 'hcaptcha.com', '*.hcapt
 const GOOGLE_PHONE_LOGIN = ['www.google.com','www.gstatic.com','apis.google.com','www.recaptcha.net','identitytoolkit.googleapis.com','securetoken.googleapis.com']
 const PLAYO_PAGE_DEPENDENCIES = ['api.playo.io','playo.gumlet.io','playo-website.gumlet.io','playov2.gumlet.io','playo-activities.gumlet.io','fonts.googleapis.com','fonts.gstatic.com',...GOOGLE_PHONE_LOGIN]
 
+export const FLIGHT_BOOKING_HANDOFF_SITES=['goindigo.in','airindia.com','airindia.in','akasaair.com','spicejet.com','airasia.com','singaporeair.com',
+  'emirates.com','qatarairways.com','etihad.com','thaiairways.com','malaysiaairlines.com','flyscoot.com','makemytrip.com','cleartrip.com','goibibo.com',
+  'easemytrip.com','yatra.com','ixigo.com','booking.com','trip.com']
+
 export function browserPageAllowlist(url:string):Record<string,string[]>{
   const target=new URL(url)
   const host=target.hostname.toLowerCase()
@@ -81,6 +85,10 @@ export function browserPageAllowlist(url:string):Record<string,string[]>{
   if(host==='www.zepto.com'||host==='zepto.com')hosts.push(...ZEPTO_PAGE_DEPENDENCIES)
   if((host==='www.google.com'||host==='google.com') && /^\/travel\/flights(?:\/|$)/.test(target.pathname))
     hosts.push(...GOOGLE_FLIGHTS_PAGE_DEPENDENCIES)
+  // 17 Oct 12:06: on Google Flights' booking page, "Continue to book with IndiGo" opens the airline. A booking
+  // follows that one hand-off, so the airlines and Indian agencies Google lists there are reachable from it.
+  if((host==='www.google.com'||host==='google.com') && /^\/travel\/flights\/booking(?:\/|$)/.test(target.pathname))
+    for(const site of FLIGHT_BOOKING_HANDOFF_SITES)hosts.push(site,`*.${site}`)
   if(host==='huggingface.co'||host==='www.huggingface.co')hosts.push(...HUGGING_FACE_PAGE_DEPENDENCIES)
   if(host==='playo.co'||host==='www.playo.co')hosts.push(...PLAYO_PAGE_DEPENDENCIES)
   return Object.fromEntries(hosts.map(name=>[name,[]]))

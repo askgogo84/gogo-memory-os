@@ -825,6 +825,33 @@ async function clickFollowingNewTab(page,doClick){
     if(/^https:/.test(url)&&(there===here||there.endsWith('.'+here)||here.endsWith('.'+there)))await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
   }catch{}
 }
+// 17 Oct 12:06: Google Flights' "Continue to book with IndiGo" opens the airline in a NEW tab, so the run
+// stayed on Google and stopped. This one hand-off from a Google Flights booking page to the airline or
+// agency it names is followed in this tab; any other cross-site tab is still ignored.
+async function watchGoogleBookingHandoff(page,payload,selector){
+  if(!payload.bookingFlow||!/^https:\/\/(?:www\.)?google\.com\/travel\/flights\/booking/i.test(page.url()))return null;
+  const named=await page.locator(selector).first().evaluate(el=>/^Continue to book with\b/i.test((el.getAttribute('aria-label')||el.textContent||'').trim())).catch(()=>false);
+  if(!named)return null;
+  const ctx=page.context();let tab=null;const on=(p)=>{tab=p};
+  try{ctx.on('page',on);}catch{}
+  return async()=>{
+    await page.waitForTimeout(2000);
+    try{ctx.off('page',on);}catch{}
+    if(!tab)return;
+    try{
+      await tab.waitForLoadState('domcontentloaded',{timeout:20000}).catch(()=>{});
+      // Google's click-out redirects through google.com before it lands on the airline.
+      const deadline=Date.now()+15000;
+      while(Date.now()<deadline&&/(^|\.)google\.com$/i.test(new URL(tab.url()).hostname))await tab.waitForTimeout(500);
+      const url=tab.url();
+      await tab.close().catch(()=>{});
+      if(/^https:/.test(url)&&!/(^|\.)google\.com$/i.test(new URL(url).hostname)){
+        console.log('BOOKING_GOOGLE_HANDOFF:',JSON.stringify({host:new URL(url).hostname}));
+        await page.goto(url,{waitUntil:'domcontentloaded',timeout:navTimeout});await page.waitForTimeout(2500);
+      }
+    }catch{}
+  };
+}
 async function pressText(page,wanted){
   sawDisabled=false;
   const candidates=page.getByText(wanted,{exact:wanted.length<=3});
@@ -1192,11 +1219,13 @@ async function clickPastOverlay(page,selector){
             const formShape=()=>page.evaluate(()=>location.href+'|'+Array.from(document.querySelectorAll('input,textarea,select,button'))
               .filter(el=>{const r=el.getBoundingClientRect();const cs=getComputedStyle(el);return r.width>0&&r.height>0&&cs.visibility!=='hidden'&&cs.display!=='none'})
               .map(el=>el.tagName+':'+(el.getAttribute('name')||el.getAttribute('type')||el.textContent||'').trim().slice(0,24)).join(',')).catch(()=>'');
+            const handoff=await watchGoogleBookingHandoff(page,payload,a.selector);
             const before=await formShape();
             await clickPastOverlay(page,a.selector);
             const until=Date.now()+8000;
             while(Date.now()<until){await page.waitForTimeout(300);const now=await formShape();if(now&&now!==before)break;}
             await page.waitForTimeout(500);
+            if(handoff)await handoff();
           }
           else await clickPastOverlay(page,a.selector);
         } else if(a.kind==='submit'){
