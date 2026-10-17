@@ -23,7 +23,8 @@ assert.equal(shouldPreferSpecialistTravel('flight from Bangalore delayed today')
 const first = t.parseFlightBriefText('Check Singapore flight from Bangalore on 27th October', now, tz)
 assert.deepEqual([first.originCode, first.destinationCode, first.departDate], ['BLR', 'SIN', '2026-10-27'])
 assert.equal(first.tripType, undefined); assert.equal(first.adults, undefined); assert.equal(first.cabin, undefined)
-assert.deepEqual(t.flightBriefSlots(first), ['trip', 'travellers', 'cabin', 'time'])
+// 17 Oct: only a blocking question is asked; travellers, cabin and time default (1 adult, economy, any time).
+assert.deepEqual(t.flightBriefSlots(first), ['trip'])
 const ask = t.askFlightBrief(first, t.flightBriefSlots(first))
 assert.match(ask, /Bengaluru to Singapore on 27 Oct 2026/)
 assert.match(ask, /\nOne-way or round trip\?\n/)
@@ -36,14 +37,14 @@ assert.deepEqual(tapTrip.choice.options.map(o => o.title), ['One way', 'Round tr
 assert.equal(tapTrip.body, 'Bengaluru to Singapore on 27 Oct 2026. One-way or round trip?')
 const oneWay = t.applyFlightBriefReply(first, ['trip'], 'One way', now, tz).brief
 assert.equal(oneWay.tripType, 'one_way')
-const askTravellers = t.askFlightBrief(oneWay, t.flightBriefSlots(oneWay))
+const askTravellers = t.askFlightBrief(oneWay, ['travellers'])
 assert.equal(flightChoiceFromText(askTravellers)!.choice.kind, 'travellers')
 const twoAdults = t.applyFlightBriefReply(oneWay, ['travellers'], '2 adults', now, tz).brief
 assert.equal(twoAdults.adults, 2)
-assert.equal(flightChoiceFromText(t.askFlightBrief(twoAdults, t.flightBriefSlots(twoAdults)))!.choice.kind, 'cabin')
+assert.equal(flightChoiceFromText(t.askFlightBrief(twoAdults, ['cabin']))!.choice.kind, 'cabin')
 const tapped = t.applyFlightBriefReply(twoAdults, ['cabin'], 'Premium economy', now, tz).brief
 assert.equal(tapped.cabin, 'premium_economy')
-const tappedTime = flightChoiceFromText(t.askFlightBrief(tapped, t.flightBriefSlots(tapped)))!
+const tappedTime = flightChoiceFromText(t.askFlightBrief(tapped, ['time']))!
 assert.equal(tappedTime.choice.kind, 'time'); assert.equal(tappedTime.choice.options.length, 5)
 for (const option of FLIGHT_CHOICES.time.options) assert.equal(t.applyFlightBriefReply(tapped, ['time'], option.title, now, tz).brief.timeOfDay, option.title === 'Any time' ? 'any' : option.title.toLowerCase(), option.title)
 for (const option of FLIGHT_CHOICES.cabin.options) assert.ok(t.applyFlightBriefReply(oneWay, ['cabin'], option.title, now, tz).brief.cabin, option.title)
@@ -56,13 +57,13 @@ assert.doesNotMatch(ask, /SEARCH:|momondo|typical pricing/i)
 assert.equal(t.isFlightBriefAnswer('Check for round trip'), true)
 let step = t.applyFlightBriefReply(first, ['trip', 'travellers', 'cabin'], 'Check for round trip', now, tz)
 assert.equal(step.understood, true); assert.equal(step.brief.tripType, 'round_trip')
-assert.deepEqual(t.flightBriefSlots(step.brief), ['return', 'travellers', 'cabin', 'time'])
+assert.deepEqual(t.flightBriefSlots(step.brief), ['return'])
 
 // 3. A return earlier than the departure is a question, never a silent guess.
 step = t.applyFlightBriefReply(step.brief, ['return', 'travellers', 'cabin'], '27th October to 2nd October back', now, tz)
 assert.equal(step.brief.departDate, '2026-10-27'); assert.equal(step.brief.returnDate, undefined)
 assert.equal(step.brief.returnSuggestion, '2026-11-02')
-assert.deepEqual(t.flightBriefSlots(step.brief), ['return_confirm', 'travellers', 'cabin', 'time'])
+assert.deepEqual(t.flightBriefSlots(step.brief), ['return_confirm'])
 assert.match(t.askFlightBrief(step.brief, t.flightBriefSlots(step.brief)), /Did you mean 2 Nov 2026\? Reply yes/)
 step = t.applyFlightBriefReply(step.brief, ['return_confirm', 'travellers', 'cabin'], 'yes', now, tz)
 assert.equal(step.brief.returnDate, '2026-11-02'); assert.equal(step.brief.returnSuggestion, undefined)
@@ -70,7 +71,7 @@ assert.equal(step.brief.returnDate, '2026-11-02'); assert.equal(step.brief.retur
 // 4. Travellers and cabin in one line.
 step = t.applyFlightBriefReply(step.brief, ['travellers', 'cabin', 'time'], '2 adults, business', now, tz)
 assert.deepEqual([step.brief.adults, step.brief.cabin], [2, 'business'])
-assert.deepEqual(t.flightBriefSlots(step.brief), ['time'])
+assert.deepEqual(t.flightBriefSlots(step.brief), [])
 assert.match(t.askFlightBrief(step.brief, ['time']), /Departure time: morning, afternoon, evening, night or any time\?/)
 step = t.applyFlightBriefReply(step.brief, ['time'], 'morning', now, tz)
 assert.equal(step.brief.timeOfDay, 'morning')
@@ -84,7 +85,7 @@ assert.equal(legs[1].text, 'Compare flights from SIN to BLR on 2026-11-02 for 2 
 for (const leg of legs) assert.equal(t.isPublicTravelResearchRequest(leg.text), true, leg.text)
 const legPrefs = t.flightSearchPreferences(legs[0].text)
 assert.deepEqual([legPrefs.adults, legPrefs.cabin], [2, 'business'])
-assert.match(t.flightSearchStartedText(step.brief), /two results/)
+assert.match(t.flightSearchStartedText(step.brief), /exactly these dates/)
 assert.match(t.flightSearchStartedText(step.brief), /never book, pay or enter traveller details/)
 
 // 6. "go" skips the optional questions with stated defaults; a bare number answers travellers.

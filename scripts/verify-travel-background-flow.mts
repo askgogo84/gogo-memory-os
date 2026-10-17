@@ -287,20 +287,14 @@ assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/Return dat
 turn=await say('27th October to 2nd October back')
 assert.match(turn.text,/Did you mean 2 Nov 2026\? Reply yes/)
 turn=await say('yes')
-assert.equal(turn.handledBy,'travel-details');assert.doesNotMatch(turn.text,/Return date/);assert.match(turn.text,/How many people are travelling\?/)
-assert.equal(tables.agent_runs.length,0)
-turn=await say('2 adults')
-assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/Which cabin: economy, premium economy, business or first class\?/)
-turn=await say('Business')
-assert.equal(turn.handledBy,'travel-details');assert.match(turn.text,/Departure time: morning, afternoon, evening, night or any time\?/)
-assert.equal(tables.agent_runs.length,0,'time of day is asked before searching')
-turn=await say('Morning')
-assert.equal(turn.handledBy,'travel-research-queued');assert.match(turn.text,/2 adults, business, morning departures, round trip/);assert.match(turn.text,/two results/);assert.match(turn.text,/never book, pay/)
+// 17 Oct: travellers, cabin and time are not asked; the search starts with 1 adult, economy, any time and says so.
+assert.equal(turn.handledBy,'travel-research-queued');assert.match(turn.text,/1 adult, economy, round trip/);assert.match(turn.text,/exactly these dates/);assert.match(turn.text,/never book, pay/)
+assert.doesNotMatch(turn.text,/CreditIQ|reward/i)
 assert.equal(tables.agent_runs.length,2,'one saved search per direction')
 const legInputs=tables.agent_runs.map((row:any)=>row.metadata_json.input_text).sort()
-assert.deepEqual(legInputs,['Compare flights from BLR to SIN on 2026-10-27 for 2 adults in business, departing in the morning. Research only; do not book or pay.','Compare flights from SIN to BLR on 2026-11-02 for 2 adults in business, departing in the morning. Research only; do not book or pay.'])
+assert.deepEqual(legInputs,['Compare flights from BLR to SIN on 2026-10-27 for 1 adult in economy. Research only; do not book or pay.','Compare flights from SIN to BLR on 2026-11-02 for 1 adult in economy. Research only; do not book or pay.'])
 const outbound=tables.agent_runs.find((row:any)=>row.metadata_json.context.origin.code==='BLR').metadata_json.context
-assert.equal(outbound.timeOfDay,'morning');assert.equal(outbound.destination.code,'SIN');assert.equal(outbound.adults,2);assert.equal(outbound.cabin,'business');assert.equal(outbound.startDate,'2026-10-27')
+assert.equal(outbound.destination.code,'SIN');assert.equal(outbound.adults,1);assert.equal(outbound.cabin,'economy');assert.equal(outbound.startDate,'2026-10-27')
 // Once searched, a stray "yes" or an unrelated message is not read as an answer.
 assert.equal(await queue.enqueueTravelResearch({actor,surface:'web',text:'yes'}),null)
 assert.equal(tables.agent_runs.length,2)
@@ -329,7 +323,7 @@ assert.equal(tables.agent_runs[0].metadata_json.context.destination.code,'BOM')
 tables.agent_runs.length=0;tables.conversations.length=0
 const response=await web.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text})}))
 assert.equal(response.status,200);const reply=await response.json()
-assert.equal(reply.handledBy,'travel-research-queued');assert.match(reply.text,/background/)
+assert.equal(reply.handledBy,'travel-research-queued');assert.match(reply.text,/flight sites/)
 assert.equal(browserAttempts,0,'the incoming request must not launch the slow browser')
 assert.equal(searches,0,'the incoming request must not perform fallback network searches')
 const duplicate=await queue.enqueueTravelResearch({actor,surface:'web',text})
@@ -362,7 +356,7 @@ assert.equal(JSON.stringify(tables.agent_activity.find(row=>row.run_id===reply.r
 failPublish=false
 await worker.processTravelResearchQueue(Clock.now()+270000)
 await worker.processTravelResearchQueue(Clock.now()+270000)
-assert.equal(tables.conversations.filter(r=>r.role==='assistant'&&!/background/.test(r.content)).length,1,'web publishes once after recovery')
+assert.equal(tables.conversations.filter(r=>r.role==='assistant'&&!/background|flight sites/.test(r.content)).length,1,'web publishes once after recovery')
 assert.equal(sent,0,'web completion never sends to WhatsApp')
 
 // Final phone result uses the receipt outbox; a rejection cannot mark notified.
