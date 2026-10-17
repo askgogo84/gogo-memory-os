@@ -47,15 +47,16 @@ export type LastFlightResult = { runId: string; context: any; options: BrowserFl
 export async function loadLastFlightResult(actor: AgentActor): Promise<LastFlightResult | null> {
   const tg = String(actor.legacyTelegramId)
   const since = new Date(Date.now() - 12 * 3600_000).toISOString()
-  const { data: runs, error } = await supabaseAdmin.from('agent_runs').select('id,metadata_json,created_at')
-    .eq('telegram_id', tg).eq('type', 'travel_research').gte('created_at', since).order('created_at', { ascending: false }).limit(4)
-  if (error) throw new Error('flight_booking_runs_read_failed')
+  const { data: runs, error } = await supabaseAdmin.from('agent_runs').select('id,metadata_json,started_at')
+    .eq('telegram_id', tg).eq('type', 'travel_research').eq('status', 'completed').gte('started_at', since).order('started_at', { ascending: false }).limit(4)
+  if (error) throw new Error(`flight_booking_runs_read_failed:${String(error.message).slice(0, 120)}`)
   for (const run of runs || []) {
-    const context: any = (run.metadata_json as any)?.context
-    if (!context || context.kind !== 'flight' || !context.roundTrip || !context.returnDate) continue
+    const metaContext: any = (run.metadata_json as any)?.context
     const { data: step } = await supabaseAdmin.from('agent_steps').select('output_json')
       .eq('run_id', run.id).eq('telegram_id', tg).eq('tool_name', 'travel').limit(1).maybeSingle()
     const flights = (step?.output_json as any)?.flights
+    const context: any = (step?.output_json as any)?.context || metaContext
+    if (!context || context.kind !== 'flight' || !context.roundTrip || !context.returnDate) continue
     if (!Array.isArray(flights) || !flights.length) continue
     const options = roundTripDisplayOrder(flights as BrowserFlightOption[])
     if (options.length) return { runId: String(run.id), context, options, searchLink: roundTripSearchLink(context) }
@@ -145,7 +146,15 @@ async function loadPending(actor: AgentActor, text: string): Promise<{ runId: st
   return { runId: String(state.runId), optionIndex: Number(state.optionIndex) }
 }
 
+/** A read problem here must never break an ordinary message: treat it as "not a booking turn". */
 export async function tryFlightBooking(params: { actor: AgentActor; surface: AgentSurface; text: string }) {
+  try { return await runFlightBooking(params) } catch (error: any) {
+    console.warn('FLIGHT_BOOKING_SKIPPED:', String(error?.message || 'flight_booking_failed').slice(0, 160))
+    return null
+  }
+}
+
+async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurface; text: string }) {
   const { actor, surface } = params
   const text = String(params.text || '').trim()
   const tg = String(actor.legacyTelegramId)
