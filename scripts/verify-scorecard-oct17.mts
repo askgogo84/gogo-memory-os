@@ -55,3 +55,13 @@ assert.equal(nut.isNutritionLogText('calories in 2 idlis and sambar'), false, 'a
 assert.equal(nut.isNutritionLogText('how many calories in a dosa?'), false)
 assert.equal(nut.isNutritionLogText('had 2 idlis and sambar for breakfast'), true)
 console.log('overnight fixes ok')
+const gm = await import('../lib/bot/handlers/gmail-read.ts')
+const sum = gm.summariseInbox([
+  {from: 'Air India Express <noreply@promo.airindiaexpress.com>', subject: 'Flat 10% off'},
+  {from: 'Srini J <srini@example.com>', subject: 'Board deck review'},
+  {from: 'Swiggy <no-reply@swiggy.in>', subject: 'Your order'},
+])
+assert.match(sum, /From people \(1\)\*\n1\. Srini J: Board deck review/); assert.match(sum, /Promotions and notifications \(2\)\*: Air India Express, Swiggy/)
+const pm = readFileSync('lib/bot/process-message.ts', 'utf8')
+assert.match(pm, /parseGmailReadFilter\(incomingText\),\/\\bsummar/, '"summarise my inbox" asks for a summary')
+console.log('inbox summary ok')

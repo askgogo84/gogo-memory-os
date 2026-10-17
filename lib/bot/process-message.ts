@@ -1134,7 +1134,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const mode=/\bunread\b/i.test(incomingText)?'unread':'latest'
     let reply=''
     try{
-      reply=await buildGmailReadReply(resolvedUser.telegramId,mode,5,parseGmailReadFilter(incomingText))
+      reply=await buildGmailReadReply(resolvedUser.telegramId,mode,5,parseGmailReadFilter(incomingText),/\bsummar(?:y|ise|ize|ies)\b|\boverview\b|\bwhat(?:'s| is) in my inbox\b/i.test(incomingText))
       if(/\bdraft\b/i.test(incomingText))reply+=`\n\nI can draft one reply at a time for you to approve. Say *draft a reply to <sender>*. Nothing was drafted or sent yet.`
     }catch(err:any){
       console.error('GMAIL_READ_HANDLER_FAILED:',err?.message||err)
