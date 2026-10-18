@@ -55,7 +55,7 @@ function extractConfirmedSlot(text:string,timezone:string){
 
 async function claim(action:any){
   const now=new Date(),leaseUntil=new Date(now.getTime()+LEASE_MINUTES*60_000).toISOString()
-  const{data,error}=await supabaseAdmin.from('life_event_actions').update({status:'running',updated_at:now.toISOString(),payload_json:{...(action.payload_json||{}),leaseUntil}}).eq('id',action.id).eq('status','ready').select('id').maybeSingle()
+  const{data,error}=await supabaseAdmin.from('life_event_actions').update({status:'running',updated_at:now.toISOString(),payload_json:{...(action.payload_json||{}),leaseUntil}}).eq('id',action.id).eq('telegram_id',String(action.telegram_id)).eq('status','ready').select('id').maybeSingle()
   if(error)throw new Error(`restaurant_reservation_claim_failed:${error.message}`)
   return Boolean(data?.id)
 }
@@ -84,6 +84,7 @@ async function failSafe(params:{action:any;event:any;runId:string;approvalId:str
 }
 
 export async function processOne(action:any,reconciledResult?:Awaited<ReturnType<typeof runSecureBrowser>>){
+  if(action.payload_json?.providerConfirmationVerified===true)throw new Error('restaurant_reservation_already_confirmed')
   const tg=String(action.telegram_id)
   if(!(await claim(action)))return{status:'skipped' as const}
   const{data:event,error:eventError}=await supabaseAdmin.from('life_events').select('id,event_type,subtype,title,provider,timezone,location,lifecycle_state,preferences_json,metadata_json,source_refs').eq('id',action.life_event_id).eq('telegram_id',tg).maybeSingle()
@@ -213,14 +214,34 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   }
 
   const now=new Date().toISOString()
-  if(reconciledResult)await releaseRunAuthHandoff(tg,runId)
   const meta={...(event.metadata_json||{}),reservationConfirmed:true,reservationConfirmedAt:now,confirmationUrl:result.url,confirmationEvidence:safe(result.pageText,2200)}
-  await Promise.all([
-    supabaseAdmin.from('agent_runs').update({status:'completed',summary:'Restaurant reservation submitted and verified from the provider confirmation page.',progress:100,completed_at:now,updated_at:now,metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:String(event.id),life_event_action_id:String(action.id),providerConfirmationVerified:true,confirmationUrl:result.url}}).eq('id',runId).eq('telegram_id',tg),
-    supabaseAdmin.from('life_event_actions').update({status:'completed',updated_at:now,payload_json:{...payload,completedAt:now,providerConfirmationVerified:true,confirmationUrl:result.url}}).eq('id',action.id).eq('telegram_id',tg),
-    supabaseAdmin.from('life_events').update({lifecycle_state:'watching',metadata_json:meta,updated_at:now,next_action_at:null}).eq('id',event.id).eq('telegram_id',tg),
-    supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:now}).eq('id',approvalId).eq('telegram_id',tg).eq('status','approved'),
+  // Provider success and durable task completion are separate facts. Quarantine
+  // this exact action before bookkeeping so a partial write cannot arm a replay.
+  const receipt={...payload,providerConfirmationVerified:true,providerConfirmedAt:now,confirmationUrl:result.url,reconciliationRequired:true,blockedReason:'restaurant_confirmation_recording'}
+  const {data:recorded,error:receiptError}=await supabaseAdmin.from('life_event_actions').update({status:'blocked',updated_at:now,payload_json:receipt})
+    .eq('id',action.id).eq('telegram_id',tg).eq('status','running').select('id').maybeSingle()
+  if(receiptError||!recorded)throw new Error('restaurant_reservation_confirmation_receipt_failed')
+  if(reconciledResult)await releaseRunAuthHandoff(tg,runId)
+  const completionMetadata={plan_type:'restaurant_reservation_release',life_event_id:String(event.id),life_event_action_id:String(action.id),providerConfirmationVerified:true,confirmationUrl:result.url}
+  const completions=await Promise.allSettled([
+    supabaseAdmin.from('agent_runs').update({status:'completed',summary:'Restaurant reservation submitted and verified from the provider confirmation page.',progress:100,completed_at:now,updated_at:now,metadata_json:completionMetadata}).eq('id',runId).eq('telegram_id',tg).select('id').maybeSingle(),
+    supabaseAdmin.from('life_event_actions').update({status:'completed',updated_at:now,payload_json:{...receipt,completedAt:now,reconciliationRequired:false,blockedReason:null}}).eq('id',action.id).eq('telegram_id',tg).select('id').maybeSingle(),
+    supabaseAdmin.from('life_events').update({lifecycle_state:'watching',metadata_json:meta,updated_at:now,next_action_at:null}).eq('id',event.id).eq('telegram_id',tg).select('id').maybeSingle(),
+    supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:now}).eq('id',approvalId).eq('telegram_id',tg).eq('status','approved').select('id').maybeSingle(),
   ])
+  if(completions.some(r=>r.status==='rejected'||r.value.error||!r.value.data)){
+    const text='The provider confirmation was verified, but Gogo could not finish saving this task. Do not repeat the reservation; this same task needs review.'
+    // Wait for every completion write to settle before restoring the quarantine;
+    // otherwise a late successful write could overwrite the blocked action.
+    const recovery=await Promise.allSettled([
+      supabaseAdmin.from('agent_runs').update({status:'paused',error:'restaurant_confirmation_recording_failed',summary:text,completed_at:null,updated_at:now,metadata_json:completionMetadata}).eq('id',runId).eq('telegram_id',tg).select('id').maybeSingle(),
+      supabaseAdmin.from('life_event_actions').update({status:'blocked',updated_at:now,payload_json:{...receipt,blockedReason:'restaurant_confirmation_recording_failed'}}).eq('id',action.id).eq('telegram_id',tg).select('id').maybeSingle(),
+    ])
+    if(recovery.some(r=>r.status==='rejected'||r.value.error||!r.value.data))throw new Error('restaurant_reservation_confirmation_recovery_failed')
+    await activity(tg,runId,'restaurant_confirmation_recording_failed',text,{life_event_id:event.id,action_id:action.id})
+    await notify(actor,text)
+    return{status:'paused' as const,runId,text}
+  }
   await activity(tg,runId,'restaurant_reservation_verified','Provider confirmation verified for the restaurant reservation.',{life_event_id:event.id,action_id:action.id,confirmation_url:result.url})
 
   let calendarNote=''
@@ -268,7 +289,9 @@ export async function processQueuedRestaurantReservations(limit=6){
     }catch(error:any){
       failed++
       console.error('RESTAURANT_RESERVATION_WORKER_FAILED:',action.id,error?.message||error)
-      await Promise.resolve(supabaseAdmin.from('life_event_actions').update({status:'blocked',payload_json:{...(action.payload_json as any||{}),blockedReason:safe(error?.message||'restaurant_reservation_worker_failed',300)},updated_at:new Date().toISOString()}).eq('id',String(action.id)).eq('telegram_id',String(action.telegram_id))).catch(()=>{})
+      // The worker may already have recorded a provider-confirmation receipt.
+      // Never replace its current payload with this earlier queued snapshot.
+      await Promise.resolve(supabaseAdmin.from('life_event_actions').update({status:'blocked',updated_at:new Date().toISOString()}).eq('id',String(action.id)).eq('telegram_id',String(action.telegram_id))).catch(()=>{})
     }
   }
   return{checked,completed,failed,paused,unknown,waitingApproval,staleUnknown:(stale.data||[]).length}

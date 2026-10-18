@@ -299,7 +299,7 @@ export function restaurantReservationApprovalInput(params:{runId:string;lifeEven
 async function existingMission(tg:number,key:string){
   const{data}=await supabaseAdmin.from('life_events').select('id,metadata_json,next_action_at,lifecycle_state').eq('telegram_id',String(tg)).eq('dedupe_key',key).maybeSingle()
   if(!data?.id)return null
-  const{data:run}=await supabaseAdmin.from('agent_runs').select('id,status,error,updated_at,metadata_json').eq('telegram_id',String(tg)).eq('metadata_json->>plan_type','restaurant_reservation_release').eq('metadata_json->>life_event_id',String(data.id)).in('status',['waiting_approval','queued','running','paused','outcome_unknown']).order('started_at',{ascending:false}).limit(1).maybeSingle()
+  const{data:run}=await supabaseAdmin.from('agent_runs').select('id,status,error,updated_at,metadata_json').eq('telegram_id',String(tg)).eq('metadata_json->>plan_type','restaurant_reservation_release').eq('metadata_json->>life_event_id',String(data.id)).in('status',['waiting_approval','queued','running','paused','outcome_unknown','completed']).order('started_at',{ascending:false}).limit(1).maybeSingle()
   const{data:approval}=run?.id?await supabaseAdmin.from('agent_approvals').select('id,status').eq('run_id',String(run.id)).eq('telegram_id',String(tg)).eq('action_type','booking').order('requested_at',{ascending:false}).limit(1).maybeSingle():{data:null}
   return{event:data,run:run||null,approval:approval||null}
 }
@@ -519,6 +519,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const contextRefs=[...contextWindows.flatMap(window=>window.sourceRefs),...diningContext.calendar.windows.flatMap(window=>window.sourceRefs)].slice(0,30)
   const key=dedupeKey(params.actor,intent,provider.url)
   const existing=await existingMission(params.actor.legacyTelegramId,key)
+  if(existing?.event?.metadata_json?.reservationConfirmed===true||existing?.run?.metadata_json?.providerConfirmationVerified===true)return{runId:String(existing?.run?.id||''),status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'A provider confirmation is already recorded for this reservation. Do not book it again. Review that same task; specify a different dining date if you intend a separate reservation.'}
   const refreshInProgress=String(existing?.run?.error||'').startsWith('restaurant_context_refresh:')
   const refreshUpdated=Date.parse(String(existing?.run?.updated_at||''))
   const abandonedRefresh=refreshInProgress&&(!Number.isFinite(refreshUpdated)||refreshUpdated<=Date.now()-5*60_000)
@@ -660,6 +661,12 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
   const meta:any=run.metadata_json||{}
   if(meta.plan_type!=='restaurant_reservation_release')throw new Error('not_restaurant_reservation_plan')
   const{data:action}=await supabaseAdmin.from('life_event_actions').select('id,status,updated_at,payload_json,due_at').eq('id',String(meta.life_event_action_id)).eq('telegram_id',tg).maybeSingle()
+  if(meta.providerConfirmationVerified===true||action?.payload_json?.providerConfirmationVerified===true)throw new Error('restaurant_reservation_already_confirmed')
+  // A failed receipt may leave no confirmation flag. Only pre-execution states
+  // can arm authority; an attempted/blocked mission must be reconciled first.
+  const initialApproval=action?.status==='waiting_approval'&&['waiting_approval','queued'].includes(run.status)
+  const alreadyArmed=run.status==='queued'&&action?.status==='ready'
+  if(run.error||(!initialApproval&&!alreadyArmed))throw new Error('restaurant_reservation_reconciliation_required')
   const{data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',tg).eq('action_type','booking').eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   if(!action||!approval)throw new Error('approval_required')
   const p:any=action.payload_json||{}
@@ -691,6 +698,7 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
     return{runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'This older reservation approval needs verified dining-date context. Nothing was armed. Request the reservation again to refresh this same mission and review a new bounded approval.'}
   }
   const now=new Date().toISOString()
+  if(alreadyArmed)return{runId:params.runId,status:'queued' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,text:'This exact reservation is already armed. No new attempt or authority was created.'}
   await transitionRun({status:'queued',summary:'Reservation approval accepted; preparing the scheduled action.',progress:55,updated_at:now})
   await transitionAction({status:'ready',updated_at:now,payload_json:{...p,armedAt:now,approvalId:String(approval.id)}})
   const results=await Promise.all([
