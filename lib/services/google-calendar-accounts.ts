@@ -60,14 +60,14 @@ export async function getCalendarAccountAccess(telegramId: number | string, prim
 }
 
 /** Merge per-account event lists: sorted by start, an invite that sits on two calendars appears once. */
-export function mergeAccountEvents(perAccount: Array<{ email: string | null; events: any[]; hasMore: boolean }>) {
+export function mergeAccountEvents(perAccount: Array<{ email: string | null; events: any[]; hasMore: boolean; timezone?: string }>) {
   const seen = new Set<string>()
   const events: TaggedEvent[] = []
   for (const part of perAccount) {
     for (const event of part.events) {
       const key = String(event?.iCalUID || '')
       if (key) { if (seen.has(key)) continue; seen.add(key) }
-      events.push({ ...event, _account: part.email })
+      events.push({ ...event, _account: part.email, ...(part.timezone?{_calendarTimezone:part.timezone}:{}) })
     }
   }
   const startOf = (e: any) => Date.parse(String(e?.start?.dateTime || e?.start?.date || '')) || 0
