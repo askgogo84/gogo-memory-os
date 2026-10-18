@@ -928,6 +928,20 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   await saveConversation(resolvedUser.telegramId, 'user', incomingText)
 
+  if(intent.type==='read_calendar'){
+    let reply:string
+    try{
+      const result=await executeReadOnlyCalendarStep({actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId||''),name:resolvedUser.name||'Gogo'},instruction:incomingText,missionText:incomingText})
+      reply=result.text||"I couldn't verify your Calendar just now. Your schedule may still contain events. Nothing was changed."
+    }catch(error:any){
+      reply=/^calendar_(?:date|time|timezone|duration)_/.test(String(error?.message||''))
+        ?'Please give the exact calendar date or date range in YYYY-MM-DD format so I can check the right days. Nothing was changed.'
+        :"I couldn't verify your Calendar just now. Your schedule may still contain events. Nothing was changed."
+    }
+    await saveConversation(resolvedUser.telegramId,'assistant',reply)
+    return {text:formatOutgoingText(params.channel,reply),handledBy:'read-only-schedule',resolvedUser}
+  }
+
   if (isPlanMyDayIntent(incomingText)) {
     const reply = await buildPlanMyDayReply(resolvedUser.telegramId, resolvedUser.name)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)

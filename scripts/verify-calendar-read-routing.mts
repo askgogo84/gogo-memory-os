@@ -17,7 +17,7 @@ async function check(label:string,fn:()=>unknown){try{await fn();console.log('PA
 const rejectIO=()=>{throw Error('Unexpected model/provider/action I/O')}
 const beforeFetch=globalThis.fetch
 globalThis.fetch=async()=>rejectIO()
-const noop=new Proxy({}, {get:()=>()=>null})
+const noop=new Proxy({}, {get:(_target,key)=>/^(?:record|observe|capture)/.test(String(key))?async()=>null:()=>null})
 function load(file:string,deps:Record<string,unknown>){
  const source=readFileSync(file,'utf8'),exports:any={}
  runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText,{exports,require:(id:string)=>deps[id]||noop,process:{env:{}},console:{log(){},error(){}},URL,URLSearchParams,Request,Response,Buffer,AbortSignal,setTimeout,clearTimeout})

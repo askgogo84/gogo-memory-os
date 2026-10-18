@@ -5,6 +5,7 @@ import { getCalendarAccountAccess, fetchMergedCalendarEventsPage, describeCalend
 import { isValidTimezone, normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
+import { CALENDAR_WORD_RE } from '@/lib/data/calendar-word'
 
 const MAX_EVENTS = 40
 const MAX_SLOTS = 6
@@ -73,6 +74,17 @@ export function calendarAffirmativeText(text:string){
     if(/^\w+(?:\s*(?:,|and|or)\s*\w+)*\s*$/i.test(prohibited)&&! /\b(?:just|please|instead)\b/i.test(next[0]))return ''
     return clause.slice(next.index)
   })
+}
+
+/** A standalone view command is not permission to connect accounts or act. */
+export function isStandaloneCalendarReadRequest(raw:string){
+  const text=calendarAffirmativeText(String(raw||'').toLowerCase().replace(/’/g,"'")).trim()
+  const head=new RegExp(`^(?:please\\s+)?(?:(?:can|could|would)\\s+you\\s+)?(?:check|read|review|show(?:\\s+me)?|list|display|summari[sz]e)\\s+(?:me\\s+)?(?:(?:my|the|your)\\s+)?(?:google\\s+)?${CALENDAR_WORD_RE.source}`)
+  if(!head.test(text))return false
+  if(/\b(?:connect|reconnect|disconnect|link|unlink|account|accounts|connection|connected|permissions?|access|sync|setup)\b/.test(text))return false
+  if(/\b(?:reserve|schedule|remind|create|add|invite|prepare|write|put|set|forward|save|remember|compose|archive|post|publish|renew|move|reschedule|resched|postpone|push|shift|update|make|edit|change|modify|cancel|delete|remove|clear|book|send|pay|buy|purchase|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|order|reorder|empty|increase|decrease|apply|redeem|block|unblock|open|browse|navigate|visit|inspect|monitor|watch|track)\b/.test(text.replace(head,'')))return false
+  if(/\b(?:and|then|also|but)\s+(?:please\s+)?(?:find|search|look\s+for|research|compare|check|read|review|show|list|tell)\b/.test(text))return false
+  return true
 }
 
 export function requestedCalendarDays(text:string){
