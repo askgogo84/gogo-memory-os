@@ -116,7 +116,7 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
         const coordinated=precedingMoney&&/^\s*and(?:\s+the)?\s*$/i.test(precedingTail)?units(preceding.slice(0,precedingMoney.index)).filter(unit=>unit.explicit).at(-1):undefined
         const inherited=sharedHeading||coordinated
         const unit=local||inherited
-        if(!unit){warnings.add('A quote has no verified weight/unit, so a per-gram rate cannot be stated.');return}
+        if(!unit){warnings.add('A candidate quote was omitted because its weight/unit is unverified.');return}
         if(before.length&&after.length&&before.at(-1)!.grams!==after[0].grams){warnings.add('A quote has conflicting weight units.');return}
         add(money[1],unit.grams)
       }
