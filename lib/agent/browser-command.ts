@@ -72,7 +72,7 @@ function explicitlyNegates(text:string, actionPattern:string){
 export function parseBrowserCommand(text:string):BrowserCommand|null{
   const raw=String(text||'').trim();const url=extractUrl(raw);if(!url)return null
   const t=actionTextWithoutUrls(raw)
-  const signal=/\b(open|browse|browser|website|site|page|form|fill|apply|submit|book|checkout|buy|purchase|reserve|navigate|go to|visit|inspect|check)\b/.test(t)
+  const signal=/\b(open|browse|browser|website|site|page|form|fill|apply|submit|book|checkout|buy|purchase|reserve|navigate|go to|visit|inspect|check|read|research|summari[sz]e|look|search|find|tell|show|what|when|where|why|how)\b/.test(t)
   if(!signal)return null
 
   const noPurchase=explicitlyNegates(t,'buy|purchase|checkout|pay|payment')
