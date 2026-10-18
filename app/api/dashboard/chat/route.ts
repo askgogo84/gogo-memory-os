@@ -125,10 +125,12 @@ export async function POST(req: NextRequest) {
     // Secondary authentication belongs only in the owner's secure takeover.
     const loginCode = text.length <= 24 && /\d{4}/.test(text.replace(/[\s-]/g, '')) ? otpReply(text) : null
     if (loginCode) {
-      const {humanAuthTakeoverReply}=await import('@/lib/agent/browser-auth-notice')
-      const reply=await humanAuthTakeoverReply(user.telegram_id)
-      await saveConversation(user.telegram_id,'[authentication code withheld]',reply)
-      return NextResponse.json({text:reply,handledBy:'human-auth-required'})
+      const {humanAuthTakeoverReply,shouldWithholdAuthenticationCode}=await import('@/lib/agent/browser-auth-notice')
+      if(await shouldWithholdAuthenticationCode(user.telegram_id,text)){
+        const reply=await humanAuthTakeoverReply(user.telegram_id)
+        await saveConversation(user.telegram_id,'[authentication code withheld]',reply)
+        return NextResponse.json({text:reply,handledBy:'human-auth-required'})
+      }
     }
     const inboxReplyRead = await handleInboxReplyRead({actor,text})
     if(inboxReplyRead){

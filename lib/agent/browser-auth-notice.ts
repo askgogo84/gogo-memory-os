@@ -1,4 +1,20 @@
 import {supabaseAdmin} from '@/lib/supabase-admin'
+import {otpReply} from './provider-booking'
+
+/** Codes are human-only; an ordinary numeric reply needs owner-specific auth context. */
+export async function shouldWithholdAuthenticationCode(telegramId:number|string,text:string):Promise<boolean>{
+  if(!otpReply(text))return false
+  if(/^(?:otp|code|the code is|code is|otp is)\b/i.test(text.trim()))return true
+  const now=Date.now()
+  const {data,error}=await supabaseAdmin.from('agent_runs').select('status,metadata_json')
+    .eq('telegram_id',String(telegramId)).eq('type','secure_browser').in('status',['paused','running'])
+    .gte('updated_at',new Date(now-10*60_000).toISOString()).order('updated_at',{ascending:false}).limit(20)
+  if(error)throw new Error('authentication_context_lookup_failed')
+  return (data||[]).some(row=>[row.metadata_json?.login_code,row.metadata_json?.booking_otp].some(context=>{
+    const requested=Date.parse(String(context?.requested_at||''))
+    return Number.isFinite(requested)&&requested<=now&&now-requested<=10*60_000
+  }))
+}
 
 export function loginUnavailableMessage(site:string,resumeUrl:string):string{
   return `I couldn't sign in to ${site} automatically, so I paused this task.\n\nOpen this, tap Take control and sign in yourself, then tap Resume. I'll continue the same question. Keep passwords and sign-in codes in Take control, not in chat:\n${resumeUrl}`

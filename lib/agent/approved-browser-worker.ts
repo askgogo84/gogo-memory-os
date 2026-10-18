@@ -144,10 +144,10 @@ export async function runBackgroundBrowserRead(runId: string): Promise<ApprovedB
 }
 
 // Compatibility exports reject legacy queued code-bearing jobs without I/O.
-export async function runBookingOtpResume(_runId:string,_otp:string):Promise<ApprovedBrowserRunOutcome>{throw new Error('human_auth_takeover_required')}
-export async function runLoginCodeResume(_runId:string,_code:string):Promise<ApprovedBrowserRunOutcome>{throw new Error('human_auth_takeover_required')}
-export async function triggerLoginCodeResume(_runId:string,_code:string):Promise<'dispatched'|'failed'>{throw new Error('human_auth_takeover_required')}
-export async function triggerBookingOtpResume(_runId:string,_otp:string):Promise<'dispatched'|'failed'>{throw new Error('human_auth_takeover_required')}
+export async function runBookingOtpResume(runId:string,otp:string):Promise<ApprovedBrowserRunOutcome>{void runId;void otp;throw new Error('human_auth_takeover_required')}
+export async function runLoginCodeResume(runId:string,code:string):Promise<ApprovedBrowserRunOutcome>{void runId;void code;throw new Error('human_auth_takeover_required')}
+export async function triggerLoginCodeResume(runId:string,code:string):Promise<'dispatched'|'failed'>{void runId;void code;throw new Error('human_auth_takeover_required')}
+export async function triggerBookingOtpResume(runId:string,otp:string):Promise<'dispatched'|'failed'>{void runId;void otp;throw new Error('human_auth_takeover_required')}
 
 function appBaseUrl() {
   return String(process.env.NEXT_PUBLIC_APP_URL || process.env.APP_URL || 'https://app.askgogo.in').replace(/\/$/, '')

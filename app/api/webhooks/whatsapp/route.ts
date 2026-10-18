@@ -349,12 +349,14 @@ async function handleWhatsAppPost(req: NextRequest) {
     // Intercept secondary-authentication codes before any model or conversation write.
     const bookingCode = numMedia === 0 ? otpReply(bodyText) : null
     if (bookingCode) {
-      const {humanAuthTakeoverReply}=await import('@/lib/agent/browser-auth-notice')
-      const reply=await humanAuthTakeoverReply(resolvedUser.telegramId)
-      await saveConversation(resolvedUser.telegramId,'user','[authentication code withheld]')
-      await saveConversation(resolvedUser.telegramId,'assistant',reply)
-      await sendWhatsAppMessage(from,reply)
-      return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      const {humanAuthTakeoverReply,shouldWithholdAuthenticationCode}=await import('@/lib/agent/browser-auth-notice')
+      if(await shouldWithholdAuthenticationCode(resolvedUser.telegramId,bodyText)){
+        const reply=await humanAuthTakeoverReply(resolvedUser.telegramId)
+        await saveConversation(resolvedUser.telegramId,'user','[authentication code withheld]')
+        await saveConversation(resolvedUser.telegramId,'assistant',reply)
+        await sendWhatsAppMessage(from,reply)
+        return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
     }
 
     // ── Interactive onboarding menu for new users ───────────────────

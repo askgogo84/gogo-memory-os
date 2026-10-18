@@ -10,6 +10,16 @@ import {browserPageAllowlist} from '../lib/agent/browser-page-network'
 
 process.env.NEXT_PUBLIC_SUPABASE_URL='https://auth-fixture.supabase.co'
 process.env.SUPABASE_SERVICE_ROLE_KEY='fixture-only'
+const {shouldWithholdAuthenticationCode}=await import('../lib/agent/browser-auth-notice')
+const beforeFetch=globalThis.fetch
+let authRows:any[]=[]
+globalThis.fetch=async input=>{
+ const target=new URL(String(input));assert.equal(target.origin,'https://auth-fixture.supabase.co')
+ assert.equal(target.searchParams.get('telegram_id'),'eq.123','authentication context must be owner-scoped')
+ assert.equal(target.searchParams.get('type'),'eq.secure_browser')
+ assert.equal(target.searchParams.get('status'),'in.(paused,running)')
+ return new Response(JSON.stringify(authRows),{headers:{'Content-Type':'application/json'}})
+}
 const noop=new Proxy({}, {get:()=>()=>null})
 function load(path:string,deps:any){
  const exports:any={}
@@ -17,6 +27,7 @@ function load(path:string,deps:any){
  return exports
 }
 
+try{
 if(process.env.AUTH_REVIEW_CASE!=='resume'){
  const json={json:(body:any,options:any={})=>new Response(JSON.stringify(body),{status:options.status||200})}
  const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{telegram_id:123,whatsapp_id:'fixture-owner',name:'Fixture'}}),insert:()=>({error:null})}
@@ -24,7 +35,7 @@ if(process.env.AUTH_REVIEW_CASE!=='resume'){
  const dash=load('app/api/dashboard/chat/route.ts',{
   'next/server':{NextResponse:json},'@/lib/dashboard/session':{getSession:async()=>({telegramId:'123'})},
   '@/lib/supabase-admin':{supabaseAdmin:{from:()=>q}},'@/lib/agent/actor':{resolveAgentActor:async()=>({legacyTelegramId:123})},
-  '@/lib/agent/provider-booking':{otpReply},'@/lib/agent/browser-auth-notice':{humanAuthTakeoverReply:async()=> 'Take control'},
+  '@/lib/agent/provider-booking':{otpReply},'@/lib/agent/browser-auth-notice':{shouldWithholdAuthenticationCode,humanAuthTakeoverReply:async()=> 'Take control'},
   '@/lib/agent/open-loops':{handleInboxReplyRead:async()=>{normal++;return{text:'ordinary clarification',handledBy:'ordinary'}}},
  })
  for(const text of ['560086','50000','2027']){
@@ -33,6 +44,19 @@ if(process.env.AUTH_REVIEW_CASE!=='resume'){
   assert.equal((await response.json()).handledBy,'ordinary',`${text}: a bare postal code, amount or year without auth state must retain normal routing`)
  }
  assert.equal(normal,3)
+ for(const key of ['login_code','booking_otp'])for(const status of ['paused','running']){
+  authRows=[{status,metadata_json:{[key]:{requested_at:new Date(Date.now()-30_000).toISOString()}}}]
+  assert.equal(await shouldWithholdAuthenticationCode(123,'482913'),true)
+ }
+ for(const row of [{metadata_json:{handoff:{},state:'delivery_location_required'}},{metadata_json:{login_code:{requested_at:new Date(Date.now()-11*60_000).toISOString()}}},{metadata_json:{booking_otp:{requested_at:new Date(Date.now()+60_000).toISOString()}}}]){
+  authRows=[row];assert.equal(await shouldWithholdAuthenticationCode(123,'560086'),false)
+ }
+ authRows=[]
+ for(const text of ['otp 482913','code is 4829 13','the code is 482913'])assert.equal(await shouldWithholdAuthenticationCode(123,text),true)
+ const readBeforeFailure=globalThis.fetch
+ globalThis.fetch=async()=>new Response(JSON.stringify({message:'fixture database unavailable'}),{status:400,headers:{'Content-Type':'application/json'}})
+ await assert.rejects(shouldWithholdAuthenticationCode(123,'482913'),/^Error: authentication_context_lookup_failed$/,'unavailable auth context must not send a possible code into ordinary routing')
+ globalThis.fetch=readBeforeFailure
  console.log('Ordinary numeric dashboard replies retain normal clarification routing')
 }
 
@@ -66,3 +90,4 @@ if(process.env.AUTH_REVIEW_CASE!=='numbers'){
  assert.equal(commands[0].reusePage,true,'resume inspects the same open page')
  console.log('Successful human authentication preserves the same page without speculative Vault retry')
 }
+}finally{globalThis.fetch=beforeFetch}

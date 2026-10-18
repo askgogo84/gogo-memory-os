@@ -2209,7 +2209,9 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       let signedOutEntry=!params.loginCode&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
       // Phone-code sites (Swiggy, Zomato): sign in once at the start unless Gogo already holds a live session there,
       // because the planner may wander to pages with no "Log in" link (16 Oct live run).
-      if(!params.loginCode&&!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
+      // A human may just have completed sign-in in this same page. A stale session marker
+      // alone must not restart login on resume; actual login controls and auth gates still apply.
+      if(!params.resumePage&&!params.loginCode&&!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
         const entryHost=(()=>{try{return new URL(String(page.url||target.toString())).hostname}catch{return ''}})()
         // typeof guard: browser test harnesses stub the vault modules with empty objects.
         const phoneSite=entryHost&&typeof findVaultProviderForDomain==='function'?findVaultProviderForDomain(entryHost):null

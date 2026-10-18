@@ -405,11 +405,13 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const codeText=String(params.text||'').trim()
   const codeMatch=codeText.length<=24&&codeText.match(/^(?:(?:otp|code|the code is|code is|otp is)\s*[:\-]?\s*)?([0-9][0-9\s-]{2,14}[0-9])\.?$/i)
   if(codeMatch&&/^\d{4,8}$/.test(codeMatch[1].replace(/[\s-]/g,''))){
-    const {humanAuthTakeoverReply}=await import('@/lib/agent/browser-auth-notice')
-    const text=await humanAuthTakeoverReply(resolvedUser.telegramId)
-    await saveConversation(resolvedUser.telegramId,'user','[authentication code withheld]')
-    await saveConversation(resolvedUser.telegramId,'assistant',text)
-    return {text,handledBy:'human-auth-required',resolvedUser}
+    const {humanAuthTakeoverReply,shouldWithholdAuthenticationCode}=await import('@/lib/agent/browser-auth-notice')
+    if(await shouldWithholdAuthenticationCode(resolvedUser.telegramId,codeText)){
+      const text=await humanAuthTakeoverReply(resolvedUser.telegramId)
+      await saveConversation(resolvedUser.telegramId,'user','[authentication code withheld]')
+      await saveConversation(resolvedUser.telegramId,'assistant',text)
+      return {text,handledBy:'human-auth-required',resolvedUser}
+    }
   }
   console.log('PIM:start', { channel: params.channel, externalUserId: params.externalUserId, text: params.text })
 
