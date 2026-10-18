@@ -154,6 +154,13 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
     if(!reconciledResult)await releaseRunAuthHandoff(tg,runId)
     result=reconciledResult||await runSecureBrowser({reserveHumanHandoff:true,userId:actor.userId,url,mode:'execute',objective:instruction})
   }catch(error:any){
+    if(error?.message==='browser_objective_too_long'){
+      const summary='The complete approved constraints exceed the browser planning limit. No reservation was attempted. Specify a narrower dining date and review a refreshed approval.'
+      await failSafe({action,event,runId,approvalId,status:'paused',summary,error:'restaurant_context_review_required',expireApproval:true,actor})
+      await activity(tg,runId,'restaurant_context_review_required',summary,{life_event_id:event.id,action_id:action.id})
+      await notify(actor,summary)
+      return{status:'paused' as const,runId}
+    }
     if(error?.message==='browser_handoff_in_use'){
       // The shared browser was reserved before any provider navigation/action.
       const at=new Date().toISOString()
