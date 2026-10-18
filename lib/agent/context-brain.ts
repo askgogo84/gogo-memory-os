@@ -8,7 +8,7 @@ import { redactSecretShapedText, isSecretShapedMemory } from '@/lib/bot/memory-r
 import type { AgentActor } from './actor'
 import { latestTypedContext } from './typed-object-context'
 import type {ReservationTravelInventory,ReservationCalendarInventory} from './reservation-dining-context'
-import {calendarInterval,calendarBlocksTime} from '../calendar-intervals'
+import {calendarInterval,calendarBlocksTime,type CalendarProviderEvent} from '../calendar-intervals'
 import {getCalendarAccountAccess,fetchMergedCalendarEventsPage} from '@/lib/services/google-calendar-accounts'
 
 export type ContextSource =
@@ -489,11 +489,12 @@ async function loadReservationCalendar(actor:AgentActor,horizonDays:number):Prom
     if(page.hasMore||page.accountsRead!==page.accountsTotal)inventory.incomplete=true
     const windows=new Map<string,ReservationCalendarInventory['windows'][number]>()
     for(const event of page.events){
-      if(!calendarBlocksTime(event))continue
+      const providerEvent=event as CalendarProviderEvent
+      if(!calendarBlocksTime(providerEvent))continue
       // All-day dates belong to the provider calendar's timezone. The owner's
       // display timezone cannot establish those instants for a linked account.
       const timezone=typeof event._calendarTimezone==='string'?event._calendarTimezone:typeof event.start?.timeZone==='string'?event.start.timeZone:''
-      const span=calendarInterval(event,timezone)
+      const span=calendarInterval(providerEvent,timezone)
       if(!span||!event.id){inventory.incomplete=true;continue}
       if(span.end<=from||span.start>=until)continue
       // Include only occupied time and opaque provenance; Calendar titles,
