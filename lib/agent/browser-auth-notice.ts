@@ -4,7 +4,7 @@ import {otpReply} from './provider-booking'
 /** Codes are human-only; an ordinary numeric reply needs owner-specific auth context. */
 export async function shouldWithholdAuthenticationCode(telegramId:number|string,text:string):Promise<boolean>{
   if(!otpReply(text))return false
-  if(/^(?:otp|code|the code is|code is|otp is)\b/i.test(text.trim()))return true
+  if(/^(?:otp|code|the code is|code is|otp is)/i.test(text.trim()))return true
   const now=Date.now()
   const {data,error}=await supabaseAdmin.from('agent_runs').select('id,status,metadata_json')
     .eq('telegram_id',String(telegramId)).eq('type','secure_browser').in('status',['paused','running'])
