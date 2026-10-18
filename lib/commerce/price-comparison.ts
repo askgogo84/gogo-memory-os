@@ -53,7 +53,7 @@ export async function readPriceComparison(owner: string, id: string): Promise<Pr
   return task
 }
 
-// 16 Oct: no app.askgogo.in link in the reply; the answer itself is the result.
+// Keep results in the reply; only a required human browser step needs an app link.
 function reply(task: PriceComparison, intro?: string) {
   return {runId: task.id, status: task.status, capability: 'browser' as const, risk: 'low' as const,
     handledBy: 'price-comparison', text: intro || comparisonWhatsAppSummary(task, commerceOrigin())}
@@ -177,7 +177,7 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
     if (error || !data) throw new Error('comparison_create_failed')
     // Open the stores now rather than on the next cron minute; the cron still picks it up if this fails.
     try { const {triggerComparisonRun} = await import('@/lib/agent/approved-browser-worker'); await triggerComparisonRun(String((data as any).id)) } catch {}
-    const current = await readPriceComparison(owner, String((data as any).id))
+    const current = await readPriceComparison(owner, String(data.id))
     if (!current) throw new Error('comparison_missing_after_create')
     return reply(current, current.metadata_json.providers.some(row => row.waitingForRunId)
       ? undefined : startedText(parsed.subject, parsed.providers, looks))
@@ -210,7 +210,7 @@ async function sharedBrowserHandoffPending(owner: string) {
   // for location or sign-in is already reported as blocked; it must not hold every other comparison.
   const probes = (data || []).filter((row: any) => Boolean(row.metadata_json?.handoff?.takeoverUrl) && !row.metadata_json?.comparison_parent_id)
   const live = await Promise.all(probes.map((row: any) => browserHandoffIsLive(row.metadata_json.handoff.takeoverUrl)))
-  return probes.find((_row: any, index: number) => live[index])?.id || null
+  return probes.find((_row: unknown, index: number) => live[index])?.id || null
 }
 
 // Electronics stores are public product pages, each read in its own browser, so they run at the same time.
@@ -239,7 +239,7 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     const task = await readPriceComparison(owner, id)
     if (!task) return null
     const sharedBusy = task.metadata_json.providers.some(row => row.status === 'checking' && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider))
-    const next = task.metadata_json.providers.find(row => row.status === 'pending' && !row.waitingForRunId && (PARALLEL_COMPARISON_PROVIDERS.has(row.provider) || !sharedBusy))
+    const next = task.metadata_json.providers.find(row => row.status === 'pending' && (PARALLEL_COMPARISON_PROVIDERS.has(row.provider) || !sharedBusy) && !row.waitingForRunId)
     if (!next) { await saveProgress(owner, task); return {task, next: null as null} }
     const parallel = PARALLEL_COMPARISON_PROVIDERS.has(next.provider)
     const {prepareLinkedBrowserRead} = await import('@/lib/agent/browser-command')
