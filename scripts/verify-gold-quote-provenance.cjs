@@ -153,4 +153,12 @@ check('reverse suffix qualifiers stop before a comma-separated next quote',()=>{
   assert.match(dated,/24K — as of 2026-10-17/);assert.match(dated,/22K — as of 2026-10-18/);
  }
 });
+check('a clause comma preserves a complete valid amount without accepting bad grouping',()=>{
+ const result=answer('1. Bangalore board\n18 October 2026. 24K gold per 10 g ₹1,40,000, ₹12,800 per gram for 22K\nSource: https://synthetic.invalid/amount-comma');
+ assert.match(result,/24K: ₹14,000/);assert.match(result,/22K: ₹12,800/);
+ for(const price of ['14,00','14,000,,','14,000.50.99']){
+  const invalid=answer(`1. Bangalore board\n18 October 2026. 24K gold per gram ₹${price}\nSource: https://synthetic.invalid/malformed-amount`);
+  assert.doesNotMatch(invalid,/24K: ₹/);
+ }
+});
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');
