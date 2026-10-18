@@ -326,14 +326,15 @@ async function loadReservationIntent(actor:AgentActor,now:number,upper:string){
     if(row.type==='secure_browser'&&!booking)continue
     const kind=booking?'flight':String(row.kind||'')
     const id=safe(row.id,160),start=missionDay(booking?row.booking_depart:row.start_date)
-    const end=missionDay(booking?row.booking_return:(row.return_date||row.end_date))
+    // Flight endDate is the departure search-window end, never a return.
+    const end=missionDay(booking?row.booking_return:kind==='flight'?row.return_date:row.end_date)
     const route=String(row.booking_route||'').match(/^[A-Z]{3}-([A-Z]{3})$/)
     const location=safe(booking?route?.[1]:row.destination,180)
     // A job being finished is not the trip being finished. Retain dated future
     // intent, including failed searches, while excluding undated historical jobs.
     const terminalJob=row.status==='completed'||row.status==='failed'
     if(terminalJob&&(!['flight','hotel'].includes(kind)||!Number.isFinite(start)))continue
-    if(terminalJob&&!Number.isFinite(end)&&start+86400_000+12*3600_000<=now)continue
+    if(terminalJob&&kind!=='flight'&&!Number.isFinite(end)&&start+86400_000+12*3600_000<=now)continue
     if(!['flight','hotel'].includes(kind)||!id||!Number.isFinite(start)){incomplete=true;continue}
     // Date-only research is tentative. A conservative UTC envelope avoids
     // pretending that a requested date is a verified flight/check-in instant.
