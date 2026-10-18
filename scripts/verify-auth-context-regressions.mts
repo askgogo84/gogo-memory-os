@@ -13,9 +13,19 @@ process.env.SUPABASE_SERVICE_ROLE_KEY='fixture-only'
 const {shouldWithholdAuthenticationCode}=await import('../lib/agent/browser-auth-notice')
 const beforeFetch=globalThis.fetch
 let authRows:any[]=[]
+let stepRows:any[]=[]
 globalThis.fetch=async input=>{
  const target=new URL(String(input));assert.equal(target.origin,'https://auth-fixture.supabase.co')
  assert.equal(target.searchParams.get('telegram_id'),'eq.123','authentication context must be owner-scoped')
+ if(target.pathname.endsWith('/agent_steps')){
+  assert.equal(target.searchParams.get('run_id'),'in.(owned-instagram-run)','generic OTP evidence must belong to the current owner-selected run')
+  assert.equal(target.searchParams.get('tool_name'),'eq.secure_browser')
+  assert.equal(target.searchParams.get('status'),'eq.failed')
+  assert.equal(target.searchParams.get('error'),'eq.human_auth_required')
+  assert.equal(target.searchParams.get('output_json->>authReason'),'eq.otp')
+  assert.match(target.searchParams.get('completed_at')||'',/^gte\./)
+  return new Response(JSON.stringify(stepRows),{headers:{'Content-Type':'application/json'}})
+ }
  assert.equal(target.searchParams.get('type'),'eq.secure_browser')
  assert.equal(target.searchParams.get('status'),'in.(paused,running)')
  return new Response(JSON.stringify(authRows),{headers:{'Content-Type':'application/json'}})
@@ -53,6 +63,14 @@ if(process.env.AUTH_REVIEW_CASE!=='resume'){
  }
  authRows=[]
  for(const text of ['otp 482913','code is 4829 13','the code is 482913'])assert.equal(await shouldWithholdAuthenticationCode(123,text),true)
+ // Saved-password providers such as Instagram persist the OTP reason in the
+ // secure-browser step, without the phone-login/booking metadata markers.
+ authRows=[{id:'owned-instagram-run',status:'paused',metadata_json:{handoff:{}}}]
+ stepRows=[{id:'owned-otp-step'}]
+ assert.equal(await shouldWithholdAuthenticationCode(123,'482913'),true,'generic provider OTP step evidence must withhold bare codes')
+ stepRows=[]
+ assert.equal(await shouldWithholdAuthenticationCode(123,'560086'),false,'a generic handoff without an OTP step is not authentication')
+ authRows=[]
  const readBeforeFailure=globalThis.fetch
  globalThis.fetch=async()=>new Response(JSON.stringify({message:'fixture database unavailable'}),{status:400,headers:{'Content-Type':'application/json'}})
  await assert.rejects(shouldWithholdAuthenticationCode(123,'482913'),/^Error: authentication_context_lookup_failed$/,'unavailable auth context must not send a possible code into ordinary routing')
