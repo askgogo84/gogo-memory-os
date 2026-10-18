@@ -69,7 +69,8 @@ for (const [t, type] of [['had 2 rotis with dal', 'nutrition_log'], ['clear groc
 
 // Wiring: the gate sits on the claim sites, and the classifier now always sees the recent conversation
 const src = (p: string) => readFileSync(new URL(p, import.meta.url), 'utf8')
-assert.match(src('../lib/bot/process-message.ts'), /gateDetectedIntent\(detectIntent\(incomingText\), incomingText, params\.semantic\)/)
+assert.match(src('../lib/bot/process-message.ts'), /const detectedIntent=detectIntent\(incomingText\)/)
+assert.match(src('../lib/bot/process-message.ts'), /gateDetectedIntent\(detectedIntent, incomingText, params\.semantic\)/)
 assert.match(src('../app/api/webhooks/whatsapp/route.ts'), /semantic: brainObservation\?\.jev \}\)\n/, 'WhatsApp passes the reading to the rules')
 assert.match(src('../app/api/dashboard/chat/route.ts'), /semantic: webObservation\?\.jev/)
 const legacy = src('../lib/feature-intents-legacy.ts')

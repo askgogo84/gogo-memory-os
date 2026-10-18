@@ -8,6 +8,7 @@ process.env.OPENAI_API_KEY='fixture-only'
 process.env.ANTHROPIC_API_KEY='fixture-only'
 const {detectIntent}=await import('../lib/bot/detect-intent')
 const schedule=await import('../lib/agent/read-only-schedule')
+const {gateDetectedIntent}=await import('../lib/agent/semantic-gate')
 const {calendarReadWindow,executeReadOnlyCalendarStep,calendarReadHoldReply,requestedCalendarTimezone}=await import('../lib/agent/calendar-read')
 const reads=['Check my google calendar','Please review my Google Calendar','Show my Google calender','Read my calendar','Can you check my Google Calendar?','Check my Google Calendar. Do not change anything.']
 const connections=['Connect my Google Calendar','Reconnect my calendar','Google Calendar','Is my Google Calendar connected?','Check my Google Calendar connection']
@@ -29,7 +30,7 @@ function load(file:string,deps:Record<string,unknown>){
  return exports
 }
 const actor={userId:'fixture',legacyTelegramId:123,whatsappId:'fixture-owner',name:'Example'}
-let calendarReads=0,connectionCalls=0,failRead=false,pm:any,dash:any
+let calendarReads=0,connectionCalls=0,semanticCalls=0,failRead=false,pm:any,dash:any
 const readCalendar=async(params:any)=>{
  assert.equal(params.actor.legacyTelegramId,123)
  assert.equal(params.actor.userId,'fixture')
@@ -79,7 +80,7 @@ try{
   const q:any={insert:()=>({error:null}),select:()=>q,eq:()=>q,maybeSingle:async()=>({data:null,error:null})}
   pm=load('lib/bot/process-message.ts',{
    './resolve-user':{resolveUser:async()=>({id:'fixture',telegramId:123,whatsappId:'fixture-owner',name:'Example'})},
-   './detect-intent':{detectIntent},'@/lib/agent/semantic-gate':{gateDetectedIntent:(intent:any)=>intent},
+   './detect-intent':{detectIntent},'@/lib/agent/semantic-gate':{gateDetectedIntent:(intent:any,text:string,semantic:any)=>{semanticCalls++;return gateDetectedIntent(intent,text,semantic)}},
    './format-response':{formatOutgoingText:(_channel:string,text:string)=>text},
    '@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{assert.equal(table,'conversations');return q}}},
    '@/lib/limits':{checkAndIncrementLimit:async()=>({allowed:true})},
@@ -110,6 +111,10 @@ try{
  })
  await check('mixed Calendar and weather reads explicitly clarify both topics before any provider call',async()=>{
   for(const text of extraReads.filter(text=>/weather/.test(text))){const before=calendarReads,connectionsBefore=connectionCalls;const result=await pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text,messageType:'text'});assert.match(result.text,/Calendar/i);assert.match(result.text,/separat|both|another task/i);assert.notEqual(result.text,'Synthetic weather only');assert.equal(calendarReads,before);assert.equal(connectionCalls,connectionsBefore)}
+ })
+ await check('a conflicting semantic classifier cannot override a read hold or compound clarification',async()=>{
+  const semantic={ok:true,intent:{choice:'live_info',confidence:.99}} as any
+  for(const text of [...heldReads,...neverReads,...extraReads]){const before=calendarReads,connectionsBefore=connectionCalls,semanticBefore=semanticCalls;const result=await pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text,messageType:'text',semantic});assert.match(result.text,/haven.t read|not read|on hold/i);assert.equal(calendarReads,before);assert.equal(connectionCalls,connectionsBefore);assert.equal(semanticCalls,semanticBefore)}
  })
  await check('actual Calendar reader refuses a held instruction before owner/provider transport',async()=>{
   for(const text of [...heldReads,...neverReads]){const before=transportCalls;const result=await executeReadOnlyCalendarStep({actor,instruction:text,missionText:text});assert.match(result.text,/haven.t read|not read|on hold/i);assert.equal(transportCalls,before)}
