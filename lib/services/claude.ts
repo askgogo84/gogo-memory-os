@@ -33,7 +33,7 @@ function providerErrorSummary(error:any){
   return {name:String(error?.name||'Error'),status:error?.status||null,type:error?.type||error?.error?.type||null,message:String(error?.message||error||'').slice(0,240)}
 }
 
-function isContextSynthesisTurn(text:string){
+export function isContextSynthesisTurn(text:string){
   const t=String(text||'').trim()
   return /\b(?:based on|using|considering)\s+(?:everything|what|all)\s+(?:you\s+)?(?:already\s+)?know\b/i.test(t)
     || /\bwhat\s+(?:existing\s+)?context\s+matters\b/i.test(t)
@@ -159,9 +159,9 @@ CRITICAL: When the user gives a time or date, calculate the exact datetime yours
 ${workflow ? contentWorkflowPrompt(workflow) : ''}`
 
   const safeHistory = history.map((m) => ({ ...m, content: redactSecretShapedText(m.content) }))
-  // Context-synthesis turns deliberately rely on the durable owner-bound context pack
-  // and memories, not unrelated recent chat branches. This prevents stale entities from
-  // being dragged into "what do you already know / what context matters?" answers.
+  // Context-synthesis turns exclude unrelated recent chat branches. The shared
+  // message caller also omits unfiltered legacy memories so only its selected
+  // owner-bound context pack and standing preferences supply saved evidence.
   const historyForTurn = isContextSynthesisTurn(userMessage)||briefing ? [] : safeHistory.slice(-10)
   const messages:Message[]=[...historyForTurn,{ role: 'user', content: userMessage }]
 

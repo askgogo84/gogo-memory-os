@@ -13,7 +13,7 @@ import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { buildContextPack, renderContextBlock } from '@/lib/agent/context-brain'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
-import { askClaude, askClaudeWithContext, type Message } from '@/lib/claude'
+import { askClaude, askClaudeWithContext, isContextSynthesisTurn, type Message } from '@/lib/claude'
 import { addToListDetailed, formatAddResult, clearList, formatList, getAllLists, getList, setItemDoneByText, resolveAndSetDoneAcrossLists, normalizeListName } from '@/lib/lists'
 import { checkAndIncrementLimit, getUsageStatusReply, getFriendReminderCap } from '@/lib/limits'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -1467,13 +1467,15 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
-  // FREEFORM LLM CONTEXT ASSEMBLY — hard constraint: only conversation history, memories,
-  // and preferences may feed the model here. Vault plaintext must NEVER reach this path —
+  // FREEFORM LLM CONTEXT ASSEMBLY — explicit context synthesis uses the selected
+  // owner-bound pack below, without an unfiltered history/legacy-memory second path.
+  // Ordinary conversation retains those inputs. Vault plaintext must NEVER reach this path —
   // never write decrypted vault_items into public.memories, and never add a vault_items
-  // SELECT to the three sources below. (getMemories also strips secret-shaped rows as
+  // SELECT to any of these context sources. (getMemories also strips secret-shaped rows as
   // defense in depth — see lib/bot/memory-redaction.ts.)
-  const history = await getConversationHistory(resolvedUser.telegramId)
-  const memories = await getMemories(resolvedUser.telegramId)
+  const contextSynthesis=isContextSynthesisTurn(incomingText)
+  const history = contextSynthesis?[]:await getConversationHistory(resolvedUser.telegramId)
+  const memories = contextSynthesis?[]:await getMemories(resolvedUser.telegramId)
   const preferenceBlock = await getPreferenceBlock(resolvedUser.telegramId)
   const contextPack = await buildContextPack({
     actor:{
