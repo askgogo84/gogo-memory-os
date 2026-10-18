@@ -66,6 +66,7 @@ export type ContextPackOptions = {
   includeSemantic?:boolean
   includeReservationTravel?:boolean
   includeReservationCalendar?:boolean
+  reservationCalendarCoverage?:{from:string;until:string}
   maxFacts?:number
   horizonDays?:number
 }
@@ -473,9 +474,16 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
   return{lifeFacts,openLoops,goalFacts,travelFacts,typedFacts,watcherFacts,retrievalIncomplete,reservationTravel}
 }
 
-async function loadReservationCalendar(actor:AgentActor,horizonDays:number):Promise<ReservationCalendarInventory>{
-  const from=Date.now(),until=from+Math.min(60,horizonDays)*86400_000
+async function loadReservationCalendar(actor:AgentActor,horizonDays:number,coverage?:{from:string;until:string}):Promise<ReservationCalendarInventory>{
+  const now=Date.now()
+  let from=now,until=from+Math.min(60,horizonDays)*86400_000
   const inventory:ReservationCalendarInventory={ownerId:String(actor.legacyTelegramId),coveredFrom:new Date(from).toISOString(),coveredUntil:new Date(until).toISOString(),connected:false,incomplete:false,windows:[]}
+  if(coverage){
+    const requested=calendarInterval({start:{dateTime:coverage.from},end:{dateTime:coverage.until}},'UTC')
+    if(!requested||requested.end<=now||requested.end>until||requested.end-requested.start>60*86400_000){inventory.incomplete=true;return inventory}
+    from=Math.max(now,requested.start);until=requested.end
+    inventory.coveredFrom=new Date(from).toISOString();inventory.coveredUntil=new Date(until).toISOString()
+  }
   try{
     const {data,error}=await supabaseAdmin.from('users').select('google_calendar_connected,google_refresh_token,timezone').eq('telegram_id',actor.legacyTelegramId).maybeSingle()
     if(error||!data){inventory.incomplete=true;return inventory}
@@ -484,7 +492,7 @@ async function loadReservationCalendar(actor:AgentActor,horizonDays:number):Prom
     if(primaryExpected&&!data.google_refresh_token)inventory.incomplete=true
     const accounts=await getCalendarAccountAccess(actor.legacyTelegramId,primaryExpected&&data.google_refresh_token?String(data.google_refresh_token):null,()=>{inventory.incomplete=true})
     inventory.connected=primaryExpected||accounts.length>0
-    if(!accounts.length)return inventory
+    if(!accounts.length){if(primaryExpected)inventory.incomplete=true;return inventory}
     const page=await fetchMergedCalendarEventsPage(accounts,inventory.coveredFrom,inventory.coveredUntil,'RESERVATION_CALENDAR_READ_FAILED',100)
     if(page.hasMore||page.accountsRead!==page.accountsTotal)inventory.incomplete=true
     const windows=new Map<string,ReservationCalendarInventory['windows'][number]>()
@@ -500,7 +508,7 @@ async function loadReservationCalendar(actor:AgentActor,horizonDays:number):Prom
       // Include only occupied time and opaque provenance; Calendar titles,
       // attendees, account addresses and access tokens never leave this read.
       const id=hash(`${String(event._account||'').toLowerCase()}|${String(event.id)}`)
-      const window={startAt:new Date(Math.max(from,span.start)).toISOString(),endAt:new Date(Math.min(until,span.end)).toISOString(),sourceRefs:[{type:'calendar_event',id}]}
+      const window={startAt:new Date(span.start).toISOString(),endAt:new Date(span.end).toISOString(),sourceRefs:[{type:'calendar_event',id}]}
       windows.set(`${window.startAt}|${window.endAt}|${id}`,window)
     }
     inventory.windows=[...windows.values()].sort((a,b)=>a.startAt.localeCompare(b.startAt)||a.endAt.localeCompare(b.endAt))
@@ -696,7 +704,7 @@ export async function buildContextPack(params:{actor:AgentActor;text:string;opti
     loadOperationalFacts(params.actor,query,horizonDays,params.options?.includeReservationTravel===true),
     loadLearnedFacts(params.actor,query,includeSemantic),
     loadInboxFacts(params.actor,query),
-    params.options?.includeReservationCalendar===true?loadReservationCalendar(params.actor,horizonDays):Promise.resolve(undefined),
+    params.options?.includeReservationCalendar===true?loadReservationCalendar(params.actor,horizonDays,params.options.reservationCalendarCoverage):Promise.resolve(undefined),
   ])
   const all=dedupeFacts([
     ...operational.typedFacts,
