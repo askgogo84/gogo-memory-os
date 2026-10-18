@@ -146,7 +146,7 @@ export function isUncertainOrNegatedCompletion(text:string){
   if(/\b(?:no\s+(?!(?:worries|problem)\b)|nothing\b|none\b)[^.!?;,]{0,160}\b(?:received|delivered|sent|shared|replied|responded|confirmed|approved|reviewed|updated|called|completed|finished|resolved|submitted|signed|arrived)\b|\b(?:received|delivered|sent|got)\s+(?:no|nothing|none)\b/i.test(raw))return true
   if(/\b(?:i think|i believe|i suspect|it seems|it looks like|apparently)\b/i.test(raw))return true
   if(/\byet\s+to\b|\b(?:going|about)\s+to\b|\b(?:failed|unable)\s+to\b/i.test(raw))return true
-  if(/\b(?:undelivered|unreceived|unresolved|incomplete|pending)\b/i.test(raw))return true
+  if(/\b(?:remains?|still|is|are)\s+(?:undelivered|unreceived|unresolved|incomplete|pending)\b/i.test(raw))return true
   return false
 }
 
