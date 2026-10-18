@@ -73,9 +73,14 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
     for(let i=0;i<labels.length;i++){
       const label=labels[i],start=label.index!+label[0].length,end=labels[i+1]?.index??current.length
       const span=current.slice(start,end)
-      if(/\b(?:unavailable|not (?:available|stated|supplied)|not verified)\b/i.test(span))continue
-      const ownDate=sourceDate(span),date=ownDate===undefined?headingDate:ownDate
-      const reportedToday=date!==null&&(/\btoday\b/i.test(span)||headingToday)
+      const previousEnd=i?labels[i-1].index!+labels[i-1][0].length:0
+      const preceding=current.slice(previousEnd,label.index),precedingMoney=[...preceding.matchAll(MONEY)].at(-1)
+      const precedingTail=precedingMoney?preceding.slice(precedingMoney.index!+precedingMoney[0].length):''
+      const reverse=Boolean(precedingMoney&&precedingTail.length<=90&&/(?:\bfor|\bof|\()\s*$/i.test(precedingTail))
+      const quoteText=reverse?preceding:span
+      if(/\b(?:unavailable|not (?:available|stated|supplied)|not verified)\b/i.test(quoteText))continue
+      const ownDate=sourceDate(quoteText),date=ownDate===undefined?headingDate:ownDate
+      const reportedToday=date!==null&&(/\btoday\b/i.test(quoteText)||headingToday)
       if(date===null)warnings.add('A quote date is invalid and unverified.')
       if(date&&date>today){warnings.add('A source reports a future date; it is not a current verified quote.');continue}
       const add=(raw:string,grams:number)=>{
@@ -85,6 +90,16 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
         if(!Number.isFinite(perGram)||perGram<=0)return
         quotes.push({karat:label[1],perGram,amount:value,grams,source,date:date||null,reportedToday,locationKnown:placeIsKnown(block,requested)})
       }
+      const addInline=(text:string,money:RegExpMatchArray)=>{
+        const before=units(text.slice(0,money.index)),after=units(text.slice(money.index!+money[0].length,money.index!+money[0].length+45))
+        const local=before.at(-1)||after[0]
+        const inherited=units(current.slice(Math.max(0,label.index!-200),label.index)).filter(unit=>unit.explicit).at(-1)
+        const unit=local||inherited
+        if(!unit){warnings.add('A quote has no verified weight/unit, so a per-gram rate cannot be stated.');return}
+        if(before.length&&after.length&&before.at(-1)!.grams!==after[0].grams){warnings.add('A quote has conflicting weight units.');return}
+        add(money[1],unit.grams)
+      }
+      if(reverse){addInline(preceding,precedingMoney!);continue}
       const rows=[...span.matchAll(/\b(\d+(?:\.\d+)?)\s*(kg|grams?|g)\s*\|/gi)]
       if(rows.length){
         const header=(heading+' '+span.slice(0,rows[0].index)).toLowerCase(),todayColumn=header.lastIndexOf('today'),yesterdayColumn=header.lastIndexOf('yesterday')
@@ -97,15 +112,11 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
         }
         continue
       }
-      const money=[...span.matchAll(MONEY)][0]
+      const monies=[...span.matchAll(MONEY)],money=monies[0]
       if(!money)continue
-      const before=units(span.slice(0,money.index)),after=units(span.slice(money.index!+money[0].length,money.index!+money[0].length+45))
-      const local=before.at(-1)||after[0]
-      const inherited=units(current.slice(Math.max(0,label.index!-200),label.index)).filter(unit=>unit.explicit).at(-1)
-      const unit=local||inherited
-      if(!unit){warnings.add('A quote has no verified weight/unit, so a per-gram rate cannot be stated.');continue}
-      if(before.length&&after.length&&before.at(-1)!.grams!==after[0].grams){warnings.add('A quote has conflicting weight units.');continue}
-      add(money[1],unit.grams)
+      const afterMoney=span.slice(money.index!+money[0].length,monies[1]?.index??span.length)
+      if(/(?:\bfor|\bof|\()\s*$/i.test(afterMoney))continue
+      addInline(span,money)
     }
   }
   const lines:string[]=[],details:string[]=[]
