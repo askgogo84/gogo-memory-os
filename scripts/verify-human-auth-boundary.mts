@@ -25,7 +25,7 @@ try{
  assert.match(reply,/owned-paused-run\/browser/);assert.match(reply,/Take control/);assert.doesNotMatch(reply,/482913/)
 }finally{globalThis.fetch=fetchBefore}
 const noop=new Proxy({}, {get:()=>()=>null})
-function load(path:string,deps:any){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:(name:string)=>deps[name]||noop,process,console,URL,Request,Response,Buffer,AbortSignal,setTimeout,clearTimeout});return exports}
+function load(path:string,deps:any,extra:any={}){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:(name:string)=>deps[name]||noop,process,console,URL,Request,Response,Buffer,AbortSignal,setTimeout,clearTimeout,...extra});return exports}
 const json={json:(body:any,options:any={})=>new Response(JSON.stringify(body),{status:options.status||200})}
 let work=0
 process.env.CRON_SECRET='fixture-cron'
@@ -44,3 +44,12 @@ for(const text of ['482913','code is 4829 13']){
 }
 assert.equal(model,0);assert.doesNotMatch(JSON.stringify(saved),/482913|4829 13/);assert.match(JSON.stringify(saved),/authentication code withheld/)
 console.log('T1c: actual chat/internal endpoints and executor reject code automation; owner-scoped same-run handoff; no code storage/model/provider I/O')
+// ECC TDD follow-up: every conversational entrypoint must reject secondary codes before logging.
+const centralLogs:any[]=[]
+const central=load('lib/bot/process-message.ts',{'./resolve-user':{resolveUser:async()=>({telegramId:123,name:'Fixture'})},'@/lib/supabase-admin':{supabaseAdmin:{from:()=>q}},'@/lib/agent/browser-auth-notice':{humanAuthTakeoverReply:async()=> 'Complete authentication in Take control.'}}, {console:{...console,log:(...args:any[])=>{centralLogs.push(args);if(JSON.stringify(args).includes('482913'))throw Error('raw authentication code reached conversational logging')}}})
+await assert.doesNotReject(async()=>{
+ const result=await central.processIncomingMessage({channel:'telegram',externalUserId:'fixture-user',text:'482913'})
+ assert.equal(result.handledBy,'human-auth-required')
+},'central routing must reject authentication codes before any conversational log or model')
+assert.doesNotMatch(JSON.stringify(centralLogs),/482913/)
+console.log('Central entrypoint: authentication code withheld before conversational logs, persistence and model routing')
