@@ -125,7 +125,7 @@ export function calendarReadClarificationReply(raw:string):string|null{
   if(!CALENDAR_READ_HEAD.test(text))return null
   for(const clause of text.replace(CALENDAR_READ_HEAD,'').split(/\b(?:and|then|also|but)\b|[.;!?]\s*/)){
     if(/^\s*(?:please\s+)?(?:find|search|look\s+for|research|compare|check|read|review|show|list|display|summari[sz]e|get|tell\s+me|what|when|where|how|who|is|are)\b/.test(clause)&&
-      !calendarRequestsAvailability(clause)&&! /\b(?:calendar|calender|calandar|meetings?|events?|reminders?|agenda|my schedule|my day)\b/.test(clause)){
+      !calendarRequestsAvailability(clause)&&! /\b(?:calendar|calender|calandar|meetings?|appointments?|events?|reminders?|agenda|my schedule|my day)\b/.test(clause)){
       return "Your request includes a Calendar read and another task. Please ask for each separately so I can check both topics. I haven't read your Calendar or acted on the other task."
     }
   }
