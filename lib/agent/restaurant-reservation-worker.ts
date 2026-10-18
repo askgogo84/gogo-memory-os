@@ -104,11 +104,17 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   // Reconciliation consumes an existing provider result; it must not repeat an
   // external action merely because context changed after that action occurred.
   if(!reconciledResult){
+    const releaseMs=Date.parse(String(payload.releaseAt||''))
+    if(Number.isFinite(releaseMs)&&releaseMs>Date.now()){
+      const {data:released,error}=await supabaseAdmin.from('life_event_actions').update({status:'ready',updated_at:new Date().toISOString()}).eq('id',action.id).eq('telegram_id',tg).eq('status','running').select('id').maybeSingle()
+      if(error||!released)throw new Error('restaurant_release_claim_return_failed')
+      return{status:'queued' as const,runId}
+    }
     let safeContext=usableReservationDiningContext(snapshot)&&Date.parse(snapshot.until)>Date.now()
     if(safeContext){
       const pack=await buildContextPack({actor,text:`Reservation dining context for ${String(payload.restaurant||'restaurant')}`,options:{includeSemantic:false,maxFacts:14,horizonDays:60}}).catch(()=>null)
       const fresh=buildReservationDiningContext({actor,timezone:snapshot.timezone,requestedDate:String(payload.requestedDate||''),releaseAt:String(payload.releaseAt||''),pack,coverage:{from:snapshot.from,until:snapshot.until},now:new Date()})
-      safeContext=sameReservationRestrictions(snapshot,fresh)
+      safeContext=sameReservationRestrictions(snapshot,fresh,new Date())
     }
     if(!safeContext){
       const summary='Dining-date travel context changed or could not be verified. No reservation was attempted; request a refreshed bounded approval before trying again.'
