@@ -1,5 +1,5 @@
 type Quote={karat:string;perGram:number;amount:number;grams:number;source:string;date:string|null;reportedToday:boolean;locationKnown:boolean}
-type Unit={grams:number;index:number;end:number}
+type Unit={grams:number;explicit:boolean}
 const KARAT=/\b(18|22|24)\s*(?:kt|karat|carat|ct|k)\b/gi
 const MONEY=/(?:₹|\brs\.?|\binr)\s*([\d,]+(?:\.\d+)?)(?![\d.])/gi
 
@@ -15,7 +15,7 @@ function units(text:string):Unit[]{
   for(const match of text.matchAll(pattern)){
     const weight=Number(match[1]||match[3]||1),name=match[2]||match[4]
     const grams=weight*(name.toLowerCase()==='kg'?1000:1)
-    if(Number.isFinite(grams)&&grams>0)found.push({grams,index:match.index!,end:match.index!+match[0].length})
+    if(Number.isFinite(grams)&&grams>0)found.push({grams,explicit:Boolean(match[2])})
   }
   return found
 }
@@ -58,13 +58,15 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
     const body=lines.join(' ').replace(/\s+/g,' ').trim()
     const current=body.split(/\b(?:gold\s+rate\s+history|price\s+history|historical\s+(?:gold\s+)?(?:rates?|prices?)|popular\s+coins|related\s+products)\b/i)[0]
     if(/\bgold\s+coins?\b|\badd to cart\b/i.test(current)){warnings.add('Retail coin prices are not metal-rate quotes.');continue}
-    const date=sourceDate(current),reportedToday=/\btoday\b/i.test(current)
-    if(date&&date>today){warnings.add('A source reports a future date; it is not a current verified quote.');continue}
     const labels=[...current.matchAll(KARAT)]
+    const heading=current.slice(0,labels[0]?.index??current.length)
+    const headingDate=sourceDate(heading),headingToday=/\btoday\b/i.test(heading)
     for(let i=0;i<labels.length;i++){
       const label=labels[i],start=label.index!+label[0].length,end=labels[i+1]?.index??current.length
       const span=current.slice(start,end)
       if(/\b(?:unavailable|not (?:available|stated|supplied)|not verified)\b/i.test(span))continue
+      const date=sourceDate(span)||headingDate,reportedToday=/\btoday\b/i.test(span)||headingToday
+      if(date&&date>today){warnings.add('A source reports a future date; it is not a current verified quote.');continue}
       const add=(raw:string,grams:number)=>{
         const value=amount(raw)
         if(value===null||!Number.isFinite(grams)||grams<=0)return
@@ -74,7 +76,7 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
       }
       const rows=[...span.matchAll(/\b(\d+(?:\.\d+)?)\s*(kg|grams?|g)\s*\|/gi)]
       if(rows.length){
-        const header=current.slice(0,start).toLowerCase(),todayColumn=header.lastIndexOf('today'),yesterdayColumn=header.lastIndexOf('yesterday')
+        const header=(heading+' '+span.slice(0,rows[0].index)).toLowerCase(),todayColumn=header.lastIndexOf('today'),yesterdayColumn=header.lastIndexOf('yesterday')
         for(let r=0;r<rows.length;r++){
           const row=rows[r],values=[...span.slice(row.index!+row[0].length,rows[r+1]?.index??span.length).matchAll(MONEY)]
           const index=values.length>1?(todayColumn>=0&&yesterdayColumn>=0?(yesterdayColumn<todayColumn?1:0):-1):0
@@ -88,7 +90,7 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
       if(!money)continue
       const before=units(span.slice(0,money.index)),after=units(span.slice(money.index!+money[0].length,money.index!+money[0].length+45))
       const local=before.at(-1)||after[0]
-      const inherited=units(current.slice(Math.max(0,label.index!-200),label.index)).at(-1)
+      const inherited=units(current.slice(Math.max(0,label.index!-200),label.index)).filter(unit=>unit.explicit).at(-1)
       const unit=local||inherited
       if(!unit){warnings.add('A quote has no verified weight/unit, so a per-gram rate cannot be stated.');continue}
       if(before.length&&after.length&&before.at(-1)!.grams!==after[0].grams){warnings.add('A quote has conflicting weight units.');continue}
