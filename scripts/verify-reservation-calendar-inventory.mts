@@ -56,4 +56,22 @@ const allDay=(await read()).reservationCalendar
 assert.equal(allDay.incomplete,false)
 assert.equal(allDay.windows[0].startAt,'2026-10-22T04:00:00.000Z','All-day intervals must use their provider Calendar timezone, not the owner display timezone')
 assert.equal(allDay.windows[0].endAt,'2026-10-23T04:00:00.000Z','All-day ends stay exclusive in the provider timezone')
+// Verify the real provider adapter and account merger preserve the timezone
+// needed above; a mocked final context object alone cannot prove that contract.
+const google:any={}
+runInNewContext(ts.transpileModule(readFileSync('lib/services/google-calendar.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
+ {exports:google,require:()=>({}),Date:FixtureDate,URLSearchParams,console,process:{env:{}},fetch:async(url:string,options:any)=>{
+  assert.match(url,/^https:\/\/www\.googleapis\.com\/calendar\/v3\/calendars\/primary\/events\?/)
+  const token=options.headers.Authorization
+  assert.ok(['Bearer inert-new-york','Bearer inert-kolkata'].includes(token))
+  return{ok:true,json:async()=>({timeZone:token==='Bearer inert-new-york'?'America/New_York':'Asia/Kolkata',items:[{id:token==='Bearer inert-new-york'?'ny-event':'ist-event',start:{date:'2026-10-22'},end:{date:'2026-10-23'}}]})}
+ }})
+const providerPage=await google.fetchPrimaryCalendarEventsPage('inert-new-york',pack.reservationCalendar.coveredFrom,pack.reservationCalendar.coveredUntil)
+assert.equal(providerPage.timezone,'America/New_York','Actual Google event-page adapter must retain its Calendar timezone')
+const accounts:any={}
+runInNewContext(ts.transpileModule(readFileSync('lib/services/google-calendar-accounts.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
+ {exports:accounts,require:(name:string)=>name==='@/lib/services/google-calendar'?google:{},Date:FixtureDate,console,Set,Map})
+const merged=await accounts.fetchMergedCalendarEventsPage([{email:'one@example.test',accessToken:'inert-new-york'},{email:'two@example.test',accessToken:'inert-kolkata'}],pack.reservationCalendar.coveredFrom,pack.reservationCalendar.coveredUntil,'fixture',100)
+assert.equal(merged.events.find((event:any)=>event.id==='ny-event')._calendarTimezone,'America/New_York')
+assert.equal(merged.events.find((event:any)=>event.id==='ist-event')._calendarTimezone,'Asia/Kolkata','Account merging must not replace another Calendar timezone with the owner display timezone')
 console.log('Actual reservation context producer reads linked Calendar busy intervals with minimal owner-bound output; inert transports only.')
