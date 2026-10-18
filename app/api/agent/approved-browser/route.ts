@@ -1,5 +1,5 @@
 import { after, NextResponse } from 'next/server'
-import { runApprovedBrowserRun, runBackgroundBrowserRead, runBookingOtpResume, runLoginCodeResume } from '@/lib/agent/approved-browser-worker'
+import { runApprovedBrowserRun, runBackgroundBrowserRead } from '@/lib/agent/approved-browser-worker'
 
 // Internal trigger, called by the WhatsApp webhook right after the user approves a browser
 // action. It answers 202 immediately and runs the approved browser work in `after()`, so the
@@ -19,6 +19,9 @@ export async function POST(request: Request) {
   const body: any = await request.json().catch(() => null)
   const runId = String(body?.runId || '').trim()
   if (!/^[A-Za-z0-9_-]{8,80}$/.test(runId)) return NextResponse.json({ error: 'invalid_run_id' }, { status: 400 })
+  if (body?.loginCode != null || body?.otp != null || body?.bookingOtp != null) {
+    return NextResponse.json({error:'human_auth_takeover_required'}, {status:400})
+  }
   // A new price comparison: open every store now (in parallel where possible) instead of on the next cron minute.
   if (body?.comparison === true) {
     after(async () => {
@@ -39,30 +42,6 @@ export async function POST(request: Request) {
         console.log('BACKGROUND_READ_DONE:', runId, outcome)
       } catch (err: any) {
         console.error('BACKGROUND_READ_CRASHED:', runId, String(err?.message || '').slice(0, 120))
-      }
-    })
-    return NextResponse.json({ accepted: true, runId }, { status: 202 })
-  }
-  // A sign-in code for a paused read: used for this one run and never stored or logged.
-  const loginCode = typeof body?.loginCode === 'string' ? body.loginCode : ''
-  if (loginCode) {
-    if (!/^\d{4,8}$/.test(loginCode)) return NextResponse.json({ error: 'invalid_code' }, { status: 400 })
-    after(async () => {
-      try { console.log('LOGIN_CODE_RESUME_DONE:', runId, await runLoginCodeResume(runId, loginCode)) }
-      catch (err: any) { console.error('LOGIN_CODE_RESUME_CRASHED:', runId, String(err?.message || '').slice(0, 120)) }
-    })
-    return NextResponse.json({ accepted: true, runId }, { status: 202 })
-  }
-  // A booking OTP from WhatsApp: used for this one run and never stored or logged.
-  const otp = typeof body?.otp === 'string' ? body.otp : ''
-  if (otp) {
-    if (!/^\d{4,8}$/.test(otp)) return NextResponse.json({ error: 'invalid_code' }, { status: 400 })
-    after(async () => {
-      try {
-        const outcome = await runBookingOtpResume(runId, otp)
-        console.log('BOOKING_OTP_RESUME_DONE:', runId, outcome)
-      } catch (err: any) {
-        console.error('BOOKING_OTP_RESUME_CRASHED:', runId, String(err?.message || '').slice(0, 120))
       }
     })
     return NextResponse.json({ accepted: true, runId }, { status: 202 })
