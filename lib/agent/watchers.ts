@@ -1315,8 +1315,62 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
   return { triggered:material, failed:false }
 }
 
+type ExpirableWatcher = {
+  id:string
+  telegram_id:string|number
+  type:string
+  condition_json:ContextualWatcherMeta & {title?:string}
+  last_state_json?:Record<string,unknown>
+}
+
+async function expireContextWatcher(watcher:ExpirableWatcher,now:Date){
+  const {data,error}=await supabaseAdmin.from('agent_watchers').update({
+    active:false,next_check_at:null,last_checked_at:now.toISOString(),
+    last_state_json:{...(watcher.last_state_json||{}),expiredAt:now.toISOString(),expiredReason:'context_window_ended'},
+    updated_at:now.toISOString(),
+  }).eq('id',watcher.id).eq('telegram_id',String(watcher.telegram_id)).eq('active',true)
+    .eq('condition_json',JSON.stringify(watcher.condition_json)).select('id')
+  if(error)throw new Error('context_watch_expiry_write_failed')
+  if(!data?.length)return false
+  await writeActivity(String(watcher.telegram_id),`Contextual watch expired: ${String(watcher.condition_json?.title||watcher.type)}`,{
+    watcher_id:watcher.id,type:watcher.type,context_key:watcher.condition_json?.contextKey||null,expired_at:now.toISOString(),
+  })
+  return true
+}
+
+// Expiry is independent of poll cadence. Legacy metadata may extend beyond the
+// source ticket, so examine active travel sources even when their next poll is later.
+async function reconcileTravelExpiry(now:Date){
+  let cursor:string|null=null,expired=0,failed=0
+  for(;;){
+    let query=supabaseAdmin.from('agent_watchers')
+      .select('id,telegram_id,type,condition_json,last_state_json')
+      .eq('active',true).eq('condition_json->>contextual','true').eq('condition_json->>contextualKind','travel')
+      .order('id',{ascending:true}).limit(200)
+    if(cursor)query=query.gt('id',cursor)
+    const {data,error}=await query
+    if(error)throw new Error('context_watch_expiry_read_failed')
+    const rows=(data||[]) as unknown as ExpirableWatcher[]
+    if(!rows.length)break
+    // Keyset pagination remains stable when expired rows leave the active set.
+    cursor=rows[rows.length-1].id
+    for(const watcher of rows){
+      try{
+        const expiry=await sourceBoundTravelExpiry(watcher)
+        if(expiry&&Date.parse(expiry)<=now.getTime()&&await expireContextWatcher(watcher,now))expired++
+      }catch(error){
+        failed++
+        console.error('CONTEXT_WATCH_EXPIRY_FAILED:',watcher.id,error instanceof Error?error.message:'expiry_failed')
+      }
+    }
+    if(rows.length<200)break
+  }
+  return {expired,failed}
+}
+
 export async function processDueAgentWatchers(limit = 40) {
   const now = new Date()
+  const expirySweep=await reconcileTravelExpiry(now)
   const { data, error } = await supabaseAdmin.from('agent_watchers')
     .select('id, telegram_id, type, condition_json, last_state_json, active, next_check_at')
     .eq('active', true)
@@ -1325,20 +1379,14 @@ export async function processDueAgentWatchers(limit = 40) {
     .limit(limit)
   if (error) throw new Error(`agent_watchers_read_failed:${error.message}`)
 
-  let checked = 0, triggered = 0, failed = 0
+  let checked = 0, triggered = 0, failed = expirySweep.failed
+  let expired=expirySweep.expired
   for (const watcher of (data || []) as any[]) {
     checked++
     try {
       const expiresAt=await sourceBoundTravelExpiry(watcher)
       if(watcher.condition_json?.contextual===true&&expiresAt&&Date.parse(expiresAt)<=now.getTime()){
-        await supabaseAdmin.from('agent_watchers').update({
-          active:false,next_check_at:null,last_checked_at:now.toISOString(),
-          last_state_json:{...(watcher.last_state_json||{}),expiredAt:now.toISOString(),expiredReason:'context_window_ended'},
-          updated_at:now.toISOString(),
-        }).eq('id',watcher.id).eq('telegram_id',String(watcher.telegram_id))
-        await writeActivity(String(watcher.telegram_id),`Contextual watch expired: ${String(watcher.condition_json?.title||watcher.type)}`,{
-          watcher_id:watcher.id,type:watcher.type,context_key:watcher.condition_json?.contextKey||null,expired_at:now.toISOString(),
-        })
+        if(await expireContextWatcher(watcher,now))expired++
         continue
       }
       const outcome = watcher.type === 'deadline'
@@ -1363,5 +1411,5 @@ export async function processDueAgentWatchers(limit = 40) {
       console.error('AGENT_WATCHER_PROCESS_FAILED:', watcher.id, err?.message || err)
     }
   }
-  return { checked, triggered, failed }
+  return { checked, triggered, failed, expired }
 }
