@@ -20,11 +20,11 @@ function units(text:string):Unit[]{
   return found
 }
 
-function sourceDate(text:string):string|null{
+function sourceDate(text:string):string|null|undefined{
   const iso=text.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/)
   const named=text.match(/\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(20\d{2})\b/i)
   const numeric=text.match(/\b(\d{1,2})-(\d{2})-(20\d{2})\b/)
-  if(!iso&&!named&&!numeric)return null
+  if(!iso&&!named&&!numeric)return undefined
   const months=['january','february','march','april','may','june','july','august','september','october','november','december']
   const year=Number(iso?.[1]||named?.[3]||numeric?.[3]),month=iso?Number(iso[2]):named?months.indexOf(named[2].toLowerCase())+1:Number(numeric![2]),day=Number(iso?.[3]||named?.[1]||numeric?.[1])
   const date=new Date(Date.UTC(year,month-1,day))
@@ -44,7 +44,8 @@ function placeIsKnown(text:string,place:string):boolean{
 
 /** Preserve quote provenance before presentation; search snippets may have no line breaks. */
 export function formatGoldQuotes(userText:string,searchContext:string,now=Date.now()):string{
-  const today=new Date(now).toISOString().slice(0,10)
+  const dateParts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(now))
+  const today=['year','month','day'].map(kind=>dateParts.find(part=>part.type===kind)?.value||'').join('-')
   const requested=userText.match(/\bin\s+([a-z][a-z ]{2,30}?)\s*(?:today|now|\?|$)/i)?.[1]?.trim()||'India'
   const place=requested.replace(/\b\w/g,c=>c.toUpperCase())
   const quotes:Quote[]=[],sources=new Set<string>(),warnings=new Set<string>()
@@ -65,14 +66,16 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
       const label=labels[i],start=label.index!+label[0].length,end=labels[i+1]?.index??current.length
       const span=current.slice(start,end)
       if(/\b(?:unavailable|not (?:available|stated|supplied)|not verified)\b/i.test(span))continue
-      const date=sourceDate(span)||headingDate,reportedToday=/\btoday\b/i.test(span)||headingToday
+      const ownDate=sourceDate(span),date=ownDate===undefined?headingDate:ownDate
+      const reportedToday=date!==null&&(/\btoday\b/i.test(span)||headingToday)
+      if(date===null)warnings.add('A quote date is invalid and unverified.')
       if(date&&date>today){warnings.add('A source reports a future date; it is not a current verified quote.');continue}
       const add=(raw:string,grams:number)=>{
         const value=amount(raw)
         if(value===null||!Number.isFinite(grams)||grams<=0)return
         const perGram=Math.round(value/grams*100)/100
         if(!Number.isFinite(perGram)||perGram<=0)return
-        quotes.push({karat:label[1],perGram,amount:value,grams,source,date,reportedToday,locationKnown:placeIsKnown(block,requested)})
+        quotes.push({karat:label[1],perGram,amount:value,grams,source,date:date||null,reportedToday,locationKnown:placeIsKnown(block,requested)})
       }
       const rows=[...span.matchAll(/\b(\d+(?:\.\d+)?)\s*(kg|grams?|g)\s*\|/gi)]
       if(rows.length){
