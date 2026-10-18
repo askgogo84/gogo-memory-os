@@ -116,4 +116,18 @@ await check('minimal structured flight booking intent is read without traveller 
  assert.ok(fact);assert.equal(fact.inferred,true);assert.equal(pack.reservationTravel.incomplete,false);assert.doesNotMatch(JSON.stringify(pack.reservationTravel),/PRIVATE/)
  assert.equal(pack.reservationTravel.facts.some((f:any)=>f.id==='travel-mission:unrelated-browser'),false)
 })
+await check('actual one-way research departure search end never becomes a return date',async()=>{
+ const research:any={}
+ runInNewContext(ts.transpileModule(readFileSync('lib/agent/travel-research.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:research,require:()=>({}),Date:FixtureDate,Intl,console,Set,Map})
+ const context=research.buildTravelResearchContext('Find one-way flights from Bengaluru to New York on 21 October 2026',new Date(epoch),'Asia/Kolkata')
+ assert.equal(context.startDate,'2026-10-21');assert.equal(context.endDate,'2026-10-21');assert.equal(context.returnDate,undefined)
+ for(const status of ['queued','completed','failed']){
+  missions=[{...mission,status,metadata_json:{context}}]
+  const span={from:'2026-10-24T18:30:00Z',until:'2026-10-25T18:30:00Z'}
+  const pack=await actual.buildContextPack({actor,text:'Restaurant dining on 25 October',options:{includeSemantic:false,includeReservationTravel:true,reservationCalendarCoverage:span,maxFacts:4,horizonDays:60}})
+  assert.equal(pack.reservationTravel.incomplete,true,status+': a departure search horizon is not evidence of return')
+ }
+ missions=[{...mission,status:'completed',metadata_json:{context:{...context,startDate:'2026-10-10',endDate:'2026-10-10'}}}]
+ assert.equal((await read()).reservationTravel.incomplete,true,'An older completed one-way search does not prove the traveller has returned')
+})
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Extended reservation inventory/snapshot controls passed; inert fixtures, not full T12 or live acceptance.')
