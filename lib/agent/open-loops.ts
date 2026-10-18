@@ -143,9 +143,10 @@ export function isUncertainOrNegatedCompletion(text:string){
   if(/\b(?:isn't|is not|wasn't|was not|weren't|were not|aren't|are not|never|cannot|can't|won't|will not|not sure|unsure|uncertain|perhaps|maybe|possibly|probably)\b/i.test(raw))return true
   if(/\bnot\s+(?:(?:been|yet|fully|actually|really|successfully|completely|ever)\s+)*(?:sent|shared|replied|responded|confirmed|approved|reviewed|delivered|updated|called|received|completed|finished|resolved|submitted|signed|arrived)\b/i.test(raw))return true
   if(/\b(?:may|might|could|would|should|will)\s+(?:(?:already|still|yet|not|possibly|probably)\s+)*(?:have|be|send|share|reply|respond|confirm|approve|review|deliver|update|call|receive|complete|finish|resolve|submit|sign|get|arrive)\b/i.test(raw))return true
-  if(/\bno\s+(?!(?:worries|problem)\b)[^.!?;,]{0,100}\b(?:received|delivered|sent|arrived)\b|\b(?:received|delivered|sent|got)\s+(?:no|nothing|none)\b/i.test(raw))return true
+  if(/\b(?:no\s+(?!(?:worries|problem)\b)|nothing\b|none\b)[^.!?;,]{0,160}\b(?:received|delivered|sent|shared|replied|responded|confirmed|approved|reviewed|updated|called|completed|finished|resolved|submitted|signed|arrived)\b|\b(?:received|delivered|sent|got)\s+(?:no|nothing|none)\b/i.test(raw))return true
   if(/\b(?:i think|i believe|i suspect|it seems|it looks like|apparently)\b/i.test(raw))return true
   if(/\byet\s+to\b|\b(?:going|about)\s+to\b|\b(?:failed|unable)\s+to\b/i.test(raw))return true
+  if(/\b(?:undelivered|unreceived|unresolved|incomplete|pending)\b/i.test(raw))return true
   return false
 }
 
