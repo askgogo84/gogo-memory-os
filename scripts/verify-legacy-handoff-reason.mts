@@ -13,19 +13,21 @@ const base={id:'run-a',telegram_id:'123',type:'secure_browser',title:'Browser ·
 let rows:any[]=[],steps:any[]=[],reasonFailure=false,writes=0
 const reads:Array<{table:string;select:string;owner:boolean}>=[]
 const db={from(table:string){
- assert.ok(['agent_runs','agent_steps'].includes(table),'Unexpected table '+table)
+ assert.ok(['agent_runs','agent_steps','agent_watchers','agent_goals','agent_ideas','agent_approvals','agent_permissions','agent_artifacts'].includes(table),'Unexpected table '+table)
  const filters:Array<(r:any)=>boolean>=[],orders:Array<{key:string;options:any}>=[]
- let count=Infinity,fields='',owner=false
+ let count=Infinity,fields='',owner=false,single=false
  const q:any={select:(value:string)=>{fields=value;return q},eq:(key:string,value:unknown)=>{if(key==='telegram_id'){assert.equal(value,'123');owner=true}filters.push(r=>String(r[key])===String(value));return q},
   in:(key:string,values:unknown[])=>{filters.push(r=>values.includes(r[key]));return q},gte:(key:string,value:string)=>{filters.push(r=>r[key]>=value);return q},contains:()=>q,or:()=>q,
+  neq:()=>q,maybeSingle:()=>{single=true;return q},
   order:(key:string,options:any)=>{orders.push({key,options});return q},limit:(value:number)=>{count=value;return q},
   update:()=>{writes++;throw Error('unexpected write')},insert:()=>{writes++;throw Error('unexpected write')},delete:()=>{writes++;throw Error('unexpected write')},
   then:(yes:any,no:any)=>Promise.resolve().then(()=>{
    assert.equal(owner,true,table+' read must be owner bound');reads.push({table,select:fields,owner})
    if(table==='agent_steps'&&reasonFailure)return{data:null,error:{message:'synthetic unavailable'}}
-   const data=structuredClone(table==='agent_runs'?rows:steps).filter((r:any)=>filters.every(f=>f(r)))
+   const data=structuredClone(table==='agent_runs'?rows:table==='agent_steps'?steps:[]).filter((r:any)=>filters.every(f=>f(r)))
    data.sort((a:any,b:any)=>{for(const {key,options}of orders){if(a[key]===b[key])continue;if(a[key]==null||b[key]==null){const nullFirst=options?.nullsFirst===true;return a[key]==null?(nullFirst?-1:1):(nullFirst?1:-1)}return(a[key]<b[key]?-1:1)*(options?.ascending===false?-1:1)}return 0})
-   return{data:data.slice(0,count).map((r:any)=>table==='agent_steps'&&fields.includes('auth_reason:')?{...r,auth_reason:r.output_json?.authReason}:r),error:null}
+   const projected=data.slice(0,count).map((r:any)=>table==='agent_steps'&&fields.includes('auth_reason:')?{...r,auth_reason:r.output_json?.authReason}:r)
+   return{data:single?projected[0]||null:projected,error:null}
   }).then(yes,no)}
  return q
 }}
@@ -34,7 +36,12 @@ function load(file:string):any{
  if(cache[file])return cache[file]
  const output:any=cache[file]={}
  runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
-  {exports:output,require:(name:string)=>name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name.startsWith('.')?load(resolve(dirname(file),name+'.ts')):(()=>{throw Error('Unexpected dependency '+name)})(),Date,URL,Map,Set,console})
+  {exports:output,require:(name:string)=>name==='@/lib/supabase-admin'?{supabaseAdmin:db}
+   :name==='next/server'?{NextResponse:{json:(body:unknown,init:any={})=>({status:init.status||200,json:async()=>body})}}
+   :name==='@/lib/agent/session'?{requireAgentSession:async()=>({telegramId:'123',surface:'web'}),isAgentSession:()=>true}
+   :name==='@/lib/dashboard/service-notices'?{getServiceNotices:async()=>({items:[],total:0})}
+   :name.startsWith('@/')?load(resolve(repo,name.slice(2)+'.ts'))
+   :name.startsWith('.')?load(resolve(dirname(file),name+'.ts')):(()=>{throw Error('Unexpected dependency '+name)})(),Date,URL,Map,Set,console,process})
  return output
 }
 const actual=load(resolve(repo,'lib/dashboard/human-handoffs.ts'))
@@ -82,5 +89,14 @@ await check('non-auth handoffs do not perform an unnecessary reason lookup',asyn
 })
 await check('duplicate handoffs still collapse after truthful projection',async()=>{
  rows.push({...structuredClone(base),id:'run-b',updated_at:'2026-10-18T10:00:00Z'});steps.push(step('login_unavailable',{id:'step-b',run_id:'run-b'}));const cards=await read();assert.equal(cards.length,1);assert.equal(cards[0].id,'run-a');assert.equal(cards[0].repeats,1)
+})
+await check('actual snapshot run used by the chat rail carries the recorded failure copy',async()=>{
+ const snapshot=load(resolve(repo,'app/api/agent/snapshot/route.ts'));const response=await snapshot.GET({});assert.equal(response.status,200);const body=await response.json();assert.match(body.handoffs[0].summary,/couldn.t sign in/i);assert.match(body.runs[0].summary,/couldn.t sign in/i);assert.doesNotMatch(body.runs[0].summary,/send you a sign-in code/)
+})
+await check('actual Activity list and task detail share truthful current-run copy',async()=>{
+ const activity=load(resolve(repo,'lib/dashboard/agent-activity.ts'));for(const run of [(await activity.getDashboardActivityRuns('123'))[0],await activity.getDashboardActivityRun('123','run-a')]){assert.match(run.summary,/couldn.t sign in/i);assert.doesNotMatch(run.summary,/send you a sign-in code/);assert.match(activity.browserContextForRun(run).summary,/couldn.t sign in/i)}
+})
+await check('completed Activity history remains the recorded historical summary',async()=>{
+ rows[0].status='completed';const activity=load(resolve(repo,'lib/dashboard/agent-activity.ts'));const run=await activity.getDashboardActivityRun('123','run-a');assert.equal(run.summary,legacy)
 })
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Actual legacy handoff reason projection: owner/run/tool provenance, uncertainty, minimal reads and no writes passed.')
