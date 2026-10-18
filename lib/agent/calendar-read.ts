@@ -13,6 +13,7 @@ const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','s
 const WEEKDAY_PATTERN = /\b(?:(next|this)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/gi
 const CALENDAR_READ_HEAD=new RegExp(`^(?:please\\s+)?(?:(?:can|could|would)\\s+you\\s+)?(?:check|read|review|show(?:\\s+me)?|list|display|summari[sz]e)\\s+(?:me\\s+)?(?:(?:my|the|your)\\s+)?(?:google\\s+)?${CALENDAR_WORD_RE.source}`)
 const CALENDAR_READ_HOLD="I haven't read your Calendar. Ask me to check it when you're ready. Nothing was changed."
+const CALENDAR_AVAILABILITY_CLAUSE=/\b(?:and|then|also|but)\s+(?:please\s+)?(?:check|tell\s+me)\s+(?:when\s+)?(?:(?:if|whether)\s+)?(?:i\s+am|i'm|we\s+are|we're|am\s+i|are\s+we|my\s+calendar\s+is|is\s+my\s+calendar)\s+(?:free|available)\b/gi
 
 function pad(n:number){return String(n).padStart(2,'0')}
 function safe(v:unknown,max=300){return redactSecretShapedText(String(v??'').replace(/\s+/g,' ').trim().slice(0,max))}
@@ -97,9 +98,12 @@ function calendarReadRequestText(raw:string){
 
 export function isStandaloneCalendarReadRequest(raw:string){
   if(calendarReadHoldReply(raw))return false
-  const text=calendarReadRequestText(raw)
+  let text=calendarReadRequestText(raw)
   const head=CALENDAR_READ_HEAD
   if(!head.test(text))return false
+  // This second phrase still asks about the same Calendar. Keep all following
+  // qualifiers/topics for whole-request validation rather than dropping them.
+  text=text.replace(CALENDAR_AVAILABILITY_CLAUSE,' ')
   if(/\b(?:reminders?|agenda|tasks?|inbox|gmail|e-?mails?)\b/.test(text.replace(head,'')))return false
   if(/\b(?:connect|reconnect|disconnect|link|unlink|account|accounts|connection|connected|permissions?|access|sync|setup)\b/.test(text))return false
   if(/\b(?:reserve|schedule|remind|create|add|invite|prepare|write|put|set|forward|save|remember|compose|archive|post|publish|renew|move|reschedule|resched|postpone|push|shift|update|make|edit|change|modify|cancel|delete|remove|clear|book|send|pay|buy|purchase|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|order|reorder|empty|increase|decrease|apply|redeem|block|unblock|open|browse|navigate|visit|inspect|monitor|watch|track)\b/.test(text.replace(head,'')))return false
@@ -121,6 +125,7 @@ export function isStandaloneCalendarReadRequest(raw:string){
 /** Do not let a second single-topic handler silently discard the Calendar read. */
 export function calendarReadClarificationReply(raw:string):string|null{
   if(calendarReadHoldReply(raw))return null
+  if(isStandaloneCalendarReadRequest(raw))return null
   const text=calendarReadRequestText(raw)
   if(!CALENDAR_READ_HEAD.test(text))return null
   for(const clause of text.replace(CALENDAR_READ_HEAD,'').split(/\b(?:and|then|also|but)\b|[.;!?]\s*/)){
