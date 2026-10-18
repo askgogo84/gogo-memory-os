@@ -1,18 +1,17 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-// 16 Oct: a saved phone login asks the site for a text code, then Gogo asks the person for it in chat or on WhatsApp,
-// types it into the same open page, and carries on with the question. The code is used once and never stored or
-// logged. Run: npx tsx scripts/verify-login-code-flow.mts
+// 18 Oct T1c supersedes chat-code entry: secondary authentication stays in Take control.
+// Preserve browser-session, redaction and gate detection regressions; legacy code paths are unreachable. Run: npx tsx scripts/verify-login-code-flow.mts
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'; process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
 const read = (p: string) => readFileSync(new URL('../' + p, import.meta.url), 'utf8')
 const { loginCodeMessage } = await import('../lib/agent/browser-command')
 const { otpReply } = await import('../lib/agent/provider-booking')
 
 const ask = loginCodeMessage({ site: 'swiggy.com', takeoverUrl: 'https://app.askgogo.in/dashboard/activity/r1/browser' })
-assert.match(ask, /^swiggy\.com sent a sign-in code to your phone\./)
-assert.match(ask, /Reply here with just the code, for example \*482913\*\. I'll type it in and carry on with your question\. I use it once and never save it\./)
-assert.match(loginCodeMessage({ site: 'swiggy.com', rejected: true, takeoverUrl: 'u' }), /didn't accept that code\. Send me the newest code/)
-assert.match(loginCodeMessage({ site: 'swiggy.com', tooMany: true, takeoverUrl: 'u' }), /three times, so I stopped there\. Open this, tap Take control/)
+assert.match(ask,/needs you to complete secondary authentication/)
+assert.match(ask,/Take control/); assert.doesNotMatch(ask,/Reply here|send.*code|482913/i)
+assert.match(loginCodeMessage({site:'swiggy.com',rejected:true,takeoverUrl:'u'}),/Take control/)
+assert.match(loginCodeMessage({site:'swiggy.com',tooMany:true,takeoverUrl:'u'}),/Take control/)
 assert.equal(otpReply('482913'), '482913')
 assert.equal(otpReply('code is 4829 13'), '482913')
 assert.equal(otpReply('where is my order'), null)
@@ -44,11 +43,11 @@ assert.match(bc, /Date\.now\(\)-requested>10\*60_000/, 'codes are accepted for 1
 
 const dash = read('app/api/dashboard/chat/route.ts')
 assert.ok(dash.indexOf('const loginCode = otpReply(text)') < dash.indexOf('handleInboxReplyRead({actor,text})'), 'checked before any handler or model')
-assert.match(dash, /saveConversation\(user\.telegram_id, '\[sign-in code sent\]', reply\)/, 'the code is never saved to the conversation')
+assert.match(dash,/authentication code withheld/)
 const wa = read('app/api/webhooks/whatsapp/route.ts')
-assert.match(wa, /const trigger = await triggerLoginCodeResume\(codeRunId, bookingCode\)/)
-assert.match(wa, /saveConversation\(resolvedUser\.telegramId, 'user', '\[sign-in code sent\]'\)/)
-assert.match(read('app/api/agent/approved-browser/route.ts'), /runLoginCodeResume\(runId, loginCode\)/)
+assert.doesNotMatch(wa,/triggerLoginCodeResume|triggerBookingOtpResume/)
+assert.match(wa,/authentication code withheld/)
+assert.match(read('app/api/agent/approved-browser/route.ts'),/human_auth_takeover_required/)
 console.log('verify-login-code-flow: ok')
 
 // 16 Oct (his ask): sites that sign in with a mobile number use the WhatsApp number Gogo already has. No Connect page.
@@ -58,7 +57,7 @@ assert.equal(phoneLoginProviderForDomain('www.amazon.in')?.key, 'amazon')
 assert.equal(phoneLoginProviderForDomain('www.flipkart.com')?.key, 'flipkart')
 assert.equal(phoneLoginProviderForDomain('www.irctc.co.in'), null, 'IRCTC signs in with a user ID')
 assert.equal(phoneLoginProviderForDomain('www.booking.com'), null)
-assert.match(loginCodeMessage({ site: 'swiggy.com', takeoverUrl: 'u', whatsappNumber: '8884501501' }), /^I'm signing in to swiggy\.com with your WhatsApp number ending 1501, and it sent a sign-in code to that phone\./)
+assert.doesNotMatch(loginCodeMessage({site:'swiggy.com',takeoverUrl:'u',whatsappNumber:'8884501501'}),/8884501501|Reply here/)
 assert.match(sc, /if\(whatsappPhoneProvider\)credential=\{username:params\.phoneLogin!\.number,secret:'',/, 'nothing secret, nothing stored')
 assert.match(bc, /phoneLogin:\{number:indianMobileFromWhatsApp\(params\.actor\.whatsappId\)!,telegramId:String\(tg\)\}/)
 assert.match(read('lib/agent/account-site-gate.ts'), /if \(\(provider\?\.phoneLogin \|\| provider\?\.phoneOnly\) && indianMobileFromWhatsApp\(actor\.whatsappId\)\) gate = null/)
@@ -96,8 +95,8 @@ console.log('verify-login-code-flow: code screen verified')
 // model, and it replied "Using that code to sign in now" (untrue). An early code now waits for the run, and a bare
 // code with nothing waiting never reaches the chat model.
 const waRoute = read('app/api/webhooks/whatsapp/route.ts')
-assert.match(waRoute, /const codeRunId = await findLoginCodeRun\(resolvedUser\.telegramId\) \|\| await waitForLoginCodeRun\(resolvedUser\.telegramId\)/)
-assert.match(waRoute, /if \(await hasRecentBrowserRun\(resolvedUser\.telegramId\)\) \{\n\s+const notUsed = "I'm not waiting for a sign-in code right now, so I didn't use that one\./)
+assert.match(waRoute,/humanAuthTakeoverReply/)
+assert.doesNotMatch(waRoute,/send the new code/)
 assert.match(bc, /export async function waitForLoginCodeRun\(tg:number\|string,maxMs=24_000\)/)
 console.log('verify-login-code-flow: early code ok')
 // 16 Oct live: the header "Sign in" link was pressed instead of Swiggy's VERIFY OTP.
