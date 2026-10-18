@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { browserApprovalBinding, createApprovalBrowserRun } from './browser-command'
-import { roundTripDisplayOrder, roundTripSearchLink } from './travel-browser-task'
+import { oneWayDisplayOrder, oneWaySearchLink, roundTripDisplayOrder, roundTripSearchLink } from './travel-browser-task'
 import type { BrowserFlightOption } from './travel-browser-task'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
@@ -56,10 +56,12 @@ export async function loadLastFlightResult(actor: AgentActor): Promise<LastFligh
       .eq('run_id', run.id).eq('telegram_id', tg).eq('tool_name', 'travel').limit(1).maybeSingle()
     const flights = (step?.output_json as any)?.flights
     const context: any = (step?.output_json as any)?.context || metaContext
-    if (!context || context.kind !== 'flight' || !context.roundTrip || !context.returnDate) continue
+    if (!context || context.kind !== 'flight' || !context.startDate) continue
     if (!Array.isArray(flights) || !flights.length) continue
-    const options = roundTripDisplayOrder(flights as BrowserFlightOption[])
-    if (options.length) return { runId: String(run.id), context, options, searchLink: roundTripSearchLink(context) }
+    // 18 Oct: a one-way result can be booked too; the list order is the one the person saw.
+    const round = Boolean(context.roundTrip && context.returnDate)
+    const options = round ? roundTripDisplayOrder(flights as BrowserFlightOption[]) : oneWayDisplayOrder(flights as BrowserFlightOption[])
+    if (options.length) return { runId: String(run.id), context, options, searchLink: round ? roundTripSearchLink(context) : oneWaySearchLink(context) }
   }
   return null
 }
@@ -102,12 +104,17 @@ export function describeFlight(option: BrowserFlightOption) {
   return `${option.airline}, out ${option.departure} → ${option.arrival}, ${stops}`
 }
 
+const isRound = (context: any) => Boolean(context?.roundTrip && context?.returnDate)
+const datesLabel = (context: any) => isRound(context) ? `${context.startDate} → ${context.returnDate}` : `${context.startDate} (one-way)`
+const fareKind = (context: any) => isRound(context) ? 'round trip' : 'one-way'
+
 export function flightBookingObjective(params: { context: any; option: BrowserFlightOption; travellers: Traveller[] }) {
   const { context, option, travellers } = params
   const fare = option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')}` : 'the listed fare'
   const who = travellers.map((t, i) => `traveller ${i + 1}: full name ${t.name}, date of birth ${t.dob}`).join('; ')
-  return safe(`Flight booking up to payment on Google Flights: round trip ${context.origin?.code} to ${context.destination?.code}, depart ${context.startDate}, return ${context.returnDate}, ${travellers.length} adult${travellers.length === 1 ? '' : 's'}, ${String(context.cabin || 'economy').replace(/_/g, ' ')}. `
-    + `Choose the ${option.airline} result that leaves ${option.departure} on ${context.startDate} (about ${fare} round trip), then the cheapest return on ${context.returnDate}, and continue (Select flight, Continue, Book) to the airline or booking site. `
+  const round = isRound(context)
+  return safe(`Flight booking up to payment on Google Flights: ${round ? 'round trip' : 'one-way'} ${context.origin?.code} to ${context.destination?.code}, depart ${context.startDate}${round ? `, return ${context.returnDate}` : ''}, ${travellers.length} adult${travellers.length === 1 ? '' : 's'}, ${String(context.cabin || 'economy').replace(/_/g, ' ')}. `
+    + `Choose the ${option.airline} result that leaves ${option.departure} on ${context.startDate} (about ${fare} ${round ? 'round trip' : 'one-way'})${round ? `, then the cheapest return on ${context.returnDate}` : ''}, and continue (Select flight, Continue, Book) to the airline or booking site. `
     + `If the site asks for passenger details, use exactly: ${who}. Do not guess any other field; leave it for the person. `
     + `If the price on the booking page is more than 10% above ${fare}, or it is a different flight, stop and report. `
     + `Stop on the payment step: never pay, never enter card, UPI or bank details, never press Pay.`, 1700)
@@ -183,7 +190,7 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
   const index = last.options.indexOf(option)
   const count = Math.max(1, Number(last.context.adults) || 1)
   const fare = option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')}` : 'the listed fare'
-  const reply = `Booking: ${last.context.origin?.code} → ${last.context.destination?.code}, ${last.context.startDate} and back ${last.context.returnDate}.\n${describeFlight(option)}\nAbout ${fare} round trip for ${count} adult${count === 1 ? '' : 's'}; fares move, so I will stop if the price on the booking page is more than 10% higher.\n\n${askText(count)}`
+  const reply = `Booking: ${last.context.origin?.code} → ${last.context.destination?.code}, ${isRound(last.context) ? `${last.context.startDate} and back ${last.context.returnDate}` : `${last.context.startDate}, one-way`}.\n${describeFlight(option)}\nAbout ${fare} ${fareKind(last.context)} for ${count} adult${count === 1 ? '' : 's'}; fares move, so I will stop if the price on the booking page is more than 10% higher.\n\n${askText(count)}`
   await savePending(tg, { runId: last.runId, optionIndex: index }, reply)
   return waiting(reply)
 }
@@ -196,7 +203,7 @@ async function createBookingApproval(p: { actor: AgentActor; surface: AgentSurfa
   const command = { url, objective, mode: 'execute' as const, risk: 'high' as const, approvalAction: 'booking' as const, flow: 'provider_booking' as const }
   const purgeAt = new Date(Date.now() + 24 * 3600_000).toISOString()
   const metadata = { plan_type: 'secure_browser', url, objective, mode: 'execute', risk: 'high', approval_action: 'booking', flow: 'provider_booking',
-    flight_booking: { search_run_id: last.runId, route: `${last.context.origin?.code}-${last.context.destination?.code}`, depart: last.context.startDate, return: last.context.returnDate,
+    flight_booking: { search_run_id: last.runId, route: `${last.context.origin?.code}-${last.context.destination?.code}`, depart: last.context.startDate, return: last.context.returnDate || null,
       airline: option.airline, fare_inr: option.fareInr, travellers: travellers.length, pii_purge_at: purgeAt } }
   const booking = await createApprovalBrowserRun({ actor, surface, command, metadata })
   const { data: approval, error } = await supabaseAdmin.from('agent_approvals').insert({
@@ -205,9 +212,9 @@ async function createBookingApproval(p: { actor: AgentActor; surface: AgentSurfa
     description: 'Gogo will pick this flight, continue to the booking page, fill the traveller details you gave, and stop at payment with a link for you to pay. Gogo never pays.',
     payload_preview: [
       { label: 'Flight', value: safe(describeFlight(option), 220) },
-      { label: 'Dates', value: `${last.context.startDate} → ${last.context.returnDate}` },
+      { label: 'Dates', value: datesLabel(last.context) },
       { label: 'Travellers', value: safe(travellers.map(t => t.name).join(', '), 220) },
-      { label: 'Quoted fare', value: option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')} round trip` : 'as listed' },
+      { label: 'Quoted fare', value: option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')} ${fareKind(last.context)}` : 'as listed' },
       { label: 'Risk', value: 'high' },
     ],
     execution_payload: { plan_type: 'secure_browser', stepId: booking.stepId, url },
@@ -221,7 +228,7 @@ async function createBookingApproval(p: { actor: AgentActor; surface: AgentSurfa
   const fare = option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')}` : 'the listed fare'
   return {
     runId: booking.runId, status: 'waiting_approval' as const, capability: 'browser' as const, risk: 'high' as const,
-    text: `Ready to book:\n${describeFlight(option)}\n${last.context.startDate} → ${last.context.returnDate} · ${fare} round trip\nTravellers: ${travellers.map(t => t.name).join(', ')}\n\nAfter you approve, I fill the booking on the airline or booking site and stop at payment. I never enter card or UPI details and never press Pay; I send you a link to pay yourself. Your details are deleted after 24 hours.\n\nReply *APPROVE* to continue or *REJECT* to stop.`,
+    text: `Ready to book:\n${describeFlight(option)}\n${datesLabel(last.context)} · ${fare} ${fareKind(last.context)}\nTravellers: ${travellers.map(t => t.name).join(', ')}\n\nAfter you approve, I fill the booking on the airline or booking site and stop at payment. I never enter card or UPI details and never press Pay; I send you a link to pay yourself. Your details are deleted after 24 hours.\n\nReply *APPROVE* to continue or *REJECT* to stop.`,
     approvalId: String(approval.id), approvalRequired: true, handledBy: 'flight-booking' as const,
   }
 }

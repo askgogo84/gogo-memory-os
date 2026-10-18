@@ -208,7 +208,20 @@ function parseGoal(text: string) {
   return { title, outcome }
 }
 
+// 18 Oct live: "show my goals" answered "I could not find a list called goals" although a goal was active.
+async function tryListGoals(actor: AgentActor, text: string): Promise<WhatsAppAgentResult | null> {
+  if (!/^(?:show|list|what are|view|see)?\s*(?:me\s+)?(?:all\s+)?(?:my\s+)?(?:active\s+)?goals\??$/i.test(String(text || '').trim())) return null
+  const { data, error } = await supabaseAdmin.from('agent_goals').select('title,status,updated_at')
+    .eq('telegram_id', String(actor.legacyTelegramId)).in('status', ['active', 'blocked', 'waiting']).order('updated_at', { ascending: false }).limit(10)
+  if (error) throw new Error(`goal_list_failed:${error.message}`)
+  if (!data?.length) return { text: 'You have no active goals. Start one like “set a goal to walk 8000 steps daily”.', status: 'completed', handledBy: 'whatsapp-agent-goal' }
+  const lines = data.map((g: any, i: number) => `${i + 1}. ${g.title}${g.status === 'active' ? '' : ` (${g.status})`}`)
+  return { text: `🎯 *Your goals*\n\n${lines.join('\n')}\n\nProgress is in *Dashboard → Goals*.`, status: 'completed', handledBy: 'whatsapp-agent-goal' }
+}
+
 async function tryCreateGoal(actor: AgentActor, text: string): Promise<WhatsAppAgentResult | null> {
+  const listed = await tryListGoals(actor, text)
+  if (listed) return listed
   const goal = parseGoal(text)
   if (!goal) return null
   const now = new Date().toISOString()

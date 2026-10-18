@@ -9,7 +9,7 @@ assert.match(pc, /row\.status === 'pending' && \(PARALLEL_COMPARISON_PROVIDERS\.
 assert.match(pc, /const laneKey = 'commerce-browser:' \+ owner \+ \(parallel \? ':' \+ provider : ''\)/)
 // Every read-modify-write of the saved comparison holds the state lease, so parallel lanes never overwrite each other.
 assert.match(pc, /const key = 'comparison-state:' \+ id/)
-assert.equal((pc.match(/withComparisonState\(id, async/g) || []).length, 2, 'claim and finish both hold the state lease')
+assert.equal((pc.match(/withComparisonState\(id, async/g) || []).length, 3, 'claim, finish and settling a stuck comparison all hold the state lease')
 assert.match(pc, /Promise\.all\(Array\.from\(\{length: Math\.max\(1, lanes\)\}/)
 // Started at once on the internal route, not on the next cron minute.
 assert.match(pc, /await triggerComparisonRun\(String\(\(data as any\)\.id\)\)/)

@@ -32,7 +32,8 @@ export async function saveExpense(params: {
     const { error, data } = await supabaseAdmin.from('expenses').insert(row).select('id').single()
     if (!error) return data
     const missing = String(error.message || '').match(/Could not find the '([a-z_]+)' column/)
-    if (!missing || !(missing[1] in row) || missing[1] === 'amount' || missing[1] === 'telegram_id') {
+    // telegram_id may go only when the row still names its owner by whatsapp_id.
+    if (!missing || !(missing[1] in row) || missing[1] === 'amount' || (missing[1] === 'telegram_id' && !params.whatsappId)) {
       console.error('[expense-storage] save failed:', error.message)
       return null
     }
@@ -41,17 +42,29 @@ export async function saveExpense(params: {
   return null
 }
 
-// ── Get today's expenses ──────────────────────────────────────────────────────
-export async function getTodayExpenses(telegramId: number): Promise<DailyExpenseSummary> {
-  const { start, end } = getTodayRange()
 
-  const { data: rows } = await supabaseAdmin
-    .from('expenses')
-    .select('amount, category, description, logged_at')
-    .eq('telegram_id', telegramId)
-    .gte('logged_at', start)
-    .lte('logged_at', end)
-    .order('logged_at', { ascending: false })
+// 18 Oct: production's expenses table predates telegram_id (expenses-v2.sql was never run). Rows are read by
+// telegram_id, or by the owner's WhatsApp id when that column does not exist yet.
+async function expenseRows(telegramId: number, whatsappId: string | null | undefined, since: string, until?: string) {
+  const run = (column: 'telegram_id' | 'whatsapp_id', value: string | number) => {
+    let q = supabaseAdmin.from('expenses').select('amount, category, description, logged_at').eq(column, value).gte('logged_at', since)
+    if (until) q = q.lte('logged_at', until)
+    return q.order('logged_at', { ascending: false })
+  }
+  const first = await run('telegram_id', telegramId)
+  if (!first.error) return first.data || []
+  if (/telegram_id/.test(String(first.error.message || '')) && whatsappId) {
+    const second = await run('whatsapp_id', whatsappId)
+    if (!second.error) return second.data || []
+  }
+  console.error('[expense-storage] read failed:', first.error.message)
+  return []
+}
+
+// ── Get today's expenses ──────────────────────────────────────────────────────
+export async function getTodayExpenses(telegramId: number, whatsappId?: string | null): Promise<DailyExpenseSummary> {
+  const { start, end } = getTodayRange()
+  const rows = await expenseRows(telegramId, whatsappId, start, end)
 
   if (!rows?.length) {
     return { total: 0, count: 0, byCategory: {}, topCategory: '', entries: [] }
@@ -80,17 +93,11 @@ export async function getTodayExpenses(telegramId: number): Promise<DailyExpense
 }
 
 // ── Get period expenses (week/month) ─────────────────────────────────────────
-export async function getPeriodExpenses(telegramId: number, period: 'week' | 'month' = 'week') {
+export async function getPeriodExpenses(telegramId: number, period: 'week' | 'month' = 'week', whatsappId?: string | null) {
   const since = new Date()
   if (period === 'week') since.setDate(since.getDate() - 7)
   else since.setDate(1)
-
-  const { data: rows } = await supabaseAdmin
-    .from('expenses')
-    .select('amount, category, description, logged_at')
-    .eq('telegram_id', telegramId)
-    .gte('logged_at', since.toISOString())
-    .order('logged_at', { ascending: false })
+  const rows = await expenseRows(telegramId, whatsappId, since.toISOString())
 
   if (!rows?.length) return null
 

@@ -51,7 +51,10 @@ export function formatBrowserFlightResult(context:BrowserFlightContext,options:B
   const stops=(f:BrowserFlightOption)=>f.stops===null?'stops not verified':f.stops===0?'non-stop':`${f.stops} stop${f.stops===1?'':'s'}${f.layover?` (${f.layover})`:''}`
   const basis=(f:BrowserFlightOption)=>f.fareBasis==='party_total'&&f.farePassengers===passengers?(passengers>1?` total for ${passengers} adults`:''):passengers>1?' (party total not verified)':''
   const rows=sorted.map((f,i)=>`${i+1}. ${f.fareInr?money(f.fareInr):'fare not verified'}${f.fareInr?basis(f):''} · ${f.airline}\n   ${f.departure} → ${f.arrival} · ${stops(f)}`)
-  const best=sorted.find(f=>f.fareInr), nonstop=sorted.find(f=>f.stops===0&&f.fareInr)
+  // 18 Oct: Google listed 52 non-stops from ₹18,327 below five cheaper 1-stop fares; the cheapest non-stop
+  // is always named and listed, even when it is not in the cheapest five.
+  const best=sorted.find(f=>f.fareInr), nonstop=[...options].filter(f=>f.stops===0&&f.fareInr).sort((a,b)=>a.fareInr!-b.fareInr!)[0]
+
   const verdict=best?[`Cheapest: ${money(best.fareInr!)} on ${best.airline}, ${best.stops===0?'non-stop':`${best.stops} stop${best.stops===1?'':'s'}`}.`,
     ...(nonstop&&nonstop!==best?[`Cheapest non-stop: ${money(nonstop.fareInr!)} on ${nonstop.airline}.`]:[])]:[]
   return [`*${context.routeLabel}* · ${context.whenLabel}`,`${passengers} adult${passengers===1?'':'s'} · ${(context.cabin||'economy').replace(/_/g,' ')} · one-way`,'',...verdict,'',...rows,'',
@@ -61,7 +64,14 @@ export function formatBrowserFlightResult(context:BrowserFlightContext,options:B
 
 /** The order the person sees for a one-way result: cheapest first, top five. "Book #2" refers to this list. */
 export function oneWayDisplayOrder(options:BrowserFlightOption[]){
-  return [...options].sort((a,b)=>(a.fareInr??Infinity)-(b.fareInr??Infinity)).slice(0,5)
+  return withCheapestNonstop([...options].sort((a,b)=>(a.fareInr??Infinity)-(b.fareInr??Infinity)),5)
+}
+
+/** Cheapest five, plus the cheapest non-stop as a sixth row when none of the five is non-stop. */
+function withCheapestNonstop(sorted:BrowserFlightOption[],n:number){
+  const top=sorted.slice(0,n)
+  const nonstop=sorted.find(f=>f.stops===0&&f.fareInr)
+  return nonstop&&!top.includes(nonstop)?[...top,nonstop]:top
 }
 
 export function browserFlightContextVisible(pageText: string, context: BrowserFlightContext) {
@@ -289,7 +299,7 @@ export function googleRoundTripOptionsFromEvidence(result:any,context:BrowserFli
 
 /** The order the person sees: cheapest first, top five. "Book #2" refers to this list. */
 export function roundTripDisplayOrder(options:BrowserFlightOption[]){
-  return [...options].filter(o=>o.fareInr).sort((a,b)=>a.fareInr!-b.fareInr!).slice(0,5)
+  return withCheapestNonstop([...options].filter(o=>o.fareInr).sort((a,b)=>a.fareInr!-b.fareInr!),5)
 }
 
 /** Cheapest first, one plain verdict. Prices are Google's round-trip totals and move between reads. */

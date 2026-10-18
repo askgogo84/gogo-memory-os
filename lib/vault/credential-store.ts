@@ -202,7 +202,8 @@ export async function resolveVaultCredentialForDomain(params:{telegramId:string;
 }
 
 export async function ownerTelegramId(ownerId:string){
-  const raw=String(ownerId||'').trim()
+  // 17 Oct live: parallel slot checks run as "<user uuid>:slots:0", which failed the uuid lookup. The owner is the part before ":".
+  const raw=String(ownerId||'').trim().split(':')[0]
   if(!raw)throw new Error('vault_owner_missing')
   if(/^-?\d+$/.test(raw))return raw
   const {data,error}=await supabaseAdmin.from('users').select('telegram_id').eq('id',raw).maybeSingle()
