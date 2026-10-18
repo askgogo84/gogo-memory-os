@@ -1,0 +1,29 @@
+import assert from 'node:assert/strict'
+import {existsSync,readFileSync} from 'node:fs'
+import {runInNewContext} from 'node:vm'
+import ts from 'typescript'
+const epoch=Date.parse('2026-10-18T17:00:00Z')
+class Clock extends Date{constructor(value?:any){super(value===undefined?epoch:value)}static now(){return epoch}}
+const noop=new Proxy({}, {get:()=>()=>null})
+const reject=()=>{throw Error('Unexpected generic model/planner/action transport')}
+function harness(fail=false){
+ let apiCalls=0
+ const load=(file:string,deps:any={})=>{const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText,{exports,require:(name:string)=>deps[name]||noop,Date:Clock,Intl,URL,URLSearchParams,Map,Set,Request,Response,Buffer,AbortSignal,TextDecoder,TextEncoder,setTimeout,clearTimeout,process:{env:{}},console:{log(){},warn(){},error(){}},fetch:async(url:any)=>{assert.match(String(url),/^https:\/\/api\.frankfurter\.dev\/v2\/rates\?/);apiCalls++;return new Response(JSON.stringify([{date:'2026-10-18',base:'USD',quote:'INR',rate:94.93,providers:[{key:'ECB',date:'2026-10-16',rate:94.93}]}]),{status:fail?503:200,headers:{'content-type':'application/json'}})}});return exports}
+ const service=load('lib/services/reference-fx.ts')
+ const helper=existsSync('lib/bot/handlers/reference-fx.ts')?load('lib/bot/handlers/reference-fx.ts',{'@/lib/services/reference-fx':service}):{buildReferenceFxReply:async()=>null}
+ const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{telegram_id:123,whatsapp_id:'fixture-owner',name:'Example'},error:null}),insert:()=>({error:null})}
+ const db={from:(table:string)=>{assert.ok(['users','conversations'].includes(table),table);return q}}
+ const actor={userId:'fixture',legacyTelegramId:123,whatsappId:'fixture-owner',name:'Example'}
+ const pm=load('lib/bot/process-message.ts',{'./resolve-user':{resolveUser:async()=>({id:'fixture',telegramId:123,whatsappId:'fixture-owner',name:'Example'})},'./format-response':{formatOutgoingText:(_channel:string,text:string)=>text},'@/lib/supabase-admin':{supabaseAdmin:db},'./handlers/reference-fx':helper,'./detect-intent':{detectIntent:reject},'@/lib/limits':{checkAndIncrementLimit:async()=>({allowed:true})}})
+ const dash=load('app/api/dashboard/chat/route.ts',{'crypto':{randomUUID:()=> 'fixture-fx-turn'},'next/server':{NextResponse:{json:(body:any,options:any={})=>new Response(JSON.stringify(body),{status:options.status||200})}},'@/lib/dashboard/session':{getSession:async()=>({telegramId:'123'})},'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/agent/actor':{resolveAgentActor:async()=>actor},'@/lib/bot/handlers/reference-fx':helper,'@/lib/dashboard/day-chat':{detectDashboardDayIntent:reject},'@/lib/bot/process-message':{processIncomingMessage:reject},'@/lib/agent/read-only-schedule':{detectReadOnlyScheduleRequest:()=>null},'@/lib/agent/recall-query':{isDecisionRecallQuery:()=>false},'@/lib/services/link-vault':{isLinkVaultSaveRequest:()=>false,isLinkVaultQuery:()=>false}})
+ return{helper,pm,dash,apiCalls:()=>apiCalls}
+}
+const failures:string[]=[]
+async function check(label:string,fn:()=>Promise<void>){try{await fn();console.log('PASS '+label)}catch(e){failures.push(label+': '+(e instanceof Error?e.message:String(e)))}}
+const verify=(text:string)=>{assert.match(text,/9,493|9493/);assert.match(text,/Frankfurter blended daily reference dated 2026-10-18/);assert.match(text,/2026-10-16/);assert.match(text,/not an executable bank or payment quote/);assert.match(text,/https:\/\/api\.frankfurter\.dev\/v2\/rates/)}
+await check('actual helper renders the strict public reference directly without model paraphrase',async()=>{const h=harness();verify(await h.helper.buildReferenceFxReply('Convert 100 USD to INR'));assert.equal(h.apiCalls(),1)})
+await check('actual shared message entry claims the original query before generic intent/model routing',async()=>{const h=harness(),r=await h.pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text:'Convert 100 USD to INR',messageType:'text'});verify(r.text);assert.equal(r.handledBy,'reference-fx');assert.equal(h.apiCalls(),1)})
+await check('actual dashboard entry claims the original query before generic planning',async()=>{const h=harness(),request=new Request('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:'Convert 100 USD to INR'})}),response=await h.dash.POST(Object.assign(request,{nextUrl:new URL(request.url)})),r=await response.json();assert.equal(response.status,200);verify(r.text);assert.equal(r.handledBy,'reference-fx');assert.equal(r.readOnly,true);assert.equal(r.mutated,false);assert.equal(h.apiCalls(),1)})
+await check('recognized provider failure stays explicit instead of using generic guessed-rate fallback',async()=>{const h=harness(true),r=await h.pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text:'Convert 100 USD to INR',messageType:'text'});assert.match(r.text,/couldn.t verify.*reference/i);assert.equal(r.handledBy,'reference-fx');assert.doesNotMatch(r.text,/9,493|mid-market|current.*rate/i);assert.equal(h.apiCalls(),1)})
+await check('historical mixed transactional and unsupported queries do not acquire the strict reference route',async()=>{const h=harness();for(const text of ['send 100 USD to INR','USD to INR yesterday','Convert 100 USD to INR and transfer it','USD to XAU','Convert 100 USD to INR'+ ' '.repeat(200)])assert.equal(await h.helper.buildReferenceFxReply(text),null);assert.equal(h.apiCalls(),0)})
+if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Actual FX helper/shared/dashboard routing passed; public provider mocked, no financial operation.')
