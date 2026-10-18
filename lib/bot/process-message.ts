@@ -19,7 +19,7 @@ import { checkAndIncrementLimit, getUsageStatusReply, getFriendReminderCap } fro
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAuthUrl, buildCalendarConnectUrl } from '@/lib/google-calendar'
 import { getAllCalendarAccountAccess, describeCalendarAccounts } from '@/lib/services/google-calendar-accounts'
-import { resolveUser, type Channel } from './resolve-user'
+import { resolveUser, type Channel, type ResolvedUser } from './resolve-user'
 import { detectIntent } from './detect-intent'
 import { parseClaudeResponse } from './parse-claude-response'
 import { formatOutgoingText } from './format-response'
@@ -1600,7 +1600,7 @@ export function rememberedForReply(fact: string): string {
   }).replace(/\byou am\b/gi, 'you are').replace(/\byou was\b/gi, 'you were')
 }
 
-async function selectedSavedContextBlock(user: { id?: any; telegramId: number; whatsappId?: any; name?: string }, text: string, history: Message[]): Promise<string> {
+async function selectedSavedContextBlock(user: Pick<ResolvedUser,'id'|'telegramId'|'whatsappId'|'name'>, text: string, history: Message[]): Promise<string> {
   const contextPack=await buildContextPack({
     actor:{userId:String(user.id),legacyTelegramId:user.telegramId,whatsappId:String(user.whatsappId||''),name:user.name||'Gogo'},
     text:recallQuery(text,history),
