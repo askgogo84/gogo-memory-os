@@ -77,4 +77,17 @@ check('an invalid quote-local date cannot inherit a valid heading date',()=>{
  const result=answer('1. Bangalore board\nAs of 18 October 2026. 24K as of 31 November 2026 per gram ₹14000\nSource: https://synthetic.invalid/invalid-date');
  assert.doesNotMatch(result,/24K — as of 2026-10-18/);assert.match(result,/date.*unverified|date.*invalid|couldn.t verify/i);
 });
+check('sentence punctuation never truncates a rupee amount',()=>{
+ for(const price of ['11,520','11,520.50']){
+  const result=answer(`1. Bangalore board\n18 October 2026. 22K gold per gram Rs. ${price}.\nSource: https://synthetic.invalid/punctuation`);
+  assert.match(result,price.endsWith('.50')?/22K: ₹11,520\.5\b/:/22K: ₹11,520\b/);
+ }
+ const invalid=answer('1. Bangalore board\n18 October 2026. 22K gold per gram ₹11,520.50.99\nSource: https://synthetic.invalid/invalid-number');assert.doesNotMatch(invalid,/22K: ₹/);
+});
+check('abbreviated quote dates do not borrow an earlier heading date',()=>{
+ const result=answer('1. Bangalore board\nAs of 18 October 2026. 24K as of 19 Oct 2026 per gram ₹14000\nSource: https://synthetic.invalid/short-month');assert.doesNotMatch(result,/24K: ₹14,?000/);assert.match(result,/future/i);
+});
+check('month-first quote dates keep their own day',()=>{
+ const result=answer('1. Bangalore board\nAs of 18 October 2026. 24K as of Oct 17, 2026 per gram ₹14000\nSource: https://synthetic.invalid/month-first');assert.match(result,/24K — as of 2026-10-17/);
+});
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');
