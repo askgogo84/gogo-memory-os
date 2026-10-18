@@ -7,7 +7,7 @@ import { runSecureBrowser } from './secure-computer'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
-import { buildContextPack } from './context-brain'
+import { buildContextPack, type ContextPack } from './context-brain'
 import {buildReservationDiningContext, usableReservationDiningContext, reservationRequestedDateCoverage, type ReservationDiningContext} from './reservation-dining-context'
 
 function safe(value: unknown, max = 1200) {
@@ -432,6 +432,74 @@ export async function runQueuedRestaurantReservationResearch(params:{actor:Agent
   }
 }
 
+type DiningFact=NonNullable<ContextPack['reservationTravel']>['facts'][number]
+function planningPlace(value:string){
+  const place=value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim()
+  return ['bangalore','blr'].includes(place)?'bengaluru':['nyc','jfk'].includes(place)?'new york':place
+}
+function planningSpan(date:string,start:string,end:string,timezone:string){
+  if(!/^\d{2}:\d{2}$/.test(start)||!/^\d{2}:\d{2}$/.test(end)||end<=start)return null
+  try{
+    const from=parseLocalDateTime({date,time:start,timezone}).dueAtUtc.getTime(),until=parseLocalDateTime({date,time:end,timezone}).dueAtUtc.getTime()
+    return Number.isFinite(from)&&Number.isFinite(until)&&until>from?{from,until}:null
+  }catch{return null}
+}
+function overlapsPlanning(start:string,end:string,span:{from:number;until:number}){return Date.parse(start)<span.until&&Date.parse(end)>span.from}
+function localPlanningDay(at:number,timezone:string){return new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(at))}
+function planningWindowBlocks(window:ReservationDiningContext['windows'][number],target:string){
+  return !(['travel_presence','life_event'].includes(window.source)&&window.location&&planningPlace(window.location)===target)
+}
+async function reservationConflictReview(params:{actor:AgentActor;text:string;intent:RestaurantReservationIntent;location:string|null;timezone:string;releaseAt:string;pack:ContextPack;snapshot:ReservationDiningContext}):Promise<string|null>{
+  const {intent,snapshot,timezone}=params,target=planningPlace(params.location||'')
+  const release=Date.parse(params.releaseAt)
+  const requested=intent.requestedDate?planningSpan(intent.requestedDate,intent.preferredStart,intent.preferredEnd,timezone):null
+  const requestedSpan=requested||(intent.requestedDate?{from:Date.parse(snapshot.from),until:Date.parse(snapshot.until)}:null)
+  const travel=requestedSpan?snapshot.windows.filter(w=>overlapsPlanning(w.startAt,w.endAt,requestedSpan)&&planningWindowBlocks(w,target)):[]
+  const busy=requestedSpan?snapshot.calendar.windows.filter(w=>overlapsPlanning(w.startAt,w.endAt,requestedSpan)):[]
+  const atRelease=snapshot.windows.filter(w=>Date.parse(w.startAt)<=release&&release<Date.parse(w.endAt)&&planningWindowBlocks(w,target))
+  // An online release while away does not invalidate an explicitly chosen later day.
+  if(intent.requestedDate?!travel.length&&!busy.length:!atRelease.length)return null
+  const relevant=intent.requestedDate?travel:atRelease
+  const locations=[...new Set(relevant.map(w=>safe(w.location||'location unverified',120)))].join(', ')
+  const explanation=intent.requestedDate
+    ?`The requested dining start-time window overlaps ${travel.length?`saved travel context (${locations})`:''}${travel.length&&busy.length?' and ':''}${busy.length?'a recorded Calendar busy interval':''}.`
+    :`The booking release overlaps saved travel context (${locations}).`
+  const prefix=`${explanation} The provider release is ${params.releaseAt}; the release is not the dining date.${relevant.length?' Saved travel is itinerary/plan evidence, not verified current presence or an actual return.':''} No new reservation mission or approval was created.`
+  const bounds=`Keep ${intent.partySize} people, ${intent.restaurant}${params.location?` in ${params.location}`:''}, ${intent.preferredStart&&intent.preferredEnd?`${intent.preferredStart}–${intent.preferredEnd} (${timezone})`:'your preferred time window'}, and the ₹0 fee/deposit ceiling.`
+  if(!intent.preferredStart||!intent.preferredEnd)return `${prefix}\n\n${bounds} Please specify a preferred time window and dining date so I can check it without inventing hours.`
+  if(!relevant.length)return `${prefix}\n\n${bounds} Please choose a different dining date or time window for a fresh Calendar and provider check.`
+  if(!target||!relevant.some(w=>w.applicability==='owner'))return `${prefix}\n\n${bounds} Please clarify the traveller, restaurant location and return date; an owner return is not verified from this context.`
+  const ownerName=planningPlace(params.actor.name||''),ownerIdentifiers=new Set([String(params.actor.legacyTelegramId),params.actor.userId||''].filter(Boolean))
+  const owned=(fact:DiningFact)=>Array.isArray(fact.participants)&&fact.participants.some(p=>typeof p==='string'&&(ownerIdentifiers.has(p.trim())||ownerName.split(' ').length>=2&&planningPlace(p)===ownerName))
+  const after=requestedSpan?.until||release
+  const returns=(params.pack.reservationTravel?.facts||[]).filter(fact=>{
+    const route=String(fact.location||'').split(/\s*(?:→|->)\s*/)
+    const arrival=Date.parse(fact.endAt||''),depart=Date.parse(fact.startAt||'')
+    return fact.source==='travel_ticket'&&fact.kind==='flight'&&fact.inferred===false&&(fact.confidence||0)>=.9&&owned(fact)&&route.length===2&&planningPlace(route[1])===target&&Number.isFinite(depart)&&arrival>depart&&arrival>after&&
+      relevant.some(w=>w.applicability==='owner'&&(planningPlace(w.location||'')===planningPlace(route[0])||w.source==='travel_ticket'&&w.sourceRefs.some(r=>fact.sourceRefs?.some(ref=>ref.type==='travel_ticket'&&ref.id===r.id))))&&
+      fact.sourceRefs?.some(ref=>ref.type==='travel_ticket'&&typeof ref.id==='string'&&ref.id.length>0)
+  }).sort((a,b)=>Date.parse(a.endAt!)-Date.parse(b.endAt!))
+  const returning=returns[0]
+  if(!returning)return `${prefix}\n\n${bounds} Please clarify the scheduled owner return and preferred dining date. A hotel checkout, research date or inferred stay end is not a verified return.`
+  const arrival=Date.parse(returning.endAt!),base=localPlanningDay(arrival,timezone)
+  const noProposal=`${prefix}\n\n${bounds} The initial saved itinerary listed an arrival at ${returning.endAt}; fresh return/context evidence could not be verified. I could not verify a compatible planning window. Please choose a date for a fresh context check; provider availability and full meal duration are not verified.`
+  for(let offset=0;offset<3;offset++){
+    const date=new Date(Date.parse(base+'T00:00:00Z')+offset*86400_000).toISOString().slice(0,10)
+    const span=planningSpan(date,intent.preferredStart,intent.preferredEnd,timezone)
+    if(!span||span.from<=Math.max(arrival,release,Date.now()))continue
+    const coverage=reservationRequestedDateCoverage(date,timezone,new Date())
+    if(!coverage)return noProposal
+    const fresh=await buildContextPack({actor:params.actor,text:params.text,options:{includeSemantic:false,includeReservationTravel:true,includeReservationCalendar:true,reservationCalendarCoverage:coverage,maxFacts:14,horizonDays:60}}).catch(()=>null)
+    const checked=buildReservationDiningContext({actor:params.actor,timezone,requestedDate:date,releaseAt:params.releaseAt,pack:fresh,now:new Date()})
+    if(!usableReservationDiningContext(checked)||!checked.calendar.connected||JSON.stringify(checked.preferences)!==JSON.stringify(snapshot.preferences))return noProposal
+    const retainedReturn=fresh?.reservationTravel?.facts.some(f=>owned(f)&&f.source==='travel_ticket'&&f.kind==='flight'&&f.inferred===false&&(f.confidence||0)>=.9&&f.startAt===returning.startAt&&f.endAt===returning.endAt&&f.location===returning.location&&f.sourceRefs?.some(ref=>ref.type==='travel_ticket'&&returning.sourceRefs?.some(old=>old.type==='travel_ticket'&&old.id===ref.id)))
+    if(!retainedReturn||checked.windows.some(w=>overlapsPlanning(w.startAt,w.endAt,span)&&planningWindowBlocks(w,target)))return noProposal
+    if(checked.calendar.windows.some(w=>overlapsPlanning(w.startAt,w.endAt,span)))continue
+    return `${prefix}\n\nProvisional planning window: ${date} ${intent.preferredStart}–${intent.preferredEnd} (${timezone}) for ${intent.partySize} people at ${intent.restaurant} in ${params.location}. The saved itinerary schedules arrival at ${returning.endAt}; actual return is not verified. A fresh linked Calendar and saved-context read found no conflicting recorded interval within this start-time window. Provider availability, full meal duration and preference compatibility are not verified; this is not a booking or a fully checked dining interval. ${bounds}\n\nChoose a dining date before I prepare a new bounded approval; actual provider slot/rules and the complete meal interval still need verification.`
+  }
+  return noProposal
+}
+
 export async function tryRunRestaurantReservation(params:{actor:AgentActor;surface:AgentSurface;text:string}){
   const intent=parseRestaurantReservationIntent(params.text)
   if(!intent)return null
@@ -515,6 +583,8 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const diningContext=buildReservationDiningContext({actor:params.actor,timezone,requestedDate:intent.requestedDate,releaseAt,pack:contextPack,now:new Date()})
   if(diningContext.incomplete)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,
     text:'I verified the reservation release, but could not verify bounded travel and Calendar context for the possible dining dates. No reservation mission was armed or booking attempted. Retry the context check, or specify a dining date to narrow the Calendar read, before approving an attempt.'}
+  const conflictReview=contextPack?await reservationConflictReview({actor:params.actor,text:params.text,intent,location:provider.location||null,timezone,releaseAt,pack:contextPack,snapshot:diningContext}):null
+  if(conflictReview)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:conflictReview}
   const contextWindows=diningContext.windows
   const contextRefs=[...contextWindows.flatMap(window=>window.sourceRefs),...diningContext.calendar.windows.flatMap(window=>window.sourceRefs)].slice(0,30)
   const key=dedupeKey(params.actor,intent,provider.url)
