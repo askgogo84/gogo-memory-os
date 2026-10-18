@@ -21,6 +21,8 @@ assert.equal(comparisonEvidenceMatchesSubject('Amul butter 500g','Amul butter 1k
 assert.equal(comparisonEvidenceMatchesSubject('Amul butter 500g','Amul butter 0.5kg ₹250'),true)
 assert.equal(comparisonEvidenceMatchesSubject('Amul butter 500g','Amul butter 1500g ₹500'),false)
 assert.equal(comparisonReadEvidenceMatches('Find the listed price of this product on Zepto: "Amul butter 500g".','Amul butter 1500g ₹500'),false)
+assert.equal(comparisonEvidenceMatchesSubject('Logitech M185 wireless mouse, grey, quantity 1,','Logitech M185 wireless mouse grey ₹926'),true,'shopping quantity is not a product variant')
+assert.equal(comparisonReadEvidenceMatches('Find the listed price of this product on Flipkart: "Logitech M185 wireless mouse, grey, quantity 1,".','Logitech M185 wireless mouse grey ₹926'),true)
 const objective='Find the listed price of this product on Croma: "iPhone 18". This read is only about Croma.'
 assert.equal(productPagePriceEvidence(objective,'Buy Apple iPhone 18 Pro 128GB Online - Croma','Apple iPhone 18 Pro 128GB ₹1,20,000'),null)
 assert.equal(comparisonReadEvidenceMatches(objective,'Apple iPhone 18 Pro 128GB ₹1,20,000'),false)
