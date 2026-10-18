@@ -86,13 +86,14 @@ export function buildReservationDiningContext(params: {
   if(inventory.incomplete)fail('travel_retrieval_incomplete')
   if(instant(inventory.coveredFrom)>Math.max(from,nowMs)||!Number.isFinite(instant(inventory.coveredFrom))||instant(inventory.coveredUntil)<until||!Number.isFinite(instant(inventory.coveredUntil)))fail('travel_coverage_incomplete')
   const actorName=name(params.actor.name||'')
-  const ownerNames=new Set([String(params.actor.legacyTelegramId),params.actor.userId||'',...(actorName.split(' ').length>=2?[actorName]:[])].filter(Boolean).map(name))
+  const ownerIdentifiers=new Set([String(params.actor.legacyTelegramId),params.actor.userId||''].filter(Boolean))
   if(!Array.isArray(inventory.facts)){fail('travel_inventory_malformed');return result}
   const deduped=new Map<string,ReservationTravelWindow>()
   for(const fact of inventory.facts){
     if(!['travel_presence','travel_ticket','travel_mission'].includes(fact.source||'')&&!(fact.source==='life_event'&&['flight','hotel'].includes(fact.kind||'')))continue
-    const participants=Array.isArray(fact.participants)?fact.participants.filter(p=>typeof p==='string').map(name).filter(Boolean):[]
-    const owner=participants.some(p=>ownerNames.has(p))
+    const rawParticipants=Array.isArray(fact.participants)?fact.participants.filter(p=>typeof p==='string'):[]
+    const participants=rawParticipants.map(name).filter(Boolean)
+    const owner=rawParticipants.some(p=>ownerIdentifiers.has(p.trim())||actorName.split(' ').length>=2&&name(p)===actorName)
     // Partial names/initials can be aliases; do not silently treat them as a
     // different person. Distinct complete names are other travellers.
     if(participants.length&&!owner&&actorName.split(' ').length>=2&&participants.every(p=>p.split(' ').length>=2&&p.split(' ')[0]!==actorName.split(' ')[0]))continue

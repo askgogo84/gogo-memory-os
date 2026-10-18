@@ -469,8 +469,8 @@ async function reservationConflictReview(params:{actor:AgentActor;text:string;in
   if(!intent.preferredStart||!intent.preferredEnd)return `${prefix}\n\n${bounds} Please specify a preferred time window and dining date so I can check it without inventing hours.`
   if(!relevant.length)return `${prefix}\n\n${bounds} Please choose a different dining date or time window for a fresh Calendar and provider check.`
   if(!target||!relevant.some(w=>w.applicability==='owner'))return `${prefix}\n\n${bounds} Please clarify the traveller, restaurant location and return date; an owner return is not verified from this context.`
-  const ownerName=planningPlace(params.actor.name||''),ownerNames=new Set([planningPlace(String(params.actor.legacyTelegramId)),planningPlace(params.actor.userId||''),...(ownerName.split(' ').length>=2?[ownerName]:[])].filter(Boolean))
-  const owned=(fact:DiningFact)=>Array.isArray(fact.participants)&&fact.participants.some(p=>typeof p==='string'&&ownerNames.has(planningPlace(p)))
+  const ownerName=planningPlace(params.actor.name||''),ownerIdentifiers=new Set([String(params.actor.legacyTelegramId),params.actor.userId||''].filter(Boolean))
+  const owned=(fact:DiningFact)=>Array.isArray(fact.participants)&&fact.participants.some(p=>typeof p==='string'&&(ownerIdentifiers.has(p.trim())||ownerName.split(' ').length>=2&&planningPlace(p)===ownerName))
   const after=requestedSpan?.until||release
   const returns=(params.pack.reservationTravel?.facts||[]).filter(fact=>{
     const route=String(fact.location||'').split(/\s*(?:→|->)\s*/)
