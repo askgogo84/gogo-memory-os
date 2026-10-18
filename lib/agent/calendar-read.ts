@@ -67,11 +67,11 @@ export function calendarRequestsAvailability(text:string){
 
 export function calendarAffirmativeText(text:string){
   return text.replace(/’/g,"'")
-    .replace(/\b(?:do not|don't|dont)\s+forget\s+to\s+/gi,'')
-    .replace(/\b(?:do not|don't|dont|without)\s+[^.;!?\n]*?(?=[.;!?\n]|\b(?:but|then)\b|$)/gi,clause=>{
+    .replace(/\b(?:do not|don't|dont|never)\s+forget\s+to\s+/gi,'')
+    .replace(/\b(?:do not|don't|dont|never|without)\s+[^.;!?\n]*?(?=[.;!?\n]|\b(?:but|then)\b|$)/gi,clause=>{
     const next=clause.match(/(?:,\s*(?:just|please|instead)\s+|,\s*(?=(?:show|list|check|review|find|read|tell|summari[sz]e|brief)\b)|,\s*and\s+(?:(?:instead|please)\s+)?|\band\s+(?:instead|please)\s+|\band\s+(?=(?:show|list|check|review|find|read|tell|summari[sz]e|brief|open|browse|navigate|go to|visit|inspect|monitor|watch|track|schedule|create|add|edit|delete|move|change|modify|prepare|invite|cancel|write|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|order|reorder|empty|increase|decrease|apply|redeem|block|unblock|reserve|remind|put|set|forward|save|remember|compose|archive|post|publish|renew|reschedule|resched|postpone|push|shift|update|make|remove|clear|book|send|pay|buy|purchase)\b))/i)
     if(next?.index===undefined)return ''
-    const prohibited=clause.slice(0,next.index).replace(/^(?:do not|don't|dont|without)\s+/i,'')
+    const prohibited=clause.slice(0,next.index).replace(/^(?:do not|don't|dont|never|without)\s+/i,'')
     // A coordinated bare verb list keeps the prohibition across an Oxford comma.
     if(/^\w+(?:\s*(?:,|and|or)\s*\w+)*\s*$/i.test(prohibited)&&! /\b(?:just|please|instead)\b/i.test(next[0]))return ''
     return clause.slice(next.index)
@@ -83,16 +83,21 @@ export function calendarReadHoldReply(raw:string):string|null{
   const original=String(raw||'').toLowerCase().replace(/’/g,"'").trim()
   if(!CALENDAR_WORD_RE.test(original))return null
   const affirmative=calendarAffirmativeText(original).trim()
-  if(/^(?:please\s+)?(?:do not|don't|dont|never)\s+(?:check|read|review|show|display|list|summari[sz]e)\b/.test(original)&&/^[\s.!?,;]*$/.test(affirmative))return CALENDAR_READ_HOLD
+  if(/^(?:please\s+)?(?:do not|don't|dont|never)\s+(?:check|read|review|show|display|list|summari[sz]e)\b/.test(original)&&/^(?:please\b)?[\s.!?,;]*$/.test(affirmative))return CALENDAR_READ_HOLD
   if(!CALENDAR_READ_HEAD.test(original))return null
   const tail=original.replace(CALENDAR_READ_HEAD,'')
   if(/\b(?:do not|don't|dont|never|without)\s+(?:check|read|review|show|display|list|summari[sz]e)\b/.test(tail)||/\b(?:only\s+)?(?:after|once|when|if|unless|until)\b[^.!?;\n]{0,100}\b(?:approv(?:e|al)|confirm|consent|permission|say\s+yes|go[- ]ahead|tell\s+you)\b/.test(tail))return CALENDAR_READ_HOLD
   return null
 }
 
+function calendarReadRequestText(raw:string){
+  return calendarAffirmativeText(String(raw||'').toLowerCase().replace(/’/g,"'")).trim()
+    .replace(/^[\s,;]*(?:(?:but|then|and|instead)\b[\s,;]*)+/,'')
+}
+
 export function isStandaloneCalendarReadRequest(raw:string){
   if(calendarReadHoldReply(raw))return false
-  const text=calendarAffirmativeText(String(raw||'').toLowerCase().replace(/’/g,"'")).trim()
+  const text=calendarReadRequestText(raw)
   const head=CALENDAR_READ_HEAD
   if(!head.test(text))return false
   if(/\b(?:reminders?|agenda|tasks?|inbox|gmail|e-?mails?)\b/.test(text.replace(head,'')))return false
@@ -102,7 +107,29 @@ export function isStandaloneCalendarReadRequest(raw:string){
   // Consume the whole request: only date/time qualifiers may follow a direct
   // Calendar view. Additional topics and questions belong to the planner.
   const dates=new RegExp(`\\b(?:${MONTH_RE}|sunday|monday|tuesday|wednesday|thursday|friday|saturday|today|tomorrow|now|this|next|last|the|on|for|from|to|until|through|between|and|or|in|days?|weeks?|months?|years?|at|am|pm|morning|afternoon|evening|night|noon|midnight|not|except|excluding|rather|than|instead|of)\\b`,'gi')
-  return text.replace(head,'').replace(dates,'').replace(/[\s\d:/+.,;!?()[\]–-]/g,'')===''
+  let tail=text.replace(head,'')
+  try{
+    const zone=requestedCalendarTimezone(text)
+    if(zone){
+      const escaped=zone.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')
+      tail=tail.replace(new RegExp(`\\b(?:(?:in|using)\\s+|(?:time\\s*zone|timezone)\\s*(?:[:=]\\s*|is\\s+)?)?${escaped}\\b`,'gi'),'')
+    }
+  }catch{return false}
+  return tail.replace(dates,'').replace(/[\s\d:/+.,;!?()[\]–-]/g,'')===''
+}
+
+/** Do not let a second single-topic handler silently discard the Calendar read. */
+export function calendarReadClarificationReply(raw:string):string|null{
+  if(calendarReadHoldReply(raw))return null
+  const text=calendarReadRequestText(raw)
+  if(!CALENDAR_READ_HEAD.test(text))return null
+  for(const clause of text.replace(CALENDAR_READ_HEAD,'').split(/\b(?:and|then|also|but)\b|[.;!?]\s*/)){
+    if(/^\s*(?:please\s+)?(?:find|search|look\s+for|research|compare|check|read|review|show|list|display|summari[sz]e|get|tell\s+me|what|when|where|how|who|is|are)\b/.test(clause)&&
+      !calendarRequestsAvailability(clause)&&! /\b(?:calendar|calender|calandar|meetings?|events?|reminders?|agenda|my schedule|my day)\b/.test(clause)){
+      return "Your request includes a Calendar read and another task. Please ask for each separately so I can check both topics. I haven't read your Calendar or acted on the other task."
+    }
+  }
+  return null
 }
 
 export function requestedCalendarDays(text:string){

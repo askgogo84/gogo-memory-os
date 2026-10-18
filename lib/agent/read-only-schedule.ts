@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
-import { calendarReadWindow, executeReadOnlyCalendarStep, requestedCalendarTimezone, requestedCalendarDays, calendarAffirmativeText, calendarRequestsAvailability, isStandaloneCalendarReadRequest, calendarReadHoldReply } from './calendar-read'
+import { calendarReadWindow, executeReadOnlyCalendarStep, requestedCalendarTimezone, requestedCalendarDays, calendarAffirmativeText, calendarRequestsAvailability, isStandaloneCalendarReadRequest, calendarReadHoldReply, calendarReadClarificationReply } from './calendar-read'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { rememberTypedObjects } from './typed-object-context'
 
@@ -47,6 +47,7 @@ export function detectReadOnlyScheduleRequest(raw: string) {
     if(/^(?:please\s+)?(?:do not|don't|dont|never)\b/.test(text))return null
     return {horizon:'held' as const,scope:'calendar' as const}
   }
+  if(calendarReadClarificationReply(text))return {horizon:'clarify' as const,scope:'calendar' as const}
   const explicitNoMutation = /\b(do not|don't|dont|without)\s+(?:change|changing|modify|modifying|create|creating|add|adding|edit|editing|move|moving|schedule|scheduling|cancel|cancelling|canceling)\b/.test(text) || /\bread[- ]only\b/.test(text)
   const request = calendarAffirmativeText(text)
   const standaloneCalendar=isStandaloneCalendarReadRequest(text)
@@ -75,6 +76,8 @@ export function detectReadOnlyScheduleRequest(raw: string) {
 export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 'calendar' | 'agenda'; text?: string }) {
   const held=calendarReadHoldReply(params.text||'')
   if(held)return {text:held,calendarEvents:[],reminders:[],timeZone:'',tomorrowKey:'',calendarReadVerified:false}
+  const clarification=calendarReadClarificationReply(params.text||'')
+  if(clarification)return {text:clarification,calendarEvents:[],reminders:[],timeZone:'',tomorrowKey:'',calendarReadVerified:false}
   const telegramId = Number(params.actor.legacyTelegramId)
   const { data: user, error: userError } = await supabaseAdmin.from('users')
     .select('timezone')

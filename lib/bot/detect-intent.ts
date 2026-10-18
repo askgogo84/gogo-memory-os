@@ -5,7 +5,7 @@ import { classifyCheckVerb } from '@/lib/data/lists-core'
 import { CALENDAR_WORD_RE } from '@/lib/bot/handlers/calendar-actions'
 import { hasConcreteFlightCode } from '@/lib/bot/flight-codes'
 import { isNutritionLogText } from '@/lib/bot/nutrition-text'
-import { isStandaloneCalendarReadRequest, calendarReadHoldReply } from '@/lib/agent/calendar-read'
+import { isStandaloneCalendarReadRequest, calendarReadHoldReply, calendarReadClarificationReply } from '@/lib/agent/calendar-read'
 
 // "google calendar" (+ misspellings) â†’ connect intent, derived from the shared spelling
 // set rather than re-encoding the vowel-swaps by hand. Hoisted out of the per-message
@@ -20,6 +20,7 @@ export type IntentType =
   | 'connect_calendar'
   | 'read_calendar'
   | 'calendar_read_held'
+  | 'calendar_read_clarify'
   | 'sports_schedule'
   | 'sports_standings'
   | 'weather_live'
@@ -148,6 +149,10 @@ export function detectIntent(text: string): DetectedIntent {
   const lower = t.toLowerCase()
 
   if (!lower) return { type: 'general_chat', confidence: 'low' }
+  const calendarHold=calendarReadHoldReply(lower)
+  if (calendarHold) return { type: 'calendar_read_held', confidence: 'high',meta:{calendarReadHoldReply:calendarHold} }
+  const calendarClarification=calendarReadClarificationReply(lower)
+  if(calendarClarification)return {type:'calendar_read_clarify',confidence:'high',meta:{calendarReadClarificationReply:calendarClarification}}
   if (isFoodComparisonRequest(t)) return { type: 'food_comparison', confidence: 'high' }
   if (/^(hi|hello|hey|start|\/start)$/i.test(lower)) return { type: 'welcome_menu', confidence: 'high' }
   if (/^(?:help|\/help|menu|commands|what can you do)[?!.]*$/i.test(lower)) return { type: 'help_menu', confidence: 'high' }
@@ -213,8 +218,6 @@ export function detectIntent(text: string): DetectedIntent {
 
   // Tolerant of common "calendar" misspellings (calender/calandar/calenders/â€¦) via
   // CALENDAR_WORD_RE â€” "connect calender" used to miss and fall to the freeform LLM.
-  const calendarHold=calendarReadHoldReply(lower)
-  if (calendarHold) return { type: 'calendar_read_held', confidence: 'high',meta:{calendarReadHoldReply:calendarHold} }
   if (isStandaloneCalendarReadRequest(lower)) return { type: 'read_calendar', confidence: 'high' }
   if (((lower.includes('connect') || lower.includes('link')) && CALENDAR_WORD_RE.test(lower)) || GOOGLE_CALENDAR_RE.test(lower)) return { type: 'connect_calendar', confidence: 'high' }
   // Check "remind me" BEFORE weather - marathon/training reminders must not go to weather

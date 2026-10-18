@@ -59,7 +59,7 @@ try{
   for(const text of mixed){assert.notEqual(detectIntent(text).type,'read_calendar',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text),null,text)}
  })
  await check('additional read sentences and question clauses are not silently reduced to Calendar',()=>{
-  for(const text of extraReads){assert.notEqual(detectIntent(text).type,'read_calendar',text);assert.notEqual(detectIntent(text).type,'connect_calendar',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text),null,text)}
+  for(const text of extraReads){assert.equal(detectIntent(text).type,'calendar_read_clarify',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text)?.horizon,'clarify',text)}
  })
  await check('explicitly deferred and revoked reads have a hold result instead of a read',()=>{
   for(const text of heldReads){assert.equal(detectIntent(text).type,'calendar_read_held',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text)?.horizon,'held',text)}
@@ -121,7 +121,7 @@ try{
    'crypto':{randomUUID:()=> 'fixture-calendar-turn'},'next/server':{NextResponse:{json:(body:any,options:any={})=>new Response(JSON.stringify(body),{status:options.status||200})}},
    '@/lib/dashboard/session':{getSession:async()=>({telegramId:'123'})},'@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{assert(['users','conversations'].includes(table));return q}}},
    '@/lib/agent/actor':{resolveAgentActor:async()=>actor},
-   '@/lib/agent/read-only-schedule':{detectReadOnlyScheduleRequest:schedule.detectReadOnlyScheduleRequest,readTomorrowSchedule:async(params:any)=>{assert.equal(params.actor.legacyTelegramId,123);assert.equal(params.scope,'calendar');if(heldReads.includes(params.text))return schedule.readTomorrowSchedule(params);assert.equal(params.text,reads[0]);calls++;return{text:'Calendar read for next 7 days: Example event',calendarReadVerified:true}}},
+   '@/lib/agent/read-only-schedule':{detectReadOnlyScheduleRequest:schedule.detectReadOnlyScheduleRequest,readTomorrowSchedule:async(params:any)=>{assert.equal(params.actor.legacyTelegramId,123);assert.equal(params.scope,'calendar');if(heldReads.includes(params.text)||extraReads.includes(params.text))return schedule.readTomorrowSchedule(params);assert.equal(params.text,reads[0]);calls++;return{text:'Calendar read for next 7 days: Example event',calendarReadVerified:true}}},
    '@/lib/bot/handlers/friend-reminders':{detectFriendReminder:()=>null,isFriendReminderFollowupCandidate:()=>false},
    '@/lib/agent/recall-query':{isDecisionRecallQuery:()=>false},'@/lib/services/link-vault':{isLinkVaultSaveRequest:()=>false,isLinkVaultQuery:()=>false},
    '@/lib/dashboard/day-chat':{detectDashboardDayIntent:rejectIO},'@/lib/bot/process-message':{processIncomingMessage:rejectIO},
@@ -132,6 +132,9 @@ try{
  })
  await check('actual dashboard entry honors held reads without Calendar provider transport',async()=>{
   for(const text of heldReads){const before=transportCalls;const request=new Request('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text})});const response=await dash.POST(Object.assign(request,{nextUrl:new URL(request.url)})),body=await response.json();assert.equal(response.status,200);assert.match(body.text,/haven.t read|not read|on hold/i);assert.equal(transportCalls,before)}
+ })
+ await check('actual dashboard entry clarifies compound reads before any provider transport',async()=>{
+  for(const text of extraReads){const before=transportCalls;const request=new Request('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text})});const response=await dash.POST(Object.assign(request,{nextUrl:new URL(request.url)})),body=await response.json();assert.equal(response.status,200);assert.match(body.text,/Calendar read and another task/);assert.equal(transportCalls,before)}
  })
 }finally{globalThis.fetch=beforeFetch}
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Calendar read/connection routing and actual read-only entries passed; inert operations only.')

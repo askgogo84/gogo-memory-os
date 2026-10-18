@@ -514,13 +514,13 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   // A keyword rule may not claim a sentence the semantic classifier is confident means something else.
   const detectedIntent=detectIntent(incomingText)
-  const intent = (detectedIntent.type==='calendar_read_held'?detectedIntent:gateDetectedIntent(detectedIntent, incomingText, params.semantic)) as ReturnType<typeof detectIntent>
+  const intent = (detectedIntent.type==='calendar_read_held'||detectedIntent.type==='calendar_read_clarify'?detectedIntent:gateDetectedIntent(detectedIntent, incomingText, params.semantic)) as ReturnType<typeof detectIntent>
   console.log('PIM:intent', intent, 'semantic:', params.semantic?.intent?.choice ?? null, params.semantic?.intent?.confidence ?? null)
-  if(intent.type==='calendar_read_held'){
-    const reply=String(intent.meta?.calendarReadHoldReply||"I haven't read your Calendar. Ask me to check it when you're ready. Nothing was changed.")
+  if(intent.type==='calendar_read_held'||intent.type==='calendar_read_clarify'){
+    const reply=String(intent.meta?.calendarReadHoldReply||intent.meta?.calendarReadClarificationReply||"I haven't read your Calendar. Ask me to check it when you're ready. Nothing was changed.")
     await saveConversation(resolvedUser.telegramId,'user',incomingText)
     await saveConversation(resolvedUser.telegramId,'assistant',reply)
-    return {text:formatOutgoingText(params.channel,reply),handledBy:'calendar-read-held',resolvedUser}
+    return {text:formatOutgoingText(params.channel,reply),handledBy:intent.type==='calendar_read_held'?'calendar-read-held':'calendar-read-clarify',resolvedUser}
   }
   // A delegated reminder needs its own pending task so a corrected time can
   // complete the same request. Do not discard it in the self-reminder guard.
@@ -940,8 +940,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     try{
       const result=await executeReadOnlyCalendarStep({actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId||''),name:resolvedUser.name||'Gogo'},instruction:incomingText,missionText:incomingText})
       reply=result.text||"I couldn't verify your Calendar just now. Your schedule may still contain events. Nothing was changed."
-    }catch(error:any){
-      reply=/^calendar_(?:date|time|timezone|duration)_/.test(String(error?.message||''))
+    }catch(error:unknown){
+      const message=error&&typeof error==='object'&&'message' in error?String(error.message):''
+      reply=/^calendar_(?:date|time|timezone|duration)_/.test(message)
         ?'Please give the exact calendar date or date range in YYYY-MM-DD format so I can check the right days. Nothing was changed.'
         :"I couldn't verify your Calendar just now. Your schedule may still contain events. Nothing was changed."
     }
