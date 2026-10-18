@@ -64,7 +64,9 @@ function preferredWindow(text:string){
   const raw=String(text||'').replace(/\b([ap])\s*\.\s*m\s*\.?/gi,'$1m')
   // These constraints cannot be represented by the local exact/window contract.
   // Ask before research rather than invert an exclusion or discard a zone/date shift.
-  if(/\b(?:not|never|don['’]?t|cannot|can['’]?t|except|excluding|avoid|anything\s+but|no\s+(?:earlier|later)\s+than)\b[^.!?;\n]*?(?:\b\d{1,2}(?::\d{1,2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{1,2}\b)/i.test(raw)
+  const excludedClock=raw.split(/[.!?;\n]/).some(clause=>/\b\d{1,2}(?::\d{1,2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{1,2}\b/i.test(clause)
+    &&/\b(?:no|not|never|don['’]?t|isn['’]?t|aren['’]?t|cannot|can['’]?t|except|excluding|excluded|avoid|forbidden|unacceptable|unsuitable|unwanted|skip|dislike|anything\s+but)\b/i.test(clause))
+  if(excludedClock
     ||/\b(?:before|after)\s+\d{1,2}(?::\d{2})?/i.test(raw)
     ||/\b(?:UTC|GMT|IST|PST|PDT|EST|EDT|CST|CDT|MST|MDT|CET|CEST|BST|AEST|AEDT|JST)\b|\b(?:Asia|America|Europe|Australia|Africa|Pacific)\/[A-Za-z_]+(?:\/[A-Za-z_]+)?\b|\b(?:Eastern|Central|Mountain|Pacific|Indian\s+Standard)\s+(?:Standard\s+|Daylight\s+)?time\b/i.test(raw))return{start:'',end:'',clarify:true}
   const m=raw.match(/\bbetween\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm))\s+(?:and|to|-)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i)
