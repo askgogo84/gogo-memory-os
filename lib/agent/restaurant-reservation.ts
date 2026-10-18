@@ -143,7 +143,10 @@ export function isRestaurantReservationRequest(raw:string){
   // safety instructions mention booking. An explicit read-only request wins.
   if(/\bread[\s-]?only\b/.test(text))return false
   let negatedBooking=false
-  const affirmative=text.replace(/\b(?:do\s+not|don['’]?t|never|without)\s+(?:(?:make|create|place)\s+(?:(?:a|any|the)\s+)?)?(?:book(?:ing)?|reserv(?:e|ing|ation)s?|tables?)\b/g,()=>{negatedBooking=true;return''})
+  const affirmative=text.replace(/\b(?:do\s+not|don['’]?t|never|without)\b[^.!?;\n]*/g,clause=>{
+    if(!/\b(?:book(?:ing)?|reserv(?:e|ing|ation)s?|tables?)\b/.test(clause))return clause
+    negatedBooking=true;return''
+  })
   if(negatedBooking&&!/\b(?:book|reserve)\b/.test(affirmative))return false
   if(/^(?:please\s+)?(?:what\s+(?:did|have)\s+(?:i|we)\s+(?:decide|say|agree|choose|discuss)|remind\s+me\s+what\b|what\s+was\s+(?:my|our)\s+decision\b)/i.test(text))return false
   const booking=/\b(book|booking|reserve|reservation|table)\b/.test(text)
