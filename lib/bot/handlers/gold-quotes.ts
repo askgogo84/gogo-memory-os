@@ -96,8 +96,8 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
         if(!Number.isFinite(perGram)||perGram<=0)return
         quotes.push({karat:label[1],perGram,amount:value,grams,source,date:date||null,reportedToday,locationKnown:placeIsKnown(block,requested)})
       }
-      const addInline=(text:string,money:RegExpMatchArray)=>{
-        const before=units(text.slice(0,money.index)),after=units(text.slice(money.index!+money[0].length,money.index!+money[0].length+45))
+      const addInline=(text:string,money:RegExpMatchArray,allowBefore=true)=>{
+        const before=allowBefore?units(text.slice(0,money.index)):[],after=units(text.slice(money.index!+money[0].length,money.index!+money[0].length+45))
         const local=before.at(-1)||after[0]
         // Only a common heading or an explicitly coordinated price predicate
         // shares a unit. A neighbouring purity alone establishes no weight.
@@ -112,7 +112,11 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
       if(reverse){
         if(/\byesterday\b/i.test(quoteText)){warnings.add('A historical inline day label is unverified.');continue}
         const localMoney=[...quoteText.matchAll(MONEY)].at(-1)
-        if(localMoney)addInline(quoteText,localMoney)
+        // A unit before a reverse amount needs an isolated clause. When there
+        // is an earlier amount or no boundary after the previous purity, only
+        // this amount's suffix can establish its unit.
+        const isolatedPrefix=[...reversePrefix.matchAll(MONEY)].length===1&&(i===0||reversePrefix!==preceding)
+        if(localMoney)addInline(quoteText,localMoney,isolatedPrefix)
         continue
       }
       const rows=[...span.matchAll(/\b(\d+(?:\.\d+)?)\s*(kg|grams?|g)\s*\|/gi)]
