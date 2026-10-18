@@ -7,13 +7,13 @@ import * as dining from '../lib/agent/reservation-dining-context'
 
 const epoch=Date.parse('2026-10-19T14:31:00Z')
 class FixtureDate extends Date{constructor(value?:string|number){super(value===undefined?epoch:value)}static now(){return epoch}}
-function load(file:string,deps:Record<string,unknown>){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:(name:string)=>deps[name]||{},Date:FixtureDate,Intl,console:{log(){},error(){},warn(){}},URL,Set,Map});return exports}
+function load(file:string,deps:Record<string,unknown>,append=''){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8')+append,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:(name:string)=>deps[name]||{},Date:FixtureDate,Intl,console:{log(){},error(){},warn(){}},URL,Set,Map});return exports}
 const actor={legacyTelegramId:123,userId:'synthetic-owner',name:'Synthetic Owner'}
 const inventory={ownerId:'123',coveredFrom:'2026-10-18T10:00:00Z',coveredUntil:'2026-12-01T10:00:00Z',incomplete:false,facts:[]}
 const calendar={...inventory,connected:true,windows:[]}
 const snapshot=dining.buildReservationDiningContext({actor,timezone:'Asia/Kolkata',requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',now:new Date('2026-10-18T10:00:00Z'),pack:{reservationTravel:inventory,reservationCalendar:calendar}})
 const payload={restaurant:'Synthetic Restaurant',reservationUrl:'https://provider.example/reserve',reservationLocation:'Home city',partySize:2,preferredStart:'19:00',preferredEnd:'21:00',requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',contextWindows:[],diningContext:snapshot,approvalId:'approval'}
-let rows:Record<string,any>,faultTable='',faultMode:'error'|'zero'|'throw'='error',receiptFault=false,providerCalls=0,calendarCalls=0,notifications:string[]=[],activityTypes:string[]=[],writes:Array<{table:string;patch:any}>=[]
+let rows:Record<string,any>,faultTable='',faultMode:'error'|'zero'|'throw'='error',receiptFault=false,recoveryFault=false,slowActionCompletion=false,handoffReleases=0,providerCalls=0,calendarCalls=0,notifications:string[]=[],activityTypes:string[]=[],writes:Array<{table:string;patch:any}>=[]
 const db={from(table:string){let patch:any,insert:any,single=false;const filters:Array<(row:any)=>boolean>=[]
  const execute=()=>{
   if(insert){assert.equal(String(insert.telegram_id),'123');if(table==='agent_activity')activityTypes.push(insert.event_type);else throw Error('Unexpected insert '+table);return{data:null,error:null}}
@@ -23,7 +23,8 @@ const db={from(table:string){let patch:any,insert:any,single=false;const filters
    writes.push({table,patch:structuredClone(patch)})
    const completion=patch.status==='completed'||patch.status==='executed'||patch.lifecycle_state==='watching'
    const receipt=table==='life_event_actions'&&patch.status==='blocked'&&patch.payload_json?.providerConfirmationVerified===true
-   if((table===faultTable&&completion)||(receiptFault&&receipt)){
+   const recovery=patch.error==='restaurant_confirmation_recording_failed'||patch.payload_json?.blockedReason==='restaurant_confirmation_recording_failed'
+   if((table===faultTable&&completion)||(receiptFault&&receipt)||(recoveryFault&&recovery)){
     if(faultMode==='throw')throw Error('Synthetic completion transport failure')
     return{data:null,error:faultMode==='error'?{message:'Synthetic completion write failure'}:null}
    }
@@ -31,8 +32,8 @@ const db={from(table:string){let patch:any,insert:any,single=false;const filters
   }
   return{data:single?structuredClone(row):[structuredClone(row)],error:null}
  }
- const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push(row=>String(row[key])===String(value));return q},is:(key:string,value:unknown)=>{filters.push(row=>(row[key]??null)===value);return q},in:(key:string,values:unknown[])=>{filters.push(row=>values.includes(row[key]));return q},not:()=>q,order:()=>q,limit:()=>q,lte:()=>q,or:()=>q,
- update:(value:unknown)=>{patch=value;return q},insert:(value:unknown)=>{insert=value;return q},maybeSingle:async()=>{single=true;return execute()},then:(resolve:any,reject:any)=>Promise.resolve().then(execute).then(resolve,reject)}
+ const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push(row=>String(key.includes('->>')?row[key.split('->>')[0]]?.[key.split('->>')[1]]:row[key])===String(value));return q},is:(key:string,value:unknown)=>{filters.push(row=>(row[key]??null)===value);return q},in:(key:string,values:unknown[])=>{filters.push(row=>values.includes(row[key]));return q},not:()=>q,order:()=>q,limit:()=>q,lte:()=>q,or:()=>q,
+ update:(value:unknown)=>{patch=value;return q},insert:(value:unknown)=>{insert=value;return q},maybeSingle:async()=>{single=true;if(slowActionCompletion&&table==='life_event_actions'&&patch?.status==='completed')await new Promise(resolve=>setTimeout(resolve,30));return execute()},then:(resolve:any,reject:any)=>Promise.resolve().then(execute).then(resolve,reject)}
  return q
 }}
 const prep=load('lib/agent/restaurant-reservation.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining})
@@ -42,15 +43,15 @@ const worker=load('lib/agent/restaurant-reservation-worker.ts',{
  '@/lib/supabase-admin':{supabaseAdmin:db},'./restaurant-reservation':prep,'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining,
  './context-brain':{buildContextPack:async(input:any)=>{assert.equal(input.actor.legacyTelegramId,123);return{reservationTravel:inventory,reservationCalendar:calendar}}},
  './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},'./sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
- './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{}},
+ './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{handoffReleases++}},
  './secure-computer':{runSecureBrowser:async()=>{providerCalls++;return structuredClone(result)}},
  './booking-calendar-execution':{prepareBookingCalendarApproval:async()=>{calendarCalls++;return{runId:'calendar-draft'}}},
  '@/lib/channels/whatsapp':{sendWhatsAppMessage:async(_recipient:string,text:string)=>{notifications.push(text)}},
 })
-function reset(){faultTable='';faultMode='error';receiptFault=false;providerCalls=0;calendarCalls=0;notifications=[];activityTypes=[];writes=[];rows={
+function reset(){faultTable='';faultMode='error';receiptFault=false;recoveryFault=false;slowActionCompletion=false;handoffReleases=0;providerCalls=0;calendarCalls=0;notifications=[];activityTypes=[];writes=[];rows={
  agent_runs:{id:'run',telegram_id:'123',status:'queued',error:null,updated_at:'2026-10-18T10:00:00Z',metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:'event',life_event_action_id:'action'}},
  life_event_actions:{id:'action',telegram_id:'123',life_event_id:'event',action_key:'restaurant-reservation-release',status:'ready',payload_json:structuredClone(payload),due_at:payload.releaseAt},
- life_events:{id:'event',telegram_id:'123',title:'Synthetic Restaurant',timezone:'Asia/Kolkata',location:'Home city',lifecycle_state:'planned',metadata_json:{}},
+ life_events:{id:'event',telegram_id:'123',dedupe_key:'fixture-key',title:'Synthetic Restaurant',timezone:'Asia/Kolkata',location:'Home city',lifecycle_state:'planned',metadata_json:{}},
  agent_approvals:{id:'approval',telegram_id:'123',run_id:'run',status:'approved',action_type:'booking',...bound},
  users:{id:'synthetic-owner',telegram_id:123,whatsapp_id:'fixture-owner',name:'Synthetic Owner',timezone:'Asia/Kolkata'},agent_permissions:{telegram_id:'123',capability:'browser',level:'ask'},
 }}
@@ -85,5 +86,29 @@ await check('already confirmed receipt cannot be armed again with a surviving ol
 await check('a mismatched owner cannot claim or mutate another owners action',async()=>{
  reset();const original=structuredClone(rows.life_event_actions);const response=await worker.processOne({...original,telegram_id:'456'})
  assert.equal(response.status,'skipped');assert.equal(rows.life_event_actions.status,'ready');assert.equal(writes.length,0);assert.equal(providerCalls,0)
+})
+for(const mode of ['error','zero','throw']as const)await check('post-auth '+mode+' receipt failure retains reconciliation handoff',async()=>{
+ reset();receiptFault=true;faultMode=mode
+ let response:any;try{response=await worker.processOne(structuredClone(rows.life_event_actions),structuredClone(result))}catch{}
+ assert.notEqual(response?.status,'completed');assert.equal(providerCalls,0);assert.equal(handoffReleases,0,'do not discard provider evidence before durable receipt')
+})
+await check('queued failure cleanup preserves the current confirmation receipt',async()=>{
+ reset();faultTable='life_events';recoveryFault=true
+ const response=await worker.processQueuedRestaurantReservations()
+ assert.equal(response.completed,0);assert.equal(response.failed,1);assert.equal(providerCalls,1)
+ assert.equal(rows.life_event_actions.status,'blocked');assert.equal(rows.life_event_actions.payload_json.providerConfirmationVerified,true)
+ assert.equal(calendarCalls,0);assert.ok(!notifications.some(t=>t.startsWith('✅')))
+})
+await check('late successful completion write cannot overwrite failure quarantine',async()=>{
+ reset();faultTable='agent_runs';slowActionCompletion=true
+ const response=await worker.processOne(structuredClone(rows.life_event_actions))
+ assert.equal(response.status,'paused');assert.equal(rows.life_event_actions.status,'blocked');assert.equal(rows.life_event_actions.payload_json.reconciliationRequired,true)
+})
+await check('existing mission lookup retains completed run confirmation after a failed event write',async()=>{
+ reset();rows.agent_runs.status='completed';rows.agent_runs.metadata_json.providerConfirmationVerified=true
+ const lookup=load('lib/agent/restaurant-reservation.ts',{'@/lib/supabase-admin':{supabaseAdmin:db}},'\nexport {existingMission}')
+ const found=await lookup.existingMission(123,'fixture-key')
+ assert.equal(found?.run?.id,'run','known provider result must not disappear from duplicate-mission lookup')
+ assert.equal(found.run.metadata_json.providerConfirmationVerified,true)
 })
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Reservation completion receipts, explicit write/row/transport failures, same-mission no-replay and owner scope passed; inert fixtures only.')
