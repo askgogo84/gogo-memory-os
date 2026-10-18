@@ -29,13 +29,13 @@ function harness(completionFault:Fault='',failureFault:Fault='',providerFails=fa
 const failures:string[]=[]
 async function check(label:string,fn:()=>Promise<void>){try{await fn();console.log('PASS '+label)}catch(e){failures.push(label+': '+(e instanceof Error?e.message:String(e)))}}
 await check('successful research records the original job then returns its child approval result',async()=>{
- const h=harness(),r=await h.run();assert.equal(r.status,'waiting_approval');assert.equal(h.providerCalls.length,1);assert.equal(h.stored.status,'completed');assert.ok(h.writes.some(w=>w.table==='agent_approvals'))
+ const h=harness(),r=await h.run();assert.equal(r.status,'waiting_approval');assert.equal(h.providerCalls.length,1);assert.equal(h.stored.status,'completed');assert.ok(h.writes.some(w=>w.table==='agent_approvals'));await assert.rejects(()=>h.run(),/restaurant_research_run_not_running/);assert.equal(h.providerCalls.length,1)
 })
 await check('completed failed paused and unclaimed queued jobs cannot research again',async()=>{
  for(const status of ['completed','failed','paused','queued']){const h=harness('','',false,status);await assert.rejects(()=>h.run(),/restaurant_research_run_not_running/,status);assert.equal(h.providerCalls.length,0);assert.equal(h.writes.length,0)}
 })
 await check('returned zero-row and thrown completion failures cannot return research success',async()=>{
- for(const fault of ['error','zero','throw'] as Fault[]){const h=harness(fault);await assert.rejects(()=>h.run(),/restaurant_research_completion_recording_failed/);assert.equal(h.providerCalls.length,1);assert.ok(h.writes.some(w=>w.table==='agent_approvals'),'Child approval already exists; never deny it was created');assert.equal(h.stored.status,'failed')}
+ for(const fault of ['error','zero','throw'] as Fault[]){const h=harness(fault);await assert.rejects(()=>h.run(),/restaurant_research_completion_recording_failed/);assert.equal(h.providerCalls.length,1);assert.ok(h.writes.some(w=>w.table==='agent_approvals'),'Child approval already exists; never deny it was created');assert.equal(h.stored.status,'failed');await assert.rejects(()=>h.run(),/restaurant_research_run_not_running/);assert.equal(h.providerCalls.length,1)}
 })
 await check('recording transitions bind exact owner type and running status',async()=>{
  const h=harness('error');await assert.rejects(()=>h.run(),/recording_failed/);assert.ok(h.filtersWritten.length>=2);for(const f of h.filtersWritten){assert.equal(f.telegram_id,'123');assert.equal(f.type,'restaurant_reservation_research');assert.equal(f.status,'running');assert.equal(f.id,'original-research')}
