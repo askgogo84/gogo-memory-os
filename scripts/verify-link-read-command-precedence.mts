@@ -39,5 +39,8 @@ try{
  assert.equal(io,0,'read commands must not perform storage, metadata enrichment, model or provider I/O')
 }finally{globalThis.fetch=originalFetch}
 for(const text of [`Save this link — read later: ${url}`,`Could you please save ${url}`,url,`${url} a useful restaurant account`,`Save this link — how to open a browser ${url}`])assert.equal(isLinkVaultSaveRequest(text),true,text)
-for(const text of prompts.slice(0,2)){const command=parseBrowserCommand(text);assert.ok(command);assert.equal(command.mode,'read');assert.equal(command.url,url);assert.ok(command.objective.includes('zomato'))}
+for(const text of prompts.slice(0,16)){const command=parseBrowserCommand(text);assert.ok(command,text);assert.equal(command.mode,'read');const target=new URL(command.url);assert.equal(target.origin+target.pathname+target.search+target.hash,url);assert.ok(command.objective.includes('zomato'))}
+assert.equal(parseBrowserCommand(`Read ${url} then buy the item`)?.mode,'execute','adding a read signal does not downgrade an affirmative purchase')
+assert.equal(parseBrowserCommand(`Read ${url} then fill the form`)?.mode,'draft')
+assert.equal(parseBrowserCommand(`Read ${url}. Do not buy anything`)?.mode,'read')
 console.log('Actual Link Vault entrypoint: URL read commands and negative saves bypass storage with zero I/O; explicit saves, bare shares and browser objectives retained')
