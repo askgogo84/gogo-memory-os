@@ -114,7 +114,9 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   if(!raw)return null
   // A provider named only inside a shared link is not a request to read that provider:
   // a pasted instagram.com reel link was sent to Instagram's login page (13 Oct 18:46).
-  const proseOnly=raw.replace(/https?:\/\/[^\s<>)\]}]+/gi,' ')
+  // A social account handle is the object being read, not a second provider
+  // navigation target (for example @zomato on Instagram).
+  const proseOnly=raw.replace(/https?:\/\/[^\s<>)\]}]+/gi,' ').replace(/@[a-z0-9._]+/gi,' ')
   // Public shopping sites need browser routing even without a Vault integration.
   // Keep these entry points separate from password-provider configuration.
   const shoppingSites=[
