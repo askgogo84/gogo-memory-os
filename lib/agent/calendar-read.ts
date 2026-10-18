@@ -1,7 +1,7 @@
 import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { fetchPrimaryCalendarEventsPage, fetchPrimaryCalendarAccount, refreshAccessToken } from '@/lib/google-calendar'
-import { listExtraCalendarAccounts, getCalendarAccountAccess, fetchMergedCalendarEventsPage, describeCalendarAccounts, type CalendarAccountAccess } from '@/lib/services/google-calendar-accounts'
+import { fetchPrimaryCalendarEventsPage, fetchPrimaryCalendarAccount } from '@/lib/google-calendar'
+import { getCalendarAccountAccess, fetchMergedCalendarEventsPage, describeCalendarAccounts } from '@/lib/services/google-calendar-accounts'
 import { isValidTimezone, normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
@@ -236,17 +236,14 @@ function slotLabel(startIso:string,endIso:string,tz:string){
 async function calendarAccess(actor:AgentActor){
   const {data,error}=await supabaseAdmin.from('users').select('google_calendar_connected,google_refresh_token,timezone').eq('telegram_id',actor.legacyTelegramId).maybeSingle()
   if(error)throw new Error(`calendar_read_user_failed:${error.message}`)
-  if(!data?.google_calendar_connected||!data?.google_refresh_token)throw new Error('calendar_not_connected')
+  if(!data)throw new Error('calendar_not_connected')
+  if(data.google_calendar_connected&&!data.google_refresh_token)throw new Error('calendar_token_refresh_failed')
   const timezone=normalizeTimezone(String(data.timezone||'Asia/Kolkata'))
-  const accessToken=await refreshAccessToken(String(data.google_refresh_token))
-  if(!accessToken)throw new Error('calendar_token_refresh_failed')
-  // More than one linked Google account: read all of them, not just the first.
-  let accounts:CalendarAccountAccess[]|undefined
-  if((await listExtraCalendarAccounts(actor.legacyTelegramId)).length){
-    const all=await getCalendarAccountAccess(actor.legacyTelegramId,String(data.google_refresh_token))
-    if(all.length>1)accounts=all
-  }
-  return {accessToken,timezone,accounts}
+  let incomplete=false
+  const accounts=await getCalendarAccountAccess(actor.legacyTelegramId,data.google_calendar_connected?String(data.google_refresh_token):null,()=>{incomplete=true})
+  if(!accounts.length)throw new Error(incomplete?'calendar_account_access_unverified':'calendar_not_connected')
+  const accessToken=accounts[0].accessToken
+  return {accessToken,timezone,accounts,incomplete}
 }
 
 export function requestedCalendarTimezone(text:string){
@@ -286,7 +283,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
     ?await fetchMergedCalendarEventsPage(access.accounts!,start.toISOString(),end.toISOString(),'AGENT_CALENDAR_READ_FAILED',MAX_EVENTS)
     :await fetchPrimaryCalendarEventsPage(access.accessToken,start.toISOString(),end.toISOString(),'AGENT_CALENDAR_READ_FAILED',MAX_EVENTS)
   const events=page.events.filter((event:any)=>event.status!=='cancelled')
-  const complete=!page.hasMore
+  const complete=!page.hasMore&&!access.incomplete
   const busyEvents=events.filter(blocksCalendarTime)
   const unknownIntervals=busyEvents.filter((event:any)=>!eventInterval(event,timezone)).length
 
@@ -309,7 +306,8 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
       const account=await fetchPrimaryCalendarAccount(access.accessToken)
       if(account)lines.push(`Google account: ${account}`)
     }
-    if(!complete)lines.push('Partial calendar page; more events are available. This is not the full schedule.')
+    if(access.incomplete)lines.push('A linked Google Calendar account could not be read, so this schedule is incomplete.')
+    if(page.hasMore)lines.push('Partial calendar page; more events are available. This is not the full schedule.')
     const conflicts:Array<{first:string;second:string}>=[]
     const wantsConflicts=/\b(overlaps?|overlapping|conflicts?|clash(?:es)?|double[- ]booked)\b/i.test(text)
     if(wantsConflicts){

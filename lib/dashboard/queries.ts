@@ -340,12 +340,12 @@ export async function getTodayCalendar(telegramId: string): Promise<TodayCalenda
       console.error('DASHBOARD_CALENDAR_FAILED:', error)
       return { ok: false }
     }
-    if (!user?.google_calendar_connected || !user?.google_refresh_token) {
-      return { ok: true, connected: false }
-    }
-
-    const accounts = await getCalendarAccountAccess(tgNum, user.google_refresh_token)
-    if (!accounts.length) return { ok: true, connected: false } // refresh failed → treat as not connected, write nothing
+    if (!user) return { ok: false }
+    if (user.google_calendar_connected && !user.google_refresh_token) return { ok: false }
+    let incomplete = false
+    const accounts = await getCalendarAccountAccess(tgNum, user.google_calendar_connected ? user.google_refresh_token : null, () => { incomplete = true })
+    if (incomplete) return { ok: false }
+    if (!accounts.length) return { ok: true, connected: false }
 
     // Read-only events fetch, bounded to the user's IST day — NOT the UTC day the
     // shared getTodayEvents assumes. India-first: an event at 00:30 IST belongs to
@@ -365,6 +365,7 @@ export async function getTodayCalendar(telegramId: string): Promise<TodayCalenda
         { headers: { Authorization: `Bearer ${account.accessToken}` } },
       )
       const data = await res.json()
+      if (!res.ok) throw new Error('calendar_provider_read_failed')
       const events: RawItem[] = Array.isArray(data?.items) ? data.items : []
       return { email: account.email, events, hasMore: false }
     }))

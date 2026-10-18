@@ -140,38 +140,12 @@ async function getTodaysDepartures(telegramId: number) {
 }
 
 async function getCalendarState(telegramId: number) {
-  const { data: user } = await supabaseAdmin
-    .from('users')
-    .select('google_calendar_connected, google_refresh_token')
-    .eq('telegram_id', telegramId)
-    .single()
-
-  if (!user?.google_calendar_connected || !user?.google_refresh_token) {
-    return {
-      connected: false,
-      events: [],
-      error: false,
-      multi: false,
-    }
-  }
-
   try {
-    const result = await getTodayEventsAllAccounts(telegramId, user.google_refresh_token, getTodayEvents)
-    if (!result.connected) {
-      return {
-        connected: false,
-        events: [],
-        error: false,
-        multi: false,
-      }
-    }
-
-    return {
-      connected: true,
-      events: result.events,
-      error: false,
-      multi: result.multi,
-    }
+    const {data: user, error} = await supabaseAdmin.from('users')
+      .select('google_calendar_connected, google_refresh_token').eq('telegram_id', telegramId).single()
+    if (error || !user || (user.google_calendar_connected && !user.google_refresh_token)) throw new Error('calendar_state_unavailable')
+    const result = await getTodayEventsAllAccounts(telegramId, user.google_calendar_connected ? user.google_refresh_token : null, getTodayEvents)
+    return {connected: result.connected, events: result.events, error: false, multi: result.multi, incomplete: result.incomplete}
   } catch (err) {
     // Fetch failed (bad/expired token, wrong account, Google error). Flag it so the
     // briefing says "couldn't reach Calendar" instead of the empty-day copy.
@@ -181,6 +155,7 @@ async function getCalendarState(telegramId: number) {
       events: [],
       error: true,
       multi: false,
+      incomplete: true,
     }
   }
 }
@@ -261,8 +236,9 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
         .map((event: any) => `• ${formatEventTime(event)} — ${event.summary || 'Untitled event'}${calendarState.multi && event._account ? ` (${event._account})` : ''}`)
         .join('\n')
     } else {
-      cal += `No calendar events lined up today.`
+      cal += calendarState.incomplete ? `No events returned from the calendars I could read.` : `No calendar events lined up today.`
     }
+    if (calendarState.incomplete && !calendarState.error) cal += `\n⚠️ A linked Google Calendar could not be read, so this schedule is incomplete.`
     blocks.push(cal)
   }
 
