@@ -202,6 +202,18 @@ async function visibleFields(page, selector){
   for(let i=0;i<Math.min(count,20);i++){ const loc=all.nth(i); if(await visible(loc)) found.push(loc); }
   return found;
 }
+// Hydrated login pages can expose their controls after navigation or a panel
+// click. Wait for a stable candidate count before deciding fields are missing.
+async function readyLoginFields(page, selector){
+  let previous=-1;
+  for(let attempt=0;attempt<20;attempt++){
+    const found=await visibleFields(page,selector);
+    if(found.length>0&&found.length===previous)return found;
+    previous=found.length;
+    await page.waitForTimeout(250);
+  }
+  return await visibleFields(page,selector);
+}
 async function model(page){
   return await page.evaluate(() => {
     const clean = s => String(s||'').replace(/\s+/g,' ').trim();
@@ -239,9 +251,9 @@ async function model(page){
       return page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
     });
     await page.waitForTimeout(800);
-    const USER_FIELDS='input[autocomplete="username"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[type="tel"], input[name*="mobile" i], input[name*="phone" i], input[placeholder*="phone" i], input[placeholder*="mobile" i]';
+    const USER_FIELDS='input[autocomplete~="username"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[type="tel"], input[name*="mobile" i], input[name*="phone" i], input[placeholder*="phone" i], input[placeholder*="mobile" i], input[placeholder*="username" i], input[placeholder*="email" i]';
     // Sites like Swiggy and Zomato keep the login in a panel opened from the header.
-    if(!(await visibleFields(page,USER_FIELDS)).length){
+    if(!(await readyLoginFields(page,USER_FIELDS)).length){
       const opener=await firstVisible(page,['a:has-text("Sign in")','button:has-text("Sign in")','a:has-text("Log in")','button:has-text("Log in")','a:has-text("Login")','button:has-text("Login")','[role="button"]:has-text("Sign in")','[role="button"]:has-text("Log in")']);
       // Some headers render "Log in" as plain text with a click handler (no link or button).
       const plain=opener?null:await (async()=>{ for(const t of ['Log in','Login','Sign in','Sign In','Log In']){ const loc=page.getByText(t,{exact:true}).first(); if(await visible(loc)) return loc; } return null; })();
@@ -263,10 +275,12 @@ async function model(page){
       }
     }
     const PASS_FIELDS='input[type="password"]';
-    const userFields=await visibleFields(page,USER_FIELDS);
+    const userFields=await readyLoginFields(page,USER_FIELDS);
     if(userFields.length>1) ambiguous.push('username_fields');
     if(userFields.length===1){ await userFields[0].fill(username,{timeout:10000}); usernameFilled=true; }
     let passFields=await visibleFields(page,PASS_FIELDS);
+    // Do not type a password when no unambiguous username was filled.
+    if(!usernameFilled)passFields=[];
     if(!passFields.length && usernameFilled){
       const next=await firstVisible(page,[
         'button:has-text("Continue")','button:has-text("Next")','button:has-text("Sign in")',
