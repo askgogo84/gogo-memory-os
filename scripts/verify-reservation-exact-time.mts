@@ -36,6 +36,22 @@ await check('range and genuinely unrestricted controls retain their meaning',()=
  const p=actual.parseRestaurantReservationIntent('Book Naru Noodle Bar for 2 between 7 PM and 9 PM.');assert.equal(p.preferredStart,'19:00');assert.equal(p.preferredEnd,'21:00');assert.notEqual(p.timeClarificationNeeded,true)
  const u=actual.parseRestaurantReservationIntent('Book Naru Noodle Bar for 2 at the next available slot.');assert.equal(u.preferredStart,'');assert.equal(u.preferredEnd,'');assert.notEqual(u.timeClarificationNeeded,true)
 })
+await check('a plain explicit dining start also stays exact without needing the word only',()=>{
+ const p=actual.parseRestaurantReservationIntent('Book Naru Noodle Bar for 2 at 8:30 PM.');assert.equal(p.preferredStart,'20:30');assert.equal(p.preferredEnd,'20:30');assert.equal(p.timeClarificationNeeded,false)
+})
+await check('ordinary ambiguous or competing clock language cannot become unrestricted authority',async()=>{
+ for(const suffix of ['at 8:30','at 8:30 PM or 9 PM','at 8:30pmonly']){
+  const text='Book Naru Noodle Bar for 2 '+suffix;assert.equal(actual.parseRestaurantReservationIntent(text).timeClarificationNeeded,true,suffix)
+  writes=[];dbReads=0;providerReads=0;assert.equal((await request(text)).status,'paused');assert.equal(writes.length,0);assert.equal(dbReads,0);assert.equal(providerReads,0)
+ }
+})
+await check('range-final only and party-only language never narrow a range to its final endpoint',()=>{
+ const p=actual.parseRestaurantReservationIntent('Book Naru Noodle Bar for 2 between 7 PM and 9 PM only.');assert.equal(p.preferredStart,'19:00');assert.equal(p.preferredEnd,'21:00');assert.equal(p.timeClarificationNeeded,false)
+ const u=actual.parseRestaurantReservationIntent('Book Naru Noodle Bar for 2 people only at the next available slot.');assert.equal(u.preferredStart,'');assert.equal(u.preferredEnd,'');assert.equal(u.timeClarificationNeeded,false)
+})
+await check('a release-only clock does not become a dining start restriction',()=>{
+ const p=actual.parseRestaurantReservationIntent('Book Naru Noodle Bar for 2 at the next available slot when bookings open at 8 PM.');assert.equal(p.preferredStart,'');assert.equal(p.preferredEnd,'');assert.equal(p.timeClarificationNeeded,false)
+})
 await check('ambiguous multiple or contradictory clocks ask before provider or DB work',async()=>{
  for(const text of ['Book Naru Noodle Bar for 2 at 8:30 only.','Book Naru Noodle Bar for 2 at 8:30 PM only and 9 PM only.','Book Naru Noodle Bar for 2 between 7 PM and 9 PM at 10 PM only.']){
   writes=[];dbReads=0;providerReads=0;assert.equal(actual.parseRestaurantReservationIntent(text).timeClarificationNeeded,true)
