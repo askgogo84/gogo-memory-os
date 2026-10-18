@@ -309,13 +309,16 @@ function missionDay(value:unknown){
 async function loadReservationIntent(actor:AgentActor,now:number,upper:string){
   // Select only dated mission context. Browser objectives, traveller details,
   // credentials and takeover URLs are never part of this inventory.
-  const [missions,preferences]=await Promise.allSettled([
-    supabaseAdmin.from('agent_runs').select('id,type,status,kind:metadata_json->context->>kind,destination:metadata_json->context->destination->>label,start_date:metadata_json->context->>startDate,end_date:metadata_json->context->>endDate,return_date:metadata_json->context->>returnDate,booking_depart:metadata_json->flight_booking->>depart,booking_return:metadata_json->flight_booking->>return,booking_route:metadata_json->flight_booking->>route')
-      .eq('telegram_id',String(actor.legacyTelegramId)).in('type',['travel_research','secure_browser']).in('status',['queued','running','waiting_approval','paused','outcome_unknown']).order('updated_at',{ascending:false}).limit(40),
+  const fields='id,type,status,kind:metadata_json->context->>kind,destination:metadata_json->context->destination->>label,start_date:metadata_json->context->>startDate,end_date:metadata_json->context->>endDate,return_date:metadata_json->context->>returnDate,booking_depart:metadata_json->flight_booking->>depart,booking_return:metadata_json->flight_booking->>return,booking_route:metadata_json->flight_booking->>route'
+  const statuses=['queued','running','waiting_approval','paused','outcome_unknown','completed','failed']
+  const [research,bookings,preferences]=await Promise.allSettled([
+    supabaseAdmin.from('agent_runs').select(fields).eq('telegram_id',String(actor.legacyTelegramId)).eq('type','travel_research').in('status',statuses).order('updated_at',{ascending:false}).limit(81),
+    supabaseAdmin.from('agent_runs').select(fields).eq('telegram_id',String(actor.legacyTelegramId)).eq('type','secure_browser').not('metadata_json->flight_booking','is',null).in('status',statuses).order('updated_at',{ascending:false}).limit(81),
     supabaseAdmin.from('user_preferences').select('id,rule_text').eq('telegram_id',actor.legacyTelegramId).order('created_at',{ascending:true}).limit(21),
   ])
-  const missionRows=missions.status==='fulfilled'&&Array.isArray(missions.value.data)?missions.value.data:[]
-  let incomplete=missions.status==='rejected'||Boolean(missions.status==='fulfilled'&&missions.value.error)||missionRows.length>=40
+  const sources=[research,bookings]
+  const missionRows=sources.flatMap(result=>result.status==='fulfilled'&&Array.isArray(result.value.data)?result.value.data.slice(0,80):[])
+  let incomplete=sources.some(result=>result.status==='rejected'||Boolean(result.value.error)||!Array.isArray(result.value.data)||result.value.data.length>80)
   const facts:ContextFact[]=[]
   for(const value of missionRows){
     const row=value as unknown as Record<string,unknown>
@@ -326,6 +329,11 @@ async function loadReservationIntent(actor:AgentActor,now:number,upper:string){
     const end=missionDay(booking?row.booking_return:(row.return_date||row.end_date))
     const route=String(row.booking_route||'').match(/^[A-Z]{3}-([A-Z]{3})$/)
     const location=safe(booking?route?.[1]:row.destination,180)
+    // A job being finished is not the trip being finished. Retain dated future
+    // intent, including failed searches, while excluding undated historical jobs.
+    const terminalJob=row.status==='completed'||row.status==='failed'
+    if(terminalJob&&(!['flight','hotel'].includes(kind)||!Number.isFinite(start)))continue
+    if(terminalJob&&!Number.isFinite(end)&&start+86400_000+12*3600_000<=now)continue
     if(!['flight','hotel'].includes(kind)||!id||!Number.isFinite(start)){incomplete=true;continue}
     // Date-only research is tentative. A conservative UTC envelope avoids
     // pretending that a requested date is a verified flight/check-in instant.
@@ -342,7 +350,7 @@ async function loadReservationIntent(actor:AgentActor,now:number,upper:string){
   }
   const preferenceRows=preferences.status==='fulfilled'&&Array.isArray(preferences.value.data)?preferences.value.data:[]
   const rules:ReservationPreferenceInventory['rules']=[],seen=new Set<string>()
-  let preferenceIncomplete=preferences.status==='rejected'||Boolean(preferences.status==='fulfilled'&&preferences.value.error)||preferenceRows.length>20
+  let preferenceIncomplete=preferences.status==='rejected'||Boolean(preferences.status==='fulfilled'&&(preferences.value.error||!Array.isArray(preferences.value.data)))||preferenceRows.length>20
   for(const value of preferenceRows.slice(0,20)){
     const row=value as unknown as Record<string,unknown>,id=safe(row.id,160),raw=String(row.rule_text||'').replace(/\s+/g,' ').trim()
     if(!id||!raw||raw.length>700||seen.has(id)||isSecretShapedMemory(raw)){preferenceIncomplete=true;continue}
