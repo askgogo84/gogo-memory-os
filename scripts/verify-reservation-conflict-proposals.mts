@@ -89,4 +89,8 @@ await check('numeric participant identity preserves the sign of an owner identif
  facts=[away,{...returning,participants:['123']}]
  const r=await request();assert.equal(r.status,'paused');assert.equal(writes.length,0);assert.doesNotMatch(r.text,/Provisional planning window/i,'Positive123 is not owner negative123')
 })
+await check('the actual approval snapshot also preserves signed participant identities',async()=>{
+ const snapshot=dining.buildReservationDiningContext({actor,timezone:'Asia/Kolkata',requestedDate:'2026-10-02',releaseAt:'2026-09-28T14:30:00Z',now:new Date(epoch),pack:{reservationTravel:{...coverage,facts:[{...returning,participants:['123']}]},reservationCalendar:{...coverage,connected:true,windows:[]},reservationPreferences:{ownerId:String(actor.legacyTelegramId),incomplete:false,rules:[]}}})
+ assert.equal(snapshot.incomplete,false);assert.equal(snapshot.windows.length,1);assert.equal(snapshot.windows[0].applicability,'unknown','Signed identifiers are exact data, not punctuation-insensitive names')
+})
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Reservation conflict/provisional proposal controls passed; inert fixtures, not provider availability or full T12 acceptance.')
