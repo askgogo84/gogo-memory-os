@@ -85,13 +85,14 @@ export async function getDashboardActivityRuns(telegramId:string,limit=60):Promi
 
   return (runs.data||[]).map((run:any)=>{
     const runSteps=byRun.get(String(run.id))||[]
+    const status=retiredRunReason(run)?'closed':String(run.status||'queued')
     return {
       id:String(run.id),
       type:String(run.type||'command'),
       capability:String(run.capability||''),
-      status:retiredRunReason(run)?'closed':String(run.status||'queued'),
+      status,
       title:String(run.title||'Gogo task'),
-      summary:browserAuthSummary(run,latestBrowserAuthEvidence(runSteps)),
+      summary:browserAuthSummary({...run,status},latestBrowserAuthEvidence(runSteps)),
       progress:Number(run.progress||0),
       source:String(run.source||''),
       why:String(run.why||''),
@@ -121,13 +122,14 @@ export async function getDashboardActivityRun(telegramId:string,runId:string):Pr
     .order('ordinal',{ascending:true})
   if(stepError)throw new Error(`dashboard_activity_run_steps_failed:${stepError.message}`)
   const runSteps=(steps||[]).map(mapStep)
+  const status=retiredRunReason(run)?'closed':String(run.status||'queued')
   return {
     id:String(run.id),
     type:String(run.type||'command'),
     capability:String(run.capability||''),
-    status:retiredRunReason(run)?'closed':String(run.status||'queued'),
+    status,
     title:String(run.title||'Gogo task'),
-    summary:browserAuthSummary(run,latestBrowserAuthEvidence(runSteps)),
+    summary:browserAuthSummary({...run,status},latestBrowserAuthEvidence(runSteps)),
     progress:Number(run.progress||0),
     source:String(run.source||''),
     why:String(run.why||''),
