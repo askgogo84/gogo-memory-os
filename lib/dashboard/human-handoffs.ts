@@ -61,7 +61,7 @@ export async function getPendingBrowserHandoffs(telegramId:string,limit=20,now=D
       if(reason==='login_unavailable')summary=`I couldn't sign in${host?` to ${host.replace(/^www\./,'').slice(0,180)}`:''} automatically, so I paused this task. Open Take control to sign in yourself, then Resume. Keep passwords and sign-in codes out of chat.`
       else if(/couldn.t get[\s\S]*send you a sign.in code/i.test(summary)){
         const known:Record<string,string>={otp:'Complete secondary authentication yourself',password:'Sign in yourself',device_approval:'Approve sign-in on your device',captcha:'Complete the provider verification yourself',payment_auth:'Complete payment authentication yourself'}
-        summary=known[reason]?`${known[reason]} in Take control, then Resume this same task. Keep passwords and sign-in codes out of chat.`
+        summary=Object.prototype.hasOwnProperty.call(known,reason)?`${known[reason]} in Take control, then Resume this same task. Keep passwords and sign-in codes out of chat.`
           :"This task is paused for a secure provider step. I couldn't verify the recorded sign-in reason. Open Take control to check it, then Resume."
       }
     }
