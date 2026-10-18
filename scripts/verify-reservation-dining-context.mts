@@ -16,15 +16,15 @@ const futureTravel={id:'synthetic-travel',source:'travel_presence',summary:'Synt
 const facts=[futureTravel,{...futureTravel,id:'unrelated',source:'semantic_memory',summary:'Unrelated private memory',location:'Unrelated private location'}]
 const pack={facts,reservationTravel:{ownerId:'123',facts,incomplete:false,coveredFrom:'2026-10-18T10:00:00Z',coveredUntil:'2026-12-17T10:00:00Z'}}
 const writes:Array<{table:string;payload:any}>=[]
-let revising=false
+let revising=false,runStatus='paused',runError='restaurant_context_review_required',approvalStatus='expired',claimLost=false,approvalWriteFailed=false
 const db={from(table:string){let updating=false;const q:any={
  select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},
  in:()=>q,order:()=>q,limit:()=>q,
  update:(payload:any)=>{updating=true;writes.push({table,payload});return q},
- maybeSingle:async()=>({data:updating?{id:'existing-context-run'}:table==='users'?{timezone:'Asia/Kolkata'}:revising&&table==='life_events'?{id:'synthetic-life_events'}:revising&&table==='agent_runs'?{id:'existing-context-run',status:'paused',error:'restaurant_context_review_required',metadata_json:{}}:revising&&table==='agent_approvals'?{id:'expired-approval',status:'expired'}:null,error:null}),
+ maybeSingle:async()=>({data:updating?(claimLost?null:{id:'existing-context-run'}):table==='users'?{timezone:'Asia/Kolkata'}:revising&&table==='life_events'?{id:'synthetic-life_events'}:revising&&table==='agent_runs'?{id:'existing-context-run',status:runStatus,error:runError,updated_at:'2026-10-18T09:00:00Z',metadata_json:{}}:revising&&table==='agent_approvals'?{id:'old-approval',status:approvalStatus}:null,error:null}),
  upsert:(payload:any)=>{assert.equal(String(payload.telegram_id),'123');writes.push({table,payload});return q},
  insert:(payload:any)=>{assert.equal(String(payload.telegram_id),'123');writes.push({table,payload});return q},
- single:async()=>({data:{id:revising&&table==='agent_runs'?'existing-context-run':'synthetic-'+table},error:null}),then:(resolve:any)=>resolve({error:null})};return q}}
+ single:async()=>({data:{id:revising&&table==='agent_runs'?'existing-context-run':'synthetic-'+table},error:approvalWriteFailed&&table==='agent_approvals'?{message:'synthetic insert failure'}:null}),then:(resolve:any)=>resolve({error:null})};return q}}
 let inspected=0
 let bindingInput:any
 const actual=load('lib/agent/restaurant-reservation.ts',{
@@ -46,4 +46,19 @@ const revised=await actual.tryRunRestaurantReservation({actor:{legacyTelegramId:
 assert.equal(revised.status,'waiting_approval','Changed context must be refreshable with a new bounded approval')
 assert.equal(revised.runId,'existing-context-run','Context review retains the reservation mission')
 assert.ok(writes.some(row=>row.table==='agent_approvals'&&row.payload.status==='pending'))
+const request=()=>actual.tryRunRestaurantReservation({actor:{legacyTelegramId:123,userId:'synthetic-user',name:'Synthetic Owner'},surface:'dashboard',text:'Book Naru Noodle Bar for 2 at the next available slot between 7 PM and 9 PM.'})
+for(const status of ['running','waiting_approval']){
+ runStatus=status;runError='restaurant_context_refresh:abandoned';approvalStatus='pending';writes.length=0
+ assert.equal((await request()).status,'waiting_approval','Expired refresh claims recover on the same mission')
+ assert.ok(writes.some(row=>row.table==='agent_approvals'&&row.payload.status==='expired'),'Recovery retires prior authority before staging new context')
+ assert.ok(writes.some(row=>row.table==='agent_approvals'&&row.payload.status==='pending'))
+}
+runStatus='paused';runError='restaurant_context_review_required';approvalStatus='approved';writes.length=0
+assert.equal((await request()).status,'waiting_approval','Partial expiry failure must not strand the paused mission')
+claimLost=true;writes.length=0
+assert.equal((await request()).status,'paused')
+assert.equal(writes.some(row=>row.table==='agent_approvals'),false,'Losing a refresh claim must not expire or stage another approval')
+claimLost=false;approvalWriteFailed=true;writes.length=0
+await assert.rejects(request,/restaurant_reservation_approval_failed/)
+assert.ok(writes.some(row=>row.table==='agent_runs'&&row.payload.status==='paused'&&row.payload.error==='restaurant_context_review_required'),'An insert failure returns the mission to retryable review')
 console.log('Actual reservation preparation retains relevant dining-date travel after release without unrelated context; inert synthetic operations only.')
