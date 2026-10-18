@@ -12,6 +12,7 @@ import * as browserEvidence from '../lib/agent/browser-evidence'
 import { detectHumanAuthGate } from '../lib/agent/browser-auth-gate'
 import { needsBrowserDeliveryLocation } from '../lib/agent/browser-location-gate'
 import { browserPageAllowlist } from '../lib/agent/browser-page-network'
+import * as reservationDiningContext from '../lib/agent/reservation-dining-context'
 
 // 2 Oct live Browserbase acceptance: this exact title request was rejected.
 const titleRequest='Open https://example.com in the browser and report its page title. Read only.'
@@ -446,6 +447,11 @@ preparationFails=false
 assert.equal((await shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'user'},runId:'run'})).runId,'run')
 console.log('Transient preparation failure restores paused state and supports a second same-run resume')
 let executionError='browser_handoff_in_use',executionCalls=0,executionReleases=0,executionResult:any
+const contextNow=new Date()
+const executionRelease=new Date(contextNow.getTime()-60_000).toISOString()
+const executionInventory={ownerId:'1',coveredFrom:new Date(contextNow.getTime()-3600_000).toISOString(),coveredUntil:new Date(contextNow.getTime()+30*86400_000).toISOString(),incomplete:false,facts:[]}
+const executionDining=reservationDiningContext.buildReservationDiningContext({actor:{legacyTelegramId:1,userId:'owner'},timezone:'Asia/Kolkata',requestedDate:'',releaseAt:executionRelease,now:contextNow,pack:{reservationTravel:executionInventory}})
+assert.equal(reservationDiningContext.usableReservationDiningContext(executionDining),true)
 const executionMocks={
   '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
   './secure-computer':{runSecureBrowser:async()=>{executionCalls++;if(executionResult)return executionResult;throw new Error(executionError)}},
@@ -455,6 +461,8 @@ const executionMocks={
   './approval-binding':{assertApprovalBinding:()=>{}},
   './life-event-approval-binding':{checkinApprovalFingerprintInput:()=>({})},
   './restaurant-reservation':{restaurantReservationApprovalInput:()=>({})},
+  './reservation-dining-context':reservationDiningContext,
+  './context-brain':{buildContextPack:async(input:any)=>{assert.equal(input.actor.legacyTelegramId,1);assert.equal(input.options.includeReservationTravel,true);return{reservationTravel:executionInventory}}},
 }
 const flightExecutor=load('life-event-execution.ts',executionMocks)
 const restaurantExecutor=load('restaurant-reservation-worker.ts',executionMocks)
@@ -462,7 +470,7 @@ for(const kind of ['flight','restaurant'])for(const busy of [true,false]){
   executionError=busy?'browser_handoff_in_use':'provider_connection_lost'
   rows.agent_runs={id:'run',telegram_id:'1',status:'queued',metadata_json:{plan_type:'life_event_checkin',life_event_id:'event',life_event_action_id:'action',checkin_url:'https://provider.example'}}
   rows.life_events={id:'event',telegram_id:'1',event_type:'travel',subtype:'flight',confirmation_ref:'fixture',metadata_json:{}}
-  rows.life_event_actions={id:'action',telegram_id:'1',life_event_id:'event',status:kind==='flight'?'waiting_approval':'ready',payload_json:{approvalId:'approval',reservationUrl:'https://provider.example'}}
+  rows.life_event_actions={id:'action',telegram_id:'1',life_event_id:'event',status:kind==='flight'?'waiting_approval':'ready',payload_json:{approvalId:'approval',reservationUrl:'https://provider.example',releaseAt:executionRelease,diningContext:executionDining}}
   rows.agent_approvals={id:'approval',telegram_id:'1',run_id:'run',status:'approved',action_type:'booking',execution_payload:{action:'submit_web_checkin'}}
   rows.users={id:'owner',telegram_id:1}
   const result=kind==='flight'?await flightExecutor.executeApprovedLifeEventCheckin({actor:{userId:'owner',legacyTelegramId:1},runId:'run'}):await restaurantExecutor.processOne(structuredClone(rows.life_event_actions))
