@@ -5,6 +5,7 @@ import {createHash} from 'node:crypto'
 import ts from 'typescript'
 import * as redaction from '../lib/bot/memory-redaction'
 import * as travelTime from '../lib/services/travel-time'
+import * as calendarIntervals from '../lib/calendar-intervals'
 import {buildReservationDiningContext,usableReservationDiningContext,sameReservationRestrictions} from '../lib/agent/reservation-dining-context'
 import {buildApprovalBinding,assertApprovalBinding} from '../lib/agent/approval-binding'
 const epoch=Date.parse('2026-10-18T10:00:00Z')
@@ -22,7 +23,7 @@ const db={from(table:string){reads.push(table);let fields='';const filters:Array
  const q:any={select:(value:string)=>{fields=value;if(table==='agent_runs')assert.ok(!/objective|travellers|dob|credential|handoff/i.test(value),'select only minimal mission context');return q},eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(String(value),'123');filters.push(row=>String(row[key])===String(value));return q},in:(key:string,values:unknown[])=>{filters.push(row=>values.includes(row[key]));return q},order:()=>q,limit:()=>q,or:()=>q,maybeSingle:async()=>({data:{memory_enabled:false,gmail_enabled:false},error:null}),then:(resolve:any)=>resolve(execute())};return q
 }}
 const actual:any={}
-runInNewContext(ts.transpileModule(readFileSync('lib/agent/context-brain.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:actual,require:(name:string)=>name==='node:crypto'?{createHash}:name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='./typed-object-context'?{latestTypedContext:async()=>null}:name==='@/lib/bot/memory-redaction'?redaction:name==='@/lib/services/travel-time'?travelTime:{},Date:FixtureDate,Intl,console,Set,Map})
+runInNewContext(ts.transpileModule(readFileSync('lib/agent/context-brain.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:actual,require:(name:string)=>name==='node:crypto'?{createHash}:name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='./typed-object-context'?{latestTypedContext:async()=>null}:name==='@/lib/bot/memory-redaction'?redaction:name==='@/lib/services/travel-time'?travelTime:name==='../calendar-intervals'?calendarIntervals:{},Date:FixtureDate,Intl,console,Set,Map})
 const actor={legacyTelegramId:123,userId:'synthetic-owner',name:'Synthetic Owner'}
 const read=(includeReservationTravel=true)=>actual.buildContextPack({actor,text:'Restaurant dining context',options:{includeSemantic:false,includeReservationTravel,maxFacts:4,horizonDays:60}})
 const coverage={ownerId:'123',coveredFrom:new Date(epoch).toISOString(),coveredUntil:'2026-12-01T10:00:00Z',incomplete:false}

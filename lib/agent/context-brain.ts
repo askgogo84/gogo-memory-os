@@ -354,11 +354,17 @@ async function loadReservationIntent(actor:AgentActor,now:number,upper:string){
   return{facts,incomplete,preferences:{ownerId:String(actor.legacyTelegramId),incomplete:preferenceIncomplete,rules}}
 }
 
-async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:number,includeReservationTravel=false){
+async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:number,includeReservationTravel=false,reservationCoverage?:{from:string;until:string}){
   const tg=String(actor.legacyTelegramId)
   const now=Date.now()
   const lower=new Date(now-2*86400_000).toISOString()
   const upper=new Date(now+horizonDays*86400_000).toISOString()
+  let constraintFrom=now,constraintUntil=Date.parse(upper),constraintCoverageInvalid=false
+  if(includeReservationTravel&&reservationCoverage){
+    const span=calendarInterval({start:{dateTime:reservationCoverage.from},end:{dateTime:reservationCoverage.until}},'UTC')
+    if(span&&span.end>Math.max(span.start,now)&&span.end<=constraintUntil&&span.end-span.start<=60*86400_000){constraintFrom=Math.max(now,span.start);constraintUntil=span.end}
+    else constraintCoverageInvalid=true
+  }
   // A retrospective travel question must be able to reach a completed trip, so the
   // ticket query widens its lookback; other fact types keep the tight 2-day window.
   const ticketLower=new Date(now-(isRetrospectiveTravelQuery(query)?RETROSPECTIVE_TRAVEL_LOOKBACK_DAYS:2)*86400_000).toISOString()
@@ -400,7 +406,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       .or(`depart_at.is.null,depart_at.lte.${upper}`)
       .order('depart_at',{ascending:false}).limit(80)
       :Promise.resolve({data:[],error:null}),
-    includeReservationTravel?loadReservationIntent(actor,now,upper):Promise.resolve(undefined),
+    includeReservationTravel?loadReservationIntent(actor,now,new Date(constraintUntil).toISOString()):Promise.resolve(undefined),
   ])
 
   const lifeFacts:ContextFact[]=[]
@@ -526,10 +532,10 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
   // A malformed ticket may be dropped by extraction. Absence from the output
   // then means unknown coverage, never affirmative evidence of a clear window.
   const missingTicket=constraintTickets.some(row=>String(row.type)==='flight'&&!constraintFacts.some(fact=>fact.id===`travel-ticket:${row.id}`))
-  const reservationLife=lifeFacts.filter(f=>['flight','hotel'].includes(f.kind||''))
+  const reservationLife=lifeFacts.filter(f=>['flight','hotel'].includes(f.kind||'')&&!(f.startAt&&Date.parse(f.startAt)>=constraintUntil)&&!(f.endAt&&Date.parse(f.endAt)<=constraintFrom))
   const malformedHotel=reservationLife.some(f=>f.kind==='hotel'&&(!validIso(f.startAt)||!validIso(f.endAt)||Date.parse(f.endAt!)<=Date.parse(f.startAt!)))
-  const reservationTravel:ReservationTravelInventory|undefined=includeReservationTravel?{ownerId:tg,coveredFrom:new Date(now).toISOString(),coveredUntil:upper,
-    incomplete:Boolean(lifeResult.error||constraintTicketResult.error||(lifeResult.data||[]).length>=80||constraintTickets.length>=80||missingTicket||malformedHotel||reservationIntent?.incomplete),
+  const reservationTravel:ReservationTravelInventory|undefined=includeReservationTravel?{ownerId:tg,coveredFrom:new Date(constraintFrom).toISOString(),coveredUntil:new Date(constraintUntil).toISOString(),
+    incomplete:Boolean(lifeResult.error||constraintTicketResult.error||(lifeResult.data||[]).length>=80||constraintTickets.length>=80||missingTicket||malformedHotel||reservationIntent?.incomplete||constraintCoverageInvalid),
     facts:[...reservationLife,...constraintFacts,...(reservationIntent?.facts||[])]}:undefined
   return{lifeFacts,openLoops,goalFacts,travelFacts,typedFacts,watcherFacts,retrievalIncomplete,reservationTravel,reservationPreferences:reservationIntent?.preferences}
 }
@@ -761,7 +767,7 @@ export async function buildContextPack(params:{actor:AgentActor;text:string;opti
   const horizonDays=Math.max(7,Math.min(180,params.options?.horizonDays??60))
   const includeSemantic=params.options?.includeSemantic!==false
   const [operational,learned,inbox,reservationCalendar]=await Promise.all([
-    loadOperationalFacts(params.actor,query,horizonDays,params.options?.includeReservationTravel===true),
+    loadOperationalFacts(params.actor,query,horizonDays,params.options?.includeReservationTravel===true,params.options?.reservationCalendarCoverage),
     loadLearnedFacts(params.actor,query,includeSemantic),
     loadInboxFacts(params.actor,query),
     params.options?.includeReservationCalendar===true?loadReservationCalendar(params.actor,horizonDays,params.options.reservationCalendarCoverage):Promise.resolve(undefined),
