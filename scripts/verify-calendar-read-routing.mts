@@ -76,6 +76,12 @@ try{
  await check('valid explicit timezone qualifiers reach the Calendar reader',()=>{
   for(const text of zonedReads){assert.equal(detectIntent(text).type,'read_calendar',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text)?.scope,'calendar',text);assert.ok(requestedCalendarTimezone(text),text)}
  })
+ await check('independent appointment discovery retains its existing planner flow',()=>{
+  const text='Show my calendar today and find a dentist appointment'
+  assert.equal(schedule.detectReadOnlyScheduleRequest(text),null)
+  assert.notEqual(detectIntent(text).type,'calendar_read_clarify')
+  assert.notEqual(detectIntent(text).type,'read_calendar')
+ })
  await check('actual shared message entry reads without minting a connection link',async()=>{
   const q:any={insert:()=>({error:null}),select:()=>q,eq:()=>q,maybeSingle:async()=>({data:null,error:null})}
   pm=load('lib/bot/process-message.ts',{
