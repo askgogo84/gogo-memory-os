@@ -23,7 +23,7 @@ for(const altered of [{...payload,reservationLocation:'Changed city'},{...payloa
 }
 let freshInventory:any=inventory, browserCalls=0, objective='',legacyMode=false,failTable=''
 const updates:Array<{table:string;value:any}>=[]
-const db={from(table:string){let writing=false;const q:any={select:()=>q,eq:(key:string,value:any)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},in:()=>q,order:()=>q,limit:()=>q,
+const db={from(table:string){let writing=false;const q:any={select:()=>q,eq:(key:string,value:any)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},is:()=>q,in:()=>q,order:()=>q,limit:()=>q,
  update:(value:any)=>{writing=true;updates.push({table,value});return q},maybeSingle:async()=>({error:null,data:table==='life_event_actions'?{id:'fixture-action',payload_json:legacyMode?{...payload,diningContext:undefined}:payload}:table==='agent_runs'?{id:'fixture-run',metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:'fixture-event',life_event_action_id:'fixture-action'}}:table==='life_events'?{id:'fixture-event',title:'Synthetic Restaurant',timezone:'Asia/Kolkata',location:'Home city',metadata_json:{}}:table==='users'?{id:'fixture-user',telegram_id:123,whatsapp_id:'',name:'Synthetic Owner',timezone:'Asia/Kolkata'}:table==='agent_approvals'?{id:'fixture-approval',run_id:'fixture-run',status:'approved',...(legacyMode?buildApprovalBinding({...boundInput(),payload:{...boundInput().payload,diningContext:undefined,reservationLocation:undefined}}):binding)}:table==='agent_permissions'?{level:'ask'}:null}),
  insert:(value:any)=>{updates.push({table,value});return q},then:(resolve:any)=>resolve({error:writing&&table===failTable?{message:'synthetic persistence failure'}:null})};return q}}
 const actual=load('lib/agent/restaurant-reservation-worker.ts',{
@@ -67,19 +67,31 @@ assert.equal(updates.some(row=>row.table==='life_event_actions'&&row.value.statu
 let liveRun:any={id:'fixture-run',status:'waiting_approval',error:null,updated_at:'2026-10-18T09:00:00Z',metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:'fixture-event',life_event_action_id:'fixture-action'}}
 let liveAction:any={id:'fixture-action',status:'waiting_approval',updated_at:'2026-10-18T09:00:00Z',payload_json:payload,due_at:payload.releaseAt}
 const refreshedPayload={...payload,reservationLocation:'Refreshed city'}
+let raceLegacy=false,raceAtRead=true,dropActionWrite=false
 const raceDb={from(table:string){let patch:any;const filters:Array<[string,unknown]>=[];const execute=()=>{
  if(patch){const row=table==='agent_runs'?liveRun:table==='life_event_actions'?liveAction:null
+  if(dropActionWrite&&table==='life_event_actions')return{data:null,error:null}
   if(row&&filters.every(([key,value])=>row[key]===value||key==='telegram_id')){Object.assign(row,patch);return{data:{id:row.id},error:null}}
   return{data:null,error:null}}
  if(table==='agent_runs')return{data:{...liveRun},error:null}
  if(table==='life_event_actions')return{data:{...liveAction},error:null}
  if(table==='agent_approvals'){
-  liveRun={...liveRun,updated_at:'2026-10-18T10:00:01Z'}
-  liveAction={...liveAction,payload_json:refreshedPayload,updated_at:'2026-10-18T10:00:01Z'}
-  return{data:{id:'old-approved',status:'approved',...binding},error:null}}
+  if(raceAtRead){liveRun={...liveRun,updated_at:'2026-10-18T10:00:01Z'}
+  liveAction={...liveAction,payload_json:refreshedPayload,updated_at:'2026-10-18T10:00:01Z'}}
+  return{data:{id:'old-approved',status:'approved',...(raceLegacy?buildApprovalBinding({...boundInput(),payload:{...boundInput().payload,diningContext:undefined,reservationLocation:undefined}}):binding)},error:null}}
  return{data:null,error:null}}
  const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push([key,value]);return q},is:(key:string,value:unknown)=>{filters.push([key,value]);return q},order:()=>q,limit:()=>q,update:(value:any)=>{patch=value;return q},maybeSingle:async()=>execute(),then:(resolve:any)=>resolve(execute())};return q}}
 const racingArm=load('lib/agent/restaurant-reservation.ts',{'@/lib/supabase-admin':{supabaseAdmin:raceDb},'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining})
 await assert.rejects(()=>racingArm.armApprovedRestaurantReservation({actor,runId:'fixture-run'}),/restaurant_reservation_state_changed/)
 assert.equal(liveAction.payload_json,refreshedPayload,'Stale arm must not overwrite refreshed context or attach old authority')
+liveRun={...liveRun,status:'waiting_approval',updated_at:'2026-10-18T09:00:00Z'}
+liveAction={...liveAction,status:'waiting_approval',updated_at:'2026-10-18T09:00:00Z',payload_json:{...payload,diningContext:undefined}}
+raceLegacy=true
+await assert.rejects(()=>racingArm.armApprovedRestaurantReservation({actor,runId:'fixture-run'}),/restaurant_reservation_state_changed/,'Legacy review must also fence stale writes before blocking refreshed context')
+assert.equal(liveAction.payload_json,refreshedPayload)
+raceLegacy=false;raceAtRead=false;dropActionWrite=true
+liveRun={...liveRun,status:'waiting_approval',updated_at:'2026-10-18T09:00:00Z'}
+liveAction={...liveAction,status:'waiting_approval',updated_at:'2026-10-18T09:00:00Z',payload_json:payload}
+await assert.rejects(()=>racingArm.armApprovedRestaurantReservation({actor,runId:'fixture-run'}),/restaurant_reservation_action_changed/,'Zero affected action rows cannot be reported as armed')
+assert.equal(liveAction.status,'waiting_approval')
 console.log('Actual reservation worker and real approval fingerprint: bounded context, material-change and failed-refresh guards passed. Inert synthetic I/O only.')
