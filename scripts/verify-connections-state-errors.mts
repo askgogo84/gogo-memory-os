@@ -5,7 +5,7 @@ import ts from 'typescript'
 
 // Execute the real profile query and server page. All reads are inert; writes,
 // credentials and provider calls are forbidden by this fixture.
-let failures=new Set<string>(),throws=new Set<string>(),authenticated=true,emptyPermission=false
+let failures=new Set<string>(),throws=new Set<string>(),authenticated=true,emptyPermission=false,emptyCounts=false,emptyCredit=false,permissionLevel='ask'
 const calls:Array<{table:string;filters:Array<[string,unknown]>}>=[]
 const user={name:'Fixture',whatsapp_id:'fixture-owner',gmail_connected:true,google_calendar_connected:true,gmail_send_connected:true}
 const db={from(table:string){
@@ -14,8 +14,8 @@ const db={from(table:string){
   return Promise.resolve().then(()=>{
    if(throws.has(table))throw new Error('fixture transport failure')
    const error=failures.has(table)?{message:'fixture unavailable'}:null
-   const data=error?null:table==='users'?user:table==='user_consent_settings'?{gmail_enabled:true}:table==='agent_permissions'?(emptyPermission?null:{level:'ask'}):table==='wa_creditiq_links'?{consumer_user_id:'fixture-link'}:null
-   return {data,count:error?null:table==='vault_credentials'?3:table==='travel_tickets'?2:null,error}
+   const data=error?null:table==='users'?user:table==='user_consent_settings'?{gmail_enabled:true}:table==='agent_permissions'?(emptyPermission?null:{level:permissionLevel}):table==='wa_creditiq_links'?(emptyCredit?null:{consumer_user_id:'fixture-link'}):null
+   return {data,count:error?null:emptyCounts?0:table==='vault_credentials'?3:table==='travel_tickets'?2:null,error}
   }).then(resolve,reject)
  }};return q
 }}
@@ -55,6 +55,8 @@ assert.match((await rows()).found.get('Gmail').state,/Reading status unavailable
 failures=new Set()
 throws=new Set(['agent_permissions','vault_credentials','travel_tickets','user_consent_settings','wa_creditiq_links'])
 for(const name of ['Secure Browser','Vault','Travel context','CreditIQ'])assert.match((await rows()).found.get(name).state,/unavailable/i,'transport failure must remain visible: '+name)
+throws=new Set(['users'])
+for(const name of ['Gmail','Google Calendar','Google Drive','CreditIQ'])assert.match((await rows()).found.get(name).state,/unavailable/i,'thrown auth read remains unknown: '+name)
 throws=new Set()
 emptyPermission=true
 assert.match((await rows()).found.get('Secure Browser').state,/draft/i,'successful absent permission retains established draft default')
@@ -65,6 +67,13 @@ assert.equal(good.get('Google Calendar').state,'Connected')
 assert.equal(good.get('Vault').state,'3 saved logins')
 assert.equal(good.get('Travel context').state,'2 upcoming legs')
 assert.equal(good.get('CreditIQ').state,'Connected')
+permissionLevel='off';emptyCounts=true;emptyCredit=true
+const empty=(await rows()).found
+assert.equal(empty.get('Secure Browser').state,'Off')
+assert.equal(empty.get('Secure Browser').available,false)
+assert.equal(empty.get('Vault').state,'No saved logins','known zero remains distinct from failed count')
+assert.equal(empty.get('Travel context').state,'No upcoming saved travel')
+assert.equal(empty.get('CreditIQ').state,'Not connected','successful absent linkage remains distinct from failure')
 for(const call of calls)assert.ok(call.filters.some(([key,value])=>key==='telegram_id'&&String(value)==='123'||call.table==='wa_creditiq_links'&&key==='sender'&&value==='fixture-owner'),'every actual read stays owner-bound: '+call.table)
 authenticated=false
 const before=calls.length
