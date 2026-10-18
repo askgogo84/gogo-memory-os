@@ -5,12 +5,12 @@ import { classifyCheckVerb } from '@/lib/data/lists-core'
 import { CALENDAR_WORD_RE } from '@/lib/bot/handlers/calendar-actions'
 import { hasConcreteFlightCode } from '@/lib/bot/flight-codes'
 import { isNutritionLogText } from '@/lib/bot/nutrition-text'
-import { isStandaloneCalendarReadRequest } from '@/lib/agent/calendar-read'
+import { isStandaloneCalendarReadRequest, calendarReadHoldReply } from '@/lib/agent/calendar-read'
 
 // "google calendar" (+ misspellings) â†’ connect intent, derived from the shared spelling
 // set rather than re-encoding the vowel-swaps by hand. Hoisted out of the per-message
 // detectIntent hot path.
-const GOOGLE_CALENDAR_RE = new RegExp(`\\bgoogle\\s+${CALENDAR_WORD_RE.source}`)
+const GOOGLE_CALENDAR_RE = new RegExp(`^google\\s+${CALENDAR_WORD_RE.source}\\s*[.!?]*$`)
 
 export type IntentType =
   | 'food_comparison'
@@ -19,6 +19,7 @@ export type IntentType =
   | 'email_action'
   | 'connect_calendar'
   | 'read_calendar'
+  | 'calendar_read_held'
   | 'sports_schedule'
   | 'sports_standings'
   | 'weather_live'
@@ -212,6 +213,8 @@ export function detectIntent(text: string): DetectedIntent {
 
   // Tolerant of common "calendar" misspellings (calender/calandar/calenders/â€¦) via
   // CALENDAR_WORD_RE â€” "connect calender" used to miss and fall to the freeform LLM.
+  const calendarHold=calendarReadHoldReply(lower)
+  if (calendarHold) return { type: 'calendar_read_held', confidence: 'high',meta:{calendarReadHoldReply:calendarHold} }
   if (isStandaloneCalendarReadRequest(lower)) return { type: 'read_calendar', confidence: 'high' }
   if (((lower.includes('connect') || lower.includes('link')) && CALENDAR_WORD_RE.test(lower)) || GOOGLE_CALENDAR_RE.test(lower)) return { type: 'connect_calendar', confidence: 'high' }
   // Check "remind me" BEFORE weather - marathon/training reminders must not go to weather

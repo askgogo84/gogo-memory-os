@@ -11,6 +11,8 @@ const MAX_EVENTS = 40
 const MAX_SLOTS = 6
 const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
 const WEEKDAY_PATTERN = /\b(?:(next|this)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/gi
+const CALENDAR_READ_HEAD=new RegExp(`^(?:please\\s+)?(?:(?:can|could|would)\\s+you\\s+)?(?:check|read|review|show(?:\\s+me)?|list|display|summari[sz]e)\\s+(?:me\\s+)?(?:(?:my|the|your)\\s+)?(?:google\\s+)?${CALENDAR_WORD_RE.source}`)
+const CALENDAR_READ_HOLD="I haven't read your Calendar. Ask me to check it when you're ready. Nothing was changed."
 
 function pad(n:number){return String(n).padStart(2,'0')}
 function safe(v:unknown,max=300){return redactSecretShapedText(String(v??'').replace(/\s+/g,' ').trim().slice(0,max))}
@@ -77,15 +79,30 @@ export function calendarAffirmativeText(text:string){
 }
 
 /** A standalone view command is not permission to connect accounts or act. */
+export function calendarReadHoldReply(raw:string):string|null{
+  const original=String(raw||'').toLowerCase().replace(/’/g,"'").trim()
+  if(!CALENDAR_WORD_RE.test(original))return null
+  const affirmative=calendarAffirmativeText(original).trim()
+  if(/^(?:please\s+)?(?:do not|don't|dont|never)\s+(?:check|read|review|show|display|list|summari[sz]e)\b/.test(original)&&/^[\s.!?,;]*$/.test(affirmative))return CALENDAR_READ_HOLD
+  if(!CALENDAR_READ_HEAD.test(original))return null
+  const tail=original.replace(CALENDAR_READ_HEAD,'')
+  if(/\b(?:do not|don't|dont|never|without)\s+(?:check|read|review|show|display|list|summari[sz]e)\b/.test(tail)||/\b(?:only\s+)?(?:after|once|when|if|unless|until)\b[^.!?;\n]{0,100}\b(?:approv(?:e|al)|confirm|consent|permission|say\s+yes|go[- ]ahead|tell\s+you)\b/.test(tail))return CALENDAR_READ_HOLD
+  return null
+}
+
 export function isStandaloneCalendarReadRequest(raw:string){
+  if(calendarReadHoldReply(raw))return false
   const text=calendarAffirmativeText(String(raw||'').toLowerCase().replace(/’/g,"'")).trim()
-  const head=new RegExp(`^(?:please\\s+)?(?:(?:can|could|would)\\s+you\\s+)?(?:check|read|review|show(?:\\s+me)?|list|display|summari[sz]e)\\s+(?:me\\s+)?(?:(?:my|the|your)\\s+)?(?:google\\s+)?${CALENDAR_WORD_RE.source}`)
+  const head=CALENDAR_READ_HEAD
   if(!head.test(text))return false
   if(/\b(?:reminders?|agenda|tasks?|inbox|gmail|e-?mails?)\b/.test(text.replace(head,'')))return false
   if(/\b(?:connect|reconnect|disconnect|link|unlink|account|accounts|connection|connected|permissions?|access|sync|setup)\b/.test(text))return false
   if(/\b(?:reserve|schedule|remind|create|add|invite|prepare|write|put|set|forward|save|remember|compose|archive|post|publish|renew|move|reschedule|resched|postpone|push|shift|update|make|edit|change|modify|cancel|delete|remove|clear|book|send|pay|buy|purchase|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|order|reorder|empty|increase|decrease|apply|redeem|block|unblock|open|browse|navigate|visit|inspect|monitor|watch|track)\b/.test(text.replace(head,'')))return false
   if(/\b(?:and|then|also|but)\s+(?:please\s+)?(?:find|search|look\s+for|research|compare|check|read|review|show|list|tell)\b/.test(text))return false
-  return true
+  // Consume the whole request: only date/time qualifiers may follow a direct
+  // Calendar view. Additional topics and questions belong to the planner.
+  const dates=new RegExp(`\\b(?:${MONTH_RE}|sunday|monday|tuesday|wednesday|thursday|friday|saturday|today|tomorrow|now|this|next|last|the|on|for|from|to|until|through|between|and|or|in|days?|weeks?|months?|years?|at|am|pm|morning|afternoon|evening|night|noon|midnight|not|except|excluding|rather|than|instead|of)\\b`,'gi')
+  return text.replace(head,'').replace(dates,'').replace(/[\s\d:/+.,;!?()[\]–-]/g,'')===''
 }
 
 export function requestedCalendarDays(text:string){
@@ -279,6 +296,8 @@ export function requestedCalendarTimezone(text:string){
 }
 
 export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instruction:string;missionText:string;rememberSelection?:boolean}){
+  const held=calendarReadHoldReply(params.instruction)||calendarReadHoldReply(params.missionText)
+  if(held)return {text:held,output:{mode:'held',events:[],complete:false,readPerformed:false}}
   const text=calendarActionText(`${params.instruction} ${params.missionText}`)
   const requestedZone=requestedCalendarTimezone(text)
   const access=await calendarAccess(params.actor)
