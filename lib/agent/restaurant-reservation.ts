@@ -508,13 +508,13 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const contextPack=await buildContextPack({
     actor:params.actor,
     text:params.text,
-    options:{includeSemantic:false,includeReservationTravel:true,maxFacts:14,horizonDays:60},
+    options:{includeSemantic:false,includeReservationTravel:true,includeReservationCalendar:true,maxFacts:14,horizonDays:60},
   }).catch(()=>null)
   const diningContext=buildReservationDiningContext({actor:params.actor,timezone,requestedDate:intent.requestedDate,releaseAt,pack:contextPack,now:new Date()})
   if(diningContext.incomplete)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,
-    text:'I verified the reservation release, but could not verify bounded saved-travel context for the possible dining dates. No reservation mission was armed or booking attempted. Please retry the context check before approving an attempt.'}
+    text:'I verified the reservation release, but could not verify bounded travel and Calendar context for the possible dining dates. No reservation mission was armed or booking attempted. Please retry the context check before approving an attempt.'}
   const contextWindows=diningContext.windows
-  const contextRefs=contextWindows.flatMap(window=>window.sourceRefs).slice(0,30)
+  const contextRefs=[...contextWindows.flatMap(window=>window.sourceRefs),...diningContext.calendar.windows.flatMap(window=>window.sourceRefs)].slice(0,30)
   const key=dedupeKey(params.actor,intent,provider.url)
   const existing=await existingMission(params.actor.legacyTelegramId,key)
   const refreshInProgress=String(existing?.run?.error||'').startsWith('restaurant_context_refresh:')
@@ -609,6 +609,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
       {label:'Preferred time',value:intent.preferredStart&&intent.preferredEnd?`${intent.preferredStart}–${intent.preferredEnd}`:'Next available'},
       {label:'Booking release',value:releaseAt},
       {label:'Dining dates covered',value:`${diningContext.from} – ${diningContext.until} (${timezone})`},
+      {label:'Calendar conflicts',value:diningContext.calendar.connected?`${diningContext.calendar.windows.length} busy intervals checked in the covered dates`:'Not connected; Calendar conflicts are not verified'},
       {label:'Fee/deposit',value:'₹0 approved; ask before any charge'},
     ],
     execution_payload:{plan_type:'restaurant_reservation_release',lifeEventId,lifeEventActionId:actionId,action:'arm_scheduled_restaurant_reservation'},
@@ -633,10 +634,11 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const travelNote=contextWindows.length
     ? '\n\nRelevant saved travel windows are attached for the possible dining dates. An inferred or unattributed traveller window requires clarification if it overlaps the dining slot; it is not proof that you are away.'
     : ''
+  const calendarNote=diningContext.calendar.connected?`\nCalendar: ${diningContext.calendar.windows.length} busy intervals attached for the covered dates. The full dining interval must avoid them.`:'\nCalendar is not connected, so Calendar conflicts have not been verified.'
   return{
     runId,status:'waiting_approval' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,
     approvalId:String(approval.id),approvalRequired:true,
-    text:`I checked ${intent.restaurant}'s live booking provider first${ruleEvidenceUrl?' and verified the release rule against the restaurant\'s first-party reservation policy':''}. ${evidence}${travelNote}\n\nI created a persistent reservation mission for ${when} (${timezone}).\n• Party: ${intent.partySize}\n• Preferred slot: ${window}${intent.requestedDate?`\n• Requested date: ${intent.requestedDate}`:''}\n• Fee/deposit authority: ₹0 — I must stop and ask before any charge.\n\nReply APPROVE to arm this exact bounded reservation attempt, or REJECT to stop it.`,
+    text:`I checked ${intent.restaurant}'s live booking provider first${ruleEvidenceUrl?' and verified the release rule against the restaurant\'s first-party reservation policy':''}. ${evidence}${travelNote}${calendarNote}\n\nI created a persistent reservation mission for ${when} (${timezone}).\n• Party: ${intent.partySize}\n• Preferred slot: ${window}${intent.requestedDate?`\n• Requested date: ${intent.requestedDate}`:''}\n• Fee/deposit authority: ₹0 — I must stop and ask before any charge.\n\nReply APPROVE to arm this exact bounded reservation attempt, or REJECT to stop it.`,
   }
   }catch(error){
     if(refreshing){

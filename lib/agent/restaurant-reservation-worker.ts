@@ -113,12 +113,12 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
     }
     let safeContext=usableReservationDiningContext(snapshot)&&Date.parse(snapshot.until)>Date.now()
     if(safeContext){
-      const pack=await buildContextPack({actor,text:`Reservation dining context for ${String(payload.restaurant||'restaurant')}`,options:{includeSemantic:false,includeReservationTravel:true,maxFacts:14,horizonDays:60}}).catch(()=>null)
+      const pack=await buildContextPack({actor,text:`Reservation dining context for ${String(payload.restaurant||'restaurant')}`,options:{includeSemantic:false,includeReservationTravel:true,includeReservationCalendar:true,maxFacts:14,horizonDays:60}}).catch(()=>null)
       const fresh=buildReservationDiningContext({actor,timezone:snapshot.timezone,requestedDate:String(payload.requestedDate||''),releaseAt:String(payload.releaseAt||''),pack,coverage:{from:snapshot.from,until:snapshot.until},now:new Date()})
       safeContext=sameReservationRestrictions(snapshot,fresh,new Date())
     }
     if(!safeContext){
-      const summary='Dining-date travel context changed or could not be verified. No reservation was attempted; request a refreshed bounded approval before trying again.'
+      const summary='Dining-date travel or Calendar context changed or could not be verified. No reservation was attempted; request a refreshed bounded approval before trying again.'
       await failSafe({action,event,runId,approvalId,status:'paused',summary,error:'restaurant_context_review_required',expireApproval:true,actor})
       await activity(tg,runId,'restaurant_context_review_required',summary,{life_event_id:event.id,action_id:action.id})
       await notify(actor,summary)
@@ -133,7 +133,10 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   const contextWindows=Array.isArray(payload.contextWindows)?payload.contextWindows:[]
   const reservationLocation=safe(payload.reservationLocation||event.metadata_json?.reservationLocation||event.location||'',120)
   const coverageConstraint=usableReservationDiningContext(snapshot)?` Dining-date coverage: ${snapshot.from} through ${snapshot.until} (${snapshot.timezone}). Only consider a future actual DINING SLOT inside this covered interval; if its date/time is unknown or outside coverage, do not submit and ask for a refreshed approval.`:''
-  const contextualConstraint=coverageConstraint+(contextWindows.length
+  const calendarConstraint=usableReservationDiningContext(snapshot)?(snapshot.calendar.connected
+    ? ` Calendar busy intervals: ${snapshot.calendar.windows.map(window=>`${window.startAt} to ${window.endAt}`).join('; ')||'none returned in the complete covered read'}. Before any submit, verify the actual dining start AND end or duration from the provider; never guess the duration. The entire dining interval must be inside covered dates and must not overlap any Calendar busy interval. If duration/end cannot be verified or an overlap exists, do not submit; stop and ask.`
+    : ' No Calendar is connected. Calendar conflicts have not been verified; never describe the schedule as clear.') : ''
+  const contextualConstraint=coverageConstraint+calendarConstraint+(contextWindows.length
     ? ` Saved travel constraints: ${contextWindows.map((w:any)=>`${w.applicability==='owner'&&!w.inferred&&w.confidence>=0.9&&w.location?'owner travel':'possible or unattributed traveller context'}: ${safe(w.location||'location unverified',100)} from ${safe(w.startAt,80)} to ${safe(w.endAt,80)}`).join('; ')}. Check the actual DINING SLOT, not merely release time. If it overlaps a possible or unattributed window, stop and clarify. If it overlaps known owner travel materially away from restaurant location ${reservationLocation||'unknown'}, do not submit; stop and ask.`
     : '')
   const instruction=`At the verified booking-release time, attempt exactly one restaurant reservation at ${safe(payload.restaurant||event.title,180)} for ${Number(payload.partySize)||1} people. ${payload.requestedDate?`Prefer only ${payload.requestedDate}. `:''}${payload.preferredStart&&payload.preferredEnd?`Choose a slot between ${payload.preferredStart} and ${payload.preferredEnd}; if no in-bounds slot exists, do not book. `:'Choose the earliest available slot.'}${contextualConstraint} The approved booking fee/deposit ceiling is ₹0. If any fee, deposit, payment, paid add-on, new terms requiring separate consent, password, OTP, CAPTCHA, passkey, device approval or payment authentication appears, stop before it. Fill ordinary reservation fields from already available safe profile/browser context only. Use one final submit only when all approved constraints are satisfied. Never submit a second time if the result is uncertain.`
