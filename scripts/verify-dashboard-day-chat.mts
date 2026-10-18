@@ -118,7 +118,7 @@ console.log('✅ Dashboard day + read-only schedule routing checks passed')
       { id: 'r0', message: 'already done', remind_at: '2026-10-15T03:00:00Z', sent: false } as any, // 8:30 am, past
     ],
     calendarOk: true, calendarConnected: true,
-    calendarEvents: [{ id: 'e1', title: 'Daily Connect-Standup Call', time: '11:30am', startAt: '2026-10-15T06:00:00Z' }],
+    calendarEvents: [{ id: 'e1', title: 'Daily Connect-Standup Call', time: '11:30am', startAt: '2026-10-15T06:00:00Z', endAt: '2026-10-15T06:30:00Z' }],
     approvalsWaiting: 3,
   })
   const lines = plan.split('\n')

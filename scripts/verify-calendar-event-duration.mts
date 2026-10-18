@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
+import * as intervals from '../lib/calendar-intervals'
+import * as timezone from '../lib/timezone'
 
 // A real linked-provider input exposed this shape; titles/IDs here are synthetic.
 // Exercise the actual dashboard projection and formatter, with no provider writes.
@@ -16,9 +18,9 @@ function load(file:string,deps:Record<string,unknown>,fetcher?:unknown){
 const db={from(table:string){assert.equal(table,'users');const q={select:()=>q,eq:(key:string,value:unknown)=>{assert.equal(key,'telegram_id');assert.equal(value,123);return q},maybeSingle:async()=>({data:{google_calendar_connected:true,google_refresh_token:'fixture-only',timezone:'Asia/Kolkata'},error:null})};return q}}
 const accounts=load('lib/services/google-calendar-accounts.ts',{'@/lib/supabase-admin':{},'@/lib/services/google-calendar':{}})
 const query=load('lib/dashboard/queries.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/ist':{istDayWindow:()=>({startUtc:new Date('2026-10-17T18:30:00Z'),endUtc:new Date('2026-10-18T18:30:00Z')})},
- '@/lib/services/meter':{},'@/lib/data/limits':{},'@/lib/services/google-calendar-accounts':{getCalendarAccountAccess:async()=>[{accessToken:'fixture-only',email:'synthetic@example.test'}],mergeAccountEvents:accounts.mergeAccountEvents}},
+ '@/lib/services/meter':{},'@/lib/data/limits':{},'@/lib/calendar-intervals':intervals,'@/lib/services/google-calendar-accounts':{getCalendarAccountAccess:async()=>[{accessToken:'fixture-only',email:'synthetic@example.test'}],mergeAccountEvents:accounts.mergeAccountEvents}},
  async(_url:unknown,init:any)=>{assert.ok(!init.method||init.method==='GET');return {ok:true,json:async()=>({items:providerEvents})}})
-const day=load('lib/dashboard/day-chat.ts',{'@/lib/dashboard/queries':query,'@/lib/supabase-admin':{supabaseAdmin:db}})
+const day=load('lib/dashboard/day-chat.ts',{'@/lib/dashboard/queries':query,'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/calendar-intervals':intervals,'@/lib/timezone':timezone})
 async function plan(now:string){
  const projected=await query.getTodayCalendar('123');assert.equal(projected.ok,true);assert.equal(projected.connected,true);assert.equal(projected.incomplete,false)
  const reply=day.formatDashboardDayReply({intent:'plan',tz:'Asia/Kolkata',remindersOk:true,reminders:[],calendarOk:true,calendarConnected:true,calendarIncomplete:false,calendarEvents:projected.events,now:new Date(now)})

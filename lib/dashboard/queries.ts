@@ -4,6 +4,7 @@ import type { ListItem } from '@/lib/data/lists'
 import { getPlan, getLimits, getUsage } from '@/lib/services/meter'
 import { getPlanLimits } from '@/lib/data/limits'
 import { getCalendarAccountAccess, mergeAccountEvents } from '@/lib/services/google-calendar-accounts'
+import {calendarInterval, calendarBlocksTime, type CalendarProviderEvent} from '@/lib/calendar-intervals'
 
 // ── The dashboard's read layer ────────────────────────────────────────────────
 // Every Supabase read the dashboard does lives here, one function per surface,
@@ -320,7 +321,10 @@ export async function getFriendContacts(telegramId: string): Promise<FriendConta
 // READ-ONLY end to end. Reads the connect flag + refresh token off the users row;
 // Failed reads remain unavailable or explicitly incomplete; healthy accounts stay
 // visible. No refresh failure changes the saved connection state.
-export type CalendarEvent = { id: string; title: string; time: string | null; startAt?: string | null }
+export type CalendarEvent = {
+  id: string; title: string; time: string | null; startAt?: string | null; endAt?: string | null;
+  allDay?: boolean; blocksTime?: boolean; timingKnown?: boolean;
+}
 export type TodayCalendar =
   | { ok: true; connected: false }
   | { ok: true; connected: true; events: CalendarEvent[]; incomplete?: boolean }
@@ -355,7 +359,7 @@ export async function getTodayCalendar(telegramId: string): Promise<TodayCalenda
       singleEvents: 'true',
       orderBy: 'startTime',
     })
-    type RawItem = { id?: string; summary?: string; iCalUID?: string; start?: { dateTime?: string } }
+    type RawItem = CalendarProviderEvent & { id?: string; summary?: string; iCalUID?: string }
     const settled = await Promise.allSettled(accounts.map(async (account) => {
       const res = await fetch(
         `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`,
@@ -373,12 +377,17 @@ export async function getTodayCalendar(telegramId: string): Promise<TodayCalenda
     const items = merged.events as RawItem[]
 
     const zone = user.timezone || 'Asia/Kolkata'
-    const events: CalendarEvent[] = items.map((it, i) => ({
-      id: String(it?.id ?? i),
-      title: (typeof it?.summary === 'string' && it.summary.trim()) || 'Untitled',
-      time: it?.start?.dateTime ? formatClock(it.start.dateTime, zone) : null,
-      startAt: it?.start?.dateTime || null,
-    }))
+    const events: CalendarEvent[] = items.filter(it => it.status !== 'cancelled').map((it, i) => {
+      const span = calendarInterval(it, zone)
+      return {
+        id: String(it?.id ?? i),
+        title: (typeof it?.summary === 'string' && it.summary.trim()) || 'Untitled',
+        time: it?.start?.dateTime ? formatClock(it.start.dateTime, zone) : null,
+        startAt: it.start?.dateTime || (span ? new Date(span.start).toISOString() : null),
+        endAt: span ? (it.end?.dateTime || new Date(span.end).toISOString()) : null,
+        allDay: Boolean(it.start?.date), blocksTime: calendarBlocksTime(it), timingKnown: Boolean(span),
+      }
+    })
     return { ok: true, connected: true, events, incomplete }
   } catch (err) {
     console.error('DASHBOARD_CALENDAR_FAILED:', err)

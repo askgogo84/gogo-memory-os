@@ -1,5 +1,7 @@
-import { getTodayCalendar, getTodayReminders, type ReminderRow } from '@/lib/dashboard/queries'
+import { getTodayCalendar, getTodayReminders, type ReminderRow, type CalendarEvent } from '@/lib/dashboard/queries'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import {calendarInterval} from '@/lib/calendar-intervals'
+import {parseLocalDateTime} from '@/lib/timezone'
 
 export type DashboardDayIntent = 'summary' | 'next' | 'plan'
 
@@ -49,7 +51,7 @@ export function formatDashboardDayReply(params: {
   calendarOk: boolean
   calendarConnected: boolean
   calendarIncomplete?: boolean
-  calendarEvents: Array<{ id: string; title: string; time: string | null; startAt?: string | null }>
+  calendarEvents: CalendarEvent[]
   /** Pending approvals waiting on the person; null when unknown. */
   approvalsWaiting?: number | null
   now?: Date
@@ -111,9 +113,7 @@ export function formatDashboardDayReply(params: {
 }
 
 
-type PlanItem = { at: number; label: string; kind: 'meeting' | 'reminder' }
-const MEETING_MINUTES = 30
-const DAY_END_HOUR = 22
+type PlanItem = { at: number; label: string; kind: 'meeting' | 'reminder'; note?: string }
 
 /** Minutes past midnight of a moment in the person's zone. */
 function minutesIn(ms: number, tz: string) {
@@ -135,10 +135,11 @@ function dayKeyIn(ms: number, tz: string) {
 export function todayAtClock(clockText: string, nowMs: number, tz: string): number {
   const m = String(clockText || '').trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/)
   if (!m) return NaN
+  if (Number(m[2] || 0) > 59 || Number(m[1]) > (m[3] ? 12 : 23) || (m[3] && Number(m[1]) < 1)) return NaN
   let h = Number(m[1]) % 12 + (m[3] === 'pm' ? 12 : 0)
   if (!m[3]) h = Number(m[1])
-  const target = h * 60 + Number(m[2] || 0)
-  return nowMs + (target - minutesIn(nowMs, tz)) * 60_000 - (nowMs % 60_000)
+  try { return parseLocalDateTime({date: dayKeyIn(nowMs, tz), time: `${String(h).padStart(2, '0')}:${String(Number(m[2] || 0)).padStart(2, '0')}`, timezone: tz}).dueAtUtc.getTime() }
+  catch { return NaN }
 }
 
 /**
@@ -149,15 +150,24 @@ function formatDayPlan(params: Parameters<typeof formatDashboardDayReply>[0], no
   const nowMs = now.getTime()
   const items: PlanItem[] = []
   const allDay: string[] = []
+  const busy: Array<{start: number; end: number}> = []
+  let timingUnknown = false
   if (params.calendarOk && params.calendarConnected) {
     for (const e of params.calendarEvents) {
-      let at = e.startAt ? new Date(e.startAt).getTime() : NaN
-      // No usable start instant but a clock time ("11:30am"): place it on today in the person's zone.
-      // A start that is not today (a recurring event's first date) also falls back to today's clock time.
-      if (e.time && (!Number.isFinite(at) || dayKeyIn(at, params.tz) !== dayKeyIn(nowMs, params.tz))) at = todayAtClock(e.time, nowMs, params.tz)
-      if (!Number.isFinite(at)) { if (!e.time) allDay.push(e.title); continue }
-      if (at + MEETING_MINUTES * 60_000 <= nowMs) console.info('DAY_PLAN_PAST_EVENT:', JSON.stringify({ startAt: e.startAt ?? null, time: e.time, now: now.toISOString() }))
-      if (at + MEETING_MINUTES * 60_000 > nowMs) items.push({ at, label: e.title, kind: 'meeting' })
+      const span = e.timingKnown === false ? null : calendarInterval({start: {dateTime: e.startAt || undefined}, end: {dateTime: e.endAt || undefined}}, params.tz)
+      const blocks = e.blocksTime !== false
+      if (span && span.end <= nowMs) continue
+      if (blocks && !span) timingUnknown = true
+      if (blocks && span) busy.push(span)
+      if (e.allDay || (!e.startAt && !e.time)) {
+        allDay.push(e.title + (!span ? ' (end time unverified)' : ''))
+        continue
+      }
+      let at = span?.start ?? (e.startAt ? Date.parse(e.startAt) : NaN)
+      // A legacy clock can display an uncertain item; it cannot establish availability.
+      if (!span && e.time && (!Number.isFinite(at) || dayKeyIn(at, params.tz) !== dayKeyIn(nowMs, params.tz))) at = todayAtClock(e.time, nowMs, params.tz)
+      const note = !span ? 'end time unverified' : span.start < nowMs ? `ongoing until ${clock(new Date(span.end).toISOString(), params.tz)}` : ''
+      items.push({at: Number.isFinite(at) ? Math.max(at, nowMs) : nowMs, label: e.title, kind: 'meeting', note: [note, !blocks ? 'does not block time' : ''].filter(Boolean).join(' · ')})
     }
   }
   for (const r of upcoming) items.push({ at: new Date(r.remind_at).getTime(), label: cleanLabel(r.message), kind: 'reminder' })
@@ -165,9 +175,9 @@ function formatDayPlan(params: Parameters<typeof formatDashboardDayReply>[0], no
 
   const lines: string[] = [`Your plan for the rest of today:`]
   if (allDay.length) lines.push(`All day — ${allDay.join(', ')}`)
-  if (!items.length) lines.push(params.calendarIncomplete || !params.calendarOk ? 'The incomplete calendar cannot establish what is scheduled from now on.' : `Nothing scheduled from now on.`)
+  if (!items.length && !allDay.length) lines.push(params.calendarIncomplete || !params.calendarOk || !params.calendarConnected ? 'The incomplete calendar cannot establish what is scheduled from now on.' : `Nothing scheduled from now on.`)
   for (const item of items.slice(0, 8)) {
-    lines.push(`${clock(new Date(item.at).toISOString(), params.tz)} — ${item.label}${item.kind === 'meeting' ? ' (meeting)' : ''}`)
+    lines.push(`${clock(new Date(item.at).toISOString(), params.tz)} — ${item.label}${item.kind === 'meeting' ? ' (meeting)' : ''}${item.note ? ` · ${item.note}` : ''}`)
   }
   if (items.length > 8) lines.push(`+${items.length - 8} more`)
 
@@ -175,21 +185,24 @@ function formatDayPlan(params: Parameters<typeof formatDashboardDayReply>[0], no
     lines.push('', `Needs you: ${params.approvalsWaiting} decision${params.approvalsWaiting === 1 ? '' : 's'} waiting. Open Needs you to clear them.`)
   }
 
-  // Longest open stretch between now and 10 pm, counting a meeting as 30 minutes and a reminder as a moment.
+  // Complement of verified busy intervals until 10 pm. Reminders are moments.
   const nowMinutes = minutesIn(nowMs, params.tz)
-  const endOfDay = nowMs + (DAY_END_HOUR * 60 - nowMinutes) * 60_000
+  const endOfDay = todayAtClock('10:00 PM', nowMs, params.tz)
   // Only during waking hours: at 1 am "free until 10 pm" is not a useful fact.
-  if (params.remindersOk && params.calendarOk && params.calendarConnected && !params.calendarIncomplete && endOfDay > nowMs && nowMinutes >= 6 * 60) {
+  if (params.remindersOk && params.calendarOk && params.calendarConnected && !params.calendarIncomplete && !timingUnknown && endOfDay > nowMs && nowMinutes >= 6 * 60) {
     let cursor = nowMs, best = { from: 0, to: 0 }
-    for (const item of items.filter(i => i.at < endOfDay)) {
-      if (item.at - cursor > best.to - best.from) best = { from: cursor, to: item.at }
-      cursor = Math.max(cursor, item.at + (item.kind === 'meeting' ? MEETING_MINUTES * 60_000 : 0))
+    const intervals = [...busy, ...upcoming.map(r => ({start: Date.parse(r.remind_at), end: Date.parse(r.remind_at)}))]
+      .filter(span => span.end >= nowMs && span.start < endOfDay).sort((a, b) => a.start - b.start)
+    for (const span of intervals) {
+      if (span.start - cursor > best.to - best.from) best = { from: cursor, to: span.start }
+      cursor = Math.max(cursor, span.end)
     }
     if (endOfDay - cursor > best.to - best.from) best = { from: cursor, to: endOfDay }
     if (best.to - best.from >= 60 * 60_000) {
       lines.push('', `Longest free stretch: ${clock(new Date(best.from).toISOString(), params.tz)} – ${clock(new Date(best.to).toISOString(), params.tz)}.`)
     }
   }
+  if (timingUnknown) lines.push('', 'Some calendar end times are unverified, so free time cannot be established.')
   if (!params.remindersOk || !params.calendarOk || params.calendarIncomplete) lines.push('', `Part of your day could not be loaded, so this plan may be missing items.`)
   return lines.join('\n')
 }
