@@ -2,6 +2,14 @@ type Quote={karat:string;perGram:number;amount:number;grams:number;source:string
 type Unit={grams:number;explicit:boolean}
 const KARAT=/\b(18|22|24)\s*(?:kt|karat|carat|ct|k)\b/gi
 const MONEY=/(?:₹|\brs\.?|\binr)\s*(\d[\d,]*(?:\.\d+)?)(?![\d,]|\.\d)/gi
+const MONTH_NAME='Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?'
+
+function quoteClauses(text:string):string[]{
+  // Date punctuation and Indian/international amount grouping are not clause
+  // boundaries. Other commas separate quote qualifiers just like semicolons.
+  const dateComma=new RegExp(`(\\b(?:\\d{1,2}\\s+(?:${MONTH_NAME})|(?:${MONTH_NAME})\\s+\\d{1,2})),\\s*(20\\d{2})\\b`,'gi')
+  return text.replace(dateComma,'$1 $2').split(/;|\band\b|,(?!\d)/i)
+}
 
 function amount(text:string):number|null{
   if(!/^(?:\d+|\d{1,3}(?:,\d{3})+|\d{1,2}(?:,\d{2})*,\d{3})(?:\.\d{1,2})?$/.test(text))return null
@@ -22,7 +30,7 @@ function units(text:string):Unit[]{
 
 function sourceDate(text:string):string|null|undefined{
   const months=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec']
-  const monthName='Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?'
+  const monthName=MONTH_NAME
   const formats:Array<{pattern:RegExp;parts:(match:RegExpMatchArray)=>number[]}>= [
     {pattern:/\b(20\d{2})-(\d{2})-(\d{2})\b/g,parts:m=>[Number(m[1]),Number(m[2]),Number(m[3])]},
     {pattern:/\b(\d{1,2})-(\d{2})-(20\d{2})\b/g,parts:m=>[Number(m[3]),Number(m[2]),Number(m[1])]},
@@ -80,8 +88,8 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
       const nextMoney=[...span.matchAll(MONEY)][0]
       // A reverse quote can have its date after the purity. Stop before the next
       // amount or coordinated clause so that quote's qualifiers cannot leak back.
-      const suffix=span.slice(0,nextMoney?.index??span.length).split(/;|\band\b/i)[0]
-      const reversePrefix=preceding.split(/;|\band\b/i).at(-1)||''
+      const suffix=quoteClauses(span.slice(0,nextMoney?.index??span.length))[0]
+      const prefixClauses=quoteClauses(preceding),reversePrefix=prefixClauses.at(-1)||''
       const quoteText=reverse?reversePrefix+' '+suffix:span
       if(/\b(?:unavailable|not (?:available|stated|supplied)|not verified)\b/i.test(quoteText))continue
       const suffixDate=reverse?sourceDate(suffix):undefined
@@ -115,7 +123,7 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
         // A unit before a reverse amount needs an isolated clause. When there
         // is an earlier amount or no boundary after the previous purity, only
         // this amount's suffix can establish its unit.
-        const isolatedPrefix=[...reversePrefix.matchAll(MONEY)].length===1&&(i===0||reversePrefix!==preceding)
+        const isolatedPrefix=[...reversePrefix.matchAll(MONEY)].length===1&&(i===0||prefixClauses.length>1)
         if(localMoney)addInline(quoteText,localMoney,isolatedPrefix)
         continue
       }
