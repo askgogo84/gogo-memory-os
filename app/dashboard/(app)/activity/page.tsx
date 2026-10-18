@@ -78,9 +78,10 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
     getDashboardActivityRuns(session.telegramId),
     getPendingBrowserHandoffs(session.telegramId),
     supabaseAdmin.from('agent_watchers')
-      .select('id,type,condition_json,cadence_minutes,last_checked_at,next_check_at')
+      .select('id,type,condition_json,cadence_minutes,last_checked_at,next_check_at',{count:'exact'})
       .eq('telegram_id',String(session.telegramId))
       .eq('active',true)
+      .neq('type','goal_review')
       .order('next_check_at',{ascending:true})
       .limit(6),
     supabaseAdmin.from('agent_approvals')
@@ -92,6 +93,7 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
     getServiceNoticesForPage(session.telegramId),
   ]):[[],[],{data:[]},{data:[]},EMPTY_SERVICE_NOTICES]
   const watchers=(watchersResult as any).data||[]
+  const watcherCount=Number((watchersResult as {count?:number|null}).count??watchers.length)
   const approvals=(approvalsResult as any).data||[]
   const handoffRows=handoffs.filter(handoff=>!approvals.some((approval:any)=>String(approval.run_id)===handoff.id))
   const activeRun=runs.find(r=>['running','queued','paused','waiting_approval'].includes(r.status))||null
@@ -219,7 +221,7 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
                 <p className="text-[13px] font-bold uppercase tracking-[.14em] text-[#6A6A6A]">Background Gogo</p>
                 <h2 className="mt-1 font-serif text-[21px] font-semibold text-[#F2EFEA]">Watching for you</h2>
               </div>
-              <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#161616] px-2 text-[14px] font-bold text-[#2FB8A6]">{watchers.length}</span>
+              <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#161616] px-2 text-[14px] font-bold text-[#2FB8A6]">{watcherCount}</span>
             </div>
             {watchers.length===0?<p className="mt-3 text-[15px] leading-5 text-[#9A9A9A]">No active background watches.</p>:
               <div className="mt-3 space-y-2.5">
