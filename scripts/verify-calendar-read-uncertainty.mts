@@ -4,6 +4,7 @@ import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 import * as timezone from '../lib/timezone'
 import * as intervals from '../lib/calendar-intervals'
+import * as calendarWord from '../lib/data/calendar-word'
 import {redactSecretShapedText} from '../lib/bot/memory-redaction'
 
 // Actual read/helper/briefing exports with inert transports. No live tokens,
@@ -40,7 +41,7 @@ const deps={'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/services/weather':w
 const morning=load('lib/bot/handlers/morning-briefing.ts',deps)
 const plan=load('lib/bot/handlers/plan-my-day.ts',deps)
 const read=load('lib/agent/calendar-read.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/google-calendar':calendar,
- '@/lib/services/google-calendar-accounts':accounts,'@/lib/timezone':timezone,'@/lib/agent/typed-object-context':{},'@/lib/bot/memory-redaction':{redactSecretShapedText}})
+ '@/lib/services/google-calendar-accounts':accounts,'@/lib/timezone':timezone,'@/lib/agent/typed-object-context':{},'@/lib/bot/memory-redaction':{redactSecretShapedText},'@/lib/data/calendar-word':calendarWord})
 const dashboard=load('lib/dashboard/queries.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/ist':{istDayWindow:()=>({startUtc:new Date('2026-10-18T00:00:00Z'),endUtc:new Date('2026-10-19T00:00:00Z')})},
  '@/lib/services/meter':{},'@/lib/data/limits':{},'@/lib/calendar-intervals':intervals,'@/lib/services/google-calendar-accounts':accounts},async(_url:unknown,init:any)=>{
  const status=failedReads.has(String(init.headers.Authorization).replace(/^Bearer /,''))?503:providerStatus

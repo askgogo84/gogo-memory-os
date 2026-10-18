@@ -1,6 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
-import { calendarReadWindow, executeReadOnlyCalendarStep, requestedCalendarTimezone, requestedCalendarDays, calendarAffirmativeText, calendarRequestsAvailability } from './calendar-read'
+import { calendarReadWindow, executeReadOnlyCalendarStep, requestedCalendarTimezone, requestedCalendarDays, calendarAffirmativeText, calendarRequestsAvailability, isStandaloneCalendarReadRequest, calendarReadHoldReply, calendarReadClarificationReply } from './calendar-read'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { rememberTypedObjects } from './typed-object-context'
 
@@ -42,23 +42,31 @@ function localClock(value: string, timeZone: string) {
 export function detectReadOnlyScheduleRequest(raw: string) {
   const text = safe(raw, 2000).toLowerCase().replace(/[’]/g, "'")
   if (!text) return null
+  const held=calendarReadHoldReply(text)
+  if(held){
+    if(/^(?:please\s+)?(?:do not|don't|dont|never)\b/.test(text))return null
+    return {horizon:'held' as const,scope:'calendar' as const}
+  }
+  if(calendarReadClarificationReply(text))return {horizon:'clarify' as const,scope:'calendar' as const}
   const explicitNoMutation = /\b(do not|don't|dont|without)\s+(?:change|changing|modify|modifying|create|creating|add|adding|edit|editing|move|moving|schedule|scheduling|cancel|cancelling|canceling)\b/.test(text) || /\bread[- ]only\b/.test(text)
   const request = calendarAffirmativeText(text)
+  const standaloneCalendar=isStandaloneCalendarReadRequest(text)
   // Command boundaries distinguish "and book a table" from "for the book
   // launch". Event subjects must not become unrelated booking/write intents.
   if (/(?:^|[,.!?;\n]\s*|\b(?:and|then|also|but|instead|please|to|you)\s+)(?:please\s+)?(?:open|browse|navigate|go to|visit|inspect|monitor|watch|track|reserve|schedule|remind|create|add|invite|prepare|write|put|set|forward|save|remember|compose|archive|post|publish|renew|move|reschedule|resched|postpone|push|shift|update|make|edit|change|modify|cancel|delete|remove|clear|book|send|pay|buy|purchase|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|order|reorder|empty|increase|decrease|apply|redeem|block|unblock)\b|\bschedule\s+(?:a|an|the|my|new|meeting|event)\b/.test(request)) return null
   // An additional discovery/read command belongs to its own handler or planner.
-  for(const clause of request.split(/\b(?:and|then|also)\b/)){
-    if(/^\s*(?:please\s+)?(?:find|search|look\s+for|research|compare|check|read(?![- ]only)|review|show|list|tell\s+me)\b/.test(clause)&&
-      !calendarRequestsAvailability(clause)&&! /\b(calendar|schedule|meetings?|events?|reminders?|my appointments?|needs? my attention|what (?:do )?i have|what(?:'s| is) on|what needs my attention|(?:review|brief me|summari[sz]e) tomorrow)\b/.test(clause))return null
+  for(const clause of request.split(/\b(?:and|then|also|but)\b|[.;!?]\s*/)){
+    if(!standaloneCalendar&&/^\s*(?:please\s+)?(?:find|search|look\s+for|research|compare|check|read(?![- ]only)|review|show|list|display|summari[sz]e|get|tell\s+me|what|when|where|how|who|is|are)\b/.test(clause)&&
+      !calendarRequestsAvailability(clause)&&! /\b(calendar|schedule|meetings?|events?|reminders?|my appointments?|my day|needs? my attention|what (?:do )?i have|what(?:'s| is) on|what needs my attention|(?:review|brief me|summari[sz]e) tomorrow)\b/.test(clause))return null
   }
   const readVerb = /\b(check|tell me|show(?: me)?|list|plan my day|what is my day|what (?:meetings?|events?|appointments?) do i have|what do i have|what(?:'s| is) on|what needs my attention|review|summari[sz]e|brief me)\b/.test(request)
-  const scheduleContext = /\b(calendar|schedule|meetings?|appointments?|events?|day)\b/.test(request) ||
+  const scheduleContext = standaloneCalendar || /\b(calendar|schedule|meetings?|appointments?|events?|day)\b/.test(request) ||
     /\b(?:what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|what needs my attention tomorrow|(?:summari[sz]e|review|brief me(?: on)?) tomorrow)\b/.test(request)
   const {today,tomorrow}=requestedCalendarDays(request)
-  if ((explicitNoMutation || readVerb) && scheduleContext && (tomorrow || today)) {
+  if(standaloneCalendar&&!today&&!tomorrow)return {horizon:'requested' as const,scope:'calendar' as const}
+  if ((standaloneCalendar || explicitNoMutation || readVerb) && scheduleContext && (tomorrow || today)) {
     const combined = /\b(?:reminders?|agenda|plan my day|what is my day|what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|my day|my schedule)\b/.test(request)
-    const calendarOnly = /\b(?:calendar|meetings?|appointments?|events?)\b/.test(request) && !combined
+    const calendarOnly = (standaloneCalendar || /\b(?:calendar|meetings?|appointments?|events?)\b/.test(request)) && !combined
     if(today&&!calendarOnly&&!tomorrow)return null // Preserve the existing Today/day route.
     return { horizon: today ? tomorrow ? 'today-tomorrow' as const : 'today' as const : 'tomorrow' as const, scope: calendarOnly ? 'calendar' as const : 'agenda' as const }
   }
@@ -66,6 +74,10 @@ export function detectReadOnlyScheduleRequest(raw: string) {
 }
 
 export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 'calendar' | 'agenda'; text?: string }) {
+  const held=calendarReadHoldReply(params.text||'')
+  if(held)return {text:held,calendarEvents:[],reminders:[],timeZone:'',tomorrowKey:'',calendarReadVerified:false}
+  const clarification=calendarReadClarificationReply(params.text||'')
+  if(clarification)return {text:clarification,calendarEvents:[],reminders:[],timeZone:'',tomorrowKey:'',calendarReadVerified:false}
   const telegramId = Number(params.actor.legacyTelegramId)
   const { data: user, error: userError } = await supabaseAdmin.from('users')
     .select('timezone')

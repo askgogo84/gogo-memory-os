@@ -5,11 +5,20 @@ import { getCalendarAccountAccess, fetchMergedCalendarEventsPage, describeCalend
 import { isValidTimezone, normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
+import { CALENDAR_WORD_RE } from '@/lib/data/calendar-word'
 
 const MAX_EVENTS = 40
 const MAX_SLOTS = 6
 const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
 const WEEKDAY_PATTERN = /\b(?:(next|this)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/gi
+const CALENDAR_READ_HEAD=new RegExp(`^(?:please\\s+)?(?:(?:can|could|would)\\s+you\\s+)?(?:check|read|review|show(?:\\s+me)?|list|display|summari[sz]e)\\s+(?:me\\s+)?(?:(?:my|the|your)\\s+)?(?:google\\s+)?${CALENDAR_WORD_RE.source}`)
+const CALENDAR_READ_HOLD="I haven't read your Calendar. Ask me to check it when you're ready. Nothing was changed."
+const CALENDAR_AVAILABILITY_COMMAND=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:for|me|the|a|an|some|any|my|calendar|free|available|open|(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)[- ](?:minutes?|mins?|hours?|hrs?))\s+)*(?:slots?|time|gaps?|availability)\b/i
+const CALENDAR_AVAILABILITY_QUESTION=/\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b|\b(?:is|are)\s+there\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b|\b(?:i|we)\s+have\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b/i
+const CALENDAR_AVAILABILITY_CONDITION=/\b(?:if|whether)\s+(?:i\s+am|i'm|we\s+are|we're|my\s+calendar\s+is)\s+(?:free|available)\b/i
+const CALENDAR_AVAILABILITY_CLAUSE=new RegExp(`\\b(?:and|then|also|but)\\s+(?:please\\s+)?(?:(?:check|tell\\s+me)\\s+)?(?:(?:if|whether|when)\\s+)?(?:${CALENDAR_AVAILABILITY_COMMAND.source}|${CALENDAR_AVAILABILITY_QUESTION.source}|${CALENDAR_AVAILABILITY_CONDITION.source})`,'gi')
+const DURATION_WORDS:Record<string,number>={a:1,an:1,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,half:0.5,quarter:0.25}
+const DURATION_RE=/(?<![\w.-])(?:a\s+(?=(?:half|quarter)\b))?(\d+(?:\.\d+)?|\.\d+|(?:half|quarter)(?:[ -]+an?)?|an?|one|two|three|four|five|six|seven|eight|nine|ten)[\s-]*(minutes?|mins?|hours?|hrs?)\b/gi
 
 function pad(n:number){return String(n).padStart(2,'0')}
 function safe(v:unknown,max=300){return redactSecretShapedText(String(v??'').replace(/\s+/g,' ').trim().slice(0,max))}
@@ -57,22 +66,90 @@ function calendarRangeText(text:string){
 }
 
 export function calendarRequestsAvailability(text:string){
-  const availabilityCommand=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:for|me|the|a|an|some|any|my|calendar|free|available|open|(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)[- ](?:minutes?|mins?|hours?|hrs?))\s+)*(?:slots?|time|gaps?|availability)\b/i
-  const availabilityQuestion=/\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b|\b(?:is|are)\s+there\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b|\b(?:i|we)\s+have\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b/i
-  return availabilityCommand.test(text)||availabilityQuestion.test(text)||/\b(?:if|whether)\s+(?:i\s+am|i'm|we\s+are|we're|my\s+calendar\s+is)\s+(?:free|available)\b/i.test(text)
+  return CALENDAR_AVAILABILITY_COMMAND.test(text)||CALENDAR_AVAILABILITY_QUESTION.test(text)||CALENDAR_AVAILABILITY_CONDITION.test(text)
 }
 
 export function calendarAffirmativeText(text:string){
   return text.replace(/’/g,"'")
-    .replace(/\b(?:do not|don't|dont)\s+forget\s+to\s+/gi,'')
-    .replace(/\b(?:do not|don't|dont|without)\s+[^.;!?\n]*?(?=[.;!?\n]|\b(?:but|then)\b|$)/gi,clause=>{
+    .replace(/\b(?:do not|don't|dont|never)\s+forget\s+to\s+/gi,'')
+    .replace(/\b(?:do not|don't|dont|never|without)\s+[^.;!?\n]*?(?=[.;!?\n]|\b(?:but|then)\b|$)/gi,clause=>{
     const next=clause.match(/(?:,\s*(?:just|please|instead)\s+|,\s*(?=(?:show|list|check|review|find|read|tell|summari[sz]e|brief)\b)|,\s*and\s+(?:(?:instead|please)\s+)?|\band\s+(?:instead|please)\s+|\band\s+(?=(?:show|list|check|review|find|read|tell|summari[sz]e|brief|open|browse|navigate|go to|visit|inspect|monitor|watch|track|schedule|create|add|edit|delete|move|change|modify|prepare|invite|cancel|write|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|order|reorder|empty|increase|decrease|apply|redeem|block|unblock|reserve|remind|put|set|forward|save|remember|compose|archive|post|publish|renew|reschedule|resched|postpone|push|shift|update|make|remove|clear|book|send|pay|buy|purchase)\b))/i)
     if(next?.index===undefined)return ''
-    const prohibited=clause.slice(0,next.index).replace(/^(?:do not|don't|dont|without)\s+/i,'')
+    const prohibited=clause.slice(0,next.index).replace(/^(?:do not|don't|dont|never|without)\s+/i,'')
     // A coordinated bare verb list keeps the prohibition across an Oxford comma.
     if(/^\w+(?:\s*(?:,|and|or)\s*\w+)*\s*$/i.test(prohibited)&&! /\b(?:just|please|instead)\b/i.test(next[0]))return ''
     return clause.slice(next.index)
   })
+}
+
+/** A standalone view command is not permission to connect accounts or act. */
+export function calendarReadHoldReply(raw:string):string|null{
+  const original=String(raw||'').toLowerCase().replace(/’/g,"'").trim()
+  if(!CALENDAR_WORD_RE.test(original))return null
+  const affirmative=calendarAffirmativeText(original).trim()
+  if(/^(?:please\s+)?(?:do not|don't|dont|never)\s+(?:check|read|review|show|display|list|summari[sz]e)\b/.test(original)&&/^(?:please\b)?[\s.!?,;]*$/.test(affirmative))return CALENDAR_READ_HOLD
+  if(!CALENDAR_READ_HEAD.test(original))return null
+  const tail=original.replace(CALENDAR_READ_HEAD,'')
+  if(/\b(?:do not|don't|dont|never|without)\s+(?:check|read|review|show|display|list|summari[sz]e)\b/.test(tail)||/\b(?:only\s+)?(?:after|once|when|if|unless|until)\b[^.!?;\n]{0,100}\b(?:approv(?:e|al)|confirm|consent|permission|say\s+yes|go[- ]ahead|tell\s+you)\b/.test(tail))return CALENDAR_READ_HOLD
+  return null
+}
+
+function calendarReadRequestText(raw:string){
+  return calendarAffirmativeText(String(raw||'').toLowerCase().replace(/’/g,"'")).trim()
+    .replace(/^[\s,;]*(?:(?:but|then|and|instead)\b[\s,;]*)+/,'')
+}
+
+export function isStandaloneCalendarReadRequest(raw:string){
+  if(calendarReadHoldReply(raw))return false
+  let text=calendarReadRequestText(raw)
+  const head=CALENDAR_READ_HEAD
+  if(!head.test(text))return false
+  const timezoneText=text
+  // This second phrase still asks about the same Calendar. Keep all following
+  // qualifiers/topics for whole-request validation rather than dropping them.
+  const availabilityClauses=text.match(CALENDAR_AVAILABILITY_CLAUSE)
+  text=text.replace(CALENDAR_AVAILABILITY_CLAUSE,' ')
+  if(availabilityClauses){
+    try{requestedDurationMinutes(text);text=normalizedDurationText(text).replace(DURATION_RE,' ')}catch{return false}
+  }
+  if(/\b(?:reminders?|agenda|tasks?|inbox|gmail|e-?mails?)\b/.test(text.replace(head,'')))return false
+  if(/\b(?:connect|reconnect|disconnect|link|unlink|account|accounts|connection|connected|permissions?|access|sync|setup)\b/.test(text))return false
+  if(/\b(?:reserve|schedule|remind|create|add|invite|prepare|write|put|set|forward|save|remember|compose|archive|post|publish|renew|move|reschedule|resched|postpone|push|shift|update|make|edit|change|modify|cancel|delete|remove|clear|book|send|pay|buy|purchase|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|order|reorder|empty|increase|decrease|apply|redeem|block|unblock|open|browse|navigate|visit|inspect|monitor|watch|track)\b/.test(text.replace(head,'')))return false
+  if(/\b(?:and|then|also|but)\s+(?:please\s+)?(?:find|search|look\s+for|research|compare|check|read|review|show|list|tell)\b/.test(text))return false
+  // Consume the whole request: only date/time qualifiers may follow a direct
+  // Calendar view. Additional topics and questions belong to the planner.
+  const dates=new RegExp(`\\b(?:${MONTH_RE}|sunday|monday|tuesday|wednesday|thursday|friday|saturday|today|tomorrow|now|this|next|last|the|on|for|from|to|until|through|between|and|or|in|days?|weeks?|months?|years?|at|am|pm|morning|afternoon|evening|night|noon|midnight|not|except|excluding|rather|than|instead|of)\\b`,'gi')
+  let tail=text.replace(head,'')
+  try{
+    const zone=requestedCalendarTimezone(timezoneText)
+    if(zone){
+      const escaped=zone.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')
+      tail=tail.replace(new RegExp(`\\b(?:(?:in|using)\\s+|(?:time\\s*zone|timezone)\\s*(?:[:=]\\s*|is\\s+)?)?${escaped}\\b`,'gi'),'')
+    }
+  }catch{return false}
+  return tail.replace(dates,'').replace(/[\s\d:/+.,;!?()[\]–-]/g,'')===''
+}
+
+/** Do not let a second single-topic handler silently discard the Calendar read. */
+export function calendarReadClarificationReply(raw:string):string|null{
+  if(calendarReadHoldReply(raw))return null
+  if(isStandaloneCalendarReadRequest(raw))return null
+  const text=calendarReadRequestText(raw)
+  if(!CALENDAR_READ_HEAD.test(text))return null
+  for(const clause of text.replace(CALENDAR_READ_HEAD,'').split(/\b(?:and|then|also|but)\b|[.;!?]\s*/)){
+    const read=clause.match(/^\s*(?:please\s+)?(find|search(?:\s+for)?|look\s+for|research|compare|check|read|review|show(?:\s+me)?|list|display|summari[sz]e|get|tell\s+me|what|when|where|how|who|is|are)\b\s*(.*)$/)
+    if(!read)continue
+    const object=read[2]
+    // The requested object must be Calendar data. An incidental purpose such
+    // as "weather for my meeting" does not turn a forecast into a schedule read.
+    const calendarObject=/^(?:(?:me|all|of|my|the|your|any|upcoming|next|today's|tomorrow's|free|available|open|a|an|some)\s+)*(?:google\s+)?(?:calendar|calender|calandar|meetings?|appointments?|events?|reminders?|agenda|schedule|day|availability|slots?|time|gaps?)\b/.exec(object)
+    if(calendarObject&&isStandaloneCalendarReadRequest(`Show my Calendar ${object.slice(calendarObject[0].length)}`))continue
+    const appointmentDiscovery=/^(?:find|search(?:\s+for)?|look\s+for)$/.test(read[1])&&/^(?:(?:a|an|my|the|new|available|next)\s+)?(?:(?!(?:for|about|during|with)\b)[\p{L}'-]+\s+){0,5}(?:appointments?|consultations?)\b/u.test(object)
+    if(!appointmentDiscovery){
+      return "Your request includes a Calendar read and another task. Please ask for each separately so I can check both topics. I haven't read your Calendar or acted on the other task."
+    }
+  }
+  return null
 }
 
 export function requestedCalendarDays(text:string){
@@ -140,18 +217,23 @@ export function calendarReadWindow(text:string,now:Date,tz:string){
   return {startDate:today,endDate:addDays(today,6),label:'next 7 days'}
 }
 
-function requestedDurationMinutes(text:string){
-  const durations=new Set<number>()
-  const words:Record<string,number>={a:1,an:1,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,half:0.5,quarter:0.25}
+function normalizedDurationText(text:string){
+  const words=DURATION_WORDS
   const amountPattern='(?:\\d+(?:\\.\\d+)?|an?|one|two|three|four|five|six|seven|eight|nine|ten)'
   const quantity=(amount:string)=>words[amount.toLowerCase()]??Number(amount)
   const beforeUnit=new RegExp(`\\b(${amountPattern})\\s+and\\s+(?:a\\s+)?(half|quarter)\\s+(hours?|hrs?|minutes?|mins?)\\b`,'gi')
   const afterUnit=new RegExp(`\\b(${amountPattern})[\\s-]+(hours?|hrs?|minutes?|mins?)\\s+and\\s+(?:a\\s+)?(half|quarter)\\b`,'gi')
-  text=text.replace(beforeUnit,(_,amount,fraction,unit)=>`${quantity(amount)+words[fraction.toLowerCase()]} ${unit}`)
+  return text.replace(beforeUnit,(_,amount,fraction,unit)=>`${quantity(amount)+words[fraction.toLowerCase()]} ${unit}`)
     .replace(afterUnit,(_,amount,unit,fraction)=>`${quantity(amount)+words[fraction.toLowerCase()]} ${unit}`)
+}
+
+function requestedDurationMinutes(text:string){
+  const durations=new Set<number>()
+  const words=DURATION_WORDS
+  text=normalizedDurationText(text)
   // Unrecognized fractional grammar must not become a shorter appointment.
   if(/\b(?:and\s+(?:an?\s+)?(?:half|quarter)|(?:half|quarter)\s+of)\b/i.test(text))throw new Error('calendar_duration_unsupported')
-  for(const match of text.matchAll(/(?<![\w.-])(\d+(?:\.\d+)?|\.\d+|(?:half|quarter)(?:[ -]+an?)?|an?|one|two|three|four|five|six|seven|eight|nine|ten)[\s-]*(minutes?|mins?|hours?|hrs?)\b/gi)){
+  for(const match of text.matchAll(DURATION_RE)){
     const amount=match[1].toLowerCase().split(/[ -]/)[0]
     const minutes=(words[amount]??Number(amount))*(/^h/i.test(match[2])?60:1)
     if(!Number.isInteger(minutes)||minutes<15||minutes>180)throw new Error('calendar_duration_unsupported')
@@ -266,6 +348,8 @@ export function requestedCalendarTimezone(text:string){
 }
 
 export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instruction:string;missionText:string;rememberSelection?:boolean}){
+  const held=calendarReadHoldReply(params.instruction)||calendarReadHoldReply(params.missionText)
+  if(held)return {text:held,output:{mode:'held',events:[],complete:false,readPerformed:false}}
   const text=calendarActionText(`${params.instruction} ${params.missionText}`)
   const requestedZone=requestedCalendarTimezone(text)
   const access=await calendarAccess(params.actor)
