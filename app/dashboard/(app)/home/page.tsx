@@ -52,7 +52,7 @@ export default async function HomePage(){
     session?getLists(tg):Promise.resolve({ok:true as const,lists:[]}),
     session?getDashboardMemory(tg):Promise.resolve({ok:true as const,items:[]}),
     session?supabaseAdmin.from('agent_approvals').select('id,run_id,title,description,risk_level,created_at').eq('telegram_id',tg).eq('status','pending').order('created_at',{ascending:false}).limit(4):Promise.resolve({data:[] as any[]}),
-    session?supabaseAdmin.from('agent_watchers').select('id,title,type,next_check_at,active').eq('telegram_id',tg).eq('active',true).order('next_check_at',{ascending:true}).limit(4):Promise.resolve({data:[] as any[]}),
+    session?supabaseAdmin.from('agent_watchers').select('id,title,type,next_check_at,active',{count:'exact'}).eq('telegram_id',tg).eq('active',true).neq('type','goal_review').order('next_check_at',{ascending:true}).limit(4):Promise.resolve({data:[] as any[],count:0}),
     session?supabaseAdmin.from('agent_runs').select('id,title,summary,status,updated_at').eq('telegram_id',tg).in('status',['running','queued','waiting_approval']).order('updated_at',{ascending:false}).limit(12):Promise.resolve({data:[] as any[]}),
     // Indicator counts come from untruncated head-counts, not the limited display list,
     // so a running row can never be hidden behind more-recent paused/waiting rows.
@@ -74,6 +74,7 @@ export default async function HomePage(){
   // Several hand-offs on the same site (four playo.co robot checks) are one thing to do: one row with a count.
   const handoffGroups=[...handoffRows.reduce((map,h)=>{const g=map.get(h.title);if(g){g.count+=1+h.repeats}else map.set(h.title,{first:h,count:1+h.repeats});return map},new Map<string,{first:typeof handoffRows[number];count:number}>()).values()]
   const watcherRows=watchers.data||[]
+  const watcherCount=Number(watchers.count??watcherRows.length)
   // A task stuck in running for hours lost its worker; it is not "now" work.
   const runRows=(runs.data||[]).filter((r:any)=>!isStaleRunning(r,now)).slice(0,4)
   // The same background check repeated (KLM status unchanged, three times) is one update, not three.
@@ -89,7 +90,7 @@ export default async function HomePage(){
   const contextBits=[
     memory.ok?`${memory.items.length} memories`:null,
     lists.ok?`${lists.lists.length} lists`:null,
-    watcherRows.length?`${watcherRows.length} background watch${watcherRows.length===1?'':'es'}`:null,
+    watcherCount?`${watcherCount} background watch${watcherCount===1?'':'es'}`:null,
   ].filter(Boolean)
 
   const summary=approvalRows.length
