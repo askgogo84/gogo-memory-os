@@ -22,17 +22,18 @@ import {
   activeStamped,
   mergeStamped,
   verifyContextualDisruption,
+  effectiveWeatherQuery,
 } from './watcher-quality'
 
 import { assessPriceCheck, appendPriceRun, buildPriceRun, normalizePriceRule, priceAlertText, priceStateFrom, type PriceRule } from './price-threshold'
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
 
-export async function sourceBoundTravelExpiry(watcher:any):Promise<string|null>{
+export async function sourceBoundTravelExpiry(watcher:{telegram_id:string|number;condition_json?:ContextualWatcherMeta}):Promise<string|null>{
   const condition=watcher.condition_json||{}
   const current=validDate(condition.expiresAt)
   if(condition.contextual!==true||condition.contextualKind!=='travel')return current
-  const ids=(condition.sourceRefs||[]).filter((ref:any)=>ref?.type==='travel_ticket'&&/^[a-f0-9-]{36}$/i.test(String(ref.id))).map((ref:any)=>String(ref.id))
+  const ids=(condition.sourceRefs||[]).filter(ref=>ref?.type==='travel_ticket'&&/^[a-f0-9-]{36}$/i.test(String(ref.id))).map(ref=>String(ref.id))
   if(!ids.length)return current
   const {data,error}=await supabaseAdmin.from('travel_tickets').select('id,depart_at,arrive_at').eq('telegram_id',Number(watcher.telegram_id)).in('id',ids)
   if(error)throw new Error('context_travel_expiry_source_unavailable')
@@ -54,6 +55,8 @@ export type ContextualWatcherMeta = {
   userStoppedAt?: string|null
   flightLegs?: string[]
   traveller?: string|null
+  weatherStartAt?:string
+  weatherTimezone?:string
 }
 
 export type DeadlineWatcherCondition = {
@@ -127,6 +130,8 @@ function normalizeContextualMeta(input:any):ContextualWatcherMeta {
     userStoppedAt:input?.userStoppedAt?validDate(input.userStoppedAt):null,
     flightLegs:Array.isArray(input?.flightLegs)?input.flightLegs.map((x:any)=>String(x||'').slice(0,80)).filter(Boolean).slice(0,12):undefined,
     traveller:input?.traveller?String(input.traveller).replace(/\s+/g,' ').trim().slice(0,40):undefined,
+    weatherStartAt:validDate(input?.weatherStartAt)||undefined,
+    weatherTimezone:typeof input?.weatherTimezone==='string'?input.weatherTimezone.slice(0,80):undefined,
   }
 }
 
@@ -1013,6 +1018,7 @@ async function processWebPageWatcher(watcher:any,now:Date){
 
 async function processWebSearchWatcher(watcher:any, now:Date) {
   const condition = normalizeWebSearchWatcher(watcher.condition_json)
+  if(condition)condition.query=effectiveWeatherQuery(condition,now)
   if (!condition) {
     await supabaseAdmin.from('agent_watchers').update({ active:false, last_checked_at:now.toISOString(), last_state_json:{ error:'invalid_condition' } }).eq('id', watcher.id).eq('telegram_id', String(watcher.telegram_id)).eq('active', true)
       .eq('condition_json', JSON.stringify(watcher.condition_json))

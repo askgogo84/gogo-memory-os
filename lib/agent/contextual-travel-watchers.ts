@@ -184,7 +184,8 @@ export function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:stri
       type:'web_search',
       condition:{
         title:`Trip weather · ${destination}`,
-        query:`${destination} weather travel conditions ${Date.parse(stayArriveIso)>Date.now()?destinationDate:'today'}`,
+        query:`${destination} weather travel conditions ${Date.parse(stayArriveIso)>Date.now()?destinationDate:dateLabel(new Date().toISOString(),ticketTimezone(destination))}`,
+        weatherStartAt:stayArriveIso,weatherTimezone:ticketTimezone(destination)||'UTC',
         triggerKeywords:['weather warning','storm','heavy rain','snow','flood','extreme heat','severe weather','travel advisory'],
         delivery:'both',cadenceMinutes:360,burstUntil:null,
         // Weather follows the destination stay, not the outbound leg's completion.
@@ -266,9 +267,10 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
   if(oldError)throw new Error(`context_watch_old_read_failed:${oldError.message}`)
   const retire=(old||[]).filter((row:any)=>String(row.condition_json?.contextRoot||'')!==root || Date.parse(String(row.condition_json?.expiresAt||''))<=now)
   if(retire.length){
-    await supabaseAdmin.from('agent_watchers').update({
+    const {error:retireError}=await supabaseAdmin.from('agent_watchers').update({
       active:false,next_check_at:null,updated_at:new Date().toISOString(),
     }).in('id',retire.map((row:any)=>row.id)).eq('telegram_id',telegramId)
+    if(retireError)throw new Error('context_watch_retire_failed')
   }
 
   const budget=await getCostBudget(telegramId)
@@ -287,7 +289,16 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
     .or('content.ilike.my home city%,content.ilike.home city:%,content.ilike.I live in%,content.ilike.I am based in%').order('created_at',{ascending:false}).limit(10)
   if(homeError)throw new Error('context_home_lookup_failed')
   const homeCity=declaredHomeCity(homeMemories||[])
-  for(const desired of desiredWebConditions(group,root,expiresAt,homeCity)){
+  const desiredConditions=desiredWebConditions(group,root,expiresAt,homeCity)
+  const desiredKeys=new Set(desiredConditions.map(row=>row.condition.contextKey))
+  const omittedWeather=(old||[]).filter(row=>row.condition_json?.contextRoot===root&&row.condition_json?.contextClass==='destination_weather'&&!desiredKeys.has(row.condition_json?.contextKey))
+  if(omittedWeather.length){
+    const {error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()})
+      .in('id',omittedWeather.map(row=>row.id)).eq('telegram_id',telegramId).eq('condition_json->>contextualKind','travel')
+    if(error)throw new Error('context_watch_reconcile_retire_failed')
+    stopped+=omittedWeather.length
+  }
+  for(const desired of desiredConditions){
     const key=String(desired.condition.contextKey)
     if(!existingContextKeys.has(key)&&slots<=0){skipped++;continue}
     const result=await upsertContextWatcher({telegramId,type:'web_search',condition:desired.condition})

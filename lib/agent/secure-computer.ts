@@ -1,3 +1,4 @@
+import {productIdentityMatches} from '../commerce/product-identity'
 import { sanitizeBrowserReadDiagnostics, type BrowserReadDiagnostic, type BrowserReadReason } from './browser-read-diagnostics'
 import { draftObjectiveCovered } from './draft-coverage'
 import {ensureManagedBrowser,managedBrowserEnabled} from './managed-browser'
@@ -344,16 +345,7 @@ async function model(page){
 export function comparisonReadEvidenceMatches(objective:string,evidence:string):boolean{
   const subject=String(objective||'').match(/^Find the listed price of this product on [^:]{2,40}: "([^"]{2,200})"/)?.[1]
   if(!subject)return true
-  const units=(value:string)=>value.replace(/(\d+(?:\.\d+)?)\s*kg\b/gi,(_,n)=>`${Number(n)*1000}g`).replace(/(\d+(?:\.\d+)?)\s*l(?:itres?|iters?)?\b/gi,(_,n)=>`${Number(n)*1000}ml`).replace(/(\d+)\s*(g|ml|gb|tb)\b/gi,'$1$2')
-  const requested=units(subject),observed=units(evidence)
-  const variants=/\b(?:iphone|ipad|galaxy|pixel|macbook)\b/i.test(requested)?['pro','max','plus','mini','ultra','air','lite','fe','se']:/\b(?:butter|milk|cheese|yogurt|curd)\b/i.test(requested)?['lite','spread','unsalted','skimmed','double']:[]
-  if(variants.some(variant=>new RegExp('\\b'+variant+'\\b','i').test(observed)&&!new RegExp('\\b'+variant+'\\b','i').test(requested)))return false
-  let cursor=0
-  for(const token of requested.match(/[a-z0-9]+/gi)||[]){
-    const re=new RegExp((/^\d/.test(token)?'(?<![a-z0-9])':'')+token.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?![a-z0-9])','gi');re.lastIndex=cursor
-    const hit=re.exec(observed);if(!hit)return false;cursor=hit.index+hit[0].length
-  }
-  return true
+  return productIdentityMatches(subject,evidence)
 }
 export function productPagePriceEvidence(objective:string,title:string,pageText:string):string[]|null{
   const ask=String(objective||'').match(/^Find the listed price of this product on [^:]{2,40}: "([^"]{2,200})"/)
@@ -361,21 +353,8 @@ export function productPagePriceEvidence(objective:string,title:string,pageText:
   if(!ask)return skip('objective_no_match')
   const heading=String(title||'').replace(/^Buy\s+/i,'').replace(/\s*(?:\s:\s*Amazon\.in\b.*|\sOnline\b.*|\s-\s*Croma\b.*|\s\|.*)$/i,'').trim()
   if(heading.length<12)return skip('short_heading',heading)
-  // Every requested word must end where a word ends ("16" is not "16e"), in order.
-  const tokens=ask[1].replace(/(\d+)\s+(GB|TB)\b/gi,'$1$2').match(/[a-z0-9]+/gi)||[]
-  const named=heading.replace(/(\d+)\s+(GB|TB)\b/gi,'$1$2')
-  if(/\b(?:iphone|ipad|galaxy|pixel|macbook)\b/i.test(ask[1])){
-    if(['pro','max','plus','mini','ultra','air','lite','fe','se'].some(tier=>new RegExp('\\b'+tier+'\\b','i').test(named)&&!new RegExp('\\b'+tier+'\\b','i').test(ask[1])))return skip('variant_mismatch')
-    const capacity=ask[1].replace(/\s+/g,'').match(/\d+(?:gb|tb)/i)?.[0]?.toLowerCase()
-    const capacities=(named.match(/\b\d+(?:GB|TB)\b/gi)||[]).map(value=>value.toLowerCase())
-    if(capacity&&capacities.some(value=>value!==capacity))return skip('capacity_mismatch')
-    if(!capacity&&/\biphone\b/i.test(ask[1])&&capacities.some(value=>/^(?:256|512)gb$|^[12]tb$/i.test(value)))return skip('capacity_unspecified')
-  }
-  let cursor=0
-  for(const token of tokens){
-    const re=new RegExp((/^\d/.test(token)?'(?<![a-z0-9])':'')+token.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?![a-z0-9])','gi');re.lastIndex=cursor
-    const hit=re.exec(named);if(!hit)return skip('token_mismatch',token+' | '+named);cursor=hit.index+hit[0].length
-  }
+  // Match the complete requested identity while retaining the exact observed heading.
+  if(!productIdentityMatches(ask[1],heading))return skip('identity_mismatch')
   const text=String(pageText||'').replace(/\s+/g,' ')
   const at=text.indexOf(heading)
   // 16 Oct 9:18 pm live: no price was found on Croma's product page. Log where things are (public page text only).

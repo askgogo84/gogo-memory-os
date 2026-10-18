@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import crypto from 'node:crypto'
 import ts from 'typescript'
 import * as model from '../lib/commerce/comparison-model'
+import * as identity from '../lib/commerce/product-identity'
 import * as quality from '../lib/agent/watcher-quality'
 import * as travelTime from '../lib/services/travel-time'
 import * as timezone from '../lib/timezone'
@@ -38,6 +39,10 @@ await check('post-arrival weather retains destination-local explicit occurrence 
   const weather=conditions.find((r:any)=>r.condition.contextClass==='destination_weather').condition
   assert.match(weather.query,/19 October 2026/)
   assert.equal(quality.verifyContextualDisruption({contextClass:'destination_weather',query:weather.query,title:weather.title,resultTitle:'Bengaluru heavy rain warning 12 October 2025'}).verified,false)
+  const next=quality.effectiveWeatherQuery(weather,new Date('2026-10-19T20:00:00Z'))
+  assert.match(next,/20 October 2026/,'saved query advances to the destination local date at each poll')
+  assert.equal(quality.verifyContextualDisruption({contextClass:'destination_weather',query:next,title:weather.title,resultTitle:'Bengaluru heavy rain warning 19 October 2026'}).verified,false)
+  assert.equal(quality.verifyContextualDisruption({contextClass:'destination_weather',query:next,title:weather.title,resultTitle:'Bengaluru heavy rain warning 20 October 2026'}).verified,true)
 })
 await check('existing home-city weather is retired with owner isolation and visible failures',async()=>{
   stored=[];home=false;await exports.compileTravelWatchersForUser(123)
@@ -56,5 +61,23 @@ await check('accepted equivalent-unit product renders final price without weaken
   assert.match(model.comparisonWhatsAppSummary({id:'fixture',status:'completed',title:'butter',source:'fixture',updated_at:'2026-10-18',metadata_json:{request:'fixture',subject:'Amul butter 500g',providers:[row]}}),/₹250/)
   assert.equal(model.comparisonEvidenceMatchesSubject('Amul butter 500g pack of 2','Amul butter 500g pack of 3 ₹500'),false)
   assert.equal(model.comparisonEvidenceMatchesSubject('Amul butter 500g','Amul butter 1500g ₹500'),false)
+})
+await check('quantity clause identity survives discovery direct observation and final summary',()=>{
+  const subject='Logitech M185 wireless mouse, grey, quantity 1,'
+  const title='Logitech M185 wireless mouse grey'
+  const url='https://www.flipkart.com/logitech-m185/p/itm1?pid=FIXTURE'
+  assert.equal(model.comparisonProductLead('flipkart',subject,[{url,title}]),url)
+  const observed=model.providerObservation('flipkart',{id:'fixture',status:'completed'},{status:'completed',output_json:{sourceUrl:url,summary:title+'\n₹926'}},subject)
+  assert.equal(observed.status,'observed');assert.equal(model.comparisonQuote(subject,observed)?.price,'₹926')
+  assert.match(model.comparisonWhatsAppSummary({id:'fixture',status:'completed',title,source:'fixture',updated_at:'2026-10-18',metadata_json:{request:'fixture',subject,providers:[observed]}}),/₹926/)
+  const computer:any={}
+  const source=ts.transpileModule(fs.readFileSync('lib/agent/secure-computer.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
+  vm.runInNewContext(source,{exports:computer,module:{exports:computer},require:(name:string)=>name==='../commerce/product-identity'?identity:{},process:{env:{}},Buffer,URL,console})
+  const objective=`Find the listed price of this product on Flipkart: ${JSON.stringify(subject)}.`
+  assert.equal(computer.comparisonReadEvidenceMatches(objective,title+' ₹926'),true)
+  assert.ok(computer.productPagePriceEvidence(objective,title,title+' ₹926 in stock'))
+  assert.equal(computer.productPagePriceEvidence(objective,title.replace('grey','black'),title.replace('grey','black')+' ₹926 in stock'),null)
+  for(const wrong of ['Apple iPhone 18 Pro 128GB','Apple iPhone 18 512GB','Apple iPhone 118 128GB'])assert.equal(identity.productIdentityMatches('iPhone 18',wrong),false)
+  assert.equal(model.tokensEndWords('Apple iPhone 18 128GB',['iPhone','18','128GB']),true,'model digits must not be concatenated with capacity')
 })
 assert.deepEqual(failures,[],'review regressions must all pass')

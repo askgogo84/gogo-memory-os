@@ -27,6 +27,18 @@ const MONTH_BY_NUM: Record<string, string> = {
   '01': 'jan', '02': 'feb', '03': 'mar', '04': 'apr', '05': 'may', '06': 'jun',
   '07': 'jul', '08': 'aug', '09': 'sep', '10': 'oct', '11': 'nov', '12': 'dec',
 }
+
+/** Refresh weather occurrence dates at execution, including old saved queries. */
+export function effectiveWeatherQuery(condition:{query:string;contextClass?:string;weatherStartAt?:string;weatherTimezone?:string},now:Date):string{
+  if(condition.contextClass!=='destination_weather')return condition.query
+  const legacyDate=condition.query.match(/(?:\d{4}-\d{2}-\d{2}|\d{1,2}\s+[a-z]+\s+20\d{2})\s*$/i)?.[0]
+  const arrival=Date.parse(condition.weatherStartAt||legacyDate||'')
+  const at=Number.isFinite(arrival)&&arrival>now.getTime()?new Date(arrival):now
+  let zone=condition.weatherTimezone||'UTC'
+  try{new Intl.DateTimeFormat('en-GB',{timeZone:zone}).format(at)}catch{zone='UTC'}
+  const date=new Intl.DateTimeFormat('en-GB',{timeZone:zone,day:'numeric',month:'long',year:'numeric'}).format(at)
+  return condition.query.replace(/\s+(?:today|\d{4}-\d{2}-\d{2}|\d{1,2}\s+[a-z]+\s+20\d{2})\s*$/i,'')+' '+date
+}
 // All spellings collapse to one canonical "mon-dd" token (year dropped — different
 // years of the same month/day are >10 days apart, so the re-arm window separates them),
 // so "2026-10-02", "Oct 2" and "2 October" describe the SAME occurrence and hash alike.
