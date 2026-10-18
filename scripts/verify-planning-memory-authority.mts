@@ -29,6 +29,15 @@ check('matching recorded itinerary remains available without converting it into 
  const current=fact('current','Synthetic Guest has a flight on 25 October 2026.')
  assert.ok(actual.prioritizeRecallEvidence(query,[current,move]).some((f:any)=>f.id==='current'))
 })
+check('month-first matching itinerary remains available',()=>{
+ const current=fact('month-first','Synthetic Guest has a flight on October 25, 2026.')
+ assert.ok(actual.prioritizeRecallEvidence(query,[current,move]).some((f:any)=>f.id==='month-first'))
+})
+check('existing 2200-character renderer budget preserves a substantial matching fact',()=>{
+ const substantial=fact('substantial','Owner is moving house on 25 October 2026. '+('Packing the study is unfinished. '.repeat(18)))
+ const text=actual.renderContextBlock({query,generatedAt:'2026-10-19T00:00:00Z',facts:[substantial]},2200)
+ assert.ok(text.includes(substantial.summary),'planning instructions crowded out the only saved fact')
+})
 check('rendered planning evidence does not promote an undated proposal into confirmation or freedom',()=>{
  const pending=fact('pending','Naru dinner proposal, awaiting approval.',{source:'open_loop'})
  const text=actual.renderContextBlock({query,generatedAt:'2026-10-19T00:00:00Z',facts:[old,move,pending,preference]},3200)
