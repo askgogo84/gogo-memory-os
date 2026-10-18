@@ -11,6 +11,7 @@ const schedule=await import('../lib/agent/read-only-schedule')
 const {gateDetectedIntent}=await import('../lib/agent/semantic-gate')
 const {calendarReadWindow,executeReadOnlyCalendarStep,calendarReadHoldReply,requestedCalendarTimezone}=await import('../lib/agent/calendar-read')
 const reads=['Check my google calendar','Please review my Google Calendar','Show my Google calender','Read my calendar','Can you check my Google Calendar?','Check my Google Calendar. Do not change anything.']
+const qualifiedReads=['Show me all my Google Calendar events for 25 October 2026, from every connected Google account. Include event titles, start and end times, and which calendar each event belongs to. This is read-only. Do not create, change, delete, book, send or set reminders.','Show all my Google Calendar events for 2026-10-25 from all connected Google accounts.','List my Calendar events for 2026-10-25. This is read-only.']
 const connections=['Connect my Google Calendar','Reconnect my calendar','Google Calendar','Is my Google Calendar connected?','Check my Google Calendar connection']
 const mixed=['Check my Google Calendar and create an event tomorrow','Show my Google Calendar and send Alice the agenda','Check my Google Calendar and connect another account','Do not check my Google Calendar','Remind me to check my Google Calendar tomorrow']
 const extraReads=['Read my Google Calendar and display my shopping list','Show my calendar and summarise my saved documents','Check my Google Calendar and get the weather forecast','Check my Google Calendar and summarize today news','Check my Google Calendar. Find flights to Delhi','Check my Google Calendar and what is the weather tomorrow?','Check my Google Calendar today and tell me the weather for my appointment','Check my Calendar today and get the weather for my meeting','Show my Calendar tomorrow and check if I am free and get the weather']
@@ -56,6 +57,10 @@ try{
  })
  await check('connection requests keep their existing intent and never become schedule reads',()=>{
   for(const text of connections){assert.equal(detectIntent(text).type,'connect_calendar',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text),null,text)}
+ })
+ await check('actual live all-account event query remains a bounded read and never a connection intent',()=>{
+  for(const text of qualifiedReads){assert.equal(detectIntent(text).type,'read_calendar',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text)?.scope,'calendar',text)}
+  for(const suffix of [' Connect another Google account.',' And create an event tomorrow.',' And send Alice my calendar.'])assert.equal(schedule.detectReadOnlyScheduleRequest(qualifiedReads[1]+suffix),null)
  })
  await check('read verbs and calendar spellings preserve their explicit day and scope',()=>{
   for(const text of ['Read my Google Calendar today','Display my Google calender tomorrow'])assert.equal(schedule.detectReadOnlyScheduleRequest(text)?.scope,'calendar',text)
@@ -112,6 +117,9 @@ try{
   assert.match(result.text,/Calendar read for next 7 days/)
   assert.equal(calendarReads,1);assert.equal(connectionCalls,0)
  })
+ await check('actual shared entry reads qualified event queries without minting account links',async()=>{
+  for(const text of qualifiedReads){const before=calendarReads,connectionsBefore=connectionCalls;const result=await pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text,messageType:'text'});assert.match(result.text,/Calendar read/);assert.equal(calendarReads,before+1);assert.equal(connectionCalls,connectionsBefore)}
+ })
  await check('shared entry preserves provider failure as uncertainty without a connection flow',async()=>{
   const previousConnections=connectionCalls;failRead=true
   try{
@@ -147,7 +155,7 @@ try{
    'crypto':{randomUUID:()=> 'fixture-calendar-turn'},'next/server':{NextResponse:{json:(body:any,options:any={})=>new Response(JSON.stringify(body),{status:options.status||200})}},
    '@/lib/dashboard/session':{getSession:async()=>({telegramId:'123'})},'@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{assert(['users','conversations'].includes(table));return q}}},
    '@/lib/agent/actor':{resolveAgentActor:async()=>actor},
-   '@/lib/agent/read-only-schedule':{detectReadOnlyScheduleRequest:schedule.detectReadOnlyScheduleRequest,readTomorrowSchedule:async(params:any)=>{assert.equal(params.actor.legacyTelegramId,123);assert.equal(params.scope,'calendar');if(heldReads.includes(params.text)||extraReads.includes(params.text))return schedule.readTomorrowSchedule(params);assert.equal(params.text,reads[0]);calls++;return{text:'Calendar read for next 7 days: Example event',calendarReadVerified:true}}},
+   '@/lib/agent/read-only-schedule':{detectReadOnlyScheduleRequest:schedule.detectReadOnlyScheduleRequest,readTomorrowSchedule:async(params:any)=>{assert.equal(params.actor.legacyTelegramId,123);assert.equal(params.scope,'calendar');if(heldReads.includes(params.text)||extraReads.includes(params.text))return schedule.readTomorrowSchedule(params);assert.ok([reads[0],...qualifiedReads].includes(params.text));calls++;return{text:'Calendar read for next 7 days: Example event',calendarReadVerified:true}}},
    '@/lib/bot/handlers/friend-reminders':{detectFriendReminder:()=>null,isFriendReminderFollowupCandidate:()=>false},
    '@/lib/agent/recall-query':{isDecisionRecallQuery:()=>false},'@/lib/services/link-vault':{isLinkVaultSaveRequest:()=>false,isLinkVaultQuery:()=>false},
    '@/lib/dashboard/day-chat':{detectDashboardDayIntent:rejectIO},'@/lib/bot/process-message':{processIncomingMessage:rejectIO},
@@ -155,6 +163,9 @@ try{
   const request=new Request('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:reads[0]})})
   const response=await dash.POST(Object.assign(request,{nextUrl:new URL(request.url)})),body=await response.json()
   assert.equal(response.status,200);assert.equal(body.handledBy,'read-only-schedule');assert.equal(calls,1)
+ })
+ await check('actual dashboard preserves qualified event reads before connection or generic planning',async()=>{
+  for(const text of qualifiedReads){const request=new Request('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text})});const response=await dash.POST(Object.assign(request,{nextUrl:new URL(request.url)})),body=await response.json();assert.equal(response.status,200);assert.equal(body.handledBy,'read-only-schedule');assert.match(body.text,/Calendar read/)}
  })
  await check('actual dashboard entry honors held reads without Calendar provider transport',async()=>{
   for(const text of heldReads){const before=transportCalls;const request=new Request('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text})});const response=await dash.POST(Object.assign(request,{nextUrl:new URL(request.url)})),body=await response.json();assert.equal(response.status,200);assert.match(body.text,/haven.t read|not read|on hold/i);assert.equal(transportCalls,before)}

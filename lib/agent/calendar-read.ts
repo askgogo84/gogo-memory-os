@@ -11,7 +11,7 @@ const MAX_EVENTS = 40
 const MAX_SLOTS = 6
 const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
 const WEEKDAY_PATTERN = /\b(?:(next|this)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/gi
-const CALENDAR_READ_HEAD=new RegExp(`^(?:please\\s+)?(?:(?:can|could|would)\\s+you\\s+)?(?:check|read|review|show(?:\\s+me)?|list|display|summari[sz]e)\\s+(?:me\\s+)?(?:(?:my|the|your)\\s+)?(?:google\\s+)?${CALENDAR_WORD_RE.source}`)
+const CALENDAR_READ_HEAD=new RegExp(`^(?:please\\s+)?(?:(?:can|could|would)\\s+you\\s+)?(?:check|read|review|show(?:\\s+me)?|list|display|summari[sz]e)\\s+(?:me\\s+)?(?:all\\s+)?(?:(?:my|the|your)\\s+)?(?:google\\s+)?${CALENDAR_WORD_RE.source}`)
 const CALENDAR_READ_HOLD="I haven't read your Calendar. Ask me to check it when you're ready. Nothing was changed."
 const CALENDAR_AVAILABILITY_COMMAND=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:for|me|the|a|an|some|any|my|calendar|free|available|open|(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)[- ](?:minutes?|mins?|hours?|hrs?))\s+)*(?:slots?|time|gaps?|availability)\b/i
 const CALENDAR_AVAILABILITY_QUESTION=/\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b|\b(?:is|are)\s+there\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b|\b(?:i|we)\s+have\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b/i
@@ -105,6 +105,13 @@ export function isStandaloneCalendarReadRequest(raw:string){
   const head=CALENDAR_READ_HEAD
   if(!head.test(text))return false
   const timezoneText=text
+  // These clauses request existing event fields/accounts, not account setup.
+  // Leave every other clause intact for the authority/topic guards below.
+  const prefix=text.match(head)![0]
+  text=prefix+text.slice(prefix.length).replace(/^\s*(?:events?|meetings?|appointments?)\b/,' ')
+  text=text.replace(/\bfrom\s+(?:all|every)\s+(?:my\s+)?connected\s+(?:google\s+)?accounts?\b/g,' ')
+    .replace(/\binclude\s+event\s+titles,\s*start\s+and\s+end\s+times,\s*and\s+which\s+calendar\s+each\s+event\s+belongs\s+to\b/g,' ')
+    .replace(/\bthis\s+is\s+read[- ]only\b/g,' ')
   // This second phrase still asks about the same Calendar. Keep all following
   // qualifiers/topics for whole-request validation rather than dropping them.
   const availabilityClauses=text.match(CALENDAR_AVAILABILITY_CLAUSE)
