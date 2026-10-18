@@ -103,6 +103,7 @@ export type RestaurantReservationIntent={
 export function isRestaurantReservationRequest(raw:string){
   const text=String(raw||'').trim().toLowerCase()
   if(!text)return false
+  if(/^(?:please\s+)?(?:what\s+(?:did|have)\s+(?:i|we)\s+(?:decide|say|agree|choose|discuss)|remind\s+me\s+what\b|what\s+was\s+(?:my|our)\s+decision\b)/i.test(text))return false
   const booking=/\b(book|booking|reserve|reservation|table)\b/.test(text)
   const restaurant=/\b(restaurant|cafe|café|bistro|bar|noodle|dinner|lunch|brunch|table|party\s+of)\b/.test(text)
     ||/\b(?:book|reserve)\s+[a-z0-9&.' -]{2,80}\s+for\s+\d{1,2}\b/i.test(text)

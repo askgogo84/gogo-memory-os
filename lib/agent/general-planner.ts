@@ -280,7 +280,7 @@ function capabilityForStep(step: GeneralPlanStep): AgentCapability {
 function classifyStep(step: GeneralPlanStep) {
   if (step.tool === 'web_search') return { capability:'browser' as const, mode:'read' as const, risk:'low' as const, irreversible:false, title:step.title, why:'This only searches the public web.' }
   if (step.tool === 'artifact') return { capability:'memory' as const, mode:'execute' as const, risk:'low' as const, irreversible:false, title:step.title, why:'This creates a private AskGogo artifact.' }
-  if (step.tool === 'tasks') return { capability:'tasks' as const, mode:'execute' as const, risk:'low' as const, irreversible:false, title:step.title, why:'This creates or updates a private AskGogo task.' }
+  if (step.tool === 'tasks') return { capability:'tasks' as const, mode:taskStepIntent(step)==='read'?'read' as const:'execute' as const, risk:'low' as const, irreversible:false, title:step.title, why:taskStepIntent(step)==='read'?'This only reads private AskGogo tasks.':'This creates or updates a private AskGogo task.' }
   if (step.tool === 'calendar') {
     const mutation = /\b(add|create|change|move|schedule|write|modify|prepare|invite|cancel|delete|event\s+titled|spanning)\b/i.test(step.instruction)
     return mutation
@@ -398,7 +398,27 @@ function taskTextForStep(step: GeneralPlanStep) {
   return cleanTaskText(instruction)
 }
 
-async function executeTaskStep(actor: AgentActor, step: GeneralPlanStep) {
+export function taskStepIntent(step:GeneralPlanStep):'read'|'write'|'mixed'|'unknown'{
+  const instruction=String(step.instruction||'').trim()
+  const read=/^(?:please\s+)?(?:list|show|read|find|review|check|get)\b/i.test(instruction)
+  const write=/\b(?:create|add|delete|remove|update|complete|mark|change)\b/i.test(instruction)
+  if(read&&write)return 'mixed'
+  if(read)return 'read'
+  if(/^(?:please\s+)?(?:create|add)(?:\s+or\s+verify)?\b/i.test(instruction))return 'write'
+  return 'unknown'
+}
+
+export async function executeTaskStep(actor: AgentActor, step: GeneralPlanStep) {
+  if(!actor.whatsappId)throw new Error('task_owner_missing')
+  const intent=taskStepIntent(step)
+  if(intent==='read'){
+    const {data,error}=await supabaseAdmin.from('todos').select('id,text').eq('whatsapp_id',actor.whatsappId).eq('done',false).order('created_at',{ascending:false}).limit(50)
+    if(error)throw new Error(`task_read_failed:${error.message}`)
+    const travel=/\b(?:travel|trip)\b/i.test(step.instruction)
+    const rows=(data||[]).filter(row=>!travel||/\b(?:travel|trip|flight|hotel|passport|visa|pack(?:ing)?)\b/i.test(row.text))
+    return{text:rows.length?rows.map(row=>`- ${safeLog(row.text,500)}`).join('\n'):'No matching open tasks were found in this lookup.',output:{tasks:rows,verifiedStore:'todos',readOnly:true}}
+  }
+  if(intent!=='write')throw new Error('task_action_ambiguous')
   const text = taskTextForStep(step)
   if (!text) throw new Error('task_text_missing')
   const { data: existing, error: readError } = await supabaseAdmin.from('todos')

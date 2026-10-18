@@ -70,6 +70,8 @@ let seen: any[] = []
 const db: any = { from(table: string) { const q: any = { select() { return q }, eq() { return q }, maybeSingle() { return q }, insert() { return q }, then(resolve: any, reject: any) { return Promise.resolve({ data: table === 'users' ? { telegram_id: 101, whatsapp_id: 'fixture', name: 'Fixture' } : null, error: null }).then(resolve, reject) } }; return q } }
 const noops = new Proxy({}, { get: () => async () => null })
 const chat = load('app/api/dashboard/chat/route.ts', {
+  '@/lib/agent/recall-query': {isDecisionRecallQuery:()=>false},
+  '@/lib/services/link-vault': {isLinkVaultSaveRequest:()=>false,isLinkVaultQuery:()=>false},
   crypto: { randomUUID: () => 'fixture-event' },
   'next/server': { NextResponse: { json: (body: any, options?: any) => ({ body, status: options?.status || 200 }) } },
   '@/lib/supabase-admin': { supabaseAdmin: db },

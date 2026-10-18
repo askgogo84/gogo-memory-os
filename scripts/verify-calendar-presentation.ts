@@ -124,6 +124,8 @@ async function main(){
   const nullModule=new Proxy({}, {get:()=>async()=>null})
   const mocks:any=Object.fromEntries([...source.matchAll(/from ['"]([^'"]+)['"]/g)].map(m=>[m[1],nullModule]))
   Object.assign(mocks,{'next/server':{NextRequest,NextResponse},'crypto':{randomUUID:()=> 'fixture-calendar-turn'},
+    '@/lib/agent/recall-query':{isDecisionRecallQuery:()=>false},
+    '@/lib/services/link-vault':{isLinkVaultSaveRequest:()=>false,isLinkVaultQuery:()=>false},
     '@/lib/dashboard/session':{getSession:async()=>({telegramId:'123'})},'@/lib/supabase-admin':{supabaseAdmin},
     '@/lib/agent/actor':{resolveAgentActor:async()=>actor},
     '@/lib/agent/read-only-schedule':{detectReadOnlyScheduleRequest,readTomorrowSchedule},

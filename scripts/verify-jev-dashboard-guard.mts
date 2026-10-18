@@ -25,6 +25,8 @@ let genericPlans = 0
 let observed: any = null
 const noops = new Proxy({}, { get: () => async () => null })
 const routeMocks: any = {
+  '@/lib/agent/recall-query': {isDecisionRecallQuery:()=>false},
+  '@/lib/services/link-vault': {isLinkVaultSaveRequest:()=>false,isLinkVaultQuery:()=>false},
   crypto: { randomUUID: () => 'fixture-event' },
   'next/server': { NextResponse: { json: (body: any, options?: any) => ({ body, status: options?.status || 200 }) } },
   '@/lib/supabase-admin': { supabaseAdmin: db },
