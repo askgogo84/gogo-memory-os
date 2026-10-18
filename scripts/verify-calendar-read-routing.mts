@@ -8,12 +8,14 @@ process.env.OPENAI_API_KEY='fixture-only'
 process.env.ANTHROPIC_API_KEY='fixture-only'
 const {detectIntent}=await import('../lib/bot/detect-intent')
 const schedule=await import('../lib/agent/read-only-schedule')
-const {calendarReadWindow,executeReadOnlyCalendarStep}=await import('../lib/agent/calendar-read')
+const {calendarReadWindow,executeReadOnlyCalendarStep,calendarReadHoldReply,requestedCalendarTimezone}=await import('../lib/agent/calendar-read')
 const reads=['Check my google calendar','Please review my Google Calendar','Show my Google calender','Read my calendar','Can you check my Google Calendar?','Check my Google Calendar. Do not change anything.']
 const connections=['Connect my Google Calendar','Reconnect my calendar','Google Calendar','Is my Google Calendar connected?','Check my Google Calendar connection']
 const mixed=['Check my Google Calendar and create an event tomorrow','Show my Google Calendar and send Alice the agenda','Check my Google Calendar and connect another account','Do not check my Google Calendar','Remind me to check my Google Calendar tomorrow']
 const extraReads=['Read my Google Calendar and display my shopping list','Show my calendar and summarise my saved documents','Check my Google Calendar and get the weather forecast','Check my Google Calendar and summarize today news','Check my Google Calendar. Find flights to Delhi','Check my Google Calendar and what is the weather tomorrow?']
 const heldReads=['Check my Google Calendar? Actually, do not check it.','Check my Google Calendar only after I approve','Show my Calendar today. Do not read it yet.']
+const neverReads=['Never read my Google Calendar','Please never check my Calendar.']
+const zonedReads=['Check my Google Calendar in UTC','Read my calendar in Asia/Kolkata','Show my calendar using Europe/London','Review my Calendar timezone is America/New_York','Read my Calendar tomorrow at 8 pm CET']
 const failures:string[]=[]
 async function check(label:string,fn:()=>unknown){try{await fn();console.log('PASS '+label)}catch(error:any){failures.push(label+': '+error.message)}}
 const rejectIO=()=>{throw Error('Unexpected model/provider/action I/O')}
@@ -62,6 +64,17 @@ try{
  await check('explicitly deferred and revoked reads have a hold result instead of a read',()=>{
   for(const text of heldReads){assert.equal(detectIntent(text).type,'calendar_read_held',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text)?.horizon,'held',text)}
  })
+ await check('never-read prohibitions hold while corrections and never-forget requests remain readable',()=>{
+  for(const text of neverReads){assert.ok(calendarReadHoldReply(text),text);assert.equal(detectIntent(text).type,'calendar_read_held',text)}
+  const correction='Never read today, but show my Calendar tomorrow'
+  assert.equal(calendarReadHoldReply(correction),null)
+  assert.equal(detectIntent(correction).type,'read_calendar')
+  assert.equal(calendarReadWindow(correction,new Date('2026-10-18T12:00:00Z'),'Asia/Kolkata').startDate,'2026-10-19')
+  assert.equal(detectIntent('Never forget to read my Calendar').type,'read_calendar')
+ })
+ await check('valid explicit timezone qualifiers reach the Calendar reader',()=>{
+  for(const text of zonedReads){assert.equal(detectIntent(text).type,'read_calendar',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text)?.scope,'calendar',text);assert.ok(requestedCalendarTimezone(text),text)}
+ })
  await check('actual shared message entry reads without minting a connection link',async()=>{
   const q:any={insert:()=>({error:null}),select:()=>q,eq:()=>q,maybeSingle:async()=>({data:null,error:null})}
   pm=load('lib/bot/process-message.ts',{
@@ -73,6 +86,8 @@ try{
    '@/lib/agent/calendar-read':{executeReadOnlyCalendarStep:readCalendar},
    './handlers/calendar-actions':{isCalendarAction:()=>false,getCalendarTokens:async()=>{connectionCalls++;return{connected:false}},buildCalendarActionReply:rejectIO},
    '@/lib/google-calendar':{getAuthUrl:()=>{connectionCalls++;return 'https://fixture.invalid/auth'},buildCalendarConnectUrl:()=>{connectionCalls++;return 'https://fixture.invalid/auth'}},
+   './handlers/deterministic':{buildDeterministicWeatherReply:async()=> 'Synthetic weather only'},
+   './handlers/response-style':{styleReplyByIntent:(_intent:string,text:string)=>text},
   })
   const result=await pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text:reads[0],messageType:'text'})
   assert.match(result.text,/Calendar read for next 7 days/)
@@ -90,8 +105,14 @@ try{
  await check('actual shared entry honors read holds without Calendar or connection calls',async()=>{
   for(const text of heldReads){const before=calendarReads,connectionsBefore=connectionCalls;const result=await pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text,messageType:'text'});assert.match(result.text,/haven.t read|not read|on hold/i);assert.equal(calendarReads,before);assert.equal(connectionCalls,connectionsBefore)}
  })
+ await check('actual shared entry honors never-read prohibitions without Calendar or connection calls',async()=>{
+  for(const text of neverReads){const before=calendarReads,connectionsBefore=connectionCalls;const result=await pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text,messageType:'text'});assert.match(result.text,/haven.t read|not read|on hold/i);assert.equal(calendarReads,before);assert.equal(connectionCalls,connectionsBefore)}
+ })
+ await check('mixed Calendar and weather reads explicitly clarify both topics before any provider call',async()=>{
+  for(const text of extraReads.filter(text=>/weather/.test(text))){const before=calendarReads,connectionsBefore=connectionCalls;const result=await pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text,messageType:'text'});assert.match(result.text,/Calendar/i);assert.match(result.text,/separat|both|another task/i);assert.notEqual(result.text,'Synthetic weather only');assert.equal(calendarReads,before);assert.equal(connectionCalls,connectionsBefore)}
+ })
  await check('actual Calendar reader refuses a held instruction before owner/provider transport',async()=>{
-  for(const text of heldReads){const before=transportCalls;const result=await executeReadOnlyCalendarStep({actor,instruction:text,missionText:text});assert.match(result.text,/haven.t read|not read|on hold/i);assert.equal(transportCalls,before)}
+  for(const text of [...heldReads,...neverReads]){const before=transportCalls;const result=await executeReadOnlyCalendarStep({actor,instruction:text,missionText:text});assert.match(result.text,/haven.t read|not read|on hold/i);assert.equal(transportCalls,before)}
  })
  await check('actual dashboard entry delegates a date-free calendar read before generic planning',async()=>{
   const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{telegram_id:123,whatsapp_id:'fixture-owner',name:'Example'},error:null}),insert:()=>({error:null})}
