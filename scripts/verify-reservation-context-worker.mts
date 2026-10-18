@@ -16,7 +16,7 @@ const inventory={ownerId:'123',coveredFrom:new Date(fixed).toISOString(),covered
 const calendar={ownerId:'123',connected:true,incomplete:false,coveredFrom:new Date(fixed).toISOString(),coveredUntil:inventory.coveredUntil,windows:[{startAt:'2026-10-22T14:00:00.000Z',endAt:'2026-10-22T17:00:00.000Z',sourceRefs:[{type:'calendar_event',id:'opaque-calendar'}]}]}
 const preferences={ownerId:'123',incomplete:false,rules:[{id:'fixture-rule',text:'Only vegetarian restaurants'}]}
 const snapshot=dining.buildReservationDiningContext({actor,timezone:'Asia/Kolkata',requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',now:new Date(fixed),pack:{reservationTravel:inventory,reservationCalendar:calendar,reservationPreferences:preferences}})
-const payload:any={restaurant:'Synthetic Restaurant',reservationUrl:'https://example.test/reserve',reservationLocation:'Home city',partySize:2,preferredStart:'19:00',preferredEnd:'21:00',requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',contextWindows:snapshot.windows,diningContext:snapshot,approvalId:'fixture-approval'}
+const payload:any={restaurant:'Synthetic Restaurant',reservationUrl:'https://example.test/reserve',reservationLocation:'Home city',partySize:2,preferredStart:'19:00',preferredEnd:'21:00',timeConstraint:{version:1,kind:'window',start:'19:00',end:'21:00'},requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',contextWindows:snapshot.windows,diningContext:snapshot,approvalId:'fixture-approval'}
 const boundInput=()=>preparation.restaurantReservationApprovalInput({runId:'fixture-run',lifeEventId:'fixture-event',actionId:'fixture-action',...payload,providerUrl:payload.reservationUrl})
 // The real fingerprint, not a fixture implementation, binds all material fields.
 const binding=buildApprovalBinding(boundInput())

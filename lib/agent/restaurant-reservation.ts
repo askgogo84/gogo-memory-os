@@ -784,7 +784,7 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
   const{data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',tg).eq('action_type','booking').eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   if(!action||!approval)throw new Error('approval_required')
   const p:any=action.payload_json||{}
-  assertApprovalBinding(restaurantReservationApprovalInput({runId:params.runId,lifeEventId:String(meta.life_event_id),actionId:String(action.id),restaurant:String(p.restaurant||meta.restaurant||''),providerUrl:String(p.reservationUrl||meta.reservation_url||''),partySize:Number(p.partySize)||null,preferredStart:String(p.preferredStart||''),preferredEnd:String(p.preferredEnd||''),requestedDate:String(p.requestedDate||''),releaseAt:String(p.releaseAt||meta.release_at||'')||null,contextWindows:Array.isArray(p.contextWindows)?p.contextWindows:[],diningContext:p.diningContext,reservationLocation:p.reservationLocation||null}),approval)
+  assertApprovalBinding(restaurantReservationApprovalInput({runId:params.runId,lifeEventId:String(meta.life_event_id),actionId:String(action.id),restaurant:String(p.restaurant||meta.restaurant||''),providerUrl:String(p.reservationUrl||meta.reservation_url||''),partySize:Number(p.partySize)||null,preferredStart:String(p.preferredStart||''),preferredEnd:String(p.preferredEnd||''),requestedDate:String(p.requestedDate||''),releaseAt:String(p.releaseAt||meta.release_at||'')||null,contextWindows:Array.isArray(p.contextWindows)?p.contextWindows:[],diningContext:p.diningContext,reservationLocation:p.reservationLocation||null,timeConstraint:p.timeConstraint}),approval)
   // Refresh and arming compete for the same captured run version. A stale arm
   // must lose before it can restore an old payload or expire new authority.
   async function transitionRun(values:Record<string,unknown>){
@@ -801,15 +801,15 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
     const {data,error}=await write.select('id').maybeSingle()
     if(error||!data)throw new Error('restaurant_reservation_action_changed')
   }
-  if(!usableReservationDiningContext(p.diningContext)||Date.parse(p.diningContext.until)<=Date.now()){
+  if(!validRestaurantTimeConstraint(p.timeConstraint,String(p.preferredStart||''),String(p.preferredEnd||''))||!usableReservationDiningContext(p.diningContext)||Date.parse(p.diningContext.until)<=Date.now()){
     const at=new Date().toISOString()
-    await transitionRun({status:'paused',error:'restaurant_context_review_required',summary:'This approval lacks current verified dining-date coverage. Request a refreshed bounded approval; no reservation was armed.',updated_at:at})
+    await transitionRun({status:'paused',error:'restaurant_context_review_required',summary:'This approval lacks current verified dining-date or time authority. Request a refreshed bounded approval; no reservation was armed.',updated_at:at})
     await transitionAction({status:'blocked',updated_at:at})
     const results=await Promise.all([
       supabaseAdmin.from('agent_approvals').update({status:'expired',resolved_at:at,resolution_note:'restaurant_context_review_required'}).eq('id',approval.id).eq('telegram_id',tg).eq('status','approved'),
     ])
     if(results.some(result=>result.error))throw new Error('restaurant_context_review_pause_failed')
-    return{runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'This older reservation approval needs verified dining-date context. Nothing was armed. Request the reservation again to refresh this same mission and review a new bounded approval.'}
+    return{runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'This older reservation approval needs verified dining-date context and time authority. Nothing was armed. Request the reservation again to refresh this same mission and review a new bounded approval.'}
   }
   const now=new Date().toISOString()
   if(alreadyArmed)return{runId:params.runId,status:'queued' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,text:'This exact reservation is already armed. No new attempt or authority was created.'}

@@ -13,7 +13,7 @@ const inventory={ownerId:'123',coveredFrom:'2026-10-18T10:00:00Z',coveredUntil:'
 const calendar={...inventory,connected:true,windows:[]}
 const preferences={ownerId:'123',incomplete:false,rules:[]}
 const snapshot=dining.buildReservationDiningContext({actor,timezone:'Asia/Kolkata',requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',now:new Date('2026-10-18T10:00:00Z'),pack:{reservationTravel:inventory,reservationCalendar:calendar,reservationPreferences:preferences}})
-const payload={restaurant:'Synthetic Restaurant',reservationUrl:'https://provider.example/reserve',reservationLocation:'Home city',partySize:2,preferredStart:'19:00',preferredEnd:'21:00',requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',contextWindows:[],diningContext:snapshot,approvalId:'approval'}
+const payload={restaurant:'Synthetic Restaurant',reservationUrl:'https://provider.example/reserve',reservationLocation:'Home city',partySize:2,preferredStart:'19:00',preferredEnd:'21:00',timeConstraint:{version:1,kind:'window',start:'19:00',end:'21:00'},requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',contextWindows:[],diningContext:snapshot,approvalId:'approval'}
 let rows:Record<string,any>,faultTable='',faultMode:'error'|'zero'|'throw'='error',receiptFault=false,recoveryFault=false,slowActionCompletion=false,handoffReleases=0,providerCalls=0,providerObjective='',calendarCalls=0,notifications:string[]=[],activityTypes:string[]=[],writes:Array<{table:string;patch:any}>=[]
 const db={from(table:string){let patch:any,insert:any,single=false;const filters:Array<(row:any)=>boolean>=[]
  const execute=()=>{
