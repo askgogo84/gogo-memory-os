@@ -24,13 +24,14 @@ function load(file:string,deps:Record<string,unknown>){
  return exports
 }
 const actor={userId:'fixture',legacyTelegramId:123,whatsappId:'fixture-owner',name:'Example'}
-let calendarReads=0,connectionCalls=0
+let calendarReads=0,connectionCalls=0,failRead=false,pm:any
 const readCalendar=async(params:any)=>{
  assert.equal(params.actor.legacyTelegramId,123)
  assert.equal(params.actor.userId,'fixture')
  assert.equal(params.instruction,params.missionText)
  assert.equal(params.rememberSelection,undefined,'a read cannot arm later object mutations')
- calendarReads++;return {text:'Calendar read for next 7 days: Example event',complete:true,events:[]}
+ calendarReads++;if(failRead)throw Error('fixture_provider_down')
+ return {text:'Calendar read for next 7 days: Example event',complete:true,events:[]}
 }
 try{
  await check('explicit reads are never calendar connection intents',()=>{
@@ -49,7 +50,7 @@ try{
  })
  await check('actual shared message entry reads without minting a connection link',async()=>{
   const q:any={insert:()=>({error:null}),select:()=>q,eq:()=>q,maybeSingle:async()=>({data:null,error:null})}
-  const pm=load('lib/bot/process-message.ts',{
+  pm=load('lib/bot/process-message.ts',{
    './resolve-user':{resolveUser:async()=>({id:'fixture',telegramId:123,whatsappId:'fixture-owner',name:'Example'})},
    './detect-intent':{detectIntent},'@/lib/agent/semantic-gate':{gateDetectedIntent:(intent:any)=>intent},
    './format-response':{formatOutgoingText:(_channel:string,text:string)=>text},
@@ -62,6 +63,15 @@ try{
   const result=await pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text:reads[0],messageType:'text'})
   assert.match(result.text,/Calendar read for next 7 days/)
   assert.equal(calendarReads,1);assert.equal(connectionCalls,0)
+ })
+ await check('shared entry preserves provider failure as uncertainty without a connection flow',async()=>{
+  const previousConnections=connectionCalls;failRead=true
+  try{
+   const result=await pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text:reads[0],messageType:'text'})
+   assert.match(result.text,/couldn.t verify|unavailable|could not read/i)
+   assert.doesNotMatch(result.text,/calendar is clear|no events|https:\/\/fixture.invalid\/auth/i)
+   assert.equal(connectionCalls,previousConnections)
+  }finally{failRead=false}
  })
  await check('actual dashboard entry delegates a date-free calendar read before generic planning',async()=>{
   const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{telegram_id:123,whatsapp_id:'fixture-owner',name:'Example'},error:null}),insert:()=>({error:null})}
