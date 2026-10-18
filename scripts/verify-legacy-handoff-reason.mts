@@ -99,4 +99,8 @@ await check('actual Activity list and task detail share truthful current-run cop
 await check('completed Activity history remains the recorded historical summary',async()=>{
  rows[0].status='completed';const activity=load(resolve(repo,'lib/dashboard/agent-activity.ts'));const run=await activity.getDashboardActivityRun('123','run-a');assert.equal(run.summary,legacy)
 })
+await check('retired paused records do not receive instructions to resume closed work',async()=>{
+ rows[0].metadata_json.state='closed_stale';const activity=load(resolve(repo,'lib/dashboard/agent-activity.ts'));for(const run of [(await activity.getDashboardActivityRuns('123'))[0],await activity.getDashboardActivityRun('123','run-a')]){assert.equal(run.status,'closed');assert.equal(run.summary,legacy)}
+ const response=await load(resolve(repo,'app/api/agent/snapshot/route.ts')).GET({});const body=await response.json();assert.equal(body.runs[0].status,'closed');assert.equal(body.runs[0].summary,legacy)
+})
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Actual legacy handoff reason projection: owner/run/tool provenance, uncertainty, minimal reads and no writes passed.')
