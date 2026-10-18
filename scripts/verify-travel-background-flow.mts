@@ -222,6 +222,8 @@ const webSource=readFileSync('app/api/dashboard/chat/route.ts','utf8')
 const names=[...webSource.matchAll(/from ['"]([^'"]+)['"]/g)].map(m=>m[1])
 const webMocks=Object.fromEntries(names.map(name=>[name,nullModule]))
 Object.assign(webMocks,{'next/server':{NextRequest,NextResponse},'crypto':{randomUUID:()=> 'fixture-web-turn'},
+  '@/lib/agent/recall-query':{isDecisionRecallQuery:()=>false},
+  '@/lib/services/link-vault':{isLinkVaultSaveRequest:()=>false,isLinkVaultQuery:()=>false},
   '@/lib/dashboard/session':{getSession:async()=>({telegramId:'42'})},'@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/agent/actor':{resolveAgentActor:async()=>actor},'@/lib/agent/travel-research':travel,'@/lib/agent/travel-research-sanitize':sanitizer,
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},
