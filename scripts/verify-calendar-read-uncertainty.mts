@@ -32,7 +32,9 @@ function load(file:string,deps:Record<string,unknown>,fetcher?:unknown,expose?:s
   {exports,process,Date,URL,URLSearchParams,console,fetch:fetcher,require:(name:string)=>{assert.ok(name in deps,'Unexpected dependency '+name);return deps[name]}})
  return exports
 }
-const accounts=load('lib/services/google-calendar-accounts.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/services/google-calendar':calendar})
+// Use the real busy-state helper now consumed by account deduplication. Keep
+// provider/database transports inert and retain every uncertainty assertion.
+const accounts=load('lib/services/google-calendar-accounts.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/services/google-calendar':calendar,'@/lib/calendar-intervals':intervals})
 const deps={'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/services/weather':weather,'@/lib/google-calendar':calendar,'@/lib/services/google-calendar-accounts':accounts,
  '@/lib/limits':{},'./followup-state':followups}
 const morning=load('lib/bot/handlers/morning-briefing.ts',deps)
