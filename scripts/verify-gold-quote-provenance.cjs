@@ -90,4 +90,12 @@ check('abbreviated quote dates do not borrow an earlier heading date',()=>{
 check('month-first quote dates keep their own day',()=>{
  const result=answer('1. Bangalore board\nAs of 18 October 2026. 24K as of Oct 17, 2026 per gram ₹14000\nSource: https://synthetic.invalid/month-first');assert.match(result,/24K — as of 2026-10-17/);
 });
+check('currency before a purity label keeps the stated association',()=>{
+ const result=answer('1. Bangalore rates\n18 October 2026. ₹14000 per gram for 24K and ₹12800 per gram for 22K\nSource: https://synthetic.invalid/reverse');
+ assert.match(result,/24K: ₹14,?000/);assert.match(result,/22K: ₹12,?800/);assert.doesNotMatch(result,/24K: ₹12,?800/);
+});
+check('mixed forward and reverse quotes do not exchange prices',()=>{
+ const result=answer('1. Bangalore rates\n18 October 2026. 24K gold ₹14000 per gram; ₹12800 per gram for 22K\nSource: https://synthetic.invalid/mixed');
+ assert.match(result,/24K: ₹14,?000/);assert.match(result,/22K: ₹12,?800/);
+});
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');
