@@ -1,8 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ExpenseEntry, DailyExpenseSummary } from './expense-analyzer'
 
-function getTodayRange(tz = 'Asia/Kolkata') {
-  const now = new Date()
+function getTodayRange(tz = 'Asia/Kolkata', now = new Date()) {
   const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' })
   const dateStr = formatter.format(now)
   const startOfDay = new Date(`${dateStr}T00:00:00+05:30`)
@@ -58,7 +57,7 @@ async function expenseRows(telegramId: number, whatsappId: string | null | undef
     if (!second.error) return second.data || []
   }
   console.error('[expense-storage] read failed:', first.error.message)
-  return []
+  throw new Error('expense_records_unavailable')
 }
 
 // ── Get today's expenses ──────────────────────────────────────────────────────
@@ -94,10 +93,14 @@ export async function getTodayExpenses(telegramId: number, whatsappId?: string |
 
 // ── Get period expenses (week/month) ─────────────────────────────────────────
 export async function getPeriodExpenses(telegramId: number, period: 'week' | 'month' = 'week', whatsappId?: string | null) {
-  const since = new Date()
-  if (period === 'week') since.setDate(since.getDate() - 7)
-  else since.setDate(1)
-  const rows = await expenseRows(telegramId, whatsappId, since.toISOString())
+  const now=new Date()
+  const {dateStr}=getTodayRange('Asia/Kolkata',now)
+  const localDay=new Date(`${dateStr}T00:00:00Z`)
+  if(period==='week')localDay.setUTCDate(localDay.getUTCDate()-(localDay.getUTCDay()+6)%7)
+  else localDay.setUTCDate(1)
+  const start=new Date(localDay.getTime()-330*60_000).toISOString()
+  const end=now.toISOString()
+  const rows = await expenseRows(telegramId, whatsappId, start,end)
 
   if (!rows?.length) return null
 
@@ -108,5 +111,5 @@ export async function getPeriodExpenses(telegramId: number, period: 'week' | 'mo
     byCategory[r.category] = (byCategory[r.category] || 0) + Number(r.amount)
   }
 
-  return { total, count: rows.length, byCategory, entries: rows }
+  return { total, count: rows.length, byCategory, entries: rows,range:{start,end,timezone:'Asia/Kolkata'} }
 }

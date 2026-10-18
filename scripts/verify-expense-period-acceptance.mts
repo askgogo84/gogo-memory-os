@@ -22,4 +22,17 @@ await check('unavailable records cannot become an authoritative empty or zero-sp
  fail=true;try{await assert.rejects(()=>actual.getPeriodExpenses(123,'week'),/expense.*unavailable/i);await assert.rejects(()=>actual.getTodayExpenses(123),/expense.*unavailable/i)}finally{fail=false}
 })
 await check('all expense acceptance probes are reads with exact owner binding',()=>assert.ok(reads>=4))
+let saves=0
+const api:any={}
+runInNewContext(ts.transpileModule(readFileSync('app/api/expenses/route.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:api,require:(name:string)=>name==='next/server'?{NextResponse:{json:(body:any,options:any={})=>new Response(JSON.stringify(body),{status:options.status||200})}}:name==='@/lib/security/cron-auth'?{isInternalServiceAuthorized:()=>true}:name==='@/lib/bot/services/expense-storage'?{...actual,saveExpense:async()=>{saves++;return{id:'fixture-saved'}}}:name==='@/lib/bot/services/expense-analyzer'?{parseExpenseText:async()=>({amount:450,category:'Food',description:'test lunch'}),generateDailyInsight:()=>{throw Error('Unexpected model call')}}:{},Date:FixedDate,Intl,console,URL,Response})
+const request=()=>({nextUrl:new URL('https://fixture.invalid/api/expenses?telegramId=123&period=week')})
+await check('actual expense GET includes entries and exact reported range',async()=>{
+ const response=await api.GET(request());assert.equal(response.status,200);const {reply}=await response.json();assert.match(reply,/1650/);assert.match(reply,/test lunch/);assert.match(reply,/test petrol/);assert.match(reply,/Monday-start week/);assert.doesNotMatch(reply,/previous week|future record/);assert.equal(saves,0)
+})
+await check('actual expense GET reports unavailable rather than zero on read failure',async()=>{
+ fail=true;try{const response=await api.GET(request());assert.equal(response.status,503);assert.match((await response.json()).reply,/unavailable/i);assert.equal(saves,0)}finally{fail=false}
+})
+await check('saved expense stays acknowledged if the subsequent total read fails',async()=>{
+ fail=true;try{const response=await api.POST({json:async()=>({telegramId:123,text:'spent 450 on test lunch'})});assert.equal(response.status,200);const body=await response.json();assert.equal(body.ok,true);assert.match(body.reply,/was saved.*totals.*unavailable/i);assert.equal(saves,1)}finally{fail=false}
+})
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}

@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   if (!saved) return NextResponse.json({ reply: "I couldn't save that expense just now, so nothing was logged. Please try again in a minute." })
 
   // Get today's total for context
-  const today = await getTodayExpenses(telegramId, phone || null)
+  const today = await getTodayExpenses(telegramId, phone || null).catch(()=>null)
 
   const catEmoji: Record<string, string> = {
     Food: '🍜', Transport: '🚗', Bills: '⚡', Shopping: '🛍️',
@@ -48,8 +48,8 @@ export async function POST(req: NextRequest) {
     `${catEmoji[expense.category] || '💰'} *Logged ₹${expense.amount}* — ${expense.description}`,
     `Category: ${expense.category}`,
     ``,
-    `Today's total: *₹${today.total}* (${today.count} transaction${today.count !== 1 ? 's' : ''})`,
-    today.total > 0 ? `Top spend: ${today.topCategory} ₹${today.byCategory[today.topCategory]}` : '',
+    today?`Today's total: *₹${today.total}* (${today.count} transaction${today.count !== 1 ? 's' : ''})`:'The expense was saved, but totals are temporarily unavailable. Do not log it again.',
+    today&&today.total > 0 ? `Top spend: ${today.topCategory} ₹${today.byCategory[today.topCategory]}` : '',
     ``,
     `Say *expenses today* for breakdown or *expense insight* for AI analysis.`,
   ].filter(l => l !== undefined).join('\n').trim()
@@ -81,7 +81,8 @@ export async function GET(req: NextRequest) {
   }
 
   if (period === 'today') {
-    const today = await getTodayExpenses(telegramId, phone || null)
+    const today = await getTodayExpenses(telegramId, phone || null).catch(()=>null)
+    if(!today)return NextResponse.json({reply:'I could not read your expense records right now. Your spending total is unavailable; I have not changed any records.'},{status:503})
 
     if (today.count === 0) {
       return NextResponse.json({ reply: "No expenses logged today yet.\n\nSay *spent 200 on lunch* to start tracking! 💰" })
@@ -120,7 +121,9 @@ export async function GET(req: NextRequest) {
   }
 
   // Week or month
-  const data = await getPeriodExpenses(telegramId, period, phone || null)
+  const result=await getPeriodExpenses(telegramId,period,phone||null).then(data=>({data,error:false}),()=>({data:null,error:true}))
+  if(result.error)return NextResponse.json({reply:'I could not read your expense records right now. Your spending total is unavailable; I have not changed any records.'},{status:503})
+  const data=result.data
   if (!data) {
     return NextResponse.json({ reply: `No expenses logged this ${period} yet.` })
   }
@@ -132,9 +135,13 @@ export async function GET(req: NextRequest) {
 
   const reply = [
     `📊 *${period === 'week' ? 'This Week' : 'This Month'}'s Expenses*`,
+    ...(data.range?[`Range: ${new Date(data.range.start).toLocaleDateString('en-IN',{timeZone:data.range.timezone})} through ${new Date(data.range.end).toLocaleDateString('en-IN',{timeZone:data.range.timezone})} (${data.range.timezone}; ${period==='week'?'Monday-start week':'calendar month'}, through now)`]:[]),
     `Total: *₹${data.total}* · ${data.count} transactions`,
     ``,
     breakdown,
+    '',
+    `Recent entries (${Math.min(data.entries.length,20)} of ${data.count}):`,
+    ...data.entries.slice(0,20).map(e=>`• ₹${e.amount} — ${e.description} (${e.category}; ${new Date(e.logged_at).toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata'})})`),
   ].join('\n')
 
   return NextResponse.json({ reply })

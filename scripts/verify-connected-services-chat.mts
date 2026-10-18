@@ -31,4 +31,32 @@ await check('connection commands and mixed changes cannot be claimed as a comple
   assert.equal(actual.isConnectionCapabilityQuery?.(text),false);assert.equal(await actual.tryGetConnectionCapabilities({actor:{legacyTelegramId:123},text}),null)
  }
 })
+const noop=new Proxy({}, {get:(_target,key)=>/^(?:record|observe|capture)/.test(String(key))?async()=>null:()=>null})
+function load(file:string,deps:any){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:(name:string)=>deps[name]||noop,Date,Intl,console,URL,Request,Response,Buffer,process});return exports}
+const user={id:'fixture',telegramId:123,whatsappId:'fixture-owner',name:'Example'}
+const pm=load('lib/bot/process-message.ts',{
+ './resolve-user':{resolveUser:async()=>user},'@/lib/agent/autonomy-status':actual,
+ './format-response':{formatOutgoingText:(_channel:string,text:string)=>text},
+ '@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{assert.equal(table,'conversations');return{insert:async(row:any)=>{assert.equal(row.telegram_id,123);return{error:null}}}}}},
+})
+await check('actual shared message boundary reports saved capabilities before models',async()=>{
+ const result=await pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text:prompt,messageType:'text'})
+ assert.equal(result.handledBy,'connection-capabilities');assert.ok(result.text.includes('CreditIQ'))
+})
+const dash=load('app/api/dashboard/chat/route.ts',{
+ crypto:{randomUUID:()=> 'fixture-decision'},'next/server':{NextResponse:{json:(body:any,options:any={})=>new Response(JSON.stringify(body),{status:options.status||200})}},
+ '@/lib/dashboard/session':{getSession:async()=>({telegramId:'123'})},
+ '@/lib/agent/actor':{resolveAgentActor:async()=>({userId:'fixture',legacyTelegramId:123,whatsappId:'fixture-owner',name:'Example'})},
+ '@/lib/supabase-admin':{supabaseAdmin:{from:(table:string)=>{assert.equal(table,'users');const q:any={select:()=>q,eq:()=>q,maybeSingle:async()=>({data:{telegram_id:123,whatsapp_id:'fixture-owner',name:'Example'}})};return q}}},
+ '@/lib/agent/autonomy-status':actual,'@/lib/bot/process-message':pm,
+ '@/lib/agent/browser-command':{...noop,tryRunBrowserCommand:()=>{throw Error('private services read reached browser')}},
+})
+await check('actual dashboard POST keeps the services query on the shared private read',async()=>{
+ const request=new Request('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:prompt})})
+ const result=await dash.POST(Object.assign(request,{nextUrl:new URL(request.url)}));assert.equal(result.status,200);assert.equal((await result.json()).handledBy,'connection-capabilities')
+})
+const bridge=load('lib/agent/whatsapp-bridge.ts',{'./autonomy-status':actual})
+await check('actual WhatsApp agent dispatch returns the seven-service read',async()=>{
+ const result=await bridge.tryRunWhatsAppAgent({user,text:prompt});assert.equal(result.handledBy,'connection-capabilities');assert.ok(result.text.includes('Vault'))
+})
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}

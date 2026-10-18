@@ -43,7 +43,9 @@ export type GmailReadFilter = { sender?: string | null; topic?: string | null }
 // "latest email from Swiggy" / "my latest password reset email": pull the sender and the topic out of the
 // sentence so the reader shows the mail that was asked for instead of the five newest.
 export function parseGmailReadFilter(text: string): GmailReadFilter {
-  const raw = String(text || '').replace(/\s+/g, ' ').trim()
+  // "from my email" names the mailbox being read, not a sender called
+  // "my email". Preserve actual "email from Swiggy" sender constraints.
+  const raw = String(text || '').replace(/\bfrom\s+my\s+(?:e-?mails?|gmail|inbox)\b/gi,' ').replace(/\s+/g, ' ').trim()
   const from = raw.match(/\bfrom\s+([A-Za-z0-9][A-Za-z0-9 .&'@-]{1,40}?)(?=\s*(?:[?.!,]|$|\bto\b|\babout\b|\bregarding\b))/i)
   const topic = raw.match(/\b(?:latest|last|newest|recent|unread)\s+([A-Za-z][A-Za-z '&-]{2,40}?)\s+(?:e-?mails?|mails?|messages?)\b/i)
   const topicWords = String(topic?.[1] || '').replace(/\b(?:my|the|a|an|new|unread|important|urgent)\b/gi, '').replace(/\s+/g, ' ').trim()

@@ -1,4 +1,5 @@
 import { worldTimeReply } from './world-time'
+import { tryGetConnectionCapabilities } from '@/lib/agent/autonomy-status'
 import { executeReadOnlyCalendarStep } from '@/lib/agent/calendar-read'
 import { createImage, imageRequest, imageRequestRefusal } from '@/lib/services/image-reply'
 import { createPodcast, createVoiceNote, podcastRequest, wantsVoiceReply } from '@/lib/services/voice-reply'
@@ -416,6 +417,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   console.log('PIM:start', { channel: params.channel, externalUserId: params.externalUserId, text: params.text })
 
   const incomingText = (params.text || '').trim()
+  const connectionCapabilities=await tryGetConnectionCapabilities({actor:{legacyTelegramId:resolvedUser.telegramId},text:incomingText})
+  if(connectionCapabilities){
+    await saveConversation(resolvedUser.telegramId,'user',incomingText)
+    await saveConversation(resolvedUser.telegramId,'assistant',connectionCapabilities.text)
+    return{...connectionCapabilities,text:formatOutgoingText(params.channel,connectionCapabilities.text),resolvedUser}
+  }
   // Draft material can mention tomorrow, price or "remind me" without being
   // permission to execute those actions. Claim explicit workflows before routing.
   // Capabilities answered before any workflow can claim the turn (Muse parity, 11 Oct).

@@ -12,6 +12,46 @@ function fmt(iso:string|null|undefined,timezone='Asia/Kolkata'){
 
 export { isAutonomyStatus } from './attention-state'
 
+export function isConnectionCapabilityQuery(text:string){
+  return /^(?:please\s+)?(?:show|list)\s+(?:my\s+)?connected\s+(?:services|integrations|connections)\b/i.test(String(text||'').trim())
+    && !/(?:\b(?:and|then|also)\s+|[.;]\s*)(?:connect|disconnect|reconnect|switch|grant|revoke)\b/i.test(text)
+}
+
+/** Saved owner state only: no provider authentication, token reads or health claim. */
+export async function tryGetConnectionCapabilities(params:{actor:Pick<AgentActor,'legacyTelegramId'>;text:string}){
+  if(!isConnectionCapabilityQuery(params.text))return null
+  const tg=params.actor.legacyTelegramId
+  if(!Number.isSafeInteger(tg)||tg===0)throw new Error('connection_capabilities_owner_missing')
+  const read=async(query:()=>PromiseLike<any>)=>{try{return await query()}catch{return{data:null,count:null,error:true}}}
+  const [user,vault,travel,browser,consent]=await Promise.all([
+    read(()=>supabaseAdmin.from('users').select('gmail_connected,gmail_send_connected,google_calendar_connected,whatsapp_id').eq('telegram_id',tg).maybeSingle()),
+    read(()=>supabaseAdmin.from('vault_credentials').select('id',{count:'exact',head:true}).eq('telegram_id',tg)),
+    read(()=>supabaseAdmin.from('travel_tickets').select('id',{count:'exact',head:true}).eq('telegram_id',tg).gte('depart_at',new Date().toISOString())),
+    read(()=>supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id',String(tg)).eq('capability','browser').maybeSingle()),
+    read(()=>supabaseAdmin.from('user_consent_settings').select('gmail_enabled').eq('telegram_id',tg).maybeSingle()),
+  ])
+  const known=!user.error&&Boolean(user.data)
+  const connection=(value:unknown)=>!known?'Unknown — saved state unavailable':value?'Connected (saved state)':'Not connected (saved state)'
+  const count=(result:any,noun:string)=>result.error||!Number.isInteger(result.count)||result.count<0?'Unknown — saved state unavailable':`${result.count} ${noun}`
+  const level=String(browser.data?.level||'draft')
+  const browserState=browser.error||!['off','read','draft','ask','auto'].includes(level)?'Unknown — permission unavailable':`Permission: ${level}`
+  const gmailRead=consent.error?'Reading preference unknown':consent.data?.gmail_enabled===false?'Reading is off in privacy settings':'Reading follows saved consent'
+  const link=known&&user.data.whatsapp_id?await read(()=>supabaseAdmin.from('wa_creditiq_links').select('consumer_user_id').eq('sender',user.data.whatsapp_id).maybeSingle()):null
+  const creditState=!known||link?.error?'Unknown — linkage unavailable':link?.data?.consumer_user_id?'Linked (saved state)':'Not linked (saved state)'
+  const text=[
+    'Connected services — read-only saved-state report. Provider health is not independently verified.',
+    `Google Calendar: ${connection(user.data?.google_calendar_connected)}. Operations: read events; propose event changes. Approval: exact changes require approval. Verification: provider event read-back.`,
+    `Gmail: ${connection(user.data?.gmail_connected)}. ${gmailRead}. Operations: approved inbox reads and draft preparation. Sending ${known?user.data.gmail_send_connected?'is enabled but approval-gated':'is not enabled':'status unknown'}. Verification: provider message/Sent evidence.`,
+    `Google Drive: ${known?user.data.gmail_connected?'Workspace connected; Drive scope/access not independently verified':'Workspace not connected':'Unknown — saved state unavailable'}. Operations: permitted file reads. Approval: sharing/writes need separate approval. Verification: provider file evidence.`,
+    `Secure Browser: ${browserState}. Operations depend on permission and provider sign-in. Approval: submissions and consequential actions remain gated; secondary authentication stays human-only. Verification: task-relevant provider evidence.`,
+    `Vault: ${count(vault,'saved logins')}. Operations: exact owner/domain login assistance in the secure browser. Approval: credential/account changes need specific approval. Verification: provider sign-in; a saved login alone proves no session.`,
+    `Travel context: ${count(travel,'upcoming saved tickets')}. Operations: itinerary context and bounded monitoring when permitted. Approval: travel changes/bookings need approval. Verification: recorded itinerary and current provider evidence.`,
+    `CreditIQ: ${creditState}. Operations: available linked-card context. Approval: payments and account changes need separate approval. Verification: bank/provider evidence; self-reported balances stay self-reported.`,
+    'No connection, permission, account or provider changes were made.',
+  ].join('\n\n')
+  return{runId:'connection-capabilities',status:'completed' as const,text,handledBy:'connection-capabilities',readOnly:true,mutated:false}
+}
+
 export function isConnectionStatus(text:string){
   const t=clean(text,500).toLowerCase()
   return /^(?:which|what)\s+(?:google\s+)?(?:account|email|calendar|gmail)(?:\s+account)?\s+(?:am\s+i|is)\s+connected\s+(?:to|with)(?:\s+(?:askgogo|gogo|me))?\??$/.test(t)
@@ -21,6 +61,8 @@ export function isConnectionStatus(text:string){
 }
 
 export async function tryGetConnectionStatus(params:{actor:AgentActor;text:string}){
+  const capabilities=await tryGetConnectionCapabilities(params)
+  if(capabilities)return capabilities
   if(!isConnectionStatus(params.text))return null
   const {data,error}=await supabaseAdmin.from('users')
     .select('gmail_connected,gmail_send_connected,gmail_email,gmail_connected_at,google_calendar_connected,google_refresh_token')

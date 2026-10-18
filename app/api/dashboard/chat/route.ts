@@ -17,6 +17,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { isDecisionRecallQuery } from '@/lib/agent/recall-query'
+import { isConnectionCapabilityQuery } from '@/lib/agent/autonomy-status'
 import { isLinkVaultSaveRequest, isLinkVaultQuery } from '@/lib/services/link-vault'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/day-chat'
@@ -240,7 +241,7 @@ export async function POST(req: NextRequest) {
 
     // Saved-object intent precedes provider words inside the object's caption.
     // A past decision or a link save is not a new booking/browser command.
-    if(isDecisionRecallQuery(text)||isLinkVaultSaveRequest(text)||isLinkVaultQuery(text)){
+    if(isConnectionCapabilityQuery(text)||isDecisionRecallQuery(text)||isLinkVaultSaveRequest(text)||isLinkVaultQuery(text)){
       const result=await processIncomingMessage({channel:'whatsapp',externalUserId:String(user.whatsapp_id),text,userName:user.name||'Gogo',messageType:'text',messageId:shadowEventId,semantic:webObservation?.jev})
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:result.handledBy||'same-brain',actualCapability:'memory'}).catch(()=>{})
       return NextResponse.json(result)
