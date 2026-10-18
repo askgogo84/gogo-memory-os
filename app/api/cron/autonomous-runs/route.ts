@@ -101,7 +101,7 @@ export async function GET(request:Request){
         }).eq('id',run.id).eq('status','running')
         continue
       }
-      let result:any
+      let result:Awaited<ReturnType<typeof runQueuedRestaurantReservationResearch>>
       try{
         result=await runQueuedRestaurantReservationResearch({actor,runId:String(run.id)})
         reservationResearchDone++

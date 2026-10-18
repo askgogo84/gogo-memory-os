@@ -474,7 +474,7 @@ export async function runQueuedRestaurantReservationResearch(params:{actor:Agent
     const result=await tryRunRestaurantReservation({actor:params.actor,surface:'whatsapp',text})
     if(!result)throw new Error('restaurant_research_not_handled')
     const at=new Date().toISOString()
-    let recorded:any
+    let recorded:{data:{id:unknown}|null;error:unknown}|null=null
     try{recorded=await supabaseAdmin.from('agent_runs').update({
       status:'completed',
       summary:`Background restaurant research finished with status ${String(result.status||'completed')}.`,
@@ -485,11 +485,11 @@ export async function runQueuedRestaurantReservationResearch(params:{actor:Agent
       metadata_json:{...meta,outcome_status:result.status||null,child_run_id:result.runId||null,finished_at:at},
     }).eq('id',params.runId).eq('telegram_id',tg).eq('type','restaurant_reservation_research').eq('status','running').select('id').maybeSingle()
     }catch{throw new Error('restaurant_research_completion_recording_failed')}
-    if(recorded.error||String(recorded.data?.id||'')!==params.runId)throw new Error('restaurant_research_completion_recording_failed')
+    if(!recorded||recorded.error||String(recorded.data?.id||'')!==params.runId)throw new Error('restaurant_research_completion_recording_failed')
     return result
   }catch(err:any){
     const at=new Date().toISOString()
-    let failed:any
+    let failed:{data:{id:unknown}|null;error:unknown}|null=null
     try{failed=await supabaseAdmin.from('agent_runs').update({
       status:'failed',
       summary:'Background Gogo could not complete reservation research.',
