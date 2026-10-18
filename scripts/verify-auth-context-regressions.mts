@@ -63,7 +63,7 @@ if(process.env.AUTH_REVIEW_CASE!=='resume'){
   authRows=[row];assert.equal(await shouldWithholdAuthenticationCode(123,'560086'),false)
  }
  authRows=[]
- for(const text of ['otp 482913','code is 4829 13','the code is 482913'])assert.equal(await shouldWithholdAuthenticationCode(123,text),true)
+ for(const text of ['otp 482913','code is 4829 13','the code is 482913','otp482913','code482913','OTP482913'])assert.equal(await shouldWithholdAuthenticationCode(123,text),true)
  // Saved-password providers such as Instagram persist the OTP reason in the
  // secure-browser step, without the phone-login/booking metadata markers.
  authRows=[{id:'owned-instagram-run',status:'paused',metadata_json:{handoff:{}}}]
