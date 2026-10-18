@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
-import {buildReservationDiningContext, sameReservationRestrictions} from '../lib/agent/reservation-dining-context'
+import {buildReservationDiningContext, sameReservationRestrictions, usableReservationDiningContext} from '../lib/agent/reservation-dining-context'
 
 const now=new Date('2026-10-18T10:00:00Z')
 const from=now.toISOString(),until='2026-12-17T10:00:00.000Z'
 const actor={legacyTelegramId:123,userId:'fixture-user',name:'Synthetic Owner'}
 const travel={id:'synthetic-travel',source:'travel_presence',summary:'PRIVATE SUMMARY MUST NOT BE COPIED',score:1,confidence:1,startAt:'2026-10-21T00:00:00Z',endAt:'2026-10-24T23:00:00Z',location:'Away city',participants:['Synthetic Owner'],sourceRefs:[{type:'travel_ticket',id:'synthetic-ticket',pnr:'PRIVATE-REF'}]}
-function build(facts:any[]=[travel],extra:any={},params:any={}){return buildReservationDiningContext({actor,timezone:'Asia/Kolkata',releaseAt:'2026-10-19T14:30:00Z',requestedDate:'',now,pack:{facts:[],reservationTravel:{ownerId:'123',facts,incomplete:false,coveredFrom:from,coveredUntil:until,...extra}},...params})}
+const busy={startAt:'2026-10-22T14:00:00Z',endAt:'2026-10-22T17:00:00Z',summary:'PRIVATE CALENDAR TITLE',attendees:['private@example.test'],sourceRefs:[{type:'calendar_event',id:'opaque-calendar-id',email:'PRIVATE'}]}
+const calendar={ownerId:'123',connected:true,incomplete:false,coveredFrom:from,coveredUntil:until,windows:[busy]}
+function build(facts:any[]=[travel],extra:any={},params:any={},calendarExtra:any={}){return buildReservationDiningContext({actor,timezone:'Asia/Kolkata',releaseAt:'2026-10-19T14:30:00Z',requestedDate:'',now,pack:{facts:[],reservationTravel:{ownerId:'123',facts,incomplete:false,coveredFrom:from,coveredUntil:until,...extra},reservationCalendar:{...calendar,...calendarExtra}},...params})}
 const future=build()
 assert.equal(future.incomplete,false)
 assert.equal(future.windows.length,1)
@@ -32,4 +34,17 @@ assert.equal(build(Array.from({length:20},(_,i)=>({...travel,id:'travel-'+i,loca
 assert.equal(sameReservationRestrictions(future,{...future,checkedAt:'2026-10-18T11:00:00Z'},now),true)
 assert.equal(sameReservationRestrictions(future,build([{...travel,location:'Changed city'}]),now),false)
 assert.equal(sameReservationRestrictions(future,{...future,incomplete:true},now),false)
+assert.equal(future.version,2,'Calendar coverage requires a new snapshot version, so travel-only authority cannot arm')
+assert.equal(future.calendar.connected,true)
+assert.equal(future.calendar.windows.length,1,'Verified Calendar busy windows must be retained in the approved snapshot')
+assert.doesNotMatch(JSON.stringify(future),/PRIVATE|private@|attendees|summary/,'Calendar titles, attendees and extra reference fields must not enter approval context')
+assert.equal(usableReservationDiningContext({...future,version:1}),false)
+assert.equal(sameReservationRestrictions(future,{...future,calendar:{...future.calendar,windows:[]}},now),false,'Calendar restrictions cannot silently disappear at execution')
+assert.equal(sameReservationRestrictions(future,{...future,calendar:{...future.calendar,connected:false}},now),false)
+for(const extra of [{incomplete:true},{ownerId:'foreign'},{coveredUntil:'2026-10-25T00:00:00Z'},{coveredFrom:'2026-10-19T00:00:00Z'},{windows:[{...busy,endAt:null}]},{windows:[{...busy,sourceRefs:[]}]},{connected:false}])assert.equal(build([travel],{},{},extra).incomplete,true,'Unknown or inconsistent Calendar coverage cannot establish safe dining context')
+assert.equal(build([travel],{}, {pack:{reservationTravel:{ownerId:'123',facts:[travel],incomplete:false,coveredFrom:from,coveredUntil:until}}}).incomplete,true,'A missing Calendar inventory is unknown, not an empty schedule')
+const disconnected=build([travel],{},{},{connected:false,windows:[]})
+assert.equal(disconnected.incomplete,false,'A successful explicit disconnected state remains distinct from a failed read')
+assert.equal(disconnected.calendar.connected,false)
+assert.equal(build([travel],{},{},{windows:Array.from({length:101},(_,i)=>({...busy,startAt:new Date(Date.parse(busy.startAt)+i*60_000).toISOString()}))}).incomplete,true,'A bounded projection cannot silently truncate Calendar conflicts')
 console.log('Reservation dining snapshot: bounded future/date coverage, attribution/privacy, partial/invalid/capped refusal and material-change controls passed.')
