@@ -8,7 +8,7 @@ function quoteClauses(text:string):string[]{
   // Date punctuation and Indian/international amount grouping are not clause
   // boundaries. Other commas separate quote qualifiers just like semicolons.
   const dateComma=new RegExp(`(\\b(?:\\d{1,2}\\s+(?:${MONTH_NAME})|(?:${MONTH_NAME})\\s+\\d{1,2})),\\s*(20\\d{2})\\b`,'gi')
-  return text.replace(dateComma,'$1 $2').split(/;|\band\b|,(?!\d)/i)
+  return text.replace(dateComma,'$1 $2').split(/;|\band\b|(?<!\d),|,(?!\d)/i)
 }
 
 function amount(text:string):number|null{
