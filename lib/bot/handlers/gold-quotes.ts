@@ -1,7 +1,7 @@
 type Quote={karat:string;perGram:number;amount:number;grams:number;source:string;date:string|null;reportedToday:boolean;locationKnown:boolean}
 type Unit={grams:number;explicit:boolean}
 const KARAT=/\b(18|22|24)\s*(?:kt|karat|carat|ct|k)\b/gi
-const MONEY=/(?:₹|\brs\.?|\binr)\s*(\d[\d,]*(?:\.\d+)?)(?![\d,]|\.\d)/gi
+const MONEY=/(?:₹|\brs\.?|\binr)\s*(\d(?:[\d,]*\d)?(?:\.\d+)?)(?!\d|,[\d,]|\.\d)/gi
 const MONTH_NAME='Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?'
 
 function quoteClauses(text:string):string[]{
@@ -150,7 +150,7 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
       if(!money)continue
       const afterMoney=span.slice(money.index!+money[0].length,allMonies[1]?.index??span.length)
       if(/(?:\bfor|\bof|\()\s*$/i.test(afterMoney))continue
-      addInline(span,money)
+      addInline(span.slice(0,money.index!+money[0].length)+quoteClauses(afterMoney)[0],money)
     }
   }
   const lines:string[]=[],details:string[]=[]
