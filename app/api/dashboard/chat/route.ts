@@ -16,6 +16,8 @@ import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { processIncomingMessage } from '@/lib/bot/process-message'
+import { isDecisionRecallQuery } from '@/lib/agent/recall-query'
+import { isLinkVaultSaveRequest, isLinkVaultQuery } from '@/lib/services/link-vault'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/day-chat'
 import { isPublicTravelResearchRequest, isTravelResearchDetailsReply, tryRunTravelResearch } from '@/lib/agent/travel-research'
@@ -234,6 +236,13 @@ export async function POST(req: NextRequest) {
       console.error('SHADOW_BRAIN_DASHBOARD_FAILED:', String(shadowError?.message || shadowError).slice(0,180))
     }
 
+    // Saved-object intent precedes provider words inside the object's caption.
+    // A past decision or a link save is not a new booking/browser command.
+    if(isDecisionRecallQuery(text)||isLinkVaultSaveRequest(text)||isLinkVaultQuery(text)){
+      const result=await processIncomingMessage({channel:'whatsapp',externalUserId:String(user.whatsapp_id),text,userName:user.name||'Gogo',messageType:'text',messageId:shadowEventId,semantic:webObservation?.jev})
+      await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:result.handledBy||'same-brain',actualCapability:'memory'}).catch(()=>{})
+      return NextResponse.json(result)
+    }
     const readOnlySchedule = detectReadOnlyScheduleRequest(text)
     if (readOnlySchedule) {
       const summary = await readTomorrowSchedule({ actor, scope: readOnlySchedule.scope, text })

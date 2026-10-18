@@ -236,13 +236,15 @@ async function upsertOpenLoop(input:OpenLoopInput){
   }
   const observedAt=input.observedAt&&Number.isFinite(Date.parse(input.observedAt))?input.observedAt:new Date().toISOString()
   const {data:existing,error:readError}=await supabaseAdmin.from('agent_open_loops')
-    .select('id,status,resolved_at,last_seen_at')
+    .select('id,status,resolved_at,last_seen_at,evidence_json')
     .eq('telegram_id',telegramId)
     .eq('fingerprint',fingerprint)
     .maybeSingle()
   if(readError)throw new Error(`open_loop_read_failed:${readError.message}`)
 
   if(existing?.id){
+    if(input.sourceType==='gmail_service_notice'&&['resolved','dismissed'].includes(String(existing.status))
+      &&existing.evidence_json?.last_message_id===input.evidence?.last_message_id)return{id:String(existing.id),fingerprint,ignoredHistorical:true}
     const resolvedAt=existing.resolved_at?Date.parse(String(existing.resolved_at)):NaN
     const evidenceAt=Date.parse(observedAt)
     if(['resolved','dismissed'].includes(String(existing.status))&&Number.isFinite(resolvedAt)&&Number.isFinite(evidenceAt)&&evidenceAt<=resolvedAt){
@@ -429,6 +431,34 @@ function looksLikeIncomingAction(text:string){
   return /\b(?:action required|please|could you|can you|need you to|kindly|confirm|approve|approval|review|sign|send|share|reply|respond|provide|submit|complete|urgent|by today|by tomorrow|deadline)\b/i.test(text)
 }
 
+// Automated service-risk notices need a private action item, not a reply to a
+// no-reply sender. This grants no authority to pay or change the account.
+export function isServiceRiskNotice(message:any):boolean{
+  const text=clean(`${message?.subject||''} ${message?.snippet||''}`,1200)
+  if(message?.listId||message?.listUnsubscribe||(message?.labelIds||[]).includes('CATEGORY_PROMOTIONS'))return false
+  return /\b(?:payment\s+(?:failed|declined)|billing\s+(?:failed|overdue)|overdue\s+invoice)\b/i.test(text)
+    && /\b(?:shutdown|shut\s*down|suspend(?:ed|ing)?|suspension|service\s+interruption|action\s+required)\b/i.test(text)
+    && !/\b(?:otp|one[- ]time password|promo\s+code|coupon)\b/i.test(text)
+}
+
+export async function captureGmailServiceNotices(telegramId:string|number,messages:any[]){
+  let captured=0
+  for(const message of messages){
+    if(!message?.id||!message?.threadId||!isServiceRiskNotice(message))continue
+    const date=Number(message.internalDate)||Date.parse(String(message.date||''))
+    const observedAt=Number.isFinite(date)&&date>0?new Date(date).toISOString():undefined
+    await upsertOpenLoop({telegramId,kind:'commitment',title:`Review service billing notice — ${clean(message.subject,180)}`,
+      summary:formatEmailSnippet(message.snippet||'Check this service billing warning directly with the provider. No payment or account change is authorized.',700),
+      priority:0.98,sourceType:'gmail_service_notice',sourceId:String(message.threadId),
+      sourceRefs:[{type:'gmail_thread',id:String(message.threadId)},{type:'gmail_message',id:String(message.id)}],
+      evidence:{last_message_id:String(message.id),thread_id:String(message.threadId),sender:headerEmail(message.from),direction:'inbound_service_action',approvalRequired:true},
+      observedAt,
+    })
+    captured++
+  }
+  return captured
+}
+
 function looksLikeIncomingPromise(text:string){
   return /\b(?:i(?:'ll| will)|we(?:'ll| will)|i\s+can|we\s+can)\s+(?:send|share|resend|reply|respond|confirm|approve|review|deliver|update|call|get\s+back|revert)\b/i.test(text)
 }
@@ -548,6 +578,10 @@ async function syncGmailAttention(telegramId:string,current:Set<string>){
   const read=await readGmailAttention(telegramId)
   if('reason' in read)return 'skip' as const
   const {threads,ownEmail}=read
+  await captureGmailServiceNotices(telegramId,threads.flatMap(thread=>{
+    const last=thread.messages?.at(-1)
+    return last&&headerEmail(last.from)!==ownEmail?[{...last,threadId:thread.id}]:[]
+  }))
   for(const thread of threads){
     const messages=thread.messages||[]
     if(!messages.length)continue

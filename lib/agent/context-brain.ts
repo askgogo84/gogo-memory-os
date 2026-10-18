@@ -598,6 +598,20 @@ function dedupeFacts(facts:ContextFact[],preserveOrder=false){
 // before summaries or inferred presence windows. Apply this at BOTH truncation
 // boundaries: selecting maxFacts and rendering maxChars. No fields are invented.
 export function prioritizeRecallEvidence(query:string,facts:ContextFact[]):ContextFact[]{
+  // Date-specific personal planning must keep the recorded commitments for that
+  // date ahead of unrelated saved flights. Otherwise the render budget can drop
+  // the owner's move while retaining somebody else's past itinerary.
+  const date=query.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+(20\d{2}))?\b/i)
+  if(date&&/\b(?:good time|am i free|am i available|context matters|dinner|lunch|meeting)\b/i.test(query)){
+    const day=Number(date[1]),month=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].indexOf(date[2].slice(0,3).toLowerCase())+1
+    const year=Number(date[3]||new Date().getUTCFullYear())
+    const start=Date.UTC(year,month-1,day),end=start+86400_000
+    const onDate=(f:ContextFact)=>!f.inferred&&(new RegExp(`\\b${day}(?:st|nd|rd|th)?\\s+${date[2].slice(0,3)}`,'i').test(f.summary)
+      ||f.summary.includes(`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`)
+      ||Boolean(f.startAt&&Date.parse(f.startAt)<end&&Date.parse(f.endAt||f.startAt)>=start))
+    const relevant=facts.filter(f=>!['travel_ticket','travel_presence'].includes(f.source)||onDate(f))
+    return [...relevant.filter(onDate),...relevant.filter(f=>!onDate(f))]
+  }
   if(/\b(?:emails?|mails?|inbox)\b/i.test(query)){
     const matchingInbox=(f:ContextFact)=>f.source==='inbox_attention'&&lexicalScore(query,f.summary)>=0.25
     return [...facts.filter(matchingInbox),...facts.filter(f=>!matchingInbox(f))]
