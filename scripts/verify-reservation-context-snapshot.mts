@@ -41,7 +41,7 @@ assert.doesNotMatch(JSON.stringify(future),/PRIVATE|private@|attendees|summary/,
 assert.equal(usableReservationDiningContext({...future,version:1}),false)
 assert.equal(sameReservationRestrictions(future,{...future,calendar:{...future.calendar,windows:[]}},now),false,'Calendar restrictions cannot silently disappear at execution')
 assert.equal(sameReservationRestrictions(future,{...future,calendar:{...future.calendar,connected:false}},now),false)
-for(const extra of [{incomplete:true},{ownerId:'foreign'},{coveredUntil:'2026-10-25T00:00:00Z'},{coveredFrom:'2026-10-19T00:00:00Z'},{windows:[{...busy,endAt:null}]},{windows:[{...busy,sourceRefs:[]}]},{connected:false}])assert.equal(build([travel],{},{},extra).incomplete,true,'Unknown or inconsistent Calendar coverage cannot establish safe dining context')
+for(const extra of [{incomplete:true},{ownerId:'foreign'},{coveredUntil:'2026-10-25T00:00:00Z'},{coveredFrom:'2026-10-19T00:00:00Z'},{windows:[{...busy,endAt:null}]},{windows:[{...busy,sourceRefs:[]}]},{connected:false}])assert.equal(build([travel],{},{coverage:{from,until}},extra).incomplete,true,'Unknown or inconsistent Calendar coverage cannot establish safe dining context')
 assert.equal(build([travel],{}, {pack:{reservationTravel:{ownerId:'123',facts:[travel],incomplete:false,coveredFrom:from,coveredUntil:until}}}).incomplete,true,'A missing Calendar inventory is unknown, not an empty schedule')
 const disconnected=build([travel],{},{},{connected:false,windows:[]})
 assert.equal(disconnected.incomplete,false,'A successful explicit disconnected state remains distinct from a failed read')
