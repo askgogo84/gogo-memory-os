@@ -85,15 +85,18 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
       const preceding=current.slice(previousEnd,label.index),precedingMoney=[...preceding.matchAll(MONEY)].at(-1)
       const precedingTail=precedingMoney?preceding.slice(precedingMoney.index!+precedingMoney[0].length):''
       const reverse=Boolean(precedingMoney&&precedingTail.length<=90&&/(?:\bfor|\bof|\()\s*$/i.test(precedingTail))
-      const nextMoney=[...span.matchAll(MONEY)][0]
+      const spanMonies=[...span.matchAll(MONEY)],nextMoney=spanMonies[0]
       // A reverse quote can have its date after the purity. Stop before the next
       // amount or coordinated clause so that quote's qualifiers cannot leak back.
       const suffix=quoteClauses(span.slice(0,nextMoney?.index??span.length))[0]
       const prefixClauses=quoteClauses(preceding),reversePrefix=prefixClauses.at(-1)||''
-      const quoteText=reverse?reversePrefix+' '+suffix:span
+      const firstAmountEnd=nextMoney?nextMoney.index!+nextMoney[0].length:0
+      const table=/\b\d+(?:\.\d+)?\s*(?:kg|grams?|g)\s*\|/i.test(span)
+      const forwardText=spanMonies.length>1&&!table?span.slice(0,firstAmountEnd)+quoteClauses(span.slice(firstAmountEnd,spanMonies[1].index))[0]:span
+      const quoteText=reverse?reversePrefix+' '+suffix:forwardText
       if(/\b(?:unavailable|not (?:available|stated|supplied)|not verified)\b/i.test(quoteText))continue
       const suffixDate=reverse?sourceDate(suffix):undefined
-      const ownDate=suffixDate===undefined?sourceDate(reverse?reversePrefix:span):suffixDate,date=ownDate===undefined?headingDate:ownDate
+      const ownDate=suffixDate===undefined?sourceDate(reverse?reversePrefix:quoteText):suffixDate,date=ownDate===undefined?headingDate:ownDate
       const reportedToday=date!==null&&(/\btoday\b/i.test(quoteText)||headingToday)
       if(date===null)warnings.add('A quote date is invalid and unverified.')
       if(date&&date>today){warnings.add('A source reports a future date; it is not a current verified quote.');continue}
@@ -139,7 +142,7 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
         }
         continue
       }
-      const allMonies=[...span.matchAll(MONEY)]
+      const allMonies=spanMonies
       let monies=allMonies
       // Currency immediately before the next purity belongs to its reverse
       // quote, not to this forward quote's daily columns.
