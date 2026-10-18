@@ -47,6 +47,16 @@ assert.doesNotMatch(rendered,/Nothing needs your input right now|Approve & run/)
 const nav=load('components/dashboard/dashboard-nav.tsx')
 assert.equal(nav.needsYouCount({approvals:2,handoffs:1,watchers:99,serviceNotices:1}),4)
 assert.equal(nav.needsYouCount({approvals:2,handoffs:1,watchers:99}),3,'legacy count defaults remain safe')
+fixture=[{...notice,title:'Payment failed; password reset https://example.invalid/reset-password?token=SYNTHETIC_RESET_TOKEN',summary:'Shutdown warning. Password: SYNTHETIC_PASSWORD. Verification code: 654321. Reset https://example.invalid/reset-password?token=SYNTHETIC_SUMMARY_TOKEN'}]
+const projected=await load('lib/dashboard/service-notices.ts').getServiceNotices('123')
+assert.doesNotMatch(JSON.stringify(projected),/SYNTHETIC_RESET_TOKEN|SYNTHETIC_PASSWORD|654321|SYNTHETIC_SUMMARY_TOKEN/,'saved email auth material must be withheld at read projection')
+body=await (await snapshot.GET({} as Request)).json()
+const cards=JSON.stringify(load('components/dashboard/service-notice-cards.tsx').ServiceNoticeCards({notices:body.serviceNotices}))
+for(const output of [JSON.stringify(body),cards]){
+ assert.doesNotMatch(output,/SYNTHETIC_RESET_TOKEN|SYNTHETIC_PASSWORD|654321|SYNTHETIC_SUMMARY_TOKEN/)
+ assert.match(output,/thread-one/);assert.match(output,/message-one/)
+ assert.match(output,/authentication link withheld/)
+}
 fixture=[notice,{...notice,id:'different',source_id:'thread-two',source_refs:[{type:'gmail_thread',id:'thread-two'}]}]
 body=await (await snapshot.GET({} as Request)).json();assert.equal(body.serviceNotices.length,2,'equal titles on distinct source threads stay distinct')
 fixture=Array.from({length:63},(_,i)=>({...notice,id:'n'+i,source_id:'thread'+i}))
