@@ -18,6 +18,16 @@ assert.equal(merged.events[0]._account, 'a@x.com', 'the first account keeps the 
 assert.equal(merged.events[1]._account, 'b@y.com')
 assert.equal(merged.hasMore, true, 'one account being partial makes the whole list partial')
 assert.equal(m.mergeAccountEvents([{ email: null, hasMore: false, events: [] }]).events.length, 0)
+const recurring=[{id:'occurrence-one',iCalUID:'same-series',start:{dateTime:'2026-10-20T14:00:00Z'},end:{dateTime:'2026-10-20T15:00:00Z'}},
+ {id:'occurrence-two',iCalUID:'same-series',start:{dateTime:'2026-10-27T14:00:00Z'},end:{dateTime:'2026-10-27T15:00:00Z'}}]
+assert.equal(m.mergeAccountEvents([{email:'a@x.com',hasMore:false,events:recurring}]).events.length,2,'A series UID does not identify one recurring occurrence')
+const one=recurring[0]
+const mergeCopies=(left:any,right:any)=>m.mergeAccountEvents([{email:'a@x.com',hasMore:false,events:[left]},{email:'b@y.com',hasMore:false,events:[right]}]).events
+assert.equal(mergeCopies(one,{...one,id:'other-account-id',start:{dateTime:'2026-10-20T19:30:00+05:30'},end:{dateTime:'2026-10-20T20:30:00+05:30'}}).length,1,'Equivalent-offset copies of the same occurrence still dedupe')
+assert.equal(mergeCopies({...one,originalStartTime:one.start},{...one,originalStartTime:one.start,start:{dateTime:'2026-10-20T16:00:00Z'},end:{dateTime:'2026-10-20T17:00:00Z'}}).length,2,'Conflicting current intervals cannot silently lose a busy window')
+assert.equal(mergeCopies({...one,transparency:'transparent'},one).length,2,'A non-busy copy may not hide a busy linked-account copy')
+const allDay={id:'all-day',iCalUID:'shared-all-day',start:{date:'2026-10-22'},end:{date:'2026-10-23'}}
+assert.equal(m.mergeAccountEvents([{email:'a@x.com',hasMore:false,timezone:'America/New_York',events:[allDay]},{email:'b@y.com',hasMore:false,timezone:'Asia/Kolkata',events:[allDay]}]).events.length,2,'All-day copies in distinct provider timezones represent distinct occupied instants')
 
 assert.equal(m.describeCalendarAccounts([{ email: 'a@x.com' }]), 'Account: *a@x.com*')
 assert.equal(m.describeCalendarAccounts([{ email: 'a@x.com' }, { email: 'b@y.com' }]), 'Accounts: *a@x.com* and *b@y.com*')

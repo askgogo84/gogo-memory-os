@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { fetchPrimaryCalendarAccount, fetchPrimaryCalendarEventsPage, refreshAccessToken } from '@/lib/services/google-calendar'
+import {calendarBlocksTime,type CalendarProviderEvent} from '@/lib/calendar-intervals'
 
 /**
  * One user can link several Google accounts. `users.google_refresh_token` stays the primary
@@ -59,15 +60,29 @@ export async function getCalendarAccountAccess(telegramId: number | string, prim
   return out
 }
 
-/** Merge per-account event lists: sorted by start, an invite that sits on two calendars appears once. */
-export function mergeAccountEvents(perAccount: Array<{ email: string | null; events: any[]; hasMore: boolean }>) {
+function momentKey(value:unknown,calendarTimezone?:string){
+  if(!value||typeof value!=='object')return ''
+  const moment=value as {dateTime?:unknown;date?:unknown;timeZone?:unknown}
+  if(typeof moment.dateTime==='string'){
+    const stamp=Date.parse(moment.dateTime)
+    return /(?:Z|[+-]\d{2}:\d{2})$/i.test(moment.dateTime)&&Number.isFinite(stamp)?`instant:${stamp}`:`local:${moment.dateTime}|${String(moment.timeZone||calendarTimezone||'')}`
+  }
+  return typeof moment.date==='string'?`date:${moment.date}|${calendarTimezone||String(moment.timeZone||'')}`:''
+}
+
+/** Deduplicate equivalent copies of one occurrence, preserving distinct busy evidence. */
+export function mergeAccountEvents(perAccount: Array<{ email: string | null; events: any[]; hasMore: boolean; timezone?: string }>) {
   const seen = new Set<string>()
   const events: TaggedEvent[] = []
   for (const part of perAccount) {
     for (const event of part.events) {
-      const key = String(event?.iCalUID || '')
+      const uid=String(event?.iCalUID||'')
+      const start=momentKey(event?.start,part.timezone)
+      // Recurring instances share iCalUID. Their original/current interval and
+      // blocking state must agree before one account copy may hide another.
+      const key=uid&&start?JSON.stringify([uid,momentKey(event?.originalStartTime,part.timezone)||start,start,momentKey(event?.end,part.timezone),calendarBlocksTime(event as CalendarProviderEvent),event?.endTimeUnspecified===true]):''
       if (key) { if (seen.has(key)) continue; seen.add(key) }
-      events.push({ ...event, _account: part.email })
+      events.push({ ...event, _account: part.email, ...(part.timezone?{_calendarTimezone:part.timezone}:{}) })
     }
   }
   const startOf = (e: any) => Date.parse(String(e?.start?.dateTime || e?.start?.date || '')) || 0

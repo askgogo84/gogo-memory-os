@@ -213,7 +213,7 @@ export async function fetchPrimaryCalendarEvents(
 export async function fetchPrimaryCalendarEventsPage(accessToken:string,timeMin:string,timeMax:string,label='GCAL_EVENTS_FETCH_FAILED',limit=40) {
   const maximum=Math.max(1,Math.min(100,Math.floor(limit)))
   const page=await readPrimaryCalendarEventsPage(accessToken,timeMin,timeMax,label,maximum)
-  return {events:page.events.slice(0,maximum),hasMore:page.hasMore||page.events.length>maximum}
+  return {events:page.events.slice(0,maximum),hasMore:page.hasMore||page.events.length>maximum,...(page.timezone?{timezone:page.timezone}:{})}
 }
 
 async function readPrimaryCalendarEventsPage(accessToken:string,timeMin:string,timeMax:string,label:string,limit?:number) {
@@ -238,7 +238,7 @@ async function readPrimaryCalendarEventsPage(accessToken:string,timeMin:string,t
     throw new Error(`Google Calendar events fetch failed: ${response.status}`)
   }
   const data = await response.json()
-  return {events:Array.isArray(data.items)?data.items:[],hasMore:typeof data.nextPageToken==='string'&&data.nextPageToken.length>0}
+  return {events:Array.isArray(data.items)?data.items:[],hasMore:typeof data.nextPageToken==='string'&&data.nextPageToken.length>0,...(typeof data.timeZone==='string'&&data.timeZone.trim()?{timezone:data.timeZone.trim()}:{})}
 }
 
 export async function getTodayEvents(accessToken: string): Promise<any[]> {
