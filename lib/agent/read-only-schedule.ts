@@ -54,13 +54,13 @@ export function detectReadOnlyScheduleRequest(raw: string) {
       !calendarRequestsAvailability(clause)&&! /\b(calendar|schedule|meetings?|events?|reminders?|my appointments?|needs? my attention|what (?:do )?i have|what(?:'s| is) on|what needs my attention|(?:review|brief me|summari[sz]e) tomorrow)\b/.test(clause))return null
   }
   const readVerb = /\b(check|tell me|show(?: me)?|list|plan my day|what is my day|what (?:meetings?|events?|appointments?) do i have|what do i have|what(?:'s| is) on|what needs my attention|review|summari[sz]e|brief me)\b/.test(request)
-  const scheduleContext = /\b(calendar|schedule|meetings?|appointments?|events?|day)\b/.test(request) ||
+  const scheduleContext = standaloneCalendar || /\b(calendar|schedule|meetings?|appointments?|events?|day)\b/.test(request) ||
     /\b(?:what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|what needs my attention tomorrow|(?:summari[sz]e|review|brief me(?: on)?) tomorrow)\b/.test(request)
   const {today,tomorrow}=requestedCalendarDays(request)
   if(standaloneCalendar&&!today&&!tomorrow)return {horizon:'requested' as const,scope:'calendar' as const}
-  if ((explicitNoMutation || readVerb) && scheduleContext && (tomorrow || today)) {
+  if ((standaloneCalendar || explicitNoMutation || readVerb) && scheduleContext && (tomorrow || today)) {
     const combined = /\b(?:reminders?|agenda|plan my day|what is my day|what (?:do )?i have tomorrow|what(?:'s| is) on tomorrow|my day|my schedule)\b/.test(request)
-    const calendarOnly = /\b(?:calendar|meetings?|appointments?|events?)\b/.test(request) && !combined
+    const calendarOnly = (standaloneCalendar || /\b(?:calendar|meetings?|appointments?|events?)\b/.test(request)) && !combined
     if(today&&!calendarOnly&&!tomorrow)return null // Preserve the existing Today/day route.
     return { horizon: today ? tomorrow ? 'today-tomorrow' as const : 'today' as const : 'tomorrow' as const, scope: calendarOnly ? 'calendar' as const : 'agenda' as const }
   }
