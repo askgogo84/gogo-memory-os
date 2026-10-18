@@ -161,4 +161,8 @@ check('a clause comma preserves a complete valid amount without accepting bad gr
   assert.doesNotMatch(invalid,/24K: ₹/);
  }
 });
+check('a forward quote date cannot come from the next reverse quote prefix',()=>{
+ const result=answer('1. Bangalore board\n18 October 2026. 24K gold per gram ₹14000; as of 17 October 2026 ₹12800 per gram for 22K\nSource: https://synthetic.invalid/mixed-prefix-dates');
+ assert.match(result,/24K — as of 2026-10-18/);assert.match(result,/22K — as of 2026-10-17/);
+});
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');
