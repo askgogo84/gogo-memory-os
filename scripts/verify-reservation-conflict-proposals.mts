@@ -9,21 +9,21 @@ import * as dining from '../lib/agent/reservation-dining-context'
 // Actual preparation/parser/snapshot; all transports are inert and owner-checked.
 const epoch=Date.parse('2026-09-27T10:00:00Z')
 class Clock extends Date{constructor(value?:any){super(value===undefined?epoch:value)}static now(){return epoch}}
-const actor={legacyTelegramId:123,userId:'fixture-owner',name:'Synthetic Owner'}
+const actor={legacyTelegramId:-123,userId:'fixture-owner',name:'Synthetic Owner'}
 const away={source:'travel_presence',kind:'inferred_presence',startAt:'2026-09-27T00:00:00Z',endAt:'2026-10-02T00:00:00Z',location:'New York',participants:['Synthetic Owner'],inferred:true,confidence:.9,sourceRefs:[{type:'travel_ticket',id:'outbound'},{type:'inference',id:'stay'}]}
 const returning={source:'travel_ticket',kind:'flight',startAt:'2026-10-02T00:00:00Z',endAt:'2026-10-02T18:00:00Z',location:'New York → Bengaluru',participants:['Synthetic Owner'],inferred:false,confidence:.98,sourceRefs:[{type:'travel_ticket',id:'return'}]}
 let facts:any[]=[away,returning],busy:any[]=[],mode='',writes:Array<{table:string;value:any}>=[],contextReads:any[]=[]
-const coverage={ownerId:'123',incomplete:false,coveredFrom:new Date(epoch).toISOString(),coveredUntil:'2026-11-26T10:00:00Z'}
-const db={from(table:string){const q:any={select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},in:()=>q,order:()=>q,limit:()=>q,
- maybeSingle:async()=>({data:table==='users'?{timezone:'Asia/Kolkata'}:null,error:null}),upsert:(value:any)=>{assert.equal(String(value.telegram_id),'123');writes.push({table,value});return q},insert:(value:any)=>{assert.equal(String(value.telegram_id),'123');writes.push({table,value});return q},single:async()=>({data:{id:'fixture-'+table},error:null}),then:(resolve:any)=>resolve({data:[],error:null})};return q}}
+const coverage={ownerId:String(actor.legacyTelegramId),incomplete:false,coveredFrom:new Date(epoch).toISOString(),coveredUntil:'2026-11-26T10:00:00Z'}
+const db={from(table:string){const q:any={select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(String(value),String(actor.legacyTelegramId));return q},in:()=>q,order:()=>q,limit:()=>q,
+ maybeSingle:async()=>({data:table==='users'?{timezone:'Asia/Kolkata'}:null,error:null}),upsert:(value:any)=>{assert.equal(String(value.telegram_id),String(actor.legacyTelegramId));writes.push({table,value});return q},insert:(value:any)=>{assert.equal(String(value.telegram_id),String(actor.legacyTelegramId));writes.push({table,value});return q},single:async()=>({data:{id:'fixture-'+table},error:null}),then:(resolve:any)=>resolve({data:[],error:null})};return q}}
 const actual:any={}
 runInNewContext(ts.transpileModule(readFileSync('lib/agent/restaurant-reservation.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:actual,require:(name:string)=>name==='node:crypto'?{createHash}:name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='@/lib/timezone'?timezone:name==='./reservation-dining-context'?dining:name==='./secure-computer'?{runSecureBrowser:async(input:any)=>{assert.equal(input.mode,'read');return{status:'completed',pageText:'Sold out. Bookings open every Monday at 8 PM.'}}}:name==='./approval-binding'?{buildApprovalBinding:()=>({})}:name==='./context-brain'?{buildContextPack:async(input:any)=>{
- assert.equal(input.actor.legacyTelegramId,123);assert.equal(input.options.includeReservationTravel,true);assert.equal(input.options.includeReservationCalendar,true);contextReads.push(input)
+ assert.equal(input.actor.legacyTelegramId,actor.legacyTelegramId);assert.equal(input.options.includeReservationTravel,true);assert.equal(input.options.includeReservationCalendar,true);contextReads.push(input)
  if(mode==='candidateRejected'&&contextReads.length>1)throw Error('synthetic failed context')
  const scope=input.options.reservationCalendarCoverage||coverage
  const c={...coverage,coveredFrom:scope.from||coverage.coveredFrom,coveredUntil:scope.until||coverage.coveredUntil}
  const freshFacts=contextReads.length>1&&mode==='returnTentative'?facts.map(f=>f===returning?{...f,inferred:true,confidence:.45}:f):contextReads.length>1&&mode==='returnDepartureChanged'?facts.map(f=>f===returning?{...f,startAt:'2026-10-03T00:00:00Z'}:f):facts
- return{facts:[],reservationTravel:{...c,facts:freshFacts,incomplete:mode==='candidateIncomplete'&&contextReads.length>1},reservationCalendar:{...c,connected:mode!=='disconnected',windows:busy},reservationPreferences:{ownerId:'123',incomplete:mode==='candidatePreferences'&&contextReads.length>1,rules:[]}}
+ return{facts:[],reservationTravel:{...c,facts:freshFacts,incomplete:mode==='candidateIncomplete'&&contextReads.length>1},reservationCalendar:{...c,connected:mode!=='disconnected',windows:busy},reservationPreferences:{ownerId:String(actor.legacyTelegramId),incomplete:mode==='candidatePreferences'&&contextReads.length>1,rules:[]}}
 }}:{},Date:Clock,Intl,console,URL,Map,Set})
 const request=(text='Book Naru Noodle Bar for 2 at the next available slot between 7 PM and 9 PM.')=>actual.tryRunRestaurantReservation({actor,surface:'dashboard',text})
 const failures:string[]=[]
@@ -84,5 +84,9 @@ await check('fresh return evidence must retain its source certainty and valid de
  for(const changed of ['returnTentative','returnDepartureChanged']){
   mode=changed;contextReads=[];writes=[];const r=await request();assert.equal(r.status,'paused');assert.equal(writes.length,0);assert.doesNotMatch(r.text,/Provisional planning window/i,changed)
  }
+})
+await check('numeric participant identity preserves the sign of an owner identifier',async()=>{
+ facts=[away,{...returning,participants:['123']}]
+ const r=await request();assert.equal(r.status,'paused');assert.equal(writes.length,0);assert.doesNotMatch(r.text,/Provisional planning window/i,'Positive123 is not owner negative123')
 })
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Reservation conflict/provisional proposal controls passed; inert fixtures, not provider availability or full T12 acceptance.')
