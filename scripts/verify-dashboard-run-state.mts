@@ -3,6 +3,7 @@ import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 import { isActionablePause, selectActiveRun, summarizeActiveRunState } from '../lib/dashboard/run-state'
+import * as authSummary from '../lib/dashboard/browser-auth-summary'
 
 // Production incident: a Blinkit run that ended blocked (status 'paused') still showed
 // "Working" on the dashboard. Paused / waiting_approval runs are waiting on the user,
@@ -102,7 +103,7 @@ const db={from(table:string){
 }}
 const handoffExports:any={}
 runInNewContext(ts.transpileModule(readFileSync('lib/dashboard/human-handoffs.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
-  exports:handoffExports,require:(name:string)=>name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='./run-state'?{isActionablePause}:null,
+  exports:handoffExports,require:(name:string)=>name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='./run-state'?{isActionablePause}:name==='./browser-auth-summary'?authSummary:null,
 })
 // 15 Oct: 11 old "Take control" cards from earlier weeks sat in Needs you. Older than 72 hours = not actionable.
 rows.push({id:'old-handoff',telegram_id:'42',type:'secure_browser',status:'paused',title:'Old Playo login',summary:'Robot check.',updated_at:'2026-10-01T00:00:00Z',metadata_json:{handoff:{takeoverUrl:'old-token'}}})

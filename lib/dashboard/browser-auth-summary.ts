@@ -5,7 +5,7 @@ type SummaryStep={id?:string;ordinal?:number;toolName?:string;status?:string;err
 /** Consume only evidence already read through an owner-bound dashboard path. */
 export function latestBrowserAuthEvidence(steps:SummaryStep[]):AuthEvidence|undefined{
   const browser=steps.filter(step=>step.toolName==='secure_browser')
-  if(browser.some(step=>!Number.isInteger(step.ordinal)||step.ordinal!<0))return undefined
+  if(browser.some(step=>!Number.isInteger(step.ordinal)||Number(step.ordinal)<0))return undefined
   const latest=[...browser].sort((a,b)=>{
     if(a.ordinal!==b.ordinal)return b.ordinal!-a.ordinal!
     const at=Date.parse(a.completedAt||''),bt=Date.parse(b.completedAt||'')

@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import ts from 'typescript'
 import { runInNewContext } from 'node:vm'
+import * as authSummary from '../lib/dashboard/browser-auth-summary'
 
 const activityExports:any={}
 runInNewContext(ts.transpileModule(fs.readFileSync('lib/dashboard/agent-activity.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
-  {exports:activityExports,require:()=>({}),URL})
+  {exports:activityExports,require:(name:string)=>name==='./browser-auth-summary'?authSummary:{},URL})
 // Live 2 Oct: a new cloud takeover rendered a previous attempt's HTTP 403.
 const old403={toolName:'secure_browser',output:{title:'Old provider page',summary:'HTTP 403',blockReason:'provider_access_limited'}}
 const resumedRun={status:'paused',summary:'Choose your account or delivery location.',error:null,metadata:{handoff:{takeoverUrl:'https://takeover.example/',providerUrl:'https://www.swiggy.com/instamart'}},steps:[old403]}
