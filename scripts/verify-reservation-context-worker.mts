@@ -20,10 +20,10 @@ const binding=buildApprovalBinding(boundInput())
 for(const altered of [{...payload,reservationLocation:'Changed city'},{...payload,diningContext:{...snapshot,until:'2026-12-18T10:00:00Z'}},{...payload,contextWindows:[]}]){
  assert.throws(()=>assertApprovalBinding(preparation.restaurantReservationApprovalInput({runId:'fixture-run',lifeEventId:'fixture-event',actionId:'fixture-action',...altered,providerUrl:altered.reservationUrl}),binding),/approval_action_changed/)
 }
-let freshInventory:any=inventory, browserCalls=0, objective=''
+let freshInventory:any=inventory, browserCalls=0, objective='',legacyMode=false
 const updates:Array<{table:string;value:any}>=[]
-const db={from(table:string){let writing=false;const q:any={select:()=>q,eq:(key:string,value:any)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},in:()=>q,
- update:(value:any)=>{writing=true;updates.push({table,value});return q},maybeSingle:async()=>({error:null,data:table==='life_event_actions'?{id:'fixture-action'}:table==='life_events'?{id:'fixture-event',title:'Synthetic Restaurant',timezone:'Asia/Kolkata',location:'Home city',metadata_json:{}}:table==='users'?{id:'fixture-user',telegram_id:123,whatsapp_id:'',name:'Synthetic Owner',timezone:'Asia/Kolkata'}:table==='agent_approvals'?{id:'fixture-approval',run_id:'fixture-run',status:'approved',...binding}:table==='agent_permissions'?{level:'ask'}:null}),
+const db={from(table:string){let writing=false;const q:any={select:()=>q,eq:(key:string,value:any)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},in:()=>q,order:()=>q,limit:()=>q,
+ update:(value:any)=>{writing=true;updates.push({table,value});return q},maybeSingle:async()=>({error:null,data:table==='life_event_actions'?{id:'fixture-action',payload_json:legacyMode?{...payload,diningContext:undefined}:payload}:table==='agent_runs'?{id:'fixture-run',metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:'fixture-event',life_event_action_id:'fixture-action'}}:table==='life_events'?{id:'fixture-event',title:'Synthetic Restaurant',timezone:'Asia/Kolkata',location:'Home city',metadata_json:{}}:table==='users'?{id:'fixture-user',telegram_id:123,whatsapp_id:'',name:'Synthetic Owner',timezone:'Asia/Kolkata'}:table==='agent_approvals'?{id:'fixture-approval',run_id:'fixture-run',status:'approved',...(legacyMode?buildApprovalBinding({...boundInput(),payload:{...boundInput().payload,diningContext:undefined,reservationLocation:undefined}}):binding)}:table==='agent_permissions'?{level:'ask'}:null}),
  insert:(value:any)=>{updates.push({table,value});return q},then:(resolve:any)=>resolve({error:null})};return q}}
 const actual=load('lib/agent/restaurant-reservation-worker.ts',{
  '@/lib/supabase-admin':{supabaseAdmin:db},'./restaurant-reservation':preparation,'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining,
@@ -43,4 +43,11 @@ for(const [label,fresh]of [['unchanged',inventory],['new travel',{...inventory,f
  }catch(error){failures.push(label+': '+(error instanceof Error?error.message:String(error)))}
 }
 assert.deepEqual(failures,[],'Fresh context may not silently change or remove approved restrictions')
+legacyMode=true;updates.length=0
+const legacyPreparation=load('lib/agent/restaurant-reservation.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining})
+const legacy=await legacyPreparation.armApprovedRestaurantReservation({actor,runId:'fixture-run'})
+assert.equal(legacy.status,'paused','Legacy approval lacking dining coverage must enter refreshable review')
+assert.ok(updates.some(row=>row.table==='agent_approvals'&&row.value.status==='expired'))
+assert.ok(updates.some(row=>row.table==='agent_runs'&&row.value.status==='paused'))
+assert.equal(updates.some(row=>row.table==='life_event_actions'&&row.value.status==='ready'),false)
 console.log('Actual reservation worker and real approval fingerprint: bounded context, material-change and failed-refresh guards passed. Inert synthetic I/O only.')
