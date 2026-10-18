@@ -90,6 +90,11 @@ export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unrea
     ? await fetchUnreadEmails(access.accessToken,filtered?25:maxResults)
     : await fetchLatestEmails(access.accessToken,filtered?25:maxResults)
   const rows=fetched.filter((row:any)=>matchesFilter(row,filter)).slice(0,maxResults)
+  // Persist only source-bound service-risk notices from this successful read.
+  // A failed reconciliation is surfaced without claiming the mail was saved.
+  let attentionWarning=''
+  try{await (await import('@/lib/agent/open-loops')).captureGmailServiceNotices(telegramId,rows)}
+  catch{attentionWarning='\n\nI read the emails but could not save their urgent action items. Please review the notices directly.'}
   if(!rows.length){
     if(filtered){
       const what=[filter?.topic,filter?.sender?`from ${filter.sender}`:''].filter(Boolean).join(' ')
@@ -100,7 +105,7 @@ export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unrea
 
   if(summarise&&!filtered){
     const more=mode==='unread'?await fetchUnreadEmails(access.accessToken,15):await fetchLatestEmails(access.accessToken,15)
-    return `${summariseInbox(more.length?more:rows)}\n\nSay “show my latest emails” for the full list. I have not sent, deleted, archived or modified anything.`
+    return `${summariseInbox(more.length?more:rows)}\n\nSay “show my latest emails” for the full list. I have not sent, deleted, archived or modified anything.${attentionWarning}`
   }
   const heading=mode==='unread'?'📧 *Unread emails*':filtered?'📧 *Matching emails*':'📧 *Latest emails*'
   const lines=rows.map((row:any,index:number)=>{
@@ -109,5 +114,5 @@ export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unrea
     const snippet=formatEmailSnippet(row.snippet,220)
     return `${index+1}. *${subject}*\nFrom: ${from}${snippet?`\n${snippet}`:''}`
   })
-  return `${heading}\n\n${lines.join('\n\n')}\n\nI only read the Google context you approved. I have not sent, deleted, archived or modified anything.`
+  return `${heading}\n\n${lines.join('\n\n')}\n\nI only read the Google context you approved. I have not sent, deleted, archived or modified anything.${attentionWarning}`
 }

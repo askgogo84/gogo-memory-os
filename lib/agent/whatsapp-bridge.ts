@@ -38,6 +38,7 @@ import { tryRecoverAppointmentOption } from './appointment-followup-recovery'
 import { tryRunAppointmentFollowup } from './appointment-followup'
 import { tryRunAppointmentResearch } from './appointment-research'
 import { armApprovedRestaurantReservation, queueRestaurantReservationResearch, tryRunRestaurantReservation } from './restaurant-reservation'
+import { isDecisionRecallQuery } from './recall-query'
 
 export type WhatsAppAgentResult = {
   text: string
@@ -419,6 +420,8 @@ export async function tryRunWhatsAppAgent(params: {
   text: string
   messageId?: string | number | null
 }): Promise<WhatsAppAgentResult | null> {
+  // A past decision is a context lookup, never authority for a new booking.
+  if(isDecisionRecallQuery(params.text))return null
   const actor = actorFromResolvedUser(params.user)
   if (!actor) return null
 

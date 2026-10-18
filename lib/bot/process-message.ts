@@ -39,7 +39,7 @@ import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeter
 import { buildDirectWebAnswer } from './handlers/web-answer'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
 import { parsePlanSelection, buildPlanCheckoutReply } from './handlers/plan-checkout'
-import { buildCalendarActionReply, createCalendarConflictEvent, createCalendarEventAtIso, isCalendarAction, getCalendarTokens } from './handlers/calendar-actions'
+import { buildCalendarActionReply, createCalendarConflictEvent, createCalendarEventAtIso, isCalendarAction, getCalendarTokens, parseAbsoluteDate } from './handlers/calendar-actions'
 import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
 import { gateDetectedIntent } from '@/lib/agent/semantic-gate'
 import { isCalendarMutation, isCalendarMutationConfirm, buildCalendarMutationReply, confirmCalendarMutation } from './handlers/calendar-mutations'
@@ -1568,6 +1568,10 @@ export function rememberedForReply(fact: string): string {
 
 export function planningCalendarInstruction(text: string): string | null {
   const t = String(text || '').toLowerCase()
+  if(/\b(?:good time|am i free|am i available|would .+ work|existing context matters)\b/i.test(t)){
+    const date=parseAbsoluteDate(text)
+    if(date)return `Show my calendar on ${date.year}-${String(date.month).padStart(2,'0')}-${String(date.day).padStart(2,'0')}`
+  }
   if (/\b(?:plan|organi[sz]e)\s+(?:my|the)\s+week\b|\b(?:my|the)\s+week\s+ahead\b|\bwhat(?:'s| is| does)?\s+(?:my|the)\s+week\b|\bweekly (?:plan|brief|briefing)\b/.test(t)) return 'Show my calendar for the next 7 days'
   if (/\b(?:morning|daily)\s+(?:briefing|brief|summary)\b|\bbrief me\b|\bplan (?:my|the) day\b|\bwhat(?:'s| is)?\s+(?:on\s+)?my day\b/.test(t)) return 'Show my calendar today'
   return null
