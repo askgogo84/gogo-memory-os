@@ -224,6 +224,7 @@ export type Profile =
       planPriceInr: number
       planExpiresAt: string | null
       connections: { googleCalendar: boolean; gmail: boolean; creditiq: boolean }
+      connectionStateKnown: { googleCalendar: boolean; gmail: boolean; creditiq: boolean }
     }
   | { ok: false }
 
@@ -252,20 +253,22 @@ export async function getProfile(telegramId: string): Promise<Profile> {
     }
 
     // CreditIQ linkage lives in wa_creditiq_links (sender → consumer_user_id),
-    // keyed on the WhatsApp sender. Best-effort match on whatsapp_id: on any error
-    // or a differently-normalized key we show "Not connected" — a false negative,
-    // never a claimed link that isn't there.
+    // keyed on the WhatsApp sender. Preserve lookup failure separately from a
+    // successful absent link, so Connections can show unknown state honestly.
     let creditiq = false
+    let creditiqKnown = !!user
     if (user?.whatsapp_id) {
       try {
-        const { data: link } = await supabaseAdmin
+        const { data: link, error: linkError } = await supabaseAdmin
           .from('wa_creditiq_links')
           .select('consumer_user_id')
           .eq('sender', user.whatsapp_id)
           .maybeSingle()
-        creditiq = !!link?.consumer_user_id
+        creditiqKnown = !linkError
+        creditiq = !linkError && !!link?.consumer_user_id
       } catch {
         creditiq = false
+        creditiqKnown = false
       }
     }
 
@@ -282,6 +285,7 @@ export async function getProfile(telegramId: string): Promise<Profile> {
         gmail: !!user?.gmail_connected,
         creditiq,
       },
+      connectionStateKnown: { googleCalendar: !!user, gmail: !!user, creditiq: creditiqKnown },
     }
   } catch (err) {
     console.error('DASHBOARD_PROFILE_FAILED:', err)
