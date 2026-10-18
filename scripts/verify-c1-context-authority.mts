@@ -26,16 +26,18 @@ try{
  const context=await import(pathToFileURL(path.join(repo,'lib/agent/context-brain.ts')).href)
  const redaction=await import(pathToFileURL(path.join(repo,'lib/bot/memory-redaction.ts')).href)
  const calendarActions=await import(pathToFileURL(path.join(repo,'lib/bot/handlers/calendar-actions.ts')).href)
- let captured:any,modelCalls=0,calendarCalls=0,contextFailure=false,historical=false
+ const recall=await import(pathToFileURL(path.join(repo,'lib/agent/recall-query.ts')).href)
+ let captured:any,modelCalls=0,calendarCalls=0,contextFailure=false,historical=false,lastContextQuery=''
  class InertAnthropic{messages={create:async(params:unknown)=>{modelCalls++;captured=params;return{content:[{type:'text',text:'Bounded synthetic response'}]}}}}
  const services=load('lib/services/claude.ts',{'@anthropic-ai/sdk':InertAnthropic,openai:class{},'@/lib/bot/memory-redaction':redaction,'@/lib/agent/content-workflows':{selectContentWorkflow:()=>null,contentWorkflowPrompt:()=>''}})
  const old='Synthetic Guest arrives on flight ZX123 on 13 October 2026.'
  const move='Owner is moving house on 25 October 2026.'
  const unrelated='Synthetic Noodle Bar was an unrelated earlier assistant suggestion.'
+ const previousUser='Tell me about Synthetic Guest and the recorded flight.'
  const preference='Standing owner preference: quiet seating.'
  const queries:string[]=[]
  const writes:Array<{role:string;content:string}>=[]
- const db={from:(table:string)=>{assert.ok(['conversations','memories'].includes(table),'Unexpected table '+table);queries.push(table);const q:any={select:()=>q,eq:(key:string,value:unknown)=>{assert.equal(key,'telegram_id');assert.equal(value,123);return q},order:()=>q,limit:()=>q,insert:(row:any)=>{assert.equal(row.telegram_id,123);assert.ok(['user','assistant'].includes(row.role));writes.push(row);return{error:null}},then:(resolve:any)=>resolve({data:table==='memories'?[{content:old},{content:unrelated},{content:move}]:[{role:'assistant',content:unrelated}],error:null})};return q}}
+ const db={from:(table:string)=>{assert.ok(['conversations','memories'].includes(table),'Unexpected table '+table);queries.push(table);const q:any={select:()=>q,eq:(key:string,value:unknown)=>{assert.equal(key,'telegram_id');assert.equal(value,123);return q},order:()=>q,limit:()=>q,insert:(row:any)=>{assert.equal(row.telegram_id,123);assert.ok(['user','assistant'].includes(row.role));writes.push(row);return{error:null}},then:(resolve:any)=>resolve({data:table==='memories'?[{content:old},{content:unrelated},{content:move}]:[{role:'assistant',content:unrelated},{role:'user',content:previousUser}],error:null})};return q}}
  const pack=(query:string)=>({query,generatedAt:new FixedDate().toISOString(),memoryEnabled:true,facts:historical?[
   {id:'recorded-old-flight',source:'travel_ticket',summary:old,score:.95,confidence:.95,inferred:false,startAt:'2026-10-13T04:00:00Z',endAt:'2026-10-13T12:00:00Z'},
  ]:[
@@ -47,8 +49,8 @@ try{
   './format-response':{formatOutgoingText:(_channel:string,text:string)=>text},'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/limits':{checkAndIncrementLimit:async()=>({allowed:true})},
   '@/lib/services/memory-index':{isIndexable:()=>true},'@/lib/bot/memory-redaction':redaction,
   '@/lib/bot/handlers/preferences':new Proxy({getPreferenceBlock:async()=>preference},{get:(target:any,key:string)=>target[key]||noop[key as keyof typeof noop]}),
-  '@/lib/agent/recall-query':{recallQuery:(text:string)=>text},
-  '@/lib/agent/context-brain':{buildContextPack:async(params:any)=>{assert.equal(params.actor.legacyTelegramId,123);assert.equal(params.actor.userId,'synthetic-owner');if(contextFailure)throw Error('fixture_context_unavailable');return pack(params.text)},renderContextBlock:context.renderContextBlock},
+  '@/lib/agent/recall-query':recall,
+  '@/lib/agent/context-brain':{buildContextPack:async(params:any)=>{assert.equal(params.actor.legacyTelegramId,123);assert.equal(params.actor.userId,'synthetic-owner');lastContextQuery=params.text;if(contextFailure)throw Error('fixture_context_unavailable');return pack(params.text)},renderContextBlock:context.renderContextBlock},
   './handlers/calendar-actions':{isCalendarAction:()=>false,parseAbsoluteDate:calendarActions.parseAbsoluteDate},
   '@/lib/agent/calendar-read':{executeReadOnlyCalendarStep:async(params:any)=>{calendarCalls++;assert.equal(params.actor.legacyTelegramId,123);assert.match(params.instruction,/^Show my calendar on 2026-10-(?:25|13)$/);return{text:'Calendar coverage incomplete. No events returned on this partial calendar page.'}}},
   '@/lib/claude':services,'./parse-claude-response':{parseClaudeResponse:()=>({type:'none'})},'./action-claim-guard':{guardChatActionClaims:(text:string)=>({blocked:false,text})},
@@ -73,9 +75,13 @@ try{
   historical=true
   try{const result=await run('Based on everything you already know, what context matters about Synthetic Guest and the past flight on 13 October 2026?');assert.equal(result.messages.length,1);assert.ok(result.system.includes(old),'recorded historical arrival remains available');assert.ok(!result.system.includes(unrelated))}finally{historical=false}
  })
+ await check('trusted previous user resolves a synthesis pronoun without reintroducing assistant history',async()=>{
+  historical=true
+  try{const result=await run('Use my saved context: what was her scheduled arrival on 13 October 2026?');assert.ok(lastContextQuery.includes('Previous user request: '+previousUser),'selected retrieval must retain trusted user referent binding');assert.ok(!lastContextQuery.includes(unrelated));assert.equal(result.messages.length,1);assert.ok(result.system.includes(old));assert.ok(!result.system.includes(unrelated))}finally{historical=false}
+ })
  await check('ordinary conversation retains its existing history and memory inputs',async()=>{
   const result=await run('Tell me about the move I mentioned')
-  assert.equal(result.messages.length,2)
+  assert.equal(result.messages.length,3,'ordinary history includes both existing user and assistant turns')
   assert.ok(result.messages.some((message:any)=>message.content===unrelated))
   assert.ok(result.system.includes(old));assert.ok(result.system.includes(move))
  })
