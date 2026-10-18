@@ -15,6 +15,7 @@ import { buildContextPack, renderContextBlock } from '@/lib/agent/context-brain'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { askClaude, askClaudeWithContext, isContextSynthesisTurn, type Message } from '@/lib/claude'
+import { buildReferenceFxReply } from './handlers/reference-fx'
 import { addToListDetailed, formatAddResult, clearList, formatList, getAllLists, getList, setItemDoneByText, resolveAndSetDoneAcrossLists, normalizeListName } from '@/lib/lists'
 import { checkAndIncrementLimit, getUsageStatusReply, getFriendReminderCap } from '@/lib/limits'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -435,6 +436,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
   {
+    const referenceFx=await buildReferenceFxReply(incomingText)
+    if(referenceFx!==null){
+      await saveConversation(resolvedUser.telegramId,'user',incomingText)
+      await saveConversation(resolvedUser.telegramId,'assistant',referenceFx)
+      return {text:formatOutgoingText(params.channel,referenceFx),resolvedUser,handledBy:'reference-fx'}
+    }
     const podcast = podcastRequest(incomingText)
     if (podcast) {
       await saveConversation(resolvedUser.telegramId, 'user', incomingText)
