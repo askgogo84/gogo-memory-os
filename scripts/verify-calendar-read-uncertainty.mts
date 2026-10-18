@@ -7,11 +7,11 @@ import {redactSecretShapedText} from '../lib/bot/memory-redaction'
 
 // Actual read/helper/briefing exports with inert transports. No live tokens,
 // provider mutations, notifications or reminder writes are allowed here.
-let userError=false,extrasError=false,primaryLinked=true,extras=true,providerStatus=200
+let userError=false,extrasError=false,primaryLinked=true,primaryMissing=false,extras=true,providerStatus=200
 let failedReads=new Set<string>(),failedRefresh=new Set<string>(),eventRows:any[]=[]
 const db={from(table:string){
  assert.ok(['users','google_calendar_accounts','reminders','travel_tickets'].includes(table),table)
- const result=()=>({data:table==='users'?{google_calendar_connected:primaryLinked,google_refresh_token:primaryLinked?'fixture-primary':null,timezone:'Asia/Kolkata',briefing_content:'calendar'}:
+ const result=()=>({data:table==='users'?{google_calendar_connected:primaryLinked,google_refresh_token:primaryLinked&&!primaryMissing?'fixture-primary':null,timezone:'Asia/Kolkata',briefing_content:'calendar'}:
   table==='google_calendar_accounts'?(extras?[{email:'extra@example.test',refresh_token:'fixture-extra'}]:[]):[],
  error:(table==='users'&&userError)||(table==='google_calendar_accounts'&&extrasError)?{message:'fixture lookup failed'}:null})
  const q:any={select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},gte:()=>q,lt:()=>q,order:()=>q,limit:()=>q,
@@ -41,7 +41,7 @@ const dashboard=load('lib/dashboard/queries.ts',{'@/lib/supabase-admin':{supabas
  '@/lib/services/meter':{},'@/lib/data/limits':{},'@/lib/services/google-calendar-accounts':accounts},async()=>({ok:providerStatus===200,status:providerStatus,json:async()=>({items:eventRows})}))
 const failures:string[]=[]
 async function check(name:string,fn:()=>Promise<void>){
- userError=false;extrasError=false;primaryLinked=true;extras=true;providerStatus=200;failedReads=new Set();failedRefresh=new Set();eventRows=[]
+ userError=false;extrasError=false;primaryLinked=true;primaryMissing=false;extras=true;providerStatus=200;failedReads=new Set();failedRefresh=new Set();eventRows=[]
  try{await fn();console.log('PASS '+name)}catch(error){failures.push(name+': '+(error instanceof Error?error.message:String(error)).slice(0,350))}
 }
 await check('partial linked Calendar read is explicitly incomplete',async()=>{
@@ -98,6 +98,16 @@ await check('extra-account lookup failure cannot imply complete read',async()=>{
 for(const [name,build]of [['briefing',morning.buildMorningBriefing],['day plan',plan.buildPlanMyDayReply]] as const){
  await check(name+' distinguishes successful absent linkage',async()=>{primaryLinked=false;extras=false;assert.match(await build(123,'Fixture'),/Calendar is not connected/);})
  await check(name+' can read an extra account when primary is absent',async()=>{primaryLinked=false;eventRows=[{summary:'Fixture extra account event',start:{dateTime:'2026-10-18T14:00:00+05:30'}}];assert.match(await build(123,'Fixture'),/Fixture extra account event/);})
+ await check(name+' preserves healthy extra events if primary token is missing',async()=>{primaryMissing=true;eventRows=[{summary:'Fixture extra account event',start:{dateTime:'2026-10-18T14:00:00+05:30'}}];const reply=await build(123,'Fixture');assert.match(reply,/Fixture extra account event/);assert.match(reply,/incomplete/i);})
 }
+await check('dashboard retains healthy events with partial access',async()=>{
+ failedRefresh.add('fixture-extra');eventRows=[{summary:'Fixture healthy event',start:{dateTime:'2026-10-18T14:00:00+05:30'}}]
+ const result=await dashboard.getTodayCalendar('123');assert.equal(result.ok,true);assert.equal(result.incomplete,true);assert.equal(result.events[0].title,'Fixture healthy event')
+})
+const dayChat=load('lib/dashboard/day-chat.ts',{'@/lib/dashboard/queries':dashboard,'@/lib/supabase-admin':{supabaseAdmin:db}})
+for(const intent of ['day','next','plan'])await check('dashboard '+intent+' cannot imply a free day from incomplete calendars',async()=>{
+ const text=dayChat.formatDashboardDayReply({intent,tz:'Asia/Kolkata',remindersOk:true,reminders:[],calendarOk:true,calendarConnected:true,calendarIncomplete:true,calendarEvents:[],now:new Date('2026-10-18T08:00:00Z')})
+ assert.match(text,/incomplete|couldn.t|missing/i);assert.doesNotMatch(text,/clear|quiet day|Longest free stretch|Nothing scheduled from now on/i)
+})
 assert.deepEqual(failures,[],'Calendar failures must remain distinct from successful empty/disconnected state')
 console.log('Calendar actual helper, morning briefing, day-plan and dashboard uncertainty regressions passed; no provider mutations.')
