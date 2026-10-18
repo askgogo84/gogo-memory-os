@@ -62,19 +62,29 @@ function partySize(text:string){
 
 function preferredWindow(text:string){
   const raw=String(text||'').replace(/\b([ap])\s*\.\s*m\s*\.?/gi,'$1m')
+  // These constraints cannot be represented by the local exact/window contract.
+  // Ask before research rather than invert an exclusion or discard a zone/date shift.
+  if(/\b(?:not(?:\s+(?:at|before|after))?|except(?:\s+at)?|excluding(?:\s+at)?|avoid(?:\s+at)?|anything\s+but|before|after|no\s+(?:earlier|later)\s+than)\s+\d{1,2}(?::\d{2})?/i.test(raw)
+    ||/\b(?:UTC|GMT|IST|PST|PDT|EST|EDT|CST|CDT|MST|MDT|CET|CEST|BST|AEST|AEDT|JST)\b|\b(?:Asia|America|Europe|Australia|Africa|Pacific)\/[A-Za-z_]+(?:\/[A-Za-z_]+)?\b|\b(?:Eastern|Central|Mountain|Pacific|Indian\s+Standard)\s+(?:Standard\s+|Daylight\s+)?time\b/i.test(raw))return{start:'',end:'',clarify:true}
   const m=raw.match(/\bbetween\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm))\s+(?:and|to|-)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i)
     ||raw.match(/\b(\d{1,2}(?::\d{2})?\s*(?:am|pm))\s*(?:-|to)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i)
   const start=m?explicitClock(m[1]):'',end=m?explicitClock(m[2]):''
   if(m&&(!start||!end||end<=start)||(raw.match(/\bbetween\s+\d/gi)||[]).length>1)return{start:'',end:'',clarify:true}
   // Range-final "only" restricts the range, not its final endpoint.
-  const rest=m?raw.slice(0,m.index)+' '+raw.slice((m.index||0)+m[0].length):raw
+  const remainder=m?raw.slice(0,m.index)+' '+raw.slice((m.index||0)+m[0].length):raw
   const clock='(?:\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)|(?:[01]\\d|2[0-3]):[0-5]\\d)'
+  // Provider release clocks are research context, never competing dining choices.
+  const rest=remainder.replace(new RegExp(`\\b(?:(?:bookings?|reservations?)\\s+(?:will\\s+)?open(?:s)?|release(?:\\s+time)?)\\s+(?:is\\s+)?at\\s*${clock}\\b`,'gi'),' ')
   const matches=[...rest.matchAll(new RegExp(`\\b(?:only(?:\\s+at)?\\s+(${clock})|(${clock})\\s+only)\\b`,'gi'))]
   const exacts=matches.map(value=>{const text=(value[1]||value[2]).trim();return /(?:am|pm)$/i.test(text)?explicitClock(text):text})
   const distinct=[...new Set(exacts)]
   const onlyClock=/\bonly\s+at\s+\d|\bonly\s+\d{1,2}:\d{2}|\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s+only\b|\b\d{1,2}:\d{2}\s*(?:am|pm)?\s+only\b/i.test(rest)
   if(distinct.length>1||exacts.some(t=>!t)||onlyClock&&!distinct.length)return{start:'',end:'',clarify:true}
-  if(distinct.length){const at=distinct[0];if(m&&(at<start||at>end))return{start:'',end:'',clarify:true};return{start:at,end:at,clarify:false}}
+  if(distinct.length){
+    const remaining=rest.replace(new RegExp(`\\b(?:only(?:\\s+at)?\\s+(${clock})|(${clock})\\s+only)\\b`,'gi'),' ')
+    if(new RegExp(`\\b${clock}\\b`,'i').test(remaining)||/\bat\s+\d{1,2}(?::\d{2})?/i.test(remaining))return{start:'',end:'',clarify:true}
+    const at=distinct[0];if(m&&(at<start||at>end))return{start:'',end:'',clarify:true};return{start:at,end:at,clarify:false}
+  }
   const namedClocks=[...rest.matchAll(new RegExp(`\\b${clock}\\b`,'gi'))]
   if(namedClocks.length>1)return{start:'',end:'',clarify:true}
   if(namedClocks.length){
