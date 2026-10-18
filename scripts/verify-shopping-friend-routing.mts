@@ -124,6 +124,7 @@ const db = {from(table: string) {
 }}
 const noMatch = new Set(['unsupportedCapability', 'podcastRequest', 'imageRequest', 'wantsVoiceReply', 'handleLinkVaultText', 'tryTypedTimeRouting', 'tryFoodComparison', 'getLatestFollowupState', 'isAmPmChoice'])
 const actual: Record<string, any> = {
+  './handlers/reference-fx':{buildReferenceFxReply:async(text:string)=>{assert.doesNotMatch(text,/\bUSD\s+to\s+INR\b/i);return null}},
   '@/lib/agent/content-workflows': contentWorkflows,
   '@/lib/supabase-admin': {supabaseAdmin: db},
   './resolve-user': {resolveUser: async () => ({id: 'owner', telegramId: 42, whatsappId: '+919999999999', name: 'Gogo', tier: 'free'})},
@@ -409,6 +410,7 @@ const webHistory:any[]=[]
 let webSession:any={telegramId:'42'}
 let failFlipkart=false
 const web=executeModule('app/api/dashboard/chat/route.ts',{
+  '@/lib/bot/handlers/reference-fx':actual['./handlers/reference-fx'],
   '@/lib/agent/open-loops':{handleInboxReplyRead},
   'crypto':{randomUUID:()=> 'fixture-web'},
   'next/server':{NextResponse:{json:(data:any,options:any={})=>new Response(JSON.stringify(data),{status:options.status||200})}},

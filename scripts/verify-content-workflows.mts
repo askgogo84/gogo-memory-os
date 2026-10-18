@@ -89,6 +89,7 @@ const db = {from(table: string) {
 }}
 let draftResearchCalls = 0
 const pim = load('lib/bot/process-message.ts', {
+  './handlers/reference-fx':{buildReferenceFxReply:async(text:string)=>{assert.doesNotMatch(text,/\bUSD\s+to\s+INR\b/i);return null}},
   './unsupported-capabilities': {unsupportedCapability: () => null},
   '@/lib/services/voice-reply': {podcastRequest: () => null, wantsVoiceReply: () => false},
   '@/lib/services/image-reply': {imageRequest: () => null},
