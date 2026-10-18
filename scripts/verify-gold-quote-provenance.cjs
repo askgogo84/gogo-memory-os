@@ -145,4 +145,12 @@ check('reverse unit selection cannot use an earlier amount or purity across a co
  const own=answer('1. Bangalore board\n18 October 2026. 24K per 10 g ₹140000; per gram ₹12800 for 22K\nSource: https://synthetic.invalid/reverse-prefix-unit');
  assert.match(own,/22K: ₹12,800/);
 });
+check('reverse suffix qualifiers stop before a comma-separated next quote',()=>{
+ const result=answer('1. Bangalore board\n18 October 2026. ₹14000 for 24K, per 10 g ₹128000 for 22K\nSource: https://synthetic.invalid/next-clause-unit');
+ assert.doesNotMatch(result,/24K: ₹/);assert.match(result,/22K: ₹12,800/);
+ for(const date of ['Oct 17, 2026','17 October, 2026']){
+  const dated=answer(`1. Bangalore board\n18 October 2026. ₹14000 per gram for 24K as of ${date}, ₹12800 per gram for 22K as of 18 October 2026\nSource: https://synthetic.invalid/comma-date`);
+  assert.match(dated,/24K — as of 2026-10-17/);assert.match(dated,/22K — as of 2026-10-18/);
+ }
+});
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');
