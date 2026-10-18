@@ -63,7 +63,7 @@ await check('excluded or relational clocks pause before preparation or queued re
 await check('release-status and fee negation do not erase a supported dining range',async()=>{
  const text='Book Naru Noodle Bar for 2 at the next available slot between 7 PM and 9 PM. If bookings are not open yet, monitor the release time and complete the reservation when it opens. Do not exceed any booking fee or deposit without asking me first.'
  const p=actual.parseRestaurantReservationIntent(text);assert.equal(p.preferredStart,'19:00');assert.equal(p.preferredEnd,'21:00');assert.equal(p.timeClarificationNeeded,false)
- assert.notEqual((await actual.queueRestaurantReservationResearch({actor,text})).status,'paused');assert.ok(writes.some(w=>w.table==='agent_runs'&&w.value.metadata?.timeConstraint?.kind==='window'));assert.equal(providerReads,0)
+ assert.equal((await actual.queueRestaurantReservationResearch({actor,text})).status,'queued');assert.ok(writes.some(w=>w.table==='agent_runs'&&w.value.metadata_json?.timeConstraint?.kind==='window'));assert.equal(providerReads,0)
 })
 await check('only-clock authority cannot hide competing or malformed remaining clocks',async()=>{
  for(const suffix of ['at 8:30 PM only or 9 PM','only at 8:30 PM and at 9 PM','at 8:30 PM only and only at 25:30','at 8:30 PM only or at 9:15','at 8:30 PM only or 25:30','at 8:30 PM only or 25:30 only','at 8:30 PM only or 9:99','at 8:30 PM only or 9:3']){
