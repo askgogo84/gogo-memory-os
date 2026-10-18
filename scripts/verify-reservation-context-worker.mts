@@ -21,11 +21,11 @@ const binding=buildApprovalBinding(boundInput())
 for(const altered of [{...payload,reservationLocation:'Changed city'},{...payload,diningContext:{...snapshot,until:'2026-12-18T10:00:00Z'}},{...payload,contextWindows:[]}]){
  assert.throws(()=>assertApprovalBinding(preparation.restaurantReservationApprovalInput({runId:'fixture-run',lifeEventId:'fixture-event',actionId:'fixture-action',...altered,providerUrl:altered.reservationUrl}),binding),/approval_action_changed/)
 }
-let freshInventory:any=inventory, browserCalls=0, objective='',legacyMode=false
+let freshInventory:any=inventory, browserCalls=0, objective='',legacyMode=false,failTable=''
 const updates:Array<{table:string;value:any}>=[]
 const db={from(table:string){let writing=false;const q:any={select:()=>q,eq:(key:string,value:any)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},in:()=>q,order:()=>q,limit:()=>q,
  update:(value:any)=>{writing=true;updates.push({table,value});return q},maybeSingle:async()=>({error:null,data:table==='life_event_actions'?{id:'fixture-action',payload_json:legacyMode?{...payload,diningContext:undefined}:payload}:table==='agent_runs'?{id:'fixture-run',metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:'fixture-event',life_event_action_id:'fixture-action'}}:table==='life_events'?{id:'fixture-event',title:'Synthetic Restaurant',timezone:'Asia/Kolkata',location:'Home city',metadata_json:{}}:table==='users'?{id:'fixture-user',telegram_id:123,whatsapp_id:'',name:'Synthetic Owner',timezone:'Asia/Kolkata'}:table==='agent_approvals'?{id:'fixture-approval',run_id:'fixture-run',status:'approved',...(legacyMode?buildApprovalBinding({...boundInput(),payload:{...boundInput().payload,diningContext:undefined,reservationLocation:undefined}}):binding)}:table==='agent_permissions'?{level:'ask'}:null}),
- insert:(value:any)=>{updates.push({table,value});return q},then:(resolve:any)=>resolve({error:null})};return q}}
+ insert:(value:any)=>{updates.push({table,value});return q},then:(resolve:any)=>resolve({error:writing&&table===failTable?{message:'synthetic persistence failure'}:null})};return q}}
 const actual=load('lib/agent/restaurant-reservation-worker.ts',{
  '@/lib/supabase-admin':{supabaseAdmin:db},'./restaurant-reservation':preparation,'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining,
  './context-brain':{buildContextPack:async(input:any)=>{assert.equal(input.actor.legacyTelegramId,123);if(freshInventory instanceof Error)throw freshInventory;return{reservationTravel:freshInventory}}},
@@ -48,6 +48,13 @@ executionNow=fixed;freshInventory=inventory;browserCalls=0
 assert.equal((await actual.processOne(action)).status,'queued','A queued action cannot execute before its bound release time')
 assert.equal(browserCalls,0)
 executionNow=Date.parse('2026-10-19T14:31:00Z')
+freshInventory={...inventory,incomplete:true}
+for(const table of ['agent_runs','life_event_actions','life_events','agent_approvals']){
+ failTable=table;browserCalls=0
+ await assert.rejects(()=>actual.processOne(action),/restaurant_reservation_transition_failed/,'Returned persistence errors must not be reported as a successful pause')
+ assert.equal(browserCalls,0)
+}
+failTable=''
 legacyMode=true;updates.length=0
 const legacyPreparation=load('lib/agent/restaurant-reservation.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining})
 const legacy=await legacyPreparation.armApprovedRestaurantReservation({actor,runId:'fixture-run'})
