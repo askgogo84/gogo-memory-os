@@ -75,6 +75,17 @@ function preferredWindow(text:string){
   const onlyClock=/\bonly\s+at\s+\d|\bonly\s+\d{1,2}:\d{2}|\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s+only\b|\b\d{1,2}:\d{2}\s*(?:am|pm)?\s+only\b/i.test(rest)
   if(distinct.length>1||exacts.some(t=>!t)||onlyClock&&!distinct.length)return{start:'',end:'',clarify:true}
   if(distinct.length){const at=distinct[0];if(m&&(at<start||at>end))return{start:'',end:'',clarify:true};return{start:at,end:at,clarify:false}}
+  const namedClocks=[...rest.matchAll(new RegExp(`\\b${clock}\\b`,'gi'))]
+  if(namedClocks.length>1)return{start:'',end:'',clarify:true}
+  if(namedClocks.length){
+    const match=namedClocks[0],prefix=rest.slice(0,match.index),text=match[0].trim()
+    // A user-stated release clock is provider-research input, not dining authority.
+    if(/\b(?:(?:bookings?|reservations?)\s+(?:will\s+)?open(?:s)?|release(?:\s+time)?)\s+(?:is\s+)?at\s*$/i.test(prefix))return{start,end,clarify:false}
+    const at=/(?:am|pm)$/i.test(text)?explicitClock(text):text
+    if(!at||!/(?:\bat|\bdining|\bdinner|\bslot)(?:\s+(?:time|start))?\s*$/i.test(prefix)||m&&(at<start||at>end))return{start:'',end:'',clarify:true}
+    return{start:at,end:at,clarify:false}
+  }
+  if(/\bat\s+\d{1,2}(?::\d{2})?/i.test(rest))return{start:'',end:'',clarify:true}
   return{start,end,clarify:false}
 }
 
