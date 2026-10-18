@@ -1,4 +1,4 @@
-import {parseLocalDateTime} from './timezone'
+import {isValidTimezone, parseLocalDateTime} from './timezone'
 
 export type CalendarProviderEvent = {
   start?: {dateTime?: string; date?: string}; end?: {dateTime?: string; date?: string};
@@ -6,10 +6,15 @@ export type CalendarProviderEvent = {
   attendees?: Array<{self?: boolean; responseStatus?: string}>;
 }
 
+function validDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+  const date = new Date(value + 'T00:00:00Z')
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
+}
+
 function explicitInstant(value: unknown) {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) return NaN
-  const date = new Date(value.slice(0, 10) + 'T00:00:00Z')
-  if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value.slice(0, 10)) return NaN
+  if (!validDate(value.slice(0, 10)) || Number(value.slice(11, 13)) > 23 || Number(value.slice(14, 16)) > 59 || (value[16] === ':' && Number(value.slice(17, 19)) > 59)) return NaN
   return Date.parse(value)
 }
 
@@ -20,7 +25,7 @@ export function calendarInterval(event: CalendarProviderEvent, timezone: string)
     const start = explicitInstant(event.start?.dateTime), end = explicitInstant(event.end?.dateTime)
     return Number.isFinite(start) && Number.isFinite(end) && end > start ? {start, end, allDay: false} : null
   }
-  if (event.start?.date && event.end?.date) {
+  if (validDate(event.start?.date) && validDate(event.end?.date) && isValidTimezone(timezone)) {
     try {
       const start = parseLocalDateTime({date: event.start.date, time: '00:00', timezone}).dueAtUtc.getTime()
       const end = parseLocalDateTime({date: event.end.date, time: '00:00', timezone}).dueAtUtc.getTime()

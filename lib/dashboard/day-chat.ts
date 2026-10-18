@@ -1,7 +1,7 @@
 import { getTodayCalendar, getTodayReminders, type ReminderRow, type CalendarEvent } from '@/lib/dashboard/queries'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {calendarInterval} from '@/lib/calendar-intervals'
-import {parseLocalDateTime} from '@/lib/timezone'
+import {isValidTimezone, parseLocalDateTime} from '@/lib/timezone'
 
 export type DashboardDayIntent = 'summary' | 'next' | 'plan'
 
@@ -41,6 +41,7 @@ function cleanLabel(value: string | null | undefined) {
 function upcomingReminders(rows: ReminderRow[], now = new Date()) {
   const nowMs = now.getTime()
   return rows.filter(row => row.sent !== true && new Date(row.remind_at).getTime() > nowMs)
+    .sort((a, b) => Date.parse(a.remind_at) - Date.parse(b.remind_at))
 }
 
 export function formatDashboardDayReply(params: {
@@ -61,16 +62,22 @@ export function formatDashboardDayReply(params: {
 
   if (params.intent === 'next') {
     const nextReminder = upcoming[0]
-    const nextCalendar = params.calendarOk && params.calendarConnected ? params.calendarEvents[0] : null
-
-    if (nextReminder) {
-      const lines = [`${params.calendarIncomplete || !params.calendarOk ? 'Next known reminder' : 'Next up'}: ${clock(nextReminder.remind_at, params.tz)} — ${cleanLabel(nextReminder.message)}.`]
-      if (nextCalendar) lines.push(`Calendar: ${nextCalendar.time || 'Today'} — ${nextCalendar.title}.`)
-      if (params.calendarIncomplete || !params.calendarOk) lines.push('Calendar is incomplete; an earlier event may be missing.')
-      return lines.join('\n')
+    const candidates = params.calendarOk && params.calendarConnected ? params.calendarEvents.map(event => ({event, span: eventInterval(event, params.tz)}))
+      .filter(({span}) => !span || span.end > now.getTime()) : []
+    const uncertain = candidates.some(({span}) => !span)
+    const incomplete = !params.calendarOk || !params.calendarConnected || params.calendarIncomplete
+    const caution = incomplete ? ' Calendar is incomplete; an earlier event may be missing.' : uncertain ? ' Some calendar times are unverified; the next item cannot be established.' : ''
+    const known = candidates.filter(candidate => candidate.span).sort((a, b) => a.span!.start - b.span!.start)
+    const nextCalendar = known[0]
+    if (nextCalendar && (!nextReminder || Math.max(nextCalendar.span!.start, now.getTime()) <= Date.parse(nextReminder.remind_at))) {
+      const {event, span} = nextCalendar
+      const ongoing = span!.start <= now.getTime()
+      const label = ongoing ? 'On your calendar now' : incomplete || uncertain || !params.remindersOk ? 'Next known calendar item' : 'Next on your calendar'
+      return `${label}: ${event.allDay ? 'All day' : event.time || clock(new Date(span!.start).toISOString(), params.tz)} — ${event.title}${ongoing ? ` (ongoing until ${clock(new Date(span!.end).toISOString(), params.tz)})` : ''}.${caution}${!params.remindersOk ? ' Reminders could not be loaded.' : ''}`
     }
-    if (nextCalendar) return `${params.calendarIncomplete ? 'Next known calendar item' : 'Next on your calendar'}: ${nextCalendar.time || 'Today'} — ${nextCalendar.title}.${params.calendarIncomplete ? ' Calendar is incomplete; an earlier event may be missing.' : ''}`
-    if (!params.remindersOk || !params.calendarOk || params.calendarIncomplete) return `I couldn't read your full day right now. Try again in a moment.`
+    if (nextReminder) return `${incomplete || uncertain ? 'Next known reminder' : 'Next up'}: ${clock(nextReminder.remind_at, params.tz)} — ${cleanLabel(nextReminder.message)}.${caution}`
+    if (uncertain) return `Calendar timing is unverified: ${candidates.filter(({span}) => !span).map(({event}) => event.title).slice(0, 4).join(', ')}. I can't establish what's next.${caution}`
+    if (!params.remindersOk || incomplete) return `I couldn't read your full day right now. Try again in a moment.`
     return `Nothing else is waiting today. Your day is clear.`
   }
 
@@ -133,6 +140,7 @@ function dayKeyIn(ms: number, tz: string) {
 
 /** Today's instant for a clock time like "11:30am" or "4:00 PM" in the person's zone; NaN when unreadable. */
 export function todayAtClock(clockText: string, nowMs: number, tz: string): number {
+  if (!isValidTimezone(tz)) return NaN
   const m = String(clockText || '').trim().toLowerCase().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/)
   if (!m) return NaN
   if (Number(m[2] || 0) > 59 || Number(m[1]) > (m[3] ? 12 : 23) || (m[3] && Number(m[1]) < 1)) return NaN
@@ -140,6 +148,10 @@ export function todayAtClock(clockText: string, nowMs: number, tz: string): numb
   if (!m[3]) h = Number(m[1])
   try { return parseLocalDateTime({date: dayKeyIn(nowMs, tz), time: `${String(h).padStart(2, '0')}:${String(Number(m[2] || 0)).padStart(2, '0')}`, timezone: tz}).dueAtUtc.getTime() }
   catch { return NaN }
+}
+
+function eventInterval(event: CalendarEvent, tz: string) {
+  return event.timingKnown === false ? null : calendarInterval({start: {dateTime: event.startAt || undefined}, end: {dateTime: event.endAt || undefined}}, tz)
 }
 
 /**
@@ -154,7 +166,7 @@ function formatDayPlan(params: Parameters<typeof formatDashboardDayReply>[0], no
   let timingUnknown = false
   if (params.calendarOk && params.calendarConnected) {
     for (const e of params.calendarEvents) {
-      const span = e.timingKnown === false ? null : calendarInterval({start: {dateTime: e.startAt || undefined}, end: {dateTime: e.endAt || undefined}}, params.tz)
+      const span = eventInterval(e, params.tz)
       const blocks = e.blocksTime !== false
       if (span && span.end <= nowMs) continue
       if (blocks && !span) timingUnknown = true
