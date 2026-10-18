@@ -22,10 +22,12 @@ const binding=buildApprovalBinding(boundInput())
 for(const altered of [{...payload,reservationLocation:'Changed city'},{...payload,diningContext:{...snapshot,until:'2026-12-18T10:00:00Z'}},{...payload,contextWindows:[]},{...payload,diningContext:{...snapshot,calendar:{...snapshot.calendar,windows:[]}}}]){
  assert.throws(()=>assertApprovalBinding(preparation.restaurantReservationApprovalInput({runId:'fixture-run',lifeEventId:'fixture-event',actionId:'fixture-action',...altered,providerUrl:altered.reservationUrl}),binding),/approval_action_changed/)
 }
-let freshInventory:any=inventory,freshCalendar:any=calendar,calendarRequested=false,lastCalendarCoverage:any,browserCalls=0,objective='',legacyMode=false,failTable='',browserFailure=''
+let freshInventory:any=inventory,freshCalendar:any=calendar,calendarRequested=false,lastCalendarCoverage:any,browserCalls=0,objective='',legacyMode=false,legacyV1=false,failTable='',browserFailure=''
+const legacyPayload=()=>({...payload,diningContext:legacyV1?{...snapshot,version:1,calendar:undefined}:undefined})
+const legacyBinding=()=>buildApprovalBinding(preparation.restaurantReservationApprovalInput({runId:'fixture-run',lifeEventId:'fixture-event',actionId:'fixture-action',...legacyPayload(),providerUrl:payload.reservationUrl}))
 const updates:Array<{table:string;value:any}>=[]
 const db={from(table:string){let writing=false;const q:any={select:()=>q,eq:(key:string,value:any)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},is:()=>q,in:()=>q,order:()=>q,limit:()=>q,
- update:(value:any)=>{writing=true;updates.push({table,value});return q},maybeSingle:async()=>({error:null,data:table==='life_event_actions'?{id:'fixture-action',payload_json:legacyMode?{...payload,diningContext:undefined}:payload}:table==='agent_runs'?{id:'fixture-run',metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:'fixture-event',life_event_action_id:'fixture-action'}}:table==='life_events'?{id:'fixture-event',title:'Synthetic Restaurant',timezone:'Asia/Kolkata',location:'Home city',metadata_json:{}}:table==='users'?{id:'fixture-user',telegram_id:123,whatsapp_id:'',name:'Synthetic Owner',timezone:'Asia/Kolkata'}:table==='agent_approvals'?{id:'fixture-approval',run_id:'fixture-run',status:'approved',...(legacyMode?buildApprovalBinding({...boundInput(),payload:{...boundInput().payload,diningContext:undefined,reservationLocation:undefined}}):binding)}:table==='agent_permissions'?{level:'ask'}:null}),
+ update:(value:any)=>{writing=true;updates.push({table,value});return q},maybeSingle:async()=>({error:null,data:table==='life_event_actions'?{id:'fixture-action',payload_json:legacyMode?legacyPayload():payload}:table==='agent_runs'?{id:'fixture-run',metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:'fixture-event',life_event_action_id:'fixture-action'}}:table==='life_events'?{id:'fixture-event',title:'Synthetic Restaurant',timezone:'Asia/Kolkata',location:'Home city',metadata_json:{}}:table==='users'?{id:'fixture-user',telegram_id:123,whatsapp_id:'',name:'Synthetic Owner',timezone:'Asia/Kolkata'}:table==='agent_approvals'?{id:'fixture-approval',run_id:'fixture-run',status:'approved',...(legacyMode?legacyBinding():binding)}:table==='agent_permissions'?{level:'ask'}:null}),
  insert:(value:any)=>{updates.push({table,value});return q},then:(resolve:any)=>resolve({error:writing&&table===failTable?{message:'synthetic persistence failure'}:null})};return q}}
 const actual=load('lib/agent/restaurant-reservation-worker.ts',{
  '@/lib/supabase-admin':{supabaseAdmin:db},'./restaurant-reservation':preparation,'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining,
@@ -71,13 +73,18 @@ for(const table of ['agent_runs','life_event_actions','life_events','agent_appro
  assert.equal(browserCalls,0)
 }
 failTable=''
-legacyMode=true;updates.length=0
 const legacyPreparation=load('lib/agent/restaurant-reservation.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining})
-const legacy=await legacyPreparation.armApprovedRestaurantReservation({actor,runId:'fixture-run'})
-assert.equal(legacy.status,'paused','Legacy approval lacking dining coverage must enter refreshable review')
-assert.ok(updates.some(row=>row.table==='agent_approvals'&&row.value.status==='expired'))
-assert.ok(updates.some(row=>row.table==='agent_runs'&&row.value.status==='paused'))
-assert.equal(updates.some(row=>row.table==='life_event_actions'&&row.value.status==='ready'),false)
+for(const version of ['missing','travel-only-v1']){
+ legacyMode=true;legacyV1=version==='travel-only-v1';updates.length=0;browserCalls=0
+ const legacy=await legacyPreparation.armApprovedRestaurantReservation({actor,runId:'fixture-run'})
+ assert.equal(legacy.status,'paused',version+' approval must enter refreshable review')
+ assert.ok(updates.some(row=>row.table==='agent_approvals'&&row.value.status==='expired'))
+ assert.ok(updates.some(row=>row.table==='agent_runs'&&row.value.status==='paused'))
+ assert.equal(updates.some(row=>row.table==='life_event_actions'&&row.value.status==='ready'),false)
+ assert.equal((await actual.processOne({...action,payload_json:legacyPayload()})).status,'paused','Already queued legacy authority must also pause before execution')
+ assert.equal(browserCalls,0)
+}
+legacyMode=false
 // Actual arm racing with a completed context refresh: same status/error can recur,
 // so only the captured row version can prevent restoring the old action payload.
 let liveRun:any={id:'fixture-run',status:'waiting_approval',error:null,updated_at:'2026-10-18T09:00:00Z',metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:'fixture-event',life_event_action_id:'fixture-action'}}
