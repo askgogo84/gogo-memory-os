@@ -33,6 +33,16 @@ function instant(value: unknown) {
 }
 function name(value: string) {return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim()}
 
+export function reservationRequestedDateCoverage(requestedDate:string,timezone:string,now=new Date()){
+  if(!requestedDate)return undefined
+  const date=new Date(requestedDate+'T00:00:00Z')
+  if(!isValidTimezone(timezone)||!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)||!Number.isFinite(date.getTime())||date.toISOString().slice(0,10)!==requestedDate)return null
+  const next=new Date(date.getTime()+DAY).toISOString().slice(0,10)
+  const span=calendarInterval({start:{date:requestedDate},end:{date:next}},timezone)
+  if(!span||span.end<=now.getTime())return null
+  return{from:new Date(Math.max(span.start,now.getTime())).toISOString(),until:new Date(span.end).toISOString()}
+}
+
 /** Minimal owner-scoped restrictions, taken before the conversational fact budget. */
 export function buildReservationDiningContext(params: {
   actor: Actor; timezone: string; requestedDate: string; releaseAt: string; now?: Date;
@@ -48,12 +58,9 @@ export function buildReservationDiningContext(params: {
   let from=nowMs, until=Math.min(nowMs+60*DAY,Number.isFinite(instant(inventory?.coveredUntil))?instant(inventory?.coveredUntil):nowMs+60*DAY,Number.isFinite(instant(calendar?.coveredUntil))?instant(calendar?.coveredUntil):nowMs+60*DAY)
   if(params.coverage){from=instant(params.coverage.from);until=instant(params.coverage.until)}
   else if(params.requestedDate){
-    const d=new Date(params.requestedDate+'T00:00:00Z')
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(params.requestedDate)||!Number.isFinite(d.getTime())||d.toISOString().slice(0,10)!==params.requestedDate){fail('dining_date_unverified');return result}
-    const next=new Date(d.getTime()+DAY).toISOString().slice(0,10)
-    const span=calendarInterval({start:{date:params.requestedDate},end:{date:next}},params.timezone)
+    const span=reservationRequestedDateCoverage(params.requestedDate,params.timezone,now)
     if(!span){fail('dining_date_unverified');return result}
-    from=Math.max(span.start,nowMs);until=span.end
+    from=instant(span.from);until=instant(span.until)
   }
   if(!Number.isFinite(from)||!Number.isFinite(until)||until<=Math.max(from,nowMs)||until-from>60*DAY){fail('dining_coverage_unverified');return result}
   result.from=new Date(from).toISOString();result.until=new Date(until).toISOString()

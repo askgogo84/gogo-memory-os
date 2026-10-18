@@ -8,7 +8,7 @@ import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildContextPack } from './context-brain'
-import {buildReservationDiningContext, usableReservationDiningContext, type ReservationDiningContext} from './reservation-dining-context'
+import {buildReservationDiningContext, usableReservationDiningContext, reservationRequestedDateCoverage, type ReservationDiningContext} from './reservation-dining-context'
 
 function safe(value: unknown, max = 1200) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -505,14 +505,16 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     {source:'provider',kind:'restaurant_reservation_page',url:provider.url},
     ...(ruleEvidenceUrl?[{source:'provider',kind:'restaurant_first_party_reservation_rules',url:ruleEvidenceUrl,title:ruleEvidenceTitle}]:[]),
   ]
+  const calendarCoverage=reservationRequestedDateCoverage(intent.requestedDate,timezone,new Date())
+  if(calendarCoverage===null)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'The requested dining date could not be verified as a future local date. No mission was armed or booking attempted.'}
   const contextPack=await buildContextPack({
     actor:params.actor,
     text:params.text,
-    options:{includeSemantic:false,includeReservationTravel:true,includeReservationCalendar:true,maxFacts:14,horizonDays:60},
+    options:{includeSemantic:false,includeReservationTravel:true,includeReservationCalendar:true,reservationCalendarCoverage:calendarCoverage,maxFacts:14,horizonDays:60},
   }).catch(()=>null)
   const diningContext=buildReservationDiningContext({actor:params.actor,timezone,requestedDate:intent.requestedDate,releaseAt,pack:contextPack,now:new Date()})
   if(diningContext.incomplete)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,
-    text:'I verified the reservation release, but could not verify bounded travel and Calendar context for the possible dining dates. No reservation mission was armed or booking attempted. Please retry the context check before approving an attempt.'}
+    text:'I verified the reservation release, but could not verify bounded travel and Calendar context for the possible dining dates. No reservation mission was armed or booking attempted. Retry the context check, or specify a dining date to narrow the Calendar read, before approving an attempt.'}
   const contextWindows=diningContext.windows
   const contextRefs=[...contextWindows.flatMap(window=>window.sourceRefs),...diningContext.calendar.windows.flatMap(window=>window.sourceRefs)].slice(0,30)
   const key=dedupeKey(params.actor,intent,provider.url)
