@@ -17,6 +17,7 @@ const extraReads=['Read my Google Calendar and display my shopping list','Show m
 const heldReads=['Check my Google Calendar? Actually, do not check it.','Check my Google Calendar only after I approve','Show my Calendar today. Do not read it yet.']
 const neverReads=['Never read my Google Calendar','Please never check my Calendar.']
 const zonedReads=['Check my Google Calendar in UTC','Read my calendar in Asia/Kolkata','Show my calendar using Europe/London','Review my Calendar timezone is America/New_York','Read my Calendar tomorrow at 8 pm CET']
+const availabilityReads=['Show my calendar tomorrow and check if I am free',"Show my Calendar tomorrow and check whether I'm available",'Show my Calendar tomorrow and tell me when am I free']
 const failures:string[]=[]
 async function check(label:string,fn:()=>unknown){try{await fn();console.log('PASS '+label)}catch(error:any){failures.push(label+': '+error.message)}}
 const rejectIO=()=>{throw Error('Unexpected model/provider/action I/O')}
@@ -82,6 +83,9 @@ try{
   assert.notEqual(detectIntent(text).type,'calendar_read_clarify')
   assert.notEqual(detectIntent(text).type,'read_calendar')
  })
+ await check('native availability questions remain a single bounded Calendar read',()=>{
+  for(const text of availabilityReads){assert.equal(detectIntent(text).type,'read_calendar',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text)?.scope,'calendar',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text)?.horizon,'tomorrow',text)}
+ })
  await check('actual shared message entry reads without minting a connection link',async()=>{
   const q:any={insert:()=>({error:null}),select:()=>q,eq:()=>q,maybeSingle:async()=>({data:null,error:null})}
   pm=load('lib/bot/process-message.ts',{
@@ -108,6 +112,9 @@ try{
    assert.doesNotMatch(result.text,/calendar is clear|no events|https:\/\/fixture.invalid\/auth/i)
    assert.equal(connectionCalls,previousConnections)
   }finally{failRead=false}
+ })
+ await check('actual shared entry delegates native availability questions to the Calendar reader',async()=>{
+  for(const text of availabilityReads){const before=calendarReads,connectionsBefore=connectionCalls;const result=await pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text,messageType:'text'});assert.match(result.text,/Calendar read/);assert.equal(calendarReads,before+1);assert.equal(connectionCalls,connectionsBefore)}
  })
  await check('actual shared entry honors read holds without Calendar or connection calls',async()=>{
   for(const text of heldReads){const before=calendarReads,connectionsBefore=connectionCalls;const result=await pm.processIncomingMessage({channel:'whatsapp',externalUserId:'fixture-owner',text,messageType:'text'});assert.match(result.text,/haven.t read|not read|on hold/i);assert.equal(calendarReads,before);assert.equal(connectionCalls,connectionsBefore)}
