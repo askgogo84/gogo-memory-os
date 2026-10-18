@@ -214,7 +214,6 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   }
 
   const now=new Date().toISOString()
-  if(reconciledResult)await releaseRunAuthHandoff(tg,runId)
   const meta={...(event.metadata_json||{}),reservationConfirmed:true,reservationConfirmedAt:now,confirmationUrl:result.url,confirmationEvidence:safe(result.pageText,2200)}
   // Provider success and durable task completion are separate facts. Quarantine
   // this exact action before bookkeeping so a partial write cannot arm a replay.
@@ -222,6 +221,7 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   const {data:recorded,error:receiptError}=await supabaseAdmin.from('life_event_actions').update({status:'blocked',updated_at:now,payload_json:receipt})
     .eq('id',action.id).eq('telegram_id',tg).eq('status','running').select('id').maybeSingle()
   if(receiptError||!recorded)throw new Error('restaurant_reservation_confirmation_receipt_failed')
+  if(reconciledResult)await releaseRunAuthHandoff(tg,runId)
   const completionMetadata={plan_type:'restaurant_reservation_release',life_event_id:String(event.id),life_event_action_id:String(action.id),providerConfirmationVerified:true,confirmationUrl:result.url}
   const completions=await Promise.allSettled([
     supabaseAdmin.from('agent_runs').update({status:'completed',summary:'Restaurant reservation submitted and verified from the provider confirmation page.',progress:100,completed_at:now,updated_at:now,metadata_json:completionMetadata}).eq('id',runId).eq('telegram_id',tg).select('id').maybeSingle(),
