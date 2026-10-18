@@ -1,5 +1,6 @@
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {isActionablePause} from './run-state'
+import {browserAuthSummary} from './browser-auth-summary'
 
 /** A Take control handoff older than this is no longer actionable (the provider session behind it is long gone),
  * so it leaves Needs you. The run itself is untouched and still shows in Activity. */
@@ -52,19 +53,9 @@ export async function getPendingBrowserHandoffs(telegramId:string,limit=20,now=D
     const handoff=row.metadata_json?.handoff
     if(!isActionablePause(row)||!handoff||!(handoff.takeoverUrl||(handoff.mode==='device'&&handoff.providerUrl)))continue
     const title=String(row.title||'Browser task')
-    let summary=String(row.summary||'Choose Take control to complete the provider step.')
+    const summary=browserAuthSummary({...row,summary:row.summary||'Choose Take control to complete the provider step.'},latestAuth.get(String(row.id)),now)
     let host=''
     try{host=handoff.providerUrl?new URL(String(handoff.providerUrl)).hostname.toLowerCase():''}catch{host=''}
-    if(row.error==='human_auth_required'){
-      const step=latestAuth.get(String(row.id)),completed=Date.parse(step?.completedAt||'')
-      const reason=step?.status==='failed'&&step.error==='human_auth_required'&&Number.isFinite(completed)&&completed<=now?step.reason:''
-      if(reason==='login_unavailable')summary=`I couldn't sign in${host?` to ${host.replace(/^www\./,'').slice(0,180)}`:''} automatically, so I paused this task. Open Take control to sign in yourself, then Resume. Keep passwords and sign-in codes out of chat.`
-      else if(/couldn.t get[\s\S]*send you a sign.in code/i.test(summary)){
-        const known:Record<string,string>={otp:'Complete secondary authentication yourself',password:'Sign in yourself',device_approval:'Approve sign-in on your device',captcha:'Complete the provider verification yourself',payment_auth:'Complete payment authentication yourself'}
-        summary=Object.prototype.hasOwnProperty.call(known,reason)?`${known[reason]} in Take control, then Resume this same task. Keep passwords and sign-in codes out of chat.`
-          :"This task is paused for a secure provider step. I couldn't verify the recorded sign-in reason. Open Take control to check it, then Resume."
-      }
-    }
     const key=[title.trim().toLowerCase(),summary.trim().toLowerCase(),host].join('|')
     const seen=byStep.get(key)
     if(seen){seen.repeats+=1;continue}
