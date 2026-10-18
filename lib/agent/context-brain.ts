@@ -490,7 +490,10 @@ async function loadReservationCalendar(actor:AgentActor,horizonDays:number):Prom
     const windows=new Map<string,ReservationCalendarInventory['windows'][number]>()
     for(const event of page.events){
       if(!calendarBlocksTime(event))continue
-      const span=calendarInterval(event,String(data.timezone||actor.timezone||'Asia/Kolkata'))
+      // All-day dates belong to the provider calendar's timezone. The owner's
+      // display timezone cannot establish those instants for a linked account.
+      const timezone=typeof event._calendarTimezone==='string'?event._calendarTimezone:typeof event.start?.timeZone==='string'?event.start.timeZone:''
+      const span=calendarInterval(event,timezone)
       if(!span||!event.id){inventory.incomplete=true;continue}
       if(span.end<=from||span.start>=until)continue
       // Include only occupied time and opaque provenance; Calendar titles,
