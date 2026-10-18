@@ -3,6 +3,7 @@ import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 import * as timezone from '../lib/timezone'
+import * as intervals from '../lib/calendar-intervals'
 import {redactSecretShapedText} from '../lib/bot/memory-redaction'
 
 // Actual read/helper/briefing exports with inert transports. No live tokens,
@@ -39,7 +40,7 @@ const plan=load('lib/bot/handlers/plan-my-day.ts',deps)
 const read=load('lib/agent/calendar-read.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/google-calendar':calendar,
  '@/lib/services/google-calendar-accounts':accounts,'@/lib/timezone':timezone,'@/lib/agent/typed-object-context':{},'@/lib/bot/memory-redaction':{redactSecretShapedText}})
 const dashboard=load('lib/dashboard/queries.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/ist':{istDayWindow:()=>({startUtc:new Date('2026-10-18T00:00:00Z'),endUtc:new Date('2026-10-19T00:00:00Z')})},
- '@/lib/services/meter':{},'@/lib/data/limits':{},'@/lib/services/google-calendar-accounts':accounts},async(_url:unknown,init:any)=>{
+ '@/lib/services/meter':{},'@/lib/data/limits':{},'@/lib/calendar-intervals':intervals,'@/lib/services/google-calendar-accounts':accounts},async(_url:unknown,init:any)=>{
  const status=failedReads.has(String(init.headers.Authorization).replace(/^Bearer /,''))?503:providerStatus
  return {ok:status===200,status,json:async()=>({items:eventRows})}
 })
@@ -108,7 +109,7 @@ await check('dashboard retains healthy events with partial access',async()=>{
  failedRefresh.add('fixture-extra');eventRows=[{summary:'Fixture healthy event',start:{dateTime:'2026-10-18T14:00:00+05:30'}}]
  const result=await dashboard.getTodayCalendar('123');assert.equal(result.ok,true);assert.equal(result.incomplete,true);assert.equal(result.events[0].title,'Fixture healthy event')
 })
-const dayChat=load('lib/dashboard/day-chat.ts',{'@/lib/dashboard/queries':dashboard,'@/lib/supabase-admin':{supabaseAdmin:db}})
+const dayChat=load('lib/dashboard/day-chat.ts',{'@/lib/dashboard/queries':dashboard,'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/calendar-intervals':intervals,'@/lib/timezone':timezone})
 for(const intent of ['summary','next','plan'])await check('dashboard '+intent+' cannot imply a free day from incomplete calendars',async()=>{
  const text=dayChat.formatDashboardDayReply({intent,tz:'Asia/Kolkata',remindersOk:true,reminders:[],calendarOk:true,calendarConnected:true,calendarIncomplete:true,calendarEvents:[],now:new Date('2026-10-18T08:00:00Z')})
  assert.match(text,/incomplete|couldn.t|missing/i);assert.doesNotMatch(text,/clear|quiet day|Longest free stretch|Nothing scheduled from now on/i)
