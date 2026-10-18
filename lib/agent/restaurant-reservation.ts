@@ -7,7 +7,8 @@ import { runSecureBrowser } from './secure-computer'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
-import { buildContextPack, contextSourceRefs, travelContextAt } from './context-brain'
+import { buildContextPack } from './context-brain'
+import {buildReservationDiningContext, type ReservationDiningContext} from './reservation-dining-context'
 
 function safe(value: unknown, max = 1200) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -272,7 +273,7 @@ function dedupeKey(actor:AgentActor,intent:RestaurantReservationIntent,url:strin
   return createHash('sha256').update(stable).digest('hex').slice(0,40)
 }
 
-export function restaurantReservationApprovalInput(params:{runId:string;lifeEventId:string;actionId:string;restaurant:string;providerUrl:string;partySize:number|null;preferredStart:string;preferredEnd:string;requestedDate:string;releaseAt:string|null;contextWindows?:Array<{startAt:string;endAt:string|null;location:string|null;source:string;confidence:number}>}){
+export function restaurantReservationApprovalInput(params:{runId:string;lifeEventId:string;actionId:string;restaurant:string;providerUrl:string;partySize:number|null;preferredStart:string;preferredEnd:string;requestedDate:string;releaseAt:string|null;contextWindows?:Array<{startAt:string;endAt:string|null;location:string|null;source:string;confidence:number}>;diningContext?:ReservationDiningContext;reservationLocation?:string|null}){
   return{
     missionId:params.runId,
     stepId:params.actionId,
@@ -290,6 +291,7 @@ export function restaurantReservationApprovalInput(params:{runId:string;lifeEven
       maxBookingFeePaise:0,
       paymentBoundary:'stop_before_fee_or_deposit',
       contextWindows:params.contextWindows||[],
+      ...(params.diningContext?{diningContext:params.diningContext,reservationLocation:params.reservationLocation||null}:{}),
     },
   }
 }
@@ -506,14 +508,13 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const contextPack=await buildContextPack({
     actor:params.actor,
     text:params.text,
-    options:{includeSemantic:true,maxFacts:14,horizonDays:60},
+    options:{includeSemantic:false,maxFacts:14,horizonDays:60},
   }).catch(()=>null)
-  const releaseTravel=contextPack?travelContextAt(contextPack,releaseAt):[]
-  const contextWindows=releaseTravel
-    .filter(f=>f.startAt)
-    .map(f=>({startAt:String(f.startAt),endAt:f.endAt?String(f.endAt):null,location:f.location||null,source:f.source,confidence:f.confidence}))
-    .slice(0,6)
-  const contextRefs=contextPack?contextSourceRefs(releaseTravel):[]
+  const diningContext=buildReservationDiningContext({actor:params.actor,timezone,requestedDate:intent.requestedDate,releaseAt,pack:contextPack,now:new Date()})
+  if(diningContext.incomplete)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,
+    text:'I verified the reservation release, but could not verify bounded saved-travel context for the possible dining dates. No reservation mission was armed or booking attempted. Please retry the context check before approving an attempt.'}
+  const contextWindows=diningContext.windows
+  const contextRefs=contextWindows.flatMap(window=>window.sourceRefs).slice(0,30)
   const key=dedupeKey(params.actor,intent,provider.url)
   const existing=await existingMission(params.actor.legacyTelegramId,key)
   if(existing?.run?.id){
@@ -538,7 +539,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     lifecycle_state:'planned',
     participants:[],
     preferences_json:{partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0},
-    metadata_json:{restaurant:intent.restaurant,reservationUrl:provider.url,reservationLocation:(provider as any).location||null,providerDiscovery:provider.source,releaseAt,releaseRule:release.releaseRule,releaseEvidence:safe(combinedReleaseEvidence,2600),releaseEvidenceUrl:ruleEvidenceUrl,readOnlyInspection:true,contextWindows,contextRefs},
+    metadata_json:{restaurant:intent.restaurant,reservationUrl:provider.url,reservationLocation:(provider as any).location||null,providerDiscovery:provider.source,releaseAt,releaseRule:release.releaseRule,releaseEvidence:safe(combinedReleaseEvidence,2600),releaseEvidenceUrl:ruleEvidenceUrl,readOnlyInspection:true,contextWindows,contextRefs,diningContext},
     source_refs:[...releaseSourceRefs,...contextRefs],
     dedupe_key:key,
     next_action_at:releaseAt,
@@ -557,7 +558,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     requires_approval:true,
     irreversible:true,
     status:'waiting_approval',
-    payload_json:{reservationUrl:provider.url,restaurant:intent.restaurant,reservationLocation:(provider as any).location||null,partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,releaseAt,releaseRule:release.releaseRule,contextWindows,contextRefs},
+    payload_json:{reservationUrl:provider.url,restaurant:intent.restaurant,reservationLocation:(provider as any).location||null,partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,releaseAt,releaseRule:release.releaseRule,contextWindows,contextRefs,diningContext},
     updated_at:now,
   },{onConflict:'life_event_id,action_key'}).select('id').single()
   if(actionError||!action?.id)throw new Error(`restaurant_reservation_action_failed:${actionError?.message||'unknown'}`)
@@ -568,11 +569,11 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     summary:'Provider release time verified. Waiting for bounded approval before the scheduled reservation attempt.',
     progress:35,why:'Gogo inspected the provider page read-only and will only attempt the reservation inside the approved restaurant/party/time/fee bounds.',
     source:params.surface,started_at:now,updated_at:now,
-    metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:lifeEventId,life_event_action_id:actionId,restaurant:intent.restaurant,reservation_url:provider.url,release_at:releaseAt,context_windows:contextWindows,context_refs:contextRefs,constraints:{partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0}},
+    metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:lifeEventId,life_event_action_id:actionId,restaurant:intent.restaurant,reservation_url:provider.url,release_at:releaseAt,context_windows:contextWindows,context_refs:contextRefs,dining_context:diningContext,constraints:{partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0}},
   }).select('id').single()
   if(runError||!run?.id)throw new Error(`restaurant_reservation_run_failed:${runError?.message||'unknown'}`)
   const runId=String(run.id)
-  const binding=buildApprovalBinding(restaurantReservationApprovalInput({runId,lifeEventId,actionId,restaurant:intent.restaurant,providerUrl:provider.url,partySize:intent.partySize,preferredStart:intent.preferredStart,preferredEnd:intent.preferredEnd,requestedDate:intent.requestedDate,releaseAt,contextWindows}))
+  const binding=buildApprovalBinding(restaurantReservationApprovalInput({runId,lifeEventId,actionId,restaurant:intent.restaurant,providerUrl:provider.url,partySize:intent.partySize,preferredStart:intent.preferredStart,preferredEnd:intent.preferredEnd,requestedDate:intent.requestedDate,releaseAt,contextWindows,diningContext,reservationLocation:(provider as any).location||null}))
   const{data:approval,error:approvalError}=await supabaseAdmin.from('agent_approvals').insert({
     telegram_id:String(params.actor.legacyTelegramId),run_id:runId,action_type:'booking',
     title:`Approve timed reservation attempt · ${intent.restaurant}`.slice(0,220),
@@ -582,6 +583,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
       {label:'Party',value:String(intent.partySize)},
       {label:'Preferred time',value:intent.preferredStart&&intent.preferredEnd?`${intent.preferredStart}–${intent.preferredEnd}`:'Next available'},
       {label:'Booking release',value:releaseAt},
+      {label:'Dining dates covered',value:`${diningContext.from} – ${diningContext.until} (${timezone})`},
       {label:'Fee/deposit',value:'₹0 approved; ask before any charge'},
     ],
     execution_payload:{plan_type:'restaurant_reservation_release',lifeEventId,lifeEventActionId:actionId,action:'arm_scheduled_restaurant_reservation'},
@@ -599,8 +601,8 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     ? `${ruleEvidenceUrl?'First-party reservation rule':'Provider rule'}: ${release.releaseRule}.`
     :(release.openNow?'The provider page currently exposes booking controls.':'Provider release time verified.')
   const window=intent.preferredStart&&intent.preferredEnd?`${intent.preferredStart}–${intent.preferredEnd}`:'next available'
-  const travelNote=releaseTravel.length
-    ? `\n\nContext check: your saved travel context places you ${releaseTravel[0].location?`in/around ${releaseTravel[0].location}`:'in active travel'} around this release window. I will not ignore that context: if the actual dining slot conflicts with your saved travel window/location, I will stop and ask instead of booking it.`
+  const travelNote=contextWindows.length
+    ? '\n\nRelevant saved travel windows are attached for the possible dining dates. An inferred or unattributed traveller window requires clarification if it overlaps the dining slot; it is not proof that you are away.'
     : ''
   return{
     runId,status:'waiting_approval' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,
@@ -619,7 +621,7 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
   const{data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',tg).eq('action_type','booking').eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   if(!action||!approval)throw new Error('approval_required')
   const p:any=action.payload_json||{}
-  assertApprovalBinding(restaurantReservationApprovalInput({runId:params.runId,lifeEventId:String(meta.life_event_id),actionId:String(action.id),restaurant:String(p.restaurant||meta.restaurant||''),providerUrl:String(p.reservationUrl||meta.reservation_url||''),partySize:Number(p.partySize)||null,preferredStart:String(p.preferredStart||''),preferredEnd:String(p.preferredEnd||''),requestedDate:String(p.requestedDate||''),releaseAt:String(p.releaseAt||meta.release_at||'')||null,contextWindows:Array.isArray(p.contextWindows)?p.contextWindows:[]}),approval)
+  assertApprovalBinding(restaurantReservationApprovalInput({runId:params.runId,lifeEventId:String(meta.life_event_id),actionId:String(action.id),restaurant:String(p.restaurant||meta.restaurant||''),providerUrl:String(p.reservationUrl||meta.reservation_url||''),partySize:Number(p.partySize)||null,preferredStart:String(p.preferredStart||''),preferredEnd:String(p.preferredEnd||''),requestedDate:String(p.requestedDate||''),releaseAt:String(p.releaseAt||meta.release_at||'')||null,contextWindows:Array.isArray(p.contextWindows)?p.contextWindows:[],diningContext:p.diningContext,reservationLocation:p.reservationLocation||null}),approval)
   const now=new Date().toISOString()
   await Promise.all([
     supabaseAdmin.from('agent_runs').update({status:'queued',summary:'Reservation mission armed and waiting for the verified provider release time.',progress:55,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg),

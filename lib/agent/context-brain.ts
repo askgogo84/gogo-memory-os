@@ -7,6 +7,7 @@ import { ticketTimezone, flightInstants, ticketInstant } from '@/lib/services/tr
 import { redactSecretShapedText, isSecretShapedMemory } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
 import { latestTypedContext } from './typed-object-context'
+import type {ReservationTravelInventory} from './reservation-dining-context'
 
 export type ContextSource =
   | 'life_event'
@@ -33,6 +34,7 @@ export type ContextFact = {
   provider?:string|null
   kind?:string|null
   inferred?:boolean
+  participants?:string[]
   sourceRefs?:Array<Record<string,unknown>>
 }
 
@@ -42,6 +44,8 @@ export type ContextPack = {
   memoryEnabled:boolean
   retrievalIncomplete?:boolean
   facts:ContextFact[]
+  /** Owner-scoped travel constraints before the conversational ranking budget. */
+  reservationTravel?:ReservationTravelInventory
   provenance:{
     lifeEvents:number
     travelTickets:number
@@ -147,7 +151,7 @@ export function isRetrospectiveTravelQuery(query:string):boolean{
 }
 export const RETROSPECTIVE_TRAVEL_LOOKBACK_DAYS=120
 
-export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=60,query=''):ContextFact[]{
+export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=60,query='',includePastConstraints=false):ContextFact[]{
   const pastWindowMs=(isRetrospectiveTravelQuery(query)?RETROSPECTIVE_TRAVEL_LOOKBACK_DAYS:2)*86400_000
   const flights=(rows||[])
     .filter((row:any)=>String(row?.type||'')==='flight')
@@ -189,9 +193,9 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     const departMs=Date.parse(leg.departAt)
     if(!leg.departAt){
       const printedMs=Date.parse(leg.printedDate)
-      if(!Number.isFinite(printedMs)||printedMs>horizonEnd+86400_000||printedMs<now-pastWindowMs)continue
+      if(!Number.isFinite(printedMs)||printedMs>horizonEnd+86400_000||(!includePastConstraints&&printedMs<now-pastWindowMs))continue
     }
-    if(departMs>horizonEnd||departMs<now-pastWindowMs)continue
+    if(departMs>horizonEnd||(!includePastConstraints&&departMs<now-pastWindowMs))continue
     const validArrival=leg.arriveAt&&Date.parse(leg.arriveAt)>departMs?leg.arriveAt:null
     const passengerLabel=(leg.passengers.length?`Passengers: ${leg.passengers.join(', ')}`:'Passenger identity not recorded')+(leg.travellerAliases.length?` (the user calls them ${leg.travellerAliases.join(', ')})`:'')
     const arrivalLabel=validArrival?`Arrival ${new Intl.DateTimeFormat('en-GB',{timeZone:leg.arrivalTz||'UTC',dateStyle:'medium',timeStyle:'short'}).format(new Date(validArrival))} (${leg.arrivalTz||'UTC'})`:'Arrival instant unverified; check source ticket'
@@ -224,6 +228,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     facts.push({
       id:`travel-ticket:${leg.id}`,
       source:'travel_ticket',
+      participants:leg.passengers,
       // timeStatusLabel is placed BEFORE unbounded passenger/seat details so a large
       // group booking can never truncate away the past-leg warning that suppresses
       // stale check-in countdowns and unverified landing claims.
@@ -270,6 +275,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
     facts.push({
       id:`travel-presence:${leg.id}`,
       source:'travel_presence',
+      participants:leg.passengers,
       summary:`Saved itinerary places ${leg.passengers.length?leg.passengers.join(', '):'the unnamed ticket passenger (not necessarily the user)'} in or around ${leg.to} after arrival${next?.departAt?' until the next saved travel leg':' for the immediate post-arrival window'}.`,
       score:0.82,
       confidence,
@@ -338,6 +344,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
     lifeFacts.push({
       id:`life-event:${(row as any).id}`,
       source:'life_event',
+      participants:Array.isArray((row as any).participants)?(row as any).participants.filter((p:unknown)=>typeof p==='string'):[],
       summary:safe([((row as any).title||`${(row as any).event_type} event`),participantText?`Participants: ${participantText}`:''].filter(Boolean).join(' · '),500),
       score:factScore({query,text,base:0.5,startAt,now,horizonDays}),
       confidence:0.96,
@@ -442,7 +449,10 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
   }
   const retrievalIncomplete=[lifeResult,loopResult,goalResult,ticketResult,watcherResult].some(result=>!!result.error)
   if(retrievalIncomplete)console.error('CONTEXT_OPERATIONAL_RETRIEVAL_INCOMPLETE')
-  return{lifeFacts,openLoops,goalFacts,travelFacts,typedFacts,watcherFacts,retrievalIncomplete}
+  const reservationTravel:ReservationTravelInventory={ownerId:tg,coveredFrom:new Date(now).toISOString(),coveredUntil:upper,
+    incomplete:Boolean(lifeResult.error||ticketResult.error||(lifeResult.data||[]).length>=80||(ticketResult.data||[]).length>=80),
+    facts:[...lifeFacts.filter(f=>f.kind==='flight'),...buildTravelPresenceFacts(ticketResult.data||[],now,horizonDays,query,true)]}
+  return{lifeFacts,openLoops,goalFacts,travelFacts,typedFacts,watcherFacts,retrievalIncomplete,reservationTravel}
 }
 
 // Saved inbox observations are a separate evidence source from live Gmail reads.
@@ -652,6 +662,7 @@ export async function buildContextPack(params:{actor:AgentActor;text:string;opti
     memoryEnabled:learned.memoryEnabled,
     retrievalIncomplete:operational.retrievalIncomplete||learned.retrievalIncomplete||inbox.retrievalIncomplete,
     facts:combined,
+    reservationTravel:operational.reservationTravel,
     provenance:{
       lifeEvents:operational.lifeFacts.length,
       travelTickets:operational.travelFacts.filter(f=>f.source==='travel_ticket'||f.source==='travel_presence').length,
