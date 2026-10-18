@@ -61,20 +61,33 @@ export async function searchWithAnthropic(query: string, opts: WebSearchOptions 
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) return []
   const includeDomains = (opts.includeDomains || []).map(d => String(d || '').trim().toLowerCase()).filter(Boolean)
-  const res = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({
+  const body: any = {
       model: 'claude-haiku-4-5',
       max_tokens: 1024,
       tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 2, user_location: { type: 'approximate', country: 'IN', timezone: 'Asia/Kolkata' }, ...(includeDomains.length ? { allowed_domains: includeDomains } : {}) }],
       messages: [{ role: 'user', content: `Search the web for: ${query}\nReply with the key current facts you found (numbers, dates, names), each sentence backed by a source.` }],
-    }),
+  }
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify(body),
     cache: 'no-store',
     signal: AbortSignal.timeout(Math.max(5000, Math.min(opts.timeoutMs || 30_000, 45_000))),
   })
   if (!res.ok) throw new Error(`anthropic_search_failed:${res.status}:${(await res.text()).slice(0, 200)}`)
-  return anthropicSearchResults(await res.json())
+  let data = await res.json()
+  // A long server-side search can stop with pause_turn; the API requires sending the assistant turn back to continue.
+  if (data?.stop_reason === 'pause_turn') {
+    const again = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ ...body, messages: [...body.messages, { role: 'assistant', content: data.content }] }),
+      cache: 'no-store',
+      signal: AbortSignal.timeout(30_000),
+    })
+    if (again.ok) data = await again.json()
+  }
+  return anthropicSearchResults(data)
 }
 
 /** Turns a Messages API response with web_search results into ranked results with cited snippets. */
@@ -100,10 +113,8 @@ export function anthropicSearchResults(data: any): WebSearchResult[] {
       byUrl.set(c.url, row)
     }
   }
-  const rows = [...byUrl.values()].filter(r => r.snippet).concat([...byUrl.values()].filter(r => !r.snippet))
-  if (!rows.length && cleanText(answer)) return [{ title: 'Web search summary', snippet: cleanText(answer).slice(0, 1500), url: '' }]
-  if (rows.length && !rows.some(r => r.snippet) && cleanText(answer)) rows[0].snippet = cleanText(answer).slice(0, 1500)
-  return rows.slice(0, 6)
+  // Only cited results count: uncited model text (or a tool error inside a 200) is not live web evidence.
+  return [...byUrl.values()].filter(r => r.snippet && r.url).slice(0, 6)
 }
 
 export async function searchWebResults(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
