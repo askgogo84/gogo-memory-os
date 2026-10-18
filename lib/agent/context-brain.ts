@@ -61,6 +61,7 @@ export type ContextPack = {
 
 export type ContextPackOptions = {
   includeSemantic?:boolean
+  includeReservationTravel?:boolean
   maxFacts?:number
   horizonDays?:number
 }
@@ -291,7 +292,7 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
   return facts
 }
 
-async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:number){
+async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:number,includeReservationTravel=false){
   const tg=String(actor.legacyTelegramId)
   const now=Date.now()
   const lower=new Date(now-2*86400_000).toISOString()
@@ -300,7 +301,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
   // ticket query widens its lookback; other fact types keep the tight 2-day window.
   const ticketLower=new Date(now-(isRetrospectiveTravelQuery(query)?RETROSPECTIVE_TRAVEL_LOOKBACK_DAYS:2)*86400_000).toISOString()
 
-  const [lifeResult,loopResult,goalResult,ticketResult,typed,watcherResult]=await Promise.all([
+  const [lifeResult,loopResult,goalResult,ticketResult,typed,watcherResult,constraintTicketResult]=await Promise.all([
     supabaseAdmin.from('life_events')
       .select('id,event_type,subtype,title,provider,start_at,end_at,timezone,location,lifecycle_state,participants,metadata_json,source_refs,updated_at')
       .eq('telegram_id',tg)
@@ -329,6 +330,14 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
     supabaseAdmin.from('agent_watchers')
       .select('id,type,condition_json,last_state_json,active,cadence_minutes,last_checked_at,next_check_at,updated_at')
       .eq('telegram_id',tg).order('updated_at',{ascending:false}).limit(40),
+    includeReservationTravel?supabaseAdmin.from('travel_tickets')
+      .select('id,type,booking_group,pnr,from_city,to_city,depart_at,arrive_at,airline,flight_no,source,passengers,seat,depart_tz,date_label,raw')
+      .eq('telegram_id',Number(actor.legacyTelegramId))
+      // An old outbound leg can establish a current stay until a future return.
+      // Keep that leg; the bounded row cap is reported as incomplete below.
+      .or(`depart_at.is.null,depart_at.lte.${upper}`)
+      .order('depart_at',{ascending:false}).limit(80)
+      :Promise.resolve({data:[],error:null}),
   ])
 
   const lifeFacts:ContextFact[]=[]
@@ -449,9 +458,14 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
   }
   const retrievalIncomplete=[lifeResult,loopResult,goalResult,ticketResult,watcherResult].some(result=>!!result.error)
   if(retrievalIncomplete)console.error('CONTEXT_OPERATIONAL_RETRIEVAL_INCOMPLETE')
-  const reservationTravel:ReservationTravelInventory={ownerId:tg,coveredFrom:new Date(now).toISOString(),coveredUntil:upper,
-    incomplete:Boolean(lifeResult.error||ticketResult.error||(lifeResult.data||[]).length>=80||(ticketResult.data||[]).length>=80),
-    facts:[...lifeFacts.filter(f=>f.kind==='flight'),...buildTravelPresenceFacts(ticketResult.data||[],now,horizonDays,query,true)]}
+  const constraintTickets=constraintTicketResult.data||[]
+  const constraintFacts=includeReservationTravel?buildTravelPresenceFacts(constraintTickets,now,horizonDays,query,true):[]
+  // A malformed ticket may be dropped by extraction. Absence from the output
+  // then means unknown coverage, never affirmative evidence of a clear window.
+  const missingTicket=constraintTickets.some(row=>String(row.type)==='flight'&&!constraintFacts.some(fact=>fact.id===`travel-ticket:${row.id}`))
+  const reservationTravel:ReservationTravelInventory|undefined=includeReservationTravel?{ownerId:tg,coveredFrom:new Date(now).toISOString(),coveredUntil:upper,
+    incomplete:Boolean(lifeResult.error||constraintTicketResult.error||(lifeResult.data||[]).length>=80||constraintTickets.length>=80||missingTicket),
+    facts:[...lifeFacts.filter(f=>f.kind==='flight'),...constraintFacts]}:undefined
   return{lifeFacts,openLoops,goalFacts,travelFacts,typedFacts,watcherFacts,retrievalIncomplete,reservationTravel}
 }
 
@@ -637,7 +651,7 @@ export async function buildContextPack(params:{actor:AgentActor;text:string;opti
   const horizonDays=Math.max(7,Math.min(180,params.options?.horizonDays??60))
   const includeSemantic=params.options?.includeSemantic!==false
   const [operational,learned,inbox]=await Promise.all([
-    loadOperationalFacts(params.actor,query,horizonDays),
+    loadOperationalFacts(params.actor,query,horizonDays,params.options?.includeReservationTravel===true),
     loadLearnedFacts(params.actor,query,includeSemantic),
     loadInboxFacts(params.actor,query),
   ])

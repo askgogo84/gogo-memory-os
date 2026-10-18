@@ -112,7 +112,7 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
     }
     let safeContext=usableReservationDiningContext(snapshot)&&Date.parse(snapshot.until)>Date.now()
     if(safeContext){
-      const pack=await buildContextPack({actor,text:`Reservation dining context for ${String(payload.restaurant||'restaurant')}`,options:{includeSemantic:false,maxFacts:14,horizonDays:60}}).catch(()=>null)
+      const pack=await buildContextPack({actor,text:`Reservation dining context for ${String(payload.restaurant||'restaurant')}`,options:{includeSemantic:false,includeReservationTravel:true,maxFacts:14,horizonDays:60}}).catch(()=>null)
       const fresh=buildReservationDiningContext({actor,timezone:snapshot.timezone,requestedDate:String(payload.requestedDate||''),releaseAt:String(payload.releaseAt||''),pack,coverage:{from:snapshot.from,until:snapshot.until},now:new Date()})
       safeContext=sameReservationRestrictions(snapshot,fresh,new Date())
     }

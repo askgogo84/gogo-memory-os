@@ -508,7 +508,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const contextPack=await buildContextPack({
     actor:params.actor,
     text:params.text,
-    options:{includeSemantic:false,maxFacts:14,horizonDays:60},
+    options:{includeSemantic:false,includeReservationTravel:true,maxFacts:14,horizonDays:60},
   }).catch(()=>null)
   const diningContext=buildReservationDiningContext({actor:params.actor,timezone,requestedDate:intent.requestedDate,releaseAt,pack:contextPack,now:new Date()})
   if(diningContext.incomplete)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,
