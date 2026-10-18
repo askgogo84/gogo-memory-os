@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
+import * as emailRedaction from '../lib/security/email-redaction'
 
 // Exercise real mail readers, watch creation, conversation status and page output.
 // No provider calls, real credentials or production mutations.
@@ -18,6 +19,7 @@ const db={from(table:string){
   }).then(resolve,reject)}};return q
 }}
 const mocks:any={
+  '@/lib/security/email-redaction':emailRedaction,
   '@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(v:string)=>v},
   '@/lib/security/google-token-crypto':{decryptGoogleToken:(v:string)=>v,hasGoogleTokenEncryptionKey:()=>false},

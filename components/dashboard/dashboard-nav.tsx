@@ -28,7 +28,7 @@ export const NAV: NavItem[] = [
   { href:'/dashboard/settings', label:'Settings', glyph:'⚙', match:(p)=>p==='/dashboard/settings'||p==='/dashboard/connections'||p==='/dashboard/you' },
 ]
 
-export type NavCounts = { approvals: number; watchers: number; handoffs: number }
+export type NavCounts = { approvals: number; watchers: number; handoffs: number; serviceNotices?:number; unavailable?:boolean }
 
 /** Waiting decisions (approvals and Take control handoffs) and background watches, refreshed on navigation. */
 export function useNavCounts(): NavCounts {
@@ -39,21 +39,24 @@ export function useNavCounts(): NavCounts {
     fetch('/api/agent/snapshot', { cache: 'no-store', credentials: 'same-origin' })
       .then(r => r.ok ? r.json() : null)
       .then(data => {
-        if (!alive || !data) return
+        if (!alive) return
+        if (!data) {setCounts(current=>({...current,unavailable:true}));return}
         setCounts({
+          serviceNotices: Number(data.serviceNoticeCount??data.serviceNotices?.length??0),
+          unavailable:false,
           approvals: Array.isArray(data.approvals) ? data.approvals.length : 0,
           watchers: Array.isArray(data.watchers) ? data.watchers.length : 0,
           // Several stops on the same site are one thing to do, as on Today.
           handoffs: Array.isArray(data.handoffs) ? new Set(data.handoffs.map((h: any) => String(h?.title || h?.id))).size : 0,
         })
-      }).catch(() => {})
+      }).catch(() => {if(alive)setCounts(current=>({...current,unavailable:true}))})
     return () => { alive = false }
   }, [pathname])
   return counts
 }
 
-/** What "Needs you" counts: decisions to approve plus browser steps only the person can take. */
-export function needsYouCount(counts: NavCounts) { return counts.approvals + counts.handoffs }
+/** Decisions, browser handoffs and source-bound service warnings needing review. */
+export function needsYouCount(counts: NavCounts) { return counts.approvals + counts.handoffs + (counts.serviceNotices||0) }
 
 export function NavLinks({ collapsed = false, counts, onNavigate }: { collapsed?: boolean; counts: NavCounts; onNavigate?: () => void }) {
   const pathname = usePathname()
@@ -74,7 +77,8 @@ export function NavLinks({ collapsed = false, counts, onNavigate }: { collapsed?
       >
         <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-[9px] border text-[14px] ${isActive ? 'border-[#2fb8a6]/30 bg-[#132a27] text-[#2fb8a6]' : 'border-[#1f1f1f] bg-[#111] text-[#8a8a86]'}`}>{item.glyph}</span>
         {!collapsed && <span className="min-w-0 flex-1 truncate">{item.label}</span>}
-        {badge > 0 && (collapsed
+        {item.badgeKey==='approvals'&&counts.unavailable&&<span role="status" className="text-[#d9a441]" title="Attention items could not be loaded">?</span>}
+        {!counts.unavailable&&badge > 0 && (collapsed
           ? <span className={`absolute right-1 top-1 h-2.5 w-2.5 rounded-full ${item.badgeKey === 'approvals' ? 'bg-[#d9a441]' : 'bg-[#2fb8a6]'}`} aria-hidden="true"/>
           : <span className={`min-w-6 rounded-full px-2 py-0.5 text-center text-[13px] font-semibold ${item.badgeKey === 'approvals' ? 'bg-[#2a2111] text-[#d9a441]' : 'bg-[#123d38] text-[#2fb8a6]'}`}>{badge}</span>)}
       </Link>
