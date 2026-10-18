@@ -68,6 +68,9 @@ await check('reason lookup projects only needed fields and excludes raw browser 
 await check('recorded secondary checks stay human-only without a code-send failure claim',async()=>{
  for(const reason of ['otp','password','device_approval','captcha','payment_auth']){steps=[step(reason)];const card=(await read())[0];assert.match(card.summary,/Take control/);assert.doesNotMatch(card.summary,/send you a sign-in code|couldn.t sign in/i);assert.match(card.summary,/out of chat/)}
 })
+await check('unknown and inherited property names cannot impersonate a recorded authentication step',async()=>{
+ for(const reason of ['constructor','toString','__proto__','unrecognised-step']){steps=[step(reason)];const card=(await read())[0];assert.match(card.summary,/couldn.t verify/i);assert.doesNotMatch(card.summary,/native code|\[object Object\]|send you a sign-in code/i)}
+})
 await check('future or invalid completion evidence cannot establish a past login failure',async()=>{
  for(const completed_at of ['not-a-date','2026-10-18T13:00:00Z']){steps=[step('login_unavailable',{completed_at})];const card=(await read())[0];assert.doesNotMatch(card.summary,/couldn.t sign in|send you a sign-in code/i);assert.match(card.summary,/couldn.t verify/i)}
 })
