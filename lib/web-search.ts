@@ -87,7 +87,13 @@ export async function searchWithAnthropic(query: string, opts: WebSearchOptions 
     })
     if (again.ok) data = await again.json()
   }
-  return anthropicSearchResults(data)
+  const results = anthropicSearchResults(data)
+  // 18 Oct retest: the fallback returned nothing with no log. Record why, without query text or content.
+  const toolErrors = (Array.isArray(data?.content) ? data.content : [])
+    .filter((b: any) => b?.type === 'web_search_tool_result' && b?.content && !Array.isArray(b.content))
+    .map((b: any) => String(b.content?.error_code || b.content?.type || 'unknown'))
+  console.log('WEB_SEARCH_FALLBACK:', JSON.stringify({ stop: data?.stop_reason || null, results: results.length, toolErrors, blocks: (data?.content || []).map((b: any) => b?.type).slice(0, 12) }))
+  return results
 }
 
 /** Turns a Messages API response with web_search results into ranked results with cited snippets. */
