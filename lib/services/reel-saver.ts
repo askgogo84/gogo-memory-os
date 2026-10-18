@@ -51,11 +51,13 @@ export function detectInstagramPreviewCard(text: string): boolean {
   // Match full and truncated platform names
   const hasFullUrl = /https?:\/\//i.test(t)
   if (hasFullUrl) return false // Let detectReelUrl handle it
-  return (
-    /on instagr/i.test(t) ||   // catches "Instagram", "Instagra...", "Instagram:"
-    /instagram\.com/i.test(t) ||
-    (/instagram/i.test(t) && t.length > 10 && !hasFullUrl)
-  )
+  // A user's imperative request is not a forwarded social preview card.
+  // Fail closed on preview detection so browser/research routing can handle it.
+  if (/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:open|use|research|check|find|tell|summari[sz]e|look|search|browse|read|go\s+to|show|visit|inspect)\b/i.test(t)) return false
+  // Require a forwarded-card shape, not a platform mention. A sentence about
+  // Instagram (including a question or a task) is not evidence of a share card.
+  return /^[^\n:]{1,100}\s+on\s+instagr(?:am|a)?(?:\.{3}|…)?\s*[:\n]/i.test(t)
+    || /^(?:instagram(?:\.com)?)(?:\.{3}|…)?\s*[:\n]\s*\S/i.test(t)
 }
 
 export function detectLinkedInPreviewCard(text: string): boolean {
