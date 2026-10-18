@@ -70,7 +70,7 @@ const providerPage=await google.fetchPrimaryCalendarEventsPage('inert-new-york',
 assert.equal(providerPage.timezone,'America/New_York','Actual Google event-page adapter must retain its Calendar timezone')
 const accounts:any={}
 runInNewContext(ts.transpileModule(readFileSync('lib/services/google-calendar-accounts.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
- {exports:accounts,require:(name:string)=>name==='@/lib/services/google-calendar'?google:{},Date:FixtureDate,console,Set,Map})
+ {exports:accounts,require:(name:string)=>name==='@/lib/services/google-calendar'?google:name==='@/lib/calendar-intervals'?intervals:{},Date:FixtureDate,console,Set,Map})
 const merged=await accounts.fetchMergedCalendarEventsPage([{email:'one@example.test',accessToken:'inert-new-york'},{email:'two@example.test',accessToken:'inert-kolkata'}],pack.reservationCalendar.coveredFrom,pack.reservationCalendar.coveredUntil,'fixture',100)
 assert.equal(merged.events.find((event:any)=>event.id==='ny-event')._calendarTimezone,'America/New_York')
 assert.equal(merged.events.find((event:any)=>event.id==='ist-event')._calendarTimezone,'Asia/Kolkata','Account merging must not replace another Calendar timezone with the owner display timezone')
