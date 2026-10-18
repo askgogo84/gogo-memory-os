@@ -61,5 +61,35 @@ await check('all-day exclusive end prevents yesterday from blocking today',async
 await check('offset-free timing cannot establish a free stretch',async()=>{
  providerEvents=[event('2026-10-18T14:00:00','2026-10-18T18:00:00')];assert.doesNotMatch((await plan('2026-10-18T15:00:00+05:30')).reply,/Longest free stretch/)
 })
+await check('invalid calendar dates never prove an interval',async()=>{
+ assert.equal(intervals.calendarInterval({start:{date:'2026-02-30'},end:{date:'2026-03-03'}},'Asia/Kolkata'),null)
+})
+await check('24-hour overflow never proves an interval',async()=>{
+ assert.equal(intervals.calendarInterval({start:{dateTime:'2026-10-17T24:00:00+05:30'},end:{dateTime:'2026-10-18T07:00:00+05:30'}},'Asia/Kolkata'),null)
+})
+async function next(now:string,reminders:any[]=[],extra:Record<string,unknown>={}){
+ const projected=await query.getTodayCalendar('123')
+ return day.formatDashboardDayReply({intent:'next',tz:'Asia/Kolkata',remindersOk:true,reminders,calendarOk:true,calendarConnected:true,calendarEvents:projected.events,now:new Date(now),...extra})
+}
+await check('next excludes appointments after their verified end',async()=>{
+ assert.doesNotMatch(await next('2026-10-18T19:00:00+05:30'),/Synthetic afternoon appointment/)
+})
+await check('next describes ongoing events through their actual end',async()=>{
+ assert.match(await next('2026-10-18T15:00:00+05:30'),/ongoing until 6:00 PM/i)
+})
+await check('next selects the earliest event across reminders and Calendar',async()=>{
+ const reply=await next('2026-10-18T13:00:00+05:30',[{message:'Synthetic later reminder',sent:false,remind_at:'2026-10-18T19:00:00+05:30'}])
+ assert.match(reply,/^Next on your calendar:.*Synthetic afternoon appointment/)
+})
+await check('unknown event ends and disconnected calendars cannot establish a clear day',async()=>{
+ const row:any=event();delete row.end;providerEvents=[row]
+ assert.match(await next('2026-10-18T19:00:00+05:30'),/unverified/i)
+ providerEvents=[]
+ assert.doesNotMatch(await next('2026-10-18T19:00:00+05:30',[],{calendarConnected:false}),/day is clear/)
+})
+await check('unknown timezone cannot establish all-day intervals or free-window boundaries',async()=>{
+ assert.equal(intervals.calendarInterval({start:{date:'2026-10-18'},end:{date:'2026-10-19'}},'Unknown/Zone'),null)
+ assert.ok(Number.isNaN(day.todayAtClock('10:00 PM',Date.parse('2026-10-18T15:00:00+05:30'),'Unknown/Zone')))
+})
 assert.deepEqual(failures,[],'Calendar intervals must come from provider evidence, never an invented thirty-minute duration')
 console.log('Actual dashboard Calendar projection and day-plan duration/unknown/all-day/overlap controls passed; synthetic read-only fixtures.')
