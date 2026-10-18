@@ -178,7 +178,7 @@ function load(file: string, deps: Record<string, any>) {
 }
 const service = load('lib/commerce/price-comparison.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/brain-runtime-guard': lease,
   './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, '@/lib/agent/browser-command': browser,
-  '@/lib/agent/browser-handoff-health': {browserHandoffIsLive: async () => liveHandoff},
+  '@/lib/agent/browser-handoff-health': {browserHandoffIsLive: async (url:string) => liveHandoff && url.includes('sb-active')},
   '@/lib/web-search': {indiaShoppingSearch, searchWebResults: async (query: string, opts: any) => {
     if (opts?.includeDomains?.[0] === 'croma.com') {
       assert.match(query, /India.*INR/i)
@@ -317,7 +317,8 @@ assert.equal(tables.agent_runs.length,beforeFourStatus,'multi-subject status rea
 // 16 Oct: only the shared grocery/food browser is gated; electronics stores each have their own browser.
 const gated = await service.tryPriceComparison({telegramId: 42, text: 'Compare Amul butter on Zepto and Blinkit. Do not create a watch.'})
 liveHandoff = true
-tables.agent_runs.push({id: id(), telegram_id: '42', type: 'secure_browser', status: 'paused',
+const blockerId = id()
+tables.agent_runs.push({id: blockerId, telegram_id: '42', type: 'secure_browser', status: 'paused',
   metadata_json: {mode: 'read', url: 'https://www.zepto.com/', handoff: {takeoverUrl: 'https://sb-active.vercel.run/?token=x', releaseUrl: 'https://sb-active.vercel.run/release?token=x'}}})
 const callsBeforeGate = calls
 const beforeGateRuns = tables.agent_runs.length
@@ -326,7 +327,7 @@ assert.equal(calls, callsBeforeGate, 'queued providers must not spin while a han
 assert.equal(tables.agent_runs.length, beforeGateRuns, 'no provider child is created while the browser is reserved')
 assert.ok(gatedTask.metadata_json.providers.every((p: any) => p.status === 'pending'), 'providers stay queued, not failed')
 assert.match(gatedTask.metadata_json.providers[0].reason, /needs your attention/i)
-const blocker = tables.agent_runs.find(r => r.metadata_json?.handoff)
+const blocker = tables.agent_runs.find(r => r.id === blockerId)
 assert.equal(gatedTask.metadata_json.providers[0].waitingForRunId, blocker.id)
 const waitingReply = model.comparisonWhatsAppSummary(gatedTask)
 assert.match(waitingReply, /needs your attention/i)
@@ -335,6 +336,30 @@ assert.doesNotMatch(waitingReply, /start shortly|in a minute|still checking|toke
 const waitingStatus = await service.tryPriceComparison({telegramId:42,text:'Show my latest grocery comparison status'})
 assert.ok(waitingStatus.text.includes('/dashboard/activity/' + blocker.id + '/browser'), 'actual saved-status reply exposes the human step')
 assert.equal(model.comparisonState(gatedTask.metadata_json.providers), 'queued')
+const freshWaiting = await service.tryPriceComparison({telegramId:42,text:'Compare Amul curd 500g on Zepto and Blinkit'})
+assert.ok(freshWaiting.text.includes('/dashboard/activity/' + blocker.id + '/browser'), 'initial response also identifies the live human step')
+assert.doesNotMatch(freshWaiting.text, /about 2 minutes|token=/)
+const mixedId=id()
+tables.agent_runs.push({id:mixedId,telegram_id:'42',type:'price_comparison',status:'queued',source:'web',metadata_json:{subject:'Amul butter',request:'fixture mixed lanes',providers:[{provider:'zepto',status:'pending'},{provider:'amazon',status:'pending'}]}})
+failStart=false
+const mixedBefore=calls
+const mixed=await service.advancePriceComparison(actor,mixedId)
+assert.equal(calls,mixedBefore+1,'a waiting shared lane cannot starve a later independent retailer')
+assert.equal(mixed.metadata_json.providers[0].waitingForRunId,blocker.id)
+assert.equal(mixed.metadata_json.providers[1].waitingForRunId,undefined)
+// Foreign reservations and another comparison's location handoff are not this gate.
+blocker.telegram_id='43'
+tables.agent_runs.push({id:id(),telegram_id:'42',type:'secure_browser',status:'paused',metadata_json:{comparison_parent_id:mixedId,handoff:{takeoverUrl:'https://sb-active.vercel.run/?token=other-comparison'}}})
+const foreignRead=await service.readPriceComparison('42',gated.runId)
+assert.ok(foreignRead.metadata_json.providers.every((p:any)=>!p.waitingForRunId),'never expose another owner or comparison reservation')
+// Tampered persisted references never become a link without a fresh owned/live probe.
+const gatedSaved=tables.agent_runs.find(r=>r.id===gated.runId)
+gatedSaved.metadata_json.providers[0].waitingForRunId=blocker.id
+assert.ok((await service.readPriceComparison('42',gated.runId)).metadata_json.providers.every((p:any)=>!p.waitingForRunId))
+blocker.telegram_id='42'
+liveHandoff=false
+assert.ok((await service.readPriceComparison('42',gated.runId)).metadata_json.providers.every((p:any)=>!p.waitingForRunId),'expired sessions do not retain an attention link')
+liveHandoff=true
 // Once the handoff is released, the same queued providers advance normally.
 failStart = false
 tables.agent_runs = tables.agent_runs.filter(r => !r.metadata_json?.handoff)
@@ -343,7 +368,7 @@ const releasedRead = await service.readPriceComparison('42', gated.runId)
 assert.ok(releasedRead.metadata_json.providers.every((p:any) => !p.waitingForRunId), 'readback removes released or missing handoff links')
 assert.doesNotMatch(model.comparisonWhatsAppSummary(releasedRead), /needs your attention|dashboard\/activity/)
 const released = await service.advancePriceComparison(actor, gated.runId)
-assert.equal(calls, callsBeforeGate + 1, 'released handoff lets the queued provider check run')
+assert.equal(calls, mixedBefore + 2, 'released handoff lets the queued provider check run')
 assert.ok(released.metadata_json.providers.some((p: any) => p.status !== 'pending'), 'a provider advanced after release')
 
 // Old terminal comparison guard: a finished report (persisted terminal status) whose

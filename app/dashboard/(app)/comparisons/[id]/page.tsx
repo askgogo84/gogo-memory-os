@@ -2,7 +2,7 @@
 
 import {use, useEffect, useState} from 'react'
 import Link from 'next/link'
-import {COMPARISON_PROVIDERS, type ProviderObservation} from '@/lib/commerce/comparison-model'
+import {COMPARISON_PROVIDERS, comparisonHandoffPath, type ProviderObservation} from '@/lib/commerce/comparison-model'
 
 type Report = {subject: string; request: string; status: string; updatedAt: string; providers: ProviderObservation[]}
 export default function ComparisonPage({params}: {params: Promise<{id: string}>}) {
@@ -30,13 +30,14 @@ export default function ComparisonPage({params}: {params: Promise<{id: string}>}
     {error && <p role="alert">{error}</p>}
     {!report && !error && <p role="status">Loading your comparison…</p>}
     {report && <>
-      <p role="status" className="text-[16px] text-[#a0a0a0]">{report.status === 'queued' ? 'Store checks are in progress. Results appear here as each check finishes.' : report.status === 'completed' ? 'Store checks finished. Review the observations and limits below.' : 'Checks finished with gaps. Available observations are saved below.'}</p>
+      <p role="status" className="text-[16px] text-[#a0a0a0]">{report.providers.some(row => comparisonHandoffPath(row)) ? 'Some store checks are waiting for your browser task. Continue it below.' : report.status === 'queued' ? 'Store checks are in progress. Results appear here as each check finishes.' : report.status === 'completed' ? 'Store checks finished. Review the observations and limits below.' : 'Checks finished with gaps. Available observations are saved below.'}</p>
       <details className="rounded-2xl border border-white/10 p-4"><summary>Your request and criteria</summary><p className="mt-3 whitespace-pre-wrap text-[16px]">{report.request}</p></details>
       {report.providers.map(row => <section key={row.provider} className="space-y-3 rounded-2xl border border-white/10 p-5">
         <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-xl">{COMPARISON_PROVIDERS[row.provider].label}</h2><span className="text-[16px] text-[#a0a0a0]">{row.status === 'observed' ? 'Page evidence found' : row.status === 'blocked' ? (row.needsInput ? 'Needs your input' : 'Access limited') : row.status === 'failed' ? 'Not verified' : row.status === 'checking' ? 'Checking' : 'Queued'}</span></div>
         {row.checkedAt && <p className="text-[14px] text-[#a0a0a0]">Checked {new Date(row.checkedAt).toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})} IST</p>}
         {row.evidence && <><p className="text-[14px] text-[#a0a0a0]">Observed on the provider page</p><blockquote className="whitespace-pre-wrap break-words text-[16px] leading-6">{row.evidence}</blockquote></>}
         {row.reason && <p className="text-[16px]">{row.reason}</p>}
+        {comparisonHandoffPath(row) && <Link href={comparisonHandoffPath(row)!} className="block text-[16px] text-[#2fb8a6]">Finish or release the waiting browser task →</Link>}
         {row.sourceUrl && <a href={row.sourceUrl} target="_blank" rel="noopener noreferrer" className="block text-[#2fb8a6]">Open {COMPARISON_PROVIDERS[row.provider].label} product page ↗</a>}
         {row.runId && <Link href={'/dashboard/activity/' + row.runId + '/browser'} className="block text-[16px] text-[#a0a0a0]">{row.needsInput ? 'Continue this same browser task →' : 'View this store check →'}</Link>}
       </section>)}

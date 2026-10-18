@@ -16,7 +16,12 @@ export async function readPriceComparison(owner: string, id: string): Promise<Pr
   if (!data || !Array.isArray(data.metadata_json?.providers)) return null
   const task = data as PriceComparison
   const rows = []
-  for (const row of task.metadata_json.providers) {
+  for (const savedRow of task.metadata_json.providers) {
+    // A persisted waiting reference is never proof of a current handoff. Clear
+    // it first, then reconstruct it from this owner's live reservation below.
+    const {waitingForRunId: _waiting, ...row} = savedRow
+    if (row.reason === 'waiting for my browser to be free; it will start shortly.' ||
+      (_waiting && row.reason === 'another browser task needs your attention. Finish or release it to let this store check start.')) delete row.reason
     if (!COMPARISON_PROVIDERS[row.provider]) continue
     if (!row.runId) { rows.push(row); continue }
     const {data: child, error: childError} = await supabaseAdmin.from('agent_runs')
@@ -40,7 +45,10 @@ export async function readPriceComparison(owner: string, id: string): Promise<Pr
     if (stepError) throw new Error('comparison_evidence_read_failed')
     rows.push({...providerObservation(row.provider, child, step,task.metadata_json.subject), startUrl: row.startUrl, ...(row.attempts ? {attempts: row.attempts} : {}), ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})})
   }
-  task.metadata_json = {...task.metadata_json, providers: rows}
+  const blocker = rows.some(row => row.status === 'pending' && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider))
+    ? await sharedBrowserHandoffPending(owner) : null
+  task.metadata_json = {...task.metadata_json, providers: rows.map(row => blocker && row.status === 'pending' && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider)
+    ? {...row, waitingForRunId: blocker, reason: 'another browser task needs your attention. Finish or release it to let this store check start.'} : row)}
   task.status = comparisonState(rows)
   return task
 }
@@ -48,7 +56,7 @@ export async function readPriceComparison(owner: string, id: string): Promise<Pr
 // 16 Oct: no app.askgogo.in link in the reply; the answer itself is the result.
 function reply(task: PriceComparison, intro?: string) {
   return {runId: task.id, status: task.status, capability: 'browser' as const, risk: 'low' as const,
-    handledBy: 'price-comparison', text: intro || comparisonWhatsAppSummary(task)}
+    handledBy: 'price-comparison', text: intro || comparisonWhatsAppSummary(task, commerceOrigin())}
 }
 
 /** Request-time web look for electronics: the product page to start from and the price its search result showed.
@@ -169,7 +177,10 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
     if (error || !data) throw new Error('comparison_create_failed')
     // Open the stores now rather than on the next cron minute; the cron still picks it up if this fails.
     try { const {triggerComparisonRun} = await import('@/lib/agent/approved-browser-worker'); await triggerComparisonRun(String((data as any).id)) } catch {}
-    return reply(data as PriceComparison, startedText(parsed.subject, parsed.providers, looks))
+    const current = await readPriceComparison(owner, String((data as any).id))
+    if (!current) throw new Error('comparison_missing_after_create')
+    return reply(current, current.metadata_json.providers.some(row => row.waitingForRunId)
+      ? undefined : startedText(parsed.subject, parsed.providers, looks))
   } finally { await releaseBrainUserLease(key, lease.ownerToken) }
 }
 
@@ -199,7 +210,7 @@ async function sharedBrowserHandoffPending(owner: string) {
   // for location or sign-in is already reported as blocked; it must not hold every other comparison.
   const probes = (data || []).filter((row: any) => Boolean(row.metadata_json?.handoff?.takeoverUrl) && !row.metadata_json?.comparison_parent_id)
   const live = await Promise.all(probes.map((row: any) => browserHandoffIsLive(row.metadata_json.handoff.takeoverUrl)))
-  return live.some(Boolean)
+  return probes.find((_row: any, index: number) => live[index])?.id || null
 }
 
 // Electronics stores are public product pages, each read in its own browser, so they run at the same time.
@@ -228,16 +239,9 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     const task = await readPriceComparison(owner, id)
     if (!task) return null
     const sharedBusy = task.metadata_json.providers.some(row => row.status === 'checking' && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider))
-    const next = task.metadata_json.providers.find(row => row.status === 'pending' && (PARALLEL_COMPARISON_PROVIDERS.has(row.provider) || !sharedBusy))
+    const next = task.metadata_json.providers.find(row => row.status === 'pending' && !row.waitingForRunId && (PARALLEL_COMPARISON_PROVIDERS.has(row.provider) || !sharedBusy))
     if (!next) { await saveProgress(owner, task); return {task, next: null as null} }
     const parallel = PARALLEL_COMPARISON_PROVIDERS.has(next.provider)
-    // Queue, do not fail, while a human handoff still reserves the shared browser.
-    if (!parallel && await sharedBrowserHandoffPending(owner)) {
-      task.metadata_json.providers = task.metadata_json.providers.map(row => row.status === 'pending'
-        ? {...row, reason: 'waiting for my browser to be free; it will start shortly.'} : row)
-      await saveProgress(owner, task)
-      return {task, next: null as null}
-    }
     const {prepareLinkedBrowserRead} = await import('@/lib/agent/browser-command')
     const startedAt = new Date().toISOString()
     let startUrl: string = COMPARISON_PROVIDERS[next.provider].url
