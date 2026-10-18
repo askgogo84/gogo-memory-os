@@ -1,7 +1,7 @@
 type Quote={karat:string;perGram:number;amount:number;grams:number;source:string;date:string|null;reportedToday:boolean;locationKnown:boolean}
 type Unit={grams:number;explicit:boolean}
 const KARAT=/\b(18|22|24)\s*(?:kt|karat|carat|ct|k)\b/gi
-const MONEY=/(?:₹|\brs\.?|\binr)\s*([\d,]+(?:\.\d+)?)(?![\d.])/gi
+const MONEY=/(?:₹|\brs\.?|\binr)\s*(\d[\d,]*(?:\.\d+)?)(?![\d,]|\.\d)/gi
 
 function amount(text:string):number|null{
   if(!/^(?:\d+|\d{1,3}(?:,\d{3})+|\d{1,2}(?:,\d{2})*,\d{3})(?:\.\d{1,2})?$/.test(text))return null
@@ -21,14 +21,22 @@ function units(text:string):Unit[]{
 }
 
 function sourceDate(text:string):string|null|undefined{
-  const iso=text.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/)
-  const named=text.match(/\b(\d{1,2})\s+(January|February|March|April|May|June|July|August|September|October|November|December)\s+(20\d{2})\b/i)
-  const numeric=text.match(/\b(\d{1,2})-(\d{2})-(20\d{2})\b/)
-  if(!iso&&!named&&!numeric)return undefined
-  const months=['january','february','march','april','may','june','july','august','september','october','november','december']
-  const year=Number(iso?.[1]||named?.[3]||numeric?.[3]),month=iso?Number(iso[2]):named?months.indexOf(named[2].toLowerCase())+1:Number(numeric![2]),day=Number(iso?.[3]||named?.[1]||numeric?.[1])
-  const date=new Date(Date.UTC(year,month-1,day))
-  return date.getUTCFullYear()===year&&date.getUTCMonth()===month-1&&date.getUTCDate()===day?date.toISOString().slice(0,10):null
+  const months=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec']
+  const monthName='Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?'
+  const formats:Array<{pattern:RegExp;parts:(match:RegExpMatchArray)=>number[]}>= [
+    {pattern:/\b(20\d{2})-(\d{2})-(\d{2})\b/g,parts:m=>[Number(m[1]),Number(m[2]),Number(m[3])]},
+    {pattern:/\b(\d{1,2})-(\d{2})-(20\d{2})\b/g,parts:m=>[Number(m[3]),Number(m[2]),Number(m[1])]},
+    {pattern:new RegExp(`\\b(\\d{1,2})\\s+(${monthName}),?\\s+(20\\d{2})\\b`,'gi'),parts:m=>[Number(m[3]),months.indexOf(m[2].slice(0,3).toLowerCase())+1,Number(m[1])]},
+    {pattern:new RegExp(`\\b(${monthName})\\s+(\\d{1,2}),?\\s+(20\\d{2})\\b`,'gi'),parts:m=>[Number(m[3]),months.indexOf(m[1].slice(0,3).toLowerCase())+1,Number(m[2])]},
+  ]
+  const dates=new Set<string>()
+  for(const {pattern,parts}of formats)for(const match of text.matchAll(pattern)){
+    const [year,month,day]=parts(match),date=new Date(Date.UTC(year,month-1,day))
+    if(date.getUTCFullYear()!==year||date.getUTCMonth()!==month-1||date.getUTCDate()!==day)return null
+    dates.add(date.toISOString().slice(0,10))
+  }
+  if(dates.size>1)return null
+  return dates.size?[...dates][0]:/\b\d{1,4}[/-]\d{1,2}[/-]\d{1,4}\b/.test(text)?null:undefined
 }
 
 function sourceUrl(block:string):string{
