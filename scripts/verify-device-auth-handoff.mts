@@ -587,6 +587,9 @@ for(const kind of ['flight_execute','restaurant']){
   rows.agent_runs.status='queued'
   rows.agent_runs.metadata_json={plan_type:'life_event_checkin',life_event_id:'event',life_event_action_id:'action',checkin_url:'https://provider.example'}
   rows.life_event_actions.status=kind==='flight_execute'?'waiting_approval':'ready'
+  // This is a fresh protected-step failure, not the already confirmed action
+  // exercised above. A retained confirmation receipt must never be replayed.
+  rows.life_event_actions.payload_json={approvalId:'approval',reservationUrl:'https://provider.example',releaseAt:executionRelease,diningContext:executionDining}
   executionResult={...evidence,status:'blocked',blockReason:'human_auth_required',authReason:'device_approval'}
   const result=kind==='flight_execute'?await flightExecutor.executeApprovedLifeEventCheckin({actor:{userId:'owner',legacyTelegramId:1},runId:'run'}):await restaurantExecutor.processOne(structuredClone(rows.life_event_actions))
   assert.equal(result.status,'outcome_unknown')
