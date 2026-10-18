@@ -45,6 +45,10 @@ for(const text of [
  'Vendor is going to have delivered the corrected JSON by tomorrow.',
  'Vendor sent nothing for the corrected JSON.',
  'Vendor failed to send the corrected JSON.',
+ 'Nothing was received from Vendor for the corrected JSON.',
+ 'None of the corrected JSON from Vendor has been received.',
+ 'No corrected JSON request from Vendor was resolved.',
+ 'The corrected JSON from Vendor remains undelivered.',
 ]){
  for(const jev of [null,{ok:true,attentionState:{choice:'completed',confidence:0.99}}]){
   writes.length=0
