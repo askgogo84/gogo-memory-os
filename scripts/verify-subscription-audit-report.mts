@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
 import * as crypto from 'node:crypto'
+import * as emailRedaction from '../lib/security/email-redaction'
 
 const actor={legacyTelegramId:101,whatsappId:'fixture-owner',userId:'fixture',name:'Fixture'}
 const mission='Audit my connected Gmail for subscription receipts and renewal notices from the last 14 days, at most 15 messages. List each service, amount, currency and renewal date only when the email shows it. Do not infer whether I use a service. Read only; do not cancel anything, send emails, create reminders or change my calendar.'
@@ -10,6 +11,7 @@ const instruction="Search connected Gmail for subscription receipts and renewal 
 const urls:string[]=[]
 let consent=true,failedMessage=false,auditNoise=false
 const mocks:any={
+  '@/lib/security/email-redaction':emailRedaction,
   '@/lib/supabase-admin':{supabaseAdmin:{from(table:string){const q:any={select(){return q},eq(key:string,value:any){assert.equal(key,'telegram_id');assert.equal(String(value),'101');return q},maybeSingle(){return q},then(resolve:any){return Promise.resolve({data:table==='users'?{gmail_connected:true,gmail_access_token:'fixture'}:{gmail_enabled:consent},error:null}).then(resolve)}};return q}}},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(v:string)=>v},
   '@/lib/security/google-token-crypto':{decryptGoogleToken:(v:string)=>v,hasGoogleTokenEncryptionKey:()=>false},

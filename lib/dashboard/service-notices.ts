@@ -1,3 +1,4 @@
+import {formatEmailSnippet} from '@/lib/security/email-redaction'
 import {supabaseAdmin} from '@/lib/supabase-admin'
 
 export type ServiceNotice={id:string;title:string;summary:string;threadId:string;messageId:string|null;updatedAt:string|null}
@@ -21,7 +22,7 @@ export async function getServiceNotices(telegramId:string|number):Promise<Servic
     seen.add(threadId)
     const refs=Array.isArray(row.source_refs)?row.source_refs:[]
     const message=refs.find((ref:{type?:unknown;id?:unknown}|null)=>ref?.type==='gmail_message'&&typeof ref.id==='string')
-    items.push({id:String(row.id),title:String(row.title||'Review service notice').slice(0,240),summary:String(row.summary||'').slice(0,700),threadId,messageId:typeof message?.id==='string'?message.id:null,updatedAt:row.last_seen_at||row.updated_at||null})
+    items.push({id:String(row.id),title:formatEmailSnippet(row.title||'Review service notice',240),summary:formatEmailSnippet(row.summary||'',700),threadId,messageId:typeof message?.id==='string'?message.id:null,updatedAt:row.last_seen_at||row.updated_at||null})
   }
   return {items,total:Math.max(items.length,Number(count??items.length)),unavailable:false}
 }

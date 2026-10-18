@@ -22,6 +22,8 @@ deps['next/navigation']={useSearchParams:()=>({get:()=> 'approvals'}),usePathnam
 function load(path:string):any{
  const exports:any={};runInNewContext(ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,require:(name:string)=>{
   if(deps[name])return deps[name]
+  if(name==='@/lib/security/email-redaction')return load('lib/security/email-redaction.ts')
+  if(name==='@/lib/bot/memory-redaction')return load('lib/bot/memory-redaction.ts')
   if(name==='@/lib/dashboard/service-notices')return load('lib/dashboard/service-notices.ts')
   if(name==='@/components/dashboard/service-notice-cards')return load('components/dashboard/service-notice-cards.tsx')
   return {}
