@@ -65,6 +65,7 @@ const noMatch = new Set([
   'isTranslationRequest', 'isFollowupReminderText', 'namesRetailerPriceRead',
 ])
 const actual: Record<string, any> = {
+  './handlers/reference-fx':{buildReferenceFxReply:async(text:string)=>{assert.doesNotMatch(text,/\bUSD\s+to\s+INR\b/i);return null}},
   '@/lib/agent/content-workflows': contentWorkflows,
   './handlers/reminders': reminders,
   './detect-intent': { detectIntent },
