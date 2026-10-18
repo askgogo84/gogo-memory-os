@@ -16,12 +16,15 @@ const futureTravel={id:'synthetic-travel',source:'travel_presence',summary:'Synt
 const facts=[futureTravel,{...futureTravel,id:'unrelated',source:'semantic_memory',summary:'Unrelated private memory',location:'Unrelated private location'}]
 const pack={facts,reservationTravel:{ownerId:'123',facts,incomplete:false,coveredFrom:'2026-10-18T10:00:00Z',coveredUntil:'2026-12-17T10:00:00Z'}}
 const writes:Array<{table:string;payload:any}>=[]
-const db={from(table:string){const q:any={
+let revising=false
+const db={from(table:string){let updating=false;const q:any={
  select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},
- maybeSingle:async()=>({data:table==='users'?{timezone:'Asia/Kolkata'}:null,error:null}),
+ in:()=>q,order:()=>q,limit:()=>q,
+ update:(payload:any)=>{updating=true;writes.push({table,payload});return q},
+ maybeSingle:async()=>({data:updating?{id:'existing-context-run'}:table==='users'?{timezone:'Asia/Kolkata'}:revising&&table==='life_events'?{id:'synthetic-life_events'}:revising&&table==='agent_runs'?{id:'existing-context-run',status:'paused',error:'restaurant_context_review_required',metadata_json:{}}:revising&&table==='agent_approvals'?{id:'expired-approval',status:'expired'}:null,error:null}),
  upsert:(payload:any)=>{assert.equal(String(payload.telegram_id),'123');writes.push({table,payload});return q},
  insert:(payload:any)=>{assert.equal(String(payload.telegram_id),'123');writes.push({table,payload});return q},
- single:async()=>({data:{id:'synthetic-'+table},error:null}),then:(resolve:any)=>resolve({error:null})};return q}}
+ single:async()=>({data:{id:revising&&table==='agent_runs'?'existing-context-run':'synthetic-'+table},error:null}),then:(resolve:any)=>resolve({error:null})};return q}}
 let inspected=0
 let bindingInput:any
 const actual=load('lib/agent/restaurant-reservation.ts',{
@@ -38,4 +41,9 @@ assert.equal(context.travelContextAt(pack,'2026-10-22T15:00:00Z').length,1,'Actu
 assert.ok(payload.contextWindows.some((window:any)=>Date.parse(window.startAt)===Date.parse(futureTravel.startAt)),'Travel starting after release must remain available for checking a later dining slot')
 assert.doesNotMatch(JSON.stringify(payload.contextWindows),/Unrelated private/,'Unrelated private context must not enter reservation constraints')
 assert.ok(bindingInput.payload.diningContext.windows.some((window:any)=>Date.parse(window.startAt)===Date.parse(futureTravel.startAt)),'The staged approval input must bind the retained travel constraints')
+revising=true;writes.length=0
+const revised=await actual.tryRunRestaurantReservation({actor:{legacyTelegramId:123,userId:'synthetic-user',name:'Synthetic Owner'},surface:'dashboard',text:'Book Naru Noodle Bar for 2 at the next available slot between 7 PM and 9 PM.'})
+assert.equal(revised.status,'waiting_approval','Changed context must be refreshable with a new bounded approval')
+assert.equal(revised.runId,'existing-context-run','Context review retains the reservation mission')
+assert.ok(writes.some(row=>row.table==='agent_approvals'&&row.payload.status==='pending'))
 console.log('Actual reservation preparation retains relevant dining-date travel after release without unrelated context; inert synthetic operations only.')
