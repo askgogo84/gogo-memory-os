@@ -59,6 +59,12 @@ export type ProviderObservation = {
   /** Reads tried for this store; a failed read is retried on our side before it is reported. */
   attempts?: number;
   evidence?: string; reason?: string; needsInput?: boolean;
+  /** Revalidated against this owner's live shared-browser reservation on every read. */
+  waitingForRunId?: string;
+}
+export function comparisonHandoffPath(row: ProviderObservation) {
+  return row.status === 'pending' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(row.waitingForRunId || '')
+    ? '/dashboard/activity/' + row.waitingForRunId + '/browser' : null
 }
 export type PriceComparison = {
   id: string; status: string; title: string; source: string; updated_at: string;
@@ -215,7 +221,7 @@ export function providerObservation(provider: ComparisonProvider, child: any, st
   // comparisons avoid this path entirely: advancePriceComparison's handoff gate keeps
   // genuinely unstarted providers pending until the shared browser is free.
   if (reason === 'browser_handoff_in_use') return {...base, status: 'blocked', needsInput: false,
-    reason: 'my browser was busy with another task, so I didn’t check this store. Ask again in a minute.'}
+    reason: 'my browser was busy with another task, so I didn’t check this store. This check has finished; ask for a new comparison when the browser is free.'}
   const needsInput = ['human_auth_required', 'delivery_location_required'].includes(reason)
   if (child.status === 'paused') return {...base, status: 'blocked', needsInput,
     reason: needsInput ? 'it needs your delivery location or sign-in before it shows prices.' : 'the store blocked my browser, so I couldn’t read a price.'}
@@ -341,7 +347,7 @@ export function comparisonSummary(task: PriceComparison) {
 }
 
 /** Short phone update (16 Oct: "make the answer crisp"); the saved report keeps the complete browser evidence. */
-export function comparisonWhatsAppSummary(task: PriceComparison) {
+export function comparisonWhatsAppSummary(task: PriceComparison, origin = 'https://app.askgogo.in') {
   const priced: Array<{label: string; value: number; price: string}> = []
   const lines = task.metadata_json.providers.map(row => {
     const label = COMPARISON_PROVIDERS[row.provider].label
@@ -365,6 +371,8 @@ export function comparisonWhatsAppSummary(task: PriceComparison) {
         ? ist(at, {hour: 'numeric', minute: '2-digit', hour12: true}) : ist(at, {day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true})) : ''
       return `• *${label}*: ${quote.price}${fee}${checked}${productLine ? `\n  ${productLine}` : ''}\n  ${row.sourceUrl}`
     }
+    const handoff = comparisonHandoffPath(row)
+    if (handoff) return `• *${label}*: another browser task needs your attention. Finish or release it to let this store check start.\n  ${origin}${handoff}`
     if (row.status === 'pending' || row.status === 'checking') return `• *${label}*: still checking…`
     return `• *${label}*: ${row.reason || 'couldn’t confirm a price on its product page.'}`
   })
@@ -376,7 +384,8 @@ export function comparisonWhatsAppSummary(task: PriceComparison) {
   return [
     `*${task.metadata_json.subject}*`, '', ...lines, '',
     ...(cheapest ? [`Lowest listed price: ${cheapest.label}, ${cheapest.price}.`] : []),
-    ...(pending ? ['I’ll send the rest here when it’s done.'] : []),
+    ...(pending ? [task.metadata_json.providers.some(row => comparisonHandoffPath(row))
+      ? 'These store checks stay queued until that browser task is finished or released.' : 'I’ll send the rest here when it’s done.'] : []),
     ...(matchedOnCode ? ['I matched this on the model code only. If it’s not the product you meant, send the full name.'] : []),
     'Listed prices only; delivery and bank offers not included.',
     'Want another model or size? Send it in full, like “compare iPhone 17 Pro 256GB”.',
