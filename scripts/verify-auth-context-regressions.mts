@@ -24,6 +24,7 @@ globalThis.fetch=async input=>{
   assert.equal(target.searchParams.get('error'),'eq.human_auth_required')
   assert.equal(target.searchParams.get('output_json->>authReason'),'eq.otp')
   assert.match(target.searchParams.get('completed_at')||'',/^gte\./)
+  assert.ok(target.searchParams.getAll('completed_at').some(value=>value.startsWith('lte.')))
   return new Response(JSON.stringify(stepRows),{headers:{'Content-Type':'application/json'}})
  }
  assert.equal(target.searchParams.get('type'),'eq.secure_browser')
@@ -68,12 +69,21 @@ if(process.env.AUTH_REVIEW_CASE!=='resume'){
  authRows=[{id:'owned-instagram-run',status:'paused',metadata_json:{handoff:{}}}]
  stepRows=[{id:'owned-otp-step'}]
  assert.equal(await shouldWithholdAuthenticationCode(123,'482913'),true,'generic provider OTP step evidence must withhold bare codes')
+ const genericRequest=new Request('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text:'482913'})})
+ const genericResponse=await dash.POST(Object.assign(genericRequest,{nextUrl:new URL(genericRequest.url)}))
+ assert.equal((await genericResponse.json()).handledBy,'human-auth-required','the actual dashboard boundary must quarantine generic provider codes')
  stepRows=[]
  assert.equal(await shouldWithholdAuthenticationCode(123,'560086'),false,'a generic handoff without an OTP step is not authentication')
  authRows=[]
  const readBeforeFailure=globalThis.fetch
  globalThis.fetch=async()=>new Response(JSON.stringify({message:'fixture database unavailable'}),{status:400,headers:{'Content-Type':'application/json'}})
  await assert.rejects(shouldWithholdAuthenticationCode(123,'482913'),/^Error: authentication_context_lookup_failed$/,'unavailable auth context must not send a possible code into ordinary routing')
+ authRows=[{id:'owned-instagram-run',status:'paused',metadata_json:{handoff:{}}}]
+ globalThis.fetch=async input=>new URL(String(input)).pathname.endsWith('/agent_steps')
+  ?new Response(JSON.stringify({message:'fixture step lookup unavailable'}),{status:400,headers:{'Content-Type':'application/json'}})
+  :readBeforeFailure(input)
+ await assert.rejects(shouldWithholdAuthenticationCode(123,'482913'),/^Error: authentication_context_lookup_failed$/,'generic provider auth lookup must also fail closed')
+ authRows=[]
  globalThis.fetch=readBeforeFailure
  console.log('Ordinary numeric dashboard replies retain normal clarification routing')
 }

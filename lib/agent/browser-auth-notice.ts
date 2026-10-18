@@ -6,14 +6,25 @@ export async function shouldWithholdAuthenticationCode(telegramId:number|string,
   if(!otpReply(text))return false
   if(/^(?:otp|code|the code is|code is|otp is)\b/i.test(text.trim()))return true
   const now=Date.now()
-  const {data,error}=await supabaseAdmin.from('agent_runs').select('status,metadata_json')
+  const {data,error}=await supabaseAdmin.from('agent_runs').select('id,status,metadata_json')
     .eq('telegram_id',String(telegramId)).eq('type','secure_browser').in('status',['paused','running'])
     .gte('updated_at',new Date(now-10*60_000).toISOString()).order('updated_at',{ascending:false}).limit(20)
   if(error)throw new Error('authentication_context_lookup_failed')
-  return (data||[]).some(row=>[row.metadata_json?.login_code,row.metadata_json?.booking_otp].some(context=>{
+  if((data||[]).some(row=>[row.metadata_json?.login_code,row.metadata_json?.booking_otp].some(context=>{
     const requested=Date.parse(String(context?.requested_at||''))
     return Number.isFinite(requested)&&requested<=now&&now-requested<=10*60_000
-  }))
+  })))return true
+  // Generic saved-password providers persist secondary OTP challenges in the
+  // browser step, not the phone-login or booking metadata. Delivery handoffs
+  // share the same run shape, so require the exact observed OTP reason.
+  const runIds=(data||[]).map(row=>String(row.id||'')).filter(Boolean)
+  if(!runIds.length)return false
+  const {data:steps,error:stepError}=await supabaseAdmin.from('agent_steps').select('id')
+    .eq('telegram_id',String(telegramId)).in('run_id',runIds).eq('tool_name','secure_browser')
+    .eq('status','failed').eq('error','human_auth_required').eq('output_json->>authReason','otp')
+    .gte('completed_at',new Date(now-10*60_000).toISOString()).lte('completed_at',new Date(now).toISOString()).limit(1)
+  if(stepError)throw new Error('authentication_context_lookup_failed')
+  return Boolean(steps?.length)
 }
 
 export function loginUnavailableMessage(site:string,resumeUrl:string):string{
