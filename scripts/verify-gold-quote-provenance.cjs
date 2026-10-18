@@ -123,4 +123,18 @@ check('inline daily amounts bind to their own day or remain explicitly unverifie
  const yesterday=answer('1. Bangalore board\n18 October 2026. 24K gold price per gram: Yesterday ₹13900\nSource: https://synthetic.invalid/inline-yesterday');
  assert.doesNotMatch(yesterday,/24K — as of 2026-10-18/);
 });
+check('reverse weights use only their own clause including suffix units',()=>{
+ for(const first of ['24K gold per 10 g ₹140000','₹140000 for 24K per 10 g']){
+  const result=answer(`1. Bangalore board\n18 October 2026. ${first}; ₹12800 for 22K\nSource: https://synthetic.invalid/reverse-unit`);
+  assert.match(result,/24K: ₹14,000/);assert.doesNotMatch(result,/22K: ₹/);
+ }
+ const explicit=answer('1. Bangalore board\n18 October 2026. ₹140000 for 24K per 10 g; ₹12800 for 22K per gram\nSource: https://synthetic.invalid/reverse-own-units');
+ assert.match(explicit,/24K: ₹14,000/);assert.match(explicit,/22K: ₹12,800/);
+});
+check('reverse historical day labels never inherit a current heading date',()=>{
+ for(const quote of ['Yesterday ₹13900 per gram for 24K','₹13900 per gram for 24K yesterday']){
+  const result=answer(`1. Bangalore board\n18 October 2026. ${quote}\nSource: https://synthetic.invalid/reverse-yesterday`);
+  assert.doesNotMatch(result,/24K — as of 2026-10-18/);assert.match(result,/couldn.t verify|unverified|2026-10-17/i);
+ }
+});
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');
