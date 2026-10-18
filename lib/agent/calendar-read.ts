@@ -237,9 +237,8 @@ async function calendarAccess(actor:AgentActor){
   const {data,error}=await supabaseAdmin.from('users').select('google_calendar_connected,google_refresh_token,timezone').eq('telegram_id',actor.legacyTelegramId).maybeSingle()
   if(error)throw new Error(`calendar_read_user_failed:${error.message}`)
   if(!data)throw new Error('calendar_not_connected')
-  if(data.google_calendar_connected&&!data.google_refresh_token)throw new Error('calendar_token_refresh_failed')
   const timezone=normalizeTimezone(String(data.timezone||'Asia/Kolkata'))
-  let incomplete=false
+  let incomplete=Boolean(data.google_calendar_connected&&!data.google_refresh_token)
   const accounts=await getCalendarAccountAccess(actor.legacyTelegramId,data.google_calendar_connected?String(data.google_refresh_token):null,()=>{incomplete=true})
   if(!accounts.length)throw new Error(incomplete?'calendar_account_access_unverified':'calendar_not_connected')
   const accessToken=accounts[0].accessToken

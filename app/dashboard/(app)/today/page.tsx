@@ -79,11 +79,11 @@ async function CalendarRestRow({ telegramId }: { telegramId: string }) {
           .slice(0, 2)
           .map((e) => (e.time ? `${e.title} ${e.time}` : e.title))
           .join(' · ')
-      : 'Clear today'
+      : calendar.incomplete ? 'Calendar incomplete; no events returned' : 'Clear today'
   return (
     <RestRow
       title="Calendar"
-      fact={fact}
+      fact={calendar.incomplete && calendar.events.length ? `${fact} · Calendar incomplete` : fact}
       tone="text-gogo-plum"
       Icon={CalendarIcon}
       chip={{ message: 'Gogo, what’s on today?', label: 'Ask' }}

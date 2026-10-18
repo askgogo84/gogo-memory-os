@@ -104,8 +104,8 @@ async function getCalendarEvents(telegramId: number) {
   try {
     const {data: user, error} = await supabaseAdmin.from('users')
       .select('google_calendar_connected, google_refresh_token').eq('telegram_id', telegramId).single()
-    if (error || !user || (user.google_calendar_connected && !user.google_refresh_token)) throw new Error('calendar_state_unavailable')
-    const result = await getTodayEventsAllAccounts(telegramId, user.google_calendar_connected ? user.google_refresh_token : null, getTodayEvents)
+    if (error || !user) throw new Error('calendar_state_unavailable')
+    const result = await getTodayEventsAllAccounts(telegramId, user.google_calendar_connected ? user.google_refresh_token : null, getTodayEvents, Boolean(user.google_calendar_connected))
     return {connected: result.connected, events: result.events, incomplete: result.incomplete, error: false}
   } catch {
     return {

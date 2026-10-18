@@ -99,8 +99,8 @@ export function describeCalendarAccounts(accounts: Array<{ email: string | null 
 }
 
 /** Today's events across every linked account (used by the briefing and day plan). */
-export async function getTodayEventsAllAccounts(telegramId: number | string, primaryRefreshToken: string | null | undefined, getToday: (accessToken: string) => Promise<any[]>) {
-  let incomplete = false
+export async function getTodayEventsAllAccounts(telegramId: number | string, primaryRefreshToken: string | null | undefined, getToday: (accessToken: string) => Promise<any[]>, primaryExpected = Boolean(primaryRefreshToken)) {
+  let incomplete = primaryExpected && !primaryRefreshToken
   const accounts = await getCalendarAccountAccess(telegramId, primaryRefreshToken, () => { incomplete = true })
   if (!accounts.length) {
     if (incomplete) throw new Error('calendar_fetch_failed')

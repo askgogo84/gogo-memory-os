@@ -24,9 +24,9 @@ const calendar={refreshAccessToken:async(token:string)=>failedRefresh.has(token)
  fetchPrimaryCalendarEventsPage:async(token:string)=>({events:await getToday(token),hasMore:false})}
 const weather={fetchWeatherForecast:async()=>null,formatCurrentWeather:()=>''}
 const followups={saveFollowupState:async(_owner:unknown,_kind:unknown,_data:unknown)=>{}}
-function load(file:string,deps:Record<string,unknown>,fetcher?:unknown){
+function load(file:string,deps:Record<string,unknown>,fetcher?:unknown,expose?:string){
  const exports:any={}
- runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
+ runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText+(expose?`\nexports.__entry=${expose};`:''),
   {exports,process,Date,URL,URLSearchParams,console,fetch:fetcher,require:(name:string)=>{assert.ok(name in deps,'Unexpected dependency '+name);return deps[name]}})
  return exports
 }
@@ -38,7 +38,10 @@ const plan=load('lib/bot/handlers/plan-my-day.ts',deps)
 const read=load('lib/agent/calendar-read.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/google-calendar':calendar,
  '@/lib/services/google-calendar-accounts':accounts,'@/lib/timezone':timezone,'@/lib/agent/typed-object-context':{},'@/lib/bot/memory-redaction':{redactSecretShapedText}})
 const dashboard=load('lib/dashboard/queries.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/ist':{istDayWindow:()=>({startUtc:new Date('2026-10-18T00:00:00Z'),endUtc:new Date('2026-10-19T00:00:00Z')})},
- '@/lib/services/meter':{},'@/lib/data/limits':{},'@/lib/services/google-calendar-accounts':accounts},async()=>({ok:providerStatus===200,status:providerStatus,json:async()=>({items:eventRows})}))
+ '@/lib/services/meter':{},'@/lib/data/limits':{},'@/lib/services/google-calendar-accounts':accounts},async(_url:unknown,init:any)=>{
+ const status=failedReads.has(String(init.headers.Authorization).replace(/^Bearer /,''))?503:providerStatus
+ return {ok:status===200,status,json:async()=>({items:eventRows})}
+})
 const failures:string[]=[]
 async function check(name:string,fn:()=>Promise<void>){
  userError=false;extrasError=false;primaryLinked=true;primaryMissing=false;extras=true;providerStatus=200;failedReads=new Set();failedRefresh=new Set();eventRows=[]
@@ -105,9 +108,39 @@ await check('dashboard retains healthy events with partial access',async()=>{
  const result=await dashboard.getTodayCalendar('123');assert.equal(result.ok,true);assert.equal(result.incomplete,true);assert.equal(result.events[0].title,'Fixture healthy event')
 })
 const dayChat=load('lib/dashboard/day-chat.ts',{'@/lib/dashboard/queries':dashboard,'@/lib/supabase-admin':{supabaseAdmin:db}})
-for(const intent of ['day','next','plan'])await check('dashboard '+intent+' cannot imply a free day from incomplete calendars',async()=>{
+for(const intent of ['summary','next','plan'])await check('dashboard '+intent+' cannot imply a free day from incomplete calendars',async()=>{
  const text=dayChat.formatDashboardDayReply({intent,tz:'Asia/Kolkata',remindersOk:true,reminders:[],calendarOk:true,calendarConnected:true,calendarIncomplete:true,calendarEvents:[],now:new Date('2026-10-18T08:00:00Z')})
  assert.match(text,/incomplete|couldn.t|missing/i);assert.doesNotMatch(text,/clear|quiet day|Longest free stretch|Nothing scheduled from now on/i)
 })
+await check('dashboard preserves a healthy account after another provider read fails',async()=>{
+ failedReads.add('fixture-extra');eventRows=[{summary:'Fixture healthy event',start:{dateTime:'2026-10-18T14:00:00+05:30'}}]
+ const result=await dashboard.getTodayCalendar('123');assert.equal(result.ok,true);assert.equal(result.incomplete,true);assert.equal(result.events[0].title,'Fixture healthy event')
+})
+await check('dashboard and read-only path preserve healthy extras when primary token is absent',async()=>{
+ primaryMissing=true;eventRows=[{summary:'Fixture extra event',start:{dateTime:'2026-10-18T14:00:00+05:30'}}]
+ const view=await dashboard.getTodayCalendar('123');assert.equal(view.ok,true);assert.equal(view.incomplete,true);assert.equal(view.events[0].title,'Fixture extra event')
+ const actual=await read.executeReadOnlyCalendarStep(readParams);assert.equal(actual.output.complete,false);assert.match(actual.text,/Fixture extra event/)
+})
+let viewState:any={ok:true,connected:true,events:[],incomplete:true}
+const jsx=(type:unknown,props:unknown)=>({type:typeof type==='function'?'component':type,props})
+function ui(file:string,expose?:string){
+ const names=[...readFileSync(file,'utf8').matchAll(/from ['"]([^'"]+)['"]/g)].map(m=>m[1])
+ const deps:Record<string,unknown>=Object.fromEntries(names.map(name=>[name,{}]))
+ deps['react/jsx-runtime']={jsx,jsxs:jsx};deps['@/lib/dashboard/session']={getSession:async()=>({telegramId:'123'})};deps['@/lib/dashboard/queries']={getTodayCalendar:async()=>viewState}
+ return load(file,deps,undefined,expose)
+}
+const calendarPage=ui('app/dashboard/(app)/calendar/page.tsx')
+const desktop=ui('components/dashboard/today-desktop.tsx','CalendarCard')
+const mobile=ui('app/dashboard/(app)/today/page.tsx','CalendarRestRow')
+for(const [name,build]of [['Calendar page',calendarPage.default],['Today desktop',desktop.__entry],['Today mobile',mobile.__entry]] as const){
+ await check(name+' renders partial empty state without clear-day claims',async()=>{
+  viewState={ok:true,connected:true,events:[],incomplete:true};const tree=JSON.stringify(await build({telegramId:'123'}))
+  assert.match(tree,/incomplete|partly unavailable/i);assert.doesNotMatch(tree,/clear today|quiet|nothing scheduled/i)
+ })
+ await check(name+' retains known events with the incomplete warning',async()=>{
+  viewState={ok:true,connected:true,events:[{id:'fixture',title:'Fixture healthy event',time:'2 PM'}],incomplete:true};const tree=JSON.stringify(await build({telegramId:'123'}))
+  assert.match(tree,/Fixture healthy event/);assert.match(tree,/incomplete/i)
+ })
+}
 assert.deepEqual(failures,[],'Calendar failures must remain distinct from successful empty/disconnected state')
 console.log('Calendar actual helper, morning briefing, day-plan and dashboard uncertainty regressions passed; no provider mutations.')

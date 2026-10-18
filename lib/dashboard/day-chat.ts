@@ -48,6 +48,7 @@ export function formatDashboardDayReply(params: {
   reminders: ReminderRow[]
   calendarOk: boolean
   calendarConnected: boolean
+  calendarIncomplete?: boolean
   calendarEvents: Array<{ id: string; title: string; time: string | null; startAt?: string | null }>
   /** Pending approvals waiting on the person; null when unknown. */
   approvalsWaiting?: number | null
@@ -61,12 +62,13 @@ export function formatDashboardDayReply(params: {
     const nextCalendar = params.calendarOk && params.calendarConnected ? params.calendarEvents[0] : null
 
     if (nextReminder) {
-      const lines = [`Next up: ${clock(nextReminder.remind_at, params.tz)} — ${cleanLabel(nextReminder.message)}.`]
+      const lines = [`${params.calendarIncomplete || !params.calendarOk ? 'Next known reminder' : 'Next up'}: ${clock(nextReminder.remind_at, params.tz)} — ${cleanLabel(nextReminder.message)}.`]
       if (nextCalendar) lines.push(`Calendar: ${nextCalendar.time || 'Today'} — ${nextCalendar.title}.`)
+      if (params.calendarIncomplete || !params.calendarOk) lines.push('Calendar is incomplete; an earlier event may be missing.')
       return lines.join('\n')
     }
-    if (nextCalendar) return `Next on your calendar: ${nextCalendar.time || 'Today'} — ${nextCalendar.title}.`
-    if (!params.remindersOk || !params.calendarOk) return `I couldn't read your full day right now. Try again in a moment.`
+    if (nextCalendar) return `${params.calendarIncomplete ? 'Next known calendar item' : 'Next on your calendar'}: ${nextCalendar.time || 'Today'} — ${nextCalendar.title}.${params.calendarIncomplete ? ' Calendar is incomplete; an earlier event may be missing.' : ''}`
+    if (!params.remindersOk || !params.calendarOk || params.calendarIncomplete) return `I couldn't read your full day right now. Try again in a moment.`
     return `Nothing else is waiting today. Your day is clear.`
   }
 
@@ -91,7 +93,7 @@ export function formatDashboardDayReply(params: {
   } else if (!params.calendarConnected) {
     lines.push(`• Calendar: not connected.`)
   } else if (params.calendarEvents.length === 0) {
-    lines.push(`• Calendar: clear today.`)
+    lines.push(params.calendarIncomplete ? `• Calendar: incomplete; no events returned from the accounts I could read.` : `• Calendar: clear today.`)
   } else {
     lines.push(`• Calendar: ${params.calendarEvents.length} event${params.calendarEvents.length === 1 ? '' : 's'}.`)
     for (const event of params.calendarEvents.slice(0, 4)) {
@@ -100,7 +102,8 @@ export function formatDashboardDayReply(params: {
     if (params.calendarEvents.length > 4) lines.push(`  +${params.calendarEvents.length - 4} more`)
   }
 
-  if (upcoming.length === 0 && params.calendarOk && params.calendarConnected && params.calendarEvents.length === 0) {
+  if (params.calendarIncomplete && params.calendarEvents.length) lines.push('Calendar is incomplete; other events may be missing.')
+  if (upcoming.length === 0 && params.calendarOk && !params.calendarIncomplete && params.calendarConnected && params.calendarEvents.length === 0) {
     lines.push(`You have a quiet day.`)
   }
 
@@ -162,7 +165,7 @@ function formatDayPlan(params: Parameters<typeof formatDashboardDayReply>[0], no
 
   const lines: string[] = [`Your plan for the rest of today:`]
   if (allDay.length) lines.push(`All day — ${allDay.join(', ')}`)
-  if (!items.length) lines.push(`Nothing scheduled from now on.`)
+  if (!items.length) lines.push(params.calendarIncomplete || !params.calendarOk ? 'The incomplete calendar cannot establish what is scheduled from now on.' : `Nothing scheduled from now on.`)
   for (const item of items.slice(0, 8)) {
     lines.push(`${clock(new Date(item.at).toISOString(), params.tz)} — ${item.label}${item.kind === 'meeting' ? ' (meeting)' : ''}`)
   }
@@ -176,7 +179,7 @@ function formatDayPlan(params: Parameters<typeof formatDashboardDayReply>[0], no
   const nowMinutes = minutesIn(nowMs, params.tz)
   const endOfDay = nowMs + (DAY_END_HOUR * 60 - nowMinutes) * 60_000
   // Only during waking hours: at 1 am "free until 10 pm" is not a useful fact.
-  if (endOfDay > nowMs && nowMinutes >= 6 * 60) {
+  if (params.remindersOk && params.calendarOk && params.calendarConnected && !params.calendarIncomplete && endOfDay > nowMs && nowMinutes >= 6 * 60) {
     let cursor = nowMs, best = { from: 0, to: 0 }
     for (const item of items.filter(i => i.at < endOfDay)) {
       if (item.at - cursor > best.to - best.from) best = { from: cursor, to: item.at }
@@ -187,7 +190,7 @@ function formatDayPlan(params: Parameters<typeof formatDashboardDayReply>[0], no
       lines.push('', `Longest free stretch: ${clock(new Date(best.from).toISOString(), params.tz)} – ${clock(new Date(best.to).toISOString(), params.tz)}.`)
     }
   }
-  if (!params.remindersOk || !params.calendarOk) lines.push('', `Part of your day could not be loaded, so this plan may be missing items.`)
+  if (!params.remindersOk || !params.calendarOk || params.calendarIncomplete) lines.push('', `Part of your day could not be loaded, so this plan may be missing items.`)
   return lines.join('\n')
 }
 
@@ -214,6 +217,7 @@ export async function getDashboardDayReply(telegramId: string, intent: Dashboard
     remindersOk: reminders.ok,
     reminders: reminders.ok ? reminders.reminders : [],
     calendarOk: calendar.ok,
+    calendarIncomplete: calendar.ok && calendar.connected ? calendar.incomplete : false,
     calendarConnected: calendar.ok ? calendar.connected : false,
     calendarEvents: calendar.ok && calendar.connected ? calendar.events : [],
     approvalsWaiting: approvals,

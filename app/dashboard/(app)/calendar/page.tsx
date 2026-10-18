@@ -83,6 +83,7 @@ export default async function CalendarPage() {
         </div>
       </header>
 
+      {calendar.incomplete && <p role="status" className="mt-5 text-[16px] text-gogo-ink-3">Some linked calendars could not be read. These are the events I could load; your schedule is incomplete.</p>}
       <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_340px]">
         <section className="min-h-[520px] rounded-[28px] border border-gogo-ink/8 bg-gogo-surface/80 p-6 shadow-[0_18px_50px_rgba(62,35,18,0.045)] backdrop-blur-xl">
           <div className="flex items-center justify-between gap-4">
@@ -97,8 +98,8 @@ export default async function CalendarPage() {
             <div className="mt-6 grid min-h-[380px] place-items-center rounded-[22px] border border-dashed border-gogo-ink/10 bg-gogo-cream/30 text-center">
               <div>
                 <div className="mx-auto flex justify-center"><GogoCharacter state="calm" size={76} showStatus={false} hands /></div>
-                <div className="mt-3 font-serif text-[20px] font-semibold text-gogo-ink">Your calendar’s clear today.</div>
-                <div className="mt-1 text-[16px] text-gogo-ink-3">Nothing scheduled — enjoy the quiet.</div>
+                <div className="mt-3 font-serif text-[20px] font-semibold text-gogo-ink">{calendar.incomplete ? 'Calendar partly unavailable' : 'Your calendar’s clear today.'}</div>
+                <div className="mt-1 text-[16px] text-gogo-ink-3">{calendar.incomplete ? 'No events returned from the calendars I could read.' : 'Nothing scheduled — enjoy the quiet.'}</div>
               </div>
             </div>
           ) : (
@@ -121,7 +122,7 @@ export default async function CalendarPage() {
           <section className="rounded-[28px] border border-gogo-ink/8 bg-gogo-surface/80 p-5 shadow-[0_18px_50px_rgba(62,35,18,0.04)] backdrop-blur-xl">
             <p className="text-[13px] font-bold uppercase tracking-[0.14em] text-gogo-ink-3">At a glance</p>
             <div className="mt-4 space-y-3">
-              <div className="flex items-center justify-between rounded-[16px] bg-gogo-cream/55 px-4 py-3"><span className="text-[15px] text-gogo-ink-2">Events today</span><strong className="font-serif text-[20px] text-gogo-ink">{events.length}</strong></div>
+              <div className="flex items-center justify-between rounded-[16px] bg-gogo-cream/55 px-4 py-3"><span className="text-[15px] text-gogo-ink-2">{calendar.incomplete ? 'Events loaded' : 'Events today'}</span><strong className="font-serif text-[20px] text-gogo-ink">{events.length}</strong></div>
               <div className="flex items-center justify-between rounded-[16px] bg-gogo-cream/55 px-4 py-3"><span className="text-[15px] text-gogo-ink-2">Calendar</span><strong className="text-[15px] text-gogo-plum">Connected</strong></div>
             </div>
           </section>
