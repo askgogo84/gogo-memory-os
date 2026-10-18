@@ -662,6 +662,11 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
   if(meta.plan_type!=='restaurant_reservation_release')throw new Error('not_restaurant_reservation_plan')
   const{data:action}=await supabaseAdmin.from('life_event_actions').select('id,status,updated_at,payload_json,due_at').eq('id',String(meta.life_event_action_id)).eq('telegram_id',tg).maybeSingle()
   if(meta.providerConfirmationVerified===true||action?.payload_json?.providerConfirmationVerified===true)throw new Error('restaurant_reservation_already_confirmed')
+  // A failed receipt may leave no confirmation flag. Only pre-execution states
+  // can arm authority; an attempted/blocked mission must be reconciled first.
+  const initialApproval=action?.status==='waiting_approval'&&['waiting_approval','queued'].includes(run.status)
+  const alreadyArmed=run.status==='queued'&&action?.status==='ready'
+  if(run.error||(!initialApproval&&!alreadyArmed))throw new Error('restaurant_reservation_reconciliation_required')
   const{data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',tg).eq('action_type','booking').eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   if(!action||!approval)throw new Error('approval_required')
   const p:any=action.payload_json||{}
@@ -693,6 +698,7 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
     return{runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'This older reservation approval needs verified dining-date context. Nothing was armed. Request the reservation again to refresh this same mission and review a new bounded approval.'}
   }
   const now=new Date().toISOString()
+  if(alreadyArmed)return{runId:params.runId,status:'queued' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,text:'This exact reservation is already armed. No new attempt or authority was created.'}
   await transitionRun({status:'queued',summary:'Reservation approval accepted; preparing the scheduled action.',progress:55,updated_at:now})
   await transitionAction({status:'ready',updated_at:now,payload_json:{...p,armedAt:now,approvalId:String(approval.id)}})
   const results=await Promise.all([
