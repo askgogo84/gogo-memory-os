@@ -143,11 +143,11 @@ export function isLinkVaultSaveRequest(text:string){
   // Explicit capture owns its note, even when the note mentions browser verbs.
   if(/^(?:save|remember|keep|store|bookmark|file)\b/i.test(request))return true
   if(/^(?:read|watch|view)\s+(?:(?:this|it)\s+)?later\b/i.test(request))return true
-  const articleCaption=/^how\s+to\b/i.test(request)&&!/[?]\s*$/.test(request)
+  const descriptiveCaption=/^(?:how\s+to|what\s+an?)\b/i.test(request)&&!/[?]\s*$/.test(request)
   // A URL in a read command is its target, not permission to store it. Keep
   // bare URL shares/captions below, and reject explicit negative capture intent.
   if(/^(?:open|use|research|check|find|tell|summari[sz]e|look|search|browse|read|go\s+to|show|visit|inspect)\b/i.test(request)
-    ||(!articleCaption&&/^(?:what|when|where|why|how)\b/i.test(request))
+    ||(!descriptiveCaption&&/^(?:what|when|where|why|how)\b/i.test(request))
     ||/^(?:do\s+not|don't|never)\s+(?:save|remember|keep|store|bookmark|file)\b/i.test(request)
     ||/\b(?:i\s+want|i'd\s+like)\s+you\s+to\s+(?:open|use|research|check|find|tell|summari[sz]e|look|search|browse|read|go\s+to|show|visit|inspect)\b/i.test(request))return false
   if(/\b(save|remember|keep|store|bookmark|file)\b/i.test(stripped))return true
