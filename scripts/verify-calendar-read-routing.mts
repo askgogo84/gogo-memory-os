@@ -18,6 +18,9 @@ const heldReads=['Check my Google Calendar? Actually, do not check it.','Check m
 const neverReads=['Never read my Google Calendar','Please never check my Calendar.']
 const zonedReads=['Check my Google Calendar in UTC','Read my calendar in Asia/Kolkata','Show my calendar using Europe/London','Review my Calendar timezone is America/New_York','Read my Calendar tomorrow at 8 pm CET']
 const availabilityReads=['Show my calendar tomorrow and check if I am free',"Show my Calendar tomorrow and check whether I'm available",'Show my Calendar tomorrow and tell me when am I free','Show my Calendar tomorrow and check if I am free for 30 minutes','Show my Calendar tomorrow and check if I am free for one hour and a half','Show my Calendar tomorrow and check if I am free for 45 minutes in UTC']
+for(const duration of ['a quarter hour','a half hour','one-hour','an hour','two-hour','half an hour','quarter-hour','one and a half hours','an hour and a half','two and a half hours','one hour and a quarter'])availabilityReads.push(`Show my Calendar tomorrow and check if I am free for ${duration}`)
+const availabilityQuestions=['check if I have any free time','tell me what is my availability','check are there any free slots','check if we have any open gaps'].map(question=>`Show my Calendar tomorrow and ${question}`)
+availabilityReads.push(...availabilityQuestions)
 extraReads.push('Show my Calendar tomorrow and check if I am free for 30 minutes and get the weather')
 heldReads.push('Show my Calendar tomorrow and check if I am free for 30 minutes only after I approve')
 const failures:string[]=[]
@@ -87,6 +90,9 @@ try{
  })
  await check('native availability questions remain a single bounded Calendar read',()=>{
   for(const text of availabilityReads){assert.equal(detectIntent(text).type,'read_calendar',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text)?.scope,'calendar',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text)?.horizon,'tomorrow',text)}
+ })
+ await check('all supported native availability question shapes remain Calendar reads',()=>{
+  for(const text of availabilityQuestions){assert.equal(detectIntent(text).type,'read_calendar',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text)?.scope,'calendar',text)}
  })
  await check('actual shared message entry reads without minting a connection link',async()=>{
   const q:any={insert:()=>({error:null}),select:()=>q,eq:()=>q,maybeSingle:async()=>({data:null,error:null})}
