@@ -519,6 +519,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const contextRefs=[...contextWindows.flatMap(window=>window.sourceRefs),...diningContext.calendar.windows.flatMap(window=>window.sourceRefs)].slice(0,30)
   const key=dedupeKey(params.actor,intent,provider.url)
   const existing=await existingMission(params.actor.legacyTelegramId,key)
+  if(existing?.event?.metadata_json?.reservationConfirmed===true||existing?.run?.metadata_json?.providerConfirmationVerified===true)return{runId:String(existing?.run?.id||''),status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'A provider confirmation is already recorded for this reservation. Do not book it again. Review that same task; specify a different dining date if you intend a separate reservation.'}
   const refreshInProgress=String(existing?.run?.error||'').startsWith('restaurant_context_refresh:')
   const refreshUpdated=Date.parse(String(existing?.run?.updated_at||''))
   const abandonedRefresh=refreshInProgress&&(!Number.isFinite(refreshUpdated)||refreshUpdated<=Date.now()-5*60_000)
@@ -660,6 +661,7 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
   const meta:any=run.metadata_json||{}
   if(meta.plan_type!=='restaurant_reservation_release')throw new Error('not_restaurant_reservation_plan')
   const{data:action}=await supabaseAdmin.from('life_event_actions').select('id,status,updated_at,payload_json,due_at').eq('id',String(meta.life_event_action_id)).eq('telegram_id',tg).maybeSingle()
+  if(meta.providerConfirmationVerified===true||action?.payload_json?.providerConfirmationVerified===true)throw new Error('restaurant_reservation_already_confirmed')
   const{data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',tg).eq('action_type','booking').eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   if(!action||!approval)throw new Error('approval_required')
   const p:any=action.payload_json||{}
