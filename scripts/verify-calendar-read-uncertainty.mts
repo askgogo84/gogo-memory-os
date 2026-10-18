@@ -9,6 +9,7 @@ import {redactSecretShapedText} from '../lib/bot/memory-redaction'
 // provider mutations, notifications or reminder writes are allowed here.
 let userError=false,extrasError=false,primaryLinked=true,primaryMissing=false,extras=true,providerStatus=200
 let failedReads=new Set<string>(),failedRefresh=new Set<string>(),eventRows:any[]=[]
+let refreshRequests:string[]=[]
 const db={from(table:string){
  assert.ok(['users','google_calendar_accounts','reminders','travel_tickets'].includes(table),table)
  const result=()=>({data:table==='users'?{google_calendar_connected:primaryLinked,google_refresh_token:primaryLinked&&!primaryMissing?'fixture-primary':null,timezone:'Asia/Kolkata',briefing_content:'calendar'}:
@@ -19,7 +20,7 @@ const db={from(table:string){
  return q
 }}
 async function getToday(token:string){if(failedReads.has(token))throw Error('fixture calendar outage');return eventRows}
-const calendar={refreshAccessToken:async(token:string)=>failedRefresh.has(token)?null:token,
+const calendar={refreshAccessToken:async(token:string)=>{refreshRequests.push(token);return failedRefresh.has(token)?null:token},
  fetchPrimaryCalendarAccount:async()=> 'primary@example.test',getTodayEvents:getToday,
  fetchPrimaryCalendarEventsPage:async(token:string)=>({events:await getToday(token),hasMore:false})}
 const weather={fetchWeatherForecast:async()=>null,formatCurrentWeather:()=>''}
@@ -44,7 +45,7 @@ const dashboard=load('lib/dashboard/queries.ts',{'@/lib/supabase-admin':{supabas
 })
 const failures:string[]=[]
 async function check(name:string,fn:()=>Promise<void>){
- userError=false;extrasError=false;primaryLinked=true;primaryMissing=false;extras=true;providerStatus=200;failedReads=new Set();failedRefresh=new Set();eventRows=[]
+ userError=false;extrasError=false;primaryLinked=true;primaryMissing=false;extras=true;providerStatus=200;failedReads=new Set();failedRefresh=new Set();eventRows=[];refreshRequests=[]
  try{await fn();console.log('PASS '+name)}catch(error){failures.push(name+': '+(error instanceof Error?error.message:String(error)).slice(0,350))}
 }
 await check('partial linked Calendar read is explicitly incomplete',async()=>{
@@ -120,6 +121,7 @@ await check('dashboard and read-only path preserve healthy extras when primary t
  primaryMissing=true;eventRows=[{summary:'Fixture extra event',start:{dateTime:'2026-10-18T14:00:00+05:30'}}]
  const view=await dashboard.getTodayCalendar('123');assert.equal(view.ok,true);assert.equal(view.incomplete,true);assert.equal(view.events[0].title,'Fixture extra event')
  const actual=await read.executeReadOnlyCalendarStep(readParams);assert.equal(actual.output.complete,false);assert.match(actual.text,/Fixture extra event/)
+ assert.ok(refreshRequests.every(token=>/^fixture-(?:primary|extra)$/.test(token)),'missing token must not become a null/undefined refresh request')
 })
 let viewState:any={ok:true,connected:true,events:[],incomplete:true}
 const jsx=(type:unknown,props:unknown)=>({type:typeof type==='function'?'component':type,props})
