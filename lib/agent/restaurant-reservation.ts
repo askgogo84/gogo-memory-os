@@ -139,6 +139,12 @@ export type RestaurantReservationIntent={
 export function isRestaurantReservationRequest(raw:string){
   const text=String(raw||'').trim().toLowerCase()
   if(!text)return false
+  // Planning/recall must not create a reservation mission merely because its
+  // safety instructions mention booking. An explicit read-only request wins.
+  if(/\bread[\s-]?only\b/.test(text))return false
+  let negatedBooking=false
+  const affirmative=text.replace(/\b(?:do\s+not|don['’]?t|never|without)\s+(?:(?:make|create|place)\s+(?:(?:a|any|the)\s+)?)?(?:book(?:ing)?|reserv(?:e|ing|ation)s?|tables?)\b/g,()=>{negatedBooking=true;return''})
+  if(negatedBooking&&!/\b(?:book|reserve)\b/.test(affirmative))return false
   if(/^(?:please\s+)?(?:what\s+(?:did|have)\s+(?:i|we)\s+(?:decide|say|agree|choose|discuss)|remind\s+me\s+what\b|what\s+was\s+(?:my|our)\s+decision\b)/i.test(text))return false
   const booking=/\b(book|booking|reserve|reservation|table)\b/.test(text)
   const restaurant=/\b(restaurant|cafe|café|bistro|bar|noodle|dinner|lunch|brunch|table|party\s+of)\b/.test(text)
