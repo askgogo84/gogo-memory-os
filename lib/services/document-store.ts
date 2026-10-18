@@ -23,6 +23,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { indexMemory } from '@/lib/services/memory-index'
 import { recordUsage, type DocumentAction } from '@/lib/services/meter'
 import { extractNoteFields } from '@/lib/services/image-note-reader'
+import { safeDocumentSummary, redactDocumentMetadata } from '@/lib/services/document-summary-privacy'
 import type { TicketInfo, FlightInfo, TrainInfo, EventInfo } from '@/lib/services/pdf-reader'
 
 const BUCKET = 'user-documents'
@@ -97,8 +98,8 @@ export async function storeDocument(params: {
     .insert({
       telegram_id: params.telegramId,
       doc_type: params.docType,
-      title: (params.title || 'Document').slice(0, 300),
-      summary: (params.summary || '').slice(0, 4000),
+      title: redactDocumentMetadata(params.title || 'Document').slice(0, 300),
+      summary: safeDocumentSummary(params.summary, params.docType, params.extracted).slice(0, 4000),
       doc_date: params.docDate ?? null,
       expires_on: params.expiresOn ?? null,
       storage_path: null,
