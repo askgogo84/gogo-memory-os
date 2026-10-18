@@ -48,4 +48,23 @@ check('a future quote cannot be presented as a current verified rate',()=>{
 check('silver remains an independent supported metal read',()=>{
  const result=actual.formatGoldAnswer('silver price today','1. Silver rate\nSilver ₹250 per gram\nSource: https://synthetic.invalid/silver');assert.match(result,/Silver price/);assert.match(result,/₹250/);
 });
+check('table date columns are respected even in a flattened snippet',()=>{
+ for(const reverse of [false,true]){
+  const columns=reverse?'Yesterday | Today':'Today | Yesterday',values=reverse?'₹13555 | ₹13575':'₹13575 | ₹13555';
+  const result=answer(`1. Bangalore board\nAs of 18 October 2026. 22 Kt Gold Rate Grammage | ${columns} 1 G | ${values}\nSource: https://synthetic.invalid/columns`);
+  assert.match(result,/22K: ₹13,?575/);assert.doesNotMatch(result,/22K: ₹13,?555/);
+ }
+});
+check('a different purity cannot inherit a table row weight',()=>{
+ const result=answer('1. Bangalore board\n18 October 2026. 24K gold rate: 8 g | ₹112000; 22K gold ₹12800\nSource: https://synthetic.invalid/weights');
+ assert.match(result,/24K: ₹14,?000/);assert.doesNotMatch(result,/22K: ₹1,?600/);
+});
+check('each purity keeps its own quoted date',()=>{
+ const result=answer('1. Bangalore board\n24K as of 17 October 2026 per gram ₹14000; 22K as of 18 October 2026 per gram ₹12800\nSource: https://synthetic.invalid/dates');
+ assert.match(result,/24K — as of 2026-10-17/);assert.match(result,/22K — as of 2026-10-18/);
+});
+check('a future quote does not borrow another purity\'s current date',()=>{
+ const result=answer('1. Bangalore board\n24K as of 18 October 2026 per gram ₹14000; 22K as of 19 October 2026 per gram ₹12800\nSource: https://synthetic.invalid/future-field');
+ assert.match(result,/24K: ₹14,?000/);assert.doesNotMatch(result,/22K: ₹12,?800/);assert.match(result,/future/i);
+});
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');
