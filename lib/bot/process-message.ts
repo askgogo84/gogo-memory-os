@@ -477,9 +477,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       evidence = await researchRedditDiscussions(incomingText)
       footer = await recordWebSearch(resolvedUser, params.channel, params.messageId ?? null, guard.usage)
     }
+    const contextSynthesis=isContextSynthesisTurn(incomingText)
     const [history, memories, preferences] = await Promise.all([
-      getConversationHistory(resolvedUser.telegramId), getMemories(resolvedUser.telegramId), getPreferenceBlock(resolvedUser.telegramId),
+      getConversationHistory(resolvedUser.telegramId), contextSynthesis?Promise.resolve([]):getMemories(resolvedUser.telegramId), getPreferenceBlock(resolvedUser.telegramId),
     ])
+    if(contextSynthesis){
+      const savedContext=await selectedSavedContextBlock(resolvedUser,incomingText,history)
+      evidence=[evidence,savedContext].filter(Boolean).join('\n\n')
+    }
     const draft = await askClaude(incomingText, history, memories, resolvedUser.name, preferences, evidence)
     if (!draft.trim()) throw new Error('content_workflow_empty_response')
     const reply = formatOutgoingText(params.channel, draft + footer)
@@ -1479,17 +1484,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const history = await getConversationHistory(resolvedUser.telegramId)
   const memories = contextSynthesis?[]:await getMemories(resolvedUser.telegramId)
   const preferenceBlock = await getPreferenceBlock(resolvedUser.telegramId)
-  const contextPack = await buildContextPack({
-    actor:{
-      userId:String(resolvedUser.id),
-      legacyTelegramId:resolvedUser.telegramId,
-      whatsappId:String(resolvedUser.whatsappId||''),
-      name:resolvedUser.name||'Gogo',
-    },
-    text:recallQuery(incomingText,history),
-    options:{includeSemantic:true,maxFacts:12,horizonDays:60},
-  }).catch(()=>null)
-  const savedContextBlock = contextPack ? renderContextBlock(contextPack,3200) : 'Saved-context lookup failed. Tell the user retrieval is unavailable; do not claim no saved record exists.'
+  const savedContextBlock = await selectedSavedContextBlock(resolvedUser,incomingText,history)
   // 18 Oct live: "plan my week" and "give me a morning briefing" said "nothing on the calendar" while a
   // 2–6 pm event was on it today — this path never read Google Calendar. Planning and briefing
   // requests now carry the real calendar for the days they cover.
@@ -1603,6 +1598,15 @@ export function rememberedForReply(fact: string): string {
     const out = swap[w.toLowerCase()] || w
     return w[0] === w[0].toUpperCase() && w.toLowerCase() !== 'i' ? out[0].toUpperCase() + out.slice(1) : out
   }).replace(/\byou am\b/gi, 'you are').replace(/\byou was\b/gi, 'you were')
+}
+
+async function selectedSavedContextBlock(user: { id?: any; telegramId: number; whatsappId?: any; name?: string }, text: string, history: Message[]): Promise<string> {
+  const contextPack=await buildContextPack({
+    actor:{userId:String(user.id),legacyTelegramId:user.telegramId,whatsappId:String(user.whatsappId||''),name:user.name||'Gogo'},
+    text:recallQuery(text,history),
+    options:{includeSemantic:true,maxFacts:12,horizonDays:60},
+  }).catch(()=>null)
+  return contextPack?renderContextBlock(contextPack,3200):'Saved-context lookup failed. Tell the user retrieval is unavailable; do not claim no saved record exists.'
 }
 
 export function planningCalendarInstruction(text: string): string | null {
