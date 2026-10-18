@@ -115,3 +115,21 @@ const ws = await import('../lib/web-search.ts')
 assert.deepEqual(ws.indiaShoppingSearch('petrol price in Bangalore today').includeDomains, [], 'fuel prices are not retailer products')
 assert.ok(ws.indiaShoppingSearch('iphone 17 price').includeDomains.includes('amazon.in'))
 console.log('market prices search the open web ok')
+// 18 Oct after merge: planning and briefings read the real calendar.
+const pmSrc = readFileSync('lib/bot/process-message.ts', 'utf8')
+assert.match(pmSrc, /const calendarBlock = await planningCalendarBlock\(resolvedUser, incomingText\)/)
+const pmi = (pmSrc.match(/export function planningCalendarInstruction[\s\S]*?\n\}\n/) || [''])[0].replace('export ', '').replace(/: string \| null/, '').replace(/\(text: string\)/, '(text)')
+const plan = new Function(pmi + ';return planningCalendarInstruction')()
+assert.equal(plan('plan my week'), 'Show my calendar for the next 7 days')
+assert.equal(plan('give me a morning briefing'), 'Show my calendar today')
+assert.equal(plan('plan a trip to goa'), null)
+console.log('planning calendar ok')
+// Tavily over its plan limit: Anthropic web search fallback.
+const wsr = await import('../lib/web-search.ts')
+const fb = wsr.anthropicSearchResults({ content: [
+  { type: 'web_search_tool_result', content: [{ type: 'web_search_result', url: 'https://example.in/petrol', title: 'Petrol price Bangalore', page_age: 'Oct 18, 2026' }, { type: 'web_search_result', url: 'https://example.in/other', title: 'Other' }] },
+  { type: 'text', text: 'Petrol costs ₹102.92 a litre in Bengaluru today.', citations: [{ type: 'web_search_result_location', url: 'https://example.in/petrol', title: 'Petrol price Bangalore', cited_text: 'Bangalore petrol ₹102.92' }] },
+] })
+assert.equal(fb[0].url, 'https://example.in/petrol'); assert.match(fb[0].snippet, /₹102\.92 a litre/); assert.equal(fb.length, 2)
+assert.match(readFileSync('lib/web-search.ts', 'utf8'), /return await searchWithAnthropic\(cleanQuery, opts\)/, 'falls back when Tavily fails')
+console.log('search fallback ok')

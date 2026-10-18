@@ -1,4 +1,5 @@
 import { worldTimeReply } from './world-time'
+import { executeReadOnlyCalendarStep } from '@/lib/agent/calendar-read'
 import { createImage, imageRequest, imageRequestRefusal } from '@/lib/services/image-reply'
 import { createPodcast, createVoiceNote, podcastRequest, wantsVoiceReply } from '@/lib/services/voice-reply'
 import { unsupportedCapability } from './unsupported-capabilities'
@@ -1449,7 +1450,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     text:recallQuery(incomingText,history),
     options:{includeSemantic:true,maxFacts:12,horizonDays:60},
   }).catch(()=>null)
-  const contextualBlock = contextPack ? renderContextBlock(contextPack,3200) : 'Saved-context lookup failed. Tell the user retrieval is unavailable; do not claim no saved record exists.'
+  const savedContextBlock = contextPack ? renderContextBlock(contextPack,3200) : 'Saved-context lookup failed. Tell the user retrieval is unavailable; do not claim no saved record exists.'
+  // 18 Oct live: "plan my week" and "give me a morning briefing" said "nothing on the calendar" while a
+  // 2–6 pm event was on it today — this path never read Google Calendar. Planning and briefing
+  // requests now carry the real calendar for the days they cover.
+  const calendarBlock = await planningCalendarBlock(resolvedUser, incomingText)
+  const contextualBlock = calendarBlock ? `${calendarBlock}\n\n${savedContextBlock}` : savedContextBlock
   const rawClaude = await askClaude(incomingText, history, memories, resolvedUser.name, preferenceBlock, contextualBlock)
   const parsed = parseClaudeResponse(rawClaude)
   let finalReply = rawClaude
@@ -1554,4 +1560,27 @@ export function rememberedForReply(fact: string): string {
     const out = swap[w.toLowerCase()] || w
     return w[0] === w[0].toUpperCase() && w.toLowerCase() !== 'i' ? out[0].toUpperCase() + out.slice(1) : out
   }).replace(/\byou am\b/gi, 'you are').replace(/\byou was\b/gi, 'you were')
+}
+
+export function planningCalendarInstruction(text: string): string | null {
+  const t = String(text || '').toLowerCase()
+  if (/\b(?:plan|organi[sz]e)\s+(?:my|the)\s+week\b|\b(?:my|the)\s+week\s+ahead\b|\bwhat(?:'s| is| does)?\s+(?:my|the)\s+week\b|\bweekly (?:plan|brief|briefing)\b/.test(t)) return 'Show my calendar for the next 7 days'
+  if (/\b(?:morning|daily)\s+(?:briefing|brief|summary)\b|\bbrief me\b|\bplan (?:my|the) day\b|\bwhat(?:'s| is)?\s+(?:on\s+)?my day\b/.test(t)) return 'Show my calendar today'
+  return null
+}
+
+async function planningCalendarBlock(user: { id?: any; telegramId: number; whatsappId?: any; name?: string }, text: string): Promise<string> {
+  const instruction = planningCalendarInstruction(text)
+  if (!instruction) return ''
+  try {
+    const result: any = await executeReadOnlyCalendarStep({
+      actor: { userId: String(user.id), legacyTelegramId: user.telegramId, whatsappId: String(user.whatsappId || ''), name: user.name || 'Gogo' } as any,
+      instruction, missionText: instruction,
+    })
+    const body = String(result?.text || '').trim()
+    return body ? `Google Calendar (read just now, use these events as the real schedule):\n${body.slice(0, 2500)}` : ''
+  } catch (error: any) {
+    console.error('PLANNING_CALENDAR_READ_FAILED:', error?.message || error)
+    return 'Google Calendar could not be read just now: say so rather than claiming the calendar is empty.'
+  }
 }
