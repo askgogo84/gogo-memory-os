@@ -1468,13 +1468,15 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
 
   // FREEFORM LLM CONTEXT ASSEMBLY — explicit context synthesis uses the selected
-  // owner-bound pack below, without an unfiltered history/legacy-memory second path.
-  // Ordinary conversation retains those inputs. Vault plaintext must NEVER reach this path —
+  // owner-bound pack below, without an unfiltered legacy-memory second path.
+  // History still resolves trusted user references; the model service excludes it
+  // from synthesis turns. Ordinary conversation retains both inputs.
+  // Vault plaintext must NEVER reach this path —
   // never write decrypted vault_items into public.memories, and never add a vault_items
   // SELECT to any of these context sources. (getMemories also strips secret-shaped rows as
   // defense in depth — see lib/bot/memory-redaction.ts.)
   const contextSynthesis=isContextSynthesisTurn(incomingText)
-  const history = contextSynthesis?[]:await getConversationHistory(resolvedUser.telegramId)
+  const history = await getConversationHistory(resolvedUser.telegramId)
   const memories = contextSynthesis?[]:await getMemories(resolvedUser.telegramId)
   const preferenceBlock = await getPreferenceBlock(resolvedUser.telegramId)
   const contextPack = await buildContextPack({
