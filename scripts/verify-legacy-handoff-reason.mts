@@ -65,6 +65,18 @@ await check('delivery-location and non-auth provider copy remain unchanged',asyn
 await check('reason lookup projects only needed fields and excludes raw browser output',async()=>{
  await read();const query=reads.find(r=>r.table==='agent_steps');assert(query);assert.match(query.select,/auth_reason:output_json->>authReason/);assert.doesNotMatch(query.select,/(?:^|,)\s*(?:\*|output_json)\s*(?:,|$)/)
 })
+await check('recorded secondary checks stay human-only without a code-send failure claim',async()=>{
+ for(const reason of ['otp','password','device_approval','captcha','payment_auth']){steps=[step(reason)];const card=(await read())[0];assert.match(card.summary,/Take control/);assert.doesNotMatch(card.summary,/send you a sign-in code|couldn.t sign in/i);assert.match(card.summary,/out of chat/)}
+})
+await check('future or invalid completion evidence cannot establish a past login failure',async()=>{
+ for(const completed_at of ['not-a-date','2026-10-18T13:00:00Z']){steps=[step('login_unavailable',{completed_at})];const card=(await read())[0];assert.doesNotMatch(card.summary,/couldn.t sign in|send you a sign-in code/i);assert.match(card.summary,/couldn.t verify/i)}
+})
+await check('private browser output cannot escape through the projected reason',async()=>{
+ steps=[step('login_unavailable',{output_json:{authReason:'login_unavailable',pageText:'SYNTHETIC_PRIVATE_PAGE',password:'SYNTHETIC_PASSWORD',token:'SYNTHETIC_TOKEN'}})];assert.doesNotMatch(JSON.stringify(await read()),/SYNTHETIC_PRIVATE_PAGE|SYNTHETIC_PASSWORD|SYNTHETIC_TOKEN|handback/)
+})
+await check('non-auth handoffs do not perform an unnecessary reason lookup',async()=>{
+ rows[0].error='delivery_location_required';rows[0].summary='Select your delivery location.';await read();assert.equal(reads.filter(r=>r.table==='agent_steps').length,0)
+})
 await check('duplicate handoffs still collapse after truthful projection',async()=>{
  rows.push({...structuredClone(base),id:'run-b',updated_at:'2026-10-18T10:00:00Z'});steps.push(step('login_unavailable',{id:'step-b',run_id:'run-b'}));const cards=await read();assert.equal(cards.length,1);assert.equal(cards[0].id,'run-a');assert.equal(cards[0].repeats,1)
 })
