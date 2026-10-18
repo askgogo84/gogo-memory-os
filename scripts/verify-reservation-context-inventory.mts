@@ -5,17 +5,18 @@ import {createHash} from 'node:crypto'
 import ts from 'typescript'
 import * as redaction from '../lib/bot/memory-redaction'
 import * as travelTime from '../lib/services/travel-time'
+import * as intervals from '../lib/calendar-intervals'
 
 const now=Date.parse('2026-10-18T10:00:00Z')
 class FixtureDate extends Date {constructor(value?:any){super(value===undefined?now:value)}static now(){return now}}
 let count=20,failed=false,tickets:any[]=[],ticketFilters:string[]=[]
-const db={from(table:string){let filter='';const q:any={select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},order:()=>q,limit:()=>q,in:()=>q,or:(value:string)=>{filter=value;if(table==='travel_tickets')ticketFilters.push(value);return q},
+const db={from(table:string){let filter='';const q:any={select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},order:()=>q,limit:()=>q,in:()=>q,not:(key:string,op:string,value:unknown)=>{assert.equal(table,'agent_runs');assert.equal(key,'metadata_json->flight_booking');assert.equal(op,'is');assert.equal(value,null);return q},or:(value:string)=>{filter=value;if(table==='travel_tickets')ticketFilters.push(value);return q},
  maybeSingle:async()=>({data:{memory_enabled:false,gmail_enabled:false},error:null}),
  then:(resolve:any)=>resolve({error:table==='life_events'&&failed?{message:'synthetic read failure'}:null,data:table==='life_events'?Array.from({length:count},(_,i)=>({id:'fixture-'+i,event_type:'flight',subtype:'flight',title:'Synthetic flight '+i,start_at:'2026-10-21T00:00:00Z',end_at:'2026-10-24T00:00:00Z',location:'City '+i,participants:['Synthetic Owner'],lifecycle_state:'planned',source_refs:[]})):table==='travel_tickets'?tickets.filter(row=>{const lower=filter.match(/depart_at.gte.([^,]+)/)?.[1];return !row.depart_at||!lower||Date.parse(row.depart_at)>=Date.parse(lower)}):[]})};return q}}
 const actual:any={}
 runInNewContext(ts.transpileModule(readFileSync('lib/agent/context-brain.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
- {exports:actual,require:(name:string)=>name==='node:crypto'?{createHash}:name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='./typed-object-context'?{latestTypedContext:async()=>null}:name==='@/lib/bot/memory-redaction'?redaction:name==='@/lib/services/travel-time'?travelTime:{},Date:FixtureDate,Intl,console,Set,Map})
-const read=(includeReservationTravel=true)=>actual.buildContextPack({actor:{legacyTelegramId:123,userId:'fixture-user',name:'Synthetic Owner'},text:'Restaurant dining context',options:{includeSemantic:false,includeReservationTravel,maxFacts:4,horizonDays:60}})
+ {exports:actual,require:(name:string)=>name==='node:crypto'?{createHash}:name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='./typed-object-context'?{latestTypedContext:async()=>null}:name==='@/lib/bot/memory-redaction'?redaction:name==='@/lib/services/travel-time'?travelTime:name==='../calendar-intervals'?intervals:{},Date:FixtureDate,Intl,console,Set,Map})
+const read=(includeReservationTravel=true,reservationCalendarCoverage?:{from:string;until:string})=>actual.buildContextPack({actor:{legacyTelegramId:123,userId:'fixture-user',name:'Synthetic Owner'},text:'Restaurant dining context',options:{includeSemantic:false,includeReservationTravel,reservationCalendarCoverage,maxFacts:4,horizonDays:60}})
 const complete=await read()
 assert.equal(complete.facts.length,4)
 assert.equal(complete.reservationTravel.facts.length,20,'Travel safety inventory precedes the conversational ranking cap')
@@ -33,6 +34,10 @@ const ongoing=await read()
 assert(ticketFilters.some(filter=>filter.includes('depart_at.lte.')&&!filter.includes('depart_at.gte.')),'Reservation inventory needs a separate bounded query without a departure lookback')
 assert(ongoing.reservationTravel.facts.some((fact:any)=>fact.source==='travel_presence'&&Date.parse(fact.startAt)<now&&Date.parse(fact.endAt)>Date.parse('2026-10-20T12:00:00Z')),'Older outbound plus future return must retain the ongoing away stay')
 assert.equal(ongoing.reservationTravel.incomplete,false)
+const scope={from:'2026-10-19T00:00:00Z',until:'2026-10-20T00:00:00Z'}
+const scoped=await read(true,scope)
+assert.equal(Date.parse(scoped.reservationTravel.coveredUntil),Date.parse(scope.until))
+assert(scoped.reservationTravel.facts.some((fact:any)=>fact.source==='travel_presence'&&Date.parse(fact.startAt)<Date.parse(scope.from)&&Date.parse(fact.endAt)>Date.parse(scope.until)),'A later return ticket must still establish an ongoing stay during the narrower dining scope')
 tickets=[{id:'unverified-flight',type:'flight',depart_at:null,arrive_at:null,raw:{}}]
 assert.equal((await read()).reservationTravel.incomplete,true,'An unrepresented flight with unknown dates cannot prove clear coverage')
 ticketFilters=[]
