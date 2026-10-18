@@ -41,6 +41,10 @@ for(const text of [
  'I think Vendor delivered the corrected JSON.',
  'It seems Vendor delivered the corrected JSON.',
  'Vendor apparently delivered the corrected JSON.',
+ 'The corrected JSON from Vendor is yet to be received.',
+ 'Vendor is going to have delivered the corrected JSON by tomorrow.',
+ 'Vendor sent nothing for the corrected JSON.',
+ 'Vendor failed to send the corrected JSON.',
 ]){
  for(const jev of [null,{ok:true,attentionState:{choice:'completed',confidence:0.99}}]){
   writes.length=0
@@ -48,16 +52,14 @@ for(const text of [
   if(result.length||writes.length)failures.push(`${text} semantic=${Boolean(jev)} incorrectly resolved a pending item`)
  }
 }
-assert.deepEqual(failures,[],'Negative/uncertain/future statements cannot prove completion, even with a conflicting semantic guess')
-for(const text of ['Vendor sent the corrected JSON.','Vendor delivered the corrected JSON.','I received the corrected JSON from Vendor.']){
+for(const text of ['Vendor sent the corrected JSON.','Vendor delivered the corrected JSON.','I received the corrected JSON from Vendor.','No worries, Vendor sent the corrected JSON.','Vendor sent the corrected JSON. No further action is needed.']){
  writes.length=0
  const result=await actual.autoResolveOpenLoopsFromTurn({actor,text})
- assert.equal(result.length,1,text)
- assert.equal(writes.length,1)
- assert.equal(writes[0].status,'resolved')
+ if(result.length!==1||writes.length!==1||writes[0]?.status!=='resolved')failures.push(`${text} incorrectly blocked clear completion`)
 }
 rows=[fixture,{...fixture,id:'synthetic-other',title:'Waiting on Vendor to send corrected JSON',summary:'Waiting for corrected JSON'}]
 writes.length=0
 assert.equal((await actual.autoResolveOpenLoopsFromTurn({actor,text:'Vendor sent the corrected JSON.'})).length,0)
 assert.equal(writes.length,0,'Ambiguous target stays open')
+assert.deepEqual(failures,[],'Only affirmative completion evidence may resolve an unambiguous item, regardless of a conflicting semantic guess')
 console.log('Actual open-loop completion export: negative/uncertain/future evidence stays open; clear completion and ambiguity controls pass. Synthetic data only.')
