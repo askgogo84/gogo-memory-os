@@ -87,7 +87,7 @@ try{
   assert.ok(result.messages.some((message:any)=>message.content===unrelated))
   assert.ok(result.system.includes(old));assert.ok(result.system.includes(move))
  })
- const workflowPrompt='Write a LinkedIn post using everything you already know about me about my upcoming move'
+ const workflowPrompt='Write a LinkedIn post using everything you already know about me about my move on 25 October 2026; explain what context matters'
  await check('content workflow synthesis also uses selected evidence without raw-memory bypass',async()=>{
   const result=await run(workflowPrompt)
   assert.match(result.system,/CURRENT CONTENT WORKFLOW: linkedin-post/)
@@ -101,7 +101,12 @@ try{
  })
  await check('content workflow synthesis preserves trusted historical pronoun retrieval',async()=>{
   historical=true
-  try{const result=await run('Write a LinkedIn post using my saved context about her scheduled arrival on 13 October 2026');assert.ok(lastContextQuery.includes('Previous user request: '+previousUser));assert.equal(result.messages.length,1);assert.ok(result.system.includes(old));assert.ok(!result.system.includes(unrelated))}finally{historical=false}
+  try{const result=await run('Write a LinkedIn post; use my saved context about her scheduled arrival on 13 October 2026');assert.ok(lastContextQuery.includes('Previous user request: '+previousUser));assert.equal(result.messages.length,1);assert.ok(result.system.includes(old));assert.ok(!result.system.includes(unrelated))}finally{historical=false}
+ })
+ await check('undated workflow synthesis excludes unrelated raw memories while retaining selected evidence',async()=>{
+  const result=await run('Write a LinkedIn post using everything you already know about me about my upcoming move')
+  assert.equal(result.messages.length,1);assert.ok(result.system.includes(move));assert.ok(result.system.includes(preference))
+  assert.ok(!result.system.includes(unrelated),'unrelated raw memories must not enter the selected pack')
  })
  await check('ordinary content workflow preserves existing history and memory behavior',async()=>{
   const result=await run('Write a LinkedIn post about the move I mentioned')
