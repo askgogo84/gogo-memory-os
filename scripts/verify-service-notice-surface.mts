@@ -25,9 +25,10 @@ function load(path:string):any{
   if(name==='@/lib/security/email-redaction')return load('lib/security/email-redaction.ts')
   if(name==='@/lib/bot/memory-redaction')return load('lib/bot/memory-redaction.ts')
   if(name==='@/lib/dashboard/service-notices')return load('lib/dashboard/service-notices.ts')
+  if(name==='@/lib/dashboard/browser-auth-summary')return load('lib/dashboard/browser-auth-summary.ts')
   if(name==='@/components/dashboard/service-notice-cards')return load('components/dashboard/service-notice-cards.tsx')
   return {}
- },console:{error:()=>{}},process,Date,Intl,Map,Set,Number,String,Math,Error});return exports
+ },console:{error:()=>{}},process,Date,Intl,Map,Set,Number,String,Math,Error,URL});return exports
 }
 const snapshot=load('app/api/agent/snapshot/route.ts')
 let response=await snapshot.GET({} as Request),body=await response.json()

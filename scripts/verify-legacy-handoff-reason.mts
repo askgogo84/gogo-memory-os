@@ -1,0 +1,130 @@
+import assert from 'node:assert/strict'
+import {readFileSync} from 'node:fs'
+import {resolve,dirname} from 'node:path'
+import {runInNewContext} from 'node:vm'
+import ts from 'typescript'
+
+// Actual projection with inert owner-checked transports. No provider, credential,
+// account or stored-record mutation is allowed by this regression.
+const repo=process.cwd()
+const now=Date.parse('2026-10-18T12:00:00Z')
+const legacy="I couldn't get provider.example to send you a sign-in code, so I stopped there. Nothing else was entered or changed."
+const base={id:'run-a',telegram_id:'123',type:'secure_browser',title:'Browser · provider.example',summary:legacy,status:'paused',error:'human_auth_required',updated_at:'2026-10-18T11:00:00Z',metadata_json:{plan_type:'secure_browser',handoff:{takeoverUrl:'https://synthetic.invalid/handback',providerUrl:'https://provider.example/'}}}
+let rows:any[]=[],steps:any[]=[],reasonFailure=false,writes=0
+const reads:Array<{table:string;select:string;owner:boolean}>=[]
+const db={from(table:string){
+ assert.ok(['agent_runs','agent_steps','agent_watchers','agent_goals','agent_ideas','agent_approvals','agent_permissions','agent_artifacts'].includes(table),'Unexpected table '+table)
+ const filters:Array<(r:any)=>boolean>=[],orders:Array<{key:string;options:any}>=[]
+ let count=Infinity,fields='',owner=false,single=false
+ const q:any={select:(value:string)=>{fields=value;return q},eq:(key:string,value:unknown)=>{if(key==='telegram_id'){assert.equal(value,'123');owner=true}filters.push(r=>String(r[key])===String(value));return q},
+  in:(key:string,values:unknown[])=>{filters.push(r=>values.includes(r[key]));return q},gte:(key:string,value:string)=>{filters.push(r=>r[key]>=value);return q},contains:()=>q,or:()=>q,
+  neq:()=>q,maybeSingle:()=>{single=true;return q},
+  order:(key:string,options:any)=>{orders.push({key,options});return q},limit:(value:number)=>{count=value;return q},
+  update:()=>{writes++;throw Error('unexpected write')},insert:()=>{writes++;throw Error('unexpected write')},delete:()=>{writes++;throw Error('unexpected write')},
+  then:(yes:any,no:any)=>Promise.resolve().then(()=>{
+   assert.equal(owner,true,table+' read must be owner bound');reads.push({table,select:fields,owner})
+   if(table==='agent_steps'&&reasonFailure)return{data:null,error:{message:'synthetic unavailable'}}
+   const data=structuredClone(table==='agent_runs'?rows:table==='agent_steps'?steps:[]).filter((r:any)=>filters.every(f=>f(r)))
+   data.sort((a:any,b:any)=>{for(const {key,options}of orders){if(a[key]===b[key])continue;if(a[key]==null||b[key]==null){const nullFirst=options?.nullsFirst===true;return a[key]==null?(nullFirst?-1:1):(nullFirst?1:-1)}return(a[key]<b[key]?-1:1)*(options?.ascending===false?-1:1)}return 0})
+   const projected=data.slice(0,count).map((r:any)=>table==='agent_steps'&&fields.includes('auth_reason:')?{...r,auth_reason:r.output_json?.authReason}:r)
+   return{data:single?projected[0]||null:projected,error:null}
+  }).then(yes,no)}
+ return q
+}}
+const cache:Record<string,any>={}
+function load(file:string):any{
+ if(cache[file])return cache[file]
+ const output:any=cache[file]={}
+ runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
+  {exports:output,require:(name:string)=>name==='@/lib/supabase-admin'?{supabaseAdmin:db}
+   :name==='next/server'?{NextResponse:{json:(body:unknown,init:any={})=>({status:init.status||200,json:async()=>body})}}
+   :name==='@/lib/agent/session'?{requireAgentSession:async()=>({telegramId:'123',surface:'web'}),isAgentSession:()=>true}
+   :name==='@/lib/dashboard/service-notices'?{getServiceNotices:async()=>({items:[],total:0})}
+   :name.startsWith('@/')?load(resolve(repo,name.slice(2)+'.ts'))
+   :name.startsWith('.')?load(resolve(dirname(file),name+'.ts')):(()=>{throw Error('Unexpected dependency '+name)})(),Date,URL,Map,Set,console,process})
+ return output
+}
+const actual=load(resolve(repo,'lib/dashboard/human-handoffs.ts'))
+const step=(reason='login_unavailable',extra:Record<string,unknown>={})=>({id:'step-a',telegram_id:'123',run_id:'run-a',tool_name:'secure_browser',ordinal:1,status:'failed',error:'human_auth_required',completed_at:'2026-10-18T11:00:00Z',started_at:'2026-10-18T10:59:00Z',output_json:{authReason:reason},...extra})
+const read=()=>actual.getPendingBrowserHandoffs('123',20,now)
+const failures:string[]=[]
+async function check(label:string,fn:()=>Promise<void>){rows=[structuredClone(base)];steps=[step()];reasonFailure=false;reads.length=0;try{await fn();assert.equal(writes,0);console.log('PASS '+label)}catch(e){failures.push(label+': '+String((e as Error).message).slice(0,400))}}
+await check('recorded login-unavailable supersedes unsupported legacy code-send claim',async()=>{
+ const cards=await read();assert.equal(cards.length,1);assert.equal(cards[0].id,'run-a');assert.match(cards[0].summary,/couldn.t sign in|could not sign in/i);assert.doesNotMatch(cards[0].summary,/send you a sign-in code/)
+ assert(reads.some(r=>r.table==='agent_steps'),'Actual recorded reason must be read')
+})
+await check('reason projection does not rewrite stored run summary or handoff',async()=>{const original=JSON.stringify(rows);await read();assert.equal(JSON.stringify(rows),original)})
+await check('foreign owner same run ID cannot change the displayed reason',async()=>{
+ steps=[step('otp',{telegram_id:'456'})];const cards=await read();assert.doesNotMatch(cards[0].summary,/send you a sign-in code|couldn.t sign in/i);assert.match(cards[0].summary,/sign.in|secure|verify/i)
+})
+await check('other run and tool reasons cannot replace the current reason',async()=>{
+ steps=[step('login_unavailable',{run_id:'other-run'}),step('login_unavailable',{tool_name:'other-tool'})];assert.doesNotMatch((await read())[0].summary,/send you a sign-in code|couldn.t sign in/i)
+})
+await check('a later non-auth browser step cannot reuse an earlier login failure',async()=>{
+ steps=[step(),step('otp',{id:'step-later',ordinal:2,error:'other_failure',completed_at:'2026-10-18T11:01:00Z'})];assert.doesNotMatch((await read())[0].summary,/send you a sign-in code|couldn.t sign in/i)
+})
+await check('missing or unavailable reason is explicit uncertainty without a code-send claim',async()=>{
+ for(const unavailable of [false,true]){reasonFailure=unavailable;steps=[];const card=(await read())[0];assert.match(card.summary,/couldn.t verify|cannot verify|unverified|unavailable|unknown/i);assert.doesNotMatch(card.summary,/send you a sign-in code|couldn.t sign in/i)}
+})
+await check('delivery-location and non-auth provider copy remain unchanged',async()=>{
+ rows[0].error='delivery_location_required';rows[0].summary='Choose your delivery location in the provider browser, then resume this same task.';steps=[step('login_unavailable')];assert.equal((await read())[0].summary,rows[0].summary)
+})
+await check('reason lookup projects only needed fields and excludes raw browser output',async()=>{
+ await read();const query=reads.find(r=>r.table==='agent_steps');assert(query);assert.match(query.select,/auth_reason:output_json->>authReason/);assert.doesNotMatch(query.select,/(?:^|,)\s*(?:\*|output_json)\s*(?:,|$)/)
+})
+await check('recorded secondary checks stay human-only without a code-send failure claim',async()=>{
+ for(const reason of ['otp','password','device_approval','captcha','payment_auth']){steps=[step(reason)];const card=(await read())[0];assert.match(card.summary,/Take control/);assert.doesNotMatch(card.summary,/send you a sign-in code|couldn.t sign in/i);assert.match(card.summary,/out of chat/)}
+})
+await check('unknown and inherited property names cannot impersonate a recorded authentication step',async()=>{
+ for(const reason of ['constructor','toString','__proto__','unrecognised-step']){steps=[step(reason)];const card=(await read())[0];assert.match(card.summary,/couldn.t verify/i);assert.doesNotMatch(card.summary,/native code|\[object Object\]|send you a sign-in code/i)}
+})
+await check('future or invalid completion evidence cannot establish a past login failure',async()=>{
+ for(const completed_at of ['not-a-date','2026-10-18T13:00:00Z']){steps=[step('login_unavailable',{completed_at})];const card=(await read())[0];assert.doesNotMatch(card.summary,/couldn.t sign in|send you a sign-in code/i);assert.match(card.summary,/couldn.t verify/i)}
+})
+await check('private browser output cannot escape through the projected reason',async()=>{
+ steps=[step('login_unavailable',{output_json:{authReason:'login_unavailable',pageText:'SYNTHETIC_PRIVATE_PAGE',password:'SYNTHETIC_PASSWORD',token:'SYNTHETIC_TOKEN'}})];assert.doesNotMatch(JSON.stringify(await read()),/SYNTHETIC_PRIVATE_PAGE|SYNTHETIC_PASSWORD|SYNTHETIC_TOKEN|handback/)
+})
+await check('non-auth handoffs do not perform an unnecessary reason lookup',async()=>{
+ rows[0].error='delivery_location_required';rows[0].summary='Select your delivery location.';await read();assert.equal(reads.filter(r=>r.table==='agent_steps').length,0)
+})
+await check('duplicate handoffs still collapse after truthful projection',async()=>{
+ rows.push({...structuredClone(base),id:'run-b',updated_at:'2026-10-18T10:00:00Z'});steps.push(step('login_unavailable',{id:'step-b',run_id:'run-b'}));const cards=await read();assert.equal(cards.length,1);assert.equal(cards[0].id,'run-a');assert.equal(cards[0].repeats,1)
+})
+await check('actual snapshot run used by the chat rail carries the recorded failure copy',async()=>{
+ const snapshot=load(resolve(repo,'app/api/agent/snapshot/route.ts'));const response=await snapshot.GET({});assert.equal(response.status,200);const body=await response.json();assert.match(body.handoffs[0].summary,/couldn.t sign in/i);assert.match(body.runs[0].summary,/couldn.t sign in/i);assert.doesNotMatch(body.runs[0].summary,/send you a sign-in code/)
+})
+await check('actual Activity list and task detail share truthful current-run copy',async()=>{
+ const activity=load(resolve(repo,'lib/dashboard/agent-activity.ts'));for(const run of [(await activity.getDashboardActivityRuns('123'))[0],await activity.getDashboardActivityRun('123','run-a')]){assert.match(run.summary,/couldn.t sign in/i);assert.doesNotMatch(run.summary,/send you a sign-in code/);assert.match(activity.browserContextForRun(run).summary,/couldn.t sign in/i)}
+})
+await check('completed Activity history remains the recorded historical summary',async()=>{
+ rows[0].status='completed';const activity=load(resolve(repo,'lib/dashboard/agent-activity.ts'));const run=await activity.getDashboardActivityRun('123','run-a');assert.equal(run.summary,legacy)
+})
+await check('retired paused records do not receive instructions to resume closed work',async()=>{
+ rows[0].metadata_json.state='closed_stale';const activity=load(resolve(repo,'lib/dashboard/agent-activity.ts'));for(const run of [(await activity.getDashboardActivityRuns('123'))[0],await activity.getDashboardActivityRun('123','run-a')]){assert.equal(run.status,'closed');assert.equal(run.summary,legacy)}
+ const response=await load(resolve(repo,'app/api/agent/snapshot/route.ts')).GET({});const body=await response.json();assert.equal(body.runs[0].status,'closed');assert.equal(body.runs[0].summary,legacy)
+})
+await check('snapshot and Activity do not offer unavailable controls on legacy failures',async()=>{
+ const activity=load(resolve(repo,'lib/dashboard/agent-activity.ts'))
+ for(const handoff of [undefined,{}, {providerUrl:'https://provider.example/'},{takeoverUrl:''}]){
+  for(const reason of ['login_unavailable','otp','unrecognised-step']){
+   rows[0].metadata_json={handoff};steps=[step(reason)]
+   const response=await load(resolve(repo,'app/api/agent/snapshot/route.ts')).GET({});const body=await response.json()
+   assert.equal(body.handoffs.length,0)
+   const list=(await activity.getDashboardActivityRuns('123'))[0],detail=await activity.getDashboardActivityRun('123','run-a')
+   const browser=activity.browserContextForRun(detail)
+   assert.equal(browser.takeoverAvailable,false);assert.equal(browser.deviceHandoff,false)
+   for(const summary of [body.runs[0].summary,list.summary,detail.summary,browser.summary]){
+    assert.doesNotMatch(summary,/Take control|then Resume|Resume this same task|send you a sign-in code/i)
+    assert.match(summary,reason==='login_unavailable'?/couldn.t sign in/i:reason==='otp'?/secondary authentication/i:/couldn.t verify/i)
+   }
+  }
+ }
+})
+await check('cloud and device handoffs retain guidance for their available controls',async()=>{
+ for(const device of [false,true]){
+  rows[0].metadata_json.handoff=device?{mode:'device',providerUrl:'https://provider.example/'}:structuredClone(base.metadata_json.handoff)
+  const card=(await read())[0];assert(card);assert.match(card.summary,/then Resume/)
+  assert.match(card.summary,device?/Open provider.*device/i:/Open Take control/i)
+ }
+})
+if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Actual legacy handoff reason projection: owner/run/tool provenance, uncertainty, minimal reads and no writes passed.')

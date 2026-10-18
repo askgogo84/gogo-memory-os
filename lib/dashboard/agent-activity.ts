@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { retiredRunReason } from '../agent/task-lifecycle'
+import {browserAuthSummary,latestBrowserAuthEvidence} from './browser-auth-summary'
 
 export type DashboardActivityStep = {
   id:string
@@ -84,13 +85,14 @@ export async function getDashboardActivityRuns(telegramId:string,limit=60):Promi
 
   return (runs.data||[]).map((run:any)=>{
     const runSteps=byRun.get(String(run.id))||[]
+    const status=retiredRunReason(run)?'closed':String(run.status||'queued')
     return {
       id:String(run.id),
       type:String(run.type||'command'),
       capability:String(run.capability||''),
-      status:retiredRunReason(run)?'closed':String(run.status||'queued'),
+      status,
       title:String(run.title||'Gogo task'),
-      summary:String(run.summary||''),
+      summary:browserAuthSummary({...run,status},latestBrowserAuthEvidence(runSteps)),
       progress:Number(run.progress||0),
       source:String(run.source||''),
       why:String(run.why||''),
@@ -120,13 +122,14 @@ export async function getDashboardActivityRun(telegramId:string,runId:string):Pr
     .order('ordinal',{ascending:true})
   if(stepError)throw new Error(`dashboard_activity_run_steps_failed:${stepError.message}`)
   const runSteps=(steps||[]).map(mapStep)
+  const status=retiredRunReason(run)?'closed':String(run.status||'queued')
   return {
     id:String(run.id),
     type:String(run.type||'command'),
     capability:String(run.capability||''),
-    status:retiredRunReason(run)?'closed':String(run.status||'queued'),
+    status,
     title:String(run.title||'Gogo task'),
-    summary:String(run.summary||''),
+    summary:browserAuthSummary({...run,status},latestBrowserAuthEvidence(runSteps)),
     progress:Number(run.progress||0),
     source:String(run.source||''),
     why:String(run.why||''),
@@ -160,7 +163,7 @@ export function browserContextForRun(run:DashboardActivityRun){
     hostname,
     title:takeoverAvailable||run.error?'':String(browser?.title||''),
     status:String(browser?.status||''),
-    summary:String(run.summary||browser?.summary||''),
+    summary:browserAuthSummary({...run,summary:run.summary||browser?.summary||''},latestBrowserAuthEvidence(run.steps)),
     handoffMode:mode,
     providerBlocked:handoffActive&&!takeoverAvailable&&(mode==='device'||(!run.error&&String(browser?.blockReason||'')==='provider_access_limited')),
     takeoverAvailable,
