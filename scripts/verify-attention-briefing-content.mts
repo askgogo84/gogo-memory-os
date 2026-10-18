@@ -3,7 +3,7 @@ import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 const noop=new Proxy({}, {get:()=>()=>null})
-function load(file:string,deps:any){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:(name:string)=>deps[name]||noop,Date,Intl,console,URL,URLSearchParams,process,Buffer});return exports}
+function load(file:string,deps:any,extra:any={}){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:(name:string)=>deps[name]||noop,Date,Intl,console,URL,URLSearchParams,process,Buffer,Response,setTimeout,clearTimeout,...extra});return exports}
 const loops=load('lib/agent/open-loops.ts',{})
 const rows=[
  {id:'19abc00000000001',threadId:'19abc00000000002',from:'Vercel <noreply@example.invalid>',subject:'Payment failed and shutdown coming soon',snippet:'Action required: service suspension follows failed payment.'},
@@ -40,5 +40,21 @@ await check('actual briefing includes requested owner-bound saved open loops des
 })
 await check('failed briefing loop read is unavailable rather than an empty queue claim',async()=>{
  failLoops=true;try{const text=await briefing.buildMorningBriefing(123,'Example',{includeOpenLoops:true});assert.match(text,/open loops.*unavailable|unavailable.*open loops/i);assert.doesNotMatch(text,/no active open loops/i)}finally{failLoops=false}
+})
+let transportFailure=''
+const provider=load('lib/services/google-gmail.ts',{}, {fetch:async(url:string,init:any)=>{
+ assert.equal(init.headers.Authorization,'Bearer fixture-access');assert.equal(new URL(url).origin,'https://gmail.googleapis.com')
+ if(new URL(url).pathname.endsWith('/messages'))return new Response(JSON.stringify(transportFailure==='list'?{}:{messages:[{id:rows[1].id}]}),{status:transportFailure==='list'?503:200})
+ assert.ok(url.includes('metadataHeaders=List-Unsubscribe'))
+ return new Response(JSON.stringify({id:rows[1].id,threadId:rows[1].threadId,labelIds:['INBOX','CATEGORY_PROMOTIONS'],payload:{headers:[{name:'List-Unsubscribe',value:'<https://example.invalid/unsubscribe>'}]}}),{status:transportFailure==='metadata'?503:200})
+}})
+await check('actual provider adapter preserves promotion provenance for attention exclusion',async()=>{
+ const fetched=await provider.fetchLatestEmails('fixture-access',25);assert.deepEqual(Array.from(fetched[0].labelIds),['INBOX','CATEGORY_PROMOTIONS']);assert.ok(fetched[0].listUnsubscribe);assert.equal(loops.isActionableGmailMessage(fetched[0]),false)
+})
+await check('actual provider outage cannot become a successful empty inbox',async()=>{
+ transportFailure='list';try{await assert.rejects(()=>provider.fetchLatestEmails('fixture-access',25),/unavailable|list|Gmail/i)}finally{transportFailure=''}
+})
+await check('failed message detail read cannot become an authoritative empty inbox',async()=>{
+ transportFailure='metadata';try{await assert.rejects(()=>provider.fetchLatestEmails('fixture-access',25),/incomplete|unavailable/i)}finally{transportFailure=''}
 })
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}
