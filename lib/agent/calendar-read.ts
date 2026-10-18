@@ -239,7 +239,7 @@ async function calendarAccess(actor:AgentActor){
   if(!data)throw new Error('calendar_not_connected')
   const timezone=normalizeTimezone(String(data.timezone||'Asia/Kolkata'))
   let incomplete=Boolean(data.google_calendar_connected&&!data.google_refresh_token)
-  const accounts=await getCalendarAccountAccess(actor.legacyTelegramId,data.google_calendar_connected?String(data.google_refresh_token):null,()=>{incomplete=true})
+  const accounts=await getCalendarAccountAccess(actor.legacyTelegramId,data.google_calendar_connected&&data.google_refresh_token?String(data.google_refresh_token):null,()=>{incomplete=true})
   if(!accounts.length)throw new Error(incomplete?'calendar_account_access_unverified':'calendar_not_connected')
   const accessToken=accounts[0].accessToken
   return {accessToken,timezone,accounts,incomplete}
