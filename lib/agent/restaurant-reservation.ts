@@ -464,9 +464,10 @@ async function reservationConflictReview(params:{actor:AgentActor;text:string;in
   const explanation=intent.requestedDate
     ?`The requested dining start-time window overlaps ${travel.length?`saved travel context (${locations})`:''}${travel.length&&busy.length?' and ':''}${busy.length?'a recorded Calendar busy interval':''}.`
     :`The booking release overlaps saved travel context (${locations}).`
-  const prefix=`${explanation} The provider release is ${params.releaseAt}; the release is not the dining date. Saved travel is itinerary/plan evidence, not verified current presence or an actual return. No new reservation mission or approval was created.`
+  const prefix=`${explanation} The provider release is ${params.releaseAt}; the release is not the dining date.${relevant.length?' Saved travel is itinerary/plan evidence, not verified current presence or an actual return.':''} No new reservation mission or approval was created.`
   const bounds=`Keep ${intent.partySize} people, ${intent.restaurant}${params.location?` in ${params.location}`:''}, ${intent.preferredStart&&intent.preferredEnd?`${intent.preferredStart}–${intent.preferredEnd} (${timezone})`:'your preferred time window'}, and the ₹0 fee/deposit ceiling.`
   if(!intent.preferredStart||!intent.preferredEnd)return `${prefix}\n\n${bounds} Please specify a preferred time window and dining date so I can check it without inventing hours.`
+  if(!relevant.length)return `${prefix}\n\n${bounds} Please choose a different dining date or time window for a fresh Calendar and provider check.`
   if(!target||!relevant.some(w=>w.applicability==='owner'))return `${prefix}\n\n${bounds} Please clarify the traveller, restaurant location and return date; an owner return is not verified from this context.`
   const ownerName=planningPlace(params.actor.name||''),ownerNames=new Set([planningPlace(String(params.actor.legacyTelegramId)),planningPlace(params.actor.userId||''),...(ownerName.split(' ').length>=2?[ownerName]:[])].filter(Boolean))
   const owned=(fact:DiningFact)=>Array.isArray(fact.participants)&&fact.participants.some(p=>typeof p==='string'&&ownerNames.has(planningPlace(p)))
@@ -481,7 +482,7 @@ async function reservationConflictReview(params:{actor:AgentActor;text:string;in
   const returning=returns[0]
   if(!returning)return `${prefix}\n\n${bounds} Please clarify the scheduled owner return and preferred dining date. A hotel checkout, research date or inferred stay end is not a verified return.`
   const arrival=Date.parse(returning.endAt!),base=localPlanningDay(arrival,timezone)
-  const noProposal=`${prefix}\n\n${bounds} The saved itinerary schedules an arrival at ${returning.endAt}; actual return is not verified. I could not verify a compatible planning window. Please choose a date for a fresh context check; provider availability and full meal duration are not verified.`
+  const noProposal=`${prefix}\n\n${bounds} The initial saved itinerary listed an arrival at ${returning.endAt}; fresh return/context evidence could not be verified. I could not verify a compatible planning window. Please choose a date for a fresh context check; provider availability and full meal duration are not verified.`
   for(let offset=0;offset<3;offset++){
     const date=new Date(Date.parse(base+'T00:00:00Z')+offset*86400_000).toISOString().slice(0,10)
     const span=planningSpan(date,intent.preferredStart,intent.preferredEnd,timezone)
@@ -491,7 +492,7 @@ async function reservationConflictReview(params:{actor:AgentActor;text:string;in
     const fresh=await buildContextPack({actor:params.actor,text:params.text,options:{includeSemantic:false,includeReservationTravel:true,includeReservationCalendar:true,reservationCalendarCoverage:coverage,maxFacts:14,horizonDays:60}}).catch(()=>null)
     const checked=buildReservationDiningContext({actor:params.actor,timezone,requestedDate:date,releaseAt:params.releaseAt,pack:fresh,now:new Date()})
     if(!usableReservationDiningContext(checked)||!checked.calendar.connected||JSON.stringify(checked.preferences)!==JSON.stringify(snapshot.preferences))return noProposal
-    const retainedReturn=fresh?.reservationTravel?.facts.some(f=>owned(f)&&f.source==='travel_ticket'&&f.endAt===returning.endAt&&f.location===returning.location&&f.sourceRefs?.some(ref=>ref.type==='travel_ticket'&&returning.sourceRefs?.some(old=>old.type==='travel_ticket'&&old.id===ref.id)))
+    const retainedReturn=fresh?.reservationTravel?.facts.some(f=>owned(f)&&f.source==='travel_ticket'&&f.kind==='flight'&&f.inferred===false&&(f.confidence||0)>=.9&&f.startAt===returning.startAt&&f.endAt===returning.endAt&&f.location===returning.location&&f.sourceRefs?.some(ref=>ref.type==='travel_ticket'&&returning.sourceRefs?.some(old=>old.type==='travel_ticket'&&old.id===ref.id)))
     if(!retainedReturn||checked.windows.some(w=>overlapsPlanning(w.startAt,w.endAt,span)&&planningWindowBlocks(w,target)))return noProposal
     if(checked.calendar.windows.some(w=>overlapsPlanning(w.startAt,w.endAt,span)))continue
     return `${prefix}\n\nProvisional planning window: ${date} ${intent.preferredStart}–${intent.preferredEnd} (${timezone}) for ${intent.partySize} people at ${intent.restaurant} in ${params.location}. The saved itinerary schedules arrival at ${returning.endAt}; actual return is not verified. A fresh linked Calendar and saved-context read found no conflicting recorded interval within this start-time window. Provider availability, full meal duration and preference compatibility are not verified; this is not a booking or a fully checked dining interval. ${bounds}\n\nChoose a dining date before I prepare a new bounded approval; actual provider slot/rules and the complete meal interval still need verification.`

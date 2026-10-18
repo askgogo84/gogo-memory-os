@@ -73,8 +73,11 @@ claimLost=false;approvalWriteFailed=true;writes.length=0
 await assert.rejects(request,/restaurant_reservation_approval_failed/)
 assert.ok(writes.some(row=>row.table==='agent_runs'&&row.payload.status==='paused'&&row.payload.error==='restaurant_context_review_required'),'An insert failure returns the mission to retryable review')
 revising=false;approvalWriteFailed=false
-const dated=await actual.tryRunRestaurantReservation({actor:{legacyTelegramId:123,userId:'synthetic-user',name:'Synthetic Owner'},surface:'dashboard',text:'Book Naru Noodle Bar for 2 on 2026-10-22 between 7 PM and 9 PM.'})
+// The positive bounded-read control uses a clear day after the fixture trip.
+// A conflicting requested day is now rejected before staging in the dedicated
+// actual-handler conflict regression; do not use it as a positive booking case.
+const dated=await actual.tryRunRestaurantReservation({actor:{legacyTelegramId:123,userId:'synthetic-user',name:'Synthetic Owner'},surface:'dashboard',text:'Book Naru Noodle Bar for 2 on 2026-10-25 between 7 PM and 9 PM.'})
 assert.equal(dated.status,'waiting_approval')
-assert.equal(lastCalendarCoverage?.from,'2026-10-21T18:30:00.000Z','The actual preparation request must scope its provider read to the requested local dining day')
-assert.equal(lastCalendarCoverage?.until,'2026-10-22T18:30:00.000Z')
+assert.equal(lastCalendarCoverage?.from,'2026-10-24T18:30:00.000Z','The actual preparation request must scope its provider read to the requested local dining day')
+assert.equal(lastCalendarCoverage?.until,'2026-10-25T18:30:00.000Z')
 console.log('Actual reservation preparation retains relevant dining-date travel after release without unrelated context; inert synthetic operations only.')
