@@ -109,7 +109,12 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
         if(before.length&&after.length&&before.at(-1)!.grams!==after[0].grams){warnings.add('A quote has conflicting weight units.');return}
         add(money[1],unit.grams)
       }
-      if(reverse){addInline(preceding,precedingMoney!);continue}
+      if(reverse){
+        if(/\byesterday\b/i.test(quoteText)){warnings.add('A historical inline day label is unverified.');continue}
+        const localMoney=[...quoteText.matchAll(MONEY)].at(-1)
+        if(localMoney)addInline(quoteText,localMoney)
+        continue
+      }
       const rows=[...span.matchAll(/\b(\d+(?:\.\d+)?)\s*(kg|grams?|g)\s*\|/gi)]
       if(rows.length){
         const header=(heading+' '+span.slice(0,rows[0].index)).toLowerCase(),todayColumn=header.lastIndexOf('today'),yesterdayColumn=header.lastIndexOf('yesterday')
