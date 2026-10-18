@@ -400,6 +400,16 @@ export async function executeVerifiedMissionWebSearch(step:MissionStep){
 function includesAny(hay:string,values:string[]){const lower=hay.toLowerCase();return values.some(v=>v&&lower.includes(v.toLowerCase()))}
 
 export async function executeVerifiedMissionMemory(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
+  if(/\b(?:my\s+)?upcoming\s+(?:trip|travel)\b/i.test(params.missionText)){
+    const {data,error}=await supabaseAdmin.from('travel_tickets').select('id,from_city,to_city,depart_at,arrive_at,passengers')
+      .eq('telegram_id',params.actor.legacyTelegramId).gte('depart_at',new Date().toISOString()).order('depart_at',{ascending:true}).limit(30)
+    if(error)throw new Error(`mission_upcoming_trip_read_failed:${error.message}`)
+    const normalize=(value:unknown)=>String(value||'').toLowerCase().replace(/[^a-z]+/g,' ').trim()
+    const owner=normalize(params.actor.name)
+    const trips=(data||[]).filter(row=>owner&&owner!=='gogo'&&Array.isArray(row.passengers)&&row.passengers.some(name=>normalize(name)===owner))
+    if(!trips.length)return{text:'No upcoming trip for you was found in the saved tickets checked. Dates and destination are unconfirmed; do not substitute another person’s travel or unrelated identity documents.',output:{found:false,tripFound:false,boundedLookup:true,verifiedStore:'travel_tickets',verifiedRelevance:true}}
+    return{text:trips.map(row=>`Saved trip: ${safe(row.from_city,80)} → ${safe(row.to_city,80)} · departure ${row.depart_at}`).join('\n'),output:{found:true,tripFound:true,ticketIds:trips.map(row=>String(row.id)),verifiedStore:'travel_tickets',verifiedRelevance:true}}
+  }
   const {context}=travelContext(params.missionText)
   const missionDate=explicitDate(params.missionText)
   if(missionDate&&!context.startDate){context.startDate=missionDate;context.endDate=missionDate}

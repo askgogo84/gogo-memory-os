@@ -6,6 +6,7 @@ import { isSecretShapedMemory, redactSecretShapedText } from '@/lib/bot/memory-r
 import { latestTypedContext, rememberTypedObjects, selectedTypedObject } from '@/lib/agent/typed-object-context'
 import type { AgentActor } from '@/lib/agent/actor'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
+import { getLocalParts, zonedLocalTimeToUtc } from '@/lib/timezone'
 
 export type LinkPlatform='instagram'|'youtube'|'twitter'|'linkedin'|'tiktok'|'github'|'facebook'|'web'
 export type LinkVaultRow={
@@ -66,13 +67,15 @@ function safeNote(raw:string){
 function noteFromText(text:string,url:string){
   return safeNote(String(text||'').replace(url,' ')
     .replace(/^\s*(?:please\s+)?(?:save|remember|keep|store|bookmark|file)\s+(?:this\s+)?(?:link|url|page|post|reel|video|repo|repository)?\s*[-:—,]*\s*/i,'')
+    .replace(/^again\s*[-:—,]*\s*/i,'')
+    .replace(/\btag\s+(?:it\s+|this\s+)?[^:;]+[:;]?\s*$/i,'')
     .replace(/\s+/g,' ').trim())
 }
 function titleFromUrl(url:string,note:string){
   try{
     const u=new URL(url)
     const slug=decodeURIComponent(u.pathname.split('/').filter(Boolean).pop()||'').replace(/[-_]+/g,' ').trim()
-    return clean(note?note.split(/[.!?]/)[0]:slug||u.hostname,120)||u.hostname
+    return clean(u.hostname==='github.com'?slug:note?note.split(/[.!?]/)[0]:slug||u.hostname,120)||u.hostname
   }catch{return clean(note||'Saved link',120)}
 }
 const STOP=new Set(['this','that','link','saved','save','about','with','from','what','show','find','open','all','links','last','month','instagram','youtube','twitter','linkedin','github','repo','repository'])
@@ -108,6 +111,19 @@ async function jevShelf(params:{platform:LinkPlatform;type:string;title:string;n
   }catch{return null}finally{clearTimeout(timer)}
 }
 function sourceHost(url:string){try{return new URL(url).hostname.replace(/^www\./,'')}catch{return''}}
+
+async function publicRepositoryMetadata(url:string){
+  try{
+    const u=new URL(url),parts=u.pathname.split('/').filter(Boolean)
+    if(u.hostname!=='github.com'||parts.length<2||!parts.slice(0,2).every(part=>/^[a-z0-9_.-]+$/i.test(part)))return null
+    const source=`https://api.github.com/repos/${parts.slice(0,2).map(encodeURIComponent).join('/')}`
+    const response=await fetch(source,{signal:AbortSignal.timeout(1200),headers:{Accept:'application/vnd.github+json'},redirect:'error'})
+    if(!response.ok)return null
+    const body=await response.json()
+    if(typeof body.name!=='string'||body.private===true)return null
+    return{title:clean(body.name,160),description:safeNote(body.description||''),source}
+  }catch{return null}
+}
 function restricted(platform:LinkPlatform){return['instagram','linkedin','facebook'].includes(platform)}
 function mergeNotes(existing:any[],note:string){
   const values=(Array.isArray(existing)?existing:[]).map(x=>typeof x==='string'?x:String(x?.note||'')).filter(Boolean)
@@ -119,6 +135,7 @@ function indexContent(row:any){
 }
 export function isLinkVaultSaveRequest(text:string){
   const url=extractLinkUrl(text);if(!url)return false
+  if(isLinkVaultQuery(text))return false
   // "Login to <link> and create the account" is an account request, not a link to save.
   if(parseExternalAccountRequest(text)||mentionsExternalAccountCreation(text))return false
   const stripped=String(text||'').replace(url,' ').trim()
@@ -128,7 +145,9 @@ export function isLinkVaultSaveRequest(text:string){
 }
 export function isLinkVaultQuery(text:string){
   const t=String(text||'').trim().toLowerCase()
+  if(/^(?:please\s+)?(?:save|remember|keep|store|bookmark|file)\b/i.test(t))return false
   return /\b(?:saved|my)\s+(?:links?|reels?|repos?|repositories|bookmarks?)\b/.test(t)
+    ||/^(?:retrieve|find|show|open|read|get)\b[\s\S]*\b(?:saved|stored|bookmarked)\b[\s\S]*\b(?:link|url|repo|reel|page)\b/i.test(t)
     ||/^find\s+(?:that\s+)?(?:instagram\s+|youtube\s+|github\s+)?(?:link|reel|repo|repository|post).*(?:saved|about|on)/i.test(t)
     ||/^what\s+was\s+that\s+(?:github\s+)?(?:repo|repository|link)/i.test(t)
     ||/^show\s+all\s+links?\s+i\s+saved/i.test(t)
@@ -144,7 +163,7 @@ function platformFilter(text:string):LinkPlatform|null{
 function requestedTag(text:string){return clean(text.match(/\b(?:tagged|tag:)\s*#?([a-z0-9_-]+)/i)?.[1]||'',60).toLowerCase()||null}
 function searchTerms(text:string){
   return clean(text,500).toLowerCase().replace(/https?:\/\/\S+/g,' ')
-    .replace(/\b(?:find|show|open|what|was|that|the|all|links?|saved|save|about|my|i|last|month|instagram|youtube|twitter|linkedin|github|repo|repository|reel|post|tagged)\b/g,' ')
+    .replace(/\b(?:find|retrieve|read|get|show|open|what|was|that|the|all|links?|saved|stored|save|about|my|i|last|month|today|yesterday|instagram|youtube|twitter|linkedin|github|repo|repository|reel|post|tagged)\b/g,' ')
     .replace(/[^a-z0-9]+/g,' ').replace(/\s+/g,' ').trim()
 }
 function ordinal(text:string){
@@ -157,14 +176,25 @@ function lastMonthWindow(now=new Date()){
   return{start:new Date(Date.UTC(y,m-1,1)).toISOString(),end:new Date(Date.UTC(y,m,1)).toISOString()}
 }
 
+export function savedLinkDayWindow(text:string,now=new Date(),timezone='Asia/Kolkata'){
+  if(!/\b(?:today|yesterday)\b/i.test(text))return null
+  const parts=getLocalParts(now,timezone)
+  const day=new Date(Date.UTC(parts.year,parts.month-1,parts.day-(/\byesterday\b/i.test(text)?1:0)))
+  const midnight=(date:Date)=>zonedLocalTimeToUtc({year:date.getUTCFullYear(),month:date.getUTCMonth()+1,day:date.getUTCDate(),hour:0,minute:0,timezone}).toISOString()
+  const start=midnight(day);day.setUTCDate(day.getUTCDate()+1)
+  return{start,end:midnight(day)}
+}
+
 export async function saveLinkVaultItem(params:{telegramId:number;text:string;url?:string;visibleTitle?:string|null;previewImage?:string|null;sourceSurface?:string}){
   const original=params.url||extractLinkUrl(params.text)
   if(!original)throw new Error('link_vault_url_missing')
   const canonical=canonicalizeLinkUrl(original)
   if(!canonical)throw new Error('link_vault_url_invalid')
   const platform=detectLinkPlatform(canonical),type=itemType(platform,canonical),note=noteFromText(params.text,original)
-  const title=clean(params.visibleTitle,160)||titleFromUrl(canonical,note),source=sourceHost(canonical)
-  const baseTags=keywordTags(title+' '+note,platform),shelf=(await jevShelf({platform,type,title,note}))||fallbackShelf(platform,type)
+  const metadata=await publicRepositoryMetadata(canonical)
+  const title=clean(params.visibleTitle,160)||metadata?.title||titleFromUrl(canonical,note),source=sourceHost(canonical)
+  const explicitTags=clean(params.text.replace(original,''),500).match(/\btag\s+(?:it\s+|this\s+)?([^:;]+)[:;]?\s*$/i)?.[1]?.toLowerCase().split(/[\s,]+/).filter(Boolean)||[]
+  const baseTags=Array.from(new Set([...explicitTags,...keywordTags(title+' '+note,platform)])).slice(0,12),shelf=(await jevShelf({platform,type,title,note}))||fallbackShelf(platform,type)
   const topic=baseTags.find(t=>t!==platform)||platform,authRequired=restricted(platform),now=new Date().toISOString()
   const{data:existing,error:readError}=await supabaseAdmin.from('link_vault_items').select('*').eq('telegram_id',params.telegramId).eq('canonical_url',canonical).maybeSingle()
   if(readError)throw new Error('link_vault_read_failed:'+readError.message)
@@ -172,11 +202,11 @@ export async function saveLinkVaultItem(params:{telegramId:number;text:string;ur
   const mergedTags=Array.from(new Set([...(Array.isArray((existing as any)?.tags)?(existing as any).tags:[]),...baseTags])).slice(0,12)
   const payload:any={
     telegram_id:params.telegramId,canonical_url:canonical,original_url:original,platform,item_type:type,title,
-    description:(existing as any)?.description||'',source,user_note:mergedNote,note_history:history,last_saved_at:now,
+    description:metadata?.description||(existing as any)?.description||'',source,user_note:mergedNote,note_history:history,last_saved_at:now,
     topic:(existing as any)?.topic||topic,tags:mergedTags,shelf:(existing as any)?.shelf||shelf,
     preview_image:params.previewImage||(existing as any)?.preview_image||null,screenshot_url:(existing as any)?.screenshot_url||null,
     enrichment_status:(existing as any)?.enrichment_status||'metadata_only',auth_required:authRequired,
-    source_evidence:{...((existing as any)?.source_evidence||{}),capture:params.sourceSurface||'chat',content_fetched:false,visible_title:Boolean(params.visibleTitle),last_captured_at:now},
+    source_evidence:{...((existing as any)?.source_evidence||{}),capture:params.sourceSurface||'chat',content_fetched:false,metadata_fetched:Boolean(metadata),metadata_source:metadata?.source||null,visible_title:Boolean(params.visibleTitle),last_captured_at:now},
     updated_at:now
   }
   let row:any
@@ -192,11 +222,12 @@ export async function saveLinkVaultItem(params:{telegramId:number;text:string;ur
   return{row:row as LinkVaultRow,created:!existing?.id,merged:Boolean(existing?.id)}
 }
 
-export async function queryLinkVault(telegramId:number,text:string){
+export async function queryLinkVault(telegramId:number,text:string,timezone='Asia/Kolkata'){
   let q=supabaseAdmin.from('link_vault_items').select('*').eq('telegram_id',telegramId).order('saved_at',{ascending:false}).limit(300)
   const platform=platformFilter(text);if(platform)q=q.eq('platform',platform)
   const tag=requestedTag(text);if(tag)q=q.contains('tags',[tag])
   if(/\blast\s+month\b/i.test(text)){const w=lastMonthWindow();q=q.gte('saved_at',w.start).lt('saved_at',w.end)}
+  const dayWindow=savedLinkDayWindow(text,new Date(),timezone);if(dayWindow)q=q.gte('saved_at',dayWindow.start).lt('saved_at',dayWindow.end)
   const{data,error}=await q;if(error)throw new Error('link_vault_query_failed:'+error.message)
   const rows=(data||[]) as LinkVaultRow[],terms=searchTerms(text),tokens=terms.split(' ').filter(Boolean)
   const scored=rows.map(row=>{
@@ -280,7 +311,7 @@ export async function handleLinkVaultText(params:{actor:AgentActor;text:string;s
     return{text:reply,status:'completed',handledBy:'link-vault',capability:'memory',runId:''}
   }
   if(isLinkVaultQuery(params.text)){
-    const rows=await queryLinkVault(params.actor.legacyTelegramId,params.text)
+    const rows=await queryLinkVault(params.actor.legacyTelegramId,params.text,params.actor.timezone||'Asia/Kolkata')
     return{text:formatLinkVaultResults(rows,params.text),status:'completed',handledBy:'link-vault',capability:'memory',runId:''}
   }
   return handleLinkVaultFollowup(params.actor,params.text)
