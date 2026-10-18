@@ -111,4 +111,19 @@ await check('existing mission lookup retains completed run confirmation after a 
  assert.equal(found?.run?.id,'run','known provider result must not disappear from duplicate-mission lookup')
  assert.equal(found.run.metadata_json.providerConfirmationVerified,true)
 })
+for(const mode of ['error','zero','throw']as const)await check('failed '+mode+' receipt cannot rearm its old approval through the public arming entry',async()=>{
+ reset();receiptFault=true;faultMode=mode
+ await worker.processQueuedRestaurantReservations()
+ assert.equal(providerCalls,1);assert.equal(rows.life_event_actions.status,'blocked');assert.equal(rows.agent_approvals.status,'approved')
+ receiptFault=false
+ await assert.rejects(()=>prep.armApprovedRestaurantReservation({actor,runId:'run'}),/reconciliation_required/)
+ const before=providerCalls;try{await worker.processOne(structuredClone(rows.life_event_actions))}catch{}assert.equal(providerCalls,before)
+})
+await check('initial approval and idempotent armed read remain safe before execution',async()=>{
+ reset();rows.agent_runs.status='waiting_approval';rows.life_event_actions.status='waiting_approval'
+ assert.equal((await prep.armApprovedRestaurantReservation({actor,runId:'run'})).status,'queued');assert.equal(rows.life_event_actions.status,'ready')
+ const count=writes.length
+ assert.equal((await prep.armApprovedRestaurantReservation({actor,runId:'run'})).status,'queued');assert.equal(writes.length,count,'already armed approval must not overwrite a concurrent claim')
+ assert.equal(providerCalls,0)
+})
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Reservation completion receipts, explicit write/row/transport failures, same-mission no-replay and owner scope passed; inert fixtures only.')
