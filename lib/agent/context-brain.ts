@@ -417,14 +417,14 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       id:`life-event:${(row as any).id}`,
       source:'life_event',
       participants:Array.isArray(row.participants)?row.participants.filter((p:unknown)=>typeof p==='string'):[],
-      summary:safe([((row as any).title||`${(row as any).event_type} event`),participantText?`Participants: ${participantText}`:''].filter(Boolean).join(' · '),500),
+      summary:safe([((row as any).title||`${(row as any).event_type} event`),participantText?`Participants: ${participantText}`:'',row.event_type==='hotel'||row.subtype==='hotel'?'Saved hotel plan; not a verified booking, presence or return.':''].filter(Boolean).join(' · '),500),
       score:factScore({query,text,base:0.5,startAt,now,horizonDays}),
       confidence:0.96,
       startAt,endAt,
       location:safe((row as any).location,180)||null,
       provider:safe((row as any).provider,160)||null,
       kind:(row.event_type==='hotel'?'hotel':safe((row as any).subtype||(row as any).event_type,120))||null,
-      inferred:false,
+      inferred:row.event_type==='hotel'||row.subtype==='hotel',
       sourceRefs:Array.isArray((row as any).source_refs)?(row as any).source_refs:[],
     })
   }

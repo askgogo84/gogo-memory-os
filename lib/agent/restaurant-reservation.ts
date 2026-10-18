@@ -613,6 +613,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
       {label:'Booking release',value:releaseAt},
       {label:'Dining dates covered',value:`${diningContext.from} – ${diningContext.until} (${timezone})`},
       {label:'Calendar conflicts',value:diningContext.calendar.connected?`${diningContext.calendar.windows.length} busy intervals checked in the covered dates`:'Not connected; Calendar conflicts are not verified'},
+      {label:'Standing dining preferences',value:diningContext.preferences.map(rule=>rule.text).join('; ')||'No explicit rules returned in the complete owner lookup'},
       {label:'Fee/deposit',value:'₹0 approved; ask before any charge'},
     ],
     execution_payload:{plan_type:'restaurant_reservation_release',lifeEventId,lifeEventActionId:actionId,action:'arm_scheduled_restaurant_reservation'},
