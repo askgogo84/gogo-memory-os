@@ -27,9 +27,10 @@ try{
  const redaction=await import(pathToFileURL(path.join(repo,'lib/bot/memory-redaction.ts')).href)
  const calendarActions=await import(pathToFileURL(path.join(repo,'lib/bot/handlers/calendar-actions.ts')).href)
  const recall=await import(pathToFileURL(path.join(repo,'lib/agent/recall-query.ts')).href)
+ const workflows=await import(pathToFileURL(path.join(repo,'lib/agent/content-workflows.ts')).href)
  let captured:any,modelCalls=0,calendarCalls=0,contextFailure=false,historical=false,lastContextQuery=''
  class InertAnthropic{messages={create:async(params:unknown)=>{modelCalls++;captured=params;return{content:[{type:'text',text:'Bounded synthetic response'}]}}}}
- const services=load('lib/services/claude.ts',{'@anthropic-ai/sdk':InertAnthropic,openai:class{},'@/lib/bot/memory-redaction':redaction,'@/lib/agent/content-workflows':{selectContentWorkflow:()=>null,contentWorkflowPrompt:()=>''}})
+ const services=load('lib/services/claude.ts',{'@anthropic-ai/sdk':InertAnthropic,openai:class{},'@/lib/bot/memory-redaction':redaction,'@/lib/agent/content-workflows':workflows})
  const old='Synthetic Guest arrives on flight ZX123 on 13 October 2026.'
  const move='Owner is moving house on 25 October 2026.'
  const unrelated='Synthetic Noodle Bar was an unrelated earlier assistant suggestion.'
@@ -50,6 +51,7 @@ try{
   '@/lib/services/memory-index':{isIndexable:()=>true},'@/lib/bot/memory-redaction':redaction,
   '@/lib/bot/handlers/preferences':new Proxy({getPreferenceBlock:async()=>preference},{get:(target:any,key:string)=>target[key]||noop[key as keyof typeof noop]}),
   '@/lib/agent/recall-query':recall,
+  '@/lib/agent/content-workflows':workflows,
   '@/lib/agent/context-brain':{buildContextPack:async(params:any)=>{assert.equal(params.actor.legacyTelegramId,123);assert.equal(params.actor.userId,'synthetic-owner');lastContextQuery=params.text;if(contextFailure)throw Error('fixture_context_unavailable');return pack(params.text)},renderContextBlock:context.renderContextBlock},
   './handlers/calendar-actions':{isCalendarAction:()=>false,parseAbsoluteDate:calendarActions.parseAbsoluteDate},
   '@/lib/agent/calendar-read':{executeReadOnlyCalendarStep:async(params:any)=>{calendarCalls++;assert.equal(params.actor.legacyTelegramId,123);assert.match(params.instruction,/^Show my calendar on 2026-10-(?:25|13)$/);return{text:'Calendar coverage incomplete. No events returned on this partial calendar page.'}}},
@@ -84,6 +86,27 @@ try{
   assert.equal(result.messages.length,3,'ordinary history includes both existing user and assistant turns')
   assert.ok(result.messages.some((message:any)=>message.content===unrelated))
   assert.ok(result.system.includes(old));assert.ok(result.system.includes(move))
+ })
+ const workflowPrompt='Write a LinkedIn post using everything you already know about me about my upcoming move'
+ await check('content workflow synthesis also uses selected evidence without raw-memory bypass',async()=>{
+  const result=await run(workflowPrompt)
+  assert.match(result.system,/CURRENT CONTENT WORKFLOW: linkedin-post/)
+  assert.equal(result.messages.length,1);assert.ok(result.system.includes(move));assert.ok(result.system.includes(preference))
+  assert.ok(!result.system.includes(old),'workflow must not bypass the selected future context')
+  assert.ok(!result.system.includes(unrelated),'workflow must exclude unrelated raw memories')
+ })
+ await check('content workflow selected-context failure stays explicitly unavailable',async()=>{
+  contextFailure=true
+  try{const result=await run(workflowPrompt);assert.match(result.system,/retrieval is unavailable/);assert.ok(!result.system.includes(old));assert.ok(!result.system.includes(unrelated))}finally{contextFailure=false}
+ })
+ await check('content workflow synthesis preserves trusted historical pronoun retrieval',async()=>{
+  historical=true
+  try{const result=await run('Write a LinkedIn post using my saved context about her scheduled arrival on 13 October 2026');assert.ok(lastContextQuery.includes('Previous user request: '+previousUser));assert.equal(result.messages.length,1);assert.ok(result.system.includes(old));assert.ok(!result.system.includes(unrelated))}finally{historical=false}
+ })
+ await check('ordinary content workflow preserves existing history and memory behavior',async()=>{
+  const result=await run('Write a LinkedIn post about the move I mentioned')
+  assert.match(result.system,/CURRENT CONTENT WORKFLOW: linkedin-post/)
+  assert.equal(result.messages.length,3);assert.ok(result.system.includes(old));assert.ok(result.system.includes(move))
  })
  await check('context regressions stay owner-scoped with no provider, secret-store or action I/O',()=>{
   assert.equal(externalCalls,0);assert.ok(queries.includes('memories'),'ordinary conversation exercises real legacy-memory getter')
