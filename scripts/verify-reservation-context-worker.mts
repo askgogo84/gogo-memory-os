@@ -62,4 +62,24 @@ assert.equal(legacy.status,'paused','Legacy approval lacking dining coverage mus
 assert.ok(updates.some(row=>row.table==='agent_approvals'&&row.value.status==='expired'))
 assert.ok(updates.some(row=>row.table==='agent_runs'&&row.value.status==='paused'))
 assert.equal(updates.some(row=>row.table==='life_event_actions'&&row.value.status==='ready'),false)
+// Actual arm racing with a completed context refresh: same status/error can recur,
+// so only the captured row version can prevent restoring the old action payload.
+let liveRun:any={id:'fixture-run',status:'waiting_approval',error:null,updated_at:'2026-10-18T09:00:00Z',metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:'fixture-event',life_event_action_id:'fixture-action'}}
+let liveAction:any={id:'fixture-action',status:'waiting_approval',updated_at:'2026-10-18T09:00:00Z',payload_json:payload,due_at:payload.releaseAt}
+const refreshedPayload={...payload,reservationLocation:'Refreshed city'}
+const raceDb={from(table:string){let patch:any;const filters:Array<[string,unknown]>=[];const execute=()=>{
+ if(patch){const row=table==='agent_runs'?liveRun:table==='life_event_actions'?liveAction:null
+  if(row&&filters.every(([key,value])=>row[key]===value||key==='telegram_id')){Object.assign(row,patch);return{data:{id:row.id},error:null}}
+  return{data:null,error:null}}
+ if(table==='agent_runs')return{data:{...liveRun},error:null}
+ if(table==='life_event_actions')return{data:{...liveAction},error:null}
+ if(table==='agent_approvals'){
+  liveRun={...liveRun,updated_at:'2026-10-18T10:00:01Z'}
+  liveAction={...liveAction,payload_json:refreshedPayload,updated_at:'2026-10-18T10:00:01Z'}
+  return{data:{id:'old-approved',status:'approved',...binding},error:null}}
+ return{data:null,error:null}}
+ const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push([key,value]);return q},is:(key:string,value:unknown)=>{filters.push([key,value]);return q},order:()=>q,limit:()=>q,update:(value:any)=>{patch=value;return q},maybeSingle:async()=>execute(),then:(resolve:any)=>resolve(execute())};return q}}
+const racingArm=load('lib/agent/restaurant-reservation.ts',{'@/lib/supabase-admin':{supabaseAdmin:raceDb},'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining})
+await assert.rejects(()=>racingArm.armApprovedRestaurantReservation({actor,runId:'fixture-run'}),/restaurant_reservation_state_changed/)
+assert.equal(liveAction.payload_json,refreshedPayload,'Stale arm must not overwrite refreshed context or attach old authority')
 console.log('Actual reservation worker and real approval fingerprint: bounded context, material-change and failed-refresh guards passed. Inert synthetic I/O only.')
