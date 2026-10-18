@@ -206,6 +206,7 @@ const dashboardOutput=ts.transpileModule(fs.readFileSync('app/api/dashboard/chat
 const dashboardExports:any={}
 const noop=new Proxy({}, {get:()=>async()=>null})
 const dashboardMocks:any={
+  '@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>false},
   crypto, 'next/server':{NextResponse:{json:(body:any,init:any)=>({body,status:init?.status||200})}},
   '@/lib/dashboard/session':{getSession:async()=>({telegramId:'101'})},
   '@/lib/supabase-admin':{supabaseAdmin:db},

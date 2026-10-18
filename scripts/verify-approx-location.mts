@@ -71,6 +71,7 @@ const db: any = { from(table: string) { const q: any = { select() { return q }, 
 const noops = new Proxy({}, { get: () => async () => null })
 const chat = load('app/api/dashboard/chat/route.ts', {
   '@/lib/agent/recall-query': {isDecisionRecallQuery:()=>false},
+  '@/lib/agent/autonomy-status': {isConnectionCapabilityQuery:()=>false},
   '@/lib/services/link-vault': {isLinkVaultSaveRequest:()=>false,isLinkVaultQuery:()=>false},
   crypto: { randomUUID: () => 'fixture-event' },
   'next/server': { NextResponse: { json: (body: any, options?: any) => ({ body, status: options?.status || 200 }) } },

@@ -81,6 +81,7 @@ const routeDb={from(table:string){
 let genericPlans=0,routeSession=true
 const noops=new Proxy({},{get:()=>async()=>null})
 const routeMocks:any={
+  '@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>false},
   'crypto':{randomUUID:()=> 'fixture-event'},
   'next/server':{NextResponse:{json:(body:any,options?:any)=>({body,status:options?.status||200})}},
   '@/lib/supabase-admin':{supabaseAdmin:routeDb},

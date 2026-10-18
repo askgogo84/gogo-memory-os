@@ -124,6 +124,7 @@ const db = {from(table: string) {
 }}
 const noMatch = new Set(['unsupportedCapability', 'podcastRequest', 'imageRequest', 'wantsVoiceReply', 'handleLinkVaultText', 'tryTypedTimeRouting', 'tryFoodComparison', 'getLatestFollowupState', 'isAmPmChoice'])
 const actual: Record<string, any> = {
+  '@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>false,tryGetConnectionCapabilities:async()=>null},
   '@/lib/agent/content-workflows': contentWorkflows,
   '@/lib/supabase-admin': {supabaseAdmin: db},
   './resolve-user': {resolveUser: async () => ({id: 'owner', telegramId: 42, whatsappId: '+919999999999', name: 'Gogo', tier: 'free'})},
