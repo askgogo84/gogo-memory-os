@@ -45,6 +45,11 @@ try{
  await check('connection requests keep their existing intent and never become schedule reads',()=>{
   for(const text of connections){assert.equal(detectIntent(text).type,'connect_calendar',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text),null,text)}
  })
+ await check('read verbs and calendar spellings preserve their explicit day and scope',()=>{
+  for(const text of ['Read my Google Calendar today','Display my Google calender tomorrow'])assert.equal(schedule.detectReadOnlyScheduleRequest(text)?.scope,'calendar',text)
+  assert.notEqual(detectIntent('Show my Google Calendar and reminders').type,'read_calendar','a calendar-only handler cannot discard the requested reminders')
+  assert.throws(()=>calendarReadWindow('Read my Google Calendar on 25 October',new Date('2026-10-18T12:00:00Z'),'Asia/Kolkata'),/calendar_date_unsupported/)
+ })
  await check('mixed actions and negated reads cannot become standalone calendar reads',()=>{
   for(const text of mixed){assert.notEqual(detectIntent(text).type,'read_calendar',text);assert.equal(schedule.detectReadOnlyScheduleRequest(text),null,text)}
  })
