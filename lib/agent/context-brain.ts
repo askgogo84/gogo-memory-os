@@ -7,7 +7,9 @@ import { ticketTimezone, flightInstants, ticketInstant } from '@/lib/services/tr
 import { redactSecretShapedText, isSecretShapedMemory } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
 import { latestTypedContext } from './typed-object-context'
-import type {ReservationTravelInventory} from './reservation-dining-context'
+import type {ReservationTravelInventory,ReservationCalendarInventory} from './reservation-dining-context'
+import {calendarInterval,calendarBlocksTime} from '../calendar-intervals'
+import {getCalendarAccountAccess,fetchMergedCalendarEventsPage} from '@/lib/services/google-calendar-accounts'
 
 export type ContextSource =
   | 'life_event'
@@ -46,6 +48,7 @@ export type ContextPack = {
   facts:ContextFact[]
   /** Owner-scoped travel constraints before the conversational ranking budget. */
   reservationTravel?:ReservationTravelInventory
+  reservationCalendar?:ReservationCalendarInventory
   provenance:{
     lifeEvents:number
     travelTickets:number
@@ -62,6 +65,7 @@ export type ContextPack = {
 export type ContextPackOptions = {
   includeSemantic?:boolean
   includeReservationTravel?:boolean
+  includeReservationCalendar?:boolean
   maxFacts?:number
   horizonDays?:number
 }
@@ -469,6 +473,40 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
   return{lifeFacts,openLoops,goalFacts,travelFacts,typedFacts,watcherFacts,retrievalIncomplete,reservationTravel}
 }
 
+async function loadReservationCalendar(actor:AgentActor,horizonDays:number):Promise<ReservationCalendarInventory>{
+  const from=Date.now(),until=from+Math.min(60,horizonDays)*86400_000
+  const inventory:ReservationCalendarInventory={ownerId:String(actor.legacyTelegramId),coveredFrom:new Date(from).toISOString(),coveredUntil:new Date(until).toISOString(),connected:false,incomplete:false,windows:[]}
+  try{
+    const {data,error}=await supabaseAdmin.from('users').select('google_calendar_connected,google_refresh_token,timezone').eq('telegram_id',actor.legacyTelegramId).maybeSingle()
+    if(error||!data){inventory.incomplete=true;return inventory}
+    const primaryExpected=data.google_calendar_connected===true
+    inventory.connected=primaryExpected
+    if(primaryExpected&&!data.google_refresh_token)inventory.incomplete=true
+    const accounts=await getCalendarAccountAccess(actor.legacyTelegramId,primaryExpected&&data.google_refresh_token?String(data.google_refresh_token):null,()=>{inventory.incomplete=true})
+    inventory.connected=primaryExpected||accounts.length>0
+    if(!accounts.length)return inventory
+    const page=await fetchMergedCalendarEventsPage(accounts,inventory.coveredFrom,inventory.coveredUntil,'RESERVATION_CALENDAR_READ_FAILED',100)
+    if(page.hasMore||page.accountsRead!==page.accountsTotal)inventory.incomplete=true
+    const windows=new Map<string,ReservationCalendarInventory['windows'][number]>()
+    for(const event of page.events){
+      if(!calendarBlocksTime(event))continue
+      const span=calendarInterval(event,String(data.timezone||actor.timezone||'Asia/Kolkata'))
+      if(!span||!event.id){inventory.incomplete=true;continue}
+      if(span.end<=from||span.start>=until)continue
+      // Include only occupied time and opaque provenance; Calendar titles,
+      // attendees, account addresses and access tokens never leave this read.
+      const id=hash(`${String(event._account||'').toLowerCase()}|${String(event.id)}`)
+      const window={startAt:new Date(Math.max(from,span.start)).toISOString(),endAt:new Date(Math.min(until,span.end)).toISOString(),sourceRefs:[{type:'calendar_event',id}]}
+      windows.set(`${window.startAt}|${window.endAt}|${id}`,window)
+    }
+    inventory.windows=[...windows.values()].sort((a,b)=>a.startAt.localeCompare(b.startAt)||a.endAt.localeCompare(b.endAt))
+  }catch{
+    inventory.incomplete=true
+    console.error('RESERVATION_CALENDAR_CONTEXT_INCOMPLETE')
+  }
+  return inventory
+}
+
 // Saved inbox observations are a separate evidence source from live Gmail reads.
 // Require both permissions before accessing their content, including on later turns.
 async function loadInboxFacts(actor:AgentActor,query:string){
@@ -650,10 +688,11 @@ export async function buildContextPack(params:{actor:AgentActor;text:string;opti
   const maxFacts=Math.max(4,Math.min(24,params.options?.maxFacts??12))
   const horizonDays=Math.max(7,Math.min(180,params.options?.horizonDays??60))
   const includeSemantic=params.options?.includeSemantic!==false
-  const [operational,learned,inbox]=await Promise.all([
+  const [operational,learned,inbox,reservationCalendar]=await Promise.all([
     loadOperationalFacts(params.actor,query,horizonDays,params.options?.includeReservationTravel===true),
     loadLearnedFacts(params.actor,query,includeSemantic),
     loadInboxFacts(params.actor,query),
+    params.options?.includeReservationCalendar===true?loadReservationCalendar(params.actor,horizonDays):Promise.resolve(undefined),
   ])
   const all=dedupeFacts([
     ...operational.typedFacts,
@@ -677,6 +716,7 @@ export async function buildContextPack(params:{actor:AgentActor;text:string;opti
     retrievalIncomplete:operational.retrievalIncomplete||learned.retrievalIncomplete||inbox.retrievalIncomplete,
     facts:combined,
     reservationTravel:operational.reservationTravel,
+    reservationCalendar,
     provenance:{
       lifeEvents:operational.lifeFacts.length,
       travelTickets:operational.travelFacts.filter(f=>f.source==='travel_ticket'||f.source==='travel_presence').length,

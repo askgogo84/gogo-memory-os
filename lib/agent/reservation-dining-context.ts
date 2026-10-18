@@ -9,6 +9,11 @@ type TravelFact = {
 export type ReservationTravelInventory = {
   ownerId: string; coveredFrom: string; coveredUntil: string; incomplete: boolean; facts: TravelFact[];
 }
+export type ReservationCalendarInventory = {
+  ownerId: string; coveredFrom: string; coveredUntil: string;
+  connected: boolean; incomplete: boolean;
+  windows: Array<{startAt: string; endAt: string; sourceRefs: Array<{type: string; id: string}>}>;
+}
 export type ReservationTravelWindow = {
   startAt: string; endAt: string; location: string | null; source: string;
   applicability: 'owner' | 'unknown'; inferred: boolean; confidence: number;
