@@ -53,7 +53,7 @@ await check('a release-only clock does not become a dining start restriction',()
  const p=actual.parseRestaurantReservationIntent('Book Naru Noodle Bar for 2 at the next available slot when bookings open at 8 PM.');assert.equal(p.preferredStart,'');assert.equal(p.preferredEnd,'');assert.equal(p.timeClarificationNeeded,false)
 })
 await check('excluded or relational clocks pause before preparation or queued research',async()=>{
- for(const suffix of ['between 7 PM and 9 PM, but not at 8:30 PM','between 7 PM and 9 PM, but do not book at 8:30 PM',"between 7 PM and 9 PM, but don't book at 8:30 PM",'between 7 PM and 9 PM, never choose the 8:30 PM slot','at any time except 8:30 PM','at any time excluding 8:30 PM','not at 8:30 PM','after 8:30 PM','no earlier than 8:30 PM','at 8:30 PM only but not at 8:30 PM']){
+ for(const suffix of ['between 7 PM and 9 PM, but not at 8:30 PM','between 7 PM and 9 PM, but do not book at 8:30 PM',"between 7 PM and 9 PM, but don't book at 8:30 PM",'between 7 PM and 9 PM, never choose the 8:30 PM slot','between 7 PM and 9 PM, but at 8:30 PM is not acceptable',"between 7 PM and 9 PM, but 8:30 PM isn't acceptable",'between 7 PM and 9 PM, but 8:30 PM is excluded','at any time except 8:30 PM','at any time excluding 8:30 PM','not at 8:30 PM','after 8:30 PM','no earlier than 8:30 PM','at 8:30 PM only but not at 8:30 PM']){
   const text='Book Naru Noodle Bar for 2 on 2026-10-25 '+suffix
   writes=[];dbReads=0;providerReads=0;assert.equal(actual.parseRestaurantReservationIntent(text).timeClarificationNeeded,true,suffix)
   assert.equal((await request(text)).status,'paused');assert.equal((await actual.queueRestaurantReservationResearch({actor,text})).status,'paused')
