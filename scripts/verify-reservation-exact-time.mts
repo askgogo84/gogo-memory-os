@@ -52,6 +52,30 @@ await check('range-final only and party-only language never narrow a range to it
 await check('a release-only clock does not become a dining start restriction',()=>{
  const p=actual.parseRestaurantReservationIntent('Book Naru Noodle Bar for 2 at the next available slot when bookings open at 8 PM.');assert.equal(p.preferredStart,'');assert.equal(p.preferredEnd,'');assert.equal(p.timeClarificationNeeded,false)
 })
+await check('excluded or relational clocks pause before preparation or queued research',async()=>{
+ for(const suffix of ['between 7 PM and 9 PM, but not at 8:30 PM','at any time except 8:30 PM','at any time excluding 8:30 PM','not at 8:30 PM','after 8:30 PM','no earlier than 8:30 PM','at 8:30 PM only but not at 8:30 PM']){
+  const text='Book Naru Noodle Bar for 2 on 2026-10-25 '+suffix
+  writes=[];dbReads=0;providerReads=0;assert.equal(actual.parseRestaurantReservationIntent(text).timeClarificationNeeded,true,suffix)
+  assert.equal((await request(text)).status,'paused');assert.equal((await actual.queueRestaurantReservationResearch({actor,text})).status,'paused')
+  assert.equal(dbReads,0);assert.equal(providerReads,0);assert.equal(writes.length,0)
+ }
+})
+await check('only-clock authority cannot hide competing or malformed remaining clocks',async()=>{
+ for(const suffix of ['at 8:30 PM only or 9 PM','only at 8:30 PM and at 9 PM','at 8:30 PM only and only at 25:30','at 8:30 PM only or at 9:15']){
+  const text='Book Naru Noodle Bar for 2 on 2026-10-25 '+suffix
+  writes=[];dbReads=0;providerReads=0;assert.equal(actual.parseRestaurantReservationIntent(text).timeClarificationNeeded,true,suffix)
+  assert.equal((await request(text)).status,'paused');assert.equal((await actual.queueRestaurantReservationResearch({actor,text})).status,'paused')
+  assert.equal(dbReads,0);assert.equal(providerReads,0);assert.equal(writes.length,0)
+ }
+})
+await check('explicit unsupported timezones cannot silently become owner-local authority',async()=>{
+ for(const suffix of ['at 8 PM UTC only','at 20:00 GMT+01:00','only at 8:30 PM IST','at 8 PM America/New_York','between 7 PM and 9 PM Eastern time']){
+  const text='Book Naru Noodle Bar for 2 on 2026-10-25 '+suffix
+  writes=[];dbReads=0;providerReads=0;assert.equal(actual.parseRestaurantReservationIntent(text).timeClarificationNeeded,true,suffix)
+  assert.equal((await request(text)).status,'paused');assert.equal((await actual.queueRestaurantReservationResearch({actor,text})).status,'paused')
+  assert.equal(dbReads,0);assert.equal(providerReads,0);assert.equal(writes.length,0)
+ }
+})
 await check('ambiguous multiple or contradictory clocks ask before provider or DB work',async()=>{
  for(const text of ['Book Naru Noodle Bar for 2 at 8:30 only.','Book Naru Noodle Bar for 2 at 8:30 PM only and 9 PM only.','Book Naru Noodle Bar for 2 between 7 PM and 9 PM at 10 PM only.']){
   writes=[];dbReads=0;providerReads=0;assert.equal(actual.parseRestaurantReservationIntent(text).timeClarificationNeeded,true)
