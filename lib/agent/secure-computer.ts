@@ -327,6 +327,20 @@ async function model(page){
 // 16 Oct: the person's sign-in code (texted by Swiggy, Amazon…) typed into the code box of the page Gogo left open.
 // It arrives as a command-scoped variable, is typed key by key, and is never logged, returned or stored.
 /** Product name + first price after it, as exact page text, when the page is the requested model's product page. */
+export function comparisonReadEvidenceMatches(objective:string,evidence:string):boolean{
+  const subject=String(objective||'').match(/^Find the listed price of this product on [^:]{2,40}: "([^"]{2,200})"/)?.[1]
+  if(!subject)return true
+  const units=(value:string)=>value.replace(/(\d+(?:\.\d+)?)\s*kg\b/gi,(_,n)=>`${Number(n)*1000}g`).replace(/(\d+(?:\.\d+)?)\s*l(?:itres?|iters?)?\b/gi,(_,n)=>`${Number(n)*1000}ml`).replace(/(\d+)\s*(g|ml|gb|tb)\b/gi,'$1$2')
+  const requested=units(subject),observed=units(evidence)
+  const variants=/\b(?:iphone|ipad|galaxy|pixel|macbook)\b/i.test(requested)?['pro','max','plus','mini','ultra','air','lite','fe','se']:/\b(?:butter|milk|cheese|yogurt|curd)\b/i.test(requested)?['lite','spread','unsalted','skimmed','double']:[]
+  if(variants.some(variant=>new RegExp('\\b'+variant+'\\b','i').test(observed)&&!new RegExp('\\b'+variant+'\\b','i').test(requested)))return false
+  let cursor=0
+  for(const token of requested.match(/[a-z0-9]+/gi)||[]){
+    const re=new RegExp((/^\d/.test(token)?'(?<![a-z0-9])':'')+token.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?![a-z0-9])','gi');re.lastIndex=cursor
+    const hit=re.exec(observed);if(!hit)return false;cursor=hit.index+hit[0].length
+  }
+  return true
+}
 export function productPagePriceEvidence(objective:string,title:string,pageText:string):string[]|null{
   const ask=String(objective||'').match(/^Find the listed price of this product on [^:]{2,40}: "([^"]{2,200})"/)
   const skip=(why:string,extra?:string)=>{if(/^Find the listed price of this product/.test(String(objective||'')))console.warn('PRODUCT_PRICE_DIRECT_SKIP:',JSON.stringify({why,extra:extra||'',title:String(title||'').slice(0,120),objective:String(objective||'').slice(0,160)}));return null}
@@ -336,9 +350,16 @@ export function productPagePriceEvidence(objective:string,title:string,pageText:
   // Every requested word must end where a word ends ("16" is not "16e"), in order.
   const tokens=ask[1].replace(/(\d+)\s+(GB|TB)\b/gi,'$1$2').match(/[a-z0-9]+/gi)||[]
   const named=heading.replace(/(\d+)\s+(GB|TB)\b/gi,'$1$2')
+  if(/\b(?:iphone|ipad|galaxy|pixel|macbook)\b/i.test(ask[1])){
+    if(['pro','max','plus','mini','ultra','air','lite','fe','se'].some(tier=>new RegExp('\\b'+tier+'\\b','i').test(named)&&!new RegExp('\\b'+tier+'\\b','i').test(ask[1])))return skip('variant_mismatch')
+    const capacity=ask[1].replace(/\s+/g,'').match(/\d+(?:gb|tb)/i)?.[0]?.toLowerCase()
+    const capacities=(named.match(/\b\d+(?:GB|TB)\b/gi)||[]).map(value=>value.toLowerCase())
+    if(capacity&&capacities.some(value=>value!==capacity))return skip('capacity_mismatch')
+    if(!capacity&&/\biphone\b/i.test(ask[1])&&capacities.some(value=>/^(?:256|512)gb$|^[12]tb$/i.test(value)))return skip('capacity_unspecified')
+  }
   let cursor=0
   for(const token of tokens){
-    const re=new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?![a-z0-9])','gi');re.lastIndex=cursor
+    const re=new RegExp((/^\d/.test(token)?'(?<![a-z0-9])':'')+token.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?![a-z0-9])','gi');re.lastIndex=cursor
     const hit=re.exec(named);if(!hit)return skip('token_mismatch',token+' | '+named);cursor=hit.index+hit[0].length
   }
   const text=String(pageText||'').replace(/\s+/g,' ')
@@ -1894,7 +1915,7 @@ export async function assessReadOutcome(objective:string,page:any,diagnose:(even
     // The reader matched on whitespace-collapsed text, so verify against the same form (line breaks inside a price were the miss).
     const flat=pageText.replace(/\s+/g,' ')
     const direct=verifiedBrowserAnswer({complete:true,evidence:directPrice},flat,title)||verifiedBrowserAnswer({complete:true,evidence:directPrice},pageText,title)
-    if(direct){diagnose({phase:'assessment',reason:'verified',pageChars:pageText.length});return direct}
+    if(direct&&comparisonReadEvidenceMatches(objective,direct)){diagnose({phase:'assessment',reason:'verified',pageChars:pageText.length});return direct}
     // Logged for diagnosis only; an unverified price is never returned.
     {const i=flat.indexOf(directPrice[0]);console.warn('PRODUCT_PRICE_DIRECT_UNVERIFIED:',JSON.stringify({evidence:directPrice.map(x=>x.slice(0,80)),title:title.slice(0,80),spans:[...flat.slice(Math.max(0,i),i+6000).matchAll(/₹\s?\d[\d,]*(?:\.\d{1,2})?/g)].slice(0,10).map(m=>flat.slice(Math.max(0,i)+Math.max(0,m.index!-45),Math.max(0,i)+m.index!+45))}))}
   }
@@ -1914,7 +1935,7 @@ export async function assessReadOutcome(objective:string,page:any,diagnose:(even
       answer=selectedBrowserEvidence(parseBrowserEvidenceResponse(repair),choices,pageText,title)
       diagnose({phase:'assessment',reason:answer?'verified':'unverified_quotes',pageChars:pageText.length})
     }
-    return answer
+    return answer&&comparisonReadEvidenceMatches(objective,answer)?answer:null
   }catch{diagnose({phase:'assessment',reason:'invalid_assessment_json'});return null}
 }
 

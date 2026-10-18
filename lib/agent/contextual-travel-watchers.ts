@@ -95,22 +95,32 @@ function awayStay(rows:TravelRow[]):{city:string;arriveMs:number;endMs:number}|n
   return best?{city:best.city,arriveMs:best.arriveMs,endMs:best.endMs}:null
 }
 // Destination weather tracks the STAY, not the outbound leg. Bounded by the return
-// departure when known; a one-way (open-ended) stay extends to a reasonable horizon
-// instead of ending 72h after arrival.
+// departure when known; a one-way stay keeps the bounded source horizon.
 export function flightStatusExpiry(rows:TravelRow[],fallbackExpiresAt:string){
   const times=rows.map(row=>Date.parse(String(row.arrive_at||row.depart_at||''))).filter(Number.isFinite)
   if(!times.length)return fallbackExpiresAt
   const end=new Date(Math.max(...times)+6*3600_000).toISOString()
   return Date.parse(end)<Date.parse(fallbackExpiresAt)?end:fallbackExpiresAt
 }
-function destinationStayExpiry(rows:TravelRow[],fallbackExpiresAt:string){
+export function destinationStayExpiry(rows:TravelRow[],fallbackExpiresAt:string){
   const stay=awayStay(rows)
   if(!stay)return fallbackExpiresAt
   if(Number.isFinite(stay.endMs))return new Date(stay.endMs+24*3600_000).toISOString()
-  const oneWayStay=new Date(stay.arriveMs+7*24*3600_000).toISOString()
-  return Date.parse(oneWayStay)>Date.parse(fallbackExpiresAt)?oneWayStay:fallbackExpiresAt
+  return fallbackExpiresAt
 }
-function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
+export function declaredHomeCity(memories:Array<{content?:string}>){
+  for(const memory of memories){
+    const city=String(memory.content||'').match(/^(?:my\s+home\s+city\s+is|home\s+city\s*:|i\s+live\s+in|i\s+am\s+based\s+in)\s+([^\n.;]{2,80})/i)?.[1]?.trim()
+    if(city)return city
+  }
+  return ''
+}
+function sameCity(a:string,b:string){
+  const normalize=(value:string)=>value.toLowerCase().replace(/\bbangalore\b/g,'bengaluru').replace(/[^a-z]+/g,' ').trim()
+  const city=normalize(a),home=normalize(b)
+  return Boolean(city&&home&&(city===home||` ${home} `.includes(` ${city} `)))
+}
+export function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string,homeCity=''){
   const first=rows[0],last=rows[rows.length-1]
   const flights=flightLabel(rows)
   const route=routeLabel(rows)
@@ -170,18 +180,18 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
         ...base('connection_ground','Watch for high-signal airport/connection or arrival ground-transit disruption tied to this itinerary.'),
       },
     },
-    {
+    ...(!sameCity(destination,homeCity)?[{
       type:'web_search',
       condition:{
         title:`Trip weather · ${destination}`,
-        query:`${destination} weather travel conditions ${destinationDate}`,
+        query:`${destination} weather travel conditions ${Date.parse(stayArriveIso)>Date.now()?destinationDate:'today'}`,
         triggerKeywords:['weather warning','storm','heavy rain','snow','flood','extreme heat','severe weather','travel advisory'],
         delivery:'both',cadenceMinutes:360,burstUntil:null,
         // Weather follows the destination stay, not the outbound leg's completion.
         ...base('destination_weather','Watch destination weather only for conditions likely to affect this saved trip.'),
         expiresAt:destinationStayExpiry(rows,expiresAt),
       },
-    },
+    }]:[]),
     ...(airline?[{
       type:'web_search' as const,
       condition:{
@@ -273,8 +283,11 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
     .map((row:any)=>String(row.condition_json?.contextKey||'')))
   let slots=Math.max(0,Number(budget.activeWebWatchersMax||0)-manualCount)
   let created=0,reused=0,stopped=0,skipped=0
-
-  for(const desired of desiredWebConditions(group,root,expiresAt)){
+  const {data:homeMemories,error:homeError}=await supabaseAdmin.from('memories').select('id,content').eq('telegram_id',Number(telegramId))
+    .or('content.ilike.my home city%,content.ilike.home city:%,content.ilike.I live in%,content.ilike.I am based in%').order('created_at',{ascending:false}).limit(10)
+  if(homeError)throw new Error('context_home_lookup_failed')
+  const homeCity=declaredHomeCity(homeMemories||[])
+  for(const desired of desiredWebConditions(group,root,expiresAt,homeCity)){
     const key=String(desired.condition.contextKey)
     if(!existingContextKeys.has(key)&&slots<=0){skipped++;continue}
     const result=await upsertContextWatcher({telegramId,type:'web_search',condition:desired.condition})

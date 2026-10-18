@@ -28,6 +28,20 @@ import { assessPriceCheck, appendPriceRun, buildPriceRun, normalizePriceRule, pr
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
 
+export async function sourceBoundTravelExpiry(watcher:any):Promise<string|null>{
+  const condition=watcher.condition_json||{}
+  const current=validDate(condition.expiresAt)
+  if(condition.contextual!==true||condition.contextualKind!=='travel')return current
+  const ids=(condition.sourceRefs||[]).filter((ref:any)=>ref?.type==='travel_ticket'&&/^[a-f0-9-]{36}$/i.test(String(ref.id))).map((ref:any)=>String(ref.id))
+  if(!ids.length)return current
+  const {data,error}=await supabaseAdmin.from('travel_tickets').select('id,depart_at,arrive_at').eq('telegram_id',Number(watcher.telegram_id)).in('id',ids)
+  if(error)throw new Error('context_travel_expiry_source_unavailable')
+  const times=(data||[]).map(row=>Date.parse(String(row.arrive_at||row.depart_at||''))).filter(Number.isFinite)
+  if(!times.length)throw new Error('context_travel_expiry_source_missing')
+  const bound=new Date(Math.max(...times)+72*3600_000).toISOString()
+  return current&&Date.parse(current)<Date.parse(bound)?current:bound
+}
+
 export type ContextualWatcherMeta = {
   contextual?: boolean
   contextualKind?: 'travel'
@@ -1309,7 +1323,7 @@ export async function processDueAgentWatchers(limit = 40) {
   for (const watcher of (data || []) as any[]) {
     checked++
     try {
-      const expiresAt=validDate(watcher.condition_json?.expiresAt)
+      const expiresAt=await sourceBoundTravelExpiry(watcher)
       if(watcher.condition_json?.contextual===true&&expiresAt&&Date.parse(expiresAt)<=now.getTime()){
         await supabaseAdmin.from('agent_watchers').update({
           active:false,next_check_at:null,last_checked_at:now.toISOString(),

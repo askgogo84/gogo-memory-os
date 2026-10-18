@@ -41,6 +41,22 @@ function isContextSynthesisTurn(text:string){
     || /\bconsider\s+(?:my\s+)?(?:travel|calendar|life|saved)\s+context\b/i.test(t)
 }
 
+export function isBriefingTurn(text:string){return /\b(?:morning|daily)\s+(?:briefing|brief|summary)\b|\bbrief me\b|\bplan (?:my|the) (?:day|week)\b/i.test(text)}
+export function filterBriefingTravelContext(text:string,now=new Date()):string{
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now)
+  const today=`${parts.find(p=>p.type==='year')?.value}-${parts.find(p=>p.type==='month')?.value}-${parts.find(p=>p.type==='day')?.value}`
+  const year=Number(today.slice(0,4)),months=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec']
+  return String(text||'').split('\n').filter(line=>{
+    if(!/\b(?:flight|flights|airline|lands?|landing|depart(?:ure|s|ing)?|itinerary|klm)\b/i.test(line))return true
+    const dates=[...line.matchAll(/\b(20\d{2})-(\d{2})-(\d{2})\b/g)].map(m=>`${m[1]}-${m[2]}-${m[3]}`)
+    for(const m of line.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+(20\d{2}))?\b/gi)){
+      const month=months.indexOf(m[2].slice(0,3).toLowerCase())+1
+      dates.push(`${m[3]||year}-${String(month).padStart(2,'0')}-${m[1].padStart(2,'0')}`)
+    }
+    return !dates.length||!dates.every(date=>date<today)
+  }).join('\n')
+}
+
 export async function askClaude(
   userMessage: string,
   history: Message[],
@@ -49,6 +65,8 @@ export async function askClaude(
   preferenceBlock: string = '',
   contextualBlock: string = ''
 ): Promise<string> {
+  const briefing=isBriefingTurn(userMessage)
+  if(briefing){memories=memories.map(memory=>filterBriefingTravelContext(memory)).filter(Boolean);contextualBlock=filterBriefingTravelContext(contextualBlock)}
   const memoryContext = memories.length > 0
     ? `\n\nWhat you remember about ${userName}:\n${memories.map((m, i) => `${i + 1}. ${m}`).join('\n')}`
     : ''
@@ -144,7 +162,7 @@ ${workflow ? contentWorkflowPrompt(workflow) : ''}`
   // Context-synthesis turns deliberately rely on the durable owner-bound context pack
   // and memories, not unrelated recent chat branches. This prevents stale entities from
   // being dragged into "what do you already know / what context matters?" answers.
-  const historyForTurn = isContextSynthesisTurn(userMessage) ? [] : safeHistory.slice(-10)
+  const historyForTurn = isContextSynthesisTurn(userMessage)||briefing ? [] : safeHistory.slice(-10)
   const messages:Message[]=[...historyForTurn,{ role: 'user', content: userMessage }]
 
   try{

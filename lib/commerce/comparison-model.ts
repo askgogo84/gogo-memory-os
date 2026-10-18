@@ -151,9 +151,17 @@ export function comparisonSource(provider: ComparisonProvider, value: unknown) {
  *  end where a word ends in the label ("xm5" still fits "WH-1000XM5"), in the requested order. */
 export function tokensEndWords(label: string, tokens: string[]) {
   const text = String(label || '').replace(/(\d+)\s+(GB|TB)\b/gi, '$1$2')
+  const requested=tokens.join(' ')
+  if(/\b(?:iphone|ipad|galaxy|pixel|macbook)\b/i.test(requested)){
+    if(['pro','max','plus','mini','ultra','air','lite','fe','se'].some(tier=>new RegExp('\\b'+tier+'\\b','i').test(text)&&!new RegExp('\\b'+tier+'\\b','i').test(requested)))return false
+    const capacity=requested.replace(/\s+/g,'').match(/\d+(?:gb|tb)/i)?.[0]?.toLowerCase()
+    const capacities=(text.match(/\b\d+(?:GB|TB)\b/gi)||[]).map(value=>value.toLowerCase())
+    if(capacity&&capacities.some(value=>value!==capacity))return false
+    if(!capacity&&/\biphone\b/i.test(requested)&&capacities.some(value=>/^(?:256|512)gb$|^[12]tb$/i.test(value)))return false
+  }
   let cursor = 0
   for (const token of tokens) {
-    const re = new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![a-z0-9])', 'gi')
+    const re = new RegExp((/^\d/.test(token)?'(?<![a-z0-9])':'')+token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![a-z0-9])', 'gi')
     re.lastIndex = cursor
     const hit = re.exec(text)
     if (!hit) return false
@@ -200,7 +208,13 @@ export function comparisonProductLead(provider: ComparisonProvider, subject: str
 
 // A completed browser run alone is insufficient: require its owned completed
 // step and observed source. Failed/paused runs never expose stale numeric claims.
-export function providerObservation(provider: ComparisonProvider, child: any, step: any): ProviderObservation {
+export function comparisonEvidenceMatchesSubject(subject:string,evidence:string):boolean{
+  const units=(value:string)=>value.replace(/(\d+(?:\.\d+)?)\s*kg\b/gi,(_,n)=>`${Number(n)*1000}g`).replace(/(\d+(?:\.\d+)?)\s*l(?:itres?|iters?)?\b/gi,(_,n)=>`${Number(n)*1000}ml`).replace(/(\d+)\s*(g|ml|gb|tb)\b/gi,'$1$2')
+  const requested=units(subject),observed=units(evidence)
+  if(/\b(?:butter|milk|cheese|yogurt|curd)\b/i.test(requested)&&['lite','spread','unsalted','skimmed','double'].some(variant=>new RegExp('\\b'+variant+'\\b','i').test(observed)&&!new RegExp('\\b'+variant+'\\b','i').test(requested)))return false
+  return tokensEndWords(observed,requested.match(/[a-z0-9]+/gi)||[])
+}
+export function providerObservation(provider: ComparisonProvider, child: any, step: any, subject?:string): ProviderObservation {
   const base = {provider, runId: child.id, checkedAt: child.updated_at}
   if (child.status === 'completed' && step?.status === 'completed') {
     const sourceUrl = comparisonSource(provider, step.output_json?.sourceUrl)
@@ -208,7 +222,7 @@ export function providerObservation(provider: ComparisonProvider, child: any, st
     // A completed browser task with a product URL but no visible item price is
     // still an incomplete comparison, never an observed retailer quote.
     const hasPrice = /(?:\u20b9\s*[\d,]+(?:\.\d{1,2})?|\b(?:INR|Rs\.?)\s*[\d,]+(?:\.\d{1,2})?)/i.test(evidence)
-    if (sourceUrl && evidence && hasPrice) return {...base, status: 'observed', sourceUrl, evidence: evidence.slice(0, 1800)}
+    if (sourceUrl && evidence && hasPrice&&(!subject||comparisonEvidenceMatchesSubject(subject,evidence))) return {...base, status: 'observed', sourceUrl, evidence: evidence.slice(0, 1800)}
     return {...base, status: 'failed', reason: 'couldn’t find this exact item with a price on its product page.'}
   }
   const reason = String(child.error || '')
