@@ -14,6 +14,8 @@ const WEEKDAY_PATTERN = /\b(?:(next|this)\s+)?(sunday|monday|tuesday|wednesday|t
 const CALENDAR_READ_HEAD=new RegExp(`^(?:please\\s+)?(?:(?:can|could|would)\\s+you\\s+)?(?:check|read|review|show(?:\\s+me)?|list|display|summari[sz]e)\\s+(?:me\\s+)?(?:(?:my|the|your)\\s+)?(?:google\\s+)?${CALENDAR_WORD_RE.source}`)
 const CALENDAR_READ_HOLD="I haven't read your Calendar. Ask me to check it when you're ready. Nothing was changed."
 const CALENDAR_AVAILABILITY_CLAUSE=/\b(?:and|then|also|but)\s+(?:please\s+)?(?:check|tell\s+me)\s+(?:when\s+)?(?:(?:if|whether)\s+)?(?:i\s+am|i'm|we\s+are|we're|am\s+i|are\s+we|my\s+calendar\s+is|is\s+my\s+calendar)\s+(?:free|available)\b/gi
+const DURATION_WORDS:Record<string,number>={a:1,an:1,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,half:0.5,quarter:0.25}
+const DURATION_RE=/(?<![\w.-])(\d+(?:\.\d+)?|\.\d+|(?:half|quarter)(?:[ -]+an?)?|an?|one|two|three|four|five|six|seven|eight|nine|ten)[\s-]*(minutes?|mins?|hours?|hrs?)\b/gi
 
 function pad(n:number){return String(n).padStart(2,'0')}
 function safe(v:unknown,max=300){return redactSecretShapedText(String(v??'').replace(/\s+/g,' ').trim().slice(0,max))}
@@ -101,9 +103,14 @@ export function isStandaloneCalendarReadRequest(raw:string){
   let text=calendarReadRequestText(raw)
   const head=CALENDAR_READ_HEAD
   if(!head.test(text))return false
+  const timezoneText=text
   // This second phrase still asks about the same Calendar. Keep all following
   // qualifiers/topics for whole-request validation rather than dropping them.
+  const availabilityClauses=text.match(CALENDAR_AVAILABILITY_CLAUSE)
   text=text.replace(CALENDAR_AVAILABILITY_CLAUSE,' ')
+  if(availabilityClauses){
+    try{requestedDurationMinutes(text);text=normalizedDurationText(text).replace(DURATION_RE,' ')}catch{return false}
+  }
   if(/\b(?:reminders?|agenda|tasks?|inbox|gmail|e-?mails?)\b/.test(text.replace(head,'')))return false
   if(/\b(?:connect|reconnect|disconnect|link|unlink|account|accounts|connection|connected|permissions?|access|sync|setup)\b/.test(text))return false
   if(/\b(?:reserve|schedule|remind|create|add|invite|prepare|write|put|set|forward|save|remember|compose|archive|post|publish|renew|move|reschedule|resched|postpone|push|shift|update|make|edit|change|modify|cancel|delete|remove|clear|book|send|pay|buy|purchase|reply|respond|email|draft|call|submit|checkout|subscribe|unsubscribe|share|follow|unfollow|like|comment|confirm|place|order|reorder|empty|increase|decrease|apply|redeem|block|unblock|open|browse|navigate|visit|inspect|monitor|watch|track)\b/.test(text.replace(head,'')))return false
@@ -113,7 +120,7 @@ export function isStandaloneCalendarReadRequest(raw:string){
   const dates=new RegExp(`\\b(?:${MONTH_RE}|sunday|monday|tuesday|wednesday|thursday|friday|saturday|today|tomorrow|now|this|next|last|the|on|for|from|to|until|through|between|and|or|in|days?|weeks?|months?|years?|at|am|pm|morning|afternoon|evening|night|noon|midnight|not|except|excluding|rather|than|instead|of)\\b`,'gi')
   let tail=text.replace(head,'')
   try{
-    const zone=requestedCalendarTimezone(text)
+    const zone=requestedCalendarTimezone(timezoneText)
     if(zone){
       const escaped=zone.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')
       tail=tail.replace(new RegExp(`\\b(?:(?:in|using)\\s+|(?:time\\s*zone|timezone)\\s*(?:[:=]\\s*|is\\s+)?)?${escaped}\\b`,'gi'),'')
@@ -209,18 +216,23 @@ export function calendarReadWindow(text:string,now:Date,tz:string){
   return {startDate:today,endDate:addDays(today,6),label:'next 7 days'}
 }
 
-function requestedDurationMinutes(text:string){
-  const durations=new Set<number>()
-  const words:Record<string,number>={a:1,an:1,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,half:0.5,quarter:0.25}
+function normalizedDurationText(text:string){
+  const words=DURATION_WORDS
   const amountPattern='(?:\\d+(?:\\.\\d+)?|an?|one|two|three|four|five|six|seven|eight|nine|ten)'
   const quantity=(amount:string)=>words[amount.toLowerCase()]??Number(amount)
   const beforeUnit=new RegExp(`\\b(${amountPattern})\\s+and\\s+(?:a\\s+)?(half|quarter)\\s+(hours?|hrs?|minutes?|mins?)\\b`,'gi')
   const afterUnit=new RegExp(`\\b(${amountPattern})[\\s-]+(hours?|hrs?|minutes?|mins?)\\s+and\\s+(?:a\\s+)?(half|quarter)\\b`,'gi')
-  text=text.replace(beforeUnit,(_,amount,fraction,unit)=>`${quantity(amount)+words[fraction.toLowerCase()]} ${unit}`)
+  return text.replace(beforeUnit,(_,amount,fraction,unit)=>`${quantity(amount)+words[fraction.toLowerCase()]} ${unit}`)
     .replace(afterUnit,(_,amount,unit,fraction)=>`${quantity(amount)+words[fraction.toLowerCase()]} ${unit}`)
+}
+
+function requestedDurationMinutes(text:string){
+  const durations=new Set<number>()
+  const words=DURATION_WORDS
+  text=normalizedDurationText(text)
   // Unrecognized fractional grammar must not become a shorter appointment.
   if(/\b(?:and\s+(?:an?\s+)?(?:half|quarter)|(?:half|quarter)\s+of)\b/i.test(text))throw new Error('calendar_duration_unsupported')
-  for(const match of text.matchAll(/(?<![\w.-])(\d+(?:\.\d+)?|\.\d+|(?:half|quarter)(?:[ -]+an?)?|an?|one|two|three|four|five|six|seven|eight|nine|ten)[\s-]*(minutes?|mins?|hours?|hrs?)\b/gi)){
+  for(const match of text.matchAll(DURATION_RE)){
     const amount=match[1].toLowerCase().split(/[ -]/)[0]
     const minutes=(words[amount]??Number(amount))*(/^h/i.test(match[2])?60:1)
     if(!Number.isInteger(minutes)||minutes<15||minutes>180)throw new Error('calendar_duration_unsupported')

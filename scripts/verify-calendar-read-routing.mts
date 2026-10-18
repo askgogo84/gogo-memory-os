@@ -18,6 +18,8 @@ const heldReads=['Check my Google Calendar? Actually, do not check it.','Check m
 const neverReads=['Never read my Google Calendar','Please never check my Calendar.']
 const zonedReads=['Check my Google Calendar in UTC','Read my calendar in Asia/Kolkata','Show my calendar using Europe/London','Review my Calendar timezone is America/New_York','Read my Calendar tomorrow at 8 pm CET']
 const availabilityReads=['Show my calendar tomorrow and check if I am free',"Show my Calendar tomorrow and check whether I'm available",'Show my Calendar tomorrow and tell me when am I free','Show my Calendar tomorrow and check if I am free for 30 minutes','Show my Calendar tomorrow and check if I am free for one hour and a half','Show my Calendar tomorrow and check if I am free for 45 minutes in UTC']
+extraReads.push('Show my Calendar tomorrow and check if I am free for 30 minutes and get the weather')
+heldReads.push('Show my Calendar tomorrow and check if I am free for 30 minutes only after I approve')
 const failures:string[]=[]
 async function check(label:string,fn:()=>unknown){try{await fn();console.log('PASS '+label)}catch(error:any){failures.push(label+': '+error.message)}}
 const rejectIO=()=>{throw Error('Unexpected model/provider/action I/O')}
