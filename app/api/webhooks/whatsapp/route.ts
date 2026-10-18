@@ -1,8 +1,6 @@
 import { isSportsVenueRequest } from '@/lib/agent/appointment-research'
 import { unsupportedCapability } from '@/lib/bot/unsupported-capabilities'
 import { otpReply } from '@/lib/agent/provider-booking'
-import { claimBookingOtpRun, claimLoginCodeRun, findBookingAwaitingOtp, findLoginCodeRun, hasRecentBrowserRun, waitForLoginCodeRun } from '@/lib/agent/browser-command'
-import { triggerBookingOtpResume, triggerLoginCodeResume } from '@/lib/agent/approved-browser-worker'
 import { subscriptionReviewText } from '@/lib/agent/general-planner'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
@@ -348,49 +346,15 @@ async function handleWhatsAppPost(req: NextRequest) {
 
     const bodyText = String(formData.get('Body') || '').slice(0, 2000) // Security: cap input length.trim()
 
-    // ── Booking OTP ─────────────────────────────────────────────────
-    // A bare code while a booking is waiting for one goes straight to that booking, before any
-    // handler or model. The code is never saved to the conversation, never logged, and travels
-    // only to the browser run that types it in.
+    // Intercept secondary-authentication codes before any model or conversation write.
     const bookingCode = numMedia === 0 ? otpReply(bodyText) : null
     if (bookingCode) {
-      const otpRunId = await findBookingAwaitingOtp(resolvedUser.telegramId)
-      if (otpRunId && await claimBookingOtpRun(resolvedUser.telegramId, otpRunId)) {
-        const trigger = await triggerBookingOtpResume(otpRunId, bookingCode)
-        if (trigger !== 'dispatched') {
-          await supabaseAdmin.from('agent_runs').update({ status: 'paused', updated_at: new Date().toISOString() })
-            .eq('id', otpRunId).eq('telegram_id', String(resolvedUser.telegramId)).eq('status', 'running')
-        }
-        const reply = trigger === 'dispatched'
-          ? "Got the code. I'm entering it and continuing your booking. I'll message you here when it's at the payment step."
-          : "I couldn't pass the code on just now. Open the Take control link I sent and type the code there."
-        await saveConversation(resolvedUser.telegramId, 'user', '[booking code sent]')
-        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-        await sendWhatsAppMessage(from, reply)
-        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
-      }
-      // A sign-in code for a read waiting for it (Swiggy, Amazon…): same rules, never saved or logged.
-      const codeRunId = await findLoginCodeRun(resolvedUser.telegramId) || await waitForLoginCodeRun(resolvedUser.telegramId)
-      if (codeRunId && await claimLoginCodeRun(resolvedUser.telegramId, codeRunId)) {
-        const trigger = await triggerLoginCodeResume(codeRunId, bookingCode)
-        const reply = trigger === 'dispatched'
-          ? "Got the code. I'm signing in and checking that for you now. I'll message you here in a minute."
-          : "I couldn't pass the code on just now. Open the Take control link I sent and type the code there."
-        await saveConversation(resolvedUser.telegramId, 'user', '[sign-in code sent]')
-        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
-        await sendWhatsAppMessage(from, reply)
-        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
-      }
-      // A bare code with nothing waiting for it never reaches the chat model (12:52 it replied "Using that code to sign
-      // in now", which was not true). Say plainly that it was not used. Other numbers (a PIN code, an amount) carry on
-      // as usual when no browser task ran recently.
-      if (await hasRecentBrowserRun(resolvedUser.telegramId)) {
-      const notUsed = "I'm not waiting for a sign-in code right now, so I didn't use that one. If you asked me to check a site, ask again and send the new code when I say it was sent."
-      await saveConversation(resolvedUser.telegramId, 'user', '[code-like message not used]')
-      await saveConversation(resolvedUser.telegramId, 'assistant', notUsed)
-      await sendWhatsAppMessage(from, notUsed)
-      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
-      }
+      const {humanAuthTakeoverReply}=await import('@/lib/agent/browser-auth-notice')
+      const reply=await humanAuthTakeoverReply(resolvedUser.telegramId)
+      await saveConversation(resolvedUser.telegramId,'user','[authentication code withheld]')
+      await saveConversation(resolvedUser.telegramId,'assistant',reply)
+      await sendWhatsAppMessage(from,reply)
+      return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
     }
 
     // ── Interactive onboarding menu for new users ───────────────────
