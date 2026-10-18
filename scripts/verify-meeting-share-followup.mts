@@ -108,7 +108,7 @@ clock=Date.parse('2026-10-03T09:28:00Z')
 store.memories=[];store.conversations=[];store.reminders=[]
 const dashboard=ts.transpileModule(fs.readFileSync('app/api/dashboard/chat/route.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
 const exports:any={},noop=new Proxy({},{get:()=>async()=>null})
-const mocks:any={crypto,'next/server':{NextResponse:{json:(body:any)=>({body})}},'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/dashboard/session':{getSession:async()=>({telegramId:'101'})},'@/lib/agent/actor':{resolveAgentActor:async()=>actor},'@/lib/agent/meeting-share-followup':worker()}
+const mocks:any={crypto,'next/server':{NextResponse:{json:(body:any)=>({body})}},'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/dashboard/session':{getSession:async()=>({telegramId:'101'})},'@/lib/agent/actor':{resolveAgentActor:async()=>actor},'@/lib/agent/meeting-share-followup':worker(), '@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>false}}
 mocks['@/lib/bot/handlers/friend-reminders']={detectFriendReminder:()=>null,isFriendReminderFollowupCandidate:()=>false}
 vm.runInNewContext(dashboard,{exports,module:{exports},require:(n:string)=>mocks[n]||noop,URL,console})
 const response=await exports.POST({headers:{get:()=> 'https://app.askgogo.in'},nextUrl:{host:'app.askgogo.in'},json:async()=>({text:invitation.replace('Food Working','Dashboard Working')})})

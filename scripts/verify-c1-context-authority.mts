@@ -44,6 +44,7 @@ try{
  ]:[
   {id:'recorded-move',source:'life_event',summary:move,score:.95,confidence:.95,inferred:false,startAt:'2026-10-25T00:00:00Z',endAt:'2026-10-25T23:00:00Z'},
   {id:'recorded-old-flight',source:'travel_ticket',summary:old,score:.95,confidence:.95,inferred:false,startAt:'2026-10-13T04:00:00Z',endAt:'2026-10-13T12:00:00Z'},
+  {id:'semantic-old-flight',source:'semantic_memory',summary:old,score:.95,confidence:.95,inferred:false,startAt:'2026-10-18T00:00:00Z'},
  ],provenance:{lifeEvents:1,travelTickets:1,openLoops:0,semanticMemories:0,insights:0,typedContext:0}})
  const pm=load('lib/bot/process-message.ts',{
   './resolve-user':{resolveUser:async()=>({id:'synthetic-owner',telegramId:123,whatsappId:'fixture-owner',name:'Synthetic Owner'})},'./detect-intent':{detectIntent},'@/lib/agent/semantic-gate':{gateDetectedIntent:(intent:unknown)=>intent},

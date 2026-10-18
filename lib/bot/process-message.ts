@@ -1,4 +1,5 @@
 import { worldTimeReply } from './world-time'
+import { tryGetConnectionCapabilities } from '@/lib/agent/autonomy-status'
 import { executeReadOnlyCalendarStep } from '@/lib/agent/calendar-read'
 import { createImage, imageRequest, imageRequestRefusal } from '@/lib/services/image-reply'
 import { createPodcast, createVoiceNote, podcastRequest, wantsVoiceReply } from '@/lib/services/voice-reply'
@@ -416,6 +417,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   console.log('PIM:start', { channel: params.channel, externalUserId: params.externalUserId, text: params.text })
 
   const incomingText = (params.text || '').trim()
+  const connectionCapabilities=await tryGetConnectionCapabilities({actor:{legacyTelegramId:resolvedUser.telegramId},text:incomingText})
+  if(connectionCapabilities){
+    await saveConversation(resolvedUser.telegramId,'user',incomingText)
+    await saveConversation(resolvedUser.telegramId,'assistant',connectionCapabilities.text)
+    return{...connectionCapabilities,text:formatOutgoingText(params.channel,connectionCapabilities.text),resolvedUser}
+  }
   // Draft material can mention tomorrow, price or "remind me" without being
   // permission to execute those actions. Claim explicit workflows before routing.
   // Capabilities answered before any workflow can claim the turn (Muse parity, 11 Oct).
@@ -1141,7 +1148,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
 
   if (intent.type === 'morning_briefing') {
-    const reply = styleReplyByIntent('morning_briefing', await buildMorningBriefing(resolvedUser.telegramId, resolvedUser.name))
+    const reply = styleReplyByIntent('morning_briefing', await buildMorningBriefing(resolvedUser.telegramId, resolvedUser.name,{includeOpenLoops:/\bopen[ -]+loops?\b/i.test(incomingText)}))
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -1176,7 +1183,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const mode=/\bunread\b/i.test(incomingText)?'unread':'latest'
     let reply=''
     try{
-      reply=await buildGmailReadReply(resolvedUser.telegramId,mode,5,parseGmailReadFilter(incomingText),/\bsummar(?:y|ise|ize|ies)\b|\boverview\b|\bwhat(?:'s| is) in my inbox\b/i.test(incomingText))
+      reply=await buildGmailReadReply(resolvedUser.telegramId,mode,5,parseGmailReadFilter(incomingText),/\bsummar(?:y|ise|ize|ies)\b|\boverview\b|\bwhat(?:'s| is) in my inbox\b/i.test(incomingText),/^(?:what|which|anything|any)\b[\s\S]*\b(?:attention|actionable|urgent|important)\b/i.test(incomingText))
       if(/\bdraft\b/i.test(incomingText))reply+=`\n\nI can draft one reply at a time for you to approve. Say *draft a reply to <sender>*. Nothing was drafted or sent yet.`
     }catch(err:any){
       console.error('GMAIL_READ_HANDLER_FAILED:',err?.message||err)

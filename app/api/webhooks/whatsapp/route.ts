@@ -15,6 +15,7 @@ import { completeReminderOccurrence } from '@/lib/bot/handlers/reminder-completi
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
 import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
+import { isConnectionCapabilityQuery } from '@/lib/agent/autonomy-status'
 import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { auditInboundTwilioSignature } from '@/lib/security/webhook-signature'
@@ -1246,7 +1247,7 @@ _"${originalText}"_
     }
 
     // Connected-account questions are private state reads, never public web search.
-    const isConnectedAccountQuery=/^(?:which|what)\s+.*(?:gmail|google|email|calendar).*\bconnected\b.*(?:askgogo|gogo|me)?\??$/i.test(text.trim())
+    const isConnectedAccountQuery=isConnectionCapabilityQuery(text)||/^(?:which|what)\s+.*(?:gmail|google|email|calendar).*\bconnected\b.*(?:askgogo|gogo|me)?\??$/i.test(text.trim())
     if(isConnectedAccountQuery){
       const accountAgent=await tryRunWhatsAppAgent({user:resolvedUser,text,messageId:inboundMessageSid||null})
       if(accountAgent){

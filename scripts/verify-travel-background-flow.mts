@@ -225,6 +225,7 @@ const webMocks=Object.fromEntries(names.map(name=>[name,nullModule]))
 Object.assign(webMocks,{'next/server':{NextRequest,NextResponse},'crypto':{randomUUID:()=> 'fixture-web-turn'},
   '@/lib/agent/provider-booking':{otpReply},
   '@/lib/agent/recall-query':{isDecisionRecallQuery:()=>false},
+  '@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>false},
   '@/lib/services/link-vault':{isLinkVaultSaveRequest:()=>false,isLinkVaultQuery:()=>false},
   '@/lib/dashboard/session':{getSession:async()=>({telegramId:'42'})},'@/lib/supabase-admin':{supabaseAdmin:db},
   '@/lib/agent/actor':{resolveAgentActor:async()=>actor},'@/lib/agent/travel-research':travel,'@/lib/agent/travel-research-sanitize':sanitizer,

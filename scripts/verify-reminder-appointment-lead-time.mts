@@ -65,6 +65,7 @@ const noMatch = new Set([
   'isTranslationRequest', 'isFollowupReminderText', 'namesRetailerPriceRead',
 ])
 const actual: Record<string, any> = {
+  '@/lib/agent/autonomy-status':{tryGetConnectionCapabilities:async()=>null},
   '@/lib/agent/content-workflows': contentWorkflows,
   './handlers/reminders': reminders,
   './detect-intent': { detectIntent },

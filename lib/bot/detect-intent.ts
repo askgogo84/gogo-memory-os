@@ -115,6 +115,12 @@ const GMAIL_ASK_RE = /^(?:what|which|who|anything|any|do\s+i\s+have\s+(?:any|any
 export function isGmailReadRequest(lower: string): boolean {
   const t = lower.trim()
   return GMAIL_READ_VERB_RE.test(t) || GMAIL_ASK_RE.test(t)
+    || /^(?:what|which|anything|any)\b[^?]*\b(?:attention|action|urgent|important)\b[^?]*\bfrom\s+my\s+(?:gmail|e-?mails?|inbox)\b/.test(t)
+}
+
+function isDetailedBriefingReadRequest(text:string){
+  return /^(?:please\s+)?(?:give|show|prepare|generate|provide)\s+(?:me\s+)?(?:a|my|the)\s+(?:morning|daily)\s+briefing\b/i.test(text)
+    && !/(?:\b(?:and|then|also)\s+|[.;]\s*)(?:send|email|create|set|add|delete|change|book|pay|schedule)\b/i.test(text)
 }
 
 function isReferralIntent(lower: string) {
@@ -205,7 +211,7 @@ export function detectIntent(text: string): DetectedIntent {
 
   if (isBriefingSettingsIntent(lower)) return { type: 'set_briefing_time', confidence: 'high' }
 
-  if (lower === 'today' || lower === 'today summary' || lower === 'today briefing' || lower === 'what is today' || lower === 'morning briefing' || lower === 'daily briefing' || lower === 'good morning' || lower === 'brief me' || lower === "what's my day today" || lower === 'whats my day today' || lower === "what's my day" || lower === 'my day today' || lower === 'my briefing' || lower === 'my day') return { type: 'morning_briefing', confidence: 'high' }
+  if (isDetailedBriefingReadRequest(lower) || lower === 'today' || lower === 'today summary' || lower === 'today briefing' || lower === 'what is today' || lower === 'morning briefing' || lower === 'daily briefing' || lower === 'good morning' || lower === 'brief me' || lower === "what's my day today" || lower === 'whats my day today' || lower === "what's my day" || lower === 'my day today' || lower === 'my briefing' || lower === 'my day') return { type: 'morning_briefing', confidence: 'high' }
 
   if (lower.includes('connect my gmail') || lower.includes('connect to my gmail') || lower.includes('connect gmail') || lower.includes('connect to gmail') || lower.includes('link gmail') || lower.includes('gmail connect')) return { type: 'connect_gmail', confidence: 'high' }
 

@@ -89,6 +89,7 @@ const db = {from(table: string) {
 }}
 let draftResearchCalls = 0
 const pim = load('lib/bot/process-message.ts', {
+  '@/lib/agent/autonomy-status':{tryGetConnectionCapabilities:async()=>null},
   './unsupported-capabilities': {unsupportedCapability: () => null},
   '@/lib/services/voice-reply': {podcastRequest: () => null, wantsVoiceReply: () => false},
   '@/lib/services/image-reply': {imageRequest: () => null},
@@ -121,7 +122,7 @@ assert.equal(await entry.tryRunContentWorkflow(actor, 'remind Matthew tomorrow a
 
 // Execute actual authenticated dashboard and Agent route exports. Any upstream
 // specialist stealing a writing request throws through the strict fixture.
-const common = {'next/server': {NextResponse: {json: (body: any, options: any) => ({body, status: options?.status || 200})}},
+const common = {'@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>false,tryGetConnectionCapabilities:async()=>null},'next/server': {NextResponse: {json: (body: any, options: any) => ({body, status: options?.status || 200})}},
   '@/lib/agent/open-loops':{handleInboxReplyRead},
   '@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/actor': {resolveAgentActor: async () => actor},
   '@/lib/agent/content-workflow-entry': entry, crypto: {randomUUID}, 'node:crypto': {randomUUID}}
