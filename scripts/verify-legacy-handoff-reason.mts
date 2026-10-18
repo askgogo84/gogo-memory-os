@@ -103,4 +103,28 @@ await check('retired paused records do not receive instructions to resume closed
  rows[0].metadata_json.state='closed_stale';const activity=load(resolve(repo,'lib/dashboard/agent-activity.ts'));for(const run of [(await activity.getDashboardActivityRuns('123'))[0],await activity.getDashboardActivityRun('123','run-a')]){assert.equal(run.status,'closed');assert.equal(run.summary,legacy)}
  const response=await load(resolve(repo,'app/api/agent/snapshot/route.ts')).GET({});const body=await response.json();assert.equal(body.runs[0].status,'closed');assert.equal(body.runs[0].summary,legacy)
 })
+await check('snapshot and Activity do not offer unavailable controls on legacy failures',async()=>{
+ const activity=load(resolve(repo,'lib/dashboard/agent-activity.ts'))
+ for(const handoff of [undefined,{}, {providerUrl:'https://provider.example/'},{takeoverUrl:''}]){
+  for(const reason of ['login_unavailable','otp','unrecognised-step']){
+   rows[0].metadata_json={handoff};steps=[step(reason)]
+   const response=await load(resolve(repo,'app/api/agent/snapshot/route.ts')).GET({});const body=await response.json()
+   assert.equal(body.handoffs.length,0)
+   const list=(await activity.getDashboardActivityRuns('123'))[0],detail=await activity.getDashboardActivityRun('123','run-a')
+   const browser=activity.browserContextForRun(detail)
+   assert.equal(browser.takeoverAvailable,false);assert.equal(browser.deviceHandoff,false)
+   for(const summary of [body.runs[0].summary,list.summary,detail.summary,browser.summary]){
+    assert.doesNotMatch(summary,/Take control|then Resume|Resume this same task|send you a sign-in code/i)
+    assert.match(summary,reason==='login_unavailable'?/couldn.t sign in/i:reason==='otp'?/secondary authentication/i:/couldn.t verify/i)
+   }
+  }
+ }
+})
+await check('cloud and device handoffs retain guidance for their available controls',async()=>{
+ for(const device of [false,true]){
+  rows[0].metadata_json.handoff=device?{mode:'device',providerUrl:'https://provider.example/'}:structuredClone(base.metadata_json.handoff)
+  const card=(await read())[0];assert(card);assert.match(card.summary,/then Resume/)
+  assert.match(card.summary,device?/Open provider.*device/i:/Open Take control/i)
+ }
+})
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Actual legacy handoff reason projection: owner/run/tool provenance, uncertainty, minimal reads and no writes passed.')
