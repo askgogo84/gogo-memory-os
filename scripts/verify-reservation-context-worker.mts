@@ -22,7 +22,7 @@ const binding=buildApprovalBinding(boundInput())
 for(const altered of [{...payload,reservationLocation:'Changed city'},{...payload,diningContext:{...snapshot,until:'2026-12-18T10:00:00Z'}},{...payload,contextWindows:[]},{...payload,diningContext:{...snapshot,calendar:{...snapshot.calendar,windows:[]}}}]){
  assert.throws(()=>assertApprovalBinding(preparation.restaurantReservationApprovalInput({runId:'fixture-run',lifeEventId:'fixture-event',actionId:'fixture-action',...altered,providerUrl:altered.reservationUrl}),binding),/approval_action_changed/)
 }
-let freshInventory:any=inventory,freshCalendar:any=calendar,calendarRequested=false,lastCalendarCoverage:any,browserCalls=0,objective='',legacyMode=false,failTable=''
+let freshInventory:any=inventory,freshCalendar:any=calendar,calendarRequested=false,lastCalendarCoverage:any,browserCalls=0,objective='',legacyMode=false,failTable='',browserFailure=''
 const updates:Array<{table:string;value:any}>=[]
 const db={from(table:string){let writing=false;const q:any={select:()=>q,eq:(key:string,value:any)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},is:()=>q,in:()=>q,order:()=>q,limit:()=>q,
  update:(value:any)=>{writing=true;updates.push({table,value});return q},maybeSingle:async()=>({error:null,data:table==='life_event_actions'?{id:'fixture-action',payload_json:legacyMode?{...payload,diningContext:undefined}:payload}:table==='agent_runs'?{id:'fixture-run',metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:'fixture-event',life_event_action_id:'fixture-action'}}:table==='life_events'?{id:'fixture-event',title:'Synthetic Restaurant',timezone:'Asia/Kolkata',location:'Home city',metadata_json:{}}:table==='users'?{id:'fixture-user',telegram_id:123,whatsapp_id:'',name:'Synthetic Owner',timezone:'Asia/Kolkata'}:table==='agent_approvals'?{id:'fixture-approval',run_id:'fixture-run',status:'approved',...(legacyMode?buildApprovalBinding({...boundInput(),payload:{...boundInput().payload,diningContext:undefined,reservationLocation:undefined}}):binding)}:table==='agent_permissions'?{level:'ask'}:null}),
@@ -32,7 +32,7 @@ const actual=load('lib/agent/restaurant-reservation-worker.ts',{
  './context-brain':{buildContextPack:async(input:any)=>{assert.equal(input.actor.legacyTelegramId,123);calendarRequested=input.options.includeReservationCalendar===true;lastCalendarCoverage=input.options.reservationCalendarCoverage;if(freshInventory instanceof Error)throw freshInventory;return{reservationTravel:freshInventory,reservationCalendar:freshCalendar}}},
  './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},'./sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
  './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{}},
- './secure-computer':{runSecureBrowser:async(input:any)=>{browserCalls++;objective=input.objective;return{status:'completed',pageText:'No available slots',actions:[]}}}
+ './secure-computer':{runSecureBrowser:async(input:any)=>{if(browserFailure)throw new Error(browserFailure);browserCalls++;objective=input.objective;return{status:'completed',pageText:'No available slots',actions:[]}}}
 })
 const action={id:'fixture-action',telegram_id:'123',life_event_id:'fixture-event',payload_json:payload}
 const failures:string[]=[]
@@ -55,6 +55,11 @@ for(const fresh of [{...calendar,incomplete:true},{...calendar,windows:[]},{...c
  assert.ok(updates.some(row=>row.table==='agent_approvals'&&row.value.status==='expired'))
 }
 freshCalendar=calendar
+freshInventory=inventory;browserFailure='browser_objective_too_long';browserCalls=0;updates.length=0
+assert.equal((await actual.processOne(action)).status,'paused','A rejected oversized authority is a known pre-execution stop, not an unknown provider outcome')
+assert.equal(browserCalls,0)
+assert.ok(updates.some(row=>row.table==='agent_approvals'&&row.value.status==='expired'))
+browserFailure=''
 executionNow=fixed;freshInventory=inventory;browserCalls=0
 assert.equal((await actual.processOne(action)).status,'queued','A queued action cannot execute before its bound release time')
 assert.equal(browserCalls,0)
