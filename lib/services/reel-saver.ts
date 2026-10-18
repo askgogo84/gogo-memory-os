@@ -51,6 +51,9 @@ export function detectInstagramPreviewCard(text: string): boolean {
   // Match full and truncated platform names
   const hasFullUrl = /https?:\/\//i.test(t)
   if (hasFullUrl) return false // Let detectReelUrl handle it
+  // A user's imperative request is not a forwarded social preview card.
+  // Fail closed on preview detection so browser/research routing can handle it.
+  if (/^(?:please\s+)?(?:open|use|research|check|find|tell|summari[sz]e|look|search|browse|read|go\s+to|show|visit|inspect)\b/i.test(t)) return false
   return (
     /on instagr/i.test(t) ||   // catches "Instagram", "Instagra...", "Instagram:"
     /instagram\.com/i.test(t) ||
