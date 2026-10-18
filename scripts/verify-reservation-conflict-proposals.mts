@@ -22,7 +22,8 @@ runInNewContext(ts.transpileModule(readFileSync('lib/agent/restaurant-reservatio
  if(mode==='candidateRejected'&&contextReads.length>1)throw Error('synthetic failed context')
  const scope=input.options.reservationCalendarCoverage||coverage
  const c={...coverage,coveredFrom:scope.from||coverage.coveredFrom,coveredUntil:scope.until||coverage.coveredUntil}
- return{facts:[],reservationTravel:{...c,facts,incomplete:mode==='candidateIncomplete'&&contextReads.length>1},reservationCalendar:{...c,connected:mode!=='disconnected',windows:busy},reservationPreferences:{ownerId:'123',incomplete:mode==='candidatePreferences'&&contextReads.length>1,rules:[]}}
+ const freshFacts=contextReads.length>1&&mode==='returnTentative'?facts.map(f=>f===returning?{...f,inferred:true,confidence:.45}:f):contextReads.length>1&&mode==='returnDepartureChanged'?facts.map(f=>f===returning?{...f,startAt:'2026-10-03T00:00:00Z'}:f):facts
+ return{facts:[],reservationTravel:{...c,facts:freshFacts,incomplete:mode==='candidateIncomplete'&&contextReads.length>1},reservationCalendar:{...c,connected:mode!=='disconnected',windows:busy},reservationPreferences:{ownerId:'123',incomplete:mode==='candidatePreferences'&&contextReads.length>1,rules:[]}}
 }}:{},Date:Clock,Intl,console,URL,Map,Set})
 const request=(text='Book Naru Noodle Bar for 2 at the next available slot between 7 PM and 9 PM.')=>actual.tryRunRestaurantReservation({actor,surface:'dashboard',text})
 const failures:string[]=[]
@@ -65,6 +66,7 @@ await check('failed incomplete or preference-incomplete candidate reads never cl
 await check('Calendar busy time on a requested dining window pauses before staging authority',async()=>{
  facts=[];busy=[{startAt:'2026-10-04T13:30:00Z',endAt:'2026-10-04T15:30:00Z',sourceRefs:[{type:'calendar_event',id:'requested-busy'}]}]
  const r=await request('Book Naru Noodle Bar for 2 on 2026-10-04 between 7 PM and 9 PM.');assert.equal(r.status,'paused');assert.equal(writes.length,0);assert.match(r.text,/Calendar/)
+ assert.match(r.text,/different.*date|different.*time/i);assert.doesNotMatch(r.text,/clarify the traveller|scheduled owner return/i)
 })
 await check('distinct named travellers are not silently attributed to the owner',async()=>{
  facts=[{...away,participants:['Different Traveller']},{...returning,participants:['Different Traveller']}];assert.equal((await request()).status,'waiting_approval')
@@ -76,6 +78,11 @@ await check('unknown arrival disconnected Calendar or unverified return attribut
  for(const scenario of ['arrival','attribution','disconnected']){
   facts=scenario==='arrival'?[away,{...returning,endAt:null}]:scenario==='attribution'?[away,{...returning,participants:[]}]:[away,returning]
   mode=scenario==='disconnected'?'disconnected':'';writes=[];contextReads=[];const r=await request();assert.equal(r.status,'paused');assert.equal(writes.length,0);assert.doesNotMatch(r.text,/Provisional planning window/i)
+ }
+})
+await check('fresh return evidence must retain its source certainty and valid departure interval',async()=>{
+ for(const changed of ['returnTentative','returnDepartureChanged']){
+  mode=changed;contextReads=[];writes=[];const r=await request();assert.equal(r.status,'paused');assert.equal(writes.length,0);assert.doesNotMatch(r.text,/Provisional planning window/i,changed)
  }
 })
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Reservation conflict/provisional proposal controls passed; inert fixtures, not provider availability or full T12 acceptance.')
