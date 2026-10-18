@@ -79,7 +79,8 @@ async function failSafe(params:{action:any;event:any;runId:string;approvalId:str
     supabaseAdmin.from('life_events').update({lifecycle_state:'needs_attention',updated_at:now}).eq('id',params.event.id).eq('telegram_id',tg),
   ]
   if(params.expireApproval)updates.push(supabaseAdmin.from('agent_approvals').update({status:'expired',resolved_at:now,resolution_note:params.error}).eq('id',params.approvalId).eq('telegram_id',tg).eq('status','approved'))
-  await Promise.all(updates)
+  const results=await Promise.all(updates)
+  if(results.some(result=>result.error))throw new Error('restaurant_reservation_transition_failed')
 }
 
 export async function processOne(action:any,reconciledResult?:Awaited<ReturnType<typeof runSecureBrowser>>){
