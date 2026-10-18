@@ -12,6 +12,7 @@ import {handleInboxReplyRead} from '../lib/agent/open-loops'
 import * as accountIntent from '../lib/agent/external-account-intent'
 import * as nutritionText from '../lib/bot/nutrition-text'
 import * as semanticGate from '../lib/agent/semantic-gate'
+import * as calendarRead from '../lib/agent/calendar-read'
 
 // Fixed phone incident: Wed 7 Oct 2026, 12:37 IST.
 const RealDate = Date
@@ -33,6 +34,7 @@ runInNewContext(ts.transpileModule(readFileSync(new URL('../lib/bot/detect-inten
   if (name === '@/lib/bot/handlers/calendar-actions') return {CALENDAR_WORD_RE: /calendar/}
   if (name === '@/lib/bot/flight-codes') return {hasConcreteFlightCode: () => false}
   if (name === '@/lib/bot/nutrition-text') return nutritionText
+  if (name === '@/lib/agent/calendar-read') return calendarRead
   throw new Error(name)
 }})
 const {detectIntent} = intentModule

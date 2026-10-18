@@ -124,8 +124,15 @@ export function calendarReadClarificationReply(raw:string):string|null{
   const text=calendarReadRequestText(raw)
   if(!CALENDAR_READ_HEAD.test(text))return null
   for(const clause of text.replace(CALENDAR_READ_HEAD,'').split(/\b(?:and|then|also|but)\b|[.;!?]\s*/)){
-    if(/^\s*(?:please\s+)?(?:find|search|look\s+for|research|compare|check|read|review|show|list|display|summari[sz]e|get|tell\s+me|what|when|where|how|who|is|are)\b/.test(clause)&&
-      !calendarRequestsAvailability(clause)&&! /\b(?:calendar|calender|calandar|meetings?|appointments?|events?|reminders?|agenda|my schedule|my day)\b/.test(clause)){
+    const read=clause.match(/^\s*(?:please\s+)?(find|search(?:\s+for)?|look\s+for|research|compare|check|read|review|show(?:\s+me)?|list|display|summari[sz]e|get|tell\s+me|what|when|where|how|who|is|are)\b\s*(.*)$/)
+    if(!read)continue
+    const object=read[2]
+    // The requested object must be Calendar data. An incidental purpose such
+    // as "weather for my meeting" does not turn a forecast into a schedule read.
+    const calendarObject=/^(?:(?:me|all|of|my|the|your|any|upcoming|next|today's|tomorrow's|free|available|open|a|an|some)\s+)*(?:google\s+)?(?:calendar|calender|calandar|meetings?|appointments?|events?|reminders?|agenda|schedule|day|availability|slots?|time|gaps?)\b/.exec(object)
+    if(calendarObject&&isStandaloneCalendarReadRequest(`Show my Calendar ${object.slice(calendarObject[0].length)}`))continue
+    const appointmentDiscovery=/^(?:find|search(?:\s+for)?|look\s+for)$/.test(read[1])&&/^(?:(?:a|an|my|the|new|available|next)\s+)?(?:(?!(?:for|about|during|with)\b)[\p{L}'-]+\s+){0,5}(?:appointments?|consultations?)\b/u.test(object)
+    if(!appointmentDiscovery){
       return "Your request includes a Calendar read and another task. Please ask for each separately so I can check both topics. I haven't read your Calendar or acted on the other task."
     }
   }
