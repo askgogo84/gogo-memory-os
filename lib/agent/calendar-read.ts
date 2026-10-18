@@ -82,7 +82,22 @@ export function requestedCalendarDays(text:string){
   return {today:/\btoday\b/i.test(requested),tomorrow:/\btomorrow\b/i.test(requested)}
 }
 
+const MONTHS=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec']
+const MONTH_RE='(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)'
+/** 18 Oct live: the planner writes "Read calendar for 18–24 October 2026"; month-name dates threw
+ * calendar_date_unsupported and every week plan failed. Spelled-out dates WITH a year become ISO dates here;
+ * a date without a year ("20 October") stays unsupported, as verify-calendar-presentation requires. */
+export function monthNameDatesToIso(text:string,defaultYear:number){
+  const iso=(y:number,mon:string,d:number)=>`${y}-${String(MONTHS.indexOf(mon.slice(0,3).toLowerCase())+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+  const yr=(y?:string)=>y?Number(y):defaultYear
+  return String(text||'')
+    .replace(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:-|–|to|until|till)\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s+${MONTH_RE}\\b,?\\s+(20\\d{2})\\b`,'gi'),(_,a,b,m,y)=>`${iso(yr(y),m,Number(a))} to ${iso(yr(y),m,Number(b))}`)
+    .replace(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?${MONTH_RE}\\b,?\\s+(20\\d{2})\\b`,'gi'),(_,d,m,y)=>iso(yr(y),m,Number(d)))
+    .replace(new RegExp(`\\b${MONTH_RE}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(20\\d{2})\\b`,'gi'),(_,m,d,y)=>iso(yr(y),m,Number(d)))
+}
+
 export function calendarReadWindow(text:string,now:Date,tz:string){
+  text=monthNameDatesToIso(text,Number(localYmd(now,tz).slice(0,4)))
   text=calendarRangeText(text)
   const explicit=explicitIsoDates(text)
   if(explicit.length>2||(explicit.length===2&&explicit[1]<explicit[0]))throw new Error('calendar_date_ambiguous')
