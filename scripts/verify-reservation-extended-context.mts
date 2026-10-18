@@ -71,7 +71,7 @@ await check('malformed and one-way active intent cannot certify complete travel 
  missions=[mission]
 })
 await check('other-owner and terminal missions do not enter the active owner restrictions',async()=>{
- missions=[{...mission,telegram_id:'456',id:'other-owner'},{...mission,status:'cancelled',id:'terminal'},{...mission,status:'failed',id:'failed'}]
+ missions=[{...mission,telegram_id:'456',id:'other-owner'},{...mission,status:'cancelled',id:'terminal'},{...mission,status:'stopped',id:'stopped'}]
  const pack=await read();assert.ok(reads.includes('agent_runs'));assert.equal(pack.reservationTravel.facts.some((f:any)=>f.source==='travel_mission'),false)
  missions=[mission]
 })
@@ -100,9 +100,15 @@ await check('later one-way intent does not fabricate uncertainty for an earlier 
 })
 await check('completed research with future dates stays tentative while finished past travel is excluded',async()=>{
  // Canonical source audit: job completion is not completion of the dated trip.
- missions=[{...mission,id:'finished-search',status:'completed'},{...mission,id:'old-search',status:'completed',metadata_json:{context:{...mission.metadata_json.context,startDate:'2026-09-01',returnDate:'2026-09-05'}}}]
+ missions=[{...mission,id:'finished-search',status:'completed'},{...mission,id:'old-search',status:'completed',metadata_json:{context:{...mission.metadata_json.context,startDate:'2026-09-01',returnDate:'2026-09-05'}}},{...mission,id:'undated-old-job',status:'completed',metadata_json:{}}]
  const pack=await read();assert.ok(pack.reservationTravel.facts.some((f:any)=>f.id==='travel-mission:finished-search'&&f.inferred===true))
  assert.equal(pack.reservationTravel.facts.some((f:any)=>f.id==='travel-mission:old-search'),false)
+ assert.equal(pack.reservationTravel.incomplete,false,'an undated old terminal job is not evidence of an active unknown trip')
+})
+await check('failed future research is unresolved intent, never cancellation or a successful booking',async()=>{
+ missions=[{...mission,id:'failed-search',status:'failed'}]
+ const pack=await read();const fact=pack.reservationTravel.facts.find((f:any)=>f.id==='travel-mission:failed-search')
+ assert.ok(fact,'a failed search is not revocation of its dated future travel intent');assert.equal(fact.inferred,true);assert.match(fact.summary,/failed/);assert.match(fact.summary,/not.*verified/)
 })
 await check('minimal structured flight booking intent is read without traveller or objective fields',async()=>{
  missions=[{id:'flight-booking',telegram_id:'123',type:'secure_browser',status:'paused',metadata_json:{objective:'PRIVATE OBJECTIVE',flight_booking:{route:'BLR-JFK',depart:'2026-10-21',return:'2026-10-24',travellers:2,private_dob:'PRIVATE DOB'}}},{id:'unrelated-browser',telegram_id:'123',type:'secure_browser',status:'paused',metadata_json:{objective:'PRIVATE UNRELATED'}}]
