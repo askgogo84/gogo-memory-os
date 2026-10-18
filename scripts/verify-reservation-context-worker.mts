@@ -6,7 +6,8 @@ import {buildApprovalBinding,assertApprovalBinding} from '../lib/agent/approval-
 import * as dining from '../lib/agent/reservation-dining-context'
 
 const fixed=Date.parse('2026-10-18T10:00:00Z')
-class FixtureDate extends Date {constructor(value?:any){super(value===undefined?fixed:value)}static now(){return fixed}}
+let executionNow=Date.parse('2026-10-19T14:31:00Z')
+class FixtureDate extends Date {constructor(value?:any){super(value===undefined?executionNow:value)}static now(){return executionNow}}
 function load(file:string,deps:Record<string,unknown>){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:(name:string)=>deps[name]||{},Date:FixtureDate,Intl,console,URL,Set,Map});return exports}
 const preparation=load('lib/agent/restaurant-reservation.ts',{})
 const actor={legacyTelegramId:123,userId:'fixture-user',name:'Synthetic Owner'}
@@ -43,6 +44,10 @@ for(const [label,fresh]of [['unchanged',inventory],['new travel',{...inventory,f
  }catch(error){failures.push(label+': '+(error instanceof Error?error.message:String(error)))}
 }
 assert.deepEqual(failures,[],'Fresh context may not silently change or remove approved restrictions')
+executionNow=fixed;freshInventory=inventory;browserCalls=0
+assert.equal((await actual.processOne(action)).status,'queued','A queued action cannot execute before its bound release time')
+assert.equal(browserCalls,0)
+executionNow=Date.parse('2026-10-19T14:31:00Z')
 legacyMode=true;updates.length=0
 const legacyPreparation=load('lib/agent/restaurant-reservation.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining})
 const legacy=await legacyPreparation.armApprovedRestaurantReservation({actor,runId:'fixture-run'})
