@@ -143,6 +143,8 @@ export function isUncertainOrNegatedCompletion(text:string){
   if(/\b(?:isn't|is not|wasn't|was not|weren't|were not|aren't|are not|never|cannot|can't|won't|will not|not sure|unsure|uncertain|perhaps|maybe|possibly|probably)\b/i.test(raw))return true
   if(/\bnot\s+(?:(?:been|yet|fully|actually|really|successfully|completely|ever)\s+)*(?:sent|shared|replied|responded|confirmed|approved|reviewed|delivered|updated|called|received|completed|finished|resolved|submitted|signed|arrived)\b/i.test(raw))return true
   if(/\b(?:may|might|could|would|should|will)\s+(?:(?:already|still|yet|not|possibly|probably)\s+)*(?:have|be|send|share|reply|respond|confirm|approve|review|deliver|update|call|receive|complete|finish|resolve|submit|sign|get|arrive)\b/i.test(raw))return true
+  if(/(?:^|[.!?;])\s*no\s+\w|\b(?:received|delivered|sent|got)\s+no\b/i.test(raw))return true
+  if(/\b(?:i think|i believe|i suspect|it seems|it looks like|apparently)\b/i.test(raw))return true
   return false
 }
 
