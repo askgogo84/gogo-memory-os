@@ -46,5 +46,20 @@ for(const kind of ['transparent','declined'])await check(kind+' event does not i
  assert.match((await plan('2026-10-18T15:00:00+05:30')).reply,/Longest free stretch: 3:00 PM/)
 })
 await check('complete genuinely empty day still permits a verified free stretch',async()=>{providerEvents=[];assert.match((await plan('2026-10-18T15:00:00+05:30')).reply,/Longest free stretch: 3:00 PM/)})
+await check('malformed start stays visible as uncertain without hiding healthy events',async()=>{
+ providerEvents=[{...event(),start:{dateTime:'not-a-time'}},{...event(),id:'healthy',summary:'Synthetic healthy event'}]
+ const {reply}=await plan('2026-10-18T15:00:00+05:30');assert.match(reply,/Synthetic healthy event/);assert.match(reply,/Synthetic afternoon appointment/);assert.match(reply,/unverified/);assert.doesNotMatch(reply,/Longest free stretch/)
+})
+for(const kind of ['transparent','declined'])await check(kind+' future event does not shorten the actual free window',async()=>{
+ providerEvents=[{...event(),...(kind==='transparent'?{transparency:'transparent'}:{attendees:[{self:true,responseStatus:'declined'}]})}]
+ assert.match((await plan('2026-10-18T13:00:00+05:30')).reply,/Longest free stretch: 1:00 PM/)
+})
+await check('all-day exclusive end prevents yesterday from blocking today',async()=>{
+ providerEvents=[{id:'past-day',summary:'Synthetic past all-day event',start:{date:'2026-10-17'},end:{date:'2026-10-18'}}]
+ const {reply}=await plan('2026-10-18T15:00:00+05:30');assert.doesNotMatch(reply,/Synthetic past all-day event/);assert.match(reply,/Longest free stretch: 3:00 PM/)
+})
+await check('offset-free timing cannot establish a free stretch',async()=>{
+ providerEvents=[event('2026-10-18T14:00:00','2026-10-18T18:00:00')];assert.doesNotMatch((await plan('2026-10-18T15:00:00+05:30')).reply,/Longest free stretch/)
+})
 assert.deepEqual(failures,[],'Calendar intervals must come from provider evidence, never an invented thirty-minute duration')
 console.log('Actual dashboard Calendar projection and day-plan duration/unknown/all-day/overlap controls passed; synthetic read-only fixtures.')
