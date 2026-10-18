@@ -1,3 +1,4 @@
+import * as productIdentity from '../lib/commerce/product-identity'
 import { sanitizeBrowserReadDiagnostics } from '../lib/agent/browser-read-diagnostics'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
@@ -225,6 +226,7 @@ let plannerReply:string|null=null
 const exports:any={}
 runInNewContext(ts.transpileModule(source+'\nexport {planActions,BROWSER_SCRIPT}; export function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+  if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-page-readiness')return {BROWSER_PAGE_READINESS}
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
     if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>redactLinkFixture?redactBrowserSensitiveText(s):s}
@@ -485,6 +487,7 @@ const airportExports:any={},airportWaves:any[]=[]
 const suggestionText='Bengaluru BLR � Kempegowda International Airport'
 runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:airportExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+  if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
   if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
@@ -518,6 +521,7 @@ assert.equal(airportResult.summary,suggestionText)
  const detail={url:'https://fixture.example/product/sony',text:'Sony WH-1000XM5 headphones. Fixture price INR 1.',title:'Sony',controls:[],forms:[],links:[],actions:[]}
  runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
   exports:flow,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+  if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
    if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
    if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
@@ -580,6 +584,7 @@ let assessmentEvidence=['Sony WH-1000XM5 headphones Black','Price, product page 
 const resultExports:any={}
 runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:resultExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+  if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
   if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
@@ -623,6 +628,7 @@ const recoveryPage={url:'https://www.google.com/travel/flights',title:'Flight se
 ]}
 runInNewContext(ts.transpileModule(source+'\nexport {recoverGoogleFlightSearch}; export function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:recoveryExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+  if(id==='../commerce/product-identity')return productIdentity
   if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
   if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
   if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
@@ -668,6 +674,7 @@ async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight
     actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:scenario==='google-flight-skipped'||steps===1&&scenario==='blocked-control'?'skipped':'done',failure:scenario==='google-flight-skipped'?{reason:guardContext===undefined?'control_unavailable':'consequential_control',guardContext,guardNameShape:guardContext===undefined?undefined:'bare_passenger',matches:0,rendered:0,token:'private',selector:'#private'}:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
   runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
     exports:exported,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,Date:timed?Clock:Date,require:(id:string)=>{
+  if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
       if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
       if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
@@ -758,6 +765,7 @@ const sourceChecks:any={}
 let flightAssessment=false
 runInNewContext(ts.transpileModule(source+'\nexport {browserSourceUrl, productLinkNeedsDetail, assessReadOutcome}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:sourceChecks,process:{env:{}},URL,console,require:(id:string)=>{
+  if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText}
   if(id==='./browser-evidence')return browserEvidence
@@ -835,6 +843,7 @@ let repairMode:'valid'|'invented'|'incomplete'='valid'
 const recoveryChecks:any={}
 runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:recoveryChecks,process:{env:{}},URL,console,require:(id:string)=>{
+  if(id==='../commerce/product-identity')return productIdentity
   if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText}
   if(id==='./browser-evidence')return browserEvidence
@@ -877,6 +886,7 @@ const reuseDb={from:(table:string)=>{
 const reuseCommand:any={}
 runInNewContext(ts.transpileModule(readFileSync('lib/agent/browser-command.ts','utf8')+'\nexport {findActiveBrowserRead}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
  exports:reuseCommand,process:{env:{}},URL,Date,console,require:(id:string)=>{
+  if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='@/lib/supabase-admin')return {supabaseAdmin:reuseDb}
   if(id==='@/lib/bot/memory-redaction')return {redactSecretShapedText:(s:string)=>s}

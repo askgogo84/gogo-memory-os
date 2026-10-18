@@ -1,3 +1,4 @@
+import {productIdentityText,productIdentityMatches} from './product-identity'
 export const COMPARISON_PROVIDERS = {
   amazon: {label: 'Amazon India', url: 'https://www.amazon.in/', domain: 'amazon.in'},
   flipkart: {label: 'Flipkart', url: 'https://www.flipkart.com/', domain: 'flipkart.com'},
@@ -150,23 +151,14 @@ export function comparisonSource(provider: ComparisonProvider, value: unknown) {
 /** 16 Oct live: "iPhone 16" matched "Apple iPhone 16e" because "16" sits inside "16e". Every requested token must
  *  end where a word ends in the label ("xm5" still fits "WH-1000XM5"), in the requested order. */
 export function tokensEndWords(label: string, tokens: string[]) {
-  const text = String(label || '').replace(/(\d+)\s+(GB|TB)\b/gi, '$1$2')
-  let cursor = 0
-  for (const token of tokens) {
-    const re = new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![a-z0-9])', 'gi')
-    re.lastIndex = cursor
-    const hit = re.exec(text)
-    if (!hit) return false
-    cursor = hit.index + hit[0].length
-  }
-  return true
+  return productIdentityMatches(tokens.join(' '),label)
 }
 
 /** Discovery selects the requested product, never the first retailer URL. No
  * snippet price is evidence; this only chooses where the browser starts. */
 export function comparisonProductLead(provider: ComparisonProvider, subject: string, leads: Array<{url: string; title?: string}>) {
   const compact = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, '')
-  const tokens = subject.replace(/(\d+)\s+(GB|TB)\b/gi, '$1$2').match(/[a-z0-9]+/gi) || []
+  const tokens = productIdentityText(subject,true).match(/[a-z0-9]+/gi) || []
   if (!namesProduct(tokens)) return null
   const accessory = /\b(?:screen\s*(?:guard|protector)|case|cover|skin|cable|adapter|replacement|ear\s*pads?)\b/i
   const matches = (label: string) => {
@@ -179,13 +171,13 @@ export function comparisonProductLead(provider: ComparisonProvider, subject: str
     if (!capacity && /\biPhone\b/i.test(subject) && /\b(?:256|512)\s*GB\b|\b[12]\s*TB\b/i.test(label)) return false
     if (tokens.length === 1 && !label.toLowerCase().includes(tokens[0].toLowerCase())) return false
     let cursor = 0
-    const identity = compact(label)
+    const identity = compact(productIdentityText(label))
     for (const token of tokens) {
       const position = identity.indexOf(compact(token), cursor)
       if (position < 0) return false
       cursor = position + compact(token).length
     }
-    return tokensEndWords(label, tokens)
+    return productIdentityMatches(subject,label)
   }
   for (const lead of leads) {
     const url = comparisonSource(provider, lead.url)
@@ -200,7 +192,10 @@ export function comparisonProductLead(provider: ComparisonProvider, subject: str
 
 // A completed browser run alone is insufficient: require its owned completed
 // step and observed source. Failed/paused runs never expose stale numeric claims.
-export function providerObservation(provider: ComparisonProvider, child: any, step: any): ProviderObservation {
+export function comparisonEvidenceMatchesSubject(subject:string,evidence:string):boolean{
+  return productIdentityMatches(subject,evidence)
+}
+export function providerObservation(provider: ComparisonProvider, child: any, step: any, subject?:string): ProviderObservation {
   const base = {provider, runId: child.id, checkedAt: child.updated_at}
   if (child.status === 'completed' && step?.status === 'completed') {
     const sourceUrl = comparisonSource(provider, step.output_json?.sourceUrl)
@@ -208,7 +203,7 @@ export function providerObservation(provider: ComparisonProvider, child: any, st
     // A completed browser task with a product URL but no visible item price is
     // still an incomplete comparison, never an observed retailer quote.
     const hasPrice = /(?:\u20b9\s*[\d,]+(?:\.\d{1,2})?|\b(?:INR|Rs\.?)\s*[\d,]+(?:\.\d{1,2})?)/i.test(evidence)
-    if (sourceUrl && evidence && hasPrice) return {...base, status: 'observed', sourceUrl, evidence: evidence.slice(0, 1800)}
+    if (sourceUrl && evidence && hasPrice&&(!subject||comparisonEvidenceMatchesSubject(subject,evidence))) return {...base, status: 'observed', sourceUrl, evidence: evidence.slice(0, 1800)}
     return {...base, status: 'failed', reason: 'couldn’t find this exact item with a price on its product page.'}
   }
   const reason = String(child.error || '')
@@ -249,16 +244,16 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
   const evidence = String(row.evidence || '')
   const heading = evidence.split('\n')[0].trim()
   const compact = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, '')
-  const requested = subject.replace(/(\d+)\s+(GB|TB)\b/gi, '$1$2').match(/[a-z0-9]+/gi) || []
+  const requested = productIdentityText(subject,true).match(/[a-z0-9]+/gi) || []
   let cursor = 0
-  const identity = compact(heading)
+  const identity = compact(productIdentityText(heading))
   for (const token of requested) {
     const position = identity.indexOf(compact(token), cursor)
     if (position < 0) return null
     cursor = position + compact(token).length
   }
   if (!namesProduct(requested) || heading.length > 220) return null
-  if (!tokensEndWords(heading, requested)) return null
+  if (!productIdentityMatches(subject,heading)) return null
   // One model code must appear as written: "xm5" is in "WH-1000XM5" but not in the camera "X-M5".
   if (requested.length === 1 && !heading.toLowerCase().includes(requested[0].toLowerCase())) return null
   // A different phone tier is not the requested variant, even if all base words match.

@@ -91,7 +91,9 @@ export function parseTravellers(text: string, now = new Date()): { travellers: T
     const date = new Date(Date.UTC(year, (month || 1) - 1, day))
     const valid = month >= 1 && month <= 12 && date.getUTCDate() === day && date.getUTCMonth() === month - 1 && year >= 1900 && date.getTime() < now.getTime()
     if (!valid) { problems.push(`“${dm[0]}” is not a valid date of birth`); continue }
-    const name = chunk.replace(dm[0], ' ').replace(/\b(?:dob|d\.o\.b|date of birth|born(?: on)?|name|passenger|traveller|traveler|adult)\b\s*[:\-]?/gi, ' ')
+    const name = chunk.replace(dm[0], ' ')
+      .replace(/\b(?:dob|d\.o\.b|date of birth|born(?: on)?)\b\s*[:\-]?\s*$/i,' ')
+      .replace(/^\s*(?:name|passenger|traveller|traveler|adult)(?:\s+\d+)?\s*[:\-]\s*/i,' ')
       .replace(/[,:()\-]+/g, ' ').replace(/\s+/g, ' ').trim()
     if (!/^[A-Za-z][A-Za-z .'-]{1,78}$/.test(name) || name.split(' ').filter(Boolean).length < 2) { problems.push(`“${name.slice(0, 40) || chunk.slice(0, 40)}” needs a first and last name as on the passport`); continue }
     travellers.push({ name: name.replace(/\b([a-z])/g, c => c.toUpperCase()), dob: `${day} ${MONTH_NAMES[month - 1]} ${year}` })

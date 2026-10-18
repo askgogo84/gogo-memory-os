@@ -82,6 +82,7 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
     .select('id,type,condition_json,last_state_json,cadence_minutes,last_checked_at,next_check_at,active,created_at,updated_at')
     .eq('telegram_id',tg)
     .eq('active',true)
+    .neq('type','goal_review')
     .order('created_at',{ascending:false})
     .limit(12)
   if(error)throw new Error(`watcher_status_read_failed:${error.message}`)
@@ -126,7 +127,7 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
   }
   const formatWatcher=(row:any,index:number)=>{
     const condition:any=row.condition_json||{}
-    let label=String(condition.title||row.type||'Watch')
+    let label=String(condition.title||row.type||'Watch').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi,'$1')
     if(row.type==='web_page') label=`${label} — ${condition.watch==='title'?'page title':'page content'}`
     else if(row.type==='web_search') label=`${label} — web search`
     else if(row.type==='product_stock') label=`${label} — ${condition.variant||'stock'}`
@@ -558,7 +559,7 @@ async function finalizePriceWatch(params:{actor:AgentActor;surface:AgentSurface}
     }
   }
   const storageNA=p.storageNA||!p.storage
-  const storageToken=(!storageNA&&p.storage)?` ${p.storage}`:''
+  const storageToken=(!storageNA&&p.storage&&!p.product.replace(/\s+/g,'').toUpperCase().includes(p.storage.replace(/\s+/g,'').toUpperCase()))?` ${p.storage}`:''
   const basisPhrase=offers==='included'?'including bank/card offers':'excluding bank/card offers'
   const synthetic=`watch the web for ${p.product}${storageToken} price in India below ${p.threshold} ${basisPhrase}`
   const created=await tryCreateWebWatchFromCommand({actor:params.actor,surface:params.surface,text:synthetic})

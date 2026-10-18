@@ -38,7 +38,7 @@ export async function readPriceComparison(owner: string, id: string): Promise<Pr
     const {data: step, error: stepError} = await supabaseAdmin.from('agent_steps').select('status,output_json')
       .eq('run_id', child.id).eq('telegram_id', owner).eq('tool_name', 'secure_browser').limit(1).maybeSingle()
     if (stepError) throw new Error('comparison_evidence_read_failed')
-    rows.push({...providerObservation(row.provider, child, step), startUrl: row.startUrl, ...(row.attempts ? {attempts: row.attempts} : {}), ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})})
+    rows.push({...providerObservation(row.provider, child, step,task.metadata_json.subject), startUrl: row.startUrl, ...(row.attempts ? {attempts: row.attempts} : {}), ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})})
   }
   task.metadata_json = {...task.metadata_json, providers: rows}
   task.status = comparisonState(rows)

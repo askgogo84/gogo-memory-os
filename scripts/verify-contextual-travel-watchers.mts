@@ -43,9 +43,9 @@ assert.match(compiler,/destination_weather/)
 assert.match(compiler,/travel_email/)
 assert.match(compiler,/72\*3600_000/,'contextual travel monitoring must have a bounded post-arrival expiry')
 // Destination weather follows the destination STAY, not the outbound leg's completion:
-// a one-way booking extends to a stay horizon instead of ending 72h after arrival.
+// A one-way booking has no verified stay end, so it keeps the bounded source horizon.
 assert.match(compiler,/destinationStayExpiry/,'destination weather must derive its own stay-based expiry')
-assert.match(compiler,/7\*24\*3600_000/,'one-way destination weather must extend to a stay horizon, not just 72h')
+assert.doesNotMatch(compiler,/7\*24\*3600_000/,'a one-way booking must not extend weather a week beyond arrival')
 assert.match(compiler,/function awayStay/,'destination must be the longest-stay city, not the final (home) arrival on a round trip')
 assert.match(compiler,/city===originCity/,'away-stay must exclude the itinerary origin so a round trip does not pick the home arrival as destination')
 assert.match(compiler,/legDates/,'the flight-status query must carry every leg date so later legs verify')

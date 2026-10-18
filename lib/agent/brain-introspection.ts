@@ -23,7 +23,7 @@ export function formatBrainIntrospection(rows:any[],limit=250){
     '',
     '*Learned handler evidence:*',
     ...(!report.patterns.length?['Insufficient learning evidence in this sample.']:report.patterns.slice(0,8).map(p=>
-      `• ${p.handler}: ${p.verifiedCompletions} verified; ${p.corrections+p.failures} negative; ${p.calibrationSamples} identified samples; calibrated confidence ${p.calibrationSamples<p.minimumSamples?'insufficient evidence':percent(p.confidence)}`)),
+      `• ${p.handler} (${p.domain}): ${p.verifiedCompletions} verified; ${p.corrections+p.failures} negative; ${p.calibrationSamples} identified samples; calibrated confidence ${p.calibrationSamples<p.minimumSamples?'insufficient evidence':percent(p.confidence)}`)),
     '',
     `Guarded-live decisions observed: ${report.routing.allowedHints}`,
     `Shadow-only decisions observed: ${report.routing.shadowOnlyHints}`,

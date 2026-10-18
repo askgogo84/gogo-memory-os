@@ -16,6 +16,7 @@ type TravelRow={
   arrive_at?:string|null
   airline?:string|null
   flight_no?:string|null
+  passengers?:string[]|null
   raw?:any
 }
 
@@ -95,22 +96,32 @@ function awayStay(rows:TravelRow[]):{city:string;arriveMs:number;endMs:number}|n
   return best?{city:best.city,arriveMs:best.arriveMs,endMs:best.endMs}:null
 }
 // Destination weather tracks the STAY, not the outbound leg. Bounded by the return
-// departure when known; a one-way (open-ended) stay extends to a reasonable horizon
-// instead of ending 72h after arrival.
+// departure when known; a one-way stay keeps the bounded source horizon.
 export function flightStatusExpiry(rows:TravelRow[],fallbackExpiresAt:string){
   const times=rows.map(row=>Date.parse(String(row.arrive_at||row.depart_at||''))).filter(Number.isFinite)
   if(!times.length)return fallbackExpiresAt
   const end=new Date(Math.max(...times)+6*3600_000).toISOString()
   return Date.parse(end)<Date.parse(fallbackExpiresAt)?end:fallbackExpiresAt
 }
-function destinationStayExpiry(rows:TravelRow[],fallbackExpiresAt:string){
+export function destinationStayExpiry(rows:TravelRow[],fallbackExpiresAt:string){
   const stay=awayStay(rows)
   if(!stay)return fallbackExpiresAt
   if(Number.isFinite(stay.endMs))return new Date(stay.endMs+24*3600_000).toISOString()
-  const oneWayStay=new Date(stay.arriveMs+7*24*3600_000).toISOString()
-  return Date.parse(oneWayStay)>Date.parse(fallbackExpiresAt)?oneWayStay:fallbackExpiresAt
+  return fallbackExpiresAt
 }
-function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
+export function declaredHomeCity(memories:Array<{content?:string}>){
+  for(const memory of memories){
+    const city=String(memory.content||'').match(/^(?:my\s+home\s+city\s+is|home\s+city\s*:|i\s+live\s+in|i\s+am\s+based\s+in)\s+([^\n.;]{2,80})/i)?.[1]?.trim()
+    if(city)return city
+  }
+  return ''
+}
+function sameCity(a:string,b:string){
+  const normalize=(value:string)=>value.toLowerCase().replace(/\bbangalore\b/g,'bengaluru').replace(/[^a-z]+/g,' ').trim()
+  const city=normalize(a),home=normalize(b)
+  return Boolean(city&&home&&(city===home||` ${home} `.includes(` ${city} `)))
+}
+export function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string,homeCity=''){
   const first=rows[0],last=rows[rows.length-1]
   const flights=flightLabel(rows)
   const route=routeLabel(rows)
@@ -170,18 +181,19 @@ function desiredWebConditions(rows:TravelRow[],root:string,expiresAt:string){
         ...base('connection_ground','Watch for high-signal airport/connection or arrival ground-transit disruption tied to this itinerary.'),
       },
     },
-    {
+    ...(!sameCity(destination,homeCity)?[{
       type:'web_search',
       condition:{
         title:`Trip weather · ${destination}`,
-        query:`${destination} weather travel conditions ${destinationDate}`,
+        query:`${destination} weather travel conditions ${Date.parse(stayArriveIso)>Date.now()?destinationDate:dateLabel(new Date().toISOString(),ticketTimezone(destination))}`,
+        weatherStartAt:stayArriveIso,weatherTimezone:ticketTimezone(destination)||'UTC',
         triggerKeywords:['weather warning','storm','heavy rain','snow','flood','extreme heat','severe weather','travel advisory'],
         delivery:'both',cadenceMinutes:360,burstUntil:null,
         // Weather follows the destination stay, not the outbound leg's completion.
         ...base('destination_weather','Watch destination weather only for conditions likely to affect this saved trip.'),
         expiresAt:destinationStayExpiry(rows,expiresAt),
       },
-    },
+    }]:[]),
     ...(airline?[{
       type:'web_search' as const,
       condition:{
@@ -232,10 +244,15 @@ async function upsertContextWatcher(params:{telegramId:string;type:'web_search'|
   return {id:String(data.id),active:true,stopped:false,created:true}
 }
 
+function nearestRetainedTrip(rows:TravelRow[],now:number){
+  return rows.find(row=>Date.parse(row.depart_at)>=now-6*3600_000)
+    || rows.slice().sort((a,b)=>Date.parse(String(b.arrive_at||b.depart_at))-Date.parse(String(a.arrive_at||a.depart_at)))
+      .find(row=>Date.parse(String(row.arrive_at||row.depart_at))>=now-72*3600_000)
+}
 async function compileForUser(telegramId:string,rows:TravelRow[]){
   const now=Date.now()
   const sorted=rows.slice().sort((a,b)=>Date.parse(a.depart_at)-Date.parse(b.depart_at))
-  const first=sorted.find(row=>Date.parse(row.depart_at)>=now-6*3600_000)
+  const first=nearestRetainedTrip(sorted,now)
   if(!first)return {created:0,reused:0,stopped:0,skipped:0}
   const group=first.booking_group
     ? sorted.filter(row=>String(row.booking_group||'')===String(first.booking_group))
@@ -256,9 +273,10 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
   if(oldError)throw new Error(`context_watch_old_read_failed:${oldError.message}`)
   const retire=(old||[]).filter((row:any)=>String(row.condition_json?.contextRoot||'')!==root || Date.parse(String(row.condition_json?.expiresAt||''))<=now)
   if(retire.length){
-    await supabaseAdmin.from('agent_watchers').update({
+    const {error:retireError}=await supabaseAdmin.from('agent_watchers').update({
       active:false,next_check_at:null,updated_at:new Date().toISOString(),
     }).in('id',retire.map((row:any)=>row.id)).eq('telegram_id',telegramId)
+    if(retireError)throw new Error('context_watch_retire_failed')
   }
 
   const budget=await getCostBudget(telegramId)
@@ -273,8 +291,25 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
     .map((row:any)=>String(row.condition_json?.contextKey||'')))
   let slots=Math.max(0,Number(budget.activeWebWatchersMax||0)-manualCount)
   let created=0,reused=0,stopped=0,skipped=0
-
-  for(const desired of desiredWebConditions(group,root,expiresAt)){
+  const {data:homeMemories,error:homeError}=await supabaseAdmin.from('memories').select('id,content').eq('telegram_id',Number(telegramId))
+    .or('content.ilike.my home city%,content.ilike.home city:%,content.ilike.I live in%,content.ilike.I am based in%').order('created_at',{ascending:false}).limit(10)
+  if(homeError)throw new Error('context_home_lookup_failed')
+  const {data:user,error:userError}=await supabaseAdmin.from('users').select('name,gmail_connected').eq('telegram_id',Number(telegramId)).maybeSingle()
+  if(userError)throw new Error('context_owner_profile_lookup_failed')
+  const names=group.flatMap(row=>[...(Array.isArray(row.passengers)?row.passengers:[]),...Object.values(row.raw?.travellerAliases||{})])
+  const normalizeName=(name:unknown)=>String(name||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
+  const anotherTraveller=names.some(name=>!user?.name||normalizeName(name)!==normalizeName(user.name))
+  const homeCity=anotherTraveller?'':declaredHomeCity(homeMemories||[])
+  const desiredConditions=desiredWebConditions(group,root,expiresAt,homeCity)
+  const desiredKeys=new Set(desiredConditions.map(row=>row.condition.contextKey))
+  const omittedWeather=(old||[]).filter(row=>row.condition_json?.contextRoot===root&&row.condition_json?.contextClass==='destination_weather'&&!desiredKeys.has(row.condition_json?.contextKey))
+  if(omittedWeather.length){
+    const {error}=await supabaseAdmin.from('agent_watchers').update({active:false,next_check_at:null,updated_at:new Date().toISOString()})
+      .in('id',omittedWeather.map(row=>row.id)).eq('telegram_id',telegramId).eq('condition_json->>contextualKind','travel')
+    if(error)throw new Error('context_watch_reconcile_retire_failed')
+    stopped+=omittedWeather.length
+  }
+  for(const desired of desiredConditions){
     const key=String(desired.condition.contextKey)
     if(!existingContextKeys.has(key)&&slots<=0){skipped++;continue}
     const result=await upsertContextWatcher({telegramId,type:'web_search',condition:desired.condition})
@@ -282,7 +317,6 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
     if(result.created){created++;slots--}else reused++
   }
 
-  const {data:user}=await supabaseAdmin.from('users').select('gmail_connected').eq('telegram_id',Number(telegramId)).maybeSingle()
   if(user?.gmail_connected){
     const last=group[group.length-1]
     const matchTerms=Array.from(new Set([
@@ -313,11 +347,11 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
 
 export async function compileUpcomingTravelWatchers(limit=200){
   const now=new Date()
-  const lower=new Date(now.getTime()-6*3600_000).toISOString()
+  const lower=new Date(now.getTime()-72*3600_000).toISOString()
   const upper=new Date(now.getTime()+14*86400_000).toISOString()
   const {data,error}=await supabaseAdmin.from('travel_tickets')
-    .select('id,telegram_id,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no,raw')
-    .eq('type','flight').gte('depart_at',lower).lt('depart_at',upper)
+    .select('id,telegram_id,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no,passengers,raw')
+    .eq('type','flight').or(`depart_at.gte.${lower},arrive_at.gte.${lower}`).lt('depart_at',upper)
     .order('depart_at',{ascending:true}).limit(Math.max(1,Math.min(500,limit)))
   if(error)throw new Error(`context_travel_read_failed:${error.message}`)
   const byUser=new Map<string,TravelRow[]>()
@@ -342,15 +376,16 @@ export async function compileUpcomingTravelWatchers(limit=200){
 export async function compileTravelWatchersForUser(telegramId:string|number){
   const now=Date.now()
   const {data,error}=await supabaseAdmin.from('travel_tickets')
-    .select('id,telegram_id,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no,raw')
+    .select('id,telegram_id,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no,passengers,raw')
     .eq('telegram_id',telegramId).eq('type','flight')
-    .gte('depart_at',new Date(now-6*3600_000).toISOString()).lt('depart_at',new Date(now+14*86400_000).toISOString())
+    .or(`depart_at.gte.${new Date(now-72*3600_000).toISOString()},arrive_at.gte.${new Date(now-72*3600_000).toISOString()}`).lt('depart_at',new Date(now+14*86400_000).toISOString())
     .order('depart_at',{ascending:true}).limit(20)
   if(error)throw new Error(`context_travel_read_failed:${error.message}`)
   if(!data?.length)return {created:0,reused:0,stopped:0,skipped:0,tracking:false,flights:[] as string[]}
   const r=await compileForUser(String(telegramId),data as TravelRow[])
   const sorted=(data as TravelRow[]).slice().sort((a,b)=>Date.parse(a.depart_at)-Date.parse(b.depart_at))
-  const first=sorted[0]
+  const first=nearestRetainedTrip(sorted,now)
+  if(!first)return {...r,tracking:false,flights:[] as string[]}
   const group=first.booking_group?sorted.filter(row=>String(row.booking_group||'')===String(first.booking_group)):[first]
   // Report tracking only when the flight-status monitor is actually active (plan limits can skip it).
   const {data:active}=await supabaseAdmin.from('agent_watchers').select('id')

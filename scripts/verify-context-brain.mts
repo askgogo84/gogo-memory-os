@@ -98,7 +98,7 @@ assert.match(processMessage,/askClaude\(incomingText, history, memories, resolve
 assert.match(claude,/contextualBlock/)
 assert.match(claude,/Relevant AskGogo context|contextualContext/)
 assert.match(claude,/isContextSynthesisTurn/,'context synthesis must be explicitly detected')
-assert.match(claude,/historyForTurn = isContextSynthesisTurn\(userMessage\) \? \[\] : safeHistory\.slice\(-10\)/,'context synthesis must not inherit stale recent-chat entities')
+assert.match(claude,/historyForTurn = isContextSynthesisTurn\(userMessage\)\s*\|\|\s*briefing\s*\? \[\] : safeHistory\.slice\(-10\)/,'context synthesis must not inherit stale recent-chat entities')
 assert.match(claude,/Do not introduce a named restaurant, vendor, person, product, project, or prior task/,'current-turn entity relevance must be enforced')
 assert.match(claude,/Never say "when you're back"/,'return-location claims require recorded evidence')
 assert.match(claude,/A prior assistant suggestion is never evidence/,'assistant history must not become factual evidence')

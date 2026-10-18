@@ -26,6 +26,7 @@ const db={from(table:string){
   let changes:any,insert:any,single=false
   const b:any={
     select(){return b},eq(k:string,v:any){filters.push(r=>k==='condition_json'?JSON.stringify(r[k])===v:String(r[k])===String(v));return b},
+    neq(k:string,v:any){filters.push(r=>String(r[k])!==String(v));return b},
     in(k:string,v:any[]){filters.push(r=>v.includes(r[k]));return b},
     lte(k:string,v:any){filters.push(r=>r[k]!=null&&r[k]<=v);return b},
     order(){return b},limit(){return b},or(){return b},is(){return b},update(v:any){changes=v;return b},insert(v:any){insert=v;return b},upsert(v:any){if(!store[table].some(r=>r.id===v.id))insert=v;return b},

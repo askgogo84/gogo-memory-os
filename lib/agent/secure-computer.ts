@@ -1,3 +1,4 @@
+import {productIdentityMatches} from '../commerce/product-identity'
 import { sanitizeBrowserReadDiagnostics, type BrowserReadDiagnostic, type BrowserReadReason } from './browser-read-diagnostics'
 import { draftObjectiveCovered } from './draft-coverage'
 import {ensureManagedBrowser,managedBrowserEnabled} from './managed-browser'
@@ -341,20 +342,19 @@ async function model(page){
 // 16 Oct: the person's sign-in code (texted by Swiggy, Amazon…) typed into the code box of the page Gogo left open.
 // It arrives as a command-scoped variable, is typed key by key, and is never logged, returned or stored.
 /** Product name + first price after it, as exact page text, when the page is the requested model's product page. */
+export function comparisonReadEvidenceMatches(objective:string,evidence:string):boolean{
+  const subject=String(objective||'').match(/^Find the listed price of this product on [^:]{2,40}: "([^"]{2,200})"/)?.[1]
+  if(!subject)return true
+  return productIdentityMatches(subject,evidence)
+}
 export function productPagePriceEvidence(objective:string,title:string,pageText:string):string[]|null{
   const ask=String(objective||'').match(/^Find the listed price of this product on [^:]{2,40}: "([^"]{2,200})"/)
   const skip=(why:string,extra?:string)=>{if(/^Find the listed price of this product/.test(String(objective||'')))console.warn('PRODUCT_PRICE_DIRECT_SKIP:',JSON.stringify({why,extra:extra||'',title:String(title||'').slice(0,120),objective:String(objective||'').slice(0,160)}));return null}
   if(!ask)return skip('objective_no_match')
   const heading=String(title||'').replace(/^Buy\s+/i,'').replace(/\s*(?:\s:\s*Amazon\.in\b.*|\sOnline\b.*|\s-\s*Croma\b.*|\s\|.*)$/i,'').trim()
   if(heading.length<12)return skip('short_heading',heading)
-  // Every requested word must end where a word ends ("16" is not "16e"), in order.
-  const tokens=ask[1].replace(/(\d+)\s+(GB|TB)\b/gi,'$1$2').match(/[a-z0-9]+/gi)||[]
-  const named=heading.replace(/(\d+)\s+(GB|TB)\b/gi,'$1$2')
-  let cursor=0
-  for(const token of tokens){
-    const re=new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'(?![a-z0-9])','gi');re.lastIndex=cursor
-    const hit=re.exec(named);if(!hit)return skip('token_mismatch',token+' | '+named);cursor=hit.index+hit[0].length
-  }
+  // Match the complete requested identity while retaining the exact observed heading.
+  if(!productIdentityMatches(ask[1],heading))return skip('identity_mismatch')
   const text=String(pageText||'').replace(/\s+/g,' ')
   const at=text.indexOf(heading)
   // 16 Oct 9:18 pm live: no price was found on Croma's product page. Log where things are (public page text only).
@@ -1908,7 +1908,7 @@ export async function assessReadOutcome(objective:string,page:any,diagnose:(even
     // The reader matched on whitespace-collapsed text, so verify against the same form (line breaks inside a price were the miss).
     const flat=pageText.replace(/\s+/g,' ')
     const direct=verifiedBrowserAnswer({complete:true,evidence:directPrice},flat,title)||verifiedBrowserAnswer({complete:true,evidence:directPrice},pageText,title)
-    if(direct){diagnose({phase:'assessment',reason:'verified',pageChars:pageText.length});return direct}
+    if(direct&&comparisonReadEvidenceMatches(objective,direct)){diagnose({phase:'assessment',reason:'verified',pageChars:pageText.length});return direct}
     // Logged for diagnosis only; an unverified price is never returned.
     {const i=flat.indexOf(directPrice[0]);console.warn('PRODUCT_PRICE_DIRECT_UNVERIFIED:',JSON.stringify({evidence:directPrice.map(x=>x.slice(0,80)),title:title.slice(0,80),spans:[...flat.slice(Math.max(0,i),i+6000).matchAll(/₹\s?\d[\d,]*(?:\.\d{1,2})?/g)].slice(0,10).map(m=>flat.slice(Math.max(0,i)+Math.max(0,m.index!-45),Math.max(0,i)+m.index!+45))}))}
   }
@@ -1928,7 +1928,7 @@ export async function assessReadOutcome(objective:string,page:any,diagnose:(even
       answer=selectedBrowserEvidence(parseBrowserEvidenceResponse(repair),choices,pageText,title)
       diagnose({phase:'assessment',reason:answer?'verified':'unverified_quotes',pageChars:pageText.length})
     }
-    return answer
+    return answer&&comparisonReadEvidenceMatches(objective,answer)?answer:null
   }catch{diagnose({phase:'assessment',reason:'invalid_assessment_json'});return null}
 }
 

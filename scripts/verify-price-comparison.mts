@@ -167,7 +167,7 @@ const browser = {
     const good = child.metadata_json.url.includes('flipkart')
     Object.assign(child, {status: good ? 'completed' : 'paused', error: good ? null : 'provider_access_limited', updated_at: new Date().toISOString()})
     tables.agent_steps.push({id: id(), run_id: child.id, telegram_id: '42', tool_name: 'secure_browser', status: good ? 'completed' : 'failed',
-      output_json: {summary: good ? 'Logitech M185 grey. ₹926. Seller IT STORE INDIA.' : 'Stale unsupported ₹1299 free shipping', sourceUrl: good ? 'https://www.flipkart.com/fixture-m185/p/fixture' : 'https://www.amazon.in/dp/fixture'}})
+      output_json: {summary: good ? (child.metadata_json.url.includes('sony-wh-1000xm5')?'Sony WH-1000XM5 black. ₹926. Seller IT STORE INDIA.':'Logitech M185 wireless mouse grey. ₹926. Seller IT STORE INDIA.') : 'Stale unsupported ₹1299 free shipping', sourceUrl: good ? (child.metadata_json.url.includes('sony-wh-1000xm5')?child.metadata_json.url:'https://www.flipkart.com/fixture-m185/p/fixture') : 'https://www.amazon.in/dp/fixture'}})
   },
 }
 function load(file: string, deps: Record<string, any>) {
