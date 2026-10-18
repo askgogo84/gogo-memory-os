@@ -11,7 +11,8 @@ function load(file:string,deps:Record<string,unknown>,append=''){const exports:a
 const actor={legacyTelegramId:123,userId:'synthetic-owner',name:'Synthetic Owner'}
 const inventory={ownerId:'123',coveredFrom:'2026-10-18T10:00:00Z',coveredUntil:'2026-12-01T10:00:00Z',incomplete:false,facts:[]}
 const calendar={...inventory,connected:true,windows:[]}
-const snapshot=dining.buildReservationDiningContext({actor,timezone:'Asia/Kolkata',requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',now:new Date('2026-10-18T10:00:00Z'),pack:{reservationTravel:inventory,reservationCalendar:calendar}})
+const preferences={ownerId:'123',incomplete:false,rules:[]}
+const snapshot=dining.buildReservationDiningContext({actor,timezone:'Asia/Kolkata',requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',now:new Date('2026-10-18T10:00:00Z'),pack:{reservationTravel:inventory,reservationCalendar:calendar,reservationPreferences:preferences}})
 const payload={restaurant:'Synthetic Restaurant',reservationUrl:'https://provider.example/reserve',reservationLocation:'Home city',partySize:2,preferredStart:'19:00',preferredEnd:'21:00',requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',contextWindows:[],diningContext:snapshot,approvalId:'approval'}
 let rows:Record<string,any>,faultTable='',faultMode:'error'|'zero'|'throw'='error',receiptFault=false,recoveryFault=false,slowActionCompletion=false,handoffReleases=0,providerCalls=0,calendarCalls=0,notifications:string[]=[],activityTypes:string[]=[],writes:Array<{table:string;patch:any}>=[]
 const db={from(table:string){let patch:any,insert:any,single=false;const filters:Array<(row:any)=>boolean>=[]
@@ -41,7 +42,7 @@ const bound=buildApprovalBinding(prep.restaurantReservationApprovalInput({runId:
 const result={status:'completed',url:'https://provider.example/confirmation',title:'Reservation confirmed',pageText:'Reservation confirmed for Synthetic Restaurant on 24 Oct 2026 at 8:30 pm',actions:[{kind:'submit',status:'done'}]}
 const worker=load('lib/agent/restaurant-reservation-worker.ts',{
  '@/lib/supabase-admin':{supabaseAdmin:db},'./restaurant-reservation':prep,'./approval-binding':{assertApprovalBinding},'./reservation-dining-context':dining,
- './context-brain':{buildContextPack:async(input:any)=>{assert.equal(input.actor.legacyTelegramId,123);return{reservationTravel:inventory,reservationCalendar:calendar}}},
+ './context-brain':{buildContextPack:async(input:any)=>{assert.equal(input.actor.legacyTelegramId,123);return{reservationTravel:inventory,reservationCalendar:calendar,reservationPreferences:preferences}}},
  './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},'./sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
  './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{handoffReleases++}},
  './secure-computer':{runSecureBrowser:async()=>{providerCalls++;return structuredClone(result)}},

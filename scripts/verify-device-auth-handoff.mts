@@ -451,7 +451,8 @@ const contextNow=new Date()
 const executionRelease=new Date(contextNow.getTime()-60_000).toISOString()
 const executionInventory={ownerId:'1',coveredFrom:new Date(contextNow.getTime()-3600_000).toISOString(),coveredUntil:new Date(contextNow.getTime()+30*86400_000).toISOString(),incomplete:false,facts:[]}
 const executionCalendar={ownerId:'1',connected:true,incomplete:false,coveredFrom:executionInventory.coveredFrom,coveredUntil:executionInventory.coveredUntil,windows:[]}
-const executionDining=reservationDiningContext.buildReservationDiningContext({actor:{legacyTelegramId:1,userId:'owner'},timezone:'Asia/Kolkata',requestedDate:'',releaseAt:executionRelease,now:contextNow,pack:{reservationTravel:executionInventory,reservationCalendar:executionCalendar}})
+const executionPreferences={ownerId:'1',incomplete:false,rules:[]}
+const executionDining=reservationDiningContext.buildReservationDiningContext({actor:{legacyTelegramId:1,userId:'owner'},timezone:'Asia/Kolkata',requestedDate:'',releaseAt:executionRelease,now:contextNow,pack:{reservationTravel:executionInventory,reservationCalendar:executionCalendar,reservationPreferences:executionPreferences}})
 assert.equal(reservationDiningContext.usableReservationDiningContext(executionDining),true)
 const executionMocks={
   '@/lib/supabase-admin':{supabaseAdmin:scopedDb},
@@ -463,7 +464,7 @@ const executionMocks={
   './life-event-approval-binding':{checkinApprovalFingerprintInput:()=>({})},
   './restaurant-reservation':{restaurantReservationApprovalInput:()=>({})},
   './reservation-dining-context':reservationDiningContext,
-  './context-brain':{buildContextPack:async(input:any)=>{assert.equal(input.actor.legacyTelegramId,1);assert.equal(input.options.includeReservationTravel,true);assert.equal(input.options.includeReservationCalendar,true);return{reservationTravel:executionInventory,reservationCalendar:executionCalendar}}},
+  './context-brain':{buildContextPack:async(input:any)=>{assert.equal(input.actor.legacyTelegramId,1);assert.equal(input.options.includeReservationTravel,true);assert.equal(input.options.includeReservationCalendar,true);return{reservationTravel:executionInventory,reservationCalendar:executionCalendar,reservationPreferences:executionPreferences}}},
 }
 const flightExecutor=load('life-event-execution.ts',executionMocks)
 const restaurantExecutor=load('restaurant-reservation-worker.ts',executionMocks)

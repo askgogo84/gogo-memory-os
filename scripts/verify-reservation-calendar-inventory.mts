@@ -11,7 +11,7 @@ import * as intervals from '../lib/calendar-intervals'
 const now=Date.parse('2026-10-18T10:00:00Z')
 class FixtureDate extends Date {constructor(value?:any){super(value===undefined?now:value)}static now(){return now}}
 let calendarReads=0,accessReads=0,mode='complete',lastCalendarWindow={from:'',until:''}
-const db={from(table:string){const q:any={select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},order:()=>q,limit:()=>q,in:()=>q,or:()=>q,
+const db={from(table:string){const q:any={select:()=>q,eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(String(value),'123');return q},order:()=>q,limit:()=>q,in:()=>q,or:()=>q,not:(key:string,op:string,value:unknown)=>{assert.equal(table,'agent_runs');assert.equal(key,'metadata_json->flight_booking');assert.equal(op,'is');assert.equal(value,null);return q},
  maybeSingle:async()=>({data:table==='users'?{google_calendar_connected:!['disconnected','extraOnly'].includes(mode),google_refresh_token:['disconnected','extraOnly','missingToken'].includes(mode)?null:'inert-fixture-token',timezone:'Asia/Kolkata'}:{memory_enabled:false,gmail_enabled:false},error:table==='users'&&mode==='userFailure'?{message:'inert read failure'}:null}),then:(resolve:any)=>resolve({data:[],error:null})};return q}}
 const busy={id:'busy-fixture',summary:'Private synthetic appointment',attendees:[{email:'private@example.test'}],_account:'two@example.test',start:{dateTime:'2026-10-22T14:00:00Z'},end:{dateTime:'2026-10-22T17:00:00Z'}}
 const deps:Record<string,unknown>={
