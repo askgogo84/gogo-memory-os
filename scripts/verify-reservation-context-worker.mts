@@ -14,11 +14,11 @@ const travel={source:'travel_presence',participants:['Synthetic Owner'],confiden
 const inventory={ownerId:'123',coveredFrom:new Date(fixed).toISOString(),coveredUntil:'2026-12-17T10:00:00.000Z',incomplete:false,facts:[travel]}
 const snapshot=dining.buildReservationDiningContext({actor,timezone:'Asia/Kolkata',requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',now:new Date(fixed),pack:{reservationTravel:inventory}})
 const payload:any={restaurant:'Synthetic Restaurant',reservationUrl:'https://example.test/reserve',reservationLocation:'Home city',partySize:2,preferredStart:'19:00',preferredEnd:'21:00',requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',contextWindows:snapshot.windows,diningContext:snapshot,approvalId:'fixture-approval'}
-const boundInput=()=>preparation.restaurantReservationApprovalInput({runId:'fixture-run',lifeEventId:'fixture-event',actionId:'fixture-action',...payload})
+const boundInput=()=>preparation.restaurantReservationApprovalInput({runId:'fixture-run',lifeEventId:'fixture-event',actionId:'fixture-action',...payload,providerUrl:payload.reservationUrl})
 // The real fingerprint, not a fixture implementation, binds all material fields.
 const binding=buildApprovalBinding(boundInput())
 for(const altered of [{...payload,reservationLocation:'Changed city'},{...payload,diningContext:{...snapshot,until:'2026-12-18T10:00:00Z'}},{...payload,contextWindows:[]}]){
- assert.throws(()=>assertApprovalBinding(preparation.restaurantReservationApprovalInput({runId:'fixture-run',lifeEventId:'fixture-event',actionId:'fixture-action',...altered}),binding),/approval_action_changed/)
+ assert.throws(()=>assertApprovalBinding(preparation.restaurantReservationApprovalInput({runId:'fixture-run',lifeEventId:'fixture-event',actionId:'fixture-action',...altered,providerUrl:altered.reservationUrl}),binding),/approval_action_changed/)
 }
 let freshInventory:any=inventory, browserCalls=0, objective=''
 const updates:Array<{table:string;value:any}>=[]
