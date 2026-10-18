@@ -1,7 +1,7 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),ts=require('typescript');
 const root=path.resolve('lib/bot/handlers'),cache={};
-const instant=Date.parse('2026-10-18T12:00:00Z');
+let instant=Date.parse('2026-10-18T12:00:00Z');
 class FixedDate extends Date{constructor(...args){super(...(args.length?args:[instant]));}static now(){return instant;}}
 function load(file){
  const full=path.resolve(file);assert(full.startsWith(root+path.sep),'Unexpected dependency');if(cache[full])return cache[full];
@@ -66,5 +66,15 @@ check('each purity keeps its own quoted date',()=>{
 check('a future quote does not borrow another purity\'s current date',()=>{
  const result=answer('1. Bangalore board\n24K as of 18 October 2026 per gram ₹14000; 22K as of 19 October 2026 per gram ₹12800\nSource: https://synthetic.invalid/future-field');
  assert.match(result,/24K: ₹14,?000/);assert.doesNotMatch(result,/22K: ₹12,?800/);assert.match(result,/future/i);
+});
+check('Indian trading dates advance at local midnight',()=>{
+ const previous=instant;try{
+  instant=Date.parse('2026-10-18T20:00:00Z');const result=answer('1. Bangalore board\nAs of 19 October 2026: 24K gold per gram ₹14000\nSource: https://synthetic.invalid/local-date');
+  assert.match(result,/24K: ₹14,?000/);assert.doesNotMatch(result,/future date/);
+ }finally{instant=previous;}
+});
+check('an invalid quote-local date cannot inherit a valid heading date',()=>{
+ const result=answer('1. Bangalore board\nAs of 18 October 2026. 24K as of 31 November 2026 per gram ₹14000\nSource: https://synthetic.invalid/invalid-date');
+ assert.doesNotMatch(result,/24K — as of 2026-10-18/);assert.match(result,/date.*unverified|date.*invalid|couldn.t verify/i);
 });
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');
