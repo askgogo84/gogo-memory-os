@@ -1458,9 +1458,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const contextualBlock = calendarBlock ? `${calendarBlock}\n\n${savedContextBlock}` : savedContextBlock
   const rawClaude = await askClaude(incomingText, history, memories, resolvedUser.name, preferenceBlock, contextualBlock)
   // Calendar event titles can be written by anyone who invites the user. When they are in the prompt, this
-  // read-only planning turn never executes a directive (REMINDER:/MEMORY:/LIST_*:) — the reply is text only.
+  // read-only planning turn never executes a directive (REMINDER:/MEMORY:/LIST_*:/SEARCH:) — the reply is text only.
+  // 18 Oct retest: "plan my week" emitted SEARCH and the calendar-based plan was replaced by an empty web answer.
   const parsedRaw = parseClaudeResponse(rawClaude)
-  const parsed: ReturnType<typeof parseClaudeResponse> = calendarBlock && !['none', 'search'].includes(parsedRaw.type) ? { type: 'none' } : parsedRaw
+  const parsed: ReturnType<typeof parseClaudeResponse> = calendarBlock && parsedRaw.type !== 'none' ? { type: 'none' } : parsedRaw
   let finalReply = calendarBlock && parsed !== parsedRaw ? stripDirectiveLines(rawClaude) : rawClaude
 
   if (parsed.type === 'memory') {

@@ -15,6 +15,7 @@
 
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { safeDocumentSummary, redactDocumentMetadata } from '@/lib/services/document-summary-privacy'
 import { storeDocument, getDocumentSignedUrl } from '@/lib/services/document-store'
 import { createDocumentShortLink, shortLinkUrl } from '@/lib/services/document-links'
 import { embedText } from '@/lib/services/embeddings'
@@ -448,8 +449,8 @@ async function upgradeExistingDocument(params: {
     .from('documents')
     .update({
       doc_type: params.ex.assetType,
-      title: params.ex.displayTitle.slice(0, 300),
-      summary: buildStoredSummary(params.ex).slice(0, 4000),
+      title: redactDocumentMetadata(params.ex.displayTitle).slice(0, 300),
+      summary: safeDocumentSummary(buildStoredSummary(params.ex), params.ex.assetType, extracted).slice(0, 4000),
       extracted,
       doc_date: params.ex.docDateISO,
       expires_on: params.ex.expiryISO,
