@@ -16,11 +16,11 @@ const mission={id:'synthetic-flight',telegram_id:'123',type:'travel_research',st
 const preference={id:'synthetic-rule',telegram_id:123,rule_text:'Only vegetarian restaurants',created_at:'2026-10-18T09:00:00Z'}
 let missions:any[]=[mission],preferences:any[]=[preference],faultTable='',missionCap=false,preferenceCap=false
 const db={from(table:string){reads.push(table);let fields='';const filters:Array<(row:any)=>boolean>=[];const execute=()=>{
- const source=table==='life_events'?[hotel]:table==='agent_runs'?(missionCap?Array.from({length:40},(_,i)=>({...mission,id:'mission-'+i})):missions):table==='user_preferences'?(preferenceCap?Array.from({length:21},(_,i)=>({...preference,id:'rule-'+i})):preferences):[]
+ const source=table==='life_events'?[hotel]:table==='agent_runs'?(missionCap?Array.from({length:81},(_,i)=>({...mission,id:'mission-'+i})):missions):table==='user_preferences'?(preferenceCap?Array.from({length:21},(_,i)=>({...preference,id:'rule-'+i})):preferences):[]
  const data=source.filter(row=>filters.every(fn=>fn(row))).map(row=>{if(table!=='agent_runs'||!fields.includes(':'))return row;const selected:any={};for(const field of fields.split(',')){const [alias,query]=field.split(':');if(!query)selected[alias]=row[alias];else selected[alias]=query.split(/->>?/).reduce((value:any,key:string)=>value?.[key],row)}return selected})
  return{error:faultTable===table?{message:'Synthetic source unavailable'}:null,data:faultTable===table?null:data}
  }
- const q:any={select:(value:string)=>{fields=value;if(table==='agent_runs')assert.ok(!/objective|travellers|dob|credential|handoff/i.test(value),'select only minimal mission context');return q},eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(String(value),'123');filters.push(row=>String(row[key])===String(value));return q},in:(key:string,values:unknown[])=>{filters.push(row=>values.includes(row[key]));return q},order:()=>q,limit:()=>q,or:()=>q,maybeSingle:async()=>({data:{memory_enabled:false,gmail_enabled:false},error:null}),then:(resolve:any)=>resolve(execute())};return q
+ const q:any={select:(value:string)=>{fields=value;if(table==='agent_runs')assert.ok(!/objective|travellers|dob|credential|handoff/i.test(value),'select only minimal mission context');return q},eq:(key:string,value:unknown)=>{if(key==='telegram_id')assert.equal(String(value),'123');filters.push(row=>String(row[key])===String(value));return q},in:(key:string,values:unknown[])=>{filters.push(row=>values.includes(row[key]));return q},not:(key:string,_op:string,_value:unknown)=>{filters.push(row=>key.split(/->>?/).reduce((value:any,part:string)=>value?.[part],row)!=null);return q},order:()=>q,limit:()=>q,or:()=>q,maybeSingle:async()=>({data:{memory_enabled:false,gmail_enabled:false},error:null}),then:(resolve:any)=>resolve(execute())};return q
 }}
 const actual:any={}
 runInNewContext(ts.transpileModule(readFileSync('lib/agent/context-brain.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:actual,require:(name:string)=>name==='node:crypto'?{createHash}:name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='./typed-object-context'?{latestTypedContext:async()=>null}:name==='@/lib/bot/memory-redaction'?redaction:name==='@/lib/services/travel-time'?travelTime:name==='../calendar-intervals'?calendarIntervals:{},Date:FixtureDate,Intl,console,Set,Map})
@@ -71,7 +71,7 @@ await check('malformed and one-way active intent cannot certify complete travel 
  missions=[mission]
 })
 await check('other-owner and terminal missions do not enter the active owner restrictions',async()=>{
- missions=[{...mission,telegram_id:'456',id:'other-owner'},{...mission,status:'completed',id:'terminal'}]
+ missions=[{...mission,telegram_id:'456',id:'other-owner'},{...mission,status:'cancelled',id:'terminal'},{...mission,status:'failed',id:'failed'}]
  const pack=await read();assert.ok(reads.includes('agent_runs'));assert.equal(pack.reservationTravel.facts.some((f:any)=>f.source==='travel_mission'),false)
  missions=[mission]
 })
@@ -97,5 +97,17 @@ await check('later one-way intent does not fabricate uncertainty for an earlier 
  assert.equal(pack.reservationTravel.incomplete,false,'known departure after the whole dining day cannot make that earlier scope unknown')
  assert.equal(Date.parse(pack.reservationTravel.coveredFrom),Date.parse(span.from));assert.equal(Date.parse(pack.reservationTravel.coveredUntil),Date.parse(span.until),'complete inventory must advertise only the scope actually checked')
  assert.equal(pack.reservationTravel.facts.some((f:any)=>f.source==='travel_mission'),false)
+})
+await check('completed research with future dates stays tentative while finished past travel is excluded',async()=>{
+ // Canonical source audit: job completion is not completion of the dated trip.
+ missions=[{...mission,id:'finished-search',status:'completed'},{...mission,id:'old-search',status:'completed',metadata_json:{context:{...mission.metadata_json.context,startDate:'2026-09-01',returnDate:'2026-09-05'}}}]
+ const pack=await read();assert.ok(pack.reservationTravel.facts.some((f:any)=>f.id==='travel-mission:finished-search'&&f.inferred===true))
+ assert.equal(pack.reservationTravel.facts.some((f:any)=>f.id==='travel-mission:old-search'),false)
+})
+await check('minimal structured flight booking intent is read without traveller or objective fields',async()=>{
+ missions=[{id:'flight-booking',telegram_id:'123',type:'secure_browser',status:'paused',metadata_json:{objective:'PRIVATE OBJECTIVE',flight_booking:{route:'BLR-JFK',depart:'2026-10-21',return:'2026-10-24',travellers:2,private_dob:'PRIVATE DOB'}}},{id:'unrelated-browser',telegram_id:'123',type:'secure_browser',status:'paused',metadata_json:{objective:'PRIVATE UNRELATED'}}]
+ const pack=await read();const fact=pack.reservationTravel.facts.find((f:any)=>f.id==='travel-mission:flight-booking')
+ assert.ok(fact);assert.equal(fact.inferred,true);assert.equal(pack.reservationTravel.incomplete,false);assert.doesNotMatch(JSON.stringify(pack.reservationTravel),/PRIVATE/)
+ assert.equal(pack.reservationTravel.facts.some((f:any)=>f.id==='travel-mission:unrelated-browser'),false)
 })
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Extended reservation inventory/snapshot controls passed; inert fixtures, not full T12 or live acceptance.')
