@@ -98,4 +98,29 @@ check('mixed forward and reverse quotes do not exchange prices',()=>{
  const result=answer('1. Bangalore rates\n18 October 2026. 24K gold ₹14000 per gram; ₹12800 per gram for 22K\nSource: https://synthetic.invalid/mixed');
  assert.match(result,/24K: ₹14,?000/);assert.match(result,/22K: ₹12,?800/);
 });
+check('explicit weights stay in their clause unless a heading or coordination shares them',()=>{
+ const result=answer('1. Bangalore board\n18 October 2026. 24K gold per 10 g ₹140000; 22K gold ₹12800\nSource: https://synthetic.invalid/explicit-weights');
+ assert.match(result,/24K: ₹14,000/);assert.doesNotMatch(result,/22K: ₹/);
+ const shared=answer('1. Bangalore board\n18 October 2026. Prices per 10 g: 24K ₹140000; 22K ₹128000\nSource: https://synthetic.invalid/shared-heading');
+ assert.match(shared,/24K: ₹14,000/);assert.match(shared,/22K: ₹12,800/);
+ const coordinated=answer('1. Bangalore board\nToday 24 Carat gold price per gram in Bangalore is Rs. 12,568 and 22 Carat is Rs. 11,520.\nSource: https://synthetic.invalid/shared-sentence');
+ assert.match(coordinated,/24K: ₹12,568/);assert.match(coordinated,/22K: ₹11,520/);
+});
+check('reverse quotes retain suffix dates without borrowing from the next quote',()=>{
+ for(const day of [17,18,19]){
+  const result=answer(`1. Bangalore board\n18 October 2026. ₹14000 per gram for 24K as of ${day} October 2026\nSource: https://synthetic.invalid/reverse-date`);
+  if(day===19){assert.doesNotMatch(result,/24K: ₹/);assert.match(result,/future/i);}
+  else {assert.match(result,/24K: ₹14,000/);assert.match(result,new RegExp(`24K — as of 2026-10-${day}`));}
+ }
+ const mixed=answer('1. Bangalore board\n18 October 2026. ₹14000 per gram for 24K as of 17 October 2026; ₹12800 per gram for 22K as of 18 October 2026\nSource: https://synthetic.invalid/reverse-local-dates');
+ assert.match(mixed,/24K — as of 2026-10-17/);assert.match(mixed,/22K — as of 2026-10-18/);
+});
+check('inline daily amounts bind to their own day or remain explicitly unverified',()=>{
+ for(const columns of ['Yesterday ₹13900; Today ₹14000','Today ₹14000; Yesterday ₹13900']){
+  const result=answer(`1. Bangalore board\n18 October 2026. 24K gold price per gram: ${columns}\nSource: https://synthetic.invalid/inline-days`);
+  assert.doesNotMatch(result,/24K: ₹13,900/);assert(/24K: ₹14,000/.test(result)||/couldn.t verify|unverified|ambiguous/i.test(result));
+ }
+ const yesterday=answer('1. Bangalore board\n18 October 2026. 24K gold price per gram: Yesterday ₹13900\nSource: https://synthetic.invalid/inline-yesterday');
+ assert.doesNotMatch(yesterday,/24K — as of 2026-10-18/);
+});
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');
