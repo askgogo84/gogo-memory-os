@@ -492,7 +492,7 @@ export function isAutomatedGmailMessage(message:any){
 }
 
 /** Attention candidates are evidence to review, never authority to act on email. */
-export function isActionableGmailMessage(message:any){
+export function isActionableGmailMessage(message:{subject?:unknown;snippet?:unknown}){
   if(isServiceRiskNotice(message))return true
   if(isAutomatedGmailMessage(message))return false
   return looksLikeIncomingAction(clean(`${message?.subject||''} ${message?.snippet||''}`,1200))

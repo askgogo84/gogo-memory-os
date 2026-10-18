@@ -22,7 +22,7 @@ export async function tryGetConnectionCapabilities(params:{actor:Pick<AgentActor
   if(!isConnectionCapabilityQuery(params.text))return null
   const tg=params.actor.legacyTelegramId
   if(!Number.isSafeInteger(tg)||tg===0)throw new Error('connection_capabilities_owner_missing')
-  const read=async(query:()=>PromiseLike<any>)=>{try{return await query()}catch{return{data:null,count:null,error:true}}}
+  const read=async<T>(query:()=>PromiseLike<T>)=>{try{return await query()}catch{return{data:null,count:null,error:true as const}}}
   const [user,vault,travel,browser,consent]=await Promise.all([
     read(()=>supabaseAdmin.from('users').select('gmail_connected,gmail_send_connected,google_calendar_connected,whatsapp_id').eq('telegram_id',tg).maybeSingle()),
     read(()=>supabaseAdmin.from('vault_credentials').select('id',{count:'exact',head:true}).eq('telegram_id',tg)),
@@ -32,7 +32,7 @@ export async function tryGetConnectionCapabilities(params:{actor:Pick<AgentActor
   ])
   const known=!user.error&&Boolean(user.data)
   const connection=(value:unknown)=>!known?'Unknown — saved state unavailable':value?'Connected (saved state)':'Not connected (saved state)'
-  const count=(result:any,noun:string)=>result.error||!Number.isInteger(result.count)||result.count<0?'Unknown — saved state unavailable':`${result.count} ${noun}`
+  const count=(result:{error?:unknown;count?:number|null},noun:string)=>result.error||!Number.isInteger(result.count)||Number(result.count)<0?'Unknown — saved state unavailable':`${result.count} ${noun}`
   const level=String(browser.data?.level||'draft')
   const browserState=browser.error||!['off','read','draft','ask','auto'].includes(level)?'Unknown — permission unavailable':`Permission: ${level}`
   const gmailRead=consent.error?'Reading preference unknown':consent.data?.gmail_enabled===false?'Reading is off in privacy settings':'Reading follows saved consent'

@@ -265,7 +265,7 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
         .order('priority',{ascending:false}).limit(8)
       if(error)throw new Error('briefing_open_loops_unavailable')
       const loops=(data||[]).filter(isRelevantOpenLoop)
-      blocks.push(`🧩 *Saved open loops* (up to 8; saved status, providers not rechecked)\n${loops.length?loops.map((loop:any)=>`• ${formatEmailSnippet(String(loop.title||'Untitled item'),180)}`).join('\n'):'No active open loops returned.'}`)
+      blocks.push(`🧩 *Saved open loops* (up to 8; saved status, providers not rechecked)\n${loops.length?loops.map((loop:{title?:unknown})=>`• ${formatEmailSnippet(String(loop.title||'Untitled item'),180)}`).join('\n'):'No active open loops returned.'}`)
     }catch{blocks.push('🧩 *Open loops unavailable* — I could not read their saved status; this is not an empty-queue claim.')}
   }
   return blocks.join('\n\n')
