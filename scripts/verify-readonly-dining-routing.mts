@@ -17,6 +17,12 @@ await check('read-only dinner and reservation research remain non-authorizing ev
 await check('negated booking commands do not become a new reservation from remaining table nouns',async()=>{
  for(const text of ["Review my existing Naru reservation; don't book a new table.",'Tell me whether dinner on 25 October works; do not reserve anything.','Check the Naru reservation without booking another table.','Review Naru dinner; do not create a booking.','Tell me about my Naru table; never make a reservation.'])await refuses(text)
 })
+await check('coordinated prohibited booking verbs are not separate affirmative authority',async()=>{
+ for(const text of ['Check Naru dinner plans; do not book or reserve a table.',"Review my Naru reservation; don't reserve or book anything.",'Check Naru dinner; never book and reserve another table.'])await refuses(text)
+})
+await check('negative booking objects retain new or additional qualifiers without creating a mission',async()=>{
+ for(const text of ['Review my existing Naru Noodle Bar reservation; do not create a new booking.','Review Naru dinner; do not make any new reservation.','Check Naru dinner without placing an additional reservation.'])await refuses(text)
+})
 await check('affirmative booking with separate zero-fee payment guard retains restaurant workflow',()=>{
  for(const text of ['Book Naru Noodle Bar for 2 between 7 PM and 9 PM. Do not pay any deposit without asking.','Reserve Naru Noodle Bar for 2 on 25 October at 8:30 PM only.','Book Naru Noodle Bar for 2, but do not book if a deposit is required.'])assert.equal(actual.isRestaurantReservationRequest(text),true,text)
 })
