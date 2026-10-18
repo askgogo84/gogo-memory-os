@@ -89,4 +89,12 @@ await check('new version snapshot binds explicit preferences and rejects older o
  const input=(context:unknown)=>({missionId:'mission',stepId:'action',capability:'browser',actionType:'booking',target:'https://provider.example',payload:{diningContext:context}})
  assert.throws(()=>assertApprovalBinding(input(changed),buildApprovalBinding(input(first))),/approval_action_changed/)
 })
+await check('later one-way intent does not fabricate uncertainty for an earlier bounded dining date',async()=>{
+ missions=[{...mission,metadata_json:{context:{kind:'flight',destination:{label:'New York'},startDate:'2026-10-21'}}}]
+ const span={from:'2026-10-18T18:30:00Z',until:'2026-10-19T18:30:00Z'}
+ const pack=await actual.buildContextPack({actor,text:'Restaurant dining on 19 October',options:{includeSemantic:false,includeReservationTravel:true,reservationCalendarCoverage:span,maxFacts:4,horizonDays:60}})
+ assert.equal(pack.reservationTravel.incomplete,false,'known departure after the whole dining day cannot make that earlier scope unknown')
+ assert.equal(Date.parse(pack.reservationTravel.coveredFrom),Date.parse(span.from));assert.equal(Date.parse(pack.reservationTravel.coveredUntil),Date.parse(span.until),'complete inventory must advertise only the scope actually checked')
+ assert.equal(pack.reservationTravel.facts.some((f:any)=>f.source==='travel_mission'),false)
+})
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Extended reservation inventory/snapshot controls passed; inert fixtures, not full T12 or live acceptance.')
