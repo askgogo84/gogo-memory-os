@@ -36,6 +36,11 @@ for(const text of [
  'I am not sure Vendor delivered the corrected JSON.',
  'Did Vendor send the corrected JSON?',
  "Vendor hasn't sent the corrected JSON yet.",
+ 'No corrected JSON was received from Vendor.',
+ 'I received no corrected JSON from Vendor.',
+ 'I think Vendor delivered the corrected JSON.',
+ 'It seems Vendor delivered the corrected JSON.',
+ 'Vendor apparently delivered the corrected JSON.',
 ]){
  for(const jev of [null,{ok:true,attentionState:{choice:'completed',confidence:0.99}}]){
   writes.length=0
