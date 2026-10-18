@@ -56,7 +56,7 @@ for(const text of [
   if(result.length||writes.length)failures.push(`${text} semantic=${Boolean(jev)} incorrectly resolved a pending item`)
  }
 }
-for(const text of ['Vendor sent the corrected JSON.','Vendor delivered the corrected JSON.','I received the corrected JSON from Vendor.','No worries, Vendor sent the corrected JSON.','Vendor sent the corrected JSON. No further action is needed.']){
+for(const text of ['Vendor sent the corrected JSON.','Vendor delivered the corrected JSON.','I received the corrected JSON from Vendor.','No worries, Vendor sent the corrected JSON.','Vendor sent the corrected JSON. No further action is needed.','Vendor delivered the pending corrected JSON.']){
  writes.length=0
  const result=await actual.autoResolveOpenLoopsFromTurn({actor,text})
  if(result.length!==1||writes.length!==1||writes[0]?.status!=='resolved')failures.push(`${text} incorrectly blocked clear completion`)
