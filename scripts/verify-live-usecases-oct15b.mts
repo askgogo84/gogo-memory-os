@@ -35,7 +35,7 @@ assert.match(home, /\.in\('status',\['running','queued'\]\)\.gte\('updated_at',s
 assert.match(home, /const runRows=\(runs\.data\|\|\[\]\)\.filter\(\(r:any\)=>!isStaleRunning\(r,now\)\)/)
 
 // 4. One site that stopped four times is one thing to do, on Today, the menu badge and Needs you.
-assert.match(home, /\{approvalRows\.length\+handoffGroups\.length\}<\/Link>/)
+assert.match(home, /\{serviceNotices\.unavailable\?'—':runState\.waiting\}<\/Link>/)
 assert.match(home, /Stopped here \$\{count\} times/)
 assert.match(read('components/dashboard/dashboard-nav.tsx'), /new Set\(data\.handoffs\.map\(\(h: any\) => String\(h\?\.title \|\| h\?\.id\)\)\)\.size/)
 const agent = read('app/dashboard/(app)/agent/page.tsx')
@@ -43,7 +43,7 @@ assert.match(agent, /needsYou:\(snapshot\?\.approvals\?\.length\|\|0\)\+handoffG
 assert.match(agent, /earlier stop\{earlier\.length===1\?'':'s'\} on this site/)
 
 // 4b. "Waiting for you" on Today is the Needs you count, not every old paused run (it said 25 while Needs you said 1).
-assert.match(home, /waiting:approvalRows\.length\+handoffGroups\.length \}/)
+assert.match(home, /waiting:approvalRows\.length\+handoffGroups\.length\+serviceNotices\.total \}/)
 assert.doesNotMatch(home, /pausedRunsRes|actionablePaused/)
 
 // 5. Cancelled reminders are not part of today.

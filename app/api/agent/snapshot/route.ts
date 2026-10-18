@@ -1,3 +1,4 @@
+import {getServiceNotices} from '@/lib/dashboard/service-notices'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAgentSession, requireAgentSession } from '@/lib/agent/session'
@@ -43,7 +44,7 @@ export async function GET(request: Request) {
   if (!isAgentSession(session)) return session
   const tg = session.telegramId
 
-  const [runs, steps, watchers, goals, ideas, approvals, permissions, artifacts, handoffs] = await Promise.all([
+  const [runs, steps, watchers, goals, ideas, approvals, permissions, artifacts, handoffs, serviceNotices] = await Promise.all([
     supabaseAdmin.from('agent_runs').select('id, type, goal_id, title, summary, status, capability, progress, started_at, updated_at, next_check_at, why, error, metadata_json').eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(20),
     supabaseAdmin.from('agent_steps').select('id, run_id, ordinal, tool_name, title, status, output_json, error, started_at, completed_at').eq('telegram_id', tg).order('created_at', { ascending: false }).limit(120),
     supabaseAdmin.from('agent_watchers').select('id, goal_id, type, condition_json, cadence_minutes, active, last_checked_at, next_check_at, created_at, updated_at').eq('telegram_id', tg).eq('active', true).order('created_at', { ascending: false }).limit(30),
@@ -53,10 +54,11 @@ export async function GET(request: Request) {
     supabaseAdmin.from('agent_permissions').select('capability, level, irreversible_always_ask, updated_at').eq('telegram_id', tg),
     supabaseAdmin.from('agent_artifacts').select('id, type, title, subtitle, updated_at').eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(20),
     getPendingBrowserHandoffs(tg),
+    getServiceNotices(tg).then(value=>({value,error:null})).catch(()=>({value:null,error:true})),
   ])
 
   const queryError = runs.error || steps.error || watchers.error || goals.error || ideas.error || approvals.error || permissions.error || artifacts.error
-  if (queryError) {
+  if (queryError || serviceNotices.error) {
     console.error('AGENT_SNAPSHOT_READ_FAILED:', queryError)
     return NextResponse.json({ error: 'read_failed' }, { status: 500 })
   }
@@ -88,6 +90,8 @@ export async function GET(request: Request) {
   })
 
   return NextResponse.json({
+    serviceNotices: serviceNotices.value?.items || [],
+    serviceNoticeCount: serviceNotices.value?.total || 0,
     surface: session.surface,
     runtime: runtimeStatus(),
     runs: (runs.data || []).map((r: any) => ({

@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import {ServiceNoticeCards} from '@/components/dashboard/service-notice-cards'
+import type {ServiceNotice} from '@/lib/dashboard/service-notices'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
 
 const LEVELS = ['off','read','draft','ask','auto'] as const
 
 type Snapshot = {
-  runs:any[]; watchers:any[]; goals:any[]; ideas:any[]; approvals:any[]; handoffs?:Array<{id:string;title:string;summary:string}>; permissions:any[]; artifacts:any[]; runtime?:any
+  serviceNotices?:ServiceNotice[]; serviceNoticeCount?:number; runs:any[]; watchers:any[]; goals:any[]; ideas:any[]; approvals:any[]; handoffs?:Array<{id:string;title:string;summary:string}>; permissions:any[]; artifacts:any[]; runtime?:any
 }
 
 async function api(path:string, init:RequestInit={}){
@@ -48,7 +50,7 @@ export default function AgentDashboardPage(){
   const handoffGroups=[...(snapshot?.handoffs||[]).reduce((m,h)=>{const g=m.get(h.title);if(g)g.push(h);else m.set(h.title,[h]);return m},new Map<string,Array<{id:string;title:string;summary:string}>>()).values()]
   const counts=useMemo(()=>({
     active:(snapshot?.runs||[]).filter(r=>['queued','running','waiting_approval'].includes(r.status)).length,
-    needsYou:(snapshot?.approvals?.length||0)+handoffGroups.length,
+    needsYou:(snapshot?.approvals?.length||0)+handoffGroups.length+(snapshot?.serviceNoticeCount??snapshot?.serviceNotices?.length??0),
     watchers:snapshot?.watchers?.length||0,
     goals:snapshot?.goals?.length||0,
   }),[snapshot])
@@ -139,7 +141,7 @@ export default function AgentDashboardPage(){
 
   const runtime=snapshot?.runtime||{}
   const sectionTitle=section==='approvals'?'Needs you':section==='background'?'Background':section==='goals'?'Goals':'Gogo Agent'
-  const sectionCopy=section==='approvals'?'Review approvals and browser tasks waiting for your account or delivery location.':section==='background'?'What Gogo is watching for you, and what it has actually seen.':section==='goals'?'Longer outcomes Gogo can keep moving in the background.':'Plan, act and keep working. Consequential actions stop for your approval.'
+  const sectionCopy=section==='approvals'?'Review service notices, approvals and browser tasks waiting for you.':section==='background'?'What Gogo is watching for you, and what it has actually seen.':section==='goals'?'Longer outcomes Gogo can keep moving in the background.':'Plan, act and keep working. Consequential actions stop for your approval.'
   const agentState = busy ? 'acting' : counts.needsYou ? 'approval' : counts.watchers ? 'watching' : 'acting'
 
   return <div className="mx-auto w-full max-w-[1440px] space-y-5 pb-10">
@@ -176,7 +178,8 @@ export default function AgentDashboardPage(){
 
     <div className="grid gap-5 xl:grid-cols-2">
       {(!section||section==='approvals')&&<Panel title="Needs you" eyebrow="You stay in control" badge={String(counts.needsYou)}>
-        {!counts.needsYou&&<Empty text="Nothing needs your input right now."/>}
+        <ServiceNoticeCards notices={snapshot?.serviceNotices||[]}/>
+        {!counts.needsYou&&!error&&<Empty text="Nothing needs your input right now."/>}
         {snapshot?.approvals?.map((a:any)=><Card key={a.id}><div className="flex items-start justify-between gap-3"><div><b>{a.title}</b><p>{a.description}</p><span className="mt-2 inline-block rounded-full bg-amber-100 px-2 py-1 text-[12px] font-bold uppercase text-amber-700">{a.risk} risk</span></div></div><div className="mt-3 flex gap-2"><button onClick={()=>resolveApproval(a,'reject')} className="btn-secondary">Reject</button><button onClick={()=>resolveApproval(a,'approve')} className="btn-primary">Approve & run</button></div></Card>)}
         {handoffGroups.map(([latest,...earlier])=><Card key={latest.id}><b>{latest.title}</b><p>{latest.summary}</p><Link href={`/dashboard/activity/${latest.id}/browser`} className="btn-primary mt-3 inline-flex">Take control</Link>{earlier.length>0&&<details className="mt-3"><summary className="cursor-pointer text-[14px]">{earlier.length} earlier stop{earlier.length===1?'':'s'} on this site</summary>{earlier.map(h=><div key={h.id} className="mt-2 border-t border-[#262626] pt-2"><p>{h.summary}</p><Link href={`/dashboard/activity/${h.id}/browser`} className="text-[14px] underline">Open</Link></div>)}</details>}</Card>)}
       </Panel>}
