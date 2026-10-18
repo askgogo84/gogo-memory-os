@@ -56,7 +56,7 @@ export function detectReadOnlyScheduleRequest(raw: string) {
   // An additional discovery/read command belongs to its own handler or planner.
   for(const clause of request.split(/\b(?:and|then|also|but)\b|[.;!?]\s*/)){
     if(!standaloneCalendar&&/^\s*(?:please\s+)?(?:find|search|look\s+for|research|compare|check|read(?![- ]only)|review|show|list|display|summari[sz]e|get|tell\s+me|what|when|where|how|who|is|are)\b/.test(clause)&&
-      !calendarRequestsAvailability(clause)&&! /\b(calendar|schedule|meetings?|events?|reminders?|my appointments?|needs? my attention|what (?:do )?i have|what(?:'s| is) on|what needs my attention|(?:review|brief me|summari[sz]e) tomorrow)\b/.test(clause))return null
+      !calendarRequestsAvailability(clause)&&! /\b(calendar|schedule|meetings?|events?|reminders?|my appointments?|my day|needs? my attention|what (?:do )?i have|what(?:'s| is) on|what needs my attention|(?:review|brief me|summari[sz]e) tomorrow)\b/.test(clause))return null
   }
   const readVerb = /\b(check|tell me|show(?: me)?|list|plan my day|what is my day|what (?:meetings?|events?|appointments?) do i have|what do i have|what(?:'s| is) on|what needs my attention|review|summari[sz]e|brief me)\b/.test(request)
   const scheduleContext = standaloneCalendar || /\b(calendar|schedule|meetings?|appointments?|events?|day)\b/.test(request) ||
