@@ -59,6 +59,19 @@ async function check(label,fn){try{await fn();console.log('PASS '+label);}catch(
   const view=rail(h.render());assert.match(text(view),/Needs you\s+1/);assert.match(text(view),/Provider New/);assert.doesNotMatch(text(view),/Nothing is waiting/);
   assert.equal(h.calls.filter(call=>call.method==='POST').length,1,'only synthetic chat transport executes; no provider action');
  });
+ await check('bounded handoff cards retain the complete count and safe task links',async()=>{
+  const rows=Array.from({length:5},(_,i)=>handoff(i===0?'run/with?reserved#chars':'run-'+i,'Provider '+i));
+  const h=harness({...base,handoffs:rows});await flush();const view=rail(h.render());
+  assert.match(text(view),/Needs you\s+5/);assert.match(text(view),/Provider 0/);assert.match(text(view),/Provider 2/);assert.doesNotMatch(text(view),/Provider 3|Provider 4/);
+  assert.ok(walk(view,node=>node.type==='a'&&node.props.href==='/dashboard/activity/run%2Fwith%3Freserved%23chars/browser'));
+  assert.ok(walk(view,node=>node.type==='a'&&node.props.href==='/dashboard/agent?section=approvals'&&text(node).trim()==='5'),'complete count links to all waiting work');
+  assert.doesNotMatch(JSON.stringify(view),/SYNTHETIC_PRIVATE_TAKEOVER/);
+ });
+ await check('collapsed earlier stops remain one waiting action',async()=>{
+  const h=harness({...base,handoffs:[{...handoff('run-repeat','Provider Repeat'),repeats:4}]});await flush();const view=rail(h.render());
+  assert.match(text(view),/Needs you\s+1/);assert.match(text(view),/Stopped here 5 times/);
+  assert.ok(walk(view,node=>node.type==='a'&&node.props.href==='/dashboard/agent?section=approvals'));
+ });
  await check('failed refresh stays explicitly unavailable and never reports empty success',async()=>{
   const h=harness({...base,handoffs:[handoff('run-a','Provider A')]});await flush();h.setFail(true);h.tick();await flush();const view=rail(h.render());assert.match(text(view),/Needs you\s+—/);assert.doesNotMatch(text(view),/Nothing is waiting/);
  });
