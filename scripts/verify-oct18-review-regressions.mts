@@ -14,9 +14,10 @@ const clock=Date.parse('2026-10-18T18:45:00Z') // 19 October at destination, sti
 class Clock extends Date{constructor(value?:string|number){super(value===undefined?clock:value)}static now(){return clock}}
 const rows=[{id:'00000000-0000-4000-8000-000000000001',telegram_id:123,from_city:'Amsterdam',to_city:'Bengaluru',depart_at:new Date(clock+3600000).toISOString(),arrive_at:new Date(clock+7200000).toISOString(),flight_no:'KL879'}]
 let stored:any[]=[],home=false,rejectRetire=false
+const ticketBounds:Array<{key:string;value:string}>=[]
 const db={from(table:string){let update:any,insert:any,single=false;const filters:Array<(r:any)=>boolean>=[];const b:any={
   select(){return b},eq(k:string,v:any){filters.push(r=>String(k.includes('->>')?r[k.split('->>')[0]]?.[k.split('->>')[1]]:r[k])===String(v));return b},
-  in(k:string,v:unknown[]){filters.push(r=>v.includes(r[k]));return b},gte(){return b},lt(){return b},or(){return b},order(){return b},limit(){return b},
+  in(k:string,v:unknown[]){filters.push(r=>v.includes(r[k]));return b},gte(key:string,value:string){if(table==='travel_tickets')ticketBounds.push({key,value});return b},lt(){return b},or(){return b},order(){return b},limit(){return b},
   update(v:any){update=v;return b},insert(v:any){insert=v;return b},maybeSingle(){single=true;return b},single(){single=true;return b},
   then(resolve:any,reject:any){return Promise.resolve().then(()=>{
     if(table==='travel_tickets')return {data:rows,error:null}
@@ -79,5 +80,32 @@ await check('quantity clause identity survives discovery direct observation and 
   assert.equal(computer.productPagePriceEvidence(objective,title.replace('grey','black'),title.replace('grey','black')+' ₹926 in stock'),null)
   for(const wrong of ['Apple iPhone 18 Pro 128GB','Apple iPhone 18 512GB','Apple iPhone 118 128GB'])assert.equal(identity.productIdentityMatches('iPhone 18',wrong),false)
   assert.equal(model.tokensEndWords('Apple iPhone 18 128GB',['iPhone','18','128GB']),true,'model digits must not be concatenated with capacity')
+})
+await check('unrequested multipacks are refused across discovery observation and price quote',()=>{
+  const cases=[{subject:'Amul butter 500g',label:'Amul butter 500g pack of 2'},{subject:'Logitech M185 wireless mouse grey',label:'Logitech M185 wireless mouse grey pack of 3'}]
+  for(const {subject,label} of cases){
+    const url='https://www.flipkart.com/item/p/itm1?pid=FIXTURE'
+    assert.equal(identity.productIdentityMatches(subject,label),false)
+    assert.equal(model.comparisonProductLead('flipkart',subject,[{url,title:label}]),null)
+    assert.equal(model.providerObservation('flipkart',{id:'fixture',status:'completed'},{status:'completed',output_json:{sourceUrl:url,summary:label+'\n₹500'}},subject).status,'failed')
+    assert.equal(model.comparisonQuote(subject,{provider:'flipkart',status:'observed',sourceUrl:url,evidence:label+'\n₹500'}),null)
+  }
+  assert.equal(identity.productIdentityMatches('Amul butter 500g pack of 2','Amul butter 2 x 500g'),true)
+  assert.equal(identity.productIdentityMatches('Amul butter 500g x2','Amul butter 500g 2-pack'),true)
+  assert.equal(identity.productIdentityMatches('Amul butter 500g pack of 2','Amul butter 500g pack of 20'),false)
+  assert.equal(identity.productIdentityMatches('Amul butter 500g, quantity 2,','Amul butter 500g pack of 2'),false,'cart quantity is separate from one sellable item pack')
+})
+await check('arrived home weather reconciles through both public scheduled and per-user entry points',async()=>{
+  rows[0].depart_at=new Date(clock-8*3600000).toISOString();rows[0].arrive_at=new Date(clock-2*3600000).toISOString()
+  const condition=exports.desiredWebConditions(rows,'arrived-root',new Date(clock+70*3600000).toISOString()).find((r:any)=>r.condition.contextClass==='destination_weather').condition
+  const fixture=()=>[{id:'arrived-home',telegram_id:123,type:'web_search',active:true,condition_json:condition},{id:'other-owner',telegram_id:456,type:'web_search',active:true,condition_json:condition},{id:'manual',telegram_id:123,type:'web_search',active:true,condition_json:{title:'Bengaluru weather'}}]
+  home=true;rejectRetire=false
+  for(const entry of ['compileTravelWatchersForUser','compileUpcomingTravelWatchers']){
+    stored=fixture();ticketBounds.length=0
+    if(entry==='compileTravelWatchersForUser')await exports[entry](123);else await exports[entry]()
+    assert.equal(stored[0].active,false,entry+' must retire weather after long-haul arrival')
+    assert.equal(stored[1].active,true);assert.equal(stored[2].active,true)
+    assert.ok(ticketBounds.some(bound=>bound.key==='depart_at'&&Date.parse(bound.value)<=Date.parse(rows[0].depart_at)),'actual database window includes the arrived source')
+  }
 })
 assert.deepEqual(failures,[],'review regressions must all pass')
