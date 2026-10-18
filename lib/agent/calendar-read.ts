@@ -13,9 +13,12 @@ const WEEKDAYS = ['sunday','monday','tuesday','wednesday','thursday','friday','s
 const WEEKDAY_PATTERN = /\b(?:(next|this)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/gi
 const CALENDAR_READ_HEAD=new RegExp(`^(?:please\\s+)?(?:(?:can|could|would)\\s+you\\s+)?(?:check|read|review|show(?:\\s+me)?|list|display|summari[sz]e)\\s+(?:me\\s+)?(?:(?:my|the|your)\\s+)?(?:google\\s+)?${CALENDAR_WORD_RE.source}`)
 const CALENDAR_READ_HOLD="I haven't read your Calendar. Ask me to check it when you're ready. Nothing was changed."
-const CALENDAR_AVAILABILITY_CLAUSE=/\b(?:and|then|also|but)\s+(?:please\s+)?(?:check|tell\s+me)\s+(?:when\s+)?(?:(?:if|whether)\s+)?(?:i\s+am|i'm|we\s+are|we're|am\s+i|are\s+we|my\s+calendar\s+is|is\s+my\s+calendar)\s+(?:free|available)\b/gi
+const CALENDAR_AVAILABILITY_COMMAND=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:for|me|the|a|an|some|any|my|calendar|free|available|open|(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)[- ](?:minutes?|mins?|hours?|hrs?))\s+)*(?:slots?|time|gaps?|availability)\b/i
+const CALENDAR_AVAILABILITY_QUESTION=/\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b|\b(?:is|are)\s+there\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b|\b(?:i|we)\s+have\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b/i
+const CALENDAR_AVAILABILITY_CONDITION=/\b(?:if|whether)\s+(?:i\s+am|i'm|we\s+are|we're|my\s+calendar\s+is)\s+(?:free|available)\b/i
+const CALENDAR_AVAILABILITY_CLAUSE=new RegExp(`\\b(?:and|then|also|but)\\s+(?:please\\s+)?(?:(?:check|tell\\s+me)\\s+)?(?:(?:if|whether|when)\\s+)?(?:${CALENDAR_AVAILABILITY_COMMAND.source}|${CALENDAR_AVAILABILITY_QUESTION.source}|${CALENDAR_AVAILABILITY_CONDITION.source})`,'gi')
 const DURATION_WORDS:Record<string,number>={a:1,an:1,one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9,ten:10,half:0.5,quarter:0.25}
-const DURATION_RE=/(?<![\w.-])(\d+(?:\.\d+)?|\.\d+|(?:half|quarter)(?:[ -]+an?)?|an?|one|two|three|four|five|six|seven|eight|nine|ten)[\s-]*(minutes?|mins?|hours?|hrs?)\b/gi
+const DURATION_RE=/(?<![\w.-])(?:a\s+(?=(?:half|quarter)\b))?(\d+(?:\.\d+)?|\.\d+|(?:half|quarter)(?:[ -]+an?)?|an?|one|two|three|four|five|six|seven|eight|nine|ten)[\s-]*(minutes?|mins?|hours?|hrs?)\b/gi
 
 function pad(n:number){return String(n).padStart(2,'0')}
 function safe(v:unknown,max=300){return redactSecretShapedText(String(v??'').replace(/\s+/g,' ').trim().slice(0,max))}
@@ -63,9 +66,7 @@ function calendarRangeText(text:string){
 }
 
 export function calendarRequestsAvailability(text:string){
-  const availabilityCommand=/\b(?:find|show|list|check|suggest|pick|choose|get|review|look\s+for|search\s+for)\s+(?:(?:for|me|the|a|an|some|any|my|calendar|free|available|open|(?:\d+(?:\.\d+)?|one|two|three|four|five|six|seven|eight|nine|ten)[- ](?:minutes?|mins?|hours?|hrs?))\s+)*(?:slots?|time|gaps?|availability)\b/i
-  const availabilityQuestion=/\b(?:when\s+)?(?:am\s+i|are\s+we|is\s+my\s+calendar)\s+(?:free|available)\b|\bwhat(?:'s|\s+is)\s+my\s+availability\b|\b(?:is|are)\s+there\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b|\b(?:i|we)\s+have\s+(?:(?:any|a|an|some)\s+)?(?:free|available|open)\s+(?:time|slots?|gaps?)\b/i
-  return availabilityCommand.test(text)||availabilityQuestion.test(text)||/\b(?:if|whether)\s+(?:i\s+am|i'm|we\s+are|we're|my\s+calendar\s+is)\s+(?:free|available)\b/i.test(text)
+  return CALENDAR_AVAILABILITY_COMMAND.test(text)||CALENDAR_AVAILABILITY_QUESTION.test(text)||CALENDAR_AVAILABILITY_CONDITION.test(text)
 }
 
 export function calendarAffirmativeText(text:string){
