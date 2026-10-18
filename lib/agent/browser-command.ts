@@ -114,7 +114,9 @@ export function parseConnectedProviderReadCommand(text:string):BrowserCommand|nu
   if(!raw)return null
   // A provider named only inside a shared link is not a request to read that provider:
   // a pasted instagram.com reel link was sent to Instagram's login page (13 Oct 18:46).
-  const proseOnly=raw.replace(/https?:\/\/[^\s<>)\]}]+/gi,' ')
+  // A social account handle is the object being read, not a second provider
+  // navigation target (for example @zomato on Instagram).
+  const proseOnly=raw.replace(/https?:\/\/[^\s<>)\]}]+/gi,' ').replace(/@[a-z0-9._]+/gi,' ')
   // Public shopping sites need browser routing even without a Vault integration.
   // Keep these entry points separate from password-provider configuration.
   const shoppingSites=[
@@ -498,8 +500,9 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
           const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
           const resumeUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
           if(result.authReason==='login_unavailable'){
+            const {loginUnavailableMessage}=await import('./browser-auth-notice')
             const site=new URL(params.command.url).hostname.replace(/^www\./,'')
-            const text=`I couldn't get ${site} to send you a sign-in code, so I stopped there. Nothing else was entered or changed.\n\nOpen this, tap Take control and sign in yourself, then tap Resume. I'll carry on with your question from there:\n${resumeUrl}`
+            const text=loginUnavailableMessage(site,resumeUrl)
             await supabaseAdmin.from('agent_runs').update({summary:safe(text.split('\n')[0],600)}).eq('id',params.runId).eq('telegram_id',String(tg))
             return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text,blockedReason:blockReason,handledBy:'secure-browser' as const}
           }
@@ -611,6 +614,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       await supabaseAdmin.from('agent_runs').update({summary}).eq('id',params.runId).eq('telegram_id',String(tg))
       return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:summary,handledBy:'secure-browser' as const}
     }
+    if(message==='browser_handoff_in_use')return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:await (await import('./browser-auth-notice')).browserHandoffInUseReply(tg),handledBy:'secure-browser' as const}
     if(message==='browser_read_deadline')return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:failureSummary,handledBy:'secure-browser' as const}
     if(message==='browser_objective_unverified'||message==='browser_planning_failed')return {runId:params.runId,status:'failed' as const,capability:'browser' as const,risk:params.command.risk,text:params.mode==='read'?failureSummary:'I could not verify the information you requested from the provider page. This task is not complete; I have no verified result to report.',handledBy:'secure-browser' as const}
     throw err

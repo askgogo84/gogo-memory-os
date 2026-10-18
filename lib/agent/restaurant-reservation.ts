@@ -453,6 +453,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
       objective:`Read only the live reservation state and booking-release rules for ${intent.restaurant}. Determine whether bookings are open, sold out, or scheduled to open later. Capture any explicit next-open date and recurring release weekday/time. Do not sign in, fill personal details, reserve, submit, pay, or change anything.`,
     })
   }catch(error:any){
+    if(error?.message==='browser_handoff_in_use')return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:await (await import('./browser-auth-notice')).browserHandoffInUseReply(params.actor.legacyTelegramId)}
     return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I found ${intent.restaurant} here: ${provider.url}\n\nI couldn't open its booking page to check tables right now, so nothing was booked. You can book there directly, or reply *try again* in a few minutes.`}
   }
   if(inspected.status==='blocked'){

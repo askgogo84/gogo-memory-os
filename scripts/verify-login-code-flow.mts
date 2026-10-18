@@ -77,7 +77,10 @@ console.log('verify-login-code-flow: older reads released')
 assert.match(sc, /if\(!vaultFilled&&params\.mode==='read'\)savedLoginMissed=true/)
 assert.match(sc, /if\(savedLoginMissed&&params\.reserveHumanHandoff===true&&!providerBooking\)\{/)
 assert.match(bc, /if\(result\.authReason==='login_unavailable'\)\{/)
-assert.match(bc, /Open this, tap Take control and sign in yourself, then tap Resume\. I'll carry on with your question from there/)
+assert.match(bc, /const text=loginUnavailableMessage\(site,resumeUrl\)/)
+const {loginUnavailableMessage}=await import('../lib/agent/browser-auth-notice')
+assert.match(loginUnavailableMessage('fixture.invalid','same-run'), /Open this, tap Take control and sign in yourself, then tap Resume/)
+assert.match(loginUnavailableMessage('fixture.invalid','same-run'), /continue the same question/)
 console.log('verify-login-code-flow: login handover ok')
 
 // 16 Oct 11:31 live: "swiggy.com sent a sign-in code" but no SMS arrived. A code is claimed only when the site shows
