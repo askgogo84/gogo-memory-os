@@ -299,7 +299,7 @@ export function restaurantReservationApprovalInput(params:{runId:string;lifeEven
 async function existingMission(tg:number,key:string){
   const{data}=await supabaseAdmin.from('life_events').select('id,metadata_json,next_action_at,lifecycle_state').eq('telegram_id',String(tg)).eq('dedupe_key',key).maybeSingle()
   if(!data?.id)return null
-  const{data:run}=await supabaseAdmin.from('agent_runs').select('id,status,metadata_json').eq('telegram_id',String(tg)).eq('metadata_json->>plan_type','restaurant_reservation_release').eq('metadata_json->>life_event_id',String(data.id)).in('status',['waiting_approval','queued','running','paused','outcome_unknown']).order('started_at',{ascending:false}).limit(1).maybeSingle()
+  const{data:run}=await supabaseAdmin.from('agent_runs').select('id,status,error,metadata_json').eq('telegram_id',String(tg)).eq('metadata_json->>plan_type','restaurant_reservation_release').eq('metadata_json->>life_event_id',String(data.id)).in('status',['waiting_approval','queued','running','paused','outcome_unknown']).order('started_at',{ascending:false}).limit(1).maybeSingle()
   const{data:approval}=run?.id?await supabaseAdmin.from('agent_approvals').select('id,status').eq('run_id',String(run.id)).eq('telegram_id',String(tg)).eq('action_type','booking').order('requested_at',{ascending:false}).limit(1).maybeSingle():{data:null}
   return{event:data,run:run||null,approval:approval||null}
 }
@@ -517,13 +517,21 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const contextRefs=contextWindows.flatMap(window=>window.sourceRefs).slice(0,30)
   const key=dedupeKey(params.actor,intent,provider.url)
   const existing=await existingMission(params.actor.legacyTelegramId,key)
-  if(existing?.run?.id){
+  const refreshing=Boolean(existing?.run?.id&&existing.run.status==='paused'&&existing.run.error==='restaurant_context_review_required'&&existing.approval?.status==='expired')
+  if(existing?.run?.id&&!refreshing){
     const status=String(existing.run.status)
     const approvalStatus=String(existing.approval?.status||'')
     const line=approvalStatus==='pending'?'Reply APPROVE to arm it, or REJECT to stop.':approvalStatus==='approved'?'It is already approved and armed.':'The mission is already active.'
     return{runId:String(existing.run.id),status:status as any,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,approvalId:existing.approval?.id||undefined,approvalRequired:approvalStatus==='pending',text:`I already have this ${intent.restaurant} reservation mission. ${line}`}
   }
-
+  const refreshToken=refreshing?`restaurant_context_refresh:${createHash('sha256').update(`${key}|${Date.now()}|${Math.random()}`).digest('hex')}`:null
+  if(refreshing){
+    const {data:claimed,error}=await supabaseAdmin.from('agent_runs').update({status:'running',error:refreshToken,summary:'Refreshing dining context for a new bounded approval.',updated_at:new Date().toISOString()})
+      .eq('id',existing!.run!.id).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('status','paused').eq('error','restaurant_context_review_required').select('id').maybeSingle()
+    if(error)throw new Error('restaurant_context_refresh_claim_failed')
+    if(!claimed)return{runId:String(existing!.run!.id),status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'This reservation context is already being refreshed. No new booking attempt was made.'}
+  }
+  try{
   const now=new Date().toISOString()
   const{data:event,error:eventError}=await supabaseAdmin.from('life_events').upsert({
     telegram_id:String(params.actor.legacyTelegramId),
@@ -563,14 +571,18 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   },{onConflict:'life_event_id,action_key'}).select('id').single()
   if(actionError||!action?.id)throw new Error(`restaurant_reservation_action_failed:${actionError?.message||'unknown'}`)
   const actionId=String(action.id)
-  const{data:run,error:runError}=await supabaseAdmin.from('agent_runs').insert({
+  const runValues={
     telegram_id:String(params.actor.legacyTelegramId),type:'restaurant_reservation',capability:'browser',status:'waiting_approval',
     title:`Reserve ${intent.restaurant}`.slice(0,180),
     summary:'Provider release time verified. Waiting for bounded approval before the scheduled reservation attempt.',
     progress:35,why:'Gogo inspected the provider page read-only and will only attempt the reservation inside the approved restaurant/party/time/fee bounds.',
-    source:params.surface,started_at:now,updated_at:now,
+    source:params.surface,started_at:now,updated_at:now,error:refreshToken,
     metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:lifeEventId,life_event_action_id:actionId,restaurant:intent.restaurant,reservation_url:provider.url,release_at:releaseAt,context_windows:contextWindows,context_refs:contextRefs,dining_context:diningContext,constraints:{partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0}},
-  }).select('id').single()
+  }
+  const runWrite=refreshing
+    ? supabaseAdmin.from('agent_runs').update(runValues).eq('id',existing!.run!.id).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('error',refreshToken)
+    : supabaseAdmin.from('agent_runs').insert(runValues)
+  const{data:run,error:runError}=await runWrite.select('id').single()
   if(runError||!run?.id)throw new Error(`restaurant_reservation_run_failed:${runError?.message||'unknown'}`)
   const runId=String(run.id)
   const binding=buildApprovalBinding(restaurantReservationApprovalInput({runId,lifeEventId,actionId,restaurant:intent.restaurant,providerUrl:provider.url,partySize:intent.partySize,preferredStart:intent.preferredStart,preferredEnd:intent.preferredEnd,requestedDate:intent.requestedDate,releaseAt,contextWindows,diningContext,reservationLocation:(provider as any).location||null}))
@@ -590,6 +602,10 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     risk_level:'high',status:'pending',...binding,
   }).select('id').single()
   if(approvalError||!approval?.id)throw new Error(`restaurant_reservation_approval_failed:${approvalError?.message||'unknown'}`)
+  if(refreshing){
+    const {data:cleared,error}=await supabaseAdmin.from('agent_runs').update({error:null}).eq('id',runId).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('error',refreshToken).select('id').maybeSingle()
+    if(error||!cleared)throw new Error('restaurant_context_refresh_finalize_failed')
+  }
   await supabaseAdmin.from('agent_activity').insert({
     telegram_id:String(params.actor.legacyTelegramId),run_id:runId,event_type:'restaurant_reservation_prepared',
     message:`Provider release verified for ${intent.restaurant}; bounded reservation approval requested.`,
@@ -608,6 +624,11 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     runId,status:'waiting_approval' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,
     approvalId:String(approval.id),approvalRequired:true,
     text:`I checked ${intent.restaurant}'s live booking provider first${ruleEvidenceUrl?' and verified the release rule against the restaurant\'s first-party reservation policy':''}. ${evidence}${travelNote}\n\nI created a persistent reservation mission for ${when} (${timezone}).\n• Party: ${intent.partySize}\n• Preferred slot: ${window}${intent.requestedDate?`\n• Requested date: ${intent.requestedDate}`:''}\n• Fee/deposit authority: ₹0 — I must stop and ask before any charge.\n\nReply APPROVE to arm this exact bounded reservation attempt, or REJECT to stop it.`,
+  }
+  }catch(error){
+    if(refreshing)await supabaseAdmin.from('agent_runs').update({status:'paused',error:'restaurant_context_review_required',summary:'Context refresh did not finish. The reservation remains unarmed; retry the bounded context review.',updated_at:new Date().toISOString()})
+      .eq('id',existing!.run!.id).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('error',refreshToken)
+    throw error
   }
 }
 
