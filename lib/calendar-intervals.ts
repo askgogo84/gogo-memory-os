@@ -32,5 +32,5 @@ export function calendarInterval(event: CalendarProviderEvent, timezone: string)
 
 export function calendarBlocksTime(event: CalendarProviderEvent) {
   return event.status !== 'cancelled' && event.transparency !== 'transparent' &&
-    !event.attendees?.some(attendee => attendee.self === true && attendee.responseStatus === 'declined')
+    !(Array.isArray(event.attendees) && event.attendees.some(attendee => attendee.self === true && attendee.responseStatus === 'declined'))
 }

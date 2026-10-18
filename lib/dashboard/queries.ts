@@ -382,7 +382,7 @@ export async function getTodayCalendar(telegramId: string): Promise<TodayCalenda
       return {
         id: String(it?.id ?? i),
         title: (typeof it?.summary === 'string' && it.summary.trim()) || 'Untitled',
-        time: it?.start?.dateTime ? formatClock(it.start.dateTime, zone) : null,
+        time: it?.start?.dateTime && Number.isFinite(Date.parse(it.start.dateTime)) ? formatClock(it.start.dateTime, zone) : null,
         startAt: it.start?.dateTime || (span ? new Date(span.start).toISOString() : null),
         endAt: span ? (it.end?.dateTime || new Date(span.end).toISOString()) : null,
         allDay: Boolean(it.start?.date), blocksTime: calendarBlocksTime(it), timingKnown: Boolean(span),
