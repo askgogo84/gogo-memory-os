@@ -92,7 +92,7 @@ export async function buildDeterministicGoldReply(userText: string) {
   const place = t.match(/\bin\s+([a-z][a-z ]{2,30}?)\s*(?:today|now|\?|$)/i)?.[1]?.trim() || 'india'
   const query = t.toLowerCase().includes('silver')
     ? `silver price today in ${place}`
-    : `22 carat and 24 carat gold rate per gram today in ${place}`
+    : `gold rate per gram today in ${place} 24 carat 22 carat`
 
   const context = await searchWeb(query)
 

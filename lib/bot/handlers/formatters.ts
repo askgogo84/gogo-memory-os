@@ -16,7 +16,8 @@ function extractPrices(text: string) {
   // "Rs." or "INR" and put the rate further from the label. Accept all of those.
   const cur = '(?:₹|rs\\.?|inr)'
   const rate = (k: string) =>
-    cleaned.match(new RegExp(`${k}\\s*(?:k|kt|karat|carat|ct)\\b[^₹]{0,80}?${cur}\\s?([\\d,]{3,}(?:\\.\\d+)?)`, 'i'))
+    cleaned.match(new RegExp(`${k}\\s*(?:k|kt|karat|carat|ct)\\b(?:(?!\\d{2}\\s*(?:k|kt|karat|carat|ct)\\b)[^₹]){0,80}?${cur}\\s?([\\d,]{3,}(?:\\.\\d+)?)`, 'i'))
+  // 18 Oct retest: "22 carat and 24 carat … ₹14,766" gave 22K the 24K price; a rate never reaches past another karat label.
   const price24 = rate('24')
   const price22 = rate('22')
   const price18 = rate('18')
