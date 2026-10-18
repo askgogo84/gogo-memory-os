@@ -2,6 +2,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { fetchWeatherForecast, formatCurrentWeather } from '@/lib/services/weather'
 import { getTodayEvents } from '@/lib/google-calendar'
 import { getTodayEventsAllAccounts } from '@/lib/services/google-calendar-accounts'
+import {isRelevantOpenLoop} from '@/lib/agent/task-lifecycle'
+import {formatEmailSnippet} from '@/lib/agent/google-workspace-read'
 
 function todayDateKey() {
   return new Intl.DateTimeFormat('en-CA', {
@@ -178,7 +180,7 @@ function cleanWeather(raw: string) {
   return text
 }
 
-export async function buildMorningBriefing(telegramId: number, userName?: string) {
+export async function buildMorningBriefing(telegramId: number, userName?: string, options:{includeOpenLoops?:boolean}={}) {
   const [reminders, calendarState, flights] = await Promise.all([
     getTodaysReminders(telegramId),
     getCalendarState(telegramId),
@@ -256,5 +258,15 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
   }
 
 
+  if(options.includeOpenLoops||show('open_loop')||show('task')){
+    try{
+      const {data,error}=await supabaseAdmin.from('agent_open_loops')
+        .select('id,kind,title,summary,status,source_type').eq('telegram_id',String(telegramId)).eq('status','active')
+        .order('priority',{ascending:false}).limit(8)
+      if(error)throw new Error('briefing_open_loops_unavailable')
+      const loops=(data||[]).filter(isRelevantOpenLoop)
+      blocks.push(`🧩 *Saved open loops* (up to 8; saved status, providers not rechecked)\n${loops.length?loops.map((loop:any)=>`• ${formatEmailSnippet(String(loop.title||'Untitled item'),180)}`).join('\n'):'No active open loops returned.'}`)
+    }catch{blocks.push('🧩 *Open loops unavailable* — I could not read their saved status; this is not an empty-queue claim.')}
+  }
   return blocks.join('\n\n')
 }

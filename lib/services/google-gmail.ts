@@ -287,7 +287,7 @@ async function listMessages(accessToken: string, maxResults: number, mode: 'late
 async function fetchMessageMeta(accessToken: string, messageId: string) {
   const detail = await gmailFetchJson(
     accessToken,
-    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID`
+    `https://gmail.googleapis.com/gmail/v1/users/me/messages/${messageId}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID&metadataHeaders=List-Id&metadataHeaders=List-Unsubscribe&metadataHeaders=Precedence&metadataHeaders=Auto-Submitted`
   )
 
   if (!detail.ok) {
@@ -308,25 +308,31 @@ async function fetchMessageMeta(accessToken: string, messageId: string) {
     date: getHeader(headers, 'Date') || '',
     snippet: detail.data.snippet || '',
     isUnread: labelIds.includes('UNREAD'),
+    labelIds,
+    listId:getHeader(headers,'List-Id')||'',
+    listUnsubscribe:getHeader(headers,'List-Unsubscribe')||'',
+    precedence:getHeader(headers,'Precedence')||'',
+    autoSubmitted:getHeader(headers,'Auto-Submitted')||'',
   }
 }
 
-export async function fetchEmails(accessToken: string, mode: 'latest' | 'unread' = 'latest', maxResults = 3) {
+export async function fetchEmails(accessToken: string, mode: 'latest' | 'unread' = 'latest', maxResults = 3, options:{inboxOnly?:boolean}={}) {
   let messages = []
 
   try {
     messages = await listMessages(accessToken, maxResults, mode)
-    if (!messages.length && mode === 'latest') {
+    if (!messages.length && mode === 'latest'&&!options.inboxOnly) {
       const fallback = await gmailFetchJson(
         accessToken,
         `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=${maxResults}`
       )
-      if (fallback.ok) messages = fallback.data.messages || []
+      if (!fallback.ok)throw new Error('gmail_messages_unavailable')
+      messages = fallback.data.messages || []
     }
   } catch (err) {
     if (err instanceof Error && err.message === 'gmail_scope_required') throw err
     console.error('Gmail list fallback failed:', err)
-    return []
+    throw new Error('gmail_messages_unavailable')
   }
 
   if (!messages.length) return []
@@ -334,6 +340,7 @@ export async function fetchEmails(accessToken: string, mode: 'latest' | 'unread'
   const settled = await Promise.allSettled(
     messages.slice(0, maxResults).map((msg: any) => fetchMessageMeta(accessToken, msg.id))
   )
+  if(settled.some(result=>result.status!=='fulfilled'||!result.value))throw new Error('gmail_message_read_incomplete')
 
   return settled
     .filter((x): x is PromiseFulfilledResult<any> => x.status === 'fulfilled')
@@ -341,8 +348,8 @@ export async function fetchEmails(accessToken: string, mode: 'latest' | 'unread'
     .filter(Boolean)
 }
 
-export async function fetchLatestEmails(accessToken: string, maxResults = 3) {
-  return fetchEmails(accessToken, 'latest', maxResults)
+export async function fetchLatestEmails(accessToken: string, maxResults = 3,options:{inboxOnly?:boolean}={}) {
+  return fetchEmails(accessToken, 'latest', maxResults,options)
 }
 
 export async function fetchUnreadEmails(accessToken: string, maxResults = 3) {

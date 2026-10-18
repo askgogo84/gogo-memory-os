@@ -491,6 +491,13 @@ export function isAutomatedGmailMessage(message:any){
   return false
 }
 
+/** Attention candidates are evidence to review, never authority to act on email. */
+export function isActionableGmailMessage(message:any){
+  if(isServiceRiskNotice(message))return true
+  if(isAutomatedGmailMessage(message))return false
+  return looksLikeIncomingAction(clean(`${message?.subject||''} ${message?.snippet||''}`,1200))
+}
+
 async function resolveOtherGmailLoopsForThread(telegramId:string,threadId:string,keepFingerprint:string|null){
   const {data,error}=await supabaseAdmin.from('agent_open_loops')
     .select('id,fingerprint')

@@ -77,7 +77,7 @@ export function summariseInbox(rows:any[]){
   return lines.join('\n')
 }
 
-export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unread'='latest',maxResults=5,filter?:GmailReadFilter,summarise=false){
+export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unread'='latest',maxResults=5,filter?:GmailReadFilter,summarise=false,attentionOnly=false){
   const access=await gmailAccess(telegramId)
   if(access.disabled)return 'Google Workspace access is turned off in your privacy settings.'
   if(!access.connected){
@@ -88,16 +88,21 @@ export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unrea
   }
 
   const filtered=Boolean(filter?.sender||filter?.topic)
+  const fetchLimit=filtered||attentionOnly?25:maxResults
   const fetched=mode==='unread'
-    ? await fetchUnreadEmails(access.accessToken,filtered?25:maxResults)
-    : await fetchLatestEmails(access.accessToken,filtered?25:maxResults)
-  const rows=fetched.filter((row:any)=>matchesFilter(row,filter)).slice(0,maxResults)
+    ? await fetchUnreadEmails(access.accessToken,fetchLimit)
+    : await fetchLatestEmails(access.accessToken,fetchLimit,{inboxOnly:attentionOnly})
+  const matching=fetched.filter((row:any)=>matchesFilter(row,filter))
+  const attention=attentionOnly?(await import('@/lib/agent/open-loops')).isActionableGmailMessage:null
+  const candidates=attention?matching.filter(attention):matching
+  const rows=candidates.slice(0,maxResults)
   // Persist only source-bound service-risk notices from this successful read.
   // A failed reconciliation is surfaced without claiming the mail was saved.
   let attentionWarning=''
-  try{await (await import('@/lib/agent/open-loops')).captureGmailServiceNotices(telegramId,rows)}
+  try{await (await import('@/lib/agent/open-loops')).captureGmailServiceNotices(telegramId,attentionOnly?matching:rows)}
   catch{attentionWarning='\n\nI read the emails but could not save their urgent action items. Please review the notices directly.'}
   if(!rows.length){
+    if(attentionOnly)return `No actionable candidates were identified among the latest ${fetched.length} ${mode==='unread'?'unread ':''}messages checked (up to ${fetchLimit}). This is a bounded inbox read, not proof your entire inbox needs no attention.${attentionWarning}`
     if(filtered){
       const what=[filter?.topic,filter?.sender?`from ${filter.sender}`:''].filter(Boolean).join(' ')
       return `I couldn't find a recent email${what?` matching “${what}”`:''} in your latest Gmail messages. I did not guess.`
@@ -105,16 +110,18 @@ export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unrea
     return mode==='unread'?'You have no unread emails in the current Gmail view.':'I could not find recent Gmail messages.'
   }
 
-  if(summarise&&!filtered){
+  if(summarise&&!filtered&&!attentionOnly){
     const more=mode==='unread'?await fetchUnreadEmails(access.accessToken,15):await fetchLatestEmails(access.accessToken,15)
     return `${summariseInbox(more.length?more:rows)}\n\nSay “show my latest emails” for the full list. I have not sent, deleted, archived or modified anything.${attentionWarning}`
   }
-  const heading=mode==='unread'?'📧 *Unread emails*':filtered?'📧 *Matching emails*':'📧 *Latest emails*'
+  const heading=attentionOnly?`📧 *Attention candidates* (${rows.length} of ${candidates.length}; latest ${fetched.length} checked, up to ${fetchLimit})`:mode==='unread'?'📧 *Unread emails*':filtered?'📧 *Matching emails*':'📧 *Latest emails*'
   const lines=rows.map((row:any,index:number)=>{
     const from=clean(row.from,120)
     const subject=clean(redactEmailAuthSecrets(String(row.subject||'')),160)
     const snippet=formatEmailSnippet(row.snippet,220)
-    return `${index+1}. *${subject}*\nFrom: ${from}${snippet?`\n${snippet}`:''}`
+    const ref=String(row.threadId||row.id||'')
+    const source=/^[a-f0-9]{6,64}$/i.test(ref)&&access.email?`\nSource: https://mail.google.com/mail/u/?authuser=${encodeURIComponent(access.email)}#all/${ref}`:'\nSource link unavailable for this message.'
+    return `${index+1}. *${subject}*\nFrom: ${from}${snippet?`\n${snippet}`:''}${source}`
   })
   return `${heading}\n\n${lines.join('\n\n')}\n\nI only read the Google context you approved. I have not sent, deleted, archived or modified anything.${attentionWarning}`
 }

@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   if (!saved) return NextResponse.json({ reply: "I couldn't save that expense just now, so nothing was logged. Please try again in a minute." })
 
   // Get today's total for context
-  const today = await getTodayExpenses(telegramId, phone || null).catch(()=>null)
+  const today:Awaited<ReturnType<typeof getTodayExpenses>>|null = await getTodayExpenses(telegramId, phone || null).catch(()=>null)
 
   const catEmoji: Record<string, string> = {
     Food: '🍜', Transport: '🚗', Bills: '⚡', Shopping: '🛍️',
@@ -81,7 +81,7 @@ export async function GET(req: NextRequest) {
   }
 
   if (period === 'today') {
-    const today = await getTodayExpenses(telegramId, phone || null).catch(()=>null)
+    const today:Awaited<ReturnType<typeof getTodayExpenses>>|null = await getTodayExpenses(telegramId, phone || null).catch(()=>null)
     if(!today)return NextResponse.json({reply:'I could not read your expense records right now. Your spending total is unavailable; I have not changed any records.'},{status:503})
 
     if (today.count === 0) {
@@ -123,7 +123,7 @@ export async function GET(req: NextRequest) {
   // Week or month
   const result=await getPeriodExpenses(telegramId,period,phone||null).then(data=>({data,error:false}),()=>({data:null,error:true}))
   if(result.error)return NextResponse.json({reply:'I could not read your expense records right now. Your spending total is unavailable; I have not changed any records.'},{status:503})
-  const data=result.data
+  const data:Awaited<ReturnType<typeof getPeriodExpenses>>=result.data
   if (!data) {
     return NextResponse.json({ reply: `No expenses logged this ${period} yet.` })
   }
