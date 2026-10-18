@@ -2,6 +2,8 @@
   return (text || '').replace(/\s+/g, ' ').trim()
 }
 
+import {formatGoldQuotes} from './gold-quotes'
+
 function getBlocks(searchContext: string) {
   return (searchContext || '')
     .split(/\n\s*\n/)
@@ -62,21 +64,7 @@ export function formatGoldAnswer(userText: string, searchContext: string) {
       : `I found live silver results, but couldn't cleanly extract the latest rate.`
   }
 
-  const lines: string[] = []
-  if (prices.p24) lines.push(`24K: ₹${prices.p24}`)
-  if (prices.p22) lines.push(`22K: ₹${prices.p22}`)
-  if (prices.p18) lines.push(`18K: ₹${prices.p18}`)
-
-  const place = userText.match(/\bin\s+([a-z][a-z ]{2,30}?)\s*(?:today|now|\?|$)/i)?.[1]?.trim()
-  const where = place && !/^india$/i.test(place) ? place.replace(/\b\w/g, c => c.toUpperCase()) : 'India'
-  if (!lines.length) {
-    const firstUseful = blocks.slice(0, 2).map(b => normalize(b.split('\n').filter(l => !/^Source:/i.test(l)).join(' ')).slice(0, 220)).filter(Boolean)
-    return firstUseful.length
-      ? `*Gold rate results (${where}):*\n${firstUseful.map(x => `• ${x}`).join('\n')}\n\nThe pages did not state a clean per-gram rate, so check the jeweller's own board before buying.`
-      : `I found live gold results, but couldn't cleanly extract the latest rates.`
-  }
-
-  return `*Gold price today in ${where}:*\n${lines.join('\n')}`
+  return formatGoldQuotes(userText,searchContext)
 }
 
 export function formatIplStandingsAnswer(searchContext: string) {
