@@ -15,7 +15,7 @@ const context=load('lib/agent/context-brain.ts',{'node:crypto':{createHash}})
 const futureTravel={id:'synthetic-travel',source:'travel_presence',summary:'Synthetic owner travel',startAt:'2026-10-21T00:00:00Z',endAt:'2026-10-24T23:00:00Z',location:'Synthetic away city',score:1,confidence:1,participants:['Synthetic Owner'],sourceRefs:[{type:'travel_ticket',id:'synthetic-travel'}]}
 const facts=[futureTravel,{...futureTravel,id:'unrelated',source:'semantic_memory',summary:'Unrelated private memory',location:'Unrelated private location'}]
 const calendar={ownerId:'123',connected:true,incomplete:false,coveredFrom:'2026-10-18T10:00:00Z',coveredUntil:'2026-12-17T10:00:00Z',windows:[{startAt:'2026-10-22T14:00:00Z',endAt:'2026-10-22T17:00:00Z',sourceRefs:[{type:'calendar_event',id:'opaque-calendar'}]}]}
-const pack={facts,reservationTravel:{ownerId:'123',facts,incomplete:false,coveredFrom:'2026-10-18T10:00:00Z',coveredUntil:'2026-12-17T10:00:00Z'},reservationCalendar:calendar}
+const pack={facts,reservationTravel:{ownerId:'123',facts,incomplete:false,coveredFrom:'2026-10-18T10:00:00Z',coveredUntil:'2026-12-17T10:00:00Z'},reservationCalendar:calendar,reservationPreferences:{ownerId:'123',incomplete:false,rules:[{id:'fixture-rule',text:'Only vegetarian restaurants'}]}}
 const writes:Array<{table:string;payload:any}>=[]
 let revising=false,runStatus='paused',runError='restaurant_context_review_required',approvalStatus='expired',claimLost=false,approvalWriteFailed=false,runUpdated='2026-10-18T09:00:00Z'
 const db={from(table:string){let updating=false;const q:any={
@@ -45,10 +45,14 @@ assert.doesNotMatch(JSON.stringify(payload.contextWindows),/Unrelated private/,'
 assert.ok(bindingInput.payload.diningContext.windows.some((window:any)=>Date.parse(window.startAt)===Date.parse(futureTravel.startAt)),'The staged approval input must bind the retained travel constraints')
 assert.equal(bindingInput.payload.diningContext.calendar.windows.length,1,'The exact approval must bind Calendar restrictions')
 assert.match(JSON.stringify(writes.find(row=>row.table==='agent_approvals')!.payload.payload_preview),/Calendar/,'The approval preview must state its Calendar conflict scope')
+assert.match(JSON.stringify(writes.find(row=>row.table==='agent_approvals')!.payload.payload_preview),/Only vegetarian restaurants/,'The actual approval must show the bound explicit dining rules')
+assert.equal(bindingInput.payload.diningContext.preferences[0].text,'Only vegetarian restaurants')
+pack.reservationPreferences.rules=[{id:'fixture-rule',text:'Quiet indoor seating only'}]
 revising=true;writes.length=0
 const revised=await actual.tryRunRestaurantReservation({actor:{legacyTelegramId:123,userId:'synthetic-user',name:'Synthetic Owner'},surface:'dashboard',text:'Book Naru Noodle Bar for 2 at the next available slot between 7 PM and 9 PM.'})
 assert.equal(revised.status,'waiting_approval','Changed context must be refreshable with a new bounded approval')
 assert.equal(revised.runId,'existing-context-run','Context review retains the reservation mission')
+assert.equal(bindingInput.payload.diningContext.preferences[0].text,'Quiet indoor seating only','Same-mission refresh must bind the changed explicit rule')
 assert.ok(writes.some(row=>row.table==='agent_approvals'&&row.payload.status==='pending'))
 const request=()=>actual.tryRunRestaurantReservation({actor:{legacyTelegramId:123,userId:'synthetic-user',name:'Synthetic Owner'},surface:'dashboard',text:'Book Naru Noodle Bar for 2 at the next available slot between 7 PM and 9 PM.'})
 for(const status of ['running','waiting_approval']){

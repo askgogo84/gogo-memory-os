@@ -33,6 +33,9 @@ async function check(label:string,fn:()=>Promise<void>){try{await fn();console.l
 await check('actual producer retains owner hotel stays in the complete pre-ranking safety inventory',async()=>{
  const pack=await read();assert.ok(pack.facts.some((f:any)=>f.id==='life-event:synthetic-hotel'),'positive control: conversational fact exists')
  assert.ok(pack.reservationTravel.facts.some((f:any)=>f.id==='life-event:synthetic-hotel'),'hotel safety restriction must not disappear')
+ const saved=pack.reservationTravel.facts.find((f:any)=>f.id==='life-event:synthetic-hotel')
+ assert.equal(saved.inferred,true,'a planned hotel record is not provider verification of a booking or presence')
+ assert.match(saved.summary,/not.*verified|not.*booking/i)
 })
 await check('actual approval snapshot retains a supplied owner hotel restriction',async()=>{
  const coverage={ownerId:'123',coveredFrom:new Date(epoch).toISOString(),coveredUntil:'2026-12-01T10:00:00Z',incomplete:false}
