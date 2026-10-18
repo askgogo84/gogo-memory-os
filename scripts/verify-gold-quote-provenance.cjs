@@ -137,4 +137,12 @@ check('reverse historical day labels never inherit a current heading date',()=>{
   assert.doesNotMatch(result,/24K — as of 2026-10-18/);assert.match(result,/couldn.t verify|unverified|2026-10-17/i);
  }
 });
+check('reverse unit selection cannot use an earlier amount or purity across a comma',()=>{
+ for(const first of ['24K gold per 10 g ₹1,40,000','₹1,40,000 for 24K per 10 g']){
+  const result=answer(`1. Bangalore board\n18 October 2026. ${first}, ₹12,800 for 22K\nSource: https://synthetic.invalid/comma-units`);
+  assert.doesNotMatch(result,/22K: ₹/);assert.match(result,/unit|weight|unverified/i);
+ }
+ const own=answer('1. Bangalore board\n18 October 2026. 24K per 10 g ₹140000; per gram ₹12800 for 22K\nSource: https://synthetic.invalid/reverse-prefix-unit');
+ assert.match(own,/22K: ₹12,800/);
+});
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');
