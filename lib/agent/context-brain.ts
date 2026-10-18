@@ -353,7 +353,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
     lifeFacts.push({
       id:`life-event:${(row as any).id}`,
       source:'life_event',
-      participants:Array.isArray((row as any).participants)?(row as any).participants.filter((p:unknown)=>typeof p==='string'):[],
+      participants:Array.isArray(row.participants)?row.participants.filter((p:unknown)=>typeof p==='string'):[],
       summary:safe([((row as any).title||`${(row as any).event_type} event`),participantText?`Participants: ${participantText}`:''].filter(Boolean).join(' · '),500),
       score:factScore({query,text,base:0.5,startAt,now,horizonDays}),
       confidence:0.96,

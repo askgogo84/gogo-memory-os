@@ -299,7 +299,7 @@ export function restaurantReservationApprovalInput(params:{runId:string;lifeEven
 async function existingMission(tg:number,key:string){
   const{data}=await supabaseAdmin.from('life_events').select('id,metadata_json,next_action_at,lifecycle_state').eq('telegram_id',String(tg)).eq('dedupe_key',key).maybeSingle()
   if(!data?.id)return null
-  const{data:run}=await supabaseAdmin.from('agent_runs').select('id,status,error,metadata_json').eq('telegram_id',String(tg)).eq('metadata_json->>plan_type','restaurant_reservation_release').eq('metadata_json->>life_event_id',String(data.id)).in('status',['waiting_approval','queued','running','paused','outcome_unknown']).order('started_at',{ascending:false}).limit(1).maybeSingle()
+  const{data:run}=await supabaseAdmin.from('agent_runs').select('id,status,error,updated_at,metadata_json').eq('telegram_id',String(tg)).eq('metadata_json->>plan_type','restaurant_reservation_release').eq('metadata_json->>life_event_id',String(data.id)).in('status',['waiting_approval','queued','running','paused','outcome_unknown']).order('started_at',{ascending:false}).limit(1).maybeSingle()
   const{data:approval}=run?.id?await supabaseAdmin.from('agent_approvals').select('id,status').eq('run_id',String(run.id)).eq('telegram_id',String(tg)).eq('action_type','booking').order('requested_at',{ascending:false}).limit(1).maybeSingle():{data:null}
   return{event:data,run:run||null,approval:approval||null}
 }
@@ -517,7 +517,11 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const contextRefs=contextWindows.flatMap(window=>window.sourceRefs).slice(0,30)
   const key=dedupeKey(params.actor,intent,provider.url)
   const existing=await existingMission(params.actor.legacyTelegramId,key)
-  const refreshing=Boolean(existing?.run?.id&&existing.run.status==='paused'&&existing.run.error==='restaurant_context_review_required'&&existing.approval?.status==='expired')
+  const refreshInProgress=String(existing?.run?.error||'').startsWith('restaurant_context_refresh:')
+  const refreshUpdated=Date.parse(String(existing?.run?.updated_at||''))
+  const abandonedRefresh=refreshInProgress&&(!Number.isFinite(refreshUpdated)||refreshUpdated<=Date.now()-5*60_000)
+  const refreshing=Boolean(existing?.run?.id&&((existing.run.status==='paused'&&existing.run.error==='restaurant_context_review_required')||abandonedRefresh))
+  if(refreshInProgress&&!abandonedRefresh)return{runId:String(existing!.run!.id),status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'This reservation context is being refreshed. No new booking attempt was made. Retry in five minutes if the refresh is interrupted.'}
   if(existing?.run?.id&&!refreshing){
     const status=String(existing.run.status)
     const approvalStatus=String(existing.approval?.status||'')
@@ -526,12 +530,21 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   }
   const refreshToken=refreshing?`restaurant_context_refresh:${createHash('sha256').update(`${key}|${Date.now()}|${Math.random()}`).digest('hex')}`:null
   if(refreshing){
-    const {data:claimed,error}=await supabaseAdmin.from('agent_runs').update({status:'running',error:refreshToken,summary:'Refreshing dining context for a new bounded approval.',updated_at:new Date().toISOString()})
-      .eq('id',existing!.run!.id).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('status','paused').eq('error','restaurant_context_review_required').select('id').maybeSingle()
+    let claim=supabaseAdmin.from('agent_runs').update({status:'running',error:refreshToken,summary:'Refreshing dining context for a new bounded approval.',updated_at:new Date().toISOString()})
+      .eq('id',existing!.run!.id).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('status',existing!.run!.status).eq('error',existing!.run!.error)
+    if(existing!.run!.updated_at)claim=claim.eq('updated_at',existing!.run!.updated_at)
+    const {data:claimed,error}=await claim.select('id').maybeSingle()
     if(error)throw new Error('restaurant_context_refresh_claim_failed')
     if(!claimed)return{runId:String(existing!.run!.id),status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'This reservation context is already being refreshed. No new booking attempt was made.'}
   }
   try{
+  if(refreshing){
+    // A failed expiry or an interrupted refresh may leave old pending authority.
+    // Retire it before changing context; the new snapshot needs a new approval.
+    const {error}=await supabaseAdmin.from('agent_approvals').update({status:'expired',resolved_at:new Date().toISOString(),resolution_note:'restaurant_context_review_required'})
+      .eq('run_id',existing!.run!.id).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('action_type','booking').in('status',['pending','approved'])
+    if(error)throw new Error('restaurant_context_refresh_expiry_failed')
+  }
   const now=new Date().toISOString()
   const{data:event,error:eventError}=await supabaseAdmin.from('life_events').upsert({
     telegram_id:String(params.actor.legacyTelegramId),
@@ -543,11 +556,11 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     start_at:null,
     end_at:null,
     timezone,
-    location:(provider as any).location||null,
+    location:provider.location||null,
     lifecycle_state:'planned',
     participants:[],
     preferences_json:{partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0},
-    metadata_json:{restaurant:intent.restaurant,reservationUrl:provider.url,reservationLocation:(provider as any).location||null,providerDiscovery:provider.source,releaseAt,releaseRule:release.releaseRule,releaseEvidence:safe(combinedReleaseEvidence,2600),releaseEvidenceUrl:ruleEvidenceUrl,readOnlyInspection:true,contextWindows,contextRefs,diningContext},
+    metadata_json:{restaurant:intent.restaurant,reservationUrl:provider.url,reservationLocation:provider.location||null,providerDiscovery:provider.source,releaseAt,releaseRule:release.releaseRule,releaseEvidence:safe(combinedReleaseEvidence,2600),releaseEvidenceUrl:ruleEvidenceUrl,readOnlyInspection:true,contextWindows,contextRefs,diningContext},
     source_refs:[...releaseSourceRefs,...contextRefs],
     dedupe_key:key,
     next_action_at:releaseAt,
@@ -566,7 +579,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     requires_approval:true,
     irreversible:true,
     status:'waiting_approval',
-    payload_json:{reservationUrl:provider.url,restaurant:intent.restaurant,reservationLocation:(provider as any).location||null,partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,releaseAt,releaseRule:release.releaseRule,contextWindows,contextRefs,diningContext},
+    payload_json:{reservationUrl:provider.url,restaurant:intent.restaurant,reservationLocation:provider.location||null,partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,releaseAt,releaseRule:release.releaseRule,contextWindows,contextRefs,diningContext},
     updated_at:now,
   },{onConflict:'life_event_id,action_key'}).select('id').single()
   if(actionError||!action?.id)throw new Error(`restaurant_reservation_action_failed:${actionError?.message||'unknown'}`)
@@ -585,7 +598,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const{data:run,error:runError}=await runWrite.select('id').single()
   if(runError||!run?.id)throw new Error(`restaurant_reservation_run_failed:${runError?.message||'unknown'}`)
   const runId=String(run.id)
-  const binding=buildApprovalBinding(restaurantReservationApprovalInput({runId,lifeEventId,actionId,restaurant:intent.restaurant,providerUrl:provider.url,partySize:intent.partySize,preferredStart:intent.preferredStart,preferredEnd:intent.preferredEnd,requestedDate:intent.requestedDate,releaseAt,contextWindows,diningContext,reservationLocation:(provider as any).location||null}))
+  const binding=buildApprovalBinding(restaurantReservationApprovalInput({runId,lifeEventId,actionId,restaurant:intent.restaurant,providerUrl:provider.url,partySize:intent.partySize,preferredStart:intent.preferredStart,preferredEnd:intent.preferredEnd,requestedDate:intent.requestedDate,releaseAt,contextWindows,diningContext,reservationLocation:provider.location||null}))
   const{data:approval,error:approvalError}=await supabaseAdmin.from('agent_approvals').insert({
     telegram_id:String(params.actor.legacyTelegramId),run_id:runId,action_type:'booking',
     title:`Approve timed reservation attempt · ${intent.restaurant}`.slice(0,220),
@@ -626,16 +639,20 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     text:`I checked ${intent.restaurant}'s live booking provider first${ruleEvidenceUrl?' and verified the release rule against the restaurant\'s first-party reservation policy':''}. ${evidence}${travelNote}\n\nI created a persistent reservation mission for ${when} (${timezone}).\n• Party: ${intent.partySize}\n• Preferred slot: ${window}${intent.requestedDate?`\n• Requested date: ${intent.requestedDate}`:''}\n• Fee/deposit authority: ₹0 — I must stop and ask before any charge.\n\nReply APPROVE to arm this exact bounded reservation attempt, or REJECT to stop it.`,
   }
   }catch(error){
-    if(refreshing)await supabaseAdmin.from('agent_runs').update({status:'paused',error:'restaurant_context_review_required',summary:'Context refresh did not finish. The reservation remains unarmed; retry the bounded context review.',updated_at:new Date().toISOString()})
+    if(refreshing){
+      const {error:rollbackError}=await supabaseAdmin.from('agent_runs').update({status:'paused',error:'restaurant_context_review_required',summary:'Context refresh did not finish. The reservation remains unarmed; retry the bounded context review.',updated_at:new Date().toISOString()})
       .eq('id',existing!.run!.id).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('error',refreshToken)
+      if(rollbackError)throw new Error('restaurant_context_refresh_rollback_failed')
+    }
     throw error
   }
 }
 
 export async function armApprovedRestaurantReservation(params:{actor:AgentActor;runId:string}){
   const tg=String(params.actor.legacyTelegramId)
-  const{data:run,error}=await supabaseAdmin.from('agent_runs').select('id,status,metadata_json').eq('id',params.runId).eq('telegram_id',tg).maybeSingle()
+  const{data:run,error}=await supabaseAdmin.from('agent_runs').select('id,status,error,metadata_json').eq('id',params.runId).eq('telegram_id',tg).maybeSingle()
   if(error||!run)throw new Error('restaurant_reservation_run_not_found')
+  if(String(run.error||'').startsWith('restaurant_context_refresh:'))throw new Error('restaurant_context_refresh_in_progress')
   const meta:any=run.metadata_json||{}
   if(meta.plan_type!=='restaurant_reservation_release')throw new Error('not_restaurant_reservation_plan')
   const{data:action}=await supabaseAdmin.from('life_event_actions').select('id,payload_json,due_at').eq('id',String(meta.life_event_action_id)).eq('telegram_id',tg).maybeSingle()
