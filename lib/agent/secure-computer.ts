@@ -2012,6 +2012,7 @@ function normalizeActionLog(values:any[]){
 }
 
 export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;loginCode?:string|null;phoneLogin?:{number:string;telegramId:string}|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
+  if(params.loginCode!=null||params.bookingOtp!=null)throw new Error('human_auth_takeover_required')
   let publicFlightRead=false
   try{const target=new URL(params.url);publicFlightRead=params.recoverFlightSearch===true&&target.protocol==='https:'&&['google.com','www.google.com'].includes(target.hostname)&&/^\/travel\/flights(?:\/|$)/.test(target.pathname)}catch{}
   const readDeadline=params.mode==='read'?Math.min(Date.now()+(publicFlightRead?FLIGHT_READ_BUDGET_MS:READ_BUDGET_MS),Number.isFinite(params.readDeadline)?params.readDeadline!:Infinity):undefined
@@ -2208,7 +2209,9 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       let signedOutEntry=!params.loginCode&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish&&hasSignInEntry(page)
       // Phone-code sites (Swiggy, Zomato): sign in once at the start unless Gogo already holds a live session there,
       // because the planner may wander to pages with no "Log in" link (16 Oct live run).
-      if(!params.loginCode&&!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
+      // A human may just have completed sign-in in this same page. A stale session marker
+      // alone must not restart login on resume; actual login controls and auth gates still apply.
+      if(!params.resumePage&&!params.loginCode&&!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
         const entryHost=(()=>{try{return new URL(String(page.url||target.toString())).hostname}catch{return ''}})()
         // typeof guard: browser test harnesses stub the vault modules with empty objects.
         const phoneSite=entryHost&&typeof findVaultProviderForDomain==='function'?findVaultProviderForDomain(entryHost):null

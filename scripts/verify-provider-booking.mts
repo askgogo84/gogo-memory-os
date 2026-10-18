@@ -58,7 +58,7 @@ const rebuilt = { ...stored, objective: redactSecretShapedText(String(objective)
 assert.equal(browserApprovalBinding('run-1', 'step-1', stored).action_hash, browserApprovalBinding('run-1', 'step-1', rebuilt).action_hash)
 
 const otpText = booking.bookingOtpMessage({ host: 'playo.co', mobile: '9876543210', takeoverUrl: 'https://app.askgogo.in/dashboard/activity/r1/browser' })
-assert.match(otpText, /Reply here with just the code/)
+assert.match(otpText, /Take control/); assert.doesNotMatch(otpText,/Reply here|482913/)
 assert.match(otpText, /ending 3210/)
 assert.doesNotMatch(otpText, /9876543210/)
 assert.match(otpText, /https:\/\/app\.askgogo\.in\/dashboard\/activity\/r1\/browser/)
@@ -96,7 +96,7 @@ assert.ok(intercept < route.indexOf("if ((resolvedUser as any).isNewUser)"), 'be
 assert.ok(intercept < route.indexOf('approvalIntent(text)'))
 assert.ok(intercept < route.indexOf('processIncomingMessage('))
 const block = route.slice(intercept, route.indexOf('// ── Interactive onboarding menu'))
-assert.match(block, /saveConversation\(resolvedUser\.telegramId, 'user', '\[booking code sent\]'\)/, 'the conversation keeps a placeholder, not the code')
+assert.match(block,/authentication code withheld/,'the conversation keeps a placeholder, not the code')
 assert.doesNotMatch(block, /saveConversation\([^)]*bookingCode/)
 assert.doesNotMatch(block, /console\.\w+\([^)]*bookingCode/)
 assert.match(route, /Body: loggedBody/)
@@ -180,35 +180,17 @@ assert.match(prompts[0], /PROVIDER BOOKING FLOW/)
 assert.match(prompts[0], /Never fill a one-time code/)
 assert.match(prompts[0], /never fill card, UPI or bank details/)
 
-// Run 2: the person replied with the code. Gogo types it once and stops at payment.
-commands.length = 0; prompts.length = 0
-script = [otpPage, cart]
-plans = [{ approvedOperation: 'booking', actions: [{ kind: 'fill_otp', selector: '#otp' }, { kind: 'click', selector: '#verify' }] }]
-const second = await computer.runSecureBrowser({ ...base, resumePage: true, bookingPhone: '9876543210', bookingOtp: '482913' })
-assert.equal(second.status, 'blocked')
-assert.equal(second.bookingStage, 'payment')
-assert.equal(second.authReason, 'payment_auth')
-assert.equal(commands[1].env.GOGO_BOOKING_OTP, '482913', 'the code reaches only the command that types it')
-assert.equal(commands[0].env.GOGO_BOOKING_OTP, undefined)
-assert.equal(commands.some(c => JSON.stringify(c.payload).includes('482913')), false, 'the code is never in the payload')
-assert.equal(prompts.some(p => p.includes('482913')), false, 'the code is never in a planner prompt')
-assert.match(prompts[0], /Gogo has it: use \{"kind":"fill_otp"/)
-
-// A wrong code: the OTP page is still there after typing it. Gogo asks again and says so.
-commands.length = 0
-script = [otpPage, { ...otpPage, text: otpPage.text + '\nInvalid OTP. Please try again.' }]
-plans = [{ approvedOperation: 'booking', actions: [{ kind: 'fill_otp', selector: '#otp' }, { kind: 'click', selector: '#verify' }] }]
-const wrong = await computer.runSecureBrowser({ ...base, resumePage: true, bookingPhone: '9876543210', bookingOtp: '000000' })
-assert.equal(wrong.bookingStage, 'otp')
-assert.equal(wrong.otpRejected, true)
-// 12 Oct live run: the code was typed but Verify never pressed, and Gogo said it was rejected. With
-// no error on the page, Gogo presses Verify again (twice at most) before saying so.
-commands.length = 0
-script = [otpPage, otpPage, otpPage, otpPage]
-plans = [{ approvedOperation: 'booking', actions: [{ kind: 'fill_otp', selector: '#otp' }, { kind: 'click_text', text: 'Verify' }] }]
-const slow = await computer.runSecureBrowser({ ...base, resumePage: true, bookingPhone: '9876543210', bookingOtp: '000000' })
-assert.deepEqual(commands.slice(2).map(c => c.payload.actions), [[{ kind: 'click', selector: '#verify' }, { kind: 'wait', ms: 2500 }], [{ kind: 'click', selector: '#verify' }, { kind: 'wait', ms: 2500 }]])
-assert.equal(slow.otpRejected, true)
+// T1c: a code-bearing resume cannot reach any browser command or planner.
+commands.length=0;prompts.length=0
+for(const bookingOtp of ['482913','000000']){
+ await assert.rejects(computer.runSecureBrowser({...base,resumePage:true,bookingPhone:'9876543210',bookingOtp}),/human_auth_takeover_required/)
+}
+assert.equal(commands.length,0);assert.equal(prompts.length,0)
+// A human completes authentication in the same browser; payment remains human-only.
+script=[cart]
+const afterHuman=await computer.runSecureBrowser({...base,resumePage:true,bookingPhone:null,bookingOtp:null})
+assert.equal(afterHuman.bookingStage,'payment')
+assert.equal(afterHuman.authReason,'payment_auth')
 
 // Not a booking: fill_phone and fill_otp are dropped, so an ordinary execution never gets them.
 commands.length = 0
@@ -468,15 +450,10 @@ console.log('Provider booking: Add to Cart is pressed at most once per run')
   assert.equal(commands.some(c => (c.payload.actions || []).some((a: any) => a.kind === 'choose' || a.selector === '#book' || a.selector === '#help-mobile')), false)
   assert.equal(first.bookingStage, 'otp', 'the run pauses for the code')
   assert.equal(prompts.length, 0, 'no planner call is needed to log in')
-  // The person sends the code: Gogo types it and verifies, then the planner continues logged in.
-  commands.length = 0; prompts.length = 0
-  script = [codeBox, { ...venue, url: 'https://playo.co/venues/machaxi', controls: [{ selector: '#book', tag: 'button', label: 'Book Now' }] }, cart]
-  plans = [{ approvedOperation: 'booking', actions: [{ kind: 'click', selector: '#book' }] }]
-  await computer.runSecureBrowser({ ...base, resumePage: true, bookingPhone: '9876543210', bookingOtp: '482913' })
-  assert.deepEqual(commands[1].payload.actions, [{ kind: 'fill_otp', selector: '#otp' }, { kind: 'click_text', text: 'Verify' }])
-  assert.equal(commands[1].env.GOGO_BOOKING_OTP, '482913')
-  assert.deepEqual(commands[2].payload.actions, [{ kind: 'click', selector: '#book' }], 'after login the planner books')
-  assert.doesNotMatch(prompts[0] || '', /LOG IN FIRST/)
+  // Code-bearing resumes are refused before any browser action.
+  commands.length=0;prompts.length=0
+  await assert.rejects(computer.runSecureBrowser({...base,resumePage:true,bookingOtp:'482913'}),/human_auth_takeover_required/)
+  assert.equal(commands.length,0);assert.equal(prompts.length,0)
   // Without the number (a rehearsal), selection is not held back.
   commands.length = 0; prompts.length = 0
   script = [loggedOut, loggedOut]

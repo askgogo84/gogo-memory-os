@@ -883,13 +883,7 @@ export async function claimBookingOtpRun(tg:number,runId:string){
 }
 
 export function loginCodeMessage(params:{site:string;rejected?:boolean;tooMany?:boolean;takeoverUrl:string;whatsappNumber?:string|null}){
-  if(params.tooMany)return `${params.site} didn't accept the code three times, so I stopped there. Open this, tap Take control and sign in yourself, then tap Resume:\n${params.takeoverUrl}`
-  const lead=params.rejected
-    ?`${params.site} didn't accept that code. Send me the newest code from your SMS (tap Resend on the site first if it expired).`
-    :params.whatsappNumber
-      ?`I'm signing in to ${params.site} with your WhatsApp number ending ${String(params.whatsappNumber).slice(-4)}, and it sent a sign-in code to that phone.`
-      :`${params.site} sent a sign-in code to your phone.`
-  return `${lead}\n\nReply here with just the code, for example *482913*. I'll type it in and carry on with your question. I use it once and never save it.\n\nPrefer to type it yourself? Open this, tap Take control, enter it, then tap Resume:\n${params.takeoverUrl}`
+  return params.site+" needs you to complete secondary authentication. Open this, tap Take control, enter the code yourself, then tap Resume to continue the same question. Keep passwords and sign-in codes out of chat.\n"+params.takeoverUrl
 }
 
 /** A read run waiting (for up to 10 minutes) for the sign-in code the site texted the person. */
