@@ -139,6 +139,17 @@ export function isLinkVaultSaveRequest(text:string){
   // "Login to <link> and create the account" is an account request, not a link to save.
   if(parseExternalAccountRequest(text)||mentionsExternalAccountCreation(text))return false
   const stripped=String(text||'').replace(url,' ').trim()
+  const request=String(text||'').trim().replace(/^(?:please\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?/i,'')
+  // Explicit capture owns its note, even when the note mentions browser verbs.
+  if(/^(?:save|remember|keep|store|bookmark|file)\b/i.test(request))return true
+  if(/^(?:read|watch|view)\s+(?:(?:this|it)\s+)?later\b/i.test(request))return true
+  const descriptiveCaption=/^(?:how\s+to|what\s+an?)\b/i.test(request)&&!/[?]\s*$/.test(request)
+  // A URL in a read command is its target, not permission to store it. Keep
+  // bare URL shares/captions below, and reject explicit negative capture intent.
+  if(/^(?:open|use|research|check|find|tell|summari[sz]e|look|search|browse|read|go\s+to|show|visit|inspect)\b/i.test(request)
+    ||(!descriptiveCaption&&/^(?:what|when|where|why|how)\b/i.test(request))
+    ||/^(?:do\s+not|don't|never)\s+(?:save|remember|keep|store|bookmark|file)\b/i.test(request)
+    ||/\b(?:i\s+want|i'd\s+like)\s+you\s+to\s+(?:open|use|research|check|find|tell|summari[sz]e|look|search|browse|read|go\s+to|show|visit|inspect)\b/i.test(request))return false
   if(/\b(save|remember|keep|store|bookmark|file)\b/i.test(stripped))return true
   if(/\b(book|reserve|buy|purchase|checkout|apply|submit|monitor|watch|compare|translate|summari[sz]e|check availability)\b/i.test(stripped))return false
   return stripped.length<180
