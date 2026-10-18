@@ -7,7 +7,7 @@ import { ticketTimezone, flightInstants, ticketInstant } from '@/lib/services/tr
 import { redactSecretShapedText, isSecretShapedMemory } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
 import { latestTypedContext } from './typed-object-context'
-import type {ReservationTravelInventory,ReservationCalendarInventory} from './reservation-dining-context'
+import type {ReservationTravelInventory,ReservationCalendarInventory,ReservationPreferenceInventory} from './reservation-dining-context'
 import {calendarInterval,calendarBlocksTime,type CalendarProviderEvent} from '../calendar-intervals'
 import {getCalendarAccountAccess,fetchMergedCalendarEventsPage} from '@/lib/services/google-calendar-accounts'
 
@@ -23,6 +23,7 @@ export type ContextSource =
   | 'typed_context'
   | 'watcher'
   | 'inbox_attention'
+  | 'travel_mission'
 
 export type ContextFact = {
   id:string
@@ -49,6 +50,7 @@ export type ContextPack = {
   /** Owner-scoped travel constraints before the conversational ranking budget. */
   reservationTravel?:ReservationTravelInventory
   reservationCalendar?:ReservationCalendarInventory
+  reservationPreferences?:ReservationPreferenceInventory
   provenance:{
     lifeEvents:number
     travelTickets:number
@@ -297,6 +299,61 @@ export function buildTravelPresenceFacts(rows:any[],now=Date.now(),horizonDays=6
   return facts
 }
 
+function missionDay(value:unknown){
+  const text=String(value||'')
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(text))return NaN
+  const time=Date.parse(text+'T00:00:00Z')
+  return Number.isFinite(time)&&new Date(time).toISOString().slice(0,10)===text?time:NaN
+}
+
+async function loadReservationIntent(actor:AgentActor,now:number,upper:string){
+  // Select only dated mission context. Browser objectives, traveller details,
+  // credentials and takeover URLs are never part of this inventory.
+  const [missions,preferences]=await Promise.allSettled([
+    supabaseAdmin.from('agent_runs').select('id,type,status,kind:metadata_json->context->>kind,destination:metadata_json->context->destination->>label,start_date:metadata_json->context->>startDate,end_date:metadata_json->context->>endDate,return_date:metadata_json->context->>returnDate,booking_depart:metadata_json->flight_booking->>depart,booking_return:metadata_json->flight_booking->>return,booking_route:metadata_json->flight_booking->>route')
+      .eq('telegram_id',String(actor.legacyTelegramId)).in('type',['travel_research','secure_browser']).in('status',['queued','running','waiting_approval','paused','outcome_unknown']).order('updated_at',{ascending:false}).limit(40),
+    supabaseAdmin.from('user_preferences').select('id,rule_text').eq('telegram_id',actor.legacyTelegramId).order('created_at',{ascending:true}).limit(21),
+  ])
+  const missionRows=missions.status==='fulfilled'&&Array.isArray(missions.value.data)?missions.value.data:[]
+  let incomplete=missions.status==='rejected'||Boolean(missions.status==='fulfilled'&&missions.value.error)||missionRows.length>=40
+  const facts:ContextFact[]=[]
+  for(const value of missionRows){
+    const row=value as unknown as Record<string,unknown>
+    const booking=row.type==='secure_browser'&&(row.booking_depart||row.booking_route)
+    if(row.type==='secure_browser'&&!booking)continue
+    const kind=booking?'flight':String(row.kind||'')
+    const id=safe(row.id,160),start=missionDay(booking?row.booking_depart:row.start_date)
+    const end=missionDay(booking?row.booking_return:(row.return_date||row.end_date))
+    const route=String(row.booking_route||'').match(/^[A-Z]{3}-([A-Z]{3})$/)
+    const location=safe(booking?route?.[1]:row.destination,180)
+    if(!['flight','hotel'].includes(kind)||!id||!Number.isFinite(start)){incomplete=true;continue}
+    // Date-only research is tentative. A conservative UTC envelope avoids
+    // pretending that a requested date is a verified flight/check-in instant.
+    const from=start-14*3600_000
+    if(from>=Date.parse(upper))continue
+    if(!Number.isFinite(end)||end<start||!location){incomplete=true;continue}
+    const until=end+86400_000+12*3600_000
+    if(until<=now)continue
+    facts.push({id:`travel-mission:${id}`,source:'travel_mission',kind,
+      summary:`Active ${kind} ${booking?'booking request':'research'} (${safe(row.status,40)}): ${location}; tentative requested dates, not a verified booking, traveller presence or return.`,
+      startAt:new Date(from).toISOString(),endAt:new Date(until).toISOString(),location,
+      participants:[],inferred:true,confidence:0.45,score:0.5,sourceRefs:[{type:'agent_run',id}],
+    })
+  }
+  const preferenceRows=preferences.status==='fulfilled'&&Array.isArray(preferences.value.data)?preferences.value.data:[]
+  const rules:ReservationPreferenceInventory['rules']=[],seen=new Set<string>()
+  let preferenceIncomplete=preferences.status==='rejected'||Boolean(preferences.status==='fulfilled'&&preferences.value.error)||preferenceRows.length>20
+  for(const value of preferenceRows.slice(0,20)){
+    const row=value as unknown as Record<string,unknown>,id=safe(row.id,160),raw=String(row.rule_text||'').replace(/\s+/g,' ').trim()
+    if(!id||!raw||raw.length>700||seen.has(id)||isSecretShapedMemory(raw)){preferenceIncomplete=true;continue}
+    const text=safe(raw,700)
+    if(text!==raw){preferenceIncomplete=true;continue}
+    seen.add(id);rules.push({id,text})
+  }
+  rules.sort((a,b)=>a.id.localeCompare(b.id))
+  return{facts,incomplete,preferences:{ownerId:String(actor.legacyTelegramId),incomplete:preferenceIncomplete,rules}}
+}
+
 async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:number,includeReservationTravel=false){
   const tg=String(actor.legacyTelegramId)
   const now=Date.now()
@@ -306,7 +363,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
   // ticket query widens its lookback; other fact types keep the tight 2-day window.
   const ticketLower=new Date(now-(isRetrospectiveTravelQuery(query)?RETROSPECTIVE_TRAVEL_LOOKBACK_DAYS:2)*86400_000).toISOString()
 
-  const [lifeResult,loopResult,goalResult,ticketResult,typed,watcherResult,constraintTicketResult]=await Promise.all([
+  const [lifeResult,loopResult,goalResult,ticketResult,typed,watcherResult,constraintTicketResult,reservationIntent]=await Promise.all([
     supabaseAdmin.from('life_events')
       .select('id,event_type,subtype,title,provider,start_at,end_at,timezone,location,lifecycle_state,participants,metadata_json,source_refs,updated_at')
       .eq('telegram_id',tg)
@@ -343,6 +400,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       .or(`depart_at.is.null,depart_at.lte.${upper}`)
       .order('depart_at',{ascending:false}).limit(80)
       :Promise.resolve({data:[],error:null}),
+    includeReservationTravel?loadReservationIntent(actor,now,upper):Promise.resolve(undefined),
   ])
 
   const lifeFacts:ContextFact[]=[]
@@ -365,7 +423,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       startAt,endAt,
       location:safe((row as any).location,180)||null,
       provider:safe((row as any).provider,160)||null,
-      kind:safe((row as any).subtype||(row as any).event_type,120)||null,
+      kind:(row.event_type==='hotel'?'hotel':safe((row as any).subtype||(row as any).event_type,120))||null,
       inferred:false,
       sourceRefs:Array.isArray((row as any).source_refs)?(row as any).source_refs:[],
     })
@@ -468,10 +526,12 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
   // A malformed ticket may be dropped by extraction. Absence from the output
   // then means unknown coverage, never affirmative evidence of a clear window.
   const missingTicket=constraintTickets.some(row=>String(row.type)==='flight'&&!constraintFacts.some(fact=>fact.id===`travel-ticket:${row.id}`))
+  const reservationLife=lifeFacts.filter(f=>['flight','hotel'].includes(f.kind||''))
+  const malformedHotel=reservationLife.some(f=>f.kind==='hotel'&&(!validIso(f.startAt)||!validIso(f.endAt)||Date.parse(f.endAt!)<=Date.parse(f.startAt!)))
   const reservationTravel:ReservationTravelInventory|undefined=includeReservationTravel?{ownerId:tg,coveredFrom:new Date(now).toISOString(),coveredUntil:upper,
-    incomplete:Boolean(lifeResult.error||constraintTicketResult.error||(lifeResult.data||[]).length>=80||constraintTickets.length>=80||missingTicket),
-    facts:[...lifeFacts.filter(f=>f.kind==='flight'),...constraintFacts]}:undefined
-  return{lifeFacts,openLoops,goalFacts,travelFacts,typedFacts,watcherFacts,retrievalIncomplete,reservationTravel}
+    incomplete:Boolean(lifeResult.error||constraintTicketResult.error||(lifeResult.data||[]).length>=80||constraintTickets.length>=80||missingTicket||malformedHotel||reservationIntent?.incomplete),
+    facts:[...reservationLife,...constraintFacts,...(reservationIntent?.facts||[])]}:undefined
+  return{lifeFacts,openLoops,goalFacts,travelFacts,typedFacts,watcherFacts,retrievalIncomplete,reservationTravel,reservationPreferences:reservationIntent?.preferences}
 }
 
 async function loadReservationCalendar(actor:AgentActor,horizonDays:number,coverage?:{from:string;until:string}):Promise<ReservationCalendarInventory>{
@@ -729,6 +789,7 @@ export async function buildContextPack(params:{actor:AgentActor;text:string;opti
     facts:combined,
     reservationTravel:operational.reservationTravel,
     reservationCalendar,
+    reservationPreferences:operational.reservationPreferences,
     provenance:{
       lifeEvents:operational.lifeFacts.length,
       travelTickets:operational.travelFacts.filter(f=>f.source==='travel_ticket'||f.source==='travel_presence').length,
