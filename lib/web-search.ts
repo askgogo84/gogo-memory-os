@@ -5,6 +5,8 @@
   publishedDate?: string
 }
 
+import { searchReferenceFx } from './services/reference-fx'
+
 function cleanText(input: string) {
   return (input || '').replace(/\s+/g, ' ').trim()
 }
@@ -126,6 +128,10 @@ export function anthropicSearchResults(data: any): WebSearchResult[] {
 export async function searchWebResults(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
   const cleanQuery = cleanText(query).slice(0, 500)
   if (!cleanQuery) return []
+  if(!Object.keys(opts).length){
+    const reference=await searchReferenceFx(query)
+    if(reference!==null)return reference
+  }
   try {
     return await searchWithTavily(cleanQuery, opts)
   } catch (err: any) {
