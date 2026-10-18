@@ -18,8 +18,13 @@ check('dated semantic arrival cannot establish later owner or guest presence',()
  assert.equal(selected[0].id,'move');assert.ok(selected.some((f:any)=>f.id==='preference'))
 })
 check('different-year semantic itinerary is not a same-day commitment',()=>{
- const wrong=fact('wrong-year','Synthetic Guest has a flight on 25 October 2027.')
- assert.ok(!actual.prioritizeRecallEvidence(query,[wrong,move]).some((f:any)=>f.id==='wrong-year'))
+ for(const date of ['25 October 2027','25 October, 2027','October 25,2027','October 25, 2027']){
+  const wrong=fact('wrong-year','Synthetic Guest has a flight on '+date+'.')
+  assert.ok(!actual.prioritizeRecallEvidence(query,[wrong,move]).some((f:any)=>f.id==='wrong-year'),date)
+ }
+})
+check('historical dinner question retains the earlier arrival it explicitly asks about',()=>{
+ assert.ok(actual.prioritizeRecallEvidence('What dinner did I have on 25 October 2026 after the flight on 13 October 2026?',[old,move]).some((f:any)=>f.id==='old'))
 })
 check('historical recall preserves dated arrival and ordinary standing preferences',()=>{
  assert.ok(actual.prioritizeRecallEvidence('When did Synthetic Guest arrive on 13 October 2026?',[old,preference]).some((f:any)=>f.id==='old'))
@@ -34,7 +39,7 @@ check('month-first matching itinerary remains available',()=>{
  assert.ok(actual.prioritizeRecallEvidence(query,[current,move]).some((f:any)=>f.id==='month-first'))
 })
 check('existing 2200-character renderer budget preserves a substantial matching fact',()=>{
- const substantial=fact('substantial','Owner is moving house on 25 October 2026. '+('Packing the study is unfinished. '.repeat(18)))
+ const substantial=fact('substantial',('Owner is moving house on 25 October 2026. '+('Packing the study is unfinished. '.repeat(18))).trim())
  const text=actual.renderContextBlock({query,generatedAt:'2026-10-19T00:00:00Z',facts:[substantial]},2200)
  assert.ok(text.includes(substantial.summary),'planning instructions crowded out the only saved fact')
 })
