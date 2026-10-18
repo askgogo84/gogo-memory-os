@@ -8,7 +8,7 @@ import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildContextPack } from './context-brain'
-import {buildReservationDiningContext, type ReservationDiningContext} from './reservation-dining-context'
+import {buildReservationDiningContext, usableReservationDiningContext, type ReservationDiningContext} from './reservation-dining-context'
 
 function safe(value: unknown, max = 1200) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -621,6 +621,7 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
   const{data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',tg).eq('action_type','booking').eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   if(!action||!approval)throw new Error('approval_required')
   const p:any=action.payload_json||{}
+  if(!usableReservationDiningContext(p.diningContext)||Date.parse(p.diningContext.until)<=Date.now())throw new Error('restaurant_context_review_required')
   assertApprovalBinding(restaurantReservationApprovalInput({runId:params.runId,lifeEventId:String(meta.life_event_id),actionId:String(action.id),restaurant:String(p.restaurant||meta.restaurant||''),providerUrl:String(p.reservationUrl||meta.reservation_url||''),partySize:Number(p.partySize)||null,preferredStart:String(p.preferredStart||''),preferredEnd:String(p.preferredEnd||''),requestedDate:String(p.requestedDate||''),releaseAt:String(p.releaseAt||meta.release_at||'')||null,contextWindows:Array.isArray(p.contextWindows)?p.contextWindows:[],diningContext:p.diningContext,reservationLocation:p.reservationLocation||null}),approval)
   const now=new Date().toISOString()
   await Promise.all([

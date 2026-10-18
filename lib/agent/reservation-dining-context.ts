@@ -83,8 +83,20 @@ export function buildReservationDiningContext(params: {
 }
 
 /** Fresh reads may not loosen or change any still-relevant approved restriction. */
+export function usableReservationDiningContext(value: unknown): value is ReservationDiningContext {
+  if(!value||typeof value!=='object')return false
+  const s=value as ReservationDiningContext
+  const from=instant(s.from),until=instant(s.until)
+  return s.version===1&&s.incomplete===false&&isValidTimezone(s.timezone)&&Number.isFinite(instant(s.checkedAt))&&
+    Number.isFinite(from)&&Number.isFinite(until)&&until>from&&until-from<=60*DAY&&
+    Array.isArray(s.reasons)&&Array.isArray(s.windows)&&s.windows.length<=40&&s.windows.every(w=>
+      w&&['owner','unknown'].includes(w.applicability)&&typeof w.inferred==='boolean'&&
+      Number.isFinite(w.confidence)&&w.confidence>=0&&w.confidence<=1&&
+      Number.isFinite(instant(w.startAt))&&Number.isFinite(instant(w.endAt))&&instant(w.startAt)>=from&&instant(w.endAt)<=until&&instant(w.endAt)>instant(w.startAt))
+}
+
 export function sameReservationRestrictions(approved: ReservationDiningContext, fresh: ReservationDiningContext, now=new Date()) {
-  if(approved.incomplete||fresh.incomplete||approved.version!==1||fresh.version!==1)return false
+  if(!usableReservationDiningContext(approved)||!usableReservationDiningContext(fresh))return false
   const key=(value: ReservationDiningContext)=>JSON.stringify({from:value.from,until:value.until,timezone:value.timezone,
     windows:value.windows.filter(w=>Date.parse(w.endAt)>now.getTime())})
   return key(approved)===key(fresh)
