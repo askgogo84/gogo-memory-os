@@ -456,6 +456,7 @@ export async function runQueuedRestaurantReservationResearch(params:{actor:Agent
     .maybeSingle()
   if(error)throw new Error(`restaurant_research_run_read_failed:${error.message}`)
   if(!run?.id)throw new Error('restaurant_research_run_not_found')
+  if(run.status!=='running')throw new Error('restaurant_research_run_not_running')
   const meta:any=run.metadata_json||{}
   if(meta.plan_type!=='restaurant_reservation_research')throw new Error('not_restaurant_research_plan')
   const text=String(meta.request_text||'').trim()
@@ -473,7 +474,8 @@ export async function runQueuedRestaurantReservationResearch(params:{actor:Agent
     const result=await tryRunRestaurantReservation({actor:params.actor,surface:'whatsapp',text})
     if(!result)throw new Error('restaurant_research_not_handled')
     const at=new Date().toISOString()
-    await supabaseAdmin.from('agent_runs').update({
+    let recorded:{data:{id:unknown}|null;error:unknown}|null=null
+    try{recorded=await supabaseAdmin.from('agent_runs').update({
       status:'completed',
       summary:`Background restaurant research finished with status ${String(result.status||'completed')}.`,
       progress:100,
@@ -481,18 +483,23 @@ export async function runQueuedRestaurantReservationResearch(params:{actor:Agent
       completed_at:at,
       updated_at:at,
       metadata_json:{...meta,outcome_status:result.status||null,child_run_id:result.runId||null,finished_at:at},
-    }).eq('id',params.runId).eq('telegram_id',tg)
+    }).eq('id',params.runId).eq('telegram_id',tg).eq('type','restaurant_reservation_research').eq('status','running').select('id').maybeSingle()
+    }catch{throw new Error('restaurant_research_completion_recording_failed')}
+    if(!recorded||recorded.error||String(recorded.data?.id||'')!==params.runId)throw new Error('restaurant_research_completion_recording_failed')
     return result
   }catch(err:any){
     const at=new Date().toISOString()
-    await Promise.resolve(supabaseAdmin.from('agent_runs').update({
+    let failed:{data:{id:unknown}|null;error:unknown}|null=null
+    try{failed=await supabaseAdmin.from('agent_runs').update({
       status:'failed',
       summary:'Background Gogo could not complete reservation research.',
       progress:100,
       error:safe(err?.message||'restaurant_research_failed',500),
       completed_at:at,
       updated_at:at,
-    }).eq('id',params.runId).eq('telegram_id',tg)).catch(()=>{})
+    }).eq('id',params.runId).eq('telegram_id',tg).eq('type','restaurant_reservation_research').eq('status','running').select('id').maybeSingle()
+    }catch{}
+    if(!failed||failed.error||String(failed.data?.id||'')!==params.runId)throw new Error('restaurant_research_failure_recording_failed',{cause:err})
     throw err
   }
 }

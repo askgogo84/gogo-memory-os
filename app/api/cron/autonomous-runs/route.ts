@@ -45,7 +45,7 @@ export async function GET(request:Request){
     // Restaurant/provider inspection can legitimately exceed the ~42s WhatsApp budget.
     // The WhatsApp path persists the objective first; this 300s worker owns the browser
     // research and sends the grounded result back. No booking/payment is authorized here.
-    let reservationResearchClaimed=0,reservationResearchDone=0,reservationResearchFailed=0,reservationResearchRequeued=0
+    let reservationResearchClaimed=0,reservationResearchDone=0,reservationResearchFailed=0,reservationResearchRequeued=0,reservationResearchNotificationFailed=0
     const reservationResearchStaleBefore=new Date(Date.now()-10*60_000).toISOString()
     const reservationResearchDayAgo=new Date(Date.now()-24*3600_000).toISOString()
 
@@ -101,17 +101,22 @@ export async function GET(request:Request){
         }).eq('id',run.id).eq('status','running')
         continue
       }
+      let result:Awaited<ReturnType<typeof runQueuedRestaurantReservationResearch>>
       try{
-        const result=await runQueuedRestaurantReservationResearch({actor,runId:String(run.id)})
+        result=await runQueuedRestaurantReservationResearch({actor,runId:String(run.id)})
         reservationResearchDone++
-        if(actor.whatsappId&&result?.text)await sendWhatsApp(actor.whatsappId,result.text)
       }catch(err:any){
         reservationResearchFailed++
         console.error('RESTAURANT_RESEARCH_WORKER_FAILED:',run.id,err?.message||err)
         try{
-          if(actor.whatsappId)await sendWhatsApp(actor.whatsappId,'I could not complete the reservation research safely. I did not book, pay, create an approval, or invent a release time. Please try again shortly.')
-        }catch{}
+          if(actor.whatsappId)await sendWhatsApp(actor.whatsappId,'I could not verify completion of the reservation research. Check Activity for any saved proposal before deciding what to do next. This message does not confirm a booking or payment.')
+        }catch{reservationResearchNotificationFailed++}
+        continue
       }
+      // A notification may have reached the provider even when its response failed.
+      // Preserve the recorded research result; never send a contradictory fallback.
+      try{if(actor.whatsappId&&result?.text)await sendWhatsApp(actor.whatsappId,result.text)}
+      catch{reservationResearchNotificationFailed++;console.error('RESTAURANT_RESEARCH_NOTIFICATION_FAILED:',run.id)}
     }
 
     const {data:runs,error}=await supabaseAdmin.from('agent_runs')
@@ -301,7 +306,7 @@ export async function GET(request:Request){
         try{if(actor.whatsappId)await sendWhatsApp(actor.whatsappId,'I could not complete the train search. I did not invent timings or availability. Try again shortly, or check IRCTC directly.')}catch{}
       }
     }
-    return NextResponse.json({ok:true,staleRunsClosed,abandonedSignInsClosed,approvedBrowserClaimed,approvedBrowserDone,approvedBrowserFailed,checked,resumed,completed,failed,skipped,reservationResearchClaimed,reservationResearchDone,reservationResearchFailed,reservationResearchRequeued,browserClaimed,browserDone,browserPaused,browserFailed,browserExpired,trainClaimed,trainDone,trainFailed,trainRequeued,results})
+    return NextResponse.json({ok:true,staleRunsClosed,abandonedSignInsClosed,approvedBrowserClaimed,approvedBrowserDone,approvedBrowserFailed,checked,resumed,completed,failed,skipped,reservationResearchClaimed,reservationResearchDone,reservationResearchFailed,reservationResearchRequeued,reservationResearchNotificationFailed,browserClaimed,browserDone,browserPaused,browserFailed,browserExpired,trainClaimed,trainDone,trainFailed,trainRequeued,results})
   }catch(err:any){
     console.error('AUTONOMOUS_CRON_FAILED:',err?.message||err)
     return NextResponse.json({ok:false,error:'autonomous_worker_failed'},{status:500})
