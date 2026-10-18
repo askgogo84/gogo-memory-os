@@ -13,8 +13,8 @@ const inventory={ownerId:'123',coveredFrom:'2026-10-18T10:00:00Z',coveredUntil:'
 const calendar={...inventory,connected:true,windows:[]}
 const preferences={ownerId:'123',incomplete:false,rules:[]}
 const snapshot=dining.buildReservationDiningContext({actor,timezone:'Asia/Kolkata',requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',now:new Date('2026-10-18T10:00:00Z'),pack:{reservationTravel:inventory,reservationCalendar:calendar,reservationPreferences:preferences}})
-const payload={restaurant:'Synthetic Restaurant',reservationUrl:'https://provider.example/reserve',reservationLocation:'Home city',partySize:2,preferredStart:'19:00',preferredEnd:'21:00',requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',contextWindows:[],diningContext:snapshot,approvalId:'approval'}
-let rows:Record<string,any>,faultTable='',faultMode:'error'|'zero'|'throw'='error',receiptFault=false,recoveryFault=false,slowActionCompletion=false,handoffReleases=0,providerCalls=0,calendarCalls=0,notifications:string[]=[],activityTypes:string[]=[],writes:Array<{table:string;patch:any}>=[]
+const payload={restaurant:'Synthetic Restaurant',reservationUrl:'https://provider.example/reserve',reservationLocation:'Home city',partySize:2,preferredStart:'19:00',preferredEnd:'21:00',timeConstraint:{version:1,kind:'window',start:'19:00',end:'21:00'},requestedDate:'',releaseAt:'2026-10-19T14:30:00Z',contextWindows:[],diningContext:snapshot,approvalId:'approval'}
+let rows:Record<string,any>,faultTable='',faultMode:'error'|'zero'|'throw'='error',receiptFault=false,recoveryFault=false,slowActionCompletion=false,handoffReleases=0,providerCalls=0,providerObjective='',calendarCalls=0,notifications:string[]=[],activityTypes:string[]=[],writes:Array<{table:string;patch:any}>=[]
 const db={from(table:string){let patch:any,insert:any,single=false;const filters:Array<(row:any)=>boolean>=[]
  const execute=()=>{
   if(insert){assert.equal(String(insert.telegram_id),'123');if(table==='agent_activity')activityTypes.push(insert.event_type);else throw Error('Unexpected insert '+table);return{data:null,error:null}}
@@ -25,7 +25,8 @@ const db={from(table:string){let patch:any,insert:any,single=false;const filters
    const completion=patch.status==='completed'||patch.status==='executed'||patch.lifecycle_state==='watching'
    const receipt=table==='life_event_actions'&&patch.status==='blocked'&&patch.payload_json?.providerConfirmationVerified===true
    const recovery=patch.error==='restaurant_confirmation_recording_failed'||patch.payload_json?.blockedReason==='restaurant_confirmation_recording_failed'
-   if((table===faultTable&&completion)||(receiptFault&&receipt)||(recoveryFault&&recovery)){
+   const legacyReview=patch.error==='restaurant_time_authority_review_required'
+   if((table===faultTable&&(completion||legacyReview))||(receiptFault&&receipt)||(recoveryFault&&recovery)){
     if(faultMode==='throw')throw Error('Synthetic completion transport failure')
     return{data:null,error:faultMode==='error'?{message:'Synthetic completion write failure'}:null}
    }
@@ -45,11 +46,11 @@ const worker=load('lib/agent/restaurant-reservation-worker.ts',{
  './context-brain':{buildContextPack:async(input:any)=>{assert.equal(input.actor.legacyTelegramId,123);return{reservationTravel:inventory,reservationCalendar:calendar,reservationPreferences:preferences}}},
  './policy':{evaluateAgentExecutionPolicy:()=>({allowed:true})},'./sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
  './secondary-auth-handoff':{releaseRunAuthHandoff:async()=>{handoffReleases++}},
- './secure-computer':{runSecureBrowser:async()=>{providerCalls++;return structuredClone(result)}},
+ './secure-computer':{runSecureBrowser:async(input:any)=>{providerCalls++;providerObjective=input.objective;return structuredClone(result)}},
  './booking-calendar-execution':{prepareBookingCalendarApproval:async()=>{calendarCalls++;return{runId:'calendar-draft'}}},
  '@/lib/channels/whatsapp':{sendWhatsAppMessage:async(_recipient:string,text:string)=>{notifications.push(text)}},
 })
-function reset(){faultTable='';faultMode='error';receiptFault=false;recoveryFault=false;slowActionCompletion=false;handoffReleases=0;providerCalls=0;calendarCalls=0;notifications=[];activityTypes=[];writes=[];rows={
+function reset(){faultTable='';faultMode='error';receiptFault=false;recoveryFault=false;slowActionCompletion=false;handoffReleases=0;providerCalls=0;providerObjective='';calendarCalls=0;notifications=[];activityTypes=[];writes=[];rows={
  agent_runs:{id:'run',telegram_id:'123',status:'queued',error:null,updated_at:'2026-10-18T10:00:00Z',metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:'event',life_event_action_id:'action'}},
  life_event_actions:{id:'action',telegram_id:'123',life_event_id:'event',action_key:'restaurant-reservation-release',status:'ready',payload_json:structuredClone(payload),due_at:payload.releaseAt},
  life_events:{id:'event',telegram_id:'123',dedupe_key:'fixture-key',title:'Synthetic Restaurant',timezone:'Asia/Kolkata',location:'Home city',lifecycle_state:'planned',metadata_json:{}},
@@ -126,5 +127,42 @@ await check('initial approval and idempotent armed read remain safe before execu
  const count=writes.length
  assert.equal((await prep.armApprovedRestaurantReservation({actor,runId:'run'})).status,'queued');assert.equal(writes.length,count,'already armed approval must not overwrite a concurrent claim')
  assert.equal(providerCalls,0)
+})
+function rebindCurrent(){const p=rows.life_event_actions.payload_json;Object.assign(rows.agent_approvals,buildApprovalBinding(prep.restaurantReservationApprovalInput({runId:'run',lifeEventId:'event',actionId:'action',...p,providerUrl:p.reservationUrl})))}
+await check('legacy missing dining-time authority pauses before a new provider execution',async()=>{
+ reset();delete rows.life_event_actions.payload_json.timeConstraint;rebindCurrent()
+ const r=await worker.processOne(structuredClone(rows.life_event_actions));assert.equal(r.status,'paused');assert.equal(providerCalls,0);assert.equal(calendarCalls,0);assert.equal(rows.agent_approvals.status,'expired')
+})
+await check('inconsistent but correctly fingerprinted time authority cannot reach a provider',async()=>{
+ reset();rows.life_event_actions.payload_json.timeConstraint={version:1,kind:'exact',start:'20:30',end:'20:30'};rebindCurrent()
+ assert.equal((await worker.processOne(structuredClone(rows.life_event_actions))).status,'paused');assert.equal(providerCalls,0)
+})
+await check('public arming pauses an older time-unproven approval for same-mission review',async()=>{
+ reset();rows.agent_runs.status='waiting_approval';rows.life_event_actions.status='waiting_approval';delete rows.life_event_actions.payload_json.timeConstraint;rebindCurrent()
+ assert.equal((await prep.armApprovedRestaurantReservation({actor,runId:'run'})).status,'paused');assert.equal(rows.life_event_actions.status,'blocked');assert.equal(rows.agent_approvals.status,'expired');assert.equal(providerCalls,0)
+})
+await check('changed time authority cannot be omitted from an old approval fingerprint',async()=>{
+ reset();rows.life_event_actions.payload_json.timeConstraint={version:1,kind:'unrestricted',start:'',end:''}
+ await assert.rejects(()=>worker.processOne(structuredClone(rows.life_event_actions)),/approval_action_changed/);assert.equal(providerCalls,0)
+})
+await check('current exact time is retained as an exact browser start restriction',async()=>{
+ reset();Object.assign(rows.life_event_actions.payload_json,{preferredStart:'20:30',preferredEnd:'20:30',timeConstraint:{version:1,kind:'exact',start:'20:30',end:'20:30'}});rebindCurrent()
+ assert.equal((await worker.processOne(structuredClone(rows.life_event_actions))).status,'completed');assert.equal(providerCalls,1);assert.match(providerObjective,/starting exactly at 20:30/);assert.doesNotMatch(providerObjective,/between 20:30 and 20:30/)
+})
+await check('explicit current unrestricted authority retains earliest-available behavior',async()=>{
+ reset();Object.assign(rows.life_event_actions.payload_json,{preferredStart:'',preferredEnd:'',timeConstraint:{version:1,kind:'unrestricted',start:'',end:''}});rebindCurrent()
+ assert.equal((await worker.processOne(structuredClone(rows.life_event_actions))).status,'completed');assert.match(providerObjective,/earliest available/)
+})
+await check('reconciliation preserves a known old confirmation without certifying its missing time authority or replaying',async()=>{
+ reset();delete rows.life_event_actions.payload_json.timeConstraint;rebindCurrent()
+ const original=structuredClone(rows.life_event_actions),r=await worker.processOne(original,structuredClone(result))
+ assert.equal(r.status,'paused');assert.equal(providerCalls,0);assert.equal(rows.life_event_actions.payload_json.providerConfirmationVerified,true);assert.equal(rows.life_event_actions.status,'blocked');assert.equal(calendarCalls,0);assert.ok(!notifications.some(t=>t.startsWith('✅')))
+ try{await worker.processOne(original)}catch{}assert.equal(providerCalls,0)
+})
+for(const mode of ['error','zero','throw']as const)await check('old-authority reconciliation '+mode+' recording failure preserves the known receipt and refuses replay',async()=>{
+ reset();delete rows.life_event_actions.payload_json.timeConstraint;rebindCurrent();faultTable='agent_runs';faultMode=mode
+ const original=structuredClone(rows.life_event_actions);let r:any;try{r=await worker.processOne(original,structuredClone(result))}catch{}
+ assert.notEqual(r?.status,'completed');assert.equal(providerCalls,0);assert.equal(rows.life_event_actions.payload_json.providerConfirmationVerified,true);assert.equal(calendarCalls,0);assert.ok(!notifications.some(t=>t.startsWith('✅')))
+ try{await worker.processOne(original)}catch{}assert.equal(providerCalls,0)
 })
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}else console.log('Reservation completion receipts, explicit write/row/transport failures, same-mission no-replay and owner scope passed; inert fixtures only.')

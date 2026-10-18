@@ -447,6 +447,7 @@ preparationFails=false
 assert.equal((await shared.resumeSecondaryAuthRun({actor:{legacyTelegramId:1,userId:'user'},runId:'run'})).runId,'run')
 console.log('Transient preparation failure restores paused state and supports a second same-run resume')
 let executionError='browser_handoff_in_use',executionCalls=0,executionReleases=0,executionResult:any
+const restaurantTimeAuthority=load('restaurant-reservation.ts',{})
 const contextNow=new Date()
 const executionRelease=new Date(contextNow.getTime()-60_000).toISOString()
 const executionInventory={ownerId:'1',coveredFrom:new Date(contextNow.getTime()-3600_000).toISOString(),coveredUntil:new Date(contextNow.getTime()+30*86400_000).toISOString(),incomplete:false,facts:[]}
@@ -462,7 +463,7 @@ const executionMocks={
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},
   './approval-binding':{assertApprovalBinding:()=>{}},
   './life-event-approval-binding':{checkinApprovalFingerprintInput:()=>({})},
-  './restaurant-reservation':{restaurantReservationApprovalInput:()=>({})},
+  './restaurant-reservation':{restaurantReservationApprovalInput:()=>({}),validRestaurantTimeConstraint:restaurantTimeAuthority.validRestaurantTimeConstraint},
   './reservation-dining-context':reservationDiningContext,
   './context-brain':{buildContextPack:async(input:any)=>{assert.equal(input.actor.legacyTelegramId,1);assert.equal(input.options.includeReservationTravel,true);assert.equal(input.options.includeReservationCalendar,true);return{reservationTravel:executionInventory,reservationCalendar:executionCalendar,reservationPreferences:executionPreferences}}},
 }
@@ -472,7 +473,7 @@ for(const kind of ['flight','restaurant'])for(const busy of [true,false]){
   executionError=busy?'browser_handoff_in_use':'provider_connection_lost'
   rows.agent_runs={id:'run',telegram_id:'1',status:'queued',metadata_json:{plan_type:'life_event_checkin',life_event_id:'event',life_event_action_id:'action',checkin_url:'https://provider.example'}}
   rows.life_events={id:'event',telegram_id:'1',event_type:'travel',subtype:'flight',confirmation_ref:'fixture',metadata_json:{}}
-  rows.life_event_actions={id:'action',telegram_id:'1',life_event_id:'event',status:kind==='flight'?'waiting_approval':'ready',payload_json:{approvalId:'approval',reservationUrl:'https://provider.example',releaseAt:executionRelease,diningContext:executionDining}}
+  rows.life_event_actions={id:'action',telegram_id:'1',life_event_id:'event',status:kind==='flight'?'waiting_approval':'ready',payload_json:{approvalId:'approval',reservationUrl:'https://provider.example',releaseAt:executionRelease,diningContext:executionDining,timeConstraint:{version:1,kind:'unrestricted',start:'',end:''}}}
   rows.agent_approvals={id:'approval',telegram_id:'1',run_id:'run',status:'approved',action_type:'booking',execution_payload:{action:'submit_web_checkin'}}
   rows.users={id:'owner',telegram_id:1}
   const result=kind==='flight'?await flightExecutor.executeApprovedLifeEventCheckin({actor:{userId:'owner',legacyTelegramId:1},runId:'run'}):await restaurantExecutor.processOne(structuredClone(rows.life_event_actions))
@@ -590,7 +591,7 @@ for(const kind of ['flight_execute','restaurant']){
   rows.life_event_actions.status=kind==='flight_execute'?'waiting_approval':'ready'
   // This is a fresh protected-step failure, not the already confirmed action
   // exercised above. A retained confirmation receipt must never be replayed.
-  rows.life_event_actions.payload_json={approvalId:'approval',reservationUrl:'https://provider.example',releaseAt:executionRelease,diningContext:executionDining}
+  rows.life_event_actions.payload_json={approvalId:'approval',reservationUrl:'https://provider.example',releaseAt:executionRelease,diningContext:executionDining,timeConstraint:{version:1,kind:'unrestricted',start:'',end:''}}
   executionResult={...evidence,status:'blocked',blockReason:'human_auth_required',authReason:'device_approval'}
   const result=kind==='flight_execute'?await flightExecutor.executeApprovedLifeEventCheckin({actor:{userId:'owner',legacyTelegramId:1},runId:'run'}):await restaurantExecutor.processOne(structuredClone(rows.life_event_actions))
   assert.equal(result.status,'outcome_unknown')

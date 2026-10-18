@@ -61,11 +61,45 @@ function partySize(text:string){
 }
 
 function preferredWindow(text:string){
-  const raw=String(text||'')
+  const raw=String(text||'').replace(/\b([ap])\s*\.\s*m\s*\.?/gi,'$1m')
+  // These constraints cannot be represented by the local exact/window contract.
+  // Ask before research rather than invert an exclusion or discard a zone/date shift.
+  const excludedClock=raw.split(/[.!?;\n]/).some(clause=>/\b\d{1,2}(?::\d{1,2})?\s*(?:am|pm)\b|\b\d{1,2}:\d{1,2}\b/i.test(clause)
+    &&/\b(?:no|not|never|don['’]?t|isn['’]?t|aren['’]?t|cannot|can['’]?t|except|excluding|excluded|avoid|forbidden|unacceptable|unsuitable|unwanted|skip|dislike|anything\s+but)\b/i.test(clause))
+  if(excludedClock
+    ||/\b(?:before|after)\s+\d{1,2}(?::\d{2})?/i.test(raw)
+    ||/\b(?:UTC|GMT|IST|PST|PDT|EST|EDT|CST|CDT|MST|MDT|CET|CEST|BST|AEST|AEDT|JST)\b|\b(?:Asia|America|Europe|Australia|Africa|Pacific)\/[A-Za-z_]+(?:\/[A-Za-z_]+)?\b|\b(?:Eastern|Central|Mountain|Pacific|Indian\s+Standard)\s+(?:Standard\s+|Daylight\s+)?time\b/i.test(raw))return{start:'',end:'',clarify:true}
   const m=raw.match(/\bbetween\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm))\s+(?:and|to|-)\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i)
     ||raw.match(/\b(\d{1,2}(?::\d{2})?\s*(?:am|pm))\s*(?:-|to)\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i)
-  if(!m)return{start:'',end:''}
-  return{start:explicitClock(m[1]),end:explicitClock(m[2])}
+  const start=m?explicitClock(m[1]):'',end=m?explicitClock(m[2]):''
+  if(m&&(!start||!end||end<=start)||(raw.match(/\bbetween\s+\d/gi)||[]).length>1)return{start:'',end:'',clarify:true}
+  // Range-final "only" restricts the range, not its final endpoint.
+  const remainder=m?raw.slice(0,m.index)+' '+raw.slice((m.index||0)+m[0].length):raw
+  const clock='(?:\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)|(?:[01]\\d|2[0-3]):[0-5]\\d)'
+  // Provider release clocks are research context, never competing dining choices.
+  const rest=remainder.replace(new RegExp(`\\b(?:(?:bookings?|reservations?)\\s+(?:will\\s+)?open(?:s)?|release(?:\\s+time)?)\\s+(?:is\\s+)?at\\s*${clock}\\b`,'gi'),' ')
+  const matches=[...rest.matchAll(new RegExp(`\\b(?:only(?:\\s+at)?\\s+(${clock})|(${clock})\\s+only)\\b`,'gi'))]
+  const exacts=matches.map(value=>{const text=(value[1]||value[2]).trim();return /(?:am|pm)$/i.test(text)?explicitClock(text):text})
+  const distinct=[...new Set(exacts)]
+  const onlyClock=/\bonly\s+at\s+\d|\bonly\s+\d{1,2}:\d{2}|\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s+only\b|\b\d{1,2}:\d{2}\s*(?:am|pm)?\s+only\b/i.test(rest)
+  if(distinct.length>1||exacts.some(t=>!t)||onlyClock&&!distinct.length)return{start:'',end:'',clarify:true}
+  if(distinct.length){
+    const remaining=rest.replace(new RegExp(`\\b(?:only(?:\\s+at)?\\s+(${clock})|(${clock})\\s+only)\\b`,'gi'),' ')
+    if(new RegExp(`\\b${clock}\\b`,'i').test(remaining)||/\b\d{1,2}:\d{1,2}\b|\bat\s+\d{1,2}(?::\d{2})?/i.test(remaining))return{start:'',end:'',clarify:true}
+    const at=distinct[0];if(m&&(at<start||at>end))return{start:'',end:'',clarify:true};return{start:at,end:at,clarify:false}
+  }
+  const namedClocks=[...rest.matchAll(new RegExp(`\\b${clock}\\b`,'gi'))]
+  if(namedClocks.length>1)return{start:'',end:'',clarify:true}
+  if(namedClocks.length){
+    const match=namedClocks[0],prefix=rest.slice(0,match.index),text=match[0].trim()
+    // A user-stated release clock is provider-research input, not dining authority.
+    if(/\b(?:(?:bookings?|reservations?)\s+(?:will\s+)?open(?:s)?|release(?:\s+time)?)\s+(?:is\s+)?at\s*$/i.test(prefix))return{start,end,clarify:false}
+    const at=/(?:am|pm)$/i.test(text)?explicitClock(text):text
+    if(!at||!/(?:\bat|\bdining|\bdinner|\bslot)(?:\s+(?:time|start))?\s*$/i.test(prefix)||m&&(at<start||at>end))return{start:'',end:'',clarify:true}
+    return{start:at,end:at,clarify:false}
+  }
+  if(/\bat\s+\d{1,2}(?::\d{2})?/i.test(rest))return{start:'',end:'',clarify:true}
+  return{start,end,clarify:false}
 }
 
 const MONTHS:Record<string,number>={jan:1,january:1,feb:2,february:2,mar:3,march:3,apr:4,april:4,may:5,jun:6,june:6,jul:7,july:7,aug:8,august:8,sep:9,sept:9,september:9,oct:10,october:10,nov:11,november:11,dec:12,december:12}
@@ -96,6 +130,7 @@ export type RestaurantReservationIntent={
   partySize:number|null
   preferredStart:string
   preferredEnd:string
+  timeClarificationNeeded?:boolean
   requestedDate:string
   nextAvailable:boolean
   sourceUrl:string
@@ -121,6 +156,7 @@ export function parseRestaurantReservationIntent(raw:string):RestaurantReservati
     partySize:partySize(raw),
     preferredStart:window.start,
     preferredEnd:window.end,
+    timeClarificationNeeded:window.clarify,
     requestedDate:explicitDate(raw),
     nextAvailable:/\bnext\s+available\b|\bearliest\s+available\b|\bfirst\s+available\b/i.test(raw),
     sourceUrl:firstUrl(raw),
@@ -128,6 +164,21 @@ export function parseRestaurantReservationIntent(raw:string):RestaurantReservati
 }
 
 function host(url:string){try{return new URL(url).hostname.replace(/^www\./,'')}catch{return''}}
+
+export type RestaurantTimeConstraint={version:1;kind:'exact'|'window'|'unrestricted';start:string;end:string}
+export function validRestaurantTimeConstraint(value:unknown,start:string,end:string):value is RestaurantTimeConstraint{
+  if(!value||typeof value!=='object'||Array.isArray(value))return false
+  const c=value as Partial<RestaurantTimeConstraint>,clock=/^(?:[01]\d|2[0-3]):[0-5]\d$/
+  if(c.version!==1||c.start!==start||c.end!==end)return false
+  return c.kind==='unrestricted'?start===''&&end==='':clock.test(start)&&clock.test(end)&&(c.kind==='exact'?start===end:c.kind==='window'&&start<end)
+}
+export function reservationTimeConstraint(intent:Pick<RestaurantReservationIntent,'preferredStart'|'preferredEnd'|'timeClarificationNeeded'>):RestaurantTimeConstraint{
+  const start=intent.preferredStart,end=intent.preferredEnd
+  const value:RestaurantTimeConstraint={version:1,kind:!start&&!end?'unrestricted':start===end?'exact':'window',start,end}
+  if(intent.timeClarificationNeeded||!validRestaurantTimeConstraint(value,start,end))throw new Error('restaurant_time_constraint_unverified')
+  return value
+}
+function diningTimeLabel(start:string,end:string){return start&&end?(start===end?`${start} only`:`${start}–${end}`):'next available'}
 
 const GENERIC_RESTAURANT_TOKENS=new Set(['restaurant','restaurants','cafe','café','bistro','bar','noodle','noodles','kitchen','eatery','the','table','indiranagar','koramangala','bengaluru','bangalore'])
 // India-first: District (Dineout), EazyDiner, Zomato and the restaurant's own site are where tables
@@ -273,7 +324,7 @@ function dedupeKey(actor:AgentActor,intent:RestaurantReservationIntent,url:strin
   return createHash('sha256').update(stable).digest('hex').slice(0,40)
 }
 
-export function restaurantReservationApprovalInput(params:{runId:string;lifeEventId:string;actionId:string;restaurant:string;providerUrl:string;partySize:number|null;preferredStart:string;preferredEnd:string;requestedDate:string;releaseAt:string|null;contextWindows?:Array<{startAt:string;endAt:string|null;location:string|null;source:string;confidence:number}>;diningContext?:ReservationDiningContext;reservationLocation?:string|null}){
+export function restaurantReservationApprovalInput(params:{runId:string;lifeEventId:string;actionId:string;restaurant:string;providerUrl:string;partySize:number|null;preferredStart:string;preferredEnd:string;requestedDate:string;releaseAt:string|null;contextWindows?:Array<{startAt:string;endAt:string|null;location:string|null;source:string;confidence:number}>;diningContext?:ReservationDiningContext;reservationLocation?:string|null;timeConstraint?:unknown}){
   return{
     missionId:params.runId,
     stepId:params.actionId,
@@ -286,6 +337,7 @@ export function restaurantReservationApprovalInput(params:{runId:string;lifeEven
       partySize:params.partySize,
       preferredStart:params.preferredStart,
       preferredEnd:params.preferredEnd,
+      ...(params.timeConstraint!==undefined?{timeConstraint:params.timeConstraint}:{}),
       requestedDate:params.requestedDate||null,
       releaseAt:params.releaseAt,
       maxBookingFeePaise:0,
@@ -318,6 +370,8 @@ export async function queueRestaurantReservationResearch(params:{
 }){
   const intent=parseRestaurantReservationIntent(params.text)
   if(!intent)return null
+  if(intent.timeClarificationNeeded)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Please specify one clear dining start time with AM/PM or a 24-hour clock, or one consistent time window. Nothing was queued or booked.'}
+  if(params.text.length>1800)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Please shorten the reservation request to the restaurant, party, dining date and exact time or time window. I cannot queue a shortened copy that might lose a restriction.'}
   if(!intent.restaurant){
     return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Which restaurant should I reserve? Give me the restaurant name (and location if there are multiple branches).'}
   }
@@ -361,6 +415,8 @@ export async function queueRestaurantReservationResearch(params:{
     metadata_json:{
       plan_type:'restaurant_reservation_research',
       request_hash:requestHash,
+      request_schema_version:2,
+      request_complete:true,
       request_text:safe(params.text,1800),
       message_id:params.messageId?String(params.messageId):null,
       restaurant:intent.restaurant,
@@ -370,6 +426,7 @@ export async function queueRestaurantReservationResearch(params:{
       requested_date:intent.requestedDate||null,
       next_available:intent.nextAvailable,
       max_booking_fee_paise:0,
+      timeConstraint:reservationTimeConstraint(intent),
     },
   }).select('id').single()
   if(error||!run?.id)throw new Error(`restaurant_research_queue_failed:${error?.message||'unknown'}`)
@@ -403,6 +460,14 @@ export async function runQueuedRestaurantReservationResearch(params:{actor:Agent
   if(meta.plan_type!=='restaurant_reservation_research')throw new Error('not_restaurant_research_plan')
   const text=String(meta.request_text||'').trim()
   if(!text)throw new Error('restaurant_research_request_missing')
+  const intent=parseRestaurantReservationIntent(text)
+  const complete=meta.request_schema_version===2&&meta.request_complete===true&&text.length<=1800&&safe(text,1800)===text&&meta.request_hash===reservationResearchHash(params.actor,text)&&intent&&!intent.timeClarificationNeeded&&
+    meta.restaurant===intent.restaurant&&meta.party_size===intent.partySize&&String(meta.preferred_start||'')===intent.preferredStart&&String(meta.preferred_end||'')===intent.preferredEnd&&String(meta.requested_date||'')===intent.requestedDate&&meta.next_available===intent.nextAvailable&&meta.max_booking_fee_paise===0&&validRestaurantTimeConstraint(meta.timeConstraint,intent.preferredStart,intent.preferredEnd)
+  if(!complete){
+    const {data:paused,error}=await supabaseAdmin.from('agent_runs').update({status:'paused',error:'restaurant_research_request_review_required',summary:'This saved request needs a complete current dining-time review before provider research.',updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',tg).eq('status',run.status).select('id').maybeSingle()
+    if(error||!paused)throw new Error('restaurant_research_request_review_failed')
+    return{runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'This older or changed saved request needs review. Send the complete restaurant, party, dining date and exact time or time window again. No provider research or booking was attempted.'}
+  }
 
   try{
     const result=await tryRunRestaurantReservation({actor:params.actor,surface:'whatsapp',text})
@@ -438,9 +503,9 @@ function planningPlace(value:string){
   return ['bangalore','blr'].includes(place)?'bengaluru':['nyc','jfk'].includes(place)?'new york':place
 }
 function planningSpan(date:string,start:string,end:string,timezone:string){
-  if(!/^\d{2}:\d{2}$/.test(start)||!/^\d{2}:\d{2}$/.test(end)||end<=start)return null
+  if(!/^\d{2}:\d{2}$/.test(start)||!/^\d{2}:\d{2}$/.test(end)||end<start)return null
   try{
-    const from=parseLocalDateTime({date,time:start,timezone}).dueAtUtc.getTime(),until=parseLocalDateTime({date,time:end,timezone}).dueAtUtc.getTime()
+    const from=parseLocalDateTime({date,time:start,timezone}).dueAtUtc.getTime(),until=end===start?from+1:parseLocalDateTime({date,time:end,timezone}).dueAtUtc.getTime()
     return Number.isFinite(from)&&Number.isFinite(until)&&until>from?{from,until}:null
   }catch{return null}
 }
@@ -465,7 +530,7 @@ async function reservationConflictReview(params:{actor:AgentActor;text:string;in
     ?`The requested dining start-time window overlaps ${travel.length?`saved travel context (${locations})`:''}${travel.length&&busy.length?' and ':''}${busy.length?'a recorded Calendar busy interval':''}.`
     :`The booking release overlaps saved travel context (${locations}).`
   const prefix=`${explanation} The provider release is ${params.releaseAt}; the release is not the dining date.${relevant.length?' Saved travel is itinerary/plan evidence, not verified current presence or an actual return.':''} No new reservation mission or approval was created.`
-  const bounds=`Keep ${intent.partySize} people, ${intent.restaurant}${params.location?` in ${params.location}`:''}, ${intent.preferredStart&&intent.preferredEnd?`${intent.preferredStart}–${intent.preferredEnd} (${timezone})`:'your preferred time window'}, and the ₹0 fee/deposit ceiling.`
+  const bounds=`Keep ${intent.partySize} people, ${intent.restaurant}${params.location?` in ${params.location}`:''}, ${intent.preferredStart&&intent.preferredEnd?`${diningTimeLabel(intent.preferredStart,intent.preferredEnd)} (${timezone})`:'your preferred time window'}, and the ₹0 fee/deposit ceiling.`
   if(!intent.preferredStart||!intent.preferredEnd)return `${prefix}\n\n${bounds} Please specify a preferred time window and dining date so I can check it without inventing hours.`
   if(!relevant.length)return `${prefix}\n\n${bounds} Please choose a different dining date or time window for a fresh Calendar and provider check.`
   if(!target||!relevant.some(w=>w.applicability==='owner'))return `${prefix}\n\n${bounds} Please clarify the traveller, restaurant location and return date; an owner return is not verified from this context.`
@@ -495,7 +560,7 @@ async function reservationConflictReview(params:{actor:AgentActor;text:string;in
     const retainedReturn=fresh?.reservationTravel?.facts.some(f=>owned(f)&&f.source==='travel_ticket'&&f.kind==='flight'&&f.inferred===false&&(f.confidence||0)>=.9&&f.startAt===returning.startAt&&f.endAt===returning.endAt&&f.location===returning.location&&f.sourceRefs?.some(ref=>ref.type==='travel_ticket'&&returning.sourceRefs?.some(old=>old.type==='travel_ticket'&&old.id===ref.id)))
     if(!retainedReturn||checked.windows.some(w=>overlapsPlanning(w.startAt,w.endAt,span)&&planningWindowBlocks(w,target)))return noProposal
     if(checked.calendar.windows.some(w=>overlapsPlanning(w.startAt,w.endAt,span)))continue
-    return `${prefix}\n\nProvisional planning window: ${date} ${intent.preferredStart}–${intent.preferredEnd} (${timezone}) for ${intent.partySize} people at ${intent.restaurant} in ${params.location}. The saved itinerary schedules arrival at ${returning.endAt}; actual return is not verified. A fresh linked Calendar and saved-context read found no conflicting recorded interval within this start-time window. Provider availability, full meal duration and preference compatibility are not verified; this is not a booking or a fully checked dining interval. ${bounds}\n\nChoose a dining date before I prepare a new bounded approval; actual provider slot/rules and the complete meal interval still need verification.`
+    return `${prefix}\n\nProvisional planning window: ${date} ${diningTimeLabel(intent.preferredStart,intent.preferredEnd)} (${timezone}) for ${intent.partySize} people at ${intent.restaurant} in ${params.location}. The saved itinerary schedules arrival at ${returning.endAt}; actual return is not verified. A fresh linked Calendar and saved-context read found no conflicting recorded interval within this start-time window. Provider availability, full meal duration and preference compatibility are not verified; this is not a booking or a fully checked dining interval. ${bounds}\n\nChoose a dining date before I prepare a new bounded approval; actual provider slot/rules and the complete meal interval still need verification.`
   }
   return noProposal
 }
@@ -503,6 +568,8 @@ async function reservationConflictReview(params:{actor:AgentActor;text:string;in
 export async function tryRunRestaurantReservation(params:{actor:AgentActor;surface:AgentSurface;text:string}){
   const intent=parseRestaurantReservationIntent(params.text)
   if(!intent)return null
+  if(intent.timeClarificationNeeded)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Please specify one clear dining start time with AM/PM or a 24-hour clock, or one consistent time window. Nothing was prepared or booked.'}
+  const timeConstraint=reservationTimeConstraint(intent)
   if(!intent.restaurant){
     return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Which restaurant should I reserve? Give me the restaurant name (and location if there are multiple branches).'}
   }
@@ -632,7 +699,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     location:provider.location||null,
     lifecycle_state:'planned',
     participants:[],
-    preferences_json:{partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0},
+    preferences_json:{partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,timeConstraint},
     metadata_json:{restaurant:intent.restaurant,reservationUrl:provider.url,reservationLocation:provider.location||null,providerDiscovery:provider.source,releaseAt,releaseRule:release.releaseRule,releaseEvidence:safe(combinedReleaseEvidence,2600),releaseEvidenceUrl:ruleEvidenceUrl,readOnlyInspection:true,contextWindows,contextRefs,diningContext},
     source_refs:[...releaseSourceRefs,...contextRefs],
     dedupe_key:key,
@@ -652,7 +719,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     requires_approval:true,
     irreversible:true,
     status:'waiting_approval',
-    payload_json:{reservationUrl:provider.url,restaurant:intent.restaurant,reservationLocation:provider.location||null,partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,releaseAt,releaseRule:release.releaseRule,contextWindows,contextRefs,diningContext},
+    payload_json:{reservationUrl:provider.url,restaurant:intent.restaurant,reservationLocation:provider.location||null,partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,timeConstraint,releaseAt,releaseRule:release.releaseRule,contextWindows,contextRefs,diningContext},
     updated_at:now,
   },{onConflict:'life_event_id,action_key'}).select('id').single()
   if(actionError||!action?.id)throw new Error(`restaurant_reservation_action_failed:${actionError?.message||'unknown'}`)
@@ -663,7 +730,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     summary:'Provider release time verified. Waiting for bounded approval before the scheduled reservation attempt.',
     progress:35,why:'Gogo inspected the provider page read-only and will only attempt the reservation inside the approved restaurant/party/time/fee bounds.',
     source:params.surface,started_at:now,updated_at:now,error:refreshToken,
-    metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:lifeEventId,life_event_action_id:actionId,restaurant:intent.restaurant,reservation_url:provider.url,release_at:releaseAt,context_windows:contextWindows,context_refs:contextRefs,dining_context:diningContext,constraints:{partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0}},
+    metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:lifeEventId,life_event_action_id:actionId,restaurant:intent.restaurant,reservation_url:provider.url,release_at:releaseAt,context_windows:contextWindows,context_refs:contextRefs,dining_context:diningContext,constraints:{partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,timeConstraint}},
   }
   const runWrite=refreshing
     ? supabaseAdmin.from('agent_runs').update(runValues).eq('id',existing!.run!.id).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('error',refreshToken)
@@ -671,7 +738,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const{data:run,error:runError}=await runWrite.select('id').single()
   if(runError||!run?.id)throw new Error(`restaurant_reservation_run_failed:${runError?.message||'unknown'}`)
   const runId=String(run.id)
-  const binding=buildApprovalBinding(restaurantReservationApprovalInput({runId,lifeEventId,actionId,restaurant:intent.restaurant,providerUrl:provider.url,partySize:intent.partySize,preferredStart:intent.preferredStart,preferredEnd:intent.preferredEnd,requestedDate:intent.requestedDate,releaseAt,contextWindows,diningContext,reservationLocation:provider.location||null}))
+  const binding=buildApprovalBinding(restaurantReservationApprovalInput({runId,lifeEventId,actionId,restaurant:intent.restaurant,providerUrl:provider.url,partySize:intent.partySize,preferredStart:intent.preferredStart,preferredEnd:intent.preferredEnd,requestedDate:intent.requestedDate,releaseAt,contextWindows,diningContext,reservationLocation:provider.location||null,timeConstraint}))
   const{data:approval,error:approvalError}=await supabaseAdmin.from('agent_approvals').insert({
     telegram_id:String(params.actor.legacyTelegramId),run_id:runId,action_type:'booking',
     title:`Approve timed reservation attempt · ${intent.restaurant}`.slice(0,220),
@@ -679,7 +746,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     payload_preview:[
       {label:'Restaurant',value:intent.restaurant},
       {label:'Party',value:String(intent.partySize)},
-      {label:'Preferred time',value:intent.preferredStart&&intent.preferredEnd?`${intent.preferredStart}–${intent.preferredEnd}`:'Next available'},
+      {label:'Preferred time',value:diningTimeLabel(intent.preferredStart,intent.preferredEnd)},
       {label:'Booking release',value:releaseAt},
       {label:'Dining dates covered',value:`${diningContext.from} – ${diningContext.until} (${timezone})`},
       {label:'Calendar conflicts',value:diningContext.calendar.connected?`${diningContext.calendar.windows.length} busy intervals checked in the covered dates`:'Not connected; Calendar conflicts are not verified'},
@@ -704,7 +771,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const evidence=release.releaseRule
     ? `${ruleEvidenceUrl?'First-party reservation rule':'Provider rule'}: ${release.releaseRule}.`
     :(release.openNow?'The provider page currently exposes booking controls.':'Provider release time verified.')
-  const window=intent.preferredStart&&intent.preferredEnd?`${intent.preferredStart}–${intent.preferredEnd}`:'next available'
+  const window=diningTimeLabel(intent.preferredStart,intent.preferredEnd)
   const travelNote=contextWindows.length
     ? '\n\nRelevant saved travel windows are attached for the possible dining dates. An inferred or unattributed traveller window requires clarification if it overlaps the dining slot; it is not proof that you are away.'
     : ''
@@ -741,7 +808,7 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
   const{data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',tg).eq('action_type','booking').eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   if(!action||!approval)throw new Error('approval_required')
   const p:any=action.payload_json||{}
-  assertApprovalBinding(restaurantReservationApprovalInput({runId:params.runId,lifeEventId:String(meta.life_event_id),actionId:String(action.id),restaurant:String(p.restaurant||meta.restaurant||''),providerUrl:String(p.reservationUrl||meta.reservation_url||''),partySize:Number(p.partySize)||null,preferredStart:String(p.preferredStart||''),preferredEnd:String(p.preferredEnd||''),requestedDate:String(p.requestedDate||''),releaseAt:String(p.releaseAt||meta.release_at||'')||null,contextWindows:Array.isArray(p.contextWindows)?p.contextWindows:[],diningContext:p.diningContext,reservationLocation:p.reservationLocation||null}),approval)
+  assertApprovalBinding(restaurantReservationApprovalInput({runId:params.runId,lifeEventId:String(meta.life_event_id),actionId:String(action.id),restaurant:String(p.restaurant||meta.restaurant||''),providerUrl:String(p.reservationUrl||meta.reservation_url||''),partySize:Number(p.partySize)||null,preferredStart:String(p.preferredStart||''),preferredEnd:String(p.preferredEnd||''),requestedDate:String(p.requestedDate||''),releaseAt:String(p.releaseAt||meta.release_at||'')||null,contextWindows:Array.isArray(p.contextWindows)?p.contextWindows:[],diningContext:p.diningContext,reservationLocation:p.reservationLocation||null,timeConstraint:p.timeConstraint}),approval)
   // Refresh and arming compete for the same captured run version. A stale arm
   // must lose before it can restore an old payload or expire new authority.
   async function transitionRun(values:Record<string,unknown>){
@@ -758,15 +825,15 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
     const {data,error}=await write.select('id').maybeSingle()
     if(error||!data)throw new Error('restaurant_reservation_action_changed')
   }
-  if(!usableReservationDiningContext(p.diningContext)||Date.parse(p.diningContext.until)<=Date.now()){
+  if(!validRestaurantTimeConstraint(p.timeConstraint,String(p.preferredStart||''),String(p.preferredEnd||''))||!usableReservationDiningContext(p.diningContext)||Date.parse(p.diningContext.until)<=Date.now()){
     const at=new Date().toISOString()
-    await transitionRun({status:'paused',error:'restaurant_context_review_required',summary:'This approval lacks current verified dining-date coverage. Request a refreshed bounded approval; no reservation was armed.',updated_at:at})
+    await transitionRun({status:'paused',error:'restaurant_context_review_required',summary:'This approval lacks current verified dining-date or time authority. Request a refreshed bounded approval; no reservation was armed.',updated_at:at})
     await transitionAction({status:'blocked',updated_at:at})
     const results=await Promise.all([
       supabaseAdmin.from('agent_approvals').update({status:'expired',resolved_at:at,resolution_note:'restaurant_context_review_required'}).eq('id',approval.id).eq('telegram_id',tg).eq('status','approved'),
     ])
     if(results.some(result=>result.error))throw new Error('restaurant_context_review_pause_failed')
-    return{runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'This older reservation approval needs verified dining-date context. Nothing was armed. Request the reservation again to refresh this same mission and review a new bounded approval.'}
+    return{runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'This older reservation approval needs verified dining-date context and time authority. Nothing was armed. Request the reservation again to refresh this same mission and review a new bounded approval.'}
   }
   const now=new Date().toISOString()
   if(alreadyArmed)return{runId:params.runId,status:'queued' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,text:'This exact reservation is already armed. No new attempt or authority was created.'}

@@ -5,7 +5,7 @@ import { attachSecondaryAuthHandoff, releaseRunAuthHandoff } from './secondary-a
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
 import { assertApprovalBinding } from './approval-binding'
-import { restaurantReservationApprovalInput } from './restaurant-reservation'
+import { restaurantReservationApprovalInput, validRestaurantTimeConstraint } from './restaurant-reservation'
 import { prepareBookingCalendarApproval } from './booking-calendar-execution'
 import type { AgentActor } from './actor'
 import {buildContextPack} from './context-brain'
@@ -99,13 +99,19 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   }
   const runId=String(approval.run_id||'')
   if(!runId)throw new Error('restaurant_reservation_run_missing')
-  const input=restaurantReservationApprovalInput({runId,lifeEventId:String(event.id),actionId:String(action.id),restaurant:String(payload.restaurant||event.metadata_json?.restaurant||''),providerUrl:String(payload.reservationUrl||event.metadata_json?.reservationUrl||''),partySize:Number(payload.partySize)||null,preferredStart:String(payload.preferredStart||''),preferredEnd:String(payload.preferredEnd||''),requestedDate:String(payload.requestedDate||''),releaseAt:String(payload.releaseAt||'')||null,contextWindows:Array.isArray(payload.contextWindows)?payload.contextWindows:[],diningContext:payload.diningContext,reservationLocation:payload.reservationLocation||null})
+  const input=restaurantReservationApprovalInput({runId,lifeEventId:String(event.id),actionId:String(action.id),restaurant:String(payload.restaurant||event.metadata_json?.restaurant||''),providerUrl:String(payload.reservationUrl||event.metadata_json?.reservationUrl||''),partySize:Number(payload.partySize)||null,preferredStart:String(payload.preferredStart||''),preferredEnd:String(payload.preferredEnd||''),requestedDate:String(payload.requestedDate||''),releaseAt:String(payload.releaseAt||'')||null,contextWindows:Array.isArray(payload.contextWindows)?payload.contextWindows:[],diningContext:payload.diningContext,reservationLocation:payload.reservationLocation||null,timeConstraint:payload.timeConstraint})
   assertApprovalBinding(input,approval)
 
   const snapshot=payload.diningContext
+  const timeAuthority=validRestaurantTimeConstraint(payload.timeConstraint,String(payload.preferredStart||''),String(payload.preferredEnd||''))
   // Reconciliation consumes an existing provider result; it must not repeat an
   // external action merely because context changed after that action occurred.
   if(!reconciledResult){
+    if(!timeAuthority){
+      const summary='This older or inconsistent approval needs verified dining-time authority. No reservation was attempted; request a refreshed bounded approval.'
+      await failSafe({action,event,runId,approvalId,status:'paused',summary,error:'restaurant_context_review_required',expireApproval:true,actor})
+      return{status:'paused' as const,runId}
+    }
     const releaseMs=Date.parse(String(payload.releaseAt||''))
     if(Number.isFinite(releaseMs)&&releaseMs>Date.now()){
       const {data:released,error}=await supabaseAdmin.from('life_event_actions').update({status:'ready',updated_at:new Date().toISOString()}).eq('id',action.id).eq('telegram_id',tg).eq('status','running').select('id').maybeSingle()
@@ -142,7 +148,8 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   const contextualConstraint=coverageConstraint+calendarConstraint+preferenceConstraint+(contextWindows.length
     ? ` Saved travel constraints: ${contextWindows.map((w:any)=>`${w.applicability==='owner'&&!w.inferred&&w.confidence>=0.9&&w.location?'owner travel':'possible or unattributed traveller context'}: ${safe(w.location||'location unverified',100)} from ${safe(w.startAt,80)} to ${safe(w.endAt,80)}`).join('; ')}. Check the actual DINING SLOT, not merely release time. If it overlaps a possible or unattributed window, stop and clarify. If it overlaps known owner travel materially away from restaurant location ${reservationLocation||'unknown'}, do not submit; stop and ask.`
     : '')
-  const instruction=`At the verified booking-release time, attempt exactly one restaurant reservation at ${safe(payload.restaurant||event.title,180)} for ${Number(payload.partySize)||1} people. ${payload.requestedDate?`Prefer only ${payload.requestedDate}. `:''}${payload.preferredStart&&payload.preferredEnd?`Choose a slot between ${payload.preferredStart} and ${payload.preferredEnd}; if no in-bounds slot exists, do not book. `:'Choose the earliest available slot.'}${contextualConstraint} The approved booking fee/deposit ceiling is ₹0. If any fee, deposit, payment, paid add-on, new terms requiring separate consent, password, OTP, CAPTCHA, passkey, device approval or payment authentication appears, stop before it. Fill ordinary reservation fields from already available safe profile/browser context only. Use one final submit only when all approved constraints are satisfied. Never submit a second time if the result is uncertain.`
+  const timeInstruction=payload.preferredStart&&payload.preferredEnd?(payload.preferredStart===payload.preferredEnd?`Choose a slot starting exactly at ${payload.preferredStart}; if that exact start is unavailable, do not book. `:`Choose a slot between ${payload.preferredStart} and ${payload.preferredEnd}; if no in-bounds slot exists, do not book. `):'Choose the earliest available slot.'
+  const instruction=`At the verified booking-release time, attempt exactly one restaurant reservation at ${safe(payload.restaurant||event.title,180)} for ${Number(payload.partySize)||1} people. ${payload.requestedDate?`Prefer only ${payload.requestedDate}. `:''}${timeInstruction}${contextualConstraint} The approved booking fee/deposit ceiling is ₹0. If any fee, deposit, payment, paid add-on, new terms requiring separate consent, password, OTP, CAPTCHA, passkey, device approval or payment authentication appears, stop before it. Fill ordinary reservation fields from already available safe profile/browser context only. Use one final submit only when all approved constraints are satisfied. Never submit a second time if the result is uncertain.`
   const sentinel=evaluateAgentSentinel({capability:'browser',mode:'execute',risk:'high',irreversible:true,approved:true,instruction,url,actionCount:12})
   if(!sentinel.allowed)throw new Error(`sentinel_${sentinel.reason}`)
 
@@ -225,6 +232,19 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   if(receiptError||!recorded)throw new Error('restaurant_reservation_confirmation_receipt_failed')
   if(reconciledResult)await releaseRunAuthHandoff(tg,runId)
   const completionMetadata={plan_type:'restaurant_reservation_release',life_event_id:String(event.id),life_event_action_id:String(action.id),providerConfirmationVerified:true,confirmationUrl:result.url}
+  if(!timeAuthority){
+    const text='A provider confirmation is recorded, but this older request lacks verified dining-time authority. Do not repeat the reservation. Review the same task and provider details; no Calendar draft or fully validated completion is claimed.'
+    const review=await Promise.allSettled([
+      supabaseAdmin.from('agent_runs').update({status:'paused',error:'restaurant_time_authority_review_required',summary:text,completed_at:null,updated_at:now,metadata_json:completionMetadata}).eq('id',runId).eq('telegram_id',tg).select('id').maybeSingle(),
+      supabaseAdmin.from('life_event_actions').update({status:'blocked',updated_at:now,payload_json:{...receipt,blockedReason:'restaurant_time_authority_review_required'}}).eq('id',action.id).eq('telegram_id',tg).select('id').maybeSingle(),
+      supabaseAdmin.from('life_events').update({lifecycle_state:'needs_attention',metadata_json:meta,updated_at:now,next_action_at:null}).eq('id',event.id).eq('telegram_id',tg).select('id').maybeSingle(),
+      supabaseAdmin.from('agent_approvals').update({status:'executed',executed_at:now,resolution_note:'restaurant_time_authority_review_required'}).eq('id',approvalId).eq('telegram_id',tg).eq('status','approved').select('id').maybeSingle(),
+    ])
+    if(review.some(r=>r.status==='rejected'||r.value.error||!r.value.data))throw new Error('restaurant_time_authority_review_recording_failed')
+    await activity(tg,runId,'restaurant_time_authority_review_required',text,{life_event_id:event.id,action_id:action.id})
+    await notify(actor,text)
+    return{status:'paused' as const,runId,text}
+  }
   const completions=await Promise.allSettled([
     supabaseAdmin.from('agent_runs').update({status:'completed',summary:'Restaurant reservation submitted and verified from the provider confirmation page.',progress:100,completed_at:now,updated_at:now,metadata_json:completionMetadata}).eq('id',runId).eq('telegram_id',tg).select('id').maybeSingle(),
     supabaseAdmin.from('life_event_actions').update({status:'completed',updated_at:now,payload_json:{...receipt,completedAt:now,reconciliationRequired:false,blockedReason:null}}).eq('id',action.id).eq('telegram_id',tg).select('id').maybeSingle(),
