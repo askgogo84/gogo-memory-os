@@ -92,6 +92,7 @@ async function CalendarCard({ telegramId }: { telegramId: string }) {
       href="/dashboard/calendar"
       action={<WhatsAppChip message="Gogo, what’s on today?" label="Ask what’s on today" />}
     >
+      {calendar.incomplete && <p role="status" className="text-[16px] text-gogo-ink-3">Some calendars could not be read; this schedule is incomplete.</p>}
       {calendar.events.length ? (
         <div className="space-y-2">
           {calendar.events.slice(0, 2).map((event) => (
@@ -101,7 +102,7 @@ async function CalendarCard({ telegramId }: { telegramId: string }) {
             </div>
           ))}
         </div>
-      ) : <p className="text-[16px] leading-5 text-gogo-ink-3">Your calendar is clear today.</p>}
+      ) : <p className="text-[16px] leading-5 text-gogo-ink-3">{calendar.incomplete ? 'No events returned from the calendars I could read.' : 'Your calendar is clear today.'}</p>}
     </ZenCard>
   )
 }

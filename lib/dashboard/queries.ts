@@ -318,13 +318,12 @@ export async function getFriendContacts(telegramId: string): Promise<FriendConta
 
 // ── Today's calendar (Calendar surface + the Today "rest of today" row) ───────
 // READ-ONLY end to end. Reads the connect flag + refresh token off the users row;
-// on a missing flag/token OR a failed refresh, returns the not-connected state and
-// writes NOTHING — flipping google_calendar_connected on failure is owned by the
-// briefing job (see stash@{0} / lib/bot/morning-briefing), never the dashboard.
+// Failed reads remain unavailable or explicitly incomplete; healthy accounts stay
+// visible. No refresh failure changes the saved connection state.
 export type CalendarEvent = { id: string; title: string; time: string | null; startAt?: string | null }
 export type TodayCalendar =
   | { ok: true; connected: false }
-  | { ok: true; connected: true; events: CalendarEvent[] }
+  | { ok: true; connected: true; events: CalendarEvent[]; incomplete?: boolean }
   | { ok: false }
 
 export async function getTodayCalendar(telegramId: string): Promise<TodayCalendar> {
@@ -340,12 +339,10 @@ export async function getTodayCalendar(telegramId: string): Promise<TodayCalenda
       console.error('DASHBOARD_CALENDAR_FAILED:', error)
       return { ok: false }
     }
-    if (!user?.google_calendar_connected || !user?.google_refresh_token) {
-      return { ok: true, connected: false }
-    }
-
-    const accounts = await getCalendarAccountAccess(tgNum, user.google_refresh_token)
-    if (!accounts.length) return { ok: true, connected: false } // refresh failed → treat as not connected, write nothing
+    if (!user) return { ok: false }
+    let incomplete = Boolean(user.google_calendar_connected && !user.google_refresh_token)
+    const accounts = await getCalendarAccountAccess(tgNum, user.google_calendar_connected ? user.google_refresh_token : null, () => { incomplete = true })
+    if (!accounts.length) return incomplete ? { ok: false } : { ok: true, connected: false }
 
     // Read-only events fetch, bounded to the user's IST day — NOT the UTC day the
     // shared getTodayEvents assumes. India-first: an event at 00:30 IST belongs to
@@ -359,16 +356,21 @@ export async function getTodayCalendar(telegramId: string): Promise<TodayCalenda
       orderBy: 'startTime',
     })
     type RawItem = { id?: string; summary?: string; iCalUID?: string; start?: { dateTime?: string } }
-    const perAccount = await Promise.all(accounts.map(async (account) => {
+    const settled = await Promise.allSettled(accounts.map(async (account) => {
       const res = await fetch(
         `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params.toString()}`,
         { headers: { Authorization: `Bearer ${account.accessToken}` } },
       )
       const data = await res.json()
+      if (!res.ok) throw new Error('calendar_provider_read_failed')
       const events: RawItem[] = Array.isArray(data?.items) ? data.items : []
-      return { email: account.email, events, hasMore: false }
+      return { email: account.email, events, hasMore: Boolean(data.nextPageToken) }
     }))
-    const items = mergeAccountEvents(perAccount).events as RawItem[]
+    const perAccount = settled.filter((part): part is PromiseFulfilledResult<{email: string | null; events: RawItem[]; hasMore: boolean}> => part.status === 'fulfilled').map(part => part.value)
+    if (!perAccount.length) return { ok: false }
+    const merged = mergeAccountEvents(perAccount)
+    incomplete = incomplete || perAccount.length < settled.length || merged.hasMore
+    const items = merged.events as RawItem[]
 
     const zone = user.timezone || 'Asia/Kolkata'
     const events: CalendarEvent[] = items.map((it, i) => ({
@@ -377,7 +379,7 @@ export async function getTodayCalendar(telegramId: string): Promise<TodayCalenda
       time: it?.start?.dateTime ? formatClock(it.start.dateTime, zone) : null,
       startAt: it?.start?.dateTime || null,
     }))
-    return { ok: true, connected: true, events }
+    return { ok: true, connected: true, events, incomplete }
   } catch (err) {
     console.error('DASHBOARD_CALENDAR_FAILED:', err)
     return { ok: false }

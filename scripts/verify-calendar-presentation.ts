@@ -83,6 +83,10 @@ async function main(){
   tables.push(table)
   if(table==='agent_activity')return {insert:async(row:any)=>{typedContexts.push(row.metadata_json);return {error:null}}} as any
   if(table==='conversations')return {insert:async(rows:any[])=>{assert.ok(rows.every(row=>row.telegram_id===123),'history remains owned');return {error:null}}} as any
+  if(table==='google_calendar_accounts'){
+    const q:any={select:()=>q,eq:(key:string,value:unknown)=>{assert.equal(key,'telegram_id');assert.equal(String(value),'123');return q},order:()=>q,then:(resolve:any,reject:any)=>Promise.resolve({data:[],error:null}).then(resolve,reject)}
+    return q // Explicit successful empty inventory, never a hidden lookup error.
+  }
   assert.ok(['users','reminders'].includes(table),'no Attention or watcher reads')
   const result={error:null,data:table==='users'?{telegram_id:123,whatsapp_id:'+15555550123',timezone:'Asia/Kolkata',google_calendar_connected:true,google_refresh_token:'fixture-refresh'}:[{message:'Travel reminder fixture',remind_at:tomorrow+'T09:00:00+05:30',sent:false}]}
   let wrongOwner=false

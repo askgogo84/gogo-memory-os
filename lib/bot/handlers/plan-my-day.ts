@@ -101,29 +101,18 @@ async function getTodaysReminders(telegramId: number) {
 }
 
 async function getCalendarEvents(telegramId: number) {
-  const { data: user } = await supabaseAdmin
-    .from('users')
-    .select('google_calendar_connected, google_refresh_token')
-    .eq('telegram_id', telegramId)
-    .single()
-
-  if (!user?.google_calendar_connected || !user?.google_refresh_token) {
-    return {
-      connected: false,
-      events: [],
-    }
-  }
-
   try {
-    const result = await getTodayEventsAllAccounts(telegramId, user.google_refresh_token, getTodayEvents)
-    return {
-      connected: result.connected,
-      events: result.events,
-    }
+    const {data: user, error} = await supabaseAdmin.from('users')
+      .select('google_calendar_connected, google_refresh_token').eq('telegram_id', telegramId).single()
+    if (error || !user) throw new Error('calendar_state_unavailable')
+    const result = await getTodayEventsAllAccounts(telegramId, user.google_calendar_connected ? user.google_refresh_token : null, getTodayEvents, Boolean(user.google_calendar_connected))
+    return {connected: result.connected, events: result.events, incomplete: result.incomplete, error: false}
   } catch {
     return {
       connected: true,
       events: [],
+      error: true,
+      incomplete: true,
     }
   }
 }
@@ -223,6 +212,8 @@ export async function buildPlanMyDayReply(telegramId: number, userName?: string)
   reply += `📅 *Calendar*\n`
   if (!calendarState.connected) {
     reply += `Calendar is not connected yet.\nType *connect calendar* to make this smarter.\n\n`
+  } else if (calendarState.error) {
+    reply += `Couldn't read Google Calendar just now; your schedule is unavailable.\n\n`
   } else if (calendarState.events.length) {
     reply += calendarState.events
       .slice(0, 5)
@@ -230,8 +221,9 @@ export async function buildPlanMyDayReply(telegramId: number, userName?: string)
       .join('\n')
     reply += '\n\n'
   } else {
-    reply += `No calendar events lined up today.\n\n`
+    reply += calendarState.incomplete ? `No events returned from the calendars I could read.\n\n` : `No calendar events lined up today.\n\n`
   }
+  if (calendarState.incomplete && !calendarState.error) reply += `A linked Google Calendar could not be read, so this schedule is incomplete.\n\n`
 
   reply += `⏰ *Reminders*\n`
   if (reminders.length) {
@@ -246,6 +238,7 @@ export async function buildPlanMyDayReply(telegramId: number, userName?: string)
 
   reply += `✨ *Suggested flow*\n`
   reply += buildSuggestedFlow(planItems)
+  if (calendarState.error || calendarState.incomplete) reply += `\nThis suggested flow has not been checked against your complete calendar.`
 
   reply += `\n\nWant me to add this plan as reminders?\nReply *yes* to create this day plan.`
 

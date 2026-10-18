@@ -12,13 +12,13 @@ export type TaggedEvent = Record<string, any> & { _account?: string | null }
 
 const tid = (telegramId: number | string) => String(telegramId)
 
-export async function listExtraCalendarAccounts(telegramId: number | string): Promise<Array<{ email: string; refreshToken: string }>> {
+export async function listExtraCalendarAccounts(telegramId: number | string, onUnavailable?: () => void): Promise<Array<{ email: string; refreshToken: string }>> {
   try {
     const { data, error } = await supabaseAdmin.from('google_calendar_accounts')
       .select('email,refresh_token').eq('telegram_id', tid(telegramId)).order('created_at', { ascending: true })
-    if (error) { console.error('CALENDAR_ACCOUNTS_LIST_FAILED:', error.message); return [] }
+    if (error) { onUnavailable?.(); console.error('CALENDAR_ACCOUNTS_LIST_FAILED:', error.message); return [] }
     return (data || []).filter((r: any) => r?.email && r?.refresh_token).map((r: any) => ({ email: String(r.email).toLowerCase(), refreshToken: String(r.refresh_token) }))
-  } catch (err) { console.error('CALENDAR_ACCOUNTS_LIST_FAILED:', err); return [] }
+  } catch (err) { onUnavailable?.(); console.error('CALENDAR_ACCOUNTS_LIST_FAILED:', err); return [] }
 }
 
 /** Save (or refresh) an extra account. Returns false when the table is missing or the write fails. */
@@ -35,22 +35,24 @@ export async function saveExtraCalendarAccount(telegramId: number | string, emai
 /**
  * Access for every linked account, primary first, one entry per distinct email. A token that no
  * longer refreshes is skipped, so one revoked account never hides the other.
+ * Read surfaces use onUnavailable to retain that missing-account evidence.
  */
-export async function getCalendarAccountAccess(telegramId: number | string, primaryRefreshToken: string | null | undefined): Promise<CalendarAccountAccess[]> {
+export async function getCalendarAccountAccess(telegramId: number | string, primaryRefreshToken: string | null | undefined, onUnavailable?: () => void): Promise<CalendarAccountAccess[]> {
   const out: CalendarAccountAccess[] = []
   const seen = new Set<string>()
   if (primaryRefreshToken) {
-    const accessToken = await refreshAccessToken(String(primaryRefreshToken))
+    const accessToken = await refreshAccessToken(String(primaryRefreshToken)).catch(() => null)
     if (accessToken) {
-      const email = (await fetchPrimaryCalendarAccount(accessToken))?.toLowerCase() || null
+      const email = (await fetchPrimaryCalendarAccount(accessToken).catch(() => null))?.toLowerCase() || null
+      if (!email) onUnavailable?.()
       if (email) seen.add(email)
       out.push({ email, accessToken, primary: true })
-    }
+    } else onUnavailable?.()
   }
-  for (const extra of await listExtraCalendarAccounts(telegramId)) {
+  for (const extra of await listExtraCalendarAccounts(telegramId, onUnavailable)) {
     if (seen.has(extra.email)) continue
-    const accessToken = await refreshAccessToken(extra.refreshToken)
-    if (!accessToken) continue
+    const accessToken = await refreshAccessToken(extra.refreshToken).catch(() => null)
+    if (!accessToken) { onUnavailable?.(); continue }
     seen.add(extra.email)
     out.push({ email: extra.email, accessToken, primary: false })
   }
@@ -97,13 +99,17 @@ export function describeCalendarAccounts(accounts: Array<{ email: string | null 
 }
 
 /** Today's events across every linked account (used by the briefing and day plan). */
-export async function getTodayEventsAllAccounts(telegramId: number | string, primaryRefreshToken: string | null | undefined, getToday: (accessToken: string) => Promise<any[]>) {
-  const accounts = await getCalendarAccountAccess(telegramId, primaryRefreshToken)
-  if (!accounts.length) return { connected: false as const, events: [] as TaggedEvent[], multi: false }
+export async function getTodayEventsAllAccounts(telegramId: number | string, primaryRefreshToken: string | null | undefined, getToday: (accessToken: string) => Promise<any[]>, primaryExpected = Boolean(primaryRefreshToken)) {
+  let incomplete = primaryExpected && !primaryRefreshToken
+  const accounts = await getCalendarAccountAccess(telegramId, primaryRefreshToken, () => { incomplete = true })
+  if (!accounts.length) {
+    if (incomplete) throw new Error('calendar_fetch_failed')
+    return { connected: false as const, events: [] as TaggedEvent[], multi: false, incomplete: false }
+  }
   const settled = await Promise.allSettled(accounts.map(async a => ({ email: a.email, events: await getToday(a.accessToken), hasMore: false })))
   const ok = settled.filter((s): s is PromiseFulfilledResult<{ email: string | null; events: any[]; hasMore: boolean }> => s.status === 'fulfilled').map(s => s.value)
   if (!ok.length) throw new Error('calendar_fetch_failed')
-  return { connected: true as const, events: mergeAccountEvents(ok).events, multi: accounts.length > 1 }
+  return { connected: true as const, events: mergeAccountEvents(ok).events, multi: accounts.length > 1, incomplete: incomplete || ok.length < settled.length }
 }
 
 /** Access token for one named linked account, or null when it is not linked or no longer refreshes. */
