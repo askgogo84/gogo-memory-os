@@ -6,6 +6,7 @@ import ts from 'typescript'
 import {PGlite} from '@electric-sql/pglite'
 import {NextRequest,NextResponse} from 'next/server'
 import {createHmac} from 'node:crypto'
+import {otpReply} from '../lib/agent/provider-booking'
 
 const fixedNow = new Date('2026-10-07T11:00:00Z')
 class Clock extends Date {constructor(value?: any){super(value ?? fixedNow.getTime())}static now(){return fixedNow.getTime()}}
@@ -222,6 +223,7 @@ const webSource=readFileSync('app/api/dashboard/chat/route.ts','utf8')
 const names=[...webSource.matchAll(/from ['"]([^'"]+)['"]/g)].map(m=>m[1])
 const webMocks=Object.fromEntries(names.map(name=>[name,nullModule]))
 Object.assign(webMocks,{'next/server':{NextRequest,NextResponse},'crypto':{randomUUID:()=> 'fixture-web-turn'},
+  '@/lib/agent/provider-booking':{otpReply},
   '@/lib/agent/recall-query':{isDecisionRecallQuery:()=>false},
   '@/lib/services/link-vault':{isLinkVaultSaveRequest:()=>false,isLinkVaultQuery:()=>false},
   '@/lib/dashboard/session':{getSession:async()=>({telegramId:'42'})},'@/lib/supabase-admin':{supabaseAdmin:db},
