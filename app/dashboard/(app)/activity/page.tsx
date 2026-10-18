@@ -1,3 +1,5 @@
+import {getServiceNoticesForPage,EMPTY_SERVICE_NOTICES} from '@/lib/dashboard/service-notices'
+import {ServiceNoticeCards} from '@/components/dashboard/service-notice-cards'
 import Link from 'next/link'
 import { readableRunSummary } from '@/lib/dashboard/readable-summary'
 import { getSession } from '@/lib/dashboard/session'
@@ -72,7 +74,7 @@ function iconFor(run:DashboardActivityRun){
 
 export default async function ActivityPage({searchParams}:{searchParams:Promise<{filter?:string}>}){
   const session=await getSession()
-  const [runs,handoffs,watchersResult,approvalsResult]=session?await Promise.all([
+  const [runs,handoffs,watchersResult,approvalsResult,serviceNotices]=session?await Promise.all([
     getDashboardActivityRuns(session.telegramId),
     getPendingBrowserHandoffs(session.telegramId),
     supabaseAdmin.from('agent_watchers')
@@ -87,7 +89,8 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
       .eq('status','pending')
       .order('requested_at',{ascending:false})
       .limit(5),
-  ]):[[],[],{data:[]},{data:[]}]
+    getServiceNoticesForPage(session.telegramId),
+  ]):[[],[],{data:[]},{data:[]},EMPTY_SERVICE_NOTICES]
   const watchers=(watchersResult as any).data||[]
   const approvals=(approvalsResult as any).data||[]
   const handoffRows=handoffs.filter(handoff=>!approvals.some((approval:any)=>String(approval.run_id)===handoff.id))
@@ -193,9 +196,10 @@ export default async function ActivityPage({searchParams}:{searchParams:Promise<
                 <p className="text-[13px] font-bold uppercase tracking-[.14em] text-[#6A6A6A]">Needs you</p>
                 <h2 className="mt-1 font-serif text-[21px] font-semibold text-[#F2EFEA]">Approvals and handoffs</h2>
               </div>
-              <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#161616] px-2 text-[14px] font-bold text-[#2FB8A6]">{approvals.length+handoffRows.length}</span>
+              <span className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-[#161616] px-2 text-[14px] font-bold text-[#2FB8A6]">{serviceNotices.unavailable?'—':approvals.length+handoffRows.length+serviceNotices.total}</span>
             </div>
-            {!approvals.length&&!handoffRows.length?<p className="mt-3 text-[15px] leading-5 text-[#9A9A9A]">Nothing needs your input right now.</p>:
+            <ServiceNoticeCards notices={serviceNotices.items} unavailable={serviceNotices.unavailable}/>
+            {!approvals.length&&!handoffRows.length&&!serviceNotices.total&&!serviceNotices.unavailable?<p className="mt-3 text-[15px] leading-5 text-[#9A9A9A]">Nothing needs your input right now.</p>:
               <div className="mt-3 space-y-2">
                 {approvals.slice(0,3).map((a:any)=><Link key={a.id} href="/dashboard/agent" className="block rounded-[14px] bg-[#1A1710] px-3.5 py-3 transition hover:bg-[#221D13]">
                   <div className="text-[15px] font-semibold text-[#F2EFEA]">{a.title}</div>

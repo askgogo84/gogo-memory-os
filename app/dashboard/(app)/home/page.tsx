@@ -1,3 +1,5 @@
+import {getServiceNoticesForPage,EMPTY_SERVICE_NOTICES} from '@/lib/dashboard/service-notices'
+import {ServiceNoticeCards} from '@/components/dashboard/service-notice-cards'
 import Link from 'next/link'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -46,7 +48,7 @@ export default async function HomePage(){
   const session=await getSession()
   const tg=session?.telegramId||''
   const tgNum=parseInt(tg,10)
-  const [{data:user},today,lists,memory,approvals,watchers,runs,workingCountRes,handoffs,recentUpdatesResult]=await Promise.all([
+  const [{data:user},today,lists,memory,approvals,watchers,runs,workingCountRes,handoffs,recentUpdatesResult,serviceNotices]=await Promise.all([
     Number.isFinite(tgNum)?supabaseAdmin.from('users').select('name,timezone').eq('telegram_id',tgNum).maybeSingle():Promise.resolve({data:null as any}),
     session?getTodayReminders(tg):Promise.resolve({ok:true as const,reminders:[]}),
     session?getLists(tg):Promise.resolve({ok:true as const,lists:[]}),
@@ -61,6 +63,7 @@ export default async function HomePage(){
     session?supabaseAdmin.from('agent_runs').select('id,type,title,summary,status,source,error,metadata_json,updated_at')
       .eq('telegram_id',tg).in('status',['completed','paused','failed']).neq('type','secure_browser')
       .order('updated_at',{ascending:false}).limit(12):Promise.resolve({data:[] as any[],error:null}),
+    session?getServiceNoticesForPage(tg):Promise.resolve(EMPTY_SERVICE_NOTICES),
   ])
 
   const tz=user?.timezone||'Asia/Kolkata'
@@ -85,14 +88,18 @@ export default async function HomePage(){
   // running/queued is "Working" (a paused/blocked run must not read as working).
   // "Waiting for you" is what Needs you shows: approvals plus one item per site that stopped for you. Old paused runs
   // (25 of them, mostly the same playo.co stop) are history, not 25 things to do.
-  const runState={ working:Number(workingCountRes?.count||0), waiting:approvalRows.length+handoffGroups.length }
+  const runState={ working:Number(workingCountRes?.count||0), waiting:approvalRows.length+handoffGroups.length+serviceNotices.total }
   const contextBits=[
     memory.ok?`${memory.items.length} memories`:null,
     lists.ok?`${lists.lists.length} lists`:null,
     watcherRows.length?`${watcherRows.length} background watch${watcherRows.length===1?'':'es'}`:null,
   ].filter(Boolean)
 
-  const summary=approvalRows.length
+  const summary=serviceNotices.unavailable
+    ? 'Some attention items could not be loaded. Refresh Needs you to check service notices.'
+    : serviceNotices.total
+    ? `${runState.waiting} item${runState.waiting===1?' needs':'s need'} your review in Needs you.`
+    : approvalRows.length
     ? `You have ${approvalRows.length} thing${approvalRows.length===1?'':'s'} waiting for your say-so. Gogo is keeping the rest moving in the background.`
     : runState.working
       ? `Gogo is working on ${runState.working} active task${runState.working===1?'':'s'}. You can leave — it will stop if anything needs your approval.`
@@ -123,11 +130,12 @@ export default async function HomePage(){
 
     <div className="grid gap-4 lg:gap-5 xl:grid-cols-3">
         <section className="final-dark-panel overflow-hidden">
-          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Needs you</div><Link href="/dashboard/agent?section=approvals" className="text-[14px] font-semibold text-[#d9a441]">{approvalRows.length+handoffGroups.length}</Link></div>
+          <div className="flex items-center justify-between px-4 py-3.5"><div className="final-dark-eyebrow">Needs you</div><Link href="/dashboard/agent?section=approvals" className="text-[14px] font-semibold text-[#d9a441]">{serviceNotices.unavailable?'—':runState.waiting}</Link></div>
           <div className="border-t border-[#1f1f1f] px-4">
             {approvalRows.map((a:any)=><Row key={a.id} tone="amber" title={a.title||'Approval needed'} meta={a.description||'Gogo stopped before a consequential action.'} right="Review" href="/dashboard/agent?section=approvals"/>)}
             {handoffGroups.map(({first,count})=><Row key={first.id} tone="amber" title={first.title} meta={count>1?`Stopped here ${count} times. Latest: ${readableRunSummary(first.summary)}`:readableRunSummary(first.summary)} right={count>1?'Open':'Take control'} href={count>1?'/dashboard/agent?section=approvals':`/dashboard/activity/${first.id}/browser`}/>)}
-            {!approvalRows.length&&!handoffGroups.length&&<div className="py-5 text-[15px] text-[#a8a8a4]">Nothing is waiting for you.</div>}
+            <ServiceNoticeCards notices={serviceNotices.items} unavailable={serviceNotices.unavailable}/>
+            {!approvalRows.length&&!handoffGroups.length&&!serviceNotices.total&&!serviceNotices.unavailable&&<div className="py-5 text-[15px] text-[#a8a8a4]">Nothing is waiting for you.</div>}
           </div>
         </section>
 

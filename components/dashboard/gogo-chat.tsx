@@ -1,5 +1,7 @@
 'use client'
 
+import {ServiceNoticeCards} from '@/components/dashboard/service-notice-cards'
+import type {ServiceNotice} from '@/lib/dashboard/service-notices'
 import { findCatalogueSite } from '@/lib/dashboard/connection-catalogue'
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
@@ -21,6 +23,9 @@ type ChatMessage={
 }
 
 type AgentSnapshot={
+  serviceNotices?:ServiceNotice[]
+  serviceNoticeCount?:number
+  unavailable?:boolean
   runs:any[]
   watchers:any[]
   approvals:any[]
@@ -171,14 +176,17 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
   async function loadSnapshot(){
     try{
       const res=await fetch('/api/agent/snapshot',{cache:'no-store',credentials:'same-origin',signal:AbortSignal.timeout(12000)})
-      if(!res.ok)return
+      if(!res.ok)throw new Error('snapshot_unavailable')
       const data=await res.json()
       setSnapshot({
+        serviceNotices:Array.isArray(data.serviceNotices)?data.serviceNotices:[],
+        serviceNoticeCount:Number(data.serviceNoticeCount??data.serviceNotices?.length??0),
+        unavailable:false,
         runs:Array.isArray(data.runs)?data.runs:[],
         watchers:Array.isArray(data.watchers)?data.watchers:[],
         approvals:Array.isArray(data.approvals)?data.approvals:[],
       })
-    }catch{}
+    }catch{setSnapshot(current=>({...current,unavailable:true}))}
   }
 
   useEffect(()=>{
@@ -192,9 +200,10 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
         // A slow activity rail must not hold conversation history hostage.
         void fetch('/api/agent/snapshot',{cache:'no-store',credentials:'same-origin',signal:AbortSignal.timeout(12000)})
           .then(r=>r.ok?r.json():null).then(agent=>{
-            if(!agent||!live||sendingRef.current||version!==conversationVersion.current)return
-            setSnapshot({runs:Array.isArray(agent.runs)?agent.runs:[],watchers:Array.isArray(agent.watchers)?agent.watchers:[],approvals:Array.isArray(agent.approvals)?agent.approvals:[]})
-          }).catch(()=>{})
+            if(!live||sendingRef.current||version!==conversationVersion.current)return
+            if(!agent){setSnapshot(current=>({...current,unavailable:true}));return}
+            setSnapshot({serviceNotices:Array.isArray(agent.serviceNotices)?agent.serviceNotices:[],serviceNoticeCount:Number(agent.serviceNoticeCount??agent.serviceNotices?.length??0),unavailable:false,runs:Array.isArray(agent.runs)?agent.runs:[],watchers:Array.isArray(agent.watchers)?agent.watchers:[],approvals:Array.isArray(agent.approvals)?agent.approvals:[]})
+          }).catch(()=>{if(live)setSnapshot(current=>({...current,unavailable:true}))})
         const response=await fetch('/api/dashboard/chat',{cache:'no-store',signal:AbortSignal.timeout(12000)})
         if(!response.ok)throw new Error('history')
         const chat=await response.json()
@@ -400,9 +409,10 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
       <div className="py-5 text-[16px] leading-[1.55] text-[#b4b4b0]">{activeRun?.summary||'Gogo is ready. Nothing consequential happens without your approval.'}</div>
 
       <section className="mt-1">
-        <div className="flex items-center justify-between text-[13px] font-bold uppercase tracking-[.1em] text-[#a8a8a4]"><span>Needs you</span><span className="text-[#e2b04a]">{snapshot.approvals.length}</span></div>
+        <div className="flex items-center justify-between text-[13px] font-bold uppercase tracking-[.1em] text-[#a8a8a4]"><span>Needs you</span><span className="text-[#e2b04a]">{snapshot.unavailable?'—':snapshot.approvals.length+(snapshot.serviceNoticeCount??snapshot.serviceNotices?.length??0)}</span></div>
         <div className="mt-2">
-          {snapshot.approvals.length?snapshot.approvals.slice(0,3).map(a=><RailRow key={a.id} tone="amber" title={a.title||'Approval needed'} meta={a.description||'Gogo is waiting for your decision.'} href="/dashboard/agent?section=approvals"/>):<div className="py-3 text-[15px] text-[#a8a8a4]">Nothing is waiting.</div>}
+          <ServiceNoticeCards notices={snapshot.serviceNotices||[]} unavailable={snapshot.unavailable}/>
+          {snapshot.approvals.length?snapshot.approvals.slice(0,3).map(a=><RailRow key={a.id} tone="amber" title={a.title||'Approval needed'} meta={a.description||'Gogo is waiting for your decision.'} href="/dashboard/agent?section=approvals"/>):!snapshot.serviceNoticeCount&&!snapshot.serviceNotices?.length&&!snapshot.unavailable?<div className="py-3 text-[15px] text-[#a8a8a4]">Nothing is waiting.</div>:null}
         </div>
       </section>
 
