@@ -34,6 +34,7 @@ import { resolveAgentActor } from '@/lib/agent/actor'
 import { tryResolvePendingQuestion } from '@/lib/bot/pending-question-resolver'
 import { tryFlightBooking } from '@/lib/agent/flight-booking'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
+import { tryUnderstandFirst } from '@/lib/agent/understand-first'
 import { isGroundedReminderCommand, jevClarificationReply } from '@/lib/agent/jev-router'
 import { parseApproxLocation } from '@/lib/dashboard/approx-location'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
@@ -162,6 +163,16 @@ export async function POST(req: NextRequest) {
       await saveConversation(user.telegram_id,text,runCancel.text)
       return NextResponse.json(runCancel)
     }
+    // One event id per turn, shared by the understand-first reading and the shadow router outcome.
+    const shadowEventId = `web-${randomUUID()}`
+    // Understand-first choke point, same as WhatsApp (docs/architecture/06-understand-first-shadow.md). Safe
+    // live set only (after the inbox read and run cancel, which keep first refusal); anything else, a timeout or an error returns null and the routing below is unchanged.
+    const understoodReply = await (async () => tryUnderstandFirst({ actor, surface:'web', text, eventId:shadowEventId, externalUserId:String(user.whatsapp_id), userName:user.name||'Gogo', registryChecked:pendingQuestionChecked }))()
+      .catch((err:any) => { console.error('UNDERSTAND_FIRST_DASHBOARD_FAILED:', String(err?.message || err).slice(0,160)); return null })
+    if (understoodReply?.text) {
+      if (!understoodReply.persisted) await saveConversation(user.telegram_id, text, understoodReply.text)
+      return NextResponse.json(understoodReply)
+    }
     // Same gold-rate watch as WhatsApp: "alert me if gold rate drops by 10%" is a rule, never a one-off quote.
     const goldWatch=await tryCreateGoldRateWatchFromCommand({actor,surface:'web',text})
     if(goldWatch){
@@ -260,8 +271,6 @@ export async function POST(req: NextRequest) {
       await saveConversation(user.telegram_id, text, brainReply.text)
       return NextResponse.json(brainReply)
     }
-    const shadowEventId = `web-${randomUUID()}`
-
     let webObservation:Awaited<ReturnType<typeof observeShadowBrainTurn>>|null=null
     try {
       webObservation = await observeShadowBrainTurn({ actor, surface:'web', text, eventId:shadowEventId })

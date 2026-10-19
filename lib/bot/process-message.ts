@@ -187,6 +187,12 @@ export type ProcessIncomingParams = {
    * exact text this turn; skip it here so its reads run once per turn.
    */
   pendingQuestionChecked?: boolean
+  /**
+   * Set only by understand-first (lib/agent/understand-first.ts) after it read the whole message with its
+   * context and chose a safe action with confidence >= 0.82. It replaces the keyword intent for this turn:
+   * 'general_chat' (conversation / memory recall) or 'web_search' (a live factual lookup). Never a mutation.
+   */
+  understoodIntent?: 'general_chat' | 'web_search'
 }
 
 export type ProcessIncomingResult = {
@@ -559,7 +565,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   // A keyword rule may not claim a sentence the semantic classifier is confident means something else.
   const detectedIntent=detectIntent(incomingText)
-  const intent = (detectedIntent.type==='calendar_read_held'||detectedIntent.type==='calendar_read_clarify'?detectedIntent:gateDetectedIntent(detectedIntent, incomingText, params.semantic)) as ReturnType<typeof detectIntent>
+  // A live lookup keeps its specialist (weather, gold quote with provenance, sports, flight status) when the
+  // keyword reading already found one; understand-first only replaces a non-lookup reading with web search.
+  const LIVE_LOOKUP=new Set(['weather_live','gold_live','sports_standings','sports_schedule','web_search'])
+  const understood=params.understoodIntent==='general_chat'?'general_chat':params.understoodIntent==='web_search'&&!LIVE_LOOKUP.has(detectedIntent.type)?'web_search':null
+  const intent = (understood?{type:understood,confidence:'high',meta:{understoodBy:'understand-first',keywordIntent:detectedIntent.type}}:detectedIntent.type==='calendar_read_held'||detectedIntent.type==='calendar_read_clarify'?detectedIntent:gateDetectedIntent(detectedIntent, incomingText, params.semantic)) as ReturnType<typeof detectIntent>
   console.log('PIM:intent', intent, 'semantic:', params.semantic?.intent?.choice ?? null, params.semantic?.intent?.confidence ?? null)
   if(intent.type==='calendar_read_held'||intent.type==='calendar_read_clarify'){
     const reply=String(intent.meta?.calendarReadHoldReply||intent.meta?.calendarReadClarificationReply||"I haven't read your Calendar. Ask me to check it when you're ready. Nothing was changed.")
