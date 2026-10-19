@@ -53,9 +53,22 @@ export function firstFutureDate(answer: string, now = new Date()): string | null
     const explicitYear = m[3] || m[6]
     let year = explicitYear ? Number(explicitYear) : ist.getUTCFullYear()
     let at = Date.UTC(year, month, day)
-    if (!explicitYear && at < today) { year += 1; at = Date.UTC(year, month, day) }
+    // No year: a date a few days/weeks back is in the past ("came out on October 14"); only a date
+    // long gone this year ("expected 10 January" said in October) means next year.
+    if (!explicitYear && at < today && today - at > 120 * 86_400_000) { year += 1; at = Date.UTC(year, month, day) }
     if (at < today) continue
     return `${day} ${MONTHS[month].charAt(0).toUpperCase()}${MONTHS[month].slice(1)}${explicitYear && year !== ist.getUTCFullYear() ? ` ${year}` : ''}`
   }
   return null
+}
+
+// The answer says the thing has already happened ("has already released", "came out last week") and
+// names no future date: there is nothing to put on the calendar.
+export function alreadyHappened(answer: string, now = new Date()): boolean {
+  if (firstFutureDate(answer, now)) return false
+  return /\b(?:already\s+(?:released|out|happened|launched|premiered|over)|came\s+out|was\s+released|released\s+(?:on|last)|is\s+(?:now\s+)?(?:out|in\s+theat(?:re|er)s|streaming))\b/i.test(String(answer || ''))
+}
+
+export function alreadyHappenedLine(title: string): string {
+  return `📅 It's already out, so I haven't set up a calendar entry for *${title}*. Want showtimes near you instead?`
 }

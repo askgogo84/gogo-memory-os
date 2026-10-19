@@ -42,7 +42,7 @@ import { setBriefingTime } from './handlers/briefing-settings'
 import { locationQuery } from '@/lib/dashboard/approx-location'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
-import { parseLookupThenCalendar, calendarFollowupLine, firstFutureDate } from '@/lib/agent/lookup-then-calendar'
+import { parseLookupThenCalendar, calendarFollowupLine, firstFutureDate, alreadyHappened, alreadyHappenedLine } from '@/lib/agent/lookup-then-calendar'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
 import { parsePlanSelection, buildPlanCheckoutReply } from './handlers/plan-checkout'
 import { buildCalendarActionReply, createCalendarConflictEvent, createCalendarEventAtIso, isCalendarAction, getCalendarTokens, parseAbsoluteDate } from './handlers/calendar-actions'
@@ -1077,8 +1077,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       const searchContext = await searchWeb(compound.question).catch(() => '')
       try { answer = await askClaudeWithContext(compound.question, searchContext, resolvedUser.name) } catch { answer = buildDirectWebAnswer(compound.question, searchContext) }
       if (!answer || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(answer)) answer = buildDirectWebAnswer(compound.question, searchContext)
-      await saveFollowupState(resolvedUser.telegramId, 'pending_calendar', { title: compound.title })
-      let reply = `${String(answer || '').trim()}\n\n${calendarFollowupLine(compound.title, firstFutureDate(answer))}`
+      // Already happened: nothing to add, and no pending question left open.
+      const past = alreadyHappened(answer)
+      if (!past) await saveFollowupState(resolvedUser.telegramId, 'pending_calendar', { title: compound.title })
+      let reply = `${String(answer || '').trim()}\n\n${past ? alreadyHappenedLine(compound.title) : calendarFollowupLine(compound.title, firstFutureDate(answer))}`
       reply += await recordWebSearch(resolvedUser, params.channel, inboundMessageId, guard.usage)
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), handledBy: 'lookup-then-calendar', resolvedUser }
