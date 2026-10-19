@@ -94,3 +94,82 @@ export function approvalChoiceList(rows: Array<{ title?: string | null; requeste
     return `${i + 1}. ${String(row.title || 'Pending action').slice(0, 140)}${detail ? ` — ${detail}` : ''} (requested ${approvalRelativeAge(row.requested_at, now)})`
   }).join('\n')
 }
+
+export type ApprovalTurn = { role: string; content: string; created_at: string }
+
+/** How long Gogo's own "Reply APPROVE" ask stays the thing a bare APPROVE answers. */
+export const APPROVAL_ASK_MAX_AGE_MS = 30 * 60_000
+
+const normalizeTurnText = (value: unknown) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase()
+
+/** "Approve timed reservation attempt · Toit Indiranagar" -> "Toit Indiranagar"; otherwise the title. */
+export function approvalSubject(row: { title?: string | null }): string {
+  const title = String(row?.title || '').trim()
+  const tail = title.split('·').pop()?.trim()
+  return (tail || title).slice(0, 140)
+}
+
+/**
+ * 19 Oct live: "Ready to book 7pm tomorrow … Reply APPROVE" was answered "Approve", and an unrelated
+ * 27-hour-old card stole the reply. When Gogo's latest assistant turn was a specific bare
+ * "Reply APPROVE" ask (recent, nothing else said since), a bare APPROVE means the live approval
+ * that ask was about: the one requested in the minutes around that turn, or, if several were, the
+ * one whose subject the ask names. Anything ambiguous returns null and the caller lists choices.
+ */
+export function approvalAskedInLatestTurn<T extends ApprovalTtlRow & { id?: unknown; title?: string | null }>(live: T[], turns: ApprovalTurn[] | null | undefined, currentText: string, now: Date | number = Date.now()): T | null {
+  if (!Array.isArray(turns) || !turns.length || !live.length) return null
+  const nowMs = typeof now === 'number' ? now : now.getTime()
+  const latest = turns.find((t) => t?.role === 'assistant')
+  if (!latest) return null
+  const content = String(latest.content || '')
+  // A bare ask only: "Reply approve 1 or reject 2" is a numbered list, not a specific ask.
+  if (!/\breply\s+\*?approve\b\*?(?!\s*#?\s*\d)/i.test(content)) return null
+  const at = validTime(latest.created_at)
+  if (at == null || nowMs - at > APPROVAL_ASK_MAX_AGE_MS || at - nowMs > 60_000) return null
+  const current = normalizeTurnText(currentText)
+  if (turns.some((t) => t?.role === 'user' && (validTime(t.created_at) ?? 0) > at && normalizeTurnText(t.content) !== current)) return null
+  const near = live.filter((row) => {
+    const requested = validTime(row.requested_at)
+    return requested != null && requested <= at + 60_000 && requested >= at - 10 * 60_000
+  })
+  if (near.length === 1) return near[0]
+  const lower = content.toLowerCase()
+  const named = near.filter((row) => {
+    const subject = approvalSubject(row).toLowerCase()
+    return subject.length >= 3 && lower.includes(subject)
+  })
+  return named.length === 1 ? named[0] : null
+}
+
+/**
+ * The approval a bare APPROVE / REJECT binds to, or null when the person must pick from a list.
+ * Expired rows are never candidates (the caller closes them silently). One live card binds when it
+ * is the newest card of all, so an older expired card can never block it; a newer expired card
+ * might be what the person meant, so that case still asks. Gogo's own latest specific ask wins.
+ */
+export function bareApprovalTarget<T extends ApprovalTtlRow & { id?: unknown; title?: string | null }>(p: { expired: T[]; live: T[]; turns?: ApprovalTurn[] | null; currentText: string; now?: Date | number }): T | null {
+  const now = p.now ?? Date.now()
+  const asked = approvalAskedInLatestTurn(p.live, p.turns, p.currentText, now)
+  if (asked) return asked
+  if (p.live.length !== 1) return null
+  const only = p.live[0]
+  const onlyAt = validTime(only.requested_at) ?? 0
+  return p.expired.every((row) => (validTime(row.requested_at) ?? 0) < onlyAt) ? only : null
+}
+
+/** A bare number ("1") right after a numbered approval list: the list must be Gogo's latest turn. */
+export function isBareApprovalNumber(text: string): number | null {
+  const m = String(text || '').trim().replace(/^["'“”‘’`]+|["'“”‘’`.!]+$/g, '').match(/^#?\s*(\d{1,2})$/)
+  return m ? Number(m[1]) : null
+}
+
+export function latestTurnIsApprovalList(turns: ApprovalTurn[] | null | undefined, currentText: string, now: Date | number = Date.now()): boolean {
+  if (!Array.isArray(turns) || !turns.length) return false
+  const nowMs = typeof now === 'number' ? now : now.getTime()
+  const latest = turns.find((t) => t?.role === 'assistant')
+  if (!latest || !/\breply\s+approve\s+1\s+or\s+reject\s+\d/i.test(String(latest.content || ''))) return false
+  const at = validTime(latest.created_at)
+  if (at == null || nowMs - at > APPROVAL_ASK_MAX_AGE_MS || at - nowMs > 60_000) return false
+  const current = normalizeTurnText(currentText)
+  return !turns.some((t) => t?.role === 'user' && (validTime(t.created_at) ?? 0) > at && normalizeTurnText(t.content) !== current)
+}

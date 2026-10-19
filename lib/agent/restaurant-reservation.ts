@@ -9,7 +9,7 @@ import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildContextPack, type ContextPack } from './context-brain'
 import { openPendingQuestion, type PendingDetail } from '@/lib/bot/pending-questions'
-import {buildReservationDiningContext, usableReservationDiningContext, reservationRequestedDateCoverage, type ReservationDiningContext} from './reservation-dining-context'
+import {buildReservationDiningContext, usableReservationDiningContext, usableDisclosedGapDiningContext, onlyDisclosableContextGaps, reservationRequestedDateCoverage, type ReservationDiningContext} from './reservation-dining-context'
 import { indianMobileFromWhatsApp } from './provider-booking'
 import { guestNameFromReply } from './reservation-guest-name'
 
@@ -539,7 +539,7 @@ function dedupeKey(actor:AgentActor,intent:RestaurantReservationIntent,url:strin
   return createHash('sha256').update(stable).digest('hex').slice(0,40)
 }
 
-export function restaurantReservationApprovalInput(params:{runId:string;lifeEventId:string;actionId:string;restaurant:string;providerUrl:string;partySize:number|null;preferredStart:string;preferredEnd:string;requestedDate:string;releaseAt:string|null;contextWindows?:Array<{startAt:string;endAt:string|null;location:string|null;source:string;confidence:number}>;diningContext?:ReservationDiningContext;reservationLocation?:string|null;timeConstraint?:unknown;guestName?:string|null}){
+export function restaurantReservationApprovalInput(params:{runId:string;lifeEventId:string;actionId:string;restaurant:string;providerUrl:string;partySize:number|null;preferredStart:string;preferredEnd:string;requestedDate:string;releaseAt:string|null;contextWindows?:Array<{startAt:string;endAt:string|null;location:string|null;source:string;confidence:number}>;diningContext?:ReservationDiningContext;reservationLocation?:string|null;timeConstraint?:unknown;guestName?:string|null;contextGapDisclosed?:boolean}){
   return{
     missionId:params.runId,
     stepId:params.actionId,
@@ -555,6 +555,9 @@ export function restaurantReservationApprovalInput(params:{runId:string;lifeEven
       ...(params.timeConstraint!==undefined?{timeConstraint:params.timeConstraint}:{}),
       // The guest name is submitted to the provider, so it is bound; older approvals without one keep their hash.
       ...(params.guestName?{guestName:params.guestName}:{}),
+      // A live-slot approval whose Calendar/travel gap was disclosed in the ask is bound to that disclosure,
+      // so the flag can never be added after approval. Approvals without it keep their hash.
+      ...(params.contextGapDisclosed===true?{contextGapDisclosed:true}:{}),
       requestedDate:params.requestedDate||null,
       releaseAt:params.releaseAt,
       maxBookingFeePaise:0,
@@ -989,6 +992,11 @@ async function prepareReservationApproval(ctx:ReservationApprovalContext){
   // Calendar check. For a live slot, an incomplete context is disclosed in the approval ask instead of blocking:
   // the user still has to reply APPROVE, and fee/CAPTCHA/OTP still stop the run. Release-rule missions keep the gate.
   const contextGap=Boolean(guestName&&diningContext.incomplete)
+  // Only a Calendar/travel coverage gap can be disclosed and approved; any other gap (date, timezone,
+  // release, preferences, malformed data) cannot be armed later, so it is refused before an ask is sent.
+  const contextGapDisclosed=contextGap&&onlyDisclosableContextGaps(diningContext)
+  if(contextGap&&!contextGapDisclosed)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,
+    text:"I found the slot, but couldn't verify the dining date and your saved context well enough to book it. Nothing was booked. Try again in a minute."}
   if(diningContext.incomplete&&!guestName)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,
     text:'I verified the reservation release, but could not verify bounded travel and Calendar context for the possible dining dates. No reservation mission was armed or booking attempted. Retry the context check, or specify a dining date to narrow the Calendar read, before approving an attempt.'}
   // 19 Oct live: the live-slot flow (slot just read, name given) was refused with "overlaps a recorded Calendar busy
@@ -1066,7 +1074,7 @@ async function prepareReservationApproval(ctx:ReservationApprovalContext){
     requires_approval:true,
     irreversible:true,
     status:'waiting_approval',
-    payload_json:{reservationUrl:provider.url,restaurant:intent.restaurant,reservationLocation:provider.location||null,partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,timeConstraint,releaseAt,releaseRule:release.releaseRule,contextWindows,contextRefs,diningContext,...(guestName?{guestName,slotMission:true}:{})},
+    payload_json:{reservationUrl:provider.url,restaurant:intent.restaurant,reservationLocation:provider.location||null,partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,timeConstraint,releaseAt,releaseRule:release.releaseRule,contextWindows,contextRefs,diningContext,...(guestName?{guestName,slotMission:true}:{}),...(contextGapDisclosed?{contextGapDisclosed:true}:{})},
     updated_at:now,
   },{onConflict:'life_event_id,action_key'}).select('id').single()
   if(actionError||!action?.id)throw new Error(`restaurant_reservation_action_failed:${actionError?.message||'unknown'}`)
@@ -1085,7 +1093,7 @@ async function prepareReservationApproval(ctx:ReservationApprovalContext){
   const{data:run,error:runError}=await runWrite.select('id').single()
   if(runError||!run?.id)throw new Error(`restaurant_reservation_run_failed:${runError?.message||'unknown'}`)
   const runId=String(run.id)
-  const binding=buildApprovalBinding(restaurantReservationApprovalInput({runId,lifeEventId,actionId,restaurant:intent.restaurant,providerUrl:provider.url,partySize:intent.partySize,preferredStart:intent.preferredStart,preferredEnd:intent.preferredEnd,requestedDate:intent.requestedDate,releaseAt,contextWindows,diningContext,reservationLocation:provider.location||null,timeConstraint,guestName}))
+  const binding=buildApprovalBinding(restaurantReservationApprovalInput({runId,lifeEventId,actionId,restaurant:intent.restaurant,providerUrl:provider.url,partySize:intent.partySize,preferredStart:intent.preferredStart,preferredEnd:intent.preferredEnd,requestedDate:intent.requestedDate,releaseAt,contextWindows,diningContext,reservationLocation:provider.location||null,timeConstraint,guestName,contextGapDisclosed}))
   const{data:approval,error:approvalError}=await supabaseAdmin.from('agent_approvals').insert({
     telegram_id:String(params.actor.legacyTelegramId),run_id:runId,action_type:'booking',
     title:`Approve timed reservation attempt · ${intent.restaurant}`.slice(0,220),
@@ -1208,6 +1216,27 @@ export async function continueRestaurantReservationGuestReply(params:{actor:Agen
   }
 }
 
+/**
+ * 19 Oct live (Toit): "Approve 1" on a live-slot approval was refused with "needs verified dining-date
+ * context" because one Calendar account could not be read — a gap the ask had already disclosed
+ * ("I couldn't fully check your calendar"). A live-slot mission may arm on such a context only when:
+ * the disclosure is part of the approval binding, a guest name and an exact approved time exist, the
+ * requested date is a future local date, and every gap is a Calendar/travel coverage gap.
+ * Release-rule missions never take this path.
+ */
+export function disclosedLiveSlotContext(p:any){
+  if(!p||p.slotMission!==true||!p.guestName||p.contextGapDisclosed!==true)return false
+  if(!p.preferredStart||p.preferredStart!==p.preferredEnd)return false
+  if(!usableDisclosedGapDiningContext(p.diningContext))return false
+  return Boolean(reservationRequestedDateCoverage(String(p.requestedDate||''),p.diningContext.timezone,new Date()))
+}
+
+export function liveSlotArmedReply(p:any,now=new Date()){
+  const time=String(p.preferredStart||'')
+  const day=p.requestedDate?` ${reservationDayLabel(String(p.requestedDate),time,now)}`:''
+  return `Approved. Booking ${reservationClockLabel(time)}${day} for ${Number(p.partySize)||''} at ${safe(p.restaurant,120)} under ${safe(p.guestName,60)} now — I'll message you the result. If a CAPTCHA, OTP or fee appears I'll stop and send you the link.`
+}
+
 export async function armApprovedRestaurantReservation(params:{actor:AgentActor;runId:string}){
   const tg=String(params.actor.legacyTelegramId)
   const{data:run,error}=await supabaseAdmin.from('agent_runs').select('id,status,error,updated_at,metadata_json').eq('id',params.runId).eq('telegram_id',tg).maybeSingle()
@@ -1225,7 +1254,7 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
   const{data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',tg).eq('action_type','booking').eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   if(!action||!approval)throw new Error('approval_required')
   const p:any=action.payload_json||{}
-  assertApprovalBinding(restaurantReservationApprovalInput({runId:params.runId,lifeEventId:String(meta.life_event_id),actionId:String(action.id),restaurant:String(p.restaurant||meta.restaurant||''),providerUrl:String(p.reservationUrl||meta.reservation_url||''),partySize:Number(p.partySize)||null,preferredStart:String(p.preferredStart||''),preferredEnd:String(p.preferredEnd||''),requestedDate:String(p.requestedDate||''),releaseAt:String(p.releaseAt||meta.release_at||'')||null,contextWindows:Array.isArray(p.contextWindows)?p.contextWindows:[],diningContext:p.diningContext,reservationLocation:p.reservationLocation||null,timeConstraint:p.timeConstraint,guestName:p.guestName||null}),approval)
+  assertApprovalBinding(restaurantReservationApprovalInput({runId:params.runId,lifeEventId:String(meta.life_event_id),actionId:String(action.id),restaurant:String(p.restaurant||meta.restaurant||''),providerUrl:String(p.reservationUrl||meta.reservation_url||''),partySize:Number(p.partySize)||null,preferredStart:String(p.preferredStart||''),preferredEnd:String(p.preferredEnd||''),requestedDate:String(p.requestedDate||''),releaseAt:String(p.releaseAt||meta.release_at||'')||null,contextWindows:Array.isArray(p.contextWindows)?p.contextWindows:[],diningContext:p.diningContext,reservationLocation:p.reservationLocation||null,timeConstraint:p.timeConstraint,guestName:p.guestName||null,contextGapDisclosed:p.contextGapDisclosed===true}),approval)
   // Refresh and arming compete for the same captured run version. A stale arm
   // must lose before it can restore an old payload or expire new authority.
   async function transitionRun(values:Record<string,unknown>){
@@ -1242,7 +1271,7 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
     const {data,error}=await write.select('id').maybeSingle()
     if(error||!data)throw new Error('restaurant_reservation_action_changed')
   }
-  if(!validRestaurantTimeConstraint(p.timeConstraint,String(p.preferredStart||''),String(p.preferredEnd||''))||!usableReservationDiningContext(p.diningContext)||Date.parse(p.diningContext.until)<=Date.now()){
+  if(!validRestaurantTimeConstraint(p.timeConstraint,String(p.preferredStart||''),String(p.preferredEnd||''))||!(usableReservationDiningContext(p.diningContext)||disclosedLiveSlotContext(p))||Date.parse(p.diningContext.until)<=Date.now()){
     const at=new Date().toISOString()
     await transitionRun({status:'paused',error:'restaurant_context_review_required',summary:'This approval lacks current verified dining-date or time authority. Request a refreshed bounded approval; no reservation was armed.',updated_at:at})
     await transitionAction({status:'blocked',updated_at:at})
@@ -1260,6 +1289,6 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
     supabaseAdmin.from('life_events').update({lifecycle_state:'planned',next_action_at:action.due_at,updated_at:now}).eq('id',String(meta.life_event_id)).eq('telegram_id',tg),
   ])
   if(results.some(result=>result.error))throw new Error('restaurant_reservation_arm_persistence_failed')
-  if(p.slotMission===true&&p.guestName)return{runId:params.runId,status:'queued' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,text:`Approved. Booking ${reservationClockLabel(String(p.preferredStart||''))} for ${Number(p.partySize)||''} at ${safe(p.restaurant,120)} under ${safe(p.guestName,60)} now; I'll message you the result. If a CAPTCHA, OTP or fee appears, I'll stop and send you the link.`}
+  if(p.slotMission===true&&p.guestName)return{runId:params.runId,status:'queued' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,text:liveSlotArmedReply(p)}
   return{runId:params.runId,status:'queued' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,text:'Approved and armed. Gogo will attempt only this reservation at the verified release time, inside the approved party/time bounds. If a fee, deposit, login challenge, OTP, CAPTCHA, passkey or payment step appears, I will stop and ask you.'}
 }

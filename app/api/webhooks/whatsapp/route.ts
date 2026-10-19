@@ -56,7 +56,7 @@ import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { parseRunCancel } from '@/lib/agent/run-cancel'
-import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppAccountSite, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist, tryRunWhatsAppTaskStatus } from '@/lib/agent/whatsapp-bridge'
+import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppApprovalNumber, tryRunWhatsAppAccountSite, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist, tryRunWhatsAppTaskStatus } from '@/lib/agent/whatsapp-bridge'
 import { parseTaskStatusQuery } from '@/lib/agent/task-status'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { tryResolvePendingQuestion } from '@/lib/bot/pending-question-resolver'
@@ -1162,6 +1162,20 @@ _"${originalText}"_
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', approvalAgent.text)
         await sendWhatsAppMessage(from, approvalAgent.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
+    // 19 Oct live: "1" right after "Reply approve 1 or reject 1" fell to general chat, which invented
+    // "Booking confirmed". A bare number answering Gogo's numbered approval list asks approve or
+    // reject for that item; it never decides by itself. No list on the table returns null.
+    if (/^\s*["'“”‘’`]*#?\s*\d{1,2}\s*["'“”‘’`.!]*\s*$/.test(text)) {
+      const numberAgent = await tryRunWhatsAppApprovalNumber({ user: resolvedUser, text })
+      if (numberAgent) {
+        await recordShadowRouterOutcome({ telegramId: resolvedUser.telegramId, surface: 'whatsapp', eventId: inboundMessageSid, actualHandler: numberAgent.handledBy, actualCapability: 'browser', status: numberAgent.status || null, runId: null }).catch(() => {})
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', numberAgent.text)
+        await sendWhatsAppMessage(from, numberAgent.text)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }

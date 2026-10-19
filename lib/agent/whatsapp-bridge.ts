@@ -5,7 +5,8 @@ import { tryTypedTimeRouting } from './typed-time-routing'
 import { executeApprovedCalendarUpdate } from './calendar-update'
 import { executeApprovedReminderUpdate } from './reminder-update'
 import { verifiedReadEvidence } from './read-evidence'
-import { approvalChoiceList, expiredApprovalReply, partitionPendingApprovals } from './approval-ttl'
+import { approvalChoiceList, bareApprovalTarget, expiredApprovalReply, isBareApprovalNumber, latestTurnIsApprovalList, partitionPendingApprovals } from './approval-ttl'
+import { readRecentTurns } from '@/lib/bot/pending-questions'
 import { expirePendingApproval, guardApprovalFreshness, latestApprovalChoices, rememberApprovalChoices } from './approval-guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
@@ -172,7 +173,7 @@ async function shownApprovalChoices(actor: AgentActor, live: any[], liveTotal: n
 // numbered list shown (persisted, 30-minute lifetime), never a list recomputed now: no fresh list
 // means the list is shown again and nothing runs; an item that has since expired or been handled is
 // refused. Expired approvals are closed, never executed, and never numbered.
-async function resolveLatestApproval(actor: AgentActor, intent: { decision: 'approve' | 'reject'; index?: number }): Promise<WhatsAppAgentResult | null> {
+async function resolveLatestApproval(actor: AgentActor, intent: { decision: 'approve' | 'reject'; index?: number; text?: string }): Promise<WhatsAppAgentResult | null> {
   const rows = await latestPendingApprovals(actor.legacyTelegramId)
   if (!rows.length) return null
   const nowDate = new Date()
@@ -217,10 +218,47 @@ async function resolveLatestApproval(actor: AgentActor, intent: { decision: 'app
     return { text: expiredApprovalReply(newestExpired?.requested_at, nowDate), runId: newestExpired?.run_id || undefined, status: 'expired', handledBy: 'whatsapp-agent-approval' }
   }
   if (live.length === 1 && !expired.length) return resolveApprovalDecision(actor, live[0], intent.decision)
+  // 19 Oct live: "Approve" right after "Ready to book … Reply APPROVE" got "That approval expired
+  // (requested 27 hours ago)" plus a one-item list. Expired cards are closed above and are never
+  // candidates; the one live card, or the card Gogo's latest turn asked about, takes the reply.
+  let turns: Awaited<ReturnType<typeof readRecentTurns>> = null
+  try { turns = await readRecentTurns(actor.legacyTelegramId) } catch { turns = null }
+  const target = bareApprovalTarget({ expired, live, turns, currentText: intent.text || '', now: nowDate })
+  if (target) return resolveApprovalDecision(actor, target, intent.decision)
   const lead = expired.length
     ? `${expiredApprovalReply(newestExpired.requested_at, nowDate)}\n\n${live.length === 1 ? 'You still have 1 pending approval:' : `You still have ${live.length} pending approvals. Which one do you mean?`}`
     : `You have ${live.length} pending approvals. Which one do you mean? Nothing was done yet.`
   return { text: `${lead}\n${await shownApprovalChoices(actor, live, liveTotal, nowDate)}`, status: 'waiting_approval', handledBy: 'whatsapp-agent-approval-choice' }
+}
+
+/**
+ * 19 Oct live: "1" right after "Reply approve 1 or reject 1" reached general chat, which answered
+ * "Booking confirmed …" with nothing booked. A bare number answering Gogo's own numbered approval
+ * list (the persisted list, still Gogo's latest turn) asks which decision is meant. It never
+ * approves anything by itself: APPROVE stays explicit. Returns null when no such list is on the table.
+ */
+export async function tryRunWhatsAppApprovalNumber(params: { user: ResolvedUser; text: string }): Promise<WhatsAppAgentResult | null> {
+  const index = isBareApprovalNumber(params.text)
+  if (index == null) return null
+  const actor = actorFromResolvedUser(params.user)
+  if (!actor) return null
+  const nowDate = new Date()
+  const snapshot = await latestApprovalChoices(actor.legacyTelegramId, nowDate)
+  if (!snapshot) return null
+  let turns: Awaited<ReturnType<typeof readRecentTurns>> = null
+  try { turns = await readRecentTurns(actor.legacyTelegramId) } catch { turns = null }
+  if (!latestTurnIsApprovalList(turns, params.text, nowDate)) return null
+  const last = snapshot.length
+  if (index < 1 || index > last) {
+    return { text: `There's no #${index} on that list. Reply approve 1${last > 1 ? `–${last}` : ''} or reject 1${last > 1 ? `–${last}` : ''}. Nothing was done.`, status: 'waiting_approval', handledBy: 'whatsapp-agent-approval-number' }
+  }
+  const { data: row, error } = await supabaseAdmin.from('agent_approvals')
+    .select('id,title,status').eq('id', snapshot[index - 1]).eq('telegram_id', String(actor.legacyTelegramId)).maybeSingle()
+  if (error) throw new Error(`whatsapp_agent_approval_read_failed:${error.message}`)
+  if (!row || row.status !== 'pending') {
+    return { text: `Approval #${index} is no longer pending${row?.status ? ` (it was already ${row.status})` : ''}. Nothing was done.`, status: 'paused', handledBy: 'whatsapp-agent-approval-number' }
+  }
+  return { text: `Approve or reject #${index} (${String(row.title || 'Pending action').slice(0, 140)})? Reply approve ${index} or reject ${index}. Nothing has been done yet.`, status: 'waiting_approval', handledBy: 'whatsapp-agent-approval-number' }
 }
 
 async function resolveApprovalDecision(actor: AgentActor, pending: any, decision: 'approve' | 'reject'): Promise<WhatsAppAgentResult | null> {
@@ -566,7 +604,7 @@ export async function tryRunWhatsAppAgent(params: {
 
   const decision = parseApprovalIntent(params.text)
   if (decision) {
-    const approval = await resolveLatestApproval(actor, decision)
+    const approval = await resolveLatestApproval(actor, { ...decision, text: params.text })
     if (approval) return approval
   }
 

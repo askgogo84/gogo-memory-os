@@ -5,6 +5,7 @@ import { createImage, imageRequest, imageRequestRefusal } from '@/lib/services/i
 import { createPodcast, createVoiceNote, podcastRequest, wantsVoiceReply } from '@/lib/services/voice-reply'
 import { unsupportedCapability } from './unsupported-capabilities'
 import { guardChatActionClaims } from './action-claim-guard'
+import { guardCompletionClaims } from './completion-claim-guard'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import {selectContentWorkflow, contentWorkflowInputQuestion} from '@/lib/agent/content-workflows'
 import {researchRedditDiscussions} from '@/lib/agent/content-workflow-research'
@@ -1627,6 +1628,18 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     if (guarded.blocked) {
       console.warn('CHAT_ACTION_CLAIM_BLOCKED:', JSON.stringify({ telegramId: resolvedUser.telegramId, parsedType: parsed.type || null }))
       finalReply = guarded.text
+    }
+  }
+
+  // 19 Oct live: "1" reached chat, which answered "Booking confirmed for 2 at Toit Indiranagar …" while
+  // the approval was still pending and nothing had run. Any model-written reply that reports a
+  // booking, order, payment, send, calendar write or cancellation as done must be backed by the
+  // owner's verified completion records; otherwise it is replaced with an honest line.
+  if (finalReply === rawClaude || parsed.type === 'search') {
+    const completion = await guardCompletionClaims(finalReply, resolvedUser.telegramId)
+    if (completion.blocked) {
+      console.warn('CHAT_COMPLETION_CLAIM_BLOCKED:', JSON.stringify({ telegramId: resolvedUser.telegramId, kind: completion.claim?.kind || null, parsedType: parsed.type || null }))
+      finalReply = completion.text
     }
   }
 

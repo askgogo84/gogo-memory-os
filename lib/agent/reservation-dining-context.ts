@@ -147,6 +147,46 @@ export function usableReservationDiningContext(value: unknown): value is Reserva
       Number.isFinite(instant(w.startAt))&&Number.isFinite(instant(w.endAt))&&instant(w.startAt)>=from&&instant(w.endAt)<=until&&instant(w.endAt)>instant(w.startAt))
 }
 
+/**
+ * Gaps a live-slot approval may carry when they were disclosed in the approval ask (#677): only
+ * Calendar/travel coverage. Date, timezone, release, preference and malformed-data gaps never qualify.
+ */
+export const LIVE_SLOT_DISCLOSABLE_GAPS: ReadonlySet<string> = new Set([
+  'calendar_retrieval_incomplete', 'calendar_coverage_incomplete', 'owner_calendar_inventory_unverified',
+  'calendar_timing_unverified', 'calendar_provenance_unverified', 'calendar_windows_truncated',
+  'travel_retrieval_incomplete', 'travel_coverage_incomplete', 'owner_travel_inventory_unverified',
+  'travel_timing_unverified', 'travel_windows_truncated',
+])
+
+/** True when every recorded gap is a disclosable Calendar/travel coverage gap (and there is at least one). */
+export function onlyDisclosableContextGaps(value: unknown): boolean {
+  if(!value||typeof value!=='object')return false
+  const s=value as ReservationDiningContext
+  return s.incomplete===true&&Array.isArray(s.reasons)&&s.reasons.length>0&&s.reasons.length<=LIVE_SLOT_DISCLOSABLE_GAPS.size&&s.reasons.every(r=>typeof r==='string'&&LIVE_SLOT_DISCLOSABLE_GAPS.has(r))
+}
+
+/**
+ * 19 Oct live (Toit): a live-slot approval whose context was incomplete only because a Calendar
+ * account could not be read was disclosed and approved, then refused at arming. The same context is
+ * acceptable for a live-slot mission when its only gaps are disclosable coverage gaps and the rest of
+ * it (owner, timezone, dining-date coverage, preferences, windows) passes every structural check.
+ */
+export function usableDisclosedGapDiningContext(value: unknown): value is ReservationDiningContext {
+  if(!onlyDisclosableContextGaps(value))return false
+  return usableReservationDiningContext({...(value as ReservationDiningContext),incomplete:false,reasons:[]})
+}
+
+/** Worker re-check for a disclosed-gap snapshot: a fresh read may not add a restriction or a new kind of gap. */
+export function sameDisclosedGapRestrictions(approved: ReservationDiningContext, fresh: ReservationDiningContext, now=new Date()) {
+  if(!usableDisclosedGapDiningContext(approved))return false
+  const freshOk=usableReservationDiningContext(fresh)||usableDisclosedGapDiningContext(fresh)
+  if(!freshOk)return false
+  if(fresh.reasons.some(r=>!approved.reasons.includes(r)))return false
+  const key=(value: ReservationDiningContext)=>JSON.stringify({ownerId:value.ownerId,from:value.from,until:value.until,timezone:value.timezone,preferences:value.preferences,
+    windows:value.windows.filter(w=>Date.parse(w.endAt)>now.getTime()),calendar:{connected:value.calendar.connected,windows:value.calendar.windows.filter(w=>Date.parse(w.endAt)>now.getTime())}})
+  return key(approved)===key(fresh)
+}
+
 export function sameReservationRestrictions(approved: ReservationDiningContext, fresh: ReservationDiningContext, now=new Date()) {
   if(!usableReservationDiningContext(approved)||!usableReservationDiningContext(fresh))return false
   const key=(value: ReservationDiningContext)=>JSON.stringify({ownerId:value.ownerId,from:value.from,until:value.until,timezone:value.timezone,preferences:value.preferences,
