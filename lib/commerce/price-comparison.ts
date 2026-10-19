@@ -73,7 +73,28 @@ async function quickWebLook(subject: string, providers: ComparisonProvider[]) {
   return Object.fromEntries(looks.filter(Boolean).map((look: any) => [look.provider, look])) as Record<string, {leadUrl: string; quickPrice?: string}>
 }
 
-function startedText(subject: string, providers: ComparisonProvider[], looks: Record<string, {quickPrice?: string}>) {
+/** 19 Oct live: "Compare iPhone 17 prices" defaulted to 128GB although the owner's own price watch is for the
+ *  iPhone 17 256GB (Instinct asked "256GB, any colour?"). When no size is named, reuse the size from the owner's
+ *  active watch for exactly the same model and tier, and say where it came from. */
+export function storageFromWatchTexts(subject: string, watchTexts: string[]): string | null {
+  if (/\d\s*(?:gb|tb)\b/i.test(subject)) return null
+  const m = subject.match(/\biPhone\s*(\d{1,2})((?:\s+(?:pro|max|plus|mini|air|e))*)\b/i)
+  if (!m) return null
+  const tier = m[2].trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const tierRe = tier.length ? '\\s+' + tier.join('\\s+') : ''
+  const re = new RegExp(`\\biphone\\s*${m[1]}${tierRe}(?!\\s+(?:pro|max|plus|mini|air|e)\\b)\\s*(?:\\(|,|-)?\\s*(\\d{2,4})\\s*(gb|tb)\\b`, 'i')
+  const sizes = new Set<string>()
+  for (const text of watchTexts) { const hit = String(text || '').match(re); if (hit) sizes.add(`${hit[1]}${hit[2].toUpperCase()}`) }
+  return sizes.size === 1 ? [...sizes][0] : null
+}
+
+async function ownerWatchStorage(owner: string, subject: string): Promise<string | null> {
+  if (!/\biPhone\s*\d/i.test(subject) || /\d\s*(?:gb|tb)\b/i.test(subject)) return null
+  const {data} = await supabaseAdmin.from('agent_watchers').select('condition_json').eq('telegram_id', owner).eq('active', true).limit(50)
+  return storageFromWatchTexts(subject, (data || []).map((row: any) => JSON.stringify(row?.condition_json || {})))
+}
+
+function startedText(subject: string, providers: ComparisonProvider[], looks: Record<string, {quickPrice?: string}>, remembered: string | null = null) {
   const names = providers.map(p => COMPARISON_PROVIDERS[p].label)
   const list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0]
   const quick = providers.filter(p => looks[p]?.quickPrice).map(p => `• ${COMPARISON_PROVIDERS[p].label}: about ${looks[p].quickPrice}`)
@@ -84,7 +105,8 @@ function startedText(subject: string, providers: ComparisonProvider[], looks: Re
   const plainModel = isPhone && !/\b(?:pro|max|plus|mini|air|e)\b/i.test(subject)
   const base = isPhone && (plainModel || !/\d\s*(?:gb|tb)\b/i.test(subject))
     ? ` (${plainModel ? 'the standard model, not Pro/Pro Max/Air' : 'this model'}${/\d\s*(?:gb|tb)\b/i.test(subject) ? '' : ', 128GB'}, any colour; to change it, send the full name like “compare iPhone 17 Pro 256GB”)` : ''
-  return [`Checking *${subject}*${base} on ${list}${pin} now. I’ll send the confirmed prices here in about 2 minutes.`,
+  const why = remembered ? ` (${remembered} like your price watch, any colour; say a different size to change it)` : base
+  return [`Checking *${subject}*${why} on ${list}${pin} now. I’ll send the confirmed prices here in about 2 minutes.`,
     ...(quick.length ? ['', 'Quick look from a web search (not yet confirmed on the store pages):', ...quick] : [])].join('\n')
 }
 
@@ -167,6 +189,8 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
     }
     if (!parsed) return null
     const now = new Date().toISOString()
+    const remembered = await ownerWatchStorage(owner, parsed.subject).catch(() => null)
+    if (remembered) parsed.subject = `${parsed.subject} ${remembered}`
     const looks = await quickWebLook(parsed.subject, parsed.providers).catch(() => ({} as Record<string, {leadUrl: string; quickPrice?: string}>))
     const {data, error} = await supabaseAdmin.from('agent_runs').insert({
       telegram_id: owner, type: TYPE, capability: 'browser', status: 'queued', title: parsed.subject,
@@ -180,7 +204,7 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
     const current = await readPriceComparison(owner, String(data.id))
     if (!current) throw new Error('comparison_missing_after_create')
     return reply(current, current.metadata_json.providers.some(row => row.waitingForRunId)
-      ? undefined : startedText(parsed.subject, parsed.providers, looks))
+      ? undefined : startedText(parsed.subject, parsed.providers, looks, remembered))
   } finally { await releaseBrainUserLease(key, lease.ownerToken) }
 }
 
