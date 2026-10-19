@@ -227,6 +227,16 @@ export function webAnswerDateLine(now = new Date()) {
   return `TODAY: ${today} (India time). Compare every date in the results with today: something dated today is happening today, an earlier date is past, and only a later date is upcoming. Never call today's date "the future".`
 }
 
+// Replies should open with the answer (19 Oct brevity rule). The model still sometimes opens with
+// "Based on the search results, …"; drop that lead-in deterministically and capitalise what follows.
+export function stripSearchPreamble(text: string): string {
+  const t = String(text || '')
+  const m = t.match(/^\s*(?:based on|according to|from|looking at)\s+(?:the\s+)?(?:provided\s+|available\s+|latest\s+)?(?:web\s+)?(?:search\s+)?(?:results|sources|information)(?:\s+(?:provided|available|above))?\s*[,:]\s*/i)
+  if (!m) return t
+  const rest = t.slice(m[0].length)
+  return rest ? rest.charAt(0).toUpperCase() + rest.slice(1) : t
+}
+
 export async function askClaudeWithContext(
   userMessage: string,
   context: string,
@@ -260,9 +270,9 @@ FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF
       max_tokens: 1500,
       messages:[{role:'user',content:prompt}],
     })
-    return response.content[0].type === 'text' ? response.content[0].text : ''
+    return stripSearchPreamble(response.content[0].type === 'text' ? response.content[0].text : '')
   }catch(error:any){
     console.error('ANTHROPIC_CONTEXT_FAILED_FALLING_BACK:',providerErrorSummary(error))
-    return await askOpenAiFallback({messages:[{role:'user',content:prompt}],maxTokens:1500})
+    return stripSearchPreamble(await askOpenAiFallback({messages:[{role:'user',content:prompt}],maxTokens:1500}))
   }
 }
