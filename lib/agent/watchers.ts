@@ -26,6 +26,8 @@ import {
 } from './watcher-quality'
 
 import { assessPriceCheck, appendPriceRun, buildPriceRun, normalizePriceRule, priceAlertText, priceStateFrom, type PriceRule } from './price-threshold'
+import { extractGoldQuotes } from '@/lib/bot/handlers/gold-quotes'
+import { appendGoldRun, decideGoldAlert, evaluateGoldRule, goldAlertText, goldSearchContext, goldStateFrom, normalizeGoldRule, sourceHost, type GoldRule } from './gold-rate-rule'
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
 
@@ -93,6 +95,8 @@ export type WebSearchWatcherCondition = ContextualWatcherMeta & {
   notifyOnFirstMatch?: boolean
   // Numeric price watch: alert only when the listed price is strictly below the threshold.
   priceRule?: PriceRule
+  // Gold-rate watch: alert only when a single verified per-gram quote crosses the threshold.
+  goldRule?: GoldRule
   originalRequest?: string
 }
 
@@ -201,6 +205,8 @@ export function normalizeWebSearchWatcher(input: any): WebSearchWatcherCondition
   return { title, query, triggerKeywords, delivery, cadenceMinutes, burstUntil,
     notifyOnFirstMatch:input?.notifyOnFirstMatch===true && input?.contextual!==true,
     priceRule:normalizePriceRule(input?.priceRule)||undefined,
+    // Only a row that carries a gold rule reads it; every other watch is untouched.
+    ...(input?.goldRule&&normalizeGoldRule(input.goldRule)?{goldRule:normalizeGoldRule(input.goldRule) as GoldRule}:{}),
     originalRequest:String(input?.originalRequest||'').trim().slice(0,2000)||undefined,
     // A cadence the person asked for ("every morning") is a floor the adaptive schedule never goes below.
     ...(Number(input?.requestedCadenceMinutes)>=60?{requestedCadenceMinutes:Math.min(24*60,Math.floor(Number(input.requestedCadenceMinutes)))}:{}),
@@ -1061,6 +1067,12 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     return { triggered:false, failed:false }
   }
 
+  if (condition.goldRule) {
+    return await processGoldRateCheck(watcher, condition, condition.goldRule, now, {
+      budget, activeCount, currentQuiet, usageRatio:allowance.state?.usageRatio || 0,
+    })
+  }
+
   // Retry the saved result even if the search index changes after a failed send.
   // Comparing the full stored condition prevents a correction from reviving old criteria.
   const pending = watcher.last_state_json?.pendingAlert
@@ -1312,6 +1324,98 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
   }).eq('id', watcher.id).eq('telegram_id', telegramId).eq('active', true)
     .eq('condition_json', JSON.stringify(watcher.condition_json))
   if (stateError) throw new Error('watch_alert_state_write_failed')
+  return { triggered:material, failed:false }
+}
+
+/** Ledger key for one gold alert episode: watch id + rule identity + episode number. */
+export function goldAlertDeliveryKey(watcherId:string, rule:GoldRule, episode:number) {
+  const identity = [watcherId, rule.metal, rule.karat, rule.direction, rule.thresholdPerGram, episode]
+  return 'watch/' + watcherId + '/gold/' + createHash('sha256').update(JSON.stringify(identity)).digest('hex')
+}
+
+// One check of a gold-rate watch. The decision is numeric, made by code on the same source-bound
+// per-gram extraction the chat quote uses: a single verified value for the karat (dated today,
+// sources within 1%) strictly past the threshold alerts once; ambiguous or unverified evidence
+// stays silent and records why; a verified value back across the threshold re-arms.
+async function processGoldRateCheck(watcher:any, condition:WebSearchWatcherCondition, rule:GoldRule, now:Date, ctx:{
+  budget:Awaited<ReturnType<typeof getCostBudget>>; activeCount:number; currentQuiet:number; usageRatio:number
+}) {
+  const telegramId = String(watcher.telegram_id)
+  const results = await searchWebResults(condition.query)
+  await recordCostEvent({ telegramId, category:'web_search_basic', metadata:{ source:'background_gogo', watcher_id:String(watcher.id), kind:'gold_rate' } })
+  const extraction = extractGoldQuotes(`${rule.karat}K gold rate today`, goldSearchContext(results), now.getTime(), rule.place || 'India')
+  const verdict = evaluateGoldRule(rule, extraction)
+  const prior = goldStateFrom(watcher.last_state_json)
+  const decision = decideGoldAlert(prior, verdict)
+
+  // Alert episode: how many alerts this watch has already delivered. It only advances after a send is
+  // accepted, so a retry after an outcome_unknown delivery reuses the same key and the ledger dedupes it.
+  const priorAlertTimes = Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : []
+  const storedEpisode = Number(watcher.last_state_json?.goldAlertCount)
+  const goldEpisode = Number.isInteger(storedEpisode) && storedEpisode >= 0 ? storedEpisode : priorAlertTimes.length
+  let sent = false
+  if (decision.notify) {
+    // Stable identity only: never the condition_json (each poll rewrites cadenceMinutes) nor the observed
+    // value (it moves between retries), either of which would mint a new key and double-send.
+    const key = goldAlertDeliveryKey(String(watcher.id), rule, goldEpisode)
+    const message = goldAlertText({ rule, verdict, at:now })
+    if (condition.delivery !== 'app') {
+      const delivery = await deliverWatchAlert({ watcherId:String(watcher.id), owner:telegramId, key, due:now.toISOString(), message, condition:watcher.condition_json })
+      if (['suppressed', 'cancelled'].includes(delivery.state)) return { triggered:false, failed:false }
+      // A definite rejection retries on the next poll with the same key (the ledger dedupes it).
+      if (!delivery.accepted && !['outcome_unknown', 'failed'].includes(delivery.state)) return { triggered:false, failed:true }
+      sent = delivery.accepted
+    } else {
+      sent = true
+    }
+    const result = { title:condition.title, url:verdict.source || '', snippet:`${rule.karat}K ${verdict.observed}/g as of ${verdict.date}` }
+    await createWebIdea(telegramId, condition, String(watcher.id), result as WebSearchResult, [], 0.9, key)
+    await writeActivity(telegramId, `Background Gogo saw the gold rate cross your level: ${condition.title}`, {
+      watcher_id:watcher.id, type:'web_search', kind:'gold_rate', source_url:verdict.source, observed_per_gram:verdict.observed,
+      threshold_per_gram:rule.thresholdPerGram, quote_date:verdict.date, evidence_level:'search_result',
+    })
+  }
+
+  const nextState = decision.notify ? (sent ? decision.next : prior) : decision.next
+  const material = decision.notify && sent
+  const quietChecks = material ? 0 : ctx.currentQuiet + 1
+  const cadenceMinutes = Math.max(adaptiveWatcherCadence({
+    budget:ctx.budget, activeWatcherCount:ctx.activeCount, quietChecks, material, usageRatio:ctx.usageRatio,
+    burstUntil:condition.burstUntil, now,
+  }), Number((condition as any).requestedCadenceMinutes) || 0)
+  const outcome = !results.length ? 'no_results' : material ? 'alert'
+    : ['crossed', 'not_crossed'].includes(verdict.reason) ? 'sent_nothing' : 'unverified'
+  const reason = !results.length ? 'no_results' : decision.notify && !sent ? 'delivery_pending' : verdict.action === 'alert' ? decision.reason : verdict.reason
+  const alertTimes = Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : []
+  const { error } = await supabaseAdmin.from('agent_watchers').update({
+    cadence_minutes:cadenceMinutes,
+    condition_json:{ ...condition, cadenceMinutes },
+    last_checked_at:now.toISOString(),
+    next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
+    last_state_json:{
+      ...(watcher.last_state_json || {}),
+      goldArmed:nextState.armed,
+      goldAlertCount:material ? goldEpisode + 1 : goldEpisode,
+      lastAlertPerGram:nextState.lastAlertPerGram,
+      lastObservedPerGram:verdict.observed ?? watcher.last_state_json?.lastObservedPerGram ?? null,
+      lastGoldReason:reason,
+      lastGoldDetail:verdict.detail,
+      goldRuns:appendGoldRun(watcher.last_state_json?.goldRuns, {
+        at:now.toISOString(), outcome, observed:verdict.observed, reason,
+        source:verdict.source ? sourceHost(verdict.source) : null, date:verdict.date,
+      }),
+      quietChecks,
+      baselineAt:watcher.last_state_json?.baselineAt || now.toISOString(),
+      lastTriggeredAt:material ? now.toISOString() : watcher.last_state_json?.lastTriggeredAt || null,
+      lastAlertAt:material ? now.toISOString() : watcher.last_state_json?.lastAlertAt || null,
+      alertTimes:material ? [...alertTimes, now.toISOString()].slice(-20) : alertTimes,
+      lastResult:material ? { title:condition.title, url:verdict.source, snippet:`${rule.karat}K ${verdict.observed}/g`, observedAt:now.toISOString(), evidenceLevel:'search_result' } : watcher.last_state_json?.lastResult || null,
+      costGuard:'ok',
+    },
+    updated_at:now.toISOString(),
+  }).eq('id', watcher.id).eq('telegram_id', telegramId).eq('active', true)
+    .eq('condition_json', JSON.stringify(watcher.condition_json))
+  if (error) throw new Error('watch_alert_state_write_failed')
   return { triggered:material, failed:false }
 }
 

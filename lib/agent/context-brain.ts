@@ -773,6 +773,29 @@ export function prioritizeRecallEvidence(query:string,facts:ContextFact[]):Conte
     const relevant=facts.filter(f=>(!['travel_ticket','travel_presence'].includes(f.source)&&!datedSemanticTravel(f))||onDate(f))
     return [...relevant.filter(onDate),...relevant.filter(f=>!onDate(f))]
   }
+  // A forward-looking trip question ("what should I watch for my upcoming trip")
+  // must not present a saved flight memory whose every written date has passed as
+  // trip evidence (19 Oct live: another traveller's 5/13 Oct KLM legs were listed
+  // as the owner's upcoming itinerary). Typed tickets already carry clock status.
+  if(!isRetrospectiveTravelQuery(query)&&/\b(?:upcoming|next|future|coming|planned)\s+(?:trip|travel|flight|journey|itinerary|holiday|vacation)\b|\bmy\s+(?:trip|itinerary)\b/i.test(query)){
+    const months=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec']
+    const todayUtc=Date.parse(new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'})+'T00:00:00Z')
+    const writtenDates=(text:string)=>{
+      const out:number[]=[],year=new Date().getUTCFullYear()
+      for(const m of text.matchAll(/\b(20\d{2})-(\d{2})-(\d{2})\b/g))out.push(Date.UTC(+m[1],+m[2]-1,+m[3]))
+      // A year-less date more than ~60 days behind today is next year's ("departs 5 Jan" in October).
+      const yearless=(month:number,day:number)=>{const at=Date.UTC(year,month,day);return at<todayUtc-60*86400_000?Date.UTC(year+1,month,day):at}
+      for(const m of text.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?:\s*,?\s*(20\d{2}))?\b/gi))out.push(m[3]?Date.UTC(+m[3],months.indexOf(m[2].toLowerCase()),+m[1]):yearless(months.indexOf(m[2].toLowerCase()),+m[1]))
+      for(const m of text.matchAll(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(20\d{2}))?\b/gi))out.push(m[3]?Date.UTC(+m[3],months.indexOf(m[1].toLowerCase()),+m[2]):yearless(months.indexOf(m[1].toLowerCase()),+m[2]))
+      return out.filter(Number.isFinite)
+    }
+    const pastSemanticTravel=(f:ContextFact)=>{
+      if(f.source!=='semantic_memory'||!/\b(?:flight|flights|arrives?|arrival|depart(?:s|ure)?|lands?|landing|itinerary|pnr)\b/i.test(f.summary))return false
+      const dates=writtenDates(f.summary)
+      return dates.length>0&&dates.every(at=>at<todayUtc)
+    }
+    return facts.filter(f=>!pastSemanticTravel(f))
+  }
   if(/\b(?:emails?|mails?|inbox)\b/i.test(query)){
     const matchingInbox=(f:ContextFact)=>f.source==='inbox_attention'&&lexicalScore(query,f.summary)>=0.25
     return [...facts.filter(matchingInbox),...facts.filter(f=>!matchingInbox(f))]

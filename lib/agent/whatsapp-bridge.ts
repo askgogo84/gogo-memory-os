@@ -13,6 +13,7 @@ import type { AgentActor } from './actor'
 import { decisionDomain, recordDecisionLearning, isSameBrainIntrospection, sameBrainIntrospection } from './decision-learning'
 import { observedOutcome, learningDecisionId } from './decision-evidence'
 import { isGmailVerificationQuery } from './gmail-verification'
+import { tryCreateGoldRateWatchFromCommand } from './gold-watch'
 import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand, tryUpdateWebWatchFromCommand } from './watch-command'
 import { tryRunBrowserCommand, executeApprovedBrowserCommand, queueBrowserRead } from './browser-command'
 import { triggerApprovedBrowserRun } from './approved-browser-worker'
@@ -138,7 +139,7 @@ async function withWhatsAppBrowserBudget<T>(actor: AgentActor, task: Promise<T>)
 // Bounded window of the newest pending approvals. Expiry and numbering are decided from this window.
 async function latestPendingApprovals(telegramId: number) {
   const { data, error } = await supabaseAdmin.from('agent_approvals')
-    .select('id,run_id,title,action_type,risk_level,status,requested_at,execution_payload')
+    .select('id,run_id,title,action_type,risk_level,status,requested_at,execution_payload,payload_preview')
     .eq('telegram_id', String(telegramId))
     .eq('status', 'pending')
     .order('requested_at', { ascending: false })
@@ -198,7 +199,7 @@ async function resolveLatestApproval(actor: AgentActor, intent: { decision: 'app
     let reason = justExpired ? expiredApprovalReply(justExpired.requested_at, nowDate) : ''
     if (!chosen && !reason) {
       const { data: prior, error: priorError } = await supabaseAdmin.from('agent_approvals')
-        .select('id,run_id,title,action_type,risk_level,status,requested_at,execution_payload').eq('id', chosenId).eq('telegram_id', String(actor.legacyTelegramId)).maybeSingle()
+        .select('id,run_id,title,action_type,risk_level,status,requested_at,execution_payload,payload_preview').eq('id', chosenId).eq('telegram_id', String(actor.legacyTelegramId)).maybeSingle()
       if (priorError) throw new Error(`whatsapp_agent_approval_read_failed:${priorError.message}`)
       if (prior?.status === 'pending') chosen = prior
       else reason = prior?.status === 'expired'
@@ -412,6 +413,8 @@ export async function tryRunWhatsAppJevSpecialist(params:{
   }
 
   if(params.intent==='watcher'){
+    const goldWatch=await tryCreateGoldRateWatchFromCommand({actor,surface:'whatsapp',text:params.text})
+    if(goldWatch)return goldWatch
     const priceClarification=await tryRunPriceWatchClarification({actor,surface:'whatsapp',text:params.text})
     if(priceClarification)return {...priceClarification,handledBy:String(priceClarification.handledBy||'price-watch-clarification')}
     const corrected=await tryUpdateWebWatchFromCommand({actor,text:params.text})
@@ -557,6 +560,11 @@ export async function tryRunWhatsAppAgent(params: {
     const approval = await resolveLatestApproval(actor, decision)
     if (approval) return approval
   }
+
+  // "Alert me if gold rate drops by 10%" is a gold-rate watch rule. Claim it before goal/planner
+  // handlers and before any path that would answer it with a one-off gold quote (19 Oct live).
+  const goldWatch = await tryCreateGoldRateWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
+  if (goldWatch) return goldWatch
 
   const accountReply = await accountSiteReply(actor, params.text)
   if (accountReply) return accountReply

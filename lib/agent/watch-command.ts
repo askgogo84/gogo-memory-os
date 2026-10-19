@@ -278,7 +278,8 @@ export async function tryUpdateWebWatchFromCommand(params:{actor:AgentActor;text
   const target=watcherIdentityTokens(match[1]), query=clean(match[2],500)
   const tg=String(params.actor.legacyTelegramId)
   const rows=await canonicalActiveWatchers(tg)
-  const matches=rows.filter((row:any)=>row.type==='web_search'&&row.condition_json?.contextual!==true&&
+  // A gold-rate watch keeps a numeric rule; replacing its search query would orphan that rule.
+  const matches=rows.filter((row:any)=>row.type==='web_search'&&row.condition_json?.contextual!==true&&!row.condition_json?.goldRule&&
     target.length>0&&target.every(token=>watcherIdentityTokens(row.condition_json?.title+' '+row.condition_json?.query).includes(token)))
   if(matches.length!==1||query.length<3)return {
     runId:'watcher-update-clarify',status:'paused' as const,capability:'browser' as const,risk:'low' as const,

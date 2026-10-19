@@ -138,17 +138,24 @@ export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}
   }
   const runLines=(items:any[])=>items.slice(0,6).map(r=>`• ${clean(r.title,150)} — ${String(r.status).replaceAll('_',' ')}\n  ${clean(r.summary,220)}${r.updated_at?` (source updated ${fmt(r.updated_at,timezone)})`:''}`).join('\n')
 
+  // Identical one-line bullets are shown once with a count (19 Oct live: "Block calendar for this
+  // booking" twice, "News: Tata Motors" three times). Grouping happens before any slice limit.
+  const bullets=(texts:string[],limit=Infinity)=>{
+    const grouped=new Map<string,number>()
+    for(const text of texts)grouped.set(text,(grouped.get(text)||0)+1)
+    return [...grouped].slice(0,limit).map(([text,count])=>`• ${text}${count>1?` (×${count})`:''}`).join('\n')
+  }
   const blocks:string[]=[]
-  if(approvals?.length)blocks.push(`🛡️ *Waiting for you*\n${approvals.map((a:any)=>`• ${clean(a.title,160)}`).join('\n')}`)
+  if(approvals?.length)blocks.push(`🛡️ *Waiting for you*\n${bullets(approvals.map((a:any)=>clean(a.title,160)))}`)
   const relevantLoops=openLoops.filter(isRelevantOpenLoop)
-  if(relevantLoops.length)blocks.push(`🧩 *Open loops*\n${relevantLoops.slice(0,6).map((loop:any)=>`• ${clean(loop.title,160)}`).join('\n')}`)
+  if(relevantLoops.length)blocks.push(`🧩 *Open loops*\n${bullets(relevantLoops.map((loop:any)=>clean(loop.title,160)),6)}`)
   if(grouped.activeNow.length)blocks.push(`🧠 *Active now*\n${runLines(grouped.activeNow)}`)
   if(grouped.incomplete.length)blocks.push(`📋 *Incomplete tasks — queued*\n${runLines(grouped.incomplete)}`)
   if(grouped.pendingDecisions.length)blocks.push(`🛡️ *Pending decisions*\n${runLines(grouped.pendingDecisions)}`)
   if(grouped.waitingContext.length)blocks.push(`⏸️ *Dormant / waiting context*\n${runLines(grouped.waitingContext)}`)
-  if(watchers?.length)blocks.push(`🔎 *Background monitors*\n${watchers.map((w:any)=>`• ${clean((w.condition_json as any)?.title||w.type,150)} — every ~${Math.max(1,Number(w.cadence_minutes||60))} min`).join('\n')}`)
+  if(watchers?.length)blocks.push(`🔎 *Background monitors*\n${bullets(watchers.map((w:any)=>`${clean((w.condition_json as any)?.title||w.type,150)} — every ~${Math.max(1,Number(w.cadence_minutes||60))} min`))}`)
   if(events?.length)blocks.push(`✈️ *Upcoming life events*\n${events.slice(0,3).map((e:any)=>`• ${clean(e.title,150)} — ${fmt(e.start_at,timezone)}`).join('\n')}`)
-  if(currentIdeas?.length)blocks.push(`💡 *Things I noticed*\n${currentIdeas.slice(0,3).map((i:any)=>`• ${clean(i.title,150)}`).join('\n')}`)
+  if(currentIdeas?.length)blocks.push(`💡 *Things I noticed*\n${bullets(currentIdeas.map((i:any)=>clean(i.title,150)),3)}`)
   if(!blocks.length)blocks.push('Nothing is currently running in the background. Your autonomous queue is clear.')
 
   return {

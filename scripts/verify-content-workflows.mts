@@ -7,6 +7,7 @@ import * as workflows from '../lib/agent/content-workflows'
 import {formatOutgoingText} from '../lib/bot/format-response'
 import {handleInboxReplyRead} from '../lib/agent/open-loops'
 import {tryCancelRunFromChat} from '../lib/agent/run-cancel'
+import {isGoldRateAlertPhrasing, parseGoldRateWatchCommand} from '../lib/agent/gold-rate-rule'
 import * as vaultProviders from '../lib/vault/providers'
 import * as accountIntent from '../lib/agent/external-account-intent'
 
@@ -128,6 +129,8 @@ const common = {'@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>f
   '@/lib/agent/open-loops':{handleInboxReplyRead},
   // The real run-cancel handler: a writing request is not a cancel, so it returns null without any read.
   '@/lib/agent/run-cancel':{tryCancelRunFromChat},
+  // Inert gold-rate watch: a writing request is never a gold alert, so it must return null with no I/O.
+  '@/lib/agent/gold-watch':{tryCreateGoldRateWatchFromCommand:async({text}:{text:string})=>{if(parseGoldRateWatchCommand(text)||isGoldRateAlertPhrasing(text))throw new Error('gold watch must not claim a content workflow');return null}},
   '@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/actor': {resolveAgentActor: async () => actor},
   '@/lib/agent/content-workflow-entry': entry, crypto: {randomUUID}, 'node:crypto': {randomUUID}}
 const dashboard = load('app/api/dashboard/chat/route.ts', {...common, '@/lib/dashboard/session': {getSession: async () => ({telegramId: '42'})}})

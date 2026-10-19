@@ -75,6 +75,22 @@ export function partitionPendingApprovals<T extends ApprovalTtlRow & { id?: unkn
   return { expired, live: listed, liveTotal: live.length }
 }
 
-export function approvalChoiceList(rows: Array<{ title?: string | null; requested_at?: string | null }>, now: Date | number = Date.now()): string {
-  return rows.map((row, i) => `${i + 1}. ${String(row.title || 'Pending action').slice(0, 140)} (requested ${approvalRelativeAge(row.requested_at, now)})`).join('\n')
+/**
+ * Several cards can share a generic title ("Block calendar for this booking"), so each
+ * numbered line also shows what it acts on from the card's own preview (event, date,
+ * place), never from execution internals. 19 Oct live: two identical lines.
+ */
+export function approvalDetail(row: { payload_preview?: unknown }): string {
+  const preview = Array.isArray(row.payload_preview) ? row.payload_preview as Array<{ label?: unknown; value?: unknown }> : []
+  const pick = (re: RegExp) => preview.find(item => re.test(String(item?.label || '')))?.value
+  const parts = [pick(/^(?:event|title|item|subject|restaurant|flight|reminder)$/i), pick(/^(?:starts?|date|when|time|new time)$/i), pick(/^(?:venue|place|location|to)$/i)]
+    .map(value => String(value ?? '').replace(/\s+/g, ' ').trim()).filter(value => value && !/^not provided$/i.test(value))
+  return parts.join(' · ').slice(0, 160)
+}
+
+export function approvalChoiceList(rows: Array<{ title?: string | null; requested_at?: string | null; payload_preview?: unknown }>, now: Date | number = Date.now()): string {
+  return rows.map((row, i) => {
+    const detail = approvalDetail(row)
+    return `${i + 1}. ${String(row.title || 'Pending action').slice(0, 140)}${detail ? ` — ${detail}` : ''} (requested ${approvalRelativeAge(row.requested_at, now)})`
+  }).join('\n')
 }

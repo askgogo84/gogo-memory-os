@@ -32,7 +32,7 @@ export const NO_ACTION_REPLY =
 // list", "Set for 6am") is a receipt. Receipts come only from handlers that did the work; plain
 // chat has no executor, so one from chat is false whatever the wording.
 const CHANGE_VERB =
-  '(?:skipped|cancell?ed|deleted|removed|added|created|scheduled|rescheduled|snoozed|updated|moved|marked|saved|stopped|paused|cleared|renamed|booked|sent|set(?=\\s+(?:for|to|it|up)\\b))'
+  '(?:skipped|cancell?ed|deleted|removed|added|created|scheduled|rescheduled|snoozed|updated|moved|marked|saved|stopped|paused|cleared|renamed|booked|sent|rejected|approved|declined|withdrawn|set(?=\\s+(?:for|to|it|up)\\b))'
 const RECEIPT_LEAD = new RegExp(
   '^[\\s\\W_]*(?:(?:done|ok(?:ay)?|got\\s+it|sure|all\\s+set|alright)[\\s,.!:\\u2013-]*)?' +
     "(?:(?:i(?:'ve|\\s+have)?|gogo(?:\\s+has)?)\\s+(?:just\\s+)?|just\\s+)?" +
@@ -41,14 +41,30 @@ const RECEIPT_LEAD = new RegExp(
   'i',
 )
 const USER_ITEM =
-  /\b(?:reminders?|lists?|events?|alarms?|meetings?|tasks?|notes?|calendar|schedule|appointments?|watch(?:es)?|alerts?|drafts?|expenses?|occurrences?)\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b(?:today|tomorrow)(?:'s|\u2019s)\b/i
+  /\b(?:reminders?|lists?|events?|alarms?|meetings?|tasks?|notes?|calendar|schedule|appointments?|watch(?:es)?|alerts?|drafts?|expenses?|occurrences?|approvals?|requests?|bookings?|orders?|runs?)\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b(?:today|tomorrow)(?:'s|\u2019s)\b/i
+
+// 19 Oct live (WhatsApp): "abort mission" reached chat, which answered "Both Jailer 2 calendar
+// approvals are cancelled" while both stayed pending. A passive receipt about items only Gogo
+// itself manages (approvals, reminders, its tasks, watches, lists, drafts) is the same false claim
+// as an active one. Third-party objects (orders, bookings, meetings, requests, payments) are
+// reported from email/calendar data all the time, so they are not receipts here.
+const GOGO_ITEM = /\b(?:approvals?|reminders?|alarms?|tasks?|watch(?:es)?|alerts?|lists?|notes?|drafts?|to-?dos?|calendar\s+blocks?)\b/i
+const PASSIVE_RECEIPT = new RegExp(
+  "\\b(?:is|are|was|were|got|now|(?:has|have)\\s+(?:now\\s+)?been)\\s+(?:now\\s+|all\\s+|both\\s+|successfully\\s+)?" + CHANGE_VERB + '\\b',
+  'i',
+)
+// "Done. Both approvals cancelled." — a verbless receipt.
+const VERBLESS_RECEIPT = new RegExp('\\b(?:both|all|the|your)\\s+(?:\\w+\\s+){0,3}?(?:approvals?|reminders?|tasks?|watch(?:es)?|alerts?)\\s+' + CHANGE_VERB + '\\s*[.!]?\\s*$', 'i')
+const NOT_A_RECEIPT = /\?\s*$|\b(?:can|could|should|would|will|may|might|if|once|until|unless|not|never)\b|\bby\s+\S+|\baccording\s+to\b|\b(?:says|said|shows|showed|reports|lists|per)\b|\b(?:yesterday|earlier|ago|last\s+(?:night|week|month|year)|previously|before)\b|\b(?:e-?mails?|inbox|mail)\b/i
 
 export function claimsCompletedChange(reply: string): boolean {
   return String(reply || '')
     .split(/\n+|(?<=[.!?])\s+/)
     .some((sentence) => {
       const m = RECEIPT_LEAD.exec(sentence)
-      return !!m && USER_ITEM.test(m[1] || '')
+      if (m && USER_ITEM.test(m[1] || '')) return true
+      if (NOT_A_RECEIPT.test(sentence) || !GOGO_ITEM.test(sentence)) return false
+      return PASSIVE_RECEIPT.test(sentence) || VERBLESS_RECEIPT.test(sentence)
     })
 }
 

@@ -216,4 +216,26 @@ check('an unknown-purity phrase in the heading does not erase heading date or to
  const result=answer(`1. Gold Rates in Bangalore\nPure gold price today in Bangalore: 24K gold per gram ₹14,327; 22K gold per gram ₹13,645\nSource: ${pb}`);
  assert.match(result,/^24K: ₹14,327$/m);assert.match(result,/24K — source says today/);
 });
+// 19 Oct WhatsApp live replies (groww): a 10 g total shown as a per-gram 22K price,
+// and an undated 22K quote equal to a dated 24K quote from the same source.
+const gw='https://groww.in/gold-rates/gold-rate-today-in-bangalore';
+check('a same-purity multi-gram total read as per gram is dropped, not shown as a range',()=>{
+ const result=answer(`1. Gold Rate Today in Bangalore\nToday 22K gold per gram ₹13,536\nSource: ${gw}\n\n2. Gold Rate Today in Bangalore\nToday 22K gold 1 g | ₹1,35,360\nSource: ${gw}`);
+ assert.match(result,/^22K: ₹13,536$/m);assert.doesNotMatch(result,/1,35,360/);assert.match(result,/multi-gram total/i);
+});
+check('a dated higher purity equal to an undated lower purity from one source is not presented',()=>{
+ const result=answer(`1. Gold Rate Today in Pune\n24K Gold / 10gm 18 Oct 2026 ₹1,35,700\nSource: ${gw}\n\n2. Gold Rate Today in Pune\nToday 22K gold per gram ₹13,570\nSource: ${gw}`);
+ assert.doesNotMatch(result,/^24K: ₹13,570$/m);assert.doesNotMatch(result,/^22K: ₹13,570$/m);assert.match(result,/lower gold purity/i);
+ const control=answer(`1. Board A\n24K Gold / 10gm 18 Oct 2026 ₹1,35,700\nSource: https://synthetic.invalid/a\n\n2. Board B\nToday 22K gold per gram ₹13,570\nSource: https://synthetic.invalid/b`);
+ assert.doesNotMatch(control,/lower gold purity/i);
+});
+check('the structured extractor returns the same selected per-gram quotes as the reply',()=>{
+ const q=load(path.join(root,'gold-quotes.ts'));
+ const out=q.extractGoldQuotes(question,'1. Bangalore rates\nAs of 18 October 2026: 24K gold per gram ₹14000; 22K gold per gram ₹12800\nSource: https://synthetic.invalid/current');
+ assert.equal(out.selected['24'][0].perGram,14000);assert.equal(out.selected['22'][0].perGram,12800);assert.equal(out.place,'Bangalore');assert.equal(out.today,'2026-10-18');
+});
+check('an old history figure from another page cannot discard today\'s quotes',()=>{
+ const result=answer(`1. Bangalore today\nAs of 18 October 2026: 24K gold per gram ₹13,120; 22K gold per gram ₹12,026\nSource: https://synthetic.invalid/today\n\n2. Gold history\nIn 2012 the 24K rate was ₹2,900 per gram\nSource: https://synthetic.invalid/history`);
+ assert.match(result,/24K — as of 2026-10-18; 1 g quote ₹13,120/);assert.match(result,/^22K: ₹12,026$/m);assert.doesNotMatch(result,/multi-gram total/i);
+});
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');
