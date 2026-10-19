@@ -902,6 +902,24 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   return prepareReservationApproval({actor:params.actor,surface:params.surface,text:params.text,intent,timeConstraint,provider,timezone,release,inspectedText:inspected.pageText,ruleEvidenceUrl,ruleEvidenceText,ruleEvidenceTitle})
 }
 
+function liveSlotCalendarOverlaps(intent:RestaurantReservationIntent,snapshot:ReservationDiningContext,timezone:string):Array<{startAt:string;endAt:string}>|null{
+  const span=intent.requestedDate?planningSpan(intent.requestedDate,intent.preferredStart,intent.preferredEnd,timezone):null
+  if(!span)return null
+  return snapshot.calendar.windows.filter(w=>{
+    const start=Date.parse(w.startAt),end=Date.parse(w.endAt)
+    return Number.isFinite(start)&&Number.isFinite(end)&&end-start<=12*3600_000&&overlapsPlanning(w.startAt,w.endAt,span)
+  }).map(w=>({startAt:w.startAt,endAt:w.endAt}))
+}
+function liveSlotTravelConflict(intent:RestaurantReservationIntent,snapshot:ReservationDiningContext,timezone:string,location:string|null){
+  const span=intent.requestedDate?planningSpan(intent.requestedDate,intent.preferredStart,intent.preferredEnd,timezone):null
+  const target=planningPlace(location||'')
+  return Boolean(span&&snapshot.windows.some(w=>overlapsPlanning(w.startAt,w.endAt,span)&&planningWindowBlocks(w,target)))
+}
+function busyLabel(windows:Array<{startAt:string;endAt:string}>,timezone:string){
+  const fmt=(iso:string)=>new Date(iso).toLocaleTimeString('en-IN',{timeZone:timezone,hour:'numeric',minute:'2-digit',hour12:true}).replace(/\s?([ap])\.?m\.?/i,(_m,a)=>` ${a.toUpperCase()}M`)
+  return windows.slice(0,2).map(w=>`${fmt(w.startAt)}–${fmt(w.endAt)}`).join(' and ')
+}
+
 type ReservationApprovalContext={actor:AgentActor;surface:AgentSurface;text:string;intent:RestaurantReservationIntent;timeConstraint:RestaurantTimeConstraint;provider:ReservationProvider;timezone:string;release:ReservationRelease;inspectedText:string;ruleEvidenceUrl:string|null;ruleEvidenceText:string;ruleEvidenceTitle:string;guestName?:string|null}
 /** Verified provider evidence -> persistent mission + bounded approval. Nothing is armed or submitted here. */
 async function prepareReservationApproval(ctx:ReservationApprovalContext){
@@ -930,7 +948,13 @@ async function prepareReservationApproval(ctx:ReservationApprovalContext){
   const contextGap=Boolean(guestName&&diningContext.incomplete)
   if(diningContext.incomplete&&!guestName)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,
     text:'I verified the reservation release, but could not verify bounded travel and Calendar context for the possible dining dates. No reservation mission was armed or booking attempted. Retry the context check, or specify a dining date to narrow the Calendar read, before approving an attempt.'}
-  const conflictReview=contextPack?await reservationConflictReview({actor:params.actor,text:params.text,intent,location:provider.location||null,timezone,releaseAt,pack:contextPack,snapshot:diningContext}):null
+  // 19 Oct live: the live-slot flow (slot just read, name given) was refused with "overlaps a recorded Calendar busy
+  // interval" — the owner's calendar carries a standup instance whose end runs weeks ahead. For a live slot, a
+  // multi-day/all-day block (>12h) is not treated as a dinner conflict, and a real short overlap is shown in the
+  // approval ask instead of blocking; the user decides with APPROVE/REJECT. Travel conflicts still block.
+  const liveSlotBusy=guestName?liveSlotCalendarOverlaps(intent,diningContext,timezone):null
+  const conflictReview=contextPack&&!(guestName&&liveSlotBusy!==null&&!liveSlotTravelConflict(intent,diningContext,timezone,provider.location||null))
+    ?await reservationConflictReview({actor:params.actor,text:params.text,intent,location:provider.location||null,timezone,releaseAt,pack:contextPack,snapshot:diningContext}):null
   if(conflictReview)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:conflictReview}
   const contextWindows=diningContext.windows
   const contextRefs=[...contextWindows.flatMap(window=>window.sourceRefs),...diningContext.calendar.windows.flatMap(window=>window.sourceRefs)].slice(0,30)
@@ -1063,7 +1087,7 @@ async function prepareReservationApproval(ctx:ReservationApprovalContext){
     return{
       runId,status:'waiting_approval' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,
       approvalId:String(approval.id),approvalRequired:true,
-      text:`Ready to book ${reservationClockLabel(intent.preferredStart)} ${reservationDayLabel(intent.requestedDate,intent.preferredStart)} for ${intent.partySize} at ${intent.restaurant} under ${guestName}${ending?`, with your WhatsApp number ending ${ending}`:''}.${contextGap?" I couldn't fully check your calendar for that evening, so make sure you're free.":''}\nReply APPROVE to book it, or REJECT to stop. I'll stop before any fee, CAPTCHA or OTP.`,
+      text:`Ready to book ${reservationClockLabel(intent.preferredStart)} ${reservationDayLabel(intent.requestedDate,intent.preferredStart)} for ${intent.partySize} at ${intent.restaurant} under ${guestName}${ending?`, with your WhatsApp number ending ${ending}`:''}.${liveSlotBusy?.length?` Your calendar shows you busy ${busyLabel(liveSlotBusy,timezone)} then — still book it?`:contextGap?" I couldn't fully check your calendar for that evening, so make sure you're free.":''}\nReply APPROVE to book it, or REJECT to stop. I'll stop before any fee, CAPTCHA or OTP.`,
     }
   }
   return{

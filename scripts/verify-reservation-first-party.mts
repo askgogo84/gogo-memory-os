@@ -60,11 +60,11 @@ function makeDb(seed:Record<string,any[]>={}){
 }
 
 type Browser=(p:any)=>Promise<any>
-function loadReservation(opts:{search:(q:string)=>any[];browser:Browser;db?:ReturnType<typeof makeDb>;calendarIncomplete?:boolean}){
+function loadReservation(opts:{search:(q:string)=>any[];browser:Browser;db?:ReturnType<typeof makeDb>;calendarIncomplete?:boolean;calendarWindows?:any[]}){
   const db=opts.db||makeDb({users:[{id:'fixture-owner',telegram_id:123,whatsapp_id:'919800001501',timezone:'Asia/Kolkata',email:null}]})
   const searches:string[]=[],browserCalls:any[]=[]
   const mod:any={}
-  const contextPack=async(p:any)=>{const c={ownerId:'123',incomplete:false,coveredFrom:p.options.reservationCalendarCoverage?.from||new Date(NOW).toISOString(),coveredUntil:p.options.reservationCalendarCoverage?.until||'2026-12-17T10:00:00Z'};return{facts:[],reservationTravel:{...c,facts:[]},reservationCalendar:{...c,connected:true,windows:[],incomplete:opts.calendarIncomplete===true},reservationPreferences:{ownerId:'123',incomplete:false,rules:[]}}}
+  const contextPack=async(p:any)=>{const c={ownerId:'123',incomplete:false,coveredFrom:p.options.reservationCalendarCoverage?.from||new Date(NOW).toISOString(),coveredUntil:p.options.reservationCalendarCoverage?.until||'2026-12-17T10:00:00Z'};return{facts:[],reservationTravel:{...c,facts:[]},reservationCalendar:{...c,connected:true,windows:opts.calendarWindows||[],incomplete:opts.calendarIncomplete===true},reservationPreferences:{ownerId:'123',incomplete:false,rules:[]}}}
   runInNewContext(transpile('lib/agent/restaurant-reservation.ts'),{exports:mod,require:(name:string)=>
     name==='node:crypto'?{createHash}:name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='@/lib/timezone'?timezone:
     name==='./reservation-dining-context'?dining:name==='./approval-binding'?binding:name==='./india-locality'?locality:name==='./provider-booking'?providerBooking:
@@ -132,6 +132,23 @@ await check('19 Oct live: an incomplete Calendar read is disclosed in the live-s
   assert.match(r.text,/couldn't fully check your calendar for that evening/)
   assert.doesNotMatch(r.text,/bounded travel/)
   assert.ok(lines(r.text)<=3,r.text)
+})
+
+await check('19 Oct live: a weeks-long calendar block is not a dinner conflict; a real overlap is shown, not a dead end',async()=>{
+  const longBlock={startAt:'2026-10-08T06:00:00.000Z',endAt:'2026-11-11T06:15:00.000Z',sourceRefs:[{type:'calendar_event',id:'standup'}]}
+  const h=loadReservation({search:searchBoth,browser:widgetPage(['7:00 PM']),calendarWindows:[longBlock]})
+  await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+  const r=await h.mod.continueRestaurantReservationGuestReply({actor,surface:'whatsapp',text:'Goverdhan'})
+  assert.equal(r.status,'waiting_approval',r.text)
+  assert.doesNotMatch(r.text,/busy|overlaps/,r.text)
+  const meeting={startAt:'2026-10-20T13:00:00.000Z',endAt:'2026-10-20T14:00:00.000Z',sourceRefs:[{type:'calendar_event',id:'m'}]}
+  const h2=loadReservation({search:searchBoth,browser:widgetPage(['7:00 PM']),calendarWindows:[meeting]})
+  await h2.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+  const r2=await h2.mod.continueRestaurantReservationGuestReply({actor,surface:'whatsapp',text:'Goverdhan'})
+  assert.equal(r2.status,'waiting_approval',r2.text)
+  assert.match(r2.text,/Your calendar shows you busy 6:30 PM–7:30 PM then — still book it\?/,r2.text)
+  assert.doesNotMatch(r2.text,/No new reservation mission/)
+  assert.ok(lines(r2.text)<=3,r2.text)
 })
 
 await check('name reply goes through the existing approval mechanism; nothing is submitted',async()=>{
