@@ -31,7 +31,7 @@ import { buildSportsReplyWithState } from './handlers/sports'
 import { getLatestFollowupState, saveFollowupState, isFreshFollowupState } from './handlers/followup-state'
 import { resolvePendingReminder, resolvePendingCalendar, looksLikeNewCommand, pendingReminderTimingProblem } from './pending-followup'
 import { styleReplyByIntent } from './handlers/response-style'
-import { buildAmPmClarificationReply, getAmbiguousReminderTime, buildReminderConfirmation, parseReminderIntent, reminderLeadTime, reminderTimingProblem } from './handlers/reminders'
+import { buildAmPmClarificationReply, getAmbiguousReminderTime, buildReminderConfirmation, parseReminderIntent, reminderLeadTime, reminderTimingProblem, isContentlessReminderRequest } from './handlers/reminders'
 import { buildAmPmReminderSetReply, buildReminderFromAmPmChoice, isAmPmChoice, amPmReminderTimingProblem } from './handlers/reminder-ampm-followup'
 import { editLatestReminder } from './handlers/edit-reminder'
 import { buildMorningBriefing } from './handlers/morning-briefing'
@@ -950,6 +950,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     if (intent.type === 'upgrade_plan') {
       await saveFollowupState(resolvedUser.telegramId, 'plan_select', { created_at: new Date().toISOString() })
     }
+    await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+    return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+  }
+
+  if (intent.type === 'set_reminder' && isContentlessReminderRequest(incomingText)) {
+    const reply = "Did you mean that time for something we were just discussing? I haven't set any reminder. If you want one, tell me what it's for, for example: remind me to call Toit this Saturday at 8 pm."
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }

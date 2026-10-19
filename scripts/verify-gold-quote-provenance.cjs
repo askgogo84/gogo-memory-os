@@ -234,4 +234,8 @@ check('the structured extractor returns the same selected per-gram quotes as the
  const out=q.extractGoldQuotes(question,'1. Bangalore rates\nAs of 18 October 2026: 24K gold per gram ₹14000; 22K gold per gram ₹12800\nSource: https://synthetic.invalid/current');
  assert.equal(out.selected['24'][0].perGram,14000);assert.equal(out.selected['22'][0].perGram,12800);assert.equal(out.place,'Bangalore');assert.equal(out.today,'2026-10-18');
 });
+check('an old history figure from another page cannot discard today\'s quotes',()=>{
+ const result=answer(`1. Bangalore today\nAs of 18 October 2026: 24K gold per gram ₹13,120; 22K gold per gram ₹12,026\nSource: https://synthetic.invalid/today\n\n2. Gold history\nIn 2012 the 24K rate was ₹2,900 per gram\nSource: https://synthetic.invalid/history`);
+ assert.match(result,/24K — as of 2026-10-18; 1 g quote ₹13,120/);assert.match(result,/^22K: ₹12,026$/m);assert.doesNotMatch(result,/multi-gram total/i);
+});
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');

@@ -200,8 +200,11 @@ export function extractGoldQuotes(userText:string,searchContext:string,now=Date.
   // read as a per-gram price (19 Oct live: 22K ₹1,35,360 "per gram" beside ₹13,536).
   // It is dropped, never divided down, because its true weight is unverified.
   const totals=new Set<Quote>()
+  // Only within one source, and only at a common pack ratio (8 g, 10 g, 100 g), so an old history
+  // figure from another page can never knock out today's quotes (review, 19 Oct).
+  const packRatio=(ratio:number)=>[8,10,100].some(pack=>Math.abs(ratio-pack)<=pack*0.1)
   for(const big of quotes)for(const small of quotes){
-    if(big!==small&&big.karat===small.karat&&big.perGram>=small.perGram*4.5)totals.add(big)
+    if(big!==small&&big.karat===small.karat&&big.source===small.source&&packRatio(big.perGram/small.perGram))totals.add(big)
   }
   if(totals.size){
     warnings.add('A quote looked like a multi-gram total rather than a per-gram price, so it was not used.')

@@ -53,7 +53,10 @@ const PHRASE_BLOCKS = [
   /\b(?:and|then|also)\b|[,;]/,
   /\b(?:cancel|stop|book|approve|reject|retry|resume|restart|change|move|delete|add|create|start)\b/,
 ]
-const ALWAYS_BLOCKS = [PHRASE_BLOCKS[0], PHRASE_BLOCKS[1], ...PHRASE_BLOCKS.slice(-2)]
+// Orders, refunds and shops always belong to commerce handlers, even with "task"/"request".
+const ALWAYS_BLOCKS = [PHRASE_BLOCKS[0], PHRASE_BLOCKS[1], PHRASE_BLOCKS[3], PHRASE_BLOCKS[4], ...PHRASE_BLOCKS.slice(-2)]
+// "request" alone does not make a named task: leave/refund/order requests are someone else's.
+const DOMAIN_BYPASS = /\b(?:task|tasks|run|job|mission)\b/
 // "how is my mom doing" / "how is my business going" are about life, not a task card.
 const PERSONAL_SUBJECT = /^(?:(?:dear|dearest|little|baby|old|new)\s+)?(?:mom|mum|mommy|mummy|mother|amma|dad|daddy|father|papa|appa|parents?|wife|husband|hubby|spouse|partner|girlfriend|boyfriend|fiance|fiancee|son|daughter|kids?|children|child|baby|family|brother|sister|bro|sis|siblings?|grandma|grandpa|granny|grandmother|grandfather|aunt|uncle|cousin|friends?|dog|cat|pet|business|company|startup|firm|shop|store|restaurant|team|staff|career|job|work|office|relationship|marriage|love life|health|body|knee|back|diet|fitness|studies|exams?|college|school|garden|plants?|car|bike|house|home)$/
 const BARE_TRANSPORT = /\b(?:flights?|trains?|bus|buses|cabs?|rides?)\b/
@@ -78,7 +81,7 @@ export function parseTaskStatusQuery(text: string): TaskStatusQuery | null {
     // Domain words ("calendar", "reminder", "watch"…) belong to their own handlers unless the
     // ask explicitly names a task ("the Jailer 2 calendar task", 19 Oct live). Flight
     // identifiers, compound requests and action verbs always stay out.
-    const blocks = TASK_NOUN.test(phrase) ? ALWAYS_BLOCKS : PHRASE_BLOCKS
+    const blocks = DOMAIN_BYPASS.test(phrase) ? ALWAYS_BLOCKS : PHRASE_BLOCKS
     if (blocks.some(block => block.test(phrase))) return null
     if (PERSONAL_SUBJECT.test(phrase)) return null
     if (BARE_TRANSPORT.test(phrase) && !TRANSPORT_TASK.test(phrase)) return null

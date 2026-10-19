@@ -44,12 +44,18 @@ const USER_ITEM =
   /\b(?:reminders?|lists?|events?|alarms?|meetings?|tasks?|notes?|calendar|schedule|appointments?|watch(?:es)?|alerts?|drafts?|expenses?|occurrences?|approvals?|requests?|bookings?|orders?|runs?)\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b(?:today|tomorrow)(?:'s|\u2019s)\b/i
 
 // 19 Oct live (WhatsApp): "abort mission" reached chat, which answered "Both Jailer 2 calendar
-// approvals are cancelled" while both stayed pending. A passive receipt about the user's items
-// is the same false claim as an active one.
+// approvals are cancelled" while both stayed pending. A passive receipt about items only Gogo
+// itself manages (approvals, reminders, its tasks, watches, lists, drafts) is the same false claim
+// as an active one. Third-party objects (orders, bookings, meetings, requests, payments) are
+// reported from email/calendar data all the time, so they are not receipts here.
+const GOGO_ITEM = /\b(?:approvals?|reminders?|alarms?|tasks?|watch(?:es)?|alerts?|lists?|notes?|drafts?|to-?dos?|calendar\s+blocks?)\b/i
 const PASSIVE_RECEIPT = new RegExp(
-  "\\b(?:is|are|was|were|has\\s+been|have\\s+been|got|now)\\s+(?:now\\s+|all\\s+|both\\s+|successfully\\s+)?" + CHANGE_VERB + '\\b',
+  "\\b(?:is|are|was|were|got|now|(?:has|have)\\s+(?:now\\s+)?been)\\s+(?:now\\s+|all\\s+|both\\s+|successfully\\s+)?" + CHANGE_VERB + '\\b',
   'i',
 )
+// "Done. Both approvals cancelled." — a verbless receipt.
+const VERBLESS_RECEIPT = new RegExp('\\b(?:both|all|the|your)\\s+(?:\\w+\\s+){0,3}?(?:approvals?|reminders?|tasks?|watch(?:es)?|alerts?)\\s+' + CHANGE_VERB + '\\s*[.!]?\\s*$', 'i')
+const NOT_A_RECEIPT = /\?\s*$|\b(?:can|could|should|would|will|may|might|if|once|until|unless|not|never)\b|\bby\s+\S+|\baccording\s+to\b|\b(?:says|said|shows|showed|reports|lists|per)\b|\b(?:yesterday|earlier|ago|last\s+(?:night|week|month|year)|previously|before)\b|\b(?:e-?mails?|inbox|mail)\b/i
 
 export function claimsCompletedChange(reply: string): boolean {
   return String(reply || '')
@@ -57,11 +63,8 @@ export function claimsCompletedChange(reply: string): boolean {
     .some((sentence) => {
       const m = RECEIPT_LEAD.exec(sentence)
       if (m && USER_ITEM.test(m[1] || '')) return true
-      // Passive form: the item and the finished change sit in the same sentence; a question
-      // ("should it be cancelled?") or a conditional ("can be cancelled") is not a receipt.
-      return !/\?\s*$/.test(sentence) && !/\b(?:can|could|should|would|will|may|might|if|once|until|unless|not)\b/i.test(sentence)
-        && !/\bby\s+(?:the|your|their|his|her|its)\b|\baccording\s+to\b|\b(?:says|shows|reports|lists)\b/i.test(sentence)
-        && PASSIVE_RECEIPT.test(sentence) && USER_ITEM.test(sentence)
+      if (NOT_A_RECEIPT.test(sentence) || !GOGO_ITEM.test(sentence)) return false
+      return PASSIVE_RECEIPT.test(sentence) || VERBLESS_RECEIPT.test(sentence)
     })
 }
 

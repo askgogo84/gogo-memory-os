@@ -32,6 +32,12 @@ check('an upcoming-trip question drops saved flight memories whose every date ha
     for (const keep of ['goa', 'pref', 'move', 'ticket']) assert.ok(ids.includes(keep), q + ' kept ' + keep)
   }
 })
+check('a year-less early-next-year flight is kept for an upcoming-trip question', () => {
+  const jan = fact('dxb', 'BLR to DXB flight departs 5 Jan, PNR ABC123')
+  const feb = fact('sin', 'Singapore flight departs Feb 3')
+  const ids = prioritizeRecallEvidence('What should I watch for my upcoming trip?', [jan, feb, pastKlm]).map((f: any) => f.id)
+  assert.ok(ids.includes('dxb') && ids.includes('sin') && !ids.includes('klm-13'), ids.join(','))
+})
 check('retrospective and unrelated questions keep past travel memories', () => {
   for (const q of ['When did Divya\'s flight land?', 'What was my last trip?', 'Show my goals']) {
     const ids = prioritizeRecallEvidence(q, [pastKlm, futureFlight]).map((f: any) => f.id)

@@ -783,8 +783,10 @@ export function prioritizeRecallEvidence(query:string,facts:ContextFact[]):Conte
     const writtenDates=(text:string)=>{
       const out:number[]=[],year=new Date().getUTCFullYear()
       for(const m of text.matchAll(/\b(20\d{2})-(\d{2})-(\d{2})\b/g))out.push(Date.UTC(+m[1],+m[2]-1,+m[3]))
-      for(const m of text.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?:\s*,?\s*(20\d{2}))?\b/gi))out.push(Date.UTC(m[3]?+m[3]:year,months.indexOf(m[2].toLowerCase()),+m[1]))
-      for(const m of text.matchAll(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(20\d{2}))?\b/gi))out.push(Date.UTC(m[3]?+m[3]:year,months.indexOf(m[1].toLowerCase()),+m[2]))
+      // A year-less date more than ~60 days behind today is next year's ("departs 5 Jan" in October).
+      const yearless=(month:number,day:number)=>{const at=Date.UTC(year,month,day);return at<todayUtc-60*86400_000?Date.UTC(year+1,month,day):at}
+      for(const m of text.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?(?:\s*,?\s*(20\d{2}))?\b/gi))out.push(m[3]?Date.UTC(+m[3],months.indexOf(m[2].toLowerCase()),+m[1]):yearless(months.indexOf(m[2].toLowerCase()),+m[1]))
+      for(const m of text.matchAll(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(20\d{2}))?\b/gi))out.push(m[3]?Date.UTC(+m[3],months.indexOf(m[1].toLowerCase()),+m[2]):yearless(months.indexOf(m[1].toLowerCase()),+m[2]))
       return out.filter(Number.isFinite)
     }
     const pastSemanticTravel=(f:ContextFact)=>{

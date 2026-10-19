@@ -95,7 +95,11 @@ function preferredWindow(text:string){
     // A user-stated release clock is provider-research input, not dining authority.
     if(/\b(?:(?:bookings?|reservations?)\s+(?:will\s+)?open(?:s)?|release(?:\s+time)?)\s+(?:is\s+)?at\s*$/i.test(prefix))return{start,end,clarify:false}
     const at=/(?:am|pm)$/i.test(text)?explicitClock(text):text
-    if(!at||!/(?:\bat|\bdining|\bdinner|\bslot)(?:\s+(?:time|start))?\s*$/i.test(prefix)||m&&(at<start||at>end))return{start:'',end:'',clarify:true}
+    // 19 Oct live (Instinct comparison): "for 2 at Toit Indiranagar this Saturday 8pm" was asked to
+    // restate its time. A single explicit clock right after the dining day, date or party is the
+    // dining time just as much as one after "at".
+    const dayLead=/(?:\btoday|\btonight|\btomorrow|\btmrw|\bday\s+after\s+tomorrow|\b(?:mon|tues|wednes|thurs|fri|satur|sun)day|\bweekend|\b\d{1,2}(?:st|nd|rd|th)?\s+[a-z]{3,9}|\b[a-z]{3,9}\s+\d{1,2}(?:st|nd|rd|th)?|\bfor\s+\d{1,2}(?:\s+(?:people|persons|pax|guests|adults))?)\s*,?\s*$/i
+    if(!at||!(/(?:\bat|\bdining|\bdinner|\bslot)(?:\s+(?:time|start))?\s*$/i.test(prefix)||dayLead.test(prefix))||m&&(at<start||at>end))return{start:'',end:'',clarify:true}
     return{start:at,end:at,clarify:false}
   }
   if(/\bat\s+\d{1,2}(?::\d{2})?/i.test(rest))return{start:'',end:'',clarify:true}
@@ -109,12 +113,30 @@ function ymd(year:number,month:number,day:number){
   return `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`
 }
 
+/** today / tonight / tomorrow / (this|next|coming) <weekday>, resolved in IST. */
+function relativeDate(raw:string,now:Date){
+  const local=new Date(now.toLocaleString('en-US',{timeZone:'Asia/Kolkata'}))
+  const base=Date.UTC(local.getFullYear(),local.getMonth(),local.getDate())
+  const at=(days:number)=>new Date(base+days*86400_000).toISOString().slice(0,10)
+  const t=raw.toLowerCase()
+  if(/\bday\s+after\s+tomorrow\b/.test(t))return at(2)
+  if(/\b(?:tomorrow|tmrw|tmr)\b/.test(t))return at(1)
+  if(/\b(?:today|tonight)\b/.test(t))return at(0)
+  const wd=t.match(/\b(?:(this|next|coming)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/)
+  if(!wd)return''
+  const target=WEEKDAYS[wd[2]],today=local.getDay()
+  let ahead=(target-today+7)%7
+  // "this Saturday" on a Saturday is today; a bare or "next/coming" weekday is the next one ahead.
+  if(ahead===0&&wd[1]!=='this')ahead=7
+  return at(ahead)
+}
+
 function explicitDate(text:string,now=new Date()){
   const raw=String(text||'')
   const iso=raw.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/)
   if(iso)return ymd(Number(iso[1]),Number(iso[2]),Number(iso[3]))
   const dm=raw.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[ ,]+(20\d{2}))?\b/i)
-  if(!dm)return''
+  if(!dm)return relativeDate(raw,now)
   const month=MONTHS[String(dm[2]).toLowerCase()]
   const day=Number(dm[1])
   let year=Number(dm[3]||now.getUTCFullYear())
