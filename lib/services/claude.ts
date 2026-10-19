@@ -240,6 +240,10 @@ ${context}
 
 Provide a clear, concise answer based on these results. Cite sources when relevant. If the results don't fully answer the question, say so.
 
+BREVITY (19 Oct: long replies confused users): start with the direct answer in the first line (the number, the fact, or yes/no). Keep the whole reply under 8 short lines unless the user asked for a list or detail. Never open with "Based on the search results" or similar. If sources disagree, give the most-reported figure and the range in one line ("₹111.68/litre; sources range ₹110.89–₹111.68"), not a source-by-source breakdown. Cite at most two links. No closing advice paragraph unless it changes what the user should do.
+
+NEWS: for "latest" or "news" questions, list only items the results show as recent (dated within the last 7 days), newest first, one line each with its date. Never present an item more than a month old as latest news. If the results contain nothing recent, say that plainly in one line.
+
 SHOPPING: if the user wants products to buy, list concrete products that appear in the results (name, price in ₹ when shown, store, and the product or listing link), grouped into complete looks or options within their budget. Never answer with only videos, reels or style articles. If the results contain no actual products, say so plainly and give the store search link instead. Never claim stock or size availability that the results do not show, and never buy anything.
 
 FORMATTING: This reply is delivered over WhatsApp, which does NOT render markdown. NEVER emit markdown link syntax like [text](url) — write any URL as a bare URL. NEVER invent or output a URL for AskGogo's own product features (connecting Calendar/Gmail, the dashboard, upgrading, magic-link login) — only cite links that appear in the web search results above.
