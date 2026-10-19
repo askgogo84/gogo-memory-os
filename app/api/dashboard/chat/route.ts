@@ -47,6 +47,7 @@ import { tryRunTrainResearch } from '@/lib/agent/train-research'
 import { handleInboxReplyRead } from '@/lib/agent/open-loops'
 import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
 import { tryCancelRunFromChat } from '@/lib/agent/run-cancel'
+import { isTicketRetrievalAsk, buildTicketRetrievalReply } from '@/lib/services/asset-memory'
 
 export const dynamic = 'force-dynamic'
 
@@ -171,7 +172,22 @@ export async function POST(req: NextRequest) {
       .catch((err:any) => { console.error('UNDERSTAND_FIRST_DASHBOARD_FAILED:', String(err?.message || err).slice(0,160)); return null })
     if (understoodReply?.text) {
       if (!understoodReply.persisted) await saveConversation(user.telegram_id, text, understoodReply.text)
-      return NextResponse.json(understoodReply)
+      // The chat shows mediaUrl as an image; a PDF ticket keeps its "Open original" link in the text instead.
+      const pdfMedia = /^application\/pdf/i.test(String(understoodReply.mediaType || ''))
+      return NextResponse.json(pdfMedia ? { ...understoodReply, mediaUrl: null, mediaType: null } : understoodReply)
+    }
+    // 20 Oct live: "Jailer qr code" on the dashboard reached same-brain ("I don't have access to your BookMyShow
+    // or PVR account… the show's tonight") because #681's ticket retrieval was wired only into WhatsApp. Same
+    // owner-bound path here: the ticket attached to the saved booking (then a saved ticket document), with the
+    // image for the chat to show, or one honest line. Booking/buying/cancelling asks are not retrievals.
+    if (isTicketRetrievalAsk(text)) {
+      const ticket = await buildTicketRetrievalReply(Number(user.telegram_id), text, shadowEventId)
+      if (ticket) {
+        // The chat renders mediaUrl as an image; a PDF ticket keeps its "Open original" link in the text.
+        const image = Boolean(ticket.mediaUrl && /^image\//i.test(String(ticket.mediaType || '')))
+        await saveConversation(user.telegram_id, text, ticket.text)
+        return NextResponse.json({ text: ticket.text, mediaUrl: image ? ticket.mediaUrl : null, mediaType: image ? ticket.mediaType : null, handledBy: 'ticket-retrieval', status: 'completed', readOnly: true, mutated: false })
+      }
     }
     // Same gold-rate watch as WhatsApp: "alert me if gold rate drops by 10%" is a rule, never a one-off quote.
     const goldWatch=await tryCreateGoldRateWatchFromCommand({actor,surface:'web',text})

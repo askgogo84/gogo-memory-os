@@ -7,6 +7,7 @@ import * as workflows from '../lib/agent/content-workflows'
 import {formatOutgoingText} from '../lib/bot/format-response'
 import {handleInboxReplyRead} from '../lib/agent/open-loops'
 import {tryCancelRunFromChat} from '../lib/agent/run-cancel'
+import {isTicketRetrievalAsk} from '../lib/services/asset-memory'
 import {isGoldRateAlertPhrasing, parseGoldRateWatchCommand} from '../lib/agent/gold-rate-rule'
 import * as vaultProviders from '../lib/vault/providers'
 import * as accountIntent from '../lib/agent/external-account-intent'
@@ -131,6 +132,8 @@ const common = {'@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>f
   '@/lib/bot/pending-question-resolver':{tryResolvePendingQuestion:async()=>null},
   // The real run-cancel handler: a writing request is not a cancel, so it returns null without any read.
   '@/lib/agent/run-cancel':{tryCancelRunFromChat},
+  // The real ticket matcher: a writing request is not a ticket/QR ask, so no ticket lookup ever runs.
+  '@/lib/services/asset-memory':{isTicketRetrievalAsk,buildTicketRetrievalReply:async()=>{throw new Error('ticket retrieval must not claim a content workflow')}},
   // Inert gold-rate watch: a writing request is never a gold alert, so it must return null with no I/O.
   '@/lib/agent/gold-watch':{tryCreateGoldRateWatchFromCommand:async({text}:{text:string})=>{if(parseGoldRateWatchCommand(text)||isGoldRateAlertPhrasing(text))throw new Error('gold watch must not claim a content workflow');return null}},
   '@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/actor': {resolveAgentActor: async () => actor},

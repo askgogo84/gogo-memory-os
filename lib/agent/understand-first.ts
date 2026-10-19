@@ -310,6 +310,15 @@ export function buildUnderstandFirstHandlers(p: {
     }],
     async retrieveDocument({ text, referent }) {
       const assets = await import('@/lib/services/asset-memory')
+      // 20 Oct live: a ticket/QR ask ("Jailer qr code") is answered from the saved booking's attached ticket
+      // first, with the image, on both surfaces. Only a real match claims it; otherwise the lookup below runs.
+      if (assets.isTicketRetrievalAsk(text)) {
+        const ticket = await assets.buildTicketRetrievalReply(telegramId, text, p.messageId)
+        if (ticket?.found) {
+          return { text: ticket.text, handledBy: 'understand-first-retrieve', status: 'completed', persisted: false,
+            ...(ticket.mediaUrl ? { mediaUrl: ticket.mediaUrl, mediaType: ticket.mediaType || undefined } : {}) }
+        }
+      }
       if (referent.kind === 'document') {
         const docId = referent.id.replace(/^doc:/, '')
         const reply = await assets.buildDocumentReplyById(telegramId, docId, text, p.messageId)

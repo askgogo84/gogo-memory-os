@@ -1082,7 +1082,14 @@ function bookingWhen(ev: any): string {
   } catch { return '' }
 }
 
-export type TicketRetrievalReply = { text: string; mediaUrl?: string | null }
+export type TicketRetrievalReply = {
+  text: string
+  mediaUrl?: string | null
+  /** MIME type of mediaUrl (image/* or application/pdf), so a surface can decide how to show it. */
+  mediaType?: string | null
+  /** True when a saved booking or ticket document matched; false for the "nothing saved" line. */
+  found?: boolean
+}
 
 /**
  * "Jailer qr code", "show my Jailer 2 ticket": the ticket attached to the saved booking, else a saved
@@ -1114,24 +1121,24 @@ export async function buildTicketRetrievalReply(telegramId: number, text: string
     if (doc) {
       await clearFollowupState(telegramId, 'last_asset')
       await saveFollowupState(telegramId, 'last_asset', { docId: doc.id, messageId: messageId ?? null, source: 'retrieval' })
-      if (isSensitiveDoc(doc)) return { text: await buildMaskedSensitiveReply(telegramId, doc) }
+      if (isSensitiveDoc(doc)) return { text: await buildMaskedSensitiveReply(telegramId, doc), found: true }
       const when = bookingWhen(event)
       const head = `🎟️ ${String(event.title || doc.title || 'Your ticket').slice(0, 160)}${when ? ` — ${when}` : ''}${event.location ? `, ${String(event.location).slice(0, 120)}` : ''}`
       const body = await buildAssetFileReply(telegramId, { ...doc, title: doc.title || event.title }, null)
       const mime = String(doc.mime || '')
       const mediaUrl = doc.storage_path && /^(?:image\/|application\/pdf)/i.test(mime) ? await getDocumentSignedUrl(String(doc.storage_path), 600).catch(() => null) : null
-      return { text: `${head}\n${body}`, mediaUrl }
+      return { text: `${head}\n${body}`, mediaUrl, mediaType: mediaUrl ? mime : null, found: true }
     }
   }
   // No ticket on the booking: a saved ticket document may still match (metadata + #679 ticket boost).
   const fromDocuments = await buildAssetRetrievalReply(telegramId, text, messageId ?? null)
-  if (fromDocuments) return { text: fromDocuments }
+  if (fromDocuments) return { text: fromDocuments, found: true }
   if (event) {
     const when = bookingWhen(event)
-    return { text: `I have your ${String(event.title || 'booking').slice(0, 160)} booking saved${when ? ` (${when}${event.location ? `, ${String(event.location).slice(0, 120)}` : ''})` : ''}, but no ticket or QR image is attached to it.` }
+    return { text: `I have your ${String(event.title || 'booking').slice(0, 160)} booking saved${when ? ` (${when}${event.location ? `, ${String(event.location).slice(0, 120)}` : ''})` : ''}, but no ticket or QR image is attached to it.`, found: true }
   }
   const words = ticketQueryTokens(text)
-  return { text: `I don't have a saved ticket or QR${words.length ? ` for ${words.join(' ')}` : ''}.` }
+  return { text: `I don't have a saved ticket or QR${words.length ? ` for ${words.join(' ')}` : ''}.`, found: false }
 }
 
 export async function buildAssetFieldReply(telegramId: number, text: string): Promise<string | null> {
