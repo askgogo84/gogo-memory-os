@@ -11,6 +11,10 @@ const { retiredRunReason } = await import('../lib/agent/task-lifecycle')
 // ---- parser positives
 const positives: Array<[string, string | null, boolean]> = [
   ['cancel that task', null, true],
+  ['stop this job', null, true],
+  ['cancel current task', null, true],
+  ['abort the mission', null, true],
+  ['stop my medicine', 'medicine', false],
   ['Cancel the task.', null, true],
   ['please stop the current task', null, true],
   ['abort the job', null, true],
@@ -35,6 +39,8 @@ for (const text of [
   'cancel my grocery list', 'cancel my Swiggy order', 'stop the order', 'cancel the email draft', 'stop the music',
   'cancel that action', 'cancel my flight booking', 'cancel', 'stop', 'I want to stop working out', 'what tasks are running',
   'reject', 'stop the alarm', 'cancel subscription to Netflix',
+  // Review 19 Oct: bare run nouns with no determiner are not a cancel of "the most recent run".
+  'abort mission', 'cancel task', 'stop job', 'abort the mission task', 'abort task',
 ]) assert.equal(parseRunCancel(text), null, `"${text}" must not be claimed`)
 
 // ---- matcher: deterministic, ambiguity returns several
@@ -137,12 +143,13 @@ assert.ok(many && many.status === 'paused' && /Which one should I cancel\?/.test
 assert.ok(many!.text.includes('1. Book flight BLR to DEL on IndiGo') && many!.text.includes('2. Flight check-in for Mumbai trip'), many!.text)
 assert.equal(writes.length, 0, 'ambiguous cancels write nothing')
 
-// 0 matches (explicit): says so and lists the active tasks; nothing cancelled.
+// 0 matches (explicit named): falls through to other handlers (review 19 Oct); nothing cancelled.
 seed()
 const none = await tryCancelRunFromChat(owner, 'cancel the pizza order comparison task', deps())
 assert.equal(none, null, 'order phrases are not claimed')
-const none2 = await tryCancelRunFromChat(owner, 'stop working on the train search', deps())
-assert.ok(none2 && /^I don't see an active task called train search\. Your active tasks:/.test(none2.text) && none2.text.includes('Goa hotel search') && !none2.text.includes('Old pizza') && !none2.text.includes('Biryani'), none2?.text)
+assert.equal(await tryCancelRunFromChat(owner, 'stop working on the train search', deps()), null, 'explicit named miss falls through')
+assert.equal(await tryCancelRunFromChat(owner, 'cancel the buy milk task', deps()), null, 'reminder-like named task falls through')
+assert.equal(await tryCancelRunFromChat(owner, 'stop working on my resume', deps()), null, 'unrelated named miss falls through')
 assert.equal(writes.length, 0)
 // 0 matches (soft "stop the X"): left for other handlers.
 assert.equal(await tryCancelRunFromChat(owner, 'stop the train search', deps()), null)
@@ -150,14 +157,175 @@ assert.equal(await tryCancelRunFromChat(owner, 'stop the train search', deps()),
 seed(); stores.agent_runs = stores.agent_runs.filter(r => r.telegram_id !== '42' || r.status === 'completed')
 const empty = await tryCancelRunFromChat(owner, 'cancel that task', deps())
 assert.ok(empty && /no active tasks/.test(empty.text), empty?.text)
-const empty2 = await tryCancelRunFromChat(owner, 'cancel the hotel task', deps())
-assert.ok(empty2 && /I don't see an active task called hotel\. You have no active tasks right now\./.test(empty2.text), empty2?.text)
+assert.equal(empty!.text, 'You have no active tasks to cancel.')
+assert.equal(await tryCancelRunFromChat(owner, 'cancel the hotel task', deps()), null, 'named cancel with no active tasks falls through')
 assert.equal(run('r-other').status, 'running', "another owner's run is never a candidate")
 // Non-cancel text never touches the DB.
 seed()
 assert.equal(await tryCancelRunFromChat(owner, 'cancel my 5pm reminder', deps()), null)
 assert.equal(await tryCancelRunFromChat(owner, 'stop watching iPhone price', deps()), null)
 assert.equal(writes.length, 0)
+
+// ---- review 19 Oct: soft "stop the/my X" never over-claims single generic words.
+function seedSoft() {
+  writes.length = 0; released.length = 0
+  stores = {
+    agent_runs: [
+      { id: 's-med', telegram_id: '42', title: 'Order my medicine refill from Apollo', type: 'browser_task', status: 'running', updated_at: '2026-10-19T09:00:00Z', metadata_json: {} },
+      { id: 's-pay', telegram_id: '42', title: 'Pay electricity bill payment', type: 'browser_task', status: 'running', updated_at: '2026-10-19T08:59:00Z', metadata_json: {} },
+      { id: 's-brief', telegram_id: '42', title: 'Prepare morning briefing with news', type: 'research', status: 'running', updated_at: '2026-10-19T08:58:00Z', metadata_json: {} },
+      { id: 's-sip', telegram_id: '42', title: 'Review my SIP plan', type: 'research', status: 'running', updated_at: '2026-10-19T08:57:00Z', metadata_json: {} },
+      { id: 's-book', telegram_id: '42', title: 'Hotel booking in Goa', type: 'browser_task', status: 'running', updated_at: '2026-10-19T08:56:00Z', metadata_json: {} },
+      { id: 's-book2', telegram_id: '42', title: 'Train booking to Mysore', type: 'browser_task', status: 'running', updated_at: '2026-10-19T08:55:00Z', metadata_json: {} },
+    ],
+    agent_approvals: [], agent_activity: [], agent_steps: [],
+  }
+}
+seedSoft()
+for (const text of ['stop my medicine', 'stop the payment', 'stop the booking', 'stop the briefing', 'stop my SIP', 'stop the news', 'stop my plan', 'stop the hotel']) {
+  assert.equal(await tryCancelRunFromChat(owner, text, deps()), null, `"${text}" must not cancel on a one-word overlap`)
+}
+assert.equal(writes.length, 0, 'soft one-word asks write nothing')
+// Two content words, exactly one run: claimed.
+const softHit = await tryCancelRunFromChat(owner, 'stop the hotel booking', deps())
+assert.ok(softHit && softHit.text === 'Cancelled: Hotel booking in Goa. Nothing further will run for it.', softHit?.text)
+assert.equal(run('s-book').status, 'failed'); assert.equal(run('s-book2').status, 'running')
+// Soft with two content words matching two runs: not claimed (no ambiguity prompt either).
+seedSoft()
+stores.agent_runs.push({ id: 's-book3', telegram_id: '42', title: 'Hotel booking in Mysore', type: 'browser_task', status: 'running', updated_at: '2026-10-19T08:54:00Z', metadata_json: {} })
+assert.equal(await tryCancelRunFromChat(owner, 'stop the hotel booking', deps()), null, 'soft ambiguous match falls through')
+assert.equal(writes.length, 0)
+
+// ---- review 19 Oct: DB failures. Reads return null; a failed cancel update says so honestly.
+function failingDb(fail: { table: string; op: 'select' | 'update' }) {
+  const inner = makeDb()
+  return { from(table: string) {
+    const b = inner.from(table)
+    let op: 'select' | 'update' = 'select'
+    const origUpdate = b.update
+    b.update = (r: Row) => { op = 'update'; return origUpdate(r) }
+    const hit = () => table === fail.table && op === fail.op
+    const origMaybe = b.maybeSingle, origThen = b.then
+    b.maybeSingle = async () => hit() ? { data: null, error: { message: 'boom' } } : origMaybe()
+    b.then = (res: any, rej: any) => hit() ? Promise.resolve({ data: null, error: { message: 'boom' } }).then(res, rej) : origThen(res, rej)
+    return b
+  } }
+}
+seed()
+assert.equal(await tryCancelRunFromChat(owner, 'cancel that task', { ...deps(), db: failingDb({ table: 'agent_runs', op: 'select' }) }), null, 'run list read error returns null')
+assert.equal(await tryCancelRunFromChat(owner, 'stop the flight booking', { ...deps(), db: failingDb({ table: 'agent_approvals', op: 'select' }) }), null, 'approval read error returns null')
+assert.equal(run('r-flight').status, 'waiting_approval', 'nothing cancelled after a read error')
+seed()
+const saveFail = await tryCancelRunFromChat(owner, 'cancel the goa hotel search task', { ...deps(), db: failingDb({ table: 'agent_runs', op: 'update' }) })
+assert.ok(saveFail && saveFail.status === 'paused' && saveFail.text === "I couldn't confirm that Goa hotel search was cancelled, and I haven't retried. Ask *what are you working on for me?* to see its current state.", saveFail?.text)
+assert.equal(run('r-hotel').status, 'running')
+assert.equal(stores.agent_activity.length, 0, 'no cancelled activity when the cancel was not confirmed')
+
+// ---- review 19 Oct: cancel terminates the run's unfinished steps (agent_steps_status_check allows 'cancelled').
+const migration = readFileSync('supabase/migrations/20260921051000_brain_v1_1_schema_foundation.sql', 'utf8')
+const stepCheck = migration.slice(migration.indexOf('add constraint agent_steps_status_check'))
+assert.match(stepCheck.slice(0, 400), /'cancelled'::text/, 'agent_steps allows cancelled')
+seed()
+stores.agent_steps = [
+  { id: 'st-1', run_id: 'r-hotel', telegram_id: '42', status: 'completed' },
+  { id: 'st-2', run_id: 'r-hotel', telegram_id: '42', status: 'running' },
+  { id: 'st-3', run_id: 'r-hotel', telegram_id: '42', status: 'queued' },
+  { id: 'st-x', run_id: 'r-other', telegram_id: '77', status: 'queued' },
+  { id: 'st-y', run_id: 'r-flight', telegram_id: '42', status: 'queued' },
+]
+await tryCancelRunFromChat(owner, 'cancel the goa hotel search task', deps())
+const step = (id: string) => stores.agent_steps.find(r => r.id === id)!
+assert.equal(step('st-1').status, 'completed', 'finished steps untouched')
+for (const id of ['st-2', 'st-3']) { assert.equal(step(id).status, 'cancelled'); assert.equal(step(id).error, 'user_cancelled') }
+assert.equal(step('st-x').status, 'queued', "other owner's steps untouched")
+assert.equal(step('st-y').status, 'queued', "other runs' steps untouched")
+for (const w of writes) assert.ok(w.filters.some(([op, c, v]: any) => op === 'eq' && c === 'telegram_id' && String(v) === '42'), `write to ${w.table} is owner-bound`)
+
+// ---- review 19 Oct: a cancel mid-wave is never resurrected by reconcileRun (actual runtime, in-memory DB).
+{
+  const ts = (await import('typescript')).default
+  const { runInNewContext } = await import('node:vm')
+  const { createHash } = await import('node:crypto')
+  function loadRuntime(db: any, notified: any[]) {
+    const exports: any = {}
+    const output = ts.transpileModule(readFileSync('lib/agent/autonomous-runtime.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
+    const requireMap: Record<string, any> = {
+      'node:crypto': { createHash },
+      '@/lib/supabase-admin': { supabaseAdmin: db },
+      './specialist-registry': { selectSpecialistRoute: () => ({ primary: 'research', supporting: [] }) },
+      './run-notify': { notifyRunOutcome: async (r: any) => { notified.push(r); return { status: 'sent' } } },
+    }
+    runInNewContext(output, { exports, require: (n: string) => { if (n in requireMap) return requireMap[n]; throw new Error(`unexpected import ${n}`) }, console, Date, Promise, Math, Number, String, Array, Set, Map, Object, JSON, Error, Boolean })
+    return exports
+  }
+  const rt = (key: string, deps: string[] = []) => ({ runtime: { stepKey: key, dependsOn: deps, lane: key, maxAttempts: 4, attempt: 0, requiresApproval: false, verificationRequired: false, mutation: false, idempotencyKey: `k-${key}` } })
+  function seedWave(stepsDone = false) {
+    writes.length = 0
+    stores = {
+      agent_runs: [{ id: 'auto-1', telegram_id: '42', title: 'Plan my Sunday', type: 'autonomous', status: 'running', updated_at: '2026-10-19T09:00:00Z', metadata_json: { persistent_general_plan: true } }],
+      agent_steps: [
+        { id: 'w1', run_id: 'auto-1', telegram_id: '42', ordinal: 1, tool_name: 'memory.verified', title: 'Check memory', status: stepsDone ? 'completed' : 'queued', output_json: rt('a') },
+      ],
+      agent_approvals: [], agent_activity: [],
+    }
+  }
+  const actor = { userId: 'u', legacyTelegramId: 42, whatsappId: 'inert', name: 'Fixture' }
+
+  // (1) The user cancels from chat while the cron wave's only step is executing. The step then "completes";
+  // reconcileRun would previously have written 'completed' and sent "Done: Plan my Sunday".
+  seedWave()
+  const db1 = makeDb(); const notified1: any[] = []
+  const runtime1 = loadRuntime(db1, notified1)
+  const registry1 = { 'memory.verified': async () => {
+    const cancelled = await tryCancelRunFromChat(owner, 'cancel that task', { db: db1, now: () => new Date('2026-10-19T10:00:00Z') })
+    assert.ok(cancelled && cancelled.text === 'Cancelled: Plan my Sunday. Nothing further will run for it.', cancelled?.text)
+    return { status: 'completed' as const, verified: true, output: { text: 'done' } }
+  } }
+  const wave1 = await runtime1.executeAutonomousRun({ actor, runId: 'auto-1', registry: registry1, notifyOutcome: true })
+  assert.equal(run('auto-1').status, 'failed', 'cancelled run stays failed'); assert.equal(run('auto-1').error, 'user_cancelled')
+  assert.equal(run('auto-1').metadata_json.closure_reason, 'user_cancelled')
+  assert.equal(notified1.length, 0, 'no outcome message for a cancelled run')
+  assert.notEqual(wave1.status, 'completed'); assert.notEqual(wave1.status, 'running')
+  assert.equal(stores.agent_steps[0].status, 'cancelled', 'the in-flight step stays cancelled; its late completion write is guarded')
+  assert.ok(!stores.agent_activity.some(a => a.event_type === 'autonomous_run_completed'), 'no completed activity')
+  // A later cron wave sees the terminal run and does nothing.
+  const again = await runtime1.executeAutonomousRun({ actor, runId: 'auto-1', registry: registry1, notifyOutcome: true })
+  assert.equal(again.executed, 0); assert.equal(run('auto-1').status, 'failed'); assert.equal(notified1.length, 0)
+
+  // (2) Race inside reconcileRun: the cancel lands after reconcile read the run but before its write. The guarded
+  // update matches no row, so nothing is written and nobody is notified.
+  for (const stepStatus of ['completed', 'running-left'] as const) {
+    seedWave(stepStatus === 'completed')
+    if (stepStatus === 'running-left') stores.agent_steps.push({ id: 'w2', run_id: 'auto-1', telegram_id: '42', ordinal: 2, tool_name: 'memory.verified', title: 'Later', status: 'queued', output_json: rt('b', ['a']) })
+    const base = makeDb(); const notified2: any[] = []
+    let runReads = 0
+    const racingDb = { from(table: string) {
+      const b = base.from(table)
+      if (table === 'agent_runs') {
+        const origMaybe = b.maybeSingle
+        b.maybeSingle = async () => {
+          const result = await origMaybe()
+          if (++runReads === 2) Object.assign(run('auto-1'), { status: 'failed', error: 'user_cancelled', summary: 'Cancelled by you.', metadata_json: { state: 'closed', closure_reason: 'user_cancelled' } })
+          return result
+        }
+      }
+      return b
+    } }
+    const runtime2 = loadRuntime(racingDb, notified2)
+    const wave2 = await runtime2.executeAutonomousRun({ actor, runId: 'auto-1', registry: { 'memory.verified': async () => ({ status: 'completed' as const, verified: true }) }, notifyOutcome: true })
+    assert.equal(wave2.status, 'superseded', `${stepStatus}: reconcile reports it lost the race`)
+    assert.equal(run('auto-1').status, 'failed', `${stepStatus}: stays failed`); assert.equal(run('auto-1').error, 'user_cancelled')
+    assert.equal(notified2.length, 0, `${stepStatus}: no notify`)
+    const runWrite = writes.find(w => w.table === 'agent_runs')
+    assert.ok(runWrite && runWrite.filters.some(([op, c, v]: any) => op === 'in' && c === 'status' && !v.includes('failed') && v.includes('running')), `${stepStatus}: run update is status-guarded`)
+  }
+
+  // (3) Normal flows unchanged: a running run still completes and notifies once.
+  seedWave(true)
+  const notified3: any[] = []
+  const done = await loadRuntime(makeDb(), notified3).executeAutonomousRun({ actor, runId: 'auto-1', registry: {}, notifyOutcome: true })
+  assert.equal(done.status, 'completed'); assert.equal(run('auto-1').status, 'completed'); assert.equal(notified3.length, 1)
+}
 
 // ---- wiring: WhatsApp attention path (before open loops) and route gate; dashboard chat (before the planner).
 const bridge = readFileSync('lib/agent/whatsapp-bridge.ts', 'utf8')

@@ -286,10 +286,27 @@ async function markFailure(row: RuntimeStepRow, telegramId: string, meta: Runtim
   return { canRetry, retryAt }
 }
 
+// Statuses reconcileRun may move a run out of. createAutonomousRun starts runs as 'running'; reconcile itself writes
+// 'waiting_approval'; persistent plans can be 'queued' or 'paused' before a resume. Terminal rows (completed, failed —
+// including a user cancel, which is failed/'user_cancelled' — and outcome_unknown) are never rewritten, so a wave that
+// finishes after the user cancelled cannot resurrect the run or send a "Done:" message for it.
+export const RECONCILABLE_RUN_STATUSES = ['queued', 'running', 'waiting_approval', 'paused'] as const
+
+// The run left an active status between our read and our write (a user cancel, or another worker finishing it).
+function rowsUpdated(data: unknown) {
+  return Array.isArray(data) ? data.length > 0 : Boolean(data)
+}
+
+function isReconcilable(run: any) {
+  return (RECONCILABLE_RUN_STATUSES as readonly string[]).includes(String(run?.status)) && String(run?.error || '') !== 'user_cancelled'
+}
+
 // notifyOutcome is set only by background drivers (the autonomous-runs cron). A run that finishes inside the live
 // WhatsApp request is already answered by that reply, so it must not get a second message.
-async function reconcileRun(runId: string, telegramId: string, opts: { notifyOutcome?: boolean } = {}) {
+async function reconcileRun(runId: string, telegramId: string, opts: { notifyOutcome?: boolean } = {}): Promise<string> {
   const { run, steps } = await loadAutonomousRun(runId, telegramId)
+  // Already terminal (e.g. cancelled while this wave ran): leave it exactly as it is, write nothing, notify nobody.
+  if (!isReconcilable(run)) return String(run.status)
   const total = Math.max(1, steps.length)
   const completed = steps.filter((step) => step.status === 'completed').length
   const failed = steps.filter((step) => step.status === 'failed')
@@ -298,23 +315,26 @@ async function reconcileRun(runId: string, telegramId: string, opts: { notifyOut
   const now = new Date().toISOString()
 
   if (completed === steps.length) {
-    const { error } = await supabaseAdmin.from('agent_runs').update({ status: 'completed', progress: 100, summary: 'Completed and verified.', completed_at: now, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: 'completed' } }).eq('id', runId).eq('telegram_id', telegramId)
+    const { data: updated, error } = await supabaseAdmin.from('agent_runs').update({ status: 'completed', progress: 100, summary: 'Completed and verified.', completed_at: now, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: 'completed' } }).eq('id', runId).eq('telegram_id', telegramId).in('status', [...RECONCILABLE_RUN_STATUSES]).select('id')
     if (error) throw new Error(`autonomous_run_complete_failed:${error.message}`)
+    if (!rowsUpdated(updated)) return 'superseded'
     await activity(telegramId, runId, 'autonomous_run_completed', 'Gogo completed and verified the full plan.', { completed_steps: completed, total_steps: total })
     if (opts.notifyOutcome) await notifyRunOutcome({ ...run, id: runId, telegram_id: telegramId, type: 'autonomous', status: 'completed', summary: 'Completed and verified.', metadata_json: { ...((run.metadata_json as any) || {}), state: 'completed' } })
     return 'completed' as const
   }
   if (failed.length) {
-    const { error } = await supabaseAdmin.from('agent_runs').update({ status: 'failed', progress, error: safe(failed[0].error, 500), completed_at: now, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: 'failed' } }).eq('id', runId).eq('telegram_id', telegramId)
+    const { data: updated, error } = await supabaseAdmin.from('agent_runs').update({ status: 'failed', progress, error: safe(failed[0].error, 500), completed_at: now, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: 'failed' } }).eq('id', runId).eq('telegram_id', telegramId).in('status', [...RECONCILABLE_RUN_STATUSES]).select('id')
     if (error) throw new Error(`autonomous_run_fail_failed:${error.message}`)
+    if (!rowsUpdated(updated)) return 'superseded'
     await activity(telegramId, runId, 'autonomous_run_failed', 'Gogo stopped because a step exhausted safe retries or hit a hard boundary.', { failed_step_ids: failed.map((step) => step.id) })
     if (opts.notifyOutcome) await notifyRunOutcome({ ...run, id: runId, telegram_id: telegramId, type: 'autonomous', status: 'failed', error: safe(failed[0].error, 500), metadata_json: { ...((run.metadata_json as any) || {}), state: 'failed' } })
     return 'failed' as const
   }
   const status = waitingApproval ? 'waiting_approval' : 'running'
-  const { error } = await supabaseAdmin.from('agent_runs').update({ status, progress, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: waitingApproval ? 'waiting_approval' : 'executing' } }).eq('id', runId).eq('telegram_id', telegramId)
+  const { data: updated, error } = await supabaseAdmin.from('agent_runs').update({ status, progress, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: waitingApproval ? 'waiting_approval' : 'executing' } }).eq('id', runId).eq('telegram_id', telegramId).in('status', [...RECONCILABLE_RUN_STATUSES]).select('id')
   if (error) throw new Error(`autonomous_run_reconcile_failed:${error.message}`)
-  return status as 'waiting_approval' | 'running'
+  if (!rowsUpdated(updated)) return 'superseded'
+  return status
 }
 
 export async function executeAutonomousRun(params: {

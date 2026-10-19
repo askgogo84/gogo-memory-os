@@ -9,7 +9,9 @@ export type RunCancelIntent = {
   // null means "that / the task": the most recently updated active run.
   target: string | null
   // explicit: the sentence says task/job/mission, "stop working on" or "abort". A soft
-  // "stop the <x>" is only claimed when an active run matches <x>; otherwise other handlers get it.
+  // "stop the <x>" is only claimed when exactly one active run matches <x> on two or more content
+  // words; otherwise other handlers get it. A named target that matches no active run is never
+  // claimed either (explicit or not), so "cancel the buy milk task" falls through.
   explicit: boolean
 }
 
@@ -32,20 +34,23 @@ function normalise(text: string) {
     .slice(0, 300)
 }
 
+const BARE_RUN_NOUN = new RegExp(`^${RUN_NOUN}s?$`, 'i')
+
 function cleanTarget(raw: string) {
   const target = String(raw || '')
     .replace(/^(?:the|my|your|that|this|current|ongoing|running|active)\s+/i, '')
     .replace(/^(?:the|my|your|that|this|current|ongoing|running|active)\s+/i, '')
     .trim()
-  return target && !VAGUE_TARGET.test(target) ? target.slice(0, 120) : null
+  return target && !VAGUE_TARGET.test(target) && !BARE_RUN_NOUN.test(target) ? target.slice(0, 120) : null
 }
 
 export function parseRunCancel(text: string): RunCancelIntent | null {
   const t = normalise(text)
   if (!t || FOREIGN_OBJECT.test(t)) return null
 
-  // "cancel that task", "stop the current task", "abort the job", "kill the running mission"
-  if (new RegExp(`^(?:cancel|stop|abort|kill|end|halt)\\s+(?:(?:that|this|the|my|your)\\s+)?(?:(?:current|last|latest|running|ongoing|active)\\s+)?${RUN_NOUN}$`, 'i').test(t)) {
+  // "cancel that task", "stop the current task", "abort the job", "kill the running mission".
+  // A determiner or qualifier is required: bare "abort mission" / "cancel task" is not claimed.
+  if (new RegExp(`^(?:cancel|stop|abort|kill|end|halt)\\s+(?:(?:(?:that|this|the|my|your)\\s+)(?:(?:current|last|latest|running|ongoing|active)\\s+)?|(?:current|last|latest|running|ongoing|active)\\s+)${RUN_NOUN}$`, 'i').test(t)) {
     return { target: null, explicit: true }
   }
   // "stop what you're doing", "stop working on it", "stop working on that"
@@ -56,14 +61,20 @@ export function parseRunCancel(text: string): RunCancelIntent | null {
   const named = t.match(new RegExp(`^(?:cancel|stop|abort|kill|end|halt)\\s+(?:the|my|your|that|this)\\s+(.+?)\\s+${RUN_NOUN}$`, 'i'))
   if (named) {
     const target = cleanTarget(named[1])
-    return { target, explicit: true }
+    return target ? { target, explicit: true } : null
   }
   // "stop working on the Goa hotel search"
   const working = t.match(/^(?:stop|quit)\s+working\s+on\s+(.+)$/i)
-  if (working) return { target: cleanTarget(working[1]), explicit: true }
-  // "abort the flight booking"
+  if (working) {
+    const target = cleanTarget(working[1])
+    return target ? { target, explicit: true } : null
+  }
+  // "abort the flight booking" (bare "abort mission" is not a named target)
   const abort = t.match(/^abort\s+(.+)$/i)
-  if (abort) return { target: cleanTarget(abort[1]), explicit: true }
+  if (abort) {
+    const target = cleanTarget(abort[1])
+    return target ? { target, explicit: true } : null
+  }
   // "stop the flight booking" — soft: only claimed when an active run fully matches.
   const soft = t.match(/^(?:stop|halt)\s+(?:the|my)\s+(.+)$/i)
   if (soft) {
@@ -90,15 +101,22 @@ function runLabel(run: any) {
   return String(run?.title || run?.type || 'Untitled task').replace(/\s+/g, ' ').trim().slice(0, 140)
 }
 
+// Number of the phrase's content words found in the run title (and its type).
+export function overlapRunTitle(run: any, phrase: string) {
+  const want = tokens(phrase)
+  if (!want.length) return { matched: 0, total: 0 }
+  const have = tokens(`${runLabel(run)} ${String(run?.type || '').replace(/_/g, ' ')}`)
+  const matched = want.filter(word => have.some(h => h === word || (word.length >= 4 && h.length >= 4 && (h.startsWith(word) || word.startsWith(h))))).length
+  return { matched, total: want.length }
+}
+
 // 0..1 share of the phrase's words found in the run title (2 for an exact title).
 export function scoreRunTitle(run: any, phrase: string) {
-  const want = tokens(phrase)
-  if (!want.length) return 0
+  const { matched, total } = overlapRunTitle(run, phrase)
+  if (!total) return 0
   const title = runLabel(run)
   if (title.toLowerCase().replace(/\s+/g, ' ') === String(phrase || '').toLowerCase().replace(/\s+/g, ' ').trim()) return 2
-  const have = tokens(`${title} ${String(run?.type || '').replace(/_/g, ' ')}`)
-  const matched = want.filter(word => have.some(h => h === word || (word.length >= 4 && h.length >= 4 && (h.startsWith(word) || word.startsWith(h))))).length
-  return matched / want.length
+  return matched / total
 }
 
 function byRecency(a: any, b: any) {
@@ -168,24 +186,29 @@ export async function tryCancelRunFromChat(owner: { telegramId: string | number 
     .in('status', [...CANCELLABLE_RUN_STATUSES])
     .order('updated_at', { ascending: false })
     .limit(25)
-  if (error) throw new Error(`run_cancel_list_failed:${error.message}`)
+  // A failed read never claims the message: other handlers (or the general agent) still get it.
+  if (error) {
+    console.error('RUN_CANCEL_LIST_FAILED:', String(error.message || error).slice(0, 180))
+    return null
+  }
   // Owner-bound twice: the query filter and the row itself.
   const active = ((data || []) as any[])
     .filter(run => String(run?.telegram_id ?? tg) === tg && (CANCELLABLE_RUN_STATUSES as readonly string[]).includes(String(run?.status)) && !retiredRunReason(run))
     .sort(byRecency)
 
-  const activeList = () => active.slice(0, 8).map(run => `• ${runLabel(run)} (${statusLabel(String(run.status))})`).join('\n')
   let target: any
   if (!intent.target) {
-    if (!active.length) return reply('run-cancel-none', 'completed', 'You have no active tasks right now, so there is nothing to cancel.')
+    if (!active.length) return reply('run-cancel-none', 'completed', 'You have no active tasks to cancel.')
     target = active[0]
   } else {
     const matches = matchRunByTitle(active, intent.target)
-    if (!matches.length) {
-      if (!intent.explicit) return null
-      return reply('run-cancel-no-match', 'paused', active.length
-        ? `I don't see an active task called ${intent.target}. Your active tasks:\n${activeList()}`
-        : `I don't see an active task called ${intent.target}. You have no active tasks right now.`)
+    // A named target that matches no active run is not a run cancel ("cancel the buy milk task",
+    // "stop working on my resume"): fall through so the reminder/list/general handlers can answer.
+    if (!matches.length) return null
+    if (!intent.explicit) {
+      // Soft "stop the/my X": claim only one unambiguous run sharing two or more content words, so
+      // "stop my medicine" or "stop the SIP" never cancels a task whose title merely contains the word.
+      if (matches.length !== 1 || overlapRunTitle(matches[0], intent.target).matched < 2) return null
     }
     if (matches.length > 1) {
       const lines = matches.slice(0, 8).map((run, index) => `${index + 1}. ${runLabel(run)} (${statusLabel(String(run.status))})`).join('\n')
@@ -203,7 +226,10 @@ export async function tryCancelRunFromChat(owner: { telegramId: string | number 
     .eq('run_id', runId)
     .eq('telegram_id', tg)
     .in('status', ['pending', 'approved', 'executed'])
-  if (approvalReadError) throw new Error(`run_cancel_approval_read_failed:${approvalReadError.message}`)
+  if (approvalReadError) {
+    console.error('RUN_CANCEL_APPROVAL_READ_FAILED:', String(approvalReadError.message || approvalReadError).slice(0, 180))
+    return null
+  }
   const approvals = (approvalRows || []) as any[]
   const submitted = possiblySubmitted(target, approvals)
 
@@ -223,8 +249,22 @@ export async function tryCancelRunFromChat(owner: { telegramId: string | number 
     .in('status', [...CANCELLABLE_RUN_STATUSES])
     .select('id')
     .maybeSingle()
-  if (saveError) throw new Error(`run_cancel_save_failed:${saveError.message}`)
+  if (saveError) {
+    console.error('RUN_CANCEL_SAVE_FAILED:', String(saveError.message || saveError).slice(0, 180))
+    return reply(runId, 'paused', `I couldn't confirm that ${title} was cancelled, and I haven't retried. Ask *what are you working on for me?* to see its current state.`)
+  }
   if (!saved) return reply(runId, 'paused', `${title} finished or changed just now, so nothing was cancelled. Ask *what are you working on for me?* to see its current state.`)
+
+  // Terminate the run's unfinished steps too, so no worker or reconcile pass treats the run as live.
+  // agent_steps_status_check allows 'cancelled'. A step whose handler is already executing keeps
+  // running in that worker, but its completion/failure writes are guarded on status 'running' and
+  // the run itself can no longer be moved out of 'failed' by reconcileRun.
+  const { error: stepCancelError } = await db.from('agent_steps')
+    .update({ status: 'cancelled', error: 'user_cancelled', completed_at: now })
+    .eq('run_id', runId)
+    .eq('telegram_id', tg)
+    .in('status', ['queued', 'running', 'waiting_approval'])
+  if (stepCancelError) console.error('RUN_CANCEL_STEPS_FAILED:', stepCancelError.message)
 
   const pendingIds = approvals.filter(row => row.status === 'pending').map(row => String(row.id))
   let rejectedIds: string[] = []
