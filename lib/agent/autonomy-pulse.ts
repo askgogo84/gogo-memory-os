@@ -177,6 +177,8 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
   const seenRunTitles=new Set<string>()
   for(const r of runs||[]){
     if(retiredRunReason(r))continue
+    // The owner already got this run's one outcome message (run-notify); don't announce it again.
+    if((r.metadata_json as any)?.outcome_notified_at)continue
     if(String(r.status)==='waiting_approval')continue
     const errorCode=clean(r.error,160)
     if(suppressedRunErrors.has(errorCode))continue

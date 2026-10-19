@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { selectSpecialistRoute, type SpecialistRoute } from './specialist-registry'
 import type { AgentActor } from './actor'
+import { notifyRunOutcome } from './run-notify'
 
 export const AUTONOMOUS_RUNTIME_VERSION = 'gogo-autonomous-v1'
 const DEFAULT_LEASE_MINUTES = 10
@@ -285,7 +286,9 @@ async function markFailure(row: RuntimeStepRow, telegramId: string, meta: Runtim
   return { canRetry, retryAt }
 }
 
-async function reconcileRun(runId: string, telegramId: string) {
+// notifyOutcome is set only by background drivers (the autonomous-runs cron). A run that finishes inside the live
+// WhatsApp request is already answered by that reply, so it must not get a second message.
+async function reconcileRun(runId: string, telegramId: string, opts: { notifyOutcome?: boolean } = {}) {
   const { run, steps } = await loadAutonomousRun(runId, telegramId)
   const total = Math.max(1, steps.length)
   const completed = steps.filter((step) => step.status === 'completed').length
@@ -298,12 +301,14 @@ async function reconcileRun(runId: string, telegramId: string) {
     const { error } = await supabaseAdmin.from('agent_runs').update({ status: 'completed', progress: 100, summary: 'Completed and verified.', completed_at: now, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: 'completed' } }).eq('id', runId).eq('telegram_id', telegramId)
     if (error) throw new Error(`autonomous_run_complete_failed:${error.message}`)
     await activity(telegramId, runId, 'autonomous_run_completed', 'Gogo completed and verified the full plan.', { completed_steps: completed, total_steps: total })
+    if (opts.notifyOutcome) await notifyRunOutcome({ ...run, id: runId, telegram_id: telegramId, type: 'autonomous', status: 'completed', summary: 'Completed and verified.', metadata_json: { ...((run.metadata_json as any) || {}), state: 'completed' } })
     return 'completed' as const
   }
   if (failed.length) {
     const { error } = await supabaseAdmin.from('agent_runs').update({ status: 'failed', progress, error: safe(failed[0].error, 500), completed_at: now, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: 'failed' } }).eq('id', runId).eq('telegram_id', telegramId)
     if (error) throw new Error(`autonomous_run_fail_failed:${error.message}`)
     await activity(telegramId, runId, 'autonomous_run_failed', 'Gogo stopped because a step exhausted safe retries or hit a hard boundary.', { failed_step_ids: failed.map((step) => step.id) })
+    if (opts.notifyOutcome) await notifyRunOutcome({ ...run, id: runId, telegram_id: telegramId, type: 'autonomous', status: 'failed', error: safe(failed[0].error, 500), metadata_json: { ...((run.metadata_json as any) || {}), state: 'failed' } })
     return 'failed' as const
   }
   const status = waitingApproval ? 'waiting_approval' : 'running'
@@ -317,13 +322,14 @@ export async function executeAutonomousRun(params: {
   runId: string
   registry: AutonomousToolRegistry
   maxParallel?: number
+  notifyOutcome?: boolean
 }) {
   const telegramId = String(params.actor.legacyTelegramId)
   const { run, steps } = await loadAutonomousRun(params.runId, telegramId)
   if (['completed', 'failed', 'cancelled'].includes(String(run.status))) return { runId: params.runId, status: run.status, executed: 0 }
   const objective = safe((run.metadata_json as any)?.objective || run.title, 4000)
   const candidates = readyAutonomousSteps(steps).slice(0, Math.max(1, Math.min(8, Number(params.maxParallel || 3))))
-  if (!candidates.length) return { runId: params.runId, status: await reconcileRun(params.runId, telegramId), executed: 0 }
+  if (!candidates.length) return { runId: params.runId, status: await reconcileRun(params.runId, telegramId, { notifyOutcome: params.notifyOutcome }), executed: 0 }
 
   const executions = await Promise.all(candidates.map(async (row) => {
     const claimed = await claimStep(row, telegramId)
@@ -367,7 +373,7 @@ export async function executeAutonomousRun(params: {
     }
   }))
 
-  const status = await reconcileRun(params.runId, telegramId)
+  const status = await reconcileRun(params.runId, telegramId, { notifyOutcome: params.notifyOutcome })
   return { runId: params.runId, status, executed: executions.filter((item) => item.claimed).length, executions }
 }
 
@@ -388,7 +394,7 @@ export async function releaseApprovedAutonomousStep(params: { actor: AgentActor;
   await reconcileRun(params.runId, telegramId)
 }
 
-export async function recoverStaleAutonomousSteps(params: { actor: AgentActor; runId: string; staleMinutes?: number }) {
+export async function recoverStaleAutonomousSteps(params: { actor: AgentActor; runId: string; staleMinutes?: number; notifyOutcome?: boolean }) {
   const telegramId = String(params.actor.legacyTelegramId)
   const staleBefore = new Date(Date.now() - Math.max(2, Number(params.staleMinutes || DEFAULT_LEASE_MINUTES)) * 60_000).toISOString()
   const { data, error } = await supabaseAdmin.from('agent_steps').select('id,run_id,ordinal,tool_name,title,status,output_json,error,started_at,completed_at').eq('run_id', params.runId).eq('telegram_id', telegramId).eq('status', 'running').lte('started_at', staleBefore)
@@ -403,7 +409,7 @@ export async function recoverStaleAutonomousSteps(params: { actor: AgentActor; r
     if (updated?.id) recovered++
   }
   if (recovered) await activity(telegramId, params.runId, 'autonomous_run_resumed', `Gogo recovered ${recovered} stale execution step${recovered === 1 ? '' : 's'} after an interruption.`, { recovered })
-  await reconcileRun(params.runId, telegramId)
+  await reconcileRun(params.runId, telegramId, { notifyOutcome: params.notifyOutcome })
   return { recovered }
 }
 

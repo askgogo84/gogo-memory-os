@@ -144,12 +144,13 @@ function toolName(step: GeneralPlanStep) {
   return 'travel.read'
 }
 
-async function drivePersistentRun(actor: AgentActor, runId: string, missionText: string, maxWaves = 10) {
-  await recoverStaleAutonomousSteps({ actor, runId }).catch(() => ({ recovered:0 }))
+// notifyOutcome: only the background resume path sends the one outcome message; the live request replies itself.
+async function drivePersistentRun(actor: AgentActor, runId: string, missionText: string, maxWaves = 10, notifyOutcome = false) {
+  await recoverStaleAutonomousSteps({ actor, runId, notifyOutcome }).catch(() => ({ recovered:0 }))
   let lastStatus = 'running'
   let executedTotal = 0
   for (let wave = 0; wave < maxWaves; wave++) {
-    const result = await executeAutonomousRun({ actor, runId, registry: registryFor(missionText), maxParallel: 3 })
+    const result = await executeAutonomousRun({ actor, runId, registry: registryFor(missionText), maxParallel: 3, notifyOutcome })
     executedTotal += Number(result.executed || 0)
     lastStatus = String(result.status || lastStatus)
     if (TERMINAL_RUN_STATES.has(lastStatus) || lastStatus === 'waiting_approval') break
@@ -164,7 +165,7 @@ export async function resumePersistentGeneralPlan(params:{actor:AgentActor;runId
   if (!meta.persistent_general_plan) throw new Error('not_persistent_general_plan')
   if (TERMINAL_RUN_STATES.has(String(run.status))) return { runId:params.runId,status:String(run.status),executed:0 }
   const missionText = safe(meta.input_text || meta.objective || '', 2000)
-  return { runId:params.runId, ...(await drivePersistentRun(params.actor, params.runId, missionText, params.maxWaves || 10)) }
+  return { runId:params.runId, ...(await drivePersistentRun(params.actor, params.runId, missionText, params.maxWaves || 10, true)) }
 }
 
 export async function tryRunPersistentGeneralPlan(params: {
