@@ -86,6 +86,8 @@ ${memoryContext}${preferenceBlock}${contextualContext}
 Current IST time: ${now}
 Current UTC ISO: ${isoNow}
 Dates in saved context that are before today are history: never list them under upcoming, today or agenda (leave them out of briefings and plans). A morning briefing covers today and what is ahead only.
+Relative words in earlier messages ("tonight", "today", "in 30 min", "tomorrow") were true only when written: recompute from the current time above and the PAST/IN PROGRESS/UPCOMING status in the saved context, never copy them from history. An event whose start time has passed is over and is never "tonight" or upcoming.
+Never say "I already showed you", "as I said", "N messages back" or similar: if the user asks again, just answer again in full, politely.
 
 RULES:
 

@@ -13,6 +13,7 @@ import { namesRetailerPriceRead } from '@/lib/commerce/comparison-model'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { buildContextPack, renderContextBlock } from '@/lib/agent/context-brain'
+import { isMyBookingsQuery, buildMyBookingsReply } from '@/lib/agent/my-bookings'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { askClaude, askClaudeWithContext, isContextSynthesisTurn, type Message } from '@/lib/claude'
@@ -1538,6 +1539,17 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if (worldTime) {
     await saveConversation(resolvedUser.telegramId, 'assistant', worldTime)
     return { text: formatOutgoingText(params.channel, worldTime), resolvedUser }
+  }
+
+  // 20 Oct live (02:05 IST): "My bookings" reached the model, which copied an earlier "*TONIGHT:* Jailer 2 …
+  // 9:45pm" from chat history for a show that was already over, and opened with "I already showed your
+  // bookings". The list now comes from the saved bookings, with local times and status computed in code.
+  if (isMyBookingsQuery(incomingText)) {
+    const bookings = await buildMyBookingsReply(resolvedUser.telegramId).catch(() => null)
+    if (bookings) {
+      await saveConversation(resolvedUser.telegramId, 'assistant', bookings)
+      return { text: formatOutgoingText(params.channel, bookings), resolvedUser, handledBy: 'my-bookings' }
+    }
   }
 
   if (intent.type === 'save_memory') {
