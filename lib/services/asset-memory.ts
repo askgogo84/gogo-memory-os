@@ -900,6 +900,18 @@ export function refreshedStoredSummary(doc: any): string {
   } catch { return stored }
 }
 
+// The stored summary is the reply sent when the file was saved ("🎟️ Event ticket saved!", "⏰ Event
+// alert …", "Say my reminders …"). On retrieval those lines read as a fresh save and a stale alert;
+// keep only the description of the file itself.
+export function retrievalSummary(summary: string): string {
+  const kept = String(summary || '').split('\n').filter(l => !(
+    /\bsaved!?\s*$/i.test(l.trim()) ||
+    /^\W*(?:\S+\s+)?(?:alert|reminder)s?\b.*\d/i.test(l.trim()) ||
+    /^\W*say\s+\*?my reminders\b/i.test(l.trim())
+  ))
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
 async function buildAssetFileReply(
   telegramId: number,
   doc: any,
@@ -909,7 +921,7 @@ async function buildAssetFileReply(
   const lines: string[] = isCard
     ? [businessCardLines((doc?.extracted?.fields || {}) as Record<string, string>, `📇 ${doc.title || 'Business card'}`)]
     : [`📎 ${doc.title || 'Document'}`]
-  const shownSummary = isCard ? '' : refreshedStoredSummary(doc)
+  const shownSummary = isCard ? '' : retrievalSummary(refreshedStoredSummary(doc))
   if (shownSummary) lines.push(shownSummary)
   if (requested && !isCard) {
     const val = fieldFromDoc(doc, requested.keys)
@@ -1132,7 +1144,26 @@ export async function buildTicketRetrievalReply(telegramId: number, text: string
   }
   // No ticket on the booking: a saved ticket document may still match (metadata + #679 ticket boost).
   const fromDocuments = await buildAssetRetrievalReply(telegramId, text, messageId ?? null)
-  if (fromDocuments) return { text: fromDocuments, found: true }
+  if (fromDocuments) {
+    // The matched document is the one just recorded as last_asset: send its image too, as the
+    // booking path does, so "Jailer qr code" shows the QR instead of only a link.
+    let mediaUrl: string | null = null, mediaType: string | null = null
+    try {
+      const last = await getLatestFollowupState(telegramId, 'last_asset')
+      const docId = last?.payload?.docId
+      if (docId) {
+        const { data: doc } = await supabaseAdmin.from('documents').select('id, storage_path, mime, doc_type, extracted').eq('telegram_id', telegramId).eq('id', docId).maybeSingle()
+        const mime = String(doc?.mime || '')
+        if (doc?.storage_path && !isSensitiveDoc(doc) && /^(?:image\/|application\/pdf)/i.test(mime)) {
+          mediaUrl = await getDocumentSignedUrl(String(doc.storage_path), 600).catch(() => null)
+          mediaType = mediaUrl ? mime : null
+        }
+      }
+    } catch (err: any) {
+      console.error('[asset-memory] ticket media lookup failed (non-fatal):', err?.message || err)
+    }
+    return { text: fromDocuments, mediaUrl, mediaType, found: true }
+  }
   if (event) {
     const when = bookingWhen(event)
     return { text: `I have your ${String(event.title || 'booking').slice(0, 160)} booking saved${when ? ` (${when}${event.location ? `, ${String(event.location).slice(0, 120)}` : ''})` : ''}, but no ticket or QR image is attached to it.`, found: true }
