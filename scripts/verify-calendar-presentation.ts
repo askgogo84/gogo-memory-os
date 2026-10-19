@@ -130,6 +130,7 @@ async function main(){
   Object.assign(mocks,{'next/server':{NextRequest,NextResponse},'crypto':{randomUUID:()=> 'fixture-calendar-turn'},
     '@/lib/agent/recall-query':{isDecisionRecallQuery:()=>false},
     '@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>false},
+    '@/lib/agent/task-status':{parseTaskStatusQuery:()=>null,tryGetTaskStatus:async()=>null},
     '@/lib/services/link-vault':{isLinkVaultSaveRequest:()=>false,isLinkVaultQuery:()=>false},
     '@/lib/dashboard/session':{getSession:async()=>({telegramId:'123'})},'@/lib/supabase-admin':{supabaseAdmin},
     '@/lib/agent/actor':{resolveAgentActor:async()=>actor},

@@ -7,6 +7,7 @@ type Label={index:number;length:number;karat:string|null}
 const KARAT=/\b(18|22|24)\s*[-–]?\s*(?:kts?|karats?|carats?|ct|k)\b/gi
 const SPELLED=/\b(twenty[\s-]?four|twenty[\s-]?two|eighteen)[\s-]*(?:kts?|karats?|carats?|k)\b/gi
 const FINENESS=/(?<![\d,.₹])(?<!(?:₹|\brs\.?|\binr)\s{0,3})\b(999|916|750)\b(?=\s*(?:fine\b|purity\b|gold\b|hallmark|\())/gi
+const FINENESS_TEXT=/^(?:999|916|750)$/
 const UNKNOWN_PURITY=/\b(?:pure|fine)\s+gold\b|\b995\b(?=\s*(?:fine\b|purity\b|gold\b))/gi
 const PURITY_ORDER:Record<string,number>={'18':1,'22':2,'24':3}
 
@@ -22,7 +23,18 @@ function purityLabels(text:string):Label[]{
     found.push({index:m.index!,length:m[0].length,karat:null})
   }
   found.sort((a,b)=>a.index-b.index||b.length-a.length)
-  return found.filter((label,i)=>!found.slice(0,i).some(prior=>label.index<prior.index+prior.length))
+  const distinct=found.filter((label,i)=>!found.slice(0,i).some(prior=>label.index<prior.index+prior.length))
+  const kept:Label[]=[]
+  for(const label of distinct){
+    // Words before the first purity ("Pure gold price today…") are heading text.
+    if(label.karat===null&&!kept.some(k=>k.karat!==null))continue
+    // A hallmark fineness that restates the preceding karat ("22K … (916 purity)",
+    // "24K 999 gold") qualifies that quote; only a different purity is a new label.
+    const previous=kept.at(-1)
+    if(previous?.karat&&label.karat===previous.karat&&FINENESS_TEXT.test(text.slice(label.index,label.index+label.length)))continue
+    kept.push(label)
+  }
+  return kept
 }
 const MONEY=/(?:₹|\brs\.?|\binr)\s*(\d(?:[\d,]*\d)?(?:\.\d+)?)(?!\d|,[\d,]|\.\d)/gi
 const MONTH_NAME='Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?'

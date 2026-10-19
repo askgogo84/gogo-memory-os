@@ -206,4 +206,14 @@ check('gm and gms are explicit gram units',()=>{
  const ten=answer(`1. Gold Rates in Bangalore\n18 October 2026: 22K gold 10 gms | ₹1,36,450\nSource: ${pb}`);
  assert.match(ten,/^22K: ₹13,645$/m);
 });
+check('a matching hallmark fineness after a karat quote qualifies it instead of stealing it',()=>{
+ const result=answer(`1. Gold Rates in Bangalore\n18 October 2026. 22 karat gold rate per gram ₹12,800 (916 purity). 24 karat ₹14,000 per gram\nSource: ${pb}`);
+ assert.match(result,/^22K: ₹12,800$/m);assert.match(result,/^24K: ₹14,000$/m);assert.doesNotMatch(result,/weight\/unit is unverified/);
+ const hallmark=answer(`1. Gold Rates in Bangalore\n18 October 2026. 24K 999 gold ₹14,327 per gram; 22K (916) gold ₹13,645 per gram\nSource: ${pb}`);
+ assert.match(hallmark,/^24K: ₹14,327$/m);assert.match(hallmark,/^22K: ₹13,645$/m);
+});
+check('an unknown-purity phrase in the heading does not erase heading date or today evidence',()=>{
+ const result=answer(`1. Gold Rates in Bangalore\nPure gold price today in Bangalore: 24K gold per gram ₹14,327; 22K gold per gram ₹13,645\nSource: ${pb}`);
+ assert.match(result,/^24K: ₹14,327$/m);assert.match(result,/24K — source says today/);
+});
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');
