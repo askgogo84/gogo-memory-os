@@ -923,7 +923,12 @@ async function prepareReservationApproval(ctx:ReservationApprovalContext){
     options:{includeSemantic:false,includeReservationTravel:true,includeReservationCalendar:true,reservationCalendarCoverage:calendarCoverage,maxFacts:14,horizonDays:60},
   }).catch(()=>null)
   const diningContext=buildReservationDiningContext({actor:params.actor,timezone,requestedDate:intent.requestedDate,releaseAt,pack:contextPack,now:new Date()})
-  if(diningContext.incomplete)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,
+  // 19 Oct live: the live-slot flow (exact date and time just read on the restaurant's own page, name given) was
+  // stopped here because the owner's multi-account Calendar read is marked incomplete. Instinct books without a
+  // Calendar check. For a live slot, an incomplete context is disclosed in the approval ask instead of blocking:
+  // the user still has to reply APPROVE, and fee/CAPTCHA/OTP still stop the run. Release-rule missions keep the gate.
+  const contextGap=Boolean(guestName&&diningContext.incomplete)
+  if(diningContext.incomplete&&!guestName)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,
     text:'I verified the reservation release, but could not verify bounded travel and Calendar context for the possible dining dates. No reservation mission was armed or booking attempted. Retry the context check, or specify a dining date to narrow the Calendar read, before approving an attempt.'}
   const conflictReview=contextPack?await reservationConflictReview({actor:params.actor,text:params.text,intent,location:provider.location||null,timezone,releaseAt,pack:contextPack,snapshot:diningContext}):null
   if(conflictReview)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:conflictReview}
@@ -1058,7 +1063,7 @@ async function prepareReservationApproval(ctx:ReservationApprovalContext){
     return{
       runId,status:'waiting_approval' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,
       approvalId:String(approval.id),approvalRequired:true,
-      text:`Ready to book ${reservationClockLabel(intent.preferredStart)} ${reservationDayLabel(intent.requestedDate,intent.preferredStart)} for ${intent.partySize} at ${intent.restaurant} under ${guestName}${ending?`, with your WhatsApp number ending ${ending}`:''}.\nReply APPROVE to book it, or REJECT to stop. I'll stop before any fee, CAPTCHA or OTP.`,
+      text:`Ready to book ${reservationClockLabel(intent.preferredStart)} ${reservationDayLabel(intent.requestedDate,intent.preferredStart)} for ${intent.partySize} at ${intent.restaurant} under ${guestName}${ending?`, with your WhatsApp number ending ${ending}`:''}.${contextGap?" I couldn't fully check your calendar for that evening, so make sure you're free.":''}\nReply APPROVE to book it, or REJECT to stop. I'll stop before any fee, CAPTCHA or OTP.`,
     }
   }
   return{
