@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { retiredRunReason } from './task-lifecycle'
+import { taskDisplayTitle } from './task-title'
 
 // 19 Oct (Muse/Wajo parity): "cancel that task" / "stop the flight booking" stops an in-flight
 // agent run from chat. Watches (watch-command.ts), reminders, calendar events, lists, orders and
@@ -211,14 +212,14 @@ export async function tryCancelRunFromChat(owner: { telegramId: string | number 
       if (matches.length !== 1 || overlapRunTitle(matches[0], intent.target).matched < 2) return null
     }
     if (matches.length > 1) {
-      const lines = matches.slice(0, 8).map((run, index) => `${index + 1}. ${runLabel(run)} (${statusLabel(String(run.status))})`).join('\n')
+      const lines = matches.slice(0, 8).map((run, index) => `${index + 1}. ${taskDisplayTitle(runLabel(run))} (${statusLabel(String(run.status))})`).join('\n')
       return reply('run-cancel-ambiguous', 'paused', `More than one active task matches ${intent.target}. Which one should I cancel?\n${lines}\n\nSay *cancel the <name> task* with the full name. Nothing was cancelled.`)
     }
     target = matches[0]
   }
 
   const runId = String(target.id)
-  const title = runLabel(target)
+  const title = taskDisplayTitle(runLabel(target))
   const meta = target.metadata_json || {}
 
   const { data: approvalRows, error: approvalReadError } = await db.from('agent_approvals')

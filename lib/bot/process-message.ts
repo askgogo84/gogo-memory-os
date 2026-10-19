@@ -42,6 +42,7 @@ import { setBriefingTime } from './handlers/briefing-settings'
 import { locationQuery } from '@/lib/dashboard/approx-location'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
+import { parseLookupThenCalendar, calendarFollowupLine, firstFutureDate } from '@/lib/agent/lookup-then-calendar'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
 import { parsePlanSelection, buildPlanCheckoutReply } from './handlers/plan-checkout'
 import { buildCalendarActionReply, createCalendarConflictEvent, createCalendarEventAtIso, isCalendarAction, getCalendarTokens, parseAbsoluteDate } from './handlers/calendar-actions'
@@ -1059,6 +1060,28 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     if (mut.handled) {
       await saveConversation(resolvedUser.telegramId, 'assistant', mut.reply)
       return { text: formatOutgoingText(params.channel, mut.reply), resolvedUser }
+    }
+  }
+
+  // "When is X releasing and add it to my calendar": answer the lookup, then ask for the date/time
+  // so the ordinary approval-gated calendar create finishes it. Nothing is written this turn.
+  {
+    const compound = parseLookupThenCalendar(incomingText)
+    if (compound) {
+      const guard = await guardAiAction(resolvedUser.telegramId)
+      if (guard.ok === false) {
+        await saveConversation(resolvedUser.telegramId, 'assistant', guard.reply)
+        return { text: formatOutgoingText(params.channel, guard.reply), resolvedUser }
+      }
+      let answer = ''
+      const searchContext = await searchWeb(compound.question).catch(() => '')
+      try { answer = await askClaudeWithContext(compound.question, searchContext, resolvedUser.name) } catch { answer = buildDirectWebAnswer(compound.question, searchContext) }
+      if (!answer || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(answer)) answer = buildDirectWebAnswer(compound.question, searchContext)
+      await saveFollowupState(resolvedUser.telegramId, 'pending_calendar', { title: compound.title })
+      let reply = `${String(answer || '').trim()}\n\n${calendarFollowupLine(compound.title, firstFutureDate(answer))}`
+      reply += await recordWebSearch(resolvedUser, params.channel, inboundMessageId, guard.usage)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), handledBy: 'lookup-then-calendar', resolvedUser }
     }
   }
 

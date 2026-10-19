@@ -680,8 +680,21 @@ export async function createCalendarEventAtIso(
 
 // Pure "does the user want to SEE their calendar" test — exported so the routing
 // harness can assert the same view/create/fall-through precedence prod uses.
+// The same event copied several times (a recurring standup imported twice, say) shows once as
+// "(×N)" instead of filling the reply with identical lines. Order of first appearance is kept.
+export function groupCalendarLines(lines: string[], limit = 7): string[] {
+  const counts = new Map<string, number>()
+  for (const line of lines) counts.set(line, (counts.get(line) || 0) + 1)
+  return [...counts.entries()].slice(0, limit).map(([line, n]) => (n > 1 ? `${line} (×${n})` : line))
+}
+
+// "…and add it to my calendar" asks to WRITE an entry; a question earlier in the sentence
+// ("when is Jailer 2 releasing") must not turn it into a read of today's schedule.
+export const CALENDAR_WRITE_RE = /\b(?:add|put|save|create|schedule|block|mark|pencil|insert)\b[^.?!]*\b(?:to|in|on|into)\s+(?:my\s+|the\s+)?(?:google\s+)?(?:calendar|calender|calandar|cal)\b/i
+
 export function isCalendarViewRequest(text: string): boolean {
   const lower = (text || '').toLowerCase().trim()
+  if (CALENDAR_WRITE_RE.test(lower)) return false
   return (
     /^(?:what|which)\s+(?:meetings?|events?|appointments?)\s+(?:do\s+i\s+have|are\s+(?:on|scheduled))(?:\s+on|\s+for)?\s+.+/i.test(lower) ||
     /^(?:show|list|display)\s+(?:me\s+)?(?:my\s+)?(?:meetings?|events?|appointments?)\s+(?:on|for)\s+.+/i.test(lower) ||
@@ -798,13 +811,7 @@ export async function buildCalendarActionReply(
       handled: true,
       reply:
         `📅 *Your calendar ${absolute ? `${absolute.day}/${absolute.month}/${absolute.year}` : targetLabel(target)}*\n\n` +
-        events
-          .slice(0, 7)
-          .map((event: any) => {
-            const title = event.summary || 'Untitled event'
-            return `• ${formatEventTime(event)} — ${title}`
-          })
-          .join('\n') +
+        groupCalendarLines(events.map((event: any) => `• ${formatEventTime(event)} — ${event.summary || 'Untitled event'}`), 7).join('\n') +
         `\n\nTry:\n• add meeting tomorrow at 4 pm\n• plan my day`,
     }
   }
