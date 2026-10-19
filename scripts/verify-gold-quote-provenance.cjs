@@ -252,7 +252,7 @@ check('19 Oct live: many sources give one rate per purity, one provenance line e
 check('a dated result title dates its undated body quotes; a conflicting body date still wins',()=>{
  const gr='https://www.goodreturns.in/gold-rates/bangalore.html';
  const result=answer(`1. Todays Gold Rate in Bangalore, 18, 22 & 24 Carat Gold Price on 18 October 2026\n24K gold per gram ₹14,804; 22K gold per gram ₹13,570\nSource: ${gr}`);
- assert.match(result,/24K — as of 2026-10-18; 1 g quote ₹14,804/);assert.match(result,/22K — as of 2026-10-18; 1 g quote ₹13,570/);
+ assert.match(result,/^24K: ₹14,804$/m);assert.match(result,/24K — as of 2026-10-18; goodreturns\.in/);assert.match(result,/^22K: ₹13,570$/m);assert.match(result,/22K — as of 2026-10-18; goodreturns\.in/);
  assert.doesNotMatch(result,/^18K: /m);
  const older=answer(`1. Gold Price on 18 October 2026\nAs of 17 October 2026: 24K gold per gram ₹14,000\nSource: ${gr}`);
  assert.match(older,/24K — as of 2026-10-17/);
