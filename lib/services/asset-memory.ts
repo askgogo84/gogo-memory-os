@@ -671,7 +671,28 @@ export function isAssetRetrievalCommand(text: string): boolean {
   const verb = /\b(show me|find|send me|get me|pull up|do you have|where'?s|where is|open the|retrieve)\b/.test(t)
   const fieldQuestion = /\b(what(?:'s| is)|when does|when is|expiry|expire|reference|transaction\s*id|utr|amount|how much|nationality)\b/.test(t)
   const noun = /\b(passport|payment|proof|screenshot|receipt|invoice|estimate|estimation|quotation|slip|document|pdf|file|id|licen[cs]e|statement|policy|aadhaar|pan|lease|agreement|contract|bill|certificate|report|letter|warranty|prescription)\b/.test(t)
-  return noun && (verb || fieldQuestion)
+  if (noun && (verb || fieldQuestion)) return true
+  return isTicketRetrievalAsk(t)
+}
+
+// 19 Oct live: "Jailer qr code" fell through to general chat, which said "I don't have a QR code saved" although
+// the ticket screenshot (QR, Audi 04, K18–K20, TSAJKDX) was saved the day before. A short ask naming a ticket,
+// QR or pass is a retrieval, unless it is about booking, buying or cancelling one.
+const TICKET_NOUN = /\b(?:tickets?|qr(?:\s*code)?|boarding\s*pass|e-?tickets?|m-?tickets?|booking\s+confirmation)\b/i
+export function isTicketRetrievalAsk(text: string): boolean {
+  const t = String(text || '').toLowerCase().trim()
+  if (!TICKET_NOUN.test(t)) return false
+  if (/\b(?:book|buy|purchase|reserve|cancel|refund|price|cost|how much|available|availability|get\s+tickets?\s+for)\b/.test(t)) return false
+  const words = t.split(/\s+/).filter(Boolean).length
+  const verb = /\b(show|send|share|give|find|get|pull up|open|where'?s|where is|need|my)\b/.test(t)
+  return words <= 6 || verb
+}
+
+/** Extra metadata score for a saved ticket when the ask names a ticket/QR (title token alone scores only 1). */
+export function ticketDocumentBoost(query: string, doc: { title?: string | null; summary?: string | null; doc_type?: string | null; extracted?: any }): number {
+  if (!TICKET_NOUN.test(String(query || ''))) return 0
+  const hay = `${doc?.title || ''} ${doc?.summary || ''} ${doc?.doc_type || ''} ${JSON.stringify(doc?.extracted || {})}`.toLowerCase()
+  return /\b(?:ticket|tickets|qr|barcode|booking id|seats?|audi|screen|boarding pass|pnr|showtime|cinema|movie)\b/.test(hay) ? 2 : 0
 }
 
 const FIELD_ALIASES: Array<{ re: RegExp; keys: string[]; label: string }> = [
@@ -953,6 +974,7 @@ async function findDocumentByMetadata(telegramId: number, text: string): Promise
 
     const type = String(ex.assetType || doc.doc_type || '').replace(/_/g, ' ')
     if (type && q.includes(normalizeWords(type))) score += 2
+    score += ticketDocumentBoost(text, doc)
 
     if (score > bestScore) {
       bestScore = score
