@@ -373,5 +373,102 @@ await check('C: worker re-check — a fresh read may not add a restriction or a 
   assert.match(worker,/Never submit a second time if the result is uncertain\./,'no blind retry')
 })
 
+// ───────────────────────── D: "<event> qr code" finds the ticket on the saved booking ─────────────────────────
+const JAILER={id:'le-jailer',telegram_id:'123',title:'Jailer 2',provider:'BookMyShow',location:'PVR Orion Mall',start_at:'2026-10-19T16:15:00.000Z',timezone:'Asia/Kolkata',lifecycle_state:'watching',updated_at:'2026-10-18T10:00:00Z',
+  metadata_json:{credential:{documentId:'doc-ticket',storagePath:'123/ticket.jpg',mimeType:'image/jpeg',source:'user_ticket_screenshot'},screenshotEvidence:{documentId:'doc-ticket',qrVisible:true}},source_refs:[{source:'whatsapp',kind:'ticket_screenshot',documentId:'doc-ticket'}]}
+const TOIT_EVENT={id:'le-toit',telegram_id:'123',title:'Reserve Toit Indiranagar',provider:'widget.reservego.com',location:'Indiranagar',start_at:null,lifecycle_state:'planned',updated_at:'2026-10-19T17:58:00Z',metadata_json:{},source_refs:[]}
+function assetDb(seedRows:Record<string,Row[]>){
+  const reads:Array<{table:string;filters:Array<[string,unknown]>}>=[]
+  return {reads,rpc:async()=>({data:[],error:null}),from:(table:string)=>{
+    const filters:Array<[string,unknown]>=[]
+    const exec=()=>{reads.push({table,filters});return (seedRows[table]||[]).filter(r=>filters.every(([k,v])=>String(r[k])===String(v)))}
+    const q:any={select:()=>q,eq:(k:string,v:unknown)=>{filters.push([k,v]);return q},order:()=>q,limit:()=>q,not:()=>q,gte:()=>q,
+      maybeSingle:async()=>({data:exec()[0]??null,error:null}),single:async()=>({data:exec()[0]??null,error:null}),
+      then:(res:any,rej:any)=>Promise.resolve({data:exec(),error:null}).then(res,rej)}
+    return q
+  }}
+}
+function loadAssets(seedRows:Record<string,Row[]>){
+  const adb=assetDb(seedRows)
+  const signed:string[]=[]
+  const mod=load('lib/services/asset-memory.ts',{
+    '@anthropic-ai/sdk':{default:class{messages={create:async()=>{throw new Error('no model calls')}}}},
+    '@/lib/supabase-admin':{supabaseAdmin:adb},
+    '@/lib/services/document-store':{getDocumentSignedUrl:async(path:string)=>{signed.push(path);return `https://storage.example/${path}?sig=fixture`},storeDocument:async()=>null},
+    '@/lib/services/document-links':{createDocumentShortLink:async()=>'tok123',shortLinkUrl:(t:string)=>`https://app.askgogo.in/d/${t}`},
+    '@/lib/services/document-summary-privacy':{safeDocumentSummary:(x:string)=>x,redactDocumentMetadata:(x:any)=>x},
+    '@/lib/services/embeddings':{embedText:async()=>[0]},
+  })
+  return {mod,adb,signed}
+}
+const TICKET_DOC={id:'doc-ticket',telegram_id:123,doc_type:'image',title:'Image',summary:'PVR Orion Mall M-Ticket, AUDI 04, seats K18–K20',extracted:{},storage_path:'123/ticket.jpg',mime:'image/jpeg',created_at:'2026-10-18T09:00:00Z'}
+
+await check('D: "Jailer qr code" finds the ticket attached to the saved Jailer 2 booking and sends the image',async()=>{
+  const {mod,adb,signed}=loadAssets({life_events:[TOIT_EVENT,JAILER],documents:[TICKET_DOC]})
+  const r=await mod.buildTicketRetrievalReply(123,'Jailer qr code',null)
+  assert.match(r.text,/^🎟️ Jailer 2 — 19 Oct, 9:45pm, PVR Orion Mall\n📎 Image/)
+  assert.match(r.text,/Open original: https:\/\/app\.askgogo\.in\/d\/tok123/)
+  assert.equal(r.mediaUrl,'https://storage.example/123/ticket.jpg?sig=fixture')
+  assert.deepEqual(signed,['123/ticket.jpg'])
+  assert.ok(adb.reads.every(x=>x.filters.some(([k,v])=>k==='telegram_id'&&String(v)==='123')),'every read is owner-bound')
+  for(const q of ['show my Jailer 2 ticket','jailer ticket','send the jailer QR'])assert.equal((await mod.buildTicketRetrievalReply(123,q,null)).mediaUrl,'https://storage.example/123/ticket.jpg?sig=fixture',q)
+})
+
+await check('D: the saved booking without an attached ticket gets an honest line; nothing saved gets one line',async()=>{
+  const bare={...JAILER,metadata_json:{},source_refs:[]}
+  const {mod}=loadAssets({life_events:[bare],documents:[]})
+  const r=await mod.buildTicketRetrievalReply(123,'Jailer qr code',null)
+  assert.equal(r.text,'I have your Jailer 2 booking saved (19 Oct, 9:45pm, PVR Orion Mall), but no ticket or QR image is attached to it.')
+  assert.equal(r.mediaUrl,undefined)
+  const none=await loadAssets({life_events:[],documents:[]}).mod.buildTicketRetrievalReply(123,'Leo qr code',null)
+  assert.equal(none.text,"I don't have a saved ticket or QR for leo.")
+  assert.equal(await mod.buildTicketRetrievalReply(123,'book tickets for Jailer 2',null),null,'booking asks are not retrievals')
+})
+
+await check('D: pure matching — every name word must match; another booking\'s ticket is never sent',()=>{
+  const {mod}=loadAssets({})
+  const coldplay={...JAILER,id:'le-cp',title:'Coldplay Music of the Spheres',location:'DY Patil Stadium',metadata_json:{credential:{documentId:'doc-cp'}},source_refs:[]}
+  assert.equal(mod.pickTicketLifeEvent([coldplay,JAILER],'Jailer qr code')?.id,'le-jailer')
+  assert.equal(mod.pickTicketLifeEvent([coldplay,JAILER],'Leo qr code'),null)
+  assert.equal(mod.pickTicketLifeEvent([coldplay,JAILER],'qr code'),null,'no name + two tickets: ambiguous')
+  assert.equal(mod.pickTicketLifeEvent([JAILER,TOIT_EVENT],'my ticket')?.id,'le-jailer','no name + one ticket')
+  assert.equal(mod.ticketDocumentIdFromLifeEvent({metadata_json:{},source_refs:[{kind:'ticket_screenshot',documentId:'d9'}]}),'d9')
+  assert.equal(mod.ticketDocumentIdFromLifeEvent({metadata_json:{},source_refs:[{kind:'restaurant_reservation_page',url:'x'}]}),null)
+})
+
+await check('D wiring: ticket asks are answered before generic asset retrieval and never reach the model',()=>{
+  const route=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
+  const t=route.indexOf('const ticket = await buildTicketRetrievalReply(resolvedUser.telegramId, text, inboundMessageSid || null)')
+  assert.ok(t>0&&t<route.indexOf('const assetReply = await buildAssetRetrievalReply(resolvedUser.telegramId, text, inboundMessageSid || null)'))
+  assert.match(route.slice(t,t+900),/sendWhatsAppMediaMessage\(from, ' ', ticket\.mediaUrl\)/)
+})
+
+// ───────────────────────── E: booking times in the model context are local, relative status computed in code ─────────────────────────
+const cb=await import('../lib/agent/context-brain')
+await check('E: 23:31 IST — the 9:45 pm Jailer show is PAST (started 1 h 46 min ago), never "tonight in ~30 min"',()=>{
+  const now=Date.parse('2026-10-19T18:01:00Z')
+  const pack={query:'my bookings',generatedAt:new Date(now).toISOString(),memoryEnabled:true,facts:[
+    {id:'le',source:'life_event',summary:'Jailer 2',score:.9,confidence:.96,startAt:'2026-10-19T16:15:00.000Z',endAt:null,location:'PVR Orion Mall',timezone:'Asia/Kolkata'},
+    {id:'le2',source:'life_event',summary:'Dinner',score:.8,confidence:.96,startAt:'2026-10-20T13:30:00.000Z',endAt:'2026-10-20T15:30:00.000Z'},
+  ],provenance:{lifeEvents:2,travelTickets:0,openLoops:0,semanticMemories:0,insights:0,typedContext:0}}
+  const text=cb.renderContextBlock(pack as any)
+  assert.match(text,/Jailer 2 · PVR Orion Mall · local Mon, 19 Oct, 2026, 9:45 pm IST · PAST — started 1 h 46 min ago \(earlier today\); never call it upcoming · UTC 2026-10-19T16:15:00\.000Z/)
+  assert.doesNotMatch(text,/4:15 pm/,'UTC is never shown as a local clock')
+  assert.match(text,/Dinner · local Tue, 20 Oct, 2026, 7:00 pm IST · UPCOMING — starts in 19 h 29 min \(tomorrow\)/)
+  assert.match(text,/Never compute your own relative time/)
+  assert.equal(cb.factRelativeStatus('2026-10-19T16:15:00.000Z','2026-10-19T19:15:00.000Z',now,'Asia/Kolkata'),'IN PROGRESS — started 1 h 46 min ago (earlier today)')
+  assert.equal(cb.factRelativeStatus('2026-10-19T16:15:00.000Z','2026-10-19T17:15:00.000Z',now,'Asia/Kolkata'),'PAST — ended 46 min ago (earlier today); never call it upcoming')
+  assert.equal(cb.factRelativeStatus('2026-10-19T18:20:00.000Z',null,now,'Asia/Kolkata'),'UPCOMING — starts in 19 min (today)')
+  assert.equal(cb.factRelativeStatus('2026-10-19T18:31:00.000Z',null,now,'Asia/Kolkata'),'UPCOMING — starts in 30 min (tomorrow)','00:01 IST is tomorrow')
+})
+
+await check('E: travel facts keep their own destination-local labels (no IST rendering added)',()=>{
+  const now=Date.parse('2026-10-19T18:01:00Z')
+  const text=cb.renderContextBlock({query:'flight',generatedAt:new Date(now).toISOString(),memoryEnabled:true,facts:[{id:'t',source:'travel_ticket',summary:'Flight BLR → AMS',score:.9,confidence:.95,startAt:'2026-10-25T20:00:00.000Z'}],provenance:{lifeEvents:0,travelTickets:1,openLoops:0,semanticMemories:0,insights:0,typedContext:0}} as any)
+  const line=text.split('\n').find(l=>l.includes('Flight BLR → AMS'))!
+  assert.doesNotMatch(line,/local |UPCOMING|PAST/)
+  assert.match(line,/UTC 2026-10-25T20:00:00\.000Z/)
+})
+
 if(failures.length){console.error(failures.join('\n\n'));process.exit(1)}
-console.log('Approve flow (19 Oct incident A–C): verified')
+console.log('Approve flow (19 Oct incident A–E): verified')

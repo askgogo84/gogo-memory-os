@@ -95,7 +95,7 @@ import { handleBucketCommand } from '@/lib/bot/handlers/shared-memory'
 import { parsePdfTicket, parseImageTicket, classifyPdfDocument, readAndSummarizePdfDocument, type PdfClass } from '@/lib/services/pdf-reader'
 import { persistAndRemindTicket } from '@/lib/services/travel-tickets'
 import { saveDocumentNote, saveTicketDocument, deriveNoteTitleFromReader } from '@/lib/services/document-store'
-import { tryHandleAssetSave, isAssetRetrievalCommand, buildAssetRetrievalReply, buildAssetFieldReply } from '@/lib/services/asset-memory'
+import { tryHandleAssetSave, isAssetRetrievalCommand, buildAssetRetrievalReply, buildAssetFieldReply, isTicketRetrievalAsk, buildTicketRetrievalReply } from '@/lib/services/asset-memory'
 import { describeCadence, formatReminderWhen, cleanReminderName } from '@/lib/services/reminder-series'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 import { shouldTreatMediaAsLinkPreview } from '@/lib/services/whatsapp-preview-routing'
@@ -1835,6 +1835,21 @@ _Reminder cancelled._`
         await saveConversation(resolvedUser.telegramId, 'assistant', fieldReply)
         await sendWhatsAppMessage(from, fieldReply)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+      // 19 Oct live: "Jailer qr code" matched no document by title and fell to general chat. A ticket/QR
+      // ask is answered from the saved booking's attached ticket (then saved documents), with the image
+      // itself, or one honest line when nothing is stored. It never reaches the model.
+      if (isTicketRetrievalAsk(text)) {
+        const ticket = await buildTicketRetrievalReply(resolvedUser.telegramId, text, inboundMessageSid || null)
+        if (ticket) {
+          await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+          await saveConversation(resolvedUser.telegramId, 'assistant', ticket.text)
+          await sendWhatsAppMessage(from, ticket.text)
+          if (ticket.mediaUrl) {
+            try { await sendWhatsAppMediaMessage(from, ' ', ticket.mediaUrl) } catch (mediaError: any) { console.error('WHATSAPP_TICKET_MEDIA_FAILED:', mediaError?.message || mediaError) }
+          }
+          return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+        }
       }
       if (isAssetRetrievalCommand(text)) {
         const assetReply = await buildAssetRetrievalReply(resolvedUser.telegramId, text, inboundMessageSid || null)
