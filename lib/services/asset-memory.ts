@@ -671,7 +671,28 @@ export function isAssetRetrievalCommand(text: string): boolean {
   const verb = /\b(show me|find|send me|get me|pull up|do you have|where'?s|where is|open the|retrieve)\b/.test(t)
   const fieldQuestion = /\b(what(?:'s| is)|when does|when is|expiry|expire|reference|transaction\s*id|utr|amount|how much|nationality)\b/.test(t)
   const noun = /\b(passport|payment|proof|screenshot|receipt|invoice|estimate|estimation|quotation|slip|document|pdf|file|id|licen[cs]e|statement|policy|aadhaar|pan|lease|agreement|contract|bill|certificate|report|letter|warranty|prescription)\b/.test(t)
-  return noun && (verb || fieldQuestion)
+  if (noun && (verb || fieldQuestion)) return true
+  return isTicketRetrievalAsk(t)
+}
+
+// 19 Oct live: "Jailer qr code" fell through to general chat, which said "I don't have a QR code saved" although
+// the ticket screenshot (QR, Audi 04, K18–K20, TSAJKDX) was saved the day before. A short ask naming a ticket,
+// QR or pass is a retrieval, unless it is about booking, buying or cancelling one.
+const TICKET_NOUN = /\b(?:tickets?|qr(?:\s*code)?|boarding\s*pass|e-?tickets?|m-?tickets?|booking\s+confirmation)\b/i
+export function isTicketRetrievalAsk(text: string): boolean {
+  const t = String(text || '').toLowerCase().trim()
+  if (!TICKET_NOUN.test(t)) return false
+  if (/\b(?:book|buy|purchase|reserve|cancel|refund|price|cost|how much|available|availability|get\s+tickets?\s+for)\b/.test(t)) return false
+  const words = t.split(/\s+/).filter(Boolean).length
+  const verb = /\b(show|send|share|give|find|get|pull up|open|where'?s|where is|need|my)\b/.test(t)
+  return words <= 6 || verb
+}
+
+/** Extra metadata score for a saved ticket when the ask names a ticket/QR (title token alone scores only 1). */
+export function ticketDocumentBoost(query: string, doc: { title?: string | null; summary?: string | null; doc_type?: string | null; extracted?: any }): number {
+  if (!TICKET_NOUN.test(String(query || ''))) return 0
+  const hay = `${doc?.title || ''} ${doc?.summary || ''} ${doc?.doc_type || ''} ${JSON.stringify(doc?.extracted || {})}`.toLowerCase()
+  return /\b(?:ticket|tickets|qr|barcode|booking id|seats?|audi|screen|boarding pass|pnr|showtime|cinema|movie)\b/.test(hay) ? 2 : 0
 }
 
 const FIELD_ALIASES: Array<{ re: RegExp; keys: string[]; label: string }> = [
@@ -953,6 +974,7 @@ async function findDocumentByMetadata(telegramId: number, text: string): Promise
 
     const type = String(ex.assetType || doc.doc_type || '').replace(/_/g, ' ')
     if (type && q.includes(normalizeWords(type))) score += 2
+    score += ticketDocumentBoost(text, doc)
 
     if (score > bestScore) {
       bestScore = score
@@ -1003,6 +1025,113 @@ export async function buildAssetRetrievalReply(
     console.error('[asset-memory] retrieval failed (non-fatal):', err?.message || err)
     return null
   }
+}
+
+// ── Ticket / QR retrieval through the saved booking ─────────────────────────
+// 19 Oct live (after #679): "Jailer qr code" was a retrieval ask, but no `documents` row matched by
+// title or embedding, so it fell through to general chat. The verified ticket screenshot is attached
+// to the saved booking itself: booking-screenshot-worker and booking-closure write
+// life_events.metadata_json.credential.documentId (and screenshotEvidence / a ticket source_ref).
+// "<event> qr code / ticket" now finds the booking by name, then sends that exact document.
+
+const TICKET_QUERY_STOP = new Set(['ticket', 'tickets', 'code', 'boarding', 'pass', 'eticket', 'mticket', 'etickets', 'mtickets', 'booking', 'confirmation', 'show', 'send', 'share', 'give', 'find', 'get', 'pull', 'open', 'where', 'need', 'the', 'for', 'please', 'movie', 'event', 'tonight', 'today', 'tomorrow', 'and', 'with', 'from', 'this', 'that', 'saved', 'image', 'photo', 'screenshot'])
+
+export function ticketQueryTokens(text: string): string[] {
+  return normalizeWords(String(text || '').replace(/\b[em]-tickets?\b/gi, ' ')).split(' ').filter((t) => t.length >= 3 && !TICKET_QUERY_STOP.has(t) && t !== 'qr')
+}
+
+/** The ticket/QR document attached to a saved booking, if any. Pure. */
+export function ticketDocumentIdFromLifeEvent(ev: any): string | null {
+  const m = ev?.metadata_json || {}
+  const refs = Array.isArray(ev?.source_refs) ? ev.source_refs : []
+  const fromRef = refs.find((r: any) => r?.documentId && /ticket|credential|qr/i.test(String(r?.kind || '')))?.documentId
+  const id = m?.credential?.documentId || m?.screenshotEvidence?.documentId || fromRef
+  return id ? String(id) : null
+}
+
+/**
+ * The saved booking a ticket ask names. Every name word in the ask must appear in the booking's
+ * title/venue/provider; with no name ("my ticket", "qr code") only a single booking with an attached
+ * ticket qualifies. Several equally good bookings prefer the one with a ticket, then the one nearest
+ * now. Pure.
+ */
+export function pickTicketLifeEvent(events: any[], text: string, now: number = Date.now()): any | null {
+  const words = ticketQueryTokens(text)
+  const pool = (events || []).filter((ev) => ev && ev.lifecycle_state !== 'cancelled')
+  let candidates: any[]
+  if (words.length) {
+    candidates = pool.filter((ev) => {
+      const hay = ` ${normalizeWords([ev.title, ev.location, ev.provider].filter(Boolean).join(' '))} `
+      return words.every((w) => hay.includes(` ${w} `) || (w.length >= 4 && hay.includes(` ${w}`)))
+    })
+  } else {
+    const withTicket = pool.filter((ev) => ticketDocumentIdFromLifeEvent(ev))
+    candidates = withTicket.length === 1 ? withTicket : []
+  }
+  if (!candidates.length) return null
+  const distance = (ev: any) => { const at = Date.parse(String(ev?.start_at || '')); return Number.isFinite(at) ? Math.abs(at - now) : Number.MAX_SAFE_INTEGER }
+  return [...candidates].sort((a, b) => Number(Boolean(ticketDocumentIdFromLifeEvent(b))) - Number(Boolean(ticketDocumentIdFromLifeEvent(a))) || distance(a) - distance(b))[0]
+}
+
+function bookingWhen(ev: any): string {
+  const at = Date.parse(String(ev?.start_at || ''))
+  if (!Number.isFinite(at)) return ''
+  const tz = typeof ev?.timezone === 'string' && ev.timezone ? ev.timezone : 'Asia/Kolkata'
+  try {
+    return new Intl.DateTimeFormat('en-IN', { timeZone: tz, day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(at)).replace(/\s?([ap])m\b/i, (_m, a) => `${a.toLowerCase()}m`)
+  } catch { return '' }
+}
+
+export type TicketRetrievalReply = { text: string; mediaUrl?: string | null }
+
+/**
+ * "Jailer qr code", "show my Jailer 2 ticket": the ticket attached to the saved booking, else a saved
+ * ticket document, else one honest line. Owner-bound throughout. Returns null only for asks that are
+ * not ticket retrievals.
+ */
+export async function buildTicketRetrievalReply(telegramId: number, text: string, messageId?: string | null): Promise<TicketRetrievalReply | null> {
+  if (!isTicketRetrievalAsk(text)) return null
+  let event: any = null
+  try {
+    const { data } = await supabaseAdmin
+      .from('life_events')
+      .select('id,title,provider,location,start_at,timezone,lifecycle_state,metadata_json,source_refs')
+      .eq('telegram_id', String(telegramId))
+      .order('updated_at', { ascending: false })
+      .limit(60)
+    event = pickTicketLifeEvent((data || []) as any[], text)
+  } catch (err: any) {
+    console.error('[asset-memory] ticket booking lookup failed (non-fatal):', err?.message || err)
+  }
+  const docId = event ? ticketDocumentIdFromLifeEvent(event) : null
+  if (docId) {
+    const { data: doc } = await supabaseAdmin
+      .from('documents')
+      .select('id, doc_type, title, summary, extracted, storage_path, mime')
+      .eq('telegram_id', telegramId)
+      .eq('id', docId)
+      .maybeSingle()
+    if (doc) {
+      await clearFollowupState(telegramId, 'last_asset')
+      await saveFollowupState(telegramId, 'last_asset', { docId: doc.id, messageId: messageId ?? null, source: 'retrieval' })
+      if (isSensitiveDoc(doc)) return { text: await buildMaskedSensitiveReply(telegramId, doc) }
+      const when = bookingWhen(event)
+      const head = `🎟️ ${String(event.title || doc.title || 'Your ticket').slice(0, 160)}${when ? ` — ${when}` : ''}${event.location ? `, ${String(event.location).slice(0, 120)}` : ''}`
+      const body = await buildAssetFileReply(telegramId, { ...doc, title: doc.title || event.title }, null)
+      const mime = String(doc.mime || '')
+      const mediaUrl = doc.storage_path && /^(?:image\/|application\/pdf)/i.test(mime) ? await getDocumentSignedUrl(String(doc.storage_path), 600).catch(() => null) : null
+      return { text: `${head}\n${body}`, mediaUrl }
+    }
+  }
+  // No ticket on the booking: a saved ticket document may still match (metadata + #679 ticket boost).
+  const fromDocuments = await buildAssetRetrievalReply(telegramId, text, messageId ?? null)
+  if (fromDocuments) return { text: fromDocuments }
+  if (event) {
+    const when = bookingWhen(event)
+    return { text: `I have your ${String(event.title || 'booking').slice(0, 160)} booking saved${when ? ` (${when}${event.location ? `, ${String(event.location).slice(0, 120)}` : ''})` : ''}, but no ticket or QR image is attached to it.` }
+  }
+  const words = ticketQueryTokens(text)
+  return { text: `I don't have a saved ticket or QR${words.length ? ` for ${words.join(' ')}` : ''}.` }
 }
 
 export async function buildAssetFieldReply(telegramId: number, text: string): Promise<string | null> {

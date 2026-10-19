@@ -56,7 +56,7 @@ import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { parseRunCancel } from '@/lib/agent/run-cancel'
-import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppAccountSite, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist, tryRunWhatsAppTaskStatus } from '@/lib/agent/whatsapp-bridge'
+import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppApprovalNumber, tryRunWhatsAppAccountSite, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist, tryRunWhatsAppTaskStatus } from '@/lib/agent/whatsapp-bridge'
 import { parseTaskStatusQuery } from '@/lib/agent/task-status'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { tryResolvePendingQuestion } from '@/lib/bot/pending-question-resolver'
@@ -95,7 +95,7 @@ import { handleBucketCommand } from '@/lib/bot/handlers/shared-memory'
 import { parsePdfTicket, parseImageTicket, classifyPdfDocument, readAndSummarizePdfDocument, type PdfClass } from '@/lib/services/pdf-reader'
 import { persistAndRemindTicket } from '@/lib/services/travel-tickets'
 import { saveDocumentNote, saveTicketDocument, deriveNoteTitleFromReader } from '@/lib/services/document-store'
-import { tryHandleAssetSave, isAssetRetrievalCommand, buildAssetRetrievalReply, buildAssetFieldReply } from '@/lib/services/asset-memory'
+import { tryHandleAssetSave, isAssetRetrievalCommand, buildAssetRetrievalReply, buildAssetFieldReply, isTicketRetrievalAsk, buildTicketRetrievalReply } from '@/lib/services/asset-memory'
 import { describeCadence, formatReminderWhen, cleanReminderName } from '@/lib/services/reminder-series'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 import { shouldTreatMediaAsLinkPreview } from '@/lib/services/whatsapp-preview-routing'
@@ -1166,6 +1166,20 @@ _"${originalText}"_
       }
     }
 
+    // 19 Oct live: "1" right after "Reply approve 1 or reject 1" fell to general chat, which invented
+    // "Booking confirmed". A bare number answering Gogo's numbered approval list asks approve or
+    // reject for that item; it never decides by itself. No list on the table returns null.
+    if (/^\s*["'“”‘’`]*#?\s*\d{1,2}\s*["'“”‘’`.!]*\s*$/.test(text)) {
+      const numberAgent = await tryRunWhatsAppApprovalNumber({ user: resolvedUser, text })
+      if (numberAgent) {
+        await recordShadowRouterOutcome({ telegramId: resolvedUser.telegramId, surface: 'whatsapp', eventId: inboundMessageSid, actualHandler: numberAgent.handledBy, actualCapability: 'browser', status: numberAgent.status || null, runId: null }).catch(() => {})
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', numberAgent.text)
+        await sendWhatsAppMessage(from, numberAgent.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
     // A short reply to the question Gogo just asked ("This Saturday 8pm" after "What time should I
     // book Toit for?") resumes THAT request before reservation, Jev clarification or feature
     // routing can read it as something new (19 Oct live: it became a reminder titled "This").
@@ -1821,6 +1835,21 @@ _Reminder cancelled._`
         await saveConversation(resolvedUser.telegramId, 'assistant', fieldReply)
         await sendWhatsAppMessage(from, fieldReply)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+      // 19 Oct live: "Jailer qr code" matched no document by title and fell to general chat. A ticket/QR
+      // ask is answered from the saved booking's attached ticket (then saved documents), with the image
+      // itself, or one honest line when nothing is stored. It never reaches the model.
+      if (isTicketRetrievalAsk(text)) {
+        const ticket = await buildTicketRetrievalReply(resolvedUser.telegramId, text, inboundMessageSid || null)
+        if (ticket) {
+          await saveConversation(resolvedUser.telegramId, 'user', incoming.wasVoice ? `[voice] ${originalText} -> ${text}` : text)
+          await saveConversation(resolvedUser.telegramId, 'assistant', ticket.text)
+          await sendWhatsAppMessage(from, ticket.text)
+          if (ticket.mediaUrl) {
+            try { await sendWhatsAppMediaMessage(from, ' ', ticket.mediaUrl) } catch (mediaError: any) { console.error('WHATSAPP_TICKET_MEDIA_FAILED:', mediaError?.message || mediaError) }
+          }
+          return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+        }
       }
       if (isAssetRetrievalCommand(text)) {
         const assetReply = await buildAssetRetrievalReply(resolvedUser.telegramId, text, inboundMessageSid || null)
