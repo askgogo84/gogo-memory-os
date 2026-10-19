@@ -5,6 +5,7 @@ import { tryTypedTimeRouting } from './typed-time-routing'
 import { executeApprovedCalendarUpdate } from './calendar-update'
 import { executeApprovedReminderUpdate } from './reminder-update'
 import { verifiedReadEvidence } from './read-evidence'
+import { approvalChoiceList, approvalRelativeAge, expiredApprovalReply, partitionPendingApprovals } from './approval-ttl'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
@@ -69,9 +70,21 @@ export function approvalIntent(text: string): 'approve' | 'reject' | null {
     .replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`.!]+$/g, '')
     .replace(/[‘’]/g, "'")
     .toLowerCase()
+  // "approve 2" / "approve #2" / "reject 1" pick one card from a numbered list of pending approvals.
   if (/^(approve|approved|yes[ ,]+approve|approve it|go ahead with it|proceed with it)$/i.test(t)) return 'approve'
+  if (/^(approve|yes[ ,]+approve)\s*#?\s*\d{1,2}$/i.test(t)) return 'approve'
   if (/^(reject|rejected|deny|decline|reject it|do not proceed|don't proceed|cancel that action)$/i.test(t)) return 'reject'
+  if (/^(reject|deny|decline)\s*#?\s*\d{1,2}$/i.test(t)) return 'reject'
   return null
+}
+
+/** The decision plus, for "approve 2" / "reject #1", the 1-based item from the numbered list. */
+export function parseApprovalIntent(text: string): { decision: 'approve' | 'reject'; index?: number } | null {
+  const decision = approvalIntent(text)
+  if (!decision) return null
+  const t = String(text || '').trim().replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`.!]+$/g, '')
+  const numbered = t.match(/(\d{1,2})$/)
+  return numbered ? { decision, index: Number(numbered[1]) } : { decision }
 }
 
 async function pauseRecentTimedOutBrowserRun(actor: AgentActor) {
@@ -119,21 +132,82 @@ async function withWhatsAppBrowserBudget<T>(actor: AgentActor, task: Promise<T>)
   }
 }
 
-async function latestPendingApproval(telegramId: number) {
+// Bounded window of the newest pending approvals. Expiry and numbering are decided from this window.
+async function latestPendingApprovals(telegramId: number) {
   const { data, error } = await supabaseAdmin.from('agent_approvals')
-    .select('id,run_id,title,action_type,risk_level,status,requested_at')
+    .select('id,run_id,title,action_type,risk_level,status,requested_at,execution_payload')
     .eq('telegram_id', String(telegramId))
     .eq('status', 'pending')
     .order('requested_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+    .limit(20)
   if (error) throw new Error(`whatsapp_agent_approval_read_failed:${error.message}`)
-  return data || null
+  return (data || []) as any[]
 }
 
-async function resolveLatestApproval(actor: AgentActor, decision: 'approve' | 'reject'): Promise<WhatsAppAgentResult | null> {
-  const pending = await latestPendingApproval(actor.legacyTelegramId)
-  if (!pending) return null
+// An approval past its lifetime is closed as expired and never executed. Its run is paused so no
+// worker can pick it up; a fresh preparation and approval is required.
+async function expirePendingApprovals(actor: AgentActor, rows: any[], now: Date) {
+  const nowIso = now.toISOString()
+  for (const row of rows) {
+    const { data, error } = await supabaseAdmin.from('agent_approvals')
+      .update({ status: 'expired', resolved_at: nowIso, resolution_note: `Expired before a decision (requested ${approvalRelativeAge(row.requested_at, now)}); nothing was executed.` })
+      .eq('id', row.id)
+      .eq('telegram_id', String(actor.legacyTelegramId))
+      .eq('status', 'pending')
+      .select('id,run_id')
+      .maybeSingle()
+    if (error) throw new Error(`whatsapp_agent_approval_expire_failed:${error.message}`)
+    if (!data) continue
+    if (data.run_id) {
+      await supabaseAdmin.from('agent_runs')
+        .update({ status: 'paused', updated_at: nowIso })
+        .eq('id', data.run_id)
+        .eq('telegram_id', String(actor.legacyTelegramId))
+        .eq('status', 'waiting_approval')
+    }
+    await supabaseAdmin.from('agent_activity').insert({
+      telegram_id: String(actor.legacyTelegramId), run_id: data.run_id,
+      event_type: 'approval_expired',
+      message: `Approval expired before a decision: ${row.title}`.slice(0, 900),
+      metadata_json: { approval_id:data.id, action_type:row.action_type, risk_level:row.risk_level, surface:'whatsapp' },
+    }).then(({ error }) => { if (error) console.error('WHATSAPP_AGENT_APPROVAL_ACTIVITY_FAILED:', error.message) })
+  }
+}
+
+function approvalChoicePrompt(live: any[], liveTotal: number, now: Date) {
+  const more = liveTotal > live.length ? ` (showing the latest ${live.length} of ${liveTotal})` : ''
+  const lastNumber = live.length > 1 ? 2 : 1
+  return `${approvalChoiceList(live, now)}${more ? `\n${more.trim()}` : ''}\n\nReply approve 1 or reject ${lastNumber}.`
+}
+
+// Bare "Approve" with one live approval behaves as before. With several, or with an expired card in
+// the way, nothing runs until the person names the item: "approve 2" resolves exactly that item from
+// the same oldest-first list. Expired approvals are closed, never executed, and never numbered.
+async function resolveLatestApproval(actor: AgentActor, intent: { decision: 'approve' | 'reject'; index?: number }): Promise<WhatsAppAgentResult | null> {
+  const rows = await latestPendingApprovals(actor.legacyTelegramId)
+  if (!rows.length) return null
+  const nowDate = new Date()
+  const { expired, live, liveTotal } = partitionPendingApprovals(rows, nowDate)
+  if (expired.length) await expirePendingApprovals(actor, expired, nowDate)
+  const newestExpired = expired[expired.length - 1]
+  if (!live.length) {
+    return { text: expiredApprovalReply(newestExpired?.requested_at, nowDate), runId: newestExpired?.run_id || undefined, status: 'expired', handledBy: 'whatsapp-agent-approval' }
+  }
+  if (intent.index != null) {
+    if (!Number.isInteger(intent.index) || intent.index < 1 || intent.index > live.length) {
+      const count = live.length === 1 ? 'There is only 1 pending approval' : `There are ${live.length} pending approvals`
+      return { text: `${count}, so there is no number ${intent.index}. Nothing was done.\n\n${approvalChoicePrompt(live, liveTotal, nowDate)}`, status: 'waiting_approval', handledBy: 'whatsapp-agent-approval-choice' }
+    }
+    return resolveApprovalDecision(actor, live[intent.index - 1], intent.decision)
+  }
+  if (live.length === 1 && !expired.length) return resolveApprovalDecision(actor, live[0], intent.decision)
+  const lead = expired.length
+    ? `${expiredApprovalReply(newestExpired.requested_at, nowDate)}\n\n${live.length === 1 ? 'You still have 1 pending approval:' : `You still have ${live.length} pending approvals. Which one do you mean?`}`
+    : `You have ${live.length} pending approvals. Which one do you mean? Nothing was done yet.`
+  return { text: `${lead}\n${approvalChoicePrompt(live, liveTotal, nowDate)}`, status: 'waiting_approval', handledBy: 'whatsapp-agent-approval-choice' }
+}
+
+async function resolveApprovalDecision(actor: AgentActor, pending: any, decision: 'approve' | 'reject'): Promise<WhatsAppAgentResult | null> {
   const now = new Date().toISOString()
   const status = decision === 'approve' ? 'approved' : 'rejected'
   const { data, error } = await supabaseAdmin.from('agent_approvals')
@@ -440,7 +514,7 @@ export async function tryRunWhatsAppAgent(params: {
     }
   }
 
-  const decision = approvalIntent(params.text)
+  const decision = parseApprovalIntent(params.text)
   if (decision) {
     const approval = await resolveLatestApproval(actor, decision)
     if (approval) return approval
