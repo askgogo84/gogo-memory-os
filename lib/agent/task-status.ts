@@ -2,6 +2,11 @@
 // owner's own agent_runs + agent_steps. A named query that matches no run returns null so routing
 // continues. Live flight status, the usage meter, shop orders, reminders, news, calendar,
 // email and watchers have their own handlers and are never claimed here.
+//
+// Precision over recall (19 Oct review): a named ask only matches a run that is still active or
+// was touched in the last 24 hours, and only when the phrase names a task ("booking", "research",
+// "plan"...) or shares at least two content words with the run title. Personal phrasings ("how is my
+// mom doing", "how is my business doing") are never task asks. DB read errors fall through (null).
 import { retiredRunReason } from './task-lifecycle'
 import { isAutonomyStatus, normalizeStatusAsk } from './attention-state'
 
@@ -48,6 +53,8 @@ const PHRASE_BLOCKS = [
   /\b(?:and|then|also)\b|[,;]/,
   /\b(?:cancel|stop|book|approve|reject|retry|resume|restart|change|move|delete|add|create|start)\b/,
 ]
+// "how is my mom doing" / "how is my business going" are about life, not a task card.
+const PERSONAL_SUBJECT = /^(?:(?:dear|dearest|little|baby|old|new)\s+)?(?:mom|mum|mommy|mummy|mother|amma|dad|daddy|father|papa|appa|parents?|wife|husband|hubby|spouse|partner|girlfriend|boyfriend|fiance|fiancee|son|daughter|kids?|children|child|baby|family|brother|sister|bro|sis|siblings?|grandma|grandpa|granny|grandmother|grandfather|aunt|uncle|cousin|friends?|dog|cat|pet|business|company|startup|firm|shop|store|restaurant|team|staff|career|job|work|office|relationship|marriage|love life|health|body|knee|back|diet|fitness|studies|exams?|college|school|garden|plants?|car|bike|house|home)$/
 const BARE_TRANSPORT = /\b(?:flights?|trains?|bus|buses|cabs?|rides?)\b/
 const TRANSPORT_TASK = /\b(?:booking|bookings|search|research|task|job|hunt|deals?|fares?|prices?|plan|planning|mission|request)\b/
 
@@ -68,6 +75,7 @@ export function parseTaskStatusQuery(text: string): TaskStatusQuery | null {
     const words = phrase.split(' ').filter(Boolean)
     if (!words.length || words.length > 6 || phrase.length < 3) return null
     if (PHRASE_BLOCKS.some(block => block.test(phrase))) return null
+    if (PERSONAL_SUBJECT.test(phrase)) return null
     if (BARE_TRANSPORT.test(phrase) && !TRANSPORT_TASK.test(phrase)) return null
     const content = contentTokens(phrase)
     if (!content.length) return null
@@ -92,12 +100,30 @@ function contentTokens(phrase: string) {
 }
 
 const ACTIVE = new Set(['queued', 'running', 'waiting_approval', 'paused', 'outcome_unknown'])
+// Runs a named ask may match regardless of age. Anything else must have been updated recently.
+const MATCHABLE_STATUSES = ['queued', 'running', 'waiting_approval', 'paused', 'watching']
+const MATCHABLE = new Set(MATCHABLE_STATUSES)
+const RECENT_MATCH_HOURS = 24
+// An explicit task word in the ask is enough on its own; otherwise two content words must overlap.
+const EXPLICIT_TASK_WORD = /\b(?:tasks?|bookings?|research(?:es|ing)?|search(?:es|ing)?|orders?|plans?|planning|jobs?|requests?)\b/
 
-/** Deterministic title match: every content word of the phrase must appear in the run title. */
-export function matchRunByTitle(runs: any[], phrase: string): { run: any; others: number } | null {
-  const wanted = contentTokens(phrase)
+/** A run a named ask may match: still active, or updated within the last 24 hours. */
+export function isMatchableRun(run: any, now: Date = new Date()) {
+  if (MATCHABLE.has(String(run?.status))) return true
+  const at = Date.parse(String(run?.updated_at || ''))
+  return Number.isFinite(at) && now.getTime() - at <= RECENT_MATCH_HOURS * 3600000
+}
+
+/**
+ * Deterministic title match: every content word of the phrase must appear in the run title, the ask
+ * must name a task or share >= 2 content words with the title, and the run must be matchable.
+ */
+export function matchRunByTitle(runs: any[], phrase: string, now: Date = new Date()): { run: any; others: number } | null {
+  const wanted = [...new Set(contentTokens(phrase))]
   if (!wanted.length) return null
+  if (!EXPLICIT_TASK_WORD.test(String(phrase || '').toLowerCase()) && wanted.length < 2) return null
   const hits = (runs || []).filter(run => {
+    if (!isMatchableRun(run, now)) return false
     const have = new Set(tokens(run?.title))
     return wanted.every(w => have.has(w))
   })
@@ -204,9 +230,13 @@ async function defaultDeps(): Promise<TaskStatusDeps> {
   const { supabaseAdmin } = await import('@/lib/supabase-admin')
   return {
     async listRuns(telegramId) {
+      // Only candidates a named ask may match: active, or touched within the recency window.
+      const cutoff = new Date(Date.now() - RECENT_MATCH_HOURS * 3600000).toISOString()
       const { data, error } = await supabaseAdmin.from('agent_runs')
         .select('id,telegram_id,status,title,summary,progress,updated_at,error,metadata_json')
-        .eq('telegram_id', telegramId).order('updated_at', { ascending: false }).limit(50)
+        .eq('telegram_id', telegramId)
+        .or(`status.in.(${MATCHABLE_STATUSES.join(',')}),updated_at.gte.${cutoff}`)
+        .order('updated_at', { ascending: false }).limit(50)
       if (error) throw new Error(`task_status_runs_read_failed:${error.message}`)
       return data || []
     },
@@ -226,13 +256,27 @@ export async function tryGetTaskStatus(owner: TaskStatusOwner, text: string, dep
   if (!query || query.kind !== 'named') return null
   const tg = String(owner?.telegramId ?? '').trim()
   if (!tg || tg === '0' || tg === 'undefined' || tg === 'null') throw new Error('task_status_owner_missing')
-  const d = deps || await defaultDeps()
-  const runs = (await d.listRuns(tg)).filter(run => run && String(run.telegram_id ?? tg) === tg)
-  const match = matchRunByTitle(runs, query.phrase)
-  if (!match) return null
-  const steps = (await d.listSteps(tg, String(match.run.id)))
-    .filter(step => String(step.telegram_id ?? tg) === tg && String(step.run_id ?? match.run.id) === String(match.run.id))
+  let d: TaskStatusDeps
+  let runs: any[]
+  try {
+    d = deps || await defaultDeps()
+    runs = ((await d.listRuns(tg)) || []).filter(run => run && String(run.telegram_id ?? tg) === tg)
+  } catch (err: any) {
+    // A failed read is not "no such task" — but it must not break routing either: fall through.
+    console.error('TASK_STATUS_READ_FAILED:', clean(err?.message || err, 200))
+    return null
+  }
   const now = d.now ? d.now() : new Date()
+  const match = matchRunByTitle(runs, query.phrase, now)
+  if (!match) return null
+  let steps: any[]
+  try {
+    steps = ((await d.listSteps(tg, String(match.run.id))) || [])
+      .filter(step => String(step.telegram_id ?? tg) === tg && String(step.run_id ?? match.run.id) === String(match.run.id))
+  } catch (err: any) {
+    console.error('TASK_STATUS_READ_FAILED:', clean(err?.message || err, 200))
+    return null
+  }
   const card = formatRunStatus(match.run, steps, lastRunActivity(match.run, steps), now)
   const more = match.others ? `\n\n${match.others} other task${match.others === 1 ? '' : 's'} also match "${clean(query.phrase, 60)}". Say *what are you working on* to see them all.` : ''
   return {

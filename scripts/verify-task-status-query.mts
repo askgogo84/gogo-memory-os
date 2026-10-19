@@ -6,7 +6,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
+// Placeholders only so module-level clients construct; every read below goes through injected deps.
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'; process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'ci-placeholder-service-role-key'
+process.env.OPENAI_API_KEY ||= 'ci-placeholder-openai-key'; process.env.ANTHROPIC_API_KEY ||= 'ci-placeholder-anthropic-key'
 
 const ts_ = await import('../lib/agent/task-status.ts')
 const { parseTaskStatusQuery, formatRunStatus, tryGetTaskStatus, matchRunByTitle, lastRunActivity } = ts_
@@ -48,6 +50,9 @@ const negatives = [
   'show my pending tasks', 'my pending tasks', 'my tasks', 'tasks', 'show tasks',
   'status of my booking and cancel it', 'what is the status of my booking, then rebook', 'how are you doing', "how's it going",
   'what are you doing tonight', 'update my address', 'plan a trip to Goa',
+  // personal phrasings are about life, not a task card (19 Oct review)
+  'how is my mom doing', "how's my mom doing", 'How is my dad doing?', 'how is my wife doing', 'how is my business doing',
+  'how is my business going', "how's my health doing", 'how are you doing?', 'how is my family doing', 'how is my startup going',
 ]
 for (const t of negatives) {
   assert.equal(parseTaskStatusQuery(t), null, `must not claim: ${t}`)
@@ -160,7 +165,7 @@ const deps = (leak = false) => ({
   assert.equal(res!.handledBy, 'task-status'); assert.equal(res!.runId, 'goa', 'active run beats an older completed one')
   assert.equal(res!.readOnly, true); assert.equal(res!.mutated, false)
   assert.match(res!.text, /Goa trip plan — December/); assert.match(res!.text, /Progress: 60%/)
-  assert.match(res!.text, /1 other task also match/)
+  assert.doesNotMatch(res!.text, /other task/, 'a 10-day-old completed run is not a candidate')
   assert.doesNotMatch(res!.text, /SECRET|LEAKED/)
   assert.ok(calls.every(([, tg]) => tg === '100'), 'every read is owner scoped')
   const flight = await tryGetTaskStatus({ telegramId: 100 }, 'status of my flight booking task', deps())
@@ -179,8 +184,48 @@ assert.equal(await tryGetTaskStatus({ telegramId: 100 }, 'flight status AI 505',
   assert.equal(other!.runId, 'secret'); assert.doesNotMatch(other!.text, /December/)
   await assert.rejects(() => tryGetTaskStatus({ telegramId: 0 }, "how's the Goa trip going", deps()), /task_status_owner_missing/)
 }
-assert.equal(matchRunByTitle(store.runs, 'kerala trip'), null, 'every phrase word must appear in the title')
+assert.equal(matchRunByTitle(store.runs, 'kerala trip', NOW), null, 'every phrase word must appear in the title')
+{
+  // Two live matches -> the "others" hint.
+  const twoLive = { runs: [...store.runs, run({ id: 'goa2', title: 'Goa trip hotels', status: 'queued', updated_at: ago(30) })], steps: store.steps }
+  const res = await tryGetTaskStatus({ telegramId: 100 }, "how's the Goa trip going", { now: () => NOW, listRuns: async (tg: string) => twoLive.runs.filter(r => r.telegram_id === tg), listSteps: async () => [] })
+  assert.equal(res!.runId, 'goa'); assert.match(res!.text, /1 other task also match/)
+}
 console.log('PASS tryGetTaskStatus: named match, none -> null, owner isolation')
+
+// 5b. Precision (19 Oct review): stale/finished runs, personal asks, weak overlaps, DB errors.
+{
+  const review = [
+    run({ id: 'mom', title: 'Book doctor appointment for mom', status: 'completed', updated_at: ago(60 * 24 * 48) }),
+    run({ id: 'biz-old', title: 'Research business loan options', status: 'failed', updated_at: ago(60 * 24 * 3) }),
+    run({ id: 'toit', title: 'Toit table for Saturday', status: 'running', updated_at: ago(10) }),
+  ]
+  const rd = (rows: any[]) => ({ now: () => NOW, listRuns: async (tg: string) => rows.filter(r => r.telegram_id === tg), listSteps: async () => [] })
+  for (const t of ['how is my mom doing', 'how is my business doing', 'how are you doing', "how's my dad doing", 'how is my wife doing'])
+    assert.equal(await tryGetTaskStatus({ telegramId: 100 }, t, rd(review)), null, `personal ask never returns a card: ${t}`)
+  // Old finished runs are not candidates even with a full, explicit match.
+  assert.equal(await tryGetTaskStatus({ telegramId: 100 }, 'status of my business loan research', rd(review)), null, 'a 3-day-old failed run is not matched')
+  assert.equal(await tryGetTaskStatus({ telegramId: 100 }, 'any update on my doctor appointment booking', rd(review)), null, 'a 48-day-old completed run is not matched')
+  assert.equal(matchRunByTitle(review, 'doctor appointment mom', NOW), null, 'matcher itself drops old finished runs')
+  // ...but a recently finished one (within 24h) still is.
+  const recent = [run({ id: 'biz-new', title: 'Research business loan options', status: 'failed', updated_at: ago(120) })]
+  assert.equal((await tryGetTaskStatus({ telegramId: 100 }, 'status of my business loan research', rd(recent)))!.runId, 'biz-new')
+  assert.equal(await tryGetTaskStatus({ telegramId: 100 }, 'how is my business doing', rd(recent)), null, 'still personal even with a fresh business run')
+  // One content word and no task word is too weak, even for a live run.
+  assert.equal(matchRunByTitle(review, 'toit', NOW), null, 'single-word, non-task phrase needs >= 2 overlaps')
+  assert.equal(await tryGetTaskStatus({ telegramId: 100 }, "how's the toit going", rd(review)), null)
+  assert.equal((await tryGetTaskStatus({ telegramId: 100 }, 'any update on the toit table', rd(review)))!.runId, 'toit', 'two overlapping words match')
+  assert.equal(matchRunByTitle(review, 'toit booking', NOW), null, 'every content word must still be in the title')
+  // Live statuses match regardless of age.
+  const oldLive = [run({ id: 'watch', title: 'Passport renewal appointment search', status: 'watching', updated_at: ago(60 * 24 * 20) })]
+  assert.equal((await tryGetTaskStatus({ telegramId: 100 }, 'where are we on my passport renewal', rd(oldLive)))!.runId, 'watch')
+  // DB read errors fall through instead of throwing into routing.
+  const boom = { now: () => NOW, listRuns: async () => { throw new Error('task_status_runs_read_failed:connection reset') }, listSteps: async () => [] }
+  assert.equal(await tryGetTaskStatus({ telegramId: 100 }, "how's the Goa trip going", boom), null, 'runs read error -> null')
+  const boomSteps = { now: () => NOW, listRuns: async (tg: string) => store.runs.filter(r => r.telegram_id === tg), listSteps: async () => { throw new Error('task_status_steps_read_failed:timeout') } }
+  assert.equal(await tryGetTaskStatus({ telegramId: 100 }, "how's the Goa trip going", boomSteps), null, 'steps read error -> null')
+}
+console.log('PASS precision: personal asks, old runs, weak overlap, DB errors')
 
 // 6. Wiring: real bridge dispatch + route order before the general planner on both surfaces.
 const read = (p: string) => readFileSync(new URL('../' + p, import.meta.url), 'utf8')

@@ -5,7 +5,10 @@ import { runInNewContext } from 'node:vm'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import ts from 'typescript'
-import { completionNotice, notifyRunOutcome } from '../lib/agent/run-notify'
+// Placeholders only so the module-level Supabase client constructs; every DB call goes to fakeDb.
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'
+process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'ci-placeholder-service-role-key'
+const { completionNotice, notifyRunOutcome } = await import('../lib/agent/run-notify')
 
 const failures: string[] = []
 async function check(name: string, fn: () => unknown | Promise<unknown>) {
@@ -13,7 +16,15 @@ async function check(name: string, fn: () => unknown | Promise<unknown>) {
 }
 
 // ---- inert Supabase-like client: rows per table, records every write ----
+// Honours `col->>key` JSON-path filters for eq/is, like PostgREST, so the claim guard is real.
 type Write = { table: string; op: string; value: any; filters: Record<string, any> }
+const IS = Symbol('is')
+function field(row: any, k: string) {
+  const m = k.match(/^(\w+)->>(\w+)$/)
+  if (!m) return row[k]
+  const v = row[m[1]]?.[m[2]]
+  return v === undefined || v === null ? null : String(v)
+}
 function fakeDb(tables: Record<string, any[]>) {
   const writes: Write[] = []
   const db = {
@@ -21,12 +32,17 @@ function fakeDb(tables: Record<string, any[]>) {
     from(table: string) {
       const filters: Record<string, any> = {}
       let op = 'select', value: any = null
-      const rows = () => (tables[table] || []).filter((row) => Object.entries(filters).every(([k, v]) => Array.isArray(v) ? v.includes(row[k]) : String(row[k]) === String(v)))
+      const matches = (row: any, k: string, v: any) => {
+        if (v && typeof v === 'object' && IS in v) return field(row, k) === null
+        const have = field(row, k)
+        return Array.isArray(v) ? v.includes(have) : String(have) === String(v)
+      }
+      const rows = () => (tables[table] || []).filter((row) => Object.entries(filters).every(([k, v]) => matches(row, k, v)))
       const result = () => {
         if (op === 'insert') return { data: { id: `${table}-new` }, error: null }
         if (op === 'update') {
           const hit = rows()
-          for (const row of hit) Object.assign(row, value)
+          for (const row of hit) Object.assign(row, structuredClone(value))
           return { data: hit, error: null }
         }
         return { data: rows(), error: null }
@@ -37,7 +53,9 @@ function fakeDb(tables: Record<string, any[]>) {
         update: (v: any) => { op = 'update'; value = v; writes.push({ table, op, value: v, filters }); return q },
         eq: (k: string, v: any) => { filters[k] = v; return q },
         in: (k: string, v: any[]) => { filters[k] = v; return q },
-        lt: () => q, lte: () => q, gte: () => q, order: () => q, limit: () => q, not: () => q, is: () => q,
+        lt: () => q, lte: () => q, gte: () => q, order: () => q, limit: () => q, not: () => q,
+        // Only JSON-path null checks are modelled; plain-column .is() stays inert as before.
+        is: (k: string, v: any) => { if (k.includes('->>') && v === null) filters[k] = { [IS]: true }; return q },
         maybeSingle: async () => { const r = result(); return { data: Array.isArray(r.data) ? r.data[0] || null : r.data, error: r.error } },
         single: async () => { const r = result(); return { data: Array.isArray(r.data) ? r.data[0] || null : r.data, error: r.error } },
         then: (resolve: any, reject: any) => Promise.resolve(result()).then(resolve, reject),
@@ -80,6 +98,18 @@ await check('titles carrying codes or passwords are never echoed', () => {
   assert.equal(text, 'Done: your task.')
   assert.doesNotMatch(text, /482913|hunter2/)
 })
+await check('titles with a raw numeric code near sign-in / verify / code / use words are redacted', () => {
+  for (const title of ['use 482913 to sign in', 'Enter 5512 to verify', 'Login code 90817265', 'Verify with 123456', '7741 is the code for the portal']) {
+    const text = completionNotice({ status: 'completed', title, summary: 'Finished.' })
+    assert.equal(text, 'Done: your task. Finished.', title)
+    assert.doesNotMatch(text, /\d{4}/)
+  }
+  assert.equal(completionNotice({ status: 'failed', title: 'use 482913 to sign in', error: 'x' }).startsWith('Stopped: your task.'), true)
+  assert.equal(completionNotice({ status: 'completed', title: 'Done', summary: 'Use 482913 to sign in next time' }), 'Done: Done.', 'summary with a code is not echoed')
+  // Ordinary numbers stay.
+  assert.equal(completionNotice({ status: 'completed', title: 'Book a table for 4 at Toit' }), 'Done: Book a table for 4 at Toit.')
+  assert.equal(completionNotice({ status: 'completed', title: 'Compare flights BLR-DEL under 6000' }), 'Done: Compare flights BLR-DEL under 6000.')
+})
 
 // ---- notifyRunOutcome ----
 function notifyHarness(meta: Record<string, any> = {}, opts: { sendFails?: boolean; type?: string } = {}) {
@@ -113,7 +143,69 @@ await check('send failure leaves the flag unset and does not throw', async () =>
   const result = await notifyRunOutcome({ ...h.row }, h.deps)
   assert.deepEqual(result, { status: 'failed', reason: 'send_failed' })
   assert.equal(h.row.metadata_json.outcome_notified_at, undefined)
-  assert.equal(h.db.writes.filter((w) => w.op === 'update').length, 0)
+  assert.equal(h.row.metadata_json.outcome_notice_claimed_at, undefined, 'failed send releases the claim')
+  assert.equal(h.row.metadata_json.outcome_notice_claim_id, undefined)
+  // Released, so a later attempt can still deliver it.
+  const retry = await notifyRunOutcome({ ...h.row }, { ...h.deps, send: async (to: string, text: string) => { h.sent.push({ to, text }) } })
+  assert.deepEqual(retry, { status: 'sent' })
+  assert.ok(h.row.metadata_json.outcome_notified_at)
+})
+await check('two racing notify calls send exactly one message', async () => {
+  const h = notifyHarness()
+  const results = await Promise.all([notifyRunOutcome({ ...h.row }, h.deps), notifyRunOutcome({ ...h.row }, h.deps)])
+  const claims = h.db.writes.filter((w) => w.op === 'update' && w.value?.metadata_json?.outcome_notice_claim_id)
+  assert.equal(claims.length, 2, 'both callers got past the read and tried to claim')
+  assert.ok(claims.every((w) => 'metadata_json->>outcome_notice_claimed_at' in w.filters && 'metadata_json->>outcome_notified_at' in w.filters), 'claim is guarded on both keys')
+  assert.ok(claims.every((w) => w.filters.id === 'run-1' && w.filters.telegram_id === '123'), 'claim is owner bound')
+  assert.equal(h.sent.length, 1, 'only the claimer sends')
+  assert.deepEqual(results.map((r) => r.status).sort(), ['sent', 'skipped'])
+  assert.ok(results.some((r) => r.status === 'skipped' && (r as any).reason === 'claimed_elsewhere'))
+  assert.ok(h.row.metadata_json.outcome_notified_at)
+  assert.equal(h.row.metadata_json.outcome_notice_claim_id, undefined, 'claim keys cleared once flagged')
+})
+await check('metadata written by another path between claim and flag is preserved', async () => {
+  const h = notifyHarness({ keep_me: 1 })
+  const result = await notifyRunOutcome({ ...h.row }, {
+    ...h.deps,
+    send: async (to: string, text: string) => {
+      h.sent.push({ to, text })
+      // Another writer (e.g. the worker recording its result) lands while the message is in flight.
+      h.row.metadata_json = { ...h.row.metadata_json, result_ref: 'artifact-42', keep_me: 2 }
+    },
+  })
+  assert.deepEqual(result, { status: 'sent' })
+  assert.equal(h.row.metadata_json.result_ref, 'artifact-42')
+  assert.equal(h.row.metadata_json.keep_me, 2)
+  assert.equal(h.row.metadata_json.outcome_notified_at, '2026-10-19T10:00:00.000Z')
+})
+await check('a fresh claim held elsewhere blocks; a stale one is taken over by compare-and-swap', async () => {
+  const fresh = notifyHarness({ outcome_notice_claimed_at: '2026-10-19T09:58:00.000Z', outcome_notice_claim_id: 'other' })
+  assert.deepEqual(await notifyRunOutcome({ ...fresh.row }, fresh.deps), { status: 'skipped', reason: 'claimed_elsewhere' })
+  assert.equal(fresh.sent.length, 0)
+  const stale = notifyHarness({ outcome_notice_claimed_at: '2026-10-19T08:00:00.000Z', outcome_notice_claim_id: 'dead' })
+  assert.deepEqual(await notifyRunOutcome({ ...stale.row }, stale.deps), { status: 'sent' })
+  assert.equal(stale.sent.length, 1)
+  const takeover = stale.db.writes.find((w) => w.value?.metadata_json?.outcome_notice_claim_id && w.value.metadata_json.outcome_notice_claim_id !== 'dead')
+  assert.equal(takeover?.filters['metadata_json->>outcome_notice_claimed_at'], '2026-10-19T08:00:00.000Z', 'takeover is conditional on the exact stale claim')
+})
+await check('a claim write that matches no row means someone else owns it: no send', async () => {
+  const h = notifyHarness()
+  const racing = { ...h.db, from(table: string) {
+    const q = h.db.from(table)
+    const update = q.update
+    q.update = (v: any) => { h.row.metadata_json = { ...h.row.metadata_json, outcome_notified_at: 'by-another-path' }; return update(v) }
+    return q
+  } }
+  assert.deepEqual(await notifyRunOutcome({ ...h.row }, { ...h.deps, db: racing }), { status: 'skipped', reason: 'claimed_elsewhere' })
+  assert.equal(h.sent.length, 0)
+})
+await check('DB errors never throw', async () => {
+  const h = notifyHarness()
+  const broken = { from: () => { const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: null, error: { message: 'down' } }) }; return q } }
+  assert.deepEqual(await notifyRunOutcome({ ...h.row }, { ...h.deps, db: broken }), { status: 'failed', reason: 'run_read_failed' })
+  const throwing = { from: () => { throw new Error('boom') } }
+  assert.deepEqual(await notifyRunOutcome({ ...h.row }, { ...h.deps, db: throwing }), { status: 'failed', reason: 'unexpected' })
+  assert.equal(h.sent.length, 0)
 })
 await check('secure_browser runs are skipped (their worker already notifies)', async () => {
   for (const h of [notifyHarness({ plan_type: 'secure_browser' }), notifyHarness({}, { type: 'secure_browser' })]) {
