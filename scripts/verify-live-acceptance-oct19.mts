@@ -11,7 +11,7 @@ import ts from 'typescript'
 const RealDate = Date
 const NOW = '2026-10-19T04:10:00Z' // 09:40 IST, Monday
 class FixedDate extends RealDate {
-  constructor(...args: any[]) { super(...(args.length ? args as [any] : [NOW])) }
+  constructor(value?: any) { super(value === undefined ? NOW : value) }
   static now() { return RealDate.parse(NOW) }
 }
 const noop = new Proxy({}, {get: () => () => null})
