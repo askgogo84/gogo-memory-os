@@ -109,13 +109,19 @@ export function extractGoldQuotes(userText:string,searchContext:string,now=Date.
     else{warnings.add('A source URL could not be verified.');continue}
     // Search result titles advertise several purities; they are not quote rows.
     const lines=block.split('\n').filter(line=>!/^Source:/i.test(line))
-    if(/^\d+\./.test(lines[0]||''))lines.shift()
+    // The title's purities are not quote rows, but its date is evidence for the whole result
+    // ("Gold Price on 19 October 2026"). 19 Oct live: discarding it made every quote undated,
+    // so a percent watch refused to start while Instinct set it from the same Goodreturns page.
+    const title=/^\d+\./.test(lines[0]||'')?String(lines.shift()):''
+    const titleDate=sourceDate(title),titleToday=/\btoday(?:'?s)?\b/i.test(title)
     const body=lines.join(' ').replace(/\s+/g,' ').trim()
     const current=body.split(/\b(?:gold\s+rate\s+history|price\s+history|historical\s+(?:gold\s+)?(?:rates?|prices?)|popular\s+coins|related\s+products)\b/i)[0]
     if(/\bgold\s+coins?\b|\badd to cart\b/i.test(current)){warnings.add('Retail coin prices are not metal-rate quotes.');continue}
     const labels=purityLabels(current)
     const heading=current.slice(0,labels[0]?.index??current.length)
-    const headingDate=sourceDate(heading),headingToday=/\btoday\b/i.test(heading)
+    const ownHeadingDate=sourceDate(heading)
+    const headingDate=ownHeadingDate===undefined&&typeof titleDate==='string'?titleDate:ownHeadingDate
+    const headingToday=/\btoday\b/i.test(heading)||titleToday
     for(let i=0;i<labels.length;i++){
       const label=labels[i],start=label.index+label.length,end=labels[i+1]?.index??current.length
       const span=current.slice(start,end)
