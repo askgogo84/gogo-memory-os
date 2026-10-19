@@ -29,6 +29,7 @@ import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
 import { tryRunAppointmentFollowup, currentAppointmentReply } from '@/lib/agent/appointment-followup'
 import { appointmentPrepareOptionNumber, tryRecoverAppointmentOption } from '@/lib/agent/appointment-followup-recovery'
 import { tryRunRestaurantReservation } from '@/lib/agent/restaurant-reservation'
+import { tryResolvePendingQuestion } from '@/lib/bot/pending-question-resolver'
 import { attachRunToThread, resolveThreadForUser } from '@/lib/agent/thread-context'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 
@@ -146,8 +147,23 @@ export async function POST(request: Request) {
       }, 200)
     }
 
+    // Reservation turns are saved like WhatsApp's, so a short reply to a reservation question ("Goverdhan" after
+    // "What name should I book under?") binds to it through the pending-question resolver, which only accepts the
+    // question that is Gogo's latest message. A failed history write is logged, never thrown.
+    const respondTurn = async (result:any, status:number) => {
+      const { error } = await supabaseAdmin.from('conversations').insert([
+        { telegram_id:actor.legacyTelegramId, role:'user', content:text },
+        { telegram_id:actor.legacyTelegramId, role:'assistant', content:String(result?.text || '') },
+      ])
+      if (error) console.error('RESERVATION_TURN_SAVE_FAILED:', String(error.message || error).slice(0, 200))
+      return respond(result, status)
+    }
+    const pendingAnswer = await tryResolvePendingQuestion({ user:{ telegramId:actor.legacyTelegramId }, text, surface:session.surface, actor })
+    if (pendingAnswer && !pendingAnswer.rewrite) {
+      return respondTurn({ runId:pendingAnswer.runId || '', status:pendingAnswer.status || 'completed', capability:pendingAnswer.capability || 'browser', risk:'low', text:pendingAnswer.text, handledBy:pendingAnswer.handledBy }, pendingAnswer.status === 'waiting_approval' ? 202 : 200)
+    }
     const restaurantReservation = await tryRunRestaurantReservation({ actor, surface:session.surface, text })
-    if (restaurantReservation) return respond(restaurantReservation, restaurantReservation.status === 'waiting_approval' ? 202 : 200)
+    if (restaurantReservation) return respondTurn(restaurantReservation, restaurantReservation.status === 'waiting_approval' ? 202 : 200)
 
     const appointmentFollowup = await tryRunAppointmentFollowup({ actor, surface:session.surface, text })
     if (appointmentFollowup) return respondAppointment(appointmentFollowup, appointmentFollowup.status === 'waiting_approval' ? 202 : 200)

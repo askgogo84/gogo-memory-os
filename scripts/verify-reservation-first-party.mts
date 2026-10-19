@@ -15,6 +15,7 @@ import * as dining from '../lib/agent/reservation-dining-context'
 import * as binding from '../lib/agent/approval-binding'
 import * as locality from '../lib/agent/india-locality'
 import * as providerBooking from '../lib/agent/provider-booking'
+import * as guestNameModule from '../lib/agent/reservation-guest-name'
 
 const NOW=Date.parse('2026-10-19T06:10:00Z') // Mon 19 Oct, 11:40 IST
 class Clock extends Date{constructor(...a:any[]){super(...(a.length?a:[NOW]) as [])}static now(){return NOW}}
@@ -62,17 +63,18 @@ function makeDb(seed:Record<string,any[]>={}){
 type Browser=(p:any)=>Promise<any>
 function loadReservation(opts:{search:(q:string)=>any[];browser:Browser;db?:ReturnType<typeof makeDb>;calendarIncomplete?:boolean;calendarWindows?:any[]}){
   const db=opts.db||makeDb({users:[{id:'fixture-owner',telegram_id:123,whatsapp_id:'919800001501',timezone:'Asia/Kolkata',email:null}]})
-  const searches:string[]=[],browserCalls:any[]=[]
+  const searches:string[]=[],browserCalls:any[]=[],questions:any[]=[]
   const mod:any={}
   const contextPack=async(p:any)=>{const c={ownerId:'123',incomplete:false,coveredFrom:p.options.reservationCalendarCoverage?.from||new Date(NOW).toISOString(),coveredUntil:p.options.reservationCalendarCoverage?.until||'2026-12-17T10:00:00Z'};return{facts:[],reservationTravel:{...c,facts:[]},reservationCalendar:{...c,connected:true,windows:opts.calendarWindows||[],incomplete:opts.calendarIncomplete===true},reservationPreferences:{ownerId:'123',incomplete:false,rules:[]}}}
   runInNewContext(transpile('lib/agent/restaurant-reservation.ts'),{exports:mod,require:(name:string)=>
     name==='node:crypto'?{createHash}:name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='@/lib/timezone'?timezone:
     name==='./reservation-dining-context'?dining:name==='./approval-binding'?binding:name==='./india-locality'?locality:name==='./provider-booking'?providerBooking:
+    name==='./reservation-guest-name'?guestNameModule:name==='@/lib/bot/pending-questions'?{openPendingQuestion:async(q:any)=>{questions.push(q);return `q-${questions.length}`}}:
     name==='@/lib/web-search'?{searchWebResults:async(q:string)=>{searches.push(q);return opts.search(q)}}:
     name==='./secure-computer'?{runSecureBrowser:async(p:any)=>{browserCalls.push(p);return opts.browser(p)}}:
     name==='./context-brain'?{buildContextPack:contextPack}:{},
   Date:Clock,Intl,console,URL,Set,Map,Promise})
-  return{mod,db,searches,browserCalls}
+  return{mod,db,searches,browserCalls,questions}
 }
 const lines=(t:string)=>String(t||'').split('\n').filter(l=>l.trim()).length
 const searchBoth=(q:string)=>/reservego/i.test(q)?[EAZY,RESERVEGO]:[EAZY]
@@ -113,6 +115,13 @@ await check('available slot: browser reads the first-party widget; reply asks on
   assert.equal(pending.error,'awaiting_guest_name')
   assert.equal(pending.metadata_json.slot_time,'19:00')
   assert.equal(pending.metadata_json.provider.url,WIDGET)
+  // The name question goes through the pending-question registry, bound to this exact reply text.
+  assert.equal(h.questions.length,1)
+  assert.equal(h.questions[0].kind,'reservation_live_slot')
+  assert.equal(JSON.stringify(h.questions[0].expects),'["guest_name"]')
+  assert.equal(h.questions[0].askedText,r.text)
+  assert.equal(h.questions[0].telegramId,123)
+  assert.equal(pending.metadata_json.asked_text,r.text)
 })
 
 await check('stored email is mentioned only when it exists',async()=>{
@@ -188,6 +197,8 @@ await check('unavailable slot: up to 3 nearest times in one line, then a picked 
   assert.equal(await h.mod.continueRestaurantReservationGuestReply({actor,surface:'whatsapp',text:'8pm'}),null,'a time that was not offered is not accepted')
   const picked=await h.mod.continueRestaurantReservationGuestReply({actor,surface:'whatsapp',text:'6:30pm'})
   assert.equal(picked.text,"6:30pm tomorrow is available for 2 at Toit Indiranagar. What name should I book under? I'll use your WhatsApp number ending 1501.")
+  // Time question first, then the name question replaces it in the registry.
+  assert.deepEqual(h.questions.map((q:any)=>[q.kind,q.expects[0],q.askedText]),[['reservation_live_slot','time',r.text],['reservation_live_slot','guest_name',picked.text]])
 })
 
 await check('slot extraction ignores opening hours and sold-out slots; needs the requested date on the page',async()=>{
@@ -252,17 +263,22 @@ await check('CAPTCHA at submission: nothing booked, first-party link, approval s
   assert.equal(rr.reservationChallengeReply({restaurant:'Toit Indiranagar',time:'19:00',date:'2026-10-20',partySize:2,url:WIDGET,kind:'otp'}),`Toit Indiranagar's page needs an OTP, so nothing is booked. This link has 7pm for 2 on 20 Oct ready — finish it there and check the final terms: ${WIDGET}`)
 })
 
-await check('dashboard/agent surfaces: tryRunRestaurantReservation continues a pending name step; WhatsApp webhook routes it first',async()=>{
+await check('one owner: tryRunRestaurantReservation never reads a bare name; the pending-question resolver is the only entry on every surface',async()=>{
   const h=loadReservation({search:searchBoth,browser:widgetPage(['7:00 PM'])})
   await h.mod.tryRunRestaurantReservation({actor,surface:'web',text:REQUEST})
-  const r=await h.mod.tryRunRestaurantReservation({actor,surface:'web',text:'book under divya rao'})
+  assert.equal(await h.mod.tryRunRestaurantReservation({actor,surface:'web',text:'book under divya rao'}),null,'no second, unbound path for the name step')
+  assert.equal((h.db.tables.agent_runs||[]).find((x:any)=>x.type==='restaurant_reservation_slot').status,'paused','the step is still waiting for the registry-bound reply')
+  // The registry resumer (continueRestaurantReservationGuestReply) still produces the bounded approval.
+  const r=await h.mod.continueRestaurantReservationGuestReply({actor,surface:'web',text:'book under divya rao'})
   assert.equal(r?.status,'waiting_approval')
   assert.equal((h.db.tables.life_event_actions||[])[0].payload_json.guestName,'Divya Rao')
   assert.equal(await h.mod.tryRunRestaurantReservation({actor,surface:'web',text:'what is the weather'}),null)
-  const webhook=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8'),bridge=readFileSync('lib/agent/whatsapp-bridge.ts','utf8')
-  assert.ok(webhook.indexOf('tryRunWhatsAppReservationGuestReply({ user: resolvedUser, text })')>webhook.indexOf('if (approvalIntent(text))'),'APPROVE/REJECT keep first refusal')
-  assert.ok(webhook.indexOf('tryRunWhatsAppReservationGuestReply({ user: resolvedUser, text })')<webhook.indexOf('const unsupported=unsupportedCapability(text)'))
-  assert.match(bridge,/looksLikeReservationGuestReply\(params\.text\)/)
+  const webhook=readFileSync('app/api/webhooks/whatsapp/route.ts','utf8'),agentRun=readFileSync('app/api/agent/run/route.ts','utf8'),dash=readFileSync('app/api/dashboard/chat/route.ts','utf8')
+  assert.equal(webhook.includes('tryRunWhatsAppReservationGuestReply('),false,'the webhook no longer has a separate name-step hook')
+  assert.ok(webhook.indexOf('await tryResolvePendingQuestion({')>webhook.indexOf('if (approvalIntent(text))'),'APPROVE/REJECT keep first refusal')
+  assert.ok(webhook.indexOf('await tryResolvePendingQuestion({')<webhook.indexOf('const unsupported=unsupportedCapability(text)'))
+  assert.ok(agentRun.indexOf('await tryResolvePendingQuestion(')>0&&agentRun.indexOf('await tryResolvePendingQuestion(')<agentRun.indexOf('await tryRunRestaurantReservation('),'agent API resolves the question before reservation routing')
+  assert.ok(dash.indexOf('await tryResolvePendingQuestion(')<dash.indexOf('await tryRunRestaurantReservation('))
 })
 
 await check('release-time providers (Naru) keep the existing release mission path',async()=>{

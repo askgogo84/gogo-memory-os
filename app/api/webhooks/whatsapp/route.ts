@@ -56,7 +56,7 @@ import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { parseRunCancel } from '@/lib/agent/run-cancel'
-import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppAccountSite, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist, tryRunWhatsAppReservationGuestReply, tryRunWhatsAppTaskStatus } from '@/lib/agent/whatsapp-bridge'
+import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppAccountSite, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist, tryRunWhatsAppTaskStatus } from '@/lib/agent/whatsapp-bridge'
 import { parseTaskStatusQuery } from '@/lib/agent/task-status'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { tryResolvePendingQuestion } from '@/lib/bot/pending-question-resolver'
@@ -131,6 +131,12 @@ export const maxDuration = 120
 
 function normalizeWhatsAppNumber(value: string | null | undefined): string {
   return (value || '').replace(/^whatsapp:/, '').trim()
+}
+
+const REMINDER_BUTTON_TITLES: Record<string, string> = { 'done': 'done', 'snooze 10m': 'snooze_10', 'snooze 10 min': 'snooze_10', 'move to 8pm': 'move_8pm', 'move to 8 pm': 'move_8pm' }
+/** The reminder Quick-Reply button a tap's title names, or '' (only for a real tap: Twilio sends ButtonText). */
+function reminderButtonPayloadFromTitle(title: string): string {
+  return REMINDER_BUTTON_TITLES[String(title || '').trim().toLowerCase().replace(/\s+/g, ' ')] || ''
 }
 
 function emptyTwiml() {
@@ -392,7 +398,9 @@ async function handleWhatsAppPost(req: NextRequest) {
     // Reminder resolution matches the typed "done"/"snooze" path: the most recently
     // fired reminder (sent_at within ~30 min), else the next pending one. Typed
     // replies keep working unchanged (this block is skipped when there's no payload).
-    const buttonPayload = String(formData.get('ButtonPayload') || '').trim()
+    // A tap always carries ButtonText (the title). If a client drops ButtonPayload, the title still names the
+    // button, so "Move to 8pm" never falls through to text routing (19 Oct live).
+    const buttonPayload = String(formData.get('ButtonPayload') || '').trim() || reminderButtonPayloadFromTitle(String(formData.get('ButtonText') || ''))
     if(buttonPayload==='done'){
       const reply=await completeReminderOccurrence(resolvedUser.telegramId,String(formData.get('OriginalRepliedMessageSid')||'')||null)
         .catch(()=> 'I couldn’t save that reminder as done. Please try again; I haven’t confirmed it as completed.')
@@ -853,7 +861,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     }
 
     const originalText = incoming.text.trim()
-    const text = incoming.wasVoice ? normalizeVoicePromptForBot(originalText) : originalText
+    let text = incoming.wasVoice ? normalizeVoicePromptForBot(originalText) : originalText
     const preserveFriendFlow = Boolean(detectFriendReminder(text)) ||
       (isFriendReminderFollowupCandidate(text) && Boolean(await getPendingFriend(resolvedUser.telegramId)))
 
@@ -1158,22 +1166,15 @@ _"${originalText}"_
       }
     }
 
-    // A reply to "What name should I book under?" (or a picked time) continues that live reservation step.
-    // Only a short name/time reply with a pending step for this person is claimed; anything else routes on.
-    const reservationGuestReply = await tryRunWhatsAppReservationGuestReply({ user: resolvedUser, text })
-    if (reservationGuestReply) {
-      await recordShadowRouterOutcome({ telegramId: resolvedUser.telegramId, surface: 'whatsapp', eventId: inboundMessageSid, actualHandler: reservationGuestReply.handledBy || 'restaurant-reservation', actualCapability: 'browser', status: reservationGuestReply.status || null, runId: reservationGuestReply.runId || null }).catch(() => {})
-      await saveConversation(resolvedUser.telegramId, 'user', text)
-      await saveConversation(resolvedUser.telegramId, 'assistant', reservationGuestReply.text)
-      await sendWhatsAppMessage(from, reservationGuestReply.text)
-      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
-    }
-
     // A short reply to the question Gogo just asked ("This Saturday 8pm" after "What time should I
     // book Toit for?") resumes THAT request before reservation, Jev clarification or feature
     // routing can read it as something new (19 Oct live: it became a reminder titled "This").
     // Approvals are resolved above and never here; two open questions get "which one?".
+    // The live-slot step ("What name should I book under?" → "Goverdhan", "Which one should I book?" → "7pm")
+    // is a registered question too, so this is its only entry point: one owner, no double handling.
+    let pendingQuestionCheckedFor: string | null = null
     if (resolvedUser.id && resolvedUser.whatsappId) {
+      pendingQuestionCheckedFor = text
       const pendingAnswer = await tryResolvePendingQuestion({
         user: resolvedUser,
         text,
@@ -1181,7 +1182,13 @@ _"${originalText}"_
         actor: { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, whatsappId: String(resolvedUser.whatsappId), name: resolvedUser.name || 'Gogo' },
         messageId: inboundMessageSid || null,
       })
-      if (pendingAnswer) {
+      if (pendingAnswer?.rewrite) {
+        // "24k" right after "22K or 24K gold?": route the full request it completes, exactly as if typed.
+        text = pendingAnswer.rewrite
+        pendingQuestionCheckedFor = text
+        // The shadow brain read the bare reply; its semantics must not steer the completed request.
+        brainObservation = null
+      } else if (pendingAnswer) {
         await recordShadowRouterOutcome({ telegramId: resolvedUser.telegramId, surface: 'whatsapp', eventId: inboundMessageSid, actualHandler: pendingAnswer.handledBy, actualCapability: pendingAnswer.capability || 'browser', status: pendingAnswer.status || null, runId: pendingAnswer.runId || null }).catch(() => {})
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', pendingAnswer.text)
@@ -1849,7 +1856,7 @@ _Reminder cancelled._`
     }
 
     await sendThinkingIfNeeded(from, text)
-    const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text', messageId: inboundMessageSid || null, semantic: brainObservation?.jev })
+    const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text', messageId: inboundMessageSid || null, pendingQuestionChecked: pendingQuestionCheckedFor === text, semantic: brainObservation?.jev })
     await recordShadowRouterOutcome({
       telegramId:resolvedUser.telegramId,
       surface:'whatsapp',

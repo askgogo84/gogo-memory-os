@@ -101,13 +101,19 @@ export function isStrictlyFreshFollowupState(state: any, maxMinutes = 10): boole
 export async function listFollowupStates(
   telegramId: number,
   kind: string,
-  limit = 50
+  limit = 20,
+  sinceIso?: string
 ): Promise<Array<{ rowId: string | number | null; state: any }>> {
   try {
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
       .from('memories')
       .select('id, content, created_at')
       .eq('telegram_id', telegramId)
+      // Filter in SQL: only this kind's follow-up rows (content is compact JSON from saveFollowupState).
+      .like('content', `%"kind":"${kind}"%`)
+    // Rows older than the caller's horizon can never be live; never load them.
+    if (sinceIso) query = query.gte('created_at', sinceIso)
+    const { data, error } = await query
       .order('created_at', { ascending: false })
       .limit(limit)
     if (error) return []

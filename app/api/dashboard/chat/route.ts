@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
   if (!user.whatsapp_id) return NextResponse.json({ error: 'whatsapp_not_linked' }, { status: 409 })
 
   const body = await req.json().catch(() => null) as any
-  const text = String(body?.text || '').trim().slice(0, 2000)
+  let text = String(body?.text || '').trim().slice(0, 2000)
   if (!text) return NextResponse.json({ error: 'empty_message' }, { status: 400 })
 
   try {
@@ -140,8 +140,13 @@ export async function POST(req: NextRequest) {
     }
     // A short reply to the question Gogo just asked ("This Saturday 8pm" after "What time should I
     // book Toit for?") resumes that request before any feature matcher reads it as something new.
+    // Resolved once per turn here; processIncomingMessage below is told so and skips the same reads.
+    const pendingQuestionChecked = true
     const pendingAnswer = await tryResolvePendingQuestion({user:{telegramId:Number(user.telegram_id)},text,surface:'web',actor})
-    if(pendingAnswer){
+    if(pendingAnswer?.rewrite){
+      // "24k" right after "22K or 24K gold?": route the full request it completes, exactly as if typed.
+      text=pendingAnswer.rewrite
+    }else if(pendingAnswer){
       await saveConversation(user.telegram_id,text,pendingAnswer.text)
       return NextResponse.json(pendingAnswer)
     }
@@ -195,7 +200,7 @@ export async function POST(req: NextRequest) {
     // the compound request opened, rather than allowing a planner to claim it.
     if (detectFriendReminder(text) || (isFriendReminderFollowupCandidate(text) && await getPendingFriend(Number(user.telegram_id)))) {
       const reminder = await processIncomingMessage({channel: 'whatsapp', externalUserId: String(user.whatsapp_id),
-        text, userName: user.name || 'Gogo', messageType: 'text', messageId: compoundEventId})
+        text, userName: user.name || 'Gogo', messageType: 'text', messageId: compoundEventId, pendingQuestionChecked})
       return NextResponse.json({text: redactSecretShapedText(reminder.text), handledBy: reminder.handledBy || 'same-brain'})
     }
     const watcherStatus=await tryGetWatcherStatusFromCommand({actor,text})
@@ -267,7 +272,7 @@ export async function POST(req: NextRequest) {
     // Saved-object intent precedes provider words inside the object's caption.
     // A past decision or a link save is not a new booking/browser command.
     if(isConnectionCapabilityQuery(text)||isDecisionRecallQuery(text)||isLinkVaultSaveRequest(text)||isLinkVaultQuery(text)){
-      const result=await processIncomingMessage({channel:'whatsapp',externalUserId:String(user.whatsapp_id),text,userName:user.name||'Gogo',messageType:'text',messageId:shadowEventId,semantic:webObservation?.jev})
+      const result=await processIncomingMessage({channel:'whatsapp',externalUserId:String(user.whatsapp_id),text,userName:user.name||'Gogo',messageType:'text',messageId:shadowEventId,semantic:webObservation?.jev,pendingQuestionChecked})
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:result.handledBy||'same-brain',actualCapability:'memory'}).catch(()=>{})
       return NextResponse.json(result)
     }
@@ -460,6 +465,7 @@ export async function POST(req: NextRequest) {
       messageId: shadowEventId,
       semantic: webObservation?.jev,
       approxLocation: parseApproxLocation(body?.location),
+      pendingQuestionChecked,
     })
 
     await recordShadowRouterOutcome({

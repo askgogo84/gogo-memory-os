@@ -115,8 +115,17 @@ export async function GET(request:Request){
       }
       // A notification may have reached the provider even when its response failed.
       // Preserve the recorded research result; never send a contradictory fallback.
-      try{if(actor.whatsappId&&result?.text)await sendWhatsApp(actor.whatsappId,result.text)}
+      let reservationResearchSent=false
+      try{if(actor.whatsappId&&result?.text){await sendWhatsApp(actor.whatsappId,result.text);reservationResearchSent=true}}
       catch{reservationResearchNotificationFailed++;console.error('RESTAURANT_RESEARCH_NOTIFICATION_FAILED:',run.id)}
+      // The sent reply is Gogo's latest turn: record it, so a short answer ("Goverdhan" after "What name should I
+      // book under?") binds to the question it answers (the pending-question resolver checks the latest turn).
+      if(reservationResearchSent){
+        try{
+          const{error:historyError}=await supabaseAdmin.from('conversations').insert({telegram_id:actor.legacyTelegramId,role:'assistant',content:result.text})
+          if(historyError)console.error('RESTAURANT_RESEARCH_HISTORY_SAVE_FAILED:',run.id,historyError.message)
+        }catch(err:any){console.error('RESTAURANT_RESEARCH_HISTORY_SAVE_FAILED:',run.id,err?.message||err)}
+      }
     }
 
     const {data:runs,error}=await supabaseAdmin.from('agent_runs')

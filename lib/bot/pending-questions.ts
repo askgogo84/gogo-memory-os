@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { supabaseAdmin } from '@/lib/supabase-admin'
 import { saveFollowupState, listFollowupStates, deleteFollowupRows } from './handlers/followup-state'
 
 /**
@@ -20,7 +21,8 @@ import { saveFollowupState, listFollowupStates, deleteFollowupRows } from './han
 
 export const PENDING_QUESTION_STATE = 'pending_question'
 
-export type PendingDetail = 'date' | 'time' | 'party' | 'restaurant'
+export type PendingDetail = 'date' | 'time' | 'party' | 'restaurant' | 'guest_name'
+const DETAILS: readonly PendingDetail[] = ['date', 'time', 'party', 'restaurant', 'guest_name']
 
 export type PendingQuestion = {
   id: string
@@ -36,6 +38,11 @@ export type PendingQuestion = {
   llmResolvable: boolean
   /** Only typed deterministic details (date / time / party) may bind; never free text. */
   exactOnly: boolean
+  /**
+   * The exact reply that asked the question. A question is answerable only while this is still Gogo's
+   * latest assistant message to the user (see isLatestAssistantTurn); a question without it never binds.
+   */
+  askedText: string
 }
 
 export type OpenPendingQuestionInput = {
@@ -47,6 +54,8 @@ export type OpenPendingQuestionInput = {
   ttlMin?: number
   llmResolvable?: boolean
   exactOnly?: boolean
+  /** The reply text that asks the question, exactly as it will be sent and saved. */
+  askedText: string
 }
 
 const MAX_TTL_MIN = 24 * 60
@@ -76,17 +85,21 @@ function asQuestion(state: any, telegramId: number): PendingQuestion | null {
     telegramId,
     kind: p.kind,
     capability: String(p.capability || ''),
-    expects: p.expects.filter((x: unknown) => x === 'date' || x === 'time' || x === 'party' || x === 'restaurant'),
+    expects: p.expects.filter((x: unknown): x is PendingDetail => DETAILS.includes(x as PendingDetail)),
     context: p.context && typeof p.context === 'object' ? p.context : {},
     createdAt: String(p.createdAt || ''),
     expiresAt: String(p.expiresAt || ''),
     llmResolvable: p.llmResolvable === true,
     exactOnly: p.exactOnly !== false,
+    askedText: typeof p.askedText === 'string' ? p.askedText : '',
   }
 }
 
 async function openRows(telegramId: number) {
-  const rows = await listFollowupStates(telegramId, PENDING_QUESTION_STATE)
+  // SQL-side: owner + kind (content LIKE) + created within the longest TTL, newest first, small limit.
+  // Rows older than MAX_TTL_MIN can never be fresh, so they are never loaded into JS.
+  const since = new Date(Date.now() - MAX_TTL_MIN * 60_000).toISOString()
+  const rows = await listFollowupStates(telegramId, PENDING_QUESTION_STATE, 20, since)
   return rows.map((row) => ({ rowId: row.rowId, question: asQuestion(row.state, telegramId) }))
 }
 
@@ -115,6 +128,7 @@ export async function openPendingQuestion(input: OpenPendingQuestionInput): Prom
       expiresAt: new Date(now.getTime() + ttl * 60_000).toISOString(),
       llmResolvable: input.llmResolvable === true,
       exactOnly: input.exactOnly !== false,
+      askedText: String(input.askedText || ''),
     })
   } catch (err: any) {
     console.error('PENDING_QUESTION_OPEN_FAILED:', err?.message || err)
@@ -142,4 +156,48 @@ export async function closePendingQuestion(telegramId: number, id: string): Prom
   if (!validTelegramId(telegramId) || !id) return
   const rows = (await openRows(telegramId)).filter((r) => r.question?.id === id && r.rowId !== null)
   if (rows.length) await deleteFollowupRows(telegramId, rows.map((r) => r.rowId as string | number))
+}
+
+// ── "Is this still the question on the table?" ─────────────────────────────────
+
+export type ConversationTurn = { role: string; content: string; created_at: string }
+
+/**
+ * The last few conversation turns for this user, newest first, or null when they cannot be read
+ * (callers fail closed: an unreadable history never lets an old question claim a reply).
+ */
+export async function readRecentTurns(telegramId: number): Promise<ConversationTurn[] | null> {
+  if (!validTelegramId(telegramId)) return null
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('conversations')
+      .select('role,content,created_at')
+      .eq('telegram_id', telegramId)
+      .order('created_at', { ascending: false })
+      .limit(6)
+    if (error) return null
+    return Array.isArray(data) ? (data as ConversationTurn[]) : []
+  } catch (err: any) {
+    console.error('PENDING_QUESTION_TURNS_READ_FAILED:', err?.message || err)
+    return null
+  }
+}
+
+const normalizeTurn = (value: unknown) => String(value || '').replace(/\s+/g, ' ').trim()
+
+/**
+ * Understand like a person: a short reply answers a question only if that question was the last
+ * thing Gogo said. True when the newest assistant turn is `askedText` (a surface may append a
+ * suffix), it is recent, and the user has said nothing else since (other than this very message).
+ * Mirrors the flight/travel clarification rule so every question kind follows the same binding.
+ */
+export function isLatestAssistantTurn(turns: ConversationTurn[] | null, askedText: string, currentText: string, maxAgeMin = 30, now = Date.now()): boolean {
+  const asked = normalizeTurn(askedText)
+  if (!turns || !asked) return false
+  const latest = turns.find((t) => t.role === 'assistant')
+  if (!latest || !normalizeTurn(latest.content).startsWith(asked)) return false
+  const at = Date.parse(String(latest.created_at || ''))
+  if (!Number.isFinite(at) || now - at < -60_000 || now - at > maxAgeMin * 60_000) return false
+  const current = normalizeTurn(currentText)
+  return !turns.some((t) => t.role === 'user' && Date.parse(String(t.created_at || '')) > at && normalizeTurn(t.content) !== current)
 }

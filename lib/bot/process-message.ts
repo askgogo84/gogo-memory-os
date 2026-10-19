@@ -181,6 +181,11 @@ export type ProcessIncomingParams = {
   semantic?: JevShadowResult | null
   /** Rounded position the person allowed on the dashboard; used only as the default place for weather. */
   approxLocation?: { lat: number; lon: number } | null
+  /**
+   * The caller (WhatsApp webhook, dashboard chat) already ran the pending-question resolver for this
+   * exact text this turn; skip it here so its reads run once per turn.
+   */
+  pendingQuestionChecked?: boolean
 }
 
 export type ProcessIncomingResult = {
@@ -719,7 +724,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // A short detail reply ("This Saturday 8pm") answers the question Gogo just asked. Exactly one
   // fresh registry question → resume it; a registry question competing with a legacy pending
   // reminder/calendar → ask which; only a legacy follow-up → null, handled by the block below.
-  if (resolvedUser.id && resolvedUser.whatsappId) {
+  if (!params.pendingQuestionChecked && resolvedUser.id && resolvedUser.whatsappId) {
     const pendingAnswer = await tryResolvePendingQuestion({
       user: resolvedUser,
       text: incomingText,
@@ -727,6 +732,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       actor: { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, whatsappId: String(resolvedUser.whatsappId), name: resolvedUser.name || 'Gogo' },
       messageId: params.messageId ?? null,
     })
+    // "24k" right after "22K or 24K gold?": handle the full request it completes, exactly as if typed.
+    if (pendingAnswer?.rewrite) return processIncomingMessage({ ...params, text: pendingAnswer.rewrite, semantic: null, pendingQuestionChecked: true })
     if (pendingAnswer) {
       await saveConversation(resolvedUser.telegramId, 'user', incomingText)
       await saveConversation(resolvedUser.telegramId, 'assistant', pendingAnswer.text)
