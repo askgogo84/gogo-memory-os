@@ -32,7 +32,7 @@ export const NO_ACTION_REPLY =
 // list", "Set for 6am") is a receipt. Receipts come only from handlers that did the work; plain
 // chat has no executor, so one from chat is false whatever the wording.
 const CHANGE_VERB =
-  '(?:skipped|cancell?ed|deleted|removed|added|created|scheduled|rescheduled|snoozed|updated|moved|marked|saved|stopped|paused|cleared|renamed|booked|sent|set(?=\\s+(?:for|to|it|up)\\b))'
+  '(?:skipped|cancell?ed|deleted|removed|added|created|scheduled|rescheduled|snoozed|updated|moved|marked|saved|stopped|paused|cleared|renamed|booked|sent|rejected|approved|declined|withdrawn|set(?=\\s+(?:for|to|it|up)\\b))'
 const RECEIPT_LEAD = new RegExp(
   '^[\\s\\W_]*(?:(?:done|ok(?:ay)?|got\\s+it|sure|all\\s+set|alright)[\\s,.!:\\u2013-]*)?' +
     "(?:(?:i(?:'ve|\\s+have)?|gogo(?:\\s+has)?)\\s+(?:just\\s+)?|just\\s+)?" +
@@ -41,14 +41,27 @@ const RECEIPT_LEAD = new RegExp(
   'i',
 )
 const USER_ITEM =
-  /\b(?:reminders?|lists?|events?|alarms?|meetings?|tasks?|notes?|calendar|schedule|appointments?|watch(?:es)?|alerts?|drafts?|expenses?|occurrences?)\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b(?:today|tomorrow)(?:'s|\u2019s)\b/i
+  /\b(?:reminders?|lists?|events?|alarms?|meetings?|tasks?|notes?|calendar|schedule|appointments?|watch(?:es)?|alerts?|drafts?|expenses?|occurrences?|approvals?|requests?|bookings?|orders?|runs?)\b|\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b(?:today|tomorrow)(?:'s|\u2019s)\b/i
+
+// 19 Oct live (WhatsApp): "abort mission" reached chat, which answered "Both Jailer 2 calendar
+// approvals are cancelled" while both stayed pending. A passive receipt about the user's items
+// is the same false claim as an active one.
+const PASSIVE_RECEIPT = new RegExp(
+  "\\b(?:is|are|was|were|has\\s+been|have\\s+been|got|now)\\s+(?:now\\s+|all\\s+|both\\s+|successfully\\s+)?" + CHANGE_VERB + '\\b',
+  'i',
+)
 
 export function claimsCompletedChange(reply: string): boolean {
   return String(reply || '')
     .split(/\n+|(?<=[.!?])\s+/)
     .some((sentence) => {
       const m = RECEIPT_LEAD.exec(sentence)
-      return !!m && USER_ITEM.test(m[1] || '')
+      if (m && USER_ITEM.test(m[1] || '')) return true
+      // Passive form: the item and the finished change sit in the same sentence; a question
+      // ("should it be cancelled?") or a conditional ("can be cancelled") is not a receipt.
+      return !/\?\s*$/.test(sentence) && !/\b(?:can|could|should|would|will|may|might|if|once|until|unless|not)\b/i.test(sentence)
+        && !/\bby\s+(?:the|your|their|his|her|its)\b|\baccording\s+to\b|\b(?:says|shows|reports|lists)\b/i.test(sentence)
+        && PASSIVE_RECEIPT.test(sentence) && USER_ITEM.test(sentence)
     })
 }
 

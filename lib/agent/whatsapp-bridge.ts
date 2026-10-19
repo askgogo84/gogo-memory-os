@@ -138,7 +138,7 @@ async function withWhatsAppBrowserBudget<T>(actor: AgentActor, task: Promise<T>)
 // Bounded window of the newest pending approvals. Expiry and numbering are decided from this window.
 async function latestPendingApprovals(telegramId: number) {
   const { data, error } = await supabaseAdmin.from('agent_approvals')
-    .select('id,run_id,title,action_type,risk_level,status,requested_at,execution_payload')
+    .select('id,run_id,title,action_type,risk_level,status,requested_at,execution_payload,payload_preview')
     .eq('telegram_id', String(telegramId))
     .eq('status', 'pending')
     .order('requested_at', { ascending: false })
@@ -198,7 +198,7 @@ async function resolveLatestApproval(actor: AgentActor, intent: { decision: 'app
     let reason = justExpired ? expiredApprovalReply(justExpired.requested_at, nowDate) : ''
     if (!chosen && !reason) {
       const { data: prior, error: priorError } = await supabaseAdmin.from('agent_approvals')
-        .select('id,run_id,title,action_type,risk_level,status,requested_at,execution_payload').eq('id', chosenId).eq('telegram_id', String(actor.legacyTelegramId)).maybeSingle()
+        .select('id,run_id,title,action_type,risk_level,status,requested_at,execution_payload,payload_preview').eq('id', chosenId).eq('telegram_id', String(actor.legacyTelegramId)).maybeSingle()
       if (priorError) throw new Error(`whatsapp_agent_approval_read_failed:${priorError.message}`)
       if (prior?.status === 'pending') chosen = prior
       else reason = prior?.status === 'expired'
