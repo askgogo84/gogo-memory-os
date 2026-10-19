@@ -130,7 +130,7 @@ export function isGoldRateAlertPhrasing(raw: string): boolean {
 }
 
 function parsePlace(text: string): string | null {
-  for (const m of text.matchAll(/\bin\s+([A-Za-z][A-Za-z]+(?:\s+(?!and\b|if\b|when\b|alert\b|by\b|below\b|under\b|above\b|over\b|to\b|from\b|for\b|per\b|today\b|now\b)[A-Za-z]+)?)/g)) {
+  for (const m of text.matchAll(/\bin\s+([A-Za-z][A-Za-z]+(?:\s+(?!and\b|if\b|when\b|alert\b|by\b|below\b|under\b|above\b|over\b|to\b|from\b|for\b|per\b|today\b|now\b|(?:drop|fall|dip|rise|go|goe|crosse|hit|reache|climb|jump|crashe|move|change|get|increase|decrease|is|are)s?\b|(?:dropp|fall|dipp|ris|go|cross|hitt|reach|climb|jump|mov|chang|gett|increas|decreas)(?:ing|ed)\b)[A-Za-z]+)?)/g)) {
     const words = m[1].split(/\s+/)
     if (PLACE_STOP.has(words[0].toLowerCase()) || TIME_WORDS.has(words[0].toLowerCase())) continue
     if (words.some((w) => TIME_WORDS.has(w.toLowerCase()) && w.toLowerCase() !== 'the')) continue

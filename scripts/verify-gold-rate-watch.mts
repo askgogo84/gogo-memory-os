@@ -134,6 +134,9 @@ await check('time phrases are never places; instruments are not the metal rate',
     'tell me if gold rate falls 2% in tomorrow morning'])
     assert.equal(rule.parseGoldRateWatchCommand(t)?.place ?? null, null, t)
   assert.equal(rule.parseGoldRateWatchCommand('watch gold rate in Bangalore and alert me if it falls 3%')?.place, 'Bangalore')
+  // 19 Oct live: "Alert me when 22K gold in Bangalore drops 10%" saved the place as "Bangalore Drops".
+  for (const t of ['Alert me when 22K gold in Bangalore drops 10%', 'alert me when gold in Mumbai falls by 5%', 'tell me when 24K gold in Chennai rises 3%', 'alert me if gold in Bangalore is below 12000', 'alert me when gold in New Delhi drops 10%'])
+    assert.equal(rule.parseGoldRateWatchCommand(t)?.place, t.match(/in ((?:New )?[A-Z]\w+)/)![1], t)
   for (const t of ['track my gold sip and tell me if it falls 5%', 'alert me if digital gold drops 5%', 'alert me if my gold ETF drops 5%',
     'alert me if SGB price drops 5%', 'tell me if gold bond falls 3%', 'alert me if gold jewellery price drops 5%', 'alert me if my gold sips fall 5%',
     'alert me if sovereign gold falls 2%']) {
@@ -302,8 +305,9 @@ await check('creation: baseline + threshold persisted, read back, honest confirm
   assert.equal(g.baselineDate, '2026-10-19'); assert.equal(g.baselineSource, 'https://rates.example/blr')
   assert.ok(rows[0].cadence_minutes >= 360, 'daily-changing price is not polled every 15 minutes')
   assert.match(searches[0], /gold rate per gram today in india 24 carat 22 carat/)
-  assert.match(r.text, /Gold watch set: 24K in India, baseline ₹14,000\/g \(rates\.example, 2026-10-19\)/)
-  assert.match(r.text, /falls below ₹12,600 \(10% drop\)/)
+  assert.match(r.text, /Gold alert set: 24K in India, starting ₹14,000\/g \(rates\.example, 2026-10-19\)/)
+  assert.match(r.text, /alert you at ₹12,600\/g or below \(10% drop\)/)
+  assert.ok(r.text.length < 330, 'short confirmation: ' + r.text.length)
   assert.match(r.text, /Default karat 24K — say "22K" to change/)
   assert.match(r.text, /never buy or sell/)
   assert.equal(r.handledBy, 'gold-rate-watch')
@@ -374,7 +378,7 @@ await check('"goes up by ₹1000" = baseline + ₹1,000/g; never "already past"'
   assert.equal(r?.status, 'completed', r?.text)
   const g = goldRows()[0].condition_json.goldRule
   assert.equal(g.mode, 'change'); assert.equal(g.direction, 'up'); assert.equal(g.value, 1000); assert.equal(g.baselinePerGram, 14000); assert.equal(g.thresholdPerGram, 15000)
-  assert.match(r.text, /rises above ₹15,000 \(₹1,000\/g rise\)/)
+  assert.match(r.text, /alert you at ₹15,000\/g or above \(₹1,000\/g rise\)/)
   assert.match(r.text, /I read ₹1,000 as a change per gram/)
   assert.doesNotMatch(r.text, /already past/)
   assert.match(goldRows()[0].condition_json.title, /24K gold rises above ₹15,000\/g \(₹1,000\/g rise from ₹14,000\)/)
@@ -393,7 +397,7 @@ await check('"22K drops by 500 rupees" = 22K baseline − ₹500/g; "by Rs 2000 
   const r3 = await create('alert me if gold rises by ₹5000')
   assert.equal(r3?.status, 'completed', r3?.text)
   assert.match(r3.text, /I read ₹5,000 as a change per 10 g/)
-  assert.match(r3.text, /rises above ₹14,500/)
+  assert.match(r3.text, /₹14,500\/g or above/)
 })
 await check('a change with no verified baseline is refused, no watch', async () => {
   reset(); seedUser(); searchContext = ''
@@ -431,7 +435,7 @@ await check('a stated base price is the baseline, said so ("drops by 10% from 1,
   assert.equal(r?.status, 'completed', r?.text)
   const g = goldRows()[0].condition_json.goldRule
   assert.equal(g.baselinePerGram, 13000); assert.equal(g.thresholdPerGram, 11700); assert.equal(g.baselineSource, rule.GOLD_STATED_BASELINE)
-  assert.match(r.text, /baseline ₹13,000\/g \(the price you gave\)/)
+  assert.match(r.text, /starting ₹13,000\/g \(the price you gave\)/)
   assert.match(r.text, /measuring from the ₹1,30,000 you gave \(read as per 10 g, ₹13,000\/g\), not today's rate/)
   // No verified rate is needed when the person gave the base.
   reset(); seedUser(); searchContext = ''

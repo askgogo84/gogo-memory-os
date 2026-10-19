@@ -274,21 +274,22 @@ export async function tryCreateGoldRateWatchFromCommand(params: {
     metadata_json: { watcher_id: watcher.id, type: 'web_search', gold_rule: saved, cadence_minutes: cadenceMinutes },
   })
 
-  const verb = saved.direction === 'down' ? 'falls below' : 'rises above'
+  const orWhere = saved.direction === 'down' ? 'or below' : 'or above'
   const change = saved.mode !== 'absolute' ? ` (${goldChangeLabel(saved)})` : ''
   const baselineText = saved.baselinePerGram === null
     ? `no verified current baseline yet`
     : saved.baselineSource === GOLD_STATED_BASELINE
-      ? `baseline ${formatPerGram(saved.baselinePerGram)}/g (the price you gave)`
-      : `baseline ${formatPerGram(saved.baselinePerGram)}/g (${sourceHost(saved.baselineSource || '')}, ${saved.baselineDate})`
+      ? `starting ${formatPerGram(saved.baselinePerGram)}/g (the price you gave)`
+      : `starting ${formatPerGram(saved.baselinePerGram)}/g (${sourceHost(saved.baselineSource || '')}, ${saved.baselineDate})`
   const placeCaveat = verified.ok && !verified.locationKnown && place ? ` The source does not confirm the rate is specific to ${place}.` : ''
   const already = verified.ok && (saved.direction === 'down' ? verified.perGram < saved.thresholdPerGram : verified.perGram > saved.thresholdPerGram)
     ? ` The current verified rate is already past that level, so my first check will alert you.` : ''
   const karatText = parsed.karatDefaulted ? ` Default karat 24K — say "22K" to change.` : ''
   return {
     runId: String(run.id), status: 'completed', capability: 'browser', risk: 'low',
-    text: `Gold watch set: ${saved.karat}K in ${placeLabel}, ${baselineText}. I'll alert you if a verified per-gram quote ${verb} ${formatPerGram(saved.thresholdPerGram)}${change}.${unitNote}${already}${placeCaveat}${karatText} ` +
-      `I check about every ${Math.round(cadenceMinutes / 60)} hours and stay silent when sources disagree or aren't dated today. I never buy or sell, and this isn't financial advice.`,
+    // 19 Oct live vs Instinct: confirmation cut from ~6 lines to 2–3 ("22K alert set: starting rate …; I'll alert at … or below").
+    text: `Gold alert set: ${saved.karat}K in ${placeLabel}, ${baselineText}. I'll alert you at ${formatPerGram(saved.thresholdPerGram)}/g ${orWhere}${change}.${unitNote}${already}${placeCaveat}${karatText} ` +
+      `I check about every ${Math.round(cadenceMinutes / 60)} hours and never buy or sell.`,
     handledBy: 'gold-rate-watch',
   }
 }
