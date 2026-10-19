@@ -66,6 +66,7 @@ const noMatch = new Set([
 ])
 const actual: Record<string, any> = {
   '@/lib/agent/autonomy-status':{tryGetConnectionCapabilities:async()=>null},
+  './handlers/reference-fx':{buildReferenceFxReply:async(text:string)=>{assert.doesNotMatch(text,/\bUSD\s+to\s+INR\b/i);return null}},
   '@/lib/agent/content-workflows': contentWorkflows,
   './handlers/reminders': reminders,
   './detect-intent': { detectIntent },

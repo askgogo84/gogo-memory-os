@@ -12,6 +12,7 @@ import { recordDecisionLearning } from '@/lib/agent/decision-learning'
 import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
 import { randomUUID } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
+import { buildReferenceFxReply } from '@/lib/bot/handlers/reference-fx'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { routeFeatureIntent } from '@/lib/feature-intents'
@@ -255,6 +256,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ text: summary.text, handledBy: 'read-only-schedule', status:'completed', readOnly:true, mutated:false })
     }
 
+    const referenceFx=await buildReferenceFxReply(text)
+    if(referenceFx!==null){
+      await saveConversation(user.telegram_id,text,referenceFx)
+      return NextResponse.json({text:referenceFx,handledBy:'reference-fx',status:'completed',readOnly:true,mutated:false})
+    }
     const dayIntent = detectDashboardDayIntent(text)
     if (dayIntent) {
       const dayReply = await getDashboardDayReply(session.telegramId, dayIntent)
