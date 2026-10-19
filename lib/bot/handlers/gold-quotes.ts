@@ -93,11 +93,14 @@ function placeIsKnown(text:string,place:string):boolean{
   return text.toLowerCase().includes(place.toLowerCase())
 }
 
-/** Preserve quote provenance before presentation; search snippets may have no line breaks. */
-export function formatGoldQuotes(userText:string,searchContext:string,now=Date.now()):string{
+export type GoldQuote=Quote
+export type GoldQuoteExtraction={place:string;today:string;quotes:Quote[];selected:Record<string,Quote[]>;sources:string[];warnings:string[]}
+
+/** Structured, source-bound per-gram quotes. Shared by the chat reply and gold-rate watches. */
+export function extractGoldQuotes(userText:string,searchContext:string,now=Date.now(),fallbackPlace?:string|null):GoldQuoteExtraction{
   const dateParts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date(now))
   const today=['year','month','day'].map(kind=>dateParts.find(part=>part.type===kind)?.value||'').join('-')
-  const requested=userText.match(/\bin\s+([a-z][a-z ]{2,30}?)\s*(?:today|now|\?|$)/i)?.[1]?.trim()||'India'
+  const requested=userText.match(/\bin\s+([a-z][a-z ]{2,30}?)\s*(?:today|now|\?|$)/i)?.[1]?.trim()||fallbackPlace?.trim()||'India'
   const place=requested.replace(/\b\w/g,c=>c.toUpperCase())
   const quotes:Quote[]=[],sources=new Set<string>(),warnings=new Set<string>()
   for(const block of searchContext.split(/\n\s*\n/).filter(Boolean)){
@@ -193,23 +196,48 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
       addInline(span.slice(0,money.index!+money[0].length)+quoteClauses(afterMoney)[0],money)
     }
   }
-  // Within one source and date, a lower purity can never cost at least as much
-  // as a higher purity per gram. Such a pair is a misattribution, not a quote.
+  // A same-purity quote several times another one is a multi-gram total that was
+  // read as a per-gram price (19 Oct live: 22K ₹1,35,360 "per gram" beside ₹13,536).
+  // It is dropped, never divided down, because its true weight is unverified.
+  const totals=new Set<Quote>()
+  for(const big of quotes)for(const small of quotes){
+    if(big!==small&&big.karat===small.karat&&big.perGram>=small.perGram*4.5)totals.add(big)
+  }
+  if(totals.size){
+    warnings.add('A quote looked like a multi-gram total rather than a per-gram price, so it was not used.')
+    for(let i=quotes.length-1;i>=0;i--)if(totals.has(quotes[i]))quotes.splice(i,1)
+  }
+  // Within one source, a lower purity can never cost at least as much as a higher
+  // purity per gram on a compatible date (equal, or either unknown). Such a pair is
+  // a misattribution, not a quote.
   const contradicted=new Set<Quote>()
   for(const low of quotes)for(const high of quotes){
-    if(low.source!==high.source||low.date!==high.date||PURITY_ORDER[low.karat]>=PURITY_ORDER[high.karat])continue
+    const sameDay=low.date===high.date||low.date===null||high.date===null
+    if(low.source!==high.source||!sameDay||PURITY_ORDER[low.karat]>=PURITY_ORDER[high.karat])continue
     if(low.perGram>=high.perGram){contradicted.add(low);contradicted.add(high)}
   }
   if(contradicted.size){
     warnings.add('A source listed a lower gold purity at or above a higher purity, so those quotes were not used.')
     for(let i=quotes.length-1;i>=0;i--)if(contradicted.has(quotes[i]))quotes.splice(i,1)
   }
-  const lines:string[]=[],details:string[]=[]
-  const rupees=(value:number)=>value.toLocaleString('en-IN',{maximumFractionDigits:2})
+  const selectedByKarat:Record<string,Quote[]>={}
   for(const karat of ['24','22','18']){
     const candidates=quotes.filter(q=>q.karat===karat)
     const current=candidates.filter(q=>q.date===today)
-    const selected=current.length?current:candidates
+    const chosen=current.length?current:candidates
+    if(chosen.length)selectedByKarat[karat]=chosen
+  }
+  return {place,today,quotes,selected:selectedByKarat,sources:[...sources],warnings:[...warnings]}
+}
+
+/** Preserve quote provenance before presentation; search snippets may have no line breaks. */
+export function formatGoldQuotes(userText:string,searchContext:string,now=Date.now(),fallbackPlace?:string|null):string{
+  const extracted=extractGoldQuotes(userText,searchContext,now,fallbackPlace)
+  const {place}=extracted,sources=new Set(extracted.sources),warnings=new Set(extracted.warnings)
+  const lines:string[]=[],details:string[]=[]
+  const rupees=(value:number)=>value.toLocaleString('en-IN',{maximumFractionDigits:2})
+  for(const karat of ['24','22','18']){
+    const selected=extracted.selected[karat]||[]
     if(!selected.length)continue
     const values=[...new Set(selected.map(q=>q.perGram))].sort((a,b)=>a-b)
     lines.push(`${karat}K: ₹${values.map(rupees).join('–₹')}${values.length>1?' (sources differ)':''}`)
