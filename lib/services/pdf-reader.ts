@@ -41,6 +41,9 @@ export interface EventInfo {
   date: string
   time: string
   venue: string
+  screen?: string
+  seats?: string
+  bookingId?: string
 }
 
 export type TicketInfo = FlightInfo | TrainInfo | EventInfo | null
@@ -55,7 +58,7 @@ If TRAIN:
 {"type":"train","from":"City","to":"City","date":"15 May 2026","departure":"14:50","arrival":"20:10","trainNo":"12345","trainName":"Train Name","pnr":"ABC123","seat":"B2-34","passengers":["Name"]}
 
 If EVENT:
-{"type":"event","name":"Event Name","date":"15 May 2026","time":"18:00","venue":"Venue"}
+{"type":"event","name":"Event Name","date":"15 May 2026","time":"18:00","venue":"Venue","screen":"Audi 04","seats":"K18, K19, K20","bookingId":"TSAJKDX"} (screen, seats and bookingId only when printed; omit otherwise)
 
 For flights preserve the separate arrivalDate when printed (same date format as date), especially overnight legs. departure and arrival are local clocks at their respective airports. Include departureTimezone and arrivalTimezone only when explicitly known as IANA zones. Never invent an arrival date. BOARDING PASSES: departure is the time printed together with the date beside the departure airport code (e.g. "10:05 / 13 Oct"), and date is that same printed date; never use the Boarding, Bag drop, Gate closed or Gate open times or dates as departure. If the year is not printed, give the date without a year (e.g. "13 Oct"). Read the PNR / booking reference character by character from where it is printed (often beside the QR code). Extract ALL flights for round-trips. Extract ALL passenger names. Include seat and arrival when present (omit the field if unknown). Return ONLY the JSON. If this is NOT a flight, train, or event ticket, return exactly: null`
 
@@ -536,7 +539,7 @@ export function buildTicketReply(info: TicketInfo, reminderTail = ''): string {
 
   if (info.type === 'event') {
     const ei = info as EventInfo
-    return `🎟️ *Event ticket saved!*\n\n*${ei.name}*\n${ei.date} · ${ei.time}\n📍 ${ei.venue}${reminderTail}\n\n_Say *my reminders* to see all alerts_`
+    return `🎟️ *Event ticket saved!*\n\n*${ei.name}*\n${ei.date} · ${ei.time}\n📍 ${ei.venue}${ei.screen?`, ${ei.screen}`:''}${ei.seats?`\n💺 ${ei.seats}`:''}${ei.bookingId?`\nBooking ${ei.bookingId}`:''}${reminderTail}\n\n_Say *my reminders* to see all alerts_`
   }
 
   return '📄 Ticket saved to your notes!'
