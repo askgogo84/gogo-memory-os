@@ -1,0 +1,52 @@
+{
+  "_note": "Redacted samples of Wajo (wajo.ai / 'Fo') network traffic captured from my OWN logged-in session via DevTools-equivalent network read. No cookies, tokens, or auth headers were captured or stored. Phone numbers redacted. Workspace UUIDs (orgId/agentId/sessionId) are non-secret identifiers kept to illustrate API shape; they are useless without the session's auth cookie, which was NOT extracted.",
+  "_captured": "2026-10-19",
+  "stack": {
+    "framework": "TanStack Start server functions",
+    "endpoint_pattern": "https://wajo.ai/_serverFn/<sha256-hash>",
+    "query_convention": "GET with ?payload=<url-encoded seroval-style typed serialization>",
+    "mutation_convention": "POST to _serverFn/<hash> (chat sends, task actions)",
+    "serialization": "seroval-style typed tree: {t:{t:10,i:0,p:{k:[...keys],v:[...vals]}},f:127,m:[]}",
+    "analytics": ["Google Analytics G-HP1H7GL3RJ", "e.wajo.ai/i/v0/e/ (first-party event ingest)"],
+    "notes": "Several chat POSTs briefly return 503 then succeed — looks like streaming/long-poll retries. Session state is read via repeated GET polls keyed by sessionId+orgId."
+  },
+  "identifiers_observed": {
+    "handle": "fo",
+    "agentId": "803df601-94a8-4935-91a5-e1a1efa2cb0d",
+    "orgId": "eaf9f280-9504-4464-bab3-97c9a329edaf",
+    "example_sessionId_(per_chat)": "c9bba611-d65f-49e7-b524-3122d0250671"
+  },
+  "sample_requests": [
+    {
+      "purpose": "Load agent config by handle",
+      "method": "GET",
+      "url": "https://wajo.ai/_serverFn/afbedd95...?payload=<encoded>",
+      "decoded_payload": {"data": {"handle": "fo"}}
+    },
+    {
+      "purpose": "Load agent by id",
+      "method": "GET",
+      "url": "https://wajo.ai/_serverFn/da5a5bdb...?payload=<encoded>",
+      "decoded_payload": {"data": {"agentId": "<agentId>"}}
+    },
+    {
+      "purpose": "Poll session/chat state (used for streaming updates + task cards)",
+      "method": "GET",
+      "url": "https://wajo.ai/_serverFn/3ea7d0e6...?payload=<encoded>",
+      "decoded_payload": {"data": {"sessionId": "<sessionId>", "orgId": "<orgId>"}}
+    },
+    {
+      "purpose": "Org-scoped queries (task inbox: Need-your-input / On-radar / Last-activity)",
+      "method": "GET",
+      "url": "https://wajo.ai/_serverFn/463703...?payload=<encoded>",
+      "decoded_payload": {"data": {"orgId": "<orgId>"}}
+    },
+    {
+      "purpose": "Chat message send + agent run mutation",
+      "method": "POST",
+      "url": "https://wajo.ai/_serverFn/<hash>",
+      "request_body": "<seroval-encoded message payload — not fully decoded; contains the user text + sessionId>",
+      "response": "streamed/polled; occasional transient 503 before 200"
+    }
+  ]
+}
