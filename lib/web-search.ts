@@ -239,10 +239,19 @@ export function indiaShoppingSearch(query: string): { query: string; includeDoma
   return { query: q, includeDomains: ['amazon.in', 'flipkart.com', 'croma.com', 'reliancedigital.in'] }
 }
 
+export function isRecentNewsQuery(query: string) {
+  return /\b(?:latest|news|headlines?|updates?|what(?:'s| is) happening)\b/i.test(query) && !/\b(?:price|rate|cost|score|weather|flight|pnr)\b/i.test(query)
+}
+
 export async function searchWeb(query: string): Promise<string> {
   try {
     const loc = indiaShoppingSearch(query)
-    const results = await searchWebResults(loc.query, loc.includeDomains.length ? { includeDomains: loc.includeDomains } : {})
+    // 19 Oct live: "Latest news on Tata Motors" led with a year-old demerger story. News asks are
+    // limited to the last 7 days at the provider; price and fact lookups are not date-restricted.
+    const recent = isRecentNewsQuery(query) ? {startDate: new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10)} : {}
+    const opts = {...(loc.includeDomains.length ? { includeDomains: loc.includeDomains } : {}), ...recent}
+    let results = await searchWebResults(loc.query, opts)
+    if (!results.length && 'startDate' in recent) results = await searchWebResults(loc.query, loc.includeDomains.length ? { includeDomains: loc.includeDomains } : {})
 
     if (!results.length) {
       return ''

@@ -109,13 +109,19 @@ export function extractGoldQuotes(userText:string,searchContext:string,now=Date.
     else{warnings.add('A source URL could not be verified.');continue}
     // Search result titles advertise several purities; they are not quote rows.
     const lines=block.split('\n').filter(line=>!/^Source:/i.test(line))
-    if(/^\d+\./.test(lines[0]||''))lines.shift()
+    // The title's purities are not quote rows, but its date is evidence for the whole result
+    // ("Gold Price on 19 October 2026"). 19 Oct live: discarding it made every quote undated,
+    // so a percent watch refused to start while Instinct set it from the same Goodreturns page.
+    const title=/^\d+\./.test(lines[0]||'')?String(lines.shift()):''
+    const titleDate=sourceDate(title),titleToday=/\btoday(?:'?s)?\b/i.test(title)
     const body=lines.join(' ').replace(/\s+/g,' ').trim()
     const current=body.split(/\b(?:gold\s+rate\s+history|price\s+history|historical\s+(?:gold\s+)?(?:rates?|prices?)|popular\s+coins|related\s+products)\b/i)[0]
     if(/\bgold\s+coins?\b|\badd to cart\b/i.test(current)){warnings.add('Retail coin prices are not metal-rate quotes.');continue}
     const labels=purityLabels(current)
     const heading=current.slice(0,labels[0]?.index??current.length)
-    const headingDate=sourceDate(heading),headingToday=/\btoday\b/i.test(heading)
+    const ownHeadingDate=sourceDate(heading)
+    const headingDate=ownHeadingDate===undefined&&typeof titleDate==='string'?titleDate:ownHeadingDate
+    const headingToday=/\btoday\b/i.test(heading)||titleToday
     for(let i=0;i<labels.length;i++){
       const label=labels[i],start=label.index+label.length,end=labels[i+1]?.index??current.length
       const span=current.slice(start,end)
@@ -233,23 +239,42 @@ export function extractGoldQuotes(userText:string,searchContext:string,now=Date.
   return {place,today,quotes,selected:selectedByKarat,sources:[...sources],warnings:[...warnings]}
 }
 
+// 19 Oct live: the reply listed every quote from every source with its full URL (~40 lines and a
+// stack of link previews). Instinct-style: one rate per purity, one provenance line per purity, one
+// link. The spread between sources is still shown, so nothing is hidden.
+function sourceHost(source:string){try{return new URL(source).hostname.replace(/^www\./,'')}catch{return source}}
+function representative(selected:Quote[]){
+  const counts=new Map<number,number>()
+  for(const q of selected)counts.set(q.perGram,(counts.get(q.perGram)||0)+1)
+  const top=Math.max(...counts.values())
+  const modes=[...counts].filter(([,n])=>n===top).map(([v])=>v).sort((x,y)=>x-y)
+  const value=modes.length===1?modes[0]:[...selected.map(q=>q.perGram)].sort((x,y)=>x-y)[Math.floor((selected.length-1)/2)]
+  return selected.find(q=>q.perGram===value&&q.date)||selected.find(q=>q.perGram===value)||selected[0]
+}
+
 /** Preserve quote provenance before presentation; search snippets may have no line breaks. */
 export function formatGoldQuotes(userText:string,searchContext:string,now=Date.now(),fallbackPlace?:string|null):string{
   const extracted=extractGoldQuotes(userText,searchContext,now,fallbackPlace)
   const {place}=extracted,sources=new Set(extracted.sources),warnings=new Set(extracted.warnings)
-  const lines:string[]=[],details:string[]=[]
+  const lines:string[]=[],details:{karat:string;text:string;dated:boolean}[]=[]
+  const links:string[]=[]
   const rupees=(value:number)=>value.toLocaleString('en-IN',{maximumFractionDigits:2})
   for(const karat of ['24','22','18']){
     const selected=extracted.selected[karat]||[]
     if(!selected.length)continue
     const values=[...new Set(selected.map(q=>q.perGram))].sort((a,b)=>a-b)
-    lines.push(`${karat}K: ₹${values.map(rupees).join('–₹')}${values.length>1?' (sources differ)':''}`)
-    for(const quote of selected){
-      const timing=quote.date?`as of ${quote.date}`:quote.reportedToday?'source says today; date not independently verified':'source date unverified'
-      details.push(`${karat}K — ${timing}; ${quote.grams} g quote ₹${rupees(quote.amount)}; ${quote.source}`)
-      if(!quote.locationKnown)warnings.add(`The source does not verify applicability to ${place}.`)
-    }
+    const pick=representative(selected)
+    lines.push(`${karat}K: ₹${rupees(pick.perGram)}${values.length>1?` (sources range ₹${rupees(values[0])}–₹${rupees(values.at(-1)!)})`:''}`)
+    const timing=pick.date?`as of ${pick.date}`:pick.reportedToday?'source says today; date not independently verified':'source date unverified'
+    details.push({karat:`${karat}K`,text:`${timing}; ${sourceHost(pick.source)}`,dated:Boolean(pick.date)})
+    // One link, plus the source at the other end of the range when sources disagree.
+    const far=values.length>1?selected.find(q=>q.perGram===(pick.perGram===values[0]?values.at(-1):values[0])):undefined
+    for(const src of [pick.source,far?.source])if(src&&/^https?:\/\//.test(src)&&links.length<2&&!links.includes(src))links.push(src)
+    if(!pick.locationKnown)warnings.add(`The source does not verify applicability to ${place}.`)
   }
-  if(!lines.length)return `I couldn't verify a source-bound per-gram gold quote for ${place}. ${[...warnings].join(' ')}${sources.size?`\nSources:\n${[...sources].join('\n')}`:''}`
-  return `*Gold rate quotes for ${place}:*\n${lines.join('\n')}\nPer gram in INR; converted from the stated weights.\n\n${[...new Set(details)].join('\n')}${warnings.size?`\n\n${[...warnings].join(' ')}`:''}`
+  if(!lines.length)return `I couldn't verify a source-bound per-gram gold quote for ${place}. ${[...warnings].join(' ')}${sources.size?`\nSources:\n${[...sources].slice(0,3).join('\n')}`:''}`
+  // Undated provenance that is identical across purities is said once ("24K/22K/18K — …").
+  const grouped:{karat:string;text:string}[]=[]
+  for(const d of details){const same=!d.dated&&grouped.find(g=>g.text===d.text&&!details.find(x=>x.karat===g.karat.split('/')[0])?.dated);if(same)same.karat+=`/${d.karat}`;else grouped.push({karat:d.karat,text:d.text})}
+  return `*Gold rate in ${place} (per gram, INR):*\n${lines.join('\n')}\n\n${grouped.map(g=>`${g.karat} — ${g.text}`).join('\n')}${links.length?`\n${links.length>1?'Sources':'Source'}: ${links.join(' , ')}`:''}${warnings.size?`\n\n${[...warnings].join(' ')}`:''}`
 }
