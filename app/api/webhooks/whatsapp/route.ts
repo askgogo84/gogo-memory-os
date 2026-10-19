@@ -55,7 +55,8 @@ import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { parseRunCancel } from '@/lib/agent/run-cancel'
-import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppAccountSite, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
+import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppAccountSite, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist, tryRunWhatsAppTaskStatus } from '@/lib/agent/whatsapp-bridge'
+import { parseTaskStatusQuery } from '@/lib/agent/task-status'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, parseLooseAccountProfile, tryRunExternalAccountFlow } from '@/lib/agent/external-account'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
@@ -1124,6 +1125,19 @@ _"${originalText}"_
         await saveConversation(resolvedUser.telegramId,'assistant',attentionAgent.text)
         await sendWhatsAppMessage(from,attentionAgent.text)
         return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
+      }
+    }
+
+    // "Any update?", "what are you working on", "how's the Goa trip going" read the owner's tasks.
+    // Pure gate first; a named ask with no matching task returns null and routing continues.
+    if (parseTaskStatusQuery(text)) {
+      const taskStatusAgent = await tryRunWhatsAppTaskStatus({ user: resolvedUser, text })
+      if (taskStatusAgent) {
+        await recordShadowRouterOutcome({ telegramId: resolvedUser.telegramId, surface: 'whatsapp', eventId: inboundMessageSid, actualHandler: taskStatusAgent.handledBy || 'task-status', actualCapability: 'orchestrator', status: taskStatusAgent.status || null, runId: taskStatusAgent.runId || null }).catch(() => {})
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', taskStatusAgent.text)
+        await sendWhatsAppMessage(from, taskStatusAgent.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
 

@@ -30,6 +30,7 @@ import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
 import { initializeBackgroundGoal } from './goal-engine'
 import { tryGetAutonomyStatus, tryGetConnectionStatus } from './autonomy-status'
+import { parseTaskStatusQuery, tryGetTaskStatus } from './task-status'
 import { executeApprovedGmailSend, tryRunGmailSendCommand, tryRunGmailContextCommand } from './gmail-send'
 import { tryRunAdaptiveTrustCommand } from './adaptive-trust'
 import { capabilityIsOff, parseAutonomyCommand } from './adaptive-autonomy'
@@ -495,6 +496,21 @@ export async function tryAnswerOpenFlightQuestion(params:{user:ResolvedUser;text
   return {...hardened,handledBy:String(hardened.handledBy||'travel-research')}
 }
 
+/**
+ * "Any update?", "what are you working on", "how's the Goa trip going": deterministic task-status reads,
+ * given first refusal on WhatsApp before semantic routing can treat them as chat or a new request.
+ * A named ask with no matching task returns null so routing continues.
+ */
+export async function tryRunWhatsAppTaskStatus(params:{user:ResolvedUser;text:string}):Promise<WhatsAppAgentResult|null>{
+  if(!parseTaskStatusQuery(params.text))return null
+  const actor=actorFromResolvedUser(params.user)
+  if(!actor)return null
+  const named=await tryGetTaskStatus({telegramId:actor.legacyTelegramId},params.text)
+  if(named)return named
+  const general=await tryGetAutonomyStatus({actor,text:params.text})
+  return general?{...general,handledBy:String(general.handledBy||'autonomy-status')}:null
+}
+
 export async function tryRunWhatsAppAgent(params: {
   user: ResolvedUser
   text: string
@@ -557,6 +573,10 @@ export async function tryRunWhatsAppAgent(params: {
 
   const connectionStatus = await tryGetConnectionStatus({ actor, text:params.text })
   if (connectionStatus) return { ...connectionStatus, handledBy:String(connectionStatus.handledBy || 'connection-status') }
+
+  // A named task ("how's the Goa trip going") gets its own card; no matching run returns null.
+  const taskStatus = await tryGetTaskStatus({ telegramId:actor.legacyTelegramId }, params.text)
+  if (taskStatus) return taskStatus
 
   const autonomyStatus = await tryGetAutonomyStatus({ actor, text:params.text })
   if (autonomyStatus) return { ...autonomyStatus, handledBy:String(autonomyStatus.handledBy || 'autonomy-status') }

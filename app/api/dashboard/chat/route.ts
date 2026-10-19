@@ -18,7 +18,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { isDecisionRecallQuery } from '@/lib/agent/recall-query'
-import { isConnectionCapabilityQuery } from '@/lib/agent/autonomy-status'
+import { isConnectionCapabilityQuery, tryGetAutonomyStatus } from '@/lib/agent/autonomy-status'
+import { parseTaskStatusQuery, tryGetTaskStatus } from '@/lib/agent/task-status'
 import { isLinkVaultSaveRequest, isLinkVaultQuery } from '@/lib/services/link-vault'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/day-chat'
@@ -254,6 +255,16 @@ export async function POST(req: NextRequest) {
       const result=await processIncomingMessage({channel:'whatsapp',externalUserId:String(user.whatsapp_id),text,userName:user.name||'Gogo',messageType:'text',messageId:shadowEventId,semantic:webObservation?.jev})
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:result.handledBy||'same-brain',actualCapability:'memory'}).catch(()=>{})
       return NextResponse.json(result)
+    }
+    // Same task-status read as WhatsApp, before the general planner can treat it as a new request.
+    // A named ask with no matching task returns null and routing continues.
+    if (parseTaskStatusQuery(text)) {
+      const taskStatus = await tryGetTaskStatus({ telegramId: actor.legacyTelegramId }, text) || await tryGetAutonomyStatus({ actor, text })
+      if (taskStatus) {
+        await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:taskStatus.handledBy,actualCapability:'orchestrator',status:taskStatus.status,runId:taskStatus.runId}).catch(()=>{})
+        await saveConversation(user.telegram_id, text, taskStatus.text)
+        return NextResponse.json(taskStatus)
+      }
     }
     const readOnlySchedule = detectReadOnlyScheduleRequest(text)
     if (readOnlySchedule) {

@@ -26,6 +26,7 @@ let observed: any = null
 const noops = new Proxy({}, { get: () => async () => null })
 const routeMocks: any = {
   '@/lib/agent/autonomy-status': {isConnectionCapabilityQuery:()=>false},
+  '@/lib/agent/task-status': {parseTaskStatusQuery:()=>null,tryGetTaskStatus:async()=>null},
   '@/lib/agent/recall-query': {isDecisionRecallQuery:()=>false},
   '@/lib/services/link-vault': {isLinkVaultSaveRequest:()=>false,isLinkVaultQuery:()=>false},
   crypto: { randomUUID: () => 'fixture-event' },
