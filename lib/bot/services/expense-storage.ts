@@ -92,14 +92,17 @@ export async function getTodayExpenses(telegramId: number, whatsappId?: string |
 }
 
 // ── Get period expenses (week/month) ─────────────────────────────────────────
-export async function getPeriodExpenses(telegramId: number, period: 'week' | 'month' = 'week', whatsappId?: string | null) {
-  const now=new Date()
+/** IST Monday-start week or calendar month, through now. */
+export function expensePeriodRange(period: 'week' | 'month' = 'week', now = new Date()) {
   const {dateStr}=getTodayRange('Asia/Kolkata',now)
   const localDay=new Date(`${dateStr}T00:00:00Z`)
   if(period==='week')localDay.setUTCDate(localDay.getUTCDate()-(localDay.getUTCDay()+6)%7)
   else localDay.setUTCDate(1)
-  const start=new Date(localDay.getTime()-330*60_000).toISOString()
-  const end=now.toISOString()
+  return {start:new Date(localDay.getTime()-330*60_000).toISOString(),end:now.toISOString(),timezone:'Asia/Kolkata'}
+}
+
+export async function getPeriodExpenses(telegramId: number, period: 'week' | 'month' = 'week', whatsappId?: string | null) {
+  const {start,end}=expensePeriodRange(period)
   const rows = await expenseRows(telegramId, whatsappId, start,end)
 
   if (!rows?.length) return null

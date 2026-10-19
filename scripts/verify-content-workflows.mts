@@ -6,6 +6,7 @@ import ts from 'typescript'
 import * as workflows from '../lib/agent/content-workflows'
 import {formatOutgoingText} from '../lib/bot/format-response'
 import {handleInboxReplyRead} from '../lib/agent/open-loops'
+import {tryCancelRunFromChat} from '../lib/agent/run-cancel'
 import * as vaultProviders from '../lib/vault/providers'
 import * as accountIntent from '../lib/agent/external-account-intent'
 
@@ -125,6 +126,8 @@ assert.equal(await entry.tryRunContentWorkflow(actor, 'remind Matthew tomorrow a
 // specialist stealing a writing request throws through the strict fixture.
 const common = {'@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>false,tryGetConnectionCapabilities:async()=>null},'next/server': {NextResponse: {json: (body: any, options: any) => ({body, status: options?.status || 200})}},
   '@/lib/agent/open-loops':{handleInboxReplyRead},
+  // The real run-cancel handler: a writing request is not a cancel, so it returns null without any read.
+  '@/lib/agent/run-cancel':{tryCancelRunFromChat},
   '@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/actor': {resolveAgentActor: async () => actor},
   '@/lib/agent/content-workflow-entry': entry, crypto: {randomUUID}, 'node:crypto': {randomUUID}}
 const dashboard = load('app/api/dashboard/chat/route.ts', {...common, '@/lib/dashboard/session': {getSession: async () => ({telegramId: '42'})}})

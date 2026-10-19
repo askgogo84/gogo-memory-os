@@ -190,13 +190,20 @@ export type ProcessIncomingResult = {
   mediaType?: string
 }
 
-async function getConversationHistory(telegramId: number): Promise<Message[]> {
-  // Fetch most recent 20 messages (descending), then reverse for chronological order
+/**
+ * Chat surfaces save a turn as one insert of [user, assistant], so both rows share
+ * created_at. Without a tiebreak Postgres may return the pair in either order and,
+ * after reversal, the reply can precede its question: the model then treats the
+ * previous question as unanswered and answers it again inside the next reply.
+ * Newest-first with role ascending ('assistant' < 'user') reverses to user→assistant.
+ */
+export async function getConversationHistory(telegramId: number): Promise<Message[]> {
   const { data } = await supabaseAdmin
     .from('conversations')
     .select('role, content')
     .eq('telegram_id', telegramId)
     .order('created_at', { ascending: false })
+    .order('role', { ascending: true })
     .limit(20)
 
   return ((data || []) as any[])

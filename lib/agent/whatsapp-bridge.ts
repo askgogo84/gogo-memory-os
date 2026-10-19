@@ -5,6 +5,8 @@ import { tryTypedTimeRouting } from './typed-time-routing'
 import { executeApprovedCalendarUpdate } from './calendar-update'
 import { executeApprovedReminderUpdate } from './reminder-update'
 import { verifiedReadEvidence } from './read-evidence'
+import { approvalChoiceList, expiredApprovalReply, partitionPendingApprovals } from './approval-ttl'
+import { expirePendingApproval, guardApprovalFreshness, latestApprovalChoices, rememberApprovalChoices } from './approval-guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
@@ -29,6 +31,7 @@ import { executeApprovedLifeEventCheckin } from './life-event-execution'
 import { executeApprovedBookingCalendar } from './booking-calendar-execution'
 import { initializeBackgroundGoal } from './goal-engine'
 import { tryGetAutonomyStatus, tryGetConnectionStatus } from './autonomy-status'
+import { parseTaskStatusQuery, tryGetTaskStatus } from './task-status'
 import { executeApprovedGmailSend, tryRunGmailSendCommand, tryRunGmailContextCommand } from './gmail-send'
 import { tryRunAdaptiveTrustCommand } from './adaptive-trust'
 import { capabilityIsOff, parseAutonomyCommand } from './adaptive-autonomy'
@@ -39,6 +42,7 @@ import { tryRunAppointmentFollowup } from './appointment-followup'
 import { tryRunAppointmentResearch } from './appointment-research'
 import { armApprovedRestaurantReservation, queueRestaurantReservationResearch, tryRunRestaurantReservation } from './restaurant-reservation'
 import { isDecisionRecallQuery } from './recall-query'
+import { tryCancelRunFromChat } from './run-cancel'
 
 export type WhatsAppAgentResult = {
   text: string
@@ -69,9 +73,21 @@ export function approvalIntent(text: string): 'approve' | 'reject' | null {
     .replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`.!]+$/g, '')
     .replace(/[‘’]/g, "'")
     .toLowerCase()
+  // "approve 2" / "approve #2" / "reject 1" pick one card from a numbered list of pending approvals.
   if (/^(approve|approved|yes[ ,]+approve|approve it|go ahead with it|proceed with it)$/i.test(t)) return 'approve'
+  if (/^(approve|yes[ ,]+approve)\s*#?\s*\d{1,2}$/i.test(t)) return 'approve'
   if (/^(reject|rejected|deny|decline|reject it|do not proceed|don't proceed|cancel that action)$/i.test(t)) return 'reject'
+  if (/^(reject|deny|decline)\s*#?\s*\d{1,2}$/i.test(t)) return 'reject'
   return null
+}
+
+/** The decision plus, for "approve 2" / "reject #1", the 1-based item from the numbered list. */
+export function parseApprovalIntent(text: string): { decision: 'approve' | 'reject'; index?: number } | null {
+  const decision = approvalIntent(text)
+  if (!decision) return null
+  const t = String(text || '').trim().replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`.!]+$/g, '')
+  const numbered = t.match(/(\d{1,2})$/)
+  return numbered ? { decision, index: Number(numbered[1]) } : { decision }
 }
 
 async function pauseRecentTimedOutBrowserRun(actor: AgentActor) {
@@ -119,21 +135,97 @@ async function withWhatsAppBrowserBudget<T>(actor: AgentActor, task: Promise<T>)
   }
 }
 
-async function latestPendingApproval(telegramId: number) {
+// Bounded window of the newest pending approvals. Expiry and numbering are decided from this window.
+async function latestPendingApprovals(telegramId: number) {
   const { data, error } = await supabaseAdmin.from('agent_approvals')
-    .select('id,run_id,title,action_type,risk_level,status,requested_at')
+    .select('id,run_id,title,action_type,risk_level,status,requested_at,execution_payload')
     .eq('telegram_id', String(telegramId))
     .eq('status', 'pending')
     .order('requested_at', { ascending: false })
-    .limit(1)
-    .maybeSingle()
+    .limit(20)
   if (error) throw new Error(`whatsapp_agent_approval_read_failed:${error.message}`)
-  return data || null
+  return (data || []) as any[]
 }
 
-async function resolveLatestApproval(actor: AgentActor, decision: 'approve' | 'reject'): Promise<WhatsAppAgentResult | null> {
-  const pending = await latestPendingApproval(actor.legacyTelegramId)
-  if (!pending) return null
+// An approval past its lifetime is closed as expired and never executed. Its run is paused so no
+// worker can pick it up; a fresh preparation and approval is required.
+async function expirePendingApprovals(actor: AgentActor, rows: any[], now: Date) {
+  for (const row of rows) await expirePendingApproval(actor.legacyTelegramId, row, now, 'whatsapp')
+}
+
+function approvalChoicePrompt(live: any[], liveTotal: number, now: Date) {
+  const more = liveTotal > live.length ? ` (showing the latest ${live.length} of ${liveTotal})` : ''
+  const lastNumber = live.length > 1 ? 2 : 1
+  return `${approvalChoiceList(live, now)}${more ? `\n${more.trim()}` : ''}\n\nReply approve 1 or reject ${lastNumber}.`
+}
+
+// Every numbered list shown is persisted as the exact ordered ids, so "approve N" can only ever
+// resolve against what the person actually saw.
+async function shownApprovalChoices(actor: AgentActor, live: any[], liveTotal: number, now: Date) {
+  await rememberApprovalChoices(actor.legacyTelegramId, live.map((row) => String(row.id)), now)
+  return approvalChoicePrompt(live, liveTotal, now)
+}
+
+// Bare "Approve" with one live approval behaves as before. With several, or with an expired card in
+// the way, nothing runs until the person names the item. "approve 2" resolves item 2 of the latest
+// numbered list shown (persisted, 30-minute lifetime), never a list recomputed now: no fresh list
+// means the list is shown again and nothing runs; an item that has since expired or been handled is
+// refused. Expired approvals are closed, never executed, and never numbered.
+async function resolveLatestApproval(actor: AgentActor, intent: { decision: 'approve' | 'reject'; index?: number }): Promise<WhatsAppAgentResult | null> {
+  const rows = await latestPendingApprovals(actor.legacyTelegramId)
+  if (!rows.length) return null
+  const nowDate = new Date()
+  const { expired, live, liveTotal } = partitionPendingApprovals(rows, nowDate)
+  if (expired.length) await expirePendingApprovals(actor, expired, nowDate)
+  const newestExpired = expired[expired.length - 1]
+  if (intent.index != null) {
+    const snapshot = await latestApprovalChoices(actor.legacyTelegramId, nowDate)
+    if (!snapshot) {
+      if (!live.length) return { text: expiredApprovalReply(newestExpired?.requested_at, nowDate), runId: newestExpired?.run_id || undefined, status: 'expired', handledBy: 'whatsapp-agent-approval' }
+      const count = live.length === 1 ? 'You have 1 pending approval' : `You have ${live.length} pending approvals`
+      return { text: `I don't have a current numbered list for ${intent.decision} ${intent.index}, so nothing was done. ${count}:\n${await shownApprovalChoices(actor, live, liveTotal, nowDate)}`, status: 'waiting_approval', handledBy: 'whatsapp-agent-approval-choice' }
+    }
+    if (!Number.isInteger(intent.index) || intent.index < 1 || intent.index > snapshot.length) {
+      if (!live.length) return { text: expiredApprovalReply(newestExpired?.requested_at, nowDate), runId: newestExpired?.run_id || undefined, status: 'expired', handledBy: 'whatsapp-agent-approval' }
+      const count = live.length === 1 ? 'There is only 1 pending approval' : `There are ${live.length} pending approvals`
+      return { text: `${count}, so there is no number ${intent.index}. Nothing was done.\n\n${await shownApprovalChoices(actor, live, liveTotal, nowDate)}`, status: 'waiting_approval', handledBy: 'whatsapp-agent-approval-choice' }
+    }
+    const chosenId = snapshot[intent.index - 1]
+    // Looked up among every pending row, not just the five newest, so a card that arrived after the
+    // list was shown can never shift which item a number refers to.
+    let chosen = rows.find((row) => String(row.id) === chosenId && !expired.includes(row))
+    const justExpired = expired.find((row) => String(row.id) === chosenId)
+    let reason = justExpired ? expiredApprovalReply(justExpired.requested_at, nowDate) : ''
+    if (!chosen && !reason) {
+      const { data: prior, error: priorError } = await supabaseAdmin.from('agent_approvals')
+        .select('id,run_id,title,action_type,risk_level,status,requested_at,execution_payload').eq('id', chosenId).eq('telegram_id', String(actor.legacyTelegramId)).maybeSingle()
+      if (priorError) throw new Error(`whatsapp_agent_approval_read_failed:${priorError.message}`)
+      if (prior?.status === 'pending') chosen = prior
+      else reason = prior?.status === 'expired'
+          ? expiredApprovalReply(prior.requested_at, nowDate)
+          : `Approval ${intent.index} from that list is no longer pending${prior?.status ? ` (it was already ${prior.status})` : ''}. Nothing was done.`
+    }
+    if (!chosen) {
+      if (!live.length) return { text: reason, runId: justExpired?.run_id || undefined, status: justExpired ? 'expired' : 'paused', handledBy: 'whatsapp-agent-approval' }
+      const still = live.length === 1 ? 'You still have 1 pending approval:' : `You still have ${live.length} pending approvals:`
+      return { text: `${reason}\n\n${still}\n${await shownApprovalChoices(actor, live, liveTotal, nowDate)}`, status: 'waiting_approval', handledBy: 'whatsapp-agent-approval-choice' }
+    }
+    return resolveApprovalDecision(actor, chosen, intent.decision)
+  }
+  if (!live.length) {
+    return { text: expiredApprovalReply(newestExpired?.requested_at, nowDate), runId: newestExpired?.run_id || undefined, status: 'expired', handledBy: 'whatsapp-agent-approval' }
+  }
+  if (live.length === 1 && !expired.length) return resolveApprovalDecision(actor, live[0], intent.decision)
+  const lead = expired.length
+    ? `${expiredApprovalReply(newestExpired.requested_at, nowDate)}\n\n${live.length === 1 ? 'You still have 1 pending approval:' : `You still have ${live.length} pending approvals. Which one do you mean?`}`
+    : `You have ${live.length} pending approvals. Which one do you mean? Nothing was done yet.`
+  return { text: `${lead}\n${await shownApprovalChoices(actor, live, liveTotal, nowDate)}`, status: 'waiting_approval', handledBy: 'whatsapp-agent-approval-choice' }
+}
+
+async function resolveApprovalDecision(actor: AgentActor, pending: any, decision: 'approve' | 'reject'): Promise<WhatsAppAgentResult | null> {
+  // The shared freshness guard runs at the moment of the transition, not only when the list was built.
+  const fresh = await guardApprovalFreshness({ telegramId: actor.legacyTelegramId, row: pending, surface: 'whatsapp' })
+  if (fresh.expired) return { text: fresh.text, runId: pending.run_id || undefined, status: 'expired', handledBy: 'whatsapp-agent-approval' }
   const now = new Date().toISOString()
   const status = decision === 'approve' ? 'approved' : 'rejected'
   const { data, error } = await supabaseAdmin.from('agent_approvals')
@@ -373,6 +465,11 @@ export async function tryRunWhatsAppAttentionCommand(params:{
   const inboxReplyRead=await handleInboxReplyRead({actor,text:params.text})
   if(inboxReplyRead)return inboxReplyRead
 
+  // "cancel that task" / "stop the flight booking": cancels the owner's in-flight agent run.
+  // The parser refuses reminders, calendar, watches, lists, orders and Gmail, so their own cancel paths still win.
+  const runCancel=await tryCancelRunFromChat({telegramId:actor.legacyTelegramId},params.text,{surface:'whatsapp'})
+  if(runCancel)return runCancel
+
   if(await shouldHandleOpenLoopAction({actor,text:params.text})){
     const action=await handleOpenLoopAction({actor,text:params.text})
     if(action)return {...action,handledBy:String(action.handledBy||'open-loops')}
@@ -415,6 +512,21 @@ export async function tryAnswerOpenFlightQuestion(params:{user:ResolvedUser;text
   return {...hardened,handledBy:String(hardened.handledBy||'travel-research')}
 }
 
+/**
+ * "Any update?", "what are you working on", "how's the Goa trip going": deterministic task-status reads,
+ * given first refusal on WhatsApp before semantic routing can treat them as chat or a new request.
+ * A named ask with no matching task returns null so routing continues.
+ */
+export async function tryRunWhatsAppTaskStatus(params:{user:ResolvedUser;text:string}):Promise<WhatsAppAgentResult|null>{
+  if(!parseTaskStatusQuery(params.text))return null
+  const actor=actorFromResolvedUser(params.user)
+  if(!actor)return null
+  const named=await tryGetTaskStatus({telegramId:actor.legacyTelegramId},params.text)
+  if(named)return named
+  const general=await tryGetAutonomyStatus({actor,text:params.text})
+  return general?{...general,handledBy:String(general.handledBy||'autonomy-status')}:null
+}
+
 export async function tryRunWhatsAppAgent(params: {
   user: ResolvedUser
   text: string
@@ -440,7 +552,7 @@ export async function tryRunWhatsAppAgent(params: {
     }
   }
 
-  const decision = approvalIntent(params.text)
+  const decision = parseApprovalIntent(params.text)
   if (decision) {
     const approval = await resolveLatestApproval(actor, decision)
     if (approval) return approval
@@ -477,6 +589,10 @@ export async function tryRunWhatsAppAgent(params: {
 
   const connectionStatus = await tryGetConnectionStatus({ actor, text:params.text })
   if (connectionStatus) return { ...connectionStatus, handledBy:String(connectionStatus.handledBy || 'connection-status') }
+
+  // A named task ("how's the Goa trip going") gets its own card; no matching run returns null.
+  const taskStatus = await tryGetTaskStatus({ telegramId:actor.legacyTelegramId }, params.text)
+  if (taskStatus) return taskStatus
 
   const autonomyStatus = await tryGetAutonomyStatus({ actor, text:params.text })
   if (autonomyStatus) return { ...autonomyStatus, handledBy:String(autonomyStatus.handledBy || 'autonomy-status') }

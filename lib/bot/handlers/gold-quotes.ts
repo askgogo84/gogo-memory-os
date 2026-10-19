@@ -1,6 +1,41 @@
 type Quote={karat:string;perGram:number;amount:number;grams:number;source:string;date:string|null;reportedToday:boolean;locationKnown:boolean}
 type Unit={grams:number;explicit:boolean}
-const KARAT=/\b(18|22|24)\s*(?:kt|karat|carat|ct|k)\b/gi
+type Label={index:number;length:number;karat:string|null}
+// Every purity marker bounds the previous purity's span, even when it is written
+// as a hyphenated/plural karat, a hallmark fineness, a spelled-out number or an
+// unknown-purity phrase. Otherwise the next row bleeds into the previous purity.
+const KARAT=/\b(18|22|24)\s*[-–]?\s*(?:kts?|karats?|carats?|ct|k)\b/gi
+const SPELLED=/\b(twenty[\s-]?four|twenty[\s-]?two|eighteen)[\s-]*(?:kts?|karats?|carats?|k)\b/gi
+const FINENESS=/(?<![\d,.₹])(?<!(?:₹|\brs\.?|\binr)\s{0,3})\b(999|916|750)\b(?=\s*(?:fine\b|purity\b|gold\b|hallmark|\())/gi
+const FINENESS_TEXT=/^(?:999|916|750)$/
+const UNKNOWN_PURITY=/\b(?:pure|fine)\s+gold\b|\b995\b(?=\s*(?:fine\b|purity\b|gold\b))/gi
+const PURITY_ORDER:Record<string,number>={'18':1,'22':2,'24':3}
+
+function purityLabels(text:string):Label[]{
+  const found:Label[]=[]
+  for(const m of text.matchAll(KARAT))found.push({index:m.index!,length:m[0].length,karat:m[1]})
+  for(const m of text.matchAll(SPELLED))found.push({index:m.index!,length:m[0].length,karat:/four/i.test(m[1])?'24':/two/i.test(m[1])?'22':'18'})
+  for(const m of text.matchAll(FINENESS))found.push({index:m.index!,length:m[0].length,karat:m[1]==='999'?'24':m[1]==='916'?'22':'18'})
+  const known=[...found]
+  for(const m of text.matchAll(UNKNOWN_PURITY)){
+    // "24K pure gold" / "999 fine gold" qualify the known label; they are not a new purity.
+    if(known.some(k=>k.index<=m.index!&&m.index!-(k.index+k.length)<=12))continue
+    found.push({index:m.index!,length:m[0].length,karat:null})
+  }
+  found.sort((a,b)=>a.index-b.index||b.length-a.length)
+  const distinct=found.filter((label,i)=>!found.slice(0,i).some(prior=>label.index<prior.index+prior.length))
+  const kept:Label[]=[]
+  for(const label of distinct){
+    // Words before the first purity ("Pure gold price today…") are heading text.
+    if(label.karat===null&&!kept.some(k=>k.karat!==null))continue
+    // A hallmark fineness that restates the preceding karat ("22K … (916 purity)",
+    // "24K 999 gold") qualifies that quote; only a different purity is a new label.
+    const previous=kept.at(-1)
+    if(previous?.karat&&label.karat===previous.karat&&FINENESS_TEXT.test(text.slice(label.index,label.index+label.length)))continue
+    kept.push(label)
+  }
+  return kept
+}
 const MONEY=/(?:₹|\brs\.?|\binr)\s*(\d(?:[\d,]*\d)?(?:\.\d+)?)(?!\d|,[\d,]|\.\d)/gi
 const MONTH_NAME='Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?'
 
@@ -19,7 +54,7 @@ function amount(text:string):number|null{
 
 function units(text:string):Unit[]{
   const found:Unit[]=[]
-  const pattern=/(?:\bper\s*|\/\s*)(?:(\d+(?:\.\d+)?)\s*)?(kg|grams?|g)\b|\b(\d+(?:\.\d+)?)\s*(kg|grams?|g)\b/gi
+  const pattern=/(?:\bper\s*|\/\s*)(?:(\d+(?:\.\d+)?)\s*)?(kg|grams?|gms?|g)\b|\b(\d+(?:\.\d+)?)\s*(kg|grams?|gms?|g)\b/gi
   for(const match of text.matchAll(pattern)){
     const weight=Number(match[1]||match[3]||1),name=match[2]||match[4]
     const grams=weight*(name.toLowerCase()==='kg'?1000:1)
@@ -75,13 +110,13 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
     const body=lines.join(' ').replace(/\s+/g,' ').trim()
     const current=body.split(/\b(?:gold\s+rate\s+history|price\s+history|historical\s+(?:gold\s+)?(?:rates?|prices?)|popular\s+coins|related\s+products)\b/i)[0]
     if(/\bgold\s+coins?\b|\badd to cart\b/i.test(current)){warnings.add('Retail coin prices are not metal-rate quotes.');continue}
-    const labels=[...current.matchAll(KARAT)]
+    const labels=purityLabels(current)
     const heading=current.slice(0,labels[0]?.index??current.length)
     const headingDate=sourceDate(heading),headingToday=/\btoday\b/i.test(heading)
     for(let i=0;i<labels.length;i++){
-      const label=labels[i],start=label.index!+label[0].length,end=labels[i+1]?.index??current.length
+      const label=labels[i],start=label.index+label.length,end=labels[i+1]?.index??current.length
       const span=current.slice(start,end)
-      const previousEnd=i?labels[i-1].index!+labels[i-1][0].length:0
+      const previousEnd=i?labels[i-1].index+labels[i-1].length:0
       const preceding=current.slice(previousEnd,label.index),precedingMoney=[...preceding.matchAll(MONEY)].at(-1)
       const precedingTail=precedingMoney?preceding.slice(precedingMoney.index!+precedingMoney[0].length):''
       const reverse=Boolean(precedingMoney&&precedingTail.length<=90&&/(?:\bfor|\bof|\()\s*$/i.test(precedingTail))
@@ -91,7 +126,9 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
       const suffix=quoteClauses(span.slice(0,nextMoney?.index??span.length))[0]
       const prefixClauses=quoteClauses(preceding),reversePrefix=prefixClauses.at(-1)||''
       const firstAmountEnd=nextMoney?nextMoney.index!+nextMoney[0].length:0
-      const table=/\b\d+(?:\.\d+)?\s*(?:kg|grams?|g)\s*\|/i.test(span)
+      if(label.karat===null)continue
+      const karat=label.karat
+      const table=/\b\d+(?:\.\d+)?\s*(?:kg|grams?|gms?|g)\s*\|/i.test(span)
       const forwardText=spanMonies.length>1&&!table?span.slice(0,firstAmountEnd)+quoteClauses(span.slice(firstAmountEnd,spanMonies[1].index))[0]:span
       const quoteText=reverse?reversePrefix+' '+suffix:forwardText
       if(/\b(?:unavailable|not (?:available|stated|supplied)|not verified)\b/i.test(quoteText))continue
@@ -105,7 +142,7 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
         if(value===null||!Number.isFinite(grams)||grams<=0)return
         const perGram=Math.round(value/grams*100)/100
         if(!Number.isFinite(perGram)||perGram<=0)return
-        quotes.push({karat:label[1],perGram,amount:value,grams,source,date:date||null,reportedToday,locationKnown:placeIsKnown(block,requested)})
+        quotes.push({karat,perGram,amount:value,grams,source,date:date||null,reportedToday,locationKnown:placeIsKnown(block,requested)})
       }
       const addInline=(text:string,money:RegExpMatchArray,allowBefore=true)=>{
         const before=allowBefore?units(text.slice(0,money.index)):[],after=units(text.slice(money.index!+money[0].length,money.index!+money[0].length+45))
@@ -130,7 +167,7 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
         if(localMoney)addInline(quoteText,localMoney,isolatedPrefix)
         continue
       }
-      const rows=[...span.matchAll(/\b(\d+(?:\.\d+)?)\s*(kg|grams?|g)\s*\|/gi)]
+      const rows=[...span.matchAll(/\b(\d+(?:\.\d+)?)\s*(kg|grams?|gms?|g)\s*\|/gi)]
       if(rows.length){
         const header=(heading+' '+span.slice(0,rows[0].index)).toLowerCase(),todayColumn=header.lastIndexOf('today'),yesterdayColumn=header.lastIndexOf('yesterday')
         for(let r=0;r<rows.length;r++){
@@ -155,6 +192,17 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
       if(/(?:\bfor|\bof|\()\s*$/i.test(afterMoney))continue
       addInline(span.slice(0,money.index!+money[0].length)+quoteClauses(afterMoney)[0],money)
     }
+  }
+  // Within one source and date, a lower purity can never cost at least as much
+  // as a higher purity per gram. Such a pair is a misattribution, not a quote.
+  const contradicted=new Set<Quote>()
+  for(const low of quotes)for(const high of quotes){
+    if(low.source!==high.source||low.date!==high.date||PURITY_ORDER[low.karat]>=PURITY_ORDER[high.karat])continue
+    if(low.perGram>=high.perGram){contradicted.add(low);contradicted.add(high)}
+  }
+  if(contradicted.size){
+    warnings.add('A source listed a lower gold purity at or above a higher purity, so those quotes were not used.')
+    for(let i=quotes.length-1;i>=0;i--)if(contradicted.has(quotes[i]))quotes.splice(i,1)
   }
   const lines:string[]=[],details:string[]=[]
   const rupees=(value:number)=>value.toLocaleString('en-IN',{maximumFractionDigits:2})

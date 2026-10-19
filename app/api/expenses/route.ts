@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { parseExpenseText, generateDailyInsight } from '@/lib/bot/services/expense-analyzer'
-import { saveExpense, getTodayExpenses, getPeriodExpenses } from '@/lib/bot/services/expense-storage'
+import { saveExpense, getTodayExpenses, getPeriodExpenses, expensePeriodRange } from '@/lib/bot/services/expense-storage'
 import { isInternalServiceAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
@@ -124,8 +124,10 @@ export async function GET(req: NextRequest) {
   const result=await getPeriodExpenses(telegramId,period,phone||null).then(data=>({data,error:false}),()=>({data:null,error:true}))
   if(result.error)return NextResponse.json({reply:'I could not read your expense records right now. Your spending total is unavailable; I have not changed any records.'},{status:503})
   const data:Awaited<ReturnType<typeof getPeriodExpenses>>=result.data
+  const rangeLine=(range:{start:string;end:string;timezone:string})=>`Range: ${new Date(range.start).toLocaleDateString('en-IN',{timeZone:range.timezone})} through ${new Date(range.end).toLocaleDateString('en-IN',{timeZone:range.timezone})} (${range.timezone}; ${period==='week'?'Monday-start week':'calendar month'}, through now)`
   if (!data) {
-    return NextResponse.json({ reply: `No expenses logged this ${period} yet.` })
+    // A successful empty read is a verified zero for this exact range, not an unknown.
+    return NextResponse.json({ reply: [`📊 *${period === 'week' ? 'This Week' : 'This Month'}'s Expenses*`,rangeLine(expensePeriodRange(period)),'Total: *₹0* · 0 transactions','No expense entries are recorded in this range.'].join('\n') })
   }
 
   const breakdown = Object.entries(data.byCategory)
@@ -135,7 +137,7 @@ export async function GET(req: NextRequest) {
 
   const reply = [
     `📊 *${period === 'week' ? 'This Week' : 'This Month'}'s Expenses*`,
-    ...(data.range?[`Range: ${new Date(data.range.start).toLocaleDateString('en-IN',{timeZone:data.range.timezone})} through ${new Date(data.range.end).toLocaleDateString('en-IN',{timeZone:data.range.timezone})} (${data.range.timezone}; ${period==='week'?'Monday-start week':'calendar month'}, through now)`]:[]),
+    ...(data.range?[rangeLine(data.range)]:[]),
     `Total: *₹${data.total}* · ${data.count} transactions`,
     ``,
     breakdown,

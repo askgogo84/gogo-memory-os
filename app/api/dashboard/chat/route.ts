@@ -18,7 +18,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { isDecisionRecallQuery } from '@/lib/agent/recall-query'
-import { isConnectionCapabilityQuery } from '@/lib/agent/autonomy-status'
+import { isConnectionCapabilityQuery, tryGetAutonomyStatus } from '@/lib/agent/autonomy-status'
+import { parseTaskStatusQuery, tryGetTaskStatus } from '@/lib/agent/task-status'
 import { isLinkVaultSaveRequest, isLinkVaultQuery } from '@/lib/services/link-vault'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/day-chat'
@@ -42,6 +43,7 @@ import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunTrainResearch } from '@/lib/agent/train-research'
 import { handleInboxReplyRead } from '@/lib/agent/open-loops'
 import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
+import { tryCancelRunFromChat } from '@/lib/agent/run-cancel'
 
 export const dynamic = 'force-dynamic'
 
@@ -138,6 +140,13 @@ export async function POST(req: NextRequest) {
     if(inboxReplyRead){
       await saveConversation(user.telegram_id,text,inboxReplyRead.text)
       return NextResponse.json(inboxReplyRead)
+    }
+    // Same run cancel as WhatsApp ("cancel that task", "stop the flight booking"). Owner-bound; reminders,
+    // calendar, watches, lists, orders and Gmail are refused by the parser and keep their own paths.
+    const runCancel = await tryCancelRunFromChat({telegramId:actor.legacyTelegramId},text,{surface:'web'})
+    if(runCancel){
+      await saveConversation(user.telegram_id,text,runCancel.text)
+      return NextResponse.json(runCancel)
     }
     const contentDraft = await tryRunContentWorkflow(actor, text, `web-${randomUUID()}`)
     if (contentDraft) return NextResponse.json(contentDraft)
@@ -246,6 +255,16 @@ export async function POST(req: NextRequest) {
       const result=await processIncomingMessage({channel:'whatsapp',externalUserId:String(user.whatsapp_id),text,userName:user.name||'Gogo',messageType:'text',messageId:shadowEventId,semantic:webObservation?.jev})
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:result.handledBy||'same-brain',actualCapability:'memory'}).catch(()=>{})
       return NextResponse.json(result)
+    }
+    // Same task-status read as WhatsApp, before the general planner can treat it as a new request.
+    // A named ask with no matching task returns null and routing continues.
+    if (parseTaskStatusQuery(text)) {
+      const taskStatus = await tryGetTaskStatus({ telegramId: actor.legacyTelegramId }, text) || await tryGetAutonomyStatus({ actor, text })
+      if (taskStatus) {
+        await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:taskStatus.handledBy,actualCapability:'orchestrator',status:taskStatus.status,runId:taskStatus.runId}).catch(()=>{})
+        await saveConversation(user.telegram_id, text, taskStatus.text)
+        return NextResponse.json(taskStatus)
+      }
     }
     const readOnlySchedule = detectReadOnlyScheduleRequest(text)
     if (readOnlySchedule) {

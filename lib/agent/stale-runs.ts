@@ -1,6 +1,7 @@
 // A run left "running" for hours with no update means the worker that owned it died (a browser task from 3 Oct still
 // showing "Gogo is working on it" on 15 Oct). Such runs must not count as active work, and the cron closes them.
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { notifyRunOutcome } from './run-notify'
 
 export const STALE_RUNNING_HOURS = 12
 export const STALE_RUN_ERROR = 'stale_run_recovered'
@@ -24,7 +25,7 @@ export async function sweepStaleRunningRuns() {
     .update({ status: 'failed', error: STALE_RUN_ERROR, summary: STALE_RUN_SUMMARY, completed_at: at, updated_at: at })
     .eq('status', 'running')
     .lt('updated_at', staleRunningCutoff())
-    .select('id')
+    .select('id,telegram_id,type,title,metadata_json')
   if (error) { console.error('STALE_RUN_SWEEP_FAILED:', error.message); return 0 }
   const ids = (data || []).map((row: any) => String(row.id))
   // The run's own steps stop too, so the task page no longer says "Gogo is working on this step now".
@@ -33,6 +34,11 @@ export async function sweepStaleRunningRuns() {
       .update({ status: 'failed', error: STALE_RUN_ERROR, completed_at: at })
       .in('run_id', ids).in('status', ['running', 'queued'])
     if (stepError) console.error('STALE_RUN_STEP_SWEEP_FAILED:', stepError.message)
+  }
+  // The owner hears once that the task was closed. notifyRunOutcome never throws and skips browser runs,
+  // which their own worker announces.
+  for (const row of (data || []) as any[]) {
+    await notifyRunOutcome({ ...row, status: 'failed', error: STALE_RUN_ERROR, summary: STALE_RUN_SUMMARY })
   }
   return ids.length
 }
