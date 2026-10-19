@@ -20,6 +20,8 @@ export function isMyBookingsQuery(text: string): boolean {
 
 export type BookingRow = {
   id?: string
+  metadata_json?: any
+  source_refs?: any
   event_type?: string | null
   subtype?: string | null
   title?: string | null
@@ -50,11 +52,19 @@ function span(ms: number) {
   return `${Math.round(hours / 24)} days`
 }
 
-function line(row: BookingRow, start: number, status: string) {
+// A saved ticket/QR means the booking happened, whatever an older approval row says.
+export function hasSavedTicket(row: BookingRow): boolean {
+  const m = row?.metadata_json || {}
+  const refs = Array.isArray(row?.source_refs) ? row.source_refs : []
+  return Boolean(m?.credential?.documentId || m?.screenshotEvidence?.documentId || refs.some((r: any) => r?.documentId && /ticket|credential|qr/i.test(String(r?.kind || ''))))
+}
+
+function line(row: BookingRow, start: number, status: string, upcoming = false) {
   const tz = zoneOf(row)
   const title = String(row.title || row.subtype || row.event_type || 'Booking').replace(/\s+/g, ' ').trim().slice(0, 140)
   const where = row.location ? ` · ${String(row.location).replace(/\s+/g, ' ').trim().slice(0, 100)}` : ''
-  const pending = row.lifecycle_state === 'waiting_approval' ? ' · waiting for your approval, not booked yet' : ''
+  // Only an upcoming booking can still be waiting on you; one with a ticket is already booked.
+  const pending = upcoming && row.lifecycle_state === 'waiting_approval' && !hasSavedTicket(row) ? ' · waiting for your approval, not booked yet' : ''
   return `• ${title} — ${localBookingTime(start, tz)}${where} · ${status}${pending}`
 }
 
@@ -78,9 +88,9 @@ export function renderMyBookingsReply(rows: BookingRow[], now: number = Date.now
     const tz = zoneOf(row)
     if (start > now) {
       const day = dayKey(start, tz) === dayKey(now, tz) ? ' (today)' : dayKey(start, tz) === dayKey(now + 86_400_000, tz) ? ' (tomorrow)' : ''
-      upcoming.push({ start, text: line(row, start, `starts in ${span(start - now)}${day}`) })
+      upcoming.push({ start, text: line(row, start, `starts in ${span(start - now)}${day}`, true) })
     } else if (Number.isFinite(end) && end > now) {
-      upcoming.push({ start, text: line(row, start, `in progress, started ${span(now - start)} ago`) })
+      upcoming.push({ start, text: line(row, start, `in progress, started ${span(now - start)} ago`, true) })
     } else if (now - start <= EARLIER_WINDOW_MS) {
       earlier.push({ start, text: line(row, start, `over, started ${span(now - start)} ago`) })
     }
@@ -102,7 +112,7 @@ export function renderMyBookingsReply(rows: BookingRow[], now: number = Date.now
 export async function buildMyBookingsReply(telegramId: number | string, now: number = Date.now()): Promise<string | null> {
   const { data, error } = await supabaseAdmin
     .from('life_events')
-    .select('id,event_type,subtype,title,provider,location,start_at,end_at,timezone,lifecycle_state')
+    .select('id,event_type,subtype,title,provider,location,start_at,end_at,timezone,lifecycle_state,metadata_json,source_refs')
     .eq('telegram_id', String(telegramId))
     .order('updated_at', { ascending: false })
     .limit(120)
