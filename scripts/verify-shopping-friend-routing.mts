@@ -275,7 +275,7 @@ let featureClaims=0
 const fixtureUser={id:'owner',telegramId:42,whatsappId:'+919999999999',name:'Gogo',tier:'free'}
 const unrelated=(module:string)=>new Proxy({}, {get:(_target,key)=>{
   const name=String(key)
-  if(/^(?:is|detect|parse)/.test(name))return ()=>null
+  if(/^(?:is|detect|parse|looksLike)/.test(name))return ()=>null
   if(/^(?:try|build|getLatestFollowupState)/.test(name))return ()=>null
   if(/^(?:observe|capture|autoResolve|record)/.test(name))return async()=>null
   throw Error(`Unmodelled webhook dependency: ${module}.${name}`)

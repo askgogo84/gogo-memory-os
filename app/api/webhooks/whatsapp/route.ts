@@ -56,7 +56,7 @@ import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { parseRunCancel } from '@/lib/agent/run-cancel'
-import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppAccountSite, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist, tryRunWhatsAppTaskStatus } from '@/lib/agent/whatsapp-bridge'
+import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppAccountSite, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist, tryRunWhatsAppReservationGuestReply, tryRunWhatsAppTaskStatus } from '@/lib/agent/whatsapp-bridge'
 import { parseTaskStatusQuery } from '@/lib/agent/task-status'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, parseLooseAccountProfile, tryRunExternalAccountFlow } from '@/lib/agent/external-account'
@@ -1155,6 +1155,17 @@ _"${originalText}"_
         await sendWhatsAppMessage(from, approvalAgent.text)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
+    }
+
+    // A reply to "What name should I book under?" (or a picked time) continues that live reservation step.
+    // Only a short name/time reply with a pending step for this person is claimed; anything else routes on.
+    const reservationGuestReply = await tryRunWhatsAppReservationGuestReply({ user: resolvedUser, text })
+    if (reservationGuestReply) {
+      await recordShadowRouterOutcome({ telegramId: resolvedUser.telegramId, surface: 'whatsapp', eventId: inboundMessageSid, actualHandler: reservationGuestReply.handledBy || 'restaurant-reservation', actualCapability: 'browser', status: reservationGuestReply.status || null, runId: reservationGuestReply.runId || null }).catch(() => {})
+      await saveConversation(resolvedUser.telegramId, 'user', text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reservationGuestReply.text)
+      await sendWhatsAppMessage(from, reservationGuestReply.text)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
     // Capabilities AskGogo does not have yet get one honest answer and an alternative, before any

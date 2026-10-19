@@ -41,7 +41,7 @@ import { handleInboxReplyRead, handleOpenLoopAction, handleOpenLoopQuery, handle
 import { tryRecoverAppointmentOption } from './appointment-followup-recovery'
 import { tryRunAppointmentFollowup } from './appointment-followup'
 import { tryRunAppointmentResearch } from './appointment-research'
-import { armApprovedRestaurantReservation, queueRestaurantReservationResearch, tryRunRestaurantReservation } from './restaurant-reservation'
+import { armApprovedRestaurantReservation, continueRestaurantReservationGuestReply, looksLikeReservationGuestReply, queueRestaurantReservationResearch, tryRunRestaurantReservation } from './restaurant-reservation'
 import { isDecisionRecallQuery } from './recall-query'
 import { tryCancelRunFromChat } from './run-cancel'
 
@@ -528,6 +528,15 @@ export async function tryRunWhatsAppTaskStatus(params:{user:ResolvedUser;text:st
   if(named)return named
   const general=await tryGetAutonomyStatus({actor,text:params.text})
   return general?{...general,handledBy:String(general.handledBy||'autonomy-status')}:null
+}
+
+/** The reply to a pending live-slot question (a picked time or the guest name). Null when none is pending. */
+export async function tryRunWhatsAppReservationGuestReply(params:{user:ResolvedUser;text:string}):Promise<WhatsAppAgentResult|null>{
+  if(!looksLikeReservationGuestReply(params.text))return null
+  const actor=actorFromResolvedUser(params.user)
+  if(!actor)return null
+  const result=await continueRestaurantReservationGuestReply({actor,surface:'whatsapp',text:params.text})
+  return result?{...(result as any),handledBy:String((result as any).handledBy||'restaurant-reservation')}:null
 }
 
 export async function tryRunWhatsAppAgent(params: {

@@ -9,6 +9,7 @@ import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildContextPack, type ContextPack } from './context-brain'
 import {buildReservationDiningContext, usableReservationDiningContext, reservationRequestedDateCoverage, type ReservationDiningContext} from './reservation-dining-context'
+import { indianMobileFromWhatsApp } from './provider-booking'
 
 function safe(value: unknown, max = 1200) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -216,6 +217,33 @@ const GENERIC_RESTAURANT_TOKENS=new Set(['restaurant','restaurants','cafe','caf�
 // are booked. A result must name the restaurant; a page that only says "table" is not a match
 // (live run 10 Oct ranked a Lithuanian software company first).
 const INDIA_BOOKING_HOSTS=/(?:^|\.)(?:district\.in|eazydiner\.com|zomato\.com|dineout\.co\.in|swiggy\.com|magicpin\.in)$/
+// 19 Oct live: Toit's own tables live in its ReserveGo widget (widget.reservego.com), which Instinct read for
+// real slots, while Gogo opened an EazyDiner listing. A restaurant's first-party booking widget or its own site
+// outranks every aggregator; aggregators are only the fallback.
+const FIRST_PARTY_WIDGET_HOSTS=/(?:^|\.)reservego\.com$/
+const NON_BOOKING_HOSTS=/instagram|facebook|reddit|tripadvisor|youtube|linkedin|(?:^|\.)x\.com$|twitter|rocketreach|crunchbase|justdial|wikipedia|google\./
+export type ReservationLinkKind='widget'|'own_site'|'aggregator'|'other'
+function restaurantIdentity(restaurant:string){
+  const tokens=restaurant.toLowerCase().split(/[^a-z0-9]+/).filter(x=>x.length>2&&!GENERIC_RESTAURANT_TOKENS.has(x))
+  return tokens.length?tokens:restaurant.toLowerCase().split(/[^a-z0-9]+/).filter(x=>x.length>2)
+}
+export function reservationLinkKind(url:string,restaurant:string):ReservationLinkKind{
+  const h=host(url).toLowerCase()
+  if(!h)return'other'
+  if(FIRST_PARTY_WIDGET_HOSTS.test(h))return'widget'
+  if(INDIA_BOOKING_HOSTS.test(h))return'aggregator'
+  if(NON_BOOKING_HOSTS.test(h))return'other'
+  const compactHost=h.replace(/[^a-z0-9]/g,'')
+  return restaurantIdentity(restaurant).some(t=>compactHost.includes(t))?'own_site':'other'
+}
+export function rankReservationCandidates(results:WebSearchResult[]|null|undefined,restaurant:string){
+  const seen=new Set<string>()
+  return (results||[])
+    .filter(r=>/^https?:\/\//i.test(String(r.url||'')))
+    .filter(r=>{const key=String(r.url).replace(/[#?].*$/,'').replace(/\/+$/,'').toLowerCase();if(seen.has(key))return false;seen.add(key);return true})
+    .map(r=>({url:String(r.url),title:safe(r.title||restaurant,220),kind:reservationLinkKind(String(r.url),restaurant),score:candidateScore(r,restaurant)}))
+    .sort((a,b)=>b.score-a.score)
+}
 function candidateScore(result:WebSearchResult,restaurant:string){
   const title=String(result.title||'').toLowerCase()
   const snippet=String(result.snippet||'').toLowerCase()
@@ -225,7 +253,10 @@ function candidateScore(result:WebSearchResult,restaurant:string){
   if(!tokens.length||hits===0)return -100
   if(!resultInPlace(`${title} ${snippet} ${url}`,resolveIndiaPlace(restaurant)))return -100
   let score=hits*4
-  if(INDIA_BOOKING_HOSTS.test(host(url)))score+=10
+  const kind=reservationLinkKind(url,restaurant)
+  if(kind==='widget')score+=30
+  else if(kind==='own_site')score+=22
+  else if(kind==='aggregator')score+=10
   if(/book|booking|reserv|table/.test(url))score+=6
   if(/book a table|reserv|table booking/.test(title+' '+snippet))score+=5
   if(/instagram|facebook|tripadvisor|rocketreach|linkedin|crunchbase/.test(url))score-=20
@@ -270,23 +301,169 @@ const KNOWN_RESERVATION_PROVIDERS:Record<string,{url:string;location?:string}>={
   'naru':{url:'https://bookings.airmenus.in/eatnaru/order',location:'Bengaluru'},
 }
 
-async function discoverProvider(intent:RestaurantReservationIntent){
-  if(intent.sourceUrl)return{url:intent.sourceUrl,title:intent.restaurant||host(intent.sourceUrl),source:'explicit_url'}
+type ReservationProvider={url:string;title:string;source:string;location?:string|null;firstParty:boolean}
+async function discoverProvider(intent:RestaurantReservationIntent):Promise<ReservationProvider|null>{
+  if(intent.sourceUrl)return{url:intent.sourceUrl,title:intent.restaurant||host(intent.sourceUrl),source:'explicit_url',firstParty:reservationLinkKind(intent.sourceUrl,intent.restaurant)!=='aggregator'}
   if(!intent.restaurant)return null
   const known=KNOWN_RESERVATION_PROVIDERS[intent.restaurant.toLowerCase().replace(/\s+/g,' ').trim()]
-  if(known)return{url:known.url,title:intent.restaurant,source:'known_provider_page',location:known.location||null}
+  if(known)return{url:known.url,title:intent.restaurant,source:'known_provider_page',location:known.location||null,firstParty:true}
   const place=resolveIndiaPlace(intent.restaurant)
-  const query=`${intent.restaurant} ${place.city&&!intent.restaurant.toLowerCase().includes(place.city.toLowerCase())?place.city+' ':''}India book a table District EazyDiner`
-  const results=await searchWebResults(query)
-  const ranked=(results||[])
-    .filter(r=>/^https?:\/\//i.test(String(r.url||'')))
-    .map(r=>({r,score:candidateScore(r,intent.restaurant)}))
-    .sort((a,b)=>b.score-a.score)
+  const city=place.city&&!intent.restaurant.toLowerCase().includes(place.city.toLowerCase())?place.city+' ':''
+  // First-party first: the restaurant's own booking widget (ReserveGo) or its own site's Reserve page.
+  // The old single query named District and EazyDiner, so aggregators were all it ever found.
+  const firstPartyResults=await searchWebResults(`${intent.restaurant} ${city}reservego reserve a table`).catch(()=>[] as WebSearchResult[])
+  let ranked=rankReservationCandidates(firstPartyResults,intent.restaurant)
+  const firstPartyTop=(r:typeof ranked)=>r[0]&&r[0].score>0&&(r[0].kind==='widget'||r[0].kind==='own_site')
+  if(!firstPartyTop(ranked)){
+    const fallback=await searchWebResults(`${intent.restaurant} ${city}India book a table District EazyDiner`)
+    ranked=rankReservationCandidates([...(firstPartyResults||[]),...(fallback||[])],intent.restaurant)
+  }
   const top=ranked[0]
   // A listing's reviews/menu/photos page is not where a table is booked (10 Oct retest opened
   // eazydiner.com/.../toit-indiranagar-330151/reviews). Use the restaurant's main listing page.
   const bookingUrl=(url:string)=>{try{const u=new URL(url);if(INDIA_BOOKING_HOSTS.test(u.hostname.replace(/^www\./,''))){u.pathname=u.pathname.replace(/\/(?:reviews?|menu|photos?|gallery|info|order-online|overview)\/?$/i,'');u.search=''}return u.toString()}catch{return url}}
-  return top?.score>0?{url:bookingUrl(String(top.r.url)),title:safe(top.r.title||intent.restaurant,220),source:'web_search',location:null}:null
+  // A first-party widget URL is kept exactly: its query can carry the restaurant id.
+  return top&&top.score>0?{url:top.kind==='aggregator'?bookingUrl(top.url):top.url,title:top.title,source:'web_search',location:null,firstParty:top.kind==='widget'||top.kind==='own_site'}:null
+}
+
+// ---- Live slot read (Instinct-style): read the first-party widget for the requested date/party/time ----
+
+const CLOCK_TOKEN=/\b(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?m\.?|p\.?m\.?)(?![a-z])|\b([01]?\d|2[0-3]):([0-5]\d)\b(?!\s*(?:a\.?m|p\.?m))/gi
+/** Bookable slot clocks (HH:MM) in widget text. Opening-hour ranges, "open/close" times and sold-out slots are not slots. */
+export function extractReservationSlots(text:string):string[]{
+  const range=/\b\d{1,2}(?:[:.]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)?\s*(?:-|–|—|to)\s*\d{1,2}(?:[:.]\d{2})?\s*(?:a\.?m\.?|p\.?m\.?)|\b\d{1,2}:\d{2}\s*(?:-|–|—|to)\s*\d{1,2}:\d{2}\b/gi
+  const raw=String(text||'').replace(/\s+/g,' ').replace(range,' ')
+  const out=new Set<string>()
+  for(const m of raw.matchAll(CLOCK_TOKEN)){
+    const before=raw.slice(Math.max(0,(m.index||0)-24),m.index||0)
+    const after=raw.slice((m.index||0)+m[0].length,(m.index||0)+m[0].length+18)
+    if(/\b(?:open(?:s|ing)?|clos(?:e|es|ing)|hours?|timings?|until|till|last\s+orders?|happy\s+hours?)\b\s*(?:from|at|by|is|are|:|-)?\s*$/i.test(before))continue
+    if(/^\s*[-–:]?\s*(?:sold\s*out|full|unavailable|not\s+available|wait\s*list|booked)\b/i.test(after))continue
+    const clock=m[3]?normalizeClock(Number(m[1]),Number(m[2]||0),/p/i.test(m[3])?'pm':'am'):`${String(Number(m[4])).padStart(2,'0')}:${m[5]}`
+    if(clock)out.add(clock)
+  }
+  return [...out].sort()
+}
+
+const SHORT_MONTHS=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec']
+const LONG_MONTHS=['january','february','march','april','may','june','july','august','september','october','november','december']
+const SHORT_DAYS=['sun','mon','tue','wed','thu','fri','sat'],LONG_DAYS=['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
+/** True when the page shows the requested dining date, so slots are never reported for another day. */
+export function reservationSlotDateEvidence(text:string,date:string){
+  const m=String(date).match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if(!m)return false
+  const t=String(text||'').toLowerCase(),month=Number(m[2]),day=Number(m[3])
+  const mon=`(?:${SHORT_MONTHS[month-1]}|${LONG_MONTHS[month-1]})`
+  const dayRe=`0?${day}(?:st|nd|rd|th)?`
+  if(t.includes(date))return true
+  if(new RegExp(`\\b${dayRe}\\s*,?\\s*${mon}\\b|\\b${mon}\\.?\\s*${dayRe}\\b|\\b0?${day}[/-]0?${month}\\b`,'i').test(t))return true
+  // A widget day strip often shows "Tue 20": weekday next to the day number.
+  const wd=new Date(`${date}T12:00:00Z`).getUTCDay()
+  return new RegExp(`\\b(?:${SHORT_DAYS[wd]}|${LONG_DAYS[wd]})\\b\\.?,?\\s*${dayRe}\\b`,'i').test(t)
+}
+
+const minutes=(clock:string)=>{const[h,m]=clock.split(':').map(Number);return h*60+m}
+export type ReservationSlotDecision={kind:'available';time:string}|{kind:'alternatives';times:string[]}|{kind:'none'}
+export function reservationSlotDecision(slots:string[],start:string,end:string):ReservationSlotDecision{
+  if(!slots.length)return{kind:'none'}
+  if(!start&&!end)return{kind:'available',time:slots[0]}
+  const inBounds=slots.filter(s=>s>=start&&s<=(end||start))
+  if(inBounds.length)return{kind:'available',time:inBounds.includes(start)?start:inBounds[0]}
+  const target=minutes(start)
+  const nearest=[...slots].sort((a,b)=>Math.abs(minutes(a)-target)-Math.abs(minutes(b)-target)||minutes(b)-minutes(a)).slice(0,3).sort()
+  return{kind:'alternatives',times:nearest}
+}
+
+/** "19:00" -> "7pm", "18:30" -> "6:30pm". */
+export function reservationClockLabel(clock:string){
+  const m=String(clock).match(/^(\d{2}):(\d{2})$/)
+  if(!m)return clock
+  const h=Number(m[1]),min=m[2],suffix=h>=12?'pm':'am',h12=h%12===0?12:h%12
+  return `${h12}${min==='00'?'':':'+min}${suffix}`
+}
+function istDay(offset:number,now:Date){
+  const local=new Date(now.toLocaleString('en-US',{timeZone:'Asia/Kolkata'}))
+  return new Date(Date.UTC(local.getFullYear(),local.getMonth(),local.getDate())+offset*86400_000).toISOString().slice(0,10)
+}
+function shortDate(date:string){return new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB',{day:'numeric',month:'short',timeZone:'UTC'})}
+/** "tomorrow", "tonight", or "on Sat 24 Oct", judged in IST. */
+export function reservationDayLabel(date:string,time:string,now=new Date()){
+  if(date===istDay(0,now))return time>='17:00'?'tonight':'today'
+  if(date===istDay(1,now))return'tomorrow'
+  return `on ${new Date(`${date}T12:00:00Z`).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',timeZone:'UTC'}).replace(/,/g,'')}`
+}
+function mobileEnding(whatsappId:string|null|undefined){
+  const mobile=indianMobileFromWhatsApp(whatsappId)||String(whatsappId||'').replace(/\D/g,'')
+  return mobile.length>=4?mobile.slice(-4):''
+}
+export function reservationAvailableReply(p:{restaurant:string;time:string;date:string;partySize:number;whatsappId?:string|null;email?:string|null;now?:Date}){
+  const ending=mobileEnding(p.whatsappId)
+  const contact=`${ending?`your WhatsApp number ending ${ending}`:'your WhatsApp number'}${p.email?` and ${p.email}`:''}`
+  return `${reservationClockLabel(p.time)} ${reservationDayLabel(p.date,p.time,p.now)} is available for ${p.partySize} at ${p.restaurant}. What name should I book under? I'll use ${contact}.`
+}
+export function reservationAlternativesReply(p:{restaurant:string;time:string;date:string;partySize:number;times:string[];now?:Date}){
+  const labels=p.times.slice(0,3).map(reservationClockLabel)
+  const list=labels.length>1?`${labels.slice(0,-1).join(', ')} or ${labels[labels.length-1]}`:labels[0]
+  return `${reservationClockLabel(p.time)} ${reservationDayLabel(p.date,p.time,p.now)} isn't available for ${p.partySize} at ${p.restaurant}. Open times: ${list}. Which one should I book?`
+}
+export function reservationUnreadableReply(p:{restaurant:string;url:string}){
+  return `I couldn't read ${p.restaurant}'s live tables right now, so nothing is booked. Book directly here: ${p.url}`
+}
+/** The submission stopped at a CAPTCHA/OTP Gogo will not solve: nothing is booked, finish on the first-party page. */
+export function reservationChallengeReply(p:{restaurant:string;time:string;date:string;partySize:number;url:string;kind:'captcha'|'otp'}){
+  const what=p.kind==='otp'?'an OTP':'a CAPTCHA'
+  const slot=[p.time?reservationClockLabel(p.time):'',`for ${p.partySize}`,p.date?`on ${shortDate(p.date)}`:''].filter(Boolean).join(' ')
+  return `${p.restaurant}'s page needs ${what}, so nothing is booked. This link has ${slot} ready — finish it there and check the final terms: ${p.url}`
+}
+/** The approved attempt could not complete the form (no CAPTCHA seen): nothing is booked, finish on the first-party page. */
+export function reservationUnfinishedReply(p:{restaurant:string;time:string;date:string;partySize:number;url:string}){
+  const slot=[p.time?reservationClockLabel(p.time):'',`for ${p.partySize}`,p.date?`on ${shortDate(p.date)}`:''].filter(Boolean).join(' ')
+  return `I couldn't finish ${p.restaurant}'s booking form, so nothing is booked. This link has ${slot} — finish it there and check the final terms: ${p.url}`
+}
+
+const NOT_NAME_WORDS=new Set(['yes','yeah','yep','no','nope','ok','okay','sure','approve','approved','reject','cancel','stop','thanks','thank','thx','hi','hello','hey','help','done','later','wait','what','why','how','when','where','confirm','go','ahead','please','book','booking','table','tomorrow','today','tonight','gogo','the','a','an','for','at','is','it','me','my','you','not','fine','good','great','cool','nice','instead','time','slot','pm','am','reserve','reservation','change','other','another','none','nothing'])
+/** A reply that is only a guest name ("Divya Rao", "book under Divya"). Commands and chatter are not names. */
+export function guestNameFromReply(raw:string){
+  let t=String(raw||'').trim().replace(/[.!]+$/,'').replace(/\s+/g,' ')
+  t=t.replace(/^(?:please\s+)?(?:(?:book|reserve|put)\s+(?:it\s+|the\s+table\s+)?under|under|(?:my\s+|the\s+)?name\s+(?:is|:)|name\s*[:\-]|it'?s|use)\s+/i,'').trim()
+  if(t.length<2||t.length>60)return null
+  if(!/^\p{L}[\p{L}'’.\-]*(?:\s\p{L}[\p{L}'’.\-]*){0,4}$/u.test(t))return null
+  if(t.toLowerCase().split(' ').some(w=>NOT_NAME_WORDS.has(w.replace(/[.'’]/g,''))))return null
+  return t===t.toLowerCase()?t.replace(/(^|\s)\p{L}/gu,s=>s.toUpperCase()):t
+}
+/** Cheap pre-check for routing: a short name reply or a short time pick. */
+export function looksLikeReservationGuestReply(text:string){
+  const t=String(text||'').trim()
+  return Boolean(guestNameFromReply(t))||/^(?:(?:the|at)\s+)?\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)?(?:\s+(?:one|slot|please))?\s*$/i.test(t)
+}
+
+async function storedEmail(actor:AgentActor){
+  try{
+    const{data,error}=await supabaseAdmin.from('users').select('email').eq('telegram_id',actor.legacyTelegramId).maybeSingle()
+    const email=String(!error&&data?.email||'').trim()
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)?email:null
+  }catch{return null}
+}
+
+const SLOT_STEP_MINUTES=30
+async function savePendingSlotStep(p:{actor:AgentActor;text:string;intent:RestaurantReservationIntent;provider:ReservationProvider;timezone:string;stage:'guest_name'|'choose_time';slotTime:string|null;alternatives:string[];slots:string[];evidence:string}){
+  const now=new Date(),at=now.toISOString(),tg=String(p.actor.legacyTelegramId)
+  // One live slot step per person: an older unanswered one is retired, never answered by a later reply.
+  await supabaseAdmin.from('agent_runs').update({status:'completed',error:'restaurant_slot_superseded',summary:'Replaced by a newer reservation request; nothing was booked.',completed_at:at,updated_at:at}).eq('telegram_id',tg).eq('type','restaurant_reservation_slot').eq('status','paused')
+  const{error}=await supabaseAdmin.from('agent_runs').insert({
+    telegram_id:tg,type:'restaurant_reservation_slot',capability:'browser',status:'paused',
+    error:p.stage==='guest_name'?'awaiting_guest_name':'awaiting_slot_choice',
+    title:`Reserve ${p.intent.restaurant} · ${p.stage==='guest_name'?'waiting for the guest name':'waiting for a time'}`.slice(0,180),
+    summary:'Live slots read from the restaurant booking page. Nothing is booked; the bounded approval comes after the guest name.',
+    progress:20,source:'whatsapp',started_at:at,updated_at:at,
+    metadata_json:{plan_type:'restaurant_reservation_slot',stage:p.stage,request_text:safe(p.text,1800),restaurant:p.intent.restaurant,party_size:p.intent.partySize,requested_date:p.intent.requestedDate,preferred_start:p.intent.preferredStart||null,preferred_end:p.intent.preferredEnd||null,slot_time:p.slotTime,alternatives:p.alternatives,observed_slots:p.slots,provider:{url:p.provider.url,title:p.provider.title,source:p.provider.source,location:p.provider.location||null,firstParty:p.provider.firstParty},timezone:p.timezone,evidence:safe(p.evidence,2600),expires_at:new Date(now.getTime()+SLOT_STEP_MINUTES*60_000).toISOString()},
+  })
+  if(error)throw new Error(`restaurant_slot_step_save_failed:${error.message}`)
+}
+
+function slotReadObjective(intent:RestaurantReservationIntent){
+  const when=intent.preferredStart&&intent.preferredEnd?(intent.preferredStart===intent.preferredEnd?` around ${intent.preferredStart}`:` between ${intent.preferredStart} and ${intent.preferredEnd}`):''
+  return `Read the live table availability at ${intent.restaurant} for ${intent.partySize} guests on ${intent.requestedDate}${when} (Asia/Kolkata). If this is the restaurant's own site, open its Reserve or Book a table link to its booking widget. In the booking widget, choose the date ${intent.requestedDate} and ${intent.partySize} guests (choosing a date or guest count books nothing), then report the selected date and every time slot shown as available for that date. Do not enter a name, phone or email, do not press Reserve, Book or Confirm, do not sign in, submit or pay.`
 }
 
 export type ReservationRelease={
@@ -355,7 +532,7 @@ function dedupeKey(actor:AgentActor,intent:RestaurantReservationIntent,url:strin
   return createHash('sha256').update(stable).digest('hex').slice(0,40)
 }
 
-export function restaurantReservationApprovalInput(params:{runId:string;lifeEventId:string;actionId:string;restaurant:string;providerUrl:string;partySize:number|null;preferredStart:string;preferredEnd:string;requestedDate:string;releaseAt:string|null;contextWindows?:Array<{startAt:string;endAt:string|null;location:string|null;source:string;confidence:number}>;diningContext?:ReservationDiningContext;reservationLocation?:string|null;timeConstraint?:unknown}){
+export function restaurantReservationApprovalInput(params:{runId:string;lifeEventId:string;actionId:string;restaurant:string;providerUrl:string;partySize:number|null;preferredStart:string;preferredEnd:string;requestedDate:string;releaseAt:string|null;contextWindows?:Array<{startAt:string;endAt:string|null;location:string|null;source:string;confidence:number}>;diningContext?:ReservationDiningContext;reservationLocation?:string|null;timeConstraint?:unknown;guestName?:string|null}){
   return{
     missionId:params.runId,
     stepId:params.actionId,
@@ -369,6 +546,8 @@ export function restaurantReservationApprovalInput(params:{runId:string;lifeEven
       preferredStart:params.preferredStart,
       preferredEnd:params.preferredEnd,
       ...(params.timeConstraint!==undefined?{timeConstraint:params.timeConstraint}:{}),
+      // The guest name is submitted to the provider, so it is bound; older approvals without one keep their hash.
+      ...(params.guestName?{guestName:params.guestName}:{}),
       requestedDate:params.requestedDate||null,
       releaseAt:params.releaseAt,
       maxBookingFeePaise:0,
@@ -605,7 +784,8 @@ async function reservationConflictReview(params:{actor:AgentActor;text:string;in
 
 export async function tryRunRestaurantReservation(params:{actor:AgentActor;surface:AgentSurface;text:string}){
   const intent=parseRestaurantReservationIntent(params.text)
-  if(!intent)return null
+  // A short name/time reply to a pending live-slot question continues that step (dashboard and agent API surfaces).
+  if(!intent)return looksLikeReservationGuestReply(params.text)?await continueRestaurantReservationGuestReply(params):null
   if(intent.timeClarificationNeeded)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Please specify one clear dining start time with AM/PM or a 24-hour clock, or one consistent time window. Nothing was prepared or booked.'}
   const timeConstraint=reservationTimeConstraint(intent)
   if(!intent.restaurant){
@@ -619,22 +799,43 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I could not verify an official reservation page for ${intent.restaurant}. Send me the booking link and I will keep the reservation objective intact.`}
   }
   const timezone=await actorTimezone(params.actor)
+  // A specific dining date is a live-slot read on the booking widget (Instinct-style); otherwise the
+  // page is read for its booking-release rules as before.
+  const slotMode=Boolean(intent.requestedDate)
+  const paused=(text:string)=>({runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text})
+  // 19 Oct live: a failed read said "I found Toit here: <EazyDiner>" plus a retry invitation. One line, the booking link, nothing promised.
+  const unreadable=()=>paused(reservationUnreadableReply({restaurant:intent.restaurant,url:provider.url}))
   let inspected:Awaited<ReturnType<typeof runSecureBrowser>>
   try{
     inspected=await runSecureBrowser({
       userId:params.actor.userId,
       url:provider.url,
       mode:'read',
-      objective:`Read only the live reservation state and booking-release rules for ${intent.restaurant}. Determine whether bookings are open, sold out, or scheduled to open later. Capture any explicit next-open date and recurring release weekday/time. Do not sign in, fill personal details, reserve, submit, pay, or change anything.`,
+      objective:slotMode?slotReadObjective(intent):`Read only the live reservation state and booking-release rules for ${intent.restaurant}. Determine whether bookings are open, sold out, or scheduled to open later. Capture any explicit next-open date and recurring release weekday/time. Do not sign in, fill personal details, reserve, submit, pay, or change anything.`,
     })
   }catch(error:any){
     if(error?.message==='browser_handoff_in_use')return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:await (await import('./browser-auth-notice')).browserHandoffInUseReply(params.actor.legacyTelegramId)}
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I found ${intent.restaurant} here: ${provider.url}\n\nI couldn't open its booking page to check tables right now, so nothing was booked. You can book there directly, or reply *try again* in a few minutes.`}
+    console.error('RESTAURANT_SLOT_READ_FAILED:',safe(error?.message||error,160))
+    return unreadable()
   }
-  if(inspected.status==='blocked'){
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I found ${intent.restaurant} here: ${provider.url}\n\nI couldn't open its booking page to check tables right now, so nothing was booked. You can book there directly, or reply *try again* in a few minutes.`}
-  }
+  if(inspected.status==='blocked')return unreadable()
   let release=extractReservationRelease(inspected.pageText,timezone)
+  if(slotMode&&!release.releaseAt){
+    const evidence=`${inspected.summary||''}\n${inspected.pageText||''}`
+    // Slots count only when the page shows the requested date: a widget left on today must not answer for tomorrow.
+    const slots=reservationSlotDateEvidence(evidence,intent.requestedDate)?extractReservationSlots(evidence):[]
+    const decision=reservationSlotDecision(slots,intent.preferredStart,intent.preferredEnd)
+    if(decision.kind==='available'){
+      await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider,timezone,stage:'guest_name',slotTime:decision.time,alternatives:[],slots,evidence})
+      return paused(reservationAvailableReply({restaurant:intent.restaurant,time:decision.time,date:intent.requestedDate,partySize:intent.partySize,whatsappId:params.actor.whatsappId,email:await storedEmail(params.actor)}))
+    }
+    if(decision.kind==='alternatives'){
+      await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider,timezone,stage:'choose_time',slotTime:null,alternatives:decision.times,slots,evidence})
+      return paused(reservationAlternativesReply({restaurant:intent.restaurant,time:intent.preferredStart,date:intent.requestedDate,partySize:intent.partySize,times:decision.times}))
+    }
+    // Sold out with no slots may still publish a release rule (Naru): keep the release research below.
+    if(!release.soldOut)return unreadable()
+  }
   let ruleEvidenceUrl:string|null=null
   let ruleEvidenceText=''
   let ruleEvidenceTitle=''
@@ -672,6 +873,16 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I checked the live booking provider for ${intent.restaurant}, but I could not verify an exact future booking-release time from reliable provider/first-party evidence. I will not turn this into an arbitrary reminder.\n\nProvider: ${provider.url}${ruleNote}\nObserved: ${evidence||'No reliable release rule was exposed.'}`}
   }
 
+  return prepareReservationApproval({actor:params.actor,surface:params.surface,text:params.text,intent,timeConstraint,provider,timezone,release,inspectedText:inspected.pageText,ruleEvidenceUrl,ruleEvidenceText,ruleEvidenceTitle})
+}
+
+type ReservationApprovalContext={actor:AgentActor;surface:AgentSurface;text:string;intent:RestaurantReservationIntent;timeConstraint:RestaurantTimeConstraint;provider:ReservationProvider;timezone:string;release:ReservationRelease;inspectedText:string;ruleEvidenceUrl:string|null;ruleEvidenceText:string;ruleEvidenceTitle:string;guestName?:string|null}
+/** Verified provider evidence -> persistent mission + bounded approval. Nothing is armed or submitted here. */
+async function prepareReservationApproval(ctx:ReservationApprovalContext){
+  const {intent,timeConstraint,provider,timezone,release,ruleEvidenceUrl,ruleEvidenceText,ruleEvidenceTitle}=ctx
+  const params={actor:ctx.actor,surface:ctx.surface,text:ctx.text}
+  const inspected={pageText:ctx.inspectedText}
+  const guestName=ctx.guestName||null
   const releaseAt=release.openNow?new Date().toISOString():release.releaseAt!
   const combinedReleaseEvidence=[inspected.pageText,ruleEvidenceText].filter(Boolean).join('\n')
   const releaseSourceRefs=[
@@ -757,7 +968,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     requires_approval:true,
     irreversible:true,
     status:'waiting_approval',
-    payload_json:{reservationUrl:provider.url,restaurant:intent.restaurant,reservationLocation:provider.location||null,partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,timeConstraint,releaseAt,releaseRule:release.releaseRule,contextWindows,contextRefs,diningContext},
+    payload_json:{reservationUrl:provider.url,restaurant:intent.restaurant,reservationLocation:provider.location||null,partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,timeConstraint,releaseAt,releaseRule:release.releaseRule,contextWindows,contextRefs,diningContext,...(guestName?{guestName,slotMission:true}:{})},
     updated_at:now,
   },{onConflict:'life_event_id,action_key'}).select('id').single()
   if(actionError||!action?.id)throw new Error(`restaurant_reservation_action_failed:${actionError?.message||'unknown'}`)
@@ -768,7 +979,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     summary:'Provider release time verified. Waiting for bounded approval before the scheduled reservation attempt.',
     progress:35,why:'Gogo inspected the provider page read-only and will only attempt the reservation inside the approved restaurant/party/time/fee bounds.',
     source:params.surface,started_at:now,updated_at:now,error:refreshToken,
-    metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:lifeEventId,life_event_action_id:actionId,restaurant:intent.restaurant,reservation_url:provider.url,release_at:releaseAt,context_windows:contextWindows,context_refs:contextRefs,dining_context:diningContext,constraints:{partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,timeConstraint}},
+    metadata_json:{plan_type:'restaurant_reservation_release',life_event_id:lifeEventId,life_event_action_id:actionId,restaurant:intent.restaurant,reservation_url:provider.url,release_at:releaseAt,context_windows:contextWindows,context_refs:contextRefs,dining_context:diningContext,constraints:{partySize:intent.partySize,preferredStart:intent.preferredStart||null,preferredEnd:intent.preferredEnd||null,requestedDate:intent.requestedDate||null,nextAvailable:intent.nextAvailable,maxBookingFeePaise:0,timeConstraint,...(guestName?{guestName}:{})}},
   }
   const runWrite=refreshing
     ? supabaseAdmin.from('agent_runs').update(runValues).eq('id',existing!.run!.id).eq('telegram_id',String(params.actor.legacyTelegramId)).eq('error',refreshToken)
@@ -776,7 +987,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const{data:run,error:runError}=await runWrite.select('id').single()
   if(runError||!run?.id)throw new Error(`restaurant_reservation_run_failed:${runError?.message||'unknown'}`)
   const runId=String(run.id)
-  const binding=buildApprovalBinding(restaurantReservationApprovalInput({runId,lifeEventId,actionId,restaurant:intent.restaurant,providerUrl:provider.url,partySize:intent.partySize,preferredStart:intent.preferredStart,preferredEnd:intent.preferredEnd,requestedDate:intent.requestedDate,releaseAt,contextWindows,diningContext,reservationLocation:provider.location||null,timeConstraint}))
+  const binding=buildApprovalBinding(restaurantReservationApprovalInput({runId,lifeEventId,actionId,restaurant:intent.restaurant,providerUrl:provider.url,partySize:intent.partySize,preferredStart:intent.preferredStart,preferredEnd:intent.preferredEnd,requestedDate:intent.requestedDate,releaseAt,contextWindows,diningContext,reservationLocation:provider.location||null,timeConstraint,guestName}))
   const{data:approval,error:approvalError}=await supabaseAdmin.from('agent_approvals').insert({
     telegram_id:String(params.actor.legacyTelegramId),run_id:runId,action_type:'booking',
     title:`Approve timed reservation attempt · ${intent.restaurant}`.slice(0,220),
@@ -784,6 +995,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     payload_preview:[
       {label:'Restaurant',value:intent.restaurant},
       {label:'Party',value:String(intent.partySize)},
+      ...(guestName?[{label:'Guest name',value:guestName}]:[]),
       {label:'Preferred time',value:diningTimeLabel(intent.preferredStart,intent.preferredEnd)},
       {label:'Booking release',value:releaseAt},
       {label:'Dining dates covered',value:`${diningContext.from} – ${diningContext.until} (${timezone})`},
@@ -814,6 +1026,15 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     ? '\n\nRelevant saved travel windows are attached for the possible dining dates. An inferred or unattributed traveller window requires clarification if it overlaps the dining slot; it is not proof that you are away.'
     : ''
   const calendarNote=diningContext.calendar.connected?`\nCalendar: ${diningContext.calendar.windows.length} busy intervals attached for the covered dates. The full dining interval must avoid them.`:'\nCalendar is not connected, so Calendar conflicts have not been verified.'
+  if(guestName){
+    // Live-slot mission: the slot was just read on the restaurant's own page. Keep the ask short (Instinct-style).
+    const ending=mobileEnding(params.actor.whatsappId)
+    return{
+      runId,status:'waiting_approval' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,
+      approvalId:String(approval.id),approvalRequired:true,
+      text:`Ready to book ${reservationClockLabel(intent.preferredStart)} ${reservationDayLabel(intent.requestedDate,intent.preferredStart)} for ${intent.partySize} at ${intent.restaurant} under ${guestName}${ending?`, with your WhatsApp number ending ${ending}`:''}.\nReply APPROVE to book it, or REJECT to stop. I'll stop before any fee, CAPTCHA or OTP.`,
+    }
+  }
   return{
     runId,status:'waiting_approval' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,
     approvalId:String(approval.id),approvalRequired:true,
@@ -826,6 +1047,63 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
       if(rollbackError)throw new Error('restaurant_context_refresh_rollback_failed')
     }
     throw error
+  }
+}
+
+/**
+ * The reply to a live-slot question: a time pick ("6:30pm") or the guest name ("Divya Rao"). The name step goes
+ * through the same bounded approval as every reservation; nothing is submitted here. Returns null when no live
+ * slot question is pending for this person, so ordinary routing continues.
+ */
+export async function continueRestaurantReservationGuestReply(params:{actor:AgentActor;surface:AgentSurface;text:string}){
+  const tg=String(params.actor.legacyTelegramId)
+  const{data:pending,error}=await supabaseAdmin.from('agent_runs').select('id,status,error,updated_at,metadata_json')
+    .eq('telegram_id',tg).eq('type','restaurant_reservation_slot').eq('status','paused')
+    .order('updated_at',{ascending:false}).limit(1).maybeSingle()
+  if(error||!pending?.id)return null
+  const meta:any=pending.metadata_json||{}
+  if(meta.plan_type!=='restaurant_reservation_slot'||!(Date.parse(String(meta.expires_at||''))>Date.now()))return null
+  const provider=meta.provider&&typeof meta.provider.url==='string'?{url:String(meta.provider.url),title:String(meta.provider.title||meta.restaurant||''),source:String(meta.provider.source||'web_search'),location:meta.provider.location||null,firstParty:meta.provider.firstParty===true}:null
+  const parsed=parseRestaurantReservationIntent(String(meta.request_text||''))
+  // The saved dining date wins over a re-parse ("tomorrow" must not move if the reply lands after midnight).
+  const base=parsed&&/^\d{4}-\d{2}-\d{2}$/.test(String(meta.requested_date||''))?{...parsed,requestedDate:String(meta.requested_date)}:null
+  if(!provider||!base||base.restaurant!==meta.restaurant||base.partySize!==meta.party_size)return null
+  const paused=(text:string)=>({runId:String(pending.id),status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text})
+
+  if(meta.stage==='choose_time'&&pending.error==='awaiting_slot_choice'){
+    const raw=String(params.text||'').trim().replace(/^(?:the|at)\s+/i,'').replace(/\s+(?:one|slot|please)$/i,'')
+    const alternatives:string[]=Array.isArray(meta.alternatives)?meta.alternatives.map(String):[]
+    const said=explicitClock(raw.replace(/(\d)\.(\d{2})/,'$1:$2'))||(/^\d{1,2}(?::\d{2})?$/.test(raw)?alternatives.find(t=>{const[h,m]=raw.split(':');return Number(t.slice(0,2))%12===Number(h)%12&&t.slice(3)===(m||'00')}):'')||''
+    if(!said||!alternatives.includes(said))return null
+    const{data:moved}=await supabaseAdmin.from('agent_runs').update({error:'awaiting_guest_name',updated_at:new Date().toISOString(),metadata_json:{...meta,stage:'guest_name',slot_time:said}})
+      .eq('id',pending.id).eq('telegram_id',tg).eq('status','paused').eq('error','awaiting_slot_choice').select('id').maybeSingle()
+    if(!moved)return null
+    return paused(reservationAvailableReply({restaurant:base.restaurant,time:said,date:base.requestedDate,partySize:base.partySize!,whatsappId:params.actor.whatsappId,email:await storedEmail(params.actor)}))
+  }
+  if(meta.stage!=='guest_name'||pending.error!=='awaiting_guest_name'||!/^\d{2}:\d{2}$/.test(String(meta.slot_time||'')))return null
+  const guestName=guestNameFromReply(params.text)
+  if(!guestName)return null
+  // Claim the step so a duplicate delivery cannot create a second approval.
+  const claimToken=`restaurant_slot_claim:${createHash('sha256').update(`${pending.id}|${Date.now()}|${Math.random()}`).digest('hex').slice(0,24)}`
+  const{data:claimed}=await supabaseAdmin.from('agent_runs').update({status:'running',error:claimToken,updated_at:new Date().toISOString()})
+    .eq('id',pending.id).eq('telegram_id',tg).eq('status','paused').eq('error','awaiting_guest_name').select('id').maybeSingle()
+  if(!claimed)return null
+  const slot=String(meta.slot_time)
+  const intent:RestaurantReservationIntent={...base,preferredStart:slot,preferredEnd:slot,timeClarificationNeeded:false,nextAvailable:false}
+  const finish=async(status:'completed'|'failed',extra:Record<string,unknown>)=>{
+    const at=new Date().toISOString()
+    await supabaseAdmin.from('agent_runs').update({status,error:status==='failed'?String(extra.error||'restaurant_slot_step_failed'):null,progress:100,completed_at:at,updated_at:at,metadata_json:{...meta,guest_name:guestName,...extra}})
+      .eq('id',pending.id).eq('telegram_id',tg).eq('error',claimToken)
+  }
+  try{
+    const timezone=normalizeTimezone(String(meta.timezone||'Asia/Kolkata'))
+    const release:ReservationRelease={soldOut:false,releaseAt:null,releaseDate:null,releaseTime:null,releaseRule:null,openNow:true}
+    const result=await prepareReservationApproval({actor:params.actor,surface:params.surface,text:String(meta.request_text),intent,timeConstraint:reservationTimeConstraint(intent),provider,timezone,release,inspectedText:String(meta.evidence||''),ruleEvidenceUrl:null,ruleEvidenceText:'',ruleEvidenceTitle:'',guestName})
+    await finish('completed',{child_run_id:result.runId||null,outcome_status:result.status||null})
+    return result
+  }catch(err:any){
+    await finish('failed',{error:safe(err?.message||'restaurant_slot_step_failed',300)})
+    throw err
   }
 }
 
@@ -846,7 +1124,7 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
   const{data:approval}=await supabaseAdmin.from('agent_approvals').select('id,status,action_hash,policy_version').eq('run_id',params.runId).eq('telegram_id',tg).eq('action_type','booking').eq('status','approved').order('resolved_at',{ascending:false}).limit(1).maybeSingle()
   if(!action||!approval)throw new Error('approval_required')
   const p:any=action.payload_json||{}
-  assertApprovalBinding(restaurantReservationApprovalInput({runId:params.runId,lifeEventId:String(meta.life_event_id),actionId:String(action.id),restaurant:String(p.restaurant||meta.restaurant||''),providerUrl:String(p.reservationUrl||meta.reservation_url||''),partySize:Number(p.partySize)||null,preferredStart:String(p.preferredStart||''),preferredEnd:String(p.preferredEnd||''),requestedDate:String(p.requestedDate||''),releaseAt:String(p.releaseAt||meta.release_at||'')||null,contextWindows:Array.isArray(p.contextWindows)?p.contextWindows:[],diningContext:p.diningContext,reservationLocation:p.reservationLocation||null,timeConstraint:p.timeConstraint}),approval)
+  assertApprovalBinding(restaurantReservationApprovalInput({runId:params.runId,lifeEventId:String(meta.life_event_id),actionId:String(action.id),restaurant:String(p.restaurant||meta.restaurant||''),providerUrl:String(p.reservationUrl||meta.reservation_url||''),partySize:Number(p.partySize)||null,preferredStart:String(p.preferredStart||''),preferredEnd:String(p.preferredEnd||''),requestedDate:String(p.requestedDate||''),releaseAt:String(p.releaseAt||meta.release_at||'')||null,contextWindows:Array.isArray(p.contextWindows)?p.contextWindows:[],diningContext:p.diningContext,reservationLocation:p.reservationLocation||null,timeConstraint:p.timeConstraint,guestName:p.guestName||null}),approval)
   // Refresh and arming compete for the same captured run version. A stale arm
   // must lose before it can restore an old payload or expire new authority.
   async function transitionRun(values:Record<string,unknown>){
@@ -881,5 +1159,6 @@ export async function armApprovedRestaurantReservation(params:{actor:AgentActor;
     supabaseAdmin.from('life_events').update({lifecycle_state:'planned',next_action_at:action.due_at,updated_at:now}).eq('id',String(meta.life_event_id)).eq('telegram_id',tg),
   ])
   if(results.some(result=>result.error))throw new Error('restaurant_reservation_arm_persistence_failed')
+  if(p.slotMission===true&&p.guestName)return{runId:params.runId,status:'queued' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,text:`Approved. Booking ${reservationClockLabel(String(p.preferredStart||''))} for ${Number(p.partySize)||''} at ${safe(p.restaurant,120)} under ${safe(p.guestName,60)} now; I'll message you the result. If a CAPTCHA, OTP or fee appears, I'll stop and send you the link.`}
   return{runId:params.runId,status:'queued' as const,capability:'browser' as const,risk:'high' as const,handledBy:'restaurant-reservation' as const,text:'Approved and armed. Gogo will attempt only this reservation at the verified release time, inside the approved party/time bounds. If a fee, deposit, login challenge, OTP, CAPTCHA, passkey or payment step appears, I will stop and ask you.'}
 }

@@ -5,7 +5,9 @@ import { attachSecondaryAuthHandoff, releaseRunAuthHandoff } from './secondary-a
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
 import { assertApprovalBinding } from './approval-binding'
-import { restaurantReservationApprovalInput, validRestaurantTimeConstraint } from './restaurant-reservation'
+import { restaurantReservationApprovalInput, validRestaurantTimeConstraint, reservationChallengeReply, reservationUnfinishedReply } from './restaurant-reservation'
+import { cancelBrowserHandoffReservation } from './provider-browser-handoff'
+import { bookingRobotCheck } from './provider-booking'
 import { prepareBookingCalendarApproval } from './booking-calendar-execution'
 import type { AgentActor } from './actor'
 import {buildContextPack} from './context-brain'
@@ -99,7 +101,7 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
   }
   const runId=String(approval.run_id||'')
   if(!runId)throw new Error('restaurant_reservation_run_missing')
-  const input=restaurantReservationApprovalInput({runId,lifeEventId:String(event.id),actionId:String(action.id),restaurant:String(payload.restaurant||event.metadata_json?.restaurant||''),providerUrl:String(payload.reservationUrl||event.metadata_json?.reservationUrl||''),partySize:Number(payload.partySize)||null,preferredStart:String(payload.preferredStart||''),preferredEnd:String(payload.preferredEnd||''),requestedDate:String(payload.requestedDate||''),releaseAt:String(payload.releaseAt||'')||null,contextWindows:Array.isArray(payload.contextWindows)?payload.contextWindows:[],diningContext:payload.diningContext,reservationLocation:payload.reservationLocation||null,timeConstraint:payload.timeConstraint})
+  const input=restaurantReservationApprovalInput({runId,lifeEventId:String(event.id),actionId:String(action.id),restaurant:String(payload.restaurant||event.metadata_json?.restaurant||''),providerUrl:String(payload.reservationUrl||event.metadata_json?.reservationUrl||''),partySize:Number(payload.partySize)||null,preferredStart:String(payload.preferredStart||''),preferredEnd:String(payload.preferredEnd||''),requestedDate:String(payload.requestedDate||''),releaseAt:String(payload.releaseAt||'')||null,contextWindows:Array.isArray(payload.contextWindows)?payload.contextWindows:[],diningContext:payload.diningContext,reservationLocation:payload.reservationLocation||null,timeConstraint:payload.timeConstraint,guestName:payload.guestName||null})
   assertApprovalBinding(input,approval)
 
   const snapshot=payload.diningContext
@@ -149,7 +151,9 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
     ? ` Saved travel constraints: ${contextWindows.map((w:any)=>`${w.applicability==='owner'&&!w.inferred&&w.confidence>=0.9&&w.location?'owner travel':'possible or unattributed traveller context'}: ${safe(w.location||'location unverified',100)} from ${safe(w.startAt,80)} to ${safe(w.endAt,80)}`).join('; ')}. Check the actual DINING SLOT, not merely release time. If it overlaps a possible or unattributed window, stop and clarify. If it overlaps known owner travel materially away from restaurant location ${reservationLocation||'unknown'}, do not submit; stop and ask.`
     : '')
   const timeInstruction=payload.preferredStart&&payload.preferredEnd?(payload.preferredStart===payload.preferredEnd?`Choose a slot starting exactly at ${payload.preferredStart}; if that exact start is unavailable, do not book. `:`Choose a slot between ${payload.preferredStart} and ${payload.preferredEnd}; if no in-bounds slot exists, do not book. `):'Choose the earliest available slot.'
-  const instruction=`At the verified booking-release time, attempt exactly one restaurant reservation at ${safe(payload.restaurant||event.title,180)} for ${Number(payload.partySize)||1} people. ${payload.requestedDate?`Prefer only ${payload.requestedDate}. `:''}${timeInstruction}${contextualConstraint} The approved booking fee/deposit ceiling is ₹0. If any fee, deposit, payment, paid add-on, new terms requiring separate consent, password, OTP, CAPTCHA, passkey, device approval or payment authentication appears, stop before it. Fill ordinary reservation fields from already available safe profile/browser context only. Use one final submit only when all approved constraints are satisfied. Never submit a second time if the result is uncertain.`
+  // Live-slot missions carry the approved guest name; it is part of the approval binding above.
+  const guestInstruction=payload.guestName?` Book under the guest name ${JSON.stringify(safe(payload.guestName,60))}.`:''
+  const instruction=`At the verified booking-release time, attempt exactly one restaurant reservation at ${safe(payload.restaurant||event.title,180)} for ${Number(payload.partySize)||1} people. ${payload.requestedDate?`Prefer only ${payload.requestedDate}. `:''}${timeInstruction}${guestInstruction}${contextualConstraint} The approved booking fee/deposit ceiling is ₹0. If any fee, deposit, payment, paid add-on, new terms requiring separate consent, password, OTP, CAPTCHA, passkey, device approval or payment authentication appears, stop before it. Fill ordinary reservation fields from already available safe profile/browser context only. Use one final submit only when all approved constraints are satisfied. Never submit a second time if the result is uncertain.`
   const sentinel=evaluateAgentSentinel({capability:'browser',mode:'execute',risk:'high',irreversible:true,approved:true,instruction,url,actionCount:12})
   if(!sentinel.allowed)throw new Error(`sentinel_${sentinel.reason}`)
 
@@ -187,6 +191,20 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
     return{status:'outcome_unknown' as const,runId}
   }
 
+  // Live-slot missions (Instinct-style): a CAPTCHA or OTP on the restaurant's page is handed back as the
+  // first-party link with nothing booked. Gogo never solves or bypasses it, and the spent approval cannot replay.
+  const slotLink=payload.slotMission===true&&payload.guestName?{restaurant:safe(payload.restaurant||event.title,160),time:String(payload.preferredStart||''),date:String(payload.requestedDate||''),partySize:Number(payload.partySize)||1,url}:null
+  const challenge=result.status==='blocked'&&slotLink&&!hasSubmit(result)
+    ?(result.authReason==='otp'?'otp':result.authReason==='captcha'||bookingRobotCheck(`${result.summary||''} ${result.pageText||''}`)?'captcha':null):null
+  if(challenge&&slotLink){
+    if(result.handoffReservation)await cancelBrowserHandoffReservation(actor.userId,result.handoffReservation).catch(()=>{})
+    const text=reservationChallengeReply({...slotLink,kind:challenge})
+    await failSafe({action,event,runId,approvalId,status:'failed',summary:text,error:`restaurant_${challenge}_handoff`,expireApproval:true,actor})
+    await activity(tg,runId,'restaurant_reservation_challenge_handoff','Reservation stopped at a provider challenge; first-party link sent, nothing booked.',{life_event_id:event.id,action_id:action.id,auth_reason:challenge})
+    await notify(actor,text)
+    return{status:'failed' as const,runId}
+  }
+
   if(result.status==='blocked'){
     const handoffUrl=await attachSecondaryAuthHandoff({userId:actor.userId,telegramId:tg,runId,kind:'restaurant',result})
     if(handoffUrl&&typeof handoffUrl!=='string'){
@@ -217,7 +235,7 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
     const soldOut=noAvailability(result)
     const summary=soldOut?'No approved in-bounds table was available when the provider opened. Nothing was booked.':'Gogo could not find an approved in-bounds slot and made no booking.'
     await failSafe({action,event,runId,approvalId,status:'failed',summary,error:soldOut?'restaurant_reservation_no_availability':'restaurant_reservation_not_submitted',expireApproval:true,actor})
-    await notify(actor,`🍜 ${summary}`)
+    await notify(actor,slotLink&&!soldOut?reservationUnfinishedReply(slotLink):`🍜 ${summary}`)
     await activity(tg,runId,'restaurant_reservation_not_booked',summary,{life_event_id:event.id,action_id:action.id})
     return{status:'failed' as const,runId}
   }
