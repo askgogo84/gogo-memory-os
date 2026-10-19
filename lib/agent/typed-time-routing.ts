@@ -11,6 +11,7 @@ import { recordDecisionLearning } from './decision-learning'
 import { captureExplicitRoutingCorrection } from './decision-feedback'
 import { evaluateAgentSentinel } from './sentinel'
 import { pendingReminderUpdate, stageReminderUpdate, executeApprovedReminderUpdate } from './reminder-update'
+import { guardApprovalFreshness } from './approval-guard'
 import type { AgentActor } from './actor'
 
 export function parseTypedTimeRequest(raw:string){
@@ -41,13 +42,16 @@ const response=(text:string,status='paused',domain='other')=>({text,status,handl
 
 async function approvalTurn(actor:AgentActor,text:string){
   if(!/^(?:approve|reject)$/i.test(text.trim()))return null
-  const {data,error}=await supabaseAdmin.from('agent_approvals').select('id,run_id,status,execution_payload').eq('telegram_id',String(actor.legacyTelegramId)).eq('status','pending').order('requested_at',{ascending:false}).limit(2)
+  const {data,error}=await supabaseAdmin.from('agent_approvals').select('id,run_id,title,action_type,risk_level,status,requested_at,execution_payload').eq('telegram_id',String(actor.legacyTelegramId)).eq('status','pending').order('requested_at',{ascending:false}).limit(2)
   if(error)throw new Error('approval_read_failed')
   const pending=data?.[0]
   const planType=pending?.execution_payload?.plan_type
   if(!['calendar_update','reminder_update'].includes(planType))return null
   const label=planType==='calendar_update'?'Calendar event':'reminder'
   if(data.length!==1)return response('More than one approval is pending. Open Gogo Agent and approve the exact update.')
+  // Same freshness guard as the WhatsApp bridge and the dashboard: an expired card is closed, never executed.
+  const fresh=await guardApprovalFreshness({telegramId:actor.legacyTelegramId,row:pending,surface:'typed'})
+  if(fresh.expired)return response(fresh.text,'expired',planType==='calendar_update'?'calendar':'reminders')
   const reject=/^reject$/i.test(text.trim())
   const {data:claimed,error:ce}=await supabaseAdmin.from('agent_approvals').update({status:reject?'rejected':'approved',resolved_at:new Date().toISOString()}).eq('id',pending.id).eq('telegram_id',String(actor.legacyTelegramId)).eq('status','pending').select('id').maybeSingle()
   if(ce||!claimed)return response('That approval has already been handled. Nothing was retried.')

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from '@/lib/agent/session'
+import { guardApprovalFreshness } from '@/lib/agent/approval-guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,6 +18,29 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   if (decision !== 'approve' && decision !== 'reject') {
     return NextResponse.json({ error: 'invalid_decision' }, { status: 400 })
   }
+
+  // Shared freshness guard (same as WhatsApp and the typed approval turn): an expired card is closed
+  // as expired, owner-bound and only while still pending, and is never approved or queued.
+  const { data: pending, error: pendingError } = await supabaseAdmin
+    .from('agent_approvals')
+    .select('id, run_id, title, action_type, risk_level, status, requested_at, execution_payload')
+    .eq('id', id)
+    .eq('telegram_id', session.telegramId)
+    .eq('status', 'pending')
+    .maybeSingle()
+  if (pendingError) {
+    console.error('AGENT_APPROVAL_READ_FAILED:', pendingError)
+    return NextResponse.json({ error: 'resolve_failed' }, { status: 500 })
+  }
+  if (!pending) return NextResponse.json({ error: 'not_found_or_already_resolved' }, { status: 409 })
+  let fresh: Awaited<ReturnType<typeof guardApprovalFreshness>>
+  try {
+    fresh = await guardApprovalFreshness({ telegramId: session.telegramId, row: pending as any, surface: 'dashboard' })
+  } catch (guardError) {
+    console.error('AGENT_APPROVAL_EXPIRE_FAILED:', guardError)
+    return NextResponse.json({ error: 'resolve_failed' }, { status: 500 })
+  }
+  if (fresh.expired) return NextResponse.json({ error: 'approval_expired', message: fresh.text }, { status: 409 })
 
   const status = decision === 'approve' ? 'approved' : 'rejected'
   const resolvedAt = new Date().toISOString()
