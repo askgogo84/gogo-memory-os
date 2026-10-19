@@ -2,7 +2,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import { syncOpenLoopsForUser } from './open-loops'
 import { isRelevantOpenLoop } from './task-lifecycle'
-import { isAutonomyStatus, partitionAttentionRuns, ideaWatcherIds, currentWatcherIdeas, watcherSupportsCurrentIdea } from './attention-state'
+import { runAuthReason } from './task-status'
+import { isAutonomyStatus, isFullTaskList, partitionAttentionRuns, ideaWatcherIds, currentWatcherIdeas, watcherSupportsCurrentIdea } from './attention-state'
 
 function clean(value:unknown,max=300){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}
 function fmt(iso:string|null|undefined,timezone='Asia/Kolkata'){
@@ -101,6 +102,133 @@ export async function tryGetConnectionStatus(params:{actor:AgentActor;text:strin
   }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Digest presentation (19 Oct, modelled on Wajo's "Fo"): a few short lines, not a section dump.
+//   1. What needs the user, one plain line each (max 3, then "+N more need you").
+//   2. Background work in one sentence ("In the background: A, B and 4 more.").
+//   3. The next life event within 48 h, if it fits.
+//   4. At most one follow-up: how to see everything, only when something was left out.
+// "show all tasks" gets the full list, one line per item. Pure: all inputs are passed in.
+export type AutonomyDigestInput={
+  approvals:any[]
+  grouped:{activeNow:any[];incomplete:any[];pendingDecisions:any[];waitingContext:any[]}
+  watchers:any[]
+  events:any[]
+  ideas:any[]
+  /** Open loops (saved follow-ups), already filtered with isRelevantOpenLoop. */
+  openLoops:any[]
+  timezone:string
+  now:Date
+}
+const DIGEST_MAX_LINES=6
+const GROUP_MAX=3
+function clip(value:unknown,max:number){
+  const text=clean(value,2000)
+  if(text.length<=max)return text
+  const cut=text.slice(0,max-1)
+  const space=cut.lastIndexOf(' ')
+  return `${(space>max*0.6?cut.slice(0,space):cut).replace(/[\s,;:—-]+$/,'')}…`
+}
+const titleKey=(value:unknown)=>clean(value,200).toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
+function joinNames(names:string[],total:number){
+  if(total>GROUP_MAX){const shown=names.slice(0,2);return `${shown.join(', ')} and ${total-shown.length} more`}
+  if(names.length<=1)return names[0]||''
+  return `${names.slice(0,-1).join(', ')} and ${names[names.length-1]}`
+}
+/** Identical labels are shown once with a count (19 Oct live: "News: Tata Motors" three times). */
+function groupLabels(labels:string[]){
+  const counts=new Map<string,number>()
+  for(const label of labels)counts.set(label,(counts.get(label)||0)+1)
+  return [...counts].map(([label,count])=>count>1?`${label} (×${count})`:label)
+}
+
+/** What the user must do for one item, in plain words. Never claims an unconfirmed outcome. */
+function waitingItems(input:AutonomyDigestInput){
+  const items:Array<{title:string;need:string}>=[]
+  const seen=new Set<string>()
+  const push=(title:unknown,need:string)=>{
+    const key=titleKey(title)
+    if(!key||seen.has(key))return
+    seen.add(key)
+    items.push({title:clip(title,70),need})
+  }
+  for(const approval of input.approvals)push(approval.title,'needs your OK — reply approve or reject.')
+  for(const run of input.grouped.pendingDecisions)push(run.title,'needs your OK — reply approve or reject.')
+  const context=input.grouped.waitingContext
+  const auth=(run:any)=>String(run.status)==='paused'?runAuthReason(run):null
+  // An unconfirmed outcome (maybe charged, maybe not) outranks sign-in steps.
+  for(const run of context.filter(run=>String(run.status)==='outcome_unknown'))push(run.title,"— I couldn't confirm it went through. Please check with the provider before retrying.")
+  for(const run of context.filter(run=>auth(run)==='otp'))push(run.title,"is paused until you enter a one-time code on the secure sign-in screen (please don't send it in chat).")
+  for(const run of context.filter(run=>auth(run)==='sign_in'))push(run.title,"is paused until you sign in on the provider's site.")
+  for(const run of context.filter(run=>String(run.status)==='paused'&&!auth(run))){
+    const ask=clip(String(run.summary||'').replace(/^waiting for your input:\s*/i,''),90)
+    push(run.title,ask?`is paused: ${/[.!?…]$/.test(ask)?ask:`${ask}.`}`:'is paused — say continue or cancel.')
+  }
+  return items.map(item=>`${item.title} ${item.need}`)
+}
+
+function backgroundLabels(input:AutonomyDigestInput){
+  return groupLabels([
+    ...input.grouped.activeNow.map(run=>clip(run.title,60)),
+    ...input.grouped.incomplete.map(run=>clip(run.title,60)),
+    ...input.watchers.map(w=>clip((w.condition_json as any)?.title||w.type,60)),
+  ].filter(Boolean))
+}
+
+export function formatAutonomyDigest(input:AutonomyDigestInput,opts:{full?:boolean}={}){
+  return opts.full?formatFullTaskList(input):formatShortDigest(input)
+}
+
+function formatShortDigest(input:AutonomyDigestInput){
+  const waiting=waitingItems(input)
+  const background=backgroundLabels(input)
+  const soon=input.events.filter(e=>{const at=Date.parse(String(e.start_at||''));return Number.isFinite(at)&&at-input.now.getTime()<=48*3600000})
+  const loops=groupLabels(input.openLoops.map(loop=>clip(loop.title,60)).filter(Boolean))
+
+  if(!waiting.length&&!background.length&&!soon.length&&!loops.length&&!input.ideas.length&&!input.events.length)
+    return 'Nothing is running in the background and nothing is waiting on you right now.'
+
+  const head:string[]=[]
+  for(const line of waiting.slice(0,GROUP_MAX))head.push(line)
+  if(waiting.length>GROUP_MAX)head.push(`+${waiting.length-GROUP_MAX} more ${waiting.length-GROUP_MAX===1?'needs':'need'} you.`)
+  if(background.length)head.push(`In the background: ${joinNames(background,background.length)}.`)
+  else if(!waiting.length)head.push('Nothing is running right now and nothing needs you.')
+
+  const hidden=Math.max(0,waiting.length-GROUP_MAX)+Math.max(0,background.length-GROUP_MAX)+loops.length+input.ideas.length
+    +Math.max(0,input.events.length-(soon.length?1:0))
+  const offer=hidden?(loops.length&&!background.length&&!waiting.length
+    ?`You also have ${loops.length} saved follow-up${loops.length===1?'':'s'}. Reply *show all tasks* to see everything.`
+    :'Reply *show all tasks* for the full list.'):''
+  const next=soon[0]?`Coming up: ${clip(soon[0].title,70)}${fmt(soon[0].start_at,input.timezone)?` — ${fmt(soon[0].start_at,input.timezone)}`:''}.`:''
+
+  const out=[...head]
+  let followUp=offer
+  if(next){
+    if(out.length+1+(followUp?1:0)<=DIGEST_MAX_LINES)out.push(next)
+    else followUp||='Reply *show all tasks* for the full list.' // still reachable through the full list
+  }
+  if(followUp)out.push(followUp)
+  return out.slice(0,DIGEST_MAX_LINES).join('\n')
+}
+
+function formatFullTaskList(input:AutonomyDigestInput){
+  const sections:string[]=[]
+  const add=(title:string,items:string[])=>{if(items.length)sections.push(`*${title}*\n${items.map(item=>`• ${item}`).join('\n')}`)}
+  add('Needs you',waitingItems(input))
+  const runLine=(run:any)=>{
+    const state=String(run.status)==='queued'?'queued, not started yet':'running'
+    const at=fmt(run.updated_at,input.timezone)
+    return `${clip(run.title,90)} — ${state}${at?` (updated ${at})`:''}`
+  }
+  add('Running',[...input.grouped.activeNow,...input.grouped.incomplete].map(runLine))
+  add('Monitors',groupLabels(input.watchers.map(w=>`${clip((w.condition_json as any)?.title||w.type,90)} — every ~${Math.max(1,Number(w.cadence_minutes||60))} min`)))
+  add('Open loops',groupLabels(input.openLoops.map(loop=>clip(loop.title,90)).filter(Boolean)))
+  add('Coming up',input.events.map(e=>`${clip(e.title,90)}${fmt(e.start_at,input.timezone)?` — ${fmt(e.start_at,input.timezone)}`:''}`))
+  add('Things I noticed',groupLabels(input.ideas.map(i=>clip(i.title,90)).filter(Boolean)))
+  if(!sections.length)return 'Nothing is running in the background and nothing is waiting on you right now.'
+  return sections.join('\n\n')
+}
+
 export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}){
   if(!isAutonomyStatus(params.text))return null
   const tg=String(params.actor.legacyTelegramId)
@@ -136,34 +264,17 @@ export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}
     if(ideaError)throw new Error('attention_watcher_evidence_read_failed')
     currentIdeas=currentWatcherIdeas(ideas,new Set((activeIdeaWatchers||[]).filter(watcherSupportsCurrentIdea).map((w:any)=>String(w.id))))
   }
-  const runLines=(items:any[])=>items.slice(0,6).map(r=>`• ${clean(r.title,150)} — ${String(r.status).replaceAll('_',' ')}\n  ${clean(r.summary,220)}${r.updated_at?` (source updated ${fmt(r.updated_at,timezone)})`:''}`).join('\n')
-
-  // Identical one-line bullets are shown once with a count (19 Oct live: "Block calendar for this
-  // booking" twice, "News: Tata Motors" three times). Grouping happens before any slice limit.
-  const bullets=(texts:string[],limit=Infinity)=>{
-    const grouped=new Map<string,number>()
-    for(const text of texts)grouped.set(text,(grouped.get(text)||0)+1)
-    return [...grouped].slice(0,limit).map(([text,count])=>`• ${text}${count>1?` (×${count})`:''}`).join('\n')
-  }
-  const blocks:string[]=[]
-  if(approvals?.length)blocks.push(`🛡️ *Waiting for you*\n${bullets(approvals.map((a:any)=>clean(a.title,160)))}`)
-  const relevantLoops=openLoops.filter(isRelevantOpenLoop)
-  if(relevantLoops.length)blocks.push(`🧩 *Open loops*\n${bullets(relevantLoops.map((loop:any)=>clean(loop.title,160)),6)}`)
-  if(grouped.activeNow.length)blocks.push(`🧠 *Active now*\n${runLines(grouped.activeNow)}`)
-  if(grouped.incomplete.length)blocks.push(`📋 *Incomplete tasks — queued*\n${runLines(grouped.incomplete)}`)
-  if(grouped.pendingDecisions.length)blocks.push(`🛡️ *Pending decisions*\n${runLines(grouped.pendingDecisions)}`)
-  if(grouped.waitingContext.length)blocks.push(`⏸️ *Dormant / waiting context*\n${runLines(grouped.waitingContext)}`)
-  if(watchers?.length)blocks.push(`🔎 *Background monitors*\n${bullets(watchers.map((w:any)=>`${clean((w.condition_json as any)?.title||w.type,150)} — every ~${Math.max(1,Number(w.cadence_minutes||60))} min`))}`)
-  if(events?.length)blocks.push(`✈️ *Upcoming life events*\n${events.slice(0,3).map((e:any)=>`• ${clean(e.title,150)} — ${fmt(e.start_at,timezone)}`).join('\n')}`)
-  if(currentIdeas?.length)blocks.push(`💡 *Things I noticed*\n${bullets(currentIdeas.map((i:any)=>clean(i.title,150)),3)}`)
-  if(!blocks.length)blocks.push('Nothing is currently running in the background. Your autonomous queue is clear.')
+  const text=formatAutonomyDigest({
+    approvals:approvals||[],grouped,watchers:watchers||[],events:events||[],ideas:currentIdeas||[],
+    openLoops:(openLoops||[]).filter(isRelevantOpenLoop),timezone,now:new Date(),
+  },{full:isFullTaskList(params.text)})
 
   return {
     runId:'autonomy-status',
     status:'completed' as const,
     capability:'orchestrator' as const,
     risk:'low' as const,
-    text:`🤖 *What Gogo is working on*\n\n${blocks.join('\n\n')}\n\nI’ll surface high-signal changes without waiting for you to ask.`,
+    text,
     handledBy:'autonomy-status',
   }
 }

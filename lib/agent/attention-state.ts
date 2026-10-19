@@ -48,7 +48,22 @@ export function normalizeStatusAsk(text:string){
     .replace(/[?!.\s]+$/,'')
 }
 
+// "show all tasks" / "list all my tasks" / "show everything": the full list instead of the short
+// digest. "all"/"every" is required so the to-do matcher ("show tasks", "my tasks") and the
+// open-loops reader ("show my pending tasks") keep their phrases.
+const FULL_LIST_PATTERNS=[
+  /^(?:please\s+)?(?:show|list|see|view|give)(?:\s+me)?\s+(?:all|every)(?:\s+of)?\s+(?:my\s+|the\s+|your\s+)?(?:background\s+|active\s+|current\s+)?(?:tasks|runs|jobs|work)(?:\s+(?:please|pls))?$/,
+  /^(?:please\s+)?(?:show|list|see|view|give)(?:\s+me)?\s+everything(?:\s+you(?:'re| are)\s+(?:working on|doing|tracking))?(?:\s+(?:please|pls))?$/,
+  /^(?:show|give)(?:\s+me)?\s+(?:the\s+)?full\s+(?:task\s+)?list(?:\s+of\s+(?:my\s+)?tasks)?$/,
+  /^all\s+(?:my\s+)?tasks$/,
+]
+export function isFullTaskList(text:string){
+  const n=normalizeStatusAsk(text)
+  return Boolean(n)&&n.length<=120&&FULL_LIST_PATTERNS.some(re=>re.test(n))
+}
+
 export function isAutonomyStatus(text:string){
+  if(isFullTaskList(text))return true
   const t=String(text||'').replace(/\s+/g,' ').trim().slice(0,500).toLowerCase()
   if(/^(?:what(?:'s| is)?|show me|give me)\s+(?:are\s+you\s+)?(?:working on|doing|handling|tracking)(?:\s+(?:for\s+me|in the background|right now|now))*\??$/.test(t)
     || /^(?:what(?:'s| is)?|show me)\s+(?:my\s+)?(?:agent|gogo|background)\s+(?:status|activity|work)\??$/.test(t))return true

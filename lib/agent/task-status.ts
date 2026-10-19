@@ -8,9 +8,10 @@
 // "plan"...) or shares at least two content words with the run title. Personal phrasings ("how is my
 // mom doing", "how is my business doing") are never task asks. DB read errors fall through (null).
 import { retiredRunReason } from './task-lifecycle'
-import { isAutonomyStatus, normalizeStatusAsk } from './attention-state'
+import { isAutonomyStatus, isFullTaskList, normalizeStatusAsk } from './attention-state'
 
-export type TaskStatusQuery = { kind: 'all' } | { kind: 'named'; phrase: string }
+/** `full` = "show all tasks": the whole list instead of the short digest. */
+export type TaskStatusQuery = { kind: 'all'; full?: true } | { kind: 'named'; phrase: string }
 export type TaskStatusOwner = { telegramId: string | number }
 export type TaskRunActivity = { at: string; text: string } | null
 export type TaskStatusDeps = {
@@ -70,6 +71,7 @@ function cleanPhrase(raw: string) {
 export function parseTaskStatusQuery(text: string): TaskStatusQuery | null {
   const t = norm(text)
   if (!t || t.length > 120) return null
+  if (isFullTaskList(text)) return { kind: 'all', full: true }
   if (isAutonomyStatus(text)) return { kind: 'all' }
   for (const re of NAMED_PATTERNS) {
     const m = t.match(re)
@@ -142,6 +144,27 @@ export function matchRunByTitle(runs: any[], phrase: string, now: Date = new Dat
   return { run: sorted[0], others: sorted.length - 1 }
 }
 
+/** Up to 3 matchable runs sharing a content word with the phrase: most overlap, then most recent. */
+export function closestRuns(runs: any[], phrase: string, now: Date = new Date(), limit = 3) {
+  const wanted = new Set(contentTokens(phrase))
+  if (!wanted.size) return []
+  const time = (run: any) => Date.parse(String(run.updated_at || '')) || 0
+  return (runs || [])
+    .filter(run => isMatchableRun(run, now) && !retiredRunReason(run))
+    .map(run => ({ run, score: new Set(tokens(run?.title).filter(w => wanted.has(w))).size }))
+    .filter(entry => entry.score > 0)
+    .sort((a, b) => b.score - a.score || time(b.run) - time(a.run))
+    .slice(0, limit).map(entry => entry.run)
+}
+
+function notFoundText(phrase: string, close: any[]) {
+  const label = clean(phrase.replace(/\b(?:task|tasks|run|runs|job|jobs|mission)\b/g, ' '), 60) || clean(phrase, 60)
+  const names = close.map(run => `*${clean(run.title, 60) || 'Untitled task'}*`)
+  if (!names.length) return `I couldn't find a "${label}" task. Reply *show all tasks* to see what I'm working on.`
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} or ${names[names.length - 1]}`
+  return `I couldn't find a "${label}" task. Did you mean ${list}?`
+}
+
 function clean(value: unknown, max = 220) { return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max) }
 
 export function relativeTime(iso: string | null | undefined, now: Date) {
@@ -170,7 +193,8 @@ export function lastRunActivity(run: any, steps: any[]): TaskRunActivity {
   return null
 }
 
-function authReason(run: any, steps: any[]): 'otp' | 'sign_in' | null {
+/** Whether a run is stopped on a human-only sign-in or one-time-code step. */
+export function runAuthReason(run: any, steps: any[] = []): 'otp' | 'sign_in' | null {
   const meta = run?.metadata_json || run?.metadata || {}
   const stepAuth = (steps || []).find(step => String(step.error || '') === 'human_auth_required')
   const reason = String(meta.secondary_auth?.reason || stepAuth?.output_json?.authReason || '')
@@ -187,51 +211,76 @@ export function formatRunStatus(run: any, steps: any[], lastActivity: TaskRunAct
   const status = String(run?.status || 'unknown')
   const ordered = [...(steps || [])].sort((a, b) => Number(a.ordinal || 0) - Number(b.ordinal || 0))
   const retired = retiredRunReason(run)
-  const auth = ['paused', 'failed', 'running'].includes(status) ? authReason(run, ordered) : null
+  const auth = ['paused', 'failed', 'running'].includes(status) ? runAuthReason(run, ordered) : null
   const approvalStep = ordered.find(step => step.status === 'waiting_approval')
   const waitingApproval = status === 'waiting_approval' || (Boolean(approvalStep) && ACTIVE.has(status))
 
+  // One short paragraph (Fo-style, 19 Oct): what state it is in, the key facts, what happens next.
   let stage: string
-  if (retired) stage = `Closed — ${retired.toLowerCase()}`
-  else if (waitingApproval) stage = 'Waiting for your approval'
-  else if (status === 'running') stage = 'Running now'
-  else if (status === 'queued') stage = 'Queued — not started yet'
-  else if (status === 'paused') stage = auth === 'otp' ? 'Paused — needs a one-time code from you' : auth ? 'Paused — needs you to sign in' : 'Paused — not running'
-  else if (status === 'outcome_unknown') stage = 'Outcome unknown'
-  else if (status === 'completed') stage = 'Completed'
-  else if (status === 'failed') stage = auth ? 'Stopped at a sign-in step' : 'Failed'
-  else if (status === 'cancelled') stage = 'Cancelled'
-  else if (status === 'blocked') stage = 'Blocked'
-  else stage = `Status not recognised (${clean(status, 40).replaceAll('_', ' ')})`
+  if (retired) stage = `is closed (${retired.toLowerCase()})`
+  else if (waitingApproval) stage = 'is waiting for your approval'
+  else if (status === 'running') stage = 'is running'
+  else if (status === 'queued') stage = "is queued and hasn't started yet"
+  else if (status === 'paused') stage = auth === 'otp' ? 'is paused until you enter a one-time code' : auth ? 'is paused until you sign in' : 'is paused and not running'
+  else if (status === 'outcome_unknown') stage = 'has an unconfirmed outcome'
+  else if (status === 'completed') stage = 'is done'
+  else if (status === 'failed') stage = auth ? 'stopped at a sign-in step' : 'failed'
+  else if (status === 'cancelled') stage = 'was cancelled'
+  else if (status === 'blocked') stage = 'is blocked'
+  else stage = `has a status I don't recognise (${clean(status, 40).replaceAll('_', ' ')})`
 
-  const lines = [`📋 *${clean(run?.title, 150) || 'Untitled task'}*`, `Status: ${stage}`]
+  const active = !retired && ACTIVE.has(status)
   const current = ordered.find(step => ['running', 'waiting_approval'].includes(step.status)) || ordered.find(step => step.status === 'queued')
-  if (ordered.length && current && !retired && ACTIVE.has(status)) lines.push(`Step ${ordered.indexOf(current) + 1} of ${ordered.length}: ${clean(current.title, 140)}`)
+  const currentTitle = current ? clean(current.title, 90) : ''
+  const activityText = clean(lastActivity?.text, 140)
+  const ago = lastActivity?.at ? relativeTime(lastActivity.at, now) : ''
+  // The latest activity is folded into the step when it is that step starting.
+  const activityIsCurrentStart = Boolean(currentTitle) && activityText === `Started: ${currentTitle}`
+  let detail = ''
+  if (ordered.length && current && active) detail = ` — step ${ordered.indexOf(current) + 1} of ${ordered.length} (${currentTitle}${activityIsCurrentStart && ago ? `, started ${ago}` : ''})`
   const progress = Number(run?.progress)
-  if (run?.progress !== null && run?.progress !== undefined && Number.isFinite(progress)) lines.push(`Progress: ${Math.max(0, Math.min(100, Math.round(progress)))}%`)
-  const summary = clean(run?.summary, 220)
-  if (summary) lines.push(summary)
-  if (lastActivity?.at) {
-    const ago = relativeTime(lastActivity.at, now)
-    lines.push(`Last activity: ${clean(lastActivity.text, 180)}${ago ? ` (${ago})` : ''}`)
+  if (run?.progress !== null && run?.progress !== undefined && Number.isFinite(progress)) detail += `, ${Math.max(0, Math.min(100, Math.round(progress)))}% done`
+
+  // With no step events, lastRunActivity falls back to the run summary: show only when it changed.
+  const activityIsRunFallback = !ordered.some(step => step.started_at || step.completed_at)
+  if (activityIsRunFallback && ago && !activityIsCurrentStart) detail += ` (updated ${ago})`
+  const sentences = [`*${clean(run?.title, 120) || 'Untitled task'}* ${stage}${detail}.`]
+  const summary = sentence(clip(run?.summary, 200))
+  if (summary) sentences.push(summary)
+  if (activityText && !activityIsCurrentStart && !activityIsRunFallback) {
+    const text = activityText.replace(/^(Started|Finished|Failed|Cancelled): /, (_m, verb: string) => `${verb.toLowerCase()} `)
+    sentences.push(sentence(`Last update${ago ? ` ${ago}` : ''}: ${text}`))
   }
 
-  let waitingOn: string | null = null
-  if (!retired) {
-    if (waitingApproval) waitingOn = 'your approval. Nothing consequential happens until you approve or reject it.'
-    else if (auth === 'otp' && status !== 'completed') waitingOn = 'a one-time code (OTP) that only you can enter on the secure sign-in screen. Please don\'t send the code in chat.'
-    else if (auth && status !== 'completed') waitingOn = 'your sign-in on the provider\'s site. I won\'t sign in for you.'
-    else if (status === 'running' || status === 'queued') waitingOn = 'nothing from you right now.'
-    else if (status === 'paused') waitingOn = 'you to say whether to continue. It is not running in the background.'
+  const stale = (status === 'running' || status === 'queued') && Boolean(lastActivity?.at) && now.getTime() - (Date.parse(String(lastActivity?.at)) || now.getTime()) > STALE_HOURS * 3600000
+  let next: string | null = null
+  // An unconfirmed outcome is always flagged, even on a closed run: never imply it went through.
+  if (status === 'outcome_unknown') next = 'I could not confirm whether it went through. Please check with the provider before retrying, so nothing happens twice.'
+  else if (!retired) {
+    if (waitingApproval) next = 'Nothing consequential happens until you approve or reject it.'
+    else if (auth === 'otp' && status !== 'completed') next = "Only you can enter the one-time code (OTP) on the secure sign-in screen; please don't send it in chat."
+    else if (auth && status !== 'completed') next = "Please sign in on the provider's site to continue; I won't sign in for you."
+    else if (stale) next = `No activity for over ${STALE_HOURS} hours, so I can't confirm it is still progressing.`
+    else if (status === 'running' || status === 'queued') next = 'Nothing needed from you right now.'
+    else if (status === 'paused') next = 'It is not running in the background; say continue or cancel.'
+    else if (status === 'completed') next = 'Nothing left pending on my side.'
+    else if (status === 'failed') next = 'It did not finish, and nothing further is running for it.'
   }
-  if (waitingOn) lines.push(`Waiting on: ${waitingOn}`)
+  if (next) sentences.push(next)
+  return sentences.join(' ')
+}
 
-  if (status === 'outcome_unknown') lines.push('I could not confirm whether this went through. Please check with the provider before retrying, so nothing is done twice.')
-  else if ((status === 'running' || status === 'queued') && lastActivity?.at && now.getTime() - (Date.parse(lastActivity.at) || now.getTime()) > STALE_HOURS * 3600000)
-    lines.push(`No activity for over ${STALE_HOURS} hours, so I can't confirm it is still progressing.`)
-  else if (status === 'failed' && !auth) lines.push('It did not finish. Nothing further is running for it.')
-
-  return lines.join('\n')
+/** Trim to max chars on a word boundary, with an ellipsis when cut. */
+function clip(value: unknown, max: number) {
+  const text = clean(value, 2000)
+  if (text.length <= max) return text
+  const cut = text.slice(0, max - 1)
+  const space = cut.lastIndexOf(' ')
+  return `${(space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s,;:—-]+$/, '')}…`
+}
+function sentence(text: string) {
+  const t = String(text || '').trim()
+  return !t || /[.!?…)]$/.test(t) ? t : `${t}.`
 }
 
 async function defaultDeps(): Promise<TaskStatusDeps> {
@@ -276,7 +325,21 @@ export async function tryGetTaskStatus(owner: TaskStatusOwner, text: string, dep
   }
   const now = d.now ? d.now() : new Date()
   const match = matchRunByTitle(runs, query.phrase, now)
-  if (!match) return null
+  if (!match) {
+    // Only an ask that explicitly names a task ("any update on the Kerala trip task?") is answered
+    // with "not found"; anything else falls through so its own handler can still claim it.
+    if (!DOMAIN_BYPASS.test(query.phrase)) return null
+    return {
+      runId: 'task-status-not-found',
+      status: 'completed' as const,
+      capability: 'orchestrator' as const,
+      risk: 'low' as const,
+      text: notFoundText(query.phrase, closestRuns(runs, query.phrase, now)),
+      handledBy: 'task-status',
+      readOnly: true,
+      mutated: false,
+    }
+  }
   let steps: any[]
   try {
     steps = ((await d.listSteps(tg, String(match.run.id))) || [])
@@ -286,7 +349,7 @@ export async function tryGetTaskStatus(owner: TaskStatusOwner, text: string, dep
     return null
   }
   const card = formatRunStatus(match.run, steps, lastRunActivity(match.run, steps), now)
-  const more = match.others ? `\n\n${match.others} other task${match.others === 1 ? '' : 's'} also match "${clean(query.phrase, 60)}". Say *what are you working on* to see them all.` : ''
+  const more = match.others ? `\n\n${match.others} other task${match.others === 1 ? ' also matches' : 's also match'} "${clean(query.phrase, 60)}". Reply *show all tasks* to see them.` : ''
   return {
     runId: String(match.run.id),
     status: 'completed' as const,
