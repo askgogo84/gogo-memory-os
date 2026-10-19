@@ -8,8 +8,10 @@ import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildContextPack, type ContextPack } from './context-brain'
+import { openPendingQuestion, type PendingDetail } from '@/lib/bot/pending-questions'
 import {buildReservationDiningContext, usableReservationDiningContext, reservationRequestedDateCoverage, type ReservationDiningContext} from './reservation-dining-context'
 import { indianMobileFromWhatsApp } from './provider-booking'
+import { guestNameFromReply } from './reservation-guest-name'
 
 function safe(value: unknown, max = 1200) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -422,16 +424,7 @@ export function reservationUnfinishedReply(p:{restaurant:string;time:string;date
   return `I couldn't finish ${p.restaurant}'s booking form, so nothing is booked. This link has ${slot} — finish it there and check the final terms: ${p.url}`
 }
 
-const NOT_NAME_WORDS=new Set(['yes','yeah','yep','no','nope','ok','okay','sure','approve','approved','reject','cancel','stop','thanks','thank','thx','hi','hello','hey','help','done','later','wait','what','why','how','when','where','confirm','go','ahead','please','book','booking','table','tomorrow','today','tonight','gogo','the','a','an','for','at','is','it','me','my','you','not','fine','good','great','cool','nice','instead','time','slot','pm','am','reserve','reservation','change','other','another','none','nothing'])
-/** A reply that is only a guest name ("Divya Rao", "book under Divya"). Commands and chatter are not names. */
-export function guestNameFromReply(raw:string){
-  let t=String(raw||'').trim().replace(/[.!]+$/,'').replace(/\s+/g,' ')
-  t=t.replace(/^(?:please\s+)?(?:(?:book|reserve|put)\s+(?:it\s+|the\s+table\s+)?under|under|(?:my\s+|the\s+)?name\s+(?:is|:)|name\s*[:\-]|it'?s|use)\s+/i,'').trim()
-  if(t.length<2||t.length>60)return null
-  if(!/^\p{L}[\p{L}'’.\-]*(?:\s\p{L}[\p{L}'’.\-]*){0,4}$/u.test(t))return null
-  if(t.toLowerCase().split(' ').some(w=>NOT_NAME_WORDS.has(w.replace(/[.'’]/g,''))))return null
-  return t===t.toLowerCase()?t.replace(/(^|\s)\p{L}/gu,s=>s.toUpperCase()):t
-}
+export { guestNameFromReply }
 /** Cheap pre-check for routing: a short name reply or a short time pick. */
 export function looksLikeReservationGuestReply(text:string){
   const t=String(text||'').trim()
@@ -447,7 +440,19 @@ async function storedEmail(actor:AgentActor){
 }
 
 const SLOT_STEP_MINUTES=30
-async function savePendingSlotStep(p:{actor:AgentActor;text:string;intent:RestaurantReservationIntent;provider:ReservationProvider;timezone:string;stage:'guest_name'|'choose_time';slotTime:string|null;alternatives:string[];slots:string[];evidence:string}){
+/**
+ * The live-slot question ("What name should I book under?" / "Which one should I book?") is registered in the
+ * pending-question registry, the one mechanism that binds a short reply to the question Gogo asked: the reply
+ * resumes this step only while `askedText` is Gogo's latest message to the person (lib/bot/pending-question-resolver).
+ */
+async function registerLiveSlotQuestion(actor:AgentActor,stage:'guest_name'|'choose_time',restaurant:string,askedText:string){
+  try{
+    await openPendingQuestion({telegramId:actor.legacyTelegramId,kind:'reservation_live_slot',capability:'restaurant_reservation',
+      expects:[stage==='guest_name'?'guest_name':'time'],context:{label:`Table at ${restaurant} (${stage==='guest_name'?'guest name':'time'})`,stage},
+      ttlMin:SLOT_STEP_MINUTES,exactOnly:true,askedText})
+  }catch(err:any){console.error('RESTAURANT_SLOT_QUESTION_OPEN_FAILED:',safe(err?.message||err,120))}
+}
+async function savePendingSlotStep(p:{actor:AgentActor;text:string;intent:RestaurantReservationIntent;provider:ReservationProvider;timezone:string;stage:'guest_name'|'choose_time';slotTime:string|null;alternatives:string[];slots:string[];evidence:string;askedText:string}){
   const now=new Date(),at=now.toISOString(),tg=String(p.actor.legacyTelegramId)
   // One live slot step per person: an older unanswered one is retired, never answered by a later reply.
   await supabaseAdmin.from('agent_runs').update({status:'completed',error:'restaurant_slot_superseded',summary:'Replaced by a newer reservation request; nothing was booked.',completed_at:at,updated_at:at}).eq('telegram_id',tg).eq('type','restaurant_reservation_slot').eq('status','paused')
@@ -457,9 +462,10 @@ async function savePendingSlotStep(p:{actor:AgentActor;text:string;intent:Restau
     title:`Reserve ${p.intent.restaurant} · ${p.stage==='guest_name'?'waiting for the guest name':'waiting for a time'}`.slice(0,180),
     summary:'Live slots read from the restaurant booking page. Nothing is booked; the bounded approval comes after the guest name.',
     progress:20,source:'whatsapp',started_at:at,updated_at:at,
-    metadata_json:{plan_type:'restaurant_reservation_slot',stage:p.stage,request_text:safe(p.text,1800),restaurant:p.intent.restaurant,party_size:p.intent.partySize,requested_date:p.intent.requestedDate,preferred_start:p.intent.preferredStart||null,preferred_end:p.intent.preferredEnd||null,slot_time:p.slotTime,alternatives:p.alternatives,observed_slots:p.slots,provider:{url:p.provider.url,title:p.provider.title,source:p.provider.source,location:p.provider.location||null,firstParty:p.provider.firstParty},timezone:p.timezone,evidence:safe(p.evidence,2600),expires_at:new Date(now.getTime()+SLOT_STEP_MINUTES*60_000).toISOString()},
+    metadata_json:{plan_type:'restaurant_reservation_slot',stage:p.stage,request_text:safe(p.text,1800),restaurant:p.intent.restaurant,party_size:p.intent.partySize,requested_date:p.intent.requestedDate,preferred_start:p.intent.preferredStart||null,preferred_end:p.intent.preferredEnd||null,slot_time:p.slotTime,alternatives:p.alternatives,observed_slots:p.slots,provider:{url:p.provider.url,title:p.provider.title,source:p.provider.source,location:p.provider.location||null,firstParty:p.provider.firstParty},timezone:p.timezone,evidence:safe(p.evidence,2600),asked_text:safe(p.askedText,600),expires_at:new Date(now.getTime()+SLOT_STEP_MINUTES*60_000).toISOString()},
   })
   if(error)throw new Error(`restaurant_slot_step_save_failed:${error.message}`)
+  await registerLiveSlotQuestion(p.actor,p.stage,p.intent.restaurant,p.askedText)
 }
 
 function slotReadObjective(intent:RestaurantReservationIntent){
@@ -574,6 +580,37 @@ function reservationResearchHash(actor:AgentActor,text:string){
     .slice(0,40)
 }
 
+// PR 1 of the understand-first router: every clarification records the question it asked, so the
+// next short reply ("This Saturday 8pm") resumes THIS reservation instead of being claimed by a
+// keyword rule (19 Oct live: it became a reminder titled "This"). expects[0] is the detail asked.
+async function askReservationDetail(actor:AgentActor,text:string,intent:RestaurantReservationIntent,asked:PendingDetail,reply:string){
+  const missing:PendingDetail[]=[asked]
+  if(!intent.restaurant)missing.push('restaurant')
+  if(!intent.partySize)missing.push('party')
+  if(!intent.requestedDate)missing.push('date')
+  if(!intent.preferredStart||intent.timeClarificationNeeded)missing.push('time')
+  const what=asked==='time'?'time':asked==='party'?'party size':asked==='restaurant'?'restaurant':'date'
+  await openPendingQuestion({
+    telegramId:actor.legacyTelegramId,
+    kind:'reservation_slot',
+    capability:'restaurant_reservation',
+    expects:[...new Set(missing)],
+    context:{originalText:safe(text,1800),restaurant:intent.restaurant||null,label:`Table${intent.restaurant?` at ${intent.restaurant}`:''} (${what})`},
+    ttlMin:30,
+    llmResolvable:true,
+    // A free-text name can answer only a restaurant question.
+    exactOnly:asked!=='restaurant',
+    // The question binds a reply only while this exact text is Gogo's latest message to the user.
+    askedText:reply,
+  })
+  return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:reply}
+}
+
+function reservationTimeQuestion(intent:RestaurantReservationIntent,verb:'queued'|'prepared'){
+  const place=intent.restaurant?` ${intent.restaurant}`:''
+  return `What time should I book${place} for? (e.g. 8 pm) Please give one time with am/pm, or one time window. Nothing was ${verb} or booked.`
+}
+
 export async function queueRestaurantReservationResearch(params:{
   actor:AgentActor
   text:string
@@ -581,13 +618,13 @@ export async function queueRestaurantReservationResearch(params:{
 }){
   const intent=parseRestaurantReservationIntent(params.text)
   if(!intent)return null
-  if(intent.timeClarificationNeeded)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Please specify one clear dining start time with AM/PM or a 24-hour clock, or one consistent time window. Nothing was queued or booked.'}
+  if(intent.timeClarificationNeeded)return askReservationDetail(params.actor,params.text,intent,'time',reservationTimeQuestion(intent,'queued'))
   if(params.text.length>1800)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Please shorten the reservation request to the restaurant, party, dining date and exact time or time window. I cannot queue a shortened copy that might lose a restriction.'}
   if(!intent.restaurant){
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Which restaurant should I reserve? Give me the restaurant name (and location if there are multiple branches).'}
+    return askReservationDetail(params.actor,params.text,intent,'restaurant','Which restaurant should I reserve? Give me the restaurant name (and location if there are multiple branches).')
   }
   if(!intent.partySize){
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`How many people should I book at ${intent.restaurant} for?`}
+    return askReservationDetail(params.actor,params.text,intent,'party',`How many people should I book at ${intent.restaurant} for?`)
   }
 
   const tg=String(params.actor.legacyTelegramId)
@@ -785,15 +822,17 @@ async function reservationConflictReview(params:{actor:AgentActor;text:string;in
 
 export async function tryRunRestaurantReservation(params:{actor:AgentActor;surface:AgentSurface;text:string}){
   const intent=parseRestaurantReservationIntent(params.text)
-  // A short name/time reply to a pending live-slot question continues that step (dashboard and agent API surfaces).
-  if(!intent)return looksLikeReservationGuestReply(params.text)?await continueRestaurantReservationGuestReply(params):null
-  if(intent.timeClarificationNeeded)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Please specify one clear dining start time with AM/PM or a 24-hour clock, or one consistent time window. Nothing was prepared or booked.'}
+  // A short name/time reply to a live-slot question is NOT read here: the pending-question resolver owns it on
+  // every surface (WhatsApp, dashboard, agent API) and resumes continueRestaurantReservationGuestReply only while
+  // that question is Gogo's latest message. One owner, so a stale step can never claim "Divya" or "7pm".
+  if(!intent)return null
+  if(intent.timeClarificationNeeded)return askReservationDetail(params.actor,params.text,intent,'time',reservationTimeQuestion(intent,'prepared'))
   const timeConstraint=reservationTimeConstraint(intent)
   if(!intent.restaurant){
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Which restaurant should I reserve? Give me the restaurant name (and location if there are multiple branches).'}
+    return askReservationDetail(params.actor,params.text,intent,'restaurant','Which restaurant should I reserve? Give me the restaurant name (and location if there are multiple branches).')
   }
   if(!intent.partySize){
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`How many people should I book at ${intent.restaurant} for?`}
+    return askReservationDetail(params.actor,params.text,intent,'party',`How many people should I book at ${intent.restaurant} for?`)
   }
   const provider=await discoverProvider(intent)
   if(!provider){
@@ -818,12 +857,14 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
         const evidence=`ReserveGo times for ${intent.requestedDate}: ${feed.slots.join(', ')||'none'}${feed.feeSlots.length?`; fee shown at ${feed.feeSlots.join(', ')}`:''}`
         const decision=reservationSlotDecision(feed.slots,intent.preferredStart,intent.preferredEnd)
         if(decision.kind==='available'){
-          await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider:widgetProvider,timezone,stage:'guest_name',slotTime:decision.time,alternatives:[],slots:feed.slots,evidence})
-          return paused(reservationAvailableReply({restaurant:intent.restaurant,time:decision.time,date:intent.requestedDate,partySize:intent.partySize,whatsappId:params.actor.whatsappId,email:await storedEmail(params.actor)}))
+          const reply=reservationAvailableReply({restaurant:intent.restaurant,time:decision.time,date:intent.requestedDate,partySize:intent.partySize,whatsappId:params.actor.whatsappId,email:await storedEmail(params.actor)})
+          await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider:widgetProvider,timezone,stage:'guest_name',slotTime:decision.time,alternatives:[],slots:feed.slots,evidence,askedText:reply})
+          return paused(reply)
         }
         if(decision.kind==='alternatives'){
-          await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider:widgetProvider,timezone,stage:'choose_time',slotTime:null,alternatives:decision.times,slots:feed.slots,evidence})
-          return paused(reservationAlternativesReply({restaurant:intent.restaurant,time:intent.preferredStart,date:intent.requestedDate,partySize:intent.partySize,times:decision.times}))
+          const reply=reservationAlternativesReply({restaurant:intent.restaurant,time:intent.preferredStart,date:intent.requestedDate,partySize:intent.partySize,times:decision.times})
+          await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider:widgetProvider,timezone,stage:'choose_time',slotTime:null,alternatives:decision.times,slots:feed.slots,evidence,askedText:reply})
+          return paused(reply)
         }
         return paused(`${intent.restaurant} has no open tables for ${reservationDayLabel(intent.requestedDate,intent.preferredStart||'19:00').replace(/^on /,'')} on its booking page, so nothing is booked. Want me to check another date? ${widget.widgetUrl}`)
       }catch(error:any){
@@ -852,12 +893,14 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     const slots=reservationSlotDateEvidence(evidence,intent.requestedDate)?extractReservationSlots(evidence):[]
     const decision=reservationSlotDecision(slots,intent.preferredStart,intent.preferredEnd)
     if(decision.kind==='available'){
-      await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider,timezone,stage:'guest_name',slotTime:decision.time,alternatives:[],slots,evidence})
-      return paused(reservationAvailableReply({restaurant:intent.restaurant,time:decision.time,date:intent.requestedDate,partySize:intent.partySize,whatsappId:params.actor.whatsappId,email:await storedEmail(params.actor)}))
+      const reply=reservationAvailableReply({restaurant:intent.restaurant,time:decision.time,date:intent.requestedDate,partySize:intent.partySize,whatsappId:params.actor.whatsappId,email:await storedEmail(params.actor)})
+      await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider,timezone,stage:'guest_name',slotTime:decision.time,alternatives:[],slots,evidence,askedText:reply})
+      return paused(reply)
     }
     if(decision.kind==='alternatives'){
-      await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider,timezone,stage:'choose_time',slotTime:null,alternatives:decision.times,slots,evidence})
-      return paused(reservationAlternativesReply({restaurant:intent.restaurant,time:intent.preferredStart,date:intent.requestedDate,partySize:intent.partySize,times:decision.times}))
+      const reply=reservationAlternativesReply({restaurant:intent.restaurant,time:intent.preferredStart,date:intent.requestedDate,partySize:intent.partySize,times:decision.times})
+      await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider,timezone,stage:'choose_time',slotTime:null,alternatives:decision.times,slots,evidence,askedText:reply})
+      return paused(reply)
     }
     // Sold out with no slots may still publish a release rule (Naru): keep the release research below.
     if(!release.soldOut)return unreadable()
@@ -1133,7 +1176,10 @@ export async function continueRestaurantReservationGuestReply(params:{actor:Agen
     const{data:moved}=await supabaseAdmin.from('agent_runs').update({error:'awaiting_guest_name',updated_at:new Date().toISOString(),metadata_json:{...meta,stage:'guest_name',slot_time:said}})
       .eq('id',pending.id).eq('telegram_id',tg).eq('status','paused').eq('error','awaiting_slot_choice').select('id').maybeSingle()
     if(!moved)return null
-    return paused(reservationAvailableReply({restaurant:base.restaurant,time:said,date:base.requestedDate,partySize:base.partySize!,whatsappId:params.actor.whatsappId,email:await storedEmail(params.actor)}))
+    const reply=reservationAvailableReply({restaurant:base.restaurant,time:said,date:base.requestedDate,partySize:base.partySize!,whatsappId:params.actor.whatsappId,email:await storedEmail(params.actor)})
+    // The name question replaces the time question in the registry, so the next reply binds to it.
+    await registerLiveSlotQuestion(params.actor,'guest_name',base.restaurant,reply)
+    return paused(reply)
   }
   if(meta.stage!=='guest_name'||pending.error!=='awaiting_guest_name'||!/^\d{2}:\d{2}$/.test(String(meta.slot_time||'')))return null
   const guestName=guestNameFromReply(params.text)

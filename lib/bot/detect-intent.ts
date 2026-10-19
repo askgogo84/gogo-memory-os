@@ -1,5 +1,5 @@
 import { isDriveWriteRequest } from './drive-write-request'
-import { isTimeFirstReminder } from './reminder-command'
+import { isTimeFirstReminder, isContentlessReminderRequest } from './reminder-command'
 import { isFoodComparisonRequest } from '@/lib/agent/food-comparison-intent'
 import { classifyCheckVerb } from '@/lib/data/lists-core'
 import { CALENDAR_WORD_RE } from '@/lib/bot/handlers/calendar-actions'
@@ -33,6 +33,10 @@ export type IntentType =
   | 'list_uncheck'
   | 'list_clear'
   | 'set_reminder'
+  // A bare day/time with nothing to be reminded about ("This Saturday 8pm", "8pm", "tomorrow morning").
+  // It is usually the answer to a question Gogo just asked; the pending-question resolver binds it, and
+  // with nothing pending process-message asks what it is for. Never a reminder by itself.
+  | 'bare_time'
   | 'edit_reminder'
   | 'morning_briefing'
   | 'set_briefing_time'
@@ -238,9 +242,11 @@ export function detectIntent(text: string): DetectedIntent {
 
   // Handle time/date-only follow-ups after a reminder conversation (e.g. "6am", "on 28th june", "change time to 6am")
   if (/^(change time to|change it to|make it|set it to|update to|change to)\s+/i.test(lower)) return { type: 'set_reminder', confidence: 'high' }
-  if (/^(at\s+)?\d{1,2}(:\d{2})?\s*(am|pm)$/i.test(lower)) return { type: 'set_reminder', confidence: 'high' }
-  if (/^(on\s+)?\d{1,2}(st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(lower)) return { type: 'set_reminder', confidence: 'high' }
-  if (/^(tomorrow|tmrw|tmr)\s*(morning|evening|noon|afternoon|night)?$/i.test(lower)) return { type: 'set_reminder', confidence: 'high' }
+  // 19 Oct live: a bare day/time ("This Saturday 8pm") answering a restaurant question became a reminder
+  // titled "This". A time alone is a detail, not a reminder request (see 'bare_time').
+  if (/^(at\s+)?\d{1,2}(:\d{2})?\s*(am|pm)$/i.test(lower)) return { type: 'bare_time', confidence: 'high' }
+  if (/^(on\s+)?\d{1,2}(st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/i.test(lower)) return { type: isContentlessReminderRequest(t) ? 'bare_time' : 'set_reminder', confidence: 'high' }
+  if (/^(tomorrow|tmrw|tmr)\s*(morning|evening|noon|afternoon|night)?$/i.test(lower)) return { type: 'bare_time', confidence: 'high' }
 
   // Live flight status ("has EY1 landed?", "status of AI 505", "is 6E203 delayed due to
   // weather?") must attempt an actual lookup, not be delegated to the user. This runs BEFORE
@@ -279,6 +285,9 @@ export function detectIntent(text: string): DetectedIntent {
   const asksForAnswer = !asksReminder && (/\?/.test(lower) || /\b(?:what should|which should|should i|can you|could you|how do i|how can i)\b/.test(lower))
   // "Rain or shine, I'll be at the gym at 6am tomorrow" tells Gogo a plan; it does not ask for a reminder.
   const statesOwnPlan = !asksReminder && /\b(?:i'll|i will|we'll|we will|i'm going to|i am going to|we're going to|we are going to)\b/.test(lower)
+  // A weekday / tomorrow / clock match with no reminder verb and no subject is a bare detail, not a reminder.
+  // A question ("tomorrow?", "8pm?", "sunday?") asks something; it keeps the contextual reply path.
+  if (!asksReminder && !/\?\s*$/.test(lower) && isContentlessReminderRequest(t) && (/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(lower) || /\b(tomorrow|tmrw|tmr)\b/i.test(lower) || /\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/i.test(lower) || /\b\d{1,2}(:\d{2})?\s*(am|pm)\b/i.test(lower))) return { type: 'bare_time', confidence: 'high' }
   if (!(otherTaskFirst && !asksReminder) && !asksForAnswer && !statesOwnPlan && (lower.includes('remind me') || lower.includes('remind to') || lower.startsWith('remind ') || lower.includes('set a reminder') || lower.includes('set reminder') || lower.includes('reminder for') || /\b(on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(lower) || /\b(tomorrow|tmrw|tmr)\b/i.test(lower) || /\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/i.test(lower) || /\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)\b/i.test(lower))) return { type: 'set_reminder', confidence: 'high' }
 
   if (lower === 'show all lists' || lower === 'list all' || lower === 'show my lists') return { type: 'list_show_all', confidence: 'high' }

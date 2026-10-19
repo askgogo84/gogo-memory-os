@@ -89,7 +89,8 @@ export async function buildDeterministicWeatherReply(userText: string, fallbackL
 
 export async function buildDeterministicGoldReply(userText: string) {
   const t = normalize(userText)
-  const place = t.match(/\bin\s+([a-z][a-z ]{2,30}?)\s*(?:today|now|\?|$)/i)?.[1]?.trim() || 'india'
+  // " — 24K gold" is a picked option appended to the request (pending-question resolver), not part of the place.
+  const place = t.match(/\bin\s+([a-z][a-z ]{2,30}?)\s*(?:today|now|\?|[—–]|$)/i)?.[1]?.trim() || 'india'
   const query = t.toLowerCase().includes('silver')
     ? `silver price today in ${place}`
     : `gold rate per gram today in ${place} 24 carat 22 carat`

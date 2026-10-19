@@ -1,3 +1,4 @@
+import { isContentlessReminderRequest } from '../lib/bot/reminder-command'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
@@ -28,7 +29,7 @@ const intentModule: any = {}
 runInNewContext(ts.transpileModule(readFileSync(new URL('../lib/bot/detect-intent.ts', import.meta.url), 'utf8'),
   {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText,
 {exports: intentModule, Date: FixedDate, Intl, console, require(name: string) {
-  if (name === './reminder-command') return {isTimeFirstReminder: () => false}
+  if (name === './reminder-command') return {isTimeFirstReminder: () => false, isContentlessReminderRequest}
   if (name === './drive-write-request') return {isDriveWriteRequest: () => false}
   if (name === '@/lib/agent/food-comparison-intent') return {isFoodComparisonRequest: () => false}
   if (name === '@/lib/data/lists-core') return {classifyCheckVerb: () => null}
@@ -45,7 +46,7 @@ const reminders: any = {}
 runInNewContext(ts.transpileModule(readFileSync(new URL('../lib/bot/handlers/reminders.ts', import.meta.url), 'utf8'),
   {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText,
 {exports: reminders, Date: FixedDate, Intl, console, require(name: string) {
-  if (name === '../reminder-command') return {isTimeFirstReminder: () => false}
+  if (name === '../reminder-command') return {isTimeFirstReminder: () => false, isContentlessReminderRequest}
   if (name === '@/lib/services/reminder-series') return {describeCadence: () => '', formatReminderTimeOfDay: () => ''}
   throw new Error(name)
 }})

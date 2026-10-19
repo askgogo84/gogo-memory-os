@@ -30,6 +30,7 @@ import { answerLiveFlightStatus } from '@/lib/bot/handlers/flight-status'
 import { buildSportsReplyWithState } from './handlers/sports'
 import { getLatestFollowupState, saveFollowupState, isFreshFollowupState } from './handlers/followup-state'
 import { resolvePendingReminder, resolvePendingCalendar, looksLikeNewCommand, pendingReminderTimingProblem } from './pending-followup'
+import { tryResolvePendingQuestion } from './pending-question-resolver'
 import { styleReplyByIntent } from './handlers/response-style'
 import { buildAmPmClarificationReply, getAmbiguousReminderTime, buildReminderConfirmation, parseReminderIntent, reminderLeadTime, reminderTimingProblem, isContentlessReminderRequest } from './handlers/reminders'
 import { buildAmPmReminderSetReply, buildReminderFromAmPmChoice, isAmPmChoice, amPmReminderTimingProblem } from './handlers/reminder-ampm-followup'
@@ -180,6 +181,11 @@ export type ProcessIncomingParams = {
   semantic?: JevShadowResult | null
   /** Rounded position the person allowed on the dashboard; used only as the default place for weather. */
   approxLocation?: { lat: number; lon: number } | null
+  /**
+   * The caller (WhatsApp webhook, dashboard chat) already ran the pending-question resolver for this
+   * exact text this turn; skip it here so its reads run once per turn.
+   */
+  pendingQuestionChecked?: boolean
 }
 
 export type ProcessIncomingResult = {
@@ -714,6 +720,27 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
 
+  // ── Pending-question registry (understand-first router, PR 1) ────────────────────────
+  // A short detail reply ("This Saturday 8pm") answers the question Gogo just asked. Exactly one
+  // fresh registry question → resume it; a registry question competing with a legacy pending
+  // reminder/calendar → ask which; only a legacy follow-up → null, handled by the block below.
+  if (!params.pendingQuestionChecked && resolvedUser.id && resolvedUser.whatsappId) {
+    const pendingAnswer = await tryResolvePendingQuestion({
+      user: resolvedUser,
+      text: incomingText,
+      surface: params.channel,
+      actor: { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, whatsappId: String(resolvedUser.whatsappId), name: resolvedUser.name || 'Gogo' },
+      messageId: params.messageId ?? null,
+    })
+    // "24k" right after "22K or 24K gold?": handle the full request it completes, exactly as if typed.
+    if (pendingAnswer?.rewrite) return processIncomingMessage({ ...params, text: pendingAnswer.rewrite, semantic: null, pendingQuestionChecked: true })
+    if (pendingAnswer) {
+      await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+      await saveConversation(resolvedUser.telegramId, 'assistant', pendingAnswer.text)
+      return { text: formatOutgoingText(params.channel, pendingAnswer.text), resolvedUser, handledBy: pendingAnswer.handledBy }
+    }
+  }
+
   // ── Pending clarification answer — runs FIRST, before any other routing ─────────────
   // A prior turn asked "what time?" and stored a pending_reminder or pending_calendar via
   // saveFollowupState (per-user, created_at TTL). If THIS message is a time/schedule answer
@@ -954,7 +981,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
-  if (intent.type === 'set_reminder' && isContentlessReminderRequest(incomingText)) {
+  // A bare day/time with nothing pending (the registry and the legacy follow-ups above had their
+  // turn) is never a reminder by itself: ask what it is for.
+  if (intent.type === 'bare_time' || (intent.type === 'set_reminder' && isContentlessReminderRequest(incomingText))) {
     const reply = "Did you mean that time for something we were just discussing? I haven't set any reminder. If you want one, tell me what it's for, for example: remind me to call Toit this Saturday at 8 pm."
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
