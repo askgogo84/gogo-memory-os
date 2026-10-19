@@ -1,0 +1,24 @@
+# Instinct — observed behaviour (19 Oct 2026, WhatsApp)
+
+Source: the founder's own WhatsApp chat with Instinct, 17:47 to 18:06 IST, sending the REA use-case messages by hand. Two phone screenshots were transcribed. Times are WhatsApp timestamps. Nothing was booked or paid.
+
+## Cross-cutting patterns
+1. **One short question at a time, only when the answer changes the work.** Examples: "256GB, any colour?"; "22K or 24K gold?"; "stay in Bangalore or a quick getaway? And who's joining you?" Each question is a single line. It never asks for anything it can default.
+2. **Acknowledge with a reaction, not text.** Simple saves (a reminder) get only a ⏰ reaction on the user's message, with no reply text. An acknowledged instruction gets a 👍 reaction while the work starts.
+3. **Async results quote the original request.** When a background task finishes, the reply is a WhatsApp quote-reply to the user's original message ("You: plan my weekend", "You: Research the best 3 coworking…"), so results stay tied to their request even when several run at once.
+4. **Long output becomes a file link; chat gets a short summary.** Examples: "Mysuru stay for Oct 24-25, from Rs4k" and "Three coworking picks in Indiranagar", both on files.instinct.com, and "iPhone 17 256GB: Flipkart vs Amazon".
+5. **States exactly what is unverified.** Examples: "These are aggregator quotes, not confirmed all-in prices"; "delivery to 560086 isn't confirmed"; "Taxes and parking fees are unconfirmed"; "Nothing booked." / "Nothing added to cart."
+6. **Uses memory silently**: the pincode 560086, the user's number ending 1501 and his email, the existing 24K alert, and Divya.
+7. **Replies are short.** Most are 1–4 lines. The longest (status, coworking picks) are about 12 lines with bullets.
+
+## Use cases
+- **UC4 "What are you working on?"** (17:47): one line "Nothing is actively being booked or changed right now." Then *Ongoing:* in one sentence (gold alert, iPhone alerts, sweater restock, standup reminders, Tipplr email tracking). Then *Waiting on you:* as 4 one-line bullets (Toit 8pm email draft? / Jailer 2 calendar entry needs OK / Swiggy sign-in unfinished / Singapore flights blocked by Air India's site, nothing booked). Then one line of "Latest work update".
+- **UC5 "Any update on the Jailer 2 task?"** (17:48): "The ticket details are confirmed, but I haven't created the calendar entry. Your show is tonight at 9:45pm, PVR Orion Mall. Shall I add it?" That is 3 lines and ends with one question.
+- **UC2 "Alert me when 22K gold in Bangalore drops 10%"** (17:48): "I'll add a 22K alert alongside your 24K alert, using a 10% drop from the current Bangalore rate." Then: "22K alert set: starting rate ₹13,570/g; I'll alert at ₹12,213/g or below. Daily Bangalore checks on Goodreturns, excluding GST, TCS and other levies. Your 24K alert stays active too." Plus a goodreturns link preview. No question asked; the threshold was computed from the live rate.
+- **UC1 Toit, 2 people, tomorrow 7pm** (17:48): checked availability first: "7pm tomorrow is available for two. What full name should I put on the booking? I'll use your number ending 1501 and <email>, and check any fee before confirming." After the name was given: "Toit is blocked by a CAPTCHA, so nothing is booked. The link offers 7pm for two on October 20; you'll need to complete the reservation there and check the final terms." Plus a ReserveGo widget link. This was a quote-reply to the original request.
+- **UC12 "plan my weekend"** (17:49): one question per turn. Turn 1: "For October 24-25: stay in Bangalore or a quick getaway? And who's joining you?" Turn 2: "what's your total budget for two, and would you rather drive or fly?" Turn 3: "Saturday morning to Sunday evening, with one room for you both?" Turn 4: "Back Sunday evening, and one room for both?" Result (18:00, quote-reply): a Mysuru plan in about 6 lines, with the stay at Grand Continent at $56.08 (about ₹5,321) and the unconfirmed items listed, ending "Nothing booked." Followed by a file link "Mysuru stay for Oct 24-25, from Rs4k".
+- **UC6 "Remind me to call Divya tomorrow at 10am"**: a ⏰ reaction only. No text.
+- **UC7 parking**: "Got it: B2, pillar 14." Recall: "You parked on level B2, pillar 14." One line each.
+- **UC8 iPhone 17 Amazon vs Flipkart**: asked "256GB, any colour? I'll compare regular prices without bank, exchange or cashback offers." Result (quote-reply): Flipkart ₹86,999 + ₹299 fee = ₹87,298 (seller named, delivery to 560086 not confirmed); Amazon.in Black 256GB currently unavailable, no price shown. "Regular prices only… Nothing added to cart." Plus a file link.
+- **UC9 coworking** (quote-reply, about 7 minutes later): 3 numbered picks with price and one reason each, then a one-line caveat, plus a file link.
+- **UC3, UC10, UC11**: not in these screenshots.
