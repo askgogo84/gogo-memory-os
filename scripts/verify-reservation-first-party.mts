@@ -60,11 +60,11 @@ function makeDb(seed:Record<string,any[]>={}){
 }
 
 type Browser=(p:any)=>Promise<any>
-function loadReservation(opts:{search:(q:string)=>any[];browser:Browser;db?:ReturnType<typeof makeDb>}){
+function loadReservation(opts:{search:(q:string)=>any[];browser:Browser;db?:ReturnType<typeof makeDb>;calendarIncomplete?:boolean}){
   const db=opts.db||makeDb({users:[{id:'fixture-owner',telegram_id:123,whatsapp_id:'919800001501',timezone:'Asia/Kolkata',email:null}]})
   const searches:string[]=[],browserCalls:any[]=[]
   const mod:any={}
-  const contextPack=async(p:any)=>{const c={ownerId:'123',incomplete:false,coveredFrom:p.options.reservationCalendarCoverage?.from||new Date(NOW).toISOString(),coveredUntil:p.options.reservationCalendarCoverage?.until||'2026-12-17T10:00:00Z'};return{facts:[],reservationTravel:{...c,facts:[]},reservationCalendar:{...c,connected:true,windows:[]},reservationPreferences:{ownerId:'123',incomplete:false,rules:[]}}}
+  const contextPack=async(p:any)=>{const c={ownerId:'123',incomplete:false,coveredFrom:p.options.reservationCalendarCoverage?.from||new Date(NOW).toISOString(),coveredUntil:p.options.reservationCalendarCoverage?.until||'2026-12-17T10:00:00Z'};return{facts:[],reservationTravel:{...c,facts:[]},reservationCalendar:{...c,connected:true,windows:[],incomplete:opts.calendarIncomplete===true},reservationPreferences:{ownerId:'123',incomplete:false,rules:[]}}}
   runInNewContext(transpile('lib/agent/restaurant-reservation.ts'),{exports:mod,require:(name:string)=>
     name==='node:crypto'?{createHash}:name==='@/lib/supabase-admin'?{supabaseAdmin:db}:name==='@/lib/timezone'?timezone:
     name==='./reservation-dining-context'?dining:name==='./approval-binding'?binding:name==='./india-locality'?locality:name==='./provider-booking'?providerBooking:
@@ -120,6 +120,18 @@ await check('stored email is mentioned only when it exists',async()=>{
   const h=loadReservation({db,search:searchBoth,browser:widgetPage(['7:00 PM'])})
   const r=await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
   assert.equal(r.text,"7pm tomorrow is available for 2 at Toit Indiranagar. What name should I book under? I'll use your WhatsApp number ending 1501 and divya@example.com.")
+})
+
+await check('19 Oct live: an incomplete Calendar read is disclosed in the live-slot approval, not a dead end',async()=>{
+  const h=loadReservation({search:searchBoth,browser:widgetPage(['7:00 PM']),calendarIncomplete:true})
+  await h.mod.tryRunRestaurantReservation({actor,surface:'whatsapp',text:REQUEST})
+  const r=await h.mod.continueRestaurantReservationGuestReply({actor,surface:'whatsapp',text:'Goverdhan'})
+  assert.equal(r.status,'waiting_approval',r.text)
+  assert.equal(r.approvalRequired,true)
+  assert.match(r.text,/under Goverdhan/)
+  assert.match(r.text,/couldn't fully check your calendar for that evening/)
+  assert.doesNotMatch(r.text,/bounded travel/)
+  assert.ok(lines(r.text)<=3,r.text)
 })
 
 await check('name reply goes through the existing approval mechanism; nothing is submitted',async()=>{
