@@ -61,7 +61,8 @@ export async function readScopedReminders(ownerId:number,step:{title:string;inst
         if(clocks.length&&!clocks.includes(clock))continue
       }
       const message=redactSecretShapedText(String(row.message||''))
-      const words=message.toLowerCase().replace(/newyork/g,'new york').match(/[a-z][a-z0-9]*/g)||[]
+      // Explicit string[]: `match(...)||[]` infers `RegExpMatchArray | []`, which some program orders type-check as never.
+      const words:string[]=message.toLowerCase().replace(/newyork/g,'new york').match(/[a-z][a-z0-9]*/g)||[]
       if(scope.scopeGroups.length&&!scope.scopeGroups.some(group=>group.every(term=>words.some(word=>word===term||(term.length>=4&&word.startsWith(term))))))continue
       reminders.push({id:String(row.id),message:message.slice(0,500),remindAt:String(row.remind_at),timezone:String(row.timezone||'UTC')})
     }

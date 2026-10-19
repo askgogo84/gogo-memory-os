@@ -161,8 +161,9 @@ function timesUngrounded(reply: string, context: string): boolean {
     if (!rt.mer) return false                             // reply gave no meridiem -> H:MM is enough
     return !sameHm.some(ct => !ct.mer || ct.mer === rt.mer) // reply's meridiem must be consistent
   })
-  const ctxTz = new Set((context.match(TZ_RE) || []).map(s => s.toUpperCase()))
-  const tzBad = (reply.match(TZ_RE) || []).some(t => !ctxTz.has(t.toUpperCase()))
+  // Explicit string[]: `match(...) || []` infers `RegExpMatchArray | []`, which some program orders type-check as never.
+  const ctxTz = new Set(((context.match(TZ_RE) || []) as string[]).map(s => s.toUpperCase()))
+  const tzBad = ((reply.match(TZ_RE) || []) as string[]).some(t => !ctxTz.has(t.toUpperCase()))
   return timeBad || tzBad
 }
 

@@ -60,6 +60,7 @@ import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppApprovalNumb
 import { parseTaskStatusQuery } from '@/lib/agent/task-status'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { tryResolvePendingQuestion } from '@/lib/bot/pending-question-resolver'
+import { tryUnderstandFirst, isUnderstandFirstReady } from '@/lib/agent/understand-first'
 import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, parseLooseAccountProfile, tryRunExternalAccountFlow } from '@/lib/agent/external-account'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
@@ -1184,6 +1185,8 @@ _"${originalText}"_
     // book Toit for?") resumes THAT request before reservation, Jev clarification or feature
     // routing can read it as something new (19 Oct live: it became a reminder titled "This").
     // Approvals are resolved above and never here; two open questions get "which one?".
+    // Understand-first runs right after this: the registry's deterministic binding always wins, and
+    // understand-first reads the turn only when the registry had nothing (or the completed request after a rewrite).
     // The live-slot step ("What name should I book under?" → "Goverdhan", "Which one should I book?" → "7pm")
     // is a registered question too, so this is its only entry point: one owner, no double handling.
     let pendingQuestionCheckedFor: string | null = null
@@ -1209,6 +1212,32 @@ _"${originalText}"_
         await sendWhatsAppMessage(from, pendingAnswer.text)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
+    }
+
+    // Understand-first choke point (docs/architecture/06-understand-first-shadow.md): one reading of the whole
+    // message with its owner-bound context, after approvals and the pending-question registry, before
+    // reservation, Jev clarification and feature keyword matchers. It answers live only for the safe set
+    // (answers to its own clarifying questions, saved documents/tickets, task status, memory recall, web answers, one clarifying
+    // question, conversation) at confidence >= 0.82 with a resolved referent; anything else, a timeout or an
+    // error returns null and routing below runs unchanged. Approvals, friend flows and button taps never enter.
+    const understandSkip = preserveFriendFlow ? 'friend_flow' : approvalIntent(text) ? 'approval_reply' : null
+    const understoodReply = understandSkip ? null : await (async () => {
+      if (!isUnderstandFirstReady()) return null
+      const understandActor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' })
+      return tryUnderstandFirst({
+        actor: understandActor, surface: 'whatsapp', text, eventId: inboundMessageSid || null, externalUserId: from, userName: profileName,
+        // The registry above already saw this exact text: understand-first must not bind pending answers again.
+        registryChecked: pendingQuestionCheckedFor === text,
+      })
+    })().catch((err: any) => { console.error('UNDERSTAND_FIRST_WHATSAPP_FAILED:', String(err?.message || err).slice(0, 160)); return null })
+    if (understoodReply?.text) {
+      if (!understoodReply.persisted) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', understoodReply.text)
+      }
+      if (understoodReply.mediaUrl && !String(understoodReply.mediaType || '').startsWith('audio/')) await sendWhatsAppMediaMessage(from, understoodReply.text, understoodReply.mediaUrl)
+      else await sendWhatsAppMessage(from, understoodReply.text)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
     // Capabilities AskGogo does not have yet get one honest answer and an alternative, before any
