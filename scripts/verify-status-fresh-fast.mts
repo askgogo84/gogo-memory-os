@@ -9,6 +9,7 @@ process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'; process.
 process.env.OPENAI_API_KEY ||= 'x'; process.env.ANTHROPIC_API_KEY ||= 'x'
 const taskStatus = await import('../lib/agent/task-status.ts')
 const attention = await import('../lib/agent/attention-state.ts')
+const taskTitle = await import('../lib/agent/task-title.ts')
 const lifecycle = await import('../lib/agent/task-lifecycle.ts')
 const NOW = new Date('2026-10-20T02:00:00.000Z')
 const ago = (h: number) => new Date(NOW.getTime() - h * 3600_000).toISOString()
@@ -24,7 +25,7 @@ function load(syncMs: number) {
   const src = readFileSync(new URL('../lib/agent/autonomy-status.ts', import.meta.url), 'utf8')
   const deps: Record<string, any> = { '@/lib/supabase-admin': { supabaseAdmin: db },
     './open-loops': { syncOpenLoopsForUser: () => new Promise(r => setTimeout(r, syncMs)) },
-    './task-lifecycle': lifecycle, './attention-state': attention, './task-status': taskStatus }
+    './task-lifecycle': lifecycle, './attention-state': attention, './task-title': taskTitle, './task-status': taskStatus }
   runInNewContext(ts.transpileModule(src, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
     { exports, module: { exports }, require: (n: string) => deps[n] || {}, Date, Intl, console, setTimeout, clearTimeout })
   return exports

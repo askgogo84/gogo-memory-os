@@ -13,6 +13,7 @@ process.env.OPENAI_API_KEY ||= 'ci-placeholder-openai-key'; process.env.ANTHROPI
 
 const taskStatus = await import('../lib/agent/task-status.ts')
 const attention = await import('../lib/agent/attention-state.ts')
+const taskTitle = await import('../lib/agent/task-title.ts')
 const lifecycle = await import('../lib/agent/task-lifecycle.ts')
 const { parseTaskStatusQuery, tryGetTaskStatus } = taskStatus
 
@@ -48,7 +49,7 @@ function loadAutonomy() {
   const deps: Record<string, any> = {
     '@/lib/supabase-admin': { supabaseAdmin: db },
     './open-loops': { syncOpenLoopsForUser: async () => {} },
-    './task-lifecycle': lifecycle, './attention-state': attention, './task-status': taskStatus,
+    './task-lifecycle': lifecycle, './attention-state': attention, './task-title': taskTitle, './task-status': taskStatus,
   }
   const RealDate = Date
   class FixedDate extends RealDate { constructor(...args: any[]) { super(...((args.length ? args : [NOW.getTime()]) as [])) } static now() { return NOW.getTime() } }

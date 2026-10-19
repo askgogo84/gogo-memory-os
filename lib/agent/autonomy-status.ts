@@ -3,6 +3,8 @@ import type { AgentActor } from './actor'
 import { syncOpenLoopsForUser } from './open-loops'
 import { isRelevantOpenLoop } from './task-lifecycle'
 import { runAuthReason } from './task-status'
+import { friendlyTaskTitle } from './task-title'
+export { friendlyTaskTitle }
 import { isAutonomyStatus, isFullTaskList, partitionAttentionRuns, ideaWatcherIds, currentWatcherIdeas, watcherSupportsCurrentIdea } from './attention-state'
 
 function clean(value:unknown,max=300){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}
@@ -147,14 +149,6 @@ function groupLabels(labels:string[]){
 // paused for days. The short digest shows only recent waiting runs (72h); older ones stay in "show all tasks".
 // Approvals and unconfirmed outcomes are always shown. Titles read as people say them.
 const STALE_WAITING_MS=72*3600_000
-export function friendlyTaskTitle(raw:unknown){
-  let t=String(raw??'').trim()
-  const browser=t.match(/^Browser\s*[·:-]\s*(?:https?:\/\/)?(?:www\.)?([a-z0-9-]+)(?:\.[a-z.]+)?/i)
-  if(browser)t=`${browser[1].charAt(0).toUpperCase()}${browser[1].slice(1)}`
-  // An older gold watch saved the place as "Bangalore Drops" (fixed in #673); don't repeat the verb in the label.
-  t=t.replace(/\bin ([A-Z][a-z]+(?: [A-Z][a-z]+)?) (?:Drops|Falls|Rises|Dips|Crosses)\b/g,'in $1')
-  return t
-}
 function waitingItems(input:AutonomyDigestInput,opts:{recentOnly?:boolean}={}){
   const items:Array<{title:string;need:string}>=[]
   const seen=new Set<string>()
