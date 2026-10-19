@@ -19,7 +19,10 @@ const watch = await import('../lib/agent/watch-command.ts')
 const news: any = watch.parseWebWatchCommand('send me news about Tata Motors every morning')
 assert.equal(news.query, 'Tata Motors news'); assert.equal(news.cadenceMinutes, 1440); assert.equal(news.requestedCadenceMinutes, 1440, 'the daily schedule survives normalisation')
 const wsrc = readFileSync('lib/agent/watchers.ts', 'utf8')
-assert.equal((wsrc.match(/Math\.max\(adaptiveWatcherCadence\(/g) || []).length, 2, 'adaptive checks never run more often than asked')
+// Every adaptive cadence call site (web search, and the gold-rate check added 19 Oct) is floored by the requested cadence.
+const adaptiveCalls = (wsrc.match(/adaptiveWatcherCadence\(\{/g) || []).length
+assert.ok(adaptiveCalls >= 2, 'adaptive cadence call sites exist')
+assert.equal((wsrc.match(/Math\.max\(adaptiveWatcherCadence\(\{[\s\S]*?\}\), Number\(\(condition as any\)\.requestedCadenceMinutes\)\s*\|\|\s*0\)/g) || []).length, adaptiveCalls, 'adaptive checks never run more often than asked')
 const parse = await import('../lib/bot/parse-claude-response.ts')
 const p: any = parse.parseClaudeResponse('Got it, boss.\n\nSEARCH: cheapest flights Bengaluru Singapore')
 assert.equal(p.type, 'search'); assert.equal(p.query, 'cheapest flights Bengaluru Singapore'); assert.doesNotMatch(p.replyText, /SEARCH:/)

@@ -5,6 +5,7 @@ import { classifyCheckVerb } from '@/lib/data/lists-core'
 import { CALENDAR_WORD_RE } from '@/lib/bot/handlers/calendar-actions'
 import { hasConcreteFlightCode } from '@/lib/bot/flight-codes'
 import { isNutritionLogText } from '@/lib/bot/nutrition-text'
+import { isGoldRateAlertPhrasing } from '@/lib/agent/gold-rate-rule'
 import { isStandaloneCalendarReadRequest, calendarReadHoldReply, calendarReadClarificationReply } from '@/lib/agent/calendar-read'
 
 // "google calendar" (+ misspellings) â†’ connect intent, derived from the shared spelling
@@ -263,7 +264,9 @@ export function detectIntent(text: string): DetectedIntent {
   // Word-boundary matching, never raw substring. includes('rain') matched "trains",
   // routing "direct trains from Bangalore to Mysuru" to weather at high confidence.
   if (asksAboutWeather(lower)) return { type: 'weather_live', confidence: 'high' }
-  if (lower.includes('gold price') || lower.includes('gold rate') || lower.includes('silver price') || lower.includes('silver rate')) return { type: 'gold_live', confidence: 'high' }
+  // "Alert me if gold rate drops by 10%" is a watch rule, not a quote ask (19 Oct live: it got a one-off
+  // quote and no alert). Alert phrasing is left to the gold-rate watch handler.
+  if ((lower.includes('gold price') || lower.includes('gold rate') || lower.includes('silver price') || lower.includes('silver rate')) && !isGoldRateAlertPhrasing(lower)) return { type: 'gold_live', confidence: 'high' }
   if (lower.includes('ipl table') || lower.includes('points table') || lower.includes('table toppers') || lower.includes('ipl standings') || lower.includes('ipl topper')) return { type: 'sports_standings', confidence: 'high' }
   if ((lower.includes('rcb') && lower.includes('match')) || (lower.includes('ipl') && lower.includes('match')) || lower.includes('next rcb match') || lower.includes('when is the next rcb match')) return { type: 'sports_schedule', confidence: 'high' }
 

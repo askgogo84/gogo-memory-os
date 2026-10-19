@@ -530,6 +530,18 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     await saveConversation(resolvedUser.telegramId,'assistant',typedReply.text)
     return {text:formatOutgoingText(params.channel,typedReply.text),resolvedUser}
   }
+  // "Alert me if gold rate drops by 10%" creates a gold-rate watch; it must never be answered with a
+  // one-off quote or a generic search on this shared path (19 Oct live).
+  // Only a message naming the metal loads the gold-watch modules.
+  if(/\b(?:gold|silver)\b/i.test(incomingText)&&resolvedUser.id&&resolvedUser.whatsappId&&(await import('@/lib/agent/gold-rate-rule')).isGoldRateAlertPhrasing(incomingText)){
+    const {tryCreateGoldRateWatchFromCommand}=await import('@/lib/agent/gold-watch')
+    const goldWatch=await tryCreateGoldRateWatchFromCommand({actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId),name:resolvedUser.name||'Gogo'},surface:params.channel==='whatsapp'?'whatsapp':'web',text:incomingText})
+    if(goldWatch){
+      await saveConversation(resolvedUser.telegramId,'user',incomingText)
+      await saveConversation(resolvedUser.telegramId,'assistant',goldWatch.text)
+      return {handledBy:goldWatch.handledBy,text:formatOutgoingText(params.channel,goldWatch.text),resolvedUser}
+    }
+  }
   // Route to the commerce browser read on an explicit "compare" OR a single named-retailer
   // price/stock read (namesRetailerPriceRead guards against hijacking bare "price" messages).
   const priceComparison=(/\bcompar(?:e|ison|isons)\b/i.test(incomingText)||namesRetailerPriceRead(incomingText)) ? await tryPriceComparison({telegramId:resolvedUser.telegramId,text:incomingText,surface:params.channel}) : null

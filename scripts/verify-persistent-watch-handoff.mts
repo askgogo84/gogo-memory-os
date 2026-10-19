@@ -192,13 +192,16 @@ console.log('PASS: corrected watch intent is recalled across surfaces, owner iso
 // Execute the actual webhook first-refusal predicate, so supported watch language
 // cannot silently fall back to a one-shot model answer before reaching the bridge.
 const route=fs.readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
+const goldRateRule=await import('../lib/agent/gold-rate-rule')
 const predicate=route.match(/const isDeterministicWatcherCommand =([\s\S]*?)\n    if\(isDeterministicWatcherCommand\)/)?.[1]
 assert.ok(predicate,'webhook watch first-refusal predicate exists')
-const routesToWatch=(text:string)=>vm.runInNewContext(predicate!,{text,parseWebWatchCommand:commandExports.parseWebWatchCommand,isWatcherStatusQuery:commandExports.isWatcherStatusQuery})
+const routesToWatch=(text:string)=>vm.runInNewContext(predicate!,{text,parseWebWatchCommand:commandExports.parseWebWatchCommand,isWatcherStatusQuery:commandExports.isWatcherStatusQuery,isGoldRateAlertPhrasing:goldRateRule.isGoldRateAlertPhrasing})
 assert.equal(routesToWatch('Keep searching for Christopher Ward C63 Sealander in India'),true)
 assert.equal(routesToWatch('Please keep looking for Sony WH-1000XM5 below 22000'),true)
 assert.equal(routesToWatch('Show my watches'),true)
 assert.equal(routesToWatch('Find my email from yesterday'),false)
+assert.equal(routesToWatch('Alert me if gold rate drips by 10% from the current rate'),true)
+assert.equal(routesToWatch('what is the gold rate today'),false)
 console.log('PASS: WhatsApp routes keep-searching requests to the persistent watch handler')
 
 // Drive the real authenticated dashboard POST through actual watch creation.

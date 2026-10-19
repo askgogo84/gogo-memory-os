@@ -5,6 +5,7 @@ import {detectFriendReminder, getPendingFriend, isFriendReminderFollowupCandidat
 import {namesRetailerPriceRead} from '@/lib/commerce/comparison-model'
 import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
 import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
+import { tryCreateGoldRateWatchFromCommand } from '@/lib/agent/gold-watch'
 import { tryCreateInboxTriageWatchFromCommand, tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand, tryGetWatcherStatusFromCommand, tryRunPriceWatchClarification, tryStopWatcherFromCommand } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
@@ -147,6 +148,12 @@ export async function POST(req: NextRequest) {
     if(runCancel){
       await saveConversation(user.telegram_id,text,runCancel.text)
       return NextResponse.json(runCancel)
+    }
+    // Same gold-rate watch as WhatsApp: "alert me if gold rate drops by 10%" is a rule, never a one-off quote.
+    const goldWatch=await tryCreateGoldRateWatchFromCommand({actor,surface:'web',text})
+    if(goldWatch){
+      await saveConversation(user.telegram_id,text,goldWatch.text)
+      return NextResponse.json(goldWatch)
     }
     const contentDraft = await tryRunContentWorkflow(actor, text, `web-${randomUUID()}`)
     if (contentDraft) return NextResponse.json(contentDraft)
