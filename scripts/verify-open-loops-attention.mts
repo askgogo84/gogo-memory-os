@@ -287,5 +287,8 @@ assert.doesNotMatch(openLoops,/status[^\n]{0,80}paused[^\n]{0,120}age\s*>/i)
 assert.match(openLoops,/\.range\(from,from\+pageSize-1\)/)
 assert.match(autonomyStatus,/terminalPauseErrors/)
 assert.match(autonomyStatus,/\.limit\(30\)/)
-assert.match(autonomyStatus,/\.slice\(0,6\)/)
+// Concise digest (19 Oct): the display limit is GROUP_MAX lines per group, applied in the formatter,
+// which only ever sees runs already filtered by terminalPauseErrors and partitionAttentionRuns.
+assert.match(autonomyStatus,/waiting\.slice\(0,GROUP_MAX\)/)
+{const body=autonomyStatus.slice(autonomyStatus.indexOf('export async function tryGetAutonomyStatus'));assert.ok(body.indexOf('terminalPauseErrors.has')>0&&body.indexOf('terminalPauseErrors.has')<body.indexOf('partitionAttentionRuns(runs)')&&body.indexOf('partitionAttentionRuns(runs)')<body.indexOf('formatAutonomyDigest('),'filtering happens before the display limit')}
 console.log('Only known terminal pauses are retired; resumable paused missions remain visible and filtering happens before the display limit')

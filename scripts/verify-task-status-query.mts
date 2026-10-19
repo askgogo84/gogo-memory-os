@@ -80,66 +80,67 @@ const steps = [
   const r = run({ progress: 45 })
   const text = formatRunStatus(r, steps, lastRunActivity(r, steps), NOW)
   assert.match(text, /\*Goa trip plan\*/)
-  assert.match(text, /Status: Running now/)
-  assert.match(text, /Step 2 of 3: Shortlist hotels in North Goa/)
-  assert.match(text, /Progress: 45%/)
-  assert.match(text, /Last activity: Started: Shortlist hotels in North Goa \(12 min ago\)/)
-  assert.match(text, /Waiting on: nothing from you right now/)
-  assert.doesNotMatch(text, /Outcome unknown|approval|sign in/i)
+  assert.match(text, /is running/)
+  assert.match(text, /step 2 of 3 \(Shortlist hotels in North Goa, started 12 min ago\)/)
+  assert.match(text, /45% done/)
+  assert.match(text, /Nothing needed from you right now/)
+  assert.doesNotMatch(text, /unconfirmed|approval|sign in/i)
+  assert.ok(text.split('\n').length <= 4, 'one short paragraph')
 }
 {
   const text = formatRunStatus(run({ progress: undefined }), steps, null, NOW)
-  assert.doesNotMatch(text, /Progress:/, 'no progress line without agent_runs.progress')
+  assert.doesNotMatch(text, /% done/, 'no progress without agent_runs.progress')
 }
 {
   const r = run({ status: 'waiting_approval', title: 'Book Toit table', summary: 'Table for 4 at 8 pm is ready to confirm.' })
   const s = [{ ...steps[0] }, { ...steps[1], status: 'waiting_approval', title: 'Confirm the reservation', started_at: ago(3) }]
   const text = formatRunStatus(r, s, lastRunActivity(r, s), NOW)
-  assert.match(text, /Status: Waiting for your approval/)
-  assert.match(text, /Waiting on: your approval\. Nothing consequential happens until you approve or reject it\./)
+  assert.match(text, /is waiting for your approval/)
+  assert.match(text, /Nothing consequential happens until you approve or reject it\./)
   assert.match(text, /Table for 4 at 8 pm/)
 }
 {
   const r = run({ status: 'paused', title: 'IRCTC train search', metadata_json: { handoff: { takeoverUrl: 'https://example.test/takeover' } }, updated_at: ago(90) })
   const text = formatRunStatus(r, [], lastRunActivity(r, []), NOW)
-  assert.match(text, /Status: Paused — needs you to sign in/)
-  assert.match(text, /Waiting on: your sign-in on the provider's site\. I won't sign in for you\./)
-  assert.match(text, /\(2 h ago\)/)
+  assert.match(text, /is paused until you sign in/)
+  assert.match(text, /sign in on the provider's site to continue; I won't sign in for you\./)
+  assert.match(text, /\(updated 2 h ago\)/)
   assert.doesNotMatch(text, /takeover|https?:/i, 'no takeover URL leaks into the card')
 }
 {
   const r = run({ status: 'paused', title: 'Flight booking BLR to DEL', metadata_json: { secondary_auth: { reason: 'otp' } } })
   const text = formatRunStatus(r, [], null, NOW)
-  assert.match(text, /Status: Paused — needs a one-time code from you/)
-  assert.match(text, /Waiting on: a one-time code \(OTP\) that only you can enter on the secure sign-in screen\. Please don't send the code in chat\./)
+  assert.match(text, /is paused until you enter a one-time code/)
+  assert.match(text, /Only you can enter the one-time code \(OTP\) on the secure sign-in screen; please don't send it in chat\./)
   const viaStep = formatRunStatus(run({ status: 'failed' }), [{ ordinal: 1, title: 'Sign in', status: 'failed', error: 'human_auth_required', output_json: { authReason: 'otp' }, completed_at: ago(2) }], null, NOW)
-  assert.match(viaStep, /Status: Stopped at a sign-in step/)
+  assert.match(viaStep, /stopped at a sign-in step/)
   assert.match(viaStep, /one-time code \(OTP\)/)
 }
 {
   const r = run({ status: 'failed', title: 'Cult slot search', summary: 'The provider page did not load.', error: 'provider_timeout' })
   const text = formatRunStatus(r, [], lastRunActivity(r, []), NOW)
-  assert.match(text, /Status: Failed/)
-  assert.match(text, /It did not finish\. Nothing further is running for it\./)
-  assert.doesNotMatch(text, /provider_timeout|Waiting on/, 'no raw error code, no waiting claim')
+  assert.match(text, /\* failed\b/)
+  assert.match(text, /It did not finish, and nothing further is running for it\./)
+  assert.doesNotMatch(text, /provider_timeout|Nothing needed from you|approve/, 'no raw error code, no waiting claim')
 }
 {
   const r = run({ status: 'outcome_unknown', title: 'Pay electricity bill' })
   const text = formatRunStatus(r, [], null, NOW)
-  assert.match(text, /Status: Outcome unknown/)
-  assert.match(text, /could not confirm whether this went through\. Please check with the provider before retrying/)
-  assert.doesNotMatch(text, /Status: Completed|succeeded/i)
+  assert.match(text, /has an unconfirmed outcome/)
+  assert.match(text, /could not confirm whether it went through\. Please check with the provider before retrying/)
+  assert.doesNotMatch(text, /is done|succeeded|Nothing left pending/i)
 }
 {
   const r = run({ status: 'running', updated_at: ago(60 * 30) })
   const text = formatRunStatus(r, [], lastRunActivity(r, []), NOW)
   assert.match(text, /No activity for over 24 hours, so I can't confirm it is still progressing\./)
-  assert.match(text, /\(1 day ago\)/)
+  assert.match(text, /\(updated 1 day ago\)/)
+  assert.doesNotMatch(text, /Nothing needed from you/, 'a stale run does not claim all is well')
 }
 {
   const text = formatRunStatus(run({ status: 'paused', error: 'stale_provider_access_limited' }), [], null, NOW)
-  assert.match(text, /Status: Closed — closed session/)
-  assert.doesNotMatch(text, /Waiting on/)
+  assert.match(text, /is closed \(closed session\)/)
+  assert.doesNotMatch(text, /Nothing needed|approve|sign in|continue or cancel/)
 }
 console.log('PASS formatter: running, approval, sign-in, OTP, failed, outcome unknown, stale, closed')
 
@@ -164,12 +165,12 @@ const deps = (leak = false) => ({
   assert.ok(res, 'named match returns a card')
   assert.equal(res!.handledBy, 'task-status'); assert.equal(res!.runId, 'goa', 'active run beats an older completed one')
   assert.equal(res!.readOnly, true); assert.equal(res!.mutated, false)
-  assert.match(res!.text, /Goa trip plan — December/); assert.match(res!.text, /Progress: 60%/)
+  assert.match(res!.text, /Goa trip plan — December/); assert.match(res!.text, /60% done/)
   assert.doesNotMatch(res!.text, /other task/, 'a 10-day-old completed run is not a candidate')
   assert.doesNotMatch(res!.text, /SECRET|LEAKED/)
   assert.ok(calls.every(([, tg]) => tg === '100'), 'every read is owner scoped')
   const flight = await tryGetTaskStatus({ telegramId: 100 }, 'status of my flight booking task', deps())
-  assert.equal(flight!.runId, 'flight'); assert.match(flight!.text, /Waiting for your approval/)
+  assert.equal(flight!.runId, 'flight'); assert.match(flight!.text, /waiting for your approval/)
   const booking = await tryGetTaskStatus({ telegramId: 100 }, "what's happening with my booking", deps())
   assert.equal(booking!.runId, 'flight', '"booking" matches the booking task title')
 }
