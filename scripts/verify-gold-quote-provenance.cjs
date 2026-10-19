@@ -180,4 +180,30 @@ check('a missing-unit-only result retains the explicit no-verified-quote outcome
  assert.match(result,/couldn't verify a source-bound per-gram gold quote/);
  assert.match(result,/candidate quote was omitted.*weight\/unit is unverified/i);assert.doesNotMatch(result,/24K: ₹/);
 });
+// 18 Oct live failure class (policybazaar Bangalore): an unrecognised 24K label
+// let the 24K table row bleed into the 22K span and become a second 22K price.
+const pb='https://www.policybazaar.com/gold-rate/bangalore/';
+check('a hyphenated, plural, fineness or spelled-out 24K label bounds the preceding 22K row',()=>{
+ for(const label of ['24-Carat Gold Rate','24 Carats Gold','24–karat gold','999 Fine Gold Rate','Twenty-four karat gold']){
+  const result=answer(`1. Gold Rates in Bangalore\n18 October 2026. 22K Gold Rate 1 g | ₹13,645 ${label} 1 g | ₹14,327\nSource: ${pb}`);
+  assert.match(result,/^22K: ₹13,645$/m,label);assert.doesNotMatch(result,/22K[^\n]*14,327/,label);
+  assert.match(result,/^24K: ₹14,327$/m,label);
+ }
+});
+check('an unknown-purity marker ends a purity span without inventing a purity',()=>{
+ const result=answer(`1. Gold Rates in Bangalore\n18 October 2026. 22 Karat gold 1 gram | ₹13,645 Pure gold 1 gram | ₹14,327\nSource: ${pb}`);
+ assert.match(result,/^22K: ₹13,645$/m);assert.doesNotMatch(result,/14,327/);
+});
+check('a lower purity at or above a higher purity from one source is not presented as verified',()=>{
+ const result=answer(`1. Gold Rates in Bangalore\n18 October 2026. 22K gold per gram ₹14,327; 24K gold per gram ₹14,327\nSource: ${pb}`);
+ assert.doesNotMatch(result,/22K: ₹14,327/);assert.doesNotMatch(result,/24K: ₹14,327/);assert.match(result,/purit/i);
+ const control=answer(`1. Gold Rates in Bangalore\n18 October 2026. 22K gold per gram ₹13,645; 24K gold per gram ₹14,327\nSource: ${pb}`);
+ assert.match(control,/^24K: ₹14,327$/m);assert.match(control,/^22K: ₹13,645$/m);assert.doesNotMatch(control,/purit/i);
+});
+check('gm and gms are explicit gram units',()=>{
+ const result=answer(`1. Gold Rates in Bangalore\n18 October 2026: 22K Gold ₹13,645/gm; 24K Gold ₹14,327 per gm\nSource: ${pb}`);
+ assert.match(result,/^22K: ₹13,645$/m);assert.match(result,/^24K: ₹14,327$/m);
+ const ten=answer(`1. Gold Rates in Bangalore\n18 October 2026: 22K gold 10 gms | ₹1,36,450\nSource: ${pb}`);
+ assert.match(ten,/^22K: ₹13,645$/m);
+});
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1;}else console.log('Actual gold quote provenance: source/row/purity boundaries, weights, dates, conflicts and silver controls passed.');
