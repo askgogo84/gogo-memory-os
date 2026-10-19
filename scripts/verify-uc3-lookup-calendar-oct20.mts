@@ -2,7 +2,7 @@
 // UC11: cancel reply named the run "Browser · www.flipkart.com".
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { parseLookupThenCalendar, calendarFollowupLine, firstFutureDate } from '../lib/agent/lookup-then-calendar'
+import { parseLookupThenCalendar, calendarFollowupLine, firstFutureDate, alreadyHappened, alreadyHappenedLine } from '../lib/agent/lookup-then-calendar'
 import { isCalendarViewRequest, groupCalendarLines } from '../lib/bot/handlers/calendar-actions'
 import { resolvePendingCalendar } from '../lib/bot/pending-followup'
 import { friendlyTaskTitle, taskDisplayTitle } from '../lib/agent/task-title'
@@ -75,4 +75,16 @@ ok('wiring: compound handler runs before the calendar action branch', () => {
   assert.doesNotMatch(pm.slice(a, b), /createCalendarEvent|createEventFromPayload/)
 })
 
-console.log(`UC3_UC11_OK ${pass}/8`)
+ok('live 03:30 IST: already-released film gets no calendar offer', () => {
+  const now = new Date('2026-10-19T22:00:00Z')
+  const live = '*Jailer 2 has already released* – it came out on October 14-15, 2026, which was last week.'
+  assert.equal(firstFutureDate(live, now), null)
+  assert.equal(alreadyHappened(live, now), true)
+  assert.match(alreadyHappenedLine('Jailer 2 release'), /haven't set up a calendar entry/)
+  // positive control: an upcoming date keeps the offer
+  assert.equal(alreadyHappened('Jailer 3 releases on 14 November 2026.', now), false)
+  const pm = readFileSync(new URL('../lib/bot/process-message.ts', import.meta.url), 'utf8')
+  assert.match(pm, /if \(!past\) await saveFollowupState\(resolvedUser\.telegramId, 'pending_calendar'/)
+})
+
+console.log(`UC3_UC11_OK ${pass}/9`)
