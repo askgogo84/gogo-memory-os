@@ -23,11 +23,22 @@ function formatReminderTime(iso: string) {
   }).format(new Date(iso))
 }
 
-function formatEventTime(event: any) {
+const istDate = (value: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(value)
+
+/** A timed event that began on an earlier IST day is ongoing today, not "at <its old start time>". */
+function startedBeforeToday(event: any, now: Date) {
+  const start = event?.start?.dateTime
+  return Boolean(start) && Number.isFinite(Date.parse(start)) && istDate(new Date(start)) < istDate(now)
+}
+
+function formatEventTime(event: any, now = new Date()) {
   const start = event?.start?.dateTime || event?.start?.date
   if (!start) return 'All day'
 
   if (!event?.start?.dateTime) return 'All day'
+  if (startedBeforeToday(event, now)) {
+    return 'Ongoing from an earlier day'
+  }
 
   return new Intl.DateTimeFormat('en-IN', {
     timeZone: 'Asia/Kolkata',
@@ -233,10 +244,17 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
     } else if (calendarState.error) {
       cal += `⚠️ Couldn't reach Google Calendar just now — this is a temporary hiccup, not necessarily an empty day. If it keeps happening, reconnect with *connect calendar*.`
     } else if (calendarState.events.length) {
-      cal += calendarState.events
-        .slice(0, 5)
-        .map((event: any) => `• ${formatEventTime(event)} — ${event.summary || 'Untitled event'}${calendarState.multi && event._account ? ` (${event._account})` : ''}`)
-        .join('\n')
+      // Events starting today come before ones carried over from earlier days, and
+      // identical lines are grouped, so a multi-day series cannot crowd out today.
+      const now = new Date()
+      const ordered = [...calendarState.events.filter((event: any) => !startedBeforeToday(event, now)), ...calendarState.events.filter((event: any) => startedBeforeToday(event, now))]
+      const grouped = new Map<string, number>()
+      for (const event of ordered) {
+        const line = `• ${formatEventTime(event, now)} — ${event.summary || 'Untitled event'}${calendarState.multi && event._account ? ` (${event._account})` : ''}`
+        grouped.set(line, (grouped.get(line) || 0) + 1)
+      }
+      const lines = [...grouped].map(([line, count]) => `${line}${count > 1 ? ` (×${count})` : ''}`)
+      cal += lines.slice(0, 5).join('\n') + (lines.length > 5 ? `\n• +${lines.length - 5} more` : '')
     } else {
       cal += calendarState.incomplete ? `No events returned from the calendars I could read.` : `No calendar events lined up today.`
     }
@@ -265,7 +283,11 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
         .order('priority',{ascending:false}).limit(8)
       if(error)throw new Error('briefing_open_loops_unavailable')
       const loops=(data||[]).filter(isRelevantOpenLoop)
-      blocks.push(`🧩 *Saved open loops* (up to 8; saved status, providers not rechecked)\n${loops.length?loops.map((loop:{title?:unknown})=>`• ${formatEmailSnippet(String(loop.title||'Untitled item'),180)}`).join('\n'):'No active open loops returned.'}`)
+      // Several saved items can share a title (e.g. two "Block calendar" cards).
+      // Group identical lines with a count instead of repeating them.
+      const grouped=new Map<string,number>()
+      for(const loop of loops as Array<{title?:unknown}>){const line=formatEmailSnippet(String(loop.title||'Untitled item'),180);grouped.set(line,(grouped.get(line)||0)+1)}
+      blocks.push(`🧩 *Saved open loops* (up to 8; saved status, providers not rechecked)\n${grouped.size?[...grouped].map(([line,count])=>`• ${line}${count>1?` (×${count})`:''}`).join('\n'):'No active open loops returned.'}`)
     }catch{blocks.push('🧩 *Open loops unavailable* — I could not read their saved status; this is not an empty-queue claim.')}
   }
   return blocks.join('\n\n')
