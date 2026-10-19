@@ -220,7 +220,8 @@ const INDIA_BOOKING_HOSTS=/(?:^|\.)(?:district\.in|eazydiner\.com|zomato\.com|di
 // 19 Oct live: Toit's own tables live in its ReserveGo widget (widget.reservego.com), which Instinct read for
 // real slots, while Gogo opened an EazyDiner listing. A restaurant's first-party booking widget or its own site
 // outranks every aggregator; aggregators are only the fallback.
-const FIRST_PARTY_WIDGET_HOSTS=/(?:^|\.)reservego\.com$/
+// The live widget host is widget.reservego.co (19 Oct); .com kept for older links.
+const FIRST_PARTY_WIDGET_HOSTS=/(?:^|\.)reservego\.co(?:m)?$/
 const NON_BOOKING_HOSTS=/instagram|facebook|reddit|tripadvisor|youtube|linkedin|(?:^|\.)x\.com$|twitter|rocketreach|crunchbase|justdial|wikipedia|google\./
 export type ReservationLinkKind='widget'|'own_site'|'aggregator'|'other'
 function restaurantIdentity(restaurant:string){
@@ -805,6 +806,31 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const paused=(text:string)=>({runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text})
   // 19 Oct live: a failed read said "I found Toit here: <EazyDiner>" plus a retry invitation. One line, the booking link, nothing promised.
   const unreadable=()=>paused(reservationUnreadableReply({restaurant:intent.restaurant,url:provider.url}))
+  if(slotMode){
+    // Fast path: read the ReserveGo widget's own public times feed instead of driving the widget in a browser.
+    const reservego:any=await import('./reservego').catch(()=>null)
+    const widget=typeof reservego?.findReservegoWidget==='function'?await reservego.findReservegoWidget(provider.url).catch(()=>null):null
+    const fetchReservegoSlots=reservego?.fetchReservegoSlots
+    if(widget&&typeof fetchReservegoSlots==='function'){
+      try{
+        const feed:{slots:string[];feeSlots:string[]}=await fetchReservegoSlots(widget.outletId,intent.requestedDate)
+        const widgetProvider={...provider,url:widget.widgetUrl,firstParty:true}
+        const evidence=`ReserveGo times for ${intent.requestedDate}: ${feed.slots.join(', ')||'none'}${feed.feeSlots.length?`; fee shown at ${feed.feeSlots.join(', ')}`:''}`
+        const decision=reservationSlotDecision(feed.slots,intent.preferredStart,intent.preferredEnd)
+        if(decision.kind==='available'){
+          await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider:widgetProvider,timezone,stage:'guest_name',slotTime:decision.time,alternatives:[],slots:feed.slots,evidence})
+          return paused(reservationAvailableReply({restaurant:intent.restaurant,time:decision.time,date:intent.requestedDate,partySize:intent.partySize,whatsappId:params.actor.whatsappId,email:await storedEmail(params.actor)}))
+        }
+        if(decision.kind==='alternatives'){
+          await savePendingSlotStep({actor:params.actor,text:params.text,intent,provider:widgetProvider,timezone,stage:'choose_time',slotTime:null,alternatives:decision.times,slots:feed.slots,evidence})
+          return paused(reservationAlternativesReply({restaurant:intent.restaurant,time:intent.preferredStart,date:intent.requestedDate,partySize:intent.partySize,times:decision.times}))
+        }
+        return paused(`${intent.restaurant} has no open tables for ${reservationDayLabel(intent.requestedDate,intent.preferredStart||'19:00').replace(/^on /,'')} on its booking page, so nothing is booked. Want me to check another date? ${widget.widgetUrl}`)
+      }catch(error:any){
+        console.error('RESERVEGO_FEED_FAILED:',safe(error?.message||error,120))
+      }
+    }
+  }
   let inspected:Awaited<ReturnType<typeof runSecureBrowser>>
   try{
     inspected=await runSecureBrowser({
