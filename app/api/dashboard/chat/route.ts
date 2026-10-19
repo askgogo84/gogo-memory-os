@@ -42,6 +42,7 @@ import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunTrainResearch } from '@/lib/agent/train-research'
 import { handleInboxReplyRead } from '@/lib/agent/open-loops'
 import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
+import { tryCancelRunFromChat } from '@/lib/agent/run-cancel'
 
 export const dynamic = 'force-dynamic'
 
@@ -138,6 +139,13 @@ export async function POST(req: NextRequest) {
     if(inboxReplyRead){
       await saveConversation(user.telegram_id,text,inboxReplyRead.text)
       return NextResponse.json(inboxReplyRead)
+    }
+    // Same run cancel as WhatsApp ("cancel that task", "stop the flight booking"). Owner-bound; reminders,
+    // calendar, watches, lists, orders and Gmail are refused by the parser and keep their own paths.
+    const runCancel = await tryCancelRunFromChat({telegramId:actor.legacyTelegramId},text,{surface:'web'})
+    if(runCancel){
+      await saveConversation(user.telegram_id,text,runCancel.text)
+      return NextResponse.json(runCancel)
     }
     const contentDraft = await tryRunContentWorkflow(actor, text, `web-${randomUUID()}`)
     if (contentDraft) return NextResponse.json(contentDraft)

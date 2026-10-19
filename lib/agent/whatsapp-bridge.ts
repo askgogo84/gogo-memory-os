@@ -40,6 +40,7 @@ import { tryRunAppointmentFollowup } from './appointment-followup'
 import { tryRunAppointmentResearch } from './appointment-research'
 import { armApprovedRestaurantReservation, queueRestaurantReservationResearch, tryRunRestaurantReservation } from './restaurant-reservation'
 import { isDecisionRecallQuery } from './recall-query'
+import { tryCancelRunFromChat } from './run-cancel'
 
 export type WhatsAppAgentResult = {
   text: string
@@ -446,6 +447,11 @@ export async function tryRunWhatsAppAttentionCommand(params:{
 
   const inboxReplyRead=await handleInboxReplyRead({actor,text:params.text})
   if(inboxReplyRead)return inboxReplyRead
+
+  // "cancel that task" / "stop the flight booking": cancels the owner's in-flight agent run.
+  // The parser refuses reminders, calendar, watches, lists, orders and Gmail, so their own cancel paths still win.
+  const runCancel=await tryCancelRunFromChat({telegramId:actor.legacyTelegramId},params.text,{surface:'whatsapp'})
+  if(runCancel)return runCancel
 
   if(await shouldHandleOpenLoopAction({actor,text:params.text})){
     const action=await handleOpenLoopAction({actor,text:params.text})

@@ -54,6 +54,7 @@ import {
 import { checkFeatureLimit, logUsage } from '@/lib/limits'
 import { buildTimezoneCommandReply, inferTimezoneFromPhone, isTimezoneCommand } from '@/lib/bot/handlers/user-timezone'
 import { routeFeatureIntent } from '@/lib/feature-intents'
+import { parseRunCancel } from '@/lib/agent/run-cancel'
 import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppAccountSite, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist } from '@/lib/agent/whatsapp-bridge'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, parseLooseAccountProfile, tryRunExternalAccountFlow } from '@/lib/agent/external-account'
@@ -1103,7 +1104,7 @@ _"${originalText}"_
     // Open-loop / Attention commands are deterministic state reads/writes.
     // Give them first refusal before semantic feature routing so "what am I waiting on?"
     // cannot be mistaken for a generic question or reminder query.
-    if (isOpenLoopQuery(text) || isOpenLoopResolutionCandidate(text) || isOpenLoopActionCandidate(text)) {
+    if (isOpenLoopQuery(text) || isOpenLoopResolutionCandidate(text) || isOpenLoopActionCandidate(text) || parseRunCancel(text)) {
       const attentionAgent = await tryRunWhatsAppAttentionCommand({
         user:resolvedUser,
         text,
