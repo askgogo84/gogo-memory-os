@@ -143,14 +143,29 @@ function groupLabels(labels:string[]){
 }
 
 /** What the user must do for one item, in plain words. Never claims an unconfirmed outcome. */
-function waitingItems(input:AutonomyDigestInput){
+// 20 Oct live (dashboard): the digest led with "Browser · www.instagram.com is paused until you sign in" — runs
+// paused for days. The short digest shows only recent waiting runs (72h); older ones stay in "show all tasks".
+// Approvals and unconfirmed outcomes are always shown. Titles read as people say them.
+const STALE_WAITING_MS=72*3600_000
+export function friendlyTaskTitle(raw:unknown){
+  let t=String(raw??'').trim()
+  const browser=t.match(/^Browser\s*[·:-]\s*(?:https?:\/\/)?(?:www\.)?([a-z0-9-]+)(?:\.[a-z.]+)?/i)
+  if(browser)t=`${browser[1].charAt(0).toUpperCase()}${browser[1].slice(1)}`
+  // An older gold watch saved the place as "Bangalore Drops" (fixed in #673); don't repeat the verb in the label.
+  t=t.replace(/\bin ([A-Z][a-z]+(?: [A-Z][a-z]+)?) (?:Drops|Falls|Rises|Dips|Crosses)\b/g,'in $1')
+  return t
+}
+function waitingItems(input:AutonomyDigestInput,opts:{recentOnly?:boolean}={}){
   const items:Array<{title:string;need:string}>=[]
   const seen=new Set<string>()
-  const push=(title:unknown,need:string)=>{
+  const nowMs=input.now.getTime()
+  const fresh=(run:any)=>{const at=Date.parse(String(run?.updated_at||''));return !opts.recentOnly||!Number.isFinite(at)||nowMs-at<=STALE_WAITING_MS}
+  const push=(title:unknown,need:string,run?:any)=>{
+    if(run&&!fresh(run))return
     const key=titleKey(title)
     if(!key||seen.has(key))return
     seen.add(key)
-    items.push({title:clip(title,70),need})
+    items.push({title:clip(friendlyTaskTitle(title),70),need})
   }
   for(const approval of input.approvals)push(approval.title,'needs your OK — reply approve or reject.')
   for(const run of input.grouped.pendingDecisions)push(run.title,'needs your OK — reply approve or reject.')
@@ -158,20 +173,22 @@ function waitingItems(input:AutonomyDigestInput){
   const auth=(run:any)=>String(run.status)==='paused'?runAuthReason(run):null
   // An unconfirmed outcome (maybe charged, maybe not) outranks sign-in steps.
   for(const run of context.filter(run=>String(run.status)==='outcome_unknown'))push(run.title,"— I couldn't confirm it went through. Please check with the provider before retrying.")
-  for(const run of context.filter(run=>auth(run)==='otp'))push(run.title,"is paused until you enter a one-time code on the secure sign-in screen (please don't send it in chat).")
-  for(const run of context.filter(run=>auth(run)==='sign_in'))push(run.title,"is paused until you sign in on the provider's site.")
+  for(const run of context.filter(run=>auth(run)==='otp'))push(run.title,"is paused until you enter a one-time code on the secure sign-in screen (please don't send it in chat).",run)
+  for(const run of context.filter(run=>auth(run)==='sign_in'))push(run.title,"is paused until you sign in on the provider's site.",run)
   for(const run of context.filter(run=>String(run.status)==='paused'&&!auth(run))){
-    const ask=clip(String(run.summary||'').replace(/^waiting for your input:\s*/i,''),90)
-    push(run.title,ask?`is paused: ${/[.!?…]$/.test(ask)?ask:`${ask}.`}`:'is paused — say continue or cancel.')
+    const raw=String(run.summary||'').replace(/^waiting for your input:\s*/i,'')
+    if(/lacks current verified dining-date|restaurant_context_review_required/i.test(raw)||String(run.error||'')==='restaurant_context_review_required'){push(run.title,'needs a fresh request — ask me again to book it.',run);continue}
+    const ask=clip(raw,90)
+    push(run.title,ask?`is paused: ${/[.!?…]$/.test(ask)?ask:`${ask}.`}`:'is paused — say continue or cancel.',run)
   }
   return items.map(item=>`${item.title} ${item.need}`)
 }
 
 function backgroundLabels(input:AutonomyDigestInput){
   return groupLabels([
-    ...input.grouped.activeNow.map(run=>clip(run.title,60)),
-    ...input.grouped.incomplete.map(run=>clip(run.title,60)),
-    ...input.watchers.map(w=>clip((w.condition_json as any)?.title||w.type,60)),
+    ...input.grouped.activeNow.map(run=>clip(friendlyTaskTitle(run.title),60)),
+    ...input.grouped.incomplete.map(run=>clip(friendlyTaskTitle(run.title),60)),
+    ...input.watchers.map(w=>clip(friendlyTaskTitle((w.condition_json as any)?.title||w.type),60)),
   ].filter(Boolean))
 }
 
@@ -180,8 +197,9 @@ export function formatAutonomyDigest(input:AutonomyDigestInput,opts:{full?:boole
 }
 
 function formatShortDigest(input:AutonomyDigestInput){
-  const waiting=waitingItems(input)
+  const waiting=waitingItems(input,{recentOnly:true})
   const background=backgroundLabels(input)
+  const olderWaiting=Math.max(0,waitingItems(input).length-waiting.length)
   const soon=input.events.filter(e=>{const at=Date.parse(String(e.start_at||''));return Number.isFinite(at)&&at-input.now.getTime()<=48*3600000})
   const loops=groupLabels(input.openLoops.map(loop=>clip(loop.title,60)).filter(Boolean))
 
@@ -194,7 +212,7 @@ function formatShortDigest(input:AutonomyDigestInput){
   if(background.length)head.push(`In the background: ${joinNames(background,background.length)}.`)
   else if(!waiting.length)head.push('Nothing is running right now and nothing needs you.')
 
-  const hidden=Math.max(0,waiting.length-GROUP_MAX)+Math.max(0,background.length-GROUP_MAX)+loops.length+input.ideas.length
+  const hidden=olderWaiting+Math.max(0,waiting.length-GROUP_MAX)+Math.max(0,background.length-GROUP_MAX)+loops.length+input.ideas.length
     +Math.max(0,input.events.length-(soon.length?1:0))
   const offer=hidden?(loops.length&&!background.length&&!waiting.length
     ?`You also have ${loops.length} saved follow-up${loops.length===1?'':'s'}. Reply *show all tasks* to see everything.`
@@ -229,10 +247,15 @@ function formatFullTaskList(input:AutonomyDigestInput){
   return sections.join('\n\n')
 }
 
+export const AUTONOMY_SYNC_WAIT_MS=2500
 export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}){
   if(!isAutonomyStatus(params.text))return null
   const tg=String(params.actor.legacyTelegramId)
-  await syncOpenLoopsForUser(tg).catch((err:any)=>console.error('AUTONOMY_STATUS_OPEN_LOOP_SYNC_FAILED:',err?.message||err))
+  // 20 Oct live: "What are you working on?" took 43.8s on the dashboard because the reply waited for a full
+  // open-loop sync (Gmail, meeting memories, conversation signals). Wait at most 2.5s; the sync keeps running and
+  // the scheduled sync covers anything it misses, so the reply shows the loops already saved.
+  const sync=syncOpenLoopsForUser(tg).catch((err:any)=>{console.error('AUTONOMY_STATUS_OPEN_LOOP_SYNC_FAILED:',err?.message||err)})
+  await (typeof setTimeout==='function'?Promise.race([sync,new Promise(resolve=>setTimeout(resolve,AUTONOMY_SYNC_WAIT_MS))]):sync)
   const {data:user}=await supabaseAdmin.from('users').select('timezone').eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
   const timezone=String(user?.timezone||'Asia/Kolkata')
   const results=await Promise.all([
