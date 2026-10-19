@@ -125,6 +125,72 @@ export function anthropicSearchResults(data: any): WebSearchResult[] {
   return [...byUrl.values()].filter(r => r.snippet && r.url).slice(0, 6)
 }
 
+// 19 Oct: Tavily returned 432 (plan quota) on every call for hours; each call still paid a failed
+// round-trip before the fallback. After a quota/auth refusal, skip that provider on this instance for
+// a while and go to the next one. Other errors (timeouts, 5xx) are retried normally.
+const QUOTA_BACKOFF_MS = 30 * 60_000
+const blockedUntil: Record<string, number> = {}
+export function providerQuotaBlocked(provider: 'tavily' | 'serper', now = Date.now()) { return now < (blockedUntil[provider] || 0) }
+export function tavilyQuotaBlocked(now = Date.now()) { return providerQuotaBlocked('tavily', now) }
+export function noteProviderFailure(provider: 'tavily' | 'serper', err: unknown, now = Date.now()) {
+  if (new RegExp(`${provider}_failed:(?:401|402|403|429|432)\\b`).test(String((err as any)?.message || err))) {
+    if (!providerQuotaBlocked(provider, now)) console.error(`SEARCH_QUOTA_BACKOFF: skipping ${provider} for 30 min on this instance`)
+    blockedUntil[provider] = now + QUOTA_BACKOFF_MS
+  }
+}
+export function noteTavilyFailure(err: unknown, now = Date.now()) { noteProviderFailure('tavily', err, now) }
+
+// Serper returns relative dates ("3 hours ago") or calendar dates ("Oct 19, 2026"). Only pass on
+// dates we can turn into a real timestamp, so freshness checks never read a guess.
+export function serperDate(raw: unknown, now = Date.now()): string | undefined {
+  const text = cleanText(String(raw || ''))
+  if (!text) return undefined
+  const rel = text.match(/^(\d+)\s+(minute|hour|day|week)s?\s+ago$/i)
+  if (rel) {
+    const unit = {minute: 60_000, hour: 3_600_000, day: 86_400_000, week: 604_800_000}[rel[2].toLowerCase() as 'minute'] as number
+    return new Date(now - Number(rel[1]) * unit).toISOString()
+  }
+  // A bare calendar day is pinned to midday UTC so the server's timezone cannot shift it a day.
+  const parsed = Date.parse(/^[A-Za-z]{3,9}\.? \d{1,2}, \d{4}$/.test(text) ? `${text} 12:00:00 UTC` : text)
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined
+}
+
+function serperDay(iso: string) { const d = new Date(iso); return Number.isFinite(d.getTime()) ? `${d.getUTCMonth() + 1}/${d.getUTCDate()}/${d.getUTCFullYear()}` : '' }
+
+async function searchWithSerper(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
+  const apiKey = process.env.SERPER_API_KEY
+  if (!apiKey) throw new Error('serper_missing_key')
+  const includeDomains = (opts.includeDomains || []).map(d => String(d || '').trim().toLowerCase()).filter(Boolean)
+  const q = includeDomains.length ? `${query} (${includeDomains.map(d => `site:${d}`).join(' OR ')})` : query
+  const min = opts.startDate ? serperDay(opts.startDate) : '', max = opts.endDate ? serperDay(opts.endDate) : ''
+  const tbs = min || max ? `cdr:1${min ? `,cd_min:${min}` : ''}${max ? `,cd_max:${max}` : ''}` : undefined
+  const res = await fetch('https://google.serper.dev/search', {
+    method: 'POST',
+    headers: {'X-API-KEY': apiKey, 'Content-Type': 'application/json'},
+    body: JSON.stringify({q, gl: 'in', hl: 'en', num: 8, ...(tbs ? {tbs} : {})}),
+    cache: 'no-store',
+    signal: AbortSignal.timeout(Math.max(1000, Math.min(opts.timeoutMs || 12_000, 30_000))),
+  })
+  if (!res.ok) {
+    console.error('Serper search failed:', res.status, (await res.text()).slice(0, 300))
+    throw new Error(`serper_failed:${res.status}`)
+  }
+  const data = await res.json()
+  const out: WebSearchResult[] = []
+  const box = data?.answerBox
+  if (box?.link && (box.answer || box.snippet)) out.push({title: cleanText(box.title || ''), snippet: cleanText([box.answer, box.snippet].filter(Boolean).join(' — ')), url: String(box.link), ...(serperDate(box.date) ? {publishedDate: serperDate(box.date)} : {})})
+  for (const r of data?.organic || []) {
+    if (!r?.link || out.some(o => o.url === r.link)) continue
+    const publishedDate = serperDate(r.date)
+    out.push({title: cleanText(r.title || ''), snippet: cleanText(r.snippet || ''), url: String(r.link), ...(publishedDate ? {publishedDate} : {})})
+  }
+  const results = includeDomains.length ? out.filter(r => { try { const h = new URL(r.url).hostname.toLowerCase(); return includeDomains.some(d => h === d || h.endsWith('.' + d)) } catch { return false } }) : out
+  const dated = opts.filterByPublishedDate && (opts.startDate || opts.endDate)
+    ? results.filter(r => r.publishedDate && (!opts.startDate || r.publishedDate >= new Date(opts.startDate).toISOString()) && (!opts.endDate || r.publishedDate.slice(0, 10) <= opts.endDate.slice(0, 10)))
+    : results
+  return dated.slice(0, 5)
+}
+
 export async function searchWebResults(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
   const cleanQuery = cleanText(query).slice(0, 500)
   if (!cleanQuery) return []
@@ -132,17 +198,32 @@ export async function searchWebResults(query: string, opts: WebSearchOptions = {
     const reference=await searchReferenceFx(query)
     if(reference!==null)return reference
   }
-  try {
-    return await searchWithTavily(cleanQuery, opts)
-  } catch (err: any) {
-    console.error('searchWebResults failed:', err?.message || err)
-    // 18 Oct live: Tavily hit its plan limit (432) and every web answer — petrol, gold, news — came back
-    // empty. Fall back to Anthropic's web search so live questions still get sources.
-    return await searchWithAnthropic(cleanQuery, opts).catch((fallbackErr: any) => {
-      console.error('WEB_SEARCH_FALLBACK_FAILED:', fallbackErr?.message || fallbackErr)
-      return []
-    })
+  // Order: Tavily → Serper (Google results) → Anthropic web search. A provider that reported
+  // quota/auth exhaustion is skipped for 30 minutes; an empty answer moves on to the next one.
+  if (process.env.TAVILY_API_KEY && !providerQuotaBlocked('tavily')) {
+    try {
+      const results = await searchWithTavily(cleanQuery, opts)
+      if (results.length) return results
+    } catch (err: any) {
+      noteProviderFailure('tavily', err)
+      console.error('searchWebResults failed:', err?.message || err)
+    }
   }
+  if (process.env.SERPER_API_KEY && !providerQuotaBlocked('serper')) {
+    try {
+      const results = await searchWithSerper(cleanQuery, opts)
+      if (results.length) return results
+    } catch (err: any) {
+      noteProviderFailure('serper', err)
+      console.error('SERPER_SEARCH_FAILED:', err?.message || err)
+    }
+  }
+  // 18 Oct live: Tavily hit its plan limit (432) and every web answer — petrol, gold, news — came back
+  // empty. Anthropic's web search is the last resort so live questions still get sources.
+  return await searchWithAnthropic(cleanQuery, opts).catch((fallbackErr: any) => {
+    console.error('WEB_SEARCH_FALLBACK_FAILED:', fallbackErr?.message || fallbackErr)
+    return []
+  })
 }
 
 // Price/shopping queries must return Indian ₹ answers from Indian retailers, not USD from
