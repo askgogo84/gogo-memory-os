@@ -127,6 +127,8 @@ assert.equal(await entry.tryRunContentWorkflow(actor, 'remind Matthew tomorrow a
 // specialist stealing a writing request throws through the strict fixture.
 const common = {'@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>false,tryGetConnectionCapabilities:async()=>null},'next/server': {NextResponse: {json: (body: any, options: any) => ({body, status: options?.status || 200})}},
   '@/lib/agent/open-loops':{handleInboxReplyRead},
+  // Inert pending-question resolver: a content request is never a short detail answer.
+  '@/lib/bot/pending-question-resolver':{tryResolvePendingQuestion:async()=>null},
   // The real run-cancel handler: a writing request is not a cancel, so it returns null without any read.
   '@/lib/agent/run-cancel':{tryCancelRunFromChat},
   // Inert gold-rate watch: a writing request is never a gold alert, so it must return null with no I/O.

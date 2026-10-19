@@ -261,6 +261,7 @@ const webInbox=loadFixture('app/api/dashboard/chat/route.ts',name=>
   name==='@/lib/supabase-admin'?{supabaseAdmin:{from:(table:string)=>table==='conversations'?{insert:async()=>({error:null})}:fixtureDb.from(table)}}:
   name==='@/lib/dashboard/session'?{getSession:async()=>({telegramId:'42'})}:
   name==='@/lib/agent/actor'?{resolveAgentActor:async()=>actor}:
+  name==='@/lib/bot/pending-question-resolver'?{tryResolvePendingQuestion:async()=>null}:
   name==='next/server'?{NextResponse:{json:(data:any)=>data}}:{}
 )
 const webFresh=await webInbox.POST({headers:{get:()=> 'https://app.example.test'},nextUrl:{host:'app.example.test'},json:async()=>({text:exactInboxPrompt})})

@@ -59,6 +59,7 @@ import { parseRunCancel } from '@/lib/agent/run-cancel'
 import { approvalIntent, tryAnswerOpenFlightQuestion, tryRunWhatsAppAccountSite, tryRunWhatsAppAgent, tryRunWhatsAppAttentionCommand, tryRunWhatsAppJevSpecialist, tryRunWhatsAppReservationGuestReply, tryRunWhatsAppTaskStatus } from '@/lib/agent/whatsapp-bridge'
 import { parseTaskStatusQuery } from '@/lib/agent/task-status'
 import { resolveAgentActor } from '@/lib/agent/actor'
+import { tryResolvePendingQuestion } from '@/lib/bot/pending-question-resolver'
 import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, parseLooseAccountProfile, tryRunExternalAccountFlow } from '@/lib/agent/external-account'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
@@ -1166,6 +1167,27 @@ _"${originalText}"_
       await saveConversation(resolvedUser.telegramId, 'assistant', reservationGuestReply.text)
       await sendWhatsAppMessage(from, reservationGuestReply.text)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    // A short reply to the question Gogo just asked ("This Saturday 8pm" after "What time should I
+    // book Toit for?") resumes THAT request before reservation, Jev clarification or feature
+    // routing can read it as something new (19 Oct live: it became a reminder titled "This").
+    // Approvals are resolved above and never here; two open questions get "which one?".
+    if (resolvedUser.id && resolvedUser.whatsappId) {
+      const pendingAnswer = await tryResolvePendingQuestion({
+        user: resolvedUser,
+        text,
+        surface: 'whatsapp',
+        actor: { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, whatsappId: String(resolvedUser.whatsappId), name: resolvedUser.name || 'Gogo' },
+        messageId: inboundMessageSid || null,
+      })
+      if (pendingAnswer) {
+        await recordShadowRouterOutcome({ telegramId: resolvedUser.telegramId, surface: 'whatsapp', eventId: inboundMessageSid, actualHandler: pendingAnswer.handledBy, actualCapability: pendingAnswer.capability || 'browser', status: pendingAnswer.status || null, runId: pendingAnswer.runId || null }).catch(() => {})
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', pendingAnswer.text)
+        await sendWhatsAppMessage(from, pendingAnswer.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
     }
 
     // Capabilities AskGogo does not have yet get one honest answer and an alternative, before any

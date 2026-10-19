@@ -94,3 +94,43 @@ export function isStrictlyFreshFollowupState(state: any, maxMinutes = 10): boole
   if (!Number.isFinite(createdAt)) return false
   return Date.now() - createdAt <= maxMinutes * 60 * 1000
 }
+
+// Every row of one follow-up kind for this user, newest first, with the memories row id so a
+// caller can close exactly one. Owner-bound by telegram_id. A read failure returns [] (callers
+// treat "cannot read" as "nothing pending", which fails closed for binding answers).
+export async function listFollowupStates(
+  telegramId: number,
+  kind: string,
+  limit = 50
+): Promise<Array<{ rowId: string | number | null; state: any }>> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('memories')
+      .select('id, content, created_at')
+      .eq('telegram_id', telegramId)
+      .order('created_at', { ascending: false })
+      .limit(limit)
+    if (error) return []
+    const out: Array<{ rowId: string | number | null; state: any }> = []
+    for (const row of data || []) {
+      let parsed: any = null
+      try { parsed = JSON.parse((row as any).content) } catch { parsed = null }
+      if (parsed?.type === 'followup_state' && parsed?.kind === kind) out.push({ rowId: (row as any).id ?? null, state: parsed })
+    }
+    return out
+  } catch (err: any) {
+    console.error('FOLLOWUP_STATE_LIST_FAILED:', err?.message || err)
+    return []
+  }
+}
+
+// Delete specific follow-up rows, scoped to the owner so a row id from another user is a no-op.
+export async function deleteFollowupRows(telegramId: number, rowIds: Array<string | number>): Promise<void> {
+  const ids = rowIds.filter((id) => id !== null && id !== undefined)
+  if (!ids.length) return
+  try {
+    await supabaseAdmin.from('memories').delete().eq('telegram_id', telegramId).in('id', ids)
+  } catch (err: any) {
+    console.error('FOLLOWUP_STATE_DELETE_FAILED:', err?.message || err)
+  }
+}

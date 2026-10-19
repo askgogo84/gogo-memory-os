@@ -8,6 +8,7 @@ import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildContextPack, type ContextPack } from './context-brain'
+import { openPendingQuestion, type PendingDetail } from '@/lib/bot/pending-questions'
 import {buildReservationDiningContext, usableReservationDiningContext, reservationRequestedDateCoverage, type ReservationDiningContext} from './reservation-dining-context'
 import { indianMobileFromWhatsApp } from './provider-booking'
 
@@ -574,6 +575,35 @@ function reservationResearchHash(actor:AgentActor,text:string){
     .slice(0,40)
 }
 
+// PR 1 of the understand-first router: every clarification records the question it asked, so the
+// next short reply ("This Saturday 8pm") resumes THIS reservation instead of being claimed by a
+// keyword rule (19 Oct live: it became a reminder titled "This"). expects[0] is the detail asked.
+async function askReservationDetail(actor:AgentActor,text:string,intent:RestaurantReservationIntent,asked:PendingDetail,reply:string){
+  const missing:PendingDetail[]=[asked]
+  if(!intent.restaurant)missing.push('restaurant')
+  if(!intent.partySize)missing.push('party')
+  if(!intent.requestedDate)missing.push('date')
+  if(!intent.preferredStart||intent.timeClarificationNeeded)missing.push('time')
+  const what=asked==='time'?'time':asked==='party'?'party size':asked==='restaurant'?'restaurant':'date'
+  await openPendingQuestion({
+    telegramId:actor.legacyTelegramId,
+    kind:'reservation_slot',
+    capability:'restaurant_reservation',
+    expects:[...new Set(missing)],
+    context:{originalText:safe(text,1800),restaurant:intent.restaurant||null,label:`Table${intent.restaurant?` at ${intent.restaurant}`:''} (${what})`},
+    ttlMin:30,
+    llmResolvable:true,
+    // A free-text name can answer only a restaurant question.
+    exactOnly:asked!=='restaurant',
+  })
+  return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:reply}
+}
+
+function reservationTimeQuestion(intent:RestaurantReservationIntent,verb:'queued'|'prepared'){
+  const place=intent.restaurant?` ${intent.restaurant}`:''
+  return `What time should I book${place} for? (e.g. 8 pm) Please give one time with am/pm, or one time window. Nothing was ${verb} or booked.`
+}
+
 export async function queueRestaurantReservationResearch(params:{
   actor:AgentActor
   text:string
@@ -581,13 +611,13 @@ export async function queueRestaurantReservationResearch(params:{
 }){
   const intent=parseRestaurantReservationIntent(params.text)
   if(!intent)return null
-  if(intent.timeClarificationNeeded)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Please specify one clear dining start time with AM/PM or a 24-hour clock, or one consistent time window. Nothing was queued or booked.'}
+  if(intent.timeClarificationNeeded)return askReservationDetail(params.actor,params.text,intent,'time',reservationTimeQuestion(intent,'queued'))
   if(params.text.length>1800)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Please shorten the reservation request to the restaurant, party, dining date and exact time or time window. I cannot queue a shortened copy that might lose a restriction.'}
   if(!intent.restaurant){
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Which restaurant should I reserve? Give me the restaurant name (and location if there are multiple branches).'}
+    return askReservationDetail(params.actor,params.text,intent,'restaurant','Which restaurant should I reserve? Give me the restaurant name (and location if there are multiple branches).')
   }
   if(!intent.partySize){
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`How many people should I book at ${intent.restaurant} for?`}
+    return askReservationDetail(params.actor,params.text,intent,'party',`How many people should I book at ${intent.restaurant} for?`)
   }
 
   const tg=String(params.actor.legacyTelegramId)
@@ -787,13 +817,13 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const intent=parseRestaurantReservationIntent(params.text)
   // A short name/time reply to a pending live-slot question continues that step (dashboard and agent API surfaces).
   if(!intent)return looksLikeReservationGuestReply(params.text)?await continueRestaurantReservationGuestReply(params):null
-  if(intent.timeClarificationNeeded)return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Please specify one clear dining start time with AM/PM or a 24-hour clock, or one consistent time window. Nothing was prepared or booked.'}
+  if(intent.timeClarificationNeeded)return askReservationDetail(params.actor,params.text,intent,'time',reservationTimeQuestion(intent,'prepared'))
   const timeConstraint=reservationTimeConstraint(intent)
   if(!intent.restaurant){
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:'Which restaurant should I reserve? Give me the restaurant name (and location if there are multiple branches).'}
+    return askReservationDetail(params.actor,params.text,intent,'restaurant','Which restaurant should I reserve? Give me the restaurant name (and location if there are multiple branches).')
   }
   if(!intent.partySize){
-    return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`How many people should I book at ${intent.restaurant} for?`}
+    return askReservationDetail(params.actor,params.text,intent,'party',`How many people should I book at ${intent.restaurant} for?`)
   }
   const provider=await discoverProvider(intent)
   if(!provider){

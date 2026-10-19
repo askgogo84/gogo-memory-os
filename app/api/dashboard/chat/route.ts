@@ -31,6 +31,7 @@ import { tryAccountSiteAnswer } from '@/lib/agent/account-site-gate'
 import { otpReply } from '@/lib/agent/provider-booking'
 import { isStandaloneWorkspaceMeetingPrep, tryPrepareWorkspaceMeetingPlan } from '@/lib/agent/workspace-meeting-plan'
 import { resolveAgentActor } from '@/lib/agent/actor'
+import { tryResolvePendingQuestion } from '@/lib/bot/pending-question-resolver'
 import { tryFlightBooking } from '@/lib/agent/flight-booking'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
 import { isGroundedReminderCommand, jevClarificationReply } from '@/lib/agent/jev-router'
@@ -136,6 +137,13 @@ export async function POST(req: NextRequest) {
         await saveConversation(user.telegram_id,'[authentication code withheld]',reply)
         return NextResponse.json({text:reply,handledBy:'human-auth-required'})
       }
+    }
+    // A short reply to the question Gogo just asked ("This Saturday 8pm" after "What time should I
+    // book Toit for?") resumes that request before any feature matcher reads it as something new.
+    const pendingAnswer = await tryResolvePendingQuestion({user:{telegramId:Number(user.telegram_id)},text,surface:'web',actor})
+    if(pendingAnswer){
+      await saveConversation(user.telegram_id,text,pendingAnswer.text)
+      return NextResponse.json(pendingAnswer)
     }
     const inboxReplyRead = await handleInboxReplyRead({actor,text})
     if(inboxReplyRead){

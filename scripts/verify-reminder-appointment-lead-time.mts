@@ -73,6 +73,8 @@ const actual: Record<string, any> = {
   './handlers/response-style': responseStyle,
   './format-response': formatResponse,
   './pending-followup': pendingFollowup,
+  // Inert: no pending question is open in this fixture.
+  './pending-question-resolver': { tryResolvePendingQuestion: async () => null },
   './handlers/reminder-ampm-followup': amPmFollowup,
   './handlers/followup-state': {
     getLatestFollowupState: async (_owner:number, kind:string) => followup?.kind===kind ? {...followup,created_at:new Date(now).toISOString()} : null,

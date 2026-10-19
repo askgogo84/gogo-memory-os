@@ -98,6 +98,7 @@ export function looksLikeNewCommand(text: string): boolean {
   if (!l) return true
   if (NEW_COMMAND_VERB.test(l)) return true
   const di = detectIntent(text)
-  if (di.confidence === 'high' && di.type !== 'set_reminder') return true
+  // A bare day/time ('bare_time') is exactly the answer a pending question waits for.
+  if (di.confidence === 'high' && di.type !== 'set_reminder' && di.type !== 'bare_time') return true
   return false
 }
