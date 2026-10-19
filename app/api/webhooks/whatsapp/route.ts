@@ -426,7 +426,7 @@ async function handleWhatsAppPost(req: NextRequest) {
         const newRemindAt = new Date(Date.now() + 10 * 60 * 1000)
         const { error } = await supabaseAdmin.from('reminders').update({ remind_at: newRemindAt.toISOString(), sent: false }).eq('id', target.id)
         if (error) console.error('REMINDER_BTN_SNOOZE_UPDATE_FAILED:', target.id, error.message)
-        reply = `⏰ Snoozed! I'll remind you about *${target.message}* again *in 10 minutes*.`
+        reply = `⏰ Snoozed for *10 minutes*:\n${target.message}`
       } else {
         // move_8pm → today 20:00 IST. IST is UTC+5:30 with no DST, so 20:00 IST is
         // 14:30 UTC on the current IST calendar day.
@@ -435,7 +435,7 @@ async function handleWhatsAppPost(req: NextRequest) {
         if (moveTarget.getTime() <= Date.now()) moveTarget.setUTCDate(moveTarget.getUTCDate() + 1) // past 8pm IST → tomorrow 8pm
         const { error } = await supabaseAdmin.from('reminders').update({ remind_at: moveTarget.toISOString(), sent: false }).eq('id', target.id)
         if (error) console.error('REMINDER_BTN_MOVE_UPDATE_FAILED:', target.id, error.message)
-        reply = `⏰ Moved! I'll remind you about *${target.message}* today at *8:00 PM*.`
+        reply = `⏰ Moved to *8:00 PM*${moveTarget.getUTCDate() === istNow.getUTCDate() ? ' today' : ' tomorrow'}:\n${target.message}`
       }
 
       await saveConversation(resolvedUser.telegramId, 'user', `[button:${buttonPayload}]`)

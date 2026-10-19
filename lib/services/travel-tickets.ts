@@ -138,7 +138,7 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
       pnr: t.pnr, seat: t.seat || null,
       passengers: t.passengers || null,
       raw: t,
-      reminderMsg: `🚆 ${t.from} → ${t.to} starts in 3 hours at ${t.departure}!`,
+      reminderMsg: trainReminderText(t),
       checkinMsg: null,
     })
   } else if (info.type === 'event') {
@@ -158,13 +158,48 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
       pnr: null, seat: null,
       passengers: null,
       raw: e,
-      reminderMsg: `🎟️ ${e.name} starts in 3 hours at ${e.time}!`,
+      reminderMsg: eventReminderText(e),
       checkinMsg: null,
     })
   }
 
   legs.forEach(refreshFlightReminderText)
   return legs
+}
+
+
+/** "21:45" -> "9:45 PM"; anything else unchanged. */
+function clock12(hhmm: string): string {
+  const m = String(hhmm || '').trim().match(/^(\d{1,2})[:.](\d{2})$/)
+  if (!m) return String(hhmm || '')
+  const h = Number(m[1]); if (h > 23) return String(hhmm)
+  return `${h % 12 === 0 ? 12 : h % 12}:${m[2]} ${h >= 12 ? 'PM' : 'AM'}`
+}
+function minusMinutes(hhmm: string, minutes: number): string | null {
+  const m = String(hhmm || '').trim().match(/^(\d{1,2})[:.](\d{2})$/)
+  if (!m) return null
+  const total = (Number(m[1]) * 60 + Number(m[2]) - minutes + 1440) % 1440
+  return clock12(`${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`)
+}
+// 19 Oct, vs Wajo: its movie reminder carried venue, screen, seats, booking ID and a leave-by time; ours said
+// "Jailer 2 starts in 3 hours at 21:45!", which also read wrong once the reminder was moved or snoozed.
+// The text now holds the facts only, with no relative time, so it stays true whenever it fires.
+export function eventReminderText(e: { name: string; time: string; venue?: string | null; screen?: string | null; seats?: string | null; bookingId?: string | null }): string {
+  const parts = [`🎟️ ${e.name} at ${clock12(e.time)}${e.venue ? ` at ${e.venue}` : ''}`]
+  if (e.screen) parts.push(e.screen)
+  if (e.seats) parts.push(`seats ${e.seats}`)
+  if (e.bookingId) parts.push(`booking ${e.bookingId}`)
+  const leave = minusMinutes(e.time, 45)
+  return `${parts.join(', ')}.${leave ? ` Aim to leave by ${leave}.` : ''}`
+}
+/** Pre-19-Oct texts of the same reminders, so re-forwarding an old ticket updates its reminder instead of adding a second one. */
+export function legacyReminderTexts(leg: { type: string; eventName?: string | null; departLocal?: string | null; fromCity?: string | null; toCity?: string | null }): string[] {
+  if (leg.type === 'event' && leg.eventName) return [`🎟️ ${leg.eventName} starts in 3 hours at ${leg.departLocal}!`]
+  if (leg.type === 'train') return [`🚆 ${leg.fromCity} → ${leg.toCity} starts in 3 hours at ${leg.departLocal}!`]
+  return []
+}
+export function trainReminderText(t: { from: string; to: string; departure: string; trainNo?: string | null; pnr?: string | null; seat?: string | null }): string {
+  return `🚆 ${t.from} → ${t.to}${t.trainNo ? ` (train ${t.trainNo})` : ''} departs at ${clock12(t.departure)}${t.seat ? `, seat ${t.seat}` : ''}${t.pnr ? `, PNR ${t.pnr}` : ''}.`
 }
 
 // Reconcile printed flight identity independently of timing verification;
@@ -363,7 +398,7 @@ async function retireUnverifiedTicketAlerts(ctx:TicketContext,leg:Leg,previousDe
   if(!decisions.length)return
   const {data,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,sent').eq('telegram_id',ctx.telegramId).eq('sent',false).in('remind_at',[...new Set(decisions.map(d=>d.remindAt.toISOString()))]).limit(1000)
   if(error)throw new Error('travel_unverified_alert_cleanup_failed')
-  const ids=(data||[]).filter((row:any)=>decisions.some(d=>d.remindAt.toISOString()===row.remind_at&&[d.message,...(leg.previousReminderMessages||[])].some(message=>ticketAlertIdentity(message)===ticketAlertIdentity(String(row.message||''))))).map((row:any)=>row.id)
+  const ids=(data||[]).filter((row:any)=>decisions.some(d=>d.remindAt.toISOString()===row.remind_at&&[d.message,...(leg.previousReminderMessages||[]),...legacyReminderTexts(leg)].some(message=>ticketAlertIdentity(message)===ticketAlertIdentity(String(row.message||''))))).map((row:any)=>row.id)
   if(ids.length){
     const {error}=await supabaseAdmin.from('reminders').delete().eq('telegram_id',ctx.telegramId).eq('sent',false).in('id',ids)
     if(error)throw new Error('travel_unverified_alert_cleanup_failed')
@@ -540,7 +575,7 @@ export async function persistAndRemindTicket(
         continue
       }
       const priorDecisionDates=(leg.previousReminderDecisions||[]).filter(prior=>prior.kind===decision.kind).map(prior=>prior.remindAt)
-      const res = await createReminderIfAbsent({...ctx,timezone:leg.departTz||ctx.timezone}, decision.message, decision.remindAt, [...(leg.departAt?[previousDeparture,leg.type==='flight'?ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'Asia/Kolkata'):null].filter((date):date is Date=>!!date).map(date=>new Date(date.getTime()+decision.remindAt.getTime()-leg.departAt!.getTime())):[]),...priorDecisionDates],leg.previousReminderMessages)
+      const res = await createReminderIfAbsent({...ctx,timezone:leg.departTz||ctx.timezone}, decision.message, decision.remindAt, [...(leg.departAt?[previousDeparture,leg.type==='flight'?ticketInstant(leg.dateLabel||undefined,leg.departLocal||undefined,'Asia/Kolkata'):null].filter((date):date is Date=>!!date).map(date=>new Date(date.getTime()+decision.remindAt.getTime()-leg.departAt!.getTime())):[]),...priorDecisionDates],[...(leg.previousReminderMessages||[]),...legacyReminderTexts(leg)])
       if (res === 'inserted') remindersSet++
       else if (res === 'failed') remindersFailed++
       else if (res === 'already_sent') remindersAlreadySent++
