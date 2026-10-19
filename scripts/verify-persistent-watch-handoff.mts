@@ -195,7 +195,7 @@ const route=fs.readFileSync('app/api/webhooks/whatsapp/route.ts','utf8')
 const goldRateRule=await import('../lib/agent/gold-rate-rule')
 const predicate=route.match(/const isDeterministicWatcherCommand =([\s\S]*?)\n    if\(isDeterministicWatcherCommand\)/)?.[1]
 assert.ok(predicate,'webhook watch first-refusal predicate exists')
-const routesToWatch=(text:string)=>vm.runInNewContext(predicate!,{text,parseWebWatchCommand:commandExports.parseWebWatchCommand,isWatcherStatusQuery:commandExports.isWatcherStatusQuery,isGoldRateAlertPhrasing:goldRateRule.isGoldRateAlertPhrasing})
+const routesToWatch=(text:string)=>vm.runInNewContext(predicate!,{text,parseWebWatchCommand:commandExports.parseWebWatchCommand,isWatcherStatusQuery:commandExports.isWatcherStatusQuery,isGoldRateAlertPhrasing:goldRateRule.isGoldRateAlertPhrasing,isGoldWatchEditCommand:goldRateRule.isGoldWatchEditCommand})
 assert.equal(routesToWatch('Keep searching for Christopher Ward C63 Sealander in India'),true)
 assert.equal(routesToWatch('Please keep looking for Sony WH-1000XM5 below 22000'),true)
 assert.equal(routesToWatch('Show my watches'),true)

@@ -7,11 +7,14 @@ import type { AgentSurface } from './orchestrator'
 import { createWebSearchWatcher, normalizeWebSearchWatcher } from './watchers'
 import { initialWatcherCadence, watcherUpgradeMessage } from './watch-cost-policy'
 import {
+  GOLD_STATED_BASELINE,
   formatPerGram,
+  goldChangeLabel,
   goldRateSearchQuery,
   goldRuleSummary,
   goldThreshold,
   isGoldRateAlertPhrasing,
+  isGoldWatchEditCommand,
   normalizeGoldRule,
   parseGoldRateWatchCommand,
   selectVerifiedGoldValue,
@@ -47,6 +50,13 @@ async function browserWatchAllowed(telegramId: number) {
   return String(data?.level || 'draft') !== 'off'
 }
 
+// An absolute level this far from the verified rate is almost certainly a misread (a year, a per-10 g
+// price, a change amount), so it is confirmed with the person before any watch is created.
+export const GOLD_LEVEL_MIN_RATIO = 0.5
+export const GOLD_LEVEL_MAX_RATIO = 2
+// No verified rate: a gold per-gram level under this is implausible (24K/22K trade far above it).
+export const GOLD_MIN_PLAUSIBLE_PER_GRAM = 1_000
+
 function sameRule(a: GoldRule, b: GoldRule) {
   return a.karat === b.karat && a.direction === b.direction && a.mode === b.mode && a.value === b.value &&
     String(a.place || '').toLowerCase() === String(b.place || '').toLowerCase()
@@ -62,6 +72,13 @@ export async function tryCreateGoldRateWatchFromCommand(params: {
   text: string
   now?: number
 }): Promise<GoldWatchResult | null> {
+  // "change my gold watch: alert me if it drops 5%" is an edit, never a second watch. A gold watch's
+  // rule cannot be edited in place yet, so nothing is changed or created and the person is told how.
+  if (isGoldWatchEditCommand(params.text)) {
+    return paused('gold-watch-edit-unsupported',
+      'I can\'t change a gold watch\'s rule in place yet, so I haven\'t changed anything or added a new watch. ' +
+      'Say "stop the gold watch" first, then send the new rule, for example "alert me if 24K gold drops by 5%".')
+  }
   const parsed = parseGoldRateWatchCommand(params.text)
   if (!parsed) {
     if (!isGoldRateAlertPhrasing(params.text)) return null
@@ -73,6 +90,11 @@ export async function tryCreateGoldRateWatchFromCommand(params: {
     return paused('gold-watch-silver-unsupported',
       "I can't yet verify a single per-gram silver rate from sources reliably, so I haven't set a silver watch. " +
       'I can set the same kind of watch on the gold rate, for example "alert me if 24K gold drops by 5%".')
+  }
+  if (parsed.yearLike) {
+    return paused('gold-watch-confirm-level',
+      `${parsed.value} looks like a year, not a gold price, so I haven't set a watch. I can't measure against a past year's level. ` +
+      `Tell me a price or a change, for example "tell me when 24K gold goes below ₹12,000 per gram" or "alert me if gold drops by 5%".`)
   }
 
   const tg = String(params.actor.legacyTelegramId)
@@ -109,37 +131,76 @@ export async function tryCreateGoldRateWatchFromCommand(params: {
   let baselineSource: string | null = null
   let baselineDate: string | null = null
   let thresholdPerGram: number
+  let ruleValue = parsed.value
   let unitNote = ''
   if (verified.ok) {
     baselinePerGram = verified.perGram
     baselineSource = verified.source
     baselineDate = verified.date
   }
-  if (parsed.mode === 'percent') {
-    if (!verified.ok) {
+  const round2 = (n: number) => Math.round(n * 100) / 100
+  // A price with no unit: per 10 g when it is several times the per-gram rate (₹1.3 lakh), else per gram.
+  const perGramOf = (value: number, grams: number | null): { perGram: number; note: string } => {
+    if (grams !== null) return { perGram: round2(value / grams), note: '' }
+    const looksPer10g = verified.ok ? value >= verified.perGram * 4.5 : value >= 50_000
+    return looksPer10g
+      ? { perGram: round2(value / 10), note: ` I read ${formatPerGram(value)} as the price per 10 g.` }
+      : { perGram: round2(value), note: ` I read ${formatPerGram(value)} as the price per gram.` }
+  }
+  const confirmLevel = (level: number, what: string) => paused('gold-watch-confirm-level',
+    `${what} works out to ${formatPerGram(level)}/g, which is far from ${verified.ok ? `today's verified ${karat}K rate of ${formatPerGram(verified.perGram)}/g` : `any real ${karat}K gold rate`}, ` +
+    `so I haven't set a watch. Please confirm the level per gram or per 10 g, for example "tell me when ${karat}K gold goes ` +
+    `${parsed.direction === 'down' ? 'below' : 'above'} ₹12,000 per gram", or a change such as "alert me if gold drops by ₹500 per gram".`)
+  const implausible = (perGram: number) => verified.ok
+    ? perGram < verified.perGram * GOLD_LEVEL_MIN_RATIO || perGram > verified.perGram * GOLD_LEVEL_MAX_RATIO
+    : perGram < GOLD_MIN_PLAUSIBLE_PER_GRAM
+
+  // "drops by 10% from 1,30,000": the person's stated starting price is the baseline, said so.
+  if (parsed.baseValue !== undefined && parsed.mode !== 'absolute') {
+    const base = perGramOf(parsed.baseValue, parsed.baseUnitGrams ?? null)
+    if (implausible(base.perGram)) return confirmLevel(base.perGram, `The starting price ${formatPerGram(parsed.baseValue)}`)
+    baselinePerGram = base.perGram
+    baselineSource = GOLD_STATED_BASELINE
+    baselineDate = null
+    const read = base.perGram === parsed.baseValue ? '' : ` (read as per ${parsed.baseUnitGrams ? `${parsed.baseUnitGrams} g` : '10 g'}, ${formatPerGram(base.perGram)}/g)`
+    unitNote += ` I'm measuring from the ${formatPerGram(parsed.baseValue)} you gave${read}, not today's rate.`
+  }
+
+  if (parsed.mode === 'percent' || parsed.mode === 'change') {
+    if (baselinePerGram === null) {
       const why = !context.trim() ? 'I could not reach a rate source just now' : (verified as UnverifiedGoldValue).detail
+      const amount = parsed.mode === 'percent' ? `${parsed.value}%` : formatPerGram(parsed.value)
       return paused('gold-watch-baseline-unverified',
-        `I couldn't verify a current ${karat}K per-gram rate${place ? ` for ${place}` : ''} to measure ${parsed.value}% from (${why}), ` +
+        `I couldn't verify a current ${karat}K per-gram rate${place ? ` for ${place}` : ''} to measure ${amount} from (${why}), ` +
         `so I haven't set the watch. I won't guess a starting price. If you tell me an exact level instead, for example ` +
         `"tell me when ${karat}K gold goes ${parsed.direction === 'down' ? 'below' : 'above'} ₹12,000 per gram", I'll watch for that.`)
     }
-    thresholdPerGram = goldThreshold(verified.perGram, parsed.direction, parsed.value)
-  } else {
-    let grams = parsed.unitGrams
-    if (grams === null) {
-      // No unit stated. A per-gram gold rate is never several times the verified rate; Indian rates
-      // are also quoted per 10 g, so an amount like ₹1.3 lakh is read as per 10 g, and said so.
-      const looksPer10g = verified.ok ? parsed.value >= verified.perGram * 4.5 : parsed.value >= 50_000
-      grams = looksPer10g ? 10 : 1
-      unitNote = looksPer10g
-        ? ` I read ${formatPerGram(parsed.value)} as the price per 10 g.`
-        : ` I read ${formatPerGram(parsed.value)} as the price per gram.`
+    if (parsed.mode === 'percent') {
+      thresholdPerGram = goldThreshold(baselinePerGram, parsed.direction, parsed.value)
+    } else {
+      // A change amount with no unit: per gram while it is a plausible daily-to-monthly move (≤ 20% of the
+      // rate); a bigger number is read as per 10 g (Indian rates move "₹1,000 per 10 g"). Said either way.
+      let grams = parsed.unitGrams
+      if (grams === null) {
+        grams = parsed.value > baselinePerGram * 0.2 ? 10 : 1
+        unitNote += ` I read ${formatPerGram(parsed.value)} as a change per ${grams === 10 ? '10 g' : 'gram'}.`
+      }
+      const deltaPerGram = round2(parsed.value / grams)
+      if (deltaPerGram >= baselinePerGram * GOLD_LEVEL_MIN_RATIO) {
+        return confirmLevel(round2(parsed.direction === 'down' ? baselinePerGram - deltaPerGram : baselinePerGram + deltaPerGram), `A change of ${formatPerGram(parsed.value)}`)
+      }
+      ruleValue = deltaPerGram
+      thresholdPerGram = round2(parsed.direction === 'down' ? baselinePerGram - deltaPerGram : baselinePerGram + deltaPerGram)
     }
-    thresholdPerGram = Math.round(parsed.value / grams * 100) / 100
+  } else {
+    const level = perGramOf(parsed.value, parsed.unitGrams)
+    if (implausible(level.perGram)) return confirmLevel(level.perGram, formatPerGram(parsed.value) + (parsed.unitGrams ? ` per ${parsed.unitGrams === 1 ? 'gram' : `${parsed.unitGrams} g`}` : ''))
+    unitNote = level.note
+    thresholdPerGram = level.perGram
   }
 
   const goldRule = normalizeGoldRule({
-    metal: 'gold', karat, direction: parsed.direction, mode: parsed.mode, value: parsed.value,
+    metal: 'gold', karat, direction: parsed.direction, mode: parsed.mode, value: ruleValue,
     baselinePerGram, thresholdPerGram, place, baselineSource, baselineDate,
   })
   if (!goldRule) {
@@ -214,10 +275,12 @@ export async function tryCreateGoldRateWatchFromCommand(params: {
   })
 
   const verb = saved.direction === 'down' ? 'falls below' : 'rises above'
-  const change = saved.mode === 'percent' ? ` (${saved.value}% ${saved.direction === 'down' ? 'drop' : 'rise'})` : ''
-  const baselineText = saved.baselinePerGram !== null
-    ? `baseline ${formatPerGram(saved.baselinePerGram)}/g (${sourceHost(saved.baselineSource || '')}, ${saved.baselineDate})`
-    : `no verified current baseline yet`
+  const change = saved.mode !== 'absolute' ? ` (${goldChangeLabel(saved)})` : ''
+  const baselineText = saved.baselinePerGram === null
+    ? `no verified current baseline yet`
+    : saved.baselineSource === GOLD_STATED_BASELINE
+      ? `baseline ${formatPerGram(saved.baselinePerGram)}/g (the price you gave)`
+      : `baseline ${formatPerGram(saved.baselinePerGram)}/g (${sourceHost(saved.baselineSource || '')}, ${saved.baselineDate})`
   const placeCaveat = verified.ok && !verified.locationKnown && place ? ` The source does not confirm the rate is specific to ${place}.` : ''
   const already = verified.ok && (saved.direction === 'down' ? verified.perGram < saved.thresholdPerGram : verified.perGram > saved.thresholdPerGram)
     ? ` The current verified rate is already past that level, so my first check will alert you.` : ''

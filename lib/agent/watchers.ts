@@ -1327,6 +1327,12 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
   return { triggered:material, failed:false }
 }
 
+/** Ledger key for one gold alert episode: watch id + rule identity + episode number. */
+export function goldAlertDeliveryKey(watcherId:string, rule:GoldRule, episode:number) {
+  const identity = [watcherId, rule.metal, rule.karat, rule.direction, rule.thresholdPerGram, episode]
+  return 'watch/' + watcherId + '/gold/' + createHash('sha256').update(JSON.stringify(identity)).digest('hex')
+}
+
 // One check of a gold-rate watch. The decision is numeric, made by code on the same source-bound
 // per-gram extraction the chat quote uses: a single verified value for the karat (dated today,
 // sources within 1%) strictly past the threshold alerts once; ambiguous or unverified evidence
@@ -1342,9 +1348,16 @@ async function processGoldRateCheck(watcher:any, condition:WebSearchWatcherCondi
   const prior = goldStateFrom(watcher.last_state_json)
   const decision = decideGoldAlert(prior, verdict)
 
+  // Alert episode: how many alerts this watch has already delivered. It only advances after a send is
+  // accepted, so a retry after an outcome_unknown delivery reuses the same key and the ledger dedupes it.
+  const priorAlertTimes = Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : []
+  const storedEpisode = Number(watcher.last_state_json?.goldAlertCount)
+  const goldEpisode = Number.isInteger(storedEpisode) && storedEpisode >= 0 ? storedEpisode : priorAlertTimes.length
   let sent = false
   if (decision.notify) {
-    const key = 'watch/' + watcher.id + '/gold/' + createHash('sha256').update(JSON.stringify([watcher.condition_json, verdict.observed, verdict.date, prior.lastAlertPerGram])).digest('hex')
+    // Stable identity only: never the condition_json (each poll rewrites cadenceMinutes) nor the observed
+    // value (it moves between retries), either of which would mint a new key and double-send.
+    const key = goldAlertDeliveryKey(String(watcher.id), rule, goldEpisode)
     const message = goldAlertText({ rule, verdict, at:now })
     if (condition.delivery !== 'app') {
       const delivery = await deliverWatchAlert({ watcherId:String(watcher.id), owner:telegramId, key, due:now.toISOString(), message, condition:watcher.condition_json })
@@ -1382,6 +1395,7 @@ async function processGoldRateCheck(watcher:any, condition:WebSearchWatcherCondi
     last_state_json:{
       ...(watcher.last_state_json || {}),
       goldArmed:nextState.armed,
+      goldAlertCount:material ? goldEpisode + 1 : goldEpisode,
       lastAlertPerGram:nextState.lastAlertPerGram,
       lastObservedPerGram:verdict.observed ?? watcher.last_state_json?.lastObservedPerGram ?? null,
       lastGoldReason:reason,

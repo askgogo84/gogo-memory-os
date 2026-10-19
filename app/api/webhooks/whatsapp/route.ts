@@ -18,7 +18,7 @@ import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
 import { isConnectionCapabilityQuery } from '@/lib/agent/autonomy-status'
 import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
-import { isGoldRateAlertPhrasing } from '@/lib/agent/gold-rate-rule'
+import { isGoldRateAlertPhrasing, isGoldWatchEditCommand } from '@/lib/agent/gold-rate-rule'
 import { auditInboundTwilioSignature } from '@/lib/security/webhook-signature'
 import { runWithQaTrace } from '@/lib/qa-trace'
 import { sendWhatsAppMessage, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
@@ -1174,6 +1174,7 @@ _"${originalText}"_
       /^(?:please\s+)?(?:update|change|correct)\s+.+?\s+(?:watch|monitor)\s+to\b/i.test(text.trim()) ||
       Boolean(parseWebWatchCommand(text)) ||
       isGoldRateAlertPhrasing(text) ||
+      isGoldWatchEditCommand(text) ||
       /^(?:watch|monitor|track)\b/i.test(text.trim()) ||
       /^(?:show|list)\s+(?:my\s+)?(?:active\s+)?(?:watchers?|watches|monitors?)\b/i.test(text.trim()) ||
       /^(?:stop|cancel|remove|disable)\b.*\b(?:watcher|watch|monitor)\b/i.test(text.trim())
