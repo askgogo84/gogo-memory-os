@@ -42,6 +42,7 @@ import { setBriefingTime } from './handlers/briefing-settings'
 import { locationQuery } from '@/lib/dashboard/approx-location'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
+import { isPlainInfoQuestion } from '@/lib/agent/plain-question'
 import { chatSummaryEnabled, readConversationSummary, refreshConversationSummary, summaryContextBlock } from '@/lib/agent/conversation-summary'
 import { parseLookupThenCalendar, calendarFollowupLine, firstFutureDate, alreadyHappened, alreadyHappenedLine } from '@/lib/agent/lookup-then-calendar'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
@@ -598,7 +599,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // keyword reading already found one; understand-first only replaces a non-lookup reading with web search.
   const LIVE_LOOKUP=new Set(['weather_live','gold_live','sports_standings','sports_schedule','web_search'])
   const understood=params.understoodIntent==='general_chat'?'general_chat':params.understoodIntent==='web_search'&&!LIVE_LOOKUP.has(detectedIntent.type)?'web_search':null
-  const intent = (understood?{type:understood,confidence:'high',meta:{understoodBy:'understand-first',keywordIntent:detectedIntent.type}}:detectedIntent.type==='calendar_read_held'||detectedIntent.type==='calendar_read_clarify'?detectedIntent:gateDetectedIntent(detectedIntent, incomingText, params.semantic)) as ReturnType<typeof detectIntent>
+  const baseIntent = (understood?{type:understood,confidence:'high',meta:{understoodBy:'understand-first',keywordIntent:detectedIntent.type}}:detectedIntent.type==='calendar_read_held'||detectedIntent.type==='calendar_read_clarify'?detectedIntent:gateDetectedIntent(detectedIntent, incomingText, params.semantic)) as ReturnType<typeof detectIntent>
+  // 20 Oct timing: a plain information question went to the chat model first, which only decided to
+  // search (~3s) before the web answer ran. Plain questions (strict gate, lib/agent/plain-question.ts)
+  // now go straight to the web answer (search + Mercury, Claude fallback). Anything understand-first or
+  // the keyword router already classified keeps its own route.
+  const intent = (baseIntent.type === 'general_chat' && !understood && isPlainInfoQuestion(incomingText)
+    ? { type: 'web_search', confidence: 'medium', meta: { plainQuestion: true } }
+    : baseIntent) as ReturnType<typeof detectIntent>
   console.log('PIM:intent', intent, 'semantic:', params.semantic?.intent?.choice ?? null, params.semantic?.intent?.confidence ?? null)
   if(intent.type==='calendar_read_held'||intent.type==='calendar_read_clarify'){
     const reply=String(intent.meta?.calendarReadHoldReply||intent.meta?.calendarReadClarificationReply||"I haven't read your Calendar. Ask me to check it when you're ready. Nothing was changed.")

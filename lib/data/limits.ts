@@ -172,8 +172,8 @@ export async function checkAndIncrementLimit(telegramId:number):Promise<{allowed
   const remainingBefore=plan.monthlyActions-usedCount
   if(remainingBefore<=0)return{allowed:false,tier,remaining:0,monthlyLimit:plan.monthlyActions,usedThisMonth:usedCount,upgradeMessage:buildLimitReachedMessage({planLabel:plan.label,limitLabel:'monthly AI actions',limitValue:plan.monthlyActions})}
   const newUsedCount=usedCount+1
-  await supabaseAdmin.from('users').update({daily_count:newUsedCount}).eq('telegram_id',telegramId)
-  await logUsage(telegramId,'ai_action')
+  // Both bookkeeping writes are still awaited; they are independent, so they run together (20 Oct timing).
+  await Promise.all([supabaseAdmin.from('users').update({daily_count:newUsedCount}).eq('telegram_id',telegramId), logUsage(telegramId,'ai_action')])
   return{allowed:true,tier,remaining:Math.max(plan.monthlyActions-newUsedCount,0),monthlyLimit:plan.monthlyActions,usedThisMonth:newUsedCount}
 }
 

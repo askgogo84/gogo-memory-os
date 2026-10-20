@@ -129,6 +129,7 @@ const noMatch = new Set(['unsupportedCapability', 'podcastRequest', 'imageReques
 const actual: Record<string, any> = {
   '@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>false,tryGetConnectionCapabilities:async()=>null},
   './handlers/reference-fx':{buildReferenceFxReply:async(text:string)=>{assert.doesNotMatch(text,/\bUSD\s+to\s+INR\b/i);return null}},
+  '@/lib/agent/plain-question': await import('../lib/agent/plain-question.ts'),
   '@/lib/agent/content-workflows': contentWorkflows,
   '@/lib/supabase-admin': {supabaseAdmin: db},
   './resolve-user': {resolveUser: async () => ({id: 'owner', telegramId: 42, whatsappId: '+919999999999', name: 'Gogo', tier: 'free'})},

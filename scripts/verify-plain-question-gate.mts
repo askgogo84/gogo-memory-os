@@ -56,3 +56,9 @@ assert.match(route, /const mission = isPlainInfoQuestion\(text\) \? null : await
 const ri = route.indexOf('const mission = isPlainInfoQuestion'), pi = route.lastIndexOf('const result = await processIncomingMessage(')
 assert.ok(pi > ri, 'the message still reaches processIncomingMessage')
 console.log('PLAIN_QUESTION_GATE_OK')
+
+// Plain questions go straight to the web answer in processIncomingMessage (no chat-model "should I search" pass).
+const pm = readFileSync(new URL('../lib/bot/process-message.ts', import.meta.url), 'utf8')
+assert.match(pm, /baseIntent\.type === 'general_chat' && !understood && isPlainInfoQuestion\(incomingText\)\n\s+\? \{ type: 'web_search', confidence: 'medium', meta: \{ plainQuestion: true \} \}/)
+assert.ok(pm.indexOf("const intent = (baseIntent.type === 'general_chat'") < pm.indexOf("if (intent.type === 'web_search') {"))
+console.log('PLAIN_QUESTION_DIRECT_WEB_OK')
