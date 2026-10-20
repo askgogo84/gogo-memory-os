@@ -306,7 +306,7 @@ function isCleanerReminderMessage(newMessage: string, oldMessage: string) {
 // A same-pattern row is only a duplicate when it fires at the SAME time of day.
 // Without the remindAt check, "drink water daily at 9am" and "…at 6pm" collapse to
 // one row (both pattern 'daily'), and the second create overwrites the first.
-async function findDuplicateRecurringReminder(telegramId: number, pattern?: string, remindAt?: string) {
+async function findDuplicateRecurringReminder(telegramId: number, pattern?: string, remindAt?: string, message?: string) {
   if (!pattern) return null
 
   const { data } = await supabaseAdmin
@@ -319,7 +319,7 @@ async function findDuplicateRecurringReminder(telegramId: number, pattern?: stri
     .order('created_at', { ascending: true })
     .limit(5)
 
-  return pickRecurringDuplicate(data || [], remindAt)
+  return pickRecurringDuplicate(data || [], remindAt, message)
 }
 
 // Read the user's saved timezone so every reminder row records the zone its
@@ -343,7 +343,7 @@ async function createReminder(
 ) {
   const timezone = await resolveReminderTimezone(telegramId)
   if (pattern) {
-    const duplicate = await findDuplicateRecurringReminder(telegramId, pattern, remindAt)
+    const duplicate = await findDuplicateRecurringReminder(telegramId, pattern, remindAt, message)
     if (duplicate?.id) {
       const updatePayload: any = { remind_at: remindAt, sent: false, timezone }
       if (whatsappTo) updatePayload.whatsapp_to = whatsappTo
