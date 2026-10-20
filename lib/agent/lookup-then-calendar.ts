@@ -32,8 +32,8 @@ export function parseLookupThenCalendar(text: string): LookupThenCalendar | null
 // Second half of the reply: says plainly that nothing was added and how to finish it. When the
 // answer names a date, it is offered as the example so a one-word "yes, 10 am" is enough context.
 export function calendarFollowupLine(title: string, suggestedDate?: string | null): string {
-  const example = suggestedDate ? `*${suggestedDate}, 10 am*` : '*14 November, 10 am*'
-  return `📅 To add *${title}* to your calendar, reply with the date and time (e.g. ${example}). I'll set it up for your approval — nothing added yet.`
+  if (!suggestedDate) return `📅 I couldn't find a confirmed upcoming date for *${title}*. When you have one, reply with the date and time (e.g. *14 November, 10 am*) and I'll set it up for your approval — nothing added yet.`
+  return `📅 To add *${title}* on *${suggestedDate}*, reply with a time (e.g. *${suggestedDate}, 10 am*). I'll set it up for your approval — nothing added yet.`
 }
 
 const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december']
@@ -56,7 +56,9 @@ export function firstFutureDate(answer: string, now = new Date()): string | null
     // No year: a date a few days/weeks back is in the past ("came out on October 14"); only a date
     // long gone this year ("expected 10 January" said in October) means next year.
     if (!explicitYear && at < today && today - at > 120 * 86_400_000) { year += 1; at = Date.UTC(year, month, day) }
-    if (at < today) continue
+    // Today's date is usually the answer restating the current date ("since today is October 20"),
+    // not the event's date; an event date must be strictly after today.
+    if (at <= today) continue
     return `${day} ${MONTHS[month].charAt(0).toUpperCase()}${MONTHS[month].slice(1)}${explicitYear && year !== ist.getUTCFullYear() ? ` ${year}` : ''}`
   }
   return null

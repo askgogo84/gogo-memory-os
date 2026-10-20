@@ -903,6 +903,15 @@ export function refreshedStoredSummary(doc: any): string {
 // The stored summary is the reply sent when the file was saved ("🎟️ Event ticket saved!", "⏰ Event
 // alert …", "Say my reminders …"). On retrieval those lines read as a fresh save and a stale alert;
 // keep only the description of the file itself.
+// "📎 Event: Jailer 2" followed by a summary whose first line is "Jailer 2": show the name once.
+export function dropRepeatedTitle(summary: string, title: string): string {
+  const lines = String(summary || '').split('\n')
+  const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  const first = norm(lines[0] || ''), t = norm(title)
+  if (first && t && (t === first || t.endsWith(' ' + first))) lines.shift()
+  return lines.join('\n').trim()
+}
+
 export function retrievalSummary(summary: string): string {
   const kept = String(summary || '').split('\n').filter(l => !(
     /\bsaved!?\s*$/i.test(l.trim()) ||
@@ -921,7 +930,7 @@ async function buildAssetFileReply(
   const lines: string[] = isCard
     ? [businessCardLines((doc?.extracted?.fields || {}) as Record<string, string>, `📇 ${doc.title || 'Business card'}`)]
     : [`📎 ${doc.title || 'Document'}`]
-  const shownSummary = isCard ? '' : retrievalSummary(refreshedStoredSummary(doc))
+  const shownSummary = isCard ? '' : dropRepeatedTitle(retrievalSummary(refreshedStoredSummary(doc)), String(doc?.title || ''))
   if (shownSummary) lines.push(shownSummary)
   if (requested && !isCard) {
     const val = fieldFromDoc(doc, requested.keys)
