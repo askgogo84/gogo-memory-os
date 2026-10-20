@@ -52,5 +52,14 @@ console.log('\nRecurring reminder dedup — pattern + time-of-day\n')
   check('daily-9am twice → ONE row (dedup still works)', store.length === 1)
 }
 
+// 21 Oct live: a different task in the same weekly slot must not be swallowed by an existing reminder.
+{
+  const at = '2026-10-26T03:30:00.000Z'
+  const rows = [{ id: 'goals', message: 'Review my goals', remind_at: at }]
+  check('different task, same Monday 9am slot → NOT a duplicate', pickRecurringDuplicate(rows, at, 'Review the week') === null)
+  check('same task reworded, same slot → duplicate', pickRecurringDuplicate([{ id: 'w', message: 'drink water', remind_at: at }], at, 'Drink water daily')?.id === 'w')
+  check('no message given → old slot-only behaviour', pickRecurringDuplicate(rows, at)?.id === 'goals')
+}
+
 console.log(`\n${fails === 0 ? '✅ all cases passed' : `❌ ${fails} case(s) failed`}\n`)
 process.exit(fails === 0 ? 0 : 1)

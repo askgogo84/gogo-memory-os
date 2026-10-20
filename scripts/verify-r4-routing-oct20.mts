@@ -105,7 +105,12 @@ const threads = [
 assert.deepEqual(gm.recipientFromThreads(threads, 'Nithin', 'me@example.com'), { status: 'resolved', email: 'nithin.kl@tipplr.in' })
 assert.deepEqual(gm.recipientFromThreads(threads, 'nithin@other.com', 'me@example.com'), { status: 'resolved', email: 'nithin@other.com' })
 assert.equal(gm.recipientFromThreads(threads, 'Rishi', 'me@example.com').status, 'not_found')
-assert.equal(gm.recipientFromThreads([...threads, { messages: [{ from: 'Nithin R <nithin.r@example.org>', to: 'me@example.com' }] }], 'Nithin', 'me@example.com').status, 'ambiguous')
+// 21 Oct live: a received newsletter "Nithin" never beats the colleague the user has written to.
+assert.deepEqual(gm.recipientFromThreads([...threads, { messages: [{ from: 'Nithin Kamath <nithin@zerodha.com>', to: 'me@example.com' }] }], 'Nithin', 'me@example.com'), { status: 'resolved', email: 'nithin.kl@tipplr.in' })
+// Two Nithins, neither ever written to: ask instead of guessing.
+assert.equal(gm.recipientFromThreads([{ messages: [{ from: 'Nithin R <nithin.r@example.org>', to: 'me@example.com' }] }, { messages: [{ from: 'Nithin Kamath <nithin@zerodha.com>', to: 'me@example.com' }] }], 'Nithin', 'me@example.com').status, 'ambiguous')
+// Automated senders never count.
+assert.equal(gm.recipientFromThreads([{ messages: [{ from: 'Nithin Updates <updates@news.example>', to: 'me@example.com' }] }], 'Nithin', 'me@example.com').status, 'not_found')
 // Draft only: the compose branch stores a draft and returns before any approval or send.
 const gmail = readFileSync(new URL('../lib/agent/gmail-send.ts', import.meta.url), 'utf8')
 const composeStart = gmail.indexOf('const compose=parseGmailComposeCommand(raw)')
@@ -113,7 +118,7 @@ const composeEnd = gmail.indexOf('const parsed=parseGmailReplyCommand(raw)', com
 const composeBranch = gmail.slice(composeStart, composeEnd)
 assert.ok(composeStart > 0 && composeEnd > composeStart)
 assert.doesNotMatch(composeBranch, /stageApproval|sendGmailReply/, 'composing never stages or sends')
-assert.match(composeBranch, /Nothing has been sent\. Say \*send it\*/)
+assert.match(composeBranch, /Nothing has been sent\. Check the address above, then say \*send it\*/)
 // "send it" on a new email goes through the same bound approval: stage and execute share one target function.
 assert.equal((gmail.match(/target:approvalTarget\(draft\)/g) || []).length, 2)
 assert.match(gmail, /gmail_new:\$\{String\(draft\.to\|\|''\)\.toLowerCase\(\)\}/)

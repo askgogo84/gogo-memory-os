@@ -49,12 +49,21 @@ export function recipientFromThreads(threads:any[],target:string,ownEmail:string
   const tokens=norm(target).split(' ').filter(x=>x.length>1)
   if(!tokens.length)return {status:'not_found',email:''}
   const own=String(ownEmail||'').toLowerCase()
-  const found=new Set<string>()
-  for(const thread of threads||[])for(const message of thread?.messages||[])for(const a of [...addressesIn(message.from),...addressesIn(message.to)]){
-    if(a.email===own)continue
-    const hay=norm(a.raw.replace(/@.*$/,' '))
-    if(tokens.every(t=>new RegExp(`(?:^|[\\s.])${escRe(t)}`).test(hay)))found.add(a.email)
+  // 21 Oct live: "draft an email to Nithin" picked nithin@zerodha.com from a received newsletter instead of the
+  // colleague. People the user has written to come first; automated/bulk senders never count.
+  const automated=/^(?:no-?reply|do-?not-?reply|notifications?|alerts?|updates?|news(?:letter)?s?|mailer|marketing|digest|info|hello|support|team|billing|accounts?)(?:[+.\-_]|@)/i
+  const sentTo=new Set<string>(),seen=new Set<string>()
+  for(const thread of threads||[])for(const message of thread?.messages||[]){
+    const fromOwn=addressesIn(message.from).some(a=>a.email===own)
+    for(const a of [...addressesIn(message.from),...addressesIn(message.to)]){
+      if(a.email===own||automated.test(a.email))continue
+      const hay=norm(a.raw.replace(/@.*$/,' '))
+      if(!tokens.every(t=>new RegExp(`(?:^|[\\s.])${escRe(t)}`).test(hay)))continue
+      seen.add(a.email)
+      if(fromOwn&&addressesIn(message.to).some(x=>x.email===a.email))sentTo.add(a.email)
+    }
   }
+  const found=sentTo.size?sentTo:seen
   if(found.size===1)return {status:'resolved',email:[...found][0]}
   return {status:found.size?'ambiguous':'not_found',email:''}
 }
@@ -248,7 +257,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
     const draft={newMessage:true,threadId:'',sourceMessageId:'',to:recipient.email,subject:written.subject,body:written.body,inReplyTo:null}
     await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
     await saveFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft',{draft,created_at:new Date().toISOString()})
-    return {runId:'gmail-compose-draft',status:'completed' as const,capability:'email' as const,risk:'low' as const,text:`📧 Draft email\n\n${preview(draft)}\n\nNothing has been sent. Say *send it* when you want me to stage approval.`,handledBy:'gmail-send'}
+    return {runId:'gmail-compose-draft',status:'completed' as const,capability:'email' as const,risk:'low' as const,text:`📧 Draft email\n\n${preview(draft)}\n\nNothing has been sent. Check the address above, then say *send it* when you want me to stage approval.`,handledBy:'gmail-send'}
   }
 
   const parsed=parseGmailReplyCommand(raw)

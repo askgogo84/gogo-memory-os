@@ -102,7 +102,7 @@ export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unrea
   try{await (await import('@/lib/agent/open-loops')).captureGmailServiceNotices(telegramId,attentionOnly?matching:rows)}
   catch{attentionWarning='\n\nI read the emails but could not save their urgent action items. Please review the notices directly.'}
   if(!rows.length){
-    if(attentionOnly)return `No actionable candidates were identified among the latest ${fetched.length} ${mode==='unread'?'unread ':''}messages checked (up to ${fetchLimit}). This is a bounded inbox read, not proof your entire inbox needs no attention.${attentionWarning}`
+    if(attentionOnly)return `Nothing needs your attention in your latest ${fetched.length} ${mode==='unread'?'unread ':''}emails. I only checked those ${fetched.length}, not the whole inbox.${attentionWarning}`
     if(filtered){
       const what=[filter?.topic,filter?.sender?`from ${filter.sender}`:''].filter(Boolean).join(' ')
       return `I couldn't find a recent email${what?` matching “${what}”`:''} in your latest Gmail messages. I did not guess.`

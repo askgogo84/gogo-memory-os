@@ -18,14 +18,33 @@ export function reminderTimeOfDayUTC(iso: string): string {
 // null when none match (→ the caller inserts a new row instead of overwriting).
 // Falls back to the first row only when no remindAt is supplied, preserving the prior
 // pattern-only behaviour for any caller that can't provide a time.
-export function pickRecurringDuplicate<T extends { remind_at?: string | null }>(
+const DEDUPE_STOP = new Set(['to','the','a','an','my','me','i','and','of','for','on','at','in','every','daily','weekly','monthly','remind','reminder','please'])
+function reminderWords(message: string): Set<string> {
+  return new Set(String(message || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(w => w && !DEDUPE_STOP.has(w)))
+}
+
+/** Same task in other words ("drink water" / "Drink water daily"), not merely the same slot. Pure. */
+export function sameReminderTask(a: string, b: string): boolean {
+  const x = reminderWords(a), y = reminderWords(b)
+  if (!x.size || !y.size) return true
+  const shared = [...x].filter(w => y.has(w)).length
+  if (shared === x.size || shared === y.size) return true
+  return shared / new Set([...x, ...y]).size >= 0.5
+}
+
+// 21 Oct live: "Remind me every Monday at 9am to review the week" replied "Recurring reminder set" but was
+// folded into the existing "Review my goals — every Monday at 9:00 am" (same pattern, same time), so the new
+// reminder never existed. A same-slot row is a duplicate only when it is the same task; pass `message` for that.
+export function pickRecurringDuplicate<T extends { remind_at?: string | null; message?: string | null }>(
   rows: T[],
-  remindAt?: string
+  remindAt?: string,
+  message?: string
 ): T | null {
-  if (!rows.length) return null
-  if (!remindAt) return rows[0] || null
+  const candidates = message == null ? rows : rows.filter(r => sameReminderTask(String(r.message || ''), message))
+  if (!candidates.length) return null
+  if (!remindAt) return candidates[0] || null
   const tod = reminderTimeOfDayUTC(remindAt)
-  return rows.find((r) => r.remind_at && reminderTimeOfDayUTC(r.remind_at) === tod) || null
+  return candidates.find((r) => r.remind_at && reminderTimeOfDayUTC(r.remind_at) === tod) || null
 }
 
 // 20 Oct live: "What are my reminders?" listed "Retrieve saved preferences about activities, dining,
