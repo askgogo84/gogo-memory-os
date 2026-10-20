@@ -1848,6 +1848,16 @@ export function planningCalendarInstruction(text: string): string | null {
     const date=parseAbsoluteDate(text)
     if(date)return `Show my calendar on ${date.year}-${String(date.month).padStart(2,'0')}-${String(date.day).padStart(2,'0')}`
   }
+  // 20 Oct live: "Summarise my week" said "Tue 20 Oct (today) — no recorded events" while the calendar had
+  // several meetings that day — this path never read Google Calendar for a week summary. A summary covers the
+  // whole current week (Monday to Sunday, IST), so earlier days this week are included too.
+  if (/\b(?:summari[sz]e|summary of|review|recap|overview of|wrap up)\s+(?:my|the|this)\s+week\b|\bweekly (?:summary|recap|review)\b|\bhow(?:'s| is| was| does)\s+my week\b/.test(t)) {
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+    const anchor = new Date(today + 'T00:00:00Z')
+    const monday = new Date(anchor.getTime() - ((anchor.getUTCDay() + 6) % 7) * 86400000)
+    const sunday = new Date(monday.getTime() + 6 * 86400000)
+    return `Show my calendar for ${monday.toISOString().slice(0, 10)} to ${sunday.toISOString().slice(0, 10)}`
+  }
   if (/\b(?:plan|organi[sz]e)\s+(?:my|the)\s+week\b|\b(?:my|the)\s+week\s+ahead\b|\bwhat(?:'s| is| does)?\s+(?:my|the)\s+week\b|\bweekly (?:plan|brief|briefing)\b/.test(t)) return 'Show my calendar for the next 7 days'
   if (/\b(?:morning|daily)\s+(?:briefing|brief|summary)\b|\bbrief me\b|\bplan (?:my|the) day\b|\bwhat(?:'s| is)?\s+(?:on\s+)?my day\b/.test(t)) return 'Show my calendar today'
   return null

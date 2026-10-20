@@ -1,6 +1,6 @@
 import { getTodayCalendar, getTodayReminders, type ReminderRow, type CalendarEvent } from '@/lib/dashboard/queries'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import {calendarInterval} from '@/lib/calendar-intervals'
+import {calendarInterval, collapseCalendarEntries, dailyOccurrenceOn, longSpanNote} from '@/lib/calendar-intervals'
 import {isValidTimezone, parseLocalDateTime} from '@/lib/timezone'
 
 export type DashboardDayIntent = 'summary' | 'next' | 'plan'
@@ -52,13 +52,14 @@ export function formatDashboardDayReply(params: {
   calendarOk: boolean
   calendarConnected: boolean
   calendarIncomplete?: boolean
-  calendarEvents: CalendarEvent[]
+  calendarEvents: DayEvent[]
   /** Pending approvals waiting on the person; null when unknown. */
   approvalsWaiting?: number | null
   now?: Date
 }) {
   const now = params.now || new Date()
   const upcoming = upcomingReminders(params.reminders, now)
+  params = {...params, calendarEvents: collapseDayEvents(params.calendarEvents, params.tz, now.getTime())}
 
   if (params.intent === 'next') {
     const nextReminder = upcoming[0]
@@ -106,7 +107,7 @@ export function formatDashboardDayReply(params: {
   } else {
     lines.push(`• Calendar: ${params.calendarEvents.length} event${params.calendarEvents.length === 1 ? '' : 's'}.`)
     for (const event of params.calendarEvents.slice(0, 4)) {
-      lines.push(`  ${event.time || 'All day'} — ${event.title}`)
+      lines.push(`  ${event.time || 'All day'} — ${event.title}${event.note ? ` · ${event.note}` : ''}`)
     }
     if (params.calendarEvents.length > 4) lines.push(`  +${params.calendarEvents.length - 4} more`)
   }
@@ -150,6 +151,26 @@ export function todayAtClock(clockText: string, nowMs: number, tz: string): numb
   catch { return NaN }
 }
 
+type DayEvent = CalendarEvent & { note?: string }
+
+/**
+ * 20 Oct live: "Plan my day" at 10:43 PM listed "Daily Connect-Standup Call (meeting) · ongoing until 11:45 AM"
+ * five times — copies of a broken invite whose entries each span ~3 weeks. Shared collapse (lib/calendar-intervals):
+ * one entry at today's daily slot (11:30–11:45, so over by evening) with the invite note; exact duplicates once.
+ */
+function collapseDayEvents(events: CalendarEvent[], tz: string, nowMs: number): DayEvent[] {
+  const today = dayKeyIn(nowMs, tz)
+  return collapseCalendarEntries(events, e => ({title: e.title, start: e.startAt, end: e.endAt,
+    dupKey: `${e.title}|${e.startAt || ''}|${e.endAt || ''}|${e.time || ''}|${e.allDay ? 1 : 0}|${e.timingKnown === false ? 0 : 1}`}), tz).map(g => {
+    if (!g.daily) return g.first
+    const occurrence = dailyOccurrenceOn(g.daily, today, tz)
+    const note = longSpanNote(g.count)
+    if (!occurrence) return {...g.first, note}
+    const startAt = new Date(occurrence.start).toISOString()
+    return {...g.first, startAt, endAt: new Date(occurrence.end).toISOString(), time: clock(startAt, tz), note}
+  })
+}
+
 function eventInterval(event: CalendarEvent, tz: string) {
   return event.timingKnown === false ? null : calendarInterval({start: {dateTime: event.startAt || undefined}, end: {dateTime: event.endAt || undefined}}, tz)
 }
@@ -179,7 +200,7 @@ function formatDayPlan(params: Parameters<typeof formatDashboardDayReply>[0], no
       // A legacy clock can display an uncertain item; it cannot establish availability.
       if (!span && e.time && (!Number.isFinite(at) || dayKeyIn(at, params.tz) !== dayKeyIn(nowMs, params.tz))) at = todayAtClock(e.time, nowMs, params.tz)
       const note = !span ? 'end time unverified' : span.start < nowMs ? `ongoing until ${clock(new Date(span.end).toISOString(), params.tz)}` : ''
-      items.push({at: Number.isFinite(at) ? Math.max(at, nowMs) : nowMs, label: e.title, kind: 'meeting', note: [note, !blocks ? 'does not block time' : ''].filter(Boolean).join(' · ')})
+      items.push({at: Number.isFinite(at) ? Math.max(at, nowMs) : nowMs, label: e.title, kind: 'meeting', note: [note, !blocks ? 'does not block time' : '', e.note || ''].filter(Boolean).join(' · ')})
     }
   }
   for (const r of upcoming) items.push({ at: new Date(r.remind_at).getTime(), label: cleanLabel(r.message), kind: 'reminder' })
