@@ -889,10 +889,20 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   const bookingEngine:any=await import('./booking-engine').catch(()=>null)
   const signInSite=typeof bookingEngine?.signedInBookingSiteForUrl==='function'?bookingEngine.signedInBookingSiteForUrl(provider.url):null
   const connectFirst=()=>paused(bookingEngine.connectFirstReply({site:signInSite,restaurant:intent.restaurant,date:intent.requestedDate,time:intent.preferredStart,partySize:intent.partySize,providerUrl:provider.url}))
+  // The saved sign-in no longer works (expired, signed out, or stuck at the code screen): mark it so the next request
+  // asks to reconnect straight away instead of spending minutes reading again. Owner-bound; best-effort.
+  const markSignInForReconnect=async()=>{
+    try{
+      const [{markVaultSessionStatus},{browserSandboxNameFor},{catalogueDomain}]=await Promise.all([import('@/lib/vault/session-store'),import('./secure-browser-bootstrap'),import('@/lib/dashboard/connection-catalogue')])
+      await markVaultSessionStatus({telegramId:String(params.actor.legacyTelegramId),domain:catalogueDomain(signInSite),sandboxName:browserSandboxNameFor(params.actor.userId),status:'needs_reauth'})
+    }catch(error:any){console.error('BOOKING_SESSION_REAUTH_MARK_FAILED:',safe(error?.message||error,120))}
+  }
   if(signInSite&&typeof bookingEngine?.isSiteConnected==='function'){
     const {listSiteConnections}=await import('@/lib/dashboard/site-sessions')
     const connections=await listSiteConnections(String(params.actor.legacyTelegramId)).catch(()=>[] as Array<{siteId:string;status:string}>)
-    if(!bookingEngine.isSiteConnected(connections,signInSite))return connectFirst()
+    const connected=bookingEngine.isSiteConnected(connections,signInSite)
+    console.log('BOOKING_CONNECTION:',JSON.stringify({site:signInSite.id,connected,rows:connections.filter((c:any)=>c.siteId===signInSite.id).map((c:any)=>({status:c.status,via:c.via||null}))}))
+    if(!connected)return connectFirst()
   }
   let inspected:Awaited<ReturnType<typeof runSecureBrowser>>
   try{
@@ -906,18 +916,13 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     if(error?.message==='browser_handoff_in_use')return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:await (await import('./browser-auth-notice')).browserHandoffInUseReply(params.actor.legacyTelegramId)}
     console.error('RESTAURANT_SLOT_READ_FAILED:',safe(error?.message||error,160))
     // A signed-in booking app that times out is almost always waiting at its sign-in/code screen.
-    if(signInSite)return connectFirst()
+    if(signInSite){await markSignInForReconnect();return connectFirst()}
     return unreadable()
   }
   // A sign-in wall on a signed-in booking app means the saved sign-in ended: ask to connect again, never guess.
   if(inspected.status==='blocked'){
     if(!signInSite)return unreadable()
-    // The saved sign-in no longer works (expired or signed out on the site): mark it so the next request asks to
-    // reconnect straight away instead of reading again. Owner-bound; best-effort.
-    try{
-      const [{markVaultSessionStatus},{browserSandboxNameFor},{catalogueDomain}]=await Promise.all([import('@/lib/vault/session-store'),import('./secure-browser-bootstrap'),import('@/lib/dashboard/connection-catalogue')])
-      await markVaultSessionStatus({telegramId:String(params.actor.legacyTelegramId),domain:catalogueDomain(signInSite),sandboxName:browserSandboxNameFor(params.actor.userId),status:'needs_reauth'})
-    }catch(error:any){console.error('BOOKING_SESSION_REAUTH_MARK_FAILED:',safe(error?.message||error,120))}
+    await markSignInForReconnect()
     return connectFirst()
   }
   let release=extractReservationRelease(inspected.pageText,timezone)
