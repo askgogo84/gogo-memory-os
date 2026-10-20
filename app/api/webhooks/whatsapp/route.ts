@@ -871,6 +871,18 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    // "Order milk on Swiggy Instamart" via the user's connected Swiggy account: three in-stock options, and a
+    // 1/2/3 reply binds only while that list is Gogo's latest reply. Lazy so strict harnesses keep their maps.
+    // Cheap pre-filter: only an Instamart mention or a bare 1/2/3-style pick loads the module.
+    const instamartChat: any = ((/\binstamart\b/i.test(text)||/^\s*(?:(?:add|pick|choose|select|take)\s+)?(?:the\s+)?(?:(?:option|number|no\.?|item)\s*)?#?\s*(?:[123](?:st|nd|rd)?|first|second|third)(?:\s+(?:one|option|item))?(?:\s+please)?\s*[.!]?\s*$/i.test(text)) ? await import('@/lib/commerce/instamart-chat').catch(() => null) : null)
+    const instamart = typeof instamartChat?.tryInstamartChat === 'function' ? await Promise.resolve().then(() => instamartChat.tryInstamartChat({ telegramId: resolvedUser.telegramId, text, surface: 'whatsapp' })).catch((err: any) => { console.error('INSTAMART_CHAT_FAILED:', String(err?.message || err).slice(0, 160)); return null }) : null
+    if (instamart) {
+      await saveConversation(resolvedUser.telegramId, 'user', text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', instamart.text)
+      await sendWhatsAppMessage(from, instamart.text)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
     const contentDraft = await tryRunContentWorkflow({userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId,
       whatsappId: String(resolvedUser.whatsappId || from), name: resolvedUser.name || profileName || 'Gogo'}, text, inboundMessageSid)
     if (contentDraft) {
