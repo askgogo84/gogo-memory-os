@@ -6,6 +6,7 @@ process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture-only'
 process.env.OPENAI_API_KEY ||= 'fixture-only'
 process.env.ANTHROPIC_API_KEY ||= 'fixture-only'
+process.env.SEARCH_PROVIDER_ORDER = 'tavily,serper' // this fixture covers Tavily's quota backoff; default order is Serper first
 process.env.TAVILY_API_KEY = 'fixture-tavily'
 process.env.SERPER_API_KEY = 'fixture-serper'
 const calls = {tavily: 0, serper: 0, anthropic: 0}
