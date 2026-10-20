@@ -172,7 +172,7 @@ check('a comma is number grouping only between numeric characters',()=>{
 check('an omitted unknown-weight candidate does not deny valid shown per-gram rates',()=>{
  const result=answer('1. Bangalore board\n18 October 2026. 24K gold per gram ₹14766; 22K gold per gram ₹13536\nSource: https://synthetic.invalid/valid\n\n2. Bangalore board\n18 October 2026. 24K gold ₹150000\nSource: https://synthetic.invalid/missing-unit');
  assert.match(result,/24K: ₹14,766/);assert.match(result,/22K: ₹13,536/);
- assert.match(result,/candidate quote was omitted.*weight\/unit is unverified/i);
+ assert.doesNotMatch(result,/candidate quote was omitted/i,'a dropped candidate is not narrated under a good answer');
  assert.doesNotMatch(result,/a per-gram rate cannot be stated/i);assert.doesNotMatch(result,/24K: ₹1,50,000/);
 });
 check('a missing-unit-only result retains the explicit no-verified-quote outcome',()=>{
@@ -221,7 +221,7 @@ check('an unknown-purity phrase in the heading does not erase heading date or to
 const gw='https://groww.in/gold-rates/gold-rate-today-in-bangalore';
 check('a same-purity multi-gram total read as per gram is dropped, not shown as a range',()=>{
  const result=answer(`1. Gold Rate Today in Bangalore\nToday 22K gold per gram ₹13,536\nSource: ${gw}\n\n2. Gold Rate Today in Bangalore\nToday 22K gold 1 g | ₹1,35,360\nSource: ${gw}`);
- assert.match(result,/^22K: ₹13,536$/m);assert.doesNotMatch(result,/1,35,360/);assert.match(result,/multi-gram total/i);
+ assert.match(result,/^22K: ₹13,536$/m);assert.doesNotMatch(result,/1,35,360/);assert.doesNotMatch(result,/multi-gram total/i,'notes about dropped candidates stay out of a good answer');
 });
 check('a dated higher purity equal to an undated lower purity from one source is not presented',()=>{
  const result=answer(`1. Gold Rate Today in Pune\n24K Gold / 10gm 18 Oct 2026 ₹1,35,700\nSource: ${gw}\n\n2. Gold Rate Today in Pune\nToday 22K gold per gram ₹13,570\nSource: ${gw}`);

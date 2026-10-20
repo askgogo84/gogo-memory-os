@@ -6,6 +6,7 @@ import { isValidTimezone, normalizeTimezone, parseLocalDateTime } from '@/lib/ti
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
 import { CALENDAR_WORD_RE } from '@/lib/data/calendar-word'
+import { collapseCalendarEntries, longSpanNote, type CalendarCollapseGroup } from '@/lib/calendar-intervals'
 
 const MAX_EVENTS = 40
 const MAX_SLOTS = 6
@@ -321,24 +322,22 @@ function clock(minutes:number){return `${pad(Math.floor(minutes/60))}:${pad(minu
  * timed entries longer than a day collapse into one line with their time of day; identical lines show once
  * with (×N). Pure; the per-event items (and typed selection) are unchanged.
  */
-export function calendarItemLines(items:Array<{summary:string;label:string;account?:string;start?:string;end?:string}>,tz:string):string[]{
+type CalendarLineItem={summary:string;label:string;account?:string;start?:string;end?:string}
+/** Shared collapse (lib/calendar-intervals) keyed for the reader's display items. */
+export function collapseCalendarItems<T extends CalendarLineItem>(items:T[],tz:string):CalendarCollapseGroup<T>[]{
+  return collapseCalendarEntries(items,e=>({title:e.summary,account:e.account,start:e.start,end:e.end,dupKey:`${e.summary}|${e.label}|${e.account||''}`}),tz)
+}
+export function calendarGroupLines<T extends CalendarLineItem>(groups:CalendarCollapseGroup<T>[],tz:string):string[]{
   const clockFmt=new Intl.DateTimeFormat('en-IN',{timeZone:tz,hour:'numeric',minute:'2-digit',hour12:true})
-  const groups=new Map<string,{text:string;count:number;longSpan:boolean}>()
-  for(const e of items){
-    const s=Date.parse(String(e.start||'')),en=Date.parse(String(e.end||''))
-    const timed=/T/.test(String(e.start||''))&&Number.isFinite(s)&&Number.isFinite(en)
-    const longSpan=timed&&en-s>24*3600_000
-    const who=e.account?` (${e.account})`:''
-    const key=longSpan?`long|${e.summary}|${e.account||''}|${clockFmt.format(new Date(s))}`:`line|${e.summary}|${e.label}|${e.account||''}`
-    const text=longSpan?`${e.summary} — ${clockFmt.format(new Date(s))} – ${clockFmt.format(new Date(en))}`+who:`${e.summary} — ${e.label}${who}`
-    const g=groups.get(key)
-    if(g)g.count++
-    else groups.set(key,{text,count:1,longSpan})
-  }
-  return [...groups.values()].map((g,i)=>{
-    const note=g.longSpan?` · ${g.count>1?`${g.count} overlapping entries, each`:'this entry'} spans several days, so the invite may be set up wrongly`:g.count>1?` (×${g.count})`:''
-    return `${i+1}. ${g.text}${note}`
+  return groups.map((g,i)=>{
+    const e=g.first,who=e.account?` (${e.account})`:''
+    const text=g.daily?`${e.summary} — ${clockFmt.format(new Date(Date.parse(String(e.start))))} – ${clockFmt.format(new Date(Date.parse(String(e.end))))}${who}`:`${e.summary} — ${e.label}${who}`
+    const note=g.daily?` · ${longSpanNote(g.count)}`:g.count>1?` (×${g.count})`:''
+    return `${i+1}. ${text}${note}`
   })
+}
+export function calendarItemLines(items:CalendarLineItem[],tz:string):string[]{
+  return calendarGroupLines(collapseCalendarItems(items,tz),tz)
 }
 
 function slotLabel(startIso:string,endIso:string,tz:string){
@@ -404,16 +403,24 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
   const unknownIntervals=busyEvents.filter((event:any)=>!eventInterval(event,timezone)).length
 
   if(!wantsAvailability){
-    const items=events.slice(0,12).map((event:any)=>({
+    // 20 Oct live: "What do I have tomorrow?" showed 6 copies of a broken multi-week invite and hid the real
+    // meetings, because events were cut to 12 BEFORE the collapse. Collapse first, then bound the display.
+    const allItems=events.map((event:any)=>({
       account:multi?String(event?._account||''):'',
       id:safe(event?.id||'',160),summary:safe(event?.summary||'Busy',220),start:String(event?.start?.dateTime||event?.start?.date||''),end:event?.endTimeUnspecified===true?'':String(event?.end?.dateTime||event?.end?.date||''),
       label:eventInterval(event,timezone)?.allDay?`All day · ${event.start.date} (end ${event.end.date} exclusive)`:
         eventInterval(event,timezone)?slotLabel(event.start.dateTime,event.end.dateTime,timezone):`${event.start?.dateTime||event.start?.date||'Start not verified'} · end time not verified`,
     }))
+    const groups=collapseCalendarItems(allItems,timezone)
+    // A week summary needs more than a single day's 12 lines.
+    const displayCap=window.endDate>=addDays(window.startDate,2)?24:12
+    const shownGroups=groups.slice(0,displayCap)
+    const items=shownGroups.map(g=>g.first)
+    const itemLines=calendarGroupLines(shownGroups,timezone)
     if(params.rememberSelection)await rememberTypedObjects(params.actor.legacyTelegramId,'calendar',items.map(e=>({id:e.id,title:e.summary}))).catch(()=>{})
-    const lines=[`Calendar ${window.label} (${timezone}):`,items.length?calendarItemLines(items,timezone).join('\n'):
+    const lines=[`Calendar ${window.label} (${timezone}):`,items.length?itemLines.join('\n'):
       complete?`No calendar events found for ${window.label}.`:'No events returned on this partial calendar page.']
-    if(events.length>items.length)lines.push(`Showing ${items.length} of ${events.length} returned events.`)
+    if(groups.length>items.length)lines.push(`Showing ${items.length} of ${groups.length} returned events.`)
     // Say which Google account this schedule came from.
     if(multi){
       lines.push(describeCalendarAccounts(access.accounts!).replace(/\*/g,'').replace('Accounts:','Google accounts (all read):'))
@@ -436,7 +443,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
       if(!complete||unknownIntervals)lines.push('Overlap review is incomplete: more events or unverified event end times remain.')
       else if(!conflicts.length)lines.push('No overlapping events found in this calendar window.')
     }
-    return {text:lines.join('\n'),output:{mode:'read',window,timezone,events:items,returnedEventCount:events.length,complete,unknownIntervals,conflicts,...(wantsConflicts?{conflictsVerified:complete&&unknownIntervals===0}:{}),verifiedStore:'google-calendar',mutated:false}}
+    return {text:lines.join('\n'),output:{mode:'read',window,timezone,events:items,itemLines,entryCount:groups.length,returnedEventCount:events.length,complete,unknownIntervals,conflicts,...(wantsConflicts?{conflictsVerified:complete&&unknownIntervals===0}:{}),verifiedStore:'google-calendar',mutated:false}}
   }
 
   // Slots are not event objects. Clear the prior event list even when this

@@ -105,6 +105,8 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
   let calendarText=''
   let calendarEvents: Array<{ id?: string; title: string; start: string; end?: string; label?: string }> = []
   let calendarReturnedCount=0
+  let calendarEntryCount=0
+  let calendarItemLines:string[]=[]
   try {
     // Independent reminders keep the same requested window even if Calendar
     // fails before producing its result (connection, refresh or provider).
@@ -130,6 +132,8 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
       label: safe(event?.label || '', 240) || undefined,
     })).filter((event: any) => event.start)
     calendarReturnedCount=Number.isInteger(output.returnedEventCount)?output.returnedEventCount:calendarEvents.length
+    calendarEntryCount=Number.isInteger(output.entryCount)?output.entryCount:calendarReturnedCount
+    calendarItemLines=Array.isArray(output.itemLines)?output.itemLines.map((line:unknown)=>safe(line,400).replace(/^\d+\.\s*/,'')):[]
   } catch (error: any) {
     if(error?.message==='calendar_duration_unsupported')return {
       text:'Please give one meeting duration from 15 to 180 minutes. I have not shortened or changed the requested duration.',
@@ -190,8 +194,13 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
   if (calendarConnected) {
     if(calendarAvailability)lines.push(calendarText)
     else if (calendarEvents.length) {
-      lines.push(`Calendar: ${calendarReturnedCount} returned event${calendarReturnedCount === 1 ? '' : 's'}${calendarReturnedCount>6?' (showing 6)':''}.`)
-      for (const event of calendarEvents.slice(0, 6)) lines.push(`• ${event.label||localClock(event.start, timeZone)} — ${event.title}`)
+      // 20 Oct live: a broken multi-week invite filled all 6 bullets. Use the reader's collapsed lines (same as
+      // "what's on my calendar today") and count collapsed entries, not raw provider copies.
+      const combined=calendarEntryCount<calendarReturnedCount
+      const count=combined?calendarEntryCount:calendarReturnedCount
+      lines.push(`Calendar: ${count} ${combined?'':'returned '}event${count === 1 ? '' : 's'}${count>6?' (showing 6)':''}${combined?` (${calendarReturnedCount} returned entries; repeats combined)`:''}.`)
+      if (calendarItemLines.length) for (const line of calendarItemLines.slice(0, 6)) lines.push(`• ${line}`)
+      else for (const event of calendarEvents.slice(0, 6)) lines.push(`• ${event.label||localClock(event.start, timeZone)} — ${event.title}`)
     } else lines.push(calendarComplete?'Calendar: clear.':'Calendar: partial page, full schedule not verified.')
     if(!calendarComplete)lines.push('Calendar review is incomplete; more events or unverified intervals remain.')
     if(!calendarAvailability)for(const line of calendarText.split('\n'))if(/^(?:Overlap:|No overlapping|Overlap review)/.test(line))lines.push(line)
