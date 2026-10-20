@@ -49,7 +49,21 @@ function parseDate(text:string,now=new Date()){
   return null
 }
 
-export function isTrainResearchRequest(text:string){const t=String(text||'').toLowerCase();return /\b(irctc|train|trains|railway|railways)\b/.test(t)&&/\b(find|search|show|available|availability|check|options|seat|seats|ticket|tickets|book|booking)\b/.test(t)}
+// 20 Oct live: "Train from Bangalore to Mysore tomorrow morning" has no search verb, so it missed this
+// specialist and a chat model answered with invented train numbers and timings. A rail route (train word +
+// from/to with a known station, or a timing/date word) is a train request too. "Train a model from scratch
+// to ..." stays out: the verb use of "train" is excluded and needs a station or travel-time word.
+const TRAIN_TIME_WORD=/\b(?:timings?|timetable|schedule|departures?|tomorrow|today|tonight|morning|afternoon|evening|night|next|\d{1,2}(?:st|nd|rd|th)|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b/i
+export function isTrainRouteQuestion(text:string){
+  const t=String(text||'')
+  if(!/\b(?:trains?|railways?|irctc)\b/i.test(t))return false
+  if(/\btrain(?:ing|ed)?\s+(?:a|an|the|my|our|your|his|her|their|this|that|model|models|llm|ai|dogs?|puppy|staff|team|people|employees)\b/i.test(t))return false
+  const from=seg(t,'from'),to=seg(t,'to')
+  if(!from||!to)return false
+  const known=(v:string)=>Boolean(STATIONS[v.trim().replace(/[,.!?]+$/g,'').toLowerCase()])
+  return known(from)||known(to)||TRAIN_TIME_WORD.test(t)
+}
+export function isTrainResearchRequest(text:string){const t=String(text||'').toLowerCase();return (/\b(irctc|train|trains|railway|railways)\b/.test(t)&&/\b(find|search|show|available|availability|check|options|seat|seats|ticket|tickets|book|booking)\b/.test(t))||isTrainRouteQuestion(text)}
 export function isTrainResumeRequest(text:string){return /^(continue|resume|done|finished|i'?m done|return control|continue gogo)$/i.test(String(text||'').trim())}
 
 // A train word in the SAME message. PNR/coach/berth included: they are unambiguous

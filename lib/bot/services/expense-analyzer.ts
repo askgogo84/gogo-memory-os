@@ -94,13 +94,13 @@ export async function generateDailyInsight(summary: DailyExpenseSummary): Promis
       max_tokens: 300,
       messages: [{
         role: 'user',
-        content: `Today's spending: ₹${summary.total} across ${summary.count} transactions. Breakdown: ${breakdown}.
+        content: `Today's spending: ₹${summary.total} across ${summary.count} transaction${summary.count === 1 ? '' : 's'}. Breakdown: ${breakdown}.
 
 Give 2-3 sharp, honest insights. Be specific with numbers. Note what's high, what's normal, and one tip for tomorrow. Under 80 words. Conversational tone, no bullet points.`
       }]
     })
     return res.content[0].type === 'text' ? res.content[0].text.trim() : 'Could not generate insight.'
   } catch {
-    return `Spent ₹${summary.total} today across ${summary.count} transactions. Most went to ${summary.topCategory}.`
+    return `Spent ₹${summary.total} today across ${summary.count} transaction${summary.count === 1 ? '' : 's'}. Most went to ${summary.topCategory}.`
   }
 }
