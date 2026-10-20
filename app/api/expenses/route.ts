@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { parseExpenseText, generateDailyInsight } from '@/lib/bot/services/expense-analyzer'
-import { saveExpense, getTodayExpenses, getPeriodExpenses, expensePeriodRange } from '@/lib/bot/services/expense-storage'
+import { saveExpense, getTodayExpenses, getPeriodExpenses, expensePeriodRange, deleteMatchingExpense } from '@/lib/bot/services/expense-storage'
 import { isInternalServiceAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
@@ -26,11 +26,20 @@ export async function POST(req: NextRequest) {
   if (!isInternalServiceAuthorized(req)) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
-  const { phone, text, telegramId: directTelegramId } = await req.json()
+  const { phone, text, telegramId: directTelegramId, action, amount, words, last } = await req.json()
   if (!text) return NextResponse.json({ error: 'text required' }, { status: 400 })
 
   const telegramId = directTelegramId || (phone ? await resolveUser(phone) : null)
   if (!telegramId) return NextResponse.json({ reply: "I couldn't find your account. Please message AskGogo on WhatsApp first." })
+
+  if (action === 'delete') {
+    const removed = await deleteMatchingExpense({ telegramId, whatsappId: phone || null, amount: Number.isFinite(Number(amount)) && amount != null ? Number(amount) : null, words: Array.isArray(words) ? words.map(String).slice(0, 6) : [], last: last === true })
+      .catch(() => 'error' as const)
+    if (removed === 'error') return NextResponse.json({ reply: "I couldn't remove that expense just now. Nothing was deleted. Please try again in a minute." })
+    if (!removed) return NextResponse.json({ reply: "I couldn't find a matching expense in the last 30 days, so nothing was deleted. Say *expenses this week* to see them." })
+    const day = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' }).format(new Date(removed.logged_at))
+    return NextResponse.json({ ok: true, reply: `🗑️ Removed ₹${removed.amount} — ${removed.description} (${day}).` })
+  }
 
   const expense = await parseExpenseText(text)
   if (!expense) return NextResponse.json({ understood: false, reply: null })

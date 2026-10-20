@@ -60,6 +60,28 @@ async function expenseRows(telegramId: number, whatsappId: string | null | undef
   throw new Error('expense_records_unavailable')
 }
 
+// ── Delete one expense ────────────────────────────────────────────────────────
+// 21 Oct live: "Delete the 450 lunch at Truffles expense" reached the model, which said only "the CreditIQ app"
+// could do it. Removes the most recent of the owner's last-30-day rows that matches the amount and/or words.
+export async function deleteMatchingExpense(params: { telegramId: number; whatsappId?: string | null; amount?: number | null; words?: string[]; last?: boolean }) {
+  const since = new Date(Date.now() - 30 * 86400_000).toISOString()
+  const pick = async (column: 'telegram_id' | 'whatsapp_id', value: string | number) =>
+    supabaseAdmin.from('expenses').select('id, amount, category, description, logged_at').eq(column, value).gte('logged_at', since).order('logged_at', { ascending: false }).limit(50)
+  let res: any = await pick('telegram_id', params.telegramId)
+  let column: 'telegram_id' | 'whatsapp_id' = 'telegram_id', owner: string | number = params.telegramId
+  if (res.error && /telegram_id/.test(String(res.error.message || '')) && params.whatsappId) { res = await pick('whatsapp_id', params.whatsappId); column = 'whatsapp_id'; owner = params.whatsappId }
+  if (res.error) throw new Error('expense_records_unavailable')
+  const rows: any[] = res.data || []
+  const words = (params.words || []).map(w => w.toLowerCase()).filter(w => w.length > 2)
+  const match = params.last && params.amount == null && !words.length ? rows[0]
+    : rows.find(r => (params.amount == null || Number(r.amount) === params.amount)
+      && words.every(w => String(r.description || '').toLowerCase().includes(w)))
+  if (!match) return null
+  const { error } = await supabaseAdmin.from('expenses').delete().eq('id', match.id).eq(column, owner)
+  if (error) throw new Error('expense_delete_failed')
+  return match as { id: string; amount: number; category: string; description: string; logged_at: string }
+}
+
 // ── Get today's expenses ──────────────────────────────────────────────────────
 export async function getTodayExpenses(telegramId: number, whatsappId?: string | null): Promise<DailyExpenseSummary> {
   const { start, end } = getTodayRange()

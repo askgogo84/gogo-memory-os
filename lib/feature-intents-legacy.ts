@@ -222,6 +222,13 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   }
 
   // ── EXPENSES ───────────────────────────────────────────────────────────
+  // Delete: "delete the 450 lunch at Truffles expense", "remove my last expense", "undo last expense"
+  const expenseDelete = t.match(/^(?:please\s+)?(?:delete|remove|undo|cancel)\s+(?:the\s+|my\s+|that\s+)?(last\s+)?(?:(?:₹|rs\.?\s*|inr\s*)?(\d{1,7})\s+)?(?:(.{0,80}?)\s+)?expense(?:\s+entry)?[.!]?$/i)
+  if (expenseDelete && may('money', 'legacy_expense_delete')) {
+    const words = String(expenseDelete[3] || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2 && !/^(?:the|for|on|at|and|that|this|last|rupees?)$/.test(w))
+    const del = (await post('/api/expenses', { phone, text, action: 'delete', amount: expenseDelete[2] ? Number(expenseDelete[2]) : null, words, last: Boolean(expenseDelete[1]) || (!expenseDelete[2] && !words.length), ...(extra?.telegramId ? { telegramId: extra.telegramId } : {}) }))?.reply
+    if (del) return del
+  }
   // Log: "spent 450 on lunch", "250 on uber", "lunch 180", "₹80 coffee"
   const isExpenseLog = (
     /^(?:i\s+(?:just\s+)?)?(spent|paid|expensed?|cost)\s/i.test(t) ||
