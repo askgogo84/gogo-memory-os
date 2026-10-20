@@ -908,7 +908,16 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     return unreadable()
   }
   // A sign-in wall on a signed-in booking app means the saved sign-in ended: ask to connect again, never guess.
-  if(inspected.status==='blocked')return signInSite?connectFirst():unreadable()
+  if(inspected.status==='blocked'){
+    if(!signInSite)return unreadable()
+    // The saved sign-in no longer works (expired or signed out on the site): mark it so the next request asks to
+    // reconnect straight away instead of reading again. Owner-bound; best-effort.
+    try{
+      const [{markVaultSessionStatus},{browserSandboxNameFor},{catalogueDomain}]=await Promise.all([import('@/lib/vault/session-store'),import('./secure-browser-bootstrap'),import('@/lib/dashboard/connection-catalogue')])
+      await markVaultSessionStatus({telegramId:String(params.actor.legacyTelegramId),domain:catalogueDomain(signInSite),sandboxName:browserSandboxNameFor(params.actor.userId),status:'needs_reauth'})
+    }catch(error:any){console.error('BOOKING_SESSION_REAUTH_MARK_FAILED:',safe(error?.message||error,120))}
+    return connectFirst()
+  }
   let release=extractReservationRelease(inspected.pageText,timezone)
   if(slotMode&&!release.releaseAt){
     const evidence=`${inspected.summary||''}\n${inspected.pageText||''}`
