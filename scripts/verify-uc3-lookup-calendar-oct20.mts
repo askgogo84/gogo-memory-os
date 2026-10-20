@@ -87,4 +87,17 @@ ok('live 03:30 IST: already-released film gets no calendar offer', () => {
   assert.match(pm, /if \(!past\) await saveFollowupState\(resolvedUser\.telegramId, 'pending_calendar'/)
 })
 
-console.log(`UC3_UC11_OK ${pass}/9`)
+ok('live 08:50 IST: "today is October 20" is never the suggested date', () => {
+  const now = new Date('2026-10-20T03:20:00Z')
+  const live = 'Pushpa 3: The Rampage was scheduled to release on December 25, 2025 in India. However, since today is October 20, 2026, that date has already passed.'
+  assert.equal(firstFutureDate(live, now), null)
+  const line = calendarFollowupLine('Pushpa 3 release', null)
+  assert.match(line, /couldn't find a confirmed upcoming date/)
+  assert.match(line, /nothing added yet/)
+  assert.doesNotMatch(line, /20 October/)
+  // positive control: a real future date is offered
+  assert.equal(firstFutureDate('Releases 21 October 2026.', now), '21 October')
+  assert.match(calendarFollowupLine('X release', '21 October'), /\*21 October\*/)
+})
+
+console.log(`UC3_UC11_OK ${pass}/10`)

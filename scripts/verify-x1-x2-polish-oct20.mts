@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'; process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'x'
 process.env.OPENAI_API_KEY ||= 'x'; process.env.ANTHROPIC_API_KEY ||= 'x'
-const { retrievalSummary } = await import('../lib/services/asset-memory.ts')
+const { retrievalSummary, dropRepeatedTitle } = await import('../lib/services/asset-memory.ts')
 const { renderMyBookingsReply, hasSavedTicket } = await import('../lib/agent/my-bookings.ts')
 
 const live = '🎟️ Event ticket saved!\n\nJailer 2\n19 Oct 2026 · 21:45\n📍 PVR: Orion Mall, Dr Rajkumar Ro...\n\n⏰ Event alert Mon 19 Oct 18:45 (Asia/Kolkata)\n\nSay my reminders to see all alerts'
@@ -13,7 +13,9 @@ const cleaned = retrievalSummary(live)
 assert.equal(cleaned, 'Jailer 2\n19 Oct 2026 · 21:45\n📍 PVR: Orion Mall, Dr Rajkumar Ro...')
 // positive control: ordinary descriptions survive
 assert.equal(retrievalSummary('Passport\nExpires 12 Mar 2031'), 'Passport\nExpires 12 Mar 2031')
-console.log('PASS retrieval summary drops save-confirmation lines')
+assert.equal(dropRepeatedTitle(cleaned, 'Event: Jailer 2'), '19 Oct 2026 · 21:45\n📍 PVR: Orion Mall, Dr Rajkumar Ro...')
+assert.equal(dropRepeatedTitle('Passport\nExpires 2031', 'Driving licence'), 'Passport\nExpires 2031')
+console.log('PASS retrieval summary drops save-confirmation lines and a repeated title')
 
 const now = Date.parse('2026-10-19T21:30:00Z') // 03:00 IST 20 Oct
 const ticketed = { event_type: 'event', title: 'Jailer 2', location: 'PVR Orion Mall', start_at: '2026-10-19T16:15:00Z', timezone: 'Asia/Kolkata', lifecycle_state: 'waiting_approval', source_refs: [{ kind: 'ticket', documentId: 'd1' }] }
