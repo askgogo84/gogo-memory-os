@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { askMercury, mercuryWebAnswersEnabled } from './mercury'
 import OpenAI from 'openai'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import {selectContentWorkflow, contentWorkflowPrompt} from '@/lib/agent/content-workflows'
@@ -264,6 +265,11 @@ FORMATTING: This reply is delivered over WhatsApp, which does NOT render markdow
 
 FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF-REPORTED and approximate unless explicitly bank-verified via Account Aggregator. When such a figure is used to make or justify a redemption or spending decision, treat it as user-entered and not confirmed, and suggest linking cards via Account Aggregator in the CreditIQ app for exact, bank-confirmed balances before deciding. Never present a self-reported balance as a confirmed, spendable fact when advising on a redemption or purchase. For a casual mention with no spending decision, a light "(self-reported)" note is enough.`
 
+  // Mercury first when its key is set: same prompt, ~1s instead of many; Claude stays the fallback.
+  if (mercuryWebAnswersEnabled()) {
+    const fast = await askMercury(prompt, { maxTokens: 1200, label: 'web_answer' })
+    if (fast?.text) return stripSearchPreamble(fast.text)
+  }
   try{
     const response = await client.messages.create({
       model: 'claude-sonnet-4-5',
