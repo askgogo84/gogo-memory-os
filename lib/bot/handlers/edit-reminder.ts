@@ -7,6 +7,7 @@ import {
   formatReminderTimeOfDay,
   formatReminderWhen,
 } from '@/lib/services/reminder-series'
+import { isInternalPlanStepReminder } from '@/lib/bot/reminder-dedup'
 
 function istNowParts() {
   const now = new Date()
@@ -257,13 +258,64 @@ function reminderHour(reminder: any): number | null {
   return extractWhenHour(String(formatReminderTimeOfDay(reminder.remind_at) || '').toLowerCase())
 }
 
-/** Several reminders share the name: the clock time in the sentence picks the one it points at. */
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+const WEEKDAY_ALIASES: Record<string, string> = { sun: 'sunday', mon: 'monday', tue: 'tuesday', tues: 'tuesday', wed: 'wednesday', thu: 'thursday', thur: 'thursday', thurs: 'thursday', fri: 'friday', sat: 'saturday' }
+
+/** "the Monday review reminder" → 'monday'; null when no weekday is named. */
+export function extractWhenWeekday(text: string): string | null {
+  const m = String(text || '').toLowerCase().match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tues?|wed|thur?s?|fri|sat|sun)\b/)
+  if (!m) return null
+  return WEEKDAY_ALIASES[m[1]] || m[1]
+}
+
+function reminderIstWeekday(reminder: any): string | null {
+  const t = Date.parse(String(reminder?.remind_at || ''))
+  if (!Number.isFinite(t)) return null
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', weekday: 'long' }).format(new Date(t)).toLowerCase()
+}
+
+/** The series a cadence word ("weekly", "daily") in the sentence points at. */
+function cadenceWord(text: string): 'daily' | 'weekly' | 'monthly' | null {
+  const t = String(text || '').toLowerCase()
+  if (/\b(?:weekly|every week|each week)\b/.test(t)) return 'weekly'
+  if (/\b(?:daily|every ?day|each day)\b/.test(t)) return 'daily'
+  if (/\b(?:monthly|every month|each month)\b/.test(t)) return 'monthly'
+  return null
+}
+
+function reminderMatchesCadence(reminder: any, cadence: 'daily' | 'weekly' | 'monthly'): boolean {
+  if (reminder?.is_recurring !== true) return false
+  const p = String(reminder?.recurring_pattern || '').toLowerCase()
+  if (cadence === 'weekly') return /week/.test(p) || WEEKDAYS.some((d) => p.includes(d))
+  if (cadence === 'daily') return /\b(?:daily|every day)\b|^every_1d$/.test(p)
+  return /month/.test(p)
+}
+
+/**
+ * Several reminders share the name: the qualifiers in the sentence pick the one it points at — a
+ * clock time ("…at 6am"), a weekday ("the Monday review reminder" → the series that fires on
+ * Mondays) or a cadence word ("the weekly review"). Each qualifier narrows only when it keeps at
+ * least one match, so an unhelpful qualifier never empties the list.
+ */
 export function narrowByWhen(matches: any[], input: string): any[] {
   if (matches.length < 2) return matches
+  let out = matches
   const hour = extractWhenHour(input)
-  if (hour === null) return matches
-  const same = matches.filter((item) => reminderHour(item) === hour)
-  return same.length ? same : matches
+  if (hour !== null) {
+    const same = out.filter((item) => reminderHour(item) === hour)
+    if (same.length) out = same
+  }
+  const weekday = extractWhenWeekday(input)
+  if (weekday && out.length > 1) {
+    const onDay = out.filter((item) => String(item?.recurring_pattern || '').toLowerCase().includes(weekday) || reminderIstWeekday(item) === weekday)
+    if (onDay.length) out = onDay
+  }
+  const cadence = cadenceWord(input)
+  if (cadence && out.length > 1) {
+    const sameCadence = out.filter((item) => reminderMatchesCadence(item, cadence))
+    if (sameCadence.length) out = sameCadence
+  }
+  return out
 }
 
 export function extractCancelQuery(input: string): string | null {
@@ -349,8 +401,10 @@ export async function getActiveReminders(telegramId: number, limit = 10) {
     .order('remind_at', { ascending: true })
     .limit(100)
 
+  // An internal agent plan step saved as a reminder (20 Oct live) is not the user's reminder:
+  // never list it or offer it in the cancel/skip picker. The row itself is left untouched.
   const active = (data || []).filter(
-    (r: any) => r.is_recurring === true || new Date(r.remind_at).getTime() >= cutoffMs,
+    (r: any) => (r.is_recurring === true || new Date(r.remind_at).getTime() >= cutoffMs) && !isInternalPlanStepReminder(r.message),
   )
   return dedupeReminders(active).slice(0, limit)
 }
@@ -397,15 +451,26 @@ async function updateReminderSent(reminder: any, sent: boolean) {
 // both surfaces disambiguate identically. Indices are 1-based and match the order
 // getActiveReminders returns, so the "<verb> 1" hint resolves to the row shown. The
 // verb drives both the question and the example hints.
-function reminderDisambiguation(verb: 'skip' | 'cancel', reminders: any[]) {
+// When the name matched several reminders, the list shows THOSE candidates (20 Oct live: "Cancel the
+// Monday review reminder" listed the first five reminders by time, and the weekly "Review the week"
+// series — next due days later — was not among them). Each candidate keeps its number in the full
+// list, so "<verb> 3" still resolves to the row shown.
+export function reminderDisambiguation(verb: 'skip' | 'cancel', reminders: any[], candidates?: any[]) {
   const question = verb === 'cancel' ? 'Which reminder should I cancel?' : 'Which reminder should I skip?'
+  const shown = candidates && candidates.length
+    ? candidates.map((item: any) => ({ item, n: reminders.indexOf(item) + 1 })).filter((row) => row.n > 0)
+    : reminders.slice(0, 5).map((item: any, idx: number) => ({ item, n: idx + 1 }))
+  const describe = (item: any) => item?.is_recurring === true && item?.recurring_pattern
+    ? `${describeCadence(item.recurring_pattern)} at ${formatReminderTimeOfDay(item.remind_at)}`
+    : formatWhen(item.remind_at)
+  const first = shown[0]?.n || 1
   return (
     `${question}\n\n` +
-    reminders
-      .slice(0, 5)
-      .map((item: any, idx: number) => `${idx + 1}. ${cleanReminderName(item.message)} — ${formatWhen(item.remind_at)}`)
+    shown
+      .slice(0, 8)
+      .map(({ item, n }) => `${n}. ${cleanReminderName(item.message)} — ${describe(item)}`)
       .join('\n') +
-    `\n\nTry: *${verb} 1* or *${verb} water reminder*.`
+    `\n\nTry: *${verb} ${first}* or *${verb} water reminder*.`
   )
 }
 
@@ -432,7 +497,7 @@ export async function cancelReminder(telegramId: number, input: string) {
       // "Drink water" instead of the daily one) is exactly the bug this guards. Ask with
       // the SAME numbered list skip uses; only a single match is safe to cancel outright.
       const narrowed = narrowByWhen(matches, lower)
-      if (narrowed.length > 1) return reminderDisambiguation('cancel', reminders)
+      if (narrowed.length > 1) return reminderDisambiguation('cancel', reminders, narrowed)
       reminder = narrowed[0] || null
     }
   }
@@ -512,7 +577,7 @@ export async function skipReminder(telegramId: number, input: string) {
       // "Drink water" instead of the 9am one) is the same hazard cancel guards; use
       // the SAME numbered list so skip and cancel disambiguate identically.
       const narrowed = narrowByWhen(matches, lower)
-      if (narrowed.length > 1) return reminderDisambiguation('skip', reminders)
+      if (narrowed.length > 1) return reminderDisambiguation('skip', reminders, narrowed)
       reminder = narrowed[0] || null
     }
   }

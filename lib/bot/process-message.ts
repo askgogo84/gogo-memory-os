@@ -62,7 +62,7 @@ import { detectPreferenceSave, isPreferenceList, detectPreferenceForget, savePre
 import { detectFriendReminder, isFriendReminderFollowupCandidate, normalizePhoneNumber, resolveFriendContact, saveFriendContact, countTodayFriendReminders, createFriendReminder, getPendingFriend, pendingFriendMarker, parseFriendTime, friendTaskWithoutTime, friendTimeLabel, cap0 } from '@/lib/bot/handlers/friend-reminders'
 import { handleCreditIqLink } from '@/lib/bot/handlers/creditiq-link'
 import { handleCreditIqCards } from '@/lib/bot/handlers/creditiq-cards'
-import { pickRecurringDuplicate } from '@/lib/bot/reminder-dedup'
+import { pickRecurringDuplicate, mayExecuteChatReminderDirective } from '@/lib/bot/reminder-dedup'
 import { stripSecretShapedMemories } from '@/lib/bot/memory-redaction'
 import { detectShareIntent, hasTopic, resolveRecipientTelegramId, grantShare } from '@/lib/bot/handlers/shared-memory'
 import { isFollowupReminderText, parseFollowupReminder, buildFollowupConfirmation } from '@/lib/services/followup-reminder'
@@ -1709,8 +1709,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // read-only planning turn never executes a directive (REMINDER:/MEMORY:/LIST_*:/SEARCH:) — the reply is text only.
   // 18 Oct retest: "plan my week" emitted SEARCH and the calendar-based plan was replaced by an empty web answer.
   const parsedRaw = parseClaudeResponse(rawClaude)
-  const parsed: ReturnType<typeof parseClaudeResponse> = calendarBlock && parsedRaw.type !== 'none' ? { type: 'none' } : parsedRaw
-  let finalReply = calendarBlock && parsed !== parsedRaw ? stripDirectiveLines(rawClaude) : rawClaude
+  // 20 Oct live: an internal planner step ("Retrieve saved preferences about activities, dining, …") came back
+  // with a REMINDER: line and the instruction itself was saved as the user's reminder. A plan step only saves a
+  // reminder when it asks for one, and a plan-step-shaped message is never saved.
+  const reminderBlocked = parsedRaw.type === 'reminder' && !mayExecuteChatReminderDirective({ internalStep: params.internalStep, text: incomingText, message: (parsedRaw as any).message })
+  if (reminderBlocked) console.warn('CHAT_REMINDER_DIRECTIVE_BLOCKED:', { internalStep: Boolean(params.internalStep) })
+  const parsedPlanning: ReturnType<typeof parseClaudeResponse> = calendarBlock && parsedRaw.type !== 'none' ? { type: 'none' } : parsedRaw
+  const parsed: ReturnType<typeof parseClaudeResponse> = reminderBlocked ? { type: 'none' } : parsedPlanning
+  let finalReply = parsed !== parsedRaw ? stripDirectiveLines(rawClaude) : rawClaude
 
   if (parsed.type === 'memory') {
     await saveMemory(resolvedUser.telegramId, parsed.fact)

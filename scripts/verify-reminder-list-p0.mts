@@ -49,8 +49,9 @@ const database={from:(table:string)=>{
  assert.ok(['users','reminders'].includes(table));return q
 }}
 const realReader:any={}
+const reminderDedup=await import('../lib/bot/reminder-dedup')
 runInNewContext(ts.transpileModule(readFileSync('lib/agent/compound-planner.ts','utf8')+'\nexport {readReminderQuery,isReminderReadQuery}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
- exports:realReader,Date:FixtureDate,Intl,console,require:(name:string)=>name==='@/lib/supabase-admin'?{supabaseAdmin:database}:name==='./typed-object-context'?{rememberTypedObjects:async()=>{}}:{},
+ exports:realReader,Date:FixtureDate,Intl,console,require:(name:string)=>name==='@/lib/supabase-admin'?{supabaseAdmin:database}:name==='./typed-object-context'?{rememberTypedObjects:async()=>{}}:name==='@/lib/bot/reminder-dedup'?reminderDedup:{},
 })
 assert.equal(realReader.isReminderReadQuery('Show my pending reminders.'),true,'the deterministic planner claims the exact production request')
 const pending=await realReader.readReminderQuery({legacyTelegramId:42},'Show my pending reminders.')

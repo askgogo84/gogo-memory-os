@@ -1,6 +1,6 @@
 import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { parseReminderIntent, buildReminderConfirmation, getAmbiguousReminderTime, buildAmPmClarificationReply, reminderTimingProblem } from './reminders'
-import { pickRecurringDuplicate } from '@/lib/bot/reminder-dedup'
+import { pickRecurringDuplicate, isInternalPlanStepReminder } from '@/lib/bot/reminder-dedup'
 import { formatReminderWhen } from '@/lib/services/reminder-series'
 
 export type NumberedChecklist = { listName: string; items: string[] }
@@ -137,7 +137,8 @@ async function showReminderReadQuery(telegramId: number, text: string): Promise<
       ? istDateKey(now)
       : null
 
-  let rows = (data || []).filter((r:any) => r?.remind_at && Number.isFinite(new Date(r.remind_at).getTime()))
+  // Internal agent plan steps saved as reminders (20 Oct live) are never the user's reminders.
+  let rows = (data || []).filter((r:any) => r?.remind_at && Number.isFinite(new Date(r.remind_at).getTime()) && !isInternalPlanStepReminder(r.message))
   if(/\bupcoming\b/i.test(text))rows=rows.filter((r:any)=>Date.parse(r.remind_at)>=now.getTime())
   if (targetKey) rows = rows.filter((r:any) => istDateKey(new Date(r.remind_at)) === targetKey)
 

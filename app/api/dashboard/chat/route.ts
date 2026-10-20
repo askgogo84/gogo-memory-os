@@ -61,6 +61,14 @@ function startTrace(surface: string) {
 
 export const dynamic = 'force-dynamic'
 
+// "What are my reminders?" / "show my reminders for tomorrow": a read of saved reminders, no change asked.
+// Inlined on top of isGroundedReminderCommand so route harnesses with strict dependency maps load it unchanged.
+function isReminderReadOnlyAsk(text: string): boolean {
+  const t = String(text || '').trim()
+  return t.length <= 120 && isGroundedReminderCommand(t) && /\breminders?\b/i.test(t)
+    && !/\b(?:set|create|add|make|schedule|remind me|cancel|delete|remove|stop|skip|snooze|move|reschedule|change|update|edit)\b/i.test(t)
+}
+
 function sameOrigin(req: NextRequest): boolean {
   const origin = req.headers.get('origin')
   if (!origin) return false
@@ -491,8 +499,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ text: jevClarify, handledBy: 'jev-clarification-guard', status: 'paused' })
     }
 
-    // Plain information questions skip the general planner (20 Oct: 1–2.4s, then it declined).
-    const mission = isPlainInfoQuestion(text) ? null : await tryRunGeneralPlan({
+    // Plain information questions skip the general planner (20 Oct: 1–2.4s, then it declined). So does a plain
+    // reminder read ("What are my reminders?", 20 Oct live 22.9s): the reminder reader below answers it from the
+    // reminders table, and the planner could only decline it or, worse, turn it into a multi-step mission.
+    const mission = isPlainInfoQuestion(text) || isReminderReadOnlyAsk(text) ? null : await tryRunGeneralPlan({
       actor,
       surface:'web',
       text,

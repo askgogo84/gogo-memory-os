@@ -1,4 +1,5 @@
 import { rememberTypedObjects } from './typed-object-context'
+import { isInternalPlanStepReminder } from '@/lib/bot/reminder-dedup'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { addToListDetailed, getList } from '@/lib/data/lists'
 import { dispatchThroughSameBrain } from './same-brain'
@@ -167,6 +168,8 @@ async function readReminderQuery(actor: AgentActor, text: string) {
   let rows = (data || []).filter((row: any) => {
     const due = new Date(String(row.remind_at || ''))
     if(!Number.isFinite(due.getTime()))return false
+    // An internal agent plan step saved as a reminder (20 Oct live) is not the user's reminder.
+    if(isInternalPlanStepReminder(row.message))return false
     if(/\bupcoming\b/.test(lower)&&due.getTime()<Date.now())return false
     return !targetDate || localDateKey(due, timezone) === targetDate
   })

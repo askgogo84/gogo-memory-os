@@ -7,7 +7,7 @@
 // was touched in the last 24 hours, and only when the phrase names a task ("booking", "research",
 // "plan"...) or shares at least two content words with the run title. Personal phrasings ("how is my
 // mom doing", "how is my business doing") are never task asks. DB read errors fall through (null).
-import { retiredRunReason } from './task-lifecycle'
+import { retiredRunReason, pastEventCalendarRun } from './task-lifecycle'
 import { isAutonomyStatus, isFullTaskList, normalizeStatusAsk } from './attention-state'
 
 /** `full` = "show all tasks": the whole list instead of the short digest. */
@@ -210,14 +210,17 @@ const STALE_HOURS = 24
 export function formatRunStatus(run: any, steps: any[], lastActivity: TaskRunActivity, now: Date) {
   const status = String(run?.status || 'unknown')
   const ordered = [...(steps || [])].sort((a, b) => Number(a.ordinal || 0) - Number(b.ordinal || 0))
-  const retired = retiredRunReason(run)
+  const retired = retiredRunReason(run, now.getTime())
+  // A calendar block offered for an event that has already ended is closed, and said plainly (20 Oct live).
+  const pastEvent = pastEventCalendarRun(run, now.getTime())
   const auth = ['paused', 'failed', 'running'].includes(status) ? runAuthReason(run, ordered) : null
   const approvalStep = ordered.find(step => step.status === 'waiting_approval')
   const waitingApproval = status === 'waiting_approval' || (Boolean(approvalStep) && ACTIVE.has(status))
 
   // One short paragraph (Fo-style, 19 Oct): what state it is in, the key facts, what happens next.
   let stage: string
-  if (retired) stage = `is closed (${retired.toLowerCase()})`
+  if (pastEvent) stage = 'is closed'
+  else if (retired) stage = `is closed (${retired.toLowerCase()})`
   else if (waitingApproval) stage = 'is waiting for your approval'
   else if (status === 'running') stage = 'is running'
   else if (status === 'queued') stage = "is queued and hasn't started yet"
@@ -239,14 +242,15 @@ export function formatRunStatus(run: any, steps: any[], lastActivity: TaskRunAct
   let detail = ''
   if (ordered.length && current && active) detail = ` — step ${ordered.indexOf(current) + 1} of ${ordered.length} (${currentTitle}${activityIsCurrentStart && ago ? `, started ${ago}` : ''})`
   const progress = Number(run?.progress)
-  if (run?.progress !== null && run?.progress !== undefined && Number.isFinite(progress)) detail += `, ${Math.max(0, Math.min(100, Math.round(progress)))}% done`
+  if (!pastEvent && run?.progress !== null && run?.progress !== undefined && Number.isFinite(progress)) detail += `, ${Math.max(0, Math.min(100, Math.round(progress)))}% done`
 
   // With no step events, lastRunActivity falls back to the run summary: show only when it changed.
   const activityIsRunFallback = !ordered.some(step => step.started_at || step.completed_at)
   if (activityIsRunFallback && ago && !activityIsCurrentStart) detail += ` (updated ${ago})`
   const sentences = [`*${clean(run?.title, 120) || 'Untitled task'}* ${stage}${detail}.`]
-  const summary = sentence(clip(run?.summary, 200))
+  const summary = pastEvent ? '' : sentence(clip(run?.summary, 200))
   if (summary) sentences.push(summary)
+  if (pastEvent) sentences.push(`${/\b(?:movie|show|film|cinema|concert|screening)\b/i.test(String(run?.title || '')) || run?.metadata_json?.proposedEvent?.provider === 'BookMyShow' ? 'The show' : 'The event'} already happened, so I dropped the calendar block. Nothing was added to your calendar.`)
   if (activityText && !activityIsCurrentStart && !activityIsRunFallback) {
     const text = activityText.replace(/^(Started|Finished|Failed|Cancelled): /, (_m, verb: string) => `${verb.toLowerCase()} `)
     sentences.push(sentence(`Last update${ago ? ` ${ago}` : ''}: ${text}`))

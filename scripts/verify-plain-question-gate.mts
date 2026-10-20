@@ -56,7 +56,8 @@ console.log(`PASS ${plain.length} plain questions skip duplicates; ${notPlain.le
 const fi = readFileSync(new URL('../lib/feature-intents.ts', import.meta.url), 'utf8')
 assert.match(fi, /if \(!hasCalendarNoun && !isPlainInfoQuestion\(text\)\) \{\n\s+const agent = await tryRunWhatsAppAgent/)
 const route = readFileSync(new URL('../app/api/dashboard/chat/route.ts', import.meta.url), 'utf8')
-assert.match(route, /const mission = isPlainInfoQuestion\(text\) \? null : await tryRunGeneralPlan\(/)
+// r4-memory (20 Oct): a plain reminder read also skips the planner; plain questions still do.
+assert.match(route, /const mission = isPlainInfoQuestion\(text\)(?: \|\| isReminderReadOnlyAsk\(text\))? \? null : await tryRunGeneralPlan\(/)
 const ri = route.indexOf('const mission = isPlainInfoQuestion'), pi = route.lastIndexOf('const result = await processIncomingMessage(')
 assert.ok(pi > ri, 'the message still reaches processIncomingMessage')
 console.log('PLAIN_QUESTION_GATE_OK')
