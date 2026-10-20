@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import { syncOpenLoopsForUser } from './open-loops'
-import { isRelevantOpenLoop } from './task-lifecycle'
+import { isRelevantOpenLoop, pastEventCalendarRun } from './task-lifecycle'
 import { runAuthReason } from './task-status'
 import { friendlyTaskTitle } from './task-title'
 export { friendlyTaskTitle }
@@ -241,6 +241,16 @@ function formatFullTaskList(input:AutonomyDigestInput){
   return sections.join('\n\n')
 }
 
+/** A pending booking-calendar approval whose event (its recorded "Ends", else "Starts") is already over. Pure. */
+export function pastEventCalendarApproval(approval:any,now:number=Date.now()){
+  if(approval?.execution_payload?.plan_type!=='booking_event_calendar')return false
+  const preview=Array.isArray(approval?.payload_preview)?approval.payload_preview:[]
+  const value=(label:string)=>String(preview.find((row:any)=>String(row?.label||'')===label)?.value||'').replace(/\s*\(estimated\)\s*$/i,'').trim()
+  const end=Date.parse(value('Ends')),start=Date.parse(value('Starts'))
+  const over=Number.isFinite(end)?end:Number.isFinite(start)?start+3*3600_000:NaN
+  return Number.isFinite(over)&&over<=now
+}
+
 export const AUTONOMY_SYNC_WAIT_MS=2500
 export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}){
   if(!isAutonomyStatus(params.text))return null
@@ -255,7 +265,7 @@ export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}
   const results=await Promise.all([
     supabaseAdmin.from('agent_runs').select('id,status,title,summary,progress,updated_at,error,metadata_json').eq('telegram_id',tg).in('status',['queued','running','waiting_approval','paused','outcome_unknown']).order('updated_at',{ascending:false}).limit(30),
     supabaseAdmin.from('agent_watchers').select('id,type,condition_json,cadence_minutes,next_check_at,active,created_at').eq('telegram_id',tg).eq('active',true).order('created_at',{ascending:false}).limit(8),
-    supabaseAdmin.from('agent_approvals').select('id,title,risk_level,requested_at').eq('telegram_id',tg).eq('status','pending').order('requested_at',{ascending:false}).limit(5),
+    supabaseAdmin.from('agent_approvals').select('id,title,risk_level,requested_at,run_id,execution_payload,payload_preview').eq('telegram_id',tg).eq('status','pending').order('requested_at',{ascending:false}).limit(5),
     supabaseAdmin.from('life_events').select('id,title,event_type,start_at,location,lifecycle_state').eq('telegram_id',tg).gte('start_at',new Date().toISOString()).order('start_at',{ascending:true}).limit(5),
     supabaseAdmin.from('agent_ideas').select('id,title,reason,value_score,status,created_at,source_refs').eq('telegram_id',tg).eq('status','new').order('value_score',{ascending:false}).limit(4),
     supabaseAdmin.from('agent_open_loops').select('id,kind,title,summary,priority,due_at,updated_at,source_type').eq('telegram_id',tg).eq('status','active').not('source_type','in','(approval,agent_run,life_event_action)').order('priority',{ascending:false}).limit(8),
@@ -273,6 +283,10 @@ export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}
     return true
   })
   const grouped=partitionAttentionRuns(runs)
+  // A pending "Block calendar for this booking" approval whose event has already ended is closed, not waiting
+  // on the user (20 Oct live: the Jailer 2 calendar block was still shown a day after the show).
+  const pastRunIds=new Set((rawRuns||[]).filter((run:any)=>pastEventCalendarRun(run)).map((run:any)=>String(run.id)))
+  const liveApprovals=(approvals||[]).filter((approval:any)=>!pastRunIds.has(String(approval.run_id||''))&&!pastEventCalendarApproval(approval))
   const ideaIds=[...new Set(ideas.flatMap(ideaWatcherIds))] as string[]
   let currentIdeas=ideas
   if(ideaIds.length){
@@ -282,7 +296,7 @@ export async function tryGetAutonomyStatus(params:{actor:AgentActor;text:string}
     currentIdeas=currentWatcherIdeas(ideas,new Set((activeIdeaWatchers||[]).filter(watcherSupportsCurrentIdea).map((w:any)=>String(w.id))))
   }
   const text=formatAutonomyDigest({
-    approvals:approvals||[],grouped,watchers:watchers||[],events:events||[],ideas:currentIdeas||[],
+    approvals:liveApprovals,grouped,watchers:watchers||[],events:events||[],ideas:currentIdeas||[],
     openLoops:(openLoops||[]).filter(isRelevantOpenLoop),timezone,now:new Date(),
   },{full:isFullTaskList(params.text)})
 
