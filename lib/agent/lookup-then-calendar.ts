@@ -68,6 +68,9 @@ export function firstFutureDate(answer: string, now = new Date()): string | null
 // names no future date: there is nothing to put on the calendar.
 export function alreadyHappened(answer: string, now = new Date()): boolean {
   if (firstFutureDate(answer, now)) return false
+  // 20 Oct live: "Pushpa 3 is expected… 2028… no exact date" plus a note that a *short film* released in
+  // 2025 was read as "already out". An answer that says the thing is still expected is not past.
+  if (/\b(?:expected|not\s+(?:yet\s+)?(?:been\s+)?announced|no\s+(?:exact|confirmed|official)\s+(?:release\s+)?date|upcoming|coming\s+soon|slated|yet\s+to\s+(?:be\s+)?release|in\s+(?:20[3-9]\d|202[7-9]))\b/i.test(String(answer || ''))) return false
   return /\b(?:already\s+(?:released|out|happened|launched|premiered|over)|came\s+out|was\s+released|released\s+(?:on|last)|is\s+(?:now\s+)?(?:out|in\s+theat(?:re|er)s|streaming))\b/i.test(String(answer || ''))
 }
 
