@@ -142,3 +142,37 @@ export function bookingOptionsReply(p: { restaurant: string; date?: string | nul
     : `Best: ${best.platform.name}${best.offer ? ` (${best.offer.label})` : ''}. To book it, sign in to ${best.platform.name} once (you type the code; I never see it), then ask again:\n${signInLink(best.platform.siteId)}\nOr book it yourself: ${best.url}`
   return [`*${head}*`, ...lines, '', next, '', 'Offers are as listed on each app today; the final bill discount is applied by the app.'].join('\n')
 }
+
+
+/** Visible text of a public listing page (no sign-in, no browser): tags, scripts and styles removed. Pure. */
+export function listingText(html: string): string {
+  // Many listing pages render offers from embedded page data (Next.js __NEXT_DATA__, JSON-LD), not visible HTML.
+  // Only short string values that themselves read like an offer are kept from those blocks.
+  const embedded = [...String(html || '').matchAll(/<script[^>]*(?:id="__NEXT_DATA__"|type="application\/(?:ld\+)?json")[^>]*>([\s\S]*?)<\/script>/gi)]
+    .flatMap(m => [...m[1].matchAll(/"([^"\\]{3,120}(?:\d{1,2}\s*%\s*(?:off|discount|cashback)|(?:₹|rs\.?\s*)\d{2,4}\s*off)[^"\\]{0,60})"/gi)].map(x => x[1]))
+    .slice(0, 20).join(' · ')
+  return (embedded + ' ' + String(html || ''))
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/&amp;/g, '&').replace(/&#8377;|&#x20b9;/gi, '₹')
+    .replace(/\s+/g, ' ').trim().slice(0, 60000)
+}
+
+/**
+ * The offer on each app's public listing page, read with a plain GET (6s, no cookies, no sign-in). Search snippets
+ * rarely carry the discount (20 Oct live: four apps found, no offers). Pages that need JS or block bots just keep
+ * the snippet result. Never throws.
+ */
+export async function enrichOffersFromListings(options: BookingOption[], fetchImpl: typeof fetch = fetch): Promise<BookingOption[]> {
+  return Promise.all(options.map(async o => {
+    if (o.offer) return o
+    try {
+      const controller = typeof AbortController === 'function' ? new AbortController() : null
+      const timer = controller ? setTimeout(() => controller.abort(), 6000) : null
+      const res = await fetchImpl(o.url, { headers: { 'user-agent': 'Mozilla/5.0 (compatible; AskGogo/1.0)', accept: 'text/html' }, redirect: 'follow', signal: controller?.signal } as any)
+      if (timer) clearTimeout(timer)
+      if (!res.ok) return o
+      const offer = offerFrom(listingText(await res.text()))
+      return offer ? { ...o, offer } : o
+    } catch { return o }
+  }))
+}

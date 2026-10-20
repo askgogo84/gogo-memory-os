@@ -326,7 +326,8 @@ async function findBookingOptions(intent:RestaurantReservationIntent,connectedSi
   const all=batches.flat()
   const scored=rankReservationCandidates(all,intent.restaurant).filter(c=>c.score>0&&c.kind==='aggregator')
   const byUrl=new Map(all.map(r=>[String(r.url),r]))
-  return engine.collectBookingOptions(scored.map(c=>({url:c.url,title:c.title,snippet:String(byUrl.get(c.url)?.snippet||'')})),connectedSiteIds)
+  const options=engine.collectBookingOptions(scored.map(c=>({url:c.url,title:c.title,snippet:String(byUrl.get(c.url)?.snippet||'')})),connectedSiteIds)
+  return typeof engine.enrichOffersFromListings==='function'?engine.enrichOffersFromListings(options):options
 }
 async function discoverProvider(intent:RestaurantReservationIntent):Promise<ReservationProvider|null>{
   if(intent.sourceUrl)return{url:intent.sourceUrl,title:intent.restaurant||host(intent.sourceUrl),source:'explicit_url',firstParty:reservationLinkKind(intent.sourceUrl,intent.restaurant)!=='aggregator'}

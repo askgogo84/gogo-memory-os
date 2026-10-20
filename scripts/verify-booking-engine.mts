@@ -86,3 +86,29 @@ console.log('BOOKING_ENGINE_OK')
   console.log('PASS compare: offers parsed, ranked by discount, signed-in tiebreak, card text')
 }
 console.log('BOOKING_COMPARE_OK')
+
+// ---- Offers from public listing pages (20 Oct live: 4 apps found, no offers in snippets) ----
+{
+  const html = '<html><head><script>var x="99% off"</script><style>.a{}</style></head><body><h1>District 6</h1><div class="offer">Flat&nbsp;20% off on total bill</div></body></html>'
+  assert.equal(be.listingText(html).includes('99% off'), false, 'script text is ignored')
+  assert.equal(be.offerFrom(be.listingText(html))?.percent, 20)
+  const base = be.collectBookingOptions([
+    { url: 'https://www.swiggy.com/dineout/bangalore/district-6', title: 'District 6', snippet: '' },
+    { url: 'https://www.eazydiner.com/bengaluru/district-6', title: 'District 6', snippet: 'Up to 25% off' },
+    { url: 'https://www.zomato.com/bangalore/district-6/book', title: 'District 6', snippet: '' },
+  ], [])
+  const calls: string[] = []
+  const fakeFetch = (async (url: string) => { calls.push(url); if (url.includes('swiggy')) return new Response(html, { status: 200 }); if (url.includes('zomato')) return new Response('blocked', { status: 403 }); throw new Error('net') }) as any
+  const enriched = await be.enrichOffersFromListings(base, fakeFetch)
+  assert.equal(enriched.find(o => o.platform.id === 'swiggy_dineout')?.offer?.percent, 20, 'offer read from the public page')
+  assert.equal(enriched.find(o => o.platform.id === 'eazydiner')?.offer?.percent, 25, 'snippet offer kept, page not fetched')
+  assert.equal(enriched.find(o => o.platform.id === 'zomato')?.offer, null, 'a blocked page keeps no offer')
+  assert.ok(!calls.some(u => u.includes('eazydiner')))
+  console.log('PASS listing offers: public page read, scripts ignored, blocked pages tolerated')
+}
+console.log('BOOKING_LISTING_OFFERS_OK')
+{
+  const next = '<script id="__NEXT_DATA__" type="application/json">{"props":{"offers":[{"title":"Flat 15% off on total bill"}],"track":"abc"}}</script><script>analytics("90% off")</script><div>District 6</div>'
+  assert.equal(be.offerFrom(be.listingText(next))?.percent, 15, 'offer from embedded page data; other scripts ignored')
+  console.log('PASS embedded page-data offers')
+}
