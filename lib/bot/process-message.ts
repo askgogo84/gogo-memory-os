@@ -42,6 +42,7 @@ import { setBriefingTime } from './handlers/briefing-settings'
 import { locationQuery } from '@/lib/dashboard/approx-location'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
+import { chatSummaryEnabled, readConversationSummary, refreshConversationSummary, summaryContextBlock } from '@/lib/agent/conversation-summary'
 import { parseLookupThenCalendar, calendarFollowupLine, firstFutureDate, alreadyHappened, alreadyHappenedLine } from '@/lib/agent/lookup-then-calendar'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
 import { parsePlanSelection, buildPlanCheckoutReply } from './handlers/plan-checkout'
@@ -72,6 +73,12 @@ import { handleLinkVaultText } from '@/lib/services/link-vault'
 
 // Request timing: mark(label) after each awaited step; a step slower than TIMING_THRESHOLD_MS (250)
 // logs one TIMING line. Inlined (not imported) so test harnesses with strict dependency maps load it.
+// Runs after the response is sent when Next's after() is available; otherwise detached. Never throws.
+function scheduleAfterResponse(task: () => Promise<unknown>) {
+  const run = () => { void task().catch(() => {}) }
+  import('next/server').then((m: any) => { try { m.after(run) } catch { run() } }).catch(run)
+}
+
 function startTrace(surface: string) {
   const threshold = Number((typeof process !== 'undefined' && process.env?.TIMING_THRESHOLD_MS) || 120)
   const started = Date.now(); let last = started
@@ -1672,15 +1679,20 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // 2–6 pm event was on it today — this path never read Google Calendar. Planning and briefing
   // requests now carry the real calendar for the days they cover.
   const historyRead = getConversationHistory(resolvedUser.telegramId)
-  const [history, memories, preferenceBlock, calendarBlock, savedContextBlock] = await Promise.all([
+  const [history, memories, preferenceBlock, calendarBlock, savedContextBlock, chatSummary] = await Promise.all([
     historyRead,
     contextSynthesis ? Promise.resolve([] as string[]) : getMemories(resolvedUser.telegramId),
     getPreferenceBlock(resolvedUser.telegramId),
     planningCalendarBlock(resolvedUser, incomingText),
     historyRead.then(h => selectedSavedContextBlock(resolvedUser, incomingText, h)),
+    chatSummaryEnabled() && !contextSynthesis ? readConversationSummary(resolvedUser.telegramId) : Promise.resolve(null),
   ])
   __trace.mark('contextReads')
-  const contextualBlock = calendarBlock ? `${calendarBlock}\n\n${savedContextBlock}` : savedContextBlock
+  // Long chat memory: fold messages older than the verbatim window into the running summary after this
+  // reply is sent (Mercury, best-effort; never delays or changes this reply).
+  if (chatSummaryEnabled()) scheduleAfterResponse(() => refreshConversationSummary(resolvedUser.telegramId))
+  const summaryBlock = summaryContextBlock(chatSummary)
+  const contextualBlock = [calendarBlock, savedContextBlock, summaryBlock].filter(Boolean).join('\n\n')
   const rawClaude = await askClaude(incomingText, history, memories, resolvedUser.name, preferenceBlock, contextualBlock)
   __trace.mark('rawClaude')
   // Calendar event titles can be written by anyone who invites the user. When they are in the prompt, this
