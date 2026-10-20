@@ -43,7 +43,7 @@ function addressesIn(header:string){
 }
 const escRe=(v:string)=>v.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')
 /** The one address the named person uses in recent mail (From or To). Ambiguous or missing: ask, never guess. */
-export function recipientFromThreads(threads:any[],target:string,ownEmail:string):{status:'resolved'|'ambiguous'|'not_found';email:string}{
+export function recipientFromThreads(threads:any[],target:string,ownEmail:string):{status:'resolved'|'unconfirmed'|'ambiguous'|'not_found';email:string}{
   const direct=emailFromHeader(target)
   if(direct)return {status:'resolved',email:direct}
   const tokens=norm(target).split(' ').filter(x=>x.length>1)
@@ -63,9 +63,11 @@ export function recipientFromThreads(threads:any[],target:string,ownEmail:string
       if(fromOwn&&addressesIn(message.to).some(x=>x.email===a.email))sentTo.add(a.email)
     }
   }
-  const found=sentTo.size?sentTo:seen
-  if(found.size===1)return {status:'resolved',email:[...found][0]}
-  return {status:found.size?'ambiguous':'not_found',email:''}
+  if(sentTo.size===1)return {status:'resolved',email:[...sentTo][0]}
+  if(sentTo.size>1)return {status:'ambiguous',email:''}
+  // Only seen in mail the user received, never written to: suggest it, but let the user confirm.
+  if(seen.size===1)return {status:'unconfirmed',email:[...seen][0]}
+  return {status:seen.size?'ambiguous':'not_found',email:''}
 }
 
 export function isGmailReplyCommand(text:string){
@@ -250,7 +252,8 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
     const recipient=recipientFromThreads(threads,compose.target,String(access.user?.gmail_email||''))
     if(recipient.status!=='resolved'){
       return {runId:'gmail-compose-recipient',status:'paused' as const,capability:'email' as const,risk:'low' as const,
-        text:recipient.status==='ambiguous'?`I found more than one email address for “${clean(compose.target,60)}”. Send the address to use, like “draft an email to name@example.com saying …”. Nothing was drafted or sent.`
+        text:recipient.status==='unconfirmed'?`The only “${clean(compose.target,60)}” in your recent mail is ${recipient.email}, and you haven't written to that address before. If that's right, say “draft an email to ${recipient.email} saying …”, or send the correct address. Nothing was drafted or sent.`
+          :recipient.status==='ambiguous'?`I found more than one email address for “${clean(compose.target,60)}”. Send the address to use, like “draft an email to name@example.com saying …”. Nothing was drafted or sent.`
           :`I couldn't find an email address for “${clean(compose.target,60)}” in your recent mail. Send the address, like “draft an email to name@example.com saying …”. Nothing was drafted or sent.`,handledBy:'gmail-send'}
     }
     const written=composeDraftFromDictation(compose.target,compose.said)

@@ -43,6 +43,14 @@ const narrowed = er.narrowByWhen(matches, input)
 check('"Monday" narrows to the weekly Monday series', narrowed.length === 1 && narrowed[0].id === 'w', JSON.stringify(narrowed.map((r: any) => r.id)))
 check('"weekly review" narrows to the weekly series', (() => { const n = er.narrowByWhen(matches, 'cancel my weekly review'); return n.length === 1 && n[0].id === 'w' })())
 check('an unhelpful weekday never empties the list', er.narrowByWhen(matches, 'cancel the friday review').length === 2)
+{
+  const two = [
+    { id: 'rw', message: 'Review the week', recurring_pattern: 'weekly:monday', remind_at: '2026-10-26T03:30:00.000Z', is_recurring: true },
+    { id: 'rg', message: 'Review my weekly goals', recurring_pattern: 'weekly:monday', remind_at: '2026-10-26T04:30:00.000Z', is_recurring: true },
+  ]
+  const n = er.narrowByWhen(two, 'cancel the monday review the week reminder')
+  check('21 Oct live: the exact title wins over a similar one', n.length === 1 && n[0].id === 'rw')
+}
 const picker = er.reminderDisambiguation('cancel', all, matches)
 check('picker lists the recurring "Review the week" with its real number', /7\. Review the week — every Monday at 9:00 am/.test(picker), picker)
 check('picker lists only the matching reminders', !/Call vendor/.test(picker), picker)
