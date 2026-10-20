@@ -278,7 +278,7 @@ await check('one owner: tryRunRestaurantReservation never reads a bare name; the
   assert.ok(webhook.indexOf('await tryResolvePendingQuestion({')>webhook.indexOf('if (approvalIntent(text))'),'APPROVE/REJECT keep first refusal')
   assert.ok(webhook.indexOf('await tryResolvePendingQuestion({')<webhook.indexOf('const unsupported=unsupportedCapability(text)'))
   assert.ok(agentRun.indexOf('await tryResolvePendingQuestion(')>0&&agentRun.indexOf('await tryResolvePendingQuestion(')<agentRun.indexOf('await tryRunRestaurantReservation('),'agent API resolves the question before reservation routing')
-  assert.ok(dash.indexOf('await tryResolvePendingQuestion(')<dash.indexOf('await tryRunRestaurantReservation('))
+  assert.ok(dash.indexOf('await tryResolvePendingQuestion(')<dash.indexOf('await queueRestaurantReservationResearch('))
 })
 
 await check('release-time providers (Naru) keep the existing release mission path',async()=>{

@@ -42,7 +42,7 @@ import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 import { tryRunAppointmentResearch } from '@/lib/agent/appointment-research'
 import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
-import { tryRunRestaurantReservation } from '@/lib/agent/restaurant-reservation'
+import { queueRestaurantReservationResearch } from '@/lib/agent/restaurant-reservation'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunTrainResearch } from '@/lib/agent/train-research'
 import { handleInboxReplyRead } from '@/lib/agent/open-loops'
@@ -379,7 +379,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(driveContext)
     }
 
-    const restaurantReservation = await tryRunRestaurantReservation({ actor, surface:'web', text })
+    // Same as WhatsApp: provider research runs in the background and the result is messaged back, so the chat
+    // never waits minutes on a provider page (20 Oct live: 191s inline on District 6).
+    const restaurantReservation = await queueRestaurantReservationResearch({ actor, text, messageId: shadowEventId })
     __trace.mark('restaurantReservation')
     if (restaurantReservation) {
       const suffix = restaurantReservation.status === 'waiting_approval'
