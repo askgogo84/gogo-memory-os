@@ -1666,18 +1666,20 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // SELECT to any of these context sources. (getMemories also strips secret-shaped rows as
   // defense in depth — see lib/bot/memory-redaction.ts.)
   const contextSynthesis=isContextSynthesisTurn(incomingText)
-  const history = await getConversationHistory(resolvedUser.telegramId)
-  __trace.mark('history')
-  const memories = contextSynthesis?[]:await getMemories(resolvedUser.telegramId)
-  const preferenceBlock = await getPreferenceBlock(resolvedUser.telegramId)
-  __trace.mark('preferenceBlock')
-  const savedContextBlock = await selectedSavedContextBlock(resolvedUser,incomingText,history)
-  __trace.mark('savedContextBlock')
+  // 20 Oct timing: these reads ran one after another (~2s). They are independent except the saved
+  // context, which needs the history, so they now run together.
   // 18 Oct live: "plan my week" and "give me a morning briefing" said "nothing on the calendar" while a
   // 2–6 pm event was on it today — this path never read Google Calendar. Planning and briefing
   // requests now carry the real calendar for the days they cover.
-  const calendarBlock = await planningCalendarBlock(resolvedUser, incomingText)
-  __trace.mark('calendarBlock')
+  const historyRead = getConversationHistory(resolvedUser.telegramId)
+  const [history, memories, preferenceBlock, calendarBlock, savedContextBlock] = await Promise.all([
+    historyRead,
+    contextSynthesis ? Promise.resolve([] as string[]) : getMemories(resolvedUser.telegramId),
+    getPreferenceBlock(resolvedUser.telegramId),
+    planningCalendarBlock(resolvedUser, incomingText),
+    historyRead.then(h => selectedSavedContextBlock(resolvedUser, incomingText, h)),
+  ])
+  __trace.mark('contextReads')
   const contextualBlock = calendarBlock ? `${calendarBlock}\n\n${savedContextBlock}` : savedContextBlock
   const rawClaude = await askClaude(incomingText, history, memories, resolvedUser.name, preferenceBlock, contextualBlock)
   __trace.mark('rawClaude')
