@@ -191,6 +191,12 @@ async function searchWithSerper(query: string, opts: WebSearchOptions = {}): Pro
   return dated.slice(0, 5)
 }
 
+export function searchProviderOrder(env: Record<string, string | undefined> = process.env): Array<'serper' | 'tavily'> {
+  const raw = String(env.SEARCH_PROVIDER_ORDER || '').toLowerCase().split(',').map(v => v.trim()).filter((v): v is 'serper' | 'tavily' => v === 'serper' || v === 'tavily')
+  const order = raw.length ? raw : ['serper', 'tavily'] as Array<'serper' | 'tavily'>
+  return [...new Set([...order, 'serper', 'tavily'] as Array<'serper' | 'tavily'>)]
+}
+
 export async function searchWebResults(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
   const cleanQuery = cleanText(query).slice(0, 500)
   if (!cleanQuery) return []
@@ -198,24 +204,21 @@ export async function searchWebResults(query: string, opts: WebSearchOptions = {
     const reference=await searchReferenceFx(query)
     if(reference!==null)return reference
   }
-  // Order: Tavily → Serper (Google results) → Anthropic web search. A provider that reported
-  // quota/auth exhaustion is skipped for 30 minutes; an empty answer moves on to the next one.
-  if (process.env.TAVILY_API_KEY && !providerQuotaBlocked('tavily')) {
+  // Order: Serper (Google results, India) → Tavily → Anthropic web search (20 Oct: Tavily is over its
+  // plan limit and its failing call cost ~3.5s on every fresh server before Serper ran).
+  // SEARCH_PROVIDER_ORDER=tavily,serper restores the old order. A provider that reported quota/auth
+  // exhaustion is skipped for 30 minutes; an empty answer moves on to the next one.
+  for (const provider of searchProviderOrder()) {
+    const key = provider === 'tavily' ? process.env.TAVILY_API_KEY : process.env.SERPER_API_KEY
+    if (!key || providerQuotaBlocked(provider)) continue
+    const started = Date.now()
     try {
-      const results = await searchWithTavily(cleanQuery, opts)
+      const results = provider === 'tavily' ? await searchWithTavily(cleanQuery, opts) : await searchWithSerper(cleanQuery, opts)
+      console.log('SEARCH:', JSON.stringify({ provider, ms: Date.now() - started, results: results.length }))
       if (results.length) return results
     } catch (err: any) {
-      noteProviderFailure('tavily', err)
-      console.error('searchWebResults failed:', err?.message || err)
-    }
-  }
-  if (process.env.SERPER_API_KEY && !providerQuotaBlocked('serper')) {
-    try {
-      const results = await searchWithSerper(cleanQuery, opts)
-      if (results.length) return results
-    } catch (err: any) {
-      noteProviderFailure('serper', err)
-      console.error('SERPER_SEARCH_FAILED:', err?.message || err)
+      noteProviderFailure(provider, err)
+      console.error(provider === 'tavily' ? 'searchWebResults failed:' : 'SERPER_SEARCH_FAILED:', err?.message || err, `(${Date.now() - started}ms)`)
     }
   }
   // 18 Oct live: Tavily hit its plan limit (432) and every web answer — petrol, gold, news — came back
