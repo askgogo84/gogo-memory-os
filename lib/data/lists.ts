@@ -7,6 +7,7 @@ import {
   dedupeListItems,
   applyAdd,
   applySetDone,
+  applyRemove,
   findPendingExactMatches,
   DEDUPE_EXEMPT_BUCKETS,
   type ListItem,
@@ -156,6 +157,17 @@ export async function setItemDoneByText(
     return r.changed ? r.next : null
   })
   return { items, matched: probe.matched, changed: true }
+}
+
+/** Remove one item by its text from a named list. */
+export async function removeItemByText(telegramId: number, listName: string, itemText: string): Promise<{ status: 'removed'; matched: string } | { status: 'ambiguous'; options: string[] } | { status: 'none' }> {
+  const list = await getList(telegramId, listName)
+  if (!list) return { status: 'none' }
+  const probe = applyRemove((list.items as ListItem[]) ?? [], itemText)
+  if (probe.ambiguous.length) return { status: 'ambiguous', options: probe.ambiguous }
+  if (!probe.matched) return { status: 'none' }
+  await mutateListItems(list.id, arr => { const r = applyRemove(arr, itemText); return r.matched ? r.next : null })
+  return { status: 'removed', matched: probe.matched }
 }
 
 // Bot list-check kept as a SET-to-done wrapper (was a flip). No other callers, but the
