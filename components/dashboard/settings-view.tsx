@@ -144,6 +144,19 @@ function Connections(props: Props) {
     } catch {}
   }, [props.sites])
 
+  // One tap from chat (20 Oct booking engine): "?section=connections&signin=zomato" opens that site's sign-in straight
+  // away, so the person does not have to find it in the list. Only a known, sign-in-able site that is not connected.
+  useEffect(() => {
+    let id = ''
+    try { id = new URLSearchParams(window.location.search).get('signin') || '' } catch {}
+    const site = CONNECTION_CATALOGUE.find(item => item.id === id)
+    if (!site || site.kind !== 'signin' || props.sites.some(s => s.siteId === site.id && s.via !== 'vault')) return
+    setCategory(site.category)
+    try { window.history.replaceState(null, '', '/dashboard/settings?section=connections') } catch {}
+    void post('sign_in', site)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   async function post(action: 'sign_in' | 'confirm' | 'remove', site: CatalogueSite) {
     setBusy(site.id + action)
     // Starting the secure browser takes up to a minute; say so instead of a silent button.

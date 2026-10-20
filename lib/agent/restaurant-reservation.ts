@@ -312,6 +312,22 @@ const KNOWN_RESERVATION_PROVIDERS:Record<string,{url:string;location?:string}>={
 }
 
 type ReservationProvider={url:string;title:string;source:string;location?:string|null;firstParty:boolean}
+
+// Booking engine compare: one search per app for the venue's listing; each result must name the venue in the
+// right city (rankReservationCandidates' score), so another restaurant's offer is never shown.
+async function findBookingOptions(intent:RestaurantReservationIntent,connectedSiteIds:string[]){
+  if(!intent.restaurant)return []
+  const engine:any=await import('./booking-engine').catch(()=>null)
+  if(typeof engine?.collectBookingOptions!=='function')return []
+  const place=resolveIndiaPlace(intent.restaurant)
+  const city=place.city&&!intent.restaurant.toLowerCase().includes(place.city.toLowerCase())?` ${place.city}`:' Bangalore'
+  const queries=[`${intent.restaurant}${city} swiggy dineout table booking offer`,`${intent.restaurant}${city} eazydiner book table offer`,`${intent.restaurant}${city} zomato book table`,`${intent.restaurant}${city} district dining table booking`]
+  const batches=await Promise.all(queries.map(q=>searchWebResults(q).catch(()=>[] as WebSearchResult[])))
+  const all=batches.flat()
+  const scored=rankReservationCandidates(all,intent.restaurant).filter(c=>c.score>0&&c.kind==='aggregator')
+  const byUrl=new Map(all.map(r=>[String(r.url),r]))
+  return engine.collectBookingOptions(scored.map(c=>({url:c.url,title:c.title,snippet:String(byUrl.get(c.url)?.snippet||'')})),connectedSiteIds)
+}
 async function discoverProvider(intent:RestaurantReservationIntent):Promise<ReservationProvider|null>{
   if(intent.sourceUrl)return{url:intent.sourceUrl,title:intent.restaurant||host(intent.sourceUrl),source:'explicit_url',firstParty:reservationLinkKind(intent.sourceUrl,intent.restaurant)!=='aggregator'}
   if(!intent.restaurant)return null
@@ -844,7 +860,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   if(!intent.partySize){
     return askReservationDetail(params.actor,params.text,intent,'party',`How many people should I book at ${intent.restaurant} for?`)
   }
-  const provider=await discoverProvider(intent)
+  let provider=await discoverProvider(intent)
   if(!provider){
     return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:`I could not verify an official reservation page for ${intent.restaurant}. Send me the booking link and I will keep the reservation objective intact.`}
   }
@@ -887,7 +903,7 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   // that sign-in. Not connected yet: ask the person to connect it once, before any browser time is spent.
   // Loaded lazily and guarded like ReserveGo above, so harnesses with inert module stubs keep the old path.
   const bookingEngine:any=await import('./booking-engine').catch(()=>null)
-  const signInSite=typeof bookingEngine?.signedInBookingSiteForUrl==='function'?bookingEngine.signedInBookingSiteForUrl(provider.url):null
+  let signInSite=typeof bookingEngine?.signedInBookingSiteForUrl==='function'?bookingEngine.signedInBookingSiteForUrl(provider.url):null
   const connectFirst=()=>paused(bookingEngine.connectFirstReply({site:signInSite,restaurant:intent.restaurant,date:intent.requestedDate,time:intent.preferredStart,partySize:intent.partySize,providerUrl:provider.url}))
   // The saved sign-in no longer works (expired, signed out, or stuck at the code screen): mark it so the next request
   // asks to reconnect straight away instead of spending minutes reading again. Owner-bound; best-effort.
@@ -900,6 +916,21 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   if(signInSite&&typeof bookingEngine?.isSiteConnected==='function'){
     const {listSiteConnections}=await import('@/lib/dashboard/site-sessions')
     const connections=await listSiteConnections(String(params.actor.legacyTelegramId)).catch(()=>[] as Array<{siteId:string;status:string}>)
+    // 20 Oct: compare every app that lists the venue (public listings, no sign-in) and rank by the offer, then book
+    // through the best one the person is signed into. Search failure falls back to the single provider below.
+    if(typeof bookingEngine?.collectBookingOptions==='function'){
+      const connectedIds=connections.filter((c:any)=>bookingEngine.isSiteConnected([c],{id:c.siteId})).map((c:any)=>String(c.siteId))
+      const options=await findBookingOptions(intent,connectedIds).catch(()=>[] as any[])
+      if(options.length){
+        const ranked=bookingEngine.rankBookingOptions(options)
+        console.log('BOOKING_OPTIONS:',JSON.stringify(ranked.map((o:any)=>({app:o.platform.id,offer:o.offer?.label||null,connected:o.connected}))))
+        const best=ranked[0]
+        if(!best.connected)return paused(bookingEngine.bookingOptionsReply({restaurant:intent.restaurant,date:intent.requestedDate,time:intent.preferredStart,partySize:intent.partySize,ranked}))
+        // Best option is an app the person is signed into: read live tables there.
+        provider={...provider,url:best.url,title:best.title||provider.title,source:'booking_compare',firstParty:false}
+        signInSite=bookingEngine.signedInBookingSiteForUrl(best.url)||signInSite
+      }
+    }
     const connected=bookingEngine.isSiteConnected(connections,signInSite)
     console.log('BOOKING_CONNECTION:',JSON.stringify({site:signInSite.id,connected,rows:connections.filter((c:any)=>c.siteId===signInSite.id).map((c:any)=>({status:c.status,via:c.via||null}))}))
     if(!connected)return connectFirst()
