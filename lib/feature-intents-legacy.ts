@@ -26,9 +26,18 @@ import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
 import { mayClaim, type RuleCapability } from '@/lib/agent/semantic-gate'
 import { isDriveWriteRequest } from '@/lib/bot/drive-write-request'
 
+// Request timing (see app/api/dashboard/chat/route.ts): steps >= TIMING_THRESHOLD_MS (120) log one TIMING line.
+function startTrace(surface: string) {
+  const threshold = Number((typeof process !== 'undefined' && process.env?.TIMING_THRESHOLD_MS) || 120)
+  const started = Date.now(); let last = started
+  return { mark(step: string) { const now = Date.now(), ms = now - last; last = now; if (ms >= threshold) console.log('TIMING:', JSON.stringify({ surface, step, ms, total: now - started })) } }
+}
+
+
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
 
 export async function routeFeatureIntent(phone: string, text: string, extra?: { telegramId?: number; caption?: string; semantic?: JevShadowResult | null }): Promise<string | null> {
+  const __trace = startTrace('feature-legacy')
   // A keyword rule below may claim the message only if the sentence's meaning (as read by the semantic
   // classifier) does not belong to another capability. See lib/agent/semantic-gate.ts.
   const may = (capability: RuleCapability, rule?: string) => mayClaim(capability, text, extra?.semantic, rule)
@@ -55,6 +64,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
         .replace(/\/\?\S+/g, '')
         .trim()
       const result = await saveReel({ url: reelUrl, userCaption: bodyContext || extra?.caption })
+      __trace.mark('result')
       if (extra?.telegramId) {
         const noteText = ['REEL:', result.author, result.title?.slice(0, 80), result.url].filter(Boolean).join(' | ')
         await addToList(extra.telegramId, 'notes', [noteText])
@@ -137,6 +147,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     const isCalendarShape = isCalendarListName(listAdd[2])
     if (item && listName && !isReminderShape && !isCalendarShape) {
       const res = await addToListDetailed(extra.telegramId, listName, [item])
+      __trace.mark('res')
       return formatAddResult(listName, res)
     }
   }
@@ -149,6 +160,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     const dedupeName = normalizeListName(dedupeMatch[1])
     if (dedupeName && !RESERVED_SHOW_NAMES.has(dedupeName)) {
       const result = await removeDuplicateItems(extra.telegramId, dedupeName)
+      __trace.mark('result')
       if (result) {
         if (!result.removed) return `✅ No duplicates in *${result.name}* — ${result.items.length} item${result.items.length === 1 ? '' : 's'}, all different.`
         return `🧹 Removed ${result.removed} duplicate${result.removed === 1 ? '' : 's'} from *${result.name}*.\n\n${formatList(result.name, result.items)}`
@@ -179,6 +191,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     // before getList, so the reserved word always reaches its real owner downstream.
     if (!RESERVED_SHOW_NAMES.has(showName)) {
       const list = await getList(extra.telegramId, showName)
+      __trace.mark('list')
       if (list) return formatList(list.list_name, list.items || [])
       // no such list → fall through to detectIntent / Claude unchanged
     }
@@ -191,6 +204,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   // an unrelated semantic hit (e.g. a JTP estimate) can never impersonate the asset.
   if (extra?.telegramId) {
     const assetReply = await buildNaturalAssetRetrievalReply(extra.telegramId, text)
+    __trace.mark('assetReply')
     if (assetReply) return assetReply
   }
 
@@ -246,6 +260,7 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     // unchanged /api/todos handler below, so today's behaviour is untouched.
     if (extra?.telegramId && !/^\d+$/.test(arg)) {
       const hits = await findPendingExactAcrossLists(extra.telegramId, arg)
+      __trace.mark('hits')
       if (hits.length === 1) {
         await setItemDoneByText(extra.telegramId, hits[0].list_name, arg, true)
         return `✅ Marked done on your ${hits[0].list_name} list: ${hits[0].matched}.`

@@ -33,6 +33,14 @@ import { isAdaptiveTrustQuery, tryRunAdaptiveTrustCommand } from '@/lib/agent/ad
 import { isDriveWriteRequest, DRIVE_WRITE_REPLY } from '@/lib/bot/drive-write-request'
 import { isCommodityAlertRequest, COMMODITY_ALERT_REPLY } from '@/lib/bot/commodity-alert'
 
+// Request timing (see app/api/dashboard/chat/route.ts): steps >= TIMING_THRESHOLD_MS (120) log one TIMING line.
+function startTrace(surface: string) {
+  const threshold = Number((typeof process !== 'undefined' && process.env?.TIMING_THRESHOLD_MS) || 120)
+  const started = Date.now(); let last = started
+  return { mark(step: string) { const now = Date.now(), ms = now - last; last = now; if (ms >= threshold) console.log('TIMING:', JSON.stringify({ surface, step, ms, total: now - started })) } }
+}
+
+
 function isSimpleWorkspaceRead(text:string) {
   const t=String(text||'')
   const gmail=/\b(email|emails|gmail|inbox|mail)\b/i.test(t) && /\b(find|show|read|latest|recent|unread|search|look for|check|attached|attachment|brief)\b/i.test(t) && !/\b(send|forward|compose)\b/i.test(t)
@@ -307,11 +315,13 @@ export async function routeFeatureIntent(
   text: string,
   extra?: { telegramId?: number; caption?: string; semantic?: JevShadowResult | null; surface?: 'web' | 'whatsapp' },
 ): Promise<string | null> {
+  const __trace = startTrace('feature')
   const normalized=normalizeUserInputForRouting(text)
   if(normalized.changed) console.info('INPUT_NORMALIZED_FOR_FEATURE_ROUTING:',{reasons:normalized.reasons,originalLength:String(text||'').length,normalizedLength:normalized.text.length})
   text=normalized.text
   if(extra?.telegramId&&(/^\s*(?:compare grocery prices for\s|(?:show|check)\s+(?:my|the)\s+(?:food|grocery) comparison(?: status)?[.!]?\s*$)/i.test(text)||isFoodComparisonRequest(text)||/\b[1-9]\d{5}\b/.test(text)||/^(?:stop|cancel) (?:the )?food comparison/i.test(text))){
     const food=await tryFoodComparison({telegramId:extra.telegramId,text})
+    __trace.mark('food')
     if(food)return food.text
   }
 
@@ -322,24 +332,29 @@ export async function routeFeatureIntent(
     const autonomy=parseAutonomyCommand(text)
     if(autonomy){
       const result=await tryRunAdaptiveAutonomyCommand({actor,text})
+      __trace.mark('result')
       if(result?.text)return result.text
     }
     if(isAdaptiveTrustQuery(text)){
       const trust=await tryRunAdaptiveTrustCommand({actor,text})
+      __trace.mark('trust')
       if(trust?.text)return trust.text
     }
   }
 
   if(extra?.telegramId){
     const snoozeReply=await tryHandleSnoozeCommand(extra.telegramId,phone,text)
+    __trace.mark('snoozeReply')
     if(snoozeReply)return snoozeReply
 
     const calendarApprovalReply=await tryHandleCalendarApproval(extra.telegramId,text)
+    __trace.mark('calendarApprovalReply')
     if(calendarApprovalReply)return calendarApprovalReply
   }
 
   if (extra?.telegramId && isEventCredentialRetrieval(text)) {
     const ticket = await retrieveEventCredential(extra.telegramId, text)
+    __trace.mark('ticket')
     // On the dashboard the ticket is shown there; nothing is pushed to WhatsApp from a dashboard request.
     if (ticket && extra?.surface === 'web') return `${ticket.caption}\n\nOpen the ticket (link valid for 10 minutes): ${ticket.mediaUrl}`
     if (ticket) {
@@ -350,6 +365,7 @@ export async function routeFeatureIntent(
 
   if (extra?.telegramId && isBookingOrEventLinkText(text)) {
     const queued = await queueBookingClosure({ telegramId: extra.telegramId, text, whatsappTo: phone })
+    __trace.mark('queued')
     if (queued) return queued.text
   }
 
@@ -373,7 +389,9 @@ export async function routeFeatureIntent(
     try {
       const listName = normalizeListName(checklist.listName)
       const result = await addToListDetailed(extra.telegramId, listName, checklist.items)
+      __trace.mark('result')
       const stored = await getList(extra.telegramId, listName)
+      __trace.mark('stored')
       const storedItems = Array.isArray(stored?.items) ? stored.items : []
       const pendingText = new Set(storedItems.filter((x:any)=>!x?.done).map((x:any)=>normListItem(x?.text)))
       const missing = checklist.items.filter(item=>!pendingText.has(normListItem(item)))
@@ -389,6 +407,7 @@ export async function routeFeatureIntent(
   if(extra?.telegramId&&isGmailReplyCommand(text)){
     const actor={userId:String(extra.telegramId),legacyTelegramId:extra.telegramId,whatsappId:phone,name:'Gogo'}
     const gmail=await tryRunGmailSendCommand({actor,text})
+    __trace.mark('gmail')
     if(gmail?.text)return gmail.text
   }
 
@@ -400,6 +419,7 @@ export async function routeFeatureIntent(
       const listName=normalizeListName(explicitRaw)
       if(listName&&!RESERVED_SHOW_NAMES.has(listName)){
         const list=await getList(extra.telegramId,listName)
+        __trace.mark('list')
         if(list){await setActiveList(extra.telegramId,list.list_name);return formatList(list.list_name,list.items||[])}
       }
     }
@@ -410,8 +430,10 @@ export async function routeFeatureIntent(
         return 'Lists are currently off in your Gogo autonomy settings. Say *set lists autonomy to auto* (or *ask*) to turn them back on.'
       }
       const listName=await getActiveListName(extra.telegramId)
+      __trace.mark('listName')
       if(listName){
         const result=await addToListDetailed(extra.telegramId,listName,followupItems)
+        __trace.mark('result')
         await setActiveList(extra.telegramId,listName)
         return formatAddResult(listName,result)
       }
@@ -419,14 +441,17 @@ export async function routeFeatureIntent(
 
     if(isActiveListShow(text)){
       const listName=await getActiveListName(extra.telegramId)
+      __trace.mark('listName')
       if(listName){
         const list=await getList(extra.telegramId,listName)
+        __trace.mark('list')
         if(list){await setActiveList(extra.telegramId,list.list_name);return formatList(list.list_name,list.items||[])}
       }
     }
   }
 
   const legacy = await routeLegacyFeatureIntent(phone, text, extra)
+  __trace.mark('legacy')
   if (legacy) return legacy
   if (!extra?.telegramId) return null
 
@@ -468,6 +493,7 @@ export async function routeFeatureIntent(
 
     if (isSimpleWorkspaceRead(text)) {
       const result=await dispatchThroughSameBrain({actor,text})
+      __trace.mark('result')
       return result.text || null
     }
 
@@ -477,11 +503,13 @@ export async function routeFeatureIntent(
     const hasCalendarNoun = /\b(?:meeting|meetings|calendar|event|events|appointment|appointments)\b/i.test(text)
     if (!hasCalendarNoun) {
       const agent = await tryRunWhatsAppAgent({ user, text })
+      __trace.mark('agent')
       if(agent?.text)return agent.text
     }
 
     if(normalized.changed){
       const repaired=await dispatchThroughSameBrain({actor,text})
+      __trace.mark('repaired')
       return repaired.text||null
     }
     return null
