@@ -42,7 +42,7 @@ import { setBriefingTime } from './handlers/briefing-settings'
 import { locationQuery } from '@/lib/dashboard/approx-location'
 import { buildDeterministicWeatherReply, buildDeterministicGoldReply, buildDeterministicIplStandingsReply } from './handlers/deterministic'
 import { buildDirectWebAnswer } from './handlers/web-answer'
-import { isPlainInfoQuestion } from '@/lib/agent/plain-question'
+import { isPlainInfoQuestion, isPersonalDataQuestion } from '@/lib/agent/plain-question'
 import { chatSummaryEnabled, readConversationSummary, refreshConversationSummary, summaryContextBlock } from '@/lib/agent/conversation-summary'
 import { parseLookupThenCalendar, calendarFollowupLine, firstFutureDate, alreadyHappened, alreadyHappenedLine } from '@/lib/agent/lookup-then-calendar'
 import { buildPremiumWhatsappReply } from './handlers/whatsapp-premium'
@@ -606,9 +606,17 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // the keyword router already classified keeps its own route.
   // Clock questions ("What's the time in Dubai?") keep the deterministic world-time answer below: a web
   // snippet gave a stale time (20 Oct regression from #698).
-  const intent = (baseIntent.type === 'general_chat' && !understood && isPlainInfoQuestion(incomingText) && !worldTimeReply(incomingText)
+  const plainOrBase = (baseIntent.type === 'general_chat' && !understood && isPlainInfoQuestion(incomingText) && !worldTimeReply(incomingText)
     ? { type: 'web_search', confidence: 'medium', meta: { plainQuestion: true } }
     : baseIntent) as ReturnType<typeof detectIntent>
+  // 20 Oct live: "Any important emails today?" was answered by a web search. A question about the person's own
+  // data never goes to the web: mail questions read Gmail (the read path checks the connection), the rest go to
+  // the assistant, which has their saved context.
+  const intent = (plainOrBase.type === 'web_search' && isPersonalDataQuestion(incomingText)
+    ? (detectedIntent.type !== 'web_search' && detectedIntent.type !== 'general_chat' ? detectedIntent
+      : /\b(?:e-?mails?|mails?|mailbox|inbox|gmail|unread)\b/i.test(incomingText) ? { type: 'read_gmail', confidence: 'medium', meta: { personalData: true } }
+        : { type: 'general_chat', confidence: 'medium', meta: { personalData: true } })
+    : plainOrBase) as ReturnType<typeof detectIntent>
   console.log('PIM:intent', intent, 'semantic:', params.semantic?.intent?.choice ?? null, params.semantic?.intent?.confidence ?? null)
   if(intent.type==='calendar_read_held'||intent.type==='calendar_read_clarify'){
     const reply=String(intent.meta?.calendarReadHoldReply||intent.meta?.calendarReadClarificationReply||"I haven't read your Calendar. Ask me to check it when you're ready. Nothing was changed.")

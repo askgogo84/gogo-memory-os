@@ -17,9 +17,51 @@ function emailFromHeader(value:unknown){
 }
 function norm(value:unknown){return clean(value,300).toLowerCase().replace(/[^a-z0-9@.]+/g,' ').replace(/\s+/g,' ').trim()}
 
+// 20 Oct live: "Draft an email to Nithin saying I will be 15 minutes late to the 4pm meeting" reached the meeting
+// slot finder ("no free slot matched"). Writing a NEW email with dictated content is a Gmail draft: it is shown
+// for review, nothing is sent, and "send it" goes through the same approval as a reply.
+const COMPOSE_RE=/^(?:please\s+|pls\s+|can\s+you\s+|could\s+you\s+)?(?:draft|write|compose|prepare)\s+(?:me\s+)?(?:an?\s+)?(?:new\s+|quick\s+|short\s+)?(?:e-?mail|mail)\s+to\s+(.+?)\s+(?:saying|that\s+says|to\s+say|telling\s+(?:him|her|them)|letting\s+(?:him|her|them)\s+know|:)\s*(.+)$/i
+export function parseGmailComposeCommand(text:string){
+  const raw=clean(text,2000)
+  const m=raw.match(COMPOSE_RE)
+  if(!m)return null
+  const target=clean(m[1],120).replace(/[,.]+$/,'')
+  const said=String(m[2]||'').trim().replace(/^that\s+/i,'').slice(0,6000)
+  if(!target||!said||target.split(/\s+/).length>5)return null
+  return {target,said,draftOnly:true as const}
+}
+const firstName=(target:string)=>{const name=target.includes('@')?'':target.split(/\s+/)[0];return name?name.charAt(0).toUpperCase()+name.slice(1):''}
+/** The new email written from what the person dictated: their words, as a sentence, with a greeting. No sign-off (Gmail adds the signature). */
+export function composeDraftFromDictation(target:string,said:string){
+  const sentence=said.trim().replace(/\s+/g,' ').replace(/^./,c=>c.toUpperCase()).replace(/([^.!?])$/,'$1.')
+  const name=firstName(target)
+  const subject=sentence.replace(/[.!?]+$/,'').slice(0,78)
+  return {subject,body:`${name?`Hi ${name},`:'Hi,'}\n\n${sentence}`}
+}
+function addressesIn(header:string){
+  return String(header||'').split(/,(?=(?:[^"]*"[^"]*")*[^"]*$)/).map(part=>({raw:part.trim(),email:emailFromHeader(part)})).filter(x=>x.email)
+}
+const escRe=(v:string)=>v.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')
+/** The one address the named person uses in recent mail (From or To). Ambiguous or missing: ask, never guess. */
+export function recipientFromThreads(threads:any[],target:string,ownEmail:string):{status:'resolved'|'ambiguous'|'not_found';email:string}{
+  const direct=emailFromHeader(target)
+  if(direct)return {status:'resolved',email:direct}
+  const tokens=norm(target).split(' ').filter(x=>x.length>1)
+  if(!tokens.length)return {status:'not_found',email:''}
+  const own=String(ownEmail||'').toLowerCase()
+  const found=new Set<string>()
+  for(const thread of threads||[])for(const message of thread?.messages||[])for(const a of [...addressesIn(message.from),...addressesIn(message.to)]){
+    if(a.email===own)continue
+    const hay=norm(a.raw.replace(/@.*$/,' '))
+    if(tokens.every(t=>new RegExp(`(?:^|[\\s.])${escRe(t)}`).test(hay)))found.add(a.email)
+  }
+  if(found.size===1)return {status:'resolved',email:[...found][0]}
+  return {status:found.size?'ambiguous':'not_found',email:''}
+}
+
 export function isGmailReplyCommand(text:string){
   const raw=clean(text,1200)
-  return /^(?:draft\s+(?:a\s+)?reply|reply|respond)\s+to\s+(?:the\s+)?(?:latest\s+)?(?:email|mail|message)(?:\s+from)?\s+.+?\s+(?:saying|with|:)/i.test(raw)
+  return Boolean(parseGmailComposeCommand(raw)) || /^(?:draft\s+(?:a\s+)?reply|reply|respond)\s+to\s+(?:the\s+)?(?:latest\s+)?(?:email|mail|message)(?:\s+from)?\s+.+?\s+(?:saying|with|:)/i.test(raw)
     || /^(?:draft\s+(?:a\s+)?reply|reply|respond)\s+to\s+(?:the\s+)?(.+?)\s+(?:email|mail|message)\s+(?:saying|with|:)/i.test(raw)
     || /^(?:send\s+it|send\s+this\s+reply)$/i.test(raw)
 }
@@ -78,14 +120,17 @@ async function resolveThread(actor:AgentActor,target:string){
 }
 
 function preview(draft:any){
-  return `To: ${draft.to}\nSubject: ${/^re:/i.test(draft.subject)?draft.subject:`Re: ${draft.subject}`}\n\n${draft.body}`
+  return `To: ${draft.to}\nSubject: ${draft.newMessage||/^re:/i.test(draft.subject)?draft.subject:`Re: ${draft.subject}`}\n\n${draft.body}`
 }
+// A reply is bound to its Gmail thread; a new email (no thread yet) is bound to its recipient. Both sides of the
+// approval (stage and execute) use this one function, and the payload binds to, subject and body either way.
+function approvalTarget(draft:any){return draft.newMessage?`gmail_new:${String(draft.to||'').toLowerCase()}`:`gmail_thread:${draft.threadId}`}
 
 async function stageApproval(actor:AgentActor,draft:any,learningText:string){
   const now=new Date().toISOString()
   const {data:run,error:runError}=await supabaseAdmin.from('agent_runs').insert({
     telegram_id:String(actor.legacyTelegramId),type:'gmail_send',capability:'email',status:'waiting_approval',
-    title:`Send reply: ${clean(draft.subject,140)}`,summary:'Waiting for approval before sending Gmail.',progress:25,
+    title:`${draft.newMessage?'Send email':'Send reply'}: ${clean(draft.subject,140)}`,summary:'Waiting for approval before sending Gmail.',progress:25,
     why:'Sending email creates an external communication.',source:'whatsapp',
     metadata_json:{plan_type:'gmail_send',draft,learning_text:learningText},started_at:now,updated_at:now,
   }).select('id').single()
@@ -93,12 +138,12 @@ async function stageApproval(actor:AgentActor,draft:any,learningText:string){
   const runId=String(run.id)
   const binding=buildApprovalBinding({
     missionId:runId,stepId:'send',capability:'email',actionType:'send_email',
-    target:`gmail_thread:${draft.threadId}`,
+    target:approvalTarget(draft),
     payload:{threadId:draft.threadId,to:draft.to,subject:draft.subject,body:draft.body},
   })
   const {data:approval,error}=await supabaseAdmin.from('agent_approvals').insert({
     telegram_id:String(actor.legacyTelegramId),run_id:runId,action_type:'send_email',
-    title:`Send email reply to ${draft.to}`,description:'This will send an external Gmail reply.',
+    title:draft.newMessage?`Send email to ${draft.to}`:`Send email reply to ${draft.to}`,description:draft.newMessage?'This will send a new external Gmail email.':'This will send an external Gmail reply.',
     payload_preview:[
       {label:'To',value:draft.to},{label:'Subject',value:draft.subject},{label:'Message',value:clean(draft.body,700)},{label:'Risk',value:'high'},
     ],
@@ -188,6 +233,24 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
     return {runId:staged.runId,status:'waiting_approval' as const,capability:'email' as const,risk:'high' as const,approvalId:staged.approvalId,approvalRequired:true,text:`📧 Ready to send — approval required\n\n${preview(state.payload.draft)}\n\nNothing has been sent yet. Reply *APPROVE* to send or *REJECT* to stop.`,handledBy:'gmail-send'}
   }
 
+  const compose=parseGmailComposeCommand(raw)
+  if(compose){
+    const access=await gmailAccess(params.actor)
+    if(!access.ok)return {runId:'gmail-compose-needs-google',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:'Connect Gmail first so I can find the recipient and prepare the draft. Nothing was sent.',handledBy:'gmail-send'}
+    const threads=emailFromHeader(compose.target)?[]:await searchGmailThreads(access.accessToken,compose.target,20)
+    const recipient=recipientFromThreads(threads,compose.target,String(access.user?.gmail_email||''))
+    if(recipient.status!=='resolved'){
+      return {runId:'gmail-compose-recipient',status:'paused' as const,capability:'email' as const,risk:'low' as const,
+        text:recipient.status==='ambiguous'?`I found more than one email address for “${clean(compose.target,60)}”. Send the address to use, like “draft an email to name@example.com saying …”. Nothing was drafted or sent.`
+          :`I couldn't find an email address for “${clean(compose.target,60)}” in your recent mail. Send the address, like “draft an email to name@example.com saying …”. Nothing was drafted or sent.`,handledBy:'gmail-send'}
+    }
+    const written=composeDraftFromDictation(compose.target,compose.said)
+    const draft={newMessage:true,threadId:'',sourceMessageId:'',to:recipient.email,subject:written.subject,body:written.body,inReplyTo:null}
+    await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
+    await saveFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft',{draft,created_at:new Date().toISOString()})
+    return {runId:'gmail-compose-draft',status:'completed' as const,capability:'email' as const,risk:'low' as const,text:`📧 Draft email\n\n${preview(draft)}\n\nNothing has been sent. Say *send it* when you want me to stage approval.`,handledBy:'gmail-send'}
+  }
+
   const parsed=parseGmailReplyCommand(raw)
   if(!parsed)return null
   // Natural reply commands include nouns after the referent ("that exact email").
@@ -249,10 +312,10 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
   if(approvalError||!approval||approval.status!=='approved')throw new Error('gmail_send_approval_missing')
   if(!['queued','waiting_approval'].includes(String(run.status)))throw new Error('agent_run_already_claimed')
   const draft:any=(run.metadata_json as any)?.draft
-  if(!draft?.threadId||!draft?.to||!draft?.subject||!draft?.body)throw new Error('gmail_send_draft_missing')
+  if((!draft?.threadId&&!draft?.newMessage)||!draft?.to||!draft?.subject||!draft?.body)throw new Error('gmail_send_draft_missing')
   assertApprovalBinding({
     missionId:params.runId,stepId:'send',capability:'email',actionType:'send_email',
-    target:`gmail_thread:${draft.threadId}`,
+    target:approvalTarget(draft),
     payload:{threadId:draft.threadId,to:draft.to,subject:draft.subject,body:draft.body},
   },approval)
 
@@ -272,7 +335,7 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
     // This enables later read-only reconciliation without retrying the mutation.
     const {error:receiptError}=await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:params.runId,event_type:'gmail_send_submitted',message:'Gmail returned a send receipt; verification is pending.',metadata_json:{gmail_message_id:sent.id,thread_id:draft.threadId}})
     if(receiptError)throw new Error('gmail_send_receipt_write_failed')
-    const evidence=await verifyGmailSentMessage(access.accessToken,sent.id,draft.threadId)
+    const evidence=await verifyGmailSentMessage(access.accessToken,sent.id,draft.threadId||sent.threadId)
     if(!evidence.verified){
       const now=new Date().toISOString()
       await supabaseAdmin.from('agent_runs').update({status:'outcome_unknown',summary:'Gmail accepted the send, but provider verification is incomplete.',progress:100,error:evidence.reason,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg)
@@ -287,7 +350,7 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
     await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,run_id:params.runId,event_type:'gmail_send_verified',message:`Gmail reply sent and provider-verified: ${clean(draft.subject,180)}`,metadata_json:{gmail_message_id:sent.id,thread_id:draft.threadId,to:draft.to}})
     await recordDecisionLearning({actor:params.actor,decisionId:params.runId,text:String((run.metadata_json as any)?.learning_text||'approved gmail send'),domain:'email',handler:'gmail-send',objectKind:'gmail_thread',objectRef:draft.threadId,outcome:'verified_success',verified:true,executionEvidence:{source:'gmail',kind:'provider_readback',objectRef:draft.threadId,providerRef:sent.id,verified:evidence.verified}}).catch(()=>{})
     await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
-    return {runId:params.runId,status:'completed' as const,capability:'email' as const,risk:'high' as const,text:`✅ Sent and verified\n\nTo: ${draft.to}\nSubject: ${/^re:/i.test(draft.subject)?draft.subject:`Re: ${draft.subject}`}`,handledBy:'gmail-send'}
+    return {runId:params.runId,status:'completed' as const,capability:'email' as const,risk:'high' as const,text:`✅ Sent and verified\n\nTo: ${draft.to}\nSubject: ${draft.newMessage||/^re:/i.test(draft.subject)?draft.subject:`Re: ${draft.subject}`}`,handledBy:'gmail-send'}
   }catch(err:any){
     const now=new Date().toISOString()
     const reason=clean(err?.message||err,300)

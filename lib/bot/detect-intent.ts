@@ -117,9 +117,16 @@ export function asksAboutWeather(lower: string): boolean {
 // "what needs my attention in my inbox?" read Gmail; "email Rahul saying hi" sends and is not matched.
 const GMAIL_READ_VERB_RE = /^(?:please\s+)?(?:(?:can|could)\s+you\s+)?(?:read|show|open|check|find|get|fetch|pull\s+up|summari[sz]e|look\s+at|go\s+through)\s+(?:me\s+)?(?:my|the)\s+(?:(?:latest|last|newest|most\s+recent|recent|unread|new|important|urgent)\s+)?(?:[\w'&-]+\s+){0,4}?(?:e-?mails?|mails?|inbox|gmail)\b/
 const GMAIL_ASK_RE = /^(?:what|which|who|anything|any|do\s+i\s+have\s+(?:any|anything))\b[^?]*\b(?:my\s+inbox|in\s+my\s+(?:gmail|e-?mails?)|my\s+unread)\b/
+// 20 Oct live: "Any important emails today?" went to web search. "Any/anything new/important emails (today)?",
+// "do I have unread mails?" and "what emails came in today?" ask about the person's own inbox.
+const MAIL_ADJ = '(?:(?:new|unread|important|urgent|recent|fresh|work|personal)\\s+)*'
+const MAIL_TAIL = '(?:\\s+(?:today|this\\s+morning|this\\s+evening|yesterday|tonight|now|so\\s+far|for\\s+me|in\\s+(?:my\\s+)?inbox|from\\s+[\\w .\'&@-]{1,40}?))*\\s*[?.!]*$'
+const GMAIL_ANY_RE = new RegExp(`^(?:(?:are\\s+there|do\\s+i\\s+have|did\\s+i\\s+(?:get|receive)|have\\s+i\\s+got|got)\\s+)?(?:any(?:thing)?\\s+)?${MAIL_ADJ}(?:e-?mails?|mails?)\\b${MAIL_TAIL}`)
+const GMAIL_WHAT_RE = new RegExp(`^(?:what|which)\\s+${MAIL_ADJ}(?:e-?mails?|mails?)\\s+(?:did\\s+i\\s+(?:get|receive)|have\\s+i\\s+(?:got|received)|came\\s+in|arrived|do\\s+i\\s+have)\\b`)
 export function isGmailReadRequest(lower: string): boolean {
   const t = lower.trim()
-  return GMAIL_READ_VERB_RE.test(t) || GMAIL_ASK_RE.test(t)
+  const anyMail = /^(?:are|do|did|have|got|any)\b/.test(t) && GMAIL_ANY_RE.test(t)
+  return GMAIL_READ_VERB_RE.test(t) || GMAIL_ASK_RE.test(t) || anyMail || GMAIL_WHAT_RE.test(t)
     || /^(?:what|which|anything|any)\b[^?]*\b(?:attention|action|urgent|important)\b[^?]*\bfrom\s+my\s+(?:gmail|e-?mails?|inbox)\b/.test(t)
 }
 
