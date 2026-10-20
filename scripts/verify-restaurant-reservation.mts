@@ -51,8 +51,9 @@ const autonomousCron=fs.readFileSync('app/api/cron/autonomous-runs/route.ts','ut
 
 assert.match(agentRoute,/tryRunRestaurantReservation/)
 assert.ok(agentRoute.indexOf("const restaurantReservation = await tryRunRestaurantReservation") < agentRoute.indexOf("const appointmentFollowup = await tryRunAppointmentFollowup"), 'restaurant reservations must outrank appointment follow-up')
-assert.match(dashboardRoute,/tryRunRestaurantReservation/)
-assert.ok(dashboardRoute.indexOf("const restaurantReservation = await tryRunRestaurantReservation") < dashboardRoute.indexOf("const appointmentFollowup = await tryRunAppointmentFollowup"), 'dashboard restaurant routing must outrank appointment routing')
+// 20 Oct: the dashboard queues reservation research in the background like WhatsApp.
+assert.match(dashboardRoute,/queueRestaurantReservationResearch/)
+assert.ok(dashboardRoute.indexOf("const restaurantReservation = await queueRestaurantReservationResearch") < dashboardRoute.indexOf("const appointmentFollowup = await tryRunAppointmentFollowup"), 'dashboard restaurant routing must outrank appointment routing')
 assert.match(whatsappWebhook,/isRestaurantReservationRequest/)
 assert.ok(whatsappWebhook.indexOf('isRestaurantReservationRequest(text)') < whatsappWebhook.indexOf('const featureReply = preserveFriendFlow'), 'WhatsApp reservation workflow must outrank legacy feature routing')
 assert.match(whatsappBridge,/queueRestaurantReservationResearch/)

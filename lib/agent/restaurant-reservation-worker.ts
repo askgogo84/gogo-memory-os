@@ -291,6 +291,19 @@ export async function processOne(action:any,reconciledResult?:Awaited<ReturnType
 
   let calendarNote=''
   const startAt=extractConfirmedSlot(result.pageText,String(event.timezone||'Asia/Kolkata'))
+  // 20 Oct: confirmed reservations never reached "My bookings" (no start_at) and got no reminder. Record the
+  // provider-confirmed time and reference on the same life event, and a 2-hour reminder. Best-effort: the booking
+  // itself is already verified and recorded above.
+  if(startAt){
+    const bookingEngine:any=await import('./booking-engine').catch(()=>null)
+    const ref=typeof bookingEngine?.confirmationRefFrom==='function'?bookingEngine.confirmationRefFrom(String(result.pageText||'')):null
+    await Promise.resolve(supabaseAdmin.from('life_events').update({start_at:startAt,end_at:new Date(Date.parse(startAt)+90*60_000).toISOString(),...(ref?{confirmation_ref:ref}:{}),updated_at:new Date().toISOString()}).eq('id',event.id).eq('telegram_id',tg)).catch(()=>{})
+    const remindAt=new Date(Date.parse(startAt)-2*3600_000)
+    if(remindAt.getTime()>Date.now()){
+      const message=`Table at ${safe(payload.restaurant||event.title,120)} in 2 hours.`
+      await Promise.resolve(supabaseAdmin.from('reminders').insert({telegram_id:Number(tg),chat_id:Number(tg),message,remind_at:remindAt.toISOString(),sent:false,timezone:String(event.timezone||'Asia/Kolkata')})).catch(()=>{})
+    }
+  }
   if(startAt){
     const endAt=new Date(Date.parse(startAt)+90*60_000).toISOString()
     const calendar=await prepareBookingCalendarApproval({actor,input:{lifeEventId:String(event.id),title:safe(payload.restaurant||event.title,180),startAt,endAt,timezone:String(event.timezone||'Asia/Kolkata'),location:null,provider:String(event.provider||''),sourceUrl:url,endEstimated:true}}).catch(()=>null)

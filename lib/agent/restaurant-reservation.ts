@@ -882,6 +882,18 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
       }
     }
   }
+  // Booking engine (20 Oct live: District 6 on Zomato burned 3 minutes on a phone-login wall and ended "couldn't
+  // read"). Apps like District/Zomato/EazyDiner only show tables to a signed-in account, and Gogo never bypasses
+  // that sign-in. Not connected yet: ask the person to connect it once, before any browser time is spent.
+  // Loaded lazily and guarded like ReserveGo above, so harnesses with inert module stubs keep the old path.
+  const bookingEngine:any=await import('./booking-engine').catch(()=>null)
+  const signInSite=typeof bookingEngine?.signedInBookingSiteForUrl==='function'?bookingEngine.signedInBookingSiteForUrl(provider.url):null
+  const connectFirst=()=>paused(bookingEngine.connectFirstReply({site:signInSite,restaurant:intent.restaurant,date:intent.requestedDate,time:intent.preferredStart,partySize:intent.partySize,providerUrl:provider.url}))
+  if(signInSite&&typeof bookingEngine?.isSiteConnected==='function'){
+    const {listSiteConnections}=await import('@/lib/dashboard/site-sessions')
+    const connections=await listSiteConnections(String(params.actor.legacyTelegramId)).catch(()=>[] as Array<{siteId:string;status:string}>)
+    if(!bookingEngine.isSiteConnected(connections,signInSite))return connectFirst()
+  }
   let inspected:Awaited<ReturnType<typeof runSecureBrowser>>
   try{
     inspected=await runSecureBrowser({
@@ -895,7 +907,8 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
     console.error('RESTAURANT_SLOT_READ_FAILED:',safe(error?.message||error,160))
     return unreadable()
   }
-  if(inspected.status==='blocked')return unreadable()
+  // A sign-in wall on a signed-in booking app means the saved sign-in ended: ask to connect again, never guess.
+  if(inspected.status==='blocked')return signInSite?connectFirst():unreadable()
   let release=extractReservationRelease(inspected.pageText,timezone)
   if(slotMode&&!release.releaseAt){
     const evidence=`${inspected.summary||''}\n${inspected.pageText||''}`
