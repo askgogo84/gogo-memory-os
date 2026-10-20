@@ -123,7 +123,7 @@ assert.ok(ws.indiaShoppingSearch('iphone 17 price').includeDomains.includes('ama
 console.log('market prices search the open web ok')
 // 18 Oct after merge: planning and briefings read the real calendar.
 const pmSrc = readFileSync('lib/bot/process-message.ts', 'utf8')
-assert.match(pmSrc, /const calendarBlock = await planningCalendarBlock\(resolvedUser, incomingText\)/)
+assert.match(pmSrc, /planningCalendarBlock\(resolvedUser, incomingText\)/)  // still read on the freeform path (now in parallel with the other context reads)
 const pmi = (pmSrc.match(/export function planningCalendarInstruction[\s\S]*?\n\}\n/) || [''])[0].replace('export ', '').replace(/: string \| null/, '').replace(/\(text: string\)/, '(text)')
 const plan = new Function(pmi + ';return planningCalendarInstruction')()
 assert.equal(plan('plan my week'), 'Show my calendar for the next 7 days')

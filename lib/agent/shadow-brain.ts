@@ -181,19 +181,24 @@ export async function observeShadowBrainTurn(params:{
   eventId?:string|null
 }):Promise<ShadowBrainObservation>{
   const classified=classifyAgentRequest(params.text)
-  const correctionTarget=await captureExplicitRoutingCorrection(params.actor,params.text).catch(()=>null)
   const contextual=shadowNeedsContext(params.text)
+  // 20 Oct timing: the correction lookup, the context reads and the learned-routing hints ran one after
+  // another; none depends on another, so they now run together.
+  const actionFamily=shadowActionFamily(params.text)
+  const correctionRead=captureExplicitRoutingCorrection(params.actor,params.text).catch(()=>null)
+  const hintsRead=decisionHints({actor:params.actor,text:params.text,domain:decisionDomain(classified.capability,actionFamily)}).catch(()=>({preferredHandler:null,avoidHandlers:[],examples:[],confidence:0}))
   let mission:any=null,trip:any=null,recentContext=''
   try{
     [mission,trip,recentContext]=await Promise.all([activeMission(params.actor),recentTrip(params.actor),recentConversation(params.actor)])
   }catch(error:any){
     console.error('SHADOW_BRAIN_CONTEXT_FAILED:',clean(error?.message||error,180))
   }
+  const [correctionTarget,learned]=await Promise.all([correctionRead,hintsRead])
 
   const focus=selectShadowFocus({text:params.text,contextual,mission,trip})
 
   const observation:ShadowBrainObservation={
-    actionFamily:shadowActionFamily(params.text),
+    actionFamily,
     capability:classified.capability,
     needsContext:contextual,
     focusKind:focus.kind,
@@ -203,7 +208,6 @@ export async function observeShadowBrainTurn(params:{
     ambiguous:focus.ambiguous,
   }
 
-  const learned=await decisionHints({actor:params.actor,text:params.text,domain:decisionDomain(observation.capability,observation.actionFamily)}).catch(()=>({preferredHandler:null,avoidHandlers:[],examples:[],confidence:0}))
   // Mission/trip salience is not exact typed-object resolution. Keep contextual
   // learning shadow-only until the authoritative specialist resolves the object.
   const guarded=calibrateGuardedRouting({preferredHandler:learned.preferredHandler,confidence:learned.confidence,avoidHandlers:learned.avoidHandlers,conflictingTypedContext:observation.ambiguous||contextual,actionRequiresApproval:Boolean(classified.approvalAction)||classified.irreversible||classified.risk==='high'||['buy','book','send'].includes(observation.actionFamily)})
