@@ -483,10 +483,12 @@ export type GmailReplyDraft = {
   subject:string
   body:string
   inReplyTo?:string|null
+  /** A new email (no thread yet): no "Re:" and no threadId, so Gmail starts a new thread. */
+  newMessage?:boolean
 }
 
 export async function sendGmailReply(accessToken:string,draft:GmailReplyDraft){
-  const subject=/^re:/i.test(draft.subject)?draft.subject:`Re: ${draft.subject}`
+  const subject=draft.newMessage||/^re:/i.test(draft.subject)?draft.subject:`Re: ${draft.subject}`
   const headers=[
     `To: ${sanitizeHeader(draft.to)}`,
     `Subject: ${sanitizeHeader(subject)}`,
@@ -502,7 +504,7 @@ export async function sendGmailReply(accessToken:string,draft:GmailReplyDraft){
   const res=await withTimeout(fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send',{
     method:'POST',
     headers:{Authorization:`Bearer ${accessToken}`,'Content-Type':'application/json'},
-    body:JSON.stringify({raw,threadId:draft.threadId}),
+    body:JSON.stringify(draft.newMessage?{raw}:{raw,threadId:draft.threadId}),
     cache:'no-store',
   }),12000)
   const data=await res.json().catch(()=>({}))

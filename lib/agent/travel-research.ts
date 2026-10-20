@@ -97,8 +97,10 @@ function routeText(text:string) {
   return text.replace(/\b(?:do\s+not|don't)\s+(?!forget\b)[^.!?;\n]*?(?=[.!?;\n]|\b(?:but|then)\b|,\s*(?:just|please|instead)\b|$)[.!?;]?/gi,' ').trim().replace(/(?:[.!?;,]\s*)+$/,'').trim()
 }
 function extractSegment(text:string,marker:'from'|'to'|'in') {
-  const markers=marker==='from'?'to|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip|departing|returning'
-    :marker==='to'?'from|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip|departing|returning'
+  // A weekday or "day after tomorrow" ends a city too ("to Delhi Friday 30 Oct").
+  const days='day\\s+after|today|(?:mon|tues|wednes|thurs|fri|satur|sun)day'
+  const markers=marker==='from'?`to|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip|departing|returning|${days}`
+    :marker==='to'?`from|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip|departing|returning|${days}`
     :'next|this|tomorrow|on|for|under|below|with|from|to'
   // A separate safety instruction is not part of the city. Keep the full
   // request available so route/date details after that clause still survive.
@@ -152,10 +154,33 @@ function explicitDateFromText(text:string,now:Date) {
   const numeric = text.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/)
   return numeric ? valid(Number(numeric[3]),Number(numeric[2])-1,Number(numeric[1])) : null
 }
-function normalizeWhen(text:string,now=new Date()):{label:string;search:string;startDate?:string;endDate?:string}{const t=text.toLowerCase();if(/\bnext week\b/.test(t))return nextWeekRange(now);if(/\bthis week\b/.test(t))return thisWeekRange(now);if(/\bnext month\b/.test(t)){const start=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+1,1));const end=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+2,0));return{label:new Intl.DateTimeFormat('en-GB',{month:'long',year:'numeric',timeZone:'UTC'}).format(start),search:`${fmtDate(start)} ${fmtDate(end)}`,startDate:isoDay(start),endDate:isoDay(end)}}if(/\btoday\b/.test(t)){const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()));return{label:fmtDate(d),search:fmtDate(d),startDate:isoDay(d),endDate:isoDay(d)}}if(/\btomorrow\b/.test(t)){const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1));return{label:fmtDate(d),search:fmtDate(d),startDate:isoDay(d),endDate:isoDay(d)}}const explicit=explicitDateFromText(text,now);if(explicit){const d=new Date(`${explicit}T00:00:00Z`);return{label:fmtDate(d),search:fmtDate(d),startDate:explicit,endDate:explicit}}return{label:'dates not specified',search:`${now.getUTCFullYear()}`}}
+// "next Friday", "this Friday", "on Friday", "Friday": the next such day after today (same rule as the
+// calendar's weekdayDateParts). 20 Oct live: "flights from Bangalore to Delhi next Friday" asked for the date.
+const WEEKDAY_NAMES=['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
+const WEEKDAY_MENTION=/\b(?:(?:on|this|next|coming)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i
+/** `today` is the local calendar day as a UTC-midnight Date (localTravelDate). Returns YYYY-MM-DD or null. */
+export function weekdayTravelDate(text:string,today:Date):string|null{
+  const m=String(text||'').match(WEEKDAY_MENTION)
+  if(!m||/\bevery\b/i.test(text))return null
+  const want=WEEKDAY_NAMES.indexOf(m[1].toLowerCase())
+  const ahead=((want-today.getUTCDay()+7)%7)||7
+  return isoDay(new Date(Date.UTC(today.getUTCFullYear(),today.getUTCMonth(),today.getUTCDate()+ahead)))
+}
+function normalizeWhen(text:string,now=new Date()):{label:string;search:string;startDate?:string;endDate?:string}{const t=text.toLowerCase();if(/\bday\s+after\s+tomorrow\b/.test(t)){const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+2));return{label:fmtDate(d),search:fmtDate(d),startDate:isoDay(d),endDate:isoDay(d)}}if(/\bnext week\b/.test(t))return nextWeekRange(now);if(/\bthis week\b/.test(t))return thisWeekRange(now);if(/\bnext month\b/.test(t)){const start=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+1,1));const end=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+2,0));return{label:new Intl.DateTimeFormat('en-GB',{month:'long',year:'numeric',timeZone:'UTC'}).format(start),search:`${fmtDate(start)} ${fmtDate(end)}`,startDate:isoDay(start),endDate:isoDay(end)}}if(/\btoday\b/.test(t)){const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()));return{label:fmtDate(d),search:fmtDate(d),startDate:isoDay(d),endDate:isoDay(d)}}if(/\btomorrow\b/.test(t)){const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1));return{label:fmtDate(d),search:fmtDate(d),startDate:isoDay(d),endDate:isoDay(d)}}const explicit=explicitDateFromText(text,now)||weekdayTravelDate(text,now);if(explicit){const d=new Date(`${explicit}T00:00:00Z`);return{label:fmtDate(d),search:fmtDate(d),startDate:explicit,endDate:explicit}}return{label:'dates not specified',search:`${now.getUTCFullYear()}`}}
 export function buildTravelResearchContext(rawText:string,now=new Date(),timezone='Asia/Kolkata'):TravelContext{const text=String(rawText||'').trim();const t=text.toLowerCase();const kind:'flight'|'hotel'=/\bhotel|hotels\b/.test(t)&&!/\bflight|flights|airfare\b/.test(t)?'hotel':'flight';let origin=placeFrom(extractSegment(text,'from'));let destination=placeFrom(extractSegment(text,'to'));if(kind==='flight'&&(!origin||!destination)){const pair=routeText(text).replace(/^(?:(?:please|find|search|compare|check|look|for|me|a|an|the|cheap|cheapest|available|actual|non-stop|direct|flight|flights|airfare|options)\s+)+/i,'').match(/\b([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28})\s*(?:→|->| to )\s*([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28}?)(?=\s+(?:next|this|tomorrow|on|for|under|below|with|one-way|round-trip)\b|\s+\d|$)/i);if(pair&&!/\b(?:compare|search|research|find|check|flights?|book|pay)\b/i.test(pair[1])){origin||=placeFrom(pair[1]);destination||=placeFrom(pair[2])}}if(kind==='flight'&&!destination){const before=text.match(/([A-Za-z][A-Za-z .'-]{1,30}?)\s+(?:flights?|airfare|fares?|tickets?)\b/i)?.[1];if(before){const filler=/^(?:check|find|search|show|get|need|want|any|cheap|cheapest|best|the|a|an|me|for|my|our|some|good|latest|current|live|actual|available|direct|non-?stop|domestic|international|one-?way|round-?trip|return|please|and|or|also)$/i;const words=before.trim().split(/\s+/).filter(w=>!filler.test(w));const two=words.slice(-2).join(' ').toLowerCase(),one=words.slice(-1).join(' ').toLowerCase();const hit=PLACES[two]?two:PLACES[one]?one:(one.length>2?one:'');const candidate=placeFrom(hit);if(candidate&&(!origin||candidate.label!==origin.label))destination=candidate}}if(kind==='hotel'&&!destination)destination=placeFrom(extractSegment(text,'in'));const when=normalizeWhen(text,localTravelDate(now,timezone));const routeLabel=origin&&destination?`${origin.code||origin.label} → ${destination.code||destination.label}`:destination?destination.label:'Travel search';return{kind,origin,destination,whenLabel:when.label,searchWhen:when.search,routeLabel,startDate:when.startDate,endDate:when.endDate}}
+// 20 Oct live: "Movies showing near Rajajinagar this Sunday evening" was read as the answer to an open flight
+// question (its "evening" looked like a departure time) and got "Please send the travel date". A reply that names
+// another topic, or is a long sentence with no travel word, is a new request and routes normally.
+const OTHER_TOPIC_RE=/\b(?:movies?|films?|cinemas?|showtimes?|screenings?|concerts?|gigs?|events?|plays?|theat(?:re|er)s?|restaurants?|cafes?|weather|news|e-?mails?|mails?|inbox|calendar|meetings?|reminders?|groceries|recipes?|nearby|near\s+(?:me|by|[a-z]+))\b/i
+const TRAVEL_WORD_RE=/\b(?:flights?|fly|flying|airfare|fares?|trip|return|travel(?:l?ing)?|depart(?:ure|ing)?|one[\s-]*way|round[\s-]*trip|adults?|passengers?|travell?ers?|economy|business|premium|cabin|non[\s-]*stop|direct)\b/i
+export function isOtherTopicThanFlightReply(raw:string):boolean{
+  const text=String(raw||'').trim()
+  if(OTHER_TOPIC_RE.test(text)&&!TRAVEL_WORD_RE.test(text))return true
+  return text.split(/\s+/).filter(Boolean).length>12&&!TRAVEL_WORD_RE.test(text)
+}
 export function isTravelResearchDetailsReply(raw:string) {
   const text=routeText(String(raw||''))
+  if(isOtherTopicThanFlightReply(raw))return false
   if(isFlightBriefAnswer(raw))return true
   return /^(?:from|to|on|for|today|tomorrow|\d{1,2})\b/i.test(text) &&
     !/\b(?:remind|reminder|calendar|email|send|create|delete|cancel|buy|book|pay|order|subscribe|watch|monitor)\b/i.test(text)
@@ -371,6 +396,12 @@ export function flightDateMentions(text: string, now: Date, timezone = 'Asia/Kol
     push(m.index ?? 0, m[0].length, Number(m[2]), MONTHS[m[1].toLowerCase()], m[3] ? Number(m[3]) : undefined)
   for (const m of text.matchAll(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g))
     push(m.index ?? 0, m[0].length, Number(m[3]), Number(m[2]) - 1, Number(m[1]))
+  // A weekday ("next Friday") counts only when no calendar date was written: "Friday 24 Oct" is one date.
+  if (!found.length) {
+    const wd = text.match(WEEKDAY_MENTION)
+    const iso = wd ? weekdayTravelDate(text, today) : null
+    if (wd && iso) { const d = new Date(`${iso}T00:00:00Z`); found.push({ iso, index: wd.index ?? 0, end: (wd.index ?? 0) + wd[0].length, day: d.getUTCDate(), month: d.getUTCMonth(), hasYear: true }) }
+  }
   found.sort((a, b) => a.index - b.index)
   return found.filter((m, i) => !found.slice(0, i).some(o => m.index < o.end && o.index < m.end))
 }
@@ -466,6 +497,7 @@ const DEFAULTS_RE = /^\s*(?:go(?:\s+ahead)?|just\s+search|search(?:\s+now)?|any|
 export function isFlightBriefAnswer(raw: string): boolean {
   const text = String(raw || '').trim()
   if (!text || text.length > 200) return false
+  if (isOtherTopicThanFlightReply(text)) return false
   if (/\b(?:remind|reminder|calendar|email|send|create|delete|cancel|buy|pay|order|subscribe|watch|monitor|book|alarm)\b/i.test(text)) return false
   if (AFFIRM_RE.test(text) || DEFAULTS_RE.test(text)) return true
   if (PLACES[text.toLowerCase().replace(/[.!?]+$/g, '')]) return true
