@@ -74,14 +74,16 @@ export async function selectCommerceTaskAddress(owner: string, task: CommerceTas
 export function commerceTaskService(task: CommerceTask): 'food' | 'grocery' { return task.type === 'grocery_comparison' ? 'grocery' : 'food' }
 
 export type FoodCatalogue = {observedAt: string; products?: import('./swiggy-read').GroceryChoice[]; restaurants?: import('./swiggy-read').RestaurantChoice[]; items?: import('./swiggy-read').FoodChoice[]; restaurantId?: string}
-export async function saveCommerceCatalogue(owner: string, task: CommerceTask, catalogue: FoodCatalogue) {
+// `extra` carries chat-offered options (lib/commerce/instamart-chat.ts); any re-read drops a stale chat offer.
+export async function saveCommerceCatalogue(owner: string, task: CommerceTask, catalogue: FoodCatalogue, extra: Record<string, any> = {}) {
   const items = catalogue.items || catalogue.products
   const options = items || catalogue.restaurants || []
   const state = items ? 'waiting_item_selection' : 'waiting_restaurant_selection'
   const summary = options.length
     ? (catalogue.products ? 'Instamart' : 'Swiggy') + ' returned these ' + (catalogue.products ? 'available products' : items ? 'available menu items' : 'open restaurants') + ' for your selected address: ' + options.map(option => option.name + ('variant' in option ? ' — ' + option.variant : '')).join('; ') + '. ' + (items ? 'Item prices, delivery totals and cart preparation are not yet verified.' : 'Choose a restaurant to read its menu. Prices and delivered totals are not yet verified.')
     : (catalogue.products ? 'Instamart' : 'Swiggy') + ' did not return verifiably available ' + (catalogue.products ? 'matching products' : items ? 'matching menu items' : 'restaurants') + ' in this search. Nothing was added to a cart or ordered.'
-  return saveTask(owner, task, {...task.metadata_json, state, commerce: {...task.metadata_json.commerce, blocker: null, catalogue}}, summary + ' Checked: ' + catalogue.observedAt + '. Availability can change.')
+  const {chat_pick: _stalePick, ...metadata} = task.metadata_json
+  return saveTask(owner, task, {...metadata, ...extra, state, commerce: {...task.metadata_json.commerce, blocker: null, catalogue}}, summary + ' Checked: ' + catalogue.observedAt + '. Availability can change.')
 }
 
 export async function saveCommerceReadBlocker(owner: string, task: CommerceTask, reason: 'reauth_required' | 'address_changed' | 'provider_unverified') {

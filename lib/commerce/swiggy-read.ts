@@ -5,7 +5,7 @@ import {verifiedCartMatches} from './evidence'
 type Reader = Pick<CommerceMcpClient, 'readTool'>
 export type RestaurantChoice = {id: string; name: string; distanceKm: number | null; deliveryMinutes: number | null}
 export type FoodChoice = {id: string; restaurantId: string; name: string; needsCustomization: boolean; pricePaise: null}
-export type GroceryChoice = {id: string; skuId: string; productId: string; name: string; variant: string; maxQuantity: number | null; pricePaise: null}
+export type GroceryChoice = {id: string; skuId: string; productId: string; name: string; variant: string; maxQuantity: number | null; pricePaise: number | null}
 const text = (value: unknown, limit = 180) => typeof value === 'string' && value.trim() && value.length <= limit ? value.trim() : null
 const positive = (value: unknown) => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 const identity = (value: unknown) => text(value, 512)
@@ -48,7 +48,9 @@ export async function readInstamartProducts(client: Reader, addressId: string, q
       const id = identity(row?.spinId), skuId = identity(row?.skuId), productId = identity(product.productId)
       const name = text(row?.displayName), variant = text(row?.quantityDescription)
       if (!id || !skuId || !productId || !name || !variant || row.isInStockAndAvailable !== true || choices.some(choice => choice.id === id && choice.skuId === skuId)) continue
-      choices.push({id, skuId, productId, name, variant, maxQuantity: Number.isSafeInteger(row.maxQuantity) && row.maxQuantity > 0 ? row.maxQuantity : null, pricePaise: null})
+      // Listed price only when the provider states the currency ("₹54"); bare numbers stay unknown.
+      const pricePaise = [row.price?.offerPrice, row.offerPrice, row.price?.mrp].map(explicitInrPaise).find(value => value !== null) ?? null
+      choices.push({id, skuId, productId, name, variant, maxQuantity: Number.isSafeInteger(row.maxQuantity) && row.maxQuantity > 0 ? row.maxQuantity : null, pricePaise})
     }
   }
   return choices.slice(0, 20)

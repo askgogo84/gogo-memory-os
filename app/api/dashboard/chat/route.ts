@@ -156,6 +156,16 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({text:reply,handledBy:'human-auth-required'})
       }
     }
+    // "Order milk on Swiggy Instamart" via the user's connected Swiggy account: three in-stock options, and a
+    // 1/2/3 reply binds only while that list is Gogo's latest reply. Lazy so strict harnesses keep their maps.
+    // Cheap pre-filter: only an Instamart mention or a bare 1/2/3-style pick loads the module.
+    const instamartChat:any=(/\binstamart\b/i.test(text)||/^\s*(?:(?:add|pick|choose|select|take)\s+)?(?:the\s+)?(?:(?:option|number|no\.?|item)\s*)?#?\s*(?:[123](?:st|nd|rd)?|first|second|third)(?:\s+(?:one|option|item))?(?:\s+please)?\s*[.!]?\s*$/i.test(text))?await import('@/lib/commerce/instamart-chat').catch(()=>null):null
+    const instamart=typeof instamartChat?.tryInstamartChat==='function'?await Promise.resolve().then(()=>instamartChat.tryInstamartChat({telegramId:actor.legacyTelegramId,text,surface:'web'})).catch((err:any)=>{console.error('INSTAMART_CHAT_FAILED:',String(err?.message||err).slice(0,160));return null}):null
+    __trace.mark('instamart')
+    if(instamart){
+      await saveConversation(user.telegram_id,text,instamart.text)
+      return NextResponse.json(instamart)
+    }
     // A short reply to the question Gogo just asked ("This Saturday 8pm" after "What time should I
     // book Toit for?") resumes that request before any feature matcher reads it as something new.
     // Resolved once per turn here; processIncomingMessage below is told so and skips the same reads.
