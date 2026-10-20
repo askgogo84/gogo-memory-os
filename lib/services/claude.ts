@@ -130,6 +130,7 @@ RULES:
    "What is the weather in Bengaluru?" -> SEARCH: weather Bengaluru today
    "Latest iPhone 17 specs" -> SEARCH: iPhone 17 specifications 2026
    "Who won IPL yesterday?" -> SEARCH: IPL results yesterday 2026
+   TIMETABLES: train, bus or flight times between places are live data. Never list train numbers, departure/arrival times or fares from memory: output SEARCH (e.g. "Bus from Bangalore to Mysore tonight" -> SEARCH: Bengaluru to Mysuru bus timings tonight).
 
 5. CONTENT CREATION: If user asks to write/draft a LinkedIn post, tweet, Instagram caption, blog post, email, or any content:
    - Write the full draft immediately with proper formatting. NEVER reply with only questions: if details are missing, make sensible assumptions from the request and the user's context, write the draft, then add ONE short line inviting changes (e.g. "Want it shorter, or more about security?")
@@ -139,7 +140,7 @@ RULES:
    - For Twitter/X: under 280 chars, punchy
    - For email: clear subject line + body
 
-6. EVERYTHING ELSE: Reply naturally, 2-3 sentences max.
+6. EVERYTHING ELSE: Reply naturally, 2-3 sentences max. Do not call the user "boss", "sir" or another nickname unless a standing preference above asks for it.
 
 6a. ASKGOGO PRODUCT FEATURES — NEVER FABRICATE LINKS OR FLOWS: You do NOT know the URLs, paths, or setup steps for AskGogo's own features (connecting Google Calendar or Gmail, the web dashboard, upgrading/pricing, magic-link login, meeting recording, referrals, etc.). NEVER invent or guess a URL such as askgogo.in/... or app.askgogo.in/... — those links are generated only by the app's own deterministic handlers, not by you. NEVER write out step-by-step instructions for connecting an account or using any product capability. If the user seems to want a product feature, say you'll help and ask them to rephrase or use the exact command (e.g. "type *connect calendar*") — do NOT produce a link or an invented flow. A wrong or made-up link is worse than no link.
 
@@ -177,10 +178,10 @@ ${workflow ? contentWorkflowPrompt(workflow) : ''}`
       system: systemPrompt,
       messages,
     })
-    return response.content[0].type === 'text' ? response.content[0].text : ''
+    return finishChatReply(userMessage, response.content[0].type === 'text' ? response.content[0].text : '', preferenceBlock)
   }catch(error:any){
     console.error('ANTHROPIC_FREEFORM_FAILED_FALLING_BACK:',providerErrorSummary(error))
-    return await askOpenAiFallback({system:systemPrompt,messages,maxTokens})
+    return finishChatReply(userMessage, await askOpenAiFallback({system:systemPrompt,messages,maxTokens}), preferenceBlock)
   }
 }
 
@@ -232,11 +233,92 @@ export function webAnswerDateLine(now = new Date()) {
 // "Based on the search results, …"; drop that lead-in deterministically and capitalise what follows.
 export function stripSearchPreamble(text: string): string {
   // WhatsApp does not render markdown links (20 Oct: Mercury wrote "[IMDb](https://…)"); keep them readable.
-  const t = String(text || '').replace(/\[([^\]\n]{1,80})\]\((https?:\/\/[^\s)]+)\)/g, '$1: $2')
+  const t = stripCitationMarkers(String(text || '').replace(/\[([^\]\n]{1,80})\]\((https?:\/\/[^\s)]+)\)/g, '$1: $2'))
   const m = t.match(/^\s*(?:based on|according to|from|looking at)\s+(?:the\s+)?(?:provided\s+|available\s+|latest\s+)?(?:web\s+)?(?:search\s+)?(?:results|sources|information)(?:\s+(?:provided|available|above))?\s*[,:]\s*/i)
   if (!m) return t
   const rest = t.slice(m[0].length)
   return rest ? rest.charAt(0).toUpperCase() + rest.slice(1) : t
+}
+
+// 20 Oct live: "Best coworking space in Indiranagar" came back with "(sources 2, 3, 4)" and "(source 3)":
+// the model cited the numbered search blocks, which mean nothing to the user. Numbered markers go; real
+// links (already bare URLs) stay.
+export function stripCitationMarkers(text: string): string {
+  return String(text || '')
+    .replace(/[ \t]*\((?:sources?|refs?|references?|citations?|results?)\s*:?\s*#?\d+(?:\s*(?:,|and|&|-|–)\s*#?\d+)*\)/gi, '')
+    .replace(/[ \t]*\[\s*\d+(?:\s*(?:,|-|–)\s*\d+)*\s*\](?!\()/g, '')
+    .replace(/[ \t]*【[^】\n]{0,40}】/g, '')
+}
+
+// 20 Oct live: "Train from Bangalore to Mysore tomorrow morning" was answered with exact trains, times
+// and fares recalled by the model ("Chamundi Exp 16215 — 06:15 → 08:45"), no source; real timetables
+// differ. Train, bus and flight times shown to the user must come from fetched text. Anything else is
+// replaced with an honest line and the official places to check.
+const TRANSPORT_WORD = /\b(?:trains?|railways?|irctc|shatabdi|vande\s*bharat|buses|bus|ksrtc|redbus|flights?)\b/i
+export function isTransportTimetableQuestion(text: string): boolean {
+  const t = String(text || '')
+  if (!TRANSPORT_WORD.test(t)) return false
+  // The user's own booked trip is answered from their saved ticket, not a public timetable.
+  if (/\bmy\s+(?:(?:next|return|onward|morning|evening)\s+)?(?:train|bus|flight|ticket|trip|pnr|booking)\b/i.test(t)) return false
+  if (/\btrain(?:ing|ed)?\s+(?:a|an|the|my|our|your|model|models|llm|ai|dogs?|staff|team|people)\b/i.test(t)) return false
+  return /\bfrom\s+\S.{0,60}?\bto\s+\S/i.test(t)
+    || /\b(?:timings?|timetable|schedule|departures?|arrivals?|next|first|last|earliest|which)\b/i.test(t)
+}
+function transportKind(text: string): 'train' | 'bus' | 'flight' {
+  return /\bflights?\b/i.test(text) ? 'flight' : /\b(?:bus|buses|ksrtc|redbus)\b/i.test(text) ? 'bus' : 'train'
+}
+export function transportUnverifiedReply(text: string): string {
+  const kind = transportKind(text)
+  if (kind === 'bus') return "I couldn't verify bus timings from a live source, so I won't list times from memory.\n\nCheck current departures here:\nredBus: https://www.redbus.in\nKSRTC: https://ksrtc.in"
+  if (kind === 'flight') return "I couldn't verify flight timings from a live source, so I won't list times from memory.\n\nCheck current schedules here:\nGoogle Flights: https://www.google.com/travel/flights"
+  return "I couldn't verify train timings from a live source, so I won't list times or train numbers from memory.\n\nCheck the current timetable here:\nIRCTC: https://www.irctc.co.in/nget/train-search\nConfirmTkt: https://www.confirmtkt.com"
+}
+function clockTimes(text: string): string[] {
+  const out: string[] = []
+  for (const m of String(text || '').matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b(?:\s*(am|pm))?/gi)) out.push(`${Number(m[1])}:${m[2]}${m[3] ? m[3].toLowerCase() : ''}`)
+  for (const m of String(text || '').matchAll(/\b(1[0-2]|0?[1-9])\s*(am|pm)\b/gi)) out.push(`${Number(m[1])}:00${m[2].toLowerCase()}`)
+  return out
+}
+/**
+ * Keeps transport times only when every time in the reply also appears in the fetched source text.
+ * With no source (chat model), any time is unverified. Non-transport questions pass through unchanged.
+ */
+export function groundTransportTimes(question: string, reply: string, sourceText = ''): string {
+  if (!isTransportTimetableQuestion(question)) return reply
+  const times = clockTimes(reply)
+  if (!times.length) return reply
+  const bare = (v: string) => v.replace(/(am|pm)$/, '')
+  const sourced = new Set(clockTimes(sourceText).flatMap(v => [v, bare(v)]))
+  if (times.some(v => !sourced.has(v) && !sourced.has(bare(v)))) return transportUnverifiedReply(question)
+  if (/https?:\/\//i.test(reply)) return reply
+  // Times are in the results but the reply named no source: cite the first fetched result.
+  const firstUrl = String(sourceText).match(/Source:\s*(https?:\/\/\S+)/)?.[1]
+  const kind = transportKind(question)
+  const confirm = kind === 'train' ? 'Confirm on IRCTC before you travel: https://www.irctc.co.in/nget/train-search' : kind === 'bus' ? 'Confirm on redBus before you travel: https://www.redbus.in' : 'Confirm with the airline before you travel.'
+  return `${reply.trim()}\n\n${firstUrl ? `Source: ${firstUrl}\n` : ''}${confirm}`
+}
+
+// The model sometimes addresses the user as "boss" ("Your car is parked at *B2 slot 14*, boss."). Only a
+// standing preference that asks for it keeps it.
+export function stripUnrequestedAddress(reply: string, preferenceBlock = ''): string {
+  if (/\bboss\b/i.test(preferenceBlock)) return reply
+  return String(reply || '')
+    .replace(/,[ \t]*boss(?=[ \t]*(?:[.!?…]|$))/gim, '')
+    .replace(/^([ \t]*(?:got it|okay|ok|sure|done|noted|alright|right|hey|hi|hello))[,]?[ \t]+boss\b/gim, '$1')
+    .replace(/^([ \t]*)boss,[ \t]*(\S)/gim, (_m: string, lead: string, ch: string) => `${lead}${ch.toUpperCase()}`)
+}
+
+/** Chat replies: no unrequested "boss", and no model-recalled transport timetable (a directive reply is left to its parser). */
+export function finishChatReply(userMessage: string, reply: string, preferenceBlock = ''): string {
+  const text = stripUnrequestedAddress(reply, preferenceBlock)
+  if (/^\s*(?:REMINDER|MEMORY|LIST_[A-Z]+|SEARCH):/m.test(text)) return text
+  return groundTransportTimes(userMessage, text, '')
+}
+
+/** Shared post-processor for every web-answer provider (Mercury, Claude, OpenAI fallback). */
+export function finishWebAnswer(userMessage: string, raw: string, context: string): string {
+  const text = stripSearchPreamble(raw)
+  return text ? groundTransportTimes(userMessage, text, context) : text
 }
 
 export async function askClaudeWithContext(
@@ -258,7 +340,11 @@ Provide a clear, concise answer based on these results. Cite sources when releva
 
 BREVITY (19 Oct: long replies confused users): start with the direct answer in the first line (the number, the fact, or yes/no). Keep the whole reply under 8 short lines unless the user asked for a list or detail. Never open with "Based on the search results" or similar. If sources disagree, give the most-reported figure and the range in one line ("₹111.68/litre; sources range ₹110.89–₹111.68"), not a source-by-source breakdown. Cite at most two links. No closing advice paragraph unless it changes what the user should do.
 
-NEWS: for "latest" or "news" questions, list only items the results show as recent (dated within the last 7 days), newest first, one line each with its date. Never present an item more than a month old as latest news. If the results contain nothing recent, say that plainly in one line.
+NEWS: for "latest" or "news" questions, list only items the results show as recent (dated within the last 7 days, using each result's "published" date or a date in its text), newest first, one line each with its date. Never present an item more than a month old as latest news. If the results contain nothing recent, say that plainly in one line. If results carry no dates at all, lead with the items that look most recent (one short line each) and add one short line that their dates could not be confirmed.
+
+TRAVEL TIMES: give train, bus or flight numbers and times only when they appear in the results above, with that result's link next to them. If the results do not show the times, say you could not verify them and point to IRCTC (https://www.irctc.co.in/nget/train-search) or ConfirmTkt (https://www.confirmtkt.com) for trains. Never fill in times from memory.
+
+CITATIONS: never write "(source 3)", "(sources 2, 3)" or "[1]" markers; the user cannot see the numbered results. Name the site or give its link instead.
 
 SHOPPING: if the user wants products to buy, list concrete products that appear in the results (name, price in ₹ when shown, store, and the product or listing link), grouped into complete looks or options within their budget. Never answer with only videos, reels or style articles. If the results contain no actual products, say so plainly and give the store search link instead. Never claim stock or size availability that the results do not show, and never buy anything.
 
@@ -269,7 +355,7 @@ FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF
   // Mercury first when its key is set: same prompt, ~1s instead of many; Claude stays the fallback.
   if (mercuryWebAnswersEnabled()) {
     const fast = await askMercury(prompt, { maxTokens: 1200, label: 'web_answer' })
-    if (fast?.text) return stripSearchPreamble(fast.text)
+    if (fast?.text) return finishWebAnswer(userMessage, fast.text, context)
   }
   try{
     const response = await client.messages.create({
@@ -277,9 +363,9 @@ FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF
       max_tokens: 1500,
       messages:[{role:'user',content:prompt}],
     })
-    return stripSearchPreamble(response.content[0].type === 'text' ? response.content[0].text : '')
+    return finishWebAnswer(userMessage, response.content[0].type === 'text' ? response.content[0].text : '', context)
   }catch(error:any){
     console.error('ANTHROPIC_CONTEXT_FAILED_FALLING_BACK:',providerErrorSummary(error))
-    return stripSearchPreamble(await askOpenAiFallback({messages:[{role:'user',content:prompt}],maxTokens:1500}))
+    return finishWebAnswer(userMessage, await askOpenAiFallback({messages:[{role:'user',content:prompt}],maxTokens:1500}), context)
   }
 }

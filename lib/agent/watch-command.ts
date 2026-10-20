@@ -1440,7 +1440,7 @@ function parseFlightWatchRequest(text: string): PendingFlightWatch | null {
 
 function flightWatchPrompt() {
   return (
-    `I need your flight details to track it, boss.\n\n` +
+    `I need your flight details to track it.\n\n` +
     `Reply with your airline and flight number (e.g. “AI 101” or “United 456”), ` +
     `or forward me the booking confirmation — I’ll pull the details and start monitoring ` +
     `for delays, gate changes and cancellations.`

@@ -49,8 +49,13 @@ export function isImageTranslationRequest(caption: string): boolean {
 
 // ── Parse target language from request ───────────────────────────────────────
 
+const LANGUAGE_ALT = Object.keys(SUPPORTED_LANGUAGES).join('|')
+
 export function parseTargetLanguage(text: string): string {
   const lower = text.toLowerCase()
+  // An explicit "to/into/in <language>" names the target even when another language word appears earlier.
+  const explicit = lower.match(new RegExp(`\\b(?:into|to|in)\\s+(${LANGUAGE_ALT})\\b(?![\\s\\S]*\\b(?:into|to|in)\\s+(?:${LANGUAGE_ALT})\\b)`))
+  if (explicit) return SUPPORTED_LANGUAGES[explicit[1]]
   for (const [key, name] of Object.entries(SUPPORTED_LANGUAGES)) {
     if (lower.includes(key)) return name
   }
@@ -59,31 +64,53 @@ export function parseTargetLanguage(text: string): string {
 
 // ── Text translation ──────────────────────────────────────────────────────────
 
+/**
+ * The words to translate, without the instruction around them. 20 Oct live: "Translate good morning to
+ * Kannada" sent "good morning to Kannada" to the model, which answered "ಕನ್ನಡಕ್ಕೆ ಶುಭೋದಯ".
+ */
+export function extractTextToTranslate(text: string): string {
+  const lang = `(?:${LANGUAGE_ALT})`
+  let t = String(text || '').trim()
+  // "Translate to Kannada: good morning" / "translate this into Hindi: ..."
+  t = t.replace(new RegExp(`^translate\\s+(?:this|it|the following)?\\s*(?:in)?to\\s+${lang}\\b\\s*[:\\-–]?\\s*`, 'i'), '')
+  // "How do you say good morning in Kannada?" / "What does namaskara mean in English?"
+  const say = t.match(new RegExp(`^(?:how (?:do (?:you|i)|to) say)\\s+([\\s\\S]+?)\\s+in\\s+${lang}\\s*\\??$`, 'i'))
+  if (say) return say[1].replace(/^["'“]|["'”]$/g, '').trim()
+  const mean = t.match(/^(?:what does|what is|what's)\s+([\s\S]+?)\s+mean\b/i)
+  if (mean) return mean[1].replace(/^["'“]|["'”]$/g, '').trim()
+  t = t
+    .replace(/^translate[:\s]+/i, '')
+    .replace(/^(?:this|it|the following)\s*[:\-–]\s*/i, '')
+    // Trailing target: "good morning to Kannada", "good morning into Hindi", "good morning in Tamil please"
+    .replace(new RegExp(`\\s+(?:in|into|to)\\s+${lang}\\b(?:\\s+(?:please|pls|language))?\\s*[.?!]*$`, 'i'), '')
+    // Leading target left over: "in Kannada: good morning"
+    .replace(new RegExp(`^(?:in|into|to)\\s+${lang}\\b\\s*[:\\-–]?\\s*`, 'i'), '')
+    .trim()
+  return t.replace(/^["'“]([\s\S]*)["'”]$/, '$1').trim()
+}
+
+const LATIN_SCRIPT_TARGETS = new Set(['English', 'French', 'German', 'Spanish', 'Portuguese', 'Italian', 'Dutch', 'Turkish', 'Vietnamese'])
+
 export async function translateText(params: {
   text: string
   targetLanguage?: string
   sourceLanguage?: string
-}): Promise<{ translation: string; detectedLanguage: string; targetLanguage: string }> {
+}): Promise<{ translation: string; detectedLanguage: string; targetLanguage: string; transliteration?: string }> {
   const target = params.targetLanguage || 'English'
-
-  // Extract the actual text to translate (remove "translate:" prefix)
-  const textToTranslate = params.text
-    .replace(/^translate[:\s]+/i, '')
-    .replace(/translate (this |it |the following )?to \w+[:\s]*/i, '')
-    .replace(/in (english|hindi|kannada|tamil|telugu|french|german|spanish|arabic|japanese|korean|chinese)[:\s]*/i, '')
-    .trim()
+  const textToTranslate = extractTextToTranslate(params.text)
+  const wantsRoman = !LATIN_SCRIPT_TARGETS.has(target)
 
   const result = await anthropic.messages.create({
     model: 'claude-haiku-4-5',
     max_tokens: 500,
     messages: [{
       role: 'user',
-      content: `Detect the language of this text and translate it to ${target}.
+      content: `Detect the language of this text and translate it to ${target}. Translate only the text; do not add the language name or any note.
 
 Text: "${textToTranslate}"
 
 Return ONLY valid JSON:
-{"detected_language": "Hindi", "translation": "translated text here"}`
+{"detected_language": "Hindi", "translation": "translated text here"${wantsRoman ? ', "transliteration": "the translation in Latin letters"' : ''}}`
     }]
   })
 
@@ -92,10 +119,12 @@ Return ONLY valid JSON:
 
   try {
     const parsed = JSON.parse(clean)
+    const transliteration = wantsRoman && typeof parsed.transliteration === 'string' ? parsed.transliteration.trim() : ''
     return {
       translation: parsed.translation,
       detectedLanguage: parsed.detected_language,
-      targetLanguage: target
+      targetLanguage: target,
+      ...(transliteration && transliteration !== String(parsed.translation || '').trim() ? { transliteration } : {}),
     }
   } catch {
     return { translation: raw, detectedLanguage: 'Unknown', targetLanguage: target }
@@ -160,6 +189,7 @@ export function buildTranslationReply(result: {
   detectedLanguage: string
   targetLanguage: string
   originalText?: string
+  transliteration?: string
 }): string {
   const flag: Record<string, string> = {
     Hindi: '🇮🇳', Kannada: '🇮🇳', Tamil: '🇮🇳', Telugu: '🇮🇳',
@@ -175,8 +205,10 @@ export function buildTranslationReply(result: {
 
   return (
     `${fromFlag} *${result.detectedLanguage} → ${toFlag} ${result.targetLanguage}*\n\n` +
-    `${result.translation}\n\n` +
-    `_Say *translate to Hindi* or *translate to French* for other languages_`
+    `${result.translation}\n` +
+    (result.transliteration ? `(${result.transliteration})\n` : '') +
+    // Plain text footer: the user dislikes italics (20 Oct).
+    `\nSay "translate to Hindi" or "translate to French" for other languages.`
   )
 }
 
@@ -184,5 +216,5 @@ export function buildTranslationReply(result: {
 
 export function buildImageTranslationReply(translation: string, isMenu: boolean): string {
   const header = isMenu ? '🍽️ *Menu Translation*\n\n' : '🌐 *Image Translation*\n\n'
-  return header + translation + '\n\n_Send another image to translate_'
+  return header + translation + '\n\nSend another image to translate.'
 }

@@ -7,6 +7,9 @@ import { isInternalServiceAuthorized } from '@/lib/security/cron-auth'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 30
 
+// 20 Oct live: "1 transactions". Not exported: a route file may export only route handlers and config.
+function transactionCount(n: number) { return `${n} transaction${n === 1 ? '' : 's'}` }
+
 async function resolveUser(phone: string) {
   const { data } = await supabaseAdmin
     .from('users')
@@ -95,7 +98,7 @@ export async function GET(req: NextRequest) {
         ``,
         aiText,
         ``,
-        `📊 Today: ₹${today.total} across ${today.count} transactions`,
+        `📊 Today: ₹${today.total} across ${transactionCount(today.count)}`,
       ]
       return NextResponse.json({ reply: lines.join('\n') })
     }
@@ -107,7 +110,7 @@ export async function GET(req: NextRequest) {
 
     const reply = [
       `📊 *Today's Expenses*`,
-      `Total: *₹${today.total}* · ${today.count} transactions`,
+      `Total: *₹${today.total}* · ${transactionCount(today.count)}`,
       ``,
       breakdown,
       ``,
@@ -138,7 +141,7 @@ export async function GET(req: NextRequest) {
   const reply = [
     `📊 *${period === 'week' ? 'This Week' : 'This Month'}'s Expenses*`,
     ...(data.range?[rangeLine(data.range)]:[]),
-    `Total: *₹${data.total}* · ${data.count} transactions`,
+    `Total: *₹${data.total}* · ${transactionCount(data.count)}`,
     ``,
     breakdown,
     '',
