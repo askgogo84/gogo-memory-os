@@ -73,7 +73,7 @@ import { handleLinkVaultText } from '@/lib/services/link-vault'
 // Request timing: mark(label) after each awaited step; a step slower than TIMING_THRESHOLD_MS (250)
 // logs one TIMING line. Inlined (not imported) so test harnesses with strict dependency maps load it.
 function startTrace(surface: string) {
-  const threshold = Number((typeof process !== 'undefined' && process.env?.TIMING_THRESHOLD_MS) || 250)
+  const threshold = Number((typeof process !== 'undefined' && process.env?.TIMING_THRESHOLD_MS) || 120)
   const started = Date.now(); let last = started
   return { mark(step: string) { const now = Date.now(), ms = now - last; last = now; if (ms >= threshold) console.log('TIMING:', JSON.stringify({ surface, step, ms, total: now - started })) } }
 }
