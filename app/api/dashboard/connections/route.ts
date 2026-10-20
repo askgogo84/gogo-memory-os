@@ -1,7 +1,7 @@
-import { NextResponse } from 'next/server'
+import { after, NextResponse } from 'next/server'
 import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from '@/lib/agent/session'
 import { resolveAgentActor } from '@/lib/agent/actor'
-import { listSiteConnections, startSiteSignIn, confirmSiteSignIn, removeSiteConnection } from '@/lib/dashboard/site-sessions'
+import { listSiteConnections, createSiteSignInRun, openSiteSignInBrowser, confirmSiteSignIn, removeSiteConnection } from '@/lib/dashboard/site-sessions'
 import { findCatalogueSite } from '@/lib/dashboard/connection-catalogue'
 
 export const dynamic = 'force-dynamic'
@@ -29,7 +29,10 @@ export async function POST(request: Request) {
   try {
     const actor = await resolveAgentActor(session)
     if (action === 'sign_in') {
-      const { runId } = await startSiteSignIn(actor, site.id)
+      // Respond at once and open the secure browser after the response (~50s); the browser page shows
+      // "Opening…" and refreshes until it is ready, or shows why it could not open.
+      const { runId } = await createSiteSignInRun(actor, site.id)
+      after(() => openSiteSignInBrowser(actor, runId, site.id).catch(error => console.error('DASHBOARD_SIGN_IN_OPEN_FAILED:', site.id, runId, error?.message || error)))
       return NextResponse.json({ runId, browserPath: `/dashboard/activity/${encodeURIComponent(runId)}/browser` })
     }
     if (action === 'confirm') await confirmSiteSignIn(actor, site.id)

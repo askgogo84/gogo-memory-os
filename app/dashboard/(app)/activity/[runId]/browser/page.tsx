@@ -8,6 +8,8 @@ import { findVaultProviderForDomain } from '@/lib/vault/providers'
 import { VaultResumeTaskButton } from '@/components/dashboard/vault-resume-task-button'
 import {RestoreBrowserHandoffButton} from '@/components/dashboard/restore-browser-handoff-button'
 import {browserHandoffIsLive} from '@/lib/agent/browser-handoff-health'
+import {SignInOpening} from '@/components/dashboard/sign-in-opening'
+import {findCatalogueSite} from '@/lib/dashboard/connection-catalogue'
 
 export const dynamic='force-dynamic'
 
@@ -17,6 +19,25 @@ export default async function ActivityBrowserPage({params}:{params:Promise<{runI
   const {runId}=await params
   const run=await getDashboardActivityRun(session.telegramId,runId)
   if(!run)notFound()
+  // A Settings sign-in whose secure browser is still starting (or could not start): say so instead of a 404.
+  const signInSite=typeof run.metadata?.site_session==='string'?findCatalogueSite(run.metadata.site_session):null
+  if(signInSite&&!run.metadata?.handoff&&['queued','running','failed'].includes(run.status)){
+    const failed=run.status==='failed'
+    return <div className="mx-auto w-full max-w-[1180px] pb-10">
+      <header className="border-b border-[#2A2A2A] pb-4">
+        <Link href="/dashboard/settings?section=connections" className="inline-flex items-center gap-1 text-[14px] font-bold uppercase tracking-[.12em] text-[#6A6A6A] hover:text-[#2FB8A6]">← Back to Settings</Link>
+        <h1 className="mt-4 font-serif text-[28px] font-semibold leading-tight text-[#F2EFEA]">{failed?`Couldn't open ${signInSite.name}`:`Sign in to ${signInSite.name}`}</h1>
+      </header>
+      <section className="mt-5 overflow-hidden rounded-[16px] border border-[#2A2A2A] bg-[#111111]">
+        {failed
+          ?<div className="grid min-h-[300px] place-items-center px-7 py-10 text-center"><div className="max-w-md">
+              <p className="text-[16px] leading-6 text-[#9A9A9A]">{run.summary||`The secure browser could not open ${signInSite.name}. Nothing was signed in.`}</p>
+              <Link href={`/dashboard/settings?section=connections&signin=${encodeURIComponent(signInSite.id)}`} className="mt-5 inline-flex min-h-[44px] items-center rounded-full bg-[#2FB8A6] px-5 text-[15px] font-semibold text-[#0B0B0B]">Try again</Link>
+            </div></div>
+          :<SignInOpening siteName={signInSite.name}/>}
+      </section>
+    </div>
+  }
   const browser=browserContextForRun(run)
   if(!browser.hasBrowser)notFound()
 

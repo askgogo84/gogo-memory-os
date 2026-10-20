@@ -15,6 +15,17 @@ export function signInObjective(site: CatalogueSite) {
 
 /** Opens the site in the person's secure browser for them to sign in. Returns the task to send them to. */
 export async function startSiteSignIn(actor: AgentActor, siteId: string) {
+  const { runId, site } = await createSiteSignInRun(actor, siteId)
+  await openSiteSignInBrowser(actor, runId, site.id)
+  return { runId, site }
+}
+
+/**
+ * Create the sign-in task only (instant). The secure browser itself takes ~50s to start (20 Oct live: Settings sat on
+ * "Opening…" for 52s and the person gave up), so the route opens it after responding and the browser page shows
+ * "Opening…" until it is ready.
+ */
+export async function createSiteSignInRun(actor: AgentActor, siteId: string) {
   const site = findCatalogueSite(siteId)
   if (!site || site.kind === 'soon') throw new Error('site_not_available')
   const owner = String(actor.legacyTelegramId)
@@ -22,13 +33,20 @@ export async function startSiteSignIn(actor: AgentActor, siteId: string) {
   const { data: run, error } = await supabaseAdmin.from('agent_runs').insert({
     telegram_id: owner, type: 'secure_browser', capability: 'browser', status: 'queued',
     title: `Sign in · ${site.name}`,
-    summary: `Sign in to ${site.name} yourself in the secure browser, then come back to Settings and tap "I'm signed in".`,
+    summary: `Opening ${site.name} in your secure browser. This usually takes under a minute.`,
     progress: 0, why: 'You sign in yourself; Gogo keeps the signed-in session, never your password.', source: 'web',
     metadata_json: { plan_type: 'secure_browser', url: site.url, objective: signInObjective(site), mode: 'read', risk: 'low', site_session: site.id },
     started_at: now, updated_at: now,
   }).select('id').single()
   if (error || !run?.id) throw new Error(`site_sign_in_create_failed:${error?.message || 'unknown'}`)
-  const runId = String(run.id)
+  return { runId: String(run.id), site }
+}
+
+/** Start the secure browser for a sign-in task and hand it to the person. Marks the task failed on error. */
+export async function openSiteSignInBrowser(actor: AgentActor, runId: string, siteId: string) {
+  const site = findCatalogueSite(siteId)
+  if (!site || site.kind === 'soon') throw new Error('site_not_available')
+  const owner = String(actor.legacyTelegramId)
   const { startProviderBrowserHandoff } = await import('@/lib/agent/provider-browser-handoff')
   const start = () => startProviderBrowserHandoff({ userId: actor.userId, url: site.url, sessionTaskId: runId })
   let handoff: Awaited<ReturnType<typeof start>>
@@ -43,12 +61,14 @@ export async function startSiteSignIn(actor: AgentActor, siteId: string) {
     }
     if (!retried) {
       const at = new Date().toISOString()
-      await supabaseAdmin.from('agent_runs').update({ status: 'failed', error: String(error?.message || 'site_sign_in_failed').slice(0, 120), summary: `The secure browser could not open ${site.name}. Nothing was signed in.`, completed_at: at, updated_at: at }).eq('id', runId).eq('telegram_id', owner)
+      const busy = error?.message === 'browser_handoff_in_use'
+      await supabaseAdmin.from('agent_runs').update({ status: 'failed', error: String(error?.message || 'site_sign_in_failed').slice(0, 120), summary: busy ? `Your secure browser is busy with another task that is waiting for you. Finish or close that task, then sign in to ${site.name} again.` : `The secure browser could not open ${site.name}. Nothing was signed in. Try again from Settings.`, completed_at: at, updated_at: at }).eq('id', runId).eq('telegram_id', owner)
       throw new Error(error?.message === 'browser_handoff_in_use' ? 'browser_busy' : String(error?.message || 'site_sign_in_failed'))
     }
   }
   const { error: saveError } = await supabaseAdmin.from('agent_runs').update({
     status: 'paused', updated_at: new Date().toISOString(),
+    summary: `Sign in to ${site.name} yourself in the secure browser, then come back to Settings and tap "I'm signed in".`,
     metadata_json: { plan_type: 'secure_browser', url: site.url, objective: signInObjective(site), mode: 'read', risk: 'low', site_session: site.id, handoff },
   }).eq('id', runId).eq('telegram_id', owner)
   if (saveError) throw new Error(`site_sign_in_save_failed:${saveError.message}`)
