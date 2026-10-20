@@ -48,4 +48,13 @@ assert.match(store, /await releaseEarlierSignIns\(actor, null, site\.id\)/)
 assert.match(store, /cancelProviderBrowserHandoff\(actor\.userId, handoff\)/)
 assert.match(store, /throw new Error\(error\?\.message === 'browser_handoff_in_use' \? 'browser_busy'/)
 assert.match(view, /Your secure browser is busy with another task that is waiting for you/)
+// 20 Oct live: Settings sat on "Opening…" for 52s while the secure browser started, and the person gave up. The route
+// now creates the task, responds at once and opens the browser after the response; the browser page shows progress.
+assert.match(route, /const \{ runId \} = await createSiteSignInRun\(actor, site\.id\)/)
+assert.match(route, /after\(\(\) => openSiteSignInBrowser\(actor, runId, site\.id\)/)
+assert.doesNotMatch(route, /await startSiteSignIn\(/, 'the sign-in request never waits for the browser')
+const browserPage = read('app/dashboard/(app)/activity/[runId]/browser/page.tsx')
+assert.match(browserPage, /<SignInOpening siteName=\{signInSite\.name\}\/>/)
+assert.ok(browserPage.indexOf('signInSite&&!run.metadata?.handoff') < browserPage.indexOf('if(!browser.hasBrowser)notFound()'), 'a starting sign-in is shown, not a 404')
+assert.match(read('components/dashboard/sign-in-opening.tsx'), /router\.refresh\(\), 3000/)
 console.log('verify-settings-connections: ok')
