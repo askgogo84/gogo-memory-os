@@ -1,4 +1,5 @@
 import { tryRunWorkspaceDriveContext } from '@/lib/agent/workspace-drive-context'
+import { isPlainInfoQuestion } from '@/lib/agent/plain-question'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import {runCompoundShoppingFriendRequests} from '@/lib/bot/compound-shopping-friend'
 import {detectFriendReminder, getPendingFriend, isFriendReminderFollowupCandidate} from '@/lib/bot/handlers/friend-reminders'
@@ -488,7 +489,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ text: jevClarify, handledBy: 'jev-clarification-guard', status: 'paused' })
     }
 
-    const mission = await tryRunGeneralPlan({
+    // Plain information questions skip the general planner (20 Oct: 1–2.4s, then it declined).
+    const mission = isPlainInfoQuestion(text) ? null : await tryRunGeneralPlan({
       actor,
       surface:'web',
       text,

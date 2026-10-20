@@ -3,6 +3,7 @@
 // Muse-style Agent handling runs ONLY when legacy routing declines the turn.
 
 import { routeFeatureIntent as routeLegacyFeatureIntent } from '@/lib/feature-intents-legacy'
+import { isPlainInfoQuestion } from '@/lib/agent/plain-question'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { isFoodComparisonRequest } from '@/lib/agent/food-comparison-intent'
 import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
@@ -501,7 +502,9 @@ export async function routeFeatureIntent(
     // calendar handlers. Do not re-enter the generic agent bridge here: reminder
     // mutation parsing is intentionally broad and would otherwise steal reschedules.
     const hasCalendarNoun = /\b(?:meeting|meetings|calendar|event|events|appointment|appointments)\b/i.test(text)
-    if (!hasCalendarNoun) {
+    // A plain information question skips the agent's ~45 matchers (20 Oct: 5.9s, then it declined);
+    // processIncomingMessage still answers it.
+    if (!hasCalendarNoun && !isPlainInfoQuestion(text)) {
       const agent = await tryRunWhatsAppAgent({ user, text })
       __trace.mark('agent')
       if(agent?.text)return agent.text

@@ -263,7 +263,7 @@ assert.ok(wa.indexOf('isOpenLoopQuery(text) ||') < waGate, 'open-loop attention 
 const dash = read('app/api/dashboard/chat/route.ts')
 const dashGate = dash.indexOf('if (parseTaskStatusQuery(text))')
 assert.ok(dashGate > 0 && dash.indexOf('tryGetTaskStatus({ telegramId: actor.legacyTelegramId }, text) || await tryGetAutonomyStatus({ actor, text })') > dashGate)
-assert.ok(dashGate < dash.indexOf('const mission = await tryRunGeneralPlan('), 'dashboard: status before the general planner')
+assert.ok(dashGate < dash.indexOf('await tryRunGeneralPlan('), 'dashboard: status before the general planner')
 assert.ok(dash.indexOf('const accountGate = await tryAccountSiteAnswer(actor, text)') > dashGate, 'shop orders are excluded by the parser, not by order')
 console.log('PASS wiring: WhatsApp webhook + bridge + dashboard chat, before the general planner')
 console.log('verify-task-status-query: ok')
