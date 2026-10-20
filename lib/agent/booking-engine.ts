@@ -33,8 +33,11 @@ export function signedInBookingSiteForUrl(url: string): CatalogueSite | null {
 }
 
 /** True when the person has an active connection for this site. Pure over the connection list. */
-export function isSiteConnected(connections: Array<{ siteId: string; status: string }>, site: CatalogueSite): boolean {
-  return connections.some(c => c.siteId === site.id && !/^(?:revoked|expired|needs_reauth|human_challenge)$/i.test(String(c.status || '')))
+// These apps sign in with a one-time code to the person's phone, so a saved phone number alone (via 'vault')
+// still needs a fresh code on every visit (20 Oct live: a saved Zomato number counted as connected and the read
+// spent 3 minutes at the code screen). Only a session the person signed into themselves counts.
+export function isSiteConnected(connections: Array<{ siteId: string; status: string; via?: string }>, site: CatalogueSite): boolean {
+  return connections.some(c => c.siteId === site.id && c.via !== 'vault' && !/^(?:revoked|expired|needs_reauth|human_challenge)$/i.test(String(c.status || '')))
 }
 
 function when(date?: string | null, time?: string | null) {
@@ -54,7 +57,7 @@ function when(date?: string | null, time?: string | null) {
 export function connectFirstReply(p: { site: CatalogueSite; restaurant: string; date?: string | null; time?: string | null; partySize?: number | null; providerUrl?: string | null }): string {
   const what = [p.partySize ? `table for ${p.partySize}` : 'a table', when(p.date, p.time)].filter(Boolean).join(', ')
   return [
-    `${p.restaurant} takes bookings on ${p.site.name}, and ${p.site.name} only shows tables to a signed-in account. ${p.site.name} isn't connected yet.`,
+    `${p.restaurant} takes bookings on ${p.site.name}, and ${p.site.name} only shows tables to a signed-in account. ${p.site.name} isn't signed in for me yet.`,
     '',
     `Connect it once: open Settings, tap Sign in next to ${p.site.name}, enter your phone number and type the code yourself. I never see or store the code.`,
     CONNECTIONS_SETTINGS_URL,

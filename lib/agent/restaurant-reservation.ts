@@ -905,6 +905,8 @@ export async function tryRunRestaurantReservation(params:{actor:AgentActor;surfa
   }catch(error:any){
     if(error?.message==='browser_handoff_in_use')return{runId:'',status:'paused' as const,capability:'browser' as const,risk:'low' as const,handledBy:'restaurant-reservation' as const,text:await (await import('./browser-auth-notice')).browserHandoffInUseReply(params.actor.legacyTelegramId)}
     console.error('RESTAURANT_SLOT_READ_FAILED:',safe(error?.message||error,160))
+    // A signed-in booking app that times out is almost always waiting at its sign-in/code screen.
+    if(signInSite)return connectFirst()
     return unreadable()
   }
   // A sign-in wall on a signed-in booking app means the saved sign-in ended: ask to connect again, never guess.
