@@ -80,7 +80,7 @@ const pm = readFileSync(new URL('../lib/bot/process-message.ts', import.meta.url
 assert.match(pm, /plainOrBase\.type === 'web_search' && isPersonalDataQuestion\(incomingText\)/)
 assert.match(pm, /type: 'read_gmail', confidence: 'medium', meta: \{ personalData: true \}/)
 const route = readFileSync(new URL('../app/api/dashboard/chat/route.ts', import.meta.url), 'utf8')
-assert.match(route, /isPlainInfoQuestion\(text\) \|\| isPersonalDataReadQuestion\(text\) \? null : await tryRunGeneralPlan/)
+assert.match(route, /isPlainInfoQuestion\(text\) \|\| isPersonalDataReadQuestion\(text\)(?: \|\| isReminderReadOnlyAsk\(text\))? \? null : await tryRunGeneralPlan/)
 
 // ── 4. A dictated email is a Gmail draft, never the meeting-slot finder ──
 const gm = await import('../lib/agent/gmail-send.ts')
