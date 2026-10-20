@@ -48,6 +48,13 @@ function restaurantName(text:string){
   // "Book a table for 4 at Toit Indiranagar this Friday" -> "Toit Indiranagar" (live run 10 Oct read "table").
   const atName=raw.match(new RegExp('\\b(?:table|reservation|booking|seats?)\\b(?:\\s+for\\s+(?:a\\s+party\\s+of\\s+)?\\d{1,2}(?:\\s+(?:people|persons?|guests?|pax))?)?\\s+(?:at|in)\\s+(.+?)'+NAME_STOP,'i'))?.[1]
   if(atName&&!GENERIC_NAME.test(atName.trim()))return safe(atName,160)
+  // 20 Oct live: "Book a table for 2 Saturday 8pm at District 6 near Orion mall" asked "Which restaurant?":
+  // the date and time sat between "table for 2" and "at <venue>". A reservation ask whose venue follows a
+  // later "at <Name>" (not "at 8pm") keeps the name, without the "near …" landmark.
+  if(/\b(?:table|reservation|reserve|book)\b/i.test(raw)){
+    const later=raw.match(new RegExp('\\bat\\s+(?:the\\s+)?(?!\\d)(?!(?:around|about|noon|night|lunch|dinner)\\b)([A-Z0-9][^,.!?]*?)(?:\\s+near\\s+[^,.!?]+)?'+NAME_STOP))?.[1]
+    if(later&&!GENERIC_NAME.test(later.trim()))return safe(later,160)
+  }
   const direct=raw.match(new RegExp('\\b(?:book|reserve)\\s+(.+?)'+NAME_STOP,'i'))?.[1]
   const cleaned=direct?direct.replace(/^(?:a|an)\s+(?:table\s+at\s+)?/i,'').replace(/^table\s+at\s+/i,'').trim():''
   if(cleaned&&!GENERIC_NAME.test(cleaned))return safe(cleaned,160)
