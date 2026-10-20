@@ -1428,6 +1428,22 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
+  // "Remove milk from my shopping list" / "take bread off the grocery list": a deterministic remove (21 Oct live:
+  // it reached the model, which changed nothing and the action guard replied with a confusing note).
+  const listRemove = incomingText.trim().match(/^(?:please\s+)?(?:remove|delete|take|cross)\s+(.{1,80}?)\s+(?:off\s+of|off|from)\s+(?:my\s+|the\s+)?([a-z][\w\s-]{0,30}?)\s+list\s*[.!]?$/i)
+  if (listRemove) {
+    const listsMod: any = await import('@/lib/lists').catch(() => null)
+    if (typeof listsMod?.removeItemByText === 'function') {
+      const listName = normalizeListName(listRemove[2])
+      const r = await listsMod.removeItemByText(resolvedUser.telegramId, listName, listRemove[1])
+      const reply = r.status === 'removed' ? `🗑️ Removed *${r.matched}* from your ${listName} list.`
+        : r.status === 'ambiguous' ? `More than one item matches "${listRemove[1]}" on your ${listName} list: ${r.options.slice(0, 5).join(', ')}. Which one should I remove?`
+        : `I could not find "${listRemove[1]}" on your ${listName} list.`
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser, handledBy: 'list-remove' }
+    }
+  }
+
   if (intent.type === 'list_check' || intent.type === 'list_uncheck') {
     const done = intent.type === 'list_check'
     const reply = await replyForCrossListSetDone(resolvedUser.telegramId, extractCheckItemText(incomingText), done)

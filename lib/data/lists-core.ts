@@ -221,6 +221,22 @@ export function applySetDone(
   return { next, matched, changed: true }
 }
 
+// 21 Oct live: "Remove milk from my shopping list" (list has "milk" and "milk and eggs") went to the model
+// and nothing changed. Exact text wins; a substring only when it names exactly one item. Pure.
+export function applyRemove(items: ListItem[], itemText: string): { next: ListItem[]; matched: string | null; ambiguous: string[] } {
+  const q = normItemText(itemText)
+  if (!q) return { next: items, matched: null, ambiguous: [] }
+  let idx = items.map((i, k) => ({ i, k })).filter(x => normItemText(x.i.text) === q)
+  if (idx.length === 0) {
+    const sub = items.map((i, k) => ({ i, k })).filter(x => normItemText(x.i.text).includes(q))
+    if (sub.length > 1) return { next: items, matched: null, ambiguous: sub.map(x => x.i.text) }
+    idx = sub
+  }
+  if (idx.length === 0) return { next: items, matched: null, ambiguous: [] }
+  const target = idx.find(x => !x.i.done) ?? idx[0]
+  return { next: items.filter((_, k) => k !== target.k), matched: target.i.text, ambiguous: [] }
+}
+
 // Pure cross-list lookup for the "done <text>" divert: PENDING items whose normalised
 // text EXACTLY equals the query, one hit per list. Exact-only + pending-only by design —
 // so "done buy stamps" with no such list item stays empty and the caller falls through
