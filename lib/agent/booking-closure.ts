@@ -5,6 +5,7 @@ import { registerLifeEvent } from './life-event-engine'
 import { readProviderTicketPage } from './secure-ticket-reader'
 import { findGmailTicketEvidence } from './gmail-ticket-credential'
 import { prepareBookingCalendarApproval } from './booking-calendar-execution'
+import { anchorYearlessInstant, todayLine } from './yearless-date'
 import { getDocumentSignedUrl } from '@/lib/services/document-store'
 import type { AgentActor } from './actor'
 
@@ -76,12 +77,14 @@ async function fetchBookingPage(initialUrl: string) {
 
 function parseJsonLoose(text: string) { const s=String(text||'').replace(/```json|```/g,'').trim(); try{return JSON.parse(s)}catch{} const m=s.match(/\{[\s\S]*\}/); if(!m)return null; try{return JSON.parse(m[0])}catch{return null} }
 async function extractDetails(input:{originalText:string;provider:string;pageTitle:string;pageText:string;gmailText:string;timezone:string}):Promise<BookingDetails>{
-  const prompt=`Extract one existing event/movie/concert booking from the evidence. Return JSON only. Never invent date/time/venue/seat/reference/status. status=confirmed only when evidence clearly represents an existing confirmed booking/ticket; cancelled when explicitly cancelled; rescheduled when explicitly changed; otherwise unknown. Convert an unambiguous local date/time to ISO 8601 using ${input.timezone}. Only calculate endAt when duration/end is evidenced.\nJSON:{"title":"","provider":"","startAt":null,"endAt":null,"timezone":"${input.timezone}","location":null,"city":null,"screen":null,"seats":[],"bookingRef":null,"durationMinutes":null,"status":"confirmed|unknown|cancelled|rescheduled"}\nForward:${input.originalText.slice(0,2500)}\nProvider:${input.provider}\nPage title:${input.pageTitle}\nProvider page:${input.pageText.slice(0,9000)}\nEmail:${input.gmailText.slice(0,9000)}`
+  const prompt=`Extract one existing event/movie/concert booking from the evidence. Return JSON only. Never invent date/time/venue/seat/reference/status. status=confirmed only when evidence clearly represents an existing confirmed booking/ticket; cancelled when explicitly cancelled; rescheduled when explicitly changed; otherwise unknown. ${todayLine(new Date(),input.timezone)} Convert an unambiguous local date/time to ISO 8601 using ${input.timezone}. Only calculate endAt when duration/end is evidenced.\nJSON:{"title":"","provider":"","startAt":null,"endAt":null,"timezone":"${input.timezone}","location":null,"city":null,"screen":null,"seats":[],"bookingRef":null,"durationMinutes":null,"status":"confirmed|unknown|cancelled|rescheduled"}\nForward:${input.originalText.slice(0,2500)}\nProvider:${input.provider}\nPage title:${input.pageTitle}\nProvider page:${input.pageText.slice(0,9000)}\nEmail:${input.gmailText.slice(0,9000)}`
   try{
     const r=await anthropic.messages.create({model:'claude-haiku-4-5',max_tokens:900,temperature:0,messages:[{role:'user',content:prompt}]})
     const raw=r.content[0]?.type==='text'?parseJsonLoose(r.content[0].text):null
-    const start=raw?.startAt&&Number.isFinite(Date.parse(raw.startAt))?String(raw.startAt):null
-    const end=raw?.endAt&&Number.isFinite(Date.parse(raw.endAt))?String(raw.endAt):null
+    // 20 Oct live: "Sat, 19 Oct" was saved as 19 Oct 2024. A year the evidence never states is re-anchored.
+    const evidence=[input.originalText,input.pageTitle,input.pageText,input.gmailText].join('\n')
+    const start=raw?.startAt&&Number.isFinite(Date.parse(raw.startAt))?anchorYearlessInstant(String(raw.startAt),evidence):null
+    const end=raw?.endAt&&Number.isFinite(Date.parse(raw.endAt))?anchorYearlessInstant(String(raw.endAt),evidence):null
     return {title:safe(raw?.title||titleFrom(input.originalText),200)||'Event booking',provider:safe(raw?.provider||input.provider,120)||input.provider,startAt:start,endAt:end,timezone:safe(raw?.timezone||input.timezone,80)||input.timezone,location:raw?.location?safe(raw.location,300):null,city:raw?.city?safe(raw.city,120):null,screen:raw?.screen?safe(raw.screen,120):null,seats:Array.isArray(raw?.seats)?raw.seats.map((x:any)=>safe(x,50)).filter(Boolean).slice(0,12):[],bookingRef:raw?.bookingRef?safe(raw.bookingRef,120):null,durationMinutes:Number.isFinite(Number(raw?.durationMinutes))?Math.max(1,Math.min(600,Number(raw.durationMinutes))):null,status:['confirmed','unknown','cancelled','rescheduled'].includes(raw?.status)?raw.status:'unknown'}
   }catch{return {title:titleFrom(input.originalText),provider:input.provider,startAt:null,endAt:null,timezone:input.timezone,location:null,city:null,screen:null,seats:[],bookingRef:null,durationMinutes:null,status:'unknown'}}
 }

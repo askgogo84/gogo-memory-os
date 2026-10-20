@@ -1,5 +1,5 @@
 import { tryRunWorkspaceDriveContext } from '@/lib/agent/workspace-drive-context'
-import { isPlainInfoQuestion } from '@/lib/agent/plain-question'
+import { isPlainInfoQuestion, isPersonalDataReadQuestion } from '@/lib/agent/plain-question'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
 import {runCompoundShoppingFriendRequests} from '@/lib/bot/compound-shopping-friend'
 import {detectFriendReminder, getPendingFriend, isFriendReminderFollowupCandidate} from '@/lib/bot/handlers/friend-reminders'
@@ -60,6 +60,14 @@ function startTrace(surface: string) {
 
 
 export const dynamic = 'force-dynamic'
+
+// "What are my reminders?" / "show my reminders for tomorrow": a read of saved reminders, no change asked.
+// Inlined on top of isGroundedReminderCommand so route harnesses with strict dependency maps load it unchanged.
+function isReminderReadOnlyAsk(text: string): boolean {
+  const t = String(text || '').trim()
+  return t.length <= 120 && isGroundedReminderCommand(t) && /\breminders?\b/i.test(t)
+    && !/\b(?:set|create|add|make|schedule|remind me|cancel|delete|remove|stop|skip|snooze|move|reschedule|change|update|edit)\b/i.test(t)
+}
 
 function sameOrigin(req: NextRequest): boolean {
   const origin = req.headers.get('origin')
@@ -481,6 +489,22 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // 20 Oct live: "Draft an email to Nithin saying I will be 15 minutes late to the 4pm meeting" went to the
+    // meeting-slot finder below. A dictated email is a Gmail draft (shown for review; "send it" stages the same
+    // approval as a reply; nothing is sent here). Loaded lazily so route harnesses keep their dependency maps.
+    if (/^(?:please\s+|pls\s+|can\s+you\s+|could\s+you\s+)?(?:draft|write|compose|prepare)\b[^\n]*?\b(?:e-?mail|mail)\s+to\b/i.test(text)) {
+      const gmailSend: any = await import('@/lib/agent/gmail-send').catch(() => null)
+      if (gmailSend?.parseGmailComposeCommand?.(text)) {
+        const draft = await gmailSend.tryRunGmailSendCommand({ actor, text })
+        __trace.mark('gmailCompose')
+        if (draft?.text) {
+          await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:draft.handledBy||'gmail-send',actualCapability:'email',status:draft.status||null,runId:null}).catch(()=>{})
+          await saveConversation(user.telegram_id, text, draft.text)
+          return NextResponse.json({ text: draft.text, handledBy: draft.handledBy || 'gmail-send', status: draft.status })
+        }
+      }
+    }
+
     if (isStandaloneWorkspaceMeetingPrep(text)) {
       const meeting = await tryPrepareWorkspaceMeetingPlan({actor,surface:'web',text})
       __trace.mark('meeting')
@@ -501,8 +525,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ text: jevClarify, handledBy: 'jev-clarification-guard', status: 'paused' })
     }
 
-    // Plain information questions skip the general planner (20 Oct: 1–2.4s, then it declined).
-    const mission = isPlainInfoQuestion(text) ? null : await tryRunGeneralPlan({
+    // Plain information questions skip the general planner (20 Oct: 1–2.4s, then it declined). So does a read-only
+    // question about the person's own data ("Any important emails today?", "What are my reminders?" 22.9s live):
+    // each goes to its read path, and the planner could only decline it or turn it into a multi-step mission.
+    const mission = isPlainInfoQuestion(text) || isPersonalDataReadQuestion(text) || isReminderReadOnlyAsk(text) ? null : await tryRunGeneralPlan({
       actor,
       surface:'web',
       text,

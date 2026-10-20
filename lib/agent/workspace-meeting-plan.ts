@@ -8,8 +8,19 @@ import type { AgentActor } from './actor'
 
 function safe(value:unknown,max=3000){return redactSecretShapedText(String(value??'').replace(/\s+/g,' ').trim().slice(0,max))}
 
+// 20 Oct live: "Draft an email to Nithin saying I will be 15 minutes late to the 4pm meeting" was run as meeting
+// prep ("no free slot matched"). An email whose content the person dictates ("… saying …") is a Gmail draft
+// (lib/agent/gmail-send.ts), unless it asks for availability or a slot to propose.
+const DICTATED_EMAIL=/^(?:please\s+|pls\s+|can\s+you\s+|could\s+you\s+)?(?:draft|write|compose|prepare)\s+(?:me\s+)?(?:an?\s+)?(?:new\s+|quick\s+|short\s+)?(?:e-?mail|mail)\s+to\s+.+?\s+(?:saying|that\s+says|to\s+say|telling\s+(?:him|her|them)|letting\s+(?:him|her|them)\s+know|:)\s*\S/i
+const AVAILABILITY_ASK=/\b(?:slots?|availability|available|free\s+time|free\s+slot|propos\w*|suggest\w*\s+(?:a\s+)?times?|invite)\b/i
+export function isDictatedEmailDraft(text:string){
+  const t=String(text||'').trim()
+  return DICTATED_EMAIL.test(t)&&!AVAILABILITY_ASK.test(t)
+}
+
 export function isWorkspaceMeetingPrep(text:string){
   const t=String(text||'')
+  if(isDictatedEmailDraft(t))return false
   const email=/\b(email|gmail|mail|inbox)\b/i.test(t)
   const meeting=/\b(meeting|calendar|slot|availability|available|invite)\b/i.test(t)
   const prep=/\b(draft|reply|brief|attached|attachment|proposed|prepare)\b/i.test(t)

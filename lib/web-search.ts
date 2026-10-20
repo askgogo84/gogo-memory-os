@@ -260,11 +260,20 @@ export async function searchWeb(query: string): Promise<string> {
       return ''
     }
 
-    return results
-      .map((r, i) => `${i + 1}. ${r.title}\n${r.snippet}\nSource: ${r.url}`)
-      .join('\n\n')
+    return formatSearchContext(results)
   } catch (err: any) {
     console.error('searchWeb failed:', err)
     return ''
   }
+}
+
+// 20 Oct live: "Latest news on ISRO" answered "No clearly dated ISRO news within the last 7 days" although
+// Serper had returned dates: publishedDate was parsed but dropped here, so the answer model never saw it.
+export function formatSearchContext(results: WebSearchResult[]): string {
+  return results
+    .map((r, i) => {
+      const day = r.publishedDate && Number.isFinite(Date.parse(r.publishedDate)) ? new Date(r.publishedDate).toISOString().slice(0, 10) : ''
+      return `${i + 1}. ${r.title}${day ? ` (published ${day})` : ''}\n${r.snippet}\nSource: ${r.url}`
+    })
+    .join('\n\n')
 }

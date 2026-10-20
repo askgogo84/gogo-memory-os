@@ -226,6 +226,13 @@ export async function runUnderstandFirst(p: {
     if (p.skip) return none(p.skip)
     // Fixed commands and bare menu numbers are unambiguous by construction; no reading is spent on them.
     if (isExactCommand(text)) return none('exact_command')
+    // 20 Oct live: "Train from Bangalore to Mysore tomorrow morning" was read as chat/web and answered by the
+    // chat model with invented train times. A rail route belongs to the train specialist, which reads the
+    // provider or says it could not verify. Loaded only when a rail word is present.
+    if (/\b(?:trains?|railways?|irctc)\b/i.test(text)) {
+      const rail: any = await import('./train-research').catch(() => null)
+      if (rail?.isTrainResearchRequest?.(text)) return none('train_specialist')
+    }
     if (!p.deps?.callModel && !String(process.env.TYPESAFE_API_KEY || '').trim()) return none('not_configured')
     const budget = Math.max(200, Math.min(p.deps?.budgetMs ?? UNDERSTAND_FIRST_BUDGET_MS, UNDERSTAND_FIRST_BUDGET_MS))
     const now = p.deps?.now || new Date()

@@ -1,4 +1,5 @@
 import { readScopedReminders, reminderTimezoneMetadata } from './reminder-read'
+import { isInternalPlanStepReminder } from '@/lib/bot/reminder-dedup'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
 import { refreshAccessToken } from '@/lib/google-calendar'
@@ -142,6 +143,8 @@ function normalizeReminderIdentity(value:unknown){
 }
 
 async function persistMissionReminder(params:{actor:AgentActor;date:string;time:string;timezone:string;message:string}){
+  // A plan step's own title is never the user's reminder text (20 Oct live: "Retrieve saved preferences about …").
+  if(isInternalPlanStepReminder(params.message))throw new Error('mission_reminder_intent_unverified')
   const parsed=parseLocalDateTime({date:params.date,time:params.time,timezone:params.timezone})
   if(parsed.dueAtUtc.getTime()<=Date.now())throw new Error('mission_reminder_time_in_past')
   const dueIso=parsed.dueAtUtc.toISOString()

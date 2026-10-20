@@ -11,6 +11,52 @@ import type {ReservationTravelInventory,ReservationCalendarInventory,Reservation
 import {calendarInterval,calendarBlocksTime,type CalendarProviderEvent} from '../calendar-intervals'
 import {getCalendarAccountAccess,fetchMergedCalendarEventsPage} from '@/lib/services/google-calendar-accounts'
 
+// 20 Oct live: "What do you remember about my Jailer booking?" answered "neither shows a confirmed booking
+// or ticket purchase" while the provider-issued ticket/QR was saved on that very life event. A saved
+// ticket (or provider-confirmed booking details) is evidence of a booking and is stated to the model.
+export function lifeEventBookingEvidence(row:any):string{
+  const meta=row?.metadata_json||{}
+  const refs=Array.isArray(row?.source_refs)?row.source_refs:[]
+  const ticket=meta?.credential?.documentId||meta?.screenshotEvidence?.documentId||refs.some((r:any)=>r?.documentId&&/ticket|credential|qr/i.test(String(r?.kind||'')))
+  if(ticket)return 'Booking confirmed: the provider-issued ticket/QR is saved in AskGogo (the user can ask for it)'
+  const status=String(meta?.bookingDetails?.status||'')
+  if(status==='confirmed')return 'Booking confirmed by the provider booking details'
+  if(row?.confirmation_ref||meta?.bookingDetails?.bookingRef)return `Booking reference saved: ${String(row?.confirmation_ref||meta.bookingDetails.bookingRef).slice(0,60)}`
+  return ''
+}
+
+// 20 Oct live: the same Jailer 2 show was saved as 19 Oct 2026 and as 19 Oct 2024 (an extraction model filled a
+// year the ticket never stated), and recall listed a phantom show "731 days ago". Two life events with the same
+// title and the same month/day/clock time that differ only by whole years are one booking: keep the one nearest
+// now (a saved ticket wins a tie). Rows are never changed; only the context shown to the model. Pure.
+export function dropYearShiftedDuplicates(facts:ContextFact[],now:number=Date.now()):ContextFact[]{
+  const norm=(v:unknown)=>String(v??'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
+  const key=(f:ContextFact)=>{
+    const at=Date.parse(String(f.startAt||''))
+    if(f.source!=='life_event'||!Number.isFinite(at))return null
+    const d=new Date(at)
+    return `${norm(String(f.summary||'').split(' · ')[0])}|${d.getUTCMonth()}-${d.getUTCDate()}-${d.getUTCHours()}-${d.getUTCMinutes()}`
+  }
+  const best=new Map<string,ContextFact>()
+  const rank=(f:ContextFact)=>[/ticket\/QR is saved|Booking confirmed/.test(f.summary)?0:1,Math.abs(Date.parse(String(f.startAt))-now)]
+  for(const f of facts){
+    const k=key(f);if(!k)continue
+    const cur=best.get(k)
+    if(!cur){best.set(k,f);continue}
+    const [a1,a2]=rank(f),[b1,b2]=rank(cur)
+    // Year-shifted only: the same calendar year is two real shows at the same time, keep both.
+    if(new Date(Date.parse(String(f.startAt))).getUTCFullYear()===new Date(Date.parse(String(cur.startAt))).getUTCFullYear())continue
+    if(a2<b2||(a2===b2&&a1<b1))best.set(k,f)
+  }
+  return facts.filter(f=>{
+    const k=key(f);if(!k)return true
+    const keep=best.get(k)
+    if(keep===f)return true
+    // Same key but same year as the kept one: not a year-shifted duplicate.
+    return new Date(Date.parse(String(f.startAt))).getUTCFullYear()===new Date(Date.parse(String(keep!.startAt))).getUTCFullYear()
+  })
+}
+
 export type ContextSource =
   | 'life_event'
   | 'travel_ticket'
@@ -434,7 +480,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       id:`life-event:${(row as any).id}`,
       source:'life_event',
       participants:Array.isArray(row.participants)?row.participants.filter((p:unknown)=>typeof p==='string'):[],
-      summary:safe([((row as any).title||`${(row as any).event_type} event`),participantText?`Participants: ${participantText}`:'',row.event_type==='hotel'||row.subtype==='hotel'?'Saved hotel plan; not a verified booking, presence or return.':''].filter(Boolean).join(' · '),500),
+      summary:safe([((row as any).title||`${(row as any).event_type} event`),participantText?`Participants: ${participantText}`:'',row.event_type==='hotel'||row.subtype==='hotel'?'Saved hotel plan; not a verified booking, presence or return.':'',lifeEventBookingEvidence(row)].filter(Boolean).join(' · '),500),
       score:factScore({query,text,base:0.5,startAt,now,horizonDays}),
       confidence:0.96,
       startAt,endAt,
@@ -446,6 +492,11 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       sourceRefs:Array.isArray((row as any).source_refs)?(row as any).source_refs:[],
     })
   }
+
+  // One booking saved twice with different years (a year the evidence never stated) is one booking.
+  const dedupedLifeFacts=dropYearShiftedDuplicates(lifeFacts,now)
+  lifeFacts.length=0
+  lifeFacts.push(...dedupedLifeFacts)
 
   const openLoops:ContextFact[]=[]
   for(const row of loopResult.data||[]){

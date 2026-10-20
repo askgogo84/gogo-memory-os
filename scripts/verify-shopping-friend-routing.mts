@@ -95,11 +95,13 @@ const readDb = {from(table: string) {
   }
   return query
 }}
+const reminderDedup = await import('../lib/bot/reminder-dedup')
 runInNewContext(ts.transpileModule(readFileSync(new URL('../lib/agent/compound-planner.ts', import.meta.url), 'utf8'),
   {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText,
 {exports: planner, Date: FixedDate, Intl, console, require(name: string) {
   if (name === '@/lib/supabase-admin') return {supabaseAdmin: readDb}
   if (name === './typed-object-context') return {rememberTypedObjects: async () => {}}
+  if (name === '@/lib/bot/reminder-dedup') return reminderDedup
   return new Proxy({}, {get: (_target, key) => {throw Error(`Unexpected planner dependency ${name}.${String(key)}`)}})
 }})
 runInNewContext(ts.transpileModule(readFileSync(new URL('../lib/bot/compound-shopping-friend.ts', import.meta.url), 'utf8'),
