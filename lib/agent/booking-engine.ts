@@ -11,6 +11,10 @@
 import { CONNECTION_CATALOGUE, catalogueDomain, type CatalogueSite } from '@/lib/dashboard/connection-catalogue'
 
 export const CONNECTIONS_SETTINGS_URL = 'https://app.askgogo.in/dashboard/settings?section=connections'
+/** One-tap sign-in link for a site (Settings opens its secure sign-in straight away). */
+export function signInLink(siteId: string | null | undefined): string {
+  return siteId ? `${CONNECTIONS_SETTINGS_URL}&signin=${encodeURIComponent(siteId)}` : CONNECTIONS_SETTINGS_URL
+}
 
 // Apps that only show or book tables/tickets for a signed-in person.
 export const SIGNED_IN_BOOKING_SITES = ['district', 'zomato', 'eazydiner', 'bookmyshow', 'swiggy'] as const
@@ -59,8 +63,8 @@ export function connectFirstReply(p: { site: CatalogueSite; restaurant: string; 
   return [
     `${p.restaurant} takes bookings on ${p.site.name}, and ${p.site.name} only shows tables to a signed-in account. ${p.site.name} isn't signed in for me yet.`,
     '',
-    `Connect it once: open Settings, tap Sign in next to ${p.site.name}, enter your phone number and type the code yourself. I never see or store the code.`,
-    CONNECTIONS_SETTINGS_URL,
+    `Connect it once: tap the link, enter your phone number in ${p.site.name}'s own page and type the code yourself. I never see or store the code.`,
+    signInLink(p.site.id),
     '',
     `Then ask me again and I'll check ${what} and show you the best option before booking anything.${p.providerUrl ? `\nOr book it yourself here: ${p.providerUrl}` : ''}`,
   ].join('\n')
@@ -135,6 +139,6 @@ export function bookingOptionsReply(p: { restaurant: string; date?: string | nul
   const lines = p.ranked.slice(0, 5).map((o, i) => `${i === 0 ? '⭐' : '•'} ${o.platform.name}: ${o.offer ? o.offer.label : 'no offer listed'}${o.connected ? ' · signed in' : ''}`)
   const next = best.connected
     ? `Best: ${best.platform.name}${best.offer ? ` (${best.offer.label})` : ''}. Checking live tables there now; I'll ask before booking.`
-    : `Best: ${best.platform.name}${best.offer ? ` (${best.offer.label})` : ''}. To book it, sign in to ${best.platform.name} once in Settings (you type the code; I never see it), then ask again:\n${CONNECTIONS_SETTINGS_URL}\nOr book it yourself: ${best.url}`
+    : `Best: ${best.platform.name}${best.offer ? ` (${best.offer.label})` : ''}. To book it, sign in to ${best.platform.name} once (you type the code; I never see it), then ask again:\n${signInLink(best.platform.siteId)}\nOr book it yourself: ${best.url}`
   return [`*${head}*`, ...lines, '', next, '', 'Offers are as listed on each app today; the final bill discount is applied by the app.'].join('\n')
 }
