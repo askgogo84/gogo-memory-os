@@ -49,6 +49,15 @@ import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
 import { tryCancelRunFromChat } from '@/lib/agent/run-cancel'
 import { isTicketRetrievalAsk, buildTicketRetrievalReply } from '@/lib/services/asset-memory'
 
+// Request timing: mark(label) after each awaited step; a step slower than TIMING_THRESHOLD_MS (250)
+// logs one TIMING line. Inlined (not imported) so test harnesses with strict dependency maps load it.
+function startTrace(surface: string) {
+  const threshold = Number((typeof process !== 'undefined' && process.env?.TIMING_THRESHOLD_MS) || 250)
+  const started = Date.now(); let last = started
+  return { mark(step: string) { const now = Date.now(), ms = now - last; last = now; if (ms >= threshold) console.log('TIMING:', JSON.stringify({ surface, step, ms, total: now - started })) } }
+}
+
+
 export const dynamic = 'force-dynamic'
 
 function sameOrigin(req: NextRequest): boolean {
@@ -117,25 +126,31 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
+  const __trace = startTrace('web')
   if (!sameOrigin(req)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   const session = await getSession()
+  __trace.mark('session')
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const user = await resolveDashboardUser(session.telegramId)
+  __trace.mark('user')
   if (!user) return NextResponse.json({ error: 'user_not_found' }, { status: 404 })
   if (!user.whatsapp_id) return NextResponse.json({ error: 'whatsapp_not_linked' }, { status: 409 })
 
   const body = await req.json().catch(() => null) as any
+  __trace.mark('body')
   let text = String(body?.text || '').trim().slice(0, 2000)
   if (!text) return NextResponse.json({ error: 'empty_message' }, { status: 400 })
 
   try {
     const actor = await resolveAgentActor({ telegramId:String(session.telegramId), surface:'web' })
+    __trace.mark('actor')
     // Secondary authentication belongs only in the owner's secure takeover.
     const loginCode = text.length <= 24 && /\d{4}/.test(text.replace(/[\s-]/g, '')) ? otpReply(text) : null
     if (loginCode) {
       const {humanAuthTakeoverReply,shouldWithholdAuthenticationCode}=await import('@/lib/agent/browser-auth-notice')
       if(await shouldWithholdAuthenticationCode(user.telegram_id,text)){
         const reply=await humanAuthTakeoverReply(user.telegram_id)
+        __trace.mark('reply')
         await saveConversation(user.telegram_id,'[authentication code withheld]',reply)
         return NextResponse.json({text:reply,handledBy:'human-auth-required'})
       }
@@ -145,6 +160,7 @@ export async function POST(req: NextRequest) {
     // Resolved once per turn here; processIncomingMessage below is told so and skips the same reads.
     const pendingQuestionChecked = true
     const pendingAnswer = await tryResolvePendingQuestion({user:{telegramId:Number(user.telegram_id)},text,surface:'web',actor})
+    __trace.mark('pendingAnswer')
     if(pendingAnswer?.rewrite){
       // "24k" right after "22K or 24K gold?": route the full request it completes, exactly as if typed.
       text=pendingAnswer.rewrite
@@ -153,6 +169,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(pendingAnswer)
     }
     const inboxReplyRead = await handleInboxReplyRead({actor,text})
+    __trace.mark('inboxReplyRead')
     if(inboxReplyRead){
       await saveConversation(user.telegram_id,text,inboxReplyRead.text)
       return NextResponse.json(inboxReplyRead)
@@ -160,6 +177,7 @@ export async function POST(req: NextRequest) {
     // Same run cancel as WhatsApp ("cancel that task", "stop the flight booking"). Owner-bound; reminders,
     // calendar, watches, lists, orders and Gmail are refused by the parser and keep their own paths.
     const runCancel = await tryCancelRunFromChat({telegramId:actor.legacyTelegramId},text,{surface:'web'})
+    __trace.mark('runCancel')
     if(runCancel){
       await saveConversation(user.telegram_id,text,runCancel.text)
       return NextResponse.json(runCancel)
@@ -170,6 +188,7 @@ export async function POST(req: NextRequest) {
     // live set only (after the inbox read and run cancel, which keep first refusal); anything else, a timeout or an error returns null and the routing below is unchanged.
     const understoodReply = await (async () => tryUnderstandFirst({ actor, surface:'web', text, eventId:shadowEventId, externalUserId:String(user.whatsapp_id), userName:user.name||'Gogo', registryChecked:pendingQuestionChecked }))()
       .catch((err:any) => { console.error('UNDERSTAND_FIRST_DASHBOARD_FAILED:', String(err?.message || err).slice(0,160)); return null })
+    __trace.mark('understoodReply')
     if (understoodReply?.text) {
       if (!understoodReply.persisted) await saveConversation(user.telegram_id, text, understoodReply.text)
       // The chat shows mediaUrl as an image; a PDF ticket keeps its "Open original" link in the text instead.
@@ -182,6 +201,7 @@ export async function POST(req: NextRequest) {
     // image for the chat to show, or one honest line. Booking/buying/cancelling asks are not retrievals.
     if (isTicketRetrievalAsk(text)) {
       const ticket = await buildTicketRetrievalReply(Number(user.telegram_id), text, shadowEventId)
+      __trace.mark('ticket')
       if (ticket) {
         // The chat renders mediaUrl as an image; a PDF ticket keeps its "Open original" link in the text.
         const image = Boolean(ticket.mediaUrl && /^image\//i.test(String(ticket.mediaType || '')))
@@ -191,11 +211,13 @@ export async function POST(req: NextRequest) {
     }
     // Same gold-rate watch as WhatsApp: "alert me if gold rate drops by 10%" is a rule, never a one-off quote.
     const goldWatch=await tryCreateGoldRateWatchFromCommand({actor,surface:'web',text})
+    __trace.mark('goldWatch')
     if(goldWatch){
       await saveConversation(user.telegram_id,text,goldWatch.text)
       return NextResponse.json(goldWatch)
     }
     const contentDraft = await tryRunContentWorkflow(actor, text, `web-${randomUUID()}`)
+    __trace.mark('contentDraft')
     if (contentDraft) return NextResponse.json(contentDraft)
     // Match WhatsApp's per-request routing before a whole-message handler can
     // combine different products or swallow a delegated reminder.
@@ -203,6 +225,7 @@ export async function POST(req: NextRequest) {
     const compoundReplies = await runCompoundShoppingFriendRequests(text, {
       checkPrice: async stepText => {
         const comparison = await tryPriceComparison({telegramId: actor.legacyTelegramId, text: stepText, surface: 'web'})
+        __trace.mark('comparison')
         if (!comparison) throw new Error('compound_price_unhandled')
         await saveConversation(user.telegram_id, stepText, comparison.text)
         return comparison.text
@@ -231,6 +254,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({text: redactSecretShapedText(reminder.text), handledBy: reminder.handledBy || 'same-brain'})
     }
     const watcherStatus=await tryGetWatcherStatusFromCommand({actor,text})
+    __trace.mark('watcherStatus')
     if(watcherStatus){
       await saveConversation(user.telegram_id,text,watcherStatus.text)
       return NextResponse.json(watcherStatus)
@@ -239,11 +263,13 @@ export async function POST(req: NextRequest) {
     // offers) before anything is saved, and "stop watching <name>" stops that watch by name. Both read the
     // sentence themselves and return nothing for anything else, so other messages continue below.
     const priceWatch=await tryRunPriceWatchClarification({actor,surface:'web',text})
+    __trace.mark('priceWatch')
     if(priceWatch){
       await saveConversation(user.telegram_id,text,priceWatch.text)
       return NextResponse.json(priceWatch)
     }
     const watcherStop=await tryStopWatcherFromCommand({actor,text})
+    __trace.mark('watcherStop')
     if(watcherStop){
       await saveConversation(user.telegram_id,text,watcherStop.text)
       return NextResponse.json(watcherStop)
@@ -251,11 +277,13 @@ export async function POST(req: NextRequest) {
     // Inbox monitoring must create a real watcher before the generic planner
     // can turn the same request into an ordinary task with no scheduled checks.
     const inboxWatch=await tryCreateInboxTriageWatchFromCommand({actor,text,surface:'web'})
+    __trace.mark('inboxWatch')
     if(inboxWatch){
       await saveConversation(user.telegram_id,text,inboxWatch.text)
       return NextResponse.json(inboxWatch)
     }
     const meetingReply=await tryMeetingShareFollowup({actor,text,surface:'web'})
+    __trace.mark('meetingReply')
     if(meetingReply){
       await saveConversation(user.telegram_id,text,meetingReply.text)
       return NextResponse.json(meetingReply)
@@ -267,22 +295,26 @@ export async function POST(req: NextRequest) {
     }
     // "book the cheapest" after a flight result, and the traveller details that follow (same as WhatsApp).
     const flightBooking=await tryFlightBooking({actor,surface:'web',text})
+    __trace.mark('flightBooking')
     if(flightBooking){
       await saveConversation(user.telegram_id,text,flightBooking.text)
       return NextResponse.json(flightBooking)
     }
     const typedReply = await tryTypedTimeRouting({actor,text,surface:'web',messageId:`web-${randomUUID()}`})
+    __trace.mark('typedReply')
     if(typedReply){
       await saveConversation(user.telegram_id,text,typedReply.text)
       return NextResponse.json(typedReply)
     }
     // Save an explicit persistent search before a one-shot planner can claim it.
     const webWatch = await tryUpdateWebWatchFromCommand({actor,text}) || await tryCreateWebWatchFromCommand({ actor, surface:'web', text })
+    __trace.mark('webWatch')
     if (webWatch) {
       await saveConversation(user.telegram_id, text, webWatch.text)
       return NextResponse.json(webWatch)
     }
     const brainReply = await trySameBrainIntrospection({ actor, text })
+    __trace.mark('brainReply')
     if (brainReply) {
       await saveConversation(user.telegram_id, text, brainReply.text)
       return NextResponse.json(brainReply)
@@ -298,6 +330,7 @@ export async function POST(req: NextRequest) {
     // A past decision or a link save is not a new booking/browser command.
     if(isConnectionCapabilityQuery(text)||isDecisionRecallQuery(text)||isLinkVaultSaveRequest(text)||isLinkVaultQuery(text)){
       const result=await processIncomingMessage({channel:'whatsapp',externalUserId:String(user.whatsapp_id),text,userName:user.name||'Gogo',messageType:'text',messageId:shadowEventId,semantic:webObservation?.jev,pendingQuestionChecked})
+      __trace.mark('result')
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:result.handledBy||'same-brain',actualCapability:'memory'}).catch(()=>{})
       return NextResponse.json(result)
     }
@@ -305,6 +338,7 @@ export async function POST(req: NextRequest) {
     // A named ask with no matching task returns null and routing continues.
     if (parseTaskStatusQuery(text)) {
       const taskStatus = await tryGetTaskStatus({ telegramId: actor.legacyTelegramId }, text) || await tryGetAutonomyStatus({ actor, text })
+      __trace.mark('taskStatus')
       if (taskStatus) {
         await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:taskStatus.handledBy,actualCapability:'orchestrator',status:taskStatus.status,runId:taskStatus.runId}).catch(()=>{})
         await saveConversation(user.telegram_id, text, taskStatus.text)
@@ -314,6 +348,7 @@ export async function POST(req: NextRequest) {
     const readOnlySchedule = detectReadOnlyScheduleRequest(text)
     if (readOnlySchedule) {
       const summary = await readTomorrowSchedule({ actor, scope: readOnlySchedule.scope, text })
+      __trace.mark('summary')
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'read-only-schedule',actualCapability:'calendar',status:'completed'}).catch(()=>{})
       await recordDecisionLearning({ actor, text, domain:'calendar', handler:'read-only-schedule', decisionId:shadowEventId, outcome:summary.calendarReadVerified?'verified_success':'unknown', verified:summary.calendarReadVerified }).catch(()=>{})
       await saveConversation(user.telegram_id, text, summary.text)
@@ -321,6 +356,7 @@ export async function POST(req: NextRequest) {
     }
 
     const referenceFx=await buildReferenceFxReply(text)
+    __trace.mark('referenceFx')
     if(referenceFx!==null){
       await saveConversation(user.telegram_id,text,referenceFx)
       return NextResponse.json({text:referenceFx,handledBy:'reference-fx',status:'completed',readOnly:true,mutated:false})
@@ -328,12 +364,14 @@ export async function POST(req: NextRequest) {
     const dayIntent = detectDashboardDayIntent(text)
     if (dayIntent) {
       const dayReply = await getDashboardDayReply(session.telegramId, dayIntent)
+      __trace.mark('dayReply')
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'dashboard-day'}).catch(()=>{})
       await saveConversation(user.telegram_id, text, dayReply)
       return NextResponse.json({ text: dayReply, handledBy: 'dashboard-day' })
     }
 
     const driveContext = await tryRunWorkspaceDriveContext({actor,surface:'web',text})
+    __trace.mark('driveContext')
     if (driveContext) {
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:driveContext.handledBy,actualCapability:'files',status:driveContext.status,runId:driveContext.runId}).catch(()=>{})
       await saveConversation(user.telegram_id,text,driveContext.text)
@@ -341,6 +379,7 @@ export async function POST(req: NextRequest) {
     }
 
     const restaurantReservation = await tryRunRestaurantReservation({ actor, surface:'web', text })
+    __trace.mark('restaurantReservation')
     if (restaurantReservation) {
       const suffix = restaurantReservation.status === 'waiting_approval'
         ? '\n\nOpen Gogo Agent to approve or reject this bounded reservation mission.'
@@ -354,6 +393,7 @@ export async function POST(req: NextRequest) {
     // Same appointment brain as Gogo Agent: preserve discovery context across
     // surfaces and keep final provider confirmation behind the Agent approval UI.
     const appointmentFollowup = await tryRunAppointmentFollowup({ actor, surface:'web', text })
+    __trace.mark('appointmentFollowup')
     if (appointmentFollowup) {
       const suffix = appointmentFollowup.status === 'waiting_approval'
         ? '\n\nI paused before the consequential provider action. Open Gogo Agent to approve or reject it.'
@@ -365,6 +405,7 @@ export async function POST(req: NextRequest) {
     }
 
     const appointmentResearch = await tryRunAppointmentResearch({ actor, surface:'web', text })
+    __trace.mark('appointmentResearch')
     if (appointmentResearch) {
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:appointmentResearch.handledBy,actualCapability:(appointmentResearch as any).capability||'browser',status:appointmentResearch.status,runId:appointmentResearch.runId}).catch(()=>{})
       await saveConversation(user.telegram_id, text, appointmentResearch.text)
@@ -375,6 +416,7 @@ export async function POST(req: NextRequest) {
     // the specialist first refusal here prevents the WhatsApp compatibility bridge
     // from storing source='whatsapp' and later pushing IRCTC handoff/results there.
     const trainResearch = await tryRunTrainResearch({ actor, surface:'web', text })
+    __trace.mark('trainResearch')
     if (trainResearch) {
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:trainResearch.handledBy,actualCapability:(trainResearch as any).capability||'travel',status:trainResearch.status,runId:trainResearch.runId}).catch(()=>{})
       await saveConversation(user.telegram_id, text, trainResearch.text)
@@ -393,12 +435,14 @@ export async function POST(req: NextRequest) {
     // Before the browser: a question about an unconnected account (Amazon orders) gets the Connect card, not a
     // browser run that hits the site's sign-in page (15 Oct live: amazon.in returned 503 and no card was shown).
     const accountGate = await tryAccountSiteAnswer(actor, text)
+    __trace.mark('accountGate')
     if (accountGate) {
       await saveConversation(user.telegram_id, text, accountGate.text)
       return NextResponse.json({ text: accountGate.text, handledBy: accountGate.handledBy, status: accountGate.status })
     }
 
     const browserTask = await tryRunBrowserCommand({ actor, surface:'web', text })
+    __trace.mark('browserTask')
     if (browserTask) {
       const suffix = browserTask.status === 'waiting_approval'
         ? '\n\nI paused before the consequential provider action. Open Gogo Agent to approve or reject it.'
@@ -416,6 +460,7 @@ export async function POST(req: NextRequest) {
 
     if (isTravelResearchDetailsReply(text)) {
       const resumed = await tryRunTravelResearch({actor,surface:'web',text})
+      __trace.mark('resumed')
       if (resumed) {
         await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:resumed.handledBy,actualCapability:'travel',status:resumed.status,runId:resumed.runId||null}).catch(()=>{})
         await saveConversation(user.telegram_id,text,resumed.text)
@@ -425,6 +470,7 @@ export async function POST(req: NextRequest) {
 
     if (isStandaloneWorkspaceMeetingPrep(text)) {
       const meeting = await tryPrepareWorkspaceMeetingPlan({actor,surface:'web',text})
+      __trace.mark('meeting')
       if (meeting) {
         await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:meeting.handledBy,actualCapability:meeting.capability,status:meeting.status,runId:meeting.runId}).catch(()=>{})
         await saveConversation(user.telegram_id,text,meeting.text)
@@ -460,8 +506,10 @@ export async function POST(req: NextRequest) {
 
     if (isPublicTravelResearchRequest(text)) {
       const travel = await tryRunTravelResearch({ actor, surface:'web', text })
+      __trace.mark('travel')
       if (travel) {
         const hardened = await hardenTravelResearchResult(travel, text)
+        __trace.mark('hardened')
         await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:travel.handledBy,actualCapability:(travel as any).capability||'travel',status:(travel as any).status||null,runId:(travel as any).runId||null}).catch(()=>{})
         await saveConversation(user.telegram_id, text, hardened.text)
         return NextResponse.json({ text: hardened.text, handledBy: hardened.handledBy, status: hardened.status, runId: 'runId' in hardened ? hardened.runId : undefined })

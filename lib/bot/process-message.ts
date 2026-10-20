@@ -70,6 +70,15 @@ import { checkAllowance, recordUsage, getPlan, getLimits, MeterUnavailableError,
 import { issueToken } from '@/lib/dashboard/session'
 import { handleLinkVaultText } from '@/lib/services/link-vault'
 
+// Request timing: mark(label) after each awaited step; a step slower than TIMING_THRESHOLD_MS (250)
+// logs one TIMING line. Inlined (not imported) so test harnesses with strict dependency maps load it.
+function startTrace(surface: string) {
+  const threshold = Number((typeof process !== 'undefined' && process.env?.TIMING_THRESHOLD_MS) || 250)
+  const started = Date.now(); let last = started
+  return { mark(step: string) { const now = Date.now(), ms = now - last; last = now; if (ms >= threshold) console.log('TIMING:', JSON.stringify({ surface, step, ms, total: now - started })) } }
+}
+
+
 // ── Usage meter wiring (Phase 3: web-search only) ────────────────────────────
 // Gated entirely behind METER_ENABLED. When it is not exactly 'true', every
 // helper below short-circuits on its first line with zero side effects, so the
@@ -419,11 +428,13 @@ export function isUsageCommand(text: string) {
 }
 
 export async function processIncomingMessage(params: ProcessIncomingParams): Promise<ProcessIncomingResult> {
+  const __trace = startTrace('pim')
   // Generated plan instructions are not user-authored conversation evidence.
   const saveConversation = async (telegramId:number,role:'user'|'assistant',content:string) => {
     if(!params.internalStep)await persistConversation(telegramId,role,content)
   }
   const resolvedUser = await resolveUser({ channel: params.channel, externalUserId: params.externalUserId, userName: params.userName })
+  __trace.mark('resolvedUser')
   // Channel adapters are not the only callers. Keep secondary codes outside
   // conversational logs, durable memory and model input at this shared boundary.
   const codeText=String(params.text||'').trim()
@@ -432,6 +443,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const {humanAuthTakeoverReply,shouldWithholdAuthenticationCode}=await import('@/lib/agent/browser-auth-notice')
     if(await shouldWithholdAuthenticationCode(resolvedUser.telegramId,codeText)){
       const text=await humanAuthTakeoverReply(resolvedUser.telegramId)
+      __trace.mark('text')
       await saveConversation(resolvedUser.telegramId,'user','[authentication code withheld]')
       await saveConversation(resolvedUser.telegramId,'assistant',text)
       return {text,handledBy:'human-auth-required',resolvedUser}
@@ -441,6 +453,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   const incomingText = (params.text || '').trim()
   const connectionCapabilities=await tryGetConnectionCapabilities({actor:{legacyTelegramId:resolvedUser.telegramId},text:incomingText})
+  __trace.mark('connectionCapabilities')
   if(connectionCapabilities){
     await saveConversation(resolvedUser.telegramId,'user',incomingText)
     await saveConversation(resolvedUser.telegramId,'assistant',connectionCapabilities.text)
@@ -459,6 +472,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   {
     const referenceFx=await buildReferenceFxReply(incomingText)
+    __trace.mark('referenceFx')
     if(referenceFx!==null){
       await saveConversation(resolvedUser.telegramId,'user',incomingText)
       await saveConversation(resolvedUser.telegramId,'assistant',referenceFx)
@@ -501,11 +515,13 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       return {text: formatOutgoingText(params.channel, inputQuestion), resolvedUser, handledBy: 'content-workflow'}
     }
     const limit = await checkAndIncrementLimit(resolvedUser.telegramId)
+    __trace.mark('limit')
     if (!limit.allowed) return {text: formatOutgoingText(params.channel, limit.upgradeMessage || 'Daily limit reached.'), resolvedUser}
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     let evidence = '', footer = ''
     if (contentWorkflow.research) {
       const guard = await guardAiAction(resolvedUser.telegramId)
+      __trace.mark('guard')
       if (guard.ok === false) {
         await saveConversation(resolvedUser.telegramId, 'assistant', guard.reply)
         return {text: formatOutgoingText(params.channel, guard.reply), resolvedUser}
@@ -519,9 +535,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     ])
     if(contextSynthesis){
       const savedContext=await selectedSavedContextBlock(resolvedUser,incomingText,history)
+      __trace.mark('savedContext')
       evidence=[evidence,savedContext].filter(Boolean).join('\n\n')
     }
     const draft = await askClaude(incomingText, history, memories, resolvedUser.name, preferences, evidence)
+    __trace.mark('draft')
     if (!draft.trim()) throw new Error('content_workflow_empty_response')
     const reply = formatOutgoingText(params.channel, draft + footer)
     // A draft is returned as text even if it contains a control-line example.
@@ -540,6 +558,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return {handledBy:linkVaultReply.handledBy,text:formatOutgoingText(params.channel,linkVaultReply.text),resolvedUser}
   }
   const typedReply=await tryTypedTimeRouting({actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId||''),name:resolvedUser.name||'Gogo'},text:incomingText,surface:params.channel,messageId:params.messageId?String(params.messageId):null})
+  __trace.mark('typedReply')
   if(typedReply){
     await saveConversation(resolvedUser.telegramId,'user',incomingText)
     await saveConversation(resolvedUser.telegramId,'assistant',typedReply.text)
@@ -551,6 +570,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if(/\b(?:gold|silver)\b/i.test(incomingText)&&resolvedUser.id&&resolvedUser.whatsappId&&await (async()=>{const g=await import('@/lib/agent/gold-rate-rule');return g.isGoldRateAlertPhrasing(incomingText)||g.isGoldWatchEditCommand(incomingText)})()){
     const {tryCreateGoldRateWatchFromCommand}=await import('@/lib/agent/gold-watch')
     const goldWatch=await tryCreateGoldRateWatchFromCommand({actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId),name:resolvedUser.name||'Gogo'},surface:params.channel==='whatsapp'?'whatsapp':'web',text:incomingText})
+    __trace.mark('goldWatch')
     if(goldWatch){
       await saveConversation(resolvedUser.telegramId,'user',incomingText)
       await saveConversation(resolvedUser.telegramId,'assistant',goldWatch.text)
@@ -589,6 +609,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   if(/^\s*(?:compare grocery prices for\s|(?:show|check)\s+(?:my|the)\s+(?:food|grocery) comparison(?: status)?[.!]?\s*$)/i.test(incomingText)||intent.type==='food_comparison'||/\b[1-9]\d{5}\b/.test(incomingText)||/^(?:stop|cancel) (?:the )?food comparison/i.test(incomingText)){
     const food=await tryFoodComparison({telegramId:resolvedUser.telegramId,text:incomingText,surface:params.channel})
+    __trace.mark('food')
     if(food){
       await saveConversation(resolvedUser.telegramId,'user',incomingText)
       await saveConversation(resolvedUser.telegramId,'assistant',food.text)
@@ -607,6 +628,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const code = String(intent.meta?.code || '')
     const senderKey = normalizePhoneNumber(resolvedUser.whatsappId || '')
     const reply = await handleCreditIqLink({ channel: params.channel, senderKey, code })
+    __trace.mark('reply')
     await saveConversation(resolvedUser.telegramId, 'user', 'link creditiq [redacted]')
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -618,6 +640,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if (intent.type === 'creditiq_cards') {
     const senderKey = normalizePhoneNumber(resolvedUser.whatsappId || '')
     const reply = await handleCreditIqCards({ senderKey })
+    __trace.mark('reply')
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -709,6 +732,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       await saveConversation(resolvedUser.telegramId, 'user', incomingText)
       const cap = getFriendReminderCap(resolvedUser.tier)
       const used = await countTodayFriendReminders(resolvedUser.telegramId)
+      __trace.mark('used')
       if (used >= cap) {
         const reply = `You've hit today's friend-reminder limit (${cap}/day).`
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
@@ -724,6 +748,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         return { text: formatOutgoingText(params.channel, reply), resolvedUser }
       }
       const contact = await resolveFriendContact(resolvedUser.telegramId, friend.name)
+      __trace.mark('contact')
       await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(friend.name, friend.rest, contact ? 'confirm' : 'number', contact || undefined, parsed))
       const reply = contact
         ? `Please confirm: remind ${cap0(friend.name)} to ${parsed.task} on ${friendTimeLabel(parsed.remindAtIso)}. Reply YES to schedule or NO to cancel.`
@@ -762,7 +787,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // richer answer the prompt itself advertises ("8pm today", "in 2 hours", "every Monday 10am").
   if (!looksLikeNewCommand(incomingText)) {
     const pendingReminder = await getLatestFollowupState(resolvedUser.telegramId, 'pending_reminder')
+    __trace.mark('pendingReminder')
     const pendingCalendar = await getLatestFollowupState(resolvedUser.telegramId, 'pending_calendar')
+    __trace.mark('pendingCalendar')
 
     const ts = (s: any) => new Date(s?.created_at || s?.payload?.created_at || 0).getTime()
     const rFresh = pendingReminder && isFreshFollowupState(pendingReminder)
@@ -775,6 +802,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       const parsed = resolvePendingCalendar(ctx, incomingText)
       if (parsed?.remindAtIso) {
         const reply = await createCalendarEventAtIso(resolvedUser.telegramId, ctx.title || 'Meeting', parsed.remindAtIso)
+        __trace.mark('reply')
         if (reply) {
           await saveConversation(resolvedUser.telegramId, 'user', incomingText)
           await saveConversation(resolvedUser.telegramId, 'assistant', reply)
@@ -827,6 +855,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (isUsageCommand(incomingText)) {
     const reply = await getUsageStatusReply(resolvedUser.telegramId)
+    __trace.mark('reply')
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -842,6 +871,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // hash-at-rest discipline would be pointless if the plaintext sat here).
   if (intent.type === 'dashboard') {
     const issue = await issueToken(resolvedUser.telegramId)
+    __trace.mark('issue')
     let reply: string
     if (issue.ok === true) {
       reply =
@@ -860,6 +890,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (isAmPmChoice(incomingText)) {
     const latestAmPm = await getLatestFollowupState(resolvedUser.telegramId, 'reminder_ampm')
+    __trace.mark('latestAmPm')
     if (latestAmPm?.payload?.originalText && isFreshFollowupState(latestAmPm)) {
       const timingProblem = amPmReminderTimingProblem(latestAmPm.payload.originalText, incomingText)
       if (timingProblem) {
@@ -887,9 +918,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (isCalendarConflictMoveCommand(incomingText)) {
     const latestCalendarConflict = await getLatestFollowupState(resolvedUser.telegramId, 'calendar_conflict')
+    __trace.mark('latestCalendarConflict')
 
     if (latestCalendarConflict?.payload?.startIso) {
       const reply = await moveCalendarConflictEvent(resolvedUser.telegramId, latestCalendarConflict.payload, incomingText)
+      __trace.mark('reply')
 
       if (reply) {
         await saveConversation(resolvedUser.telegramId, 'user', incomingText)
@@ -905,6 +938,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   const namesCalendarObject = /\b(meeting|event|appointment|appt|standup|sync|session|slot|calendar)\b/i.test(incomingText)
   if (intent.type === 'edit_reminder' && !(isCalendarMutation(incomingText) && namesCalendarObject)) {
     const reply = await editLatestReminder(resolvedUser.telegramId, incomingText)
+    __trace.mark('reply')
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -915,8 +949,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
 
     const latestCalendarConflict = await getLatestFollowupState(resolvedUser.telegramId, 'calendar_conflict')
+    __trace.mark('latestCalendarConflict')
     if (latestCalendarConflict?.payload?.startIso) {
       const reply = await createCalendarConflictEvent(resolvedUser.telegramId, latestCalendarConflict.payload)
+      __trace.mark('reply')
       if (reply) {
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -924,6 +960,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
 
     const latestDayPlanFollowup = await getLatestFollowupState(resolvedUser.telegramId, 'day_plan')
+    __trace.mark('latestDayPlanFollowup')
     if (latestDayPlanFollowup?.payload?.items?.length) {
       const reply = await createDayPlanReminders({
         telegramId: resolvedUser.telegramId,
@@ -936,6 +973,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
 
     const latestSportsFollowup = await getLatestFollowupState(resolvedUser.telegramId, 'sports_match')
+    __trace.mark('latestSportsFollowup')
     if (latestSportsFollowup?.payload?.match_time_iso) {
       const matchTime = new Date(latestSportsFollowup.payload.match_time_iso)
       const lower = incomingText.toLowerCase()
@@ -965,9 +1003,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     if (selectedPlan) {
       const explicit = /^(subscribe|get|buy|choose|select|start)\b/i.test(incomingText.trim())
       const recent = await getLatestFollowupState(resolvedUser.telegramId, 'plan_select')
+      __trace.mark('recent')
       const recentEnough = recent && (Date.now() - new Date(recent.created_at).getTime() < 30 * 60 * 1000)
       if (explicit || recentEnough) {
         const reply = await buildPlanCheckoutReply(resolvedUser, selectedPlan)
+        __trace.mark('reply')
         await saveConversation(resolvedUser.telegramId, 'user', incomingText)
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -1015,6 +1055,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
 
   const limit = await checkAndIncrementLimit(resolvedUser.telegramId)
+  __trace.mark('limit')
   if (!limit.allowed) {
     return { text: formatOutgoingText(params.channel, limit.upgradeMessage || 'Daily limit reached.'), resolvedUser }
   }
@@ -1025,6 +1066,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     let reply:string
     try{
       const result=await executeReadOnlyCalendarStep({actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId||''),name:resolvedUser.name||'Gogo'},instruction:incomingText,missionText:incomingText})
+      __trace.mark('result')
       reply=result.text||"I couldn't verify your Calendar just now. Your schedule may still contain events. Nothing was changed."
     }catch(error:unknown){
       const message=error&&typeof error==='object'&&'message' in error?String(error.message):''
@@ -1038,6 +1080,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (isPlanMyDayIntent(incomingText)) {
     const reply = await buildPlanMyDayReply(resolvedUser.telegramId, resolvedUser.name)
+    __trace.mark('reply')
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -1045,8 +1088,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // Calendar mutation confirm (yes / pick a number) — only when one is pending.
   {
     const pendingCalMut = await getLatestFollowupState(resolvedUser.telegramId, 'calendar_mutation')
+    __trace.mark('pendingCalMut')
     if (pendingCalMut && isCalendarMutationConfirm(incomingText)) {
       const reply = await confirmCalendarMutation(resolvedUser.telegramId, incomingText, pendingCalMut.payload)
+      __trace.mark('reply')
       if (reply) {
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -1057,6 +1102,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // Calendar mutation: move / reschedule / cancel an event (confirms before mutating).
   if (isCalendarMutation(incomingText)) {
     const mut = await buildCalendarMutationReply(resolvedUser.telegramId, incomingText)
+    __trace.mark('mut')
     if (mut.handled) {
       await saveConversation(resolvedUser.telegramId, 'assistant', mut.reply)
       return { text: formatOutgoingText(params.channel, mut.reply), resolvedUser }
@@ -1069,12 +1115,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const compound = parseLookupThenCalendar(incomingText)
     if (compound) {
       const guard = await guardAiAction(resolvedUser.telegramId)
+      __trace.mark('guard')
       if (guard.ok === false) {
         await saveConversation(resolvedUser.telegramId, 'assistant', guard.reply)
         return { text: formatOutgoingText(params.channel, guard.reply), resolvedUser }
       }
       let answer = ''
       const searchContext = await searchWeb(compound.question).catch(() => '')
+      __trace.mark('searchContext')
       try { answer = await askClaudeWithContext(compound.question, searchContext, resolvedUser.name) } catch { answer = buildDirectWebAnswer(compound.question, searchContext) }
       if (!answer || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(answer)) answer = buildDirectWebAnswer(compound.question, searchContext)
       // Already happened: nothing to add, and no pending question left open.
@@ -1089,6 +1137,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (isCalendarAction(incomingText)) {
     const calendarResult = await buildCalendarActionReply(resolvedUser.telegramId, incomingText)
+    __trace.mark('calendarResult')
     if (calendarResult.handled) {
       await saveConversation(resolvedUser.telegramId, 'assistant', calendarResult.reply)
       return { text: formatOutgoingText(params.channel, calendarResult.reply), resolvedUser }
@@ -1099,6 +1148,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if (isTranslationRequest(incomingText)) {
     const targetLang = parseTargetLanguage(incomingText)
     const result = await translateText({ text: incomingText, targetLanguage: targetLang })
+    __trace.mark('result')
     const reply = buildTranslationReply(result)
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
@@ -1131,6 +1181,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if (intent.type === 'set_reminder' && !reminderLeadTime(incomingText) && /\b(every|hourly|twice|between|from .+ to |each (day|week|mon|tue|wed|thu|fri|sat|sun))\b/i.test(incomingText)) {
     try {
       const cRaw = await askClaude(incomingText, [], [], resolvedUser.name, '')
+      __trace.mark('cRaw')
       const cParsed = parseClaudeResponse(cRaw)
       if (cParsed.type === 'reminder' && cParsed.remindAt) {
         const ms = Date.parse(cParsed.remindAt)
@@ -1187,6 +1238,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     // falls through to the clarifying question below.
     try {
       const llmRaw = await askClaude(incomingText, [], [], resolvedUser.name, '')
+      __trace.mark('llmRaw')
       const llmParsed = parseClaudeResponse(llmRaw)
       if (llmParsed.type === 'reminder' && llmParsed.remindAt) {
         const ms = Date.parse(llmParsed.remindAt)
@@ -1241,6 +1293,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   if (intent.type === 'set_briefing_time') {
     const reply = await setBriefingTime(resolvedUser.telegramId, incomingText)
+    __trace.mark('reply')
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -1255,6 +1308,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     // Check existing state before minting a fresh OAuth URL. An already-connected user
     // is told so plainly; the link is only offered for adding a DIFFERENT account.
     const calTokens = await getCalendarTokens(resolvedUser.telegramId)
+    __trace.mark('calTokens')
     if (calTokens.connected) {
       const url = buildCalendarConnectUrl(resolvedUser.telegramId) || getAuthUrl(resolvedUser.telegramId)
       // Name the account so "which calendar am I connected to?" has an answer.
@@ -1312,18 +1366,21 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'gold_live') {
     const reply = await buildDeterministicGoldReply(incomingText)
+    __trace.mark('reply')
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'sports_standings') {
     const reply = await buildDeterministicIplStandingsReply(incomingText)
+    __trace.mark('reply')
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
   if (intent.type === 'sports_schedule') {
     const sportsResult = await buildSportsReplyWithState(incomingText, resolvedUser.telegramId)
+    __trace.mark('sportsResult')
     const styledSportsReply = styleReplyByIntent('sports_schedule', sportsResult?.reply || 'I could not find the next RCB match.')
     await saveConversation(resolvedUser.telegramId, 'assistant', styledSportsReply)
     return { text: formatOutgoingText(params.channel, styledSportsReply), resolvedUser }
@@ -1331,6 +1388,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'list_show_all') {
     const lists = await getAllLists(resolvedUser.telegramId)
+    __trace.mark('lists')
     const reply = !lists.length ? 'You do not have any lists yet.' : `Your lists:\n` + lists.map((l: any) => `- ${l.list_name}`).join('\n')
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -1339,6 +1397,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if (intent.type === 'list_show') {
     const listName = extractListNameFromText(incomingText)
     const list = await getList(resolvedUser.telegramId, listName)
+    __trace.mark('list')
     const reply = list ? formatList(list.list_name, list.items || []) : (await goalsReplyFor(resolvedUser.telegramId, listName)) || `I could not find a list called "${listName}".`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -1347,6 +1406,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   if (intent.type === 'list_check' || intent.type === 'list_uncheck') {
     const done = intent.type === 'list_check'
     const reply = await replyForCrossListSetDone(resolvedUser.telegramId, extractCheckItemText(incomingText), done)
+    __trace.mark('reply')
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
@@ -1354,6 +1414,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // ── Media Memory (my instagram saves, my youtube notes, find reel about X) ──
   if (intent.type === 'media_memory' || isMediaMemoryCommand(incomingText)) {
     const mediaReply = await buildMediaMemoryReply(resolvedUser.telegramId, incomingText)
+    __trace.mark('mediaReply')
     await saveConversation(resolvedUser.telegramId, 'assistant', mediaReply)
     return { text: formatOutgoingText(params.channel, mediaReply), resolvedUser }
   }
@@ -1401,6 +1462,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // ── Nutrition ──────────────────────────────────────────────
   if (intent.type === 'nutrition_log' || intent.type === 'nutrition_query') {
     const nutritionReply = await handleNutritionText({ telegramId: resolvedUser.telegramId, text: incomingText, whatsappId: resolvedUser.whatsappId })
+    __trace.mark('nutritionReply')
 
     // Handle visual card signals
     const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
@@ -1421,6 +1483,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'web_search') {
     const guard = await guardAiAction(resolvedUser.telegramId)
+    __trace.mark('guard')
     if (guard.ok === false) {
       await saveConversation(resolvedUser.telegramId, 'assistant', guard.reply)
       return { text: formatOutgoingText(params.channel, guard.reply), resolvedUser }
@@ -1432,9 +1495,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       // turned status into "fare not verified" shopping. This path never emits fares. Pass the
       // user's timezone so "tomorrow" resolves to THEIR local calendar date, not a server default.
       const userTz = await resolveReminderTimezone(resolvedUser.telegramId)
+      __trace.mark('userTz')
       reply = await answerLiveFlightStatus(incomingText, resolvedUser.name, {}, userTz)
     } else {
       const searchContext = await searchWeb(incomingText)
+      __trace.mark('searchContext')
       try { reply = await askClaudeWithContext(incomingText, searchContext, resolvedUser.name) } catch { reply = buildDirectWebAnswer(incomingText, searchContext) }
       if (!reply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(reply)) reply = buildDirectWebAnswer(incomingText, searchContext)
     }
@@ -1503,12 +1568,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const prefForget = detectPreferenceForget(incomingText)
     if (prefForget) {
       const n = await forgetPreference(resolvedUser.telegramId, prefForget)
+      __trace.mark('n')
       const reply = n ? `Removed ${n} preference${n > 1 ? 's' : ''}.` : `No matching preference found for "${prefForget}".`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
     if (isPreferenceList(incomingText)) {
       const rules = await listPreferences(resolvedUser.telegramId)
+      __trace.mark('rules')
       const reply = rules.length
         ? `📌 *Your standing preferences*\n${rules.map((r, i) => `${i + 1}. ${r.rule_text}`).join('\n')}\n\nSay "forget rule about X" to remove one.`
         : `You haven't set any preferences yet. Try:\n• always keep my lists in capitals\n• from now on address me as boss`
@@ -1518,6 +1585,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const prefRule = detectPreferenceSave(incomingText)
     if (prefRule) {
       const res = await savePreference(resolvedUser.telegramId, prefRule)
+      __trace.mark('res')
       const reply = res.capped
         ? `You've hit the ${MAX_RULES}-preference limit. Remove one first ("forget rule about ...").`
         : `Got it — I'll always keep this in mind: "${prefRule}".`
@@ -1571,6 +1639,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // bookings". The list now comes from the saved bookings, with local times and status computed in code.
   if (isMyBookingsQuery(incomingText)) {
     const bookings = await buildMyBookingsReply(resolvedUser.telegramId).catch(() => null)
+    __trace.mark('bookings')
     if (bookings) {
       await saveConversation(resolvedUser.telegramId, 'assistant', bookings)
       return { text: formatOutgoingText(params.channel, bookings), resolvedUser, handledBy: 'my-bookings' }
@@ -1598,15 +1667,20 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // defense in depth — see lib/bot/memory-redaction.ts.)
   const contextSynthesis=isContextSynthesisTurn(incomingText)
   const history = await getConversationHistory(resolvedUser.telegramId)
+  __trace.mark('history')
   const memories = contextSynthesis?[]:await getMemories(resolvedUser.telegramId)
   const preferenceBlock = await getPreferenceBlock(resolvedUser.telegramId)
+  __trace.mark('preferenceBlock')
   const savedContextBlock = await selectedSavedContextBlock(resolvedUser,incomingText,history)
+  __trace.mark('savedContextBlock')
   // 18 Oct live: "plan my week" and "give me a morning briefing" said "nothing on the calendar" while a
   // 2–6 pm event was on it today — this path never read Google Calendar. Planning and briefing
   // requests now carry the real calendar for the days they cover.
   const calendarBlock = await planningCalendarBlock(resolvedUser, incomingText)
+  __trace.mark('calendarBlock')
   const contextualBlock = calendarBlock ? `${calendarBlock}\n\n${savedContextBlock}` : savedContextBlock
   const rawClaude = await askClaude(incomingText, history, memories, resolvedUser.name, preferenceBlock, contextualBlock)
+  __trace.mark('rawClaude')
   // Calendar event titles can be written by anyone who invites the user. When they are in the prompt, this
   // read-only planning turn never executes a directive (REMINDER:/MEMORY:/LIST_*:/SEARCH:) — the reply is text only.
   // 18 Oct retest: "plan my week" emitted SEARCH and the calendar-based plan was replaced by an empty web answer.
@@ -1626,6 +1700,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (parsed.type === 'list_add') {
     const res = await addToListDetailed(resolvedUser.telegramId, parsed.listName, parsed.items)
+    __trace.mark('res')
     // If nothing was added (all dupes), surface the dedupe note even when Claude supplied
     // a friendly replyText — otherwise keep Claude's wording.
     const hasDedupeNote = res.added.length === 0 && (res.alreadyPending.length > 0 || res.reactivated.length > 0)
@@ -1633,12 +1708,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   if (parsed.type === 'list_show') {
     const list = await getList(resolvedUser.telegramId, parsed.listName)
+    __trace.mark('list')
     finalReply = list ? formatList(list.list_name, list.items || []) : (await goalsReplyFor(resolvedUser.telegramId, parsed.listName)) || `I could not find a list called "${parsed.listName}".`
   }
   if (parsed.type === 'list_check' || parsed.type === 'list_uncheck') {
     const done = parsed.type === 'list_check'
     const listName = normalizeListName(parsed.listName)
     const r = await setItemDoneByText(resolvedUser.telegramId, listName, parsed.itemText, done)
+    __trace.mark('r')
     if (!r) {
       finalReply = `I could not find "${parsed.itemText}" on your ${listName} list.`
     } else if (!r.changed) {
@@ -1655,14 +1732,17 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   }
   if (parsed.type === 'list_all') {
     const lists = await getAllLists(resolvedUser.telegramId)
+    __trace.mark('lists')
     finalReply = !lists.length ? 'You do not have any lists yet.' : `Your lists:\n` + lists.map((l: any) => `- ${l.list_name}`).join('\n')
   }
   if (parsed.type === 'search') {
     const guard = await guardAiAction(resolvedUser.telegramId)
+    __trace.mark('guard')
     if (guard.ok === false) {
       finalReply = guard.reply
     } else {
       const searchContext = await searchWeb(parsed.query)
+      __trace.mark('searchContext')
       try { finalReply = await askClaudeWithContext(incomingText, searchContext, resolvedUser.name) } catch { finalReply = buildDirectWebAnswer(incomingText, searchContext) }
       if (!finalReply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(finalReply)) finalReply = buildDirectWebAnswer(incomingText, searchContext)
       finalReply += await recordWebSearch(resolvedUser, params.channel, inboundMessageId, guard.usage)
@@ -1684,6 +1764,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // owner's verified completion records; otherwise it is replaced with an honest line.
   if (finalReply === rawClaude || parsed.type === 'search') {
     const completion = await guardCompletionClaims(finalReply, resolvedUser.telegramId)
+    __trace.mark('completion')
     if (completion.blocked) {
       console.warn('CHAT_COMPLETION_CLAIM_BLOCKED:', JSON.stringify({ telegramId: resolvedUser.telegramId, kind: completion.claim?.kind || null, parsedType: parsed.type || null }))
       finalReply = completion.text
