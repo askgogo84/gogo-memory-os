@@ -40,6 +40,7 @@ const routeMocks: any = {
   '@/lib/agent/read-only-schedule': { detectReadOnlyScheduleRequest: () => null },
   '@/lib/agent/shadow-brain': { observeShadowBrainTurn: async () => ({ jev: observed }) },
   '@/lib/agent/jev-router': jevRouter,
+  '@/lib/agent/plain-question': await import('../lib/agent/plain-question.ts'),
   '@/lib/agent/general-planner': { tryRunGeneralPlan: async () => { genericPlans++; return { handledBy: 'general-plan', text: 'planner ran', status: 'completed' } } },
 }
 const route = load('app/api/dashboard/chat/route.ts', routeMocks, noops)
