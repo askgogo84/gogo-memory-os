@@ -75,6 +75,7 @@ const actual: Record<string, any> = {
   './pending-followup': pendingFollowup,
   // Real parser: none of these reminder texts is a "lookup + add it to my calendar" compound.
   '@/lib/agent/lookup-then-calendar': await import('../lib/agent/lookup-then-calendar.ts'),
+  '@/lib/agent/plain-question': await import('../lib/agent/plain-question.ts'),
   // Inert: no pending question is open in this fixture.
   './pending-question-resolver': { tryResolvePendingQuestion: async () => null },
   './handlers/reminder-ampm-followup': amPmFollowup,
