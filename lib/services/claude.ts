@@ -231,7 +231,8 @@ export function webAnswerDateLine(now = new Date()) {
 // Replies should open with the answer (19 Oct brevity rule). The model still sometimes opens with
 // "Based on the search results, …"; drop that lead-in deterministically and capitalise what follows.
 export function stripSearchPreamble(text: string): string {
-  const t = String(text || '')
+  // WhatsApp does not render markdown links (20 Oct: Mercury wrote "[IMDb](https://…)"); keep them readable.
+  const t = String(text || '').replace(/\[([^\]\n]{1,80})\]\((https?:\/\/[^\s)]+)\)/g, '$1: $2')
   const m = t.match(/^\s*(?:based on|according to|from|looking at)\s+(?:the\s+)?(?:provided\s+|available\s+|latest\s+)?(?:web\s+)?(?:search\s+)?(?:results|sources|information)(?:\s+(?:provided|available|above))?\s*[,:]\s*/i)
   if (!m) return t
   const rest = t.slice(m[0].length)

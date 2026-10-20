@@ -604,7 +604,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // search (~3s) before the web answer ran. Plain questions (strict gate, lib/agent/plain-question.ts)
   // now go straight to the web answer (search + Mercury, Claude fallback). Anything understand-first or
   // the keyword router already classified keeps its own route.
-  const intent = (baseIntent.type === 'general_chat' && !understood && isPlainInfoQuestion(incomingText)
+  // Clock questions ("What's the time in Dubai?") keep the deterministic world-time answer below: a web
+  // snippet gave a stale time (20 Oct regression from #698).
+  const intent = (baseIntent.type === 'general_chat' && !understood && isPlainInfoQuestion(incomingText) && !worldTimeReply(incomingText)
     ? { type: 'web_search', confidence: 'medium', meta: { plainQuestion: true } }
     : baseIntent) as ReturnType<typeof detectIntent>
   console.log('PIM:intent', intent, 'semantic:', params.semantic?.intent?.choice ?? null, params.semantic?.intent?.confidence ?? null)

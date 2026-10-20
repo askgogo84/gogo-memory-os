@@ -14,6 +14,8 @@ const NOT_PLAIN = new RegExp([
   String.raw`\b(?:remind|reminders?|alert|alerts|notify|watch(?:es|ing)?|track(?:ing)?|monitor|task|tasks|working on|status|update on|progress|approv\w*|confirm|cancel|stop|pause|resume|retry|again)\b`,
   // actions in the world
   String.raw`\b(?:book|booking|bookings|reserve|reservation|order|orders|buy|purchase|pay|payment|send|email|mail|message|whatsapp|call|text|schedule|reschedule|move|add|create|set|save|remember|forget|delete|remove|change|edit|connect|sign ?in|log ?in|login|password|otp|code)\b`,
+  // answered by deterministic handlers (clock, date, weather, unit/currency maths), never a web snippet
+  String.raw`\b(?:time|date|today's date|day is it|weather|temperature|rain|forecast|convert)\b`,
   // things that live in their accounts or need their context
   String.raw`\b(?:calendar|meeting|meetings|appointment|appointments|event|events|ticket|tickets|qr|flight|flights|train|trains|pnr|bus|hotel|gmail|inbox|drive|docs?|document|documents|file|files|list|lists|plan|plans|goal|goals|budget|expense|expenses|spent|spend|bill|bills|subscription|card|cards|account|accounts|price watch)\b`,
 ].join('|'), 'i')

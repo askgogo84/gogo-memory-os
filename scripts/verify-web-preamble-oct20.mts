@@ -10,3 +10,6 @@ assert.equal(stripSearchPreamble('Based on the web search results provided, gold
 assert.equal(stripSearchPreamble('Jailer 2 releases on 14 November.'), 'Jailer 2 releases on 14 November.')
 assert.equal(stripSearchPreamble('Based on your budget, the Pixel fits best.'), 'Based on your budget, the Pixel fits best.')
 console.log('WEB_PREAMBLE_OK')
+
+assert.equal(stripSearchPreamble('Nelson directed it. Source: [IMDb](https://www.imdb.com/title/tt33318732/)'), 'Nelson directed it. Source: IMDb: https://www.imdb.com/title/tt33318732/')
+console.log('WEB_LINKS_OK')

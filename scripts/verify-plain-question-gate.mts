@@ -44,6 +44,10 @@ const notPlain = [
   'Send an email to Divya about the launch',
   'What time should we leave for PVR?',
   'Who is free tomorrow? Schedule a call.',
+  "What's the time in Dubai?",
+  'What time is it in London?',
+  'What is the weather in Bangalore?',
+  'What is the date today?',
 ]
 for (const t of plain) assert.equal(isPlainInfoQuestion(t), true, `should be plain: ${t}`)
 for (const t of notPlain) assert.equal(isPlainInfoQuestion(t), false, `must keep the full chain: ${t}`)
@@ -59,6 +63,7 @@ console.log('PLAIN_QUESTION_GATE_OK')
 
 // Plain questions go straight to the web answer in processIncomingMessage (no chat-model "should I search" pass).
 const pm = readFileSync(new URL('../lib/bot/process-message.ts', import.meta.url), 'utf8')
-assert.match(pm, /baseIntent\.type === 'general_chat' && !understood && isPlainInfoQuestion\(incomingText\)\n\s+\? \{ type: 'web_search', confidence: 'medium', meta: \{ plainQuestion: true \} \}/)
+assert.match(pm, /baseIntent\.type === 'general_chat' && !understood && isPlainInfoQuestion\(incomingText\) && !worldTimeReply\(incomingText\)\n\s+\? \{ type: 'web_search', confidence: 'medium', meta: \{ plainQuestion: true \} \}/)
+assert.match(pm, /isPlainInfoQuestion\(incomingText\) && !worldTimeReply\(incomingText\)/)
 assert.ok(pm.indexOf("const intent = (baseIntent.type === 'general_chat'") < pm.indexOf("if (intent.type === 'web_search') {"))
 console.log('PLAIN_QUESTION_DIRECT_WEB_OK')
