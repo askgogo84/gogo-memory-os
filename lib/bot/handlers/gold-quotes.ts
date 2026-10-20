@@ -276,5 +276,8 @@ export function formatGoldQuotes(userText:string,searchContext:string,now=Date.n
   // Undated provenance that is identical across purities is said once ("24K/22K/18K — …").
   const grouped:{karat:string;text:string}[]=[]
   for(const d of details){const same=!d.dated&&grouped.find(g=>g.text===d.text&&!details.find(x=>x.karat===g.karat.split('/')[0])?.dated);if(same)same.karat+=`/${d.karat}`;else grouped.push({karat:d.karat,text:d.text})}
-  return `*Gold rate in ${place} (per gram, INR):*\n${lines.join('\n')}\n\n${grouped.map(g=>`${g.karat} — ${g.text}`).join('\n')}${links.length?`\n${links.length>1?'Sources':'Source'}: ${links.join(' , ')}`:''}${warnings.size?`\n\n${[...warnings].join(' ')}`:''}`
+  // 20 Oct live: notes about candidates that were dropped ("An inline quote has an unverified day…") read as noise
+  // under a good answer. Only a caveat about the shown numbers themselves stays.
+  const shownCaveats=[...warnings].filter(w=>/^The source does not verify applicability/.test(w))
+  return `*Gold rate in ${place} (per gram, INR):*\n${lines.join('\n')}\n\n${grouped.map(g=>`${g.karat} — ${g.text}`).join('\n')}${links.length?`\n${links.length>1?'Sources':'Source'}: ${links.join(' , ')}`:''}${shownCaveats.length?`\n\n${shownCaveats.join(' ')}`:''}`
 }
