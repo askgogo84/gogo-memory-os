@@ -315,6 +315,32 @@ function overlaps(start:number,end:number,events:any[],tz:string){
 }
 function clock(minutes:number){return `${pad(Math.floor(minutes/60))}:${pad(minutes%60)}`}
 
+/**
+ * 20 Oct live: "What's on my calendar today?" listed "Daily Connect-Standup Call — Thu, 8 Oct, 11:30 am – Sat,
+ * 31 Oct, 11:45 am" eight times: a series whose entries each span ~3 weeks, all overlapping today. Same-title
+ * timed entries longer than a day collapse into one line with their time of day; identical lines show once
+ * with (×N). Pure; the per-event items (and typed selection) are unchanged.
+ */
+export function calendarItemLines(items:Array<{summary:string;label:string;account?:string;start?:string;end?:string}>,tz:string):string[]{
+  const clockFmt=new Intl.DateTimeFormat('en-IN',{timeZone:tz,hour:'numeric',minute:'2-digit',hour12:true})
+  const groups=new Map<string,{text:string;count:number;longSpan:boolean}>()
+  for(const e of items){
+    const s=Date.parse(String(e.start||'')),en=Date.parse(String(e.end||''))
+    const timed=/T/.test(String(e.start||''))&&Number.isFinite(s)&&Number.isFinite(en)
+    const longSpan=timed&&en-s>24*3600_000
+    const who=e.account?` (${e.account})`:''
+    const key=longSpan?`long|${e.summary}|${e.account||''}|${clockFmt.format(new Date(s))}`:`line|${e.summary}|${e.label}|${e.account||''}`
+    const text=longSpan?`${e.summary} — ${clockFmt.format(new Date(s))} – ${clockFmt.format(new Date(en))}`+who:`${e.summary} — ${e.label}${who}`
+    const g=groups.get(key)
+    if(g)g.count++
+    else groups.set(key,{text,count:1,longSpan})
+  }
+  return [...groups.values()].map((g,i)=>{
+    const note=g.longSpan?` · ${g.count>1?`${g.count} overlapping entries, each`:'this entry'} spans several days, so the invite may be set up wrongly`:g.count>1?` (×${g.count})`:''
+    return `${i+1}. ${g.text}${note}`
+  })
+}
+
 function slotLabel(startIso:string,endIso:string,tz:string){
   const fmt=new Intl.DateTimeFormat('en-IN',{timeZone:tz,weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true})
   const differentDay=localYmd(new Date(startIso),tz)!==localYmd(new Date(endIso),tz)
@@ -385,7 +411,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
         eventInterval(event,timezone)?slotLabel(event.start.dateTime,event.end.dateTime,timezone):`${event.start?.dateTime||event.start?.date||'Start not verified'} · end time not verified`,
     }))
     if(params.rememberSelection)await rememberTypedObjects(params.actor.legacyTelegramId,'calendar',items.map(e=>({id:e.id,title:e.summary}))).catch(()=>{})
-    const lines=[`Calendar ${window.label} (${timezone}):`,items.length?items.map((e:any,i:number)=>`${i+1}. ${e.summary} — ${e.label}${e.account?` (${e.account})`:''}`).join('\n'):
+    const lines=[`Calendar ${window.label} (${timezone}):`,items.length?calendarItemLines(items,timezone).join('\n'):
       complete?`No calendar events found for ${window.label}.`:'No events returned on this partial calendar page.']
     if(events.length>items.length)lines.push(`Showing ${items.length} of ${events.length} returned events.`)
     // Say which Google account this schedule came from.
