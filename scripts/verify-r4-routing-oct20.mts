@@ -109,6 +109,8 @@ assert.equal(gm.recipientFromThreads(threads, 'Rishi', 'me@example.com').status,
 assert.deepEqual(gm.recipientFromThreads([...threads, { messages: [{ from: 'Nithin Kamath <nithin@zerodha.com>', to: 'me@example.com' }] }], 'Nithin', 'me@example.com'), { status: 'resolved', email: 'nithin.kl@tipplr.in' })
 // Two Nithins, neither ever written to: ask instead of guessing.
 assert.equal(gm.recipientFromThreads([{ messages: [{ from: 'Nithin R <nithin.r@example.org>', to: 'me@example.com' }] }, { messages: [{ from: 'Nithin Kamath <nithin@zerodha.com>', to: 'me@example.com' }] }], 'Nithin', 'me@example.com').status, 'ambiguous')
+// Only a received-only match (21 Oct live: a newsletter): suggest it, never fill it in silently.
+assert.deepEqual(gm.recipientFromThreads([{ messages: [{ from: 'Nithin Kamath <nithin@zerodha.com>', to: 'me@example.com' }] }], 'Nithin', 'me@example.com'), { status: 'unconfirmed', email: 'nithin@zerodha.com' })
 // Automated senders never count.
 assert.equal(gm.recipientFromThreads([{ messages: [{ from: 'Nithin Updates <updates@news.example>', to: 'me@example.com' }] }], 'Nithin', 'me@example.com').status, 'not_found')
 // Draft only: the compose branch stores a draft and returns before any approval or send.

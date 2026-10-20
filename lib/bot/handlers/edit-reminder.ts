@@ -315,6 +315,14 @@ export function narrowByWhen(matches: any[], input: string): any[] {
     const sameCadence = out.filter((item) => reminderMatchesCadence(item, cadence))
     if (sameCadence.length) out = sameCadence
   }
+  // 21 Oct live: "Cancel the Monday review the week reminder" still asked between "Review the week" and
+  // "Review my weekly goals". A reminder whose title is exactly the words asked for wins.
+  if (out.length > 1) {
+    const words = (t: string) => [...new Set(String(t || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(w => w && !/^(?:the|a|an|my|to|reminder|cancel|delete|remove|stop|clear|every|monday|tuesday|wednesday|thursday|friday|saturday|sunday|daily|weekly|monthly)$/.test(w)))].sort().join(' ')
+    const asked = words(input)
+    const exact = asked ? out.filter((item) => words(String(item?.message || '')) === asked) : []
+    if (exact.length === 1) out = exact
+  }
   return out
 }
 
