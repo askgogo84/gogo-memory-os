@@ -2,6 +2,8 @@ import { Kpis, Head, BarList } from '@/components/admin/ui'
 import { WaitlistTable } from '@/components/admin/waitlist-table'
 import { waitlistRows, istDateKey } from '@/lib/admin/console-data'
 import { INVITE_TEXT } from '@/lib/admin/actions'
+import { ACCESS_GRANTED_TEMPLATE_BODY } from '@/lib/bot/handlers/welcome'
+import { accessTemplateStatus } from '@/lib/whatsapp'
 import { requireAdminConsole } from '@/lib/admin/console-auth'
 
 export const dynamic = 'force-dynamic'
@@ -16,7 +18,8 @@ export default async function WaitlistPage() {
   const optins = rows.filter(r => r.whatsapp_opt_in).length
   const srcCount = new Map<string, number>()
   for (const r of rows) { const s = r.source || 'unknown'; srcCount.set(s, (srcCount.get(s) || 0) + 1) }
-  const templateReady = !!process.env.TWILIO_INVITE_CONTENT_SID
+  const template = await accessTemplateStatus(ACCESS_GRANTED_TEMPLATE_BODY)
+  const templateReady = template.status === 'approved'
   return (
     <div className="adm-stack">
       <Head title="Waitlist" lede="New numbers wait here until you approve them. Approve opens the bot and the dashboard to that number and sends the invite. Block turns the number away politely. Signups come from the askgogo.in form and from people who message AskGogo on WhatsApp." />
@@ -33,9 +36,9 @@ export default async function WaitlistPage() {
         </div>
         <aside style={{ flex: '1 1 280px', display: 'flex', flexDirection: 'column', gap: 28 }}>
           <section>
-            <h3>Invite message</h3>
+            <h3>Message sent when you approve</h3>
             <div className="card" style={{ whiteSpace: 'pre-line', fontSize: 14, lineHeight: 1.6 }}>{INVITE_TEXT}</div>
-            <p className="note">{templateReady ? 'Sent with your approved WhatsApp template, so it reaches everyone.' : 'Goes as free text. WhatsApp only delivers free text to numbers that messaged AskGogo in the last 24 hours. Website signups need an approved template (set TWILIO_INVITE_CONTENT_SID). Approved numbers get in the moment they message, invite or not.'}</p>
+            <p className="note">{templateReady ? 'WhatsApp template approved: everyone you approve gets a short "your access is active" message, and the full welcome above when they reply Hi.' : `WhatsApp template: ${template.status === 'error' ? 'could not be checked' : template.status === 'rejected' ? 'rejected by Meta' : 'waiting for Meta approval'}. Until it is approved this full welcome goes as text, which WhatsApp delivers only to numbers that messaged AskGogo in the last 24 hours. Approved numbers get in the moment they message, either way.`}</p>
           </section>
           <section>
             <h3>Where signups come from</h3>

@@ -28,7 +28,7 @@ import { meterAs } from '@/lib/metering/core'
 import { isStopMessage, suppressAllForRecipient } from '@/lib/bot/handlers/reminder-optout'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { addToList } from '@/lib/lists'
-import { getDirectWhatsappPremiumReply } from '@/lib/bot/handlers/whatsapp-direct-premium'
+import { getDirectWhatsappPremiumReply, isGreeting } from '@/lib/bot/handlers/whatsapp-direct-premium'
 import { normalizeVoicePromptForBot } from '@/lib/bot/handlers/voice-normalizer'
 import { buildMemoryControlReply, isMemoryControlCommand } from '@/lib/bot/handlers/memory-control'
 import { buildNotesReply, isNotesCommand, isMeetingNotesCommand, buildMeetingNotesListReply } from '@/lib/bot/handlers/notes-control'
@@ -396,7 +396,11 @@ async function handleWhatsAppPost(req: NextRequest) {
       const welcomeMenu = buildOnboardingMenu(resolvedUser.name || profileName)
       await sendWhatsAppMessage(from, welcomeMenu)
       await saveConversation(resolvedUser.telegramId, 'assistant', welcomeMenu)
-      // Don't return — continue processing their first message too
+      // A bare "Hi" is fully answered by the intro; anything else is processed too.
+      if (isGreeting(bodyText)) {
+        await saveConversation(resolvedUser.telegramId, 'user', bodyText)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
     }
 
     if (isAdminCommand(bodyText)) {

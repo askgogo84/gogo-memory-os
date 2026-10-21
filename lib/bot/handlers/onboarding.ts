@@ -1,3 +1,4 @@
+import { buildWelcomeIntro } from './welcome'
 /**
  * Interactive Onboarding Flow
  * New user gets a warm first-use message + a compact menu, then a tailored quick-start.
@@ -19,28 +20,8 @@ const EMAIL_OPT_IN_PROMPT =
 // ── Step 1: Welcome menu ──────────────────────────────────────────────────────
 
 export function buildOnboardingMenu(userName?: string): string {
-  const name = userName ? userName.split(' ')[0] : 'there'
-  return (
-    `👋 *Hey ${name}, I’m Gogo — your second brain.*\n\n` +
-    `Tell me the things you don’t want to carry in your head. I can remember them, remind you at the right time, find your documents again, organise lists, help with meetings, travel and your day.\n\n` +
-    `*You don’t need commands. Just talk to me normally.*\n\n` +
-    `Try one:\n` +
-    `⏰ _“Remind me tomorrow at 10 AM to call Mom.”_\n` +
-    `🧠 _“Remember my passport expires in October 2033.”_\n` +
-    `📋 _“Make a grocery list.”_\n` +
-    `☀️ _“What do I have today?”_\n\n` +
-    `Or send me a photo, screenshot, PDF, link or voice note.\n\n` +
-    `🖥️ What you tell me here also appears in your private AskGogo dashboard.\n\n` +
-    `*Start with anything you don’t want to forget.* ✨\n\n` +
-    `Want a quick tour instead?\n` +
-    `1️⃣ Reminders & follow-ups\n` +
-    `2️⃣ Meeting notes & transcription\n` +
-    `3️⃣ Save content\n` +
-    `4️⃣ Expenses & finance\n` +
-    `5️⃣ Notes, documents & memory\n` +
-    `6️⃣ Show me everything\n\n` +
-    `_Reply with 1–6, or simply start talking to me._`
-  )
+  // The first message a new person gets (approved 21 Oct 2026). Copy lives in ./welcome.
+  return buildWelcomeIntro(userName)
 }
 
 // ── Step 2: Tailored quick-start based on choice ──────────────────────────────

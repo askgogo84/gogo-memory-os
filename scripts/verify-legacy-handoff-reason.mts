@@ -7,9 +7,11 @@ import ts from 'typescript'
 // Actual projection with inert owner-checked transports. No provider, credential,
 // account or stored-record mutation is allowed by this regression.
 const repo=process.cwd()
-const now=Date.parse('2026-10-18T12:00:00Z')
+// Fixture runs are dated yesterday so they stay inside the snapshot's recent-run window.
+const DAY0=new Date(Date.now()-86_400_000).toISOString().slice(0,10)
+const now=Date.parse((DAY0+'T12:00:00Z'))
 const legacy="I couldn't get provider.example to send you a sign-in code, so I stopped there. Nothing else was entered or changed."
-const base={id:'run-a',telegram_id:'123',type:'secure_browser',title:'Browser · provider.example',summary:legacy,status:'paused',error:'human_auth_required',updated_at:'2026-10-18T11:00:00Z',metadata_json:{plan_type:'secure_browser',handoff:{takeoverUrl:'https://synthetic.invalid/handback',providerUrl:'https://provider.example/'}}}
+const base={id:'run-a',telegram_id:'123',type:'secure_browser',title:'Browser · provider.example',summary:legacy,status:'paused',error:'human_auth_required',updated_at:(DAY0+'T11:00:00Z'),metadata_json:{plan_type:'secure_browser',handoff:{takeoverUrl:'https://synthetic.invalid/handback',providerUrl:'https://provider.example/'}}}
 let rows:any[]=[],steps:any[]=[],reasonFailure=false,writes=0
 const reads:Array<{table:string;select:string;owner:boolean}>=[]
 const db={from(table:string){
@@ -45,7 +47,7 @@ function load(file:string):any{
  return output
 }
 const actual=load(resolve(repo,'lib/dashboard/human-handoffs.ts'))
-const step=(reason='login_unavailable',extra:Record<string,unknown>={})=>({id:'step-a',telegram_id:'123',run_id:'run-a',tool_name:'secure_browser',ordinal:1,status:'failed',error:'human_auth_required',completed_at:'2026-10-18T11:00:00Z',started_at:'2026-10-18T10:59:00Z',output_json:{authReason:reason},...extra})
+const step=(reason='login_unavailable',extra:Record<string,unknown>={})=>({id:'step-a',telegram_id:'123',run_id:'run-a',tool_name:'secure_browser',ordinal:1,status:'failed',error:'human_auth_required',completed_at:(DAY0+'T11:00:00Z'),started_at:(DAY0+'T10:59:00Z'),output_json:{authReason:reason},...extra})
 const read=()=>actual.getPendingBrowserHandoffs('123',20,now)
 const failures:string[]=[]
 async function check(label:string,fn:()=>Promise<void>){rows=[structuredClone(base)];steps=[step()];reasonFailure=false;reads.length=0;try{await fn();assert.equal(writes,0);console.log('PASS '+label)}catch(e){failures.push(label+': '+String((e as Error).message).slice(0,400))}}
@@ -61,7 +63,7 @@ await check('other run and tool reasons cannot replace the current reason',async
  steps=[step('login_unavailable',{run_id:'other-run'}),step('login_unavailable',{tool_name:'other-tool'})];assert.doesNotMatch((await read())[0].summary,/send you a sign-in code|couldn.t sign in/i)
 })
 await check('a later non-auth browser step cannot reuse an earlier login failure',async()=>{
- steps=[step(),step('otp',{id:'step-later',ordinal:2,error:'other_failure',completed_at:'2026-10-18T11:01:00Z'})];assert.doesNotMatch((await read())[0].summary,/send you a sign-in code|couldn.t sign in/i)
+ steps=[step(),step('otp',{id:'step-later',ordinal:2,error:'other_failure',completed_at:(DAY0+'T11:01:00Z')})];assert.doesNotMatch((await read())[0].summary,/send you a sign-in code|couldn.t sign in/i)
 })
 await check('missing or unavailable reason is explicit uncertainty without a code-send claim',async()=>{
  for(const unavailable of [false,true]){reasonFailure=unavailable;steps=[];const card=(await read())[0];assert.match(card.summary,/couldn.t verify|cannot verify|unverified|unavailable|unknown/i);assert.doesNotMatch(card.summary,/send you a sign-in code|couldn.t sign in/i)}
@@ -79,7 +81,7 @@ await check('unknown and inherited property names cannot impersonate a recorded 
  for(const reason of ['constructor','toString','__proto__','unrecognised-step']){steps=[step(reason)];const card=(await read())[0];assert.match(card.summary,/couldn.t verify/i);assert.doesNotMatch(card.summary,/native code|\[object Object\]|send you a sign-in code/i)}
 })
 await check('future or invalid completion evidence cannot establish a past login failure',async()=>{
- for(const completed_at of ['not-a-date','2026-10-18T13:00:00Z']){steps=[step('login_unavailable',{completed_at})];const card=(await read())[0];assert.doesNotMatch(card.summary,/couldn.t sign in|send you a sign-in code/i);assert.match(card.summary,/couldn.t verify/i)}
+ for(const completed_at of ['not-a-date',(DAY0+'T13:00:00Z')]){steps=[step('login_unavailable',{completed_at})];const card=(await read())[0];assert.doesNotMatch(card.summary,/couldn.t sign in|send you a sign-in code/i);assert.match(card.summary,/couldn.t verify/i)}
 })
 await check('private browser output cannot escape through the projected reason',async()=>{
  steps=[step('login_unavailable',{output_json:{authReason:'login_unavailable',pageText:'SYNTHETIC_PRIVATE_PAGE',password:'SYNTHETIC_PASSWORD',token:'SYNTHETIC_TOKEN'}})];assert.doesNotMatch(JSON.stringify(await read()),/SYNTHETIC_PRIVATE_PAGE|SYNTHETIC_PASSWORD|SYNTHETIC_TOKEN|handback/)
@@ -88,7 +90,7 @@ await check('non-auth handoffs do not perform an unnecessary reason lookup',asyn
  rows[0].error='delivery_location_required';rows[0].summary='Select your delivery location.';await read();assert.equal(reads.filter(r=>r.table==='agent_steps').length,0)
 })
 await check('duplicate handoffs still collapse after truthful projection',async()=>{
- rows.push({...structuredClone(base),id:'run-b',updated_at:'2026-10-18T10:00:00Z'});steps.push(step('login_unavailable',{id:'step-b',run_id:'run-b'}));const cards=await read();assert.equal(cards.length,1);assert.equal(cards[0].id,'run-a');assert.equal(cards[0].repeats,1)
+ rows.push({...structuredClone(base),id:'run-b',updated_at:(DAY0+'T10:00:00Z')});steps.push(step('login_unavailable',{id:'step-b',run_id:'run-b'}));const cards=await read();assert.equal(cards.length,1);assert.equal(cards[0].id,'run-a');assert.equal(cards[0].repeats,1)
 })
 await check('actual snapshot run used by the chat rail carries the recorded failure copy',async()=>{
  const snapshot=load(resolve(repo,'app/api/agent/snapshot/route.ts'));const response=await snapshot.GET({});assert.equal(response.status,200);const body=await response.json();assert.match(body.handoffs[0].summary,/couldn.t sign in/i);assert.match(body.runs[0].summary,/couldn.t sign in/i);assert.doesNotMatch(body.runs[0].summary,/send you a sign-in code/)

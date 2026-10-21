@@ -1,9 +1,10 @@
 // Admin console mutations. Every one is role-checked by the caller and written to the audit log here.
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { sendWhatsApp } from '@/lib/whatsapp'
+import { sendWhatsAppAccessGranted } from '@/lib/whatsapp'
+import { ACCESS_GRANTED_TEMPLATE_BODY, buildAccessGrantedText, welcomeFirstName } from '@/lib/bot/handlers/welcome'
 import { audit, canDo, e164, hashPassword, setPasswordHash, type AdminIdentity, type AdminRole } from './console-auth'
 
-export const INVITE_TEXT = `You're in! Your AskGogo access is open.\n\nSay hi here on WhatsApp to start, or sign in at app.askgogo.in with this number.`
+export const INVITE_TEXT = buildAccessGrantedText('Divya')
 
 type Result = { ok: true; message?: string; detail?: any } | { ok: false; error: string }
 const ROLE_FOR: Record<string, AdminRole> = {
@@ -16,26 +17,10 @@ const ROLE_FOR: Record<string, AdminRole> = {
 export const roleFor = (action: string): AdminRole | null => ROLE_FOR[action] || null
 const VALID_TIERS = ['free', 'starter', 'pro', 'founder_pro']
 
-/** Send the invite. Free text works inside WhatsApp's 24-hour window; outside it Meta requires an approved template. */
-export async function sendInvite(phone: string): Promise<string> {
-  const sid = (process.env.TWILIO_INVITE_CONTENT_SID || '').trim()
-  try {
-    if (sid) {
-      // Template path: reuse the generic sender with a content SID through the Twilio REST client.
-      const twilio = (await import('twilio')).default
-      const client = twilio(process.env.TWILIO_ACCOUNT_SID!, process.env.TWILIO_AUTH_TOKEN!)
-      const from = String(process.env.TWILIO_WHATSAPP_NUMBER || '')
-      await client.messages.create({ from: from.startsWith('whatsapp:') ? from : `whatsapp:${from}`, to: `whatsapp:${phone}`, contentSid: sid } as any)
-      return 'sent (template)'
-    }
-    await sendWhatsApp(phone, INVITE_TEXT)
-    // Twilio accepts free text at once; WhatsApp only delivers it if this number messaged us in the last 24 hours.
-    return 'queued (free text, needs the 24-hour window)'
-  } catch (err: any) {
-    const code = String(err?.code || '')
-    if (code === '63016' || /24.?hour|outside.*window/i.test(String(err?.message || ''))) return 'not sent: needs an approved WhatsApp template'
-    return `not sent: ${String(err?.message || 'error').slice(0, 80)}`
-  }
+/** Send the "you're in" message. Uses the approved WhatsApp template when ready (reaches everyone); until then
+ *  the full welcome goes as text, which WhatsApp delivers only to numbers that messaged us in the last 24 hours. */
+export async function sendInvite(phone: string, name?: string | null): Promise<string> {
+  return sendWhatsAppAccessGranted(phone, welcomeFirstName(name), buildAccessGrantedText(name), ACCESS_GRANTED_TEMPLATE_BODY)
 }
 
 export async function runAdminAction(admin: AdminIdentity, action: string, body: any): Promise<Result> {
@@ -48,19 +33,20 @@ export async function runAdminAction(admin: AdminIdentity, action: string, body:
   switch (action) {
     case 'waitlist.approve': {
       if (!ids.length) return { ok: false, error: 'nothing_selected' }
-      const { data: list } = await supabaseAdmin.from('waitlist').select('id, phone_e164, status').in('id', ids)
+      const { data: list } = await supabaseAdmin.from('waitlist').select('id, phone_e164, status, profile_name').in('id', ids)
       const results: Record<string, string> = {}
       for (const row of (list || []) as any[]) {
-        const invite = await sendInvite(row.phone_e164)
+        const invite = await sendInvite(row.phone_e164, row.profile_name)
         results[row.phone_e164] = invite
         await supabaseAdmin.from('waitlist').update({ status: row.status === 'joined' ? 'joined' : 'invited', approved_at: now, approved_by: admin.phone, invited_at: now, invite_status: invite, blocked_at: null }).eq('id', row.id)
         // A number blocked earlier as a user is unblocked by approval.
         await supabaseAdmin.from('users').update({ access_status: 'active', access_changed_at: now, access_changed_by: admin.phone }).in('whatsapp_id', [row.phone_e164, `whatsapp:${row.phone_e164}`])
       }
       await audit(admin, 'Approved', `${ids.length} waitlist`, { results })
-      const failed = Object.values(results).filter(v => v.startsWith('not sent')).length
-      const freeText = Object.values(results).filter(v => v.startsWith('queued')).length
-      return { ok: true, message: `Approved ${ids.length}.` + (failed ? ` ${failed} invite(s) could not be sent.` : '') + (freeText ? ` ${freeText} invite(s) went as free text, which WhatsApp only delivers to numbers that messaged us in the last 24 hours. Either way they get in as soon as they message AskGogo.` : ' Invite sent.'), detail: results }
+      const vals = Object.values(results)
+      const failed = vals.filter(v => v.startsWith('not sent')).length
+      const asText = vals.filter(v => v.startsWith('sent as text')).length
+      return { ok: true, message: `Approved ${ids.length}.` + (failed ? ` ${failed} message(s) could not be sent.` : '') + (asText ? ` The welcome went as text because the WhatsApp template is still waiting for Meta's approval; WhatsApp delivers that only to numbers that messaged us in the last 24 hours. They get in the moment they message AskGogo either way.` : failed ? '' : ' They have been sent the welcome on WhatsApp.'), detail: results }
     }
     case 'waitlist.block':
     case 'waitlist.unblock': {
