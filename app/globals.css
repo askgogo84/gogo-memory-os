@@ -200,6 +200,26 @@
 @keyframes gogoSpark { 0%,100%{transform:scale(0);opacity:0} 20%,60%{transform:scale(1);opacity:1} }
 @keyframes gogoWave { 0%,100%{transform:rotate(0deg)} 50%{transform:rotate(-14deg)} }
 @keyframes gogoSway { 0%,100%{transform:rotate(0deg)} 50%{transform:rotate(5deg)} }
+/* Gogo character system (docs/design/gogo-character): one state per action. */
+@keyframes gg-breath{0%,100%{transform:scale(1)}50%{transform:scale(1.025)}}
+@keyframes gg-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+@keyframes gg-lean{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-4deg)}}
+@keyframes gg-orbit{to{transform:rotate(360deg)}}
+@keyframes gg-glow{0%,100%{opacity:.75}50%{opacity:1}}
+@keyframes gg-ring{0%{transform:scale(.9);opacity:.5}100%{transform:scale(1.4);opacity:0}}
+@keyframes gg-blink{0%,90%,100%{transform:scaleY(1)}94%{transform:scaleY(.1)}}
+@keyframes gg-look{0%,15%{transform:translateX(-2px)}45%,60%{transform:translateX(2px)}85%,100%{transform:translateX(-2px)}}
+@keyframes gg-lookdown{0%,100%{transform:translate(-1.5px,2px)}50%{transform:translate(1.5px,2px)}}
+@keyframes gg-type{0%{transform:translateY(0)}100%{transform:translateY(-2px)}}
+@keyframes gg-wave{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-14deg)}}
+@keyframes gg-scratch{0%,100%{transform:translateX(0)}50%{transform:translateX(3px)}}
+@keyframes gg-cardin{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:translateY(0)}}
+@keyframes gg-drift{0%,100%{transform:translateY(-2px)}50%{transform:translateY(2px)}}
+@keyframes gg-scan{0%{transform:translateY(0)}100%{transform:translateY(22px)}}
+@keyframes gg-plane{0%{offset-distance:0%}100%{offset-distance:100%}}
+@keyframes gg-dots{0%,80%,100%{opacity:.25}40%{opacity:1}}
+@keyframes gg-check{0%{stroke-dashoffset:24}100%{stroke-dashoffset:0}}
+@keyframes gg-spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
 
 .gogo-float { animation: gogo-float 5.5s ease-in-out infinite; }
 
