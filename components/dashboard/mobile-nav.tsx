@@ -1,8 +1,8 @@
 'use client'
 
-// Phone navigation (approved 21 Oct mock): bottom tabs Home · Tasks · Memory · Activity (Activity opens the Gogo
-// sheet), a slim top bar with the menu button and a live Gogo pill, and a drawer for Recent, More, Getting started,
-// usage and Settings. The Gogo chat page keeps its own header and composer, so it gets neither bar.
+// Phone navigation (21 Oct, Wajo layout): no bottom tabs. A slim top bar has the menu button (a drawer with Home,
+// Tasks, Memory, Recent, More, Getting started, usage and Settings) and a live Gogo pill that opens the Gogo sheet.
+// The Gogo chat page keeps its own header and composer.
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createContext, useContext, useEffect, useState } from 'react'
@@ -86,38 +86,4 @@ export function MobileTopBar() {
     <span className="min-w-0 flex-1 truncate text-[17px] font-semibold text-[#ecebe8]">{pageLabel(pathname)}</span>
     <GogoPill/>
   </div>
-}
-
-/** Bottom tabs on the phone. Activity opens the Gogo sheet rather than a page. */
-export function MobileTabBar() {
-  const pathname = usePathname()
-  const counts = useNavCounts()
-  const { openSheet, sheetOpen } = useGogoLive()
-  if (pathname === '/dashboard/chat') return null
-  const waiting = needsYouCount(counts)
-  const tabs = [
-    { href: '/dashboard/home', label: 'Home', icon: <path d="M4 11l8-7 8 7v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z"/> },
-    { href: '/dashboard/tasks', label: 'Tasks', icon: <path d="M5 12l4 4 10-10"/>, badge: waiting },
-    { href: '/dashboard/memory', label: 'Memory', icon: <path d="M12 3l8 5v8l-8 5-8-5V8z"/> },
-  ]
-  const isOn = (href: string) => !sheetOpen && (pathname === href || pathname.startsWith(href + '/') || (href === '/dashboard/tasks' && (pathname.startsWith('/dashboard/activity') || pathname === '/dashboard/agent')))
-  const cls = (on: boolean) => `flex min-h-[52px] flex-col items-center justify-center gap-0.5 rounded-[12px] text-[11px] font-medium ${on ? 'text-[#2fb8a6]' : 'text-[#9a9a96]'}`
-  return <nav aria-label="Main" className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-4 border-t border-[#1c1c1c] bg-[#0f0f0f] px-1 pb-[calc(.4rem+env(safe-area-inset-bottom))] pt-1 lg:hidden">
-    {tabs.map(t => <Link key={t.href} href={t.href} aria-current={isOn(t.href) ? 'page' : undefined} className={cls(isOn(t.href))}>
-      <span className="relative"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{t.icon}</svg>
-        {!!t.badge && <span className="absolute -right-3 -top-1.5 min-w-[18px] rounded-full bg-[#ef7a27] px-1 text-center text-[11px] font-bold leading-[18px] text-[#1a0d04]">{t.badge}</span>}</span>
-      {t.label}
-    </Link>)}
-    <button type="button" onClick={openSheet} className={cls(sheetOpen)} aria-label="Activity: what Gogo is doing">
-      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
-      Activity
-    </button>
-  </nav>
-}
-
-/** Room under the page for the fixed bottom tabs (none on the chat page, which has no tabs). */
-export function MobileTabSpacer() {
-  const pathname = usePathname()
-  if (pathname === '/dashboard/chat') return null
-  return <div aria-hidden="true" className="h-[72px] lg:hidden"/>
 }
