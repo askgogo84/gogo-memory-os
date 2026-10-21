@@ -40,7 +40,7 @@ let passed=0;const failed=[]
 async function test(name,fn){try{await fn();passed++;console.log('PASS '+name)}catch(e){failed.push(name+': '+e.message);console.error('FAIL '+name)}}
 const daylight='Etc/GMT'+(new Date().getUTCHours()-12>=0?'+':'')+(new Date().getUTCHours()-12)
 await query('update users set timezone=$1',[daylight])
-const add=async(meta={outcome_notice_requested:true},status='completed',owner='1')=>(await query('insert into agent_runs(telegram_id,type,status,title,summary,metadata_json,completed_at) values($1,'autonomous',$2,'Synthetic task','Verified fixture',$3,now()) returning *',[owner,status,meta]))[0]
+const add=async(meta={outcome_notice_requested:true},status='completed',owner='1')=>(await query("insert into agent_runs(telegram_id,type,status,title,summary,metadata_json,completed_at) values($1,'autonomous',$2,'Synthetic task','Verified fixture',$3,now()) returning *",[owner,status,meta]))[0]
 const key=r=>'run_outcome/'+r.id+'/whatsapp'
 const claim=(r,t,owner=Number(r.telegram_id))=>rpc('claim_run_outcome_delivery',{p_key:key(r),p_owner:owner,p_token:t})
 const snapshot=r=>({status:r.status,title:r.title,summary:r.summary,error:r.error,outcome_state:r.metadata_json.outcome_state??null,reconciliation_required:r.metadata_json.reconciliation_required===true})
