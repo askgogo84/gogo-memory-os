@@ -122,5 +122,15 @@ await check('same cursor survivor is deterministic regardless of insertion order
   assert.equal((await cs.readConversationSummary(42, harness([a, z]).db))?.summary, 'Z')
   assert.equal((await cs.readConversationSummary(42, harness([z, a]).db))?.summary, 'Z')
 })
+await check('database submillisecond cursors retain their actual source order', async () => {
+  const prefix = iso(9).replace(/\.\d{3}Z$/, '')
+  const older = prefix + '.123100+00:00', newer = prefix + '.123900Z'
+  const a = row('z-late-old', 42, 'obsolete', 9), b = row('a-newer', 42, 'correction', 9)
+  const pa = JSON.parse(a.content); pa.payload.upTo = older; a.content = JSON.stringify(pa)
+  const pb = JSON.parse(b.content); pb.payload.upTo = newer; b.content = JSON.stringify(pb)
+  assert.equal((await cs.readConversationSummary(42, harness([a, b]).db))?.summary, 'correction')
+  const rows = [...conv.slice(0, 20), { role: 'user', content: 'new correction', created_at: newer }]
+  assert.equal(cs.rowsToFold(rows, { summary: 'old', upTo: older, updatedAt: iso(10) }).length, 1)
+})
 console.log(`SUMMARY_DURABILITY ${passed}/${passed + failed}`)
 if (failed) process.exitCode = 1

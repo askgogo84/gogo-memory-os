@@ -29,11 +29,20 @@ function summaryRowContent(s: StoredSummary): string {
   return JSON.stringify({ type: 'followup_state', kind: SUMMARY_KIND, payload: s, created_at: s.updatedAt })
 }
 
+// Postgres timestamps can have microseconds; Date.parse alone collapses distinct
+// source cursors into the same millisecond and can drop a correction in that gap.
+function compareCoverage(a: string, b: string): number {
+  const milliseconds = Date.parse(a) - Date.parse(b)
+  if (milliseconds) return milliseconds
+  const fraction = (s: string) => (s.match(/\.(\d+)(?:Z|[+-]\d{2}:\d{2})$/)?.[1] || '').padEnd(9, '0').slice(0, 9)
+  return fraction(a).localeCompare(fraction(b))
+}
+
 function parseSummary(content: unknown): StoredSummary | null {
   try {
     const parsed = JSON.parse(String(content || 'null'))
     const p = parsed?.type === 'followup_state' && parsed?.kind === SUMMARY_KIND ? parsed.payload : null
-    if (typeof p?.summary !== 'string' || !p.summary.trim() || !Number.isFinite(Date.parse(p.upTo)) || Date.parse(p.upTo) > Date.now() + 60_000) return null
+    if (typeof p?.summary !== 'string' || !p.summary.trim() || typeof p.upTo !== 'string' || !Number.isFinite(Date.parse(p.upTo)) || Date.parse(p.upTo) > Date.now() + 60_000) return null
     return { summary: p.summary, upTo: String(p.upTo), updatedAt: String(p.updatedAt || '') }
   } catch { return null }
 }
@@ -52,7 +61,7 @@ async function summaryCandidates(telegramId: number, db: any): Promise<{ id: unk
   return data.flatMap((row: any) => {
     const value = parseSummary(row.content)
     return value ? [{ id: row.id, value }] : []
-  }).sort((a: any, b: any) => Date.parse(b.value.upTo) - Date.parse(a.value.upTo)
+  }).sort((a: any, b: any) => compareCoverage(b.value.upTo, a.value.upTo)
     || String(b.id).localeCompare(String(a.id))) // equal-cursor cleanup must pick the same survivor across workers
 }
 
@@ -78,7 +87,8 @@ export function rowsToFold(rowsNewestFirst: ConversationRow[], existing: StoredS
   const parsedCursor = existing?.upTo ? Date.parse(existing.upTo) : NaN
   const cursor = Number.isFinite(parsedCursor) ? parsedCursor : -Infinity
   return older
-    .filter(r => (r.role === 'user' || r.role === 'assistant') && Date.parse(r.created_at) > cursor)
+    .filter(r => (r.role === 'user' || r.role === 'assistant') && Number.isFinite(Date.parse(r.created_at))
+      && (cursor === -Infinity || compareCoverage(r.created_at, existing!.upTo) > 0))
     .filter(r => !isSecretShapedMemory(String(r.content || '')))
     .reverse() // chronological
 }
@@ -113,7 +123,7 @@ export async function refreshConversationSummary(telegramId: number, deps: { db?
     if (!summary) return 'failed'
     const next: StoredSummary = { summary: summary.slice(0, 2000), upTo: fold[fold.length - 1].created_at, updatedAt: new Date().toISOString() }
     const latest = (await summaryCandidates(telegramId, db))[0]?.value
-    if (latest && Date.parse(latest.upTo) >= Date.parse(next.upTo)) return 'not_needed'
+    if (latest && compareCoverage(latest.upTo, next.upTo) >= 0) return 'not_needed'
     const { error } = await db.from('memories').insert({ telegram_id: telegramId, content: summaryRowContent(next) })
     if (error) { console.error('CHAT_SUMMARY_SAVE_FAILED:', String(error.message || error).slice(0, 160)); return 'failed' }
     // Keep one row per user: remove the older summary rows only after the new one is saved.
