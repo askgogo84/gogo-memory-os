@@ -3,11 +3,15 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { selectSpecialistRoute, type SpecialistRoute } from './specialist-registry'
 import type { AgentActor } from './actor'
 import { notifyRunOutcome } from './run-notify'
+import { assertApprovalBinding } from './approval-binding'
+import { isApprovalExpired } from './approval-ttl'
 
 export const AUTONOMOUS_RUNTIME_VERSION = 'gogo-autonomous-v1'
 const DEFAULT_LEASE_MINUTES = 10
 const DEFAULT_MAX_ATTEMPTS = 4
 const RETRY_MINUTES = [2, 10, 30, 120]
+
+export type RuntimeApprovalAction = { capability: string; actionType: string; target: string; payload: unknown; amount?: string | number | null; objectRef?: string | null; objectVersion?: string | number | null }
 
 export type AutonomousPlanStep = {
   key: string
@@ -19,6 +23,7 @@ export type AutonomousPlanStep = {
   requiresApproval?: boolean
   verificationRequired?: boolean
   mutation?: boolean
+  approvalAction?: RuntimeApprovalAction
 }
 
 export type AutonomousPlan = {
@@ -42,6 +47,7 @@ export type RuntimeStepMetadata = {
   retryAt?: string | null
   approvalId?: string | null
   approvalGrantedId?: string | null
+  approvalAction?: RuntimeApprovalAction | null
   verifiedAt?: string | null
   lastError?: string | null
 }
@@ -101,6 +107,7 @@ function runtimeMeta(row: RuntimeStepRow): RuntimeStepMetadata {
     retryAt: runtime.retryAt || null,
     approvalId: runtime.approvalId || null,
     approvalGrantedId: runtime.approvalGrantedId || null,
+    approvalAction: runtime.approvalAction || null,
     verifiedAt: runtime.verifiedAt || null,
     lastError: runtime.lastError || null,
   }
@@ -112,6 +119,22 @@ function mergeRuntimeOutput(row: RuntimeStepRow, runtime: RuntimeStepMetadata, o
 
 function idempotencyKey(runId: string, stepKey: string) {
   return createHash('sha256').update(`${AUTONOMOUS_RUNTIME_VERSION}:${runId}:${stepKey}`).digest('hex')
+}
+
+/** Concrete adapters must stage/display this exact action; legacy/unbound grants fail closed. */
+export function autonomousStepApprovalInput(run: { id: string; title?: string; metadata_json?: Record<string, any> | null }, row: RuntimeStepRow, ownerId: string) {
+  const meta = runtimeMeta(row), action = meta.approvalAction
+  if (!action || !safe(action.capability, 120) || !safe(action.actionType, 120) || !safe(action.target, 1200) || !meta.idempotencyKey) throw new Error('autonomous_approval_action_binding_required')
+  return { missionId: String(run.id), stepId: row.id, capability: action.capability, actionType: action.actionType, target: action.target,
+    payload: { ownerId, objective: safe(run.metadata_json?.objective || run.title, 4000), stepKey: meta.stepKey,
+      toolName: row.tool_name, title: row.title, idempotencyKey: meta.idempotencyKey, action: action.payload,
+      planDefinition: run.metadata_json?.persistent_plan_steps || null, inputText: run.metadata_json?.input_text || null, actionVersion: action.objectVersion || null },
+    amount: action.amount, objectRef: action.objectRef, objectVersion: run.metadata_json?.plan_revision || 1, policyVersion: 'runtime-step-v1' }
+}
+function assertRuntimeApproval(run: { id: string; title?: string; metadata_json?: Record<string, any> | null }, row: RuntimeStepRow, ownerId: string, approval: any) {
+  const requested = Date.parse(String(approval?.requested_at || ''))
+  if (!Number.isFinite(requested) || requested > Date.now() || isApprovalExpired(approval) || approval?.policy_version !== 'runtime-step-v1') throw new Error('autonomous_approval_required_or_expired')
+  assertApprovalBinding(autonomousStepApprovalInput(run, row, ownerId), approval)
 }
 
 function validatePlan(plan: AutonomousPlan) {
@@ -194,6 +217,7 @@ export async function createAutonomousRun(params: {
         leaseUntil: null,
         retryAt: null,
         approvalId: null,
+        approvalAction: step.approvalAction || null,
       } satisfies RuntimeStepMetadata,
     },
   }))
@@ -241,12 +265,15 @@ async function claimStep(row: RuntimeStepRow, telegramId: string) {
   const attempt = meta.attempt + 1
   const nextMeta: RuntimeStepMetadata = { ...meta, attempt, leaseUntil: isoPlusMinutes(DEFAULT_LEASE_MINUTES), retryAt: null, lastError: null }
   const now = new Date().toISOString()
-  const { data, error } = await supabaseAdmin.from('agent_steps').update({
+  let claim = supabaseAdmin.from('agent_steps').update({
     status: 'running',
     started_at: now,
     error: null,
     output_json: mergeRuntimeOutput(row, nextMeta),
-  }).eq('id', row.id).eq('telegram_id', telegramId).eq('status', 'queued').eq('output_json->runtime->>attempt', meta.attempt).select('id').maybeSingle()
+  }).eq('id', row.id).eq('telegram_id', telegramId).eq('status', 'queued').eq('output_json->runtime->>attempt', meta.attempt)
+  claim = meta.retryAt ? claim.eq('output_json->runtime->>retryAt', meta.retryAt) : claim.is('output_json->runtime->>retryAt', null)
+  claim = meta.approvalId ? claim.eq('output_json->runtime->>approvalId', meta.approvalId) : claim.is('output_json->runtime->>approvalId', null)
+  const { data, error } = await claim.select('id').maybeSingle()
   if (error) throw new Error(`autonomous_step_claim_failed:${error.message}`)
   return data?.id ? nextMeta : null
 }
@@ -265,7 +292,7 @@ async function markCompleted(row: RuntimeStepRow, telegramId: string, meta: Runt
 }
 
 async function markWaitingApproval(row: RuntimeStepRow, telegramId: string, meta: RuntimeStepMetadata, approvalId: string, output: Record<string, unknown> = {}) {
-  const nextMeta: RuntimeStepMetadata = { ...meta, leaseUntil: null, retryAt: null, approvalId: safe(approvalId, 120), lastError: null }
+  const nextMeta: RuntimeStepMetadata = { ...meta, leaseUntil: null, retryAt: null, requiresApproval: true, approvalGrantedId: null, approvalId: safe(approvalId, 120), lastError: null }
   const { data, error } = await supabaseAdmin.from('agent_steps').update({
     status: 'queued',
     error: null,
@@ -378,8 +405,17 @@ export async function executeAutonomousRun(params: {
     }
     await activity(telegramId, params.runId, 'autonomous_step_started', row.title, { step_id: row.id, step_key: claimed.stepKey, tool: row.tool_name, attempt: claimed.attempt, lane: claimed.lane })
     try {
-      // Activity/storage awaits permit cancellation or replacement after our initial read.
-      // Recheck the owner, parent, attempt and lease immediately before dispatch.
+      // Resolve any grant first, then recheck parent/step authority after the final await.
+      let approved: any = null
+      if (claimed.requiresApproval) {
+        const response = await supabaseAdmin.from('agent_approvals').select('id,status,run_id,action_hash,policy_version,requested_at,execution_payload')
+          .eq('id', claimed.approvalGrantedId || '').eq('telegram_id', telegramId).eq('run_id', params.runId).eq('status', 'approved').maybeSingle()
+        if (response.error || !response.data) {
+          await markFailure(row, telegramId, claimed, 'autonomous_approval_required', false)
+          return { stepId: row.id, claimed: true, status: 'blocked' }
+        }
+        approved = response.data
+      }
       const current = await loadAutonomousRun(params.runId, telegramId)
       const fresh = current.steps.find(step => step.id === row.id)
       const authority = fresh ? runtimeMeta(fresh) : null
@@ -389,11 +425,10 @@ export async function executeAutonomousRun(params: {
         return { stepId: row.id, claimed: true, status: 'superseded' }
       }
       if (claimed.requiresApproval) {
-        const { data: approved, error: approvalError } = await supabaseAdmin.from('agent_approvals').select('id,status,run_id')
-          .eq('id', claimed.approvalGrantedId || '').eq('telegram_id', telegramId).eq('run_id', params.runId).eq('status', 'approved').maybeSingle()
-        if (approvalError || !approved) {
-          await markFailure(row, telegramId, claimed, 'autonomous_approval_required', false)
-          return { stepId: row.id, claimed: true, status: 'blocked' }
+        try { assertRuntimeApproval(current.run, fresh, telegramId, approved) }
+        catch {
+          const boundary = await markFailure(row, telegramId, claimed, 'autonomous_approval_invalid_or_expired', false)
+          return { stepId: row.id, claimed: true, status: boundary.superseded ? 'superseded' : 'blocked' }
         }
       }
       const result = await handler({ actor: params.actor, runId: params.runId, objective, step: row, runtime: claimed, idempotencyKey: claimed.idempotencyKey })
@@ -444,9 +479,10 @@ export async function releaseApprovedAutonomousStep(params: { actor: AgentActor;
   if (!row) throw new Error('autonomous_step_missing')
   const meta = runtimeMeta(row)
   if (!meta.approvalId || row.status !== 'queued') throw new Error('autonomous_step_not_waiting_approval')
-  const { data: approval, error } = await supabaseAdmin.from('agent_approvals').select('id,status,run_id').eq('id', meta.approvalId).eq('telegram_id', telegramId).eq('run_id', params.runId).maybeSingle()
+  const { data: approval, error } = await supabaseAdmin.from('agent_approvals').select('id,status,run_id,action_hash,policy_version,requested_at,execution_payload').eq('id', meta.approvalId).eq('telegram_id', telegramId).eq('run_id', params.runId).maybeSingle()
   if (error) throw new Error(`autonomous_approval_read_failed:${error.message}`)
   if (!approval || approval.status !== 'approved') throw new Error('autonomous_approval_required')
+  assertRuntimeApproval(run, row, telegramId, approval)
   const nextMeta: RuntimeStepMetadata = { ...meta, approvalId: null, approvalGrantedId: approval.id, retryAt: null, leaseUntil: null }
   const { data: released, error: updateError } = await supabaseAdmin.from('agent_steps').update({ output_json: mergeRuntimeOutput(row, nextMeta) }).eq('id', row.id).eq('telegram_id', telegramId).eq('status', 'queued')
     .eq('output_json->runtime->>approvalId', meta.approvalId).eq('output_json->runtime->>attempt', meta.attempt).select('id')
@@ -491,7 +527,7 @@ export async function appendAutonomousReplan(params: { actor: AgentActor; runId:
     tool_name: safe(step.toolName, 180),
     title: safe(step.title, 240),
     status: 'queued',
-    output_json: { runtime: { stepKey: safe(step.key, 160), dependsOn: step.dependsOn || [], lane: safe(step.lane || 'default', 80), maxAttempts: Math.max(1, Math.min(10, Number(step.maxAttempts || DEFAULT_MAX_ATTEMPTS))), attempt: 0, requiresApproval: Boolean(step.requiresApproval), verificationRequired: Boolean(step.verificationRequired), mutation: Boolean(step.mutation), idempotencyKey: idempotencyKey(params.runId, step.key), leaseUntil: null, retryAt: null, approvalId: null } satisfies RuntimeStepMetadata },
+    output_json: { runtime: { stepKey: safe(step.key, 160), dependsOn: step.dependsOn || [], lane: safe(step.lane || 'default', 80), maxAttempts: Math.max(1, Math.min(10, Number(step.maxAttempts || DEFAULT_MAX_ATTEMPTS))), attempt: 0, requiresApproval: Boolean(step.requiresApproval), verificationRequired: Boolean(step.verificationRequired), mutation: Boolean(step.mutation), approvalAction: step.approvalAction || null, idempotencyKey: idempotencyKey(params.runId, step.key), leaseUntil: null, retryAt: null, approvalId: null } satisfies RuntimeStepMetadata },
   }))
   const { error } = await supabaseAdmin.from('agent_steps').insert(rows)
   if (error) throw new Error(`autonomous_replan_steps_failed:${error.message}`)
@@ -503,4 +539,3 @@ export async function appendAutonomousReplan(params: { actor: AgentActor; runId:
   await activity(telegramId,params.runId,'autonomous_plan_revised',`Gogo revised the plan and added ${rows.length} step${rows.length===1?'':'s'}.`,{reason:safe(params.reason,500),plan_revision:revision,added_steps:rows.map(row=>({tool:row.tool_name,title:row.title}))})
   return{added:rows.length,planRevision:revision}
 }
-

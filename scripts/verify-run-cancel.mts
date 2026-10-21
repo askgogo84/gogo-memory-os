@@ -66,12 +66,14 @@ function makeDb() {
     const b: any = { _f: [] as any[], _u: null as Row | null, _ins: null as Row | null,
       select() { return b }, order() { return b }, limit() { return b },
       eq(c: string, v: any) { b._f.push(['eq', c, v]); return b },
+      is(c: string, v: any) { b._f.push(['is', c, v]); return b },
       in(c: string, v: any[]) { b._f.push(['in', c, v]); return b },
       update(r: Row) { b._u = r; return b },
       insert(r: Row) { b._ins = r; (stores[table] ||= []).push({ ...r }); return Promise.resolve({ data: null, error: null }) },
       maybeSingle: async () => { const rows = run(); return { data: rows[0] || null, error: null } },
       then: (res: any, rej: any) => Promise.resolve({ data: run(), error: null }).then(res, rej) }
-    const hit = () => (stores[table] || []).filter(x => b._f.every(([op, c, v]: any) => op === 'eq' ? String(x[c]) === String(v) : v.map(String).includes(String(x[c]))))
+    const field = (row: Row, key: string) => key.split(/->>?/).reduce((value: any, part: string) => value?.[part], row)
+    const hit = () => (stores[table] || []).filter(x => b._f.every(([op, c, v]: any) => op === 'eq' ? String(field(x, c)) === String(v) : op === 'is' ? (v === null ? field(x, c) == null : field(x, c) === v) : v.map(String).includes(String(field(x, c)))))
     function run() {
       const rows = hit()
       if (b._u) { for (const r of rows) Object.assign(r, b._u); writes.push({ table, patch: b._u, filters: b._f }) }
@@ -252,7 +254,9 @@ for (const w of writes) assert.ok(w.filters.some(([op, c, v]: any) => op === 'eq
     const requireMap: Record<string, any> = {
       'node:crypto': { createHash },
       '@/lib/supabase-admin': { supabaseAdmin: db },
-      './specialist-registry': { selectSpecialistRoute: () => ({ primary: 'research', supporting: [] }) },
+      './approval-binding': { assertApprovalBinding: () => { throw Error('Unexpected runtime approval use') } },
+    './approval-ttl': { isApprovalExpired: () => { throw Error('Unexpected runtime approval use') } },
+    './specialist-registry': { selectSpecialistRoute: () => ({ primary: 'research', supporting: [] }) },
       './run-notify': { notifyRunOutcome: async (r: any) => { notified.push(r); return { status: 'sent' } } },
     }
     runInNewContext(output, { exports, require: (n: string) => { if (n in requireMap) return requireMap[n]; throw new Error(`unexpected import ${n}`) }, console, Date, Promise, Math, Number, String, Array, Set, Map, Object, JSON, Error, Boolean })
@@ -305,7 +309,8 @@ for (const w of writes) assert.ok(w.filters.some(([op, c, v]: any) => op === 'eq
         const origMaybe = b.maybeSingle
         b.maybeSingle = async () => {
           const result = await origMaybe()
-          if (++runReads === 2) Object.assign(run('auto-1'), { status: 'failed', error: 'user_cancelled', summary: 'Cancelled by you.', metadata_json: { state: 'closed', closure_reason: 'user_cancelled' } })
+          // Target reconciliation after completion, independent of extra pre-dispatch reads.
+          if (++runReads >= 2 && stores.agent_steps[0].status === 'completed') Object.assign(run('auto-1'), { status: 'failed', error: 'user_cancelled', summary: 'Cancelled by you.', metadata_json: { state: 'closed', closure_reason: 'user_cancelled' } })
           return result
         }
       }
