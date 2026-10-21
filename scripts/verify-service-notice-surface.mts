@@ -27,6 +27,10 @@ function load(path:string):any{
   if(name==='@/lib/dashboard/service-notices')return load('lib/dashboard/service-notices.ts')
   if(name==='@/lib/dashboard/browser-auth-summary')return load('lib/dashboard/browser-auth-summary.ts')
   if(name==='@/components/dashboard/service-notice-cards')return load('components/dashboard/service-notice-cards.tsx')
+  if(name==='@/lib/dashboard/task-feed')return load('lib/dashboard/task-feed.ts')
+  if(name==='@/lib/gogo/agent-states')return load('lib/gogo/agent-states.ts')
+  if(name==='@/lib/dashboard/readable-summary')return {readableRunSummary:(s:any)=>String(s||'')}
+  if(name==='@/components/dashboard/feed-list')return load('components/dashboard/feed-list.tsx')
   return {}
  },console:{error:()=>{}},process,Date,Intl,Map,Set,Number,String,Math,Error,URL});return exports
 }

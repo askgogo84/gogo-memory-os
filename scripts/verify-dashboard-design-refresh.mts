@@ -13,15 +13,16 @@ assert.match(css,/--color-gogo-cream: #0b0b0b/)
 assert.match(css,/--color-gogo-teal: #2fb8a6/)
 assert.match(css,/--color-gogo-ink: #f2efea/)
 
-for(const label of ['Today','Gogo','Activity','Needs you','Background','Goals','Memory','Library','Vault','Settings']){
-  assert.ok(rail.includes("label:'"+label+"'"),'rail must expose '+label)
+// 21 Oct approved mock (Muse + Wajo): three main places plus Settings; the other sections sit under More.
+for(const label of ['Home','Tasks','Memory','Chat with Gogo','Calendar','Lists','Library','Goals','Vault','Settings']){
+  assert.ok(rail.includes("label:'"+label+"'"),'nav must expose '+label)
 }
-// 15 Oct redesign: the phone drawer shows the same list as the desktop rail (no bottom tab bar).
 assert.ok(mobile.includes('<NavLinks counts={counts}'),'phone drawer must use the shared nav list')
+assert.ok(mobile.includes('export function MobileTabBar'),'phone has the approved bottom tabs')
 
-assert.match(home,/Needs you/)
-assert.match(home,/In the background/)
-assert.match(home,/Safe mode on/)
+assert.match(home,/FeedTabs/)
+assert.match(readFileSync(new URL('../components/dashboard/feed-list.tsx',import.meta.url),'utf8'),/Needs you[\s\S]*On radar[\s\S]*Recent/)
+assert.match(home,/asks before it books, pays or sends anything/)
 assert.match(home,/CommandBar/)
 assert.match(library,/Saved documents/)
 assert.match(connections,/Security boundary/)
