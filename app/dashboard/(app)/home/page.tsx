@@ -4,11 +4,10 @@ import Link from 'next/link'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getTodayReminders } from '@/lib/dashboard/queries'
-import { CommandBar } from '@/components/dashboard/command-bar'
 import { reminderStateLabel } from '@/lib/dashboard/reminder-state'
 import { getTaskFeed, feedTab, EMPTY_FEED } from '@/lib/dashboard/task-feed'
 import { FeedItems, FeedTabs } from '@/components/dashboard/feed-list'
-import { HomeGogoCard } from '@/components/dashboard/home-gogo-card'
+import { HomeAsk, HomeGogo } from '@/components/dashboard/home-ask'
 
 export const dynamic='force-dynamic'
 
@@ -64,21 +63,22 @@ export default async function HomePage({searchParams}:{searchParams?:Promise<{ta
         ? `You have ${pending.length} reminder${pending.length===1?'':'s'} today. Gogo is quiet unless something changes or needs you.`
         : 'Your day is clear. Tell Gogo what matters and it will carry the next safe steps.'
 
-  return <div className="mx-auto w-full max-w-[760px] pb-10">
-    <section className="flex flex-col gap-4 pb-5 pt-1 lg:pt-6">
+  // Wajo layout (21 Oct feedback): Gogo, the greeting and a big chat box centred in the first screen, shortcuts under
+  // it, then Needs you · On radar · Recent below the fold.
+  return <div className="mx-auto w-full max-w-[780px] pb-10">
+    <section className="flex min-h-[calc(100svh-9rem)] flex-col items-center justify-center gap-4 pb-8 pt-2 text-center lg:min-h-[calc(100vh-7rem)]">
+      <HomeGogo/>
       <div>
-        <div className="final-dark-eyebrow">{dayLabel(now,tz)}</div>
-        <h1 className="final-dark-title mt-1.5 text-[26px] leading-[1.15] sm:text-[32px]">{greeting(now,tz)}, {name}.</h1>
-        <p className="mt-2 text-[16px] leading-6 text-[#a8a8a4]">{summary}</p>
+        <h1 className="text-[28px] font-medium leading-[1.15] tracking-[-0.02em] text-[#a8a8a4] sm:text-[34px]">{greeting(now,tz)}, <span className="text-[#f2efea]">{name}.</span></h1>
+        <p className="mx-auto mt-2 max-w-[560px] text-[15px] leading-6 text-[#8a8a86]">{summary}</p>
       </div>
-      <HomeGogoCard/>
-      <CommandBar/>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {SHORTCUTS.map(s=><Link key={s.label} href={`/dashboard/chat?prompt=${encodeURIComponent(s.prompt)}`} className="flex min-h-[64px] items-center gap-2.5 rounded-[14px] border border-[#222] bg-[#121212] px-3 py-2.5 text-[14px] font-medium leading-snug text-[#f2efea] hover:border-[#2fb8a6]/50 sm:min-h-[88px] sm:flex-col sm:items-start">
-          <span className="grid h-7 w-7 shrink-0 place-items-center rounded-[8px] bg-[#132a27] font-semibold text-[#2fb8a6]">{s.icon}</span>{s.label}
+      <HomeAsk/>
+      <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4">
+        {SHORTCUTS.map(s=><Link key={s.label} href={`/dashboard/chat?prompt=${encodeURIComponent(s.prompt)}`} className="flex min-h-[64px] items-center gap-2.5 rounded-[16px] border border-[#222] bg-[#121212] px-3 py-3 text-left text-[14px] font-medium leading-snug text-[#f2efea] hover:border-[#2fb8a6]/50 sm:min-h-[96px] sm:flex-col sm:items-start sm:justify-between">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-[9px] bg-[#132a27] font-semibold text-[#2fb8a6]">{s.icon}</span>{s.label}
         </Link>)}
       </div>
-      <p className="text-[13px] text-[#8a8a86]">Safe mode on · Gogo asks before it books, pays or sends anything.</p>
+      <p className="text-[12px] text-[#8a8a86]">Safe mode on · Gogo asks before it books, pays or sends anything · {dayLabel(now,tz)}</p>
     </section>
 
     <section aria-label="Your tasks" className="flex flex-col gap-3">

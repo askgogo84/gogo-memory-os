@@ -16,7 +16,6 @@ const TABS: { key: PanelTab; label: string; heading: string; empty: string }[] =
   { key: 'scheduled', label: 'Scheduled', heading: 'Running in the background', empty: 'No background watches yet.' },
   { key: 'files', label: 'Files', heading: 'Saved results', empty: 'Saved results and documents will appear here.' },
 ]
-const PANEL_CLOSED_KEY = 'askgogo-panel-closed'
 
 function PanelBody({ big }: { big: number }) {
   const { feeds, hero, loaded, counts } = useGogoLive()
@@ -70,23 +69,24 @@ function PanelBody({ big }: { big: number }) {
   </div>
 }
 
-/** Desktop right column (xl and wider). Closing it leaves a floating Gogo that reopens it. */
+/** Desktop right column (xl and wider), closed by default so the page gets the full width (Wajo layout). It opens
+ *  from the Gogo pill at the top right and closes with ×; the choice is remembered in this browser. */
 export function GogoPanel() {
-  const { hero } = useGogoLive()
+  const { panelOpen, setPanelOpen } = useGogoLive()
   const pathname = usePathname()
-  const [closed, setClosed] = useState(false)
-  useEffect(() => { try { setClosed(window.localStorage.getItem(PANEL_CLOSED_KEY) === '1') } catch {} }, [])
-  const set = (v: boolean) => { setClosed(v); try { window.localStorage.setItem(PANEL_CLOSED_KEY, v ? '1' : '0') } catch {} }
   // The chat page has its own side column (the day's context), so the panel steps aside there.
-  if (pathname === '/dashboard/chat') return null
-  if (closed) return <button type="button" onClick={() => set(false)} aria-label="Show what Gogo is doing"
-    className="fixed bottom-5 right-5 z-40 hidden h-[76px] w-[76px] place-items-center rounded-full border border-[#3b312b] bg-[#1f1a17] shadow-[0_12px_32px_rgba(0,0,0,.45)] xl:grid">
-    <GogoAgent state={hero.state} size={60}/>
-  </button>
-  return <aside aria-label="What Gogo is doing" className="dashboard-rail hidden h-screen w-[320px] shrink-0 flex-col overflow-y-auto border-l border-[#1c1c1c] px-4 pb-6 pt-3 xl:flex">
-    <div className="flex justify-end"><button type="button" onClick={() => set(true)} aria-label="Close panel" className="grid h-10 w-10 place-items-center rounded-full text-[18px] text-[#8a8a86] hover:text-[#f2efea]">×</button></div>
+  if (pathname === '/dashboard/chat' || !panelOpen) return null
+  return <aside aria-label="What Gogo is doing" className="dashboard-rail hidden h-screen w-[340px] shrink-0 flex-col overflow-y-auto border-l border-[#1c1c1c] px-4 pb-6 pt-3 xl:flex">
+    <div className="flex justify-end"><button type="button" onClick={() => setPanelOpen(false)} aria-label="Close panel" className="grid h-10 w-10 place-items-center rounded-full text-[18px] text-[#8a8a86] hover:text-[#f2efea]">×</button></div>
     <PanelBody big={200}/>
   </aside>
+}
+
+/** Desktop top bar (lg+): a slim row with the live Gogo pill at the right, like Wajo's top-right controls. */
+export function DesktopTopBar() {
+  const pathname = usePathname()
+  if (pathname === '/dashboard/chat') return null
+  return <div className="sticky top-0 z-30 -mt-3 mb-2 hidden justify-end bg-[#0b0b0b]/0 py-1 lg:flex"><GogoPill desktop/></div>
 }
 
 /** Phone and tablet: the same panel as a bottom sheet, opened from the top-bar pill or the Activity tab. */
@@ -102,13 +102,14 @@ export function GogoSheet() {
   </div>
 }
 
-/** Phone top-bar pill: a small Gogo in the current state and how many tasks are running or waiting. */
-export function GogoPill() {
-  const { hero, counts, openSheet } = useGogoLive()
+/** Gogo pill: a small Gogo in the current state and how many tasks are running or waiting. Opens the bottom sheet
+ *  on phones and tablets, and toggles the right panel on wide screens. */
+export function GogoPill({ desktop = false }: { desktop?: boolean }) {
+  const { hero, counts, showGogo, panelOpen } = useGogoLive()
   const waiting = counts.approvals + counts.handoffs
   const label = counts.working ? `${counts.working} working` : waiting ? `${waiting} waiting` : counts.watchers ? 'Watching' : 'Ready'
-  return <button type="button" onClick={openSheet} aria-label={`What Gogo is doing: ${hero.live}`}
-    className="flex h-11 items-center gap-1 rounded-full border border-[#3b312b] bg-[#1a1512] pl-0.5 pr-3 text-[12px] font-medium text-[#f2efea] xl:hidden">
+  return <button type="button" onClick={showGogo} aria-label={`What Gogo is doing: ${hero.live}`} aria-expanded={desktop ? panelOpen : undefined}
+    className={`flex h-11 items-center gap-1 rounded-full border border-[#3b312b] bg-[#1a1512] pl-0.5 pr-3 text-[12px] font-medium text-[#f2efea] hover:border-[#ef7a27] ${desktop ? '' : 'xl:hidden'}`}>
     <GogoAgent state={hero.state} size={48} label=""/><span>{label}</span>
   </button>
 }

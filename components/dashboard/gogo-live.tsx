@@ -24,13 +24,19 @@ type Live = {
   sheetOpen: boolean
   openSheet: () => void
   closeSheet: () => void
+  /** Desktop right panel (xl+): closed by default for a clean, chat-first screen (Wajo layout); remembered. */
+  panelOpen: boolean
+  setPanelOpen: (open: boolean) => void
+  /** "Show what Gogo is doing": the right panel on wide screens, the bottom sheet elsewhere. */
+  showGogo: () => void
 }
 
+const PANEL_OPEN_KEY = 'askgogo-panel-open'
 const EMPTY_FEEDS: Record<PanelTab, LiveRow[]> = { activity: [], approvals: [], scheduled: [], files: [] }
 const IDLE_HERO: LiveHero = { state: 'idle', name: GOGO_STATE_NAME.idle, live: GOGO_STATE_LINE.idle, task: 'Nothing running right now', href: null }
 const Ctx = createContext<Live>({
   loaded: false, counts: { approvals: 0, watchers: 0, handoffs: 0, working: 0 }, feeds: EMPTY_FEEDS, hero: IDLE_HERO,
-  recent: [], sheetOpen: false, openSheet: () => {}, closeSheet: () => {},
+  recent: [], sheetOpen: false, openSheet: () => {}, closeSheet: () => {}, panelOpen: false, setPanelOpen: () => {}, showGogo: () => {},
 })
 
 function clock(iso?: string | null) {
@@ -44,7 +50,8 @@ const WORKING = new Set(['running', 'queued'])
 const short = (s: string, n = 110) => (s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s)
 
 /** Turn the agent snapshot into the panel's four lists, the hero Gogo and the counts. Exported for tests. */
-export function buildLive(data: any): Omit<Live, 'sheetOpen' | 'openSheet' | 'closeSheet' | 'loaded'> {
+type LiveControls = 'sheetOpen' | 'openSheet' | 'closeSheet' | 'panelOpen' | 'setPanelOpen' | 'showGogo'
+export function buildLive(data: any): Omit<Live, LiveControls | 'loaded'> {
   const runs: any[] = Array.isArray(data?.runs) ? data.runs.filter((r: any) => r && r.status !== 'closed') : []
   const approvals: any[] = Array.isArray(data?.approvals) ? data.approvals : []
   const handoffs: any[] = Array.isArray(data?.handoffs) ? data.handoffs : []
@@ -85,8 +92,11 @@ export function buildLive(data: any): Omit<Live, 'sheetOpen' | 'openSheet' | 'cl
 
 export function GogoLiveProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const [state, setState] = useState<Omit<Live, 'sheetOpen' | 'openSheet' | 'closeSheet'>>({ loaded: false, counts: { approvals: 0, watchers: 0, handoffs: 0, working: 0 }, feeds: EMPTY_FEEDS, hero: IDLE_HERO, recent: [] })
+  const [state, setState] = useState<Omit<Live, LiveControls>>({ loaded: false, counts: { approvals: 0, watchers: 0, handoffs: 0, working: 0 }, feeds: EMPTY_FEEDS, hero: IDLE_HERO, recent: [] })
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [panelOpen, setPanelOpenState] = useState(false)
+  useEffect(() => { try { setPanelOpenState(window.localStorage.getItem(PANEL_OPEN_KEY) === '1') } catch {} }, [])
+  const setPanelOpen = useCallback((open: boolean) => { setPanelOpenState(open); try { window.localStorage.setItem(PANEL_OPEN_KEY, open ? '1' : '0') } catch {} }, [])
   const alive = useRef(true)
 
   const load = useCallback(() => {
@@ -113,7 +123,13 @@ export function GogoLiveProvider({ children }: { children: React.ReactNode }) {
     return () => document.removeEventListener('keydown', onKey)
   }, [sheetOpen])
 
-  const value = useMemo<Live>(() => ({ ...state, sheetOpen, openSheet: () => setSheetOpen(true), closeSheet: () => setSheetOpen(false) }), [state, sheetOpen])
+  const value = useMemo<Live>(() => ({
+    ...state, sheetOpen, openSheet: () => setSheetOpen(true), closeSheet: () => setSheetOpen(false), panelOpen, setPanelOpen,
+    showGogo: () => {
+      const wide = typeof window !== 'undefined' && window.matchMedia?.('(min-width: 1280px)').matches
+      if (wide) setPanelOpen(!panelOpen); else setSheetOpen(true)
+    },
+  }), [state, sheetOpen, panelOpen, setPanelOpen])
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>
 }
 

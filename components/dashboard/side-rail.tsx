@@ -29,10 +29,16 @@ export function SideRail({ shell }: { shell: ShellData }) {
 
   return (
     <aside className={`dashboard-rail hidden h-screen shrink-0 py-4 transition-[width] lg:flex lg:flex-col ${collapsed ? 'w-[80px] px-3' : 'w-[260px] px-3'}`}>
-      <Link href="/dashboard/home" aria-label="AskGogo home" className={`flex items-center gap-2 ${collapsed ? 'justify-center' : 'px-1'}`}>
-        <GogoAgent state="idle" size={48} label="Gogo"/>
-        {!collapsed && <span className="dashboard-brand-wordmark text-gogo-ink">AskGogo</span>}
-      </Link>
+      <div className={`flex items-center ${collapsed ? 'flex-col gap-2' : 'justify-between'}`}>
+        <Link href="/dashboard/home" aria-label="AskGogo home" className={`flex items-center gap-2 ${collapsed ? 'justify-center' : 'px-1'}`}>
+          <GogoAgent state="idle" size={48} label="Gogo"/>
+          {!collapsed && <span className="dashboard-brand-wordmark text-gogo-ink">AskGogo</span>}
+        </Link>
+        <button type="button" onClick={toggle} aria-label={collapsed ? 'Expand menu' : 'Collapse menu'} title={collapsed ? 'Expand menu' : 'Collapse menu'}
+          className="grid h-10 w-10 place-items-center rounded-[10px] text-[#8a8a86] hover:bg-[#141414] hover:text-[#f2efea]">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+        </button>
+      </div>
       <Link href="/dashboard/chat" className={`mt-3 flex min-h-11 items-center gap-2 rounded-[12px] border border-[#262626] bg-[#151515] text-[15px] font-medium text-[#f2efea] hover:border-[#2fb8a6] ${collapsed ? 'justify-center' : 'px-3'}`} aria-label={collapsed ? 'New chat' : undefined}>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
         {!collapsed && 'New chat'}
@@ -49,11 +55,6 @@ export function SideRail({ shell }: { shell: ShellData }) {
         <ThemeToggle compact/>
       </div>}
       <div className="mt-2"><SettingsLink collapsed={collapsed} name={shell.name}/></div>
-      <button type="button" onClick={toggle} aria-label={collapsed ? 'Expand menu' : 'Collapse menu'} title={collapsed ? 'Expand menu' : 'Collapse menu'}
-        className={`mt-2 flex min-h-10 items-center gap-3 rounded-[12px] text-[13px] text-[#8a8a86] hover:text-[#f2efea] ${collapsed ? 'justify-center' : 'px-3'}`}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
-        {!collapsed && <span>Collapse menu</span>}
-      </button>
     </aside>
   )
 }

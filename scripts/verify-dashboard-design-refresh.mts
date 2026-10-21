@@ -18,12 +18,12 @@ for(const label of ['Home','Tasks','Memory','Chat with Gogo','Calendar','Lists',
   assert.ok(rail.includes("label:'"+label+"'"),'nav must expose '+label)
 }
 assert.ok(mobile.includes('<NavLinks counts={counts}'),'phone drawer must use the shared nav list')
-assert.ok(mobile.includes('export function MobileTabBar'),'phone has the approved bottom tabs')
+assert.ok(!mobile.includes('export function MobileTabBar'),'21 Oct Wajo layout: no bottom tab bar on the phone; the menu drawer and Gogo pill carry navigation')
 
 assert.match(home,/FeedTabs/)
 assert.match(readFileSync(new URL('../components/dashboard/feed-list.tsx',import.meta.url),'utf8'),/Needs you[\s\S]*On radar[\s\S]*Recent/)
 assert.match(home,/asks before it books, pays or sends anything/)
-assert.match(home,/CommandBar/)
+assert.match(home,/HomeAsk/)
 assert.match(library,/Saved documents/)
 assert.match(connections,/Security boundary/)
 assert.match(connections,/Passwords, one-time codes, passkeys and payment-auth values never belong in chat or memory/)
