@@ -82,7 +82,8 @@ function harness(steps = [drive('Read \"Budget\" from my Google Drive'),task('Li
  })
  const workspace=load('lib/agent/google-workspace-read.ts')
  const read=existsSync('lib/agent/persistent-drive-read.ts')?load('lib/agent/persistent-drive-read.ts',{'./google-workspace-read':workspace}):{}
- const persistent=load('lib/agent/persistent-general-plan.ts',{'./general-planner':general,'./autonomous-runtime':runtime,'./persistent-drive-read':read})
+ const travelRead=load('lib/agent/persistent-travel-read.ts')
+ const persistent=load('lib/agent/persistent-general-plan.ts',{'./general-planner':general,'./autonomous-runtime':runtime,'./persistent-drive-read':read,'./persistent-travel-read':travelRead})
  const start=()=>persistent.tryRunPersistentGeneralPlan({actor,surface:'web',text:'Fixture task objective',prepared:{plan:{title:'Fixture tasks',reason:'Two typed task operations',steps},startedAt:new Date().toISOString(),modelUsage:[]}})
  const resume=()=>persistent.resumePersistentGeneralPlan({actor,runId:tables.agent_runs[0].id})
  return {tables,queries,requests,start,resume,persistent,general,read,actor,setSearch:(v:any)=>{searchBody=v},setContent:(v:string)=>{content=v},setStatus:(s:number,c=200)=>{searchStatus=s;contentStatus=c},setHttpFault:(f:typeof httpFault)=>{httpFault=f},fallback:()=>fallback,setFault:(f:typeof fault)=>{fault=f},setPermission:(level:string)=>{tables.agent_permissions=[{telegram_id:'123',capability:'files',level}]}}

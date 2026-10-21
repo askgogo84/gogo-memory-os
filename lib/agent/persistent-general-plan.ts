@@ -12,7 +12,7 @@ import {
   executeVerifiedMissionWebSearch,
 } from './mission-tools'
 import { executeExactNamedPersistentList, hasExplicitNamedListIntent } from './persistent-list-verifier'
-import { dispatchThroughSameBrain } from './same-brain'
+import { executePersistentTravelRead, persistentTravelFailureReply } from './persistent-travel-read'
 import { executePersistentDriveRead, persistentDriveFailureReply } from './persistent-drive-read'
 import {
   createAutonomousRun,
@@ -35,7 +35,7 @@ function missionFingerprint(value:unknown){return createHash('sha256').update(no
 
 function persistentRunReply(run: {status?: unknown; summary?: unknown; error?: unknown}, fallback: string) {
   if (run.status === 'outcome_unknown') return 'I couldn’t confirm the result of this request. I haven’t retried it because an earlier step may already have completed.'
-  if (run.status === 'failed') return persistentDriveFailureReply(run.error) || 'I couldn’t finish this request. Check the task details for the step that stopped.'
+  if (run.status === 'failed') return persistentDriveFailureReply(run.error) || persistentTravelFailureReply(run.error) || 'I couldn’t finish this request. Check the task details for the step that stopped.'
   return safe(run.summary || fallback)
 }
 
@@ -89,24 +89,6 @@ async function loadDefinition(context: AutonomousToolContext): Promise<GeneralPl
   } as GeneralPlanStep
 }
 
-async function verifiedSameBrainRead(context: AutonomousToolContext, step: GeneralPlanStep) {
-  const result = await dispatchThroughSameBrain({internalStep:true,
-    actor: context.actor,
-    text: step.instruction,
-    messageId: `persistent-${context.idempotencyKey.slice(0, 24)}`,
-  })
-  return {
-    status: 'completed' as const,
-    verified: true,
-    output: {
-      reply: safe(result.text, 3500),
-      handledBy: result.handledBy,
-      mediaUrl: result.mediaUrl || null,
-      mediaType: result.mediaType || null,
-    },
-  }
-}
-
 async function verifiedTaskStep(context: AutonomousToolContext, step: GeneralPlanStep) {
   const intent = taskStepIntent(step)
   if (intent !== 'read' && intent !== 'write') return { status:'blocked' as const, error:'persistent_task_action_ambiguous' }
@@ -137,6 +119,7 @@ function registryFor(missionText: string): AutonomousToolRegistry {
     const step = await loadDefinition(context)
     if (step.tool === 'tasks') return verifiedTaskStep(context, step)
     if (step.tool === 'files') return executePersistentDriveRead(context, step)
+    if (step.tool === 'travel') return executePersistentTravelRead(context, step)
     if (step.tool === 'memory') {
       const result = await executeVerifiedMissionMemory({ actor: context.actor, step, missionText, messageId: `persistent-${context.idempotencyKey.slice(0,24)}` })
       return { status:'completed' as const, verified:true, output:{ ...result.output, text:safe(result.text,3500) } }
@@ -156,7 +139,7 @@ function registryFor(missionText: string): AutonomousToolRegistry {
       const result = await executeVerifiedMissionWebSearch(step)
       return { status:'completed' as const, verified:true, output:{ ...result.output, text:safe(result.text,3500) } }
     }
-    return verifiedSameBrainRead(context, step)
+    return {status:'blocked' as const,error:'persistent_plan_unsupported_tool'}
   }
   return {
     'memory.verified': handler,
