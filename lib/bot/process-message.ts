@@ -1805,7 +1805,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   // Plain chat replies (no structured action) may never claim an action was taken.
   if (finalReply === rawClaude) {
-    const guarded = guardChatActionClaims(finalReply)
+    const guarded = guardChatActionClaims(finalReply, { userText: incomingText })
     if (guarded.blocked) {
       console.warn('CHAT_ACTION_CLAIM_BLOCKED:', JSON.stringify({ telegramId: resolvedUser.telegramId, parsedType: parsed.type || null }))
       finalReply = guarded.text

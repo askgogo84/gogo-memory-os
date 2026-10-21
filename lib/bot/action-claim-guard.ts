@@ -89,10 +89,20 @@ export function claimsUnperformedAction(reply: string): boolean {
   return FAKE_ACTION_CLAIMS.some((re) => re.test(text))
 }
 
+// 21 Oct live (round 6, #44): "Summarise my week" composed a real recap ("Booked Toit for Sat 8 pm", "3 reminders were
+// sent") and the receipt-shape check replaced it. A read-only recap reports past events; it is not a chat receipt.
+// Fake-action and fake-call checks still apply.
+const READ_ONLY_RECAP = /\b(?:summari[sz]e|summary of|recap|review|overview of|wrap\s*up)\s+(?:my|the|this|last)\s+(?:week|day|month)\b|\b(?:weekly|daily|monthly)\s+(?:summary|recap|review)\b|\bhow(?:'s| is| was)\s+my\s+(?:week|day|month)\b/i
+const RECAP_ACTION = /\b(?:skip|cancel|delete|remove|add|create|set|remind|move|reschedule|book|send|snooze|stop|pause|mark)\b/i
+export function isReadOnlyRecapRequest(userText: string): boolean {
+  const t = String(userText || '')
+  return READ_ONLY_RECAP.test(t) && !RECAP_ACTION.test(t)
+}
+
 /** Replace a chat reply that claims an action Gogo did not take. */
-export function guardChatActionClaims(reply: string): { text: string; blocked: boolean } {
+export function guardChatActionClaims(reply: string, opts: { userText?: string } = {}): { text: string; blocked: boolean } {
   if (claimsUnplacedCall(reply)) return { text: NO_CALL_REPLY, blocked: true }
   if (claimsUnperformedAction(reply)) return { text: NO_ACTION_REPLY, blocked: true }
-  if (claimsCompletedChange(reply)) return { text: NO_CHANGE_REPLY, blocked: true }
+  if (!isReadOnlyRecapRequest(opts.userText || '') && claimsCompletedChange(reply)) return { text: NO_CHANGE_REPLY, blocked: true }
   return { text: reply, blocked: false }
 }

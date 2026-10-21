@@ -42,7 +42,16 @@ assert.match(acct, /parseAccountProfile\(params\.text\)\|\|\(payload\.stage==='p
 const route = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')
 assert.match(route, /parseAccountProfile\(text\) \|\| parseLooseAccountProfile\(text\) \|\|/)
 const pm = readFileSync('lib/bot/process-message.ts', 'utf8')
-assert.match(pm, /if \(finalReply === rawClaude\) \{\s*const guarded = guardChatActionClaims\(finalReply\)/)
+assert.match(pm, /if \(finalReply === rawClaude\) \{\s*const guarded = guardChatActionClaims\(finalReply, \{ userText: incomingText \}\)/)
 assert.match(pm, /CHAT_ACTION_CLAIM_BLOCKED:/)
 
 console.log('Chat action guard: unlabelled profile replies accepted; fabricated action claims blocked')
+
+// Round 6 (#44): a read-only recap may report past changes; the receipt check stays on for everything else.
+{
+  const recap = guardChatActionClaims('Your week:\n• Booked Toit for Sat 8 pm\n• 3 reminders were sent', { userText: 'Summarise my week' })
+  if (recap.blocked) throw new Error('a week recap must not be replaced by the no-change line')
+  const skip = guardChatActionClaims("Skipped today's lunch reminder (2:30 pm)", { userText: 'Skip lunch today' })
+  if (!skip.blocked) throw new Error('a chat receipt for an action request is still blocked')
+  console.log('✓ recap exemption is narrow')
+}

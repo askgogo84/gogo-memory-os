@@ -292,6 +292,13 @@ export function detectIntent(text: string): DetectedIntent {
   const asksForAnswer = !asksReminder && (/\?/.test(lower) || /\b(?:what should|which should|should i|can you|could you|how do i|how can i)\b/.test(lower))
   // "Rain or shine, I'll be at the gym at 6am tomorrow" tells Gogo a plan; it does not ask for a reminder.
   const statesOwnPlan = !asksReminder && /\b(?:i'll|i will|we'll|we will|i'm going to|i am going to|we're going to|we are going to)\b/.test(lower)
+  // 21 Oct live (round 6, #39): "Movies showing near Rajajinagar this Sunday evening" became a 9 am reminder via the
+  // weekday rule below. Asking what is on, playing or showing somewhere is a lookup, never a reminder, unless a
+  // reminder is asked for explicitly.
+  const localListingLookup = !asksReminder && !/\bmy\b/.test(lower) &&
+    /\b(?:movies?|films?|show\s*times?|showtimes?|screenings?|cinemas?|theat(?:er|re)s?|concerts?|gigs?|stand-?up|comedy shows?|events?)\b/.test(lower) &&
+    /\b(?:showing|playing|running|screening|happening|near|nearby|around)\b/.test(lower)
+  if (localListingLookup || /^\s*what'?s\s+(?:playing|showing|on)\s+(?:at|in|near|this|tonight|today)\b/.test(lower)) return { type: 'web_search', confidence: 'high' }
   // A weekday / tomorrow / clock match with no reminder verb and no subject is a bare detail, not a reminder.
   // A question ("tomorrow?", "8pm?", "sunday?") asks something; it keeps the contextual reply path.
   if (!asksReminder && !/\?\s*$/.test(lower) && isContentlessReminderRequest(t) && (/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(lower) || /\b(tomorrow|tmrw|tmr)\b/i.test(lower) || /\bin\s+\d+\s+(minute|minutes|min|mins|hour|hours|day|days)\b/i.test(lower) || /\b\d{1,2}(:\d{2})?\s*(am|pm)\b/i.test(lower))) return { type: 'bare_time', confidence: 'high' }

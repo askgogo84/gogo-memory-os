@@ -40,6 +40,8 @@ const GENERAL_STATUS_PATTERNS=[
   new RegExp(`^(?:(?:${WHAT_IS}\\s+the\\s+)?status\\s+of\\s+|any\\s+updates?\\s+on\\s+|${WHAT_IS}\\s+happening\\s+with\\s+)(?:all\\s+)?my\\s+(?:background\\s+)?(?:tasks|runs|jobs)$`),
   /^how(?:'s|s| is| are)\s+(?:all\s+)?my\s+(?:background\s+)?(?:tasks|runs|jobs)\s+(?:going|coming along|doing|progressing)$/,
   /^(?:my\s+)?(?:task|tasks)\s+status$/,
+  // Round 6 (#48): "What's pending?" is the person's own open items, never a web search.
+  /^(?:what(?:'s|s| is)\s+(?:still\s+)?(?:pending|outstanding)|(?:is\s+there\s+)?anything\s+(?:still\s+)?(?:pending|outstanding)|what(?:'s| is)\s+on\s+my\s+plate)(?:\s+(?:for me|now|right now))?$/,
 ]
 
 export function normalizeStatusAsk(text:string){

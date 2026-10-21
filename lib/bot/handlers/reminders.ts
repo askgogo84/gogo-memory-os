@@ -413,7 +413,9 @@ function parseSpecificWeekdayReminder(text: string): ParsedReminder {
   if (!match) return null
   if (getAmbiguousReminderTime(text)) return null
   const weekdayName = match[1].toLowerCase()
-  const time = parseTimePart(text) || { hour: 9, minute: 0 }
+  // "Sunday evening" is 6 pm, not a silent 9 am.
+  const part = /\bafternoon\b/i.test(text) ? 14 : /\bevening\b/i.test(text) ? 18 : /\bnight\b/i.test(text) ? 21 : 9
+  const time = parseTimePart(text) || { hour: part, minute: 0 }
   const nowIst = istNowParts()
   const targetDay = WEEKDAYS.indexOf(weekdayName)
   const currentDayIndex = WEEKDAYS.indexOf(nowIst.weekday)
