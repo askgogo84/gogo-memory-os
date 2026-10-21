@@ -6,6 +6,7 @@
 import { usePathname } from 'next/navigation'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { readableRunSummary } from '@/lib/dashboard/readable-summary'
+import { friendlyTaskTitle } from '@/lib/agent/task-title'
 import {
   GOGO_STATE_LINE, GOGO_STATE_NAME, liveLineFor, stateForHandoff, stateForRun, type GogoAgentState,
 } from '@/lib/gogo/agent-states'
@@ -61,7 +62,7 @@ export function buildLive(data: any): Omit<Live, LiveControls | 'loaded'> {
   const runRow = (r: any): LiveRow => {
     const state = stateForRun(r)
     const sub = readableRunSummary(String(r.summary || '')) || ''
-    return { id: `run-${r.id}`, state, title: String(r.title || 'Gogo task'), sub: short(sub), at: clock(r.updatedAt), live: liveLineFor(state, sub), href: `/dashboard/activity/${encodeURIComponent(String(r.id))}` }
+    return { id: `run-${r.id}`, state, title: friendlyTaskTitle(String(r.title || 'Gogo task')), sub: short(sub), at: clock(r.updatedAt), live: liveLineFor(state, sub), href: `/dashboard/activity/${encodeURIComponent(String(r.id))}` }
   }
   // Several stops on the same site are one thing to do, as on Home.
   const handoffGroups = [...new Map(handoffs.map((h: any) => [String(h?.title || h?.id), h])).values()]
@@ -86,7 +87,7 @@ export function buildLive(data: any): Omit<Live, LiveControls | 'loaded'> {
       serviceNotices: Number(data?.serviceNoticeCount ?? data?.serviceNotices?.length ?? 0), unavailable: false,
     },
     feeds, hero,
-    recent: runs.slice(0, 5).map((r: any) => ({ id: String(r.id), title: String(r.title || 'Gogo task'), href: `/dashboard/activity/${encodeURIComponent(String(r.id))}` })),
+    recent: runs.slice(0, 5).map((r: any) => ({ id: String(r.id), title: friendlyTaskTitle(String(r.title || 'Gogo task')), href: `/dashboard/activity/${encodeURIComponent(String(r.id))}` })),
   }
 }
 
