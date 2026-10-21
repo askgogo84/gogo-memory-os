@@ -7,7 +7,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 const BOLNA = 'https://api.bolna.ai'
-export const CALL_AGENT_NAME = 'AskGogo booking caller v1'
+export const CALL_AGENT_NAME = 'AskGogo booking caller v2'
 export const DEFAULT_FROM_NUMBER = '+918065539020'
 export const PLAN_STATE = 'voice_call_plan'
 export const MAX_REDIALS = 2
@@ -60,14 +60,14 @@ export type CallPlan = {
 /** The approved mock's call-plan card as WhatsApp text. Pure. */
 export function callPlanText(p: CallPlan) {
   const script = p.test
-    ? `"Hi, this is Gogo, an AI assistant calling for ${p.guestName}. This is a short test call so you can hear how I sound."`
-    : `"Hi, this is Gogo, an AI assistant calling for ${p.guestName}. Could I book a table for ${p.partySize || 2} ${p.dateLabel} at ${p.timeLabel}? If that's full, ${p.flexWindow} works."`
+    ? `"Hi, I'm an AI assistant from AskGogo, calling for ${p.guestName}. This is a short test call so you can hear how I sound."`
+    : `"Hi, I'm an AI assistant from AskGogo, calling for ${p.guestName}. Could I book a table for ${p.partySize || 2} ${p.dateLabel} at ${p.timeLabel}? If that's full, ${p.flexWindow} works."`
   const body = [
     '*CALL PLAN · NEEDS YOUR YES*',
     `To: ${p.venue} · ${displayPhone(p.to)}${p.source ? ` (${p.source})` : ''}`,
     `From: ${displayPhone(DEFAULT_FROM_NUMBER)}`,
     script,
-    p.test ? '' : `Seating: ${p.seating}. Name: ${p.guestName}.`,
+    p.test ? '' : `Seating: ${p.seating}. Booking name: ${p.guestName} (add "under the name …" to change it).`,
     "Won't pay, share card details or agree to a deposit on the call.",
   ].filter(Boolean).join('\n')
   return `${body}\n\nReply *yes call* to place it, or *no* to skip.`
@@ -132,7 +132,7 @@ async function bolna(path: string, init: { method?: string; body?: any } = {}, f
   return data
 }
 
-export const CALL_AGENT_PROMPT = `You are Gogo, an AI assistant making a short phone call to {venue} on behalf of {guest_name}.
+export const CALL_AGENT_PROMPT = `You are an AI assistant from AskGogo making a short phone call to {venue} on behalf of {guest_name}.
 Your task: {purpose}
 Details you may share: table for {party_size} people, {date_label} at {time_label}. If that time is full, any time {flex_window} is fine. Seating preference: {seating}. Name for the booking: {guest_name}. Contact number, only if they ask: {contact_number}.
 Rules:
@@ -154,7 +154,7 @@ export async function ensureCallAgent(fetchImpl: typeof fetch = fetch): Promise<
   const created = await bolna('/v2/agent', { method: 'POST', body: {
     agent_config: {
       agent_name: CALL_AGENT_NAME,
-      agent_welcome_message: 'Hi, this is Gogo, an AI assistant calling on behalf of {guest_name}. This call may be recorded.',
+      agent_welcome_message: "Hi, I'm an AI assistant from AskGogo, calling on behalf of {guest_name}. This call may be recorded.",
       tasks: [{
         task_type: 'conversation',
         toolchain: { execution: 'sequential', pipelines: [['transcriber', 'llm', 'synthesizer']] },
@@ -255,7 +255,9 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     return { text: `📞 Calling ${plan.venue} now from ${displayPhone(String(process.env.BOLNA_FROM_NUMBER || DEFAULT_FROM_NUMBER))}. I'll message you here with what they said, usually within 2–3 minutes.`, handledBy: 'voice-call' }
   }
 
-  const guestName = String(params.actor.name || 'my client').split(/\s+/)[0]
+  // "…under the name Goverdhan" wins; otherwise the account name.
+  const named = params.text.match(/\bunder\s+(?:the\s+name\s+(?:of\s+)?)?([A-Z][A-Za-z.'-]{1,30}(?:\s+[A-Z][A-Za-z.'-]{1,30})?)/)
+  const guestName = named?.[1] || String(params.actor.name || 'my client').split(/\s+/)[0]
   const now = new Date().toISOString()
   let plan: CallPlan
   if (cmd.kind === 'test') {
@@ -265,7 +267,9 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
       purpose: 'This is a short test call. Say hello, explain you are testing how you sound for future restaurant bookings, ask if the audio is clear, then thank them and end.', test: true, redials: 0, createdAt: now }
   } else {
     const rr = await import('@/lib/agent/restaurant-reservation')
-    const bookingText = cmd.text.replace(/^(?:please\s+)?(?:call|phone|ring)\s+(?:up\s+)?/i, 'book ').replace(/\s+(?:and|to)\s+(?:book|reserve)\b/i, ' ')
+    // "Call District 6 near Orion mall and book a table for 2 Saturday 8pm" -> "Book a table for 2 Saturday 8pm at District 6 near Orion mall"
+    const parts = cmd.text.replace(/\s+under\s+(?:the\s+name\s+(?:of\s+)?)?[A-Z][A-Za-z.' -]{1,40}$/, '').match(/^(?:please\s+)?(?:call|phone|ring)\s+(?:up\s+)?(.+?)\s+(?:and|to)\s+(?:book|reserve)\s+(.+)$/i)
+    const bookingText = parts ? `Book ${parts[2].trim()} at ${parts[1].trim()}` : cmd.text
     const intent = rr.parseRestaurantReservationIntent(bookingText)
     if (!intent?.restaurant) return { text: 'Which restaurant should I call, and for when? For example: *call District 6 and book a table for 2 Saturday 8pm*.', handledBy: 'voice-call' }
     const explicit = indianPhoneFrom(cmd.text)

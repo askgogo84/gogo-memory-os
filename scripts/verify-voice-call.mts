@@ -25,7 +25,7 @@ const plan = { venue: 'District 6', to: '+917259906666', source: 'from justdial.
   flexWindow: v.flexWindowLabel('20:00', (c: string) => c), seating: 'no preference', purpose: 'Book a table', test: false, redials: 0, createdAt: new Date().toISOString() }
 assert.equal(plan.flexWindow, 'between 19:30 and 21:00')
 const card = v.callPlanText(plan)
-assert.match(card, /CALL PLAN · NEEDS YOUR YES/); assert.match(card, /\+91 72599 06666/); assert.match(card, /AI assistant calling for Goverdhan/)
+assert.match(card, /CALL PLAN · NEEDS YOUR YES/); assert.match(card, /\+91 72599 06666/); assert.match(card, /AI assistant from AskGogo, calling for Goverdhan/); assert.match(card, /Booking name: Goverdhan/)
 assert.match(card, /Won't pay, share card details or agree to a deposit/); assert.match(card, /Reply \*yes call\*/)
 // Outcomes: honest
 assert.match(v.callResultText(plan, 'no-answer', null), /nobody picked up\. Nothing was booked\.[\s\S]*call again/)
@@ -38,7 +38,7 @@ assert.match(v.callResultText(plan, 'completed', refused), /not booked\. They wa
 assert.equal(v.parseOutcome('{"booked":"yes"}')!.booked, false, 'only a literal true counts')
 assert.ok(v.TERMINAL.has('completed') && v.TERMINAL.has('balance-low') && !v.TERMINAL.has('call-disconnected'), 'call-disconnected is not final')
 // Agent prompt: discloses AI, never pays
-assert.match(v.CALL_AGENT_PROMPT, /AI assistant/); assert.match(v.CALL_AGENT_PROMPT, /do not agree to it/); assert.match(v.CALL_AGENT_PROMPT, /deposit, card, UPI, payment, OTP/)
+assert.match(v.CALL_AGENT_PROMPT, /AI assistant from AskGogo/); assert.doesNotMatch(v.CALL_AGENT_PROMPT, /You are Gogo/); assert.match(v.CALL_AGENT_PROMPT, /do not agree to it/); assert.match(v.CALL_AGENT_PROMPT, /deposit, card, UPI, payment, OTP/)
 // Wiring
 const src = readFileSync(new URL('../lib/agent/voice-call.ts', import.meta.url), 'utf8')
 assert.match(src, /includes\('CALL PLAN'\)/, 'a yes only binds to the plan just shown')
