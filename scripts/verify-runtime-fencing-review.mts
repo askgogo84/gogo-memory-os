@@ -4,6 +4,8 @@ import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import {createHash} from 'node:crypto'
 import ts from 'typescript'
+import * as approvalBinding from '../lib/agent/approval-binding'
+import * as approvalTtl from '../lib/agent/approval-ttl'
 const actor={userId:'fixture-owner',legacyTelegramId:123,whatsappId:'inert',name:'Fixture'}
 function harness(){
  const run:any={id:'run',telegram_id:'123',status:'running',title:'Fixture',metadata_json:{objective:'Fixture'}}
@@ -30,6 +32,8 @@ function harness(){
  const exports:any={}
  const source=ts.transpileModule(readFileSync('lib/agent/autonomous-runtime.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
  runInNewContext(source,{exports,Date,Promise,console,require:(id:string)=>{
+  if(id==='./approval-binding')return approvalBinding
+  if(id==='./approval-ttl')return approvalTtl
   if(id==='node:crypto')return{createHash}
   if(id==='@/lib/supabase-admin')return{supabaseAdmin:db}
   if(id==='./specialist-registry')return{selectSpecialistRoute:()=>({primary:'research',supporting:[]})}
@@ -64,7 +68,7 @@ await check('cancelled run cannot release an interrupted approval',async()=>{
  assert.equal(h.step.output_json.runtime.approvalId,'a');assert.equal(h.run.status,'failed')
 })
 await check('stale approval release cannot clear a newly replaced approval',async()=>{
- const h=harness();h.step.output_json.runtime.approvalId='a';h.tables.agent_approvals.push({id:'a',run_id:'run',telegram_id:'123',status:'approved'})
+ const h=harness();h.step.output_json.runtime.approvalId='a';h.step.output_json.runtime.approvalAction={capability:'fixture',actionType:'fixture.mutate',target:'fixture-owner',payload:{value:'fixture'}};h.tables.agent_approvals.push({id:'a',run_id:'run',telegram_id:'123',status:'approved',requested_at:new Date().toISOString(),...approvalBinding.buildApprovalBinding(h.runtime.autonomousStepApprovalInput(h.run,h.step,'123'))})
  h.beforeWrite((table)=>{assert.equal(table,'agent_steps');h.step.output_json.runtime.approvalId='b'})
  await assert.rejects(h.runtime.releaseApprovedAutonomousStep({actor,runId:'run',stepKey:'first'}),/superseded|changed/)
  assert.equal(h.step.output_json.runtime.approvalId,'b')
@@ -78,7 +82,7 @@ await check('requiresApproval suspends before a handler and resumes only its own
  const h=harness();h.step.output_json.runtime.requiresApproval=true;let calls=0
  const handler=async()=>{calls++;return{status:'completed',verified:true}}
  await h.execute(handler);assert.equal(calls,0);assert.equal(h.run.status,'waiting_approval')
- h.step.output_json.runtime.approvalId='bound';h.tables.agent_approvals.push({id:'bound',run_id:'run',telegram_id:'123',status:'approved'})
+ h.step.output_json.runtime.approvalId='bound';h.step.output_json.runtime.approvalAction={capability:'fixture',actionType:'fixture.mutate',target:'fixture-owner',payload:{value:'fixture'}};h.tables.agent_approvals.push({id:'bound',run_id:'run',telegram_id:'123',status:'approved',requested_at:new Date().toISOString(),...approvalBinding.buildApprovalBinding(h.runtime.autonomousStepApprovalInput(h.run,h.step,'123'))})
  await h.runtime.releaseApprovedAutonomousStep({actor,runId:'run',stepKey:'first'});await h.execute(handler);assert.equal(calls,1)
 })
 await check('an approval for another run cannot release this step',async()=>{
@@ -112,5 +116,25 @@ await check('same-owner same-run approval for another action grants no authority
  h.tables.agent_approvals.push({id:'foreign-action',run_id:'run',telegram_id:'123',status:'approved',action_hash:'different-action',policy_version:'brain-v1.1',requested_at:new Date().toISOString()})
  await assert.rejects(h.runtime.releaseApprovedAutonomousStep({actor,runId:'run',stepKey:'first'}),/binding|action|approval/)
  assert.equal(h.step.output_json.runtime.approvalId,'foreign-action')
+})
+function stage(h:ReturnType<typeof harness>){
+ h.step.output_json.runtime.requiresApproval=true;h.step.output_json.runtime.approvalId='exact'
+ h.step.output_json.runtime.approvalAction={capability:'fixture',actionType:'fixture.mutate',target:'fixture-owner',payload:{value:'approved'}}
+ const approval={id:'exact',run_id:'run',telegram_id:'123',status:'approved',requested_at:new Date().toISOString(),...approvalBinding.buildApprovalBinding(h.runtime.autonomousStepApprovalInput(h.run,h.step,'123'))}
+ h.tables.agent_approvals.push(approval);return approval
+}
+await check('changed approved payload cannot release a step',async()=>{
+ const h=harness();stage(h);h.step.output_json.runtime.approvalAction.payload.value='changed'
+ await assert.rejects(h.runtime.releaseApprovedAutonomousStep({actor,runId:'run',stepKey:'first'}),/approval_action_changed/)
+ assert.equal(h.step.output_json.runtime.approvalId,'exact')
+})
+await check('expired or future-dated approval cannot release a step',async()=>{
+ for(const requested of ['2020-01-01T00:00:00Z','2099-01-01T00:00:00Z']){const h=harness();const approval=stage(h);approval.requested_at=requested
+ await assert.rejects(h.runtime.releaseApprovedAutonomousStep({actor,runId:'run',stepKey:'first'}),/expired|approval_required/)}
+})
+await check('approval expiry after release is a definite no-dispatch boundary',async()=>{
+ const h=harness();const approval=stage(h);await h.runtime.releaseApprovedAutonomousStep({actor,runId:'run',stepKey:'first'});approval.requested_at='2020-01-01T00:00:00Z';let calls=0
+ await h.execute(async()=>{calls++;return{status:'completed',verified:true}})
+ assert.equal(calls,0);assert.equal(h.run.status,'failed');assert.notEqual(h.step.output_json.reconciliation_required,true)
 })
 if(failures)process.exitCode=1
