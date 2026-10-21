@@ -1,3 +1,4 @@
+import * as sentinel from '../lib/agent/sentinel'
 // Real Chromium against local pages built like Playo's booking flow (mapped live on 11 Oct):
 // venue cards that are plain divs, a Book Now button, Headless UI style listboxes that only take a
 // real pointer press, a calendar of plain divs, Add To Cart, and a cart with a pay button.
@@ -22,7 +23,7 @@ const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKi
 const exports: any = {}
 const real = await import('../lib/agent/browser-page-readiness.ts')
 runInNewContext(code, { exports, process: { env: {} }, Buffer, URL, console, setTimeout, clearTimeout,
-  require: (name: string) => name === './browser-page-readiness' ? real
+  require:(name:string)=>name==='./sentinel'?sentinel:name === './browser-page-readiness' ? real
     : name === './secure-browser-bootstrap' ? { BROWSER_PROFILE_DIR: join(work, 'profile'), SANDBOX_WORKDIR: work, browserSandboxNameFor: () => 'x' }
     : name === './persistent-commerce-browser' ? { COMMERCE_CDP_URL: 'http://127.0.0.1:9' }
     : new Proxy({}, { get: () => () => null }) })

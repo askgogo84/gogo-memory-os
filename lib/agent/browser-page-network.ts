@@ -1,3 +1,5 @@
+import { browserTargetUrl } from './sentinel'
+
 // 2 Oct live Instamart journey: its cloud page stayed blank while the same URL
 // rendered locally. These script hosts were observed in the public page DOM.
 // Keep the list explicit; page-supplied URLs must not expand browser authority.
@@ -67,7 +69,7 @@ export const FLIGHT_BOOKING_HANDOFF_SITES=['goindigo.in','airindia.com','airindi
   'googleadservices.com','doubleclick.net','dartsearch.net','clickserve.dartsearch.net']
 
 export function browserPageAllowlist(url:string):Record<string,string[]>{
-  const target=new URL(url)
+  const target=browserTargetUrl(url)
   const host=target.hostname.toLowerCase()
   const hosts=[host,`*.${host}`]
   // 3 Oct live cloud page lacked the flight widget. The public DOM loads its
