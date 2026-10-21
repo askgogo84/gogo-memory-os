@@ -4,25 +4,33 @@ import { isDefiniteProviderRejection } from './delivery-state'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export async function deliverNotification(p: {
-  key: string; source: 'briefing' | 'followup' | 'price_comparison' | 'travel_research' | 'watch_alert'; owner: number; channel: 'whatsapp' | 'email'; due: string
-  prepare: () => Promise<void>; ready: () => Promise<boolean>; send: (token: string) => Promise<string>
+  key: string; source: 'briefing' | 'followup' | 'price_comparison' | 'travel_research' | 'watch_alert' | 'run_outcome'; owner: number; channel: 'whatsapp' | 'email'; due: string
+  prepare: (token: string) => Promise<void>; ready: () => Promise<boolean>; send: (token: string) => Promise<string>
   accepted?: (id: string) => Promise<void>; deadline: number
+  /** Trusted producer hooks still use the same receipt ledger; no model receives these. */
+  claim?: (token: string) => Promise<boolean>; begin?: (token: string) => Promise<boolean>
+  deferUntil?: () => Promise<string | null>
 }): Promise<string> {
   const token = randomUUID()
   let claimed = false, started = false, returned = false
   try {
     if (Date.now() >= p.deadline) return 'deferred'
-    claimed = await deliveryRpc('claim_notification_delivery', { p_key: p.key, p_source: p.source, p_owner: p.owner,
+    claimed = p.claim ? await p.claim(token) : await deliveryRpc('claim_notification_delivery', { p_key: p.key, p_source: p.source, p_owner: p.owner,
       p_channel: p.channel, p_due: p.due, p_token: token })
     if (!claimed) return 'skipped'
-    await p.prepare()
+    await p.prepare(token)
+    const deferUntil = await p.deferUntil?.()
+    if (deferUntil) {
+      if (!await deliveryRpc('defer_notification_delivery', { p_key: p.key, p_token: token, p_until: deferUntil })) throw new Error('deferral_write_failed')
+      return 'deferred'
+    }
     if (Date.now() >= p.deadline) return 'deferred' // unstarted lease recovers
     if (!await p.ready()) {
       if (!await deliveryRpc('finish_notification_delivery', { p_key: p.key, p_token: token, p_state: 'suppressed' })) throw new Error('suppression_write_failed')
       return 'suppressed'
     }
     if (Date.now() >= p.deadline) return 'deferred'
-    if (!await deliveryRpc('begin_notification_delivery', { p_key: p.key, p_token: token })) return 'skipped'
+    if (!(p.begin ? await p.begin(token) : await deliveryRpc('begin_notification_delivery', { p_key: p.key, p_token: token }))) return 'skipped'
     started = true
     const id = await p.send(token)
     returned = true

@@ -243,7 +243,7 @@ function loadModule(path: string, requireMap: Record<string, any>, extra: Record
   const output = ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   runInNewContext(output, {
     exports,
-    require: (name: string) => {
+    require: (name: string) => {if(name==='./run-outcome-delivery')return {deliverRunOutcomeNotice:()=>{throw Error('unexpected gateway call in legacy fixture')}};
       if (name in requireMap) return requireMap[name]
       throw new Error(`unexpected import in ${path}: ${name}`)
     },

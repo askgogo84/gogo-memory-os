@@ -347,10 +347,11 @@ async function reconcileRun(runId: string, telegramId: string, opts: { notifyOut
   const waitingApproval = steps.some((step) => { const meta = runtimeMeta(step); return Boolean(meta.approvalId || (meta.requiresApproval && !meta.approvalGrantedId)) })
   const progress = Math.min(100, Math.max(1, Math.round((completed / total) * 100)))
   const now = new Date().toISOString()
+  const noticeRequest = opts.notifyOutcome ? { outcome_notice_requested: true } : {}
 
   const uncertain = steps.some(step => step.output_json?.reconciliation_required === true)
   if (uncertain) {
-    const metadata = { ...(run.metadata_json || {}), state: 'outcome_unknown', outcome_state: 'unknown', reconciliation_required: true }
+    const metadata = { ...(run.metadata_json || {}), ...noticeRequest, state: 'outcome_unknown', outcome_state: 'unknown', reconciliation_required: true }
     const { data: updated, error } = await supabaseAdmin.from('agent_runs').update({ status: 'outcome_unknown', progress, completed_at: now, updated_at: now, metadata_json: metadata }).eq('id', runId).eq('telegram_id', telegramId).in('status', [...RECONCILABLE_RUN_STATUSES]).select('id')
     if (error) throw new Error(`autonomous_run_unknown_failed:${error.message}`)
     if (!rowsUpdated(updated)) return 'superseded'
@@ -359,7 +360,7 @@ async function reconcileRun(runId: string, telegramId: string, opts: { notifyOut
     return 'outcome_unknown'
   }
   if (completed === steps.length) {
-    const { data: updated, error } = await supabaseAdmin.from('agent_runs').update({ status: 'completed', progress: 100, summary: 'Completed and verified.', completed_at: now, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: 'completed' } }).eq('id', runId).eq('telegram_id', telegramId).in('status', [...RECONCILABLE_RUN_STATUSES]).select('id')
+    const { data: updated, error } = await supabaseAdmin.from('agent_runs').update({ status: 'completed', progress: 100, summary: 'Completed and verified.', completed_at: now, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), ...noticeRequest, state: 'completed' } }).eq('id', runId).eq('telegram_id', telegramId).in('status', [...RECONCILABLE_RUN_STATUSES]).select('id')
     if (error) throw new Error(`autonomous_run_complete_failed:${error.message}`)
     if (!rowsUpdated(updated)) return 'superseded'
     await activity(telegramId, runId, 'autonomous_run_completed', 'Gogo completed and verified the full plan.', { completed_steps: completed, total_steps: total })
@@ -367,7 +368,7 @@ async function reconcileRun(runId: string, telegramId: string, opts: { notifyOut
     return 'completed' as const
   }
   if (failed.length) {
-    const { data: updated, error } = await supabaseAdmin.from('agent_runs').update({ status: 'failed', progress, error: safe(failed[0].error, 500), completed_at: now, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: 'failed' } }).eq('id', runId).eq('telegram_id', telegramId).in('status', [...RECONCILABLE_RUN_STATUSES]).select('id')
+    const { data: updated, error } = await supabaseAdmin.from('agent_runs').update({ status: 'failed', progress, error: safe(failed[0].error, 500), completed_at: now, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), ...noticeRequest, state: 'failed' } }).eq('id', runId).eq('telegram_id', telegramId).in('status', [...RECONCILABLE_RUN_STATUSES]).select('id')
     if (error) throw new Error(`autonomous_run_fail_failed:${error.message}`)
     if (!rowsUpdated(updated)) return 'superseded'
     await activity(telegramId, runId, 'autonomous_run_failed', 'Gogo stopped because a step exhausted safe retries or hit a hard boundary.', { failed_step_ids: failed.map((step) => step.id) })

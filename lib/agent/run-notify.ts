@@ -5,6 +5,7 @@
 // The owner-bound claim is a write-ahead send intent. An expired claim may already
 // have reached the provider: never reclaim it without delivery reconciliation.
 // Only a definite provider rejection releases a claim for retry.
+import { deliverRunOutcomeNotice } from './run-outcome-delivery'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isDefiniteProviderRejection } from '@/lib/services/delivery-state'
 
@@ -21,13 +22,14 @@ export type RunOutcomeLike = {
 
 export type RunNotifyDeps = {
   db?: any
-  send?: (to: string, text: string) => Promise<unknown>
+  send?: (to: string, text: string, token?: string) => Promise<unknown>
   resolveWhatsappId?: (telegramId: string) => Promise<string | null>
   now?: () => Date
 }
 
 export type RunNotifyResult =
   | { status: 'sent' }
+  | { status: 'provider_accepted' | 'deferred' | 'suppressed' | 'outcome_unknown' }
   | { status: 'skipped'; reason: string }
   | { status: 'failed'; reason: string }
 
@@ -165,6 +167,9 @@ export async function notifyRunOutcome(run: RunOutcomeLike, deps: RunNotifyDeps 
     if (!first.ok) return { status: 'failed', reason: 'run_read_failed' }
     if (!first.found) return { status: 'skipped', reason: 'run_not_found' }
     const latestMeta = first.meta
+    // Newly requested background notices use the receipt ledger. Legacy uncertain
+    // JSON intents remain on the conservative compatibility path below.
+    if (latestMeta.outcome_notice_requested === true) return deliverRunOutcomeNotice(runId, telegramId, completionNotice, deps)
     if (latestMeta.outcome_notified_at || latestMeta.notified === true) return { status: 'skipped', reason: 'already_notified' }
     if (SELF_NOTIFYING_TYPES.has(clean(latestMeta.plan_type, 60))) return { status: 'skipped', reason: 'self_notifying_run' }
 
