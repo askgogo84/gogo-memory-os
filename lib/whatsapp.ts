@@ -283,3 +283,54 @@ export async function sendWhatsAppTypingIndicator(messageSid?: string | null) {
   console.log('WHATSAPP_TYPING_INDICATOR_SENT:', { messageSid: sid })
   return true
 }
+
+// ---- access granted (admin approves a waitlist number) ---------------------------------------------
+// The full welcome goes as free text, which WhatsApp delivers only inside the 24-hour window (the person
+// messaged us recently). Outside it, an approved template is required: one is created through the Content
+// API and submitted to WhatsApp for approval (UTILITY) on first use, then used once Meta approves it.
+const ACCESS_TEMPLATE_NAME = 'askgogo_access_granted_v1'
+let accessTemplateSid: string | null = null
+
+export async function accessTemplateStatus(body: string): Promise<{ sid: string | null; status: string }> {
+  const override = (process.env.TWILIO_INVITE_CONTENT_SID || '').trim()
+  if (override) return { sid: override, status: 'approved' }
+  try {
+    if (!accessTemplateSid) {
+      const existing = (await client.content.v1.contents.list({ pageSize: 200, limit: 400 })).find(item => item.friendlyName === ACCESS_TEMPLATE_NAME)
+      accessTemplateSid = existing?.sid || (await client.content.v1.contents.create({ friendlyName: ACCESS_TEMPLATE_NAME, language: 'en', variables: { '1': 'there' }, types: { 'twilio/text': { body } } } as any)).sid
+    }
+    const approval: any = await (client.content.v1.contents(accessTemplateSid!) as any).approvalFetch().fetch().catch(() => null)
+    const status = String(approval?.whatsapp?.status || '').toLowerCase()
+    if (!status || status === 'unsubmitted') {
+      await (client.content.v1.contents(accessTemplateSid!) as any).approvalCreate.create({ name: ACCESS_TEMPLATE_NAME, category: 'UTILITY' })
+      return { sid: accessTemplateSid, status: 'submitted' }
+    }
+    return { sid: accessTemplateSid, status }
+  } catch (err: any) {
+    console.error('ACCESS_TEMPLATE_STATUS_FAILED', err?.code || '', err?.message || err)
+    return { sid: accessTemplateSid, status: 'error' }
+  }
+}
+
+/** Tell an approved person they can start. Returns what happened, in plain words, for the admin console. */
+export async function sendWhatsAppAccessGranted(toNumber: string, firstName: string, fullText: string, templateBody: string): Promise<string> {
+  const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
+  const to = normalizeWhatsAppAddress(toNumber)
+  const template = await accessTemplateStatus(templateBody)
+  try {
+    if (template.sid && template.status === 'approved') {
+      const payload: any = { from, to, contentSid: template.sid, contentVariables: JSON.stringify({ '1': firstName || 'there' }) }
+      if (statusCallbackUrl) payload.statusCallback = statusCallbackUrl
+      const message = await meteredCreate(payload)
+      console.log('WHATSAPP_ACCESS_GRANTED_SENT:', { sid: message.sid, to, via: 'template' })
+      return 'sent (WhatsApp template)'
+    }
+    const payload: any = { from, to, body: fullText }
+    if (statusCallbackUrl) payload.statusCallback = statusCallbackUrl
+    const message = await meteredCreate(payload)
+    console.log('WHATSAPP_ACCESS_GRANTED_SENT:', { sid: message.sid, to, via: 'text', template: template.status })
+    return `sent as text; template ${template.status === 'error' ? 'not ready' : template.status === 'submitted' || template.status === 'pending' || template.status === 'received' ? 'waiting for WhatsApp approval' : template.status}`
+  } catch (err: any) {
+    return `not sent: ${String(err?.message || 'error').slice(0, 80)}`
+  }
+}
