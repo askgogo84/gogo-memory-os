@@ -32,6 +32,12 @@ function safe(value: unknown, max = 1800) {
 function normalizedMission(value:unknown){return safe(value,4000).toLowerCase()}
 function missionFingerprint(value:unknown){return createHash('sha256').update(normalizedMission(value)).digest('hex')}
 
+function persistentRunReply(run: {status?: unknown; summary?: unknown}, fallback: string) {
+  if (run.status === 'outcome_unknown') return 'I couldn’t confirm the result of this request. I haven’t retried it because an earlier step may already have completed.'
+  if (run.status === 'failed') return 'I couldn’t finish this request. Check the task details for the step that stopped.'
+  return safe(run.summary || fallback)
+}
+
 function stepKey(index: number, step: GeneralPlanStep) {
   return `step-${index + 1}-${step.tool}`
 }
@@ -210,7 +216,7 @@ export async function tryRunPersistentGeneralPlan(params: {
     await recordTaskModelUsage(params.actor.legacyTelegramId,String(duplicate.id),modelUsage).catch(()=>{})
     return {
       runId:String(duplicate.id),status:String(duplicate.status||'running'),capability:'orchestrator',risk:'low' as const,
-      text:safe(duplicate.summary||'I’m already working on this same request.'),handledBy:'persistent-general-plan' as const,
+      text:persistentRunReply(duplicate,'I’m already working on this same request.'),handledBy:'persistent-general-plan' as const,
       persistent:true,runtimeVersion:'gogo-autonomous-v1',progress:Number(duplicate.progress||1),deduplicated:true,
     }
   }
@@ -251,7 +257,7 @@ export async function tryRunPersistentGeneralPlan(params: {
     status: run.status || executed.status,
     capability: created.route.primary,
     risk: 'low' as const,
-    text: run.summary || 'I started working through this request.',
+    text: persistentRunReply(run, 'I started working through this request.'),
     handledBy: 'persistent-general-plan' as const,
     persistent: true,
     runtimeVersion: 'gogo-autonomous-v1',

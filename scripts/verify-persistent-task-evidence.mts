@@ -176,5 +176,13 @@ await check('cancellation during permission lookup prevents canonical executor d
  h.setFault(t=>{if(t==='agent_permissions'){h.tables.agent_runs[0].status='failed';h.tables.agent_runs[0].error='user_cancelled'}return null})
  await h.start();assert.equal(h.tables.todos.length,0);assert.equal(h.tables.agent_runs[0].error,'user_cancelled');assert.equal(h.fallback(),0)
 })
+await check('failed and repeated unknown outcomes never claim to be still working',async()=>{
+ const denied=harness(['Create task: Pack trip bag','List all open tasks']);denied.setPermission('off')
+ const failed=await denied.start();assert.equal(failed.status,'failed');assert.match(failed.text,/couldn.t finish|couldn.t complete/i);assert.doesNotMatch(failed.text,/working through/i)
+ const h=harness(['Create task: Pack trip bag','List all open tasks']);h.setFault((t,o)=>t==='todos'&&o==='insert'?'inert lost response':null)
+ const initial=await h.start();assert.equal(initial.status,'outcome_unknown');assert.match(initial.text,/couldn.t confirm/i);assert.doesNotMatch(initial.text,/working through/i)
+ const repeated=await h.start();assert.equal(repeated.deduplicated,true);assert.equal(repeated.status,'outcome_unknown')
+ assert.match(repeated.text,/haven.t retried/i);assert.equal(h.tables.agent_runs.length,1)
+})
 console.log(`PERSISTENT_TASK_EVIDENCE ${passed}/${passed+failures}`)
 if(failures)process.exitCode=1
