@@ -24,7 +24,7 @@ export function persistentDriveFailureReply(error: unknown): string | null {
     permission_invalid:'I could not verify your file-reading permissions. No file was read.',
     permission_unavailable:'I could not check your file-reading permissions. No file was read.',
   }
-  return String(error || '').startsWith('persistent_drive_') ? replies[reason] || null : null
+  return String(error || '').startsWith('persistent_drive_') && Object.prototype.hasOwnProperty.call(replies, reason) ? replies[reason] : null
 }
 
 /** A constrained adapter over the existing owner-bound Workspace client; no generic executor. */

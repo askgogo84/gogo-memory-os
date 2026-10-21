@@ -85,7 +85,7 @@ function harness(steps = [drive('Read \"Budget\" from my Google Drive'),task('Li
  const persistent=load('lib/agent/persistent-general-plan.ts',{'./general-planner':general,'./autonomous-runtime':runtime,'./persistent-drive-read':read})
  const start=()=>persistent.tryRunPersistentGeneralPlan({actor,surface:'web',text:'Fixture task objective',prepared:{plan:{title:'Fixture tasks',reason:'Two typed task operations',steps},startedAt:new Date().toISOString(),modelUsage:[]}})
  const resume=()=>persistent.resumePersistentGeneralPlan({actor,runId:tables.agent_runs[0].id})
- return {tables,queries,requests,start,resume,persistent,general,actor,setSearch:(v:any)=>{searchBody=v},setContent:(v:string)=>{content=v},setStatus:(s:number,c=200)=>{searchStatus=s;contentStatus=c},setHttpFault:(f:typeof httpFault)=>{httpFault=f},fallback:()=>fallback,setFault:(f:typeof fault)=>{fault=f},setPermission:(level:string)=>{tables.agent_permissions=[{telegram_id:'123',capability:'files',level}]}}
+ return {tables,queries,requests,start,resume,persistent,general,read,actor,setSearch:(v:any)=>{searchBody=v},setContent:(v:string)=>{content=v},setStatus:(s:number,c=200)=>{searchStatus=s;contentStatus=c},setHttpFault:(f:typeof httpFault)=>{httpFault=f},fallback:()=>fallback,setFault:(f:typeof fault)=>{fault=f},setPermission:(level:string)=>{tables.agent_permissions=[{telegram_id:'123',capability:'files',level}]}}
 }
 let failures=0,passed=0
 async function check(name:string,fn:()=>Promise<void>){try{await fn();passed++;console.log('PASS '+name)}catch(e:any){failures++;console.error('FAIL '+name+': '+e.message)}}
@@ -177,6 +177,11 @@ await check('provider source instructions stay data and never authorize effects'
 })
 await check('cancellation during permission lookup prevents Drive dispatch',async()=>{
  const h=harness();h.setFault(t=>{if(t==='agent_permissions'){h.tables.agent_runs[0].status='failed';h.tables.agent_runs[0].error='user_cancelled'}return null});await h.start();assert.equal(h.requests.length,0);assert.equal(h.fallback(),0)
+})
+await check('unknown and prototype-named errors cannot escape the reply allowlist',async()=>{
+ const h=harness()
+ for(const code of ['persistent_drive_constructor','persistent_drive___proto__','persistent_drive_toString','unrelated_error','persistent_drive_unknown'])assert.equal(h.read.persistentDriveFailureReply(code),null)
+ assert.equal(typeof h.read.persistentDriveFailureReply('persistent_drive_connection_required'),'string')
 })
 console.log(`PERSISTENT_DRIVE_EVIDENCE ${passed}/${passed+failures}`)
 if(failures)process.exitCode=1
