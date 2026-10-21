@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 // Long chat memory with Mercury. The reply model sees the last 20 messages verbatim; anything older
 // was simply dropped. After a reply is sent, Mercury folds older messages into one running summary
 // (facts, decisions, open threads) owned by that user, and the next reply reads it as context.
@@ -49,7 +50,7 @@ function parseSummary(content: unknown): StoredSummary | null {
 
 // A slower refresh can insert AFTER a newer one. Insertion time is not message
 // coverage: always pick the greatest source cursor, and never clean up a higher one.
-async function summaryCandidates(telegramId: number, db: any): Promise<{ id: unknown; value: StoredSummary }[]> {
+async function summaryCandidates(telegramId: number, db: Pick<SupabaseClient,'from'>): Promise<{ id: unknown; value: StoredSummary }[]> {
   const { data, error } = await db.from('memories').select('id, content')
     .eq('telegram_id', telegramId)
     .like('content', `%"kind":"${SUMMARY_KIND}"%`)
@@ -58,10 +59,10 @@ async function summaryCandidates(telegramId: number, db: any): Promise<{ id: unk
   // A partial or failed read must not be mistaken for an empty baseline. When
   // saturated, withhold context rather than guess which unseen cursor is newest.
   if (error || !Array.isArray(data) || data.length >= MAX_SUMMARY_CANDIDATES) throw new Error('chat_summary_candidates_unavailable')
-  return data.flatMap((row: any) => {
+  return data.flatMap((row: {id:unknown;content:unknown}) => {
     const value = parseSummary(row.content)
     return value ? [{ id: row.id, value }] : []
-  }).sort((a: any, b: any) => compareCoverage(b.value.upTo, a.value.upTo)
+  }).sort((a, b) => compareCoverage(b.value.upTo, a.value.upTo)
     || String(b.id).localeCompare(String(a.id))) // equal-cursor cleanup must pick the same survivor across workers
 }
 

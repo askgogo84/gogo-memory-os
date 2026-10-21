@@ -1,12 +1,13 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { createHash } from 'node:crypto'
 import { isDefiniteProviderRejection } from '@/lib/services/delivery-state'
 
 // No provider credentials or dialogue in the claim identity. All effect-bearing fields are bound.
-export function voicePlanHash(owner: string, plan: Record<string, any>) {
+export function voicePlanHash(owner: string, plan: Record<string, unknown>) {
   const fields = ['venue','to','source','guestName','partySize','date','dateLabel','timeLabel','flexWindow','seating','purpose','test','createdAt','startClock']
   return createHash('sha256').update(JSON.stringify([owner, ...fields.map(key => plan[key] ?? null)])).digest('hex')
 }
-export function voiceAttemptId(owner: string, plan: Record<string, any>, attempt = Number(plan.redials || 0)) {
+export function voiceAttemptId(owner: string, plan: Record<string, unknown>, attempt = Number(plan.redials || 0)) {
   const h = createHash('sha256').update(`voice-call-v1:${voicePlanHash(owner, plan)}:${attempt}`).digest('hex')
   // A deterministic UUID uses the existing run primary key as the cross-worker uniqueness boundary.
   return `${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-a${h.slice(17,20)}-${h.slice(20,32)}`
@@ -17,8 +18,8 @@ export type VoicePlacementResult = { status: 'started' | 'outcome_unknown' | 're
 
 /** Persist a one-shot send intent before touching the provider. Repeated approvals cannot call again. */
 export async function beginApprovedVoiceCall(p: {
-  owner: string; plan: Record<string, any>; approvedPlanHash: string; shownText: string; expectedText: string;
-  surface: 'web' | 'whatsapp'; db: any; place: () => Promise<string>; now?: Date;
+  owner: string; plan: Record<string, unknown>; approvedPlanHash: string; shownText: string; expectedText: string;
+  surface: 'web' | 'whatsapp'; db: Pick<SupabaseClient,'from'>; place: () => Promise<string>; now?: Date;
 }): Promise<VoicePlacementResult> {
   const now = p.now || new Date(), age = now.getTime() - Date.parse(String(p.plan.createdAt || ''))
   const attempt = Number(p.plan.redials || 0)

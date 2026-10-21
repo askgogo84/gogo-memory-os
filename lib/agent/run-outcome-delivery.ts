@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { deliverNotification } from '@/lib/services/notification-delivery'
 import { deliveryCallbackUrl } from '@/lib/services/delivery-callback'
@@ -20,7 +21,7 @@ export async function deliverRunOutcomeNotice(runId:string, ownerId:string, rend
   if(!Number.isSafeInteger(owner)||String(owner)!==ownerId)return {status:'failed',reason:'owner_invalid'}
   const rpc=async(name:string,args:Record<string,unknown>)=>{const {data,error}=await db.rpc(name,args);if(error)throw Error(name+'_failed');return data}
   const key='run_outcome/'+runId+'/whatsapp'
-  let run:any,phone='',timezone='',text=''
+  let run:RunOutcomeLike,phone='',timezone='',text=''
   const status=await deliverNotification({key,source:'run_outcome',owner,channel:'whatsapp',due:new Date(0).toISOString(),deadline:Date.now()+20_000,
     claim:token=>rpc('claim_run_outcome_delivery',{p_key:key,p_owner:owner,p_token:token}),
     prepare:async token=>{
@@ -41,7 +42,7 @@ export async function deliverRunOutcomeNotice(runId:string, ownerId:string, rend
     accepted:async()=>{try{await rpc('reconcile_run_outcome_notice_flags',{p_limit:10})}catch{console.error('RUN_NOTICE_COMPAT_ACK_FAILED')}},
     send:async token=>{
       const result=deps.send ? await deps.send(phone,text,token) : await (await import('@/lib/whatsapp')).sendWhatsApp(phone,text,undefined,token)
-      return String((result as any)?.sid||'')
+      return String((result as {sid?:unknown}|null)?.sid||'')
     },
   })
   if(['provider_accepted','deferred','suppressed','outcome_unknown'].includes(status))return {status:status as 'provider_accepted'|'deferred'|'suppressed'|'outcome_unknown'}
@@ -50,7 +51,7 @@ export async function deliverRunOutcomeNotice(runId:string, ownerId:string, rend
 }
 
 /** Existing cron consumes a bounded outbox; never scan legacy terminal rows without explicit intent. */
-export async function processRunOutcomeNotices(p:{deadline:number;limit?:number;db?:any}) {
+export async function processRunOutcomeNotices(p:{deadline:number;limit?:number;db?:Pick<SupabaseClient,'from'|'rpc'>}) {
   const db=p.db||supabaseAdmin
   const repair=await db.rpc('reconcile_run_outcome_notice_flags',{p_limit:10})
   if(repair.error)throw Error('run_notice_flag_repair_failed')

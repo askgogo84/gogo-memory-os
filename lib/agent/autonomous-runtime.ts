@@ -5,7 +5,7 @@ import { selectSpecialistRoute, type SpecialistRoute } from './specialist-regist
 import type { AgentActor } from './actor'
 import { notifyRunOutcome } from './run-notify'
 import { assertApprovalBinding } from './approval-binding'
-import { isApprovalExpired } from './approval-ttl'
+import { isApprovalExpired, type ApprovalTtlRow } from './approval-ttl'
 
 export const AUTONOMOUS_RUNTIME_VERSION = 'gogo-autonomous-v1'
 const DEFAULT_LEASE_MINUTES = 10
@@ -123,19 +123,23 @@ function idempotencyKey(runId: string, stepKey: string) {
 }
 
 /** Fence immutable handler inputs separately from mutable lease/checkpoint fields. */
-function dispatchInputDigest(run:any,row:RuntimeStepRow) {
-  const {status,started_at,completed_at,error,updated_at,output_json,...definition}=row as RuntimeStepRow & {updated_at?:string}
-  const {attempt,leaseUntil,retryAt,approvalId,approvalGrantedId,verifiedAt,lastError,...policy}=runtimeMeta(row)
-  const output={...(output_json||{})};delete output.runtime
-  const stable=(value:any):any=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'
-    ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value
+type RuntimeRunInputs={id:string;title?:string;metadata_json?:(Record<string,unknown> & {plan_revision?:string|number})|null}
+type RuntimeApprovalRecord=ApprovalTtlRow & {action_hash?:string|null;policy_version?:string|null}
+function dispatchInputDigest(run:RuntimeRunInputs,row:RuntimeStepRow) {
+  const definition={...row} as Record<string,unknown>
+  for(const key of ['status','started_at','completed_at','error','updated_at','output_json'])delete definition[key]
+  const policy={...runtimeMeta(row)} as Record<string,unknown>
+  for(const key of ['attempt','leaseUntil','retryAt','approvalId','approvalGrantedId','verifiedAt','lastError'])delete policy[key]
+  const output={...(row.output_json||{})};delete output.runtime
+  const stable=(value:unknown):unknown=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'
+    ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable((value as Record<string,unknown>)[key])])):value
   return createHash('sha256').update(JSON.stringify(stable({definition,output,policy,runId:run.id,title:run.title,
     objective:run.metadata_json?.objective,inputText:run.metadata_json?.input_text,
     plan:run.metadata_json?.persistent_plan_steps,revision:run.metadata_json?.plan_revision}))).digest('hex')
 }
 
 /** Concrete adapters must stage/display this exact action; legacy/unbound grants fail closed. */
-export function autonomousStepApprovalInput(run: { id: string; title?: string; metadata_json?: Record<string, any> | null }, row: RuntimeStepRow, ownerId: string) {
+export function autonomousStepApprovalInput(run: RuntimeRunInputs, row: RuntimeStepRow, ownerId: string) {
   const meta = runtimeMeta(row), action = meta.approvalAction
   if (!action || !safe(action.capability, 120) || !safe(action.actionType, 120) || !safe(action.target, 1200) || !meta.idempotencyKey) throw new Error('autonomous_approval_action_binding_required')
   return { missionId: String(run.id), stepId: row.id, capability: action.capability, actionType: action.actionType, target: action.target,
@@ -144,7 +148,7 @@ export function autonomousStepApprovalInput(run: { id: string; title?: string; m
       planDefinition: run.metadata_json?.persistent_plan_steps || null, inputText: run.metadata_json?.input_text || null, actionVersion: action.objectVersion || null },
     amount: action.amount, objectRef: action.objectRef, objectVersion: run.metadata_json?.plan_revision || 1, policyVersion: 'runtime-step-v1' }
 }
-function assertRuntimeApproval(run: { id: string; title?: string; metadata_json?: Record<string, any> | null }, row: RuntimeStepRow, ownerId: string, approval: any) {
+function assertRuntimeApproval(run: RuntimeRunInputs, row: RuntimeStepRow, ownerId: string, approval: RuntimeApprovalRecord) {
   const requested = Date.parse(String(approval?.requested_at || ''))
   if (!Number.isFinite(requested) || requested > Date.now() || isApprovalExpired(approval) || approval?.policy_version !== 'runtime-step-v1') throw new Error('autonomous_approval_required_or_expired')
   assertApprovalBinding(autonomousStepApprovalInput(run, row, ownerId), approval)
@@ -344,7 +348,7 @@ function rowsUpdated(data: unknown) {
   return Array.isArray(data) ? data.length > 0 : Boolean(data)
 }
 
-function isReconcilable(run: any) {
+function isReconcilable(run: {status?:unknown;error?:unknown}) {
   return (RECONCILABLE_RUN_STATUSES as readonly string[]).includes(String(run?.status)) && String(run?.error || '') !== 'user_cancelled'
 }
 
@@ -420,7 +424,7 @@ export async function executeAutonomousRun(params: {
     await activity(telegramId, params.runId, 'autonomous_step_started', row.title, { step_id: row.id, step_key: claimed.stepKey, tool: row.tool_name, attempt: claimed.attempt, lane: claimed.lane })
     try {
       // Resolve any grant first, then recheck parent/step authority after the final await.
-      let approved: any = null
+      let approved: RuntimeApprovalRecord | null = null
       if (claimed.requiresApproval) {
         const response = await supabaseAdmin.from('agent_approvals').select('id,status,run_id,action_hash,policy_version,requested_at,execution_payload')
           .eq('id', claimed.approvalGrantedId || '').eq('telegram_id', telegramId).eq('run_id', params.runId).eq('status', 'approved').maybeSingle()

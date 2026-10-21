@@ -1626,7 +1626,7 @@ function observedReadActions(actions:BrowserAction[],page:any,reject:(reason:Bro
       let destination:string
       try{destination=browserTargetUrl(new URL(action.url,page.url).href).href}
       catch{reject('invalid_reference');break}
-      const observed=destination===page.url||(page.links||[]).some((link:any)=>{
+      const observed=destination===page.url||(page.links||[]).some((link:{href:string})=>{
         try{return new URL(link.href,page.url).href===destination}catch{return false}
       })
       if(!observed){reject('invalid_reference');break}

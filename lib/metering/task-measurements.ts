@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js'
 /** Bounded, privacy-safe task measurements. Missing observations never become zero cost. */
 export function percentile(values: number[], fraction: number): number | null {
   const sorted = values.filter(v => Number.isFinite(v) && v >= 0).sort((a, b) => a - b)
@@ -8,7 +9,9 @@ const valid = (v: unknown): v is number => typeof v === 'number' && Number.isFin
 const currency = (v: unknown) => (typeof v === 'number' || (typeof v === 'string' && /^\d+(?:\.\d+)?$/.test(v))) && valid(Number(v))
 const measured = (v: unknown): number | null => valid(v) ? v : null
 
-export function summarizeMeteredTasks(owner: string, runs: any[], rows: any[], truncated = false) {
+type MeasuredRun={id:string;telegram_id?:string|number;status?:string;started_at?:string;completed_at?:string}
+type MeasuredEvent={id?:string|number;telegram_id?:string|number;vendor?:string;category?:string;model?:string;input_tokens?:unknown;output_tokens?:unknown;cost_inr?:unknown;ok?:boolean;metadata?:{run_id?:string;pricing_status?:string;[key:string]:unknown};[key:string]:unknown}
+export function summarizeMeteredTasks(owner: string, runs: MeasuredRun[], rows: MeasuredEvent[], truncated = false) {
   const owned = runs.filter(r => String(r.telegram_id) === owner)
   const completed = owned.filter(r => r.status === 'completed' && r.completed_at)
   const ownedRunIds = new Set(owned.map(r => r.id))
@@ -63,7 +66,7 @@ export function summarizeMeteredTasks(owner: string, runs: any[], rows: any[], t
 }
 
 /** Fail closed on read errors and expose partial sampling, rather than silently report complete totals. */
-export async function loadTaskMeasurements(owner: string, db: any, now = new Date()) {
+export async function loadTaskMeasurements(owner: string, db: Pick<SupabaseClient,'from'>, now = new Date()) {
   const since = new Date(now.getTime() - 30 * 86400_000).toISOString()
   const [{ data: runs, error: runError }, { data: rows, error: eventError }] = await Promise.all([
     db.from('agent_runs').select('id,telegram_id,status,started_at,completed_at').eq('telegram_id', owner)

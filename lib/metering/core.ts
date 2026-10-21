@@ -120,7 +120,8 @@ export function tokensFromBody(body: any): { model: string | null; input: number
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
 
 /** Preserve provider token counters, not synthetic "input-equivalent" token counts. */
-export function rawUsageFromBody(body: any) {
+type RawUsageBody={model?:unknown;usage?:{input_tokens?:unknown;prompt_tokens?:unknown;output_tokens?:unknown;completion_tokens?:unknown;cache_read_input_tokens?:unknown;cache_creation_input_tokens?:unknown;prompt_tokens_details?:{cached_tokens?:unknown};input_tokens_details?:{cached_tokens?:unknown}}}
+export function rawUsageFromBody(body: RawUsageBody | null | undefined) {
   const u = body?.usage || {}
   return { model: typeof body?.model === 'string' ? body.model : null,
     input: num(u.input_tokens ?? u.prompt_tokens), output: num(u.output_tokens ?? u.completion_tokens),
