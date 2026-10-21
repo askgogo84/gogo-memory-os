@@ -1,3 +1,4 @@
+import * as sentinel from '../lib/agent/sentinel'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
@@ -10,7 +11,7 @@ export function browserProgram(file:string,name:string){
   const exports:any={}
   const source=readFileSync(new URL('../lib/agent/'+file,import.meta.url),'utf8')+'\nexport { '+name+' }'
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
-  runInNewContext(code,{exports,process:{env:{}},Buffer,URL,require:(id:string)=>{
+  runInNewContext(code,{exports,process:{env:{}},Buffer,URL,require:(id:string)=>{if(id==='./sentinel')return sentinel;
     if(id==='@anthropic-ai/sdk')return {default:class {}}
     if(id==='./secure-browser-bootstrap')return {BROWSER_PROFILE_DIR:'/fixture/profile',SANDBOX_WORKDIR:'/fixture'}
     if(id==='./persistent-commerce-browser')return {COMMERCE_CDP_URL:'http://127.0.0.1:9222'}
@@ -66,7 +67,7 @@ const fs={readFileSync:()=>activeTask,writeFileSync:(_path:string,value:string)=
 const globals=(argv:string[])=>({
   Buffer,URL,console:{log:()=>{},error:()=>{}},setTimeout:()=>0,
   process:{argv,env:managedEndpoint?{GOGO_BROWSER_CDP_URL:managedEndpoint}:{},on:()=>{},exit:(code:number)=>{if(code)throw Error('program_exit_'+code)}},
-  require:(name:string)=>name==='playwright'?{chromium}:name==='fs'?fs:name==='url'?{URL}:name==='http'?{createServer:(h:any)=>{handler=h;return {listen:()=>{}}}}:{},
+  require:(name:string)=>name==='./sentinel'?sentinel:name==='playwright'?{chromium}:name==='fs'?fs:name==='url'?{URL}:name==='http'?{createServer:(h:any)=>{handler=h;return {listen:()=>{}}}}:{},
 })
 const run=(payload:any)=>runInNewContext(worker,globals(['node','worker',Buffer.from(JSON.stringify(payload)).toString('base64')]))
 const task={url:'https://provider.example/item',mode:'read',keepAlive:true,taskId:'owned-task',actions:[]}

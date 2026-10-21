@@ -1,3 +1,4 @@
+import * as sentinel from '../lib/agent/sentinel'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
@@ -13,7 +14,7 @@ async function check(name:string,run:()=>unknown){try{await run();console.log('P
 function fixtureComputer(){
   const computer:any={}
   const source=ts.transpileModule(fs.readFileSync('lib/agent/secure-computer.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
-  vm.runInNewContext(source,{exports:computer,module:{exports:computer},require:(name:string)=>name==='../commerce/product-identity'?identity:{},process:{env:{}},Buffer,URL,console})
+  vm.runInNewContext(source,{exports:computer,module:{exports:computer},require:(name:string)=>name==='./sentinel'?sentinel:name==='../commerce/product-identity'?identity:{},process:{env:{}},Buffer,URL,console})
   return computer
 }
 const clock=Date.parse('2026-10-18T18:45:00Z') // 19 October at destination, still 18 October UTC.
@@ -40,7 +41,7 @@ const db={from(table:string){let update:any,insert:any,single=false;const filter
 const exports:any={}
 const source=ts.transpileModule(fs.readFileSync('lib/agent/contextual-travel-watchers.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
 const mocks:any={'node:crypto':crypto,'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/services/cost-guard':{getCostBudget:async()=>({activeWebWatchersMax:20})},'@/lib/services/travel-time':travelTime,'@/lib/timezone':timezone,'./flight-leg-tracker':{normalizeFlightNo:(v:string)=>v}}
-vm.runInNewContext(source,{exports,module:{exports},require:(name:string)=>mocks[name]||{},Date:Clock,console,Intl})
+vm.runInNewContext(source,{exports,module:{exports},require:(name:string)=>name==='./sentinel'?sentinel:mocks[name]||{},Date:Clock,console,Intl})
 await check('post-arrival weather retains destination-local explicit occurrence date',()=>{
   const conditions=exports.desiredWebConditions([{...rows[0],depart_at:new Date(clock-7200000).toISOString(),arrive_at:new Date(clock-3600000).toISOString()}],'root','2026-10-22T00:00:00Z')
   const weather=conditions.find((r:any)=>r.condition.contextClass==='destination_weather').condition

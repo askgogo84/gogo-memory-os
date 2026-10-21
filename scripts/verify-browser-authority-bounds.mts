@@ -1,3 +1,4 @@
+import * as sentinel from '../lib/agent/sentinel'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
@@ -11,7 +12,7 @@ let browserStarts=0
 const actual:any={}
 const source=readFileSync('lib/agent/secure-computer.ts','utf8')+'\nexport const fixturePlanActions=planActions;'
 runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
- exports:actual,require:(name:string)=>name==='./planner-provider'?{
+ exports:actual,require:(name:string)=>name==='./sentinel'?sentinel:name==='./planner-provider'?{
   completeAgentPlanPrompt:async(prompt:string)=>{prompts.push(prompt);return JSON.stringify({approvedOperation:'booking',actions:[]})},
   completeVisionPrompt:async(prompt:string)=>{prompts.push(prompt);return JSON.stringify({action:'none'})},
  }:name==='./trust'?trust:name==='./secure-browser-redaction'?{redactBrowserSensitiveText:(value:string)=>value}:name==='./browser-owner-lock'?{acquireBrowserOwnerLock:async()=>{browserStarts++;throw new Error('Unexpected browser launch')}}:{},

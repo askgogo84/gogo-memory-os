@@ -1,3 +1,4 @@
+import * as sentinel from '../lib/agent/sentinel'
 // 11 Oct: the person asked for the real booking flow: open the venue, pick the slot, log in with
 // their number, ask for the OTP on WhatsApp, continue to the cart, and send a link to pay there.
 // This checks the pure rules, the routing words, and the real secure-browser loop with a fake
@@ -116,7 +117,7 @@ function load(file: string, mocks: Record<string, any>, extra = '') {
   const source = readFileSync(new URL(`../lib/agent/${file}`, import.meta.url), 'utf8') + extra
   const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   const exports: any = {}
-  runInNewContext(code, { exports, require: (name: string) => mocks[name] || (name === './browser-page-network' ? { browserPageAllowlist } : undefined) || (name === './draft-coverage' ? { draftObjectiveCovered } : undefined) || (name === './browser-evidence' ? browserEvidence : undefined) || (name === './browser-proxy' ? { resolveBrowserProxy: () => null, proxyAllowlistHost: () => null } : {}), process: { env: {} }, Buffer, URL, console, AbortSignal, setTimeout, clearTimeout })
+  runInNewContext(code, { exports, require:(name:string)=>name==='./sentinel'?sentinel:mocks[name] || (name === './browser-page-network' ? { browserPageAllowlist } : undefined) || (name === './draft-coverage' ? { draftObjectiveCovered } : undefined) || (name === './browser-evidence' ? browserEvidence : undefined) || (name === './browser-proxy' ? { resolveBrowserProxy: () => null, proxyAllowlistHost: () => null } : {}), process: { env: {} }, Buffer, URL, console, AbortSignal, setTimeout, clearTimeout })
   return exports
 }
 

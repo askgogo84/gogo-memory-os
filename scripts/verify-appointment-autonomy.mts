@@ -1,3 +1,4 @@
+import * as sentinel from '../lib/agent/sentinel'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 import assert from 'node:assert/strict'
@@ -130,13 +131,13 @@ const dependencies:any={
   './provider-booking':await import('../lib/agent/provider-booking.ts'),
   './life-event-engine':{},
 }
-runInNewContext(ts.transpileModule(followup,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:exportsFixture,require:(name:string)=>dependencies[name],console,Date,Intl,URL})
+runInNewContext(ts.transpileModule(followup,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:exportsFixture,require:(name:string)=>name==='./sentinel'?sentinel:dependencies[name],console,Date,Intl,URL})
 const actor={legacyTelegramId:42} as any
 const privatePlan='Use option 3 from your last reply. Turn it into a 95-minute plan for the parent and two children, including preparation and cleanup. State any assumptions; do not claim you remember their ages or preferences. Keep this as a private written plan and do not create reminders or contact anyone.'
 assert.equal(await exportsFixture.tryRunAppointmentFollowup({actor,surface:'web',text:privatePlan}),null,'the actual follow-up must not hijack a private family activity plan')
 assert.equal(browserCalls,0)
 const recoveryFixture:any={}
-runInNewContext(ts.transpileModule(recovery,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:recoveryFixture,require:(name:string)=>name==='./appointment-followup'?exportsFixture:dependencies[name],console,Date,Intl,URL})
+runInNewContext(ts.transpileModule(recovery,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:recoveryFixture,require:(name:string)=>name==='./sentinel'?sentinel:name==='./appointment-followup'?exportsFixture:dependencies[name],console,Date,Intl,URL})
 assert.equal(await recoveryFixture.tryRecoverAppointmentOption({actor,surface:'whatsapp',text:privatePlan}),null,'WhatsApp/API recovery also rejects unrelated option context')
 lastAssistant={content:'Appointment options · dentist\n3. Dentist\nBooking/provider page: https://clinic.example/appointments',created_at:new Date().toISOString()}
 assert.ok(await exportsFixture.tryRunAppointmentFollowup({actor,surface:'web',text:'Use option 3'}),'genuine current appointment selection still routes')
@@ -170,7 +171,7 @@ const apiDependencies:any={
  '@/lib/agent/appointment-followup-recovery':recoveryFixture,
  '@/lib/agent/general-planner':{prepareGeneralPlanForActor:async()=>null,tryRunGeneralPlan:async()=>({text:'Private activity plan',status:'completed',handledBy:'fixture-general-plan'})},
 }
-runInNewContext(ts.transpileModule(agentRoute,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:apiExports,require:(name:string)=>apiDependencies[name]||noOpModule,console,Date})
+runInNewContext(ts.transpileModule(agentRoute,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:apiExports,require:(name:string)=>name==='./sentinel'?sentinel:apiDependencies[name]||noOpModule,console,Date})
 const apiReply=await apiExports.POST({json:async()=>({text:privatePlan})})
 assert.equal(apiReply.status,200)
 assert.equal(apiReply.body.handledBy,'fixture-general-plan','real API must not preempt the private plan as an appointment')
