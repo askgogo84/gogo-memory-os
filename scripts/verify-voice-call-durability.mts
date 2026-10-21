@@ -130,7 +130,7 @@ await check('actual chat entry cannot call when task persistence fails', async (
   assert.doesNotMatch(reply.text, /Calling .* now/)
 })
 function processHarness(status='completed') {
-  const h = fakeDb(), exports:any={}, p={...plan(),test:true}
+  const h = fakeDb(), exports:any={}, p={...plan(),test:true,date:new Date(Date.now()+3*86400_000).toISOString().slice(0,10)}
   h.rows.push({id:'call-run',telegram_id:'123',type:'voice_call',status:'running',started_at:new Date().toISOString(),metadata_json:{plan:p,execution_id:'inert-execution'}})
   const mocks:any={'node:crypto':crypto,'@/lib/supabase-admin':{supabaseAdmin:h.db},'./voice-call-execution':execution,'@anthropic-ai/sdk':{__esModule:true,default:class {messages={create:async()=>({content:[{text:JSON.stringify({booked:true,confirmed_time:'8:00 pm',staff_name:'Fixture'})}]})}}}}
   runInNewContext(ts.transpileModule(readFileSync('lib/agent/voice-call.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
