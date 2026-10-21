@@ -57,4 +57,11 @@ for (const t of ['📞 Calling District 6 now from +[sensitive]. I\'ll message y
   assert.equal(g.guardChatActionClaims(t).text, g.NO_CALL_REPLY, t)
 for (const t of ['Should I call them for you?', 'Their number is +91 72599 06666, you can call them directly.', 'Remind me to call Divya'])
   assert.equal(g.guardChatActionClaims(t).blocked, false, t)
+// Venue number: trusted listing wins; a page that doesn't name the venue ranks lower
+const pick = v.pickVenuePhone([
+  { url: 'https://example.com/list', title: 'Best pubs', snippet: 'Call 080 1111 2222' },
+  { url: 'https://www.zomato.com/bangalore/district-6', title: 'District 6 Pub & Brewery', snippet: 'Phone +91 72599 06666' },
+], 'District 6')
+assert.deepEqual(pick, { phone: '+917259906666', source: 'from zomato.com' })
+assert.equal(v.pickVenuePhone([{ url: 'https://x.com', title: 'No number here', snippet: '4.2 rating' }], 'District 6'), null)
 console.log('verify-voice-call: ok')

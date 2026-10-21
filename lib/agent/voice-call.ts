@@ -208,14 +208,31 @@ async function latestAssistantText(telegramId: number) {
   return String((data || []).find((r: any) => r.role === 'assistant')?.content || '')
 }
 
-async function findVenuePhone(venue: string, area: string) {
-  const { searchWebResults } = await import('@/lib/web-search')
-  const results = await searchWebResults(`${venue} ${area || 'Bangalore'} phone number reservations`).catch(() => [] as any[])
+/** The best venue number from search results: trusted listings first, then any page naming the venue. Pure. */
+export function pickVenuePhone(results: Array<{ url?: string; title?: string; snippet?: string }>, venue: string) {
+  const trusted = /(?:^|\.)(?:zomato\.com|justdial\.com|swiggy\.com|district\.in|eazydiner\.com|magicpin\.in|google\.com|tripadvisor\.in|tripadvisor\.com)$/i
+  const name = String(venue || '').toLowerCase().split(/\s+/).filter(w => w.length > 2)
+  const hits: Array<{ phone: string; host: string; score: number }> = []
   for (const r of results || []) {
-    const phone = indianPhoneFrom(`${r.title || ''} ${r.snippet || ''}`)
-    if (phone) { let host = ''; try { host = new URL(String(r.url)).hostname.replace(/^www\./, '') } catch {} ; return { phone, source: host ? `from ${host}` : 'from a web listing' } }
+    const text = `${r.title || ''} ${r.snippet || ''}`
+    const phone = indianPhoneFrom(text)
+    if (!phone) continue
+    let host = ''; try { host = new URL(String(r.url)).hostname.replace(/^www\./, '') } catch {}
+    const named = name.length && name.every(w => text.toLowerCase().includes(w))
+    hits.push({ phone, host, score: (trusted.test(host) ? 2 : 0) + (named ? 1 : 0) })
   }
-  return null
+  hits.sort((a, b) => b.score - a.score)
+  const best = hits[0]
+  return best ? { phone: best.phone, source: best.host ? `from ${best.host}` : 'from a web listing' } : null
+}
+
+async function findVenuePhone(venue: string, area: string) {
+  // 21 Oct live: the same request found the Zomato number at 12:26 and nothing at 13:00 (results vary per search).
+  const { searchWebResults } = await import('@/lib/web-search')
+  const place = area || 'Bangalore'
+  const queries = [`${venue} ${place} phone number`, `${venue} ${place} contact number reservations`, `${venue} Bangalore zomato`]
+  const batches = await Promise.all(queries.map(q => searchWebResults(q).catch(() => [] as any[])))
+  return pickVenuePhone(batches.flat(), venue)
 }
 
 export async function tryVoiceCall(params: { actor: Actor; text: string; surface: 'web' | 'whatsapp' }): Promise<Reply | null> {
@@ -281,7 +298,9 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     if (!intent?.restaurant) return { text: 'Which restaurant should I call, and for when? For example: *call District 6 and book a table for 2 Saturday 8pm*.', handledBy: 'voice-call' }
     const explicit = indianPhoneFrom(cmd.text)
     const area = (cmd.text.match(/\bnear\s+([a-z0-9 .'-]{2,40}?)(?:\s+(?:for|on|at|this|tomorrow|today)\b|$)/i)?.[1] || '').trim()
-    const found = explicit ? { phone: explicit, source: 'the number you gave' } : await findVenuePhone(intent.restaurant, area)
+    const previous: any = await fs.getLatestFollowupState(tg, PLAN_STATE).catch(() => null)
+    const remembered = previous?.payload?.plan?.venue && String(previous.payload.plan.venue).toLowerCase() === intent.restaurant.toLowerCase() && !previous.payload.plan.test ? { phone: String(previous.payload.plan.to), source: String(previous.payload.plan.source || 'from your last plan') } : null
+    const found = explicit ? { phone: explicit, source: 'the number you gave' } : (await findVenuePhone(intent.restaurant, area)) || remembered
     if (!found) return { text: `I couldn't find a phone number for ${intent.restaurant}. Send it, like *call ${intent.restaurant} on 080 1234 5678 and book a table…*. Nothing was called.`, handledBy: 'voice-call' }
     const start = intent.preferredStart || '20:00'
     const window = flexWindowLabel(start, rr.reservationClockLabel)
