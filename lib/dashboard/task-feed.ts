@@ -5,6 +5,7 @@ import { getPendingBrowserHandoffs } from '@/lib/dashboard/human-handoffs'
 import { retiredRunReason } from '@/lib/agent/task-lifecycle'
 import { isStaleRunning } from '@/lib/agent/stale-runs'
 import { readableRunSummary } from '@/lib/dashboard/readable-summary'
+import { friendlyTaskTitle } from '@/lib/agent/task-title'
 import { GOGO_STATE_LINE, liveLineFor, stateForHandoff, stateForRun, type GogoAgentState } from '@/lib/gogo/agent-states'
 
 export type FeedTab = 'need' | 'radar' | 'recent'
@@ -58,7 +59,7 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
   for (const { first, count } of groups) {
     const state = stateForHandoff(first)
     need.push({
-      id: `ho-${first.id}`, tab: 'need', state, tag: state === 'otp' ? 'Code needed' : 'Sign-in needed', title: first.title,
+      id: `ho-${first.id}`, tab: 'need', state, tag: state === 'otp' ? 'Code needed' : 'Sign-in needed', title: friendlyTaskTitle(first.title),
       sub: count > 1 ? `Stopped here ${count} times. Latest: ${readableRunSummary(first.summary)}` : readableRunSummary(first.summary),
       live: GOGO_STATE_LINE[state], href: count > 1 ? '/dashboard/agent?section=approvals' : `/dashboard/activity/${first.id}/browser`,
       action: count > 1 ? 'Open' : 'Take control', at: first.updatedAt,
@@ -70,7 +71,7 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
   for (const r of ((running as any)?.data || []).filter((r: any) => !isStaleRunning(r, now) && !retiredRunReason(r))) {
     const state = stateForRun(r)
     const sub = readableRunSummary(r.summary) || 'Gogo is working on it.'
-    radar.push({ id: `run-${r.id}`, tab: 'radar', state, tag: 'Working now', title: r.title || 'Gogo task', sub, live: liveLineFor(state, sub), href: `/dashboard/activity/${r.id}`, action: 'Watch', at: r.updated_at || null })
+    radar.push({ id: `run-${r.id}`, tab: 'radar', state, tag: 'Working now', title: friendlyTaskTitle(r.title || 'Gogo task'), sub, live: liveLineFor(state, sub), href: `/dashboard/activity/${r.id}`, action: 'Watch', at: r.updated_at || null })
   }
   const workingCount = radar.length
   for (const w of ((watchers as any)?.data || [])) {
@@ -84,7 +85,7 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
     .slice(0, 12)
   const recentItems: FeedItem[] = recentRows.map(r => {
     const state = stateForRun(r)
-    return { id: `run-${r.id}`, tab: 'recent', state, tag: recentTag(String(r.status)), title: r.title || 'Gogo task', sub: readableRunSummary(r.summary) || 'Open the task to see what happened.', live: GOGO_STATE_LINE[state], href: `/dashboard/activity/${encodeURIComponent(String(r.id))}`, action: 'Details', at: r.updated_at || null }
+    return { id: `run-${r.id}`, tab: 'recent', state, tag: recentTag(String(r.status)), title: friendlyTaskTitle(r.title || 'Gogo task'), sub: readableRunSummary(r.summary) || 'Open the task to see what happened.', live: GOGO_STATE_LINE[state], href: `/dashboard/activity/${encodeURIComponent(String(r.id))}`, action: 'Details', at: r.updated_at || null }
   })
     // The tab count is the untruncated total, not the display rows (12 shown of 30 watches still says 30).
   const watcherTotal = Number((watchers as any)?.count ?? ((watchers as any)?.data || []).length)
