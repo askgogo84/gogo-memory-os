@@ -64,4 +64,7 @@ const pick = v.pickVenuePhone([
 ], 'District 6')
 assert.deepEqual(pick, { phone: '+917259906666', source: 'from zomato.com' })
 assert.equal(v.pickVenuePhone([{ url: 'https://x.com', title: 'No number here', snippet: '4.2 rating' }], 'District 6'), null)
+assert.match(src, /claude-haiku-4-5/, 'call outcome read by Haiku (Mercury reasoning ate its budget live)')
+assert.match(src, /maxTokens: 2000, label: 'voice_call_outcome'/)
+assert.match(src, /venuePart = parts \? parts\[1\]\.replace/, 'a rehearsal number is not part of the venue name')
 console.log('verify-voice-call: ok')
