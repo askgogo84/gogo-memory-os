@@ -13,6 +13,7 @@ import {
 } from './mission-tools'
 import { executeExactNamedPersistentList, hasExplicitNamedListIntent } from './persistent-list-verifier'
 import { dispatchThroughSameBrain } from './same-brain'
+import { executePersistentDriveRead, persistentDriveFailureReply } from './persistent-drive-read'
 import {
   createAutonomousRun,
   executeAutonomousRun,
@@ -32,9 +33,9 @@ function safe(value: unknown, max = 1800) {
 function normalizedMission(value:unknown){return safe(value,4000).toLowerCase()}
 function missionFingerprint(value:unknown){return createHash('sha256').update(normalizedMission(value)).digest('hex')}
 
-function persistentRunReply(run: {status?: unknown; summary?: unknown}, fallback: string) {
+function persistentRunReply(run: {status?: unknown; summary?: unknown; error?: unknown}, fallback: string) {
   if (run.status === 'outcome_unknown') return 'I couldn’t confirm the result of this request. I haven’t retried it because an earlier step may already have completed.'
-  if (run.status === 'failed') return 'I couldn’t finish this request. Check the task details for the step that stopped.'
+  if (run.status === 'failed') return persistentDriveFailureReply(run.error) || 'I couldn’t finish this request. Check the task details for the step that stopped.'
   return safe(run.summary || fallback)
 }
 
@@ -48,7 +49,7 @@ function supportsPersistentSafePlan(steps: GeneralPlanStep[]) {
 
 async function runMetadata(runId: string, actor: AgentActor) {
   const { data, error } = await supabaseAdmin.from('agent_runs')
-    .select('status,summary,progress,metadata_json')
+    .select('status,error,summary,progress,metadata_json')
     .eq('id', runId)
     .eq('telegram_id', String(actor.legacyTelegramId))
     .maybeSingle()
@@ -135,6 +136,7 @@ function registryFor(missionText: string): AutonomousToolRegistry {
   const handler = async (context: AutonomousToolContext) => {
     const step = await loadDefinition(context)
     if (step.tool === 'tasks') return verifiedTaskStep(context, step)
+    if (step.tool === 'files') return executePersistentDriveRead(context, step)
     if (step.tool === 'memory') {
       const result = await executeVerifiedMissionMemory({ actor: context.actor, step, missionText, messageId: `persistent-${context.idempotencyKey.slice(0,24)}` })
       return { status:'completed' as const, verified:true, output:{ ...result.output, text:safe(result.text,3500) } }
