@@ -8,6 +8,14 @@ import * as policy from '../lib/agent/policy'
 import * as binding from '../lib/agent/approval-binding'
 import * as ttl from '../lib/agent/approval-ttl'
 import { redactSecretShapedText } from '../lib/bot/memory-redaction'
+// Keep date validation, duplicate windows, leases and flight weekdays reproducible.
+const RealDate=globalThis.Date
+const fixtureNow=RealDate.parse('2026-10-22T00:00:00Z')
+class FixtureDate extends RealDate {
+ constructor(value?: string | number | Date) {super(value === undefined ? fixtureNow : value instanceof RealDate ? value.valueOf() : value)}
+ static now() {return fixtureNow}
+}
+const Date=FixtureDate
 const actor = {userId:'owner-a',legacyTelegramId:123,whatsappId:'inert-owner-a',name:'Fixture'}
 const task = (instruction:string) => ({tool:'tasks',title:instruction,instruction})
 const travel = (instruction:string) => ({tool:'travel',title:instruction,instruction})
