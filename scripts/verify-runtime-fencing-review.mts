@@ -74,4 +74,21 @@ await check('normal active execution and bounded active replanning remain usable
  assert.equal(h.tables.agent_steps.length,2);let calls=0
  await h.execute(async()=>{calls++;return{status:'completed',verified:true}});assert.equal(calls,1)
 })
+await check('requiresApproval suspends before a handler and resumes only its owned run approval',async()=>{
+ const h=harness();h.step.output_json.runtime.requiresApproval=true;let calls=0
+ const handler=async()=>{calls++;return{status:'completed',verified:true}}
+ await h.execute(handler);assert.equal(calls,0);assert.equal(h.run.status,'waiting_approval')
+ h.step.output_json.runtime.approvalId='bound';h.tables.agent_approvals.push({id:'bound',run_id:'run',telegram_id:'123',status:'approved'})
+ await h.runtime.releaseApprovedAutonomousStep({actor,runId:'run',stepKey:'first'});await h.execute(handler);assert.equal(calls,1)
+})
+await check('an approval for another run cannot release this step',async()=>{
+ const h=harness();h.step.output_json.runtime.approvalId='wrong';h.tables.agent_approvals.push({id:'wrong',run_id:'other',telegram_id:'123',status:'approved'})
+ await assert.rejects(h.runtime.releaseApprovedAutonomousStep({actor,runId:'run',stepKey:'first'}),/approval_required/)
+ assert.equal(h.step.output_json.runtime.approvalId,'wrong')
+})
+await check('checkpoint superseded by cancellation cannot report completed',async()=>{
+ const h=harness();const result=await h.execute(async()=>{h.run.status='failed';h.run.error='user_cancelled';h.step.status='cancelled';return{status:'completed',verified:true}})
+ assert.equal(result.executions[0].status,'superseded');assert.equal(h.tables.agent_activity.filter((v:any)=>v.event_type==='autonomous_step_completed').length,0)
+})
 if(failures)process.exitCode=1
+
