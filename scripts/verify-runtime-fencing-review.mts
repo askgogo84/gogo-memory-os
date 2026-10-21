@@ -145,4 +145,14 @@ await check('a discovered approval wait enables revalidation even on initially u
  await h.execute(async()=>{calls++;return{status:'completed',verified:true}})
  assert.equal(calls,1);assert.equal(h.step.output_json.runtime.requiresApproval,true);assert.equal(h.run.status,'failed')
 })
+for(const change of ['objective','payload','tool'] as const)await check('same-attempt '+change+' replacement cannot dispatch cached inputs',async()=>{
+ const h=harness();let calls=0;h.step.output_json.payload={target:'old'}
+ h.beforeWrite((table,value)=>{if(table==='agent_steps'&&value.status==='running')h.beforeWrite((t,v)=>{if(t==='agent_activity'&&v.event_type==='autonomous_step_started'){
+  if(change==='objective')h.run.metadata_json.objective='new objective'
+  else if(change==='payload')h.step.output_json.payload={target:'new'}
+  else h.step.tool_name='replacement-tool'
+ }})})
+ await h.execute(async()=>{calls++;return{status:'completed',verified:true}})
+ assert.equal(calls,0);assert.notEqual(h.step.status,'completed')
+})
 if(failures)process.exitCode=1
