@@ -56,7 +56,7 @@ export function parseCallCommand(raw: string): CallCommand | null {
 export type CallPlan = {
   venue: string; to: string; source: string; guestName: string; partySize: number | null
   date: string | null; dateLabel: string; timeLabel: string; flexWindow: string; seating: string
-  purpose: string; test: boolean; redials: number; createdAt: string
+  purpose: string; test: boolean; redials: number; createdAt: string; startClock?: string
 }
 
 /** The approved mock's call-plan card as WhatsApp text. Pure. */
@@ -83,6 +83,24 @@ export function flexWindowLabel(start: string, label: (clock: string) => string)
   return `between ${label(at(base - 30))} and ${label(at(base + 60))}`
 }
 
+/** "8:00 pm" / "8pm" / "20:00" -> "20:00", else null. Pure. */
+export function clock24(label: string | null | undefined): string | null {
+  const m = String(label || '').trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i)
+  if (!m) return null
+  let h = Number(m[1]); const min = Number(m[2] || 0); const ap = (m[3] || '').toLowerCase()
+  if (ap === 'pm' && h < 12) h += 12
+  if (ap === 'am' && h === 12) h = 0
+  return h < 24 && min < 60 ? `${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}` : null
+}
+
+/** The booked start as an ISO instant (IST), or null when the date or time is unknown. Pure. */
+export function bookedStartAt(plan: Pick<CallPlan, 'date' | 'startClock' | 'timeLabel'>, outcome: Pick<CallOutcome, 'confirmedTime'> | null): string | null {
+  const clock = clock24(outcome?.confirmedTime) || plan.startClock || clock24(plan.timeLabel)
+  if (!plan.date || !clock) return null
+  const ms = Date.parse(`${plan.date}T${clock}:00+05:30`)
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null
+}
+
 export type CallOutcome = { booked: boolean; confirmedTime: string | null; staffName: string | null; callbackAt: string | null; notes: string }
 
 /** Parse the summariser's JSON; anything unclear counts as not booked. Pure. */
@@ -102,15 +120,17 @@ const FAIL_STATUS: Record<string, string> = { 'no-answer': "nobody picked up", b
 export const TERMINAL = new Set(['completed', ...Object.keys(FAIL_STATUS)])
 
 /** What the person reads after the call. Pure. */
-export function callResultText(p: CallPlan, status: string, outcome: CallOutcome | null, transcriptTail = '') {
+export function callResultText(p: CallPlan, status: string, outcome: CallOutcome | null, transcriptTail = '', saved = false) {
   const head = `📞 ${p.venue}`
   if (status !== 'completed') return `${head}: ${FAIL_STATUS[status] || "the call didn't complete"}. Nothing was booked.${p.test ? '' : p.redials < MAX_REDIALS ? '\nSay *call again* to retry.' : ''}`
   if (p.test) return `${head}: test call finished. Tell me how it sounded, and say *call District 6…* style requests when you're ready.`
   if (!outcome) return `${head}: the call finished, but I couldn't read a clear answer from it, so I'm not treating it as booked.${transcriptTail ? `\nLast words on the call: "${transcriptTail}"` : ''}`
   if (outcome.booked) {
-    return [`*Booked by phone* · ${p.dateLabel}, ${outcome.confirmedTime || p.timeLabel}, ${p.partySize || 2} guests, under ${p.guestName}.`,
+    // 21 Oct live: the notes line repeated the confirmation ("Reservation for 2 … confirmed under Goverdhan").
+    return [`*Booked by phone* · ${p.dateLabel.replace(/^on\s+/i, '')}, ${outcome.confirmedTime || p.timeLabel}, ${p.partySize || 2} guests, under ${p.guestName}.`,
       outcome.staffName ? `Confirmed by ${outcome.staffName} on the call.` : 'Confirmed by the restaurant on the call.',
-      outcome.notes ? outcome.notes : '', 'This is a phone confirmation, not a written booking ID.'].filter(Boolean).join('\n')
+      saved ? 'Saved to My bookings, with a reminder 2 hours before.' : '',
+      'This is a phone confirmation, not a written booking ID.'].filter(Boolean).join('\n')
   }
   return [`${head}: not booked. ${outcome.notes || 'They did not confirm a table.'}`,
     outcome.callbackAt ? `They asked to be called back ${outcome.callbackAt}.` : '',
@@ -308,13 +328,35 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     plan = { venue: intent.restaurant, to: found.phone, source: found.source, guestName, partySize: intent.partySize || 2, date: intent.requestedDate || null,
       dateLabel: intent.requestedDate ? rr.reservationDayLabel(intent.requestedDate, start) : 'today', timeLabel: rr.reservationClockLabel(start),
       flexWindow: window, seating: /smok/i.test(cmd.text) ? (/non[\s-]?smok/i.test(cmd.text) ? 'non-smoking' : 'smoking') : 'no preference',
-      purpose: `Book a table for ${intent.partySize || 2} people at ${intent.restaurant}.`, test: false, redials: 0, createdAt: now }
+      purpose: `Book a table for ${intent.partySize || 2} people at ${intent.restaurant}.`, test: false, redials: 0, createdAt: now, startClock: start }
   }
   await fs.saveFollowupState(tg, PLAN_STATE, { plan })
   return { text: callPlanText(plan), handledBy: 'voice-call-plan' }
 }
 
 // ---- cron: read finished calls and report ----------------------------------------------------------------------
+
+/** A venue's yes on the call becomes a booking in My bookings plus a 2-hour reminder (approved mock). */
+async function recordPhoneBooking(telegramId: string, executionId: string, plan: CallPlan, outcome: CallOutcome): Promise<boolean> {
+  const startAt = bookedStartAt(plan, outcome)
+  if (!startAt) return false
+  const now = new Date().toISOString()
+  const { error } = await supabaseAdmin.from('life_events').upsert({
+    telegram_id: telegramId, event_type: 'reservation', subtype: 'phone_booking', source: 'voice_call',
+    title: `Table at ${plan.venue} · ${plan.partySize || 2} guests (phone booking)`.slice(0, 240), provider: 'phone',
+    start_at: startAt, end_at: new Date(Date.parse(startAt) + 90 * 60_000).toISOString(), timezone: 'Asia/Kolkata', location: null,
+    lifecycle_state: 'planned', participants: [],
+    preferences_json: { partySize: plan.partySize, guestName: plan.guestName, seating: plan.seating },
+    metadata_json: { restaurant: plan.venue, phone: plan.to, bookingStatus: 'confirmed_by_phone', confirmedBy: outcome.staffName, executionId },
+    source_refs: [], dedupe_key: `voice_call:${executionId}`, updated_at: now,
+  }, { onConflict: 'telegram_id,dedupe_key' })
+  if (error) throw new Error(error.message)
+  const remindAt = Date.parse(startAt) - 2 * 3600_000
+  if (remindAt > Date.now()) {
+    await supabaseAdmin.from('reminders').insert({ telegram_id: Number(telegramId), chat_id: Number(telegramId), message: `Table at ${plan.venue} in 2 hours (${plan.partySize || 2} guests, under ${plan.guestName}).`, remind_at: new Date(remindAt).toISOString(), sent: false, timezone: 'Asia/Kolkata' })
+  }
+  return true
+}
 
 export async function processVoiceCalls(deps: { send: (to: string, text: string) => Promise<any> }) {
   const { data: runs } = await supabaseAdmin.from('agent_runs').select('id,telegram_id,metadata_json,started_at').eq('type', 'voice_call').eq('status', 'running').limit(10)
@@ -344,7 +386,9 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
         outcome = parseOutcome(r?.text || '')
       }
     }
-    const text = callResultText(plan, TERMINAL.has(status) ? status : 'failed', outcome, transcript.split('\n').filter(Boolean).slice(-1)[0]?.slice(0, 160) || '')
+    let saved = false
+    if (status === 'completed' && outcome?.booked && !plan.test) saved = await recordPhoneBooking(String(run.telegram_id), String(meta.execution_id), plan, outcome).catch((err: any) => { console.error('VOICE_CALL_RECORD_FAILED:', run.id, String(err?.message || err).slice(0, 160)); return false })
+    const text = callResultText(plan, TERMINAL.has(status) ? status : 'failed', outcome, transcript.split('\n').filter(Boolean).slice(-1)[0]?.slice(0, 160) || '', saved)
     const at = new Date().toISOString()
     await supabaseAdmin.from('agent_runs').update({ status: status === 'completed' ? 'completed' : 'failed', progress: 100, summary: text.slice(0, 500), completed_at: at, updated_at: at,
       metadata_json: { ...meta, final_status: status, outcome, recording_url: exec?.telephony_data?.recording_url || null } }).eq('id', run.id).eq('status', 'running')
