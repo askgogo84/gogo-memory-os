@@ -174,6 +174,13 @@ export async function POST(req: NextRequest) {
       await saveConversation(user.telegram_id,text,instamart.text)
       return NextResponse.json(instamart)
     }
+    // Phone calls (Bolna): a call plan needs an explicit "yes call"; "test call me" rings the owner's own phone.
+    const voiceMod:any=/^\s*(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?(?:call|redial|phone|ring|test\s+call|do\s+a\s+test\s+call|make\s+a\s+test\s+call|place\s+the\s+call|try\s+again)\b|^\s*(?:no|don'?t\s+call|do\s+not\s+call|cancel\s+(?:the\s+)?call)[.!]?\s*$/i.test(text)?await import('@/lib/agent/voice-call').catch(()=>null):null
+    const voice=typeof voiceMod?.tryVoiceCall==='function'?await Promise.resolve().then(()=>voiceMod.tryVoiceCall({actor,text,surface:'web'})).catch((err:any)=>{console.error('VOICE_CALL_FAILED:',String(err?.message||err).slice(0,160));return null}):null
+    if(voice){
+      await saveConversation(user.telegram_id,text,voice.text)
+      return NextResponse.json(voice)
+    }
     // A short reply to the question Gogo just asked ("This Saturday 8pm" after "What time should I
     // book Toit for?") resumes that request before any feature matcher reads it as something new.
     // Resolved once per turn here; processIncomingMessage below is told so and skips the same reads.
