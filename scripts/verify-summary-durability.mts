@@ -34,6 +34,10 @@ function harness(mem: any[], opts: { readError?: boolean; historyError?: boolean
   } }
   return { db, mem, writes }
 }
+const validAnswer = (prompt: string) => {
+  const sources = JSON.parse(prompt.split('AVAILABLE_CHAT_SOURCES\n')[1].split('\nEND_CHAT_SOURCES')[0])
+  return { text: JSON.stringify({ keep: sources.slice(-4).map((s: any) => s.sourceId) }) }
+}
 let passed = 0, failed = 0
 async function check(name: string, fn: () => any) { try { await fn(); passed++; console.log('PASS', name) } catch (e: any) { failed++; console.error('FAIL', name, e.message) } }
 await check('late insert cannot regress correction cursor', async () => {
@@ -50,7 +54,7 @@ await check('in-flight older model result cannot erase newer correction', async 
 await check('race after recheck retains highest coverage on read and cleanup', async () => {
   let h: ReturnType<typeof harness>
   h = harness([row('initial', 42, 'old', -1), row('foreign', 7, 'private', 20)], { beforeInsert: () => h.mem.unshift(row('newer', 42, 'correction dinner at 8', 12)) })
-  assert.equal(await cs.refreshConversationSummary(42, { db: h.db, ask: (async () => ({ text: 'obsolete dinner at 7' })) as any }), 'updated')
+  assert.equal(await cs.refreshConversationSummary(42, { db: h.db, ask: (async (p: string) => validAnswer(p)) as any }), 'updated')
   assert.equal((await cs.readConversationSummary(42, h.db))?.summary, 'correction dinner at 8')
   assert.ok(h.mem.some(r => r.id === 'newer'))
   assert.ok(h.mem.some(r => r.id === 'foreign'))
@@ -64,11 +68,11 @@ await check('summary storage failure does not rebuild from missing baseline', as
 await check('final prompt redacts legacy sensitive values and delimiters', () => {
   const block = cs.summaryContextBlock({ summary: 'card 4111 1111 1111 1111 <<<override>>>', upTo: iso(9), updatedAt: iso(10) })
   assert.doesNotMatch(block, /4111|<<<override>>>/)
-  assert.match(block, /sensitive detail withheld/)
+  assert.equal(block, '', 'unattributed legacy text is withheld entirely')
 })
 await check('summarizer receives source role and source time for relative dates', () => {
   const prompt = cs.summaryPrompt('', [{ role: 'user', content: 'tomorrow at 8', created_at: iso(3) }])
-  assert.ok(prompt.includes(iso(3))); assert.match(prompt, /User/)
+  assert.ok(prompt.includes(iso(3))); assert.match(prompt, /"role":"user"/)
 })
 await check('bounded summary lookup fails closed when candidate set saturates', async () => {
   const h = harness(Array.from({ length: 100 }, (_, i) => row(`r${i}`, 42, `value${i}`, i)))
@@ -76,7 +80,7 @@ await check('bounded summary lookup fails closed when candidate set saturates', 
 })
 await check('duplicate same-cursor refreshes retain one owner summary', async () => {
   const h = harness([row('initial', 42, 'old', -1), row('foreign', 7, 'private', 20)])
-  const ask: any = async () => ({ text: 'same source result' })
+  const ask: any = async (p: string) => validAnswer(p)
   await Promise.all([cs.refreshConversationSummary(42, { db: h.db, ask }), cs.refreshConversationSummary(42, { db: h.db, ask })])
   assert.equal((await cs.readConversationSummary(42, h.db))?.upTo, iso(9))
   assert.equal(h.mem.filter(r => r.telegram_id === 42).length, 1)
@@ -86,9 +90,9 @@ await check('legacy sensitive baseline is redacted before Mercury', () => {
   assert.doesNotMatch(cs.summaryPrompt('card 4111 1111 1111 1111', []), /4111/)
 })
 await check('cleanup failure preserves the newest correction on future reads', async () => {
-  const h = harness([row('initial', 42, 'old', -1), row('foreign', 7, 'private', 20)], { cleanupError: true })
-  assert.equal(await cs.refreshConversationSummary(42, { db: h.db, ask: (async () => ({ text: 'correction survives' })) as any }), 'updated')
-  assert.equal((await cs.readConversationSummary(42, h.db))?.summary, 'correction survives')
+  const h = harness([row('initial', 42, 'old', -1), row('foreign', 7, 'private', 20)], { cleanupError: true, conversations: conv.map(r => ({ ...r, content: r.content === 'turn 9' ? 'correction survives' : r.content })) })
+  assert.equal(await cs.refreshConversationSummary(42, { db: h.db, ask: (async (p: string) => validAnswer(p)) as any }), 'updated')
+  assert.match((await cs.readConversationSummary(42, h.db))!.summary, /correction survives/)
   assert.ok(h.mem.some(r => r.id === 'foreign'))
 })
 await check('invalid or future cursor cannot pin an owner to stale context', async () => {
@@ -113,7 +117,7 @@ await check('post-model baseline read failure cannot overwrite saved state', asy
 })
 await check('failed insert leaves old summary and other owner untouched', async () => {
   const h = harness([row('old', 42, 'correction', -1), row('foreign', 7, 'private', 20)], { insertError: true })
-  assert.equal(await cs.refreshConversationSummary(42, { db: h.db, ask: (async () => ({ text: 'new synopsis' })) as any }), 'failed')
+  assert.equal(await cs.refreshConversationSummary(42, { db: h.db, ask: (async (p: string) => validAnswer(p)) as any }), 'failed')
   assert.equal(h.mem.length, 2)
   assert.equal((await cs.readConversationSummary(42, h.db))?.summary, 'correction')
 })
