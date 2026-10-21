@@ -59,12 +59,12 @@ await check('stale queued snapshot cannot reuse a newer attempt or bypass backof
 })
 await check('cancelled run cannot release an interrupted approval',async()=>{
  const h=harness();h.run.status='failed';h.run.error='user_cancelled';h.step.output_json.runtime.approvalId='a'
- h.tables.agent_approvals.push({id:'a',telegram_id:'123',status:'approved'})
+ h.tables.agent_approvals.push({id:'a',run_id:'run',telegram_id:'123',status:'approved'})
  await assert.rejects(h.runtime.releaseApprovedAutonomousStep({actor,runId:'run',stepKey:'first'}),/terminal|inactive|superseded/)
  assert.equal(h.step.output_json.runtime.approvalId,'a');assert.equal(h.run.status,'failed')
 })
 await check('stale approval release cannot clear a newly replaced approval',async()=>{
- const h=harness();h.step.output_json.runtime.approvalId='a';h.tables.agent_approvals.push({id:'a',telegram_id:'123',status:'approved'})
+ const h=harness();h.step.output_json.runtime.approvalId='a';h.tables.agent_approvals.push({id:'a',run_id:'run',telegram_id:'123',status:'approved'})
  h.beforeWrite((table)=>{assert.equal(table,'agent_steps');h.step.output_json.runtime.approvalId='b'})
  await assert.rejects(h.runtime.releaseApprovedAutonomousStep({actor,runId:'run',stepKey:'first'}),/superseded|changed/)
  assert.equal(h.step.output_json.runtime.approvalId,'b')
@@ -91,4 +91,5 @@ await check('checkpoint superseded by cancellation cannot report completed',asyn
  assert.equal(result.executions[0].status,'superseded');assert.equal(h.tables.agent_activity.filter((v:any)=>v.event_type==='autonomous_step_completed').length,0)
 })
 if(failures)process.exitCode=1
+
 
