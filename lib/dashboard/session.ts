@@ -164,6 +164,9 @@ export function redeemCode(code: string): Promise<string | null> {
 // Create a session row for a redeemed telegram_id and return its random id (the
 // cookie value). 32 random bytes, base64url — carries no user information.
 export async function createSession(telegramId: string): Promise<string | null> {
+  // Blocked accounts (admin console) cannot start a dashboard session.
+  const { data: access } = await supabaseAdmin.from('users').select('access_status').eq('telegram_id', Number(telegramId)).maybeSingle()
+  if ((access as any)?.access_status === 'blocked') return null
   const sessionId = randomBytes(32).toString('base64url')
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString()
   const { error } = await supabaseAdmin

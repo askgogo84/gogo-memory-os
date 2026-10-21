@@ -323,6 +323,9 @@ const webhook=executeModule('app/api/webhooks/whatsapp/route.ts',{
   }},
   '@/lib/bot/handlers/friend-reminders':{...actual['@/lib/bot/handlers/friend-reminders'],isFriendReminderFollowupCandidate:()=>false},
   '@/lib/bot/resolve-user':{resolveUser:async()=>fixtureUser},
+  // Access gate (admin console v1): the fixture user already has access.
+  '@/lib/access/gate':{checkWhatsAppAccess:async()=>({allow:true,reason:'user'})},
+  '@/lib/metering/core':{meterAs:()=>{}},
   '@/lib/agent/actor':{resolveAgentActor:async()=>({userId:'owner',legacyTelegramId:42,whatsappId:fixtureUser.whatsappId,name:'Gogo'})},
   '@/lib/bot/handlers/shared-memory':{handleBucketCommand:async()=>null},
   '@/lib/channels/whatsapp':{sendWhatsAppMessage:async(_to:string,text:string)=>{sent.push(text)},sendWhatsAppTyping:async()=>{}},
@@ -449,6 +452,7 @@ const web=executeModule('app/api/dashboard/chat/route.ts',{
   '@/lib/agent/approved-browser-worker':{triggerBookingOtpResume:async()=>'failed'},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(text:string)=>text},
   '@/lib/feature-intents':realFeature,
+  '@/lib/metering/core':{meterAs:()=>{}},
 })
 const postWeb=(text:string,origin='https://fixture.invalid')=>{
   const req=new Request('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin,'content-type':'application/json'},body:JSON.stringify({text})})

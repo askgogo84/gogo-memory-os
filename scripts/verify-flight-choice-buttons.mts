@@ -54,6 +54,7 @@ const wlib = load('lib/whatsapp.ts', {
   './qa-trace': { qaTraceReply: () => {} },
   twilio: { default: () => twilioClient },
   '@/lib/services/delivery-callback': { deliveryCallbackUrl: () => '', persistAcceptedChunk: async () => {} },
+  '@/lib/metering/record': { recordMeterEvent: async () => {} },
 }, { TWILIO_ACCOUNT_SID: 'ACtest', TWILIO_AUTH_TOKEN: 'test', TWILIO_WHATSAPP_NUMBER: '+15555550100' })
 await wlib.sendWhatsAppChoice('+15555550101', 'cabin', 'Bengaluru to Singapore on 27 Oct 2026. Which cabin?', choices.FLIGHT_CHOICES.cabin.options)
 await wlib.sendWhatsAppChoice('+15555550101', 'cabin', 'second send', choices.FLIGHT_CHOICES.cabin.options)

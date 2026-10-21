@@ -16,6 +16,7 @@ import { randomUUID } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { buildReferenceFxReply } from '@/lib/bot/handlers/reference-fx'
 import { getSession } from '@/lib/dashboard/session'
+import { meterAs } from '@/lib/metering/core'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { routeFeatureIntent } from '@/lib/feature-intents'
 import { processIncomingMessage } from '@/lib/bot/process-message'
@@ -153,6 +154,7 @@ export async function POST(req: NextRequest) {
   __trace.mark('user')
   if (!user) return NextResponse.json({ error: 'user_not_found' }, { status: 404 })
   if (!user.whatsapp_id) return NextResponse.json({ error: 'whatsapp_not_linked' }, { status: 409 })
+  meterAs(session.telegramId, 'dashboard')
 
   const body = await req.json().catch(() => null) as any
   __trace.mark('body')
