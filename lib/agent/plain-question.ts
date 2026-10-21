@@ -11,7 +11,7 @@ const NOT_PLAIN = new RegExp([
   // the user, their data and their accounts
   String.raw`\b(?:my|me|mine|i|i'm|im|i've|i'd|we|our|us)\b`,
   // tasks, follow-ups and Gogo's own work
-  String.raw`\b(?:remind|reminders?|alert|alerts|notify|watch(?:es|ing)?|track(?:ing)?|monitor|task|tasks|working on|status|update on|progress|approv\w*|confirm|cancel|stop|pause|resume|retry|again)\b`,
+  String.raw`\b(?:left to do|to-?dos?|remind|reminders?|alert|alerts|notify|watch(?:es|ing)?|track(?:ing)?|monitor|task|tasks|working on|status|update on|progress|approv\w*|confirm|cancel|stop|pause|resume|retry|again)\b`,
   // actions in the world
   String.raw`\b(?:book|booking|bookings|reserve|reservation|order|orders|buy|purchase|pay|payment|send|e-?mails?|mails?|mailbox|unread|messages?|whatsapp|call|text|schedule|reschedule|move|add|create|set|save|remember|forget|delete|remove|change|edit|connect|sign ?in|log ?in|login|password|otp|code)\b`,
   // answered by deterministic handlers (clock, date, weather, unit/currency maths), never a web snippet

@@ -325,7 +325,9 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     if (!found) return { text: `I couldn't find a phone number for ${intent.restaurant}. Send it, like *call ${intent.restaurant} on 080 1234 5678 and book a table…*. Nothing was called.`, handledBy: 'voice-call' }
     const start = intent.preferredStart || '20:00'
     const window = flexWindowLabel(start, rr.reservationClockLabel)
-    plan = { venue: intent.restaurant, to: found.phone, source: found.source, guestName, partySize: intent.partySize || 2, date: intent.requestedDate || null,
+    plan = { venue: intent.restaurant, to: found.phone, source: found.source, guestName, partySize: intent.partySize || 2,
+      // The call says "today" when no day was named, so the booking record uses today's date too (round 6, #36).
+      date: intent.requestedDate || new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()),
       dateLabel: intent.requestedDate ? rr.reservationDayLabel(intent.requestedDate, start) : 'today', timeLabel: rr.reservationClockLabel(start),
       flexWindow: window, seating: /smok/i.test(cmd.text) ? (/non[\s-]?smok/i.test(cmd.text) ? 'non-smoking' : 'smoking') : 'no preference',
       purpose: `Book a table for ${intent.partySize || 2} people at ${intent.restaurant}.`, test: false, redials: 0, createdAt: now, startClock: start }

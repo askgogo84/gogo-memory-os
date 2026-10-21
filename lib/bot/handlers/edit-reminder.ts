@@ -178,7 +178,7 @@ function isShowReminderCommand(input: string) {
   )
 }
 
-function isCancelReminderCommand(input: string) {
+export function isCancelReminderCommand(input: string) {
   const lower = input.toLowerCase().trim()
 
   return (
@@ -541,7 +541,7 @@ export async function cancelReminder(telegramId: number, input: string) {
   return `🗑️ *Cancelled* *${name}*\n${formatReminderWhen(reminder.remind_at)}`
 }
 
-function isSkipReminderCommand(input: string) {
+export function isSkipReminderCommand(input: string) {
   const lower = input.toLowerCase().trim()
   return /^skip\b/i.test(lower) || lower === 'not today'
 }

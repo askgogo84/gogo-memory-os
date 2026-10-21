@@ -679,8 +679,18 @@ export function isAssetRetrievalCommand(text: string): boolean {
 // the ticket screenshot (QR, Audi 04, K18–K20, TSAJKDX) was saved the day before. A short ask naming a ticket,
 // QR or pass is a retrieval, unless it is about booking, buying or cancelling one.
 const TICKET_NOUN = /\b(?:tickets?|qr(?:\s*code)?|boarding\s*pass|e-?tickets?|m-?tickets?|booking\s+confirmation)\b/i
+// 21 Oct live (round 6, #23): "What do you remember about my Jailer booking?" was answered by chat, which said no
+// ticket was saved although the QR was. Asking what Gogo remembers or has about a named booking is a retrieval.
+// A bare "my bookings" stays with the bookings list.
+const BOOKING_RECALL_RE = /\b(?:remember|know|have|saved?)\b[^?]{0,40}?\b(?:about|on|for)\s+(?:my|the)\s+[a-z0-9][\w' .&-]{1,40}?\s+(?:booking|reservation|tickets?|show|movie)\b/i
+export function isBookingRecallAsk(text: string): boolean {
+  const t = String(text || '').toLowerCase().trim()
+  if (t.length > 120 || /\b(?:book|buy|purchase|reserve|cancel|refund)\b/.test(t)) return false
+  return BOOKING_RECALL_RE.test(t)
+}
 export function isTicketRetrievalAsk(text: string): boolean {
   const t = String(text || '').toLowerCase().trim()
+  if (isBookingRecallAsk(t)) return true
   if (!TICKET_NOUN.test(t)) return false
   if (/\b(?:book|buy|purchase|reserve|cancel|refund|price|cost|how much|available|availability|get\s+tickets?\s+for)\b/.test(t)) return false
   const words = t.split(/\s+/).filter(Boolean).length
@@ -1055,7 +1065,7 @@ export async function buildAssetRetrievalReply(
 // life_events.metadata_json.credential.documentId (and screenshotEvidence / a ticket source_ref).
 // "<event> qr code / ticket" now finds the booking by name, then sends that exact document.
 
-const TICKET_QUERY_STOP = new Set(['ticket', 'tickets', 'code', 'boarding', 'pass', 'eticket', 'mticket', 'etickets', 'mtickets', 'booking', 'confirmation', 'show', 'send', 'share', 'give', 'find', 'get', 'pull', 'open', 'where', 'need', 'the', 'for', 'please', 'movie', 'event', 'tonight', 'today', 'tomorrow', 'and', 'with', 'from', 'this', 'that', 'saved', 'image', 'photo', 'screenshot'])
+const TICKET_QUERY_STOP = new Set(['ticket', 'tickets', 'code', 'boarding', 'pass', 'eticket', 'mticket', 'etickets', 'mtickets', 'booking', 'confirmation', 'show', 'send', 'share', 'give', 'find', 'get', 'pull', 'open', 'where', 'need', 'the', 'for', 'please', 'movie', 'event', 'tonight', 'today', 'tomorrow', 'and', 'with', 'from', 'this', 'that', 'saved', 'image', 'photo', 'screenshot', 'what', 'you', 'remember', 'about', 'know', 'tell', 'have', 'does', 'did', 'do', 'my', 'reservation', 'reservations', 'bookings'])
 
 export function ticketQueryTokens(text: string): string[] {
   return normalizeWords(String(text || '').replace(/\b[em]-tickets?\b/gi, ' ')).split(' ').filter((t) => t.length >= 3 && !TICKET_QUERY_STOP.has(t) && t !== 'qr')

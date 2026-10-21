@@ -6,8 +6,16 @@ export type DirectWhatsappReply = {
   saveMemory?: string | null
 }
 
+/** "Hi", "hello!", "hey gogo" — trailing punctuation and a name after the greeting are fine. */
 export function isGreeting(input: string) {
-  return /^(hi|hello|hey|start|\/start|hi askgogo|hello askgogo|hey askgogo|start askgogo|askgogo)$/i.test(String(input || '').trim().toLowerCase())
+  const t = String(input || '').trim().toLowerCase().replace(/[\s!.?,]+$/g, '')
+  return /^(?:hi+|hello|hey|hii|hola|namaste|start|\/start)(?:\s+(?:there|askgogo|gogo))?$|^askgogo$/i.test(t)
+}
+
+/** "help", "What can you do?", "show me the menu" — the help menu on WhatsApp and the dashboard. */
+export function isHelpAsk(input: string) {
+  const t = String(input || '').trim().toLowerCase().replace(/[\s!.?,]+$/g, '').replace(/^(?:please|pls|hey gogo|gogo)[,\s]+/, '')
+  return /^(?:\/?help|menu|commands|features|what (?:all )?can (?:you|askgogo|gogo) do(?: for me)?|what do you do|how do (?:i|you) use (?:you|askgogo|this)|show (?:me )?(?:the )?(?:help|menu|features|commands)|what are your features)$/.test(t)
 }
 
 export function getDirectWhatsappPremiumReply(input: string, userName?: string): DirectWhatsappReply | null {
@@ -19,14 +27,7 @@ export function getDirectWhatsappPremiumReply(input: string, userName?: string):
     return { mediaUrl: null, text: buildWelcomeBack(userName) }
   }
 
-  if (
-    lower === 'help' ||
-    lower === '/help' ||
-    lower === 'menu' ||
-    lower === 'commands' ||
-    lower === 'what can you do' ||
-    lower === 'features'
-  ) {
+  if (isHelpAsk(raw)) {
     return { text: HELP_MENU }
   }
 

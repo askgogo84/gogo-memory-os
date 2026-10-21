@@ -233,6 +233,11 @@ export async function runUnderstandFirst(p: {
       const rail: any = await import('./train-research').catch(() => null)
       if (rail?.isTrainResearchRequest?.(text)) return none('train_specialist')
     }
+    // Round 6 (#23): "What do you remember about my Jailer booking?" belongs to the saved-ticket lookup, not chat.
+    if (/\b(?:remember|know)\b/i.test(text)) {
+      const assets: any = await import('../services/asset-memory').catch(() => null)
+      if (assets?.isBookingRecallAsk?.(text)) return none('ticket_recall_specialist')
+    }
     if (!p.deps?.callModel && !String(process.env.TYPESAFE_API_KEY || '').trim()) return none('not_configured')
     const budget = Math.max(200, Math.min(p.deps?.budgetMs ?? UNDERSTAND_FIRST_BUDGET_MS, UNDERSTAND_FIRST_BUDGET_MS))
     const now = p.deps?.now || new Date()

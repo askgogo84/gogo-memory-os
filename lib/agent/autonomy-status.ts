@@ -226,7 +226,12 @@ function formatShortDigest(input:AutonomyDigestInput){
 function formatFullTaskList(input:AutonomyDigestInput){
   const sections:string[]=[]
   const add=(title:string,items:string[])=>{if(items.length)sections.push(`*${title}*\n${items.map(item=>`• ${item}`).join('\n')}`)}
-  add('Needs you',waitingItems(input))
+  // Round 6 (#26, #27): the full list led with paused tasks from days ago (Instagram, Croma). Paused tasks older
+  // than 3 days move to the end, under their own heading, instead of leading as things that need you now.
+  const recentWaiting=waitingItems(input,{recentOnly:true})
+  const recentKeys=new Set(recentWaiting.map(item=>JSON.stringify(item)))
+  const olderWaiting=waitingItems(input).filter(item=>!recentKeys.has(JSON.stringify(item)))
+  add('Needs you',recentWaiting)
   const runLine=(run:any)=>{
     const state=String(run.status)==='queued'?'queued, not started yet':'running'
     const at=fmt(run.updated_at,input.timezone)
@@ -237,6 +242,7 @@ function formatFullTaskList(input:AutonomyDigestInput){
   add('Open loops',groupLabels(input.openLoops.map(loop=>clip(loop.title,90)).filter(Boolean)))
   add('Coming up',input.events.map(e=>`${clip(e.title,90)}${fmt(e.start_at,input.timezone)?` — ${fmt(e.start_at,input.timezone)}`:''}`))
   add('Things I noticed',groupLabels(input.ideas.map(i=>clip(i.title,90)).filter(Boolean)))
+  add('Older paused (over 3 days, not running)',olderWaiting)
   if(!sections.length)return 'Nothing is running in the background and nothing is waiting on you right now.'
   return sections.join('\n\n')
 }

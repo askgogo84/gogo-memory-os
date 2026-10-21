@@ -62,6 +62,18 @@ function startTrace(surface: string) {
 
 export const dynamic = 'force-dynamic'
 
+// Round 6 (#7): redaction can land inside a link's address ("…/[sensitive detail withheld].cms"); such a link is
+// broken, so keep its words and drop the address. Inlined so strict route harnesses keep their dependency maps.
+function safeReplyText(raw: string): string {
+  const text = redactSecretShapedText(raw)
+  if (!/detail withheld\]/i.test(text)) return text
+  const marker = /\[(?:sensitive |authentication )?detail withheld\]/i
+  return text
+    .replace(/\[([^\]]*?)\]\(([^)]*)\)/g, (m, label, href) => (!marker.test(href) && !marker.test(label) ? m : marker.test(label) ? '' : label))
+    .replace(/(?:https?:\/\/|www\.)\S*?\[(?:sensitive |authentication )?detail withheld\]\S*/gi, '')
+    .replace(/[ \t]{2,}/g, ' ')
+}
+
 // "What are my reminders?" / "show my reminders for tomorrow": a read of saved reminders, no change asked.
 // Inlined on top of isGroundedReminderCommand so route harnesses with strict dependency maps load it unchanged.
 function isReminderReadOnlyAsk(text: string): boolean {
@@ -84,7 +96,7 @@ function cleanHistory(role: string, raw: string): string | null {
     const trailing = text.replace(/^\[[^\]]+\]\s*/i, '').trim()
     return trailing || 'Shared something with Gogo'
   }
-  return redactSecretShapedText(text)
+  return safeReplyText(text)
 }
 
 async function resolveDashboardUser(telegramId: string) {
@@ -175,6 +187,32 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({text:reply,handledBy:'human-auth-required'})
       }
     }
+    // Round 6 (#34, #31, #49, #48): "Hi", "help", "What can you do?" and "What's pending?" get the same approved
+    // replies as WhatsApp, instantly, before any slow matcher (the dashboard Hi took 25 s and used the old intro).
+    // Inlined matchers (same as lib/bot/handlers/whatsapp-direct-premium.ts and lib/bot/pending-summary.ts) and lazy
+    // imports only on a match, so strict route harnesses keep their dependency maps.
+    {
+      const quick = text.toLowerCase().replace(/[’]/g, "'").replace(/[\s!.?,]+$/g, '').trim()
+      const isHi = /^(?:hi+|hello|hey|hii|hola|namaste|start|\/start)(?:\s+(?:there|askgogo|gogo))?$|^askgogo$/.test(quick)
+      const isHelp = /^(?:please\s+|pls\s+)?(?:\/?help|menu|commands|features|what (?:all )?can (?:you|askgogo|gogo) do(?: for me)?|what do you do|how do (?:i|you) use (?:you|askgogo|this)|show (?:me )?(?:the )?(?:help|menu|features|commands)|what are your features)$/.test(quick)
+      if (isHi || isHelp) {
+        const welcome: any = await import('@/lib/bot/handlers/welcome').catch(() => null)
+        const reply = isHi ? welcome?.buildWelcomeBack?.(user.name) : welcome?.HELP_MENU
+        if (typeof reply === 'string' && reply) {
+          await saveConversation(user.telegram_id, text, reply)
+          return NextResponse.json({ text: reply, handledBy: isHi ? 'welcome-back' : 'help-menu', status: 'completed' })
+        }
+      }
+      const isPending = quick.length <= 60 && /^(?:so\s+|ok\s+|and\s+)?(?:what(?:'s| is| all is| else is)?\s+(?:still\s+)?(?:pending|left|open|outstanding)(?:\s+(?:for me|today|now|on my plate))?|anything\s+(?:still\s+)?(?:pending|left|open|outstanding)(?:\s+(?:for me|today))?|what(?:'s| is)\s+on my plate(?:\s+today)?|what do i (?:still )?(?:need|have) to do(?:\s+today)?|my pending (?:items|tasks|stuff)|pending (?:items|tasks|stuff)|show (?:me )?(?:what(?:'s| is) )?pending)$/.test(quick)
+      if (isPending) {
+        const pendingMod: any = await import('@/lib/bot/pending-summary').catch(() => null)
+        const reply = typeof pendingMod?.buildPendingSummary === 'function' ? await pendingMod.buildPendingSummary(String(session.telegramId)).catch(() => null) : null
+        if (typeof reply === 'string' && reply) {
+          await saveConversation(user.telegram_id, text, reply)
+          return NextResponse.json({ text: reply, handledBy: 'pending-summary', status: 'completed' })
+        }
+      }
+    }
     // "Order milk on Swiggy Instamart" via the user's connected Swiggy account: three in-stock options, and a
     // 1/2/3 reply binds only while that list is Gogo's latest reply. Lazy so strict harnesses keep their maps.
     // Cheap pre-filter: only an Instamart mention or a bare 1/2/3-style pick loads the module.
@@ -218,6 +256,20 @@ export async function POST(req: NextRequest) {
     if(runCancel){
       await saveConversation(user.telegram_id,text,runCancel.text)
       return NextResponse.json(runCancel)
+    }
+    // Round 6 (#14): "Cancel the Monday review reminder" took 28 s (understand-first + planner) before the
+    // deterministic reminder editor asked which one. A named reminder cancel/skip goes straight there.
+    if (/^(?:please\s+)?(?:cancel|delete|remove|skip)\b/i.test(text) && /\breminders?\b/i.test(text)
+        && !/\b(?:meeting|event|appointment|calendar|standup|task|watch|order|booking|subscription|friend)\b/i.test(text)) {
+      const editor: any = await import('@/lib/bot/handlers/edit-reminder').catch(() => null)
+      const lowered = text.toLowerCase().replace(/^please\s+/, '').trim()
+      if (typeof editor?.editLatestReminder === 'function' && (editor.isCancelReminderCommand?.(lowered) || editor.isSkipReminderCommand?.(lowered))) {
+        const reply = await Promise.resolve().then(() => editor.editLatestReminder(Number(user.telegram_id), text.replace(/^please\s+/i, ''))).catch(() => null)
+        if (typeof reply === 'string' && reply) {
+          await saveConversation(user.telegram_id, text, reply)
+          return NextResponse.json({ text: safeReplyText(reply), handledBy: 'edit-reminder', status: 'completed' })
+        }
+      }
     }
     // One event id per turn, shared by the understand-first reading and the shadow router outcome.
     const shadowEventId = `web-${randomUUID()}`
@@ -586,7 +638,7 @@ export async function POST(req: NextRequest) {
     if (featureReply) {
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'feature-intent'}).catch(()=>{})
       await saveConversation(user.telegram_id, text, featureReply)
-      return NextResponse.json({ text: redactSecretShapedText(featureReply), handledBy: 'feature-intent' })
+      return NextResponse.json({ text: safeReplyText(featureReply), handledBy: 'feature-intent' })
     }
 
     const result = await processIncomingMessage({
@@ -612,7 +664,7 @@ export async function POST(req: NextRequest) {
     }).catch(()=>{})
 
     return NextResponse.json({
-      text: redactSecretShapedText(result.text),
+      text: safeReplyText(result.text),
       mediaUrl: result.mediaUrl || null,
       mediaType: result.mediaType || null,
       handledBy: result.handledBy || 'same-brain',
