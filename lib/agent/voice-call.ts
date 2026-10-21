@@ -37,7 +37,7 @@ export function displayPhone(e164: string) {
   return d.length === 10 ? `+91 ${d.slice(0, 5)} ${d.slice(5)}` : String(e164 || '')
 }
 
-export type CallCommand = { kind: 'test'; number?: string } | { kind: 'book'; text: string } | { kind: 'approve' } | { kind: 'redial' } | { kind: 'decline' }
+export type CallCommand = { kind: 'test'; number?: string } | { kind: 'book'; text: string } | { kind: 'approve' } | { kind: 'affirm' } | { kind: 'redial' } | { kind: 'decline' }
 
 /** "Call District 6 and book a table for 2 Saturday 8pm", "test call me", "yes call", "call again". Pure. */
 export function parseCallCommand(raw: string): CallCommand | null {
@@ -45,6 +45,8 @@ export function parseCallCommand(raw: string): CallCommand | null {
   const test = t.match(/^(?:(?:do\s+a\s+)?test\s+call(?:\s+me)?|call\s+me\s+(?:to|for\s+a)\s+test|make\s+a\s+test\s+call)(?:\s+(?:on|at|to)\s+([+\d][\d\s-]{8,16}))?[.!]?$/i)
   if (test) { const n = test[1] ? indianPhoneFrom(test[1]) : null; return n ? { kind: 'test', number: n } : { kind: 'test' } }
   if (/^(?:yes[,!]?\s*)?(?:(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?|place\s+the\s+call|yes,?\s*call)[.!]?$/i.test(t) && /\bcall\b/i.test(t) && !/\bagain\b/i.test(t)) return { kind: 'approve' }
+  // A bare yes only approves when Gogo's latest message is the call plan (checked in tryVoiceCall).
+  if (/^(?:yes|yeah|yep|yup|ok|okay|sure|go\s+ahead|do\s+it|please\s+do|haan|ha)(?:\s+please)?[.!]*$/i.test(t)) return { kind: 'affirm' }
   if (/^(?:please\s+)?(?:call|try)\s+(?:them\s+)?again[.!]?$|^redial[.!]?$/i.test(t)) return { kind: 'redial' }
   if (/^(?:no|don'?t\s+call|do\s+not\s+call|cancel\s+(?:the\s+)?call)[.!]?$/i.test(t)) return { kind: 'decline' }
   if (/^(?:please\s+)?(?:call|phone|ring)\s+(?!me\b)(?:up\s+)?.{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b/i.test(t)) return { kind: 'book', text: t }
@@ -221,16 +223,21 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
   if (!cmd) return null
   const tg = params.actor.legacyTelegramId
   const fs = await import('@/lib/bot/handlers/followup-state')
-  if (cmd.kind === 'approve' || cmd.kind === 'redial' || cmd.kind === 'decline') {
+  if (cmd.kind === 'affirm') {
+    // 21 Oct live: "Yes" to the plan fell through to chat, which claimed it was calling. A bare yes right
+    // after the plan is the approval; anywhere else it belongs to some other question.
+    if (!(await latestAssistantText(tg)).includes('CALL PLAN')) return null
+  }
+  if (cmd.kind === 'approve' || cmd.kind === 'affirm' || cmd.kind === 'redial' || cmd.kind === 'decline') {
     const state: any = await fs.getLatestFollowupState(tg, PLAN_STATE)
     const plan: CallPlan | undefined = state?.payload?.plan
-    if (!plan) return cmd.kind === 'approve' || cmd.kind === 'redial' ? { text: "There's no call waiting for your yes. Ask me to call a restaurant first, like *call District 6 and book a table for 2 Saturday 8pm*.", handledBy: 'voice-call' } : null
+    if (!plan) return cmd.kind === 'approve' || cmd.kind === 'affirm' || cmd.kind === 'redial' ? { text: "There's no call waiting for your yes. Ask me to call a restaurant first, like *call District 6 and book a table for 2 Saturday 8pm*.", handledBy: 'voice-call' } : null
     if (cmd.kind === 'decline') {
       // A bare "no" only declines the call plan Gogo just showed; otherwise it belongs to another question.
       if (!(await latestAssistantText(tg)).includes('CALL PLAN')) return null
       await fs.clearFollowupState(tg, PLAN_STATE); return { text: 'OK, I won\'t call.', handledBy: 'voice-call' }
     }
-    if (cmd.kind === 'approve') {
+    if (cmd.kind === 'approve' || cmd.kind === 'affirm') {
       // The yes must answer the plan just shown (within 15 min, and Gogo's latest message is the plan).
       const fresh = Date.now() - Date.parse(String(plan.createdAt)) < 15 * 60_000
       if (!fresh || !(await latestAssistantText(tg)).includes('CALL PLAN')) return { text: 'That call plan has expired. Ask me again and I\'ll show a fresh plan before calling.', handledBy: 'voice-call' }

@@ -71,6 +71,19 @@ export function claimsCompletedChange(reply: string): boolean {
 export const NO_CHANGE_REPLY =
   "I haven't changed anything. That reply came from a normal chat answer, and chat can't skip, cancel, add or set things. If you want something done, say it directly, for example: skip my water reminder today."
 
+// 21 Oct live (WhatsApp): a bare "Yes" to a call plan reached chat, which wrote "📞 Calling District 6 now…"
+// and nothing was called. Only the call module places calls; chat may never say it is calling or called.
+const CALL_CLAIMS: RegExp[] = [
+  /\b(?:calling|dialling|dialing|ringing|phoning)\s+(?:[\w .'&-]{0,40}\s+)?(?:now|right\s+now)\b/i,
+  /\b(?:i(?:'ve| have| just)?|gogo\s+(?:has\s+)?)\s*(?:called|phoned|rang|placed\s+(?:the|a)\s+call|made\s+the\s+call)\b/i,
+  /\bon\s+the\s+(?:phone|line|call)\s+with\b/i,
+  /\bcall\s+(?:is\s+)?(?:in\s+progress|connected|going\s+through)\b/i,
+]
+export const NO_CALL_REPLY = "I haven't called anyone. A call only goes out after you reply *yes call* to a call plan. Ask me again, like *call District 6 and book a table for 2 Saturday 8pm*, and I'll show the plan."
+export function claimsUnplacedCall(reply: string): boolean {
+  return CALL_CLAIMS.some((re) => re.test(String(reply || '')))
+}
+
 export function claimsUnperformedAction(reply: string): boolean {
   const text = String(reply || '')
   return FAKE_ACTION_CLAIMS.some((re) => re.test(text))
@@ -78,6 +91,7 @@ export function claimsUnperformedAction(reply: string): boolean {
 
 /** Replace a chat reply that claims an action Gogo did not take. */
 export function guardChatActionClaims(reply: string): { text: string; blocked: boolean } {
+  if (claimsUnplacedCall(reply)) return { text: NO_CALL_REPLY, blocked: true }
   if (claimsUnperformedAction(reply)) return { text: NO_ACTION_REPLY, blocked: true }
   if (claimsCompletedChange(reply)) return { text: NO_CHANGE_REPLY, blocked: true }
   return { text: reply, blocked: false }
