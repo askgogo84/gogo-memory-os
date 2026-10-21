@@ -293,7 +293,8 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     const rr = await import('@/lib/agent/restaurant-reservation')
     // "Call District 6 near Orion mall and book a table for 2 Saturday 8pm" -> "Book a table for 2 Saturday 8pm at District 6 near Orion mall"
     const parts = cmd.text.replace(/\s+under\s+(?:the\s+name\s+(?:of\s+)?)?[A-Z][A-Za-z.' -]{1,40}$/, '').match(/^(?:please\s+)?(?:call|phone|ring)\s+(?:up\s+)?(.+?)\s+(?:and|to)\s+(?:book|reserve)\s+(.+)$/i)
-    const bookingText = parts ? `Book ${parts[2].trim()} at ${parts[1].trim()}` : cmd.text
+    const venuePart = parts ? parts[1].replace(/\s+(?:on|at|via)\s+[+\d][\d\s-]{8,16}$/i, '').trim() : ''
+    const bookingText = parts ? `Book ${parts[2].trim()} at ${venuePart}` : cmd.text
     const intent = rr.parseRestaurantReservationIntent(bookingText)
     if (!intent?.restaurant) return { text: 'Which restaurant should I call, and for when? For example: *call District 6 and book a table for 2 Saturday 8pm*.', handledBy: 'voice-call' }
     const explicit = indianPhoneFrom(cmd.text)
@@ -329,9 +330,19 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
     const transcript = String(exec?.transcript || '')
     let outcome: CallOutcome | null = null
     if (status === 'completed' && transcript && !plan.test) {
-      const { askMercury } = await import('@/lib/services/mercury')
-      const r = await askMercury(`Read this restaurant booking phone call transcript. Reply with JSON only: {"booked": true only if the restaurant clearly confirmed a table, "confirmed_time": "8:00 pm" or null, "staff_name": name or null, "callback_time": when they asked to be called back or null, "notes": one short plain sentence on what happened}.\nRequested: table for ${plan.partySize} ${plan.dateLabel} at ${plan.timeLabel}.\nTranscript:\n${transcript.slice(-6000)}`, { maxTokens: 300, label: 'voice_call_outcome' }).catch(() => null)
-      outcome = parseOutcome(r?.text || '')
+      // 21 Oct live: Mercury spent its whole 300-token budget on reasoning and returned nothing, so a finished
+      // call read as "couldn't read a clear answer". Claude Haiku reads it; Mercury (bigger budget) is the fallback.
+      const prompt = `Read this restaurant booking phone call transcript. Reply with JSON only: {"booked": true only if the restaurant clearly confirmed a table, "confirmed_time": "8:00 pm" or null, "staff_name": name or null, "callback_time": when they asked to be called back or null, "notes": one short plain sentence on what happened}.\nRequested: table for ${plan.partySize} ${plan.dateLabel} at ${plan.timeLabel}.\nTranscript:\n${transcript.slice(-6000)}`
+      try {
+        const { default: Anthropic } = await import('@anthropic-ai/sdk')
+        const res: any = await new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).messages.create({ model: 'claude-haiku-4-5', max_tokens: 400, messages: [{ role: 'user', content: prompt }] })
+        outcome = parseOutcome(String(res?.content?.[0]?.text || ''))
+      } catch (err: any) { console.error('VOICE_CALL_OUTCOME_CLAUDE_FAILED:', String(err?.message || err).slice(0, 120)) }
+      if (!outcome) {
+        const { askMercury } = await import('@/lib/services/mercury')
+        const r = await askMercury(prompt, { maxTokens: 2000, label: 'voice_call_outcome' }).catch(() => null)
+        outcome = parseOutcome(r?.text || '')
+      }
     }
     const text = callResultText(plan, TERMINAL.has(status) ? status : 'failed', outcome, transcript.split('\n').filter(Boolean).slice(-1)[0]?.slice(0, 160) || '')
     const at = new Date().toISOString()
