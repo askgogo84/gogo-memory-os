@@ -883,6 +883,16 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    // Phone calls (Bolna): a call plan needs an explicit "yes call"; "test call me" rings the owner's own phone.
+    const voiceMod: any = /^\s*(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?(?:call|redial|phone|ring|test\s+call|do\s+a\s+test\s+call|make\s+a\s+test\s+call|place\s+the\s+call|try\s+again)\b|^\s*(?:no|don'?t\s+call|do\s+not\s+call|cancel\s+(?:the\s+)?call)[.!]?\s*$/i.test(text) ? await import('@/lib/agent/voice-call').catch(() => null) : null
+    const voice = typeof voiceMod?.tryVoiceCall === 'function' ? await Promise.resolve().then(() => voiceMod.tryVoiceCall({ actor: { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, whatsappId: String(resolvedUser.whatsappId || from), name: resolvedUser.name || profileName || 'Gogo' }, text, surface: 'whatsapp' })).catch((err: any) => { console.error('VOICE_CALL_FAILED:', String(err?.message || err).slice(0, 160)); return null }) : null
+    if (voice) {
+      await saveConversation(resolvedUser.telegramId, 'user', text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', voice.text)
+      await sendWhatsAppMessage(from, voice.text)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
     const contentDraft = await tryRunContentWorkflow({userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId,
       whatsappId: String(resolvedUser.whatsappId || from), name: resolvedUser.name || profileName || 'Gogo'}, text, inboundMessageSid)
     if (contentDraft) {
