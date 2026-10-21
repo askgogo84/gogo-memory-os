@@ -25,16 +25,19 @@ const SECRET_PATTERNS = [
 const CREDENTIAL_REQUEST = /\b(?:tell|show|reveal|read|extract|copy|send|share)\b[\s\S]{0,40}\b(?:password|otp|cvv|cvc|pin|secret|api key|access token|refresh token)\b/i
 
 function unsafeHost(hostname:string) {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g,'')
-  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) return true
-  if (host === '0.0.0.0' || host === '::' || host === '::1') return true
-  if (isIP(host)) {
-    if (/^10\./.test(host) || /^127\./.test(host) || /^169\.254\./.test(host) || /^192\.168\./.test(host)) return true
-    const m = host.match(/^172\.(\d+)\./)
-    if (m && Number(m[1]) >= 16 && Number(m[1]) <= 31) return true
-    if (/^(fc|fd|fe8|fe9|fea|feb)/i.test(host)) return true
-  }
-  return false
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g,'').replace(/\.$/,'')
+  // Browser targets use public DNS names, matching the managed browser policy.
+  // Reject literals as a class: URL normalizes mapped IPv6 and nonstandard IPv4.
+  return !host || !host.includes('.') || host === 'localhost' || host.endsWith('.localhost') ||
+    host.endsWith('.local') || host.endsWith('.internal') || !!isIP(host)
+}
+
+/** Shared admission boundary; never grant network authority to URL userinfo or literals. */
+export function browserTargetUrl(raw:string):URL {
+  const url=new URL(raw)
+  if(!['https:','http:'].includes(url.protocol))throw new Error('browser_url_not_http')
+  if(url.username||url.password||unsafeHost(url.hostname))throw new Error('browser_private_host_blocked')
+  return url
 }
 
 export function evaluateAgentSentinel(input:SentinelInput):SentinelResult {
@@ -47,7 +50,7 @@ export function evaluateAgentSentinel(input:SentinelInput):SentinelResult {
     let url:URL
     try { url = new URL(input.url) } catch { return { allowed:false, reason:'unsupported_scheme' } }
     if (!['https:','http:'].includes(url.protocol)) return { allowed:false, reason:'unsupported_scheme' }
-    if (unsafeHost(url.hostname)) return { allowed:false, reason:'unsafe_network_target' }
+    if (url.username || url.password || unsafeHost(url.hostname)) return { allowed:false, reason:'unsafe_network_target' }
   }
 
   const consequential = input.irreversible || input.risk === 'high' || (

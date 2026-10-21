@@ -16,7 +16,7 @@ runInNewContext(ts.transpileModule(source+'\nexport {allowedHosts,observedReadAc
 let passed=0;const failures:string[]=[]
 function test(name:string,fn:()=>void){try{fn();passed++;console.log('PASS '+name)}catch(e){failures.push(name+': '+String(e));console.error('FAIL '+name)}}
 const input={capability:'browser' as const,mode:'read' as const,risk:'low' as const,irreversible:false,approved:false}
-for(const url of ['http://[::ffff:127.0.0.1]/','http://[::ffff:a9fe:a9fe]/','http://127.1/','http://2130706433/','http://localhost./','http://sub.localhost/','http://fixture.internal/','https://fixture:dummy@example.com/']){
+for(const url of ['http://[::ffff:127.0.0.1]/','http://[::ffff:a9fe:a9fe]/','http://127.1/','http://2130706433/','http://localhost./','http://sub.localhost/','http://fixture.internal/','http://metadata/','http://intranet/','https://fixture:dummy@example.com/']){
  test('sentinel rejects '+url,()=>assert.equal(evaluateAgentSentinel({...input,url}).allowed,false))
  test('executor rejects '+url,()=>assert.throws(()=>api.allowedHosts(url)))
  test('allowlist rejects '+url,()=>assert.throws(()=>browserPageAllowlist(url)))
