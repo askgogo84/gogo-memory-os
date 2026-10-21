@@ -90,6 +90,24 @@ await check('checkpoint superseded by cancellation cannot report completed',asyn
  const h=harness();const result=await h.execute(async()=>{h.run.status='failed';h.run.error='user_cancelled';h.step.status='cancelled';return{status:'completed',verified:true}})
  assert.equal(result.executions[0].status,'superseded');assert.equal(h.tables.agent_activity.filter((v:any)=>v.event_type==='autonomous_step_completed').length,0)
 })
+await check('same-attempt backoff changes cannot be overwritten by a stale claimant',async()=>{
+ const h=harness();let calls=0
+ h.beforeWrite(()=>{h.step.output_json.runtime.retryAt='2099-01-01T00:00:00Z'})
+ await h.execute(async()=>{calls++;return{status:'completed',verified:true}})
+ assert.equal(calls,0);assert.equal(h.step.output_json.runtime.retryAt,'2099-01-01T00:00:00Z')
+})
+await check('new approval wait cannot be overwritten by a stale claimant',async()=>{
+ const h=harness();let calls=0
+ h.beforeWrite(()=>{h.step.output_json.runtime.approvalId='new-approval'})
+ await h.execute(async()=>{calls++;return{status:'completed',verified:true}})
+ assert.equal(calls,0);assert.equal(h.step.output_json.runtime.approvalId,'new-approval')
+})
+await check('cancellation racing with replan persistence cannot reopen the parent',async()=>{
+ const h=harness();h.beforeWrite(()=>{h.run.status='failed';h.run.error='user_cancelled'})
+ await assert.rejects(h.runtime.appendAutonomousReplan({actor,runId:'run',reason:'Fixture',steps:[{key:'next',title:'Fixture next',toolName:'fixture',mutation:true}]}),/superseded/)
+ let calls=0;await h.execute(async()=>{calls++;return{status:'completed',verified:true}});assert.equal(calls,0);assert.equal(h.run.status,'failed')
+})
 if(failures)process.exitCode=1
+
 
 
