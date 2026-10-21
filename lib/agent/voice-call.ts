@@ -4,7 +4,9 @@
 //   - The agent says it is an AI assistant first, never pays, shares card details or agrees to a deposit.
 //   - The result is reported honestly from the transcript; "booked" only when the venue said yes on the call.
 //   - No automatic redial loop: the person can say "call again" (at most 2 redials per plan).
+import { randomUUID } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { beginApprovedVoiceCall, voicePlanHash, voiceAttemptId } from './voice-call-execution'
 
 const BOLNA = 'https://api.bolna.ai'
 export const CALL_AGENT_NAME = 'AskGogo booking caller v2'
@@ -120,7 +122,7 @@ const FAIL_STATUS: Record<string, string> = { 'no-answer': "nobody picked up", b
 export const TERMINAL = new Set(['completed', ...Object.keys(FAIL_STATUS)])
 
 /** What the person reads after the call. Pure. */
-export function callResultText(p: CallPlan, status: string, outcome: CallOutcome | null, transcriptTail = '', saved = false) {
+export function callResultText(p: CallPlan, status: string, outcome: CallOutcome | null, transcriptTail = '', saved = false, reminderScheduled = true) {
   const head = `📞 ${p.venue}`
   if (status !== 'completed') return `${head}: ${FAIL_STATUS[status] || "the call didn't complete"}. Nothing was booked.${p.test ? '' : p.redials < MAX_REDIALS ? '\nSay *call again* to retry.' : ''}`
   if (p.test) return `${head}: test call finished. Tell me how it sounded, and say *call District 6…* style requests when you're ready.`
@@ -129,7 +131,7 @@ export function callResultText(p: CallPlan, status: string, outcome: CallOutcome
     // 21 Oct live: the notes line repeated the confirmation ("Reservation for 2 … confirmed under Goverdhan").
     return [`*Booked by phone* · ${p.dateLabel.replace(/^on\s+/i, '')}, ${outcome.confirmedTime || p.timeLabel}, ${p.partySize || 2} guests, under ${p.guestName}.`,
       outcome.staffName ? `Confirmed by ${outcome.staffName} on the call.` : 'Confirmed by the restaurant on the call.',
-      saved ? 'Saved to My bookings, with a reminder 2 hours before.' : '',
+      saved ? (reminderScheduled ? 'Saved to My bookings, with a reminder 2 hours before.' : 'Saved to My bookings. No future 2-hour reminder could be scheduled.') : '',
       'This is a phone confirmation, not a written booking ID.'].filter(Boolean).join('\n')
   }
   return [`${head}: not booked. ${outcome.notes || 'They did not confirm a table.'}`,
@@ -150,7 +152,7 @@ async function bolna(path: string, init: { method?: string; body?: any } = {}, f
   } as any)
   const text = await res.text()
   let data: any = null; try { data = JSON.parse(text) } catch {}
-  if (!res.ok) throw new Error(`bolna_${res.status}:${String(data?.message || text).slice(0, 160)}`)
+  if (!res.ok) throw Object.assign(new Error(`bolna_${res.status}:${String(data?.message || text).slice(0, 160)}`), { status: res.status })
   return data
 }
 
@@ -284,18 +286,16 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     }
     if (!voiceCallsEnabled()) return { text: 'Calling isn\'t switched on yet (the voice provider key is missing). Nothing was called.', handledBy: 'voice-call' }
     const contact = params.actor.whatsappId ? '+' + String(params.actor.whatsappId).replace(/\D/g, '') : ''
-    let executionId: string
-    try { executionId = await placeCall(plan, contact) } catch (err: any) {
-      console.error('VOICE_CALL_PLACE_FAILED:', String(err?.message || err).slice(0, 200))
-      return { text: `I couldn't place the call to ${plan.venue} just now${/balance|402|insufficient/i.test(String(err?.message)) ? ' (the calling balance looks low)' : ''}. Nothing was called or booked.`, handledBy: 'voice-call' }
-    }
-    const at = new Date().toISOString()
-    await supabaseAdmin.from('agent_runs').insert({
-      telegram_id: String(tg), type: 'voice_call', capability: 'contacts', status: 'running', progress: 20,
-      title: `Call · ${plan.venue}`, summary: `Calling ${plan.venue} (${displayPhone(plan.to)}).`, source: params.surface,
-      why: 'You approved this call plan.', metadata_json: { plan_type: 'voice_call', plan, execution_id: executionId }, started_at: at, updated_at: at,
-    })
-    await fs.saveFollowupState(tg, PLAN_STATE, { plan })
+    const placement = await beginApprovedVoiceCall({ owner: String(tg), plan,
+      approvedPlanHash: String(state?.payload?.approvalHash || ''),
+      shownText: await latestAssistantText(tg), expectedText: callPlanText(plan), surface: params.surface,
+      db: supabaseAdmin, place: () => placeCall(plan, contact) })
+    if (placement.status === 'outcome_unknown') return { text: `The call to ${plan.venue} may have started, but I couldn't confirm its status. I haven't repeated it. Check the task before trying again.`, handledBy: 'voice-call' }
+    if (placement.status === 'rejected') return { text: `The calling provider rejected this attempt to ${plan.venue}. Nothing was called or booked. Ask for a fresh call plan to try again.`, handledBy: 'voice-call' }
+    if (placement.status === 'blocked') return { text: placement.reason === 'call_already_attempted' || placement.reason === 'previous_call_requires_reconciliation'
+      ? `That call has already been attempted or still needs its outcome checked. I won't call again until that is resolved.`
+      : `I couldn't safely start that call. Ask for a fresh call plan and approve the exact details again. Nothing new was called.`, handledBy: 'voice-call' }
+    await fs.saveFollowupState(tg, PLAN_STATE, { plan, approvalHash: state.payload.approvalHash }).catch(() => {})
     return { text: `📞 Calling ${plan.venue} now from ${displayPhone(String(process.env.BOLNA_FROM_NUMBER || DEFAULT_FROM_NUMBER))}. I'll message you here with what they said, usually within 2–3 minutes.`, handledBy: 'voice-call' }
   }
 
@@ -332,16 +332,16 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
       flexWindow: window, seating: /smok/i.test(cmd.text) ? (/non[\s-]?smok/i.test(cmd.text) ? 'non-smoking' : 'smoking') : 'no preference',
       purpose: `Book a table for ${intent.partySize || 2} people at ${intent.restaurant}.`, test: false, redials: 0, createdAt: now, startClock: start }
   }
-  await fs.saveFollowupState(tg, PLAN_STATE, { plan })
+  await fs.saveFollowupState(tg, PLAN_STATE, { plan, approvalHash: voicePlanHash(String(tg), plan) })
   return { text: callPlanText(plan), handledBy: 'voice-call-plan' }
 }
 
 // ---- cron: read finished calls and report ----------------------------------------------------------------------
 
 /** A venue's yes on the call becomes a booking in My bookings plus a 2-hour reminder (approved mock). */
-async function recordPhoneBooking(telegramId: string, executionId: string, plan: CallPlan, outcome: CallOutcome): Promise<boolean> {
+async function recordPhoneBooking(telegramId: string, executionId: string, plan: CallPlan, outcome: CallOutcome): Promise<{ saved: boolean; reminderScheduled: boolean }> {
   const startAt = bookedStartAt(plan, outcome)
-  if (!startAt) return false
+  if (!startAt) return { saved: false, reminderScheduled: false }
   const now = new Date().toISOString()
   const { error } = await supabaseAdmin.from('life_events').upsert({
     telegram_id: telegramId, event_type: 'reservation', subtype: 'phone_booking', source: 'voice_call',
@@ -350,14 +350,19 @@ async function recordPhoneBooking(telegramId: string, executionId: string, plan:
     lifecycle_state: 'planned', participants: [],
     preferences_json: { partySize: plan.partySize, guestName: plan.guestName, seating: plan.seating },
     metadata_json: { restaurant: plan.venue, phone: plan.to, bookingStatus: 'confirmed_by_phone', confirmedBy: outcome.staffName, executionId },
-    source_refs: [], dedupe_key: `voice_call:${executionId}`, updated_at: now,
+    source_refs: [{ type: 'voice_call', execution_id: executionId }], dedupe_key: `voice_call:${executionId}`, updated_at: now,
   }, { onConflict: 'telegram_id,dedupe_key' })
   if (error) throw new Error(error.message)
   const remindAt = Date.parse(startAt) - 2 * 3600_000
+  let reminderScheduled = false
   if (remindAt > Date.now()) {
-    await supabaseAdmin.from('reminders').insert({ telegram_id: Number(telegramId), chat_id: Number(telegramId), message: `Table at ${plan.venue} in 2 hours (${plan.partySize || 2} guests, under ${plan.guestName}).`, remind_at: new Date(remindAt).toISOString(), sent: false, timezone: 'Asia/Kolkata' })
+    // Existing reminder PK makes interrupted/concurrent result persistence idempotent.
+    const reminderId = voiceAttemptId(telegramId, { createdAt: executionId, purpose: 'phone-booking-reminder' }, 0)
+    const { error: reminderError } = await supabaseAdmin.from('reminders').upsert({ id: reminderId, telegram_id: Number(telegramId), chat_id: Number(telegramId), message: `Table at ${plan.venue} in 2 hours (${plan.partySize || 2} guests, under ${plan.guestName}).`, remind_at: new Date(remindAt).toISOString(), sent: false, timezone: 'Asia/Kolkata' }, { onConflict: 'id', ignoreDuplicates: true })
+    if (reminderError) return { saved: true, reminderScheduled: false }
+    reminderScheduled = true
   }
-  return true
+  return { saved: true, reminderScheduled }
 }
 
 export async function processVoiceCalls(deps: { send: (to: string, text: string) => Promise<any> }) {
@@ -366,11 +371,22 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
   for (const run of (runs || []) as any[]) {
     const meta = run.metadata_json || {}
     const plan: CallPlan = meta.plan
+    if (!meta.execution_id || meta.result_claim) {
+      // A killed sender/result worker may already have called/notified. Never reclaim by age alone.
+      if (!meta.execution_id || !Number.isFinite(Date.parse(String(meta.result_claimed_at || ''))) || Date.parse(String(meta.result_claimed_at || '')) > Date.now() || Date.now() - Date.parse(String(meta.result_claimed_at || '')) > 10 * 60_000) {
+        await supabaseAdmin.from('agent_runs').update({ status: 'outcome_unknown', summary: 'The call or its result reporting was interrupted. Check the provider outcome before repeating it.', metadata_json: { ...meta, outcome_state: 'unknown', reconciliation_required: true }, updated_at: new Date().toISOString() }).eq('id', run.id).eq('telegram_id', String(run.telegram_id)).eq('status', 'running')
+      }
+      continue
+    }
     let exec: any
     try { exec = await getExecution(String(meta.execution_id)) } catch (err: any) { console.error('VOICE_CALL_READ_FAILED:', run.id, String(err?.message || err).slice(0, 160)); continue }
     const status = String(exec?.status || '')
     const tooOld = Date.now() - Date.parse(String(run.started_at)) > 20 * 60_000
     if (!TERMINAL.has(status) && !tooOld) continue
+    const resultClaim = randomUUID()
+    const { data: claimed, error: claimError } = await supabaseAdmin.from('agent_runs').update({ metadata_json: { ...meta, result_claim: resultClaim, result_claimed_at: new Date().toISOString() } })
+      .eq('id', run.id).eq('telegram_id', String(run.telegram_id)).eq('status', 'running').is('metadata_json->>result_claim', null).select('id').maybeSingle()
+    if (claimError || !claimed) continue
     const transcript = String(exec?.transcript || '')
     let outcome: CallOutcome | null = null
     if (status === 'completed' && transcript && !plan.test) {
@@ -388,12 +404,14 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
         outcome = parseOutcome(r?.text || '')
       }
     }
-    let saved = false
-    if (status === 'completed' && outcome?.booked && !plan.test) saved = await recordPhoneBooking(String(run.telegram_id), String(meta.execution_id), plan, outcome).catch((err: any) => { console.error('VOICE_CALL_RECORD_FAILED:', run.id, String(err?.message || err).slice(0, 160)); return false })
-    const text = callResultText(plan, TERMINAL.has(status) ? status : 'failed', outcome, transcript.split('\n').filter(Boolean).slice(-1)[0]?.slice(0, 160) || '', saved)
+    let saved = { saved: false, reminderScheduled: false }
+    if (status === 'completed' && outcome?.booked && !plan.test) saved = await recordPhoneBooking(String(run.telegram_id), String(meta.execution_id), plan, outcome).catch((err: any) => { console.error('VOICE_CALL_RECORD_FAILED:', run.id, String(err?.message || err).slice(0, 160)); return { saved: false, reminderScheduled: false } })
+    const outcomeUncertain = !TERMINAL.has(status) || (status !== 'completed' && Boolean(transcript.trim()))
+    const text = !outcomeUncertain ? callResultText(plan, status, outcome, transcript.split('\n').filter(Boolean).slice(-1)[0]?.slice(0, 160) || '', saved.saved, saved.reminderScheduled) : `I couldn't confirm the outcome of the call to ${plan.venue}. I haven't repeated it. Check the task before trying again.`
     const at = new Date().toISOString()
-    await supabaseAdmin.from('agent_runs').update({ status: status === 'completed' ? 'completed' : 'failed', progress: 100, summary: text.slice(0, 500), completed_at: at, updated_at: at,
-      metadata_json: { ...meta, final_status: status, outcome, recording_url: exec?.telephony_data?.recording_url || null } }).eq('id', run.id).eq('status', 'running')
+    const { data: finalized, error: finalizeError } = await supabaseAdmin.from('agent_runs').update({ status: outcomeUncertain ? 'outcome_unknown' : status === 'completed' ? 'completed' : 'failed', progress: 100, summary: text.slice(0, 500), completed_at: at, updated_at: at,
+      metadata_json: { ...meta, result_claim: resultClaim, result_claimed_at: new Date().toISOString(), final_status: status, outcome, booking_saved: saved.saved, reminder_scheduled: saved.reminderScheduled, reconciliation_required: outcomeUncertain, recording_url: exec?.telephony_data?.recording_url || null } }).eq('id', run.id).eq('telegram_id', String(run.telegram_id)).eq('status', 'running').eq('metadata_json->>result_claim', resultClaim).select('id').maybeSingle()
+    if (finalizeError || !finalized) continue
     const { data: user } = await supabaseAdmin.from('users').select('whatsapp_id').eq('telegram_id', Number(run.telegram_id)).maybeSingle()
     try { if (user?.whatsapp_id) await deps.send(String(user.whatsapp_id), text) } catch {}
     await supabaseAdmin.from('conversations').insert({ telegram_id: Number(run.telegram_id), role: 'assistant', content: text })
