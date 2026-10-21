@@ -140,7 +140,9 @@ export function bookingOptionsReply(p: { restaurant: string; date?: string | nul
   const next = best.connected
     ? `Best: ${best.platform.name}${best.offer ? ` (${best.offer.label})` : ''}. Checking live tables there now; I'll ask before booking.`
     : `Best: ${best.platform.name}${best.offer ? ` (${best.offer.label})` : ''}. To book it, sign in to ${best.platform.name} once (you type the code; I never see it), then ask again:\n${signInLink(best.platform.siteId)}\nOr book it yourself: ${best.url}`
-  return [`*${head}*`, ...lines, '', next, '', 'Offers are as listed on each app today; the final bill discount is applied by the app.'].join('\n')
+  // Approved mock: when online booking needs a sign-in, a phone booking is the other route (needs a separate yes).
+  const callOffer = `Or I can phone them: say *call ${p.restaurant} and book a table for ${p.partySize || 2}${p.date ? ' ' + when(p.date, p.time) : ''}* and I'll show you a call plan first.`
+  return [`*${head}*`, ...lines, '', next, '', best.connected ? '' : callOffer, 'Offers are as listed on each app today; the final bill discount is applied by the app.'].filter((l, i, a) => l !== '' || a[i - 1] !== '').join('\n')
 }
 
 

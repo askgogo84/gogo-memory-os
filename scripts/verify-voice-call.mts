@@ -35,6 +35,12 @@ assert.match(v.callResultText({ ...plan, redials: 2 }, 'busy', null), /^(?![\s\S
 assert.match(v.callResultText(plan, 'completed', null), /not treating it as booked/)
 const booked = v.parseOutcome('{"booked":true,"confirmed_time":"8:00 pm","staff_name":"Ravi","callback_time":null,"notes":""}')!
 assert.match(v.callResultText(plan, 'completed', booked), /Booked by phone.*8:00 pm.*2 guests.*Goverdhan[\s\S]*Ravi[\s\S]*not a written booking ID/)
+assert.match(v.callResultText(plan, 'completed', booked, '', true), /^\*Booked by phone\* · Sat 24 Oct, 8:00 pm[\s\S]*Saved to My bookings, with a reminder 2 hours before/)
+const dup = v.parseOutcome('{"booked":true,"confirmed_time":"8:00 pm","staff_name":"Karen","notes":"Reservation for 2 on Sat 24 Oct at 8pm confirmed under Goverdhan."}')!
+assert.doesNotMatch(v.callResultText(plan, 'completed', dup), /Reservation for 2/, 'no repeated confirmation line')
+assert.equal(v.clock24('8:00 pm'), '20:00'); assert.equal(v.clock24('8pm'), '20:00'); assert.equal(v.clock24('12 am'), '00:00'); assert.equal(v.clock24('later'), null)
+assert.equal(v.bookedStartAt({ date: '2026-10-24', startClock: '20:00', timeLabel: '8pm' }, { confirmedTime: '8:30 pm' }), '2026-10-24T15:00:00.000Z')
+assert.equal(v.bookedStartAt({ date: null, startClock: '20:00', timeLabel: '8pm' }, null), null, 'no date, no booking record')
 const refused = v.parseOutcome('noise {"booked":false,"callback_time":"after 6pm","notes":"They wanted to speak to the guest directly."}')!
 assert.match(v.callResultText(plan, 'completed', refused), /not booked\. They wanted to speak[\s\S]*after 6pm[\s\S]*call again/)
 assert.equal(v.parseOutcome('{"booked":"yes"}')!.booked, false, 'only a literal true counts')
