@@ -101,7 +101,8 @@ export function selectSummaryEvidence(text: string, sources: SummarySource[], ow
     const sort = (a: SummaryClaim, b: SummaryClaim) => compareSummaryTimestamps(a.observedAt, b.observedAt) || a.sourceId.localeCompare(b.sourceId)
     const optional = [...selected.values()].filter(c => !mandatory.has(c.sourceId)).sort(sort).slice(-(SUMMARY_MAX_CLAIMS - mandatory.size))
     const claims = [...optional, ...[...selected.values()].filter(c => mandatory.has(c.sourceId))].sort(sort)
-    return claims.length ? readSummaryEvidence({ version: 1, owner, claims }, owner, now) : null
+    const evidence = claims.length ? readSummaryEvidence({ version: 1, owner, claims }, owner, now) : null
+    return evidence?.claims.length ? evidence : null
   } catch { return null }
 }
 

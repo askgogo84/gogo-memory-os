@@ -137,5 +137,16 @@ const bank=source('user','valid observation')
 for(const value of [null,{keep:'bad'},{keep:[{}]},{keep:Array(13).fill(bank[0].sourceId)},{keep:[bank[0].sourceId],instructions:'act now'}])assert.equal(ev.selectSummaryEvidence(JSON.stringify(value),bank,42,now),null)
 const evidence=choose(bank);evidence.claims.push(structuredClone(evidence.claims[0]));assert.equal(ev.readSummaryEvidence(evidence,42,now),null)
 })
+await check('expiry crossing during model work cannot produce an empty successful update', () => {
+const bank=source('user','tomorrow at dinner','almost-expired',-2*86400000+1000)
+assert.equal(bank.length,1)
+assert.equal(ev.selectSummaryEvidence(JSON.stringify({keep:[]}),bank,42,now+2000),null)
+})
+await check('actual refresh refuses evidence that cannot fit even one bounded prompt line', async () => {
+memories.length=0
+for(const r of conversations)r.content='\u0000'.repeat(500)
+assert.equal(await cs.refreshConversationSummary(42,{db:db(),ask:(async(p:string)=>answer(p)) as any}),'failed')
+assert.equal(memories.length,0)
+})
 console.log(`GROUNDED_SUMMARY ${passed}/${passed+fail}`)
 if(fail)process.exitCode=1

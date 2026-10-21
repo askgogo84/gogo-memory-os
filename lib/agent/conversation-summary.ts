@@ -118,7 +118,8 @@ export async function refreshConversationSummary(telegramId: number, deps: { db?
     if (latest && (compareCoverage(latest.upTo, upTo) > 0 || compareCoverage(latest.upTo, upTo) === 0 && latest.evidence)) return 'not_needed'
     const evidence = selectSummaryEvidence(result.text, sources, telegramId)
     if (!evidence) { console.error('CHAT_SUMMARY_SOURCE_VALIDATION_FAILED'); return 'failed' }
-    const summary = summaryEvidenceText(evidence, Date.now(), 2000)
+    const summary = summaryEvidenceText(evidence)
+    if (!summary) { console.error('CHAT_SUMMARY_CONTEXT_EMPTY'); return 'failed' }
     const next: StoredSummary = { summary, upTo, evidence, updatedAt: new Date().toISOString() }
     const { error } = await db.from('memories').insert({ telegram_id: telegramId, content: summaryRowContent(next) })
     if (error) { console.error('CHAT_SUMMARY_SAVE_FAILED:', String(error.message || error).slice(0, 160)); return 'failed' }
