@@ -1,3 +1,4 @@
+import { runMeteredTask } from '../lib/metering/core'
 // Actual runtime exports with snapshot-faithful inert storage. No provider I/O.
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
@@ -31,7 +32,7 @@ function harness(){
  }}
  const exports:any={}
  const source=ts.transpileModule(readFileSync('lib/agent/autonomous-runtime.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
- runInNewContext(source,{exports,Date,Promise,console,require:(id:string)=>{
+ runInNewContext(source,{exports,Date,Promise,console,require:(id:string)=>{if(id==='@/lib/metering/core')return {runMeteredTask};
   if(id==='./approval-binding')return approvalBinding
   if(id==='./approval-ttl')return approvalTtl
   if(id==='node:crypto')return{createHash}

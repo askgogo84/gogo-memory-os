@@ -253,6 +253,7 @@ for (const w of writes) assert.ok(w.filters.some(([op, c, v]: any) => op === 'eq
     const output = ts.transpileModule(readFileSync('lib/agent/autonomous-runtime.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
     const requireMap: Record<string, any> = {
       'node:crypto': { createHash },
+    '@/lib/metering/core': { runMeteredTask: (_owner: unknown, _trace: unknown, work: () => unknown) => work() },
       '@/lib/supabase-admin': { supabaseAdmin: db },
       './approval-binding': { assertApprovalBinding: () => { throw Error('Unexpected runtime approval use') } },
     './approval-ttl': { isApprovalExpired: () => { throw Error('Unexpected runtime approval use') } },

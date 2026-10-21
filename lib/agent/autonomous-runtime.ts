@@ -1,3 +1,4 @@
+import { runMeteredTask } from '@/lib/metering/core'
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { selectSpecialistRoute, type SpecialistRoute } from './specialist-registry'
@@ -432,7 +433,7 @@ export async function executeAutonomousRun(params: {
           return { stepId: row.id, claimed: true, status: boundary.superseded ? 'superseded' : 'blocked' }
         }
       }
-      const result = await handler({ actor: params.actor, runId: params.runId, objective, step: row, runtime: claimed, idempotencyKey: claimed.idempotencyKey })
+      const result = await runMeteredTask(telegramId, {runId:params.runId,stepId:row.id,attempt:claimed.attempt,approvalId:claimed.approvalGrantedId||claimed.approvalId||undefined}, () => handler({ actor: params.actor, runId: params.runId, objective, step: row, runtime: claimed, idempotencyKey: claimed.idempotencyKey }))
       if (result.status === 'waiting_approval') {
         if (!await markWaitingApproval(row, telegramId, claimed, result.approvalId, result.output || {})) return { stepId: row.id, claimed: true, status: 'superseded' }
         await activity(telegramId, params.runId, 'autonomous_step_waiting_approval', row.title, { step_id: row.id, step_key: claimed.stepKey, approval_id: result.approvalId })

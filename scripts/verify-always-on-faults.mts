@@ -1,3 +1,4 @@
+import { runMeteredTask } from '../lib/metering/core'
 // Actual exported runtime, inert persistence and tools. No provider/network access.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -20,7 +21,7 @@ function harness(mutation = false, status = 'queued') {
             return q;
         } };
     const exports: any = {};
-    runInNewContext(ts.transpileModule(readFileSync('lib/agent/autonomous-runtime.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, require: (id: string) => { if (id === './approval-binding') return { assertApprovalBinding: () => { throw Error('Unexpected runtime approval use') } }; if (id === './approval-ttl') return { isApprovalExpired: () => { throw Error('Unexpected runtime approval use') } }; if (id === 'node:crypto')
+    runInNewContext(ts.transpileModule(readFileSync('lib/agent/autonomous-runtime.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, require: (id: string) => { if(id==='@/lib/metering/core')return {runMeteredTask}; if (id === './approval-binding') return { assertApprovalBinding: () => { throw Error('Unexpected runtime approval use') } }; if (id === './approval-ttl') return { isApprovalExpired: () => { throw Error('Unexpected runtime approval use') } }; if (id === 'node:crypto')
             return { createHash }; if (id === '@/lib/supabase-admin')
             return { supabaseAdmin: db }; if (id === './specialist-registry')
             return { selectSpecialistRoute: () => ({ primary: 'research', supporting: [] }) }; if (id === './run-notify')
