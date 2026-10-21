@@ -257,7 +257,7 @@ async function markCompleted(row: RuntimeStepRow, telegramId: string, meta: Runt
     completed_at: now,
     error: null,
     output_json: mergeRuntimeOutput(row, nextMeta, output),
-  }).eq('id', row.id).eq('telegram_id', telegramId).eq('status', 'running')
+  }).eq('id', row.id).eq('telegram_id', telegramId).eq('status', 'running').eq('output_json->runtime->>attempt', meta.attempt)
   if (error) throw new Error(`autonomous_step_complete_failed:${error.message}`)
 }
 
@@ -267,21 +267,24 @@ async function markWaitingApproval(row: RuntimeStepRow, telegramId: string, meta
     status: 'queued',
     error: null,
     output_json: mergeRuntimeOutput(row, nextMeta, output),
-  }).eq('id', row.id).eq('telegram_id', telegramId).eq('status', 'running')
+  }).eq('id', row.id).eq('telegram_id', telegramId).eq('status', 'running').eq('output_json->runtime->>attempt', meta.attempt)
   if (error) throw new Error(`autonomous_step_approval_wait_failed:${error.message}`)
 }
 
 async function markFailure(row: RuntimeStepRow, telegramId: string, meta: RuntimeStepMetadata, errorMessage: string, retryable: boolean, output: Record<string, unknown> = {}) {
   const message = safe(errorMessage, 500) || 'autonomous_step_failed'
-  const canRetry = retryable && meta.attempt < meta.maxAttempts
+  // A mutation may already have taken effect before a timeout, crash or failed read-back.
+  // A stable key alone does not prove the downstream provider enforces idempotency.
+  const unknown = retryable && meta.mutation
+  const canRetry = retryable && !meta.mutation && meta.attempt < meta.maxAttempts
   const retryAt = canRetry ? isoPlusMinutes(RETRY_MINUTES[Math.min(Math.max(meta.attempt - 1, 0), RETRY_MINUTES.length - 1)]) : null
   const nextMeta: RuntimeStepMetadata = { ...meta, leaseUntil: null, retryAt, approvalId: null, lastError: message }
   const { error } = await supabaseAdmin.from('agent_steps').update({
     status: canRetry ? 'queued' : 'failed',
     completed_at: canRetry ? null : new Date().toISOString(),
     error: message,
-    output_json: mergeRuntimeOutput(row, nextMeta, output),
-  }).eq('id', row.id).eq('telegram_id', telegramId).eq('status', 'running')
+    output_json: mergeRuntimeOutput(row, nextMeta, { ...output, ...(unknown ? { outcome_state: 'unknown', reconciliation_required: true } : {}) }),
+  }).eq('id', row.id).eq('telegram_id', telegramId).eq('status', 'running').eq('output_json->runtime->>attempt', meta.attempt)
   if (error) throw new Error(`autonomous_step_failure_update_failed:${error.message}`)
   return { canRetry, retryAt }
 }
@@ -314,6 +317,16 @@ async function reconcileRun(runId: string, telegramId: string, opts: { notifyOut
   const progress = Math.min(100, Math.max(1, Math.round((completed / total) * 100)))
   const now = new Date().toISOString()
 
+  const uncertain = steps.some(step => step.output_json?.reconciliation_required === true)
+  if (uncertain) {
+    const metadata = { ...(run.metadata_json || {}), state: 'outcome_unknown', outcome_state: 'unknown', reconciliation_required: true }
+    const { data: updated, error } = await supabaseAdmin.from('agent_runs').update({ status: 'outcome_unknown', progress, completed_at: now, updated_at: now, metadata_json: metadata }).eq('id', runId).eq('telegram_id', telegramId).in('status', [...RECONCILABLE_RUN_STATUSES]).select('id')
+    if (error) throw new Error(`autonomous_run_unknown_failed:${error.message}`)
+    if (!rowsUpdated(updated)) return 'superseded'
+    await activity(telegramId, runId, 'autonomous_outcome_unknown', 'A mutation may have completed; provider reconciliation is required before any retry.')
+    if (opts.notifyOutcome) await notifyRunOutcome({ ...run, id: runId, telegram_id: telegramId, status: 'outcome_unknown', metadata_json: metadata })
+    return 'outcome_unknown'
+  }
   if (completed === steps.length) {
     const { data: updated, error } = await supabaseAdmin.from('agent_runs').update({ status: 'completed', progress: 100, summary: 'Completed and verified.', completed_at: now, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: 'completed' } }).eq('id', runId).eq('telegram_id', telegramId).in('status', [...RECONCILABLE_RUN_STATUSES]).select('id')
     if (error) throw new Error(`autonomous_run_complete_failed:${error.message}`)
@@ -346,7 +359,7 @@ export async function executeAutonomousRun(params: {
 }) {
   const telegramId = String(params.actor.legacyTelegramId)
   const { run, steps } = await loadAutonomousRun(params.runId, telegramId)
-  if (['completed', 'failed', 'cancelled'].includes(String(run.status))) return { runId: params.runId, status: run.status, executed: 0 }
+  if (!isReconcilable(run)) return { runId: params.runId, status: run.status, executed: 0 }
   const objective = safe((run.metadata_json as any)?.objective || run.title, 4000)
   const candidates = readyAutonomousSteps(steps).slice(0, Math.max(1, Math.min(8, Number(params.maxParallel || 3))))
   if (!candidates.length) return { runId: params.runId, status: await reconcileRun(params.runId, telegramId, { notifyOutcome: params.notifyOutcome }), executed: 0 }
@@ -422,11 +435,9 @@ export async function recoverStaleAutonomousSteps(params: { actor: AgentActor; r
   let recovered = 0
   for (const row of (data || []) as RuntimeStepRow[]) {
     const meta = runtimeMeta(row)
-    const retryAt = isoPlusMinutes(RETRY_MINUTES[Math.min(Math.max(meta.attempt - 1, 0), RETRY_MINUTES.length - 1)])
-    const nextMeta: RuntimeStepMetadata = { ...meta, leaseUntil: null, retryAt, lastError: 'stale_worker_recovered' }
-    const { data: updated, error: updateError } = await supabaseAdmin.from('agent_steps').update({ status: 'queued', error: 'stale_worker_recovered', output_json: mergeRuntimeOutput(row, nextMeta) }).eq('id', row.id).eq('telegram_id', telegramId).eq('status', 'running').select('id').maybeSingle()
-    if (updateError) throw new Error(`autonomous_stale_recover_failed:${updateError.message}`)
-    if (updated?.id) recovered++
+    // Reuse the failure boundary: reads can recover within budget, mutations require reconciliation.
+    await markFailure(row, telegramId, meta, 'stale_worker_recovered', true)
+    recovered++
   }
   if (recovered) await activity(telegramId, params.runId, 'autonomous_run_resumed', `Gogo recovered ${recovered} stale execution step${recovered === 1 ? '' : 's'} after an interruption.`, { recovered })
   await reconcileRun(params.runId, telegramId, { notifyOutcome: params.notifyOutcome })

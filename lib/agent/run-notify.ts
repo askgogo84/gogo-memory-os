@@ -2,13 +2,11 @@
 // Before this, reconcileRun only wrote activity and the stale sweep failed runs silently, so the owner
 // learned the outcome only from the 3-hour pulse or by opening the dashboard.
 //
-// Exactly-once (19 Oct review): before sending, the caller CLAIMS the notice with a conditional,
-// owner-bound update that only matches a row with no outcome_notified_at and no live claim
-// (metadata_json->>outcome_notice_claimed_at IS NULL, or equal to the stale claim it is taking over).
-// Only the caller whose update returned exactly one row sends. After a successful send,
-// outcome_notified_at is merged into freshly re-read metadata (so keys other paths wrote meanwhile
-// survive); a failed send releases the claim. Never throws into the cron.
+// The owner-bound claim is a write-ahead send intent. An expired claim may already
+// have reached the provider: never reclaim it without delivery reconciliation.
+// Only a definite provider rejection releases a claim for retry.
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isDefiniteProviderRejection } from '@/lib/services/delivery-state'
 
 export type RunOutcomeLike = {
   id?: string | number | null
@@ -47,7 +45,6 @@ const SENSITIVE_WORDS = /\b(otp|one[- ]time (?:code|password)|password|passcode|
 // A raw 4-8 digit code next to sign-in / verify / code / use words ("use 482913 to sign in").
 const CODE_NEAR_AUTH = /(?:\b(?:use|enter|sign[\s-]?in|log[\s-]?in|signin|login|verify|verification|code|confirm)\b\D{0,24}\b\d{4,8}\b|\b\d{4,8}\b\D{0,24}\b(?:to\s+)?(?:use|enter|sign[\s-]?in|log[\s-]?in|signin|login|verify|verification|code|confirm)\b)/i
 
-const CLAIM_STALE_MS = 10 * 60 * 1000
 const CLAIM_KEYS = ['outcome_notice_claimed_at', 'outcome_notice_claim_id'] as const
 
 function clean(value: unknown, max: number) {
@@ -171,14 +168,11 @@ export async function notifyRunOutcome(run: RunOutcomeLike, deps: RunNotifyDeps 
     if (latestMeta.outcome_notified_at || latestMeta.notified === true) return { status: 'skipped', reason: 'already_notified' }
     if (SELF_NOTIFYING_TYPES.has(clean(latestMeta.plan_type, 60))) return { status: 'skipped', reason: 'self_notifying_run' }
 
-    // A claim older than CLAIM_STALE_MS belongs to a sender that died mid-flight; it may be taken over,
-    // but only by compare-and-swap on that exact claim value.
+    // A crashed sender may have reached the provider even if no ID/flag was persisted.
+    // Fail closed on legacy claims too; age is not proof of non-delivery.
     const existingClaim = clean(latestMeta.outcome_notice_claimed_at, 60)
-    if (existingClaim) {
-      const claimedAt = Date.parse(existingClaim)
-      if (Number.isFinite(claimedAt) && nowDate().getTime() - claimedAt < CLAIM_STALE_MS) {
-        return { status: 'skipped', reason: 'claimed_elsewhere' }
-      }
+    if (existingClaim || latestMeta.outcome_notice_claim_id) {
+      return { status: 'skipped', reason: 'reconciliation_required' }
     }
 
     const whatsappId = await (deps.resolveWhatsappId || defaultResolveWhatsappId)(telegramId)
@@ -202,12 +196,15 @@ export async function notifyRunOutcome(run: RunOutcomeLike, deps: RunNotifyDeps 
       await (deps.send || defaultSend)(whatsappId, text)
     } catch (err: any) {
       console.error('RUN_OUTCOME_NOTICE_SEND_FAILED:', runId, clean(err?.message || err, 200))
-      await releaseClaim(db, runId, telegramId, token)
-      return { status: 'failed', reason: 'send_failed' }
+      if (isDefiniteProviderRejection(err)) {
+        await releaseClaim(db, runId, telegramId, token)
+        return { status: 'failed', reason: 'send_failed' }
+      }
+      return { status: 'failed', reason: 'outcome_unknown' }
     }
 
     // Sent: record the flag on top of whatever other paths wrote since the claim.
-    // One retry: if the flag never lands, the claim stays and only a stale takeover could resend.
+    // One persistence retry: if neither write lands, the send intent stays and blocks replay.
     const at = nowDate().toISOString()
     for (let attempt = 0; attempt < 2; attempt++) {
       const fresh = await readMeta(db, runId, telegramId)
