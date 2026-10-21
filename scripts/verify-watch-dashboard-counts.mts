@@ -13,14 +13,21 @@ const db={from:(table:string)=>{
 }}
 const jsx=(_type:any,props:any)=>props
 const deps:any={'@/lib/dashboard/service-notices':{EMPTY_SERVICE_NOTICES:{items:[],total:0,unavailable:false},getServiceNoticesForPage:async()=>({items:[],total:0,unavailable:false})},'react/jsx-runtime':{jsx,jsxs:jsx},'next/link':{default:'a'},'@/lib/dashboard/session':{getSession:async()=>({telegramId:'123'})},'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/dashboard/queries':{getTodayReminders:async()=>({ok:true,reminders:[]}),getLists:async()=>({ok:true,lists:[]})},'@/lib/dashboard/memory':{getDashboardMemory:async()=>({ok:true,items:[]})},'@/lib/dashboard/human-handoffs':{getPendingBrowserHandoffs:async()=>[]},'@/lib/agent/stale-runs':{staleRunningCutoff:()=>new Date().toISOString(),isStaleRunning:()=>false},'@/lib/dashboard/agent-activity':{getDashboardActivityRuns:async()=>[]},'@/lib/dashboard/activity-collapse':{collapseRepeatedRuns:(rows:any)=>rows}}
+function load(path:string):any{
+ const exports:any={};runInNewContext(ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,require:(name:string)=>deps[name]||{},console,process,Date,Intl,Map,Set});return exports
+}
+deps['@/lib/agent/task-lifecycle']={retiredRunReason:()=>false}
+deps['@/lib/dashboard/readable-summary']={readableRunSummary:(s:any)=>String(s||'')}
+deps['@/lib/gogo/agent-states']=load('lib/gogo/agent-states.ts')
+deps['@/lib/dashboard/task-feed']=load('lib/dashboard/task-feed.ts')
 for(const page of ['home','activity']){
- const exports:any={};runInNewContext(ts.transpileModule(readFileSync(`app/dashboard/(app)/${page}/page.tsx`,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText,{exports,require:(name:string)=>deps[name]||{},console,process,Date,Intl,Map,Set})
- const rendered=JSON.stringify(await exports.default({searchParams:Promise.resolve({})}))
+ const exports=load(`app/dashboard/(app)/${page}/page.tsx`)
+ const rendered=JSON.stringify(await exports.default({searchParams:Promise.resolve(page==='home'?{tab:'radar'}:{})}))
  assert.doesNotMatch(rendered,/Daily step goal review/,page+' must exclude goal jobs before limiting display')
  const query=calls.filter(row=>row.table==='agent_watchers').at(-1)
  assert.ok(query.filters.some(([op,key,value]:any)=>op==='eq'&&key==='telegram_id'&&value==='123'),page+' owner scope')
  assert.ok(query.filters.some(([op,key,value]:any)=>op==='neq'&&key==='type'&&value==='goal_review'),page+' ordinary watches only')
- if(page==='home')assert.match(rendered,/9 background watches/,'home context count must not be capped at four display rows')
+ if(page==='home'){assert.match(rendered,/"radarCount":9/,'home On radar count must be the exact total, not the display rows');assert.match(rendered,/Watch 8/)}
  else assert.match(rendered,/"children":9/,'activity badge must report all nine watches rather than six display rows')
 }
 console.log('Actual Home/Activity server pages: goals excluded before row limits; owner-bound total watch counts remain exact')

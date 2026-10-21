@@ -10,7 +10,7 @@ const LABEL: Record<FeedTab, string> = { need: 'Needs you', radar: 'On radar', r
 export function FeedTabs({ base, tab, feed, needCount, extra }: { base: string; tab: string; feed: TaskFeed; needCount: number; extra?: { key: string; label: string; count: number } }) {
   const tabs: { key: string; label: string; count: number | string }[] = [
     { key: 'need', label: LABEL.need, count: needCount },
-    { key: 'radar', label: LABEL.radar, count: feed.radar.length },
+    { key: 'radar', label: LABEL.radar, count: feed.radarCount ?? feed.radar.length },
     { key: 'recent', label: LABEL.recent, count: feed.recent.length },
     ...(extra ? [extra] : []),
   ]

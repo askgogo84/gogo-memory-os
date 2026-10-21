@@ -20,9 +20,9 @@ export type FeedItem = {
   action: string
   at: string | null
 }
-export type TaskFeed = { need: FeedItem[]; radar: FeedItem[]; recent: FeedItem[]; recentUnavailable: boolean }
+export type TaskFeed = { need: FeedItem[]; radar: FeedItem[]; recent: FeedItem[]; recentUnavailable: boolean; radarCount: number }
 
-export const EMPTY_FEED: TaskFeed = { need: [], radar: [], recent: [], recentUnavailable: false }
+export const EMPTY_FEED: TaskFeed = { need: [], radar: [], recent: [], recentUnavailable: false, radarCount: 0 }
 
 export function feedTab(raw: unknown): FeedTab {
   return raw === 'radar' || raw === 'recent' ? raw : 'need'
@@ -40,7 +40,7 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
   const [approvals, handoffs, watchers, running, recent] = await Promise.all([
     supabaseAdmin.from('agent_approvals').select('id,run_id,title,description,created_at').eq('telegram_id', tg).eq('status', 'pending').order('created_at', { ascending: false }).limit(10),
     getPendingBrowserHandoffs(tg),
-    supabaseAdmin.from('agent_watchers').select('id,title,type,next_check_at,condition_json').eq('telegram_id', tg).eq('active', true).neq('type', 'goal_review').order('next_check_at', { ascending: true }).limit(12),
+    supabaseAdmin.from('agent_watchers').select('id,title,type,next_check_at,condition_json', { count: 'exact' }).eq('telegram_id', tg).eq('active', true).neq('type', 'goal_review').order('next_check_at', { ascending: true }).limit(12),
     supabaseAdmin.from('agent_runs').select('id,type,capability,title,summary,status,error,metadata_json,updated_at').eq('telegram_id', tg).in('status', ['running', 'queued']).order('updated_at', { ascending: false }).limit(8),
     supabaseAdmin.from('agent_runs').select('id,type,capability,title,summary,status,source,error,metadata_json,updated_at')
       .eq('telegram_id', tg).in('status', ['completed', 'paused', 'failed']).neq('type', 'secure_browser')
@@ -72,6 +72,7 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
     const sub = readableRunSummary(r.summary) || 'Gogo is working on it.'
     radar.push({ id: `run-${r.id}`, tab: 'radar', state, tag: 'Working now', title: r.title || 'Gogo task', sub, live: liveLineFor(state, sub), href: `/dashboard/activity/${r.id}`, action: 'Watch', at: r.updated_at || null })
   }
+  const workingCount = radar.length
   for (const w of ((watchers as any)?.data || [])) {
     const title = String(w.title || w.condition_json?.title || 'Background watch').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi, '$1')
     radar.push({ id: `w-${w.id}`, tab: 'radar', state: 'watcher', tag: 'On radar', title, sub: String(w.type || 'watch').replaceAll('_', ' '), live: GOGO_STATE_LINE.watcher, href: '/dashboard/agent?section=background', action: 'Open', at: w.next_check_at || null })
@@ -85,5 +86,7 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
     const state = stateForRun(r)
     return { id: `run-${r.id}`, tab: 'recent', state, tag: recentTag(String(r.status)), title: r.title || 'Gogo task', sub: readableRunSummary(r.summary) || 'Open the task to see what happened.', live: GOGO_STATE_LINE[state], href: `/dashboard/activity/${encodeURIComponent(String(r.id))}`, action: 'Details', at: r.updated_at || null }
   })
-  return { need, radar, recent: recentItems, recentUnavailable: Boolean((recent as any)?.error) }
+    // The tab count is the untruncated total, not the display rows (12 shown of 30 watches still says 30).
+  const watcherTotal = Number((watchers as any)?.count ?? ((watchers as any)?.data || []).length)
+  return { need, radar, recent: recentItems, recentUnavailable: Boolean((recent as any)?.error), radarCount: workingCount + watcherTotal }
 }
