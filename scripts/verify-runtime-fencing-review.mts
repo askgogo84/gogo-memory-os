@@ -107,7 +107,10 @@ await check('cancellation racing with replan persistence cannot reopen the paren
  await assert.rejects(h.runtime.appendAutonomousReplan({actor,runId:'run',reason:'Fixture',steps:[{key:'next',title:'Fixture next',toolName:'fixture',mutation:true}]}),/superseded/)
  let calls=0;await h.execute(async()=>{calls++;return{status:'completed',verified:true}});assert.equal(calls,0);assert.equal(h.run.status,'failed')
 })
+await check('same-owner same-run approval for another action grants no authority',async()=>{
+ const h=harness();h.step.output_json.runtime.requiresApproval=true;h.step.output_json.runtime.approvalId='foreign-action'
+ h.tables.agent_approvals.push({id:'foreign-action',run_id:'run',telegram_id:'123',status:'approved',action_hash:'different-action',policy_version:'brain-v1.1',requested_at:new Date().toISOString()})
+ await assert.rejects(h.runtime.releaseApprovedAutonomousStep({actor,runId:'run',stepKey:'first'}),/binding|action|approval/)
+ assert.equal(h.step.output_json.runtime.approvalId,'foreign-action')
+})
 if(failures)process.exitCode=1
-
-
-
