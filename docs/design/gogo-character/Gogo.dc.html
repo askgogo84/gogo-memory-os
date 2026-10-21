@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><style>
+@keyframes gg-breath{0%,100%{transform:scale(1)}50%{transform:scale(1.025)}}
+@keyframes gg-bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+@keyframes gg-lean{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-4deg)}}
+@keyframes gg-orbit{to{transform:rotate(360deg)}}
+@keyframes gg-glow{0%,100%{opacity:.75}50%{opacity:1}}
+@keyframes gg-ring{0%{transform:scale(.9);opacity:.5}100%{transform:scale(1.4);opacity:0}}
+@keyframes gg-blink{0%,90%,100%{transform:scaleY(1)}94%{transform:scaleY(.1)}}
+@keyframes gg-look{0%,15%{transform:translateX(-2px)}45%,60%{transform:translateX(2px)}85%,100%{transform:translateX(-2px)}}
+@keyframes gg-lookdown{0%,100%{transform:translate(-1.5px,2px)}50%{transform:translate(1.5px,2px)}}
+@keyframes gg-type{0%{transform:translateY(0)}100%{transform:translateY(-2px)}}
+@keyframes gg-wave{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-14deg)}}
+@keyframes gg-scratch{0%,100%{transform:translateX(0)}50%{transform:translateX(3px)}}
+@keyframes gg-cardin{0%{opacity:0;transform:translateY(8px)}100%{opacity:1;transform:translateY(0)}}
+@keyframes gg-drift{0%,100%{transform:translateY(-2px)}50%{transform:translateY(2px)}}
+@keyframes gg-scan{0%{transform:translateY(0)}100%{transform:translateY(22px)}}
+@keyframes gg-plane{0%{offset-distance:0%}100%{offset-distance:100%}}
+@keyframes gg-dots{0%,80%,100%{opacity:.25}40%{opacity:1}}
+@keyframes gg-check{0%{stroke-dashoffset:24}100%{stroke-dashoffset:0}}
+@keyframes gg-spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+</style></helmet>
+<svg viewBox="0 0 240 200" width="{{ w }}" height="{{ h }}" style="display:block;overflow:visible">
+  <defs>
+    <radialGradient id="gogoBody" cx="40%" cy="30%" r="80%"><stop offset="0" stop-color="#FFFBF3"></stop><stop offset=".6" stop-color="#F3E7D3"></stop><stop offset="1" stop-color="#E4D3B9"></stop></radialGradient>
+    <radialGradient id="gogoCore" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#FFB06A" stop-opacity=".95"></stop><stop offset=".55" stop-color="#EF7A27" stop-opacity=".55"></stop><stop offset="1" stop-color="#EF7A27" stop-opacity="0"></stop></radialGradient>
+    <radialGradient id="gogoHair" cx="40%" cy="35%" r="75%"><stop offset="0" stop-color="#4A2E20"></stop><stop offset="1" stop-color="#2C1A13"></stop></radialGradient>
+  </defs>
+  <ellipse cx="120" cy="174" rx="40" ry="5" style="fill:{{ shadow }}"></ellipse>
+  <sc-for list="{{ rings }}" as="r" hint-placeholder-count="0"><circle cx="120" cy="100" r="72" style="fill:none;stroke:#EF7A27;stroke-width:1.5;stroke-opacity:.4;transform-box:fill-box;transform-origin:center;animation:gg-ring 4s {{ r.delay }} ease-out infinite"></circle></sc-for>
+  <sc-if value="{{ orbit }}" hint-placeholder-val="{{ false }}">
+    <g style="transform-box:fill-box;transform-origin:center;animation:gg-orbit 6s linear infinite"><circle cx="120" cy="14" r="4" style="fill:#EF7A27"></circle><circle cx="186" cy="80" r="3" style="fill:#EF7A27;opacity:.7"></circle><circle cx="56" cy="96" r="2.4" style="fill:#EF7A27;opacity:.5"></circle></g>
+  </sc-if>
+  <g transform="translate(30 -6) scale(1.5)">
+    <g style="transform-box:fill-box;transform-origin:center 90%;animation:{{ bodyAnim }}">
+      <g fill="url(#gogoHair)" style="stroke:{{ hairStroke }};stroke-width:1.6">
+        <circle cx="24" cy="52" r="9"></circle><circle cx="28" cy="40" r="10.5"></circle><circle cx="38" cy="30" r="11"></circle><circle cx="51" cy="23" r="11.5"></circle><circle cx="66" cy="22" r="12"></circle><circle cx="81" cy="28" r="11"></circle><circle cx="92" cy="39" r="10.5"></circle><circle cx="96" cy="52" r="9"></circle><circle cx="60" cy="32" r="13"></circle><circle cx="44" cy="40" r="10"></circle><circle cx="78" cy="38" r="10"></circle>
+      </g>
+      <path d="M60 34 C84 34 100 52 101 76 C102 100 84 113 60 113 C36 113 18 100 19 76 C20 52 36 34 60 34Z" fill="url(#gogoBody)" style="stroke:{{ bodyStroke }};stroke-width:1.5"></path>
+      <circle cx="60" cy="92" r="23" fill="url(#gogoCore)" style="animation:gg-glow {{ glowSpeed }} ease-in-out infinite"></circle>
+      <circle cx="42" cy="72" r="4.5" style="fill:#EF7A27;opacity:{{ blush }};transition:opacity .4s"></circle><circle cx="78" cy="72" r="4.5" style="fill:#EF7A27;opacity:{{ blush }};transition:opacity .4s"></circle>
+      <sc-if value="{{ eyesClosed }}" hint-placeholder-val="{{ true }}"><path d="M43 63 q5 4 10 0 M67 63 q5 4 10 0" style="fill:none;stroke:#2C1A13;stroke-width:2.6;stroke-linecap:round"></path></sc-if>
+      <sc-if value="{{ eyesHappy }}" hint-placeholder-val="{{ false }}"><path d="M43 65 q5 -5 10 0 M67 65 q5 -5 10 0" style="fill:none;stroke:#2C1A13;stroke-width:2.6;stroke-linecap:round"></path></sc-if>
+      <sc-if value="{{ eyesHalf }}" hint-placeholder-val="{{ false }}"><circle cx="48" cy="64" r="3.2" style="fill:#2C1A13"></circle><circle cx="72" cy="64" r="3.2" style="fill:#2C1A13"></circle><path d="M43 61 h10 M67 61 h10" style="stroke:#F3E7D3;stroke-width:3.2;stroke-linecap:round"></path></sc-if>
+      <sc-if value="{{ eyesOpen }}" hint-placeholder-val="{{ false }}">
+        <g style="transition:transform .5s cubic-bezier(.4,0,.2,1);transform:{{ gazeTf }}">
+          <g style="animation:{{ gazeAnim }}">
+            <g style="animation:gg-blink 5.5s ease-in-out infinite;transform-box:fill-box;transform-origin:center">
+              <circle cx="48" cy="64" r="{{ eyeR }}" style="fill:#2C1A13;transition:r .3s"></circle><circle cx="72" cy="64" r="{{ eyeR }}" style="fill:#2C1A13;transition:r .3s"></circle>
+              <circle cx="49.2" cy="62.8" r="1" style="fill:#FFFBF3"></circle><circle cx="73.2" cy="62.8" r="1" style="fill:#FFFBF3"></circle>
+            </g>
+          </g>
+        </g>
+      </sc-if>
+      <sc-if value="{{ brows }}" hint-placeholder-val="{{ false }}"><path d="M43 55 l9 2.5 M77 55 l-9 2.5" style="fill:none;stroke:#2C1A13;stroke-width:2;stroke-linecap:round;opacity:.7"></path></sc-if>
+      <sc-if value="{{ mouth }}" hint-placeholder-val="{{ false }}"><path d="{{ mouth }}" style="fill:none;stroke:#2C1A13;stroke-width:2;stroke-linecap:round;opacity:.7;transition:d .4s"></path></sc-if>
+      <sc-if value="{{ handsRest }}" hint-placeholder-val="{{ false }}"><ellipse cx="30" cy="98" rx="7" ry="5" style="fill:#F3E7D3;stroke:#E4D3B9;stroke-width:1"></ellipse><ellipse cx="90" cy="98" rx="7" ry="5" style="fill:#F3E7D3;stroke:#E4D3B9;stroke-width:1"></ellipse></sc-if>
+      <sc-if value="{{ handsType }}" hint-placeholder-val="{{ false }}"><ellipse cx="44" cy="107" rx="7" ry="5" style="fill:#F3E7D3;stroke:#E4D3B9;stroke-width:1;animation:gg-type {{ typeSpeed }} ease-in-out infinite alternate"></ellipse><ellipse cx="76" cy="107" rx="7" ry="5" style="fill:#F3E7D3;stroke:#E4D3B9;stroke-width:1;animation:gg-type {{ typeSpeed }} .17s ease-in-out infinite alternate-reverse"></ellipse></sc-if>
+      <sc-if value="{{ handWave }}" hint-placeholder-val="{{ false }}"><ellipse cx="30" cy="98" rx="7" ry="5" style="fill:#F3E7D3;stroke:#E4D3B9;stroke-width:1"></ellipse><ellipse cx="96" cy="72" rx="6" ry="7.5" style="fill:#F3E7D3;stroke:#E4D3B9;stroke-width:1;transform-box:fill-box;transform-origin:bottom center;animation:gg-wave 1.2s ease-in-out infinite"></ellipse></sc-if>
+      <sc-if value="{{ handChin }}" hint-placeholder-val="{{ false }}"><ellipse cx="30" cy="98" rx="7" ry="5" style="fill:#F3E7D3;stroke:#E4D3B9;stroke-width:1"></ellipse><ellipse cx="80" cy="82" rx="6.5" ry="5.5" style="fill:#F3E7D3;stroke:#E4D3B9;stroke-width:1"></ellipse></sc-if>
+      <sc-if value="{{ handScratch }}" hint-placeholder-val="{{ false }}"><ellipse cx="30" cy="98" rx="7" ry="5" style="fill:#F3E7D3;stroke:#E4D3B9;stroke-width:1"></ellipse><ellipse cx="94" cy="40" rx="6" ry="6.5" style="fill:#F3E7D3;stroke:#E4D3B9;stroke-width:1;animation:gg-scratch 1.6s ease-in-out infinite"></ellipse></sc-if>
+      <sc-if value="{{ handPoint }}" hint-placeholder-val="{{ false }}"><ellipse cx="30" cy="98" rx="7" ry="5" style="fill:#F3E7D3;stroke:#E4D3B9;stroke-width:1"></ellipse><ellipse cx="100" cy="86" rx="7.5" ry="5" style="fill:#F3E7D3;stroke:#E4D3B9;stroke-width:1"></ellipse></sc-if>
+    </g>
+  </g>
+  <sc-if value="{{ laptop }}" hint-placeholder-val="{{ false }}">
+    <g style="animation:gg-cardin .5s ease-out both">
+      <rect x="82" y="122" width="76" height="46" rx="6" style="fill:{{ cardFill }};stroke:{{ cardStroke }};stroke-width:1.2"></rect>
+      <rect x="88" y="128" width="64" height="34" rx="3" style="fill:{{ screenFill }}"></rect>
+      <rect x="92" y="132" width="34" height="3" rx="1.5" style="fill:{{ lineStrong }}"></rect>
+      <rect x="92" y="139" width="52" height="3" rx="1.5" style="fill:{{ lineSoft }}"></rect>
+      <rect x="92" y="146" width="44" height="3" rx="1.5" style="fill:{{ lineSoft }}"></rect>
+      <rect x="92" y="153" width="50" height="3" rx="1.5" style="fill:{{ lineSoft }}"></rect>
+      <rect x="88" y="130" width="64" height="1.5" style="fill:#EF7A27;opacity:.6;animation:gg-scan 1.8s linear infinite alternate"></rect>
+      <rect x="74" y="168" width="92" height="7" rx="3.5" style="fill:{{ cardFill }};stroke:{{ cardStroke }};stroke-width:1.2"></rect>
+    </g>
+  </sc-if>
+  <sc-for list="{{ cards }}" as="c" hint-placeholder-count="0">
+    <g style="animation:gg-cardin .5s {{ c.delay }} ease-out both">
+      <g style="animation:gg-drift 3.2s {{ c.delay }} ease-in-out infinite alternate">
+        <rect x="{{ c.x }}" y="{{ c.y }}" width="{{ c.w }}" height="{{ c.h }}" rx="6" style="fill:{{ cardFill }};stroke:{{ cardStroke }};stroke-width:1.2"></rect>
+        <sc-for list="{{ c.lines }}" as="l" hint-placeholder-count="0"><rect x="{{ l.x }}" y="{{ l.y }}" width="{{ l.w }}" height="3" rx="1.5" style="fill:{{ l.fill }}"></rect></sc-for>
+        <sc-if value="{{ c.check }}" hint-placeholder-val="{{ false }}">
+          <circle cx="{{ c.cx }}" cy="{{ c.cy }}" r="6" style="fill:#EF7A27"></circle>
+          <path d="{{ c.checkPath }}" style="fill:none;stroke:#fff;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:24;animation:gg-check .6s {{ c.delay }} ease-out both"></path>
+        </sc-if>
+        <sc-if value="{{ c.glyph }}" hint-placeholder-val="{{ false }}"><path d="{{ c.glyph }}" style="fill:none;stroke:{{ c.glyphColor }};stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round"></path></sc-if>
+        <sc-if value="{{ c.dots }}" hint-placeholder-val="{{ false }}">
+          <circle cx="{{ c.dx1 }}" cy="{{ c.dy }}" r="2" style="fill:#EF7A27;animation:gg-dots 1.4s 0s ease-in-out infinite"></circle>
+          <circle cx="{{ c.dx2 }}" cy="{{ c.dy }}" r="2" style="fill:#EF7A27;animation:gg-dots 1.4s .2s ease-in-out infinite"></circle>
+          <circle cx="{{ c.dx3 }}" cy="{{ c.dy }}" r="2" style="fill:#EF7A27;animation:gg-dots 1.4s .4s ease-in-out infinite"></circle>
+        </sc-if>
+        <sc-if value="{{ c.spin }}" hint-placeholder-val="{{ false }}"><path d="{{ c.spin }}" style="fill:none;stroke:#EF7A27;stroke-width:1.8;stroke-linecap:round;transform-box:fill-box;transform-origin:center;animation:gg-spin 2.4s linear infinite"></path></sc-if>
+      </g>
+    </g>
+  </sc-for>
+  <sc-if value="{{ plane }}" hint-placeholder-val="{{ false }}">
+    <g style="animation:gg-cardin .6s .2s ease-out both">
+      <path d="M30 70 Q120 -20 210 70" style="fill:none;stroke:#EF7A27;stroke-width:1.2;stroke-dasharray:3 4;opacity:.6"></path>
+      <circle cx="30" cy="70" r="2.5" style="fill:#EF7A27"></circle><circle cx="210" cy="70" r="2.5" style="fill:#EF7A27"></circle>
+      <path d="M-5 0 L5 0 M0 -4 L2 0 L0 4 M-3 -2 L-3 2" style="fill:none;stroke:#2C1A13;stroke-width:1.6;stroke-linecap:round;offset-path:path('M30 70 Q120 -20 210 70');offset-rotate:auto;animation:gg-plane 6s cubic-bezier(.4,0,.4,1) infinite"></path>
+    </g>
+  </sc-if>
+  <sc-if value="{{ badge }}" hint-placeholder-val="{{ false }}">
+    <g style="animation:gg-cardin .5s .3s ease-out both">
+      <circle cx="176" cy="132" r="14" style="fill:#2FAE6A;stroke:{{ ringStroke }};stroke-width:3"></circle>
+      <path d="M169 132 L174 137 L184 127" style="fill:none;stroke:#fff;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:24;animation:gg-check .7s .6s ease-out both"></path>
+    </g>
+  </sc-if>
+</svg>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:260,&quot;height&quot;:220},&quot;state&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;searching&quot;,&quot;options&quot;:[&quot;idle&quot;,&quot;thinking&quot;,&quot;searching&quot;,&quot;browsing&quot;,&quot;comparing&quot;,&quot;flight&quot;,&quot;train&quot;,&quot;grocery&quot;,&quot;booking&quot;,&quot;approval&quot;,&quot;otp&quot;,&quot;watcher&quot;,&quot;done&quot;,&quot;blocked&quot;,&quot;failed&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Gogo&quot;},&quot;size&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:240,&quot;min&quot;:48,&quot;max&quot;:480,&quot;unit&quot;:&quot;px&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Gogo&quot;},&quot;theme&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;light&quot;,&quot;options&quot;:[&quot;light&quot;,&quot;dark&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Gogo&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props, state = p.state ?? 'idle', dark = (p.theme ?? 'light') === 'dark';
+    const size = Number(p.size ?? 240);
+    const cardFill = dark ? '#1F1A17' : '#FFFFFF', cardStroke = dark ? '#3B312B' : '#E4D3B9';
+    const lineStrong = dark ? 'rgba(243,231,211,.7)' : 'rgba(44,26,19,.7)', lineSoft = dark ? 'rgba(243,231,211,.22)' : 'rgba(44,26,19,.18)';
+    const L = (x, y, w, strong) => ({ x, y, w, fill: strong ? lineStrong : lineSoft });
+    const card = (x, y, w, h, delay, extra = {}) => ({ x, y, w, h, delay, lines: [L(x+6,y+6,w*0.5,1), L(x+6,y+13,w-12,0), L(x+6,y+20,w*0.7,0)].filter(l => l.y < y+h-4), ...extra });
+    const check = (c) => ({ ...c, check: true, cx: c.x + c.w - 9, cy: c.y + c.h - 9, checkPath: `M${c.x+c.w-12} ${c.y+c.h-9} L${c.x+c.w-10} ${c.y+c.h-7} L${c.x+c.w-6} ${c.y+c.h-11.5}` });
+    const M = { smile: 'M55 76 q5 3 10 0', open: 'M57 75 q3 4 6 0', flat: 'M56 76 h8', hm: 'M55 77 q4 -2 9 0' };
+    const B = { breath: 'gg-breath 5s ease-in-out infinite', bob: 'gg-bob 1.4s ease-in-out infinite', lean: 'gg-lean 3s ease-in-out infinite', none: 'none' };
+    let v = { eyes: 'closed', eyeR: 3.3, gazeTf: 'translate(0,0)', gazeAnim: 'none', hands: 'rest', mouth: false, brows: false, bodyAnim: B.breath, glowSpeed: '4s', blush: 0.18, laptop: false, cards: [], plane: false, badge: false, rings: [], orbit: false, typeSpeed: '.34s' };
+    const work = { eyes: 'open', hands: 'type', laptop: true, bodyAnim: B.none, glowSpeed: '2.4s' };
+    const S = {
+      idle: {},
+      thinking: { eyes: 'open', gazeTf: 'translate(1.5px,-2px)', hands: 'chin', orbit: true, cards: [check(card(178,74,44,22,'0s')), check(card(184,102,44,22,'.3s')), card(190,130,44,22,'.6s',{dots:true,dx1:200,dx2:207,dx3:214,dy:145,lines:[]})] },
+      searching: { ...work, gazeAnim: 'gg-look 3.2s ease-in-out infinite', cards: [card(10,96,56,34,'0s'), card(174,86,56,34,'.25s'), card(16,138,50,30,'.5s')] },
+      browsing: { ...work, gazeAnim: 'gg-lookdown 2.4s ease-in-out infinite', cards: [card(6,76,60,30,'0s'), card(2,112,60,30,'.2s'), card(174,68,60,30,'.4s'), card(180,104,60,30,'.6s'), card(178,140,58,26,'.8s')] },
+      comparing: { eyes: 'open', gazeAnim: 'gg-look 4s ease-in-out infinite', hands: 'rest', cards: [card(22,130,56,40,'0s'), check(card(92,130,56,40,'.2s')), card(162,130,56,40,'.4s')] },
+      flight: { ...work, gazeAnim: 'gg-look 3.6s ease-in-out infinite', plane: true, cards: [card(8,112,56,30,'.3s'), card(176,112,56,30,'.5s')] },
+      train: { ...work, gazeAnim: 'gg-lookdown 3s ease-in-out infinite', cards: [ { ...card(4,92,64,22,'0s'), lines:[L(10,98,10,1),L(24,98,20,0),L(48,98,14,1)] }, { ...card(4,118,64,22,'.2s'), lines:[L(10,124,10,1),L(24,124,20,0),L(48,124,14,1)] }, check({ ...card(4,144,64,22,'.4s'), lines:[L(10,150,10,1),L(24,150,20,0)] }), { ...card(174,100,60,22,'.5s'), lines:[L(180,106,10,1),L(194,106,22,0),L(220,106,8,1)] } ] },
+      grocery: { eyes: 'open', gazeAnim: 'gg-look 4s ease-in-out infinite', hands: 'point', bodyAnim: B.lean, cards: [ { ...card(164,112,66,52,'0s'), lines:[L(170,118,30,1),L(170,126,50,0),L(170,134,44,0),L(170,142,40,0)], glyph:'M184 152 L188 152 L191 160 L210 160 L212 154 L190 154 M192 165 a1 1 0 1 0 0.01 0 M208 165 a1 1 0 1 0 0.01 0', glyphColor:'#EF7A27' }, check(card(10,96,48,30,'.2s')), card(14,132,48,30,'.4s') ] },
+      booking: { ...work, typeSpeed: '.8s', gazeTf: 'translate(0,2px)', glowSpeed: '4s', cards: [ { ...card(170,88,62,58,'0s'), lines:[L(176,94,24,1),L(176,102,50,0),L(176,110,50,0),L(176,118,44,0),L(176,126,50,0),L(176,134,30,1)] } ] },
+      approval: { eyes: 'open', eyeR: 3.8, hands: 'wave', mouth: M.open, blush: 0.3, cards: [ { ...card(170,84,64,60,'0s'), lines:[L(176,90,30,1),L(176,98,52,0),L(176,106,44,0),L(176,124,20,1),L(202,124,20,1)] } ] },
+      otp: { eyes: 'open', gazeTf: 'translate(2px,2.5px)', hands: 'rest', cards: [ { ...card(182,96,34,60,'0s'), lines:[L(192,110,14,1)], dots:true, dx1:192, dx2:199, dx3:206, dy:130 } ] },
+      watcher: { eyes: 'half', bodyAnim: B.none, glowSpeed: '2.4s', rings: [{delay:'0s'},{delay:'2s'}], cards: [ { ...card(178,116,50,26,'.4s'), lines:[L(194,124,28,1),L(194,132,22,0)], glyph:'M184 134 a4 4 0 0 1 8 0 v4 h-8z M188 126 a1 1 0 0 1 0 2', glyphColor:'#EF7A27' } ] },
+      done: { eyes: 'happy', mouth: M.smile, badge: true, blush: 0.3, bodyAnim: 'gg-bob 2.2s ease-in-out infinite' },
+      blocked: { eyes: 'open', eyeR: 3, brows: true, mouth: M.flat, gazeTf: 'translate(0,1.5px)', hands: 'chin', laptop: true, blush: 0.1, cards: [ { ...card(170,84,56,40,'0s'), lines:[L(176,110,44,0),L(176,117,30,0)], glyph:'M192 98 h12 v9 h-12z M194 98 v-3 a4 4 0 0 1 8 0 v3', glyphColor:'#EF7A27' } ] },
+      failed: { eyes: 'open', mouth: M.hm, gazeTf: 'translate(-2px,-1.5px)', hands: 'scratch', blush: 0.12, cards: [ { ...card(166,100,58,40,'.2s'), lines:[L(172,126,46,0),L(172,133,30,0)], spin:'M190 112 a6 6 0 1 1 6 6 M196 112 l0 5 l-5 0' } ] },
+    };
+    Object.assign(v, S[state] || {});
+    if (size < 90) { v.cards = []; v.plane = false; v.rings = []; v.orbit = false; }
+    return { ...v,
+      eyesClosed: v.eyes === 'closed', eyesOpen: v.eyes === 'open', eyesHappy: v.eyes === 'happy', eyesHalf: v.eyes === 'half',
+      handsRest: v.hands === 'rest', handsType: v.hands === 'type', handWave: v.hands === 'wave', handChin: v.hands === 'chin', handScratch: v.hands === 'scratch', handPoint: v.hands === 'point',
+      w: size, h: size * 200 / 240, cardFill, cardStroke, lineStrong, lineSoft,
+      screenFill: dark ? '#2A231E' : '#FBF6EC', shadow: dark ? 'rgba(0,0,0,.45)' : 'rgba(44,26,19,.10)',
+      bodyStroke: dark ? 'rgba(255,251,243,.22)' : 'rgba(44,26,19,.08)', hairStroke: dark ? 'rgba(255,251,243,.32)' : 'none', ringStroke: dark ? '#0E1614' : '#F6F1E8' };
+  }
+}
+</script>
+</body>
+</html>

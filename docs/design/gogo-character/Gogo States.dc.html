@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet><meta name="design_doc_mode" content="canvas"><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Instrument+Serif&display=swap" rel="stylesheet"><style>body{margin:0;background:#F5F3EE;font-family:Manrope,system-ui,sans-serif;color:#2C1A13}a{color:#EF7A27}a:hover{color:#C9601A}</style></helmet>
+<div style="padding:40px 48px 80px;display:flex;flex-direction:column;gap:48px;max-width:1400px">
+  <div style="display:flex;flex-direction:column;gap:14px;max-width:760px">
+    <div style="font:600 11px/1 Manrope;letter-spacing:.14em;text-transform:uppercase;color:#7A6A60">AskGogo · Character system · Round 1</div>
+    <h1 style="font:400 44px/1.05 'Instrument Serif',serif;margin:0">Meet Gogo</h1>
+    <p style="margin:0;font-size:15px;line-height:1.55;color:#4A3B32;text-wrap:pretty">Your Gogo — the cream, curly-haired little helper with a warm orange core — now carries the full working system. Every state keeps the same silhouette; only eyes, hands, the core glow and the props around him change, so Gogo is recognisable at 48px in a task card and at 240px in the expanded view. Palette stays yours: cream #F3E7D3, hair #2C1A13, Gogo orange #EF7A27, verified green #2FAE6A. No red anywhere — problems read as calm, not alarm.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:13px"><a href="Gogo Panels.dc.html">Live panel + mobile cards + Rive/Lottie spec →</a></div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <h2 style="font:400 26px/1.1 'Instrument Serif',serif;margin:0">Character sheet</h2>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <sc-for list="{{ sheet }}" as="s" hint-placeholder-count="6">
+        <div style="background:#fff;border:1px solid #E4D3B9;border-radius:16px;padding:16px 16px 12px;display:flex;flex-direction:column;align-items:center;gap:8px;width:180px">
+          <dc-import name="Gogo" state="{{ s.state }}" size="150" hint-size="150px,125px"></dc-import>
+          <div style="font-size:13px;font-weight:700">{{ s.label }}</div>
+          <div style="font-size:11.5px;color:#7A6A60;text-align:center;line-height:1.4">{{ s.note }}</div>
+        </div>
+      </sc-for>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end">
+      <sc-for list="{{ sizes }}" as="z" hint-placeholder-count="4">
+        <div style="background:#fff;border:1px solid #E4D3B9;border-radius:16px;padding:14px;display:flex;flex-direction:column;align-items:center;gap:6px">
+          <dc-import name="Gogo" state="idle" size="{{ z.px }}" hint-size="100px,80px"></dc-import>
+          <div style="font-size:11px;color:#7A6A60">{{ z.label }}</div>
+        </div>
+      </sc-for>
+      <div style="background:#1F1A17;border:1px solid #3B312B;border-radius:16px;padding:14px;display:flex;flex-direction:column;align-items:center;gap:6px">
+        <dc-import name="Gogo" state="searching" theme="dark" size="160" hint-size="160px,133px"></dc-import>
+        <div style="font-size:11px;color:#E4D3B9">Dark theme</div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <h2 style="font:400 26px/1.1 'Instrument Serif',serif;margin:0">15 states — compact card and expanded view</h2>
+    <p style="margin:0;font-size:13px;color:#7A6A60">Click any card to preview the transition into that state in the expanded viewer. Live task text sits under Gogo in every context.</p>
+    <div style="display:grid;grid-template-columns:minmax(0,1fr) 420px;gap:24px;align-items:start">
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px">
+        <sc-for list="{{ states }}" as="st" hint-placeholder-count="15">
+          <div onClick="{{ st.pick }}" style="cursor:pointer;background:#fff;border:1px solid {{ st.border }};border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:12px;box-shadow:{{ st.shadow }};transition:border-color .2s,box-shadow .2s">
+            <div style="flex:none;width:64px;height:54px;display:flex;align-items:center;justify-content:center"><dc-import name="Gogo" state="{{ st.id }}" size="64" hint-size="64px,54px"></dc-import></div>
+            <div style="min-width:0;display:flex;flex-direction:column;gap:3px">
+              <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#A8988C">{{ st.num }} · {{ st.name }}</div>
+              <div style="font-size:13px;font-weight:600;line-height:1.3">{{ st.text }}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+      <div style="position:sticky;top:24px;background:#fff;border:1px solid #E4D3B9;border-radius:20px;padding:28px 24px 22px;display:flex;flex-direction:column;align-items:center;gap:14px">
+        <dc-import name="Gogo" state="{{ cur.id }}" size="300" hint-size="300px,250px"></dc-import>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center">
+          <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#A8988C">{{ cur.num }} · {{ cur.name }}</div>
+          <div style="font-size:17px;font-weight:700">{{ cur.text }}</div>
+          <div style="font-size:13px;color:#7A6A60;line-height:1.5;text-wrap:pretty;max-width:340px">{{ cur.desc }}</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;font-size:12px;color:#7A6A60"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:#EF7A27"></span>Auto-cycling every 3.5s · click a card to hold</div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { i: 2, hold: false };
+  STATES = [
+    ['idle','Idle','Ready when you are','Closed-eye calm, slow breath, core glow 4s. Used when no task is running.'],
+    ['thinking','Thinking / planning','Planning your trip…','Gaze up-right, hand to chin, orbit dots, checklist cards tick in one by one.'],
+    ['searching','Searching the web','Searching live flight sources…','On the laptop, eyes sweep left–right between results; browser cards fade in around him.'],
+    ['browsing','Deep browser work','Reading 6 pages in the background…','Faster typing, gaze down at screen, tabs stack and drift on both sides. Signals genuine ongoing work.'],
+    ['comparing','Comparing options','Comparing 14 options…','Three cards in front; gaze scans across them; the best one gets a check.'],
+    ['flight','Flight search','Checking current fares…','Laptop work plus a quiet dotted route arc with a small aircraft; restrained, not cartoon.'],
+    ['train','Train / IRCTC search','Checking seat availability…','Timetable rows appear at the left; one row verified.'],
+    ['grocery','Grocery / food search','Building your cart…','Cart card fills while product cards are compared; one hand reaching.'],
+    ['booking','Booking / preparing','Preparing your booking…','Slow, careful typing; gaze fixed on the screen; a detail card fills in. "I am preparing this for you."'],
+    ['approval','Waiting for approval','Waiting for your approval…','Gogo turns to the user, eyes wide, small open smile, hand gestures at the approval card. "Your turn."'],
+    ['otp','Waiting for OTP / login','Continue on your phone — I will pick up from here','Patient glance toward the phone, typing dots. No error expression.'],
+    ['watcher','Background watcher','Watching fares for Delhi → Goa','Half-closed eyes, slow radar rings around the body, a small notification card.'],
+    ['done','Completed / verified','Booked and verified','Happy eye arcs, small smile, gentle bob, green check. Understated.'],
+    ['blocked','Blocked / needs help','This site needs your login to continue','Brows drawn in, flat mouth, hand to chin; orange lock card. The site is blocking, not the system.'],
+    ['failed','Failed — trying another way','That route did not work — trying another way','Head-scratch, "hm" mouth, retry spinner. Never red.'],
+  ];
+  componentDidMount() { this.t = setInterval(() => { if (!this.state.hold) this.setState(s => ({ i: (s.i + 1) % this.STATES.length })); }, 3500); }
+  componentWillUnmount() { clearInterval(this.t); }
+  renderVals() {
+    const states = this.STATES.map(([id, name, text, desc], k) => ({ id, name, text, desc, num: String(k + 1).padStart(2, '0'), border: k === this.state.i ? '#EF7A27' : '#E4D3B9', shadow: k === this.state.i ? '0 0 0 3px rgba(239,122,39,.18)' : 'none', pick: () => this.setState({ i: k, hold: true }) }));
+    return {
+      states, cur: states[this.state.i],
+      sheet: [
+        { state: 'idle', label: 'Calm', note: 'Closed eyes, slow breath' },
+        { state: 'thinking', label: 'Focused', note: 'Gaze up, hand to chin' },
+        { state: 'approval', label: 'Attentive', note: 'Eyes +15%, wave, open mouth' },
+        { state: 'done', label: 'Content', note: 'Happy arcs, smile' },
+        { state: 'blocked', label: 'Concerned', note: 'Brows in, flat mouth, calm' },
+        { state: 'watcher', label: 'Resting', note: 'Half-closed, monitoring' },
+      ],
+      sizes: [{ px: 48, label: '48 · mobile card' }, { px: 72, label: '72 · task card' }, { px: 120, label: '120 · side rail' }, { px: 200, label: '200 · expanded' }],
+    };
+  }
+}
+</script>
+</body>
+</html>
