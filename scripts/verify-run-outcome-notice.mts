@@ -294,6 +294,7 @@ function runtimeHarness(stepStatus: 'completed' | 'failed') {
   const notified: any[] = []
   const runtime = loadModule('lib/agent/autonomous-runtime.ts', {
     'node:crypto': { createHash },
+    '@/lib/metering/core': { runMeteredTask: (_owner: unknown, _trace: unknown, work: () => unknown) => work() },
     '@/lib/supabase-admin': { supabaseAdmin: db },
     './specialist-registry': { selectSpecialistRoute: () => ({ primary: 'research', supporting: [] }) },
     './run-notify': { notifyRunOutcome: async (run: any) => { notified.push(run); return { status: 'sent' } } },

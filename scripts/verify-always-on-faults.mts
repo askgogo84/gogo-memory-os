@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
+import { runMeteredTask, currentMeterContext } from '../lib/metering/core';
 const actor = { userId: 'owner-a', legacyTelegramId: 123, whatsappId: 'inert', name: 'Fixture' };
 function harness(mutation = false, status = 'queued') {
     const run: any = { id: 'r', telegram_id: '123', status: 'running', title: 'Fixture', metadata_json: { objective: 'Fixture' } };
@@ -20,7 +21,7 @@ function harness(mutation = false, status = 'queued') {
             return q;
         } };
     const exports: any = {};
-    runInNewContext(ts.transpileModule(readFileSync('lib/agent/autonomous-runtime.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, require: (id: string) => { if (id === 'node:crypto')
+    runInNewContext(ts.transpileModule(readFileSync('lib/agent/autonomous-runtime.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText, { exports, require: (id: string) => { if (id === '@/lib/metering/core') return { runMeteredTask }; if (id === 'node:crypto')
             return { createHash }; if (id === '@/lib/supabase-admin')
             return { supabaseAdmin: db }; if (id === './specialist-registry')
             return { selectSpecialistRoute: () => ({ primary: 'research', supporting: [] }) }; if (id === './run-notify')
@@ -106,6 +107,19 @@ await check('lost managed session restores saved context without replaying a pro
     assert.equal(created, 2);
     assert.equal(contexts, 1);
     assert.equal(state.contexts['example.com'], context);
+});
+await check('actual tool execution carries owner/run/step/attempt trace', async () => {
+    const h = harness();
+    await h.execute(async () => {
+        const context = currentMeterContext();
+        assert.equal(context?.telegramId, '123');
+        assert.equal(context?.runId, 'r');
+        assert.equal(context?.stepId, 's');
+        assert.equal(context?.attempt, 1);
+        return { status: 'completed', verified: true };
+    });
+    assert.equal(h.run.status, 'completed');
+    assert.equal(currentMeterContext(), null);
 });
 if (failures)
     process.exit(1);
