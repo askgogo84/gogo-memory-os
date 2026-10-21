@@ -122,6 +122,18 @@ function idempotencyKey(runId: string, stepKey: string) {
   return createHash('sha256').update(`${AUTONOMOUS_RUNTIME_VERSION}:${runId}:${stepKey}`).digest('hex')
 }
 
+/** Fence immutable handler inputs separately from mutable lease/checkpoint fields. */
+function dispatchInputDigest(run:any,row:RuntimeStepRow) {
+  const {status,started_at,completed_at,error,updated_at,output_json,...definition}=row as RuntimeStepRow & {updated_at?:string}
+  const {attempt,leaseUntil,retryAt,approvalId,approvalGrantedId,verifiedAt,lastError,...policy}=runtimeMeta(row)
+  const output={...(output_json||{})};delete output.runtime
+  const stable=(value:any):any=>Array.isArray(value)?value.map(stable):value&&typeof value==='object'
+    ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,stable(value[key])])):value
+  return createHash('sha256').update(JSON.stringify(stable({definition,output,policy,runId:run.id,title:run.title,
+    objective:run.metadata_json?.objective,inputText:run.metadata_json?.input_text,
+    plan:run.metadata_json?.persistent_plan_steps,revision:run.metadata_json?.plan_revision}))).digest('hex')
+}
+
 /** Concrete adapters must stage/display this exact action; legacy/unbound grants fail closed. */
 export function autonomousStepApprovalInput(run: { id: string; title?: string; metadata_json?: Record<string, any> | null }, row: RuntimeStepRow, ownerId: string) {
   const meta = runtimeMeta(row), action = meta.approvalAction
@@ -422,7 +434,8 @@ export async function executeAutonomousRun(params: {
       const fresh = current.steps.find(step => step.id === row.id)
       const authority = fresh ? runtimeMeta(fresh) : null
       if (!isReconcilable(current.run) || fresh?.status !== 'running' || authority?.attempt !== claimed.attempt
-        || authority.idempotencyKey !== claimed.idempotencyKey || !authority.leaseUntil
+        || authority.idempotencyKey !== claimed.idempotencyKey || authority.approvalId !== claimed.approvalId
+        || authority.approvalGrantedId !== claimed.approvalGrantedId || dispatchInputDigest(run,row) !== dispatchInputDigest(current.run,fresh) || !authority.leaseUntil
         || !Number.isFinite(Date.parse(authority.leaseUntil)) || Date.parse(authority.leaseUntil) <= Date.now()) {
         return { stepId: row.id, claimed: true, status: 'superseded' }
       }
