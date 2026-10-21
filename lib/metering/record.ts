@@ -19,8 +19,21 @@ async function loadRates(): Promise<RateCard> {
   return rates
 }
 
+/** Keep a serverless function alive until this background write finishes (Vercel request context), so the
+ *  last model call before a reply is not lost when the response is sent. No-op outside Vercel. */
+export function keepAlive<T>(work: Promise<T>): Promise<T> {
+  try {
+    const ctx = (globalThis as any)[Symbol.for('@vercel/request-context')]?.get?.()
+    ctx?.waitUntil?.(work.catch(() => undefined))
+  } catch { /* not on Vercel */ }
+  return work
+}
+
 /** Record one metered call. Never throws and never blocks the caller for long. */
-export async function recordMeterEvent(e: MeterEvent, telegramId?: string | number | null): Promise<void> {
+export function recordMeterEvent(e: MeterEvent, telegramId?: string | number | null): Promise<void> {
+  return keepAlive(writeMeterEvent(e, telegramId))
+}
+async function writeMeterEvent(e: MeterEvent, telegramId?: string | number | null): Promise<void> {
   if (Date.now() < disabledUntil || process.env.ADMIN_METERING_ENABLED === 'false') return
   try {
     const who = telegramId != null && telegramId !== '' ? String(telegramId) : currentMeterContext()?.telegramId || 'system'

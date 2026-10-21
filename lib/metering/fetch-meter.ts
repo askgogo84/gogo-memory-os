@@ -2,7 +2,7 @@
 // without touching the many places that make those calls. It only observes: the request and the response
 // the caller gets are unchanged, and any metering failure is swallowed.
 import { classifyRequest, tokensFromBody, type MeterEvent } from './core'
-import { recordMeterEvent } from './record'
+import { keepAlive, recordMeterEvent } from './record'
 
 function requestUrl(input: any): string {
   if (typeof input === 'string') return input
@@ -33,10 +33,10 @@ export function installFetchMeter() {
         const type = response.headers.get('content-type') || ''
         if (response.ok && type.includes('application/json')) {
           // Read usage from a clone after the caller has its response; does not delay the caller.
-          response.clone().json().then((body: any) => {
+          void keepAlive(response.clone().json().then((body: any) => {
             const t = tokensFromBody(body)
-            void recordMeterEvent({ ...event, model: t.model || event.model, inputTokens: t.input, outputTokens: t.output })
-          }).catch(() => { void recordMeterEvent(event) })
+            return recordMeterEvent({ ...event, model: t.model || event.model, inputTokens: t.input, outputTokens: t.output })
+          }).catch(() => recordMeterEvent(event)))
           return response
         }
         event.metadata = { streamed: type.includes('event-stream') }
