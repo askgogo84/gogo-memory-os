@@ -137,4 +137,11 @@ await check('approval expiry after release is a definite no-dispatch boundary',a
  await h.execute(async()=>{calls++;return{status:'completed',verified:true}})
  assert.equal(calls,0);assert.equal(h.run.status,'failed');assert.notEqual(h.step.output_json.reconciliation_required,true)
 })
+await check('a discovered approval wait enables revalidation even on initially ungated steps',async()=>{
+ const h=harness();const approval=stage(h);h.step.output_json.runtime.requiresApproval=false;h.step.output_json.runtime.approvalId=null;let calls=0
+ await h.execute(async()=>{calls++;return{status:'waiting_approval',approvalId:'exact'}})
+ await h.runtime.releaseApprovedAutonomousStep({actor,runId:'run',stepKey:'first'});approval.status='rejected'
+ await h.execute(async()=>{calls++;return{status:'completed',verified:true}})
+ assert.equal(calls,1);assert.equal(h.step.output_json.runtime.requiresApproval,true);assert.equal(h.run.status,'failed')
+})
 if(failures)process.exitCode=1
