@@ -220,6 +220,8 @@
 @keyframes gg-dots{0%,80%,100%{opacity:.25}40%{opacity:1}}
 @keyframes gg-check{0%{stroke-dashoffset:24}100%{stroke-dashoffset:0}}
 @keyframes gg-spin{0%{transform:rotate(0)}100%{transform:rotate(360deg)}}
+/* Small list Gogos hold their pose (no animation): keeps long lists smooth on phones. */
+.gg-still, .gg-still * { animation: none !important; transition: none !important; }
 
 .gogo-float { animation: gogo-float 5.5s ease-in-out infinite; }
 

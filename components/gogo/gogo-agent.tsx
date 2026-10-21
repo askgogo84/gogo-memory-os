@@ -65,9 +65,12 @@ function look(state: GogoAgentState, dark: boolean): Look {
 
 const HAND = { fill: '#F3E7D3', stroke: '#E4D3B9', strokeWidth: 1 }
 
-export function GogoAgent({ state = 'idle', size = 120, theme = 'dark', label, className = '' }: {
+export function GogoAgent({ state = 'idle', size = 120, theme = 'dark', label, className = '', animate }: {
   state?: GogoAgentState; size?: number; theme?: 'light' | 'dark'; label?: string; className?: string
+  /** Small Gogos in lists are still by default: a page of 20 animated SVGs stalls phones. The big Gogo moves. */
+  animate?: boolean
 }) {
+  const still = animate === false || (animate === undefined && size < 90)
   const id = useId().replace(/:/g, '')
   const dark = theme === 'dark'
   const v = look(state, dark)
@@ -76,7 +79,7 @@ export function GogoAgent({ state = 'idle', size = 120, theme = 'dark', label, c
   const lineStrong = dark ? 'rgba(243,231,211,.7)' : 'rgba(44,26,19,.7)', lineSoft = dark ? 'rgba(243,231,211,.22)' : 'rgba(44,26,19,.18)'
   const body = `gg-body-${id}`, core = `gg-core-${id}`, hair = `gg-hair-${id}`
   const w = size, h = Math.round(size * 200 / 240)
-  return <span role="img" aria-label={label || `Gogo — ${GOGO_STATE_NAME[state]}`} className={`inline-block shrink-0 leading-none ${className}`} style={{ width: w, height: h }}>
+  return <span role="img" aria-label={label || `Gogo — ${GOGO_STATE_NAME[state]}`} className={`inline-block shrink-0 leading-none ${still ? 'gg-still' : ''} ${className}`} style={{ width: w, height: h }}>
     <svg viewBox="0 0 240 200" width={w} height={h} style={{ display: 'block', overflow: 'visible' }} aria-hidden="true">
       <defs>
         <radialGradient id={body} cx="40%" cy="30%" r="80%"><stop offset="0" stopColor="#FFFBF3" /><stop offset=".6" stopColor="#F3E7D3" /><stop offset="1" stopColor="#E4D3B9" /></radialGradient>

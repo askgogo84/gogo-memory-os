@@ -36,7 +36,9 @@ assert.equal(overallState({ working: [], approvals: 0, handoffs: 0, watchers: 0 
 const comp = readFileSync('components/gogo/gogo-agent.tsx', 'utf8')
 for (const s of GOGO_AGENT_STATES) assert.ok(new RegExp(`\\b${s}:`).test(comp), `component defines ${s}`)
 assert.match(comp, /size < 90/)
+assert.match(comp, /animate === undefined && size < 90/, 'small list Gogos are still so long lists stay smooth on phones')
 const css = readFileSync('app/globals.css', 'utf8')
+assert.match(css, /\.gg-still, \.gg-still \* \{ animation: none !important/)
 for (const k of ['gg-breath', 'gg-blink', 'gg-ring', 'gg-plane', 'gg-check']) assert.ok(css.includes(`@keyframes ${k}`), `keyframe ${k}`)
 
 // Navigation: three main places plus Settings; old sections live under More.
