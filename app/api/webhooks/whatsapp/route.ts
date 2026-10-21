@@ -23,6 +23,8 @@ import { auditInboundTwilioSignature } from '@/lib/security/webhook-signature'
 import { runWithQaTrace } from '@/lib/qa-trace'
 import { sendWhatsAppMessage, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
+import { checkWhatsAppAccess } from '@/lib/access/gate'
+import { meterAs } from '@/lib/metering/core'
 import { isStopMessage, suppressAllForRecipient } from '@/lib/bot/handlers/reminder-optout'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { addToList } from '@/lib/lists'
@@ -342,9 +344,18 @@ async function handleWhatsAppPost(req: NextRequest) {
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    // ── Access gate: new numbers wait on the waitlist until an admin approves them ──
+    const access = await checkWhatsAppAccess(from, profileName)
+    if (!access.allow) {
+      console.log('ACCESS_GATE_HELD:', { from, reason: access.reason })
+      if (access.reply) await sendWhatsAppMessage(from, access.reply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
     if (inboundMessageSid) sendWhatsAppTyping(inboundMessageSid).catch((error: any) => console.error('WHATSAPP_TYPING_BACKGROUND_FAILED:', error?.message || error))
 
     const resolvedUser = await resolveUser({ channel: 'whatsapp', externalUserId: from, userName: profileName })
+    meterAs(resolvedUser.telegramId, 'whatsapp')
 
     brainUserKey = `user:${resolvedUser.telegramId}`
     // Several photos forwarded together arrive as separate webhooks while the first is still

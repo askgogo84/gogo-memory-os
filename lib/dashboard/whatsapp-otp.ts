@@ -81,7 +81,7 @@ export async function issueDashboardOtp(phoneInput: string, requestIpHash?: stri
   // and prefer the row that is actually linked to a dashboard telegram_id.
   const { data: matchedUsers, error: userError } = await supabaseAdmin
     .from('users')
-    .select('telegram_id, whatsapp_id')
+    .select('*')
     .in('whatsapp_id', phoneLookupCandidates(whatsappId))
     .limit(10)
 
@@ -115,7 +115,7 @@ export async function issueDashboardOtp(phoneInput: string, requestIpHash?: stri
 
   // Unknown numbers get no message, but the caller receives the same generic
   // success shape so the login form cannot be used for account enumeration.
-  if (user?.telegram_id != null) {
+  if (user?.telegram_id != null && (user as any)?.access_status !== 'blocked') {
     try {
       await sendWhatsAppAuthOtp(whatsappId, otp)
     } catch (error) {

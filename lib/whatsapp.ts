@@ -1,5 +1,6 @@
 import { qaTraceReply } from './qa-trace'
 import twilio from 'twilio'
+import { recordMeterEvent } from '@/lib/metering/record'
 import { deliveryCallbackUrl, persistAcceptedChunk } from '@/lib/services/delivery-callback'
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID
@@ -8,6 +9,13 @@ const rawWhatsappFrom = process.env.TWILIO_WHATSAPP_NUMBER
 const CALENDAR_APPROVAL_CONTENT_SID = 'HX8bb5cb6116ee401e81b1a59a864393d2'
 
 const client = twilio(accountSid!, authToken!)
+
+// Every outbound WhatsApp message is metered for the admin console (cost per person).
+async function meteredCreate(payload: any) {
+  const message = await client.messages.create(payload)
+  void recordMeterEvent({ vendor: 'twilio', category: 'whatsapp.outbound', metadata: { template: !!payload?.contentSid } })
+  return message
+}
 
 function normalizeWhatsAppAddress(value: string): string {
   const clean = (value || '').trim()
@@ -99,7 +107,7 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
     if (i === 0 && mediaUrl && mediaUrl.trim()) payload.mediaUrl = [mediaUrl.trim()]
 
     let message
-    try { message = await client.messages.create(payload) }
+    try { message = await meteredCreate(payload) }
     catch (error) {
       // A later chunk's rejection cannot make earlier accepted chunks safe to retry.
       if (i > 0 && error && typeof error === 'object') Object.assign(error, { partialSend: true })
@@ -141,7 +149,7 @@ export async function sendWhatsAppReminderTemplate(toNumber: string, label: stri
     contentVariables: JSON.stringify({ '1': reminderTemplateLabel(label) }),
   }
   if (statusCallbackUrl || deliveryToken) payload.statusCallback = deliveryCallbackUrl(statusCallbackUrl, deliveryToken)
-  const message = await client.messages.create(payload)
+  const message = await meteredCreate(payload)
   await persistAcceptedChunk(message.sid, deliveryToken, 1, 1)
   console.log('WHATSAPP_TEMPLATE_SENT:', { sid: message.sid, to, status: message.status })
   return message
@@ -159,7 +167,7 @@ export async function sendWhatsAppReminderButtons(toNumber: string, label: strin
     contentVariables: JSON.stringify({ '1': reminderTemplateLabel(label) }),
   }
   if (statusCallbackUrl || deliveryToken) payload.statusCallback = deliveryCallbackUrl(statusCallbackUrl, deliveryToken)
-  const message = await client.messages.create(payload)
+  const message = await meteredCreate(payload)
   await persistAcceptedChunk(message.sid, deliveryToken, 1, 1)
   console.log('WHATSAPP_BUTTONS_TEMPLATE_SENT:', { sid: message.sid, to, status: message.status })
   return message
@@ -184,7 +192,7 @@ export async function sendWhatsAppCalendarApprovalButtons(
     }),
   }
   if (statusCallbackUrl) payload.statusCallback = statusCallbackUrl
-  const message = await client.messages.create(payload)
+  const message = await meteredCreate(payload)
   console.log('WHATSAPP_CALENDAR_APPROVAL_SENT:', { sid: message.sid, to, status: message.status })
   return message
 }
@@ -216,7 +224,7 @@ export async function sendWhatsAppChoice(toNumber: string, kind: string, body: s
   const to = normalizeWhatsAppAddress(toNumber)
   const payload: any = { from, to, contentSid, contentVariables: JSON.stringify({ '1': String(body || '').replace(/\s+/g, ' ').trim().slice(0, 900) }) }
   if (statusCallbackUrl) payload.statusCallback = statusCallbackUrl
-  const message = await client.messages.create(payload)
+  const message = await meteredCreate(payload)
   console.log('WHATSAPP_CHOICE_SENT:', { sid: message.sid, to, kind, status: message.status })
   return message
 }
@@ -239,7 +247,7 @@ export async function sendWhatsAppAuthOtp(toNumber: string, otp: string) {
   }
   if (statusCallbackUrl) payload.statusCallback = statusCallbackUrl
 
-  const message = await client.messages.create(payload)
+  const message = await meteredCreate(payload)
   console.log('WHATSAPP_AUTH_OTP_SENT:', { sid: message.sid, to, status: message.status })
   return message
 }

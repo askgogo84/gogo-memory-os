@@ -1,0 +1,70 @@
+// Behaviour of the WhatsApp access gate against a fake database.
+import assert from 'node:assert/strict'
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'
+process.env.SUPABASE_URL ||= 'https://example.supabase.co'
+process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'test-key'
+process.env.ADMIN_WHATSAPP_NUMBERS = '+918310441698'
+const { supabaseAdmin } = await import('../lib/supabase-admin.ts')
+const { checkWhatsAppAccess, WAITLIST_REPLY, BLOCKED_REPLY, e164 } = await import('../lib/access/gate.ts')
+
+type DB = { users: any[]; waitlist: any[]; fail?: string }
+let db: DB
+const writes: any[] = []
+function table(name: string) {
+  const filters: [string, string, any][] = []
+  let op = 'select', payload: any = null
+  const q: any = {
+    select() { return q }, in(col: string, vals: any[]) { filters.push(['in', col, vals]); return q }, eq(col: string, v: any) { filters.push(['eq', col, v]); return q },
+    limit() { return q }, insert(p: any) { op = 'insert'; payload = p; return q }, update(p: any) { op = 'update'; payload = p; return q },
+    maybeSingle() { return run(true) }, then(res: any, rej: any) { return run(false).then(res, rej) },
+  }
+  async function run(single: boolean) {
+    if (db.fail === name) return { data: null, error: { code: '42703', message: 'column does not exist' } }
+    const rows = (db as any)[name].filter((r: any) => filters.every(([k, c, v]) => k === 'in' ? v.includes(r[c]) : r[c] === v))
+    if (op === 'insert') { if (rows.length && name === 'waitlist') return { error: { code: '23505' } }; (db as any)[name].push({ id: 'new', ...payload }); writes.push([name, 'insert', payload]); return { error: null } }
+    if (op === 'update') { rows.forEach((r: any) => Object.assign(r, payload)); writes.push([name, 'update', payload]); return { error: null } }
+    return { data: single ? rows[0] || null : rows, error: null }
+  }
+  return q
+}
+;(supabaseAdmin as any).from = table
+
+// Admin always passes, even with no row.
+db = { users: [], waitlist: [] }
+assert.deepEqual(await checkWhatsAppAccess('+918310441698'), { allow: true, reason: 'admin' })
+// Existing user (stored as whatsapp:+91…) keeps access.
+db = { users: [{ telegram_id: 1, whatsapp_id: 'whatsapp:+919900000001', access_status: 'active' }], waitlist: [] }
+assert.equal((await checkWhatsAppAccess('+919900000001')).reason, 'user')
+// Blocked user is held with the blocked reply.
+db.users[0].access_status = 'blocked'
+assert.deepEqual(await checkWhatsAppAccess('+919900000001'), { allow: false, reason: 'blocked', reply: BLOCKED_REPLY })
+// New number: added to the waitlist, told once.
+db = { users: [], waitlist: [] }
+const first = await checkWhatsAppAccess('+919900000002', 'Divya')
+assert.deepEqual(first, { allow: false, reason: 'waitlist', reply: WAITLIST_REPLY })
+assert.equal(db.waitlist[0].phone_e164, '+919900000002'); assert.equal(db.waitlist[0].source, 'whatsapp'); assert.equal(db.waitlist[0].country, 'IN'); assert.equal(db.waitlist[0].profile_name, 'Divya')
+// Second message the same day: held silently.
+assert.deepEqual(await checkWhatsAppAccess('+919900000002'), { allow: false, reason: 'waitlist', reply: null })
+// A day later: reminded once more.
+db.waitlist[0].last_notified_at = new Date(Date.now() - 25 * 3600_000).toISOString()
+assert.equal((await checkWhatsAppAccess('+919900000002')).reply, WAITLIST_REPLY)
+// Approved: gets in, and the row becomes joined.
+db.waitlist[0].status = 'invited'
+assert.deepEqual(await checkWhatsAppAccess('+919900000002'), { allow: true, reason: 'approved' })
+assert.equal(db.waitlist[0].status, 'joined')
+// Website signup that was never approved is held too.
+db = { users: [], waitlist: [{ id: 'w', phone_e164: '+971501234567', status: 'waiting', last_notified_at: null }] }
+assert.equal((await checkWhatsAppAccess('+971501234567')).reason, 'waitlist')
+// Database trouble (e.g. migration not applied yet) never locks anyone out.
+db = { users: [], waitlist: [], fail: 'users' }
+assert.deepEqual(await checkWhatsAppAccess('+919900000003'), { allow: true, reason: 'gate_error' })
+db = { users: [], waitlist: [], fail: 'waitlist' }
+assert.deepEqual(await checkWhatsAppAccess('+919900000003'), { allow: true, reason: 'gate_error' })
+// Kill switch.
+process.env.ACCESS_GATE_ENABLED = 'false'
+db = { users: [], waitlist: [] }
+assert.deepEqual(await checkWhatsAppAccess('+919900000004'), { allow: true, reason: 'gate_off' })
+delete process.env.ACCESS_GATE_ENABLED
+assert.equal(e164('whatsapp:+91 98450 12345'), '+919845012345')
+assert.equal(e164('9845012345'), '+919845012345')
+console.log('verify-access-gate: ok')

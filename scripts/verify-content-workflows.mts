@@ -137,7 +137,8 @@ const common = {'@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>f
   // Inert gold-rate watch: a writing request is never a gold alert, so it must return null with no I/O.
   '@/lib/agent/gold-watch':{tryCreateGoldRateWatchFromCommand:async({text}:{text:string})=>{if(parseGoldRateWatchCommand(text)||isGoldRateAlertPhrasing(text))throw new Error('gold watch must not claim a content workflow');return null}},
   '@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/actor': {resolveAgentActor: async () => actor},
-  '@/lib/agent/content-workflow-entry': entry, crypto: {randomUUID}, 'node:crypto': {randomUUID}}
+  '@/lib/agent/content-workflow-entry': entry, crypto: {randomUUID}, 'node:crypto': {randomUUID},
+  '@/lib/metering/core': {meterAs: () => {}}}
 const dashboard = load('app/api/dashboard/chat/route.ts', {...common, '@/lib/dashboard/session': {getSession: async () => ({telegramId: '42'})}})
 const dashboardReply = await dashboard.POST({headers: new Headers({origin: 'https://fixture.invalid'}), nextUrl: {host: 'fixture.invalid'}, json: async () => ({text: request})})
 assert.equal(dashboardReply.status, 200); assert.equal(dashboardReply.body.handledBy, 'content-workflow')
