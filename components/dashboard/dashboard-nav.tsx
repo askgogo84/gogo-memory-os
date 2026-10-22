@@ -1,7 +1,7 @@
 'use client'
 
 // One navigation list for the desktop side rail and the phone drawer, so both always offer the same places.
-// Approved 21 Oct mock (Muse + Wajo): three main places — Home, Tasks, Memory — plus Settings. Everything else
+// Approved 21 Oct mock (Muse + Wajo): main places — Home, Tasks, Make (22 Oct, Duet parity), Memory — plus Settings. Everything else
 // still exists but sits under a closed "More" so the menu stays short.
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
@@ -19,6 +19,8 @@ export type NavItem = {
 export const NAV: NavItem[] = [
   { href:'/dashboard/home', label:'Home', glyph:'⌂' },
   { href:'/dashboard/tasks', label:'Tasks', glyph:'✓', badgeKey:'approvals', match:(p,s)=>p==='/dashboard/tasks'||(p==='/dashboard/agent'&&(s==='approvals'||s==='background'))||p.startsWith('/dashboard/activity') },
+  // Duet parity (22 Oct): finished work Gogo made for you.
+  { href:'/dashboard/make', label:'Make', glyph:'▤' },
   { href:'/dashboard/memory', label:'Memory', glyph:'◇' },
 ]
 

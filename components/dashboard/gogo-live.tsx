@@ -76,7 +76,7 @@ export function buildLive(data: any): Omit<Live, LiveControls | 'loaded'> {
       }),
     ],
     scheduled: watchers.map((w: any): LiveRow => ({ id: `w-${w.id}`, state: 'watcher', title: String(w.title || 'Background watch'), sub: w.nextCheckAt ? `Next check ${clock(w.nextCheckAt)}` : String(w.type || 'watch').replaceAll('_', ' '), at: w.cadenceMinutes ? (w.cadenceMinutes >= 60 ? `Every ${Math.round(w.cadenceMinutes / 60)} h` : `Every ${w.cadenceMinutes} min`) : '', live: GOGO_STATE_LINE.watcher, href: '/dashboard/agent?section=background' })),
-    files: artifacts.slice(0, 8).map((a: any): LiveRow => ({ id: `f-${a.id}`, state: 'done', title: String(a.title || 'Saved result'), sub: short(String(a.subtitle || String(a.type || '').replaceAll('_', ' '))), at: clock(a.updatedAt), live: 'Saved for you', href: '/dashboard/library' })),
+    files: artifacts.slice(0, 8).map((a: any): LiveRow => ({ id: `f-${a.id}`, state: 'done', title: String(a.title || 'Saved result'), sub: short(String(a.subtitle || String(a.type || '').replaceAll('_', ' '))), at: clock(a.updatedAt), live: 'Saved for you', href: `/dashboard/reports/${encodeURIComponent(String(a.id))}` })),
   }
   const working = runs.filter(r => WORKING.has(String(r.status)))
   const first = working[0] ? runRow(working[0]) : feeds.approvals[0] || feeds.scheduled[0] || null
