@@ -164,7 +164,8 @@ export type RunCancelDeps = {
   db?: any
   releaseAuthHandoff?: (telegramId: string, runId: string) => Promise<void>
   now?: () => Date
-  surface?: 'whatsapp' | 'web'
+  // 'dashboard' = the Cancel task button on the activity page (cancelRunById); 'web' = dashboard chat.
+  surface?: 'whatsapp' | 'web' | 'dashboard'
 }
 
 type RunCancelResult = { runId: string; status: 'completed' | 'paused'; capability: 'orchestrator'; risk: 'low'; text: string; handledBy: 'run-cancel' }
@@ -218,6 +219,23 @@ export async function tryCancelRunFromChat(owner: { telegramId: string | number 
     target = matches[0]
   }
 
+  const outcome = await cancelOwnedRun(db, tg, target, { now, surface: deps.surface || 'chat', releaseAuthHandoff: deps.releaseAuthHandoff })
+  // A failed approval read never claims the message: other handlers (or the general agent) still get it.
+  if (!outcome.ok && outcome.error === 'approval_read_failed') return null
+  return reply(outcome.runId, outcome.ok ? 'completed' : 'paused', outcome.text)
+}
+
+export type CancelOwnedRunOutcome =
+  | { ok: true; runId: string; title: string; possiblySubmitted: boolean; rejectedApprovalIds: string[]; handoffReleased: boolean; text: string; error?: undefined }
+  | { ok: false; runId: string; title: string; error: 'approval_read_failed' | 'save_failed' | 'changed'; text: string }
+
+// The cancellation core shared by chat cancel (tryCancelRunFromChat) and the dashboard Cancel task button
+// (POST /api/agent/runs/[id]/cancel). `target` is the owner's run row, already owner-scoped by the caller. Every
+// write is owner-bound again, and the run update only lands while the run is still in a cancellable status.
+export async function cancelOwnedRun(db: any, telegramId: string, target: any, opts: { now: string; surface: string; releaseAuthHandoff?: RunCancelDeps['releaseAuthHandoff'] }): Promise<CancelOwnedRunOutcome> {
+  const tg = String(telegramId)
+  const now = opts.now
+  const deps = { surface: opts.surface, releaseAuthHandoff: opts.releaseAuthHandoff }
   const runId = String(target.id)
   const title = taskDisplayTitle(runLabel(target))
   const meta = target.metadata_json || {}
@@ -229,7 +247,7 @@ export async function tryCancelRunFromChat(owner: { telegramId: string | number 
     .in('status', ['pending', 'approved', 'executed'])
   if (approvalReadError) {
     console.error('RUN_CANCEL_APPROVAL_READ_FAILED:', String(approvalReadError.message || approvalReadError).slice(0, 180))
-    return null
+    return { ok: false, runId, title, error: 'approval_read_failed', text: `I couldn't check ${title} just now, so nothing was cancelled. Try again shortly.` }
   }
   const approvals = (approvalRows || []) as any[]
   const submitted = possiblySubmitted(target, approvals)
@@ -252,9 +270,9 @@ export async function tryCancelRunFromChat(owner: { telegramId: string | number 
     .maybeSingle()
   if (saveError) {
     console.error('RUN_CANCEL_SAVE_FAILED:', String(saveError.message || saveError).slice(0, 180))
-    return reply(runId, 'paused', `I couldn't confirm that ${title} was cancelled, and I haven't retried. Ask *what are you working on for me?* to see its current state.`)
+    return { ok: false, runId, title, error: 'save_failed', text: `I couldn't confirm that ${title} was cancelled, and I haven't retried. Ask *what are you working on for me?* to see its current state.` }
   }
-  if (!saved) return reply(runId, 'paused', `${title} finished or changed just now, so nothing was cancelled. Ask *what are you working on for me?* to see its current state.`)
+  if (!saved) return { ok: false, runId, title, error: 'changed', text: `${title} finished or changed just now, so nothing was cancelled. Ask *what are you working on for me?* to see its current state.` }
 
   // Terminate the run's unfinished steps too, so no worker or reconcile pass treats the run as live.
   // agent_steps_status_check allows 'cancelled'. A step whose handler is already executing keeps
@@ -301,5 +319,33 @@ export async function tryCancelRunFromChat(owner: { telegramId: string | number 
   if (activityError) console.error('RUN_CANCEL_ACTIVITY_FAILED:', activityError.message)
 
   const caveat = submitted ? ` I can't undo anything already submitted to ${providerName(meta)}.` : ''
-  return reply(runId, 'completed', `Cancelled: ${title}. Nothing further will run for it.${caveat}`)
+  return { ok: true, runId, title, possiblySubmitted: submitted, rejectedApprovalIds: rejectedIds, handoffReleased, text: `Cancelled: ${title}. Nothing further will run for it.${caveat}` }
+}
+
+export type CancelRunByIdResult =
+  | CancelOwnedRunOutcome
+  | { ok: false; runId: string; error: 'read_failed' | 'not_found' | 'not_cancellable'; text: string }
+
+// Dashboard Cancel task: one specific run by id, owner-scoped. Only queued/running/waiting_approval/paused runs that
+// are not already retired can be cancelled; the shared core does the rest exactly as chat cancel does.
+export async function cancelRunById(owner: { telegramId: string | number }, runId: string, deps: RunCancelDeps = {}): Promise<CancelRunByIdResult> {
+  const tg = String(owner?.telegramId ?? '').trim()
+  const id = String(runId || '').trim()
+  if (!tg || !id) return { ok: false, runId: id, error: 'not_found', text: 'That task was not found.' }
+  const db = deps.db || supabaseAdmin
+  const now = (deps.now || (() => new Date()))().toISOString()
+  const { data: run, error } = await db.from('agent_runs')
+    .select('id,telegram_id,title,type,status,error,summary,metadata_json,updated_at,started_at')
+    .eq('id', id)
+    .eq('telegram_id', tg)
+    .maybeSingle()
+  if (error) {
+    console.error('RUN_CANCEL_BY_ID_READ_FAILED:', String(error.message || error).slice(0, 180))
+    return { ok: false, runId: id, error: 'read_failed', text: "Couldn't check this task just now. Nothing was cancelled." }
+  }
+  if (!run || String(run.telegram_id ?? tg) !== tg) return { ok: false, runId: id, error: 'not_found', text: 'That task was not found.' }
+  if (!(CANCELLABLE_RUN_STATUSES as readonly string[]).includes(String(run.status)) || retiredRunReason(run)) {
+    return { ok: false, runId: id, error: 'not_cancellable', text: 'This task has already finished or stopped, so there is nothing to cancel.' }
+  }
+  return cancelOwnedRun(db, tg, run, { now, surface: deps.surface || 'dashboard', releaseAuthHandoff: deps.releaseAuthHandoff })
 }
