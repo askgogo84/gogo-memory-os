@@ -75,6 +75,11 @@ export default async function ConnectionsPage(){
   const gmailSend=authKnown&&Boolean(u?.gmail_send_connected)
   const gmailReadOff=gmailConsent?.data?.gmail_enabled===false
   const gmailReadUnknown=Boolean(gmailConsent?.error)
+  // Duet parity step 5: one tap to let Gogo send email for you. Every send still waits for your approval and is
+  // confirmed from your Sent folder. The signed link only grants the Gmail Send scope.
+  const sendUpgradeUrl=authKnown&&c.gmail&&!gmailSend&&!gmailReadOff
+    ?await import('@/lib/services/google-gmail').then(m=>m.buildGmailSendConnectUrl(tgNum)).catch(()=>null)
+    :null
 
   return <div className="mx-auto w-full max-w-[1180px] pb-10">
     <header className="border-b border-[#1f1f1f] pb-5">
@@ -102,6 +107,14 @@ export default async function ConnectionsPage(){
           available={vaultCount>0} href="/dashboard/you/vault"/>
       </div>
     </section>
+
+    {sendUpgradeUrl&&<section className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-[#24433e] bg-[#101f1d] px-4 py-4" aria-labelledby="gmail-send-upgrade">
+      <div className="min-w-0">
+        <h2 id="gmail-send-upgrade" className="text-[16px] font-semibold text-[#f2efea]">Let Gogo send email for you</h2>
+        <p className="mt-1 text-[14px] leading-5 text-[#a8a8a8]">Gmail is connected read-only. Allow sending once; every email still waits for your OK and is checked in your Sent folder.</p>
+      </div>
+      <a href={sendUpgradeUrl} className="flex min-h-11 shrink-0 items-center rounded-full bg-[#2fb8a6] px-5 text-[15px] font-semibold text-[#04201c]">Allow sending</a>
+    </section>}
 
     <section className="mt-5 final-dark-panel overflow-hidden">
       <div className="hidden border-b border-[#1f1f1f] px-4 py-3 text-[12px] uppercase tracking-[.14em] text-[#555] lg:grid lg:grid-cols-[170px_130px_minmax(0,1.4fr)_minmax(0,1fr)_minmax(0,1fr)_auto]">
