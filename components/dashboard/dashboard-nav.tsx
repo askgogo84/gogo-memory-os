@@ -31,6 +31,7 @@ export const MORE: NavItem[] = [
   { href:'/dashboard/brain', label:'Brain', glyph:'◈' },
   { href:'/dashboard/you/vault', label:'Vault', glyph:'▰' },
   { href:'/dashboard/usage', label:'Usage', glyph:'◔' },
+  { href:'/dashboard/alerts', label:'What you hear about', glyph:'◎' },
 ]
 
 // One Settings page (approved mock): General, Connections, Permissions, Payments, Addresses, Notifications, Voice, Invites.

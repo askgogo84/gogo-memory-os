@@ -78,6 +78,7 @@ function loadPulseModule(file:string,extra=''):any{
       if(name==='./task-lifecycle')return {retiredRunReason:()=>null,isRelevantOpenLoop:()=>true}
       if(name==='./google-workspace-read')return {decodeHtmlEntities:(v:string)=>String(v).replace(/&#39;/g,"'").replace(/&amp;/g,'&')}
       if(name==='./browser-failure-notice')return loadPulseModule('browser-failure-notice')
+      if(name==='./alert-preferences'){const shared=loadPulseModule('alert-preferences-shared');return {...shared,getAlertPreferences:async()=>shared.DEFAULT_ALERT_PREFERENCES}}
       throw new Error(`Unexpected dependency ${name}`)
     },
   });return exports
