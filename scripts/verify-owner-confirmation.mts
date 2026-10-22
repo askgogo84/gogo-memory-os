@@ -45,6 +45,8 @@ try {
   assert.equal(oc.needsOwnerConfirmation({ ...base, status: 'failed' }, now), false)
   assert.equal(oc.needsOwnerConfirmation({ ...base, updated_at: '2026-10-01T10:00:00Z' }, now), false, 'older than the window')
   assert.equal(oc.needsOwnerConfirmation({ ...base, metadata_json: { owner_confirmation: { decision: 'done' } } }, now), false, 'decided once')
+  assert.equal(oc.needsOwnerConfirmation({ ...base, type: 'restaurant_reservation_research', metadata_json: { outcome_status: 'paused' } }, now), false, 'a wrapper whose real outcome paused is not done')
+  assert.equal(oc.needsOwnerConfirmation({ ...base, metadata_json: { outcome_status: 'completed' } }, now), true)
   assert.equal(oc.ownerReopened({ metadata_json: { owner_confirmation: { decision: 'not_done' } } }), true)
 
   assert.deepEqual(oc.parseOwnerDecision({ decision: 'done' }), { decision: 'done', note: '' })
@@ -93,6 +95,7 @@ try {
   assert.match(feed, /needsOwnerConfirmation\(r, now\.getTime\(\)\)/)
   assert.match(feed, /runIds: rows\.map\(x => String\(x\.id\)\)/, 'same-title tasks are one card')
   assert.match(feed, /watchEnds\(w, now\)/)
+  assert.match(feed, /if \(confirmedTitles\.has\(key\)\) continue/, 'confirmed titles do not ask again for re-runs')
   const card = readFileSync('components/dashboard/confirm-done-card.tsx', 'utf8')
   assert.match(card, /for \(const id of confirm\.runIds\?\.length \? confirm\.runIds : \[confirm\.runId\]\)/)
   assert.match(card, /setTimeout\(\(\) => router\.refresh\(\), 1500\)/)
