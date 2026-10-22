@@ -51,6 +51,9 @@ const GOOGLE_FLIGHTS_PAGE_DEPENDENCIES = ['www.gstatic.com','fonts.googleapis.co
 // still only for Hugging Face pages, so the person can see and solve it themselves.
 // 10 Oct run 2c73711f: after submit, Hugging Face showed an hCaptcha whose script (js.hcaptcha.com)
 // the allowlist aborted, so the person could not see it. Its password-breach check also failed.
+// 22 Oct live: a public instagram.com profile stayed on the blank logo splash in the cloud browser. Instagram's
+// scripts, styles and images come from its CDN hosts, which the page allowlist refused, so the page never drew.
+const INSTAGRAM_PAGE_DEPENDENCIES = ['instagram.com', 'i.instagram.com', 'static.cdninstagram.com', '*.cdninstagram.com', '*.fbcdn.net']
 const HUGGING_FACE_PAGE_DEPENDENCIES = ['*.awswaf.com', 'hcaptcha.com', '*.hcaptcha.com', 'api.pwnedpasswords.com']
 
 // 11 Oct live Playo booking: the broker aborted Playo's own API (api.playo.io), which serves venue
@@ -96,6 +99,7 @@ export function browserPageAllowlist(url:string):Record<string,string[]>{
   // may hand off to these sites; a fare read still never clicks a result or leaves Google.
   if((host==='www.google.com'||host==='google.com') && /^\/travel\/flights(?:\/|$)/.test(target.pathname))
     for(const site of FLIGHT_BOOKING_HANDOFF_SITES)hosts.push(site,`*.${site}`)
+  if(host==='www.instagram.com'||host==='instagram.com')hosts.push(...INSTAGRAM_PAGE_DEPENDENCIES)
   if(host==='huggingface.co'||host==='www.huggingface.co')hosts.push(...HUGGING_FACE_PAGE_DEPENDENCIES)
   if(host==='playo.co'||host==='www.playo.co')hosts.push(...PLAYO_PAGE_DEPENDENCIES)
   return Object.fromEntries(hosts.map(name=>[name,[]]))

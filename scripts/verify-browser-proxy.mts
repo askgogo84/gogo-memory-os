@@ -25,7 +25,7 @@ assert.ok(resolveBrowserProxy('https://www.zeptonow.com/', env))
 assert.ok(resolveBrowserProxy('https://www.swiggy.com/instamart', env))
 
 // 3. A non-listed provider does NOT spend residential proxy by default.
-assert.equal(resolveBrowserProxy('https://www.instagram.com/', env), null)
+assert.equal(resolveBrowserProxy('https://www.wikipedia.org/', env), null)
 assert.equal(resolveBrowserProxy('https://example.com/', env), null)
 
 // 4. Opt-in: route ALL egress through the proxy.

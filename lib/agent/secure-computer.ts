@@ -966,6 +966,29 @@ async function clickPastOverlay(page,selector){
   // Still covered: press the control directly. If even that fails, report the original cause.
   try{await target.evaluate(el=>el.click());}catch{throw covered;}
 }
+function isInstagramUrl(u){try{return /(^|\.)instagram\.com$/i.test(new URL(u).hostname)}catch{return false}}
+async function closeInstagramPopup(page){
+  // The "Sign up / Log in" dialog over a public page: press Escape, then a close or "Not now" control if one is there.
+  try{await page.keyboard.press('Escape');await page.waitForTimeout(300);}catch{}
+  for(const sel of ['[role="dialog"] svg[aria-label="Close"]','[role="dialog"] [aria-label="Close"]','div[role="button"]:has-text("Not now")','button:has-text("Not now")']){
+    try{const el=page.locator(sel).first();if(await el.count()&&await el.isVisible()){await el.click({timeout:2000});await page.waitForTimeout(400);}}catch{}
+  }
+}
+async function instagramPublicRead(page,url,navTimeout){
+  const bounced=()=>/\/accounts\/login|\/challenge\//i.test(page.url());
+  const empty=async()=>{try{return (await page.evaluate(()=>(document.body&&document.body.innerText||'').trim().length))<40}catch{return true}};
+  for(let i=0;i<2;i++){
+    if(bounced()){
+      if(i>0)break;
+      await page.waitForTimeout(1500);
+      await page.goto(url,{waitUntil:'domcontentloaded',timeout:navTimeout}).catch(()=>{});
+    }
+    // Instagram draws the page after load; the bare splash has almost no text.
+    for(let w=0;w<6&&!bounced()&&await empty();w++)await page.waitForTimeout(1000);
+    await closeInstagramPopup(page);
+    if(!bounced()&&!await empty())return;
+  }
+}
 (async()=>{
   const __env=(process&&process.env)||{};
   const __proxyServer=(__env.GOGO_BROWSER_PROXY_URL||'').trim();
@@ -997,6 +1020,10 @@ async function clickPastOverlay(page,selector){
       return page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
     });
     await page.waitForTimeout(900);
+    // 22 Oct live: instagram.com showed a blank splash, or bounced to /accounts/login, in the cloud browser, so a
+    // read of a PUBLIC profile paused for sign-in. For reads only: let it render, close the sign-up popup, and retry
+    // the profile once if it was bounced to login. Never types anything; a real login wall still pauses as before.
+    if(!reuse&&payload.mode==='read'&&isInstagramUrl(payload.url))await instagramPublicRead(page,payload.url,navTimeout);
     await pageReadiness.read(true);
     for(const a of (payload.actions||[])){
       let consequential=a.kind==='submit';

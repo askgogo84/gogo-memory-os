@@ -45,10 +45,14 @@ function hostMatches(host: string, suffix: string): boolean {
 // with "503 - Service Unavailable" before the saved login could be used. Always added, even when the env list is set.
 export const ACCOUNT_PROXY_HOSTS = ['amazon.in', 'flipkart.com', 'irctc.co.in']
 
+// 22 Oct live: instagram.com showed a blank splash or its login page to the cloud browser (datacenter IP) even for a
+// public profile. Always added, even when the env list is set; it only takes effect when a proxy is configured.
+export const SOCIAL_PROXY_HOSTS = ['instagram.com']
+
 export function proxyRequiredHosts(env: Record<string, string | undefined> = process.env): string[] {
   const csv = String(env.GOGO_BROWSER_PROXY_HOSTS || '').trim()
   const base = csv ? csv.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : DEFAULT_PROXY_HOSTS
-  return [...new Set([...base, ...ACCOUNT_PROXY_HOSTS])]
+  return [...new Set([...base, ...ACCOUNT_PROXY_HOSTS, ...SOCIAL_PROXY_HOSTS])]
 }
 
 /**
