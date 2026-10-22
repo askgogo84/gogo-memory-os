@@ -5,6 +5,14 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { artifactSections, publicResearchUrl } from '@/lib/agent/artifact-presentation'
 import { agentRunRefOf, artifactSourceUrls, refreshCheck, versionSummaries } from '@/lib/agent/artifact-versions'
 import { ReportEditor } from '@/components/dashboard/report-editor'
+import { canRole, listMyWorkspaces } from '@/lib/workspaces/access'
+import { ShareToWorkspace } from '../../business/share-to-workspace'
+
+// SecondBrain pilot: workspaces where I may share. Empty when workspaces are not enabled yet.
+async function shareTargets(telegramId:string){
+  try{return (await listMyWorkspaces(telegramId)).filter(w=>canRole(w.role,'share_artifact')).map(w=>({id:w.id,name:w.name}))}
+  catch{return []}
+}
 
 export const dynamic='force-dynamic'
 
@@ -36,8 +44,10 @@ export default async function ReportPage({params}:{params:Promise<{id:string}>})
     run=data
   }
   const check=refreshCheck(report,run)
+  const targets=await shareTargets(telegramId)
   return <div className="mx-auto max-w-3xl px-0 pb-10">
     <Link href="/dashboard/make" className="inline-flex min-h-11 items-center text-[16px] text-[#2FB8A6]">← Make</Link>
+    <ShareToWorkspace artifactId={id} workspaces={targets}/>
     <ReportEditor id={id} title={String(report.title||'Saved result')} notes={String((report.content_json as any)?.notes||'')}
       sections={artifactSections(report.content_json)} refresh={'reason' in check?{ok:false,reason:check.reason}:{ok:true,reason:''}}
       versions={versionSummaries(report.content_json)} sources={sourceList(report.content_json,report.source_refs)}/>

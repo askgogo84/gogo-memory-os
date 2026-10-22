@@ -34,6 +34,8 @@ export const MORE: NavItem[] = [
   { href:'/dashboard/you/vault', label:'Vault', glyph:'▰' },
   { href:'/dashboard/usage', label:'Usage', glyph:'◔' },
   { href:'/dashboard/alerts', label:'What you hear about', glyph:'◎' },
+  // SecondBrain for Business (23 Oct pilot): shared team workspaces, read-only.
+  { href:'/dashboard/business', label:'SecondBrain', glyph:'⬡' },
 ]
 
 // One Settings page (approved mock): General, Connections, Permissions, Payments, Addresses, Notifications, Voice, Invites.
