@@ -645,7 +645,7 @@ async function processInboxTriageWatcher(watcher:any,now:Date) {
     let delivery={state:'app_only',accepted:true,providerId:null as string|null}
     if(condition.delivery!=='app') {
       delivery=await deliverWatchAlert({watcherId:String(watcher.id),owner:telegramId,key,due:pending.due,
-        message,condition:watcher.condition_json})
+        message,condition:watcher.condition_json,topic:['bills','replies']})
       if(['suppressed','cancelled'].includes(delivery.state))return {triggered:false,failed:false}
     }
     deliveryState={state:delivery.state,providerId:delivery.providerId,key}

@@ -235,6 +235,8 @@ const deliveryExports:any={}
 let providerCalls=0,readyMutation:(()=>void)|null=null
 const deliveryMocks:any={
   '@/lib/supabase-admin':{supabaseAdmin:db},
+  // Alert settings: nothing muted (defaults), so delivery behaves as before.
+  './alert-preferences':{getAlertPreferences:async()=>({topics:{watches:true,travel:true,bills:true,replies:true}})},
   '@/lib/whatsapp':{sendWhatsApp:async(phone:string,message:string,media:any,token:string)=>{
     assert.equal(phone,'fixture-phone');assert.equal(token,'fixture-receipt-token');assert.equal(media,null)
     providerCalls++;return {sid:'SM-verified-adapter-fixture'}

@@ -2,6 +2,7 @@
 // state (approval, watcher, flight, done…) and a short live line, as in the approved 21 Oct mock.
 import Link from 'next/link'
 import { GogoAgent } from '@/components/gogo/gogo-agent'
+import { ConfirmDoneCard } from './confirm-done-card'
 import type { FeedItem, FeedTab, TaskFeed } from '@/lib/dashboard/task-feed'
 
 const TAG_TONE: Record<FeedTab, string> = { need: 'bg-[#3a2a10] text-[#f0c26b]', radar: 'bg-[#13253a] text-[#8cc2ff]', recent: 'bg-[#132a27] text-[#5fd3c3]' }
@@ -41,5 +42,5 @@ export function FeedCard({ item, size = 56 }: { item: FeedItem; size?: number })
 
 export function FeedItems({ items, size, empty }: { items: FeedItem[]; size?: number; empty: string }) {
   if (!items.length) return <p className="py-5 text-[15px] text-[#a8a8a4]">{empty}</p>
-  return <div className="flex flex-col gap-2">{items.map(item => <FeedCard key={item.id} item={item} size={size}/>)}</div>
+  return <div className="flex flex-col gap-2">{items.map(item => item.confirm ? <ConfirmDoneCard key={item.id} item={item} size={size}/> : <FeedCard key={item.id} item={item} size={size}/>)}</div>
 }
