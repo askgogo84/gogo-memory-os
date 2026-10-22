@@ -8,6 +8,8 @@ import { readableRunSummary } from '@/lib/dashboard/readable-summary'
 import { friendlyTaskTitle } from '@/lib/agent/task-title'
 import { GOGO_STATE_LINE, liveLineFor, stateForHandoff, stateForRun, type GogoAgentState } from '@/lib/gogo/agent-states'
 import { CONFIRM_MAX, CONFIRMABLE_RUN_TYPES, continuePrompt, needsOwnerConfirmation, ownerConfirmationOf, ownerReopened, watchEnds, watchWhy } from '@/lib/agent/owner-confirmation'
+// Every run card's tag is its one owner-facing state (Working now · Needs you · Gogo thinks it's done · Done …).
+import { TASK_STATE_LABEL, taskStateLabel } from '@/lib/dashboard/task-state'
 
 export type FeedTab = 'need' | 'radar' | 'recent'
 export type FeedItem = {
@@ -32,12 +34,6 @@ export function feedTab(raw: unknown): FeedTab {
   return raw === 'radar' || raw === 'recent' ? raw : 'need'
 }
 
-function recentTag(status: string) {
-  if (status === 'completed') return 'Finished'
-  if (status === 'completed_by_owner') return 'Completed by you'
-  if (status === 'failed') return 'Could not finish'
-  return 'Paused'
-}
 
 export async function getTaskFeed(telegramId: string, now = new Date()): Promise<TaskFeed> {
   const tg = String(telegramId || '')
@@ -79,7 +75,7 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
   const finishedRows: any[] = ((finished as any)?.data || []).filter((r: any) => !retiredRunReason(r))
   for (const r of finishedRows.filter(ownerReopened).slice(0, CONFIRM_MAX)) {
     const title = friendlyTaskTitle(r.title || 'Gogo task')
-    need.push({ id: `re-${r.id}`, tab: 'need', state: 'blocked', tag: 'You said not yet', title, sub: 'Tell Gogo what is missing and it will pick this up again.',
+    need.push({ id: `re-${r.id}`, tab: 'need', state: 'blocked', tag: TASK_STATE_LABEL.needs_you, title, sub: 'Tell Gogo what is missing and it will pick this up again.',
       live: 'Waiting for you to say what is missing', href: `/dashboard/chat?prompt=${encodeURIComponent(continuePrompt(title))}`, action: 'Tell Gogo', at: r.updated_at || null })
   }
   // 22 Oct live: two "Travel task · BLR → DEL" runs (and two District 6 calls) showed as identical cards, so confirming
@@ -98,7 +94,7 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
     const r = rows[0]
     const title = friendlyTaskTitle(r.title || 'Gogo task')
     const sub = readableRunSummary(r.summary) || 'Open it to check the result.'
-    need.push({ id: `cf-${r.id}`, tab: 'need', state: 'done', tag: 'Gogo thinks done', title, sub: rows.length > 1 ? `${rows.length} runs. Latest: ${sub}` : sub,
+    need.push({ id: `cf-${r.id}`, tab: 'need', state: 'done', tag: TASK_STATE_LABEL.gogo_thinks_done, title, sub: rows.length > 1 ? `${rows.length} runs. Latest: ${sub}` : sub,
       live: 'Only you mark it complete', href: `/dashboard/activity/${encodeURIComponent(String(r.id))}`, action: 'Details', at: r.updated_at || null,
       confirm: { runId: String(r.id), runIds: rows.map(x => String(x.id)), continueHref: `/dashboard/chat?prompt=${encodeURIComponent(continuePrompt(title))}` } })
   }
@@ -109,7 +105,7 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
   for (const r of ((running as any)?.data || []).filter((r: any) => !isStaleRunning(r, now) && !retiredRunReason(r))) {
     const state = stateForRun(r)
     const sub = readableRunSummary(r.summary) || 'Gogo is working on it.'
-    radar.push({ id: `run-${r.id}`, tab: 'radar', state, tag: 'Working now', title: friendlyTaskTitle(r.title || 'Gogo task'), sub, live: liveLineFor(state, sub), href: `/dashboard/activity/${r.id}`, action: 'Watch', at: r.updated_at || null })
+    radar.push({ id: `run-${r.id}`, tab: 'radar', state, tag: taskStateLabel(r), title: friendlyTaskTitle(r.title || 'Gogo task'), sub, live: liveLineFor(state, sub), href: `/dashboard/activity/${r.id}`, action: 'Watch', at: r.updated_at || null })
   }
   const workingCount = radar.length
   for (const w of ((watchers as any)?.data || [])) {
@@ -126,8 +122,7 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
     .slice(0, 12)
   const recentItems: FeedItem[] = recentRows.map(r => {
     const state = stateForRun(r)
-    const byOwner = String(r.status) === 'completed' && ownerConfirmationOf(r)?.decision === 'done'
-    return { id: `run-${r.id}`, tab: 'recent', state, tag: recentTag(byOwner ? 'completed_by_owner' : String(r.status)), title: friendlyTaskTitle(r.title || 'Gogo task'), sub: readableRunSummary(r.summary) || 'Open the task to see what happened.', live: GOGO_STATE_LINE[state], href: `/dashboard/activity/${encodeURIComponent(String(r.id))}`, action: 'Details', at: r.updated_at || null }
+    return { id: `run-${r.id}`, tab: 'recent', state, tag: taskStateLabel(r), title: friendlyTaskTitle(r.title || 'Gogo task'), sub: readableRunSummary(r.summary) || 'Open the task to see what happened.', live: GOGO_STATE_LINE[state], href: `/dashboard/activity/${encodeURIComponent(String(r.id))}`, action: 'Details', at: r.updated_at || null }
   })
     // The tab count is the untruncated total, not the display rows (12 shown of 30 watches still says 30).
   const watcherTotal = Number((watchers as any)?.count ?? ((watchers as any)?.data || []).length)

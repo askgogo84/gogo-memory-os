@@ -21,6 +21,7 @@ deps['@/lib/dashboard/readable-summary']={readableRunSummary:(s:any)=>String(s||
 deps['@/lib/gogo/agent-states']=load('lib/gogo/agent-states.ts')
 deps['@/lib/agent/task-title']=load('lib/agent/task-title.ts')
 deps['@/lib/agent/owner-confirmation']=load('lib/agent/owner-confirmation.ts')
+deps['@/lib/dashboard/task-state']=load('lib/dashboard/task-state.ts')
 deps['@/lib/dashboard/task-feed']=load('lib/dashboard/task-feed.ts')
 for(const page of ['home','activity']){
  const exports=load(`app/dashboard/(app)/${page}/page.tsx`)

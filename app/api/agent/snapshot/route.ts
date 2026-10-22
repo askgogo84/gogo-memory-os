@@ -5,6 +5,7 @@ import { isAgentSession, requireAgentSession } from '@/lib/agent/session'
 import { retiredRunReason } from '@/lib/agent/task-lifecycle'
 import { getPendingBrowserHandoffs } from '@/lib/dashboard/human-handoffs'
 import {browserAuthSummary,latestBrowserAuthEvidence} from '@/lib/dashboard/browser-auth-summary'
+import { taskStateLabel } from '@/lib/dashboard/task-state'
 
 export const dynamic = 'force-dynamic'
 
@@ -102,6 +103,8 @@ export async function GET(request: Request) {
       // error + metadata let the client tell an actionable pause (sign-in / secure
       // handoff / browser-waiting) from a rejected or terminal pause.
       error: r.error || null, metadata: r.metadata_json || null,
+      // The one owner-facing state in plain words (lib/dashboard/task-state.ts), shown instead of the raw status.
+      stateLabel: taskStateLabel(r),
       steps: stepsByRun.get(String(r.id)) || [],
     })),
     watchers: (watchers.data || []).map((w: any) => ({

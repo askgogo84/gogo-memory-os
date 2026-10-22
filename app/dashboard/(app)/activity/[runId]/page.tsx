@@ -3,6 +3,8 @@ import { readableRunSummary } from '@/lib/dashboard/readable-summary'
 import { notFound } from 'next/navigation'
 import { getSession } from '@/lib/dashboard/session'
 import { browserContextForRun, getDashboardActivityRun } from '@/lib/dashboard/agent-activity'
+import { TASK_STATE_LABEL, canOwnerCancel, taskStateOf } from '@/lib/dashboard/task-state'
+import { CancelTaskButton } from '@/components/dashboard/cancel-task-button'
 
 export const dynamic='force-dynamic'
 
@@ -45,6 +47,9 @@ export default async function ActivityRunPage({params}:{params:Promise<{runId:st
   const needsUser=['paused','waiting_approval'].includes(run.status)
   // A step left running inside a task that already ended did not keep going; say it stopped.
   const runOver=['completed','failed','closed','cancelled'].includes(String(run.status))
+  // One owner-facing state (Duet parity): Gogo finishing is "Gogo thinks it's done"; only the owner makes it "Done".
+  const taskState=taskStateOf(run)
+  const cancellable=canOwnerCancel(run)
 
   return <div className="mx-auto w-full max-w-[1180px] pb-10">
     <header className="border-b border-[#2A2A2A] pb-5">
@@ -53,7 +58,7 @@ export default async function ActivityRunPage({params}:{params:Promise<{runId:st
         <div className="min-w-0">
           <h1 className="font-serif text-[30px] font-semibold leading-[1.08] tracking-[-.02em] text-[#F2EFEA] lg:text-[38px]">{run.title}</h1>
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-bold uppercase tracking-[.12em] ${badge(run.status)}`}><span className={`h-2 w-2 rounded-full ${dot(run.status)}`}/>{statusLabel(run.status)}</span>
+            <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[13px] font-bold uppercase tracking-[.12em] ${badge(run.status)}`}><span className={`h-2 w-2 rounded-full ${dot(run.status)}`}/>{TASK_STATE_LABEL[taskState]}</span>
             <span className="text-[15px] text-[#6A6A6A]">Started {fmt(run.startedAt)}</span>
             <span className="inline-flex items-center gap-1.5 text-[15px] text-[#6A6A6A]"><span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-[#161616] px-1.5 text-[14px] font-bold text-[#2FB8A6]">{done}</span>of {total} steps</span>
             {run.source&&<span className="rounded-full border border-[#2A2A2A] px-2.5 py-1 text-[13px] font-semibold uppercase tracking-[.08em] text-[#9A9A9A]">{run.source}</span>}
@@ -103,9 +108,15 @@ export default async function ActivityRunPage({params}:{params:Promise<{runId:st
           {run.status==='waiting_approval'&&<Link href="/dashboard/agent" className="mt-4 inline-flex h-10 items-center rounded-[10px] bg-[#2FB8A6] px-4 text-[16px] font-bold text-[#F2EFEA]">Review approval</Link>}
         </section>}
 
+        {cancellable&&<section className="rounded-[16px] border border-[#2A2A2A] bg-[#111111] p-4">
+          <p className="text-[13px] font-bold uppercase tracking-[.12em] text-[#6A6A6A]">Stop this task</p>
+          <p className="mb-3 mt-1 text-[15px] leading-5 text-[#9A9A9A]">You can cancel it any time. Gogo can’t undo anything already submitted.</p>
+          <CancelTaskButton runId={run.id}/>
+        </section>}
+
         <section className="rounded-[16px] border border-[#2A2A2A] bg-[#111111] p-5">
           <p className="text-[13px] font-bold uppercase tracking-[.12em] text-[#6A6A6A]">Summary</p>
-          <h2 className="mt-2 font-serif text-[22px] font-semibold leading-tight text-[#F2EFEA]">{run.status==='completed'?'Done.':run.status==='failed'?'Stopped safely.':needsUser?'Almost done — needs you.':'Gogo is working on it.'}</h2>
+          <h2 className="mt-2 font-serif text-[22px] font-semibold leading-tight text-[#F2EFEA]">{taskState==='done'?'Done.':taskState==='gogo_thinks_done'?'Gogo thinks it’s done.':taskState==='cancelled'?'Cancelled.':taskState==='unknown'?'Not sure it happened.':taskState==='could_not_finish'||run.status==='failed'?'Stopped safely.':run.status==='completed'?TASK_STATE_LABEL[taskState]+'.':needsUser?'Almost done — needs you.':'Gogo is working on it.'}</h2>
           <p className="mt-2 text-[16px] leading-5 text-[#9A9A9A]">{readableRunSummary(run.summary||run.why)||'This task is recorded in Activity.'}</p>
           {run.error&&<p className="mt-3 rounded-[10px] bg-[#161616] px-3 py-2 text-[14px] text-[#9A9A9A]">Error: {run.error}</p>}
         </section>
