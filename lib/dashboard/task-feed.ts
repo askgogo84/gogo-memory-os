@@ -28,6 +28,12 @@ export type TaskFeed = { need: FeedItem[]; radar: FeedItem[]; recent: FeedItem[]
 
 export const EMPTY_FEED: TaskFeed = { need: [], radar: [], recent: [], recentUnavailable: false, radarCount: 0 }
 
+/** Cloud takeover sessions last 20 minutes (secure-computer.ts sandbox timeout); 25 allows for clock skew. */
+export function cloudHandoffLikelyClosed(h: { cloud?: boolean; updatedAt?: string | null }, now = new Date()): boolean {
+  const at = Date.parse(String(h?.updatedAt || ''))
+  return Boolean(h?.cloud) && Number.isFinite(at) && now.getTime() - at > 25 * 60_000
+}
+
 export function feedTab(raw: unknown): FeedTab {
   return raw === 'radar' || raw === 'recent' ? raw : 'need'
 }
@@ -42,7 +48,7 @@ function recentTag(status: string) {
 export async function getTaskFeed(telegramId: string, now = new Date()): Promise<TaskFeed> {
   const tg = String(telegramId || '')
   if (!tg) return EMPTY_FEED
-  const [approvals, handoffs, watchers, running, recent, finished] = await Promise.all([
+  const [approvals, handoffs, watchers, running, recent, finished, deferred] = await Promise.all([
     supabaseAdmin.from('agent_approvals').select('id,run_id,title,description,created_at').eq('telegram_id', tg).eq('status', 'pending').order('created_at', { ascending: false }).limit(10),
     getPendingBrowserHandoffs(tg),
     supabaseAdmin.from('agent_watchers').select('id,title,type,next_check_at,created_at,condition_json', { count: 'exact' }).eq('telegram_id', tg).eq('active', true).neq('type', 'goal_review').order('next_check_at', { ascending: true }).limit(12),
@@ -55,23 +61,38 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
       .eq('telegram_id', tg).eq('status', 'completed').in('type', [...CONFIRMABLE_RUN_TYPES])
       .gte('updated_at', new Date(now.getTime() - 30 * 86_400_000).toISOString())
       .order('updated_at', { ascending: false }).limit(40),
+    // Approval card v2 "Later": the owner deferred these; they stay pending but stop leading Needs you.
+    supabaseAdmin.from('agent_activity').select('metadata_json').eq('telegram_id', tg).eq('event_type', 'approval_deferred')
+      .gte('created_at', new Date(now.getTime() - 86_400_000).toISOString()).limit(50),
   ])
+  const deferredUntil = new Map<string, number>()
+  for (const row of ((deferred as any)?.data || [])) {
+    const id = String(row?.metadata_json?.approval_id || ''), until = Date.parse(String(row?.metadata_json?.until || ''))
+    if (id && Number.isFinite(until) && until > now.getTime()) deferredUntil.set(id, Math.max(until, deferredUntil.get(id) || 0))
+  }
   const approvalRows: any[] = (approvals as any)?.data || []
-  const need: FeedItem[] = approvalRows.map(a => ({
-    id: `ap-${a.id}`, tab: 'need', state: 'approval', tag: 'Needs your yes', title: a.title || 'Approval needed',
-    sub: a.description || 'Gogo stopped before a consequential action.', live: GOGO_STATE_LINE.approval,
-    href: '/dashboard/agent?section=approvals', action: 'Review', at: a.created_at || null,
-  }))
+  const need: FeedItem[] = approvalRows.map(a => {
+    const later = deferredUntil.get(String(a.id))
+    const back = later ? new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' }).format(new Date(later)) : ''
+    return {
+      id: `ap-${a.id}`, tab: 'need' as const, state: 'approval' as const, tag: later ? 'Later' : 'Needs your yes', title: a.title || 'Approval needed',
+      sub: later ? `You said later. Gogo asks again at ${back}.` : a.description || 'Gogo stopped before a consequential action.', live: GOGO_STATE_LINE.approval,
+      href: '/dashboard/agent?section=approvals', action: 'Review', at: a.created_at || null,
+    }
+  })
   // Several stops on the same site are one thing to do: one row with a count.
   const handoffRows = (handoffs || []).filter(h => !approvalRows.some(a => String(a.run_id) === h.id))
   const groups = [...handoffRows.reduce((map, h) => { const g = map.get(h.title); if (g) g.count += 1 + h.repeats; else map.set(h.title, { first: h, count: 1 + h.repeats }); return map }, new Map<string, { first: typeof handoffRows[number]; count: number }>()).values()]
   for (const { first, count } of groups) {
     const state = stateForHandoff(first)
+    // 22 Oct live ("When I tried to take control"): the cloud browser closes after 20 minutes, but the card still said
+    // Take control. A cloud handoff older than that says Restart; the browser page checks it live and offers restore.
+    const closed = cloudHandoffLikelyClosed(first, now)
     need.push({
-      id: `ho-${first.id}`, tab: 'need', state, tag: state === 'otp' ? 'Code needed' : 'Sign-in needed', title: friendlyTaskTitle(first.title),
-      sub: count > 1 ? `Stopped here ${count} times. Latest: ${readableRunSummary(first.summary)}` : readableRunSummary(first.summary),
+      id: `ho-${first.id}`, tab: 'need', state, tag: closed ? 'Browser closed' : state === 'otp' ? 'Code needed' : 'Sign-in needed', title: friendlyTaskTitle(first.title),
+      sub: closed ? 'The secure browser closed after 20 minutes. Open it to restart the same task.' : count > 1 ? `Stopped here ${count} times. Latest: ${readableRunSummary(first.summary)}` : readableRunSummary(first.summary),
       live: GOGO_STATE_LINE[state], href: count > 1 ? '/dashboard/agent?section=approvals' : `/dashboard/activity/${first.id}/browser`,
-      action: count > 1 ? 'Open' : 'Take control', at: first.updatedAt,
+      action: closed ? 'Restart' : count > 1 ? 'Open' : 'Take control', at: first.updatedAt,
     })
   }
 
@@ -103,6 +124,9 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
       confirm: { runId: String(r.id), runIds: rows.map(x => String(x.id)), continueHref: `/dashboard/chat?prompt=${encodeURIComponent(continuePrompt(title))}` } })
   }
 
+
+  // Deferred approvals wait at the end of Needs you (stable order otherwise).
+  need.sort((x, y) => Number(x.tag === 'Later') - Number(y.tag === 'Later'))
 
   const radar: FeedItem[] = []
   // A task stuck in running for hours lost its worker; it is not "now" work.
