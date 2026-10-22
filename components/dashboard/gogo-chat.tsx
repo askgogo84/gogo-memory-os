@@ -5,6 +5,7 @@ import type {ServiceNotice} from '@/lib/dashboard/service-notices'
 import type {PendingBrowserHandoff} from '@/lib/dashboard/human-handoffs'
 import { findCatalogueSite } from '@/lib/dashboard/connection-catalogue'
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { ChatChannels, type ChatChannel } from './chat-channels'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
@@ -133,6 +134,32 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
   const [loc,setLoc]=useState<LocationPreference>({status:'off'})
   const [locBusy,setLocBusy]=useState(false)
   const [locNote,setLocNote]=useState('')
+  // Duet parity step 4: one ongoing thread ('') plus optional channels. Memory, tasks and approvals stay shared.
+  const [channels,setChannels]=useState<ChatChannel[]>([])
+  const [channel,setChannel]=useState('')
+  const channelRef=useRef('')
+  const refreshRef=useRef<((initial?:boolean)=>Promise<void>)|null>(null)
+  useEffect(()=>{
+    fetch('/api/agent/threads',{cache:'no-store',credentials:'same-origin'}).then(r=>r.ok?r.json():null)
+      .then(d=>{if(Array.isArray(d?.threads))setChannels(d.threads.map((t:any)=>({id:String(t.id),title:String(t.title||'Channel')})))}).catch(()=>{})
+  },[])
+  function pickChannel(id:string){
+    if(id===channelRef.current||sendingRef.current)return
+    channelRef.current=id;setChannel(id)
+    conversationVersion.current++
+    setMessages([]);setLoading(true);setHistoryOpen(false);setError('')
+    void refreshRef.current?.(true)
+  }
+  async function createChannel(title:string){
+    try{
+      const res=await fetch('/api/agent/threads',{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({title})})
+      const d=await res.json().catch(()=>null)
+      if(!res.ok||!d?.thread?.id)return false
+      setChannels(cs=>[{id:String(d.thread.id),title:String(d.thread.title)},...cs])
+      pickChannel(String(d.thread.id))
+      return true
+    }catch{return false}
+  }
 
   function saveLoc(next:LocationPreference){
     setLoc(next)
@@ -207,7 +234,7 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
             if(!agent){setSnapshot(current=>({...current,unavailable:true}));return}
             setSnapshot({serviceNotices:Array.isArray(agent.serviceNotices)?agent.serviceNotices:[],serviceNoticeCount:Number(agent.serviceNoticeCount??agent.serviceNotices?.length??0),unavailable:false,runs:Array.isArray(agent.runs)?agent.runs:[],watchers:Array.isArray(agent.watchers)?agent.watchers:[],approvals:Array.isArray(agent.approvals)?agent.approvals:[],handoffs:Array.isArray(agent.handoffs)?agent.handoffs:[]})
           }).catch(()=>{if(live)setSnapshot(current=>({...current,unavailable:true}))})
-        const response=await fetch('/api/dashboard/chat',{cache:'no-store',signal:AbortSignal.timeout(12000)})
+        const response=await fetch(channelRef.current?`/api/dashboard/chat?thread=${encodeURIComponent(channelRef.current)}`:'/api/dashboard/chat',{cache:'no-store',signal:AbortSignal.timeout(12000)})
         if(!response.ok)throw new Error('history')
         const chat=await response.json()
         // A response started before a new send must not overwrite its optimistic
@@ -218,6 +245,7 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
       }catch{if(initial&&live)setError('I could not load the recent conversation. You can still start a new message.')}
       finally{refreshing=false;if(live)setLoading(false)}
     }
+    refreshRef.current=refresh
     void refresh(true)
     const onVisible=()=>{void refresh()}
     const timer=setInterval(onVisible,15000)
@@ -273,7 +301,7 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
       const res=await fetch('/api/dashboard/chat',{
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(loc.status==='on'?{text:next,location:{lat:loc.lat,lon:loc.lon}}:{text:next}),
+        body:JSON.stringify({...(loc.status==='on'?{text:next,location:{lat:loc.lat,lon:loc.lon}}:{text:next}),...(channelRef.current?{threadId:channelRef.current}:{})}),
       })
       const data=await res.json().catch(()=>({}))
       if(!res.ok)throw new Error(data?.message||'chat')
@@ -345,6 +373,7 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
           </div>
           {archived.length>0&&<button type="button" onClick={()=>setHistoryOpen(v=>!v)} className="min-h-10 shrink-0 rounded-full border border-[#2f2f2f] px-4 text-[14px] text-[#d8d8d3] hover:text-[#f2efea] lg:min-h-11 lg:px-5 lg:text-[16px]">{historyOpen?'Current':'History'}</button>}
         </div>
+        <div className="mt-2 lg:mt-3"><ChatChannels channels={channels} active={channel} onPick={pickChannel} onCreate={createChannel} disabled={sending}/></div>
       </header>
 
       <div ref={messageScrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-6 sm:px-6 lg:px-10">

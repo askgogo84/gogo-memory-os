@@ -50,6 +50,7 @@
 .dashboard-root[data-theme='light'] .focus-within\:border-\[\#2fb8a6\]:focus-within{border-color:#0f6f64}
 .dashboard-root[data-theme='light'] .focus-within\:border-\[\#4cd0bd\]:focus-within{border-color:#0f6f64}
 .dashboard-root[data-theme='light'] .focus\:border-\[\#2FB8A6\]:focus{border-color:#0f6f64}
+.dashboard-root[data-theme='light'] .focus\:border-\[\#2fb8a6\]:focus{border-color:#0f6f64}
 .dashboard-root[data-theme='light'] .group:hover .group-hover\:text-\[\#2FB8A6\]{color:#0f6f64}
 .dashboard-root[data-theme='light'] .group:hover .group-hover\:text-\[\#f2efea\]{color:#16130f}
 .dashboard-root[data-theme='light'] .hover\:bg-\[\#101f1d\]:hover{background-color:#e8f5f1}
