@@ -342,7 +342,7 @@ function parseGoal(text: string) {
 
 // 18 Oct live: "show my goals" answered "I could not find a list called goals" although a goal was active.
 async function tryListGoals(actor: AgentActor, text: string): Promise<WhatsAppAgentResult | null> {
-  if (!/^(?:show|list|what are|view|see)?\s*(?:me\s+)?(?:all\s+)?(?:my\s+)?(?:active\s+)?goals\??$/i.test(String(text || '').trim())) return null
+  if (!/^(?:show|list|what are|view|see)?\s*(?:me\s+)?(?:all\s+)?(?:my\s+)?(?:active\s+)?goals\s*[.?!]*$/i.test(String(text || '').trim())) return null
   const { data, error } = await supabaseAdmin.from('agent_goals').select('title,status,updated_at')
     .eq('telegram_id', String(actor.legacyTelegramId)).in('status', ['active', 'blocked', 'waiting']).order('updated_at', { ascending: false }).limit(10)
   if (error) throw new Error(`goal_list_failed:${error.message}`)

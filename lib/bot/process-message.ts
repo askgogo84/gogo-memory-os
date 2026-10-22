@@ -1420,6 +1420,17 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
+  // 22 Oct launch run (R25b): "Show my goals." has no "list" word, so it reached chat, which said there were no goals
+  // while two existed. A plain goals ask reads agent_goals directly.
+  if (SHOW_GOALS_RE.test(String(incomingText || '').trim())) {
+    const reply = await goalsReplyFor(resolvedUser.telegramId, 'goals')
+    if (reply) {
+      __trace.mark('goals')
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+  }
+
   if (intent.type === 'list_show') {
     const listName = extractListNameFromText(incomingText)
     const list = await getList(resolvedUser.telegramId, listName)
@@ -1844,8 +1855,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
 // 18 Oct live: "show my goals" answered "I could not find a list called goals" although a goal was active.
 // Goals live in agent_goals, not in lists.
+export const SHOW_GOALS_RE = /^(?:(?:show|list|view|see)\s+(?:me\s+)?|what\s+are\s+)?(?:all\s+)?(?:my\s+)?(?:active\s+|current\s+)?goals\s*[.?!]*$/i
 async function goalsReplyFor(telegramId: number, listName: string): Promise<string | null> {
-  if (!/^(?:my\s+)?(?:active\s+)?goals?$/i.test(String(listName || '').trim())) return null
+  // 22 Oct launch run (R25b): "Show my goals." (with a full stop) missed this and chat said there were none.
+  if (!/^(?:my\s+)?(?:active\s+)?goals?$/i.test(String(listName || '').trim().replace(/[.!?]+$/, '').trim())) return null
   const { supabaseAdmin } = await import('@/lib/supabase-admin')
   const { data, error } = await supabaseAdmin.from('agent_goals').select('title,status')
     .eq('telegram_id', String(telegramId)).in('status', ['active', 'blocked', 'waiting']).order('updated_at', { ascending: false }).limit(10)

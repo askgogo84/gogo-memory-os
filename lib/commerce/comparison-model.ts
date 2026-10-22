@@ -76,6 +76,12 @@ export function isPriceComparisonStatus(text: string) {
     && /\b(?:status|my|latest|saved|last|previous)\b/i.test(text)
 }
 
+// "across available stores", "on all apps", "for my confirmed delivery pincode": where to look, not the product.
+const SHOPPING_QUALIFIER = /\s+(?:across|at|on|in|from)\s+(?:(?:all|the|available|different|major|online|popular)\s+)*(?:stores?|shops?|apps?|sites?|retailers?|platforms?)\b|\s+(?:for|to|at|near)\s+my\s+(?:(?:confirmed|saved|home|current)\s+)*(?:delivery\s+)?(?:pincode|pin\s*code|address|location)\b/gi
+function shoppingCore(text: string) {
+  return (String(text || '').split(/[.!?](?:\s|$)/)[0] || '').replace(SHOPPING_QUALIFIER, '')
+}
+
 export function parsePriceComparison(text: string) {
   if (isPriceComparisonStatus(text)) return null
   const intentText = text.replace(/\b(?:do not|don't|never)\b[^.!?\n]*/gi, '')
@@ -93,17 +99,22 @@ export function parsePriceComparison(text: string) {
   // With no store named, compare the usual ones (Wajo-style default, stated in the start message):
   // groceries on the quick-commerce apps, everything else on the big electronics/retail stores.
   // Two products against each other ("iPhone 17 vs Pixel 10") is a spec comparison, not a price read.
-  if (compares && providers.length === 0 && !/\b(?:vs\.?|versus)\b|\bor\b|\bwith\s+(?:the\s+)?(?:iphone|pixel|galaxy|oneplus|samsung)\b/i.test(text)
-    && /\bcompar(?:e|ison)\s+(?:the\s+)?(?:prices?\s+(?:of|for)\s+)?[a-z0-9]/i.test(text)
-    && !/\b(?:my|our|options?|plans?|insurance|policy|policies|loans?|credit cards?|cards?|banks?|schools?|colleges?|courses?|jobs?|salary|cities|hotels?|flights?|trains?|funds?|stocks?|shares|schemes?|offers|tariffs?|recharge|vs)\b/i.test(text)
-    && text.trim().split(/\s+/).length <= 9) {
+  // 22 Oct launch run (R17/R18): "Compare Amul butter 500 g across available stores for my confirmed delivery
+  // pincode. Include stock, fees, total and sources. Do not add to cart or order." fell to a plain web search: the
+  // later sentences ("bank/card offers", "add to cart") and the store/pincode qualifiers tripped the guards below.
+  // Judge the product ask by its first sentence with those qualifiers removed; the full text is still kept.
+  const core = shoppingCore(text)
+  if (compares && providers.length === 0 && !/\b(?:vs\.?|versus)\b|\bor\b|\bwith\s+(?:the\s+)?(?:iphone|pixel|galaxy|oneplus|samsung)\b/i.test(core)
+    && /\bcompar(?:e|ison)\s+(?:the\s+)?(?:prices?\s+(?:of|for)\s+)?[a-z0-9]/i.test(core)
+    && !/\b(?:my|our|options?|plans?|insurance|policy|policies|loans?|credit cards?|cards?|banks?|schools?|colleges?|courses?|jobs?|salary|cities|hotels?|flights?|trains?|funds?|stocks?|shares|schemes?|offers|tariffs?|recharge|vs)\b/i.test(core)
+    && core.trim().split(/\s+/).length <= 9) {
     const grocery = /\b(?:butter|milk|ghee|curd|paneer|atta|rice|dal|oil|sugar|eggs?|bread|biscuits?|chips|maggi|noodles|tea|coffee|detergent|shampoo|soap|toothpaste|fruits?|vegetables?|onions?|tomato(?:es)?|potato(?:es)?|grocer(?:y|ies)|amul|nestle|britannia|aashirvaad|tata salt|surf excel|colgate)\b/i.test(text)
     providers.push(...(grocery ? ['zepto', 'blinkit', 'instamart'] : ['amazon', 'flipkart', 'croma', 'reliance']) as ComparisonProvider[])
   }
   if (providers.length < (compares ? 2 : 1)) return null
   // Preserve all original criteria separately. This is a display label, never a
   // model-extracted product specification or a substitute for the full request.
-  const subject = text.replace(/^.*?\bcompare\s+(?:grocery prices for\s+|prices for\s+)?/i, '')
+  const subject = text.replace(SHOPPING_QUALIFIER, '').replace(/^.*?\bcompare\s+(?:grocery prices for\s+|prices for\s+)?/i, '')
     .replace(/^\s*(?:(?:what(?:'s| is)|check|find|show|tell me)\s+(?:me\s+)?(?:the\s+)?(?:live\s+)?(?:price|cost|availability|stock)\s+(?:of\s+|for\s+)?|(?:is|are)\s+the\s+|(?:how much (?:is|does)\s+))/i, '')
     .split(/\s+(?:on|across|between|from)\s+(?:amazon|flipkart|croma|reliance|instamart|swiggy|zepto|blinkit|zomato)\b/i)[0]
     .replace(/[?.!]+$/g, '').split(/[.!?]\s/)[0]
