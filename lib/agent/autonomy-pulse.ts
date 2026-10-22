@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { allowedByTopic, dueForCheck, getAlertPreferences, isQuietHour, topicForPulse, DEFAULT_ALERT_PREFERENCES, type AlertPreferences, type AlertTopic } from './alert-preferences'
 import { browserFailureSummary } from './browser-failure-notice'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp, sendWhatsAppReminderTemplate } from '@/lib/whatsapp'
@@ -22,7 +23,7 @@ function fmtWhen(iso:string|null|undefined,timezone:string){
   try{return new Intl.DateTimeFormat('en-IN',{timeZone:timezone||'Asia/Kolkata',weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(iso))}catch{return ''}
 }
 
-type PulseItem={key:string;score:number;line:string;kind:string}
+type PulseItem={key:string;score:number;line:string;kind:string;topic?:AlertTopic|null}
 
 function usefulOpenLoopTitle(value:unknown){
   const title=clean(value,170)
@@ -58,6 +59,15 @@ async function candidateUserIds(){
   if(recentError)console.error('AUTONOMY_PULSE_RECENT_READ_FAILED:',recentError.message)
   const recentlyProcessed=new Set((recent||[]).map((row:any)=>String(row.telegram_id||'')).filter(Boolean))
   return Array.from(ids).filter(id=>!recentlyProcessed.has(id)).sort().slice(0,MAX_USERS_PER_PASS)
+}
+
+async function lastPulseAt(telegramId:string,withinMinutes:number):Promise<string|null>{
+  const {data,error}=await supabaseAdmin.from('agent_activity').select('created_at')
+    .eq('telegram_id',telegramId).eq('event_type','autonomy_pulse_sent')
+    .gte('created_at',new Date(Date.now()-withinMinutes*60_000).toISOString())
+    .order('created_at',{ascending:false}).limit(1).maybeSingle()
+  if(error)console.error('AUTONOMY_PULSE_LAST_READ_FAILED:',error.message)
+  return (data as any)?.created_at||null
 }
 
 async function lastPulse(telegramId:string){
@@ -109,7 +119,7 @@ async function recentBrowserNotices(telegramId:string){
   return new Set<string>((data||[]).flatMap((row:any)=>Array.isArray(row.metadata_json?.item_keys)?row.metadata_json.item_keys:[]))
 }
 
-async function buildPulse(telegramId:string,timezone:string):Promise<{items:PulseItem[];fingerprint:string}>{
+async function buildPulse(telegramId:string,timezone:string,prefs:AlertPreferences=DEFAULT_ALERT_PREFERENCES):Promise<{items:PulseItem[];fingerprint:string}>{
   const nowIso=new Date().toISOString()
   const future72=new Date(Date.now()+72*3600_000).toISOString()
   const since48=new Date(Date.now()-48*3600_000).toISOString()
@@ -159,7 +169,7 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
     if(!title)continue
     const badge=loop.kind==='followup'?'📨':loop.kind==='waiting_on'?'⏳':loop.kind==='approval'?'🛡️':loop.kind==='life_event'?'✈️':'•'
     const action=clean(loop.summary,160)
-    items.push({key:`open_loop:${loop.id}`,score,line:`${badge} ${title}${action&&action.toLowerCase()!==title.toLowerCase()?` — ${action}`:''}`,kind:'open_loop'})
+    items.push({key:`open_loop:${loop.id}`,score,line:`${badge} ${title}${action&&action.toLowerCase()!==title.toLowerCase()?` — ${action}`:''}`,kind:'open_loop',topic:topicForPulse('open_loop',loop)})
   }
   for(const e of events||[]){
     const hours=(new Date(e.start_at).getTime()-Date.now())/3600_000
@@ -217,7 +227,8 @@ async function buildPulse(telegramId:string,timezone:string):Promise<{items:Puls
   }
 
   const dedup=new Map<string,PulseItem>()
-  for(const item of items.sort((a,b)=>b.score-a.score))if(!dedup.has(item.key))dedup.set(item.key,item)
+  // Duet parity: only the topics this person chose (approvals they are waiting on are never muted).
+  for(const item of items.filter(item=>allowedByTopic(prefs,item.topic===undefined?topicForPulse(item.kind):item.topic)).sort((a,b)=>b.score-a.score))if(!dedup.has(item.key))dedup.set(item.key,item)
   // Two threads with the same sender and subject (two JioFiber surveys) read as one line, so show it once.
   const seenLines=new Set<string>()
   const top=Array.from(dedup.values()).filter(item=>{const k=item.line.toLowerCase().replace(/\s+/g,' ').trim();if(seenLines.has(k))return false;seenLines.add(k);return true}).slice(0,3)
@@ -249,9 +260,12 @@ async function sendPulse(telegramId:string){
   if(error||!user?.whatsapp_id)return {sent:false,reason:'user_unavailable'}
   const timezone=String(user.timezone||'Asia/Kolkata')
   const hour=localHour(timezone)
-  if(hour<7||hour>=22)return {sent:false,reason:'quiet_hours'}
+  // Duet parity: the person's own quiet hours (default 10 pm–7 am, as before) and check frequency.
+  const prefs=await getAlertPreferences(telegramId)
+  if(isQuietHour(prefs,hour))return {sent:false,reason:'quiet_hours'}
+  if(!dueForCheck(prefs,await lastPulseAt(telegramId,prefs.checkEveryMinutes)))return {sent:false,reason:'frequency'}
 
-  const pulse=await buildPulse(telegramId,timezone)
+  const pulse=await buildPulse(telegramId,timezone,prefs)
   if(!pulse.items.length)return {sent:false,reason:'nothing_material'}
   const previous=await lastPulse(telegramId)
   if(String(previous?.metadata_json?.fingerprint||'')===pulse.fingerprint)return {sent:false,reason:'duplicate'}
