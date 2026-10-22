@@ -7,6 +7,7 @@ import { isStaleRunning } from '@/lib/agent/stale-runs'
 import { readableRunSummary } from '@/lib/dashboard/readable-summary'
 import { friendlyTaskTitle } from '@/lib/agent/task-title'
 import { GOGO_STATE_LINE, liveLineFor, stateForHandoff, stateForRun, type GogoAgentState } from '@/lib/gogo/agent-states'
+import { CONFIRM_MAX, CONFIRMABLE_RUN_TYPES, continuePrompt, needsOwnerConfirmation, ownerConfirmationOf, ownerReopened, watchEnds, watchWhy } from '@/lib/agent/owner-confirmation'
 
 export type FeedTab = 'need' | 'radar' | 'recent'
 export type FeedItem = {
@@ -20,6 +21,8 @@ export type FeedItem = {
   href: string
   action: string
   at: string | null
+  /** Duet parity: a finished task waiting for the owner's Mark complete / Not yet. */
+  confirm?: { runId: string; continueHref: string }
 }
 export type TaskFeed = { need: FeedItem[]; radar: FeedItem[]; recent: FeedItem[]; recentUnavailable: boolean; radarCount: number }
 
@@ -31,6 +34,7 @@ export function feedTab(raw: unknown): FeedTab {
 
 function recentTag(status: string) {
   if (status === 'completed') return 'Finished'
+  if (status === 'completed_by_owner') return 'Completed by you'
   if (status === 'failed') return 'Could not finish'
   return 'Paused'
 }
@@ -38,14 +42,19 @@ function recentTag(status: string) {
 export async function getTaskFeed(telegramId: string, now = new Date()): Promise<TaskFeed> {
   const tg = String(telegramId || '')
   if (!tg) return EMPTY_FEED
-  const [approvals, handoffs, watchers, running, recent] = await Promise.all([
+  const [approvals, handoffs, watchers, running, recent, finished] = await Promise.all([
     supabaseAdmin.from('agent_approvals').select('id,run_id,title,description,created_at').eq('telegram_id', tg).eq('status', 'pending').order('created_at', { ascending: false }).limit(10),
     getPendingBrowserHandoffs(tg),
-    supabaseAdmin.from('agent_watchers').select('id,title,type,next_check_at,condition_json', { count: 'exact' }).eq('telegram_id', tg).eq('active', true).neq('type', 'goal_review').order('next_check_at', { ascending: true }).limit(12),
+    supabaseAdmin.from('agent_watchers').select('id,title,type,next_check_at,created_at,condition_json', { count: 'exact' }).eq('telegram_id', tg).eq('active', true).neq('type', 'goal_review').order('next_check_at', { ascending: true }).limit(12),
     supabaseAdmin.from('agent_runs').select('id,type,capability,title,summary,status,error,metadata_json,updated_at').eq('telegram_id', tg).in('status', ['running', 'queued']).order('updated_at', { ascending: false }).limit(8),
     supabaseAdmin.from('agent_runs').select('id,type,capability,title,summary,status,source,error,metadata_json,updated_at')
       .eq('telegram_id', tg).in('status', ['completed', 'paused', 'failed']).neq('type', 'secure_browser')
       .order('updated_at', { ascending: false }).limit(20),
+    // Outcome tasks Gogo finished recently: the owner confirms them (Duet parity) or sends them back.
+    supabaseAdmin.from('agent_runs').select('id,type,title,summary,status,error,metadata_json,updated_at')
+      .eq('telegram_id', tg).eq('status', 'completed').in('type', [...CONFIRMABLE_RUN_TYPES])
+      .gte('updated_at', new Date(now.getTime() - 30 * 86_400_000).toISOString())
+      .order('updated_at', { ascending: false }).limit(40),
   ])
   const approvalRows: any[] = (approvals as any)?.data || []
   const need: FeedItem[] = approvalRows.map(a => ({
@@ -66,6 +75,20 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
     })
   }
 
+  // Sent back by the owner first (they are waiting on Gogo to hear what is missing), then Gogo's "done?" asks.
+  const finishedRows: any[] = ((finished as any)?.data || []).filter((r: any) => !retiredRunReason(r))
+  for (const r of finishedRows.filter(ownerReopened).slice(0, CONFIRM_MAX)) {
+    const title = friendlyTaskTitle(r.title || 'Gogo task')
+    need.push({ id: `re-${r.id}`, tab: 'need', state: 'blocked', tag: 'You said not yet', title, sub: 'Tell Gogo what is missing and it will pick this up again.',
+      live: GOGO_STATE_LINE.blocked, href: `/dashboard/chat?prompt=${encodeURIComponent(continuePrompt(title))}`, action: 'Tell Gogo', at: r.updated_at || null })
+  }
+  for (const r of finishedRows.filter(r => needsOwnerConfirmation(r, now.getTime())).slice(0, CONFIRM_MAX)) {
+    const title = friendlyTaskTitle(r.title || 'Gogo task')
+    need.push({ id: `cf-${r.id}`, tab: 'need', state: 'done', tag: 'Gogo thinks done', title, sub: readableRunSummary(r.summary) || 'Open it to check the result.',
+      live: 'Only you mark it complete', href: `/dashboard/activity/${encodeURIComponent(String(r.id))}`, action: 'Details', at: r.updated_at || null,
+      confirm: { runId: String(r.id), continueHref: `/dashboard/chat?prompt=${encodeURIComponent(continuePrompt(title))}` } })
+  }
+
   const radar: FeedItem[] = []
   // A task stuck in running for hours lost its worker; it is not "now" work.
   for (const r of ((running as any)?.data || []).filter((r: any) => !isStaleRunning(r, now) && !retiredRunReason(r))) {
@@ -76,7 +99,10 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
   const workingCount = radar.length
   for (const w of ((watchers as any)?.data || [])) {
     const title = String(w.title || w.condition_json?.title || 'Background watch').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi, '$1')
-    radar.push({ id: `w-${w.id}`, tab: 'radar', state: 'watcher', tag: 'On radar', title, sub: String(w.type || 'watch').replaceAll('_', ' '), live: GOGO_STATE_LINE.watcher, href: '/dashboard/agent?section=background', action: 'Open', at: w.next_check_at || null })
+    // Duet parity + R02: every watch says why it exists and when it ends; a watch whose own date is over says so.
+    const ends = watchEnds(w, now)
+    radar.push({ id: `w-${w.id}`, tab: 'radar', state: 'watcher', tag: ends.datePassed ? 'Date passed' : 'Watching', title, sub: `${watchWhy(w)} · ${ends.label}`,
+      live: ends.datePassed ? 'Probably safe to stop' : GOGO_STATE_LINE.watcher, href: '/dashboard/agent?section=background', action: ends.datePassed ? 'Review' : 'Open', at: w.next_check_at || null })
   }
 
   const recentRows: any[] = ((recent as any)?.data || []).filter((run: any) => !retiredRunReason(run))
@@ -85,7 +111,8 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
     .slice(0, 12)
   const recentItems: FeedItem[] = recentRows.map(r => {
     const state = stateForRun(r)
-    return { id: `run-${r.id}`, tab: 'recent', state, tag: recentTag(String(r.status)), title: friendlyTaskTitle(r.title || 'Gogo task'), sub: readableRunSummary(r.summary) || 'Open the task to see what happened.', live: GOGO_STATE_LINE[state], href: `/dashboard/activity/${encodeURIComponent(String(r.id))}`, action: 'Details', at: r.updated_at || null }
+    const byOwner = String(r.status) === 'completed' && ownerConfirmationOf(r)?.decision === 'done'
+    return { id: `run-${r.id}`, tab: 'recent', state, tag: recentTag(byOwner ? 'completed_by_owner' : String(r.status)), title: friendlyTaskTitle(r.title || 'Gogo task'), sub: readableRunSummary(r.summary) || 'Open the task to see what happened.', live: GOGO_STATE_LINE[state], href: `/dashboard/activity/${encodeURIComponent(String(r.id))}`, action: 'Details', at: r.updated_at || null }
   })
     // The tab count is the untruncated total, not the display rows (12 shown of 30 watches still says 30).
   const watcherTotal = Number((watchers as any)?.count ?? ((watchers as any)?.data || []).length)
