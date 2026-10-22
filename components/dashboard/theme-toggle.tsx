@@ -11,9 +11,9 @@ function applyTheme(theme: DashboardTheme) {
   root.setAttribute('data-theme', theme)
 }
 
-/** Dark / Light switch. Dark is the default; the choice stays in this browser. */
+/** Light / Dark switch. Light is the default; the choice stays in this browser. */
 export function ThemeToggle({ compact = false }: { compact?: boolean }) {
-  const [theme, setTheme] = useState<DashboardTheme>('dark')
+  const [theme, setTheme] = useState<DashboardTheme>('light')
 
   useEffect(() => {
     let stored: string | null = null

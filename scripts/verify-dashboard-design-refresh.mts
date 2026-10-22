@@ -20,7 +20,8 @@ for(const label of ['Home','Tasks','Memory','Chat with Gogo','Calendar','Lists',
 assert.ok(mobile.includes('<NavLinks counts={counts}'),'phone drawer must use the shared nav list')
 assert.ok(!mobile.includes('export function MobileTabBar'),'21 Oct Wajo layout: no bottom tab bar on the phone; the menu drawer and Gogo pill carry navigation')
 
-assert.match(home,/FeedTabs/)
+// Home v2 (23 Oct): Home shows the day as sections; the Needs you · On radar · Recent tabs live on Tasks.
+assert.match(home,/Needs you now[\s\S]*Gogo is handling[\s\S]*Coming up today[\s\S]*Can wait[\s\S]*Done today/)
 assert.match(readFileSync(new URL('../components/dashboard/feed-list.tsx',import.meta.url),'utf8'),/Needs you[\s\S]*On radar[\s\S]*Recent/)
 assert.match(home,/asks before it books, pays or sends anything/)
 assert.match(home,/HomeAsk/)

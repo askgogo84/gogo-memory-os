@@ -6,7 +6,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createContext, useContext, useEffect, useState } from 'react'
-import { GogoAgent } from '@/components/gogo/gogo-agent'
+import { Companion } from '@/components/gogo/companion'
 import { ThemeToggle } from './theme-toggle'
 import { NAV, MORE, SETTINGS, NavLinks, SettingsLink, needsYouCount, useNavCounts, type NavCounts } from './dashboard-nav'
 import { GettingStarted, RecentList, UsageCard } from './rail-cards'
@@ -39,7 +39,7 @@ export function MobileNavProvider({ children, shell }: { children: React.ReactNo
       <div className="dashboard-rail absolute inset-y-0 left-0 flex w-[300px] max-w-[85vw] flex-col overflow-y-auto border-r border-[#262626] px-3 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(.75rem+env(safe-area-inset-top))]">
         <div className="flex items-center justify-between pb-2">
           <Link href="/dashboard/home" onClick={close} className="flex items-center gap-1">
-            <GogoAgent state="idle" size={48} label="Gogo"/>
+            <Companion state="idle" size={48} label="Gogo"/>
             <span className="dashboard-brand-wordmark text-gogo-ink">AskGogo</span>
           </Link>
           <button type="button" onClick={close} aria-label="Close menu" className="grid h-11 w-11 place-items-center rounded-[12px] text-[#c4c4c0]">
