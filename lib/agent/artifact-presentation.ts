@@ -34,14 +34,16 @@ export function researchReportText(value:unknown,sourceUrls:unknown[],max=20000,
   return text.slice(0,max)
 }
 
-export function artifactSections(content:unknown):{title:string;tool:string;text:string}[] {
+export function artifactSections(content:unknown):{title:string;tool:string;text:string;edited:boolean}[] {
   const value=content as any
   return (Array.isArray(value?.sections)?value.sections:[]).slice(0,10).map((section:any)=>{
     const result=section?.result||{}
     // Display known prose only; internal IDs, tokens and arbitrary result JSON are not a report.
     const text=typeof result.reply==='string'?result.reply:typeof result.text==='string'?result.text:''
     const sanitize=(s:unknown,max:number)=>String(s??'').split('\n').map(line=>redactSecretShapedText(formatEmailSnippet(line,max))).join('\n').slice(0,max)
-    return {title:sanitize(section.title||'Result',180),tool:sanitize(section.tool,40),text:researchReportText(text||'This step has no readable summary saved.',Array.isArray(result.sourceUrls)?result.sourceUrls:[],20000,section.tool==='artifact'&&result.synthesisStatus==='generated')}
+    // Make v2: text the owner wrote is shown as written (still redacted); the search-excerpt wording guard is for Gogo's synthesis.
+    const edited=section?.editedBy==='owner'
+    return {title:sanitize(section.title||'Result',180),tool:sanitize(section.tool,40),edited,text:researchReportText(text||'This step has no readable summary saved.',Array.isArray(result.sourceUrls)?result.sourceUrls:[],20000,!edited&&section.tool==='artifact'&&result.synthesisStatus==='generated')}
   })
 }
 
