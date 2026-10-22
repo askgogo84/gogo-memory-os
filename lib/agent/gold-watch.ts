@@ -4,7 +4,8 @@ import { getCostBudget } from '@/lib/services/cost-guard'
 import { extractGoldQuotes } from '@/lib/bot/handlers/gold-quotes'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
-import { createWebSearchWatcher, normalizeWebSearchWatcher } from './watchers'
+import { createWebSearchWatcher, normalizeWebSearchWatcher, type ReusedWatcher } from './watchers'
+import { reusedWatchText } from './watch-dedupe'
 import { initialWatcherCadence, watcherUpgradeMessage } from './watch-cost-policy'
 import {
   GOLD_STATED_BASELINE,
@@ -288,7 +289,7 @@ export async function tryCreateGoldRateWatchFromCommand(params: {
   return {
     runId: String(run.id), status: 'completed', capability: 'browser', risk: 'low',
     // 19 Oct live vs Instinct: confirmation cut from ~6 lines to 2–3 ("22K alert set: starting rate …; I'll alert at … or below").
-    text: `Gold alert set: ${saved.karat}K in ${placeLabel}, ${baselineText}. I'll alert you at ${formatPerGram(saved.thresholdPerGram)}/g ${orWhere}${change}.${unitNote}${already}${placeCaveat}${karatText} ` +
+    text: `${'reused' in watcher ? `${reusedWatchText((watcher as ReusedWatcher).updated, `${saved.karat}K gold rate`)} ` : ''}Gold alert set: ${saved.karat}K in ${placeLabel}, ${baselineText}. I'll alert you at ${formatPerGram(saved.thresholdPerGram)}/g ${orWhere}${change}.${unitNote}${already}${placeCaveat}${karatText} ` +
       `I check about every ${Math.round(cadenceMinutes / 60)} hours and never buy or sell.`,
     handledBy: 'gold-rate-watch',
   }

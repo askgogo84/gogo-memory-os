@@ -27,6 +27,7 @@ import {
 
 import { assessPriceCheck, appendPriceRun, buildPriceRun, normalizePriceRule, priceAlertText, priceStateFrom, type PriceRule } from './price-threshold'
 import { extractGoldQuotes } from '@/lib/bot/handlers/gold-quotes'
+import { matchingActiveWatches, planWatchCleanup, watchSpecificity, DEDUPE_WATCH_TYPES, type DedupeRow, type WatchRetirement } from './watch-dedupe'
 import { appendGoldRun, decideGoldAlert, evaluateGoldRule, goldAlertText, goldSearchContext, goldStateFrom, normalizeGoldRule, sourceHost, type GoldRule } from './gold-rate-rule'
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
@@ -213,6 +214,77 @@ export function normalizeWebSearchWatcher(input: any): WebSearchWatcherCondition
     ...normalizeContextualMeta(input) }
 }
 
+// R02: a watch about the same subject as an active one (same gold karat, same flight + date, same product URL)
+// updates that watch instead of inserting another; any further same-subject rows are retired as duplicates.
+// Owner-scoped throughout. Returns null when nothing matched (or the keeper changed under us), so the caller inserts.
+const WATCH_COLUMNS='id, type, condition_json, cadence_minutes, active, next_check_at, created_at'
+export type ReusedWatcher={id:any;type:any;condition_json:any;cadence_minutes:any;active:any;next_check_at:any;created_at:any;reused:true;updated:boolean;retiredDuplicates:number}
+async function reuseSameSubjectWatcher(params:{
+  telegramId:string
+  type:'web_search'|'web_page'|'product_stock'
+  condition:Record<string,any>
+  cadenceMinutes:number
+  initialState:Record<string,unknown>
+  goalId?:string|null
+}):Promise<ReusedWatcher|null>{
+  const {data:existing,error}=await supabaseAdmin.from('agent_watchers')
+    .select('id, telegram_id, type, condition_json, last_state_json, created_at')
+    .eq('telegram_id',params.telegramId).eq('type',params.type).eq('active',true)
+  if(error)throw new Error(`agent_watcher_read_failed:${error.message}`)
+  const now=new Date()
+  const matches=matchingActiveWatches((existing||[]) as DedupeRow[],{telegram_id:params.telegramId,type:params.type,condition_json:params.condition},now)
+  const keeper=matches[0]
+  if(!keeper)return null
+  // A vaguer request ("watch gold") never overwrites a numeric rule already in place; it just keeps it.
+  const updated=watchSpecificity({id:'new',type:params.type,condition_json:params.condition})>=watchSpecificity(keeper)
+  const nowIso=now.toISOString()
+  const patch:Record<string,unknown>=updated
+    ? {condition_json:params.condition,cadence_minutes:params.cadenceMinutes,last_state_json:params.initialState,next_check_at:nowIso,updated_at:nowIso,...(params.goalId?{goal_id:params.goalId}:{})}
+    : {next_check_at:nowIso,updated_at:nowIso}
+  const {data,error:updateError}=await supabaseAdmin.from('agent_watchers').update(patch)
+    .eq('id',keeper.id).eq('telegram_id',params.telegramId).eq('active',true)
+    .select(WATCH_COLUMNS).maybeSingle()
+  if(updateError)throw new Error(`agent_watcher_update_failed:${updateError.message}`)
+  if(!data)return null
+  const retired=await retireWatchers(matches.slice(1).map(row=>({id:row.id,telegramId:params.telegramId,reason:'duplicate' as const,keptId:keeper.id,label:`Same as watch ${keeper.id}`})),
+    new Map(matches.map(row=>[row.id,row])),now)
+  return {...(data as any),reused:true,updated,retiredDuplicates:retired}
+}
+
+// Owner-scoped, active-only retire: a row someone already stopped is left alone, so this is safe to repeat.
+async function retireWatchers(plan:WatchRetirement[],rowsById:Map<string,DedupeRow>,now:Date){
+  let retired=0
+  for(const item of plan){
+    const prev=rowsById.get(item.id)?.last_state_json
+    const {data,error}=await supabaseAdmin.from('agent_watchers').update({
+      active:false,next_check_at:null,last_checked_at:now.toISOString(),
+      last_state_json:{...(prev&&typeof prev==='object'?prev:{}),retiredAt:now.toISOString(),retiredReason:item.reason,retiredLabel:item.label,...(item.keptId?{keptWatcherId:item.keptId}:{})},
+      updated_at:now.toISOString(),
+    }).eq('id',item.id).eq('telegram_id',item.telegramId).eq('active',true).select('id')
+    if(error){console.error('AGENT_WATCHER_RETIRE_FAILED:',item.id,error.message);continue}
+    if(!Array.isArray(data)||!data.length)continue
+    retired++
+    const title=String(rowsById.get(item.id)?.condition_json?.title||'watch')
+    await writeActivity(item.telegramId,item.reason==='date_passed'?`Stopped watch whose date passed: ${title} (${item.label})`:`Merged duplicate watch: ${title}`,{
+      watcher_id:item.id,reason:item.reason,kept_watcher_id:item.keptId||null,label:item.label,
+    })
+  }
+  return retired
+}
+
+/** Cron sweep (R02): retire watches whose own date has passed and collapse same-subject duplicates per owner. */
+export async function reconcileStaleAndDuplicateWatchers(now:Date=new Date(),limit=1000){
+  const {data,error}=await supabaseAdmin.from('agent_watchers')
+    .select('id, telegram_id, type, condition_json, last_state_json, created_at')
+    .eq('active',true).in('type',[...DEDUPE_WATCH_TYPES])
+    .order('created_at',{ascending:false}).limit(limit)
+  if(error)throw new Error(`agent_watchers_cleanup_read_failed:${error.message}`)
+  const rows=(data||[]) as DedupeRow[]
+  const plan=planWatchCleanup(rows,now)
+  const retired=await retireWatchers(plan,new Map(rows.map(row=>[row.id,row])),now)
+  return {datePassed:plan.filter(p=>p.reason==='date_passed').length,duplicates:plan.filter(p=>p.reason==='duplicate').length,retired}
+}
+
 export async function createDeadlineWatcher(params: {
   telegramId: string
   condition: DeadlineWatcherCondition
@@ -260,6 +332,9 @@ export async function createProductStockWatcher(params: {
   condition: ProductStockWatcherCondition
   goalId?: string | null
 }) {
+  const reused = await reuseSameSubjectWatcher({ telegramId:params.telegramId, type:'product_stock', condition:params.condition, cadenceMinutes:params.condition.cadenceMinutes,
+    initialState:{ availability:'unknown', blockedNotified:false, cartAttempted:false }, goalId:params.goalId })
+  if (reused) return reused
   const { data, error } = await supabaseAdmin.from('agent_watchers').insert({
     telegram_id:params.telegramId,
     goal_id:params.goalId || null,
@@ -279,6 +354,9 @@ export async function createWebPageWatcher(params:{
   condition:WebPageWatcherCondition
   goalId?:string|null
 }) {
+  const reused=await reuseSameSubjectWatcher({telegramId:params.telegramId,type:'web_page',condition:params.condition,cadenceMinutes:params.condition.cadenceMinutes,
+    initialState:{baseline:null,lastTitle:null,lastContentHash:null,quietChecks:0},goalId:params.goalId})
+  if(reused)return reused
   const {data,error}=await supabaseAdmin.from('agent_watchers').insert({
     telegram_id:params.telegramId,
     goal_id:params.goalId||null,
@@ -298,6 +376,9 @@ export async function createWebSearchWatcher(params: {
   condition: WebSearchWatcherCondition
   goalId?: string | null
 }) {
+  const reused = await reuseSameSubjectWatcher({ telegramId:params.telegramId, type:'web_search', condition:params.condition, cadenceMinutes:params.condition.cadenceMinutes,
+    initialState:{ quietChecks:0, seenUrls:[], seenSignatures:[], alertTimes:[] }, goalId:params.goalId })
+  if (reused) return reused
   const { data, error } = await supabaseAdmin.from('agent_watchers').insert({
     telegram_id: params.telegramId,
     goal_id: params.goalId || null,
@@ -1485,6 +1566,11 @@ async function reconcileTravelExpiry(now:Date){
 export async function processDueAgentWatchers(limit = 40) {
   const now = new Date()
   const expirySweep=await reconcileTravelExpiry(now)
+  // R02: dated watches past their date and same-subject duplicates are retired before polling; never blocks polling.
+  const cleanup=await reconcileStaleAndDuplicateWatchers(now).catch((err:any)=>{
+    console.error('AGENT_WATCHER_CLEANUP_FAILED:',err?.message||err)
+    return {datePassed:0,duplicates:0,retired:0}
+  })
   const { data, error } = await supabaseAdmin.from('agent_watchers')
     .select('id, telegram_id, type, condition_json, last_state_json, active, next_check_at')
     .eq('active', true)
@@ -1525,5 +1611,5 @@ export async function processDueAgentWatchers(limit = 40) {
       console.error('AGENT_WATCHER_PROCESS_FAILED:', watcher.id, err?.message || err)
     }
   }
-  return { checked, triggered, failed, expired }
+  return { checked, triggered, failed, expired, retired:cleanup.retired }
 }
