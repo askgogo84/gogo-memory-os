@@ -15,6 +15,7 @@ import { flightChoiceFromText } from '@/lib/agent/flight-choices'
 import { CHAT_SUGGESTIONS, greetingFor, type ChatSuggestion } from '@/lib/dashboard/chat-suggestions'
 import { splitChatText } from '@/lib/dashboard/chat-text'
 import { MobileMenuButton } from '@/components/dashboard/mobile-nav'
+import { RunStepsLine } from '@/components/dashboard/run-steps'
 import { LOCATION_STORAGE_KEY, locationIsStale, locationTag, parseApproxLocation, parseLocationPreference, type LocationPreference } from '@/lib/dashboard/approx-location'
 
 type ChatMessage={
@@ -22,6 +23,8 @@ type ChatMessage={
   content:string
   createdAt?:string
   mediaUrl?:string|null
+  /** The task this reply started or reported on: its real steps show above the reply (Wajo-style). */
+  runId?:string|null
 }
 
 type AgentSnapshot={
@@ -81,6 +84,7 @@ function Message({message,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPic
   return <div className="flex items-start gap-3 sm:gap-3.5">
     <Avatar size={40}/>
     <div className="min-w-0 max-w-[90%] pt-1 text-[16px] leading-[1.65] text-[#dcdad5] sm:max-w-[84%] sm:text-[17px]">
+      {message.runId&&<div className="mb-1"><RunStepsLine runId={message.runId}/></div>}
       <div className="whitespace-pre-wrap break-words">
         {richText(message.content)}
         {message.mediaUrl&&<img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 rounded-xl border border-[#2a2a2a]"/>}
@@ -117,6 +121,7 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
   const [text,setText]=useState(initialPrompt)
   const [loading,setLoading]=useState(true)
   const [sending,setSending]=useState(false)
+  const [sentAt,setSentAt]=useState("")
   const [error,setError]=useState('')
   const [historyOpen,setHistoryOpen]=useState(false)
   const [justReplied,setJustReplied]=useState(false)
@@ -300,7 +305,7 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
     if(!next||sendingRef.current)return
     sendingRef.current=true
     conversationVersion.current++
-    setText('');setError('');setSending(true);setHistoryOpen(false)
+    setText('');setError('');setSending(true);setSentAt(new Date().toISOString());setHistoryOpen(false)
     setMessages(m=>[...m,{role:'user',content:next}])
     const controller=typeof AbortController==='function'?new AbortController():null;stopRef.current=controller
     try{
@@ -312,7 +317,7 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
       const data=await res.json().catch(()=>({}))
       if(!res.ok)throw new Error(data?.message||'chat')
       setLoading(false)
-      setMessages(m=>[...m,{role:'assistant',content:String(data.text||'Done.'),mediaUrl:data.mediaUrl||null}])
+      setMessages(m=>[...m,{role:'assistant',content:String(data.text||'Done.'),mediaUrl:data.mediaUrl||null,runId:typeof data.runId==='string'?data.runId:null}])
       // A short "done" pose after each answer, then back to whatever Gogo is really doing.
       setJustReplied(true)
       if(repliedTimer.current)clearTimeout(repliedTimer.current)
@@ -425,7 +430,8 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
         </div>}
         <div className="mx-auto flex max-w-[980px] flex-col gap-6">
           {visible.map((message,index)=><Message key={`${index}-${message.createdAt||''}`} message={message} chips={index===visible.length-1?lastChips:undefined} onPick={v=>void submit(v)}/>)}
-          {sending&&<div className="flex items-start gap-3.5"><Avatar state="thinking" size={40} showStatus/><div className="pt-1.5 text-[16px] text-[#b4b4b0] sm:text-[17px]">Gogo is working<span className="animate-pulse">…</span></div></div>}
+          {/* While the reply is pending, the live line follows the task Gogo just started (real steps only). */}
+          {sending&&<RunStepsLine since={sentAt} fallback="Gogo is working"/>}
           <div ref={endRef}/>
         </div>
       </div>
