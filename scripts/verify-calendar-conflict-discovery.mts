@@ -33,4 +33,6 @@ assert.match(sync, /t\.passengers\.some/, 'another traveller\'s flight is not th
 assert.doesNotMatch(sync, /insert\(|update\(|sendWhatsApp/, 'discovery only records an open loop; delivery stays with the pulse')
 assert.match(src, /const sourceTypes=\['followup','approval','agent_run','life_event_action','calendar_conflict'\] as const[\s\S]*?syncLifeActions\(tg,current\),\n\s*syncCalendarConflicts\(tg,current\),/, 'source index stays aligned for reconciliation')
 assert.match(src, /\.filter\(x=>!x\.startsWith\('skip:'\)\)/)
+const feed = readFileSync('lib/dashboard/task-feed.ts', 'utf8')
+assert.match(feed, /\.eq\('telegram_id', tg\)\.eq\('status', 'active'\)\s*\.eq\('source_type', 'calendar_conflict'\)/, 'Needs you shows the owner\'s own clashes')
 console.log('Calendar conflict discovery: complete reads only, owner flights only, deduped open loops')
