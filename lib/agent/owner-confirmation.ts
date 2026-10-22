@@ -62,9 +62,11 @@ export async function recordOwnerDecision(params: { telegramId: string; runId: s
     ...(params.note ? { note: params.note } : {}),
   }
   const metadata = { ...(run.metadata_json || {}), owner_confirmation: confirmation }
-  const { error: updateError } = await supabaseAdmin.from('agent_runs').update({ metadata_json: metadata, updated_at: confirmation.at })
-    .eq('id', params.runId).eq('telegram_id', params.telegramId).eq('status', 'completed')
+  const { data: written, error: updateError } = await supabaseAdmin.from('agent_runs').update({ metadata_json: metadata, updated_at: confirmation.at })
+    .eq('id', params.runId).eq('telegram_id', params.telegramId).eq('status', 'completed').select('id')
   if (updateError) throw new Error(`owner_confirmation_write_failed:${updateError.message}`)
+  // Never report a decision that did not land (22 Oct live: a card appeared to revert after Mark complete).
+  if (!Array.isArray(written) || !written.length) throw new Error('owner_confirmation_not_saved')
   const { error: activityError } = await supabaseAdmin.from('agent_activity').insert({
     telegram_id: params.telegramId, run_id: params.runId,
     event_type: params.decision === 'done' ? 'task_owner_confirmed' : 'task_owner_reopened',

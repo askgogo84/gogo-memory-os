@@ -19,12 +19,16 @@ export function ConfirmDoneCard({ item, size = 56 }: { item: FeedItem; size?: nu
     if (busy) return
     setBusy(decision); setError('')
     try {
-      const res = await fetch(`/api/agent/runs/${encodeURIComponent(confirm.runId)}/confirm`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ decision }),
-      })
-      if (!res.ok) throw new Error(String(res.status))
+      // Same-title runs are one card; the decision applies to each of them.
+      for (const id of confirm.runIds?.length ? confirm.runIds : [confirm.runId]) {
+        const res = await fetch(`/api/agent/runs/${encodeURIComponent(id)}/confirm`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ decision }),
+        })
+        if (!res.ok) throw new Error(String(res.status))
+      }
       setResult(decision)
-      router.refresh()
+      // Keep the confirmation visible before the list re-sorts, so it never looks like it reverted.
+      setTimeout(() => router.refresh(), 1500)
     } catch {
       setError('Could not save that. Try once more.')
     } finally {

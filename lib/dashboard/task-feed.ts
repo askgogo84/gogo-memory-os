@@ -22,7 +22,7 @@ export type FeedItem = {
   action: string
   at: string | null
   /** Duet parity: a finished task waiting for the owner's Mark complete / Not yet. */
-  confirm?: { runId: string; continueHref: string }
+  confirm?: { runId: string; runIds?: string[]; continueHref: string }
 }
 export type TaskFeed = { need: FeedItem[]; radar: FeedItem[]; recent: FeedItem[]; recentUnavailable: boolean; radarCount: number }
 
@@ -82,12 +82,22 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
     need.push({ id: `re-${r.id}`, tab: 'need', state: 'blocked', tag: 'You said not yet', title, sub: 'Tell Gogo what is missing and it will pick this up again.',
       live: GOGO_STATE_LINE.blocked, href: `/dashboard/chat?prompt=${encodeURIComponent(continuePrompt(title))}`, action: 'Tell Gogo', at: r.updated_at || null })
   }
-  for (const r of finishedRows.filter(r => needsOwnerConfirmation(r, now.getTime())).slice(0, CONFIRM_MAX)) {
-    const title = friendlyTaskTitle(r.title || 'Gogo task')
-    need.push({ id: `cf-${r.id}`, tab: 'need', state: 'done', tag: 'Gogo thinks done', title, sub: readableRunSummary(r.summary) || 'Open it to check the result.',
-      live: 'Only you mark it complete', href: `/dashboard/activity/${encodeURIComponent(String(r.id))}`, action: 'Details', at: r.updated_at || null,
-      confirm: { runId: String(r.id), continueHref: `/dashboard/chat?prompt=${encodeURIComponent(continuePrompt(title))}` } })
+  // 22 Oct live: two "Travel task · BLR → DEL" runs (and two District 6 calls) showed as identical cards, so confirming
+  // one looked like it "came back". Same-title finished tasks are one card; Mark complete confirms all of them.
+  const confirmGroups = new Map<string, any[]>()
+  for (const r of finishedRows.filter(r => needsOwnerConfirmation(r, now.getTime()))) {
+    const key = friendlyTaskTitle(r.title || 'Gogo task').toLowerCase()
+    const g = confirmGroups.get(key); if (g) g.push(r); else confirmGroups.set(key, [r])
   }
+  for (const rows of [...confirmGroups.values()].slice(0, CONFIRM_MAX)) {
+    const r = rows[0]
+    const title = friendlyTaskTitle(r.title || 'Gogo task')
+    const sub = readableRunSummary(r.summary) || 'Open it to check the result.'
+    need.push({ id: `cf-${r.id}`, tab: 'need', state: 'done', tag: 'Gogo thinks done', title, sub: rows.length > 1 ? `${rows.length} runs. Latest: ${sub}` : sub,
+      live: 'Only you mark it complete', href: `/dashboard/activity/${encodeURIComponent(String(r.id))}`, action: 'Details', at: r.updated_at || null,
+      confirm: { runId: String(r.id), runIds: rows.map(x => String(x.id)), continueHref: `/dashboard/chat?prompt=${encodeURIComponent(continuePrompt(title))}` } })
+  }
+
 
   const radar: FeedItem[] = []
   // A task stuck in running for hours lost its worker; it is not "now" work.
