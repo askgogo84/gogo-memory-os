@@ -11,7 +11,7 @@ import { tryCreateInboxTriageWatchFromCommand, tryCreateWebWatchFromCommand, try
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
-import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
+import { isSameBrainIntrospection, trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
 import { randomUUID } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { buildReferenceFxReply } from '@/lib/bot/handlers/reference-fx'
@@ -295,7 +295,10 @@ async function handleChatPost(req: NextRequest) {
     const shadowEventId = `web-${randomUUID()}`
     // Understand-first choke point, same as WhatsApp (docs/architecture/06-understand-first-shadow.md). Safe
     // live set only (after the inbox read and run cancel, which keep first refusal); anything else, a timeout or an error returns null and the routing below is unchanged.
-    const understoodReply = await (async () => tryUnderstandFirst({ actor, surface:'web', text, eventId:shadowEventId, externalUserId:String(user.whatsapp_id), userName:user.name||'Gogo', registryChecked:pendingQuestionChecked }))()
+    // R03 (22 Oct live): "How is Same Brain learning from my outcomes?" got a generic understand-first answer on the
+    // dashboard; WhatsApp checks the measured learning report first. Same order here.
+    const brainFirst = /\bsame brain\b|\bhave you (?:learnt|learned) (?:about|from) me\b/i.test(text) && isSameBrainIntrospection(text)
+    const understoodReply = brainFirst ? null : await (async () => tryUnderstandFirst({ actor, surface:'web', text, eventId:shadowEventId, externalUserId:String(user.whatsapp_id), userName:user.name||'Gogo', registryChecked:pendingQuestionChecked }))()
       .catch((err:any) => { console.error('UNDERSTAND_FIRST_DASHBOARD_FAILED:', String(err?.message || err).slice(0,160)); return null })
     __trace.mark('understoodReply')
     if (understoodReply?.text) {

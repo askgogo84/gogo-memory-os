@@ -11,3 +11,14 @@ assert.equal(openLoopSourceLink({ source_type: 'calendar_conflict', source_id: '
 assert.equal(openLoopSourceLink({ source_type: 'conversation', source_id: '1' }), '')
 assert.match(readFileSync('lib/agent/autonomy-pulse.ts', 'utf8'), /source_type,source_id'\)/)
 console.log('Pulse items carry a source link built only from stored ids')
+
+// R03: the measured learning report answers on the dashboard too (before understand-first), and "what have you
+// learnt about me" reaches it.
+const route = readFileSync('app/api/dashboard/chat/route.ts', 'utf8')
+assert.ok(route.indexOf('const brainFirst') > 0 && route.indexOf('const brainFirst') < route.indexOf('tryUnderstandFirst({'), 'brain report is checked before understand-first')
+assert.match(route, /const understoodReply = brainFirst \? null : await/)
+const { isSameBrainIntrospection } = await import('../lib/agent/brain-introspection')
+assert.equal(isSameBrainIntrospection('How is Same Brain learning from my outcomes?'), true)
+assert.equal(isSameBrainIntrospection('What have you learnt about me?'), true)
+assert.equal(isSameBrainIntrospection('Write a post about what I learned today'), false)
+console.log('R03: learning report reachable on the dashboard')
