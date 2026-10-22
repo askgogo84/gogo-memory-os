@@ -422,7 +422,7 @@ export async function executeTaskStep(actor: AgentActor, step: GeneralPlanStep) 
   const text = taskTextForStep(step)
   if (!text) throw new Error('task_text_missing')
   const { data: existing, error: readError } = await supabaseAdmin.from('todos')
-    .select('id,text').eq('whatsapp_id', actor.whatsappId).eq('done', false).ilike('text', text).limit(1).maybeSingle()
+    .select('id,text').eq('whatsapp_id', actor.whatsappId).eq('done', false).ilike('text', text.replace(/[\\%_]/g, (c: string) => '\\' + c)).limit(1).maybeSingle()
   if (readError) throw new Error(`task_verify_failed:${readError.message}`)
   if (existing?.id) {
     return { text:`Task already open: ${text}`, output:{ todoId:String(existing.id), text, reused:true, verifiedStore:'todos' } }

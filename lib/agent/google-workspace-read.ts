@@ -281,10 +281,16 @@ function driveQ(terms:string[]) {
   return `trashed = false and (${safe.map((term)=>`name contains '${term}' or fullText contains '${term}'`).join(' or ')})`
 }
 
-export async function searchWorkspaceDrive(actor:AgentActor, input:string) {
+/** Exact-title lookup for a content read: `name = '<title>'`, not the broad name/fullText OR search, so an active
+ *  Drive does not return "more matches" for a unique title (release review, 22 Oct). */
+export function driveExactNameQ(title:string){
+  return `trashed = false and name = '${String(title).replace(/\\/g,'\\\\').replace(/'/g,"\\'")}'`
+}
+
+export async function searchWorkspaceDrive(actor:AgentActor, input:string, opts:{exactName?:string}={}) {
   const terms=workspaceSearchTerms(input)
   const params=new URLSearchParams({
-    q:driveQ(terms),
+    q:opts.exactName?driveExactNameQ(opts.exactName):driveQ(terms),
     pageSize:String(MAX_FILES),
     orderBy:'modifiedTime desc',
     fields:'nextPageToken,incompleteSearch,files(id,name,mimeType,modifiedTime,webViewLink,size)',
@@ -293,7 +299,8 @@ export async function searchWorkspaceDrive(actor:AgentActor, input:string) {
   const response=await workspaceFetch(actor,`https://www.googleapis.com/drive/v3/files?${params}`)
   if(!response.ok)throw new Error(`workspace_drive_search_failed:${response.status}`)
   const data:any=await response.json()
-  if (!data || !Array.isArray(data.files) || data.files.length > MAX_FILES) throw new Error('workspace_drive_response_invalid')
+  // Drive may omit `files` for an empty result under a fields mask; that is zero files, not an invalid response.
+  if (!data || (data.files !== undefined && !Array.isArray(data.files)) || (data.files?.length || 0) > MAX_FILES) throw new Error('workspace_drive_response_invalid')
   const files=(Array.isArray(data?.files)?data.files:[]).slice(0,MAX_FILES).map((file:any)=>({
     id:String(file?.id||''),name:clean(file?.name||'Untitled',240),mimeType:String(file?.mimeType||''),
     modifiedTime:String(file?.modifiedTime||''),webViewLink:String(file?.webViewLink||''),size:Number(file?.size||0)||null,

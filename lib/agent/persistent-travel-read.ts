@@ -30,7 +30,22 @@ export function persistentTravelFailureReply(error: unknown): string | null {
 }
 
 /** Read-only adapter: existing browser/session authority, no nested travel run or generic executor. */
-export async function executePersistentTravelRead(context: AutonomousToolContext, step: GeneralPlanStep): Promise<AutonomousToolResult> {
+/** The planner writes the step; the person wrote the mission. A constraint the person gave that this bounded
+ *  one-way adult grammar cannot carry (child, return, budget, time window, baggage) or a different date or adult
+ *  count blocks the step instead of searching something else (release review, 22 Oct). Pure. */
+export function missionContradictsTravelStep(missionText: string, step: {startDate?: string; adults?: number}): boolean {
+  const m=String(missionText||'').toLowerCase()
+  if (!m.trim()) return false
+  if (/\b(?:child|children|kid|kids|infant|baby|toddler|return(?:ing)?|round[- ]?trip|coming back|back on|budget|under\s*(?:₹|rs\.?|inr)|below\s*(?:₹|rs\.?|inr)|baggage|luggage|check[- ]?in bag|(?:morning|afternoon|evening|night|red[- ]?eye)\s+flights?|depart(?:ing|ure)?\s+(?:before|after))\b/.test(m)) return true
+  const people=m.match(/\b([2-9]|two|three|four|five|six|seven|eight|nine)\s+(?:adults?|people|persons|passengers|travell?ers|of us)\b/)
+  const words:Record<string,number>={two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9}
+  if (people && (Number(people[1])||words[people[1]]) !== (step.adults||1)) return true
+  const asked=buildTravelResearchContext(missionText).startDate
+  if (asked && step.startDate && asked !== step.startDate) return true
+  return false
+}
+
+export async function executePersistentTravelRead(context: AutonomousToolContext, step: GeneralPlanStep, missionText = ''): Promise<AutonomousToolResult> {
   const input=String(step.instruction || '').replace(/\s+/g,' ').trim()
   // Deliberately bounded grammar: do not silently discard a return, child, budget,
   // baggage, time-window, booking instruction or a second objective.
@@ -41,6 +56,7 @@ export async function executePersistentTravelRead(context: AutonomousToolContext
   if (flightDateIssue(input,travel)) return blocked('invalid_date')
   if (!travel.origin?.code || !travel.destination?.code || travel.origin.code === travel.destination.code || travel.startDate !== request[3] || travel.endDate && travel.endDate !== travel.startDate) return blocked('unsupported_request')
   const search={...travel,...preferences}
+  if (missionContradictsTravelStep(missionText,{startDate:search.startDate,adults:(search as any).adults})) return blocked('unsupported_request')
   const ownerId=String(context.actor.legacyTelegramId)
   for (const capability of ['travel','browser'] as const) {
     const permission=await supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id',ownerId).eq('capability',capability).maybeSingle()

@@ -48,7 +48,7 @@ export async function executePersistentDriveRead(context: AutonomousToolContext,
   if (!parent.data || !['queued','running','waiting_approval','paused'].includes(parent.data.status) || parent.data.error === 'user_cancelled') return blocked('parent_terminal')
   try {
     const query = contentRead ? `"${quotes[0]}"` : input.replace(/\b(?:google\s+drive|my\s+drive)\b/ig,'')
-    const result = await searchWorkspaceDrive(context.actor,query)
+    const result = await searchWorkspaceDrive(context.actor,query,contentRead?{exactName:quotes[0]}:{})
     const files = result.files.map(file => ({id:file.id,name:file.name,mimeType:file.mimeType,modifiedTime:file.modifiedTime}))
     const evidence = {source:'google_drive',ownerId,observedAt:new Date().toISOString(),boundedLookup:true,hasMore:result.hasMore,contentRead,untrustedContent:true,verifiedProviderOutcome:false}
     if (result.hasMore) return {status:'blocked',error:'persistent_drive_paginated',output:{...evidence,files,partial:true}}

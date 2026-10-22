@@ -44,7 +44,9 @@ async function persistentResultReply(actor: AgentActor, runId: string, run: {sta
   const definitions=run.metadata_json?.persistent_plan_steps
   if (run.status === 'completed' && Array.isArray(definitions) && definitions.some(step=>step?.tool === 'travel')) {
     const result=await readPersistentFlightResult(actor,runId)
-    if (result) return result
+    // A mixed plan (flights + a reminder or list) still confirms its other steps (release review, 22 Oct).
+    const others=definitions.filter(step=>step?.tool !== 'travel').length
+    if (result) return others && run.summary ? `${result}\n\n${safe(run.summary)}` : result
     return 'I couldn’t display the flight results. Check this task’s current status and details before trying again.'
   }
   return persistentRunReply(run,fallback)
@@ -130,7 +132,7 @@ function registryFor(missionText: string): AutonomousToolRegistry {
     const step = await loadDefinition(context)
     if (step.tool === 'tasks') return verifiedTaskStep(context, step)
     if (step.tool === 'files') return executePersistentDriveRead(context, step)
-    if (step.tool === 'travel') return executePersistentTravelRead(context, step)
+    if (step.tool === 'travel') return executePersistentTravelRead(context, step, missionText)
     if (step.tool === 'memory') {
       const result = await executeVerifiedMissionMemory({ actor: context.actor, step, missionText, messageId: `persistent-${context.idempotencyKey.slice(0,24)}` })
       return { status:'completed' as const, verified:true, output:{ ...result.output, text:safe(result.text,3500) } }
