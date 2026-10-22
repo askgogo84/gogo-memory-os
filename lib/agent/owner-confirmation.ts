@@ -28,6 +28,10 @@ export function needsOwnerConfirmation(run: any, now: number = Date.now()): bool
   if (String(run?.status || '') !== 'completed') return false
   if (!CONFIRMABLE_RUN_TYPES.has(String(run?.type || ''))) return false
   if (ownerConfirmationOf(run)) return false
+  // 22 Oct live: background reservation wrappers are "completed" even when the real outcome paused ("finished with
+  // status paused"); every re-check made a new card. A run whose own recorded outcome is not completed is not done.
+  const outcome = (run?.metadata_json || run?.metadata || {})?.outcome_status
+  if (outcome && String(outcome) !== 'completed') return false
   const at = Date.parse(String(run?.updated_at || ''))
   return Number.isFinite(at) && now - at <= CONFIRM_WINDOW_DAYS * 86_400_000 && at <= now + 60_000
 }

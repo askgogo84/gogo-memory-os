@@ -80,13 +80,18 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
   for (const r of finishedRows.filter(ownerReopened).slice(0, CONFIRM_MAX)) {
     const title = friendlyTaskTitle(r.title || 'Gogo task')
     need.push({ id: `re-${r.id}`, tab: 'need', state: 'blocked', tag: 'You said not yet', title, sub: 'Tell Gogo what is missing and it will pick this up again.',
-      live: GOGO_STATE_LINE.blocked, href: `/dashboard/chat?prompt=${encodeURIComponent(continuePrompt(title))}`, action: 'Tell Gogo', at: r.updated_at || null })
+      live: 'Waiting for you to say what is missing', href: `/dashboard/chat?prompt=${encodeURIComponent(continuePrompt(title))}`, action: 'Tell Gogo', at: r.updated_at || null })
   }
   // 22 Oct live: two "Travel task · BLR → DEL" runs (and two District 6 calls) showed as identical cards, so confirming
   // one looked like it "came back". Same-title finished tasks are one card; Mark complete confirms all of them.
   const confirmGroups = new Map<string, any[]>()
+  // Once the owner marked a task complete, later re-runs with the same title (background re-checks) don't ask again
+  // for a week; a new, differently named task still does.
+  const confirmedTitles = new Set(finishedRows.filter(r => ownerConfirmationOf(r)?.decision === 'done'
+    && now.getTime() - Date.parse(String(ownerConfirmationOf(r)?.at || '')) <= 7 * 86_400_000).map(r => friendlyTaskTitle(r.title || 'Gogo task').toLowerCase()))
   for (const r of finishedRows.filter(r => needsOwnerConfirmation(r, now.getTime()))) {
     const key = friendlyTaskTitle(r.title || 'Gogo task').toLowerCase()
+    if (confirmedTitles.has(key)) continue
     const g = confirmGroups.get(key); if (g) g.push(r); else confirmGroups.set(key, [r])
   }
   for (const rows of [...confirmGroups.values()].slice(0, CONFIRM_MAX)) {
