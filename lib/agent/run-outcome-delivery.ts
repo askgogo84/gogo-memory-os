@@ -4,16 +4,17 @@ import { deliverNotification } from '@/lib/services/notification-delivery'
 import { deliveryCallbackUrl } from '@/lib/services/delivery-callback'
 import { isSuppressed } from '@/lib/bot/handlers/reminder-optout'
 import type { RunNotifyDeps, RunNotifyResult, RunOutcomeLike } from './run-notify'
+import { DEFAULT_ALERT_PREFERENCES, isQuietHour, normaliseAlertPreferences } from './alert-preferences-shared'
 
 export function runOutcomeSnapshot(run: RunOutcomeLike) {
   return { status:run.status ?? null, title:run.title ?? null, summary:run.summary ?? null, error:run.error ?? null,
     outcome_state:run.metadata_json?.outcome_state ?? null, reconciliation_required:run.metadata_json?.reconciliation_required === true }
 }
 
-/** Same quiet window as the existing autonomy pulse. Invalid timezone fails closed. */
-export function runOutcomeQuietUntil(timezone:string, now:Date):string|null {
+/** The owner's own quiet hours (Alerts settings; default 22–07), same as the autonomy pulse. Invalid timezone fails closed. */
+export function runOutcomeQuietUntil(timezone:string, now:Date, quiet:{quietStart:number;quietEnd:number}=DEFAULT_ALERT_PREFERENCES):string|null {
   const hour=Number(new Intl.DateTimeFormat('en-GB',{timeZone:timezone,hour:'2-digit',hourCycle:'h23'}).format(now))
-  return hour<7||hour>=22 ? new Date(now.getTime()+30*60_000).toISOString() : null
+  return isQuietHour(quiet,hour) ? new Date(now.getTime()+30*60_000).toISOString() : null
 }
 
 export async function deliverRunOutcomeNotice(runId:string, ownerId:string, render:(run:RunOutcomeLike)=>string, deps:RunNotifyDeps={}):Promise<RunNotifyResult> {
@@ -21,7 +22,7 @@ export async function deliverRunOutcomeNotice(runId:string, ownerId:string, rend
   if(!Number.isSafeInteger(owner)||String(owner)!==ownerId)return {status:'failed',reason:'owner_invalid'}
   const rpc=async(name:string,args:Record<string,unknown>)=>{const {data,error}=await db.rpc(name,args);if(error)throw Error(name+'_failed');return data}
   const key='run_outcome/'+runId+'/whatsapp'
-  let run:RunOutcomeLike,phone='',timezone='',text=''
+  let run:RunOutcomeLike,phone='',timezone='',text='',quiet:{quietStart:number;quietEnd:number}=DEFAULT_ALERT_PREFERENCES
   const status=await deliverNotification({key,source:'run_outcome',owner,channel:'whatsapp',due:new Date(0).toISOString(),deadline:Date.now()+20_000,
     claim:token=>rpc('claim_run_outcome_delivery',{p_key:key,p_owner:owner,p_token:token}),
     prepare:async token=>{
@@ -31,12 +32,17 @@ export async function deliverRunOutcomeNotice(runId:string, ownerId:string, rend
       ])
       if(record.error||!record.data||user.error||!user.data?.whatsapp_id)throw Error('run_notice_owner_unavailable')
       run=record.data;phone=String(user.data.whatsapp_id);timezone=String(user.data.timezone||'Asia/Kolkata');text=render(run)
+      // 23 Oct: task results follow the owner's quiet hours, not a fixed 22–07. A missing row or table keeps the defaults.
+      try{
+        const prefs=await db.from('user_alert_preferences').select('check_every_minutes,topics,quiet_start,quiet_end').eq('telegram_id',ownerId).maybeSingle()
+        if(!prefs.error&&prefs.data)quiet=normaliseAlertPreferences(prefs.data,true)
+      }catch{}
       if(!deps.send){
         const callback=new URL(deliveryCallbackUrl(String(process.env.TWILIO_STATUS_CALLBACK_URL||'').trim(),token))
         if(callback.protocol!=='https:'||callback.username||callback.password)throw Error('run_notice_callback_invalid')
       }
     },
-    deferUntil:async()=>runOutcomeQuietUntil(timezone,deps.now?deps.now():new Date()),
+    deferUntil:async()=>runOutcomeQuietUntil(timezone,deps.now?deps.now():new Date(),quiet),
     ready:async()=>!await isSuppressed(owner,phone),
     begin:token=>rpc('begin_run_outcome_delivery',{p_key:key,p_token:token,p_target:phone,p_snapshot:runOutcomeSnapshot(run)}),
     accepted:async()=>{try{await rpc('reconcile_run_outcome_notice_flags',{p_limit:10})}catch{console.error('RUN_NOTICE_COMPAT_ACK_FAILED')}},

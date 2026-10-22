@@ -36,3 +36,13 @@ assert.match(src, /\.filter\(x=>!x\.startsWith\('skip:'\)\)/)
 const feed = readFileSync('lib/dashboard/task-feed.ts', 'utf8')
 assert.match(feed, /\.eq\('telegram_id', tg\)\.eq\('status', 'active'\)\s*\.eq\('source_type', 'calendar_conflict'\)/, 'Needs you shows the owner\'s own clashes')
 console.log('Calendar conflict discovery: complete reads only, owner flights only, deduped open loops')
+
+// Task results follow the owner's quiet hours (Alerts settings), not a fixed 22–07.
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'
+process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'test-key'
+const { runOutcomeQuietUntil } = await import('../lib/agent/run-outcome-delivery')
+const at2230 = new Date('2026-10-23T17:00:00Z') // 22:30 IST
+assert.ok(runOutcomeQuietUntil('Asia/Kolkata', at2230), 'default 22–07 is quiet at 22:30')
+assert.equal(runOutcomeQuietUntil('Asia/Kolkata', at2230, { quietStart: 23, quietEnd: 6 }), null, 'a 23–06 owner still hears at 22:30')
+assert.equal(runOutcomeQuietUntil('Asia/Kolkata', at2230, { quietStart: 0, quietEnd: 0 }), null, 'equal start/end = never quiet')
+console.log('Task results: owner quiet hours')
