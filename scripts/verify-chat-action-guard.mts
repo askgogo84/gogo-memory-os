@@ -55,3 +55,17 @@ console.log('Chat action guard: unlabelled profile replies accepted; fabricated 
   if (!skip.blocked) throw new Error('a chat receipt for an action request is still blocked')
   console.log('✓ recap exemption is narrow')
 }
+
+// 22 Oct launch run (R34): an explicit read-only listing of Gogo's own tasks keeps its answer.
+{
+  const list = "Open travel tasks:\n• Reserve Naru Noodle Bar — saved, no date set\n• Check-in reminder marked done"
+  const r34 = guardChatActionClaims(list, { userText: 'List all my open tasks related to travel. Read-only; do not create, update or delete anything.' })
+  if (r34.blocked) throw new Error('a read-only task listing must not be replaced by the no-change line')
+  const shown = guardChatActionClaims('Removed the water reminder for today.', { userText: 'Show my reminders' })
+  if (!shown.blocked) throw new Error('a fabricated receipt to a plain listing request is still blocked')
+  for (const ask of ['Show my reminders and delete the water one', 'List my tasks then cancel the Naru one', 'Skip lunch today, read-only is fine']) {
+    const g = guardChatActionClaims("Skipped today's lunch reminder (2:30 pm)", { userText: ask })
+    if (!g.blocked) throw new Error(`an action request is still guarded: ${ask}`)
+  }
+  console.log('✓ read-only listing exemption ignores forbidden verbs but keeps real actions guarded')
+}

@@ -17,7 +17,7 @@ function harness(payload:any=row(),status=200,contentType='application/json'){
  const load=(file:string,deps:any={})=>{const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{...globals,exports,require:(name:string)=>{if(deps[name])return deps[name];throw Error('unexpected dependency '+name)}});return exports}
  const service=existsSync('lib/services/reference-fx.ts')?load('lib/services/reference-fx.ts'):{}
  const web=load('lib/web-search.ts',{'./services/reference-fx':service})
- return{web,requests,apiCalls:()=>apiCalls,searchCalls:()=>searchCalls}
+ return{web,service,requests,apiCalls:()=>apiCalls,searchCalls:()=>searchCalls}
 }
 const failures:string[]=[]
 async function check(label:string,fn:()=>Promise<void>){try{await fn();console.log('PASS '+label)}catch(e){failures.push(label+': '+(e instanceof Error?e.message:String(e)))}}
@@ -41,6 +41,11 @@ await check('multiple missing non-JSON error and oversized responses fail closed
 })
 await check('concurrent same-pair requests share a bounded success read but calculate each amount separately',async()=>{
  const h=harness(),r=await Promise.all([h.web.searchWebResults('10 USD to INR'),h.web.searchWebResults('100 USD to INR')]);assert.equal(h.apiCalls(),1);assert.match(r[0][0].snippet,/949\.3/);assert.match(r[1][0].snippet,/9,493|9493/);await h.web.searchWebResults('USD to INR');assert.equal(h.apiCalls(),1)
+})
+await check('R33: a trailing ask for the source and observation date keeps the reference route; other extra clauses do not',async()=>{
+ for(const text of ['Convert 100 USD to INR and give the source and observation date.','convert 100 usd to inr with the source','USD to INR, and show me the date and source']){const h=harness();const r=await h.web.searchWebResults(text,{});assert.equal(h.apiCalls(),1,text);assert.equal(h.searchCalls(),0,text);assert.match(String(r[0]?.snippet||''),/reference/i)}
+ for(const text of ['Convert 100 USD to INR and give the fees','Convert 100 USD to INR and transfer it with the source','Convert 100 USD to INR and give the source and pay it']){const h=harness();await h.web.searchWebResults(text,{});assert.equal(h.apiCalls(),0,text)}
+ const h=harness();assert.equal(h.service.isReferenceFxRequest('Convert 100 USD to INR and give the source and observation date.'),true);assert.equal(h.service.isReferenceFxRequest('send 100 USD to INR'),false)
 })
 await check('the ordinary search text formatter preserves API source and uncertainty',async()=>{
  const h=harness(),text=await h.web.searchWeb('USD to INR');assert.equal(h.apiCalls(),1);assert.match(text,/Source: https:\/\/api\.frankfurter\.dev/);assert.match(text,/reference/i);assert.match(text,/2026-10-18/)

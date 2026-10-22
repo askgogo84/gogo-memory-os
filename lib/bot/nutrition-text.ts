@@ -44,7 +44,10 @@ export function isNutritionLogText(text: string): boolean {
   // so "carbon" ⊄ carb).
   // 17 Oct scorecard: "calories in 2 idlis and sambar" is a question, not a meal eaten; it logged a meal.
   // Questions about calories are answered, not logged.
+  // 22 Oct launch run (R25i): "Estimate the calories in two plain idlis and one cup of sambar." logged a meal too.
+  // Asking for an estimate, count or breakdown is a question, whatever verb it opens with.
   if (/^(?:how\s+many|how\s+much|what(?:'s|\s+is|\s+are)?|calories\s+in|kcal\s+in|protein\s+in|carbs\s+in|is\s+there|does|do)\b/i.test(lower) || /\?\s*$/.test(lower)) return false
+  if (/^(?:(?:please|can\s+you|could\s+you)\s+)?(?:estimate|calculate|count|check|tell\s+me|show\s+me|give\s+me|find|guess|approximate)\b/i.test(lower)) return false
   if (/\b(calories?|kcal|protein|carbs?|macros?)\b/i.test(lower)) return true
 
   // Otherwise require an eating verb AND a recognised food word. An eating verb

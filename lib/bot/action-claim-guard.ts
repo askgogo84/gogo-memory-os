@@ -93,10 +93,18 @@ export function claimsUnperformedAction(reply: string): boolean {
 // sent") and the receipt-shape check replaced it. A read-only recap reports past events; it is not a chat receipt.
 // Fake-action and fake-call checks still apply.
 const READ_ONLY_RECAP = /\b(?:summari[sz]e|summary of|recap|review|overview of|wrap\s*up)\s+(?:my|the|this|last)\s+(?:week|day|month)\b|\b(?:weekly|daily|monthly)\s+(?:summary|recap|review)\b|\bhow(?:'s| is| was)\s+my\s+(?:week|day|month)\b/i
-const RECAP_ACTION = /\b(?:skip|cancel|delete|remove|add|create|set|remind|move|reschedule|book|send|snooze|stop|pause|mark)\b/i
+const RECAP_ACTION = /\b(?:skip|cancel|delete|remove|add|create|set|remind|move|reschedule|book|send|snooze|stop|pause|mark|update|change)\b/i
+// 22 Oct launch run (R34): "List all my open tasks related to travel. Read-only; do not create, update or delete
+// anything." got a real task list replaced, because listed task statuses ("Saved …", "Marked …") look like receipts.
+// An explicitly read-only ask reports state; it is not a receipt. A plain "show my reminders" stays guarded, so a
+// fabricated "Removed the water reminder" is still caught. Verbs inside a "do not / don't / without …" clause are
+// what the person forbade, not what they asked for.
+const EXPLICIT_READ_ONLY = /\bread[\s-]?only\b/i
+const NEGATED_CLAUSE = /\b(?:do\s+not|don['’]?t|never|without)\b[^.;!?\n]*/gi
 export function isReadOnlyRecapRequest(userText: string): boolean {
   const t = String(userText || '')
-  return READ_ONLY_RECAP.test(t) && !RECAP_ACTION.test(t)
+  const asked = t.replace(NEGATED_CLAUSE, ' ')
+  return (READ_ONLY_RECAP.test(t) || EXPLICIT_READ_ONLY.test(t)) && !RECAP_ACTION.test(asked)
 }
 
 /** Replace a chat reply that claims an action Gogo did not take. */

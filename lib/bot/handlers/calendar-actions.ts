@@ -413,6 +413,11 @@ export function parseCalendarCreate(text: string) {
   // Muse case 32 (11 Oct): "...prepare the request for my review" about a delayed flight matched
   // the preparation branch with no appointment in sight. Preparation help is only about an
   // appointment or calendar item.
+  // 22 Oct launch run (R21): "Plan my week from 26 October to 1 November using my actual calendars … Read-only; do
+  // not create or change anything" hit the negation branch and got the appointment-prep menu. A read-only plan,
+  // review or listing is a read; "do not create" there is a safety limit, not an appointment to prepare for.
+  const readOnlyAsk = /\bread[\s-]?only\b/i.test(lower) || /^\s*(?:plan|review|summari[sz]e|show|list|what|which|how|tell\s+me)\b/i.test(lower)
+  if (!hasAffirmativeCreate && !isPreparation && readOnlyAsk) return null
   if (!hasAffirmativeCreate && ((isPreparation && hasCalendarSignal) || bookingNegated)) {
     return { preparation: true, time: parseTime(text) || null, title: conciseAppointmentTitle(text) }
   }

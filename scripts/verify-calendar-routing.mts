@@ -71,5 +71,10 @@ eq('"schedule lunch tomorrow"', route('schedule lunch tomorrow'), 'reminder')
 // View requests are unaffected.
 eq('"what is on my calendar"', route('what is on my calendar'), 'calendar_view')
 
+// 22 Oct launch run (R21): a read-only week plan is a read, not an appointment to prepare for.
+eq('R21 read-only plan my week', route('Plan my week from 26 October 2026 to 1 November 2026 using my actual calendars and saved context. Read-only; do not create or change anything.'), 'general')
+eq('prep request still clarifies', parseCalendarCreate('Help me prepare for my dentist appointment at 5 pm, do not book anything')?.preparation === true ? 'prep' : 'other', 'prep')
+eq('negated booking still clarifies', parseCalendarCreate('Dentist at 5 pm tomorrow, do not book it yet')?.preparation === true ? 'prep' : 'other', 'prep')
+
 console.log(`\n${fails === 0 ? '✅ all cases passed' : `❌ ${fails} case(s) failed`}\n`)
 process.exit(fails === 0 ? 0 : 1)

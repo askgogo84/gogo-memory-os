@@ -6,10 +6,17 @@ type Rate={date:string;base:string;quote:string;rate:number;oldest:string;newest
 type Result={title:string;snippet:string;url:string;publishedDate:string}
 const cache=new Map<string,{expires:number;value:Rate}>(),pending=new Map<string,Promise<Rate|null>>()
 
+const FX_DETAIL='(?:the\\s+)?(?:sources?|(?:observation|as[\\s-]of|reference)\\s+dates?|dates?)'
+const BENIGN_TAIL=new RegExp(`\\s*,?\\s+(?:and|with)\\s+(?:(?:give|show|include|cite|tell)\\s+(?:me\\s+)?)?${FX_DETAIL}(?:\\s*(?:,|and)\\s*${FX_DETAIL})*\\s*[.?]?$`,'i')
+/** Sync check: is this exactly a supported currency conversion ask (so routing can hand it to the reference route)? */
+export function isReferenceFxRequest(raw:string):boolean{return request(raw)!==null}
 function request(raw:string){
   // Never accept a truncated prefix, extra clauses, payment instructions or implied currencies.
   if(typeof raw!=='string'||raw.length>160)return null
-  const text=raw.replace(/\s+/g,' ').trim()
+  // 22 Oct launch run (R33): "Convert 100 USD to INR and give the source and observation date." asks only for
+  // what this reply always carries (source and dates), so that one trailing clause is dropped. Anything else extra
+  // (fees, transfers, payments, other currencies) still fails the exact match below.
+  const text=raw.replace(/\s+/g,' ').trim().replace(BENIGN_TAIL,'')
   const match=text.match(/^(?:(?:convert|exchange rate)\s+)?(?:((?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d{1,4})?)\s+)?([a-z]{3})\s+(?:to|in)\s+([a-z]{3})[?.]?$/i)
   if(!match)return null
   const amount=match[1]?Number(match[1].replace(/,/g,'')):1,base=match[2].toUpperCase(),quote=match[3].toUpperCase()

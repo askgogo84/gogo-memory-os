@@ -238,6 +238,12 @@ export async function runUnderstandFirst(p: {
       const assets: any = await import('../services/asset-memory').catch(() => null)
       if (assets?.isBookingRecallAsk?.(text)) return none('ticket_recall_specialist')
     }
+    // 22 Oct launch run (R33): "Convert 100 USD to INR…" was answered from web pages instead of the dated reference
+    // route. An exact supported conversion belongs to that route. Loaded only when a currency-pair shape is present.
+    if (/\b[a-z]{3}\s+(?:to|in)\s+[a-z]{3}\b/i.test(text)) {
+      const fx: any = await import('../services/reference-fx').catch(() => null)
+      if (fx?.isReferenceFxRequest?.(text)) return none('reference_fx_specialist')
+    }
     if (!p.deps?.callModel && !String(process.env.TYPESAFE_API_KEY || '').trim()) return none('not_configured')
     const budget = Math.max(200, Math.min(p.deps?.budgetMs ?? UNDERSTAND_FIRST_BUDGET_MS, UNDERSTAND_FIRST_BUDGET_MS))
     const now = p.deps?.now || new Date()

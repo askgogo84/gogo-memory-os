@@ -69,7 +69,8 @@ function noteFromText(text:string,url:string){
     .replace(/^\s*(?:please\s+)?(?:save|remember|keep|store|bookmark|file)\s+(?:this\s+)?(?:link|url|page|post|reel|video|repo|repository)?\s*[-:—,]*\s*/i,'')
     .replace(/^again\s*[-:—,]*\s*/i,'')
     .replace(/\btag\s+(?:it\s+|this\s+)?[^:;]+[:;]?\s*$/i,'')
-    .replace(/\s+/g,' ').trim())
+    // 22 Oct launch run (R14): removing the URL left the lead-in's colon behind ("…saving links:").
+    .replace(/\s+/g,' ').trim().replace(/\s*[-:—–,;]+$/,'').trim())
 }
 function titleFromUrl(url:string,note:string){
   try{
@@ -210,7 +211,9 @@ export async function saveLinkVaultItem(params:{telegramId:number;text:string;ur
   const{data:existing,error:readError}=await supabaseAdmin.from('link_vault_items').select('*').eq('telegram_id',params.telegramId).eq('canonical_url',canonical).maybeSingle()
   if(readError)throw new Error('link_vault_read_failed:'+readError.message)
   const history=mergeNotes((existing as any)?.note_history,note),mergedNote=history.join(' · ').slice(0,1400)
-  const mergedTags=Array.from(new Set([...(Array.isArray((existing as any)?.tags)?(existing as any).tags:[]),...baseTags])).slice(0,12)
+  // 22 Oct launch run (R14): "tag it agent memory" on a re-save was dropped once the old item already had 12 tags, and
+  // lists show the first four. Tags the person just named come first; older and keyword tags fill the rest.
+  const mergedTags=Array.from(new Set([...explicitTags,...(Array.isArray((existing as any)?.tags)?(existing as any).tags:[]),...baseTags])).slice(0,12)
   const payload:any={
     telegram_id:params.telegramId,canonical_url:canonical,original_url:original,platform,item_type:type,title,
     description:metadata?.description||(existing as any)?.description||'',source,user_note:mergedNote,note_history:history,last_saved_at:now,
@@ -238,7 +241,8 @@ export async function queryLinkVault(telegramId:number,text:string,timezone='Asi
   const platform=platformFilter(text);if(platform)q=q.eq('platform',platform)
   const tag=requestedTag(text);if(tag)q=q.contains('tags',[tag])
   if(/\blast\s+month\b/i.test(text)){const w=lastMonthWindow();q=q.gte('saved_at',w.start).lt('saved_at',w.end)}
-  const dayWindow=savedLinkDayWindow(text,new Date(),timezone);if(dayWindow)q=q.gte('saved_at',dayWindow.start).lt('saved_at',dayWindow.end)
+  // 22 Oct launch run (R14): "links I saved today" missed a link first saved earlier and saved again today.
+  const dayWindow=savedLinkDayWindow(text,new Date(),timezone);if(dayWindow)q=q.or(`and(saved_at.gte.${dayWindow.start},saved_at.lt.${dayWindow.end}),and(last_saved_at.gte.${dayWindow.start},last_saved_at.lt.${dayWindow.end})`)
   const{data,error}=await q;if(error)throw new Error('link_vault_query_failed:'+error.message)
   const rows=(data||[]) as LinkVaultRow[],terms=searchTerms(text),tokens=terms.split(' ').filter(Boolean)
   const scored=rows.map(row=>{
