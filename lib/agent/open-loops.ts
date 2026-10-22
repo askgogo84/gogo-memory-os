@@ -758,20 +758,52 @@ async function resolveMissingSourceLoops(telegramId:string,current:Set<string>,s
   return ids.length
 }
 
+// Duet brief (23 Oct): proactive check-ins discover genuine scheduling conflicts without a user-created watch.
+// Only a COMPLETE Calendar read for the next 48 h counts; any gap skips (never infers availability). Each conflict
+// is one deduped open loop with its event/ticket evidence, and it resolves itself once the calendar no longer
+// shows it. The pulse surfaces it with the owner's quiet hours and topics, like every other open loop.
+async function syncCalendarConflicts(telegramId:string,current:Set<string>){
+  const {data:user}=await supabaseAdmin.from('users').select('google_calendar_connected,timezone,name').eq('telegram_id',Number(telegramId)).maybeSingle()
+  if(!user?.google_calendar_connected)throw new Error('skip:calendar_not_connected')
+  const [{resolveAgentActor},{executeReadOnlyCalendarStep},{findScheduleConflicts}]=await Promise.all([import('./actor'),import('./calendar-read'),import('./calendar-conflicts')])
+  const actor=await resolveAgentActor({telegramId,surface:'whatsapp'} as any)
+  const tz=String(user.timezone||'Asia/Kolkata')
+  const day=(offset:number)=>new Intl.DateTimeFormat('en-CA',{timeZone:tz}).format(new Date(Date.now()+offset*86_400_000))
+  const instruction=`Show my calendar from ${day(0)} to ${day(2)} and check for conflicts`
+  const read:any=await executeReadOnlyCalendarStep({actor,instruction,missionText:instruction})
+  const out=read?.output||{}
+  const events=Array.isArray(out.events)?out.events:[]
+  if(out.complete!==true||Number(out.unknownIntervals||0)>0||Number(out.entryCount??events.length)!==events.length)throw new Error('skip:calendar_read_incomplete')
+  const {data:tickets}=await supabaseAdmin.from('travel_tickets').select('id,flight_no,from_city,to_city,depart_at,passengers')
+    .eq('telegram_id',Number(telegramId)).gte('depart_at',new Date().toISOString()).lte('depart_at',new Date(Date.now()+3*86_400_000).toISOString()).limit(20)
+  const owner=String(user.name||'').toLowerCase().replace(/[^a-z]+/g,' ').trim()
+  // A ticket counts only when the owner is a named passenger (another traveller's flight is not their conflict).
+  const mine=(tickets||[]).filter((t:any)=>owner&&Array.isArray(t.passengers)&&t.passengers.some((p:unknown)=>String(p||'').toLowerCase().replace(/[^a-z]+/g,' ').trim()===owner))
+  for(const c of findScheduleConflicts(events,mine,new Date(),tz)){
+    const input:OpenLoopInput={telegramId,kind:'other',title:c.title,summary:c.summary,priority:c.kind==='flight'?0.95:0.9,dueAt:c.startsAt,
+      nextCheckAt:isoPlusHours(6),sourceType:'calendar_conflict',sourceId:c.key,
+      sourceRefs:[...c.evidence.eventIds.map(id=>({type:'calendar_event',id})),...(c.evidence.ticketId?[{type:'travel_ticket',id:c.evidence.ticketId}]:[])],
+      evidence:{window:c.evidence.window,read:'google_calendar_complete'},observedAt:new Date().toISOString()}
+    const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
+  }
+}
+
 export async function syncOpenLoopsForUser(telegramId:string|number){
   const tg=String(telegramId)
   const current=new Set<string>()
-  const sourceTypes=['followup','approval','agent_run','life_event_action'] as const
+  const sourceTypes=['followup','approval','agent_run','life_event_action','calendar_conflict'] as const
   const results=await Promise.allSettled([
     syncFollowups(tg,current),
     syncApprovals(tg,current),
     syncRuns(tg,current),
     syncLifeActions(tg,current),
+    syncCalendarConflicts(tg,current),
     syncGmailAttention(tg,current),
     syncMeetingActionMemories(tg),
     syncConversationSignals(tg),
   ])
-  const failures=results.filter((x):x is PromiseRejectedResult=>x.status==='rejected').map(x=>clean(x.reason?.message||x.reason,180))
+  // "skip:" rejections are deliberate (source not connected or not fully readable): no failure, no reconciliation.
+  const failures=results.filter((x):x is PromiseRejectedResult=>x.status==='rejected').map(x=>clean(x.reason?.message||x.reason,180)).filter(x=>!x.startsWith('skip:'))
   const successfulSourceTypes=sourceTypes.filter((_,index)=>results[index]?.status==='fulfilled')
   // Reconcile only sources that were read successfully. A transient provider/DB
   // failure must never make an existing open loop disappear.
