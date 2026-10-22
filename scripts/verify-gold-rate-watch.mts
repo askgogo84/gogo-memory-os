@@ -16,6 +16,7 @@ const goldQuotes = await import('../lib/bot/handlers/gold-quotes')
 const costPolicy = await import('../lib/agent/watch-cost-policy')
 const watcherQuality = await import('../lib/agent/watcher-quality')
 const priceThreshold = await import('../lib/agent/price-threshold')
+const watchDedupe = await import('../lib/agent/watch-dedupe')
 const { detectIntent } = await import('../lib/bot/detect-intent')
 
 const failures: string[] = []
@@ -274,6 +275,7 @@ const watchers = load('lib/agent/watchers.ts', {
   './watch-cost-policy': costPolicy,
   './watcher-quality': watcherQuality,
   './price-threshold': priceThreshold,
+  './watch-dedupe': watchDedupe,
   '@/lib/bot/handlers/gold-quotes': goldQuotes,
   './gold-rate-rule': rule,
 })
@@ -283,6 +285,7 @@ const goldWatch = load('lib/agent/gold-watch.ts', {
   '@/lib/services/cost-guard': costGuard,
   '@/lib/bot/handlers/gold-quotes': goldQuotes,
   './watchers': watchers,
+  './watch-dedupe': watchDedupe,
   './watch-cost-policy': costPolicy,
   './gold-rate-rule': rule,
 })
