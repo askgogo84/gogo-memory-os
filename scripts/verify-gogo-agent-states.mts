@@ -41,10 +41,10 @@ const css = readFileSync('app/globals.css', 'utf8')
 assert.match(css, /\.gg-still, \.gg-still \* \{ animation: none !important/)
 for (const k of ['gg-breath', 'gg-blink', 'gg-ring', 'gg-plane', 'gg-check']) assert.ok(css.includes(`@keyframes ${k}`), `keyframe ${k}`)
 
-// Navigation: three main places plus Settings; old sections live under More.
+// Navigation: four main places (Make added 22 Oct, Duet parity) plus Settings; old sections live under More.
 const nav = readFileSync('components/dashboard/dashboard-nav.tsx', 'utf8')
 const main = nav.slice(nav.indexOf('export const NAV'), nav.indexOf('export const MORE'))
-assert.equal((main.match(/label:'/g) || []).length, 3, 'Home, Tasks, Memory')
+assert.equal((main.match(/label:'/g) || []).length, 4, 'Home, Tasks, Make, Memory')
 assert.match(nav, /export const MORE/)
 
 // The old meditating figure is not used for status on the new shell.
