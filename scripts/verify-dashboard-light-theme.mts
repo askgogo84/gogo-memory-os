@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { LIGHT_PALETTE } from '../lib/dashboard/light-palette.mjs'
 import { buildLightCss } from './gen-dashboard-light-css.mjs'
 import { parseTheme, THEME_BOOT_SCRIPT, THEME_STORAGE_KEY } from '../lib/dashboard/theme'
-// 14 Oct: light theme as an option, dark stays the default. Run: npx tsx scripts/verify-dashboard-light-theme.mts
+// 14 Oct: light theme as an option. 23 Oct (Duet brief): light is the default, dark is the choice. Run: npx tsx scripts/verify-dashboard-light-theme.mts
 
 // 1. The generated stylesheet matches the palette and the classes in use.
 assert.equal(readFileSync('app/dashboard-light.css', 'utf8'), buildLightCss(), 'app/dashboard-light.css is stale: run node scripts/gen-dashboard-light-css.mjs')
@@ -39,10 +39,10 @@ for (const file of [...walk('app/dashboard'), ...walk('components/dashboard')].f
 assert.deepEqual([...missing], [], 'dark colours without a light partner in lib/dashboard/light-palette.mjs')
 
 // 4. Dark is the default; light only when chosen; no dark flash for someone who chose light.
-assert.equal(parseTheme(null), 'dark'); assert.equal(parseTheme('weird'), 'dark'); assert.equal(parseTheme('light'), 'light')
+assert.equal(parseTheme(null), 'light'); assert.equal(parseTheme('weird'), 'light'); assert.equal(parseTheme('dark'), 'dark')
 assert.ok(THEME_BOOT_SCRIPT.includes(THEME_STORAGE_KEY) && THEME_BOOT_SCRIPT.includes("setAttribute('data-theme'"))
 const layout = readFileSync('app/dashboard/layout.tsx', 'utf8')
-assert.ok(layout.includes('data-theme="dark"') && layout.includes("import '../dashboard-light.css'") && layout.includes('THEME_BOOT_SCRIPT'))
+assert.ok(layout.includes('data-theme="light"') && layout.includes("import '../dashboard-light.css'") && layout.includes('THEME_BOOT_SCRIPT'))
 const css = readFileSync('app/dashboard-light.css', 'utf8')
 assert.ok(css.split('\n').filter(l => l.startsWith('.') || l.startsWith('@')).every(l => l.includes(".dashboard-root[data-theme='light']")), 'every light rule is scoped to the light choice')
 

@@ -1,7 +1,7 @@
 // Needs you · On radar · Recent tabs and their cards, shared by Home and Tasks. Every card carries its own Gogo
 // state (approval, watcher, flight, done…) and a short live line, as in the approved 21 Oct mock.
 import Link from 'next/link'
-import { GogoAgent } from '@/components/gogo/gogo-agent'
+import { Companion } from '@/components/gogo/companion'
 import { ConfirmDoneCard } from './confirm-done-card'
 import type { FeedItem, FeedTab, TaskFeed } from '@/lib/dashboard/task-feed'
 
@@ -28,7 +28,7 @@ export function FeedTabs({ base, tab, feed, needCount, extra }: { base: string; 
 
 export function FeedCard({ item, size = 56 }: { item: FeedItem; size?: number }) {
   return <Link href={item.href} className="flex items-center gap-3 rounded-[14px] border border-[#222] bg-[#121212] py-2 pl-1.5 pr-4 text-left transition hover:border-[#2fb8a6]/50 hover:bg-[#141a19]">
-    <span className="grid shrink-0 place-items-center" style={{ width: size + 4 }}><GogoAgent state={item.state} size={size}/></span>
+    <span className="grid shrink-0 place-items-center" style={{ width: size + 4 }}><Companion state={item.state} size={size}/></span>
     <span className="flex min-w-0 flex-1 flex-col gap-1 py-1">
       <span className="flex items-start justify-between gap-3">
         <span className="text-[15px] font-medium leading-snug text-[#f2efea]">{item.title}</span>

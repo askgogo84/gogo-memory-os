@@ -4,7 +4,7 @@
 // Shift+Enter adds a line; + opens the chat to attach a file, the mic opens the chat ready to talk.
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
-import { GogoAgent } from '@/components/gogo/gogo-agent'
+import { Companion } from '@/components/gogo/companion'
 import { useGogoLive } from './gogo-live'
 
 export function HomeAsk() {
@@ -42,7 +42,7 @@ export function HomeAsk() {
 export function HomeGogo() {
   const { hero, showGogo } = useGogoLive()
   return <button type="button" onClick={showGogo} className="group flex flex-col items-center gap-1 rounded-[20px] px-4 pt-1 pb-2 hover:bg-[#141414]" aria-label={`What Gogo is doing: ${hero.live}`}>
-    <GogoAgent state={hero.state} size={132}/>
+    <Companion state={hero.state} size={132}/>
     <span className="max-w-[86vw] truncate text-[13px] text-[#9a9a96] group-hover:text-[#f2efea] sm:max-w-[560px]" aria-live="polite">{hero.state === 'idle' ? hero.live : `${hero.live} · ${hero.task}`}</span>
   </button>
 }

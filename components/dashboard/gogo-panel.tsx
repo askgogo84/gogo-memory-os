@@ -6,7 +6,7 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { GogoAgent } from '@/components/gogo/gogo-agent'
+import { Companion } from '@/components/gogo/companion'
 import { GOGO_STATE_NAME } from '@/lib/gogo/agent-states'
 import { useGogoLive, type LiveRow, type PanelTab } from './gogo-live'
 
@@ -30,7 +30,7 @@ function PanelBody({ big }: { big: number }) {
   return <div className="flex flex-col gap-3">
     <div className="flex flex-col items-center gap-1 text-center">
       <div className="grid w-full place-items-center rounded-[16px] py-1" style={{ background: 'radial-gradient(circle at 50% 55%, #2a1c12 0%, transparent 70%)' }}>
-        <GogoAgent state={show.state} size={big}/>
+        <Companion state={show.state} size={big}/>
       </div>
       <div className="text-[11px] font-semibold uppercase tracking-[.06em] text-[#ef7a27]">{show.name}</div>
       <div className="text-[15px] font-medium leading-snug text-[#f2efea]" aria-live="polite">{show.live}</div>
@@ -55,7 +55,7 @@ function PanelBody({ big }: { big: number }) {
         const on = (sel?.id || '') === r.id
         return <li key={r.id} className={`flex items-center gap-1 rounded-[12px] border ${on ? 'border-[#3b312b] bg-[#1a1512]' : 'border-transparent hover:bg-[#141414]'}`}>
           <button type="button" onClick={() => setPicked(r.id)} aria-pressed={on} className="flex min-h-14 min-w-0 flex-1 items-center gap-2 py-1 pl-0.5 text-left">
-            <GogoAgent state={r.state} size={48}/>
+            <Companion state={r.state} size={48}/>
             <span className="flex min-w-0 flex-col gap-0.5">
               <span className="truncate text-[14px] font-medium text-[#f2efea]">{r.title}</span>
               <span className="line-clamp-2 text-[12px] leading-[1.4] text-[#9a9a96]">{r.sub}</span>
@@ -110,6 +110,6 @@ export function GogoPill({ desktop = false }: { desktop?: boolean }) {
   const label = counts.working ? `${counts.working} working` : waiting ? `${waiting} waiting` : counts.watchers ? 'Watching' : 'Ready'
   return <button type="button" onClick={showGogo} aria-label={`What Gogo is doing: ${hero.live}`} aria-expanded={desktop ? panelOpen : undefined}
     className={`flex h-11 items-center gap-1 rounded-full border border-[#3b312b] bg-[#1a1512] pl-0.5 pr-3 text-[12px] font-medium text-[#f2efea] hover:border-[#ef7a27] ${desktop ? '' : 'xl:hidden'}`}>
-    <GogoAgent state={hero.state} size={48} label=""/><span>{label}</span>
+    <Companion state={hero.state} size={48} label=""/><span>{label}</span>
   </button>
 }

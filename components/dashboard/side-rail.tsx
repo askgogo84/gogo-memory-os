@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import { ThemeToggle } from './theme-toggle'
-import { GogoAgent } from '@/components/gogo/gogo-agent'
+import { Companion } from '@/components/gogo/companion'
 import { NavLinks, SettingsLink, useNavCounts } from './dashboard-nav'
 import { GettingStarted, RecentList, UsageCard } from './rail-cards'
 import { useGogoLive } from './gogo-live'
@@ -31,7 +31,7 @@ export function SideRail({ shell }: { shell: ShellData }) {
     <aside className={`dashboard-rail hidden h-screen shrink-0 py-4 transition-[width] lg:flex lg:flex-col ${collapsed ? 'w-[80px] px-3' : 'w-[260px] px-3'}`}>
       <div className={`flex items-center ${collapsed ? 'flex-col gap-2' : 'justify-between'}`}>
         <Link href="/dashboard/home" aria-label="AskGogo home" className={`flex items-center gap-2 ${collapsed ? 'justify-center' : 'px-1'}`}>
-          <GogoAgent state="idle" size={48} label="Gogo"/>
+          <Companion state="idle" size={48} label="Gogo"/>
           {!collapsed && <span className="dashboard-brand-wordmark text-gogo-ink">AskGogo</span>}
         </Link>
         <button type="button" onClick={toggle} aria-label={collapsed ? 'Expand menu' : 'Collapse menu'} title={collapsed ? 'Expand menu' : 'Collapse menu'}
