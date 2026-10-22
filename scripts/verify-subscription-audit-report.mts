@@ -114,6 +114,8 @@ mocks['@/lib/bot/process-message']={processIncomingMessage:async()=>{throw new E
 mocks['./same-brain']=load('lib/agent/same-brain.ts')
 mocks['./artifact-presentation']=load('lib/agent/artifact-presentation.ts')
 mocks['@/lib/agent/artifact-presentation']=mocks['./artifact-presentation']
+mocks['./artifact-versions']=load('lib/agent/artifact-versions.ts')
+mocks['@/lib/agent/artifact-versions']=mocks['./artifact-versions']
 mocks['./policy']=load('lib/agent/policy.ts')
 mocks['./classifier']=load('lib/agent/classifier.ts')
 mocks['./approval-fingerprint']=load('lib/agent/approval-fingerprint.ts')

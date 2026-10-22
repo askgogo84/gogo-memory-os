@@ -18,6 +18,7 @@ import type { AgentSurface } from './orchestrator'
 import { buildContextPack, renderContextBlock } from './context-brain'
 import { artifactReply, publicResearchUrl, researchReportText } from './artifact-presentation'
 import { workspaceEmailAuditScope } from './google-workspace-read'
+import { mergeRegenerated } from './artifact-versions'
 
 const MAX_STEPS = 10
 const CONSEQUENTIAL = new Set<AgentCapability>(['email', 'calendar', 'browser', 'travel', 'payments'])
@@ -363,13 +364,16 @@ async function createArtifact(tg:number, runId:string, step:GeneralPlanStep, mis
   const source_refs = [{type:'agent_run',id:runId}]
 
   const { data: existing } = await supabaseAdmin.from('agent_artifacts')
-    .select('id').eq('telegram_id',String(tg)).eq('type',type).ilike('title',title).order('created_at',{ascending:false}).limit(1).maybeSingle()
+    .select('id,title,content_json,updated_at').eq('telegram_id',String(tg)).eq('type',type).ilike('title',title).order('created_at',{ascending:false}).limit(1).maybeSingle()
   if (existing?.id) {
+    // Make v2: regenerating keeps history and never overwrites what the owner edited (sections in userEdits, notes).
+    const now=new Date().toISOString()
+    const merged=mergeRegenerated(existing,content_json,now)
     const { error } = await supabaseAdmin.from('agent_artifacts').update({
-      subtitle:'Updated by Gogo from a multi-step run', content_json, source_refs, updated_at:new Date().toISOString(),
+      subtitle:'Updated by Gogo from a multi-step run', content_json:merged, source_refs, updated_at:now,
     }).eq('id',existing.id).eq('telegram_id',String(tg))
     if (error) throw new Error(`general_plan_artifact_update_failed:${error.message}`)
-    return {id:String(existing.id),title,content:content_json}
+    return {id:String(existing.id),title:String(existing.title||title),content:merged}
   }
 
   const { data, error } = await supabaseAdmin.from('agent_artifacts').insert({
