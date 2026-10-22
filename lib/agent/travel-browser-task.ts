@@ -224,6 +224,9 @@ export async function runLiveFlightBrowserTask(params: {
   context: BrowserFlightContext
   objective: string
   deadline?: number
+  /** Persistent reads retain parent trace and refuse model-inferred rows. */
+  runId?: string
+  observedOnly?: boolean
 }) {
   const { context } = params
   if (!context.origin?.code || !context.destination?.code || !context.startDate) return null
@@ -236,6 +239,7 @@ export async function runLiveFlightBrowserTask(params: {
   let result: Awaited<ReturnType<typeof runSecureBrowser>>
   try { result = await runSecureBrowser({
     userId:params.actor.userId,
+    ...(params.runId ? {runId:params.runId} : {}),
     url,
     objective:`Read actual flight rows for ${query}. Before Search, explicitly set ${context.adults||1} adult${context.adults===1?'':'s'}, ${round?'round trip with the exact departure and return dates':'one-way'} and ${(context.cabin||'economy').replace(/_/g,' ')} using the observed controls; query URL prose does not set them. User research criteria: ${params.objective}. Verify the selected route, departure date, passengers and cabin using visible search controls. For the party total, read the visible "Prices include required taxes + fees for ... adults" statement; do not multiply a per-person or unknown fare. Report airline, departure, arrival and INR fare evidence. Stay on the results list: never click a flight row, Select flight or a fare, because that moves to the return-flight page and hides the round-trip prices. Do not book, purchase, sign in or submit passenger/payment information.`,
     mode:'read',recoverFlightSearch:true,
@@ -244,7 +248,7 @@ export async function runLiveFlightBrowserTask(params: {
     // Browser verification/timeouts are expected provider failures. The travel
     // orchestrator must still deliver its clearly labelled public-source fallback.
     const browserReadDiagnostics = sanitizeBrowserReadDiagnostics(error?.browserReadDiagnostics)
-    console.warn('TRAVEL_BROWSER_READ_FAILED:', String(error?.message || 'browser_read_failed').slice(0, 200))
+    console.warn('TRAVEL_BROWSER_READ_FAILED:', params.observedOnly ? 'browser_read_failed' : String(error?.message || 'browser_read_failed').slice(0, 200))
     return {status: 'failed' as const, options: [] as BrowserFlightOption[], browser: null, source: 'google-flights-browser' as const, browserReadDiagnostics}
   }
 
@@ -252,7 +256,7 @@ export async function runLiveFlightBrowserTask(params: {
     return { status:'blocked' as const, options:[] as BrowserFlightOption[], browser:result, source:'google-flights-browser' as const }
   }
   const observedOptions=round?googleRoundTripOptionsFromEvidence(result,context):googleFlightOptionsFromEvidence(result,context)
-  const options = (observedOptions.length||round?observedOptions:await extractFlightOptions(result.pageText, context)).filter(option => !context.nonStop || option.stops === 0)
+  const options = (observedOptions.length||round||params.observedOnly?observedOptions:await extractFlightOptions(result.pageText, context)).filter(option => !context.nonStop || option.stops === 0)
   console.log('TRAVEL_BROWSER_EVIDENCE:',JSON.stringify({status:result.status,observedRows:result.flightEvidence?.resultLabels?.length||0,
     selectedControls:result.flightEvidence?.searchControls?.length||0,contextMatches:browserFlightControlsMatch(result.flightEvidence?.searchControls,context),
     orderedTextContextMatches:browserFlightContextVisible(result.flightEvidence?.searchControls?.join('\n')||result.pageText,context),

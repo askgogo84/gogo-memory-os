@@ -70,12 +70,14 @@ export function signConsoleCookie(phone: string, passwordHash: string, now = Dat
 }
 export function readConsoleCookie(value: string | undefined, phone: string, passwordHash: string, now = Date.now()): boolean {
   if (!value || !passwordHash) return false
+  if (value.length > 4096 || value.split('.').length !== 2) return false
   const [payload, sig] = value.split('.')
-  if (!payload || !sig) return false
+  if (!/^[A-Za-z0-9_-]+$/.test(payload) || !/^[A-Za-z0-9_-]{43}$/.test(sig)) return false
   const want = createHmac('sha256', cookieKey(passwordHash)).update(payload).digest()
   const got = Buffer.from(sig, 'base64url')
-  if (got.length !== want.length || !timingSafeEqual(got, want)) return false
-  try { const d = JSON.parse(Buffer.from(payload, 'base64url').toString()); return d.p === phone && Number(d.e) > now } catch { return false }
+  // Node's decoder accepts noncanonical padding bits; require the signed wire representation too.
+  if (got.toString('base64url') !== sig || got.length !== want.length || !timingSafeEqual(got, want)) return false
+  try { const d = JSON.parse(Buffer.from(payload, 'base64url').toString()); return d.p === phone && typeof d.e === 'number' && Number.isFinite(d.e) && d.e > now } catch { return false }
 }
 
 // One flat shape (this repo compiles with strict:false, where discriminated-union narrowing does not work).

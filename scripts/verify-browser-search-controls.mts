@@ -1,3 +1,4 @@
+import * as sentinel from '../lib/agent/sentinel'
 import * as productIdentity from '../lib/commerce/product-identity'
 import { sanitizeBrowserReadDiagnostics } from '../lib/agent/browser-read-diagnostics'
 import assert from 'node:assert/strict'
@@ -225,7 +226,7 @@ let redactLinkFixture=false
 let plannerReply:string|null=null
 const exports:any={}
 runInNewContext(ts.transpileModule(source+'\nexport {planActions,BROWSER_SCRIPT}; export function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
-  exports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+  exports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{if(id==='./sentinel')return sentinel;
   if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-page-readiness')return {BROWSER_PAGE_READINESS}
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
@@ -431,7 +432,8 @@ assert.equal((await exports.planActions('Prepare navigation',zomatoPage,'draft',
 plannerReply=JSON.stringify({actions:[{kind:'goto',url:zomatoPage.url}]})
 assert.equal((await exports.planActions('Refresh the page',zomatoPage,'read','USER_INSTRUCTION')).actions[0].kind,'goto','a standalone refresh is not discarded')
 plannerReply=JSON.stringify({actions:[{kind:'goto',url:'https://www.zomato.com/bangalore/restaurants'},{kind:'click',selector:'#restaurants'}]})
-assert.equal((await exports.planActions('Find restaurants',zomatoPage,'read','USER_INSTRUCTION')).actions[0].kind,'goto','changed-page navigation still ends the wave')
+assert.equal((await exports.planActions('Find restaurants',zomatoPage,'read','USER_INSTRUCTION')).actions.length,0,'unobserved changed-page navigation is rejected')
+assert.equal((await exports.planActions('Find restaurants',{...zomatoPage,links:[{href:'https://www.zomato.com/bangalore/restaurants',text:'Restaurants'}]},'read','USER_INSTRUCTION')).actions[0].kind,'goto','observed changed-page navigation still ends the wave')
 // 3 Oct Flipkart accepts Enter on its public search input; Zomato has no
 // homepage search input, only a restaurant link. Bind model refs to this page.
 plannerReply=JSON.stringify({actions:[{kind:'fill',ref:'r0',value:'Sony WH-1000XM5'},{kind:'search_enter',ref:'r0'}]})
@@ -486,7 +488,7 @@ plannerReply=null
 const airportExports:any={},airportWaves:any[]=[]
 const suggestionText='Bengaluru BLR � Kempegowda International Airport'
 runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
- exports:airportExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+ exports:airportExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{if(id==='./sentinel')return sentinel;
   if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
@@ -520,7 +522,7 @@ assert.equal(airportResult.summary,suggestionText)
  const firstPage={...searchedPage,url:'https://fixture.example/',links:[],text:'Search',controls:[{...searchedPage.controls[0],value:''}]}
  const detail={url:'https://fixture.example/product/sony',text:'Sony WH-1000XM5 headphones. Fixture price INR 1.',title:'Sony',controls:[],forms:[],links:[],actions:[]}
  runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
-  exports:flow,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+  exports:flow,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{if(id==='./sentinel')return sentinel;
   if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
    if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
@@ -583,7 +585,7 @@ let researchCalls=0,workerCalls=0,assessmentCalls=0,assessmentInstruction=''
 let assessmentEvidence=['Sony WH-1000XM5 headphones Black','Price, product page ₹28,926']
 const resultExports:any={}
 runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
- exports:resultExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+ exports:resultExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{if(id==='./sentinel')return sentinel;
   if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
@@ -627,7 +629,7 @@ const recoveryPage={url:'https://www.google.com/travel/flights',title:'Flight se
  {selector:'#search',tag:'button',role:'button',label:'Search'},
 ]}
 runInNewContext(ts.transpileModule(source+'\nexport {recoverGoogleFlightSearch}; export function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
- exports:recoveryExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{
+ exports:recoveryExports,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,require:(id:string)=>{if(id==='./sentinel')return sentinel;
   if(id==='../commerce/product-identity')return productIdentity
   if(id==='./browser-proxy')return {resolveBrowserProxy:()=>null}
   if(id==='./trust')return {canAuthorizeConsequentialAction:()=>false}
@@ -673,7 +675,7 @@ async function multiStepFixture(scenario:'flight'|'google-flight'|'google-flight
     forms:[],links:[],controls:[{selector:'#commit',tag:'button',label:'Book now'},{selector:'#safe',tag:'button',label:scenario==='google-flight-skipped'?'1 passenger, change number of passengers.':'Search flights'}],
     actions:steps?[{kind:'click',detail:steps===1&&scenario==='blocked-control'?'#commit':'#safe',status:scenario==='google-flight-skipped'||steps===1&&scenario==='blocked-control'?'skipped':'done',failure:scenario==='google-flight-skipped'?{reason:guardContext===undefined?'control_unavailable':'consequential_control',guardContext,guardNameShape:guardContext===undefined?undefined:'bare_passenger',matches:0,rendered:0,token:'private',selector:'#private'}:steps===1&&scenario==='blocked-control'?{reason:'consequential_control'}:undefined}]:[]})
   runInNewContext(ts.transpileModule(source+'\nexport function testInspect(fn:any){inspect=fn}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
-    exports:exported,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,Date:timed?Clock:Date,require:(id:string)=>{
+    exports:exported,process:{env:{}},Buffer,URL,console,setTimeout,clearTimeout,Date:timed?Clock:Date,require:(id:string)=>{if(id==='./sentinel')return sentinel;
   if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
       if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText:(s:string)=>s}
@@ -764,7 +766,7 @@ assert.equal(capped,callerDeadline,'caller completion reserve wins over the larg
 const sourceChecks:any={}
 let flightAssessment=false
 runInNewContext(ts.transpileModule(source+'\nexport {browserSourceUrl, productLinkNeedsDetail, assessReadOutcome}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
- exports:sourceChecks,process:{env:{}},URL,console,require:(id:string)=>{
+ exports:sourceChecks,process:{env:{}},URL,console,require:(id:string)=>{if(id==='./sentinel')return sentinel;
   if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText}
@@ -842,7 +844,7 @@ let recoveryCalls=0
 let repairMode:'valid'|'invented'|'incomplete'='valid'
 const recoveryChecks:any={}
 runInNewContext(ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
- exports:recoveryChecks,process:{env:{}},URL,console,require:(id:string)=>{
+ exports:recoveryChecks,process:{env:{}},URL,console,require:(id:string)=>{if(id==='./sentinel')return sentinel;
   if(id==='../commerce/product-identity')return productIdentity
   if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='./secure-browser-redaction')return {redactBrowserSensitiveText}
@@ -885,7 +887,7 @@ const reuseDb={from:(table:string)=>{
 }}
 const reuseCommand:any={}
 runInNewContext(ts.transpileModule(readFileSync('lib/agent/browser-command.ts','utf8')+'\nexport {findActiveBrowserRead}',{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{
- exports:reuseCommand,process:{env:{}},URL,Date,console,require:(id:string)=>{
+ exports:reuseCommand,process:{env:{}},URL,Date,console,require:(id:string)=>{if(id==='./sentinel')return sentinel;
   if(id==='../commerce/product-identity')return productIdentity
     if(id==='./browser-read-diagnostics')return {sanitizeBrowserReadDiagnostics}
   if(id==='@/lib/supabase-admin')return {supabaseAdmin:reuseDb}

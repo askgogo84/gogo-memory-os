@@ -281,23 +281,31 @@ function driveQ(terms:string[]) {
   return `trashed = false and (${safe.map((term)=>`name contains '${term}' or fullText contains '${term}'`).join(' or ')})`
 }
 
-export async function searchWorkspaceDrive(actor:AgentActor, input:string) {
+/** Exact-title lookup for a content read: `name = '<title>'`, not the broad name/fullText OR search, so an active
+ *  Drive does not return "more matches" for a unique title (release review, 22 Oct). */
+export function driveExactNameQ(title:string){
+  return `trashed = false and name = '${String(title).replace(/\\/g,'\\\\').replace(/'/g,"\\'")}'`
+}
+
+export async function searchWorkspaceDrive(actor:AgentActor, input:string, opts:{exactName?:string}={}) {
   const terms=workspaceSearchTerms(input)
   const params=new URLSearchParams({
-    q:driveQ(terms),
+    q:opts.exactName?driveExactNameQ(opts.exactName):driveQ(terms),
     pageSize:String(MAX_FILES),
     orderBy:'modifiedTime desc',
-    fields:'files(id,name,mimeType,modifiedTime,webViewLink,size)',
+    fields:'nextPageToken,incompleteSearch,files(id,name,mimeType,modifiedTime,webViewLink,size)',
     spaces:'drive',
   })
   const response=await workspaceFetch(actor,`https://www.googleapis.com/drive/v3/files?${params}`)
   if(!response.ok)throw new Error(`workspace_drive_search_failed:${response.status}`)
   const data:any=await response.json()
+  // Drive may omit `files` for an empty result under a fields mask; that is zero files, not an invalid response.
+  if (!data || (data.files !== undefined && !Array.isArray(data.files)) || (data.files?.length || 0) > MAX_FILES) throw new Error('workspace_drive_response_invalid')
   const files=(Array.isArray(data?.files)?data.files:[]).slice(0,MAX_FILES).map((file:any)=>({
     id:String(file?.id||''),name:clean(file?.name||'Untitled',240),mimeType:String(file?.mimeType||''),
     modifiedTime:String(file?.modifiedTime||''),webViewLink:String(file?.webViewLink||''),size:Number(file?.size||0)||null,
   })).filter((x:any)=>x.id)
-  return {queryTerms:terms,files}
+  return {queryTerms:terms,files,hasMore:Boolean(data.nextPageToken || data.incompleteSearch)}
 }
 
 async function workspaceText(actor:AgentActor,url:string) {
@@ -305,25 +313,25 @@ async function workspaceText(actor:AgentActor,url:string) {
   if(!response.ok)throw new Error(`workspace_file_read_failed:${response.status}`)
   const declared=Number(response.headers.get('content-length')||0)
   if(declared>MAX_FILE_TEXT*4)throw new Error('workspace_file_too_large')
-  const text=(await response.text()).slice(0,MAX_FILE_TEXT)
-  return clean(text,MAX_FILE_TEXT)
+  const raw=await response.text()
+  return {text:clean(raw.slice(0,MAX_FILE_TEXT),MAX_FILE_TEXT),truncated:raw.length>MAX_FILE_TEXT}
 }
 
 export async function readWorkspaceDriveText(actor:AgentActor,file:{id:string;mimeType:string;name?:string}) {
   const id=encodeURIComponent(String(file.id||''))
   const mime=String(file.mimeType||'')
   if(!id)throw new Error('workspace_file_id_missing')
-  let text=''
+  let content:{text:string;truncated:boolean}
   if(mime==='application/vnd.google-apps.document') {
-    text=await workspaceText(actor,`https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=${encodeURIComponent('text/plain')}`)
+    content=await workspaceText(actor,`https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=${encodeURIComponent('text/plain')}`)
   } else if(mime==='application/vnd.google-apps.spreadsheet') {
-    text=await workspaceText(actor,`https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=${encodeURIComponent('text/csv')}`)
+    content=await workspaceText(actor,`https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=${encodeURIComponent('text/csv')}`)
   } else if(/^text\//.test(mime)||['application/json','application/xml'].includes(mime)) {
-    text=await workspaceText(actor,`https://www.googleapis.com/drive/v3/files/${id}?alt=media`)
+    content=await workspaceText(actor,`https://www.googleapis.com/drive/v3/files/${id}?alt=media`)
   } else {
-    return {supported:false,name:clean(file.name||'file',240),mimeType:mime,text:''}
+    return {supported:false,name:clean(file.name||'file',240),mimeType:mime,text:'',truncated:false}
   }
-  return {supported:true,name:clean(file.name||'file',240),mimeType:mime,text}
+  return {supported:true,name:clean(file.name||'file',240),mimeType:mime,...content}
 }
 
 type GmailAttachmentCandidate = {

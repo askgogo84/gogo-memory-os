@@ -9,6 +9,7 @@ import { completeAgentPlanPrompt, completeVisionPrompt } from './planner-provide
 import { Sandbox } from '@vercel/sandbox'
 import { resolveBrowserProxy, proxyAllowlistHost } from './browser-proxy'
 import { browserPageAllowlist } from './browser-page-network'
+import { browserTargetUrl } from './sentinel'
 import {BROWSER_PAGE_READINESS} from './browser-page-readiness'
 import { redactBrowserSensitiveText } from './secure-browser-redaction'
 import { detectHumanAuthGate } from './browser-auth-gate'
@@ -153,7 +154,7 @@ async function canonicalBrowserOwnerId(value:string){
 }
 
 function allowedHosts(url:string){
-  const u=new URL(url)
+  const u=browserTargetUrl(url)
   if(u.protocol!=='https:'&&u.protocol!=='http:')throw new Error('browser_url_not_http')
   const hostname=u.hostname.toLowerCase()
   if(!hostname||hostname==='localhost'||hostname.endsWith('.local'))throw new Error('browser_private_host_blocked')
@@ -1619,6 +1620,17 @@ function observedReadActions(actions:BrowserAction[],page:any,reject:(reason:Bro
     // Live Zomato plans reloaded the current homepage before their useful step.
     // Skip only a leading same-URL preamble; retain standalone refresh requests.
     if(action===actions[0]&&actions.length>1&&action.kind==='goto'&&action.url===page.url)continue
+    if(action.kind==='goto'){
+      // Model prose and page text cannot mint a destination. Bind the full URL
+      // (including query) to the current observation, then apply network admission.
+      let destination:string
+      try{destination=browserTargetUrl(new URL(action.url,page.url).href).href}
+      catch{reject('invalid_reference');break}
+      const observed=destination===page.url||(page.links||[]).some((link:{href:string})=>{
+        try{return new URL(link.href,page.url).href===destination}catch{return false}
+      })
+      if(!observed){reject('invalid_reference');break}
+    }
     if('selector' in action){
       const control=controls.get(action.selector),field=fields.get(action.selector)
       if(!control&&!field){reject('unknown_control');break}
@@ -1827,7 +1839,7 @@ async function planActions(objective:string,page:any,mode:BrowserMode,objectiveT
       return {...action,selector:(choice as any).selector}
     }):rawActions
     const normalized=normalizeActions(resolvedActions,page.url,canAuthorizeConsequentialAction({mode,objectiveTrust}))
-    const actions=mode==='read'?observedReadActions(normalized,pageModel,reason=>rejections.push(reason)):normalized
+    const actions=mode==='read'?observedReadActions(normalized,{...pageModel,url:page.url,links:page.links},reason=>rejections.push(reason)):normalized
     if(mode==='read'){
       const counts={proposed:Array.isArray(rawActions)?rawActions.length:0,normalized:normalized.length,accepted:actions.length}
       for(const reason of new Set(rejections))diagnose({phase:'plan',reason,...counts})

@@ -1,3 +1,4 @@
+import * as sentinel from '../lib/agent/sentinel'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
@@ -34,7 +35,7 @@ globalThis.fetch=async input=>{
 const noop=new Proxy({}, {get:()=>()=>null})
 function load(path:string,deps:any){
  const exports:any={}
- runInNewContext(ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText,{exports,require:(name:string)=>deps[name]||noop,process:{env:{}},console,URL,Request,Response,Buffer,AbortSignal,setTimeout,clearTimeout})
+ runInNewContext(ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText,{exports,require:(name:string)=>name==='./sentinel'?sentinel:deps[name]||noop,process:{env:{}},console,URL,Request,Response,Buffer,AbortSignal,setTimeout,clearTimeout})
  return exports
 }
 

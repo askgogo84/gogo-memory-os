@@ -2,7 +2,8 @@
 // Pure helpers (no Supabase import) so they can be tested offline. The writer lives in ./record.ts.
 import { AsyncLocalStorage } from 'node:async_hooks'
 
-export type MeterContext = { telegramId: string; surface?: string }
+export type TaskTrace = { runId: string; stepId?: string; attempt?: number; decisionId?: string; approvalId?: string }
+export type MeterContext = { telegramId: string; surface?: string } & Partial<TaskTrace>
 export type MeterEvent = {
   vendor: string
   category: string
@@ -10,6 +11,9 @@ export type MeterEvent = {
   units?: number
   inputTokens?: number | null
   outputTokens?: number | null
+  cachedReadTokens?: number | null
+  cachedWriteTokens?: number | null
+  inputIncludesCached?: boolean
   ok?: boolean
   metadata?: Record<string, unknown>
 }
@@ -22,12 +26,24 @@ const store: AsyncLocalStorage<MeterContext> = (globalThis as any).__askgogoMete
 export function meterAs(telegramId: string | number | null | undefined, surface?: string) {
   const id = telegramId == null || telegramId === '' ? '' : String(telegramId)
   if (!id) return
-  try { store.enterWith({ telegramId: id, surface }) } catch { /* never break a request over metering */ }
+  try { const parent = store.getStore(); store.enterWith({ ...(parent?.telegramId === id ? parent : {}), telegramId: id, surface: surface || (parent?.telegramId === id ? parent.surface : undefined) }) } catch { /* never break a request over metering */ }
 }
 export function runMeteredAs<T>(telegramId: string | number, fn: () => T, surface?: string): T {
-  return store.run({ telegramId: String(telegramId), surface }, fn)
+  const parent = store.getStore(), owner = String(telegramId)
+  return store.run({ ...(parent?.telegramId === owner ? parent : {}), telegramId: owner, surface: surface || (parent?.telegramId === owner ? parent.surface : undefined) }, fn)
 }
 export function currentMeterContext(): MeterContext | null { return store.getStore() || null }
+
+/** One isolated trace per actual tool attempt; no shared mutable request globals. */
+export function runMeteredTask<T>(telegramId: string | number, trace: TaskTrace, work: () => T): T {
+  const owner = String(telegramId), parent = store.getStore()
+  const clean = (v: unknown) => typeof v === 'string' && /^[a-zA-Z0-9_:-]{1,128}$/.test(v) ? v : undefined
+  const runId = clean(trace.runId)
+  if (!runId) throw new Error('meter_task_identity_invalid')
+  return store.run({ telegramId: owner, surface: parent?.telegramId === owner ? parent.surface : undefined,
+    runId, stepId: clean(trace.stepId), decisionId: clean(trace.decisionId), approvalId: clean(trace.approvalId),
+    attempt: Number.isSafeInteger(trace.attempt) && trace.attempt! >= 0 ? trace.attempt : undefined }, work)
+}
 
 // Seed values mirror supabase/migrations/20261021150000_admin_console_v1.sql (estimates; the table wins).
 export const DEFAULT_RATES: RateCard = {
@@ -102,3 +118,37 @@ export function tokensFromBody(body: any): { model: string | null; input: number
   return { model: typeof body?.model === 'string' ? body.model : null, input: input == null ? null : Math.round(input + cacheWrite * 1.25 + cacheRead * 0.1), output }
 }
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null)
+
+/** Preserve provider token counters, not synthetic "input-equivalent" token counts. */
+type RawUsageBody={model?:unknown;usage?:{input_tokens?:unknown;prompt_tokens?:unknown;output_tokens?:unknown;completion_tokens?:unknown;cache_read_input_tokens?:unknown;cache_creation_input_tokens?:unknown;prompt_tokens_details?:{cached_tokens?:unknown};input_tokens_details?:{cached_tokens?:unknown}}}
+export function rawUsageFromBody(body: RawUsageBody | null | undefined) {
+  const u = body?.usage || {}
+  return { model: typeof body?.model === 'string' ? body.model : null,
+    input: num(u.input_tokens ?? u.prompt_tokens), output: num(u.output_tokens ?? u.completion_tokens),
+    cachedReadTokens: num(u.cache_read_input_tokens ?? u.prompt_tokens_details?.cached_tokens ?? u.input_tokens_details?.cached_tokens),
+    cachedWriteTokens: num(u.cache_creation_input_tokens),
+    inputIncludesCached: u.prompt_tokens !== undefined || u.input_tokens_details !== undefined }
+}
+
+/** A missing price/usage is unavailable, never evidence of a free call. Cache rates are operator supplied. */
+export function priceMeasuredEvent(e: MeterEvent, rates: RateCard): { inr: number; usd: number | null } | null {
+  const valid = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v >= 0
+  if (e.category !== 'llm') {
+    const rate = rates[e.vendor + '.' + e.category]
+    if (!rate || (!valid(rate.inr) && !valid(rate.usd)) || (e.units !== undefined && !valid(e.units))) return null
+    return priceEvent(e, rates)
+  }
+  if (!valid(e.inputTokens) || !valid(e.outputTokens)) return null
+  const family = modelFamily(e.vendor, e.model)
+  const inputRate = rates[family + '.input']?.usd, outputRate = rates[family + '.output']?.usd
+  if (!valid(inputRate) || !valid(outputRate)) return null
+  const read = e.cachedReadTokens ?? 0, write = e.cachedWriteTokens ?? 0
+  if (!valid(read) || !valid(write) || (e.inputIncludesCached && read > e.inputTokens!)) return null
+  const readRate = rates[family + '.cache_read']?.usd, writeRate = rates[family + '.cache_write']?.usd
+  if ((read > 0 && !valid(readRate)) || (write > 0 && !valid(writeRate))) return null
+  const fresh = e.inputTokens! - (e.inputIncludesCached ? read : 0)
+  const usd = (fresh * inputRate! + e.outputTokens! * outputRate! + read * (readRate || 0) + write * (writeRate || 0)) / 1e6
+  const fx = rates['fx.usd_inr']?.inr
+  if (!valid(fx) || !fx) return null
+  return { inr: round4(usd * fx), usd: round6(usd) }
+}

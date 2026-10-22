@@ -1,9 +1,11 @@
+import { readPersistentFlightResult } from './persistent-flight-result'
 import { recordTaskModelUsage } from './model-usage'
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
-import { prepareGeneralPlan, type PreparedGeneralPlan, type GeneralPlanStep } from './general-planner'
+import { prepareGeneralPlan, executeTaskStep, taskStepIntent, type PreparedGeneralPlan, type GeneralPlanStep } from './general-planner'
+import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import {
   executeVerifiedMissionList,
   executeVerifiedMissionMemory,
@@ -11,7 +13,8 @@ import {
   executeVerifiedMissionWebSearch,
 } from './mission-tools'
 import { executeExactNamedPersistentList, hasExplicitNamedListIntent } from './persistent-list-verifier'
-import { dispatchThroughSameBrain } from './same-brain'
+import { executePersistentTravelRead, persistentTravelFailureReply } from './persistent-travel-read'
+import { executePersistentDriveRead, persistentDriveFailureReply } from './persistent-drive-read'
 import {
   createAutonomousRun,
   executeAutonomousRun,
@@ -22,7 +25,7 @@ import {
 } from './autonomous-runtime'
 
 const PERSISTENT_SAFE_TOOLS = new Set(['memory','files','reminders','lists','tasks','web_search','travel'])
-const TERMINAL_RUN_STATES = new Set(['completed','failed','cancelled'])
+const TERMINAL_RUN_STATES = new Set(['completed','failed','cancelled','outcome_unknown'])
 const DUPLICATE_WINDOW_MINUTES = 10
 
 function safe(value: unknown, max = 1800) {
@@ -30,6 +33,24 @@ function safe(value: unknown, max = 1800) {
 }
 function normalizedMission(value:unknown){return safe(value,4000).toLowerCase()}
 function missionFingerprint(value:unknown){return createHash('sha256').update(normalizedMission(value)).digest('hex')}
+
+function persistentRunReply(run: {status?: unknown; summary?: unknown; error?: unknown}, fallback: string) {
+  if (run.status === 'outcome_unknown') return 'I couldn’t confirm the result of this request. I haven’t retried it because an earlier step may already have completed.'
+  if (run.status === 'failed') return persistentDriveFailureReply(run.error) || persistentTravelFailureReply(run.error) || 'I couldn’t finish this request. Check the task details for the step that stopped.'
+  return safe(run.summary || fallback)
+}
+
+async function persistentResultReply(actor: AgentActor, runId: string, run: {status?: unknown;summary?: unknown;error?: unknown;metadata_json?: {persistent_plan_steps?: unknown}}, fallback: string) {
+  const definitions=run.metadata_json?.persistent_plan_steps
+  if (run.status === 'completed' && Array.isArray(definitions) && definitions.some(step=>step?.tool === 'travel')) {
+    const result=await readPersistentFlightResult(actor,runId)
+    // A mixed plan (flights + a reminder or list) still confirms its other steps (release review, 22 Oct).
+    const others=definitions.filter(step=>step?.tool !== 'travel').length
+    if (result) return others && run.summary ? `${result}\n\n${safe(run.summary)}` : result
+    return 'I couldn’t display the flight results. Check this task’s current status and details before trying again.'
+  }
+  return persistentRunReply(run,fallback)
+}
 
 function stepKey(index: number, step: GeneralPlanStep) {
   return `step-${index + 1}-${step.tool}`
@@ -41,7 +62,7 @@ function supportsPersistentSafePlan(steps: GeneralPlanStep[]) {
 
 async function runMetadata(runId: string, actor: AgentActor) {
   const { data, error } = await supabaseAdmin.from('agent_runs')
-    .select('status,summary,progress,metadata_json')
+    .select('status,error,summary,progress,metadata_json')
     .eq('id', runId)
     .eq('telegram_id', String(actor.legacyTelegramId))
     .maybeSingle()
@@ -57,7 +78,7 @@ async function findRecentDuplicate(actor:AgentActor,text:string){
     .select('id,status,summary,progress,metadata_json,started_at')
     .eq('telegram_id',String(actor.legacyTelegramId))
     .gte('started_at',cutoff)
-    .in('status',['queued','running','waiting_approval','completed'])
+    .in('status',['queued','running','waiting_approval','completed','outcome_unknown'])
     .order('started_at',{ascending:false})
     .limit(20)
   if(error)throw new Error(`persistent_duplicate_read_failed:${error.message}`)
@@ -81,27 +102,37 @@ async function loadDefinition(context: AutonomousToolContext): Promise<GeneralPl
   } as GeneralPlanStep
 }
 
-async function verifiedSameBrainRead(context: AutonomousToolContext, step: GeneralPlanStep) {
-  const result = await dispatchThroughSameBrain({internalStep:true,
-    actor: context.actor,
-    text: step.instruction,
-    messageId: `persistent-${context.idempotencyKey.slice(0, 24)}`,
-  })
-  return {
-    status: 'completed' as const,
-    verified: true,
-    output: {
-      reply: safe(result.text, 3500),
-      handledBy: result.handledBy,
-      mediaUrl: result.mediaUrl || null,
-      mediaType: result.mediaType || null,
-    },
-  }
+async function verifiedTaskStep(context: AutonomousToolContext, step: GeneralPlanStep) {
+  const intent = taskStepIntent(step)
+  if (intent !== 'read' && intent !== 'write') return { status:'blocked' as const, error:'persistent_task_action_ambiguous' }
+  const {data, error} = await supabaseAdmin.from('agent_permissions').select('level')
+    .eq('telegram_id', String(context.actor.legacyTelegramId)).eq('capability', 'tasks').maybeSingle()
+  // These failures happen before the executor, so they do not imply an uncertain task write.
+  if (error) return { status:'blocked' as const, error:'persistent_task_permission_unavailable' }
+  const level = data?.level ?? 'auto'
+  if (!['off','read','draft','ask','auto'].includes(level)) return { status:'blocked' as const, error:'persistent_task_permission_invalid' }
+  const policy = evaluateAgentExecutionPolicy({capability:'tasks', permissionLevel:level as AgentPermissionLevel,
+    mode:intent === 'read' ? 'read' : 'execute', risk:'low', irreversible:false,
+    // Match the existing general planner's explicit reversible private-task policy.
+    // This never supplies an approval to an external or consequential adapter.
+    approvalStatus:intent === 'write' ? 'approved' : null})
+  if (!policy.allowed) return { status:'blocked' as const, error:`persistent_task_${policy.reason}` }
+  const current = await runMetadata(context.runId, context.actor)
+  if (TERMINAL_RUN_STATES.has(String(current.status))) return { status:'blocked' as const, error:'persistent_task_parent_terminal' }
+  const result = await executeTaskStep(context.actor, step)
+  const output = result.output as Record<string, unknown>
+  const verified = output.verifiedStore === 'todos' && (intent === 'read'
+    ? output.readOnly === true && Array.isArray(output.tasks)
+    : typeof output.todoId === 'string' && output.todoId.length > 0)
+  return { status:'completed' as const, verified, output:{...output, text:safe(result.text,3500)} }
 }
 
 function registryFor(missionText: string): AutonomousToolRegistry {
   const handler = async (context: AutonomousToolContext) => {
     const step = await loadDefinition(context)
+    if (step.tool === 'tasks') return verifiedTaskStep(context, step)
+    if (step.tool === 'files') return executePersistentDriveRead(context, step)
+    if (step.tool === 'travel') return executePersistentTravelRead(context, step, missionText)
     if (step.tool === 'memory') {
       const result = await executeVerifiedMissionMemory({ actor: context.actor, step, missionText, messageId: `persistent-${context.idempotencyKey.slice(0,24)}` })
       return { status:'completed' as const, verified:true, output:{ ...result.output, text:safe(result.text,3500) } }
@@ -121,7 +152,7 @@ function registryFor(missionText: string): AutonomousToolRegistry {
       const result = await executeVerifiedMissionWebSearch(step)
       return { status:'completed' as const, verified:true, output:{ ...result.output, text:safe(result.text,3500) } }
     }
-    return verifiedSameBrainRead(context, step)
+    return {status:'blocked' as const,error:'persistent_plan_unsupported_tool'}
   }
   return {
     'memory.verified': handler,
@@ -183,7 +214,7 @@ export async function tryRunPersistentGeneralPlan(params: {
     await recordTaskModelUsage(params.actor.legacyTelegramId,String(duplicate.id),modelUsage).catch(()=>{})
     return {
       runId:String(duplicate.id),status:String(duplicate.status||'running'),capability:'orchestrator',risk:'low' as const,
-      text:safe(duplicate.summary||'I’m already working on this same request.'),handledBy:'persistent-general-plan' as const,
+      text:await persistentResultReply(params.actor,String(duplicate.id),duplicate,'I’m already working on this same request.'),handledBy:'persistent-general-plan' as const,
       persistent:true,runtimeVersion:'gogo-autonomous-v1',progress:Number(duplicate.progress||1),deduplicated:true,
     }
   }
@@ -197,7 +228,7 @@ export async function tryRunPersistentGeneralPlan(params: {
     maxAttempts: 4,
     requiresApproval: false,
     verificationRequired: true,
-    mutation: ['reminders','lists','tasks'].includes(step.tool),
+    mutation: ['reminders','lists'].includes(step.tool) || (step.tool === 'tasks' && taskStepIntent(step) !== 'read'),
   }))
 
   const runtimePlan: AutonomousPlan = {
@@ -224,7 +255,7 @@ export async function tryRunPersistentGeneralPlan(params: {
     status: run.status || executed.status,
     capability: created.route.primary,
     risk: 'low' as const,
-    text: run.summary || 'I started working through this request.',
+    text: await persistentResultReply(params.actor,created.runId,run,'I started working through this request.'),
     handledBy: 'persistent-general-plan' as const,
     persistent: true,
     runtimeVersion: 'gogo-autonomous-v1',

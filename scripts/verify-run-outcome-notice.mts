@@ -119,7 +119,7 @@ function notifyHarness(meta: Record<string, any> = {}, opts: { sendFails?: boole
   const deps = {
     db,
     resolveWhatsappId: async (tg: string) => (tg === '123' ? 'whatsapp:+910000000000' : null),
-    send: async (to: string, text: string) => { sent.push({ to, text }); if (opts.sendFails) throw new Error('inert transport down') },
+    send: async (to: string, text: string) => { sent.push({ to, text }); if (opts.sendFails) throw Object.assign(new Error('inert definite provider rejection'), { status: 400 }) },
     now: () => new Date('2026-10-19T10:00:00Z'),
   }
   return { row, db, sent, deps }
@@ -178,15 +178,20 @@ await check('metadata written by another path between claim and flag is preserve
   assert.equal(h.row.metadata_json.keep_me, 2)
   assert.equal(h.row.metadata_json.outcome_notified_at, '2026-10-19T10:00:00.000Z')
 })
-await check('a fresh claim held elsewhere blocks; a stale one is taken over by compare-and-swap', async () => {
-  const fresh = notifyHarness({ outcome_notice_claimed_at: '2026-10-19T09:58:00.000Z', outcome_notice_claim_id: 'other' })
-  assert.deepEqual(await notifyRunOutcome({ ...fresh.row }, fresh.deps), { status: 'skipped', reason: 'claimed_elsewhere' })
-  assert.equal(fresh.sent.length, 0)
-  const stale = notifyHarness({ outcome_notice_claimed_at: '2026-10-19T08:00:00.000Z', outcome_notice_claim_id: 'dead' })
-  assert.deepEqual(await notifyRunOutcome({ ...stale.row }, stale.deps), { status: 'sent' })
-  assert.equal(stale.sent.length, 1)
-  const takeover = stale.db.writes.find((w) => w.value?.metadata_json?.outcome_notice_claim_id && w.value.metadata_json.outcome_notice_claim_id !== 'dead')
-  assert.equal(takeover?.filters['metadata_json->>outcome_notice_claimed_at'], '2026-10-19T08:00:00.000Z', 'takeover is conditional on the exact stale claim')
+await check('fresh and stale send intents both require reconciliation, never takeover', async () => {
+  for (const at of ['2026-10-19T09:58:00.000Z','2026-10-19T08:00:00.000Z']) {
+    const h=notifyHarness({outcome_notice_claimed_at:at,outcome_notice_claim_id:'previous-worker'})
+    assert.deepEqual(await notifyRunOutcome({...h.row},h.deps),{status:'skipped',reason:'reconciliation_required'})
+    assert.equal(h.sent.length,0)
+  }
+})
+await check('provider timeout after acceptance never permits a duplicate notice', async () => {
+  const h=notifyHarness();let effects=0
+  const deps={...h.deps,send:async()=>{effects++;throw Object.assign(new Error('timeout after effect'),{status:504})}}
+  assert.deepEqual(await notifyRunOutcome({...h.row},deps),{status:'failed',reason:'outcome_unknown'})
+  assert.ok(h.row.metadata_json.outcome_notice_claim_id)
+  await notifyRunOutcome({...h.row},deps)
+  assert.equal(effects,1)
 })
 await check('a claim write that matches no row means someone else owns it: no send', async () => {
   const h = notifyHarness()
@@ -238,7 +243,7 @@ function loadModule(path: string, requireMap: Record<string, any>, extra: Record
   const output = ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
   runInNewContext(output, {
     exports,
-    require: (name: string) => {
+    require: (name: string) => {if(name==='./run-outcome-delivery')return {deliverRunOutcomeNotice:()=>{throw Error('unexpected gateway call in legacy fixture')}};
       if (name in requireMap) return requireMap[name]
       throw new Error(`unexpected import in ${path}: ${name}`)
     },
@@ -274,9 +279,9 @@ await check('sweepStaleRunningRuns sends one stale notice per closed run and kee
   ]
   const realDb = fakeDb({ agent_runs: realRuns, agent_steps: [] })
   const sent: string[] = []
-  const notifier = loadModule('lib/agent/run-notify.ts', { '@/lib/supabase-admin': { supabaseAdmin: realDb } })
+  const notifier = loadModule('lib/agent/run-notify.ts', { '@/lib/supabase-admin': { supabaseAdmin: realDb }, '@/lib/services/delivery-state': { isDefiniteProviderRejection: (e:any) => e?.status >= 400 && e?.status < 500 && e?.status !== 408 && !e?.partialSend } })
   const wrapped = { notifyRunOutcome: (run: any) => notifier.notifyRunOutcome(run, { resolveWhatsappId: async () => 'whatsapp:+910000000000', send: async (_to: string, text: string) => { sent.push(text) } }) }
-  const stale2 = loadModule('lib/agent/stale-runs.ts', { '@/lib/supabase-admin': { supabaseAdmin: realDb }, './run-notify': wrapped })
+  const stale2 = loadModule('lib/agent/stale-runs.ts', { '@/lib/supabase-admin': { supabaseAdmin: realDb }, '@/lib/services/delivery-state': { isDefiniteProviderRejection: (e:any) => e?.status >= 400 && e?.status < 500 && e?.status !== 408 && !e?.partialSend }, './run-notify': wrapped })
   assert.equal(await stale2.sweepStaleRunningRuns(), 2)
   assert.deepEqual(sent, ['Stopped: Track my parcel. It stopped responding, so I closed it. Nothing was repeated or submitted again.'])
   assert.ok(realRuns[0].metadata_json && (realRuns[0].metadata_json as any).outcome_notified_at)
@@ -289,7 +294,10 @@ function runtimeHarness(stepStatus: 'completed' | 'failed') {
   const notified: any[] = []
   const runtime = loadModule('lib/agent/autonomous-runtime.ts', {
     'node:crypto': { createHash },
+    '@/lib/metering/core': { runMeteredTask: (_owner: unknown, _trace: unknown, work: () => unknown) => work() },
     '@/lib/supabase-admin': { supabaseAdmin: db },
+    './approval-binding': { assertApprovalBinding: () => { throw Error('Unexpected runtime approval use') } },
+    './approval-ttl': { isApprovalExpired: () => { throw Error('Unexpected runtime approval use') } },
     './specialist-registry': { selectSpecialistRoute: () => ({ primary: 'research', supporting: [] }) },
     './run-notify': { notifyRunOutcome: async (run: any) => { notified.push(run); return { status: 'sent' } } },
   })
