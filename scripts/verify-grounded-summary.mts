@@ -1,3 +1,4 @@
+import { summaryFixtureId, summaryFixtureFilter, summaryFixtureOrder } from './summary-history-fixture.mts'
 import assert from 'node:assert/strict'
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
@@ -6,11 +7,11 @@ process.env.ANTHROPIC_API_KEY ||= 'fixture'
 process.env.INCEPTION_API_KEY = 'fixture'
 const cs = await import('../lib/agent/conversation-summary.ts')
 const now = Date.now(), at = (n: number) => new Date(now - (40 - n) * 60000).toISOString()
-const conversations = Array.from({ length: 30 }, (_, i) => ({ id: `t${29-i}`, telegram_id: 42, role: i % 2 ? 'assistant' : 'user', content: `source statement ${29-i}`, created_at: at(29-i) }))
+const conversations = Array.from({ length: 30 }, (_, i) => ({ id: summaryFixtureId(29-i), telegram_id: 42, role: i % 2 ? 'assistant' : 'user', content: `source statement ${29-i}`, created_at: at(29-i) }))
 const memories: any[] = []
 let serial=0
-function db() { return { from(table: string) { let rows = [...(table === 'memories' ? memories : conversations)], op = 'select'; const q: any = {
-select: () => q, eq: (k: string, v: any) => { rows = rows.filter(r => r[k] === v); return q }, like: (_k: string, v: string) => { rows = rows.filter(r => r.content.includes(v.replaceAll('%',''))); return q }, order: () => q, limit: (n: number) => { rows = rows.slice(0,n); return q },
+function db() { return { from(table: string) { let rows = [...(table === 'memories' ? memories : conversations)], op = 'select'; const orders:any[]=[]; const q: any = {
+select: () => q, eq: (k: string, v: any) => { rows = rows.filter(r => r[k] === v); return q }, like: (_k: string, v: string) => { rows = rows.filter(r => r.content.includes(v.replaceAll('%',''))); return q }, or:(expr:string)=>{rows=rows.filter(r=>summaryFixtureFilter(r,expr));return q}, order:(key:string,p:any)=>{orders.push({key,ascending:p.ascending});return q}, limit: (n: number) => { rows = summaryFixtureOrder(rows,orders).slice(0,n); return q },
 insert: async (v: any) => { memories.unshift({ id: `m${++serial}`, ...v }); return { error: null } }, delete: () => { op='delete'; return q }, in: (k: string, ids: any[]) => { rows = rows.filter(r => ids.includes(r[k])); return q }, then(resolve: any) { if(op==='delete') for(const r of rows){const i=memories.indexOf(r);if(i>=0)memories.splice(i,1)}; resolve({data:rows,error:null}) }
 }; return q } } }
 let fail=0, passed=0
@@ -100,17 +101,17 @@ assert.equal(await cs.readConversationSummary(42,db()),null)
 })
 await check('repeated actual refresh preserves a correction source instead of recasting it as new', async () => {
 memories.length=0
-const rows=(count:number)=>Array.from({length:count},(_,i)=>{const n=count-1-i;return{id:`t${n}`,telegram_id:42,role:n%2?'user':'assistant',content:n===9?'Dinner is at 7':n===15?'Correction: dinner is at 8':`source statement ${n}`,created_at:at(n)}})
+const rows=(count:number)=>Array.from({length:count},(_,i)=>{const n=count-1-i;return{id:summaryFixtureId(n),telegram_id:42,role:n%2?'user':'assistant',content:n===9?'Dinner is at 7':n===15?'Correction: dinner is at 8':`source statement ${n}`,created_at:at(n)}})
 conversations.splice(0,conversations.length,...rows(30))
 assert.equal(await cs.refreshConversationSummary(42,{db:db(),ask:(async(p:string)=>answer(p)) as any}),'updated')
 conversations.splice(0,conversations.length,...rows(36))
 const keep=(p:string)=>{const bank=sourceBank(p);return{text:JSON.stringify({keep:bank.filter((s:any)=>s.text.includes('Dinner is at 7')||s.text.includes('Correction:')).map((s:any)=>s.sourceId)})}}
 assert.equal(await cs.refreshConversationSummary(42,{db:db(),ask:(async(p:string)=>keep(p)) as any}),'updated')
-const second=(await cs.readConversationSummary(42,db()))!, correction=second.evidence!.claims.find(c=>c.turnId==='t15')!
+const second=(await cs.readConversationSummary(42,db()))!, correction=second.evidence!.claims.find(c=>c.turnId===summaryFixtureId(15))!
 assert.equal(correction.quote,'Correction: dinner is at 8')
 conversations.splice(0,conversations.length,...rows(42))
 assert.equal(await cs.refreshConversationSummary(42,{db:db(),ask:(async(p:string)=>keep(p)) as any}),'updated')
-const third=(await cs.readConversationSummary(42,db()))!, same=third.evidence!.claims.find(c=>c.turnId==='t15')!
+const third=(await cs.readConversationSummary(42,db()))!, same=third.evidence!.claims.find(c=>c.turnId===summaryFixtureId(15))!
 assert.equal(same.sourceId,correction.sourceId);assert.equal(same.observedAt,correction.observedAt);assert.equal(same.expiresAt,correction.expiresAt)
 assert.match(cs.summaryContextBlock(third),/Correction: dinner is at 8/)
 let calls=0;assert.equal(await cs.refreshConversationSummary(42,{db:db(),ask:(async()=>{calls++;throw Error('covered cursor')}) as any}),'not_needed');assert.equal(calls,0)

@@ -1,3 +1,4 @@
+import { summaryFixtureId, summaryFixtureFilter, summaryFixtureOrder } from './summary-history-fixture.mts'
 // Actual chat-summary entry points with owner-scoped inert storage; never calls Mercury/network.
 import assert from 'node:assert/strict'
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'
@@ -9,17 +10,18 @@ const cs = await import('../lib/agent/conversation-summary.ts')
 const day = 86400000, base = Date.now() - day
 const iso = (n: number) => new Date(base + n * 60000).toISOString()
 const row = (id: string, owner: number, summary: string, cursor: number) => ({ id, telegram_id: owner, created_at: iso(99), content: JSON.stringify({ type: 'followup_state', kind: cs.SUMMARY_KIND, payload: { summary, upTo: iso(cursor), updatedAt: iso(98) } }) })
-const conv = Array.from({ length: 30 }, (_, i) => ({ telegram_id: 42, role: i % 2 ? 'assistant' : 'user', content: `turn ${29 - i}`, created_at: iso(29 - i) }))
+const conv = Array.from({ length: 30 }, (_, i) => ({ id: summaryFixtureId(29-i), telegram_id: 42, role: i % 2 ? 'assistant' : 'user', content: `turn ${29 - i}`, created_at: iso(29 - i) }))
 function harness(mem: any[], opts: { readError?: boolean; historyError?: boolean; insertError?: boolean; beforeInsert?: () => void; cleanupError?: boolean; conversations?: any[] } = {}) {
   const writes: any[] = []
   const db = { from(table: string) {
-    let matches = [...(table === 'memories' ? mem : opts.conversations || conv)], op = 'select'
+    let matches = [...(table === 'memories' ? mem : opts.conversations || conv)], op = 'select'; const orders:any[]=[]
     const q: any = {
       select: () => q,
       eq: (k: string, v: any) => { matches = matches.filter(r => r[k] === v); return q },
       like: (_k: string, v: string) => { matches = matches.filter(r => r.content.includes(v.replaceAll('%', ''))); return q },
-      order: (k: string, p: any) => { matches.sort((a, b) => String(a[k]).localeCompare(String(b[k])) * (p.ascending ? 1 : -1)); return q },
-      limit: (n: number) => { matches = matches.slice(0, n); return q },
+      or:(expr:string)=>{matches=matches.filter(r=>summaryFixtureFilter(r,expr));return q},
+      order: (key: string, p: any) => { orders.push({key,ascending:p.ascending});return q },
+      limit: (n: number) => { matches = summaryFixtureOrder(matches,orders).slice(0, n); return q },
       delete: () => { op = 'delete'; return q },
       in: (k: string, values: any[]) => { matches = matches.filter(r => values.includes(r[k])); return q },
       insert: async (v: any) => { if (opts.insertError) return { error: { message: 'injected insert failure' } }; opts.beforeInsert?.(); writes.push(v); mem.unshift({ ...v, id: `new${writes.length}`, created_at: iso(100) }); return { error: null } },

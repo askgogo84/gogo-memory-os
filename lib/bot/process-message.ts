@@ -236,6 +236,7 @@ export async function getConversationHistory(telegramId: number): Promise<Messag
     .eq('telegram_id', telegramId)
     .order('created_at', { ascending: false })
     .order('role', { ascending: true })
+    .order('id', { ascending: false })
     .limit(20)
 
   return ((data || []) as any[])

@@ -1,3 +1,4 @@
+import { summaryFixtureId, summaryFixtureFilter, summaryFixtureOrder } from './summary-history-fixture.mts'
 // Long chat memory via Mercury: older messages fold into one owner-bound running summary, batched,
 // secret-free, fenced as data in the reply prompt, best-effort.
 import assert from 'node:assert/strict'
@@ -12,7 +13,7 @@ assert.equal(cs.chatSummaryEnabled({ INCEPTION_API_KEY: 'k' }), true)
 assert.equal(cs.chatSummaryEnabled({ INCEPTION_API_KEY: 'k', MERCURY_CHAT_SUMMARY: '0' }), false)
 
 const t0 = Date.now() - 86400000 // source-age policy stays meaningful after today's date
-const mk = (n: number, content = `message ${n}`) => ({ role: n % 2 ? 'assistant' : 'user', content, created_at: new Date(t0 + n * 60_000).toISOString() })
+const mk = (n: number, content = `message ${n}`) => ({ id: summaryFixtureId(n), role: n % 2 ? 'assistant' : 'user', content, created_at: new Date(t0 + n * 60_000).toISOString() })
 const newestFirst = Array.from({ length: 30 }, (_, i) => mk(29 - i))
 // 30 rows: the newest 20 stay verbatim; the 10 oldest are folded, chronological.
 let fold = cs.rowsToFold(newestFirst, null)
@@ -42,9 +43,9 @@ console.log('PASS prompt and fenced context block')
 process.env.INCEPTION_API_KEY = 'k'
 function fakeDb(conv: any[], mem: any[]) {
   const ops: any[] = []
-  const q = (table: string) => { let rows = table === 'conversations' ? [...conv] : [...mem]; let op = 'select'; let ins: any = null
+  const q = (table: string) => { let rows = table === 'conversations' ? [...conv] : [...mem]; let op = 'select'; let ins: any = null; const orders: any[]=[]
     const api: any = {
-      select: () => api, order: () => api, limit: (n: number) => { rows = rows.slice(0, n); return api },
+      select: () => api, or: (expr:string) => { rows=rows.filter(r=>summaryFixtureFilter(r,expr));return api }, order: (key:string,p:any) => { orders.push({key,ascending:p.ascending});return api }, limit: (n: number) => { rows = summaryFixtureOrder(rows,orders).slice(0, n); return api },
       eq: (k: string, v: any) => { ops.push({ table, op, k, v }); rows = rows.filter(r => r[k] === undefined || String(r[k]) === String(v)); return api },
       like: (_k: string, pat: string) => { const needle = pat.replace(/%/g, ''); rows = rows.filter(r => String(r.content).includes(needle)); return api },
       in: (k: string, ids: any[]) => { if (op === 'delete') { for (const id of ids) { const i = mem.findIndex(m => m.id === id); if (i >= 0) mem.splice(i, 1) } } ops.push({ table, op, k, ids }); return api },
