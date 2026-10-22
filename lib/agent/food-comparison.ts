@@ -1,6 +1,6 @@
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {searchWebResults, type WebSearchResult} from '@/lib/web-search'
-import {foodLocationReply,foodSearchSubject,isFoodComparisonRequest,isExplicitFoodBrowserRequest} from './food-comparison-intent'
+import {foodAreaLocation,foodLocationReply,foodSearchSubject,isFoodComparisonRequest,isExplicitFoodBrowserRequest} from './food-comparison-intent'
 
 import {commerceTaskLink, readCommerceTask} from '@/lib/commerce/task'
 
@@ -21,9 +21,9 @@ export function foodProviderLink(result:WebSearchResult,domain:string){
 
 // Search snippets identify candidate pages; they are NOT a live menu/cart receipt.
 // No LLM can turn these into invented prices, distances, discounts or cart writes.
-export function renderFoodDiscovery(subject:string,pin:string,groups:Array<{name:string;links:Array<{title:string;url:string}>}>,checkedAt:string){
+export function renderFoodDiscovery(subject:string,pin:string,groups:Array<{name:string;links:Array<{title:string;url:string}>}>,checkedAt:string,area?:string){
   const lines=groups.map(g=>`${g.name}:\n${g.links.length?g.links.map(x=>`• ${x.title}\n${x.url}`).join('\n'):'No matching provider page found for this PIN.'}`)
-  return `I searched for ${subject} around PIN ${pin}, India.\n\n${lines.join('\n\n')}\n\nThese are provider-page leads, not verified delivery quotes. I could not yet verify current item prices, fees, distance or the cheapest delivered total for your saved address. Checked: ${checkedAt}.\n\nYou can open a provider link to inspect it. Nothing has been added to a cart or ordered. AskGogo’s saved-address/cart connection is not active yet; the comparison remains incomplete.`
+  return `I searched for ${subject} around ${area?`${area} (PIN ${pin}; reply with your exact PIN to change it)`:`PIN ${pin}`}, India.\n\n${lines.join('\n\n')}\n\nThese are provider-page leads, not verified delivery quotes. I could not yet verify current item prices, fees, distance or the cheapest delivered total for your saved address. Checked: ${checkedAt}.\n\nYou can open a provider link to inspect it. Nothing has been added to a cart or ordered. AskGogo’s saved-address/cart connection is not active yet; the comparison remains incomplete.`
 }
 
 export async function tryFoodComparison(params:{telegramId:number;text:string;surface?:string}):Promise<Result|null>{
@@ -34,7 +34,8 @@ export async function tryFoodComparison(params:{telegramId:number;text:string;su
   if(isExplicitFoodBrowserRequest(params.text))return null
   const statusRequest=/^\s*(?:show|check)\s+(?:my|the)\s+food comparison(?: status)?[.!]?\s*$/i.test(params.text)
   const fresh=isFoodComparisonRequest(params.text)
-  const location=foodLocationReply(params.text)
+  // A PIN in the message wins; otherwise a named locality in a fresh request ("near Rajajinagar") resolves it.
+  const location=foodLocationReply(params.text)||(fresh?foodAreaLocation(params.text):null)
   // Do not query pending work or hijack unrelated requests.
   if(!statusRequest&&!fresh&&!location&&!/^\s*(?:cancel|stop)\s+(?:the\s+)?food comparison[.!]?\s*$/i.test(params.text))return null
   const owner=String(params.telegramId)
@@ -72,7 +73,7 @@ export async function tryFoodComparison(params:{telegramId:number;text:string;su
   if(fresh){
     // Reuse only a recent, user-supplied postal area from this feature, never
     // a guessed city or a location in external search/document content.
-    if(active&&previous.metadata_json?.location?.source==='user')meta.location=previous.metadata_json.location
+    if(!location&&active&&previous.metadata_json?.location?.source==='user')meta.location=previous.metadata_json.location
     const {data,error}=await supabaseAdmin.from('agent_runs').insert({telegram_id:owner,type:TYPE,capability:'browser',status:'paused',title:`Compare ${meta.subject} delivery`,summary:'Waiting for delivery location.',progress:0,source:params.surface||'whatsapp',started_at:now,updated_at:now,metadata_json:meta}).select('id').single()
     if(error||!data?.id)throw new Error('food_comparison_create_failed')
     runId=data.id
@@ -103,5 +104,5 @@ export async function tryFoodComparison(params:{telegramId:number;text:string;su
   meta.state='provider_connection_required'
   meta.discovery={checked_at:now,groups,evidence_kind:'search_results_only',cart_verified:false}
   await save('Provider pages searched; live prices, delivery totals and cart connection remain unverified.')
-  return reply(renderFoodDiscovery(meta.subject,pin,groups,now)+'\n\nContinue this comparison: '+commerceTaskLink(runId!))
+  return reply(renderFoodDiscovery(meta.subject,pin,groups,now,meta.location.area)+'\n\nContinue this comparison: '+commerceTaskLink(runId!))
 }
