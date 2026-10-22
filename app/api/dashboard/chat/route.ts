@@ -118,21 +118,39 @@ async function saveConversation(telegramId: number | string, userText: string, a
   if (error) console.error('DASHBOARD_CHAT_CONVERSATION_SAVE_FAILED:', error.message)
 }
 
-export async function GET() {
+export async function GET(req?: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const user = await resolveDashboardUser(session.telegramId)
   if (!user) return NextResponse.json({ error: 'user_not_found' }, { status: 404 })
 
-  const { data, error } = await supabaseAdmin
-    .from('conversations')
-    .select('role, content, created_at')
-    .eq('telegram_id', user.telegram_id)
-    .in('role', ['user', 'assistant'])
-    .order('created_at', { ascending: false })
-    // Reverse below displays each tied batch as user then assistant.
-    .order('role', { ascending: true })
-    .limit(50)
+  // Duet parity step 4: channels. ?thread=<id> shows that channel; no param shows the one ongoing thread (everything
+  // not in a channel, WhatsApp included). Before the thread_id migration the plain view still works.
+  const threadParam = (() => { try { return new URL(String((req as any)?.url || '')).searchParams.get('thread') || '' } catch { return '' } })()
+  let threadId: string | null = null
+  if (threadParam) {
+    const ctx = await import('@/lib/agent/thread-context').catch(() => null)
+    const thread = await ctx?.resolveThreadForUser(String(user.telegram_id), threadParam).catch(() => null)
+    if (!thread) return NextResponse.json({ error: 'channel_not_found' }, { status: 404 })
+    threadId = thread.id
+  }
+  const historyQuery = (scoped: boolean) => {
+    let q: any = supabaseAdmin
+      .from('conversations')
+      .select(scoped ? 'role, content, created_at, thread_id' : 'role, content, created_at')
+      .eq('telegram_id', user.telegram_id)
+      .in('role', ['user', 'assistant'])
+    if (scoped && threadId) q = q.eq('thread_id', threadId)
+    return q.order('created_at', { ascending: false })
+      // Reverse below displays each tied batch as user then assistant.
+      .order('role', { ascending: true })
+      .limit(threadId || !scoped ? 50 : 120)
+  }
+  // Main view: rows outside channels (filtered here, so it also works before the thread_id column exists).
+  let { data, error } = await historyQuery(true)
+  if (error && threadId) return NextResponse.json({ messages: [], name: user.name || 'Gogo', channelsNotReady: true })
+  if (error) ({ data, error } = await historyQuery(false))
+  if (!error && !threadId) data = (data || []).filter((row: any) => !row?.thread_id).slice(0, 50)
 
   if (error) return NextResponse.json({ error: 'history_failed' }, { status: 500 })
   const messages = (data || [])
@@ -156,7 +174,9 @@ async function callPlanWasLastReply(telegramId:number|string){
   }catch{return false}
 }
 
-export async function POST(req: NextRequest) {
+export async function POST(req: NextRequest) { return withChatChannel(req) }
+
+async function handleChatPost(req: NextRequest) {
   const __trace = startTrace('web')
   if (!sameOrigin(req)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   const session = await getSession()
@@ -675,3 +695,27 @@ export async function POST(req: NextRequest) {
   }
 }
 
+// Duet parity step 4: channels. The chat handlers save their own conversation rows; when the message was sent in a
+// channel, the rows this request created are tagged with it afterwards (owner-scoped, untagged rows only, created
+// during this request). Memory, tasks and approvals stay shared across channels.
+async function withChatChannel(req: NextRequest) {
+  const startedAt = new Date(Date.now() - 1000).toISOString()
+  let threadValue = ''
+  try { threadValue = String(((await (req as any).clone?.().json().catch(() => null)) as any)?.threadId || '') } catch {}
+  const res = await handleChatPost(req)
+  if (threadValue && res.status < 400) {
+    try {
+      const session = await getSession()
+      const ctx = await import('@/lib/agent/thread-context').catch(() => null)
+      const thread = session && ctx ? await ctx.resolveThreadForUser(String(session.telegramId), threadValue).catch(() => null) : null
+      if (thread && session) {
+        const tg = parseInt(String(session.telegramId), 10)
+        const { error } = await supabaseAdmin.from('conversations').update({ thread_id: thread.id })
+          .eq('telegram_id', tg).is('thread_id', null).gte('created_at', startedAt).in('role', ['user', 'assistant'])
+        if (error) console.error('DASHBOARD_CHAT_CHANNEL_TAG_FAILED:', error.message)
+        else await supabaseAdmin.from('agent_threads').update({ updated_at: new Date().toISOString() }).eq('id', thread.id).eq('telegram_id', String(session.telegramId))
+      }
+    } catch (err: any) { console.error('DASHBOARD_CHAT_CHANNEL_FAILED:', String(err?.message || err).slice(0, 160)) }
+  }
+  return res
+}
