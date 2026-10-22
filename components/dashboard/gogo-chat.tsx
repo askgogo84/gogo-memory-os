@@ -5,7 +5,7 @@ import type {ServiceNotice} from '@/lib/dashboard/service-notices'
 import type {PendingBrowserHandoff} from '@/lib/dashboard/human-handoffs'
 import { findCatalogueSite } from '@/lib/dashboard/connection-catalogue'
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
-import { ChatChannels, type ChatChannel } from './chat-channels'
+import { ChannelPill, ChatChannels, type ChatChannel } from './chat-channels'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
@@ -290,6 +290,11 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
   // eslint-disable-next-line react-hooks/exhaustive-deps
   },[loading,askAfterConnect])
 
+  // Stop (approved 22 Oct mock): stops waiting for this reply. Work Gogo already started on the server is not undone,
+  // so the line says where to find it instead of claiming nothing happened.
+  const stopRef=useRef<AbortController|null>(null)
+  function stopWaiting(){stopRef.current?.abort()}
+
   async function submit(value?:string){
     const next=String(value??text).trim()
     if(!next||sendingRef.current)return
@@ -297,9 +302,10 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
     conversationVersion.current++
     setText('');setError('');setSending(true);setHistoryOpen(false)
     setMessages(m=>[...m,{role:'user',content:next}])
+    const controller=typeof AbortController==='function'?new AbortController():null;stopRef.current=controller
     try{
       const res=await fetch('/api/dashboard/chat',{
-        method:'POST',
+        method:'POST',...(controller?{signal:controller.signal}:{}),
         headers:{'Content-Type':'application/json'},
         body:JSON.stringify({...(loc.status==='on'?{text:next,location:{lat:loc.lat,lon:loc.lon}}:{text:next}),...(channelRef.current?{threadId:channelRef.current}:{})}),
       })
@@ -313,6 +319,11 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
       repliedTimer.current=setTimeout(()=>setJustReplied(false),4000)
       void loadSnapshot()
     }catch(e:any){
+      if(e?.name==='AbortError'){
+        setMessages(m=>[...m,{role:'assistant',content:'Stopped waiting. If Gogo had already started something, it shows in Tasks.'}])
+        void loadSnapshot()
+        return
+      }
       setError(e?.message&&e.message!=='chat'?e.message:'Gogo had trouble with that. Try once more.')
     }finally{
       sendingRef.current=false
@@ -359,9 +370,18 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
     void submit()
   }
 
-  return <div className="grid h-[calc(100dvh-1.5rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] min-h-[520px] w-full overflow-hidden bg-[#0b0b0b] lg:border lg:border-[#1f1f1f] lg:h-[calc(100dvh-4.25rem)] lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
+  return <div className="grid w-full overflow-hidden bg-[#0b0b0b] max-lg:fixed max-lg:inset-0 max-lg:z-30 max-lg:h-[100dvh] max-lg:pt-[env(safe-area-inset-top)] max-lg:pb-[env(safe-area-inset-bottom)] lg:min-h-[520px] lg:border lg:border-[#1f1f1f] lg:h-[calc(100dvh-4.25rem)] lg:grid-cols-[minmax(0,1fr)_360px] xl:grid-cols-[minmax(0,1fr)_400px]">
+    {/* Phone (approved 22 Oct full-screen mock, Wajo-style): no header bar — menu, channel pill and Needs you float
+          over the conversation, which scrolls underneath. */}
+      <div className="absolute inset-x-0 top-[env(safe-area-inset-top)] z-20 flex items-center justify-between gap-2 bg-[#0b0b0b] px-2 pb-1.5 pt-1.5 lg:hidden">
+        <MobileMenuButton/>
+        <ChannelPill channels={channels} active={channel} onPick={pickChannel} onCreate={createChannel} disabled={sending}/>
+        <Link href="/dashboard/tasks" aria-label={snapshot.unavailable?'Needs you':`Needs you: ${waitingCount}`} className="flex h-10 items-center gap-1.5 rounded-full border border-[#262626] bg-[#151515] pl-3 pr-1 text-[13px] font-semibold text-[#f2efea]">
+          Needs you <span className="grid h-8 min-w-8 place-items-center rounded-full bg-[#3a2a10] px-1 text-[13px] font-bold text-[#f0c26b]">{snapshot.unavailable?'—':waitingCount}</span>
+        </Link>
+      </div>
     <section className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-      <header className="shrink-0 border-b border-[#1f1f1f] px-1 py-2 sm:px-6 lg:px-10 lg:py-5">
+      <header className="hidden shrink-0 border-b border-[#1f1f1f] px-1 py-2 sm:px-6 lg:block lg:px-10 lg:py-5">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2 lg:gap-3">
             <MobileMenuButton/>
@@ -376,7 +396,7 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
         <div className="mt-2 lg:mt-3"><ChatChannels channels={channels} active={channel} onPick={pickChannel} onCreate={createChannel} disabled={sending}/></div>
       </header>
 
-      <div ref={messageScrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-6 sm:px-6 lg:px-10">
+      <div ref={messageScrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 pt-16 sm:px-6 lg:px-10 lg:py-6">
         {loading&&<div className="py-16 text-center text-[16px] text-[#a8a8a4]">Bringing your conversation in…</div>}
         {!loading&&visible.length===0&&<div className="mx-auto max-w-[980px] py-8 text-center lg:py-14">
           <div className="mx-auto w-fit"><Avatar state={gogoState} size={104}/></div>
@@ -410,7 +430,7 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
         </div>
       </div>
 
-      <div className="sticky bottom-0 z-20 shrink-0 border-t border-[#1f1f1f] bg-[#0b0b0b] px-4 pb-4 pt-3 sm:px-6 lg:px-10 lg:pb-5">
+      <div className="sticky bottom-0 z-20 shrink-0 bg-[#0b0b0b] px-3 pb-1 pt-1 sm:px-6 lg:border-t lg:border-[#1f1f1f] lg:px-10 lg:pb-5 lg:pt-3">
         <div className="mx-auto max-w-[980px]">
           {error&&<div className="mb-3 rounded-[12px] border border-red-500/30 bg-red-500/10 px-4 py-3 text-[15px] text-red-300">{error}</div>}
           {loc.status==='ask'&&visible.length>0&&<div className="mb-3 rounded-[16px] border border-[#2a2a2a] bg-[#151515] p-3.5">
@@ -422,7 +442,7 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
             </div>
             {locNote&&<p className="mt-2 text-[14px] text-[#e2b04a]">{locNote}</p>}
           </div>}
-          {(loading||visible.length>0)&&<div className="mb-3 flex gap-2.5 overflow-x-auto pb-1">
+          {(loading||visible.length>0)&&<div className="mb-3 hidden gap-2.5 overflow-x-auto pb-1 lg:flex">
             {CHAT_SUGGESTIONS.map(item=><button key={item.id} type="button" onClick={()=>pickSuggestion(item)} className="min-h-11 shrink-0 rounded-full border border-[#2f2f2f] px-5 text-[15px] text-[#d8d8d3] hover:border-[#4cd0bd] hover:text-[#f2efea] lg:text-[16px]">{item.title}</button>)}
             {loc.status!=='ask'&&<button type="button" onClick={loc.status==='on'?disableLocation:()=>void enableLocation()} disabled={locBusy} className="min-h-11 shrink-0 rounded-full border border-dashed border-[#2f2f2f] px-5 text-[15px] text-[#a8a8a4] hover:text-[#f2efea] disabled:opacity-60 lg:text-[16px]">{loc.status==='on'?`Location on${loc.label?` · ${loc.label}`:''} · turn off`:locBusy?'Checking…':'Use my location'}</button>}
           </div>}
@@ -431,8 +451,11 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
             {canDictate&&<button type="button" onClick={toggleDictation} aria-pressed={dictating} aria-label={dictating?'Stop dictation':'Dictate a message'} className={`grid h-12 w-12 shrink-0 place-items-center rounded-full border ${dictating?'border-[#4cd0bd] bg-[#123d38] text-[#8be6d8]':'border-[#2f2f2f] text-[#d8d8d3]'}`}>
               <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
             </button>}
-            <button disabled={sending||!text.trim()} className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#efe6d7] text-[22px] font-bold text-[#0b0b0b] disabled:opacity-30" aria-label="Send">↑</button>
+            {sending
+              ?<button type="button" onClick={stopWaiting} className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#efe6d7] text-[#0b0b0b]" aria-label="Stop"><svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2" fill="currentColor"/></svg></button>
+              :<button disabled={!text.trim()} className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#efe6d7] text-[22px] font-bold text-[#0b0b0b] disabled:opacity-30" aria-label="Send">↑</button>}
           </form>
+          <p className="pb-1 pt-1.5 text-center text-[12px] text-[#8a8a86] lg:hidden">Gogo can make mistakes. It asks before it acts for you.</p>
         </div>
       </div>
     </section>

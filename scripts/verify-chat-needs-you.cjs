@@ -20,7 +20,7 @@ function harness(initial){
     if(id==='next/link')return{default:'a'};
     if(id==='@/components/gogo/gogo-character')return{GogoCharacter:()=>null};
     if(id==='@/components/dashboard/mobile-nav')return{MobileMenuButton:()=>null};
-    if(id==='./chat-channels')return{ChatChannels:()=>null};
+    if(id==='./chat-channels')return{ChatChannels:()=>null,ChannelPill:()=>null};
     if(id.startsWith('@/')){
      const relative=id.slice(2),ext=relative.startsWith('components/')?'.tsx':'.ts';
      assert(/^(lib\/(dashboard|agent\/flight-choices)|components\/dashboard\/service-notice-cards)/.test(relative),'Unexpected dependency '+id);
