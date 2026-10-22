@@ -1,3 +1,4 @@
+import { readPersistentFlightResult } from './persistent-flight-result'
 import { recordTaskModelUsage } from './model-usage'
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -37,6 +38,16 @@ function persistentRunReply(run: {status?: unknown; summary?: unknown; error?: u
   if (run.status === 'outcome_unknown') return 'I couldn’t confirm the result of this request. I haven’t retried it because an earlier step may already have completed.'
   if (run.status === 'failed') return persistentDriveFailureReply(run.error) || persistentTravelFailureReply(run.error) || 'I couldn’t finish this request. Check the task details for the step that stopped.'
   return safe(run.summary || fallback)
+}
+
+async function persistentResultReply(actor: AgentActor, runId: string, run: {status?: unknown;summary?: unknown;error?: unknown;metadata_json?: {persistent_plan_steps?: unknown}}, fallback: string) {
+  const definitions=run.metadata_json?.persistent_plan_steps
+  if (run.status === 'completed' && Array.isArray(definitions) && definitions.some(step=>step?.tool === 'travel')) {
+    const result=await readPersistentFlightResult(actor,runId)
+    if (result) return result
+    return 'I couldn’t display the flight results. Check this task’s current status and details before trying again.'
+  }
+  return persistentRunReply(run,fallback)
 }
 
 function stepKey(index: number, step: GeneralPlanStep) {
@@ -201,7 +212,7 @@ export async function tryRunPersistentGeneralPlan(params: {
     await recordTaskModelUsage(params.actor.legacyTelegramId,String(duplicate.id),modelUsage).catch(()=>{})
     return {
       runId:String(duplicate.id),status:String(duplicate.status||'running'),capability:'orchestrator',risk:'low' as const,
-      text:persistentRunReply(duplicate,'I’m already working on this same request.'),handledBy:'persistent-general-plan' as const,
+      text:await persistentResultReply(params.actor,String(duplicate.id),duplicate,'I’m already working on this same request.'),handledBy:'persistent-general-plan' as const,
       persistent:true,runtimeVersion:'gogo-autonomous-v1',progress:Number(duplicate.progress||1),deduplicated:true,
     }
   }
@@ -242,7 +253,7 @@ export async function tryRunPersistentGeneralPlan(params: {
     status: run.status || executed.status,
     capability: created.route.primary,
     risk: 'low' as const,
-    text: persistentRunReply(run, 'I started working through this request.'),
+    text: await persistentResultReply(params.actor,created.runId,run,'I started working through this request.'),
     handledBy: 'persistent-general-plan' as const,
     persistent: true,
     runtimeVersion: 'gogo-autonomous-v1',

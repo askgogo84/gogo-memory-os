@@ -68,7 +68,8 @@ function harness(instructions = ['List all open tasks','List all open tasks']) {
  })
  const driveRead=load('lib/agent/persistent-drive-read.ts')
  const travelRead=load('lib/agent/persistent-travel-read.ts')
- const persistent=load('lib/agent/persistent-general-plan.ts',{'./general-planner':general,'./autonomous-runtime':runtime,'./persistent-drive-read':driveRead,'./persistent-travel-read':travelRead})
+ const projection=load('lib/agent/persistent-flight-result.ts')
+ const persistent=load('lib/agent/persistent-general-plan.ts',{'./general-planner':general,'./autonomous-runtime':runtime,'./persistent-drive-read':driveRead,'./persistent-travel-read':travelRead,'./persistent-flight-result':projection})
  const start=()=>persistent.tryRunPersistentGeneralPlan({actor,surface:'web',text:'Fixture task objective',prepared:{plan:{title:'Fixture tasks',reason:'Two typed task operations',steps:instructions.map(task)},startedAt:new Date().toISOString(),modelUsage:[]}})
  const resume=()=>persistent.resumePersistentGeneralPlan({actor,runId:tables.agent_runs[0].id})
  return {tables,queries,start,resume,persistent,general,actor,fallback:()=>fallback,setFault:(f:typeof fault)=>{fault=f},setPermission:(level:string)=>{tables.agent_permissions=[{telegram_id:'123',capability:'tasks',level}]}}

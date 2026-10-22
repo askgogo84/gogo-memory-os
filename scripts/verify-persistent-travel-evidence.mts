@@ -85,7 +85,8 @@ function harness(instruction = request) {
  const research=load('lib/agent/travel-research.ts',{'./travel-browser-task':browser})
  const travelRead=existsSync('lib/agent/persistent-travel-read.ts')?load('lib/agent/persistent-travel-read.ts',{'./travel-research':research,'./travel-browser-task':browser}):{}
  const driveRead=load('lib/agent/persistent-drive-read.ts')
- const persistent=load('lib/agent/persistent-general-plan.ts',{'./general-planner':general,'./autonomous-runtime':runtime,'./persistent-drive-read':driveRead,'./persistent-travel-read':travelRead})
+ const projection=load('lib/agent/persistent-flight-result.ts')
+ const persistent=load('lib/agent/persistent-general-plan.ts',{'./general-planner':general,'./autonomous-runtime':runtime,'./persistent-drive-read':driveRead,'./persistent-travel-read':travelRead,'./persistent-flight-result':projection})
  const start=(surface='web',acting=actor)=>persistent.tryRunPersistentGeneralPlan({actor:acting,surface,text:'Fixture task objective',prepared:{plan:{title:'Fixture tasks',reason:'Two typed task operations',steps:[travel(instruction),task('List all open tasks')]},startedAt:new Date().toISOString(),modelUsage:[]}})
  const resume=()=>persistent.resumePersistentGeneralPlan({actor,runId:tables.agent_runs[0].id})
  return {tables,queries,start,resume,persistent,general,actor,travelRead,browserCalls,runtime,modelCalls:()=>modelCalls,setBrowser:(v:any)=>{browserResult=v},setBrowserFault:(f:typeof browserFault)=>{browserFault=f},fallback:()=>fallback,setFault:(f:typeof fault)=>{fault=f},setPermission:(level:string,capability='travel')=>{tables.agent_permissions=[{telegram_id:'123',capability,level}]} }
