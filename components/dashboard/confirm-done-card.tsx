@@ -5,7 +5,7 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
-import { GogoAgent } from '@/components/gogo/gogo-agent'
+import { Companion } from '@/components/gogo/companion'
 import type { FeedItem } from '@/lib/dashboard/task-feed'
 
 export function ConfirmDoneCard({ item, size = 56 }: { item: FeedItem; size?: number }) {
@@ -37,7 +37,7 @@ export function ConfirmDoneCard({ item, size = 56 }: { item: FeedItem; size?: nu
   }
 
   return <div className="flex items-start gap-3 rounded-[14px] border border-[#222] bg-[#121212] py-2 pl-1.5 pr-4">
-    <span className="grid shrink-0 place-items-center" style={{ width: size + 4 }}><GogoAgent state={item.state} size={size}/></span>
+    <span className="grid shrink-0 place-items-center" style={{ width: size + 4 }}><Companion state={item.state} size={size}/></span>
     <span className="flex min-w-0 flex-1 flex-col gap-1.5 py-1">
       <span className="flex items-start justify-between gap-3">
         <Link href={item.href} className="text-[15px] font-medium leading-snug text-[#f2efea] hover:underline">{item.title}</Link>

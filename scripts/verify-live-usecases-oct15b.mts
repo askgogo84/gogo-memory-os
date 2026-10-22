@@ -42,7 +42,7 @@ assert.match(agent, /needsYou:\(snapshot\?\.approvals\?\.length\|\|0\)\+handoffG
 assert.match(agent, /earlier stop\{earlier\.length===1\?'':'s'\} on this site/)
 
 // 4b. "Waiting for you" on Today is the Needs you count, not every old paused run (it said 25 while Needs you said 1).
-assert.match(home, /const needCount=feed\.need\.length\+serviceNotices\.total/)
+assert.match(home, /const nowCount=sections\.now\.length\+serviceNotices\.total/)
 assert.doesNotMatch(home+feed, /pausedRunsRes|actionablePaused/)
 
 // 5. Cancelled reminders are not part of today.
