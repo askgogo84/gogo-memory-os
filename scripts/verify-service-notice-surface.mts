@@ -83,7 +83,9 @@ await assert.rejects(()=>load('lib/dashboard/service-notices.ts').getServiceNoti
 session=null;const before=calls.length
 response=await snapshot.GET({} as Request);assert.equal(response.status,401);assert.equal(calls.length,before,'unauthenticated snapshot never reads owner data')
 await load('app/dashboard/(app)/home/page.tsx').default();assert.equal(calls.length,before,'signed-out Home never reads service notices')
-for(const call of calls.filter(c=>c.table==='agent_open_loops')){
+// Calendar clashes (task feed) are a separate owner-scoped open-loop read.
+for(const call of calls.filter(c=>c.table==='agent_open_loops'&&c.filters.some(([k,v]:any)=>k==='source_type'&&v==='calendar_conflict')))assert.ok(call.filters.some(([k,v]:any)=>k==='telegram_id'&&v==='123'))
+for(const call of calls.filter(c=>c.table==='agent_open_loops'&&!c.filters.some(([k,v]:any)=>k==='source_type'&&v==='calendar_conflict'))){
  assert.ok(call.filters.some(([k,v]:any)=>k==='telegram_id'&&v==='123'))
  assert.ok(call.filters.some(([k,v]:any)=>k==='status'&&v==='active'))
  assert.ok(call.filters.some(([k,v]:any)=>k==='kind'&&v==='commitment'))

@@ -52,6 +52,7 @@ const twilioClient = {
 }
 const wlib = load('lib/whatsapp.ts', {
   './qa-trace': { qaTraceReply: () => {} },
+  '@/lib/security/outbound-identifiers': { maskOutboundIdentifiers: (t: string) => t },
   twilio: { default: () => twilioClient },
   '@/lib/services/delivery-callback': { deliveryCallbackUrl: () => '', persistAcceptedChunk: async () => {} },
   '@/lib/metering/record': { recordMeterEvent: async () => {} },

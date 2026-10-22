@@ -48,7 +48,7 @@ function recentTag(status: string) {
 export async function getTaskFeed(telegramId: string, now = new Date()): Promise<TaskFeed> {
   const tg = String(telegramId || '')
   if (!tg) return EMPTY_FEED
-  const [approvals, handoffs, watchers, running, recent, finished, deferred] = await Promise.all([
+  const [approvals, handoffs, watchers, running, recent, finished, deferred, clashes] = await Promise.all([
     supabaseAdmin.from('agent_approvals').select('id,run_id,title,description,created_at').eq('telegram_id', tg).eq('status', 'pending').order('created_at', { ascending: false }).limit(10),
     getPendingBrowserHandoffs(tg),
     supabaseAdmin.from('agent_watchers').select('id,title,type,next_check_at,created_at,condition_json', { count: 'exact' }).eq('telegram_id', tg).eq('active', true).neq('type', 'goal_review').order('next_check_at', { ascending: true }).limit(12),
@@ -64,6 +64,9 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
     // Approval card v2 "Later": the owner deferred these; they stay pending but stop leading Needs you.
     supabaseAdmin.from('agent_activity').select('metadata_json').eq('telegram_id', tg).eq('event_type', 'approval_deferred')
       .gte('created_at', new Date(now.getTime() - 86_400_000).toISOString()).limit(50),
+    // Calendar clashes Gogo discovered on its own (open-loops scout, complete Calendar reads only).
+    supabaseAdmin.from('agent_open_loops').select('id,title,summary,due_at,updated_at').eq('telegram_id', tg).eq('status', 'active')
+      .eq('source_type', 'calendar_conflict').gte('due_at', now.toISOString()).order('due_at', { ascending: true }).limit(5),
   ])
   const deferredUntil = new Map<string, number>()
   for (const row of ((deferred as any)?.data || [])) {
@@ -79,6 +82,11 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
       sub: later ? `You said later. Gogo asks again at ${back}.` : a.description || 'Gogo stopped before a consequential action.', live: GOGO_STATE_LINE.approval,
       href: '/dashboard/agent?section=approvals', action: 'Review', at: a.created_at || null,
     }
+  })
+  for (const c of ((clashes as any)?.data || [])) need.push({
+    id: `cc-${c.id}`, tab: 'need', state: 'thinking', tag: 'Calendar clash', title: String(c.title || 'Calendar clash').slice(0, 160),
+    sub: String(c.summary || 'Two things overlap on your calendar.').slice(0, 300), live: 'Found on your calendar',
+    href: '/dashboard/calendar', action: 'Open calendar', at: c.updated_at || null,
   })
   // Several stops on the same site are one thing to do: one row with a count.
   const handoffRows = (handoffs || []).filter(h => !approvalRows.some(a => String(a.run_id) === h.id))
