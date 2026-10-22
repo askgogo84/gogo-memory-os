@@ -23,6 +23,15 @@ function fmtWhen(iso:string|null|undefined,timezone:string){
   try{return new Intl.DateTimeFormat('en-IN',{timeZone:timezone||'Asia/Kolkata',weekday:'short',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(iso))}catch{return ''}
 }
 
+// Duet reviewers' worry: a polished brief can silently drop the email that mattered. Every surfaced item links to
+// its source so the person can check it in one tap. Only ids Gogo stored itself; never a link taken from email text.
+export function openLoopSourceLink(loop:{source_type?:string|null;source_id?:string|null}):string{
+  const type=String(loop?.source_type||''),id=String(loop?.source_id||'').trim()
+  if((type==='gmail_thread'||type==='gmail_service_notice')&&/^[A-Za-z0-9_-]{6,64}$/.test(id))return `Open email: https://mail.google.com/mail/u/0/#all/${id}`
+  if(type==='calendar_conflict')return 'Open calendar: https://app.askgogo.in/dashboard/calendar'
+  return ''
+}
+
 type PulseItem={key:string;score:number;line:string;kind:string;topic?:AlertTopic|null}
 
 function usefulOpenLoopTitle(value:unknown){
@@ -128,7 +137,7 @@ async function buildPulse(telegramId:string,timezone:string,prefs:AlertPreferenc
     fetchPulseIdeas(telegramId),
     supabaseAdmin.from('agent_runs').select('id,status,title,summary,updated_at,error,metadata_json').eq('telegram_id',telegramId).in('status',['waiting_approval','paused','outcome_unknown','failed']).gte('updated_at',since48).order('updated_at',{ascending:false}).limit(6),
     supabaseAdmin.from('life_events').select('id,event_type,title,start_at,location,lifecycle_state,next_action_at').eq('telegram_id',telegramId).gte('start_at',nowIso).lte('start_at',future72).order('start_at',{ascending:true}).limit(5),
-    supabaseAdmin.from('agent_open_loops').select('id,kind,title,summary,priority,due_at,next_check_at,proactive_backoff_until,source_type').eq('telegram_id',telegramId).eq('status','active').gte('priority',0.85).not('source_type','in','(approval,agent_run,life_event_action)').or(`next_check_at.is.null,next_check_at.lte.${nowIso}`).or(`proactive_backoff_until.is.null,proactive_backoff_until.lte.${nowIso}`).order('priority',{ascending:false}).limit(8),
+    supabaseAdmin.from('agent_open_loops').select('id,kind,title,summary,priority,due_at,next_check_at,proactive_backoff_until,source_type,source_id').eq('telegram_id',telegramId).eq('status','active').gte('priority',0.85).not('source_type','in','(approval,agent_run,life_event_action)').or(`next_check_at.is.null,next_check_at.lte.${nowIso}`).or(`proactive_backoff_until.is.null,proactive_backoff_until.lte.${nowIso}`).order('priority',{ascending:false}).limit(8),
   ])
   const approvals=approvalRes.data||[]
   const runs=runsRes.data||[]
@@ -169,7 +178,8 @@ async function buildPulse(telegramId:string,timezone:string,prefs:AlertPreferenc
     if(!title)continue
     const badge=loop.kind==='followup'?'📨':loop.kind==='waiting_on'?'⏳':loop.kind==='approval'?'🛡️':loop.kind==='life_event'?'✈️':'•'
     const action=clean(loop.summary,160)
-    items.push({key:`open_loop:${loop.id}`,score,line:`${badge} ${title}${action&&action.toLowerCase()!==title.toLowerCase()?` — ${action}`:''}`,kind:'open_loop',topic:topicForPulse('open_loop',loop)})
+    const source=openLoopSourceLink(loop)
+    items.push({key:`open_loop:${loop.id}`,score,line:`${badge} ${title}${action&&action.toLowerCase()!==title.toLowerCase()?` — ${action}`:''}${source?`\n   ${source}`:''}`,kind:'open_loop',topic:topicForPulse('open_loop',loop)})
   }
   for(const e of events||[]){
     const hours=(new Date(e.start_at).getTime()-Date.now())/3600_000
