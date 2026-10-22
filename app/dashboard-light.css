@@ -67,6 +67,7 @@
 .dashboard-root[data-theme='light'] .hover\:border-\[\#4cd0bd\]:hover{border-color:#0f6f64}
 .dashboard-root[data-theme='light'] .hover\:text-\[\#2FB8A6\]:hover{color:#0f6f64}
 .dashboard-root[data-theme='light'] .hover\:text-\[\#2fb8a6\]:hover{color:#0f6f64}
+.dashboard-root[data-theme='light'] .hover\:text-\[\#77d2c4\]:hover{color:#0f6f64}
 .dashboard-root[data-theme='light'] .hover\:text-\[\#8be6d8\]:hover{color:#0f6f64}
 .dashboard-root[data-theme='light'] .hover\:text-\[\#f2efea\]:hover{color:#16130f}
 @media (width >= 64rem){.dashboard-root[data-theme='light'] .lg\:border-\[\#1f1f1f\]{border-color:#e3d9cb}}

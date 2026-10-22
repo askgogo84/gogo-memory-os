@@ -46,7 +46,7 @@ assert.match(home, /const nowCount=sections\.now\.length\+serviceNotices\.total/
 assert.doesNotMatch(home+feed, /pausedRunsRes|actionablePaused/)
 
 // 5. Cancelled reminders are not part of today.
-assert.match(home, /filter\(\(r:any\)=>r\.status!=='cancelled'&&r\.delivery_state!=='cancelled'\)/)
+assert.match(read('lib/dashboard/home-sections.ts'), /const live = \(r: HomeReminder\) => r\.status !== 'cancelled' && r\.delivery_state !== 'cancelled'/)
 
 // 6. Activity never shows a raw error code as the task line, and summaries read as clock times.
 const activity = read('app/dashboard/(app)/activity/page.tsx')

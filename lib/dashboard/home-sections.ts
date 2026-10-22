@@ -8,6 +8,8 @@ export type HomeLine = { id: string; when: string; title: string; href: string }
 export type HomeSections = {
   now: FeedItem[]
   handling: FeedItem[]
+  /** Exact number of live tasks and watches (the feed shows at most 12 watch rows). */
+  handlingTotal: number
   comingUp: HomeLine[]
   canWait: FeedItem[]
   canWaitLater: HomeLine[]
@@ -52,7 +54,8 @@ export function buildHomeSections(input: { feed: TaskFeed; today: HomeReminder[]
     .slice(0, 5)
     .map(r => ({ id: `rl-${r.id}`, when: weekdayLabel(r.remind_at, tz), title: r.message || 'Reminder', href: '/dashboard/today' }))
   const doneToday = input.feed.recent.filter(i => (i.tag === 'Finished' || i.tag === 'Completed by you') && i.at && dayKey(new Date(i.at), tz) === today)
-  return { now: rankNow(urgent), handling, comingUp, canWait: [...tidy, ...passed], canWaitLater, doneToday }
+  const handlingTotal = Math.max(handling.length, Number(input.feed.radarCount || 0) - passed.length)
+  return { now: rankNow(urgent), handling, handlingTotal, comingUp, canWait: [...tidy, ...passed], canWaitLater, doneToday }
 }
 
 /** The one-line summary under the greeting, from the same counts the sections show. */
@@ -60,7 +63,7 @@ export function homeSummary(s: HomeSections, extraNeeds = 0): string {
   const need = s.now.length + extraNeeds
   const parts: string[] = []
   if (need) parts.push(`${need} thing${need === 1 ? ' needs' : 's need'} you.`)
-  if (s.handling.length) parts.push(`Gogo is handling ${s.handling.length}.`)
+  if (s.handlingTotal) parts.push(`Gogo is handling ${s.handlingTotal}.`)
   if (s.comingUp[0]) parts.push(`Next: ${s.comingUp[0].title} at ${s.comingUp[0].when}.`)
   return parts.join(' ') || 'Your day is clear. Tell Gogo what matters and it will carry the next safe steps.'
 }

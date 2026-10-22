@@ -84,9 +84,9 @@ export default async function HomePage(){
           {(serviceNotices.total>0||serviceNotices.unavailable)&&<div className="final-dark-panel px-4"><ServiceNoticeCards notices={serviceNotices.items} unavailable={serviceNotices.unavailable}/></div>}
         </section>
         <section aria-labelledby="home-handling" className="flex flex-col gap-2">
-          <div className="flex items-baseline justify-between"><h2 id="home-handling" className="final-dark-eyebrow">Gogo is handling</h2><span className="text-[14px] text-[#a8a8a4]">{sections.handling.length}</span></div>
+          <div className="flex items-baseline justify-between"><h2 id="home-handling" className="final-dark-eyebrow">Gogo is handling</h2><span className="text-[14px] text-[#a8a8a4]">{sections.handlingTotal}</span></div>
           <FeedItems items={sections.handling.slice(0,6)} empty="Nothing is running in the background. Ask Gogo to watch a price, a fare or a seat."/>
-          {sections.handling.length>6&&<Link href="/dashboard/tasks?tab=radar" className="self-start text-[14px] font-medium text-[#77d2c4] hover:underline">All {sections.handling.length} in Tasks →</Link>}
+          {sections.handlingTotal>6&&<Link href="/dashboard/tasks?tab=radar" className="self-start text-[14px] font-medium text-[#77d2c4] hover:underline">All {sections.handlingTotal} in Tasks →</Link>}
         </section>
       </div>
       <div className="flex flex-col gap-8">
