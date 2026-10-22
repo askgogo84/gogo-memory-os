@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ApprovalCard } from '@/components/dashboard/approval-card'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import {ServiceNoticeCards} from '@/components/dashboard/service-notice-cards'
@@ -65,10 +66,11 @@ export default function AgentDashboardPage(){
     finally{setBusy('')}
   }
 
-  async function resolveApproval(a:any,decision:'approve'|'reject'){
+  async function resolveApproval(a:any,decision:'approve'|'reject'|'defer'){
     setBusy(`approval:${a.id}`);setError('')
     try{
       await api(`/api/agent/approvals/${encodeURIComponent(a.id)}`,{method:'POST',body:JSON.stringify({decision})})
+      if(decision==='defer'){setResult(`Okay. Nothing was done. Gogo will ask again later: ${a.title}`);await load(true);return}
       if(decision==='approve'){
         const r=await api(`/api/agent/runs/${encodeURIComponent(a.runId)}/execute`,{method:'POST',body:'{}'})
         setResult(r.text||`Approved · ${r.status}`)
@@ -180,7 +182,7 @@ export default function AgentDashboardPage(){
       {(!section||section==='approvals')&&<Panel title="Needs you" eyebrow="You stay in control" badge={String(counts.needsYou)}>
         <ServiceNoticeCards notices={snapshot?.serviceNotices||[]}/>
         {!counts.needsYou&&!error&&<Empty text="Nothing needs your input right now."/>}
-        {snapshot?.approvals?.map((a:any)=><Card key={a.id}><div className="flex items-start justify-between gap-3"><div><b>{a.title}</b><p>{a.description}</p><span className="mt-2 inline-block rounded-full bg-amber-100 px-2 py-1 text-[12px] font-bold uppercase text-amber-700">{a.risk} risk</span></div></div><div className="mt-3 flex gap-2"><button onClick={()=>resolveApproval(a,'reject')} className="btn-secondary">Reject</button><button onClick={()=>resolveApproval(a,'approve')} className="btn-primary">Approve & run</button></div></Card>)}
+        {snapshot?.approvals?.map((a:any)=><ApprovalCard key={a.id} approval={a} busy={busy===`approval:${a.id}`} onDecide={d=>resolveApproval(a,d)}/>)}
         {handoffGroups.map(([latest,...earlier])=><Card key={latest.id}><b>{latest.title}</b><p>{latest.summary}</p><Link href={`/dashboard/activity/${latest.id}/browser`} className="btn-primary mt-3 inline-flex">Take control</Link>{earlier.length>0&&<details className="mt-3"><summary className="cursor-pointer text-[14px]">{earlier.length} earlier stop{earlier.length===1?'':'s'} on this site</summary>{earlier.map(h=><div key={h.id} className="mt-2 border-t border-[#262626] pt-2"><p>{h.summary}</p><Link href={`/dashboard/activity/${h.id}/browser`} className="text-[14px] underline">Open</Link></div>)}</details>}</Card>)}
       </Panel>}
       {(!section||section==='background')&&<Panel title="Background Gogo" eyebrow="Keeps watching" badge={String(snapshot?.watchers?.length||0)}>{!snapshot?.watchers?.length?<Empty text="No active watches. Ask Gogo to watch a price, deadline or change."/>:snapshot.watchers.map((w:any)=><Card key={w.id}><b>{w.title}</b><p>{w.type.replaceAll('_',' ')} · every {w.cadenceMinutes} min</p><p>Next: {w.nextCheckAt?new Date(w.nextCheckAt).toLocaleString():'—'}</p><button onClick={()=>stopWatcher(w.id)} className="mt-3 btn-secondary">Stop</button></Card>)}</Panel>}

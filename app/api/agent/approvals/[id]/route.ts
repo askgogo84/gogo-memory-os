@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from '@/lib/agent/session'
 import { guardApprovalFreshness } from '@/lib/agent/approval-guard'
+import { parseDeferHours } from '@/lib/agent/approval-card'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,7 +16,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
 
   const body = await request.json().catch(() => null) as any
   const decision = String(body?.decision || '').trim()
-  if (decision !== 'approve' && decision !== 'reject') {
+  if (decision !== 'approve' && decision !== 'reject' && decision !== 'defer') {
     return NextResponse.json({ error: 'invalid_decision' }, { status: 400 })
   }
 
@@ -41,6 +42,21 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return NextResponse.json({ error: 'resolve_failed' }, { status: 500 })
   }
   if (fresh.expired) return NextResponse.json({ error: 'approval_expired', message: fresh.text }, { status: 409 })
+
+  // Approval card v2 "Later": nothing is approved, rejected or executed. The card stays pending (and still expires
+  // on its own clock); Gogo only records when to bring it back.
+  if (decision === 'defer') {
+    const until = new Date(Date.now() + parseDeferHours(body?.hours) * 3_600_000).toISOString()
+    const { error: deferError } = await supabaseAdmin.from('agent_activity').insert({
+      telegram_id: session.telegramId, run_id: pending.run_id, event_type: 'approval_deferred',
+      message: `Later: ${pending.title}`, metadata_json: { approval_id: pending.id, until, surface: session.surface },
+    })
+    if (deferError) {
+      console.error('AGENT_APPROVAL_DEFER_FAILED:', deferError)
+      return NextResponse.json({ error: 'defer_failed' }, { status: 500 })
+    }
+    return NextResponse.json({ ok: true, deferredUntil: until, status: 'pending' })
+  }
 
   const status = decision === 'approve' ? 'approved' : 'rejected'
   const resolvedAt = new Date().toISOString()

@@ -6,7 +6,7 @@ import {browserAuthSummary} from './browser-auth-summary'
  * so it leaves Needs you. The run itself is untouched and still shows in Activity. */
 export const HANDOFF_MAX_AGE_HOURS=72
 
-export type PendingBrowserHandoff={id:string;title:string;summary:string;updatedAt:string|null;repeats:number}
+export type PendingBrowserHandoff={id:string;title:string;summary:string;updatedAt:string|null;repeats:number;cloud?:boolean}
 
 // Read the actual paused browser handoffs separately from recent activity.
 // A long conversation must not push an unresolved Take control task out of
@@ -59,7 +59,7 @@ export async function getPendingBrowserHandoffs(telegramId:string,limit=20,now=D
     const key=[title.trim().toLowerCase(),summary.trim().toLowerCase(),host].join('|')
     const seen=byStep.get(key)
     if(seen){seen.repeats+=1;continue}
-    const card={id:String(row.id),title,summary,updatedAt:row.updated_at||null,repeats:0}
+    const card={id:String(row.id),title,summary,updatedAt:row.updated_at||null,repeats:0,cloud:Boolean(handoff.takeoverUrl)}
     byStep.set(key,card)
     found.push(card)
   }
