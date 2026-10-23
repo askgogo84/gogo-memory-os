@@ -374,6 +374,15 @@ async function createReminder(
   }
 
   const { data:createdReminder,error } = await supabaseAdmin.from('reminders').insert(payload).select('id').single()
+  // 23 Oct live: "Remind me to check EK500 landing at 2:25 am" twice → "services temporarily unavailable". The
+  // prevent_duplicate_pending_reminder trigger (reminder-insert-idempotency-20260915.sql) skips an identical
+  // pending reminder by returning NULL, so the insert returns 0 rows (PGRST116). That is "already set", not a failure.
+  if (error && String((error as any).code || '') === 'PGRST116') {
+    const { data: existing } = await supabaseAdmin.from('reminders').select('id').eq('telegram_id', telegramId).eq('message', message).eq('remind_at', remindAt).eq('sent', false).limit(1).maybeSingle()
+    if (existing?.id) await rememberTypedObjects(telegramId,'reminders',[{id:String(existing.id),title:message}]).catch(()=>{})
+    console.log('REMINDER DUPLICATE SKIPPED BY DB:', { telegramId, existingId: existing?.id || null })
+    return
+  }
   if (error) {
     console.error('REMINDER INSERT FAILED:', error, payload)
     throw new Error(`Reminder insert failed: ${error.message}`)
