@@ -52,3 +52,19 @@ assert.ok(src.includes("message: e.text, topic: 'travel' })"), 'alerts go throug
 assert.match(readFileSync('lib/agent/watchers.ts', 'utf8'), /watcher\.condition_json\?\.adHocFlight\s*\?\s*await import\('\.\/flight-track'\)/)
 assert.match(readFileSync('lib/bot/process-message.ts', 'utf8'), /trackAsk\.createFlightTrackWatch\(resolvedUser\.telegramId, live\)/)
 console.log('Flight tracking: live feed status, one watch per flight until landing, ICAO search fallback')
+
+// Follow-up "Alert me once it lands" binds to the flight just discussed; never a reminder.
+assert.equal(t.isFlightFollowUp('Alert me once it lands'), true)
+assert.equal(t.isFlightFollowUp('Notify me when it takes off'), true)
+assert.equal(t.isFlightFollowUp('track it'), true)
+assert.equal(t.isFlightFollowUp('Alert me once VS 354 lands'), false, 'a named flight is a track request, not a follow-up')
+assert.equal(t.isFlightFollowUp('Remind me to call Divya at 5'), false)
+const nowMs = Date.parse('2026-10-23T03:10:00Z')
+assert.equal(t.flightCodeFromHistory([
+  { content: 'Virgin Atlantic VS354 Status: scheduled…', created_at: '2026-10-23T03:08:00Z' },
+  { content: 'Track Virgin Atlantic VS 354', created_at: '2026-10-23T03:08:00Z' },
+], nowMs), 'VS354')
+assert.equal(t.flightCodeFromHistory([{ content: 'Track EK 501', created_at: '2026-10-22T10:00:00Z' }], nowMs), '', 'an old flight (over 6 h) is not "it"')
+const pm = readFileSync('lib/bot/process-message.ts', 'utf8')
+assert.ok(pm.indexOf("handledBy: 'flight-track-follow-up'") > 0 && pm.indexOf("handledBy: 'flight-track-follow-up'") < pm.indexOf('const timingProblem='), 'follow-up is checked before reminders and chat')
+console.log('Flight follow-up: "alert me once it lands" tracks the flight from context')
