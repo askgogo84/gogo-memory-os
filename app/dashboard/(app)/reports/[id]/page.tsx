@@ -7,6 +7,7 @@ import { agentRunRefOf, artifactSourceUrls, refreshCheck, versionSummaries } fro
 import { ReportEditor } from '@/components/dashboard/report-editor'
 import { canRole, listMyWorkspaces } from '@/lib/workspaces/access'
 import { ShareToWorkspace } from '../../business/share-to-workspace'
+import { MakeDocViewer } from '@/components/dashboard/make-doc-viewer'
 
 // SecondBrain pilot: workspaces where I may share. Empty when workspaces are not enabled yet.
 async function shareTargets(telegramId:string){
@@ -37,6 +38,17 @@ export default async function ReportPage({params}:{params:Promise<{id:string}>})
     .select('title,subtitle,content_json,source_refs,updated_at').eq('id',id).eq('telegram_id',telegramId).maybeSingle()
   if(error)throw new Error('report_read_unavailable')
   if(!report)notFound()
+  // Make: a deck or a sheet has its own viewer and downloads.
+  const made:any=(report.content_json as any)?.doc
+  if(made&&(made.format==='deck'||made.format==='sheet')){
+    const targets=await shareTargets(telegramId)
+    const sources=(Array.isArray((report.content_json as any)?.sources)?(report.content_json as any).sources:[]).map(publicResearchUrl).filter(Boolean).slice(0,8)
+    return <div className="mx-auto max-w-4xl px-0 pb-10">
+      <Link href="/dashboard/make" className="inline-flex min-h-11 items-center text-[16px] text-[#2FB8A6]">← Make</Link>
+      <ShareToWorkspace artifactId={id} workspaces={targets}/>
+      <MakeDocViewer id={id} doc={made} request={String((report.content_json as any)?.request||'')} sources={sources} updatedAt={report.updated_at?String(report.updated_at):null}/>
+    </div>
+  }
   const runRef=agentRunRefOf(report.source_refs)
   let run:any=null
   if(runRef){

@@ -39,6 +39,12 @@ try{
   await assert.rejects(()=>executeTaskStep(actor,{...step,instruction:'List tasks and create a new task'}),/task_action_ambiguous/)
   assert.equal(writes,0,'mixed instructions cannot silently mutate')
   await assert.rejects(()=>executeTaskStep({...actor,whatsappId:''},step),/task_owner_missing/)
+  // 24 Oct: planner-internal steps are never saved as tasks the person did not ask for.
+  const internal=await executeTaskStep(actor,{tool:'tasks',title:'Prefs',instruction:'Create task: Pack sunscreen'},'Plan a weekend in Goa')
+  assert.equal((internal.output as any).skipped,'task_not_requested')
+  const odd=await executeTaskStep(actor,{tool:'tasks',title:'Prefs',instruction:'Create task: Retrieve saved preferences without revealing sensitive identifiers'},'Plan Goa and add a task to book cabs')
+  assert.equal((odd.output as any).skipped,'task_text_not_user_facing')
+  assert.equal(writes,0,'skipped tasks are never written')
 }finally{globalThis.fetch=originalFetch}
 const query='Based on everything you already know about me, would 25 October 2026 around 8:30 PM be a good time for dinner in Bengaluru? Tell me what existing context matters.'
 assert.equal(planningCalendarInstruction(query),'Show my calendar on 2026-10-25')
