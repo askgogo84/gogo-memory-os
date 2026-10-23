@@ -5,7 +5,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { waLink } from '@/lib/product-urls'
 
 const WA_DASHBOARD_LINK = waLink('dashboard')
-const DASHBOARD_HOME = '/dashboard/home'
+// Approved 22 Oct Duet-parity mock: Chat (the one thread with the brief on top) is where you land.
+const DASHBOARD_HOME = '/dashboard/chat'
 const SESSION_CHECK_TIMEOUT_MS = 8000
 
 function postAuthTarget() {

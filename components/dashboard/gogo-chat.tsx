@@ -111,7 +111,9 @@ function RailRow({title,meta,tone='muted',href}:{title:string;meta:string;tone?:
   return href?<Link href={href} className="block rounded-lg hover:bg-[#151515]">{body}</Link>:body
 }
 
-export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:string;userName?:string}){
+export type ChatBrief={title:string;summary:string;items:{text:string;tone:'amber'|'teal'|'muted';href:string}[]}
+
+export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initialDrink?:string;userName?:string;brief?:ChatBrief|null}){
   const searchParams=useSearchParams()
   const initialPrompt=searchParams.get('prompt')||''
   // Back from connecting a site: send the question that needed it, once.
@@ -146,7 +148,14 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
   const refreshRef=useRef<((initial?:boolean)=>Promise<void>)|null>(null)
   useEffect(()=>{
     fetch('/api/agent/threads',{cache:'no-store',credentials:'same-origin'}).then(r=>r.ok?r.json():null)
-      .then(d=>{if(Array.isArray(d?.threads))setChannels(d.threads.map((t:any)=>({id:String(t.id),title:String(t.title||'Channel')})))}).catch(()=>{})
+      .then(d=>{if(Array.isArray(d?.threads)){
+        const list=d.threads.map((t:any)=>({id:String(t.id),title:String(t.title||'Channel')}))
+        setChannels(list)
+        // A channel picked in the side rail (?channel=<id>) opens here.
+        const wanted=searchParams.get('channel')||''
+        if(wanted&&list.some((c:ChatChannel)=>c.id===wanted))pickChannel(wanted)
+      }}).catch(()=>{})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   },[])
   function pickChannel(id:string){
     if(id===channelRef.current||sendingRef.current)return
@@ -398,10 +407,11 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
           </div>
           {archived.length>0&&<button type="button" onClick={()=>setHistoryOpen(v=>!v)} className="min-h-10 shrink-0 rounded-full border border-[#2f2f2f] px-4 text-[14px] text-[#d8d8d3] hover:text-[#f2efea] lg:min-h-11 lg:px-5 lg:text-[16px]">{historyOpen?'Current':'History'}</button>}
         </div>
-        <div className="mt-2 lg:mt-3"><ChatChannels channels={channels} active={channel} onPick={pickChannel} onCreate={createChannel} disabled={sending}/></div>
+        <div className="mt-2 lg:mt-3"><ChatChannels channels={channels} active={channel} onPick={pickChannel} onCreate={createChannel} disabled={sending} startAdding={searchParams.get('newChannel')==='1'}/></div>
       </header>
 
       <div ref={messageScrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 pt-16 sm:px-6 lg:px-10 lg:py-6">
+        {brief&&!channel&&!historyOpen&&<ChatBriefCard brief={brief}/>}
         {loading&&<div className="py-16 text-center text-[16px] text-[#a8a8a4]">Bringing your conversation in…</div>}
         {!loading&&visible.length===0&&<div className="mx-auto max-w-[980px] py-8 text-center lg:py-14">
           <div className="mx-auto w-fit"><Avatar state={gogoState} size={104}/></div>
@@ -514,4 +524,21 @@ export function GogoChat({initialDrink='coffee',userName=''}:{initialDrink?:stri
       </section>
     </aside>
   </div>
+}
+
+/** The morning brief at the top of the one thread (approved 22 Oct Duet-parity mock, screen 1). */
+function ChatBriefCard({brief}:{brief:ChatBrief}){
+  const dot={amber:'bg-[#ef7a27]',teal:'bg-[#2fb8a6]',muted:'bg-[#8a8a86]'}
+  return <section aria-label={brief.title} className="mx-auto mb-5 flex max-w-[980px] flex-col gap-2.5 rounded-[18px] border border-[#242424] bg-[#141414] p-4">
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-[12px] font-semibold uppercase tracking-[.04em] text-[#ef7a27]">{brief.title}</span>
+      {brief.items.length>0&&<span className="text-[12px] text-[#a8a8a4]">{brief.items.length} thing{brief.items.length===1?'':'s'}</span>}
+    </div>
+    <p className="text-[15px] leading-[1.45] text-[#f2efea]">{brief.summary}</p>
+    {brief.items.length>0&&<ul className="flex flex-col gap-2">
+      {brief.items.map((it,i)=><li key={i}><Link href={it.href} className="flex items-start gap-2.5 text-[14px] leading-[1.4] text-[#e0e0dc] hover:text-[#f2efea]">
+        <span className={`mt-[6px] h-2 w-2 shrink-0 rounded-full ${dot[it.tone]}`} aria-hidden="true"/><span className="min-w-0">{it.text}</span>
+      </Link></li>)}
+    </ul>}
+  </section>
 }

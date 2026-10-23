@@ -44,7 +44,7 @@ for (const k of ['gg-breath', 'gg-blink', 'gg-ring', 'gg-plane', 'gg-check']) as
 // Navigation: four main places (Make added 22 Oct, Duet parity) plus Settings; old sections live under More.
 const nav = readFileSync('components/dashboard/dashboard-nav.tsx', 'utf8')
 const main = nav.slice(nav.indexOf('export const NAV'), nav.indexOf('export const MORE'))
-assert.equal((main.match(/label:'/g) || []).length, 4, 'Home, Tasks, Make, Memory')
+assert.equal((main.match(/label:'/g) || []).length, 3, 'Chat, Tasks, Make (approved 22 Oct Duet-parity mock)')
 assert.match(nav, /export const MORE/)
 
 // The old meditating figure is not used for status on the new shell.

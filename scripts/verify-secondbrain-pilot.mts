@@ -137,7 +137,7 @@ for (const file of workspaceFiles) {
 const nav = readFileSync('components/dashboard/dashboard-nav.tsx', 'utf8')
 const main = nav.slice(nav.indexOf('export const NAV'), nav.indexOf('export const MORE'))
 const more = nav.slice(nav.indexOf('export const MORE'), nav.indexOf('export const SETTINGS'))
-assert.equal((main.match(/label:'/g) || []).length, 4)
+assert.equal((main.match(/label:'/g) || []).length, 3)
 assert.match(more, /href:'\/dashboard\/business', label:'SecondBrain'/)
 
 // 8. The page is honest: no invented metrics, set-up state when the tables are missing.
