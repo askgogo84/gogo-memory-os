@@ -31,4 +31,6 @@ assert.match(src, /if \(r\?\.error\) throw new Error\('briefing_intelligence_una
 assert.match(src, /\.eq\('status', 'completed'\)\.is\('error', null\)\.gte\('updated_at', since\)/, 'done = completed without error in the last 24 h')
 const mb = readFileSync('lib/bot/handlers/morning-briefing.ts', 'utf8')
 assert.ok(mb.indexOf('loadIntelligence(telegramId)') < mb.indexOf("blocks.push(`🌤️ *Weather*"), 'intelligence leads the brief')
+// agent_watchers has no title column (23 Oct live: selecting it emptied Home's 'Gogo is handling').
+assert.doesNotMatch(src, /from\('agent_watchers'\)\.select\('[^']*\btitle\b/)
 console.log('Morning intelligence: needs you, meeting prep, handling, done, can wait — saved state only, no empty claims')

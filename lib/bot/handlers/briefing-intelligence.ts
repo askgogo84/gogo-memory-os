@@ -42,7 +42,7 @@ export async function loadIntelligence(telegramId: number | string, now = new Da
     supabaseAdmin.from('agent_approvals').select('title').eq('telegram_id', tg).eq('status', 'pending').limit(10),
     supabaseAdmin.from('agent_open_loops').select('title,summary,priority,source_type,due_at').eq('telegram_id', tg).eq('status', 'active').order('priority', { ascending: false }).limit(30),
     supabaseAdmin.from('agent_runs').select('title').eq('telegram_id', tg).in('status', ['running', 'queued']).limit(8),
-    supabaseAdmin.from('agent_watchers').select('title,condition_json').eq('telegram_id', tg).eq('active', true).neq('type', 'goal_review').limit(10),
+    supabaseAdmin.from('agent_watchers').select('condition_json').eq('telegram_id', tg).eq('active', true).neq('type', 'goal_review').limit(10),
     supabaseAdmin.from('agent_runs').select('title,summary').eq('telegram_id', tg).eq('status', 'completed').is('error', null).gte('updated_at', since).neq('type', 'secure_browser').order('updated_at', { ascending: false }).limit(8),
   ])
   for (const r of [approvals, loops, running, watchers, done] as any[]) if (r?.error) throw new Error('briefing_intelligence_unavailable')
