@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getSession } from '@/lib/dashboard/session'
 import { artifactSections } from '@/lib/agent/artifact-presentation'
+import { PlainMarkdown } from '@/components/dashboard/plain-markdown'
 import { getSharedArtifact, WorkspaceError } from '@/lib/workspaces/access'
 
 export const dynamic = 'force-dynamic'
@@ -22,7 +23,7 @@ export default async function SharedArtifactPage({ params }: { params: Promise<{
     <p className="mt-1 text-[14px] text-[#9A9A9A]">Shared by {view.sharedByYou ? 'you' : view.sharedByName} · read-only</p>
     {sections.length ? sections.map((section, index) => <section key={index} className="mt-5 rounded-xl border border-[#2A2A2A] p-5">
       <h2 className="text-lg font-semibold text-[#F2EFEA]">{section.title}</h2>
-      <p className="mt-3 whitespace-pre-wrap break-words text-[16px] leading-6 text-[#F2EFEA]">{section.text}</p>
+      <PlainMarkdown text={section.text} className="mt-3 text-[16px] leading-6 text-[#F2EFEA]"/>
     </section>) : <p className="mt-6 text-[#9A9A9A]">This report has no saved sections.</p>}
   </div>
 }

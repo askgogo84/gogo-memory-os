@@ -3,6 +3,7 @@
 // Make v2 (Duet parity): the owner edits a saved result in place, refreshes it from its sources, and sees earlier
 // versions. Saving sends only what changed; Gogo's later refreshes keep the sections marked "Edited by you".
 import { useRouter } from 'next/navigation'
+import { PlainMarkdown } from './plain-markdown'
 import { useState } from 'react'
 
 export type ReportSection = { title: string; text: string; edited: boolean }
@@ -116,7 +117,7 @@ export function ReportEditor({ id, title, notes, sections, refresh, versions, so
       {editing
         ? <textarea value={draft[index]} onChange={e => setDraft(d => d.map((t, i) => i === index ? e.target.value : t))} maxLength={20000} rows={8}
             aria-label={`Edit ${section.title}`} className="mt-3 w-full rounded-xl border border-[#2A2A2A] bg-[#111111] p-3 text-[16px] leading-6 text-[#F2EFEA]"/>
-        : <p className="mt-3 whitespace-pre-wrap break-words text-[16px] leading-6 text-[#F2EFEA]">{section.text}</p>}
+        : <PlainMarkdown text={section.text} className="mt-3 text-[16px] leading-6 text-[#F2EFEA]"/>}
     </section>) : <p className="mt-6 text-[#9A9A9A]">No completed source results were saved in this report.</p>}
 
     <section className="mt-6 rounded-xl border border-[#2A2A2A] p-5">
