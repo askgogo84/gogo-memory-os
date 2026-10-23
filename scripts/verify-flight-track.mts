@@ -68,3 +68,11 @@ assert.equal(t.flightCodeFromHistory([{ content: 'Track EK 501', created_at: '20
 const pm = readFileSync('lib/bot/process-message.ts', 'utf8')
 assert.ok(pm.indexOf("handledBy: 'flight-track-follow-up'") > 0 && pm.indexOf("handledBy: 'flight-track-follow-up'") < pm.indexOf('const timingProblem='), 'follow-up is checked before reminders and chat')
 console.log('Flight follow-up: "alert me once it lands" tracks the flight from context')
+
+// Arrival estimate: landing time > live prediction > revisedTime; a too-early estimate after a late departure is hidden.
+const late = { departure: { scheduledTime: { utc: '2026-10-22 18:50Z' }, revisedTime: { utc: '2026-10-22 19:42Z' } },
+  arrival: { scheduledTime: { utc: '2026-10-23 04:05Z', local: '2026-10-23 09:35+05:30' }, revisedTime: { utc: '2026-10-23 03:20Z', local: '2026-10-23 08:50+05:30' } } }
+assert.equal(t.arrivalEstimateLocal(late), undefined, '08:50 after a 52-min-late departure is not shown (23 Oct live)')
+assert.equal(t.arrivalEstimateLocal({ ...late, arrival: { ...late.arrival, predictedTime: { utc: '2026-10-23 04:03Z', local: '2026-10-23 09:33+05:30' } } }), '2026-10-23 09:33+05:30')
+assert.equal(t.arrivalEstimateLocal({ ...late, arrival: { ...late.arrival, runwayTime: { utc: '2026-10-23 04:01Z', local: '2026-10-23 09:31+05:30' } } }), '2026-10-23 09:31+05:30')
+console.log('Arrival estimate: plausible live prediction only')

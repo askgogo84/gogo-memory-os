@@ -60,6 +60,21 @@ export function pickLiveOccurrence(list: Occ[], now: number): Occ | null {
   return recent?.o || next?.o || null
 }
 
+// 23 Oct live: VS354 left 52 min late, yet the reply said "Arrives 08:50 (was 09:35)" while it was still in the air
+// at 09:21. The feed's arrival revisedTime can be stale; a landing time (runway/actual) wins, then the live
+// prediction, then revisedTime — and an estimate earlier than schedule after a late departure is not shown.
+export function arrivalEstimateLocal(o: any): string | undefined {
+  const a = o?.arrival || {}, d = o?.departure || {}
+  const landed = a.runwayTime?.local || a.actualTime?.local
+  if (landed) return landed
+  const est = a.predictedTime || a.revisedTime
+  if (!est?.local) return undefined
+  const depLate = utcOf(d.revisedTime || d.runwayTime) - utcOf(d.scheduledTime)
+  const arrEarly = utcOf(a.scheduledTime) - utcOf(est)
+  if (Number.isFinite(depLate) && Number.isFinite(arrEarly) && depLate >= 15 * MIN && arrEarly > 20 * MIN) return undefined
+  return est.local
+}
+
 export async function lookupLiveFlight(code: string, now = new Date(), tz = 'Asia/Kolkata', fetcher: FlightFetcher = fetchAeroDataBox): Promise<LiveFlight | null> {
   const ymd = (ms: number) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date(ms))
   const days = [...new Set([ymd(now.getTime() - 86_400_000), ymd(now.getTime()), ymd(now.getTime() + 86_400_000)])]
@@ -75,7 +90,7 @@ export async function lookupLiveFlight(code: string, now = new Date(), tz = 'Asi
     flightNo: normalizeFlightNo(String(o.number || code)), airline: o.airline?.name ? String(o.airline.name).slice(0, 60) : undefined,
     from: ap(o.departure?.airport), to: ap(o.arrival?.airport),
     depLocal: o.departure?.scheduledTime?.local, arrLocal: o.arrival?.scheduledTime?.local, depUtc, arrUtc: Number.isFinite(arrMs) ? new Date(arrMs).toISOString() : undefined,
-    depRevisedLocal: o.departure?.revisedTime?.local || o.departure?.runwayTime?.local, arrRevisedLocal: o.arrival?.revisedTime?.local || o.arrival?.predictedTime?.local,
+    depRevisedLocal: o.departure?.runwayTime?.local || o.departure?.revisedTime?.local, arrRevisedLocal: arrivalEstimateLocal(o),
     status,
   }
 }

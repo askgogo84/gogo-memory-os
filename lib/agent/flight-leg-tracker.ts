@@ -79,7 +79,7 @@ export function parseFlightData(json: any, departAt: string): LegStatus | null {
     state, delayMinutes: delay > 0 ? delay : undefined, source: 'flight_data',
     depGate: s(best.departure?.gate), depTerminal: s(best.departure?.terminal),
     arrGate: s(best.arrival?.gate), arrTerminal: s(best.arrival?.terminal), belt: s(best.arrival?.baggageBelt),
-    revisedDeparture: revised, revisedArrival: adbTime(best.arrival?.revisedTime) || adbTime(best.arrival?.predictedTime),
+    revisedDeparture: revised, revisedArrival: adbTime(best.arrival?.predictedTime) || adbTime(best.arrival?.revisedTime),
     actualArrival: adbTime(best.arrival?.runwayTime) || adbTime(best.arrival?.actualTime),
     scheduledArrival: adbTime(best.arrival?.scheduledTime),
   }
