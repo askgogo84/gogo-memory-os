@@ -88,5 +88,11 @@ await check('invented statistics become [ADD NUMBER]; known ones and small count
   assert.deepEqual(out.slides[0].points, ["India's [ADD NUMBER] users need recall", '500M WhatsApp users', '3 simple steps', 'Launched in 2026'])
 })
 
+await check('amount is quantity x unit price, computed in code', () => {
+  const s = D.validSheet({ title: 'Goa', columns: ['Item', 'Basis', 'Qty', 'Unit price', 'Amount'], rows: [['Hotel', '2 rooms x 3 nights', 6, '5,000', 20000], ['Flights', '4 people', 4, 9000, 36000]], totalColumn: 4 })!
+  assert.equal(s.rows[0][4], 30000)
+  assert.equal(D.sheetTotal(s), 66000)
+})
+
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('verify-make-docs: all passed')
