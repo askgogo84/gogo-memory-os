@@ -326,9 +326,21 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     // three reads) before it is reported; one that needs the person's input or sign-in is not retried.
     task.metadata_json.providers = task.metadata_json.providers.map(row => row.status === 'failed' && (row.attempts || 1) < MAX_STORE_ATTEMPTS
       ? {provider: row.provider, status: 'pending' as const, attempts: (row.attempts || 1) + 1, ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})} : row)
+    task.metadata_json.providers = withStoreFallback(task.metadata_json) as any
     await saveProgress(owner, task)
     return task
   })
+}
+
+/** 23 Oct (owner): "If Amazon is not accessible, try the others." A single-store read whose store blocked the
+ *  browser (not a sign-in or location ask) also checks the other electronics stores, once. */
+export function withStoreFallback(meta: any) {
+  const rows = Array.isArray(meta?.providers) ? meta.providers : []
+  const only = rows.length === 1 ? rows[0] : null
+  if (!only || meta.storeFallback || only.status !== 'blocked' || only.needsInput || !PARALLEL_COMPARISON_PROVIDERS.has(only.provider)) return rows
+  meta.storeFallback = only.provider
+  const others = ['flipkart', 'croma', 'reliance', 'amazon'].filter(p => p !== only.provider)
+  return [...rows, ...others.map(provider => ({provider, status: 'pending', attempts: 1}))]
 }
 
 /** Run every store that can start now, at the same time, then send the result if it is finished. */

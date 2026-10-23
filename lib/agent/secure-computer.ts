@@ -1632,9 +1632,12 @@ function detectProviderAccessBlock(page:any){
   if(page?.pageLoad?.state==='security_check')return 'The provider security check has not finished in the cloud browser. Availability and prices remain unverified; this is not an account sign-in request.'
   if(page?.pageLoad?.httpStatus===403)return 'The provider refused access from the cloud browser (HTTP 403). Availability and prices remain unverified.'
   if(page?.pageLoad?.httpStatus===429)return 'The provider limited requests from the cloud browser (HTTP 429). Availability and prices remain unverified. Gogo has stopped retrying.'
+  // 23 Oct live: Amazon answers the cloud browser with "503 - Service Unavailable" on every retry (a bot block, not an
+  // outage); three retries only added minutes. Treated as a provider block so the store is reported at once.
+  if(page?.pageLoad?.httpStatus===503||/^\s*503\b.*service unavailable/i.test(String(page?.title||'')))return 'The provider refused the cloud browser (HTTP 503). Availability and prices remain unverified. Gogo has stopped retrying.'
   if(['http_error','navigation_error','empty'].includes(page?.pageLoad?.state))return 'The page didn’t load in the secure browser.'
   const text=`${page?.title || ''} ${page?.text || ''}`.replace(/\s+/g,' ').toLowerCase()
-  const blocked=/\b(your access to this site has been limited|access denied|access has been denied|request blocked|security policy prevents access|temporarily blocked|unusual traffic|automated requests|bot protection)\b/i.test(text)
+  const blocked=/\b(your access to this site has been limited|access denied|access has been denied|request blocked|security policy prevents access|temporarily blocked|unusual traffic|automated requests|bot protection|automated access to amazon data|enter the characters you see below)\b/i.test(text)
   return blocked ? 'The provider site is limiting automated access, so Gogo cannot verify live availability from this page.' : null
 }
 
