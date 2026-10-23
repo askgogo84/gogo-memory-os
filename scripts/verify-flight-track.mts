@@ -76,3 +76,15 @@ assert.equal(t.arrivalEstimateLocal(late), undefined, '08:50 after a 52-min-late
 assert.equal(t.arrivalEstimateLocal({ ...late, arrival: { ...late.arrival, predictedTime: { utc: '2026-10-23 04:03Z', local: '2026-10-23 09:33+05:30' } } }), '2026-10-23 09:33+05:30')
 assert.equal(t.arrivalEstimateLocal({ ...late, arrival: { ...late.arrival, runwayTime: { utc: '2026-10-23 04:01Z', local: '2026-10-23 09:31+05:30' } } }), '2026-10-23 09:31+05:30')
 console.log('Arrival estimate: plausible live prediction only')
+
+// "Alert as soon as it lands": 2-minute checks around the expected landing; the per-minute cron runs both trackers.
+const eta = Date.parse('2026-10-23T04:03:00Z'), dep = Date.parse('2026-10-22T19:42:00Z')
+assert.equal(t.nextCheckMinutes(eta - 30 * 60_000, dep, { etaArrival: '2026-10-23T04:03:00Z' }), 2)
+assert.equal(t.nextCheckMinutes(eta + 60 * 60_000, dep, { etaArrival: '2026-10-23T04:03:00Z' }), 2)
+assert.equal(t.nextCheckMinutes(eta - 4 * 3600_000, dep, { etaArrival: '2026-10-23T04:03:00Z' }), 20)
+const cron = readFileSync('app/api/cron/autonomous-runs/route.ts', 'utf8')
+assert.match(cron, /processDueFlightTracks\(10\)/); assert.match(cron, /runFlightLegTracker\(\)/)
+const L = await import('../lib/agent/flight-leg-tracker')
+const leg = { departAt: '2026-10-22T19:42:00Z', arriveAt: '2026-10-23T04:05:00Z' }
+assert.equal(L.dueForCheck(Date.parse('2026-10-23T04:00:00Z'), { ...leg, tracking: { lastCheckedAt: '2026-10-23T03:57:30Z' } }), true, 'saved legs: 2-minute checks near landing')
+console.log('Landing alerts: 2-minute checks near landing on the per-minute cron')

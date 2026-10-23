@@ -136,6 +136,25 @@ export async function createFlightTrackWatch(telegramId: string, f: LiveFlight):
   return { id: String(data.id), reused: false }
 }
 
+// 23 Oct feedback: "it should alert as soon as it lands". Around the expected landing (live estimate, else
+// schedule) the flight is checked every 2 minutes, around take-off every 5, otherwise every 20.
+export function nextCheckMinutes(now: number, departAt: number, tracking: TrackingState & { scheduledArrival?: string }): number {
+  const eta = Date.parse(String(tracking.etaArrival || tracking.scheduledArrival || ''))
+  if (Number.isFinite(eta) && now >= eta - 40 * MIN && now <= eta + 90 * MIN) return 2
+  if (Math.abs(now - departAt) <= 30 * MIN) return 5
+  return 20
+}
+
+/** Per-minute pass (autonomous-runs cron) so a landing alert never waits for the 15-minute watcher cron. */
+export async function processDueFlightTracks(limit = 10, now = new Date()) {
+  const { data, error } = await supabaseAdmin.from('agent_watchers').select('id, telegram_id, type, condition_json, last_state_json, active, next_check_at')
+    .eq('active', true).not('condition_json->adHocFlight', 'is', null).lte('next_check_at', now.toISOString()).order('next_check_at', { ascending: true }).limit(limit)
+  if (error) throw new Error(`flight_track_read_failed:${error.message}`)
+  let checked = 0, alerted = 0
+  for (const w of data || []) { checked++; const r = await processFlightTrackWatcher(w, now).catch(() => null); if (r?.triggered) alerted++ }
+  return { checked, alerted }
+}
+
 /** Watcher pass for an ad-hoc tracked flight: feed status → new events only → owner's alert settings → next check. */
 export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher: FlightFetcher = fetchAeroDataBox) {
   const c = watcher.condition_json?.adHocFlight || {}
@@ -174,10 +193,10 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
     }
     tracking.state = status.state
     if (status.revisedArrival) tracking.etaArrival = status.revisedArrival
+    if (status.scheduledArrival) tracking.scheduledArrival = status.scheduledArrival
     if (status.actualArrival) tracking.actualArrival = status.actualArrival
   }
-  const near = Math.abs(now.getTime() - w.dep) <= 60 * MIN || Math.abs(now.getTime() - w.arr) <= 60 * MIN
-  await save({ next_check_at: new Date(now.getTime() + (near ? 15 : 30) * MIN).toISOString(), last_state_json: { ...(watcher.last_state_json || {}), tracking, source: status ? 'flight_data' : 'unavailable' } })
+  await save({ next_check_at: new Date(now.getTime() + nextCheckMinutes(now.getTime(), w.dep, tracking) * MIN).toISOString(), last_state_json: { ...(watcher.last_state_json || {}), tracking, source: status ? 'flight_data' : 'unavailable' } })
   return { triggered: sent > 0, failed: false }
 }
 
