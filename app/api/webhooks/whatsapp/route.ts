@@ -24,6 +24,8 @@ import { runWithQaTrace } from '@/lib/qa-trace'
 import { sendWhatsAppMessage, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
 import { checkWhatsAppAccess } from '@/lib/access/gate'
+import { inviteLinkReply, inviteeWelcomeLine, isInviteLinkCommand, isMyInvitesCommand, myInvitesReply } from '@/lib/invites/core'
+import { completeInviteJoin, getOrCreateInviteCode, listJoinedFriends } from '@/lib/invites/store'
 import { meterAs } from '@/lib/metering/core'
 import { isStopMessage, suppressAllForRecipient } from '@/lib/bot/handlers/reminder-optout'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -345,7 +347,7 @@ async function handleWhatsAppPost(req: NextRequest) {
     }
 
     // ── Access gate: new numbers wait on the waitlist until an admin approves them ──
-    const access = await checkWhatsAppAccess(from, profileName)
+    const access = await checkWhatsAppAccess(from, profileName, String(formData.get('Body') || ''))
     if (!access.allow) {
       console.log('ACCESS_GATE_HELD:', { from, reason: access.reason })
       if (access.reply) await sendWhatsAppMessage(from, access.reply)
@@ -389,6 +391,38 @@ async function handleWhatsAppPost(req: NextRequest) {
         await sendWhatsAppMessage(from,reply)
         return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
       }
+    }
+
+    // ── Joined with a friend's invite link: welcome them, tell the inviter (once) ──
+    if (access.invite?.ok && access.invite.redemptionId && access.invite.inviterTelegramId) {
+      const invite = access.invite
+      const { inviterName } = await completeInviteJoin({ redemptionId: invite.redemptionId!, inviterTelegramId: invite.inviterTelegramId!, inviteeTelegramId: resolvedUser.telegramId,
+        inviteePhone: from, inviteeName: profileName, remaining: invite.remaining }).catch((err: any) => { console.error('INVITE_JOIN_FAILED:', err?.message || err); return { inviterName: null } })
+      if (invite.reason === 'joined' || (resolvedUser as any).isNewUser) {
+        const welcome = `${inviteeWelcomeLine(inviterName)}\n\n${buildOnboardingMenu(resolvedUser.name || profileName)}`
+        await saveConversation(resolvedUser.telegramId, 'user', bodyText)
+        await saveConversation(resolvedUser.telegramId, 'assistant', welcome)
+        await sendWhatsAppMessage(from, welcome)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
+    // ── Invite links: "send me my invite link" / "my invites" ──
+    if (isInviteLinkCommand(bodyText) || isMyInvitesCommand(bodyText)) {
+      let reply: string
+      try {
+        const { code, remaining } = await getOrCreateInviteCode(resolvedUser.telegramId, resolvedUser.name || profileName)
+        reply = isMyInvitesCommand(bodyText)
+          ? myInvitesReply({ code, remaining, joined: await listJoinedFriends(resolvedUser.telegramId), tz: resolvedUser.timezone })
+          : inviteLinkReply({ code, remaining })
+      } catch (err: any) {
+        console.error('INVITE_COMMAND_FAILED:', err?.message || err)
+        reply = `I couldn't get your invite link just now. Please try again in a minute.`
+      }
+      await saveConversation(resolvedUser.telegramId, 'user', bodyText)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await sendWhatsAppMessage(from, reply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
     // ── Interactive onboarding menu for new users ───────────────────

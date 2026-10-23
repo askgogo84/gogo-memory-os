@@ -50,7 +50,7 @@ assert.deepEqual(priceEvent({ vendor: 'unknown', category: 'x' }, DEFAULT_RATES)
 // ── Wiring ───────────────────────────────────────────────────────────────────
 const wa = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')
 const stopAt = wa.indexOf('isStopMessage(String(formData.get')
-const gateAt = wa.indexOf('await checkWhatsAppAccess(from, profileName)')
+const gateAt = wa.indexOf('await checkWhatsAppAccess(from, profileName')
 const resolveAt = wa.indexOf("await resolveUser({ channel: 'whatsapp'")
 assert.ok(stopAt > 0 && gateAt > stopAt && resolveAt > gateAt, 'gate runs after STOP and before a users row can be created')
 assert.match(wa.slice(gateAt, resolveAt), /if \(!access\.allow\)[\s\S]*return new NextResponse\(emptyTwiml\(\)/)
