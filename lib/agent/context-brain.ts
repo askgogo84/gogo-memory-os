@@ -969,6 +969,8 @@ export function renderContextBlock(pack:ContextPack,maxChars=3200){
     '- Do not expose hidden identifiers or unrelated private facts.',
     '- A proposal is not a confirmed booking; require provider proof. Moving/packing completion: do not assume it. Arrival is not continued presence. Free time requires complete Calendar coverage and full event intervals.',
     '- A bounded lookup is not proof of absence or completeness.',
+    // R09 (22 Oct live): the move day was acknowledged, then "nothing blocks evening plans" was asserted anyway.
+    '- A saved life event on the asked day (a move, a trip, an event) is a constraint even when Calendar shows that hour free: name it and how it may affect the plan, and never say "nothing blocks" or "you are free" while it stands.',
     ...(pack.retrievalIncomplete?['- Retrieval is incomplete: one or more sources failed. Disclose lookup limitations; never claim no saved record exists.']:[]),
   ]
   const generated=Date.parse(String(pack.generatedAt||''))

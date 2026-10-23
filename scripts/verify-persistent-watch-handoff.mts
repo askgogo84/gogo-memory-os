@@ -6,6 +6,9 @@ import ts from 'typescript'
 import * as quality from '../lib/agent/watcher-quality'
 import * as cadence from '../lib/agent/watch-cost-policy'
 import * as priceThreshold from '../lib/agent/price-threshold'
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://persistent-watch.invalid'
+process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture-only'
+const watchDedupe = await import('../lib/agent/watch-dedupe')
 
 // User-requested lifecycle: empty now -> match on a later worker -> source link
 // in WhatsApp and app -> no duplicate. Fixture records, no real sends or DB writes.
@@ -57,7 +60,7 @@ function freshWorker(){
     '@/lib/web-search':{searchWebResults:async(query:string)=>{queries.push(query);await duringSearch?.();return structuredClone(results)}},
     '@/lib/services/cost-guard':{getCostBudget:async()=>budget,checkCostAllowance:async()=>({allowed:true,state:{usageRatio:0}}),recordCostEvent:async()=>{},COST_ESTIMATES_PAISE:{web_search_basic:1}},
     './google-workspace-read':{listRecentWorkspaceInbox:async(actor:any)=>{assert.equal(actor.legacyTelegramId,101);if(!inboxReadingEnabled)throw new Error('workspace_email_reading_disabled');return {messages:structuredClone(inboxMessages)}}},
-    './watch-cost-policy':cadence,'./watcher-quality':quality,'./price-threshold':priceThreshold,
+    './watch-cost-policy':cadence,'./watcher-quality':quality,'./price-threshold':priceThreshold,'./watch-dedupe':watchDedupe,
   }
   vm.runInNewContext(output,{exports,module:{exports},require:(name:string)=>mocks[name]||{},Date:Clock,URL,console,Buffer})
   return exports
@@ -181,6 +184,7 @@ const commandMocks:any={
     // The dashboard now runs the price-watch clarifier too; with no pending question it must find none.
     '@/lib/bot/handlers/followup-state':{getLatestFollowupState:async()=>null,isStrictlyFreshFollowupState:()=>false,clearFollowupState:async()=>{},saveFollowupState:async()=>{}},
     './price-threshold':priceThreshold,
+    './watch-dedupe':watchDedupe,
 }
 vm.runInNewContext(commandsOutput,{exports:commandExports,module:{exports:commandExports},require:(name:string)=>commandMocks[name]||{},Date,URL,console,Buffer})
 const parsed=commandExports.parseWebWatchCommand('Keep searching for Christopher Ward C63 Sealander in India and alert me when you find a new listing')

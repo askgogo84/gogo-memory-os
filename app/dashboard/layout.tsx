@@ -14,7 +14,7 @@ export default function DashboardRootLayout({
 }: {
   children: React.ReactNode
 }) {
-  return <div className="dashboard-root theme-dark final-dark flex min-h-full flex-1 flex-col" data-theme="dark" suppressHydrationWarning>
+  return <div className="dashboard-root theme-light final-dark flex min-h-full flex-1 flex-col" data-theme="light" suppressHydrationWarning>
     <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
     {children}
   </div>

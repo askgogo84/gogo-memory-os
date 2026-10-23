@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { getSession } from '@/lib/dashboard/session'
 import { getMadeForYou, makeKind, MAKE_KINDS } from '@/lib/dashboard/make'
-import { GogoAgent } from '@/components/gogo/gogo-agent'
+import { Companion } from '@/components/gogo/companion'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,7 +33,7 @@ export default async function MakePage({ searchParams }: { searchParams?: Promis
       </nav>
       {!made.ok && <p className="py-5 text-[15px] text-[#d9a441]">Couldn’t load your finished work right now. Try again shortly.</p>}
       {made.ok && !made.items.length && <div className="flex flex-col items-center gap-2 py-10 text-center">
-        <GogoAgent state="idle" size={96}/>
+        <Companion state="idle" size={96}/>
         <p className="max-w-[420px] text-[15px] text-[#a8a8a4]">Nothing here yet. Ask Gogo for a research brief, a price comparison or a trip plan and it will be saved here.</p>
         <Link href="/dashboard/chat" className="mt-2 flex min-h-11 items-center rounded-full bg-[#2fb8a6] px-5 text-[15px] font-semibold text-[#04201c]">Ask Gogo</Link>
       </div>}

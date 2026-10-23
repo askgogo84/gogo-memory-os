@@ -1,4 +1,5 @@
 import { qaTraceReply } from './qa-trace'
+import { maskOutboundIdentifiers } from '@/lib/security/outbound-identifiers'
 import twilio from 'twilio'
 import { recordMeterEvent } from '@/lib/metering/record'
 import { deliveryCallbackUrl, persistAcceptedChunk } from '@/lib/services/delivery-callback'
@@ -97,7 +98,8 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
   const to = normalizeWhatsAppAddress(toNumber)
 
-  const chunks = splitIntoChunks(sanitizeMarkdownForWhatsApp(text || ''))
+  // Never send a full card, Aadhaar or PAN number (outbound leak filter).
+  const chunks = splitIntoChunks(sanitizeMarkdownForWhatsApp(maskOutboundIdentifiers(text || '')))
   qaTraceReply(chunks.join('\n\n'))
   let lastMessage: any = null
 

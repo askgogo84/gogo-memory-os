@@ -1549,7 +1549,21 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       // user's timezone so "tomorrow" resolves to THEIR local calendar date, not a server default.
       const userTz = await resolveReminderTimezone(resolvedUser.telegramId)
       __trace.mark('userTz')
-      reply = await answerLiveFlightStatus(incomingText, resolvedUser.name, {}, userTz)
+      // 23 Oct live: "Track Virgin Atlantic VS 354" only got a one-off "couldn't verify". A track request now
+      // gets the live status AND a watch that sends delay, gate, take-off and landing updates until it lands.
+      const trackAsk = /\b(?:track|tracking|keep (?:me )?posted|keep an eye on|monitor|follow)\b/i.test(incomingText)
+        ? await import('@/lib/agent/flight-track').then(m => m.isFlightTrackRequest(incomingText) ? m : null).catch(() => null) : null
+      const code = trackAsk ? trackAsk.trackCode(incomingText) : ''
+      const live = trackAsk && code ? await trackAsk.lookupLiveFlight(code, new Date(), userTz || 'Asia/Kolkata').catch(() => null) : null
+      if (trackAsk && live) {
+        const watch = await trackAsk.createFlightTrackWatch(resolvedUser.telegramId, live).catch(() => null)
+        reply = `${trackAsk.formatLiveFlight(live)}\n\n${watch ? (watch.reused ? "I'm already tracking this flight." : "I'm tracking it now: I'll message you about delays, gate changes, take-off and landing until it lands.") : "I couldn't start tracking just now. Ask again in a minute."}`
+      } else {
+        reply = await answerLiveFlightStatus(incomingText, resolvedUser.name, {}, userTz)
+        if (trackAsk) reply += live === null && !process.env.AERODATABOX_RAPIDAPI_KEY
+          ? "\n\nLive flight tracking isn't switched on yet, so I can't follow this flight for you."
+          : `\n\nI couldn't find ${code}'s schedule for today or tomorrow to track it. Send the date, for example: Track ${code} on 25 Oct.`
+      }
     } else {
       const searchContext = await searchWeb(incomingText)
       __trace.mark('searchContext')

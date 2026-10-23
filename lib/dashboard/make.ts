@@ -4,7 +4,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const MAKE_KINDS = [
   { key: 'all', label: 'All', types: [] as string[] },
-  { key: 'briefs', label: 'Briefs', types: ['research_brief', 'meeting_brief'] },
+  { key: 'briefs', label: 'Briefs', types: ['research_brief', 'meeting_brief', 'daily_brief', 'decision_summary'] },
   { key: 'comparisons', label: 'Comparisons', types: ['comparison'] },
   { key: 'plans', label: 'Plans', types: ['trip', 'goal_plan'] },
   { key: 'trackers', label: 'Trackers', types: ['application_tracker', 'reward_summary'] },
@@ -14,6 +14,8 @@ export type MakeKind = typeof MAKE_KINDS[number]['key']
 const TYPE_LABEL: Record<string, string> = {
   research_brief: 'Brief', meeting_brief: 'Meeting brief', comparison: 'Comparison', trip: 'Trip plan',
   goal_plan: 'Goal plan', application_tracker: 'Tracker', reward_summary: 'Rewards',
+  // Make v2: registered kinds. No writer saves daily_brief yet (the morning brief is sent, not saved); see verify-make-artifacts-v2.
+  daily_brief: 'Daily brief', decision_summary: 'Decision summary',
 }
 export function makeKind(raw: unknown): MakeKind {
   return (MAKE_KINDS.find(k => k.key === raw)?.key || 'all') as MakeKind

@@ -6,7 +6,8 @@ import { buildGmailConnectUrl } from '@/lib/services/google-gmail'
 import { clearFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
-import { createInboxTriageWatcher, createProductStockWatcher, createWebPageWatcher, createWebSearchWatcher, normalizeProductStockWatcher, normalizeWebPageWatcher, normalizeWebSearchWatcher } from './watchers'
+import { createInboxTriageWatcher, createProductStockWatcher, createWebPageWatcher, createWebSearchWatcher, normalizeProductStockWatcher, normalizeWebPageWatcher, normalizeWebSearchWatcher, type ReusedWatcher } from './watchers'
+import { reusedWatchText } from './watch-dedupe'
 import { initialWatcherCadence, isUrgentWatchRequest, watcherUpgradeMessage } from './watch-cost-policy'
 
 function clean(value: unknown, max = 1000) {
@@ -1103,7 +1104,7 @@ export async function tryCreateProductStockWatchFromCommand(params: {
     status:'completed' as const,
     capability:'browser' as const,
     risk:'low' as const,
-    text:`Got it — I’ll check hourly for ${condition.variant} availability on ${condition.title}.${condition.addToCart ? ` If it comes back, I’ll add ${condition.variant} to your cart and alert you.` : ' I’ll alert you when it comes back.'} I won’t place the order, checkout, or make a payment without your approval.`,
+    text:`${'reused' in watcher ? `${reusedWatchText((watcher as ReusedWatcher).updated, condition.title)} ` : ''}Got it — I’ll check hourly for ${condition.variant} availability on ${condition.title}.${condition.addToCart ? ` If it comes back, I’ll add ${condition.variant} to your cart and alert you.` : ' I’ll alert you when it comes back.'} I won’t place the order, checkout, or make a payment without your approval.`,
     handledBy:'product-stock-watch',
   }
 }
@@ -1226,7 +1227,7 @@ export async function tryCreateWebPageWatchFromCommand(params:{
   })
   return {
     runId:String(run.id),status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-    text:`Background Gogo is now monitoring ${condition.url}. I’ll establish a verified baseline with the persistent browser, then check about every ${cadenceMinutes} minutes and alert you only if the page ${condition.watch} changes. You can ask *what are you monitoring for me?* or say *stop monitoring that*.`,
+    text:`${'reused' in watcher?`${reusedWatchText((watcher as ReusedWatcher).updated,condition.url)} `:''}Background Gogo is now monitoring ${condition.url}. I’ll establish a verified baseline with the persistent browser, then check about every ${cadenceMinutes} minutes and alert you only if the page ${condition.watch} changes. You can ask *what are you monitoring for me?* or say *stop monitoring that*.`,
     handledBy:'web-page-watch',
   }
 }
@@ -1365,7 +1366,7 @@ export async function tryCreateWebWatchFromCommand(params: {
     status: 'completed' as const,
     capability: 'browser' as const,
     risk: 'low' as const,
-    text: `Background Gogo is now watching “${condition.query}”. Your request is saved. I’ll check about every ${condition.cadenceMinutes} minutes initially and send the first relevant result with its source link${condition.delivery !== 'app' ? ' in WhatsApp and Ideas' : ' in Ideas'}. Quiet checks may slow down within your plan. Search results are leads; prices, availability and offer terms need provider verification. Say “show my watches” for status or stop a watch by name.`,
+    text: `${'reused' in watcher ? `${reusedWatchText((watcher as ReusedWatcher).updated, condition.query)} ` : ''}Background Gogo is now watching “${condition.query}”. Your request is saved. I’ll check about every ${condition.cadenceMinutes} minutes initially and send the first relevant result with its source link${condition.delivery !== 'app' ? ' in WhatsApp and Ideas' : ' in Ideas'}. Quiet checks may slow down within your plan. Search results are leads; prices, availability and offer terms need provider verification. Say “show my watches” for status or stop a watch by name.`,
     handledBy: 'background-web-watch',
   }
 }

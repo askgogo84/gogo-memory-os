@@ -1,10 +1,12 @@
 import {getServiceNotices} from '@/lib/dashboard/service-notices'
+import { activeDeferrals, approvalExpiresAt } from '@/lib/agent/approval-card'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAgentSession, requireAgentSession } from '@/lib/agent/session'
 import { retiredRunReason } from '@/lib/agent/task-lifecycle'
 import { getPendingBrowserHandoffs } from '@/lib/dashboard/human-handoffs'
 import {browserAuthSummary,latestBrowserAuthEvidence} from '@/lib/dashboard/browser-auth-summary'
+import { taskStateLabel } from '@/lib/dashboard/task-state'
 
 export const dynamic = 'force-dynamic'
 
@@ -51,13 +53,18 @@ export async function GET(request: Request) {
     supabaseAdmin.from('agent_watchers').select('id, goal_id, type, condition_json, cadence_minutes, active, last_checked_at, next_check_at, created_at, updated_at').eq('telegram_id', tg).eq('active', true).neq('type','goal_review').order('created_at', { ascending: false }).limit(30),
     supabaseAdmin.from('agent_goals').select('id, title, outcome, status, progress, deadline, next_action, blockers').eq('telegram_id', tg).neq('status', 'cancelled').order('updated_at', { ascending: false }).limit(20),
     supabaseAdmin.from('agent_ideas').select('id, title, reason, expected_value, action_label, source_refs, status, created_at, snoozed_until').eq('telegram_id', tg).in('status', ['new','snoozed']).order('created_at', { ascending: false }).limit(20),
-    supabaseAdmin.from('agent_approvals').select('id, run_id, action_type, title, description, payload_preview, risk_level, status, requested_at, resolved_at').eq('telegram_id', tg).eq('status', 'pending').order('requested_at', { ascending: false }).limit(20),
+    supabaseAdmin.from('agent_approvals').select('id, run_id, action_type, title, description, payload_preview, risk_level, status, requested_at, resolved_at, execution_payload').eq('telegram_id', tg).eq('status', 'pending').order('requested_at', { ascending: false }).limit(20),
     supabaseAdmin.from('agent_permissions').select('capability, level, irreversible_always_ask, updated_at').eq('telegram_id', tg),
     supabaseAdmin.from('agent_artifacts').select('id, type, title, subtitle, updated_at').eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(20),
     getPendingBrowserHandoffs(tg),
     getServiceNotices(tg).then(value=>({value,error:null})).catch(()=>({value:null,error:true})),
   ])
 
+  // Approval card v2: "Later" deferrals (agent_activity) — a read failure only hides the "Later" label.
+  const deferrals = (approvals.data || []).length
+    ? activeDeferrals(((await supabaseAdmin.from('agent_activity').select('metadata_json').eq('telegram_id', tg).eq('event_type', 'approval_deferred')
+        .gte('created_at', new Date(Date.now() - 86_400_000).toISOString()).limit(50)) as any)?.data || [])
+    : new Map<string, string>()
   const queryError = runs.error || steps.error || watchers.error || goals.error || ideas.error || approvals.error || permissions.error || artifacts.error
   if (queryError || serviceNotices.error) {
     console.error('AGENT_SNAPSHOT_READ_FAILED:', queryError)
@@ -102,6 +109,8 @@ export async function GET(request: Request) {
       // error + metadata let the client tell an actionable pause (sign-in / secure
       // handoff / browser-waiting) from a rejected or terminal pause.
       error: r.error || null, metadata: r.metadata_json || null,
+      // The one owner-facing state in plain words (lib/dashboard/task-state.ts), shown instead of the raw status.
+      stateLabel: taskStateLabel(r),
       steps: stepsByRun.get(String(r.id)) || [],
     })),
     watchers: (watchers.data || []).map((w: any) => ({
@@ -129,6 +138,7 @@ export async function GET(request: Request) {
       id: a.id, runId: a.run_id, actionType: a.action_type, title: a.title,
       description: a.description, preview: Array.isArray(a.payload_preview) ? a.payload_preview : [], risk: a.risk_level,
       status: a.status, requestedAt: a.requested_at, resolvedAt: a.resolved_at,
+      expiresAt: approvalExpiresAt(a), deferredUntil: deferrals.get(String(a.id)) || null,
       primaryLabel: 'Approve & run', secondaryLabel: 'Not now',
     })),
     handoffs: handoffs.filter(handoff=>!(approvals.data||[]).some((approval:any)=>String(approval.run_id)===handoff.id)),

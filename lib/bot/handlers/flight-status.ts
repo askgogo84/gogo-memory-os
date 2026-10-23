@@ -1,7 +1,7 @@
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { askClaudeFlightStatus } from '@/lib/claude'
 import { extractFlightCodes, extractDateTokens, extractDateTokensYear } from '@/lib/agent/watcher-quality'
-import { normalizeNumericDates, resolveRelativeDates, localTodayYmd, extractDateHint, requestedFlightCodes, datesContradict, requestedYears } from '@/lib/bot/flight-codes'
+import { normalizeNumericDates, resolveRelativeDates, localTodayYmd, extractDateHint, requestedFlightCodes, datesContradict, requestedYears, icaoFlightCode } from '@/lib/bot/flight-codes'
 // Re-export so existing importers/tests keep their entry point.
 export { normalizeNumericDates, requestedFlightCodes } from '@/lib/bot/flight-codes'
 
@@ -53,7 +53,8 @@ export function buildFlightStatusQuery(userText: string, refYmd = localTodayYmd(
   const norm = normalizeRequest(userText, refYmd)
   const dateHint = extractDateHint(norm)
   const codes = requestedFlightCodes(norm).map(c => c.toUpperCase())
-  const codePart = codes.length ? codes.join(' ') : String(userText || '').slice(0, 80)
+  // 23 Oct live: "VS354 flight status" returned VS358 pages; trackers index flights by ICAO (VIR354), so search both.
+  const codePart = codes.length ? codes.flatMap(c => [c, icaoFlightCode(c)].filter(Boolean)).join(' ') : String(userText || '').slice(0, 80)
   return `${codePart} flight status ${dateHint} arrival landed on time delayed`.replace(/\s+/g, ' ').trim()
 }
 
@@ -179,6 +180,15 @@ const COULD_NOT_VERIFY =
 export type FlightStatusDeps = {
   search?: (query: string, opts?: { includeDomains?: string[] }) => Promise<WebSearchResult[]>
   ask?: (userText: string, context: string, userName: string) => Promise<string>
+  /** Structured flight-data lookup for one flight code (null = not available); defaults to the AeroDataBox feed when configured. */
+  live?: (code: string, timezone?: string) => Promise<string | null>
+}
+
+async function defaultLiveStatus(code: string, timezone?: string): Promise<string | null> {
+  if (!process.env.AERODATABOX_RAPIDAPI_KEY) return null
+  const { lookupLiveFlight, formatLiveFlight } = await import('@/lib/agent/flight-track')
+  const f = await lookupLiveFlight(code, new Date(), timezone || 'Asia/Kolkata').catch(() => null)
+  return f ? `${formatLiveFlight(f)}\n\nSource: live flight-data feed.` : null
 }
 
 export async function answerLiveFlightStatus(userText: string, userName: string, deps: FlightStatusDeps = {}, timezone?: string): Promise<string> {
@@ -198,6 +208,14 @@ export async function answerLiveFlightStatus(userText: string, userName: string,
     return ok
   })
 
+  // 23 Oct live: a structured flight-data feed answers first for a single flight with no other date asked.
+  const liveCodes = requestedFlightCodes(normalizeRequest(userText, refYmd))
+  const otherDay = extractDateTokens(normalizeRequest(userText, refYmd)).some(d => !extractDateTokens(refYmd).includes(d))
+  if (liveCodes.length === 1 && !otherDay) {
+    const live = await (deps.live || defaultLiveStatus)(liveCodes[0], timezone).catch(() => null)
+    console.log('FLIGHT_STATUS_TRACE:', JSON.stringify({ stage: 'live_feed', code: liveCodes[0], found: Boolean(live) }))
+    if (live) return live
+  }
   console.log('FLIGHT_STATUS_TRACE:', JSON.stringify({ stage: 'query', query, refYmd }))
   // 1) Prefer flight-tracker domains so airfare pages never enter the context.
   const scopedRaw = await search(query, { includeDomains: FLIGHT_TRACKER_DOMAINS })

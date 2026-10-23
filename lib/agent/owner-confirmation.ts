@@ -24,6 +24,11 @@ export function ownerConfirmationOf(run: any): OwnerConfirmation | null {
 }
 
 /** Completed, recent, an outcome-type run, and the owner has not decided yet. */
+const NO_RESULT = /\b(?:could\s*n[o']t|couldn['’]t|unable to|was unable to|failed to)\s+(?:obtain|find|get|read|verify|load|complete|reach)\b|\bno\s+(?:verified\s+)?(?:live\s+)?(?:results?|rows|flights?|fares?|options?|slots?|matches|availability)\b(?:\s+(?:were\s+)?(?:found|available|returned))?|\bnothing\s+(?:was\s+)?found\b/i
+export function reportsNoResult(summary: unknown): boolean {
+  return NO_RESULT.test(String(summary || ''))
+}
+
 export function needsOwnerConfirmation(run: any, now: number = Date.now()): boolean {
   if (String(run?.status || '') !== 'completed') return false
   if (!CONFIRMABLE_RUN_TYPES.has(String(run?.type || ''))) return false
@@ -32,6 +37,9 @@ export function needsOwnerConfirmation(run: any, now: number = Date.now()): bool
   // status paused"); every re-check made a new card. A run whose own recorded outcome is not completed is not done.
   const outcome = (run?.metadata_json || run?.metadata || {})?.outcome_status
   if (outcome && String(outcome) !== 'completed') return false
+  // 22 Oct live (SIN→BLR): a search that found nothing ("could not obtain verified live rows") asked "is it done?".
+  // A run that reports no result has nothing for the owner to confirm; it shows under Recent as it is.
+  if (reportsNoResult(run?.summary)) return false
   const at = Date.parse(String(run?.updated_at || ''))
   return Number.isFinite(at) && now - at <= CONFIRM_WINDOW_DAYS * 86_400_000 && at <= now + 60_000
 }

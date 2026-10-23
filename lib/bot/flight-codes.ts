@@ -102,3 +102,15 @@ export function datesContradict(a: string, b: string): boolean {
 export function requestedYears(text: string): string[] {
   return Array.from(new Set(extractDateTokensYear(text).map(t => t.slice(-4))))
 }
+
+/** IATA → ICAO for common airlines: flight trackers index flights by ICAO ("VIR354"), so a VS354 search found VS358. */
+export const IATA_TO_ICAO: Record<string, string> = {
+  VS: 'VIR', BA: 'BAW', EK: 'UAE', EY: 'ETD', QR: 'QTR', AI: 'AIC', '6E': 'IGO', UK: 'VTI', SQ: 'SIA', LH: 'DLH',
+  AF: 'AFR', KL: 'KLM', UA: 'UAL', AA: 'AAL', DL: 'DAL', IX: 'AXB', SG: 'SEJ', QP: 'AKJ', TK: 'THY', CX: 'CPA',
+  LX: 'SWR', TG: 'THA', MH: 'MAS', FZ: 'FDB', G9: 'ABY', WY: 'OMA', GF: 'GFA', SV: 'SVA', NH: 'ANA', JL: 'JAL',
+}
+export function icaoFlightCode(code: string): string | null {
+  const c = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^([A-Z0-9]{2})0+(\d)/, '$1$2'), m = c.match(/^([A-Z0-9]{2})(\d{1,4})$/)
+  return m && IATA_TO_ICAO[m[1]] ? `${IATA_TO_ICAO[m[1]]}${m[2]}` : null
+}
+

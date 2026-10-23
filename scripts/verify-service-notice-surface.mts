@@ -16,7 +16,7 @@ const db={from:(table:string)=>{
  }};return q
 }}
 const jsx=(type:any,props:any)=>typeof type==='function'?type(props):props
-const deps:any={'react/jsx-runtime':{jsx,jsxs:jsx},'next/link':{default:'a'},'next/server':{NextResponse:{json:(body:any,init:any={})=>({status:init.status||200,json:async()=>body})}},'@/lib/agent/session':{requireAgentSession:async()=>session||{status:401},isAgentSession:(s:any)=>!!s.telegramId},'@/lib/dashboard/session':{getSession:async()=>session},'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/agent/task-lifecycle':{retiredRunReason:()=>false},'@/lib/dashboard/queries':{getTodayReminders:async()=>({ok:true,reminders:[]}),getLists:async()=>({ok:true,lists:[]})},'@/lib/dashboard/memory':{getDashboardMemory:async()=>({ok:true,items:[]})},'@/lib/dashboard/human-handoffs':{getPendingBrowserHandoffs:async()=>[]},'@/lib/agent/stale-runs':{staleRunningCutoff:()=>'',isStaleRunning:()=>false},'@/lib/dashboard/agent-activity':{getDashboardActivityRuns:async()=>[]},'@/lib/dashboard/activity-collapse':{collapseRepeatedRuns:(r:any)=>r}}
+const deps:any={'react/jsx-runtime':{jsx,jsxs:jsx},'next/link':{default:'a'},'next/server':{NextResponse:{json:(body:any,init:any={})=>({status:init.status||200,json:async()=>body})}},'@/lib/agent/session':{requireAgentSession:async()=>session||{status:401},isAgentSession:(s:any)=>!!s.telegramId},'@/lib/dashboard/session':{getSession:async()=>session},'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/agent/task-lifecycle':{retiredRunReason:()=>false},'@/lib/dashboard/queries':{getTodayReminders:async()=>({ok:true,reminders:[]}),getUpcomingReminders:async()=>[],getLists:async()=>({ok:true,lists:[]})},'@/lib/dashboard/memory':{getDashboardMemory:async()=>({ok:true,items:[]})},'@/lib/dashboard/human-handoffs':{getPendingBrowserHandoffs:async()=>[]},'@/lib/agent/stale-runs':{staleRunningCutoff:()=>'',isStaleRunning:()=>false},'@/lib/dashboard/agent-activity':{getDashboardActivityRuns:async()=>[]},'@/lib/dashboard/activity-collapse':{collapseRepeatedRuns:(r:any)=>r}}
 deps.react={useState:(initial:any)=>{const index=hookIndex++;return [index===0&&renderSnapshot?renderSnapshot:index===1&&renderSnapshot?false:initial,()=>{}]},useEffect:()=>{},useMemo:(fn:any)=>fn(),useCallback:(fn:any)=>fn}
 deps['next/navigation']={useSearchParams:()=>({get:()=> 'approvals'}),usePathname:()=>'/dashboard/agent'}
 function load(path:string):any{
@@ -28,6 +28,7 @@ function load(path:string):any{
   if(name==='@/lib/dashboard/browser-auth-summary')return load('lib/dashboard/browser-auth-summary.ts')
   if(name==='@/components/dashboard/service-notice-cards')return load('components/dashboard/service-notice-cards.tsx')
   if(name==='@/lib/dashboard/task-feed')return load('lib/dashboard/task-feed.ts')
+  if(name==='@/lib/dashboard/home-sections')return load('lib/dashboard/home-sections.ts')
   if(name==='@/lib/agent/task-title')return load('lib/agent/task-title.ts')
   if(name==='@/lib/agent/owner-confirmation')return load('lib/agent/owner-confirmation.ts')
   if(name==='@/lib/gogo/agent-states')return load('lib/gogo/agent-states.ts')
@@ -82,7 +83,9 @@ await assert.rejects(()=>load('lib/dashboard/service-notices.ts').getServiceNoti
 session=null;const before=calls.length
 response=await snapshot.GET({} as Request);assert.equal(response.status,401);assert.equal(calls.length,before,'unauthenticated snapshot never reads owner data')
 await load('app/dashboard/(app)/home/page.tsx').default();assert.equal(calls.length,before,'signed-out Home never reads service notices')
-for(const call of calls.filter(c=>c.table==='agent_open_loops')){
+// Calendar clashes (task feed) are a separate owner-scoped open-loop read.
+for(const call of calls.filter(c=>c.table==='agent_open_loops'&&c.filters.some(([k,v]:any)=>k==='source_type'&&v==='calendar_conflict')))assert.ok(call.filters.some(([k,v]:any)=>k==='telegram_id'&&v==='123'))
+for(const call of calls.filter(c=>c.table==='agent_open_loops'&&!c.filters.some(([k,v]:any)=>k==='source_type'&&v==='calendar_conflict'))){
  assert.ok(call.filters.some(([k,v]:any)=>k==='telegram_id'&&v==='123'))
  assert.ok(call.filters.some(([k,v]:any)=>k==='status'&&v==='active'))
  assert.ok(call.filters.some(([k,v]:any)=>k==='kind'&&v==='commitment'))

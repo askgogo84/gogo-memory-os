@@ -52,9 +52,10 @@ export async function POST(request: Request) {
         telegram_id:session.telegramId,
         event_type:'watcher_created',
         message:`Background Gogo is watching the web: ${condition.title}`,
-        metadata_json:{ watcher_id:watcher.id, type:'web_search', delivery:condition.delivery, cadence_minutes:condition.cadenceMinutes },
+        metadata_json:{ watcher_id:watcher.id, type:'web_search', delivery:condition.delivery, cadence_minutes:condition.cadenceMinutes, reused:'reused' in watcher },
       })
-      return NextResponse.json({ watcher }, { status:201 })
+      // R02: a same-subject watch was updated in place rather than created.
+      return NextResponse.json({ watcher }, { status:'reused' in watcher ? 200 : 201 })
     }
 
     return NextResponse.json({ error:'watcher_type_not_available' }, { status:400 })

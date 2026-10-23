@@ -64,6 +64,23 @@ export async function getTodayReminders(telegramId: string): Promise<TodayRemind
   return { ok: true, reminders: (data as ReminderRow[]) ?? [] }
 }
 
+// Home v2 "Can wait": reminders after today, up to `days` ahead. A read failure is an empty list (Home still renders).
+export async function getUpcomingReminders(telegramId: string, days = 7): Promise<ReminderRow[]> {
+  const tgNum = parseInt(telegramId, 10)
+  if (!Number.isFinite(tgNum)) return []
+  const { endUtc } = istDayWindow()
+  const { data, error } = await supabaseAdmin
+    .from('reminders')
+    .select('id, message, remind_at, timezone, recurring_pattern, is_recurring, sent, sent_at, status, delivery_state')
+    .eq('telegram_id', tgNum)
+    .gte('remind_at', endUtc.toISOString())
+    .lt('remind_at', new Date(endUtc.getTime() + days * 864e5).toISOString())
+    .order('remind_at', { ascending: true })
+    .limit(10)
+  if (error) { console.error('DASHBOARD_UPCOMING_REMINDERS_FAILED:', error); return [] }
+  return (data as ReminderRow[]) ?? []
+}
+
 // The dashboard's view of a list: the stored name (lower-cased, trimmed — the
 // same string the bot renders in WhatsApp) and its items. The `lists` table has
 // NO item table — items are a JSONB array on the row — so the count the page
