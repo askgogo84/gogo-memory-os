@@ -47,7 +47,7 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
   const [approvals, handoffs, watchers, running, recent, finished, deferred, clashes] = await Promise.all([
     supabaseAdmin.from('agent_approvals').select('id,run_id,title,description,created_at').eq('telegram_id', tg).eq('status', 'pending').order('created_at', { ascending: false }).limit(10),
     getPendingBrowserHandoffs(tg),
-    supabaseAdmin.from('agent_watchers').select('id,title,type,next_check_at,created_at,condition_json', { count: 'exact' }).eq('telegram_id', tg).eq('active', true).neq('type', 'goal_review').order('next_check_at', { ascending: true }).limit(12),
+    supabaseAdmin.from('agent_watchers').select('id,type,next_check_at,created_at,condition_json', { count: 'exact' }).eq('telegram_id', tg).eq('active', true).neq('type', 'goal_review').order('next_check_at', { ascending: true }).limit(12),
     supabaseAdmin.from('agent_runs').select('id,type,capability,title,summary,status,error,metadata_json,updated_at').eq('telegram_id', tg).in('status', ['running', 'queued']).order('updated_at', { ascending: false }).limit(8),
     supabaseAdmin.from('agent_runs').select('id,type,capability,title,summary,status,source,error,metadata_json,updated_at')
       .eq('telegram_id', tg).in('status', ['completed', 'paused', 'failed']).neq('type', 'secure_browser')
@@ -141,7 +141,7 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
   }
   const workingCount = radar.length
   for (const w of ((watchers as any)?.data || [])) {
-    const title = String(w.title || w.condition_json?.title || 'Background watch').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi, '$1')
+    const title = String(w.condition_json?.title || 'Background watch').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi, '$1')
     // Duet parity + R02: every watch says why it exists and when it ends; a watch whose own date is over says so.
     const ends = watchEnds(w, now)
     radar.push({ id: `w-${w.id}`, tab: 'radar', state: 'watcher', tag: ends.datePassed ? 'Date passed' : 'Watching', title, sub: `${watchWhy(w)} · ${ends.label}`,
