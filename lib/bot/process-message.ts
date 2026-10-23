@@ -1566,8 +1566,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       const trackAsk = /\b(?:track|tracking|keep (?:me )?posted|keep an eye on|monitor|follow)\b/i.test(incomingText)
         ? await import('@/lib/agent/flight-track').then(m => m.isFlightTrackRequest(incomingText) ? m : null).catch(() => null) : null
       const code = trackAsk ? trackAsk.trackCode(incomingText) : ''
-      const live = trackAsk && code ? await trackAsk.lookupLiveFlight(code, new Date(), userTz || 'Asia/Kolkata').catch(() => null) : null
-      if (trackAsk && live) {
+      const live = trackAsk && code ? await trackAsk.lookupLiveFlight(code, new Date(), userTz || 'Asia/Kolkata', undefined, { telegramId: String(resolvedUser.telegramId) }).catch(() => null) : null
+      if (trackAsk && live && live.status.state === 'landed') {
+        reply = `${trackAsk.formatLiveFlight(live)}\n\nIt has already landed, so there's nothing left to track.`
+      } else if (trackAsk && live) {
         const watch = await trackAsk.createFlightTrackWatch(resolvedUser.telegramId, live).catch(() => null)
         reply = `${trackAsk.formatLiveFlight(live)}\n\n${watch ? (watch.reused ? "Already tracking it. That's the latest from the flight-data feed; I'll confirm when it lands." : "I'm tracking it now: I'll message you about delays, gate changes, take-off and landing until it lands.") : "I couldn't start tracking just now. Ask again in a minute."}`
       } else {

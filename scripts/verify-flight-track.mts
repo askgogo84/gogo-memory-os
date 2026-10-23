@@ -94,3 +94,51 @@ const trackSrc = readFileSync('lib/agent/flight-track.ts', 'utf8')
 assert.match(trackSrc, /const firstPass = !prev\.lastCheckedAt/)
 assert.match(trackSrc, /if \(firstPass && !\['landed', 'cancelled', 'diverted'\]\.includes\(e\.kind\)\)/)
 console.log('First pass: only landing/cancellation/diversion are announced')
+
+// 23 Oct live: VS354 landed 09:39 IST (Google/OAG) while the feed still said "In the air · arrives 09:47" at 09:45.
+// A landing is also read from the aircraft's position in the feed and from dated tracker pages near the ETA.
+{
+  const BOM = { iata: 'BOM', municipalityName: 'Mumbai', location: { lat: 19.0896, lon: 72.8656 } }
+  const vs = (loc?: any) => ({
+    number: 'VS 354', status: 'EnRoute', airline: { name: 'Virgin Atlantic' },
+    departure: { airport: { iata: 'LHR', municipalityName: 'London' }, scheduledTime: { utc: '2026-10-22 19:25Z', local: '2026-10-22 20:25+01:00' }, revisedTime: { utc: '2026-10-22 19:42Z', local: '2026-10-22 20:42+01:00' } },
+    arrival: { airport: BOM, scheduledTime: { utc: '2026-10-23 04:05Z', local: '2026-10-23 09:35+05:30' }, predictedTime: { utc: '2026-10-23 04:17Z', local: '2026-10-23 09:47+05:30' } },
+    ...(loc ? { location: loc } : {}),
+  })
+  const at = new Date('2026-10-23T04:15:00Z')
+  const feed = (loc?: any) => async (_c: string, d: string) => d === '2026-10-22' ? [vs(loc)] : []
+  let searches = 0
+  const none: any = async () => { searches++; return [] }
+  const onGround = { lat: 19.09, lon: 72.87, pressureAltitude: { feet: 0 }, groundSpeed: { kt: 8 }, reportedAtUtc: '2026-10-23 04:12Z' }
+  const g = await t.lookupLiveFlight('VS354', at, 'Asia/Kolkata', feed(onGround), { search: none })
+  assert.equal(g!.status.state, 'landed', 'aircraft on the ground at BOM = landed, even while the feed status says EnRoute')
+  assert.equal(g!.arrRevisedLocal, undefined, 'the stale 09:47 estimate is not shown as the landing time')
+  assert.match(t.formatLiveFlight(g!), /Status: \*Landed\*/)
+  assert.equal(searches, 0, 'position settled it; no search spent')
+  const inAir = { lat: 19.5, lon: 71.9, pressureAltitude: { feet: 9000 }, groundSpeed: { kt: 280 }, reportedAtUtc: '2026-10-23 04:12Z' }
+  assert.equal(t.landedFromLocation(vs(inAir), at.getTime()), false)
+  assert.equal(t.landedFromLocation({ ...vs(), location: { ...onGround, lat: 51.47, lon: -0.45 } }, at.getTime()), false, 'on the ground at the origin is not a landing')
+  const web: any = async (q: string, o: any) => { searches++; assert.match(q, /^VS354 VIR354 flight status 22 Oct 2026/); assert.ok(o.includeDomains.length); return [
+    { title: 'VS354 (VIR354) Virgin Atlantic Flight Tracking and History 22-Oct-2026', snippet: 'Landed 09:39 IST Thursday 23-Oct-2026 London (LHR) → Mumbai (BOM)', url: 'https://www.flightaware.com/live/flight/VIR354/history/20261022/1925Z/EGLL/VABB' },
+  ] }
+  searches = 0
+  const w = await t.lookupLiveFlight('VS354', at, 'Asia/Kolkata', feed(), { search: web })
+  assert.equal(searches, 1)
+  assert.equal(w!.status.state, 'landed', 'tracker page says landed near ETA = landed')
+  assert.match(t.formatLiveFlight(w!), /Landing confirmed by flightaware\.com/)
+  searches = 0
+  const n = await t.lookupLiveFlight('VS354', at, 'Asia/Kolkata', feed(), { search: none })
+  assert.equal(n!.status.state, 'departed', 'no tracker confirmation: stays "in the air"')
+  searches = 0
+  await t.lookupLiveFlight('VS354', new Date('2026-10-23T01:00:00Z'), 'Asia/Kolkata', feed(), { search: web })
+  assert.equal(searches, 0, 'no search spent hours before landing')
+  assert.equal(t.nearLanding(Date.parse('2026-10-23T03:45:00Z'), '2026-10-23T04:17:00Z', '2026-10-23T04:05:00Z'), true)
+  assert.equal(t.nearLanding(Date.parse('2026-10-23T03:30:00Z'), '2026-10-23T04:17:00Z', '2026-10-23T04:05:00Z'), false)
+  const src = readFileSync('lib/agent/flight-track.ts', 'utf8')
+  assert.ok(src.includes('now.getTime() - lastWeb >= 4 * MIN'), 'watcher cross-check throttled to every 4 minutes')
+  assert.ok(src.includes("landedFromLocation(occ, now.getTime())"), 'watcher reads the aircraft position')
+  assert.ok(src.includes('withLocation=true'))
+  const pm = readFileSync('lib/bot/process-message.ts', 'utf8')
+  assert.ok(pm.includes("It has already landed, so there's nothing left to track."))
+  console.log('Landing cross-check: aircraft position + tracker pages beat a lagging feed status')
+}
