@@ -1,5 +1,14 @@
 # Email forwarding inbox
 
+**Live route (23 Oct): Resend inbound.** askgogo.in DNS is at GoDaddy, so instead of moving it to Cloudflare:
+1. Resend › Domains › Add `in.askgogo.in` (turn off Enable Sending) and copy its DKIM TXT and receiving MX records.
+2. GoDaddy DNS for askgogo.in: add those records (host `in` for the MX, priority as shown).
+3. Resend › Webhooks › Add `https://app.askgogo.in/api/email/resend-inbound`, event `email.received`; copy its
+   signing secret into Vercel as `RESEND_INBOUND_WEBHOOK_SECRET` and redeploy.
+
+The Cloudflare Worker route below stays available if the DNS ever moves to Cloudflare.
+
+
 Each person gets `name-xxxxxx@in.askgogo.in` (Settings › Email). Gmail forwards new mail there; Cloudflare Email
 Routing hands it to the Worker in `cloudflare/email-worker/worker.js`, which POSTs it to
 `https://app.askgogo.in/api/email/inbound` with the shared secret.

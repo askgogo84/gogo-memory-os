@@ -150,5 +150,25 @@ await check('aliases: unguessable, only our domain', () => {
   assert.equal(aliases.aliasFromAddress('divyak-k7q2mx@evil.in'), null)
 })
 
+const RI = await import('../lib/email/resend-inbound.ts').catch(() => null)
+await check('Resend webhook signatures verify; tampered, stale or unsigned ones are refused', async () => {
+  if (!RI) throw new Error('resend-inbound failed to load')
+  const { createHmac } = await import('node:crypto')
+  const secret = 'whsec_' + Buffer.from('fixture-signing-key-0123456789').toString('base64')
+  const id = 'msg_1', timestamp = String(Math.floor(Date.now() / 1000)), body = '{"type":"email.received"}'
+  const sig = createHmac('sha256', Buffer.from(secret.slice(6), 'base64')).update(`${id}.${timestamp}.${body}`).digest('base64')
+  assert.equal(RI.verifyResendWebhook({ secret, id, timestamp, body, signature: `v1,${sig}` }), true)
+  assert.equal(RI.verifyResendWebhook({ secret, id, timestamp, body: body + ' ', signature: `v1,${sig}` }), false)
+  assert.equal(RI.verifyResendWebhook({ secret, id, timestamp: String(Number(timestamp) - 900), body, signature: `v1,${sig}` }), false)
+  assert.equal(RI.verifyResendWebhook({ secret: '', id, timestamp, body, signature: `v1,${sig}` }), false)
+})
+
+await check('Resend parsed email rebuilds into a message the inbound pipeline reads', () => {
+  if (!RI) throw new Error('resend-inbound failed to load')
+  const raw = RI.rawFromParsed({ id: 'e1', to: ['divyak-k7q2mx@in.askgogo.in'], from: 'Nithin Rao <nithin@tipplr.in>', subject: 'Contract – sign-off', html: null, text: 'Can you sign off by Friday? ₹5,000', headers: { 'List-Id': '<x>' }, message_id: '<m1@x>' } as any)
+  const mail = M.parseMail(raw)
+  assert.equal(mail.subject, 'Contract – sign-off'); assert.equal(mail.messageId, '<m1@x>'); assert.equal(mail.listId, '<x>'); assert.equal(mail.text, 'Can you sign off by Friday? ₹5,000')
+})
+
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('email attention: all checks passed')
