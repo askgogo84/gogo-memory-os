@@ -88,3 +88,9 @@ const L = await import('../lib/agent/flight-leg-tracker')
 const leg = { departAt: '2026-10-22T19:42:00Z', arriveAt: '2026-10-23T04:05:00Z' }
 assert.equal(L.dueForCheck(Date.parse('2026-10-23T04:00:00Z'), { ...leg, tracking: { lastCheckedAt: '2026-10-23T03:57:30Z' } }), true, 'saved legs: 2-minute checks near landing')
 console.log('Landing alerts: 2-minute checks near landing on the per-minute cron')
+
+// First check after "Track" never re-announces what the reply already said (23 Oct: "VS354 has taken off" hours late).
+const trackSrc = readFileSync('lib/agent/flight-track.ts', 'utf8')
+assert.match(trackSrc, /const firstPass = !prev\.lastCheckedAt/)
+assert.match(trackSrc, /if \(firstPass && !\['landed', 'cancelled', 'diverted'\]\.includes\(e\.kind\)\)/)
+console.log('First pass: only landing/cancellation/diversion are announced')

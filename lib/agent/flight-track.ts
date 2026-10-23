@@ -184,7 +184,17 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
   const tracking: TrackingState = { ...prev, lastCheckedAt: now.toISOString() }
   if (status) {
     const leg = { id: String(watcher.id), telegramId: tg, flightNo: String(c.flightNo), airline: c.airline, fromCity: String(c.from || ''), toCity: String(c.to || ''), departAt: String(c.departAt), arriveAt: c.arriveAt, tracking: prev }
+    // 23 Oct live: the first check after "Track VS354" (already airborne for hours) sent "has taken off". The
+    // track reply already gave the current status, so the first pass only records what is already true; only a
+    // landing, cancellation or diversion is news straight away.
+    const firstPass = !prev.lastCheckedAt
     for (const e of legEvents(leg, status)) {
+      if (firstPass && !['landed', 'cancelled', 'diverted'].includes(e.kind)) {
+        tracking.sent = [...new Set([...(tracking.sent || []), e.key])]
+        if (e.kind === 'delayed') tracking.delayNotified = status.delayMinutes || 0
+        if (e.kind === 'gate') tracking.gateNotified = status.depGate
+        continue
+      }
       await deliverWatchAlert({ watcherId: String(watcher.id), owner: tg, key: `flight-track/${watcher.id}/${e.key}`, due: new Date(now.getTime() - 60_000).toISOString(), condition: watcher.condition_json, message: e.text, topic: 'travel' })
       tracking.sent = [...new Set([...(tracking.sent || []), e.key])]
       if (e.kind === 'delayed') tracking.delayNotified = status.delayMinutes || 0
