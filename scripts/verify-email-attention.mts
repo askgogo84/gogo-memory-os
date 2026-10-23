@@ -104,6 +104,14 @@ await check('chat commands parse; numbers bind only to the card', () => {
   assert.ok(C.isUndo('undo'))
 })
 
+await check('one conversation from two sources (Gmail + forwarded) and its replies shows once', () => {
+  const g = { ...nithin, id: 'g1', threadId: '19abcdef01', source: 'gmail', subject: 'Re: Q4 vendor contract', internalDate: now - 10 * 60e3 }
+  const f1 = { ...nithin, id: 'f1', threadId: 'hashroot', source: 'forwarded', internalDate: now - 30 * 60e3 }
+  const f2 = { ...nithin, id: 'f2', threadId: 'hashroot2', source: 'forwarded', subject: 'RE: Q4 vendor contract', internalDate: now - 10 * 60e3 }
+  const p = A.pickAttention([g, f1, f2] as any, { now })
+  assert.equal(p.picked.length, 1); assert.equal(p.checked, 1)
+})
+
 const forwardedRaw = [
   'Received: by mx', 'From: =?UTF-8?B?Tml0aGluIFJhbw==?= <nithin@tipplr.in>', 'To: divya@gmail.com', 'Subject: =?UTF-8?Q?Q4_vendor_contract_=E2=80=93_sign-off?=',
   'Message-ID: <abc123@mail.tipplr.in>', 'In-Reply-To: <root1@mail.tipplr.in>', 'MIME-Version: 1.0', 'Content-Type: multipart/alternative; boundary="b1"', '',
