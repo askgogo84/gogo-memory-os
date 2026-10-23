@@ -81,6 +81,16 @@ export function validSheet(raw: any): Sheet | null {
     for (let c = columns.length - 1; c >= 0; c--) if (rows.every((r: any[]) => parseAmount(r[c]) !== null || String(r[c]).trim() === '')) { totalColumn = c; break }
   }
   if (totalColumn !== null) for (const r of rows) { const n = parseAmount(r[totalColumn]); if (n !== null) r[totalColumn] = n }
+  // 24 Oct live: "make the hotel ₹5,000 a night" gave ₹20,000 for 3 nights. With a quantity and a unit price
+  // column, the amount is quantity x unit price, computed here, never by the model.
+  const qtyCol = columns.findIndex((c: string) => /^(?:qty|quantity|units?|count|nights?|days?|people|persons?|pax)\b/i.test(c))
+  const unitCol = columns.findIndex((c: string) => /\b(?:unit|rate|price per|per (?:night|day|person|unit)|each)\b/i.test(c))
+  if (totalColumn !== null && qtyCol >= 0 && unitCol >= 0 && qtyCol !== totalColumn && unitCol !== totalColumn) {
+    for (const r of rows) {
+      const q = parseAmount(r[qtyCol]), u = parseAmount(r[unitCol])
+      if (q !== null && u !== null) { r[qtyCol] = q; r[unitCol] = u; r[totalColumn] = Math.round(q * u * 100) / 100 }
+    }
+  }
   const estimateRows = (Array.isArray(raw?.estimateRows) ? raw.estimateRows : []).filter((i: any) => Number.isInteger(i) && i >= 0 && i < rows.length)
   return { format: 'sheet', title: clean(raw?.title, 120) || 'Sheet', columns, rows, totalColumn, notes: clean(raw?.notes, 400), estimateRows }
 }
@@ -105,15 +115,15 @@ Return ONLY JSON: {"title":"…","slides":[{"kicker":"…","title":"…","points
 export function sheetPrompt(request: string, facts: string) {
   return `Create a spreadsheet as JSON for this request: ${JSON.stringify(request)}
 Use these public facts for prices where relevant (may be empty): ${facts ? JSON.stringify(facts.slice(0, 6000)) : '""'}
-Rules: 3-5 columns, 5-20 rows, plain words; amounts as plain numbers without currency symbols or commas (Indian Rupees unless asked otherwise); quantity x unit price where useful; mark rows that are your planning estimates (not from the facts) by listing their 0-based row numbers in "estimateRows"; do NOT add a total row (it is computed separately); put the amount column last and give its index in "totalColumn".
-Return ONLY JSON: {"title":"…","columns":["Item","Qty","Amount"],"rows":[["Flights",4,36000]],"totalColumn":2,"estimateRows":[1],"notes":"one line on assumptions"}`
+Rules: 5-20 rows, plain words; for costs use exactly the columns "Item", "Basis", "Qty", "Unit price", "Amount" where Basis says what Qty counts (e.g. "2 rooms x 3 nights" with Qty 6) and Amount = Qty x Unit price; amounts as plain numbers without currency symbols or commas (Indian Rupees unless asked otherwise); mark rows that are your planning estimates (not from the facts) by listing their 0-based row numbers in "estimateRows"; do NOT add a total row (it is computed separately); put the amount column last and give its index in "totalColumn".
+Return ONLY JSON: {"title":"…","columns":["Item","Basis","Qty","Unit price","Amount"],"rows":[["Flights","4 people return",4,9000,36000]],"totalColumn":4,"estimateRows":[0],"notes":"one line on assumptions"}`
 }
 
 export function editPrompt(doc: MakeDoc, instruction: string) {
   return `Here is a ${doc.format === 'deck' ? 'presentation' : 'spreadsheet'} as JSON:
 ${JSON.stringify(doc)}
 Apply this change and nothing else: ${JSON.stringify(instruction)}
-Keep the same JSON shape. Never invent numbers or facts; use placeholders like [AMOUNT] if needed. ${doc.format === 'sheet' ? 'Do not add a total row.' : ''}
+Keep the same JSON shape. Never invent numbers or facts; use placeholders like [AMOUNT] if needed. ${doc.format === 'sheet' ? 'Do not add a total row. Change the unit price or quantity, not just the amount, and update "notes" so it matches the new numbers.' : ''}
 Return ONLY the full updated JSON.`
 }
 
