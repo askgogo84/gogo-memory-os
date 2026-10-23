@@ -235,6 +235,9 @@ export function gmailFiltersFor(input:string):{operators:string[];consumed:Set<s
   if(operators.length){
     ;['summarise','summarize','summary','emails','email','mails','mail','inbox','gmail','my','from','all','new','recent','latest','show','read','check','list','what','are','any'].forEach(w=>consumed.add(w))
     if(!operators.some(o=>o.startsWith('in:')))operators.push('in:inbox')
+    // A summary of what came in skips promotions and social mail unless asked (23 Oct live: the "unread today"
+    // summary led with a Chrome-extension promo and a cricket ad).
+    if(/\b(?:summar|digest|what came in|need(?:s)? (?:my )?(?:attention|reply)|catch me up)/.test(t)&&!/\b(?:promo|promotion|offer|deal|sale|newsletter|social)/.test(t))operators.push('-category:promotions','-category:social')
   }
   return {operators,consumed}
 }
