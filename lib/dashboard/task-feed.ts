@@ -134,7 +134,11 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
 
   const radar: FeedItem[] = []
   // A task stuck in running for hours lost its worker; it is not "now" work.
-  for (const r of ((running as any)?.data || []).filter((r: any) => !isStaleRunning(r, now) && !retiredRunReason(r))) {
+  // 24 Oct live: two price-check store reads (Flipkart, Reliance Digital) still showed as "working" hours after the
+  // comparison had replied. A browser read with no update for 30 minutes is not live work either.
+  const quietBrowserRead = (r: any) => String(r?.capability || r?.type || '').includes('browser') && String(r?.status) === 'running'
+    && Number.isFinite(Date.parse(String(r?.updated_at || ''))) && now.getTime() - Date.parse(String(r.updated_at)) > 30 * 60_000
+  for (const r of ((running as any)?.data || []).filter((r: any) => !isStaleRunning(r, now) && !retiredRunReason(r)).filter((r: any) => !quietBrowserRead(r))) {
     const state = stateForRun(r)
     const sub = readableRunSummary(r.summary) || 'Gogo is working on it.'
     radar.push({ id: `run-${r.id}`, tab: 'radar', state, tag: taskStateLabel(r), title: friendlyTaskTitle(r.title || 'Gogo task'), sub, live: liveLineFor(state, sub), href: `/dashboard/activity/${r.id}`, action: 'Watch', at: r.updated_at || null })

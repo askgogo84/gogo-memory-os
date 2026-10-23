@@ -1267,6 +1267,30 @@ _"${originalText}"_
     // Approvals are resolved above and never here; two open questions get "which one?".
     // Understand-first runs right after this: the registry's deterministic binding always wins, and
     // understand-first reads the turn only when the registry had nothing (or the completed request after a rewrite).
+    // "Plan my day tomorrow": a time-blocked plan (same as the dashboard).
+    if (resolvedUser.id && resolvedUser.whatsappId && text.length <= 80 && /^(?:please\s+)?(?:can you\s+)?(?:help me\s+)?(?:plan|schedule|organi[sz]e|block out)\s+(?:out\s+)?(?:my\s+)?(?:day|today|tomorrow|morning|evening)\b/i.test(text)) {
+      const dp: any = await import('@/lib/agent/day-plan').catch(() => null)
+      const which = dp?.dayPlanRequest?.(text)
+      const actor = { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, whatsappId: String(resolvedUser.whatsappId), name: resolvedUser.name || 'Gogo', timezone: (resolvedUser as any).timezone || undefined }
+      const out = which === 'tomorrow' ? await Promise.resolve().then(() => dp.buildDayPlan(actor, which)).catch((err: any) => { console.error('DAY_PLAN_FAILED:', String(err?.message || err).slice(0, 160)); return null }) : null
+      if (typeof out === 'string' && out) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', out)
+        await sendWhatsAppMessage(from, out)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+    // Local places: Google local results in the area asked (same as the dashboard).
+    if (text.length <= 200 && /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert)/i.test(text)&&/\b(?:in|near|around|at)\s+[a-z]/i.test(text)) {
+      const pl: any = await import('@/lib/agent/places-search').catch(() => null)
+      const out = pl?.answerPlaces ? await Promise.resolve().then(() => pl.answerPlaces(text)).catch(() => null) : null
+      if (typeof out === 'string' && out) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', out)
+        await sendWhatsAppMessage(from, out)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
     // Research asks: several searches, page reads, cited answer (same as the dashboard).
     if (text.length <= 600 && (/^(?:please\s+)?(?:do\s+(?:a\s+)?|run\s+(?:a\s+)?)?(?:deep\s+)?research\b/i.test(text) || /\bwith (?:sources|citations|references)\b/i.test(text) && /\b(?:best|compare|comparison|top|options|vs\.?|versus|review|pros and cons)\b/i.test(text))) {
       const dr: any = await import('@/lib/agent/deep-research').catch(() => null)
