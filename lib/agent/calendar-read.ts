@@ -407,7 +407,11 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
     // meetings, because events were cut to 12 BEFORE the collapse. Collapse first, then bound the display.
     const allItems=events.map((event:any)=>({
       account:multi?String(event?._account||''):'',
-      id:safe(event?.id||'',160),summary:safe(event?.summary||'Busy',220),start:String(event?.start?.dateTime||event?.start?.date||''),end:event?.endTimeUnspecified===true?'':String(event?.end?.dateTime||event?.end?.date||''),
+      id:safe(event?.id||'',160),summary:safe(event?.summary||'Busy',220),
+      // Kept for proactive discovery (conflicts honour free/declined; meeting prep needs who is attending).
+      ...(event?.transparency?{transparency:String(event.transparency)}:{}),
+      ...(Array.isArray(event?.attendees)?{attendees:event.attendees.slice(0,15).map((a:any)=>({email:safe(a?.email||'',120).toLowerCase(),displayName:safe(a?.displayName||'',60),self:a?.self===true,resource:a?.resource===true,responseStatus:safe(a?.responseStatus||'',20)}))}:{}),
+      start:String(event?.start?.dateTime||event?.start?.date||''),end:event?.endTimeUnspecified===true?'':String(event?.end?.dateTime||event?.end?.date||''),
       label:eventInterval(event,timezone)?.allDay?`All day · ${event.start.date} (end ${event.end.date} exclusive)`:
         eventInterval(event,timezone)?slotLabel(event.start.dateTime,event.end.dateTime,timezone):`${event.start?.dateTime||event.start?.date||'Start not verified'} · end time not verified`,
     }))
