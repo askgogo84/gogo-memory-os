@@ -26,6 +26,7 @@ type PgError = { code?: string | null; message?: string | null } | null
 function check(error: PgError, context: string) {
   if (!error) return
   if (isMissingTableError(error)) throw new WorkspaceError('workspaces_not_enabled')
+  if (/last_owner/.test(String(error.message || ''))) throw new WorkspaceError('last_owner')
   console.error('WORKSPACE_QUERY_FAILED:', context, String(error.code || ''), String(error.message || '').slice(0, 160))
   throw new WorkspaceError('workspace_unavailable')
 }
@@ -133,6 +134,9 @@ export type SharedArtifact = { artifactId: string; title: string; sharedBy: stri
 export type WorkspaceDetail = {
   id: string; name: string; pilotReadOnly: boolean; myRole: WorkspaceRole
   members: WorkspaceMember[]; artifacts: SharedArtifact[]
+  /** Admin+ only (empty otherwise). */
+  pendingInvites: PendingInvite[]
+  audit: Awaited<ReturnType<typeof listAudit>>
 }
 
 export async function getWorkspaceDetail(telegramId: string, workspaceId: string): Promise<WorkspaceDetail> {
@@ -158,8 +162,11 @@ export async function getWorkspaceDetail(telegramId: string, workspaceId: string
     .filter((m): m is { telegram_id: unknown; role: WorkspaceRole } => isWorkspaceRole(m.role))
   const names = await displayNames([...memberRows.map(m => String(m.telegram_id)), ...shareRows.map(s => s.shared_by)])
   const me = membership.telegramId
+  const admin = canRole(membership.role, 'remove_member')
+  const [invites, auditRows] = admin ? await Promise.all([pendingInvites(id), listAudit(me, id, 20)]) : [[], []]
   return {
     id, name: space.data.name, pilotReadOnly: space.data.pilot_read_only !== false, myRole: membership.role,
+    pendingInvites: invites, audit: auditRows,
     members: memberRows.map(m => ({ telegramId: String(m.telegram_id), name: names.get(String(m.telegram_id)) || 'AskGogo user', role: m.role, isYou: String(m.telegram_id) === me })),
     artifacts: shareRows.flatMap(s => {
       const art = titles.get(s.artifact_id)
@@ -183,7 +190,10 @@ async function ownerCount(workspaceId: string): Promise<number> {
   return count || 0
 }
 
-/** Invite an existing AskGogo user by WhatsApp number. Never creates users. */
+/**
+ * Invite an existing AskGogo user by WhatsApp number. Never creates users and never adds anyone directly:
+ * it creates a pending invitation that only the invitee can accept (consent-based membership).
+ */
 export async function inviteMember(telegramId: string, workspaceId: string, rawNumber: unknown, rawRole: unknown) {
   const membership = await requireWorkspaceRole(telegramId, workspaceId, 'invite')
   const role = isWorkspaceRole(rawRole) && INVITABLE_ROLES.includes(rawRole) ? rawRole : null
@@ -200,11 +210,133 @@ export async function inviteMember(telegramId: string, workspaceId: string, rawN
     .select('telegram_id', { count: 'exact', head: true }).eq('workspace_id', membership.workspaceId)
   check(countError, 'member_count')
   if ((count || 0) >= MAX_MEMBERS_PER_WORKSPACE) throw new WorkspaceError('member_limit')
-  const { error: insertError } = await supabaseAdmin.from('workspace_members')
-    .insert({ workspace_id: membership.workspaceId, telegram_id: invitee, role, invited_by: membership.telegramId })
+  await expireStaleInvites(membership.workspaceId)
+  const { data: invite, error: insertError } = await supabaseAdmin.from('workspace_invites')
+    .insert({ workspace_id: membership.workspaceId, telegram_id: invitee, role, invited_by: membership.telegramId, status: 'pending' })
+    .select('id').single()
+  if (insertError && /23505|duplicate/i.test(`${insertError.code} ${insertError.message}`)) throw new WorkspaceError('already_invited')
   check(insertError, 'invite')
-  await audit(membership.workspaceId, membership.telegramId, 'member.invite', invitee, { role })
-  return { ok: true as const, telegramId: invitee, role }
+  await audit(membership.workspaceId, membership.telegramId, 'member.invite', invitee, { role, inviteId: invite.id })
+  return { ok: true as const, inviteId: String(invite.id), role, status: 'pending' as const }
+}
+
+async function expireStaleInvites(workspaceId: string) {
+  const { error } = await supabaseAdmin.from('workspace_invites').update({ status: 'expired', responded_at: new Date().toISOString() })
+    .eq('workspace_id', workspaceId).eq('status', 'pending').lt('expires_at', new Date().toISOString())
+  check(error, 'expire_invites')
+}
+
+export type MyInvite = { id: string; workspaceId: string; workspaceName: string; role: WorkspaceRole; invitedByName: string; expiresAt: string | null }
+
+/** Pending, unexpired invitations addressed to the caller. */
+export async function listMyInvites(telegramId: string): Promise<MyInvite[]> {
+  const me = tg(telegramId)
+  const { data, error } = await supabaseAdmin.from('workspace_invites').select('id,workspace_id,role,invited_by,expires_at')
+    .eq('telegram_id', me).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(20)
+  check(error, 'my_invites')
+  const rows = ((data || []) as { id: string; workspace_id: string; role: unknown; invited_by: string; expires_at: string | null }[])
+    .filter((r): r is typeof r & { role: WorkspaceRole } => isWorkspaceRole(r.role))
+  if (!rows.length) return []
+  const { data: spaces, error: spaceError } = await supabaseAdmin.from('workspaces').select('id,name').in('id', rows.map(r => r.workspace_id))
+  check(spaceError, 'my_invite_spaces')
+  const names = new Map(((spaces || []) as { id: string; name: string }[]).map(s => [s.id, s.name]))
+  const people = await displayNames(rows.map(r => r.invited_by))
+  return rows.flatMap(r => names.has(r.workspace_id) ? [{ id: r.id, workspaceId: r.workspace_id, workspaceName: names.get(r.workspace_id)!, role: r.role, invitedByName: people.get(r.invited_by) || 'AskGogo user', expiresAt: r.expires_at }] : [])
+}
+
+/** The invitee accepts or declines. Only the person the invitation is addressed to can answer it. */
+export async function respondToInvite(telegramId: string, inviteId: unknown, decision: unknown) {
+  const me = tg(telegramId)
+  const id = String(inviteId ?? '')
+  if (!UUID_RE.test(id)) throw new WorkspaceError('invite_not_found')
+  if (decision !== 'accept' && decision !== 'decline') throw new WorkspaceError('invalid_decision')
+  const { data: invite, error } = await supabaseAdmin.from('workspace_invites').select('id,workspace_id,role,status,expires_at,telegram_id')
+    .eq('id', id).eq('telegram_id', me).maybeSingle()
+  check(error, 'invite_lookup_own')
+  if (!invite || invite.status !== 'pending') throw new WorkspaceError('invite_not_found')
+  const now = new Date().toISOString()
+  if (Date.parse(String(invite.expires_at)) <= Date.now()) {
+    await supabaseAdmin.from('workspace_invites').update({ status: 'expired', responded_at: now }).eq('id', id).eq('telegram_id', me).eq('status', 'pending')
+    throw new WorkspaceError('invite_expired')
+  }
+  // Claim the invitation first (pending → answered) so a double tap or a concurrent revoke cannot both win.
+  const { data: claimed, error: claimError } = await supabaseAdmin.from('workspace_invites')
+    .update({ status: decision === 'accept' ? 'accepted' : 'declined', responded_at: now })
+    .eq('id', id).eq('telegram_id', me).eq('status', 'pending').select('id')
+  check(claimError, 'invite_claim')
+  if (!claimed?.length) throw new WorkspaceError('invite_not_found')
+  if (decision === 'decline') {
+    await audit(invite.workspace_id, me, 'member.decline', me, { inviteId: id })
+    return { ok: true as const, joined: false }
+  }
+  if (!isWorkspaceRole(invite.role) || invite.role === 'owner') throw new WorkspaceError('invalid_role')
+  if (!(await memberRow(invite.workspace_id, me))) {
+    const { count, error: countError } = await supabaseAdmin.from('workspace_members')
+      .select('telegram_id', { count: 'exact', head: true }).eq('workspace_id', invite.workspace_id)
+    check(countError, 'member_count_accept')
+    if ((count || 0) >= MAX_MEMBERS_PER_WORKSPACE) throw new WorkspaceError('member_limit')
+    const { error: insertError } = await supabaseAdmin.from('workspace_members')
+      .insert({ workspace_id: invite.workspace_id, telegram_id: me, role: invite.role, invited_by: null })
+    if (!(insertError && /23505|duplicate/i.test(`${insertError.code} ${insertError.message}`))) check(insertError, 'accept_insert')
+  }
+  await audit(invite.workspace_id, me, 'member.accept', me, { inviteId: id, role: invite.role })
+  return { ok: true as const, joined: true, workspaceId: String(invite.workspace_id) }
+}
+
+/** Admin+ withdraws a pending invitation. */
+export async function revokeInvite(telegramId: string, workspaceId: string, inviteId: unknown) {
+  const membership = await requireWorkspaceRole(telegramId, workspaceId, 'invite')
+  const id = String(inviteId ?? '')
+  if (!UUID_RE.test(id)) throw new WorkspaceError('invite_not_found')
+  const { data, error } = await supabaseAdmin.from('workspace_invites').update({ status: 'revoked', responded_at: new Date().toISOString() })
+    .eq('id', id).eq('workspace_id', membership.workspaceId).eq('status', 'pending').select('telegram_id')
+  check(error, 'revoke')
+  if (!data?.length) throw new WorkspaceError('invite_not_found')
+  await audit(membership.workspaceId, membership.telegramId, 'member.revoke_invite', String(data[0].telegram_id), { inviteId: id })
+  return { ok: true as const }
+}
+
+export type PendingInvite = { id: string; name: string; role: WorkspaceRole; expiresAt: string | null }
+
+async function pendingInvites(workspaceId: string): Promise<PendingInvite[]> {
+  const { data, error } = await supabaseAdmin.from('workspace_invites').select('id,telegram_id,role,expires_at')
+    .eq('workspace_id', workspaceId).eq('status', 'pending').gt('expires_at', new Date().toISOString()).order('created_at', { ascending: false }).limit(MAX_MEMBERS_PER_WORKSPACE)
+  check(error, 'pending_invites')
+  const rows = ((data || []) as { id: string; telegram_id: string; role: unknown; expires_at: string | null }[]).filter((r): r is typeof r & { role: WorkspaceRole } => isWorkspaceRole(r.role))
+  const names = await displayNames(rows.map(r => String(r.telegram_id)))
+  return rows.map(r => ({ id: r.id, name: names.get(String(r.telegram_id)) || 'AskGogo user', role: r.role, expiresAt: r.expires_at }))
+}
+
+export type SharedArtifactView = { artifactId: string; title: string; sharedByName: string; sharedByYou: boolean; contentJson: unknown }
+
+/** A member reads an artifact shared into a workspace they belong to — read-only, never anything unshared. */
+export async function getSharedArtifact(telegramId: string, workspaceId: string, artifactId: unknown): Promise<SharedArtifactView> {
+  const membership = await requireWorkspaceRole(telegramId, workspaceId, 'view')
+  const id = String(artifactId ?? '')
+  if (!UUID_RE.test(id)) throw new WorkspaceError('artifact_not_found')
+  const { data: share, error } = await supabaseAdmin.from('workspace_artifacts').select('shared_by')
+    .eq('workspace_id', membership.workspaceId).eq('artifact_id', id).maybeSingle()
+  check(error, 'shared_lookup')
+  if (!share) throw new WorkspaceError('artifact_not_found')
+  // Only while the sharer still owns it.
+  const { data: art, error: artError } = await supabaseAdmin.from('agent_artifacts').select('id,title,content_json,telegram_id')
+    .eq('id', id).eq('telegram_id', String(share.shared_by)).maybeSingle()
+  check(artError, 'shared_artifact')
+  if (!art) throw new WorkspaceError('artifact_not_found')
+  await audit(membership.workspaceId, membership.telegramId, 'artifact.view', id, {})
+  const names = await displayNames([String(share.shared_by)])
+  return { artifactId: id, title: String(art.title || 'Untitled'), sharedByName: names.get(String(share.shared_by)) || 'AskGogo user', sharedByYou: String(share.shared_by) === membership.telegramId, contentJson: art.content_json }
+}
+
+/** Admin+ reads the workspace's audit trail (latest first). */
+export async function listAudit(telegramId: string, workspaceId: string, limit = 50) {
+  const membership = await requireWorkspaceRole(telegramId, workspaceId, 'remove_member')
+  const { data, error } = await supabaseAdmin.from('workspace_audit_log').select('actor,action,target,created_at')
+    .eq('workspace_id', membership.workspaceId).order('created_at', { ascending: false }).limit(Math.min(Math.max(limit, 1), 200))
+  check(error, 'audit_list')
+  const rows = (data || []) as { actor: string; action: string; target: string | null; created_at: string }[]
+  const names = await displayNames(rows.flatMap(r => [r.actor, ...(r.target && /^\d+$/.test(r.target) ? [r.target] : [])]))
+  return rows.map(r => ({ actorName: names.get(r.actor) || 'AskGogo user', action: r.action, targetName: r.target && names.get(r.target) ? names.get(r.target)! : null, at: r.created_at }))
 }
 
 async function applyMemberChange(telegramId: string, workspaceId: string, targetTelegramId: string, change: MemberChange) {

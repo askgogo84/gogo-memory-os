@@ -6,7 +6,7 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useState } from 'react'
-import type { MyWorkspace, WorkspaceDetail, WorkspaceMember } from '@/lib/workspaces/access'
+import type { MyInvite, MyWorkspace, WorkspaceDetail, WorkspaceMember } from '@/lib/workspaces/access'
 import { canRole, INVITABLE_ROLES, ROLE_LABEL, WORKSPACE_ROLES, type WorkspaceRole } from '@/lib/workspaces/rules'
 
 const ERRORS: Record<string, string> = {
@@ -17,6 +17,9 @@ const ERRORS: Record<string, string> = {
   invalid_number: 'Enter a WhatsApp number with country code.',
   user_not_found: 'No AskGogo user has that WhatsApp number. Ask them to message Gogo first.',
   already_member: 'They are already in this workspace.',
+  already_invited: 'They already have a pending invitation.',
+  invite_not_found: 'That invitation is no longer open.',
+  invite_expired: 'That invitation has expired. Ask for a new one.',
   ambiguous_number: 'That number matches more than one account. Contact support.',
   last_owner: 'A workspace needs at least one owner. Make someone else owner first.',
   workspace_forbidden: 'Your role can’t do that.',
@@ -29,6 +32,13 @@ async function send(url: string, method: string, body?: unknown): Promise<string
     const data = await res.json().catch(() => null)
     return ERRORS[data?.error] || 'Something went wrong. Try again.'
   } catch { return 'Couldn’t reach AskGogo. Check your connection.' }
+}
+
+const ACTION_LABEL: Record<string, string> = {
+  'workspace.create': 'created the workspace', 'workspace.rename': 'renamed the workspace', 'member.invite': 'invited',
+  'member.accept': 'joined', 'member.decline': 'declined the invitation', 'member.revoke_invite': 'revoked the invitation for',
+  'member.role': 'changed the role of', 'member.remove': 'removed', 'member.leave': 'left', 'artifact.share': 'shared a report',
+  'artifact.unshare': 'unshared a report', 'artifact.view': 'opened a shared report',
 }
 
 const btn = 'flex min-h-11 items-center justify-center rounded-full px-5 text-[15px] font-semibold'
@@ -54,6 +64,31 @@ export function CreateWorkspaceForm({ onDone }: { onDone?: () => void }) {
     <button type="submit" disabled={busy || !name.trim()} className={`${btn} shrink-0 bg-[#2fb8a6] text-[#04201c] disabled:opacity-50`}>{busy ? 'Creating…' : 'Create workspace'}</button>
     {error && <p role="alert" className="text-[14px] text-[#d9a441] sm:basis-full">{error}</p>}
   </form>
+}
+
+export function InviteBanner({ invites }: { invites: MyInvite[] }) {
+  const router = useRouter()
+  const [busy, setBusy] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const answer = async (inv: MyInvite, decision: 'accept' | 'decline') => {
+    setBusy(inv.id); setError(null)
+    const problem = await send(`/api/workspaces/invites/${inv.id}`, 'POST', { decision })
+    setBusy(null)
+    if (problem) { setError(problem); return }
+    if (decision === 'accept') router.push(`/dashboard/business?ws=${encodeURIComponent(inv.workspaceId)}`)
+    router.refresh()
+  }
+  return <section aria-label="Invitations" className="mb-4 flex flex-col gap-2">
+    {error && <p role="alert" className="text-[14px] text-[#d9a441]">{error}</p>}
+    {invites.map(inv => <div key={inv.id} className="flex flex-wrap items-center gap-3 rounded-[16px] border border-[#2fb8a6]/40 bg-[#121212] p-4">
+      <p className="min-w-0 flex-1 text-[15px] text-[#f2efea]"><b>{inv.invitedByName}</b> invited you to <b>{inv.workspaceName}</b> as {ROLE_LABEL[inv.role]}.</p>
+      <div className="flex gap-2">
+        <button type="button" disabled={busy === inv.id} onClick={() => answer(inv, 'decline')} className="min-h-11 rounded-full border border-[#262626] px-4 text-[14px] text-[#9a9a96]">Decline</button>
+        <button type="button" disabled={busy === inv.id} onClick={() => answer(inv, 'accept')} className={`${btn} bg-[#2fb8a6] text-[#04201c] disabled:opacity-50`}>Join</button>
+      </div>
+    </div>)}
+    <p className="text-[13px] text-[#8a8a86]">Joining shares your name with the workspace. Your personal Gogo stays private.</p>
+  </section>
 }
 
 type Tab = 'brief' | 'approvals' | 'channels' | 'people'
@@ -126,9 +161,7 @@ function Brief({ detail }: { detail: WorkspaceDetail }) {
     <ul className="flex flex-col gap-2">
       {detail.artifacts.map(a => <li key={a.artifactId} className="flex items-center gap-3 rounded-[14px] border border-[#222] bg-[#121212] p-4">
         <span className="flex min-w-0 flex-1 flex-col">
-          {a.sharedByYou
-            ? <Link href={`/dashboard/reports/${a.artifactId}`} className="truncate text-[16px] font-medium text-[#f2efea] underline-offset-2 hover:underline">{a.title}</Link>
-            : <span className="truncate text-[16px] font-medium text-[#f2efea]">{a.title}</span>}
+          <Link href={a.sharedByYou ? `/dashboard/reports/${a.artifactId}` : `/dashboard/business/${detail.id}/shared/${a.artifactId}`} className="truncate text-[16px] font-medium text-[#f2efea] underline-offset-2 hover:underline">{a.title}</Link>
           <span className="text-[13px] text-[#8a8a86]">Shared by {a.sharedByYou ? 'you' : a.sharedByName}</span>
         </span>
         {(a.sharedByYou || admin) && <button type="button" className="min-h-11 shrink-0 rounded-full border border-[#262626] px-4 text-[14px] text-[#9a9a96]" onClick={async () => {
@@ -179,6 +212,14 @@ function People({ detail }: { detail: WorkspaceDetail }) {
         </li>
       })}
     </ul>
+    {canInvite && detail.pendingInvites.length > 0 && <div className="mt-2 flex flex-col gap-2">
+      <h2 className="text-[16px] font-semibold text-[#f2efea]">Waiting to accept</h2>
+      {detail.pendingInvites.map(inv => <div key={inv.id} className="flex items-center gap-3 rounded-[14px] border border-dashed border-[#2a2a2a] p-4">
+        <span className="min-w-0 flex-1 truncate text-[15px] text-[#f2efea]">{inv.name} <span className="text-[#8a8a86]">· {ROLE_LABEL[inv.role]}</span></span>
+        <button type="button" disabled={busy} className="min-h-11 rounded-full border border-[#262626] px-4 text-[14px] text-[#9a9a96]"
+          onClick={() => act(`/api/workspaces/${detail.id}/invites/${inv.id}`, 'DELETE')}>Revoke</button>
+      </div>)}
+    </div>}
     {canInvite && <form className="mt-2 flex flex-col gap-3 rounded-[16px] border border-[#222] bg-[#121212] p-4" onSubmit={async e => {
       e.preventDefault()
       if (await act(`/api/workspaces/${detail.id}/members`, 'POST', { whatsapp: number, role })) setNumber('')
@@ -193,7 +234,13 @@ function People({ detail }: { detail: WorkspaceDetail }) {
         </select>
         <button type="submit" disabled={busy || !number.trim()} className={`${btn} bg-[#2fb8a6] text-[#04201c] disabled:opacity-50`}>Invite</button>
       </div>
-      <p className="text-[13px] text-[#8a8a86]">They see only what members share here, never your personal Gogo.</p>
+      <p className="text-[13px] text-[#8a8a86]">They join only after accepting. They see only what members share here, never your personal Gogo.</p>
     </form>}
+    {detail.audit.length > 0 && <details className="mt-2 rounded-[16px] border border-[#222] bg-[#121212] p-4">
+      <summary className="min-h-11 cursor-pointer text-[15px] font-semibold text-[#f2efea]">Activity</summary>
+      <ul className="mt-2 flex flex-col gap-1.5">
+        {detail.audit.map((r, i) => <li key={i} className="text-[14px] text-[#a8a8a4]">{r.actorName} · {ACTION_LABEL[r.action] || r.action}{r.targetName && r.targetName !== r.actorName ? ` · ${r.targetName}` : ''} <span className="text-[#8a8a86]">· {new Date(r.at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</span></li>)}
+      </ul>
+    </details>}
   </div>
 }

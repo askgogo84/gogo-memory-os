@@ -1,20 +1,20 @@
 import { getSession } from '@/lib/dashboard/session'
-import { getWorkspaceDetail, listMyWorkspaces, UUID_RE, WorkspaceError, type MyWorkspace, type WorkspaceDetail } from '@/lib/workspaces/access'
-import { BusinessWorkspace, CreateWorkspaceForm } from './business-client'
+import { getWorkspaceDetail, listMyInvites, listMyWorkspaces, UUID_RE, WorkspaceError, type MyInvite, type MyWorkspace, type WorkspaceDetail } from '@/lib/workspaces/access'
+import { BusinessWorkspace, CreateWorkspaceForm, InviteBanner } from './business-client'
 
 export const dynamic = 'force-dynamic'
 
 type Loaded =
   | { state: 'setup' }
   | { state: 'error' }
-  | { state: 'ok'; workspaces: MyWorkspace[]; detail: WorkspaceDetail | null }
+  | { state: 'ok'; workspaces: MyWorkspace[]; detail: WorkspaceDetail | null; invites: MyInvite[] }
 
 async function load(telegramId: string, wanted: string | undefined): Promise<Loaded> {
   try {
-    const workspaces = await listMyWorkspaces(telegramId)
+    const [workspaces, invites] = await Promise.all([listMyWorkspaces(telegramId), listMyInvites(telegramId)])
     const pick = workspaces.find(w => w.id === wanted) || workspaces[0]
     const detail = pick && UUID_RE.test(pick.id) ? await getWorkspaceDetail(telegramId, pick.id) : null
-    return { state: 'ok', workspaces, detail }
+    return { state: 'ok', workspaces, detail, invites }
   } catch (err) {
     if (err instanceof WorkspaceError && err.code === 'workspaces_not_enabled') return { state: 'setup' }
     console.error('BUSINESS_PAGE_FAILED:', String(err instanceof Error ? err.message : err).slice(0, 160))
@@ -37,6 +37,7 @@ export default async function BusinessPage({ searchParams }: { searchParams?: Pr
       </section>}
       {loaded.state === 'error' && <Header />}
       {loaded.state === 'error' && <p className="py-5 text-[15px] text-[#d9a441]">Couldn’t load your workspaces right now. Try again shortly.</p>}
+      {loaded.state === 'ok' && loaded.invites.length > 0 && <InviteBanner invites={loaded.invites} />}
       {loaded.state === 'ok' && !loaded.detail && <>
         <Header />
         <section className="rounded-[16px] border border-[#222] bg-[#121212] p-5">

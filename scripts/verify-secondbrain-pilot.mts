@@ -56,8 +56,10 @@ assert.equal(isMissingTableError({ code: '23505', message: 'duplicate key' }), f
 // 3. Source: every workspace function membership-checks or filters by the caller's telegram_id before touching a table.
 const src = readFileSync('lib/workspaces/access.ts', 'utf8')
 const fns = [...src.matchAll(/^(?:export )?async function (\w+)\(/gm)].map((m, i, all) => ({ name: m[1], body: src.slice(m.index!, all[i + 1]?.index ?? src.length) }))
-const SCOPED_BY_CALLER = new Set(['getMembership', 'listMyWorkspaces', 'createWorkspace'])
-const INTERNAL = new Set(['audit', 'displayNames', 'memberRow', 'ownerCount', 'applyMemberChange'])
+// listMyInvites / respondToInvite: only invitations addressed to the caller (telegram_id = me).
+const SCOPED_BY_CALLER = new Set(['getMembership', 'listMyWorkspaces', 'createWorkspace', 'listMyInvites', 'respondToInvite'])
+// expireStaleInvites / pendingInvites run only after the caller passed requireWorkspaceRole (asserted below).
+const INTERNAL = new Set(['audit', 'displayNames', 'memberRow', 'ownerCount', 'applyMemberChange', 'expireStaleInvites', 'pendingInvites'])
 for (const fn of fns) {
   const firstFrom = fn.body.indexOf('.from(')
   if (firstFrom < 0 && !fn.body.includes('applyMemberChange(')) continue
@@ -78,7 +80,7 @@ assert.equal((src.match(/from\('workspace_members'\)\.(update|delete)\(/g) || []
 // Every route authenticates, uses the origin guard on mutations, and reaches data only through access.ts.
 function walk(dir: string, out: string[] = []) { for (const n of readdirSync(dir)) { const f = join(dir, n); statSync(f).isDirectory() ? walk(f, out) : out.push(f) } return out }
 const routes = walk('app/api/workspaces').filter(f => f.endsWith('route.ts'))
-assert.equal(routes.length, 5, 'five workspace route files')
+assert.equal(routes.length, 8, 'eight workspace route files (5 pilot + 3 invitation)')
 for (const file of routes) {
   const r = readFileSync(file, 'utf8')
   assert.doesNotMatch(r, /supabaseAdmin|\.from\(/, `${file} never queries directly`)
@@ -150,3 +152,19 @@ for (const file of ['app/dashboard/(app)/business/business-client.tsx', 'app/das
   for (const line of readFileSync(file, 'utf8').split('\n').filter(l => l.includes("'@/lib/workspaces/access'")))
     assert.match(line, /^import type /, `${file} imports only types from the server access layer`)
 console.log('verify-secondbrain-pilot: ok')
+
+// Invitations are consent-based: inviting creates a pending invite, never a membership row.
+{
+  const body = (name: string) => fns.find(f => f.name === name)!.body
+  const invite = body('inviteMember')
+  assert.ok(!invite.includes("from('workspace_members')\n    .insert") && !/workspace_members'\)\s*\.insert/.test(invite), 'inviteMember never inserts a member')
+  assert.match(invite, /from\('workspace_invites'\)\s*\.insert/)
+  const respond = body('respondToInvite')
+  assert.match(respond, /\.eq\('id', id\)\.eq\('telegram_id', me\)/, 'only the invitee can answer')
+  assert.ok(respond.indexOf(".eq('status', 'pending').select('id')") < respond.indexOf("from('workspace_members')\n      .insert"), 'invite is claimed before membership is created')
+  assert.ok(src.indexOf('expireStaleInvites(membership.workspaceId)') > src.indexOf("requireWorkspaceRole(telegramId, workspaceId, 'invite')"))
+  assert.match(body('getWorkspaceDetail'), /admin \? await Promise\.all\(\[pendingInvites\(id\)/, 'pending invites and audit only for admins')
+  assert.match(body('getSharedArtifact'), /requireWorkspaceRole\(telegramId, workspaceId, 'view'\)[\s\S]*\.eq\('telegram_id', String\(share\.shared_by\)\)/, 'shared view: member + still owned by sharer')
+  assert.match(body('listAudit'), /requireWorkspaceRole\(telegramId, workspaceId, 'remove_member'\)/, 'audit trail is admin+')
+  console.log('Invitations: pending until the invitee accepts; revoke/expiry; shared reports readable by members; audit admin-only')
+}
