@@ -12,6 +12,8 @@ import { GogoCharacter } from '@/components/gogo/gogo-character'
 import { selectActiveRun, summarizeActiveRunState } from '@/lib/dashboard/run-state'
 import { CHAT_STATE_LABEL, CHAT_STATE_SHORT, chatGogoState, type ChatGogoState } from '@/lib/dashboard/gogo-chat-state'
 import { flightChoiceFromText } from '@/lib/agent/flight-choices'
+import { EmailAttentionCard } from '@/components/dashboard/email-attention-card'
+import { parseAttentionCard } from '@/lib/email/attention'
 import { CHAT_SUGGESTIONS, greetingFor, type ChatSuggestion } from '@/lib/dashboard/chat-suggestions'
 import { splitChatText } from '@/lib/dashboard/chat-text'
 import { MobileMenuButton } from '@/components/dashboard/mobile-nav'
@@ -81,14 +83,15 @@ function Message({message,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPic
       </div>
     </div>
   }
+  const attentionCard=parseAttentionCard(message.content)
   return <div className="flex items-start gap-3 sm:gap-3.5">
     <Avatar size={40}/>
     <div className="min-w-0 max-w-[90%] pt-1 text-[16px] leading-[1.65] text-[#dcdad5] sm:max-w-[84%] sm:text-[17px]">
       {message.runId&&<div className="mb-1"><RunStepsLine runId={message.runId}/></div>}
-      <div className="whitespace-pre-wrap break-words">
+      {attentionCard?<EmailAttentionCard card={attentionCard} onAction={onPick}/>:<div className="whitespace-pre-wrap break-words">
         {richText(message.content)}
         {message.mediaUrl&&<img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 rounded-xl border border-[#2a2a2a]"/>}
-      </div>
+      </div>}
       {connectCard(message.content)}
       {chips&&chips.length>0&&onPick&&<div className="mt-4 flex flex-wrap gap-2.5" role="group" aria-label="Quick answers">
         {chips.map(c=><button key={c.title} type="button" onClick={()=>onPick(c.title)} className="min-h-12 rounded-full border border-[#2f2f2f] bg-[#161616] px-5 text-left text-[16px] font-semibold text-[#f2efea] transition hover:border-[#4cd0bd] hover:bg-[#123d38] hover:text-[#8be6d8] sm:text-[17px]">

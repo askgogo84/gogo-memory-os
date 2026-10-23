@@ -1267,6 +1267,22 @@ _"${originalText}"_
     // Approvals are resolved above and never here; two open questions get "which one?".
     // Understand-first runs right after this: the registry's deterministic binding always wins, and
     // understand-first reads the turn only when the registry had nothing (or the completed request after a rewrite).
+    // Emails that need you: the attention card, its numbered actions and learned rules (same as the dashboard).
+    if (resolvedUser.id && resolvedUser.whatsappId && text.length <= 140 && /\b(?:e-?mails?|mails?|inbox|flag(?:ging)?|undo|rule)\b|^\s*(?:not important|important|draft|remind|why|open|ignore|skip)\b[^\n]{0,40}\b[1-9]\b/i.test(text)) {
+      const cmds: any = await import('@/lib/email/attention-commands').catch(() => null)
+      if (cmds?.mightBeAttentionCommand?.(text)) {
+        const store: any = await import('@/lib/email/attention-store').catch(() => null)
+        const actor = { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, whatsappId: String(resolvedUser.whatsappId), name: resolvedUser.name || 'Gogo', timezone: (resolvedUser as any).timezone || undefined }
+        const res: any = store ? await Promise.resolve().then(() => store.handleEmailAttentionCommand({ actor, text })).catch((err: any) => { console.error('EMAIL_ATTENTION_FAILED:', String(err?.message || err).slice(0, 160)); return null }) : null
+        if (res?.rewrite) text = res.rewrite
+        else if (res) {
+          await saveConversation(resolvedUser.telegramId, 'user', text)
+          await saveConversation(resolvedUser.telegramId, 'assistant', res.text)
+          await sendWhatsAppMessage(from, res.text)
+          return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+        }
+      }
+    }
     // The live-slot step ("What name should I book under?" → "Goverdhan", "Which one should I book?" → "7pm")
     // is a registered question too, so this is its only entry point: one owner, no double handling.
     let pendingQuestionCheckedFor: string | null = null

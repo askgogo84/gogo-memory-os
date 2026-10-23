@@ -24,7 +24,7 @@ function harness(initial){
     if(id==='@/components/dashboard/run-steps')return{RunStepsLine:()=>null};
     if(id.startsWith('@/')){
      const relative=id.slice(2),ext=relative.startsWith('components/')?'.tsx':'.ts';
-     assert(/^(lib\/(dashboard|agent\/flight-choices)|components\/dashboard\/service-notice-cards)/.test(relative),'Unexpected dependency '+id);
+     assert(/^(lib\/(dashboard|agent\/flight-choices|email\/attention$)|components\/dashboard\/(service-notice-cards|email-attention-card))/.test(relative),'Unexpected dependency '+id);
      return load(relative+ext);
     }
     if(id.startsWith('.'))return load(path.relative(repo,path.resolve(path.dirname(full),id+'.ts')));

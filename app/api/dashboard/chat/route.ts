@@ -274,6 +274,20 @@ async function handleChatPost(req: NextRequest) {
       await saveConversation(user.telegram_id,text,voice.text)
       return NextResponse.json(voice)
     }
+    // Emails that need you: the attention card, its numbered actions ("not important 2", "draft 1") and learned rules.
+    // Lazy and pre-filtered so strict harnesses keep their dependency maps.
+    {
+      const cmds:any=text.length<=140&&/\b(?:e-?mails?|mails?|inbox|flag(?:ging)?|undo|rule)\b|^\s*(?:not important|important|draft|remind|why|open|ignore|skip)\b[^\n]{0,40}\b[1-9]\b/i.test(text)?await import('@/lib/email/attention-commands').catch(()=>null):null
+      if(cmds?.mightBeAttentionCommand?.(text)){
+        const store:any=await import('@/lib/email/attention-store').catch(()=>null)
+        const res=store?await Promise.resolve().then(()=>store.handleEmailAttentionCommand({actor,text})).catch((err:any)=>{console.error('EMAIL_ATTENTION_FAILED:',String(err?.message||err).slice(0,160));return null}):null
+        if(res?.rewrite)text=res.rewrite
+        else if(res){
+          await saveConversation(user.telegram_id,text,res.text)
+          return NextResponse.json(res)
+        }
+      }
+    }
     // A short reply to the question Gogo just asked ("This Saturday 8pm" after "What time should I
     // book Toit for?") resumes that request before any feature matcher reads it as something new.
     // Resolved once per turn here; processIncomingMessage below is told so and skips the same reads.

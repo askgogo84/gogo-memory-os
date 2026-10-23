@@ -5,6 +5,7 @@ import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 import { fetchGmailAttentionThreads, refreshGmailAccessToken } from '@/lib/services/google-gmail'
 import { formatEmailSnippet } from './google-workspace-read'
+import { scoreEmail as scoreAttentionEmail } from '@/lib/email/attention'
 import { retiredRunReason, isTaskInventoryQuestion, isRelevantOpenLoop, openLoopStatus } from './task-lifecycle'
 
 export type OpenLoopKind='followup'|'waiting_on'|'commitment'|'approval'|'mission'|'life_event'|'meeting_action'|'other'
@@ -594,6 +595,14 @@ async function syncGmailAttention(telegramId:string,current:Set<string>,gmailRea
   const read=await (gmailRead?gmailRead():readGmailAttention(telegramId))
   if('reason' in read)return 'skip' as const
   const {threads,ownEmail}=read
+  // The same attention judgement as the chat card (with the person's learned rules) keeps routine mail out of
+  // "what needs my attention". Guarded so a missing module or rules read never blocks the sync.
+  let attentionScore:((message:any)=>{picked:boolean}|null)=()=>null
+  try{
+    const {data:ruleRows}=await supabaseAdmin.from('email_attention_rules').select('kind,match_type,match_value,category,label,source').eq('telegram_id',Number(telegramId)).eq('active',true).limit(300)
+    const rules=(Array.isArray(ruleRows)?ruleRows:[]).map((r:any)=>({kind:r.kind,matchType:r.match_type,matchValue:String(r.match_value||''),category:r.category,label:String(r.label||''),source:r.source}))
+    if(typeof scoreAttentionEmail==='function')attentionScore=(message:any)=>{const r=scoreAttentionEmail(message,{rules,ownEmail});return r&&typeof r.score==='number'?r:null}
+  }catch{}
   await captureGmailServiceNotices(telegramId,threads.flatMap(thread=>{
     const last=thread.messages?.at(-1)
     return last&&headerEmail(last.from)!==ownEmail?[{...last,threadId:thread.id}]:[]
@@ -648,7 +657,7 @@ async function syncGmailAttention(telegramId:string,current:Set<string>,gmailRea
       continue
     }
 
-    if(looksLikeIncomingAction(combined)&&!isAutomatedGmailMessage(last)){
+    if(looksLikeIncomingAction(combined)&&!isAutomatedGmailMessage(last)&&attentionScore(last)?.picked!==false){
       const sender=headerName(last.from)
       const input:OpenLoopInput={
         telegramId,kind:'commitment',

@@ -190,6 +190,7 @@ function Connections(props: Props) {
 
   const builtIn = [
     { name: 'Google', what: props.google.gmail || props.google.calendar ? [props.google.gmail && 'Gmail', props.google.calendar && 'Calendar', props.google.gmail && 'Drive'].filter(Boolean).join(', ') : 'Not connected', on: props.google.gmail || props.google.calendar, href: '/dashboard/you' },
+    { name: 'Email inbox', what: 'Forward your mail or sign in with Google', on: false, href: '/dashboard/settings/email' },
     { name: 'WhatsApp', what: props.phone || 'Connected', on: true, href: '' },
     { name: 'CreditIQ', what: props.creditiq ? 'Cards and reward points' : 'Not connected', on: props.creditiq, href: '/dashboard/you' },
   ]
