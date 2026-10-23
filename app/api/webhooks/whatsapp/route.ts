@@ -1268,7 +1268,7 @@ _"${originalText}"_
     // Understand-first runs right after this: the registry's deterministic binding always wins, and
     // understand-first reads the turn only when the registry had nothing (or the completed request after a rewrite).
     // Emails that need you: the attention card, its numbered actions and learned rules (same as the dashboard).
-    if (resolvedUser.id && resolvedUser.whatsappId && /\b(?:e-?mails?|mails?|inbox|flag(?:ging)?|undo|rule)\b|^\s*(?:not important|important|draft|remind|why|open|ignore|skip)\b[^\n]{0,40}\b[1-9]\b/i.test(text)) {
+    if (resolvedUser.id && resolvedUser.whatsappId && text.length <= 140 && /\b(?:e-?mails?|mails?|inbox|flag(?:ging)?|undo|rule)\b|^\s*(?:not important|important|draft|remind|why|open|ignore|skip)\b[^\n]{0,40}\b[1-9]\b/i.test(text)) {
       const cmds: any = await import('@/lib/email/attention-commands').catch(() => null)
       if (cmds?.mightBeAttentionCommand?.(text)) {
         const store: any = await import('@/lib/email/attention-store').catch(() => null)

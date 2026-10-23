@@ -277,7 +277,7 @@ async function handleChatPost(req: NextRequest) {
     // Emails that need you: the attention card, its numbered actions ("not important 2", "draft 1") and learned rules.
     // Lazy and pre-filtered so strict harnesses keep their dependency maps.
     {
-      const cmds:any=/\b(?:e-?mails?|mails?|inbox|flag(?:ging)?|undo|rule)\b|^\s*(?:not important|important|draft|remind|why|open|ignore|skip)\b[^\n]{0,40}\b[1-9]\b/i.test(text)?await import('@/lib/email/attention-commands').catch(()=>null):null
+      const cmds:any=text.length<=140&&/\b(?:e-?mails?|mails?|inbox|flag(?:ging)?|undo|rule)\b|^\s*(?:not important|important|draft|remind|why|open|ignore|skip)\b[^\n]{0,40}\b[1-9]\b/i.test(text)?await import('@/lib/email/attention-commands').catch(()=>null):null
       if(cmds?.mightBeAttentionCommand?.(text)){
         const store:any=await import('@/lib/email/attention-store').catch(()=>null)
         const res=store?await Promise.resolve().then(()=>store.handleEmailAttentionCommand({actor,text})).catch((err:any)=>{console.error('EMAIL_ATTENTION_FAILED:',String(err?.message||err).slice(0,160));return null}):null
