@@ -127,10 +127,11 @@ export function makeDocRequest(text: string): { format: 'deck' | 'sheet'; reques
   if (!t || t.length > 500) return null
   // Asked in a connected app's format (Google Sheets, Drive, Notion): that flow handles it.
   if (/\b(?:google\s+(?:sheets?|slides|docs?|drive)|in (?:my )?drive|notion|gsheet)\b/i.test(t)) return null
-  // Reminders, tasks, events and messages that merely mention a deck or budget are not Make requests.
-  if (/\b(?:remind(?:er)?s?|tasks?|to-?dos?|events?|meetings?|calendar|e-?mails?|messages?|whatsapp|note that|alarm|call)\b/i.test(t)) return null
   const m = t.match(/^(?:hey\s+gogo[,!]?\s+)?(?:please\s+)?(?:can you\s+|could you\s+|pls\s+)?(?:make|create|build|prepare|draft|generate|put together|design)\s+(?:me\s+|us\s+)?(?:a|an|the|my|one)?\s*([\s\S]{0,80}?)\b(pitch\s+deck|deck|slides|slide deck|presentation|powerpoint|ppt|spreadsheet|excel sheet|sheet|excel|budget|expense tracker|cost breakdown)\b/i)
   if (!m) return null
+  // "Create a reminder to review the budget sheet": what is being made comes before the format word. Only that part
+  // is checked, so a deck ABOUT a WhatsApp product is still a deck (24 Oct live).
+  if (/\b(?:remind(?:er)?s?|tasks?|to-?dos?|events?|meetings?|calendar|e-?mails?|messages?|note|alarm|list)\b/i.test(m[1])) return null
   const format = makeFormatOf(m[2]) || (/budget|expense|cost/i.test(m[2]) ? 'sheet' : null)
   if (!format) return null
   return { format, request: t }
@@ -148,8 +149,8 @@ export function madeIdFromReply(reply: string): string | null {
 export function isMakeEdit(text: string) {
   const t = String(text || '').trim()
   if (!t || t.length > 240 || makeDocRequest(t)) return false
-  // "add milk to my list" or "set a reminder" right after a deck is not an edit to it.
-  if (/\b(?:remind(?:er)?s?|tasks?|to-?dos?|events?|meetings?|calendar|e-?mails?|messages?|whatsapp|alarm|call|my list|shopping|grocer(?:y|ies)|note)\b/i.test(t)) return false
+  // "add milk to my list" or "set a reminder" right after a deck is not an edit to it; "add a slide on WhatsApp reminders" is.
+  if (/^(?:please\s+)?(?:set|add|make|create|put)\s+(?:a\s+|an\s+|my\s+)?(?:reminder|task|to-?do|event|meeting|alarm|note|call)\b|\bremind me\b|\b(?:to|on|in) (?:my|the) (?:list|shopping list|grocery list|calendar|tasks?|to-?dos?)\b/i.test(t)) return false
   return /^(?:please\s+)?(?:can you\s+)?(?:make|change|set|add|remove|delete|drop|rename|shorten|replace|update|move|swap|increase|reduce|cut|put|use|merge|split|reword|rewrite|fix|turn|convert)\b/i.test(t)
 }
 

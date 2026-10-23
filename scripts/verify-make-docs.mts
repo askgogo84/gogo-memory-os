@@ -15,6 +15,8 @@ await check('make requests are recognised; reminders, Google apps and plain chat
   assert.equal(D.makeDocRequest('Create a reminder to review the budget sheet tomorrow'), null)
   assert.equal(D.makeDocRequest('Make a Google Sheet in my drive for expenses'), null)
   assert.equal(D.makeDocRequest('What is a pitch deck?'), null)
+  // 24 Oct live: a deck about a WhatsApp product was rejected as a message.
+  assert.equal(D.makeDocRequest('Make a 6 slide pitch deck for AskGogo, a WhatsApp-first AI memory assistant for India')?.format, 'deck')
   assert.equal(D.makeDocRequest('Add a task: send the deck to Ravi'), null)
 })
 
@@ -29,6 +31,7 @@ await check('edits bind only to the last Make reply', () => {
   assert.ok(!D.isMakeEdit('what is the weather'))
   assert.ok(!D.isMakeEdit('add milk to my list'))
   assert.ok(!D.isMakeEdit('set a reminder for 5pm'))
+  assert.ok(D.isMakeEdit('add a slide on WhatsApp reminders'))
   assert.ok(!D.isMakeEdit('make a pitch deck for my bakery'))
 })
 
