@@ -62,7 +62,7 @@ export function parseV1(data:any,base:string,quote:string):Rate|null{
 }
 async function loadV1(base:string,quote:string):Promise<Rate|null>{
   try{
-    const response=await fetch(`https://api.frankfurter.app/latest?from=${base}&to=${quote}`,{headers:{accept:'application/json'},cache:'no-store',signal:AbortSignal.timeout(3500)})
+    const response=await fetch(`https://api.frankfurter.dev/v1/latest?base=${base}&symbols=${quote}`,{headers:{accept:'application/json'},cache:'no-store',signal:AbortSignal.timeout(3500)})
     if(!response.ok)return null
     const text=await response.text()
     if(text.length>MAX_BYTES)return null

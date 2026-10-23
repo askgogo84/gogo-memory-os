@@ -970,7 +970,7 @@ export function renderContextBlock(pack:ContextPack,maxChars=3200){
     '- A proposal is not a confirmed booking; require provider proof. Moving/packing completion: do not assume it. Arrival is not continued presence. Free time requires complete Calendar coverage and full event intervals.',
     '- A bounded lookup is not proof of absence or completeness.',
     // 24 Oct live: "What do you know about me?" listed three parking spots (B2 14, B3 21, B2 9) and a test locker.
-    '- Saved memories carry their saved date. When several facts describe the same thing (where the car is parked, a locker, an address, a preference), only the newest is current: state that one, never list the older values as if they were also true. Skip entries that look like test data (e.g. TEST-…). Write in normal sentence case, never in capitals.',
+    ...(pack.facts.filter(f=>f.source==='semantic_memory').length>1?['- Conflicting saved facts about one thing (parking spot, locker, address): only the newest saved is current.']:[]),
     // R09 (22 Oct live): the move day was acknowledged, then "nothing blocks evening plans" was asserted anyway.
     '- A saved life event on the asked day (a move, a trip, an event) is a constraint even when Calendar shows that hour free: name it and how it may affect the plan, and never say "nothing blocks" or "you are free" while it stands.',
     ...(pack.retrievalIncomplete?['- Retrieval is incomplete: one or more sources failed. Disclose lookup limitations; never claim no saved record exists.']:[]),
