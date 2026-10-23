@@ -15,6 +15,7 @@ import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { buildContextPack, renderContextBlock } from '@/lib/agent/context-brain'
 import { isMyBookingsQuery, buildMyBookingsReply } from '@/lib/agent/my-bookings'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
+import { isFollowUpQuery, standaloneSearchQuery } from '@/lib/agent/follow-up-query'
 import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
 import { askClaude, askClaudeWithContext, isContextSynthesisTurn, type Message } from '@/lib/claude'
 import { buildReferenceFxReply } from './handlers/reference-fx'
@@ -1588,10 +1589,16 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
           : `\n\nI couldn't find ${code}'s schedule for today or tomorrow to track it. Send the date, for example: Track ${code} on 25 Oct.`
       }
     } else {
-      const searchContext = await searchWeb(incomingText)
+      // A follow-up ("which of those is open late?", "how old is he?") is searched as a standalone query built
+      // from the last turns; the user's own words are unchanged everywhere else.
+      const searchQuery = isFollowUpQuery(incomingText)
+        ? await standaloneSearchQuery(incomingText, await getConversationHistory(resolvedUser.telegramId).catch(() => [])).catch(() => incomingText)
+        : incomingText
+      const question = searchQuery === incomingText ? incomingText : `${incomingText} (meaning: ${searchQuery})`
+      const searchContext = await searchWeb(searchQuery)
       __trace.mark('searchContext')
-      try { reply = await askClaudeWithContext(incomingText, searchContext, resolvedUser.name) } catch { reply = buildDirectWebAnswer(incomingText, searchContext) }
-      if (!reply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(reply)) reply = buildDirectWebAnswer(incomingText, searchContext)
+      try { reply = await askClaudeWithContext(question, searchContext, resolvedUser.name) } catch { reply = buildDirectWebAnswer(searchQuery, searchContext) }
+      if (!reply || /i apologize|unable to provide|don't have access|couldn't fetch|web search failed/i.test(reply)) reply = buildDirectWebAnswer(searchQuery, searchContext)
     }
     reply += await recordWebSearch(resolvedUser, params.channel, inboundMessageId, guard.usage)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)

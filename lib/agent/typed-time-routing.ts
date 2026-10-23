@@ -21,6 +21,19 @@ export function parseTypedTimeRequest(raw:string){
   const target=m[1].replace(/^the\s+/i,'').replace(/\s+(?:time|to|for|at)$/i,'').trim()
   return {text,target,clock:m[2].trim(),day:/\btomorrow\b/i.test(text)?'tomorrow':/\btoday\b/i.test(text)?'today':null}
 }
+/** "11:30 am, Sat 24 Oct" in the owner's zone, never a raw ISO string (23 Oct live). A repeating event whose
+ * series began in the past is answered with its time only. */
+export function readableStart(start:string,timezone:string,repeating=false,now=Date.now()):string{
+  if(!start)return 'no time set'
+  if(/^\d{4}-\d{2}-\d{2}$/.test(start))return `all day, ${new Intl.DateTimeFormat('en-IN',{timeZone:'UTC',weekday:'short',day:'numeric',month:'short'}).format(new Date(start+'T00:00:00Z'))}`
+  const at=new Date(start)
+  if(!Number.isFinite(at.getTime()))return start
+  const time=new Intl.DateTimeFormat('en-IN',{timeZone:timezone,hour:'numeric',minute:'2-digit',hour12:true}).format(at).replace(/\s?([ap])\.?m\.?/i,(_,m)=>` ${m.toLowerCase()}m`)
+  if(repeating&&at.getTime()<now)return `${time} (repeats)`
+  const day=new Intl.DateTimeFormat('en-IN',{timeZone:timezone,weekday:'short',day:'numeric',month:'short'}).format(at)
+  return `${time}, ${day}`
+}
+
 export function movedTime(clock:string,start:string,end:string|undefined,timezone:string,day:string|null){
   const time=clock.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i)
   if(!time||!Number.isFinite(Date.parse(start)))return null
@@ -164,7 +177,7 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
     if(read){
       const start=calendar?.start?.dateTime||calendar?.start?.date||reminder.remind_at
       await recordDecisionLearning({actor:p.actor,text:original,domain,handler:calendar?'calendar-named-read':'reminder-query',decisionId:p.messageId||randomUUID(),outcome:'verified_success',verified:true,objectKind:calendar?'calendar_event':'reminder',objectRef:object.id}).catch(()=>{})
-      return response(`${object.title}: ${start}`,'completed',domain)
+      return response(`${object.title}: ${readableStart(start,normalizeTimezone(calendar?access?.timezone:reminder?.timezone),!!calendar?.recurrence||!!calendar?.recurringEventId)}`,'completed',domain)
     }
     const timezone=normalizeTimezone(calendar?access!.timezone:reminder.timezone)
     if(calendar&&(!calendar.start?.dateTime||!calendar.end?.dateTime))return clarify('All-day events need an explicit date and duration before they can become timed events. Nothing has changed.')

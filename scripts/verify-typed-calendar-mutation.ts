@@ -164,7 +164,7 @@ async function main(){try{
  reset();permission='off';assert.equal((await run('Move Same Brain Learning Test to 5 PM'))?.status,'paused');assert.equal(db.agent_approvals.length,0)
  assert.equal(parseTypedTimeRequest('Remind me tomorrow at 4 PM to call Praveen'),null)
  assert.equal(isSameBrainIntrospection('What time is Same Brain Learning Test tomorrow?'),false)
- reset();assert.match((await run('What time is Same Brain Learning Test tomorrow?'))!.text,/16:00:00/)
+ reset();assert.match((await run('What time is Same Brain Learning Test tomorrow?'))!.text,/4:00 pm, Thu, 1 Oct/)
  assert.equal(movedTime('25 PM',baseEvent.start.dateTime,baseEvent.end.dateTime,'Asia/Kolkata',null),null)
  for(const path of ['app/api/dashboard/chat/route.ts','app/api/webhooks/whatsapp/route.ts','app/api/agent/run/route.ts']){const source=readFileSync(path,'utf8');assert.ok(source.indexOf('await tryTypedTimeRouting(')<source.indexOf('await trySameBrainIntrospection('),path)}
  // Repeatable offline routing matrix. Scores describe these fixtures, not users.

@@ -55,6 +55,8 @@ export function isWatcherStatusQuery(text:string) {
     || /^what\s+(?:monitors?|watchers?|watches)\s+(?:do\s+i\s+have|are\s+active)\??$/.test(raw)
     || /^(?:what|which)\b[^.!?]*\b(?:am\s+i|are\s+you)\s+(?:monitoring|watching|tracking)\b/.test(raw)
     || /^(?:what|when|how|is|are|do)\b[^.!?]*\bmy\b[^.!?]*\b(?:watches|watch|watchers?|monitors?)\b/.test(raw)
+    // "What did I ask you to track today?" / "what have I asked you to monitor" (23 Oct live: went to web search).
+    || /^(?:what|which)\b[^.!?]{0,30}\b(?:did|have|had)\s+i\s+(?:ask(?:ed)?|told?|get|got)\s+you\s+to\s+(?:track|watch|monitor|keep\s+an?\s+eye\s+on)\b/.test(raw)
 }
 
 function watchStatusSubject(text:string){
@@ -77,8 +79,17 @@ function watchCheckTime(value:unknown){
 }
 
 export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;text:string}) {
-  if(!isWatcherStatusQuery(params.text))return null
   const tg=String(params.actor.legacyTelegramId)
+  if(!isWatcherStatusQuery(params.text)){
+    // "How is EK500 doing?" about a flight Gogo is tracking: answer from the tracker, not a web search
+    // (23 Oct live: a web answer quoted an undated Facebook post about a U-turn).
+    const ft:any=await import('./flight-track').catch(()=>null)
+    if(typeof ft?.isFlightStatusQuestion!=='function'||!ft.isFlightStatusQuestion(params.text))return null
+    const flight=await ft.flightTrackStatusReply(tg,params.text,new Date(),'Asia/Kolkata',{onlyTracked:true}).catch(()=>null)
+    if(!flight)return null
+    return {runId:'watcher-status-flights',status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:flight,handledBy:'watcher-status',
+      verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:'flight-tracks'}}
+  }
   // Tracked flights answer with their own state (waiting / in the air / landed + when alerted).
   if(/\bflights?\b|\b(?:land(?:ed|s)?|take[- ]?off|took off)\b/i.test(params.text)||/\b(?:[A-Z]{2}|[A-Z]\d|\d[A-Z])\s?\d{2,4}\b/.test(params.text)){
     const flight=await import('./flight-track').then(m=>m.flightTrackStatusReply(tg,params.text)).catch(()=>null)

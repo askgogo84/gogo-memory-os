@@ -248,7 +248,8 @@ export function detectIntent(text: string): DetectedIntent {
   if (isTimeFirstReminder(text)) return { type: 'set_reminder', confidence: 'high' }
 
   // Handle time/date-only follow-ups after a reminder conversation (e.g. "6am", "on 28th june", "change time to 6am")
-  if (/^(change time to|change it to|make it|set it to|update to|change to)\s+/i.test(lower)) return { type: 'set_reminder', confidence: 'high' }
+  // Reminder time edits only ("make it 10am", "change it to tomorrow"); "make it shorter" is a draft edit (23 Oct live).
+  if (/^(change time to|change it to|make it|set it to|update to|change to)\s+(?:at\s+|by\s+|for\s+)?(?:\d|(?:half|quarter|noon|midnight|tonight|tomorrow|today|morning|afternoon|evening|night|next|every|daily|weekly|(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?|sun)(?:day)?)\b|in\s+\d|in\s+an?\b)/i.test(lower)) return { type: 'set_reminder', confidence: 'high' }
   // 19 Oct live: a bare day/time ("This Saturday 8pm") answering a restaurant question became a reminder
   // titled "This". A time alone is a detail, not a reminder request (see 'bare_time').
   if (/^(at\s+)?\d{1,2}(:\d{2})?\s*(am|pm)$/i.test(lower)) return { type: 'bare_time', confidence: 'high' }
