@@ -77,7 +77,16 @@ export function summariseInbox(rows:any[]){
   return lines.join('\n')
 }
 
-export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unread'='latest',maxResults=5,filter?:GmailReadFilter,summarise=false,attentionOnly=false){
+export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unread'='latest',maxResults=5,filter?:GmailReadFilter,summarise=false,attentionOnly=false,timezone?:string){
+  // "What needs my attention" / "summarise my inbox": only the mail that needs the person, with why, from every
+  // connected source (Gmail, forwarded inbox, Composio). Learned rules apply. Lists below stay for explicit asks.
+  if((attentionOnly||summarise)&&!filter?.sender&&!filter?.topic){
+    const store:any=await import('@/lib/email/attention-store').catch(()=>null)
+    if(store?.buildAttentionCard){
+      try{return (await store.buildAttentionCard({legacyTelegramId:telegramId,timezone})).text}
+      catch(err:any){console.error('ATTENTION_CARD_FAILED:',String(err?.message||err).slice(0,160))}
+    }
+  }
   const access=await gmailAccess(telegramId)
   if(access.disabled)return 'Google Workspace access is turned off in your privacy settings.'
   if(!access.connected){

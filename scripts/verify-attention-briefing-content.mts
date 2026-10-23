@@ -19,6 +19,7 @@ const security={redactEmailAuthSecrets:(text:string)=>text,formatEmailSnippet:(t
 const gmail=load('lib/bot/handlers/gmail-read.ts',{
  '@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/google-gmail':{fetchLatestEmails:async(_access:string,limit:number)=>{requested=limit;return rows},fetchUnreadEmails:async()=>rows},
  '@/lib/security/google-token-crypto':{decryptGoogleToken:(value:string)=>value},'@/lib/agent/google-workspace-read':security,
+ '@/lib/email/attention-store':{},
  '@/lib/agent/open-loops':{...loops,captureGmailServiceNotices:async(tg:number,messages:any[])=>{assert.equal(tg,123);assert.ok(messages.some(m=>m.id===rows[0].id));noticeWrites++;if(failNotices)throw Error('fixture-notice-write-failed')}},
 })
 const failures:string[]=[]
