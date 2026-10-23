@@ -103,6 +103,7 @@ type BrowserAction =
 
 export type SecureBrowserResult = {
   flightEvidence?:{searchControls:string[];resultLabels:string[];fareBasisLabel?:string}
+  productEvidence?:{name:string;price:string}
   status:'completed'|'prepared'|'blocked'|'failed'
   // For an account sign-up with a generated password: whether it was saved to the Vault.
   signupVault?:SignupVaultResult
@@ -352,10 +353,16 @@ export function comparisonReadEvidenceMatches(objective:string,evidence:string):
   if(!subject)return true
   return productIdentityMatches(subject,evidence)
 }
-export function productPagePriceEvidence(objective:string,title:string,pageText:string):string[]|null{
+export function productPagePriceEvidence(objective:string,title:string,pageText:string,product?:{name?:string;price?:string}|null):string[]|null{
   const ask=String(objective||'').match(/^Find the listed price of this product on [^:]{2,40}: "([^"]{2,200})"/)
   const skip=(why:string,extra?:string)=>{if(/^Find the listed price of this product/.test(String(objective||'')))console.warn('PRODUCT_PRICE_DIRECT_SKIP:',JSON.stringify({why,extra:extra||'',title:String(title||'').slice(0,120),objective:String(objective||'').slice(0,160)}));return null}
   if(!ask)return skip('objective_no_match')
+  // The page's own product markup (name + selling price), when it names exactly the requested model.
+  const pName=String(product?.name||'').replace(/\s+/g,' ').trim(),pPrice=String(product?.price||'').replace(/\s+/g,' ').trim()
+  if(pName.length>=6&&/^₹\s?\d[\d,]*(?:\.\d{1,2})?$/.test(pPrice)&&productIdentityMatches(ask[1],pName)){
+    const flat=String(pageText||'').replace(/\s+/g,' ')
+    if(flat.includes(pName)&&flat.includes(pPrice))return [pName,pPrice]
+  }
   const heading=String(title||'').replace(/^Buy\s+/i,'').replace(/\s*(?:\s:\s*Amazon\.in\b.*|\sOnline\b.*|\s-\s*Croma\b.*|\s\|.*)$/i,'').trim()
   if(heading.length<12)return skip('short_heading',heading)
   // Match the complete requested identity while retaining the exact observed heading.
@@ -632,9 +639,39 @@ async function model(page){
       resultLabels:Array.from(document.querySelectorAll('[role="link"][aria-label]')).filter(visible)
         .map(el=>clean(el.getAttribute('aria-label'))).filter(label=>/^From [\d,]+ Indian rupees(?: round trip total)?\. .+ flight with .+\. Leaves .+ and arrives at .+\. Total duration /i.test(label)).slice(0,80)
     }:undefined;
+    // 23 Oct live: Amazon's iPhone 17 page was the right product, but its tab title is not in the body text, so the
+    // price was never read. The product name and selling price come from the page's own product markup instead
+    // (Amazon's title/price blocks, schema.org Product data, product meta tags). Public page data only.
+    const productEvidence=(()=>{try{
+      const q=sel=>{const el=document.querySelector(sel);return el?clean(el.innerText||el.textContent||el.getAttribute('content')||''):''};
+      const rupee=v=>{const n=Number(String(v||'').replace(/[^0-9.]/g,''));return Number.isFinite(n)&&n>0?'₹'+n.toLocaleString('en-IN',{maximumFractionDigits:2}):''};
+      let name='',price='';
+      if(/(^|\.)amazon\.in$/i.test(location.hostname)){
+        name=q('#productTitle');
+        price=q('#corePriceDisplay_desktop_feature_div .priceToPay .a-offscreen')||q('#corePrice_feature_div .a-price .a-offscreen')||q('#apex_desktop .priceToPay .a-offscreen')||q('#corePrice_desktop .a-price .a-offscreen');
+      }
+      if(!name||!price){
+        for(const node of Array.from(document.querySelectorAll('script[type="application/ld+json"]')).slice(0,12)){
+          let data=null;try{data=JSON.parse(node.textContent||'')}catch{continue}
+          const items=[].concat(data&&data['@graph']?data['@graph']:data);
+          for(const item of items){
+            if(!item||!/Product/i.test(String([].concat(item['@type']||'').join(' '))))continue;
+            const offer=[].concat(item.offers||[])[0]||{};
+            const cur=String(offer.priceCurrency||'INR').toUpperCase();
+            if(!name&&item.name)name=clean(String(item.name));
+            if(!price&&cur==='INR')price=rupee(offer.price||offer.lowPrice);
+          }
+        }
+      }
+      if(!price){const meta=document.querySelector('meta[property="product:price:amount"],meta[itemprop="price"]');if(meta)price=rupee(meta.getAttribute('content'))}
+      if(!name)name=q('h1');
+      if(!/^₹\s?\d/.test(price))price=price?rupee(price):'';
+      return name&&price&&name.length>=6?{name:name.slice(0,300),price:price.slice(0,40)}:undefined;
+    }catch{return undefined}})();
     return {
       url:location.href,title:document.title,
       ...(flightEvidence?{flightEvidence}:{}),
+      ...(productEvidence?{productEvidence}:{}),
       ...(activeDialog?{activeDialog:clean(activeDialog.getAttribute('aria-label')||activeDialog.getAttribute('aria-labelledby')||'Public flight picker')}:{}),
       text:((openDialog?'[Open dialog] '+String(openDialog.innerText||'').trim()+'\n\n':'')+String(document.body?.innerText||'')).replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,18000),
       links:Array.from(document.querySelectorAll('a[href]')).filter(actionable).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).sort((a,b)=>relevance(b.text)-relevance(a.text)).slice(0,100),
@@ -1940,7 +1977,10 @@ export async function assessReadOutcome(objective:string,page:any,diagnose:(even
     // before that unchanged privacy boundary, rather than exempting digit runs.
     return `departing ${new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'long',year:'numeric',timeZone:'UTC'}).format(date)}`
   }))
-  const pageText=safeText([...flightLabels,String(page.text||'')].join('\n'),flightLabels.length?24000:18000)
+  // Product markup read from the page (name + selling price) leads the text, like the flight labels above.
+  const productLines=page.productEvidence&&typeof page.productEvidence.name==='string'&&typeof page.productEvidence.price==='string'
+    ?[safeText(page.productEvidence.name,300),safeText(page.productEvidence.price,40)].filter(Boolean):[]
+  const pageText=safeText([...flightLabels,...productLines,String(page.text||'')].join('\n'),flightLabels.length?24000:18000)
   const title=safeText(page.title,500)
   const titleOnly=isTitleOnlyObjective(objective)
   if(!pageText.trim()&&!(titleOnly&&title)){diagnose({phase:'assessment',reason:'empty_page'});return null}
@@ -1949,7 +1989,7 @@ export async function assessReadOutcome(objective:string,page:any,diagnose:(even
   // A store price read ("Find the listed price of this product on Croma: …") on a page whose product name matches
   // the requested model reads the first price after that name directly. The evidence is still exact page text, and
   // the comparison's own strict price check decides whether it is one clear item price.
-  const directPrice=productPagePriceEvidence(objective,title,pageText)
+  const directPrice=productPagePriceEvidence(objective,title,pageText,productLines.length===2?{name:productLines[0],price:productLines[1]}:null)
   if(directPrice){
     // The reader matched on whitespace-collapsed text, so verify against the same form (line breaks inside a price were the miss).
     const flat=pageText.replace(/\s+/g,' ')

@@ -104,7 +104,10 @@ export function parsePriceComparison(text: string) {
   // later sentences ("bank/card offers", "add to cart") and the store/pincode qualifiers tripped the guards below.
   // Judge the product ask by its first sentence with those qualifiers removed; the full text is still kept.
   const core = shoppingCore(text)
-  if (compares && providers.length === 0 && !/\b(?:vs\.?|versus)\b|\bor\b|\bwith\s+(?:the\s+)?(?:iphone|pixel|galaxy|oneplus|samsung)\b/i.test(core)
+  // 23 Oct live: "Compare Bose QC Ultra and Sony WH-1000XM6 headphones" became ONE product search for both names,
+  // so no store page could ever match. Two named products joined by "and"/"&" are a spec comparison too.
+  const twoProducts = /^\s*(?:compare\s+)?(?:the\s+)?[\w-]+\s+[\w-]+.*?\s(?:and|&)\s+[\w-]+\s+[\w-]+/i.test(core) && !/\b(?:salt and pepper|bread and butter|black and white)\b/i.test(core)
+  if (compares && providers.length === 0 && !twoProducts && !/\b(?:vs\.?|versus)\b|\bor\b|\bwith\s+(?:the\s+)?(?:iphone|pixel|galaxy|oneplus|samsung)\b/i.test(core)
     && /\bcompar(?:e|ison)\s+(?:the\s+)?(?:prices?\s+(?:of|for)\s+)?[a-z0-9]/i.test(core)
     && !/\b(?:my|our|options?|plans?|insurance|policy|policies|loans?|credit cards?|cards?|banks?|schools?|colleges?|courses?|jobs?|salary|cities|hotels?|flights?|trains?|funds?|stocks?|shares|schemes?|offers|tariffs?|recharge|vs)\b/i.test(core)
     && core.trim().split(/\s+/).length <= 9) {

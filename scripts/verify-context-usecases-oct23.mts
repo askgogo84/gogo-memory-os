@@ -54,3 +54,22 @@ assert.equal(readableStart('2026-10-08T11:30:00+05:30', 'Asia/Kolkata', true, no
 assert.match(readableStart('2026-10-25', 'Asia/Kolkata'), /^all day, /)
 assert.ok(!/T\d\d:/.test(readableStart('2026-10-24T11:30:00+05:30', 'Asia/Kolkata')), 'no raw ISO')
 console.log('verify-context-usecases-oct23: ok')
+
+// Browser reads (23 Oct live): Amazon's iPhone 17 page was the right product but its price was never read
+// ("no_heading"); the page's product markup now supplies name + selling price as exact observed evidence.
+{
+  const sc = await import('../lib/agent/secure-computer.ts')
+  const objective = 'Find the listed price of this product on Amazon India: "iPhone 17 256GB". This read is only about Amazon India.'
+  const name = 'iPhone 17 256 GB: 15.93 cm (6.3″) Display with ProMotion up to 120Hz; White'
+  const text = `${name}\n₹82,900.00\nVideo Games Watches ₹1,85,900.00 M.R.P.: ₹1,89,900.00 iPhone 17 Pro Max`
+  assert.deepEqual(sc.productPagePriceEvidence(objective, 'iPhone 17 256GB White', text, { name, price: '₹82,900.00' }), [name, '₹82,900.00'])
+  assert.equal(sc.productPagePriceEvidence(objective, 'x', `iPhone 17 Pro 256 GB\n₹1,34,900`, { name: 'iPhone 17 Pro 256 GB', price: '₹1,34,900' }), null, 'Pro is a different product')
+  assert.equal(sc.productPagePriceEvidence(objective, 'x', text, { name, price: 'See all buying options' }), null, 'no price, no answer')
+  const src = readFileSync('lib/agent/secure-computer.ts', 'utf8')
+  assert.match(src, /#productTitle/); assert.match(src, /application\/ld\+json/); assert.match(src, /\.\.\.\(productEvidence\?\{productEvidence\}:\{\}\)/)
+  const { parsePriceComparison } = await import('../lib/commerce/comparison-model.ts')
+  assert.equal(parsePriceComparison('Compare Bose QC Ultra and Sony WH-1000XM6 headphones'), null, 'two products: spec comparison, not one price search')
+  assert.equal(parsePriceComparison('compare iPhone 17 256GB')?.subject, 'iPhone 17 256GB')
+  assert.deepEqual(parsePriceComparison('compare price of iPhone 16 on Flipkart and Croma')?.providers, ['flipkart', 'croma'])
+}
+console.log('verify-context-usecases-oct23: browser evidence ok')
