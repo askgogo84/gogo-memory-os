@@ -140,6 +140,11 @@ await check('Gmail forwarding confirmation code is found', () => {
   assert.equal(M.gmailForwardingConfirmation({ from: 'evil <forwarding-noreply@g00gle.com>', subject: '(#1234567) Gmail Forwarding Confirmation', text: '' }), null)
 })
 
+await check('Gmail link-only forwarding confirmation (23 Oct live format) is recognised', () => {
+  const c = M.gmailForwardingConfirmation({ from: 'forwarding-noreply@google.com', subject: '(Gmail Forwarding confirmation – Receive mail from goverdhan.md@gmail.com', text: 'goverdhan.md@gmail.com has requested to automatically forward mail to your email\naddress gogo-y4qtch@in.askgogo.in.\n\nhttps://mail-settings.google.com/mail/vf-%5BABC%5D-xyz\n\nThanks' })
+  assert.deepEqual(c, { code: null, forwarder: 'goverdhan.md@gmail.com', link: 'https://mail-settings.google.com/mail/vf-%5BABC%5D-xyz' })
+})
+
 const aliases = await import('../lib/email/aliases.ts').catch(() => null)
 await check('aliases: unguessable, only our domain', () => {
   if (!aliases) throw new Error('aliases module failed to load')

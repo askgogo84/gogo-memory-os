@@ -4,7 +4,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 
-export function EmailSetup(props: { address: string | null; forwardingOn: boolean; confirmationCode: string | null; googleConnected: boolean; googleEmail: string | null; notice: string | null }) {
+export function EmailSetup(props: { address: string | null; forwardingOn: boolean; confirmationCode: string | null; confirmationLink?: string | null; googleConnected: boolean; googleEmail: string | null; notice: string | null }) {
   const [copied, setCopied] = useState<string | null>(null)
   const copy = async (value: string, what: string) => {
     try { await navigator.clipboard.writeText(value); setCopied(what); setTimeout(() => setCopied(null), 1800) } catch {}
@@ -41,6 +41,11 @@ export function EmailSetup(props: { address: string | null; forwardingOn: boolea
         <div className="text-[12px] font-medium uppercase tracking-[0.08em] text-[#8a8a86]">Gmail confirmation code</div>
         <div className="mt-1 font-mono text-[28px] font-semibold tracking-[0.12em] text-[#f2efea]">{props.confirmationCode}</div>
         <button type="button" onClick={() => copy(props.confirmationCode!, 'code')} className={`${pill} mt-2 border border-[#2f2f2f] text-[#f2efea]`}>{copied === 'code' ? 'Copied' : 'Copy code'}</button>
+      </div>}
+
+      {props.confirmationLink && !props.confirmationCode && <div className="mt-4 rounded-[12px] border border-[#2f2f2f] p-3">
+        <div className="text-[14px] leading-[1.5] text-[#dcdad5]">Gmail sent a confirmation link. Open it and tap Confirm, then choose "Forward a copy" in Gmail and save.</div>
+        <a href={props.confirmationLink} target="_blank" rel="noreferrer" className={`${pill} mt-3 w-full bg-[#4cd0bd] text-[#0b0b0b]`}>Confirm forwarding in Gmail</a>
       </div>}
 
       {!props.forwardingOn && <ol className="mt-4 list-decimal space-y-1 pl-5 text-[14px] leading-[1.6] text-[#dcdad5]">
