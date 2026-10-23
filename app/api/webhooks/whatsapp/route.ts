@@ -1267,6 +1267,19 @@ _"${originalText}"_
     // Approvals are resolved above and never here; two open questions get "which one?".
     // Understand-first runs right after this: the registry's deterministic binding always wins, and
     // understand-first reads the turn only when the registry had nothing (or the completed request after a rewrite).
+    // Research asks: several searches, page reads, cited answer (same as the dashboard).
+    if (text.length <= 600 && (/^(?:please\s+)?(?:do\s+(?:a\s+)?|run\s+(?:a\s+)?)?(?:deep\s+)?research\b/i.test(text) || /\bwith (?:sources|citations|references)\b/i.test(text) && /\b(?:best|compare|comparison|top|options|vs\.?|versus|review|pros and cons)\b/i.test(text))) {
+      const dr: any = await import('@/lib/agent/deep-research').catch(() => null)
+      if (dr?.isDeepResearchRequest?.(text)) {
+        const out = await Promise.resolve().then(() => dr.runDeepResearch(text)).catch((err: any) => { console.error('DEEP_RESEARCH_FAILED:', String(err?.message || err).slice(0, 160)); return null })
+        if (out?.text) {
+          await saveConversation(resolvedUser.telegramId, 'user', text)
+          await saveConversation(resolvedUser.telegramId, 'assistant', out.text)
+          await sendWhatsAppMessage(from, out.text)
+          return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+        }
+      }
+    }
     // "Summarise https://…": a public page is fetched and summarised directly (same as the dashboard).
     if (/https?:\/\//i.test(text) && /\b(?:summar|tl;?dr|gist|key points|takeaways)/i.test(text) && text.length <= 600) {
       const us: any = await import('@/lib/agent/url-summary').catch(() => null)
