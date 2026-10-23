@@ -8,6 +8,9 @@ export const MAKE_KINDS = [
   { key: 'comparisons', label: 'Comparisons', types: ['comparison'] },
   { key: 'plans', label: 'Plans', types: ['trip', 'goal_plan'] },
   { key: 'trackers', label: 'Trackers', types: ['application_tracker', 'reward_summary'] },
+  // Make: real slides and sheets (approved 24 Oct mock, screen 4).
+  { key: 'slides', label: 'Slides', types: ['slide_deck'] },
+  { key: 'sheets', label: 'Sheets', types: ['spreadsheet'] },
 ] as const
 export type MakeKind = typeof MAKE_KINDS[number]['key']
 
@@ -16,6 +19,7 @@ const TYPE_LABEL: Record<string, string> = {
   goal_plan: 'Goal plan', application_tracker: 'Tracker', reward_summary: 'Rewards',
   // Make v2: registered kinds. No writer saves daily_brief yet (the morning brief is sent, not saved); see verify-make-artifacts-v2.
   daily_brief: 'Daily brief', decision_summary: 'Decision summary',
+  slide_deck: 'Slides', spreadsheet: 'Sheet',
 }
 export function makeKind(raw: unknown): MakeKind {
   return (MAKE_KINDS.find(k => k.key === raw)?.key || 'all') as MakeKind

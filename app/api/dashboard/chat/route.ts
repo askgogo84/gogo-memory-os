@@ -165,6 +165,14 @@ export async function GET(req?: NextRequest) {
   return NextResponse.json({ messages, name: user.name || 'Gogo' })
 }
 
+async function makeDocWasLastReply(telegramId:number|string){
+  // "make slide 3 shorter" edits the deck or sheet only when Gogo's latest message was that Make reply.
+  try{
+    const {data}=await supabaseAdmin.from('conversations').select('role,content').eq('telegram_id',telegramId).order('created_at',{ascending:false}).limit(3)
+    return /^📊 (?:Your (?:deck|sheet) is ready|Updated)/.test(String((data||[]).find((r:any)=>r.role==='assistant')?.content||''))
+  }catch{return false}
+}
+
 async function callPlanWasLastReply(telegramId:number|string){
   // A bare "yes" goes to the call module only when Gogo's latest message is a call plan (21 Oct live: "Yes" fell
   // through to chat, which claimed it was calling). Read here so other "yes" replies never load the module.
@@ -273,6 +281,15 @@ async function handleChatPost(req: NextRequest) {
     if(voice){
       await saveConversation(user.telegram_id,text,voice.text)
       return NextResponse.json(voice)
+    }
+    // Make: real slides and sheets ("make a pitch deck for …", "create a budget sheet for …") and edits to the one just made.
+    if(text.length<=500&&(/^(?:hey\s+gogo[,!]?\s+)?(?:please\s+)?(?:can you\s+|could you\s+|pls\s+)?(?:make|create|build|prepare|draft|generate|put together|design)\b[\s\S]{0,100}\b(?:deck|slides|presentation|powerpoint|ppt|spreadsheet|sheet|excel|budget|expense tracker|cost breakdown)\b/i.test(text)||text.length<=240&&/^(?:please\s+)?(?:can you\s+)?(?:make|change|set|add|remove|delete|drop|rename|shorten|replace|update|move|swap|increase|reduce|cut|put|use|merge|split|reword|rewrite|fix|turn|convert)\b/i.test(text)&&await makeDocWasLastReply(user.telegram_id))){
+      const mk:any=await import('@/lib/make/store').catch(()=>null)
+      const out=mk?.handleMakeDoc?await Promise.resolve().then(()=>mk.handleMakeDoc({actor,text})).catch((err:any)=>{console.error('MAKE_DOC_FAILED:',String(err?.message||err).slice(0,160));return null}):null
+      if(out?.text){
+        await saveConversation(user.telegram_id,text,out.text)
+        return NextResponse.json(out)
+      }
     }
     // "Plan my day tomorrow": a time-blocked plan around the real calendar and reminders.
     if(text.length<=80&&/^(?:please\s+)?(?:can you\s+)?(?:help me\s+)?(?:plan|schedule|organi[sz]e|block out)\s+(?:out\s+)?(?:my\s+)?(?:day|today|tomorrow|morning|evening)\b/i.test(text)){

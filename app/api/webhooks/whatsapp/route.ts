@@ -262,6 +262,14 @@ export async function POST(req: NextRequest) {
   return runWithQaTrace(qaSid,()=>handleWhatsAppPost(req))
 }
 
+async function makeDocWasLastReply(telegramId: number | string) {
+  // "make slide 3 shorter" edits the deck or sheet only when Gogo's latest message was that Make reply.
+  try {
+    const { data } = await supabaseAdmin.from('conversations').select('role,content').eq('telegram_id', telegramId).order('created_at', { ascending: false }).limit(3)
+    return /^📊 (?:Your (?:deck|sheet) is ready|Updated)/.test(String((data || []).find((r: any) => r.role === 'assistant')?.content || ''))
+  } catch { return false }
+}
+
 async function callPlanWasLastReply(telegramId: number | string){
   // A bare "yes" goes to the call module only when Gogo's latest message is a call plan (21 Oct live: "Yes" fell
   // through to chat, which claimed it was calling). Read here so other "yes" replies never load the module.
@@ -1267,6 +1275,18 @@ _"${originalText}"_
     // Approvals are resolved above and never here; two open questions get "which one?".
     // Understand-first runs right after this: the registry's deterministic binding always wins, and
     // understand-first reads the turn only when the registry had nothing (or the completed request after a rewrite).
+    // Make: real slides and sheets and edits to the one just made (same as the dashboard).
+    if (resolvedUser.id && resolvedUser.whatsappId && text.length <= 500 && (/^(?:hey\s+gogo[,!]?\s+)?(?:please\s+)?(?:can you\s+|could you\s+|pls\s+)?(?:make|create|build|prepare|draft|generate|put together|design)\b[\s\S]{0,100}\b(?:deck|slides|presentation|powerpoint|ppt|spreadsheet|sheet|excel|budget|expense tracker|cost breakdown)\b/i.test(text) || text.length <= 240 && /^(?:please\s+)?(?:can you\s+)?(?:make|change|set|add|remove|delete|drop|rename|shorten|replace|update|move|swap|increase|reduce|cut|put|use|merge|split|reword|rewrite|fix|turn|convert)\b/i.test(text) && await makeDocWasLastReply(resolvedUser.telegramId))) {
+      const mk: any = await import('@/lib/make/store').catch(() => null)
+      const actor = { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, whatsappId: String(resolvedUser.whatsappId), name: resolvedUser.name || 'Gogo', timezone: (resolvedUser as any).timezone || undefined }
+      const out: any = mk?.handleMakeDoc ? await Promise.resolve().then(() => mk.handleMakeDoc({ actor, text })).catch((err: any) => { console.error('MAKE_DOC_FAILED:', String(err?.message || err).slice(0, 160)); return null }) : null
+      if (out?.text) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', out.text)
+        await sendWhatsAppMessage(from, out.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
     // "Plan my day tomorrow": a time-blocked plan (same as the dashboard).
     if (resolvedUser.id && resolvedUser.whatsappId && text.length <= 80 && /^(?:please\s+)?(?:can you\s+)?(?:help me\s+)?(?:plan|schedule|organi[sz]e|block out)\s+(?:out\s+)?(?:my\s+)?(?:day|today|tomorrow|morning|evening)\b/i.test(text)) {
       const dp: any = await import('@/lib/agent/day-plan').catch(() => null)

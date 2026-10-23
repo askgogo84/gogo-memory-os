@@ -469,7 +469,7 @@ export function taskStepIntent(step:GeneralPlanStep):'read'|'write'|'mixed'|'unk
   return 'unknown'
 }
 
-export async function executeTaskStep(actor: AgentActor, step: GeneralPlanStep) {
+export async function executeTaskStep(actor: AgentActor, step: GeneralPlanStep, missionText?: string) {
   if(!actor.whatsappId)throw new Error('task_owner_missing')
   const intent=taskStepIntent(step)
   if(intent==='read'){
@@ -482,6 +482,10 @@ export async function executeTaskStep(actor: AgentActor, step: GeneralPlanStep) 
   if(intent!=='write')throw new Error('task_action_ambiguous')
   const text = taskTextForStep(step)
   if (!text) throw new Error('task_text_missing')
+  // 24 Oct live: Pending showed planner-internal steps saved as tasks ("Retrieve saved preferences … without revealing
+  // sensitive identifiers"). A task is created only when the person asked for one, and only with a person-facing text.
+  if (missionText !== undefined && !/\b(?:tasks?|to-?dos?|checklist|remind me|add (?:it |this |that )?to (?:my )?(?:list|tasks?))\b/i.test(missionText)) return { text:'Skipped saving a task: you did not ask for one.', output:{ skipped:'task_not_requested', verifiedStore:'todos' } }
+  if (/\b(?:without revealing|sensitive identifiers?|saved preferences|owner context|do not reveal|internal step)\b|^(?:retrieve|look up|check|verify|ensure)\b/i.test(text)) return { text:'Skipped saving an internal step as a task.', output:{ skipped:'task_text_not_user_facing', verifiedStore:'todos' } }
   const { data: existing, error: readError } = await supabaseAdmin.from('todos')
     .select('id,text').eq('whatsapp_id', actor.whatsappId).eq('done', false).ilike('text', text.replace(/[\\%_]/g, (c: string) => '\\' + c)).limit(1).maybeSingle()
   if (readError) throw new Error(`task_verify_failed:${readError.message}`)
@@ -502,7 +506,7 @@ async function executeTool(params:{actor:AgentActor;runId:string;step:GeneralPla
     const artifact = await createArtifact(actor.legacyTelegramId, params.runId, step, params.missionText)
     return { text:artifactReply(artifact), output:{ artifactId:artifact.id, type:step.artifactType || 'research_brief' } }
   }
-  if (step.tool === 'tasks') return executeTaskStep(actor, step)
+  if (step.tool === 'tasks') return executeTaskStep(actor, step, params.missionText)
   if (step.tool === 'lists') return executeVerifiedMissionList({actor,step,missionText:params.missionText})
   if (step.tool === 'reminders') return executeVerifiedMissionReminder({actor,step,missionText:params.missionText,messageId:params.messageId})
   if (step.tool === 'memory') return executeVerifiedMissionMemory({actor,step,missionText:params.missionText,messageId:params.messageId})
