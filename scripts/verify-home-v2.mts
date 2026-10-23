@@ -61,7 +61,7 @@ assert.match(companion, /theme=\{theme \|\| current\}/, 'the character follows t
 
 // 4. Home page: sections in order, characters on cards, safe-mode line, no tabs.
 const home = readFileSync('app/dashboard/(app)/home/page.tsx', 'utf8')
-assert.match(home, /<HomeGogo\/>[\s\S]*<HomeAsk\/>[\s\S]*Needs you now[\s\S]*Gogo is handling[\s\S]*Coming up today[\s\S]*Can wait[\s\S]*Done today/)
+assert.match(home, /<HomeGogo compact\/>[\s\S]*<HomeAsk compact\/>[\s\S]*Needs you now[\s\S]*Gogo is handling[\s\S]*Coming up today[\s\S]*Can wait[\s\S]*Done today/)
 assert.doesNotMatch(home, /FeedTabs/)
 assert.match(home, /asks before it books, pays or sends anything/)
 assert.match(readFileSync('lib/dashboard/queries.ts', 'utf8'), /export async function getUpcomingReminders[\s\S]*?\.eq\('telegram_id', tgNum\)/, 'upcoming reminders are owner-scoped')
@@ -70,3 +70,14 @@ assert.match(readFileSync('lib/dashboard/queries.ts', 'utf8'), /export async fun
 assert.equal(parseTheme(null), 'light'); assert.equal(parseTheme('dark'), 'dark')
 assert.match(readFileSync('app/dashboard/layout.tsx', 'utf8'), /theme-light final-dark[^"]*" data-theme="light"/)
 console.log('Home v2: ranked Needs you, five sections, companion registry, light default')
+
+// 23 Oct feedback "home looks completely out of design": back to the approved mock — Gogo beside a left-aligned
+// greeting, one Ask bar, compact notice cards (no full email bodies), Gogo-is-handling as one list card.
+{
+  const h = readFileSync('app/dashboard/(app)/home/page.tsx', 'utf8')
+  assert.doesNotMatch(h, /SHORTCUTS|ServiceNoticeCards|text-center/, 'no centred hero, shortcut tiles or full notice bodies')
+  assert.match(h, /<section className="flex items-center gap-3 pb-5">\s*<HomeGogo compact\/>/)
+  assert.match(h, /line-clamp-1 text-\[13px\] text-\[#9a9a96\]">\{n\.summary\}/, 'notice body clamped to one line')
+  assert.match(h, /rounded-\[14px\] border border-\[#222\] bg-\[#121212\]">\{sections\.handling\.slice\(0,6\)\.map/, 'handling is one list card')
+  console.log('Home layout: matches the approved 22 Oct mock')
+}
