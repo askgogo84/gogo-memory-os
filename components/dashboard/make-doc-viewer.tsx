@@ -55,7 +55,7 @@ function SheetView({ sheet }: { sheet: Sheet }) {
       <tbody>
         {sheet.rows.map((r, i) => <tr key={i} className="border-t border-[#2A2A2A]">
           {r.map((c, j) => <td key={j} className={`px-3 py-2 ${typeof c === 'number' ? 'text-right tabular-nums' : ''}`}>
-            {cell(c, j)}{j === 0 && sheet.estimateRows.includes(i) ? <span className="ml-2 rounded bg-[#2a2414] px-1.5 py-0.5 text-[11px] text-[#d9a441]">est.</span> : null}
+            {cell(c, j)}{j === 0 && sheet.estimateRows.includes(i) ? <span className="ml-2 rounded bg-[#221D13] px-1.5 py-0.5 text-[11px] text-[#d9a441]">est.</span> : null}
           </td>)}
         </tr>)}
         {total !== null ? <tr className="border-t-2 border-[#2FB8A6] font-semibold">

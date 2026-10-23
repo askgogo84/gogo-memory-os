@@ -21,6 +21,7 @@
 .dashboard-root[data-theme='light'] .bg-\[\#1c1c1c\]{background-color:#efe8dd}
 .dashboard-root[data-theme='light'] .bg-\[\#1d1d1d\]{background-color:#efe8dd}
 .dashboard-root[data-theme='light'] .bg-\[\#1f1f1f\]{background-color:#efe8dd}
+.dashboard-root[data-theme='light'] .bg-\[\#221D13\]{background-color:#fbf1dd}
 .dashboard-root[data-theme='light'] .bg-\[\#222\]{background-color:#efe8dd}
 .dashboard-root[data-theme='light'] .bg-\[\#232323\]{background-color:#e6ddd0}
 .dashboard-root[data-theme='light'] .bg-\[\#2A2A2A\]{background-color:#e6ddd0}
@@ -39,6 +40,7 @@
 .dashboard-root[data-theme='light'] .border-\[\#2A2A2A\]\/60{border-color:rgba(227,217,203,0.6)}
 .dashboard-root[data-theme='light'] .border-\[\#2A2A2A\]\/70{border-color:rgba(227,217,203,0.7)}
 .dashboard-root[data-theme='light'] .border-\[\#2A2A2A\]\/80{border-color:rgba(227,217,203,0.8)}
+.dashboard-root[data-theme='light'] .border-\[\#2FB8A6\]{border-color:#0f6f64}
 .dashboard-root[data-theme='light'] .border-\[\#2a2a2a\]{border-color:#e3d9cb}
 .dashboard-root[data-theme='light'] .border-\[\#2f2f2f\]{border-color:#ddd2c3}
 .dashboard-root[data-theme='light'] .border-\[\#2fb8a6\]{border-color:#0f6f64}
@@ -63,6 +65,7 @@
 .dashboard-root[data-theme='light'] .hover\:bg-\[\#161616\]:hover{background-color:#fffdf9}
 .dashboard-root[data-theme='light'] .hover\:bg-\[\#1f1f1f\]:hover{background-color:#efe8dd}
 .dashboard-root[data-theme='light'] .hover\:bg-\[\#221D13\]:hover{background-color:#fbf1dd}
+.dashboard-root[data-theme='light'] .hover\:border-\[\#2FB8A6\]:hover{border-color:#0f6f64}
 .dashboard-root[data-theme='light'] .hover\:border-\[\#2fb8a6\]:hover{border-color:#0f6f64}
 .dashboard-root[data-theme='light'] .hover\:border-\[\#2fb8a6\]\/50:hover{border-color:rgba(15,111,100,0.5)}
 .dashboard-root[data-theme='light'] .hover\:border-\[\#4cd0bd\]:hover{border-color:#0f6f64}
