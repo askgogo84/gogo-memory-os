@@ -442,8 +442,13 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
         const a=eventInterval(busyEvents[i],timezone),b=eventInterval(busyEvents[j],timezone)
         if(a&&b&&a.start<b.end&&a.end>b.start)conflicts.push({first:safe(busyEvents[i].summary||'Busy',220),second:safe(busyEvents[j].summary||'Busy',220)})
       }
-      for(const pair of conflicts.slice(0,6))lines.push(`Overlap: ${pair.first} ↔ ${pair.second}.`)
-      if(conflicts.length>6)lines.push(`Showing 6 of ${conflicts.length} observed overlapping pairs.`)
+      // 23 Oct live: a broken multi-day series printed "Overlap: Daily Connect-Standup Call ↔ Daily Connect-Standup
+      // Call" six times (187 pairs). Copies of one event overlapping each other are one line; real clashes come first.
+      const groups=new Map<string,{first:string;second:string;count:number}>()
+      for(const pair of conflicts){const key=[pair.first,pair.second].sort().join('\u0000');const g=groups.get(key);if(g)g.count++;else groups.set(key,{...pair,count:1})}
+      const ordered=[...groups.values()].sort((a,b)=>Number(a.first===a.second)-Number(b.first===b.second))
+      for(const g of ordered.slice(0,6))lines.push(g.first===g.second?`Duplicate copies: ${g.first} overlaps itself (${g.count} pairs), so the invite may be set up wrongly.`:`Overlap: ${g.first} ↔ ${g.second}${g.count>1?` (${g.count} times)`:''}.`)
+      if(ordered.length>6)lines.push(`Showing 6 of ${ordered.length} distinct overlaps (${conflicts.length} overlapping pairs).`)
       if(!complete||unknownIntervals)lines.push('Overlap review is incomplete: more events or unverified event end times remain.')
       else if(!conflicts.length)lines.push('No overlapping events found in this calendar window.')
     }
