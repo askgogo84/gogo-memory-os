@@ -104,6 +104,8 @@ ${corpus.slice(0, 24_000)}`
   let body = ''
   try { body = (await model(prompt, 900, 'claude-sonnet-4-5')).trim() } catch {}
   if (!body) body = sources.slice(0, 5).map(s => `• ${s.title} [${s.n}]`).join('\n')
+  // Some models write markdown bold (**x**); WhatsApp bold is *x*.
+  body = body.replace(/\*\*([^*\n]+)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '')
   const cited = new Set([...body.matchAll(/\[(\d{1,2})\]/g)].map(m => Number(m[1])))
   const used = sources.filter(s => cited.has(s.n))
   const list = (used.length ? used : sources.slice(0, 5)).map(s => `[${s.n}] ${s.title}\n${s.url}`).join('\n')
