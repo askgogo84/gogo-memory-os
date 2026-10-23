@@ -31,7 +31,7 @@ for(const page of ['home','activity']){
  const query=calls.filter(row=>row.table==='agent_watchers').at(-1)
  assert.ok(query.filters.some(([op,key,value]:any)=>op==='eq'&&key==='telegram_id'&&value==='123'),page+' owner scope')
  assert.ok(query.filters.some(([op,key,value]:any)=>op==='neq'&&key==='type'&&value==='goal_review'),page+' ordinary watches only')
- if(page==='home'){assert.match(rendered,/"Gogo is handling"\},\{"className":"text-\[14px\] text-\[#a8a8a4\]","children":9\}/,'home Gogo is handling count must be the exact total, not the display rows');assert.match(rendered,/"All ",9," in Tasks →"/,'the rest are one tap away in Tasks')}
+ if(page==='home'){assert.match(rendered,/"Gogo is handling"\},\{"className":"text-\[13px\] text-\[#a8a8a4\]","children":9\}/,'home Gogo is handling count must be the exact total, not the display rows');assert.match(rendered,/"All ",9," in Tasks →"/,'the rest are one tap away in Tasks')}
  else assert.match(rendered,/"children":9/,'activity badge must report all nine watches rather than six display rows')
 }
 console.log('Actual Home/Activity server pages: goals excluded before row limits; owner-bound total watch counts remain exact')
