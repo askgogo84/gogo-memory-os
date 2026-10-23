@@ -5,6 +5,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { requestedFlightCodes, normalizeNumericDates, icaoFlightCode } from '@/lib/bot/flight-codes'
 export { icaoFlightCode, IATA_TO_ICAO } from '@/lib/bot/flight-codes'
+import { ticketTimezone } from '@/lib/services/travel-time'
 import { legEvents, normalizeFlightNo, parseFlightData, statusFromWeb, trackingWindow, type LegStatus, type TrackingState } from './flight-leg-tracker'
 import { searchWebResults } from '@/lib/web-search'
 import { FLIGHT_TRACKER_DOMAINS } from '@/lib/bot/handlers/flight-status'
@@ -281,12 +282,14 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
       tracking.sent = [...new Set([...(tracking.sent || []), e.key])]
       if (e.kind === 'delayed') tracking.delayNotified = status.delayMinutes || 0
       if (e.kind === 'gate') tracking.gateNotified = status.depGate
+      if (e.kind === 'landed') tracking.landedAlertAt = now.toISOString()
       sent++
     }
     tracking.state = status.state
     if (status.revisedArrival) tracking.etaArrival = status.revisedArrival
     if (status.scheduledArrival) tracking.scheduledArrival = status.scheduledArrival
     if (status.actualArrival) tracking.actualArrival = status.actualArrival
+    if (status.landedBy && !tracking.landedBy) tracking.landedBy = status.landedBy
   }
   await save({ next_check_at: new Date(now.getTime() + nextCheckMinutes(now.getTime(), w.dep, tracking) * MIN).toISOString(), last_state_json: { ...(watcher.last_state_json || {}), tracking, source: status ? 'flight_data' : 'unavailable' } })
   return { triggered: sent > 0, failed: false }
@@ -331,4 +334,52 @@ export async function handleFlightFollowUp(p: { telegramId: string | number; tex
   const eta = live.status.revisedArrival || live.arrUtc
   const etaText = eta ? new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: p.timezone || 'Asia/Kolkata' }).format(new Date(eta)) : ''
   return `✅ Tracking ${code} (${live.from.iata} → ${live.to.iata}). I'll message you the moment it lands${etaText ? ` (expected ${etaText})` : ''}.`
+}
+
+// 23 Oct live: "Which flights am I tracking right now, and did VS354 land?" got a generic watch dump ("EK500 flight
+// status · Last checked: not yet recorded") and no word on VS354, which had landed and alerted 3 minutes earlier.
+// Tracked flights answer with their own state: waiting to start, in the air, landed (and when the alert went out).
+export function describeTrackedFlight(w: any, now: number, tz = 'Asia/Kolkata'): string {
+  const c = w?.condition_json?.adHocFlight || {}
+  const t: TrackingState = w?.last_state_json?.tracking || {}
+  const code = String(c.flightNo || 'Flight'), route = c.from && c.to ? ` (${c.from} → ${c.to})` : ''
+  const at = (iso: unknown, zone: string) => { const ms = typeof iso === 'number' ? iso : Date.parse(String(iso || '')); return Number.isFinite(ms) ? new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: zone }).format(new Date(ms)) : '' }
+  const arrTz = ticketTimezone(String(c.to || '')) || tz
+  const win = trackingWindow(String(c.departAt), c.arriveAt)
+  if (t.state === 'landed') {
+    const when = t.actualArrival ? ` at ${at(t.actualArrival, arrTz)}` : t.landedBy ? ` (on the ground by ${at(t.landedBy, arrTz)})` : ''
+    return `🛬 ${code}${route} landed in ${c.to || 'its destination'}${when}${t.landedAlertAt ? `. I alerted you at ${at(t.landedAlertAt, tz)}` : ''}. Tracking ended.`
+  }
+  if (t.state === 'cancelled') return `❌ ${code}${route} was cancelled. Tracking ended.`
+  if (t.state === 'diverted') return `⚠️ ${code}${route} was diverted. ${w?.active ? 'Still tracking.' : 'Tracking ended.'}`
+  if (!w?.active) return `${code}${route}: tracking ended without a confirmed landing.`
+  if (now < win.from || !t.lastCheckedAt) return `✈️ ${code}${route}: checks start ${at(Math.max(win.from, now), tz)}, 3 h before take-off (${at(win.dep, ticketTimezone(String(c.from || '')) || tz)} local). I'll message you when it lands.`
+  const eta = t.etaArrival || t.scheduledArrival || c.arriveAt
+  if (t.state === 'departed') return `✈️ ${code}${route}: in the air${eta ? `, landing about ${at(eta, arrTz)} local` : ''}. I'll message you when it lands.`
+  const late = t.delayNotified ? `, about ${t.delayNotified} min late` : ''
+  return `✈️ ${code}${route}: ${t.state === 'delayed' ? 'delayed' : 'not departed yet'}${late}. I'll message you on take-off and landing.`
+}
+
+export async function flightTrackStatusReply(telegramId: string, text: string, now = new Date(), tz = 'Asia/Kolkata'): Promise<string | null> {
+  const tg = String(telegramId)
+  const { data, error } = await supabaseAdmin.from('agent_watchers').select('id,active,condition_json,last_state_json,updated_at,created_at')
+    .eq('telegram_id', tg).not('condition_json->adHocFlight', 'is', null)
+    .or(`active.eq.true,updated_at.gte.${new Date(now.getTime() - 12 * 60 * MIN).toISOString()}`)
+    .order('created_at', { ascending: false }).limit(10)
+  if (error) throw new Error(`flight_track_status_failed:${error.message}`)
+  const codes = requestedFlightCodes(normalizeNumericDates(String(text || ''))).map(normalizeFlightNo)
+  const seen = new Set<string>()
+  const rows = (data || []).filter((w: any) => {
+    const k = `${w.condition_json?.adHocFlight?.flightNo}|${w.condition_json?.adHocFlight?.departAt}`
+    if (seen.has(k)) return false
+    seen.add(k); return true
+  })
+  const active = rows.filter((w: any) => w.active)
+  const named = codes.length ? rows.filter((w: any) => codes.includes(normalizeFlightNo(String(w.condition_json?.adHocFlight?.flightNo || '')))) : []
+  const missing = codes.filter(code => !named.some((w: any) => normalizeFlightNo(String(w.condition_json?.adHocFlight?.flightNo || '')) === code))
+  const shown = [...new Set([...active, ...named])]
+  const lines = shown.map((w: any) => describeTrackedFlight(w, now.getTime(), tz))
+  if (!lines.length && !missing.length) return `I'm not tracking any flights right now. Say "Track EK 500" to start.`
+  const head = active.length ? (active.length === 1 ? 'Tracking 1 flight:' : `Tracking ${active.length} flights:`) : 'No flights being tracked right now.'
+  return [head, ...lines, ...missing.map(code => `${code}: I wasn't tracking it in the last 12 hours. Say "Track ${code}" to follow it.`)].join('\n')
 }

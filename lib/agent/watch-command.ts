@@ -79,6 +79,12 @@ function watchCheckTime(value:unknown){
 export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;text:string}) {
   if(!isWatcherStatusQuery(params.text))return null
   const tg=String(params.actor.legacyTelegramId)
+  // Tracked flights answer with their own state (waiting / in the air / landed + when alerted).
+  if(/\bflights?\b|\b(?:land(?:ed|s)?|take[- ]?off|took off)\b/i.test(params.text)||/\b(?:[A-Z]{2}|[A-Z]\d|\d[A-Z])\s?\d{2,4}\b/.test(params.text)){
+    const flight=await import('./flight-track').then(m=>m.flightTrackStatusReply(tg,params.text)).catch(()=>null)
+    if(flight)return {runId:'watcher-status-flights',status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:flight,handledBy:'watcher-status',
+      verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:'flight-tracks'}}
+  }
   const {data,error}=await supabaseAdmin.from('agent_watchers')
     .select('id,type,condition_json,last_state_json,cadence_minutes,last_checked_at,next_check_at,active,created_at,updated_at')
     .eq('telegram_id',tg)

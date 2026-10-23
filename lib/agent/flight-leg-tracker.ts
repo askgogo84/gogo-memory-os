@@ -33,7 +33,9 @@ export type TrackedLeg = {
 }
 export type TrackingState = { lastCheckedAt?: string; state?: LegState; sent?: string[]; delayNotified?: number; gateNotified?: string
   /** Latest live arrival estimate / actual landing from the flight-status feed (ISO), kept so "when does she land?" can be answered. */
-  etaArrival?: string; actualArrival?: string; scheduledArrival?: string }
+  etaArrival?: string; actualArrival?: string; scheduledArrival?: string
+  /** Landing seen without a runway time (position / tracker page): on the ground by then. When the landing alert went out. */
+  landedBy?: string; landedAlertAt?: string }
 export type LegEvent = { kind: 'delayed' | 'gate' | 'departed' | 'landed' | 'cancelled' | 'diverted'; key: string; text: string }
 
 const MIN = 60_000

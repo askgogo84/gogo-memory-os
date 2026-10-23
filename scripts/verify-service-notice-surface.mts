@@ -67,9 +67,12 @@ for(const output of [JSON.stringify(body),cards]){
  assert.match(output,/thread-one/);assert.match(output,/message-one/)
  assert.match(output,/authentication link withheld/)
 }
-fixture=[notice,{...notice,id:'different',source_id:'thread-two',source_refs:[{type:'gmail_thread',id:'thread-two'}]}]
-body=await (await snapshot.GET({} as Request)).json();assert.equal(body.serviceNotices.length,2,'equal titles on distinct source threads stay distinct')
-fixture=Array.from({length:63},(_,i)=>({...notice,id:'n'+i,source_id:'thread'+i}))
+fixture=[notice,{...notice,id:'different',summary:'A different warning body',source_id:'thread-two',source_refs:[{type:'gmail_thread',id:'thread-two'}]}]
+body=await (await snapshot.GET({} as Request)).json();assert.equal(body.serviceNotices.length,2,'equal titles with different text on distinct source threads stay distinct')
+// 23 Oct live: the same billing warning sent twice showed as two identical Needs-you cards. One card, with a count.
+fixture=[notice,{...notice,id:'copy',source_id:'thread-copy',source_refs:[{type:'gmail_thread',id:'thread-copy'}]}]
+body=await (await snapshot.GET({} as Request)).json();assert.equal(body.serviceNotices.length,1,'identical warning collapses');assert.equal(body.serviceNotices[0].copies,2);assert.equal(body.serviceNoticeCount,1)
+fixture=Array.from({length:63},(_,i)=>({...notice,id:'n'+i,summary:'Warning '+i,source_id:'thread'+i}))
 body=await (await snapshot.GET({} as Request)).json();assert.equal(body.serviceNoticeCount,63);assert.equal(body.serviceNotices.length,50,'bounded cards retain exact untruncated total')
 fail=true
 response=await snapshot.GET({} as Request);assert.equal(response.status,500,'query errors cannot claim empty success')
