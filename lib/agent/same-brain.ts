@@ -127,10 +127,25 @@ function isDriveRead(text:string) {
   return /\b(google drive|drive file|google doc|google sheet|in drive)\b/i.test(text) && /\b(find|show|read|search|open|use|look for|get)\b/i.test(text)
 }
 
+export function isGeneralInboxDigest(text:string){
+  const t=String(text||'').toLowerCase()
+  if(!/\b(?:summar(?:y|ise|ize)|digest|catch me up|what came in|unread|check (?:my )?(?:e-?mail|mail|inbox)|any (?:new|important|urgent) (?:e-?mails?|mails?)|my inbox)\b/.test(t))return false
+  return !/\bfrom\s+[a-z0-9]|\babout\s+\w|\bregarding\b|\bsubject\b|\battach|\bbrief\b|\bpdf\b|\blatest (?:e-?mail|mail) from\b|\bpromo|\bnewsletter|\bsocial\b/.test(t)
+}
+
 async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string):Promise<string|null> {
   try {
     if(isWorkspaceDisconnect(text)) return await disconnectWorkspace(actor)
     if(isEmailRead(text)) {
+      // 24 Oct live: "Summarise my unread emails today" listed raw emails with signatures. A general inbox
+      // digest (no sender/topic/attachment named) gets the attention card: only what needs the person, and why.
+      if(isGeneralInboxDigest(text)){
+        const store:any=await import('@/lib/email/attention-store').catch(()=>null)
+        if(store?.buildAttentionCard){
+          try{const card=await store.buildAttentionCard({legacyTelegramId:actor.legacyTelegramId,timezone:actor.timezone});if(card?.text)return card.text}
+          catch(err:any){console.error('ATTENTION_DIGEST_FAILED:',String(err?.message||err).slice(0,160))}
+        }
+      }
       const result=await searchWorkspaceEmails(actor,text,{missionText})
       await rememberTypedObjects(actor.legacyTelegramId,'email',result.messages.slice(0,5).map((m:any)=>({id:String(m.id),title:String(m.subject||'Email')}))).catch(()=>{})
       if(result.audit)return formatWorkspaceEmailAudit(result)
@@ -224,6 +239,20 @@ export async function dispatchThroughSameBrain(params: {
       mediaUrl:null,
       mediaType:null,
       handledBy:'same-brain',
+    }
+  }
+
+  // Research asks get several searches, page reads and a cited answer (public web only).
+  if(!params.internalStep){
+    const dr:any=/\b(?:research|investigate|sources|citations|references)\b/i.test(text)?await import('./deep-research').catch(()=>null):null
+    if(dr?.isDeepResearchRequest?.(text)){
+      try{
+        const out=await dr.runDeepResearch(text)
+        if(out?.text){
+          await saveFeatureConversation(params.actor.legacyTelegramId,text,out.text).catch(()=>{})
+          return {text:redactSecretShapedText(out.text),mediaUrl:null,mediaType:null,handledBy:'same-brain'}
+        }
+      }catch(err:any){console.error('DEEP_RESEARCH_FAILED:',String(err?.message||err).slice(0,160))}
     }
   }
 

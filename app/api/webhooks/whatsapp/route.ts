@@ -1267,6 +1267,18 @@ _"${originalText}"_
     // Approvals are resolved above and never here; two open questions get "which one?".
     // Understand-first runs right after this: the registry's deterministic binding always wins, and
     // understand-first reads the turn only when the registry had nothing (or the completed request after a rewrite).
+    // "Summarise https://…": a public page is fetched and summarised directly (same as the dashboard).
+    if (/https?:\/\//i.test(text) && /\b(?:summar|tl;?dr|gist|key points|takeaways)/i.test(text) && text.length <= 600) {
+      const us: any = await import('@/lib/agent/url-summary').catch(() => null)
+      const req = us?.urlSummaryRequest?.(text)
+      const summary = req ? await Promise.resolve().then(() => us.summariseUrl(req)).catch(() => null) : null
+      if (typeof summary === 'string' && summary) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', summary)
+        await sendWhatsAppMessage(from, summary)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
     // Emails that need you: the attention card, its numbered actions and learned rules (same as the dashboard).
     if (resolvedUser.id && resolvedUser.whatsappId && text.length <= 140 && /\b(?:e-?mails?|mails?|inbox|flag(?:ging)?|undo|rule)\b|^\s*(?:not important|important|draft|remind|why|open|ignore|skip)\b[^\n]{0,40}\b[1-9]\b/i.test(text)) {
       const cmds: any = await import('@/lib/email/attention-commands').catch(() => null)
