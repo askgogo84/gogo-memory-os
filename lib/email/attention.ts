@@ -248,7 +248,16 @@ export function pickAttention(emails: AttentionEmail[], ctx: ScoreContext = {}, 
     const prev = byThread.get(key)
     if (!prev || (Number(e.internalDate) || 0) >= (Number(prev.internalDate) || 0)) byThread.set(key, e)
   }
-  const scored = [...byThread.values()].map(e => scoreEmail(e, ctx)).sort((a, b) => b.score - a.score)
+  // The same conversation can arrive from two sources (Gmail sign-in and forwarding) with different thread ids,
+  // and a reply ("Re: …") is the same conversation: one entry per sender + subject, latest wins (24 Oct live).
+  const byConversation = new Map<string, AttentionEmail>()
+  for (const e of byThread.values()) {
+    const key = `${senderEmailOf(e.from) || senderNameOf(e.from).toLowerCase()}|${stripSubject(e.subject).toLowerCase()}`
+    const prev = byConversation.get(key)
+    const at = (x: AttentionEmail) => Number(x.internalDate) || Date.parse(String(x.date || '')) || 0
+    if (!prev || at(e) >= at(prev)) byConversation.set(key, e)
+  }
+  const scored = [...byConversation.values()].map(e => scoreEmail(e, ctx)).sort((a, b) => b.score - a.score)
   const picked = scored.filter(s => s.picked).slice(0, max)
   return { picked, skipped: scored.filter(s => !picked.includes(s)), checked: scored.length }
 }
