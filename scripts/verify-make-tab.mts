@@ -9,6 +9,8 @@ const rows = [
   { id: 'a2', type: 'comparison', title: 'iPhone 17 256GB', subtitle: '4 stores', updated_at: '2026-10-21T05:00:00Z' },
   { id: 'a3', type: 'trip', title: 'Goa trip', subtitle: '', updated_at: '2026-10-20T05:00:00Z' },
   { id: 'a4', type: 'goal_plan', title: 'Walk 8000 steps', subtitle: '', updated_at: '2026-10-19T05:00:00Z' },
+  // 23 Oct live: the same goal tracker saved twice showed as two cards.
+  { id: 'a5', type: 'goal_plan', title: 'walk 8000 steps', subtitle: '', updated_at: '2026-10-18T05:00:00Z' },
 ]
 let fail = false
 const originalFetch = globalThis.fetch
@@ -25,6 +27,7 @@ try {
   const all = await m.getMadeForYou('123')
   assert.equal(all.items.length, 4); assert.deepEqual(all.counts, { all: 4, briefs: 1, comparisons: 1, plans: 2, trackers: 0 })
   assert.equal(all.items[0].href, '/dashboard/reports/a1'); assert.equal(all.items[0].label, 'Brief')
+  assert.equal(all.items.find(i => i.id === 'a4')!.subtitle, '2 saved versions', 'duplicate title collapses to the newest card')
   const plans = await m.getMadeForYou('123', 'plans')
   assert.deepEqual(plans.items.map(i => i.id), ['a3', 'a4'])
   assert.equal(m.makeKind('nope'), 'all'); assert.equal(m.makeKind('comparisons'), 'comparisons')
