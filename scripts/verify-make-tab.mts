@@ -11,6 +11,8 @@ const rows = [
   { id: 'a4', type: 'goal_plan', title: 'Walk 8000 steps', subtitle: '', updated_at: '2026-10-19T05:00:00Z' },
   // 23 Oct live: the same goal tracker saved twice showed as two cards.
   { id: 'a5', type: 'goal_plan', title: 'walk 8000 steps', subtitle: '', updated_at: '2026-10-18T05:00:00Z' },
+  // 24 Oct: a deck saved under research_brief before the slide_deck type existed still counts as Slides.
+  { id: 'a6', type: 'research_brief', title: 'AskGogo pitch', subtitle: '6 slides', updated_at: '2026-10-17T05:00:00Z', fmt: 'deck' },
 ]
 let fail = false
 const originalFetch = globalThis.fetch
@@ -25,7 +27,8 @@ globalThis.fetch = (async (input: any) => {
 try {
   const m = await import('../lib/dashboard/make')
   const all = await m.getMadeForYou('123')
-  assert.equal(all.items.length, 4); assert.deepEqual(all.counts, { all: 4, briefs: 1, comparisons: 1, plans: 2, trackers: 0, slides: 0, sheets: 0 })
+  assert.equal(all.items.length, 5); assert.deepEqual(all.counts, { all: 5, briefs: 1, comparisons: 1, plans: 2, trackers: 0, slides: 1, sheets: 0 })
+  assert.equal(all.items.find(i => i.id === 'a6')!.label, 'Slides')
   assert.equal(all.items[0].href, '/dashboard/reports/a1'); assert.equal(all.items[0].label, 'Brief')
   assert.equal(all.items.find(i => i.id === 'a4')!.subtitle, '2 saved versions', 'duplicate title collapses to the newest card')
   const plans = await m.getMadeForYou('123', 'plans')

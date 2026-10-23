@@ -9,11 +9,17 @@ import { editDoc, generateDoc } from './generate'
 export const MAKE_TYPES = { deck: 'slide_deck', sheet: 'spreadsheet' } as const
 export async function saveDoc(telegramId: number, doc: MakeDoc, request: string, sources: string[]) {
   const content_json = { format: doc.format, doc, request, sources, notes: '' }
-  const { data, error } = await supabaseAdmin.from('agent_artifacts').insert({
-    telegram_id: String(telegramId), type: MAKE_TYPES[doc.format], title: doc.title,
+  const row = (type: string) => ({
+    telegram_id: String(telegramId), type, title: doc.title,
     subtitle: doc.format === 'deck' ? `${(doc as any).slides.length} slides` : `${(doc as any).rows.length} rows`,
     schema_version: 1, content_json, source_refs: [{ type: 'make_request' }],
-  }).select('id').single()
+  })
+  let { data, error } = await supabaseAdmin.from('agent_artifacts').insert(row(MAKE_TYPES[doc.format])).select('id').single()
+  // 24 Oct live: the type check constraint predates slide_deck/spreadsheet (migration 20261024120000 adds them).
+  // Until it runs, save under research_brief; content_json.format still marks it as a deck or sheet everywhere.
+  if (error && /agent_artifacts_type_check/.test(error.message || '')) {
+    ({ data, error } = await supabaseAdmin.from('agent_artifacts').insert(row('research_brief')).select('id').single())
+  }
   if (error || !data?.id) throw new Error(`make_save_failed:${error?.message || 'unknown'}`)
   return String(data.id)
 }
