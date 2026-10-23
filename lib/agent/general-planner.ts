@@ -1,4 +1,5 @@
 import { recordTaskModelUsage, type ModelUsage } from './model-usage'
+import { isMakeDeliverableRequest } from './make-request'
 import { completeAgentPlanPrompt } from './planner-provider'
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -253,7 +254,7 @@ export function shouldUseGeneralPlanner(text: string) {
   if (/\b(research|compare)\b/i.test(t) && /\b(report|brief|tracker|dashboard|save|remind|calendar)\b/i.test(t)) return true
   // 23 Oct live (Make): "Make a one-page brief on co-working spaces near Rajajinagar" got an inline web answer and
   // nothing in Make. Asking Gogo to make a brief/report/one-pager is a Make deliverable.
-  if (/^(?:please\s+|can you\s+|could you\s+)?(?:make|create|write|prepare|build|put together|draw up|produce)\s+(?:me\s+)?(?:a|an|the|my)?\s*(?:short\s+|quick\s+|detailed\s+|one[- ]page\s+|1[- ]page\s+)?(?:research\s+)?(?:brief|report|one[- ]pager|comparison(?:\s+table)?|summary\s+report|tracker|guide|checklist)\b/i.test(t) && !/\b(?:e-?mail|message|whatsapp|text|reply)\b/i.test(t)) return true
+  if (isMakeDeliverableRequest(t)) return true
   if (/\b(use anything relevant|use what you know|already know about me)\b/i.test(t) && domainCount(t) >= 2) return true
   return false
 }

@@ -219,6 +219,24 @@ export function formatWorkspaceEmailAudit(result:{messages:any[];audit?:{days:nu
   return `Gmail subscription audit · last ${days} days · up to ${limit} messages\nBilling/renewal email evidence (subject search; not a verified active-subscription inventory).${scope}\n\n${lines.length?lines.join('\n\n'):'No billing or renewal evidence found among the checked candidates.'}\n\n${hasMore?'More matching messages exist; this is a bounded audit, not a complete inbox inventory.':'Only matching messages returned by this bounded search were checked.'} Sender names and email text are evidence; subscription status, usage and future charges are not inferred. No email, cancellation, reminder or calendar change was made.`
 }
 
+/** Gmail search operators for plain-language filters, and the words they replace. */
+export function gmailFiltersFor(input:string):{operators:string[];consumed:Set<string>}{
+  const t=String(input||'').toLowerCase()
+  const operators:string[]=[],consumed=new Set<string>()
+  const use=(re:RegExp,op:string,words:string[])=>{if(re.test(t)){operators.push(op);words.forEach(w=>consumed.add(w))}}
+  use(/\bunread\b/,'is:unread',['unread'])
+  use(/\b(?:important|priority)\b/,'is:important',['important','priority'])
+  use(/\bstarred\b/,'is:starred',['starred'])
+  if(/\btoday\b|\bthis morning\b/.test(t)){operators.push('newer_than:1d');['today','morning'].forEach(w=>consumed.add(w))}
+  else if(/\byesterday\b/.test(t)){operators.push('newer_than:2d');consumed.add('yesterday')}
+  else if(/\bthis week\b|\blast 7 days\b|\bpast week\b/.test(t)){operators.push('newer_than:7d');['week','last','past','days'].forEach(w=>consumed.add(w))}
+  if(operators.length){
+    ;['summarise','summarize','summary','emails','email','mails','mail','inbox','gmail','my','from','all','new','recent','latest','show','read','check','list','what','are','any'].forEach(w=>consumed.add(w))
+    if(!operators.some(o=>o.startsWith('in:')))operators.push('in:inbox')
+  }
+  return {operators,consumed}
+}
+
 export async function searchWorkspaceEmails(actor:AgentActor, input:string, options:{missionText?:string;topic?:'meeting'}={}) {
   const stepAudit=workspaceEmailAuditScope(input)
   const audit=stepAudit?(workspaceEmailAuditScope(options.missionText||'')||stepAudit):null
@@ -232,7 +250,15 @@ export async function searchWorkspaceEmails(actor:AgentActor, input:string, opti
   const terms=meetingLink?[meetingLink]:workspaceSearchTerms(senderPart.rest)
   if(options.topic==='meeting'&&!terms.includes('meeting'))terms.unshift('meeting')
   const subjectQuery=exactSubject?`subject:"${exactSubject.replace(/"/g,'')}"`:''
-  const q=audit?audit.query:meetingLink
+  // "Summarise my unread emails from today" (23 Oct live): the words "unread"/"today" were searched as text and
+  // nothing matched. They are Gmail filters, not keywords.
+  const filters=gmailFiltersFor(input)
+  if(filters.operators.length){
+    for(let i=terms.length-1;i>=0;i--)if(filters.consumed.has(terms[i].toLowerCase()))terms.splice(i,1)
+  }
+  const q=audit?audit.query:filters.operators.length&&!meetingLink&&!exactSubject
+    ? [senderPart.sender?`from:(${senderPart.sender})`:'',...terms,...filters.operators,'-in:spam','-in:trash'].filter(Boolean).join(' ').trim()
+    :meetingLink
     ? [subjectQuery,`"${meetingLink}"`,'-in:spam','-in:trash'].filter(Boolean).join(' ')
     : exactSubject?`${subjectQuery} -in:spam -in:trash`:[senderPart.sender?`from:(${senderPart.sender})`:'',...terms,'newer_than:2y'].filter(Boolean).join(' ').trim()
   const maxEmails=audit?.limit||MAX_EMAILS

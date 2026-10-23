@@ -57,3 +57,27 @@ console.log('verify-usecases-round2-oct23: ok')
   assert.equal(pc.withStoreFallback({ providers: [{ provider: 'amazon', status: 'observed' }] }).length, 1)
   console.log('verify-usecases-round2-oct23: store fallback ok')
 }
+{
+  const uf = await import('../lib/agent/understand-first.ts')
+  const u: any = { ok: true, action: 'web_answer', confidence: 0.99, reasons: [], referent: null }
+  const ctx: any = { recentTurns: [], savedAssetsIndex: [], openTasks: [], pendingApprovals: [], memoryFacts: [] }
+  assert.equal(uf.decideLiveDispatch(u, ctx, { enabled: true, text: 'Make a one-page brief on co-working spaces near Rajajinagar' }).reason, 'make_deliverable')
+  console.log('verify-usecases-round2-oct23: make dispatch ok')
+}
+{
+  const gw = await import('../lib/agent/google-workspace-read.ts')
+  const f = gw.gmailFiltersFor('Summarise my unread emails from today')
+  assert.deepEqual(f.operators, ['is:unread', 'newer_than:1d', 'in:inbox'])
+  assert.ok(f.consumed.has('unread') && f.consumed.has('today') && f.consumed.has('summarise'))
+  assert.deepEqual(gw.gmailFiltersFor('find the hotel confirmation for my New York trip').operators, [], 'plain search keeps its words')
+  const src = readFileSync('lib/agent/google-workspace-read.ts', 'utf8')
+  assert.match(src, /filters\.operators\.length&&!meetingLink&&!exactSubject/)
+  console.log('verify-usecases-round2-oct23: gmail filters ok')
+}
+{
+  const bc = readFileSync('lib/agent/browser-command.ts', 'utf8')
+  assert.match(bc, /async function releaseClosedReadHandoffs/)
+  assert.match(bc, /if\(await browserHandoffIsLive\(handoff\?\.takeoverUrl\)\)continue/, 'a live sign-in is never released')
+  assert.match(bc, /if\(params\.mode==='read'&&!runMetadata\.handoff\)await releaseClosedReadHandoffs/)
+  console.log('verify-usecases-round2-oct23: stale handoff ok')
+}

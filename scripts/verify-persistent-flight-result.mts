@@ -1,5 +1,6 @@
 // Actual planner/entry/runtime/flight result handoff. Inert planner, DB and secure-browser boundaries only.
 import assert from 'node:assert/strict'
+import * as makeRequest from '../lib/agent/make-request.ts'
 import { readFileSync, existsSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import { createHash } from 'node:crypto'
@@ -58,7 +59,7 @@ function harness(instruction = request,flightCount = 1) {
  }}
  const common:any={
   '@/lib/supabase-admin':{supabaseAdmin:db},'node:crypto':{createHash},
-  '@/lib/bot/memory-redaction':{redactSecretShapedText},'./policy':policy,
+  '@/lib/bot/memory-redaction':{redactSecretShapedText},'./policy':policy,'./make-request':makeRequest,
   './approval-binding':binding,'./approval-ttl':ttl,'./model-usage':{recordTaskModelUsage:async()=>{}},
   '@anthropic-ai/sdk':{default:class {messages={create:async()=>{modelCalls++;throw Error('Unexpected model extraction')}}}},
   './secure-computer':{runSecureBrowser:async(args:any)=>{browserCalls.push(args);if(browserFault)await browserFault();return structuredClone(browserResult)}},
