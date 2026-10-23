@@ -326,6 +326,11 @@ export function narrowByWhen(matches: any[], input: string): any[] {
   return out
 }
 
+/** "cancel that reminder", "delete it", "cancel the last one": points at the reminder just discussed. */
+export function isDeicticReminderRef(input: string): boolean {
+  return /^(?:please\s+|pls\s+|ok(?:ay)?\s+|actually\s+)?(?:cancel|delete|remove|stop|clear)\s+(?:that|this|it|the\s+(?:last|new|latest)|my\s+(?:last|latest))(?:\s+(?:one|reminder))?(?:\s+(?:please|pls))?\s*[.!]?$/i.test(String(input || '').trim())
+}
+
 export function extractCancelQuery(input: string): string | null {
   let out = input
     .replace(/^(cancel|delete|remove|clear|stop)\s+/i, '')
@@ -508,6 +513,14 @@ export async function cancelReminder(telegramId: number, input: string) {
       if (narrowed.length > 1) return reminderDisambiguation('cancel', reminders, narrowed)
       reminder = narrowed[0] || null
     }
+  }
+
+  // "cancel that reminder" / "cancel it" right after setting or changing one (23 Oct live): the reminder
+  // just made. Only one created in the last 2 hours qualifies; anything older still asks.
+  if (!reminder && isDeicticReminderRef(lower)) {
+    const recent = [...reminders].filter((item: any) => Date.now() - Date.parse(String(item.created_at || '')) < 2 * 60 * 60 * 1000)
+      .sort((a: any, b: any) => Date.parse(String(b.created_at)) - Date.parse(String(a.created_at)))
+    reminder = recent[0] || null
   }
 
   if (!reminder) {

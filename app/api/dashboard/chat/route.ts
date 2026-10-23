@@ -233,6 +233,30 @@ async function handleChatPost(req: NextRequest) {
         }
       }
     }
+    // "What time is it in New York?" answers instantly (23 Oct live: 37 s through the general brain).
+    if (text.length <= 80 && /\btime\b/i.test(text) && /\b(?:in|at)\s+[a-z]/i.test(text)) {
+      const wt: any = await import('@/lib/bot/world-time').catch(() => null)
+      const reply = typeof wt?.worldTimeReply === 'function' ? wt.worldTimeReply(text) : null
+      if (typeof reply === 'string' && reply) {
+        await saveConversation(user.telegram_id, text, reply)
+        return NextResponse.json({ text: reply, handledBy: 'world-time', status: 'completed' })
+      }
+    }
+    // Invite links on the dashboard too (23 Oct live: "Send me my invite link" / "my invites" only worked on WhatsApp).
+    {
+      const inv: any = /\binvite|\brefer/i.test(text) ? await import('@/lib/invites/core').catch(() => null) : null
+      if (inv && (inv.isInviteLinkCommand(text) || inv.isMyInvitesCommand(text))) {
+        let reply = `I couldn't get your invite link just now. Please try again in a minute.`
+        try {
+          const store: any = await import('@/lib/invites/store')
+          const { code, remaining } = await store.getOrCreateInviteCode(Number(user.telegram_id), user.name || null)
+          if (inv.isMyInvitesCommand(text)) reply = inv.myInvitesReply({ code, remaining, joined: await store.listJoinedFriends(Number(user.telegram_id)) })
+          else { const r = inv.inviteLinkReply({ code, remaining }); reply = r.link ? `${r.text}\n\n${r.link}` : r.text }
+        } catch (err: any) { console.error('DASHBOARD_INVITE_FAILED:', err?.message || err) }
+        await saveConversation(user.telegram_id, text, reply)
+        return NextResponse.json({ text: reply, handledBy: 'invite-links', status: 'completed' })
+      }
+    }
     // "Order milk on Swiggy Instamart" via the user's connected Swiggy account: three in-stock options, and a
     // 1/2/3 reply binds only while that list is Gogo's latest reply. Lazy so strict harnesses keep their maps.
     // Cheap pre-filter: only an Instamart mention or a bare 1/2/3-style pick loads the module.

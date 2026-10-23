@@ -6,6 +6,8 @@ function packageIdentity(value:string,subject=false):{text:string;counts:number[
   const normalized=text.replace(/(\d+(?:\.\d+)?)\s*kg\b/gi,(_,n)=>`${Number(n)*1000}g`)
     .replace(/(\d+(?:\.\d+)?)\s*l(?:itres?|iters?)?\b/gi,(_,n)=>`${Number(n)*1000}ml`)
     .replace(/(\d+)\s*(g|ml|gb|tb)\b/gi,'$1$2')
+    // "AirPods Pro (2nd Generation)" is "AirPods Pro 2" (23 Oct live: Croma's page failed the identity check).
+    .replace(/\(?\b(\d)(?:st|nd|rd|th)\s*gen(?:eration)?\b[^)]*\)?/gi,' $1 ')
     .replace(/\b(\d+(?:\.\d+)?(?:g|ml))\s*[x×]\s*(\d+)\b/gi,(_,weight,n)=>weight+pack(n))
     .replace(/\b(\d+)\s*[x×]\s*(\d+(?:\.\d+)?(?:g|ml))\b/gi,(_,n,weight)=>weight+pack(n))
     .replace(/\b(?:pack|set|bundle)\s*(?:of\s*)?(\d+)\b/gi,(_,n)=>pack(n))
