@@ -53,8 +53,12 @@ export function dueForCheck(now: number, leg: Pick<TrackedLeg, 'departAt' | 'arr
   const s = leg.tracking?.state
   if (s === 'landed' || s === 'cancelled' || s === 'diverted') return false
   const near = Math.abs(now - w.dep) <= 60 * MIN || Math.abs(now - w.arr) <= 60 * MIN
+  // 23 Oct feedback: alert as soon as it lands. Around the expected landing (live estimate, else schedule) the
+  // leg is checked every 2 minutes; the per-minute cron runs this tracker too.
+  const eta = Date.parse(String(leg.tracking?.etaArrival || leg.arriveAt || ''))
+  const landingWindow = Number.isFinite(eta) && now >= eta - 40 * MIN && now <= eta + 90 * MIN
   const last = Date.parse(String(leg.tracking?.lastCheckedAt || ''))
-  return !Number.isFinite(last) || now - last >= (near ? 14 : 29) * MIN
+  return !Number.isFinite(last) || now - last >= (landingWindow ? 2 : near ? 14 : 29) * MIN
 }
 
 const adbTime = (t: any) => { const v = String(t?.utc || '').trim(); const ms = Date.parse(v.replace(' ', 'T')); return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined }
@@ -79,7 +83,7 @@ export function parseFlightData(json: any, departAt: string): LegStatus | null {
     state, delayMinutes: delay > 0 ? delay : undefined, source: 'flight_data',
     depGate: s(best.departure?.gate), depTerminal: s(best.departure?.terminal),
     arrGate: s(best.arrival?.gate), arrTerminal: s(best.arrival?.terminal), belt: s(best.arrival?.baggageBelt),
-    revisedDeparture: revised, revisedArrival: adbTime(best.arrival?.revisedTime) || adbTime(best.arrival?.predictedTime),
+    revisedDeparture: revised, revisedArrival: adbTime(best.arrival?.predictedTime) || adbTime(best.arrival?.revisedTime),
     actualArrival: adbTime(best.arrival?.runwayTime) || adbTime(best.arrival?.actualTime),
     scheduledArrival: adbTime(best.arrival?.scheduledTime),
   }
