@@ -32,13 +32,15 @@ export async function getMadeForYou(telegramId: string, kind: MakeKind = 'all'):
   const counts = Object.fromEntries(MAKE_KINDS.map(k => [k.key, 0])) as Record<MakeKind, number>
   const tg = String(telegramId || '')
   if (!tg) return { ok: true, items: [], counts }
-  const { data, error } = await supabaseAdmin.from('agent_artifacts').select('id,type,title,subtitle,updated_at')
+  const { data, error } = await supabaseAdmin.from('agent_artifacts').select('id,type,title,subtitle,updated_at,fmt:content_json->>format')
     .eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(120)
   if (error) { console.error('MAKE_READ_FAILED:', error.message); return { ok: false, items: [], counts } }
   // 23 Oct live: Make listed "walk 8000 steps daily" and "Keep my upcoming travel documents…" twice each (a goal
   // tracker saved again). Same type + same title is one card (newest), noting the earlier copies.
   const seen = new Map<string, any>()
-  for (const r of (data || []) as any[]) {
+  for (const raw of (data || []) as any[]) {
+    // A deck or sheet saved before the slide_deck/spreadsheet types existed is still shown as one.
+    const r = raw?.fmt === 'deck' ? { ...raw, type: 'slide_deck' } : raw?.fmt === 'sheet' ? { ...raw, type: 'spreadsheet' } : raw
     const key = `${r.type}|${String(r.title || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()}`
     const first = seen.get(key)
     if (first) first.__copies = (first.__copies || 1) + 1
