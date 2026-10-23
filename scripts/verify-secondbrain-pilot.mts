@@ -168,3 +168,19 @@ console.log('verify-secondbrain-pilot: ok')
   assert.match(body('listAudit'), /requireWorkspaceRole\(telegramId, workspaceId, 'remove_member'\)/, 'audit trail is admin+')
   console.log('Invitations: pending until the invitee accepts; revoke/expiry; shared reports readable by members; audit admin-only')
 }
+
+// One open = one 'opened a shared report' (23 Oct live test logged seven).
+{
+  const v = fns.find(f => f.name === 'getSharedArtifact')!.body
+  assert.match(v, /\.eq\('action', 'artifact\.view'\)\.eq\('target', id\)\.gte\('created_at'/)
+  assert.match(v, /if \(!recent\?\.length\) await audit\(/)
+  console.log('Shared report views: one audit entry per member and report per 10 minutes')
+}
+
+// REJECT leaves a truthful run summary (23 Oct live: panel kept "Waiting for approval").
+{
+  const wb = readFileSync('lib/agent/whatsapp-bridge.ts', 'utf8'), tr = readFileSync('lib/agent/typed-time-routing.ts', 'utf8')
+  assert.match(wb, /decision === 'reject' \? \{ summary: 'Rejected by you\. Nothing was done\.' \}/)
+  assert.match(tr, /status:'paused',summary:'Rejected by you\. Nothing was done\.'/)
+  console.log('Rejected approvals: run summary says nothing was done')
+}

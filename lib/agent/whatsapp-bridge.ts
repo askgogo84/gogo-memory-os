@@ -279,7 +279,9 @@ async function resolveApprovalDecision(actor: AgentActor, pending: any, decision
 
   if (data.run_id) {
     await supabaseAdmin.from('agent_runs')
-      .update({ status: decision === 'approve' ? 'queued' : 'paused', updated_at: now })
+      // 23 Oct live: after REJECT the side panel still said "Waiting for approval before sending Gmail." The run's
+      // summary now says what happened.
+      .update({ status: decision === 'approve' ? 'queued' : 'paused', updated_at: now, ...(decision === 'reject' ? { summary: 'Rejected by you. Nothing was done.' } : {}) })
       .eq('id', data.run_id)
       .eq('telegram_id', String(actor.legacyTelegramId))
       .eq('status', 'waiting_approval')

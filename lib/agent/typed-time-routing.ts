@@ -55,7 +55,7 @@ async function approvalTurn(actor:AgentActor,text:string){
   const reject=/^reject$/i.test(text.trim())
   const {data:claimed,error:ce}=await supabaseAdmin.from('agent_approvals').update({status:reject?'rejected':'approved',resolved_at:new Date().toISOString()}).eq('id',pending.id).eq('telegram_id',String(actor.legacyTelegramId)).eq('status','pending').select('id').maybeSingle()
   if(ce||!claimed)return response('That approval has already been handled. Nothing was retried.')
-  if(reject){await supabaseAdmin.from('agent_runs').update({status:'paused'}).eq('id',pending.run_id).eq('telegram_id',String(actor.legacyTelegramId));return response(`Update rejected. The ${label} is unchanged.`,'paused',planType==='calendar_update'?'calendar':'reminders')}
+  if(reject){await supabaseAdmin.from('agent_runs').update({status:'paused',summary:'Rejected by you. Nothing was done.'}).eq('id',pending.run_id).eq('telegram_id',String(actor.legacyTelegramId));return response(`Update rejected. The ${label} is unchanged.`,'paused',planType==='calendar_update'?'calendar':'reminders')}
   return planType==='calendar_update'?executeApprovedCalendarUpdate({actor,runId:pending.run_id}):executeApprovedReminderUpdate({actor,runId:pending.run_id})
 }
 
