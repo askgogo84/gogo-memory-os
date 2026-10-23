@@ -6,16 +6,29 @@ export type PrepAttendee = { email?: string | null; self?: boolean; responseStat
 export type PrepEvent = {
   id?: string; summary?: string | null; start?: string | null; end?: string | null
   status?: string | null; transparency?: string | null; attendees?: PrepAttendee[] | null
+  /** Video-call link from the calendar event (Meet/Zoom/Teams only). */
+  meetLink?: string | null
 }
 export type PrepThread = { id: string; subject: string; messages: Array<{ from: string; to: string; internalDate: number; snippet?: string }> }
 export type MeetingPrep = {
   key: string; eventId: string; title: string; summary: string; startsAt: string
   attendees: string[]; threadIds: string[]
+  meetingName: string; meetLink: string | null
 }
 
 const MIN = 60_000
 /** Prep is useful from ~18 h before until 20 min before the start. */
-export const PREP_WINDOW = { fromMs: 20 * MIN, toMs: 18 * 60 * MIN }
+// Kept until the meeting starts so the start nudge (meeting-nudge.ts) can still find it.
+export const PREP_WINDOW = { fromMs: 0, toMs: 18 * 60 * MIN }
+
+/** Only real video-call hosts; anything else is not shown as a join link. */
+export function safeMeetLink(raw: unknown): string | null {
+  try {
+    const u = new URL(String(raw || ''))
+    if (u.protocol !== 'https:') return null
+    return /(^|\.)(meet\.google\.com|zoom\.us|teams\.microsoft\.com|teams\.live\.com)$/.test(u.hostname) ? u.toString().slice(0, 300) : null
+  } catch { return null }
+}
 
 const emailsIn = (header: string) => (String(header || '').toLowerCase().match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) || [])
 const clean = (s: unknown, n: number) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n)
@@ -58,6 +71,7 @@ export function findMeetingsNeedingPrep(events: PrepEvent[], threads: PrepThread
       title: `Prepare for ${name} · ${clock(start, tz)}`,
       summary: `With ${who}${Number.isFinite(end) ? ` until ${new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz }).format(new Date(end))}` : ''}. ${emailLine}`,
       startsAt: new Date(start).toISOString(), attendees: otherEmails, threadIds: related.map(r => r.t.id),
+      meetingName: name, meetLink: safeMeetLink(e.meetLink),
     })
   }
   return out.sort((a, b) => a.startsAt.localeCompare(b.startsAt)).slice(0, 6)

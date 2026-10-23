@@ -410,6 +410,7 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
       id:safe(event?.id||'',160),summary:safe(event?.summary||'Busy',220),
       // Kept for proactive discovery (conflicts honour free/declined; meeting prep needs who is attending).
       ...(event?.transparency?{transparency:String(event.transparency)}:{}),
+      ...((event?.hangoutLink||Array.isArray(event?.conferenceData?.entryPoints))?{meetLink:String(event?.hangoutLink||(event?.conferenceData?.entryPoints||[]).find((p:any)=>p?.entryPointType==='video')?.uri||'').slice(0,300)}:{}),
       ...(Array.isArray(event?.attendees)?{attendees:event.attendees.slice(0,15).map((a:any)=>({email:safe(a?.email||'',120).toLowerCase(),displayName:safe(a?.displayName||'',60),self:a?.self===true,resource:a?.resource===true,responseStatus:safe(a?.responseStatus||'',20)}))}:{}),
       start:String(event?.start?.dateTime||event?.start?.date||''),end:event?.endTimeUnspecified===true?'':String(event?.end?.dateTime||event?.end?.date||''),
       label:eventInterval(event,timezone)?.allDay?`All day · ${event.start.date} (end ${event.end.date} exclusive)`:

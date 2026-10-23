@@ -797,7 +797,7 @@ async function syncCalendarConflicts(telegramId:string,current:Set<string>,gmail
     const input:OpenLoopInput={telegramId,kind:'meeting_action',title:m.title,summary,priority:0.87,dueAt:m.startsAt,
       nextCheckAt:isoPlusHours(3),sourceType:'meeting_prep',sourceId:m.key,
       sourceRefs:[{type:'calendar_event',id:m.eventId},...m.threadIds.map(id=>({type:'gmail_thread',id}))],
-      evidence:{read:'google_calendar_complete',attendees:m.attendees.length,emailChecked:Boolean(mail&&!('reason' in mail))},observedAt:new Date().toISOString()}
+      evidence:{read:'google_calendar_complete',attendees:m.attendees.length,emailChecked:Boolean(mail&&!('reason' in mail)),meetingName:m.meetingName,startsAt:m.startsAt,meetLink:m.meetLink},observedAt:new Date().toISOString()}
     const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
   }
 }

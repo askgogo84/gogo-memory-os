@@ -23,12 +23,13 @@ const threads = [
   { id: 't3', subject: 'Contract draft', messages: [{ from: me, to: 'divya@acme.com, legal@acme.com', internalDate: Date.parse('2026-10-22T10:00:00Z') }] },
 ]
 const out = findMeetingsNeedingPrep(events as any, threads, me, now, 'Asia/Kolkata')
-assert.deepEqual(out.map(o => o.eventId), ['Divya sync', 'Nithin 1:1'], 'only meetings with other people, in the prep window, not declined/free/all-day/solo')
-assert.equal(out[0].title, 'Prepare for Divya sync · Fri, 3:00 pm')
-assert.match(out[0].summary, /^With Divya until 3:30 pm\. Read first: “Contract draft” \(22 Oct\); “Q4 menu pricing” \(21 Oct\)\.$/, 'latest related email first; unrelated newsletter left out')
-assert.deepEqual(out[0].threadIds, ['t3', 't1'])
-assert.deepEqual(out[0].attendees, ['divya@acme.com'], 'resource rooms and self excluded')
-assert.match(out[1].summary, /No recent email with them in the last two weeks\./, 'no related email: said plainly, nothing invented')
+assert.deepEqual(out.map(o => o.eventId), ['Starts soon', 'Divya sync', 'Nithin 1:1'], 'meetings with other people until they start; not declined/free/all-day/solo/next week')
+const divya = out.find(o => o.eventId === 'Divya sync')!
+assert.equal(divya.title, 'Prepare for Divya sync · Fri, 3:00 pm')
+assert.match(divya.summary, /^With Divya until 3:30 pm\. Read first: “Contract draft” \(22 Oct\); “Q4 menu pricing” \(21 Oct\)\.$/, 'latest related email first; unrelated newsletter left out')
+assert.deepEqual(divya.threadIds, ['t3', 't1'])
+assert.deepEqual(divya.attendees, ['divya@acme.com'], 'resource rooms and self excluded')
+assert.match(out.find(o => o.eventId === 'Nithin 1:1')!.summary, /No recent email with them in the last two weeks\./, 'no related email: said plainly, nothing invented')
 assert.equal(new Set(out.map(o => o.key)).size, out.length)
 assert.equal(findMeetingsNeedingPrep(events as any, threads, me, now).length, findMeetingsNeedingPrep(events as any, threads, me, now).length, 'stable')
 console.log('Meeting prep: meetings with people in the next 18 h, related email first, honest when there is none')
@@ -42,3 +43,22 @@ const cal = readFileSync('lib/agent/calendar-read.ts', 'utf8')
 assert.match(cal, /attendees:event\.attendees\.slice\(0,15\)/)
 assert.match(cal, /transparency:String\(event\.transparency\)/, 'free blocks reach the conflict check as free')
 console.log('Meeting prep: wired into the open-loop sync (calendar complete read + shared Gmail read)')
+
+// Start nudge (23 Oct, Instinct side by side): "Your Daily Connect-Standup starts at 11:30am, in about 8 minutes" + link.
+{
+  const P = await import('../lib/agent/meeting-prep')
+  assert.equal(P.safeMeetLink('https://meet.google.com/zdq-nnkc-jfr'), 'https://meet.google.com/zdq-nnkc-jfr')
+  assert.equal(P.safeMeetLink('https://evil.example/meet.google.com'), null)
+  assert.equal(P.safeMeetLink('http://meet.google.com/x'), null)
+  const withLink = P.findMeetingsNeedingPrep([{ id: 'standup', summary: 'Daily Connect-Standup', start: '2026-10-23T06:00:00Z', end: '2026-10-23T06:15:00Z', meetLink: 'https://meet.google.com/zdq-nnkc-jfr', attendees: [{ email: 'nithin@tipplr.in' }] } as any], [], me, new Date('2026-10-23T05:52:00Z'))
+  assert.equal(withLink[0].meetLink, 'https://meet.google.com/zdq-nnkc-jfr'); assert.equal(withLink[0].meetingName, 'Daily Connect-Standup')
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'; process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'x'
+  const N = await import('../lib/agent/meeting-nudge')
+  assert.equal(N.meetingNudgeText({ name: 'Daily Connect-Standup', startsAt: '2026-10-23T06:00:00Z', meetLink: 'https://meet.google.com/zdq-nnkc-jfr', now: Date.parse('2026-10-23T05:52:00Z'), tz: 'Asia/Kolkata' }),
+    '📅 Your Daily Connect-Standup starts at 11:30am, in about 8 minutes.\nhttps://meet.google.com/zdq-nnkc-jfr')
+  const src = readFileSync('lib/agent/meeting-nudge.ts', 'utf8')
+  assert.match(src, /key: `meeting-nudge\/\$\{loop\.source_id\}`/, 'once per meeting (delivery ledger key)')
+  assert.match(src, /prefs\.topics\.calendar === false \|\| isQuietHour\(prefs, hour\)/, 'Calendar topic and quiet hours respected')
+  assert.match(readFileSync('app/api/cron/autonomous-runs/route.ts', 'utf8'), /processMeetingNudges\(\)/)
+  console.log('Meeting start nudge: 10 minutes before, with the Meet link, once, within alert settings')
+}
