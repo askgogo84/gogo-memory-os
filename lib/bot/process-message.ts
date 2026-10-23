@@ -59,6 +59,7 @@ import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
 import { recallQuery } from '@/lib/agent/recall-query'
 import { indexMemory, isIndexable } from '@/lib/services/memory-index'
+import { memorySlotOf } from '@/lib/bot/memory-slots'
 import { detectPreferenceSave, isPreferenceList, detectPreferenceForget, savePreference, listPreferences, forgetPreference, getPreferenceBlock, MAX_RULES } from '@/lib/bot/handlers/preferences'
 import { detectFriendReminder, isFriendReminderFollowupCandidate, normalizePhoneNumber, resolveFriendContact, saveFriendContact, countTodayFriendReminders, createFriendReminder, getPendingFriend, pendingFriendMarker, parseFriendTime, friendTaskWithoutTime, friendTimeLabel, cap0 } from '@/lib/bot/handlers/friend-reminders'
 import { handleCreditIqLink } from '@/lib/bot/handlers/creditiq-link'
@@ -274,6 +275,19 @@ async function saveMemory(telegramId: number, content: string, topic: string | n
   // Awaited semantic index (survives serverless response). Never blocks the save on failure.
   if (data?.id) {
     await indexMemory({ telegramId, sourceId: String(data.id), content, topic })
+  }
+  // A new value for the same slot (where the car is parked, gym locker) replaces the older ones.
+  const slot = memorySlotOf(content)
+  if (slot && data?.id) {
+    try {
+      const { data: older } = await supabaseAdmin.from('memories').select('id,content').eq('telegram_id', telegramId).neq('id', data.id).order('created_at', { ascending: false }).limit(300)
+      const stale = (older || []).filter((row: any) => memorySlotOf(String(row.content || '')) === slot).map((row: any) => row.id)
+      if (stale.length) {
+        await supabaseAdmin.from('memories').delete().in('id', stale).eq('telegram_id', telegramId)
+        const { unindexMemory } = await import('@/lib/services/memory-index')
+        for (const id of stale) await unindexMemory(String(id)).catch(() => {})
+      }
+    } catch (err: any) { console.error('MEMORY_SUPERSEDE_FAILED:', String(err?.message || err).slice(0, 120)) }
   }
 }
 
