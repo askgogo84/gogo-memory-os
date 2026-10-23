@@ -48,9 +48,10 @@ export const metadata: Metadata = {
     url: "https://app.askgogo.in",
     images: [
       {
-        url: "/askgogo-og.png?v=2",
-        width: 1200,
-        height: 630,
+        // Square and large so WhatsApp's small thumbnail stays sharp (23 Oct: the wide image was smudged).
+        url: "/askgogo-share.png",
+        width: 800,
+        height: 800,
         alt: "AskGogo — Meet Gogo",
       },
     ],

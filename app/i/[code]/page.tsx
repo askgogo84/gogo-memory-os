@@ -17,7 +17,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
     title: "You're invited to AskGogo",
     description,
     robots: { index: false, follow: false },
-    openGraph: { title: "You're invited to AskGogo", description, siteName: 'AskGogo', images: [{ url: '/askgogo-og.png?v=2', width: 1200, height: 630, alt: 'AskGogo' }] },
+    openGraph: { title: "You're invited to AskGogo", description, siteName: 'AskGogo', images: [{ url: '/askgogo-share.png', width: 800, height: 800, alt: 'AskGogo' }] },
   }
 }
 
