@@ -335,7 +335,7 @@ export async function listAudit(telegramId: string, workspaceId: string, limit =
     .eq('workspace_id', membership.workspaceId).order('created_at', { ascending: false }).limit(Math.min(Math.max(limit, 1), 200))
   check(error, 'audit_list')
   const rows = (data || []) as { actor: string; action: string; target: string | null; created_at: string }[]
-  const names = await displayNames(rows.flatMap(r => [r.actor, ...(r.target && /^\d+$/.test(r.target) ? [r.target] : [])]))
+  const names = await displayNames(rows.flatMap(r => [r.actor, ...(r.target && /^-?\d+$/.test(r.target) ? [r.target] : [])]))
   return rows.map(r => ({ actorName: names.get(r.actor) || 'AskGogo user', action: r.action, targetName: r.target && names.get(r.target) ? names.get(r.target)! : null, at: r.created_at }))
 }
 
