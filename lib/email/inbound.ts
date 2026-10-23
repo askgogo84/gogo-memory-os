@@ -19,8 +19,9 @@ export function threadKeyOf(mail: Pick<ParsedMail, 'messageId' | 'inReplyTo' | '
   return first ? createHash('sha256').update(first.toLowerCase()).digest('hex').slice(0, 24) : null
 }
 
-export function confirmationText(code: string, forwarder: string | null) {
-  return `📬 Gmail sent your forwarding confirmation code${forwarder ? ` for ${forwarder}` : ''}:\n\n*${code}*\n\nPaste it in Gmail › Settings › Forwarding and POP/IMAP, then choose "Forward a copy of incoming mail".\nhttps://mail.google.com/mail/u/0/#settings/fwdandpop`
+export function confirmationText(code: string | null, forwarder: string | null, link: string | null = null) {
+  if (code) return `📬 Gmail sent your forwarding confirmation code${forwarder ? ` for ${forwarder}` : ''}:\n\n*${code}*\n\nPaste it in Gmail › Settings › Forwarding and POP/IMAP, then choose "Forward a copy of incoming mail".\nhttps://mail.google.com/mail/u/0/#settings/fwdandpop`
+  return `📬 Gmail needs you to confirm forwarding${forwarder ? ` from ${forwarder}` : ''}. Open this link and tap Confirm:\n\n${link}\n\nThen in Gmail › Settings › Forwarding and POP/IMAP, choose "Forward a copy of incoming mail" and save.`
 }
 
 export const FORWARDING_ON_TEXT = `📬 Forwarding is on. Your first forwarded email arrived.\n\nFrom now on I'll only tell you about mail that needs you. Ask "emails that need me" any time.`
@@ -63,10 +64,10 @@ export async function processInboundEmail(input: { to: string; from?: string; ra
   const confirm = gmailForwardingConfirmation(mail)
   if (confirm) {
     await supabaseAdmin.from('inbound_emails').upsert({
-      telegram_id: telegramId, alias, message_id: mail.messageId || `confirm-${confirm.code}`, from_addr: clean(mail.from, 300), to_addr: clean(mail.to, 300),
-      subject: clean(mail.subject, 300), snippet: `Gmail forwarding confirmation code ${confirm.code}`, category: 'forwarding_confirmation', received_at: new Date(now).toISOString(),
+      telegram_id: telegramId, alias, message_id: mail.messageId || `confirm-${confirm.code || createHash('sha256').update(String(confirm.link)).digest('hex').slice(0, 16)}`, from_addr: clean(mail.from, 300), to_addr: clean(mail.to, 300),
+      subject: clean(mail.subject, 300), snippet: confirm.code ? `Gmail forwarding confirmation code ${confirm.code}` : 'Gmail forwarding confirmation link', body_text: confirm.link || '', category: 'forwarding_confirmation', received_at: new Date(now).toISOString(),
     }, { onConflict: 'telegram_id,message_id', ignoreDuplicates: true })
-    await notify(telegramId, `email-forward-confirm/${telegramId}/${confirm.code}`, confirmationText(confirm.code, confirm.forwarder))
+    await notify(telegramId, `email-forward-confirm/${telegramId}/${confirm.code || createHash('sha256').update(String(confirm.link)).digest('hex').slice(0, 16)}`, confirmationText(confirm.code, confirm.forwarder, confirm.link))
     return { status: 'confirmation', telegramId }
   }
 
@@ -88,8 +89,11 @@ export async function processInboundEmail(input: { to: string; from?: string; ra
   if (!inserted?.length) return { status: 'duplicate', telegramId }
 
   const at = new Date(now).toISOString()
-  await supabaseAdmin.from('email_aliases').update({ last_received_at: at, ...(owner.confirmedAt ? {} : { forwarding_confirmed_at: at }) }).eq('alias', alias)
-  if (!owner.confirmedAt) await notify(telegramId, `email-forward-on/${telegramId}`, FORWARDING_ON_TEXT)
+  // Only real forwarded mail turns forwarding "on": Gmail keeps the original To (not the alias) and adds X-Forwarded-*.
+  const forwarded = Boolean(mail.headers['x-forwarded-to'] || mail.headers['x-forwarded-for']) || !aliasFromAddress(mail.to)
+  const firstForward = !owner.confirmedAt && forwarded && !/@(?:google|accounts\.google)\.com\b/i.test(mail.from)
+  await supabaseAdmin.from('email_aliases').update({ last_received_at: at, ...(firstForward ? { forwarding_confirmed_at: at } : {}) }).eq('alias', alias)
+  if (firstForward) await notify(telegramId, `email-forward-on/${telegramId}`, FORWARDING_ON_TEXT)
   // Opportunistic 30-day retention for this person.
   await supabaseAdmin.from('inbound_emails').delete().eq('telegram_id', telegramId).lt('received_at', new Date(now - 30 * 86400_000).toISOString()).then(() => {}, () => {})
 

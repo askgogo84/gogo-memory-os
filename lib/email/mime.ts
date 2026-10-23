@@ -160,5 +160,6 @@ export function gmailForwardingConfirmation(mail: Pick<ParsedMail, 'from' | 'sub
   const code = mail.subject.match(/\(#(\d{6,12})\)/)?.[1] || mail.text.match(/confirmation code:?\s*(\d{6,12})/i)?.[1] || null
   const forwarder = mail.subject.match(/receive mail from\s+([^\s]+@[^\s]+)/i)?.[1] || mail.text.match(/([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}) has requested/i)?.[1] || null
   const link = mail.text.match(/https:\/\/mail(?:-settings)?\.google\.com\/mail\/[^\s<>"]+/i)?.[0] || null
-  return code ? { code, forwarder, link } : null
+  // Gmail now often sends only a confirmation link (23 Oct live), older mails carry a numeric code.
+  return code || link ? { code, forwarder, link } : null
 }
