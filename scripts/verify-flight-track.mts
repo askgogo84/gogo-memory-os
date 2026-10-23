@@ -147,3 +147,20 @@ console.log('First pass: only landing/cancellation/diversion are announced')
   assert.equal(ev[0].text, '🛬 Flight VS354 has landed in BOM (on the ground by 09:42 local time). Arrival: terminal 2, bags on belt 10.', 'landing alert says when, briefly')
   console.log('Landing cross-check: aircraft position + tracker pages beat a lagging feed status')
 }
+
+// "Which flights am I tracking right now, and did VS354 land?" (23 Oct live) answers per flight.
+{
+  const at = Date.parse('2026-10-23T04:40:00Z')
+  const vs = { active: false, condition_json: { adHocFlight: { flightNo: 'VS354', from: 'LHR', to: 'BOM', departAt: '2026-10-22T19:25:00Z', arriveAt: '2026-10-23T04:05:00Z' } },
+    last_state_json: { tracking: { state: 'landed', lastCheckedAt: '2026-10-23T04:36:00Z', landedBy: '2026-10-23T04:12:00Z', landedAlertAt: '2026-10-23T04:36:00Z' } } }
+  assert.equal(t.describeTrackedFlight(vs, at), '🛬 VS354 (LHR → BOM) landed in BOM (on the ground by 9:42 am). I alerted you at 10:06 am. Tracking ended.')
+  const ek = { active: true, condition_json: { adHocFlight: { flightNo: 'EK500', from: 'DXB', to: 'BOM', departAt: '2026-10-23T17:10:00Z', arriveAt: '2026-10-23T20:38:00Z' } }, last_state_json: { tracking: { state: null, sent: [] } } }
+  assert.match(t.describeTrackedFlight(ek, at), /^✈️ EK500 \(DXB → BOM\): checks start 7:40 pm, 3 h before take-off \(9:10 pm local\)\. I'll message you when it lands\.$/)
+  const air = { ...ek, last_state_json: { tracking: { state: 'departed', lastCheckedAt: '2026-10-23T18:00:00Z', etaArrival: '2026-10-23T20:38:00Z' } } }
+  assert.match(t.describeTrackedFlight(air, Date.parse('2026-10-23T18:30:00Z')), /in the air, landing about 2:08 am local/)
+  const wc = readFileSync('lib/agent/watch-command.ts', 'utf8')
+  assert.ok(wc.indexOf("runId:'watcher-status-flights'") < wc.indexOf("const subject=watchStatusSubject"), 'flight questions answered before the generic watch dump')
+  const ft = readFileSync('lib/agent/flight-track.ts', 'utf8')
+  assert.ok(ft.includes("if (e.kind === 'landed') tracking.landedAlertAt = now.toISOString()"))
+  console.log('Flight watch status: landed + when alerted, waiting to start, in the air — per flight')
+}
