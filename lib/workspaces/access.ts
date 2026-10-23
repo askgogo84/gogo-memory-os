@@ -323,7 +323,11 @@ export async function getSharedArtifact(telegramId: string, workspaceId: string,
     .eq('id', id).eq('telegram_id', String(share.shared_by)).maybeSingle()
   check(artError, 'shared_artifact')
   if (!art) throw new WorkspaceError('artifact_not_found')
-  await audit(membership.workspaceId, membership.telegramId, 'artifact.view', id, {})
+  // 23 Oct live test: one open logged "opened a shared report" seven times (page refetches). One entry per
+  // member + report per 10 minutes is the evidence; repeats add nothing.
+  const { data: recent } = await supabaseAdmin.from('workspace_audit_log').select('id').eq('workspace_id', membership.workspaceId)
+    .eq('actor', membership.telegramId).eq('action', 'artifact.view').eq('target', id).gte('created_at', new Date(Date.now() - 10 * 60_000).toISOString()).limit(1)
+  if (!recent?.length) await audit(membership.workspaceId, membership.telegramId, 'artifact.view', id, {})
   const names = await displayNames([String(share.shared_by)])
   return { artifactId: id, title: String(art.title || 'Untitled'), sharedByName: names.get(String(share.shared_by)) || 'AskGogo user', sharedByYou: String(share.shared_by) === membership.telegramId, contentJson: art.content_json }
 }

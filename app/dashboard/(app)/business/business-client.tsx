@@ -239,7 +239,7 @@ function People({ detail }: { detail: WorkspaceDetail }) {
     {detail.audit.length > 0 && <details className="mt-2 rounded-[16px] border border-[#222] bg-[#121212] p-4">
       <summary className="min-h-11 cursor-pointer text-[15px] font-semibold text-[#f2efea]">Activity</summary>
       <ul className="mt-2 flex flex-col gap-1.5">
-        {detail.audit.map((r, i) => <li key={i} className="text-[14px] text-[#a8a8a4]">{r.actorName} · {ACTION_LABEL[r.action] || r.action}{r.targetName && r.targetName !== r.actorName ? ` · ${r.targetName}` : ''} <span className="text-[#8a8a86]">· {new Date(r.at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</span></li>)}
+        {detail.audit.filter((r, i, all) => !(i > 0 && all[i - 1].actorName === r.actorName && all[i - 1].action === r.action && all[i - 1].targetName === r.targetName && Math.abs(Date.parse(all[i - 1].at) - Date.parse(r.at)) < 10 * 60_000)).map((r, i) => <li key={i} className="text-[14px] text-[#a8a8a4]">{r.actorName} · {ACTION_LABEL[r.action] || r.action}{r.targetName && r.targetName !== r.actorName ? ` · ${r.targetName}` : ''} <span className="text-[#8a8a86]">· {new Date(r.at).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</span></li>)}
       </ul>
     </details>}
   </div>
