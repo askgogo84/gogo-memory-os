@@ -17,7 +17,7 @@ export function urlSummaryRequest(text: string): { url: string; ask: string } | 
   let host = ''
   try { host = new URL(url).hostname.toLowerCase() } catch { return null }
   // Private/local addresses and the person's own app links are never fetched.
-  if (/^(?:localhost|127\.|10\.|192\.168\.|169\.254\.|0\.)|\.local$|\.internal$/.test(host) || /(?:^|\.)askgogo\.in$/.test(host)) return null
+  if (/^(?:localhost|127\.|10\.|192\.168\.|169\.254\.|0\.)|\.local$|\.internal$/.test(host) || /^(?:app|api|in)\.askgogo\.in$/.test(host)) return null // the public site (askgogo.in, www) is fine
   if (/(?:mail\.google|docs\.google|drive\.google|calendar\.google|accounts\.)/.test(host)) return null
   return { url, ask: rest }
 }

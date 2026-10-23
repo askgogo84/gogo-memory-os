@@ -43,6 +43,9 @@ await check('page summary only for an explicit ask on a public page; bare links 
   assert.deepEqual(US.urlSummaryRequest('Summarise https://en.wikipedia.org/wiki/Bengaluru'), { url: 'https://en.wikipedia.org/wiki/Bengaluru', ask: 'Summarise' })
   assert.ok(US.urlSummaryRequest('tl;dr https://example.com/post.'))
   assert.equal(US.urlSummaryRequest('https://example.com/post'), null)
+  // 24 Oct battery: the public site is summarised; the app is never fetched.
+  assert.ok(US.urlSummaryRequest('Summarise https://www.askgogo.in/journal/memory-is-the-product/'))
+  assert.equal(US.urlSummaryRequest('Summarise https://app.askgogo.in/dashboard/reports/x'), null)
   assert.equal(US.urlSummaryRequest('Save this link https://example.com/post'), null)
   assert.equal(US.urlSummaryRequest('Summarise http://localhost:3000/admin'), null)
   assert.equal(US.urlSummaryRequest('Summarise https://docs.google.com/document/d/x'), null)
