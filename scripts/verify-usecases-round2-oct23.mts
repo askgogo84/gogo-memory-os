@@ -38,3 +38,14 @@ console.log('verify-usecases-round2-oct23: ok')
   assert.match(String(wt.worldTimeReply('What time is it in New York?')), /New York/)
   console.log('verify-usecases-round2-oct23: dashboard ok')
 }
+{
+  const pc = await import('../lib/commerce/price-comparison.ts')
+  const meta: any = { providers: [{ provider: 'amazon', status: 'blocked', needsInput: false }] }
+  const rows = pc.withStoreFallback(meta)
+  assert.deepEqual(rows.map((r: any) => r.provider), ['amazon', 'flipkart', 'croma', 'reliance'])
+  assert.equal(meta.storeFallback, 'amazon')
+  assert.equal(pc.withStoreFallback({ ...meta, providers: rows }).length, 4, 'once only')
+  assert.equal(pc.withStoreFallback({ providers: [{ provider: 'amazon', status: 'blocked', needsInput: true }] }).length, 1, 'a sign-in/location ask is not a block')
+  assert.equal(pc.withStoreFallback({ providers: [{ provider: 'amazon', status: 'observed' }] }).length, 1)
+  console.log('verify-usecases-round2-oct23: store fallback ok')
+}
