@@ -5,13 +5,12 @@ import { SideRail } from '@/components/dashboard/side-rail'
 import { MobileNavProvider, MobileTopBar } from '@/components/dashboard/mobile-nav'
 import { GogoLiveProvider } from '@/components/dashboard/gogo-live'
 import { DesktopTopBar, GogoPanel } from '@/components/dashboard/gogo-panel'
+import { BottomTabs } from '@/components/dashboard/bottom-tabs'
 
 export const dynamic = 'force-dynamic'
 
-// Approved 21 Oct mock (Muse + Wajo). Desktop: a short side rail (Home · Tasks · Memory, Recent, Getting started,
-// usage, Settings), the page, and a Muse-style right panel showing what Gogo is doing with its own character per
-// action. Phone: slim top bar with the menu and a live Gogo pill (no bottom tabs, Wajo-style), and the same panel
-// as a bottom sheet. Desktop right panel starts closed; the Gogo pill at the top right opens it.
+// Approved 22 Oct Duet-parity mock (Claude Duet + Wajo). Desktop: a short side rail (Chat · Tasks · Make, then
+// Channels), the page, and the Gogo panel. Phone: Chat · Tasks · Make as bottom tabs; other places stay in the menu.
 export default async function DashboardShell({ children }: { children: React.ReactNode }) {
   const session=await getSession()
   if(!session)redirect('/dashboard')
@@ -22,12 +21,13 @@ export default async function DashboardShell({ children }: { children: React.Rea
       <MobileNavProvider shell={shell}>
         <div className="dashboard-shell flex min-h-screen w-full flex-1 overflow-hidden bg-[#0b0b0b] text-[#ecebe8]">
           <SideRail shell={shell} />
-          <main className="min-w-0 flex-1 overflow-x-hidden px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(.5rem+env(safe-area-inset-top))] sm:px-6 lg:h-screen lg:overflow-y-auto lg:px-8 lg:pb-10 lg:pt-4 xl:px-12">
+          <main className="min-w-0 flex-1 overflow-x-hidden px-4 pb-[calc(76px+env(safe-area-inset-bottom))] pt-[calc(.5rem+env(safe-area-inset-top))] sm:px-6 lg:h-screen lg:overflow-y-auto lg:px-8 lg:pb-10 lg:pt-4 xl:px-12">
             <MobileTopBar />
             <DesktopTopBar />
             {children}
           </main>
           <GogoPanel />
+          <BottomTabs />
         </div>
       </MobileNavProvider>
     </GogoLiveProvider>

@@ -6,10 +6,10 @@ import { FormEvent, useState } from 'react'
 
 export type ChatChannel = { id: string; title: string }
 
-export function ChatChannels({ channels, active, onPick, onCreate, disabled }: {
-  channels: ChatChannel[]; active: string; onPick: (id: string) => void; onCreate: (title: string) => Promise<boolean>; disabled?: boolean
+export function ChatChannels({ channels, active, onPick, onCreate, disabled, startAdding = false }: {
+  channels: ChatChannel[]; active: string; onPick: (id: string) => void; onCreate: (title: string) => Promise<boolean>; disabled?: boolean; startAdding?: boolean
 }) {
-  const [adding, setAdding] = useState(false)
+  const [adding, setAdding] = useState(startAdding)
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')

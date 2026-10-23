@@ -1,17 +1,13 @@
 'use client'
 
-// Phone navigation (21 Oct, Wajo layout): no bottom tabs. A slim top bar has the menu button (a drawer with Home,
-// Tasks, Memory, Recent, More, Getting started, usage and Settings) and a live Gogo pill that opens the Gogo sheet.
-// The Gogo chat page keeps its own header and composer.
+// Phone navigation (approved 22 Oct Duet-parity mock): Chat · Tasks · Make are the bottom tabs; the menu holds the
+// other places (More) and Settings. A slim top bar has the menu and a live Gogo pill. The chat page has its own header.
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createContext, useContext, useEffect, useState } from 'react'
 import { Companion } from '@/components/gogo/companion'
-import { ThemeToggle } from './theme-toggle'
 import { NAV, MORE, SETTINGS, NavLinks, SettingsLink, needsYouCount, useNavCounts, type NavCounts } from './dashboard-nav'
-import { GettingStarted, RecentList, UsageCard } from './rail-cards'
 import { GogoPill, GogoSheet } from './gogo-panel'
-import { useGogoLive } from './gogo-live'
 import type { ShellData } from '@/lib/dashboard/shell-data'
 
 type MobileNav = { open: () => void; counts: NavCounts }
@@ -19,7 +15,6 @@ const Ctx = createContext<MobileNav>({ open: () => {}, counts: { approvals: 0, w
 
 export function MobileNavProvider({ children, shell }: { children: React.ReactNode; shell: ShellData }) {
   const counts = useNavCounts()
-  const { recent } = useGogoLive()
   const [isOpen, setOpen] = useState(false)
   const pathname = usePathname()
   useEffect(() => { setOpen(false) }, [pathname])
@@ -38,7 +33,7 @@ export function MobileNavProvider({ children, shell }: { children: React.ReactNo
       <button type="button" aria-label="Close menu" onClick={close} className="absolute inset-0 bg-black/60"/>
       <div className="dashboard-rail absolute inset-y-0 left-0 flex w-[300px] max-w-[85vw] flex-col overflow-y-auto border-r border-[#262626] px-3 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-[calc(.75rem+env(safe-area-inset-top))]">
         <div className="flex items-center justify-between pb-2">
-          <Link href="/dashboard/home" onClick={close} className="flex items-center gap-1">
+          <Link href="/dashboard/chat" onClick={close} className="flex items-center gap-1">
             <Companion state="idle" size={48} label="Gogo"/>
             <span className="dashboard-brand-wordmark text-gogo-ink">AskGogo</span>
           </Link>
@@ -46,13 +41,8 @@ export function MobileNavProvider({ children, shell }: { children: React.ReactNo
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
           </button>
         </div>
-        <Link href="/dashboard/chat" onClick={close} className="mb-2 flex min-h-11 items-center gap-2 rounded-[12px] border border-[#262626] bg-[#151515] px-3 text-[15px] font-medium text-[#f2efea]">+ New chat</Link>
         <NavLinks counts={counts} onNavigate={close} />
-        <RecentList recent={recent} onNavigate={close}/>
-        <div className="mt-auto space-y-2 pt-5">
-          <GettingStarted setup={shell.setup} onNavigate={close}/>
-          <UsageCard plan={shell.plan} meters={shell.meters} onNavigate={close}/>
-          <ThemeToggle compact/>
+        <div className="mt-auto pt-5">
           <SettingsLink name={shell.name} onNavigate={close}/>
         </div>
       </div>
@@ -74,7 +64,8 @@ function pageLabel(pathname: string) {
   const all = [...NAV, ...MORE, SETTINGS]
   const here = all.find(item => !item.href.includes('?') && (pathname === item.href || pathname.startsWith(item.href + '/')))
   if (pathname.startsWith('/dashboard/activity') || pathname === '/dashboard/agent') return 'Tasks'
-  return here?.label === 'Home' ? 'AskGogo' : here?.label || 'AskGogo'
+  if (pathname === '/dashboard/home') return 'Today'
+  return here?.label || 'AskGogo'
 }
 
 /** Slim phone top bar for every page except the Gogo chat, which has its own header. */

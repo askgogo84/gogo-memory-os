@@ -1,8 +1,6 @@
 'use client'
 
-// One navigation list for the desktop side rail and the phone drawer, so both always offer the same places.
-// Approved 21 Oct mock (Muse + Wajo): main places — Home, Tasks, Make (22 Oct, Duet parity), Memory — plus Settings. Everything else
-// still exists but sits under a closed "More" so the menu stays short.
+// One navigation list for the desktop side rail, the phone drawer and the phone bottom tabs, so all offer the same places.
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { useState } from 'react'
@@ -16,16 +14,16 @@ export type NavItem = {
   badgeKey?: 'approvals' | 'watchers'
 }
 
+// Approved 22 Oct Duet-parity mock (Claude Duet + Wajo): three places — Chat (the one thread, with the morning brief
+// on top), Tasks and Make. Everything else sits under a closed "More".
 export const NAV: NavItem[] = [
-  { href:'/dashboard/home', label:'Home', glyph:'⌂' },
+  { href:'/dashboard/chat', label:'Chat', glyph:'◉', match:(p)=>p==='/dashboard/chat'||p==='/dashboard/home' },
   { href:'/dashboard/tasks', label:'Tasks', glyph:'✓', badgeKey:'approvals', match:(p,s)=>p==='/dashboard/tasks'||(p==='/dashboard/agent'&&(s==='approvals'||s==='background'))||p.startsWith('/dashboard/activity') },
-  // Duet parity (22 Oct): finished work Gogo made for you.
   { href:'/dashboard/make', label:'Make', glyph:'▤' },
-  { href:'/dashboard/memory', label:'Memory', glyph:'◇' },
 ]
 
 export const MORE: NavItem[] = [
-  { href:'/dashboard/chat', label:'Chat with Gogo', glyph:'◉' },
+  { href:'/dashboard/memory', label:'Memory', glyph:'◇' },
   { href:'/dashboard/calendar', label:'Calendar', glyph:'▦' },
   { href:'/dashboard/lists', label:'Lists', glyph:'≡' },
   { href:'/dashboard/library', label:'Library', glyph:'▣' },
