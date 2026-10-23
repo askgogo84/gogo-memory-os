@@ -46,6 +46,8 @@ export async function GET(request:Request){
     const flightTracks=await import('@/lib/agent/flight-track').then(m=>m.processDueFlightTracks(10)).catch(()=>({checked:0,alerted:0}))
     // Saved-ticket legs too: dueForCheck itself spaces checks (2 min near landing, otherwise 15–30).
     const flightLegs=await import('@/lib/agent/flight-leg-tracker').then(m=>m.runFlightLegTracker()).catch(()=>null)
+    // A meeting with people starting in the next 10 minutes: one WhatsApp nudge with the join link.
+    const meetingNudges=await import('@/lib/agent/meeting-nudge').then(m=>m.processMeetingNudges()).catch(()=>({checked:0,sent:0,skipped:0}))
     const outcomeNotices=await processRunOutcomeNotices({deadline:Date.now()+15_000,limit:5}).catch(()=>({checked:0,accepted:0,deferred:0,unknown:0,failed:1}))
     // ---- voice_call: read finished Bolna calls and report the outcome ----
     let voiceCallsReported=0
@@ -327,7 +329,7 @@ export async function GET(request:Request){
         try{if(actor.whatsappId)await sendWhatsApp(actor.whatsappId,'I could not complete the train search. I did not invent timings or availability. Try again shortly, or check IRCTC directly.')}catch{}
       }
     }
-    return NextResponse.json({ok:true,flightTracks,flightLegs,outcomeNotices,voiceCallsReported,staleRunsClosed,abandonedSignInsClosed,approvedBrowserClaimed,approvedBrowserDone,approvedBrowserFailed,checked,resumed,completed,failed,skipped,reservationResearchClaimed,reservationResearchDone,reservationResearchFailed,reservationResearchRequeued,reservationResearchNotificationFailed,browserClaimed,browserDone,browserPaused,browserFailed,browserExpired,trainClaimed,trainDone,trainFailed,trainRequeued,results})
+    return NextResponse.json({ok:true,flightTracks,flightLegs,meetingNudges,outcomeNotices,voiceCallsReported,staleRunsClosed,abandonedSignInsClosed,approvedBrowserClaimed,approvedBrowserDone,approvedBrowserFailed,checked,resumed,completed,failed,skipped,reservationResearchClaimed,reservationResearchDone,reservationResearchFailed,reservationResearchRequeued,reservationResearchNotificationFailed,browserClaimed,browserDone,browserPaused,browserFailed,browserExpired,trainClaimed,trainDone,trainFailed,trainRequeued,results})
   }catch(err:any){
     console.error('AUTONOMOUS_CRON_FAILED:',err?.message||err)
     return NextResponse.json({ok:false,error:'autonomous_worker_failed'},{status:500})
