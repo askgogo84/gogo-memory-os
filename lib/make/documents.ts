@@ -45,6 +45,20 @@ export function validDeck(raw: any): Deck | null {
   return { format: 'deck', title: clean(raw?.title, 120) || slides[0].title, theme: 'light', slides }
 }
 
+const STAT = /(?:₹|\$|rs\.?\s?)?\d[\d,]*(?:\.\d+)?\s*(?:%|x\b|k\b|m\b|b\b|bn\b|mn\b|cr\b|crores?\b|lakhs?\b|million\b|billion\b|thousand\b|\+)?/gi
+/** Numbers the model wrote that are not in the facts or the request become [ADD NUMBER] (never invent stats). */
+export function scrubInventedNumbers(deck: Deck, facts: string, request: string): Deck {
+  const known = `${facts} ${request}`.toLowerCase().replace(/,/g, '')
+  const fix = (t: string) => t.replace(STAT, m => {
+    const digits = m.replace(/[^\d.]/g, '')
+    const hasUnit = /[%xkmb+]|cr|lakh|million|billion|thousand|₹|\$|rs/i.test(m.replace(/\d/g, ''))
+    if (!digits || (!hasUnit && Number(digits) <= 12)) return m // "3 steps", "slide 2", years handled below
+    if (/^(?:19|20)\d{2}$/.test(digits) && !hasUnit) return m
+    return known.includes(digits) ? m : '[ADD NUMBER]'
+  })
+  return { ...deck, slides: deck.slides.map(s => ({ ...s, title: fix(s.title), points: s.points.map(fix), notes: fix(s.notes) })) }
+}
+
 export function parseAmount(v: unknown): number | null {
   if (typeof v === 'number' && Number.isFinite(v)) return v
   const s = String(v ?? '').replace(/[₹,\s]|rs\.?|inr/gi, '')
@@ -83,6 +97,7 @@ export function deckPrompt(request: string, facts: string) {
 Use these public facts where relevant (may be empty): ${facts ? JSON.stringify(facts.slice(0, 6000)) : '""'}
 Rules: one idea per slide; 3-4 short bullet points per slide (max 12 words each); a short kicker label; speaker notes of 1-2 sentences.
 Never invent numbers, customers, revenue, users or quotes: use placeholders like [YOUR USERS], [AMOUNT], [ADD PROOF POINT] instead.
+Slide 1 is the title slide: kicker "Overview", title = the deck title, one point = a one-line tagline. Any number or statistic must appear in the facts above; otherwise write [ADD NUMBER].
 Follow the requested slide count (default 6). Light, plain wording, no emoji, no markdown.
 Return ONLY JSON: {"title":"…","slides":[{"kicker":"…","title":"…","points":["…"],"notes":"…"}]}`
 }
