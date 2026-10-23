@@ -58,7 +58,7 @@ export async function summariseUrl(req: { url: string; ask: string }, deps: { fe
   const { title, text } = readable((await res.text()).slice(0, 1_500_000))
   // A sign-in wall or an empty shell page is not something to summarise from the server.
   if (text.length < 400 || /\b(?:sign in|log in) to (?:continue|view)\b/i.test(text.slice(0, 1500))) return null
-  const prompt = `${req.ask}. Use only the page text below. Reply for a phone: one line on what the page is, then 4-6 short bullets with the key facts (numbers, dates, names), then one line "Worth knowing:" if something stands out. Plain text, bullets with •, no headings, no italics, under 900 characters.\n\nTitle: ${title}\nURL: ${req.url}\n\nPage text:\n${text.slice(0, 20_000)}`
+  const prompt = `${req.ask}. Use only the page text below. Reply for a phone: one line on what the page is, then 4-6 short bullets with the key facts (numbers, dates, names), then one line "Worth knowing:" if something stands out. Plain text, bullets with •, no headings, no italics, under 900 characters.\n\nTitle: ${title}\nURL: ${req.url}\n\nPage text:\n${text.slice(0, 12_000)}`
   let body = ''
   try { body = (await (deps.model || defaultModel)(prompt)).trim() } catch {}
   if (!body) return null
