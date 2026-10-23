@@ -590,8 +590,8 @@ export async function handleInboxReplyRead(params:{actor:AgentActor;text:string}
   }
 }
 
-async function syncGmailAttention(telegramId:string,current:Set<string>){
-  const read=await readGmailAttention(telegramId)
+async function syncGmailAttention(telegramId:string,current:Set<string>,gmailRead?:()=>ReturnType<typeof readGmailAttention>){
+  const read=await (gmailRead?gmailRead():readGmailAttention(telegramId))
   if('reason' in read)return 'skip' as const
   const {threads,ownEmail}=read
   await captureGmailServiceNotices(telegramId,threads.flatMap(thread=>{
@@ -762,7 +762,7 @@ async function resolveMissingSourceLoops(telegramId:string,current:Set<string>,s
 // Only a COMPLETE Calendar read for the next 48 h counts; any gap skips (never infers availability). Each conflict
 // is one deduped open loop with its event/ticket evidence, and it resolves itself once the calendar no longer
 // shows it. The pulse surfaces it with the owner's quiet hours and topics, like every other open loop.
-async function syncCalendarConflicts(telegramId:string,current:Set<string>){
+async function syncCalendarConflicts(telegramId:string,current:Set<string>,gmailRead?:()=>Promise<Awaited<ReturnType<typeof readGmailAttention>>>){
   const {data:user}=await supabaseAdmin.from('users').select('google_calendar_connected,timezone,name').eq('telegram_id',Number(telegramId)).maybeSingle()
   if(!user?.google_calendar_connected)throw new Error('skip:calendar_not_connected')
   const [{resolveAgentActor},{executeReadOnlyCalendarStep},{findScheduleConflicts}]=await Promise.all([import('./actor'),import('./calendar-read'),import('./calendar-conflicts')])
@@ -786,28 +786,47 @@ async function syncCalendarConflicts(telegramId:string,current:Set<string>){
       evidence:{window:c.evidence.window,read:'google_calendar_complete'},observedAt:new Date().toISOString()}
     const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
   }
+  // Pre-meeting intelligence: meetings with other people in the next ~18 h, with the email worth reading first.
+  // Email context is optional (Gmail off or unreadable → the prep item says nothing was checked, never invents).
+  const {findMeetingsNeedingPrep}=await import('./meeting-prep')
+  const mail=gmailRead?await gmailRead().catch(()=>null):null
+  const threads=mail&&!('reason' in mail)?mail.threads:[]
+  const ownEmail=mail&&!('reason' in mail)?mail.ownEmail:''
+  for(const m of findMeetingsNeedingPrep(events,threads as any,ownEmail,new Date(),tz)){
+    const summary=mail&&!('reason' in mail)?m.summary:m.summary.replace(/ (?:Read first:.*|No recent email with them in the last two weeks\.)$/,' Gmail isn’t connected, so no email was checked.')
+    const input:OpenLoopInput={telegramId,kind:'meeting_action',title:m.title,summary,priority:0.87,dueAt:m.startsAt,
+      nextCheckAt:isoPlusHours(3),sourceType:'meeting_prep',sourceId:m.key,
+      sourceRefs:[{type:'calendar_event',id:m.eventId},...m.threadIds.map(id=>({type:'gmail_thread',id}))],
+      evidence:{read:'google_calendar_complete',attendees:m.attendees.length,emailChecked:Boolean(mail&&!('reason' in mail))},observedAt:new Date().toISOString()}
+    const fp=fingerprintFor(input);current.add(fp);await upsertOpenLoop(input)
+  }
 }
 
 export async function syncOpenLoopsForUser(telegramId:string|number){
   const tg=String(telegramId)
   const current=new Set<string>()
   const sourceTypes=['followup','approval','agent_run','life_event_action','calendar_conflict'] as const
+  // One Gmail read per sync, shared by email attention and meeting prep.
+  let gmailPromise:ReturnType<typeof readGmailAttention>|null=null
+  const gmailOnce=()=>(gmailPromise??=readGmailAttention(tg))
   const results=await Promise.allSettled([
     syncFollowups(tg,current),
     syncApprovals(tg,current),
     syncRuns(tg,current),
     syncLifeActions(tg,current),
-    syncCalendarConflicts(tg,current),
-    syncGmailAttention(tg,current),
+    syncCalendarConflicts(tg,current,gmailOnce),
+    syncGmailAttention(tg,current,gmailOnce),
     syncMeetingActionMemories(tg),
     syncConversationSignals(tg),
   ])
   // "skip:" rejections are deliberate (source not connected or not fully readable): no failure, no reconciliation.
   const failures=results.filter((x):x is PromiseRejectedResult=>x.status==='rejected').map(x=>clean(x.reason?.message||x.reason,180)).filter(x=>!x.startsWith('skip:'))
-  const successfulSourceTypes=sourceTypes.filter((_,index)=>results[index]?.status==='fulfilled')
+  const successfulSourceTypes:string[]=sourceTypes.filter((_,index)=>results[index]?.status==='fulfilled')
+  // Meeting prep comes from the same complete calendar read as conflicts; past meetings drop out and resolve.
+  if(results[4]?.status==='fulfilled')successfulSourceTypes.push('meeting_prep')
   // Reconcile only sources that were read successfully. A transient provider/DB
   // failure must never make an existing open loop disappear.
-  const resolved=await resolveMissingSourceLoops(tg,current,[...successfulSourceTypes]).catch(err=>{failures.push(clean(err?.message||err,180));return 0})
+  const resolved=await resolveMissingSourceLoops(tg,current,successfulSourceTypes).catch(err=>{failures.push(clean(err?.message||err,180));return 0})
   return {telegramId:tg,resolved,failures}
 }
 

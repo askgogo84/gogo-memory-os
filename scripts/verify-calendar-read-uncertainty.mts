@@ -36,7 +36,7 @@ function load(file:string,deps:Record<string,unknown>,fetcher?:unknown,expose?:s
 // Use the real busy-state helper now consumed by account deduplication. Keep
 // provider/database transports inert and retain every uncertainty assertion.
 const accounts=load('lib/services/google-calendar-accounts.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/services/google-calendar':calendar,'@/lib/calendar-intervals':intervals})
-const deps={'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/services/weather':weather,'@/lib/google-calendar':calendar,'@/lib/services/google-calendar-accounts':accounts,
+const deps={'@/lib/supabase-admin':{supabaseAdmin:db},'./briefing-intelligence':{loadIntelligence:async()=>[]},'@/lib/services/weather':weather,'@/lib/google-calendar':calendar,'@/lib/services/google-calendar-accounts':accounts,
  '@/lib/agent/task-lifecycle':{isRelevantOpenLoop:()=>{throw Error('Calendar-only briefing must not inspect open loops')}},
  '@/lib/agent/google-workspace-read':{formatEmailSnippet:()=>{throw Error('Calendar-only briefing must not format email')}},
  '@/lib/limits':{},'./followup-state':followups}

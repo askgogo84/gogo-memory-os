@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { loadIntelligence } from './briefing-intelligence'
 import { fetchWeatherForecast, formatCurrentWeather } from '@/lib/services/weather'
 import { getTodayEvents } from '@/lib/google-calendar'
 import { getTodayEventsAllAccounts } from '@/lib/services/google-calendar-accounts'
@@ -221,6 +222,13 @@ export async function buildMorningBriefing(telegramId: number, userName?: string
   const show = (k: string) => flags === 'default' || flags.includes(k)
 
   const blocks: string[] = [`☀️ *Today for ${name}*`]
+
+  // What needs me / meeting prep / what Gogo is handling / done since yesterday, from saved state only.
+  if (show('intelligence') || flags === 'default') {
+    try {
+      blocks.push(...await loadIntelligence(telegramId))
+    } catch { /* section omitted; never claims an empty queue */ }
+  }
 
   if (show('weather')) blocks.push(`🌤️ *Weather*\n${weatherText}`)
 
