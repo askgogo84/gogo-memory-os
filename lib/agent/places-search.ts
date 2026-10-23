@@ -43,13 +43,26 @@ export async function searchPlaces(query: string, fetchImpl: typeof fetch = fetc
 function inArea(p: Place, area: string) {
   const a = area.toLowerCase().replace(/\s+/g, ' ')
   const words = a.split(' ').filter(w => w.length > 3)
-  const addr = p.address.toLowerCase()
-  return addr.includes(a) || (words.length > 0 && words.every(w => addr.includes(w)))
+  const hay = `${p.address} ${p.title}`.toLowerCase().replace(/rajaji nagar/g, 'rajajinagar')
+  return hay.includes(a) || (words.length > 0 && words.every(w => hay.includes(w)))
+}
+
+const GENERIC = new Set(['restaurant', 'restaurants', 'place', 'places', 'good', 'best', 'top', 'nice', 'near', 'around', 'bengaluru', 'bangalore', 'some', 'with', 'that', 'open', 'cafe', 'cafes', 'food'])
+/** "South Indian restaurants" must not return a North Indian dhaba first: match the asked kind against category/title. */
+function kindMatch(p: Place, ask: PlaceAsk) {
+  const words = ask.query.toLowerCase().replace(/,.*$/, '').replace(new RegExp(`\\b(?:in|near|around|at)\\s+${ask.area.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), '')
+    .split(/[^a-z]+/).filter(w => w.length > 2 && !GENERIC.has(w))
+  if (!words.length) return true
+  const hay = `${p.category || ''} ${p.title}`.toLowerCase()
+  const phrase = words.join(' ')
+  return hay.includes(phrase) || words.every(w => hay.includes(w))
 }
 
 export function formatPlaces(ask: PlaceAsk, places: Place[]) {
   // Prefer places whose address is really in the area asked for, then better-rated, well-reviewed ones.
-  const ranked = [...places].sort((x, y) => Number(inArea(y, ask.area)) - Number(inArea(x, ask.area)) || (y.rating || 0) * Math.log10((y.ratingCount || 1) + 9) - (x.rating || 0) * Math.log10((x.ratingCount || 1) + 9))
+  const kindOk = places.filter(p => kindMatch(p, ask))
+  const pool = kindOk.length >= Math.min(ask.count, 2) ? kindOk : places
+  const ranked = [...pool].sort((x, y) => Number(inArea(y, ask.area)) - Number(inArea(x, ask.area)) || (y.rating || 0) * Math.log10((y.ratingCount || 1) + 9) - (x.rating || 0) * Math.log10((x.ratingCount || 1) + 9))
   const local = ranked.filter(p => inArea(p, ask.area))
   const shown = (local.length >= Math.min(ask.count, 2) ? local : ranked).slice(0, ask.count)
   if (!shown.length) return null
