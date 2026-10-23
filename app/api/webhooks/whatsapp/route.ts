@@ -409,19 +409,19 @@ async function handleWhatsAppPost(req: NextRequest) {
 
     // ── Invite links: "send me my invite link" / "my invites" ──
     if (isInviteLinkCommand(bodyText) || isMyInvitesCommand(bodyText)) {
-      let reply: string
+      let reply: string, link: string | null = null
       try {
         const { code, remaining } = await getOrCreateInviteCode(resolvedUser.telegramId, resolvedUser.name || profileName)
-        reply = isMyInvitesCommand(bodyText)
-          ? myInvitesReply({ code, remaining, joined: await listJoinedFriends(resolvedUser.telegramId), tz: resolvedUser.timezone })
-          : inviteLinkReply({ code, remaining })
+        if (isMyInvitesCommand(bodyText)) reply = myInvitesReply({ code, remaining, joined: await listJoinedFriends(resolvedUser.telegramId), tz: resolvedUser.timezone })
+        else ({ text: reply, link } = inviteLinkReply({ code, remaining }))
       } catch (err: any) {
         console.error('INVITE_COMMAND_FAILED:', err?.message || err)
         reply = `I couldn't get your invite link just now. Please try again in a minute.`
       }
       await saveConversation(resolvedUser.telegramId, 'user', bodyText)
-      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await saveConversation(resolvedUser.telegramId, 'assistant', link ? `${reply}\n${link}` : reply)
       await sendWhatsAppMessage(from, reply)
+      if (link) await sendWhatsAppMessage(from, link)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 

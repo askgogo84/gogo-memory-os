@@ -70,10 +70,10 @@ assert.equal(core.joinWhatsAppLink('divya-abc234'), "https://wa.me/17605483659?t
 for (const t of ['Send me my invite link', 'send me my invite link.', 'invite friends', 'My invite link', 'Invite', 'referral']) assert.ok(core.isInviteLinkCommand(t), t)
 for (const t of ['my invites', 'Who joined?', 'invite status', 'referral status']) assert.ok(core.isMyInvitesCommand(t), t)
 for (const t of ['invite Divya to the meeting', 'send an invite to Nithin', 'add to calendar invite']) assert.ok(!core.isInviteLinkCommand(t) && !core.isMyInvitesCommand(t), t)
-assert.equal(core.inviteLinkReply({ code: 'goverdhan-7k2m9x', remaining: 10 }),
-  `You have 10 invites left. Share this link with a friend; it works once per person.\n\nhttps://app.askgogo.in/i/goverdhan-7k2m9x\n\nWhen they join, I'll tell you here. Say "my invites" any time to see who joined.`)
-assert.match(core.inviteLinkReply({ code: 'x-abc234', remaining: 1 }), /You have 1 invite left/)
-assert.match(core.inviteLinkReply({ code: 'x-abc234', remaining: 0 }), /used all 10 invites/)
+assert.deepEqual(core.inviteLinkReply({ code: 'goverdhan-7k2m9x', remaining: 10 }),
+  { text: 'You have 10 invites left. Your invite link is below; share it with a friend.', link: 'https://app.askgogo.in/i/goverdhan-7k2m9x' })
+assert.match(core.inviteLinkReply({ code: 'x-abc234', remaining: 1 }).text, /You have 1 invite left/)
+assert.deepEqual(core.inviteLinkReply({ code: 'x-abc234', remaining: 0 }).link, null)
 assert.equal(core.maskPhone('+919876543210'), '+91 98•••••210')
 const mine = core.myInvitesReply({ code: 'goverdhan-7k2m9x', remaining: 8, joined: [
   { name: 'Divya Rao', phone: '+919876543210', joinedAt: '2026-10-21T06:00:00Z' }, { name: 'Friend', phone: '+919812345678', joinedAt: '2026-10-22T06:00:00Z' }] })
@@ -93,7 +93,10 @@ const joinAt = wa.indexOf('access.invite?.ok'), cmdAt = wa.indexOf('isInviteLink
 assert.ok(wa.indexOf("await resolveUser({ channel: 'whatsapp'") < joinAt && joinAt < cmdAt && cmdAt < menuAt, 'invite join + commands run after resolveUser, before the onboarding menu')
 const page = readFileSync('app/i/[code]/page.tsx', 'utf8')
 assert.match(page, /params: Promise<\{ code: string \}>/); assert.match(page, /robots: \{ index: false/)
-assert.ok(!/phone/i.test(readFileSync('app/i/[code]/invite-flow.tsx', 'utf8')), 'invite page never handles phone numbers')
+const flow = readFileSync('app/i/[code]/invite-flow.tsx', 'utf8')
+assert.ok(!/phone/i.test(flow), 'invite page never handles phone numbers')
+assert.match(flow, /<Companion state="idle"/); assert.ok(!flow.includes('gogo-figure'), 'designed Gogo, not the old meditating figure')
+assert.match(wa, /if \(link\) await sendWhatsAppMessage\(from, link\)/, 'link sent on its own for the preview card')
 const store = readFileSync('lib/invites/store.ts', 'utf8')
 assert.match(store, /key: `invite-joined\/\$\{p\.redemptionId\}`/, 'inviter told once per join')
 console.log('verify-invite-links: ok')

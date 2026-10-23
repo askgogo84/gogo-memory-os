@@ -64,9 +64,10 @@ const STATUS_PHRASES = new Set([
 export const isInviteLinkCommand = (text: string) => LINK_PHRASES.has(norm(text))
 export const isMyInvitesCommand = (text: string) => STATUS_PHRASES.has(norm(text))
 
-export function inviteLinkReply(p: { code: string; remaining: number }): string {
-  if (p.remaining <= 0) return `You've used all ${INVITE_LIMIT} invites. Say "my invites" to see who joined.`
-  return `You have ${p.remaining} invite${p.remaining === 1 ? '' : 's'} left. Share this link with a friend; it works once per person.\n\n${inviteUrl(p.code)}\n\nWhen they join, I'll tell you here. Say "my invites" any time to see who joined.`
+/** Two WhatsApp messages, like Instinct: a short line, then the link on its own so it renders as a preview card. */
+export function inviteLinkReply(p: { code: string; remaining: number }): { text: string; link: string | null } {
+  if (p.remaining <= 0) return { text: `You've used all ${INVITE_LIMIT} invites. Say "my invites" to see who joined.`, link: null }
+  return { text: `You have ${p.remaining} invite${p.remaining === 1 ? '' : 's'} left. Your invite link is below; share it with a friend.`, link: inviteUrl(p.code) }
 }
 
 export type JoinedFriend = { name: string | null; phone: string; joinedAt: string }
