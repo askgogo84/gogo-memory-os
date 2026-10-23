@@ -165,3 +165,44 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
   await save({ next_check_at: new Date(now.getTime() + (near ? 15 : 30) * MIN).toISOString(), last_state_json: { ...(watcher.last_state_json || {}), tracking, source: status ? 'flight_data' : 'unavailable' } })
   return { triggered: sent > 0, failed: false }
 }
+
+// 23 Oct live (side by side with Instinct): after "Track VS 354", the follow-up "Alert me once it lands" fell to
+// general chat, which claimed a 9:25 reminder. A follow-up about "it" landing/departing/delay binds to the flight
+// in the last few hours of this conversation and starts (or reuses) the same tracking watch — never a reminder.
+const FOLLOW_UP = /\b(?:alert|notify|tell|ping|message|update|let)\s+(?:me|us)\b[^.?!]{0,40}\b(?:when|once|after|as soon as|if)\b[^.?!]{0,30}\b(?:lands?|landed|landing|arrives?|arrival|touches down|takes? off|departs?|departure|is delayed|gets delayed|delay)\b|^\s*(?:track|keep tracking|follow|monitor|watch)\s+(?:it|that|this|that flight|this flight)\s*[.!]?\s*$/i
+
+export function isFlightFollowUp(text: string): boolean {
+  return FOLLOW_UP.test(String(text || '')) && !trackCode(text)
+}
+
+/** The flight code most recently mentioned in this conversation within `hours` (newest first). */
+export function flightCodeFromHistory(rows: Array<{ content?: string | null; created_at?: string | null }>, now = Date.now(), hours = 6): string {
+  for (const r of rows || []) {
+    const at = Date.parse(String(r?.created_at || ''))
+    if (Number.isFinite(at) && now - at > hours * 3_600_000) break
+    const code = trackCode(String(r?.content || ''))
+    if (code) return code
+  }
+  return ''
+}
+
+export async function handleFlightFollowUp(p: { telegramId: string | number; text: string; timezone?: string; now?: Date }): Promise<string | null> {
+  if (!isFlightFollowUp(p.text)) return null
+  const tg = String(p.telegramId), now = p.now || new Date()
+  const { data } = await supabaseAdmin.from('conversations').select('content,created_at').eq('telegram_id', Number(tg))
+    .order('created_at', { ascending: false }).limit(10)
+  const code = flightCodeFromHistory(data || [], now.getTime())
+  if (!code) return null
+  const live = await lookupLiveFlight(code, now, p.timezone || 'Asia/Kolkata').catch(() => null)
+  if (!live) {
+    return process.env.AERODATABOX_RAPIDAPI_KEY
+      ? `I couldn't find ${code} flying today or tomorrow, so I can't follow it yet. Send the date, for example: Track ${code} on 25 Oct. I haven't set a reminder.`
+      : `I can't follow ${code} live yet: live flight tracking isn't switched on. I haven't set a reminder, so nothing will fire at a guessed time.`
+  }
+  if (live.status.state === 'landed') return `${code} has already landed.\n\n${formatLiveFlight(live)}`
+  const watch = await createFlightTrackWatch(tg, live).catch(() => null)
+  if (!watch) return `I couldn't start tracking ${code} just now. Ask again in a minute.`
+  const eta = live.status.revisedArrival || live.arrUtc
+  const etaText = eta ? new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: p.timezone || 'Asia/Kolkata' }).format(new Date(eta)) : ''
+  return `${watch.reused ? `I'm already tracking ${code}` : `Done. I'm tracking ${code}`} (${live.from.iata} → ${live.to.iata}) and will message you here when it lands${etaText ? ` (estimated ${etaText})` : ''}, plus any delay or gate change before that.`
+}

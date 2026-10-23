@@ -619,6 +619,18 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         : { type: 'general_chat', confidence: 'medium', meta: { personalData: true } })
     : plainOrBase) as ReturnType<typeof detectIntent>
   console.log('PIM:intent', intent, 'semantic:', params.semantic?.intent?.choice ?? null, params.semantic?.intent?.confidence ?? null)
+  // 23 Oct live: "Alert me once it lands" after a flight question binds to that flight and starts tracking
+  // (Instinct parity); it never becomes a guessed-time reminder. Cheap regex gate before any lookup.
+  if (/\b(?:lands?|landed|landing|arriv\w*|touches down|takes? off|depart\w*|delay\w*)\b|^\s*(?:track|keep tracking|follow|monitor|watch)\s+(?:it|that|this)/i.test(incomingText)) {
+    const followUp = await import('@/lib/agent/flight-track')
+      .then(async m => m.isFlightFollowUp(incomingText) ? m.handleFlightFollowUp({ telegramId: resolvedUser.telegramId, text: incomingText, timezone: await resolveReminderTimezone(resolvedUser.telegramId).catch(() => undefined) }) : null)
+      .catch((err: any) => { console.error('FLIGHT_FOLLOW_UP_FAILED:', String(err?.message || err).slice(0, 160)); return null })
+    if (followUp) {
+      await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+      await saveConversation(resolvedUser.telegramId, 'assistant', followUp)
+      return { text: formatOutgoingText(params.channel, followUp), handledBy: 'flight-track-follow-up', resolvedUser }
+    }
+  }
   if(intent.type==='calendar_read_held'||intent.type==='calendar_read_clarify'){
     const reply=String(intent.meta?.calendarReadHoldReply||intent.meta?.calendarReadClarificationReply||"I haven't read your Calendar. Ask me to check it when you're ready. Nothing was changed.")
     await saveConversation(resolvedUser.telegramId,'user',incomingText)
