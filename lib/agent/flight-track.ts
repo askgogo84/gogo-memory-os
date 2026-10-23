@@ -360,7 +360,16 @@ export function describeTrackedFlight(w: any, now: number, tz = 'Asia/Kolkata'):
   return `✈️ ${code}${route}: ${t.state === 'delayed' ? 'delayed' : 'not departed yet'}${late}. I'll message you on take-off and landing.`
 }
 
-export async function flightTrackStatusReply(telegramId: string, text: string, now = new Date(), tz = 'Asia/Kolkata'): Promise<string | null> {
+/** "How is EK500 doing?" / "has EK 500 landed?": a status question naming a flight (not a track/stop command). */
+export function isFlightStatusQuestion(text: string): boolean {
+  const t = String(text || '').trim()
+  if (!t || t.length > 160 || !requestedFlightCodes(t).length) return false
+  if (/^(?:please\s+)?(?:track|stop|cancel|alert|notify|remind|book|watch|follow|untrack)\b/i.test(t)) return false
+  return /^(?:how|where|what|when|is|has|did|any|whats|what's|status)\b/i.test(t) || /\?\s*$/.test(t)
+    || /\b(?:status|doing|update|landed|delayed|late|on time|eta|arriv\w*|depart\w*|in the air)\b/i.test(t)
+}
+
+export async function flightTrackStatusReply(telegramId: string, text: string, now = new Date(), tz = 'Asia/Kolkata', opts: { onlyTracked?: boolean } = {}): Promise<string | null> {
   const tg = String(telegramId)
   const { data, error } = await supabaseAdmin.from('agent_watchers').select('id,active,condition_json,last_state_json,updated_at,created_at')
     .eq('telegram_id', tg).not('condition_json->adHocFlight', 'is', null)
@@ -377,7 +386,9 @@ export async function flightTrackStatusReply(telegramId: string, text: string, n
   const active = rows.filter((w: any) => w.active)
   const named = codes.length ? rows.filter((w: any) => codes.includes(normalizeFlightNo(String(w.condition_json?.adHocFlight?.flightNo || '')))) : []
   const missing = codes.filter(code => !named.some((w: any) => normalizeFlightNo(String(w.condition_json?.adHocFlight?.flightNo || '')) === code))
-  const shown = [...new Set([...active, ...named])]
+  // onlyTracked: answer a named-flight question only when every named flight is one we track.
+  if (opts.onlyTracked && (!codes.length || missing.length)) return null
+  const shown = opts.onlyTracked ? named : [...new Set([...active, ...named])]
   const lines = shown.map((w: any) => describeTrackedFlight(w, now.getTime(), tz))
   if (!lines.length && !missing.length) return `I'm not tracking any flights right now. Say "Track EK 500" to start.`
   const head = active.length ? (active.length === 1 ? 'Tracking 1 flight:' : `Tracking ${active.length} flights:`) : 'No flights being tracked right now.'
