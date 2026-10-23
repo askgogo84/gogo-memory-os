@@ -90,3 +90,14 @@ export function isMissingTableError(error: { code?: string | null; message?: str
 }
 
 export const ROLE_LABEL: Record<WorkspaceRole, string> = { owner: 'Owner', admin: 'Admin', member: 'Member', viewer: 'Viewer' }
+
+/**
+ * 23 Oct live test: a shared research brief showed the owner's own calendar entries and flights to a workspace
+ * Viewer ("Review travel and calendar context", "Check calendar availability"). Personal data is never shared by
+ * default: a workspace sees only the report itself and its public web sources.
+ */
+export const SHAREABLE_SECTION_TOOLS = ['artifact', 'web_search'] as const
+export function shareableSections<T extends { tool: string }>(sections: T[]): { shown: T[]; withheld: number } {
+  const shown = sections.filter(s => (SHAREABLE_SECTION_TOOLS as readonly string[]).includes(String(s.tool)))
+  return { shown, withheld: sections.length - shown.length }
+}

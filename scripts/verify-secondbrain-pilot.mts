@@ -184,3 +184,13 @@ console.log('verify-secondbrain-pilot: ok')
   assert.match(tr, /status:'paused',summary:'Rejected by you\. Nothing was done\.'/)
   console.log('Rejected approvals: run summary says nothing was done')
 }
+
+// Sharing never exposes the owner's personal sections (23 Oct live test showed calendar + flights to a Viewer).
+{
+  const R = await import('../lib/workspaces/rules')
+  const r = R.shareableSections([{ tool: 'artifact' }, { tool: 'memory' }, { tool: 'calendar' }, { tool: 'web_search' }, { tool: 'travel' }, { tool: 'gmail' }])
+  assert.deepEqual(r.shown.map(s => s.tool), ['artifact', 'web_search']); assert.equal(r.withheld, 4)
+  const page = readFileSync('app/dashboard/(app)/business/[ws]/shared/[id]/page.tsx', 'utf8')
+  assert.match(page, /shareableSections\(artifactSections\(view\.contentJson\)\)/)
+  console.log('Shared reports: only the report and its web sources; personal sections stay private')
+}
