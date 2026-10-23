@@ -26,3 +26,14 @@ assert.ok(route.includes('(?:(?:draft|write|compose|prepare|send)\\b[^\\n]*?\\b(
 const src = readFileSync('lib/agent/gmail-send.ts', 'utf8')
 assert.match(src, /Nothing has been sent\. Check the address above, then say \*send it\* when you want me to stage approval\./, 'compose still only drafts')
 console.log('Email compose: "email X saying", "send an email to X", "send X an email", "mail X:" all draft for review; nothing sends')
+
+// "send it" after a NEW-email draft (23 Oct live: "Please select the exact object…"): the draft becomes the selected
+// email object, so typed routing hands "send it" to the Gmail flow, which stages the approval.
+{
+  const g = readFileSync('lib/agent/gmail-send.ts', 'utf8')
+  assert.match(g, /rememberTypedObjects\(params\.actor\.legacyTelegramId,'email',\[\{id:`draft:\$\{recipient\.email\}`/)
+  assert.match(g, /draft\?\.newMessage\?`draft:\$\{state\.payload\.draft\.to\}`/, 'the draft binding is not treated as a newer foreign selection')
+  const typed = readFileSync('lib/agent/typed-time-routing.ts', 'utf8')
+  assert.match(typed, /context\?\.domain==='email'&&\([\s\S]*?\/\^send it/)
+  console.log('Email compose: "send it" after a new draft stages the approval')
+}

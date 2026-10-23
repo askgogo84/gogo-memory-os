@@ -182,7 +182,7 @@ async function newerForeignSelection(actor:AgentActor,state:any){
   if(!context||(Number.isFinite(at)&&Date.parse(context.at)<at))return null
   if(context.domain!=='email')return context.domain
   // A newer selection in the same connector must not revive an older draft.
-  const boundId=state?.payload?.message?.id||state?.payload?.draft?.sourceMessageId
+  const boundId=state?.payload?.message?.id||state?.payload?.draft?.sourceMessageId||(state?.payload?.draft?.newMessage?`draft:${state.payload.draft.to}`:'')
   if((state?.payload?.message||state?.payload?.draft)&&(!boundId||context.selectedId!==String(boundId)))return 'email'
   return null
 }
@@ -271,6 +271,9 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
     const draft={newMessage:true,threadId:'',sourceMessageId:'',to:recipient.email,subject:written.subject,body:written.body,inReplyTo:null}
     await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
     await saveFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft',{draft,created_at:new Date().toISOString()})
+    // 23 Oct live: after a new-email draft, "send it" answered "Please select the exact object…" because the typed
+    // context was not the email domain. The draft is the selected email object, so "send it" binds to it.
+    await rememberTypedObjects(params.actor.legacyTelegramId,'email',[{id:`draft:${recipient.email}`,title:`Draft to ${recipient.email}: ${written.subject}`}]).catch(()=>{})
     return {runId:'gmail-compose-draft',status:'completed' as const,capability:'email' as const,risk:'low' as const,text:`📧 Draft email\n\n${preview(draft)}\n\nNothing has been sent. Check the address above, then say *send it* when you want me to stage approval.`,handledBy:'gmail-send'}
   }
 
