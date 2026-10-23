@@ -1,0 +1,54 @@
+// "Track Virgin Atlantic VS 354" (23 Oct live): live status from the flight-data feed + a watch until landing.
+// Run: npx tsx scripts/verify-flight-track.mts
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'
+process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'test-key'
+process.env.OPENAI_API_KEY ||= 'test-key'
+process.env.ANTHROPIC_API_KEY ||= 'test-key'
+const t = await import('../lib/agent/flight-track')
+const fs = await import('../lib/bot/handlers/flight-status')
+
+assert.equal(t.icaoFlightCode('VS 354'), 'VIR354'); assert.equal(t.icaoFlightCode('6E0201'), 'IGO201'); assert.equal(t.icaoFlightCode('ZZ1'), null)
+assert.equal(t.isFlightTrackRequest('Track Virgin Atlantic VS 354'), true)
+assert.equal(t.isFlightTrackRequest('Keep me posted on EK 501'), true)
+assert.equal(t.isFlightTrackRequest('Stop tracking VS 354'), false)
+assert.equal(t.isFlightTrackRequest('Did VS 354 land?'), false, 'a status question stays a one-off answer')
+assert.equal(t.trackCode('Track Virgin Atlantic VS 354'), 'VS354')
+assert.match(fs.buildFlightStatusQuery('Track Virgin Atlantic VS 354', '2026-10-23'), /^VS354 VIR354 flight status/)
+
+const occ = (dep: string, arr: string, status = 'Expected', extra: any = {}) => ({
+  number: 'VS 354', status, airline: { name: 'Virgin Atlantic' },
+  departure: { airport: { iata: 'LHR', municipalityName: 'London' }, scheduledTime: { utc: dep, local: dep.replace('Z', '+00:00') }, terminal: '3', gate: '12', ...(extra.dep || {}) },
+  arrival: { airport: { iata: 'BOM', municipalityName: 'Mumbai' }, scheduledTime: { utc: arr, local: arr.replace('Z', '+00:00') } },
+})
+const now = new Date('2026-10-23T10:00:00Z')
+const fixture: Record<string, any[]> = {
+  '2026-10-22': [occ('2026-10-22 08:30Z', '2026-10-22 17:30Z', 'Arrived')],
+  '2026-10-23': [occ('2026-10-23 08:30Z', '2026-10-23 17:30Z', 'EnRoute', { dep: { revisedTime: { utc: '2026-10-23 08:55Z', local: '2026-10-23 08:55+00:00' } } })],
+  '2026-10-24': [occ('2026-10-24 08:30Z', '2026-10-24 17:30Z')],
+}
+const f = await t.lookupLiveFlight('VS354', now, 'UTC', async (_c, d) => fixture[d] || [])
+assert.ok(f, 'found')
+assert.equal(f!.depUtc, '2026-10-23T08:30:00.000Z', 'the flight in the air now, not yesterday\'s or tomorrow\'s')
+assert.equal(f!.status.state, 'departed')
+const text = t.formatLiveFlight(f!)
+assert.match(text, /VS354\* · Virgin Atlantic/); assert.match(text, /London \(LHR\) → Mumbai \(BOM\)/); assert.match(text, /Status: \*In the air\*/)
+assert.match(text, /Departs 08:55 \(was 08:30\)/, 'times come from the feed, airport-local')
+assert.equal(await t.lookupLiveFlight('VS354', now, 'UTC', async () => []), null)
+assert.equal(t.pickLiveOccurrence([occ('2026-10-20 08:30Z', '2026-10-20 17:30Z', 'Arrived')], now.getTime()), null, 'a flight that landed days ago is not "now"')
+
+// Structured feed answers first; web search only when it has nothing.
+let searched = 0
+const live = await fs.answerLiveFlightStatus('Track Virgin Atlantic VS 354', 'Gogo', { live: async () => 'LIVE', search: async () => { searched++; return [] } }, 'Asia/Kolkata')
+assert.equal(live, 'LIVE'); assert.equal(searched, 0)
+await fs.answerLiveFlightStatus('Track VS 354', 'Gogo', { live: async () => null, search: async () => { searched++; return [] } }, 'Asia/Kolkata')
+assert.ok(searched > 0)
+
+const src = readFileSync('lib/agent/flight-track.ts', 'utf8')
+assert.match(src, /\.eq\('telegram_id', tg\)\.eq\('active', true\)\s*\.eq\('condition_json->adHocFlight->>flightNo', f\.flightNo\)/, 'one watch per flight occurrence, owner-scoped')
+assert.doesNotMatch(src, /from\('travel_tickets'\)\.(?:insert|upsert)/, 'a tracked flight is never saved as the owner\'s trip')
+assert.ok(src.includes("message: e.text, topic: 'travel' })"), 'alerts go through deliverWatchAlert (owner alert settings)')
+assert.match(readFileSync('lib/agent/watchers.ts', 'utf8'), /watcher\.condition_json\?\.adHocFlight\s*\?\s*await import\('\.\/flight-track'\)/)
+assert.match(readFileSync('lib/bot/process-message.ts', 'utf8'), /trackAsk\.createFlightTrackWatch\(resolvedUser\.telegramId, live\)/)
+console.log('Flight tracking: live feed status, one watch per flight until landing, ICAO search fallback')

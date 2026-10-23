@@ -1589,7 +1589,10 @@ export async function processDueAgentWatchers(limit = 40) {
         if(await expireContextWatcher(watcher,now))expired++
         continue
       }
-      const outcome = watcher.type === 'deadline'
+      // An ad-hoc tracked flight ("Track VS354") is followed from the flight-data feed, not as a web search.
+      const outcome = watcher.condition_json?.adHocFlight
+        ? await import('./flight-track').then(m => m.processFlightTrackWatcher(watcher, now))
+        : watcher.type === 'deadline'
         ? await processDeadlineWatcher(watcher, now)
         : watcher.type === 'web_search'
           ? await processWebSearchWatcher(watcher, now)
