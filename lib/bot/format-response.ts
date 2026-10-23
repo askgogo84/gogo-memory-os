@@ -27,6 +27,11 @@ function shortenCalendarOAuthLinks(text: string): string {
 // that is mostly capitals is put back into sentence case; short codes and anything with digits (B2, 6E204, PVR, QR)
 // keep their case. Pure.
 const KEEP_CAPS = new Set(['PNR', 'PVR', 'QR', 'IST', 'OTP', 'UPI', 'GST', 'USD', 'INR', 'AED', 'ATM', 'EMI', 'KYC', 'PAN', 'IRCTC', 'BLR', 'DEL', 'BOM', 'MAA', 'HYD', 'CCU', 'AI', 'TV', 'AC', 'ID', 'UK', 'US', 'UAE', 'ISRO', 'IPL', 'SMS', 'URL', 'PDF', 'GB', 'TB'])
+// 24 Oct live: chat replies showed "## *ACCOMMODATION*" and a "What I know about you" list with shouted lines.
+// Markdown headings become a bold line (WhatsApp has no headings).
+export function markdownHeadingsToBold(text: string): string {
+  return String(text || '').replace(/^[ \t]*#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$/gm, (_m, title) => `*${String(title).replace(/\*/g, '').trim()}*`)
+}
 export function calmShouting(text: string): string {
   const letters: string[] = String(text || '').replace(/https?:\/\/\S+/g, '').match(/\p{L}/gu) || []
   const upper = letters.filter(c => c !== c.toLowerCase()).length
@@ -54,7 +59,7 @@ export function dropRedactedLinks(text: string): string {
 }
 
 function cleanBaseText(text: string): string {
-  return calmShouting(dropRedactedLinks(shortenCalendarOAuthLinks(text || ''))
+  return calmShouting(markdownHeadingsToBold(dropRedactedLinks(shortenCalendarOAuthLinks(text || '')))
     .replace(/\r\n/g, '\n')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')

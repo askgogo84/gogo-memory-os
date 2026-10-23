@@ -57,6 +57,9 @@ export function isWatcherStatusQuery(text:string) {
     || /^(?:what|when|how|is|are|do)\b[^.!?]*\bmy\b[^.!?]*\b(?:watches|watch|watchers?|monitors?)\b/.test(raw)
     // "What did I ask you to track today?" / "what have I asked you to monitor" (23 Oct live: went to web search).
     || /^(?:what|which)\b[^.!?]{0,30}\b(?:did|have|had)\s+i\s+(?:ask(?:ed)?|told?|get|got)\s+you\s+to\s+(?:track|watch|monitor|keep\s+an?\s+eye\s+on)\b/.test(raw)
+    // "What scheduled tasks do I have?" (24 Oct live: the model answered "1 scheduled task: Browser task").
+    || /^(?:what|which|show|list)\b[^.!?]{0,20}\b(?:scheduled|recurring|background)\s+(?:tasks?|jobs?|runs?|automations?)\b/.test(raw)
+    || /^(?:show|list)\s+(?:my\s+)?(?:automations?|scheduled\s+tasks?)\b/.test(raw)
 }
 
 function watchStatusSubject(text:string){

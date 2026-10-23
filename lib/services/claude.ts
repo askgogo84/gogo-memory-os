@@ -303,14 +303,20 @@ export function groundTransportTimes(question: string, reply: string, sourceText
 export function stripUnrequestedAddress(reply: string, preferenceBlock = ''): string {
   if (/\bboss\b/i.test(preferenceBlock)) return reply
   return String(reply || '')
-    .replace(/,[ \t]*boss(?=[ \t]*(?:[.!?…]|$))/gim, '')
+    .replace(/,[ \t]*boss(?=[ \t]*(?:[.!?…:]|$))/gim, '')
     .replace(/^([ \t]*(?:got it|okay|ok|sure|done|noted|alright|right|hey|hi|hello))[,]?[ \t]+boss\b/gim, '$1')
     .replace(/^([ \t]*)boss,[ \t]*(\S)/gim, (_m: string, lead: string, ch: string) => `${lead}${ch.toUpperCase()}`)
 }
 
 /** Chat replies: no unrequested "boss", and no model-recalled transport timetable (a directive reply is left to its parser). */
+// 24 Oct live: a drafted email to Nithin ended "Best,\nGogo". A draft is written in the person's voice and their
+// mail adds their own signature, so a sign-off naming Gogo is dropped.
+export function stripGogoSignoff(reply: string): string {
+  return String(reply || '').replace(/\n[ \t]*(?:best|regards|best regards|warm regards|kind regards|thanks|thank you|cheers|sincerely)[,!]?[ \t]*\n[ \t]*(?:gogo|askgogo|ask gogo)[ \t]*(?=\n|$)/gi, '')
+}
+
 export function finishChatReply(userMessage: string, reply: string, preferenceBlock = ''): string {
-  const text = stripUnrequestedAddress(reply, preferenceBlock)
+  const text = stripGogoSignoff(stripUnrequestedAddress(reply, preferenceBlock))
   if (/^\s*(?:REMINDER|MEMORY|LIST_[A-Z]+|SEARCH):/m.test(text)) return text
   return groundTransportTimes(userMessage, text, '')
 }

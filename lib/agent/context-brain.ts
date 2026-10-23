@@ -746,7 +746,7 @@ async function loadLearnedFacts(actor:AgentActor,query:string,includeSemantic:bo
           semantic.push({
             id:`semantic:${safe((row as any).source_id,120)||hash(String((row as any).content||''))}`,
             source:'semantic_memory',
-            summary:safe((row as any).content,420),
+            summary:`${safe((row as any).content,420)}${validIso((row as any).created_at)?` (saved ${String((row as any).created_at).slice(0,10)})`:''}`,
             score:clamp(score),
             confidence:clamp(score),
             startAt:validIso((row as any).created_at),
@@ -780,7 +780,7 @@ async function loadLearnedFacts(actor:AgentActor,query:string,includeSemantic:bo
         if(relevance===0)continue
         const id='source_id' in row?String(row.source_id):String(row.id)
         if(semantic.some(f=>f.id===`semantic:${id}`))continue
-        semantic.push({id:`semantic:${id}`,source:'semantic_memory',summary:safe(content,700),score:clamp(0.55+relevance*0.44),confidence:0.95,inferred:false,sourceRefs:[{type:'saved_memory',source_id:id}]})
+        semantic.push({id:`semantic:${id}`,source:'semantic_memory',summary:`${safe(content,700)}${(row as any).created_at?` (saved ${String((row as any).created_at).slice(0,10)})`:''}`,score:clamp(0.55+relevance*0.44),confidence:0.95,inferred:false,sourceRefs:[{type:'saved_memory',source_id:id}]})
       }
     }
   }
@@ -969,6 +969,8 @@ export function renderContextBlock(pack:ContextPack,maxChars=3200){
     '- Do not expose hidden identifiers or unrelated private facts.',
     '- A proposal is not a confirmed booking; require provider proof. Moving/packing completion: do not assume it. Arrival is not continued presence. Free time requires complete Calendar coverage and full event intervals.',
     '- A bounded lookup is not proof of absence or completeness.',
+    // 24 Oct live: "What do you know about me?" listed three parking spots (B2 14, B3 21, B2 9) and a test locker.
+    ...(pack.facts.filter(f=>f.source==='semantic_memory').length>1?['- Conflicting saved facts about one thing (parking spot, locker, address): only the newest saved is current.']:[]),
     // R09 (22 Oct live): the move day was acknowledged, then "nothing blocks evening plans" was asserted anyway.
     '- A saved life event on the asked day (a move, a trip, an event) is a constraint even when Calendar shows that hour free: name it and how it may affect the plan, and never say "nothing blocks" or "you are free" while it stands.',
     ...(pack.retrievalIncomplete?['- Retrieval is incomplete: one or more sources failed. Disclose lookup limitations; never claim no saved record exists.']:[]),

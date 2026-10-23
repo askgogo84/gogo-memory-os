@@ -53,13 +53,29 @@ async function load(base:string,quote:string):Promise<Rate|null>{
     return parse(JSON.parse(text),base,quote)
   }catch{return null}
 }
+// 24 Oct live: "Convert 250 USD to INR" failed because the v2 response no longer passed the strict parser.
+// Fallback: Frankfurter's stable v1 endpoint (ECB reference rates), same no-guess rules.
+export function parseV1(data:any,base:string,quote:string):Rate|null{
+  if(!data||data.base!==base||!validDate(data.date)||!recent(data.date))return null
+  const r=data.rates?.[quote]
+  return validNumber(r)?{date:data.date,base,quote,rate:r,oldest:data.date,newest:data.date}:null
+}
+async function loadV1(base:string,quote:string):Promise<Rate|null>{
+  try{
+    const response=await fetch(`https://api.frankfurter.dev/v1/latest?base=${base}&symbols=${quote}`,{headers:{accept:'application/json'},cache:'no-store',signal:AbortSignal.timeout(3500)})
+    if(!response.ok)return null
+    const text=await response.text()
+    if(text.length>MAX_BYTES)return null
+    return parseV1(JSON.parse(text),base,quote)
+  }catch{return null}
+}
 async function rate(base:string,quote:string){
   const key=base+'/'+quote,saved=cache.get(key)
   if(saved&&saved.expires>Date.now()&&recent(saved.value.date))return saved.value
   cache.delete(key)
   const running=pending.get(key);if(running)return running
   if(pending.size>=MAX_ENTRIES)return null
-  const promise=load(base,quote).then(value=>{
+  const promise=load(base,quote).then(async value=>value||await loadV1(base,quote)).then(value=>{
     if(value){if(cache.size>=MAX_ENTRIES)cache.delete(cache.keys().next().value!);cache.set(key,{expires:Date.now()+CACHE_MS,value})}
     return value
   }).finally(()=>pending.delete(key))

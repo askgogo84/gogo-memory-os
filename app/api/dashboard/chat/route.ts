@@ -274,6 +274,16 @@ async function handleChatPost(req: NextRequest) {
       await saveConversation(user.telegram_id,text,voice.text)
       return NextResponse.json(voice)
     }
+    // "Summarise https://…": a public page is fetched and summarised directly, not opened in the secure browser.
+    if(/https?:\/\//i.test(text)&&/\b(?:summar|tl;?dr|gist|key points|takeaways)/i.test(text)&&text.length<=600){
+      const us:any=await import('@/lib/agent/url-summary').catch(()=>null)
+      const req=us?.urlSummaryRequest?.(text)
+      const summary=req?await Promise.resolve().then(()=>us.summariseUrl(req)).catch(()=>null):null
+      if(typeof summary==='string'&&summary){
+        await saveConversation(user.telegram_id,text,summary)
+        return NextResponse.json({text:summary,handledBy:'url-summary',status:'completed'})
+      }
+    }
     // Emails that need you: the attention card, its numbered actions ("not important 2", "draft 1") and learned rules.
     // Lazy and pre-filtered so strict harnesses keep their dependency maps.
     {
