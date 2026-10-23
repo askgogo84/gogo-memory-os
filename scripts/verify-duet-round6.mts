@@ -100,5 +100,15 @@ await check('scheduled-task questions list the real background watches', () => {
   assert.ok(!wc.isWatcherStatusQuery('schedule a task every monday'))
 })
 
+const slots: any = await import('../lib/bot/memory-slots.ts').catch(() => null)
+await check('a new parking spot or locker replaces the old one (one current value per slot)', () => {
+  if (!slots?.memorySlotOf) throw new Error('memory-slots failed to load')
+  assert.equal(slots.memorySlotOf('my car parking is B2 slot 9'), 'car_parking')
+  assert.equal(slots.memorySlotOf('CAR PARKED AT B3 SLOT 21'), 'car_parking')
+  assert.equal(slots.memorySlotOf('my bike is parked near gate 2'), 'bike_parking')
+  assert.equal(slots.memorySlotOf('gym locker: TEST-LOCKER-42'), 'gym_locker')
+  assert.equal(slots.memorySlotOf('I prefer morning meetings'), null)
+})
+
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('duet round 6: all checks passed')
