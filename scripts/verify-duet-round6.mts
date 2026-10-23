@@ -93,5 +93,12 @@ await check('general inbox digests use the attention card; specific searches kee
   for (const t of ['Summarise emails from Nithin', 'latest email from Swiggy', 'summarise the email about the contract', 'summarise my promotions']) assert.ok(!sb.isGeneralInboxDigest(t), t)
 })
 
+const wc: any = await import('../lib/agent/watch-command.ts').catch(() => null)
+await check('scheduled-task questions list the real background watches', () => {
+  if (!wc?.isWatcherStatusQuery) throw new Error('watch-command failed to load')
+  for (const t of ['What scheduled tasks do I have?', 'show my automations', 'list my scheduled tasks']) assert.ok(wc.isWatcherStatusQuery(t), t)
+  assert.ok(!wc.isWatcherStatusQuery('schedule a task every monday'))
+})
+
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('duet round 6: all checks passed')
