@@ -11,7 +11,15 @@ for (const t of ['cancel that reminder', 'cancel it', 'delete that', 'cancel the
 for (const t of ['cancel water reminder', 'cancel 2', 'cancel the call nithin reminder', 'cancel all reminders']) assert.ok(!er.isDeicticReminderRef(t), t)
 const src = readFileSync('lib/bot/handlers/edit-reminder.ts', 'utf8')
 assert.match(src, /if \(!reminder && isDeicticReminderRef\(lower\)\)/)
-assert.match(src, /2 \* 60 \* 60 \* 1000/, 'only a reminder made in the last 2 hours')
+assert.ok(!/2 \* 60 \* 60 \* 1000/.test(src), 'never by newest created_at (a daily series writes new rows)')
+const rows = [
+  { id: 1, message: 'Drink water', is_recurring: true, recurring_pattern: 'daily', created_at: new Date().toISOString() },
+  { id: 2, message: 'Call Nithin', is_recurring: false, created_at: new Date(Date.now() - 60000).toISOString() },
+]
+assert.equal((er.pickReminderNamedIn('✅ *Reminder set*\n\nCall Nithin tomorrow at 9:00 am.', rows) as any)?.id, 2, 'the reminder the last reply named')
+assert.equal(er.pickReminderNamedIn('Here is the weather', rows), null, 'no reminder named: ask, act on nothing')
+assert.equal(er.pickReminderNamedIn('✅ Reminder set: Drink water and Call Nithin', rows), 'ambiguous')
+assert.match(src, /Which reminder should I cancel\? Say its name/)
 console.log('verify-usecases-round2-oct23: ok')
 {
   const src2 = readFileSync('lib/agent/secure-computer.ts', 'utf8')
