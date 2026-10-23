@@ -47,6 +47,8 @@ export function extractEmailSender(input: string): { sender: string | null; rest
   if (!m) return { sender: null, rest: raw }
   const sender = m[1].replace(/\s+/g, ' ').trim().replace(/[()"\\]/g, '')
   if (!sender) return { sender: null, rest: raw }
+  // "unread emails from today" (23 Oct live): a time, not a sender.
+  if (/^(?:today|yesterday|tonight|this (?:morning|week|month)|last (?:week|night|month|\d+ days?)|the (?:last|past) \w+(?: days?)?|now)$/i.test(sender)) return { sender: null, rest: raw }
   return { sender, rest: raw.replace(m[0], ' ').replace(/\s+/g, ' ').trim() }
 }
 

@@ -81,3 +81,10 @@ console.log('verify-usecases-round2-oct23: ok')
   assert.match(bc, /if\(params\.mode==='read'&&!runMetadata\.handoff\)await releaseClosedReadHandoffs/)
   console.log('verify-usecases-round2-oct23: stale handoff ok')
 }
+{
+  const gw = await import('../lib/agent/google-workspace-read.ts')
+  assert.equal(gw.extractEmailSender('Summarise my unread emails from today').sender, null, '"from today" is a time, not a sender')
+  assert.equal(gw.extractEmailSender('emails from yesterday').sender, null)
+  assert.equal(gw.extractEmailSender('latest emails from Vercel').sender, 'Vercel')
+  console.log('verify-usecases-round2-oct23: gmail sender ok')
+}
