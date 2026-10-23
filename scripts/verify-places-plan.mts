@@ -35,6 +35,15 @@ await check('when almost nothing is inside the area it says some picks are nearb
   assert.match(out!, /some are nearby/)
 })
 
+await check('the asked cuisine comes first: no North Indian dhaba for a South Indian ask', () => {
+  const out = P.formatPlaces({ query: 'South Indian restaurants in Rajajinagar, Bengaluru', area: 'Rajajinagar', count: 2 }, [
+    { title: 'Chulha Chauki da Dhaba | Rajajinagar', address: 'Dr Rajkumar Rd', rating: 4.7, ratingCount: 7300, category: 'North Indian restaurant' },
+    { title: 'Sai Sogadu', address: '14th Cross, below Rajaji Nagar metro', rating: 4.4, ratingCount: 6100, category: 'South Indian restaurant' },
+    { title: 'Kakal Kai Ruchi @ Rajajinagar', address: 'Dr Rajkumar Rd', rating: 4.4, ratingCount: 4600, category: 'South Indian restaurant' },
+  ])
+  assert.doesNotMatch(out!, /Dhaba/); assert.match(out!, /Sai Sogadu/); assert.doesNotMatch(out!, /some are nearby/)
+})
+
 const DP: any = await import('../lib/agent/day-plan.ts').catch(() => null)
 await check('plan-my-day asks resolve to today or tomorrow; other text does not', () => {
   if (!DP) throw new Error('day-plan failed to load')
