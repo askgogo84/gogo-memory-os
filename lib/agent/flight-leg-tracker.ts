@@ -22,6 +22,8 @@ export type LegStatus = {
   delayMinutes?: number
   depGate?: string; depTerminal?: string; arrGate?: string; arrTerminal?: string; belt?: string
   revisedDeparture?: string; revisedArrival?: string; actualArrival?: string; scheduledArrival?: string
+  /** Landing seen from aircraft position / tracker pages without a runway time: it was on the ground by then. */
+  landedBy?: string
   source: 'flight_data' | 'web'; url?: string
 }
 export type TrackedLeg = {
@@ -150,7 +152,8 @@ export function legEvents(leg: TrackedLeg, status: LegStatus): LegEvent[] {
   if (status.state === 'landed') {
     const at = localClock(status.actualArrival, leg.toCity)
     const where = [status.arrTerminal && `terminal ${status.arrTerminal}`, status.arrGate && `gate ${status.arrGate}`, status.belt && `bags on belt ${status.belt}`].filter(Boolean).join(', ')
-    add('landed', 'landed', `🛬 ${flight} has landed in ${leg.toCity}${at ? ` at ${at} local time` : ''}.${where ? ` Arrival: ${where}.` : ''}`)
+    const by = at ? '' : localClock(status.landedBy, leg.toCity)
+    add('landed', 'landed', `🛬 ${flight} has landed in ${leg.toCity}${at ? ` at ${at} local time` : by ? ` (on the ground by ${by} local time)` : ''}.${where ? ` Arrival: ${where}.` : ''}`)
   }
   if (status.state === 'departed') {
     const eta = localClock(status.revisedArrival, leg.toCity)
