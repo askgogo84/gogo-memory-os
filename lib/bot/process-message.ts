@@ -1568,10 +1568,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       const code = trackAsk ? trackAsk.trackCode(incomingText) : ''
       const live = trackAsk && code ? await trackAsk.lookupLiveFlight(code, new Date(), userTz || 'Asia/Kolkata', undefined, { telegramId: String(resolvedUser.telegramId) }).catch(() => null) : null
       if (trackAsk && live && live.status.state === 'landed') {
-        reply = `${trackAsk.formatLiveFlight(live)}\n\nIt has already landed, so there's nothing left to track.`
+        reply = `${trackAsk.formatLiveFlight(live)}\n\n✅ It has landed. Nothing left to track.`
       } else if (trackAsk && live) {
         const watch = await trackAsk.createFlightTrackWatch(resolvedUser.telegramId, live).catch(() => null)
-        reply = `${trackAsk.formatLiveFlight(live)}\n\n${watch ? (watch.reused ? "Already tracking it. That's the latest from the flight-data feed; I'll confirm when it lands." : "I'm tracking it now: I'll message you about delays, gate changes, take-off and landing until it lands.") : "I couldn't start tracking just now. Ask again in a minute."}`
+        reply = `${trackAsk.formatLiveFlight(live)}\n\n${watch ? (watch.reused ? "✅ Already tracking. I'll message you the moment it lands." : "✅ Tracking. I'll message you on any delay, gate change, take-off and the moment it lands.") : "I couldn't start tracking just now. Ask again in a minute."}`
       } else {
         reply = await answerLiveFlightStatus(incomingText, resolvedUser.name, {}, userTz)
         if (trackAsk) reply += live === null && !process.env.AERODATABOX_RAPIDAPI_KEY

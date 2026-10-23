@@ -106,6 +106,12 @@ export function landedFromLocation(o: any, now: number): boolean {
   return Number.isFinite(depActual) && now - depActual >= 60 * MIN && Number.isFinite(eta) && now >= eta - 45 * MIN
 }
 
+/** When the feed's position report put the aircraft on the ground (else now). */
+export function groundTime(o: any, now: number): string {
+  const at = Date.parse(String(o?.location?.reportedAtUtc || o?.location?.reportedAt || '').replace(' ', 'T').replace(/Z?$/, 'Z'))
+  return new Date(Number.isFinite(at) && at <= now ? at : now).toISOString()
+}
+
 export type WebSearchFn = (query: string, opts: { includeDomains: string[] }) => Promise<any[]>
 /** Expected landing is close enough that a tracker cross-check is worth a search. */
 export function nearLanding(now: number, eta?: string | number | null, sched?: string | number | null): boolean {
@@ -143,11 +149,11 @@ export async function lookupLiveFlight(code: string, now = new Date(), tz = 'Asi
   let arrRevisedLocal = arrivalEstimateLocal(o)
   const terminal = ['landed', 'cancelled', 'diverted'].includes(status.state)
   if (!terminal && landedFromLocation(o, now.getTime())) {
-    status = { ...status, state: 'landed' }
+    status = { ...status, state: 'landed', landedBy: groundTime(o, now.getTime()) }
     if (!(o.arrival?.runwayTime?.local || o.arrival?.actualTime?.local)) arrRevisedLocal = undefined
   } else if (!terminal && opts.crossCheck !== false && nearLanding(now.getTime(), status.revisedArrival, Number.isFinite(arrMs) ? arrMs : null)) {
     const web = await trackerCrossCheck({ flightNo: normalizeFlightNo(String(o.number || code)), departAt: depUtc, arriveAt: Number.isFinite(arrMs) ? new Date(arrMs).toISOString() : null, from: o.departure?.airport?.municipalityName, telegramId: opts.telegramId, source: 'flight_track_lookup', now: now.getTime(), search: opts.search }).catch(() => null)
-    if (web) { status = { ...status, state: web.state, url: web.url }; if (web.state === 'landed' && !(o.arrival?.runwayTime?.local || o.arrival?.actualTime?.local)) arrRevisedLocal = undefined }
+    if (web) { status = { ...status, state: web.state, url: web.url, ...(web.state === 'landed' ? { landedBy: now.toISOString() } : {}) }; if (web.state === 'landed' && !(o.arrival?.runwayTime?.local || o.arrival?.actualTime?.local)) arrRevisedLocal = undefined }
   }
   const ap = (a: any) => ({ iata: String(a?.iata || a?.icao || '').slice(0, 4), name: String(a?.municipalityName || a?.shortName || a?.name || a?.iata || '').slice(0, 60) })
   return {
@@ -238,7 +244,7 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
   const tracking: TrackingState & { webCheckedAt?: string } = { ...prev, lastCheckedAt: now.toISOString() }
   const occ = (list || []).find((o: any) => Math.abs(utcOf(o?.departure?.scheduledTime) - Date.parse(String(c.departAt))) <= 6 * 60 * MIN) || list[0]
   const terminal = (s: LegStatus | null) => !!s && ['landed', 'cancelled', 'diverted'].includes(s.state)
-  if (status && !terminal(status) && occ && landedFromLocation(occ, now.getTime())) status = { ...status, state: 'landed' }
+  if (status && !terminal(status) && occ && landedFromLocation(occ, now.getTime())) status = { ...status, state: 'landed', landedBy: groundTime(occ, now.getTime()) }
   // Feed silent (no row) — or feed not yet showing a landing close to the expected time: dated tracker pages,
   // at most every 4 minutes and within the owner's budget.
   const lastWeb = Date.parse(String((prev as any).webCheckedAt || ''))
@@ -253,7 +259,8 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
       await recordCostEvent({ telegramId: tg, category: 'web_search_basic', metadata: { source: 'flight_track', watcher_id: watcher.id } }).catch(() => {})
       const web = statusFromWeb(results || [], { flightNo: String(c.flightNo), departAt: String(c.departAt), arriveAt: c.arriveAt, fromCity: String(c.from || '') }, now.getTime())
       if (!status) status = web
-      else if (web && terminal(web)) status = { ...status, state: web.state, url: web.url }
+      else if (web && terminal(web)) status = { ...status, state: web.state, url: web.url, ...(web.state === 'landed' ? { landedBy: now.toISOString() } : {}) }
+      if (status?.state === 'landed' && !status.actualArrival && !status.landedBy) status = { ...status, landedBy: now.toISOString() }
     }
   }
   let sent = 0
@@ -323,5 +330,5 @@ export async function handleFlightFollowUp(p: { telegramId: string | number; tex
   if (!watch) return `I couldn't start tracking ${code} just now. Ask again in a minute.`
   const eta = live.status.revisedArrival || live.arrUtc
   const etaText = eta ? new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: p.timezone || 'Asia/Kolkata' }).format(new Date(eta)) : ''
-  return `${watch.reused ? `I'm already tracking ${code}` : `Done. I'm tracking ${code}`} (${live.from.iata} → ${live.to.iata}) and will message you here when it lands${etaText ? ` (estimated ${etaText})` : ''}, plus any delay or gate change before that.`
+  return `✅ Tracking ${code} (${live.from.iata} → ${live.to.iata}). I'll message you the moment it lands${etaText ? ` (expected ${etaText})` : ''}.`
 }
