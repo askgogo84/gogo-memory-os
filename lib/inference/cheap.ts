@@ -12,7 +12,11 @@ const COOL_MS = 60_000
 async function postJson(url: string, headers: Record<string, string>, body: unknown, adapterId: string, timeoutMs: number) {
   const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs) })
   if (res.status === 429) { cooling.set(adapterId, Date.now() + COOL_MS); throw new ProviderRateLimitedError(adapterId) }
-  if (!res.ok) throw new Error(`${adapterId}_${res.status}`)
+  if (!res.ok) {
+    // Status and the provider's short error message only (never the prompt or key).
+    const detail = await res.text().then(t => { try { return String(JSON.parse(t)?.error?.message || '').slice(0, 160) } catch { return t.slice(0, 120) } }).catch(() => '')
+    throw new Error(`${adapterId}_${res.status}:${detail}`)
+  }
   return res.json() as Promise<any>
 }
 
@@ -24,7 +28,9 @@ function groq(key: string): ProviderAdapter {
     dataPolicy: { trainsOnInputs: false, humanReview: false, retentionDays: 30 },
     async complete(req: CompletionRequest) {
       const data = await postJson('https://api.groq.com/openai/v1/chat/completions', { authorization: `Bearer ${key}` }, {
-        model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b', temperature: 0.2, max_tokens: req.maxOutputTokens || 900,
+        // gpt-oss is a reasoning model: low effort and room for reasoning, or the answer comes back empty.
+        model: process.env.GROQ_MODEL || 'openai/gpt-oss-20b', temperature: 0.2, max_tokens: Math.max(1500, (req.maxOutputTokens || 900) * 2),
+        reasoning_effort: 'low',
         messages: [{ role: 'user', content: req.prompt }],
       }, id, 20_000)
       const text = String(data?.choices?.[0]?.message?.content || '').trim()
@@ -44,7 +50,7 @@ function gemini(key: string): ProviderAdapter {
       const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite'
       const data = await postJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { 'x-goog-api-key': key }, {
         contents: [{ role: 'user', parts: [{ text: req.prompt }] }],
-        generationConfig: { temperature: 0.2, maxOutputTokens: req.maxOutputTokens || 900 },
+        generationConfig: { temperature: 0.2, maxOutputTokens: Math.max(1024, req.maxOutputTokens || 900) },
       }, id, 20_000)
       const text = String((data?.candidates?.[0]?.content?.parts || []).map((p: any) => p?.text || '').join('')).trim()
       if (!text) throw new Error('gemini_empty')
@@ -79,7 +85,7 @@ export async function cheapComplete(p: { taskClass: AllowedTaskClass; prompt: st
     console.log('CHEAP_INFERENCE:', JSON.stringify({ taskClass: p.taskClass, adapter: out.adapterId, ms: Date.now() - started, in: out.result.inputTokens, out: out.result.outputTokens }))
     return out.result.text
   } catch (err: any) {
-    console.error('CHEAP_INFERENCE_FAILED:', JSON.stringify({ taskClass: p.taskClass, attempted: err?.attempted || [] }))
+    console.error('CHEAP_INFERENCE_FAILED:', JSON.stringify({ taskClass: p.taskClass, attempted: err?.attempted || [], errors: err?.errors || [] }))
     return null
   }
 }

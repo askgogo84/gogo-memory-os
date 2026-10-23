@@ -183,17 +183,20 @@ export async function completeWithFallback(
   prompt: string,
 ): Promise<{ result: CompletionResult; adapterId: string; attempted: string[] }> {
   const attempted: string[] = []
+  const errors: string[] = []
   for (const adapter of decision.chain) {
     attempted.push(adapter.id)
     try {
       const result = await adapter.complete({ taskClass: decision.taskClass, prompt })
       return { result, adapterId: adapter.id, attempted }
-    } catch {
+    } catch (err) {
+      errors.push(`${adapter.id}:${String((err as Error)?.message || err).slice(0, 200)}`)
       continue
     }
   }
-  const err = new Error('all_providers_failed') as Error & { attempted?: string[] }
+  const err = new Error('all_providers_failed') as Error & { attempted?: string[]; errors?: string[] }
   err.attempted = attempted
+  err.errors = errors
   throw err
 }
 
