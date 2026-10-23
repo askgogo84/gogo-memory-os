@@ -21,13 +21,24 @@ function norm(value:unknown){return clean(value,300).toLowerCase().replace(/[^a-
 // slot finder ("no free slot matched"). Writing a NEW email with dictated content is a Gmail draft: it is shown
 // for review, nothing is sent, and "send it" goes through the same approval as a reply.
 const COMPOSE_RE=/^(?:please\s+|pls\s+|can\s+you\s+|could\s+you\s+)?(?:draft|write|compose|prepare)\s+(?:me\s+)?(?:an?\s+)?(?:new\s+|quick\s+|short\s+)?(?:e-?mail|mail)\s+to\s+(.+?)\s+(?:saying|that\s+says|to\s+say|telling\s+(?:him|her|them)|letting\s+(?:him|her|them)\s+know|:)\s*(.+)$/i
+// 23 Oct acceptance run: "Email nithin@… saying …" got "I can't send emails from this chat" although Gmail send is
+// enabled. "Email/mail X saying…", "send (an) email to X saying…" and "send X an email saying…" are the same
+// request: they make the same draft for review; sending still needs the explicit approval.
+const SAY='(?:saying|that\\s+says|to\\s+say|telling\\s+(?:him|her|them)|letting\\s+(?:him|her|them)\\s+know|:)'
+const SEND_COMPOSE_RE=[
+  new RegExp(`^(?:please\\s+|pls\\s+|can\\s+you\\s+|could\\s+you\\s+)?(?:e-?mail|mail)\\s+(?!me\\b)(.+?)\\s*${SAY}\\s*(.+)$`,'i'),
+  new RegExp(`^(?:please\\s+|pls\\s+|can\\s+you\\s+|could\\s+you\\s+)?send\\s+(?:an?\\s+)?(?:new\\s+|quick\\s+|short\\s+)?(?:e-?mail|mail)\\s+to\\s+(.+?)\\s*${SAY}\\s*(.+)$`,'i'),
+  new RegExp(`^(?:please\\s+|pls\\s+|can\\s+you\\s+|could\\s+you\\s+)?send\\s+(.+?)\\s+an?\\s+(?:quick\\s+|short\\s+)?(?:e-?mail|mail)\\s*${SAY}\\s*(.+)$`,'i'),
+]
 export function parseGmailComposeCommand(text:string){
   const raw=clean(text,2000)
-  const m=raw.match(COMPOSE_RE)
+  const m=raw.match(COMPOSE_RE)||SEND_COMPOSE_RE.map(re=>raw.match(re)).find(Boolean)||null
   if(!m)return null
   const target=clean(m[1],120).replace(/[,.]+$/,'')
-  const said=String(m[2]||'').trim().replace(/^that\s+/i,'').slice(0,6000)
+  const said=String(m[2]||'').trim().replace(/^that\s+/i,'').replace(/^["“'‘](.*)["”'’]\.?$/s,'$1').trim().slice(0,6000)
   if(!target||!said||target.split(/\s+/).length>5)return null
+  // "Email the report to Divya saying …" is about an attachment, not a recipient called "the report to Divya".
+  if(/\b(?:to|the|this|that|my)\b/i.test(target)&&!target.includes('@'))return null
   return {target,said,draftOnly:true as const}
 }
 const firstName=(target:string)=>{const name=target.includes('@')?'':target.split(/\s+/)[0];return name?name.charAt(0).toUpperCase()+name.slice(1):''}

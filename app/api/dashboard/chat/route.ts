@@ -585,7 +585,7 @@ async function handleChatPost(req: NextRequest) {
     // 20 Oct live: "Draft an email to Nithin saying I will be 15 minutes late to the 4pm meeting" went to the
     // meeting-slot finder below. A dictated email is a Gmail draft (shown for review; "send it" stages the same
     // approval as a reply; nothing is sent here). Loaded lazily so route harnesses keep their dependency maps.
-    if (/^(?:please\s+|pls\s+|can\s+you\s+|could\s+you\s+)?(?:draft|write|compose|prepare)\b[^\n]*?\b(?:e-?mail|mail)\s+to\b/i.test(text)) {
+    if (/^(?:please\s+|pls\s+|can\s+you\s+|could\s+you\s+)?(?:(?:draft|write|compose|prepare|send)\b[^\n]*?\b(?:e-?mail|mail)\b|(?:e-?mail|mail)\s+\S)/i.test(text)) {
       const gmailSend: any = await import('@/lib/agent/gmail-send').catch(() => null)
       if (gmailSend?.parseGmailComposeCommand?.(text)) {
         const draft = await gmailSend.tryRunGmailSendCommand({ actor, text })
