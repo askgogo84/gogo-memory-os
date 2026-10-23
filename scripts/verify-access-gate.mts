@@ -5,7 +5,7 @@ process.env.SUPABASE_URL ||= 'https://example.supabase.co'
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'test-key'
 process.env.ADMIN_WHATSAPP_NUMBERS = '+918310441698'
 const { supabaseAdmin } = await import('../lib/supabase-admin.ts')
-const { checkWhatsAppAccess, WAITLIST_REPLY, BLOCKED_REPLY, e164 } = await import('../lib/access/gate.ts')
+const { checkWhatsAppAccess, WAITLIST_REPLY, BLOCKED_REPLY, INVITE_USED_UP_REPLY, INVITE_INVALID_REPLY, e164 } = await import('../lib/access/gate.ts')
 
 type DB = { users: any[]; waitlist: any[]; fail?: string }
 let db: DB
@@ -28,6 +28,15 @@ function table(name: string) {
   return q
 }
 ;(supabaseAdmin as any).from = table
+// redeem_invite stand-in: 'goverdhan-abc234' has invites left, 'full-abc234' is used up, anything else is invalid.
+const redeemed: any[] = []
+;(supabaseAdmin as any).rpc = async (fn: string, args: any) => {
+  assert.equal(fn, 'redeem_invite'); redeemed.push(args)
+  if (args.p_code === 'goverdhan-abc234') return { data: [{ ok: true, reason: 'joined', redemption_id: 'r1', inviter_telegram_id: 100, remaining: 9 }], error: null }
+  if (args.p_code === 'full-abc234') return { data: [{ ok: false, reason: 'used_up', redemption_id: null, inviter_telegram_id: 100, remaining: 0 }], error: null }
+  return { data: [{ ok: false, reason: 'invalid', redemption_id: null, inviter_telegram_id: null, remaining: 0 }], error: null }
+}
+const JOIN = "Hi Gogo, I'm joining with invite goverdhan-abc234"
 
 // Admin always passes, even with no row.
 db = { users: [], waitlist: [] }
@@ -64,6 +73,35 @@ assert.deepEqual(await checkWhatsAppAccess('+919900000003'), { allow: true, reas
 process.env.ACCESS_GATE_ENABLED = 'false'
 db = { users: [], waitlist: [] }
 assert.deepEqual(await checkWhatsAppAccess('+919900000004'), { allow: true, reason: 'gate_off' })
+delete process.env.ACCESS_GATE_ENABLED
+// Invite links: a new number with a live code skips the waitlist; its waitlist row says how it joined.
+db = { users: [], waitlist: [] }
+const inv = await checkWhatsAppAccess('+919900000010', 'Divya', JOIN)
+assert.equal(inv.allow, true); assert.equal(inv.reason, 'invited'); assert.equal(inv.invite?.inviterTelegramId, 100); assert.equal(inv.invite?.remaining, 9)
+assert.deepEqual(redeemed.at(-1), { p_code: 'goverdhan-abc234', p_phone: '+919900000010', p_name: 'Divya' })
+assert.equal(db.waitlist[0].status, 'joined'); assert.equal(db.waitlist[0].approved_by, 'invite:goverdhan-abc234')
+// A number already waiting gets in with an invite too.
+db = { users: [], waitlist: [{ id: 'w2', phone_e164: '+919900000011', status: 'waiting', last_notified_at: new Date().toISOString() }] }
+assert.equal((await checkWhatsAppAccess('+919900000011', 'Friend', JOIN)).reason, 'invited')
+assert.equal(db.waitlist[0].status, 'joined'); assert.equal(redeemed.at(-1).p_name, null, 'placeholder name not stored')
+// Used-up / wrong code: waitlist, told why.
+db = { users: [], waitlist: [] }
+assert.deepEqual(await checkWhatsAppAccess('+919900000012', 'Nithin', "I'm joining with invite full-abc234"), { allow: false, reason: 'waitlist', reply: INVITE_USED_UP_REPLY })
+db = { users: [], waitlist: [] }
+assert.deepEqual(await checkWhatsAppAccess('+919900000013', 'Nithin', 'invite nobody-abc234'), { allow: false, reason: 'waitlist', reply: INVITE_INVALID_REPLY })
+// Codes never change anything for existing users, admins or blocked numbers.
+const before = redeemed.length
+db = { users: [{ telegram_id: 1, whatsapp_id: '+919900000001', access_status: 'active' }], waitlist: [] }
+assert.deepEqual(await checkWhatsAppAccess('+919900000001', 'Divya', JOIN), { allow: true, reason: 'user' })
+assert.deepEqual(await checkWhatsAppAccess('+918310441698', 'Gogo', JOIN), { allow: true, reason: 'admin' })
+db = { users: [], waitlist: [{ id: 'b', phone_e164: '+919900000014', status: 'blocked', last_notified_at: new Date().toISOString() }] }
+assert.equal((await checkWhatsAppAccess('+919900000014', 'x', JOIN)).reason, 'blocked')
+assert.equal(redeemed.length, before, 'no redemption attempted for user/admin/blocked')
+// Gate off: still recorded for new numbers.
+process.env.ACCESS_GATE_ENABLED = 'false'
+db = { users: [], waitlist: [] }
+const off = await checkWhatsAppAccess('+919900000015', 'Divya', JOIN)
+assert.equal(off.reason, 'gate_off'); assert.equal(off.invite?.redemptionId, 'r1')
 delete process.env.ACCESS_GATE_ENABLED
 assert.equal(e164('whatsapp:+91 98450 12345'), '+919845012345')
 assert.equal(e164('9845012345'), '+919845012345')
