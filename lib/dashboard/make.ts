@@ -31,12 +31,21 @@ export async function getMadeForYou(telegramId: string, kind: MakeKind = 'all'):
   const { data, error } = await supabaseAdmin.from('agent_artifacts').select('id,type,title,subtitle,updated_at')
     .eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(120)
   if (error) { console.error('MAKE_READ_FAILED:', error.message); return { ok: false, items: [], counts } }
-  const rows: any[] = data || []
+  // 23 Oct live: Make listed "walk 8000 steps daily" and "Keep my upcoming travel documents…" twice each (a goal
+  // tracker saved again). Same type + same title is one card (newest), noting the earlier copies.
+  const seen = new Map<string, any>()
+  for (const r of (data || []) as any[]) {
+    const key = `${r.type}|${String(r.title || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()}`
+    const first = seen.get(key)
+    if (first) first.__copies = (first.__copies || 1) + 1
+    else seen.set(key, r)
+  }
+  const rows: any[] = [...seen.values()]
   for (const k of MAKE_KINDS) counts[k.key] = k.key === 'all' ? rows.length : rows.filter(r => (k.types as readonly string[]).includes(String(r.type))).length
   const types = MAKE_KINDS.find(k => k.key === kind)!.types as readonly string[]
   const items = rows.filter(r => !types.length || types.includes(String(r.type))).slice(0, 60).map(r => ({
     id: String(r.id), type: String(r.type), label: typeLabel(String(r.type)), title: String(r.title || 'Saved result'),
-    subtitle: String(r.subtitle || ''), updatedAt: r.updated_at || null, href: `/dashboard/reports/${encodeURIComponent(String(r.id))}`,
+    subtitle: [String(r.subtitle || ''), r.__copies > 1 ? `${r.__copies} saved versions` : ''].filter(Boolean).join(' · '), updatedAt: r.updated_at || null, href: `/dashboard/reports/${encodeURIComponent(String(r.id))}`,
   }))
   return { ok: true, items, counts }
 }
