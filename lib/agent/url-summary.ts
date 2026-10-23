@@ -35,6 +35,11 @@ function readable(html: string) {
 
 type Model = (prompt: string) => Promise<string>
 const defaultModel: Model = async prompt => {
+  // Cheapest configured provider first (public page, non-personal ask), Claude as the backstop.
+  const { cheapComplete } = await import('@/lib/inference/cheap')
+  const ask = prompt.split('.')[0] || 'Summarise'
+  const cheap = await cheapComplete({ taskClass: 'public_web_research', prompt, scanText: ask, maxTokens: 700 }).catch(() => null)
+  if (cheap) return cheap
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) throw new Error('no_model')
   const client = new Anthropic({ apiKey: key })
