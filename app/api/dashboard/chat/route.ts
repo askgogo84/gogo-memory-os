@@ -231,7 +231,7 @@ async function handleChatPost(req: NextRequest) {
           return NextResponse.json({ text: reply, handledBy: isHi ? 'welcome-back' : 'help-menu', status: 'completed' })
         }
       }
-      const isPending = quick.length <= 60 && /^(?:so\s+|ok\s+|and\s+)?(?:what(?:'s| is| all is| else is)?\s+(?:still\s+)?(?:pending|left|open|outstanding)(?:\s+(?:for me|today|now|on my plate))?|anything\s+(?:still\s+)?(?:pending|left|open|outstanding)(?:\s+(?:for me|today))?|what(?:'s| is)\s+on my plate(?:\s+today)?|what do i (?:still )?(?:need|have) to do(?:\s+today)?|my pending (?:items|tasks|stuff)|pending (?:items|tasks|stuff)|show (?:me )?(?:what(?:'s| is) )?pending)$/.test(quick)
+      const isPending = quick.length <= 60 && /^(?:so\s+|ok\s+|and\s+)?(?:what(?:'s| is| all is| else is)?\s+(?:still\s+)?(?:pending|left|open|outstanding)(?:\s+(?:for me|today|now|on my plate))?|anything\s+(?:still\s+)?(?:pending|left|open|outstanding)(?:\s+(?:for me|today))?|what(?:'s| is)\s+on my plate(?:\s+today)?|what do i (?:still )?(?:need|have) to do(?:\s+today)?|my pending (?:items|tasks|stuff)|pending (?:items|tasks|stuff)|what(?:'s|s| is| are)\s+(?:all\s+)?my\s+(?:pending|open|outstanding)\s+(?:items|tasks|to-?dos|things|stuff)|(?:show|list)\s+(?:me\s+)?(?:all\s+)?my\s+(?:pending\s+|open\s+)?(?:tasks|to-?dos)|show (?:me )?(?:what(?:'s| is) )?pending)$/.test(quick)
       if (isPending) {
         const pendingMod: any = await import('@/lib/bot/pending-summary').catch(() => null)
         const reply = typeof pendingMod?.buildPendingSummary === 'function' ? await pendingMod.buildPendingSummary(String(session.telegramId)).catch(() => null) : null

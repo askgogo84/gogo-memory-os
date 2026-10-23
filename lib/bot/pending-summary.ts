@@ -5,7 +5,7 @@ import { getTaskFeed } from '@/lib/dashboard/task-feed'
 import { getTodayReminders } from '@/lib/dashboard/queries'
 import { getDashboardTasks } from '@/lib/dashboard/tasks'
 
-const PENDING_RE = /^(?:so\s+|ok\s+|and\s+)?(?:what(?:'s|’s| is| all is| else is)?\s+(?:still\s+)?(?:pending|left|open|outstanding)(?:\s+(?:for me|today|now|on my plate))?|anything\s+(?:still\s+)?(?:pending|left|open|outstanding)(?:\s+(?:for me|today))?|what(?:'s| is)\s+on my plate(?:\s+today)?|what do i (?:still )?(?:need|have) to do(?:\s+today)?|my pending (?:items|tasks|stuff)|pending (?:items|tasks|stuff)|show (?:me )?(?:what(?:'s| is) )?pending)$/i
+const PENDING_RE = /^(?:so\s+|ok\s+|and\s+)?(?:what(?:'s|’s| is| all is| else is)?\s+(?:still\s+)?(?:pending|left|open|outstanding)(?:\s+(?:for me|today|now|on my plate))?|anything\s+(?:still\s+)?(?:pending|left|open|outstanding)(?:\s+(?:for me|today))?|what(?:'s| is)\s+on my plate(?:\s+today)?|what do i (?:still )?(?:need|have) to do(?:\s+today)?|my pending (?:items|tasks|stuff)|pending (?:items|tasks|stuff)|what(?:'s|’s| is| are)\s+(?:all\s+)?my\s+(?:pending|open|outstanding)\s+(?:items|tasks|to-?dos|things|stuff)|(?:show|list)\s+(?:me\s+)?(?:all\s+)?my\s+(?:pending\s+|open\s+)?(?:tasks|to-?dos)|show (?:me )?(?:what(?:'s| is) )?pending)$/i
 
 export function isPendingAsk(text: string): boolean {
   const t = String(text || '').trim().replace(/[\s!.?,]+$/g, '')
