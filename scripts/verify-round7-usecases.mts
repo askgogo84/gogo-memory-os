@@ -25,7 +25,7 @@ for (const h of ['help', 'What can you do?', 'what can you do for me', 'show me 
 assert.ok(!isHelpAsk('can you help me book a table'), 'a real request is not the help menu')
 
 // #48: "What's pending?" is the person's own open items, not a web search.
-for (const p of ["What's pending?", 'anything pending for me', 'what do I need to do today', "what's left"]) assert.ok(isPendingAsk(p), p)
+for (const p of ["What's pending?", 'anything pending for me', 'what do I need to do today', "what's left", 'What are my pending tasks?', 'show my tasks', 'list my open todos']) assert.ok(isPendingAsk(p), p)
 for (const n of ["What's pending with my HDFC payment", 'Is the bank transaction pending?']) assert.ok(!isPendingAsk(n), n)
 
 // The dashboard route answers these before any slow matcher.
