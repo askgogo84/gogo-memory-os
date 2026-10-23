@@ -18,6 +18,7 @@
  * dispatched here; they are recorded in shadow only.
  */
 import { after } from 'next/server'
+import { isMakeDeliverableRequest } from './make-request'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isSecretShapedMemory, redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { isExactCommand } from './semantic-gate'
@@ -79,6 +80,8 @@ export function decideLiveDispatch(u: UnderstandingResult | null, ctx: Understan
   if (!SAFE_LIVE_ACTIONS.has(u.action)) return { dispatch: false, reason: 'not_in_safe_live_set' }
   if (u.confidence < UNDERSTANDING_LIVE_MIN_CONFIDENCE) return { dispatch: false, reason: 'below_live_confidence' }
   if (MUTATION_LEAD.test(opts.text)) return { dispatch: false, reason: 'explicit_mutation_verb' }
+  // A Make deliverable goes to the planner, which saves it in Make (23 Oct live: answered inline as a web search).
+  if (isMakeDeliverableRequest(opts.text)) return { dispatch: false, reason: 'make_deliverable' }
   const spec = actionSpec(u.action)
   if (spec.referent === 'required' && !u.referent) return { dispatch: false, reason: 'referent_unresolved' }
   if (u.referent) {
