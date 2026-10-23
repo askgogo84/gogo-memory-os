@@ -47,7 +47,7 @@ function gemini(key: string): ProviderAdapter {
     // The free tier may use inputs to improve Google products: the router keeps it to public-only classes.
     dataPolicy: { trainsOnInputs: true, humanReview: true, retentionDays: 55 },
     async complete(req: CompletionRequest) {
-      const model = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite'
+      const model = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite'
       const data = await postJson(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { 'x-goog-api-key': key }, {
         contents: [{ role: 'user', parts: [{ text: req.prompt }] }],
         generationConfig: { temperature: 0.2, maxOutputTokens: Math.max(1024, req.maxOutputTokens || 900) },
