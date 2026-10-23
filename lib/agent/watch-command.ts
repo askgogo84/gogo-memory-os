@@ -83,8 +83,8 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
   if(!isWatcherStatusQuery(params.text)){
     // "How is EK500 doing?" about a flight Gogo is tracking: answer from the tracker, not a web search
     // (23 Oct live: a web answer quoted an undated Facebook post about a U-turn).
-    const ft=await import('./flight-track')
-    if(!ft.isFlightStatusQuestion(params.text))return null
+    const ft:any=await import('./flight-track').catch(()=>null)
+    if(typeof ft?.isFlightStatusQuestion!=='function'||!ft.isFlightStatusQuestion(params.text))return null
     const flight=await ft.flightTrackStatusReply(tg,params.text,new Date(),'Asia/Kolkata',{onlyTracked:true}).catch(()=>null)
     if(!flight)return null
     return {runId:'watcher-status-flights',status:'completed' as const,capability:'browser' as const,risk:'low' as const,text:flight,handledBy:'watcher-status',
