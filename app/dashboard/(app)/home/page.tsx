@@ -65,7 +65,7 @@ export default async function HomePage(){
     : homeSummary(sections,serviceNotices.total)
   const waitCount=sections.canWait.length+sections.canWaitLater.length
 
-  return <div className="w-full max-w-[1040px] pb-10 lg:pt-4">
+  return <div className="mx-auto w-full max-w-[1040px] pb-10 lg:pt-4">
     {/* Header: Gogo beside the greeting, left-aligned (approved 22 Oct Home mock). */}
     <section className="flex items-center gap-3 pb-5">
       <HomeGogo compact/>
