@@ -82,5 +82,11 @@ await check('PowerPoint and Excel exports are real files', async () => {
   assert.equal(ws.A4.v, 'Total'); assert.equal(ws.B4.f, 'SUM(B2:B3)'); assert.equal(ws.B4.v, 20000)
 })
 
+await check('invented statistics become [ADD NUMBER]; known ones and small counts stay', () => {
+  const deck = D.validDeck({ title: 'T', slides: [{ title: 'Why now', points: ["India's 1.4B users need recall", '500M WhatsApp users', '3 simple steps', 'Launched in 2026'], notes: '' }, { title: 'B', points: ['x'], notes: '' }] })!
+  const out = D.scrubInventedNumbers(deck, 'WhatsApp has 500M users in India', 'Make a deck')
+  assert.deepEqual(out.slides[0].points, ["India's [ADD NUMBER] users need recall", '500M WhatsApp users', '3 simple steps', 'Launched in 2026'])
+})
+
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('verify-make-docs: all passed')

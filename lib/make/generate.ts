@@ -1,7 +1,7 @@
 // Make: deck and sheet generation and edits. Non-personal requests go to the cheapest configured provider
 // (make_draft_nonpersonal: the policy router never sends drafts to a provider that trains on inputs), Claude is the
 // backstop. Public web snippets give the model real prices and facts; it never invents numbers.
-import { deckPrompt, editPrompt, firstJson, sheetPrompt, validDeck, validSheet, type MakeDoc } from './documents'
+import { deckPrompt, editPrompt, firstJson, scrubInventedNumbers, sheetPrompt, validDeck, validSheet, type MakeDoc } from './documents'
 
 // The person's own data never leaves the primary model.
 const PERSONAL = /\b(?:my|our)\s+(?:e-?mails?|inbox|calendar|meetings?|vault|documents?|files?|salary|income|bank|account|expenses?|bills?|card)\b/i
@@ -26,7 +26,10 @@ async function publicFacts(request: string, search?: (q: string) => Promise<any[
   if (PERSONAL.test(request)) return { facts: '', sources: [] as string[] }
   try {
     const run = search || (async (q: string) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: 6000 }))
-    const q = request.replace(/^(?:please\s+)?(?:can you\s+|could you\s+)?(?:make|create|build|prepare|draft|generate|put together|design)\s+(?:me\s+)?(?:a|an|the|my)?\s*/i, '').slice(0, 160)
+    // Search the subject, not "pitch deck": "Make a 6 slide pitch deck for AskGogo, a …" → "AskGogo, a …".
+    const q = request.replace(/^(?:please\s+)?(?:can you\s+|could you\s+)?(?:make|create|build|prepare|draft|generate|put together|design)\s+(?:me\s+)?(?:a|an|the|my)?\s*/i, '')
+      .replace(/^[\s\S]{0,40}?\b(?:pitch\s+deck|slide deck|deck|slides|presentation|powerpoint|ppt|spreadsheet|sheet|excel)\s+(?:on|about|for|of|covering)\s+/i, '')
+      .replace(/^\d+\s*(?:-\s*)?slides?\s+/i, '').slice(0, 160)
     const results = (await run(q)).slice(0, 5)
     return {
       facts: results.map((r: any, i: number) => `[${i + 1}] ${r.title}: ${r.snippet}`).join('\n'),
@@ -41,7 +44,8 @@ export async function generateDoc(format: 'deck' | 'sheet', request: string, dep
   const prompt = format === 'deck' ? deckPrompt(request, facts) : sheetPrompt(request, facts)
   for (let attempt = 0; attempt < 2; attempt++) {
     const raw = firstJson(await model(prompt, request).catch(() => ''))
-    const doc = format === 'deck' ? validDeck(raw) : validSheet(raw)
+    const valid = format === 'deck' ? validDeck(raw) : validSheet(raw)
+    const doc = valid && valid.format === 'deck' ? scrubInventedNumbers(valid, facts, request) : valid
     if (doc) return { doc, sources }
   }
   return null
@@ -52,7 +56,8 @@ export async function editDoc(doc: MakeDoc, instruction: string, deps: { model?:
   for (let attempt = 0; attempt < 2; attempt++) {
     const raw = firstJson(await model(editPrompt(doc, instruction), instruction).catch(() => ''))
     const next = doc.format === 'deck' ? validDeck(raw) : validSheet(raw)
-    if (next) return next
+    // An edit may keep numbers already in the document or given in the instruction, never new ones.
+    if (next) return next.format === 'deck' ? scrubInventedNumbers(next, JSON.stringify(doc), instruction) : next
   }
   return null
 }
