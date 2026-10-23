@@ -12,7 +12,7 @@ export function ShareToWorkspace({ artifactId, workspaces }: { artifactId: strin
     e.preventDefault(); setBusy(true); setStatus(null)
     try {
       const res = await fetch(`/api/workspaces/${encodeURIComponent(target)}/artifacts`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ artifactId }) })
-      setStatus(res.ok ? 'Shared. Workspace members can open it read-only.' : 'Couldn’t share this report.')
+      setStatus(res.ok ? 'Shared. Members can open the report and its web sources read-only; your calendar, travel and memory sections stay private.' : 'Couldn’t share this report.')
     } catch { setStatus('Couldn’t reach AskGogo. Check your connection.') } finally { setBusy(false) }
   }}>
     <label className="sr-only" htmlFor="share-ws">Workspace</label>
