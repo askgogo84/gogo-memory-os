@@ -48,7 +48,7 @@ export const metadata: Metadata = {
     url: "https://app.askgogo.in",
     images: [
       {
-        url: "/askgogo-og.png",
+        url: "/askgogo-og.png?v=2",
         width: 1200,
         height: 630,
         alt: "AskGogo — Meet Gogo",

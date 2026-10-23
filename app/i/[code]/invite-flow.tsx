@@ -1,5 +1,6 @@
 'use client'
 import { useState } from 'react'
+import { Companion } from '@/components/gogo/companion'
 
 const Arrow = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
 const Chat = ({ size = 24, color = '#0f6f64' }: { size?: number; color?: string }) => <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="1.8" strokeLinecap="round" aria-hidden="true" className="shrink-0"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>
@@ -15,8 +16,7 @@ export function InviteFlow(p: { inviterFirstName: string | null; code: string; r
 
   if (step === 0) return (
     <div className={`${shell} items-center justify-center gap-6 text-center`}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src="/gogo-figure.png" alt="" width={120} height={120} className="h-[120px] w-[120px] object-contain" />
+      <Companion state="idle" size={140} theme="light" label="Gogo" />
       <div className="text-[40px] font-semibold tracking-tight">AskGogo</div>
       <p className="text-[18px] leading-relaxed text-[#4a4650]">Welcome, <b className="text-[#1d1b20]">{who}</b> invited you to AskGogo, the assistant that remembers and gets things done on WhatsApp.</p>
       <button type="button" onClick={() => setStep(1)} className={`${primary} bg-[#1d1b20]`}>Get started <Arrow /></button>
