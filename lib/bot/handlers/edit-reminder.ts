@@ -326,6 +326,31 @@ export function narrowByWhen(matches: any[], input: string): any[] {
   return out
 }
 
+/** The single active reminder whose name appears in Gogo's most recent reply (within 30 minutes). */
+export async function reminderNamedInLastReply(telegramId: number, reminders: any[]): Promise<any | 'ambiguous' | null> {
+  const { data } = await supabaseAdmin.from('conversations').select('role, content, created_at')
+    .eq('telegram_id', telegramId).eq('role', 'assistant').order('created_at', { ascending: false }).limit(1)
+  const last = (data || [])[0] as any
+  if (!last || Date.now() - Date.parse(String(last.created_at || '')) > 30 * 60 * 1000) return null
+  return pickReminderNamedIn(String(last.content || ''), reminders)
+}
+
+export function pickReminderNamedIn(replyText: string, reminders: any[]): any | 'ambiguous' | null {
+  const reply = String(replyText || '').toLowerCase().replace(/[*_]/g, '')
+  if (!/\b(?:reminder set|updated|reminder|i'll remind you|will remind you)\b/.test(reply)) return null
+  const hits = reminders.filter((item: any) => {
+    const name = cleanReminderName(item.message).toLowerCase().trim()
+    return name.length >= 3 && reply.includes(name)
+  })
+  if (!hits.length) return null
+  // Several rows of the same name (an old and a new copy): only safe when they are all one-offs and the newest is meant.
+  const names = new Set(hits.map((item: any) => cleanReminderName(item.message).toLowerCase().trim()))
+  if (names.size > 1) return 'ambiguous'
+  if (hits.length > 1) return hits.some((item: any) => item.is_recurring) ? 'ambiguous'
+    : [...hits].sort((a: any, b: any) => Date.parse(String(b.created_at)) - Date.parse(String(a.created_at)))[0]
+  return hits[0]
+}
+
 /** "cancel that reminder", "delete it", "cancel the last one": points at the reminder just discussed. */
 export function isDeicticReminderRef(input: string): boolean {
   return /^(?:please\s+|pls\s+|ok(?:ay)?\s+|actually\s+)?(?:cancel|delete|remove|stop|clear)\s+(?:that|this|it|the\s+(?:last|new|latest)|my\s+(?:last|latest))(?:\s+(?:one|reminder))?(?:\s+(?:please|pls))?\s*[.!]?$/i.test(String(input || '').trim())
@@ -515,12 +540,15 @@ export async function cancelReminder(telegramId: number, input: string) {
     }
   }
 
-  // "cancel that reminder" / "cancel it" right after setting or changing one (23 Oct live): the reminder
-  // just made. Only one created in the last 2 hours qualifies; anything older still asks.
+  // "cancel that reminder" / "cancel it" right after setting or changing one (23 Oct live). It means the reminder
+  // Gogo's LAST reply named ("✅ Reminder set · Call Nithin …"), never the newest row: a daily series writes its next
+  // occurrence as a new row, and picking by created_at stopped the owner's daily "Drink water" (23 Oct live).
   if (!reminder && isDeicticReminderRef(lower)) {
-    const recent = [...reminders].filter((item: any) => Date.now() - Date.parse(String(item.created_at || '')) < 2 * 60 * 60 * 1000)
-      .sort((a: any, b: any) => Date.parse(String(b.created_at)) - Date.parse(String(a.created_at)))
-    reminder = recent[0] || null
+    const named = await reminderNamedInLastReply(telegramId, reminders)
+    if (named === 'ambiguous' || !named) {
+      return `Which reminder should I cancel? Say its name, like *cancel the Call Nithin reminder*, or *cancel 1* from *my reminders*.`
+    }
+    reminder = named
   }
 
   if (!reminder) {
