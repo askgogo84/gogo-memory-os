@@ -391,6 +391,28 @@ async function releaseOlderReadHandoffs(tg:number,userId:string,exceptRunId:stri
   }
 }
 
+// 23 Oct live: a paused Instagram sign-in whose browser had already closed (20-minute limit) still held the
+// reservation, so a Flipkart price check failed as "browser busy". Waiting reads whose takeover browser is no
+// longer live are released for any new read; a live sign-in the person may be using is left alone.
+async function releaseClosedReadHandoffs(tg:number,userId:string,exceptRunId:string){
+  const {data}=await supabaseAdmin.from('agent_runs').select('id,metadata_json').eq('telegram_id',String(tg)).eq('type','secure_browser').eq('status','paused')
+    .neq('id',exceptRunId).not('metadata_json->handoff','is',null).order('updated_at',{ascending:false}).limit(10)
+  const {browserHandoffIsLive}=await import('./browser-handoff-health')
+  for(const run of (data||[]) as any[]){
+    const meta=run.metadata_json||{}
+    if(String(meta.mode||'read')!=='read'||meta.flow||meta.commerce_parent_id||meta.site_session)continue
+    const handoff=meta.handoff
+    if(await browserHandoffIsLive(handoff?.takeoverUrl))continue
+    if(handoff?.token&&handoff?.releaseUrl){
+      const {cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
+      await cancelProviderBrowserHandoff(userId,handoff).catch(()=>{})
+    }
+    const {handoff:_h,login_code:_c,...rest}=meta
+    await supabaseAdmin.from('agent_runs').update({metadata_json:{...rest,state:'closed_stale'},updated_at:new Date().toISOString()})
+      .eq('id',run.id).eq('telegram_id',String(tg)).eq('status','paused')
+  }
+}
+
 // 16 Oct live: a Blinkit comparison read stopped for a delivery location and its handoff held the shared commerce
 // browser, so the next comparison never started. A new comparison read releases older comparison handoffs from
 // other comparisons; those stores are already reported to the person as blocked.
@@ -439,6 +461,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   // account" failed with browser_handoff_in_use. A new read on the person's own browser closes older reads that are
   // only waiting (never bookings, sign-ups, comparisons or approved actions).
   if(params.mode==='read'&&runMetadata.comparison_parent_id&&!runMetadata.handoff)await releaseOlderComparisonHandoffs(tg,params.actor.userId,params.runId,String(runMetadata.comparison_parent_id)).catch((err:any)=>console.error('OLDER_COMPARISON_HANDOFF_RELEASE_FAILED:',String(err?.message||err).slice(0,120)))
+  if(params.mode==='read'&&!runMetadata.handoff)await releaseClosedReadHandoffs(tg,params.actor.userId,params.runId).catch((err:any)=>console.error('CLOSED_READ_HANDOFF_RELEASE_FAILED:',String(err?.message||err).slice(0,120)))
   if(params.mode==='read'&&browserOwner===params.actor.userId)await releaseOlderReadHandoffs(tg,params.actor.userId,params.runId).catch((err:any)=>console.error('OLDER_READ_HANDOFF_RELEASE_FAILED:',String(err?.message||err).slice(0,120)))
   if(runMetadata.handoff?.releaseUrl){
     // Release the human browser's profile lock only after permission/approval checks.

@@ -74,3 +74,10 @@ console.log('verify-usecases-round2-oct23: ok')
   assert.match(src, /filters\.operators\.length&&!meetingLink&&!exactSubject/)
   console.log('verify-usecases-round2-oct23: gmail filters ok')
 }
+{
+  const bc = readFileSync('lib/agent/browser-command.ts', 'utf8')
+  assert.match(bc, /async function releaseClosedReadHandoffs/)
+  assert.match(bc, /if\(await browserHandoffIsLive\(handoff\?\.takeoverUrl\)\)continue/, 'a live sign-in is never released')
+  assert.match(bc, /if\(params\.mode==='read'&&!runMetadata\.handoff\)await releaseClosedReadHandoffs/)
+  console.log('verify-usecases-round2-oct23: stale handoff ok')
+}
