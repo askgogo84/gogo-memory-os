@@ -134,5 +134,28 @@ await check('P1: privacy scanning is complete and request-local for both researc
   assert.ok(summaries.includes('if (!deps.fetchImpl) return null'), 'direct production fetch must fail closed')
 })
 
+await check('P1: research snippets never initiate direct server fetch to search-result or redirect URLs', async () => {
+  const originalFetch = globalThis.fetch
+  const attempted: string[] = []
+  globalThis.fetch = (async (url: any) => {
+    attempted.push(String(url))
+    throw new Error('a production server fetch would have reached this destination')
+  }) as typeof fetch
+  try {
+    const sources = await DR.gatherSources(['attacker-controlled page result'], {
+      search: (async () => [
+        { title: 'private metadata result', url: 'http://169.254.169.254/latest/meta-data', snippet: 'Search snippet only' },
+        { title: 'public redirect result', url: 'https://attacker.example/redirect-to-private', snippet: 'May redirect internally' },
+      ]) as any,
+    })
+    assert.equal(sources.length, 2)
+    assert.deepEqual(attempted, [], 'untrusted result/redirect URLs must not leave the application server')
+    assert.ok(sources.every(source => source.text === ''), 'no direct page evidence was retrieved')
+    assert.match(sources[0].snippet, /Search snippet only/, 'safe search-provider snippets are preserved')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('duet round 6: all checks passed')
