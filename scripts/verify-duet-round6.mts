@@ -113,5 +113,49 @@ await check('a new parking spot or locker replaces the old one (one current valu
   assert.equal(slots.memorySlotOf('I prefer morning meetings'), null)
 })
 
+await check('P1: production URL summary never directly fetches arbitrary destinations', async () => {
+  let modelCalls = 0
+  const result = await US.summariseUrl(
+    { url: 'http://172.16.0.1/admin', ask: 'Summarise for alex.r@example.com' },
+    { model: async () => { modelCalls++; return 'unsafe' } },
+  )
+  assert.equal(result, null)
+  assert.equal(modelCalls, 0)
+})
+
+await check('P1: privacy scanning is complete and request-local for both research paths', async () => {
+  const { readFileSync } = await import('node:fs')
+  const research = readFileSync('lib/agent/deep-research.ts', 'utf8')
+  const summaries = readFileSync('lib/agent/url-summary.ts', 'utf8')
+  assert.doesNotMatch(research, /currentQuestion/, 'no cross-request global identity')
+  assert.match(research, /scanText:\s*prompt/, 'scan the full per-call research prompt')
+  assert.match(summaries, /scanText:\s*prompt/, 'scan the full URL-summary prompt including email addresses')
+  assert.ok(!summaries.includes("prompt.split('.')"), 'do not truncate on email dot')
+  assert.ok(summaries.includes('if (!deps.fetchImpl) return null'), 'direct production fetch must fail closed')
+})
+
+await check('P1: research snippets never initiate direct server fetch to search-result or redirect URLs', async () => {
+  const originalFetch = globalThis.fetch
+  const attempted: string[] = []
+  globalThis.fetch = (async (url: any) => {
+    attempted.push(String(url))
+    throw new Error('a production server fetch would have reached this destination')
+  }) as typeof fetch
+  try {
+    const sources = await DR.gatherSources(['attacker-controlled page result'], {
+      search: (async () => [
+        { title: 'private metadata result', url: 'http://169.254.169.254/latest/meta-data', snippet: 'Search snippet only' },
+        { title: 'public redirect result', url: 'https://attacker.example/redirect-to-private', snippet: 'May redirect internally' },
+      ]) as any,
+    })
+    assert.equal(sources.length, 2)
+    assert.deepEqual(attempted, [], 'untrusted result/redirect URLs must not leave the application server')
+    assert.ok(sources.every(source => source.text === ''), 'no direct page evidence was retrieved')
+    assert.match(sources[0].snippet, /Search snippet only/, 'safe search-provider snippets are preserved')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('duet round 6: all checks passed')
