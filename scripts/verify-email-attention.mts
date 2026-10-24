@@ -183,5 +183,9 @@ await check('Resend parsed email rebuilds into a message the inbound pipeline re
   assert.equal(mail.subject, 'Contract – sign-off'); assert.equal(mail.messageId, '<m1@x>'); assert.equal(mail.listId, '<x>'); assert.equal(mail.text, 'Can you sign off by Friday? ₹5,000')
 })
 
+await check('AskGogo\'s own digest emails never need you', () => {
+  assert.equal(A.classifyEmail({ id: 'x', from: 'Gogo from AskGogo <brief@askgogo.in>', subject: '4 events · 6 reminders', snippet: 'Payment failed and shutdown coming soon — action required', date: new Date().toISOString() } as any), 'update')
+})
+
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('email attention: all checks passed')

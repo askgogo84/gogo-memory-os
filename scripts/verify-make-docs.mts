@@ -102,5 +102,12 @@ await check('in-page edits are signed-in and owner-scoped', () => {
   assert.match(readFileSync('components/dashboard/make-doc-viewer.tsx', 'utf8'), /\/api\/make\/\$\{encodeURIComponent\(id\)\}\/edit/)
 })
 
+await check('a wrapped or bad cheap edit retries on the strong model', async () => {
+  const s = D.validSheet({ title: 'Home', columns: ['Item', 'Amount'], rows: [['Rent', 30000]] })!
+  const calls: any[] = []
+  const next = await editDoc(s, 'add a row for school fees', { model: async (_p: string, _s: string, o?: any) => { calls.push(!!o?.strong); return o?.strong ? JSON.stringify({ spreadsheet: { ...s, rows: [...s.rows, ['School fees', 8000]] } }) : 'Sure! here it is' } })
+  assert.deepEqual(calls, [false, true]); assert.equal(D.sheetTotal(next as any), 38000)
+})
+
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('verify-make-docs: all passed')
