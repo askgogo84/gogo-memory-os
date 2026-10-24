@@ -35,32 +35,7 @@ export function trustedTwilioVoiceMediaUrl(raw: unknown, accountSid: string): st
     if (url.protocol !== 'https:' || url.hostname !== 'api.twilio.com' ||
         url.username || url.password || url.port || url.search || url.hash) return null
     const path = new RegExp(
-      `^/2010-04-01/Accounts/${accountSid}/Messages/(?:SM|MM)[a-f0-9]{32}/Media/ME[a-f0-9]{32}(?:/Content)?import OpenAI from 'openai'
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
-
-function getExtension(contentType: string) {
-  const type = (contentType || '').toLowerCase()
-
-  if (type.includes('ogg')) return 'ogg'
-  if (type.includes('mpeg')) return 'mp3'
-  if (type.includes('mp3')) return 'mp3'
-  if (type.includes('mp4')) return 'mp4'
-  if (type.includes('m4a')) return 'm4a'
-  if (type.includes('wav')) return 'wav'
-  if (type.includes('webm')) return 'webm'
-
-  return 'ogg'
-}
-
-export function isAudioContentType(contentType: string | null | undefined) {
-  const type = (contentType || '').toLowerCase()
-  return type.startsWith('audio/')
-}
-
-,
+      `^/2010-04-01/Accounts/${accountSid}/Messages/(?:SM|MM)[a-f0-9]{32}/Media/ME[a-f0-9]{32}(?:/Content)?$`,
       'i',
     )
     return path.test(url.pathname) ? url.toString() : null
