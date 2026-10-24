@@ -9,8 +9,12 @@ export async function linkedTelegramIds(sessionTelegramId: string | number): Pro
     const { data: me } = await supabaseAdmin.from('users').select('whatsapp_id').eq('telegram_id', Number(own)).maybeSingle()
     const wa = String((me as any)?.whatsapp_id || '').trim()
     if (!wa) return [own]
-    const { data: rows } = await supabaseAdmin.from('users').select('telegram_id').eq('whatsapp_id', wa).limit(5)
-    const ids = new Set([own, ...((rows || []) as any[]).map(r => String(r.telegram_id)).filter(v => /^-?\d+$/.test(v))])
+    // The rows store the number in different shapes ("+91…", "91…", "whatsapp:+91…"): match on the last 10 digits.
+    const digits = wa.replace(/\D/g, '').slice(-10)
+    if (digits.length < 10) return [own]
+    const { data: rows } = await supabaseAdmin.from('users').select('telegram_id,whatsapp_id').ilike('whatsapp_id', `%${digits}`).limit(5)
+    const ids = new Set([own, ...((rows || []) as any[]).filter(r => String(r.whatsapp_id || '').replace(/\D/g, '').endsWith(digits)).map(r => String(r.telegram_id)).filter(v => /^-?\d+$/.test(v))])
+    if (ids.size === 1) console.log('LINKED_IDS_NONE:', JSON.stringify({ own: own.slice(-4), rows: (rows || []).length }))
     return [...ids]
   } catch { return [own] }
 }
