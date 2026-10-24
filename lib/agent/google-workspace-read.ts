@@ -89,6 +89,17 @@ async function refresh(actor: AgentActor, refreshToken: string) {
   return token
 }
 
+async function composioDriveFor(actor: AgentActor): Promise<((url:string)=>Promise<Response>)|null> {
+  try{
+    const c:any=await import('@/lib/connectors/composio-gmail')
+    if(typeof c?.composioConfigured!=='function'||!c.composioConfigured())return null
+    const o:any=await import('@/lib/dashboard/owner-ids')
+    const ids=[String(actor.legacyTelegramId),...(typeof o?.idsForWhatsapp==='function'?await o.idsForWhatsapp(actor.whatsappId):[])]
+    const account=await c.activeDriveAccount(ids)
+    return account?(url:string)=>c.composioDriveFetch(account,url):null
+  }catch(err:any){console.error('COMPOSIO_DRIVE_LOOKUP_FAILED:',String(err?.message||err).slice(0,160));return null}
+}
+
 async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit = {}) {
   // OAuth reach and the user's read preference are separate. Check before even
   // loading credentials; Drive/Contacts retain their independent Workspace access.
@@ -97,6 +108,16 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
       .select('gmail_enabled').eq('telegram_id',actor.legacyTelegramId).maybeSingle()
     if(error)throw new Error('workspace_email_consent_unavailable')
     if(consent?.gmail_enabled===false)throw new Error('workspace_email_reading_disabled')
+  }
+  // Google Drive while AskGogo's own Google verification is pending (24 Oct): use the person's Composio Drive
+  // connection when there is one; their own Workspace token is still preferred when it works.
+  if(url.startsWith('https://www.googleapis.com/drive/v3/')){
+    const viaComposio=await composioDriveFor(actor)
+    if(viaComposio){
+      let native:any=null
+      try{native=await credentials(actor)}catch{}
+      if(!native)return viaComposio(url)
+    }
   }
   const creds = await credentials(actor)
   let token = String(creds.gmail_access_token || '')
