@@ -50,8 +50,24 @@ function SheetView({ sheet }: { sheet: Sheet }) {
   const tc = sheet.totalColumn
   const total = tc === null ? null : sheet.rows.reduce((sum, r) => sum + (typeof r[tc] === 'number' ? r[tc] as number : Number(String(r[tc]).replace(/[^\d.-]/g, '')) || 0), 0)
   const cell = (v: string | number, j: number) => typeof v === 'number' ? (j === tc ? `₹${inr(v)}` : inr(v)) : v
-  return <div className="mt-5 overflow-x-auto rounded-xl border border-[#2A2A2A]">
-    <table className="w-full min-w-[480px] border-collapse text-[15px] text-[#F2EFEA]">
+  const est = (i: number) => sheet.estimateRows.includes(i) ? <span className="ml-2 rounded bg-[#221D13] px-1.5 py-0.5 text-[11px] text-[#d9a441]">est.</span> : null
+  // 24 Oct live (phone, 375px): the table cut off Unit price, Amount and the total. On phones each row is a card
+  // with the amount on the right and the other columns underneath; the table is for wider screens.
+  return <>
+  <div className="mt-5 overflow-hidden rounded-xl border border-[#2A2A2A] md:hidden">
+    {sheet.rows.map((r, i) => <div key={i} className="border-b border-[#2A2A2A] px-4 py-3 last:border-b-0">
+      <div className="flex items-start justify-between gap-3 text-[16px] text-[#F2EFEA]">
+        <span className="min-w-0 break-words">{String(r[0] ?? '')}{est(i)}</span>
+        {tc !== null && tc !== 0 ? <span className="shrink-0 font-semibold tabular-nums">{cell(r[tc], tc)}</span> : null}
+      </div>
+      <div className="mt-1 text-[14px] leading-5 text-[#9A9A9A]">
+        {sheet.columns.map((c, j) => j === 0 || j === tc || String(r[j] ?? '') === '' ? null : <span key={j} className="mr-3 inline-block">{c}: <span className="tabular-nums text-[#F2EFEA]">{cell(r[j], j)}</span></span>)}
+      </div>
+    </div>)}
+    {total !== null ? <div className="flex items-center justify-between border-t-2 border-[#2FB8A6] px-4 py-3 text-[17px] font-semibold text-[#F2EFEA]"><span>Total</span><span className="tabular-nums">₹{inr(total)}</span></div> : null}
+  </div>
+  <div className="mt-5 hidden overflow-x-auto rounded-xl border border-[#2A2A2A] md:block">
+    <table className="w-full border-collapse text-[15px] text-[#F2EFEA]">
       <thead><tr className="bg-[#161616]">{sheet.columns.map((c, j) => <th key={j} className={`px-3 py-2 text-left font-semibold ${j === tc ? 'text-right' : ''}`}>{c}</th>)}</tr></thead>
       <tbody>
         {sheet.rows.map((r, i) => <tr key={i} className="border-t border-[#2A2A2A]">
@@ -65,6 +81,7 @@ function SheetView({ sheet }: { sheet: Sheet }) {
       </tbody>
     </table>
   </div>
+  </>
 }
 
 function EditBox({ id, kind }: { id: string; kind: 'deck' | 'sheet' }) {
