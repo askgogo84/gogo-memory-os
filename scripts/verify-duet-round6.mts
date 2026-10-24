@@ -128,10 +128,10 @@ await check('P1: privacy scanning is complete and request-local for both researc
   const research = readFileSync('lib/agent/deep-research.ts', 'utf8')
   const summaries = readFileSync('lib/agent/url-summary.ts', 'utf8')
   assert.doesNotMatch(research, /currentQuestion/, 'no cross-request global identity')
-  assert.match(research, /scanText:\\s*prompt/, 'scan the full per-call research prompt')
-  assert.match(summaries, /scanText:\\s*prompt/, 'scan the full URL-summary prompt including email addresses')
-  assert.doesNotMatch(summaries, /prompt\\.split\\('\.'\\)/, 'do not truncate on email dot')
-  assert.match(summaries, /if \\(!deps\\.fetchImpl\\) return null/, 'direct production fetch must fail closed')
+  assert.match(research, /scanText:\s*prompt/, 'scan the full per-call research prompt')
+  assert.match(summaries, /scanText:\s*prompt/, 'scan the full URL-summary prompt including email addresses')
+  assert.ok(!summaries.includes("prompt.split('.')"), 'do not truncate on email dot')
+  assert.ok(summaries.includes('if (!deps.fetchImpl) return null'), 'direct production fetch must fail closed')
 })
 
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
