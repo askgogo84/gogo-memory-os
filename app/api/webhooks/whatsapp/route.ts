@@ -104,6 +104,7 @@ import { tryHandleAssetSave, isAssetRetrievalCommand, buildAssetRetrievalReply, 
 import { describeCadence, formatReminderWhen, cleanReminderName } from '@/lib/services/reminder-series'
 import { handleNutritionPhoto, isNutritionPhotoCaption, handleNutritionGoalSelection } from '@/lib/bot/handlers/nutrition'
 import { shouldTreatMediaAsLinkPreview } from '@/lib/services/whatsapp-preview-routing'
+import { downloadTwilioWhatsappInboundMedia } from '@/lib/services/twilio-whatsapp-inbound-egress'
 
 // Detect WhatsApp link preview cards (any website shared as a card)
 // These come as: Body = "Site Title | Site Name" + MediaUrl0 = thumbnail
@@ -602,16 +603,18 @@ async function handleWhatsAppPost(req: NextRequest) {
         const hasForeignScript = /[ऀ-ॿ؀-ۿ一-鿿぀-ゟ゠-ヿ가-힯฀-๿]/.test(bodyText)
         if (isImageTranslationRequest(bodyText) || hasForeignScript) {
           await sendWhatsAppMessage(from, '🌐 Translating image...')
-          const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
-          const imgRes = await fetch(firstMediaUrl, { headers: { Authorization: `Basic ${auth}` } })
-          if (imgRes.ok) {
-            const imgBuf = await imgRes.arrayBuffer()
+          const imageMedia = await downloadTwilioWhatsappInboundMedia({
+            mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID,
+            authToken: process.env.TWILIO_AUTH_TOKEN, kind: 'image',
+          })
+          if (imageMedia) {
+            const imgBuf = imageMedia.arrayBuffer
             const imageBase64 = Buffer.from(imgBuf).toString('base64')
             const targetLang = parseTargetLanguage(bodyText)
             const isMenu = /menu|food|restaurant|cafe/i.test(bodyText)
             const translation = await translateImage({
               imageBase64,
-              mediaType: firstMediaType || 'image/jpeg',
+              mediaType: imageMedia.contentType,
               caption: bodyText,
               targetLanguage: targetLang,
             })
@@ -672,15 +675,17 @@ async function handleWhatsAppPost(req: NextRequest) {
           try {
             const Anthropic = (await import('@anthropic-ai/sdk')).default
             const ant = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
-            const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
-            const imgRes = await fetch(firstMediaUrl, { headers: { Authorization: `Basic ${auth}` } })
-            if (imgRes.ok) {
-              const imgBuf = await imgRes.arrayBuffer()
+            const imageMedia = await downloadTwilioWhatsappInboundMedia({
+              mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID,
+              authToken: process.env.TWILIO_AUTH_TOKEN, kind: 'image',
+            })
+            if (imageMedia) {
+              const imgBuf = imageMedia.arrayBuffer
               const b64 = Buffer.from(imgBuf).toString('base64')
               const check = await ant.messages.create({
                 model: 'claude-haiku-4-5', max_tokens: 20,
                 messages: [{ role: 'user', content: [
-                  { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+                  { type: 'image', source: { type: 'base64', media_type: imageMedia.contentType as 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp', data: b64 } },
                   { type: 'text', text: 'Classify this image into exactly ONE category. Reply with only the category word:\n- TICKET (a flight/train/bus travel ticket, boarding pass, e-ticket, or itinerary with a PNR/flight number — NOT a purchase receipt)\n- FOOD (a plate, bowl, drink, or meal that is the main subject)\n- DOCUMENT (handwritten notes, printed text, receipts, screenshots, forms, lists)\n- OTHER (people, places, objects, products, anything else)\n\nIf the main subject is handwriting or text on paper or a screen, it is DOCUMENT, not FOOD. Reply with one word only.' }
                 ]}]
               })
@@ -689,6 +694,8 @@ async function handleWhatsAppPost(req: NextRequest) {
               isTicketImage = upperAns.includes('TICKET')
               // Only treat as food if explicitly classified FOOD — everything else is a note
               isFoodImage = upperAns.includes('FOOD') && !upperAns.includes('DOCUMENT') && !isTicketImage
+            } else {
+              isFoodImage = false // rejected or unavailable photo must not default to FOOD
             }
           } catch { isFoodImage = false } // default to image note on error — better safe than wrong
 
@@ -1153,11 +1160,12 @@ _"${originalText}"_
         let txResult = null
 
         if (mediaUrl0) {
-          const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
-          const audioRes = await fetch(mediaUrl0, { headers: { Authorization: `Basic ${auth}` } })
-          if (audioRes.ok) {
-            const audioBuffer = await audioRes.arrayBuffer()
-            txResult = await transcribeMeeting({ audioBuffer, contentType: contentType0, isMeeting: true })
+          const audioMedia = await downloadTwilioWhatsappInboundMedia({
+            mediaUrl: mediaUrl0, accountSid: process.env.TWILIO_ACCOUNT_SID,
+            authToken: process.env.TWILIO_AUTH_TOKEN, kind: 'audio',
+          })
+          if (audioMedia) {
+            txResult = await transcribeMeeting({ audioBuffer: audioMedia.arrayBuffer, contentType: audioMedia.contentType, isMeeting: true })
           }
         }
 
