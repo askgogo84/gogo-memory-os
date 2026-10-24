@@ -49,6 +49,17 @@ try{
 // 24 Oct live: a reminder saved as just "This".
 for(const m of ['This','this','about that','it','This one.'])assert.ok(isPronounReminder(m),m)
 for(const m of ['This weekend trip','call Nithin','drink water'])assert.ok(!isPronounReminder(m),m)
+{
+  const {parseReminderIntent}=await import('../lib/bot/handlers/reminders')
+  // 24 Oct live: the invite's date was used instead of "tomorrow at 10am", and the message was mangled.
+  const a:any=parseReminderIntent("Saw Divya's wedding invite for 12 Dec at Taj West End. Remind me about this tomorrow at 10am")
+  assert.equal(a.message,"Saw Divya's wedding invite for 12 Dec at Taj West End")
+  const ist=(iso:string)=>new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).format(new Date(iso))
+  assert.equal(ist(a.remindAtIso),'10:00')
+  assert.ok(Date.parse(a.remindAtIso)-Date.now()<48*3600_000,'tomorrow, not 12 Dec')
+  const b:any=parseReminderIntent('remind me on 12 Dec at 10am about the wedding')
+  assert.ok(Date.parse(b.remindAtIso)-Date.now()>7*24*3600_000,'an explicit date still wins when the time is tied to it')
+}
 const query='Based on everything you already know about me, would 25 October 2026 around 8:30 PM be a good time for dinner in Bengaluru? Tell me what existing context matters.'
 assert.equal(planningCalendarInstruction(query),'Show my calendar on 2026-10-25')
 const move={id:'move',source:'semantic_memory',summary:'I am moving house on 25 October 2026.',score:.6,confidence:.95,inferred:false}
