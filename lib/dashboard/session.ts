@@ -1,7 +1,7 @@
 import { createHash, createHmac, randomBytes } from 'crypto'
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { dashboardAccountIsActive } from '@/lib/dashboard/session-access'
+import { dashboardAccountIsActive, dashboardSessionHasNotExpired } from '@/lib/dashboard/session-access'
 
 // ── Dashboard auth core ───────────────────────────────────────────────────────
 // The ONLY way into the dashboard is a WhatsApp-issued magic link: single-use,
@@ -205,7 +205,7 @@ export async function getSession(): Promise<{ telegramId: string } | null> {
     .maybeSingle()
 
   if (error || !data) return null
-  if (new Date(data.expires_at).getTime() <= Date.now()) return null
+  if (!dashboardSessionHasNotExpired(data.expires_at)) return null
   // A valid unexpired 30-day cookie is not sufficient once this owner is blocked/deleted.
   if (!(await sessionOwnerAllowed(data.telegram_id))) return null
   return { telegramId: String(data.telegram_id) }
