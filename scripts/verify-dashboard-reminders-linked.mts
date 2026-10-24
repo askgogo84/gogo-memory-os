@@ -74,4 +74,37 @@ assert.equal(JSON.stringify(writes.map(w => w.hit)), JSON.stringify([['r-dash']]
 // All four routes must still pass an owner selected by the safe resolver.
 const route = readFileSync('app/api/dashboard/reminders/[id]/route.ts', 'utf8')
 for (const fn of ['deleteReminderById', 'stopReminderSeriesById', 'skipReminderOccurrenceById', 'updateReminderById']) assert.doesNotMatch(route, new RegExp(`${fn}\\(tgNum`), `${fn} must use the session-only resolver`)
+
+// Execute the actual dashboard mutation handlers with an inert getSession stub.
+// A malformed/unsafe 64-bit telegram ID must 401 BEFORE contacting reminder DB.
+let routeSessionId = String(SESSION)
+const routeMutationOwners: number[] = []
+deps['next/server'] = { NextResponse: { json: (body: any, options?: any) => ({ status: options?.status || 200, body }) } }
+deps['@/lib/dashboard/session'] = { getSession: async () => ({ telegramId: routeSessionId }) }
+deps['@/lib/dashboard/guard'] = { verifySameOrigin: () => null }
+deps['@/lib/dashboard/wall-time'] = { todayInTz: () => ({ y: 2026, mo: 10, d: 25 }), wallTimeToUtcIso: () => '2026-10-25T11:00:00Z' }
+deps['@/lib/dashboard/reminder-writes'] = {
+  resolveReminderOwner: W.resolveReminderOwner,
+  deleteReminderById: async (owner: number) => { routeMutationOwners.push(owner); return { ok: true } },
+  stopReminderSeriesById: async (owner: number) => { routeMutationOwners.push(owner); return { ok: true } },
+  skipReminderOccurrenceById: async (owner: number) => { routeMutationOwners.push(owner); return { ok: true } },
+  updateReminderById: async (owner: number) => { routeMutationOwners.push(owner); return { ok: true } },
+}
+const H = load('app/api/dashboard/reminders/[id]/route.ts')
+const routeArgs = [{ json: async () => ({ action: 'stop', message: 'safe edit' }) }, { params: Promise.resolve({ id: 'r-dash' }) }] as const
+for (const invalid of ['5550001tail', '9007199254740993', '-0', '1e2']) {
+  routeSessionId = invalid
+  for (const verb of ['DELETE', 'POST', 'PATCH']) {
+    const reply = await H[verb](routeArgs[0], routeArgs[1])
+    assert.equal(reply.status, 401, verb + ': unsafe owner must not reach a write')
+  }
+}
+assert.equal(routeMutationOwners.length, 0, 'unsafe session owner caused no writes')
+routeSessionId = String(SESSION)
+for (const verb of ['DELETE', 'POST', 'PATCH']) {
+  const reply = await H[verb](routeArgs[0], routeArgs[1])
+  assert.equal(reply.status, 200, 'legitimate session owner can still change own reminder')
+}
+assert.equal(JSON.stringify(routeMutationOwners), JSON.stringify([SESSION, SESSION, SESSION]), 'each mutation stays bound to exact session owner')
+
 console.log('Dashboard reminders P1: session-only reads/mutations; poisoned linked sets never consulted')
