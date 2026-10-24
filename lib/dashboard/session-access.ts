@@ -14,6 +14,13 @@ export function exactDashboardOwnerId(value: unknown): number | null {
   return Number.isSafeInteger(number) ? number : null
 }
 
+/** An unreadable/null expiration must never turn a 30-day bearer cookie into a perpetual session. */
+export function dashboardSessionHasNotExpired(expiresAt: unknown, nowMs = Date.now()): boolean {
+  if (typeof expiresAt !== 'string') return false
+  const expiresMs = Date.parse(expiresAt)
+  return Number.isFinite(expiresMs) && expiresMs > nowMs
+}
+
 /**
  * Fail closed on revoked, deleted, unresolvable, ambiguous, or unreadable owner rows.
  * Historical users with a null access_status are still allowed; only a persisted
