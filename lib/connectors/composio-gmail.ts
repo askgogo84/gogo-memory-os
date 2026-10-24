@@ -14,7 +14,7 @@ export function composioUserId(telegramId: string | number) {
   const id = String(telegramId)
   // This is a persisted numeric telegram_id, not a phone number or untrusted alias.
   // Reject rounded, non-canonical, out-of-range identities instead of linking to another account.
-  if (!/^-?[1-9]\\d{0,18}$/.test(id)) throw new Error('composio_owner_id_invalid')
+  if (!/^-?[1-9]\d{0,18}$/.test(id)) throw new Error('composio_owner_id_invalid')
   const numeric = BigInt(id)
   if (numeric < -(1n << 63n) || numeric > (1n << 63n) - 1n) throw new Error('composio_owner_id_invalid')
   return `askgogo-${id}`
