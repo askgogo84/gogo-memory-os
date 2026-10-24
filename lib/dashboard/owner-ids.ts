@@ -17,7 +17,9 @@ export async function linkedTelegramIds(sessionTelegramId: string | number): Pro
     // WhatsApp-first rows and chat ids are derived from the same number: the full digits (e.g. 91XXXXXXXXXX).
     // Unique to this number, so they belong to this person by construction.
     const full = wa.replace(/\D/g, '')
-    for (const derived of [full, `91${digits}`]) if (/^-?\d{9,15}$/.test(derived)) ids.add(derived)
+    // 24 Oct live: the WhatsApp row has telegram_id null and its chat id is resolve-user's fallback, -(last 9 digits).
+    const fallback = `-${full.slice(-9)}`
+    for (const derived of [full, `91${digits}`, fallback]) if (/^-?\d{9,15}$/.test(derived)) ids.add(derived)
     console.log('LINKED_IDS:', JSON.stringify({ own: own.slice(-4), rows: ((rows || []) as any[]).map(r => String(r.telegram_id).slice(-4)), ids: ids.size }))
     return [...ids]
   } catch { return [own] }
