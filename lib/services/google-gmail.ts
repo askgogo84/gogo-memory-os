@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
+import { bindingMatches } from '@/lib/security/oauth-browser-binding'
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -36,10 +37,16 @@ type SignedGoogleState = {
   purpose: 'connect' | 'oauth' | 'send_connect' | 'send_oauth'
   exp: number
   nonce: string
+  b?: string
 }
 
+let warnedGmailFallback = false
 function stateSecret() {
-  return process.env.GMAIL_OAUTH_STATE_SECRET || process.env.CRON_SECRET || ''
+  // F3: GMAIL_OAUTH_STATE_SECRET is expected; CRON_SECRET is also sent in URLs by the external scheduler, so using it
+  // to sign OAuth links is logged until a dedicated secret is set in Vercel.
+  if (process.env.GMAIL_OAUTH_STATE_SECRET) return process.env.GMAIL_OAUTH_STATE_SECRET
+  if (process.env.CRON_SECRET && !warnedGmailFallback) { warnedGmailFallback = true; console.warn('GMAIL_STATE_SECRET_FALLBACK: set GMAIL_OAUTH_STATE_SECRET') }
+  return process.env.CRON_SECRET || ''
 }
 
 function sign(encoded: string) {
@@ -55,7 +62,9 @@ function encodeState(payload: SignedGoogleState) {
 }
 
 function decodeState(token: string, purpose: SignedGoogleState['purpose']): SignedGoogleState | null {
-  const [encoded, supplied] = String(token || '').split('.')
+  const parts = String(token || '').split('.')
+  if (parts.length !== 2) return null
+  const [encoded, supplied] = parts
   if (!encoded || !supplied) return null
   const expected = sign(encoded)
   if (!expected) return null
@@ -105,34 +114,45 @@ export function verifyGmailSendConnectToken(token:string):number|null {
   return decodeState(token,'send_connect')?.tg||null
 }
 
-function issueGmailOauthState(telegramId: number): string | null {
+function issueGmailOauthState(telegramId: number, bindHash?: string): string | null {
   return encodeState({
     tg: telegramId,
     purpose: 'oauth',
     exp: Date.now() + OAUTH_STATE_TTL_MS,
     nonce: randomBytes(16).toString('base64url'),
+    ...(bindHash ? { b: bindHash } : {}),
   })
 }
 
-function issueGmailSendOauthState(telegramId:number):string|null {
+function issueGmailSendOauthState(telegramId:number, bindHash?:string):string|null {
   return encodeState({
     tg:telegramId,
     purpose:'send_oauth',
     exp:Date.now()+OAUTH_STATE_TTL_MS,
     nonce:randomBytes(16).toString('base64url'),
+    ...(bindHash?{b:bindHash}:{}),
   })
 }
 
+/** @deprecated Unbound; the callback uses the bound variants below. */
 export function consumeGmailOauthState(state: string): number | null {
   return decodeState(state, 'oauth')?.tg || null
 }
 
+/** @deprecated Unbound; the callback uses the bound variants below. */
 export function consumeGmailSendOauthState(state:string):number|null {
   return decodeState(state,'send_oauth')?.tg||null
 }
 
-export function getGmailAuthUrl(telegramId: number): string | null {
-  const state = issueGmailOauthState(telegramId)
+// OAuth CSRF fix (24 Oct): the state is accepted only in the browser that opened the signed connect link.
+export function consumeBoundGmailOauthState(state: string, cookieNonce: string | undefined | null, purpose: 'oauth' | 'send_oauth'): number | null {
+  const payload = decodeState(state, purpose)
+  if (!payload || !bindingMatches(cookieNonce, payload.b)) return null
+  return Number.isSafeInteger(payload.tg) ? payload.tg : null
+}
+
+export function getGmailAuthUrl(telegramId: number, bindHash?: string): string | null {
+  const state = issueGmailOauthState(telegramId, bindHash)
   if (!state) return null
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID || '',
@@ -148,8 +168,8 @@ export function getGmailAuthUrl(telegramId: number): string | null {
   return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
 }
 
-export function getGmailSendAuthUrl(telegramId:number):string|null {
-  const state=issueGmailSendOauthState(telegramId)
+export function getGmailSendAuthUrl(telegramId:number, bindHash?:string):string|null {
+  const state=issueGmailSendOauthState(telegramId, bindHash)
   if(!state)return null
   const params=new URLSearchParams({
     client_id:process.env.GOOGLE_CLIENT_ID||'',

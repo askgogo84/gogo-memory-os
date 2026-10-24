@@ -1,14 +1,21 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
+import { bindingMatches } from '@/lib/security/oauth-browser-binding'
 
 const CALENDAR_CALLBACK_URL = 'https://app.askgogo.in/api/calendar/callback'
 const CALENDAR_STATE_TTL_MS = 10 * 60 * 1000
 const CALENDAR_CONNECT_TTL_MS = 15 * 60 * 1000
 
-type CalendarState = { tg:number; purpose:'calendar_oauth'|'calendar_connect'; exp:number; nonce:string }
+type CalendarState = { tg:number; purpose:'calendar_oauth'|'calendar_connect'; exp:number; nonce:string; b?:string }
 
+let warnedFallback=false
 function calendarStateSecret() {
-  return process.env.CALENDAR_OAUTH_STATE_SECRET || process.env.GMAIL_OAUTH_STATE_SECRET || process.env.CRON_SECRET || ''
+  // F3: a dedicated secret is expected. The older fallbacks stay so live connections keep working until
+  // CALENDAR_OAUTH_STATE_SECRET is set in Vercel; using them is logged once per instance.
+  if(process.env.CALENDAR_OAUTH_STATE_SECRET)return process.env.CALENDAR_OAUTH_STATE_SECRET
+  const fallback=process.env.GMAIL_OAUTH_STATE_SECRET||process.env.CRON_SECRET||''
+  if(fallback&&!warnedFallback){warnedFallback=true;console.warn('CALENDAR_STATE_SECRET_FALLBACK: set CALENDAR_OAUTH_STATE_SECRET')}
+  return fallback
 }
 function calendarSignature(encoded:string) {
   const secret=calendarStateSecret()
@@ -21,7 +28,10 @@ function encodeCalendarState(payload:CalendarState) {
   return signature?`${encoded}.${signature}`:null
 }
 function decodeCalendarState(token:string,purpose:CalendarState['purpose']) {
-  const [encoded,supplied]=String(token||'').split('.')
+  const parts=String(token||'').split('.')
+  // Exactly <payload>.<signature>; trailing segments are rejected rather than ignored (review finding d).
+  if(parts.length!==2)return null
+  const [encoded,supplied]=parts
   if(!encoded||!supplied)return null
   const expected=calendarSignature(encoded)
   if(!expected)return null
@@ -59,18 +69,27 @@ export function verifyCalendarConnectToken(token:string):number|null {
     if(!expected)return null
     const a=Buffer.from(supplied),b=Buffer.from(expected)
     if(a.length!==b.length||!timingSafeEqual(a,b))return null
+    // F4: one strict shape for both entry routes (signed, so leniency was not exploitable, but keep it exact).
+    if(!/^-?[1-9]\d{0,15}$/.test(tg)||!/^[0-9a-z]{1,10}$/.test(expiry))return null
     const id=Number(tg),expiresAt=parseInt(expiry,36)*1000
-    if(!Number.isInteger(id)||id===0||!Number.isFinite(expiresAt)||expiresAt<=Date.now()||!nonce)return null
+    if(!Number.isSafeInteger(id)||!Number.isFinite(expiresAt)||expiresAt<=Date.now()||!nonce)return null
     return id
   }
   return decodeCalendarState(value,'calendar_connect')?.tg||null
 }
+/** @deprecated Unbound read of the state owner; the callback must use consumeBoundCalendarOauthState. */
 export function consumeCalendarOauthState(state:string):number|null {
   return decodeCalendarState(state,'calendar_oauth')?.tg||null
 }
+/** F1/F2: the state is accepted only in the browser that started the flow (cookie nonce matches the signed hash). */
+export function consumeBoundCalendarOauthState(state:string,cookieNonce:string|undefined|null):number|null {
+  const payload=decodeCalendarState(state,'calendar_oauth')
+  if(!payload||!bindingMatches(cookieNonce,payload.b))return null
+  return Number.isSafeInteger(payload.tg)?payload.tg:null
+}
 
-export function getAuthUrl(telegramId: number): string {
-  const state=encodeCalendarState({tg:telegramId,purpose:'calendar_oauth',exp:Date.now()+CALENDAR_STATE_TTL_MS,nonce:randomBytes(16).toString('base64url')})
+export function getAuthUrl(telegramId: number, bindHash?: string): string {
+  const state=encodeCalendarState({tg:telegramId,purpose:'calendar_oauth',exp:Date.now()+CALENDAR_STATE_TTL_MS,nonce:randomBytes(16).toString('base64url'),...(bindHash?{b:bindHash}:{})})
   if(!state)throw new Error('calendar_oauth_state_secret_missing')
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID!,

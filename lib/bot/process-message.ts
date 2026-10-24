@@ -22,7 +22,7 @@ import { buildReferenceFxReply } from './handlers/reference-fx'
 import { addToListDetailed, formatAddResult, clearList, formatList, getAllLists, getList, setItemDoneByText, resolveAndSetDoneAcrossLists, normalizeListName } from '@/lib/lists'
 import { checkAndIncrementLimit, getUsageStatusReply, getFriendReminderCap } from '@/lib/limits'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { getAuthUrl, buildCalendarConnectUrl } from '@/lib/google-calendar'
+import { buildCalendarConnectUrl } from '@/lib/google-calendar'
 import { getAllCalendarAccountAccess, describeCalendarAccounts } from '@/lib/services/google-calendar-accounts'
 import { resolveUser, type Channel, type ResolvedUser } from './resolve-user'
 import { detectIntent } from './detect-intent'
@@ -1389,14 +1389,26 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const calTokens = await getCalendarTokens(resolvedUser.telegramId)
     __trace.mark('calTokens')
     if (calTokens.connected) {
-      const url = buildCalendarConnectUrl(resolvedUser.telegramId) || getAuthUrl(resolvedUser.telegramId)
+      // F5: only the signed, browser-bound connect link is ever sent; no raw Google URL fallback (it threw when the
+      // signing secret was missing, and it skipped the browser binding).
+      const url = buildCalendarConnectUrl(resolvedUser.telegramId)
+      if (!url) {
+        const reply = '✅ Your Google Calendar is already connected. Adding another account is temporarily unavailable; please try again later.'
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+      }
       // Name the account so "which calendar am I connected to?" has an answer.
       const accountLine = describeCalendarAccounts(await getAllCalendarAccountAccess(resolvedUser.telegramId).catch(() => []))
       const reply = `✅ *Your Google Calendar is already connected.*${accountLine ? `\n${accountLine}` : ''}\n\nYour schedule already shows up in your *Today* briefing.\n\nWant to connect another Google account? Use this link (it adds to the ones above, it does not replace them):\n${url}`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
-    const url = buildCalendarConnectUrl(resolvedUser.telegramId) || getAuthUrl(resolvedUser.telegramId)
+    const url = buildCalendarConnectUrl(resolvedUser.telegramId)
+    if (!url) {
+      const reply = 'Google Calendar connection is temporarily unavailable. Please try again later.'
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
     const reply = `📅 *Connect Google Calendar*\n\nThis lets AskGogo include your schedule in Today briefing and help you plan reminders better.\n\n${url}\n\nAfter connecting, come back and type:\nToday`
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }

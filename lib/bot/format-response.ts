@@ -1,27 +1,7 @@
 import type { Channel } from './resolve-user'
 
-function shortenCalendarOAuthLinks(text: string): string {
-  return text.replace(
-    /https:\/\/accounts\.google\.com\/o\/oauth2\/v2\/auth\?[^\s]+/g,
-    (rawUrl) => {
-      try {
-        const url = new URL(rawUrl)
-        const redirectUri = url.searchParams.get('redirect_uri') || ''
-        const state = url.searchParams.get('state') || ''
-
-        // Only rewrite AskGogo's Google Calendar OAuth URL. Other Google links
-        // must stay untouched.
-        if (!redirectUri.includes('/api/calendar/callback') || !/^-?\d+$/.test(state)) {
-          return rawUrl
-        }
-
-        return `https://app.askgogo.in/calendar?id=${encodeURIComponent(state)}`
-      } catch {
-        return rawUrl
-      }
-    }
-  )
-}
+// F6 (24 Oct): the old rewrite of unsigned numeric-state Google URLs into /calendar?id= links was removed; those
+// links are rejected by the server now (PR #848) and every current link is the signed /api/calendar/connect form.
 
 // Round 6 (#22): "Where is my car parked?" came back ALL IN CAPITALS (the model copied a shouted memory). A reply
 // that is mostly capitals is put back into sentence case; short codes and anything with digits (B2, 6E204, PVR, QR)
@@ -59,7 +39,7 @@ export function dropRedactedLinks(text: string): string {
 }
 
 function cleanBaseText(text: string): string {
-  return calmShouting(markdownHeadingsToBold(dropRedactedLinks(shortenCalendarOAuthLinks(text || '')))
+  return calmShouting(markdownHeadingsToBold(dropRedactedLinks(text || ''))
     .replace(/\r\n/g, '\n')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')

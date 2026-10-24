@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { consumeCalendarOauthState, exchangeCode, fetchPrimaryCalendarAccount, refreshAccessToken } from '@/lib/google-calendar'
+import { consumeBoundCalendarOauthState, exchangeCode, fetchPrimaryCalendarAccount, refreshAccessToken } from '@/lib/google-calendar'
+import { OAUTH_BIND_COOKIE, clearBindingCookie } from '@/lib/security/oauth-browser-binding'
 import { saveExtraCalendarAccount } from '@/lib/services/google-calendar-accounts'
 import { encryptGoogleToken, hasGoogleTokenEncryptionKey } from '@/lib/security/google-token-crypto'
 
@@ -11,23 +12,31 @@ function failedPageHtml() {
 <html><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="theme-color" content="#F6F1E8"/><title>Calendar connection failed · AskGogo</title><style>*{box-sizing:border-box}body{margin:0;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#F6F1E8;color:#16130F;min-height:100vh;display:grid;place-items:center;padding:24px}.card{width:100%;max-width:480px;background:#FFFDF9;border:1px solid rgba(22,19,15,.09);border-radius:28px;padding:34px;box-shadow:0 24px 70px rgba(45,32,22,.08);text-align:center}.mark{width:58px;height:58px;border-radius:18px;margin:0 auto 20px;background:#FFF0E5;display:grid;place-items:center;font-size:26px}h1{font-family:Georgia,serif;font-weight:400;font-size:36px;letter-spacing:-.03em;margin:0 0 12px}p{margin:0 0 14px;line-height:1.6;color:#5C554C}.pill{display:inline-block;margin-top:8px;padding:12px 20px;border-radius:999px;background:#157A6E;color:white;font-weight:800;font-size:14px}</style></head><body><div class="card"><div class="mark">!</div><h1>Calendar wasn’t connected.</h1><p>The Google authorization was missing, expired or could not be verified.</p><p>Return to Gogo and request a fresh Calendar connection link.</p><div class="pill">Connect calendar</div></div></body></html>`
 }
 
+// Every exit clears the binding cookie, so a state can be attempted at most once per started flow.
+function failedResponse(status: number) {
+  const res = new NextResponse(failedPageHtml(), { status, headers:{'Content-Type':'text/html; charset=utf-8'} })
+  clearBindingCookie(res.cookies)
+  return res
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const code = searchParams.get('code')
-  const telegramId = consumeCalendarOauthState(searchParams.get('state') || '')
+  // F1/F2: only the browser that opened the signed connect link can finish this flow, and only once.
+  const telegramId = consumeBoundCalendarOauthState(searchParams.get('state') || '', req.cookies.get(OAUTH_BIND_COOKIE)?.value)
 
   if (!code || !telegramId) {
-    return new NextResponse(failedPageHtml(), { status:400, headers:{'Content-Type':'text/html; charset=utf-8'} })
+    return failedResponse(400)
   }
 
   const tokens = await exchangeCode(code)
   if (!tokens?.refresh_token) {
-    return new NextResponse(failedPageHtml(), { status:400, headers:{'Content-Type':'text/html; charset=utf-8'} })
+    return failedResponse(400)
   }
 
   if (!hasGoogleTokenEncryptionKey()) {
     console.error('GOOGLE_TOKEN_ENCRYPTION_KEY_MISSING')
-    return new NextResponse(failedPageHtml(), { status:503, headers:{'Content-Type':'text/html; charset=utf-8'} })
+    return failedResponse(503)
   }
 
   const encrypted = encryptGoogleToken(tokens.refresh_token)
@@ -53,8 +62,10 @@ export async function GET(req: NextRequest) {
 
   if (error) {
     console.error('CALENDAR_CONNECTION_SAVE_FAILED:', error.message)
-    return new NextResponse(failedPageHtml(), { status:500, headers:{'Content-Type':'text/html; charset=utf-8'} })
+    return failedResponse(500)
   }
 
-  return NextResponse.redirect(new URL('/calendar-connected.html', req.url), 303)
+  const done = NextResponse.redirect(new URL('/calendar-connected.html', req.url), 303)
+  clearBindingCookie(done.cookies)
+  return done
 }

@@ -1,17 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { consumeGmailOauthState, consumeGmailSendOauthState, exchangeGmailCode, getGoogleEmail } from '@/lib/google-gmail'
+import { consumeBoundGmailOauthState, exchangeGmailCode, getGoogleEmail } from '@/lib/google-gmail'
+import { OAUTH_BIND_COOKIE, clearBindingCookie } from '@/lib/security/oauth-browser-binding'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { encryptGoogleToken, hasGoogleTokenEncryptionKey } from '@/lib/security/google-token-crypto'
 
 export const dynamic = 'force-dynamic'
 
+// Every exit clears the OAuth binding cookie: one attempt per started flow, in the browser that started it.
 export async function GET(req: NextRequest) {
+  const res = await handle(req)
+  clearBindingCookie(res.cookies)
+  return res
+}
+
+async function handle(req: NextRequest): Promise<NextResponse> {
   try {
     const url = new URL(req.url)
     const code = url.searchParams.get('code')
     const state = url.searchParams.get('state') || ''
-    const sendTelegramId=consumeGmailSendOauthState(state)
-    const readTelegramId=sendTelegramId?null:consumeGmailOauthState(state)
+    const bindNonce=req.cookies.get(OAUTH_BIND_COOKIE)?.value
+    const sendTelegramId=consumeBoundGmailOauthState(state,bindNonce,'send_oauth')
+    const readTelegramId=sendTelegramId?null:consumeBoundGmailOauthState(state,bindNonce,'oauth')
     const telegramId=sendTelegramId||readTelegramId
     const sendUpgrade=Boolean(sendTelegramId)
 

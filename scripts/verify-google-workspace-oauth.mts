@@ -40,7 +40,7 @@ assert.equal(gmail.consumeGmailOauthState(`${oauthState}tampered`), null)
 assert.match(connectRoute, /verifyGmailConnectToken/)
 assert.match(connectRoute, /searchParams\.get\('token'\)/)
 assert.doesNotMatch(connectRoute, /searchParams\.get\('telegramId'\)/)
-assert.match(callbackRoute, /consumeGmailOauthState/)
+assert.match(callbackRoute, /consumeBoundGmailOauthState/)
 assert.doesNotMatch(callbackRoute, /Number\(state\)/)
 assert.match(callbackRoute, /Could not verify the connected Google account/)
 assert.match(emailActions, /buildGmailConnectUrl/)
@@ -63,7 +63,7 @@ assert.equal(calendar.consumeCalendarOauthState(`${calendarState}tampered`), nul
 assert.match(calendarConnectRoute, /verifyCalendarConnectToken/)
 assert.match(calendarConnectRoute, /searchParams\.get\('token'\)/)
 assert.doesNotMatch(calendarConnectRoute, /searchParams\.get\('id'\)/)
-assert.match(calendarCallbackRoute, /consumeCalendarOauthState/)
+assert.match(calendarCallbackRoute, /consumeBoundCalendarOauthState/)
 assert.doesNotMatch(calendarCallbackRoute, /parseInt\(telegramId\)|Number\(state\)/)
 
 // WhatsApp users carry a NEGATIVE telegram_id (resolve-user.ts generateNegativeTelegramId).
