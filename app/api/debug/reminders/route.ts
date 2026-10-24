@@ -24,10 +24,11 @@ function formatIst(iso: string | null) {
 }
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url)
-  const secret = searchParams.get('secret')
-
-  if (secret !== process.env.CRON_SECRET) {
+  // F3 (24 Oct): this debug dump lists other people's reminders. It no longer accepts the secret in the URL (query
+  // strings end up in logs and browser history); only an Authorization: Bearer header is accepted.
+  const expected = process.env.CRON_SECRET || ''
+  const auth = req.headers.get('authorization') || ''
+  if (!expected || auth !== `Bearer ${expected}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

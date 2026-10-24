@@ -54,7 +54,7 @@ assert.equal(calendarOwnerForLegacyEntry(new URLSearchParams({ token: roundedTok
 const route = readFileSync(new URL('../app/calendar/route.ts', import.meta.url), 'utf8')
 assert.match(route, /calendarOwnerForLegacyEntry\(new URL\(req\.url\)\.searchParams\)/, 'legacy route validates bearer ownership')
 assert.match(route, /if \(telegramId === null\)/, 'invalid token returns before OAuth state mint')
-assert.match(route, /getAuthUrl\(telegramId\)/, 'only verified signed owner reaches OAuth state mint')
+assert.match(route, /getAuthUrl\(telegramId, binding\.hash\)/, 'only verified signed owner reaches OAuth state mint, bound to this browser')
 assert.doesNotMatch(route, /\.get\(['"]id['"]\)/, 'the route must not trust a raw caller ID')
 
 console.log('Calendar: account is named and legacy OAuth entry rejects forged, expired, and unsafe owner identity')

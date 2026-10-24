@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getGmailAuthUrl, verifyGmailConnectToken } from '@/lib/google-gmail'
+import { newOauthBinding, setBindingCookie } from '@/lib/security/oauth-browser-binding'
 
 export const dynamic = 'force-dynamic'
 
@@ -15,7 +16,9 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  const authUrl = getGmailAuthUrl(telegramId)
+  // Bind the OAuth state to this browser (OAuth CSRF fix).
+  const binding = newOauthBinding()
+  const authUrl = getGmailAuthUrl(telegramId, binding.hash)
   if (!authUrl) {
     console.error('GMAIL_OAUTH_STATE_SECRET_MISSING')
     return NextResponse.json(
@@ -24,5 +27,7 @@ export async function GET(req: NextRequest) {
     )
   }
 
-  return NextResponse.redirect(authUrl)
+  const res = NextResponse.redirect(authUrl)
+  setBindingCookie(res.cookies, binding.nonce)
+  return res
 }
