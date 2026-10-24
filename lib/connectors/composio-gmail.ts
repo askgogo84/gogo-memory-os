@@ -15,8 +15,11 @@ export function composioUserId(telegramId: string | number) {
   // This is a persisted numeric telegram_id, not a phone number or untrusted alias.
   // Reject rounded, non-canonical, out-of-range identities instead of linking to another account.
   if (!/^-?[1-9]\d{0,18}$/.test(id)) throw new Error('composio_owner_id_invalid')
-  const numeric = BigInt(id)
-  if (numeric < -(1n << 63n) || numeric > (1n << 63n) - 1n) throw new Error('composio_owner_id_invalid')
+  // String bounds avoid JS Number rounding and compile under this app's ES2018 target.
+  const negative = id.startsWith('-')
+  const digits = negative ? id.slice(1) : id
+  const bound = negative ? '9223372036854775808' : '9223372036854775807'
+  if (digits.length === bound.length && digits > bound) throw new Error('composio_owner_id_invalid')
   return `askgogo-${id}`
 }
 
