@@ -104,6 +104,9 @@ function isAutomatedSender(email: AttentionEmail) {
 export function classifyEmail(email: AttentionEmail): AttentionCategory {
   const text = clean(`${email.subject} ${email.snippet}`, 1200)
   const labels = email.labelIds || []
+  // 24 Oct battery: AskGogo's own daily brief quoted a "payment failed … shutdown" mail and was itself flagged as
+  // needing the person. Our own digests summarise mail; they never need a reply.
+  if (/(?:^|\.)askgogo\.in$/i.test(senderDomainOf(email.from))) return 'update'
   if (/\bone[- ]time password\b|\bOTP\b|\bverification code\b|\bsign[- ]?in code\b|\blogin code\b/i.test(text)) return 'otp'
   if (/\b(?:payment\s+(?:failed|declined)|billing\s+(?:failed|overdue)|overdue\s+invoice)\b/i.test(text)
     && /\b(?:shutdown|shut\s*down|suspend(?:ed|ing)?|suspension|service\s+interruption|action\s+required|disconnect)\b/i.test(text)) return 'service_risk'
