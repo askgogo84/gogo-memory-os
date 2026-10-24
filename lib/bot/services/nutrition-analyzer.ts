@@ -10,6 +10,7 @@
  */
 
 import OpenAI from 'openai'
+import { downloadTwilioNutritionImage } from './twilio-nutrition-image'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 
@@ -158,17 +159,9 @@ export async function analyzeNutritionFromImage(params: {
 
   if (sid && tok) {
     try {
-      const res = await fetch(params.mediaUrl, {
-        headers: { Authorization: `Basic ${btoa(`${sid}:${tok}`)}` }
-      })
-      if (res.ok) {
-        const buf = await res.arrayBuffer()
-        const bytes = new Uint8Array(buf)
-        let b = ''
-        bytes.forEach(x => b += String.fromCharCode(x))
-        imageDataUrl = `data:${params.contentType};base64,${btoa(b)}`
-      }
-    } catch { /* fall through to text */ }
+      const image = await downloadTwilioNutritionImage(params.mediaUrl, sid, tok)
+      imageDataUrl = 'data:' + image.contentType + ';base64,' + image.data.toString('base64')
+    } catch { /* Untrusted/invalid media fails closed; fall back to text, never unguarded fetch. */ }
   }
 
   if (!imageDataUrl) {
