@@ -101,13 +101,17 @@ function isAutomatedSender(email: AttentionEmail) {
   return AUTOMATED_LOCAL.test(senderEmailOf(email.from)) || isBulk(email) || (email.labelIds || []).includes('CATEGORY_UPDATES')
 }
 
+/** AskGogo's own mail (briefs, tips). EMAIL_FROM may use another sending domain, so the sender name counts too. */
+export function isOwnProductMail(email: AttentionEmail) {
+  return /(?:^|\.)askgogo\.in$/i.test(senderDomainOf(email.from)) || /^\s*"?[^<"]*\bAskGogo\b[^<"]*"?\s*</i.test(String(email.from || ''))
+}
+
 export function classifyEmail(email: AttentionEmail): AttentionCategory {
   const text = clean(`${email.subject} ${email.snippet}`, 1200)
   const labels = email.labelIds || []
   // 24 Oct battery: AskGogo's own daily brief quoted a "payment failed … shutdown" mail and was itself flagged as
   // needing the person. Our own digests summarise mail; they never need a reply.
-  // EMAIL_FROM may use another sending domain, so the AskGogo sender name counts too.
-  if (/(?:^|\.)askgogo\.in$/i.test(senderDomainOf(email.from)) || /^\s*"?[^<"]*\bAskGogo\b[^<"]*"?\s*</i.test(String(email.from || ''))) return 'update'
+  if (isOwnProductMail(email)) return 'update'
   if (/\bone[- ]time password\b|\bOTP\b|\bverification code\b|\bsign[- ]?in code\b|\blogin code\b/i.test(text)) return 'otp'
   if (/\b(?:payment\s+(?:failed|declined)|billing\s+(?:failed|overdue)|overdue\s+invoice)\b/i.test(text)
     && /\b(?:shutdown|shut\s*down|suspend(?:ed|ing)?|suspension|service\s+interruption|action\s+required|disconnect)\b/i.test(text)) return 'service_risk'
@@ -200,7 +204,8 @@ export function scoreEmail(email: AttentionEmail, ctx: ScoreContext = {}): Score
   const reasons: string[] = []
   let score = 0
 
-  const own = Boolean(ctx.ownEmail && senderEmail === String(ctx.ownEmail).toLowerCase())
+  // Mail the person sent themselves, and AskGogo's own digests (24 Oct: a brief quoting a failed payment was flagged).
+  const own = Boolean(ctx.ownEmail && senderEmail === String(ctx.ownEmail).toLowerCase()) || isOwnProductMail(email)
   if (own || category === 'otp' || category === 'transaction_alert') score = 0
   else if (category === 'service_risk') { score = 0.92; reasons.push('Service may be cut off') }
   else if (category === 'security') { score = 0.8; reasons.push('Security alert on your account') }
