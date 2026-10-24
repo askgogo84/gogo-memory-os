@@ -5,6 +5,13 @@
  */
 export type OwnerLinkRow = { telegram_id?: string | number | null; whatsapp_id?: string | null }
 
+/** Preserve exact persisted BIGINT identities; JS numbers outside safe range can alias another owner. */
+export function exactOwnerDecimalId(value: string | number | null | undefined): string | null {
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
+  const id = String(value ?? '').trim()
+  return /^-?[1-9]\d*$/.test(id) ? id : null
+}
+
 /** E.164 digits, including country calling code. Domestic-only 10-digit values fail closed. */
 export function canonicalInternationalPhone(value: unknown): string | null {
   if (typeof value !== 'string') return null
@@ -21,15 +28,15 @@ export function authorizedLinkedOwnerIds(
   sessionWhatsAppId: unknown,
   rows: OwnerLinkRow[],
 ): string[] {
-  const own = String(sessionTelegramId)
+  const own = exactOwnerDecimalId(sessionTelegramId)
+  if (!own) return []
   const full = canonicalInternationalPhone(sessionWhatsAppId)
   if (!full) return [own]
   const ids = new Set<string>([own])
   for (const row of rows) {
     if (canonicalInternationalPhone(row.whatsapp_id) !== full) continue
-    if (row.telegram_id === null || row.telegram_id === undefined) continue
-    const id = String(row.telegram_id).trim()
-    if (!/^-?\d+$/.test(id) || Number(id) === 0) continue
+    const id = exactOwnerDecimalId(row.telegram_id)
+    if (!id) continue
     ids.add(id)
   }
   return [...ids]
