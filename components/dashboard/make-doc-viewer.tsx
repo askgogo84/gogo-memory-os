@@ -3,6 +3,7 @@
 // Make: deck and sheet viewers (approved 24 Oct mock, screens 2 and 3). Slides render as light 16:9 pages with
 // a thumbnail strip; sheets as a table with a computed total. Downloads come from /api/make/<id>/export.
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 
 type Slide = { kicker: string; title: string; points: string[]; notes: string }
 type Deck = { format: 'deck'; title: string; slides: Slide[] }
@@ -66,6 +67,35 @@ function SheetView({ sheet }: { sheet: Sheet }) {
   </div>
 }
 
+function EditBox({ id, kind }: { id: string; kind: 'deck' | 'sheet' }) {
+  const router = useRouter()
+  const [text, setText] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  async function submit() {
+    const instruction = text.trim()
+    if (!instruction || busy) return
+    setBusy(true); setMsg('')
+    try {
+      const res = await fetch(`/api/make/${encodeURIComponent(id)}/edit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ instruction }) })
+      if (res.ok) { setText(''); setMsg('Updated.'); router.refresh() }
+      else setMsg(res.status === 502 ? 'I could not apply that. Try saying it another way.' : 'Could not update this right now.')
+    } catch { setMsg('Could not update this right now.') }
+    setBusy(false)
+  }
+  return <div className="mt-5 rounded-xl border border-[#2A2A2A] p-4">
+    <label htmlFor="make-edit" className="text-[14px] text-[#F2EFEA]">Change it</label>
+    <textarea id="make-edit" rows={2} value={text} onChange={e => setText(e.target.value)} maxLength={400}
+      placeholder={kind === 'deck' ? 'e.g. make slide 3 shorter, add a slide on pricing' : 'e.g. make the hotel ₹5,000 a night, add a row for snacks'}
+      className="mt-2 w-full rounded-xl border border-[#2A2A2A] bg-[#111111] p-3 text-[16px] leading-6 text-[#F2EFEA]" />
+    <div className="mt-2 flex items-center gap-3">
+      <button onClick={submit} disabled={busy || !text.trim()} className={btn}>{busy ? 'Updating…' : 'Update'}</button>
+      {msg ? <span className="text-[14px] text-[#9A9A9A]">{msg}</span> : null}
+    </div>
+    <p className="mt-2 text-[13px] text-[#9A9A9A]">You can also say it to Gogo in chat right after it was made.</p>
+  </div>
+}
+
 export function MakeDocViewer({ id, doc, request, sources, updatedAt }: { id: string; doc: Deck | Sheet; request: string; sources: string[]; updatedAt: string | null }) {
   const href = (f: string) => `/api/make/${encodeURIComponent(id)}/export?format=${f}`
   return <div>
@@ -82,9 +112,7 @@ export function MakeDocViewer({ id, doc, request, sources, updatedAt }: { id: st
     </div>
     {doc.format === 'deck' ? <DeckView deck={doc} /> : <SheetView sheet={doc} />}
     {doc.format === 'sheet' && doc.notes ? <p className="mt-3 text-[14px] text-[#9A9A9A]">{doc.notes}</p> : null}
-    <p className="mt-5 rounded-xl border border-[#2A2A2A] p-4 text-[14px] leading-6 text-[#9A9A9A]">
-      To change it, message Gogo in chat right after it was made, like {doc.format === 'deck' ? '"make slide 3 shorter" or "add a slide on pricing"' : '"make the hotel ₹5,000 a night" or "add a row for snacks"'}.
-    </p>
+    <EditBox id={id} kind={doc.format} />
     {request ? <p className="mt-3 text-[13px] text-[#9A9A9A]">You asked: “{request.slice(0, 300)}”</p> : null}
     {sources.length ? <div className="mt-4"><p className="text-[13px] text-[#9A9A9A]">Facts from</p>
       <ul className="mt-1 space-y-1">{sources.map(u => <li key={u}><a className="break-all text-[13px] text-[#2FB8A6]" href={u} target="_blank" rel="noreferrer">{u}</a></li>)}</ul></div> : null}
