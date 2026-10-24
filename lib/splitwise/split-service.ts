@@ -124,6 +124,29 @@ async function upsertMembers(groupId: string, phone: string, members: string[] =
   )
 }
 
+// 25 Oct live: "Add expense 500 dinner paid by me split with Nithin" went into the latest group, an old
+// "Split 18 Oct 12:01 am" with Person 2/3/4, so Nithin's ₹250 was mixed into strangers' balances. With no group
+// named, the latest group is used only when it already has everyone named; otherwise the expense goes to a group
+// named for those people ("With Nithin"), reused the next time the same people are named.
+export function namedPeopleGroupName(members: string[] = []): string | null {
+  const others = Array.from(new Set(members.map(normalizeMemberName).filter((m) => m && m.toLowerCase() !== 'me')))
+  if (!others.length || others.some((m) => /^person \d+$/i.test(m))) return null
+  return `With ${others.join(' & ')}`.slice(0, 80)
+}
+
+async function groupNameForNamedPeople(phone: string, groupName: string | undefined, members: string[] = []) {
+  if (groupName) return groupName
+  const named = namedPeopleGroupName(members)
+  if (!named) return undefined
+  const latest = await getLatestGroup(phone)
+  if (latest) {
+    const have = new Set((await getMembers(latest.id)).map((m) => normalizeMemberName(m.name).toLowerCase()))
+    const others = members.map(normalizeMemberName).filter((m) => m && m.toLowerCase() !== 'me')
+    if (others.every((m) => have.has(m.toLowerCase()))) return undefined
+  }
+  return named
+}
+
 async function ensureGroup(phone: string, groupName?: string, members: string[] = []) {
   let group = await findGroup(phone, groupName)
   if (!group) group = await insertGroup(phone, groupName || 'My Split Group', members)
@@ -282,7 +305,7 @@ _Add expense 2400 hotel paid by me split equally_`
   }
 
   if (intent.type === 'add_equal_expense') {
-    const group = await ensureGroup(phone, intent.groupName, intent.members)
+    const group = await ensureGroup(phone, await groupNameForNamedPeople(phone, intent.groupName, intent.members), intent.members)
     const existingMembers = (await getMembers(group.id)).map((m) => m.name)
     const shareRows = computeShares({ amount: intent.amount, paidBy: intent.paidBy, members: intent.members.length ? intent.members : existingMembers, allocations: intent.allocations, splitMode: intent.splitMode })
     const members = shareRows.map((row) => row.member)
