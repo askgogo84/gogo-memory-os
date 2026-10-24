@@ -1,5 +1,6 @@
 // Make: real slides and sheets (approved 24 Oct mock). Pure logic, generation with a fake model, and real exports.
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import * as D from '../lib/make/documents.ts'
 import { generateDoc, editDoc } from '../lib/make/generate.ts'
 import { deckToPptx, sheetToXlsx } from '../lib/make/export.ts'
@@ -92,6 +93,13 @@ await check('amount is quantity x unit price, computed in code', () => {
   const s = D.validSheet({ title: 'Goa', columns: ['Item', 'Basis', 'Qty', 'Unit price', 'Amount'], rows: [['Hotel', '2 rooms x 3 nights', 6, '5,000', 20000], ['Flights', '4 people', 4, 9000, 36000]], totalColumn: 4 })!
   assert.equal(s.rows[0][4], 30000)
   assert.equal(D.sheetTotal(s), 66000)
+})
+
+await check('in-page edits are signed-in and owner-scoped', () => {
+  const route = readFileSync('app/api/make/[id]/edit/route.ts', 'utf8')
+  assert.match(route, /getSession\(\)/); assert.match(route, /unauthorized/)
+  assert.match(route, /linkedTelegramIds\(session\.telegramId\)/)
+  assert.match(readFileSync('components/dashboard/make-doc-viewer.tsx', 'utf8'), /\/api\/make\/\$\{encodeURIComponent\(id\)\}\/edit/)
 })
 
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
