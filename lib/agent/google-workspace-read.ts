@@ -93,9 +93,11 @@ async function composioDriveFor(actor: AgentActor): Promise<((url:string)=>Promi
   try{
     const c:any=await import('@/lib/connectors/composio-gmail')
     if(typeof c?.composioConfigured!=='function'||!c.composioConfigured())return null
-    const o:any=await import('@/lib/dashboard/owner-ids')
-    const ids=[String(actor.legacyTelegramId),...(typeof o?.idsForWhatsapp==='function'?await o.idsForWhatsapp(actor.whatsappId):[])]
-    const account=await c.activeDriveAccount(ids)
+    // Composio account IDs are authorization identities, not phone-based search aliases.
+    // Never append idsForWhatsapp(): it infers other users by last-9/10-digit suffix,
+    // allowing a foreign E.164 owner with the same suffix to be selected by service role.
+    // Cross-channel Drive restoration requires an explicit verified account-link record.
+    const account=await c.activeDriveAccount([String(actor.legacyTelegramId)])
     return account?(url:string)=>c.composioDriveFetch(account,url):null
   }catch(err:any){console.error('COMPOSIO_DRIVE_LOOKUP_FAILED:',String(err?.message||err).slice(0,160));return null}
 }
