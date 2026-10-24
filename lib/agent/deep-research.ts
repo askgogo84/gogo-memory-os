@@ -77,8 +77,11 @@ export async function gatherSources(queries: string[], deps: { search?: typeof s
     seen.add(key); merged.push(r)
   }
   const top = merged.slice(0, 10)
-  const toRead = top.slice(0, deps.readPages ?? 4)
-  const texts = await Promise.all(toRead.map(r => readPage(r.url, deps.fetchImpl || fetch)))
+  // A search provider can return attacker-controlled URLs (or redirects to private hosts).
+  // Direct application-server fetch cannot safely pin destination IPs yet: fail closed.
+  // A deliberately injected transport is only used by inert research tests.
+  const toRead = deps.fetchImpl ? top.slice(0, deps.readPages ?? 4) : []
+  const texts = await Promise.all(toRead.map(r => readPage(r.url, deps.fetchImpl!)))
   return top.map((r: any, i): ResearchSource => ({ n: i + 1, title: String(r.title || r.url).slice(0, 140), url: String(r.url), snippet: String(r.content || r.snippet || '').slice(0, 500), text: texts[i] || '' }))
 }
 
