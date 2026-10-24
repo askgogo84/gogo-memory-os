@@ -26,8 +26,9 @@ function isLikelyMedicalImage(caption?: string) {
  * media metadata. Authorize the exact Twilio API account and media resource
  * before creating the Authorization header; no cross-host/suffix matching.
  *
- * Twilio CDN redirects and alternate media hosts intentionally fail closed
- * until a separate DNS-pinned, per-hop reviewed media transport is available.
+ * Provider-documented CDN redirects are manually constrained to one exact
+ * HTTPS Twilio CDN hostname, with Basic auth stripped on the next request.
+ * Any other redirect or a second redirect fails closed.
  */
 export function trustedTwilioMediaUrl(raw: unknown, accountSid: string): string | null {
   if (typeof raw !== 'string' || !/^AC[a-f0-9]{32}$/i.test(accountSid)) return null
@@ -40,6 +41,24 @@ export function trustedTwilioMediaUrl(raw: unknown, accountSid: string): string 
       'i',
     )
     return mediaPath.test(url.pathname) ? url.toString() : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * The Twilio Messaging API can respond with a temporary CDN redirect for
+ * authenticated media. The redirect URL is untrusted until its exact host,
+ * scheme and credentials/port are verified. NEVER send Twilio Basic auth here.
+ */
+export function trustedTwilioCdnRedirect(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== 'https:' || url.hostname !== 'mms.twiliocdn.com' ||
+        url.username || url.password || url.port || url.hash ||
+        !url.pathname || url.pathname === '/') return null
+    return url.toString()
   } catch {
     return null
   }
@@ -90,14 +109,23 @@ export async function downloadTwilioMediaAsDataUrl(params: {
   if (!trustedUrl) throw new Error('Untrusted Twilio media URL')
 
   const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64')
-  const mediaResponse = await fetch(trustedUrl, {
+  let mediaResponse = await fetch(trustedUrl, {
     headers: { Authorization: `Basic ${auth}` },
     cache: 'no-store',
     redirect: 'manual',
     signal: AbortSignal.timeout(10_000),
   })
-  // No automatic 3xx following; never forward a Basic credential to a CDN or
-  // a redirect destination without a separately authorized transport.
+  // Twilio may issue a signed CDN URL for protected media. Validate one hop;
+  // never include Authorization on that follow-up and never follow CDN redirects.
+  if ([301, 302, 303, 307, 308].includes(mediaResponse.status)) {
+    const cdnUrl = trustedTwilioCdnRedirect(mediaResponse.headers.get('location'))
+    if (!cdnUrl) throw new Error('Twilio media redirect refused')
+    mediaResponse = await fetch(cdnUrl, {
+      cache: 'no-store',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(10_000),
+    })
+  }
   if (!mediaResponse.ok) {
     throw new Error(`Twilio image download failed: ${mediaResponse.status}`)
   }
