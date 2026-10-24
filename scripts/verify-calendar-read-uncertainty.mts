@@ -44,7 +44,7 @@ const morning=load('lib/bot/handlers/morning-briefing.ts',deps)
 const plan=load('lib/bot/handlers/plan-my-day.ts',deps)
 const read=load('lib/agent/calendar-read.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/google-calendar':calendar,
  '@/lib/services/google-calendar-accounts':accounts,'@/lib/timezone':timezone,'@/lib/agent/typed-object-context':{},'@/lib/bot/memory-redaction':{redactSecretShapedText},'@/lib/data/calendar-word':calendarWord,'@/lib/calendar-intervals':intervals})
-const dashboard=load('lib/dashboard/queries.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/ist':{istDayWindow:()=>({startUtc:new Date('2026-10-18T00:00:00Z'),endUtc:new Date('2026-10-19T00:00:00Z')})},
+const dashboard=load('lib/dashboard/queries.ts',{'@/lib/dashboard/owner-ids':{linkedTelegramIds:async(id:any)=>[String(id)]},'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/ist':{istDayWindow:()=>({startUtc:new Date('2026-10-18T00:00:00Z'),endUtc:new Date('2026-10-19T00:00:00Z')})},
  '@/lib/services/meter':{},'@/lib/data/limits':{},'@/lib/calendar-intervals':intervals,'@/lib/services/google-calendar-accounts':accounts},async(_url:unknown,init:any)=>{
  const status=failedReads.has(String(init.headers.Authorization).replace(/^Bearer /,''))?503:providerStatus
  return {ok:status===200,status,json:async()=>({items:eventRows})}

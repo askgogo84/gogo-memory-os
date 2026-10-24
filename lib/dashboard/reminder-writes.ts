@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { cancelFollowupChain } from '@/lib/bot/handlers/edit-reminder'
+import { linkedTelegramIds } from '@/lib/dashboard/owner-ids'
 import { stopReminderSeries, skipReminderOccurrence } from '@/lib/services/reminder-series'
 
 // ── The dashboard's reminder write layer ──────────────────────────────────────
@@ -24,6 +25,18 @@ import { stopReminderSeries, skipReminderOccurrence } from '@/lib/services/remin
 // a "Stop" action: a recurring reminder's Stop must end the series (clear the
 // recurrence), not just blank one occurrence. skipReminderOccurrenceById writes only
 // remind_at + sent, advancing the pending occurrence so the series keeps regenerating.
+
+// The dashboard lists reminders from every row linked to the signed-in person's verified number (see queries.ts).
+// A write must address the row's real owner id, chosen ONLY from that linked set — never from the request.
+export async function resolveReminderOwner(sessionTelegramId: number, id: string): Promise<number> {
+  try {
+    const ids = (await linkedTelegramIds(sessionTelegramId)).map(v => Number(v)).filter(n => Number.isSafeInteger(n) && n !== 0)
+    if (ids.length <= 1) return sessionTelegramId
+    const { data } = await supabaseAdmin.from('reminders').select('telegram_id').eq('id', id).in('telegram_id', ids).maybeSingle()
+    const owner = Number((data as any)?.telegram_id)
+    return Number.isSafeInteger(owner) && ids.includes(owner) ? owner : sessionTelegramId
+  } catch { return sessionTelegramId }
+}
 
 export type DeleteReminderResult = { ok: true } | { ok: false; reason: 'not_found' | 'error' }
 

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/dashboard/session'
 import { verifySameOrigin } from '@/lib/dashboard/guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { deleteReminderById, updateReminderById, stopReminderSeriesById, skipReminderOccurrenceById } from '@/lib/dashboard/reminder-writes'
+import { resolveReminderOwner, deleteReminderById, updateReminderById, stopReminderSeriesById, skipReminderOccurrenceById } from '@/lib/dashboard/reminder-writes'
 import { todayInTz, wallTimeToUtcIso } from '@/lib/dashboard/wall-time'
 
 // Reads cookies + headers per request → never cache. (Non-GET handlers aren't cached
@@ -41,7 +41,7 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
   if (!Number.isFinite(tgNum)) return unauthorized()
 
   const { id } = await params
-  const res = await deleteReminderById(tgNum, id)
+  const res = await deleteReminderById(await resolveReminderOwner(tgNum, id), id)
   if (res.ok === false) {
     return NextResponse.json({ ok: false }, { status: res.reason === 'not_found' ? 404 : 500 })
   }
@@ -74,9 +74,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ ok: false, error: 'Unknown action.' }, { status: 400 })
   }
 
+  const owner = await resolveReminderOwner(tgNum, id)
   const res = action === 'stop'
-    ? await stopReminderSeriesById(tgNum, id)
-    : await skipReminderOccurrenceById(tgNum, id)
+    ? await stopReminderSeriesById(owner, id)
+    : await skipReminderOccurrenceById(owner, id)
 
   if (res.ok === false) {
     const status = res.reason === 'not_found' ? 404 : res.reason === 'not_recurring' ? 409 : 500
@@ -96,6 +97,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
   if (!Number.isFinite(tgNum)) return unauthorized()
 
   const { id } = await params
+  const owner = await resolveReminderOwner(tgNum, id)
 
   let body: unknown
   try {
@@ -127,7 +129,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return NextResponse.json({ ok: false, error: 'Nothing to change.' }, { status: 400 })
   }
 
-  const res = await updateReminderById(tgNum, id, { message, remindAt })
+  const res = await updateReminderById(owner, id, { message, remindAt })
   if (res.ok === false) {
     const status = res.reason === 'not_found' ? 404 : res.reason === 'recurring' ? 409 : 500
     const error =
