@@ -11,7 +11,7 @@ export async function GET() {
   if (!session) return NextResponse.redirect('https://app.askgogo.in/dashboard?next=' + encodeURIComponent('/dashboard/connections'))
   if (!composioConfigured()) return NextResponse.redirect('https://app.askgogo.in/dashboard/connections?error=drive_unavailable')
   try {
-    return NextResponse.redirect(await createDriveConnectLink(Number(session.telegramId)))
+    return NextResponse.redirect(await createDriveConnectLink(session.telegramId))
   } catch (err: any) {
     console.error('COMPOSIO_DRIVE_CONNECT_FAILED:', String(err?.message || err).slice(0, 200))
     return NextResponse.redirect('https://app.askgogo.in/dashboard/connections?error=drive_unavailable')
