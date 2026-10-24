@@ -162,7 +162,7 @@ export function makeDocRequest(text: string): { format: 'deck' | 'sheet'; reques
   return { format, request: t }
 }
 
-export const MAKE_REPLY_MARK = /^📊 (?:Your (?:deck|sheet) is ready|Updated)/
+export const MAKE_REPLY_MARK = /^📊 (?:Your (?:deck|sheet) is ready|Updated|Not updated)/
 /** Report id from Gogo's last Make reply, so "make slide 3 shorter" edits that document. */
 export function madeIdFromReply(reply: string): string | null {
   const s = String(reply || '')

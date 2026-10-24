@@ -26,6 +26,7 @@ await check('edits bind only to the last Make reply', () => {
   assert.equal(D.madeIdFromReply(reply), '11111111-2222-3333-4444-555555555555')
   assert.equal(D.madeIdFromReply(D.editedReply({ format: 'deck', title: 'T', theme: 'light', slides: [{ kicker: '', title: 'A', points: [], notes: '' }, { kicker: '', title: 'B', points: [], notes: '' }] }, '11111111-2222-3333-4444-555555555555')), '11111111-2222-3333-4444-555555555555')
   assert.equal(D.madeIdFromReply('Here is /dashboard/reports/11111111-2222-3333-4444-555555555555'), null)
+  assert.equal(D.madeIdFromReply('📊 Not updated: try again\nhttps://app.askgogo.in/dashboard/reports/11111111-2222-3333-4444-555555555555'), '11111111-2222-3333-4444-555555555555')
   assert.ok(D.isMakeEdit('make slide 3 shorter'))
   assert.ok(D.isMakeEdit('Make the hotel ₹5,000 a night'))
   assert.ok(D.isMakeEdit('add a row for snacks'))
