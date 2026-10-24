@@ -147,14 +147,15 @@ assert.match(direct.text,/Gmail subscription audit/,'negative no-send instructio
 
 let session:any={telegramId:'101'}
 mocks['@/lib/dashboard/session']={getSession:async()=>session}
-mocks['next/navigation']={notFound:()=>{throw new Error('NOT_FOUND')}}
+mocks['next/navigation']={notFound:()=>{throw new Error('NOT_FOUND')},redirect:(to:string)=>{throw new Error('REDIRECT:'+to)}}
 mocks['react/jsx-runtime']={jsx:(type:any,props:any)=>({type:typeof type==='function'?type.name:type,props}),jsxs:(type:any,props:any)=>({type:typeof type==='function'?type.name:type,props})}
 const page=load('app/dashboard/(app)/reports/[id]/page.tsx')
 assert.match(JSON.stringify(await page.default({params:Promise.resolve({id:reportId})})),/15\./)
 session={telegramId:'202'}
 await assert.rejects(()=>page.default({params:Promise.resolve({id:reportId})}),/NOT_FOUND/,'another owner cannot read the report')
 session=null;const queriesBefore=reportQueries
-await assert.rejects(()=>page.default({params:Promise.resolve({id:reportId})}),/NOT_FOUND/)
+// 24 Oct: signed out goes to sign-in and comes back to this result (was a bare 404 from WhatsApp links).
+await assert.rejects(()=>page.default({params:Promise.resolve({id:reportId})}),new RegExp('REDIRECT:/dashboard\\?next=%2Fdashboard%2Freports%2F'+reportId))
 assert.equal(reportQueries,queriesBefore,'signed-out requests stop before private database reads')
 session={telegramId:'101'};reportReadError=true
 await assert.rejects(()=>page.default({params:Promise.resolve({id:reportId})}),/report_read_unavailable/)

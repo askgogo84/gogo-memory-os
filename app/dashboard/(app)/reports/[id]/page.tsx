@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { artifactSections, publicResearchUrl } from '@/lib/agent/artifact-presentation'
@@ -29,14 +29,21 @@ function sourceList(content:unknown,refs:unknown):{label:string;href?:string}[] 
 }
 
 export default async function ReportPage({params}:{params:Promise<{id:string}>}) {
-  const session=await getSession()
-  if(!session)notFound()
   const {id}=await params
   if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))notFound()
+  // 24 Oct live: a deck link opened from WhatsApp on the phone showed a bare 404 because that browser was not
+  // signed in. Sign in first, then land back on this result (the link itself is never a login credential).
+  const session=await getSession()
+  if(!session)redirect('/dashboard?next='+encodeURIComponent(`/dashboard/reports/${id}`))
   const telegramId=String(session.telegramId)
   const {data:report,error}=await supabaseAdmin.from('agent_artifacts')
     .select('title,subtitle,content_json,source_refs,updated_at').eq('id',id).eq('telegram_id',telegramId).maybeSingle()
   if(error)throw new Error('report_read_unavailable')
+  if(!report){
+    // Diagnose without revealing anything: does the row exist under another owner id?
+    const {data:other}=await supabaseAdmin.from('agent_artifacts').select('telegram_id').eq('id',id).maybeSingle()
+    console.error('REPORT_NOT_IN_ACCOUNT:',JSON.stringify({id,exists:!!other,ownerMatchesType:other?typeof other.telegram_id:null,sessionTg:String(telegramId).slice(-4),ownerTg:other?String(other.telegram_id).slice(-4):null}))
+  }
   if(!report)notFound()
   // Make: a deck or a sheet has its own viewer and downloads.
   const made:any=(report.content_json as any)?.doc

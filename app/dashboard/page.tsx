@@ -15,6 +15,8 @@ function postAuthTarget() {
   // Deliberately narrow allow-list: magic links created for Vault may only land
   // inside the authenticated Vault surface. Never turn this into an open redirect.
   if (/^\/dashboard\/you\/vault(?:\/|$|\?)/.test(raw)) return raw
+  // A saved result (deck, sheet, report) linked from chat: one exact path shape, same origin.
+  if (/^\/dashboard\/reports\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(raw)) return raw
   return DASHBOARD_HOME
 }
 
