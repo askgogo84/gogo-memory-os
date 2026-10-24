@@ -21,38 +21,89 @@ function isLikelyMedicalImage(caption?: string) {
   return /prescription|doctor|medicine|tablet|pill|clinic|medical|report|bp|cholesterol|ldl|tg|triglyceride|sugar|dose|dosage/i.test(text)
 }
 
+/**
+ * Twilio Basic credentials must NEVER accompany an arbitrary URL supplied via
+ * media metadata. Authorize the exact Twilio API account and media resource
+ * before creating the Authorization header; no cross-host/suffix matching.
+ *
+ * Twilio CDN redirects and alternate media hosts intentionally fail closed
+ * until a separate DNS-pinned, per-hop reviewed media transport is available.
+ */
+export function trustedTwilioMediaUrl(raw: unknown, accountSid: string): string | null {
+  if (typeof raw !== 'string' || !/^AC[a-f0-9]{32}$/i.test(accountSid)) return null
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== 'https:' || url.hostname !== 'api.twilio.com' ||
+        url.username || url.password || url.port || url.search || url.hash) return null
+    const mediaPath = new RegExp(
+      `^/2010-04-01/Accounts/${accountSid}/Messages/(?:MM|SM)[a-f0-9]{32}/Media/ME[a-f0-9]{32}(?:/Content)?$`,
+      'i',
+    )
+    return mediaPath.test(url.pathname) ? url.toString() : null
+  } catch {
+    return null
+  }
+}
+
+const MAX_TWILIO_IMAGE_BYTES = 18 * 1024 * 1024
+
+async function readBoundedTwilioImage(response: Response): Promise<Buffer> {
+  const header = response.headers.get('content-length')
+  if (header !== null && (!/^\\d+$/.test(header) || Number(header) > MAX_TWILIO_IMAGE_BYTES)) {
+    throw new Error('Image is too large. Please send a smaller image.')
+  }
+  const stream = response.body
+  if (!stream) return Buffer.alloc(0)
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > MAX_TWILIO_IMAGE_BYTES) {
+        await reader.cancel().catch(() => {})
+        throw new Error('Image is too large. Please send a smaller image.')
+      }
+      chunks.push(value)
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  return Buffer.concat(chunks, total)
+}
+
 export async function downloadTwilioMediaAsDataUrl(params: {
   mediaUrl: string
   contentType: string
 }) {
   const { mediaUrl, contentType } = params
-
-  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID || ''
+  const authToken = process.env.TWILIO_AUTH_TOKEN || ''
+  if (!accountSid || !authToken) {
     throw new Error('Missing Twilio credentials for media download')
   }
 
-  const auth = Buffer.from(
-    `${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`
-  ).toString('base64')
+  // Validate BEFORE constructing the credential, not after a request/redirect.
+  const trustedUrl = trustedTwilioMediaUrl(mediaUrl, accountSid)
+  if (!trustedUrl) throw new Error('Untrusted Twilio media URL')
 
-  const mediaResponse = await fetch(mediaUrl, {
+  const auth = Buffer.from(`${accountSid}:${authToken}`).toString('base64')
+  const mediaResponse = await fetch(trustedUrl, {
     headers: { Authorization: `Basic ${auth}` },
+    cache: 'no-store',
+    redirect: 'manual',
+    signal: AbortSignal.timeout(10_000),
   })
-
+  // No automatic 3xx following; never forward a Basic credential to a CDN or
+  // a redirect destination without a separately authorized transport.
   if (!mediaResponse.ok) {
-    const body = await mediaResponse.text().catch(() => '')
-    throw new Error(`Twilio image download failed: ${mediaResponse.status} ${body}`)
+    throw new Error(`Twilio image download failed: ${mediaResponse.status}`)
   }
 
-  const arrayBuffer = await mediaResponse.arrayBuffer()
-  const sizeMb = arrayBuffer.byteLength / (1024 * 1024)
-
-  if (sizeMb > 18) {
-    throw new Error('Image is too large. Please send a smaller image.')
-  }
-
-  const base64 = Buffer.from(arrayBuffer).toString('base64')
-  return `data:${normalizeMime(contentType)};base64,${base64}`
+  const bytes = await readBoundedTwilioImage(mediaResponse)
+  return `data:${normalizeMime(contentType)};base64,${bytes.toString('base64')}`
 }
 
 export async function readAndSummarizeImageNote(params: {
