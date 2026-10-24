@@ -49,7 +49,9 @@ function DeckView({ deck }: { deck: Deck }) {
 function SheetView({ sheet }: { sheet: Sheet }) {
   const tc = sheet.totalColumn
   const total = tc === null ? null : sheet.rows.reduce((sum, r) => sum + (typeof r[tc] === 'number' ? r[tc] as number : Number(String(r[tc]).replace(/[^\d.-]/g, '')) || 0), 0)
-  const cell = (v: string | number, j: number) => typeof v === 'number' ? (j === tc ? `₹${inr(v)}` : inr(v)) : v
+  // Money columns (the amount, and any price/rate/cost column) show ₹; counts stay plain.
+  const money = (j: number) => j === tc || /\b(?:price|rate|cost|fare|fee|amount)\b/i.test(sheet.columns[j] || '')
+  const cell = (v: string | number, j: number) => typeof v === 'number' ? (money(j) ? `₹${inr(v)}` : inr(v)) : v
   const est = (i: number) => sheet.estimateRows.includes(i) ? <span className="ml-2 rounded bg-[#221D13] px-1.5 py-0.5 text-[11px] text-[#d9a441]">est.</span> : null
   // 24 Oct live (phone, 375px): the table cut off Unit price, Amount and the total. On phones each row is a card
   // with the amount on the right and the other columns underneath; the table is for wider screens.
