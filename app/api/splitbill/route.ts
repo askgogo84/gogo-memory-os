@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { handleSplitCommand } from '@/lib/splitwise/split-service'
+import { isInternalServiceAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
+  // Internal service call only (bot pipeline, lib/feature-intents-legacy.ts sends the Bearer secret). `phone` is the
+  // target owner the signed webhook already resolved, never authorization. 24 Oct: this route had no auth, so anyone
+  // could read a stranger's split history/balances or add expenses to their groups by phone number.
+  if (!isInternalServiceAuthorized(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const body = await req.json()
     const phone = String(body.phone || '').trim()
@@ -34,6 +39,10 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
+  // Internal service call only (bot pipeline, lib/feature-intents-legacy.ts sends the Bearer secret). `phone` is the
+  // target owner the signed webhook already resolved, never authorization. 24 Oct: this route had no auth, so anyone
+  // could read a stranger's split history/balances or add expenses to their groups by phone number.
+  if (!isInternalServiceAuthorized(req)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   try {
     const phone = req.nextUrl.searchParams.get('phone') || ''
     const group = req.nextUrl.searchParams.get('group') || ''
