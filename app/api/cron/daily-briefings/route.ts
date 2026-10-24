@@ -10,6 +10,7 @@ import { buildThrowbackLine } from '@/lib/bot/handlers/throwback'
 import { sendAskGogoEmail } from '@/lib/email/resend'
 import { renderDailyBriefEmail } from '@/lib/email/daily-brief'
 import { buildDailyBriefUnsubscribeUrl } from '@/lib/email/daily-brief-unsubscribe'
+import { pruneForwardedEmailInDb } from '@/lib/email/retention'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -125,6 +126,13 @@ async function runDelivery(req: NextRequest) {
   const nowMinutes = now.hour * 60 + now.minute
   const failures: { owner?: number; channel: string; status: string }[] = []
   let sentWhatsapp = 0, sentEmail = 0, checked = 0
+  // Prune stale forwarded mail even if that owner has stopped forwarding.
+  // Do not read mail content, wait for inbound mail, or permit an unbounded delete.
+  try { await pruneForwardedEmailInDb() }
+  catch (error) {
+    console.error('FORWARDED_EMAIL_RETENTION_FAILED:', (error as Error)?.message || 'unknown')
+    failures.push({ channel: 'email_retention', status: 'prune_failed' })
+  }
   try {
     const receiptFailures = await reconcileBriefingEmailReceipts(Math.min(deadline, Date.now() + 8000))
     if (receiptFailures) failures.push({ channel: 'email_receipt', status: 'reconciliation_failed' })

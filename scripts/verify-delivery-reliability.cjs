@@ -295,7 +295,7 @@ async function main() {
     '@/lib/security/cron-auth':{isCronAuthorized:()=>true},'@/lib/whatsapp':{},
     '@/lib/services/notification-delivery':{reconcileBriefingEmailReceipts:async()=>0,deliverNotification:async p=>{seen.push(p.owner);assert.equal(await p.ready(),!disabled);return 'skipped'}},
     '@/lib/bot/handlers/reminder-optout':{isSuppressed:async()=>false},'@/lib/supabase-admin':{supabaseAdmin:briefingDb},
-    '@/lib/bot/handlers/morning-briefing':{},'@/lib/bot/handlers/throwback':{},'@/lib/email/resend':{},'@/lib/email/daily-brief':{},'@/lib/email/daily-brief-unsubscribe':{}
+    '@/lib/bot/handlers/morning-briefing':{},'@/lib/bot/handlers/throwback':{},'@/lib/email/resend':{},'@/lib/email/daily-brief':{},'@/lib/email/daily-brief-unsubscribe':{},'@/lib/email/retention':{pruneForwardedEmailInDb:async()=>({examined:0,deleted:0})}
   })
   assert.equal((await briefing.GET(req())).status,200);assert.equal(seen.length,161);assert.ok(seen.includes(-80))
   seen=[];disabled=true;await briefing.GET(req());assert.equal(seen.length,161)
