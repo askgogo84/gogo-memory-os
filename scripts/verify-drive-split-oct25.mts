@@ -36,7 +36,7 @@ const fake = { from(table: string) {
   const rows = () => { let out = (db[table] ||= []).filter(r => f.every(fn => fn(r))); if (order) { const [k, asc] = order; out = [...out].sort((a, b) => (a[k] > b[k] ? 1 : -1) * (asc ? 1 : -1)) } return out.slice(0, lim) }
   const run = () => {
     if (op === 'insert' || op === 'upsert') {
-      const list = (Array.isArray(payload) ? payload : [payload]).map((r: Row) => ({ id: `id${++seq}`, created_at: new Date(++clock * 1000).toISOString(), updated_at: new Date(clock * 1000).toISOString(), ...r }))
+      const list: Row[] = (Array.isArray(payload) ? payload : [payload]).map((r: Row) => ({ id: `id${++seq}`, created_at: new Date(++clock * 1000).toISOString(), updated_at: new Date(clock * 1000).toISOString(), ...r }))
       for (const r of list) {
         if (op === 'upsert' && table === 'split_group_members' && (db[table] ||= []).some(x => x.group_id === r.group_id && x.name === r.name)) continue
         (db[table] ||= []).push(r)
