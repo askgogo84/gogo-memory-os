@@ -44,8 +44,11 @@ export default async function ReportPage({params}:{params:Promise<{id:string}>})
   if(!report&&typeof linkedTelegramIds==='function'){
     const others=(await linkedTelegramIds(telegramId)).filter(v=>v!==telegramId)
     if(others.length){
-      const linked=await supabaseAdmin.from('agent_artifacts').select('title,subtitle,content_json,source_refs,updated_at').eq('id',id).in('telegram_id',others).maybeSingle()
-      if(!linked.error)report=linked.data
+      // Read by id, then authorise in code: the owner must be one of this person's linked ids (exact string match).
+      const linked=await supabaseAdmin.from('agent_artifacts').select('telegram_id,title,subtitle,content_json,source_refs,updated_at').eq('id',id).maybeSingle()
+      const owner=String((linked.data as any)?.telegram_id??'').trim()
+      if(!linked.error&&linked.data&&others.includes(owner))report=linked.data as any
+      else if(linked.data)console.error('REPORT_LINK_MISMATCH:',JSON.stringify({owner:owner.slice(-4),ownerLen:owner.length,others:others.map(v=>`${v.slice(-4)}/${v.length}`)}))
     }
   }
   if(!report){

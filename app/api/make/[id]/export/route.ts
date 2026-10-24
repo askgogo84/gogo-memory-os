@@ -19,7 +19,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   const format = new URL(request.url).searchParams.get('format') || ''
   if (!TYPES[format]) return NextResponse.json({ error: 'bad_format' }, { status: 400 })
-  const { data } = await supabaseAdmin.from('agent_artifacts').select('content_json').eq('id', id).in('telegram_id', await (await import('@/lib/dashboard/owner-ids')).linkedTelegramIds(session.telegramId)).maybeSingle()
+  const ids = await (await import('@/lib/dashboard/owner-ids')).linkedTelegramIds(session.telegramId)
+  const { data: row } = await supabaseAdmin.from('agent_artifacts').select('telegram_id,content_json').eq('id', id).maybeSingle()
+  const data = row && ids.includes(String((row as any).telegram_id ?? '').trim()) ? row : null
   const doc: any = (data?.content_json as any)?.doc
   if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   const ex = await import('@/lib/make/export')
