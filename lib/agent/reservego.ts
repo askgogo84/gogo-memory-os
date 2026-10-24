@@ -10,7 +10,7 @@ const WIDGET_LINK_RE = /https?:\/\/widget\.reservego\.co(?:m)?\/reserveOutlets\/
 export function reservegoOutletId(url: string): string | null {
   try {
     const u = new URL(url)
-    if (!/(?:^|\.)reservego\.co(?:m)?$/i.test(u.hostname)) return null
+    if (u.protocol !== 'https:' || u.username || u.password || !/(?:^|\.)reservego\.co(?:m)?$/i.test(u.hostname)) return null
     return u.pathname.match(OUTLET_RE)?.[1]?.toLowerCase() || null
   } catch { return null }
 }
@@ -21,13 +21,18 @@ export function reservegoWidgetLinkFromHtml(html: string): string | null {
 }
 
 /** The ReserveGo widget for a provider URL: the URL itself, or a widget link on the restaurant's own page. */
-export async function findReservegoWidget(url: string, fetcher: typeof fetch = fetch): Promise<{outletId: string; widgetUrl: string} | null> {
+export async function findReservegoWidget(url: string, fetcher?: typeof fetch): Promise<{outletId: string; widgetUrl: string} | null> {
   const direct = reservegoOutletId(url)
   if (direct) return {outletId: direct, widgetUrl: url}
+  // Search results and user-supplied restaurant URLs are untrusted. The app server
+  // must not issue arbitrary GETs: DNS/private endpoints and redirect hops are not
+  // safely pinned. Fall back to the existing controlled browser route instead.
+  // An explicit fetcher is reserved for inert, injected unit-test transports only.
+  if (!fetcher) return null
   try {
     const u = new URL(url)
-    if (u.protocol !== 'https:') return null
-    const res = await fetcher(url, {cache: 'no-store', redirect: 'follow', signal: AbortSignal.timeout(6_000), headers: {'User-Agent': 'Mozilla/5.0 (compatible; AskGogo/1.0)'}})
+    if (u.protocol !== 'https:' || u.username || u.password) return null
+    const res = await fetcher(url, {cache: 'no-store', redirect: 'manual', signal: AbortSignal.timeout(6_000), headers: {'User-Agent': 'Mozilla/5.0 (compatible; AskGogo/1.0)'}})
     if (!res.ok) return null
     const link = reservegoWidgetLinkFromHtml((await res.text()).slice(0, 2_000_000))
     const outletId = link ? reservegoOutletId(link) : null
