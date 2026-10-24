@@ -32,8 +32,10 @@ export async function getMadeForYou(telegramId: string, kind: MakeKind = 'all'):
   const counts = Object.fromEntries(MAKE_KINDS.map(k => [k.key, 0])) as Record<MakeKind, number>
   const tg = String(telegramId || '')
   if (!tg) return { ok: true, items: [], counts }
+  // Results made on WhatsApp may sit under the person's linked WhatsApp row (see owner-ids).
+  const ids = await (await import('./owner-ids')).linkedTelegramIds(tg).catch(() => [tg])
   const { data, error } = await supabaseAdmin.from('agent_artifacts').select('id,type,title,subtitle,updated_at,fmt:content_json->>format')
-    .eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(120)
+    [ids.length > 1 ? 'in' : 'eq']('telegram_id', (ids.length > 1 ? ids : tg) as any).order('updated_at', { ascending: false }).limit(120)
   if (error) { console.error('MAKE_READ_FAILED:', error.message); return { ok: false, items: [], counts } }
   // 23 Oct live: Make listed "walk 8000 steps daily" and "Keep my upcoming travel documents…" twice each (a goal
   // tracker saved again). Same type + same title is one card (newest), noting the earlier copies.

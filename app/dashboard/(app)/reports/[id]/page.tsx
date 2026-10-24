@@ -8,6 +8,7 @@ import { ReportEditor } from '@/components/dashboard/report-editor'
 import { canRole, listMyWorkspaces } from '@/lib/workspaces/access'
 import { ShareToWorkspace } from '../../business/share-to-workspace'
 import { MakeDocViewer } from '@/components/dashboard/make-doc-viewer'
+import { linkedTelegramIds } from '@/lib/dashboard/owner-ids'
 
 // SecondBrain pilot: workspaces where I may share. Empty when workspaces are not enabled yet.
 async function shareTargets(telegramId:string){
@@ -36,9 +37,17 @@ export default async function ReportPage({params}:{params:Promise<{id:string}>})
   const session=await getSession()
   if(!session)redirect('/dashboard?next='+encodeURIComponent(`/dashboard/reports/${id}`))
   const telegramId=String(session.telegramId)
-  const {data:report,error}=await supabaseAdmin.from('agent_artifacts')
+  let {data:report,error}=await supabaseAdmin.from('agent_artifacts')
     .select('title,subtitle,content_json,source_refs,updated_at').eq('id',id).eq('telegram_id',telegramId).maybeSingle()
   if(error)throw new Error('report_read_unavailable')
+  // Made on WhatsApp: the person's linked WhatsApp row may own it (same whatsapp_id; see owner-ids).
+  if(!report&&typeof linkedTelegramIds==='function'){
+    const others=(await linkedTelegramIds(telegramId)).filter(v=>v!==telegramId)
+    if(others.length){
+      const linked=await supabaseAdmin.from('agent_artifacts').select('title,subtitle,content_json,source_refs,updated_at').eq('id',id).in('telegram_id',others).maybeSingle()
+      if(!linked.error)report=linked.data
+    }
+  }
   if(!report){
     // Diagnose without revealing anything: does the row exist under another owner id?
     const {data:other}=await supabaseAdmin.from('agent_artifacts').select('telegram_id').eq('id',id).maybeSingle()
