@@ -113,5 +113,26 @@ await check('a new parking spot or locker replaces the old one (one current valu
   assert.equal(slots.memorySlotOf('I prefer morning meetings'), null)
 })
 
+await check('P1: production URL summary never directly fetches arbitrary destinations', async () => {
+  let modelCalls = 0
+  const result = await US.summariseUrl(
+    { url: 'http://172.16.0.1/admin', ask: 'Summarise for alex.r@example.com' },
+    { model: async () => { modelCalls++; return 'unsafe' } },
+  )
+  assert.equal(result, null)
+  assert.equal(modelCalls, 0)
+})
+
+await check('P1: privacy scanning is complete and request-local for both research paths', async () => {
+  const { readFileSync } = await import('node:fs')
+  const research = readFileSync('lib/agent/deep-research.ts', 'utf8')
+  const summaries = readFileSync('lib/agent/url-summary.ts', 'utf8')
+  assert.doesNotMatch(research, /currentQuestion/, 'no cross-request global identity')
+  assert.match(research, /scanText:\\s*prompt/, 'scan the full per-call research prompt')
+  assert.match(summaries, /scanText:\\s*prompt/, 'scan the full URL-summary prompt including email addresses')
+  assert.doesNotMatch(summaries, /prompt\\.split\\('\.'\\)/, 'do not truncate on email dot')
+  assert.match(summaries, /if \\(!deps\\.fetchImpl\\) return null/, 'direct production fetch must fail closed')
+})
+
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('duet round 6: all checks passed')
