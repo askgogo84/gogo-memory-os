@@ -1,4 +1,5 @@
 import { worldTimeReply } from './world-time'
+import { signCardToken } from '@/lib/security/card-link'
 import { tryGetConnectionCapabilities } from '@/lib/agent/autonomy-status'
 import { executeReadOnlyCalendarStep } from '@/lib/agent/calendar-read'
 import { createImage, imageRequest, imageRequestRefusal } from '@/lib/services/image-reply'
@@ -1574,13 +1575,15 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
     if (nutritionReply.startsWith('__SEND_DAILY_CARD__')) {
       const tid = nutritionReply.replace('__SEND_DAILY_CARD__', '')
-      const cardUrl = `${APP_URL}/api/nutrition/daily-card/${tid}`
-      return { text: '📊 Your daily nutrition card 👆', mediaUrl: cardUrl, mediaType: 'image/png', resolvedUser }
+      const t = await signCardToken('nutrition-daily', tid)
+      if (t) return { text: '📊 Your daily nutrition card 👆', mediaUrl: `${APP_URL}/api/nutrition/daily-card/${tid}?t=${encodeURIComponent(t)}`, mediaType: 'image/png', resolvedUser }
+      return { text: 'Your daily nutrition card is temporarily unavailable. Ask me "what did I eat today" for the summary.', resolvedUser }
     }
     if (nutritionReply.startsWith('__SEND_WEEKLY_CARD__')) {
       const tid = nutritionReply.replace('__SEND_WEEKLY_CARD__', '')
-      const cardUrl = `${APP_URL}/api/nutrition/weekly-card/${tid}`
-      return { text: '📊 Your weekly nutrition card 👆', mediaUrl: cardUrl, mediaType: 'image/png', resolvedUser }
+      const t = await signCardToken('nutrition-weekly', tid)
+      if (t) return { text: '📊 Your weekly nutrition card 👆', mediaUrl: `${APP_URL}/api/nutrition/weekly-card/${tid}?t=${encodeURIComponent(t)}`, mediaType: 'image/png', resolvedUser }
+      return { text: 'Your weekly nutrition card is temporarily unavailable. Ask me "what did I eat today" for the summary.', resolvedUser }
     }
 
     await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
