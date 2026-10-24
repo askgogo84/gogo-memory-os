@@ -59,7 +59,7 @@ const priorMediaFetch = globalThis.fetch
 process.env.TWILIO_ACCOUNT_SID = twilioSid
 process.env.TWILIO_AUTH_TOKEN = 'inert-media-auth-fixture'
 try {
-  const { downloadTwilioMediaAsDataUrl, trustedTwilioMediaUrl } = await import('../lib/services/image-note-reader')
+  const { downloadTwilioMediaAsDataUrl, trustedTwilioMediaUrl, trustedTwilioCdnRedirect } = await import('../lib/services/image-note-reader')
   assert.equal(trustedTwilioMediaUrl(trustedMediaUrl, twilioSid), trustedMediaUrl)
   const attempts: Array<{ url: string; redirect: RequestRedirect; authorization: string | null }> = []
   globalThis.fetch = (async (url, init) => {
@@ -99,20 +99,55 @@ try {
   assert.equal(attempts[0].authorization,
     'Basic ' + Buffer.from(twilioSid + ':inert-media-auth-fixture').toString('base64'))
 
+  // Twilio's documented protected-media flow returns a short-lived signed
+  // mms.twiliocdn.com URL. The exact approved HTTPS CDN gets NO Basic header.
+  const signedCdn = 'https://mms.twiliocdn.com/signed/fixture-image?token=fixture'
+  assert.equal(trustedTwilioCdnRedirect(signedCdn), signedCdn)
+  for (const badCdn of [
+    'http://mms.twiliocdn.com/signed/media',
+    'https://mms.twiliocdn.com.evil.test/x',
+    'https://169.254.169.254/latest/meta-data/',
+    'https://mms.twiliocdn.com:8443/signed/media',
+    'https://user:pass@mms.twiliocdn.com/signed/media',
+    'https://mms.twiliocdn.com/',
+  ]) assert.equal(trustedTwilioCdnRedirect(badCdn), null)
+
+  globalThis.fetch = (async (url, init) => {
+    attempts.push({ url: String(url), redirect: init?.redirect || 'follow', authorization: new Headers(init?.headers).get('authorization') })
+    if (String(url) === trustedMediaUrl) return Response.redirect(signedCdn, 302)
+    assert.equal(String(url), signedCdn, 'only the exact provider CDN hop is allowed')
+    return new Response(new Uint8Array([137, 80, 78, 71]), { status: 200 })
+  }) as typeof fetch
+  const redirectedMedia = await downloadTwilioMediaAsDataUrl({ mediaUrl: trustedMediaUrl, contentType: 'image/png' })
+  assert.equal(redirectedMedia, 'data:image/png;base64,iVBORw==')
+  assert.equal(attempts.length, 3, 'one API fetch + exactly one approved CDN hop')
+  assert.equal(attempts[1].authorization, attempts[0].authorization, 'Basic only goes to Twilio API')
+  assert.equal(attempts[2].url, signedCdn)
+  assert.equal(attempts[2].authorization, null, 'never forward account credentials to CDN')
+  assert.equal(attempts[2].redirect, 'manual', 'no second CDN redirect is followed')
+
   globalThis.fetch = (async (url, init) => {
     attempts.push({ url: String(url), redirect: init?.redirect || 'follow', authorization: new Headers(init?.headers).get('authorization') })
     return Response.redirect('http://169.254.169.254/latest/meta-data/', 302)
   }) as typeof fetch
   await assert.rejects(downloadTwilioMediaAsDataUrl({ mediaUrl: trustedMediaUrl, contentType: 'image/jpeg' }),
+    /Twilio media redirect refused/)
+  assert.equal(attempts.length, 4, 'hostile redirect rejected before second server fetch')
+
+  globalThis.fetch = (async (url, init) => {
+    attempts.push({ url: String(url), redirect: init?.redirect || 'follow', authorization: new Headers(init?.headers).get('authorization') })
+    return Response.redirect(String(url) === trustedMediaUrl ? signedCdn : 'http://169.254.169.254/', 302)
+  }) as typeof fetch
+  await assert.rejects(downloadTwilioMediaAsDataUrl({ mediaUrl: trustedMediaUrl, contentType: 'image/jpeg' }),
     /Twilio image download failed: 302/)
-  assert.equal(attempts.length, 2, 'redirect is rejected without a second server fetch')
+  assert.equal(attempts.length, 6, 'CDN is never permitted a second redirect')
 
   globalThis.fetch = (async () => new Response('fixture', {
     status: 200, headers: { 'content-length': String(18 * 1024 * 1024 + 1) },
   })) as typeof fetch
   await assert.rejects(downloadTwilioMediaAsDataUrl({ mediaUrl: trustedMediaUrl, contentType: 'image/jpeg' }),
     /Image is too large/)
-  console.log('Twilio media credential egress: hostile, redirect and oversized fixtures blocked; exact signed-account media allowed')
+  console.log('Twilio media credential egress: hostile and oversized fixtures blocked; one approved credential-free Twilio CDN hop allowed')
 } finally {
   globalThis.fetch = priorMediaFetch
   if (priorSid === undefined) delete process.env.TWILIO_ACCOUNT_SID
