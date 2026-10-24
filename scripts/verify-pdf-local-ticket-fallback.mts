@@ -90,4 +90,111 @@ Booking reference B8XIQC
 EY 239 • Etihad
 ` )?.flights[0]?.flightNo,'EY239')
 
+
+/**
+ * P1: Real PDF/ticket handler entry points must refuse untrusted media before
+ * constructing Twilio Basic auth or making any network/provider call.
+ * All positive CDN tests below use an injected, entirely inert fetch.
+ */
+const { fetchTwilioBoundDocumentMedia, TWILIO_DOCUMENT_MAX_BYTES } = await import('../lib/services/twilio-pdf-egress')
+const { parsePdfTicket: parseCoreTicket, parseImageTicket } = await import('../lib/services/pdf-reader')
+const { parsePdfTicket: parseWhatsAppTicket } = await import('../lib/services/pdf-reader-whatsapp')
+const testAccount = 'AC' + '1'.repeat(32)
+const testMessage = 'MM' + '2'.repeat(32)
+const testMedia = 'ME' + '3'.repeat(32)
+const validTwilioMedia = `https://api.twilio.com/2010-04-01/Accounts/${testAccount}/Messages/${testMessage}/Media/${testMedia}`
+const testSecret = 'inert-secret-not-real'
+const privateUrls = [
+  'http://169.254.169.254/latest/meta-data/',
+  'http://127.0.0.1/admin',
+  'https://api.twilio.com.evil.example/steal',
+  'https://api.twilio.com@evil.example/steal',
+  validTwilioMedia.replace('https:', 'http:'),
+  validTwilioMedia.replace('api.twilio.com', 'api.twilio.com:8443'),
+  validTwilioMedia.replace(testAccount, 'AC' + '4'.repeat(32)),
+  validTwilioMedia + '?redirect=https://127.0.0.1',
+  validTwilioMedia + '#fragment',
+  validTwilioMedia.replace('/Media/' + testMedia, '/Media/invalid'),
+]
+let unauthorizedCalls = 0
+const neverFetch = (async () => { unauthorizedCalls++; throw new Error('network reached'); }) as typeof fetch
+for (const url of privateUrls) {
+  await assert.rejects(fetchTwilioBoundDocumentMedia(url, testAccount, testSecret, { fetchImpl: neverFetch }))
+}
+assert.equal(unauthorizedCalls, 0, 'bad media URL must be rejected before network or Basic credentials')
+
+const originalMediaFetch = globalThis.fetch
+globalThis.fetch = neverFetch
+try {
+  await assert.rejects(parseCoreTicket('http://169.254.169.254/', testAccount, testSecret))
+  await assert.rejects(parseWhatsAppTicket('http://169.254.169.254/', testAccount, testSecret))
+  await assert.rejects(parseImageTicket('http://169.254.169.254/', testAccount, testSecret))
+  assert.equal(unauthorizedCalls, 0, 'all real ticket entry points must enforce the shared boundary')
+} finally {
+  globalThis.fetch = originalMediaFetch
+}
+
+const pdfFixture = Buffer.from('%PDF-1.4\nsynthetic only', 'utf8')
+const apiCalls: Array<{ url: string; auth: string | null; redirect: RequestRedirect | undefined }> = []
+const apiFetch = (async (url: any, init?: RequestInit) => {
+  apiCalls.push({ url: String(url), auth: new Headers(init?.headers).get('authorization'), redirect: init?.redirect })
+  return new Response(pdfFixture, { status: 200 })
+}) as typeof fetch
+assert.deepEqual(await fetchTwilioBoundDocumentMedia(validTwilioMedia, testAccount, testSecret, { fetchImpl: apiFetch }), pdfFixture)
+assert.equal(apiCalls.length, 1)
+assert.equal(apiCalls[0].url, validTwilioMedia)
+assert.equal(apiCalls[0].redirect, 'manual')
+assert.equal(apiCalls[0].auth, 'Basic ' + Buffer.from(testAccount + ':' + testSecret).toString('base64'))
+
+const validCdn = 'https://mms.twiliocdn.com/synthetic-fixture.pdf?token=public-test'
+const seen: Array<{ url: string; auth: string | null; redirect: RequestRedirect | undefined }> = []
+const redirected = (async (url: any, init?: RequestInit) => {
+  seen.push({ url: String(url), auth: new Headers(init?.headers).get('authorization'), redirect: init?.redirect })
+  return seen.length === 1
+    ? new Response(null, { status: 302, headers: { location: validCdn } })
+    : new Response(pdfFixture, { status: 200 })
+}) as typeof fetch
+assert.deepEqual(await fetchTwilioBoundDocumentMedia(validTwilioMedia, testAccount, testSecret, { fetchImpl: redirected }), pdfFixture)
+assert.equal(seen.length, 2)
+assert.equal(seen[1].url, validCdn)
+assert.equal(seen[1].auth, null, 'Basic must not follow a Twilio CDN redirect')
+assert.equal(seen[1].redirect, 'manual')
+
+for (const target of [
+  'http://169.254.169.254/latest/meta-data/',
+  'https://evil.example/upload',
+  'https://mms.twiliocdn.com.evil.example/steal',
+  'https://mms.twiliocdn.com@evil.example/steal',
+  'http://mms.twiliocdn.com/untrusted',
+  'https://mms.twiliocdn.com:8080/untrusted',
+]) {
+  let calls = 0
+  const poisoned = (async () => {
+    calls++
+    return new Response(null, { status: 302, headers: { location: target } })
+  }) as typeof fetch
+  await assert.rejects(fetchTwilioBoundDocumentMedia(validTwilioMedia, testAccount, testSecret, { fetchImpl: poisoned }))
+  assert.equal(calls, 1, 'unsafe redirect must not be contacted')
+}
+let secondHopCount = 0
+const doubleRedirect = (async () => {
+  secondHopCount++
+  return new Response(null, { status: 302, headers: { location: validCdn } })
+}) as typeof fetch
+await assert.rejects(fetchTwilioBoundDocumentMedia(validTwilioMedia, testAccount, testSecret, { fetchImpl: doubleRedirect }))
+assert.equal(secondHopCount, 2, 'a second redirect cannot cause third-hop SSRF')
+const tooLargeDeclared = (async () => new Response('X', {
+  status: 200,
+  headers: { 'content-length': String(TWILIO_DOCUMENT_MAX_BYTES + 1) },
+})) as typeof fetch
+await assert.rejects(fetchTwilioBoundDocumentMedia(validTwilioMedia, testAccount, testSecret, { fetchImpl: tooLargeDeclared }), /size limit/)
+const oversizedStream = (async () => new Response(new ReadableStream({
+  start(controller) {
+    controller.enqueue(new Uint8Array(TWILIO_DOCUMENT_MAX_BYTES))
+    controller.enqueue(new Uint8Array(1))
+    controller.close()
+  },
+}))) as typeof fetch
+await assert.rejects(fetchTwilioBoundDocumentMedia(validTwilioMedia, testAccount, testSecret, { fetchImpl: oversizedStream }), /size limit/)
+
 console.log('PDF local ticket fallback regression passed')
