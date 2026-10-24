@@ -51,7 +51,7 @@ export default async function ReportPage({params}:{params:Promise<{id:string}>})
   if(!report){
     // Diagnose without revealing anything: does the row exist under another owner id?
     const {data:other}=await supabaseAdmin.from('agent_artifacts').select('telegram_id').eq('id',id).maybeSingle()
-    console.error('REPORT_NOT_IN_ACCOUNT:',JSON.stringify({id,exists:!!other,ownerMatchesType:other?typeof other.telegram_id:null,sessionTg:String(telegramId).slice(-4),ownerTg:other?String(other.telegram_id).slice(-4):null}))
+    console.error('REPORT_NOT_IN_ACCOUNT:',JSON.stringify({id,exists:!!other,ownerMatchesType:other?typeof other.telegram_id:null,sessionTg:String(telegramId).slice(-4),ownerTg:other?String(other.telegram_id).slice(-4):null,ownerShape:other?`${String(other.telegram_id).startsWith('-')?'neg':'pos'}${String(other.telegram_id).replace('-','').length}`:null}))
   }
   if(!report)notFound()
   // Make: a deck or a sheet has its own viewer and downloads.

@@ -402,7 +402,9 @@ function parseTomorrowReminder(text: string): ParsedReminder {
   if (getAmbiguousReminderTime(text)) return null
   const nowIst = istNowParts()
   const nextDay = addIstDays(nowIst, 1)
-  const time = parseTimePart(text) || { hour: 9, minute: 0 }
+  // The clock time next to "tomorrow" wins over other numbers in the sentence ("for 12 Dec", 24 Oct live).
+  const near = text.match(/\b(?:tomorrow|tmrw|tmr)\b.{0,30}/i)?.[0]
+  const time = (near && parseTimePart(near)) || parseTimePart(text) || { hour: 9, minute: 0 }
   const when = istWallTimeToUtcDate(nextDay.year, nextDay.month, nextDay.day, time.hour, time.minute)
   return { kind: 'one_time', remindAtIso: when.toISOString(), message: cleanMessageText(text) }
 }
@@ -597,7 +599,18 @@ function parseReminderBase(text: string): ParsedReminder {
   if(recurring)return recurring
   // A named date or "today" owns its interpretation even when invalid/past.
   // Never fall through to the next weekday, tomorrow, or next year.
-  if(hasNamedReminderDate(text))return parseAbsoluteDateReminder(text)
+  // 24 Oct live: "Saw Divya's wedding invite for 12 Dec … remind me about this tomorrow at 10am" was set for 12 Dec.
+  // When the clock time is tied to today/tomorrow/tonight, that is when to remind; the named date is the subject.
+  const relativeTimed=/\b(?:today|tomorrow|tonight)\s+(?:at|by|around)\s+\d|\b\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)\s+(?:today|tomorrow|tonight)\b/i.test(text)
+  if(hasNamedReminderDate(text)&&!relativeTimed)return parseAbsoluteDateReminder(text)
+  if(hasNamedReminderDate(text)&&relativeTimed){
+    const r=/\btoday\b/i.test(text)?parseTodayReminder(text):parseTomorrowReminder(text)
+    // "Saw X on 12 Dec. Remind me about this tomorrow at 10am": the reminder is about the earlier sentence, kept whole.
+    const subject=text.match(/^([\s\S]{5,200}?)[.!;,]?\s+remind me\s+(?:about\s+)?(?:this|that|it)\b/i)?.[1]?.trim()
+    if(r&&subject)return {...r,message:subject}
+    if(r)return {...r,message:String(r.message||'').replace(/^about\s+/i,'')}
+    return r
+  }
   if(/\byesterday\b/i.test(text))return null
   if(/\btoday\b/i.test(text))return parseTodayReminder(text)
   return parseRelativeReminder(text)||parseTomorrowReminder(text)||parseSpecificWeekdayReminder(text)||parseAbsoluteDateReminder(text)||parseSimpleAtTime(text)||null
