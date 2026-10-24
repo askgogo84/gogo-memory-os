@@ -103,11 +103,19 @@ await check('in-page edits are signed-in and owner-scoped', () => {
   assert.match(readFileSync('components/dashboard/make-doc-viewer.tsx', 'utf8'), /\/api\/make\/\$\{encodeURIComponent\(id\)\}\/edit/)
 })
 
-await check('a wrapped or bad cheap edit retries on the strong model', async () => {
-  const s = D.validSheet({ title: 'Home', columns: ['Item', 'Amount'], rows: [['Rent', 30000]] })!
-  const calls: any[] = []
-  const next = await editDoc(s, 'add a row for school fees', { model: async (_p: string, _s: string, o?: any) => { calls.push(!!o?.strong); return o?.strong ? JSON.stringify({ spreadsheet: { ...s, rows: [...s.rows, ['School fees', 8000]] } }) : 'Sure! here it is' } })
-  assert.deepEqual(calls, [false, true]); assert.equal(D.sheetTotal(next as any), 38000)
+await check('owner-private Make edits never reach a cheap model, including the invalid-output retry', async () => {
+  const confidential = 'Internal owner-only acquisition forecast'
+  const s = D.validSheet({ title: 'Private plan', columns: ['Item', 'Amount'], rows: [[confidential, 30000]] })!
+  const calls: boolean[] = []
+  const next = await editDoc(s, 'add a row for school fees', { model: async (prompt: string, scanText: string, opts?: any) => {
+    calls.push(!!opts?.strong)
+    assert.equal(scanText, 'add a row for school fees', 'innocent instructions cannot classify a stored private document')
+    assert.match(prompt, /Internal owner-only acquisition forecast/, 'existing private document is included in the model prompt')
+    return calls.length === 1 ? 'Sure! here it is' : JSON.stringify({ spreadsheet: { ...s, rows: [...s.rows, ['School fees', 8000]] } })
+  } })
+  assert.deepEqual(calls, [true, true], 'both attempts must stay on the strong/primary provider')
+  assert.equal(D.sheetTotal(next as any), 38000)
+  assert.match(readFileSync('lib/make/generate.ts', 'utf8'), /model\(editPrompt\(doc, instruction\), instruction, \{ strong: true \}\)/, 'privacy boundary must be applied by actual editDoc caller')
 })
 
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
