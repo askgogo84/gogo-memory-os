@@ -2,15 +2,18 @@
 // A service-role artifact read MUST have an explicit, full-phone owner-row match.
 // Missing/ambiguous legacy links fail closed until a verified link is established.
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { authorizedLinkedOwnerIds, canonicalInternationalPhone, phoneRowCandidates } from './owner-link'
+import { authorizedLinkedOwnerIds, canonicalInternationalPhone, exactOwnerDecimalId, phoneRowCandidates } from './owner-link'
 
 export async function linkedTelegramIds(sessionTelegramId: string | number): Promise<string[]> {
-  const own = String(sessionTelegramId)
+  // Telegram IDs may be 64-bit persisted decimal strings. Number(...) silently
+  // rounds distinct owner identities, so preserve the exact decimal for SQL.
+  const own = exactOwnerDecimalId(sessionTelegramId)
+  if (!own) return []
   try {
     const { data: me, error: ownerError } = await supabaseAdmin
       .from('users')
       .select('whatsapp_id')
-      .eq('telegram_id', Number(own))
+      .eq('telegram_id', own)
       .maybeSingle()
     if (ownerError || !me) return [own]
 
