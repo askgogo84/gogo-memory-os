@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { dashboardAccountIsActive, exactDashboardOwnerId } from '../lib/dashboard/session-access.ts'
+import { dashboardAccountIsActive, dashboardSessionHasNotExpired, exactDashboardOwnerId } from '../lib/dashboard/session-access.ts'
 
 const auth=readFileSync('lib/admin/auth.ts','utf8')
 const layout=readFileSync('app/admin/layout.tsx','utf8')
@@ -34,11 +34,20 @@ assert.ok(adminIndex>postIndex&&adminIndex<bodyIndex,'POST must authorize admin 
 // P1 regression: blocking an existing user must invalidate *already minted* 30-day cookies,
 // not just deny a new cookie. The same exact persisted user row must guard both paths.
 const dashboardSession = readFileSync('lib/dashboard/session.ts', 'utf8')
-assert.match(dashboardSession, /import \{ dashboardAccountIsActive \}/)
+assert.match(dashboardSession, /import \{ dashboardAccountIsActive, dashboardSessionHasNotExpired \}/)
+assert.match(dashboardSession, /if \(!dashboardSessionHasNotExpired\(data\.expires_at\)\) return null/)
 assert.match(dashboardSession, /if \(!\(await sessionOwnerAllowed\(telegramId\)\)\) return null/)
 assert.match(dashboardSession, /if \(!\(await sessionOwnerAllowed\(data\.telegram_id\)\)\) return null/)
 assert.equal((dashboardSession.match(/await sessionOwnerAllowed\(/g) || []).length, 2, 'issuance and every session read must recheck current owner')
 assert.match(dashboardSession, /\.eq\('telegram_id', id\)/, 'must resolve the exact session owner, never a suffix or client-supplied ID')
+
+const now = Date.parse('2026-10-24T12:00:00.000Z')
+assert.equal(dashboardSessionHasNotExpired('2026-10-24T12:00:01.000Z', now), true)
+assert.equal(dashboardSessionHasNotExpired('2026-10-24T12:00:00.000Z', now), false)
+assert.equal(dashboardSessionHasNotExpired('2026-10-24T11:59:59.000Z', now), false)
+for (const bad of [null, undefined, '', 'not-a-date', 1792836512645]) {
+  assert.equal(dashboardSessionHasNotExpired(bad, now), false, 'unparseable/absent cookie expiry fails closed')
+}
 
 let status: string | null = 'active'
 let missing = false
