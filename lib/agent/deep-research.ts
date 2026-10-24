@@ -17,10 +17,10 @@ export function isDeepResearchRequest(text: string) {
 
 type Model = (prompt: string, maxTokens: number, model: string) => Promise<string>
 // The cheapest configured provider first (public web research only), Claude as the backstop.
-let currentQuestion = ''
+// Scan each complete per-invocation prompt: no process-global request data or cross-user race.
 const defaultModel: Model = async (prompt, maxTokens, model) => {
   const { cheapComplete } = await import('@/lib/inference/cheap')
-  const cheap = await cheapComplete({ taskClass: 'public_web_research', prompt, scanText: currentQuestion, maxTokens }).catch(() => null)
+  const cheap = await cheapComplete({ taskClass: 'public_web_research', prompt, scanText: prompt, maxTokens }).catch(() => null)
   if (cheap) return cheap
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) throw new Error('no_model')
@@ -83,7 +83,6 @@ export async function gatherSources(queries: string[], deps: { search?: typeof s
 }
 
 export async function runDeepResearch(question: string, deps: { model?: Model; search?: typeof searchWebResults; fetchImpl?: typeof fetch } = {}) {
-  currentQuestion = question
   const model = deps.model || defaultModel
   const queries = await planQueries(question, model)
   const sources = await gatherSources(queries, deps)
