@@ -29,7 +29,7 @@ async function saveFeatureConversation(telegramId: number, userText: string, ass
 function workspaceConnectionReply(actor:AgentActor) {
   const url=buildGmailConnectUrl(actor.legacyTelegramId)
   return url
-    ? `Google Workspace needs to be connected or refreshed before I can read that private context.\n\nConnect read-only Gmail, Contacts and Drive here:\n${url}\n\nSending email, changing files and scheduling still require the normal Gogo approval boundary.`
+    ? `Google Workspace needs to be connected or refreshed before I can read that private context.\n\nConnect read-only Gmail, Contacts and Drive here:\n${url}${process.env.COMPOSIO_API_KEY?`\n\nIf Google blocks that sign-in, connect Drive here instead (the Google screen says Composio):\nhttps://app.askgogo.in/api/connect/google-drive`:''}\n\nSending email, changing files and scheduling still require the normal Gogo approval boundary.`
     : 'Google Workspace connection is temporarily unavailable. I did not guess or use another account.'
 }
 
