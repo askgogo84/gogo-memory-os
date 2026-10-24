@@ -285,7 +285,7 @@ export function trustedAssetTwilioMediaUrl(raw: unknown, accountSid: string): st
         url.username || url.password || url.port || url.search || url.hash) return null
     const accountBoundPath = new RegExp(
       '^/2010-04-01/Accounts/' + accountSid +
-      '/Messages/(?:SM|MM)[a-f0-9]{32}/Media/ME[a-f0-9]{32}(?:/Content)?, 'i',
+      '/Messages/(?:SM|MM)[a-f0-9]{32}/Media/ME[a-f0-9]{32}(?:/Content)?$', 'i',
     )
     return accountBoundPath.test(url.pathname) ? url.toString() : null
   } catch { return null }
