@@ -49,7 +49,7 @@ const MAX_TWILIO_IMAGE_BYTES = 18 * 1024 * 1024
 
 async function readBoundedTwilioImage(response: Response): Promise<Buffer> {
   const header = response.headers.get('content-length')
-  if (header !== null && (!/^\\d+$/.test(header) || Number(header) > MAX_TWILIO_IMAGE_BYTES)) {
+  if (header !== null && (!/^\d+$/.test(header) || Number(header) > MAX_TWILIO_IMAGE_BYTES)) {
     throw new Error('Image is too large. Please send a smaller image.')
   }
   const stream = response.body
