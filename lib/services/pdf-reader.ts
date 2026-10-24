@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { fetchTwilioBoundDocumentMedia } from './twilio-pdf-egress'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
@@ -252,14 +253,8 @@ async function fetchTwilioPdfBuffer(
   accountSid:string,
   authToken:string,
 ):Promise<Buffer>{
-  const response=await fetch(mediaUrl,{
-    headers:{Authorization:'Basic '+Buffer.from(`${accountSid}:${authToken}`).toString('base64')},
-  })
-  if(!response.ok){
-    console.error('[pdf-reader] Failed to fetch PDF:',response.status,response.statusText)
-    throw new Error(`Failed to fetch PDF: ${response.status}`)
-  }
-  return Buffer.from(await response.arrayBuffer())
+  return fetchTwilioBoundDocumentMedia(mediaUrl, accountSid, authToken)
+
 }
 
 /**
@@ -270,7 +265,7 @@ export async function parsePdfTicket(
   accountSid: string,
   authToken: string
 ): Promise<TicketInfo> {
-  console.log('[pdf-reader] Fetching PDF from Twilio:', mediaUrl)
+  console.log('[pdf-reader] Fetching authenticated PDF from Twilio')
   const pdfBuffer=await fetchTwilioPdfBuffer(mediaUrl,accountSid,authToken)
   console.log('[pdf-reader] PDF fetched, bytes:',pdfBuffer.byteLength)
 
@@ -456,21 +451,9 @@ export async function parseImageTicket(
   authToken: string,
   mediaType: string = 'image/jpeg'
 ): Promise<TicketInfo> {
-  console.log('[ticket-reader] Fetching ticket image from Twilio:', mediaUrl)
+  console.log('[ticket-reader] Fetching authenticated ticket image from Twilio')
 
-  const response = await fetch(mediaUrl, {
-    headers: {
-      Authorization: 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64'),
-    },
-  })
-
-  if (!response.ok) {
-    console.error('[ticket-reader] Failed to fetch image:', response.status, response.statusText)
-    throw new Error(`Failed to fetch image: ${response.status}`)
-  }
-
-  const imgBuffer = await response.arrayBuffer()
-  const base64Img = Buffer.from(imgBuffer).toString('base64')
+  const base64Img = (await fetchTwilioBoundDocumentMedia(mediaUrl, accountSid, authToken)).toString('base64')
   const cleanMediaType = mediaType.includes('png') ? 'image/png' : 'image/jpeg'
 
   // Small forwarded screenshots are hard to read; prefer the newer model, fall back if unavailable.
