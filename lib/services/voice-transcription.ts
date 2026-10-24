@@ -87,7 +87,7 @@ const MAX_VOICE_NOTE_BYTES = 24 * 1024 * 1024
 
 async function boundedVoiceAudio(response: Response): Promise<ArrayBuffer> {
   const length = response.headers.get('content-length')
-  if (length !== null && (!/^\\d+$/.test(length) || Number(length) > MAX_VOICE_NOTE_BYTES)) {
+  if (length !== null && (!/^\d+$/.test(length) || Number(length) > MAX_VOICE_NOTE_BYTES)) {
     throw new Error('Voice note is too large. Please send a shorter voice note.')
   }
   const stream = response.body
