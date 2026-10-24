@@ -16,7 +16,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const instruction = String(body?.instruction || '').replace(/\s+/g, ' ').trim()
   if (!instruction || instruction.length > 400) return NextResponse.json({ error: 'bad_instruction' }, { status: 400 })
   const { linkedTelegramIds } = await import('@/lib/dashboard/owner-ids')
-  const { data } = await supabaseAdmin.from('agent_artifacts').select('telegram_id,content_json').eq('id', id).in('telegram_id', await linkedTelegramIds(session.telegramId)).maybeSingle()
+  const ids = await linkedTelegramIds(session.telegramId)
+  const { data: row } = await supabaseAdmin.from('agent_artifacts').select('telegram_id,content_json').eq('id', id).maybeSingle()
+  const data = row && ids.includes(String((row as any).telegram_id ?? '').trim()) ? row : null
   const content: any = data?.content_json
   if (!content?.doc || (content.doc.format !== 'deck' && content.doc.format !== 'sheet')) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   const { editDoc } = await import('@/lib/make/generate')
