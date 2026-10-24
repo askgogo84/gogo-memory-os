@@ -26,14 +26,49 @@ const fetcher = (async (url: any, init: any = {}) => {
 assert.equal(rg.reservegoOutletId(WIDGET), OUTLET)
 assert.equal(rg.reservegoOutletId('https://widget.reservego.com/reserveOutlets/' + OUTLET), OUTLET)
 assert.equal(rg.reservegoOutletId('https://evil.example/reserveOutlets/' + OUTLET), null, 'only reservego hosts')
+assert.equal(rg.reservegoOutletId('http://widget.reservego.co/reserveOutlets/' + OUTLET), null, 'direct widget requires HTTPS')
+assert.equal(rg.reservegoOutletId('https://attacker@widget.reservego.co/reserveOutlets/' + OUTLET), null, 'no credentials in widget URL')
 assert.equal(rg.reservegoClock('07:00 PM'), '19:00'); assert.equal(rg.reservegoClock('12:00 PM'), '12:00'); assert.equal(rg.reservegoClock('12:30 AM'), '00:30')
 
 // The restaurant's own page links the widget → outlet found; a direct widget URL needs no page fetch.
 assert.deepEqual(await rg.findReservegoWidget('https://toit.in/bangalore-reservation/', fetcher), {outletId: OUTLET, widgetUrl: WIDGET})
+assert.equal(calls[0]?.init?.redirect, 'manual', 'injected page fixture also forbids automatic redirect following')
 calls = []
 assert.equal((await rg.findReservegoWidget(WIDGET, fetcher))?.outletId, OUTLET)
 assert.equal(calls.length, 0)
 assert.equal(await rg.findReservegoWidget('https://nowidget.example/', fetcher), null)
+
+// Independently confirmed SSRF boundary: a search-discovered first-party URL,
+// including a public redirector or cloud metadata IP, must NOT cause the normal
+// server call path to touch the network. No real network traffic in this test.
+const originalFetch = globalThis.fetch
+let unexpectedNetworkCalls = 0
+globalThis.fetch = (async () => {
+  unexpectedNetworkCalls++
+  throw new Error('global server fetch must not run for untrusted page URLs')
+}) as typeof fetch
+try {
+  for (const candidate of [
+    'https://toit.in/bangalore-reservation/',
+    'https://169.254.169.254/latest/meta-data/',
+    'https://public.example/redirect-to-internal',
+    'https://127.0.0.1/private',
+    'https://[::1]/private',
+  ]) {
+    assert.equal(await rg.findReservegoWidget(candidate), null, 'untrusted server page read fails closed: ' + candidate)
+  }
+  assert.deepEqual(await rg.findReservegoWidget(WIDGET), {outletId: OUTLET, widgetUrl: WIDGET},
+    'direct trusted widget extraction survives closed page-read path')
+  assert.equal(unexpectedNetworkCalls, 0, 'global fetch was never called')
+} finally {
+  globalThis.fetch = originalFetch
+}
+const redirectCalls: string[] = []
+assert.equal(await rg.findReservegoWidget('https://public.example/go', (async (_url:any, init:any) => {
+  redirectCalls.push(init.redirect)
+  return Response.redirect('http://169.254.169.254/latest/meta-data/', 302)
+}) as any), null, 'synthetic redirect is never followed')
+assert.deepEqual(redirectCalls, ['manual'], 'even the injected transport receives manual redirect policy')
 
 calls = []
 const out = await rg.fetchReservegoSlots(OUTLET, '2026-10-20', fetcher)
