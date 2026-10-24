@@ -2,7 +2,7 @@
 // Inert tests: no DB, browser, credentials, or production user content.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { authorizedLinkedOwnerIds, canonicalInternationalPhone, phoneRowCandidates } from '../lib/dashboard/owner-link.ts'
+import { authorizedLinkedOwnerIds, canonicalInternationalPhone, exactOwnerDecimalId, phoneRowCandidates } from '../lib/dashboard/owner-link.ts'
 
 let checks = 0
 function check(name: string, fn: () => void) {
@@ -78,6 +78,30 @@ check('database lookup uses full identities, not suffix searches', () => {
   assert.ok(!source.includes('.ilike('), 'suffix wildcard lookup must not authorize')
   assert.ok(!source.includes('slice(-9)'), 'never derive an owner from last nine digits')
   assert.ok(!source.includes('slice(-10)'), 'never derive an owner from last ten digits')
+})
+
+check('P1: 64-bit owner ids are exact decimals, never rounded or inferred', () => {
+  const a = '9007199254740992'
+  const b = '9007199254740993'
+  assert.equal(Number(a), Number(b), 'pre-fix Number conversion aliases distinct persisted owner IDs')
+  assert.equal(exactOwnerDecimalId(a), a)
+  assert.equal(exactOwnerDecimalId(b), b)
+  assert.equal(exactOwnerDecimalId(Number(b)), null, 'rounded unsafe JS numbers cannot authorize')
+  assert.equal(exactOwnerDecimalId(null), null)
+  assert.equal(exactOwnerDecimalId(0), null)
+  assert.equal(exactOwnerDecimalId('00012'), null)
+  assert.deepEqual(authorizedLinkedOwnerIds('111', '+14155552671', [
+    { telegram_id: Number(b), whatsapp_id: '+14155552671' },
+    { telegram_id: b, whatsapp_id: '+14155552671' },
+    { telegram_id: a, whatsapp_id: '+914155552671' },
+  ]), ['111', b], 'unsafe rounded row rejected, exact intended owner remains')
+  assert.deepEqual(authorizedLinkedOwnerIds(Number(b), '+14155552671', [
+    { telegram_id: 222, whatsapp_id: '+14155552671' },
+  ]), [], 'invalid session owner fails completely closed')
+  const source = readFileSync('lib/dashboard/owner-ids.ts', 'utf8')
+  assert.match(source, /\.eq\('telegram_id', own\)/, 'service role query must bind the precise decimal owner')
+  assert.doesNotMatch(source, /Number\(own\)/, 'never coerce large owner IDs into JS Number')
+  assert.match(source, /exactOwnerDecimalId\(sessionTelegramId\)/, 'validate ID before owner query')
 })
 
 console.log(`Make owner isolation: ${checks} groups passed`)
