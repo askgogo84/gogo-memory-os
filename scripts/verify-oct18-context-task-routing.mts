@@ -11,7 +11,7 @@ const {parseRestaurantReservationIntent}=await import('../lib/agent/restaurant-r
 const {tryRunWhatsAppAgent}=await import('../lib/agent/whatsapp-bridge')
 const {taskStepIntent,executeTaskStep}=await import('../lib/agent/general-planner')
 const {prioritizeRecallEvidence,renderContextBlock}=await import('../lib/agent/context-brain')
-const {planningCalendarInstruction}=await import('../lib/bot/process-message')
+const {planningCalendarInstruction,isPronounReminder}=await import('../lib/bot/process-message')
 const originalFetch=globalThis.fetch
 let writes=0
 globalThis.fetch=async(input,init)=>{
@@ -46,6 +46,9 @@ try{
   assert.equal((odd.output as any).skipped,'task_text_not_user_facing')
   assert.equal(writes,0,'skipped tasks are never written')
 }finally{globalThis.fetch=originalFetch}
+// 24 Oct live: a reminder saved as just "This".
+for(const m of ['This','this','about that','it','This one.'])assert.ok(isPronounReminder(m),m)
+for(const m of ['This weekend trip','call Nithin','drink water'])assert.ok(!isPronounReminder(m),m)
 const query='Based on everything you already know about me, would 25 October 2026 around 8:30 PM be a good time for dinner in Bengaluru? Tell me what existing context matters.'
 assert.equal(planningCalendarInstruction(query),'Show my calendar on 2026-10-25')
 const move={id:'move',source:'semantic_memory',summary:'I am moving house on 25 October 2026.',score:.6,confidence:.95,inferred:false}

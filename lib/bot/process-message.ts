@@ -349,6 +349,22 @@ async function resolveReminderTimezone(telegramId: number): Promise<string> {
   return data?.timezone || 'Asia/Kolkata'
 }
 
+// 24 Oct live: "remind me about this at 8pm" saved a reminder that just said "This". A bare pronoun takes its
+// subject from the person's previous message (what "this" points at); otherwise it says what it is for.
+export function isPronounReminder(message: string) {
+  return /^\s*(?:about\s+)?(?:this|that|it|these|those|the same|same|this one|that one)\s*[.!?]*\s*$/i.test(String(message || ''))
+}
+async function resolvePronounReminder(chatId: number, message: string) {
+  if (!isPronounReminder(message)) return message
+  try {
+    const { data } = await supabaseAdmin.from('conversations').select('content').eq('telegram_id', chatId).eq('role', 'user').order('created_at', { ascending: false }).limit(4)
+    const prior = ((data || []) as any[]).map(r => String(r.content || '').trim())
+      .find(t => t && t.length <= 200 && !/\bremind\b/i.test(t) && !/^(?:yes|no|ok|okay|done|thanks?)\b/i.test(t))
+    if (prior) return prior.replace(/\s+/g, ' ').slice(0, 160)
+  } catch {}
+  return 'Follow up on what you asked about'
+}
+
 async function createReminder(
   telegramId: number,
   chatId: number,
@@ -357,6 +373,7 @@ async function createReminder(
   pattern?: string,
   whatsappTo?: string | null
 ) {
+  message = await resolvePronounReminder(chatId, message)
   const timezone = await resolveReminderTimezone(telegramId)
   if (pattern) {
     const duplicate = await findDuplicateRecurringReminder(telegramId, pattern, remindAt, message)
