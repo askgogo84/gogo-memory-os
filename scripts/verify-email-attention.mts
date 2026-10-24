@@ -185,6 +185,8 @@ await check('Resend parsed email rebuilds into a message the inbound pipeline re
 
 await check('AskGogo\'s own digest emails never need you', () => {
   assert.equal(A.classifyEmail({ id: 'x', from: 'Gogo from AskGogo <brief@askgogo.in>', subject: '4 events · 6 reminders', snippet: 'Payment failed and shutdown coming soon — action required', date: new Date().toISOString() } as any), 'update')
+  assert.equal(A.classifyEmail({ id: 'y', from: 'Gogo from AskGogo <gogo@mail.resend-sender.com>', subject: '4 events · 6 reminders', snippet: 'Something went wrong with a payment, action required, shutdown', date: new Date().toISOString() } as any), 'update')
+  assert.notEqual(A.classifyEmail({ id: 'z', from: 'Nithin <nithin@tipplr.in>', subject: 'Re: AskGogo POS', snippet: 'Can you approve this by tomorrow?', date: new Date().toISOString() } as any), 'update')
 })
 
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
