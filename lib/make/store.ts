@@ -78,7 +78,8 @@ export async function handleMakeDoc(params: { actor: Pick<AgentActor, 'legacyTel
   const loaded = await loadDoc(telegramId, id) || (telegramId !== chatId ? await loadDoc(chatId, id) : null)
   if (!loaded) return null
   const next = await editDoc(loaded.doc, text)
-  if (!next) return { text: `I couldn't apply that change. Try saying it another way, like "make slide 2 shorter".`, handledBy: 'make-doc', status: 'failed' }
+  // The failure keeps the link, so the next try still edits the same document (24 Oct battery).
+  if (!next) return { text: `📊 Not updated: I couldn't apply that change. Try saying it another way, like "make slide 2 shorter".\nhttps://app.askgogo.in/dashboard/reports/${id}`, handledBy: 'make-doc', status: 'failed' }
   await updateDoc(loaded.owner, id, loaded.content, next, text)
   return { text: editedReply(next, id), handledBy: 'make-doc', status: 'completed' }
 }

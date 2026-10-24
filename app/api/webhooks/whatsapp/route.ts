@@ -266,7 +266,7 @@ async function makeDocWasLastReply(telegramId: number | string) {
   // "make slide 3 shorter" edits the deck or sheet only when Gogo's latest message was that Make reply.
   try {
     const { data } = await supabaseAdmin.from('conversations').select('role,content').eq('telegram_id', telegramId).order('created_at', { ascending: false }).limit(3)
-    return /^📊 (?:Your (?:deck|sheet) is ready|Updated)/.test(String((data || []).find((r: any) => r.role === 'assistant')?.content || ''))
+    return /^📊 (?:Your (?:deck|sheet) is ready|Updated|Not updated)/.test(String((data || []).find((r: any) => r.role === 'assistant')?.content || ''))
   } catch { return false }
 }
 
