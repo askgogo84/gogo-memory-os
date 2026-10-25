@@ -69,6 +69,15 @@ const PROTECTED_SNIPPETS = [
   '[EXECUTION_RECORD run=run_552 status=verified_success] calendar.insert evt_19 ',
   '-----BEGIN APPROVAL-----\n  id: apv_9001\n\n  amount: ₹1,240   \n-----END APPROVAL-----',
 ]
+// Guard records even when a document assembler prepends prose to their line.
+for (const text of [
+  'Context: [APPROVAL id=synthetic] Do not send.',
+  'Excerpt [EXECUTION_RECORD run=synthetic] uncertain',
+]) {
+  assert.equal(routeTask({ taskClass:'public_web_research', containsPersonalData:false, text, providers }).allowed, false,
+    'inline protected records must not reach a cheap provider')
+}
+
 const SENTINEL = 'ZZ_PRIVATE_SENTINEL_'
 
 type Mode = 'clean' | 'declared' | 'hidden_pii' | 'protected'
