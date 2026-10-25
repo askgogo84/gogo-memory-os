@@ -27,6 +27,7 @@ jobs:
           tar xzf obscura.tgz --no-same-owner
           chmod 700 obscura
           ./obscura --version
+      # Only this inert CI fixture may access loopback. The production adapter never sets this flag.
       - name: Static and JS page rendering (local HTTP fixture only)
         shell: bash
         run: |
@@ -38,8 +39,8 @@ jobs:
           server=$!
           trap 'kill "$server" 2>/dev/null || true' EXIT
           for i in $(seq 1 30); do curl -sf http://127.0.0.1:18868/static.html >/dev/null && break || sleep 0.2; done
-          ./obscura fetch http://127.0.0.1:18868/static.html --eval document.title --timeout 12 --quiet > static.out
+          OBSCURA_ALLOW_PRIVATE_NETWORK=1 ./obscura fetch http://127.0.0.1:18868/static.html --eval document.title --timeout 12 --quiet > static.out
           grep -Fq 'AskGogo static fixture' static.out
-          ./obscura fetch http://127.0.0.1:18868/dynamic.html --eval document.body.innerText --timeout 12 --quiet > dynamic.out
+          OBSCURA_ALLOW_PRIVATE_NETWORK=1 ./obscura fetch http://127.0.0.1:18868/dynamic.html --eval document.body.innerText --timeout 12 --quiet > dynamic.out
           grep -Fq 'Rendered by JS' dynamic.out
           echo 'OBSC-01 static and OBSC-02 JS fixture passed; no external provider was accessed'
