@@ -149,7 +149,7 @@ assert(deferredResolve)
 const count=requests.length
 poll()
 assert.equal(requests.length, count, 'no duplicate concurrent polling reads')
-deferredResolve({ok:false,status:503,json:async()=>({error:'unavailable'})})
+;(deferredResolve as (value:any)=>void)({ok:false,status:503,json:async()=>({error:'unavailable'})})
 assert.equal(visible(await receive()), false, 'failed delayed refresh revokes stale card')
 
 assert.equal(replies.length,0)
