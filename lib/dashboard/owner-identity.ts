@@ -1,10 +1,15 @@
 import { randomBytes } from 'node:crypto'
 
+const MIN_OWNER = BigInt('-9223372036854775808')
+const MAX_OWNER = BigInt('9223372036854775807')
+
 /** Keep persisted numeric IDs exact; never coerce an unsafe bigint through JS Number. */
 export function exactSessionOwnerId(value: string | number | null | undefined): string | null {
-  if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
-  const raw = String(value ?? '').trim()
-  return /^-?[1-9]\d*$/.test(raw) ? raw : null
+  if (typeof value !== 'string' && (typeof value !== 'number' || !Number.isSafeInteger(value))) return null
+  const raw = String(value)
+  if (raw.length > 20 || !/^-?[1-9]\d*$/.test(raw)) return null
+  const owner = BigInt(raw)
+  return owner >= MIN_OWNER && owner <= MAX_OWNER ? raw : null
 }
 
 /** Authorization is bounded to the authenticated owner, not to a phone-number search. */

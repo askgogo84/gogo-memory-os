@@ -102,6 +102,7 @@ async function composioDriveFor(actor: AgentActor): Promise<((url:string)=>Promi
 }
 
 async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit = {}) {
+  if (!Number.isSafeInteger(actor.legacyTelegramId) || actor.legacyTelegramId === 0) throw new Error('workspace_owner_invalid')
   // OAuth reach and the user's read preference are separate. Check before even
   // loading credentials; Drive/Contacts retain their independent Workspace access.
   if(url.startsWith('https://gmail.googleapis.com/')){
