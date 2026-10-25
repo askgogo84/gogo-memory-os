@@ -30,7 +30,7 @@ assert.equal(explicitPublicRetailSearch(flipkart,{browser_safe_to_retry:false}),
 assert.equal(explicitPublicRetailSearch({...flipkart,objective:'Read-only: find my account prices'}),false)
 assert.equal(explicitPublicRetailSearch({...flipkart,objective:'Read-only: compare prices then login'}),false)
 assert.equal(explicitPublicRetailSearch({...flipkart,url:'https://www.flipkart.com/account/orders?q=sony'}),false)
-assert.equal(explicitPublicRetailSearch({...flipkart,url:'https://www.flipkart.com/search?q=sony#private'},false),false)
+assert.equal(explicitPublicRetailSearch({...flipkart,url:'https://www.flipkart.com/search?q=sony#private'}),false)
 assert.equal(explicitPublicRetailSearch({...flipkart,url:'https://www.flipkart.com.evil.test/search?q=sony'}),false)
 assert.equal(explicitPublicRetailSearch({...flipkart,url:'https://www.flipkart.com/search?q=sony&access%5Ftoken=abc'}),false)
 const commandSource=readFileSync('lib/agent/browser-command.ts','utf8')
