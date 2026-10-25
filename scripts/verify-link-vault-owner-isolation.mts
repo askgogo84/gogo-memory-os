@@ -7,6 +7,9 @@ import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import { safeNumericLinkVaultOwnerId } from '../lib/services/link-vault-owner.ts'
 
+const paddedOwnerIds = [' 1234 ', '\t-2345\n', '\u00a01234\u00a0',
+  '1234 ', ' 1234', '\u2003-2345\u2003']
+
 let checks = 0
 const verify = (name: string, fn: () => void) => {
   fn(); checks++; console.log('PASS Link Vault owner: ' + name)
@@ -21,7 +24,8 @@ verify('JS aliases adjacent unsafe bigint owners but the boundary rejects both',
 
 verify('only exact canonical, safe integer owners enter numeric Link Vault storage', () => {
   for (const raw of [undefined, null, {}, [], '', ' ', '0', '-0', '0012',
-    '+12', '1e3', '1.5', 'NaN', 'Infinity', '9007199254740993', '-9007199254740993']) {
+    '+12', '1e3', '1.5', 'NaN', 'Infinity', '9007199254740993', '-9007199254740993',
+    ...paddedOwnerIds]) {
     assert.equal(safeNumericLinkVaultOwnerId(raw), null, String(raw))
   }
   assert.equal(safeNumericLinkVaultOwnerId('1234'), 1234)
@@ -100,7 +104,7 @@ const validImport = {
 }
 
 for (const poisoned of ['9007199254740992', '9007199254740993', '-9007199254740993',
-  '12e3', '001234', '0', '', 'not-a-user']) {
+  '12e3', '001234', '0', '', 'not-a-user', ...paddedOwnerIds]) {
   sessionId = poisoned
   const oldExports = exportsSent.length
   const oldImports = importsSent.length

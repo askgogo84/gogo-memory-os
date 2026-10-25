@@ -10,7 +10,8 @@
 export function safeNumericLinkVaultOwnerId(value: unknown): number | null {
   if (typeof value !== 'string' && typeof value !== 'number') return null
   if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
-  const raw = String(value).trim()
+  // A persisted session owner is an exact identity, never display text to clean up.
+  const raw = String(value)
   if (!/^-?[1-9][0-9]*$/.test(raw)) return null
   const parsed = Number(raw)
   if (!Number.isSafeInteger(parsed) || String(parsed) !== raw) return null
