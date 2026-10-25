@@ -8,6 +8,9 @@ async function check(label: string, fn: () => unknown) { try { await fn(); conso
 await check('place asks are recognised with area and count; bookings and orders are not', () => {
   assert.deepEqual(P.placeAsk('Suggest 3 South Indian restaurants in Rajajinagar'), { query: 'South Indian restaurants in Rajajinagar, Bengaluru', area: 'Rajajinagar', count: 3 })
   assert.equal(P.placeAsk('Find a good cafe near Indiranagar')?.area, 'Indiranagar')
+  assert.equal(P.placeAsk('Find restaurants near St. Marks Road')?.area, 'St. Marks Road')
+  assert.equal(P.placeAsk('Suggest three South Indian restaurants in Rajajinagar')?.query, 'South Indian restaurants in Rajajinagar, Bengaluru')
+  assert.equal(P.placeAsk('Suggest three South Indian restaurants in Rajajinagar')?.count, 3)
   assert.equal(P.placeAsk('best biryani in Koramangala')?.count, 5)
   assert.equal(P.placeAsk('Book a table at Toit for 4'), null)
   assert.equal(P.placeAsk('Order biryani from Meghana'), null)
