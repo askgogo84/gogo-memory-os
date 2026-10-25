@@ -45,3 +45,125 @@ try {
   assert.equal(writes[0].extracted.text, legacy, 'private extraction remains intact')
 } finally { globalThis.fetch = originalFetch }
 console.log('Document storage: owner-bound metadata is masked, private extraction preserved')
+
+
+// P1 image-note/receipt media egress: exercise the ACTUAL exported downloader
+// and its transport with synthetic bytes and URLs only. No network or Twilio.
+{
+  const originalSid = process.env.TWILIO_ACCOUNT_SID
+  const originalToken = process.env.TWILIO_AUTH_TOKEN
+  const sid = 'AC' + 'a'.repeat(32)
+  const otherSid = 'AC' + 'd'.repeat(32)
+  const message = 'MM' + 'b'.repeat(32)
+  const media = 'ME' + 'c'.repeat(32)
+  const good = 'https://api.twilio.com/2010-04-01/Accounts/' + sid + '/Messages/' + message + '/Media/' + media
+  process.env.TWILIO_ACCOUNT_SID = sid
+  process.env.TWILIO_AUTH_TOKEN = 'fixture-never-send'
+  const { downloadTwilioMediaAsDataUrl } = await import('../lib/services/image-note-reader')
+  const { fetchTwilioImageNote, TWILIO_IMAGE_NOTE_MAX_BYTES } = await import('../lib/services/twilio-image-note-egress')
+  const requests: { url: string; auth: string | null; redirect: RequestRedirect | undefined }[] = []
+  const imageResponse = () => new Response(new Uint8Array([137, 80, 78, 71]), {
+    status: 200, headers: { 'content-type': 'image/png', 'content-length': '4' },
+  })
+  const transport = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const headers = new Headers(init?.headers)
+    requests.push({ url: String(input), auth: headers.get('authorization'), redirect: init?.redirect })
+    return imageResponse()
+  }
+  try {
+    globalThis.fetch = transport as typeof fetch
+    // Validate BEFORE any Basic header can be sent, even for plausible hosts.
+    for (const hostile of [
+      'https://169.254.169.254/latest/meta-data/',
+      'http://api.twilio.com/2010-04-01/Accounts/' + sid + '/Messages/' + message + '/Media/' + media,
+      'https://api.twilio.com.evil.example/2010-04-01/Accounts/' + sid + '/Messages/' + message + '/Media/' + media,
+      'https://api.twilio.com@evil.example/2010-04-01/Accounts/' + sid + '/Messages/' + message + '/Media/' + media,
+      good.replace(sid, otherSid),
+      good + '?target=https://169.254.169.254/',
+      good + '#fragment',
+      good + '/extra',
+      good.replace(message, 'bad-message'),
+    ]) {
+      await assert.rejects(() => downloadTwilioMediaAsDataUrl({ mediaUrl: hostile, contentType: 'image/png' }))
+      assert.equal(requests.length, 0, 'hostile origin/account/query must not cause a fetch')
+    }
+    const valid = await downloadTwilioMediaAsDataUrl({ mediaUrl: good, contentType: 'image/jpeg' })
+    assert.equal(valid, 'data:image/png;base64,' + Buffer.from([137, 80, 78, 71]).toString('base64'),
+      'real image-note entrypoint uses checked response MIME and synthetic bytes')
+    assert.equal(requests.length, 1)
+    assert.equal(requests[0].url, good)
+    assert.equal(requests[0].auth, 'Basic ' + Buffer.from(sid + ':fixture-never-send').toString('base64'))
+    assert.equal(requests[0].redirect, 'manual')
+
+    // One explicit CDN hop, stripped of ALL credentials; no follow-on redirects.
+    const cdn = 'https://mms.twiliocdn.com/fixture/asset.jpg?signature=fixture'
+    requests.length = 0
+    const redirectTransport = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      requests.push({
+        url: String(input), auth: new Headers(init?.headers).get('authorization'), redirect: init?.redirect,
+      })
+      return requests.length === 1
+        ? new Response(null, {status:302,headers:{location:cdn}})
+        : imageResponse()
+    }
+    const redirected = await fetchTwilioImageNote(good, sid, 'fixture-never-send', { fetchImpl: redirectTransport as typeof fetch })
+    assert.equal(redirected.contentType, 'image/png')
+    assert.equal(requests.length, 2)
+    assert.equal(requests[0].auth?.startsWith('Basic '), true)
+    assert.equal(requests[1].url, cdn)
+    assert.equal(requests[1].auth, null, 'never disclose SID/token to CDN')
+    assert.ok(requests.every(request => request.redirect === 'manual'))
+
+    for (const location of [
+      'https://169.254.169.254/latest/meta-data/',
+      'https://mms.twiliocdn.com.evil.example/image',
+      'http://mms.twiliocdn.com/fixture',
+      'https://mms.twiliocdn.com@evil.example/fixture',
+    ]) {
+      let count = 0
+      await assert.rejects(() => fetchTwilioImageNote(good, sid, 'fixture-never-send', {
+        fetchImpl: (async () => { count++; return new Response(null, {status:302,headers:{location}}) }) as typeof fetch,
+      }))
+      assert.equal(count, 1, 'hostile redirect never receives a second fetch')
+    }
+    let secondHops = 0
+    await assert.rejects(() => fetchTwilioImageNote(good, sid, 'fixture-never-send', {
+      fetchImpl: (async () => {
+        secondHops++
+        return new Response(null, {status:302,headers:{location:cdn}})
+      }) as typeof fetch,
+    }))
+    assert.equal(secondHops, 2, 'second redirect is never followed')
+    await assert.rejects(() => fetchTwilioImageNote(good, sid, 'fixture-never-send', {
+      fetchImpl: (async () => new Response('<html>not an image</html>', {
+        status:200,headers:{'content-type':'text/html'},
+      })) as typeof fetch,
+    }))
+    await assert.rejects(() => fetchTwilioImageNote(good, sid, 'fixture-never-send', {
+      fetchImpl: (async () => new Response('tiny', {
+        status:200,headers:{'content-type':'image/jpeg','content-length':String(TWILIO_IMAGE_NOTE_MAX_BYTES + 1)},
+      })) as typeof fetch,
+    }), /too_large/)
+
+    // No Content-Length is not a size bypass: count real streaming bytes.
+    let pullCount = 0
+    const chunk = new Uint8Array(2 * 1024 * 1024)
+    const oversized = () => new Response(new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pullCount++ >= 10) controller.close()
+        else controller.enqueue(chunk)
+      },
+    }), {status:200,headers:{'content-type':'image/jpeg'}})
+    await assert.rejects(() => fetchTwilioImageNote(good, sid, 'fixture-never-send', {
+      fetchImpl: (async () => oversized()) as typeof fetch,
+    }), /too_large/)
+    assert.ok(pullCount > 1, 'stream limit tested beyond the first chunk')
+    console.log('P1 image note/receipt egress: actual entrypoint and inert URL, Basic stripping, MIME, redirect and 18MiB streamed limits passed')
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalSid === undefined) delete process.env.TWILIO_ACCOUNT_SID
+    else process.env.TWILIO_ACCOUNT_SID = originalSid
+    if (originalToken === undefined) delete process.env.TWILIO_AUTH_TOKEN
+    else process.env.TWILIO_AUTH_TOKEN = originalToken
+  }
+}
