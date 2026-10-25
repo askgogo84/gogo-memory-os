@@ -25,7 +25,15 @@ function normalizePlan(value: unknown): PublicPlan | null {
 }
 
 function normalizePhone(value: unknown) {
-  const digits = String(value || '').replace(/\D/g, '')
+  const raw = String(value || '').trim().replace(/^whatsapp:\s*/i, '').trim()
+  // An explicit +country marker distinguishes short valid E.164 numbers
+  // (e.g. +65 and 8 national digits) from a bare Indian 10-digit entry.
+  if (!/^\+?[0-9\s().-]+$/.test(raw)) return null
+  const digits = raw.replace(/\D/g, '')
+  if (raw.startsWith('+')) {
+    return /^[1-9][0-9]{7,14}$/.test(digits) ? digits : null
+  }
+  // Keep established India checkout UX for unprefixed domestic entries.
   if (digits.length === 10) return `91${digits}`
   if (digits.length === 12 && digits.startsWith('91')) return digits
   return null
