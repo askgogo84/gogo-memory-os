@@ -18,6 +18,7 @@ import { CHAT_SUGGESTIONS, greetingFor, type ChatSuggestion } from '@/lib/dashbo
 import { splitChatText } from '@/lib/dashboard/chat-text'
 import { MobileMenuButton } from '@/components/dashboard/mobile-nav'
 import { RunStepsLine } from '@/components/dashboard/run-steps'
+import { OpenUIComparisonInline } from '@/components/dashboard/openui-comparison-inline'
 import { LOCATION_STORAGE_KEY, locationIsStale, locationTag, parseApproxLocation, parseLocationPreference, type LocationPreference } from '@/lib/dashboard/approx-location'
 
 type ChatMessage={
@@ -93,6 +94,7 @@ function Message({message,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPic
         {message.mediaUrl&&<img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 rounded-xl border border-[#2a2a2a]"/>}
       </div>}
       {connectCard(message.content)}
+      <OpenUIComparisonInline text={message.content}/>
       {chips&&chips.length>0&&onPick&&<div className="mt-4 flex flex-wrap gap-2.5" role="group" aria-label="Quick answers">
         {chips.map(c=><button key={c.title} type="button" onClick={()=>onPick(c.title)} className="min-h-12 rounded-full border border-[#2f2f2f] bg-[#161616] px-5 text-left text-[16px] font-semibold text-[#f2efea] transition hover:border-[#4cd0bd] hover:bg-[#123d38] hover:text-[#8be6d8] sm:text-[17px]">
           {c.title}{c.description&&<span className="ml-2 text-[14px] font-normal text-[#a8a8a4]">{c.description}</span>}
