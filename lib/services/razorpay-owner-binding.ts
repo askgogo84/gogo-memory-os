@@ -106,6 +106,9 @@ export function uniquePaymentOwner(
     (subscription != null && subscription === row.razorpay_subscription_id)
   if (!matched) return null
 
-  const destination = storedPhones[0] || null
+  // Never notify a different saved phone merely because it sits first in the row.
+  // Prefer the exact paid-contact match; subscription-only status falls back to
+  // the persisted WhatsApp destination on the bound subscription owner.
+  const destination = incomingPhones[0] || fullInternationalDigits(row.whatsapp_id) || fullInternationalDigits(row.phone)
   return { id, notificationPhone: destination ? '+' + destination : null }
 }
