@@ -225,7 +225,7 @@ await check('WhatsApp +65 ten-digit E.164 is accepted without colliding with Ind
   const message = await bot.buildPlanCheckoutReply({
     telegramId: -111, whatsappId: 'whatsapp:' + singapore, name: 'Synthetic Caller',
   }, 'plus')
-  assert.match(message, /example\\.invalid\\/synthetic-only/)
+  assert.ok(message.includes('https://example.invalid/synthetic-only'))
   assert.equal(state.provider.length, 1)
   assert.equal(state.provider[0].whatsappId, 'whatsapp:' + singapore)
   const exact = state.reads.find(call => call.kind === 'in')
