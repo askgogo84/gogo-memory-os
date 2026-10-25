@@ -56,6 +56,8 @@ assert.equal(parseObscuraObservation(req.url,row('https://other.example.com/p'))
 assert.equal(parseObscuraObservation(req.url,row('http://www.example.com/p')),null)
 assert.equal(parseObscuraObservation(req.url,row('https://www.example.com/login')),null)
 assert.equal(parseObscuraObservation(req.url,row(req.url,'Just a moment','Checking your browser')),null)
+assert.equal(parseObscuraObservation(req.url,row(req.url,'Access Denied','You do not have permission to access this page')),null,
+  'the live observed Zomato title Access Denied can never be mistaken for completed research')
 assert.equal(parseObscuraObservation(req.url,row(req.url,'Log in','Sign in')),null)
 assert.ok(parseObscuraObservation(req.url,row(req.url,'Page','')), 'title-only observations remain eligible for existing objective assessor')
 assert.equal(parseObscuraObservation(req.url,'not json'),null)
