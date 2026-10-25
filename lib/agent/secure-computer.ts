@@ -2105,12 +2105,19 @@ function normalizeActionLog(values:any[]){
 export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;loginCode?:string|null;phoneLogin?:{number:string;telegramId:string}|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
   if(params.loginCode!=null||params.bookingOtp!=null)throw new Error('human_auth_takeover_required')
   assertBrowserAuthorityFits(params.objective,params.mode)
+  let publicFlightRead=false
+  try{const target=new URL(params.url);publicFlightRead=params.recoverFlightSearch===true&&target.protocol==='https:'&&['google.com','www.google.com'].includes(target.hostname)&&/^\/travel\/flights(?:\/|$)/.test(target.pathname)}catch{}
+  const readDeadline=params.mode==='read'?Math.min(Date.now()+(publicFlightRead?FLIGHT_READ_BUDGET_MS:READ_BUDGET_MS),Number.isFinite(params.readDeadline)?params.readDeadline!:Infinity):undefined
+  // The Obscura pilot shares this same total read deadline with the trusted
+  // fallback. Only start it with enough time to recover through Chromium.
   // Obscura trial is strictly opt-in, public and read-only. No Vault session,
   // protected action, human takeover or persistent browser is routed here.
   // A valid page still MUST pass the existing evidence-grounded assessor;
   // missing/misleading evidence falls back to the existing secure browser.
-  if (typeof obscuraPilotEligible === 'function' && obscuraPilotEligible(params)) {
-    const candidate = await tryObscuraPublicRead(params).catch(() => null)
+  if (readDeadline !== undefined && readDeadline-Date.now() > 90_000
+    && typeof obscuraPilotEligible === 'function' && obscuraPilotEligible(params)) {
+    const pilotDeadline=Math.min(Date.now()+75_000,readDeadline-90_000)
+    const candidate = await withinReadBudget(pilotDeadline,()=>tryObscuraPublicRead(params)).catch(() => null)
     if (candidate) {
       const page = {url:candidate.url,title:candidate.title,text:candidate.text,
         forms:[],links:[],controls:[],actions:[]}
@@ -2128,9 +2135,6 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       }
     }
   }
-  let publicFlightRead=false
-  try{const target=new URL(params.url);publicFlightRead=params.recoverFlightSearch===true&&target.protocol==='https:'&&['google.com','www.google.com'].includes(target.hostname)&&/^\/travel\/flights(?:\/|$)/.test(target.pathname)}catch{}
-  const readDeadline=params.mode==='read'?Math.min(Date.now()+(publicFlightRead?FLIGHT_READ_BUDGET_MS:READ_BUDGET_MS),Number.isFinite(params.readDeadline)?params.readDeadline!:Infinity):undefined
   const readDiagnostics:BrowserReadDiagnostic[]=[]
   const diagnose=(event:BrowserReadDiagnostic)=>{readDiagnostics.splice(0,readDiagnostics.length,...sanitizeBrowserReadDiagnostics([...readDiagnostics,event]))}
   let releaseOwnerLock:BrowserOwnerRelease|undefined
