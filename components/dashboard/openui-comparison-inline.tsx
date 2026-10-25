@@ -24,8 +24,12 @@ export function OpenUIComparisonInline({text}:{text:string}) {
         })
         if(!res.ok){if(active)setResult(null);return}
         const body=await res.json()
-        if(active && body && Array.isArray(body.providers))setResult(body as SavedComparisonRead)
-      }catch{ /* Unavailable/unauthorized comparisons must never reveal cached content. */ }
+        // Even a 200 response without a valid observation list revokes stale cards.
+        if(active)setResult(body && Array.isArray(body.providers) ? body as SavedComparisonRead : null)
+      }catch{
+        // Network or parse errors must clear previously displayed private results.
+        if(active)setResult(null)
+      }
       finally{busy=false}
     }
     void refresh()
