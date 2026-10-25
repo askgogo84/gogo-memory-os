@@ -14,7 +14,7 @@ export type ObscuraReadCandidate = {
   text: string
   observedAt: string
   runtime: 'obscura'
-  // Metadata only; no .value, field contents or credentials leave the page.
+  // Security-relevant input metadata only; filter checkbox/radio noise, never .value or credentials.
   forms: Array<{inputs:Array<{type:string;name:string;label:string}>}>
 }
 export type ObscuraRequest = {
@@ -135,7 +135,9 @@ export function obscuraPilotEligible(
 // The expression is a CONSTANT. No user objective, credentials or selectors
 // enter the agent browser's JS execution context.
 export const OBSCURA_READ_EXPRESSION =
-  '(()=>{const all=[...document.querySelectorAll("input")];return JSON.stringify(' +
+  '(()=>{const all=[...document.querySelectorAll("input")].filter(e=>' +
+  '!/^(?:checkbox|radio|range|color|button|submit|reset|file)$/i.test(' +
+  'String(e.getAttribute("type")||"text")));return JSON.stringify(' +
   '{url:location.href,title:document.title,text:document.body?document.body.innerText:"",' +
   'inputCount:all.length,forms:[{inputs:all.slice(0,24).map(e=>({' +
   'type:String(e.getAttribute("type")||"text").slice(0,36),' +
