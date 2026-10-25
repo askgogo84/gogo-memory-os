@@ -252,6 +252,32 @@ function adminStats(verdict: any) {
   check('admin/stats: admin → users table queried (PII only after auth)', spy.calls.includes('users'))
 }
 
+// ── 4. Legacy preview deployment control plane is permanently inert ────────
+// Execute the real handler in the existing no-network/no-provider VM. A
+// caller-controlled phone number was NEVER an admin authentication mechanism.
+{
+  const spy = makeSpy()
+  const route = loadRoute('app/api/dev/webhook/route.ts', {}, spy)
+  const cases = [
+    { phone: '+919000000001', text: '/deploy' },
+    { phone: '+919000000001', text: '/redeploy' },
+    { phone: '+919000000001', text: '/logs' },
+    { phone: '+919000000001', text: '/fix leaked-account-data' },
+    { phone: '+919000000001', text: '/status' },
+    { phone: '+19999999999', text: '/help' },
+    {},
+  ]
+  for (const body of cases) {
+    spy.calls.length = 0
+    const response: Res = await route.POST(fakeReq({ body }))
+    check('dev/webhook: spoofed admin command always 404', response.status === 404 && response.body?.error === 'not_found')
+    check('dev/webhook: zero privileged database calls', spy.calls.length === 0)
+  }
+  const source = readFileSync('app/api/dev/webhook/route.ts', 'utf8')
+  check('dev/webhook: no credential or provider-control imports/calls', !/(?:VERCEL_TOKEN|GITHUB_TOKEN|ADMIN_PHONES|sendWhatsAppMessage|triggerRedeploy|createGitHubIssue|fetch\s*\(|req\.json\s*\()/i.test(source))
+  check('dev/webhook: POST disabled independent of preview/production env', !/(?:VERCEL_ENV|NODE_ENV)/.test(source))
+}
+
 if (failures > 0) {
   console.error(`\nprivileged-route-auth verification FAILED: ${failures} check(s)`)
   process.exit(1)
