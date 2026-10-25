@@ -412,6 +412,8 @@ async function loadReservationIntent(actor:AgentActor,now:number,upper:string){
 }
 
 async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:number,includeReservationTravel=false,reservationCoverage?:{from:string;until:string}){
+  // buildContextPack validates this actor before any service-role reads. Preserve
+  // the exact canonical owner in PostgREST bigint filters; never re-coerce via Number.
   const tg=String(actor.legacyTelegramId)
   const now=Date.now()
   const lower=new Date(now-2*86400_000).toISOString()
@@ -447,7 +449,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       .limit(30),
     supabaseAdmin.from('travel_tickets')
       .select('id,type,booking_group,pnr,from_city,to_city,depart_at,arrive_at,airline,flight_no,source,passengers,seat,depart_tz,date_label,raw')
-      .eq('telegram_id',Number(actor.legacyTelegramId))
+      .eq('telegram_id',tg)
       .or(`depart_at.is.null,and(depart_at.gte.${ticketLower},depart_at.lte.${upper})`)
       .order('depart_at',{ascending:true})
       .limit(80),
@@ -457,7 +459,7 @@ async function loadOperationalFacts(actor:AgentActor,query:string,horizonDays:nu
       .eq('telegram_id',tg).order('updated_at',{ascending:false}).limit(40),
     includeReservationTravel?supabaseAdmin.from('travel_tickets')
       .select('id,type,booking_group,pnr,from_city,to_city,depart_at,arrive_at,airline,flight_no,source,passengers,seat,depart_tz,date_label,raw')
-      .eq('telegram_id',Number(actor.legacyTelegramId))
+      .eq('telegram_id',tg)
       // An old outbound leg can establish a current stay until a future return.
       // Keep that leg; the bounded row cap is reported as incomplete below.
       .or(`depart_at.is.null,depart_at.lte.${upper}`)
@@ -860,6 +862,13 @@ export function prioritizeRecallEvidence(query:string,facts:ContextFact[]):Conte
 }
 
 export async function buildContextPack(params:{actor:AgentActor;text:string;options?:ContextPackOptions}):Promise<ContextPack>{
+  // A rounded 64-bit owner can alias a different tenant in service-role memory reads.
+  // Reject before launching ANY concurrent retrieval (DB, inference or calendar).
+  // The upstream actor resolver must also verify identity; this is a separate read boundary.
+  const owner = params.actor?.legacyTelegramId
+  if (typeof owner !== 'number' || !Number.isSafeInteger(owner) || owner === 0) {
+    throw new Error('context_owner_identity_unsafe')
+  }
   const query=safe(params.text,1800)
   const maxFacts=Math.max(4,Math.min(24,params.options?.maxFacts??12))
   const horizonDays=Math.max(7,Math.min(180,params.options?.horizonDays??60))
