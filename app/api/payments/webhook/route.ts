@@ -81,8 +81,10 @@ async function activateUserPlan(params: {
   }) : false
 
   await supabase.from('payment_records').upsert({
-    whatsapp_id: params.phone || params.whatsappId || null,
-    telegram_id: typeof params.telegramId === 'string' && /^[1-9][0-9]{0,18}$/.test(params.telegramId) ? params.telegramId : null,
+    // Never attach an unbound payment record to another person's saved identity.
+    // Provider contact/notes remain available as untrusted raw_payload for reconciliation.
+    whatsapp_id: activated ? owner?.notificationPhone || null : null,
+    telegram_id: activated ? owner?.verifiedTelegramId || null : null,
     plan: plan.key,
     amount: plan.amountInPaise,
     currency: 'INR',
@@ -142,8 +144,8 @@ async function activateSubscription(entity: any, rawPayload: unknown) {
   }) : false
 
   await supabase.from('payment_records').insert({
-    whatsapp_id: notes.whatsapp_id || null,
-    telegram_id: typeof notes.telegram_id === 'string' && /^[1-9][0-9]{0,18}$/.test(notes.telegram_id) ? notes.telegram_id : null,
+    whatsapp_id: activated ? owner?.notificationPhone || null : null,
+    telegram_id: activated ? owner?.verifiedTelegramId || null : null,
     plan: plan.key,
     amount: plan.amountInPaise,
     currency: 'INR',
