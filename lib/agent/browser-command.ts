@@ -6,7 +6,8 @@ import { rememberTypedObjects } from './typed-object-context'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
-import { runSecureBrowser, type BrowserMode } from './secure-computer'
+import { runSecureBrowser, tryObscuraBrowserRead, type BrowserMode } from './secure-computer'
+import { explicitPublicRetailSearch } from './obscura-public-read'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildVaultAddLink } from '@/lib/vault/connect-link'
@@ -478,8 +479,18 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   let pendingHandoffReservation:string|undefined
   try{
     const bookingPhone=providerBooking?indianMobileFromWhatsApp(params.actor.whatsappId):null
-    const result=reconciledResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,runId:params.runId,accountCreation,
-      ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),...(params.loginCode?{loginCode:params.loginCode}:{}),...(vaultAccountRead&&indianMobileFromWhatsApp(params.actor.whatsappId)?{phoneLogin:{number:indianMobileFromWhatsApp(params.actor.whatsappId)!,telegramId:String(tg)}}:{}),url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
+    // Read-only public search can use the disposable Obscura observer first.
+    // Existing account/Take Control browser still owns any fallback. Only this
+    // exact explicit Flipkart search shape can take the public preflight.
+    const publicProbe=explicitPublicRetailSearch(params.command,runMetadata)
+      && !params.bookingOtp && !params.loginCode && !reconciledResult
+    const publicReadDeadline=publicProbe?Date.now()+180_000:undefined
+    const publicResult=publicProbe
+      ?await tryObscuraBrowserRead({userId:params.actor.userId,url:params.command.url,
+          objective:params.command.objective,mode:'read'},publicReadDeadline)
+      :null
+    const result=reconciledResult||publicResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,runId:params.runId,accountCreation,
+      ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),...(params.loginCode?{loginCode:params.loginCode}:{}),...(vaultAccountRead&&indianMobileFromWhatsApp(params.actor.whatsappId)?{phoneLogin:{number:indianMobileFromWhatsApp(params.actor.whatsappId)!,telegramId:String(tg)}}:{}),url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(publicReadDeadline?{readDeadline:publicReadDeadline}:{}),...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
     pendingHandoffReservation=result.handoffReservation
     // Why a run stopped, without page text, selectors or values: answers "why was it blocked?".
     try{console.log('BROWSER_RUN_RESULT:',JSON.stringify({runId:params.runId,status:result.status,blockReason:(result as any).blockReason||null,authReason:(result as any).authReason||null,host:(()=>{try{return new URL(String(result.url||'')).hostname}catch{return null}})(),title:String(result.title||'').slice(0,80),steps:(result.actions||[]).slice(0,20).map((a:any)=>`${a.kind}:${a.status}`),signupVault:(result as any).signupVault||null}))}catch{}
