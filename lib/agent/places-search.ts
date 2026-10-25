@@ -1,3 +1,5 @@
+import { redactSecretShapedText } from '../bot/memory-redaction'
+
 // Local places (24 Oct live): "Suggest 3 South Indian restaurants in Rajajinagar" named ITC Windsor's Dakshin and a
 // Crescent Road hotel, neither in Rajajinagar, from a web search. Place asks now use Google local results (via
 // Serper's places search): real names, the area they are actually in, rating and a Maps link. Read-only.
@@ -46,7 +48,15 @@ export function placeAsk(text: string): PlaceAsk | null {
 
 export type Place = { title: string; address: string; rating?: number; ratingCount?: number; category?: string; phone?: string; website?: string; cid?: string }
 
+function privatePlaceQuery(query: string) {
+  // The shared text filter can mistake a following "in <city>" for an expiry
+  // sentence. Keep an explicit short labelled identifier out of public search.
+  return redactSecretShapedText(query) !== query
+    || /\b(?:passport|pin)\b\s*(?:(?:number|no\.?|is)\s*)?(?:[:=-]\s*)?[a-z0-9]*\d[a-z0-9]*\b/i.test(query)
+}
+
 export async function searchPlaces(query: string, fetchImpl: typeof fetch = fetch): Promise<Place[]> {
+  if (privatePlaceQuery(query)) return []
   const key = process.env.SERPER_API_KEY
   if (!key) return []
   const res = await fetchImpl('https://google.serper.dev/places', {
@@ -100,6 +110,7 @@ export function formatPlaces(ask: PlaceAsk, places: Place[]) {
 export async function answerPlaces(text: string, fetchImpl: typeof fetch = fetch) {
   const ask = placeAsk(text)
   if (!ask) return null
+  if (privatePlaceQuery(ask.query)) return 'I cannot send a request containing sensitive details to public search. Remove those details and ask again. No booking was made.'
   const places = await searchPlaces(ask.query, fetchImpl).catch((err: any) => { console.error('PLACES_SEARCH_FAILED:', String(err?.message || err).slice(0, 120)); return [] })
   if (!places.length) return `I couldn't verify local listings in ${ask.area} right now. I won't invent restaurants, source links or table availability. No booking was made.`
   const listing = formatPlaces(ask, places)

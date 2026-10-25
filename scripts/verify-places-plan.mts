@@ -79,6 +79,28 @@ await check('negative booking constraints never become external discovery querie
   assert.equal(P.placeAsk('Find in Mumbai, do not book restaurants using private-note synthetic-private-123'), null, 'the discovery segment itself must name a place kind')
 })
 
+await check('secret-shaped discovery text is refused before the public provider', async () => {
+  process.env.SERPER_API_KEY = 'test'
+  let calls = 0
+  const forbiddenFetch = (async () => { calls++; throw new Error('unexpected provider call') }) as typeof fetch
+  for (const detail of ['card number 4111111111111111', 'password synthetic123', 'api key synthetic-key-123', 'passport A1234567', '4111111111111111']) {
+    const text = `Find restaurants with ${detail} in Mumbai, do not book`
+    const ask = P.placeAsk(text)
+    assert.ok(ask, 'the discovery request reaches the query privacy boundary')
+    assert.deepEqual(await P.searchPlaces(ask.query, forbiddenFetch), [], 'direct search also enforces privacy')
+    const reply = await P.answerPlaces(text, forbiddenFetch)
+    assert.match(reply!, /sensitive details/i)
+    assert.doesNotMatch(reply!, /411111|synthetic123|synthetic-key|A1234567/)
+  }
+  assert.equal(calls, 0)
+  let publicCalls = 0
+  await P.answerPlaces('Find restaurants near Passport Seva Kendra, Mumbai; do not book', (async () => {
+    publicCalls++
+    return Response.json({ places: [] })
+  }) as typeof fetch)
+  assert.equal(publicCalls, 1, 'an ordinary public landmark name is not an identifier')
+})
+
 await check('25 Oct WhatsApp dining discovery: negated booking, locality comma and party size', async () => {
   const userText = 'Find restaurants in Indiranagar, Bengaluru, for 2 people tomorrow at 8 PM. Show evidence, availability only if provider-verified, and source links. Research only; do not book.'
   assert.deepEqual(P.placeAsk(userText), {
