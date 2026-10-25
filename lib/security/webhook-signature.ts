@@ -1,4 +1,5 @@
-// Inbound webhook signature verification — PREPARED, OFF BY DEFAULT.
+// Inbound webhook signature verification — PROPOSED production fail-closed default.
+// REVIEW-ONLY DRAFT: production Twilio signature/URL compatibility is NOT verified; do not release without owner approval.
 //
 // WHICH PATH IS LIVE
 // ------------------
@@ -15,20 +16,16 @@
 // The GET handler implements Meta's hub.challenge handshake, but no JSON POST path
 // exists anywhere, so the Meta Cloud API path is vestigial for inbound messages.
 //
-// ENFORCEMENT IS OPT-IN
-// ---------------------
-// Unset WEBHOOK_SIGNATURE_ENFORCE  → log-only. Every request is evaluated and the
-// verdict logged as WEBHOOK_SIGNATURE_AUDIT, and NOTHING is ever rejected. This is
-// deliberately the default so the flag can be flipped only after production logs
-// show 100% would-pass.
-// WEBHOOK_SIGNATURE_ENFORCE=1|true|on|enforce → invalid signatures get 403.
-//
-// A request that cannot be checked is 'unverifiable', never 'invalid'. Under
-// enforcement the REASON decides whether it is rejected: an absent signature header
-// is attacker-controlled — omitting the header is the easiest forgery — so it is
-// rejected exactly like an 'invalid' one. 'no_auth_token_configured' and
-// 'no_candidate_url' are OUR OWN misconfiguration, not an attack, and must never
-// reject genuine Twilio traffic. See shouldRejectRequest for the exact rule.
+// RELEASE-GATED PRODUCTION STRICT MODE (not yet approved)
+// -------------------------------------------------------
+// With NODE_ENV=production the default is strict signature validation: any verdict
+// other than 'valid' returns 403, including missing verifier configuration. This
+// avoids an unsigned request becoming an authenticated identity if secrets or URL
+// resolution are missing. An EXPLICIT WEBHOOK_SIGNATURE_ENFORCE=0|false|off|log-only
+// is a temporary operator escape hatch; its use must be audited and time bounded.
+// Non-production keeps the pre-existing opt-in behavior for existing tests and
+// local tools. Real Twilio callback/proxy URL compatibility MUST be independently
+// verified before this change ships. Do not release solely on synthetic CI.
 
 import crypto from 'node:crypto'
 
@@ -41,7 +38,7 @@ export type SignatureVerdict = {
   candidateCount: number
 }
 
-export type EnforcementMode = 'enforce' | 'log-only'
+export type EnforcementMode = 'strict' | 'enforce' | 'log-only'
 
 /**
  * Twilio's scheme: HMAC-SHA1, keyed with the account auth token, over the full
@@ -94,7 +91,11 @@ export function evaluateTwilioSignature(input: {
 
 export function signatureEnforcementMode(env: Record<string, string | undefined> = process.env): EnforcementMode {
   const raw = String(env.WEBHOOK_SIGNATURE_ENFORCE || '').trim().toLowerCase()
-  return raw === '1' || raw === 'true' || raw === 'on' || raw === 'enforce' ? 'enforce' : 'log-only'
+  const explicitlyOff = ['0', 'false', 'off', 'log-only'].includes(raw)
+  // Production must not accept forged WhatsApp sender identities simply because an
+  // optional flag was never configured. A temporary opt-out must be explicit.
+  if (String(env.NODE_ENV || '').toLowerCase() === 'production' && !explicitlyOff) return 'strict'
+  return ['1', 'true', 'on', 'enforce', 'strict'].includes(raw) ? 'enforce' : 'log-only'
 }
 
 /**
@@ -127,21 +128,14 @@ export function candidateWebhookUrls(
 }
 
 /**
- * Whether to reject, given the verdict and enforcement mode. Rejects ONLY under
- * enforcement — log-only never rejects, no matter the verdict.
- *
- * Under enforcement two cases are rejected, both attacker-controlled:
- *   · outcome 'invalid'                         — a forged/tampered signature;
- *   · 'unverifiable' + reason 'no_signature_header' — the header was omitted, which
- *     is the EASIEST forgery; blocking 'invalid' but not this would let the simpler
- *     attack through while stopping the harder one.
- *
- * The other 'unverifiable' reasons stay NON-rejecting on purpose:
- *   · 'no_auth_token_configured' and 'no_candidate_url' are OUR OWN misconfiguration,
- *     not something an attacker controls. Rejecting on them would 403 genuine Twilio
- *     traffic the moment we misconfigured, so they must never start rejecting.
+ * In production strict mode ONLY a cryptographically valid verdict is accepted.
+ * Local/test legacy 'enforce' retains opt-in behavior (missing local configuration
+ * is audit-only), and explicit 'log-only' never rejects.
+ * Strict mode deliberately fails closed on unavailable verifier configuration:
+ * an unauthenticated message must not be processed as another user's identity.
  */
 export function shouldRejectRequest(verdict: SignatureVerdict, mode: EnforcementMode): boolean {
+  if (mode === 'strict') return verdict.outcome !== 'valid'
   if (mode !== 'enforce') return false
   if (verdict.outcome === 'invalid') return true
   if (verdict.outcome === 'unverifiable' && verdict.reason === 'no_signature_header') return true
@@ -149,8 +143,8 @@ export function shouldRejectRequest(verdict: SignatureVerdict, mode: Enforcement
 }
 
 /**
- * Single call site for a route: evaluate, log the audit line, and say whether to
- * reject. Returns reject:false in log-only mode no matter what the verdict is.
+ * Single call site for the route. Returns reject:true for any non-valid verdict
+ * in strict mode, and preserves explicit log-only behavior for staged operations.
  */
 export function auditInboundTwilioSignature(input: {
   requestUrl: string
@@ -168,9 +162,8 @@ export function auditInboundTwilioSignature(input: {
     authToken: env.TWILIO_AUTH_TOKEN,
   })
   const reject = shouldRejectRequest(verdict, mode)
-  // One structured line per inbound request. Grep WEBHOOK_SIGNATURE_AUDIT in
-  // production and confirm outcome is 'valid' for 100% of real traffic before
-  // setting WEBHOOK_SIGNATURE_ENFORCE.
+  // One structured audit line per inbound request. Independent provider-level
+  // callback evidence is required before strict enforcement may be released.
   console.log('WEBHOOK_SIGNATURE_AUDIT:', JSON.stringify({
     route: input.route,
     mode,
@@ -178,9 +171,9 @@ export function auditInboundTwilioSignature(input: {
     reason: verdict.reason,
     matchedUrl: verdict.matchedUrl || null,
     candidateCount: verdict.candidateCount,
-    // Truthful under the real rule: what enforcement WOULD do to this verdict,
-    // independent of the current mode (so log-only logs stay honest about the risk).
-    wouldReject: shouldRejectRequest(verdict, 'enforce'),
+    // What production strict validation would reject, including misconfiguration.
+    // Distinct from the actual runtime 'rejected' field when explicitly log-only.
+    wouldReject: shouldRejectRequest(verdict, 'strict'),
     rejected: reject,
   }))
   return { reject, verdict, mode }
