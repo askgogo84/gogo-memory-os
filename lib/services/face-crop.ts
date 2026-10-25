@@ -1,5 +1,6 @@
 import OpenAI from 'openai'
 import sharp from 'sharp'
+import { downloadTwilioFaceMedia } from './twilio-face-media-egress'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -11,17 +12,6 @@ type FaceBox = {
   y: number
   width: number
   height: number
-}
-
-function getTwilioAuthHeader() {
-  const sid = process.env.TWILIO_ACCOUNT_SID
-  const token = process.env.TWILIO_AUTH_TOKEN
-
-  if (!sid || !token) {
-    throw new Error('Missing TWILIO_ACCOUNT_SID or TWILIO_AUTH_TOKEN')
-  }
-
-  return `Basic ${Buffer.from(`${sid}:${token}`).toString('base64')}`
 }
 
 function contentTypeToExtension(contentType: string) {
@@ -49,23 +39,9 @@ function extractJson(text: string): FaceBox | null {
 }
 
 async function downloadMediaBuffer(mediaUrl: string) {
-  const response = await fetch(mediaUrl, {
-    headers: {
-      Authorization: getTwilioAuthHeader(),
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error(`Failed to download media: ${response.status}`)
-  }
-
-  const contentType = response.headers.get('content-type') || 'image/jpeg'
-  const arrayBuffer = await response.arrayBuffer()
-
-  return {
-    buffer: Buffer.from(arrayBuffer),
-    contentType,
-  }
+  const sid = process.env.TWILIO_ACCOUNT_SID || ''
+  const token = process.env.TWILIO_AUTH_TOKEN || ''
+  return downloadTwilioFaceMedia(mediaUrl, sid, token)
 }
 
 async function detectPrimaryFaceBox(imageDataUrl: string): Promise<FaceBox | null> {
