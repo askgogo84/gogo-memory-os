@@ -8,6 +8,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { createHash } from 'node:crypto'
 import { addToList, getList, type ListItem } from '@/lib/lists'
 import { indexMemory } from '@/lib/services/memory-index'
+import { downloadTwilioMemoryThumbnail, type ThumbnailImageMime } from '@/lib/services/twilio-media-memory-thumbnail'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
@@ -108,6 +109,7 @@ async function summarizeMediaContent(params: {
   creator: string
   transcript?: string
   thumbnailBase64?: string
+  thumbnailMediaType?: ThumbnailImageMime
 }): Promise<{ title: string; summary: string; tags: string[] }> {
   const platformLabel = {
     instagram: 'Instagram reel',
@@ -149,7 +151,7 @@ If caption is truncated or minimal, infer from creator name and platform. Always
   if (params.thumbnailBase64) {
     content.push({
       type: 'image',
-      source: { type: 'base64', media_type: 'image/jpeg', data: params.thumbnailBase64 },
+      source: { type: 'base64', media_type: params.thumbnailMediaType || 'image/jpeg', data: params.thumbnailBase64 },
     })
   }
 
@@ -193,6 +195,7 @@ export async function saveMediaMemory(params: {
 
   let transcript: string | undefined
   let thumbnailBase64: string | undefined
+  let thumbnailMediaType: ThumbnailImageMime | undefined
   let creator = params.creator || ''
 
   // Extract whatever useful text exists from body — thumbnail vision handles the rest
@@ -235,19 +238,22 @@ export async function saveMediaMemory(params: {
     }
   }
 
-  // Fetch thumbnail from Twilio for vision analysis
-  if (params.mediaUrl && params.accountSid && params.authToken) {
-    try {
-      const r = await fetch(params.mediaUrl, {
-        headers: {
-          Authorization: 'Basic ' + Buffer.from(`${params.accountSid}:${params.authToken}`).toString('base64'),
-        },
-      })
-      if (r.ok) {
-        const buf = await r.arrayBuffer()
-        thumbnailBase64 = Buffer.from(buf).toString('base64')
-      }
-    } catch { /* thumbnail optional */ }
+  // Only the transcript summarizer consumes thumbnails; ordinary caption saves
+  // must never make the unnecessary Twilio request. Require configured credentials
+  // to match the caller's reference before contacting the exact Twilio media origin.
+  const configuredSid = process.env.TWILIO_ACCOUNT_SID
+  const configuredToken = process.env.TWILIO_AUTH_TOKEN
+  if (transcript && params.mediaUrl && configuredSid && configuredToken
+    && params.accountSid === configuredSid && params.authToken === configuredToken) {
+    const thumbnail = await downloadTwilioMemoryThumbnail({
+      mediaUrl: params.mediaUrl,
+      accountSid: configuredSid,
+      authToken: configuredToken,
+    })
+    if (thumbnail) {
+      thumbnailBase64 = thumbnail.base64
+      thumbnailMediaType = thumbnail.mediaType
+    }
   }
 
   // Build guaranteed fallback title/summary from body text — never depends on AI
@@ -267,7 +273,7 @@ export async function saveMediaMemory(params: {
   // Only use AI for YouTube transcripts (where it adds real value)
   if (transcript) {
     try {
-      const aiResult = await summarizeMediaContent({ platform, caption, creator, transcript, thumbnailBase64 })
+      const aiResult = await summarizeMediaContent({ platform, caption, creator, transcript, thumbnailBase64, thumbnailMediaType })
       const questionPattern = /please provide|provide the|need the creator|need more|tell me|I need|more info|more context|to write a useful|can you provide|creator name|caption for/i
       const looksLikeQuestion = questionPattern.test(aiResult.summary) || questionPattern.test(aiResult.title)
       if (!looksLikeQuestion && aiResult.title && aiResult.summary) {
