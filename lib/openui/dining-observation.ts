@@ -32,8 +32,9 @@ export function safeDiningProviderUrl(value: unknown): string | null {
     if(url.protocol!=='https:'||url.username||url.password||url.port||url.hash)return null
     const host=url.hostname.toLowerCase()
     if(!PROVIDERS.some(domain=>host===domain||host.endsWith('.'+domain)))return null
-    // Strip unknown tracking/session/customer tokens, never reconstruct unsafe URLs.
-    url.search=''
+    // Some booking-widget queries identify a private session or outlet. Without a
+    // reviewed allowlist, reject the URL rather than show a broken or leaky link.
+    if(url.search)return null
     return url.href
   }catch{return null}
 }
