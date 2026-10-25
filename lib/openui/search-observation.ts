@@ -47,7 +47,7 @@ const trim = (v: unknown, n: number) => typeof v === 'string' ? v.trim().slice(0
 export function savedComparisonId(text: string): string | null {
   // Only our canonical comparison links get inline cards. This does not authorize a read:
   // /api/comparisons/[id] performs session+owner checks for every request.
-  const hit = String(text || '').match(/(?:https:\/\/app\.askgogo\.in)?\/dashboard\/comparisons\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f-])/i)
+  const hit = String(text || '').match(/(?:^|[\s(\[])(?:https:\/\/app\.askgogo\.in)?\/dashboard\/comparisons\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?![0-9a-f-])/i)
   return hit ? hit[1].toLowerCase() : null
 }
 
