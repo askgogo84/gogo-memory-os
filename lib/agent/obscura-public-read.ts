@@ -14,6 +14,8 @@ export type ObscuraReadCandidate = {
   text: string
   observedAt: string
   runtime: 'obscura'
+  // Metadata only; no .value, field contents or credentials leave the page.
+  forms: Array<{inputs:Array<{type:string;name:string;label:string}>}>
 }
 export type ObscuraRequest = {
   userId: string
@@ -133,7 +135,13 @@ export function obscuraPilotEligible(
 // The expression is a CONSTANT. No user objective, credentials or selectors
 // enter the agent browser's JS execution context.
 export const OBSCURA_READ_EXPRESSION =
-  'JSON.stringify({url:location.href,title:document.title,text:document.body?document.body.innerText:""})'
+  '(()=>{const all=[...document.querySelectorAll("input")];return JSON.stringify(' +
+  '{url:location.href,title:document.title,text:document.body?document.body.innerText:"",' +
+  'inputCount:all.length,forms:[{inputs:all.slice(0,24).map(e=>({' +
+  'type:String(e.getAttribute("type")||"text").slice(0,36),' +
+  'name:String(e.getAttribute("name")||"").slice(0,80),' +
+  'label:String(e.getAttribute("aria-label")||e.getAttribute("placeholder")||"").slice(0,100)' +
+  '}))}]})})()'
 
 export function parseObscuraObservation(
   originalUrl: string,
@@ -145,9 +153,26 @@ export function parseObscuraObservation(
     let value: unknown = JSON.parse(raw.trim())
     if (typeof value === 'string') value = JSON.parse(value)
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-    const row = value as { url?: unknown; title?: unknown; text?: unknown }
+    const row = value as { url?: unknown; title?: unknown; text?: unknown;
+      forms?:unknown; inputCount?:unknown }
     if (typeof row.url !== 'string' || typeof row.title !== 'string'
-      || typeof row.text !== 'string') return null
+      || typeof row.text !== 'string' || !Array.isArray(row.forms)
+      || row.forms.length!==1 || !Number.isInteger(row.inputCount)
+      || (row.inputCount as number)<0 || (row.inputCount as number)>24) return null
+    const inputRows=(row.forms[0] as any)?.inputs
+    if (!Array.isArray(inputRows) || inputRows.length!==row.inputCount) return null
+    const inputs: Array<{type:string;name:string;label:string}> = []
+    for (const entry of inputRows) {
+      if (!entry || typeof entry!=='object') return null
+      const {type,name,label}=entry as Record<string,unknown>
+      if (typeof type!=='string'||typeof name!=='string'||typeof label!=='string'
+        || type.length>36 || name.length>80 || label.length>100) return null
+      inputs.push({type,name,label})
+    }
+    // Do not treat pages with a visible credential field as public data even if
+    // surrounding text/markup fails to explain the sign-in dialog.
+    if (inputs.some(input=>/password|otp|passcode|verification|security ?code|cvv|cvc/i
+      .test(input.type+' '+input.name+' '+input.label))) return null
     const original = browserTargetUrl(originalUrl)
     const final = browserTargetUrl(row.url)
     if (final.origin !== original.origin || final.protocol !== 'https:'
@@ -157,7 +182,8 @@ export function parseObscuraObservation(
     const text = row.text.replace(/\s+/g, ' ').trim().slice(0, 12000)
     if ((!title && !text) || BLOCK_TEXT.test(text) || BLOCK_TEXT.test(title)
       || isLoginFormPage({ url: final.href, title, text })) return null
-    return { url: final.href, title, text, observedAt: now().toISOString(), runtime: 'obscura' }
+    return { url: final.href, title, text, forms:[{inputs}],
+      observedAt: now().toISOString(), runtime: 'obscura' }
   } catch {
     return null
   }
