@@ -4,7 +4,7 @@ import { createHmac, randomBytes, scryptSync, timingSafeEqual, createHash } from
 import { cookies, headers } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getSession } from '@/lib/dashboard/session'
-import { isAdminPhone } from '@/lib/bot/handlers/admin-analytics'
+import { canonicalAdminPhone, isAdminPhone } from '@/lib/bot/handlers/admin-analytics'
 
 export const ADMIN_COOKIE = 'askgogo_admin'
 export const ADMIN_SESSION_MS = 12 * 60 * 60 * 1000
@@ -27,7 +27,9 @@ export async function adminIdentity(): Promise<AdminIdentity | null> {
   const session = await getSession()
   if (!session) return null
   const { data: user } = await supabaseAdmin.from('users').select('whatsapp_id, name').eq('telegram_id', Number(session.telegramId)).maybeSingle()
-  const phone = e164((user as any)?.whatsapp_id || '')
+  // Authorization cannot inherit the display helper's implicit +91 guess.
+  // An ambiguous domestic-only DB identity must not become an owner/member.
+  const phone = canonicalAdminPhone((user as any)?.whatsapp_id || '')
   if (!phone) return null
   if (isAdminPhone(phone)) return { phone, name: (user as any)?.name || 'Owner', role: 'owner', telegramId: session.telegramId }
   const { data: member } = await supabaseAdmin.from('admin_members').select('name, role, active').eq('phone_e164', phone).maybeSingle()
