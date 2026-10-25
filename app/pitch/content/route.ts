@@ -51,6 +51,8 @@ const NAV_BRIDGE = `
 })();
 </script>`
 
+// 24 Oct sweep: the deck is uploaded HTML served from the app origin. The CSP sandbox gives it an opaque origin, so
+// script in the deck can never read the dashboard session or call same-origin APIs as the viewer.
 export async function GET() {
   const upstream = await fetch(DECK_URL, { cache: 'no-store' })
   if (!upstream.ok) {
@@ -68,7 +70,7 @@ export async function GET() {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'no-store, max-age=0',
       'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy': "default-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https:; style-src 'self' 'unsafe-inline' data: blob: https:; img-src 'self' data: blob: https:; font-src 'self' data: blob: https:; connect-src 'self' data: blob: https:; frame-src 'self' data: blob: https:; media-src 'self' data: blob: https:; object-src 'none'; base-uri 'none'",
+      'Content-Security-Policy': "default-src 'self' data: blob: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https:; style-src 'self' 'unsafe-inline' data: blob: https:; img-src 'self' data: blob: https:; font-src 'self' data: blob: https:; connect-src 'self' data: blob: https:; frame-src 'self' data: blob: https:; media-src 'self' data: blob: https:; object-src 'none'; base-uri 'none'; sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox allow-downloads",
     },
   })
 }

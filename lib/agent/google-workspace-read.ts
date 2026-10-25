@@ -96,6 +96,7 @@ async function composioDriveFor(actor: AgentActor): Promise<((url:string)=>Promi
     const o:any=await import('@/lib/dashboard/owner-ids')
     const ids=[String(actor.legacyTelegramId),...(typeof o?.idsForWhatsapp==='function'?await o.idsForWhatsapp(actor.whatsappId):[])]
     const account=await c.activeDriveAccount(ids)
+    if(!account)console.log('COMPOSIO_DRIVE_NONE:',JSON.stringify({ids:ids.map(v=>`${v.slice(0,1)}…${v.slice(-4)}`)}))
     return account?(url:string)=>c.composioDriveFetch(account,url):null
   }catch(err:any){console.error('COMPOSIO_DRIVE_LOOKUP_FAILED:',String(err?.message||err).slice(0,160));return null}
 }
@@ -111,8 +112,11 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
   }
   // Google Drive while AskGogo's own Google verification is pending (24 Oct): use the person's Composio Drive
   // connection when there is one; their own Workspace token is still preferred when it works.
+  // 24 Oct live: the native token existed (from a Gmail Send upgrade) but had no Drive scope, so Drive got 403 and
+  // the Composio connection was never tried. Composio is now used when native is missing OR answers 401/403.
+  let viaComposio:((url:string)=>Promise<Response>)|null=null
   if(url.startsWith('https://www.googleapis.com/drive/v3/')){
-    const viaComposio=await composioDriveFor(actor)
+    viaComposio=await composioDriveFor(actor)
     if(viaComposio){
       let native:any=null
       try{native=await credentials(actor)}catch{}
@@ -133,6 +137,7 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
     token = await refresh(actor, String(creds.gmail_refresh_token))
     response = await run(token)
   }
+  if ((response.status === 403 || response.status === 401) && viaComposio) return viaComposio(url)
   if (response.status === 403) throw new Error('workspace_scope_required')
   return response
 }

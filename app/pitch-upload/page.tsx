@@ -2,20 +2,20 @@
 
 import { useState } from 'react'
 
-const UPLOAD_KEY = 'AGP-2026-09-14-d570c78f1b0846c8915fcaa8e74e79c1'
-
 export default function PitchUploadPage() {
   const [html, setHtml] = useState<File | null>(null)
   const [pptx, setPptx] = useState<File | null>(null)
   const [status, setStatus] = useState('')
   const [busy, setBusy] = useState(false)
+  // Typed each time; never stored or shipped in the bundle (the route checks PITCH_UPLOAD_KEY).
+  const [key, setKey] = useState('')
 
   async function upload(file: File, path: string, contentType: string) {
     const signRes = await fetch('/api/pitch-assets/upload', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        'x-pitch-upload-key': UPLOAD_KEY,
+        'x-pitch-upload-key': key,
       },
       body: JSON.stringify({ path, contentType }),
     })
@@ -45,6 +45,7 @@ export default function PitchUploadPage() {
   }
 
   async function run() {
+    if (!key) return setStatus('Enter the upload key first.')
     if (!html) return setStatus('Select the HTML file first.')
     setBusy(true)
     setStatus('Uploading HTML directly to storage…')
@@ -73,6 +74,9 @@ export default function PitchUploadPage() {
         <div style={{fontSize:12,letterSpacing:'.14em',textTransform:'uppercase',color:'#EF7A27',fontWeight:700}}>AskGogo pitch updater</div>
         <h1 style={{fontFamily:'Georgia, serif',fontSize:40,lineHeight:1.05,margin:'12px 0'}}>Upload the exact new deck</h1>
         <p style={{color:'#6B635D',lineHeight:1.55,marginBottom:28}}>Select the new HTML and matching PowerPoint. They upload directly to storage, so large deck files no longer pass through Vercel's request-body limit.</p>
+
+        <label style={{display:'block',fontWeight:700,marginBottom:8}}>Upload key</label>
+        <input type="password" autoComplete="off" value={key} onChange={(e)=>setKey(e.target.value)} style={{width:'100%',padding:14,border:'1px solid #D9D0C5',borderRadius:14,marginBottom:22}} />
 
         <label style={{display:'block',fontWeight:700,marginBottom:8}}>HTML deck</label>
         <input type="file" accept=".html,text/html" onChange={(e)=>setHtml(e.target.files?.[0] || null)} style={{width:'100%',padding:14,border:'1px solid #D9D0C5',borderRadius:14,marginBottom:22}} />
