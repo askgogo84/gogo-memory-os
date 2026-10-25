@@ -2130,7 +2130,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
           sourceUrl:browserSourceUrl(candidate.url)||undefined,
           title:safeText(candidate.title,300),summary:verified,
           pageText:safeText(candidate.text,9000),forms:[],actions:[],
-          sandboxName:'obscura-ephemeral-read',
+          // This ephemeral observer has no attachable browser session.
+          sandboxName:'',
         }
       }
     }
