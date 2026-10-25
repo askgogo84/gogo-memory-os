@@ -1,0 +1,1081 @@
+{
+ "version": "understanding-golden-v1",
+ "note": "Model outputs are in the TypeSafe /v1/systemone response shape. They are authored for the 19 Oct live cases until production shadow rows exist; run the verifier with --record and TYPESAFE_API_KEY to capture live outputs into recordedLive.",
+ "now": "2026-10-19T08:00:00.000Z",
+ "timezone": "Asia/Kolkata",
+ "baseContext": {
+  "recent_turns": [
+   {
+    "role": "user",
+    "content": "Find the cheapest Jailer 2 show timings near Orion",
+    "createdAt": "2026-10-19T03:00:00.000Z"
+   },
+   {
+    "role": "assistant",
+    "content": "I'm checking Jailer 2 shows near Orion Mall and will update you.",
+    "createdAt": "2026-10-19T03:01:00.000Z"
+   }
+  ],
+  "open_tasks": [
+   {
+    "id": "run:r-jailer2",
+    "title": "Add Jailer 2 to calendar",
+    "detail": "waiting_approval",
+    "at": "2026-10-19T06:00:00.000Z"
+   },
+   {
+    "id": "run:r-research",
+    "title": "Research Goa monsoon homestays",
+    "detail": "running",
+    "at": "2026-10-19T07:50:00.000Z"
+   }
+  ],
+  "pending_approvals": [
+   {
+    "id": "approval:a-cal",
+    "title": "Block calendar for this booking",
+    "detail": "risk low",
+    "at": "2026-10-19T06:00:00.000Z"
+   }
+  ],
+  "saved_documents": [
+   {
+    "id": "doc:pvr-jailer",
+    "kind": "document",
+    "type": "ticket",
+    "title": "PVR ticket - Jailer 2",
+    "at": "2026-10-18T14:00:00.000Z"
+   },
+   {
+    "id": "doc:passport",
+    "kind": "document",
+    "type": "passport",
+    "title": "masked passport",
+    "at": "2026-09-01T10:00:00.000Z"
+   }
+  ],
+  "saved_tickets": [
+   {
+    "id": "ticket:t-jailer",
+    "kind": "ticket",
+    "type": "event ticket",
+    "title": "Jailer 2 at PVR Orion Mall",
+    "at": "Mon, 19 Oct, 9:45 pm (Asia/Kolkata)"
+   }
+  ],
+  "upcoming_reminders": [
+   {
+    "id": "reminder:r-jailer",
+    "title": "Jailer 2 at 9:45 PM at PVR Orion Mall. Aim to leave by 9:00 PM.",
+    "at": "Mon, 19 Oct, 6:45 pm (Asia/Kolkata)"
+   }
+  ],
+  "context_pack": {
+   "watches": [
+    {
+     "id": "watch:watcher:w-1",
+     "title": "Sony WH-1000XM5 price on Flipkart"
+    }
+   ],
+   "travelLegs": [
+    {
+     "id": "travel:ticket:f-1",
+     "title": "Bengaluru to Delhi 6E 2134",
+     "at": "2026-10-25T03:00:00.000Z"
+    }
+   ],
+   "memoryFacts": [
+    {
+     "id": "memory:semantic:m-parking",
+     "title": "Car parked at B2, pillar 14, Orion Mall"
+    }
+   ]
+  },
+  "calendar": [
+   {
+    "id": "event:1",
+    "title": "Investor call",
+    "at": "Mon, 19 Oct, 4:00 pm (Asia/Kolkata)"
+   }
+  ],
+  "preferences": [
+   "Keep replies short",
+   "Prefer vegetarian restaurants"
+  ],
+  "profile": {
+   "name": "Goverdhan",
+   "timezone": "Asia/Kolkata",
+   "city": "Bangalore",
+   "pincode": "560086"
+  }
+ },
+ "cases": [
+  {
+   "id": "oct19-jailer-qr",
+   "note": "19 Oct live: 'Jailer qr code' with a saved PVR ticket went to web search.",
+   "text": "Jailer qr code",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "retrieve_saved_document",
+      "confidence": 0.94,
+      "probabilities": {
+       "retrieve_saved_document": 0.94,
+       "event_or_travel_booking": 0.03
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     },
+     "referent": {
+      "type": "choice",
+      "choice": "doc:pvr-jailer",
+      "confidence": 0.91,
+      "probabilities": {
+       "doc:pvr-jailer": 0.91
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "retrieve_saved_document",
+    "referent": "doc:pvr-jailer",
+    "live": "dispatch",
+    "handledBy": "understand-first-retrieve"
+   }
+  },
+  {
+   "id": "oct19-name-answer",
+   "note": "19 Oct live: the guest name after Gogo's reservation question.",
+   "text": "Goverdhan",
+   "context": {
+    "recent_turns": [
+     {
+      "role": "user",
+      "content": "Book a table for 2 at Toit Indiranagar tomorrow at 7pm",
+      "createdAt": "2026-10-19T07:57:00.000Z"
+     },
+     {
+      "role": "assistant",
+      "content": "7:00 PM tomorrow is available for 2 at Toit. What name should I book under? I'll use Goverdhan.",
+      "createdAt": "2026-10-19T07:58:00.000Z"
+     }
+    ]
+   },
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "answer_pending_question",
+      "confidence": 0.96,
+      "probabilities": {
+       "answer_pending_question": 0.96
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "answer_pending_question",
+    "referent": "q:latest",
+    "slots": {
+     "answer": "Goverdhan"
+    },
+    "live": "dispatch",
+    "handledBy": "restaurant-reservation"
+   }
+  },
+  {
+   "id": "oct19-karat-answer",
+   "note": "19 Oct live: '24k' after the karat question. No answerer on main for gold yet (PR #668 hook), so it falls through to the existing clarifier.",
+   "text": "24k",
+   "context": {
+    "recent_turns": [
+     {
+      "role": "user",
+      "content": "Alert me when gold drops 10%",
+      "createdAt": "2026-10-19T07:57:00.000Z"
+     },
+     {
+      "role": "assistant",
+      "content": "Which one should I watch: 22K or 24K gold?",
+      "createdAt": "2026-10-19T07:58:00.000Z"
+     }
+    ]
+   },
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "answer_pending_question",
+      "confidence": 0.95,
+      "probabilities": {
+       "answer_pending_question": 0.95
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "answer_pending_question",
+    "referent": "q:latest",
+    "slots": {
+     "answer": "24K"
+    },
+    "live": "fall_through",
+    "reason": "handler_declined"
+   }
+  },
+  {
+   "id": "oct19-move-8pm",
+   "note": "19 Oct live: 'Move to 8pm' on a reminder. A reminder write stays with its handler.",
+   "text": "Move to 8pm",
+   "context": {
+    "recent_turns": [
+     {
+      "role": "assistant",
+      "content": "Jailer 2 at 9:45 PM at PVR Orion Mall, Audi 04, seats K18, K19. Aim to leave by 9:00 PM.",
+      "createdAt": "2026-10-19T07:55:00.000Z"
+     }
+    ]
+   },
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "modify_reminder",
+      "confidence": 0.95,
+      "probabilities": {
+       "modify_reminder": 0.95
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     },
+     "referent": {
+      "type": "choice",
+      "choice": "reminder:r-jailer",
+      "confidence": 0.9,
+      "probabilities": {
+       "reminder:r-jailer": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "modify_reminder",
+    "referent": "reminder:r-jailer",
+    "slots": {
+     "time": "20:00"
+    },
+    "live": "fall_through",
+    "reason": "not_in_safe_live_set"
+   }
+  },
+  {
+   "id": "oct19-gold-watch",
+   "text": "Alert me when 22K gold in Bangalore drops 10%",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "create_watch",
+      "confidence": 0.97,
+      "probabilities": {
+       "create_watch": 0.97,
+       "web_answer": 0.02
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "create_watch",
+    "slots": {
+     "asset": "gold",
+     "karat": "22K",
+     "city": "Bangalore",
+     "changePct": -10
+    },
+    "live": "fall_through",
+    "reason": "not_in_safe_live_set"
+   }
+  },
+  {
+   "id": "oct19-toit-booking",
+   "text": "Book a table for 2 at Toit Indiranagar tomorrow at 7pm",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "restaurant_booking",
+      "confidence": 0.98,
+      "probabilities": {
+       "restaurant_booking": 0.98
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "restaurant_booking",
+    "slots": {
+     "partySize": 2,
+     "venue": "Toit",
+     "area": "Indiranagar",
+     "date": "2026-10-20",
+     "time": "19:00"
+    },
+    "live": "fall_through",
+    "reason": "not_in_safe_live_set"
+   }
+  },
+  {
+   "id": "oct19-plan-weekend",
+   "text": "plan my weekend",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "plan_with_clarification",
+      "confidence": 0.9,
+      "probabilities": {
+       "plan_with_clarification": 0.9
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "preferences",
+      "confidence": 0.88,
+      "probabilities": {
+       "preferences": 0.88
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "plan_with_clarification",
+    "clarifyingQuestion": "Happy to plan it. What should it include: going out, food, rest, errands, or time with someone?",
+    "slots": {
+     "scope": "weekend"
+    },
+    "live": "dispatch",
+    "handledBy": "understand-first-clarify"
+   }
+  },
+  {
+   "id": "oct19-working-on",
+   "text": "What are you working on?",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "task_status",
+      "confidence": 0.95,
+      "probabilities": {
+       "task_status": 0.95
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "task_status",
+    "live": "dispatch",
+    "handledBy": "autonomy-status"
+   }
+  },
+  {
+   "id": "oct19-jailer-task-update",
+   "text": "Any update on the Jailer 2 task?",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "task_status",
+      "confidence": 0.94,
+      "probabilities": {
+       "task_status": 0.94
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     },
+     "referent": {
+      "type": "choice",
+      "choice": "run:r-jailer2",
+      "confidence": 0.92,
+      "probabilities": {
+       "run:r-jailer2": 0.92
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "task_status",
+    "referent": "run:r-jailer2",
+    "live": "dispatch",
+    "handledBy": "task-status"
+   }
+  },
+  {
+   "id": "oct19-cancel-task",
+   "text": "cancel that task",
+   "context": {
+    "recent_turns": [
+     {
+      "role": "user",
+      "content": "Research Goa monsoon homestays",
+      "createdAt": "2026-10-19T07:48:00.000Z"
+     },
+     {
+      "role": "assistant",
+      "content": "On it. I'm researching Goa monsoon homestays and will send options.",
+      "createdAt": "2026-10-19T07:49:00.000Z"
+     }
+    ]
+   },
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "task_cancel",
+      "confidence": 0.93,
+      "probabilities": {
+       "task_cancel": 0.93
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     },
+     "referent": {
+      "type": "choice",
+      "choice": "run:r-research",
+      "confidence": 0.9,
+      "probabilities": {
+       "run:r-research": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "task_cancel",
+    "referent": "run:r-research",
+    "live": "fall_through",
+    "reason": "not_in_safe_live_set"
+   }
+  },
+  {
+   "id": "oct19-petrol",
+   "text": "Petrol price in Bangalore today",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "web_answer",
+      "confidence": 0.95,
+      "probabilities": {
+       "web_answer": 0.95
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "web_answer",
+    "slots": {
+     "asset": "petrol",
+     "city": "Bangalore",
+     "date": "2026-10-19"
+    },
+    "live": "dispatch",
+    "handledBy": "understand-first-web"
+   }
+  },
+  {
+   "id": "oct19-remind-divya",
+   "text": "Remind me to call Divya tomorrow at 10am",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "set_reminder",
+      "confidence": 0.98,
+      "probabilities": {
+       "set_reminder": 0.98
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "set_reminder",
+    "slots": {
+     "task": "call Divya",
+     "date": "2026-10-20",
+     "time": "10:00"
+    },
+    "live": "fall_through",
+    "reason": "not_in_safe_live_set"
+   }
+  },
+  {
+   "id": "oct19-parking-recall",
+   "text": "What did I tell you about my parking spot?",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "memory_recall",
+      "confidence": 0.93,
+      "probabilities": {
+       "memory_recall": 0.93
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     },
+     "referent": {
+      "type": "choice",
+      "choice": "memory:semantic:m-parking",
+      "confidence": 0.9,
+      "probabilities": {
+       "memory:semantic:m-parking": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "memory_recall",
+    "referent": "memory:semantic:m-parking",
+    "live": "dispatch",
+    "handledBy": "understand-first-recall"
+   }
+  },
+  {
+   "id": "neg-book-jailer-tickets",
+   "negative": true,
+   "note": "'tickets' + 'Jailer' must not read as retrieving the saved ticket.",
+   "text": "book tickets for Jailer 2",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "event_or_travel_booking",
+      "confidence": 0.95,
+      "probabilities": {
+       "event_or_travel_booking": 0.95,
+       "retrieve_saved_document": 0.03
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "event_or_travel_booking",
+    "notAction": "retrieve_saved_document",
+    "live": "fall_through",
+    "reason": "not_in_safe_live_set"
+   }
+  },
+  {
+   "id": "neg-book-jailer-misread",
+   "negative": true,
+   "note": "Even if the model misreads it as a retrieval, an explicit 'book' verb is never answered live.",
+   "text": "book tickets for Jailer 2",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "retrieve_saved_document",
+      "confidence": 0.9,
+      "probabilities": {
+       "retrieve_saved_document": 0.9
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     },
+     "referent": {
+      "type": "choice",
+      "choice": "doc:pvr-jailer",
+      "confidence": 0.9,
+      "probabilities": {
+       "doc:pvr-jailer": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "retrieve_saved_document",
+    "live": "fall_through",
+    "reason": "explicit_mutation_verb"
+   }
+  },
+  {
+   "id": "neg-mom",
+   "negative": true,
+   "note": "'how is ... doing' is conversation, not a task status.",
+   "text": "how is my mom doing",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "general_chat",
+      "confidence": 0.92,
+      "probabilities": {
+       "general_chat": 0.92,
+       "task_status": 0.04
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "general_chat",
+    "notAction": "task_status",
+    "live": "dispatch",
+    "handledBy": "understand-first-chat"
+   }
+  },
+  {
+   "id": "neg-amazon-order",
+   "negative": true,
+   "note": "'status' of an external order is not Gogo's task status.",
+   "text": "status of my Amazon order",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "order_status",
+      "confidence": 0.94,
+      "probabilities": {
+       "order_status": 0.94,
+       "task_status": 0.03
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "order_status",
+    "notAction": "task_status",
+    "live": "fall_through",
+    "reason": "not_in_safe_live_set"
+   }
+  },
+  {
+   "id": "val-low-confidence",
+   "text": "hmm maybe that one later",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "general_chat",
+      "confidence": 0.55,
+      "probabilities": {
+       "general_chat": 0.55
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": null,
+    "reasons": [
+     "low_confidence"
+    ],
+    "live": "fall_through",
+    "reason": "low_confidence"
+   }
+  },
+  {
+   "id": "val-below-live",
+   "text": "what do you think about the Goa homestays",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "general_chat",
+      "confidence": 0.75,
+      "probabilities": {
+       "general_chat": 0.75
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "general_chat",
+    "live": "fall_through",
+    "reason": "below_live_confidence"
+   }
+  },
+  {
+   "id": "val-unknown-referent",
+   "text": "that pdf from yesterday",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "retrieve_saved_document",
+      "confidence": 0.92,
+      "probabilities": {
+       "retrieve_saved_document": 0.92
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     },
+     "referent": {
+      "type": "choice",
+      "choice": "doc:someone-elses",
+      "confidence": 0.95,
+      "probabilities": {
+       "doc:someone-elses": 0.95
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "retrieve_saved_document",
+    "referent": null,
+    "reasons": [
+     "referent_not_in_context",
+     "referent_required_missing"
+    ],
+    "live": "fall_through",
+    "reason": "referent_unresolved"
+   }
+  },
+  {
+   "id": "val-unknown-action",
+   "text": "wipe everything",
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "delete_everything",
+      "confidence": 0.99,
+      "probabilities": {
+       "delete_everything": 0.99
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": null,
+    "reasons": [
+     "unknown_action"
+    ],
+    "live": "fall_through",
+    "reason": "unknown_action"
+   }
+  },
+  {
+   "id": "val-stale-question",
+   "note": "A question asked two hours ago is not pending.",
+   "text": "Goverdhan",
+   "context": {
+    "recent_turns": [
+     {
+      "role": "assistant",
+      "content": "What name should I book under?",
+      "createdAt": "2026-10-19T06:00:00.000Z"
+     }
+    ]
+   },
+   "model": {
+    "model": "jev-latest",
+    "answers": {
+     "action": {
+      "type": "choice",
+      "choice": "answer_pending_question",
+      "confidence": 0.9,
+      "probabilities": {
+       "answer_pending_question": 0.9
+      }
+     },
+     "missing_info": {
+      "type": "choice",
+      "choice": "none",
+      "confidence": 0.9,
+      "probabilities": {
+       "none": 0.9
+      }
+     }
+    },
+    "usage": {
+     "input_tokens": 1800,
+     "output_tokens": 24
+    }
+   },
+   "expect": {
+    "action": "answer_pending_question",
+    "referent": null,
+    "live": "fall_through",
+    "reason": "referent_unresolved"
+   }
+  },
+  {
+   "id": "val-malformed",
+   "text": "Tell me a joke",
+   "model": {
+    "answers": {}
+   },
+   "expect": {
+    "ok": false,
+    "action": null,
+    "live": "fall_through",
+    "reason": "typesafe_malformed_response"
+   }
+  },
+  {
+   "id": "val-timeout",
+   "text": "Will it rain in Bangalore tomorrow?",
+   "modelError": "hang",
+   "expect": {
+    "ok": null,
+    "action": null,
+    "live": "fall_through",
+    "reasonOneOf": [
+     "budget_timeout",
+     "typesafe_timeout"
+    ]
+   }
+  }
+ ]
+}

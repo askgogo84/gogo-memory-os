@@ -1,0 +1,66 @@
+﻿app/api/cron/daily-briefings/route.ts(210,46): error TS2339: Property 'error' does not exist on type 'SendEmailResult'.
+  Property 'error' does not exist on type '{ ok: true; id: string; }'.
+app/api/cron/lifecycle-emails/route.ts(114,62): error TS2339: Property 'error' does not exist on type 'SendEmailResult'.
+  Property 'error' does not exist on type '{ ok: true; id: string; }'.
+app/api/dashboard/chat/route.ts(155,25): error TS2339: Property 'handledBy' does not exist on type 'ProcessIncomingResult'.
+app/api/dashboard/lists/items/route.ts(41,24): error TS2339: Property 'reason' does not exist on type 'SetItemResult'.
+  Property 'reason' does not exist on type '{ ok: true; }'.
+app/api/dashboard/lists/items/route.ts(41,59): error TS2339: Property 'reason' does not exist on type 'SetItemResult'.
+  Property 'reason' does not exist on type '{ ok: true; }'.
+app/api/dashboard/lists/items/route.ts(43,11): error TS2339: Property 'reason' does not exist on type 'SetItemResult'.
+  Property 'reason' does not exist on type '{ ok: true; }'.
+app/api/dashboard/lists/route.ts(37,24): error TS2339: Property 'reason' does not exist on type 'CreateListResult'.
+  Property 'reason' does not exist on type '{ ok: true; list: { id: string | number; name: string; items: ListItem[]; }; }'.
+app/api/dashboard/lists/route.ts(38,23): error TS2339: Property 'reason' does not exist on type 'CreateListResult'.
+  Property 'reason' does not exist on type '{ ok: true; list: { id: string | number; name: string; items: ListItem[]; }; }'.
+app/api/dashboard/master-gogo-presenter/route.ts(11,23): error TS2345: Argument of type 'Uint8Array<ArrayBufferLike>' is not assignable to parameter of type 'BodyInit'.
+  Type 'Uint8Array<ArrayBufferLike>' is missing the following properties from type 'URLSearchParams': size, append, delete, get, and 2 more.
+app/api/dashboard/otp/request/route.ts(34,16): error TS2339: Property 'reason' does not exist on type 'OtpIssueResult'.
+  Property 'reason' does not exist on type '{ ok: true; challengeId: string; retryAfterSeconds: number; }'.
+app/api/dashboard/otp/request/route.ts(35,16): error TS2339: Property 'reason' does not exist on type 'OtpIssueResult'.
+  Property 'reason' does not exist on type '{ ok: true; challengeId: string; retryAfterSeconds: number; }'.
+app/api/dashboard/otp/verify/route.ts(25,29): error TS2339: Property 'reason' does not exist on type 'OtpVerifyResult'.
+  Property 'reason' does not exist on type '{ ok: true; telegramId: string; }'.
+app/api/dashboard/otp/verify/route.ts(25,60): error TS2339: Property 'reason' does not exist on type 'OtpVerifyResult'.
+  Property 'reason' does not exist on type '{ ok: true; telegramId: string; }'.
+app/api/dashboard/reminders/[id]/route.ts(46,59): error TS2339: Property 'reason' does not exist on type 'DeleteReminderResult'.
+  Property 'reason' does not exist on type '{ ok: true; }'.
+app/api/dashboard/reminders/[id]/route.ts(82,24): error TS2339: Property 'reason' does not exist on type 'SeriesActionResult'.
+  Property 'reason' does not exist on type '{ ok: true; }'.
+app/api/dashboard/reminders/[id]/route.ts(82,59): error TS2339: Property 'reason' does not exist on type 'SeriesActionResult'.
+  Property 'reason' does not exist on type '{ ok: true; }'.
+app/api/dashboard/reminders/[id]/route.ts(83,23): error TS2339: Property 'reason' does not exist on type 'SeriesActionResult'.
+  Property 'reason' does not exist on type '{ ok: true; }'.
+app/api/dashboard/reminders/[id]/route.ts(132,24): error TS2339: Property 'reason' does not exist on type 'UpdateReminderResult'.
+  Property 'reason' does not exist on type '{ ok: true; }'.
+app/api/dashboard/reminders/[id]/route.ts(132,59): error TS2339: Property 'reason' does not exist on type 'UpdateReminderResult'.
+  Property 'reason' does not exist on type '{ ok: true; }'.
+app/api/dashboard/reminders/[id]/route.ts(134,11): error TS2339: Property 'reason' does not exist on type 'UpdateReminderResult'.
+  Property 'reason' does not exist on type '{ ok: true; }'.
+lib/agent/booking-calendar-execution.ts(25,308): error TS2551: Property 'catch' does not exist on type 'PostgrestFilterBuilder<any, any, any, null, "agent_activity", unknown, "POST">'. Did you mean 'match'?
+lib/agent/booking-calendar-execution.ts(43,261): error TS2551: Property 'catch' does not exist on type 'PostgrestFilterBuilder<any, any, any, null, "agent_activity", unknown, "POST">'. Did you mean 'match'?
+lib/agent/booking-closure.ts(126,697): error TS2551: Property 'catch' does not exist on type 'PostgrestFilterBuilder<any, any, any, null, "life_event_actions", unknown, "POST">'. Did you mean 'match'?
+lib/agent/booking-queue.ts(50,5): error TS2739: Type '{ dedupeKey: string; lifecycleState: "planned" | "captured"; nextActionAt: string; actions: LifeEventAction[]; id: string; }' is missing the following properties from type '{ id: any; metadata_json: any; source_refs: any; title: any; provider: any; }': metadata_json, source_refs, title, provider
+lib/agent/browser-command.ts(127,134): error TS2551: Property 'catch' does not exist on type 'PostgrestFilterBuilder<any, any, any, null, "agent_steps", unknown, "PATCH">'. Did you mean 'match'?
+lib/agent/browser-command.ts(128,237): error TS2551: Property 'catch' does not exist on type 'PostgrestFilterBuilder<any, any, any, null, "agent_runs", unknown, "PATCH">'. Did you mean 'match'?
+lib/agent/creditiq-hotel-research.ts(109,6): error TS2551: Property 'catch' does not exist on type 'PostgrestFilterBuilder<any, any, any, null, "agent_activity", unknown, "POST">'. Did you mean 'match'?
+lib/agent/life-event-execution.ts(147,8): error TS2551: Property 'catch' does not exist on type 'PostgrestFilterBuilder<any, any, any, null, "agent_activity", unknown, "POST">'. Did you mean 'match'?
+lib/agent/travel-research.ts(141,112): error TS2339: Property 'startDate' does not exist on type '{ label: string; search: string; startDate: string; endDate: string; } | { label: string; search: string; }'.
+  Property 'startDate' does not exist on type '{ label: string; search: string; }'.
+lib/agent/travel-research.ts(141,136): error TS2339: Property 'endDate' does not exist on type '{ label: string; search: string; startDate: string; endDate: string; } | { label: string; search: string; }'.
+  Property 'endDate' does not exist on type '{ label: string; search: string; }'.
+lib/agent/travel-research.ts(420,135): error TS2551: Property 'catch' does not exist on type 'PostgrestFilterBuilder<any, any, any, null, "agent_steps", unknown, "PATCH">'. Did you mean 'match'?
+lib/agent/travel-research.ts(421,237): error TS2551: Property 'catch' does not exist on type 'PostgrestFilterBuilder<any, any, any, null, "agent_runs", unknown, "PATCH">'. Did you mean 'match'?
+lib/agent/workspace-drive-context.ts(162,23): error TS2339: Property 'file' does not exist on type '{ status: "selected"; file: DriveFile; } | { status: "ambiguous" | "not_found"; files: DriveFile[]; }'.
+  Property 'file' does not exist on type '{ status: "ambiguous" | "not_found"; files: DriveFile[]; }'.
+lib/bot/process-message.ts(541,22): error TS2339: Property 'reason' does not exist on type 'IssueResult'.
+  Property 'reason' does not exist on type '{ ok: true; token: string; code: string; }'.
+lib/bot/process-message.ts(1033,74): error TS2339: Property 'reply' does not exist on type 'AiActionGuard'.
+  Property 'reply' does not exist on type '{ ok: true; usage?: AllowanceResult; }'.
+lib/bot/process-message.ts(1034,63): error TS2339: Property 'reply' does not exist on type 'AiActionGuard'.
+  Property 'reply' does not exist on type '{ ok: true; usage?: AllowanceResult; }'.
+lib/bot/process-message.ts(1231,26): error TS2339: Property 'reply' does not exist on type 'AiActionGuard'.
+  Property 'reply' does not exist on type '{ ok: true; usage?: AllowanceResult; }'.
+scripts/verify-google-workspace-oauth.mts(7,28): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+scripts/verify-google-workspace-oauth.mts(8,31): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.
+scripts/verify-provider-challenge.mts(8,8): error TS5097: An import path can only end with a '.ts' extension when 'allowImportingTsExtensions' is enabled.

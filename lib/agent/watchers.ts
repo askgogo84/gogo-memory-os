@@ -1,0 +1,1618 @@
+import { createHash } from 'node:crypto'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
+import { deliverWatchAlert } from './watch-alert-delivery'
+import { travelWatchAlertMessage } from './contextual-travel-watchers'
+import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
+import { checkCostAllowance, COST_ESTIMATES_PAISE, getCostBudget, recordCostEvent } from '@/lib/services/cost-guard'
+import { adaptiveWatcherCadence } from './watch-cost-policy'
+import { runSecureBrowser } from './secure-computer'
+import { listRecentWorkspaceInbox } from './google-workspace-read'
+import { buildVaultAddLink } from '@/lib/vault/connect-link'
+import type { AgentActor } from './actor'
+import {
+  assessWebWatchResult,
+  canonicalWatcherUrl,
+  watcherResultSignature,
+  webWatchAlertAllowed,
+  extractFlightCodes,
+  extractDateTokens,
+  activeEventKeys,
+  recordEventKey,
+  activeStamped,
+  mergeStamped,
+  verifyContextualDisruption,
+  effectiveWeatherQuery,
+} from './watcher-quality'
+
+import { assessPriceCheck, appendPriceRun, buildPriceRun, normalizePriceRule, priceAlertText, priceStateFrom, type PriceRule } from './price-threshold'
+import { extractGoldQuotes } from '@/lib/bot/handlers/gold-quotes'
+import { matchingActiveWatches, planWatchCleanup, watchSpecificity, DEDUPE_WATCH_TYPES, type DedupeRow, type WatchRetirement } from './watch-dedupe'
+import { appendGoldRun, decideGoldAlert, evaluateGoldRule, goldAlertText, goldSearchContext, goldStateFrom, normalizeGoldRule, sourceHost, type GoldRule } from './gold-rate-rule'
+
+export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
+
+export async function sourceBoundTravelExpiry(watcher:{telegram_id:string|number;condition_json?:ContextualWatcherMeta}):Promise<string|null>{
+  const condition=watcher.condition_json||{}
+  const current=validDate(condition.expiresAt)
+  if(condition.contextual!==true||condition.contextualKind!=='travel')return current
+  const ids=(condition.sourceRefs||[]).filter(ref=>ref?.type==='travel_ticket'&&/^[a-f0-9-]{36}$/i.test(String(ref.id))).map(ref=>String(ref.id))
+  if(!ids.length)return current
+  const {data,error}=await supabaseAdmin.from('travel_tickets').select('id,depart_at,arrive_at').eq('telegram_id',Number(watcher.telegram_id)).in('id',ids)
+  if(error)throw new Error('context_travel_expiry_source_unavailable')
+  const times=(data||[]).map(row=>Date.parse(String(row.arrive_at||row.depart_at||''))).filter(Number.isFinite)
+  if(!times.length)throw new Error('context_travel_expiry_source_missing')
+  const bound=new Date(Math.max(...times)+72*3600_000).toISOString()
+  return current&&Date.parse(current)<Date.parse(bound)?current:bound
+}
+
+export type ContextualWatcherMeta = {
+  contextual?: boolean
+  contextualKind?: 'travel'
+  contextKey?: string
+  contextRoot?: string
+  contextClass?: 'flight_status'|'connection_ground'|'destination_weather'|'travel_email'|'airline_news'
+  reason?: string
+  expiresAt?: string|null
+  sourceRefs?: Array<Record<string,unknown>>
+  userStoppedAt?: string|null
+  flightLegs?: string[]
+  traveller?: string|null
+  weatherStartAt?:string
+  weatherTimezone?:string
+}
+
+export type DeadlineWatcherCondition = {
+  title: string
+  deadline: string
+  notifyBeforeHours: number
+  delivery: WatcherDelivery
+}
+
+export type InboxTriageWatcherCondition = ContextualWatcherMeta & {
+  title: string
+  delivery: WatcherDelivery
+  cadenceMinutes: number
+  matchTerms?: string[]
+}
+
+export type ProductStockWatcherCondition = {
+  title: string
+  productUrl: string
+  variant: string
+  addToCart: boolean
+  delivery: WatcherDelivery
+  cadenceMinutes: number
+}
+
+export type WebSearchWatcherCondition = ContextualWatcherMeta & {
+  title: string
+  query: string
+  triggerKeywords: string[]
+  delivery: WatcherDelivery
+  cadenceMinutes: number
+  burstUntil?: string | null
+  // Manual find requests surface their first match, even after empty checks.
+  notifyOnFirstMatch?: boolean
+  // Numeric price watch: alert only when the listed price is strictly below the threshold.
+  priceRule?: PriceRule
+  // Gold-rate watch: alert only when a single verified per-gram quote crosses the threshold.
+  goldRule?: GoldRule
+  originalRequest?: string
+}
+
+export type WebPageWatcherCondition = {
+  title: string
+  url: string
+  watch: 'title' | 'content'
+  delivery: WatcherDelivery
+  cadenceMinutes: number
+}
+
+function validDate(value: unknown): string | null {
+  const d = new Date(String(value || ''))
+  return Number.isFinite(d.getTime()) ? d.toISOString() : null
+}
+
+function normalizeDelivery(value: unknown): WatcherDelivery {
+  return ['app','whatsapp','both'].includes(String(value)) ? String(value) as WatcherDelivery : 'both'
+}
+
+function normalizeContextualMeta(input:any):ContextualWatcherMeta {
+  if(input?.contextual!==true)return{}
+  const expiresAt=input?.expiresAt?validDate(input.expiresAt):null
+  const contextClass=['flight_status','connection_ground','destination_weather','travel_email','airline_news'].includes(String(input?.contextClass))
+    ? String(input.contextClass) as ContextualWatcherMeta['contextClass'] : undefined
+  return {
+    contextual:true,
+    contextualKind:input?.contextualKind==='travel'?'travel':undefined,
+    contextKey:String(input?.contextKey||'').slice(0,160)||undefined,
+    contextRoot:String(input?.contextRoot||'').slice(0,120)||undefined,
+    contextClass,
+    reason:String(input?.reason||'').replace(/\s+/g,' ').trim().slice(0,320)||undefined,
+    expiresAt,
+    sourceRefs:Array.isArray(input?.sourceRefs)?input.sourceRefs.slice(0,12):[],
+    userStoppedAt:input?.userStoppedAt?validDate(input.userStoppedAt):null,
+    flightLegs:Array.isArray(input?.flightLegs)?input.flightLegs.map((x:any)=>String(x||'').slice(0,80)).filter(Boolean).slice(0,12):undefined,
+    traveller:input?.traveller?String(input.traveller).replace(/\s+/g,' ').trim().slice(0,40):undefined,
+    weatherStartAt:validDate(input?.weatherStartAt)||undefined,
+    weatherTimezone:typeof input?.weatherTimezone==='string'?input.weatherTimezone.slice(0,80):undefined,
+  }
+}
+
+export function normalizeDeadlineWatcher(input: any): DeadlineWatcherCondition | null {
+  const title = String(input?.title || '').trim().slice(0, 180)
+  const deadline = validDate(input?.deadline)
+  const notifyBeforeHours = Math.max(1, Math.min(24 * 30, Math.floor(Number(input?.notifyBeforeHours || 24))))
+  const delivery = normalizeDelivery(input?.delivery)
+  if (!title || !deadline) return null
+  return { title, deadline, notifyBeforeHours, delivery }
+}
+
+export function normalizeInboxTriageWatcher(input:any): InboxTriageWatcherCondition | null {
+  const title=String(input?.title||'Inbox action watch').trim().slice(0,180)
+  const delivery=normalizeDelivery(input?.delivery)
+  const cadenceMinutes=Math.max(60,Math.min(24*60,Math.floor(Number(input?.cadenceMinutes||60))))
+  const matchTerms=Array.isArray(input?.matchTerms)
+    ? Array.from(new Set(input.matchTerms.map((x:any)=>String(x||'').replace(/\s+/g,' ').trim()).filter((x:string)=>x.length>=3))).slice(0,12) as string[]
+    : []
+  if(!title)return null
+  return {title,delivery,cadenceMinutes,matchTerms,...normalizeContextualMeta(input)}
+}
+
+export function normalizeProductStockWatcher(input: any): ProductStockWatcherCondition | null {
+  const title = String(input?.title || '').trim().slice(0, 180)
+  const rawUrl = String(input?.productUrl || '').trim()
+  let productUrl = ''
+  try {
+    const url = new URL(rawUrl)
+    if (['http:','https:'].includes(url.protocol)) {
+      url.hash = ''
+      productUrl = url.toString()
+    }
+  } catch {}
+  const variant = String(input?.variant || '').replace(/\s+/g, ' ').trim().slice(0, 60)
+  const addToCart = input?.addToCart === true
+  const delivery = normalizeDelivery(input?.delivery)
+  const cadenceMinutes = Math.max(15, Math.min(24 * 60, Math.floor(Number(input?.cadenceMinutes || 60))))
+  if (!title || !productUrl || !variant) return null
+  return { title, productUrl, variant, addToCart, delivery, cadenceMinutes }
+}
+
+export function normalizeWebPageWatcher(input:any): WebPageWatcherCondition | null {
+  const title=String(input?.title||'Page watch').replace(/\s+/g,' ').trim().slice(0,180)
+  let url=''
+  try{
+    const u=new URL(String(input?.url||'').trim())
+    if(['http:','https:'].includes(u.protocol)){u.hash='';url=u.toString()}
+  }catch{}
+  const watch=String(input?.watch||'title')==='content'?'content':'title'
+  const delivery=normalizeDelivery(input?.delivery)
+  const cadenceMinutes=Math.max(60,Math.min(24*60,Math.floor(Number(input?.cadenceMinutes||60))))
+  if(!title||!url)return null
+  return {title,url,watch,delivery,cadenceMinutes}
+}
+
+export function normalizeWebSearchWatcher(input: any): WebSearchWatcherCondition | null {
+  const title = String(input?.title || '').trim().slice(0, 180)
+  const query = String(input?.query || '').replace(/\s+/g, ' ').trim().slice(0, 500)
+  const triggerKeywords = Array.isArray(input?.triggerKeywords)
+    ? Array.from(new Set(input.triggerKeywords.map((x:any)=>String(x || '').trim().toLowerCase()).filter(Boolean))).slice(0, 12) as string[]
+    : []
+  const delivery = normalizeDelivery(input?.delivery)
+  const cadenceMinutes = Math.max(15, Math.min(24 * 60, Math.floor(Number(input?.cadenceMinutes || 60))))
+  const burstUntil = input?.burstUntil ? validDate(input.burstUntil) : null
+  if (!title || !query) return null
+  return { title, query, triggerKeywords, delivery, cadenceMinutes, burstUntil,
+    notifyOnFirstMatch:input?.notifyOnFirstMatch===true && input?.contextual!==true,
+    priceRule:normalizePriceRule(input?.priceRule)||undefined,
+    // Only a row that carries a gold rule reads it; every other watch is untouched.
+    ...(input?.goldRule&&normalizeGoldRule(input.goldRule)?{goldRule:normalizeGoldRule(input.goldRule) as GoldRule}:{}),
+    originalRequest:String(input?.originalRequest||'').trim().slice(0,2000)||undefined,
+    // A cadence the person asked for ("every morning") is a floor the adaptive schedule never goes below.
+    ...(Number(input?.requestedCadenceMinutes)>=60?{requestedCadenceMinutes:Math.min(24*60,Math.floor(Number(input.requestedCadenceMinutes)))}:{}),
+    ...normalizeContextualMeta(input) }
+}
+
+// R02: a watch about the same subject as an active one (same gold karat, same flight + date, same product URL)
+// updates that watch instead of inserting another; any further same-subject rows are retired as duplicates.
+// Owner-scoped throughout. Returns null when nothing matched (or the keeper changed under us), so the caller inserts.
+const WATCH_COLUMNS='id, type, condition_json, cadence_minutes, active, next_check_at, created_at'
+export type ReusedWatcher={id:any;type:any;condition_json:any;cadence_minutes:any;active:any;next_check_at:any;created_at:any;reused:true;updated:boolean;retiredDuplicates:number}
+async function reuseSameSubjectWatcher(params:{
+  telegramId:string
+  type:'web_search'|'web_page'|'product_stock'
+  condition:Record<string,any>
+  cadenceMinutes:number
+  initialState:Record<string,unknown>
+  goalId?:string|null
+}):Promise<ReusedWatcher|null>{
+  const {data:existing,error}=await supabaseAdmin.from('agent_watchers')
+    .select('id, telegram_id, type, condition_json, last_state_json, created_at')
+    .eq('telegram_id',params.telegramId).eq('type',params.type).eq('active',true)
+  if(error)throw new Error(`agent_watcher_read_failed:${error.message}`)
+  const now=new Date()
+  const matches=matchingActiveWatches((existing||[]) as DedupeRow[],{telegram_id:params.telegramId,type:params.type,condition_json:params.condition},now)
+  const keeper=matches[0]
+  if(!keeper)return null
+  // A vaguer request ("watch gold") never overwrites a numeric rule already in place; it just keeps it.
+  const updated=watchSpecificity({id:'new',type:params.type,condition_json:params.condition})>=watchSpecificity(keeper)
+  const nowIso=now.toISOString()
+  const patch:Record<string,unknown>=updated
+    ? {condition_json:params.condition,cadence_minutes:params.cadenceMinutes,last_state_json:params.initialState,next_check_at:nowIso,updated_at:nowIso,...(params.goalId?{goal_id:params.goalId}:{})}
+    : {next_check_at:nowIso,updated_at:nowIso}
+  const {data,error:updateError}=await supabaseAdmin.from('agent_watchers').update(patch)
+    .eq('id',keeper.id).eq('telegram_id',params.telegramId).eq('active',true)
+    .select(WATCH_COLUMNS).maybeSingle()
+  if(updateError)throw new Error(`agent_watcher_update_failed:${updateError.message}`)
+  if(!data)return null
+  const retired=await retireWatchers(matches.slice(1).map(row=>({id:row.id,telegramId:params.telegramId,reason:'duplicate' as const,keptId:keeper.id,label:`Same as watch ${keeper.id}`})),
+    new Map(matches.map(row=>[row.id,row])),now)
+  return {...(data as any),reused:true,updated,retiredDuplicates:retired}
+}
+
+// Owner-scoped, active-only retire: a row someone already stopped is left alone, so this is safe to repeat.
+async function retireWatchers(plan:WatchRetirement[],rowsById:Map<string,DedupeRow>,now:Date){
+  let retired=0
+  for(const item of plan){
+    const prev=rowsById.get(item.id)?.last_state_json
+    const {data,error}=await supabaseAdmin.from('agent_watchers').update({
+      active:false,next_check_at:null,last_checked_at:now.toISOString(),
+      last_state_json:{...(prev&&typeof prev==='object'?prev:{}),retiredAt:now.toISOString(),retiredReason:item.reason,retiredLabel:item.label,...(item.keptId?{keptWatcherId:item.keptId}:{})},
+      updated_at:now.toISOString(),
+    }).eq('id',item.id).eq('telegram_id',item.telegramId).eq('active',true).select('id')
+    if(error){console.error('AGENT_WATCHER_RETIRE_FAILED:',item.id,error.message);continue}
+    if(!Array.isArray(data)||!data.length)continue
+    retired++
+    const title=String(rowsById.get(item.id)?.condition_json?.title||'watch')
+    await writeActivity(item.telegramId,item.reason==='date_passed'?`Stopped watch whose date passed: ${title} (${item.label})`:`Merged duplicate watch: ${title}`,{
+      watcher_id:item.id,reason:item.reason,kept_watcher_id:item.keptId||null,label:item.label,
+    })
+  }
+  return retired
+}
+
+/** Cron sweep (R02): retire watches whose own date has passed and collapse same-subject duplicates per owner. */
+export async function reconcileStaleAndDuplicateWatchers(now:Date=new Date(),limit=1000){
+  const {data,error}=await supabaseAdmin.from('agent_watchers')
+    .select('id, telegram_id, type, condition_json, last_state_json, created_at')
+    .eq('active',true).in('type',[...DEDUPE_WATCH_TYPES])
+    .order('created_at',{ascending:false}).limit(limit)
+  if(error)throw new Error(`agent_watchers_cleanup_read_failed:${error.message}`)
+  const rows=(data||[]) as DedupeRow[]
+  const plan=planWatchCleanup(rows,now)
+  const retired=await retireWatchers(plan,new Map(rows.map(row=>[row.id,row])),now)
+  return {datePassed:plan.filter(p=>p.reason==='date_passed').length,duplicates:plan.filter(p=>p.reason==='duplicate').length,retired}
+}
+
+export async function createDeadlineWatcher(params: {
+  telegramId: string
+  condition: DeadlineWatcherCondition
+  goalId?: string | null
+}) {
+  const now = new Date()
+  const deadline = new Date(params.condition.deadline)
+  const threshold = new Date(deadline.getTime() - params.condition.notifyBeforeHours * 3600_000)
+  const nextCheck = threshold.getTime() > now.getTime() ? threshold : now
+  const { data, error } = await supabaseAdmin.from('agent_watchers').insert({
+    telegram_id: params.telegramId,
+    goal_id: params.goalId || null,
+    type: 'deadline',
+    condition_json: params.condition,
+    cadence_minutes: 60,
+    active: true,
+    last_state_json: {},
+    next_check_at: nextCheck.toISOString(),
+  }).select('id, type, condition_json, cadence_minutes, active, next_check_at, created_at').single()
+  if (error || !data) throw new Error(`agent_watcher_create_failed:${error?.message || 'unknown'}`)
+  return data
+}
+
+export async function createInboxTriageWatcher(params:{
+  telegramId:string
+  condition:InboxTriageWatcherCondition
+  goalId?:string|null
+}) {
+  const {data,error}=await supabaseAdmin.from('agent_watchers').insert({
+    telegram_id:params.telegramId,
+    goal_id:params.goalId||null,
+    type:'email_triage',
+    condition_json:params.condition,
+    cadence_minutes:params.condition.cadenceMinutes,
+    active:true,
+    last_state_json:{seenMessageIds:[],lastActionCount:0},
+    next_check_at:new Date().toISOString(),
+  }).select('id,type,condition_json,cadence_minutes,active,next_check_at,created_at').single()
+  if(error||!data)throw new Error(`agent_watcher_create_failed:${error?.message||'unknown'}`)
+  return data
+}
+
+export async function createProductStockWatcher(params: {
+  telegramId: string
+  condition: ProductStockWatcherCondition
+  goalId?: string | null
+}) {
+  const reused = await reuseSameSubjectWatcher({ telegramId:params.telegramId, type:'product_stock', condition:params.condition, cadenceMinutes:params.condition.cadenceMinutes,
+    initialState:{ availability:'unknown', blockedNotified:false, cartAttempted:false }, goalId:params.goalId })
+  if (reused) return reused
+  const { data, error } = await supabaseAdmin.from('agent_watchers').insert({
+    telegram_id:params.telegramId,
+    goal_id:params.goalId || null,
+    type:'product_stock',
+    condition_json:params.condition,
+    cadence_minutes:params.condition.cadenceMinutes,
+    active:true,
+    last_state_json:{ availability:'unknown', blockedNotified:false, cartAttempted:false },
+    next_check_at:new Date().toISOString(),
+  }).select('id, type, condition_json, cadence_minutes, active, next_check_at, created_at').single()
+  if (error || !data) throw new Error(`agent_watcher_create_failed:${error?.message || 'unknown'}`)
+  return data
+}
+
+export async function createWebPageWatcher(params:{
+  telegramId:string
+  condition:WebPageWatcherCondition
+  goalId?:string|null
+}) {
+  const reused=await reuseSameSubjectWatcher({telegramId:params.telegramId,type:'web_page',condition:params.condition,cadenceMinutes:params.condition.cadenceMinutes,
+    initialState:{baseline:null,lastTitle:null,lastContentHash:null,quietChecks:0},goalId:params.goalId})
+  if(reused)return reused
+  const {data,error}=await supabaseAdmin.from('agent_watchers').insert({
+    telegram_id:params.telegramId,
+    goal_id:params.goalId||null,
+    type:'web_page',
+    condition_json:params.condition,
+    cadence_minutes:params.condition.cadenceMinutes,
+    active:true,
+    last_state_json:{baseline:null,lastTitle:null,lastContentHash:null,quietChecks:0},
+    next_check_at:new Date().toISOString(),
+  }).select('id,type,condition_json,cadence_minutes,active,next_check_at,created_at').single()
+  if(error||!data)throw new Error(`agent_watcher_create_failed:${error?.message||'unknown'}`)
+  return data
+}
+
+export async function createWebSearchWatcher(params: {
+  telegramId: string
+  condition: WebSearchWatcherCondition
+  goalId?: string | null
+}) {
+  const reused = await reuseSameSubjectWatcher({ telegramId:params.telegramId, type:'web_search', condition:params.condition, cadenceMinutes:params.condition.cadenceMinutes,
+    initialState:{ quietChecks:0, seenUrls:[], seenSignatures:[], alertTimes:[] }, goalId:params.goalId })
+  if (reused) return reused
+  const { data, error } = await supabaseAdmin.from('agent_watchers').insert({
+    telegram_id: params.telegramId,
+    goal_id: params.goalId || null,
+    type: 'web_search',
+    condition_json: params.condition,
+    cadence_minutes: params.condition.cadenceMinutes,
+    active: true,
+    last_state_json: { quietChecks:0, seenUrls:[], seenSignatures:[], alertTimes:[] },
+    next_check_at: new Date().toISOString(),
+  }).select('id, type, condition_json, cadence_minutes, active, next_check_at, created_at').single()
+  if (error || !data) throw new Error(`agent_watcher_create_failed:${error?.message || 'unknown'}`)
+  return data
+}
+
+async function writeActivity(telegramId: string, message: string, metadata: Record<string, unknown>) {
+  const { error } = await supabaseAdmin.from('agent_activity').insert({
+    telegram_id: telegramId,
+    event_type: 'watcher_triggered',
+    message: message.slice(0, 900),
+    metadata_json: metadata,
+  })
+  if (error) console.error('AGENT_WATCHER_ACTIVITY_FAILED:', error.message)
+}
+
+async function createDeadlineIdea(telegramId: string, condition: DeadlineWatcherCondition, watcherId: string) {
+  const reason = `${condition.title} is approaching its deadline.`
+  const { error } = await supabaseAdmin.from('agent_ideas').insert({
+    telegram_id: telegramId,
+    title: condition.title,
+    reason,
+    expected_value: 'Review it now so it does not become a last-minute problem.',
+    value_score: 0.9,
+    action_label: 'Review',
+    source_refs: [{ type: 'watcher', id: watcherId }],
+    status: 'new',
+  })
+  if (error) console.error('AGENT_WATCHER_IDEA_FAILED:', error.message)
+}
+
+async function createWebIdea(telegramId: string, condition: WebSearchWatcherCondition, watcherId: string, result: WebSearchResult | null, matchedKeywords: string[], relevance = 0.8, deliveryKey?: string) {
+  const detail = matchedKeywords.length
+    ? `A new relevant result matched: ${matchedKeywords.join(', ')}.`
+    : 'A new result materially matched this watch.'
+  const sourceRefs:any[] = [{ type:'watcher', id:watcherId }]
+  if (result?.url) sourceRefs.push({ type:'url', url:result.url })
+  const hex = createHash('sha256').update(deliveryKey || `${watcherId}:${result?.url}`).digest('hex')
+  const id = `${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`
+  const { error } = await supabaseAdmin.from('agent_ideas').upsert({
+    id,
+    telegram_id: telegramId,
+    title: condition.title,
+    reason: detail,
+    expected_value: result?.title ? `${result.title}${result.snippet ? ` — ${result.snippet.slice(0, 180)}` : ''}` : 'Open the latest result to review what changed.',
+    value_score: Math.max(0.78, Math.min(0.96, relevance)),
+    action_label: 'Review update',
+    source_refs: sourceRefs,
+    status: 'new',
+  }, { onConflict: 'id', ignoreDuplicates: true })
+  if (error) throw new Error('watch_alert_idea_write_failed')
+}
+
+async function sendWhatsAppIfWanted(telegramId: string, delivery: WatcherDelivery, message: string) {
+  if (delivery !== 'whatsapp' && delivery !== 'both') return
+  const tg = Number(telegramId)
+  if (!Number.isFinite(tg)) return
+  const { data } = await supabaseAdmin.from('users').select('whatsapp_id').eq('telegram_id', tg).maybeSingle()
+  const phone = String(data?.whatsapp_id || '').trim()
+  if (!phone) return
+  await sendWhatsAppMessage(phone, message)
+  await recordCostEvent({ telegramId, category:'whatsapp_outbound', metadata:{ source:'background_gogo' } })
+}
+
+function searchFingerprint(results: WebSearchResult[]) {
+  const stable = results.slice(0, 5).map(r => `${r.title.toLowerCase()}\n${canonicalWatcherUrl(r.url)}`).join('\n---\n')
+  return createHash('sha256').update(stable).digest('hex')
+}
+
+async function activeWebWatchCount(telegramId:string) {
+  const { count, error } = await supabaseAdmin.from('agent_watchers')
+    .select('id', { count:'exact', head:true })
+    .eq('telegram_id', telegramId)
+    .in('type', ['web_search','web_page','product_stock'])
+    .eq('active', true)
+  if (error) throw new Error(`agent_watcher_count_failed:${error.message}`)
+  return Math.max(1, count || 1)
+}
+
+async function processDeadlineWatcher(watcher:any, now:Date) {
+  const condition = normalizeDeadlineWatcher(watcher.condition_json)
+  if (!condition) {
+    await supabaseAdmin.from('agent_watchers').update({ active:false, last_checked_at:now.toISOString(), last_state_json:{ error:'invalid_condition' } }).eq('id', watcher.id)
+    return { triggered:false, failed:true }
+  }
+  const deadline = new Date(condition.deadline)
+  const thresholdMs = deadline.getTime() - condition.notifyBeforeHours * 3600_000
+  const due = now.getTime() >= thresholdMs
+  const alreadyTriggered = watcher.last_state_json?.triggered === true
+
+  if (due && !alreadyTriggered) {
+    await createDeadlineIdea(String(watcher.telegram_id), condition, String(watcher.id))
+    await sendWhatsAppIfWanted(String(watcher.telegram_id), condition.delivery, `⏳ Gogo noticed a deadline coming up\n\n${condition.title}\n\nI’ve also added this to your Gogo Activity/Ideas in the app.`).catch(err => console.error('AGENT_WATCHER_WHATSAPP_FAILED:', err?.message || err))
+    await writeActivity(String(watcher.telegram_id), `Background Gogo surfaced: ${condition.title}`, { watcher_id: watcher.id, type:'deadline', delivery:condition.delivery })
+    await supabaseAdmin.from('agent_watchers').update({
+      active:false,
+      last_checked_at:now.toISOString(),
+      last_state_json:{ triggered:true, triggeredAt:now.toISOString(), deadline:condition.deadline },
+      next_check_at:null,
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:true, failed:false }
+  }
+
+  const next = new Date(Math.min(deadline.getTime(), Math.max(now.getTime() + 3600_000, thresholdMs)))
+  await supabaseAdmin.from('agent_watchers').update({
+    last_checked_at:now.toISOString(),
+    last_state_json:{ triggered:alreadyTriggered, deadline:condition.deadline },
+    next_check_at:next.toISOString(),
+    updated_at:now.toISOString(),
+  }).eq('id', watcher.id)
+  return { triggered:false, failed:false }
+}
+
+
+export function assessProductAvailabilityText(pageText: string, variant: string): 'available'|'unavailable'|'unknown' {
+  const text = String(pageText || '').replace(/\s+/g, ' ').toLowerCase()
+  const wanted = String(variant || '').trim().toLowerCase()
+  if (!text || !wanted) return 'unknown'
+
+  const escapeRegExp = (value:string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const wantedRe = escapeRegExp(wanted)
+  const unavailable = /\b(sold\s*out|out\s*of\s*stock|currently\s*unavailable|unavailable|not\s*available|notify\s*me\s*when\s*available|notify\s+when\s+available|email\s+me\s+when\s+available|coming\s*soon)\b/i
+  const available = /\b(in\s*stock|available\s*now|available\s*today|ready\s*to\s*ship|add\s*to\s*(?:cart|bag|basket)|buy\s*now)\b/i
+
+  // Only trust an explicit SELECTED variant marker. A bare `Size: XL` often
+  // appears in option lists, size guides, or accessibility text even when XL is
+  // disabled. Treating that as the selected SKU caused false-positive stock alerts.
+  const selectedRe = new RegExp('\\bselected\\s+size\\s*[:=-]?\\s*' + wantedRe + '\\b', 'i')
+  const selected = selectedRe.exec(text)
+  if (selected) {
+    const selectedEnd = selected.index + selected[0].length
+    const sizeTokenRe = /\b(?:xxxs|xxs|xs|xxxl|xxl|xl|3xl|4xl|5xl|s|m|l)\b/ig
+    sizeTokenRe.lastIndex = selectedEnd
+    const next = sizeTokenRe.exec(text)
+    const segmentEnd = next ? Math.min(next.index, selectedEnd + 220) : Math.min(text.length, selectedEnd + 220)
+    const segment = text.slice(selected.index, segmentEnd)
+    if (unavailable.test(segment)) return 'unavailable'
+    if (available.test(segment)) return 'available'
+    return 'unknown'
+  }
+
+  // Without a selected-size marker, accept only direct variant/state wording.
+  const directUnavailable = new RegExp(
+    '(?:\\b' + wantedRe + '\\b\\s*(?:is\\s+)?(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available|notify\\s*me\\s*when\\s*available|notify\\s+when\\s+available|email\\s+me\\s+when\\s+available)|(?:sold\\s*out|out\\s*of\\s*stock|unavailable|not\\s*available|notify\\s*me\\s*when\\s*available|notify\\s+when\\s+available|email\\s+me\\s+when\\s+available)\\s*(?:for\\s+)?\\b' + wantedRe + '\\b)',
+    'i',
+  )
+  const directAvailable = new RegExp(
+    '(?:\\b' + wantedRe + '\\b\\s*(?:is\\s+)?(?:in\\s*stock|available\\s*now|available\\s*today)|(?:in\\s*stock|available\\s*now|available\\s*today)\\s*(?:for\\s+)?\\b' + wantedRe + '\\b)',
+    'i',
+  )
+  if (directUnavailable.test(text)) return 'unavailable'
+  if (directAvailable.test(text)) return 'available'
+  return 'unknown'
+}
+
+function cartLooksVerified(pageText: string) {
+  const text = String(pageText || '').replace(/\s+/g, ' ').toLowerCase()
+  return /\b(added\s*to\s*(?:cart|bag|basket)|view\s*(?:cart|bag|basket)|go\s*to\s*(?:cart|bag|basket)|your\s*(?:cart|bag|basket)\s*\(?\s*1\b|(?:cart|bag|basket)\s*\(?\s*1\b)/i.test(text)
+}
+
+async function dismissWatcherIdeas(telegramId:string,watcherId:string,reason:string){
+  const {data,error}=await supabaseAdmin.from('agent_ideas')
+    .select('id').eq('telegram_id',telegramId).eq('status','new')
+    .contains('source_refs',[{type:'watcher',id:watcherId}]).limit(50)
+  if(error){console.error('AGENT_WATCHER_IDEA_READ_FAILED:',error.message);return 0}
+  const ids=(data||[]).map((row:any)=>row.id).filter(Boolean)
+  if(!ids.length)return 0
+  const {error:updateError}=await supabaseAdmin.from('agent_ideas')
+    .update({status:'dismissed'}).in('id',ids)
+    .eq('telegram_id',telegramId).eq('status','new')
+  if(updateError){console.error('AGENT_WATCHER_IDEA_DISMISS_FAILED:',updateError.message);return 0}
+  return ids.length
+}
+
+async function createProductIdea(telegramId:string, condition:ProductStockWatcherCondition, watcherId:string, cartVerified:boolean) {
+  const { error } = await supabaseAdmin.from('agent_ideas').insert({
+    telegram_id:telegramId,
+    title:`${condition.title} is available`,
+    reason:`${condition.variant} is now available on the product page.`,
+    expected_value:cartVerified
+      ? 'Gogo verified the requested variant in your cart. Checkout still needs your approval.'
+      : 'Open the product now while the requested variant is available.',
+    value_score:0.95,
+    action_label:cartVerified ? 'Review cart' : 'Open product',
+    source_refs:[{ type:'watcher', id:watcherId }, { type:'url', url:condition.productUrl }],
+    status:'new',
+  })
+  if (error) console.error('AGENT_PRODUCT_WATCH_IDEA_FAILED:', error.message)
+}
+
+
+function senderLabel(value:string) {
+  return String(value||'').replace(/<[^>]+>/g,'').replace(/"/g,'').trim().slice(0,80) || 'sender'
+}
+
+export function inboxActionStep(message:any): {subject:string;from:string;step:string}|null {
+  const subject=String(message?.subject||'(No subject)').replace(/\s+/g,' ').trim().slice(0,180)
+  const from=senderLabel(String(message?.from||''))
+  const snippet=String(message?.snippet||'').replace(/\s+/g,' ').trim()
+  const text=`${subject} ${snippet}`.toLowerCase()
+
+  if(/\b(unsubscribe|newsletter|weekly digest|daily digest|sale|discount|offer|coupon|promotion|promotional)\b/i.test(text)
+    && !/\b(action required|deadline|due|invoice|payment|renew|expire|response required)\b/i.test(text)) return null
+
+  // Calendar providers use these subject prefixes without saying "meeting invite".
+  // Require schedule evidence as well so social invitations and order cancellations
+  // do not become meeting alerts. This only suggests review; it never edits events.
+  const calendarSubject=/^(?:updated invitation|invitation|cancell?ed)\s*:/i.test(subject)
+  const hasCalendarDate=/\b(?:mon(?:day)?|tue(?:sday)?|wed(?:nesday)?|thu(?:rsday)?|fri(?:day)?|sat(?:urday)?|sun(?:day)?)\b|\b20\d{2}-\d{2}-\d{2}\b|\b(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}\b|\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/i.test(text)
+  const hasCalendarTime=/\b(?:[01]?\d|2[0-3]):[0-5]\d\b|\b(?:[1-9]|1[0-2])(?::[0-5]\d)?\s*[ap]m\b/i.test(text)
+  let step=''
+  if(calendarSubject&&hasCalendarDate&&hasCalendarTime) {
+    step=/^cancell?ed\s*:/i.test(subject)
+      ? 'Review the cancellation against your saved meeting and reminder; nothing has been changed automatically.'
+      : /^updated invitation\s*:/i.test(subject)
+      ? 'Compare the updated date/time with your saved meeting and reminder before making changes.'
+      : 'Check the invitation date/time and existing reminders, then decide whether to accept or decline.'
+  }
+  else if(/\b(action required|response required|please respond|please reply|reply required)\b/i.test(text)) step='Review the request and reply if it is valid.'
+  else if(/\b(sign|signature|approve|approval)\b/i.test(text)) step='Review the request and approve or sign only if appropriate.'
+  else if(/\b(invoice|payment|amount due|due payment|past due|overdue)\b/i.test(text)) step='Check the amount and due date, then decide whether payment or follow-up is needed.'
+  else if(/\b(rsvp|meeting invite|calendar invite|schedule|reschedule|appointment)\b/i.test(text)) step='Check the date/time and confirm, decline, or reschedule.'
+  else if(/\b(submit|submission|complete the form|complete your|upload|provide the requested)\b/i.test(text)) step='Complete or submit the requested information before the stated deadline.'
+  else if(/\b(renew|renewal|expire|expiry|expires|expiration)\b/i.test(text)) step='Review the renewal or expiry and decide whether to renew, cancel, or update it.'
+  else if(/\b(deadline|due by|due date|before [a-z]{3,9}\s+\d{1,2})\b/i.test(text)) step='Check the deadline and schedule the required action.'
+  else if(/\b(please review|review requested|needs your attention|requires your attention|follow up|follow-up)\b/i.test(text)) step='Review this email and complete the requested follow-up.'
+  else return null
+
+  return {subject,from,step}
+}
+
+async function watcherActor(telegramId:string):Promise<AgentActor|null> {
+  const {data,error}=await supabaseAdmin.from('users')
+    .select('id,telegram_id,whatsapp_id,name')
+    .eq('telegram_id',Number(telegramId))
+    .maybeSingle()
+  if(error)throw new Error(`email_triage_user_read_failed:${error.message}`)
+  if(!data?.id||!data?.whatsapp_id||!Number.isFinite(Number(data.telegram_id)))return null
+  return {
+    userId:String(data.id),
+    legacyTelegramId:Number(data.telegram_id),
+    whatsappId:String(data.whatsapp_id),
+    name:String(data.name||'Gogo'),
+  }
+}
+
+async function processInboxTriageWatcher(watcher:any,now:Date) {
+  const condition=normalizeInboxTriageWatcher(watcher.condition_json)
+  if(!condition) {
+    await supabaseAdmin.from('agent_watchers').update({
+      active:false,last_checked_at:now.toISOString(),next_check_at:null,
+      last_state_json:{error:'invalid_condition'},updated_at:now.toISOString(),
+    }).eq('id',watcher.id)
+    return {triggered:false,failed:true}
+  }
+
+  const telegramId=String(watcher.telegram_id)
+  const actor=await watcherActor(telegramId)
+  if(!actor) {
+    await supabaseAdmin.from('agent_watchers').update({
+      active:false,last_checked_at:now.toISOString(),next_check_at:null,
+      last_state_json:{...(watcher.last_state_json||{}),error:'workspace_user_unavailable'},updated_at:now.toISOString(),
+    }).eq('id',watcher.id)
+    return {triggered:false,failed:true}
+  }
+
+  let messages:any[]=[]
+  try {
+    messages=(await listRecentWorkspaceInbox(actor,12)).messages||[]
+  } catch(err:any) {
+    const reason=String(err?.message||'workspace_read_failed')
+    const alreadyNotified=watcher.last_state_json?.workspaceErrorNotified===true
+    if(!alreadyNotified) {
+      await sendWhatsAppIfWanted(
+        telegramId,condition.delivery,
+        reason.includes('workspace_email_reading_disabled')
+          ? 'Your inbox watch cannot read mail because Gmail reading is disabled in your saved privacy preference. Connecting Google does not enable it.'
+          : reason.includes('workspace_reconnect_required')||reason.includes('workspace_not_connected')
+          ? 'Your inbox watch is paused because Google Workspace needs to be reconnected. I did not read or change any mail.'
+          : 'I could not read your inbox safely on this check. I will retry later; I did not change any mail.',
+      ).catch(()=>{})
+    }
+    await supabaseAdmin.from('agent_watchers').update({
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime()+6*3600_000).toISOString(),
+      last_state_json:{...(watcher.last_state_json||{}),lastError:reason,workspaceErrorNotified:true,lastErrorAt:now.toISOString()},
+      updated_at:now.toISOString(),
+    }).eq('id',watcher.id)
+    return {triggered:false,failed:false}
+  }
+
+  const seen=Array.isArray(watcher.last_state_json?.seenMessageIds)?watcher.last_state_json.seenMessageIds.map(String):[]
+  const seenSet=new Set(seen)
+  const fresh=messages.filter((m:any)=>m?.id&&!seenSet.has(String(m.id)))
+  const scoped=condition.matchTerms?.length
+    ? fresh.filter((m:any)=>{
+        const hay=`${m?.subject||''} ${m?.from||''} ${m?.snippet||''}`.toLowerCase()
+        return condition.matchTerms!.some(term=>hay.includes(String(term).toLowerCase()))
+      })
+    : fresh
+  const candidates=scoped.map((m:any)=>{
+    const action=inboxActionStep(m)
+    return action ? {...action,id:String(m.id),threadId:String(m.threadId||''),date:String(m.date||'')} : null
+  }).filter(Boolean)
+  const conditionKey=JSON.stringify(watcher.condition_json)
+  const saved=watcher.last_state_json?.pendingInboxAlert
+  const retained=saved?.conditionKey===conditionKey&&Array.isArray(saved?.actions)&&saved.actions.length ? saved : null
+  const actions=retained?.actions||candidates.slice(0,5)
+  const actionIds=new Set(actions.map((a:any)=>String(a.id)))
+  // A bounded digest must leave overflow candidates eligible for the next check.
+  const deferredIds=new Set(candidates.filter((a:any)=>!actionIds.has(a.id)).map((a:any)=>a.id))
+  const consumedIds=messages.map((m:any)=>String(m?.id||'')).filter((id:string)=>id&&!deferredIds.has(id))
+  const nextSeen=Array.from(new Set([...actions.map((a:any)=>a.id),...consumedIds,...seen])).slice(0,120)
+  let deliveryState=watcher.last_state_json?.inboxAlertDelivery||null
+
+  const checkpoint=async(state:Record<string,unknown>,minutes:number)=>{
+    const {data,error}=await supabaseAdmin.from('agent_watchers').update({
+      last_state_json:state,last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime()+minutes*60_000).toISOString(),updated_at:now.toISOString(),
+    }).eq('id',watcher.id).eq('telegram_id',telegramId).eq('active',true)
+      .eq('condition_json',conditionKey).select('id').maybeSingle()
+    if(error)throw new Error('inbox_alert_checkpoint_failed')
+    return Boolean(data?.id)
+  }
+
+  if(actions.length) {
+    const key=retained?.key||'inbox/'+watcher.id+'/'+createHash('sha256')
+      .update(JSON.stringify([watcher.condition_json,actions.map((a:any)=>a.id).sort()])).digest('hex')
+    const pending=retained||{key,due:now.toISOString(),conditionKey,actions}
+    const lines=actions.map((a:any,i:number)=>`${i+1}. *${a.subject}* — ${a.from}\n   Next: ${a.step}`).join('\n\n')
+    const message=`📬 *Your inbox needs attention*\n\n${lines}\n\nI only read this mail. I did not reply, send, delete, archive, approve, pay, or change anything.`
+    const pendingState={...(watcher.last_state_json||{}),pendingInboxAlert:pending}
+    // Persist before handing off to the receipt-backed ledger. A fresh worker can
+    // retry the same digest even if the source leaves the latest inbox window.
+    if(!await checkpoint(pendingState,15))return {triggered:false,failed:false}
+    let delivery={state:'app_only',accepted:true,providerId:null as string|null}
+    if(condition.delivery!=='app') {
+      delivery=await deliverWatchAlert({watcherId:String(watcher.id),owner:telegramId,key,due:pending.due,
+        message,condition:watcher.condition_json,topic:['bills','replies']})
+      if(['suppressed','cancelled'].includes(delivery.state))return {triggered:false,failed:false}
+    }
+    deliveryState={state:delivery.state,providerId:delivery.providerId,key}
+    if(!await checkpoint({...pendingState,inboxAlertDelivery:deliveryState},15))return {triggered:false,failed:false}
+    // Retry definite rejections with the same key; never blindly resend an
+    // uncertain/terminal attempt. Surface that uncertainty in the app instead.
+    if(!delivery.accepted&&!['outcome_unknown','failed'].includes(delivery.state))return {triggered:false,failed:true}
+    const hex=createHash('sha256').update(key).digest('hex')
+    const ideaId=`${hex.slice(0,8)}-${hex.slice(8,12)}-5${hex.slice(13,16)}-a${hex.slice(17,20)}-${hex.slice(20,32)}`
+    const {error:ideaError}=await supabaseAdmin.from('agent_ideas').upsert({
+      id:ideaId,telegram_id:telegramId,
+      title:`Inbox: ${actions.length} action item${actions.length===1?'':'s'}`,
+      reason:delivery.accepted?'New inbox messages appear to require your attention.'
+        :'New inbox messages need attention. WhatsApp delivery is not confirmed; review them here.',
+      expected_value:actions.map((a:any)=>`${a.subject}: ${a.step}`).join(' | ').slice(0,1200),
+      value_score:0.88,action_label:'Review inbox',
+      source_refs:[{type:'watcher',id:String(watcher.id)},
+        ...actions.map((a:any)=>({type:'gmail_message',id:a.id,threadId:a.threadId,date:a.date,observedAt:pending.due})),
+        ...(condition.delivery==='app'?[]:[{type:'notification_delivery',key}])],
+      status:'new',
+    },{onConflict:'id',ignoreDuplicates:true})
+    if(ideaError)throw new Error('inbox_alert_idea_write_failed')
+    await writeActivity(telegramId,`Inbox triage surfaced ${actions.length} action item(s).`,{
+      watcher_id:watcher.id,type:'email_triage',action_count:actions.length,delivery_key:key,delivery_state:delivery.state,
+    })
+  }
+
+  const finalState={
+    ...(watcher.last_state_json||{}),pendingInboxAlert:null,inboxAlertDelivery:deliveryState,
+    seenMessageIds:nextSeen,lastActionCount:actions.length,
+    lastActionAt:actions.length?now.toISOString():watcher.last_state_json?.lastActionAt||null,
+    workspaceErrorNotified:false,lastError:null,
+  }
+  if(!await checkpoint(finalState,deferredIds.size?15:condition.cadenceMinutes))return {triggered:false,failed:false}
+  return {triggered:actions.length>0,failed:false}
+}
+
+async function processProductStockWatcher(watcher:any, now:Date) {
+  const condition = normalizeProductStockWatcher(watcher.condition_json)
+  if (!condition) {
+    await supabaseAdmin.from('agent_watchers').update({
+      active:false,
+      last_checked_at:now.toISOString(),
+      last_state_json:{ error:'invalid_condition' },
+      next_check_at:null,
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:true }
+  }
+
+  // The flight-status feed (flight-leg-tracker) already watches every saved leg with real data and sends
+  // delay/gate/take-off/landing alerts. This generic web-page watcher would fire on boilerplate words on a
+  // tracker page ("Flight update ... From a news or tracker page", 13 Oct 8:45 pm) and cost searches, so
+  // it stands down while the feed key is configured.
+  if ((condition as any).contextClass === 'flight_status' && process.env.AERODATABOX_RAPIDAPI_KEY) {
+    await supabaseAdmin.from('agent_watchers').update({
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + 6 * 60 * 60_000).toISOString(),
+      last_state_json:{ ...(watcher.last_state_json || {}), handledBy:'flight_leg_tracker', lastSkippedAt:now.toISOString() },
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id).eq('telegram_id', String(watcher.telegram_id)).eq('active', true)
+      .eq('condition_json', JSON.stringify(watcher.condition_json))
+    return { triggered:false, failed:false }
+  }
+
+  const telegramId = String(watcher.telegram_id)
+  const budget = await getCostBudget(telegramId)
+  if (budget.activeWebWatchersMax <= 0) {
+    await supabaseAdmin.from('agent_watchers').update({
+      active:false,
+      last_checked_at:now.toISOString(),
+      last_state_json:{ ...(watcher.last_state_json || {}), costGuard:'plan_not_eligible', stoppedAt:now.toISOString() },
+      next_check_at:null,
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:false }
+  }
+
+  const allowance = await checkCostAllowance(telegramId, COST_ESTIMATES_PAISE.web_search_basic)
+  if (!allowance.allowed) {
+    const deferMinutes = allowance.state?.maxWatcherCadenceMinutes || budget.maxWatcherCadenceMinutes || 1440
+    await supabaseAdmin.from('agent_watchers').update({
+      cadence_minutes:deferMinutes,
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + deferMinutes * 60_000).toISOString(),
+      last_state_json:{ ...(watcher.last_state_json || {}), costGuard:'deferred', costGuardReason:allowance.reason || 'budget' },
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:false }
+  }
+
+  let browser:any
+  try {
+    browser = await runSecureBrowser({
+      userId:telegramId,
+      url:condition.productUrl,
+      objective:`Check only whether product variant/size "${condition.variant}" is currently available. Select that variant if the page requires it. Do not add to cart, buy, checkout, log in, submit personal data, or make any consequential action.`,
+      mode:'read',
+    })
+  } catch (err:any) {
+    const retryMinutes = Math.max(60, condition.cadenceMinutes)
+    await supabaseAdmin.from('agent_watchers').update({
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + retryMinutes * 60_000).toISOString(),
+      last_state_json:{ ...(watcher.last_state_json || {}), lastError:'browser_check_failed', lastErrorAt:now.toISOString() },
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    console.error('AGENT_PRODUCT_WATCH_BROWSER_FAILED:', watcher.id, err?.message || err)
+    return { triggered:false, failed:true }
+  }
+
+  await recordCostEvent({
+    telegramId,
+    category:'web_search_basic',
+    metadata:{ source:'product_stock_watch', watcher_id:String(watcher.id) },
+  })
+
+  if (browser.status === 'blocked') {
+    const alreadyNotified = watcher.last_state_json?.blockedNotified === true
+    const humanAuth = browser.blockReason === 'human_auth_required'
+    const retryMinutes = humanAuth ? Math.max(60, condition.cadenceMinutes) : Math.max(240, budget.maxWatcherCadenceMinutes || 240)
+    if (!alreadyNotified) {
+      let message = `I’m watching ${condition.title}, but this store is currently blocking Gogo’s cloud browser, so I can’t honestly verify ${condition.variant} stock yet. I’ll keep retrying in the background. If you want to check immediately, open: ${condition.productUrl}`
+      if (humanAuth) {
+        let host=''
+        try{host=new URL(browser.url||condition.productUrl).hostname}catch{}
+        const vault=host ? await buildVaultAddLink({telegramId,domain:host}).catch(()=>null) : null
+        message = vault
+          ? `I’m still watching ${condition.title}, but the store needs a sign-in before I can verify ${condition.variant}. Don’t send your password here. Save the ${vault.provider.label} login securely:\n${vault.url}\n\nAfter that, the background watch will keep checking with the authenticated browser.`
+          : `I’m still watching ${condition.title}, but the store needs you to sign in. Use AskGogo’s browser Take Control flow; don’t send passwords or one-time codes in chat.`
+      }
+      await sendWhatsAppIfWanted(
+        telegramId,
+        condition.delivery,
+        message,
+      ).catch(err => console.error('AGENT_PRODUCT_WATCH_WHATSAPP_FAILED:', err?.message || err))
+    }
+    await supabaseAdmin.from('agent_watchers').update({
+      cadence_minutes:retryMinutes,
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + retryMinutes * 60_000).toISOString(),
+      last_state_json:{
+        ...(watcher.last_state_json || {}),
+        blockedNotified:true,
+        blockReason:browser.blockReason || 'browser_blocked',
+        authReason:browser.authReason || null,
+        blockedAt:now.toISOString(),
+      },
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:false }
+  }
+
+  const availability = assessProductAvailabilityText(browser.pageText, condition.variant)
+  const priorAvailability = String(watcher.last_state_json?.availability || 'unknown')
+
+  if (availability !== 'available') {
+    await dismissWatcherIdeas(telegramId,String(watcher.id),'watcher_state_no_longer_available')
+    const quietChecks = Math.max(0, Number(watcher.last_state_json?.quietChecks || 0)) + 1
+    // Product availability is a direct page check, not a broad web-search watch.
+    // Keep the user's promised hourly cadence while the cost guard allows it.
+    const cadenceMinutes = Math.max(60, condition.cadenceMinutes)
+    await supabaseAdmin.from('agent_watchers').update({
+      cadence_minutes:cadenceMinutes,
+      condition_json:{ ...condition, cadenceMinutes },
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
+      last_state_json:{
+        ...(watcher.last_state_json || {}),
+        availability,
+        quietChecks,
+        lastUrl:browser.url || condition.productUrl,
+        lastTitle:browser.title || '',
+        costGuard:'ok',
+      },
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:false }
+  }
+
+  if (priorAvailability === 'available' && watcher.last_state_json?.triggered === true) {
+    await supabaseAdmin.from('agent_watchers').update({
+      active:false,
+      next_check_at:null,
+      last_checked_at:now.toISOString(),
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id)
+    return { triggered:false, failed:false }
+  }
+
+  let cartVerified = false
+  let cartStatus = 'not_requested'
+  let handoffReason:string | null = null
+
+  if (condition.addToCart) {
+    cartStatus = 'attempted'
+    try {
+      const cart = await runSecureBrowser({
+        userId:telegramId,
+        url:condition.productUrl,
+        objective:`Select product variant/size "${condition.variant}" and add exactly one item to the cart/bag. Stop immediately after it is added. Do not checkout, place an order, pay, authenticate, or submit personal/payment data.`,
+        mode:'draft',
+      })
+      if (cart.status === 'blocked') {
+        cartStatus = 'blocked'
+        handoffReason = cart.blockReason || 'browser_blocked'
+      } else {
+        cartVerified = cartLooksVerified(cart.pageText)
+        cartStatus = cartVerified ? 'verified' : 'not_verified'
+      }
+    } catch (err:any) {
+      cartStatus = 'failed'
+      console.error('AGENT_PRODUCT_WATCH_CART_FAILED:', watcher.id, err?.message || err)
+    }
+  }
+
+  await createProductIdea(telegramId, condition, String(watcher.id), cartVerified)
+  const actionText = !condition.addToCart
+    ? 'I found it available.'
+    : cartVerified
+      ? 'I added one to your cart and verified the cart state.'
+      : handoffReason
+        ? 'It is available, but the store requires you to continue on the site before I can complete the cart step.'
+        : 'It is available, but I could not verify that the cart step completed.'
+
+  await sendWhatsAppIfWanted(
+    telegramId,
+    condition.delivery,
+    `✅ ${condition.variant} is available\n\n${condition.title}\n${actionText}\n\n${condition.productUrl}\n\nI will not checkout or make a payment without your approval.`,
+  ).catch(err => console.error('AGENT_PRODUCT_WATCH_WHATSAPP_FAILED:', err?.message || err))
+
+  await writeActivity(telegramId, `Product watcher triggered: ${condition.title}`, {
+    watcher_id:watcher.id,
+    type:'product_stock',
+    variant:condition.variant,
+    product_url:condition.productUrl,
+    cart_status:cartStatus,
+  })
+
+  await supabaseAdmin.from('agent_watchers').update({
+    active:false,
+    last_checked_at:now.toISOString(),
+    next_check_at:null,
+    last_state_json:{
+      ...(watcher.last_state_json || {}),
+      availability:'available',
+      triggered:true,
+      triggeredAt:now.toISOString(),
+      cartAttempted:condition.addToCart,
+      cartStatus,
+      cartVerified,
+      handoffReason,
+      lastUrl:browser.url || condition.productUrl,
+      lastTitle:browser.title || '',
+      costGuard:'ok',
+    },
+    updated_at:now.toISOString(),
+  }).eq('id', watcher.id)
+  return { triggered:true, failed:false }
+}
+
+function stablePageContent(value:unknown){
+  return String(value||'')
+    .toLowerCase()
+    .replace(/\b(?:last\s+updated|updated|generated|refreshed)\s*(?:at|on)?\s*[:=-]?\s*[^\n]{0,40}/gi,' ')
+    .replace(/\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?\b/gi,' ')
+    .replace(/\b\d{4}-\d{2}-\d{2}(?:t\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?z?)?\b/gi,' ')
+    .replace(/\b\d+\s+(?:seconds?|minutes?|hours?)\s+ago\b/gi,' ')
+    .replace(/\s+/g,' ')
+    .trim()
+    .slice(0,12000)
+}
+
+function pageContentMateriallyChanged(previous:string,current:string){
+  if(!previous||!current)return previous!==current
+  if(previous===current)return false
+  const a=new Set(previous.split(/\s+/).filter(Boolean))
+  const b=new Set(current.split(/\s+/).filter(Boolean))
+  if(!a.size||!b.size)return previous!==current
+  let intersection=0
+  for(const token of a)if(b.has(token))intersection++
+  const union=new Set([...a,...b]).size
+  const similarity=union?intersection/union:1
+  return similarity<0.94
+}
+
+async function processWebPageWatcher(watcher:any,now:Date){
+  const condition=normalizeWebPageWatcher(watcher.condition_json)
+  if(!condition){
+    await supabaseAdmin.from('agent_watchers').update({active:false,last_checked_at:now.toISOString(),next_check_at:null,last_state_json:{error:'invalid_condition'},updated_at:now.toISOString()}).eq('id',watcher.id)
+    return {triggered:false,failed:true}
+  }
+
+  const telegramId=String(watcher.telegram_id)
+  const allowance=await checkCostAllowance(telegramId,COST_ESTIMATES_PAISE.secure_compute_minute)
+  if(!allowance.allowed){
+    const deferMinutes=allowance.state?.maxWatcherCadenceMinutes||1440
+    await supabaseAdmin.from('agent_watchers').update({
+      cadence_minutes:deferMinutes,last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime()+deferMinutes*60_000).toISOString(),
+      last_state_json:{...(watcher.last_state_json||{}),costGuard:'deferred',costGuardReason:allowance.reason||'budget'},
+      updated_at:now.toISOString(),
+    }).eq('id',watcher.id)
+    return {triggered:false,failed:false}
+  }
+
+  let browser:any
+  try{
+    browser=await runSecureBrowser({
+      userId:telegramId,
+      url:condition.url,
+      objective:condition.watch==='title'
+        ? 'Read only. Inspect this exact page and report its current document title. Do not click, fill, submit, log in, or navigate away.'
+        : 'Read only. Inspect this exact page and report its visible content. Do not click, fill, submit, log in, or navigate away.',
+      mode:'read',
+      objectiveTrust:'USER_INSTRUCTION',
+    })
+    await recordCostEvent({telegramId,category:'secure_compute_minute',metadata:{source:'background_gogo',watcher_id:String(watcher.id),watcher_type:'web_page'}})
+  }catch(err:any){
+    const cadence=Math.max(120,condition.cadenceMinutes)
+    await supabaseAdmin.from('agent_watchers').update({
+      last_checked_at:now.toISOString(),next_check_at:new Date(now.getTime()+cadence*60_000).toISOString(),
+      last_state_json:{...(watcher.last_state_json||{}),lastError:String(err?.message||'browser_failed').slice(0,300),lastErrorAt:now.toISOString()},
+      updated_at:now.toISOString(),
+    }).eq('id',watcher.id)
+    return {triggered:false,failed:false}
+  }
+
+  if(!browser||browser.status==='failed'||browser.status==='blocked'){
+    const cadence=Math.max(120,condition.cadenceMinutes)
+    await supabaseAdmin.from('agent_watchers').update({
+      last_checked_at:now.toISOString(),next_check_at:new Date(now.getTime()+cadence*60_000).toISOString(),
+      last_state_json:{...(watcher.last_state_json||{}),lastError:browser?.blockReason||browser?.status||'browser_unverified',lastErrorAt:now.toISOString()},
+      updated_at:now.toISOString(),
+    }).eq('id',watcher.id)
+    return {triggered:false,failed:false}
+  }
+
+  const currentTitle=String(browser.title||'').replace(/\s+/g,' ').trim().slice(0,500)
+  const stableContent=stablePageContent(browser.pageText||'')
+  const contentHash=createHash('sha256').update(stableContent).digest('hex')
+  const state:any=watcher.last_state_json||{}
+  const baselineMissing=!state.baseline
+  const changed=condition.watch==='title'
+    ? (!baselineMissing && String(state.lastTitle||'')!==currentTitle)
+    : (!baselineMissing && pageContentMateriallyChanged(String(state.lastStableContent||''),stableContent))
+
+  if(changed){
+    const what=condition.watch==='title'
+      ? `Page title changed from “${String(state.lastTitle||'').slice(0,180)}” to “${currentTitle.slice(0,180)}”.`
+      : 'The visible page content changed materially since the last verified check.'
+    await supabaseAdmin.from('agent_ideas').insert({
+      telegram_id:telegramId,title:condition.title,reason:what,
+      expected_value:`${condition.url}\n${what}`.slice(0,900),value_score:0.9,
+      action_label:'Review page',source_refs:[{type:'watcher',id:String(watcher.id)},{type:'url',url:condition.url}],status:'new',
+    }).then(({error})=>{if(error)console.error('AGENT_PAGE_WATCH_IDEA_FAILED:',error.message)})
+    await sendWhatsAppIfWanted(telegramId,condition.delivery,`🌐 *Gogo noticed a page change*\n\n${condition.title}\n${what}\n\n${condition.url}`)
+      .catch(err=>console.error('AGENT_PAGE_WATCH_WHATSAPP_FAILED:',err?.message||err))
+    await writeActivity(telegramId,`Background Gogo detected a page change: ${condition.title}`,{watcher_id:watcher.id,type:'web_page',url:condition.url,watch:condition.watch,title:currentTitle})
+  }
+
+  const quietChecks=changed?0:Math.max(0,Number(state.quietChecks||0))+1
+  const cadence=Math.min(24*60,changed?condition.cadenceMinutes:Math.max(condition.cadenceMinutes,quietChecks>=4?240:quietChecks>=2?120:condition.cadenceMinutes))
+  await supabaseAdmin.from('agent_watchers').update({
+    cadence_minutes:cadence,condition_json:{...condition,cadenceMinutes:cadence},
+    last_checked_at:now.toISOString(),next_check_at:new Date(now.getTime()+cadence*60_000).toISOString(),
+    last_state_json:{
+      ...state,baseline:true,lastTitle:currentTitle,lastContentHash:contentHash,lastStableContent:stableContent,quietChecks,
+      baselineAt:state.baselineAt||now.toISOString(),lastChangedAt:changed?now.toISOString():state.lastChangedAt||null,
+      lastVerifiedAt:now.toISOString(),lastError:null,
+    },
+    updated_at:now.toISOString(),
+  }).eq('id',watcher.id)
+  return {triggered:changed,failed:false}
+}
+
+async function processWebSearchWatcher(watcher:any, now:Date) {
+  const condition = normalizeWebSearchWatcher(watcher.condition_json)
+  if(condition)condition.query=effectiveWeatherQuery(condition,now)
+  if (!condition) {
+    await supabaseAdmin.from('agent_watchers').update({ active:false, last_checked_at:now.toISOString(), last_state_json:{ error:'invalid_condition' } }).eq('id', watcher.id).eq('telegram_id', String(watcher.telegram_id)).eq('active', true)
+      .eq('condition_json', JSON.stringify(watcher.condition_json))
+    return { triggered:false, failed:true }
+  }
+
+  const telegramId = String(watcher.telegram_id)
+  const budget = await getCostBudget(telegramId)
+  if (budget.activeWebWatchersMax <= 0) {
+    await supabaseAdmin.from('agent_watchers').update({
+      active:false,
+      last_checked_at:now.toISOString(),
+      last_state_json:{ ...(watcher.last_state_json || {}), costGuard:'plan_not_eligible', stoppedAt:now.toISOString() },
+      next_check_at:null,
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id).eq('telegram_id', String(watcher.telegram_id)).eq('active', true)
+      .eq('condition_json', JSON.stringify(watcher.condition_json))
+    return { triggered:false, failed:false }
+  }
+
+  const allowance = await checkCostAllowance(telegramId, COST_ESTIMATES_PAISE.web_search_basic)
+  const currentQuiet = Math.max(0, Number(watcher.last_state_json?.quietChecks || 0))
+  const activeCount = await activeWebWatchCount(telegramId)
+  if (!allowance.allowed) {
+    const deferMinutes = allowance.state?.maxWatcherCadenceMinutes || budget.maxWatcherCadenceMinutes || 1440
+    await supabaseAdmin.from('agent_watchers').update({
+      cadence_minutes:deferMinutes,
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + deferMinutes * 60_000).toISOString(),
+      last_state_json:{
+        ...(watcher.last_state_json || {}),
+        quietChecks:currentQuiet,
+        costGuard:'deferred',
+        costGuardReason:allowance.reason || 'budget',
+        costDeferredAt:now.toISOString(),
+      },
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id).eq('telegram_id', String(watcher.telegram_id)).eq('active', true)
+      .eq('condition_json', JSON.stringify(watcher.condition_json))
+    return { triggered:false, failed:false }
+  }
+
+  if (condition.goldRule) {
+    return await processGoldRateCheck(watcher, condition, condition.goldRule, now, {
+      budget, activeCount, currentQuiet, usageRatio:allowance.state?.usageRatio || 0,
+    })
+  }
+
+  // Retry the saved result even if the search index changes after a failed send.
+  // Comparing the full stored condition prevents a correction from reviving old criteria.
+  const pending = watcher.last_state_json?.pendingAlert
+  const retained = pending?.conditionKey === JSON.stringify(watcher.condition_json) ? pending : null
+  const results = retained ? [retained.result] : await searchWebResults(condition.query)
+  if (!retained) await recordCostEvent({
+    telegramId,
+    category:'web_search_basic',
+    metadata:{ source:'background_gogo', watcher_id:String(watcher.id) },
+  })
+
+  if (!results.length) {
+    const quietChecks = currentQuiet + 1
+    const cadenceMinutes = Math.max(adaptiveWatcherCadence({
+      budget,
+      activeWatcherCount:activeCount,
+      quietChecks,
+      material:false,
+      usageRatio:allowance.state?.usageRatio || 0,
+      burstUntil:condition.burstUntil,
+      now,
+    }), Number((condition as any).requestedCadenceMinutes)||0)
+    await supabaseAdmin.from('agent_watchers').update({
+      cadence_minutes:cadenceMinutes,
+      condition_json:{ ...condition, cadenceMinutes },
+      last_checked_at:now.toISOString(),
+      next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
+      last_state_json:{ ...(watcher.last_state_json || {}), quietChecks, lastEmptyAt:now.toISOString(), costGuard:'ok',
+        ...(condition.priceRule ? { priceRuns: appendPriceRun(watcher.last_state_json?.priceRuns, { at:now.toISOString(), outcome:'no_relevant_result', observed:null, kind:null, reason:'no_results', source:null }) } : {}) },
+      updated_at:now.toISOString(),
+    }).eq('id', watcher.id).eq('telegram_id', String(watcher.telegram_id)).eq('active', true)
+      .eq('condition_json', JSON.stringify(watcher.condition_json))
+    return { triggered:false, failed:false }
+  }
+
+  const topResults = results.slice(0, 5)
+  const fingerprint = searchFingerprint(topResults)
+  const isBaseline = !watcher.last_state_json?.fingerprint
+  const priorSeenUrls = Array.isArray(watcher.last_state_json?.seenUrls)
+    ? watcher.last_state_json.seenUrls
+    : Array.isArray(watcher.last_state_json?.urls) ? watcher.last_state_json.urls : []
+  const priorSeenSignatures = Array.isArray(watcher.last_state_json?.seenSignatures) ? watcher.last_state_json.seenSignatures : []
+  const priorSeenEventKeys = Array.isArray(watcher.last_state_json?.seenEventKeys) ? watcher.last_state_json.seenEventKeys : []
+  const armedEventKeys = activeEventKeys(priorSeenEventKeys, now)
+  // Scope the disruption identity to the SPECIFIC occurrence the result is about: the
+  // watcher context plus whichever of the watch's known flight codes the result cites.
+  // A delay on one leg then a delay on a different leg are distinct events; the same
+  // flight's delay re-retrieved is one event. Weather watchers have no flight code, so
+  // they fall back to the context key and rely on the re-arm window.
+  const contextScope = String((condition as any).contextKey || condition.title || '')
+  const knownFlightCodes = extractFlightCodes(condition.query)
+  const occurrenceFor = (result: WebSearchResult) => {
+    const hay = `${result.title} ${result.snippet || ''}`.toLowerCase().replace(/\s+/g, ' ')
+    const cited = knownFlightCodes.filter(code => {
+      const spaced = code.replace(/^([a-z]{1,2}|\d[a-z])(\d)/i, '$1 $2')
+      return hay.includes(code) || hay.includes(spaced)
+    })
+    // Include the date the result is about so the SAME flight number on different dates
+    // (e.g. an outbound and a return leg) is a distinct event and both can alert.
+    const dates = extractDateTokens(`${result.title} ${result.snippet || ''}`)
+    return `${contextScope}:${cited.join('+')}:${dates.join('+')}`
+  }
+
+  // URL/topic dedup expires on the same re-arm clock as event keys, so a recurring
+  // event at a stable URL can alert again after the window instead of being suppressed
+  // forever (legacy bare entries stay armed until re-stamped).
+  const armedUrls = activeStamped(priorSeenUrls, now)
+  const armedSignatures = activeStamped(priorSeenSignatures, now)
+
+  const assessments = topResults.map(result => ({
+    result,
+    quality: assessWebWatchResult({
+      query: condition.query,
+      title: result.title,
+      snippet: result.snippet,
+      url: result.url,
+      triggerKeywords: condition.triggerKeywords,
+      // A previously nonmatching page can later contain the requested result.
+      // Find watches deduplicate delivered content rather than the URL alone.
+      seenUrls: condition.notifyOnFirstMatch || condition.priceRule ? [] : armedUrls,
+      seenSignatures: condition.priceRule ? [] : armedSignatures,
+      seenEventKeys: armedEventKeys,
+      occurrence: occurrenceFor(result),
+    }),
+  }))
+  // A keyword hit alone is not a confirmed disruption. For contextual travel watchers,
+  // pick the first eligible result that ALSO passes occurrence verification (flight
+  // number+date / destination+date) — an earlier eligible-but-wrong result (another
+  // flight/date/city) must not veto a later correct one in the same poll.
+  const contextClass = String((condition as any).contextClass || '')
+  const contextual = contextClass === 'flight_status' || contextClass === 'destination_weather'
+  const verifyItem = (item: any) => verifyContextualDisruption({
+    contextClass, query: condition.query, title: condition.title,
+    resultTitle: item.result.title, resultSnippet: item.result.snippet,
+    flightLegs: (condition as any).flightLegs,
+  })
+  let candidate: any = null
+  let sawUnverified = false
+  for (const item of assessments) {
+    if (!item.quality.eligible) continue
+    if (contextual && !verifyItem(item).verified) { sawUnverified = true; continue }
+    candidate = item; break
+  }
+  // Price watch: relevance only says the result is about the product. Whether to alert is decided
+  // by NUMBER (listed price strictly below the threshold) and the explicit new-low/re-arm policy.
+  const priceRule = condition.priceRule
+  const eligibleItems = assessments.filter((item: any) => item.quality.eligible)
+  const priceCheck = priceRule
+    ? assessPriceCheck(priceRule, priceStateFrom(watcher.last_state_json), eligibleItems.map((item: any) => item.result))
+    : null
+  if (priceRule && priceCheck) candidate = priceCheck.pick !== null ? eligibleItems[priceCheck.pick] : null
+  const priceHost = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, '') } catch { return '' } }
+  const alertGate = webWatchAlertAllowed({
+    now,
+    lastAlertAt: watcher.last_state_json?.lastAlertAt || watcher.last_state_json?.lastTriggeredAt || null,
+    alertTimes: Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : [],
+  })
+  const material = Boolean(retained && candidate) || ((!isBaseline || condition.notifyOnFirstMatch===true || Boolean(priceRule)) && Boolean(candidate) && alertGate.allowed)
+  const suppressedReason = !isBaseline && !candidate && sawUnverified ? 'unverified_context'
+    : !isBaseline && candidate && !alertGate.allowed ? alertGate.reason : null
+  const quietChecks = material || isBaseline ? 0 : currentQuiet + 1
+  const cadenceMinutes = Math.max(adaptiveWatcherCadence({
+    budget,
+    activeWatcherCount:activeCount,
+    quietChecks,
+    material,
+    usageRatio:allowance.state?.usageRatio || 0,
+    burstUntil:condition.burstUntil,
+    now,
+  }), Number((condition as any).requestedCadenceMinutes)||0)
+
+  let notificationAccepted = condition.delivery === 'app'
+  if (material && candidate) {
+    const candidateKey = retained?.key || 'watch/' + watcher.id + '/' + createHash('sha256').update(JSON.stringify([watcher.condition_json, candidate.result, watcher.last_state_json?.lastTriggeredAt || null])).digest('hex')
+    if (condition.delivery !== 'app') {
+      const pendingAlert = retained || {
+        key: candidateKey,
+        due: now.toISOString(), result: candidate.result,
+        conditionKey: JSON.stringify(watcher.condition_json),
+      }
+      const persistAlert = async (state: string, providerId: string | null = null) => {
+        const { data: checkpoint, error } = await supabaseAdmin.from('agent_watchers').update({
+          last_state_json: { ...(watcher.last_state_json || {}), pendingAlert, alertDelivery: { state, providerId, key: pendingAlert.key } },
+          last_checked_at: now.toISOString(), next_check_at: new Date(now.getTime() + 15 * 60_000).toISOString(), updated_at: now.toISOString(),
+        }).eq('id', watcher.id).eq('telegram_id', telegramId).eq('active', true)
+          .eq('condition_json', JSON.stringify(watcher.condition_json)).select('id').maybeSingle()
+        if (error || !checkpoint?.id) throw new Error('watch_alert_checkpoint_failed')
+      }
+      await persistAlert('pending')
+      const delivery = await deliverWatchAlert({
+        watcherId: String(watcher.id), owner: telegramId, key: pendingAlert.key, due: pendingAlert.due,
+        condition: watcher.condition_json,
+        message: priceRule && priceCheck?.verdict?.observed != null
+          ? priceAlertText({ title: candidate.result.title, url: candidate.result.url, host: priceHost(candidate.result.url), observed: priceCheck.verdict.observed, rule: priceRule, at: now })
+          : (condition as any).contextualKind === 'travel' ? travelWatchAlertMessage(condition, candidate.result) : candidate.result.title + '\n\nSearch result for ' + condition.title.replace(/^Watch:\s*/i, '') +
+          '. Price, stock and offer eligibility have not been verified on the provider page.\n\n' + candidate.result.url +
+          '\n\nI’ll keep checking and only alert on a new relevant result.',
+      })
+      if (['suppressed', 'cancelled'].includes(delivery.state)) return { triggered: false, failed: false }
+      await persistAlert(delivery.state, delivery.providerId)
+      // A definite rejection can retry; an uncertain or terminal send must not
+      // be resent blindly or block subsequent searches. Surface it in the app.
+      if (!delivery.accepted && !['outcome_unknown', 'failed', 'suppressed', 'cancelled'].includes(delivery.state)) return { triggered: false, failed: true }
+      notificationAccepted = delivery.accepted
+      watcher.last_state_json = { ...(watcher.last_state_json || {}), alertDelivery: { state: delivery.state, providerId: delivery.providerId, key: pendingAlert.key } }
+    }
+    await createWebIdea(telegramId, condition, String(watcher.id), candidate.result, candidate.quality.matchedKeywords, candidate.quality.relevance, candidateKey)
+    await writeActivity(telegramId, `Background Gogo found a high-signal web update: ${condition.title}`, {
+      watcher_id:watcher.id,
+      type:'web_search',
+      source_url:candidate.result.url,
+      evidence_level:'search_result',
+      notification_state:watcher.last_state_json?.alertDelivery?.state || 'app',
+      relevance:candidate.quality.relevance,
+      matched_keywords:candidate.quality.matchedKeywords,
+    })
+  }
+
+  const currentUrls = topResults.map(result => canonicalWatcherUrl(result.url)).filter(Boolean)
+  const currentSignatures = topResults.map(result => watcherResultSignature(result.title, result.snippet || ''))
+  // Only record dedup entries for results we'd actually act on. For contextual watchers a
+  // context-rejected result (wrong flight/date/city) must NOT enter seenUrls/seenSignatures:
+  // if that same stable tracker or weather URL is later updated to describe the watched
+  // occurrence, it must remain eligible to alert instead of being suppressed as "seen".
+  const recordable = condition.notifyOnFirstMatch
+    ? material && candidate ? [candidate.result] : []
+    : contextual ? assessments.filter(item => verifyItem(item).verified).map(item => item.result) : topResults
+  const recordUrls = recordable.map(result => canonicalWatcherUrl(result.url)).filter(Boolean)
+  const recordSignatures = recordable.map(result => watcherResultSignature(result.title, result.snippet || ''))
+  const seenUrls = mergeStamped(priorSeenUrls, recordUrls, now)
+  const seenSignatures = mergeStamped(priorSeenSignatures, recordSignatures, now)
+  // Record the disruption identity (with a timestamp) only when we actually alert, so
+  // the same event is suppressed on later polls but re-arms after the window. Expiry is
+  // applied at read time via activeEventKeys, so non-alert polls keep the prior list.
+  const seenEventKeys = material && candidate?.quality.eventKey
+    ? recordEventKey(priorSeenEventKeys, candidate.quality.eventKey, now)
+    : priorSeenEventKeys
+  const alertTimes = material && notificationAccepted
+    ? [...alertGate.recentAlertTimes, now.toISOString()]
+    : alertGate.recentAlertTimes
+
+  // One ledger line per check (observed price, outcome, reason) so counts agree everywhere.
+  const priorPriceState = priceStateFrom(watcher.last_state_json)
+  const sentNow = Boolean(material && notificationAccepted && candidate)
+  const nextPriceState = !priceCheck?.decision ? priorPriceState
+    : priceCheck.decision.notify ? (sentNow ? priceCheck.decision.next : priorPriceState)
+    : priceCheck.decision.next
+  const priceLedger = priceRule && priceCheck ? {
+    priceArmed: nextPriceState.armed,
+    lastAlertPrice: nextPriceState.lastAlertPrice,
+    lastObservedPrice: priceCheck.verdict?.observed ?? watcher.last_state_json?.lastObservedPrice ?? null,
+    priceRuns: appendPriceRun(watcher.last_state_json?.priceRuns, buildPriceRun({
+      now, eligibleCount: eligibleItems.length, check: priceCheck, sent: sentNow,
+      gateReason: priceCheck.decision?.notify && !sentNow ? (suppressedReason || 'delivery_pending') : null,
+      source: priceHost((candidate?.result || eligibleItems[0]?.result || topResults[0])?.url || ''),
+    })),
+  } : {}
+
+  const { error: stateError } = await supabaseAdmin.from('agent_watchers').update({
+    cadence_minutes:cadenceMinutes,
+    condition_json:{ ...condition, cadenceMinutes },
+    last_checked_at:now.toISOString(),
+    next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
+    last_state_json:{
+      ...(watcher.last_state_json || {}),
+      ...priceLedger,
+      fingerprint,
+      pendingAlert: null,
+      lastResult:material && candidate ? {
+        title:candidate.result.title, url:candidate.result.url,
+        snippet:candidate.result.snippet, observedAt:now.toISOString(), evidenceLevel:'search_result',
+      } : watcher.last_state_json?.lastResult || null,
+      urls:currentUrls,
+      seenUrls,
+      seenSignatures,
+      seenEventKeys,
+      quietChecks,
+      baselineAt:watcher.last_state_json?.baselineAt || now.toISOString(),
+      lastTriggeredAt:material ? now.toISOString() : watcher.last_state_json?.lastTriggeredAt || null,
+      lastAlertAt:material && notificationAccepted ? now.toISOString() : watcher.last_state_json?.lastAlertAt || null,
+      alertTimes,
+      suppressedReason,
+      suppressedAt:suppressedReason ? now.toISOString() : null,
+      candidateReason:candidate?.quality.reason || assessments[0]?.quality.reason || 'none',
+      candidateRelevance:candidate?.quality.relevance || 0,
+      costGuard:'ok',
+    },
+    updated_at:now.toISOString(),
+  }).eq('id', watcher.id).eq('telegram_id', telegramId).eq('active', true)
+    .eq('condition_json', JSON.stringify(watcher.condition_json))
+  if (stateError) throw new Error('watch_alert_state_write_failed')
+  return { triggered:material, failed:false }
+}
+
+/** Ledger key for one gold alert episode: watch id + rule identity + episode number. */
+export function goldAlertDeliveryKey(watcherId:string, rule:GoldRule, episode:number) {
+  const identity = [watcherId, rule.metal, rule.karat, rule.direction, rule.thresholdPerGram, episode]
+  return 'watch/' + watcherId + '/gold/' + createHash('sha256').update(JSON.stringify(identity)).digest('hex')
+}
+
+// One check of a gold-rate watch. The decision is numeric, made by code on the same source-bound
+// per-gram extraction the chat quote uses: a single verified value for the karat (dated today,
+// sources within 1%) strictly past the threshold alerts once; ambiguous or unverified evidence
+// stays silent and records why; a verified value back across the threshold re-arms.
+async function processGoldRateCheck(watcher:any, condition:WebSearchWatcherCondition, rule:GoldRule, now:Date, ctx:{
+  budget:Awaited<ReturnType<typeof getCostBudget>>; activeCount:number; currentQuiet:number; usageRatio:number
+}) {
+  const telegramId = String(watcher.telegram_id)
+  const results = await searchWebResults(condition.query)
+  await recordCostEvent({ telegramId, category:'web_search_basic', metadata:{ source:'background_gogo', watcher_id:String(watcher.id), kind:'gold_rate' } })
+  const extraction = extractGoldQuotes(`${rule.karat}K gold rate today`, goldSearchContext(results), now.getTime(), rule.place || 'India')
+  const verdict = evaluateGoldRule(rule, extraction)
+  const prior = goldStateFrom(watcher.last_state_json)
+  const decision = decideGoldAlert(prior, verdict)
+
+  // Alert episode: how many alerts this watch has already delivered. It only advances after a send is
+  // accepted, so a retry after an outcome_unknown delivery reuses the same key and the ledger dedupes it.
+  const priorAlertTimes = Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : []
+  const storedEpisode = Number(watcher.last_state_json?.goldAlertCount)
+  const goldEpisode = Number.isInteger(storedEpisode) && storedEpisode >= 0 ? storedEpisode : priorAlertTimes.length
+  let sent = false
+  if (decision.notify) {
+    // Stable identity only: never the condition_json (each poll rewrites cadenceMinutes) nor the observed
+    // value (it moves between retries), either of which would mint a new key and double-send.
+    const key = goldAlertDeliveryKey(String(watcher.id), rule, goldEpisode)
+    const message = goldAlertText({ rule, verdict, at:now })
+    if (condition.delivery !== 'app') {
+      const delivery = await deliverWatchAlert({ watcherId:String(watcher.id), owner:telegramId, key, due:now.toISOString(), message, condition:watcher.condition_json })
+      if (['suppressed', 'cancelled'].includes(delivery.state)) return { triggered:false, failed:false }
+      // A definite rejection retries on the next poll with the same key (the ledger dedupes it).
+      if (!delivery.accepted && !['outcome_unknown', 'failed'].includes(delivery.state)) return { triggered:false, failed:true }
+      sent = delivery.accepted
+    } else {
+      sent = true
+    }
+    const result = { title:condition.title, url:verdict.source || '', snippet:`${rule.karat}K ${verdict.observed}/g as of ${verdict.date}` }
+    await createWebIdea(telegramId, condition, String(watcher.id), result as WebSearchResult, [], 0.9, key)
+    await writeActivity(telegramId, `Background Gogo saw the gold rate cross your level: ${condition.title}`, {
+      watcher_id:watcher.id, type:'web_search', kind:'gold_rate', source_url:verdict.source, observed_per_gram:verdict.observed,
+      threshold_per_gram:rule.thresholdPerGram, quote_date:verdict.date, evidence_level:'search_result',
+    })
+  }
+
+  const nextState = decision.notify ? (sent ? decision.next : prior) : decision.next
+  const material = decision.notify && sent
+  const quietChecks = material ? 0 : ctx.currentQuiet + 1
+  const cadenceMinutes = Math.max(adaptiveWatcherCadence({
+    budget:ctx.budget, activeWatcherCount:ctx.activeCount, quietChecks, material, usageRatio:ctx.usageRatio,
+    burstUntil:condition.burstUntil, now,
+  }), Number((condition as any).requestedCadenceMinutes) || 0)
+  const outcome = !results.length ? 'no_results' : material ? 'alert'
+    : ['crossed', 'not_crossed'].includes(verdict.reason) ? 'sent_nothing' : 'unverified'
+  const reason = !results.length ? 'no_results' : decision.notify && !sent ? 'delivery_pending' : verdict.action === 'alert' ? decision.reason : verdict.reason
+  const alertTimes = Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : []
+  const { error } = await supabaseAdmin.from('agent_watchers').update({
+    cadence_minutes:cadenceMinutes,
+    condition_json:{ ...condition, cadenceMinutes },
+    last_checked_at:now.toISOString(),
+    next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
+    last_state_json:{
+      ...(watcher.last_state_json || {}),
+      goldArmed:nextState.armed,
+      goldAlertCount:material ? goldEpisode + 1 : goldEpisode,
+      lastAlertPerGram:nextState.lastAlertPerGram,
+      lastObservedPerGram:verdict.observed ?? watcher.last_state_json?.lastObservedPerGram ?? null,
+      lastGoldReason:reason,
+      lastGoldDetail:verdict.detail,
+      goldRuns:appendGoldRun(watcher.last_state_json?.goldRuns, {
+        at:now.toISOString(), outcome, observed:verdict.observed, reason,
+        source:verdict.source ? sourceHost(verdict.source) : null, date:verdict.date,
+      }),
+      quietChecks,
+      baselineAt:watcher.last_state_json?.baselineAt || now.toISOString(),
+      lastTriggeredAt:material ? now.toISOString() : watcher.last_state_json?.lastTriggeredAt || null,
+      lastAlertAt:material ? now.toISOString() : watcher.last_state_json?.lastAlertAt || null,
+      alertTimes:material ? [...alertTimes, now.toISOString()].slice(-20) : alertTimes,
+      lastResult:material ? { title:condition.title, url:verdict.source, snippet:`${rule.karat}K ${verdict.observed}/g`, observedAt:now.toISOString(), evidenceLevel:'search_result' } : watcher.last_state_json?.lastResult || null,
+      costGuard:'ok',
+    },
+    updated_at:now.toISOString(),
+  }).eq('id', watcher.id).eq('telegram_id', telegramId).eq('active', true)
+    .eq('condition_json', JSON.stringify(watcher.condition_json))
+  if (error) throw new Error('watch_alert_state_write_failed')
+  return { triggered:material, failed:false }
+}
+
+type ExpirableWatcher = {
+  id:string
+  telegram_id:string|number
+  type:string
+  condition_json:ContextualWatcherMeta & {title?:string}
+  last_state_json?:Record<string,unknown>
+}
+
+async function expireContextWatcher(watcher:ExpirableWatcher,now:Date){
+  let query=supabaseAdmin.from('agent_watchers').update({
+    active:false,next_check_at:null,last_checked_at:now.toISOString(),
+    last_state_json:{...(watcher.last_state_json||{}),expiredAt:now.toISOString(),expiredReason:'context_window_ended'},
+    updated_at:now.toISOString(),
+  }).eq('id',watcher.id).eq('telegram_id',String(watcher.telegram_id)).eq('active',true)
+    .eq('condition_json',JSON.stringify(watcher.condition_json))
+  query=watcher.last_state_json==null?query.is('last_state_json',null):query.eq('last_state_json',JSON.stringify(watcher.last_state_json))
+  const {data,error}=await query.select('id')
+  if(error)throw new Error('context_watch_expiry_write_failed')
+  if(!data?.length)return false
+  await writeActivity(String(watcher.telegram_id),`Contextual watch expired: ${String(watcher.condition_json?.title||watcher.type)}`,{
+    watcher_id:watcher.id,type:watcher.type,context_key:watcher.condition_json?.contextKey||null,expired_at:now.toISOString(),
+  })
+  return true
+}
+
+// Expiry is independent of poll cadence. Legacy metadata may extend beyond the
+// source ticket, so examine active travel sources even when their next poll is later.
+async function reconcileTravelExpiry(now:Date){
+  let expired=0,failed=0
+  const {data,error}=await supabaseAdmin.from('agent_watchers')
+      .select('id,telegram_id,type,condition_json,last_state_json')
+      .eq('active',true).eq('condition_json->>contextual','true').eq('condition_json->>contextualKind','travel')
+      .order('last_state_json->>contextExpiryCheckedAt',{ascending:true,nullsFirst:true})
+      .order('id',{ascending:true}).limit(40)
+    if(error)throw new Error('context_watch_expiry_read_failed')
+    const rows=(data||[]) as unknown as ExpirableWatcher[]
+    for(const watcher of rows){
+      let retired=false,failedThisWatcher=false
+      try{
+        const expiry=await sourceBoundTravelExpiry(watcher)
+        if(expiry&&Date.parse(expiry)<=now.getTime()){
+          retired=await expireContextWatcher(watcher,now)
+          if(retired)expired++
+        }
+      }catch(error){
+        failed++;failedThisWatcher=true
+        console.error('CONTEXT_WATCH_EXPIRY_FAILED:',watcher.id,error instanceof Error?error.message:'expiry_failed')
+      }
+      if(!retired){
+        // Persist attempted checks, including source failures, so one bad batch
+        // cannot monopolize future serverless invocations. Preserve concurrent polls.
+        let update=supabaseAdmin.from('agent_watchers').update({
+          last_state_json:{...(watcher.last_state_json||{}),contextExpiryCheckedAt:now.toISOString()},
+        }).eq('id',watcher.id).eq('telegram_id',String(watcher.telegram_id)).eq('active',true)
+          .eq('condition_json',JSON.stringify(watcher.condition_json))
+        update=watcher.last_state_json==null?update.is('last_state_json',null):update.eq('last_state_json',JSON.stringify(watcher.last_state_json))
+        const {error:updateError}=await update
+        if(updateError){if(!failedThisWatcher)failed++;console.error('CONTEXT_WATCH_EXPIRY_ROTATION_FAILED:',watcher.id)}
+      }
+    }
+  return {expired,failed}
+}
+
+export async function processDueAgentWatchers(limit = 40) {
+  const now = new Date()
+  const expirySweep=await reconcileTravelExpiry(now)
+  // R02: dated watches past their date and same-subject duplicates are retired before polling; never blocks polling.
+  const cleanup=await reconcileStaleAndDuplicateWatchers(now).catch((err:any)=>{
+    console.error('AGENT_WATCHER_CLEANUP_FAILED:',err?.message||err)
+    return {datePassed:0,duplicates:0,retired:0}
+  })
+  const { data, error } = await supabaseAdmin.from('agent_watchers')
+    .select('id, telegram_id, type, condition_json, last_state_json, active, next_check_at')
+    .eq('active', true)
+    .lte('next_check_at', now.toISOString())
+    .order('next_check_at', { ascending: true })
+    .limit(limit)
+  if (error) throw new Error(`agent_watchers_read_failed:${error.message}`)
+
+  let checked = 0, triggered = 0, failed = expirySweep.failed
+  let expired=expirySweep.expired
+  for (const watcher of (data || []) as any[]) {
+    checked++
+    try {
+      const expiresAt=await sourceBoundTravelExpiry(watcher)
+      if(watcher.condition_json?.contextual===true&&expiresAt&&Date.parse(expiresAt)<=now.getTime()){
+        if(await expireContextWatcher(watcher,now))expired++
+        continue
+      }
+      // An ad-hoc tracked flight ("Track VS354") is followed from the flight-data feed, not as a web search.
+      const outcome = watcher.condition_json?.adHocFlight
+        ? await import('./flight-track').then(m => m.processFlightTrackWatcher(watcher, now))
+        : watcher.type === 'deadline'
+        ? await processDeadlineWatcher(watcher, now)
+        : watcher.type === 'web_search'
+          ? await processWebSearchWatcher(watcher, now)
+          : watcher.type === 'web_page'
+            ? await processWebPageWatcher(watcher, now)
+          : watcher.type === 'product_stock'
+            ? await processProductStockWatcher(watcher, now)
+            : watcher.type === 'email_triage'
+              ? await processInboxTriageWatcher(watcher, now)
+              : null
+      if (!outcome) {
+        await supabaseAdmin.from('agent_watchers').update({ next_check_at: new Date(now.getTime() + 3600_000).toISOString(), last_checked_at: now.toISOString() }).eq('id', watcher.id)
+        continue
+      }
+      if (outcome.triggered) triggered++
+      if (outcome.failed) failed++
+    } catch (err:any) {
+      failed++
+      console.error('AGENT_WATCHER_PROCESS_FAILED:', watcher.id, err?.message || err)
+    }
+  }
+  return { checked, triggered, failed, expired, retired:cleanup.retired }
+}

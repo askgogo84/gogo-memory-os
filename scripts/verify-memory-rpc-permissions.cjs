@@ -1,0 +1,27 @@
+const assert=require('node:assert/strict'),fs=require('node:fs')
+const {PGlite}=require('@electric-sql/pglite')
+async function main(){const db=new PGlite();await db.exec(`create role anon;create role authenticated;create role service_role;
+create table user_consent_settings(telegram_id bigint primary key,memory_enabled boolean,proactive_suggestions_enabled boolean);
+create table user_memory_profile(telegram_id bigint primary key,timezone text,communication_style text);
+alter table user_consent_settings enable row level security;alter table user_memory_profile enable row level security;
+create table fixture_conversations(telegram_id bigint);grant insert on fixture_conversations to service_role;`)
+const source=fs.readFileSync('supabase/memory-twin-wiring.sql','utf8')
+const ensure=source.match(/create or replace function public\.ensure_memory_twin_user[\s\S]*?\$\$;/i)[0]
+await db.exec(ensure)
+const triggers=['memory_twin_log_conversation_event','memory_twin_log_reminder_event','gogo_enrich_life_event_checkin_url']
+for(const name of triggers)await db.exec('create function public.'+name+'() returns trigger language plpgsql security definer as $$begin perform public.ensure_memory_twin_user(new.telegram_id);return new;end$$;')
+await db.exec('create trigger fixture_memory after insert on fixture_conversations for each row execute function public.memory_twin_log_conversation_event()')
+const original=(await db.query("select proname,prosrc from pg_proc where proname in ('ensure_memory_twin_user','memory_twin_log_conversation_event','memory_twin_log_reminder_event','gogo_enrich_life_event_checkin_url') order by proname")).rows
+const files=fs.readdirSync('supabase/migrations').filter(x=>x.endsWith('_memory_rpc_permissions.sql'));assert.equal(files.length,1)
+await db.exec(fs.readFileSync('supabase/migrations/'+files[0],'utf8'))
+let passed=0;const failures=[];async function test(name,fn){try{await fn();passed++;console.log('PASS '+name)}catch(e){failures.push(name+': '+e.message);console.error('FAIL '+name)}}
+for(const role of ['anon','authenticated'])await test(role+' cannot initialize arbitrary owner rows',async()=>{await db.exec('set role '+role);try{await assert.rejects(db.query('select public.ensure_memory_twin_user(9001)'),/permission denied/)}finally{await db.exec('reset role')}})
+await test('blocked callers did not create consent or profile rows',async()=>{assert.equal((await db.query('select count(*) n from user_consent_settings')).rows[0].n,0);assert.equal((await db.query('select count(*) n from user_memory_profile')).rows[0].n,0)})
+for(const name of ['ensure_memory_twin_user(bigint)',...triggers.map(n=>n+'()')])await test('service-only execute '+name,async()=>{for(const role of ['anon','authenticated'])assert.equal((await db.query('select has_function_privilege($1,$2,$3) allowed',[role,'public.'+name,'EXECUTE'])).rows[0].allowed,false);assert.equal((await db.query('select has_function_privilege($1,$2,$3) allowed',['service_role','public.'+name,'EXECUTE'])).rows[0].allowed,true)})
+await test('service initializer preserves normal behavior and explicit opt-out',async()=>{await db.exec('set role service_role');try{await db.query('select public.ensure_memory_twin_user(9002)')}finally{await db.exec('reset role')};assert.equal((await db.query('select memory_enabled from user_consent_settings where telegram_id=9002')).rows[0].memory_enabled,true);await db.exec('update user_consent_settings set memory_enabled=false,proactive_suggestions_enabled=false where telegram_id=9002');await db.exec('set role service_role');try{await db.query('select public.ensure_memory_twin_user(9002)')}finally{await db.exec('reset role')};assert.equal((await db.query('select memory_enabled from user_consent_settings where telegram_id=9002')).rows[0].memory_enabled,false)})
+await test('existing database trigger still initializes its owner',async()=>{await db.exec('set role service_role');try{await db.exec('insert into fixture_conversations values(9003)')}finally{await db.exec('reset role')};assert.equal((await db.query('select telegram_id from user_memory_profile where telegram_id=9003')).rows.length,1)})
+await test('function bodies remain byte-identical',async()=>{assert.deepEqual((await db.query("select proname,prosrc from pg_proc where proname in ('ensure_memory_twin_user','memory_twin_log_conversation_event','memory_twin_log_reminder_event','gogo_enrich_life_event_checkin_url') order by proname")).rows,original)})
+await test('fully qualified memory helpers have fixed empty search paths',async()=>{const rows=(await db.query("select proconfig from pg_proc where proname in ('ensure_memory_twin_user','memory_twin_log_conversation_event','memory_twin_log_reminder_event')")).rows;assert.equal(rows.length,3);for(const r of rows)assert.ok(r.proconfig.some(x=>x.startsWith('search_path=')))})
+await test('idempotent migration also tolerates absent optional legacy helpers',async()=>{await db.exec(fs.readFileSync('supabase/migrations/'+files[0],'utf8'));await db.exec('drop trigger fixture_memory on fixture_conversations');for(const name of triggers)await db.exec('drop function public.'+name+'()');await db.exec(fs.readFileSync('supabase/migrations/'+files[0],'utf8'))})
+console.log('Memory RPC ACL groups: '+passed+'/'+(passed+failures.length));await db.close();if(failures.length)throw Error(failures.join('\n'))}
+main().catch(e=>{console.error(e);process.exitCode=1})

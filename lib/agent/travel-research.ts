@@ -1,0 +1,606 @@
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { formatFlightTiming } from './flight-timing'
+export { formatFlightTiming }
+import { FLIGHT_CHOICES } from './flight-choices'
+import { rememberTypedObjects } from './typed-object-context'
+import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
+import { searchCreditIQLiveFlights } from '@/lib/integrations/creditiq-travel'
+import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { formatBrowserFlightResult, formatRoundTripResult, runLiveFlightBrowserTask } from './travel-browser-task'
+import { sanitizeBrowserReadDiagnostics, type BrowserReadDiagnostic } from './browser-read-diagnostics'
+import {enqueueTravelResearch} from './travel-research-queue'
+import type { CreditIQFlightResult } from '@/lib/integrations/creditiq-travel'
+import type { AgentActor } from './actor'
+import type { AgentSurface } from './orchestrator'
+
+function safe(value: unknown, max = 1600) {
+  return redactSecretShapedText(String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max))
+}
+
+export type TimeOfDay = 'morning' | 'afternoon' | 'evening' | 'night'
+type Place = { label: string; code?: string; aliases: string[] }
+type TravelContext = {
+  kind: 'flight' | 'hotel'
+  origin?: Place
+  destination?: Place
+  whenLabel: string
+  searchWhen: string
+  routeLabel: string
+  startDate?: string
+  endDate?: string
+  /** A round trip is one search for both dates: set when the request says "departing D returning R". */
+  returnDate?: string
+  roundTrip?: boolean
+  cabin?: 'economy' | 'premium_economy' | 'business' | 'first'
+  adults?: number
+  nonStop?: boolean
+  timeOfDay?: TimeOfDay
+}
+type DateRelevance = 'matched' | 'unknown' | 'mismatched'
+
+const PLACES: Record<string, Place> = {
+  bangalore: { label: 'Bengaluru', code: 'BLR', aliases: ['bangalore','bengaluru','blr'] },
+  bengaluru: { label: 'Bengaluru', code: 'BLR', aliases: ['bangalore','bengaluru','blr'] },
+  blr: { label: 'Bengaluru', code: 'BLR', aliases: ['bangalore','bengaluru','blr'] },
+  mumbai: { label: 'Mumbai', code: 'BOM', aliases: ['mumbai','bombay','bom'] },
+  bombay: { label: 'Mumbai', code: 'BOM', aliases: ['mumbai','bombay','bom'] },
+  bom: { label: 'Mumbai', code: 'BOM', aliases: ['mumbai','bombay','bom'] },
+  delhi: { label: 'Delhi', code: 'DEL', aliases: ['delhi','new delhi','del'] },
+  'new delhi': { label: 'Delhi', code: 'DEL', aliases: ['delhi','new delhi','del'] },
+  del: { label: 'Delhi', code: 'DEL', aliases: ['delhi','new delhi','del'] },
+  hyderabad: { label: 'Hyderabad', code: 'HYD', aliases: ['hyderabad','hyd'] },
+  hyd: { label: 'Hyderabad', code: 'HYD', aliases: ['hyderabad','hyd'] },
+  chennai: { label: 'Chennai', code: 'MAA', aliases: ['chennai','madras','maa'] },
+  maa: { label: 'Chennai', code: 'MAA', aliases: ['chennai','madras','maa'] },
+  kolkata: { label: 'Kolkata', code: 'CCU', aliases: ['kolkata','calcutta','ccu'] },
+  ccu: { label: 'Kolkata', code: 'CCU', aliases: ['kolkata','calcutta','ccu'] },
+  pune: { label: 'Pune', code: 'PNQ', aliases: ['pune','pnq'] },
+  pnq: { label: 'Pune', code: 'PNQ', aliases: ['pune','pnq'] },
+  goa: { label: 'Goa', aliases: ['goa','goi','gox'] },
+  dubai: { label: 'Dubai', code: 'DXB', aliases: ['dubai','dxb'] },
+  dxb: { label: 'Dubai', code: 'DXB', aliases: ['dubai','dxb'] },
+  'new york': { label: 'New York', code: 'NYC', aliases: ['new york','nyc','jfk','ewr','lga'] },
+  nyc: { label: 'New York', code: 'NYC', aliases: ['new york','nyc','jfk','ewr','lga'] },
+  jfk: { label: 'New York', code: 'JFK', aliases: ['new york','nyc','jfk'] },
+}
+// More airports so a city named in a sentence resolves to a searchable code. [label, code, names]
+const MORE_PLACES: Array<[string, string, string[]]> = [
+  ['Singapore','SIN',['singapore']],['Bangkok','BKK',['bangkok']],['Kuala Lumpur','KUL',['kuala lumpur','kl']],
+  ['Abu Dhabi','AUH',['abu dhabi']],['Doha','DOH',['doha']],['Muscat','MCT',['muscat']],['Sharjah','SHJ',['sharjah']],
+  ['London','LHR',['london','heathrow']],['Paris','CDG',['paris']],['Frankfurt','FRA',['frankfurt']],['Amsterdam','AMS',['amsterdam']],
+  ['Zurich','ZRH',['zurich']],['Istanbul','IST',['istanbul']],['Hong Kong','HKG',['hong kong']],['Tokyo','TYO',['tokyo']],
+  ['Seoul','ICN',['seoul']],['Sydney','SYD',['sydney']],['Melbourne','MEL',['melbourne']],['San Francisco','SFO',['san francisco','sfo']],
+  ['Los Angeles','LAX',['los angeles','lax']],['Chicago','ORD',['chicago']],['Toronto','YYZ',['toronto']],['Colombo','CMB',['colombo']],
+  ['Kathmandu','KTM',['kathmandu']],['Male','MLE',['male','maldives']],['Bali','DPS',['bali','denpasar']],['Phuket','HKT',['phuket']],
+  ['Ho Chi Minh City','SGN',['ho chi minh','saigon']],['Hanoi','HAN',['hanoi']],['Jakarta','CGK',['jakarta']],['Manila','MNL',['manila']],
+  ['Dhaka','DAC',['dhaka']],['Riyadh','RUH',['riyadh']],['Jeddah','JED',['jeddah']],['Johannesburg','JNB',['johannesburg']],
+  ['Ahmedabad','AMD',['ahmedabad']],['Jaipur','JAI',['jaipur']],['Kochi','COK',['kochi','cochin']],
+  ['Thiruvananthapuram','TRV',['thiruvananthapuram','trivandrum']],['Lucknow','LKO',['lucknow']],['Chandigarh','IXC',['chandigarh']],
+  ['Coimbatore','CJB',['coimbatore']],['Mangaluru','IXE',['mangalore','mangaluru']],['Visakhapatnam','VTZ',['visakhapatnam','vizag']],
+  ['Bhubaneswar','BBI',['bhubaneswar']],['Patna','PAT',['patna']],['Varanasi','VNS',['varanasi']],['Indore','IDR',['indore']],
+  ['Nagpur','NAG',['nagpur']],['Guwahati','GAU',['guwahati']],['Srinagar','SXR',['srinagar']],['Amritsar','ATQ',['amritsar']],
+  ['Udaipur','UDR',['udaipur']],
+]
+for (const [label, code, names] of MORE_PLACES) {
+  const place: Place = { label, code, aliases: [...names, code.toLowerCase()] }
+  for (const name of [...names, code.toLowerCase()]) PLACES[name] ||= place
+}
+const INDIA_CODES = new Set(['BLR','BOM','DEL','HYD','MAA','CCU','PNQ','GOI','GOX','AMD','JAI','COK','TRV','LKO','IXC','CJB','IXE','VTZ','BBI','PAT','VNS','IDR','NAG','GAU','SXR','ATQ','UDR'])
+const MONTHS: Record<string, number> = {
+  jan:0, january:0, feb:1, february:1, mar:2, march:2, apr:3, april:3, may:4,
+  jun:5, june:5, jul:6, july:6, aug:7, august:7, sep:8, sept:8, september:8,
+  oct:9, october:9, nov:10, november:10, dec:11, december:11,
+}
+function esc(value: string) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') }
+function placeFrom(raw: string | undefined): Place | undefined { const cleaned=String(raw||'').trim().replace(/[,.!?]+$/g,'').toLowerCase(); if(!cleaned)return undefined; if(PLACES[cleaned])return PLACES[cleaned]; return {label:cleaned.replace(/\b\w/g,c=>c.toUpperCase()),aliases:[cleaned]} }
+function routeText(text:string) {
+  return text.replace(/\b(?:do\s+not|don't)\s+(?!forget\b)[^.!?;\n]*?(?=[.!?;\n]|\b(?:but|then)\b|,\s*(?:just|please|instead)\b|$)[.!?;]?/gi,' ').trim().replace(/(?:[.!?;,]\s*)+$/,'').trim()
+}
+function extractSegment(text:string,marker:'from'|'to'|'in') {
+  // A weekday or "day after tomorrow" ends a city too ("to Delhi Friday 30 Oct").
+  const days='day\\s+after|today|(?:mon|tues|wednes|thurs|fri|satur|sun)day'
+  const markers=marker==='from'?`to|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip|departing|returning|${days}`
+    :marker==='to'?`from|next|this|tomorrow|on|for|under|below|with|return|one-way|round-trip|departing|returning|${days}`
+    :'next|this|tomorrow|on|for|under|below|with|from|to'
+  // A separate safety instruction is not part of the city. Keep the full
+  // request available so route/date details after that clause still survive.
+  const safetyClause="(?:[.!?;,]\\s*|\\s+[-–—]\\s*|\\s+)(?=(?:research|read)[ -]+only\\b|do\\s+not\\b|don't\\b)"
+  const stop=`(?=\\s+(?:${markers})\\b|\\s+\\d|${safetyClause}|$)`
+  return routeText(text).match(new RegExp(`\\b${marker}\\s+([a-zA-Z][a-zA-Z .'-]{1,42}?)${stop}`,'i'))?.[1]?.trim()
+}
+function fmtDate(date:Date){return new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'}).format(date)}
+function isoDay(date:Date){return date.toISOString().slice(0,10)}
+export function localTravelDate(now: Date, timezone = 'Asia/Kolkata') {
+  const parts = new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now)
+  const pick = (type: string) => parts.find(part=>part.type===type)?.value
+  return new Date(`${pick('year')}-${pick('month')}-${pick('day')}T00:00:00Z`)
+}
+
+export function flightDateIssue(text: string, context: TravelContext, now = new Date(), timezone = 'Asia/Kolkata') {
+  const months = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?'
+  const dayMonth = text.match(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(${months})\\b(?:[,\\s]+(20\\d{2}))?`, 'i'))
+  const monthDay = text.match(new RegExp(`\\b(${months})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:[,\\s]+(20\\d{2}))?`, 'i'))
+  if(dayMonth || monthDay) {
+    const year = Number((dayMonth || monthDay)![3] || localTravelDate(now,timezone).getUTCFullYear())
+    const month = MONTHS[(dayMonth ? dayMonth[2] : monthDay![1]).toLowerCase()]
+    const day = Number(dayMonth ? dayMonth[1] : monthDay![2])
+    const parsed = new Date(Date.UTC(year,month,day))
+    if(parsed.getUTCFullYear()!==year || parsed.getUTCMonth()!==month || parsed.getUTCDate()!==day) return 'invalid'
+  }
+  const iso = text.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/)
+  const numeric = text.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/)
+  if(iso || numeric) {
+    const [year,month,day] = iso ? [Number(iso[1]),Number(iso[2]),Number(iso[3])] : [Number(numeric![3]),Number(numeric![2]),Number(numeric![1])]
+    const parsed = new Date(Date.UTC(year,month-1,day))
+    if(parsed.getUTCFullYear()!==year || parsed.getUTCMonth()!==month-1 || parsed.getUTCDate()!==day) return 'invalid'
+  }
+  if(context.startDate && context.startDate < isoDay(localTravelDate(now,timezone))) return 'past'
+  return null
+}
+function nextWeekRange(now:Date){const base=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()));const day=base.getUTCDay()||7;const monday=new Date(base);monday.setUTCDate(base.getUTCDate()+(8-day));const sunday=new Date(monday);sunday.setUTCDate(monday.getUTCDate()+6);return{label:`${fmtDate(monday)} – ${fmtDate(sunday)}`,search:`${fmtDate(monday)} ${fmtDate(sunday)}`,startDate:isoDay(monday),endDate:isoDay(sunday)}}
+function thisWeekRange(now:Date){const base=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()));const day=base.getUTCDay()||7;const sunday=new Date(base);sunday.setUTCDate(base.getUTCDate()+(7-day));return{label:`${fmtDate(base)} – ${fmtDate(sunday)}`,search:`${fmtDate(base)} ${fmtDate(sunday)}`,startDate:isoDay(base),endDate:isoDay(sunday)}}
+function explicitDateFromText(text:string,now:Date) {
+  const valid = (year:number,month:number,day:number) => {
+    const date = new Date(Date.UTC(year,month,day))
+    return date.getUTCFullYear()===year && date.getUTCMonth()===month && date.getUTCDate()===day ? isoDay(date) : null
+  }
+  const months = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?'
+  const iso = text.match(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/)
+  if(iso)return valid(Number(iso[1]),Number(iso[2])-1,Number(iso[3]))
+  const dayMonth = text.match(new RegExp(String.raw`\b(\d{1,2})(?:st|nd|rd|th)?\s+(${months})\b(?:[,\s]+(20\d{2}))?`, 'i'))
+  if(dayMonth)return valid(Number(dayMonth[3]||now.getUTCFullYear()),MONTHS[dayMonth[2].toLowerCase()],Number(dayMonth[1]))
+  const monthDay = text.match(new RegExp(String.raw`\b(${months})\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:[,\s]+(20\d{2}))?`, 'i'))
+  if(monthDay)return valid(Number(monthDay[3]||now.getUTCFullYear()),MONTHS[monthDay[1].toLowerCase()],Number(monthDay[2]))
+  const numeric = text.match(/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/)
+  return numeric ? valid(Number(numeric[3]),Number(numeric[2])-1,Number(numeric[1])) : null
+}
+// "next Friday", "this Friday", "on Friday", "Friday": the next such day after today (same rule as the
+// calendar's weekdayDateParts). 20 Oct live: "flights from Bangalore to Delhi next Friday" asked for the date.
+const WEEKDAY_NAMES=['sunday','monday','tuesday','wednesday','thursday','friday','saturday']
+const WEEKDAY_MENTION=/\b(?:(?:on|this|next|coming)\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i
+/** `today` is the local calendar day as a UTC-midnight Date (localTravelDate). Returns YYYY-MM-DD or null. */
+export function weekdayTravelDate(text:string,today:Date):string|null{
+  const m=String(text||'').match(WEEKDAY_MENTION)
+  if(!m||/\bevery\b/i.test(text))return null
+  const want=WEEKDAY_NAMES.indexOf(m[1].toLowerCase())
+  const ahead=((want-today.getUTCDay()+7)%7)||7
+  return isoDay(new Date(Date.UTC(today.getUTCFullYear(),today.getUTCMonth(),today.getUTCDate()+ahead)))
+}
+function normalizeWhen(text:string,now=new Date()):{label:string;search:string;startDate?:string;endDate?:string}{const t=text.toLowerCase();if(/\bday\s+after\s+tomorrow\b/.test(t)){const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+2));return{label:fmtDate(d),search:fmtDate(d),startDate:isoDay(d),endDate:isoDay(d)}}if(/\bnext week\b/.test(t))return nextWeekRange(now);if(/\bthis week\b/.test(t))return thisWeekRange(now);if(/\bnext month\b/.test(t)){const start=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+1,1));const end=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth()+2,0));return{label:new Intl.DateTimeFormat('en-GB',{month:'long',year:'numeric',timeZone:'UTC'}).format(start),search:`${fmtDate(start)} ${fmtDate(end)}`,startDate:isoDay(start),endDate:isoDay(end)}}if(/\btoday\b/.test(t)){const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()));return{label:fmtDate(d),search:fmtDate(d),startDate:isoDay(d),endDate:isoDay(d)}}if(/\btomorrow\b/.test(t)){const d=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate()+1));return{label:fmtDate(d),search:fmtDate(d),startDate:isoDay(d),endDate:isoDay(d)}}const explicit=explicitDateFromText(text,now)||weekdayTravelDate(text,now);if(explicit){const d=new Date(`${explicit}T00:00:00Z`);return{label:fmtDate(d),search:fmtDate(d),startDate:explicit,endDate:explicit}}return{label:'dates not specified',search:`${now.getUTCFullYear()}`}}
+export function buildTravelResearchContext(rawText:string,now=new Date(),timezone='Asia/Kolkata'):TravelContext{const text=String(rawText||'').trim();const t=text.toLowerCase();const kind:'flight'|'hotel'=/\bhotel|hotels\b/.test(t)&&!/\bflight|flights|airfare\b/.test(t)?'hotel':'flight';let origin=placeFrom(extractSegment(text,'from'));let destination=placeFrom(extractSegment(text,'to'));if(kind==='flight'&&(!origin||!destination)){const pair=routeText(text).replace(/^(?:(?:please|find|search|compare|check|look|for|me|a|an|the|cheap|cheapest|available|actual|non-stop|direct|flight|flights|airfare|options)\s+)+/i,'').match(/\b([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28})\s*(?:→|->| to )\s*([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28}?)(?=\s+(?:next|this|tomorrow|on|for|under|below|with|one-way|round-trip)\b|\s+\d|$)/i);if(pair&&!/\b(?:compare|search|research|find|check|flights?|book|pay)\b/i.test(pair[1])){origin||=placeFrom(pair[1]);destination||=placeFrom(pair[2])}}if(kind==='flight'&&!destination){const before=text.match(/([A-Za-z][A-Za-z .'-]{1,30}?)\s+(?:flights?|airfare|fares?|tickets?)\b/i)?.[1];if(before){const filler=/^(?:check|find|search|show|get|need|want|any|cheap|cheapest|best|the|a|an|me|for|my|our|some|good|latest|current|live|actual|available|direct|non-?stop|domestic|international|one-?way|round-?trip|return|please|and|or|also)$/i;const words=before.trim().split(/\s+/).filter(w=>!filler.test(w));const two=words.slice(-2).join(' ').toLowerCase(),one=words.slice(-1).join(' ').toLowerCase();const hit=PLACES[two]?two:PLACES[one]?one:(one.length>2?one:'');const candidate=placeFrom(hit);if(candidate&&(!origin||candidate.label!==origin.label))destination=candidate}}if(kind==='hotel'&&!destination)destination=placeFrom(extractSegment(text,'in'));const when=normalizeWhen(text,localTravelDate(now,timezone));const routeLabel=origin&&destination?`${origin.code||origin.label} → ${destination.code||destination.label}`:destination?destination.label:'Travel search';return{kind,origin,destination,whenLabel:when.label,searchWhen:when.search,routeLabel,startDate:when.startDate,endDate:when.endDate}}
+// 20 Oct live: "Movies showing near Rajajinagar this Sunday evening" was read as the answer to an open flight
+// question (its "evening" looked like a departure time) and got "Please send the travel date". A reply that names
+// another topic, or is a long sentence with no travel word, is a new request and routes normally.
+const OTHER_TOPIC_RE=/\b(?:movies?|films?|cinemas?|showtimes?|screenings?|concerts?|gigs?|events?|plays?|theat(?:re|er)s?|restaurants?|cafes?|weather|news|e-?mails?|mails?|inbox|calendar|meetings?|reminders?|groceries|recipes?|nearby|near\s+(?:me|by|[a-z]+))\b/i
+const TRAVEL_WORD_RE=/\b(?:flights?|fly|flying|airfare|fares?|trip|return|travel(?:l?ing)?|depart(?:ure|ing)?|one[\s-]*way|round[\s-]*trip|adults?|passengers?|travell?ers?|economy|business|premium|cabin|non[\s-]*stop|direct)\b/i
+export function isOtherTopicThanFlightReply(raw:string):boolean{
+  const text=String(raw||'').trim()
+  if(OTHER_TOPIC_RE.test(text)&&!TRAVEL_WORD_RE.test(text))return true
+  return text.split(/\s+/).filter(Boolean).length>12&&!TRAVEL_WORD_RE.test(text)
+}
+export function isTravelResearchDetailsReply(raw:string) {
+  const text=routeText(String(raw||''))
+  if(isOtherTopicThanFlightReply(raw))return false
+  if(isFlightBriefAnswer(raw))return true
+  return /^(?:from|to|on|for|today|tomorrow|\d{1,2})\b/i.test(text) &&
+    !/\b(?:remind|reminder|calendar|email|send|create|delete|cancel|buy|book|pay|order|subscribe|watch|monitor)\b/i.test(text)
+}
+// A request about flights is a flight search because of what the sentence says: it names flights and a
+// route (from X, to X, X → Y), not because it happens to contain "cheap" or "price". Status, check-in and
+// "my flight" questions are someone's existing booking and belong elsewhere.
+export function flightRouteEvidence(lower: string): boolean {
+  if (!/\b(?:flights?|airfare|airlines?)\b/.test(lower)) return false
+  if (/\b(?:status|delayed|delay|on\s+time|cancell?ed|gate|terminal|pnr|boarding|check[- ]?in|baggage)\b/.test(lower)) return false
+  return /\b(?:from|to|between|via)\s+[a-z]{3,}/.test(lower) || /\b[a-z]{3,}\s*(?:→|->)\s*[a-z]{3,}/.test(lower)
+}
+export function isPublicTravelResearchRequest(rawText:string){const t=String(rawText||'').trim().toLowerCase();if(!/\b(flight|flights|airfare|fare|fares|hotel|hotels|travel|trip)\b/.test(t))return false;if(/\b(my\s+(flight|ticket|booking|reservation|pnr|boarding pass|itinerary)|saved\s+(flight|ticket|booking)|show\s+my\s+(flight|ticket)|find\s+my\s+(flight|ticket))\b/.test(t))return false;return flightRouteEvidence(t)||/\b(cheap|cheapest|best\s+(fare|price|deal)|compare|comparison|price|prices|fare|fares|deal|deals|available|availability|options|search|research|look\s+for|find\s+(a|me\s+a)|next\s+week|this\s+week|next\s+month)\b/.test(t)}
+function placeIndex(text:string,place:Place){const lower=text.toLowerCase();const indexes=place.aliases.map(a=>lower.search(new RegExp(`\\b${esc(a)}\\b`,'i'))).filter(i=>i>=0);return indexes.length?Math.min(...indexes):-1}
+function directionScore(result:WebSearchResult,context:TravelContext){if(!context.origin||!context.destination||context.kind!=='flight')return 1;const title=String(result.title||'');const oi=placeIndex(title,context.origin);const di=placeIndex(title,context.destination);if(oi>=0&&di>=0)return oi<di?4:-5;const combined=`${result.title} ${result.snippet}`;const co=placeIndex(combined,context.origin);const cd=placeIndex(combined,context.destination);if(co>=0&&cd>=0)return co<cd?2:-2;return 0}
+function sourceLabel(url:string){try{return new URL(url).hostname.replace(/^www\./,'').split('.')[0].replace(/[-_]/g,' ').replace(/\b\w/g,c=>c.toUpperCase())}catch{return'Source'}}
+function domesticIndia(context:TravelContext){return Boolean(context.origin?.code&&context.destination?.code&&INDIA_CODES.has(context.origin.code)&&INDIA_CODES.has(context.destination.code))}
+function parseDateMentions(text:string,context:TravelContext){const out:Date[]=[];const defaultYear=Number(context.startDate?.slice(0,4)||new Date().getUTCFullYear());const add=(year:number,month:number,day:number)=>{if(year<2020||year>2100||month<0||month>11||day<1||day>31)return;const d=new Date(Date.UTC(year,month,day));if(d.getUTCFullYear()===year&&d.getUTCMonth()===month&&d.getUTCDate()===day)out.push(d)};let m:RegExpExecArray|null;const dayMonth=/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[,\s]+(20\d{2}))?/gi;while((m=dayMonth.exec(text)))add(Number(m[3]||defaultYear),MONTHS[m[2].toLowerCase()],Number(m[1]));const monthDay=/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:[,\s]+(20\d{2}))?/gi;while((m=monthDay.exec(text)))add(Number(m[3]||defaultYear),MONTHS[m[1].toLowerCase()],Number(m[2]));const numeric=/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/g;while((m=numeric.exec(text)))add(Number(m[3]),Number(m[2])-1,Number(m[1]));const seen=new Set<string>();return out.filter(d=>{const key=isoDay(d);if(seen.has(key))return false;seen.add(key);return true})}
+function dateRelevance(result:WebSearchResult,context:TravelContext):{relevance:DateRelevance;signals:string[]}{if(!context.startDate||!context.endDate)return{relevance:'unknown',signals:[]};const dates=parseDateMentions(`${result.title} ${result.snippet}`,context);if(!dates.length)return{relevance:'unknown',signals:[]};const hits=dates.filter(d=>{const iso=isoDay(d);return iso>=context.startDate!&&iso<=context.endDate!});if(!hits.length)return{relevance:'mismatched',signals:dates.map(fmtDate).slice(0,4)};return{relevance:'matched',signals:hits.map(fmtDate).slice(0,4)}}
+function extractInrFare(text:string){const m=String(text||'').match(/(?:₹|INR\s*|Rs\.?\s*)([\d,]+(?:\.\d{1,2})?)/i);return m?`₹${m[1]}`:undefined}
+function hasForeignCurrency(text:string){return/(?:US\$|\$|USD\b|UAH\b|AED\b|EUR\b|€|GBP\b|£)\s*[\d,.]*/i.test(text)}
+function stripForeignPrices(text:string){return text.replace(/(?:US\$|\$|USD\s*|UAH\s*|AED\s*|EUR\s*|€|GBP\s*|£)\s*[\d,.]+/gi,'').replace(/\s{2,}/g,' ').trim()}
+function cleanTitle(value:string,context:TravelContext){const title=safe(value,150);return domesticIndia(context)?stripForeignPrices(title).replace(/\s*[–—-]\s*$/,'').trim():title}
+function cleanSnippet(value:string,context:TravelContext){let snippet=safe(value,280).replace(/\b(?:book now|click here|promo code|checkout)\b.*$/i,'').replace(/\s*[|]{1,2}\s*/g,' · ').trim();if(domesticIndia(context))snippet=stripForeignPrices(snippet);return snippet}
+export function curateTravelResults(results:WebSearchResult[],context:TravelContext){const seen=new Set<string>();const directional=Boolean(context.kind==='flight'&&context.origin&&context.destination);return results.map(result=>{const dates=dateRelevance(result,context);const score=directionScore(result,context)+(dates.relevance==='matched'?3:0);return{result,score,dates}}).filter(x=>(directional?x.score>0:x.score>=0)&&x.dates.relevance!=='mismatched').sort((a,b)=>b.score-a.score).filter(({result})=>{try{const u=new URL(result.url);const key=`${u.hostname}${u.pathname}`.replace(/\/$/,'');if(seen.has(key))return false;seen.add(key);return true}catch{return false}}).slice(0,4).map(({result,dates})=>{const combined=`${result.title} ${result.snippet}`;const inrFare=extractInrFare(combined);return{title:cleanTitle(result.title,context),source:sourceLabel(result.url),url:result.url,snippet:cleanSnippet(result.snippet,context),dateRelevance:dates.relevance,dateSignals:dates.signals,inrFare,foreignCurrencyOnly:domesticIndia(context)&&!inrFare&&hasForeignCurrency(combined)}})}
+function humanDateFromIso(iso:string|undefined){return iso?fmtDate(new Date(`${iso}T00:00:00Z`)):''}
+function buildQueries(context:TravelContext,original:string){if(context.kind==='flight'&&context.origin&&context.destination){const origin=`${context.origin.label}${context.origin.code?` ${context.origin.code}`:''}`;const dest=`${context.destination.label}${context.destination.code?` ${context.destination.code}`:''}`;const dates=[context.startDate,context.endDate].filter(Boolean).map(humanDateFromIso);return[`${origin} to ${dest} flights ${context.searchWhen} fare INR direct`,...dates.map(date=>`${origin} to ${dest} flight ${date} fare INR`)].slice(0,3)}if(context.kind==='hotel'&&context.destination)return[`hotels in ${context.destination.label} ${context.searchWhen} rates availability`,String(original).trim()];return[`${String(original).trim()} ${context.searchWhen} current fares options`]}
+async function addActivity(tg:number,runId:string,eventType:string,message:string,metadata:Record<string,unknown>={}){const{error}=await supabaseAdmin.from('agent_activity').insert({telegram_id:String(tg),run_id:runId,event_type:eventType,message:safe(message,900),metadata_json:metadata});if(error)console.error('TRAVEL_RESEARCH_ACTIVITY_FAILED:',error.message)}
+function formatRedemption(value:any){const summary=value?.redemption;if(!summary||typeof summary!=='object'||!summary.verdictLabel)return'';const best=summary.bestPath;const details:string[]=[`CreditIQ: ${safe(summary.verdictLabel,80)}`];if(best?.label)details.push(safe(best.label,160));if(Number.isFinite(Number(best?.bankPointsRequired))&&Number(best.bankPointsRequired)>0)details.push(`${Math.round(Number(best.bankPointsRequired)).toLocaleString('en-IN')} points`);if(best?.state&&best.state!=='EXECUTABLE')details.push('verification required');return`\n${details.join(' · ')}`}
+export function flightSearchPreferences(text: string) {
+  const cabin: NonNullable<TravelContext['cabin']> = /\bfirst(?:[- ]class)?\b/i.test(text) ? 'first'
+    : /\bbusiness(?:[- ]class)?\b/i.test(text) ? 'business'
+    : /\bpremium[- ]economy\b/i.test(text) ? 'premium_economy' : 'economy'
+  const words: Record<string, number> = {one:1,two:2,three:3,four:4,five:5,six:6,seven:7,eight:8,nine:9}
+  const adultText = text.match(/\b(\d+|one|two|three|four|five|six|seven|eight|nine)\s+adults?\b/i)?.[1]?.toLowerCase()
+  const adults = adultText ? words[adultText] ?? Number(adultText) : 1
+  const timeOfDay = timeOfDayFrom(text)
+  const dates = text.match(/\bround trip\b.*?\bdeparting (\d{4}-\d{2}-\d{2}) returning (\d{4}-\d{2}-\d{2})\b/i)
+  return {cabin, adults, nonStop: /\b(?:non[- ]?stop|direct flights?)\b/i.test(text), ...(timeOfDay ? { timeOfDay } : {}),
+    ...(dates ? { roundTrip: true, startDate: dates[1], returnDate: dates[2] } : {})}
+}
+
+export function timeOfDayFrom(text: string): TimeOfDay | undefined {
+  const t = String(text || '')
+  if (/\btonight\b/i.test(t)) return 'night'
+  if (/\b(?:red[\s-]?eye|late\s+night|after\s+(?:9|10|11)\s*pm)\b/i.test(t)) return 'night'
+  const m = t.match(/\b(morning|afternoon|evening|night)\b/i)
+  return m ? (m[1].toLowerCase() as TimeOfDay) : undefined
+}
+
+// Local departure hour from "2026-10-27T06:30", "6:30 AM" or "06:30".
+export function departureHour(value: unknown): number | null {
+  const text = String(value || '')
+  const iso = text.match(/T(\d{2}):(\d{2})/)
+  if (iso) return Number(iso[1])
+  const clock = text.match(/\b(\d{1,2}):(\d{2})\s*([AaPp][Mm])?/)
+  if (!clock) return null
+  let hour = Number(clock[1])
+  const meridiem = clock[3]?.toLowerCase()
+  if (meridiem === 'pm' && hour < 12) hour += 12
+  if (meridiem === 'am' && hour === 12) hour = 0
+  return hour >= 0 && hour <= 23 ? hour : null
+}
+export function inTimeOfDay(hour: number, tod: TimeOfDay): boolean {
+  return tod === 'morning' ? hour >= 5 && hour < 12 : tod === 'afternoon' ? hour >= 12 && hour < 17 : tod === 'evening' ? hour >= 17 && hour < 21 : hour >= 21 || hour < 5
+}
+/** Keep the options in the asked-for part of the day. If there are none, say so and show the rest. */
+export function applyTimeOfDay<T>(rows: T[], departure: (row: T) => unknown, tod?: TimeOfDay): { rows: T[]; note: string } {
+  if (!tod) return { rows, note: '' }
+  const matching = rows.filter(row => { const hour = departureHour(departure(row)); return hour !== null && inTimeOfDay(hour, tod) })
+  if (matching.length) return { rows: matching, note: `Showing ${tod} departures only.\n\n` }
+  return { rows, note: `No ${tod} departures were found, so these are the other options.\n\n` }
+}
+
+// A search the person can open to see live prices themselves. No login is needed and nothing is booked.
+export function googleFlightsSearchUrl(context: TravelContext, date?: string): string {
+  const origin = context.origin?.code || context.origin?.label || ''
+  const destination = context.destination?.code || context.destination?.label || ''
+  const when = date || context.startDate || ''
+  const cabin = (context.cabin || 'economy').replace(/_/g, ' ')
+  const adults = context.adults || 1
+  const q = `One-way ${context.nonStop ? 'non-stop ' : ''}flights from ${origin} to ${destination} on ${when} for ${adults} adult${adults === 1 ? '' : 's'} in ${cabin}`
+  return `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(q)}`
+}
+
+export function verifiedProviderFlights(rows: CreditIQFlightResult[], context: TravelContext) {
+  return rows.filter(row => row.live && row.from === context.origin?.code && row.to === context.destination?.code
+    && row.cabin === (context.cabin || 'economy') && /^20\d{2}-\d{2}-\d{2}[T ]/.test(row.departure)
+    && row.departure.slice(0,10) >= (context.startDate || '') && row.departure.slice(0,10) <= (context.endDate || context.startDate || '')
+    && (!context.nonStop || row.stops === 0)).map(row => ({...row,
+      price: row.currency === 'INR' && row.cashFareVerifiedForCabin && row.price != null && row.price > 0 ? row.price : null,
+      bookingLink: row.bookingLink && /^https:\/\//i.test(row.bookingLink) ? row.bookingLink : null,
+    }))
+}
+
+/**
+ * Live fares come with local airport times like "2026-11-20T10:20:00". Show "10:20 am → 5:40 pm", with "(+1)"
+ * when the arrival is on a later day. Anything else is shown as it came.
+ */
+function formatLiveFlight(value:CreditIQFlightResult,index:number){const price=value.price != null && Number.isFinite(value.price) && value.price > 0?`₹${Math.round(value.price).toLocaleString('en-IN')}`:'INR fare not verified';const stops=value.stops != null && Number.isInteger(value.stops)?(value.stops===0?'non-stop':`${value.stops} stop${value.stops===1?'':'s'}`):'stops not verified';const timing=formatFlightTiming(value.departure,value.arrival);const bits=[price,value.airline,timing,stops].filter(Boolean);return`${index+1}. ${bits.join(' · ')}${formatRedemption(value)}${value.bookingLink?`\nBooking/provider link: ${value.bookingLink}`:''}`}
+async function tryCreditIQLive(context:TravelContext,actor:AgentActor){if(context.kind!=='flight'||!context.origin?.code||!context.destination?.code||!context.startDate)return null;const live=await searchCreditIQLiveFlights({from:context.origin.code,to:context.destination.code,date:context.startDate,dateTo:context.endDate||context.startDate,cabin:context.cabin||'economy',adults:context.adults||1,userLinkId: actor.creditiqUserId || null});return live ? {...live,flights:verifiedProviderFlights(live.flights,context)} : null}
+
+export async function tryRunTravelResearch(params:{actor:AgentActor;surface:AgentSurface;text:string}) {
+  return enqueueTravelResearch(params)
+}
+
+export async function executeTravelResearch(params:{actor:AgentActor;surface:AgentSurface;text:string;existingRunId?:string;context?:TravelContext;deadline?:number}){
+  let effectiveText=params.text
+  const continuation=/^(?:continue|resume|carry on|keep going)(?:\s+(?:that|the|my))?.*?(?:travel|hotel|flight|research|search|task)?(?:\s+from\s+where\s+you\s+left\s+off)?[.!?]*$/i.test(String(params.text||'').trim())
+  if(continuation){
+    const {data:prior,error:priorError}=await supabaseAdmin.from('agent_runs')
+      .select('id,metadata_json,created_at').eq('telegram_id',String(params.actor.legacyTelegramId))
+      .eq('type','travel_research').order('created_at',{ascending:false}).limit(1).maybeSingle()
+    if(priorError)throw new Error(`travel_continuation_read_failed:${priorError.message}`)
+    const priorInput=safe((prior?.metadata_json as any)?.input_text||'',1800)
+    if(priorInput)effectiveText=priorInput
+    else return null
+  }
+  if(!isPublicTravelResearchRequest(effectiveText))return null
+  const context=params.context || {...buildTravelResearchContext(effectiveText),...flightSearchPreferences(effectiveText)};const queries=buildQueries(context,effectiveText);const tg=params.actor.legacyTelegramId;const now=new Date().toISOString()
+  if(context.kind === 'flight') {
+    const roundTripRequest = context.roundTrip === true && Boolean(context.returnDate) && Boolean(context.startDate)
+    const missing = [!context.origin && 'departure city', !context.destination && 'destination', !context.startDate && 'travel date'].filter(Boolean)
+    const unsupported = /\b(?:children|child|infants?|round[- ]trip|return(?:ing)?(?:\s+on|\s+flight|\s+date)?)\b/i.test(roundTripRequest ? effectiveText.replace(/\bround trip\b|\breturning\b/gi, '') : effectiveText)
+      || !Number.isInteger(context.adults) || context.adults! < 1 || context.adults! > 9
+    if(missing.length || unsupported) return {runId: undefined, status:'waiting_user' as const, capability:'travel' as const, risk:'low' as const,
+      handledBy:'travel-details' as const, text: missing.length
+        ? `Please send the ${missing.join(', ')} together so I can compare the right flights.`
+        : 'This flight search supports one-way journeys for 1–9 adults. Return journeys and child/infant fares need provider verification; please give a one-way adult search or use the provider for those fares.'}
+  }
+  const created = params.existingRunId ? {data:{id:params.existingRunId},error:null} : await supabaseAdmin.from('agent_runs').insert({telegram_id:String(tg),type:'travel_research',capability:'travel',status:'running',title:`Travel task · ${context.routeLabel}`,summary:'Gogo is working on this travel task.',progress:10,why:'This is a task to obtain usable current travel options.',source:params.surface,metadata_json:{plan_type:'travel_research',input_text:safe(effectiveText,1800),continuation_requested:continuation,queries,context,task_based:true},started_at:now,updated_at:now}).select('id').single()
+  const {data:run,error:runError}=created;if(runError||!run?.id)throw new Error(`travel_research_run_create_failed:${runError?.message||'unknown'}`)
+  const runId=String(run.id)
+  let stepResult: {data:{id:string}|null;error:any}
+  const priorStep=params.existingRunId ? await supabaseAdmin.from('agent_steps').select('id')
+    .eq('run_id',runId).eq('telegram_id',String(tg)).eq('ordinal',1).eq('tool_name','travel').limit(1).maybeSingle() : null
+  if(priorStep?.error)throw new Error('travel_research_step_read_failed')
+  if(priorStep?.data?.id){stepResult=await supabaseAdmin.from('agent_steps').update({status:'running',error:null,completed_at:null,started_at:now,input_json:{queries,context}}).eq('id',priorStep.data.id).eq('telegram_id',String(tg)).select('id').single()}
+  else stepResult=await supabaseAdmin.from('agent_steps').insert({telegram_id:String(tg),run_id:runId,ordinal:1,tool_name:'travel',title:'Obtain actual travel results',status:'running',input_json:{queries,context},output_json:{},started_at:now}).select('id').single()
+  const{data:step,error:stepError}=stepResult;if(stepError||!step?.id)throw new Error(`travel_research_step_create_failed:${stepError?.message||'unknown'}`)
+  await addActivity(tg,runId,'run_started',`Gogo started the travel task for ${context.routeLabel}.`,{queries,task_based:true})
+  await rememberTypedObjects(tg,'travel',[{id:runId,title:context.routeLabel}]).catch(()=>{})
+  let browserReadDiagnostics: BrowserReadDiagnostic[] = []
+  try{
+    await supabaseAdmin.from('agent_runs').update({summary:'Checking live provider inventory.',progress:25,updated_at:new Date().toISOString()}).eq('id',runId)
+    // 17 Oct: flight searches read the flight sites directly (Google Flights); CreditIQ rewards are not part of a fare search.
+    const live=context.kind==='flight'?null:await tryCreditIQLive(context,params.actor)
+    console.log('TRAVEL_INVENTORY_RESULT:',{runId,source:live?.source||'unavailable',live:live?.live===true,
+      eligibleCount:live?.flights.length||0,requiresServiceAuth:live?.requiresServiceAuth===true})
+    if(live?.live&&live.flights.length){const completedAt=new Date().toISOString();const timedLive=applyTimeOfDay(live.flights,(f:any)=>f.departure,context.timeOfDay);const top=timedLive.rows.slice(0,8);const rewardsLine=live.identity?.pointsAware?`Rewards: linked CreditIQ wallet · ${live.identity.verifiedBalances} verified balance${live.identity.verifiedBalances===1?'':'s'}`:live.identity?.linked?'Rewards: CreditIQ is linked, but wallet balances were unavailable for this search':'Rewards: CreditIQ account not linked';const text=`Flight task completed · ${context.routeLabel} · ${context.whenLabel}\n${rewardsLine}\n\n${timedLive.note}${top.map(formatLiveFlight).join('\n\n')}`;await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context,liveInventory:live,source:'creditiq',inventoryType:'live-provider'},completed_at:completedAt}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed',`Task completed with ${top.length} live provider options.`,{travel_engine:'creditiq'});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'creditiq-travel' as const}}
+    if(context.kind==='flight'){
+      await supabaseAdmin.from('agent_runs').update({summary:'Live inventory was unavailable. Gogo is now working through the browser.',progress:45,updated_at:new Date().toISOString()}).eq('id',runId)
+      await supabaseAdmin.from('agent_steps').update({title:'Work through live flight search in secure browser'}).eq('id',String(step.id))
+      await addActivity(tg,runId,'browser_research_started','Gogo opened a secure browser to complete the flight-search task.',{route:context.routeLabel})
+      // 17 Oct: a page that did not load is tried again (up to 3 reads) while there is time, before anything is reported.
+      let browserTask=await runLiveFlightBrowserTask({actor:params.actor,context,objective:effectiveText,deadline:params.deadline})
+      for(let attempt=2;attempt<=3&&!browserTask?.options?.length&&(!Number.isFinite(params.deadline)||params.deadline!-Date.now()>120_000);attempt++){
+        await addActivity(tg,runId,'browser_research_retry',`The flight page did not give readable fares; trying again (${attempt} of 3).`,{attempt})
+        browserTask=await runLiveFlightBrowserTask({actor:params.actor,context,objective:effectiveText,deadline:params.deadline})
+      }
+      browserReadDiagnostics=sanitizeBrowserReadDiagnostics(browserTask && 'browserReadDiagnostics' in browserTask ? browserTask.browserReadDiagnostics : [])
+      if(browserTask?.options?.length){const completedAt=new Date().toISOString();const timedBrowser=applyTimeOfDay(browserTask.options,(f:any)=>f.departure,context.timeOfDay);const top=timedBrowser.rows.slice(0,8);const text=timedBrowser.note+(context.roundTrip&&context.returnDate?formatRoundTripResult(context,top,browserTask.browser?.sourceUrl||browserTask.browser?.url||''):formatBrowserFlightResult(context,top,browserTask.browser?.sourceUrl||browserTask.browser?.url||''));await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:{context,source:'browser-live',inventoryType:'browser-verified',browser:browserTask.browser,flights:top},completed_at:completedAt}).eq('id',String(step.id));await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed',`Task completed with ${top.length} browser-verified flight options.`,{travel_engine:'secure-browser',result_count:top.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'browser-flight-task' as const}}
+      console.warn('TRAVEL_BROWSER_DIAGNOSTICS:',JSON.stringify({runId,status:browserTask?.status||'no_result',browserReadDiagnostics}))
+      await addActivity(tg,runId,'browser_research_incomplete','The browser could not produce verified flight rows; falling back to public sources.',{status:browserTask?.status||'no_result',browserReadDiagnostics})
+    }
+    // A projected redemption is never treated as executable until verified; browser research is read-only and cannot book or transfer points.
+    await supabaseAdmin.from('agent_runs').update({summary:'Browser/provider inventory did not yield verifiable rows. Checking public sources as a last fallback.',progress:75,updated_at:new Date().toISOString()}).eq('id',runId)
+    const batches=await Promise.all(queries.map(q=>searchWebResults(q,{timeoutMs:15_000})));const curated=curateTravelResults(batches.flat(),context);const completedAt=new Date().toISOString();const output={context,results:curated,source:'public-web-fallback',inventoryType:'research',browserReadDiagnostics};await supabaseAdmin.from('agent_steps').update({status:'completed',output_json:output,completed_at:completedAt}).eq('id',String(step.id));const intro=`Task could not obtain verified live rows · ${context.routeLabel} · ${context.whenLabel}`;const text=curated.length?`${intro}\n\nI could not read live fares just now. Open this search to see live prices (no login needed, nothing is booked):\n${googleFlightsSearchUrl(context)}\n\n${curated.map((r,i)=>`${i+1}. ${r.source} — ${r.title}\n${r.inrFare?`Public snippet mentions ${r.inrFare}`:'Fare not verified'}\nOpen source: ${r.url}`).join('\n\n')}\n\nThese are fallback sources only, not completed live inventory.`:`${intro}\n\nI could not read live fares just now. Open this search to see live prices (no login needed, nothing is booked):\n${googleFlightsSearchUrl(context)}`;await supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'completed',summary:safe(text,1800),progress:100,completed_at:completedAt,updated_at:completedAt}).eq('id',runId);await addActivity(tg,runId,'run_completed','Task ended with fallback research rather than verified live inventory.',{travel_engine:'public-web-fallback',result_count:curated.length});return{runId,status:'completed' as const,capability:'travel' as const,risk:'low' as const,text,handledBy:'travel-research' as const}
+  }catch(error:any){const message=safe(error?.message||'travel_research_failed',500);const completedAt=new Date().toISOString();await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:message,completed_at:completedAt}).eq('id',String(step.id))).catch(()=>{});await Promise.resolve(supabaseAdmin.from('agent_runs').update({status:params.existingRunId?'running':'failed',summary:'Gogo could not complete the travel task.',error:message,completed_at:completedAt,updated_at:completedAt}).eq('id',runId)).catch(()=>{});await addActivity(tg,runId,'run_failed','Travel task failed.',{error:message});throw error}
+}
+
+
+// ---- the flight brief ------------------------------------------------------------------------------
+// A person who asks for flights has said some of: route, date, one-way or round trip, who is travelling
+// and in which cabin. Gogo asks for what is missing in ONE message, then searches. Nothing here books,
+// pays or enters traveller details.
+export type FlightBrief = {
+  originCode?: string; originLabel?: string
+  destinationCode?: string; destinationLabel?: string
+  departDate?: string
+  returnDate?: string
+  returnSuggestion?: string
+  tripType?: 'one_way' | 'round_trip'
+  adults?: number; children?: number; infants?: number
+  cabin?: 'economy' | 'premium_economy' | 'business' | 'first'
+  nonStop?: boolean
+  timeOfDay?: TimeOfDay | 'any'
+  useDefaults?: boolean
+}
+export type FlightBriefSlot = 'route' | 'date' | 'trip' | 'return' | 'return_confirm' | 'travellers' | 'cabin' | 'time'
+
+const COUNT_WORDS: Record<string, number> = { one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9 }
+const COUNT_RE = '(\\d{1,2}|one|two|three|four|five|six|seven|eight|nine)'
+const countOf = (raw: string | undefined) => raw ? (COUNT_WORDS[raw.toLowerCase()] ?? Number(raw)) : undefined
+const MONTH_RE = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?'
+
+type DateMention = { iso: string; index: number; end: number; day: number; month: number; hasYear: boolean }
+
+// Dates in the order they were written. A date with no year is its next occurrence, never one in the past.
+export function flightDateMentions(text: string, now: Date, timezone = 'Asia/Kolkata'): DateMention[] {
+  const today = localTravelDate(now, timezone)
+  const found: DateMention[] = []
+  const push = (index: number, length: number, day: number, month: number, year?: number) => {
+    let y = year ?? today.getUTCFullYear()
+    let d = new Date(Date.UTC(y, month, day))
+    if (d.getUTCMonth() !== month || d.getUTCDate() !== day) return
+    if (year === undefined && d.getTime() < today.getTime()) { y += 1; d = new Date(Date.UTC(y, month, day)); if (d.getUTCMonth() !== month || d.getUTCDate() !== day) return }
+    found.push({ iso: isoDay(d), index, end: index + length, day, month, hasYear: year !== undefined })
+  }
+  for (const m of text.matchAll(new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(${MONTH_RE})\\b(?:[,\\s]+(20\\d{2}))?`, 'gi')))
+    push(m.index ?? 0, m[0].length, Number(m[1]), MONTHS[m[2].toLowerCase()], m[3] ? Number(m[3]) : undefined)
+  for (const m of text.matchAll(new RegExp(`\\b(${MONTH_RE})\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:[,\\s]+(20\\d{2}))?`, 'gi')))
+    push(m.index ?? 0, m[0].length, Number(m[2]), MONTHS[m[1].toLowerCase()], m[3] ? Number(m[3]) : undefined)
+  for (const m of text.matchAll(/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g))
+    push(m.index ?? 0, m[0].length, Number(m[3]), Number(m[2]) - 1, Number(m[1]))
+  // A weekday ("next Friday") counts only when no calendar date was written: "Friday 24 Oct" is one date.
+  if (!found.length) {
+    const wd = text.match(WEEKDAY_MENTION)
+    const iso = wd ? weekdayTravelDate(text, today) : null
+    if (wd && iso) { const d = new Date(`${iso}T00:00:00Z`); found.push({ iso, index: wd.index ?? 0, end: (wd.index ?? 0) + wd[0].length, day: d.getUTCDate(), month: d.getUTCMonth(), hasYear: true }) }
+  }
+  found.sort((a, b) => a.index - b.index)
+  return found.filter((m, i) => !found.slice(0, i).some(o => m.index < o.end && o.index < m.end))
+}
+
+// A return date with no year is read against the departure, not against today: "27 Oct ... back 2 Nov".
+function returnDateFor(mention: DateMention, departIso: string): string {
+  if (mention.hasYear) return mention.iso
+  const depart = new Date(`${departIso}T00:00:00Z`)
+  let year = depart.getUTCFullYear()
+  let d = new Date(Date.UTC(year, mention.month, mention.day))
+  if (d.getTime() <= depart.getTime() && mention.month < depart.getUTCMonth()) { year += 1; d = new Date(Date.UTC(year, mention.month, mention.day)) }
+  return isoDay(d)
+}
+
+function cabinFrom(text: string): FlightBrief['cabin'] | undefined {
+  if (/\bpremium[\s-]*economy\b/i.test(text)) return 'premium_economy'
+  if (/\bfirst(?:[\s-]*class)?\b/i.test(text)) return 'first'
+  if (/\bbusiness(?![\s-]*(?:trip|travel|meeting|visa))\b/i.test(text)) return 'business'
+  if (/\beconomy\b|\bcoach\b/i.test(text)) return 'economy'
+  return undefined
+}
+
+function travellersFrom(text: string): Pick<FlightBrief, 'adults' | 'children' | 'infants'> {
+  const out: Pick<FlightBrief, 'adults' | 'children' | 'infants'> = {}
+  const adults = text.match(new RegExp(`\\b${COUNT_RE}\\s*(?:adults?|people|persons?|passengers?|pax|travell?ers?|of\\s+us)\\b`, 'i'))
+  const children = text.match(new RegExp(`\\b${COUNT_RE}\\s*(?:child(?:ren)?|kids?)\\b`, 'i'))
+  const infants = text.match(new RegExp(`\\b${COUNT_RE}\\s*(?:infants?|babies|baby)\\b`, 'i'))
+  if (adults) out.adults = countOf(adults[1])
+  else if (/\b(?:just\s+me|only\s+me|myself|solo|alone|one\s+person|single\s+traveller)\b/i.test(text)) out.adults = 1
+  else if (/\b(?:me\s+and\s+(?:my\s+)?(?:wife|husband|partner|friend|girlfriend|boyfriend|spouse)|a\s+couple|both\s+of\s+us|the\s+two\s+of\s+us)\b/i.test(text)) out.adults = 2
+  if (children) out.children = countOf(children[1])
+  if (infants) out.infants = countOf(infants[1])
+  return out
+}
+
+/** Everything the sentence says about the trip. Fields it does not mention stay undefined. */
+export function parseFlightBriefText(raw: string, now = new Date(), timezone = 'Asia/Kolkata'): FlightBrief {
+  const text = String(raw || '')
+  // Cabin and trip-type words describe the ticket, not the route; take them out before reading the route.
+  const routeOnly = text.replace(/\b(?:premium[\s-]*economy|business|economy|first)(?:[\s-]*class)?\b/gi, ' ').replace(/\b(?:round[\s-]*trip|one[\s-]*way|two[\s-]*way|non[\s-]*stop|direct)\b/gi, ' ').replace(/\s{2,}/g, ' ').trim()
+  const context = buildTravelResearchContext(routeOnly, now, timezone)
+  const brief: FlightBrief = {}
+  if (context.origin) { brief.originLabel = context.origin.label; if (context.origin.code) brief.originCode = context.origin.code }
+  if (context.destination) { brief.destinationLabel = context.destination.label; if (context.destination.code) brief.destinationCode = context.destination.code }
+
+  const dates = flightDateMentions(text, now, timezone)
+  const wantsReturn = /\b(?:back|return(?:ing|s)?|coming\s+back|and\s+back)\b/i.test(text)
+  if (dates.length >= 2) { brief.departDate = dates[0].iso; brief.returnDate = returnDateFor(dates[1], dates[0].iso) }
+  else if (dates.length === 1) {
+    const before = text.slice(Math.max(0, dates[0].index - 24), dates[0].index)
+    if (/\b(?:back|return(?:ing|s)?)\s*(?:on|by|around)?\s*$/i.test(before) && !/\bfrom\b/i.test(before)) brief.returnDate = dates[0].iso
+    else brief.departDate = dates[0].iso
+  } else if (context.startDate && context.startDate === context.endDate) brief.departDate = context.startDate
+
+  if (/\b(?:round[\s-]*trip|two[\s-]*way|return\s+(?:trip|flights?|tickets?|journey)|there\s+and\s+back|and\s+back|with\s+return)\b/i.test(text) || (brief.returnDate && wantsReturn)) brief.tripType = 'round_trip'
+  else if (/\b(?:one[\s-]*way|single\s+(?:trip|journey|ticket)|no\s+return)\b/i.test(text)) brief.tripType = 'one_way'
+  if (brief.returnDate && !brief.tripType) brief.tripType = 'round_trip'
+
+  Object.assign(brief, travellersFrom(text))
+  const cabin = cabinFrom(text)
+  if (cabin) brief.cabin = cabin
+  if (/\b(?:non[\s-]*stop|direct\s+flights?)\b/i.test(text)) brief.nonStop = true
+  const tod = timeOfDayFrom(text)
+  if (tod) brief.timeOfDay = tod
+  else if (/\b(?:any\s*time|anytime|whenever|no\s+preference\s+(?:on|for)\s+(?:the\s+)?time)\b/i.test(text)) brief.timeOfDay = 'any'
+  return fixReturnOrder(brief)
+}
+
+// A return before the departure cannot be right. Do not guess silently: keep it as a question.
+function fixReturnOrder(brief: FlightBrief): FlightBrief {
+  if (brief.departDate && brief.returnDate && brief.returnDate <= brief.departDate) {
+    const depart = new Date(`${brief.departDate}T00:00:00Z`)
+    const day = Number(brief.returnDate.slice(8, 10))
+    const next = new Date(Date.UTC(depart.getUTCFullYear(), depart.getUTCMonth() + 1, day))
+    if (next.getUTCDate() === day) brief.returnSuggestion = isoDay(next)
+    delete brief.returnDate
+    brief.tripType = 'round_trip'
+  }
+  return brief
+}
+
+export function mergeFlightBrief(previous: FlightBrief | null | undefined, next: FlightBrief): FlightBrief {
+  const merged: FlightBrief = { ...(previous || {}) }
+  for (const [key, value] of Object.entries(next)) if (value !== undefined) (merged as any)[key] = value
+  if (merged.returnDate) delete merged.returnSuggestion
+  return fixReturnOrder(merged)
+}
+
+const AFFIRM_RE = /^\s*(?:yes|yeah|yep|yup|correct|right|exactly|that(?:'s| is)\s+(?:right|correct)|ok(?:ay)?|sure|please\s+do)\b[\s.!]*$/i
+const DEFAULTS_RE = /^\s*(?:go(?:\s+ahead)?|just\s+search|search(?:\s+now)?|any|anything|whatever|default|defaults|go\s+with\s+defaults?|no\s+preference|doesn'?t\s+matter|skip(?:\s+it)?|that'?s\s+it|nothing\s+else|go\s+go)\b[\s.!]*$/i
+
+/** A short reply that could answer one of the questions above, judged by what it says. */
+export function isFlightBriefAnswer(raw: string): boolean {
+  const text = String(raw || '').trim()
+  if (!text || text.length > 200) return false
+  if (isOtherTopicThanFlightReply(text)) return false
+  if (/\b(?:remind|reminder|calendar|email|send|create|delete|cancel|buy|pay|order|subscribe|watch|monitor|book|alarm)\b/i.test(text)) return false
+  if (AFFIRM_RE.test(text) || DEFAULTS_RE.test(text)) return true
+  if (PLACES[text.toLowerCase().replace(/[.!?]+$/g, '')]) return true
+  if (/^\s*(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine)\s*[.!]?\s*$/i.test(text)) return true
+  return /\b(?:round[\s-]*trip|one[\s-]*way|return|back|economy|business|first[\s-]*class|premium|adults?|children|child|kids?|infants?|passengers?|travell?ers?|people|persons?|just\s+me|only\s+me|solo|couple|of\s+us|non[\s-]*stop|direct|morning|afternoon|evening|night|any\s*time|anytime)\b/i.test(text)
+    || flightDateMentions(text, new Date()).length > 0
+}
+
+/** Apply a reply to the question that was just asked. */
+export function applyFlightBriefReply(previous: FlightBrief, awaiting: FlightBriefSlot[], raw: string, now = new Date(), timezone = 'Asia/Kolkata'): { brief: FlightBrief; understood: boolean } {
+  const text = String(raw || '').trim()
+  const parsed = parseFlightBriefText(text, now, timezone)
+  // The question already fixed the route; a reply that only names a date answers the open date question.
+  const dates = flightDateMentions(text, now, timezone)
+  if (dates.length === 1 && awaiting.includes('return') && !parsed.returnDate && !/\b(?:from|on)\b/i.test(text.slice(0, dates[0].index))) { parsed.returnDate = previous.departDate ? returnDateFor(dates[0], previous.departDate) : dates[0].iso; delete parsed.departDate; parsed.tripType = 'round_trip' }
+  else if (dates.length === 1 && awaiting.includes('return_confirm') && !parsed.returnDate) { parsed.returnDate = previous.departDate ? returnDateFor(dates[0], previous.departDate) : dates[0].iso; delete parsed.departDate; parsed.tripType = 'round_trip' }
+  if (awaiting.includes('travellers') && parsed.adults === undefined && /^\s*(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine)\s*[.!]?\s*$/i.test(text)) parsed.adults = countOf(text.replace(/[^\w]/g, ''))
+  if (awaiting.includes('return_confirm') && AFFIRM_RE.test(text) && previous.returnSuggestion) { parsed.returnDate = previous.returnSuggestion }
+  // A bare city answers the open route question: it is the end of the journey that is still missing.
+  const bare = PLACES[text.toLowerCase().replace(/[.!?]+$/g, '')]
+  if (bare && awaiting.includes('route')) {
+    if (!previous.originLabel && !parsed.originLabel) { parsed.originLabel = bare.label; if (bare.code) parsed.originCode = bare.code }
+    else if (!previous.destinationLabel && !parsed.destinationLabel) { parsed.destinationLabel = bare.label; if (bare.code) parsed.destinationCode = bare.code }
+  }
+  let understood = Object.keys(parsed).length > 0
+  const merged = mergeFlightBrief(previous, parsed)
+  if (DEFAULTS_RE.test(text)) { merged.useDefaults = true; understood = true }
+  if (AFFIRM_RE.test(text) && !awaiting.includes('return_confirm')) { understood = false }
+  return { brief: merged, understood }
+}
+
+/** What is still open, most important first. Defaults skip the optional questions only. */
+export function flightBriefSlots(brief: FlightBrief): FlightBriefSlot[] {
+  const slots: FlightBriefSlot[] = []
+  if (!brief.originLabel || !brief.destinationLabel) slots.push('route')
+  if (!brief.departDate) slots.push('date')
+  if (slots.length) return slots
+  if (brief.returnSuggestion && !brief.returnDate) slots.push('return_confirm')
+  if (brief.useDefaults) return slots
+  // 17 Oct: travellers, cabin and time are never asked up front. They default to 1 adult, economy, any time,
+  // are stated in the reply, and can be set in the request itself. Only a missing trip type or return date blocks.
+  // 17 Oct (his scorecard): a single date means one-way. It is searched straight away and the reply says how to
+  // add a return, instead of asking "one-way or round trip?" first.
+  if (brief.tripType === 'round_trip' && !brief.returnDate && !brief.returnSuggestion) slots.push('return')
+  return slots
+}
+
+export function withFlightDefaults(brief: FlightBrief): FlightBrief {
+  return { ...brief, tripType: brief.tripType || (brief.returnDate ? 'round_trip' : 'one_way'), adults: brief.adults ?? 1, cabin: brief.cabin || 'economy' }
+}
+
+const CABIN_TEXT: Record<NonNullable<FlightBrief['cabin']>, string> = { economy: 'economy', premium_economy: 'premium economy', business: 'business', first: 'first class' }
+const dayLabel = (iso: string) => fmtDate(new Date(`${iso}T00:00:00Z`))
+const cityOf = (brief: FlightBrief, end: 'origin' | 'destination') => end === 'origin' ? (brief.originLabel || brief.originCode || '') : (brief.destinationLabel || brief.destinationCode || '')
+
+export function travellersLabel(brief: FlightBrief): string {
+  const parts = [`${brief.adults ?? 1} adult${(brief.adults ?? 1) === 1 ? '' : 's'}`]
+  if (brief.children) parts.push(`${brief.children} child${brief.children === 1 ? '' : 'ren'}`)
+  if (brief.infants) parts.push(`${brief.infants} infant${brief.infants === 1 ? '' : 's'}`)
+  return parts.join(', ')
+}
+
+/** The next open question. One at a time, so each can be answered with a tap on WhatsApp. */
+export function askFlightBrief(brief: FlightBrief, slots: FlightBriefSlot[]): string {
+  if (slots.includes('route') || slots.includes('date')) {
+    const missing = [slots.includes('route') && (!brief.originLabel ? 'departure city' : null), slots.includes('route') && (!brief.destinationLabel ? 'destination' : null), slots.includes('date') && 'travel date'].filter(Boolean)
+    return `Please send the ${missing.join(', ')} together so I can compare the right flights.`
+  }
+  const head = `${cityOf(brief, 'origin')} to ${cityOf(brief, 'destination')} on ${dayLabel(brief.departDate!)}.`
+  const next = slots[0]
+  const defaults = withFlightDefaults(brief)
+  const goLine = `Or say go and I'll search ${travellersLabel(defaults)}, ${CABIN_TEXT[defaults.cabin!]}, ${defaults.tripType === 'round_trip' ? 'round trip' : 'one-way'}, any departure time.`
+  if (next === 'return_confirm' && brief.returnSuggestion) return `${head}\n\nReturn date: the date you gave is before you leave. Did you mean ${dayLabel(brief.returnSuggestion)}? Reply yes, or send the right date.`
+  if (next === 'return') return `${head}\n\nReturn date: which day are you coming back? For example, back on 2 Nov.\n\n${goLine}`
+  const choice = next === 'trip' || next === 'travellers' || next === 'cabin' || next === 'time' ? FLIGHT_CHOICES[next] : null
+  if (!choice) return `${head}\n\n${goLine}`
+  return `${head}\n\n${choice.question}\n\n${goLine}`
+}
+
+export type FlightLeg = { from: string; to: string; date: string; text: string; label: string }
+
+/** One search per direction. Each text is complete on its own: route, date, travellers, cabin. */
+export function flightLegs(brief: FlightBrief): FlightLeg[] {
+  const b = withFlightDefaults(brief)
+  const adults = b.adults!
+  const make = (from: string, to: string, date: string): FlightLeg => ({
+    from, to, date, label: `${from} to ${to}, ${dayLabel(date)}`,
+    text: `Compare ${b.nonStop ? 'non-stop ' : ''}flights from ${from} to ${to} on ${date} for ${adults} adult${adults === 1 ? '' : 's'} in ${CABIN_TEXT[b.cabin!]}${b.timeOfDay && b.timeOfDay !== 'any' ? `, departing in the ${b.timeOfDay}` : ''}. Research only; do not book or pay.`,
+  })
+  const origin = b.originCode || b.originLabel || ''
+  const destination = b.destinationCode || b.destinationLabel || ''
+  // 17 Oct: a round trip is ONE search for the exact dates (Google returns the round-trip total).
+  if (b.tripType === 'round_trip' && b.returnDate) return [{ from: origin, to: destination, date: b.departDate!, label: `${origin} to ${destination}, ${dayLabel(b.departDate!)} and back ${dayLabel(b.returnDate)}`,
+    text: `Compare ${b.nonStop ? 'non-stop ' : ''}round trip flights from ${origin} to ${destination} departing ${b.departDate} returning ${b.returnDate} for ${adults} adult${adults === 1 ? '' : 's'} in ${CABIN_TEXT[b.cabin!]}${b.timeOfDay && b.timeOfDay !== 'any' ? `, departing in the ${b.timeOfDay}` : ''}. Research only; do not book or pay.` }]
+  return [make(origin, destination, b.departDate!)]
+}
+
+export function flightSearchStartedText(brief: FlightBrief): string {
+  const b = withFlightDefaults(brief)
+  const round = b.tripType === 'round_trip' && b.returnDate
+  const when = round ? `${dayLabel(b.departDate!)} and back ${dayLabel(b.returnDate!)}` : dayLabel(b.departDate!)
+  const perAdult = b.children || b.infants ? ' Fares are per adult; child and infant fares can differ.' : ''
+  return `Searching ${cityOf(b, 'origin')} to ${cityOf(b, 'destination')}, ${when}: ${travellersLabel(b)}, ${CABIN_TEXT[b.cabin!]}, ${b.timeOfDay && b.timeOfDay !== 'any' ? `${b.timeOfDay} departures, ` : ''}${round ? 'round trip' : 'one-way'}.\n\n` +
+    `${round ? 'I search the round trip as one booking for both dates, so the price is the round-trip total. ' : 'One-way, since you gave one date; for a return, send it again with “back <date>”. '}` +
+    `I'm checking the flight sites for exactly these dates and will send the cheapest options here when it finishes. To change travellers or cabin, send the request again, like “flights BLR to SIN 28 Oct, back 2 Nov, 2 adults, business”. When it finishes, say “book the cheapest” and I will take it to the payment page; you pay yourself.${perAdult}`
+}

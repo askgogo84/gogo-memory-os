@@ -1,0 +1,943 @@
+import { rememberTypedObjects } from '@/lib/agent/typed-object-context'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { checkFeatureLimit, logUsage } from '@/lib/limits'
+import { saveFollowupState } from './followup-state'
+import { recordDecisionLearning } from '@/lib/agent/decision-learning'
+import type { AgentActor } from '@/lib/agent/actor'
+import {
+  createCalendarEvent,
+  fetchPrimaryCalendarEvents,
+  refreshAccessToken,
+} from '@/lib/google-calendar'
+
+type CalendarActionResult = {
+  handled: boolean
+  reply: string
+}
+
+// Tolerant "calendar" matcher — canonical spelling set now lives in the zero-import
+// lib/data/calendar-word.ts so it can be shared with the list-routing guard without
+// dragging this file's @/… deps into the type-stripped harness. Re-exported here so
+// existing importers (detect-intent.ts) keep working.
+export { CALENDAR_WORD_RE } from '@/lib/data/calendar-word'
+import { CALENDAR_WORD_RE } from '@/lib/data/calendar-word'
+import { getAccessTokenForCalendarAccount } from '@/lib/services/google-calendar-accounts'
+
+// Calendar-create SIGNAL phrases, derived from the shared spelling set rather than
+// re-encoding the cal[ae]nd[ae]rs? vowel-swaps by hand (that hand-encoding is exactly how
+// "calender" leaked). CALENDAR_WORD_RE.source already carries its own \b boundaries.
+const CALENDAR_POSSESSIVE_RE = new RegExp(`\\b(?:in|on|to)\\s+(?:my|the|your)\\s+${CALENDAR_WORD_RE.source}`)
+const CALENDAR_EVENT_RE = new RegExp(`${CALENDAR_WORD_RE.source}\\s+event\\b`)
+
+type CalendarDateTarget = 'today' | 'tomorrow' | 'day_after_tomorrow'
+
+type CalendarCreatePayload = {
+  title: string
+  startIso: string
+  endIso: string
+  displayTime: string
+  created_at?: string
+  // Set when the user has two or more linked Google accounts and chose one for this event.
+  accountEmail?: string
+}
+
+function istPartsNow() {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date())
+
+  const get = (type: string) => Number(parts.find((p) => p.type === type)?.value)
+
+  return {
+    year: get('year'),
+    month: get('month'),
+    day: get('day'),
+  }
+}
+
+function istDatePartsPlusDays(days: number) {
+  const now = istPartsNow()
+  const anchor = new Date(Date.UTC(now.year, now.month - 1, now.day, 12, 0, 0))
+  anchor.setUTCDate(anchor.getUTCDate() + days)
+
+  return {
+    year: anchor.getUTCFullYear(),
+    month: anchor.getUTCMonth() + 1,
+    day: anchor.getUTCDate(),
+  }
+}
+
+function istWallTimeToUtcDate(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number
+) {
+  return new Date(Date.UTC(year, month - 1, day, hour - 5, minute - 30, 0))
+}
+
+function googleDateTimeWithIstOffset(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number
+) {
+  const yyyy = String(year)
+  const mm = String(month).padStart(2, '0')
+  const dd = String(day).padStart(2, '0')
+  const hh = String(hour).padStart(2, '0')
+  const min = String(minute).padStart(2, '0')
+
+  return `${yyyy}-${mm}-${dd}T${hh}:${min}:00+05:30`
+}
+
+function formatIstDisplayFromParts(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number
+) {
+  const utcDate = istWallTimeToUtcDate(year, month, day, hour, minute)
+
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(utcDate)
+}
+
+function formatEventTime(event: any) {
+  const start = event?.start?.dateTime || event?.start?.date
+
+  if (!start) return 'All day'
+  if (!event?.start?.dateTime) return 'All day'
+
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(new Date(start))
+}
+
+function targetFromText(text: string): CalendarDateTarget {
+  const lower = text.toLowerCase()
+
+  if (lower.includes('day after tomorrow')) return 'day_after_tomorrow'
+  if (lower.includes('tomorrow')) return 'tomorrow'
+
+  return 'today'
+}
+
+function targetLabel(target: CalendarDateTarget) {
+  if (target === 'tomorrow') return 'tomorrow'
+  if (target === 'day_after_tomorrow') return 'day after tomorrow'
+  return 'today'
+}
+
+function formatClock12(t: { hour: number; minute: number } | null | undefined) {
+  if (!t) return ''
+  let h = t.hour
+  const mer = h >= 12 ? 'PM' : 'AM'
+  h = h % 12 || 12
+  return `${h}:${String(t.minute).padStart(2, '0')} ${mer}`
+}
+
+const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
+export function weekdayDateParts(lower: string) {
+  const m = lower.match(/\b(?:on\s+|this\s+|next\s+|coming\s+)?(sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)(?:day|nesday|sday|urday|rsday)?\b/)
+  if (!m || /\bevery\b/.test(lower)) return null
+  const want = WEEKDAYS.findIndex(d => d.startsWith(m[1].slice(0, 3)))
+  if (want < 0) return null
+  const todayName = new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Kolkata', weekday: 'long' }).format(new Date()).toLowerCase()
+  const today = WEEKDAYS.indexOf(todayName)
+  const ahead = ((want - today + 7) % 7) || 7
+  return istDatePartsPlusDays(ahead)
+}
+
+function targetParts(target: CalendarDateTarget) {
+  if (target === 'tomorrow') return istDatePartsPlusDays(1)
+  if (target === 'day_after_tomorrow') return istDatePartsPlusDays(2)
+  return istDatePartsPlusDays(0)
+}
+
+function calendarRangeForTarget(target: CalendarDateTarget) {
+  const parts = targetParts(target)
+  const startUtc = istWallTimeToUtcDate(parts.year, parts.month, parts.day, 0, 0)
+  const endUtc = istWallTimeToUtcDate(parts.year, parts.month, parts.day, 23, 59)
+
+  return {
+    timeMin: startUtc.toISOString(),
+    timeMax: endUtc.toISOString(),
+  }
+}
+
+function cleanTitle(text: string) {
+  return (text || 'Meeting')
+    .replace(/^(add|create|schedule|book|set up)\s+/i, '')
+    .replace(/\b(?:to|on|in|into)\s+(?:my|the|your)\s+(?:calendar|calender|calandar)\b/gi, '')
+    .replace(/\b(on|in my)?\s*calendar\b/gi, '')
+    .replace(/\btomorrow\b/gi, '')
+    .replace(/\btoday\b/gi, '')
+    .replace(/\bday after tomorrow\b/gi, '')
+    .replace(new RegExp('\\\\b\\\\d{1,2}(?:st|nd|rd|th)?\\\\s+(?:of\\\\s+)?(?:' + MONTH_NAMES + ')\\\\b\\\\s*,?\\\\s*(?:\\\\d{4})?', 'gi'), '')
+    .replace(new RegExp('\\\\b(?:' + MONTH_NAMES + ')\\\\s+\\\\d{1,2}(?:st|nd|rd|th)?\\\\b\\\\s*,?\\\\s*(?:\\\\d{4})?', 'gi'), '')
+    .replace(/\b\d{1,2}[\/.-]\d{1,2}[\/.-]\d{2,4}\b/g, '')
+    .replace(/\b\d{4}-\d{1,2}-\d{1,2}\b/g, '')
+    .replace(/\bat\s+\d{1,2}(:\d{2})?\s*(am|pm)?/gi, '')
+    .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+// A concise event title for a preparation / needs-date request, so the persisted follow-up doesn't
+// carry the whole sentence (incl. "do not ... book it yet") into the eventual event title.
+function conciseAppointmentTitle(text: string): string {
+  let t = String(text || '')
+  // Drop a NEGATED / secondary instruction clause ("... but do not book it yet") — but NOT the
+  // affirmative "don't forget to …" idiom — without cutting at an abbreviation period like "Dr.".
+  t = t.replace(/\b(?:but\s+)?(?:please\s+)?(?:do\s*n'?t|do\s+not|dont|does\s*n'?t|doesn'?t|don'?t|never)\b(?!\s+forget)[\s\S]*/gi, ' ')
+  t = t.replace(/\b(?:can you|could you|please|help me|i want to|i'?d like to|don'?t forget to|do not forget to|remember to)\s+/gi, '')
+  t = t.replace(/\b(?:prepare|prep|get\s+ready)\s+(?:for\s+)?/gi, '')       // drop the prep framing
+  t = t.replace(/^\s*(?:add|create|schedule|book|set\s+up|put)\s+/i, '')    // drop a leading create verb
+  // Remove ONLY the time expression, not the remainder — keep title text that follows the time
+  // ("meeting at 5 pm with Alice" -> "Meeting with Alice").
+  t = t.replace(/\b(?:for|at)\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\b/gi, ' ')
+  t = t.replace(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi, ' ')
+  t = t.replace(/^\s*(?:a|an|my|the)\s+/i, '')
+  t = t.replace(/[\s.,;:]+$/, '').replace(/\s+/g, ' ').trim()
+  const title = t.length >= 3 ? t.slice(0, 80) : 'Appointment'
+  return title.charAt(0).toUpperCase() + title.slice(1)
+}
+
+function parseTime(text: string) {
+  const lower = text.toLowerCase()
+
+  const match =
+    lower.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i) ||
+    lower.match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+
+  if (!match) return null
+
+  let hour = Number(match[1])
+  const minute = match[2] ? Number(match[2]) : 0
+  const ampm = match[3]?.toLowerCase()
+
+  if (ampm === 'pm' && hour < 12) hour += 12
+  if (ampm === 'am' && hour === 12) hour = 0
+  if (!ampm && hour >= 1 && hour <= 7) hour += 12
+
+  return { hour, minute }
+}
+
+// ── Absolute dates ───────────────────────────────────────────────────────────
+// targetFromText only knows today / tomorrow / day after tomorrow, so any event
+// dated further out silently landed on today. These parse a real date out of the
+// text; when the text has no absolute date every existing path is untouched.
+
+const MONTH_NAMES =
+  'jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december'
+
+const MONTH_INDEX: Record<string, number> = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+  may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8, sep: 9, sept: 9,
+  september: 9, oct: 10, october: 10, nov: 11, november: 11, dec: 12, december: 12,
+}
+
+function daysInMonth(year: number, month: number) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate()
+}
+
+function resolveYear(month: number, day: number, raw?: string) {
+  if (raw) {
+    const n = Number(raw)
+    return n < 100 ? 2000 + n : n
+  }
+  const now = istPartsNow()
+  const isPast = month < now.month || (month === now.month && day < now.day)
+  return isPast ? now.year + 1 : now.year
+}
+
+function validDate(year: number, month: number, day: number) {
+  if (!year || !month || !day) return null
+  if (month < 1 || month > 12) return null
+  if (day < 1 || day > daysInMonth(year, month)) return null
+  return { year, month, day }
+}
+
+export function parseAbsoluteDate(text: string) {
+  const lower = (text || '').toLowerCase()
+
+  const iso = lower.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/)
+  if (iso) return validDate(Number(iso[1]), Number(iso[2]), Number(iso[3]))
+
+  const dayFirst = lower.match(
+    new RegExp('\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?(' + MONTH_NAMES + ')\\b(?:\\s*,?\\s*(\\d{4}|\\d{2}))?')
+  )
+  if (dayFirst) {
+    const month = MONTH_INDEX[dayFirst[2]]
+    const day = Number(dayFirst[1])
+    return validDate(resolveYear(month, day, dayFirst[3]), month, day)
+  }
+
+  const monthFirst = lower.match(
+    new RegExp('\\b(' + MONTH_NAMES + ')\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b(?:\\s*,?\\s*(\\d{4}|\\d{2}))?')
+  )
+  if (monthFirst) {
+    const month = MONTH_INDEX[monthFirst[1]]
+    const day = Number(monthFirst[2])
+    return validDate(resolveYear(month, day, monthFirst[3]), month, day)
+  }
+
+  // Numeric, day-first (Indian convention), and only with an explicit year so
+  // that bare "7/9" can never be mistaken for a date.
+  const numeric = lower.match(/\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})\b/)
+  if (numeric) {
+    const day = Number(numeric[1])
+    const month = Number(numeric[2])
+    return validDate(resolveYear(month, day, numeric[3]), month, day)
+  }
+
+  return null
+}
+
+const DEICTIC_RE = /\b(?:this|that|it|the (?:above|event|poster|invite|note))\b/i
+
+// Newest saved note for this user in the last 20 minutes, if it carries a date.
+async function findRecentNoteEvent(telegramId: number) {
+  const since = new Date(Date.now() - 20 * 60 * 1000).toISOString()
+  const { data, error } = await supabaseAdmin
+    .from('documents')
+    .select('title, summary, extracted, created_at')
+    .eq('telegram_id', telegramId)
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(1)
+
+  if (error || !data || !data.length) return null
+  const row: any = data[0]
+  const blob = [row.title, row.summary, row?.extracted?.text].filter(Boolean).join('\n')
+  const date = parseAbsoluteDate(blob)
+  if (!date) return null
+
+  return {
+    title: String(row.title || 'Event').replace(/^Image note\s*—\s*/i, '').slice(0, 120),
+    date,
+    time: parseTime(blob),
+  }
+}
+// A title the user quoted: `called "X"`, or a quoted name straight after the verb
+// (Add 'Gogo test' to my calendar tomorrow at 4 pm). Curly and straight quotes both work.
+const QUOTED_AFTER_VERB = /^\s*(?:please\s+)?(?:add|create|schedule|book|put|set\s+up)\s+(?:an?\s+|the\s+)?(?:(?:calendar\s+)?(?:event|meeting)\s+)?(?:(?:called|titled)\s+)?(?:"([^"]{1,180})"|\u201c([^\u201d]{1,180})\u201d|'([^']{1,180})'(?=\s|$|[,.;!])|\u2018([^\u2019]{1,180})\u2019)/i
+export function quotedEventTitle(text: string): string | undefined {
+  const called = text.match(/(?:called|titled)\s+["\u201c]([^"\u201d]+)["\u201d]/i)?.[1]
+  const afterVerb = text.match(QUOTED_AFTER_VERB)?.slice(1).find(Boolean)
+  return (called || afterVerb)?.trim() || undefined
+}
+
+export function parseCalendarCreate(text: string) {
+  // Muse case 07 (10 Oct): "Add a meeting with Srini tomorrow at 4 pm, then move it to 5 pm" was
+  // added at 4 pm titled "A meeting with Srini, then move it to". A trailing "then move/change it
+  // to <time>" is the final time: apply it and drop the clause.
+  const thenMove = text.match(/[,;]?\s*(?:and\s+)?then\s+(?:move|change|shift|reschedule|push|make)\s+it\s+(?:to\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm))\s*[.!]?\s*$/i)
+  if (thenMove && thenMove.index !== undefined) {
+    const head = text.slice(0, thenMove.index)
+    const moved = /\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b(?![\s\S]*\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b)/i.test(head)
+      ? head.replace(/\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b(?![\s\S]*\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b)/i, `at ${thenMove[1]}`)
+      : `${head} at ${thenMove[1]}`
+    text = moved
+  }
+  // "meeting notes" is a document about a meeting, not a calendar event.
+  const lower = text.replace(/\b(?:meetings?|call|standup|stand-up)\s+(?:notes?|minutes|agenda|summary|summaries|recap|transcripts?|docs?|documents?)\b/gi, 'document').toLowerCase()
+
+  // Structural detection. The old test matched exact contiguous bigrams ("add meeting",
+  // "schedule call"), so a single article broke it: "add a meeting" ≠ "add meeting". A
+  // calendar-create needs BOTH a create VERB and a calendar SIGNAL, anywhere in the text,
+  // regardless of intervening articles or title words.
+  //   verb:   add | schedule | book | create | set up | put
+  //   signal: meeting | appointment(s) | appt(s) | call | event, OR the possessive phrase
+  //           "in/on/to my|the|your calendar", OR the literal "calendar event".
+  // Requiring a create verb is what keeps this from swallowing reminders that merely mention
+  // a calendar noun ("remind me to check my calendar", "add milk to my grocery list").
+  // FOLLOW-UP: a verb-only phrasing with no calendar noun ("schedule lunch tomorrow") is
+  // genuinely ambiguous with a reminder and deliberately stays a reminder here. Resolving
+  // that class robustly would need an LLM classification step — deferred; this structural
+  // test is zero-latency and covers every reported phrasing.
+  const hasCreateVerb = /\b(?:add|schedule|book|create|set\s+up|put)\b/.test(lower)
+  const hasCalendarSignal =
+    /\b(?:meeting|appointments?|appts?|call|event)\b/.test(lower) ||
+    CALENDAR_POSSESSIVE_RE.test(lower) ||  // "in/on/to my|the|your calendar" (+ misspellings)
+    CALENDAR_EVENT_RE.test(lower)          // "calendar event" (+ misspellings)
+  // "Which courts are free this Saturday? … then book it and add it to my calendar" asks to find
+  // options first; it is not a calendar create (Muse case 02, 11 Oct).
+  const discoveryQuestion = /^\s*(?:which|what|where|are\s+there|is\s+there|find|search|show\s+me|look\s+for)\b/i.test(lower)
+  const isCreate = hasCreateVerb && hasCalendarSignal && !discoveryQuestion
+
+  // Preparation help ("help me prepare for a dentist appointment") or an explicitly NEGATED action
+  // ("do not book it yet") must NOT create a calendar event/approval — the create verb can appear
+  // INSIDE a negation ("do not ... book it yet"). Surface a distinct signal so the caller clarifies
+  // preparation vs a calendar reminder/event vs an actual provider booking, preserving any time.
+  const isPreparation = /\b(?:prepare|prep|get\s+ready|help me (?:prepare|get ready)|what\s+should\s+i\s+(?:bring|ask|do))\b/i.test(lower)
+  // A create verb governed by a negator ("do not book it yet"). Non-greedy so it binds to the
+  // NEAREST create verb after the negator, within one clause.
+  // "don't forget to schedule …" is an AFFIRMATIVE idiom, not a negation — the (?!\s+forget)
+  // lookahead keeps it out of the negated-create match.
+  // The gap must NOT cross a real sentence boundary (. ! ?) — otherwise "Do not contact Alice.
+  // Schedule a meeting tomorrow at 5 pm" would let the negator govern the later "Schedule" and
+  // suppress an explicit create. But it MUST tolerate an abbreviation period ("Dr.") mid-clause,
+  // so a plain [^.!?] is too strict. The gap therefore consumes either a known abbreviation+dot
+  // (Dr./Mr./…) as one unit OR any non-sentence-ending character. Non-greedy + a 60-unit bound
+  // keeps it within the clause. (Abbrev branch listed FIRST so "dr." is consumed whole, not as
+  // letters that then strand the period as a boundary.)
+  const NEG_ABBR = "(?:dr|mr|mrs|ms|messrs|prof|sr|jr|st|mt|vs|no|dept|approx|appt)"
+  const NEG_GAP = `(?:${NEG_ABBR}\\.|[^.!?]){0,60}?`
+  const NEG_CREATE_SRC = `\\b(?:do\\s*n'?t|do\\s+not|dont|does\\s*n'?t|doesn'?t|not|never|no)\\b(?!\\s+forget)${NEG_GAP}\\b(?:book|add|schedule|create|put|set\\s+up)\\b`
+  const bookingNegated = new RegExp(NEG_CREATE_SRC, 'i').test(lower)
+  // An AFFIRMATIVE create is a create verb that ISN'T part of a negation. Strip the negated spans
+  // first, then look for a remaining create verb — so "Schedule … but do not add a reminder" is
+  // still an affirmative create, while "do not book it yet" (only negated verbs) is not.
+  const hasAffirmativeCreate = /\b(?:add|schedule|book|create|set\s+up|put)\b/.test(lower.replace(new RegExp(NEG_CREATE_SRC, 'gi'), ' '))
+  // Route to preparation ONLY when there is no affirmative create verb — an explicit create that
+  // merely uses a prep word as its title ("schedule a prep meeting") or contains a negated
+  // secondary action still proceeds as a real create.
+  // Muse case 32 (11 Oct): "...prepare the request for my review" about a delayed flight matched
+  // the preparation branch with no appointment in sight. Preparation help is only about an
+  // appointment or calendar item.
+  // 22 Oct launch run (R21): "Plan my week from 26 October to 1 November using my actual calendars … Read-only; do
+  // not create or change anything" hit the negation branch and got the appointment-prep menu. A read-only plan,
+  // review or listing is a read; "do not create" there is a safety limit, not an appointment to prepare for.
+  const readOnlyAsk = /\bread[\s-]?only\b/i.test(lower) || /^\s*(?:plan|review|summari[sz]e|show|list|what|which|how|tell\s+me)\b/i.test(lower)
+  if (!hasAffirmativeCreate && !isPreparation && readOnlyAsk) return null
+  if (!hasAffirmativeCreate && ((isPreparation && hasCalendarSignal) || bookingNegated)) {
+    return { preparation: true, time: parseTime(text) || null, title: conciseAppointmentTitle(text) }
+  }
+
+  if (!isCreate) return null
+
+  const time = parseTime(text)
+
+  if (!time) {
+    return {
+      needsTime: true,
+      title: cleanTitle(text),
+    }
+  }
+
+  // A calendar CREATE with a time but NO explicit date must ASK for the date — never silently
+  // default to today (which produced a wrong-day event the user then approved). An explicit date is
+  // an absolute date OR an explicit relative day; targetFromText's "today" default does NOT count.
+  // 17 Oct scorecard: "add a meeting with Srini on Monday at 5pm" asked "which date?". A weekday names the
+  // next such day in India time ("next Monday" too); today's weekday means the same day next week.
+  const absolute = parseAbsoluteDate(text) || weekdayDateParts(lower)
+  const hasExplicitRelativeDay = /\b(?:today|tonight|tomorrow|day after tomorrow)\b/i.test(lower)
+  if (!absolute && !hasExplicitRelativeDay) {
+    return { needsDate: true, time, title: conciseAppointmentTitle(text) }
+  }
+
+  const target = targetFromText(text)
+  const parts = absolute || targetParts(target)
+
+  const quotedTitle = quotedEventTitle(text)
+  let title = quotedTitle ? quotedTitle.slice(0, 180) : cleanTitle(text)
+
+  if (!title || title.length < 3) {
+    title = lower.includes('call') ? 'Call' : 'Meeting'
+  }
+
+  title = title.charAt(0).toUpperCase() + title.slice(1)
+
+  const endHourMinute = (() => {
+    const endDate = istWallTimeToUtcDate(parts.year, parts.month, parts.day, time.hour, time.minute)
+    endDate.setMinutes(endDate.getMinutes() + 30)
+
+    const endParts = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).formatToParts(endDate)
+
+    return {
+      hour: Number(endParts.find((p) => p.type === 'hour')?.value || time.hour),
+      minute: Number(endParts.find((p) => p.type === 'minute')?.value || time.minute),
+    }
+  })()
+
+  return {
+    needsTime: false,
+    title,
+    target,
+    start: {
+      ...parts,
+      hour: time.hour,
+      minute: time.minute,
+    },
+    end: {
+      ...parts,
+      hour: endHourMinute.hour,
+      minute: endHourMinute.minute,
+    },
+  }
+}
+
+export async function getCalendarTokens(telegramId: number) {
+  const { data: user } = await supabaseAdmin
+    .from('users')
+    .select('google_calendar_connected, google_refresh_token')
+    .eq('telegram_id', telegramId)
+    .single()
+
+  if (!user?.google_calendar_connected || !user?.google_refresh_token) {
+    return {
+      connected: false,
+      accessToken: null,
+    }
+  }
+
+  const accessToken = await refreshAccessToken(user.google_refresh_token)
+
+  if (!accessToken) {
+    return {
+      connected: false,
+      accessToken: null,
+    }
+  }
+
+  return {
+    connected: true,
+    accessToken,
+  }
+}
+
+// Throws on a non-200 (bad/expired token, wrong account, Google error) via the shared
+// fetch — a failed fetch must NOT masquerade as an empty day. Callers below catch it and
+// either surface a "couldn't reach Calendar" reply (view) or degrade to no-conflicts (create).
+async function getEventsForTarget(accessToken: string, target: CalendarDateTarget) {
+  const range = calendarRangeForTarget(target)
+  return fetchPrimaryCalendarEvents(accessToken, range.timeMin, range.timeMax, 'GCAL_TARGET_EVENTS_FAILED')
+}
+
+function findConflictingEvents(events: any[], startIso: string, endIso: string) {
+  const start = new Date(startIso).getTime()
+  const end = new Date(endIso).getTime()
+
+  return events.filter((event: any) => {
+    const eventStart = event?.start?.dateTime
+    const eventEnd = event?.end?.dateTime
+
+    if (!eventStart || !eventEnd) return false
+
+    const existingStart = new Date(eventStart).getTime()
+    const existingEnd = new Date(eventEnd).getTime()
+
+    return existingStart < end && existingEnd > start
+  })
+}
+
+async function createEventFromPayload(
+  telegramId: number,
+  accessToken: string,
+  payload: CalendarCreatePayload
+) {
+  const calendarLimit = await checkFeatureLimit(telegramId, 'calendar_event')
+
+  if (!calendarLimit.allowed) {
+    return calendarLimit.upgradeMessage || 'Calendar event limit reached.'
+  }
+
+  const created = await createCalendarEvent(
+    accessToken,
+    payload.title,
+    payload.startIso,
+    payload.endIso
+  )
+
+  if (created?.error) {
+    return (
+      `📅 *Calendar error*\n\n` +
+      `I couldn’t add this event right now.\n\n` +
+      `Please try again, or reconnect calendar.`
+    )
+  }
+
+  // A POST can return an id while the mandatory provider read-back is unknown.
+  // That is not verified success and must never produce success-shaped copy.
+  if (!created?.id || created?.verification !== 'verified') {
+    console.error('GCAL_CREATE_NOT_VERIFIED:', { id: created?.id || null, verification: created?.verification || null })
+    return (
+      `⚠️ *Calendar write not verified*\n\n` +
+      `Google may have received the request, but I couldn't verify the event in your primary calendar.\n\n` +
+      `I won't claim it was added, and I won't retry automatically.`
+    )
+  }
+
+  await rememberTypedObjects(telegramId,'calendar',[{id:String(created.id),title:payload.title}]).catch(()=>{})
+  await logUsage(telegramId, 'calendar_event', {
+    title: payload.title,
+    startIso: payload.startIso,
+    endIso: payload.endIso,
+  })
+  recordDecisionLearning({actor:{userId:String(telegramId),legacyTelegramId:telegramId,name:'Gogo'} as AgentActor,text:`create calendar event ${payload.title}`,domain:'calendar',handler:'calendar-create',objectKind:'calendar_event',objectRef:String(created.id),outcome:'verified_success',verified:true,executionEvidence:{source:'google_calendar',kind:'provider_readback',objectRef:String(created.id),providerRef:String(created.id),verified:created.verification==='verified'}}).catch(()=>{})
+
+  return (
+    `✅ *Calendar event added*\n\n` +
+    `${payload.title}\n` +
+    `${payload.displayTime}\n\n` +
+    `Duration: 30 mins` +
+    (payload.accountEmail ? `\nCalendar: ${payload.accountEmail}` : '')
+  )
+}
+
+export function isCalendarAction(text: string) {
+  const lower = (text || '').toLowerCase()
+
+  return (
+    CALENDAR_WORD_RE.test(lower) ||   // calendar + common misspellings (calender/calandar/…)
+    lower.includes('meeting') ||
+    /\b(?:events?|appointments?)\b/i.test(lower) ||
+    lower.includes('schedule call') ||
+    lower.includes('add call') ||
+    lower.includes('book call') ||
+    lower.includes('add event') ||
+    lower.includes('schedule event')
+  )
+}
+
+export async function createCalendarConflictEvent(
+  telegramId: number,
+  payload: CalendarCreatePayload
+) {
+  if (!payload?.title || !payload?.startIso || !payload?.endIso) {
+    return null
+  }
+
+  if (payload.created_at) {
+    const ageMs = Date.now() - new Date(payload.created_at).getTime()
+    if (ageMs > 15 * 60 * 1000) return null
+  }
+
+  if (payload.accountEmail) {
+    const accountToken = await getAccessTokenForCalendarAccount(telegramId, payload.accountEmail)
+    if (!accountToken) return null
+    return await createEventFromPayload(telegramId, accountToken, payload)
+  }
+
+  const tokens = await getCalendarTokens(telegramId)
+
+  if (!tokens.connected || !tokens.accessToken) {
+    return null
+  }
+
+  return await createEventFromPayload(telegramId, tokens.accessToken, payload)
+}
+
+// Complete a pending calendar-create once the user answers with a time. The caller resolves
+// the answer to an absolute instant (via the shared reminder parser, so "8pm today", "in 2
+// hours" and "every Monday 10am" all work); here we just turn that instant into a 30-min
+// primary-calendar event. Recurring answers are created as their next single occurrence —
+// the create path has no recurrence support (a documented limitation). Returns the reply
+// string, or null on a bad instant so the caller can fall through.
+export async function createCalendarEventAtIso(
+  telegramId: number,
+  title: string,
+  startIso: string
+): Promise<string | null> {
+  const start = new Date(startIso)
+  if (isNaN(start.getTime())) return null
+
+  const tokens = await getCalendarTokens(telegramId)
+  if (!tokens.connected || !tokens.accessToken) {
+    return (
+      `📅 *Connect Google Calendar*\n\n` +
+      `To add this event, connect Calendar once.\n\n` +
+      `Type *connect calendar* to get the secure Google link.`
+    )
+  }
+
+  const end = new Date(start.getTime() + 30 * 60 * 1000)
+  const displayTime = new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(start)
+
+  return await createEventFromPayload(telegramId, tokens.accessToken, {
+    title: title || 'Meeting',
+    startIso: start.toISOString(),
+    endIso: end.toISOString(),
+    displayTime,
+  })
+}
+
+// Pure "does the user want to SEE their calendar" test — exported so the routing
+// harness can assert the same view/create/fall-through precedence prod uses.
+// The same event copied several times (a recurring standup imported twice, say) shows once as
+// "(×N)" instead of filling the reply with identical lines. Order of first appearance is kept.
+export function groupCalendarLines(lines: string[], limit = 7): string[] {
+  const counts = new Map<string, number>()
+  for (const line of lines) counts.set(line, (counts.get(line) || 0) + 1)
+  return [...counts.entries()].slice(0, limit).map(([line, n]) => (n > 1 ? `${line} (×${n})` : line))
+}
+
+// "…and add it to my calendar" asks to WRITE an entry; a question earlier in the sentence
+// ("when is Jailer 2 releasing") must not turn it into a read of today's schedule.
+export const CALENDAR_WRITE_RE = /\b(?:add|put|save|create|schedule|block|mark|pencil|insert)\b[^.?!]*\b(?:to|in|on|into)\s+(?:my\s+|the\s+)?(?:google\s+)?(?:calendar|calender|calandar|cal)\b/i
+
+export function isCalendarViewRequest(text: string): boolean {
+  const lower = (text || '').toLowerCase().trim()
+  if (CALENDAR_WRITE_RE.test(lower)) return false
+  return (
+    /^(?:what|which)\s+(?:meetings?|events?|appointments?)\s+(?:do\s+i\s+have|are\s+(?:on|scheduled))(?:\s+on|\s+for)?\s+.+/i.test(lower) ||
+    /^(?:show|list|display)\s+(?:me\s+)?(?:my\s+)?(?:meetings?|events?|appointments?)\s+(?:on|for)\s+.+/i.test(lower) ||
+    /^(?:what\s+time|when)\s+(?:is|does)\s+.+(?:calendar|meeting|event|appointment).*(?:today|tomorrow|on\s+.+)?\??$/i.test(lower) ||
+    lower.includes('calendar today') ||
+    lower.includes('calendar tomorrow') ||
+    lower.includes('calendar for today') ||
+    lower.includes('calendar for tomorrow') ||
+    lower.includes('what is on my calendar') ||
+    lower.includes("what's on my calendar") ||
+    lower.includes('show my calendar')
+  )
+}
+
+export async function buildCalendarActionReply(
+  telegramId: number,
+  text: string
+): Promise<CalendarActionResult> {
+  const wantsCalendarView = isCalendarViewRequest(text)
+
+  let createIntent: any = parseCalendarCreate(text)
+
+  if (!wantsCalendarView && !createIntent) {
+    return {
+      handled: false,
+      reply: '',
+    }
+  }
+
+  // Preparation / explicitly-not-booking: never create an event or approval. Clarify the intent
+  // (prep vs calendar reminder vs provider booking) and preserve any stated time. No calendar
+  // connection required to clarify, so this runs BEFORE the tokens gate.
+  if (createIntent?.preparation) {
+    const t = createIntent.time as { hour: number; minute: number } | null
+    const at = t ? ` at ${formatClock12(t)}` : ''
+    // Do NOT arm a pending_calendar here: the user asked for preparation, not a calendar entry.
+    // Auto-completing on their next date-bearing reply would create an event they never requested.
+    // Keep this a non-actionable clarification; they must explicitly choose to add a calendar entry.
+    return {
+      handled: true,
+      reply:
+        `Happy to help you prepare — I won't book anything, add a calendar entry, or contact anyone yet. What would you like?\n\n` +
+        `• *Prep help* — what to bring/ask and how to get ready\n` +
+        `• *Add to calendar* — say e.g. *"add it to my calendar on 28 October${at}"* and I'll set it up for approval\n` +
+        `• *Find a provider* — I can look up options (I won't contact or book without your go-ahead)`,
+    }
+  }
+
+  // Calendar create with a time but no date: ASK for the date, preserving the time. Never default
+  // to today. Store the time so the date reply completes THIS event.
+  if (createIntent?.needsDate) {
+    await saveFollowupState(telegramId, 'pending_calendar', { title: createIntent.title, timeText: formatClock12(createIntent.time) })
+    const at = createIntent.time ? ` at ${formatClock12(createIntent.time)}` : ''
+    return {
+      handled: true,
+      reply: `📅 Which date should I add it for${at}? For example: *28 October* or *tomorrow*. (Nothing added yet.)`,
+    }
+  }
+
+  const tokens = await getCalendarTokens(telegramId)
+
+  if (!tokens.connected || !tokens.accessToken) {
+    return {
+      handled: true,
+      reply:
+        `📅 *Connect Google Calendar*\n\n` +
+        `To manage meetings and show your daily schedule, connect Calendar once.\n\n` +
+        `Type *connect calendar* to get the secure Google link.`,
+    }
+  }
+
+  if (wantsCalendarView) {
+    const target = targetFromText(text)
+    const absolute = parseAbsoluteDate(text)
+    let events: any[]
+    try {
+      if (absolute) {
+        const start = istWallTimeToUtcDate(absolute.year, absolute.month, absolute.day, 0, 0)
+        const nextDayAnchor = new Date(Date.UTC(absolute.year, absolute.month - 1, absolute.day, 12, 0, 0))
+        nextDayAnchor.setUTCDate(nextDayAnchor.getUTCDate() + 1)
+        const end = istWallTimeToUtcDate(nextDayAnchor.getUTCFullYear(), nextDayAnchor.getUTCMonth() + 1, nextDayAnchor.getUTCDate(), 0, 0)
+        events = await fetchPrimaryCalendarEvents(tokens.accessToken, start.toISOString(), end.toISOString(), 'GCAL_ABSOLUTE_EVENTS_FAILED')
+      } else {
+        events = await getEventsForTarget(tokens.accessToken, target)
+      }
+    } catch (err) {
+      // Fetch failed — say so instead of the empty-day copy, mirroring the morning
+      // briefing (getCalendarState → "Couldn't reach Google Calendar"). Empty vs failed
+      // must read differently to the user.
+      console.error('CALENDAR_VIEW_FETCH_FAILED:', err)
+      return {
+        handled: true,
+        reply:
+          `📅 *Your calendar ${targetLabel(target)}*\n\n` +
+          `⚠️ Couldn't reach Google Calendar just now — this is a temporary hiccup, not ` +
+          `necessarily an empty day. If it keeps happening, reconnect with *connect calendar*.`,
+      }
+    }
+
+    await rememberTypedObjects(telegramId,'calendar',events.slice(0,7).map((e:any)=>({id:String(e.id),title:String(e.summary||'Untitled event')}))).catch(()=>{})
+    if (!events.length) {
+      return {
+        handled: true,
+        reply:
+          `📅 *Your calendar ${absolute ? `${absolute.day}/${absolute.month}/${absolute.year}` : targetLabel(target)}*\n\n` +
+          `No calendar events lined up ${absolute ? 'for that date' : targetLabel(target)}.\n\n` +
+          `Try:\n` +
+          `• Add meeting tomorrow at 4 pm\n` +
+          `• Plan my day`,
+      }
+    }
+
+    return {
+      handled: true,
+      reply:
+        `📅 *Your calendar ${absolute ? `${absolute.day}/${absolute.month}/${absolute.year}` : targetLabel(target)}*\n\n` +
+        groupCalendarLines(events.map((event: any) => `• ${formatEventTime(event)} — ${event.summary || 'Untitled event'}`), 7).join('\n') +
+        `\n\nTry:\n• add meeting tomorrow at 4 pm\n• plan my day`,
+    }
+  }
+
+  // "add this to my calendar" straight after an image note: the date and time live in
+  // the note, not in the message. Resolve them before falling back to asking for a time.
+  if (createIntent?.needsTime && DEICTIC_RE.test(text)) {
+    const noteEvent = await findRecentNoteEvent(telegramId)
+    if (noteEvent && noteEvent.time) {
+      const d = noteEvent.date
+      const start = { ...d, hour: noteEvent.time.hour, minute: noteEvent.time.minute }
+      const endUtc = istWallTimeToUtcDate(d.year, d.month, d.day, start.hour, start.minute)
+      endUtc.setMinutes(endUtc.getMinutes() + 30)
+      const endParts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false,
+      }).formatToParts(endUtc)
+      createIntent = {
+        needsTime: false,
+        title: noteEvent.title,
+        target: targetFromText(text),
+        start,
+        end: {
+          ...d,
+          hour: Number(endParts.find((x) => x.type === 'hour')?.value || start.hour),
+          minute: Number(endParts.find((x) => x.type === 'minute')?.value || start.minute),
+        },
+      }
+    }
+  }
+  if (createIntent?.needsTime) {
+    // Store the pending create so the user's next message (the time) completes THIS event.
+    // Previously nothing was stored, so "8pm" fell through to the reminder path and silently
+    // became a reminder instead of a calendar event. Keyed by user with created_at TTL via
+    // saveFollowupState — the same store the AM/PM and conflict follow-ups already use.
+    await saveFollowupState(telegramId, 'pending_calendar', {
+      title: createIntent.title,
+      target: targetFromText(text),
+    })
+    return {
+      handled: true,
+      reply:
+        `📅 *Almost there*\n\n` +
+        `What time should I add it?\n\n` +
+        `Example:\n` +
+        `Add meeting with Rahul tomorrow at 4 pm`,
+    }
+  }
+
+  if (createIntent && !createIntent.needsTime && createIntent.start && createIntent.end) {
+    const start = createIntent.start
+    const end = createIntent.end
+
+    const startIso = googleDateTimeWithIstOffset(
+      start.year,
+      start.month,
+      start.day,
+      start.hour,
+      start.minute
+    )
+
+    const endIso = googleDateTimeWithIstOffset(
+      end.year,
+      end.month,
+      end.day,
+      end.hour,
+      end.minute
+    )
+
+    const displayTime = formatIstDisplayFromParts(start.year, start.month, start.day, start.hour, start.minute)
+    // Conflict detection is best-effort: if we can't read the day's events (token/API
+    // error), don't block the create — proceed as if no known conflicts. Blocking a user's
+    // event because the conflict-check fetch failed is worse than skipping the warning.
+    let eventsForDay: any[] = []
+    try {
+      eventsForDay = await getEventsForTarget(tokens.accessToken, createIntent.target)
+    } catch (err) {
+      console.error('GCAL_CONFLICT_CHECK_FAILED:', err)
+    }
+    const conflicts = findConflictingEvents(eventsForDay, startIso, endIso)
+
+    if (conflicts.length) {
+      const conflict = conflicts[0]
+      const payload = {
+        title: createIntent.title,
+        startIso,
+        endIso,
+        displayTime,
+        created_at: new Date().toISOString(),
+      }
+
+      await saveFollowupState(telegramId, 'calendar_conflict', payload)
+
+      return {
+        handled: true,
+        reply:
+          `⚠️ *Calendar conflict found*\n\n` +
+          `You already have:\n` +
+          `• ${formatEventTime(conflict)} — ${conflict.summary || 'Calendar event'}\n\n` +
+          `New event:\n` +
+          `• ${displayTime} — ${createIntent.title}\n\n` +
+          `Reply *yes* to add anyway, or send another time like *move to 4:30 pm*.`,
+      }
+    }
+
+    const reply = await createEventFromPayload(telegramId, tokens.accessToken, {
+      title: createIntent.title,
+      startIso,
+      endIso,
+      displayTime,
+    })
+
+    return {
+      handled: true,
+      reply,
+    }
+  }
+
+  return {
+    handled: false,
+    reply: '',
+  }
+}
+
+

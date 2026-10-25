@@ -1,0 +1,84 @@
+// Belt-and-braces redaction for the LLM prompt: keep secret-shaped memories out of the
+// freeform Claude context (getMemories → askClaude). This is DEFENSE IN DEPTH, not the
+// primary guarantee. The real guarantee is structural: vault plaintext is never written
+// into public.memories, and no vault_items SELECT is added to the freeform assembly
+// (see the constraint comment in process-message.ts). This filter only catches a secret
+// that lands in `memories` anyway (e.g. a user pasting a password into "remember X").
+//
+// Kept pure and dependency-free so scripts/verify-memory-redaction.mts exercises the
+// shipped logic directly.
+
+// Explicit secret-labelling keywords. Matching any of these hides the whole memory.
+const SECRET_KEYWORDS =
+  /\b(pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|passport|aadhaar|aadhar|ssn|cvv|cvc|card\s*number|account\s*number|credit\s*card|debit\s*card|api[\s_-]?key|secret\s*key|secret|security\s*code|routing\s*number|ifsc)\b/i
+
+// Sensitive values that may appear in conversation history. Keep this deliberately
+// conservative: it is only a prompt-boundary redactor, not a parser for the source data.
+const LABELED_SECRET_VALUE_RE =
+  /\b(pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|passport(?:\s*(?:number|no))?|aadhaar|aadhar|ssn|cvv|cvc|card\s*number|account\s*number|api[\s_-]?key|secret\s*key|security\s*code|routing\s*number|ifsc)\b\s*(?:is|:|=|-)?\s*([A-Z0-9][A-Z0-9\s._\-/]{2,})/gi
+
+// Heuristic: does this memory look like it carries a credential/identifier we must not
+// surface to the model?
+//   - keyword match (labelled secrets), OR
+//   - a long digit run: 8+ consecutive digits after stripping spaces/hyphens, which
+//     catches card / account / passport-style numbers (e.g. "4111 1111 1111 1111").
+//
+// FALSE POSITIVES (acceptable): a benign note that merely mentions "password", or a
+// 10-digit phone number, gets withheld from Claude — the memory still exists, Claude
+// just won't see it that turn. FALSE NEGATIVES (why this is belt-and-braces, not the
+// guarantee): a short unlabelled secret (e.g. a 4-digit PIN with no "pin" word, or a
+// passport like "A1234567" that is <8 digits) can still slip through.
+export function isSecretShapedMemory(content: string): boolean {
+  if (!content) return false
+  const text = content.trim()
+  if (!text) return false
+  if (SECRET_KEYWORDS.test(text)) return true
+  const digitsOnly = text.replace(/[\s-]/g, '')
+  if (/\d{8,}/.test(digitsOnly)) return true
+  return false
+}
+
+// Redact sensitive VALUE spans while preserving the surrounding conversational turn.
+// This is used at the final freeform prompt boundary so old assistant replies containing
+// passport/account/etc. values cannot be re-fed to the LLM and echoed on a later turn.
+export function redactSecretShapedText(content: string): string {
+  if (!content) return content
+  let out = String(content)
+
+  // Preserve the label/context and replace only its value.
+  // 18 Oct live: "my passport expires in March 2028" became "my passport [sensitive detail withheld]" (the /i
+  // flag let any word count as a value). Only an identifier-shaped value — with a digit, not a sentence about
+  // dates — is withheld.
+  out = out.replace(LABELED_SECRET_VALUE_RE, (match, label, value) => {
+    const v = String(value || '')
+    const sentence = /\b(?:expires?|expiry|expired|valid|renew(?:al|ed)?|issued|until|till|due|in|on|from|at)\b/i.test(v.split(/\s+/).slice(0, 2).join(' '))
+    // Passwords, keys and the like are always withheld; only passport/PIN-style labels need an identifier value.
+    if (!/^(?:passport|pin)\b/i.test(String(label))) return `${label} [sensitive detail withheld]`
+    return /\d/.test(v) && !sentence ? `${label} [sensitive detail withheld]` : match
+  })
+
+  // Generated authenticated report links carry UUIDs, whose first group can be
+  // all digits. Preserve only these exact first-party routes, never arbitrary
+  // URLs, query values or fragments, so redaction cannot break the saved result.
+  const reportLinks = [...out.matchAll(/https:\/\/[^\s<>)\]]+/gi)].filter(match => {
+    try {
+      const url = new URL(match[0])
+      return url.hostname === 'app.askgogo.in' && !url.username && !url.password && !url.port && !url.search && !url.hash
+        && /^\/dashboard\/(?:comparisons|activity)\/[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}(?:\/browser)?$/i.test(url.pathname)
+    } catch { return false }
+  })
+  // Catch long unlabelled identifier-like digit runs that survived the labelled pass.
+  // A calendar date (2026-10-17) is 8 digits too, but not an identifier: 12 Oct, the booking
+  // planner never saw the requested date because it was withheld here.
+  out = out.replace(/\b(?:\d[\s-]?){8,}\b/g, (value, offset: number) =>
+    reportLinks.some(link => offset >= link.index! && offset + value.length <= link.index! + link[0].length)
+      || /^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/.test(value.trim())
+      ? value : '[sensitive detail withheld]')
+
+  return out
+}
+
+// Drop every secret-shaped entry. Exported for reuse/testing alongside getMemories.
+export function stripSecretShapedMemories(memories: string[]): string[] {
+  return memories.filter((m) => !isSecretShapedMemory(m))
+}

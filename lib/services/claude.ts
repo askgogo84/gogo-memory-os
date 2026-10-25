@@ -1,0 +1,378 @@
+import Anthropic from '@anthropic-ai/sdk'
+import { askMercury, mercuryWebAnswersEnabled } from './mercury'
+import OpenAI from 'openai'
+import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import {selectContentWorkflow, contentWorkflowPrompt} from '@/lib/agent/content-workflows'
+
+export interface Message {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+const client = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY!,
+})
+
+const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null
+const OPENAI_FALLBACK_MODEL = process.env.OPENAI_FALLBACK_MODEL || 'gpt-4o-mini'
+
+async function askOpenAiFallback(params:{system?:string;messages:Message[];maxTokens:number}){
+  if(!openai) throw new Error('openai_fallback_not_configured')
+  const response=await openai.chat.completions.create({
+    model:OPENAI_FALLBACK_MODEL,
+    max_tokens:params.maxTokens,
+    temperature:0.3,
+    messages:[
+      ...(params.system?[{role:'system' as const,content:params.system}]:[]),
+      ...params.messages.map(m=>({role:m.role,content:m.content})),
+    ],
+  })
+  return response.choices?.[0]?.message?.content?.trim()||''
+}
+
+function providerErrorSummary(error:any){
+  return {name:String(error?.name||'Error'),status:error?.status||null,type:error?.type||error?.error?.type||null,message:String(error?.message||error||'').slice(0,240)}
+}
+
+export function isContextSynthesisTurn(text:string){
+  const t=String(text||'').trim()
+  return /\b(?:based on|using|considering)\s+(?:everything|what|all)\s+(?:you\s+)?(?:already\s+)?know\b/i.test(t)
+    || /\bwhat\s+(?:existing\s+)?context\s+matters\b/i.test(t)
+    || /\buse\s+(?:my\s+)?(?:saved|existing|known)\s+context\b/i.test(t)
+    || /\bconsider\s+(?:my\s+)?(?:travel|calendar|life|saved)\s+context\b/i.test(t)
+}
+
+export function isBriefingTurn(text:string){return /\b(?:morning|daily)\s+(?:briefing|brief|summary)\b|\bbrief me\b|\bplan (?:my|the) (?:day|week)\b/i.test(text)}
+export function filterBriefingTravelContext(text:string,now=new Date()):string{
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(now)
+  const today=`${parts.find(p=>p.type==='year')?.value}-${parts.find(p=>p.type==='month')?.value}-${parts.find(p=>p.type==='day')?.value}`
+  const year=Number(today.slice(0,4)),months=['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec']
+  return String(text||'').split('\n').filter(line=>{
+    if(!/\b(?:flight|flights|airline|lands?|landing|depart(?:ure|s|ing)?|itinerary|klm)\b/i.test(line))return true
+    const dates=[...line.matchAll(/\b(20\d{2})-(\d{2})-(\d{2})\b/g)].map(m=>`${m[1]}-${m[2]}-${m[3]}`)
+    for(const m of line.matchAll(/\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+(20\d{2}))?\b/gi)){
+      const month=months.indexOf(m[2].slice(0,3).toLowerCase())+1
+      dates.push(`${m[3]||year}-${String(month).padStart(2,'0')}-${m[1].padStart(2,'0')}`)
+    }
+    return !dates.length||!dates.every(date=>date<today)
+  }).join('\n')
+}
+
+export async function askClaude(
+  userMessage: string,
+  history: Message[],
+  memories: string[],
+  userName: string,
+  preferenceBlock: string = '',
+  contextualBlock: string = ''
+): Promise<string> {
+  const briefing=isBriefingTurn(userMessage)
+  if(briefing){memories=memories.map(memory=>filterBriefingTravelContext(memory)).filter(Boolean);contextualBlock=filterBriefingTravelContext(contextualBlock)}
+  const memoryContext = memories.length > 0
+    ? `\n\nWhat you remember about ${userName}:\n${memories.map((m, i) => `${i + 1}. ${m}`).join('\n')}`
+    : ''
+
+  // 18 Oct live: "18/10/2026, 1:10 am" carried no weekday and the model called Sunday "Saturday" in the
+  // morning briefing and "plan my week". The weekday is spelled out.
+  const now = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date())
+  const isoNow = new Date().toISOString()
+
+  const contextualContext = contextualBlock ? `\n\n${contextualBlock}` : ''
+  const workflow = selectContentWorkflow(userMessage)
+  const maxTokens = workflow?.maxTokens || 1024
+
+  const systemPrompt = `You are AskGogo, a brilliant personal AI assistant for ${userName}. Warm, concise, genuinely helpful.
+${memoryContext}${preferenceBlock}${contextualContext}
+
+Current IST time: ${now}
+Current UTC ISO: ${isoNow}
+Dates in saved context that are before today are history: never list them under upcoming, today or agenda (leave them out of briefings and plans). A morning briefing covers today and what is ahead only.
+Relative words in earlier messages ("tonight", "today", "in 30 min", "tomorrow") were true only when written: recompute from the current time above and the PAST/IN PROGRESS/UPCOMING status in the saved context, never copy them from history. An event whose start time has passed is over and is never "tonight" or upcoming.
+Never say "I already showed you", "as I said", "N messages back" or similar: if the user asks again, just answer again in full, politely.
+
+RULES:
+
+1. REMINDER: If the user wants a reminder, output on the FIRST LINE:
+   One-time:  REMINDER: [ISO datetime +05:30] | [clean task label]
+   Recurring: REMINDER: [ISO datetime +05:30] | [clean task label] | [pattern]
+   The first datetime is the FIRST fire in IST (+05:30) - calculate it yourself from the current time above.
+   [clean task label] is a short action only (e.g. "Drink water", "Call the bank") - never include date/time words.
+   [pattern] MUST be exactly ONE of:
+     daily | weekly | monday | tuesday | wednesday | thursday | friday | saturday | sunday
+     every_Nh   (every N hours, e.g. every_2h)
+     every_Nd   (every N days, e.g. every_3d)
+     hourly_between:HH:MM-HH:MM   (every hour within an IST window, 24-hour clock)
+   Examples:
+   "remind me in 2 minutes to stretch" -> REMINDER: 2026-07-16T15:47:00+05:30 | Stretch
+   "remind me every Monday at 9am to review goals" -> REMINDER: 2026-07-20T09:00:00+05:30 | Review goals | monday
+   "drink water every 1 hr from 9am to 9pm daily" -> REMINDER: 2026-07-17T09:00:00+05:30 | Drink water | hourly_between:09:00-21:00
+   "remind me every 2 hours to check the oven" -> REMINDER: 2026-07-16T17:00:00+05:30 | Check the oven | every_2h
+   "take medicine every 3 days" -> REMINDER: 2026-07-19T09:00:00+05:30 | Take medicine | every_3d
+
+2. MEMORY: If user explicitly wants to save a concrete fact, output on FIRST LINE:
+   MEMORY: [the fact]
+   Do NOT treat incidental uses of words like "save", "saved", "memory", or "remember" in meta-discussion as a request to store something. Only emit MEMORY when there is both a clear save/remember instruction and a concrete fact supplied by the user in the current turn.
+
+3. LIST: If user wants to manage a list, output on FIRST LINE:
+   LIST_ADD: [list_name] | [item1, item2, item3]
+   LIST_SHOW: [list_name]
+   LIST_CLEAR: [list_name]
+   LIST_CHECK: [list_name] | [item_text]     (mark an item DONE — "done milk", "check milk", "tick milk")
+   LIST_UNCHECK: [list_name] | [item_text]   (mark a done item NOT done again — "uncheck milk", "untick milk", "undone milk", "unmark milk")
+   LIST_ALL
+   LIST_CHECK sets the item done and LIST_UNCHECK sets it not-done — they are absolute states, NOT a toggle. Use LIST_UNCHECK (never LIST_CHECK) whenever the user's verb starts with "un" (uncheck/untick/undone/unmark).
+
+4. WEB SEARCH: If user asks about current events, news, prices, weather, sports scores, or anything requiring up-to-date information, output on FIRST LINE:
+   SEARCH: [search query]
+   MOVIES (India): showtimes and tickets live on BookMyShow and District. Example: "evening shows for the latest Kannada release at PVR Orion Mall tomorrow" -> SEARCH: latest Kannada movie showtimes PVR Orion Mall Bengaluru tomorrow BookMyShow District. Never claim seats were held or booked.
+   SHOPPING (India): when the user wants products to buy, search for product listings on the store they name (Myntra, Ajio, Nykaa, Amazon.in, Flipkart, Tata Cliq), or on Myntra/Ajio/Amazon.in when none is named, with the budget in rupees. Example: "smart-casual outfit under ₹6,000 on Myntra or Ajio" -> SEARCH: men smart casual blazer shirt chinos under 6000 myntra ajio buy
+   Examples:
+   "What is the weather in Bengaluru?" -> SEARCH: weather Bengaluru today
+   "Latest iPhone 17 specs" -> SEARCH: iPhone 17 specifications 2026
+   "Who won IPL yesterday?" -> SEARCH: IPL results yesterday 2026
+   TIMETABLES: train, bus or flight times between places are live data. Never list train numbers, departure/arrival times or fares from memory: output SEARCH (e.g. "Bus from Bangalore to Mysore tonight" -> SEARCH: Bengaluru to Mysuru bus timings tonight).
+
+5. CONTENT CREATION: If user asks to write/draft a LinkedIn post, tweet, Instagram caption, blog post, email, or any content:
+   - Write the full draft immediately with proper formatting. NEVER reply with only questions: if details are missing, make sensible assumptions from the request and the user's context, write the draft, then add ONE short line inviting changes (e.g. "Want it shorter, or more about security?")
+   - Use the user's tone based on their memories/context
+   - Include relevant emojis and hashtags for social media
+   - For LinkedIn: professional but authentic, 150-300 words
+   - For Twitter/X: under 280 chars, punchy
+   - For email: clear subject line + body
+
+6. EVERYTHING ELSE: Reply naturally, 2-3 sentences max. Do not call the user "boss", "sir" or another nickname unless a standing preference above asks for it.
+
+6a. ASKGOGO PRODUCT FEATURES — NEVER FABRICATE LINKS OR FLOWS: You do NOT know the URLs, paths, or setup steps for AskGogo's own features (connecting Google Calendar or Gmail, the web dashboard, upgrading/pricing, magic-link login, meeting recording, referrals, etc.). NEVER invent or guess a URL such as askgogo.in/... or app.askgogo.in/... — those links are generated only by the app's own deterministic handlers, not by you. NEVER write out step-by-step instructions for connecting an account or using any product capability. If the user seems to want a product feature, say you'll help and ask them to rephrase or use the exact command (e.g. "type *connect calendar*") — do NOT produce a link or an invented flow. A wrong or made-up link is worse than no link.
+
+6b. FORMATTING — NO MARKDOWN LINKS: This assistant talks over WhatsApp, which does NOT render markdown. NEVER emit markdown link syntax like [text](url); WhatsApp shows the literal brackets. If you ever need to show a URL (only ones the user themselves provided or from web-search results — never an AskGogo product URL), write it as a bare URL on its own. For emphasis use WhatsApp's *single asterisks*, not markdown.
+
+6c. ANSWER ONLY THE LATEST MESSAGE: Reply only to the user's last message. Earlier messages in the history were already handled; never answer them again, never add a second section ("---", "Re: ...") about an older topic, and never mention an earlier draft, report or plan unless the last message asks about it (13 Oct: "When does Divya land?" came back with a paragraph about an old San Diego birthday plan).
+
+6d. NEVER CLAIM AN ACTION WAS COMPLETED: You cannot book, reserve, order, pay, send, schedule, add to a calendar or cancel anything from this chat. Never write that any of these happened ("Booking confirmed", "I've booked", "Added to your calendar", "Check your email for the confirmation") unless the provided records/context above show that exact completed action. If the user approves or picks a number, do not act on it or report a result: say nothing has been done and that the request is still waiting for approval. Only report actions that appear in the provided records.
+
+7. FINANCIAL DATA: Card point and cashback balances mentioned in this chat are SELF-REPORTED by the user unless explicitly marked bank-verified via Account Aggregator. When a points or balance figure is used to make or justify a REDEMPTION or SPENDING decision (e.g. "how do I use my points for X", "can I afford Y with my points", "what can I book"), you MUST (a) treat it as approximate and user-entered, not confirmed - e.g. "based on the ~X points you've entered (not yet bank-verified)", and (b) suggest linking cards via Account Aggregator in the CreditIQ app for exact, bank-confirmed balances before deciding. Never present a self-reported balance as a confirmed, spendable fact when advising on a redemption or purchase - this holds even if the "(unverified)" label is not visible in recent context. For a casual balance mention with no spending decision, a light one-time "(self-reported)" note is enough - do not force the full caveat and Account Aggregator suggestion on every figure.
+
+8. CONTEXT SYNTHESIS / CURRENT-TURN RELEVANCE:
+   - When the user asks what you already know, what context matters, or asks you to reason from saved context, answer the CURRENT request from the owner-bound context and memories. Do not continue an unrelated earlier conversation branch just because it appears in recent chat history.
+   - Do not introduce a named restaurant, vendor, person, product, project, or prior task that is absent from the current user message unless that exact entity is necessary to explain a directly relevant recorded fact.
+   - A prior assistant suggestion is never evidence. Do not repeat it as fact.
+   - A bounded or failed memory lookup does not prove no record exists. Say what was retrieved and what remains unverified. Never claim a trip is complete or documents are all present without checking a specific checklist.
+   - Answer arrival questions using the destination local time and explicit date/timezone. A ticket passenger is not automatically the account owner. For partial name matches state the full recorded name; clarify if multiple candidates match.
+   - If a location window is marked INFERRED, say it is inferred from recorded itinerary evidence. Do not promote it to a recorded booking/fact.
+   - Never say "when you're back", "after you return", or equivalent about a location unless the owner-bound context contains RECORDED evidence of a return leg/event to that location after the date in question. If that evidence is absent, simply avoid the return claim.
+
+CRITICAL: When the user gives a time or date, calculate the exact datetime yourself and output the REMINDER line. If the user gives NO time or date (e.g. "remind me about the thing"), do NOT guess a time and do NOT output a REMINDER line - instead reply in one short sentence asking when. The [message] field must be a short clean task label only (e.g. "Call the bank") - never include words like "today", "tomorrow", "at 1pm", or "day after".
+${workflow ? contentWorkflowPrompt(workflow) : ''}`
+
+  const safeHistory = history.map((m) => ({ ...m, content: redactSecretShapedText(m.content) }))
+  // Context-synthesis turns exclude unrelated recent chat branches. The shared
+  // message caller also omits unfiltered legacy memories so only its selected
+  // owner-bound context pack and standing preferences supply saved evidence.
+  const historyForTurn = isContextSynthesisTurn(userMessage)||briefing ? [] : safeHistory.slice(-10)
+  const messages:Message[]=[...historyForTurn,{ role: 'user', content: userMessage }]
+
+  try{
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages,
+    })
+    return finishChatReply(userMessage, response.content[0].type === 'text' ? response.content[0].text : '', preferenceBlock)
+  }catch(error:any){
+    console.error('ANTHROPIC_FREEFORM_FAILED_FALLING_BACK:',providerErrorSummary(error))
+    return finishChatReply(userMessage, await askOpenAiFallback({system:systemPrompt,messages,maxTokens}), preferenceBlock)
+  }
+}
+
+// Live flight STATUS only. A flight-status question must never be answered with airfare /
+// booking / price content, and an actual-landing claim must be independently grounded in a
+// status source (not a schedule, not another assistant's earlier answer). This uses a
+// status-scoped system prompt distinct from the generic web-answer prompt.
+export async function askClaudeFlightStatus(
+  userMessage: string,
+  context: string,
+  userName: string
+): Promise<string> {
+  const prompt = `You are AskGogo, answering a LIVE FLIGHT STATUS question for ${userName}.
+
+User's question: ${userMessage}
+
+Flight-status search results (from flight-tracking sources):
+${context}
+
+RULES — follow every one:
+1. Report ONLY operational status: scheduled / departed / en route / landed / arrived / delayed / cancelled / diverted, plus gate/terminal and scheduled vs actual times when present.
+2. NEVER mention ticket prices, fares, airfare, "book", "cheap flights", deals, or any purchase/shopping content. This is a status lookup, not flight shopping. If the results are airfare/booking pages with no operational status, say you could not verify the live status right now and suggest checking the airline's official flight-status page or a tracker like FlightAware/Flightradar24 — do NOT report any prices.
+3. Do NOT claim the flight actually landed/arrived unless a result EXPLICITLY states it landed or arrived. If results only show a schedule or are inconclusive, say the scheduled time and that the actual arrival is not yet confirmed. Never infer a landing from the schedule.
+4. Do not copy any figure the user quoted from another assistant as ground truth; rely only on the search results above.
+5. When you give an arrival/landing time, state the timezone explicitly.
+
+FORMATTING: Delivered over WhatsApp (no markdown). Never emit [text](url); write any URL bare. Keep it concise (2-5 sentences).`
+
+  try {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 900,
+      messages: [{ role: 'user', content: prompt }],
+    })
+    return response.content[0].type === 'text' ? response.content[0].text : ''
+  } catch (error: any) {
+    console.error('ANTHROPIC_FLIGHT_STATUS_FAILED_FALLING_BACK:', providerErrorSummary(error))
+    return await askOpenAiFallback({ messages: [{ role: 'user', content: prompt }], maxTokens: 900 })
+  }
+}
+
+/** Today's date in India, so answers about releases, events and schedules compare against the real day. */
+export function webAnswerDateLine(now = new Date()) {
+  const today = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }).format(now)
+  return `TODAY: ${today} (India time). Compare every date in the results with today: something dated today is happening today, an earlier date is past, and only a later date is upcoming. Never call today's date "the future".`
+}
+
+// Replies should open with the answer (19 Oct brevity rule). The model still sometimes opens with
+// "Based on the search results, …"; drop that lead-in deterministically and capitalise what follows.
+export function stripSearchPreamble(text: string): string {
+  // WhatsApp does not render markdown links (20 Oct: Mercury wrote "[IMDb](https://…)"); keep them readable.
+  const t = stripCitationMarkers(String(text || '').replace(/\[([^\]\n]{1,80})\]\((https?:\/\/[^\s)]+)\)/g, '$1: $2'))
+  const m = t.match(/^\s*(?:based on|according to|from|looking at)\s+(?:the\s+)?(?:provided\s+|available\s+|latest\s+)?(?:web\s+)?(?:search\s+)?(?:results|sources|information)(?:\s+(?:provided|available|above))?\s*[,:]\s*/i)
+  if (!m) return t
+  const rest = t.slice(m[0].length)
+  return rest ? rest.charAt(0).toUpperCase() + rest.slice(1) : t
+}
+
+// 20 Oct live: "Best coworking space in Indiranagar" came back with "(sources 2, 3, 4)" and "(source 3)":
+// the model cited the numbered search blocks, which mean nothing to the user. Numbered markers go; real
+// links (already bare URLs) stay.
+export function stripCitationMarkers(text: string): string {
+  return String(text || '')
+    .replace(/[ \t]*\((?:sources?|refs?|references?|citations?|results?)\s*:?\s*#?\d+(?:\s*(?:,|and|&|-|–)\s*#?\d+)*\)/gi, '')
+    .replace(/[ \t]*\[\s*\d+(?:\s*(?:,|-|–)\s*\d+)*\s*\](?!\()/g, '')
+    .replace(/[ \t]*【[^】\n]{0,40}】/g, '')
+}
+
+// 20 Oct live: "Train from Bangalore to Mysore tomorrow morning" was answered with exact trains, times
+// and fares recalled by the model ("Chamundi Exp 16215 — 06:15 → 08:45"), no source; real timetables
+// differ. Train, bus and flight times shown to the user must come from fetched text. Anything else is
+// replaced with an honest line and the official places to check.
+const TRANSPORT_WORD = /\b(?:trains?|railways?|irctc|shatabdi|vande\s*bharat|buses|bus|ksrtc|redbus|flights?)\b/i
+export function isTransportTimetableQuestion(text: string): boolean {
+  const t = String(text || '')
+  if (!TRANSPORT_WORD.test(t)) return false
+  // The user's own booked trip is answered from their saved ticket, not a public timetable.
+  if (/\bmy\s+(?:(?:next|return|onward|morning|evening)\s+)?(?:train|bus|flight|ticket|trip|pnr|booking)\b/i.test(t)) return false
+  if (/\btrain(?:ing|ed)?\s+(?:a|an|the|my|our|your|model|models|llm|ai|dogs?|staff|team|people)\b/i.test(t)) return false
+  return /\bfrom\s+\S.{0,60}?\bto\s+\S/i.test(t)
+    || /\b(?:timings?|timetable|schedule|departures?|arrivals?|next|first|last|earliest|which)\b/i.test(t)
+}
+function transportKind(text: string): 'train' | 'bus' | 'flight' {
+  return /\bflights?\b/i.test(text) ? 'flight' : /\b(?:bus|buses|ksrtc|redbus)\b/i.test(text) ? 'bus' : 'train'
+}
+export function transportUnverifiedReply(text: string): string {
+  const kind = transportKind(text)
+  if (kind === 'bus') return "I couldn't verify bus timings from a live source, so I won't list times from memory.\n\nCheck current departures here:\nredBus: https://www.redbus.in\nKSRTC: https://ksrtc.in"
+  if (kind === 'flight') return "I couldn't verify flight timings from a live source, so I won't list times from memory.\n\nCheck current schedules here:\nGoogle Flights: https://www.google.com/travel/flights"
+  return "I couldn't verify train timings from a live source, so I won't list times or train numbers from memory.\n\nCheck the current timetable here:\nIRCTC: https://www.irctc.co.in/nget/train-search\nConfirmTkt: https://www.confirmtkt.com"
+}
+function clockTimes(text: string): string[] {
+  const out: string[] = []
+  for (const m of String(text || '').matchAll(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b(?:\s*(am|pm))?/gi)) out.push(`${Number(m[1])}:${m[2]}${m[3] ? m[3].toLowerCase() : ''}`)
+  for (const m of String(text || '').matchAll(/\b(1[0-2]|0?[1-9])\s*(am|pm)\b/gi)) out.push(`${Number(m[1])}:00${m[2].toLowerCase()}`)
+  return out
+}
+/**
+ * Keeps transport times only when every time in the reply also appears in the fetched source text.
+ * With no source (chat model), any time is unverified. Non-transport questions pass through unchanged.
+ */
+export function groundTransportTimes(question: string, reply: string, sourceText = ''): string {
+  if (!isTransportTimetableQuestion(question)) return reply
+  const times = clockTimes(reply)
+  if (!times.length) return reply
+  const bare = (v: string) => v.replace(/(am|pm)$/, '')
+  const sourced = new Set(clockTimes(sourceText).flatMap(v => [v, bare(v)]))
+  if (times.some(v => !sourced.has(v) && !sourced.has(bare(v)))) return transportUnverifiedReply(question)
+  if (/https?:\/\//i.test(reply)) return reply
+  // Times are in the results but the reply named no source: cite the first fetched result.
+  const firstUrl = String(sourceText).match(/Source:\s*(https?:\/\/\S+)/)?.[1]
+  const kind = transportKind(question)
+  const confirm = kind === 'train' ? 'Confirm on IRCTC before you travel: https://www.irctc.co.in/nget/train-search' : kind === 'bus' ? 'Confirm on redBus before you travel: https://www.redbus.in' : 'Confirm with the airline before you travel.'
+  return `${reply.trim()}\n\n${firstUrl ? `Source: ${firstUrl}\n` : ''}${confirm}`
+}
+
+// The model sometimes addresses the user as "boss" ("Your car is parked at *B2 slot 14*, boss."). Only a
+// standing preference that asks for it keeps it.
+export function stripUnrequestedAddress(reply: string, preferenceBlock = ''): string {
+  if (/\bboss\b/i.test(preferenceBlock)) return reply
+  return String(reply || '')
+    .replace(/,[ \t]*boss(?=[ \t]*(?:[.!?…:]|$))/gim, '')
+    .replace(/^([ \t]*(?:got it|okay|ok|sure|done|noted|alright|right|hey|hi|hello))[,]?[ \t]+boss\b/gim, '$1')
+    .replace(/^([ \t]*)boss,[ \t]*(\S)/gim, (_m: string, lead: string, ch: string) => `${lead}${ch.toUpperCase()}`)
+}
+
+/** Chat replies: no unrequested "boss", and no model-recalled transport timetable (a directive reply is left to its parser). */
+// 24 Oct live: a drafted email to Nithin ended "Best,\nGogo". A draft is written in the person's voice and their
+// mail adds their own signature, so a sign-off naming Gogo is dropped.
+export function stripGogoSignoff(reply: string): string {
+  return String(reply || '').replace(/\n[ \t]*(?:best|regards|best regards|warm regards|kind regards|thanks|thank you|cheers|sincerely)[,!]?[ \t]*\n[ \t]*(?:gogo|askgogo|ask gogo)[ \t]*(?=\n|$)/gi, '')
+}
+
+export function finishChatReply(userMessage: string, reply: string, preferenceBlock = ''): string {
+  const text = stripGogoSignoff(stripUnrequestedAddress(reply, preferenceBlock))
+  if (/^\s*(?:REMINDER|MEMORY|LIST_[A-Z]+|SEARCH):/m.test(text)) return text
+  return groundTransportTimes(userMessage, text, '')
+}
+
+/** Shared post-processor for every web-answer provider (Mercury, Claude, OpenAI fallback). */
+export function finishWebAnswer(userMessage: string, raw: string, context: string): string {
+  const text = stripSearchPreamble(raw)
+  return text ? groundTransportTimes(userMessage, text, context) : text
+}
+
+export async function askClaudeWithContext(
+  userMessage: string,
+  context: string,
+  userName: string
+): Promise<string> {
+  // 15 Oct live: on Jailer 2's release day Gogo called it "in the future" because the prompt had no date.
+  const prompt=`You are AskGogo, a helpful AI assistant for ${userName}. Answer the user's question using the web search results provided below.
+
+${webAnswerDateLine()}
+
+User's question: ${userMessage}
+
+Web search results:
+${context}
+
+Provide a clear, concise answer based on these results. Cite sources when relevant. If the results don't fully answer the question, say so. You only read these results: never say you booked, reserved, ordered, paid for, sent or scheduled anything.
+
+BREVITY (19 Oct: long replies confused users): start with the direct answer in the first line (the number, the fact, or yes/no). Keep the whole reply under 8 short lines unless the user asked for a list or detail. Never open with "Based on the search results" or similar. If sources disagree, give the most-reported figure and the range in one line ("₹111.68/litre; sources range ₹110.89–₹111.68"), not a source-by-source breakdown. Cite at most two links. No closing advice paragraph unless it changes what the user should do.
+
+NEWS: for "latest" or "news" questions, list only items the results show as recent (dated within the last 7 days, using each result's "published" date or a date in its text), newest first, one line each with its date. Never present an item more than a month old as latest news. If the results contain nothing recent, say that plainly in one line. If results carry no dates at all, lead with the items that look most recent (one short line each) and add one short line that their dates could not be confirmed.
+
+TRAVEL TIMES: give train, bus or flight numbers and times only when they appear in the results above, with that result's link next to them. If the results do not show the times, say you could not verify them and point to IRCTC (https://www.irctc.co.in/nget/train-search) or ConfirmTkt (https://www.confirmtkt.com) for trains. Never fill in times from memory.
+
+REPEATS: never remark on how many times the user asked something ("you've asked three times"); just answer.
+CITATIONS: never write "(source 3)", "(sources 2, 3)" or "[1]" markers; the user cannot see the numbered results. Name the site or give its link instead.
+
+SHOPPING: if the user wants products to buy, list concrete products that appear in the results (name, price in ₹ when shown, store, and the product or listing link), grouped into complete looks or options within their budget. Never answer with only videos, reels or style articles. If the results contain no actual products, say so plainly and give the store search link instead. Never claim stock or size availability that the results do not show, and never buy anything.
+
+FORMATTING: This reply is delivered over WhatsApp, which does NOT render markdown. NEVER emit markdown link syntax like [text](url) — write any URL as a bare URL. NEVER invent or output a URL for AskGogo's own product features (connecting Calendar/Gmail, the dashboard, upgrading, magic-link login) — only cite links that appear in the web search results above.
+
+FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF-REPORTED and approximate unless explicitly bank-verified via Account Aggregator. When such a figure is used to make or justify a redemption or spending decision, treat it as user-entered and not confirmed, and suggest linking cards via Account Aggregator in the CreditIQ app for exact, bank-confirmed balances before deciding. Never present a self-reported balance as a confirmed, spendable fact when advising on a redemption or purchase. For a casual mention with no spending decision, a light "(self-reported)" note is enough.`
+
+  // Mercury first when its key is set: same prompt, ~1s instead of many; Claude stays the fallback.
+  if (mercuryWebAnswersEnabled()) {
+    const fast = await askMercury(prompt, { maxTokens: 1200, label: 'web_answer' })
+    if (fast?.text) return finishWebAnswer(userMessage, fast.text, context)
+  }
+  try{
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 1500,
+      messages:[{role:'user',content:prompt}],
+    })
+    return finishWebAnswer(userMessage, response.content[0].type === 'text' ? response.content[0].text : '', context)
+  }catch(error:any){
+    console.error('ANTHROPIC_CONTEXT_FAILED_FALLING_BACK:',providerErrorSummary(error))
+    return finishWebAnswer(userMessage, await askOpenAiFallback({messages:[{role:'user',content:prompt}],maxTokens:1500}), context)
+  }
+}

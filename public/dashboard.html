@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>AskGogo · Features</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{--g:#00E676;--bg:#050A0E;--c1:#0C1319;--c2:#111920;--bd:rgba(255,255,255,.07);--t:#ECF3FF;--m:#5E7A8A;--r:#FF3B30;--a:#FF9F0A}
+body{font-family:-apple-system,system-ui,sans-serif;background:var(--bg);color:var(--t);min-height:100vh}
+.hdr{background:var(--c1);border-bottom:1px solid var(--bd);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;position:sticky;top:0;z-index:10;backdrop-filter:blur(10px)}
+.logo{font-size:20px;font-weight:800;letter-spacing:-.5px}.logo span{color:var(--g)}
+.live{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--g);font-weight:600;letter-spacing:.05em}
+.live-dot{width:7px;height:7px;border-radius:50%;background:var(--g);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 0 0 rgba(0,230,118,.4)}70%{opacity:.6;box-shadow:0 0 0 6px rgba(0,230,118,0)}}
+.wrap{max-width:480px;margin:0 auto;padding:16px}
+.hero{background:linear-gradient(135deg,#0d2419,#061009);border:1px solid rgba(0,230,118,.2);border-radius:20px;padding:22px 20px;margin-bottom:16px;text-align:center;position:relative;overflow:hidden}
+.hero::before{content:'';position:absolute;top:-40px;right:-40px;width:120px;height:120px;border-radius:50%;background:radial-gradient(circle,rgba(0,230,118,.15),transparent);pointer-events:none}
+.hero h1{font-size:22px;font-weight:800;letter-spacing:-.5px;margin-bottom:6px}
+.hero p{font-size:13px;color:var(--m);line-height:1.6}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px}
+.stat{background:var(--c1);border:1px solid var(--bd);border-radius:14px;padding:14px 10px;text-align:center}
+.stat-n{font-size:24px;font-weight:800;color:var(--g);letter-spacing:-.5px}
+.stat-l{font-size:10px;color:var(--m);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+.sec-title{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--m);margin-bottom:10px;margin-top:20px;display:flex;align-items:center;gap:8px}
+.sec-title::after{content:'';flex:1;height:1px;background:var(--bd)}
+.fc{background:var(--c1);border:1px solid var(--bd);border-radius:16px;padding:14px 16px;margin-bottom:8px;display:flex;align-items:flex-start;gap:12px;cursor:pointer;transition:border-color .2s,background .2s}
+.fc:active{transform:scale(.98)}
+.fc.open{border-color:rgba(0,230,118,.25);background:rgba(0,230,118,.03)}
+.fi{width:42px;height:42px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:20px;flex-shrink:0}
+.g{background:rgba(0,230,118,.1)}.b{background:rgba(41,121,255,.1)}.r{background:rgba(255,59,48,.1)}.a{background:rgba(255,159,10,.1)}.p{background:rgba(156,39,176,.1)}
+.fd{flex:1;min-width:0}
+.fn{font-size:14px;font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.bx{font-size:9px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;padding:2px 7px;border-radius:100px}
+.new{background:rgba(0,230,118,.12);color:var(--g);border:1px solid rgba(0,230,118,.25)}
+.beta{background:rgba(255,159,10,.1);color:var(--a);border:1px solid rgba(255,159,10,.25)}
+.fdesc{font-size:12px;color:var(--m);line-height:1.5}
+.cmd{font-family:monospace;font-size:11px;background:var(--c2);color:var(--g);padding:2px 7px;border-radius:5px;display:inline-block;margin-top:5px}
+.detail{display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--bd)}
+.fc.open .detail{display:block}
+.try{list-style:none;display:flex;flex-direction:column;gap:5px}
+.try li{font-size:12.5px;color:var(--m);background:var(--c2);border:1px solid var(--bd);border-radius:8px;padding:8px 11px;cursor:pointer;transition:border-color .15s,color .15s;display:flex;align-items:center;justify-content:space-between}
+.try li:hover{border-color:rgba(0,230,118,.3);color:var(--t)}
+.try li code{color:var(--g);font-size:11.5px;font-family:monospace}
+.copy-hint{font-size:10px;color:var(--m);opacity:.6}
+.tbar{position:fixed;bottom:0;left:0;right:0;background:rgba(12,19,25,.95);border-top:1px solid var(--bd);padding:12px 16px;display:flex;gap:8px;max-width:480px;margin:0 auto;backdrop-filter:blur(10px)}
+.tinput{flex:1;background:var(--c2);border:1px solid var(--bd);border-radius:12px;padding:11px 14px;font-size:14px;color:var(--t);outline:none;font-family:inherit}
+.tinput:focus{border-color:rgba(0,230,118,.35)}
+.tbtn{background:var(--g);color:#000;border:none;border-radius:12px;padding:11px 18px;font-size:14px;font-weight:700;cursor:pointer;white-space:nowrap;font-family:inherit}
+.tbtn:active{opacity:.85}
+.toast{position:fixed;top:72px;left:50%;transform:translateX(-50%) translateY(-6px);background:#1a2a1a;border:1px solid rgba(0,230,118,.3);color:var(--g);padding:10px 18px;border-radius:100px;font-size:13px;font-weight:600;opacity:0;transition:all .25s;pointer-events:none;z-index:200;white-space:nowrap}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.pb{padding-bottom:76px}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div class="logo">Ask<span>Gogo</span> AI</div>
+  <div class="live"><div class="live-dot"></div>LIVE · WhatsApp</div>
+</div>
+<div class="wrap pb">
+  <div class="hero">
+    <h1>🚀 AskGogo Features</h1>
+    <p>Your AI assistant on WhatsApp — 20 features, 96 languages, always on.</p>
+  </div>
+  <div class="stats">
+    <div class="stat"><div class="stat-n">20</div><div class="stat-l">Features</div></div>
+    <div class="stat"><div class="stat-n">96</div><div class="stat-l">Languages</div></div>
+    <div class="stat"><div class="stat-n">24/7</div><div class="stat-l">Active</div></div>
+  </div>
+
+  <div class="sec-title">🧠 Memory & Notes</div>
+  <div class="fc" onclick="tog(this)"><div class="fi g">🧠</div><div class="fd"><div class="fn">AI Memory <span class="bx new">Core</span></div><div class="fdesc">Remembers anything — facts, names, preferences, forever</div><div class="cmd">Remember that...</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>Remember that my wife's birthday is June 15th</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Remember I prefer black coffee</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>What do I know about Rahul?</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>My notes</code><span class="copy-hint">tap</span></li></ul></div></div></div>
+
+  <div class="fc" onclick="tog(this)"><div class="fi b">📸</div><div class="fd"><div class="fn">Image Notes <span class="bx new">New</span></div><div class="fdesc">Send any photo — receipt, handwritten note, screenshot — reads & saves it</div><div class="cmd">📷 Send any photo</div><div class="detail"><ul class="try"><li>📷 Photo of handwritten notes → auto-transcribed & saved</li><li>🧾 Receipt photo → amount & merchant extracted</li><li>📄 Screenshot of anything → summarized & searchable</li></ul></div></div></div>
+
+  <div class="fc" onclick="tog(this)"><div class="fi p">🎭</div><div class="fd"><div class="fn">Instagram Reel Save <span class="bx new">New</span></div><div class="fdesc">Share any IG reel link — saves with summary to your notes</div><div class="cmd">Share reel link</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>https://www.instagram.com/reel/...</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>My saved reels</code><span class="copy-hint">tap</span></li></ul></div></div></div>
+
+  <div class="fc" onclick="tog(this)"><div class="fi a">🔬</div><div class="fd"><div class="fn">Skin Analysis <span class="bx beta">Beta</span></div><div class="fdesc">Send a selfie — AI analyses skin and gives personalised tips</div><div class="cmd">📷 Send selfie + "check my skin"</div><div class="detail"><ul class="try"><li>📸 Send clear face photo with caption: <code>check my skin</code></li><li>✅ Get: skin type, concerns, product recommendations</li></ul></div></div></div>
+
+  <div class="sec-title">⏰ Productivity</div>
+  <div class="fc" onclick="tog(this)"><div class="fi g">🔔</div><div class="fd"><div class="fn">Smart Reminders</div><div class="fdesc">Natural language reminders — training schedules, recurring, date-based</div><div class="cmd">Remind me at 7am for...</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>Remind me at 6 AM for easy run</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Remind me every morning at 7 for gym</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Remind me on 28th June at 9am</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Show my reminders</code><span class="copy-hint">tap</span></li></ul></div></div></div>
+
+  <div class="fc" onclick="tog(this)"><div class="fi b">✅</div><div class="fd"><div class="fn">Task Manager</div><div class="fdesc">WhatsApp to-do list — add, view, complete tasks instantly</div><div class="cmd">Add task / My tasks</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>Add task: Review Q2 report</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>My tasks</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Done Review Q2 report</code><span class="copy-hint">tap</span></li></ul></div></div></div>
+
+  <div class="fc" onclick="tog(this)"><div class="fi g">🌅</div><div class="fd"><div class="fn">Morning Briefing</div><div class="fdesc">Daily summary: weather, reminders, tasks, news — one message every morning</div><div class="cmd">Today / Morning briefing</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>Today</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Morning briefing</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Set my briefing at 7am</code><span class="copy-hint">tap</span></li></ul></div></div></div>
+
+  <div class="fc" onclick="tog(this)"><div class="fi a">🎙️</div><div class="fd"><div class="fn">Meeting Recorder</div><div class="fdesc">Record meeting in browser, Whisper AI transcribes, minutes on WhatsApp</div><div class="cmd">Record meeting</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>Record meeting</code><span class="copy-hint">tap</span></li><li>1. Tap link → recorder opens in browser</li><li>2. Lock phone anytime — recording continues</li><li>3. Tap End → minutes on WhatsApp in 60s ✅</li></ul></div></div></div>
+
+  <div class="sec-title">💰 Finance</div>
+  <div class="fc" onclick="tog(this)"><div class="fi g">💸</div><div class="fd"><div class="fn">Expense Tracking</div><div class="fdesc">Log expenses by voice or text. Weekly & monthly summaries</div><div class="cmd">Spent ₹X on...</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>Spent ₹250 on lunch</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Paid ₹1200 for groceries</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>My expenses this week</code><span class="copy-hint">tap</span></li></ul></div></div></div>
+
+  <div class="fc" onclick="tog(this)"><div class="fi b">🤝</div><div class="fd"><div class="fn">Bill Split <span class="bx new">Splitwise-style</span></div><div class="fdesc">Split bills on WhatsApp — share with friends to bring them in</div><div class="cmd">Split ₹X among...</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>Split ₹900 among me, Rahul, Priya</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Split ₹1200 between me and Alex</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>My splits</code><span class="copy-hint">tap</span></li></ul></div></div></div>
+
+  <div class="sec-title">📬 Communication</div>
+  <div class="fc" onclick="tog(this)"><div class="fi r">📧</div><div class="fd"><div class="fn">Gmail Integration</div><div class="fdesc">Read & reply to emails from WhatsApp. Connect once.</div><div class="cmd">Check my latest emails</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>Connect Gmail</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Show unread emails</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Draft a reply to the latest email</code><span class="copy-hint">tap</span></li></ul></div></div></div>
+
+  <div class="fc" onclick="tog(this)"><div class="fi b">👤</div><div class="fd"><div class="fn">Contact Memory</div><div class="fdesc">Remember facts about people. Ask about them anytime.</div><div class="cmd">Remember [name]...</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>Remember Rahul prefers morning meetings</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>What do I know about Priya?</code><span class="copy-hint">tap</span></li></ul></div></div></div>
+
+  <div class="fc" onclick="tog(this)"><div class="fi g">🔁</div><div class="fd"><div class="fn">Follow-up Tracker</div><div class="fdesc">Auto-remind to follow up if someone doesn't reply in N days</div><div class="cmd">Follow up with X in 2 days</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>Follow up with Rahul in 2 days</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Follow up with Priya in 3 days about the proposal</code><span class="copy-hint">tap</span></li></ul></div></div></div>
+
+  <div class="sec-title">🌐 Live Info</div>
+  <div class="fc" onclick="tog(this)"><div class="fi b">☁️</div><div class="fd"><div class="fn">Live Weather</div><div class="fdesc">Real-time weather for any city, auto-detects your location</div><div class="cmd">Weather / Weather in Mumbai</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>Weather</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Weather in Chennai</code><span class="copy-hint">tap</span></li></ul></div></div></div>
+
+  <div class="fc" onclick="tog(this)"><div class="fi a">📰</div><div class="fd"><div class="fn">News Digest</div><div class="fdesc">Tech, market, cricket, startup, world news summaries</div><div class="cmd">News / Tech news</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>Tech news</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Market news</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Cricket news</code><span class="copy-hint">tap</span></li></ul></div></div></div>
+
+  <div class="fc" onclick="tog(this)"><div class="fi g">🏏</div><div class="fd"><div class="fn">IPL / Sports & Gold</div><div class="fdesc">IPL standings, match schedules, gold & silver rates live</div><div class="cmd">IPL table / Gold rate</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>IPL table</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>Gold rate</code><span class="copy-hint">tap</span></li></ul></div></div></div>
+
+  <div class="sec-title">🎤 Voice</div>
+  <div class="fc" onclick="tog(this)"><div class="fi p">🎤</div><div class="fd"><div class="fn">Voice Notes — 96 Languages</div><div class="fdesc">Tamil, Kannada, Hindi, English — auto-detected & processed</div><div class="cmd">🎙️ Send voice note</div><div class="detail"><ul class="try"><li>🇮🇳 Tamil voice → transcribed & answered</li><li>🇮🇳 Kannada voice → full support</li><li>🇮🇳 Hindi voice → full support</li><li>🌍 96 languages via Whisper AI</li></ul></div></div></div>
+
+  <div class="sec-title">🔧 Dev Commands (Admin only)</div>
+  <div class="fc" onclick="tog(this)"><div class="fi r">⚡</div><div class="fd"><div class="fn">WhatsApp Dev Control <span class="bx new">New</span></div><div class="fdesc">Control deployments & bugs directly from WhatsApp</div><div class="cmd">/status · /deploy · /fix</div><div class="detail"><ul class="try"><li onclick="cp(this)"><code>/status</code> — deployment status<span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>/deploy</code> — trigger redeploy<span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>/fix reminder bug when user says 7am</code><span class="copy-hint">tap</span></li><li onclick="cp(this)"><code>/help</code> — all commands<span class="copy-hint">tap</span></li></ul></div></div></div>
+
+</div>
+
+<div class="tbar">
+  <input class="tinput" id="cmd" placeholder="Tap any feature example to fill..." readonly>
+  <button class="tbtn" onclick="copy()">📋 Copy</button>
+</div>
+<div class="toast" id="toast">✅ Copied! Paste in WhatsApp</div>
+
+<script>
+function tog(el) {
+  const isOpen = el.classList.contains('open');
+  document.querySelectorAll('.fc.open').forEach(e => e.classList.remove('open'));
+  if (!isOpen) el.classList.add('open');
+  if (!isOpen) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function cp(li) {
+  event.stopPropagation();
+  const c = li.querySelector('code');
+  if (!c) return;
+  document.getElementById('cmd').value = c.textContent;
+  navigator.clipboard?.writeText(c.textContent).catch(() => {});
+  showToast('✅ Copied! Paste in WhatsApp');
+}
+function copy() {
+  const v = document.getElementById('cmd').value;
+  if (!v) { showToast('Tap any example first'); return; }
+  navigator.clipboard?.writeText(v).catch(() => {});
+  showToast('✅ Copied! Paste in WhatsApp');
+}
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AskGogo — Today, v2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Karla:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--cream:#FDFBF7;--surface:#FFF;--ink:#3E2312;--orange:#F18219;--orange-deep:#D67528;
+ --plum:#714C77;--sand:#E4A97D;--wa:#25D366;--hair:rgba(62,35,18,.10);--hair2:rgba(62,35,18,.20);}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#EDE7DE;font-family:'Karla',system-ui,sans-serif;color:var(--ink);
+ -webkit-font-smoothing:antialiased;padding:28px 14px 56px}
+.stage{max-width:430px;margin:0 auto}
+.stage h1{font-family:'Fraunces',Georgia,serif;font-size:22px;font-weight:600;text-align:center}
+.stage p.sub{font-size:13px;opacity:.6;text-align:center;margin:6px 0 22px}
+.phone{width:100%;background:var(--cream);border-radius:28px;overflow:hidden;
+ border:1px solid var(--hair2);box-shadow:0 18px 50px rgba(62,35,18,.13);display:flex;flex-direction:column}
+
+.top{padding:24px 20px 4px}
+.greet{font-family:'Fraunces',Georgia,serif;font-size:26px;font-weight:600;letter-spacing:-.02em;line-height:1.15}
+.greet span{opacity:.45}
+.date{font-size:12.5px;opacity:.55;margin-top:6px}
+
+.body{flex:1;padding:18px 20px 20px}
+
+.pills{display:flex;gap:7px;margin-bottom:24px}
+.pill{font-size:12.5px;font-weight:500;padding:7px 12px;border-radius:999px;
+ border:1px solid var(--hair2);opacity:.6;white-space:nowrap}
+.pill b{font-weight:700;font-variant-numeric:tabular-nums}
+.pill.on{background:var(--orange);border-color:var(--orange);color:#fff;opacity:1;font-weight:600}
+
+.thread{position:relative;padding-left:70px}
+.thread:before{content:'';position:absolute;left:50px;top:6px;bottom:22px;width:2px;
+ background:linear-gradient(180deg,var(--hair),var(--hair2) 18%,var(--hair2) 82%,var(--hair))}
+.node{position:relative;margin-bottom:24px}
+.node .t{position:absolute;left:-70px;top:1px;width:44px;text-align:right;font-size:12px;
+ font-variant-numeric:tabular-nums;opacity:.55}
+.node:after{content:'';position:absolute;left:-22px;top:6px;width:9px;height:9px;border-radius:50%;
+ background:var(--cream);border:2px solid var(--plum)}
+.node.done:after{background:var(--hair2);border-color:transparent}
+.node .label{font-size:15px;font-weight:500;line-height:1.35}
+.node .meta{font-size:12.5px;opacity:.55;margin-top:3px}
+.node.done .label{opacity:.42;text-decoration:line-through;text-decoration-color:var(--hair2)}
+
+.now{position:relative;margin:0 0 28px}
+.now .t{position:absolute;left:-70px;top:-2px;width:44px;text-align:right;font-size:12px;
+ font-weight:700;color:var(--orange);font-variant-numeric:tabular-nums}
+.now:after{content:'';position:absolute;left:-25px;top:2px;width:15px;height:15px;border-radius:50%;
+ background:var(--orange);box-shadow:0 0 0 5px rgba(241,130,25,.16)}
+.now .rule{height:2px;background:linear-gradient(90deg,var(--orange),rgba(241,130,25,0));border-radius:2px;margin-top:8px}
+.now .say{font-size:12.5px;color:var(--orange-deep);font-weight:600;margin-top:7px}
+
+.sep{height:1px;background:var(--hair);margin:26px 0 6px}
+.sect{font-size:11px;letter-spacing:.10em;text-transform:uppercase;opacity:.42;font-weight:700;margin:0 0 4px}
+
+.row{display:flex;align-items:center;gap:12px;padding:15px 0;border-bottom:1px solid var(--hair)}
+.row:last-of-type{border-bottom:0}
+.row .ic{width:26px;flex:0 0 26px;color:var(--plum);opacity:.75}
+.row .ic svg{width:24px;height:24px;display:block}
+.row .txt{flex:1;min-width:0}
+.row .ttl{font-size:14.5px;font-weight:600}
+.row .fact{font-size:12.5px;opacity:.58;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip{display:inline-flex;align-items:center;gap:6px;background:var(--wa);color:#fff;
+ font-size:11.5px;font-weight:600;padding:7px 11px;border-radius:999px;white-space:nowrap;flex:0 0 auto}
+.chip .wa{width:12px;height:12px;fill:#fff}
+.ring{position:relative;width:26px;height:26px;flex:0 0 26px}
+.ring svg{transform:rotate(-90deg)}
+
+.tabs{display:flex;background:var(--surface);padding:10px 6px 15px;
+ box-shadow:0 -1px 0 var(--hair),0 -14px 28px rgba(62,35,18,.045)}
+.tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;position:relative;padding:5px 0 2px}
+.tab .i{width:24px;height:24px;opacity:.38}
+.tab .i svg{width:24px;height:24px;display:block}
+.tab .l{font-size:10.5px;font-weight:600;opacity:.42}
+.tab .d{position:absolute;bottom:-3px;width:4px;height:4px;border-radius:50%;background:var(--orange);opacity:0}
+.tab.on .i{opacity:1;color:var(--orange);transform:translateY(-2px)}
+.tab.on .l{opacity:1;color:var(--orange-deep)}
+.tab.on .d{opacity:1}
+</style></head><body>
+<div class="stage">
+  <h1>Today, with the day around it</h1>
+  <p class="sub">Greeting, counts on the pills, and the rest of your life below the thread.</p>
+
+  <div class="phone">
+    <div class="top">
+      <div class="greet">Good afternoon,<br><span>Gogo</span></div>
+      <div class="date">Saturday, 9 August</div>
+    </div>
+
+    <div class="body">
+      <div class="pills">
+        <div class="pill on">Today <b>4</b></div>
+        <div class="pill">Recurring <b>2</b></div>
+        <div class="pill">Done <b>9</b></div>
+      </div>
+
+      <div class="thread">
+        <div class="node done"><div class="t">1:00pm</div><div class="label">Drink water</div><div class="meta">Hourly · 5 done today</div></div>
+        <div class="node done"><div class="t">4:00pm</div><div class="label">Call the accountant</div></div>
+        <div class="now"><div class="t">5:04pm</div><div class="rule"></div><div class="say">Nothing for the next 55 minutes.</div></div>
+        <div class="node"><div class="t">6:00pm</div><div class="label">Drink water</div><div class="meta">Hourly</div></div>
+        <div class="node"><div class="t">9:00pm</div><div class="label">Take medicine</div></div>
+      </div>
+
+      <div class="sep"></div>
+      <p class="sect">The rest of today</p>
+
+      <div class="row">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none"><path d="M9.6 6.6h10.2M9.6 12h10.2M9.6 17.4h6.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M3.2 6.5l1.5 1.5 2.4-2.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="4.6" cy="12" r="1.5" fill="currentColor"/><circle cx="4.6" cy="17.4" r="1.5" fill="currentColor" opacity=".38"/></svg></span>
+        <span class="txt"><div class="ttl">Lists</div><div class="fact">3 lists · Grocery updated 2h ago</div></span>
+        <span class="chip"><svg viewBox="0 0 24 24" class="wa"><path d="M12 2a10 10 0 00-8.6 15l-1.3 4.7 4.8-1.3A10 10 0 1012 2z"/></svg>Add an item</span>
+      </div>
+
+      <div class="row">
+        <span class="ring"><svg width="26" height="26" viewBox="0 0 26 26">
+          <circle cx="13" cy="13" r="10.5" fill="none" stroke="rgba(62,35,18,.13)" stroke-width="3"/>
+          <circle cx="13" cy="13" r="10.5" fill="none" stroke="#F18219" stroke-width="3"
+                  stroke-linecap="round" stroke-dasharray="66" stroke-dashoffset="45"/></svg></span>
+        <span class="txt"><div class="ttl">Usage</div><div class="fact">8 of 25 AI actions today · Lite</div></span>
+        <span class="chip"><svg viewBox="0 0 24 24" class="wa"><path d="M12 2a10 10 0 00-8.6 15l-1.3 4.7 4.8-1.3A10 10 0 1012 2z"/></svg>My usage</span>
+      </div>
+
+      <div class="row">
+        <span class="ic"><svg viewBox="0 0 24 24" fill="none"><rect x="3.4" y="5.4" width="17.2" height="15.2" rx="4.2" stroke="currentColor" stroke-width="1.7"/><path d="M8.2 2.9v3.6M15.8 2.9v3.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="12" cy="13.6" r="1.9" fill="currentColor"/></svg></span>
+        <span class="txt"><div class="ttl">Calendar</div><div class="fact">Connected · Next: Standup, 9:00am tomorrow</div></span>
+        <span class="chip"><svg viewBox="0 0 24 24" class="wa"><path d="M12 2a10 10 0 00-8.6 15l-1.3 4.7 4.8-1.3A10 10 0 1012 2z"/></svg>What&rsquo;s on</span>
+      </div>
+    </div>
+
+    <nav class="tabs">
+      <a class="tab on"><span class="i"><svg viewBox="0 0 24 24" fill="none"><path d="M12 3.2v4.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".45"/><path d="M12 15.6v5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".45"/><circle cx="12" cy="11.6" r="3.1" fill="currentColor"/><circle cx="12" cy="11.6" r="5.6" stroke="currentColor" stroke-width="1.5" opacity=".3"/></svg></span><span class="l">Today</span><span class="d"></span></a>
+      <a class="tab"><span class="i"><svg viewBox="0 0 24 24" fill="none"><rect x="3.4" y="5.4" width="17.2" height="15.2" rx="4.2" stroke="currentColor" stroke-width="1.7"/><path d="M8.2 2.9v3.6M15.8 2.9v3.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="12" cy="13.6" r="1.9" fill="currentColor"/></svg></span><span class="l">Calendar</span><span class="d"></span></a>
+      <a class="tab"><span class="i"><svg viewBox="0 0 24 24" fill="none"><path d="M9.6 6.6h10.2M9.6 12h10.2M9.6 17.4h6.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><path d="M3.2 6.5l1.5 1.5 2.4-2.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="4.6" cy="12" r="1.5" fill="currentColor"/><circle cx="4.6" cy="17.4" r="1.5" fill="currentColor" opacity=".38"/></svg></span><span class="l">Lists</span><span class="d"></span></a>
+      <a class="tab"><span class="i"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8.4" stroke="currentColor" stroke-width="1.7" opacity=".28"/><path d="M12 3.6a8.4 8.4 0 0 1 7.1 12.9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="12" cy="12" r="2.2" fill="currentColor"/></svg></span><span class="l">Usage</span><span class="d"></span></a>
+      <a class="tab"><span class="i"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="6.1" r="2.9" stroke="currentColor" stroke-width="1.7"/><path d="M4.9 19.1c1.3-5.6 4.1-8.4 7.1-8.4s5.8 2.8 7.1 8.4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><path d="M4.9 19.1c2.1 1.1 12.1 1.1 14.2 0" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></span><span class="l">You</span><span class="d"></span></a>
+    </nav>
+  </div>
+</div></body></html>

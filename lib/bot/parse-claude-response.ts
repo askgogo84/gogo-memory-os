@@ -1,0 +1,129 @@
+﻿export type ClaudeAction =
+  | { type: 'none' }
+  | { type: 'memory'; fact: string; replyText: string }
+  | { type: 'reminder'; remindAt: string; message: string; pattern?: string; replyText: string }
+  | { type: 'list_add'; listName: string; items: string[]; replyText: string }
+  | { type: 'list_show'; listName: string; replyText: string }
+  | { type: 'list_clear'; listName: string; replyText: string }
+  | { type: 'list_check'; listName: string; itemText: string; replyText: string }
+  | { type: 'list_uncheck'; listName: string; itemText: string; replyText: string }
+  | { type: 'list_all'; replyText: string }
+  | { type: 'search'; query: string; replyText: string }
+
+function cleanReply(lines: string[]) {
+  return lines.join('\n').trim()
+}
+
+export function parseClaudeResponse(raw: string): ClaudeAction {
+  const text = (raw || '').trim()
+  if (!text) return { type: 'none' }
+
+  const lines = text.split('\n')
+  const first = lines[0]?.trim() || ''
+  const rest = cleanReply(lines.slice(1))
+
+  if (first.startsWith('MEMORY:')) {
+    return {
+      type: 'memory',
+      fact: first.replace('MEMORY:', '').trim(),
+      replyText: rest,
+    }
+  }
+
+  if (first.startsWith('REMINDER:')) {
+    const payload = first.replace('REMINDER:', '').trim()
+    const parts = payload.split('|').map(p => p.trim())
+
+    return {
+      type: 'reminder',
+      remindAt: parts[0] || '',
+      message: parts[1] || 'Reminder',
+      pattern: parts[2] || undefined,
+      replyText: rest,
+    }
+  }
+
+  if (first.startsWith('LIST_ADD:')) {
+    const payload = first.replace('LIST_ADD:', '').trim()
+    const parts = payload.split('|').map(p => p.trim())
+    return {
+      type: 'list_add',
+      listName: parts[0] || 'list',
+      items: (parts[1] || '')
+        .split(',')
+        .map(s => s.trim())
+        .filter(Boolean),
+      replyText: rest,
+    }
+  }
+
+  if (first.startsWith('LIST_SHOW:')) {
+    return {
+      type: 'list_show',
+      listName: first.replace('LIST_SHOW:', '').trim(),
+      replyText: rest,
+    }
+  }
+
+  if (first.startsWith('LIST_CLEAR:')) {
+    return {
+      type: 'list_clear',
+      listName: first.replace('LIST_CLEAR:', '').trim(),
+      replyText: rest,
+    }
+  }
+
+  // LIST_UNCHECK before LIST_CHECK: "LIST_UNCHECK:" does not startWith "LIST_CHECK:"
+  // (they differ at char 5, U vs C), so there is no prefix collision — but we order it
+  // first anyway to mirror the detect-intent guard.
+  if (first.startsWith('LIST_UNCHECK:')) {
+    const payload = first.replace('LIST_UNCHECK:', '').trim()
+    const parts = payload.split('|').map(p => p.trim())
+    return {
+      type: 'list_uncheck',
+      listName: parts[0] || 'list',
+      itemText: parts[1] || '',
+      replyText: rest,
+    }
+  }
+
+  if (first.startsWith('LIST_CHECK:')) {
+    const payload = first.replace('LIST_CHECK:', '').trim()
+    const parts = payload.split('|').map(p => p.trim())
+    return {
+      type: 'list_check',
+      listName: parts[0] || 'list',
+      itemText: parts[1] || '',
+      replyText: rest,
+    }
+  }
+
+  if (first.startsWith('LIST_ALL')) {
+    return {
+      type: 'list_all',
+      replyText: rest,
+    }
+  }
+
+  if (first.startsWith('SEARCH:')) {
+    return {
+      type: 'search',
+      query: first.replace('SEARCH:', '').trim(),
+      replyText: rest,
+    }
+  }
+
+  // 17 Oct live: the model wrote a sentence first and "SEARCH: …" on a later line, and the raw control line
+  // reached the person. A SEARCH line anywhere is the search; the rest stays as the reply text.
+  const later = lines.findIndex((line, i) => i > 0 && /^\s*SEARCH:/.test(line))
+  if (later > 0) {
+    return {
+      type: 'search',
+      query: lines[later].replace(/^\s*SEARCH:/, '').trim(),
+      replyText: cleanReply(lines.filter((_, i) => i !== later)),
+    }
+  }
+
+  return { type: 'none' }
+}
+

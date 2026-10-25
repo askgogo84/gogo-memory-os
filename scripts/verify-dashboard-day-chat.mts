@@ -1,0 +1,149 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { detectDashboardDayIntent, formatDashboardDayReply } from '../lib/dashboard/day-chat'
+import { detectReadOnlyScheduleRequest, nextLocalDateKey } from '../lib/agent/read-only-schedule'
+
+let failed = 0
+
+const intentCases: Array<[string, 'summary' | 'next' | 'plan' | null]> = [
+  ['What do I have today?', 'summary'],
+  ['Brief my day', 'summary'],
+  ['Plan my day', 'plan'],
+  ["Today's plan", 'plan'],
+  ["What's on today?", 'summary'],
+  ["What's next?", 'next'],
+  ['Find cheap flights to Mumbai', null],
+  ['Sunrise time today', null],
+]
+
+for (const [text, expected] of intentCases) {
+  const got = detectDashboardDayIntent(text)
+  if (got !== expected) {
+    failed++
+    console.error(`✗ intent ${JSON.stringify(text)} got=${got} expected=${expected}`)
+  } else {
+    console.log(`✓ ${JSON.stringify(text)} → ${got ?? 'fall through'}`)
+  }
+}
+
+const readOnlyCases = [
+  'Check what I have tomorrow and tell me what needs my attention. Do not change anything.',
+  "Tell me what's on tomorrow. Don't change my calendar.",
+  'Review my schedule tomorrow without changing anything.',
+  'Summarize tomorrow for me, read-only.',
+]
+for (const text of readOnlyCases) {
+  const got = detectReadOnlyScheduleRequest(text)
+  if (got?.horizon !== 'tomorrow') {
+    failed++
+    console.error(`✗ read-only schedule guard missed ${JSON.stringify(text)}`)
+  } else console.log(`✓ read-only tomorrow guard → ${JSON.stringify(text)}`)
+}
+
+for (const text of [
+  'Remind me tomorrow at 9 AM to call Praveen',
+  'Create a calendar event tomorrow at 4 PM',
+  'Move my meeting tomorrow to 5 PM',
+]) {
+  if (detectReadOnlyScheduleRequest(text)) {
+    failed++
+    console.error(`✗ read-only guard incorrectly swallowed mutation ${JSON.stringify(text)}`)
+  } else console.log(`✓ mutation remains outside read-only guard → ${JSON.stringify(text)}`)
+}
+
+// At 12:33 PM IST on Sep 14, adding 36h lands on Sep 16. "Tomorrow" must still
+// resolve to the next LOCAL calendar date, Sep 15.
+const tomorrowBoundary = nextLocalDateKey(new Date('2026-09-14T07:03:00.000Z'), 'Asia/Kolkata')
+if (tomorrowBoundary !== '2026-09-15') {
+  failed++
+  console.error(`✗ local tomorrow boundary got=${tomorrowBoundary} expected=2026-09-15`)
+} else console.log('✓ local tomorrow boundary remains Sep 15 after midday IST')
+
+// Read-only schedule summaries must use the same calendar reader as autonomous
+// mission steps. This prevents a second Google query implementation from drifting
+// and reporting "Calendar: clear" after AskGogo has just created an event.
+const readOnlyScheduleSource = readFileSync('lib/agent/read-only-schedule.ts', 'utf8')
+if (!readOnlyScheduleSource.includes("executeReadOnlyCalendarStep")) {
+  failed++
+  console.error('✗ read-only schedule is not wired to canonical calendar reader')
+} else console.log('✓ read-only schedule uses canonical autonomous calendar reader')
+if (readOnlyScheduleSource.includes('www.googleapis.com/calendar/v3/calendars/primary/events')) {
+  failed++
+  console.error('✗ read-only schedule still contains a duplicate direct Google Calendar query')
+} else console.log('✓ no duplicate Google Calendar query remains in read-only schedule')
+
+const reply = formatDashboardDayReply({
+  intent: 'summary',
+  tz: 'Asia/Kolkata',
+  now: new Date('2026-09-10T06:00:00Z'),
+  remindersOk: true,
+  reminders: [
+    { id: 1, message: 'Drink water', remind_at: '2026-09-10T12:30:00Z', timezone: 'Asia/Kolkata', recurring_pattern: null, is_recurring: false, sent: false, sent_at: null },
+    { id: 2, message: 'Already done', remind_at: '2026-09-10T04:00:00Z', timezone: 'Asia/Kolkata', recurring_pattern: null, is_recurring: false, sent: true, sent_at: '2026-09-10T04:01:00Z' },
+  ],
+  calendarOk: true,
+  calendarConnected: true,
+  calendarEvents: [{ id:'cal-1', title:'Team sync', time:'4:00 PM' }],
+})
+
+const mustContain = ['Here’s your day:', 'Reminders: 1 left.', 'Drink water', 'Calendar: 1 event.', 'Team sync']
+const mustNotContain = ['http://', 'https://', 'Google Calendar Help', 'Sunrise', '**', 'Reply “more”']
+
+for (const text of mustContain) {
+  if (!reply.includes(text)) {
+    failed++
+    console.error(`✗ day reply missing ${JSON.stringify(text)}\n${reply}`)
+  }
+}
+for (const text of mustNotContain) {
+  if (reply.includes(text)) {
+    failed++
+    console.error(`✗ day reply contains forbidden public/markdown text ${JSON.stringify(text)}\n${reply}`)
+  }
+}
+
+if (!failed) console.log('✓ personal day reply is private, concise and dashboard-shaped')
+
+if (failed) process.exit(1)
+console.log('✅ Dashboard day + read-only schedule routing checks passed')
+// 15 Oct: "Plan my day" gave exactly the "What do I have today?" list. It is now one ordered timeline of
+// meetings and reminders, what is waiting on the person, and the longest free stretch before 10 pm.
+{
+  const now = new Date('2026-10-15T04:30:00Z') // 10:00 IST
+  const plan = formatDashboardDayReply({
+    intent: 'plan', tz: 'Asia/Kolkata', now,
+    remindersOk: true,
+    reminders: [
+      { id: 'r1', message: 'drink water', remind_at: '2026-10-15T08:30:00Z', sent: false } as any, // 2:00 pm
+      { id: 'r0', message: 'already done', remind_at: '2026-10-15T03:00:00Z', sent: false } as any, // 8:30 am, past
+    ],
+    calendarOk: true, calendarConnected: true,
+    calendarEvents: [{ id: 'e1', title: 'Daily Connect-Standup Call', time: '11:30am', startAt: '2026-10-15T06:00:00Z', endAt: '2026-10-15T06:30:00Z' }],
+    approvalsWaiting: 3,
+  })
+  const lines = plan.split('\n')
+  assert.equal(lines[0], 'Your plan for the rest of today:')
+  assert.ok(lines[1].startsWith('11:30') && lines[1].includes('Daily Connect-Standup Call (meeting)'), plan)
+  assert.ok(lines[2].startsWith('2:00') && lines[2].includes('drink water'), plan)
+  assert.ok(!plan.includes('already done'), 'past reminders are not in the plan')
+  assert.ok(plan.includes('Needs you: 3 decisions waiting'), plan)
+  assert.ok(plan.includes('Longest free stretch: 2:00 PM – 10:00 PM'), plan)
+  const summary = formatDashboardDayReply({ intent: 'summary', tz: 'Asia/Kolkata', now, remindersOk: true, reminders: [], calendarOk: true, calendarConnected: true, calendarEvents: [] })
+  assert.notEqual(summary.split('\n')[0], lines[0], 'plan and summary differ')
+  // At 1 am there is no "free until 10 pm" line.
+  const night = formatDashboardDayReply({ intent: 'plan', tz: 'Asia/Kolkata', now: new Date('2026-10-14T19:30:00Z'), remindersOk: true, reminders: [], calendarOk: true, calendarConnected: true, calendarEvents: [] })
+  assert.ok(!night.includes('Longest free stretch') && night.includes('Nothing scheduled from now on.'), night)
+  console.log('✓ plan my day is an ordered plan')
+}
+
+// 15 Oct live: the 11:30 standup showed in "What do I have today?" but not in "Plan my day". A meeting whose start
+// instant is missing or not today (a recurring event's first date) is placed at today's clock time.
+{
+  const now = new Date('2026-10-14T19:15:00Z') // 00:45 IST, 15 Oct
+  for (const startAt of [null, 'garbage', '2025-03-03T11:30:00+05:30']) {
+    const plan = formatDashboardDayReply({ intent: 'plan', tz: 'Asia/Kolkata', now, remindersOk: true, reminders: [], calendarOk: true, calendarConnected: true,
+      calendarEvents: [{ id: 'e', title: 'Daily Connect-Standup Call', time: '11:30am', startAt }] })
+    assert.ok(plan.includes('11:30 AM — Daily Connect-Standup Call (meeting)'), `${startAt}: ${plan}`)
+  }
+  console.log('✓ plan keeps meetings whose start is missing or not today')
+}

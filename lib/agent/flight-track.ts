@@ -1,0 +1,396 @@
+// "Track Virgin Atlantic VS 354" (23 Oct live): Gogo answered "couldn't verify" and tracked nothing. A flight
+// someone asks to track — with or without a saved ticket — gets its live status from the flight-data feed and a
+// watch that sends delay, gate, take-off and landing updates until it lands. The flight is NOT saved as the
+// owner's trip (they may be tracking someone else), so trip, conflict and briefing features never treat it as theirs.
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { requestedFlightCodes, normalizeNumericDates, icaoFlightCode } from '@/lib/bot/flight-codes'
+export { icaoFlightCode, IATA_TO_ICAO } from '@/lib/bot/flight-codes'
+import { ticketTimezone } from '@/lib/services/travel-time'
+import { legEvents, normalizeFlightNo, parseFlightData, statusFromWeb, trackingWindow, type LegStatus, type TrackingState } from './flight-leg-tracker'
+import { searchWebResults } from '@/lib/web-search'
+import { FLIGHT_TRACKER_DOMAINS } from '@/lib/bot/handlers/flight-status'
+import { checkCostAllowance, COST_ESTIMATES_PAISE, recordCostEvent } from '@/lib/services/cost-guard'
+import { deliverWatchAlert } from './watch-alert-delivery'
+
+const MIN = 60_000
+
+export function trackCode(text: string): string {
+  return normalizeFlightNo(requestedFlightCodes(normalizeNumericDates(String(text || '')))[0] || '')
+}
+
+export function isFlightTrackRequest(text: string): boolean {
+  const t = String(text || '')
+  if (/\b(?:stop|cancel|don'?t|do not)\s+(?:tracking|track|watching|monitoring)\b/i.test(t)) return false
+  return /\b(?:track|tracking|keep (?:me )?posted|keep an eye on|monitor|follow)\b/i.test(t) && requestedFlightCodes(normalizeNumericDates(t)).length === 1
+}
+
+export type LiveFlight = {
+  flightNo: string; airline?: string
+  from: { iata: string; name: string }; to: { iata: string; name: string }
+  depLocal?: string; arrLocal?: string; depUtc: string; arrUtc?: string
+  depRevisedLocal?: string; arrRevisedLocal?: string
+  status: LegStatus
+}
+type Occ = any
+export type FlightFetcher = (code: string, ymd: string) => Promise<Occ[]>
+
+const utcOf = (t: any) => { const ms = Date.parse(String(t?.utc || '').replace(' ', 'T')); return Number.isFinite(ms) ? ms : NaN }
+const clockOf = (t: any) => String(t?.local || '').match(/\d{2}:\d{2}/)?.[0]
+const dayOf = (t: any) => String(t?.local || '').slice(0, 10)
+
+export async function fetchAeroDataBox(code: string, ymd: string): Promise<Occ[]> {
+  const key = process.env.AERODATABOX_RAPIDAPI_KEY
+  if (!key) return []
+  const res = await fetch(`https://aerodatabox.p.rapidapi.com/flights/number/${encodeURIComponent(normalizeFlightNo(code))}/${ymd}?withAircraftImage=false&withLocation=true`, {
+    headers: { 'X-RapidAPI-Key': key, 'X-RapidAPI-Host': 'aerodatabox.p.rapidapi.com' }, signal: AbortSignal.timeout(8_000),
+  })
+  if (res.status === 204) return []
+  if (!res.ok) { console.error('FLIGHT_TRACK_LOOKUP_FAILED:', res.status); return [] }
+  const json = await res.json().catch(() => null)
+  return Array.isArray(json) ? json : []
+}
+
+/** The occurrence that matters now: in the air, else the next departure, else one that landed in the last 3 h. */
+export function pickLiveOccurrence(list: Occ[], now: number): Occ | null {
+  const rows = (list || []).map(o => ({ o, dep: utcOf(o?.departure?.scheduledTime), arr: utcOf(o?.arrival?.scheduledTime) })).filter(r => Number.isFinite(r.dep))
+  const airborne = rows.find(r => r.dep <= now && (Number.isFinite(r.arr) ? r.arr + 3 * 60 * MIN : r.dep + 20 * 60 * MIN) >= now && !/arrived|landed|cancel/i.test(String(r.o?.status || '')))
+  if (airborne) return airborne.o
+  const next = rows.filter(r => r.dep > now).sort((a, b) => a.dep - b.dep)[0]
+  if (next && next.dep - now <= 48 * 60 * MIN) return next.o
+  const recent = rows.filter(r => Number.isFinite(r.arr) && r.arr <= now && now - r.arr <= 3 * 60 * MIN).sort((a, b) => b.arr - a.arr)[0]
+  return recent?.o || next?.o || null
+}
+
+// 23 Oct live: VS354 left 52 min late, yet the reply said "Arrives 08:50 (was 09:35)" while it was still in the air
+// at 09:21. The feed's arrival revisedTime can be stale; a landing time (runway/actual) wins, then the live
+// prediction, then revisedTime — and an estimate earlier than schedule after a late departure is not shown.
+export function arrivalEstimateLocal(o: any): string | undefined {
+  const a = o?.arrival || {}, d = o?.departure || {}
+  const landed = a.runwayTime?.local || a.actualTime?.local
+  if (landed) return landed
+  const est = a.predictedTime || a.revisedTime
+  if (!est?.local) return undefined
+  const depLate = utcOf(d.revisedTime || d.runwayTime) - utcOf(d.scheduledTime)
+  const arrEarly = utcOf(a.scheduledTime) - utcOf(est)
+  if (Number.isFinite(depLate) && Number.isFinite(arrEarly) && depLate >= 15 * MIN && arrEarly > 20 * MIN) return undefined
+  return est.local
+}
+
+// 23 Oct live: VS354 landed at 09:39 (Google/OAG) while the feed still said "in the air · arrives 09:47" at 09:45.
+// The feed's status field lags, so a landing is also read from (a) the aircraft's own position in the same feed
+// (on the ground, slow, after the flight took off) and (b) dated flight-tracker pages searched by IATA + ICAO code
+// once the expected landing is close. Either one is enough to report "landed"; nothing ever reports a landing early
+// on a guess.
+const numOf = (v: any) => { const n = typeof v === 'number' ? v : Number(v); return Number.isFinite(n) ? n : NaN }
+function distanceKm(a: { lat: number; lon: number }, b: { lat: number; lon: number }) {
+  const r = (d: number) => d * Math.PI / 180
+  const h = Math.sin(r(b.lat - a.lat) / 2) ** 2 + Math.cos(r(a.lat)) * Math.cos(r(b.lat)) * Math.sin(r(b.lon - a.lon) / 2) ** 2
+  return 12_742 * Math.asin(Math.sqrt(h))
+}
+/** True when the feed's aircraft position shows it on the ground at (or, without airport coordinates, after) the destination. */
+export function landedFromLocation(o: any, now: number): boolean {
+  const loc = o?.location
+  if (!loc) return false
+  const alt = numOf(loc.pressureAltitude?.feet ?? loc.altitude?.feet ?? loc.altitudeFt)
+  const gs = numOf(loc.groundSpeed?.kt ?? loc.groundSpeed?.knots ?? loc.groundSpeedKt)
+  const at = Date.parse(String(loc.reportedAtUtc || loc.reportedAt || '').replace(' ', 'T').replace(/Z?$/, 'Z'))
+  if (!Number.isFinite(gs) || gs > 60) return false
+  if (Number.isFinite(alt) && alt > 1_000) return false
+  if (Number.isFinite(at) && now - at > 30 * MIN) return false
+  const lat = numOf(loc.lat), lon = numOf(loc.lon)
+  const ap = o?.arrival?.airport?.location
+  const apLat = numOf(ap?.lat), apLon = numOf(ap?.lon)
+  if ([lat, lon, apLat, apLon].every(Number.isFinite)) return distanceKm({ lat, lon }, { lat: apLat, lon: apLon }) <= 15
+  // No coordinates to compare: only after it has demonstrably flown (took off ≥ 60 min ago) and is near its landing time.
+  const depActual = utcOf(o?.departure?.runwayTime) || utcOf(o?.departure?.revisedTime)
+  const eta = utcOf(o?.arrival?.predictedTime) || utcOf(o?.arrival?.revisedTime) || utcOf(o?.arrival?.scheduledTime)
+  return Number.isFinite(depActual) && now - depActual >= 60 * MIN && Number.isFinite(eta) && now >= eta - 45 * MIN
+}
+
+/** When the feed's position report put the aircraft on the ground (else now). */
+export function groundTime(o: any, now: number): string {
+  const at = Date.parse(String(o?.location?.reportedAtUtc || o?.location?.reportedAt || '').replace(' ', 'T').replace(/Z?$/, 'Z'))
+  return new Date(Number.isFinite(at) && at <= now ? at : now).toISOString()
+}
+
+export type WebSearchFn = (query: string, opts: { includeDomains: string[] }) => Promise<any[]>
+/** Expected landing is close enough that a tracker cross-check is worth a search. */
+export function nearLanding(now: number, eta?: string | number | null, sched?: string | number | null): boolean {
+  const e = typeof eta === 'number' ? eta : Date.parse(String(eta || ''))
+  const s = typeof sched === 'number' ? sched : Date.parse(String(sched || ''))
+  const ref = Number.isFinite(e) && Number.isFinite(s) ? Math.min(e, s) : Number.isFinite(e) ? e : s
+  return Number.isFinite(ref) && now >= ref - 25 * MIN && now <= ref + 4 * 60 * MIN
+}
+/** Dated tracker pages (IATA + ICAO code) — returns a landed/cancelled/diverted status, or null. Spends one search. */
+export async function trackerCrossCheck(p: { flightNo: string; departAt: string; arriveAt?: string | null; from?: string; telegramId?: string; source: string; now: number; search?: WebSearchFn }): Promise<LegStatus | null> {
+  if (p.telegramId) {
+    const allowance = await checkCostAllowance(p.telegramId, COST_ESTIMATES_PAISE.web_search_basic).catch(() => ({ allowed: false }))
+    if (!allowance.allowed) return null
+  }
+  const date = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(p.departAt))
+  const search: WebSearchFn = p.search || ((q, o) => searchWebResults(q, o))
+  const results = await search(`${[p.flightNo, icaoFlightCode(p.flightNo)].filter(Boolean).join(' ')} flight status ${date}`, { includeDomains: FLIGHT_TRACKER_DOMAINS }).catch(() => [])
+  if (p.telegramId) await recordCostEvent({ telegramId: p.telegramId, category: 'web_search_basic', metadata: { source: p.source } }).catch(() => {})
+  const st = statusFromWeb(results || [], { flightNo: p.flightNo, departAt: p.departAt, arriveAt: p.arriveAt, fromCity: String(p.from || '') }, p.now)
+  return st && ['landed', 'cancelled', 'diverted'].includes(st.state) ? st : null
+}
+
+export type LiveLookupOptions = { telegramId?: string; crossCheck?: boolean; search?: WebSearchFn }
+
+export async function lookupLiveFlight(code: string, now = new Date(), tz = 'Asia/Kolkata', fetcher: FlightFetcher = fetchAeroDataBox, opts: LiveLookupOptions = {}): Promise<LiveFlight | null> {
+  const ymd = (ms: number) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date(ms))
+  const days = [...new Set([ymd(now.getTime() - 86_400_000), ymd(now.getTime()), ymd(now.getTime() + 86_400_000)])]
+  const list = (await Promise.all(days.map(d => fetcher(code, d).catch(() => [])))).flat()
+  const o = pickLiveOccurrence(list, now.getTime())
+  if (!o) return null
+  const depUtc = new Date(utcOf(o.departure?.scheduledTime)).toISOString()
+  const arrMs = utcOf(o.arrival?.scheduledTime)
+  let status = parseFlightData([o], depUtc)
+  if (!status) return null
+  let arrRevisedLocal = arrivalEstimateLocal(o)
+  const terminal = ['landed', 'cancelled', 'diverted'].includes(status.state)
+  if (!terminal && landedFromLocation(o, now.getTime())) {
+    status = { ...status, state: 'landed', landedBy: groundTime(o, now.getTime()) }
+    if (!(o.arrival?.runwayTime?.local || o.arrival?.actualTime?.local)) arrRevisedLocal = undefined
+  } else if (!terminal && opts.crossCheck !== false && nearLanding(now.getTime(), status.revisedArrival, Number.isFinite(arrMs) ? arrMs : null)) {
+    const web = await trackerCrossCheck({ flightNo: normalizeFlightNo(String(o.number || code)), departAt: depUtc, arriveAt: Number.isFinite(arrMs) ? new Date(arrMs).toISOString() : null, from: o.departure?.airport?.municipalityName, telegramId: opts.telegramId, source: 'flight_track_lookup', now: now.getTime(), search: opts.search }).catch(() => null)
+    if (web) { status = { ...status, state: web.state, url: web.url, ...(web.state === 'landed' ? { landedBy: now.toISOString() } : {}) }; if (web.state === 'landed' && !(o.arrival?.runwayTime?.local || o.arrival?.actualTime?.local)) arrRevisedLocal = undefined }
+  }
+  const ap = (a: any) => ({ iata: String(a?.iata || a?.icao || '').slice(0, 4), name: String(a?.municipalityName || a?.shortName || a?.name || a?.iata || '').slice(0, 60) })
+  return {
+    flightNo: normalizeFlightNo(String(o.number || code)), airline: o.airline?.name ? String(o.airline.name).slice(0, 60) : undefined,
+    from: ap(o.departure?.airport), to: ap(o.arrival?.airport),
+    depLocal: o.departure?.scheduledTime?.local, arrLocal: o.arrival?.scheduledTime?.local, depUtc, arrUtc: Number.isFinite(arrMs) ? new Date(arrMs).toISOString() : undefined,
+    depRevisedLocal: o.departure?.runwayTime?.local || o.departure?.revisedTime?.local, arrRevisedLocal,
+    status,
+  }
+}
+
+const STATE_WORD: Record<string, string> = { scheduled: 'Scheduled', delayed: 'Delayed', departed: 'In the air', landed: 'Landed', cancelled: 'Cancelled', diverted: 'Diverted', unknown: 'Status not published yet' }
+
+/** Reply built only from the feed's fields; times are airport-local, as printed on boarding passes. */
+export function formatLiveFlight(f: LiveFlight): string {
+  const at = (sched?: string, revised?: string) => {
+    const s = clockOf({ local: sched }), r = clockOf({ local: revised })
+    const day = dayOf({ local: sched }) ? ` (${new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(`${dayOf({ local: sched })}T00:00:00Z`))})` : ''
+    return s ? (r && r !== s ? `${r} (was ${s})${day}` : `${s}${day}`) : 'time not published'
+  }
+  const st = f.status
+  const delay = st.delayMinutes ? ` · about ${st.delayMinutes} min late` : ''
+  const lines = [
+    `✈️ *${f.flightNo}*${f.airline ? ` · ${f.airline}` : ''}`,
+    `${f.from.name || f.from.iata} (${f.from.iata}) → ${f.to.name || f.to.iata} (${f.to.iata})`,
+    `Status: *${STATE_WORD[st.state] || 'Unknown'}*${delay}`,
+    `Departs ${at(f.depLocal, f.depRevisedLocal)} local${st.depTerminal ? ` · T${st.depTerminal}` : ''}${st.depGate ? ` · gate ${st.depGate}` : ''}`,
+    `Arrives ${at(f.arrLocal, f.arrRevisedLocal)} local${st.arrTerminal ? ` · T${st.arrTerminal}` : ''}${st.belt ? ` · belt ${st.belt}` : ''}`,
+  ]
+  if (st.source !== 'web' && st.url && st.state === 'landed') { try { lines.push(`Landing confirmed by ${new URL(st.url).hostname.replace(/^www\./, '')}`) } catch { /* no link */ } }
+  return lines.join('\n')
+}
+
+/** One watch per flight occurrence; asking again keeps the existing one. Ends 3 h after scheduled arrival. */
+export async function createFlightTrackWatch(telegramId: string, f: LiveFlight): Promise<{ id: string; reused: boolean } | null> {
+  const tg = String(telegramId)
+  const { data: existing } = await supabaseAdmin.from('agent_watchers').select('id').eq('telegram_id', tg).eq('active', true)
+    .eq('condition_json->adHocFlight->>flightNo', f.flightNo).eq('condition_json->adHocFlight->>departAt', f.depUtc).limit(1).maybeSingle()
+  if (existing?.id) return { id: String(existing.id), reused: true }
+  const w = trackingWindow(f.depUtc, f.arrUtc)
+  const condition = {
+    title: `Track ${f.flightNo} (${f.from.iata} → ${f.to.iata})`, query: `${f.flightNo} flight status`, keywords: [f.flightNo],
+    adHocFlight: { flightNo: f.flightNo, departAt: f.depUtc, arriveAt: f.arrUtc || null, from: f.from.iata || f.from.name, to: f.to.iata || f.to.name, airline: f.airline || null },
+    expiresAt: new Date(w.until + 60 * MIN).toISOString(), why: 'You asked Gogo to track this flight',
+  }
+  const { data, error } = await supabaseAdmin.from('agent_watchers').insert({
+    telegram_id: tg, type: 'web_search', condition_json: condition, cadence_minutes: 15, active: true,
+    next_check_at: new Date(Math.max(Date.now() + 5 * MIN, w.from)).toISOString(), last_state_json: { tracking: { state: null, sent: [] } },
+  }).select('id').single()
+  if (error || !data?.id) { console.error('FLIGHT_TRACK_WATCH_CREATE_FAILED:', error?.message); return null }
+  return { id: String(data.id), reused: false }
+}
+
+// 23 Oct feedback: "it should alert as soon as it lands". Around the expected landing (live estimate, else
+// schedule) the flight is checked every 2 minutes, around take-off every 5, otherwise every 20.
+export function nextCheckMinutes(now: number, departAt: number, tracking: TrackingState & { scheduledArrival?: string }): number {
+  const eta = Date.parse(String(tracking.etaArrival || tracking.scheduledArrival || ''))
+  if (Number.isFinite(eta) && now >= eta - 40 * MIN && now <= eta + 90 * MIN) return 2
+  if (Math.abs(now - departAt) <= 30 * MIN) return 5
+  return 20
+}
+
+/** Per-minute pass (autonomous-runs cron) so a landing alert never waits for the 15-minute watcher cron. */
+export async function processDueFlightTracks(limit = 10, now = new Date()) {
+  const { data, error } = await supabaseAdmin.from('agent_watchers').select('id, telegram_id, type, condition_json, last_state_json, active, next_check_at')
+    .eq('active', true).not('condition_json->adHocFlight', 'is', null).lte('next_check_at', now.toISOString()).order('next_check_at', { ascending: true }).limit(limit)
+  if (error) throw new Error(`flight_track_read_failed:${error.message}`)
+  let checked = 0, alerted = 0
+  for (const w of data || []) { checked++; const r = await processFlightTrackWatcher(w, now).catch(() => null); if (r?.triggered) alerted++ }
+  return { checked, alerted }
+}
+
+/** Watcher pass for an ad-hoc tracked flight: feed status → new events only → owner's alert settings → next check. */
+export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher: FlightFetcher = fetchAeroDataBox, search?: WebSearchFn) {
+  const c = watcher.condition_json?.adHocFlight || {}
+  const tg = String(watcher.telegram_id)
+  const prev: TrackingState = watcher.last_state_json?.tracking || {}
+  const w = trackingWindow(String(c.departAt), c.arriveAt)
+  const finished = prev.state === 'landed' || prev.state === 'cancelled' || now.getTime() > w.until + 60 * MIN
+  const save = (patch: Record<string, unknown>) => supabaseAdmin.from('agent_watchers').update({ ...patch, last_checked_at: now.toISOString(), updated_at: now.toISOString() })
+    .eq('id', watcher.id).eq('telegram_id', tg).eq('active', true)
+  if (finished) { await save({ active: false, next_check_at: null, last_state_json: { ...(watcher.last_state_json || {}), endedReason: prev.state || 'window_over' } }); return { triggered: false, failed: false } }
+  if (now.getTime() < w.from) { await save({ next_check_at: new Date(w.from).toISOString() }); return { triggered: false, failed: false } }
+  const tz = 'UTC'
+  const ymd = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date(String(c.departAt)))
+  const list = await fetcher(String(c.flightNo), ymd).catch(() => [])
+  let status = parseFlightData(list, String(c.departAt))
+  const tracking: TrackingState & { webCheckedAt?: string } = { ...prev, lastCheckedAt: now.toISOString() }
+  const occ = (list || []).find((o: any) => Math.abs(utcOf(o?.departure?.scheduledTime) - Date.parse(String(c.departAt))) <= 6 * 60 * MIN) || list[0]
+  const terminal = (s: LegStatus | null) => !!s && ['landed', 'cancelled', 'diverted'].includes(s.state)
+  if (status && !terminal(status) && occ && landedFromLocation(occ, now.getTime())) status = { ...status, state: 'landed', landedBy: groundTime(occ, now.getTime()) }
+  // Feed silent (no row) — or feed not yet showing a landing close to the expected time: dated tracker pages,
+  // at most every 4 minutes and within the owner's budget.
+  const lastWeb = Date.parse(String((prev as any).webCheckedAt || ''))
+  const webDue = !Number.isFinite(lastWeb) || now.getTime() - lastWeb >= 4 * MIN
+  const wantWeb = (!status && !list.length) || (!!status && !terminal(status) && nearLanding(now.getTime(), status.revisedArrival || prev.etaArrival, status.scheduledArrival || c.arriveAt))
+  if (wantWeb && webDue) {
+    tracking.webCheckedAt = now.toISOString()
+    const date = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(String(c.departAt)))
+    const allowance = await checkCostAllowance(tg, COST_ESTIMATES_PAISE.web_search_basic).catch(() => ({ allowed: false }))
+    if (allowance.allowed) {
+      const results = await (search || ((q: string, o: { includeDomains: string[] }) => searchWebResults(q, o)))(`${[c.flightNo, icaoFlightCode(String(c.flightNo))].filter(Boolean).join(' ')} flight status ${date}`, { includeDomains: FLIGHT_TRACKER_DOMAINS }).catch(() => [])
+      await recordCostEvent({ telegramId: tg, category: 'web_search_basic', metadata: { source: 'flight_track', watcher_id: watcher.id } }).catch(() => {})
+      const web = statusFromWeb(results || [], { flightNo: String(c.flightNo), departAt: String(c.departAt), arriveAt: c.arriveAt, fromCity: String(c.from || '') }, now.getTime())
+      if (!status) status = web
+      else if (web && terminal(web)) status = { ...status, state: web.state, url: web.url, ...(web.state === 'landed' ? { landedBy: now.toISOString() } : {}) }
+      if (status?.state === 'landed' && !status.actualArrival && !status.landedBy) status = { ...status, landedBy: now.toISOString() }
+    }
+  }
+  let sent = 0
+  if (status) {
+    const leg = { id: String(watcher.id), telegramId: tg, flightNo: String(c.flightNo), airline: c.airline, fromCity: String(c.from || ''), toCity: String(c.to || ''), departAt: String(c.departAt), arriveAt: c.arriveAt, tracking: prev }
+    // 23 Oct live: the first check after "Track VS354" (already airborne for hours) sent "has taken off". The
+    // track reply already gave the current status, so the first pass only records what is already true; only a
+    // landing, cancellation or diversion is news straight away.
+    const firstPass = !prev.lastCheckedAt
+    for (const e of legEvents(leg, status)) {
+      if (firstPass && !['landed', 'cancelled', 'diverted'].includes(e.kind)) {
+        tracking.sent = [...new Set([...(tracking.sent || []), e.key])]
+        if (e.kind === 'delayed') tracking.delayNotified = status.delayMinutes || 0
+        if (e.kind === 'gate') tracking.gateNotified = status.depGate
+        continue
+      }
+      await deliverWatchAlert({ watcherId: String(watcher.id), owner: tg, key: `flight-track/${watcher.id}/${e.key}`, due: new Date(now.getTime() - 60_000).toISOString(), condition: watcher.condition_json, message: e.text, topic: 'travel' })
+      tracking.sent = [...new Set([...(tracking.sent || []), e.key])]
+      if (e.kind === 'delayed') tracking.delayNotified = status.delayMinutes || 0
+      if (e.kind === 'gate') tracking.gateNotified = status.depGate
+      if (e.kind === 'landed') tracking.landedAlertAt = now.toISOString()
+      sent++
+    }
+    tracking.state = status.state
+    if (status.revisedArrival) tracking.etaArrival = status.revisedArrival
+    if (status.scheduledArrival) tracking.scheduledArrival = status.scheduledArrival
+    if (status.actualArrival) tracking.actualArrival = status.actualArrival
+    if (status.landedBy && !tracking.landedBy) tracking.landedBy = status.landedBy
+  }
+  await save({ next_check_at: new Date(now.getTime() + nextCheckMinutes(now.getTime(), w.dep, tracking) * MIN).toISOString(), last_state_json: { ...(watcher.last_state_json || {}), tracking, source: status ? 'flight_data' : 'unavailable' } })
+  return { triggered: sent > 0, failed: false }
+}
+
+// 23 Oct live (side by side with Instinct): after "Track VS 354", the follow-up "Alert me once it lands" fell to
+// general chat, which claimed a 9:25 reminder. A follow-up about "it" landing/departing/delay binds to the flight
+// in the last few hours of this conversation and starts (or reuses) the same tracking watch — never a reminder.
+const FOLLOW_UP = /\b(?:alert|notify|tell|ping|message|update|let)\s+(?:me|us)\b[^.?!]{0,40}\b(?:when|once|after|as soon as|if)\b[^.?!]{0,30}\b(?:lands?|landed|landing|arrives?|arrival|touches down|takes? off|departs?|departure|is delayed|gets delayed|delay)\b|^\s*(?:track|keep tracking|follow|monitor|watch)\s+(?:it|that|this|that flight|this flight)\s*[.!]?\s*$/i
+
+export function isFlightFollowUp(text: string): boolean {
+  return FOLLOW_UP.test(String(text || '')) && !trackCode(text)
+}
+
+/** The flight code most recently mentioned in this conversation within `hours` (newest first). */
+export function flightCodeFromHistory(rows: Array<{ content?: string | null; created_at?: string | null }>, now = Date.now(), hours = 6): string {
+  for (const r of rows || []) {
+    const at = Date.parse(String(r?.created_at || ''))
+    if (Number.isFinite(at) && now - at > hours * 3_600_000) break
+    const code = trackCode(String(r?.content || ''))
+    if (code) return code
+  }
+  return ''
+}
+
+export async function handleFlightFollowUp(p: { telegramId: string | number; text: string; timezone?: string; now?: Date }): Promise<string | null> {
+  if (!isFlightFollowUp(p.text)) return null
+  const tg = String(p.telegramId), now = p.now || new Date()
+  const { data } = await supabaseAdmin.from('conversations').select('content,created_at').eq('telegram_id', Number(tg))
+    .order('created_at', { ascending: false }).limit(10)
+  const code = flightCodeFromHistory(data || [], now.getTime())
+  if (!code) return null
+  const live = await lookupLiveFlight(code, now, p.timezone || 'Asia/Kolkata', undefined, { telegramId: String(p.telegramId) }).catch(() => null)
+  if (!live) {
+    return process.env.AERODATABOX_RAPIDAPI_KEY
+      ? `I couldn't find ${code} flying today or tomorrow, so I can't follow it yet. Send the date, for example: Track ${code} on 25 Oct. I haven't set a reminder.`
+      : `I can't follow ${code} live yet: live flight tracking isn't switched on. I haven't set a reminder, so nothing will fire at a guessed time.`
+  }
+  if (live.status.state === 'landed') return `${code} has already landed.\n\n${formatLiveFlight(live)}`
+  const watch = await createFlightTrackWatch(tg, live).catch(() => null)
+  if (!watch) return `I couldn't start tracking ${code} just now. Ask again in a minute.`
+  const eta = live.status.revisedArrival || live.arrUtc
+  const etaText = eta ? new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: p.timezone || 'Asia/Kolkata' }).format(new Date(eta)) : ''
+  return `✅ Tracking ${code} (${live.from.iata} → ${live.to.iata}). I'll message you the moment it lands${etaText ? ` (expected ${etaText})` : ''}.`
+}
+
+// 23 Oct live: "Which flights am I tracking right now, and did VS354 land?" got a generic watch dump ("EK500 flight
+// status · Last checked: not yet recorded") and no word on VS354, which had landed and alerted 3 minutes earlier.
+// Tracked flights answer with their own state: waiting to start, in the air, landed (and when the alert went out).
+export function describeTrackedFlight(w: any, now: number, tz = 'Asia/Kolkata'): string {
+  const c = w?.condition_json?.adHocFlight || {}
+  const t: TrackingState = w?.last_state_json?.tracking || {}
+  const code = String(c.flightNo || 'Flight'), route = c.from && c.to ? ` (${c.from} → ${c.to})` : ''
+  const at = (iso: unknown, zone: string) => { const ms = typeof iso === 'number' ? iso : Date.parse(String(iso || '')); return Number.isFinite(ms) ? new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: zone }).format(new Date(ms)) : '' }
+  const arrTz = ticketTimezone(String(c.to || '')) || tz
+  const win = trackingWindow(String(c.departAt), c.arriveAt)
+  if (t.state === 'landed') {
+    const when = t.actualArrival ? ` at ${at(t.actualArrival, arrTz)}` : t.landedBy ? ` (on the ground by ${at(t.landedBy, arrTz)})` : ''
+    return `🛬 ${code}${route} landed in ${c.to || 'its destination'}${when}${t.landedAlertAt ? `. I alerted you at ${at(t.landedAlertAt, tz)}` : ''}. Tracking ended.`
+  }
+  if (t.state === 'cancelled') return `❌ ${code}${route} was cancelled. Tracking ended.`
+  if (t.state === 'diverted') return `⚠️ ${code}${route} was diverted. ${w?.active ? 'Still tracking.' : 'Tracking ended.'}`
+  if (!w?.active) return `${code}${route}: tracking ended without a confirmed landing.`
+  if (now < win.from || !t.lastCheckedAt) return `✈️ ${code}${route}: checks start ${at(Math.max(win.from, now), tz)}, 3 h before take-off (${at(win.dep, ticketTimezone(String(c.from || '')) || tz)} local). I'll message you when it lands.`
+  const eta = t.etaArrival || t.scheduledArrival || c.arriveAt
+  if (t.state === 'departed') return `✈️ ${code}${route}: in the air${eta ? `, landing about ${at(eta, arrTz)} local` : ''}. I'll message you when it lands.`
+  const late = t.delayNotified ? `, about ${t.delayNotified} min late` : ''
+  return `✈️ ${code}${route}: ${t.state === 'delayed' ? 'delayed' : 'not departed yet'}${late}. I'll message you on take-off and landing.`
+}
+
+/** "How is EK500 doing?" / "has EK 500 landed?": a status question naming a flight (not a track/stop command). */
+export function isFlightStatusQuestion(text: string): boolean {
+  const t = String(text || '').trim()
+  if (!t || t.length > 160 || !requestedFlightCodes(t).length) return false
+  if (/^(?:please\s+)?(?:track|stop|cancel|alert|notify|remind|book|watch|follow|untrack)\b/i.test(t)) return false
+  return /^(?:how|where|what|when|is|has|did|any|whats|what's|status)\b/i.test(t) || /\?\s*$/.test(t)
+    || /\b(?:status|doing|update|landed|delayed|late|on time|eta|arriv\w*|depart\w*|in the air)\b/i.test(t)
+}
+
+export async function flightTrackStatusReply(telegramId: string, text: string, now = new Date(), tz = 'Asia/Kolkata', opts: { onlyTracked?: boolean } = {}): Promise<string | null> {
+  const tg = String(telegramId)
+  const { data, error } = await supabaseAdmin.from('agent_watchers').select('id,active,condition_json,last_state_json,updated_at,created_at')
+    .eq('telegram_id', tg).not('condition_json->adHocFlight', 'is', null)
+    .or(`active.eq.true,updated_at.gte.${new Date(now.getTime() - 12 * 60 * MIN).toISOString()}`)
+    .order('created_at', { ascending: false }).limit(10)
+  if (error) throw new Error(`flight_track_status_failed:${error.message}`)
+  const codes = requestedFlightCodes(normalizeNumericDates(String(text || ''))).map(normalizeFlightNo)
+  const seen = new Set<string>()
+  const rows = (data || []).filter((w: any) => {
+    const k = `${w.condition_json?.adHocFlight?.flightNo}|${w.condition_json?.adHocFlight?.departAt}`
+    if (seen.has(k)) return false
+    seen.add(k); return true
+  })
+  const active = rows.filter((w: any) => w.active)
+  const named = codes.length ? rows.filter((w: any) => codes.includes(normalizeFlightNo(String(w.condition_json?.adHocFlight?.flightNo || '')))) : []
+  const missing = codes.filter(code => !named.some((w: any) => normalizeFlightNo(String(w.condition_json?.adHocFlight?.flightNo || '')) === code))
+  // onlyTracked: answer a named-flight question only when every named flight is one we track.
+  if (opts.onlyTracked && (!codes.length || missing.length)) return null
+  const shown = opts.onlyTracked ? named : [...new Set([...active, ...named])]
+  const lines = shown.map((w: any) => describeTrackedFlight(w, now.getTime(), tz))
+  if (!lines.length && !missing.length) return `I'm not tracking any flights right now. Say "Track EK 500" to start.`
+  const head = active.length ? (active.length === 1 ? 'Tracking 1 flight:' : `Tracking ${active.length} flights:`) : 'No flights being tracked right now.'
+  return [head, ...lines, ...missing.map(code => `${code}: I wasn't tracking it in the last 12 hours. Say "Track ${code}" to follow it.`)].join('\n')
+}

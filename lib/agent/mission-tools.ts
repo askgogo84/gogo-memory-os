@@ -1,0 +1,526 @@
+import { readScopedReminders, reminderTimezoneMetadata } from './reminder-read'
+import { isInternalPlanStepReminder } from '@/lib/bot/reminder-dedup'
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { normalizeTimezone, parseLocalDateTime } from '@/lib/timezone'
+import { refreshAccessToken } from '@/lib/google-calendar'
+import { addToListDetailed, getAllLists, getList, normalizeListName } from '@/lib/data/lists'
+import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
+import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { dispatchThroughSameBrain } from './same-brain'
+import { executeReadOnlyCalendarStep, calendarReadWindow, calendarAffirmativeText } from './calendar-read'
+import { buildTravelResearchContext, curateTravelResults, isPublicTravelResearchRequest } from './travel-research'
+import type { AgentActor } from './actor'
+
+type MissionStep = { tool:string; title:string; instruction:string }
+
+const MONTHS:Record<string,number>={
+  jan:1,january:1,feb:2,february:2,mar:3,march:3,apr:4,april:4,may:5,jun:6,june:6,
+  jul:7,july:7,aug:8,august:8,sep:9,sept:9,september:9,oct:10,october:10,nov:11,november:11,dec:12,december:12,
+}
+
+const DEFAULT_BUSINESS_PACKING=['Laptop','Charger','Phone charger','Power bank','ID proof','Work clothes','Undergarments','Toiletries','Notebook and pen']
+
+function safe(value:unknown,max=1200){return redactSecretShapedText(String(value??'').replace(/\s+/g,' ').trim().slice(0,max))}
+function pad(n:number){return String(n).padStart(2,'0')}
+
+export function explicitDates(text:string, defaultYear=new Date().getUTCFullYear(), upcomingFrom?:string){
+  const out:string[]=[]
+  const add=(year:number,month:number,day:number,yearless=false)=>{
+    for(let offset=0;offset<(yearless&&upcomingFrom?9:1);offset++){
+      const candidateYear=year+offset
+      const d=new Date(Date.UTC(candidateYear,month-1,day))
+      if(d.getUTCFullYear()!==candidateYear||d.getUTCMonth()!==month-1||d.getUTCDate()!==day)continue
+      const iso=`${candidateYear}-${pad(month)}-${pad(day)}`
+      if(yearless&&upcomingFrom&&iso<upcomingFrom)continue
+      if(!out.includes(iso))out.push(iso)
+      return
+    }
+  }
+  let m:RegExpExecArray|null
+  const dayMonth=/\b(\d{1,2})\s+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[,\s]+(20\d{2}))?/gi
+  while((m=dayMonth.exec(text))){const month=MONTHS[m[2].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[1]),!m[3])}
+  const monthDay=/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{1,2})\b(?:[,\s]+(20\d{2}))?/gi
+  while((m=monthDay.exec(text))){const month=MONTHS[m[1].toLowerCase()];if(month)add(Number(m[3]||defaultYear),month,Number(m[2]),!m[3])}
+  const iso=/\b(20\d{2})-(\d{1,2})-(\d{1,2})\b/g
+  while((m=iso.exec(text)))add(Number(m[1]),Number(m[2]),Number(m[3]))
+  const numeric=/\b(\d{1,2})[\/-](\d{1,2})[\/-](20\d{2})\b/g
+  while((m=numeric.exec(text)))add(Number(m[3]),Number(m[2]),Number(m[1]))
+  return out
+}
+
+function explicitDate(text:string){return explicitDates(text)[0]||null}
+
+function to24Hour(hour:number,minute:number,ap:string){
+  let h=hour
+  const marker=ap.toLowerCase()
+  if(marker==='pm'&&h<12)h+=12
+  if(marker==='am'&&h===12)h=0
+  if(h<0||h>23||minute<0||minute>59)return null
+  return `${pad(h)}:${pad(minute)}`
+}
+
+export function explicitMissionClock(text:string){
+  const withMinutes=text.match(/\b(\d{1,2}):(\d{2})\s*(am|pm)\b/i)
+  if(withMinutes)return to24Hour(Number(withMinutes[1]),Number(withMinutes[2]),withMinutes[3])
+  const hourOnly=text.match(/\b(\d{1,2})\s*(am|pm)\b/i)
+  if(hourOnly)return to24Hour(Number(hourOnly[1]),0,hourOnly[2])
+  const clock24=text.match(/\b(\d{1,2}):(\d{2})\b/)
+  if(clock24)return to24Hour(Number(clock24[1]),Number(clock24[2]),'')
+  return null
+}
+
+function routeText(raw:string){
+  const text=String(raw||'').replace(/\s+/g,' ').trim()
+  const stop='(?=\\s+(?:on|for|next|this|tomorrow|depart(?:ing|ure)?|flights?|work\\s+trip|business\\s+trip|trip|travel|only|around|at|with)\\b|[.,;]|$)'
+  let m=text.match(new RegExp(`\\bfrom\\s+([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28}?)\\s+to\\s+([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28}?)${stop}`,'i'))
+  if(!m)m=text.match(new RegExp(`\\b([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28}?)\\s+to\\s+([A-Za-z]{3}|[A-Za-z][A-Za-z .'-]{2,28}?)${stop}`,'i'))
+  if(!m?.[1]||!m?.[2])return text
+  const origin=m[1].replace(/^(?:research|search|find|compare|check|plan)\s+/i,'').trim()
+  const destination=m[2].replace(/\s+(?:work|business)\s+trip$/i,'').trim()
+  const date=explicitDate(text)
+  return `Search flights from ${origin} to ${destination}${date?` on ${date}`:''}`
+}
+
+function travelContext(raw:string){
+  const normalized=routeText(raw)
+  const context=buildTravelResearchContext(normalized)
+  if(!context.startDate){
+    const date=explicitDate(raw)
+    if(date){context.startDate=date;context.endDate=date;context.whenLabel=date;context.searchWhen=date}
+  }
+  return {context,normalized}
+}
+
+function plannedDeparture(missionText:string){
+  if(!/\bplanned\s+departure(?:\s+time)?\b|\bdeparture\s+time\b/i.test(missionText))return null
+  const date=explicitDate(missionText)
+  const time=explicitMissionClock(missionText)
+  if(!date||!time)return null
+  const timezone=/\bIST\b/i.test(missionText)?'Asia/Kolkata':null
+  return {date,time,timezone}
+}
+
+function beforeOffset(step:MissionStep){
+  const text=`${step.title} ${step.instruction}`
+  let m=text.match(/\b(\d{1,3})\s*(?:-|\s)?hours?\s+(?:before|pre[- ]?departure)\b/i)
+  if(m)return Number(m[1])*3600_000
+  m=text.match(/\b(\d{1,3})\s*(?:-|\s)?days?\s+(?:before|pre[- ]?departure)\b/i)
+  if(m)return Number(m[1])*24*3600_000
+  return null
+}
+
+async function actorTimezone(actor:AgentActor){
+  const {data}=await supabaseAdmin.from('users').select('timezone').eq('telegram_id',actor.legacyTelegramId).maybeSingle()
+  return normalizeTimezone(String(data?.timezone||'Asia/Kolkata'))
+}
+
+async function relativeMissionDate(text:string,actor:AgentActor){
+  if(!/\btomorrow\b/i.test(text))return null
+  const timezone=await actorTimezone(actor)
+  const tomorrow=new Date(Date.now()+24*3600_000)
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(tomorrow)
+  const values:Record<string,string>={}
+  for(const p of parts)if(p.type!=='literal')values[p.type]=p.value
+  return `${values.year}-${values.month}-${values.day}`
+}
+
+function destinationLabel(missionText:string){return travelContext(missionText).context.destination?.label||'trip'}
+
+function reminderMessage(step:MissionStep,missionText:string,hours?:number){
+  const quoted=step.instruction.match(/(?:with\s+the\s+)?(?:message|saying|text)\s*:?[\s]*['“\"]([^'”\"]+)['”\"]/i)?.[1]
+  if(quoted)return safe(quoted,500)
+  const destination=destinationLabel(missionText)
+  return hours ? `${destination} trip departure in ${hours} hours — confirm packing and check-in status.` : safe(step.title,500)
+}
+
+function normalizeReminderIdentity(value:unknown){
+  return String(value??'')
+    .toLowerCase()
+    .replace(/^\s*(?:create\s+(?:a\s+)?reminder(?:\s+with\s+the\s+message)?|remind\s+(?:me\s+)?(?:to|about)?)\s*[:\-]?\s*/i,'')
+    .replace(/[^a-z0-9]+/g,' ')
+    .replace(/\s+/g,' ')
+    .trim()
+}
+
+async function persistMissionReminder(params:{actor:AgentActor;date:string;time:string;timezone:string;message:string}){
+  // A plan step's own title is never the user's reminder text (20 Oct live: "Retrieve saved preferences about …").
+  if(isInternalPlanStepReminder(params.message))throw new Error('mission_reminder_intent_unverified')
+  const parsed=parseLocalDateTime({date:params.date,time:params.time,timezone:params.timezone})
+  if(parsed.dueAtUtc.getTime()<=Date.now())throw new Error('mission_reminder_time_in_past')
+  const dueIso=parsed.dueAtUtc.toISOString()
+  const {data:candidates,error:readError}=await supabaseAdmin.from('reminders')
+    .select('id,message,remind_at,timezone').eq('telegram_id',params.actor.legacyTelegramId).eq('remind_at',dueIso).eq('sent',false).limit(25)
+  if(readError)throw new Error(`mission_reminder_verify_failed:${readError.message}`)
+  const wantedIdentity=normalizeReminderIdentity(params.message)
+  const existing=(candidates||[]).find((r:any)=>normalizeReminderIdentity(r.message)===wantedIdentity)
+  if(existing?.id){
+    let row:any=existing
+    if(String(existing.message||'')!==params.message||String(existing.timezone||'')!==params.timezone){
+      const {data:updated,error:updateError}=await supabaseAdmin.from('reminders')
+        .update({message:params.message,timezone:params.timezone})
+        .eq('id',existing.id)
+        .eq('telegram_id',params.actor.legacyTelegramId)
+        .select('id,message,remind_at,timezone')
+        .maybeSingle()
+      if(updateError)throw new Error(`mission_reminder_canonicalize_failed:${updateError.message}`)
+      if(updated)row=updated
+    }
+    return {text:`Reminder already set for ${params.date} at ${params.time} (${params.timezone}).`,output:{reminderId:String(row.id),message:String(row.message||params.message),remindAt:String(row.remind_at||dueIso),timezone:String(row.timezone||params.timezone),reused:true,verifiedStore:'reminders'}}
+  }
+  const {data,error}=await supabaseAdmin.from('reminders').insert({
+    telegram_id:params.actor.legacyTelegramId,chat_id:params.actor.legacyTelegramId,whatsapp_to:params.actor.whatsappId,
+    message:params.message,remind_at:dueIso,sent:false,timezone:params.timezone,
+  }).select('id,message,remind_at,timezone').single()
+  if(error||!data?.id||!data.remind_at)throw new Error(`mission_reminder_create_failed:${error?.message||'missing_due_time'}`)
+  return {text:`Created reminder for ${params.date} at ${params.time} (${params.timezone}).`,output:{reminderId:String(data.id),message:String(data.message||params.message),remindAt:String(data.remind_at),timezone:String(data.timezone||params.timezone),reused:false,verifiedStore:'reminders'}}
+}
+
+export function reminderStepIntent(step:{title:string;instruction:string}):'read'|'write'|'mixed'|'unknown'{
+  const verbs=/(?<![\w-])(review(?:ing|ed)?|list(?:ing|ed)?|show(?:ing|n)?|find(?:ing)?|retriev(?:e|ing|ed)|read(?:ing)?|check(?:ing|ed)?|inspect(?:ing|ed)?|look(?:ing)? up|creat(?:e|ing|ed)|mak(?:e|ing)|set(?:ting)?|add(?:ing|ed)?|schedul(?:e|ing|ed)|remind(?:ing|ed)?|mov(?:e|ing|ed)|reschedul(?:e|ing|ed)|updat(?:e|ing|ed)|edit(?:ing|ed)?|delet(?:e|ing|ed)|remov(?:e|ing|ed)|cancel(?:ling|ing|led|ed)?|complet(?:e|ing|ed))(?![\w-])/gi
+  const kind=(verb:string)=>/^(review|list|show|find|retriev|read|check|inspect|look)/i.test(verb)?'read':/^(creat|mak|set|add|schedul|remind)/i.test(verb)?'write':'unsupported'
+  const intents=new Set<string>()
+  for(const text of [step.title,step.instruction]){
+    const positive=text.replace(/\b(?:do not|don't|never|without)\b(?:(?!\b(?:then|but|afterwards?|subsequently|and\s+(?:create|make|set|add|schedule|remind|review|list|show|find|retrieve|read|check|inspect|move|reschedule|update|edit|delete|remove|cancel|complete))\b)[^.;!?])*/gi,'')
+      .replace(/\b(?:scheduled|created|added|updated)\s+(?=reminders?\b)/gi,'')
+      .replace(/\b(reminders?\s+)(?:(?:that\s+)?(?:(?:were|are|was|is|has been|have been|had been)|(?:I|we|you|they)(?:\s+(?:have|had))?)\s+)?(?:scheduled|created|added|set|updated)\b/gi,'$1')
+    let creations=0
+    for(const clause of positive.split(/[.;!?]|\b(?:and|then)\b/i)){
+      let matches=[...clause.matchAll(verbs)]
+      // In an explicit creation, "reminder to review documents" is the reminder
+      // content. In a review, later verbs still describe outstanding operations.
+      if(matches[0]&&kind(matches[0][1])==='write'){
+        const payload=clause.search(/\breminders?\b[\s\S]*?\bto\b/i)
+        if(payload>=0)matches=matches.filter(match=>(match.index||0)<payload)
+      }
+      for(const match of matches){
+        const action=kind(match[1]);intents.add(action)
+        if(action==='write')creations++
+      }
+    }
+    if(creations>1&&(positive.match(/\b(?:reminders?|one|another)\b/gi)||[]).length>1)return 'mixed'
+  }
+  return intents.size>1?'mixed':intents.has('read')?'read':intents.has('write')?'write':'unknown'
+}
+
+// Muse case 35 (10 Oct): "I'm moving on 25 Oct … make a daily packing plan in 30-minute sessions
+// with reminders" failed: one plan step asked for daily reminders, which the single-instant writer
+// refuses. A daily request now becomes one reminder per day from today up to the day before the
+// deadline (at most 21), at the stated time or 7 pm when none is given.
+async function dailyMissionReminders(params:{actor:AgentActor;step:MissionStep;missionText:string}){
+  const text=`${params.step.title} ${params.step.instruction}`
+  if(!/\b(?:daily|every\s+day|each\s+day)\b/i.test(text))return null
+  const timezone=normalizeTimezone(await actorTimezone(params.actor))
+  const parts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date())
+  const v:Record<string,string>={};for(const p of parts)v[p.type]=p.value
+  const today=`${v.year}-${v.month}-${v.day}`
+  const deadlines=[...explicitDates(params.step.instruction,Number(v.year),today),...explicitDates(params.missionText,Number(v.year),today)].filter(d=>d>today).sort()
+  if(!deadlines.length)return null
+  const end=deadlines[deadlines.length-1]
+  const clock=explicitMissionClock(params.step.instruction)||explicitMissionClock(params.missionText)||'19:00'
+  const message=reminderMessage(params.step,params.missionText)
+  const created:string[]=[]
+  for(let day=new Date(`${today}T00:00:00Z`);created.length<21;day.setUTCDate(day.getUTCDate()+1)){
+    const date=day.toISOString().slice(0,10)
+    if(date>=end)break
+    try{await persistMissionReminder({actor:params.actor,date,time:clock,timezone,message});created.push(date)}
+    catch(error:any){if(String(error?.message||'')!=='mission_reminder_time_in_past')throw error}
+  }
+  if(!created.length)return null
+  const fmt=(d:string)=>new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(`${d}T00:00:00Z`))
+  return {text:`Set ${created.length} daily reminders at ${clock} (${fmt(created[0])} to ${fmt(created[created.length-1])}): ${message}`,
+    output:{reminderDates:created,clock,timezone,verifiedStore:'reminders',daily:true}}
+}
+
+export async function executeVerifiedMissionReminder(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
+  const {actor,step,missionText}=params
+  const stepIntent=reminderStepIntent(step)
+  if(stepIntent==='mixed')throw new Error('mission_reminder_mixed_read_write_requires_separate_steps')
+  if(stepIntent==='unknown')throw new Error('mission_reminder_intent_unverified')
+  if(stepIntent==='read'){
+    const reviewText=`${step.title} ${step.instruction}`
+    const timezone=reminderTimezoneMetadata(reviewText).timezone||await actorTimezone(actor)
+    const localParts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date())
+    const localValues:Record<string,string>={};for(const part of localParts)localValues[part.type]=part.value
+    const localToday=`${localValues.year}-${localValues.month}-${localValues.day}`
+    const dates=explicitDates(reviewText,Number(localValues.year),localToday)
+    const clocks=[...new Set([...reviewText.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter((clock):clock is string=>!!clock))]
+    const clock=clocks[0]||null
+    const relative=/\b(today|tomorrow)\b/i.exec(reviewText)?.[1].toLowerCase()
+    const weekRelative=/\b(?:this|next) week\b/i.test(reviewText)
+    let temporal: {timezone:string;dates:string[];clock:string|null;clocks:string[];pairs?:Array<{date:string;clock:string}>}|undefined
+    if(dates.length||clock||relative||weekRelative){
+      if(weekRelative&&!dates.length){
+        const window=calendarReadWindow(reviewText,new Date(),timezone)
+        for(let day=new Date(`${window.startDate}T00:00:00Z`);day.toISOString().slice(0,10)<=window.endDate;day.setUTCDate(day.getUTCDate()+1))dates.push(day.toISOString().slice(0,10))
+      }
+      if(relative&&!dates.length){
+        const parts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date())
+        const values:Record<string,string>={};for(const part of parts)values[part.type]=part.value
+        const date=new Date(`${values.year}-${values.month}-${values.day}T00:00:00Z`)
+        if(relative==='tomorrow')date.setUTCDate(date.getUTCDate()+1)
+        dates.push(date.toISOString().slice(0,10))
+      }
+      let pairs:Array<{date:string;clock:string}>|undefined
+      if(dates.length>1&&clocks.length>1&&!weekRelative){
+        pairs=[]
+        for(const clause of reviewText.replace(/(?<=\d),\s*(?=20\d{2}\b)/g,' ').split(/\band\b|[;,]/i).filter(clause=>clause.trim())){
+          const clauseDates=explicitDates(clause,Number(localValues.year),localToday)
+          const clauseClocks=[...new Set([...clause.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter((time):time is string=>!!time))]
+          if(clauseDates.length===1&&clauseClocks.length===1)pairs.push({date:clauseDates[0],clock:clauseClocks[0]})
+          else throw new Error('mission_reminder_paired_scope_unverified')
+        }
+        if(!dates.every(date=>pairs!.some(pair=>pair.date===date))||!clocks.every(time=>pairs!.some(pair=>pair.clock===time)))throw new Error('mission_reminder_paired_scope_unverified')
+      }
+      temporal={timezone,dates,clock,clocks,pairs}
+    }
+    const {reminders,truncated,scopeTerms}=await readScopedReminders(actor.legacyTelegramId,step,missionText,temporal)
+    return {text:(reminders.length
+      ? `Pending saved reminders${scopeTerms.length?` matching ${scopeTerms.join(' ')}`:''}:\n${reminders.map(row=>`${row.message} — ${new Intl.DateTimeFormat('en-GB',{timeZone:normalizeTimezone(row.timezone),dateStyle:'medium',timeStyle:'short'}).format(new Date(row.remindAt))} (${normalizeTimezone(row.timezone)})`).join('\n')}`
+      : 'No upcoming unsent reminders matching the requested text were found. This does not establish that the trip checklist is complete.')
+      +(scopeTerms.length?'\nMatched saved reminder text; reminders without these names or labels may not be included.':'')
+      +(truncated?'\nThe review reached its 1,000-reminder limit; later reminders were not checked.':''),
+      output:{reminders,readOnly:true,scope:'requested_reminders',scopeTerms,truncated,verifiedStore:'reminders'}}
+  }
+  const daily=await dailyMissionReminders({actor,step,missionText})
+  if(daily)return daily
+  const writeDates=explicitDates(step.instruction)
+  const writeClocks=[...new Set([...step.instruction.matchAll(/\b(?:\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\s*(?:am|pm))\b/gi)].map(match=>explicitMissionClock(match[0])).filter(Boolean))]
+  if(writeDates.length>1||writeClocks.length>1)throw new Error('mission_reminder_multiple_instants_require_separate_steps')
+  const exactDate=explicitDate(step.instruction)||await relativeMissionDate(step.instruction,actor)
+  const exactTime=explicitMissionClock(step.instruction)
+  if(exactDate&&exactTime){
+    const timezone=normalizeTimezone(/\bIST\b/i.test(step.instruction)?'Asia/Kolkata':await actorTimezone(actor))
+    return persistMissionReminder({actor,date:exactDate,time:exactTime,timezone,message:reminderMessage(step,missionText)})
+  }
+
+  const departure=plannedDeparture(missionText)
+  const offset=beforeOffset(step)
+  if(departure&&offset){
+    const timezone=normalizeTimezone(departure.timezone||await actorTimezone(actor))
+    const parsed=parseLocalDateTime({date:departure.date,time:departure.time,timezone})
+    const due=new Date(parsed.dueAtUtc.getTime()-offset)
+    if(due.getTime()<=Date.now())throw new Error('mission_reminder_time_in_past')
+    const hours=Math.round(offset/3600_000)
+    const localDue=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false}).formatToParts(due)
+    const values:Record<string,string>={};for(const p of localDue)if(p.type!=='literal')values[p.type]=p.value
+    return persistMissionReminder({actor,date:`${values.year}-${values.month}-${values.day}`,time:`${values.hour}:${values.minute}`,timezone,message:reminderMessage(step,missionText,hours)})
+  }
+
+  const startedAt=new Date().toISOString()
+  const result=await dispatchThroughSameBrain({internalStep:true,actor,text:step.instruction,messageId:params.messageId})
+  const {data,error}=await supabaseAdmin.from('reminders').select('id,message,remind_at,timezone,created_at')
+    .eq('telegram_id',actor.legacyTelegramId).gte('created_at',startedAt).order('created_at',{ascending:false}).limit(1).maybeSingle()
+  if(error)throw new Error(`mission_reminder_verify_failed:${error.message}`)
+  const due=data?.remind_at?new Date(data.remind_at):null
+  if(!data?.id||!due||!Number.isFinite(due.getTime())||due.getTime()<=Date.now())throw new Error('mission_reminder_write_unverified')
+  return {text:result.text,output:{reminderId:String(data.id),message:String(data.message||''),remindAt:String(data.remind_at),timezone:String(data.timezone||''),verifiedStore:'reminders',handledBy:result.handledBy}}
+}
+
+function listWords(value:string){
+  const stop=new Set(['create','review','update','use','or','my','existing','list','business','trip','work','the','a','an','for','and','with','without','items','existing','retrieve','find','add','missing','ensure','included'])
+  return value.toLowerCase().replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter(w=>w.length>2&&!stop.has(w))
+}
+
+function explicitRequestedListName(instruction:string){
+  const quoted=instruction.match(/(?:list\s+)?(?:titled|called)\s+['“\"]([^'”\"]+)['”\"]/i)?.[1]
+  if(quoted)return safe(quoted,180)
+  const bare=instruction.match(/(?:list\s+)?(?:titled|called)\s+([^,.;]+?)(?=\s+with\b|\s+containing\b|\s+including\b|[.;,]|$)/i)?.[1]
+  return bare?safe(bare,180):null
+}
+
+function requestedListName(step:MissionStep,missionText:string){
+  const explicit=explicitRequestedListName(step.instruction)
+  if(explicit)return explicit
+  const destination=destinationLabel(missionText)
+  if(/\bpacking\b/i.test(`${step.title} ${step.instruction}`))return `${destination} work trip packing`
+  return safe(step.title.replace(/^(?:create|review|update|use|retrieve|find)\s+/i,'').replace(/\blist\b/i,'').trim()||'mission list',180)
+}
+
+function itemsToEnsure(step:MissionStep,creating:boolean){
+  const text=`${step.title} ${step.instruction}`
+  const items:string[]=[]
+  const add=(v:string)=>{if(!items.some(x=>x.toLowerCase()===v.toLowerCase()))items.push(v)}
+  if(/\blaptop\b/i.test(text))add('Laptop')
+  if(/\bcharger\b/i.test(text))add('Charger')
+  if(/\bphone charger\b/i.test(text))add('Phone charger')
+  if(/\bpower bank\b/i.test(text))add('Power bank')
+  const itemClause=step.instruction.match(/\bitems?\s*:\s*([^.;]+)/i)?.[1]
+  if(itemClause)itemClause.split(/,|\band\b/i).map(x=>x.trim()).filter(Boolean).forEach(add)
+  if(creating&&/\bpacking\b/i.test(text)&&!itemClause&&items.length<4)DEFAULT_BUSINESS_PACKING.forEach(add)
+  return items
+}
+
+export async function executeVerifiedMissionList(params:{actor:AgentActor;step:MissionStep;missionText:string}){
+  const all=await getAllLists(params.actor.legacyTelegramId)
+  const text=`${params.step.title} ${params.step.instruction}`
+  const explicitName=explicitRequestedListName(params.step.instruction)
+  const explicitCanonical=explicitName?normalizeListName(explicitName):null
+  const exactExplicit=explicitCanonical?(all||[]).find((row:any)=>normalizeListName(String(row.list_name||''))===explicitCanonical):null
+  const words=listWords(text)
+  const destination=destinationLabel(params.missionText).toLowerCase()
+  const ranked=(all||[]).map((row:any)=>{
+    const name=String(row.list_name||'').toLowerCase()
+    let score=words.reduce((n,w)=>n+(name.includes(w)?1:0),0)
+    if(/\bpacking\b/i.test(text)&&name.includes('packing'))score+=5
+    if(destination!=='trip'&&name.includes(destination))score+=5
+    return {row,score}
+  }).filter((x:any)=>x.score>0).sort((a:any,b:any)=>b.score-a.score)
+  const chosen=explicitName?(exactExplicit||null):(ranked[0]?.row||null)
+  const listName=chosen?.list_name||requestedListName(params.step,params.missionText)
+  const ensure=itemsToEnsure(params.step,!chosen)
+  if(ensure.length)await addToListDetailed(params.actor.legacyTelegramId,listName,ensure)
+  const verified=await getList(params.actor.legacyTelegramId,listName)
+  if(!verified?.id)throw new Error('mission_list_write_unverified')
+  const items=Array.isArray(verified.items)?verified.items:[]
+  return {text:`Using ${verified.list_name} with ${items.length} items.`,output:{listId:String(verified.id),listName:String(verified.list_name),itemCount:items.length,items:items.slice(0,80),reused:Boolean(chosen),verifiedStore:'lists'}}
+}
+
+function resultDatesAreInsideWindow(result:WebSearchResult,startDate?:string,endDate?:string){
+  if(!startDate||!endDate)return true
+  const defaultYear=Number(startDate.slice(0,4))
+  const dates=explicitDates(`${result.title} ${result.snippet}`,defaultYear)
+  if(!dates.length)return true
+  return dates.every(date=>date>=startDate&&date<=endDate)
+}
+
+export async function executeVerifiedMissionWebSearch(step:MissionStep){
+  if(!isPublicTravelResearchRequest(step.instruction)){
+    const results=await searchWebResults(step.instruction)
+    return {text:results.length?`Found ${results.length} public web results.`:'No useful public web results found.',output:{results:results.slice(0,5).map(r=>({title:r.title,url:r.url,snippet:r.snippet.slice(0,500)}))}}
+  }
+  const {context,normalized}=travelContext(step.instruction)
+  const raw=await searchWebResults(normalized)
+  const dateSafe=raw.filter(result=>resultDatesAreInsideWindow(result,context.startDate,context.endDate))
+  const curatedBase=curateTravelResults(dateSafe,context)
+  const exactDateQuery=Boolean(context.startDate&&context.endDate&&context.startDate===context.endDate)
+  const curated=exactDateQuery?curatedBase.filter((r:any)=>r.dateRelevance==='matched'):curatedBase
+  return {
+    text:curated.length?`Found ${curated.length} direction/date-curated travel sources for ${context.routeLabel}.`:`No reliable direction/date-matched travel source was found for ${context.routeLabel}.`,
+    output:{context,results:curated,verifiedCuration:'travel-research',mixedDateResultsRejected:raw.length-dateSafe.length,exactDateRequired:exactDateQuery},
+  }
+}
+
+function includesAny(hay:string,values:string[]){const lower=hay.toLowerCase();return values.some(v=>v&&lower.includes(v.toLowerCase()))}
+
+export async function executeVerifiedMissionMemory(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
+  if(/\b(?:my\s+)?upcoming\s+(?:trip|travel)\b/i.test(params.missionText)){
+    const {data,error}=await supabaseAdmin.from('travel_tickets').select('id,from_city,to_city,depart_at,arrive_at,passengers')
+      .eq('telegram_id',params.actor.legacyTelegramId).gte('depart_at',new Date().toISOString()).order('depart_at',{ascending:true}).limit(30)
+    if(error)throw new Error(`mission_upcoming_trip_read_failed:${error.message}`)
+    const normalize=(value:unknown)=>String(value||'').toLowerCase().replace(/[^a-z]+/g,' ').trim()
+    const owner=normalize(params.actor.name)
+    const trips=(data||[]).filter(row=>owner&&owner!=='gogo'&&Array.isArray(row.passengers)&&row.passengers.some(name=>normalize(name)===owner))
+    if(!trips.length)return{text:'No upcoming trip for you was found in the saved tickets checked. Dates and destination are unconfirmed; do not substitute another person’s travel or unrelated identity documents.',output:{found:false,tripFound:false,boundedLookup:true,verifiedStore:'travel_tickets',verifiedRelevance:true}}
+    return{text:trips.map(row=>`Saved trip: ${safe(row.from_city,80)} → ${safe(row.to_city,80)} · departure ${row.depart_at}`).join('\n'),output:{found:true,tripFound:true,ticketIds:trips.map(row=>String(row.id)),verifiedStore:'travel_tickets',verifiedRelevance:true}}
+  }
+  const {context}=travelContext(params.missionText)
+  const missionDate=explicitDate(params.missionText)
+  if(missionDate&&!context.startDate){context.startDate=missionDate;context.endDate=missionDate}
+  const travelMission=context.kind==='flight'&&context.origin&&context.destination&&/\b(flight|trip|travel|mumbai|bengaluru|bangalore)\b/i.test(params.missionText)
+  if(travelMission){
+    const {data,error}=await supabaseAdmin.from('documents').select('id,title,summary,extracted,doc_date,created_at')
+      .eq('telegram_id',params.actor.legacyTelegramId).eq('doc_type','ticket').order('created_at',{ascending:false}).limit(40)
+    if(error)throw new Error(`mission_memory_read_failed:${error.message}`)
+    const originTerms=[context.origin!.label,context.origin!.code||'',...context.origin!.aliases]
+    const destTerms=[context.destination!.label,context.destination!.code||'',...context.destination!.aliases]
+    for(const doc of data||[]){
+      const flights=Array.isArray((doc as any)?.extracted?.flights)?(doc as any).extracted.flights:[]
+      for(const leg of flights){
+        const from=String(leg?.from||'');const to=String(leg?.to||'')
+        if(!includesAny(from,originTerms)||!includesAny(to,destTerms))continue
+        const date=explicitDate(String(leg?.date||doc.doc_date||''))
+        if(context.startDate&&context.endDate&&date&&(date<context.startDate||date>context.endDate))continue
+        return {text:'Found a saved travel item that matches this mission.',output:{found:true,documentId:String(doc.id),title:safe(doc.title||'Saved travel item',180),summary:safe(doc.summary||'',600),matchedRoute:context.routeLabel,verifiedRelevance:true}}
+      }
+    }
+    return {text:'No saved flight matched this mission’s route/date. Continuing without an old ticket.',output:{found:false,matchedRoute:context.routeLabel,verifiedRelevance:true}}
+  }
+  const result=await dispatchThroughSameBrain({internalStep:true,actor:params.actor,text:params.step.instruction,messageId:params.messageId})
+  return {text:result.text,output:{reply:String(result.text||'').slice(0,3500),handledBy:result.handledBy}}
+}
+
+function calendarTitle(step:MissionStep){
+  const quoted=step.instruction.match(/(?:titled|called)\s+['“\"]([^'”\"]+)['”\"]/i)?.[1]
+  if(quoted)return safe(quoted,180)
+  const fromTitle=step.title.replace(/^(?:prepare|create|add|schedule)(?:\s+calendar)?\s+event(?:\s+for)?\s*/i,'').replace(/\s*\(approval required\)\s*$/i,'').trim()
+  return safe(fromTitle||'AskGogo event',180)
+}
+
+function addDaysIso(iso:string,days:number){
+  const d=new Date(`${iso}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate()+days)
+  return d.toISOString().slice(0,10)
+}
+
+function isCalendarWriteStep(step:MissionStep){
+  const request=calendarAffirmativeText(`${step.title} ${step.instruction}`)
+  return /\b(add|create|change|move|schedule|write|modify|prepare|invite|cancel|delete|event\s+titled|spanning)\b/i.test(request)
+}
+
+export async function executeVerifiedMissionCalendar(params:{actor:AgentActor;step:MissionStep;missionText:string;runId:string}){
+  if(!isCalendarWriteStep(params.step)){
+    const result=await executeReadOnlyCalendarStep({actor:params.actor,instruction:params.step.instruction,missionText:params.missionText})
+    if('conflictsVerified' in result.output&&result.output.conflictsVerified===false){
+      throw new Error('calendar_conflicts_unverified')
+    }
+    return result
+  }
+
+  const year=Number(explicitDate(params.missionText)?.slice(0,4)||new Date().getUTCFullYear())
+  let dates=explicitDates(params.step.instruction,year)
+  if(dates.length<2){
+    const missionDates=explicitDates(params.missionText,year)
+    for(const date of missionDates)if(!dates.includes(date))dates.push(date)
+  }
+  const startDate=dates[0]
+  const endInclusive=dates[1]||dates[0]
+  if(!startDate||!endInclusive)throw new Error('mission_calendar_dates_missing')
+  const endExclusive=addDaysIso(endInclusive,1)
+  const title=calendarTitle(params.step)
+  const location=destinationLabel(params.missionText)
+
+  const {data:user,error:userError}=await supabaseAdmin.from('users')
+    .select('google_calendar_connected,google_refresh_token').eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
+  if(userError)throw new Error(`mission_calendar_user_read_failed:${userError.message}`)
+  if(!user?.google_calendar_connected||!user?.google_refresh_token)throw new Error('calendar_not_connected')
+  const accessToken=await refreshAccessToken(user.google_refresh_token)
+  if(!accessToken)throw new Error('calendar_token_refresh_failed')
+
+  const {data:priorSteps}=await supabaseAdmin.from('agent_steps')
+    .select('tool_name,title,output_json').eq('run_id',params.runId).eq('telegram_id',String(params.actor.legacyTelegramId)).order('ordinal',{ascending:true})
+  const travel=(priorSteps||[]).find((s:any)=>s.tool_name==='web_search') as any
+  const travelResults=Array.isArray(travel?.output_json?.results)?travel.output_json.results.slice(0,3):[]
+  const {data:artifact}=await supabaseAdmin.from('agent_artifacts')
+    .select('id,title').eq('telegram_id',String(params.actor.legacyTelegramId))
+    .contains('source_refs',[{type:'agent_run',id:params.runId}]).order('created_at',{ascending:false}).limit(1).maybeSingle()
+
+  const description=[
+    'Prepared by AskGogo.',
+    artifact?.title?`Trip Brief: ${artifact.title} (AskGogo artifact ${artifact.id})`:null,
+    travelResults.length?`Flight research: ${travelResults.map((r:any)=>safe(`${r.source||''} ${r.title||''}`,140)).join(' | ')}`:null,
+    'No flight booking or payment was performed by this calendar action.',
+  ].filter(Boolean).join('\n')
+
+  const lookupParams=new URLSearchParams({
+    timeMin:`${startDate}T00:00:00Z`,timeMax:`${addDaysIso(endExclusive,1)}T00:00:00Z`,singleEvents:'true',
+    privateExtendedProperty:`askgogoRunId=${params.runId}`,
+  })
+  const lookup=await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events?${lookupParams}`,{headers:{Authorization:`Bearer ${accessToken}`},cache:'no-store'})
+  if(lookup.ok){
+    const found=await lookup.json().catch(()=>({}))
+    const existing=Array.isArray(found?.items)?found.items[0]:null
+    if(existing?.id)return {text:`Calendar event already exists: ${title}.`,output:{eventId:String(existing.id),title,startDate,endDate:endInclusive,location,reused:true,verifiedStore:'google-calendar'}}
+  }
+
+  const response=await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events',{
+    method:'POST',headers:{Authorization:`Bearer ${accessToken}`,'Content-Type':'application/json'},
+    body:JSON.stringify({
+      summary:title,description,location,
+      start:{date:startDate},end:{date:endExclusive},
+      extendedProperties:{private:{askgogoRunId:params.runId,source:'askgogo-agent'}},
+    }),
+  })
+  const data=await response.json().catch(()=>({}))
+  if(!response.ok||!data?.id)throw new Error(`mission_calendar_create_failed:${data?.error?.message||response.status}`)
+  return {text:`Added ${title} to Google Calendar for ${startDate} through ${endInclusive}.`,output:{eventId:String(data.id),htmlLink:String(data.htmlLink||''),title,startDate,endDate:endInclusive,location,reused:false,verifiedStore:'google-calendar'}}
+}

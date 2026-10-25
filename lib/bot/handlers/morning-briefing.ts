@@ -1,0 +1,302 @@
+import { supabaseAdmin } from '@/lib/supabase-admin'
+import { loadIntelligence } from './briefing-intelligence'
+import { fetchWeatherForecast, formatCurrentWeather } from '@/lib/services/weather'
+import { getTodayEvents } from '@/lib/google-calendar'
+import { getTodayEventsAllAccounts } from '@/lib/services/google-calendar-accounts'
+import {isRelevantOpenLoop} from '@/lib/agent/task-lifecycle'
+import {formatEmailSnippet} from '@/lib/agent/google-workspace-read'
+
+function todayDateKey() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date())
+}
+
+function formatReminderTime(iso: string) {
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(new Date(iso))
+}
+
+const istDate = (value: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit' }).format(value)
+
+/** A timed event that began on an earlier IST day is ongoing today, not "at <its old start time>". */
+function startedBeforeToday(event: any, now: Date) {
+  const start = event?.start?.dateTime
+  return Boolean(start) && Number.isFinite(Date.parse(start)) && istDate(new Date(start)) < istDate(now)
+}
+
+function formatEventTime(event: any, now = new Date()) {
+  const start = event?.start?.dateTime || event?.start?.date
+  if (!start) return 'All day'
+
+  if (!event?.start?.dateTime) return 'All day'
+  if (startedBeforeToday(event, now)) {
+    return 'Ongoing from an earlier day'
+  }
+
+  return new Intl.DateTimeFormat('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  }).format(new Date(start))
+}
+
+function cleanReminderText(text: string) {
+  return (text || 'Reminder').replace(/^to\s+/i, '').trim()
+}
+
+function firstName(name?: string) {
+  const clean = (name || '').trim()
+  if (!clean) return 'there'
+  return clean.split(' ')[0]
+}
+
+function semanticReminderKey(reminder: any) {
+  const text = cleanReminderText(reminder.message).toLowerCase()
+  const time = formatReminderTime(reminder.remind_at)
+
+  if (text.includes('top priority')) return `day-plan-priority|${time}`
+  if (text.includes('calendar') && text.includes('follow')) return `day-plan-followups|${time}`
+  if (text.includes('plan tomorrow') || text.includes('review the day') || text.includes('close pending')) {
+    return `day-plan-evening-review|${time}`
+  }
+
+  return `${text}|${time}`
+}
+
+function uniqueReminders(reminders: any[]) {
+  const seen = new Set<string>()
+  const output: any[] = []
+
+  for (const reminder of reminders) {
+    const key = semanticReminderKey(reminder)
+    if (seen.has(key)) continue
+    seen.add(key)
+    output.push(reminder)
+  }
+
+  return output
+}
+
+async function getTodaysReminders(telegramId: number) {
+  const { data } = await supabaseAdmin
+    .from('reminders')
+    .select('id, message, remind_at, sent')
+    .eq('telegram_id', telegramId)
+    .eq('sent', false)
+    .order('remind_at', { ascending: true })
+    .limit(30)
+
+  const today = todayDateKey()
+
+  const reminders = (data || []).filter((r: any) => {
+    const d = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(r.remind_at))
+
+    return d === today
+  })
+
+  return uniqueReminders(reminders)
+}
+
+// Flights departing today (IST). Reads the structured travel_tickets store; returns
+// [] on any error (e.g. table not migrated yet) so the brief stays resilient.
+function normalizeBriefKey(value: unknown) {
+  return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+export function reminderDuplicatesFlight(reminder:any, flights:any[]) {
+  const text=normalizeBriefKey(reminder?.message)
+  if(!text)return false
+  return (flights||[]).some((f:any)=>{
+    const flightNo=normalizeBriefKey(f.flight_no)
+    const pnr=normalizeBriefKey(f.pnr)
+    const from=normalizeBriefKey(f.from_city)
+    const to=normalizeBriefKey(f.to_city)
+    if(flightNo&&text.includes(flightNo))return true
+    if(pnr&&text.includes(pnr)&&/depart|flight|boarding|check in|checkin/.test(text))return true
+    return Boolean(from&&to&&text.includes(from)&&text.includes(to)&&/depart|flight|boarding/.test(text))
+  })
+}
+
+async function getTodaysDepartures(telegramId: number) {
+  try {
+    const key = todayDateKey() // YYYY-MM-DD in IST
+    const startMs = new Date(`${key}T00:00:00+05:30`).getTime()
+    const startUtc = new Date(startMs).toISOString()
+    const endUtc = new Date(startMs + 24 * 60 * 60 * 1000).toISOString()
+
+    const { data } = await supabaseAdmin
+      .from('travel_tickets')
+      .select('from_city, to_city, depart_local, airline, flight_no, seat, pnr')
+      .eq('telegram_id', telegramId)
+      .eq('type', 'flight')
+      .gte('depart_at', startUtc)
+      .lt('depart_at', endUtc)
+      .order('depart_at', { ascending: true })
+
+    return data || []
+  } catch {
+    return []
+  }
+}
+
+async function getCalendarState(telegramId: number) {
+  try {
+    const {data: user, error} = await supabaseAdmin.from('users')
+      .select('google_calendar_connected, google_refresh_token').eq('telegram_id', telegramId).single()
+    if (error || !user) throw new Error('calendar_state_unavailable')
+    const result = await getTodayEventsAllAccounts(telegramId, user.google_calendar_connected ? user.google_refresh_token : null, getTodayEvents, Boolean(user.google_calendar_connected))
+    return {connected: result.connected, events: result.events, error: false, multi: result.multi, incomplete: result.incomplete}
+  } catch (err) {
+    // Fetch failed (bad/expired token, wrong account, Google error). Flag it so the
+    // briefing says "couldn't reach Calendar" instead of the empty-day copy.
+    console.error('CALENDAR_STATE_FETCH_FAILED:', err)
+    return {
+      connected: true,
+      events: [],
+      error: true,
+      multi: false,
+      incomplete: true,
+    }
+  }
+}
+
+function cleanWeather(raw: string) {
+  let text = raw
+    .replace(/\*/g, '')
+    .replace(/^Current weather in /i, '')
+    .replace(/:\s*\n/i, ': ')
+    .replace(/\n/g, ' • ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  text = text.replace(/^Bangalore:\s*/i, 'Bangalore: ')
+
+  if (!text.toLowerCase().startsWith('bangalore')) {
+    text = `Bangalore: ${text}`
+  }
+
+  return text
+}
+
+export async function buildMorningBriefing(telegramId: number, userName?: string, options:{includeOpenLoops?:boolean}={}) {
+  const [reminders, calendarState, flights] = await Promise.all([
+    getTodaysReminders(telegramId),
+    getCalendarState(telegramId),
+    getTodaysDepartures(telegramId),
+  ])
+  const visibleReminders=reminders.filter((r:any)=>!reminderDuplicatesFlight(r,flights))
+
+  let weatherText = 'Weather unavailable right now.'
+  try {
+    const forecast = await fetchWeatherForecast('Bangalore', 2)
+    if (forecast) {
+      weatherText = cleanWeather(formatCurrentWeather(forecast))
+    }
+  } catch {
+    weatherText = 'Weather unavailable right now.'
+  }
+
+  const name = firstName(userName)
+
+  // #20 content flags: users.briefing_content (csv). 'default' = show everything.
+  const { data: bc } = await supabaseAdmin
+    .from('users')
+    .select('briefing_content')
+    .eq('telegram_id', telegramId)
+    .maybeSingle()
+  const flags = String((bc as any)?.briefing_content || 'default').toLowerCase()
+  const show = (k: string) => flags === 'default' || flags.includes(k)
+
+  const blocks: string[] = [`☀️ *Today for ${name}*`]
+
+  // What needs me / meeting prep / what Gogo is handling / done since yesterday, from saved state only.
+  if (show('intelligence') || flags === 'default') {
+    try {
+      blocks.push(...await loadIntelligence(telegramId))
+    } catch { /* section omitted; never claims an empty queue */ }
+  }
+
+  if (show('weather')) blocks.push(`🌤️ *Weather*\n${weatherText}`)
+
+  // ✈️ Today's flight — above Calendar. 'travel' is included by the 'default' flag.
+  if (show('travel')) {
+    if (flights.length) {
+      const lines = flights.map((f: any) => {
+        const carrier = [f.airline, f.flight_no].filter(Boolean).join(' ')
+        const seat = f.seat ? ` · Seat ${f.seat}` : ''
+        const pnr = f.pnr ? ` · PNR ${f.pnr}` : ''
+        return `• ${f.from_city} → ${f.to_city} · ${f.depart_local || ''}${carrier ? ` · ${carrier}` : ''}${seat}${pnr}`
+      })
+      blocks.push(`✈️ *Today's flight*\n${lines.join('\n')}`)
+    }
+  }
+
+  if (show('calendar') || show('meeting')) {
+    let cal = `📅 *Calendar*\n`
+    if (!calendarState.connected) {
+      cal += `Calendar is not connected yet.\nType *connect calendar* to enable your daily schedule.`
+    } else if (calendarState.error) {
+      cal += `⚠️ Couldn't reach Google Calendar just now — this is a temporary hiccup, not necessarily an empty day. If it keeps happening, reconnect with *connect calendar*.`
+    } else if (calendarState.events.length) {
+      // Events starting today come before ones carried over from earlier days, and
+      // identical lines are grouped, so a multi-day series cannot crowd out today.
+      const now = new Date()
+      const ordered = [...calendarState.events.filter((event: any) => !startedBeforeToday(event, now)), ...calendarState.events.filter((event: any) => startedBeforeToday(event, now))]
+      const grouped = new Map<string, number>()
+      for (const event of ordered) {
+        const line = `• ${formatEventTime(event, now)} — ${event.summary || 'Untitled event'}${calendarState.multi && event._account ? ` (${event._account})` : ''}`
+        grouped.set(line, (grouped.get(line) || 0) + 1)
+      }
+      const lines = [...grouped].map(([line, count]) => `${line}${count > 1 ? ` (×${count})` : ''}`)
+      cal += lines.slice(0, 5).join('\n') + (lines.length > 5 ? `\n• +${lines.length - 5} more` : '')
+    } else {
+      cal += calendarState.incomplete ? `No events returned from the calendars I could read.` : `No calendar events lined up today.`
+    }
+    if (calendarState.incomplete && !calendarState.error) cal += `\n⚠️ A linked Google Calendar could not be read, so this schedule is incomplete.`
+    blocks.push(cal)
+  }
+
+  if (show('reminder') || show('task')) {
+    let rem = `⏰ *Reminders*\n`
+    if (visibleReminders.length) {
+      rem += visibleReminders
+        .slice(0, 7)
+        .map((r: any) => `• ${cleanReminderText(r.message)} — ${formatReminderTime(r.remind_at)}`)
+        .join('\n')
+    } else {
+      rem += `No reminders lined up for today.`
+    }
+    blocks.push(rem)
+  }
+
+
+  if(options.includeOpenLoops||show('open_loop')||show('task')){
+    try{
+      const {data,error}=await supabaseAdmin.from('agent_open_loops')
+        .select('id,kind,title,summary,status,source_type').eq('telegram_id',String(telegramId)).eq('status','active')
+        .order('priority',{ascending:false}).limit(8)
+      if(error)throw new Error('briefing_open_loops_unavailable')
+      const loops=(data||[]).filter(isRelevantOpenLoop)
+      // Several saved items can share a title (e.g. two "Block calendar" cards).
+      // Group identical lines with a count instead of repeating them.
+      const grouped=new Map<string,number>()
+      for(const loop of loops as Array<{title?:unknown}>){const line=formatEmailSnippet(String(loop.title||'Untitled item'),180);grouped.set(line,(grouped.get(line)||0)+1)}
+      blocks.push(`🧩 *Saved open loops* (up to 8; saved status, providers not rechecked)\n${grouped.size?[...grouped].map(([line,count])=>`• ${line}${count>1?` (×${count})`:''}`).join('\n'):'No active open loops returned.'}`)
+    }catch{blocks.push('🧩 *Open loops unavailable* — I could not read their saved status; this is not an empty-queue claim.')}
+  }
+  return blocks.join('\n\n')
+}

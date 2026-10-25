@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AskGogo mark">
+  <title>AskGogo</title>
+  <circle cx="20" cy="22" r="9" fill="#2C1A13"/>
+  <circle cx="32" cy="17" r="10" fill="#2C1A13"/>
+  <circle cx="44" cy="22" r="9" fill="#2C1A13"/>
+  <path d="M32 22 C46 22 54 32 54 44 C54 54 44 60 32 60 C20 60 10 54 10 44 C10 32 18 22 32 22Z" fill="#F3E7D3"/>
+  <circle cx="32" cy="48" r="10" fill="#EF7A27" fill-opacity=".85"/>
+</svg>

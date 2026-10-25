@@ -1,0 +1,14 @@
+<!doctype html><html><head><title>Vision fixture</title><meta charset="utf-8">
+<style>body{margin:0;font:14px sans-serif}.b{position:absolute;width:140px;height:40px}#box{position:absolute;left:300px;top:300px;width:200px;height:30px}</style></head><body>
+<!-- Fixed positions so a test can act by coordinates, like the screenshot fallback does. -->
+<button class="b" id="login" style="left:100px;top:100px">Login</button>
+<button class="b" id="pay" style="left:100px;top:200px">Pay now INR 375</button>
+<button class="b" id="cart" style="left:300px;top:200px">Add To Cart</button>
+<p id="state" style="position:absolute;left:600px;top:100px">idle</p>
+<script>
+const st=document.getElementById('state');
+document.getElementById('login').addEventListener('click',()=>{if(document.getElementById('box'))return;const i=document.createElement('input');i.id='box';i.type='tel';document.body.appendChild(i);i.addEventListener('input',()=>{st.textContent='typed '+i.value.length+' digits ending '+i.value.slice(-4)});st.textContent='login open'});
+document.getElementById('pay').addEventListener('click',()=>{st.textContent='PAID'});
+document.getElementById('cart').addEventListener('click',()=>{st.textContent='added to cart'});
+</script>
+</body></html>

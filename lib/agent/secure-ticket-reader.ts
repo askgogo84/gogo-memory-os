@@ -1,0 +1,288 @@
+import { Sandbox } from '@vercel/sandbox'
+import { detectHumanAuthGate } from './browser-auth-gate'
+import { acquireBrowserOwnerLock, type BrowserOwnerRelease } from './browser-owner-lock'
+import { detectProviderChallenge, PROVIDER_CLOUDFLARE_CHALLENGE, DEVICE_HANDOFF_REQUIRED } from './provider-challenge'
+import { runSecureBrowser } from './secure-computer'
+import { startProviderBrowserHandoff } from './provider-browser-handoff'
+import {ensureManagedBrowser,managedBrowserEnabled} from './managed-browser'
+import { releaseBrowserHandoff } from './browser-handoff'
+import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_IMAGE, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
+
+const SANDBOX_REGION = process.env.GOGO_SANDBOX_REGION || 'bom1'
+
+export type TicketCredential = {
+  mimeType: string
+  dataBase64: string
+  source: 'provider_page'
+  label: string
+}
+
+export type SecureTicketReadResult = {
+  status: 'completed' | 'blocked' | 'failed'
+  url: string
+  title: string
+  pageText: string
+  shareData?: { title?: string; text?: string; url?: string }
+  usefulLinks: Array<{ text: string; href: string }>
+  credential?: TicketCredential
+  blockReason?: 'human_auth_required' | 'provider_cloudflare_challenge'
+  authReason?: 'password'|'otp'|'passkey'|'captcha'|'device_approval'|'payment_auth'|'login_unavailable'
+  handoff?: 'device_handoff_required'
+  authHandoff?: Awaited<ReturnType<typeof startProviderBrowserHandoff>>
+  authHandoffPending?: boolean
+}
+
+const sandboxName = browserSandboxNameFor
+
+function allowedHosts(url: string) {
+  const u = new URL(url)
+  if (!['http:', 'https:'].includes(u.protocol)) throw new Error('ticket_url_not_http')
+  const host = u.hostname.toLowerCase()
+  if (!host || host === 'localhost' || host.endsWith('.local')) throw new Error('ticket_private_host_blocked')
+  const allow: Record<string, string[]> = { [host]: [], [`*.${host}`]: [] }
+  if (/bookmyshow|bmsurl/.test(host)) {
+    allow['bookmyshow.com'] = []
+    allow['*.bookmyshow.com'] = []
+    allow['bmscdn.com'] = []
+    allow['*.bmscdn.com'] = []
+  }
+  return allow
+}
+
+function safeFailureCode(error: unknown) {
+  const message = String((error as any)?.message || error || '')
+  if (message.startsWith('ticket_browser_bootstrap_failed')) return 'ticket_browser_bootstrap_failed'
+  if (message.startsWith('ticket_browser_failed')) return 'ticket_browser_failed'
+  if (message.startsWith('ticket_browser_empty_output')) return 'ticket_browser_empty_output'
+  if (message.startsWith('missing_ticket_reader_payload')) return 'missing_ticket_reader_payload'
+  if (message.startsWith('secure_browser_')) return message.split(':')[0].slice(0, 120)
+  return 'ticket_reader_failed'
+}
+
+const SCRIPT = String.raw`
+const { chromium } = require('playwright');
+const encoded = process.argv[2];
+if (!encoded) throw new Error('missing_ticket_reader_payload');
+const payload = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+const profile='${BROWSER_PROFILE_DIR}';
+const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
+const bad=/\b(pay|purchase|buy|confirm purchase|place order|book now|checkout|refund|cancel booking|delete)\b/i;
+const useful=/\b(share|download|show ticket|view ticket|your ticket|ticket|qr|barcode|pass|wallet|details|more actions)\b/i;
+const mobileUA='Mozilla/5.0 (Linux; Android 16; CPH2745) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36';
+async function waitForTicket(page){
+  const marker=/\b(your ticket|booking id|ticket\(s\)|audi\s*\d+|seat(?:s)?|qr-|showtime|find venue)\b/i;
+  const deadline=Date.now()+12000;
+  while(Date.now()<deadline){
+    const text=clean(await page.locator('body').innerText().catch(()=>''));
+    if(marker.test(text))return true;
+    await page.waitForTimeout(650);
+  }
+  return false;
+}
+async function clickUseful(page){
+  const loc=page.locator('button,a,[role="button"]');
+  const n=Math.min(await loc.count(),140);
+  const tried=[];
+  for(let i=0;i<n;i++){
+    const el=loc.nth(i); let label='';
+    try{label=clean(await el.innerText().catch(()=>'' )||await el.getAttribute('aria-label')||await el.getAttribute('title')||'')}catch{}
+    if(!label||!useful.test(label)||bad.test(label))continue;
+    tried.push(label.slice(0,120));
+    try{await el.click({timeout:3500});await page.waitForTimeout(1000)}catch{}
+    const share=await page.evaluate(()=>window.__gogoShareData||null).catch(()=>null);
+    if(share)break;
+  }
+  return tried;
+}
+async function candidateScore(el){
+  return await el.evaluate(node=>{
+    const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
+    const attrs=[node.getAttribute('alt'),node.getAttribute('title'),node.getAttribute('aria-label'),node.getAttribute('src'),node.id,node.className].filter(Boolean).join(' ').toLowerCase();
+    const near=clean(node.parentElement?.innerText||node.closest('div')?.innerText||'').slice(0,700).toLowerCase();
+    let s=0;
+    if(/qr|qrcode|barcode/.test(attrs))s+=12;
+    if(/ticket|pass|entry|scan/.test(attrs))s+=5;
+    if(/qr|barcode|scan (?:this|at)|show this|entry|booking id|ticket\(s\)/.test(near))s+=7;
+    if(node.tagName==='CANVAS')s+=2;
+    return s;
+  }).catch(()=>0);
+}
+async function captureCredential(page){
+  const selectors='img,canvas,svg,[class*="qr" i],[id*="qr" i],[class*="barcode" i],[id*="barcode" i]';
+  const loc=page.locator(selectors); const n=Math.min(await loc.count(),120); let best=null,bestScore=0;
+  for(let i=0;i<n;i++){
+    const el=loc.nth(i);
+    try{
+      if(!await el.isVisible())continue;
+      const box=await el.boundingBox(); if(!box||box.width<70||box.height<70)continue;
+      const score=await candidateScore(el); if(score>bestScore){best=el;bestScore=score;}
+    }catch{}
+  }
+  if(!best||bestScore<7)return null;
+  try{
+    const label=clean(await best.getAttribute('aria-label')||await best.getAttribute('alt')||await best.getAttribute('title')||'ticket QR/barcode');
+    const buf=await best.screenshot({type:'png',animations:'disabled'});
+    return {mimeType:'image/png',dataBase64:buf.toString('base64'),source:'provider_page',label:label.slice(0,180)||'ticket QR/barcode'};
+  }catch{return null;}
+}
+(async()=>{
+  const attached=process.env.GOGO_BROWSER_CDP_URL?await chromium.connectOverCDP(process.env.GOGO_BROWSER_CDP_URL).catch(()=>{throw Error('browser_connection_failed')}):null;
+  const context=attached?attached.contexts()[0]:await chromium.launchPersistentContext(profile,{
+    headless:true,
+    viewport:{width:412,height:915},
+    screen:{width:412,height:915},
+    deviceScaleFactor:2,
+    isMobile:true,
+    hasTouch:true,
+    locale:'en-IN',
+    timezoneId:'Asia/Kolkata',
+    userAgent:mobileUA,
+    colorScheme:'light',
+  });
+  await context.addInitScript(()=>{
+    window.__gogoShareData=null;
+    try{
+      Object.defineProperty(navigator,'share',{configurable:true,value:async(data)=>{window.__gogoShareData={title:data?.title||'',text:data?.text||'',url:data?.url||''};}});
+      Object.defineProperty(navigator,'canShare',{configurable:true,value:()=>true});
+    }catch{}
+  });
+  const page=context.pages()[0]||await context.newPage();
+  try{
+    await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:45000});
+    await page.waitForLoadState('networkidle',{timeout:12000}).catch(()=>{});
+    await page.waitForTimeout(2200);
+    let ticketRendered=await waitForTicket(page);
+    const tried=await clickUseful(page);
+    await page.waitForLoadState('networkidle',{timeout:8000}).catch(()=>{});
+    await page.waitForTimeout(1200);
+    if(!ticketRendered)ticketRendered=await waitForTicket(page);
+    const data=await page.evaluate(()=>{
+      const clean=s=>String(s||'').replace(/\s+/g,' ').trim();
+      const visible=el=>{try{const r=el.getBoundingClientRect(),s=getComputedStyle(el);return r.width>0&&r.height>0&&s.visibility!=='hidden'&&s.display!=='none'}catch{return false}};
+      return {
+        url:location.href,title:document.title,text:String(document.body?.innerText||'').replace(/\r\n?/g,'\n').replace(/[^\S\n]+/g,' ').trim().slice(0,30000),
+        shareData:window.__gogoShareData||null,
+        links:Array.from(document.querySelectorAll('a[href]')).filter(visible).map(a=>({text:clean(a.textContent).slice(0,180),href:a.href})).filter(x=>/ticket|pass|qr|barcode|download|share|wallet|venue/i.test(x.text+' '+x.href)).slice(0,40)
+      };
+    });
+    data.tried=tried;
+    data.mobileContext=!attached;
+    data.ticketRendered=ticketRendered;
+    data.credential=await captureCredential(page);
+    console.log(JSON.stringify(data));
+  }finally{if(attached)await attached.close();else await context.close();}
+})().catch(e=>{console.error(String(e&&e.stack||e));process.exit(1)});
+`
+
+async function computer(userId: string, url: string) {
+  const sandbox = await Sandbox.getOrCreate({
+    name: sandboxName(userId), image: SANDBOX_IMAGE, region: SANDBOX_REGION,
+    timeout: 20 * 60 * 1000, persistent: true, ports: BROWSER_PORTS, resources: { vcpus: 1 },
+  } as any)
+  const releaseOwnerLock=await acquireBrowserOwnerLock(sandbox)
+  let managed:Awaited<ReturnType<typeof ensureManagedBrowser>>=null
+  try {
+    await ensureBrowserRuntime(sandbox,managedBrowserEnabled()?{'*.browserbase.com':[]}: {})
+    managed=await ensureManagedBrowser(sandbox,sandboxName(userId),url)
+  await sandbox.writeFiles([{ path: 'gogo-ticket-reader.js', content: Buffer.from(SCRIPT) }])
+  await sandbox.updateNetworkPolicy({ allow: managed?.allow||allowedHosts(url) } as any)
+  return {sandbox,releaseOwnerLock,managed}
+  }catch(error){await managed?.release().catch(()=>{});await releaseOwnerLock();throw error}
+}
+
+async function fallbackSecureComputer(params: { userId: string; url: string; humanHandoff?: boolean }): Promise<SecureTicketReadResult> {
+  try {
+    const result = await runSecureBrowser({
+      userId: params.userId,
+      url: params.url,
+      mode: 'read',
+      reserveHumanHandoff:params.humanHandoff!==false,
+      objective: 'Read this confirmed booking/ticket page. Do not submit, purchase, cancel, authenticate, or change anything.',
+    })
+    if (result.status === 'blocked') {
+      const authHandoff=params.humanHandoff!==false&&result.authReason&&result.authReason!=='password'
+        ? await startProviderBrowserHandoff({userId:params.userId,url:result.url||params.url,originalUrl:params.url,reservationToken:result.handoffReservation}) : undefined
+      return {
+        status: 'blocked', url: result.url || params.url, title: result.title || '', pageText: '', usefulLinks: [],
+        blockReason: 'human_auth_required', authReason: result.authReason, authHandoff,
+      }
+    }
+    if (result.status === 'completed' || result.status === 'prepared') {
+      return { status: 'completed', url: result.url || params.url, title: result.title || '', pageText: result.pageText || '', usefulLinks: [] }
+    }
+  } catch (error: any) {
+    console.error('SECURE_TICKET_READER_FALLBACK_FAILED:', safeFailureCode(error))
+  }
+  return { status: 'failed', url: params.url, title: '', pageText: '', usefulLinks: [] }
+}
+
+export async function readProviderTicketPage(params: { userId: string; url: string; humanHandoff?: boolean; resumeHandoff?: SecureTicketReadResult['authHandoff'] }): Promise<SecureTicketReadResult> {
+  let sandbox: any = null
+  let releaseOwnerLock:BrowserOwnerRelease|undefined
+  let keepForHuman=false
+  let releaseManaged:(()=>Promise<void>)|undefined
+  // Only an explicit continuation may release a user's active takeover session.
+  if(params.resumeHandoff?.releaseUrl)await releaseBrowserHandoff(params.resumeHandoff.releaseUrl,{allowExpired:true})
+  try {
+    const owned=await computer(params.userId, params.url)
+    sandbox=owned.sandbox;releaseOwnerLock=owned.releaseOwnerLock;releaseManaged=owned.managed?.release
+    const payload = Buffer.from(JSON.stringify({ url: params.url })).toString('base64')
+    const result = await sandbox.runCommand({ cmd: 'node', args: ['gogo-ticket-reader.js', payload],env:owned.managed?.env })
+    if (result.exitCode !== 0) throw new Error('ticket_browser_failed')
+    const stdout = await result.stdout()
+    const lines = String(stdout || '').trim().split('\n').filter(Boolean)
+    if (!lines.length) throw new Error('ticket_browser_empty_output')
+    const page: any = JSON.parse(lines[lines.length - 1])
+    console.info('SECURE_TICKET_READER_RESULT:', {
+      url: String(page.url || params.url).slice(0, 500),
+      title: String(page.title || '').slice(0, 180),
+      mobileContext: Boolean(page.mobileContext),
+      ticketRendered: Boolean(page.ticketRendered),
+      credentialFound: Boolean(page.credential),
+      textLength: String(page.text || '').length,
+    })
+    const challenge = detectProviderChallenge({ title: page.title, text: page.text })
+    if (challenge.challenged) {
+      console.warn('SECURE_TICKET_READER_PROVIDER_CHALLENGE:', {
+        url: String(page.url || params.url).slice(0, 500),
+        reason: challenge.reason,
+        handoff: DEVICE_HANDOFF_REQUIRED,
+      })
+      return {
+        status: 'blocked', url: String(page.url || params.url), title: String(page.title || '').slice(0, 300),
+        pageText: '', usefulLinks: [], blockReason: PROVIDER_CLOUDFLARE_CHALLENGE, handoff: DEVICE_HANDOFF_REQUIRED,
+      }
+    }
+    const gate = detectHumanAuthGate({ title: page.title, text: page.text, forms: [] })
+    if (gate.required) {
+      let reservationToken:string|undefined
+      if(params.humanHandoff!==false&&gate.reason!=='password'){
+        reservationToken=await releaseOwnerLock!.reserveHandoff()
+        await releaseOwnerLock?.();releaseOwnerLock=undefined
+      }
+      const authHandoff=params.humanHandoff!==false&&gate.reason&&gate.reason!=='password'
+        ? await startProviderBrowserHandoff({userId:params.userId,url:String(page.url||params.url),originalUrl:params.url,reservationToken}).catch(()=>undefined) : undefined
+      const authHandoffPending=params.humanHandoff!==false&&gate.reason!=='password'&&!authHandoff
+      keepForHuman=Boolean(authHandoff)||authHandoffPending
+      return {
+        status: 'blocked', url: String(page.url || params.url), title: String(page.title || '').slice(0, 300),
+        pageText: '', usefulLinks: [], blockReason: 'human_auth_required', authReason: gate.reason, authHandoff, authHandoffPending,
+      }
+    }
+    return {
+      status: 'completed', url: String(page.url || params.url), title: String(page.title || '').slice(0, 300),
+      pageText: String(page.text || '').slice(0, 24000), shareData: page.shareData || undefined,
+      usefulLinks: Array.isArray(page.links) ? page.links.slice(0, 40) : [], credential: page.credential || undefined,
+    }
+  } catch (error: any) {
+    console.error('SECURE_TICKET_READER_FAILED:', safeFailureCode(error))
+    await releaseOwnerLock?.();releaseOwnerLock=undefined
+    const fallback=await fallbackSecureComputer(params)
+    // A failed read may be contending with another task's live takeover.
+    keepForHuman=true
+    return fallback
+  } finally {
+    if (sandbox&&!keepForHuman){await releaseManaged?.().catch(()=>{});await sandbox.stop().catch(() => {})}
+    await releaseOwnerLock?.()
+  }
+}

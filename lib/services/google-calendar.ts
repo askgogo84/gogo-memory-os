@@ -1,0 +1,317 @@
+import { createHmac, randomBytes, timingSafeEqual } from 'crypto'
+import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
+
+const CALENDAR_CALLBACK_URL = 'https://app.askgogo.in/api/calendar/callback'
+const CALENDAR_STATE_TTL_MS = 10 * 60 * 1000
+const CALENDAR_CONNECT_TTL_MS = 15 * 60 * 1000
+
+type CalendarState = { tg:number; purpose:'calendar_oauth'|'calendar_connect'; exp:number; nonce:string }
+
+function calendarStateSecret() {
+  return process.env.CALENDAR_OAUTH_STATE_SECRET || process.env.GMAIL_OAUTH_STATE_SECRET || process.env.CRON_SECRET || ''
+}
+function calendarSignature(encoded:string) {
+  const secret=calendarStateSecret()
+  if(!secret)return null
+  return createHmac('sha256',secret).update(encoded).digest('base64url')
+}
+function encodeCalendarState(payload:CalendarState) {
+  const encoded=Buffer.from(JSON.stringify(payload),'utf8').toString('base64url')
+  const signature=calendarSignature(encoded)
+  return signature?`${encoded}.${signature}`:null
+}
+function decodeCalendarState(token:string,purpose:CalendarState['purpose']) {
+  const [encoded,supplied]=String(token||'').split('.')
+  if(!encoded||!supplied)return null
+  const expected=calendarSignature(encoded)
+  if(!expected)return null
+  const a=Buffer.from(supplied),b=Buffer.from(expected)
+  if(a.length!==b.length||!timingSafeEqual(a,b))return null
+  try{
+    const payload=JSON.parse(Buffer.from(encoded,'base64url').toString('utf8')) as CalendarState
+    if(payload?.purpose!==purpose||!Number.isFinite(payload?.tg)||payload.tg===0)return null
+    if(!Number.isFinite(payload?.exp)||payload.exp<=Date.now()||!payload?.nonce)return null
+    return payload
+  }catch{return null}
+}
+
+// Compact signed connect token: "c1.<id>.<expiry seconds, base36>.<nonce>.<signature>". The long JSON form
+// made the WhatsApp link wrap over most of a screen (13 Oct); this keeps the link short and still signed.
+function shortConnectSignature(payload:string) {
+  const secret=calendarStateSecret()
+  if(!secret)return null
+  return createHmac('sha256',secret).update('calendar_connect.c1.'+payload).digest('base64url').slice(0,22)
+}
+export function buildCalendarConnectUrl(telegramId:number):string|null {
+  // WhatsApp users have NEGATIVE telegram_ids (resolve-user.ts); only 0 is invalid.
+  if(!Number.isFinite(telegramId)||telegramId===0)return null
+  const payload=`${Math.trunc(telegramId)}.${Math.floor((Date.now()+CALENDAR_CONNECT_TTL_MS)/1000).toString(36)}.${randomBytes(8).toString('base64url')}`
+  const signature=shortConnectSignature(payload)
+  return signature?`https://app.askgogo.in/api/calendar/connect?token=c1.${payload}.${signature}`:null
+}
+export function verifyCalendarConnectToken(token:string):number|null {
+  const value=String(token||'')
+  if(value.startsWith('c1.')){
+    const parts=value.slice(3).split('.')
+    if(parts.length!==4)return null
+    const [tg,expiry,nonce,supplied]=parts
+    const expected=shortConnectSignature(`${tg}.${expiry}.${nonce}`)
+    if(!expected)return null
+    const a=Buffer.from(supplied),b=Buffer.from(expected)
+    if(a.length!==b.length||!timingSafeEqual(a,b))return null
+    const id=Number(tg),expiresAt=parseInt(expiry,36)*1000
+    if(!Number.isInteger(id)||id===0||!Number.isFinite(expiresAt)||expiresAt<=Date.now()||!nonce)return null
+    return id
+  }
+  return decodeCalendarState(value,'calendar_connect')?.tg||null
+}
+export function consumeCalendarOauthState(state:string):number|null {
+  return decodeCalendarState(state,'calendar_oauth')?.tg||null
+}
+
+export function getAuthUrl(telegramId: number): string {
+  const state=encodeCalendarState({tg:telegramId,purpose:'calendar_oauth',exp:Date.now()+CALENDAR_STATE_TTL_MS,nonce:randomBytes(16).toString('base64url')})
+  if(!state)throw new Error('calendar_oauth_state_secret_missing')
+  const params = new URLSearchParams({
+    client_id: process.env.GOOGLE_CLIENT_ID!,
+    redirect_uri: CALENDAR_CALLBACK_URL,
+    response_type: 'code',
+    scope: 'https://www.googleapis.com/auth/calendar.events',
+    access_type: 'offline',
+    // Let the person pick which Google account to connect (also how they switch accounts).
+    prompt: 'select_account consent',
+    state,
+  })
+  return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`
+}
+
+export async function exchangeCode(code: string): Promise<{ access_token: string; refresh_token: string } | null> {
+  try {
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID!,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        redirect_uri: CALENDAR_CALLBACK_URL,
+        grant_type: 'authorization_code',
+      }),
+      cache:'no-store',
+    })
+    const data = await response.json()
+    if (data.access_token) return data
+    console.error('Token exchange failed:', data?.error || response.status)
+    return null
+  } catch (err) {
+    console.error('Token exchange error:', err)
+    return null
+  }
+}
+
+export async function refreshAccessToken(refreshToken: string): Promise<string | null> {
+  try {
+    const decryptedRefreshToken = decryptGoogleToken(refreshToken)
+    if (!decryptedRefreshToken) return null
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        refresh_token: decryptedRefreshToken,
+        client_id: process.env.GOOGLE_CLIENT_ID!,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET!,
+        grant_type: 'refresh_token',
+      }),
+      cache:'no-store',
+    })
+    const data = await response.json()
+    return data.access_token || null
+  } catch (err) {
+    console.error('Token refresh error:', err)
+    return null
+  }
+}
+
+export async function createCalendarEvent(
+  accessToken: string,
+  summary: string,
+  startTime: string,
+  endTime: string,
+  location?: string
+): Promise<any> {
+  const event = {
+    summary,
+    start: { dateTime: startTime, timeZone: 'Asia/Kolkata' },
+    end: { dateTime: endTime, timeZone: 'Asia/Kolkata' },
+    ...(location ? { location } : {}),
+  }
+
+  const response = await fetch(
+    'https://www.googleapis.com/calendar/v3/calendars/primary/events',
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(event),
+      cache: 'no-store',
+    }
+  )
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok || !body?.id) {
+    console.error('GCAL_EVENT_CREATE_FAILED:', response.status, JSON.stringify(body).slice(0, 500))
+    return { error: body?.error?.message || `Google Calendar create failed: ${response.status}`, status: response.status }
+  }
+  // Never claim success from the POST alone. Read the created resource back from
+  // Google so a permission/scope/account inconsistency cannot masquerade as success.
+  try {
+    const verify = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(body.id)}`,
+      { headers: { 'Authorization': `Bearer ${accessToken}` }, cache: 'no-store' }
+    )
+    const verified = await verify.json().catch(() => ({}))
+    if (verify.ok && verified?.id === body.id && verified?.status !== 'cancelled'
+      && verified?.summary === summary
+      && Date.parse(verified?.start?.dateTime) === Date.parse(startTime)
+      && Date.parse(verified?.end?.dateTime) === Date.parse(endTime)
+      && (!location || verified?.location === location)) return { ...verified, verification: 'verified' }
+    console.error('GCAL_EVENT_CREATE_VERIFY_UNKNOWN:', verify.status)
+  } catch (err: any) {
+    console.error('GCAL_EVENT_CREATE_VERIFY_UNKNOWN:', String(err?.message || err).slice(0, 300))
+  }
+  // The POST already succeeded and returned an event id. A failed readback is an
+  // UNKNOWN verification outcome, not a failed create. Return the created resource
+  // with an explicit verification marker so callers never encourage a duplicate retry.
+  return { ...body, verification: 'unknown' }
+}
+
+/** The Google account behind the primary calendar: its title is the account's email address.
+ * Returns null when it cannot be read or the calendar was renamed to something that is not an email. */
+export async function fetchPrimaryCalendarAccount(accessToken: string): Promise<string | null> {
+  try {
+    const response = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events?maxResults=1&fields=summary', {
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+      cache: 'no-store',
+    })
+    if (!response.ok) return null
+    const summary = String((await response.json())?.summary || '').trim()
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(summary) ? summary : null
+  } catch { return null }
+}
+
+export async function fetchPrimaryCalendarEvents(
+  accessToken: string,
+  timeMin: string,
+  timeMax: string,
+  label = 'GCAL_EVENTS_FETCH_FAILED',
+): Promise<any[]> {
+  return (await readPrimaryCalendarEventsPage(accessToken,timeMin,timeMax,label)).events
+}
+
+/** A bounded page retains completeness evidence for read/availability claims. */
+export async function fetchPrimaryCalendarEventsPage(accessToken:string,timeMin:string,timeMax:string,label='GCAL_EVENTS_FETCH_FAILED',limit=40) {
+  const maximum=Math.max(1,Math.min(100,Math.floor(limit)))
+  const page=await readPrimaryCalendarEventsPage(accessToken,timeMin,timeMax,label,maximum)
+  return {events:page.events.slice(0,maximum),hasMore:page.hasMore||page.events.length>maximum,...(page.timezone?{timezone:page.timezone}:{})}
+}
+
+async function readPrimaryCalendarEventsPage(accessToken:string,timeMin:string,timeMax:string,label:string,limit?:number) {
+  const params = new URLSearchParams({
+    timeMin,
+    timeMax,
+    singleEvents: 'true',
+    orderBy: 'startTime',
+  })
+  if(limit)params.set('maxResults',String(limit))
+
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
+    {
+      headers: { 'Authorization': `Bearer ${accessToken}` },
+      cache: 'no-store',
+    }
+  )
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    console.error(`${label}:`, response.status, body.slice(0, 300))
+    throw new Error(`Google Calendar events fetch failed: ${response.status}`)
+  }
+  const data = await response.json()
+  return {events:Array.isArray(data.items)?data.items:[],hasMore:typeof data.nextPageToken==='string'&&data.nextPageToken.length>0,...(typeof data.timeZone==='string'&&data.timeZone.trim()?{timezone:data.timeZone.trim()}:{})}
+}
+
+export async function getTodayEvents(accessToken: string): Promise<any[]> {
+  const now = new Date()
+  const startOfDay = new Date(now)
+  startOfDay.setHours(0, 0, 0, 0)
+  const endOfDay = new Date(now)
+  endOfDay.setHours(23, 59, 59, 999)
+
+  return fetchPrimaryCalendarEvents(
+    accessToken,
+    startOfDay.toISOString(),
+    endOfDay.toISOString(),
+    'GCAL_TODAY_EVENTS_FAILED',
+  )
+}
+
+export async function listUpcomingEvents(accessToken: string, days = 7): Promise<any[]> {
+  const now = new Date()
+  const timeMax = new Date(now.getTime() + days * 24 * 60 * 60 * 1000)
+  const params = new URLSearchParams({
+    timeMin: now.toISOString(),
+    timeMax: timeMax.toISOString(),
+    singleEvents: 'true',
+    orderBy: 'startTime',
+    maxResults: '50',
+  })
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events?${params}`,
+    { headers: { Authorization: `Bearer ${accessToken}` }, cache:'no-store' }
+  )
+  const data = await response.json()
+  return data.items || []
+}
+
+export async function updateCalendarEvent(
+  accessToken: string,
+  eventId: string,
+  patch: { summary?: string; startTime?: string; endTime?: string; location?: string; ifMatch?: string; timezone?: string }
+): Promise<{ ok: boolean; event?: any; error?: string; verification?: 'verified' | 'unknown' | 'rejected' }> {
+  const body: any = {}
+  if (patch.summary) body.summary = patch.summary
+  if (patch.startTime) body.start = { dateTime: patch.startTime, timeZone: patch.timezone || 'Asia/Kolkata' }
+  if (patch.endTime) body.end = { dateTime: patch.endTime, timeZone: patch.timezone || 'Asia/Kolkata' }
+  if (patch.location) body.location = patch.location
+
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+    {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json', ...(patch.ifMatch ? { 'If-Match': patch.ifMatch } : {}) },
+      body: JSON.stringify(body),
+    }
+  )
+  const data = await response.json().catch(() => ({}))
+  if (!response.ok) return { ok: false, verification: [400,401,403,404,409,410,412,422,429].includes(response.status) ? 'rejected' : 'unknown', error: data?.error?.message || `HTTP ${response.status}` }
+  const readback = await fetch(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`, { headers: { Authorization: `Bearer ${accessToken}` }, cache: 'no-store' })
+  const actual = await readback.json().catch(() => null)
+  const matches = readback.ok && actual?.id === eventId && actual?.status !== 'cancelled'
+    && (!patch.startTime || Date.parse(actual?.start?.dateTime) === Date.parse(patch.startTime))
+    && (!patch.endTime || Date.parse(actual?.end?.dateTime) === Date.parse(patch.endTime))
+    && (!patch.summary || actual?.summary === patch.summary)
+    && (!patch.location || actual?.location === patch.location)
+  if (!matches) return { ok: false, verification: 'unknown', error: 'Calendar update read-back did not verify the exact event and expected fields.' }
+  return { ok: true, event: actual, verification: 'verified' }
+}
+
+export async function deleteCalendarEvent(accessToken: string, eventId: string): Promise<{ ok: boolean; error?: string }> {
+  const response = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+    { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } }
+  )
+  if (response.ok || response.status === 410) return { ok: true }
+  const data = await response.json().catch(() => ({}))
+  return { ok: false, error: data?.error?.message || `HTTP ${response.status}` }
+}

@@ -1,0 +1,67 @@
+{
+  "regions": [
+    "bom1"
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/travel-research",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/price-comparisons",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/daily-briefings",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/reminders",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/autonomous-runs",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/agent-watchers",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/agent-goals",
+      "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/life-events",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/booking-events",
+      "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/agent-learning",
+      "schedule": "17 * * * *"
+    },
+    {
+      "path": "/api/cron/autonomy-pulse",
+      "schedule": "10,40 * * * *"
+    },
+    {
+      "path": "/api/cron/open-loops",
+      "schedule": "5,35 * * * *"
+    },
+    {
+      "path": "/api/followups",
+      "schedule": "30 3 * * *"
+    },
+    {
+      "path": "/api/cron/lifecycle-emails",
+      "schedule": "30 4 * * *"
+    },
+    {
+      "path": "/api/cron/booking-rehearsal",
+      "schedule": "*/5 * * * *"
+    }
+  ]
+}

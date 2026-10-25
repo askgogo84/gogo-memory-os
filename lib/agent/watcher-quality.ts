@@ -1,0 +1,358 @@
+import { createHash } from 'node:crypto'
+
+export const WEB_WATCH_MIN_ALERT_INTERVAL_MS = 6 * 60 * 60 * 1000
+export const WEB_WATCH_MAX_ALERTS_24H = 2
+export const WEB_WATCH_MAX_HISTORY = 40
+// Event-key dedup re-arms after this window so a genuinely NEW disruption of the same
+// kind (a later storm, a delay on a different date) can alert again, while the same
+// event re-retrieved over the following days stays suppressed.
+export const EVENT_KEY_REARM_MS = 10 * 24 * 60 * 60 * 1000
+
+// Airline/flight codes as they appear in search snippets ("EY 1", "EY239", "6E 203").
+// Used to scope an event key to the specific flight the RESULT is about, so a delay on
+// one leg does not suppress a delay on a different leg of the same trip watcher.
+export function extractFlightCodes(text: string): string[] {
+  const out = new Set<string>()
+  const re = /\b([a-z]{2}|[a-z]\d|\d[a-z])\s?(\d{1,4})\b/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(String(text || '')))) out.add(`${m[1]}${m[2]}`.toLowerCase())
+  return Array.from(out).sort()
+}
+
+// Date tokens in a result ("2026-09-27", "2 October", "Oct 2") normalised to a stable
+// form. Added to the occurrence key so the SAME flight number on DIFFERENT dates is a
+// distinct event (a delay on the return leg is not suppressed by the outbound delay).
+const MONTHS = 'jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec'
+const MONTH_BY_NUM: Record<string, string> = {
+  '01': 'jan', '02': 'feb', '03': 'mar', '04': 'apr', '05': 'may', '06': 'jun',
+  '07': 'jul', '08': 'aug', '09': 'sep', '10': 'oct', '11': 'nov', '12': 'dec',
+}
+
+/** Refresh weather occurrence dates at execution, including old saved queries. */
+export function effectiveWeatherQuery(condition:{query:string;contextClass?:string;weatherStartAt?:string;weatherTimezone?:string},now:Date):string{
+  if(condition.contextClass!=='destination_weather')return condition.query
+  const legacyDate=condition.query.match(/(?:\d{4}-\d{2}-\d{2}|\d{1,2}\s+[a-z]+\s+20\d{2})\s*$/i)?.[0]
+  const arrival=Date.parse(condition.weatherStartAt||legacyDate||'')
+  const at=Number.isFinite(arrival)&&arrival>now.getTime()?new Date(arrival):now
+  let zone=condition.weatherTimezone||'UTC'
+  try{new Intl.DateTimeFormat('en-GB',{timeZone:zone}).format(at)}catch{zone='UTC'}
+  const date=new Intl.DateTimeFormat('en-GB',{timeZone:zone,day:'numeric',month:'long',year:'numeric'}).format(at)
+  return condition.query.replace(/\s+(?:today|\d{4}-\d{2}-\d{2}|\d{1,2}\s+[a-z]+\s+20\d{2})\s*$/i,'')+' '+date
+}
+// All spellings collapse to one canonical "mon-dd" token (year dropped — different
+// years of the same month/day are >10 days apart, so the re-arm window separates them),
+// so "2026-10-02", "Oct 2" and "2 October" describe the SAME occurrence and hash alike.
+export function extractDateTokens(text: string): string[] {
+  const t = String(text || '').toLowerCase()
+  const out = new Set<string>()
+  for (const m of t.matchAll(/\b\d{4}-(\d{2})-(\d{2})\b/g)) { const mon = MONTH_BY_NUM[m[1]]; if (mon) out.add(`${mon}-${m[2]}`) }
+  for (const m of t.matchAll(new RegExp(`\\b(\\d{1,2})\\s+(${MONTHS})[a-z]*\\b`, 'g'))) out.add(`${m[2].slice(0, 3)}-${m[1].padStart(2, '0')}`)
+  for (const m of t.matchAll(new RegExp(`\\b(${MONTHS})[a-z]*\\s+(\\d{1,2})\\b`, 'g'))) out.add(`${m[1].slice(0, 3)}-${m[2].padStart(2, '0')}`)
+  return Array.from(out).sort()
+}
+
+// Year-qualified date tokens ("sep-28-2026") — only emitted when a 4-digit year sits with
+// the date. Used ONLY for verification (not dedup): a recurring flight's delay reported for
+// the same month/day in a DIFFERENT year must not verify this year's leg. When either side
+// lacks a year we fall back to month/day so we never over-reject a legitimately dateless
+// snippet.
+export function extractDateTokensYear(text: string): string[] {
+  const t = String(text || '').toLowerCase()
+  const out = new Set<string>()
+  for (const m of t.matchAll(/\b(\d{4})-(\d{2})-(\d{2})\b/g)) { const mon = MONTH_BY_NUM[m[2]]; if (mon) out.add(`${mon}-${m[3]}-${m[1]}`) }
+  for (const m of t.matchAll(new RegExp(`\\b(\\d{1,2})\\s+(${MONTHS})[a-z]*,?\\s+(\\d{4})\\b`, 'g'))) out.add(`${m[2].slice(0, 3)}-${m[1].padStart(2, '0')}-${m[3]}`)
+  for (const m of t.matchAll(new RegExp(`\\b(${MONTHS})[a-z]*\\s+(\\d{1,2}),?\\s+(\\d{4})\\b`, 'g'))) out.add(`${m[1].slice(0, 3)}-${m[2].padStart(2, '0')}-${m[3]}`)
+  return Array.from(out).sort()
+}
+
+// True when both texts carry a date but none coincide. If both also carry a year, the year
+// must match (so Sep-28-2025 does not verify a Sep-28-2026 leg); otherwise month/day decides.
+// When either side is dateless we return false — there is nothing to contradict.
+function datesContradict(knownText: string, resultText: string): boolean {
+  const known = extractDateTokens(knownText)
+  const got = extractDateTokens(resultText)
+  if (!known.length || !got.length) return false
+  const knownY = extractDateTokensYear(knownText)
+  const gotY = extractDateTokensYear(resultText)
+  if (knownY.length && gotY.length) return !gotY.some(d => knownY.includes(d))
+  return !got.some(d => known.includes(d))
+}
+
+// A keyword hit alone must not become a confirmed disruption alert. For contextual
+// travel watchers, verify the retrieved result actually concerns THIS occurrence:
+//  • flight_status — the result must name one of the watch's flight numbers, and if both
+//    sides carry a date it must match (an old EY 1 delay, or a different EY flight, is
+//    rejected).
+//  • destination_weather — the result must name the destination, and if both sides carry
+//    a date it must match (a storm on an unrelated date is rejected).
+// Other classes are not gated here. Returns verified:true when there is nothing to check
+// against (missing known flight/destination) so we never over-suppress genuine matches.
+export function verifyContextualDisruption(params: {
+  contextClass?: string
+  query: string
+  title?: string
+  resultTitle: string
+  resultSnippet?: string
+  flightLegs?: string[]
+}): { verified: boolean; reason: string } {
+  const cls = String(params.contextClass || '')
+  const hay = `${params.resultTitle} ${params.resultSnippet || ''}`
+  if (cls === 'flight_status') {
+    // Preferred: per-leg "flightNo @ date" pairs, so a result's date is checked against
+    // the date of the SPECIFIC leg whose flight number the result cites — not any leg date.
+    const legs = (params.flightLegs || [])
+      .map(leg => ({ text: leg, codes: extractFlightCodes(leg) }))
+      .filter(leg => leg.codes.length)
+    if (legs.length) {
+      const got = extractFlightCodes(hay)
+      const citedLegs = legs.filter(leg => leg.codes.some(code => got.includes(code)))
+      if (!citedLegs.length) return { verified: false, reason: 'flight_number_mismatch' }
+      // Verified only if the result's date is consistent with a cited leg's own date
+      // (year-aware). A dateless leg or dateless result can't contradict, so it passes.
+      if (!citedLegs.some(leg => !datesContradict(leg.text, hay))) {
+        return { verified: false, reason: 'flight_leg_date_mismatch' }
+      }
+      return { verified: true, reason: 'flight_leg_verified' }
+    }
+    // Fallback (no structured legs): flight number + any known date.
+    const known = extractFlightCodes(params.query)
+    if (!known.length) return { verified: true, reason: 'no_known_flight' }
+    const got = extractFlightCodes(hay)
+    if (!got.some(code => known.includes(code))) return { verified: false, reason: 'flight_number_mismatch' }
+    if (datesContradict(params.query, hay)) return { verified: false, reason: 'flight_date_mismatch' }
+    return { verified: true, reason: 'flight_verified' }
+  }
+  if (cls === 'destination_weather') {
+    const dest = String(params.title || '').split('·').pop()?.trim() || String(params.query || '').split(/\bweather\b/i)[0] || ''
+    const destTokens = words(dest).filter(t => t.length >= 3)
+    if (!destTokens.length) return { verified: true, reason: 'no_known_destination' }
+    const hayTokens = new Set(words(hay))
+    // Require the COMPLETE destination identity: every distinctive token must appear, so a
+    // "Mexico City" watcher is not satisfied by a Boston result that merely contains "city".
+    if (!destTokens.every(t => hayTokens.has(t))) return { verified: false, reason: 'destination_mismatch' }
+    if (datesContradict(params.query, hay)) return { verified: false, reason: 'weather_date_mismatch' }
+    return { verified: true, reason: 'weather_verified' }
+  }
+  return { verified: true, reason: 'no_context_gate' }
+}
+
+// Dedup history entries are stored "value|ms". Only a trailing |<digits> is treated as
+// a timestamp, so values that themselves contain "|" (e.g. a URL query) are preserved.
+function parseStamped(entry: string): { value: string; ms: number } {
+  const m = String(entry || '').match(/^(.*)\|(\d{6,})$/)
+  return m ? { value: m[1], ms: Number(m[2]) } : { value: String(entry || ''), ms: NaN }
+}
+
+// Return the still-armed bare values (undated legacy entries stay armed for back-compat).
+export function activeStamped(entries: string[] | undefined, now: Date): string[] {
+  const cutoff = now.getTime() - EVENT_KEY_REARM_MS
+  const set = new Set<string>()
+  for (const entry of entries || []) {
+    const { value, ms } = parseStamped(entry)
+    if (!value) continue
+    if (!Number.isFinite(ms) || ms >= cutoff) set.add(value)
+  }
+  return Array.from(set)
+}
+
+// Merge freshly-seen values into stamped history: keep the earliest timestamp per value,
+// stamp legacy/new values with `now`, drop values past the re-arm window, and bound size.
+// This gives seenUrls / seenSignatures the same time-expiry as event keys, so a recurring
+// event reported at a stable URL can alert again after the window instead of forever.
+export function mergeStamped(prior: string[] | undefined, values: string[], now: Date): string[] {
+  const cutoff = now.getTime() - EVENT_KEY_REARM_MS
+  const map = new Map<string, number>()
+  for (const entry of prior || []) {
+    const { value, ms } = parseStamped(entry)
+    if (!value) continue
+    const t = Number.isFinite(ms) ? ms : now.getTime() // legacy bare → stamp now (self-heals within a window)
+    if (t >= cutoff) map.set(value, Math.min(map.get(value) ?? t, t))
+  }
+  for (const raw of values) {
+    const value = String(raw || '')
+    if (value && !map.has(value)) map.set(value, now.getTime())
+  }
+  return Array.from(map.entries()).map(([value, ms]) => `${value}|${ms}`).slice(-WEB_WATCH_MAX_HISTORY)
+}
+
+// seenEventKeys entries are stored "key|ms". Return the still-armed bare keys.
+export function activeEventKeys(entries: string[] | undefined, now: Date): string[] {
+  return activeStamped(entries, now)
+}
+
+// Record a freshly-alerted event key with a fresh timestamp, pruning expired entries.
+export function recordEventKey(entries: string[] | undefined, key: string, now: Date): string[] {
+  if (!key) return entries || []
+  const cutoff = now.getTime() - EVENT_KEY_REARM_MS
+  const kept = (entries || []).filter(entry => {
+    const { value, ms } = parseStamped(entry)
+    return value !== key && (!Number.isFinite(ms) || ms >= cutoff)
+  })
+  return [...kept, `${key}|${now.getTime()}`].slice(-WEB_WATCH_MAX_HISTORY)
+}
+
+export type WebWatchQualityResult = {
+  eligible: boolean
+  reason: 'eligible' | 'duplicate_url' | 'duplicate_topic' | 'duplicate_event' | 'low_relevance' | 'keyword_miss'
+  canonicalUrl: string
+  signature: string
+  relevance: number
+  matchedKeywords: string[]
+  eventKey: string
+}
+
+// A disruption is the same EVENT regardless of which synonym the search snippet used
+// ("delay" vs "delayed") or how the snippet was reworded between polls. Collapse
+// synonyms to a canonical stem so the SAME disruption cannot re-alert as a new match
+// (the production incident emitted "delay" then "delay, delayed" for one EY 1 delay).
+const KEYWORD_STEMS: Array<[RegExp, string]> = [
+  [/^delay(ed|s|ing)?$/, 'delay'],
+  [/^cancel(led|ed|s|lation|lations|ling)?$/, 'cancel'],
+  [/^divert(ed|s|ing|ed)?$|^diversion$/, 'divert'],
+  [/^reschedul(e|ed|es|ing)$/, 'reschedule'],
+  [/^storm(s|ing|y)?$|^thunderstorms?$/, 'storm'],
+  [/^snow(storm|ing|s)?$|^blizzards?$/, 'snow'],
+  [/^flood(s|ing|ed)?$/, 'flood'],
+  [/^strike[sd]?$|^striking$/, 'strike'],
+  [/^gate\s*change[sd]?$/, 'gate change'],
+]
+function stemKeyword(keyword: string): string {
+  const k = String(keyword || '').toLowerCase().trim()
+  for (const [re, stem] of KEYWORD_STEMS) if (re.test(k)) return stem
+  return k
+}
+/**
+ * Canonical identity of the disruption being alerted: the set of matched trigger
+ * keywords collapsed to synonym stems, optionally scoped to a specific occurrence
+ * (e.g. a flight number + date). Superset keyword sets ({delay} ⊂ {delay,delayed})
+ * map to the SAME key so repeated retrieval of one event cannot duplicate.
+ */
+export function watcherEventKey(matchedKeywords: string[], occurrence = ''): string {
+  const stems = Array.from(new Set((matchedKeywords || []).map(stemKeyword).filter(Boolean))).sort()
+  if (!stems.length) return ''
+  const base = `${String(occurrence || '').toLowerCase().trim()}::${stems.join(',')}`
+  return createHash('sha256').update(base).digest('hex').slice(0, 24)
+}
+
+const STOP_WORDS = new Set([
+  'a','an','and','are','as','at','be','by','for','from','in','is','it','of','on','or','the','to','with',
+  'watch','monitor','online','web','new','latest','update','updates','news','tell','notify','when','something',
+  'personal','agent','agents','ai','business','availability','available','program','application','applications',
+])
+
+function words(value: string) {
+  return Array.from(new Set(String(value || '')
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, ' ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .map(x => x.trim())
+    .filter(x => x.length >= 2 && !STOP_WORDS.has(x))))
+}
+
+export function canonicalWatcherUrl(value: string) {
+  try {
+    const url = new URL(String(value || '').trim())
+    url.hash = ''
+    for (const key of Array.from(url.searchParams.keys())) {
+      if (/^(utm_|gclid$|fbclid$|ref$|ref_|source$|campaign$)/i.test(key)) url.searchParams.delete(key)
+    }
+    url.hostname = url.hostname.toLowerCase().replace(/^www\./, '')
+    url.pathname = url.pathname.replace(/\/+$/, '') || '/'
+    const qs = url.searchParams.toString()
+    return `${url.protocol}//${url.hostname}${url.pathname}${qs ? `?${qs}` : ''}`.toLowerCase()
+  } catch {
+    return String(value || '').trim().toLowerCase()
+  }
+}
+
+export function watcherResultSignature(title: string, snippet = '') {
+  const stable = words(`${title} ${snippet}`).slice(0, 14).sort().join('|')
+  return createHash('sha256').update(stable || `${title} ${snippet}`.toLowerCase().trim()).digest('hex').slice(0, 24)
+}
+
+function intentTokens(query: string) {
+  const all = words(query)
+  const anchors = all.filter(token => token.length >= 6)
+  return { all, anchors }
+}
+
+export function assessWebWatchResult(params: {
+  query: string
+  title: string
+  snippet?: string
+  url: string
+  triggerKeywords?: string[]
+  seenUrls?: string[]
+  seenSignatures?: string[]
+  seenEventKeys?: string[]
+  occurrence?: string
+}): WebWatchQualityResult {
+  const canonicalUrl = canonicalWatcherUrl(params.url)
+  const signature = watcherResultSignature(params.title, params.snippet || '')
+  const seenUrls = new Set((params.seenUrls || []).map(canonicalWatcherUrl))
+  const seenSignatures = new Set(params.seenSignatures || [])
+  const seenEventKeys = new Set((params.seenEventKeys || []).filter(Boolean))
+
+  if (seenUrls.has(canonicalUrl)) return { eligible:false, reason:'duplicate_url', canonicalUrl, signature, relevance:0, matchedKeywords:[], eventKey:'' }
+  if (seenSignatures.has(signature)) return { eligible:false, reason:'duplicate_topic', canonicalUrl, signature, relevance:0, matchedKeywords:[], eventKey:'' }
+
+  const resultTokens = new Set(words(`${params.title} ${params.snippet || ''}`))
+  const { all: queryTokens, anchors } = intentTokens(params.query)
+  const matched = queryTokens.filter(token => resultTokens.has(token))
+  const relevance = queryTokens.length ? matched.length / queryTokens.length : 0
+  const anchorHit = anchors.length === 0 || anchors.some(token => resultTokens.has(token))
+
+  // Search providers frequently rotate generic listicles into the top results. Treat those as noise.
+  // A useful update must cover most of the watch intent and, when present, retain a distinctive query anchor.
+  if (!anchorHit || (queryTokens.length >= 3 ? relevance < 0.72 : relevance < 0.5)) {
+    return { eligible:false, reason:'low_relevance', canonicalUrl, signature, relevance, matchedKeywords:[], eventKey:'' }
+  }
+
+  const triggerKeywords = Array.from(new Set((params.triggerKeywords || []).map(x => String(x || '').trim().toLowerCase()).filter(Boolean)))
+  const haystack = `${params.title} ${params.snippet || ''} ${params.url}`.toLowerCase()
+  const matchedKeywords = triggerKeywords.filter(keyword => haystack.includes(keyword))
+  if (triggerKeywords.length && matchedKeywords.length === 0) {
+    return { eligible:false, reason:'keyword_miss', canonicalUrl, signature, relevance, matchedKeywords, eventKey:'' }
+  }
+
+  // Same disruption, re-retrieved with a reworded snippet or a superset of synonyms,
+  // must not alert twice. This is the semantic backstop the URL/signature keys miss.
+  const eventKey = watcherEventKey(matchedKeywords, params.occurrence)
+  if (eventKey && seenEventKeys.has(eventKey)) {
+    return { eligible:false, reason:'duplicate_event', canonicalUrl, signature, relevance, matchedKeywords, eventKey }
+  }
+
+  return { eligible:true, reason:'eligible', canonicalUrl, signature, relevance, matchedKeywords, eventKey }
+}
+
+export function webWatchAlertAllowed(params: {
+  now: Date
+  lastAlertAt?: string | null
+  alertTimes?: string[]
+}) {
+  const nowMs = params.now.getTime()
+  const lastMs = params.lastAlertAt ? new Date(params.lastAlertAt).getTime() : 0
+  if (Number.isFinite(lastMs) && lastMs > 0 && nowMs - lastMs < WEB_WATCH_MIN_ALERT_INTERVAL_MS) {
+    return { allowed:false, reason:'cooldown' as const, recentAlertTimes:pruneAlertTimes(params.alertTimes, params.now) }
+  }
+  const recentAlertTimes = pruneAlertTimes(params.alertTimes, params.now)
+  if (recentAlertTimes.length >= WEB_WATCH_MAX_ALERTS_24H) {
+    return { allowed:false, reason:'daily_cap' as const, recentAlertTimes }
+  }
+  return { allowed:true, reason:'ok' as const, recentAlertTimes }
+}
+
+export function pruneAlertTimes(alertTimes: string[] | undefined, now: Date) {
+  const cutoff = now.getTime() - 24 * 60 * 60 * 1000
+  return (alertTimes || [])
+    .filter(value => {
+      const ms = new Date(value).getTime()
+      return Number.isFinite(ms) && ms >= cutoff && ms <= now.getTime() + 60_000
+    })
+    .slice(-WEB_WATCH_MAX_HISTORY)
+}
+
+export function appendBoundedHistory(current: string[] | undefined, additions: string[]) {
+  return Array.from(new Set([...(current || []), ...additions].filter(Boolean))).slice(-WEB_WATCH_MAX_HISTORY)
+}
