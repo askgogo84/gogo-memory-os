@@ -25,10 +25,28 @@ function normalizePlan(value: unknown): PublicPlan | null {
 }
 
 function normalizePhone(value: unknown) {
-  const digits = String(value || '').replace(/\D/g, '')
+  const raw = String(value || '').trim().replace(/^whatsapp:\s*/i, '').trim()
+  // An explicit +country marker distinguishes short valid E.164 numbers
+  // (e.g. +65 and 8 national digits) from a bare Indian 10-digit entry.
+  if (!/^\+?[0-9\s().-]+$/.test(raw)) return null
+  const digits = raw.replace(/\D/g, '')
+  if (raw.startsWith('+')) {
+    return /^[1-9][0-9]{7,14}$/.test(digits) ? digits : null
+  }
+  // Keep established India checkout UX for unprefixed domestic entries.
   if (digits.length === 10) return `91${digits}`
   if (digits.length === 12 && digits.startsWith('91')) return digits
   return null
+}
+
+/** An unverified public phone is a lookup key, never proof of an account owner. */
+function exactWhatsAppForms(internationalDigits: string): string[] {
+  return [
+    `+${internationalDigits}`,
+    `whatsapp:+${internationalDigits}`,
+    internationalDigits,
+    `whatsapp:${internationalDigits}`,
+  ]
 }
 
 export async function POST(req: NextRequest) {
@@ -48,32 +66,42 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'invalid_phone' }, { status: 400 })
     }
 
-    const last10 = phoneDigits.slice(-10)
-    const { data: users } = await supabaseAdmin
+    // The public form supplies no verified session/WhatsApp ownership. Match only
+    // complete saved international numbers to avoid blocking another-country users,
+    // and NEVER attach any selected users row to the resulting provider subscription.
+    const { data: users, error: lookupError } = await supabaseAdmin
       .from('users')
-      .select('telegram_id, whatsapp_id, name, tier, tier_expires_at, subscription_status')
-      .ilike('whatsapp_id', `%${last10}%`)
-      .limit(3)
+      .select('tier, tier_expires_at, subscription_status')
+      .in('whatsapp_id', exactWhatsAppForms(phoneDigits))
+      .limit(25)
+
+    // Cannot safely check for an existing paid subscription when the service-role
+    // lookup fails or might have been truncated. Fail closed: no new provider link.
+    if (lookupError || !Array.isArray(users) || users.length >= 25) {
+      console.error('subscription/create: exact plan-status lookup unavailable')
+      return NextResponse.json({ success: false, error: 'checkout_unavailable' }, { status: 503 })
+    }
 
     const now = Date.now()
-    const active = (users || []).find((user: any) =>
+    const active = users.find((user: any) =>
       (user.subscription_status === 'active' || user.subscription_status === 'authenticated') &&
       user.tier && user.tier !== 'free' &&
       (!user.tier_expires_at || new Date(user.tier_expires_at).getTime() > now)
     )
-
     if (active) {
       return NextResponse.json({ success: false, error: 'already_subscribed' }, { status: 409 })
     }
 
-    const user = (users || [])[0] as any
+    // NEVER trust a phone typed into a public form as proof of a persisted owner.
+    // A future, separately verified account-link flow can bind the resulting
+    // subscription. In particular, do not persist another row's telegram_id/name.
     const whatsappId = `+${phoneDigits}`
     const result = await createSubscription({
       planKey: plan,
       phone: whatsappId,
-      whatsappId: user?.whatsapp_id || whatsappId,
-      telegramId: user?.telegram_id || null,
-      name: user?.name || 'AskGogo User',
+      whatsappId,
+      telegramId: null,
+      name: 'AskGogo User',
     })
 
     const trialDays = Number(process.env.RAZORPAY_TRIAL_DAYS ?? '7')

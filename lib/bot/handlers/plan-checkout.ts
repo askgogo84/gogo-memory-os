@@ -20,19 +20,51 @@ export function parsePlanSelection(text: string): CheckoutPlanKey | null {
   return null
 }
 
-async function hasActiveSubscription(telegramId: number, whatsappId: string | null): Promise<boolean> {
-  const digits = String(whatsappId || '').replace(/\D/g, '').slice(-10)
-  const clauses: string[] = [`telegram_id.eq.${telegramId}`]
-  if (digits.length === 10) clauses.push(`whatsapp_id.ilike.*${digits}*`)
+/** Keep explicit +country identities even when the whole E.164 number is 10 digits. */
+function completeInternationalWhatsAppDigits(value: string | null): string | null {
+  const raw = String(value || '').trim().replace(/^whatsapp:\s*/i, '').trim()
+  if (/^\+[1-9][0-9]{7,14}$/.test(raw)) return raw.slice(1)
+  // Without '+', ten digits may be a local Indian number; never infer ownership.
+  if (/^[1-9][0-9]{10,14}$/.test(raw)) return raw
+  return null
+}
 
-  const { data } = await supabaseAdmin
+/** Exact actor and complete international WhatsApp identity only: never a national suffix. */
+async function hasActiveSubscription(telegramId: number, whatsappId: string | null): Promise<boolean> {
+  // JS Number values outside the safe range can alias another persisted BIGINT.
+  if (!Number.isSafeInteger(telegramId) || telegramId === 0) throw new Error('unsafe_plan_owner')
+
+  const { data: ownRows, error: ownError } = await supabaseAdmin
     .from('users')
     .select('tier, tier_expires_at, subscription_status')
-    .or(clauses.join(','))
-    .limit(5)
+    .eq('telegram_id', telegramId)
+    .limit(3)
+  if (ownError || !Array.isArray(ownRows) || ownRows.length >= 3) {
+    throw new Error('plan_owner_lookup_unavailable')
+  }
+
+  const rows: any[] = [...ownRows]
+  const raw = String(whatsappId || '').trim().replace(/^whatsapp:\s*/i, '').trim()
+  // Complete E.164 numbers can be 8–15 digits with an explicit + prefix.
+  // For legacy unprefixed IDs, require 11+ digits to reject ambiguous
+  // domestic-only ten-digit phone numbers.
+  const full = completeInternationalWhatsAppDigits(raw)
+  if (full) {
+    const { data: exactRows, error: exactError } = await supabaseAdmin
+      .from('users')
+      .select('tier, tier_expires_at, subscription_status')
+      .in('whatsapp_id', [
+        `+${full}`, `whatsapp:+${full}`, full, `whatsapp:${full}`,
+      ])
+      .limit(25)
+    if (exactError || !Array.isArray(exactRows) || exactRows.length >= 25) {
+      throw new Error('plan_phone_lookup_unavailable')
+    }
+    rows.push(...exactRows)
+  }
 
   const now = Date.now()
-  return (data || []).some((u: any) =>
+  return rows.some((u: any) =>
     (u.subscription_status === 'active' || u.subscription_status === 'authenticated') &&
     u.tier && u.tier !== 'free' &&
     (!u.tier_expires_at || new Date(u.tier_expires_at).getTime() > now)
@@ -51,11 +83,14 @@ export async function buildPlanCheckoutReply(
     }
   } catch (err) {
     console.error('plan-checkout: active-sub check failed:', err)
+    // Cannot safely create another recurring mandate when existing subscription
+    // state is unknown; do not turn an owner lookup outage into duplicate billing.
+    return `I couldn't verify your current Gogo plan. Please try again later.`
   }
 
   const phone = user.whatsappId || ''
-  if (!phone.replace(/\D/g, '')) {
-    return `I couldn't read your number to set up the subscription. Please try again from WhatsApp.`
+  if (!completeInternationalWhatsAppDigits(phone)) {
+    return `I couldn't verify your full international WhatsApp number for a subscription. Please try again from WhatsApp.`
   }
 
   try {
