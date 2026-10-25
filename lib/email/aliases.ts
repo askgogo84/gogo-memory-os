@@ -49,7 +49,7 @@ export function safeInboundAliasOwnerId(value: unknown): number | null {
   if (typeof value === 'number') return Number.isSafeInteger(value) ? value : null
   if (typeof value !== 'string') return null
   const exact = value.trim()
-  if (!/^(?:0|[1-9]\\d*|-[1-9]\\d*)$/.test(exact)) return null
+  if (!/^(?:0|[1-9][0-9]*|-[1-9][0-9]*)$/.test(exact)) return null
   const parsed = Number(exact)
   return Number.isSafeInteger(parsed) && BigInt(parsed).toString() === exact ? parsed : null
 }
