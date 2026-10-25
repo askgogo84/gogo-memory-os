@@ -75,7 +75,7 @@ export function activityObservationFromRun(run: ActivityRunRead, steps: Activity
     const title = short(row.title, 140)
     const url = safeActivityProviderUrl(row.url)
     if (!title || !url || seen.has(url)) continue
-    const provider = new URL(url).hostname
+    const provider = new URL(url).hostname.replace(/^www\./, '')
     if (short(row.provider, 160).toLowerCase() !== provider.toLowerCase()) continue
     // The run's result and tool's observed record must agree on exact title + source URL.
     const agrees = saved.some(item => {
