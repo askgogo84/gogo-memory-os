@@ -63,7 +63,7 @@ function propertyTitle(value: string, url: string): string | null {
     .replace(/[\[\]<>*_`]/g, '').trim().slice(0, 100)
   const words = title.toLowerCase().match(/[a-z0-9]+/g) || []
   const identity = words.filter(word => !['hotel', 'the', 'and', 'a', 'an'].includes(word))
-  const slug = (propertyIdentity(new URL(url)) || '').toLowerCase().match(/[a-z0-9]+/g) || []
+  const slug: string[] = (propertyIdentity(new URL(url)) || '').toLowerCase().match(/[a-z0-9]+/g) || []
   let offset = 0
   if (!identity.length || identity.join('').length < 4 || !identity.every(word => {
     const found = slug.indexOf(word, offset)
