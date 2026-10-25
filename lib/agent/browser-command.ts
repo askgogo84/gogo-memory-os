@@ -7,7 +7,6 @@ import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
 import { runSecureBrowser, tryObscuraBrowserRead, type BrowserMode } from './secure-computer'
-import { explicitPublicRetailSearch } from './obscura-public-read'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { buildVaultAddLink } from '@/lib/vault/connect-link'
@@ -482,11 +481,12 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     // Read-only public search can use the disposable Obscura observer first.
     // Existing account/Take Control browser still owns any fallback. Only this
     // exact explicit Flipkart search shape can take the public preflight.
-    const publicProbe=params.mode==='read' && !persistentCommerce
-      && !accountCreation && !providerBooking && !runMetadata.handoff
-      && typeof explicitPublicRetailSearch === 'function'
-      && explicitPublicRetailSearch(params.command,runMetadata)
+    const publicPreflightAllowed=process.env.GOGO_OBSCURA_PUBLIC_READ==='1'
+      && params.mode==='read' && !persistentCommerce && !accountCreation
+      && !providerBooking && !runMetadata.handoff
       && !params.bookingOtp && !params.loginCode && !reconciledResult
+    const publicProbe=publicPreflightAllowed
+      ?(await import('./obscura-public-read')).explicitPublicRetailSearch(params.command,runMetadata):false
     const publicReadDeadline=publicProbe?Date.now()+180_000:undefined
     const publicResult=publicProbe
       ?await tryObscuraBrowserRead({userId:params.actor.userId,url:params.command.url,
