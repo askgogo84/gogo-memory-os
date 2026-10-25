@@ -7,6 +7,7 @@ import {
   internalServiceAuthHeaders,
   isCronAuthorized,
 } from '../lib/security/cron-auth'
+import { auditInboundTwilioSignature, computeTwilioSignature, signatureEnforcementMode } from '../lib/security/webhook-signature'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Privileged-route authorization regression.
@@ -250,6 +251,48 @@ function adminStats(verdict: any) {
   res = await r.GET()
   check('admin/stats: admin → 200', res.status === 200)
   check('admin/stats: admin → users table queried (PII only after auth)', spy.calls.includes('users'))
+}
+
+
+// ── 4. Inbound Twilio owner-identity boundary — production-default strict mode ──
+// Synthetic HMAC fixture only. These tests never call the provider or use a real
+// account. They document the potential compatibility impact, NOT live acceptance.
+{
+  const webhookUrl = 'https://app.askgogo.in/api/webhooks/whatsapp'
+  const authToken = 'fixture_twilio_auth_token'
+  const params = { From: 'whatsapp:+14155552671', Body: 'show my reminders', NumMedia: '0' }
+  const validSignature = computeTwilioSignature(authToken, webhookUrl, params)
+  const production = {
+    NODE_ENV: 'production',
+    TWILIO_AUTH_TOKEN: authToken,
+    TWILIO_WHATSAPP_WEBHOOK_URL: webhookUrl,
+  }
+  const h = (sig: string | null) => ({ get: (k: string) => k.toLowerCase() === 'x-twilio-signature' ? sig : null })
+  const verify = (sig: string | null, env: Record<string, string | undefined>, body = params, url = webhookUrl) =>
+    auditInboundTwilioSignature({ requestUrl: url, headers: h(sig), params: body, route: 'test/twilio-whatsapp', env })
+
+  check('Twilio: production unset enforcement flag is STRICT, not silently audit-only',
+    signatureEnforcementMode(production) === 'strict')
+  check('Twilio: correctly signed production message passes',
+    verify(validSignature, production).reject === false)
+  check('Twilio: same signed body with another owner phone is blocked',
+    verify(validSignature, production, { ...params, From: 'whatsapp:+914155552671' }).reject === true)
+  check('Twilio: unsigned production message is blocked',
+    verify(null, production).reject === true)
+  check('Twilio: garbage production signature is blocked',
+    verify('AAAA=', production).reject === true)
+  check('Twilio: missing production verifier secret FAILS CLOSED',
+    verify(validSignature, { ...production, TWILIO_AUTH_TOKEN: '' }).reject === true)
+  check('Twilio: missing all signed-URL candidates FAILS CLOSED',
+    verify(validSignature, { NODE_ENV: 'production', TWILIO_AUTH_TOKEN: authToken }, params, 'not-a-url').reject === true)
+  check('Twilio: unknown production flag fails closed',
+    signatureEnforcementMode({ ...production, WEBHOOK_SIGNATURE_ENFORCE: 'mistyped' }) === 'strict')
+  check('Twilio: explicit production log-only opt-out is visible and does not masquerade as secure',
+    signatureEnforcementMode({ ...production, WEBHOOK_SIGNATURE_ENFORCE: '0' }) === 'log-only' &&
+    verify(null, { ...production, WEBHOOK_SIGNATURE_ENFORCE: '0' }).reject === false)
+  check('Twilio: legacy local/test opt-in contract unchanged',
+    signatureEnforcementMode({ ...production, NODE_ENV: 'test' }) === 'log-only' &&
+    signatureEnforcementMode({ ...production, NODE_ENV: 'test', WEBHOOK_SIGNATURE_ENFORCE: '1' }) === 'enforce')
 }
 
 if (failures > 0) {
