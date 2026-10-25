@@ -104,4 +104,7 @@ check('Reminder cron is scheduled every minute', () => {
   assert.equal(reminder?.schedule, '* * * * *')
 })
 
+// Registered under npm test: transpile the real checkout handlers with network-inert mocks.
+await import('./verify-subscription-checkout-owner-isolation.mjs')
+
 console.log('✅ product readiness checks passed')
