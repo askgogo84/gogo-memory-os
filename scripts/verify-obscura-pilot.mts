@@ -97,11 +97,14 @@ assert.equal(parseObscuraObservation(req.url,
   row(req.url,'Member Portal','Welcome. Sign in to your account.',
     [{type:'password',name:'password',label:'Password'}])),null,
   'even a member portal title-only request must not bypass credential input evidence')
-const phoneLogin=parseObscuraObservation(req.url,
-  row(req.url,'Member Portal','Sign in to your account to continue',
-    [{type:'tel',name:'phone',label:'Mobile phone'}]))
-assert.equal(isLoginFormPage(phoneLogin!),true,
+const phoneLoginInputs=[{type:'tel',name:'phone',label:'Mobile phone'}]
+const phoneLogin={url:req.url,title:'Member Portal',text:'Sign in to your account to continue',
+  forms:[{inputs:phoneLoginInputs}]}
+assert.equal(isLoginFormPage(phoneLogin),true,
   'observed phone-login field and copy must reach existing auth safety gate')
+assert.equal(parseObscuraObservation(req.url,
+  row(req.url,phoneLogin.title,phoneLogin.text,phoneLoginInputs)),null,
+  'the public observation parser must reject a phone sign-in wall before downstream research')
 const locationGate=parseObscuraObservation(req.url,
   row(req.url,'Store','Please enter your delivery address to continue',
     [{type:'text',name:'pincode',label:'Enter delivery pincode'}]))
@@ -143,7 +146,10 @@ assert.equal((seen[0] as any).owner,req.userId)
 assert.equal((seen[0] as any).command.url,req.url)
 assert.equal((seen[0] as any).command.expression,OBSCURA_READ_EXPRESSION)
 assert.equal((seen[0] as any).command.timeoutSeconds,15)
-assert.doesNotMatch(OBSCURA_READ_EXPRESSION,/\bclick\b|submit|password|token|localStorage|cookie/i)
+// HTML input type="submit" is inert metadata, not a submission command.
+assert.doesNotMatch(OBSCURA_READ_EXPRESSION,
+  /\.(?:click|submit|dispatchEvent|setAttribute)\s*\(|\.value\s*=|\b(?:localStorage|sessionStorage|password|token)\b|document\.cookie/i,
+  'public observation expression cannot invoke mutation actions or read private browser state')
 assert.equal(await readWithObscura({...req,mode:'execute'},runner,env),null)
 assert.equal(called,1)
 assert.equal(await readWithObscura(req,async()=>{throw Error('canary')},env),null)
