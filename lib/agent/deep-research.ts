@@ -4,6 +4,7 @@
 // Public web only: never used for personal data (mail, calendar, vault), and it never acts on anything.
 import Anthropic from '@anthropic-ai/sdk'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
+import { hotelResearchEvidence, isHotelDiscoveryResearch } from './hotel-research-evidence'
 
 const PERSONAL = /\b(?:my|our)\s+(?:e-?mails?|inbox|calendar|meetings?|vault|documents?|files?|drive|expenses?|bills?|account|reminders?|contacts?)\b/i
 
@@ -89,6 +90,7 @@ export async function runDeepResearch(question: string, deps: { model?: Model; s
   const model = deps.model || defaultModel
   const queries = await planQueries(question, model)
   const sources = await gatherSources(queries, deps)
+  if (isHotelDiscoveryResearch(question)) return { ...hotelResearchEvidence(question, sources), queries }
   if (!sources.length) return { text: `I couldn't find reliable sources for that right now. I didn't guess. Try rephrasing, or ask me again in a minute.`, sources: [], queries }
   const corpus = sources.map(s => `[${s.n}] ${s.title}\n${s.url}\n${s.snippet}${s.text ? `\n${s.text}` : ''}`).join('\n\n---\n\n')
   const prompt = `You are a careful researcher. Answer the request using ONLY the sources below. Cite every factual claim with [n]. If sources disagree or a detail is missing, say so briefly. Prefer the most recent information. Be concise and practical for someone reading on a phone.

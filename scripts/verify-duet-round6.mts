@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict'
 import * as DR from '../lib/agent/deep-research.ts'
 import * as US from '../lib/agent/url-summary.ts'
+import { hotelResearchEvidence, isHotelDiscoveryResearch } from '../lib/agent/hotel-research-evidence.ts'
 import { isMakeDeliverableRequest } from '../lib/agent/make-request.ts'
 import { markdownHeadingsToBold } from '../lib/bot/format-response.ts'
 
@@ -155,6 +156,63 @@ await check('P1: research snippets never initiate direct server fetch to search-
   } finally {
     globalThis.fetch = originalFetch
   }
+})
+
+await check('hotel research cannot assign an area price to a property or invent a ranked pick', async () => {
+  let modelCalls = 0
+  const question = 'Research only: list 3 hotels near Mumbai airport for one adult, 14–16 November 2026. Give public source links. Do not book.'
+  const out = await DR.runDeepResearch(question, {
+    search: (async () => [
+      { title: 'Hotels in Mumbai Airport Area', url: 'https://www.makemytrip.com/hotels/hotels-in-airport-mumbai.html', snippet: 'Roswyn, A Morgans Originals Hotel ₹31,270 per night' },
+      { title: 'Hotel Airport International BOOK Mumbai Hotel', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai.html', snippet: 'Hotel property page; requested-date rates not supplied' },
+      { title: 'Hotel Airport Metro Near Mumbai Airport', url: 'https://www.agoda.com/en-in/oyo-5352-hotel-airport-metro/hotel/mumbai-in.html', snippet: 'Hotel property page; availability not supplied' },
+    ]) as any,
+    model: async (_prompt: string, _n: number, name: string) => {
+      modelCalls++
+      return name.includes('haiku') ? 'Mumbai airport hotel property pages\nMumbai airport accommodation'
+        : 'Hotel Airport International costs ₹31,270 per night [1][2]. My pick: it has the best rating.'
+    },
+  })
+  assert.doesNotMatch(out.text, /₹|31,270|My pick|best rating/i)
+  assert.match(out.text, /2 of 3/i, 'do not invent a third property from an area directory')
+  assert.match(out.text, /rates and availability.*unverified/i)
+  assert.match(out.text, /Hotel Airport International/)
+  assert.match(out.text, /Hotel Airport Metro/)
+  assert.doesNotMatch(out.text, /hotels-in-airport-mumbai/)
+  assert.equal(modelCalls, 1, 'property output does not use model price synthesis')
+  assert.equal(out.sources.length, 2)
+  assert.ok(out.sources.every(source => source.snippet === '' && source.text === ''), 'unbound rates cannot survive in hotel output metadata')
+})
+
+await check('hotel source catalogue rejects directories, mismatched identities, credentials and price-bearing titles', () => {
+  const source = (n: number, title: string, url: string) => ({ n, title, url, snippet: 'unbound ₹31,270', text: 'not a date-specific quote' })
+  const out = hotelResearchEvidence('Research three hotels near Mumbai airport for 2 adults', [
+    source(1, 'Hotel Airport International', 'https://www.makemytrip.com/hotels/roswyn-details-mumbai.html'),
+    source(2, 'Hotels near Mumbai airport', 'https://www.skyscanner.co.in/hotels/india/mumbai-hotels/near-airport'),
+    source(3, 'Hotel Airport International', 'https://user:secret@www.makemytrip.com/hotels/hotel_airport_international-details-mumbai.html'),
+    source(4, 'Hotel Airport International', 'https://www.makemytrip.com.evil.test/hotels/hotel_airport_international-details-mumbai.html'),
+    source(5, 'Hotel Airport International ₹31,270', 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai.html'),
+    source(6, 'Hotel Airport International', 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai.html?token=SYNTHETIC_SECRET#private'),
+    source(7, 'Hotel Airport International BOOK Mumbai Hotel', 'https://www.agoda.com/hotel-airport-international/hotel/mumbai-in.html'),
+    source(8, 'Hotel Private PIN 1234', 'https://www.makemytrip.com/hotels/hotel_private_pin_1234-details-mumbai.html'),
+  ])
+  assert.equal(out.sources.length, 1, 'duplicate property names do not create a false result count')
+  assert.match(out.text, /1 of 3/)
+  assert.doesNotMatch(out.text, /₹|31,270|SYNTHETIC_SECRET|private|evil|token|roswyn/i)
+  assert.equal(out.sources[0].url, 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai.html')
+  const none = hotelResearchEvidence('Research 3 hotels in Mumbai', [source(1, 'Hotels in Mumbai', 'https://example.test/directory')])
+  assert.equal(none.sources.length, 0)
+  assert.match(none.text, /couldn.t verify property-specific/)
+})
+
+await check('hotel requests preserve venue count, report caps honestly and leave unrelated research alone', () => {
+  assert.ok(isHotelDiscoveryResearch('Research only: list 3 hotels near Mumbai airport for one adult'))
+  assert.ok(!isHotelDiscoveryResearch('Research hotel industry stocks in India'))
+  assert.ok(!isHotelDiscoveryResearch('Research history of hotels in India'))
+  assert.ok(!isHotelDiscoveryResearch('Research electric scooters in India'))
+  const sources = Array.from({ length: 8 }, (_, i) => ({ n: i + 1, title: `Hotel Example${i}`, url: `https://www.makemytrip.com/hotels/hotel_example${i}-details-mumbai.html`, snippet: '', text: '' }))
+  assert.match(hotelResearchEvidence('Research ten hotels in Mumbai for 2 adults', sources).text, /5 of 10/)
+  assert.equal(hotelResearchEvidence('Research two hotels in Mumbai for 3 adults', sources).sources.length, 2)
 })
 
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
