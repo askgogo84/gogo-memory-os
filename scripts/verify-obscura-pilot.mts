@@ -5,6 +5,8 @@ import {
   readWithObscura, type ObscuraRequest,
 } from '../lib/agent/obscura-public-read'
 import { OBSCURA_ARCHIVE_SHA256, OBSCURA_VERSION } from '../lib/agent/obscura-pilot-runtime'
+import { isLoginFormPage } from '../lib/agent/browser-evidence'
+import { needsBrowserDeliveryLocation } from '../lib/agent/browser-location-gate'
 
 const env = {
   GOGO_OBSCURA_PUBLIC_READ:'1',
@@ -39,8 +41,10 @@ assert.match(commandSource,/await tryObscuraBrowserRead\(/)
 assert.match(commandSource,/readDeadline:publicReadDeadline/)
 assert.match(commandSource,/reservePasswordHandoff:true,reserveHumanHandoff:true/)
 
-const row = (url=req.url, title='A real research page', text='Exact product or restaurant source evidence was observed on this page.') =>
-  JSON.stringify({url,title,text})
+const row = (url=req.url, title='A real research page',
+  text='Exact product or restaurant source evidence was observed on this page.',
+  inputs: Array<{type:string;name:string;label:string}>=[]) =>
+  JSON.stringify({url,title,text,inputCount:inputs.length,forms:[{inputs}]})
 
 // Opt in requires explicit mode, owner-supplied host and unprivileged public URL.
 assert.equal(obscuraPilotEligible(req,env),true)
@@ -85,6 +89,29 @@ const hit=parseObscuraObservation(req.url,row(),()=>stamp)
 assert.equal(hit?.title,'A real research page')
 assert.equal(hit?.runtime,'obscura')
 assert.equal(hit?.observedAt,stamp.toISOString())
+assert.deepEqual(hit?.forms,[{inputs:[]}])
+assert.equal(parseObscuraObservation(req.url,
+  JSON.stringify({url:req.url,title:'Page',text:'Valid body but no input metadata'})),null,
+  'missing form census cannot be silently assumed to have no login inputs')
+assert.equal(parseObscuraObservation(req.url,
+  row(req.url,'Member Portal','Welcome. Sign in to your account.',
+    [{type:'password',name:'password',label:'Password'}])),null,
+  'even a member portal title-only request must not bypass credential input evidence')
+const phoneLogin=parseObscuraObservation(req.url,
+  row(req.url,'Member Portal','Sign in to your account to continue',
+    [{type:'tel',name:'phone',label:'Mobile phone'}]))
+assert.equal(isLoginFormPage(phoneLogin!),true,
+  'observed phone-login field and copy must reach existing auth safety gate')
+const locationGate=parseObscuraObservation(req.url,
+  row(req.url,'Store','Please enter your delivery address to continue',
+    [{type:'text',name:'pincode',label:'Enter delivery pincode'}]))
+assert.equal(needsBrowserDeliveryLocation(locationGate),true,
+  'real input metadata must reach the established delivery-location gate')
+assert.equal(parseObscuraObservation(req.url,
+  JSON.stringify({url:req.url,title:'Page',text:'Text',inputCount:25,
+    forms:[{inputs:Array.from({length:24},()=>({type:'text',name:'x',label:''}))}]})),null,
+  'truncated input enumeration must not claim a complete page assessment')
+
 assert.equal(parseObscuraObservation(req.url,row('https://other.example.com/p')),null)
 assert.equal(parseObscuraObservation(req.url,row('https://www.example.com/p?access%5Ftoken=private')),null)
 assert.equal(parseObscuraObservation(req.url,row('https://www.example.com/p?access%255Ftoken=private')),null)
@@ -136,6 +163,7 @@ const computer=readFileSync('lib/agent/secure-computer.ts','utf8')
 assert.match(computer,/obscuraPilotEligible\(params\)/)
 assert.match(computer,/assessReadOutcome\(params\.objective,page\)/)
 assert.match(computer,/if \(verified\) return/)
+assert.match(computer,/forms:candidate\.forms/,'the actual browser calls existing gates with real input metadata')
 assert.match(computer,/let publicFlightRead=false/)
 assert.match(computer,/pilotDeadline=Math.min\(Date.now\(\)\+75_000,readDeadline-90_000\)/)
 assert.match(computer,/sandboxName:''/)
