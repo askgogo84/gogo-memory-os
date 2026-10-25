@@ -24,9 +24,9 @@ export function placeAsk(text: string): PlaceAsk | null {
   const explicitCount = primary.match(/\b(?:suggest|recommend|find|show(?: me)?|list|give me|top|best)\s+(?:me\s+|the\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight)\s+/i)?.[1]?.toLowerCase()
   const count = Math.max(1, Math.min(8, explicitCount ? (COUNT_WORDS[explicitCount] || Number(explicitCount)) : 5))
   const discovery = primary
-    .replace(/\bfor\s+\d{1,2}\s+(?:people|persons?|guests?|pax)\b.*$/i, '')
-    .replace(/\b(?:today|tonight|tomorrow)\b.*$/i, '')
-    .replace(/\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b.*$/i, '')
+    .replace(/\bfor\s+\d{1,2}\s+(?:people|persons?|guests?|pax)\b/gi, ' ')
+    .replace(/\b(?:today|tonight|tomorrow)\b/gi, ' ')
+    .replace(/\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi, ' ')
     .replace(LEAD, '').trimStart()
     .replace(/^(?:me\s+|the\s+)?(?:\d{1,2}|one|two|three|four|five|six|seven|eight)\s+/i, '')
     .replace(/[\s,]+$/, '').replace(/\s+/g, ' ').trim()
