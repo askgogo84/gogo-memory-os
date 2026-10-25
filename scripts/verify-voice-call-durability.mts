@@ -171,4 +171,136 @@ await check('failed call with dialogue cannot claim that nothing was booked or p
   assert.equal(h.rows[0].status,'outcome_unknown');assert.equal(h.rows[0].metadata_json.reconciliation_required,true)
   assert.doesNotMatch(sent[0],/Nothing was booked/);assert.match(sent[0],/couldn't confirm/)
 })
+
+/**
+ * P1 WhatsApp voice-note transport: actual function, fake OpenAI, and fully
+ * intercepted fetch. No Twilio/OpenAI network, no audio or real accounts.
+ */
+const VOICE_MEDIA_SID = 'AC' + 'a'.repeat(32)
+const VOICE_MEDIA_URL = `https://api.twilio.com/2010-04-01/Accounts/${VOICE_MEDIA_SID}/Messages/SM${'b'.repeat(32)}/Media/ME${'c'.repeat(32)}`
+function voiceMediaHarness(transport: (url: string, options?: any) => Promise<Response>) {
+  const exports: any = {}
+  let providerCalls = 0
+  const FakeOpenAI = class {
+    audio = { transcriptions: { create: async ({ file }: any) => {
+      providerCalls++
+      assert.equal(file.name, 'whatsapp-voice.ogg')
+      return { text: 'Fixture audio transcription' }
+    } } }
+  }
+  class InertFile {
+    constructor(public parts: any[], public name: string, public opts: any) {}
+  }
+  const source = readFileSync('lib/services/voice-transcription.ts', 'utf8')
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+  }).outputText
+  runInNewContext(compiled, {
+    exports,
+    require: (name: string) => {
+      if (name === 'openai') return { __esModule: true, default: FakeOpenAI }
+      throw Error('Unexpected voice media dependency ' + name)
+    },
+    process: { env: { OPENAI_API_KEY: 'fixture-only', TWILIO_ACCOUNT_SID: VOICE_MEDIA_SID, TWILIO_AUTH_TOKEN: 'fixture-token' } },
+    fetch: transport, Buffer, URL, Response, AbortSignal, Uint8Array, ArrayBuffer, File: InertFile, console,
+  })
+  return { voice: exports, getProviderCalls: () => providerCalls }
+}
+await check('P1 voice-note: forged media URLs never receive Twilio Basic auth or any server fetch', async () => {
+  const attacks = [
+    'http://169.254.169.254/latest/meta-data',
+    'https://127.0.0.1/internal',
+    'http://api.twilio.com/2010-04-01/Accounts/' + VOICE_MEDIA_SID,
+    VOICE_MEDIA_URL.replace('api.twilio.com', 'api.twilio.com.evil.invalid'),
+    VOICE_MEDIA_URL.replace(VOICE_MEDIA_SID, 'AC' + 'd'.repeat(32)),
+    VOICE_MEDIA_URL.replace('api.twilio.com', 'user:pass@api.twilio.com'),
+    VOICE_MEDIA_URL.replace('api.twilio.com', 'api.twilio.com:8443'),
+    VOICE_MEDIA_URL + '?redirect=https://attacker.invalid/',
+    VOICE_MEDIA_URL + '#fragment',
+    VOICE_MEDIA_URL.replace('/Media/ME', '/Media/%4dE'),
+  ]
+  for (const mediaUrl of attacks) {
+    let fetchCalls = 0
+    const h = voiceMediaHarness(async () => { fetchCalls++; return new Response(new Uint8Array([1, 2, 3])) })
+    await assert.rejects(() => h.voice.transcribeTwilioVoiceNote({ mediaUrl, contentType: 'audio/ogg' }), /Untrusted Twilio voice media URL/)
+    assert.equal(fetchCalls, 0, 'malicious URL must be rejected before any network request: ' + mediaUrl)
+    assert.equal(h.getProviderCalls(), 0)
+  }
+})
+await check('P1 voice-note: valid account URL uses manual redirect and supports direct 200 audio', async () => {
+  const calls: any[] = []
+  const h = voiceMediaHarness(async (url, options) => {
+    calls.push({ url, options })
+    return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'content-type': 'audio/ogg' } })
+  })
+  assert.equal(await h.voice.transcribeTwilioVoiceNote({ mediaUrl: VOICE_MEDIA_URL, contentType: 'audio/ogg' }), 'Fixture audio transcription')
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].url, VOICE_MEDIA_URL)
+  assert.equal(calls[0].options.redirect, 'manual')
+  assert.equal(calls[0].options.headers.Authorization, 'Basic ' + Buffer.from(VOICE_MEDIA_SID + ':fixture-token').toString('base64'))
+  assert.equal(h.getProviderCalls(), 1)
+})
+await check('P1 voice-note: external/private redirect is refused before a second fetch', async () => {
+  for (const redirect of [
+    'http://169.254.169.254/latest/meta-data',
+    'https://mms.twiliocdn.com.evil.invalid/audio',
+    'https://mms.twiliocdn.com:8443/audio',
+    'https://user:pass@mms.twiliocdn.com/audio',
+  ]) {
+    const calls: any[] = []
+    const h = voiceMediaHarness(async (url, options) => {
+      calls.push({ url, options })
+      return new Response(null, { status: 302, headers: { location: redirect } })
+    })
+    await assert.rejects(() => h.voice.transcribeTwilioVoiceNote({ mediaUrl: VOICE_MEDIA_URL, contentType: 'audio/ogg' }), /redirect refused/)
+    assert.equal(calls.length, 1, 'must never follow unapproved redirect')
+    assert.equal(h.getProviderCalls(), 0)
+  }
+})
+await check('P1 voice-note: one valid Twilio CDN hop receives NO Basic auth; second hop blocked', async () => {
+  const cdn = 'https://mms.twiliocdn.com/fixture/audio?sig=fixture'
+  const calls: any[] = []
+  const h = voiceMediaHarness(async (url, options) => {
+    calls.push({ url, options })
+    return calls.length === 1
+      ? new Response(null, { status: 302, headers: { location: cdn } })
+      : new Response(new Uint8Array([4, 5]), { status: 200 })
+  })
+  assert.equal(await h.voice.transcribeTwilioVoiceNote({ mediaUrl: VOICE_MEDIA_URL, contentType: 'audio/ogg' }), 'Fixture audio transcription')
+  assert.equal(calls.length, 2)
+  assert.equal(calls[1].url, cdn)
+  assert.equal(calls[1].options.redirect, 'manual')
+  assert.equal(calls[1].options.headers?.Authorization, undefined)
+  assert.equal(h.getProviderCalls(), 1)
+
+  let tries = 0
+  const second = voiceMediaHarness(async () => {
+    tries++
+    return new Response(null, { status: 307, headers: { location: cdn } })
+  })
+  await assert.rejects(() => second.voice.transcribeTwilioVoiceNote({ mediaUrl: VOICE_MEDIA_URL, contentType: 'audio/ogg' }), /download failed: 307/)
+  assert.equal(tries, 2)
+  assert.equal(second.getProviderCalls(), 0)
+})
+await check('P1 voice-note: reject declared and streaming >24MiB before model upload', async () => {
+  let providerCalls = 0
+  const declared = voiceMediaHarness(async () => {
+    providerCalls++
+    return new Response(new Uint8Array([1]), { status: 200, headers: { 'content-length': String(25 * 1024 * 1024) } })
+  })
+  await assert.rejects(() => declared.voice.transcribeTwilioVoiceNote({ mediaUrl: VOICE_MEDIA_URL, contentType: 'audio/ogg' }), /too large/)
+  assert.equal(providerCalls, 1)
+  assert.equal(declared.getProviderCalls(), 0)
+
+  const streamed = voiceMediaHarness(async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(12 * 1024 * 1024))
+      controller.enqueue(new Uint8Array(13 * 1024 * 1024))
+      controller.close()
+    },
+  }), { status: 200 }))
+  await assert.rejects(() => streamed.voice.transcribeTwilioVoiceNote({ mediaUrl: VOICE_MEDIA_URL, contentType: 'audio/ogg' }), /too large/)
+  assert.equal(streamed.getProviderCalls(), 0)
+})
+
 if (failed) process.exit(1)
