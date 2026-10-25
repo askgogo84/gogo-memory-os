@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { exactOwnerOnly, exactSessionOwnerId, allocateWhatsAppOwnerId } from '../lib/dashboard/owner-identity'
+import { linkedTelegramIds, idsForWhatsapp } from '../lib/dashboard/owner-ids'
+
+// Exercise the actual runtime helpers, not merely static source inspections.
+assert.deepEqual(await linkedTelegramIds('4242'), ['4242'])
+assert.deepEqual(await linkedTelegramIds('-884501501'), ['-884501501'])
+assert.deepEqual(await idsForWhatsapp('whatsapp:+918884501501'), [])
+assert.deepEqual(await idsForWhatsapp('whatsapp:+198884501501'), [])
+assert.deepEqual(await linkedTelegramIds(Number.MAX_SAFE_INTEGER + 10), [])
 
 assert.deepEqual(exactOwnerOnly('4242'), ['4242'])
 assert.deepEqual(exactOwnerOnly(-884501501), ['-884501501'])
