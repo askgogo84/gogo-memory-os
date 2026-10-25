@@ -81,7 +81,7 @@ for (const k of ['daily', 'weekly', 'report']) assert.match((await import('node:
   globalThis.fetch = (async (input: any, init?: any) => {
     calls++
     const endpoint = String(typeof input === 'string' ? input : input?.url || input)
-    assert.match(endpoint, /\\/rest\\/v1\\/email_aliases(?:\\?|$)/, 'only local synthetic alias lookup is invoked')
+    assert.equal(new URL(endpoint).pathname, '/rest/v1/email_aliases', 'only local synthetic alias lookup is invoked')
     if (failure) return new Response(JSON.stringify({ message: 'synthetic alias DB outage' }), {
       status: 503, headers: { 'content-type': 'application/json' },
     })
