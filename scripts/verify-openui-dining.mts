@@ -57,8 +57,8 @@ for(const url of [
   'https://localhost/widget',
   'javascript:alert(1)',
 ])assert.equal(safeDiningProviderUrl(url),null,'unsafe booking source refused: '+url)
-assert.equal(safeDiningProviderUrl('https://widget.reservego.co/widget?token=secret'),
-  'https://widget.reservego.co/widget','strip account/session tokens from link')
+assert.equal(safeDiningProviderUrl('https://widget.reservego.co/widget?token=secret'),null,
+  'reject provider links with unreviewed session or outlet query parameters')
 
 const route=readFileSync('app/api/openui/dining/[id]/route.ts','utf8')
 assert.match(route,/requireAgentSession\(request\)/)
