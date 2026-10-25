@@ -32,6 +32,11 @@ assert.deepEqual(uniquePaymentOwner([row44()], {phone:FULL_91}), null, 'another 
 assert.deepEqual(uniquePaymentOwner([row91()], {phone:FULL_91, whatsappId:FULL_44}), null, 'contradictory paid-contact and notes deny')
 assert.deepEqual(uniquePaymentOwner([{...row91(),id:9007199254740993}],{phone:FULL_91}), null, 'unsafe DB number denies')
 assert.equal(uniquePaymentOwner([row91()], {phone:FULL_91})?.id, 'owner91')
+assert.equal(uniquePaymentOwner([{...row91(),phone:FULL_44}],{phone:FULL_91})?.notificationPhone,FULL_91,
+  'paid contact—not another saved phone field—receives a payment confirmation')
+assert.equal(uniquePaymentOwner([{...row91(),phone:FULL_44,razorpay_subscription_id:'sub_fixtureOwner91'}],
+  {subscriptionId:'sub_fixtureOwner91'})?.notificationPhone,FULL_91,
+  'subscription-only status notice uses persisted WhatsApp destination')
 
 type Row = ReturnType<typeof row91>
 type Write = { id: string; patch: Record<string, unknown> }
