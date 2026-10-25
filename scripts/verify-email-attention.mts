@@ -190,5 +190,8 @@ await check('AskGogo\'s own digest emails never need you', () => {
   assert.notEqual(A.classifyEmail({ id: 'z', from: 'Nithin <nithin@tipplr.in>', subject: 'Re: AskGogo POS', snippet: 'Can you approve this by tomorrow?', date: new Date().toISOString() } as any), 'update')
 })
 
+// Exercise actual inbound-mail handler through an inert delivery-ledger truth table.
+await import('./verify-inbound-notification-outcome.mts')
+
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('email attention: all checks passed')
