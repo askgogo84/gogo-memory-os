@@ -36,7 +36,7 @@ const db = {
       in(key: string, values: string[]) {
         assert.equal(mode, 'read'); assert.equal(key, 'whatsapp_id')
         assert.ok(Array.isArray(values)); forms = values
-        state.lookupCalls.push(values)
+        state.lookupCalls.push(Array.from(values))
         return query
       },
       limit(value: number) { assert.equal(value, 2, 'never truncate ambiguity to first matching account'); limit = value; return query },
