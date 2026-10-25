@@ -28,6 +28,13 @@ export type ObscuraRequest = {
   loginCode?: string | null
   bookingOtp?: string | null
   reserveHumanHandoff?: boolean
+  reservePasswordHandoff?: boolean
+  phoneLogin?: { number: string; telegramId: string } | null
+  bookingPhone?: string | null
+  slotCheck?: boolean
+  rehearsal?: boolean
+  recoverFlightSearch?: boolean
+  keepAliveOwner?: string
   sessionTaskId?: string
 }
 export type ObscuraCommand = {
@@ -47,7 +54,10 @@ export function obscuraPilotEligible(
   if (env.GOGO_OBSCURA_PUBLIC_READ !== '1' || params.mode !== 'read'
     || params.keepAlive || params.vaultCredentialId || params.accountCreation
     || params.providerBooking || params.resumePage || params.loginCode
-    || params.bookingOtp || params.reserveHumanHandoff) return false
+    || params.bookingOtp || params.reserveHumanHandoff
+    || params.reservePasswordHandoff || params.phoneLogin || params.bookingPhone != null
+    || params.slotCheck || params.rehearsal || params.recoverFlightSearch
+    || params.keepAliveOwner) return false
   try {
     const target = browserTargetUrl(params.url)
     if (target.protocol !== 'https:' || target.username || target.password || target.port
