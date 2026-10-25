@@ -5,8 +5,8 @@ import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 
-const state = { users: [], memories: [], writes: [], reads: [], failUsers: false, failMemories: false }
-function reset(users = [], opts = {}) {
+const state: any = { users: [], memories: [], writes: [], reads: [], failUsers: false, failMemories: false }
+function reset(users: any[] = [], opts: any = {}) {
   state.users = users
   state.memories = opts.memories || []
   state.writes = []
@@ -65,9 +65,9 @@ const source = readFileSync(new URL('../lib/bot/handlers/referral-unlock.ts', im
 const compiled = ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText
-const exports = {}
+const moduleExports: Record<string, any> = {}
 runInNewContext(compiled, {
-  exports,
+  exports: moduleExports,
   require(id) {
     if (id === '@/lib/supabase-admin') return { supabaseAdmin }
     if (id === '@/lib/product-urls') return { waLink: () => 'https://wa.me/0000000000' }
@@ -78,8 +78,8 @@ runInNewContext(compiled, {
   console: { log() {}, error() {}, warn() {} },
   fetch() { throw new Error('real network forbidden') },
 }, { filename: 'lib/bot/handlers/referral-unlock.ts', timeout: 1500 })
-assert.equal(typeof exports.recordReferralJoinFromText, 'function', 'real compiled referral handler executes')
-assert.equal(typeof exports.buildReferralUnlockReply, 'function', 'real compiled referral exports loaded')
+assert.equal(typeof moduleExports.recordReferralJoinFromText, 'function', 'real compiled referral handler executes')
+assert.equal(typeof moduleExports.buildReferralUnlockReply, 'function', 'real compiled referral exports loaded')
 
 const code = 'GOGO-4155552671'
 const id = -4155552671
@@ -101,7 +101,7 @@ async function check(name, fn) {
 
 await check('legitimate inviter is selected by own persisted telegram ID, not the first foreign suffix', async () => {
   state.users = [wrong(), good()]
-  const answer = await exports.recordReferralJoinFromText(params())
+  const answer = await moduleExports.recordReferralJoinFromText(params())
   assert.equal(answer?.saved, true)
   assert.equal(state.writes.length, 2)
   assert.equal(state.writes[0].telegram_id, id, 'only real code owner credited')
@@ -110,34 +110,34 @@ await check('legitimate inviter is selected by own persisted telegram ID, not th
 })
 await check('foreign WhatsApp suffix alone cannot claim a different inviter code', async () => {
   state.users = [wrong()]
-  assert.equal(await exports.recordReferralJoinFromText(params()), null)
+  assert.equal(await moduleExports.recordReferralJoinFromText(params()), null)
   assert.equal(state.writes.length, 0)
 })
 await check('two canonical owners whose telegram IDs produce the same code are ambiguous', async () => {
   state.users = [good(), good(4155552671, '+14155552671')]
-  assert.equal(await exports.recordReferralJoinFromText(params()), null)
+  assert.equal(await moduleExports.recordReferralJoinFromText(params()), null)
   assert.equal(state.writes.length, 0)
 })
 await check('unsafe 64-bit saved telegram ID never aliases a referral recipient', async () => {
   state.users = [good('9007199254740993', 'whatsapp:+9199254740993')]
-  assert.equal(await exports.recordReferralJoinFromText(params('GOGO-9254740993')), null)
+  assert.equal(await moduleExports.recordReferralJoinFromText(params('GOGO-9254740993')), null)
   assert.equal(state.writes.length, 0)
 })
 await check('DB outage fails closed without any memory write', async () => {
   state.users = [good()]
   state.failUsers = true
-  assert.equal(await exports.recordReferralJoinFromText(params()), null)
+  assert.equal(await moduleExports.recordReferralJoinFromText(params()), null)
   assert.equal(state.writes.length, 0)
 })
 await check('candidate truncation is not interpreted as a unique verified inviter', async () => {
   state.users = [good(), ...Array.from({ length: 24 }, (_, i) => wrong(-(i + 40), '+14155552671'))]
-  assert.equal(await exports.recordReferralJoinFromText(params()), null)
+  assert.equal(await moduleExports.recordReferralJoinFromText(params()), null)
   assert.equal(state.writes.length, 0)
 })
 await check('unknown memory dedupe state fails closed before writes', async () => {
   state.users = [good()]
   state.failMemories = true
-  const reply = await exports.recordReferralJoinFromText(params())
+  const reply = await moduleExports.recordReferralJoinFromText(params())
   assert.equal(reply?.reason, 'lookup_unavailable')
   assert.equal(state.writes.length, 0)
 })
@@ -145,32 +145,32 @@ await check('already-recorded join stays idempotent', async () => {
   state.users = [good()]
   state.memories = [{ id: 1, telegram_id: id,
     content: 'ASKGOGO_REFERRAL_JOINED:' + code + ':synthetic-joined-account' }]
-  const reply = await exports.recordReferralJoinFromText(params())
+  const reply = await moduleExports.recordReferralJoinFromText(params())
   assert.equal(reply?.reason, 'already_recorded')
   assert.equal(state.writes.length, 0)
 })
 await check('referred actor with unsafe Number cannot create either memory', async () => {
   state.users = [good()]
-  const reply = await exports.recordReferralJoinFromText(params(code, { referredTelegramId: Number.MAX_SAFE_INTEGER + 100 }))
+  const reply = await moduleExports.recordReferralJoinFromText(params(code, { referredTelegramId: Number.MAX_SAFE_INTEGER + 100 }))
   assert.equal(reply?.reason, 'invalid_referred_owner')
   assert.equal(state.writes.length, 0)
   assert.equal(state.reads.length, 0)
 })
 await check('self-referral remains rejected', async () => {
   state.users = [good()]
-  const reply = await exports.recordReferralJoinFromText(params(code, { referredTelegramId: id }))
+  const reply = await moduleExports.recordReferralJoinFromText(params(code, { referredTelegramId: id }))
   assert.equal(reply?.reason, 'self_referral')
   assert.equal(state.writes.length, 0)
 })
 await check('legacy negative nine-digit generated inviter code remains functional', async () => {
   state.users = [{ telegram_id: -884501501, whatsapp_id: 'whatsapp:+919884501501' }]
-  const reply = await exports.recordReferralJoinFromText(params('GOGO-884501501'))
+  const reply = await moduleExports.recordReferralJoinFromText(params('GOGO-884501501'))
   assert.equal(reply?.saved, true)
   assert.equal(state.writes[0].telegram_id, -884501501)
 })
 await check('inert input lacking referral code causes no lookup and no writes', async () => {
   state.users = [good()]
-  assert.equal(await exports.recordReferralJoinFromText(params('not-a-referral-code')), null)
+  assert.equal(await moduleExports.recordReferralJoinFromText(params('not-a-referral-code')), null)
   assert.equal(state.reads.length, 0)
   assert.equal(state.writes.length, 0)
 })
