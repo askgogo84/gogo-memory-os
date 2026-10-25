@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import {
-  OBSCURA_READ_EXPRESSION, obscuraPilotEligible, parseObscuraObservation,
+  OBSCURA_READ_EXPRESSION, obscuraPilotEligible, explicitPublicRetailSearch, parseObscuraObservation,
   readWithObscura, type ObscuraRequest,
 } from '../lib/agent/obscura-public-read'
 import { OBSCURA_ARCHIVE_SHA256, OBSCURA_VERSION } from '../lib/agent/obscura-pilot-runtime'
@@ -13,6 +13,32 @@ const env = {
 const req:ObscuraRequest = {
   userId:'owner-a',url:'https://www.example.com/p?q=book',objective:'What is the page title? Read only.',mode:'read',
 }
+const flipkart={url:'https://www.flipkart.com/search?q=sony%20headphones',
+  objective:'Read-only: compare Sony headphones prices. Do not buy.',
+  mode:'read' as const,risk:'low'}
+assert.equal(explicitPublicRetailSearch(flipkart),true,
+  'a safely scoped user public Flipkart comparison has a path through the actual browser command')
+assert.equal(explicitPublicRetailSearch({...flipkart,mode:'execute'}),false)
+assert.equal(explicitPublicRetailSearch({...flipkart,approvalAction:'purchase'}),false)
+assert.equal(explicitPublicRetailSearch({...flipkart,risk:'high'}),false)
+assert.equal(explicitPublicRetailSearch({...flipkart,vaultCredentialId:'vault-token'}),false)
+assert.equal(explicitPublicRetailSearch({...flipkart,flow:'provider_booking'}),false)
+assert.equal(explicitPublicRetailSearch(flipkart,{handoff:{token:'fixture'}}),false)
+assert.equal(explicitPublicRetailSearch(flipkart,{comparison_parent_id:'compare'}),false)
+assert.equal(explicitPublicRetailSearch(flipkart,{commerce_parent_id:'commerce'}),false)
+assert.equal(explicitPublicRetailSearch(flipkart,{browser_safe_to_retry:false}),false)
+assert.equal(explicitPublicRetailSearch({...flipkart,objective:'Read-only: find my account prices'}),false)
+assert.equal(explicitPublicRetailSearch({...flipkart,objective:'Read-only: compare prices then login'}),false)
+assert.equal(explicitPublicRetailSearch({...flipkart,url:'https://www.flipkart.com/account/orders?q=sony'}),false)
+assert.equal(explicitPublicRetailSearch({...flipkart,url:'https://www.flipkart.com/search?q=sony#private'},false),false)
+assert.equal(explicitPublicRetailSearch({...flipkart,url:'https://www.flipkart.com.evil.test/search?q=sony'}),false)
+assert.equal(explicitPublicRetailSearch({...flipkart,url:'https://www.flipkart.com/search?q=sony&access%5Ftoken=abc'}),false)
+const commandSource=readFileSync('lib/agent/browser-command.ts','utf8')
+assert.match(commandSource,/explicitPublicRetailSearch\(params\.command,runMetadata\)/)
+assert.match(commandSource,/await tryObscuraBrowserRead\(/)
+assert.match(commandSource,/readDeadline:publicReadDeadline/)
+assert.match(commandSource,/reservePasswordHandoff:true,reserveHumanHandoff:true/)
+
 const row = (url=req.url, title='A real research page', text='Exact product or restaurant source evidence was observed on this page.') =>
   JSON.stringify({url,title,text})
 
