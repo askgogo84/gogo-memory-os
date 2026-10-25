@@ -14,11 +14,12 @@ export function placeAsk(text: string): PlaceAsk | null {
   if (!LEAD.test(t) || !KIND.test(t)) return null
   // A negated action is a safety constraint, not an instruction to book.
   // Keep affirmative booking/ordering requests on their separate approval-gated routes.
-  // Remove only the negated verb and its bounded table object, never the rest
-  // of the clause: "do not order food but book a table" still asks to book.
-  const affirmative = t
-    .replace(/\b(?:do\s+not|don['’]?t|never|without)\s+(?:book|reserve)\b(?:\s+(?:(?:a|the|any)\s+)?table\b(?:\s+for\s+\d{1,2}\b(?:\s+(?:people|persons?|guests?|pax)\b)?)?)?/gi, '')
-    .replace(/\b(?:do\s+not|don['’]?t|never|without)\s+(?:order|buy|purchase)\b/gi, '')
+  // Bound negation at punctuation, contrast or another action. Explicitly
+  // coordinated negatives stay negative: "do not book or reserve a table".
+  const action = '(?:book|reserve|order|buy|purchase)'
+  const object = `(?:(?!\\b(?:${action}|call|deliver|but|then|however|instead|and|or)\\b)[^.!?;,\\n])*`
+  const negated = new RegExp(`\\b(?:do\\s+not|don['’]?t|never|without)\\s+${action}\\b${object}(?:\\b(?:and|or)\\s+${action}\\b${object})*`, 'gi')
+  const affirmative = t.replace(negated, '')
   if (/\b(?:book|reserve|order|buy|purchase|deliver|table for|call|reviews? of|menu of|timings? of)\b/i.test(affirmative)) return null
   // Search the place, not its party size, dinner time or safety/availability instructions.
   const primary = t.split(/(?:[!?;\n]|\.(?=\s+(?:show|research|read|do|don['’]?t|only|without)\b))/i)[0].trim()

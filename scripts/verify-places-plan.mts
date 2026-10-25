@@ -36,6 +36,7 @@ await check('a negated action never swallows a later affirmative action', async 
     'Find restaurants in Mumbai; do not book a table for 2 people but reserve one for 3',
     'Find restaurants in Mumbai; do not book but buy food',
     'Find restaurants in Mumbai; do not reserve but purchase food',
+    'Find restaurants in Mumbai; do not book or reserve a table but order food',
   ]
   let calls = 0
   const forbiddenFetch = (async () => { calls++; throw new Error('unexpected provider call') }) as typeof fetch
@@ -44,7 +45,9 @@ await check('a negated action never swallows a later affirmative action', async 
     assert.equal(await P.answerPlaces(text, forbiddenFetch), null, 'mixed action stays out of discovery')
   }
   assert.equal(calls, 0, 'rejected mixed requests never call the places provider')
-  assert.ok(P.placeAsk('Find restaurants in Mumbai; do not book a table for 2 people'), 'a purely negated table request remains read-only')
+  for (const safety of ['do not book a table for 2 people', 'do not book or reserve', 'do not book a table or reserve one', 'do not order food or book a table']) {
+    assert.ok(P.placeAsk(`Find restaurants in Mumbai; ${safety}`), 'purely negated actions remain read-only: ' + safety)
+  }
 })
 
 await check('25 Oct WhatsApp dining discovery: negated booking, locality comma and party size', async () => {
