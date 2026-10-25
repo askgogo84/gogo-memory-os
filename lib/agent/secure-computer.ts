@@ -2109,7 +2109,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
   // protected action, human takeover or persistent browser is routed here.
   // A valid page still MUST pass the existing evidence-grounded assessor;
   // missing/misleading evidence falls back to the existing secure browser.
-  if (obscuraPilotEligible(params)) {
+  if (typeof obscuraPilotEligible === 'function' && obscuraPilotEligible(params)) {
     const candidate = await tryObscuraPublicRead(params).catch(() => null)
     if (candidate) {
       const page = {url:candidate.url,title:candidate.title,text:candidate.text,
