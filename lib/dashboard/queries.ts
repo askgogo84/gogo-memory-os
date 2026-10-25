@@ -4,7 +4,6 @@ import type { ListItem } from '@/lib/data/lists'
 import { getPlan, getLimits, getUsage } from '@/lib/services/meter'
 import { getPlanLimits } from '@/lib/data/limits'
 import { getCalendarAccountAccess, mergeAccountEvents } from '@/lib/services/google-calendar-accounts'
-import { linkedTelegramIds } from '@/lib/dashboard/owner-ids'
 import {calendarInterval, calendarBlocksTime, type CalendarProviderEvent} from '@/lib/calendar-intervals'
 
 // ── The dashboard's read layer ────────────────────────────────────────────────
@@ -17,11 +16,13 @@ import {calendarInterval, calendarBlocksTime, type CalendarProviderEvent} from '
 // dashboard_sessions.telegram_id is TEXT; reminders.telegram_id is numeric. The
 // cast happens HERE, at the boundary, and nowhere else.
 
-// One person can have a dashboard row and a WhatsApp row (24 Oct live: reminders set on WhatsApp were saved under the
-// WhatsApp id and the signed-in dashboard showed none). Reminder reads cover every row linked to the same verified number.
-async function reminderOwnerIds(tgNum: number): Promise<number[]> {
-  const ids = (await linkedTelegramIds(tgNum)).map(v => Number(v)).filter(n => Number.isSafeInteger(n) && n !== 0)
-  return ids.length ? [...new Set(ids)] : [tgNum]
+// P1 temporary containment: reminders may be accessed only for the signed-in
+// session owner. Never use suffix-based inferred WhatsApp links to list reminders.
+// Rows belonging to a WhatsApp identity remain stored and deliver normally.
+function exactReminderSessionId(raw: string): number | null {
+  if (!/^-?[1-9]\d*$/.test(raw)) return null
+  const parsed = Number(raw)
+  return Number.isSafeInteger(parsed) ? parsed : null
 }
 
 export type ReminderRow = {
@@ -51,16 +52,16 @@ export type TodayReminders = { ok: true; reminders: ReminderRow[] } | { ok: fals
  * layer splits them into past/upcoming around the now-marker.
  */
 export async function getTodayReminders(telegramId: string): Promise<TodayReminders> {
-  const tgNum = parseInt(telegramId, 10)
+  const tgNum = exactReminderSessionId(telegramId)
   // A non-numeric session id can't own numeric-keyed reminders — that's an empty
   // day, not a failure. (Failures are reserved for actual read errors below.)
-  if (!Number.isFinite(tgNum)) return { ok: true, reminders: [] }
+  if (tgNum === null) return { ok: true, reminders: [] }
 
   const { startUtc, endUtc } = istDayWindow()
   const { data, error } = await supabaseAdmin
     .from('reminders')
     .select('id, message, remind_at, timezone, recurring_pattern, is_recurring, sent, sent_at, status, delivery_state')
-    .in('telegram_id', await reminderOwnerIds(tgNum))
+    .eq('telegram_id', tgNum)
     .gte('remind_at', startUtc.toISOString())
     .lt('remind_at', endUtc.toISOString())
     .order('remind_at', { ascending: true })
@@ -74,13 +75,13 @@ export async function getTodayReminders(telegramId: string): Promise<TodayRemind
 
 // Home v2 "Can wait": reminders after today, up to `days` ahead. A read failure is an empty list (Home still renders).
 export async function getUpcomingReminders(telegramId: string, days = 7): Promise<ReminderRow[]> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return []
+  const tgNum = exactReminderSessionId(telegramId)
+  if (tgNum === null) return []
   const { endUtc } = istDayWindow()
   const { data, error } = await supabaseAdmin
     .from('reminders')
     .select('id, message, remind_at, timezone, recurring_pattern, is_recurring, sent, sent_at, status, delivery_state')
-    .in('telegram_id', await reminderOwnerIds(tgNum))
+    .eq('telegram_id', tgNum)
     .gte('remind_at', endUtc.toISOString())
     .lt('remind_at', new Date(endUtc.getTime() + days * 864e5).toISOString())
     .order('remind_at', { ascending: true })
