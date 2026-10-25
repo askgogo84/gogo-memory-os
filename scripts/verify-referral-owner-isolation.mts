@@ -86,7 +86,7 @@ const id = -4155552671
 const referred = -2222222222
 const good = (telegram_id = id, whatsapp_id = '+914155552671') => ({ telegram_id, whatsapp_id })
 const wrong = (telegram_id = -987654321, whatsapp_id = '+14155552671') => ({ telegram_id, whatsapp_id })
-const params = (value = code, options = {}) => ({
+const params = (value = code, options: any = {}) => ({
   text: 'Hi AskGogo ' + value, referredTelegramId: referred,
   referredExternalId: options.externalId || 'synthetic-joined-account',
   referredName: 'Synthetic Invitee', ...options,
