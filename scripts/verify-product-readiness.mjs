@@ -88,7 +88,6 @@ for (const path of [
   'app/api/debug/voice-version/route.ts',
   'app/api/debug/whatsapp-version/route.ts',
   'app/api/dev/migrate-nutrition/route.ts',
-  'app/api/dev/webhook/route.ts',
   'app/api/payment/trial/route.ts',
   'app/api/payment/create/route.ts',
   'app/api/payments/create-link/route.ts',
@@ -98,13 +97,23 @@ for (const path of [
   })
 }
 
+// This retired preview control-plane endpoint is stricter than the standard
+// dev/debug routes: it must fail closed in *all* environments, not only prod.
+check('legacy phone-admin deployment webhook is retired on preview and production', () => {
+  const source = read('app/api/dev/webhook/route.ts')
+  assert.match(source, /export async function POST\s*\(/)
+  assert.match(source, /status:\s*404\b/)
+  assert.doesNotMatch(source, /\b(?:VERCEL_ENV|NODE_ENV)\b/)
+  assert.doesNotMatch(source, /\b(?:VERCEL_TOKEN|GITHUB_TOKEN|ADMIN_PHONES|triggerRedeploy|createGitHubIssue|sendWhatsAppMessage)\b/)
+})
+
 const vercel = JSON.parse(read('vercel.json'))
 check('Reminder cron is scheduled every minute', () => {
   const reminder = vercel.crons.find((cron) => cron.path === '/api/cron/reminders')
   assert.equal(reminder?.schedule, '* * * * *')
 })
 
-// Registered under npm test: transpile the real checkout handlers with network-inert mocks.
+// Registered under npm test: actual checkout handlers with network-inert mocks.
 await import('./verify-subscription-checkout-owner-isolation.mjs')
 
 console.log('✅ product readiness checks passed')
