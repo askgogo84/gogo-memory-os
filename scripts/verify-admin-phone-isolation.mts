@@ -48,7 +48,12 @@ assert.equal(adminPhone('whatsapp:+919876543210'), true, 'singular explicit conf
 env.ADMIN_WHATSAPP_NUMBERS = '+919876543210,+12025550105'
 delete env.ADMIN_WHATSAPP_NUMBER
 
-let currentUser: { whatsapp_id?: string; name?: string } | null = null
+let currentUser: { telegram_id: unknown; whatsapp_id?: string; name?: string } | null = null
+let sessionOwner: unknown = '101'
+let userError: unknown = null
+let userThrows = false
+let memberError: unknown = null
+let userReads: unknown[] = []
 let activeSession = true
 let memberReads: string[] = []
 const members: Record<string, { name: string; role: string; active: boolean }> = {
@@ -61,8 +66,8 @@ const db = {
         select: () => ({
           eq: (field: string, id: unknown) => {
             assert.equal(field, 'telegram_id')
-            assert.equal(id, 101)
-            return { maybeSingle: async () => ({ data: currentUser, error: null }) }
+            userReads.push(id)
+            return { maybeSingle: async () => { if (userThrows) throw new Error('inert owner read'); return { data: currentUser, error: userError } } }
           },
         }),
       }
@@ -73,7 +78,7 @@ const db = {
           eq: (field: string, id: string) => {
             assert.equal(field, 'phone_e164')
             memberReads.push(id)
-            return { maybeSingle: async () => ({ data: members[id] || null, error: null }) }
+            return { maybeSingle: async () => ({ data: members[id] || null, error: memberError }) }
           },
         }),
       }
@@ -85,12 +90,12 @@ const consoleModule = load('lib/admin/console-auth.ts', {
   'node:crypto': {},
   'next/headers': {},
   '@/lib/supabase-admin': { supabaseAdmin: db },
-  '@/lib/dashboard/session': { getSession: async () => activeSession ? { telegramId: '101' } : null },
+  '@/lib/dashboard/session': { getSession: async () => activeSession ? { telegramId: sessionOwner } : null },
   '@/lib/bot/handlers/admin-analytics': analytics,
 }, env)
 
 async function expectIdentity(whatsappId: string | null, role: string | null, shouldReadMember: boolean) {
-  currentUser = whatsappId === null ? null : { whatsapp_id: whatsappId, name: 'Fixture' }
+  currentUser = whatsappId === null ? null : { telegram_id: sessionOwner, whatsapp_id: whatsappId, name: 'Fixture' }
   memberReads = []
   const actual = await consoleModule.adminIdentity()
   assert.equal(actual?.role || null, role, 'actual console identity for ' + whatsappId)
@@ -107,4 +112,40 @@ await expectIdentity('2025550111', null, false)
 await expectIdentity(null, null, false)
 activeSession = false
 await expectIdentity('+919876543210', null, false)
+activeSession = true
+
+for (const invalid of [null, undefined, '', '0', '00101', '+101', '1e3', ' 101 ', '\u00a0101\u00a0', '9223372036854775808', '-9223372036854775809', 9007199254740992, NaN, Infinity, {}, []]) {
+  sessionOwner = invalid
+  currentUser = { telegram_id: '101', whatsapp_id: '+919876543210', name: 'Other owner' }
+  userReads = []; memberReads = []
+  assert.equal(await consoleModule.adminIdentity(), null, 'invalid original owner never authenticates')
+  assert.equal(userReads.length, 0, 'invalid owner causes no private users read')
+  assert.equal(memberReads.length, 0)
+}
+for (const owner of ['101', '-101', '9007199254740992', '9007199254740993', '9223372036854775807', '-9223372036854775808', 101, -101]) {
+  sessionOwner = owner
+  currentUser = { telegram_id: owner, whatsapp_id: '+919876543210', name: 'Exact owner' }
+  userReads = []
+  const identity = await consoleModule.adminIdentity()
+  assert.equal(identity?.role, 'owner')
+  assert.equal(identity?.telegramId, String(owner))
+  assert.deepEqual(userReads, [String(owner)], 'query must preserve canonical owner string, never Number')
+}
+sessionOwner = '9007199254740993'
+for (const returnedOwner of ['9007199254740992', ' 9007199254740993 ', 9007199254740992, null, undefined]) {
+  currentUser = { telegram_id: returnedOwner, whatsapp_id: '+919876543210', name: 'Wrong owner' }
+  memberReads = []
+  assert.equal(await consoleModule.adminIdentity(), null, 'foreign/noncanonical returned owner denied')
+  assert.equal(memberReads.length, 0)
+}
+currentUser = { telegram_id: sessionOwner, whatsapp_id: '+919876543210', name: 'Exact owner' }
+userError = { code: 'inert' }
+assert.equal(await consoleModule.adminIdentity(), null, 'error with returned row cannot authenticate')
+userError = null; userThrows = true
+assert.equal(await consoleModule.adminIdentity(), null, 'thrown private lookup cannot authenticate')
+userThrows = false
+sessionOwner = '101'
+await expectIdentity('+12025550111', 'operator', true)
+memberError = { code: 'inert' }
+await expectIdentity('+12025550111', null, true)
 console.log('Strict full-phone admin authentication: actual predicate + owner/member session boundary, foreign suffix, local legacy, malformed and unset config passed')

@@ -22,18 +22,36 @@ export function e164(phone: string) {
 }
 export const canDo = (role: AdminRole, min: AdminRole) => RANK[role] >= RANK[min]
 
+/** Preserve exact database owner text; a rounded number is never an admin identity. */
+export function exactAdminOwnerId(value: unknown): string | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
+  const raw = String(value)
+  if (raw.length > 20 || !/^-?[1-9]\d*$/.test(raw)) return null
+  const owner = BigInt(raw)
+  return owner >= BigInt('-9223372036854775808') && owner <= BigInt('9223372036854775807') ? raw : null
+}
+
 /** Step 1: who is this (dashboard session on an admin number or an active admin member)? */
 export async function adminIdentity(): Promise<AdminIdentity | null> {
   const session = await getSession()
   if (!session) return null
-  const { data: user } = await supabaseAdmin.from('users').select('whatsapp_id, name').eq('telegram_id', Number(session.telegramId)).maybeSingle()
+  const owner = exactAdminOwnerId(session.telegramId)
+  if (!owner) return null
+  let user: { telegram_id: unknown; whatsapp_id?: string | null; name?: string | null } | null
+  try {
+    const result = await supabaseAdmin.from('users').select('telegram_id, whatsapp_id, name').eq('telegram_id', owner).maybeSingle()
+    if (result.error) return null
+    user = result.data
+  } catch { return null }
+  if (!user || exactAdminOwnerId(user.telegram_id) !== owner) return null
   // Authorization cannot inherit the display helper's implicit +91 guess.
   // An ambiguous domestic-only DB identity must not become an owner/member.
   const phone = canonicalAdminPhone((user as any)?.whatsapp_id || '')
   if (!phone) return null
-  if (isAdminPhone(phone)) return { phone, name: (user as any)?.name || 'Owner', role: 'owner', telegramId: session.telegramId }
-  const { data: member } = await supabaseAdmin.from('admin_members').select('name, role, active').eq('phone_e164', phone).maybeSingle()
-  if (member && (member as any).active) return { phone, name: (member as any).name, role: (member as any).role, telegramId: session.telegramId }
+  if (isAdminPhone(phone)) return { phone, name: user.name || 'Owner', role: 'owner', telegramId: owner }
+  const { data: member, error: memberError } = await supabaseAdmin.from('admin_members').select('name, role, active').eq('phone_e164', phone).maybeSingle()
+  if (!memberError && member && (member as any).active) return { phone, name: (member as any).name, role: (member as any).role, telegramId: owner }
   return null
 }
 
