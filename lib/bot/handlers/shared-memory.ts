@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { embedText } from '@/lib/services/embeddings'
 import { indexMemory } from '@/lib/services/memory-index'
+import { canonicalE164Digits, fullPhoneRowCandidates, uniqueExactRecipientId } from './shared-memory-recipient'
 
 // Phase 1.5 — Shared Memory: share a topic "bucket" with a contact who is an
 // AskGogo user; they can then retrieve your notes in that topic (read-only).
@@ -35,15 +36,16 @@ export async function resolveRecipientTelegramId(
     .eq('name', name)
     .maybeSingle()
   if (!c?.whatsapp_id) return { telegramId: null, hasContact: false }
-  const last10 = String(c.whatsapp_id).replace(/\D/g, '').slice(-10)
-  const { data: u } = await supabaseAdmin
+  const full = canonicalE164Digits(c.whatsapp_id)
+  if (!full) return { telegramId: null, hasContact: true }
+  // Exact stored variants only. Ambiguous or errored lookups must never create a share.
+  const { data: rows, error } = await supabaseAdmin
     .from('users')
     .select('telegram_id, whatsapp_id')
-    .ilike('whatsapp_id', `%${last10}%`)
-    .not('telegram_id', 'is', null)
-    .order('telegram_id', { ascending: true })
-    .limit(1)
-  return { telegramId: u?.[0]?.telegram_id ?? null, hasContact: true }
+    .in('whatsapp_id', fullPhoneRowCandidates(full))
+    .limit(25)
+  if (error || !Array.isArray(rows)) return { telegramId: null, hasContact: true }
+  return { telegramId: uniqueExactRecipientId(c.whatsapp_id, rows), hasContact: true }
 }
 
 export async function grantShare(owner: number, recipient: number, topic: string): Promise<void> {
@@ -105,7 +107,7 @@ export async function handleBucketCommand(telegramId: number, text: string): Pro
     }
     const { telegramId: rid, hasContact } = await resolveRecipientTelegramId(telegramId, share.name)
     if (!hasContact) return `I don't have ${capName(share.name)}'s number yet. Do a friend reminder once (remind ${share.name} to ...) so I save it, then share.`
-    if (!rid) return `${capName(share.name)} isn't on AskGogo yet — ask them to message the bot first, then share.`
+    if (!rid) return `I couldn't verify ${capName(share.name)}'s AskGogo account uniquely. No memories were shared. Ask them to message the bot and verify their number before retrying.`
     await grantShare(telegramId, rid, share.topic)
     return `Shared your *${share.topic}* bucket with ${capName(share.name)}. They can now ask me about it.`
   }
