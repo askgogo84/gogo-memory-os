@@ -10,13 +10,25 @@ export type AgentActor = {
   timezone?: string
 }
 
+// AgentActor's legacyTelegramId is a JavaScript number. Reject every ID that
+// cannot round-trip exactly before using it for a service-role owner lookup
+// or downstream actor operations. Never alias two distinct Postgres BIGINTs.
+function exactSafeTelegramId(value: unknown): string | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  if (typeof value !== 'string' || !/^-?[1-9]\\d*$/.test(value)) return null
+  const numeric = Number(value)
+  return Number.isSafeInteger(numeric) && String(numeric) === value ? value : null
+}
+
 export async function resolveAgentActor(session: Omit<AgentSession,'surface'> & {surface:AgentSession['surface']|'whatsapp'}): Promise<AgentActor> {
+  const sessionOwner = exactSafeTelegramId(session.telegramId)
+  if (!sessionOwner) throw new Error('agent_actor_invalid_session_owner')
   let query = supabaseAdmin
     .from('users')
     .select('id, telegram_id, whatsapp_id, name, timezone')
 
   if (session.userId) query = query.eq('id', session.userId)
-  else query = query.eq('telegram_id', Number(session.telegramId))
+  else query = query.eq('telegram_id', sessionOwner)
 
   const { data, error } = await query.maybeSingle()
   if (error) throw new Error(`agent_actor_lookup_failed:${error.message}`)
@@ -24,8 +36,10 @@ export async function resolveAgentActor(session: Omit<AgentSession,'surface'> & 
 
   const whatsappId = String(data.whatsapp_id || session.whatsappId || '').trim()
   if (!whatsappId) throw new Error('whatsapp_identity_required')
-  const legacyTelegramId = Number(data.telegram_id)
-  if (!Number.isFinite(legacyTelegramId)) throw new Error('legacy_identity_missing')
+  const storedOwner = exactSafeTelegramId(data.telegram_id)
+  if (!storedOwner) throw new Error('legacy_identity_unsafe')
+  if (storedOwner !== sessionOwner) throw new Error('agent_actor_identity_mismatch')
+  const legacyTelegramId = Number(storedOwner)
 
   // CreditIQ linkage is deliberately best-effort. The AskGogo actor keeps only
   // the opaque CreditIQ consumer id; card/account data remains inside CreditIQ.
