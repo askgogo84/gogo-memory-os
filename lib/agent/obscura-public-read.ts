@@ -44,7 +44,35 @@ export type ObscuraCommand = {
 }
 export type ObscuraRunner = (command: ObscuraCommand, owner: string) => Promise<string>
 
-const PRIVATE_QUERY_KEY = /(?:^|&)(?:token|access_token|refresh_token|api_key|key|secret|password|otp|code|session|auth|signature|state)=/i
+// Query parsing must decode key names. A raw string regex misses
+// access%5Ftoken and doubly encoded access%255Ftoken. Fragments are refused
+// altogether, including SPA/#/token routes, because they can carry secrets.
+const SECRET_PARAM_NAMES = new Set([
+  'token','accesstoken','refreshtoken','idtoken','apikey','key','secret',
+  'clientsecret','password','pass','passphrase','otp','code','session',
+  'sessionid','auth','authorization','signature','state','nonce','jwt',
+  'bearer','csrf','csrftoken','credential','credentials',
+])
+function containsCredentials(target:URL):boolean {
+  if (target.hash) return true
+  for (const [name] of target.searchParams) {
+    let key=name
+    // URLSearchParams decodes once, but a provider may interpret repeated
+    // encoding after further parsing. Fail closed on up to three layers.
+    for (let i=0;i<3;i++) {
+      const normalized=key.toLowerCase().replace(/[^a-z0-9]/g,'')
+      if (SECRET_PARAM_NAMES.has(normalized)
+        || /^(?:access|refresh|session|oauth|auth|id)token(?:id)?$/.test(normalized)) return true
+      try {
+        const decoded=decodeURIComponent(key.replace(/\\+/g,' '))
+        if (decoded===key) break
+        key=decoded
+      } catch { return true }
+    }
+    if (key.includes('%')) return true // undecodable or deeply encoded key
+  }
+  return false
+}
 const BLOCK_TEXT = /^(?:access denied|forbidden|checking your browser|just a moment|enable javascript|sign in|log in|please wait|loading\.{0,3})\s*[.!…]*$/i
 
 export function obscuraPilotEligible(
@@ -61,7 +89,7 @@ export function obscuraPilotEligible(
   try {
     const target = browserTargetUrl(params.url)
     if (target.protocol !== 'https:' || target.username || target.password || target.port
-      || PRIVATE_QUERY_KEY.test(target.search.slice(1))) return false
+      || containsCredentials(target)) return false
     // No implicit global allowlist, no wildcard, no top-level suffix match.
     const hosts = String(env.GOGO_OBSCURA_PILOT_HOSTS || '').split(',')
       .map(value => value.trim().toLowerCase()).filter(Boolean)
@@ -93,13 +121,11 @@ export function parseObscuraObservation(
     const final = browserTargetUrl(row.url)
     if (final.origin !== original.origin || final.protocol !== 'https:'
       || final.username || final.password || final.port
-      || PRIVATE_QUERY_KEY.test(final.search.slice(1))) return null
+      || containsCredentials(final)) return null
     const title = row.title.replace(/\s+/g, ' ').trim().slice(0, 300)
     const text = row.text.replace(/\s+/g, ' ').trim().slice(0, 12000)
     if ((!title && !text) || BLOCK_TEXT.test(text) || BLOCK_TEXT.test(title)
       || isLoginFormPage({ url: final.href, title, text })) return null
-    // URL fragments may leak page navigation state; never retain them.
-    final.hash = ''
     return { url: final.href, title, text, observedAt: now().toISOString(), runtime: 'obscura' }
   } catch {
     return null
