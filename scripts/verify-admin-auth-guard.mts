@@ -30,4 +30,6 @@ const bodyIndex=users.indexOf('await req.json()',postIndex)
 assert.ok(originIndex>postIndex&&originIndex<bodyIndex,'POST must validate same-origin before reading/mutating input')
 assert.ok(adminIndex>postIndex&&adminIndex<bodyIndex,'POST must authorize admin before reading/mutating input')
 
+assert.match(analytics,/canonicalAdminPhone/)
 console.log('admin authorization regression passed')
+await import('./verify-admin-phone-isolation.mts')

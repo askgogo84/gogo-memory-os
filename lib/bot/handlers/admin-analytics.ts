@@ -59,14 +59,31 @@ function normalizePlan(value: string | null | undefined): PlanKey | null {
   return null
 }
 
+/**
+ * Authorization must compare the ENTIRE international WhatsApp identity.
+ * Never guess a country code from a local number or match a phone suffix:
+ * two unrelated countries can have identical last-ten-digit numbers.
+ * Plain digits are accepted only when they include an explicit country code.
+ */
+export function canonicalAdminPhone(value: string | null | undefined): string | null {
+  const raw = String(value || '').trim().replace(/^whatsapp:/i, '').trim()
+  const prefixed = raw.startsWith('+')
+  const digits = prefixed ? raw.slice(1) : raw
+  if (!/^[1-9][0-9]{7,14}$/.test(digits)) return null
+  if (!prefixed && digits.length <= 10) return null
+  return '+' + digits
+}
+
 export function isAdminPhone(phone: string | null | undefined) {
+  const candidate = canonicalAdminPhone(phone)
+  if (!candidate) return false
   const allowed = (process.env.ADMIN_WHATSAPP_NUMBERS || process.env.ADMIN_WHATSAPP_NUMBER || '')
     .split(',')
-    .map((x) => normalizePhone(x))
-    .filter(Boolean)
+    .map((x) => canonicalAdminPhone(x))
+    .filter((x): x is string => Boolean(x))
 
   if (!allowed.length) return false
-  return allowed.includes(normalizePhone(phone))
+  return allowed.includes(candidate)
 }
 
 export function isAdminCommand(text: string) {
