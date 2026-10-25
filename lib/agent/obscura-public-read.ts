@@ -137,12 +137,20 @@ export function obscuraPilotEligible(
 export const OBSCURA_READ_EXPRESSION =
   '(()=>{const all=[...document.querySelectorAll("input")].filter(e=>' +
   '!/^(?:checkbox|radio|range|color|button|submit|reset|file)$/i.test(' +
-  'String(e.getAttribute("type")||"text")));return JSON.stringify(' +
+  'String(e.getAttribute("type")||"text")));' +
+  'const labels=[...document.querySelectorAll("label")];' +
+  'const labelOf=e=>{const id=e.getAttribute("id");' +
+  'const named=id?labels.find(l=>l.getAttribute("for")===id):null;' +
+  'const parent=typeof e.closest==="function"?e.closest("label"):null;' +
+  'return String(e.getAttribute("aria-label")||e.getAttribute("placeholder")||' +
+  '(named&&(named.innerText||named.textContent))||' +
+  '(parent&&(parent.innerText||parent.textContent))||"").slice(0,100)};' +
+  'return JSON.stringify(' +
   '{url:location.href,title:document.title,text:document.body?document.body.innerText:"",' +
   'inputCount:all.length,forms:[{inputs:all.slice(0,24).map(e=>({' +
   'type:String(e.getAttribute("type")||"text").slice(0,36),' +
   'name:String(e.getAttribute("name")||"").slice(0,80),' +
-  'label:String(e.getAttribute("aria-label")||e.getAttribute("placeholder")||"").slice(0,100)' +
+  'label:labelOf(e)' +
   '}))}]})})()'
 
 export function parseObscuraObservation(
