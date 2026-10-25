@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { exactOwnerOnly, exactSessionOwnerId, allocateWhatsAppOwnerId } from '../lib/dashboard/owner-identity'
+
+assert.deepEqual(exactOwnerOnly('4242'), ['4242'])
+assert.deepEqual(exactOwnerOnly(-884501501), ['-884501501'])
+assert.deepEqual(exactOwnerOnly('9007199254740993'), ['9007199254740993'])
+assert.deepEqual(exactOwnerOnly(Number.MAX_SAFE_INTEGER + 2), [])
+assert.deepEqual(exactOwnerOnly(''), [])
+assert.deepEqual(exactOwnerOnly('0'), [])
+assert.deepEqual(exactOwnerOnly('123e4'), [])
+assert.equal(exactSessionOwnerId('whatsapp:+918884501501'), null)
+const idA=allocateWhatsAppOwnerId(new Uint8Array(7))
+const idB=allocateWhatsAppOwnerId(new Uint8Array(7).fill(255))
+assert.ok(Number.isSafeInteger(idA)&&Number.isSafeInteger(idB))
+assert.ok(idA<-1_000_000_000&&idB<-1_000_000_000)
+assert.notEqual(idA,idB)
+assert.notEqual(idA,-884501501)
+assert.throws(()=>allocateWhatsAppOwnerId(new Uint8Array(1)))
+
+const own=readFileSync('lib/dashboard/owner-ids.ts','utf8')
+const resolver=readFileSync('lib/bot/resolve-user.ts','utf8')
+const workspace=readFileSync('lib/agent/google-workspace-read.ts','utf8')
+assert.match(own,/exactOwnerOnly\(sessionTelegramId\)/)
+assert.doesNotMatch(own,/slice\(-(?:9|10)\)|\.ilike\(|%\$\{digits\}/i)
+assert.match(own,/idsForWhatsapp\([\s\S]*?return \[\]/)
+assert.match(resolver,/allocateWhatsAppOwnerId\(\)/)
+assert.doesNotMatch(resolver,/generateNegativeTelegramId|slice\(-9\)/)
+assert.match(workspace,/const ids=\[String\(actor\.legacyTelegramId\)\]/)
+assert.doesNotMatch(workspace,/idsForWhatsapp\(actor\.whatsappId\)/)
+console.log('P0 owner isolation: exact identity, random new IDs, no suffix-based linkage confirmed')
