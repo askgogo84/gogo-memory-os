@@ -1,6 +1,7 @@
-// Execute the actual saved-comparison React effects in a fully isolated VM.
-// No browser session, provider request, database, or customer account is used.
-// Source inspection alone does not prove 200 -> unauthorized/offline revokes UI state.
+// Offline regression executing the *actual* comparison React components.
+// This minimal React hook runner models dependencies, effect cleanup, rerender
+// scheduling and JSX produced BEFORE effects run. It never mounts an actual
+// browser, queries customer data, invokes providers or runs a mutation.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
@@ -10,164 +11,235 @@ const ID = '61bdc60d-a901-4fa0-868b-3461790df018'
 const OTHER_ID = '4afce011-8571-4ea5-89df-74e2a5a51ca1'
 const fixture = { id: ID, subject: 'Private fixture comparison', request: 'Read only',
   status: 'completed', updatedAt: '2026-10-25T08:00:00Z', providers: [] }
-type SimulatedResponse = { status: number; body?: unknown }
+type Reply = { status: number; body?: unknown }
+type Element = { type: unknown; props: Record<string, any> }
+type DependencyState = { deps: unknown[]; cleanup?: () => void }
+const same = (a: unknown[] | undefined, b: unknown[] | undefined) =>
+  Array.isArray(a) && Array.isArray(b) && a.length === b.length &&
+    a.every((v, i) => Object.is(v, b[i]))
+const childHas = (node: unknown, predicate: (item: Element) => boolean): boolean => {
+  if (Array.isArray(node)) return node.some(n => childHas(n, predicate))
+  if (node === null || typeof node !== 'object') return false
+  const item = node as Element
+  return predicate(item) || childHas(item.props?.children, predicate)
+}
+const tick = async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)) }
 
-function harness(file: string, kind: 'page' | 'inline') {
-  const source = readFileSync(file, 'utf8')
-  const compiled = ts.transpileModule(source, {
+function mount(file: string, mode: 'page' | 'inline') {
+  const compiled = ts.transpileModule(readFileSync(file, 'utf8'), {
     fileName: file, compilerOptions: {
       module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022,
       jsx: ts.JsxEmit.ReactJSX,
     },
   }).outputText
-  const slots: unknown[] = []
+  const states = new Map<number, any>()
+  const memos = new Map<number, { deps: unknown[]; value: unknown }>()
+  const existingEffects = new Map<number, DependencyState>()
+  let nextEffects: Array<{ index: number; cb: () => (() => void) | void; deps: unknown[] }> = []
+  let currentId = ID
   let cursor = 0
-  let renderId = ID
-  let effect: (() => (() => void) | void) | null = null
+  let tree: unknown = null
   let interval: (() => void) | null = null
-  const replies: Array<SimulatedResponse | Error> = []
+  let scheduled = false
+  let mounted = false
+  const replies: Array<Reply | Error> = []
   const requests: Array<{ url: string; method: string; credentials: unknown }> = []
-  const ReactMock = {
-    use: () => ({ id: renderId }),
-    useMemo: (fn: () => unknown) => fn(),
+  const SearchMarker = () => null
+  const jsx = (type: unknown, props: Record<string, any> = {}) => ({ type, props })
+  const schedule = () => {
+    if (scheduled || !mounted) return
+    scheduled = true
+    queueMicrotask(() => { scheduled = false; if (mounted) commitRender() })
+  }
+  const react = {
+    use: () => ({ id: currentId }),
+    useMemo: (fn: () => unknown, deps: unknown[]) => {
+      const index = cursor++
+      const prior = memos.get(index)
+      if (prior && same(prior.deps, deps)) return prior.value
+      const value = fn()
+      memos.set(index, { deps: [...deps], value })
+      return value
+    },
     useState: (initial: unknown) => {
       const index = cursor++
-      if (index >= slots.length) slots.push(initial)
-      return [slots[index], (next: unknown) => { slots[index] = next }]
+      if (!states.has(index)) states.set(index, initial)
+      return [states.get(index), (value: unknown) => {
+        states.set(index, typeof value === 'function' ? (value as Function)(states.get(index)) : value)
+        schedule()
+      }]
     },
-    useEffect: (cb: () => (() => void) | void) => { effect = cb },
+    useEffect: (cb: () => (() => void) | void, deps: unknown[]) => {
+      nextEffects.push({ index: cursor++, cb, deps })
+    },
   }
-  const noop = () => null
-  const mocks: Record<string, unknown> = {
-    react: ReactMock,
-    'react/jsx-runtime': { jsx: noop, jsxs: noop, Fragment: noop },
-    'next/link': { default: noop },
-    '@/lib/commerce/comparison-model': { COMPARISON_PROVIDERS: {}, comparisonHandoffPath: noop },
-    '@/components/dashboard/openui-search-results': { OpenUISearchResults: noop },
+  const noOp = () => null
+  const imports: Record<string, unknown> = {
+    react,
+    'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: Symbol('Fragment') },
+    'next/link': noOp,
+    '@/lib/commerce/comparison-model': { COMPARISON_PROVIDERS: {}, comparisonHandoffPath: noOp },
+    '@/components/dashboard/openui-search-results': { OpenUISearchResults: SearchMarker },
+    './openui-search-results': { OpenUISearchResults: SearchMarker },
     '@/lib/openui/search-observation': {
       savedComparisonId: (value: string) => value.match(/comparisons\/([0-9a-f-]+)/i)?.[1] ?? null,
     },
-    './openui-search-results': { OpenUISearchResults: noop },
   }
   const exportsObj: Record<string, any> = {}
   runInNewContext(compiled, {
     exports: exportsObj,
     require: (name: string) => {
-      if (!(name in mocks)) throw Error('Unexpected external dependency: ' + name)
-      return mocks[name]
+      if (!(name in imports)) throw Error('Unexpected external dependency: ' + name)
+      return imports[name]
     },
     fetch: async (url: string, options: { method?: string; credentials?: unknown } = {}) => {
       requests.push({ url, method: options.method ?? 'GET', credentials: options.credentials })
-      const next = replies.shift()
-      if (next instanceof Error) throw next
-      if (!next) throw Error('Unexpected fetch without inert fixture')
-      return { ok: next.status >= 200 && next.status < 300, status: next.status,
-        json: async () => next.body }
+      const reply = replies.shift()
+      if (reply instanceof Error) throw reply
+      if (!reply) throw Error('Unmocked fetch would reach external system')
+      return { ok: reply.status >= 200 && reply.status < 300,
+        status: reply.status, json: async () => reply.body }
     },
     setInterval: (fn: () => void) => { interval = fn; return 1 },
     clearInterval: () => { interval = null },
-    AbortSignal,
-    document: { hidden: false },
+    document: { hidden: false }, AbortSignal,
   })
-  const component = kind === 'page' ? exportsObj.default : exportsObj.OpenUIComparisonInline
-  assert.equal(typeof component, 'function', 'real component must load')
+  const component = mode === 'page' ? exportsObj.default : exportsObj.OpenUIComparisonInline
+  assert.equal(typeof component, 'function', 'actual component must be loaded')
+  // Render commits JSX before useEffect. An effect dependency must change to
+  // clean up the old subscription, refetch and install a new timer.
+  function commitRender() {
+    cursor = 0
+    nextEffects = []
+    tree = mode === 'page'
+      ? component({ params: Promise.resolve({ id: currentId }) })
+      : component({ text: 'Open /dashboard/comparisons/' + currentId })
+    for (const item of nextEffects) {
+      const prior = existingEffects.get(item.index)
+      if (prior && same(prior.deps, item.deps)) continue
+      prior?.cleanup?.()
+      const cleanup = item.cb()
+      existingEffects.set(item.index, {
+        deps: [...item.deps], cleanup: typeof cleanup === 'function' ? cleanup : undefined,
+      })
+    }
+    return tree
+  }
   return {
-    enqueue: (reply: SimulatedResponse | Error) => { replies.push(reply) },
-    render: (id = ID) => {
-      renderId = id
-      cursor = 0
-      effect = null
-      if (kind === 'page') component({ params: Promise.resolve({ id }) })
-      else component({ text: 'Open /dashboard/comparisons/' + id })
-      assert.equal(typeof effect, 'function', 'effect was registered')
-      return effect!() || noop
-    },
-    poll: () => { assert.equal(typeof interval, 'function'); interval!() },
-    get data() { return slots[0] as typeof fixture | null },
-    get error() { return String(slots[1] ?? '') },
+    enqueue: (reply: Reply | Error) => { replies.push(reply) },
+    render: (id = ID) => { currentId = id; mounted = true; return commitRender() },
+    poll: () => { assert.equal(typeof interval, 'function', 'poll timer registered'); interval!() },
+    get data() { return states.get(mode === 'page' ? 0 : 1) as typeof fixture | null },
+    get error() { return String(states.get(1) ?? '') },
     get requests() { return requests },
+    visible: (snapshot: unknown = tree, id?: string) =>
+      childHas(snapshot, node => node.type === SearchMarker &&
+        (!id || node.props?.data?.id === id)),
+    dispose: () => {
+      mounted = false
+      for (const item of existingEffects.values()) item.cleanup?.()
+      existingEffects.clear()
+    },
   }
 }
 
-const settle = async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)) }
-
-const page = harness('app/dashboard/(app)/comparisons/[id]/page.tsx', 'page')
+const page = mount('app/dashboard/(app)/comparisons/[id]/page.tsx', 'page')
 page.enqueue({ status: 200, body: fixture })
-let stop = page.render()
-await settle()
-assert.equal(page.data?.id, ID, 'initial owner-scoped saved comparison was presented')
+const before = page.render(ID)
+assert.equal(page.visible(before), false, 'initial frame has no private source cards')
+await tick()
+assert.equal(page.visible(), true, 'successful real GET causes rendered cards')
 
 page.enqueue({ status: 401, body: { error: 'unauthorized' } })
 page.poll()
-await settle()
-assert.equal(page.data, null, '401 on revalidation must remove a previously visible private report')
-assert.match(page.error, /Sign in/, 'revoked session must be explained without stale cards')
+await tick()
+assert.equal(page.data, null)
+assert.equal(page.visible(), false, 'a 401 removes already-rendered private cards')
+assert.match(page.error, /Sign in/)
 
 page.enqueue({ status: 200, body: fixture })
 page.poll()
-await settle()
-assert.equal(page.data?.id, ID)
-page.enqueue(new Error('inert-network-failure'))
+await tick()
+assert.equal(page.visible(), true)
+page.enqueue(new Error('offline'))
 page.poll()
-await settle()
-assert.equal(page.data, null, 'network failure must not preserve an older price/source list')
+await tick()
+assert.equal(page.visible(), false, 'offline revalidation revokes rendered results')
 
 page.enqueue({ status: 200, body: fixture })
 page.poll()
-await settle()
+await tick()
 page.enqueue({ status: 200, body: { subject: 'missing providers' } })
 page.poll()
-await settle()
-assert.equal(page.data, null, 'malformed successful response must fail closed')
+await tick()
+assert.equal(page.visible(), false, '200 without evidence rows fails closed')
 assert.match(page.error, /incomplete/i)
+
 page.enqueue({ status: 200, body: fixture })
 page.poll()
-await settle()
-assert.equal(page.data?.id, ID)
+await tick()
 page.enqueue({ status: 200, body: { ...fixture, id: OTHER_ID } })
 page.poll()
-await settle()
-assert.equal(page.data, null, 'a 200 payload for a different run ID cannot replace owner-bound evidence')
+await tick()
+assert.equal(page.visible(), false, '200 for a different run ID cannot display')
 page.enqueue({ status: 200, body: fixture })
 page.poll()
-await settle()
-assert.equal(page.data?.id, ID)
-stop()
-page.enqueue(new Error('inert-switch'))
-stop = page.render(OTHER_ID)
-assert.equal(page.data, null, 'route change must remove old comparison before new fetch resolves')
-await settle()
-stop()
+await tick()
+assert.equal(page.visible(ID), true)
 
-const inline = harness('components/dashboard/openui-comparison-inline.tsx', 'inline')
+page.enqueue({ status: 200, body: { ...fixture, id: OTHER_ID } })
+const requestsBeforeRoute = page.requests.length
+const preEffectRoute = page.render(OTHER_ID)
+assert.equal(page.visible(preEffectRoute), false, 'route-change frame cannot flash old report before effect')
+await tick()
+assert.equal(page.requests.length, requestsBeforeRoute + 1, '[id] effect must re-fetch on route change')
+assert.equal(page.requests.at(-1)?.url, '/api/comparisons/' + OTHER_ID)
+assert.equal(page.visible(ID), false)
+assert.equal(page.visible(OTHER_ID), true)
+page.dispose()
+
+const inline = mount('components/dashboard/openui-comparison-inline.tsx', 'inline')
 inline.enqueue({ status: 200, body: fixture })
-const stopInline = inline.render()
-await settle()
-assert.equal(inline.data?.id, ID)
-inline.enqueue(new Error('inert-network-failure'))
+inline.render(ID)
+await tick()
+assert.equal(inline.visible(ID), true)
+inline.enqueue(new Error('offline'))
 inline.poll()
-await settle()
-assert.equal(inline.data, null, 'inline network failure must revoke cached price cards')
+await tick()
+assert.equal(inline.visible(), false, 'inline network error clears rendered card')
 inline.enqueue({ status: 200, body: fixture })
 inline.poll()
-await settle()
-assert.equal(inline.data?.id, ID)
+await tick()
+assert.equal(inline.visible(ID), true)
 inline.enqueue({ status: 200, body: { subject: 'malformed' } })
 inline.poll()
-await settle()
-assert.equal(inline.data, null, 'inline malformed successful response must revoke stale cards')
+await tick()
+assert.equal(inline.visible(), false, 'inline malformed 200 clears rendered card')
 inline.enqueue({ status: 200, body: fixture })
 inline.poll()
-await settle()
+await tick()
 inline.enqueue({ status: 403, body: { error: 'forbidden' } })
 inline.poll()
-await settle()
-assert.equal(inline.data, null, 'inline non-OK result must continue to fail closed')
-stopInline()
+await tick()
+assert.equal(inline.visible(), false, '403 does not preserve inline cached card')
+inline.enqueue({ status: 200, body: fixture })
+inline.poll()
+await tick()
+assert.equal(inline.visible(ID), true)
+
+inline.enqueue({ status: 200, body: { ...fixture, id: OTHER_ID } })
+const inlineBefore = inline.requests.length
+const inlinePreEffectRoute = inline.render(OTHER_ID)
+assert.equal(inline.visible(inlinePreEffectRoute), false, 'Chat link change cannot flash another ID')
+await tick()
+assert.equal(inline.requests.length, inlineBefore + 1, '[id] inline effect must refetch on link change')
+assert.equal(inline.visible(ID), false)
+assert.equal(inline.visible(OTHER_ID), true)
+inline.dispose()
 
 for (const req of [...page.requests, ...inline.requests]) {
   assert.match(req.url, /^\/api\/comparisons\/[0-9a-f-]{36}$/)
-  assert.equal(req.method, 'GET', 'read-only regression may not submit or mutate')
-  assert.equal(req.credentials, 'same-origin', 'only current authenticated session is used')
+  assert.equal(req.method, 'GET', 'only read-only comparison GET is executed')
+  assert.equal(req.credentials, 'same-origin', 'requires authenticated same-origin session')
 }
-console.log('OpenUI comparison revalidation: real page + inline effects revoke stale private evidence (offline)')
+console.log('OpenUI comparison: real JSX + dependency-aware effects revoke stale cards (offline)')
