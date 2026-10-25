@@ -129,6 +129,7 @@ function harness(people: Row[], opts: { lookupError?: boolean } = {}) {
   assert.equal(h.people[1].razorpay_subscription_id, null)
   assert.deepEqual(h.sends.map((x) => x.phone), [FULL_91], 'confirmation goes to DB-bound owner, not unverified notes')
   assert.equal(h.records.length, 1, 'provider payment provenance remains recorded')
+  assert.equal(h.records[0].whatsapp_id, FULL_91, 'verified bound owner receives payment history identity')
 }
 {
   const h = harness([row91(), row44()])
@@ -137,6 +138,9 @@ function harness(people: Row[], opts: { lookupError?: boolean } = {}) {
   assert.equal(h.writes.length, 0)
   assert.equal(h.sends.length, 0)
   assert.equal(h.records.length, 1, 'unbound money remains recorded for manual reconciliation')
+  assert.equal(h.records[0].whatsapp_id, null, 'unbound record must not be attributed to a different owner')
+  assert.equal(h.records[0].telegram_id, null, 'unbound provider metadata cannot attach another Telegram owner')
+  assert.ok(h.records[0].raw_payload, 'signed provider event remains in raw reconciliation evidence')
 }
 {
   const h = harness([row91(), { ...row91(), id: 'different-owner' }])
