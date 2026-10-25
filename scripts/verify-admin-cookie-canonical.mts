@@ -23,3 +23,4 @@ for (const invalid of [value + '.extra', value + '.', value + '=', `${payload}.$
 assert.equal(exports.readConsoleCookie(value, '+918888888888', hash, 2000), false)
 assert.equal(exports.readConsoleCookie(value, '+919999999999', hash, 1000 + exports.ADMIN_SESSION_MS), false)
 console.log('Canonical admin cookies: valid control, equivalent-byte signature alias, malformed/trailing segments, owner and expiry passed')
+await import('./verify-admin-tier-owner-binding.mts')
