@@ -49,7 +49,7 @@ export default function ComparisonPage({params}: {params: Promise<{id: string}>}
     {!visibleReport && !error && <p role="status">Loading your comparison…</p>}
     {visibleReport && <>
       <p role="status" className="text-[16px] text-[#a0a0a0]">{visibleReport.providers.some(row => comparisonHandoffPath(row)) ? 'Some store checks are waiting for your browser task. Continue it below.' : visibleReport.status === 'queued' ? 'Store checks are in progress. Results appear here as each check finishes.' : visibleReport.status === 'completed' ? 'Store checks finished. Review the observations and limits below.' : 'Checks finished with gaps. Available observations are saved below.'}</p>
-      <details className="rounded-2xl border border-white/10 p-4"><summary>Your request and criteria</summary><p className="mt-3 whitespace-pre-wrap text-[16px]">{report.request}</p></details>
+      <details className="rounded-2xl border border-white/10 p-4"><summary>Your request and criteria</summary><p className="mt-3 whitespace-pre-wrap text-[16px]">{visibleReport.request}</p></details>
       <OpenUISearchResults data={visibleReport}/>
       <section className="space-y-2 rounded-2xl border border-white/10 p-5 text-[16px] text-[#a0a0a0]"><h2 className="font-medium text-white">What this comparison establishes</h2><p>These are dated page observations, not a verified delivered-total ranking. A listed price can change with your delivery location. Cart, bank and membership discounts are conditional. Missing stock, seller, warranty or delivery fees remain unknown.</p><p>No cart changes or purchases are made by these checks. Retailer links open on your device; app opening depends on the retailer and your phone settings.</p></section>
     </>}
