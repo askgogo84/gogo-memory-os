@@ -18,6 +18,13 @@ const ARCHIVE_URL = 'https://github.com/h4ckf0r0day/obscura/releases/download/v0
 const DIR = SANDBOX_WORKDIR + '/obscura-pilot'
 const BINARY = DIR + '/obscura'
 const MAX_OUTPUT = 26000
+// The official Vercel node:24 Sandbox image has Node but no curl executable.
+// Native fetch is available; archive SHA256 is still independently verified.
+const DOWNLOAD_SCRIPT = 'const fs=require("node:fs");' +
+  '(async()=>{const r=await fetch(' + JSON.stringify(ARCHIVE_URL) +
+  ',{signal:AbortSignal.timeout(65000)});if(!r.ok)throw Error("download_http");' +
+  'const b=Buffer.from(await r.arrayBuffer());if(b.length>60000000)throw Error("archive_too_large");' +
+  'fs.writeFileSync("obscura.tgz",b)})().catch(()=>process.exit(1))'
 
 /** Caller may safely fall back to the ordinary browser on null (read-only). */
 export async function tryObscuraPublicRead(params: ObscuraRequest): Promise<ObscuraReadCandidate | null> {
@@ -47,7 +54,7 @@ export async function tryObscuraPublicRead(params: ObscuraRequest): Promise<Obsc
           'set -euo pipefail',
           'mkdir -p ' + DIR,
           'cd ' + DIR,
-          'curl -fsSL --max-time 65 --retry 0 -o obscura.tgz ' + ARCHIVE_URL,
+          'node -e ' + JSON.stringify(DOWNLOAD_SCRIPT),
           'echo "' + OBSCURA_ARCHIVE_SHA256 + '  obscura.tgz" | sha256sum -c -',
           'tar xzf obscura.tgz --no-same-owner',
           'test -f obscura && chmod 700 obscura',
