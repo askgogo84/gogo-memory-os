@@ -89,3 +89,6 @@ assert.match(worker,/prepareBookingCalendarApproval/)
 assert.match(genericLifeEventWorker,/neq\('action_key', 'restaurant-reservation-release'\)/)
 
 console.log('✅ Restaurant reservation regression passed: provider-first release evidence → bounded approval → timed execution → verified completion')
+
+// OPENUI-DINING-03 read-only provider-observation regression (no remote calls).
+await import('./verify-openui-dining.mts')
