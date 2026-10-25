@@ -6,8 +6,21 @@ import type { AttentionEmail } from '@/lib/email/attention'
 const BASE = 'https://backend.composio.dev/api/v3.1'
 export const COMPOSIO_CALLBACK = 'https://app.askgogo.in/dashboard/settings/email?connected=google'
 
-export function composioUserId(telegramId: number) {
-  return `askgogo-${telegramId}`
+/** Preserve the persisted owner identity exactly. JS Number can alias distinct BIGINT rows. */
+export function composioUserId(telegramId: string | number) {
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) {
+    throw new Error('composio_owner_id_unsafe_number')
+  }
+  const id = String(telegramId)
+  // This is a persisted numeric telegram_id, not a phone number or untrusted alias.
+  // Reject rounded, non-canonical, out-of-range identities instead of linking to another account.
+  if (!/^-?[1-9]\d{0,18}$/.test(id)) throw new Error('composio_owner_id_invalid')
+  // String bounds avoid JS Number rounding and compile under this app's ES2018 target.
+  const negative = id.startsWith('-')
+  const digits = negative ? id.slice(1) : id
+  const bound = negative ? '9223372036854775808' : '9223372036854775807'
+  if (digits.length === bound.length && digits > bound) throw new Error('composio_owner_id_invalid')
+  return `askgogo-${id}`
 }
 
 export function composioConfigured() {
@@ -129,7 +142,7 @@ export async function toolkitAuthConfigId(toolkit: 'googledrive') {
   return String(id)
 }
 
-export async function createDriveConnectLink(telegramId: number) {
+export async function createDriveConnectLink(telegramId: string | number) {
   const out = await composio('/connected_accounts/link', { method: 'POST', body: { auth_config_id: await toolkitAuthConfigId('googledrive'), user_id: composioUserId(telegramId), callback_url: DRIVE_CALLBACK } })
   const url = String(out?.redirect_url || '')
   if (!/^https:\/\//.test(url)) throw new Error('composio_link_missing')
@@ -139,7 +152,7 @@ export async function createDriveConnectLink(telegramId: number) {
 /** Active Drive account for any of the person's ids (dashboard row and WhatsApp chat id). */
 export async function activeDriveAccount(telegramIds: Array<string | number>): Promise<string | null> {
   if (!composioConfigured() || !telegramIds.length) return null
-  const users = [...new Set(telegramIds.map(id => composioUserId(Number(id))))]
+  const users = [...new Set(telegramIds.map(id => composioUserId(id)))]
   const out = await composio('/connected_accounts', { query: { user_ids: users, toolkit_slugs: 'googledrive', statuses: 'ACTIVE', limit: '10' } })
   const item = (out?.items || []).find((a: any) => a?.status === 'ACTIVE' && !a?.is_disabled && users.includes(a?.user_id))
   return item?.id ? String(item.id) : null
