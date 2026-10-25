@@ -108,7 +108,8 @@ export async function GET(req: NextRequest) {
             <p class="ok">${sendUpgrade?'Gogo now has the Gmail Send access you explicitly approved.':'Gogo now has the read-only Google access you approved.'}</p>
             <p>Connected account: <span class="email">${email.replace(/[<>&"']/g, '')}</span></p>
             <div class="privacy">${sendUpgrade?'Gogo may send Gmail only after the AskGogo approval boundary. This upgrade does not grant automatic sending, Drive mutation, booking or payment authority.':'Gogo can read the approved Gmail, Contacts and Drive context to help with your requests. Sending email, changing files, scheduling, booking or spending still requires the appropriate permission and approval boundary.'}</div>
-            <p style="margin-top:22px">You can close this window and return to AskGogo.</p>
+            <a href="https://app.askgogo.in/dashboard/connections" style="display:block;margin-top:24px;min-height:48px;line-height:48px;text-align:center;border-radius:14px;background:#0f6f64;color:#fff;font-weight:600;font-size:16px;text-decoration:none">Back to AskGogo</a>
+            <a href="https://wa.me/17605483659" style="display:block;margin-top:10px;min-height:48px;line-height:48px;text-align:center;border-radius:14px;border:1px solid #d9d2c7;color:#1f1b16;font-weight:600;font-size:16px;text-decoration:none">Open WhatsApp chat</a>
           </div>
         </body>
       </html>`,

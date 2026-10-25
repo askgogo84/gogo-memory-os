@@ -378,6 +378,10 @@ async function handleWhatsAppPost(req: NextRequest) {
     }
     if (!brainLease) {
       console.error('WHATSAPP_INBOUND_BUSY_DROPPED:', { messageSid: inboundMessageSid })
+      // 23 Oct live: a photo (MM… sid) was dropped here silently. Nothing retries it, so say so instead of going quiet.
+      await sendWhatsAppMessage(from, numMedia > 0
+        ? "I was still busy with your last message, so I couldn't take that file. Please send it again in a minute."
+        : "I was still busy with your last message and missed this one. Please send it again in a minute.").catch(() => {})
       if (inboundClaimOwned && inboundClaim) {
         await failInboundEvent({ id: inboundClaim.id, ownerToken: inboundClaim.ownerToken, error: 'brain_user_lease_busy' })
         inboundClaimOwned = false

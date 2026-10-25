@@ -17,7 +17,7 @@ function load(file:string,deps:Record<string,unknown>,fetcher?:unknown){
 }
 const db={from(table:string){assert.equal(table,'users');const q={select:()=>q,eq:(key:string,value:unknown)=>{assert.equal(key,'telegram_id');assert.equal(value,123);return q},maybeSingle:async()=>({data:{google_calendar_connected:true,google_refresh_token:'fixture-only',timezone:'Asia/Kolkata'},error:null})};return q}}
 const accounts=load('lib/services/google-calendar-accounts.ts',{'@/lib/supabase-admin':{},'@/lib/services/google-calendar':{},'@/lib/calendar-intervals':intervals})
-const query=load('lib/dashboard/queries.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/ist':{istDayWindow:()=>({startUtc:new Date('2026-10-17T18:30:00Z'),endUtc:new Date('2026-10-18T18:30:00Z')})},
+const query=load('lib/dashboard/queries.ts',{'@/lib/dashboard/owner-ids':{linkedTelegramIds:async(id:any)=>[String(id)]},'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/ist':{istDayWindow:()=>({startUtc:new Date('2026-10-17T18:30:00Z'),endUtc:new Date('2026-10-18T18:30:00Z')})},
  '@/lib/services/meter':{},'@/lib/data/limits':{},'@/lib/calendar-intervals':intervals,'@/lib/services/google-calendar-accounts':{getCalendarAccountAccess:async()=>[{accessToken:'fixture-only',email:'synthetic@example.test'}],mergeAccountEvents:accounts.mergeAccountEvents}},
  async(_url:unknown,init:any)=>{assert.ok(!init.method||init.method==='GET');return {ok:true,json:async()=>({items:providerEvents})}})
 const day=load('lib/dashboard/day-chat.ts',{'@/lib/dashboard/queries':query,'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/calendar-intervals':intervals,'@/lib/timezone':timezone})

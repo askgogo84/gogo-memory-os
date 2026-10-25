@@ -107,3 +107,50 @@ export async function fetchComposioRecentEmails(telegramId: number) {
   }
   return { emails, ownEmail, repliedSenders }
 }
+
+// ---------- Google Drive through Composio (same stopgap, 24 Oct) ----------
+export const DRIVE_CALLBACK = 'https://app.askgogo.in/dashboard/connections?connected=drive'
+const authConfigCache = new Map<string, string>()
+
+/** Composio-managed OAuth config for a toolkit (env override per toolkit, else find, else create). */
+export async function toolkitAuthConfigId(toolkit: 'googledrive') {
+  const env = process.env.COMPOSIO_GOOGLEDRIVE_AUTH_CONFIG_ID
+  if (env) return env
+  if (authConfigCache.has(toolkit)) return authConfigCache.get(toolkit)!
+  const list = await composio('/auth_configs', { query: { toolkit_slug: toolkit } })
+  const existing = (list?.items || []).find((c: any) => String(c?.toolkit?.slug || '').toLowerCase() === toolkit && c?.status !== 'DISABLED' && !c?.is_disabled)
+  let id = existing?.id
+  if (!id) {
+    const created = await composio('/auth_configs', { method: 'POST', body: { toolkit: { slug: toolkit }, auth_config: { type: 'use_composio_managed_auth', name: 'AskGogo Google Drive' } } })
+    id = created?.auth_config?.id || created?.id
+  }
+  if (!id) throw new Error('composio_auth_config_missing')
+  authConfigCache.set(toolkit, String(id))
+  return String(id)
+}
+
+export async function createDriveConnectLink(telegramId: number) {
+  const out = await composio('/connected_accounts/link', { method: 'POST', body: { auth_config_id: await toolkitAuthConfigId('googledrive'), user_id: composioUserId(telegramId), callback_url: DRIVE_CALLBACK } })
+  const url = String(out?.redirect_url || '')
+  if (!/^https:\/\//.test(url)) throw new Error('composio_link_missing')
+  return url
+}
+
+/** Active Drive account for any of the person's ids (dashboard row and WhatsApp chat id). */
+export async function activeDriveAccount(telegramIds: Array<string | number>): Promise<string | null> {
+  if (!composioConfigured() || !telegramIds.length) return null
+  const users = [...new Set(telegramIds.map(id => composioUserId(Number(id))))]
+  const out = await composio('/connected_accounts', { query: { user_ids: users, toolkit_slugs: 'googledrive', statuses: 'ACTIVE', limit: '10' } })
+  const item = (out?.items || []).find((a: any) => a?.status === 'ACTIVE' && !a?.is_disabled && users.includes(a?.user_id))
+  return item?.id ? String(item.id) : null
+}
+
+/** A Drive REST GET through Composio's proxy, returned as a fetch Response so existing Drive code reads it unchanged. */
+export async function composioDriveFetch(accountId: string, url: string): Promise<Response> {
+  if (!/^https:\/\/www\.googleapis\.com\/drive\/v3\//.test(url)) throw new Error('composio_drive_url_not_allowed')
+  const out = await composio('/tools/execute/proxy', { method: 'POST', body: { endpoint: url, method: 'GET', connected_account_id: accountId, connectedAccountId: accountId } })
+  const status = Number(out?.status ?? 200)
+  const data = out?.data ?? out
+  const body = typeof data === 'string' ? data : JSON.stringify(data)
+  return new Response(body, { status: status >= 100 && status < 600 ? status : 200, headers: { 'content-type': typeof data === 'string' ? 'text/plain; charset=utf-8' : 'application/json' } })
+}

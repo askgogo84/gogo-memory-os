@@ -1,6 +1,7 @@
 import { ImageResponse } from 'next/og'
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
+import { verifyCardToken } from '@/lib/security/card-link'
 
 export const dynamic = 'force-dynamic'
 export const runtime = 'edge'
@@ -30,9 +31,11 @@ function mealEmoji(type: string) {
   return { breakfast: '☀️', lunch: '🌞', dinner: '🌙', snack: '🍎', drink: '💧', unknown: '🍽' }[type] || '🍽'
 }
 
-export async function GET(_req: NextRequest, ctx: { params: Promise<{ telegramId: string }> }) {
+export async function GET(req: NextRequest, ctx: { params: Promise<{ telegramId: string }> }) {
   try {
     const { telegramId } = await ctx.params
+    // Signed link only (lib/security/card-link.ts): the id in the path is never authorization.
+    if (!(await verifyCardToken('nutrition-daily', telegramId, req.nextUrl.searchParams.get('t')))) return new NextResponse('Not found', { status: 404 })
     const tgId = parseInt(telegramId)
 
     const todayStart = new Date()
