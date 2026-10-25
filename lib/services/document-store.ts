@@ -24,6 +24,7 @@ import { indexMemory } from '@/lib/services/memory-index'
 import { recordUsage, type DocumentAction } from '@/lib/services/meter'
 import { extractNoteFields } from '@/lib/services/image-note-reader'
 import { safeDocumentSummary, redactDocumentMetadata } from '@/lib/services/document-summary-privacy'
+import { fetchTwilioVaultDocumentMedia } from '@/lib/services/twilio-document-store-egress'
 import type { TicketInfo, FlightInfo, TrainInfo, EventInfo } from '@/lib/services/pdf-reader'
 
 const BUCKET = 'user-documents'
@@ -52,13 +53,19 @@ async function uploadToBucket(
   const mime = file.contentType || null
   let sizeBytes: number | null = null
   try {
-    const res = await fetch(file.mediaUrl, {
-      headers: {
-        Authorization: 'Basic ' + Buffer.from(`${file.accountSid}:${file.authToken}`).toString('base64'),
-      },
+    // An inbound FileRef is data, not authority to choose a credentialed destination.
+    // Use the configured Twilio account only; stale/foreign FileRef credentials fail closed.
+    const configuredSid = process.env.TWILIO_ACCOUNT_SID
+    const configuredToken = process.env.TWILIO_AUTH_TOKEN
+    if (!configuredSid || !configuredToken
+      || file.accountSid !== configuredSid || file.authToken !== configuredToken) {
+      throw new Error('Document media account binding unavailable')
+    }
+    const buf = await fetchTwilioVaultDocumentMedia({
+      mediaUrl: file.mediaUrl,
+      accountSid: configuredSid,
+      authToken: configuredToken,
     })
-    if (!res.ok) throw new Error(`Twilio fetch ${res.status}`)
-    const buf = Buffer.from(await res.arrayBuffer())
     sizeBytes = buf.byteLength
     const path = `${telegramId}/${randomUUID()}.${extFromMime(file.contentType)}`
     const { error } = await supabaseAdmin.storage
