@@ -8,7 +8,12 @@ const PROPERTY = `(?:(?:best|top)\\s+)?(?:${COUNT}\\s+)?(?:${MODIFIER}\\s+){0,5}
 const PROPERTY_END = '(?=\\s*(?:$|[.,;:!?])|\\s+(?:near|in|around|for|at|with|under|between|by)\\b)'
 
 export function isHotelDiscoveryResearch(question: string): boolean {
-  if (!/\bhotels?\b/i.test(question) || /\b(?:flights?|airfares?|trains?|itinerar(?:y|ies))\b/i.test(question)) return false
+  if (!/\bhotels?\b/i.test(question)) return false
+  // Exclusions do not turn a hotel-only request into mixed travel research.
+  // Keep affirmative travel clauses separate from bounded English exclusions.
+  const affirmative = question.split(/[.;!?,]|\b(?:but|however|instead|also)\b/i)
+    .map(clause => clause.replace(/\b(?:do\s+not|don't|without|excluding|exclude|no)\b.*$/i, '')).join(' ')
+  if (/\b(?:flights?|airfares?|trains?|itinerar(?:y|ies))\b/i.test(affirmative)) return false
   const discovery = new RegExp(`\\b(?:list|find|show|suggest|recommend|compare|choose|pick|give me|search for|looking for|need|want)\\s+(?:me\\s+|the\\s+)?${PROPERTY}${PROPERTY_END}`, 'i')
   const research = new RegExp(`^(?:please\\s+)?(?:(?:do|run)\\s+(?:a\\s+)?)?(?:deep\\s+)?research(?:\\s+only)?\\s*[:,-]?\\s+(?:the\\s+)?${PROPERTY}${PROPERTY_END}`, 'i')
   return discovery.test(question) || research.test(question)
@@ -16,27 +21,35 @@ export function isHotelDiscoveryResearch(question: string): boolean {
 
 // These are display-only public property links, never a transport allowlist.
 // A directory/category URL is not evidence for any particular property's price.
+function propertyIdentity(url: URL): string | null {
+  const host = url.hostname.replace(/^www\./, '')
+  const path = url.pathname
+  // Only provider shapes with a separable property slug are admitted. Destination,
+  // country, IDs and structural labels cannot establish the property's identity.
+  if (host === 'makemytrip.com') return path.match(/^\/hotels\/([\w-]+)-details-[\w-]+\.html$/i)?.[1] || null
+  if (host === 'agoda.com') return path.match(/\/([\w-]+)\/hotel\/[\w-]+\.html$/i)?.[1] || null
+  if (host === 'booking.com') return path.match(/^\/hotel\/[\w-]+\/([\w.-]+)\.html$/i)?.[1] || null
+  if (host === 'tripadvisor.com' || host === 'tripadvisor.in') {
+    return path.match(/^\/Hotel_Review-g\d+-d\d+-Reviews-([\w.]+)(?:-[\w.-]+)?\.html$/i)?.[1] || null
+  }
+  return null
+}
+
 function propertyUrl(value: string): string | null {
   try {
     const url = new URL(value)
     if (url.protocol !== 'https:' || url.username || url.password || url.port) return null
-    const host = url.hostname.replace(/^www\./, '')
     const path = url.pathname
     const decoded = decodeURIComponent(path).normalize('NFKC')
     const separated = decoded.replace(/[_/]/g, ' ')
     // URL segments are identifiers, so prose/date exceptions must not exempt a PIN.
-    const segments = decoded.replace(/[-_/]/g, ' ')
+    const segments = decoded.replace(/[^a-z0-9]/gi, ' ')
     if (/\b(?:password|passwd|passcode|api\s+key|secret\s+key|(?:access\s+|refresh\s+)?token)\b/i.test(segments)
       || /\b(?:pin|otp|passport|aadhaar|aadhar|ssn|cvv|cvc)\s+(?:(?:number|no)\s+)?[a-z0-9]*\d[a-z0-9]*\b/i.test(segments)) return null
     if (/%[a-f\d]{2}/i.test(decoded) || redactSecretShapedText(decoded) !== decoded
-      || redactSecretShapedText(separated) !== separated) return null
-    const property = host === 'makemytrip.com' ? /^\/hotels\/[\w-]+-details-[\w-]+\.html$/i.test(path)
-      : host === 'agoda.com' ? /\/[\w-]+\/hotel\/[\w-]+\.html$/i.test(path)
-      : host === 'booking.com' ? /^\/hotel\/[\w-]+\/[\w.-]+\.html$/i.test(path)
-      : host === 'hotels.com' ? /^\/ho\d+\//i.test(path)
-      : host === 'expedia.com' ? /\.h\d+\.Hotel-Information$/i.test(path)
-      : host === 'tripadvisor.com' || host === 'tripadvisor.in' ? /^\/Hotel_Review-g\d+-d\d+-Reviews-[\w.-]+\.html$/i.test(path) : false
-    if (!property) return null
+      || redactSecretShapedText(separated) !== separated
+      || redactSecretShapedText(segments) !== segments) return null
+    if (!propertyIdentity(url)) return null
     url.search = ''; url.hash = ''
     return url.href.length <= 350 ? url.href : null
   } catch { return null }
@@ -50,12 +63,12 @@ function propertyTitle(value: string, url: string): string | null {
     .replace(/[\[\]<>*_`]/g, '').trim().slice(0, 100)
   const words = title.toLowerCase().match(/[a-z0-9]+/g) || []
   const identity = words.filter(word => !['hotel', 'the', 'and', 'a', 'an'].includes(word))
-  const slug = new URL(url).pathname.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const slug = (propertyIdentity(new URL(url)) || '').toLowerCase().match(/[a-z0-9]+/g) || []
   let offset = 0
   if (!identity.length || identity.join('').length < 4 || !identity.every(word => {
     const found = slug.indexOf(word, offset)
     if (found < 0) return false
-    offset = found + word.length; return true
+    offset = found + 1; return true
   })) return null
   return title
 }

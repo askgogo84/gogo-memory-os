@@ -158,6 +158,20 @@ await check('P1: research snippets never initiate direct server fetch to search-
   }
 })
 
+await check('hotel travel exclusions cannot bypass grounded output', async () => {
+  for (const exclusion of ['Do not include flights or itineraries.', 'No flights or trains.', 'Without airfares or flights.', 'Exclude flights, please.']) {
+    const question = `Research only: list 3 hotels near Mumbai airport. ${exclusion} Do not book.`
+    assert.ok(isHotelDiscoveryResearch(question), question)
+    let calls = 0
+    const out = await DR.runDeepResearch(question, {
+      search: (async () => [{ title: 'Hotel Airport International', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai.html', snippet: 'Unbound directory price ₹31,270' }]) as any,
+      model: async (_p: string, _n: number, name: string) => { calls++; return name.includes('haiku') ? 'hotel property query' : '₹31,270 best rating [1]' },
+    })
+    assert.equal(calls, 1)
+    assert.doesNotMatch(out.text, /₹|31,270|best rating/)
+  }
+})
+
 await check('hotel research cannot assign an area price to a property or invent a ranked pick', async () => {
   let modelCalls = 0
   const question = 'Research only: list 3 hotels near Mumbai airport for one adult, 14–16 November 2026. Give public source links. Do not book.'
@@ -234,6 +248,9 @@ await check('hotel discovery leaves safety, history and mixed travel research on
 
 await check('hotel catalogue refuses raw or encoded path secrets and malformed directory URLs', () => {
   const sources = [
+    { title: 'Hotel Airport International', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai-security-code-1234.html' },
+    { title: 'Hotel Airport International', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai-account-number-AB1234567.html' },
+    { title: 'Hotel Airport International', url: 'https://www.tripadvisor.com/Hotel_Review-g304554-d12345-Reviews-Hotel_Airport_International-security.code.1234.html' },
     { title: 'Hotel Airport International', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai-pin-1234.html' },
     { title: 'Hotel Airport International', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai-pin-1234-in-mumbai.html' },
     { title: 'Hotel Airport International', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai-token-SYNTHETIC_PRIVATE_SECRET.html' },
@@ -244,6 +261,27 @@ await check('hotel catalogue refuses raw or encoded path secrets and malformed d
   const out = hotelResearchEvidence('Research 3 hotels near Mumbai airport', sources)
   assert.equal(out.sources.length, 0)
   assert.doesNotMatch(out.text, /1234|SYNTHETIC_PRIVATE_SECRET|Hotel_Review/)
+  for (const label of ['security-code', 'account-number', 'card-number', 'routing-number', 'ifsc', 'api-key', 'secret-key', 'passport', 'pin', 'otp', 'cvv', 'cvc', 'aadhaar', 'ssn']) {
+    for (const separator of ['-', '_', '.']) {
+      const tail = `${label.replace(/-/g, separator)}${separator}AB1234567`
+      const result = hotelResearchEvidence('Research 3 hotels in Mumbai', [{ n: 1, title: 'Hotel Airport International', url: `https://www.booking.com/hotel/in/hotel-airport-international-${tail}.html`, snippet: '', text: '' }])
+      assert.equal(result.sources.length, 0, `secret path label ${tail}`)
+    }
+  }
+})
+
+await check('hotel identity cannot be established from destination or structural URL segments', () => {
+  for (const [title, url] of [
+    ['Hotel Mumbai', 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai.html'],
+    ['Hotel Mumbai', 'https://www.agoda.com/hotel-airport-international/hotel/mumbai-in.html'],
+    ['Hotel India', 'https://www.booking.com/hotel/india/airport-international.html'],
+    ['Hotel Mumbai', 'https://www.tripadvisor.com/Hotel_Review-g304554-d12345-Reviews-Hotel_Airport_International-Mumbai_Maharashtra.html'],
+    ['Hotel Airport International', 'https://www.hotels.com/ho12345/hotel-airport-international-mumbai-india/'],
+    ['Hotel Airport International', 'https://www.expedia.com/Mumbai-Hotels-Hotel-Airport-International.h12345.Hotel-Information'],
+  ]) {
+    const out = hotelResearchEvidence('Research 3 hotels in Mumbai', [{ n: 1, title, url, snippet: '', text: '' }])
+    assert.equal(out.sources.length, 0, `${title} cannot borrow destination identity: ${url}`)
+  }
 })
 
 await check('hotel modifiers and large counts remain exact, defaults are not attributed to the user, aliases dedupe', () => {
