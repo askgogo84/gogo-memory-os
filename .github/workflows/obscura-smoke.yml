@@ -1,0 +1,45 @@
+name: Obscura public-read engine smoke
+
+on:
+  pull_request:
+    paths:
+      - 'lib/agent/obscura-public-read.ts'
+      - 'lib/agent/obscura-pilot-runtime.ts'
+      - 'scripts/verify-obscura-pilot.mts'
+      - '.github/workflows/obscura-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pinned-engine-smoke:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Download and verify pinned Obscura v0.2.5 binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL --max-time 120 --retry 0 -o obscura.tgz \
+            https://github.com/h4ckf0r0day/obscura/releases/download/v0.2.5/obscura-x86_64-linux-no-render.tar.gz
+          echo '405b7d1b79a94f89be1dcad03edab3c48858568b5cb03b90d9e7dcbfda449b12  obscura.tgz' | sha256sum -c -
+          tar xzf obscura.tgz --no-same-owner
+          chmod 700 obscura
+          ./obscura --version
+      - name: Static and JS page rendering (local HTTP fixture only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p fixture
+          printf '%s' '<html><head><title>AskGogo static fixture</title></head><body>Verified public source</body></html>' > fixture/static.html
+          printf '%s' '<html><head><title>AskGogo dynamic fixture</title></head><body>Loading</body><script>document.body.innerText="Rendered by JS";</script></html>' > fixture/dynamic.html
+          python3 -m http.server 18868 --bind 127.0.0.1 -d fixture >/tmp/obscura-fixture-server.log 2>&1 &
+          server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          for i in $(seq 1 30); do curl -sf http://127.0.0.1:18868/static.html >/dev/null && break || sleep 0.2; done
+          ./obscura fetch http://127.0.0.1:18868/static.html --eval document.title --timeout 12 --quiet > static.out
+          grep -Fq 'AskGogo static fixture' static.out
+          ./obscura fetch http://127.0.0.1:18868/dynamic.html --eval document.body.innerText --timeout 12 --quiet > dynamic.out
+          grep -Fq 'Rendered by JS' dynamic.out
+          echo 'OBSC-01 static and OBSC-02 JS fixture passed; no external provider was accessed'
