@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import ts from 'typescript'
 import * as crypto from 'node:crypto'
 import * as emailRedaction from '../lib/security/email-redaction'
+import { exactSessionOwnerId } from '../lib/dashboard/owner-identity'
 
 const actor={legacyTelegramId:101,whatsappId:'fixture-owner',userId:'fixture',name:'Fixture'}
 const mission='Audit my connected Gmail for subscription receipts and renewal notices from the last 14 days, at most 15 messages. List each service, amount, currency and renewal date only when the email shows it. Do not infer whether I use a service. Read only; do not cancel anything, send emails, create reminders or change my calendar.'
@@ -147,10 +148,16 @@ assert.match(direct.text,/Gmail subscription audit/,'negative no-send instructio
 
 let session:any={telegramId:'101'}
 mocks['@/lib/dashboard/session']={getSession:async()=>session}
+mocks['@/lib/dashboard/owner-identity']={exactSessionOwnerId}
 mocks['next/navigation']={notFound:()=>{throw new Error('NOT_FOUND')},redirect:(to:string)=>{throw new Error('REDIRECT:'+to)}}
 mocks['react/jsx-runtime']={jsx:(type:any,props:any)=>({type:typeof type==='function'?type.name:type,props}),jsxs:(type:any,props:any)=>({type:typeof type==='function'?type.name:type,props})}
 const page=load('app/dashboard/(app)/reports/[id]/page.tsx')
 assert.match(JSON.stringify(await page.default({params:Promise.resolve({id:reportId})})),/15\./)
+for(const owner of [' 101 ', '\u00a0101\u00a0', '9223372036854775808']){
+ session={telegramId:owner};const before=reportQueries
+ await assert.rejects(()=>page.default({params:Promise.resolve({id:reportId})}),/NOT_FOUND/)
+ assert.equal(reportQueries,before,'invalid persisted owner stops before report access')
+}
 session={telegramId:'202'}
 await assert.rejects(()=>page.default({params:Promise.resolve({id:reportId})}),/NOT_FOUND/,'another owner cannot read the report')
 session=null;const queriesBefore=reportQueries
