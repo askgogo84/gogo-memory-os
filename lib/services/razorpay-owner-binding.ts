@@ -17,7 +17,7 @@ export type PaymentOwnerRow = {
   telegram_id?: string | number | null
   razorpay_subscription_id?: string | null
 }
-export type BoundPaymentOwner = { id: string; notificationPhone: string | null }
+export type BoundPaymentOwner = { id: string; notificationPhone: string | null; verifiedTelegramId: string | null }
 
 function safeScalar(value: unknown): string | null {
   if (typeof value === 'number') {
@@ -110,5 +110,6 @@ export function uniquePaymentOwner(
   // Prefer the exact paid-contact match; subscription-only status falls back to
   // the persisted WhatsApp destination on the bound subscription owner.
   const destination = incomingPhones[0] || fullInternationalDigits(row.whatsapp_id) || fullInternationalDigits(row.phone)
-  return { id, notificationPhone: destination ? '+' + destination : null }
+  return { id, notificationPhone: destination ? '+' + destination : null,
+    verifiedTelegramId: safeTelegramId(row.telegram_id) }
 }
