@@ -99,4 +99,5 @@ assert.match(flow, /<Companion state="idle"/); assert.ok(!flow.includes('gogo-fi
 assert.match(wa, /if \(link\) await sendWhatsAppMessage\(from, link\)/, 'link sent on its own for the preview card')
 const store = readFileSync('lib/invites/store.ts', 'utf8')
 assert.match(store, /key: `invite-joined\/\$\{p\.redemptionId\}`/, 'inviter told once per join')
+await import('./verify-referral-owner-isolation.mts')
 console.log('verify-invite-links: ok')
