@@ -77,6 +77,35 @@ function containsCredentials(target:URL):boolean {
 }
 const BLOCK_TEXT = /^(?:access denied|forbidden|checking your browser|just a moment|enable javascript|sign in|log in|please wait|loading\.{0,3})\s*[.!…]*$/i
 
+/**
+ * The ordinary browser-command flow reserves password/Take Control by design.
+ * Only a separate, explicit PUBLIC Flipkart product-search request can probe
+ * Obscura before that path. Private account/order/cart/slot state is excluded.
+ * No user data, credentials, cookies or handoff state are forwarded.
+ */
+export function explicitPublicRetailSearch(
+  command: { url:string; objective:string; mode:'read'|'draft'|'execute'; risk?:string;
+    approvalAction?:string; flow?:string; vaultCredentialId?:string },
+  state: { handoff?:unknown; comparison_parent_id?:unknown; commerce_parent_id?:unknown;
+    browser_safe_to_retry?:boolean } | null = null,
+):boolean {
+  if (command.mode!=='read' || command.risk!=='low' || command.approvalAction
+    || command.flow || command.vaultCredentialId || state?.handoff
+    || state?.comparison_parent_id || state?.commerce_parent_id
+    || state?.browser_safe_to_retry===false) return false
+  const instruction=command.objective.toLowerCase()
+  if (!/\bread[ -]only\b/.test(instruction)
+    || !/\b(?:price|prices|products?|compare|listed|offers?)\b/.test(instruction)
+    || /\b(?:my|our|your)\s+(?:account|orders?|cart|basket|wishlist|address|profile|payments?|subscriptions?)\b/.test(instruction)
+    || /\b(?:sign\s*in|log\s*in|login|password|otp|passkey|booking|reservation|checkout|payment)\b/.test(instruction)) return false
+  try {
+    const u=browserTargetUrl(command.url)
+    return u.origin==='https://www.flipkart.com' && u.pathname==='/search'
+      && !containsCredentials(u) && (u.searchParams.get('q')||'').trim().length>0
+      && (u.searchParams.get('q')||'').length<=120
+  } catch { return false }
+}
+
 export function obscuraPilotEligible(
   params: ObscuraRequest,
   env: Record<string, string | undefined> = process.env,
