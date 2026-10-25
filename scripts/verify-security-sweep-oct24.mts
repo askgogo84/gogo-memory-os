@@ -59,4 +59,49 @@ for (const k of ['daily', 'weekly', 'report']) assert.match((await import('node:
   assert.match(fs.readFileSync('app/pitch/content/route.ts', 'utf8'), /sandbox allow-scripts/, 'served deck has an opaque origin')
   assert.doesNotMatch(fs.readFileSync('app/pitch/content/route.ts', 'utf8'), /allow-same-origin/, 'sandbox never grants same-origin')
 }
+// P1 inbound forwarded-email owner containment: BIGINT IDs must never be rounded
+// into another person's legacy numeric telegram_id. No provider call or real mail.
+{
+  const aliases = await import('../lib/email/aliases')
+  const safe = aliases.safeInboundAliasOwnerId
+  assert.equal(safe('42'), 42)
+  assert.equal(safe('-884501501'), -884501501, 'legacy negative owner remains supported')
+  assert.equal(safe('9007199254740991'), Number.MAX_SAFE_INTEGER)
+  for (const raw of [
+    '9007199254740992', '9007199254740993', '-9007199254740993',
+    Number.MAX_SAFE_INTEGER + 1, null, undefined, '', '00042',
+    '1.0', '1e3', 'Infinity', '42x', {},
+  ]) assert.equal(safe(raw), null, 'unsafe or ambiguous inbound alias owner rejected: ' + String(raw))
+
+  // Exercise the real ownerOfAlias Supabase lookup under an inert fetch transport.
+  const priorFetch = globalThis.fetch
+  let persistedOwner: unknown = '42'
+  let failure = false
+  let calls = 0
+  globalThis.fetch = (async (input: any, init?: any) => {
+    calls++
+    const endpoint = String(typeof input === 'string' ? input : input?.url || input)
+    assert.match(endpoint, /\\/rest\\/v1\\/email_aliases(?:\\?|$)/, 'only local synthetic alias lookup is invoked')
+    if (failure) return new Response(JSON.stringify({ message: 'synthetic alias DB outage' }), {
+      status: 503, headers: { 'content-type': 'application/json' },
+    })
+    const row = { telegram_id: persistedOwner, forwarding_confirmed_at: null }
+    const accept = String(new Headers(init?.headers).get('accept') || '')
+    const payload = accept.includes('vnd.pgrst.object') ? row : [row]
+    return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } })
+  }) as typeof fetch
+  try {
+    assert.deepEqual(await aliases.ownerOfAlias('synthetic-k7q2mx'), { telegramId: 42, confirmedAt: null }, 'legitimate exact owner still resolves')
+    persistedOwner = '9007199254740993'
+    assert.equal(await aliases.ownerOfAlias('synthetic-k7q2mx'), null, 'adjacent unsafe BIGINT never aliases another owner')
+    persistedOwner = 9007199254740992
+    assert.equal(await aliases.ownerOfAlias('synthetic-k7q2mx'), null, 'already-rounded unsafe JSON number is rejected')
+    persistedOwner = null
+    assert.equal(await aliases.ownerOfAlias('synthetic-k7q2mx'), null, 'missing owner never becomes owner zero')
+    failure = true
+    await assert.rejects(() => aliases.ownerOfAlias('synthetic-k7q2mx'), /email_alias_owner_lookup_failed/, 'DB outage fails instead of silently misrouting mail')
+    assert.equal(calls, 5, 'only five inert lookups, no send or mutation')
+  } finally { globalThis.fetch = priorFetch }
+}
+
 console.log('splitbill, test-gmail, nutrition cards, pitch upload: no public key or caller-supplied id is authorization')
