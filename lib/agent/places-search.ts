@@ -17,7 +17,7 @@ export function placeAsk(text: string): PlaceAsk | null {
   const affirmative = t.replace(/\b(?:do\s+not|don['’]?t|never|without)\s+(?:book|reserve|order|buy|purchase)\b[^.!?;\n]*/gi, '')
   if (/\b(?:book|reserve|order|deliver|table for|call|reviews? of|menu of|timings? of)\b/i.test(affirmative)) return null
   // Search the place, not its party size, dinner time or safety/availability instructions.
-  const primary = t.split(/[.!?;\n]/)[0].trim()
+  const primary = t.split(/(?:[!?;\n]|\.(?=\s+(?:show|research|read|do|don['’]?t|only|without)\b))/i)[0].trim()
   const area = primary.match(/\b(?:in|near|around|at|close to)\s+([A-Za-z][A-Za-z .'-]{2,40}?)(?=,|\s+(?:for|with|that|which|open|under|below|within)\b|$)/i)?.[1]?.trim()
   if (!area || /^(?:me|here|my (?:area|place|home|office))$/i.test(area)) return null
   // Only an explicit requested number of venues sets result count; "for 2 people" is party size.
@@ -27,7 +27,7 @@ export function placeAsk(text: string): PlaceAsk | null {
     .replace(/\bfor\s+\d{1,2}\s+(?:people|persons?|guests?|pax)\b.*$/i, '')
     .replace(/\b(?:today|tonight|tomorrow)\b.*$/i, '')
     .replace(/\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b.*$/i, '')
-    .replace(LEAD, '')
+    .replace(LEAD, '').trimStart()
     .replace(/^(?:me\s+|the\s+)?(?:\d{1,2}|one|two|three|four|five|six|seven|eight)\s+/i, '')
     .replace(/[\s,]+$/, '').replace(/\s+/g, ' ').trim()
   if (!discovery) return null
