@@ -40,14 +40,17 @@ export async function tryObscuraPublicRead(params: ObscuraRequest): Promise<Obsc
       timeout: 5 * 60 * 1000,
       persistent: false,
       resources: { vcpus: 1 },
-    } as any)
-    try {
-      // Separate one-time vendor asset egress from page-fetch egress.
-      await sandbox.updateNetworkPolicy({ allow: {
+      // Verified in an actual BOM Vercel Sandbox: initial host admission
+      // works; changing the named sandbox policy mid-session did not reliably
+      // update DNS. Keep only pinned asset hosts + this public page's deps.
+      networkPolicy: { allow: {
         'github.com': [],
         'release-assets.githubusercontent.com': [],
         'objects.githubusercontent.com': [],
-      } } as any)
+        ...browserPageAllowlist(target.href),
+      } },
+    } as any)
+    try {
       const bootstrap = await sandbox.runCommand({
         cmd: 'bash',
         args: ['-lc', [
@@ -62,8 +65,7 @@ export async function tryObscuraPublicRead(params: ObscuraRequest): Promise<Obsc
         ].join(' && ')],
       })
       if (bootstrap.exitCode !== 0) throw new Error('obscura_binary_incompatible_or_unavailable')
-      // Source-aware restrictions still apply to Obscura's subresources.
-      await sandbox.updateNetworkPolicy({ allow: browserPageAllowlist(target.href) } as any)
+      // Vercel sandbox's initial egress policy pins page hosts, as above.
       const result = await sandbox.runCommand({
         cmd: BINARY,
         args: ['fetch', target.href, '--eval', expression,
