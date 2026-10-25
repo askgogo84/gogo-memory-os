@@ -17,24 +17,28 @@ export function placeAsk(text: string): PlaceAsk | null {
   // Bound negation at punctuation, contrast or another action. Explicitly
   // coordinated negatives stay negative: "do not book or reserve a table".
   const action = '(?:book|reserve|order|buy|purchase)'
-  const object = `(?:(?!\\b(?:${action}|call|deliver|but|then|however|instead|and|or)\\b)[^.!?;,\\n])*`
+  const object = `(?:(?!\\b(?:${action}|call|deliver|but|then|however|instead|rather|and|or)\\b)[^.!?;,\\n])*`
   const negated = new RegExp(`\\b(?:do\\s+not|don['’]?t|never|without)\\s+${action}\\b${object}(?:\\b(?:and|or)\\s+${action}\\b${object})*`, 'gi')
-  const affirmative = t.replace(negated, '')
+  const affirmative = t.replace(negated, (match, offset: number) =>
+    /^\s*(?:instead|rather)\b/i.test(t.slice(offset + match.length)) ? match : '')
   if (/\b(?:book|reserve|order|buy|purchase|deliver|table for|call|reviews? of|menu of|timings? of)\b/i.test(affirmative)) return null
   // Search the place, not its party size, dinner time or safety/availability instructions.
-  const primary = t.split(/(?:[!?;\n]|\.(?=\s+(?:show|research|read|do|don['’]?t|only|without)\b))/i)[0].trim()
+  const primary = t.split(/(?:[!?;\n]|\.(?=\s+(?:show|research|read|do|don['’]?t|only|without)\b))/i)[0]
+    .split(/\b(?:do\s+not|don['’]?t|never|without)\s+(?:book|reserve|order|buy|purchase)\b/i)[0]
+    .replace(/[\s,]+$/, '').trim()
+  if (!KIND.test(primary)) return null
   const area = primary.match(/\b(?:in|near|around|at|close to)\s+([A-Za-z][A-Za-z .'-]{2,40}?)(?=,|\s+(?:for|with|that|which|open|under|below|within)\b|$)/i)?.[1]?.trim()
   if (!area || /^(?:me|here|my (?:area|place|home|office))$/i.test(area)) return null
   // Only an explicit requested number of venues sets result count; "for 2 people" is party size.
-  const explicitCount = primary.replace(LEAD, '').trimStart()
-    .match(/^(?:me\s+|the\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight)\s+/i)?.[1]?.toLowerCase()
+  const countPrefix = /^(?:(?:me|the|best|top|good|nice)\s+)*(\d{1,2}|one|two|three|four|five|six|seven|eight)\s+/i
+  const explicitCount = primary.replace(LEAD, '').trimStart().match(countPrefix)?.[1]?.toLowerCase()
   const count = Math.max(1, Math.min(8, explicitCount ? (COUNT_WORDS[explicitCount] || Number(explicitCount)) : 5))
   const discovery = primary
     .replace(/\bfor\s+\d{1,2}\s+(?:people|persons?|guests?|pax)\b/gi, ' ')
     .replace(/\b(?:today|tonight|tomorrow)\b/gi, ' ')
     .replace(/\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi, ' ')
     .replace(LEAD, '').trimStart()
-    .replace(/^(?:me\s+|the\s+)?(?:\d{1,2}|one|two|three|four|five|six|seven|eight)\s+/i, '')
+    .replace(countPrefix, '')
     .replace(/[\s,]+$/, '').replace(/\s+/g, ' ').trim()
   if (!discovery) return null
   return { query: /\b(?:bengaluru|bangalore|mumbai|delhi|chennai|hyderabad|pune|kolkata|dubai|india)\b/i.test(discovery) ? discovery : `${discovery}, Bengaluru`, area, count }

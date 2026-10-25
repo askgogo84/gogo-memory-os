@@ -25,6 +25,11 @@ await check('all supported question leads preserve an explicit venue count', () 
     assert.equal(P.placeAsk(`${lead} 3 restaurants in Mumbai?`)?.count, 3, `${lead} count`)
     assert.equal(P.placeAsk(`${lead} two cafes in Indiranagar?`)?.count, 2, `${lead} word count`)
   }
+  for (const lead of ['Suggest the best', 'Find the top', 'Recommend the best', 'What are the best']) {
+    assert.deepEqual(P.placeAsk(`${lead} 3 South Indian restaurants in Rajajinagar`), {
+      query: 'South Indian restaurants in Rajajinagar, Bengaluru', area: 'Rajajinagar', count: 3,
+    }, `${lead} count and query`)
+  }
 })
 
 await check('a negated action never swallows a later affirmative action', async () => {
@@ -37,6 +42,9 @@ await check('a negated action never swallows a later affirmative action', async 
     'Find restaurants in Mumbai; do not book but buy food',
     'Find restaurants in Mumbai; do not reserve but purchase food',
     'Find restaurants in Mumbai; do not book or reserve a table but order food',
+    'Find restaurants in Mumbai; do not order food and book a table instead',
+    'Find restaurants in Mumbai; do not book and order food instead',
+    'Find restaurants in Mumbai; do not book or reserve a table instead',
   ]
   let calls = 0
   const forbiddenFetch = (async () => { calls++; throw new Error('unexpected provider call') }) as typeof fetch
@@ -48,6 +56,27 @@ await check('a negated action never swallows a later affirmative action', async 
   for (const safety of ['do not book a table for 2 people', 'do not book or reserve', 'do not book a table or reserve one', 'do not order food or book a table']) {
     assert.ok(P.placeAsk(`Find restaurants in Mumbai; ${safety}`), 'purely negated actions remain read-only: ' + safety)
   }
+})
+
+await check('negative booking constraints never become external discovery queries', async () => {
+  process.env.SERPER_API_KEY = 'test'
+  let calls = 0
+  const fetchImpl = (async (url: string, opts: any) => {
+    calls++
+    assert.equal(url, 'https://google.serper.dev/places')
+    assert.equal(opts.method, 'POST')
+    const body = JSON.parse(String(opts.body))
+    assert.equal(body.q, 'restaurants in Mumbai')
+    assert.doesNotMatch(JSON.stringify(body), /synthetic-private|private-note|do not|book/i)
+    return Response.json({ places: [] })
+  }) as typeof fetch
+  for (const separator of [', ', ' ']) {
+    const text = `Find restaurants in Mumbai${separator}do not book using private-note synthetic-private-123`
+    assert.deepEqual(P.placeAsk(text), { query: 'restaurants in Mumbai', area: 'Mumbai', count: 5 })
+    assert.match((await P.answerPlaces(text, fetchImpl))!, /couldn't verify local listings/i)
+  }
+  assert.equal(calls, 2)
+  assert.equal(P.placeAsk('Find in Mumbai, do not book restaurants using private-note synthetic-private-123'), null, 'the discovery segment itself must name a place kind')
 })
 
 await check('25 Oct WhatsApp dining discovery: negated booking, locality comma and party size', async () => {
