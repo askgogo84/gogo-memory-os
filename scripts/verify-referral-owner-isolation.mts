@@ -22,8 +22,16 @@ const supabaseAdmin = {
     let count = 100
     let page: [number, number] | null = null
     let ordered = false
+    let exactCount = false
     const query = {
-      select() { return query },
+      select(_fields, options) {
+        if (table === 'users') {
+          assert.equal(_fields, 'telegram_id', 'global scan reads owner IDs only')
+          assert.equal(options?.count, 'exact')
+          exactCount = true
+        }
+        return query
+      },
       ilike(field, like) {
         assert.equal(table, 'users')
         assert.equal(field, 'whatsapp_id')
@@ -70,15 +78,16 @@ const supabaseAdmin = {
         const failed = table === 'users' ? state.failUsers : state.failMemories
         return Promise.resolve(failed
           ? { data: null, error: { message: 'synthetic DB read failure' } }
-          : { data: (() => {
+          : (() => {
               const rows = (table === 'users' ? state.users : state.memories)
                 .filter(row => filters.every(test => test(row)))
               if (table === 'users' && ordered) rows.sort((a, b) => {
                 const x = BigInt(String(a.telegram_id)); const y = BigInt(String(b.telegram_id))
                 return x < y ? -1 : x > y ? 1 : 0
               })
-              return page ? rows.slice(page[0], page[1] + 1) : rows.slice(0, count)
-            })(), error: null }
+              const data = page ? rows.slice(page[0], page[1] + 1) : rows.slice(0, count)
+              return { data, count: exactCount ? rows.length : null, error: null }
+            })()
         ).then(resolve, reject)
       },
     }

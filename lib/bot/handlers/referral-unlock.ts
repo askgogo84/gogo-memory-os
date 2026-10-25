@@ -45,14 +45,21 @@ async function findUserByReferralCode(code: string) {
   const PAGE_SIZE = 500
   const MAX_SCANNED = 5000
   let found: { telegram_id: number } | null = null
+  let expectedCount: number | null = null
   for (let offset = 0; offset < MAX_SCANNED; offset += PAGE_SIZE) {
-    const { data, error } = await supabaseAdmin
+    const { data, error, count } = await supabaseAdmin
       .from('users')
-      .select('telegram_id')
+      .select('telegram_id', { count: 'exact' })
       .not('telegram_id', 'is', null)
       .order('telegram_id', { ascending: true })
       .range(offset, offset + PAGE_SIZE - 1)
-    if (error || !Array.isArray(data) || data.length > PAGE_SIZE) return null
+    // A server max-rows cap can silently shorten an apparently final page.
+    // Require a complete server-reported count with every exact page.
+    if (error || !Array.isArray(data) || !Number.isSafeInteger(count)
+      || count === null || count < 0 || count > MAX_SCANNED
+      || (expectedCount !== null && expectedCount !== count)
+      || data.length !== Math.min(PAGE_SIZE, Math.max(0, count - offset))) return null
+    expectedCount = count
     for (const row of data) {
       const rawId = String(row?.telegram_id ?? '').trim()
       if (!/^-?[1-9][0-9]*$/.test(rawId)) continue
@@ -64,7 +71,7 @@ async function findUserByReferralCode(code: string) {
       if (found) return null
       found = { telegram_id: owner }
     }
-    if (data.length < PAGE_SIZE) return found
+    if (offset + data.length === count) return found
   }
   // No proof the final scanned page was the last page: no speculative credit.
   return null
