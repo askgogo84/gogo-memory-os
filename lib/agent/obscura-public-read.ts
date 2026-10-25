@@ -59,17 +59,19 @@ function containsCredentials(target:URL):boolean {
     let key=name
     // URLSearchParams decodes once, but a provider may interpret repeated
     // encoding after further parsing. Fail closed on up to three layers.
-    for (let i=0;i<3;i++) {
+    for (let i=0;i<5;i++) {
       const normalized=key.toLowerCase().replace(/[^a-z0-9]/g,'')
       if (SECRET_PARAM_NAMES.has(normalized)
-        || /^(?:access|refresh|session|oauth|auth|id)token(?:id)?$/.test(normalized)) return true
+        || /token|apikey|secret|password|credential|session|signature|authorization|csrf|oauth/.test(normalized)
+        || /^auth(?:entication)?/.test(normalized)) return true
+      if (!key.includes('%')) break
       try {
-        const decoded=decodeURIComponent(key.replace(/\\+/g,' '))
-        if (decoded===key) break
+        const decoded=decodeURIComponent(key)
+        if (decoded===key) return true
         key=decoded
       } catch { return true }
     }
-    if (key.includes('%')) return true // undecodable or deeply encoded key
+    if (key.includes('%')) return true // deeply encoded / still ambiguous key
   }
   return false
 }
