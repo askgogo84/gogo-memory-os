@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
+import ts from 'typescript'
 import { diningObservationFromRun, safeDiningProviderUrl } from '../lib/openui/dining-observation'
 
 const UUID='6d84d990-8888-4d20-9fc7-e331c73a2011'
@@ -75,4 +77,68 @@ assert.match(page,/\/api\/openui\/dining\//)
 assert.match(page,/credentials:'same-origin'/)
 const activity=readFileSync('app/dashboard/(app)/activity/[runId]/page.tsx','utf8')
 assert.match(activity,/\/dashboard\/dining-results\//)
+// Exercise the real route with inert session + database fixtures: no production I/O.
+{
+  let owner='123', authenticated=true, databaseError=false
+  let reads=0, mutations=0
+  const ownedRow={...slotRun}
+  const db={
+    from(table:string){
+      assert.equal(table,'agent_runs')
+      reads++
+      const filters:Array<(v:any)=>boolean>=[]
+      const q:any={
+        select:()=>q,
+        eq:(field:string,value:any)=>{filters.push(r=>String(r[field])===String(value));return q},
+        in:(field:string,values:string[])=>{filters.push(r=>values.includes(String(r[field])));return q},
+        maybeSingle:async()=>databaseError?{data:null,error:{message:'synthetic failure'}}:
+          {data:filters.every(test=>test({...ownedRow,telegram_id:'123'}))?ownedRow:null,error:null},
+        update:()=>{mutations++;throw Error('no mutation allowed')},
+        insert:()=>{mutations++;throw Error('no mutation allowed')},
+        delete:()=>{mutations++;throw Error('no mutation allowed')},
+      }
+      return q
+    },
+  }
+  const mod:any={exports:{}}
+  const routeTs=ts.transpileModule(route,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
+  runInNewContext(routeTs,{
+    exports:mod.exports,
+    require:(name:string)=>{
+      if(name==='next/server')return{NextResponse:{json:(value:any,options:any={})=>({
+        status:options.status||200,body:value,headers:options.headers||{},
+      })}}
+      if(name==='@/lib/agent/session')return{
+        requireAgentSession:async()=>authenticated?{telegramId:owner}:{status:401,body:{error:'unauthorized'}},
+        isAgentSession:(s:any)=>s?.telegramId!==undefined,
+      }
+      if(name==='@/lib/supabase-admin')return{supabaseAdmin:db}
+      if(name==='@/lib/openui/dining-observation')return{diningObservationFromRun}
+      throw Error('unexpected route dependency '+name)
+    },
+    Date,URL,console,Array,String,
+  })
+  const GET=mod.exports.GET as (request:Request,ctx:any)=>Promise<any>
+  const context=(id:string)=>({params:Promise.resolve({id})})
+  let response=await GET(new Request('https://fixture.invalid/api/openui/dining/'+UUID),context(UUID))
+  assert.equal(response.status,200)
+  assert.deepEqual(response.body.observedSlots,['19:00','19:30','20:00'])
+  assert.equal(response.headers['Cache-Control'],'private, no-store')
+  const seen=reads
+  owner='456'
+  response=await GET(new Request('https://fixture.invalid/api/openui/dining/'+UUID),context(UUID))
+  assert.equal(response.status,404,'another authenticated user cannot access the same run')
+  authenticated=false
+  response=await GET(new Request('https://fixture.invalid/api/openui/dining/'+UUID),context(UUID))
+  assert.equal(response.status,401,'signed-out request fails before DB lookup')
+  assert.equal(reads,seen+1,'unauthorized request makes zero further queries')
+  authenticated=true;owner='123'
+  response=await GET(new Request('https://fixture.invalid/api/openui/dining/invalid'),context('invalid'))
+  assert.equal(response.status,400,'invalid run ID fails before DB lookup')
+  databaseError=true
+  response=await GET(new Request('https://fixture.invalid/api/openui/dining/'+UUID),context(UUID))
+  assert.equal(response.status,503,'database error must never appear as empty success')
+  assert.equal(mutations,0,'no database writes, ever')
+}
+
 console.log('OPENUI-DINING-03: source, identity, historical-slot and read-only contracts PASS (synthetic)')
