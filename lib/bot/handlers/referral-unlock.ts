@@ -35,30 +35,39 @@ async function findUserByReferralCode(code: string) {
   const referralId = referralIdFromCode(code)
   if (!referralId) return null
 
-  // A public referral code is derived from the inviter's persisted telegram
-  // ID, not from their WhatsApp number. Phone suffixes select ONLY candidates,
-  // never confer ownership or decide whose memory receives referral credit.
-  const { data, error } = await supabaseAdmin
-    .from('users')
-    .select('telegram_id, whatsapp_id')
-    .ilike('whatsapp_id', `%${referralId}%`)
-    .not('telegram_id', 'is', null)
-    .limit(25)
-
-  // Refuse database errors and truncated/ambiguous candidate sets. Selecting
-  // the first suffix hit could otherwise credit a different international user.
-  if (error || !Array.isArray(data) || data.length >= 25) return null
-  const matches = data.filter(row => {
-    const rawId = String(row?.telegram_id ?? '').trim()
-    if (!/^-?[1-9][0-9]*$/.test(rawId)) return false
-    const owner = Number(rawId)
-    return Number.isSafeInteger(owner) && owner !== 0
-      && String(owner) === rawId
-      && cleanReferralId(rawId) === referralId
-  })
-  // Even canonical legacy codes can collide when different account IDs have
-  // the same trailing ten digits. Do not guess between those identities.
-  return matches.length === 1 ? matches[0] : null
+  // Legacy codes contain only the final 10 digits of a signed Telegram ID.
+  // A WhatsApp-suffix-filtered candidate set cannot prove global uniqueness:
+  // users with different phones, or positive/negative or longer IDs, may
+  // generate the same public code. Read ONLY owner IDs in ordered bounded
+  // pages, never private phone/account fields, and fail closed if we cannot
+  // exhaust the active users table. A durable indexed code map is needed for
+  // larger installations; this legacy compatibility fallback is not one.
+  const PAGE_SIZE = 500
+  const MAX_SCANNED = 5000
+  let found: { telegram_id: number } | null = null
+  for (let offset = 0; offset < MAX_SCANNED; offset += PAGE_SIZE) {
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .select('telegram_id')
+      .not('telegram_id', 'is', null)
+      .order('telegram_id', { ascending: true })
+      .range(offset, offset + PAGE_SIZE - 1)
+    if (error || !Array.isArray(data) || data.length > PAGE_SIZE) return null
+    for (const row of data) {
+      const rawId = String(row?.telegram_id ?? '').trim()
+      if (!/^-?[1-9][0-9]*$/.test(rawId)) continue
+      if (cleanReferralId(rawId) !== referralId) continue
+      const owner = Number(rawId)
+      // Matching unsafe/noncanonical owner is itself ambiguous; don't credit
+      // a different owner because its numeric conversion silently rounded.
+      if (!Number.isSafeInteger(owner) || owner === 0 || String(owner) !== rawId) return null
+      if (found) return null
+      found = { telegram_id: owner }
+    }
+    if (data.length < PAGE_SIZE) return found
+  }
+  // No proof the final scanned page was the last page: no speculative credit.
+  return null
 }
 
 export function isShareMyWinCommand(text: string) {

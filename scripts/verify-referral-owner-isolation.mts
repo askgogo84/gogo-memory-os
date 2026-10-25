@@ -20,6 +20,8 @@ const supabaseAdmin = {
     state.reads.push({ table })
     const filters = []
     let count = 100
+    let page: [number, number] | null = null
+    let ordered = false
     const query = {
       select() { return query },
       ilike(field, like) {
@@ -44,7 +46,21 @@ const supabaseAdmin = {
         return query
       },
       limit(n) { count = n; return query },
-      order() { throw new Error('first-suffix-wins_owner_selection_forbidden') },
+      order(field, options) {
+        assert.equal(table, 'users')
+        assert.equal(field, 'telegram_id')
+        assert.equal(options?.ascending, true)
+        ordered = true
+        return query
+      },
+      range(start, end) {
+        assert.equal(table, 'users')
+        assert.equal(ordered, true, 'stable sorted pagination is mandatory')
+        assert.ok(Number.isInteger(start) && start >= 0 && end >= start)
+        assert.ok(end - start + 1 <= 500, 'page remains bounded')
+        page = [start, end]
+        return query
+      },
       insert(row) {
         assert.equal(table, 'memories')
         state.writes.push({ table, ...row })
@@ -54,7 +70,15 @@ const supabaseAdmin = {
         const failed = table === 'users' ? state.failUsers : state.failMemories
         return Promise.resolve(failed
           ? { data: null, error: { message: 'synthetic DB read failure' } }
-          : { data: (table === 'users' ? state.users : state.memories).filter(row => filters.every(test => test(row))).slice(0, count), error: null }
+          : { data: (() => {
+              const rows = (table === 'users' ? state.users : state.memories)
+                .filter(row => filters.every(test => test(row)))
+              if (table === 'users' && ordered) rows.sort((a, b) => {
+                const x = BigInt(String(a.telegram_id)); const y = BigInt(String(b.telegram_id))
+                return x < y ? -1 : x > y ? 1 : 0
+              })
+              return page ? rows.slice(page[0], page[1] + 1) : rows.slice(0, count)
+            })(), error: null }
         ).then(resolve, reject)
       },
     }
@@ -118,6 +142,22 @@ await check('two canonical owners whose telegram IDs produce the same code are a
   assert.equal(await moduleExports.recordReferralJoinFromText(params()), null)
   assert.equal(state.writes.length, 0)
 })
+await check('colliding generated codes are rejected even when only one WhatsApp phone matched the old suffix query', async () => {
+  state.users = [
+    { telegram_id: 884501501, whatsapp_id: '+14155552671' },
+    { telegram_id: -884501501, whatsapp_id: 'whatsapp:+919884501501' },
+  ]
+  assert.equal(await moduleExports.recordReferralJoinFromText(params('GOGO-884501501')), null)
+  assert.equal(state.writes.length, 0, 'no owner receives credit on an ambiguous public code')
+})
+await check('longer canonical owner IDs sharing the last ten digits also block credit', async () => {
+  state.users = [
+    good(4155552671, '+914155552671'),
+    good(14155552671, '+14155552671'),
+  ]
+  assert.equal(await moduleExports.recordReferralJoinFromText(params()), null)
+  assert.equal(state.writes.length, 0)
+})
 await check('unsafe 64-bit saved telegram ID never aliases a referral recipient', async () => {
   state.users = [good('9007199254740993', 'whatsapp:+9199254740993')]
   assert.equal(await moduleExports.recordReferralJoinFromText(params('GOGO-9254740993')), null)
@@ -130,7 +170,7 @@ await check('DB outage fails closed without any memory write', async () => {
   assert.equal(state.writes.length, 0)
 })
 await check('candidate truncation is not interpreted as a unique verified inviter', async () => {
-  state.users = [good(), ...Array.from({ length: 24 }, (_, i) => wrong(-(i + 40), '+14155552671'))]
+  state.users = [good(), ...Array.from({ length: 5000 }, (_, i) => wrong(-(i + 40), '+14155552671'))]
   assert.equal(await moduleExports.recordReferralJoinFromText(params()), null)
   assert.equal(state.writes.length, 0)
 })

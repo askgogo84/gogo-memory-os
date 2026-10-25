@@ -1,1 +1,0 @@
-Reported fixture: `Hey there, we're watching Mirzapur: The Movie (A). Find ticket details and other benefits, here https://bmsurl.co/BMSTNY/5Mjc6DKmzL` with a Twilio `image/jpeg` preview thumbnail. Expected route: booking/event text; preview image ignored.
