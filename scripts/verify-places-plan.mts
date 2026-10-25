@@ -15,6 +15,35 @@ await check('place asks are recognised with area and count; bookings and orders 
   assert.equal(P.placeAsk('What is the capital of Karnataka?'), null)
 })
 
+await check('25 Oct WhatsApp dining discovery: negated booking, locality comma and party size', async () => {
+  const userText = 'Find restaurants in Indiranagar, Bengaluru, for 2 people tomorrow at 8 PM. Show evidence, availability only if provider-verified, and source links. Research only; do not book.'
+  assert.deepEqual(P.placeAsk(userText), {
+    query: 'restaurants in Indiranagar, Bengaluru', area: 'Indiranagar', count: 5,
+  }, 'party size must never be mistaken for number of restaurants')
+  assert.equal(P.placeAsk('Find 3 restaurants in Indiranagar, Bengaluru, for 2 people tomorrow')?.count,3)
+  assert.equal(P.placeAsk('Find restaurants in Indiranagar, Bengaluru; then book one for me'),null)
+  assert.equal(P.placeAsk('Find restaurants in Indiranagar, Bengaluru; reserve one'),null)
+  assert.ok(P.placeAsk('Find restaurants in Indiranagar, Bengaluru; do not reserve'))
+  process.env.SERPER_API_KEY = 'test'
+  let calls=0
+  const fixtureFetch=(async (_url:string,opts:any)=>{
+    calls++
+    const body=JSON.parse(String(opts.body))
+    assert.equal(body.q,'restaurants in Indiranagar, Bengaluru')
+    return new Response(JSON.stringify({places:[
+      {title:'Fixture Indiranagar Restaurant',address:'100 Main Rd, Indiranagar, Bengaluru',rating:4.2,cid:'98765',category:'Restaurant'},
+      {title:'Fixture Koramangala Restaurant',address:'80 Main Rd, Koramangala, Bengaluru',rating:4.9,cid:'87654',category:'Restaurant'},
+    ]}),{status:200,headers:{'content-type':'application/json'}})
+  }) as any
+  const reply=await P.answerPlaces(userText,fixtureFetch)
+  assert.equal(calls,1)
+  assert.match(reply!,/Fixture Indiranagar Restaurant/)
+  assert.match(reply!,/https:\/\/maps\.google\.com\/\?cid=98765/)
+  assert.match(reply!,/directory listings, not live table availability/i)
+  assert.match(reply!,/no booking was made/i)
+  assert.doesNotMatch(reply!,/confirmed.*(?:available|booked)|reservation confirmed/i)
+})
+
 await check('results inside the asked area come first, with rating and Maps link', async () => {
   process.env.SERPER_API_KEY = 'test'
   const fetchImpl = (async () => new Response(JSON.stringify({ places: [
