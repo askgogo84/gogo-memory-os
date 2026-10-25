@@ -215,5 +215,52 @@ await check('hotel requests preserve venue count, report caps honestly and leave
   assert.equal(hotelResearchEvidence('Research two hotels in Mumbai for 3 adults', sources).sources.length, 2)
 })
 
+await check('hotel discovery leaves safety, history and mixed travel research on the general path', async () => {
+  for (const question of ['Research fire safety regulations in hotels in India with sources',
+    'Research the history of luxury hotels in India', 'Research hotel fire safety in Mumbai',
+    'Research flights and hotels in Mumbai']) {
+    assert.ok(!isHotelDiscoveryResearch(question), question)
+    let calls = 0
+    const out = await DR.runDeepResearch(question, {
+      search: (async () => [{ title: 'Relevant research source', url: 'https://example.test/research', snippet: 'Synthetic informational source' }]) as any,
+      model: async (_p: string, _n: number, model: string) => {
+        calls++; return model.includes('haiku') ? 'query one\nquery two' : 'SYNTHETIC_INFORMATIONAL_ANSWER [1]'
+      },
+    })
+    assert.match(out.text, /SYNTHETIC_INFORMATIONAL_ANSWER/)
+    assert.equal(calls, 2)
+  }
+})
+
+await check('hotel catalogue refuses raw or encoded path secrets and malformed directory URLs', () => {
+  const sources = [
+    { title: 'Hotel Airport International', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai-pin-1234.html' },
+    { title: 'Hotel Airport International', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-password-SYNTHETIC_PRIVATE_SECRET-details-mumbai.html' },
+    { title: 'Hotel Airport International', url: 'https://www.tripadvisor.com/Hotel_Review-g304554-d12345-Reviews-Hotel_Airport_International-p%69n-1234.html' },
+    { title: 'Mumbai Airport Hotels', url: 'https://www.tripadvisor.com/Hotel_Review-Mumbai_Airport_Hotels' },
+  ].map((source, i) => ({ ...source, n: i + 1, snippet: '', text: '' }))
+  const out = hotelResearchEvidence('Research 3 hotels near Mumbai airport', sources)
+  assert.equal(out.sources.length, 0)
+  assert.doesNotMatch(out.text, /1234|SYNTHETIC_PRIVATE_SECRET|Hotel_Review/)
+})
+
+await check('hotel modifiers and large counts remain exact, defaults are not attributed to the user, aliases dedupe', () => {
+  const sources = Array.from({ length: 8 }, (_, i) => ({ n: i + 1, title: `Hotel Example${i}`, url: `https://www.makemytrip.com/hotels/hotel_example${i}-details-mumbai.html`, snippet: '', text: '' }))
+  assert.equal(hotelResearchEvidence('Research 2 budget hotels near Mumbai airport', sources).sources.length, 2)
+  assert.ok(isHotelDiscoveryResearch('Research the best 2 budget hotels near Mumbai airport'))
+  assert.equal(hotelResearchEvidence('Research the best 2 budget hotels near Mumbai airport', sources).sources.length, 2)
+  assert.match(hotelResearchEvidence('Research 100 hotels in Mumbai', sources).text, /5 of 100/)
+  assert.doesNotMatch(hotelResearchEvidence('Research hotels in Mumbai for 2 adults', sources.slice(0, 1)).text, /of 3 requested/)
+  const aliases = [
+    { n: 1, title: 'Hotel Airport International', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai.html', snippet: '', text: '' },
+    { n: 2, title: 'Airport International Hotel', url: 'https://www.agoda.com/hotel-airport-international/hotel/mumbai-in.html', snippet: '', text: '' },
+  ]
+  assert.equal(hotelResearchEvidence('Research 3 hotels in Mumbai', aliases).sources.length, 1)
+  const validReview = hotelResearchEvidence('Research one hotel near Mumbai airport', [
+    { n: 1, title: 'Roswyn, A Morgans Originals Hotel', url: 'https://www.tripadvisor.com/Hotel_Review-g304554-d12345-Reviews-Roswyn_A_Morgans_Originals_Hotel-Mumbai_Maharashtra.html', snippet: '', text: '' },
+  ])
+  assert.equal(validReview.sources.length, 1, 'actual property review URL shape remains supported')
+})
+
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('duet round 6: all checks passed')
