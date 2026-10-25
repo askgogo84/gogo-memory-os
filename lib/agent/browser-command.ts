@@ -484,6 +484,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     // exact explicit Flipkart search shape can take the public preflight.
     const publicProbe=params.mode==='read' && !persistentCommerce
       && !accountCreation && !providerBooking && !runMetadata.handoff
+      && typeof explicitPublicRetailSearch === 'function'
       && explicitPublicRetailSearch(params.command,runMetadata)
       && !params.bookingOtp && !params.loginCode && !reconciledResult
     const publicReadDeadline=publicProbe?Date.now()+180_000:undefined
