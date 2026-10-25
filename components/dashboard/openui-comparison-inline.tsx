@@ -24,16 +24,22 @@ export function OpenUIComparisonInline({text}:{text:string}) {
         })
         if(!res.ok){if(active)setResult(null);return}
         const body=await res.json()
-        if(active && body && Array.isArray(body.providers))setResult(body as SavedComparisonRead)
-      }catch{ /* Unavailable/unauthorized comparisons must never reveal cached content. */ }
+        // Even a 200 response without a valid observation list revokes stale cards.
+        if(active)setResult(body && body.id === id && Array.isArray(body.providers) ? body as SavedComparisonRead : null)
+      }catch{
+        // Network or parse errors must clear previously displayed private results.
+        if(active)setResult(null)
+      }
       finally{busy=false}
     }
     void refresh()
     const interval=setInterval(()=>void refresh(),30000)
     return()=>{active=false;clearInterval(interval)}
   },[id])
-  if(!id||!result)return null
+  // Do not render another thread's result even briefly before the effect runs.
+  const visibleResult = result?.id === id ? result : null
+  if(!id||!visibleResult)return null
   return <div className="mt-4 max-w-[650px]">
-    <OpenUISearchResults data={result} compact fullHref={'/dashboard/comparisons/'+encodeURIComponent(id)}/>
+    <OpenUISearchResults data={visibleResult} compact fullHref={'/dashboard/comparisons/'+encodeURIComponent(id)}/>
   </div>
 }
