@@ -40,7 +40,28 @@ export async function getOrCreateAlias(telegramId: number, name?: string | null)
   throw new Error('alias_create_failed')
 }
 
+/**
+ * Inbound email persists private content under this legacy numeric owner ID.
+ * PostgreSQL BIGINT values above JS safe precision can round to ANOTHER tenant;
+ * reject them until the whole inbound pipeline can carry exact string owner IDs.
+ */
+export function safeInboundAliasOwnerId(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) ? value : null
+  if (typeof value !== 'string') return null
+  const exact = value.trim()
+  if (!/^(?:0|[1-9]\\d*|-[1-9]\\d*)$/.test(exact)) return null
+  const parsed = Number(exact)
+  return Number.isSafeInteger(parsed) && BigInt(parsed).toString() === exact ? parsed : null
+}
+
 export async function ownerOfAlias(alias: string) {
-  const { data } = await supabaseAdmin.from('email_aliases').select('telegram_id,forwarding_confirmed_at').eq('alias', alias).maybeSingle()
-  return data ? { telegramId: Number(data.telegram_id), confirmedAt: data.forwarding_confirmed_at as string | null } : null
+  const { data, error } = await supabaseAdmin.from('email_aliases')
+    .select('telegram_id,forwarding_confirmed_at').eq('alias', alias).maybeSingle()
+  // The provider must retry a temporary lookup outage; never interpret it as
+  // an unknown address or silently write mail to a guessed numeric owner.
+  if (error) throw new Error('email_alias_owner_lookup_failed')
+  if (!data) return null
+  const telegramId = safeInboundAliasOwnerId(data.telegram_id)
+  if (telegramId === null) return null
+  return { telegramId, confirmedAt: data.forwarding_confirmed_at as string | null }
 }
