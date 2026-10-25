@@ -64,7 +64,19 @@ assert.match(gate, /status === 'invited' \|\| row\?\.status === 'joined'/)
 assert.match(gate, /reason: 'gate_error'/, 'database trouble lets messages through')
 assert.match(gate, /NOTIFY_EVERY_MS = 24 \* 60 \* 60 \* 1000/)
 
-assert.match(readFileSync('lib/dashboard/session.ts', 'utf8'), /access_status === 'blocked'\) return null/)
+// Dashboard access is now revalidated against the exact owner on both mint and read.
+// Do not pin this assertion to the old inline string spelling: blocking moved to a
+// fail-closed reusable helper, tested behaviorally below and in verify-admin-auth-guard.
+const dashboardSessionSource = readFileSync('lib/dashboard/session.ts', 'utf8')
+const dashboardAccessSource = readFileSync('lib/dashboard/session-access.ts', 'utf8')
+assert.match(dashboardSessionSource, /if \(!\(await sessionOwnerAllowed\(telegramId\)\)\) return null/, 'mint must check exact persisted owner')
+assert.match(dashboardSessionSource, /if \(!\(await sessionOwnerAllowed\(data\.telegram_id\)\)\) return null/, 'existing cookie must recheck owner')
+assert.match(dashboardSessionSource, /\.eq\('telegram_id', id\)/, 'owner lookup uses exact id, not phone suffix')
+assert.match(dashboardAccessSource, /access_status !== 'blocked'/, 'blocked status must deny authorization')
+const { dashboardAccountIsActive } = await import('../lib/dashboard/session-access.ts')
+assert.equal(await dashboardAccountIsActive('101', async () => ({ data: { access_status: 'blocked' } })), false, 'blocking revokes an already minted session')
+assert.equal(await dashboardAccountIsActive('101', async () => ({ data: null })), false, 'deleted owner fails closed')
+assert.equal(await dashboardAccountIsActive('101', async () => ({ data: { access_status: 'active' } })), true, 'active owner remains allowed')
 assert.match(readFileSync('lib/dashboard/whatsapp-otp.ts', 'utf8'), /access_status !== 'blocked'/)
 
 const layout = readFileSync('app/admin/(console)/layout.tsx', 'utf8')
