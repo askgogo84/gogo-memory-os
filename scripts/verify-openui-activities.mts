@@ -25,7 +25,7 @@ assert.equal(positive.status, 'discovered')
 assert.equal(positive.venues.length, 1, 'only provider-allowlisted exact-evidence item is shown')
 assert.equal(positive.venues[0].title, 'Synthetic Court One')
 assert.equal(positive.venues[0].sourceUrl, webRow.url)
-assert.equal(positive.observedAt, step.completed_at)
+assert.equal(positive.observedAt, new Date(step.completed_at).toISOString(), 'evidence timestamps use canonical UTC ISO')
 assert.match(positive.notice, /not live availability/i)
 assert.doesNotMatch(JSON.stringify(positive), /SECRET_PHONE_MUST_NOT_LEAK|PRIVATE_USER_CONTENT|priceInr/)
 assert.equal(activityObservationFromRun({...run, metadata_json: {...meta,service:'dermatologist'}},[step]),null,
