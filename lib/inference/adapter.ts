@@ -130,6 +130,9 @@ const PROTECTED_BEGIN = /^\s*-----BEGIN\s+(?:APPROVAL|EXECUTION_RECORD)-----\s*$
 const PROTECTED_END = /^\s*-----END\s+(?:APPROVAL|EXECUTION_RECORD)-----\s*$/
 
 export function containsProtectedRecord(text: string): boolean {
+  // Embedded records inside assembled model prompts are still private even if an
+  // upstream formatter put descriptive prose before the marker on the same line.
+  if (/\[(?:APPROVAL|EXECUTION_RECORD)\b[^\]]*\]/i.test(text)) return true
   return text.split('\n').some((l) => PROTECTED_LINE.test(l) || PROTECTED_BEGIN.test(l))
 }
 
