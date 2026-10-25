@@ -20,6 +20,33 @@ await check('place asks are recognised with area and count; bookings and orders 
   assert.equal(P.placeAsk('What is the capital of Karnataka?'), null)
 })
 
+await check('all supported question leads preserve an explicit venue count', () => {
+  for (const lead of ['What are', 'Which are', 'Any', 'Good', 'Nice', 'Where can I find']) {
+    assert.equal(P.placeAsk(`${lead} 3 restaurants in Mumbai?`)?.count, 3, `${lead} count`)
+    assert.equal(P.placeAsk(`${lead} two cafes in Indiranagar?`)?.count, 2, `${lead} word count`)
+  }
+})
+
+await check('a negated action never swallows a later affirmative action', async () => {
+  const mixed = [
+    'Find restaurants in Mumbai; do not book a table, but order food from the first one',
+    'Find restaurants in Mumbai; do not reserve anything, but call the first one',
+    'Find restaurants in Indiranagar; do not order food but book a table',
+    'Find restaurants in Indiranagar; do not book online, call the restaurant and reserve a table',
+    'Find restaurants in Mumbai; do not book a table for 2 people but reserve one for 3',
+    'Find restaurants in Mumbai; do not book but buy food',
+    'Find restaurants in Mumbai; do not reserve but purchase food',
+  ]
+  let calls = 0
+  const forbiddenFetch = (async () => { calls++; throw new Error('unexpected provider call') }) as typeof fetch
+  for (const text of mixed) {
+    assert.equal(P.placeAsk(text), null, text)
+    assert.equal(await P.answerPlaces(text, forbiddenFetch), null, 'mixed action stays out of discovery')
+  }
+  assert.equal(calls, 0, 'rejected mixed requests never call the places provider')
+  assert.ok(P.placeAsk('Find restaurants in Mumbai; do not book a table for 2 people'), 'a purely negated table request remains read-only')
+})
+
 await check('25 Oct WhatsApp dining discovery: negated booking, locality comma and party size', async () => {
   const userText = 'Find restaurants in Indiranagar, Bengaluru, for 2 people tomorrow at 8 PM. Show evidence, availability only if provider-verified, and source links. Research only; do not book.'
   assert.deepEqual(P.placeAsk(userText), {

@@ -14,14 +14,19 @@ export function placeAsk(text: string): PlaceAsk | null {
   if (!LEAD.test(t) || !KIND.test(t)) return null
   // A negated action is a safety constraint, not an instruction to book.
   // Keep affirmative booking/ordering requests on their separate approval-gated routes.
-  const affirmative = t.replace(/\b(?:do\s+not|don['’]?t|never|without)\s+(?:book|reserve|order|buy|purchase)\b[^.!?;\n]*/gi, '')
-  if (/\b(?:book|reserve|order|deliver|table for|call|reviews? of|menu of|timings? of)\b/i.test(affirmative)) return null
+  // Remove only the negated verb and its bounded table object, never the rest
+  // of the clause: "do not order food but book a table" still asks to book.
+  const affirmative = t
+    .replace(/\b(?:do\s+not|don['’]?t|never|without)\s+(?:book|reserve)\b(?:\s+(?:(?:a|the|any)\s+)?table\b(?:\s+for\s+\d{1,2}\b(?:\s+(?:people|persons?|guests?|pax)\b)?)?)?/gi, '')
+    .replace(/\b(?:do\s+not|don['’]?t|never|without)\s+(?:order|buy|purchase)\b/gi, '')
+  if (/\b(?:book|reserve|order|buy|purchase|deliver|table for|call|reviews? of|menu of|timings? of)\b/i.test(affirmative)) return null
   // Search the place, not its party size, dinner time or safety/availability instructions.
   const primary = t.split(/(?:[!?;\n]|\.(?=\s+(?:show|research|read|do|don['’]?t|only|without)\b))/i)[0].trim()
   const area = primary.match(/\b(?:in|near|around|at|close to)\s+([A-Za-z][A-Za-z .'-]{2,40}?)(?=,|\s+(?:for|with|that|which|open|under|below|within)\b|$)/i)?.[1]?.trim()
   if (!area || /^(?:me|here|my (?:area|place|home|office))$/i.test(area)) return null
   // Only an explicit requested number of venues sets result count; "for 2 people" is party size.
-  const explicitCount = primary.match(/\b(?:suggest|recommend|find|show(?: me)?|list|give me|top|best)\s+(?:me\s+|the\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight)\s+/i)?.[1]?.toLowerCase()
+  const explicitCount = primary.replace(LEAD, '').trimStart()
+    .match(/^(?:me\s+|the\s+)?(\d{1,2}|one|two|three|four|five|six|seven|eight)\s+/i)?.[1]?.toLowerCase()
   const count = Math.max(1, Math.min(8, explicitCount ? (COUNT_WORDS[explicitCount] || Number(explicitCount)) : 5))
   const discovery = primary
     .replace(/\bfor\s+\d{1,2}\s+(?:people|persons?|guests?|pax)\b/gi, ' ')
