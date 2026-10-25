@@ -128,7 +128,8 @@ try {
   let actor: any = null
   let pageActor: any = null
   let rejectOrigin = false
-  const response = (body: unknown, status = 200) => Response.json(body, { status })
+  const response = (body: unknown, init: number | { status?: number } = 200) =>
+    Response.json(body, { status: typeof init === 'number' ? init : (init?.status ?? 200) })
   const supabase = {
     from(table: string) {
       assert.equal(table, 'users', 'unexpected table: production service-role client is never reached')
