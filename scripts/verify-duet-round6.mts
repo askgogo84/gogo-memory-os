@@ -235,6 +235,8 @@ await check('hotel discovery leaves safety, history and mixed travel research on
 await check('hotel catalogue refuses raw or encoded path secrets and malformed directory URLs', () => {
   const sources = [
     { title: 'Hotel Airport International', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai-pin-1234.html' },
+    { title: 'Hotel Airport International', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai-pin-1234-in-mumbai.html' },
+    { title: 'Hotel Airport International', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-details-mumbai-token-SYNTHETIC_PRIVATE_SECRET.html' },
     { title: 'Hotel Airport International', url: 'https://www.makemytrip.com/hotels/hotel_airport_international-password-SYNTHETIC_PRIVATE_SECRET-details-mumbai.html' },
     { title: 'Hotel Airport International', url: 'https://www.tripadvisor.com/Hotel_Review-g304554-d12345-Reviews-Hotel_Airport_International-p%69n-1234.html' },
     { title: 'Mumbai Airport Hotels', url: 'https://www.tripadvisor.com/Hotel_Review-Mumbai_Airport_Hotels' },

@@ -24,6 +24,10 @@ function propertyUrl(value: string): string | null {
     const path = url.pathname
     const decoded = decodeURIComponent(path).normalize('NFKC')
     const separated = decoded.replace(/[_/]/g, ' ')
+    // URL segments are identifiers, so prose/date exceptions must not exempt a PIN.
+    const segments = decoded.replace(/[-_/]/g, ' ')
+    if (/\b(?:password|passwd|passcode|api\s+key|secret\s+key|(?:access\s+|refresh\s+)?token)\b/i.test(segments)
+      || /\b(?:pin|otp|passport|aadhaar|aadhar|ssn|cvv|cvc)\s+(?:(?:number|no)\s+)?[a-z0-9]*\d[a-z0-9]*\b/i.test(segments)) return null
     if (/%[a-f\d]{2}/i.test(decoded) || redactSecretShapedText(decoded) !== decoded
       || redactSecretShapedText(separated) !== separated) return null
     const property = host === 'makemytrip.com' ? /^\/hotels\/[\w-]+-details-[\w-]+\.html$/i.test(path)
