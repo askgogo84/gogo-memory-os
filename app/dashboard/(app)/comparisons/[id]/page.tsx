@@ -12,13 +12,28 @@ export default function ComparisonPage({params}: {params: Promise<{id: string}>}
   const [error, setError] = useState('')
   useEffect(() => {
     let active = true
+    let busy = false
+    // A route/account change must not show observations from the previous request.
+    setReport(null)
+    setError('')
     async function refresh() {
+      if (busy || (typeof document !== 'undefined' && document.hidden)) return
+      busy = true
       try {
-        const response = await fetch('/api/comparisons/' + encodeURIComponent(id), {cache: 'no-store'})
+        const response = await fetch('/api/comparisons/' + encodeURIComponent(id), {
+          credentials: 'same-origin', cache: 'no-store', signal: AbortSignal.timeout(12000),
+        })
         if (!response.ok) throw new Error(response.status === 401 ? 'Sign in to AskGogo to view your private comparison.' : 'This comparison could not be loaded. Try refreshing.')
         const body = await response.json()
-        if (active) { setReport(body); setError('') }
-      } catch (err) { if (active) setError(err instanceof Error ? err.message : 'Unable to load comparison.') }
+        if (!body || !Array.isArray(body.providers)) throw new Error('Saved comparison evidence was incomplete. Try refreshing.')
+        if (active) { setReport(body as Report); setError('') }
+      } catch (err) {
+        // 401, network loss and invalid responses all revoke displayed saved evidence.
+        if (active) {
+          setReport(null)
+          setError(err instanceof Error ? err.message : 'Unable to load comparison.')
+        }
+      } finally { busy = false }
     }
     void refresh()
     const timer = setInterval(() => void refresh(), 15000)
