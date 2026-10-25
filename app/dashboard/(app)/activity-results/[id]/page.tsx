@@ -21,14 +21,18 @@ function isCurrentActivityRead(value: unknown, id: string): value is ActivityObs
       typeof record.observedAt === 'string' && Number.isFinite(Date.parse(record.observedAt))
     )) &&
     Array.isArray(record.venues) && record.venues.length <= 8 &&
+    (record.status === 'discovered'
+      ? (record.venues.length > 0 && record.observedAt !== null)
+      : record.venues.length === 0) &&
     record.venues.every(venue => {
       if (!venue || typeof venue !== 'object' ||
           typeof venue.title !== 'string' || !venue.title.trim() ||
           typeof venue.provider !== 'string' || typeof venue.sourceUrl !== 'string' ||
           typeof venue.observedAt !== 'string' || !Number.isFinite(Date.parse(venue.observedAt))) return false
       const source = safeActivityProviderUrl(venue.sourceUrl)
-      return source === venue.sourceUrl &&
-        venue.provider === new URL(source).hostname.replace(/^www\./, '')
+      return source !== null && source === venue.sourceUrl &&
+        venue.provider === new URL(source).hostname.replace(/^www\./, '') &&
+        venue.observedAt === record.observedAt
     })
 }
 
