@@ -14,7 +14,7 @@ const source={
     observed,
     {provider:'flipkart' as const,status:'pending' as const,quickPrice:'₹22,000',reason:'Check pending.'},
     {provider:'croma' as const,status:'observed' as const,sourceUrl:'https://www.croma.com/sony/p/236417?access_token=secret',checkedAt:'2026-10-25T09:00:00Z',evidence:'Sony WH-1000XM5\n₹1'},
-    {provider:'reliance' as const,status:'blocked' as const,waitingForRunId:id},
+    {provider:'reliance' as const,status:'pending' as const,waitingForRunId:id},
   ],
 }
 const model=buildSearchObservationModel(source)
