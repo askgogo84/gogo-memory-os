@@ -1,3 +1,5 @@
+// Keep payment owner-isolation fixtures in this already npm-test-registered subscription suite.
+import './verify-razorpay-owner-binding.mts'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
