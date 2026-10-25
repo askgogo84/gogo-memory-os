@@ -3,8 +3,9 @@
 //  - A new number gets access only once an admin approves it on the waitlist. Until then every
 //    message adds/keeps it on the waitlist and gets a short holding reply (at most once a day).
 //  - Admin numbers always pass.
-//  - If the access columns are not there yet (migration not applied) or the lookup fails, the gate
-//    lets the message through: a database hiccup must never lock real users out.
+//  - Missing access columns, unreadable policies or other store errors never confer access:
+//    unknown authorization state must fail closed, even if this briefly affects availability.
+//  - ACCESS_GATE_ENABLED=false is a separately explicit operator bypass, not an error fallback.
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAdminPhone } from '@/lib/bot/handlers/admin-analytics'
 import { extractInviteCode } from '@/lib/invites/core'
@@ -17,6 +18,12 @@ export const BLOCKED_REPLY = `Sorry, AskGogo isn't available on this number.`
 export const INVITE_USED_UP_REPLY = `That invite link has been used up, so you're on the waitlist for now. We'll message you here as soon as your access is ready.`
 export const INVITE_INVALID_REPLY = `That invite code didn't work, so you're on the waitlist for now. We'll message you here as soon as your access is ready.`
 const NOTIFY_EVERY_MS = 24 * 60 * 60 * 1000
+
+// An unreadable authorization decision is not evidence that a phone is allowed.
+// Respond with empty TwiML (no message to a potentially unverified number).
+function unavailableAccess(): AccessDecision {
+  return { allow: false, reason: 'gate_error', reply: null }
+}
 
 export function accessGateEnabled() {
   return process.env.ACCESS_GATE_ENABLED !== 'false'
@@ -54,12 +61,12 @@ export async function checkWhatsAppAccess(phone: string, profileName?: string, t
     return invite?.ok ? { allow: true, reason: 'gate_off', invite } : { allow: true, reason: 'gate_off' }
   }
   const p = e164(phone)
-  if (!p) return { allow: true, reason: 'gate_error' }
+  if (!p) return unavailableAccess()
   if (isAdminPhone(p)) return { allow: true, reason: 'admin' }
   try {
     const { data: users, error: userError } = await supabaseAdmin
       .from('users').select('telegram_id, access_status').in('whatsapp_id', phoneCandidates(p)).limit(5)
-    if (userError) { console.error('ACCESS_GATE_USER_LOOKUP_FAILED', userError.code); return { allow: true, reason: 'gate_error' } }
+    if (userError) { console.error('ACCESS_GATE_USER_LOOKUP_FAILED', userError.code); return unavailableAccess() }
     if (users && users.length) {
       if (users.some((u: any) => u.access_status === 'blocked')) return { allow: false, reason: 'blocked', reply: BLOCKED_REPLY }
       return { allow: true, reason: 'user' }
@@ -67,7 +74,7 @@ export async function checkWhatsAppAccess(phone: string, profileName?: string, t
 
     const { data: row, error: wlError } = await supabaseAdmin
       .from('waitlist').select('id, status, last_notified_at').eq('phone_e164', p).maybeSingle()
-    if (wlError) { console.error('ACCESS_GATE_WAITLIST_LOOKUP_FAILED', wlError.code); return { allow: true, reason: 'gate_error' } }
+    if (wlError) { console.error('ACCESS_GATE_WAITLIST_LOOKUP_FAILED', wlError.code); return unavailableAccess() }
 
     if (row?.status === 'invited' || row?.status === 'joined') {
       if (row.status === 'invited') {
@@ -100,7 +107,7 @@ export async function checkWhatsAppAccess(phone: string, profileName?: string, t
       })
       if (insertError && insertError.code !== '23505') {
         console.error('ACCESS_GATE_WAITLIST_INSERT_FAILED', insertError.code)
-        return { allow: true, reason: 'gate_error' }
+        return unavailableAccess()
       }
       return { allow: false, reason: 'waitlist', reply: inviteReply || WAITLIST_REPLY }
     }
@@ -108,7 +115,7 @@ export async function checkWhatsAppAccess(phone: string, profileName?: string, t
     return { allow: false, reason: 'waitlist', reply: null }
   } catch (err: any) {
     console.error('ACCESS_GATE_FAILED', err?.message || err)
-    return { allow: true, reason: 'gate_error' }
+    return unavailableAccess()
   }
 }
 
