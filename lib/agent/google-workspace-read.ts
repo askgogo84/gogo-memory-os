@@ -93,8 +93,8 @@ async function composioDriveFor(actor: AgentActor): Promise<((url:string)=>Promi
   try{
     const c:any=await import('@/lib/connectors/composio-gmail')
     if(typeof c?.composioConfigured!=='function'||!c.composioConfigured())return null
-    const o:any=await import('@/lib/dashboard/owner-ids')
-    const ids=[String(actor.legacyTelegramId),...(typeof o?.idsForWhatsapp==='function'?await o.idsForWhatsapp(actor.whatsappId):[])]
+    // Credential selection is owner-bound; raw phone numbers cannot expand accounts.
+    const ids=[String(actor.legacyTelegramId)]
     const account=await c.activeDriveAccount(ids)
     if(!account)console.log('COMPOSIO_DRIVE_NONE:',JSON.stringify({ids:ids.map(v=>`${v.slice(0,1)}…${v.slice(-4)}`)}))
     return account?(url:string)=>c.composioDriveFetch(account,url):null

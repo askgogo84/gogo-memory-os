@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getUserTimeZone } from './handlers/user-timezone'
+import { allocateWhatsAppOwnerId } from '@/lib/dashboard/owner-identity'
 
 export type Channel = 'telegram' | 'whatsapp'
 
@@ -17,11 +18,7 @@ export type ResolvedUser = {
   rawUser: any
 }
 
-function generateNegativeTelegramId(phone: string): number {
-  const digits = phone.replace(/\D/g, '').slice(-9) || '999999999'
-  const numeric = parseInt(digits, 10)
-  return -1 * numeric
-}
+// New owner IDs must never be derived from any phone-number substring.
 
 export async function resolveUser(params: {
   channel: Channel
@@ -80,27 +77,34 @@ export async function resolveUser(params: {
     .single()
 
   if (!user) {
-    const fallbackTelegramId = generateNegativeTelegramId(externalUserId)
     const inferredTimezone = getUserTimeZone(null, externalUserId)
-
-    const { data: created, error } = await supabaseAdmin
-      .from('users')
-      .insert({
-        telegram_id: fallbackTelegramId,
-        whatsapp_id: externalUserId,
-        name: userName || 'Friend',
-        tier: 'free',
-        platform: 'whatsapp',
-        timezone: inferredTimezone,
-        daily_count: 0,
-        last_reset: new Date().toLocaleDateString('en-CA', { timeZone: inferredTimezone }),
-      })
-      .select()
-      .single()
-
-    if (error) throw error
-    user = created
-    ;(user as any)._isNew = true
+    // A fresh cryptographic ID has no phone-derived identity overlap. Retry only
+    // Postgres uniqueness conflicts; all other failures remain fail-closed.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const { data: created, error } = await supabaseAdmin
+        .from('users')
+        .insert({
+          telegram_id: allocateWhatsAppOwnerId(),
+          whatsapp_id: externalUserId,
+          name: userName || 'Friend',
+          tier: 'free',
+          platform: 'whatsapp',
+          timezone: inferredTimezone,
+          daily_count: 0,
+          last_reset: new Date().toLocaleDateString('en-CA', { timeZone: inferredTimezone }),
+        })
+        .select()
+        .single()
+      if (error) {
+        if (error.code === '23505' && attempt < 3) continue
+        throw error
+      }
+      if (!created) throw new Error('whatsapp_user_create_missing_row')
+      user = created
+      ;(user as any)._isNew = true
+      break
+    }
+    if (!user) throw new Error('whatsapp_owner_id_allocation_failed')
   }
 
   return {
