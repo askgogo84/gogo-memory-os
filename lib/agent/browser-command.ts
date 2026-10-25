@@ -482,7 +482,9 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     // Read-only public search can use the disposable Obscura observer first.
     // Existing account/Take Control browser still owns any fallback. Only this
     // exact explicit Flipkart search shape can take the public preflight.
-    const publicProbe=explicitPublicRetailSearch(params.command,runMetadata)
+    const publicProbe=params.mode==='read' && !persistentCommerce
+      && !accountCreation && !providerBooking && !runMetadata.handoff
+      && explicitPublicRetailSearch(params.command,runMetadata)
       && !params.bookingOtp && !params.loginCode && !reconciledResult
     const publicReadDeadline=publicProbe?Date.now()+180_000:undefined
     const publicResult=publicProbe
