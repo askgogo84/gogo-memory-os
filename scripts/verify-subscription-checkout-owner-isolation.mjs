@@ -160,6 +160,28 @@ await check('public invalid origin, plan and phone do not read DB or create mand
   assert.equal(state.reads.length, 0)
   assert.equal(state.provider.length, 0)
 })
+await check('public explicit +65 ten-digit E.164 is not rewritten to India or foreign owner', async () => {
+  const singapore = '+6591234567'
+  const foreignCollision = '+916591234567'
+  state.rows = [active('whatsapp:' + foreignCollision, 909)]
+  const response = await route.POST(checkoutRequest({ phone: '+65 9123 4567', plan: 'plus' }))
+  assert.equal(response.status, 200)
+  assert.equal(state.provider.length, 1)
+  assert.equal(state.provider[0].phone, singapore, 'explicit country code must survive')
+  assert.equal(state.provider[0].whatsappId, singapore)
+  assert.equal(state.provider[0].telegramId, null)
+  const exact = state.reads.find(call => call.kind === 'in')
+  assert.ok(exact.values.includes('whatsapp:' + singapore))
+  assert.ok(!exact.values.includes('whatsapp:' + foreignCollision))
+})
+await check('public invalid explicit country number fails closed before provider and DB', async () => {
+  for (const phone of ['+1234567', 'xyz+6591234567', '+65foo91234567']) {
+    const response = await route.POST(checkoutRequest({ phone, plan: 'plus' }))
+    assert.equal(response.status, 400, phone)
+  }
+  assert.equal(state.provider.length, 0)
+  assert.equal(state.reads.length, 0)
+})
 await check('WhatsApp actor is never falsely marked active by a foreign same-last-ten owner', async () => {
   state.rows = [inactive('whatsapp:' + india, -111), active(otherCountry, 909)]
   const message = await bot.buildPlanCheckoutReply({
@@ -194,6 +216,27 @@ await check('WhatsApp unsafe 64-bit numeric owner cannot alias a second account'
   }, 'plus')
   assert.match(message, /couldn't verify your current Gogo plan/)
   assert.equal(state.reads.length, 0)
+  assert.equal(state.provider.length, 0)
+})
+await check('WhatsApp +65 ten-digit E.164 is accepted without colliding with Indian owner', async () => {
+  const singapore = '+6591234567'
+  const foreignCollision = '+916591234567'
+  state.rows = [active('whatsapp:' + foreignCollision, 919)]
+  const message = await bot.buildPlanCheckoutReply({
+    telegramId: -111, whatsappId: 'whatsapp:' + singapore, name: 'Synthetic Caller',
+  }, 'plus')
+  assert.match(message, /example\\.invalid\\/synthetic-only/)
+  assert.equal(state.provider.length, 1)
+  assert.equal(state.provider[0].whatsappId, 'whatsapp:' + singapore)
+  const exact = state.reads.find(call => call.kind === 'in')
+  assert.ok(exact.values.includes('whatsapp:' + singapore))
+  assert.ok(!exact.values.includes('whatsapp:' + foreignCollision))
+})
+await check('WhatsApp unprefixed short country digits remain ambiguous and deny billing', async () => {
+  const message = await bot.buildPlanCheckoutReply({
+    telegramId: -111, whatsappId: '6591234567', name: 'Synthetic Caller',
+  }, 'plus')
+  assert.match(message, /full international WhatsApp number/)
   assert.equal(state.provider.length, 0)
 })
 await check('WhatsApp local-only ambiguous number cannot create subscription', async () => {
