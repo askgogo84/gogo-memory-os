@@ -78,8 +78,9 @@ export async function buildPlanCheckoutReply(
   }
 
   const phone = user.whatsappId || ''
-  if (!phone.replace(/\D/g, '')) {
-    return `I couldn't read your number to set up the subscription. Please try again from WhatsApp.`
+  const fullPhone = phone.trim().replace(/^whatsapp:\s*/i, '').trim()
+  if (!/^\+?[1-9][0-9]{10,14}$/.test(fullPhone)) {
+    return `I couldn't verify your full international WhatsApp number for a subscription. Please try again from WhatsApp.`
   }
 
   try {
