@@ -77,30 +77,53 @@ for (const k of ['daily', 'weekly', 'report']) assert.match((await import('node:
   const priorFetch = globalThis.fetch
   let persistedOwner: unknown = '42'
   let failure = false
+  let absent = false
   let calls = 0
+  let outageAttempts = 0
   globalThis.fetch = (async (input: any, init?: any) => {
     calls++
     const endpoint = String(typeof input === 'string' ? input : input?.url || input)
-    assert.equal(new URL(endpoint).pathname, '/rest/v1/email_aliases', 'only local synthetic alias lookup is invoked')
-    if (failure) return new Response(JSON.stringify({ message: 'synthetic alias DB outage' }), {
+    const url = new URL(endpoint)
+    assert.equal(url.origin, 'https://synthetic.supabase.co', 'no external provider host')
+    assert.equal(url.pathname, '/rest/v1/email_aliases', 'only local synthetic alias lookup is invoked')
+    assert.equal(init?.method || 'GET', 'GET', 'no mail storage, send, or mutation')
+    assert.equal(url.searchParams.get('alias'), 'eq.synthetic-k7q2mx', 'lookup remains bound to the requested alias')
+    if (failure) { outageAttempts++; return new Response(JSON.stringify({ message: 'synthetic alias DB outage' }), {
       status: 503, headers: { 'content-type': 'application/json' },
-    })
+    }) }
     const row = { telegram_id: persistedOwner, forwarding_confirmed_at: null }
     const accept = String(new Headers(init?.headers).get('accept') || '')
-    const payload = accept.includes('vnd.pgrst.object') ? row : [row]
+    const payload = absent ? [] : accept.includes('vnd.pgrst.object') ? row : [row]
     return new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } })
   }) as typeof fetch
   try {
     assert.deepEqual(await aliases.ownerOfAlias('synthetic-k7q2mx'), { telegramId: 42, confirmedAt: null }, 'legitimate exact owner still resolves')
     persistedOwner = '9007199254740993'
-    assert.equal(await aliases.ownerOfAlias('synthetic-k7q2mx'), null, 'adjacent unsafe BIGINT never aliases another owner')
+    await assert.rejects(() => aliases.ownerOfAlias('synthetic-k7q2mx'), /email_alias_owner_invalid/, 'unsafe existing owner is retryable failure, never another owner or unknown alias')
     persistedOwner = 9007199254740992
-    assert.equal(await aliases.ownerOfAlias('synthetic-k7q2mx'), null, 'already-rounded unsafe JSON number is rejected')
+    await assert.rejects(() => aliases.ownerOfAlias('synthetic-k7q2mx'), /email_alias_owner_invalid/, 'already-rounded unsafe JSON number is rejected explicitly')
     persistedOwner = null
-    assert.equal(await aliases.ownerOfAlias('synthetic-k7q2mx'), null, 'missing owner never becomes owner zero')
+    await assert.rejects(() => aliases.ownerOfAlias('synthetic-k7q2mx'), /email_alias_owner_invalid/, 'existing row with missing owner never becomes owner zero or unknown alias')
+    absent = true
+    assert.equal(await aliases.ownerOfAlias('synthetic-k7q2mx'), null, 'genuinely absent alias still resolves to null')
+    absent = false
     failure = true
     await assert.rejects(() => aliases.ownerOfAlias('synthetic-k7q2mx'), /email_alias_owner_lookup_failed/, 'DB outage fails instead of silently misrouting mail')
-    assert.equal(calls, 5, 'only five inert lookups, no send or mutation')
+    assert.equal(outageAttempts, 4, 'installed PostgREST retries the idempotent 503 read three times')
+    assert.equal(calls, 5 + outageAttempts, 'five ordinary lookups plus bounded outage reads; every request checked for no mutation')
+    failure = false
+    const inbound = await import('../app/api/email/inbound/route')
+    process.env.EMAIL_INBOUND_SECRET = 'synthetic-inbound-secret-at-least-24-characters'
+    const request = () => new NextRequest(u('/api/email/inbound'), { method: 'POST', headers: {
+      'content-type': 'application/json', 'x-askgogo-inbound-secret': process.env.EMAIL_INBOUND_SECRET!,
+    }, body: JSON.stringify({ to: 'synthetic-k7q2mx@in.askgogo.in', from: 'fixture@example.test', raw: Buffer.from('Subject: synthetic\r\n\r\nfixture').toString('base64') }) })
+    const invalid = await inbound.POST(request())
+    assert.equal(invalid.status, 500, 'invalid existing owner must not acknowledge and drop private email')
+    assert.deepEqual(await invalid.json(), { error: 'processing_failed' }, 'owner details are not disclosed')
+    absent = true
+    const missing = await inbound.POST(request())
+    assert.equal(missing.status, 200, 'genuinely unknown address is still acknowledged')
+    assert.equal((await missing.json()).status, 'unknown_alias')
   } finally { globalThis.fetch = priorFetch }
 }
 

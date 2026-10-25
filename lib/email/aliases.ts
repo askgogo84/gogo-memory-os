@@ -62,6 +62,8 @@ export async function ownerOfAlias(alias: string) {
   if (error) throw new Error('email_alias_owner_lookup_failed')
   if (!data) return null
   const telegramId = safeInboundAliasOwnerId(data.telegram_id)
-  if (telegramId === null) return null
+  // An existing invalid row is a processing failure, not an unknown address.
+  // Let inbound handlers return 500 so the sender can retry after repair.
+  if (telegramId === null) throw new Error('email_alias_owner_invalid')
   return { telegramId, confirmedAt: data.forwarding_confirmed_at as string | null }
 }
