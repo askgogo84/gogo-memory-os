@@ -6,17 +6,19 @@ const COUNT = '(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten)'
 const MODIFIER = '(?:best|top|good|nice|budget|cheap|luxury|affordable|boutique|business|airport|recommended|well[- ]rated|family[- ]friendly|[1-5][- ]star)'
 const PROPERTY = `(?:(?:best|top)\\s+)?(?:${COUNT}\\s+)?(?:${MODIFIER}\\s+){0,5}hotels?\\b`
 const PROPERTY_END = '(?=\\s*(?:$|[.,;:!?])|\\s+(?:near|in|around|for|at|with|under|between|by)\\b)'
+const TRAVEL = '(?:flights?|airfares?|trains?|itinerar(?:y|ies))'
 
 export function isHotelDiscoveryResearch(question: string): boolean {
   if (!/\bhotels?\b/i.test(question)) return false
-  // Exclusions do not turn a hotel-only request into mixed travel research.
-  // Keep affirmative travel clauses separate from bounded English exclusions.
-  const affirmative = question.split(/[.;!?,]|\b(?:but|however|instead|also)\b/i)
-    .map(clause => clause.replace(/\b(?:do\s+not|don't|without|excluding|exclude|no)\b.*$/i, '')).join(' ')
-  if (/\b(?:flights?|airfares?|trains?|itinerar(?:y|ies))\b/i.test(affirmative)) return false
+  // Remove only explicitly excluded travel subjects/lists, never the remainder
+  // of a clause. Commas stay inside lists; later affirmative actions survive.
+  const exclusions = new RegExp(`\\b(?:do\\s+not|don't|not|without|excluding|exclude|no|instead\\s+of)\\s+(?:(?:include|show|book|compare|research|find|consider)\\s+)?(?:any\\s+)?${TRAVEL}\\b(?:\\s*(?:,\\s*(?:(?:and|or)\\s+)?|(?:and|or)\\s+)${TRAVEL}\\b)*`, 'gi')
+  if (new RegExp(`\\b${TRAVEL}\\b`, 'i').test(question.replace(exclusions, ''))) return false
   const discovery = new RegExp(`\\b(?:list|find|show|suggest|recommend|compare|choose|pick|give me|search for|looking for|need|want)\\s+(?:me\\s+|the\\s+)?${PROPERTY}${PROPERTY_END}`, 'i')
   const research = new RegExp(`^(?:please\\s+)?(?:(?:do|run)\\s+(?:a\\s+)?)?(?:deep\\s+)?research(?:\\s+only)?\\s*[:,-]?\\s+(?:the\\s+)?${PROPERTY}${PROPERTY_END}`, 'i')
-  return discovery.test(question) || research.test(question)
+  if (discovery.test(question)) return true
+  if (/\b(?:history|industry|stocks?|regulations?|standards?|fire[- ]safety|architecture|environmental impact)\b/i.test(question)) return false
+  return research.test(question)
 }
 
 // These are display-only public property links, never a transport allowlist.

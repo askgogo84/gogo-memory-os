@@ -159,7 +159,8 @@ await check('P1: research snippets never initiate direct server fetch to search-
 })
 
 await check('hotel travel exclusions cannot bypass grounded output', async () => {
-  for (const exclusion of ['Do not include flights or itineraries.', 'No flights or trains.', 'Without airfares or flights.', 'Exclude flights, please.']) {
+  for (const exclusion of ['Do not include flights or itineraries.', 'No flights or trains.', 'Without airfares or flights.', 'Exclude flights, please.',
+    'Exclude flights, trains and itineraries.', 'No flights, trains or itineraries.', 'Without flights, trains or itineraries.', 'Do not include flights, trains, or itineraries.']) {
     const question = `Research only: list 3 hotels near Mumbai airport. ${exclusion} Do not book.`
     assert.ok(isHotelDiscoveryResearch(question), question)
     let calls = 0
@@ -232,7 +233,8 @@ await check('hotel requests preserve venue count, report caps honestly and leave
 await check('hotel discovery leaves safety, history and mixed travel research on the general path', async () => {
   for (const question of ['Research fire safety regulations in hotels in India with sources',
     'Research the history of luxury hotels in India', 'Research hotel fire safety in Mumbai',
-    'Research flights and hotels in Mumbai']) {
+    'Research flights and hotels in Mumbai', 'Research 3 hotels near Mumbai airport with no booking required and compare flights to Delhi.',
+    'Research hotels in India for fire safety standards with sources']) {
     assert.ok(!isHotelDiscoveryResearch(question), question)
     let calls = 0
     const out = await DR.runDeepResearch(question, {
