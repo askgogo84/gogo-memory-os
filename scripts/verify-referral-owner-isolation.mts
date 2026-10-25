@@ -20,8 +20,6 @@ const supabaseAdmin = {
     state.reads.push({ table })
     const filters = []
     let count = 100
-    let page: [number, number] | null = null
-    let ordered = false
     let exactCount = false
     const query = {
       select(_fields, options) {
@@ -54,21 +52,8 @@ const supabaseAdmin = {
         return query
       },
       limit(n) { count = n; return query },
-      order(field, options) {
-        assert.equal(table, 'users')
-        assert.equal(field, 'telegram_id')
-        assert.equal(options?.ascending, true)
-        ordered = true
-        return query
-      },
-      range(start, end) {
-        assert.equal(table, 'users')
-        assert.equal(ordered, true, 'stable sorted pagination is mandatory')
-        assert.ok(Number.isInteger(start) && start >= 0 && end >= start)
-        assert.ok(end - start + 1 <= 500, 'page remains bounded')
-        page = [start, end]
-        return query
-      },
+      order() { throw new Error('cross_request_offset_pagination_is_forbidden') },
+      range() { throw new Error('cross_request_offset_pagination_is_forbidden') },
       insert(row) {
         assert.equal(table, 'memories')
         state.writes.push({ table, ...row })
@@ -81,11 +66,7 @@ const supabaseAdmin = {
           : (() => {
               const rows = (table === 'users' ? state.users : state.memories)
                 .filter(row => filters.every(test => test(row)))
-              if (table === 'users' && ordered) rows.sort((a, b) => {
-                const x = BigInt(String(a.telegram_id)); const y = BigInt(String(b.telegram_id))
-                return x < y ? -1 : x > y ? 1 : 0
-              })
-              const data = page ? rows.slice(page[0], page[1] + 1) : rows.slice(0, count)
+              const data = rows.slice(0, count)
               return { data, count: exactCount ? rows.length : null, error: null }
             })()
         ).then(resolve, reject)
@@ -171,6 +152,14 @@ await check('unsafe 64-bit saved telegram ID never aliases a referral recipient'
   state.users = [good('9007199254740993', 'whatsapp:+9199254740993')]
   assert.equal(await moduleExports.recordReferralJoinFromText(params('GOGO-9254740993')), null)
   assert.equal(state.writes.length, 0)
+})
+await check('JSON-decoded unsafe numeric owner rejects collision before suffix comparison', async () => {
+  state.users = [
+    { telegram_id: 9007199254740993, whatsapp_id: '+14155552671' },
+    { telegram_id: -9254740993, whatsapp_id: 'whatsapp:+919254740993' },
+  ]
+  assert.equal(await moduleExports.recordReferralJoinFromText(params('GOGO-9254740993')), null)
+  assert.equal(state.writes.length, 0, 'rounded BIGINT must never hide a collision')
 })
 await check('DB outage fails closed without any memory write', async () => {
   state.users = [good()]

@@ -35,46 +35,38 @@ async function findUserByReferralCode(code: string) {
   const referralId = referralIdFromCode(code)
   if (!referralId) return null
 
-  // Legacy codes contain only the final 10 digits of a signed Telegram ID.
-  // A WhatsApp-suffix-filtered candidate set cannot prove global uniqueness:
-  // users with different phones, or positive/negative or longer IDs, may
-  // generate the same public code. Read ONLY owner IDs in ordered bounded
-  // pages, never private phone/account fields, and fail closed if we cannot
-  // exhaust the active users table. A durable indexed code map is needed for
-  // larger installations; this legacy compatibility fallback is not one.
-  const PAGE_SIZE = 500
-  const MAX_SCANNED = 5000
+  // Legacy public codes are derived from the final 10 digits of signed owner
+  // IDs, not from WhatsApp phone numbers. Resolve across ALL persisted owner
+  // IDs in ONE bounded database read (one consistent SQL statement), or refuse
+  // to credit anyone. An indexed durable code mapping is needed at scale.
+  const MAX_SINGLE_SNAPSHOT_OWNERS = 1000
+  const { data, error, count } = await supabaseAdmin
+    .from('users')
+    .select('telegram_id', { count: 'exact' })
+    .not('telegram_id', 'is', null)
+    .limit(MAX_SINGLE_SNAPSHOT_OWNERS)
+
+  // A PostgREST max-rows setting can silently return fewer than requested.
+  // Only a complete one-statement result can establish uniqueness; refuse
+  // oversized, truncated or unknown-count tables instead of paginating.
+  if (error || !Array.isArray(data) || !Number.isSafeInteger(count)
+    || count === null || count < 0 || count > MAX_SINGLE_SNAPSHOT_OWNERS
+    || data.length !== count) return null
+
   let found: { telegram_id: number } | null = null
-  let expectedCount: number | null = null
-  for (let offset = 0; offset < MAX_SCANNED; offset += PAGE_SIZE) {
-    const { data, error, count } = await supabaseAdmin
-      .from('users')
-      .select('telegram_id', { count: 'exact' })
-      .not('telegram_id', 'is', null)
-      .order('telegram_id', { ascending: true })
-      .range(offset, offset + PAGE_SIZE - 1)
-    // A server max-rows cap can silently shorten an apparently final page.
-    // Require a complete server-reported count with every exact page.
-    if (error || !Array.isArray(data) || !Number.isSafeInteger(count)
-      || count === null || count < 0 || count > MAX_SCANNED
-      || (expectedCount !== null && expectedCount !== count)
-      || data.length !== Math.min(PAGE_SIZE, Math.max(0, count - offset))) return null
-    expectedCount = count
-    for (const row of data) {
-      const rawId = String(row?.telegram_id ?? '').trim()
-      if (!/^-?[1-9][0-9]*$/.test(rawId)) continue
-      if (cleanReferralId(rawId) !== referralId) continue
-      const owner = Number(rawId)
-      // Matching unsafe/noncanonical owner is itself ambiguous; don't credit
-      // a different owner because its numeric conversion silently rounded.
-      if (!Number.isSafeInteger(owner) || owner === 0 || String(owner) !== rawId) return null
-      if (found) return null
-      found = { telegram_id: owner }
-    }
-    if (offset + data.length === count) return found
+  for (const row of data) {
+    // PostgREST may JSON-decode BIGINT into an imprecise JavaScript Number
+    // before we see it. Such a row could hide a colliding referral suffix.
+    if (typeof row?.telegram_id === 'number' && !Number.isSafeInteger(row.telegram_id)) return null
+    const rawId = String(row?.telegram_id ?? '').trim()
+    if (!/^-?[1-9][0-9]*$/.test(rawId)) continue
+    if (cleanReferralId(rawId) !== referralId) continue
+    const owner = Number(rawId)
+    if (!Number.isSafeInteger(owner) || owner === 0 || String(owner) !== rawId) return null
+    if (found) return null
+    found = { telegram_id: owner }
   }
-  // No proof the final scanned page was the last page: no speculative credit.
-  return null
+  return found
 }
 
 export function isShareMyWinCommand(text: string) {
