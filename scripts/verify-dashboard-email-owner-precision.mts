@@ -88,7 +88,7 @@ for (const path of routes) {
     '@/lib/supabase-admin': { supabaseAdmin: db },
   })
 
-  for (const owner of ['42', '-100123456789012', nearA, nearB, '9223372036854775807']) {
+  for (const owner of ['42', '-100123456789012', nearA, nearB, '900719925474099300', '9223372036854775807']) {
     sessionOwner = owner
     for (const method of ['GET', 'POST', 'DELETE'] as const) {
       calls.length = 0
@@ -108,7 +108,7 @@ for (const path of routes) {
     }
   }
 
-  for (const bad of [null, '0', '0123', '900719925474099300', 9007199254740993, 'not-an-id']) {
+  for (const bad of [null, '0', '0123', '9223372036854775808', 9007199254740993, 'not-an-id']) {
     sessionOwner = bad
     for (const method of ['GET', 'POST', 'DELETE'] as const) {
       calls.length = 0
@@ -118,7 +118,7 @@ for (const path of routes) {
       })
       const res: Response = method === 'POST' ? await handlers.POST(req)
         : method === 'DELETE' ? await handlers.DELETE() : await handlers.GET()
-      assert.equal(res.status, bad === null ? 401 : 403, path + ' ' + method + ' denies untrusted identity')
+      assert.equal(res.status, bad === null ? 401 : 403, path + ' ' + method + ' denies untrusted identity: ' + String(bad))
       assert.equal(calls.length, 0, path + ' ' + method + ' must not read/mutate service DB on denial')
     }
   }
