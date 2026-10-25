@@ -22,7 +22,7 @@ export async function GET() {
   // session identity: two distinct owners can alias as the same JavaScript Number.
   // Reject unsafe IDs before either privileged data access or briefing synthesis.
   const ownerId = session.telegramId
-  if (!/^-?[1-9]\\d*$/.test(ownerId)) {
+  if (!/^-?[1-9]\d*$/.test(ownerId)) {
     return NextResponse.json({ ok: false, error: 'invalid_session' }, { status: 403 })
   }
   const telegramId = Number(ownerId)
