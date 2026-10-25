@@ -181,7 +181,7 @@ export function parseObscuraObservation(
     const title = row.title.replace(/\s+/g, ' ').trim().slice(0, 300)
     const text = row.text.replace(/\s+/g, ' ').trim().slice(0, 12000)
     if ((!title && !text) || BLOCK_TEXT.test(text) || BLOCK_TEXT.test(title)
-      || isLoginFormPage({ url: final.href, title, text })) return null
+      || isLoginFormPage({ url: final.href, title, text, forms:[{inputs}] })) return null
     return { url: final.href, title, text, forms:[{inputs}],
       observedAt: now().toISOString(), runtime: 'obscura' }
   } catch {
