@@ -2122,7 +2122,7 @@ export async function tryObscuraBrowserRead(
     const candidate = await withinReadBudget(pilotDeadline,()=>tryObscuraPublicRead(params)).catch(() => null)
     if (candidate) {
       const page = {url:candidate.url,title:candidate.title,text:candidate.text,
-        forms:[],links:[],controls:[],actions:[]}
+        forms:candidate.forms,links:[],controls:[],actions:[]}
       if (!detectHumanAuthGate(page).required
         && !detectProviderAccessBlock(page)
         && !needsBrowserDeliveryLocation(page)) {
