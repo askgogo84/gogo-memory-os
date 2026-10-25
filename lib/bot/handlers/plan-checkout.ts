@@ -20,6 +20,15 @@ export function parsePlanSelection(text: string): CheckoutPlanKey | null {
   return null
 }
 
+/** Keep explicit +country identities even when the whole E.164 number is 10 digits. */
+function completeInternationalWhatsAppDigits(value: string | null): string | null {
+  const raw = String(value || '').trim().replace(/^whatsapp:\s*/i, '').trim()
+  if (/^\+[1-9][0-9]{7,14}$/.test(raw)) return raw.slice(1)
+  // Without '+', ten digits may be a local Indian number; never infer ownership.
+  if (/^[1-9][0-9]{10,14}$/.test(raw)) return raw
+  return null
+}
+
 /** Exact actor and complete international WhatsApp identity only: never a national suffix. */
 async function hasActiveSubscription(telegramId: number, whatsappId: string | null): Promise<boolean> {
   // JS Number values outside the safe range can alias another persisted BIGINT.
@@ -36,9 +45,11 @@ async function hasActiveSubscription(telegramId: number, whatsappId: string | nu
 
   const rows: any[] = [...ownRows]
   const raw = String(whatsappId || '').trim().replace(/^whatsapp:\s*/i, '').trim()
-  // A bare 10-digit national number does not prove a cross-channel owner.
-  if (/^\+?[1-9][0-9]{10,14}$/.test(raw)) {
-    const full = raw.replace(/^\+/, '')
+  // Complete E.164 numbers can be 8–15 digits with an explicit + prefix.
+  // For legacy unprefixed IDs, require 11+ digits to reject ambiguous
+  // domestic-only ten-digit phone numbers.
+  const full = completeInternationalWhatsAppDigits(raw)
+  if (full) {
     const { data: exactRows, error: exactError } = await supabaseAdmin
       .from('users')
       .select('tier, tier_expires_at, subscription_status')
@@ -78,8 +89,7 @@ export async function buildPlanCheckoutReply(
   }
 
   const phone = user.whatsappId || ''
-  const fullPhone = phone.trim().replace(/^whatsapp:\s*/i, '').trim()
-  if (!/^\+?[1-9][0-9]{10,14}$/.test(fullPhone)) {
+  if (!completeInternationalWhatsAppDigits(phone)) {
     return `I couldn't verify your full international WhatsApp number for a subscription. Please try again from WhatsApp.`
   }
 
