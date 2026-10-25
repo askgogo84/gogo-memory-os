@@ -1,6 +1,8 @@
 // Duet parity step 2: what you hear about and how often — frequency, topics, quiet hours.
 // Run: npx tsx scripts/verify-alert-preferences.mts
 import assert from 'node:assert/strict'
+import ts from 'typescript'
+import { runInNewContext } from 'node:vm'
 import { readFileSync } from 'node:fs'
 process.env.NEXT_PUBLIC_SUPABASE_URL = 'https://state-fixture.supabase.co'
 process.env.SUPABASE_SERVICE_ROLE_KEY = 'fixture-only'
@@ -98,8 +100,6 @@ try {
 // synthetic 64-bit owner rows. No network, tenant data, email or real mutation.
 {
   const { exactAlertOwnerId } = await import('../lib/agent/alert-owner-id.ts')
-  const ts = await import('typescript')
-  const { runInNewContext } = await import('node:vm')
   const first = '9007199254740992'
   const second = '9007199254740993'
   assert.equal(Number(first), Number(second), 'the pre-fix Number coercion aliases unrelated owners')
