@@ -2102,16 +2102,53 @@ function normalizeActionLog(values:any[]){
   return values.map((a:any)=>({kind:String(a.kind||''),detail:safeText(a.detail,300),status:['done','skipped','failed'].includes(a.status)?a.status:'failed' as const,consequential:a.consequential===true}))
 }
 
-/** Public, uncredentialed opt-in browser probe. The caller retains the regular
- * secure Browserbase/Chromium path for fallback and all human-auth boundaries. */
+/** Public, uncredentialed opt-in browser probe. The normal browser retains all
+ * session, Vault, approval and human takeover authority on fallback. */
 export async function tryObscuraBrowserRead(
   params: ObscuraRequest, callerReadDeadline?: number,
 ): Promise<SecureBrowserResult|null> {
   const readDeadline=Math.min(Date.now()+READ_BUDGET_MS,
     Number.isFinite(callerReadDeadline)?callerReadDeadline!:Infinity)
   if (readDeadline-Date.now() <= 90_000) return null
-  // The optional pilot reuses the same read deadline and never overrides any
-  // human Take Control, saved login, slot check, draft or execution authority.
+  // The Obscura pilot shares this same total read deadline with the trusted
+  // fallback. Only start it with enough time to recover through Chromium.
+  // Obscura trial is strictly opt-in, public and read-only. No Vault session,
+  // protected action, human takeover or persistent browser is routed here.
+  // A valid page still MUST pass the existing evidence-grounded assessor;
+  // missing/misleading evidence falls back to the existing secure browser.
+  if (readDeadline-Date.now() > 90_000
+    && typeof obscuraPilotEligible === 'function' && obscuraPilotEligible(params)) {
+    const pilotDeadline=Math.min(Date.now()+75_000,readDeadline-90_000)
+    const candidate = await withinReadBudget(pilotDeadline,()=>tryObscuraPublicRead(params)).catch(() => null)
+    if (candidate) {
+      const page = {url:candidate.url,title:candidate.title,text:candidate.text,
+        forms:[],links:[],controls:[],actions:[]}
+      if (!detectHumanAuthGate(page).required
+        && !detectProviderAccessBlock(page)
+        && !needsBrowserDeliveryLocation(page)) {
+        const verified = await withinReadBudget(readDeadline,()=>assessReadOutcome(params.objective,page)).catch(() => null)
+        if (verified) return {
+          status:'completed',url:candidate.url,
+          sourceUrl:browserSourceUrl(candidate.url)||undefined,
+          title:safeText(candidate.title,300),summary:verified,
+          pageText:safeText(candidate.text,9000),forms:[],actions:[],
+          // This ephemeral observer has no attachable browser session.
+          sandboxName:'',
+        }
+      }
+    }
+  }
+  return null
+}
+
+export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;loginCode?:string|null;phoneLogin?:{number:string;telegramId:string}|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
+  if(params.loginCode!=null||params.bookingOtp!=null)throw new Error('human_auth_takeover_required')
+  assertBrowserAuthorityFits(params.objective,params.mode)
+  let publicFlightRead=false
+  try{const target=new URL(params.url);publicFlightRead=params.recoverFlightSearch===true&&target.protocol==='https:'&&['google.com','www.google.com'].includes(target.hostname)&&/^\/travel\/flights(?:\/|$)/.test(target.pathname)}catch{}
+  const readDeadline=params.mode==='read'?Math.min(Date.now()+(publicFlightRead?FLIGHT_READ_BUDGET_MS:READ_BUDGET_MS),Number.isFinite(params.readDeadline)?params.readDeadline!:Infinity):undefined
+  // The optional public read shares the original read budget and has no
+  // authority to intercept a saved login, handoff, booking or execution.
   const obscuraResult=readDeadline!==undefined
     ? await tryObscuraBrowserRead(params,readDeadline):null
   if(obscuraResult)return obscuraResult
