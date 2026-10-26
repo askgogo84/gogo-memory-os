@@ -1,4 +1,5 @@
 // 26 Oct live: "Compare chicken biryani at Meghana Foods on Swiggy and Zomato for 560086" ran as a product
+import './verify-comparison-no-login-oct26.mts'
 // comparison (home pages, Swiggy asked for a location, Zomato "browser busy", iPhone-style closing line).
 import assert from 'node:assert/strict'
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'; process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'

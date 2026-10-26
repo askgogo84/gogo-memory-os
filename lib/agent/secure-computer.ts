@@ -2169,7 +2169,7 @@ export async function tryObscuraBrowserRead(
   }
 }
 
-export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;loginCode?:string|null;phoneLogin?:{number:string;telegramId:string}|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
+export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;loginCode?:string|null;phoneLogin?:{number:string;telegramId:string}|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number;publicOnly?:boolean}):Promise<SecureBrowserResult>{
   if(params.loginCode!=null||params.bookingOtp!=null)throw new Error('human_auth_takeover_required')
   assertBrowserAuthorityFits(params.objective,params.mode)
   let publicFlightRead=false
@@ -2375,7 +2375,10 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // because the planner may wander to pages with no "Log in" link (16 Oct live run).
       // A human may just have completed sign-in in this same page. A stale session marker
       // alone must not restart login on resume; actual login controls and auth gates still apply.
-      if(!params.resumePage&&!params.loginCode&&!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
+      // 26 Oct live: a Swiggy menu read for a food comparison signed in with the saved login and stopped at a text code.
+      // A comparison read is a public page: it never signs in (publicOnly); a real sign-in wall still pauses for the person.
+      if(params.publicOnly)signedOutEntry=false
+      if(!params.publicOnly&&!params.resumePage&&!params.loginCode&&!signedOutEntry&&!vaultAttempted&&!vaultEntryChecked&&!authGate.required&&!loginish){
         const entryHost=(()=>{try{return new URL(String(page.url||target.toString())).hostname}catch{return ''}})()
         // typeof guard: browser test harnesses stub the vault modules with empty objects.
         const phoneSite=entryHost&&typeof findVaultProviderForDomain==='function'?findVaultProviderForDomain(entryHost):null
@@ -2386,7 +2389,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         }
       }
       if(signedOutEntry)vaultEntryChecked=true
-      if(!vaultAttempted && params.accountCreation!==true && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry)))){
+      if(!params.publicOnly && !vaultAttempted && params.accountCreation!==true && (authGate.reason==='password'||(!authGate.required&&(loginish||signedOutEntry)))){
       const currentUrl=String(page.url||target.toString())
         let host=''
         try{host=new URL(currentUrl).hostname}catch{}
