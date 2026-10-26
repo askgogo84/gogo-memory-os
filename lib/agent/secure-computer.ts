@@ -832,6 +832,17 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
     const consequential=/\b(book|booking|cancel|cancellation|buy|purchase|checkout|pay|payment|reserve|reservation|place order|order now|apply|send application|check\s*-?\s*in|confirm(?:ation)?|complete purchase|finish purchase|finali[sz]e|submit)\b/i.test(commitText);
     if(text!==commitText&&!consequential)return false;
     if(safeResearch && !consequential)return false;
+    // 26 Oct (owner): a store's "Select your location" box needs Continue/Apply after Gogo enters the delivery
+    // pincode. Only a plain apply-type label, inside a dialog/form about the delivery location, holding a filled
+    // 6-digit pincode, with no password or payment field nearby, counts as setting the location (not a commit).
+    // The visible label must be exactly one of these ("Apply"/"Submit" would otherwise read as commit words).
+    if(/^(?:continue|apply|submit|check|done|save|confirm location|update)$/.test(visibleText.trim())){
+      const box=el.closest?.('[role="dialog"],[aria-modal="true"],form,[class*="modal" i],[class*="popup" i],[class*="location" i],[class*="pincode" i]');
+      const boxText=(box?.textContent||'').toLowerCase();
+      const pinFilled=!!box&&Array.from(box.querySelectorAll?.('input')||[]).some((i)=>/^[1-9]\d{5}$/.test(String(i.value||'').trim()));
+      const risky=!!box&&(box.querySelector?.('input[type="password"]')||/\b(?:card number|cvv|upi|pay now|place order)\b/.test(boxText));
+      if(box&&pinFilled&&!risky&&/\b(?:pin\s*code|pincode|delivery location|select your location|enter your location|delivery address|check delivery)\b/.test(boxText))return false;
+    }
     if(consequential)return true;
     if(t==='submit'||(el.tagName==='BUTTON'&&t!=='button')||el.getAttribute('formaction')!==null)return true;
     return false;
