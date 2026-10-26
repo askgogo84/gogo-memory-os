@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
 import { exactSessionOwnerId } from '../lib/dashboard/owner-identity.ts'
+import { runInNewContext } from 'node:vm'
 import * as D from '../lib/make/documents.ts'
 import { generateDoc, editDoc } from '../lib/make/generate.ts'
 import { deckToPptx, sheetToXlsx } from '../lib/make/export.ts'
@@ -186,11 +187,77 @@ await check('Make routes deny mismatched, padded rows and database errors withou
   }
 })
 
-await check('a wrapped or bad cheap edit retries on the strong model', async () => {
-  const s = D.validSheet({ title: 'Home', columns: ['Item', 'Amount'], rows: [['Rent', 30000]] })!
-  const calls: any[] = []
-  const next = await editDoc(s, 'add a row for school fees', { model: async (_p: string, _s: string, o?: any) => { calls.push(!!o?.strong); return o?.strong ? JSON.stringify({ spreadsheet: { ...s, rows: [...s.rows, ['School fees', 8000]] } }) : 'Sure! here it is' } })
-  assert.deepEqual(calls, [false, true]); assert.equal(D.sheetTotal(next as any), 38000)
+await check('owner-private Make edits never reach a cheap model, including the invalid-output retry', async () => {
+  const confidential = 'Internal owner-only acquisition forecast'
+  const s = D.validSheet({ title: 'Private plan', columns: ['Item', 'Amount'], rows: [[confidential, 30000]] })!
+  const calls: boolean[] = []
+  const next = await editDoc(s, 'add a row for school fees', { model: async (prompt: string, scanText: string, opts?: any) => {
+    calls.push(!!opts?.strong)
+    assert.equal(scanText, 'add a row for school fees', 'innocent instructions cannot classify a stored private document')
+    assert.match(prompt, /Internal owner-only acquisition forecast/, 'existing private document is included in the model prompt')
+    return calls.length === 1 ? 'Sure! here it is' : JSON.stringify({ spreadsheet: { ...s, rows: [...s.rows, ['School fees', 8000]] } })
+  } })
+  assert.deepEqual(calls, [true, true], 'both attempts must stay on the strong/primary provider')
+  assert.equal(D.sheetTotal(next as any), 38000)
+  assert.match(readFileSync('lib/make/generate.ts', 'utf8'), /model\(editPrompt\(doc, instruction\), instruction, \{ strong: true \}\)/, 'privacy boundary must be applied by actual editDoc caller')
+})
+
+function actualMakeModelBoundary(doc: D.MakeDoc, options: { replies?: string[]; throwAt?: number[]; noKey?: boolean } = {}) {
+  const cheapCalls: any[] = [], primaryCalls: any[] = []
+  class FixturePrimary {
+    constructor(config: any) { assert.equal(config.apiKey, 'fixture-primary-only') }
+    messages = { create: async (params: any, requestOptions: any) => {
+      primaryCalls.push(params)
+      assert.equal(params.model, 'claude-haiku-4-5'); assert.equal(params.max_tokens, 4000)
+      assert.equal(requestOptions.timeout, 45_000)
+      if (options.throwAt?.includes(primaryCalls.length)) throw new Error('fixture primary unavailable')
+      return { content: [{ type: 'text', text: options.replies?.[primaryCalls.length - 1] ?? JSON.stringify(doc) }] }
+    } }
+  }
+  const exports: any = {}
+  const deps: Record<string, any> = {
+    './documents': D,
+    '@anthropic-ai/sdk': { __esModule: true, default: FixturePrimary },
+    '@/lib/inference/cheap': { cheapComplete: async (params: any) => { cheapCalls.push(params); return JSON.stringify(doc) } },
+  }
+  runInNewContext(ts.transpileModule(readFileSync('lib/make/generate.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText, {
+    exports, require: (name: string) => { if (!(name in deps)) throw new Error(`unexpected model-boundary dependency: ${name}`); return deps[name] },
+    process: { env: options.noKey ? {} : { ANTHROPIC_API_KEY: 'fixture-primary-only' } }, console,
+  })
+  return { api: exports, cheapCalls, primaryCalls }
+}
+
+await check('actual default model keeps saved sheet and deck prompts off cheap routing on first attempt and retry', async () => {
+  const privateText = 'SYNTHETIC OWNER ONLY ACQUISITION FORECAST'
+  const docs: D.MakeDoc[] = [
+    D.validSheet({ title: 'Private plan', columns: ['Item', 'Amount'], rows: [[privateText, 30000]] })!,
+    D.validDeck({ title: 'Private deck', slides: [{ title: 'Plan', points: ['Fixture'], notes: privateText }, { title: 'Next', points: ['Fixture'], notes: '' }] })!,
+  ]
+  for (const doc of docs) for (const retry of [false, true]) {
+    const fixture = actualMakeModelBoundary(doc, { replies: retry ? ['not document JSON', JSON.stringify(doc)] : [JSON.stringify(doc)] })
+    const result = await fixture.api.editDoc(doc, 'rename the final heading')
+    assert.equal(result?.format, doc.format)
+    assert.equal(fixture.cheapCalls.length, 0, 'a saved private prompt must never reach cheap routing')
+    assert.equal(fixture.primaryCalls.length, retry ? 2 : 1)
+    for (const call of fixture.primaryCalls) assert.ok(call.messages[0].content.includes(privateText), 'the actual primary call carries the existing document')
+  }
+})
+
+await check('actual private edits fail closed without a primary key or on primary failure; fresh nonpersonal creation keeps cheap routing', async () => {
+  const doc = D.validSheet({ title: 'Private plan', columns: ['Item', 'Amount'], rows: [['SYNTHETIC PRIVATE ROW', 30000]] })!
+  const retry = actualMakeModelBoundary(doc, { throwAt: [1] })
+  assert.equal((await retry.api.editDoc(doc, 'rename heading'))?.format, 'sheet')
+  assert.equal(retry.primaryCalls.length, 2); assert.equal(retry.cheapCalls.length, 0)
+  for (const options of [{ noKey: true }, { throwAt: [1, 2] }, { replies: ['invalid', 'invalid'] }]) {
+    const fixture = actualMakeModelBoundary(doc, options)
+    assert.equal(await fixture.api.editDoc(doc, 'rename heading'), null)
+    assert.equal(fixture.cheapCalls.length, 0, 'unavailable/invalid primary output must not fall back to cheap')
+  }
+  const creation = actualMakeModelBoundary(doc)
+  const made = await creation.api.generateDoc('sheet', 'Make a spreadsheet of public park names', { search: async () => [] })
+  assert.equal(made?.doc.format, 'sheet'); assert.equal(creation.cheapCalls.length, 1); assert.equal(creation.primaryCalls.length, 0)
+  assert.equal(creation.cheapCalls[0].taskClass, 'make_draft_nonpersonal')
+  assert.equal(creation.cheapCalls[0].scanText, 'Make a spreadsheet of public park names')
 })
 
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
