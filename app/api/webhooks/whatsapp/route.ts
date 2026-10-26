@@ -19,7 +19,7 @@ import { isConnectionCapabilityQuery } from '@/lib/agent/autonomy-status'
 import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { isGoldRateAlertPhrasing, isGoldWatchEditCommand } from '@/lib/agent/gold-rate-rule'
-import { auditInboundTwilioSignature } from '@/lib/security/webhook-signature'
+import { auditInboundTwilioSignature, parseTwilioSignatureParams } from '@/lib/security/webhook-signature'
 import { runWithQaTrace } from '@/lib/qa-trace'
 import { sendWhatsAppMessage, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
@@ -291,17 +291,14 @@ async function handleWhatsAppPost(req: NextRequest) {
   try {
     const formData = await req.formData()
 
-    // ── Inbound signature audit ───────────────────────────────────────────────
-    // LOG-ONLY unless WEBHOOK_SIGNATURE_ENFORCE is set. Every request is evaluated
-    // and the verdict emitted as WEBHOOK_SIGNATURE_AUDIT; nothing is rejected while
-    // the flag is unset, so this cannot change behaviour on its own. The evidence
-    // that this path is Twilio's (not Meta's) is recorded in the module header.
-    // Params are built from the ALREADY-PARSED formData: the request body can only
-    // be read once, so re-reading it here would break every downstream handler.
-    const signatureParams: Record<string, string> = {}
-    for (const [key, value] of formData.entries()) {
-      signatureParams[key] = typeof value === 'string' ? value : ''
-    }
+    // Reject ambiguous form data before any signature/identity/event processing.
+    // Otherwise a last-value signature map can authenticate different values
+    // from the first-value FormData.get calls below, even in strict mode.
+    const signatureParams = parseTwilioSignatureParams(formData)
+    if (!signatureParams) return new NextResponse('Bad Request', { status: 400 })
+
+    // Strict by default in production; explicit opt-out/nonproduction behavior
+    // and genuine provider callback compatibility are documented in the helper.
     const signatureAudit = auditInboundTwilioSignature({
       requestUrl: req.url,
       headers: req.headers,
