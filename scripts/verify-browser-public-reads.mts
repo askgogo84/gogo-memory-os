@@ -1,3 +1,4 @@
+import './verify-obscura-pilot.mts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { browserPageAllowlist } from '../lib/agent/browser-page-network'

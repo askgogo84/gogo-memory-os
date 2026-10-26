@@ -10,6 +10,23 @@ const KIND = /\b(restaurants?|caf(?:e|é)s?|coffee (?:shops?|places?)|bars?|pubs
 const LEAD = /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show(?: me)?|list|give me|what are|which are|any|best|top|good|nice|where can i (?:get|find|eat|have))\b/i
 const COUNT_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 }
 
+// 26 Oct live: "Find hotels near Mumbai Airport for 12–16 November for 2 adults" sent the dates and guests to the
+// places search (zero results). A place search names the place; stay dates, nights, rooms and guests are not
+// searchable listing attributes, and their rates/availability are never verified here.
+// Whole month tokens only: 'Marwari', 'Marriott', 'Mayura', 'Junior', 'Decent' are not months (26 Oct review).
+const MONTH = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?![a-z])'
+const DAY = '\\d{1,2}(?:st|nd|rd|th)?'
+const STAY_DATE = new RegExp(`\\b(?:from|on|for|between|check-?in|checking in|check-?out)?\\s*(?:${DAY}\\s*(?:[–—-]|to|and|until|till)\\s*${DAY}\\s+${MONTH}|${DAY}\\s+${MONTH}(?:\\s*(?:[–—-]|to|and|until|till)\\s*${DAY}(?:\\s+${MONTH})?)?|${MONTH}\\s+${DAY}(?:\\s*(?:[–—-]|to|and|until|till)\\s*${DAY})?)\\b`, 'gi')
+const STAY_PARTY = /\b(?:for\s+)?\d{1,2}\s+(?:adults?|kids?|children|child|nights?|rooms?|guests?)\b/gi
+function stripStayQualifiers(text: string) {
+  return text.replace(STAY_DATE, ' ').replace(STAY_PARTY, ' ')
+    .replace(/\b(?:check-?in|check-?out|checking in)\b/gi, ' ')
+    .replace(/\s*,(?:\s*,)+/g, ',').replace(/(?:\s*,)+\s*$/, '').replace(/\s+(?:for|from|on|and)\s*$/i, '')
+}
+const OTHER_PLACE = /\b(?:bengaluru|bangalore|mumbai|delhi|new delhi|chennai|hyderabad|pune|kolkata|dubai|india|goa|jaipur|udaipur|jodhpur|kochi|cochin|mysuru|mysore|ooty|coorg|madikeri|chikmagalur|hampi|manali|shimla|agra|varanasi|rishikesh|kerala|munnar|alleppey|pondicherry|puducherry|gurgaon|gurugram|noida|ahmedabad|chandigarh|lonavala|amritsar|darjeeling|gangtok|leh|srinagar|london|singapore|bangkok|bali)\b/i
+const STAY_KIND = /\b(?:hotels?|stays?|resorts?|hostels?|lodges?|homestays?|guest ?houses?)\b/i
+const FOOD_KIND = /\b(?:restaurants?|caf(?:e|é)s?|coffee|bars?|pubs?|brewer(?:y|ies)|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets?)\b/i
+
 export function placeAsk(text: string): PlaceAsk | null {
   const t = String(text || '').trim().replace(/[?.!]+$/, '')
   if (!t || t.length > 200) return null
@@ -29,13 +46,14 @@ export function placeAsk(text: string): PlaceAsk | null {
     .split(/\b(?:do\s+not|don['’]?t|never|without)\s+(?:book|reserve|order|buy|purchase)\b/i)[0]
     .replace(/[\s,]+$/, '').trim()
   if (!KIND.test(primary)) return null
-  const area = primary.match(/\b(?:in|near|around|at|close to)\s+([A-Za-z][A-Za-z .'-]{2,40}?)(?=,|\s+(?:for|with|that|which|open|under|below|within)\b|$)/i)?.[1]?.trim()
+  const area = primary.match(/\b(?:in|near|around|at|close to)\s+([A-Za-z][A-Za-z .'-]{2,40}?)(?=,|\s+(?:for|with|that|which|open|under|below|within|from|on|between|check-?in|checking in)\b|$)/i)?.[1]?.trim()
   if (!area || /^(?:me|here|my (?:area|place|home|office))$/i.test(area)) return null
   // Only an explicit requested number of venues sets result count; "for 2 people" is party size.
   const countPrefix = /^(?:(?:me|the|best|top|good|nice)\s+)*(\d{1,2}|one|two|three|four|five|six|seven|eight)\s+/i
   const explicitCount = primary.replace(LEAD, '').trimStart().match(countPrefix)?.[1]?.toLowerCase()
   const count = Math.max(1, Math.min(8, explicitCount ? (COUNT_WORDS[explicitCount] || Number(explicitCount)) : 5))
-  const discovery = primary
+  // Only a stay ask drops dates/nights/rooms/guests; a food ask keeps its words ("open on 25 Dec").
+  const discovery = (STAY_KIND.test(primary) ? stripStayQualifiers(primary) : primary)
     .replace(/\bfor\s+\d{1,2}\s+(?:people|persons?|guests?|pax)\b/gi, ' ')
     .replace(/\b(?:today|tonight|tomorrow)\b/gi, ' ')
     .replace(/\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi, ' ')
@@ -43,7 +61,8 @@ export function placeAsk(text: string): PlaceAsk | null {
     .replace(countPrefix, '')
     .replace(/[\s,]+$/, '').replace(/\s+/g, ' ').trim()
   if (!discovery) return null
-  return { query: /\b(?:bengaluru|bangalore|mumbai|delhi|chennai|hyderabad|pune|kolkata|dubai|india)\b/i.test(discovery) ? discovery : `${discovery}, Bengaluru`, area, count }
+  // A place outside Bengaluru keeps its own city (26 Oct review: "hotels in Goa" became "…, Bengaluru").
+  return { query: OTHER_PLACE.test(discovery) ? discovery : `${discovery}, Bengaluru`, area, count }
 }
 
 export type Place = { title: string; address: string; rating?: number; ratingCount?: number; category?: string; phone?: string; website?: string; cid?: string }
@@ -129,9 +148,17 @@ export async function answerPlaces(text: string, fetchImpl: typeof fetch = fetch
   if (!ask) return null
   if (privatePlaceQuery(ask.query)) return 'I cannot send a request containing sensitive details to public search. Remove those details and ask again. No booking was made.'
   const places = await searchPlaces(ask.query, fetchImpl).catch((err: any) => { console.error('PLACES_SEARCH_FAILED:', String(err?.message || err).slice(0, 120)); return [] })
-  if (!places.length) return `I couldn't verify local listings in ${ask.area} right now. I won't invent restaurants, source links or table availability. No booking was made.`
+  const stay = STAY_KIND.test(ask.query) && !FOOD_KIND.test(ask.query)
+  if (!places.length) return stay
+    ? `I couldn't verify hotel listings in ${ask.area} right now. I won't invent hotels, source links, room rates or availability. No booking was made.`
+    : FOOD_KIND.test(ask.query)
+      ? `I couldn't verify local listings in ${ask.area} right now. I won't invent restaurants, source links or table availability. No booking was made.`
+      : `I couldn't verify local listings in ${ask.area} right now. I won't invent places or source links. No booking was made.`
   const listing = formatPlaces(ask, places)
   if (!listing) return `I couldn't verify local listings in ${ask.area} right now. No booking was made.`
+  // A place listing verifies the property, never a room rate or availability for dates.
+  if (stay) return listing.replace(/\n\nAsk "which of these is open late\?" or "book a table at <name>"\.$/, '')
+    + '\n\nRoom rates and availability for your dates are not verified here; no booking was made.'
   const tableRequest = /\bfor\s+\d{1,2}\s+(?:people|persons?|guests?|pax)\b/i.test(text)
     && /\b(?:today|tomorrow|tonight|\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i.test(text)
   // Google Places verifies a listing, not a real-time reservation slot.
