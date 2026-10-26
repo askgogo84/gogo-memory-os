@@ -1,6 +1,8 @@
 // Admin console v1: access gate wiring, password/cookie crypto, metering classification and pricing.
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
+import ts from 'typescript'
 import { classifyRequest, priceEvent, tokensFromBody, modelFamily, DEFAULT_RATES } from '../lib/metering/core.ts'
 
 process.env.DASHBOARD_THROTTLE_PEPPER = 'test-pepper'
@@ -126,3 +128,112 @@ const waRoute = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')
 assert.match(waRoute, /if \(isGreeting\(bodyText\)\) \{[\s\S]{0,200}return new NextResponse/, 'a bare Hi from a new person gets one intro, not two')
 assert.match(readFileSync('lib/admin/actions.ts', 'utf8'), /sendWhatsAppAccessGranted\(phone, welcomeFirstName\(name\), buildAccessGrantedText\(name\), ACCESS_GRANTED_TEMPLATE_BODY\)/)
 console.log('verify-admin-console: welcome ok')
+
+
+// ── Actual admin user-action owner isolation: inert service-role DB ─────────
+// Model PostgreSQL signed-64 owners without ever calling an account or provider.
+// An adjacent unsafe owner must fail BEFORE any service-role read or write.
+{
+  type Call = { table: string; kind: string; where: Array<[string, unknown]> }
+  const calls: Call[] = []
+  let readOwner = '123'
+  let writtenOwner = '123'
+  const db = {
+    from(table: string) {
+      const state: Call = { table, kind: 'read', where: [] }
+      calls.push(state)
+      const q: any = {
+        select(_cols: string) { return q },
+        update(_values: any) { state.kind = 'update'; return q },
+        delete() { state.kind = 'delete'; return q },
+        eq(key: string, value: unknown) { state.where.push([key, value]); return q },
+        maybeSingle: async () => ({
+          data: table === 'users'
+            ? state.kind === 'update'
+              ? { telegram_id: writtenOwner }
+              : { telegram_id: readOwner, whatsapp_id: '+918888888888', name: 'Synthetic person' }
+            : null,
+          error: null,
+        }),
+        then(resolve: any, reject: any) {
+          return Promise.resolve({ error: null }).then(resolve, reject)
+        },
+      }
+      return q
+    },
+  }
+  const stubs: Record<string, any> = {
+    '@/lib/supabase-admin': { supabaseAdmin: db },
+    '@/lib/whatsapp': { sendWhatsAppAccessGranted: async () => 'fixture' },
+    '@/lib/bot/handlers/welcome': {
+      ACCESS_GRANTED_TEMPLATE_BODY: 'fixture',
+      buildAccessGrantedText: () => 'fixture',
+      welcomeFirstName: () => 'fixture',
+    },
+    './console-auth': {
+      audit: async () => {},
+      canDo: () => true,
+      e164: (v: string) => String(v || ''),
+      hashPassword: (v: string) => v,
+      setPasswordHash: async () => {},
+    },
+  }
+  const moduleExports: any = {}
+  const compiled = ts.transpileModule(readFileSync('lib/admin/actions.ts', 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText
+  runInNewContext(compiled, {
+    exports: moduleExports,
+    require: (id: string) => {
+      if (!Object.prototype.hasOwnProperty.call(stubs, id)) throw new Error('unexpected_import:' + id)
+      return stubs[id]
+    },
+    console, Date, process: { env: {} },
+  })
+  const admin = { role: 'owner', phone: '+919999999999' }
+  const run = (action: string, telegramId: unknown, tier = 'pro') =>
+    moduleExports.runAdminAction(admin, action, { telegramId, tier })
+
+  for (const id of ['9007199254740993', 9007199254740993, '01', '1e3', '0', ' 123 ']) {
+    for (const action of ['user.plan', 'user.block', 'user.unblock']) {
+      calls.length = 0
+      const result = await run(action, id)
+      assert.equal(result.ok, false, action + ' must reject unsafe/noncanonical owner ' + String(id))
+      assert.equal(calls.length, 0, action + ' must reject before privileged DB operations')
+    }
+  }
+
+  calls.length = 0
+  let result = await run('user.plan', '123')
+  assert.equal(result.ok, true, 'legitimate safe owner plan edit still succeeds')
+  assert.ok(calls.some(c => c.table === 'users' && c.kind === 'update' &&
+    c.where.some(([field, value]) => field === 'telegram_id' && value === '123')),
+    'plan write uses exact canonical TEXT owner, never rounded Number')
+  assert.ok(!calls.some(c => c.where.some(([field, value]) =>
+    field === 'telegram_id' && typeof value === 'number')),
+    'no admin user-action owner predicate may coerce to JS Number')
+
+  readOwner = '124'
+  calls.length = 0
+  result = await run('user.block', '123')
+  assert.equal(result.ok, false, 'mismatched returned users row cannot authorize blocking')
+  assert.equal(calls.filter(c => c.kind === 'update').length, 0,
+    'mismatched owner must be rejected before any update')
+
+  readOwner = '123'
+  writtenOwner = '123'
+  calls.length = 0
+  result = await run('user.block', '123')
+  assert.equal(result.ok, true, 'legitimate exact-owner block remains available')
+  assert.ok(calls.some(c => c.table === 'users' && c.kind === 'update' &&
+    c.where.some(([field, value]) => field === 'telegram_id' && value === '123')))
+  assert.ok(calls.some(c => c.table === 'dashboard_sessions' && c.kind === 'delete' &&
+    c.where.some(([field, value]) => field === 'telegram_id' && value === '123')),
+    'only exact blocked owner sessions may be revoked')
+
+  writtenOwner = '124'
+  calls.length = 0
+  result = await run('user.plan', '123')
+  assert.equal(result.ok, false, 'a wrong-row update receipt cannot be reported as changed')
+}
+console.log('verify-admin-console: admin actions exact owner and inert two-person boundary ok')
