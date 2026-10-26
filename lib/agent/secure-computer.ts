@@ -358,6 +358,12 @@ export function comparisonReadEvidenceMatches(objective:string,evidence:string):
 // 26 Oct live: Swiggy's Meghana Foods menu showed "Chicken Boneless Biryani. This item is a Bestseller, Costs: 375 rupees",
 // but the model would not quote it (it had been told to report a ₹ price). A food comparison read takes the menu line
 // for the asked dish directly: exact page text, the dish's every word, one price.
+/** An edge/CDN refusal page (Akamai "Access Denied", Cloudflare block): the site will not load for this browser. */
+export function edgeBlockedPage(page:{text?:unknown;title?:unknown}){
+  const t=String(page?.text||'').replace(/\s+/g,' ').slice(0,600),title=String(page?.title||'')
+  return /^\s*Access Denied\b/i.test(t)&&/don'?t have permission to access|errors\.edgesuite\.net|Reference #/i.test(t)
+    ||/Sorry, you have been blocked|Attention Required! \| Cloudflare/i.test(t+' '+title)
+}
 export function foodMenuEvidence(objective:string,pageText:string):string[]|null{
   const ask=String(objective||'').match(/^On (?:Swiggy|Zomato), open the menu of the restaurant "([^"]{2,80})" and find the dish "([^"]{2,80})"/)
   if(!ask)return null
@@ -2258,6 +2264,11 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     let assessedReadPage:any=null
     let unchangedReadWaves=0
     let flightSearchRecoveryUsed=false,bookingStartReloaded=false
+    // 27 Oct live booking 27507272: Google Flights handed off to Air India, whose edge (Akamai) answered
+    // "Access Denied" to the cloud browser. That site will not load for this run, so go back to the Google
+    // booking options once per blocked site and pick another listed site (never a retry of the same one).
+    let googleBookingUrl='';const edgeBlockedHosts:string[]=[]
+    const avoidNote=()=>edgeBlockedHosts.length?` ${edgeBlockedHosts.join(' and ')} refused this browser (Access Denied), so on the booking options pick a different listed site (MakeMyTrip, Cleartrip, Goibibo, ixigo, EaseMyTrip or Yatra), never ${edgeBlockedHosts.join(' or ')}.`:''
     const readSnapshot=(p:any)=>JSON.stringify([p.url,p.text,p.controls,p.forms])
 
     const readWaves=googleFlightReadProgress(page)?MAX_FLIGHT_RESEARCH_WAVES:MAX_RESEARCH_WAVES
@@ -2567,10 +2578,15 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // ("+91" beside it, "Enter Mobile No" above) and Send OTP stays disabled until a number is typed,
       // so the planner kept pressing LOGIN (which toggles the box). Logging in is done by Gogo itself:
       // press Login once, then fill the number and press the send-code control.
+      let edgeBack:BrowserAction[]|null=null
+      if(providerBooking&&!onGoogle&&googleBookingUrl&&edgeBlockedPage(page)&&edgeBlockedHosts.length<2){
+        let host='';try{host=new URL(String(page.url||'')).hostname.replace(/^www\./,'')}catch{}
+        if(host&&!edgeBlockedHosts.includes(host)){edgeBlockedHosts.push(host);edgeBack=[{kind:'goto',url:googleBookingUrl} as any];console.log('BROWSER_BOOKING_EDGE_BLOCKED:',JSON.stringify({runId:params.sessionTaskId||null,host,wave}))}
+      }
       let vision:{actions:BrowserAction[];why:string}|null=null
-      if(providerBooking&&visionEnabled&&lastShot&&visionSteps<5&&(bookingStuck>=2||bookingIdleWaves>=1)){
+      if(!edgeBack&&providerBooking&&visionEnabled&&lastShot&&visionSteps<5&&(bookingStuck>=2||bookingIdleWaves>=1)){
         visionSteps++;bookingStuck=0
-        vision=await visionPlan(params.objective,lastShot,lastViewport,{phoneAvailable:Boolean(params.bookingPhone),otpAvailable:Boolean(bookingPlan?.otpAvailable),loginFirst,tried:bookingTried,mismatch:bookingSelectionMismatch(page.controls||[],bookingTarget)}).catch((err:any)=>{console.error('BROWSER_VISION_FAILED:',safeText(err?.message||err,200));return null})
+        vision=await visionPlan(params.objective+avoidNote(),lastShot,lastViewport,{phoneAvailable:Boolean(params.bookingPhone),otpAvailable:Boolean(bookingPlan?.otpAvailable),loginFirst,tried:bookingTried,mismatch:bookingSelectionMismatch(page.controls||[],bookingTarget)}).catch((err:any)=>{console.error('BROWSER_VISION_FAILED:',safeText(err?.message||err,200));return null})
         console.log('BROWSER_VISION_STEP:',JSON.stringify({runId:params.sessionTaskId||null,step:vision?.actions.map(a=>a.kind)||[],why:vision?.why||null}))
         if(vision&&!vision.actions.length)vision=null
       }
@@ -2582,12 +2598,12 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         console.log('BROWSER_BOOKING_LOGIN_STEP:',JSON.stringify({runId:params.sessionTaskId||null,step:loginStep.map(a=>a.kind==='click_text'?'click_text:'+a.text:a.kind)}))
         if(loginStep.some(a=>a.kind==='click'))bookingLoginPressed=true
       }
-      let plan=slotActions?{actions:slotActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:robotActions?{actions:robotActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:otpRecheckActions?{actions:otpRecheckActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:vision?{actions:vision.actions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:loginStep?{actions:loginStep,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
+      let plan=edgeBack?{actions:edgeBack,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:slotActions?{actions:slotActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:robotActions?{actions:robotActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:otpRecheckActions?{actions:otpRecheckActions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:vision?{actions:vision.actions,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:loginStep?{actions:loginStep,operation:'booking' as ApprovedBrowserOperation,draftReady:false}:await withinReadBudget(readDeadline,()=>planActions(params.objective+avoidNote(),page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,bookingPlan))
       // 11 Oct 15:10 rehearsal: the planner saw today's times ("No courts available") and stopped
       // without setting the requested date. A booking gets one second look per run.
       if(providerBooking&&!plan.actions.length&&!bookingRetried&&!bookingAtPayment(page)&&!otpWaiting){
         bookingRetried=true
-        plan=await withinReadBudget(readDeadline,()=>planActions(params.objective,page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,{...bookingPlan!,retry:true}))
+        plan=await withinReadBudget(readDeadline,()=>planActions(params.objective+avoidNote(),page,params.mode,params.objectiveTrust||'USER_INSTRUCTION',completedSearches,diagnose,{...bookingPlan!,retry:true}))
       }
       // Public reads must never navigate INTO a login wall (/ap/signin, /account/login, …).
       // If the site itself redirects there, the auth-gate check handles it as a sign-in pause.
@@ -2600,6 +2616,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // 26 Oct live booking 46beb2e2: Google Flights opened its blank search form ("Where to?" empty) instead of the
       // search link's results, and six waves re-typed the search until the 5-minute budget ran out. Reload the
       // approved search link once instead; it is the same URL the approval was bound to.
+      // The way back is the Google booking page this run already opened, not a link the blocked page offers.
+      if(edgeBack)actions.splice(0,actions.length,...edgeBack)
       if(providerBooking&&onGoogle&&!bookingStartReloaded&&wave<3){
         let path='';try{path=new URL(String(page.url||'')).pathname}catch{}
         const blank=/^\/travel\/flights\/?$/.test(path)&&(page.controls||[]).some((c:any)=>/^Where to\?/i.test(String(c?.label||'').trim())&&!String(c?.value||'').trim())
@@ -2752,6 +2770,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
       const previousPage=page
       page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]));mergeBlocked(page);if(page?.handoff)console.log('BOOKING_GOOGLE_HANDOFF:',JSON.stringify({runId:params.sessionTaskId||null,...page.handoff}))
+      if(providerBooking&&/^https:\/\/(?:www\.)?google\.com\/travel\/flights\/booking/i.test(String(page.url||'')))googleBookingUrl=String(page.url)
       // The screenshot is kept only for the next vision step; it never reaches logs or results.
       lastShot=typeof page.shot==='string'?page.shot:null;lastViewport=page.viewport||null;delete page.shot;delete page.viewport
       try{lastPageMeta={title:safeText(page.title,80),path:new URL(String(page.url||currentUrl)).pathname.slice(0,80)}}catch{}

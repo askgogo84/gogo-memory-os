@@ -40,3 +40,4 @@ assert.equal(await pc.nearestOutletArea('Meghana Foods', '560086', async () => n
 const answer = await sc.assessReadOutcome(swiggyObjective, {url: 'https://www.swiggy.com/city/bangalore/meghana-foods-rajajinagar-rest3242', title: 'Order from Meghana Foods online in Bangalore | Swiggy', text: swiggyPage})
 assert.ok(answer && /Chicken Boneless Biryani\. This item is a Bestseller, Costs: 375 rupees/.test(String(answer)), String(answer))
 console.log('Food menu direct read and nearest outlet passed')
+await import('./verify-booking-edge-blocked-oct27.mts')
