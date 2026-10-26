@@ -1,6 +1,8 @@
 // Home v2 (approved 23 Oct mock): Needs you now · Gogo is handling · Coming up · Can wait · Done today, the companion
 // character registry, and light as the default theme. Run: npx tsx scripts/verify-home-v2.mts
 import assert from 'node:assert/strict'
+import { runInNewContext } from 'node:vm'
+import ts from 'typescript'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { buildHomeSections, homeSummary, rankNow } from '../lib/dashboard/home-sections'
@@ -80,4 +82,99 @@ console.log('Home v2: ranked Needs you, five sections, companion registry, light
   assert.match(h, /line-clamp-1 text-\[13px\] text-\[#9a9a96\]">\{n\.summary\}/, 'notice body clamped to one line')
   assert.match(h, /rounded-\[14px\] border border-\[#222\] bg-\[#121212\]">\{sections\.handling\.slice\(0,6\)\.map/, 'handling is one list card')
   console.log('Home layout: matches the approved 22 Oct mock')
+}
+
+
+// Dashboard privileged read owner-isolation: execute the actual queries module with
+// inert service-role DB/meter/calendar providers. No network, records or tokens leave this fixture.
+{
+  const compiled = ts.transpileModule(readFileSync('lib/dashboard/queries.ts', 'utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText
+  const queries: any = {}
+  type Read = { table: string; eqs: [string, unknown][] }
+  const reads: Read[] = []
+  const meterOwners: string[] = []
+  const calendarAccess: { owner: number; token: string | null }[] = []
+  const rowFor = (table: string) => table === 'users'
+    ? { name: 'Owner Safe', whatsapp_id: 'whatsapp:+0000004242', created_at: '2026-10-01T00:00:00Z',
+        google_calendar_connected: true, google_refresh_token: 'INERT_FIXTURE_TOKEN', gmail_connected: false }
+    : table === 'wa_creditiq_links' ? { consumer_user_id: 'fixture-42' } : null
+  const supabaseAdmin = {
+    from(table: string) {
+      const record: Read = { table, eqs: [] }
+      reads.push(record)
+      const query: any = {
+        select: () => query,
+        eq: (key: string, value: unknown) => { record.eqs.push([key, value]); return query },
+        order: async () => ({
+          data: table === 'lists'
+            ? [{ id: 7, list_name: 'Owner grocery', items: [{ text: 'Only owner sees' }], updated_at: '2026-10-25T00:00:00Z' }]
+            : table === 'friend_contacts' ? [{ name: 'Owner friend' }] : [],
+          error: null,
+        }),
+        maybeSingle: async () => ({ data: rowFor(table), error: null }),
+      }
+      return query
+    },
+  }
+  runInNewContext(compiled, {
+    exports: queries, console, Date, Intl, Number, String, Boolean, Object, Array,
+    Promise, URL, URLSearchParams, Math,
+    fetch: async () => { throw new Error('fixture must never fetch a provider') },
+    require: (name: string) => {
+      if (name === '@/lib/supabase-admin') return { supabaseAdmin }
+      if (name === '@/lib/ist') return { istDayWindow: () => ({ startUtc: new Date('2026-10-26T00:00:00Z'), endUtc: new Date('2026-10-27T00:00:00Z') }) }
+      if (name === '@/lib/data/limits') return { getPlanLimits: () => ({ free: { label: 'Free', priceInr: 0 } }) }
+      if (name === '@/lib/services/meter') return {
+        getPlan: async (owner: string) => { meterOwners.push(owner); return { plan_code: 'free' } },
+        getUsage: async (owner: string) => { meterOwners.push(owner); return { aiToday: 0, docsThisMonth: 0, friendContacts: 0 } },
+        getLimits: async () => ({
+          ai_actions_per_day: 10, documents_per_month: 10, friend_contacts_max: 10,
+          reminders_per_day_fair_use: 10, calendars_max: 1,
+        }),
+      }
+      if (name === '@/lib/services/google-calendar-accounts') return {
+        getCalendarAccountAccess: async (owner: number, token: string | null) => {
+          calendarAccess.push({ owner, token })
+          return [] // no provider/network call, even for valid synthetic owner
+        },
+        mergeAccountEvents: () => [],
+      }
+      if (name === '@/lib/calendar-intervals') return { calendarInterval: () => null, calendarBlocksTime: () => false }
+      throw new Error('fixture unexpected query import: ' + name)
+    },
+  })
+  for (const bad of ['9007199254740992', '9007199254740993', '4242suffix', '004242', '1e3', '+4242', '4242.0', ' 4242']) {
+    const beforeReads = reads.length
+    const beforeMeter = meterOwners.length
+    const beforeCalendar = calendarAccess.length
+    assert.deepEqual(await queries.getLists(bad), { ok: true, lists: [] }, bad + ': no cross-owner list')
+    assert.deepEqual(await queries.getFriendContacts(bad), { ok: true, contacts: [], count: 0 }, bad + ': no contacts')
+    assert.deepEqual(await queries.getProfile(bad), { ok: false }, bad + ': no private profile/WhatsApp ID')
+    assert.deepEqual(await queries.getTodayCalendar(bad), { ok: true, connected: false }, bad + ': no calendar token')
+    assert.deepEqual(await queries.getUsageSummary(bad), { ok: false }, bad + ': no metering fallback')
+    assert.equal(reads.length, beforeReads, bad + ': zero privileged DB queries')
+    assert.equal(meterOwners.length, beforeMeter, bad + ': zero meter queries')
+    assert.equal(calendarAccess.length, beforeCalendar, bad + ': zero calendar-account access')
+  }
+  for (const [valid, expected] of [['4242', 4242], ['-2251799813685248', -2251799813685248]] as const) {
+    const before = reads.length
+    assert.equal((await queries.getLists(valid)).lists[0].name, 'Owner grocery')
+    assert.equal((await queries.getFriendContacts(valid)).contacts[0].name, 'Owner friend')
+    assert.equal((await queries.getProfile(valid)).whatsappId, 'whatsapp:+0000004242')
+    assert.equal((await queries.getUsageSummary(valid)).ok, true)
+    assert.deepEqual(await queries.getTodayCalendar(valid), { ok: true, connected: false })
+    assert.ok(reads.length > before)
+    for (const read of reads.slice(before)) {
+      for (const [column, value] of read.eqs) {
+        if (column === 'telegram_id' || column === 'owner_telegram_id') {
+          assert.equal(value, expected, valid + ': ' + read.table + ' must use only exact owner')
+        }
+      }
+    }
+    assert.equal(calendarAccess.at(-1)?.owner, expected, 'calendar OAuth access uses exact safe owner')
+    assert.equal(calendarAccess.at(-1)?.token, 'INERT_FIXTURE_TOKEN')
+  }
+  console.log('Dashboard owner precision: adjacent signed64, partial-decimal and malformed sessions deny before privileged reads; safe signed owners remain available')
 }
