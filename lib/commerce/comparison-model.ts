@@ -63,17 +63,22 @@ export function foodDishMatches(dish: string, text: string) {
   return tokens.length > 0 && tokens.every(t => words.has(t) || words.has(t.replace(/s$/, '')) || words.has(t + 's'))
 }
 /** The menu line for the dish and its one price; the objective asks for "<dish as listed> — ₹<price>" first. */
-export function foodQuote(subject: string, evidence: string): {dish: string; price: string} | null {
+export function foodQuote(subject: string, evidence: string): {dish: string; price: string; outlet?: string} | null {
   const food = parseFoodSubject(subject)
   if (!food) return null
-  for (const line of String(evidence || '').split(/\n+/)) {
+  const lines = String(evidence || '').split(/\n+/)
+  for (const [index, line] of lines.entries()) {
     if (!foodDishMatches(food.dish, line)) continue
     const amounts = [...line.matchAll(/(?:₹\s*|\b(?:INR|Rs\.?)\s*)(\d[\d,]*(?:\.\d{1,2})?)/gi)]
       .filter(m => !/\b(?:MRP|was|off|save|discount)\s*:?\s*$/i.test(line.slice(Math.max(0, m.index! - 20), m.index!)))
     const values = [...new Set(amounts.map(m => Number(m[1].replace(/,/g, ''))))].filter(v => v > 0)
     if (values.length !== 1) continue
-    const name = line.split(/\s+[—–-]\s+|:\s*(?=₹)/)[0].replace(/^[•*\s]+/, '').trim().slice(0, 90)
-    return {dish: name || food.dish, price: '₹' + new Intl.NumberFormat('en-IN', {maximumFractionDigits: 2}).format(values[0])}
+    // 26 Oct live: "Chicken Biryani ₹365" kept the price in the dish name.
+    const name = line.split(/\s+[—–-]\s+|:\s*(?=₹)/)[0].replace(/(?:₹\s*|\b(?:INR|Rs\.?)\s*)\d[\d,]*(?:\.\d{1,2})?/gi, '').replace(/^[•*\s]+|[\s,;:—–-]+$/g, '').trim().slice(0, 90)
+    // The outlet line names the restaurant ("Meghana Foods, Kanakapura Road"): say which branch was read.
+    const restaurantWords = foodTokens(food.restaurant)
+    const outlet = lines.slice(index + 1, index + 3).find(l => restaurantWords.every(w => l.toLowerCase().includes(w)) && !/₹|\bRs\.?\s*\d/i.test(l))?.trim().slice(0, 90)
+    return {dish: name || food.dish, price: '₹' + new Intl.NumberFormat('en-IN', {maximumFractionDigits: 2}).format(values[0]), ...(outlet ? {outlet} : {})}
   }
   return null
 }
@@ -458,7 +463,7 @@ export function comparisonWhatsAppSummary(task: PriceComparison, origin = 'https
       const dish = foodQuote(task.metadata_json.subject, row.evidence)
       if (!dish) return `• *${label}*: I read the menu but couldn’t pick out one price for that dish.\n  ${row.sourceUrl}`
       priced.push({label, value: Number(dish.price.replace(/[^\d.]/g, '')), price: dish.price})
-      return `• *${label}*: ${dish.price}\n  ${dish.dish}\n  ${row.sourceUrl}`
+      return `• *${label}*: ${dish.price}\n  ${dish.dish}${dish.outlet ? ` · ${dish.outlet}` : ''}\n  ${row.sourceUrl}`
     }
     if (row.status === 'observed' && row.sourceUrl && row.evidence) {
       const quote = comparisonQuote(task.metadata_json.subject, row)

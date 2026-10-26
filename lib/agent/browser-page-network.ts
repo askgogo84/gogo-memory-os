@@ -85,7 +85,8 @@ export function browserPageAllowlist(url:string):Record<string,string[]>{
   // 3 Oct live Network panel: Zomato images/fonts/videos failed on this exact
   // asset host while same-origin scripts loaded. Do not grant sibling domains.
   // 15 Oct live: zwstatic.zomato.com (45 blocked requests) serves the login panel's scripts.
-  if(host==='www.zomato.com'||host==='zomato.com')hosts.push('b.zmtcdn.com','zwstatic.zomato.com')
+  // 26 Oct live food comparison: the restaurant menu loads from api.zomato.com / jumbo.zomato.com (6 blocked requests).
+  if(host==='www.zomato.com'||host==='zomato.com')hosts.push('b.zmtcdn.com','zwstatic.zomato.com','api.zomato.com','jumbo.zomato.com')
   if(host==='www.flipkart.com'||host==='flipkart.com')hosts.push(...FLIPKART_PAGE_DEPENDENCIES)
   if(host==='www.croma.com'||host==='croma.com')hosts.push(...CROMA_PAGE_DEPENDENCIES)
   if(host==='www.reliancedigital.in'||host==='reliancedigital.in')hosts.push(...RELIANCE_PAGE_DEPENDENCIES)
