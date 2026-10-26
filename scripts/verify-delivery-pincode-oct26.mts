@@ -1,5 +1,7 @@
 // 26 Oct (owner): Gogo enters the delivery pincode itself on store pages instead of asking the person to type it in
 // the remote Take Control view. Offline. Run: npx --yes tsx scripts/verify-delivery-pincode-oct26.mts
+// Also runs the web-link vs saved-asset routing checks (registered here to keep package.json free of merge conflicts).
+import './verify-asset-url-guard-oct26.mts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { isStoreHost, requestedPincode, savedPincode, withDeliveryPincode } from '../lib/agent/delivery-pincode'
