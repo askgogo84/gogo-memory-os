@@ -190,5 +190,56 @@ await check('AskGogo\'s own digest emails never need you', () => {
   assert.notEqual(A.classifyEmail({ id: 'z', from: 'Nithin <nithin@tipplr.in>', subject: 'Re: AskGogo POS', snippet: 'Can you approve this by tomorrow?', date: new Date().toISOString() } as any), 'update')
 })
 
+
+// Exercise the REAL private notify helper in an inert VM: provider outcome
+// acknowledgement is not equivalent to a send on skipped/deferred/unknown.
+const { readFileSync: readInboundFixtureFile } = await import('node:fs')
+const { runInNewContext: runInboundFixture } = await import('node:vm')
+const inboundTs = (await import('typescript')).default
+for (const deliveryOutcome of ['provider_accepted', 'skipped', 'suppressed', 'deferred', 'persistence_failed', 'outcome_unknown', 'failed']) {
+  await check('forwarded urgent mail notification outcome is truthful: ' + deliveryOutcome, async () => {
+    const conversationRows: unknown[] = []
+    const deliveryCalls: unknown[] = []
+    const db = {
+      from(table: string) {
+        if (table === 'users') return {
+          select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { whatsapp_id: '+15555550100' } }) }) }),
+        }
+        if (table === 'conversations') return {
+          insert: async (row: unknown) => { conversationRows.push(row); return { error: null } },
+        }
+        throw Error('Unexpected fixture DB table: ' + table)
+      },
+    }
+    const mocks: Record<string, unknown> = {
+      'node:crypto': await import('node:crypto'),
+      '@/lib/supabase-admin': { supabaseAdmin: db },
+      '@/lib/whatsapp': { sendWhatsApp: () => { throw Error('Real send must not occur in inbound fixture') } },
+      '@/lib/services/notification-delivery': {
+        deliverNotification: async (args: unknown) => { deliveryCalls.push(args); return deliveryOutcome },
+      },
+      './aliases': {}, './mime': {}, './attention': {}, './attention-store': {},
+    }
+    const fixture: { exports: Record<string, any> } = { exports: {} }
+    const source = readInboundFixtureFile('lib/email/inbound.ts', 'utf8') + '\nexport const __fixtureNotify = notify\n'
+    const compiled = inboundTs.transpileModule(source, {
+      compilerOptions: { module: inboundTs.ModuleKind.CommonJS, target: inboundTs.ScriptTarget.ES2022 },
+    }).outputText
+    runInboundFixture(compiled, {
+      module: fixture, exports: fixture.exports, console, Date, Buffer,
+      require: (id: string) => {
+        if (!Object.hasOwn(mocks, id)) throw Error('Unmocked fixture import: ' + id)
+        return mocks[id]
+      },
+    })
+    const pushed = await fixture.exports.__fixtureNotify(42, 'fixture/urgent/1', 'One urgent email card')
+    const accepted = deliveryOutcome === 'provider_accepted'
+    assert.equal(pushed, accepted, 'Only provider-accepted is eligible for a pushed/notified_at marker')
+    assert.equal(conversationRows.length, accepted ? 1 : 0,
+      'Do not create a conversation card without provider acceptance (especially outcome_unknown)')
+    assert.equal(deliveryCalls.length, 1, 'No blind retry on uncertain outcomes')
+  })
+}
+
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('email attention: all checks passed')
