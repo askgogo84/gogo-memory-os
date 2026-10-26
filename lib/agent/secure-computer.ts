@@ -829,19 +829,31 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
     commitText=commitText.replace(/\bapply\s+filters?\b/gi,' ');
     // Observed headphone links describe noise cancellation, not an account action.
     if(el.tagName==='A')commitText=commitText.replace(/\bnoise[ -]+cancellation\b/gi,' ');
-    const consequential=/\b(book|booking|cancel|cancellation|buy|purchase|checkout|pay|payment|reserve|reservation|place order|order now|apply|send application|check\s*-?\s*in|confirm(?:ation)?|complete purchase|finish purchase|finali[sz]e|submit)\b/i.test(commitText);
+    const consequentialWords=/\b(book|booking|cancel|cancellation|buy|purchase|checkout|pay|payment|reserve|reservation|place order|order now|apply|send application|check\s*-?\s*in|confirm(?:ation)?|complete purchase|finish purchase|finali[sz]e|submit)\b/i;
+    const consequential=consequentialWords.test(commitText);
     if(text!==commitText&&!consequential)return false;
     if(safeResearch && !consequential)return false;
-    // 26 Oct (owner): a store's "Select your location" box needs Continue/Apply after Gogo enters the delivery
-    // pincode. Only a plain apply-type label, inside a dialog/form about the delivery location, holding a filled
-    // 6-digit pincode, with no password or payment field nearby, counts as setting the location (not a commit).
-    // The visible label must be exactly one of these ("Apply"/"Submit" would otherwise read as commit words).
-    if(/^(?:continue|apply|submit|check|done|save|confirm location|update)$/.test(visibleText.trim())){
+    // Only an unambiguous non-form location control can use this read exception.
+    // Equivalent accessible labels are one label; conflicting labels retain the normal checks.
+    const locationLabels=Array.from(new Set([el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value')]
+      .map(value=>String(value||'').replace(/\s+/g,' ').trim().toLowerCase()).filter(Boolean)));
+    if(el.tagName==='BUTTON'&&locationLabels.length===1&&/^(?:continue|apply|submit|check|done|save|confirm location|update)$/.test(locationLabels[0])){
       const box=el.closest?.('[role="dialog"],[aria-modal="true"],form,[class*="modal" i],[class*="popup" i],[class*="location" i],[class*="pincode" i]');
       const boxText=(box?.textContent||'').toLowerCase();
-      const pinFilled=!!box&&Array.from(box.querySelectorAll?.('input')||[]).some((i)=>/^[1-9]\d{5}$/.test(String(i.value||'').trim()));
-      const risky=!!box&&(box.querySelector?.('input[type="password"]')||/\b(?:card number|cvv|upi|pay now|place order)\b/.test(boxText));
-      if(box&&pinFilled&&!risky&&/\b(?:pin\s*code|pincode|delivery location|select your location|enter your location|delivery address|check delivery)\b/.test(boxText))return false;
+      if(box&&/\b(?:pin\s*code|pincode|delivery location|select your location|enter your location|delivery address|check delivery)\b/.test(boxText)){
+        const inputs=Array.from(box.querySelectorAll?.('input')||[]);
+        const pinFilled=inputs.length>0&&inputs.every(i=>/^[1-9]\d{5}$/.test(String(i.value||'').trim()));
+        const riskyInput=inputs.some(i=>/\b(?:password|email|tel|phone|mobile|address|street|card|cvv|cvc|upi|otp|verification|one.time.code)\b/.test(
+          [i.type,i.name,i.id,i.autocomplete,i.getAttribute?.('name'),i.getAttribute?.('autocomplete')].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').toLowerCase()));
+        const metadata=[el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').toLowerCase();
+        const metadataCommit=consequentialWords.test(metadata)||/\b(?:order|check\s*out|address|shipping|billing|account|profile|login|password|otp)\b/.test(metadata);
+        const nativeSubmit=!!searchForm||t==='submit'||t==='image'||el.getAttribute('form')!==null
+          ||el.getAttribute('formaction')!==null||el.getAttribute('formmethod')!==null;
+        const risky=!!box.querySelector?.('input[type="password"]')||riskyInput
+          ||/\b(?:checkout|shipping address|billing address|save address|add address|card number|cvv|upi|pay now|place order)\b/.test(boxText);
+        const locationOnly=/\b(?:pin\s*code|pincode|delivery location|select your location|enter your location|check delivery)\b/.test(boxText);
+        return nativeSubmit||metadataCommit||risky||!pinFilled||!locationOnly;
+      }
     }
     if(consequential)return true;
     if(t==='submit'||(el.tagName==='BUTTON'&&t!=='button')||el.getAttribute('formaction')!==null)return true;
