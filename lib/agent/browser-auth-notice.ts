@@ -40,17 +40,23 @@ export async function browserHandoffInUseReply(telegramId:number):Promise<string
       .order('updated_at',{ascending:false}).limit(20)
     if(!error){
       // 26 Oct live: this pointed at a days-old paused task while the real holder was a timed-out read still
-      // finishing. Only a task whose takeover browser is actually live is named as the one waiting for the person.
+      // finishing. Only a task whose takeover browser is actually live is named; probes run in parallel.
       const {browserHandoffIsLive}=await import('./browser-handoff-health')
-      for(const row of (data||[]).filter(r=>r.metadata_json?.handoff).slice(0,5)){
-        if(await browserHandoffIsLive(row.metadata_json.handoff.takeoverUrl).catch(()=>false)){
-          return `Another browser task is waiting for you to sign in or finish a secure step. Open it and complete that step before retrying this request. Nothing was submitted for this request.\n${base}/dashboard/activity/${encodeURIComponent(row.id)}/browser`
-        }
+      const rows=(data||[]).filter(r=>r.metadata_json?.handoff).slice(0,5)
+      const live=await Promise.all(rows.map(r=>browserHandoffIsLive(r.metadata_json.handoff.takeoverUrl).catch(()=>false)))
+      const waiting=rows.find((_,i)=>live[i])
+      if(waiting){
+        const link=`${base}/dashboard/activity/${encodeURIComponent(waiting.id)}/browser`
+        // A page handed back on request is the person's own open page, not a sign-in step.
+        return waiting.metadata_json?.handback
+          ? `Your browser is still open on a page Gogo handed back to you. Close it or tap Resume there, then send this again. Nothing was submitted for this request.\n${link}`
+          : `Another browser task is waiting for you to sign in or finish a secure step. Open it and complete that step before retrying this request. Nothing was submitted for this request.\n${link}`
       }
-      return `Gogo's browser is still finishing your previous request. Try again in a minute. Nothing was submitted for this request.\n${target}`
+      // A takeover we cannot probe may still be open, so the task list is offered rather than a promise.
+      return `Gogo's browser is still busy with an earlier request. Try again in a minute, or check your tasks if something is waiting for you. Nothing was submitted for this request.\n${target}`
     }
   }catch{/* The user still receives the safe task-list handoff if lookup fails. */}
-  return `Another browser task is waiting for you to sign in or finish a secure step. Open it and complete that step before retrying this request. Nothing was submitted for this request.\n${target}`
+  return `Gogo's browser is busy with another task. Check your tasks for anything waiting for you, then try again. Nothing was submitted for this request.\n${target}`
 }
 
 export async function humanAuthTakeoverReply(telegramId:number|string):Promise<string>{

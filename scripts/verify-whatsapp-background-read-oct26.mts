@@ -26,7 +26,7 @@ assert.match(fn, /if\(!command\|\|command\.mode!=='read'\)return null/, 'only re
 assert.match(fn, /if\(findVaultProviderForDomain\(host\)\)return null/, 'saved-login sites keep their kept-alive path')
 assert.match(fn, /evaluateAgentSentinel\(/, 'the sentinel still screens the request')
 assert.match(fn, /findActiveBrowserRead\(/, 'a duplicate message does not start a second read')
-assert.match(fn, /queueBrowserRead\(\{actor:params\.actor,surface:'whatsapp',text:params\.text\}\)/)
+assert.match(fn, /queued=await queueBrowserRead\(\{actor:params\.actor,surface:'whatsapp',text:params\.text\}\)/)
 assert.match(fn, /Nothing will be bought, booked or submitted\./)
 
 const wa = readFileSync(new URL('../lib/agent/whatsapp-bridge.ts', import.meta.url), 'utf8')
@@ -44,6 +44,16 @@ assert.match(worker, /result\?\.status === 'completed' \|\| result\?\.status ===
 // The in-use reply names only a task whose takeover browser is live.
 const notice = readFileSync(new URL('../lib/agent/browser-auth-notice.ts', import.meta.url), 'utf8')
 const reply = notice.slice(notice.indexOf('export async function browserHandoffInUseReply'), notice.indexOf('export async function humanAuthTakeoverReply'))
-assert.match(reply, /browserHandoffIsLive\(row\.metadata_json\.handoff\.takeoverUrl\)/)
-assert.match(reply, /Gogo's browser is still finishing your previous request\. Try again in a minute\./)
+assert.match(reply, /browserHandoffIsLive\(r\.metadata_json\.handoff\.takeoverUrl\)/)
+assert.match(reply, /Gogo's browser is still busy with an earlier request\. Try again in a minute/)
+assert.match(reply, /Promise\.all\(rows\.map/, 'liveness probes run in parallel (webhook budget)')
+assert.match(reply, /waiting\.metadata_json\?\.handback/, 'a handed-back page gets its own wording, not "sign in"')
+assert.doesNotMatch(reply.slice(reply.lastIndexOf('}catch')), /Another browser task is waiting/, 'a failed lookup never blames a task')
+// Review round 2: a queued read is found by a resent message; a failed queue never falls back to a second inline run.
+const active = cmd.slice(cmd.indexOf('async function findActiveBrowserRead'), cmd.indexOf('export async function runBrowserCommand'))
+assert.match(active, /error\.in\.\(background_read_queued,background_read_running,whatsapp_browser_response_timeout\)/)
+assert.match(active, /error\.like\.background_resume_claimed\*/)
+assert.match(fn, /I couldn't start opening \$\{host/, 'queue failure is reported, not retried inline')
+assert.match(fn, /rememberTypedObjects\(params\.actor\.legacyTelegramId,'browser'/)
+assert.match(cmd, /if\(queueError\)throw new Error\('background_read_queue_save_failed'\)/)
 console.log('WhatsApp public page reads run in the background; the in-use reply never blames a stale task')

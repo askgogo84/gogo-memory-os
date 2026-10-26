@@ -775,7 +775,10 @@ function linkedBrowserOwner(userId:string,meta:any){
 async function findActiveBrowserRead(owner:string,command:BrowserCommand){
   if(command.mode!=='read')return null
   const {data,error}=await supabaseAdmin.from('agent_runs').select('id,status,summary')
-    .eq('telegram_id',owner).eq('type','secure_browser').eq('status','running')
+    // 26 Oct: a background-queued read waits as paused until the worker picks it up; a resent message must not
+    // queue a second read that would then find the browser in use.
+    .eq('telegram_id',owner).eq('type','secure_browser')
+    .or('status.eq.running,and(status.eq.paused,error.in.(background_read_queued,background_read_running,whatsapp_browser_response_timeout)),and(status.eq.paused,error.like.background_resume_claimed*)')
     .eq('metadata_json->>mode','read').eq('metadata_json->>url',command.url)
     .eq('metadata_json->>objective',command.objective)
     .gte('started_at',new Date(Date.now()-10*60_000).toISOString())
@@ -835,8 +838,16 @@ export async function tryQueueWhatsAppPublicRead(params:{actor:AgentActor;text:s
   const existing=await findActiveBrowserRead(String(params.actor.legacyTelegramId),command)
   if(existing)return {runId:existing.id,status:'running' as const,capability:'browser' as const,risk:'low' as const,
     text:'I’m still working on this same browser task. You do not need to send it again.\nTask progress: https://app.askgogo.in/dashboard/activity/'+existing.id,handledBy:'secure-browser' as const}
-  const queued=await queueBrowserRead({actor:params.actor,surface:'whatsapp',text:params.text}).catch(()=>null)
+  // Once queued, never fall back to the inline read: that would start a second run for the same message.
+  let queued:Awaited<ReturnType<typeof queueBrowserRead>>=null
+  try{queued=await queueBrowserRead({actor:params.actor,surface:'whatsapp',text:params.text})}
+  catch(err:any){
+    console.error('WHATSAPP_BACKGROUND_READ_QUEUE_FAILED:',String(err?.message||'error').slice(0,120))
+    return {runId:'',status:'failed' as const,capability:'browser' as const,risk:'low' as const,handledBy:'secure-browser' as const,
+      text:`I couldn't start opening ${host.replace(/^www\./,'')} just now. Nothing was bought, booked or submitted. Please send it again in a minute.`}
+  }
   if(!queued)return null
+  await rememberTypedObjects(params.actor.legacyTelegramId,'browser',[{id:queued.runId,title:'Browser task'}]).catch(()=>{})
   const site=host.replace(/^www\./,'')
   return {...queued,text:`Opening ${site} now. I’ll send what I find here in a minute or two. Nothing will be bought, booked or submitted.`}
 }
@@ -1065,7 +1076,9 @@ export async function queueBrowserRead(params:{actor:AgentActor;surface:AgentSur
   if(!policy.allowed)return null
   const {runId}=await makeRun({actor:params.actor,surface:params.surface,command})
   const metadata={plan_type:'secure_browser',url:command.url,objective:command.objective,mode:'read',risk:'low',approval_action:null,vault_credential_id:null,flow:null,notify_suffix:String(params.notifySuffix||'').slice(0,900)||null,...(params.metadata||{})}
-  await supabaseAdmin.from('agent_runs').update({status:'paused',error:'background_read_queued',summary:'Gogo is opening this page in the background.',metadata_json:metadata,updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',String(tg))
+  const {error:queueError}=await supabaseAdmin.from('agent_runs').update({status:'paused',error:'background_read_queued',summary:'Gogo is opening this page in the background.',metadata_json:metadata,updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',String(tg))
+  // A run that never reached the queue would be picked up by nobody; say so instead of promising a result.
+  if(queueError)throw new Error('background_read_queue_save_failed')
   let dispatched=false
   const secret=process.env.CRON_SECRET
   if(secret){

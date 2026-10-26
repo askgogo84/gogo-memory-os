@@ -20,7 +20,8 @@ globalThis.fetch=async(input,init)=>{
 try{
   // Nothing live: no stale task is blamed; the person is told the previous request is still finishing.
   const finishing=await browserHandoffInUseReply(123)
-  assert.match(finishing,/Gogo's browser is still finishing your previous request\. Try again in a minute\./)
+  assert.match(finishing,/Gogo's browser is still busy with an earlier request\. Try again in a minute/)
+  assert.match(finishing,/dashboard\/tasks/, 'the task list is offered when nothing is provably live')
   assert.doesNotMatch(finishing,/stale-run|waiting-run/)
   live=true
   const message=await browserHandoffInUseReply(123)
