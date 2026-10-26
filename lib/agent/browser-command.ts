@@ -669,7 +669,7 @@ export async function restoreReadBrowserHandoff(params:{actor:AgentActor;runId:s
   if(meta.comparison_parent_id){
     const {assertComparisonChild}=await import('@/lib/commerce/price-comparison')
     await assertComparisonChild(owner,String(meta.comparison_parent_id),run.id)
-  }else{
+  }else if(meta.commerce_parent_id){
     const {readCommerceTask}=await import('@/lib/commerce/task')
     const parent=await readCommerceTask(owner,meta.commerce_parent_id)
     if(!parent||parent.metadata_json.state!=='browser_research'||!Object.values(parent.metadata_json.browser_runs||{}).includes(run.id))throw new Error('commerce_parent_unavailable')
