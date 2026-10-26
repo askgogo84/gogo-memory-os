@@ -164,9 +164,25 @@ export function formatPlaces(ask: PlaceAsk, places: Place[]) {
   // Prefer places whose address is really in the area asked for, then better-rated, well-reviewed ones.
   const kindOk = linked.filter(p => kindMatch(p, ask))
   const pool = kindOk.length >= Math.min(ask.count, 2) ? kindOk : linked
-  const ranked = [...pool].sort((x, y) => Number(inArea(y, ask.area)) - Number(inArea(x, ask.area)) || (y.rating || 0) * Math.log10((y.ratingCount || 1) + 9) - (x.rating || 0) * Math.log10((x.ratingCount || 1) + 9))
+  // 26 Oct live: hotel results listed one property twice as room types ("Home2 Suites … - Deluxe Room",
+  // "… - One-Bedroom Apartment"). One entry per property: the name before a room-type suffix, or the same pin.
+  const stayAsk = STAY_KIND.test(ask.query) && !FOOD_KIND.test(ask.query)
+  const seen = new Set<string>()
+  const distinct = <T extends Place>(list: T[]) => list.filter(p => {
+    const name = p.title.split(/\s+[-–—]\s+/)[0].toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    // Same-pin merging is for stays only: different restaurants can share a mall or food-court pin.
+    const pin = stayAsk && p.lat !== undefined && p.lng !== undefined ? `${p.lat.toFixed(4)},${p.lng.toFixed(4)}` : ''
+    // Room-type suffixes only exist for stays; restaurant branches ("X - Indiranagar") stay separate entries.
+    const byName = stayAsk && Boolean(name)
+    if ((byName && seen.has('n:' + name)) || (pin && seen.has('p:' + pin))) return false
+    if (byName) seen.add('n:' + name); if (pin) seen.add('p:' + pin)
+    return true
+  })
+  const ranked = distinct([...pool].sort((x, y) => Number(inArea(y, ask.area)) - Number(inArea(x, ask.area)) || (y.rating || 0) * Math.log10((y.ratingCount || 1) + 9) - (x.rating || 0) * Math.log10((x.ratingCount || 1) + 9)))
   const local = ranked.filter(p => inArea(p, ask.area))
-  const shown = (local.length >= Math.min(ask.count, 2) ? local : ranked).slice(0, ask.count)
+  // Without addresses "in the area" can only be guessed from names, so no listing is dropped on that guess.
+  const addressKnown = ranked.some(p => p.address)
+  const shown = (addressKnown && local.length >= Math.min(ask.count, 2) ? local : ranked).slice(0, ask.count)
   if (!shown.length) return null
   const lines = shown.map((p, i) => {
     const rating = p.rating ? ` · ${p.rating}★${p.ratingCount ? ` (${new Intl.NumberFormat('en-IN').format(p.ratingCount)})` : ''}` : ''
