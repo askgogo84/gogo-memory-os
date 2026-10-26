@@ -15,3 +15,7 @@ const snippet=formatEmailSnippet('Your security code = 445566. Keep it private.'
 assert.ok(snippet.includes('[authentication detail withheld]'))
 assert.ok(!snippet.includes('445566'))
 console.log('gmail authentication-secret filter regression passed')
+
+// This npm-test registered security runner also executes the inert lifecycle
+// email preview owner-isolation regression (no provider/DB/network calls).
+await import('./verify-lifecycle-preview-owner.mts')
