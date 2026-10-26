@@ -27,15 +27,30 @@ async function browserPermission(telegramId: string): Promise<AgentPermissionLev
 }
 
 async function resolveActor(telegramId: string): Promise<AgentActor> {
+  // The browser actor is security-sensitive: a rounded BIGINT must never
+  // select another account's linked Secure Computer or Vault session.
+  // AgentActor.legacyTelegramId is numeric, so owners outside the safe
+  // integer range must fail closed until that downstream contract is fixed.
+  if (typeof telegramId !== 'string' || !/^-?(?:0|[1-9]\\d*)$/.test(telegramId)) {
+    throw new Error('life_event_actor_unsafe_owner')
+  }
+  const owner = BigInt(telegramId)
+  if (owner === 0n || owner > BigInt(Number.MAX_SAFE_INTEGER) || owner < BigInt(Number.MIN_SAFE_INTEGER)) {
+    throw new Error('life_event_actor_unsafe_owner')
+  }
   const { data, error } = await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name')
-    .eq('telegram_id', Number(telegramId))
+    .eq('telegram_id', telegramId)
     .maybeSingle()
   if (error) throw new Error(`life_event_actor_lookup_failed:${error.message}`)
-  if (!data?.id || !data?.telegram_id) throw new Error('life_event_actor_missing')
+  if (!data?.id || data.telegram_id == null) throw new Error('life_event_actor_missing')
+  const rawOwner = data.telegram_id
+  const persistedOwner = typeof rawOwner === 'string' ? rawOwner
+    : typeof rawOwner === 'number' && Number.isSafeInteger(rawOwner) ? String(rawOwner) : ''
+  if (persistedOwner !== telegramId) throw new Error('life_event_actor_owner_mismatch')
   return {
     userId: String(data.id),
-    legacyTelegramId: Number(data.telegram_id),
+    legacyTelegramId: Number(owner),
     whatsappId: String(data.whatsapp_id || ''),
     name: String(data.name || 'Gogo'),
   }
