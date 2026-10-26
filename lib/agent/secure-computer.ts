@@ -358,6 +358,17 @@ export function comparisonReadEvidenceMatches(objective:string,evidence:string):
 // 26 Oct live: Swiggy's Meghana Foods menu showed "Chicken Boneless Biryani. This item is a Bestseller, Costs: 375 rupees",
 // but the model would not quote it (it had been told to report a ₹ price). A food comparison read takes the menu line
 // for the asked dish directly: exact page text, the dish's every word, one price.
+/** The results-list row link for the approved flight ("Choose the SpiceJet result that leaves 6:10 AM on 2026-11-09"). */
+export function googleFlightRowControl(controls:{selector?:string;label?:string}[],objective:string):string|null{
+  const m=String(objective||'').match(/Choose the (.+?) result that leaves (\d{1,2}:\d{2}\s*[AP]M) on (\d{4}-\d{2}-\d{2})/i)
+  if(!m)return null
+  const airline=m[1].trim().toLowerCase(),time=m[2].replace(/\s+/,' ').toUpperCase()
+  const date=new Date(`${m[3]}T00:00:00Z`);if(!Number.isFinite(date.getTime()))return null
+  const day=`${new Intl.DateTimeFormat('en',{month:'long',timeZone:'UTC'}).format(date)} ${date.getUTCDate()}`
+  const hit=controls.find(c=>{const l=String(c?.label||'').replace(/\s+/g,' ');const r=l.match(/^From [\d,]+ Indian rupees(?: round trip total)?\. .*? flight with (.+?)\. Leaves .+? at (\d{1,2}:\d{2} [AP]M) on \w+, (\w+ \d{1,2})\b/i)
+    return Boolean(r&&c.selector&&r[1].toLowerCase().split(/,\s*|\s+and\s+|\s*\+\s*/)[0]===airline.split(/,\s*|\s+and\s+|\s*\+\s*/)[0]&&r[2].toUpperCase()===time&&r[3].toLowerCase()===day.toLowerCase())})
+  return hit?.selector||null
+}
 /** An edge/CDN refusal page (Akamai "Access Denied", Cloudflare block): the site will not load for this browser. */
 export function edgeBlockedPage(page:{text?:unknown;title?:unknown}){
   const t=String(page?.text||'').replace(/\s+/g,' ').slice(0,600),title=String(page?.title||'')
@@ -2277,6 +2288,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     // "Access Denied" to the cloud browser. That site will not load for this run, so go back to the Google
     // booking options once per blocked site and pick another listed site (never a retry of the same one).
     let googleBookingUrl='';const edgeBlockedHosts:string[]=[]
+    let flightRowPicks=0
     const avoidNote=()=>edgeBlockedHosts.length?` ${edgeBlockedHosts.join(' and ')} refused this browser (Access Denied), so on the booking options pick a different listed site (MakeMyTrip, Cleartrip, Goibibo, ixigo, EaseMyTrip or Yatra), never ${edgeBlockedHosts.join(' or ')}.`:''
     const readSnapshot=(p:any)=>JSON.stringify([p.url,p.text,p.controls,p.forms])
 
@@ -2591,6 +2603,13 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       if(providerBooking&&!onGoogle&&googleBookingUrl&&edgeBlockedPage(page)&&edgeBlockedHosts.length<2){
         let host='';try{host=new URL(String(page.url||'')).hostname.replace(/^www\./,'')}catch{}
         if(host&&!edgeBlockedHosts.includes(host)){edgeBlockedHosts.push(host);edgeBack=[{kind:'goto',url:googleBookingUrl} as any];console.log('BROWSER_BOOKING_EDGE_BLOCKED:',JSON.stringify({runId:params.sessionTaskId||null,host,wave}))}
+      }
+      // 27 Oct live booking b1ba0f1e: on Google Flights' results list the planner clicked a list container six
+      // times (the row never opened). The approved flight's own row link is clicked directly instead, up to 3 times.
+      if(!edgeBack&&providerBooking&&onGoogle&&flightRowPicks<3){
+        let path='';try{path=new URL(String(page.url||'')).pathname}catch{}
+        const row=/^\/travel\/flights\/?$/.test(path)?googleFlightRowControl(page.controls||[],params.objective):null
+        if(row){flightRowPicks++;edgeBack=[{kind:'click',selector:row} as any];console.log('BROWSER_BOOKING_ROW_PICK:',JSON.stringify({runId:params.sessionTaskId||null,wave,try:flightRowPicks}))}
       }
       let vision:{actions:BrowserAction[];why:string}|null=null
       if(!edgeBack&&providerBooking&&visionEnabled&&lastShot&&visionSteps<5&&(bookingStuck>=2||bookingIdleWaves>=1)){

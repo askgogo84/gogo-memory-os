@@ -42,3 +42,4 @@ assert.ok(answer && /Chicken Boneless Biryani\. This item is a Bestseller, Costs
 console.log('Food menu direct read and nearest outlet passed')
 await import('./verify-booking-edge-blocked-oct27.mts')
 await import('./verify-flight-rows-direct-oct27.mts')
+await import('./verify-booking-row-pick-oct27.mts')
