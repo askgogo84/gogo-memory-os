@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { fetchTwilioImageNote } from './twilio-image-note-egress'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -7,13 +8,6 @@ const openai = new OpenAI({
 export function isImageContentType(contentType: string | null | undefined) {
   const type = (contentType || '').toLowerCase()
   return type.startsWith('image/')
-}
-
-function normalizeMime(contentType: string) {
-  const type = (contentType || '').toLowerCase()
-  if (type.includes('png')) return 'image/png'
-  if (type.includes('webp')) return 'image/webp'
-  return 'image/jpeg'
 }
 
 function isLikelyMedicalImage(caption?: string) {
@@ -25,34 +19,14 @@ export async function downloadTwilioMediaAsDataUrl(params: {
   mediaUrl: string
   contentType: string
 }) {
-  const { mediaUrl, contentType } = params
-
-  if (!process.env.TWILIO_ACCOUNT_SID || !process.env.TWILIO_AUTH_TOKEN) {
-    throw new Error('Missing Twilio credentials for media download')
-  }
-
-  const auth = Buffer.from(
-    `${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`
-  ).toString('base64')
-
-  const mediaResponse = await fetch(mediaUrl, {
-    headers: { Authorization: `Basic ${auth}` },
-  })
-
-  if (!mediaResponse.ok) {
-    const body = await mediaResponse.text().catch(() => '')
-    throw new Error(`Twilio image download failed: ${mediaResponse.status} ${body}`)
-  }
-
-  const arrayBuffer = await mediaResponse.arrayBuffer()
-  const sizeMb = arrayBuffer.byteLength / (1024 * 1024)
-
-  if (sizeMb > 18) {
-    throw new Error('Image is too large. Please send a smaller image.')
-  }
-
-  const base64 = Buffer.from(arrayBuffer).toString('base64')
-  return `data:${normalizeMime(contentType)};base64,${base64}`
+  if (!isImageContentType(params.contentType)) throw new Error('unsupported_image_note_media_type')
+  const sid = process.env.TWILIO_ACCOUNT_SID || ''
+  const token = process.env.TWILIO_AUTH_TOKEN || ''
+  // Never construct or forward Basic auth until this transport validates the
+  // exact Twilio account/media path; CDN redirect is anonymous and bounded.
+  const image = await fetchTwilioImageNote(params.mediaUrl, sid, token)
+  // Trust the verified response MIME rather than a form-supplied content type.
+  return 'data:' + image.contentType + ';base64,' + image.bytes.toString('base64')
 }
 
 export async function readAndSummarizeImageNote(params: {

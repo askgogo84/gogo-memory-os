@@ -8,6 +8,7 @@
 // (2) is the one that matters until the flag is flipped: it is what makes shipping
 // this safe. Run: npx tsx scripts/verify-webhook-signature.mts
 
+import { downloadTwilioWhatsappInboundMedia, TWILIO_WHATSAPP_IMAGE_MAX_BYTES } from '../lib/services/twilio-whatsapp-inbound-egress'
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
@@ -215,6 +216,125 @@ const validSignature = computeTwilioSignature(AUTH_TOKEN, URL_SIGNED, PARAMS)
     'the audit must not re-read the request body',
   )
   console.log('  ✓ wired into the inbound webhook ahead of user resolution, reusing the parsed body')
+}
+
+// ── 9. P1: media URL metadata never authorizes off-origin credential egress ──
+// Synthetic network only. No provider calls, real credentials, user content or DB.
+{
+  const sid = 'AC' + 'a'.repeat(32)
+  const message = 'MM' + 'b'.repeat(32)
+  const media = 'ME' + 'c'.repeat(32)
+  const goodUrl = `https://api.twilio.com/2010-04-01/Accounts/${sid}/Messages/${message}/Media/${media}`
+  const basic = 'Basic ' + Buffer.from(sid + ':fake-token').toString('base64')
+  const imageResponse = () => new Response(new Uint8Array([1, 2, 3]), {
+    status: 200, headers: { 'content-type': 'image/png', 'content-length': '3' },
+  })
+  function network(responses: Response[]) {
+    const calls: { url: string; init?: RequestInit }[] = []
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init })
+      const res = responses.shift()
+      if (!res) throw new Error('unexpected fake network call')
+      return res
+    }) as typeof fetch
+    return { calls, fetchImpl }
+  }
+  const request = (mediaUrl: string, fetchImpl: typeof fetch, kind: 'image' | 'audio' = 'image') =>
+    downloadTwilioWhatsappInboundMedia({ mediaUrl, accountSid: sid, authToken: 'fake-token', kind, fetchImpl })
+
+  const invalid = [
+    'http://169.254.169.254/latest/meta-data',
+    'https://169.254.169.254/latest/meta-data',
+    'https://api.twilio.com.evil.example/2010-04-01/Accounts/' + sid,
+    'https://api.twilio.com@evil.example/a',
+    'http://api.twilio.com/2010-04-01/Accounts/' + sid + '/Messages/' + message + '/Media/' + media,
+    goodUrl.replace(sid, 'AC' + 'd'.repeat(32)),
+    goodUrl.replace('/Messages/', '/Calls/'),
+    goodUrl.replace('/Media/', '/Media-not/'),
+    goodUrl + '?redirect=https://evil.example',
+    goodUrl + '#private',
+    goodUrl.replace('/Media/' + media, '/Media/' + media + '/other'),
+    goodUrl.replace(message, 'SM0001'),
+  ]
+  for (const hostile of invalid) {
+    const fake = network([])
+    assert.equal(await request(hostile, fake.fetchImpl), null, 'must reject invalid origin/account/path before fetch')
+    assert.equal(fake.calls.length, 0, 'no outbound fetch for invalid URL')
+  }
+
+  const success = network([imageResponse()])
+  const direct = await request(goodUrl, success.fetchImpl)
+  assert.ok(direct)
+  assert.equal(direct.contentType, 'image/png')
+  assert.deepEqual([...new Uint8Array(direct.arrayBuffer)], [1, 2, 3])
+  assert.equal(success.calls.length, 1)
+  assert.equal(success.calls[0].url, goodUrl)
+  assert.equal((success.calls[0].init?.headers as Record<string, string>).Authorization, basic)
+  assert.equal(success.calls[0].init?.redirect, 'manual')
+
+  const cdn = 'https://mms.twiliocdn.com/secure/test-content?sig=test'
+  const oneHop = network([
+    new Response(null, { status: 302, headers: { location: cdn } }),
+    imageResponse(),
+  ])
+  assert.ok(await request(goodUrl, oneHop.fetchImpl))
+  assert.equal(oneHop.calls.length, 2)
+  assert.equal(oneHop.calls[1].url, cdn)
+  assert.equal(oneHop.calls[1].init?.redirect, 'manual')
+  assert.equal((oneHop.calls[1].init?.headers as Record<string, string> | undefined)?.Authorization, undefined,
+    'CDN hop must never carry Basic auth')
+
+  for (const redirect of [
+    'http://mms.twiliocdn.com/unsafe',
+    'https://mms.twiliocdn.com.evil.example/unsafe',
+    'https://127.0.0.1/internal',
+    'https://api.twilio.com/internal',
+    'https://user:pass@mms.twiliocdn.com/private',
+  ]) {
+    const offHost = network([new Response(null, { status: 302, headers: { location: redirect } })])
+    assert.equal(await request(goodUrl, offHost.fetchImpl), null)
+    assert.equal(offHost.calls.length, 1, 'off-host second hop must not be fetched')
+  }
+  const doubleRedirect = network([
+    new Response(null, { status: 302, headers: { location: cdn } }),
+    new Response(null, { status: 302, headers: { location: 'https://evil.example/third' } }),
+  ])
+  assert.equal(await request(goodUrl, doubleRedirect.fetchImpl), null)
+  assert.equal(doubleRedirect.calls.length, 2, 'no third-hop network request')
+
+  const badMime = network([new Response('<html>bad</html>', { headers: { 'content-type': 'text/html' } })])
+  assert.equal(await request(goodUrl, badMime.fetchImpl), null)
+  const oversizedHeader = network([new Response(new Uint8Array([1]), {
+    headers: { 'content-type': 'image/png', 'content-length': String(TWILIO_WHATSAPP_IMAGE_MAX_BYTES + 1) },
+  })])
+  assert.equal(await request(goodUrl, oversizedHeader.fetchImpl), null)
+  const hugeStream = network([new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      const chunk = new Uint8Array(1024 * 1024)
+      for (let i = 0; i < 13; i++) controller.enqueue(chunk)
+      controller.close()
+    },
+  }), { headers: { 'content-type': 'image/jpeg' } })])
+  assert.equal(await request(goodUrl, hugeStream.fetchImpl), null, 'actual streamed bytes must be limited')
+
+  const audio = network([new Response(new Uint8Array([4, 5]), {
+    headers: { 'content-type': 'audio/ogg' },
+  })])
+  const recording = await request(goodUrl, audio.fetchImpl, 'audio')
+  assert.ok(recording)
+  assert.equal(recording.contentType, 'audio/ogg')
+  const noCreds = network([])
+  assert.equal(await downloadTwilioWhatsappInboundMedia({
+    mediaUrl: goodUrl, accountSid: sid, authToken: '', kind: 'image', fetchImpl: noCreds.fetchImpl,
+  }), null)
+  assert.equal(noCreds.calls.length, 0)
+
+  const route = fs.readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')
+  assert.equal((route.match(/downloadTwilioWhatsappInboundMedia\(/g) || []).length, 3,
+    'translation, food/ticket classification and meeting diarization use guarded download')
+  assert.doesNotMatch(route, /fetch\((?:firstMediaUrl|mediaUrl0),\s*\{\s*headers:\s*\{\s*Authorization:/,
+    'legacy direct credential-bearing fetches must be removed')
+  console.log('  ✓ P1 media fetch: account/path exact, auth first-hop only, bounded stream/MIME, image+audio, fail-closed redirects')
 }
 
 console.log('\n✅ webhook signature verification: valid accepted, forged rejected, OFF by default')
