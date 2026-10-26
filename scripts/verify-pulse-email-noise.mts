@@ -19,3 +19,6 @@ const watch = read('lib/agent/watch-command.ts')
 assert.doesNotMatch(watch, /Persistent state now shows/)
 assert.match(watch, /other watch\$\{remaining\.length===1\?' is':'es are'\} still running\./)
 console.log('verify-pulse-email-noise: ok')
+
+// Exact owner-isolation regression for signed email unsubscribe links (registered with npm test).
+await import('./verify-email-unsubscribe-owner.mts')
