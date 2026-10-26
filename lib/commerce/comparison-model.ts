@@ -368,8 +368,9 @@ export function comparisonWhatsAppSummary(task: PriceComparison, origin = 'https
     if (row.status === 'observed' && row.sourceUrl && row.evidence) {
       const quote = comparisonQuote(task.metadata_json.subject, row)
       if (!quote) {
-        // Public product-page text only (no personal data): shows why no single price was picked.
-        console.warn('COMPARISON_QUOTE_UNPARSED:', JSON.stringify({provider: row.provider, evidence: String(row.evidence || '').replace(/\s+/g, ' ').slice(0, 400)}))
+        // Never log page evidence: even retail pages may contain a signed-in owner's
+        // name, delivery address, or session-related content. Fixed metadata only.
+        console.warn('COMPARISON_QUOTE_UNPARSED:', JSON.stringify({provider: row.provider, reason: 'exact_item_price_unverified'}))
         return `• *${label}*: I read the page but couldn’t pick out one price for this exact item.\n  ${row.sourceUrl}`
       }
       priced.push({label, value: Number(quote.price.replace(/[^\d.]/g, '')), price: quote.price})
