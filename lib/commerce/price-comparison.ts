@@ -244,19 +244,24 @@ const MAX_STORE_ATTEMPTS = 3
 // then the store line said only "couldn't confirm the item and price." A page that never loads is retried once
 // (two reads), then reported plainly. No price is invented and no search snippet stands in for a store quote.
 const NAV_TIMEOUT_ATTEMPTS = 2
-const NAV_TIMEOUT_SECONDS = 45
+const NAV_TIMEOUT_FALLBACK_SECONDS = 45
 type StoreRow = PriceComparison['metadata_json']['providers'][number] & {navTimeout?: boolean}
 
 export function isNavigationTimeout(error: unknown): boolean {
   return /\bpage\.goto: Timeout \d+ms exceeded\b/.test(String(error || ''))
 }
 
-/** A failed store whose browser read timed out on navigation gets an honest, specific reason. Others are untouched. */
+/** A failed store whose LAST browser read timed out on navigation gets an honest, specific reason. Others are untouched.
+ *  The wait comes from the error itself; with several reads, only the last one is claimed to have timed out. */
 export function withNavigationTimeout<T extends {status?: string; attempts?: number}>(row: T, childError: unknown): T {
   if (row?.status !== 'failed' || !isNavigationTimeout(childError)) return row
+  const ms = Number(String(childError).match(/\bpage\.goto: Timeout (\d+)ms exceeded\b/)?.[1])
+  const seconds = Number.isFinite(ms) && ms > 0 ? Math.round(ms / 1000) : NAV_TIMEOUT_FALLBACK_SECONDS
   const tries = Math.max(1, Number(row.attempts) || 1)
-  return {...row, navTimeout: true,
-    reason: `its page didn’t load within ${NAV_TIMEOUT_SECONDS} seconds (tried ${tries === 1 ? 'once' : `${tries} times`}), so I have no price from this store.`}
+  const reason = tries === 1
+    ? `its page didn’t load within ${seconds} seconds, so I have no price from this store.`
+    : `I tried ${tries} times and the last time its page didn’t load within ${seconds} seconds, so I have no price from this store.`
+  return {...row, navTimeout: true, reason}
 }
 
 export function storeRetryLimit(row: {navTimeout?: boolean}): number {

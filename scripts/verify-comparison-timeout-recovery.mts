@@ -27,12 +27,12 @@ const failed = { provider: 'flipkart', status: 'failed', reason: 'couldn’t con
 const first = pc.withNavigationTimeout(failed, LIVE_ERROR)
 assert.equal(first.status, 'failed', 'still failed: no price is invented')
 assert.equal(first.navTimeout, true)
-assert.match(first.reason, /didn’t load within 45 seconds/)
-assert.match(first.reason, /tried once/)
+assert.match(first.reason, /^its page didn’t load within 45 seconds, so I have no price from this store\.$/)
 assert.match(first.reason, /no price from this store/)
 assert.equal(first.evidence, undefined)
 assert.equal(first.sourceUrl, undefined)
-assert.match(pc.withNavigationTimeout({ ...failed, attempts: 2 }, LIVE_ERROR).reason, /tried 2 times/)
+assert.match(pc.withNavigationTimeout({ ...failed, attempts: 2 }, LIVE_ERROR).reason, /^I tried 2 times and the last time its page didn’t load within 45 seconds/, 'only the last read is claimed to have timed out')
+assert.match(pc.withNavigationTimeout(failed, 'secure_browser_read_failed:page.goto: Timeout 30000ms exceeded.').reason, /within 30 seconds/, 'the wait comes from the error')
 // Other failures and other statuses are untouched.
 assert.deepEqual(pc.withNavigationTimeout(failed, 'browser_objective_unverified'), failed)
 const observed = { provider: 'amazon', status: 'observed', evidence: 'Apple iPhone 16 (128 GB) ₹69,900', sourceUrl: 'https://www.amazon.in/dp/X' } as any
@@ -68,9 +68,46 @@ const summary = comparisonSummary({ id: 'r', status: 'paused', title: 'iPhone 16
   { provider: 'amazon', status: 'observed', evidence: 'Apple iPhone 16 (128 GB) ₹69,900', sourceUrl: 'https://www.amazon.in/dp/X', checkedAt: '2026-10-25T15:50:00Z' },
   final,
 ] } } as any)
-assert.match(summary, /Flipkart: its page didn’t load within 45 seconds \(tried 2 times\), so I have no price from this store\./)
+assert.match(summary, /Flipkart: I tried 2 times and the last time its page didn’t load within 45 seconds, so I have no price from this store\./)
 assert.match(summary, /Amazon[^\n]*observed/)
 assert.doesNotMatch(summary, /Flipkart[^\n]*₹/, 'no Flipkart price appears')
+
+
+// 5a. Behaviour: the real readPriceComparison reads the child's error and applies the reason (mocked PostgREST).
+{
+  const PARENT = '11111111-1111-4111-8111-111111111111', CHILD = '22222222-2222-4222-8222-222222222222', OWNER = '-884501501'
+  const realFetch = globalThis.fetch
+  const rows: Record<string, any> = {
+    [PARENT]: { id: PARENT, status: 'queued', title: 'iPhone 16 128GB', source: 'whatsapp', updated_at: '2026-10-25T15:50:00Z', metadata_json: { request: 'r', subject: 'iPhone 16 128GB', providers: [{ provider: 'flipkart', status: 'checking', runId: CHILD, attempts: 2, startedAt: new Date().toISOString() }] } },
+    [CHILD]: { id: CHILD, status: 'failed', summary: 'The provider check could not finish.', error: LIVE_ERROR, updated_at: '2026-10-25T15:57:28Z', metadata_json: { comparison_parent_id: PARENT, mode: 'read', url: 'https://www.flipkart.com/' } },
+  }
+  globalThis.fetch = (async (input: any, init: any) => {
+    const url = new URL(String(input))
+    if (!url.pathname.startsWith('/rest/v1/')) return new Response('{}', { status: 404 })
+    const id = url.searchParams.get('id')?.replace(/^eq\./, '')
+    const owner = url.searchParams.get('telegram_id')?.replace(/^eq\./, '')
+    const table = url.pathname.split('/').pop()
+    const hit = table === 'agent_runs' && id && owner === OWNER ? rows[id] : null
+    const accept = String(new Headers(init?.headers).get('accept') || '')
+    if (accept.includes('vnd.pgrst.object')) return hit ? new Response(JSON.stringify(hit), { status: 200, headers: { 'content-type': 'application/json' } }) : new Response(JSON.stringify({ code: 'PGRST116', message: 'no rows' }), { status: 406, headers: { 'content-type': 'application/json' } })
+    return new Response(JSON.stringify(hit ? [hit] : []), { status: 200, headers: { 'content-type': 'application/json' } })
+  }) as any
+  try {
+    const task = await pc.readPriceComparison(OWNER, PARENT)
+    const fk = task!.metadata_json.providers[0] as any
+    assert.equal(fk.status, 'failed')
+    assert.equal(fk.navTimeout, true, 'the child error reached the reason')
+    assert.match(fk.reason, /^I tried 2 times and the last time its page didn’t load within 45 seconds/)
+    assert.equal(fk.evidence, undefined)
+    // The same read with a non-timeout error keeps the old reason.
+    rows[CHILD] = { ...rows[CHILD], error: 'browser_objective_unverified' }
+    const other = (await pc.readPriceComparison(OWNER, PARENT))!.metadata_json.providers[0] as any
+    assert.equal(other.navTimeout, undefined)
+    assert.doesNotMatch(String(other.reason), /didn’t load/)
+    // Another owner sees nothing.
+    assert.equal(await pc.readPriceComparison('-999999999', PARENT), null)
+  } finally { globalThis.fetch = realFetch }
+}
 
 // 5. Wiring: the live read path and the retry step both use these helpers.
 const src = readFileSync(new URL('../lib/commerce/price-comparison.ts', import.meta.url), 'utf8')
