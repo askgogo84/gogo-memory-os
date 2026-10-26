@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { verifyDailyBriefUnsubscribeToken } from '@/lib/email/daily-brief-unsubscribe'
+import { exactUnsubscribeOwnerId } from '@/lib/email/unsubscribe-owner'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,14 +18,15 @@ export async function GET(req: NextRequest) {
   const email = (url.searchParams.get('e') || '').trim().toLowerCase()
   const sig = (url.searchParams.get('s') || '').trim()
 
-  if (!telegramId || !email || !verifyDailyBriefUnsubscribeToken(telegramId, email, sig)) {
+  const ownerId = exactUnsubscribeOwnerId(telegramId)
+  if (!ownerId || !email || !verifyDailyBriefUnsubscribeToken(telegramId, email, sig)) {
     return page('That link is no longer valid.', 'Open AskGogo preferences to manage your Daily Brief email.', 400)
   }
 
   const { error } = await supabaseAdmin
     .from('users')
     .update({ daily_brief_email_enabled: false })
-    .eq('telegram_id', Number(telegramId))
+    .eq('telegram_id', ownerId)
     .eq('email', email)
 
   if (error) {
