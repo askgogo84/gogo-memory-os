@@ -44,4 +44,16 @@ assert.doesNotMatch(route, /^import .*universal-search/m)
 const driveOnly = await u.runUniversalSearch(actor, 'Toastr', { db, gmail: async () => [],
   drive: async () => [{ name: 'RepuLink-master.zip', modifiedTime: '2018-05-08T00:00:00Z', webViewLink: 'https://drive.google.com/file/d/a/view' }, { name: 'Toastr partnership deck', modifiedTime: '2026-10-26T00:00:00Z', webViewLink: 'https://docs.google.com/presentation/d/b' }] })
 assert.deepEqual(driveOnly.find(r => r.source === 'drive')!.hits.map(h => h.title), ['Toastr partnership deck'])
+// 27 Oct live: the same "nag me about the invoice" message was listed twice and a notes hit was raw JSON state.
+const dupDb = { from(table: string) { const q: any = { select() { return q }, eq() { return q }, gte() { return q }, ilike() { return q }, or() { return q }, order() { return q },
+  limit() { const rows: any = { conversations: [{ content: '"nag me about the invoice every 2 hours until done"', created_at: '2026-07-16T10:00:00Z' }, { content: '"nag me about the invoice every 2 hours until done"', created_at: '2026-07-16T09:00:00Z' },
+    { content: '1) All Shareholders Documents a) passport copy b) residence visa copy c) EmiratesID d) CV or personal profile e) bank statements f) proof of address g) the signed invoice for the setup fee', created_at: '2026-08-16T10:00:00Z' }],
+    memories: [{ content: '{"type":"followup_state","payload":{"invoice":1}}', created_at: '2026-05-14T00:00:00Z' }, { content: 'Divya sends the invoice on the 5th', created_at: '2026-05-10T00:00:00Z' }] }[table] || []
+    return Promise.resolve({ data: rows, error: null }) } }; return q } }
+const dup = await u.runUniversalSearch(actor, 'invoice', { db: dupDb, gmail: async () => [], drive: async () => [] })
+const chatHits = dup.find(r => r.source === 'chat')!.hits.map(h => h.title)
+assert.equal(chatHits.length, 2, chatHits.join('\n'))
+assert.equal(chatHits[0], 'You said: “nag me about the invoice every 2 hours until done”')
+assert.match(chatHits[1], /^You said: “….*signed invoice for the setup fee”$/, 'long message shows the part around the word')
+assert.deepEqual(dup.find(r => r.source === 'notes')!.hits.map(h => h.title), ['Divya sends the invoice on the 5th'], 'JSON state rows are not notes')
 console.log('Universal search passed')
