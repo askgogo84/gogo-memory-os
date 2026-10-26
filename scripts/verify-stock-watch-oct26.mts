@@ -94,3 +94,14 @@ assert.equal(nseMarketOpen(new Date('2026-10-26T05:00:00Z')), true, 'Mon 10:30 I
 assert.equal(nseMarketOpen(new Date('2026-10-25T05:00:00Z')), false, 'Sunday closed')
 assert.equal(nseMarketOpen(new Date('2026-10-26T13:00:00Z')), false, 'Mon 18:30 IST closed')
 console.log('Share-price review fixes: real asks claimed, verbs/portfolio/reminders left alone, no false level alert')
+
+// ── review round 2 ──
+for (const t of ['let me know when Nithin shares', 'notify me when Nithin shares updates', 'alert me when she shares photos'])
+  assert.equal(parseStockWatchCommand(t), null, `verb "shares": ${t}`)
+assert.ok(parseStockWatchCommand('track HDFC Bank shares, tell me if it moves 5%'), 'bare "shares" with a move still counts')
+const { nextNseOpen } = await import('../lib/agent/stock-rule')
+assert.equal(nextNseOpen(new Date('2026-10-26T02:30:00Z')).toISOString(), '2026-10-26T03:45:00.000Z', 'Mon 08:00 IST → 09:15 IST same day')
+assert.equal(nextNseOpen(new Date('2026-10-24T05:00:00Z')).toISOString(), '2026-10-26T03:45:00.000Z', 'Saturday → Monday 09:15 IST')
+assert.match(readFileSync(new URL('../lib/agent/watchers.ts', import.meta.url), 'utf8'), /nseMarketOpen\(now\) \? Infinity : nextNseOpen\(now\)\.getTime\(\)/)
+assert.match(readFileSync(new URL('../lib/agent/stock-watch.ts', import.meta.url), 'utf8'), /new RegExp\(`\\\\b\$\{w\.replace/, 'word-boundary match when retiring old news watches')
+console.log('Share-price review round 2: verb "shares" ignored, first minutes of trading watched')

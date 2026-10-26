@@ -39,7 +39,9 @@ export function isStockWatchPhrasing(text: string) {
   if (/\b(?:in\s+stock|out\s+of\s+stock|back\s+in\s+stock|restock|stock\s+up|gold|silver)\b/i.test(t)) return false
   // "Divya shares the doc", "my shares are worth": a verb or a portfolio question, not a quote watch.
   if (/\bshares\s+(?:the|a|an|my|his|her|their|this|that|it|with)\b/i.test(t) || /\b(?:my|our)\s+(?:shares|stocks|portfolio|holdings)\b/i.test(t)) return false
-  return new RegExp(`\\b(?:share\\s*price|stock\\s*price|shares|share\\s+of|(?:share|shares|stock)\\s+${MOVE_WORDS}|nse|bse|scrip)\\b`, 'i').test(t)
+  if (new RegExp(`\\b(?:share\\s*price|stock\\s*price|share\\s+of|(?:share|shares|stock)\\s+${MOVE_WORDS}|nse|bse|scrip)\\b`, 'i').test(t)) return true
+  // Bare "shares" ("Nithin shares updates") is a quote watch only with a price, %, level or move alongside it.
+  return /\bshares\b/i.test(t) && /(?:%|₹\s*\d|\brs\.?\s*\d|\b(?:percent|price|below|above|under|over|drops?|falls?|rises?|moves?|crosses|jumps?|dips?)\b)/i.test(t)
 }
 
 function cleanCompany(raw: string) {
@@ -65,7 +67,7 @@ export function parseStockWatchCommand(text: string): ParsedStockWatch | null {
   }
   company = company.replace(new RegExp(WATCH_WORDS.source, 'gi'), ' ').replace(/\b(?:if|when|it|by|drops?|falls?|rises?|goes|moves?|up|down)\b.*$/i, '').replace(/\s+/g, ' ').trim()
   if (!company || company.length < 2) return null
-  if (/^(?:how|what|which|when|why|it|this|that|they|we|i|you)\b/i.test(company)) return null
+  if (/^(?:how|what|which|when|why|it|this|that|they|we|i|you|she|he|him|her|them|someone|somebody|everyone)\b/i.test(company)) return null
 
   const levelMatch = raw.match(/\b(below|under|less\s+than|falls?\s+(?:below|under)|drops?\s+(?:below|under)|above|over|more\s+than|crosses|goes\s+above|rises?\s+above)\s*(?:₹|rs\.?|inr)?\s*([\d,]+(?:\.\d+)?)(?!\s*%)/i)
   if (levelMatch) {
@@ -111,6 +113,18 @@ export function nseMarketOpen(now: Date) {
   const ist = new Date(now.getTime() + 330 * 60_000)
   const day = ist.getUTCDay(), mins = ist.getUTCHours() * 60 + ist.getUTCMinutes()
   return day >= 1 && day <= 5 && mins >= 9 * 60 && mins <= 15 * 60 + 45
+}
+
+/** The next NSE opening (09:15 IST, Mon–Fri) after now. */
+export function nextNseOpen(now: Date) {
+  const ist = new Date(now.getTime() + 330 * 60_000)
+  for (let d = 0; d < 8; d++) {
+    const day = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + d, 9, 15))
+    const wd = day.getUTCDay()
+    const utc = new Date(day.getTime() - 330 * 60_000)
+    if (wd >= 1 && wd <= 5 && utc.getTime() > now.getTime()) return utc
+  }
+  return new Date(now.getTime() + 24 * 3600_000)
 }
 
 export const inr = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`

@@ -27,7 +27,7 @@ import {
 
 import { assessPriceCheck, appendPriceRun, buildPriceRun, normalizePriceRule, priceAlertText, priceStateFrom, type PriceRule } from './price-threshold'
 import { extractGoldQuotes } from '@/lib/bot/handlers/gold-quotes'
-import { evaluateStockRule, normalizeStockRule, nseMarketOpen, stockAlertText, stockStateFrom, type StockRule } from './stock-rule'
+import { evaluateStockRule, nextNseOpen, normalizeStockRule, nseMarketOpen, stockAlertText, stockStateFrom, type StockRule } from './stock-rule'
 import { fetchStockQuote } from './stock-quote'
 import { matchingActiveWatches, planWatchCleanup, watchSpecificity, DEDUPE_WATCH_TYPES, type DedupeRow, type WatchRetirement } from './watch-dedupe'
 import { appendGoldRun, decideGoldAlert, evaluateGoldRule, goldAlertText, goldSearchContext, goldStateFrom, normalizeGoldRule, sourceHost, type GoldRule } from './gold-rate-rule'
@@ -1453,7 +1453,8 @@ async function processStockCheck(watcher:any, condition:WebSearchWatcherConditio
   const { error } = await supabaseAdmin.from('agent_watchers').update({
     cadence_minutes:cadenceMinutes,
     last_checked_at:now.toISOString(),
-    next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
+    // Closed market: the next check is at most the next 09:15 IST opening, so the first minutes of trading are watched.
+    next_check_at:new Date(Math.min(now.getTime() + cadenceMinutes * 60_000, nseMarketOpen(now) ? Infinity : nextNseOpen(now).getTime())).toISOString(),
     last_state_json:{
       ...(watcher.last_state_json || {}),
       stockArmed:next.armed, stockBaseline:next.baseline, stockAlertCount:material ? prior.alertCount + 1 : prior.alertCount,

@@ -90,9 +90,11 @@ export async function tryCreateStockWatchFromCommand(params: { actor: AgentActor
       const c = row.condition_json || {}
       if (row.id === watcher.id || c.stockRule || c.goldRule || c.priceRule || c.contextual) continue
       const hay = `${c.title || ''} ${c.query || ''} ${c.originalRequest || ''}`.toLowerCase()
-      if (key.length && key.every(w => hay.includes(w)) && /\b(?:share|shares|stock|news)\b/.test(hay)) {
+      const has = (w: string) => new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(hay)
+      if (key.length && key.every(has) && /\b(?:share|shares|stock|news)\b/.test(hay)) {
+        const { data: prev } = await supabaseAdmin.from('agent_watchers').select('last_state_json').eq('id', row.id).eq('telegram_id', tg).maybeSingle()
         const { error } = await supabaseAdmin.from('agent_watchers').update({ active: false, next_check_at: null, updated_at: new Date().toISOString(),
-          last_state_json: { retiredReason: 'replaced_by_share_price_watch', replacedBy: watcher.id } })
+          last_state_json: { ...((prev?.last_state_json as any) || {}), retiredReason: 'replaced_by_share_price_watch', replacedBy: watcher.id } })
           .eq('id', row.id).eq('telegram_id', tg).eq('active', true)
         if (!error) retiredNews++
       }
