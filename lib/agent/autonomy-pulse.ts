@@ -9,7 +9,7 @@ import { decodeHtmlEntities } from './google-workspace-read'
 const PULSE_COOLDOWN_MINUTES=180
 const MAX_USERS_PER_PASS=80
 
-function clean(value:unknown,max=500){return String(value??'').replace(/\\s+/g,' ').trim().slice(0,max)}
+function clean(value:unknown,max=500){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}
 // The service-role pulse may address a WhatsApp recipient. Never choose a user
 // after lossy 64-bit Number coercion, including when a DB adapter already rounded
 // an integer before it reached this worker. Legitimate canonical safe IDs continue.
@@ -17,7 +17,7 @@ function exactPulseOwner(value:unknown):string|null{
   if(typeof value!=='string'&&typeof value!=='number')return null
   if(typeof value==='number'&&!Number.isSafeInteger(value))return null
   const id=typeof value==='number'?String(value):value
-  if(!/^-?[1-9]\\d*$/.test(id))return null
+  if(!/^-?[1-9]\d*$/.test(id))return null
   const numeric=Number(id)
   return Number.isSafeInteger(numeric)&&String(numeric)===id?id:null
 }
