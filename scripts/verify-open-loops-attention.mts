@@ -204,13 +204,14 @@ console.log('Attention scout page rotation + action discoverability verified')
 // Execute the exported production handler and both entry points with a fresh
 // Gmail transport. Stored reminders/open loops are deliberately inaccessible.
 let inboxConnected=true, inboxEnabled=true, readFails=false, freshCalls=0
+let returnedOwner:string|number=42, returnedConsentOwner:string|number=42
 const queries:Array<{table:string;owner:any}>=[]
 const fixtureDb={from:(table:string)=>{
   assert.ok(['users','user_consent_settings'].includes(table),'inbox read must not use saved attention or reminder rows')
   const record={table,owner:null as any};queries.push(record)
   const q:any={select:()=>q,eq:(key:string,value:any)=>{if(key==='telegram_id')record.owner=value;return q},maybeSingle:async()=>({error:null,data:table==='users'
-    ? {gmail_connected:inboxConnected,gmail_email:'owner@example.test',gmail_access_token:'fixture-token',telegram_id:42,whatsapp_id:'fixture-wa',name:'Fixture'}
-    : {gmail_enabled:inboxEnabled}})}
+    ? {gmail_connected:inboxConnected,gmail_email:'owner@example.test',gmail_access_token:'fixture-token',telegram_id:returnedOwner,whatsapp_id:'fixture-wa',name:'Fixture'}
+    : {telegram_id:returnedConsentOwner,gmail_enabled:inboxEnabled}})}
   return q
 }}
 const message=(id:string,from:string,snippet:string,extra:any={})=>({id,from,to:'owner@example.test',subject:'Please review You&#39;re invited',snippet,internalDate:Date.parse('2026-10-07T12:00:00Z'),...extra})
@@ -225,7 +226,9 @@ const fixtureThreads=[
 ]
 function loadFixture(path:string,requireFn:(name:string)=>any,extra:any={}){
   const exports:any={}
-  runInNewContext(ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:requireFn,console,Date,Intl,Set,Map,URL,process,...extra})
+  const compiled=ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
+  const exposing=path==='lib/agent/open-loops.ts'?'; exports.__testUserConnection = userConnection;':''
+  runInNewContext(compiled+exposing,{exports,require:requireFn,console,Date,Intl,Set,Map,URL,process,...extra})
   return exports
 }
 const inboxModule=loadFixture('lib/agent/open-loops.ts',name=>
@@ -267,7 +270,7 @@ const webInbox=loadFixture('app/api/dashboard/chat/route.ts',name=>
 )
 const webFresh=await webInbox.POST({headers:{get:()=> 'https://app.example.test'},nextUrl:{host:'app.example.test'},json:async()=>({text:exactInboxPrompt})})
 assert.equal(webFresh.handledBy,'inbox-reply-read','real web POST must claim the read before content/general planners')
-assert.ok(queries.every(q=>q.owner===42),'every connection/consent read is owner scoped')
+assert.ok(queries.every(q=>q.owner===42||q.owner==='42'),'safe legacy owner query may use number or canonical string, but never another owner')
 console.log('Fresh inbox reply reads: real handler + web POST + WhatsApp first refusal, ownership, consent, errors, automation suppression and secret-safe text verified')
 
 let failThread=false
@@ -294,3 +297,68 @@ assert.match(autonomyStatus,/\.limit\(30\)/)
 assert.match(autonomyStatus,/waiting\.slice\(0,GROUP_MAX\)/)
 {const body=autonomyStatus.slice(autonomyStatus.indexOf('export async function tryGetAutonomyStatus'));assert.ok(body.indexOf('terminalPauseErrors.has')>0&&body.indexOf('terminalPauseErrors.has')<body.indexOf('partitionAttentionRuns(runs)')&&body.indexOf('partitionAttentionRuns(runs)')<body.indexOf('formatAutonomyDigest('),'filtering happens before the display limit')}
 console.log('Only known terminal pauses are retired; resumable paused missions remain visible and filtering happens before the display limit')
+
+// Conditional BIGINT privacy regression: a JS Number aliases the two distinct
+// persisted owners 9007199254740992 and 9007199254740993. Only synthetic
+// Gmail, consent and users rows are exercised: zero external provider calls.
+const highOwner='9007199254740993'
+const adjacentOwner='9007199254740992'
+const highActor={...actor,legacyTelegramId:highOwner}
+returnedOwner=highOwner;returnedConsentOwner=highOwner;queries.length=0
+let oldFresh=freshCalls
+const highRead=await inboxModule.handleInboxReplyRead({actor:highActor,text:exactInboxPrompt})
+assert.equal(highRead.status,'completed','exact decimal-string owner still reads their own Gmail')
+assert.equal(freshCalls,oldFresh+1,'valid exact owner may read inert Gmail once')
+assert.ok(queries.every(q=>q.owner===highOwner),'service-role Gmail/consent predicates must preserve all owner digits')
+queries.length=0
+const ownConnection=await inboxModule.__testUserConnection(highOwner)
+assert.equal(ownConnection?.whatsapp_id,'fixture-wa','exact owner follow-up linkage retained')
+assert.ok(queries.every(q=>q.owner===highOwner),'follow-up user lookup uses exact string owner')
+
+returnedOwner=adjacentOwner;returnedConsentOwner=highOwner;queries.length=0;oldFresh=freshCalls
+const crossUser=await inboxModule.handleInboxReplyRead({actor:highActor,text:exactInboxPrompt})
+assert.equal(crossUser.status,'failed','a mismatched returned persisted users owner must fail closed')
+assert.equal(freshCalls,oldFresh,'a mismatched user may never invoke Gmail')
+await assert.rejects(()=>inboxModule.__testUserConnection(highOwner),/open_loop_user_owner_mismatch|open_loop_owner_mismatch/,'follow-up WhatsApp lookup must check persisted owner')
+returnedOwner=highOwner;returnedConsentOwner=adjacentOwner;queries.length=0;oldFresh=freshCalls
+const crossConsent=await inboxModule.handleInboxReplyRead({actor:highActor,text:exactInboxPrompt})
+assert.equal(crossConsent.status,'failed','consent row from a different persisted owner cannot authorize a Gmail read')
+assert.equal(freshCalls,oldFresh,'cross-owner consent cannot reach Gmail')
+returnedOwner=highOwner;returnedConsentOwner=highOwner;queries.length=0;oldFresh=freshCalls
+const unsafeNumber=Number(highOwner)
+assert.equal(Number.isSafeInteger(unsafeNumber),false,'test uses a genuinely rounded JS identity')
+const unsafe=await inboxModule.handleInboxReplyRead({actor:{...actor,legacyTelegramId:unsafeNumber},text:exactInboxPrompt})
+assert.equal(unsafe.status,'failed','an already rounded numeric identity must be rejected')
+assert.equal(queries.length,0,'no service-role lookup with unsafe numeric owner')
+assert.equal(freshCalls,oldFresh,'no Gmail request with unsafe numeric owner')
+await assert.rejects(()=>inboxModule.__testUserConnection(unsafeNumber),/open_loop_owner_invalid/)
+assert.doesNotMatch(openLoops,/Number\(telegramId\)/,'private owner predicates in this module must never round BIGINT IDs')
+console.log('Open Loops exact owner/privacy fixture: two neighboring BIGINTs, persisted-user mismatch, consent mismatch, unsafe numeric and valid exact owner verified offline')
+
+let scoutCandidate:string|number=unsafeNumber
+const scoutDb={from:(table:string)=>{
+  const q:any={
+    select:()=>q,eq:()=>q,in:()=>q,gte:()=>q,order:()=>q,
+    limit:async()=>({error:null,data:table==='users'
+      ? [{telegram_id:scoutCandidate,whatsapp_id:'whatsapp:+919999999999',gmail_connected:true}]
+      : table==='memories'?[{telegram_id:scoutCandidate}]:[]}),
+    maybeSingle:async()=>({error:null,data:null}),
+    range:async()=>({error:null,data:[]}),
+    update:()=>q,insert:async()=>({error:null}),
+  }
+  return q
+}}
+const scoutModule=loadFixture('lib/agent/open-loops.ts',name=>
+  name==='@/lib/supabase-admin'?{supabaseAdmin:scoutDb}:
+  name==='@/lib/security/google-token-crypto'?{decryptGoogleToken:(value:any)=>value||''}:
+  name==='@/lib/services/google-gmail'?{fetchGmailAttentionThreads:async()=>{throw Error('no real or mock Gmail should be called by scout')},refreshGmailAccessToken:async()=>''}:{}
+)
+const unsafeScout=await scoutModule.processOpenLoopScoutPass(2)
+assert.equal(unsafeScout.considered,0,'scout must reject already rounded numeric BIGINT IDs before String() preserves the wrong owner')
+assert.equal(unsafeScout.processed,0,'no private sync for ambiguous owner')
+scoutCandidate=highOwner
+const exactScout=await scoutModule.processOpenLoopScoutPass(2)
+assert.equal(exactScout.considered,1,'scout must retain canonical exact-string BIGINT owners')
+console.log('Open Loops scout unsafe numeric owner exclusion and valid exact-string candidate verified offline')
+
+

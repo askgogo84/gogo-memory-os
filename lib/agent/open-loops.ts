@@ -34,6 +34,22 @@ function normalize(value:unknown){
 function normalizedPhone(value:unknown){
   return String(value||'').replace(/^whatsapp:/i,'').replace(/\D/g,'').slice(-15)
 }
+
+// Postgres BIGINT owner IDs may exceed JS's exact integer range. Never round an
+// identity before a service-role query, and never trust an already rounded row.
+function exactOpenLoopOwnerId(value:unknown):string|null{
+  if(typeof value==='number')return Number.isSafeInteger(value)&&value!==0?String(value):null
+  if(typeof value!=='string'||! /^-?[1-9]\d*$/.test(value))return null
+  return value
+}
+function requireOpenLoopOwnerId(value:unknown):string{
+  const owner=exactOpenLoopOwnerId(value)
+  if(!owner)throw new Error('open_loop_owner_invalid')
+  return owner
+}
+function matchesPersistedOpenLoopOwner(stored:unknown,owner:string):boolean{
+  return exactOpenLoopOwnerId(stored)===owner
+}
 function hash(value:string){
   return createHash('sha256').update(value).digest('hex').slice(0,40)
 }
@@ -302,11 +318,13 @@ async function upsertOpenLoop(input:OpenLoopInput){
 }
 
 async function userConnection(telegramId:string){
+  const owner=requireOpenLoopOwnerId(telegramId)
   const {data,error}=await supabaseAdmin.from('users')
-    .select('whatsapp_id')
-    .eq('telegram_id',Number(telegramId))
+    .select('telegram_id,whatsapp_id')
+    .eq('telegram_id',owner)
     .maybeSingle()
   if(error)throw new Error(`open_loop_user_read_failed:${error.message}`)
+  if(data&&!matchesPersistedOpenLoopOwner(data.telegram_id,owner))throw new Error('open_loop_user_owner_mismatch')
   return data||null
 }
 
@@ -518,16 +536,19 @@ async function resolveOtherGmailLoopsForThread(telegramId:string,threadId:string
   return ids.length
 }
 
-async function readGmailAttention(telegramId:string){
+async function readGmailAttention(telegramId:string|number){
+  const owner=requireOpenLoopOwnerId(telegramId)
   const [{data:user,error:userError},{data:consent,error:consentError}]=await Promise.all([
     supabaseAdmin.from('users')
-      .select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token')
-      .eq('telegram_id',Number(telegramId)).maybeSingle(),
+      .select('telegram_id,gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token')
+      .eq('telegram_id',owner).maybeSingle(),
     supabaseAdmin.from('user_consent_settings')
-      .select('gmail_enabled').eq('telegram_id',Number(telegramId)).maybeSingle(),
+      .select('telegram_id,gmail_enabled').eq('telegram_id',owner).maybeSingle(),
   ])
   if(userError)throw new Error(`open_loop_gmail_user_failed:${userError.message}`)
   if(consentError)throw new Error(`open_loop_gmail_consent_failed:${consentError.message}`)
+  if(user&&!matchesPersistedOpenLoopOwner(user.telegram_id,owner))throw new Error('open_loop_owner_mismatch')
+  if(consent&&!matchesPersistedOpenLoopOwner(consent.telegram_id,owner))throw new Error('open_loop_consent_owner_mismatch')
   if(consent?.gmail_enabled===false)return {reason:'disabled' as const}
   if(!user?.gmail_connected)return {reason:'disconnected' as const}
 
@@ -559,7 +580,8 @@ export async function handleInboxReplyRead(params:{actor:AgentActor;text:string}
   if(!isInboxReplyReadQuery(params.text))return null
   const base={runId:'inbox-reply-read',capability:'orchestrator' as const,risk:'low' as const,handledBy:'inbox-reply-read'}
   try{
-    const read=await readGmailAttention(String(params.actor.legacyTelegramId))
+    // Preserve the incoming identity representation: String(unsafeNumber) cannot recover rounded BIGINT digits.
+    const read=await readGmailAttention(params.actor.legacyTelegramId)
     if('reason' in read)return {...base,status:'completed' as const,text:read.reason==='disabled'
       ? 'Email reading is turned off. Enable it in Connections to check emails needing a reply.'
       : 'Connect Gmail in Connections so I can check emails needing a reply.'}
@@ -592,14 +614,15 @@ export async function handleInboxReplyRead(params:{actor:AgentActor;text:string}
 }
 
 async function syncGmailAttention(telegramId:string,current:Set<string>,gmailRead?:()=>ReturnType<typeof readGmailAttention>){
-  const read=await (gmailRead?gmailRead():readGmailAttention(telegramId))
+  const owner=requireOpenLoopOwnerId(telegramId)
+  const read=await (gmailRead?gmailRead():readGmailAttention(owner))
   if('reason' in read)return 'skip' as const
   const {threads,ownEmail}=read
   // The same attention judgement as the chat card (with the person's learned rules) keeps routine mail out of
   // "what needs my attention". Guarded so a missing module or rules read never blocks the sync.
   let attentionScore:((message:any)=>{picked:boolean}|null)=()=>null
   try{
-    const {data:ruleRows}=await supabaseAdmin.from('email_attention_rules').select('kind,match_type,match_value,category,label,source').eq('telegram_id',Number(telegramId)).eq('active',true).limit(300)
+    const {data:ruleRows}=await supabaseAdmin.from('email_attention_rules').select('kind,match_type,match_value,category,label,source').eq('telegram_id',owner).eq('active',true).limit(300)
     const rules=(Array.isArray(ruleRows)?ruleRows:[]).map((r:any)=>({kind:r.kind,matchType:r.match_type,matchValue:String(r.match_value||''),category:r.category,label:String(r.label||''),source:r.source}))
     if(typeof scoreAttentionEmail==='function')attentionScore=(message:any)=>{const r=scoreAttentionEmail(message,{rules,ownEmail});return r&&typeof r.score==='number'?r:null}
   }catch{}
@@ -683,10 +706,11 @@ async function syncGmailAttention(telegramId:string,current:Set<string>,gmailRea
 }
 
 async function syncMeetingActionMemories(telegramId:string){
+  const owner=requireOpenLoopOwnerId(telegramId)
   const since=new Date(Date.now()-30*86400_000).toISOString()
   const {data,error}=await supabaseAdmin.from('memories')
     .select('id,content,created_at')
-    .eq('telegram_id',Number(telegramId))
+    .eq('telegram_id',owner)
     .gte('created_at',since)
     .order('created_at',{ascending:false})
     .limit(120)
@@ -722,13 +746,16 @@ async function syncMeetingActionMemories(telegramId:string){
 }
 
 async function syncConversationSignals(telegramId:string){
-  const {data:consent}=await supabaseAdmin.from('user_consent_settings')
-    .select('memory_enabled').eq('telegram_id',Number(telegramId)).maybeSingle()
+  const owner=requireOpenLoopOwnerId(telegramId)
+  const {data:consent,error:consentError}=await supabaseAdmin.from('user_consent_settings')
+    .select('telegram_id,memory_enabled').eq('telegram_id',owner).maybeSingle()
+  if(consentError)throw new Error(`open_loop_memory_consent_failed:${consentError.message}`)
+  if(consent&&!matchesPersistedOpenLoopOwner(consent.telegram_id,owner))throw new Error('open_loop_memory_consent_owner_mismatch')
   if(consent?.memory_enabled===false)return 0
   const since=new Date(Date.now()-7*86400_000).toISOString()
   const {data,error}=await supabaseAdmin.from('conversations')
     .select('id,content,created_at')
-    .eq('telegram_id',Number(telegramId)).eq('role','user')
+    .eq('telegram_id',owner).eq('role','user')
     .gte('created_at',since).order('created_at',{ascending:false}).limit(80)
   if(error)throw new Error(`open_loop_conversation_read_failed:${error.message}`)
   let captured=0
@@ -772,10 +799,14 @@ async function resolveMissingSourceLoops(telegramId:string,current:Set<string>,s
 // is one deduped open loop with its event/ticket evidence, and it resolves itself once the calendar no longer
 // shows it. The pulse surfaces it with the owner's quiet hours and topics, like every other open loop.
 async function syncCalendarConflicts(telegramId:string,current:Set<string>,gmailRead?:()=>Promise<Awaited<ReturnType<typeof readGmailAttention>>>){
-  const {data:user}=await supabaseAdmin.from('users').select('google_calendar_connected,timezone,name').eq('telegram_id',Number(telegramId)).maybeSingle()
+  const ownerId=requireOpenLoopOwnerId(telegramId)
+  const {data:user,error:userError}=await supabaseAdmin.from('users').select('telegram_id,google_calendar_connected,timezone,name').eq('telegram_id',ownerId).maybeSingle()
+  if(userError)throw new Error(`open_loop_calendar_owner_failed:${userError.message}`)
+  if(user&&!matchesPersistedOpenLoopOwner(user.telegram_id,ownerId))throw new Error('open_loop_calendar_owner_mismatch')
   if(!user?.google_calendar_connected)throw new Error('skip:calendar_not_connected')
   const [{resolveAgentActor},{executeReadOnlyCalendarStep},{findScheduleConflicts}]=await Promise.all([import('./actor'),import('./calendar-read'),import('./calendar-conflicts')])
-  const actor=await resolveAgentActor({telegramId,surface:'whatsapp'} as any)
+  const actor=await resolveAgentActor({telegramId:ownerId,surface:'whatsapp'} as any)
+  if(!actor||!matchesPersistedOpenLoopOwner(actor.legacyTelegramId,ownerId))throw new Error('open_loop_calendar_actor_owner_mismatch')
   const tz=String(user.timezone||'Asia/Kolkata')
   const day=(offset:number)=>new Intl.DateTimeFormat('en-CA',{timeZone:tz}).format(new Date(Date.now()+offset*86_400_000))
   const instruction=`Show my calendar from ${day(0)} to ${day(2)} and check for conflicts`
@@ -784,7 +815,7 @@ async function syncCalendarConflicts(telegramId:string,current:Set<string>,gmail
   const events=Array.isArray(out.events)?out.events:[]
   if(out.complete!==true||Number(out.unknownIntervals||0)>0||Number(out.entryCount??events.length)!==events.length)throw new Error('skip:calendar_read_incomplete')
   const {data:tickets}=await supabaseAdmin.from('travel_tickets').select('id,flight_no,from_city,to_city,depart_at,passengers')
-    .eq('telegram_id',Number(telegramId)).gte('depart_at',new Date().toISOString()).lte('depart_at',new Date(Date.now()+3*86_400_000).toISOString()).limit(20)
+    .eq('telegram_id',ownerId).gte('depart_at',new Date().toISOString()).lte('depart_at',new Date(Date.now()+3*86_400_000).toISOString()).limit(20)
   const owner=String(user.name||'').toLowerCase().replace(/[^a-z]+/g,' ').trim()
   // A ticket counts only when the owner is a named passenger (another traveller's flight is not their conflict).
   const mine=(tickets||[]).filter((t:any)=>owner&&Array.isArray(t.passengers)&&t.passengers.some((p:unknown)=>String(p||'').toLowerCase().replace(/[^a-z]+/g,' ').trim()===owner))
@@ -812,7 +843,7 @@ async function syncCalendarConflicts(telegramId:string,current:Set<string>,gmail
 }
 
 export async function syncOpenLoopsForUser(telegramId:string|number){
-  const tg=String(telegramId)
+  const tg=requireOpenLoopOwnerId(telegramId)
   const current=new Set<string>()
   const sourceTypes=['followup','approval','agent_run','life_event_action','calendar_conflict'] as const
   // One Gmail read per sync, shared by email attention and meeting prep.
@@ -1214,13 +1245,20 @@ export async function processOpenLoopScoutPass(limit=80){
   const ids=new Set<string>()
   for(const result of [conversationResult,approvalResult,runResult,lifeResult,memoryResult]){
     if(result.error)console.error('OPEN_LOOP_SCOUT_CANDIDATE_FAILED:',result.error.message)
-    for(const row of result.data||[])if((row as any).telegram_id)ids.add(String((row as any).telegram_id))
+    // Convert only original exact persisted representations. String(unsafeNumber)
+    // would silently turn a rounded 64-bit owner into a different tenant.
+    for(const row of result.data||[]){
+      const owner=exactOpenLoopOwnerId((row as any).telegram_id)
+      if(owner)ids.add(owner)
+    }
   }
   const phoneToTelegram=new Map<string,string>()
   for(const user of userResult.data||[]){
+    const owner=exactOpenLoopOwnerId((user as any).telegram_id)
+    if(!owner)continue
     const phone=normalizedPhone((user as any).whatsapp_id)
-    if(phone&&(user as any).telegram_id)phoneToTelegram.set(phone,String((user as any).telegram_id))
-    if((user as any).gmail_connected&&(user as any).telegram_id)ids.add(String((user as any).telegram_id))
+    if(phone)phoneToTelegram.set(phone,owner)
+    if((user as any).gmail_connected)ids.add(owner)
   }
   for(const follow of followupResult.data||[]){
     const tg=phoneToTelegram.get(normalizedPhone((follow as any).whatsapp_id))
