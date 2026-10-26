@@ -271,12 +271,101 @@ function fallbackExtraction(kind: 'image' | 'pdf', userLabel: string | null): As
   }
 }
 
-async function fetchTwilioBase64(mediaUrl: string, contentType: string): Promise<{ b64: string; isPdf: boolean }> {
-  const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
-  const res = await fetch(mediaUrl, { headers: { Authorization: `Basic ${auth}` } })
-  if (!res.ok) throw new Error(`Twilio fetch ${res.status}`)
-  const b64 = Buffer.from(await res.arrayBuffer()).toString('base64')
-  return { b64, isPdf: (contentType || '').toLowerCase().includes('pdf') }
+/**
+ * The inbound media URL is NOT authority to use our Twilio account credentials.
+ * Only the configured account's exact HTTPS Messaging Media resource receives
+ * Basic auth. Redirects are manual; a single Twilio CDN hop receives NO auth.
+ * This is origin containment, not DNS/IP pinning or provider compatibility proof.
+ */
+export function trustedAssetTwilioMediaUrl(raw: unknown, accountSid: string): string | null {
+  if (typeof raw !== 'string' || !/^AC[a-f0-9]{32}$/i.test(accountSid)) return null
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== 'https:' || url.hostname !== 'api.twilio.com' ||
+        url.username || url.password || url.port || url.search || url.hash) return null
+    const accountBoundPath = new RegExp(
+      '^/2010-04-01/Accounts/' + accountSid +
+      '/Messages/(?:SM|MM)[a-f0-9]{32}/Media/ME[a-f0-9]{32}(?:/Content)?$', 'i',
+    )
+    return accountBoundPath.test(url.pathname) ? url.toString() : null
+  } catch { return null }
+}
+
+/** One exact HTTPS Twilio CDN download URL; never forward Basic credentials. */
+export function trustedAssetTwilioCdnUrl(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  try {
+    const url = new URL(raw)
+    if (url.protocol !== 'https:' || url.hostname !== 'mms.twiliocdn.com' ||
+        url.username || url.password || url.port || url.hash ||
+        !url.pathname || url.pathname === '/') return null
+    return url.toString()
+  } catch { return null }
+}
+
+const MAX_ASSET_MEDIA_BYTES = 20 * 1024 * 1024
+async function boundedAssetMedia(res: Response): Promise<Buffer> {
+  const length = res.headers.get('content-length')
+  if (length !== null && (!/^\d+$/.test(length) || Number(length) > MAX_ASSET_MEDIA_BYTES)) {
+    throw new Error('Asset media exceeds size limit')
+  }
+  if (!res.body) throw new Error('Empty asset media response')
+  const reader = res.body.getReader()
+  const chunks: Buffer[] = []
+  let total = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > MAX_ASSET_MEDIA_BYTES) {
+        await reader.cancel().catch(() => {})
+        throw new Error('Asset media exceeds size limit')
+      }
+      chunks.push(Buffer.from(value))
+    }
+  } finally {
+    reader.releaseLock()
+  }
+  if (total === 0) throw new Error('Empty asset media response')
+  return Buffer.concat(chunks, total)
+}
+
+/**
+ * Used by PDF asset classification. A malformed or hostile MediaUrl0 must never
+ * trigger a network request or authorize against Twilio. Do not silently retry
+ * with a less restrictive transport if the resource fails validation.
+ */
+export async function fetchTwilioBase64(
+  mediaUrl: string, contentType: string,
+): Promise<{ b64: string; isPdf: boolean }> {
+  const sid = process.env.TWILIO_ACCOUNT_SID || ''
+  const token = process.env.TWILIO_AUTH_TOKEN || ''
+  const trusted = trustedAssetTwilioMediaUrl(mediaUrl, sid)
+  if (!trusted || !token) throw new Error('Untrusted Twilio asset media URL or missing credentials')
+  const auth = 'Basic ' + Buffer.from(sid + ':' + token).toString('base64')
+  const response = await fetch(trusted, {
+    headers: { Authorization: auth },
+    redirect: 'manual',
+    signal: AbortSignal.timeout(10_000),
+  })
+  let final = response
+  if (response.status >= 300 && response.status < 400) {
+    const cdnUrl = trustedAssetTwilioCdnUrl(response.headers.get('location'))
+    if (!cdnUrl) throw new Error('Untrusted Twilio asset media redirect')
+    final = await fetch(cdnUrl, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(10_000),
+    })
+  }
+  if (!final.ok || final.status >= 300 || final.status < 200) {
+    throw new Error('Twilio asset media unavailable')
+  }
+  const bytes = await boundedAssetMedia(final)
+  return {
+    b64: bytes.toString('base64'),
+    isPdf: (contentType || '').toLowerCase().includes('pdf'),
+  }
 }
 
 export async function classifyAndExtractAsset(params: {
