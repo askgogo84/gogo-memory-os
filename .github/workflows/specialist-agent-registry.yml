@@ -1,0 +1,29 @@
+name: Specialist Agent Memory Registry
+
+on:
+  push:
+    branches: ["feat/specialist-agent-memory-router-20260913"]
+    paths:
+      - "lib/agent/specialist-registry.ts"
+      - "scripts/verify-specialist-agent-registry.mts"
+      - "docs/UNIVERSAL-AGENT-OPERATOR-ARCHITECTURE-2026-09-13.md"
+      - ".github/workflows/specialist-agent-registry.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "lib/agent/specialist-registry.ts"
+      - "scripts/verify-specialist-agent-registry.mts"
+      - "docs/UNIVERSAL-AGENT-OPERATOR-ARCHITECTURE-2026-09-13.md"
+      - ".github/workflows/specialist-agent-registry.yml"
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npx tsx scripts/verify-specialist-agent-registry.mts
