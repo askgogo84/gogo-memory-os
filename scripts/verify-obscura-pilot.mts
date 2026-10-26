@@ -38,7 +38,9 @@ assert.equal(explicitPublicRetailSearch({...flipkart,url:'https://www.flipkart.c
 const commandSource=readFileSync('lib/agent/browser-command.ts','utf8')
 assert.match(commandSource,/explicitPublicRetailSearch\(params\.command,runMetadata\)/)
 assert.match(commandSource,/await tryObscuraBrowserRead\(/)
-assert.match(commandSource,/readDeadline:publicReadDeadline/)
+// 26 Oct: the public probe and the comparison attempt share the fallback deadline (verify-obscura-reach-oct26).
+assert.match(commandSource,/fallbackReadDeadline=publicReadDeadline\|\|comparisonReadDeadline/)
+assert.match(commandSource,/readDeadline:fallbackReadDeadline/)
 assert.match(commandSource,/reservePasswordHandoff:true,reserveHumanHandoff:true/)
 
 const row = (url=req.url, title='A real research page',
@@ -168,7 +170,7 @@ assert.doesNotMatch(runtime,/GOGO_BROWSER_PROXY_PASSWORD|GITHUB_TOKEN|VERCEL_TOK
 const computer=readFileSync('lib/agent/secure-computer.ts','utf8')
 assert.match(computer,/obscuraPilotEligible\(params\)/)
 assert.match(computer,/assessReadOutcome\(params\.objective,page\)/)
-assert.match(computer,/if \(verified\) return/)
+assert.match(computer,/if \(!verified\) \{ report\('unverified'\); return null \}/,'an unverified Obscura page never returns a result')
 assert.match(computer,/forms:candidate\.forms/,'the actual browser calls existing gates with real input metadata')
 assert.match(computer,/let publicFlightRead=false/)
 assert.match(computer,/pilotDeadline=Math.min\(Date.now\(\)\+75_000,readDeadline-90_000\)/)

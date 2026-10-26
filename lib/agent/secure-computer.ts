@@ -2107,38 +2107,53 @@ function normalizeActionLog(values:any[]){
 export async function tryObscuraBrowserRead(
   params: ObscuraRequest, callerReadDeadline?: number,
 ): Promise<SecureBrowserResult|null> {
+  const started=Date.now()
+  const flagOn=process.env.GOGO_OBSCURA_PUBLIC_READ==='1'
+  let host=''
+  try{host=new URL(String(params.url||'')).hostname}catch{}
+  // 26 Oct: one structured line per attempt (host, outcome, ms) so production compatibility is observable.
+  // Never page text, URL path/query, objective or user identifiers.
+  const report=(outcome:string)=>{ if(flagOn) try{console.log('OBSCURA_READ:',JSON.stringify({host,outcome,ms:Date.now()-started}))}catch{} }
   const readDeadline=Math.min(Date.now()+READ_BUDGET_MS,
     Number.isFinite(callerReadDeadline)?callerReadDeadline!:Infinity)
-  if (readDeadline-Date.now() <= 90_000) return null
+  if (readDeadline-Date.now() <= 90_000) { report('no_budget'); return null }
   // The Obscura pilot shares this same total read deadline with the trusted
   // fallback. Only start it with enough time to recover through Chromium.
   // Obscura trial is strictly opt-in, public and read-only. No Vault session,
   // protected action, human takeover or persistent browser is routed here.
   // A valid page still MUST pass the existing evidence-grounded assessor;
   // missing/misleading evidence falls back to the existing secure browser.
-  if (readDeadline-Date.now() > 90_000
-    && typeof obscuraPilotEligible === 'function' && obscuraPilotEligible(params)) {
-    const pilotDeadline=Math.min(Date.now()+75_000,readDeadline-90_000)
-    const candidate = await withinReadBudget(pilotDeadline,()=>tryObscuraPublicRead(params)).catch(() => null)
-    if (candidate) {
-      const page = {url:candidate.url,title:candidate.title,text:candidate.text,
-        forms:candidate.forms,links:[],controls:[],actions:[]}
-      if (!detectHumanAuthGate(page).required
-        && !detectProviderAccessBlock(page)
-        && !needsBrowserDeliveryLocation(page)) {
-        const verified = await withinReadBudget(readDeadline,()=>assessReadOutcome(params.objective,page)).catch(() => null)
-        if (verified) return {
-          status:'completed',url:candidate.url,
-          sourceUrl:browserSourceUrl(candidate.url)||undefined,
-          title:safeText(candidate.title,300),summary:verified,
-          pageText:safeText(candidate.text,9000),forms:[],actions:[],
-          // This ephemeral observer has no attachable browser session.
-          sandboxName:'',
-        }
-      }
-    }
+  if (!(typeof obscuraPilotEligible === 'function' && obscuraPilotEligible(params))) {
+    // Only a pilot host that was turned away is worth a line; kept-alive fallbacks after an attempt are not.
+    const pilot=String(process.env.GOGO_OBSCURA_PILOT_HOSTS||'').split(',').map(h=>h.trim().toLowerCase()).includes(host.toLowerCase())
+    if (pilot && !params.keepAlive) report('ineligible')
+    return null
   }
-  return null
+  const pilotDeadline=Math.min(Date.now()+75_000,readDeadline-90_000)
+  let failure='no_candidate'
+  const candidate = await withinReadBudget(pilotDeadline,()=>tryObscuraPublicRead(params))
+    .catch((error:any) => {
+      // Known codes only; never free-form SDK text (it can carry hosts or paths).
+      const m=String(error?.message||'')
+      failure='no_candidate:'+(/^(?:obscura_[a-z_]{3,40}|browser_read_deadline)$/.test(m)?m:'error')
+      return null
+    })
+  if (!candidate) { report(failure); return null }
+  const page = {url:candidate.url,title:candidate.title,text:candidate.text,
+    forms:candidate.forms,links:[],controls:[],actions:[]}
+  if (detectHumanAuthGate(page).required || detectProviderAccessBlock(page) || needsBrowserDeliveryLocation(page)) { report('gated'); return null }
+  // The assessor must also leave the trusted fallback its 90s.
+  const verified = await withinReadBudget(readDeadline-90_000,()=>assessReadOutcome(params.objective,page)).catch(() => null)
+  if (!verified) { report('unverified'); return null }
+  report('used')
+  return {
+    status:'completed',url:candidate.url,
+    sourceUrl:browserSourceUrl(candidate.url)||undefined,
+    title:safeText(candidate.title,300),summary:verified,
+    pageText:safeText(candidate.text,9000),forms:[],actions:[],
+    // This ephemeral observer has no attachable browser session.
+    sandboxName:'',
+  }
 }
 
 export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;loginCode?:string|null;phoneLogin?:{number:string;telegramId:string}|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number}):Promise<SecureBrowserResult>{
