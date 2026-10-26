@@ -21,7 +21,7 @@ function safe(value:unknown,max=800){return String(value??'').replace(/\s+/g,' '
 // can be represented exactly. Reject before service-role lookup or booking claim.
 function exactReservationOwner(value:unknown):string|null{
   if(typeof value==='number')return Number.isSafeInteger(value)&&value!==0?String(value):null
-  if(typeof value!=='string'||! /^-?[1-9]\\d*$/.test(value))return null
+  if(typeof value!=='string'||! /^-?[1-9]\d*$/.test(value))return null
   const numeric=Number(value)
   return Number.isSafeInteger(numeric)&&String(numeric)===value?value:null
 }
