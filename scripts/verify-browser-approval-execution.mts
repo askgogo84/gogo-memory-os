@@ -1,4 +1,5 @@
 // Browser approval execution — STRUCTURAL CHECKS.
+import './verify-approved-thread-outcome-oct27.mts'
 // An approval on WhatsApp must (1) be resolved before any free-form routing, (2) queue the run
 // and hand it to the approved-browser route, which runs the browser with a 300s budget, never in
 // the 60s webhook, and (3) let the autonomous-runs cron sweep only what is still queued, through
