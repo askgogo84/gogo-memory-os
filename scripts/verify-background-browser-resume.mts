@@ -134,3 +134,98 @@ await assert.rejects(()=>unsafeMode.restore({actor:unsafeMode.actor,runId:unsafe
   /browser_control_unavailable/,'execute mode may not be restored through read-only entrypoint')
 assert.equal(unsafeMode.started(),0)
 console.log('PASS: actual standalone browser handoff restores without a fake commerce parent; owner, policy and linked controls remain fenced')
+
+
+/*
+ * Browser worker owner-precision regression: execute the actual actor resolver
+ * with an inert users lookup, not a regex-only source assertion. Distinct
+ * signed64 owner strings must never alias via JavaScript Number into a
+ * different person's approved Vault/browser task or WhatsApp result.
+ * No browser, phone, account, network or real database is touched.
+ */
+const approvedWorkerSource = readFileSync('lib/agent/approved-browser-worker.ts', 'utf8')
+const browserActorBegin = approvedWorkerSource.indexOf('export async function actorForTelegramId(')
+const browserActorEnd = approvedWorkerSource.indexOf('/** Claim one queued', browserActorBegin)
+assert.ok(browserActorBegin >= 0 && browserActorEnd > browserActorBegin, 'actual approved-browser actor resolver boundaries')
+const browserActorJs = ts.transpileModule(approvedWorkerSource.slice(browserActorBegin, browserActorEnd), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText
+
+// Evaluate the real canonical owner helper with inert node:crypto support.
+const exactOwnerExports: any = {}
+runInNewContext(ts.transpileModule(readFileSync('lib/dashboard/owner-identity.ts', 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, {
+  exports: exactOwnerExports, Buffer, BigInt,
+  require: (name: string) => {
+    assert.equal(name, 'node:crypto')
+    return { randomBytes: () => { throw Error('fixture must not allocate owner identity') } }
+  },
+})
+assert.equal(exactOwnerExports.exactSessionOwnerId('9007199254740993'), '9007199254740993')
+
+function inertApprovedBrowserActor(row: any) {
+  const lookups: Array<[string, unknown]> = []
+  const db = {
+    from(table: string) {
+      assert.equal(table, 'users', 'actor resolver may only query users')
+      const query: any = {
+        select(_columns: string) { return query },
+        eq(field: string, value: unknown) { lookups.push([field, value]); return query },
+        maybeSingle: async () => ({ data: row, error: null }),
+      }
+      return query
+    },
+  }
+  const actorExports: any = {}
+  runInNewContext(browserActorJs, {
+    exports: actorExports, supabaseAdmin: db,
+    exactSessionOwnerId: exactOwnerExports.exactSessionOwnerId,
+    console,
+  })
+  return {
+    resolve: actorExports.actorForTelegramId as (owner: string) => Promise<any>,
+    lookups,
+  }
+}
+const browserSafeActor = inertApprovedBrowserActor({
+  id: 'fixture-user-42', telegram_id: '42', whatsapp_id: 'whatsapp:+15550000042', name: 'Owner 42',
+})
+const browserSafeResult = await browserSafeActor.resolve('42')
+assert.equal(browserSafeResult?.userId, 'fixture-user-42')
+assert.equal(browserSafeResult?.legacyTelegramId, 42)
+assert.equal(browserSafeResult?.whatsappId, 'whatsapp:+15550000042')
+assert.equal(browserSafeActor.lookups.length, 1)
+assert.equal(browserSafeActor.lookups[0][0], 'telegram_id')
+assert.equal(browserSafeActor.lookups[0][1], '42', 'SQL owner lookup must bind the original exact decimal string')
+
+const browserRoundedNeighbor = inertApprovedBrowserActor({
+  id: 'other-person', telegram_id: '9007199254740992', whatsapp_id: 'whatsapp:+15550000043', name: 'Not owner',
+})
+assert.equal(await browserRoundedNeighbor.resolve('9007199254740993'), null, 'rounded neighbour must not receive the actor')
+assert.equal(browserRoundedNeighbor.lookups.length, 0, 'unsafe numeric owner must fail BEFORE privileged query')
+
+const browserRoundedSource = inertApprovedBrowserActor({
+  id: 'other-person', telegram_id: 9007199254740992, whatsapp_id: 'whatsapp:+15550000043', name: 'Not owner',
+})
+assert.equal(await browserRoundedSource.resolve('9007199254740992'), null, 'unsafe numeric source must not be trusted')
+assert.equal(browserRoundedSource.lookups.length, 0)
+
+const browserWrongRow = inertApprovedBrowserActor({
+  id: 'other-person', telegram_id: '43', whatsapp_id: 'whatsapp:+15550000043', name: 'Not owner',
+})
+assert.equal(await browserWrongRow.resolve('42'), null, 'malformed/incorrect DB result must not cross-bind a person')
+assert.equal(browserWrongRow.lookups.length, 1)
+
+const browserNoncanonical = inertApprovedBrowserActor({
+  id: 'owner-42', telegram_id: '42', whatsapp_id: 'whatsapp:+15550000042',
+})
+assert.equal(await browserNoncanonical.resolve('00042'), null, 'noncanonical owner ID must fail closed')
+assert.equal(browserNoncanonical.lookups.length, 0)
+
+const browserNegative = inertApprovedBrowserActor({
+  id: 'owner-negative', telegram_id: '-2251799813685249', whatsapp_id: 'whatsapp:+15550000044',
+})
+assert.equal((await browserNegative.resolve('-2251799813685249'))?.userId, 'owner-negative',
+  'valid allocated negative WhatsApp owner identity must remain supported')
+console.log('PASS: approved-browser actor exact owner identity; rounded neighbour, wrong row, and noncanonical IDs fail before browser/notification')
