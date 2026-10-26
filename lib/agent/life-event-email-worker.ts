@@ -92,23 +92,41 @@ export function buildBoardingPassSearchTexts(event: any, action: any) {
   ].map((parts) => parts.join(' ')).filter((value, index, all) => all.indexOf(value) === index)
 }
 
+
+// Gmail and token-backed reads still consume a legacy numeric AgentActor.
+// Until that contract is lossless for signed64 owners, reject unsafe/rounded IDs
+// BEFORE claiming an email watch, reading a flight, or selecting a mailbox.
+function exactEmailWatchOwner(value: unknown): { id: string; legacyId: number } | null {
+  if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'bigint') return null
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
+  const id = String(value)
+  if (!/^-?[1-9]\d*$/.test(id)) return null
+  const legacyId = Number(id)
+  if (!Number.isSafeInteger(legacyId) || String(legacyId) !== id) return null
+  return { id, legacyId }
+}
+
 async function resolveActor(telegramId: string): Promise<AgentActor> {
+  const owner = exactEmailWatchOwner(telegramId)
+  if (!owner) throw new Error('life_event_email_owner_invalid')
   const { data, error } = await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name,gmail_connected')
-    .eq('telegram_id', Number(telegramId))
+    .eq('telegram_id', owner.id)
     .maybeSingle()
   if (error) throw new Error(`life_event_email_actor_lookup_failed:${error.message}`)
   if (!data?.id || !data?.telegram_id) throw new Error('life_event_email_actor_missing')
+  const persisted = exactEmailWatchOwner(data.telegram_id)
+  if (!persisted || persisted.id !== owner.id) throw new Error('life_event_email_actor_owner_mismatch')
   if (!data.gmail_connected) throw new Error('workspace_not_connected')
-  return { userId: String(data.id), legacyTelegramId: Number(data.telegram_id), whatsappId: String(data.whatsapp_id || ''), name: String(data.name || 'Gogo') }
+  return { userId: String(data.id), legacyTelegramId: owner.legacyId, whatsappId: String(data.whatsapp_id || ''), name: String(data.name || 'Gogo') }
 }
 
-async function claimAction(action: any, now: Date) {
+async function claimAction(action: any, now: Date, owner: string) {
   const leaseUntil = plusMinutes(now, EMAIL_WATCH_LEASE_MINUTES)
   const expectedStatus = String(action.status || 'ready')
   let query = supabaseAdmin.from('life_event_actions')
     .update({ status: 'running', updated_at: now.toISOString(), payload_json: { ...(action.payload_json || {}), emailWatchLeaseUntil: leaseUntil } })
-    .eq('id', action.id).eq('status', expectedStatus)
+    .eq('id', action.id).eq('telegram_id', owner).eq('status', expectedStatus)
   if (expectedStatus === 'running' && action.updated_at) query = query.eq('updated_at', action.updated_at)
   const { data, error } = await query.select('id').maybeSingle()
   if (error) throw new Error(`life_event_email_claim_failed:${error.message}`)
@@ -210,15 +228,21 @@ export async function processDueLifeEventEmailWatches(limit = 10) {
   let checked = 0, claimed = 0, matched = 0, deferred = 0, completed = 0, failed = 0
   for (const action of rows) {
     checked++
-    if (!(await claimAction(action, now))) continue
+    const owner = exactEmailWatchOwner(action.telegram_id)
+    if (!owner) {
+      failed++
+      console.error('LIFE_EVENT_EMAIL_OWNER_INVALID', action.id)
+      continue
+    }
+    if (!(await claimAction(action, now, owner.id))) continue
     claimed++
     try {
-      const { data: event, error } = await supabaseAdmin.from('life_events').select('id,telegram_id,event_type,subtype,title,provider,start_at,confirmation_ref,lifecycle_state,metadata_json,source_refs').eq('id', action.life_event_id).eq('telegram_id', String(action.telegram_id)).maybeSingle()
+      const { data: event, error } = await supabaseAdmin.from('life_events').select('id,telegram_id,event_type,subtype,title,provider,start_at,confirmation_ref,lifecycle_state,metadata_json,source_refs').eq('id', action.life_event_id).eq('telegram_id', owner.id).maybeSingle()
       if (error) throw new Error(`life_event_email_event_read_failed:${error.message}`)
       if (!event) throw new Error('life_event_email_event_missing')
       assertBoardingPassSchedule(action,event)
       if (event.event_type !== 'travel' || event.subtype !== 'flight' || action.action_key !== 'watch-boarding-pass-email') { await completeAction(action, { skippedReason: 'unsupported_email_watch' }); completed++; continue }
-      const result = await processBoardingPassWatch(action, event, String(action.telegram_id))
+      const result = await processBoardingPassWatch(action, event, owner.id)
       if (result.status === 'completed') { completed++; if (result.matched) matched++ } else deferred++
     } catch (error: any) {
       failed++
