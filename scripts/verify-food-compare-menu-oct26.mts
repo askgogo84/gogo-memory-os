@@ -1,4 +1,5 @@
 // 26 Oct live: "Compare chicken biryani at Meghana Foods on Swiggy and Zomato for 560086" ran as a product
+import './verify-comparison-no-login-oct26.mts'
 // comparison (home pages, Swiggy asked for a location, Zomato "browser busy", iPhone-style closing line).
 import assert from 'node:assert/strict'
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'; process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
@@ -41,7 +42,9 @@ assert.match(m.comparisonObjective(task, 'zomato'), /On Zomato/)
 
 // Evidence: the dish line gives one price; another dish or an unrelated money figure does not.
 const ev = 'Chicken Dum Biryani (Boneless) — ₹389\nMeghana Foods, Rajajinagar\nFree delivery above ₹199'
-assert.deepEqual(m.foodQuote(live.subject, ev), {dish: 'Chicken Dum Biryani (Boneless)', price: '₹389'})
+assert.deepEqual(m.foodQuote(live.subject, ev), {dish: 'Chicken Dum Biryani (Boneless)', price: '₹389', outlet: 'Meghana Foods, Rajajinagar'})
+// Live Zomato evidence (26 Oct 23:45): price on the dish line, outlet on the next.
+assert.deepEqual(m.foodQuote(live.subject, 'Chicken Biryani ₹365\nMeghana Foods, Kanakapura Road'), {dish: 'Chicken Biryani', price: '₹365', outlet: 'Meghana Foods, Kanakapura Road'})
 assert.equal(m.foodQuote(live.subject, 'Mutton Biryani — ₹450\nMeghana Foods'), null)
 assert.equal(m.foodQuote(live.subject, 'Chicken Biryani — ₹389 or ₹420 for family pack'), null)
 const done = (summary: string) => m.providerObservation('zomato', {id: 'c', status: 'completed', updated_at: new Date().toISOString()},
@@ -54,8 +57,15 @@ const summary = m.comparisonWhatsAppSummary({...task, metadata_json: {...task.me
   {provider: 'swiggy', status: 'observed', sourceUrl: 'https://www.swiggy.com/restaurants/meghana-foods-rajajinagar-bangalore-48219', evidence: 'Chicken Dum Biryani (Boneless) — ₹410\nMeghana Foods', checkedAt: new Date().toISOString()},
   {provider: 'zomato', status: 'observed', sourceUrl: 'https://www.zomato.com/bangalore/meghana-foods-rajajinagar-bangalore/order', evidence: ev, checkedAt: new Date().toISOString()},
 ]}})
-assert.match(summary, /\*Swiggy\*: ₹410/); assert.match(summary, /\*Zomato\*: ₹389/)
+assert.match(summary, /\*Swiggy\*: ₹410/); assert.match(summary, /\*Zomato\*: ₹389\n  Chicken Dum Biryani \(Boneless\) · Meghana Foods, Rajajinagar/)
 assert.match(summary, /Lowest listed price: Zomato, ₹389\./)
 assert.match(summary, /delivery fee, packaging, surge and coupons/)
 assert.doesNotMatch(summary, /iPhone/)
 console.log('Food menu comparison passed')
+{
+  const {browserPageAllowlist} = await import('../lib/agent/browser-page-network')
+  const zomato = browserPageAllowlist('https://www.zomato.com/bangalore/meghana-foods-kanakapura-road-bangalore/order')
+  assert.ok('api.zomato.com' in zomato && 'jumbo.zomato.com' in zomato, 'Zomato menu data hosts are reachable')
+  assert.ok(!('accounts.google.com' in zomato), 'no extra sign-in hosts')
+  console.log('Zomato menu hosts passed')
+}
