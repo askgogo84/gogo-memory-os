@@ -21,39 +21,70 @@ function bearerFrom(request: Request): string | null {
 export async function resolveMobileActor(request: Request): Promise<MobileActor | null> {
   const token = bearerFrom(request)
   if (!token || token.length < 32) return null
-  const now = new Date().toISOString()
+  try {
+    const now = new Date().toISOString()
 
-  const { data: session, error } = await supabaseAdmin
-    .from('mobile_sessions')
-    .select('id, user_id, platform, expires_at, revoked_at')
-    .eq('session_token_hash', sha256(token))
-    .is('revoked_at', null)
-    .gt('expires_at', now)
-    .maybeSingle()
+    const { data: session, error } = await supabaseAdmin
+      .from('mobile_sessions')
+      .select('id, user_id, platform, expires_at, revoked_at')
+      .eq('session_token_hash', sha256(token))
+      .is('revoked_at', null)
+      .gt('expires_at', now)
+      .maybeSingle()
 
-  if (error || !session?.user_id) return null
+    if (error || !session || !exactStoredId(session.id) || !exactStoredId(session.user_id)) return null
+    if (session.revoked_at !== null || (session.platform !== 'ios' && session.platform !== 'android')) return null
+    const expiresMs = typeof session.expires_at === 'string' ? Date.parse(session.expires_at) : NaN
+    if (!Number.isFinite(expiresMs) || expiresMs <= Date.now()) return null
 
-  const { data: user, error: userError } = await supabaseAdmin
-    .from('users')
-    .select('id, telegram_id, whatsapp_id, name')
-    .eq('id', session.user_id)
-    .maybeSingle()
+    const { data: user, error: userError } = await supabaseAdmin
+      .from('users')
+      .select('id, telegram_id, whatsapp_id, name, access_status')
+      .eq('id', session.user_id)
+      .maybeSingle()
 
-  if (userError || !user?.id || !user?.whatsapp_id || !Number.isFinite(Number(user.telegram_id))) return null
+    if (userError || !user || user.id !== session.user_id || !exactStoredId(user.whatsapp_id)) return null
+    if (user.access_status !== 'active' && user.access_status !== null) return null
+    const legacyTelegramId = exactMobileOwnerId(user.telegram_id)
+    if (legacyTelegramId === null) return null
 
-  // Best effort only. Authentication must not fail because last_seen could not update.
-  supabaseAdmin.from('mobile_sessions').update({ last_seen_at: now }).eq('id', session.id).then(({ error: touchError }) => {
-    if (touchError) console.error('MOBILE_SESSION_TOUCH_FAILED:', touchError.message)
-  })
+    // Best effort only. Authentication must not fail because last_seen could not update.
+    void (async () => {
+      try {
+        const { error: touchError } = await supabaseAdmin.from('mobile_sessions')
+          .update({ last_seen_at: now }).eq('id', session.id).eq('user_id', session.user_id)
+          .eq('session_token_hash', sha256(token)).is('revoked_at', null).gt('expires_at', now)
+        if (touchError) console.error('MOBILE_SESSION_TOUCH_FAILED:', touchError.code)
+      } catch {
+        console.error('MOBILE_SESSION_TOUCH_FAILED')
+      }
+    })()
 
-  return {
-    userId: String(user.id),
-    legacyTelegramId: Number(user.telegram_id),
-    whatsappId: String(user.whatsapp_id),
-    name: user.name || 'Gogo',
-    platform: session.platform as 'ios' | 'android',
-    mobileSessionId: String(session.id),
+    return {
+      userId: String(user.id),
+      legacyTelegramId,
+      whatsappId: String(user.whatsapp_id),
+      name: user.name || 'Gogo',
+      platform: session.platform as 'ios' | 'android',
+      mobileSessionId: String(session.id),
+    }
+  } catch {
+    // An unreadable bearer session/current owner is not authorization evidence.
+    return null
   }
+}
+
+function exactStoredId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.trim() === value
+}
+
+// The downstream actor contract is numeric. Deny identities it cannot carry losslessly.
+function exactMobileOwnerId(value: unknown): number | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null
+  const raw = String(value)
+  if (!/^-?[1-9]\d*$/.test(raw)) return null
+  const owner = Number(raw)
+  return Number.isSafeInteger(owner) ? owner : null
 }
 
 export async function revokeMobileSession(request: Request): Promise<boolean> {
