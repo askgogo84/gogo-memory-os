@@ -496,13 +496,15 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     // ineligible, so it never ran in production. Try the stateless observer once first; the kept-alive browser keeps
     // every fallback, handoff and sign-in path. Both share one read budget. No Vault, handoff or account flow here.
     const comparisonObscuraAllowed=process.env.GOGO_OBSCURA_PUBLIC_READ==='1'&&params.mode==='read'
-      &&Boolean(runMetadata.comparison_parent_id)&&!runMetadata.handoff&&!params.command.vaultCredentialId
+      &&Boolean(runMetadata.comparison_parent_id)&&!resumePage&&!runMetadata.handoff&&!params.command.vaultCredentialId
       &&!params.bookingOtp&&!params.loginCode&&!reconciledResult&&!accountCreation&&!providerBooking&&!publicResult
     const comparisonReadDeadline=comparisonObscuraAllowed?Date.now()+180_000:undefined
     const comparisonResult=comparisonObscuraAllowed
       ?await tryObscuraBrowserRead({userId:params.actor.userId,url:params.command.url,
           objective:params.command.objective,mode:'read'},comparisonReadDeadline)
       :null
+    // The stateless observer cannot enter the comparison delivery PIN, so its evidence is the listed price only.
+    if(comparisonResult)comparisonResult.summary=`${comparisonResult.summary} (Listed price; your delivery PIN was not applied on this read.)`
     const fallbackReadDeadline=publicReadDeadline||comparisonReadDeadline
     const result=reconciledResult||publicResult||comparisonResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,runId:params.runId,accountCreation,
       ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),...(params.loginCode?{loginCode:params.loginCode}:{}),...(vaultAccountRead&&indianMobileFromWhatsApp(params.actor.whatsappId)?{phoneLogin:{number:indianMobileFromWhatsApp(params.actor.whatsappId)!,telegramId:String(tg)}}:{}),url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(fallbackReadDeadline?{readDeadline:fallbackReadDeadline}:{}),...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})

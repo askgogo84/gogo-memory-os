@@ -14,7 +14,7 @@ const cmd = readFileSync(new URL('../lib/agent/browser-command.ts', import.meta.
 const gate = cmd.match(/const comparisonObscuraAllowed=([\s\S]*?)\n\s*const comparisonReadDeadline/)?.[1] || ''
 assert.ok(gate, 'comparison Obscura gate exists')
 for (const need of [
-  "process.env.GOGO_OBSCURA_PUBLIC_READ==='1'", "params.mode==='read'", 'Boolean(runMetadata.comparison_parent_id)',
+  "process.env.GOGO_OBSCURA_PUBLIC_READ==='1'", "params.mode==='read'", 'Boolean(runMetadata.comparison_parent_id)', '!resumePage',
   '!runMetadata.handoff', '!params.command.vaultCredentialId', '!params.bookingOtp', '!params.loginCode',
   '!reconciledResult', '!accountCreation', '!providerBooking', '!publicResult',
 ]) assert.ok(gate.includes(need), `gate requires ${need}`)
@@ -22,6 +22,10 @@ assert.doesNotMatch(gate, /commerce_parent_id/, 'single-store commerce (checkout
 assert.match(cmd, /reconciledResult\|\|publicResult\|\|comparisonResult\|\|await runSecureBrowser\(/, 'Chromium stays the fallback')
 assert.match(cmd, /fallbackReadDeadline=publicReadDeadline\|\|comparisonReadDeadline/, 'Obscura and the fallback share one read budget')
 assert.match(cmd, /readDeadline:fallbackReadDeadline/)
+// Review: a resumed read deletes runMetadata.handoff before this point, so the gate must also check resumePage
+// (computed before the delete) or a Take Control → Resume would be read statelessly without the person's changes.
+assert.ok(cmd.indexOf('const resumePage=') < cmd.indexOf('delete runMetadata.handoff'), 'resumePage is computed before the handoff is released')
+assert.match(cmd, /if\(comparisonResult\)comparisonResult\.summary=`\$\{comparisonResult\.summary\} \(Listed price; your delivery PIN was not applied on this read\.\)`/, 'Obscura evidence never implies the PIN was applied')
 
 // ── 2. tryObscuraBrowserRead reports each outcome, with no page content or identifiers ──
 const sc = await import('../lib/agent/secure-computer')
@@ -31,8 +35,12 @@ console.log = (...a: any[]) => { logs.push(a.map(String).join(' ')) }
 try {
   process.env.GOGO_OBSCURA_PUBLIC_READ = '1'
   process.env.GOGO_OBSCURA_PILOT_HOSTS = 'www.flipkart.com'
-  // Not in the pilot host list → ineligible, logged.
+  // Not a pilot host → silent (every ordinary read passes through here).
   assert.equal(await sc.tryObscuraBrowserRead({ userId: 'u-secret', url: 'https://www.amazon.in/dp/X?q=secret', objective: 'price secret', mode: 'read' } as any), null)
+  // Pilot host but a kept-alive fallback → silent (it follows an attempt already logged).
+  assert.equal(await sc.tryObscuraBrowserRead({ userId: 'u', url: 'https://www.flipkart.com/p/1', objective: 'o', mode: 'read', keepAlive: true } as any), null)
+  // Pilot host turned away for a Vault login → ineligible, logged.
+  assert.equal(await sc.tryObscuraBrowserRead({ userId: 'u-secret', url: 'https://www.flipkart.com/account?q=secret', objective: 'price secret', mode: 'read', vaultCredentialId: 'v' } as any), null)
   // Too little budget → no_budget, logged.
   assert.equal(await sc.tryObscuraBrowserRead({ userId: 'u-secret', url: 'https://www.flipkart.com/p/1', objective: 'o', mode: 'read' } as any, Date.now() + 10_000), null)
   // Flag off → silent.
@@ -42,12 +50,13 @@ try {
 const lines = logs.filter(l => l.startsWith('OBSCURA_READ:'))
 assert.equal(lines.length, 2, 'one line per attempt while enabled; none when off')
 const parsed = lines.map(l => JSON.parse(l.slice('OBSCURA_READ:'.length)))
-assert.deepEqual(parsed.map(p => [p.host, p.outcome]), [['www.amazon.in', 'ineligible'], ['www.flipkart.com', 'no_budget']])
+assert.deepEqual(parsed.map(p => [p.host, p.outcome]), [['www.flipkart.com', 'ineligible'], ['www.flipkart.com', 'no_budget']])
 for (const p of parsed) assert.deepEqual(Object.keys(p).sort(), ['host', 'ms', 'outcome'])
-assert.ok(!lines.join('').match(/secret|\/dp\/|u-secret/), 'no path, query, objective or user id in logs')
+assert.ok(!lines.join('').match(/secret|\/dp\/|account|u-secret/), 'no path, query, objective or user id in logs')
 const src = readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
 for (const o of ["'gated'", "'unverified'", "'used'", "'no_candidate'"]) assert.ok(src.includes(o), `outcome ${o} reported`)
-assert.match(src, /failure='no_candidate:'\+String\(error\?\.message/, 'the runtime error code reaches the log')
+assert.match(src, /failure='no_candidate:'\+\(\/\^\(\?:obscura_\[a-z_\]\{3,40\}\|browser_read_deadline\)\$\/\.test\(m\)\?m:'error'\)/, 'only known error codes reach the log')
+assert.match(src, /withinReadBudget\(readDeadline-90_000,\(\)=>assessReadOutcome/, 'the assessor also leaves the fallback 90s')
 
 // ── 3. Places: a provider place id is an exact Maps source ──
 const places = await import('../lib/agent/places-search')

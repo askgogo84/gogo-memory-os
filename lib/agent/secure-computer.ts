@@ -2123,16 +2123,27 @@ export async function tryObscuraBrowserRead(
   // protected action, human takeover or persistent browser is routed here.
   // A valid page still MUST pass the existing evidence-grounded assessor;
   // missing/misleading evidence falls back to the existing secure browser.
-  if (!(typeof obscuraPilotEligible === 'function' && obscuraPilotEligible(params))) { report('ineligible'); return null }
+  if (!(typeof obscuraPilotEligible === 'function' && obscuraPilotEligible(params))) {
+    // Only a pilot host that was turned away is worth a line; kept-alive fallbacks after an attempt are not.
+    const pilot=String(process.env.GOGO_OBSCURA_PILOT_HOSTS||'').split(',').map(h=>h.trim().toLowerCase()).includes(host.toLowerCase())
+    if (pilot && !params.keepAlive) report('ineligible')
+    return null
+  }
   const pilotDeadline=Math.min(Date.now()+75_000,readDeadline-90_000)
   let failure='no_candidate'
   const candidate = await withinReadBudget(pilotDeadline,()=>tryObscuraPublicRead(params))
-    .catch((error:any) => { failure='no_candidate:'+String(error?.message||'error').replace(/[^a-z0-9_:]/gi,'_').slice(0,60); return null })
+    .catch((error:any) => {
+      // Known codes only; never free-form SDK text (it can carry hosts or paths).
+      const m=String(error?.message||'')
+      failure='no_candidate:'+(/^(?:obscura_[a-z_]{3,40}|browser_read_deadline)$/.test(m)?m:'error')
+      return null
+    })
   if (!candidate) { report(failure); return null }
   const page = {url:candidate.url,title:candidate.title,text:candidate.text,
     forms:candidate.forms,links:[],controls:[],actions:[]}
   if (detectHumanAuthGate(page).required || detectProviderAccessBlock(page) || needsBrowserDeliveryLocation(page)) { report('gated'); return null }
-  const verified = await withinReadBudget(readDeadline,()=>assessReadOutcome(params.objective,page)).catch(() => null)
+  // The assessor must also leave the trusted fallback its 90s.
+  const verified = await withinReadBudget(readDeadline-90_000,()=>assessReadOutcome(params.objective,page)).catch(() => null)
   if (!verified) { report('unverified'); return null }
   report('used')
   return {
