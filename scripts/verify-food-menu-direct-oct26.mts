@@ -41,3 +41,4 @@ const answer = await sc.assessReadOutcome(swiggyObjective, {url: 'https://www.sw
 assert.ok(answer && /Chicken Boneless Biryani\. This item is a Bestseller, Costs: 375 rupees/.test(String(answer)), String(answer))
 console.log('Food menu direct read and nearest outlet passed')
 await import('./verify-booking-edge-blocked-oct27.mts')
+await import('./verify-flight-rows-direct-oct27.mts')

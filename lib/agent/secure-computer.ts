@@ -2034,6 +2034,15 @@ export async function assessReadOutcome(objective:string,page:any,diagnose:(even
   // A store price read ("Find the listed price of this product on Croma: …") on a page whose product name matches
   // the requested model reads the first price after that name directly. The evidence is still exact page text, and
   // the comparison's own strict price check decides whether it is one clear item price.
+  // 27 Oct live (BLR→DEL 6 Nov): 54 result rows were observed, yet the model's ten quotes failed the exact-substring
+  // check twice and the whole read was thrown away. Google's row labels are exact page observations, and the travel
+  // task re-checks route, airports and date on each one, so a flight-rows read answers with those labels directly.
+  if(/^Read actual flight rows\b/i.test(objective)&&flightLabels.some(l=>/^From [\d,]+ Indian rupees/i.test(l))){
+    const rows:string[]=[];let total=0
+    for(const label of flightLabels.filter(l=>/^From [\d,]+ Indian rupees/i.test(l)).map(l=>safeText(l,1200))){if(total+label.length+1>1700)break;rows.push(label);total+=label.length+1}
+    const direct=rows.length?verifiedBrowserAnswer({complete:true,evidence:rows},pageText,title):null
+    if(direct){diagnose({phase:'assessment',reason:'verified',evidenceCount:rows.length,pageChars:pageText.length});return direct}
+  }
   const food=foodMenuEvidence(objective,pageText)
   if(food){
     const direct=verifiedBrowserAnswer({complete:true,evidence:food},pageText,title)||verifiedBrowserAnswer({complete:true,evidence:food},pageText.replace(/[ \t]+/g,' '),title)
