@@ -38,7 +38,7 @@ type ContextMeta={
 // before service-role reads or contextual watcher writes.
 function exactTravelOwner(value:unknown):string|null{
   if(typeof value==='number')return Number.isSafeInteger(value)&&value!==0?String(value):null
-  if(typeof value!=='string'||! /^-?[1-9]\\d*$/.test(value))return null
+  if(typeof value!=='string'||! /^-?[1-9]\d*$/.test(value))return null
   return value
 }
 function requireTravelOwner(value:unknown):string{
