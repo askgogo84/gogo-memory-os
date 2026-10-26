@@ -28,8 +28,8 @@ const db={from(table:string){let update:any,insert:any,single=false;const filter
   update(v:any){update=v;return b},insert(v:any){insert=v;return b},maybeSingle(){single=true;return b},single(){single=true;return b},
   then(resolve:any,reject:any){return Promise.resolve().then(()=>{
     if(table==='travel_tickets')return {data:rows,error:null}
-    if(table==='memories')return {data:home?[{content:'My home city is Bengaluru'}]:[],error:null}
-    if(table==='users')return {data:{gmail_connected:false},error:null}
+    if(table==='memories')return {data:home?[{telegram_id:123,content:'My home city is Bengaluru'}]:[],error:null}
+    if(table==='users')return {data:{telegram_id:123,gmail_connected:false},error:null}
     if(table!=='agent_watchers')return {data:[],error:null}
     const matches=stored.filter(r=>filters.every(f=>f(r)))
     if(update&&update.active===false&&rejectRetire)return {data:null,error:{message:'fixture retirement failed'}}
