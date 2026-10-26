@@ -35,7 +35,7 @@ async function resolveActor(telegramId: string): Promise<AgentActor> {
     throw new Error('life_event_actor_unsafe_owner')
   }
   const owner = BigInt(telegramId)
-  if (owner === 0n || owner > BigInt(Number.MAX_SAFE_INTEGER) || owner < BigInt(Number.MIN_SAFE_INTEGER)) {
+  if (owner === BigInt(0) || owner > BigInt(Number.MAX_SAFE_INTEGER) || owner < BigInt(Number.MIN_SAFE_INTEGER)) {
     throw new Error('life_event_actor_unsafe_owner')
   }
   const { data, error } = await supabaseAdmin.from('users')
