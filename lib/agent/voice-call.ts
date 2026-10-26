@@ -338,6 +338,18 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
 
 // ---- cron: read finished calls and report ----------------------------------------------------------------------
 
+// A signed 64-bit persisted owner may not fit AgentActor's legacy numeric id.
+// Never round a user's identity when selecting the recipient of a private call
+// result, writing their conversation, or scheduling their booking reminder.
+// If PostgreSQL already returned an unsafe JS number, fail closed.
+function exactVoiceCallOwner(value: unknown): string | null {
+  if (typeof value === 'number')
+    return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  if (typeof value !== 'string' || !/^-?[1-9]\\d*$/.test(value)) return null
+  const numeric = Number(value)
+  return Number.isSafeInteger(numeric) && String(numeric) === value ? value : null
+}
+
 /** A venue's yes on the call becomes a booking in My bookings plus a 2-hour reminder (approved mock). */
 async function recordPhoneBooking(telegramId: string, executionId: string, plan: CallPlan, outcome: CallOutcome): Promise<{ saved: boolean; reminderScheduled: boolean }> {
   const startAt = bookedStartAt(plan, outcome)
@@ -358,7 +370,7 @@ async function recordPhoneBooking(telegramId: string, executionId: string, plan:
   if (remindAt > Date.now()) {
     // Existing reminder PK makes interrupted/concurrent result persistence idempotent.
     const reminderId = voiceAttemptId(telegramId, { createdAt: executionId, purpose: 'phone-booking-reminder' }, 0)
-    const { error: reminderError } = await supabaseAdmin.from('reminders').upsert({ id: reminderId, telegram_id: Number(telegramId), chat_id: Number(telegramId), message: `Table at ${plan.venue} in 2 hours (${plan.partySize || 2} guests, under ${plan.guestName}).`, remind_at: new Date(remindAt).toISOString(), sent: false, timezone: 'Asia/Kolkata' }, { onConflict: 'id', ignoreDuplicates: true })
+    const { error: reminderError } = await supabaseAdmin.from('reminders').upsert({ id: reminderId, telegram_id: telegramId, chat_id: telegramId, message: `Table at ${plan.venue} in 2 hours (${plan.partySize || 2} guests, under ${plan.guestName}).`, remind_at: new Date(remindAt).toISOString(), sent: false, timezone: 'Asia/Kolkata' }, { onConflict: 'id', ignoreDuplicates: true })
     if (reminderError) return { saved: true, reminderScheduled: false }
     reminderScheduled = true
   }
@@ -369,6 +381,13 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
   const { data: runs } = await supabaseAdmin.from('agent_runs').select('id,telegram_id,metadata_json,started_at').eq('type', 'voice_call').eq('status', 'running').limit(10)
   let done = 0
   for (const run of (runs || []) as any[]) {
+    const owner = exactVoiceCallOwner(run.telegram_id)
+    if (!owner) {
+      // No provider status poll, DB result claim, recipient lookup, send or
+      // reminder for a rounded/noncanonical owner. Do not retry the call.
+      console.error('VOICE_CALL_RESULT_OWNER_IMPRECISE:', String(run.id || ''))
+      continue
+    }
     const meta = run.metadata_json || {}
     const plan: CallPlan = meta.plan
     if (!meta.execution_id || meta.result_claim) {
@@ -405,16 +424,21 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
       }
     }
     let saved = { saved: false, reminderScheduled: false }
-    if (status === 'completed' && outcome?.booked && !plan.test) saved = await recordPhoneBooking(String(run.telegram_id), String(meta.execution_id), plan, outcome).catch((err: any) => { console.error('VOICE_CALL_RECORD_FAILED:', run.id, String(err?.message || err).slice(0, 160)); return { saved: false, reminderScheduled: false } })
+    if (status === 'completed' && outcome?.booked && !plan.test) saved = await recordPhoneBooking(owner, String(meta.execution_id), plan, outcome).catch((err: any) => { console.error('VOICE_CALL_RECORD_FAILED:', run.id, String(err?.message || err).slice(0, 160)); return { saved: false, reminderScheduled: false } })
     const outcomeUncertain = !TERMINAL.has(status) || (status !== 'completed' && Boolean(transcript.trim()))
     const text = !outcomeUncertain ? callResultText(plan, status, outcome, transcript.split('\n').filter(Boolean).slice(-1)[0]?.slice(0, 160) || '', saved.saved, saved.reminderScheduled) : `I couldn't confirm the outcome of the call to ${plan.venue}. I haven't repeated it. Check the task before trying again.`
     const at = new Date().toISOString()
     const { data: finalized, error: finalizeError } = await supabaseAdmin.from('agent_runs').update({ status: outcomeUncertain ? 'outcome_unknown' : status === 'completed' ? 'completed' : 'failed', progress: 100, summary: text.slice(0, 500), completed_at: at, updated_at: at,
       metadata_json: { ...meta, result_claim: resultClaim, result_claimed_at: new Date().toISOString(), final_status: status, outcome, booking_saved: saved.saved, reminder_scheduled: saved.reminderScheduled, reconciliation_required: outcomeUncertain, recording_url: exec?.telephony_data?.recording_url || null } }).eq('id', run.id).eq('telegram_id', String(run.telegram_id)).eq('status', 'running').eq('metadata_json->>result_claim', resultClaim).select('id').maybeSingle()
     if (finalizeError || !finalized) continue
-    const { data: user } = await supabaseAdmin.from('users').select('whatsapp_id').eq('telegram_id', Number(run.telegram_id)).maybeSingle()
-    try { if (user?.whatsapp_id) await deps.send(String(user.whatsapp_id), text) } catch {}
-    await supabaseAdmin.from('conversations').insert({ telegram_id: Number(run.telegram_id), role: 'assistant', content: text })
+    const { data: user, error: userError } = await supabaseAdmin.from('users')
+      .select('telegram_id,whatsapp_id').eq('telegram_id', owner).maybeSingle()
+    try {
+      // A returned row is not authority without exact owner correspondence.
+      if (!userError && user?.whatsapp_id && exactVoiceCallOwner(user.telegram_id) === owner)
+        await deps.send(String(user.whatsapp_id), text)
+    } catch {}
+    await supabaseAdmin.from('conversations').insert({ telegram_id: owner, role: 'assistant', content: text })
     done++
   }
   return done
