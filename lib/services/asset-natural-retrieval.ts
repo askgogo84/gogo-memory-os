@@ -9,6 +9,8 @@ const RESERVED_RETRIEVAL_RE = /^(?:show|open|find|get|send)(?:\s+me)?\s+(?:my\s+
 // an outside source (Drive, Gmail, inbox, Docs) belongs to that source's reader, never to saved-asset retrieval.
 export const EXTERNAL_SOURCE_RE = /\b(?:(?:in|from|on|inside|of|search|check)\s+(?:my\s+|the\s+)?(?:google\s+)?(?:drive|g-?drive|gmail|inbox|e-?mails?|mail|docs|sheets|dropbox|one\s?drive)|google\s+(?:drive|docs?|sheets?)|drive\s+(?:files?|folders?|docs?))\b/i
 const SENSITIVE_REVEAL_CONFIRM_RE = /^\s*show\s+(?:the\s+)?(?:passport|id|reference)\s*(?:number|no)?\s*[?.!]*$/i
+// Explicit public links belong to web/page readers, not a private saved-asset lookup.
+const WEB_LINK_RE = /\bhttps?:\/\/\S+|\bwww\.[a-z0-9-]+\.[a-z]{2,}/i
 
 // Operational requests must never be stolen by a loose match against an old saved
 // document. This is especially important for booking flows where words such as
@@ -65,7 +67,7 @@ export function shouldAttemptNaturalAssetRetrieval(text: string): boolean {
   if (!raw || !RETRIEVAL_VERB_RE.test(raw) || RESERVED_RETRIEVAL_RE.test(raw) || SENSITIVE_REVEAL_CONFIRM_RE.test(raw) || EXTERNAL_SOURCE_RE.test(raw)) return false
   // 26 Oct live: "Open https://www.croma.com/… read-only and tell me the price and delivery date for my pincode" was
   // answered with a saved loan agreement. A message carrying a web link is about that page, never a saved asset.
-  if (/\bhttps?:\/\/\S+|\bwww\.[a-z0-9-]+\.[a-z]{2,}/i.test(raw)) return false
+  if (WEB_LINK_RE.test(raw)) return false
   // If this is an operational booking/travel/event flow, only permit Asset Memory to
   // claim it when the user explicitly asks for an asset-shaped object (document,
   // passport, receipt, file, etc.). Otherwise the real booking agent owns the turn.
@@ -93,6 +95,9 @@ export async function buildNaturalAssetRetrievalReply(
   messageId?: string | null,
 ): Promise<string | null> {
   const raw = String(text || '').trim()
+  // This builder has a separate contact-intent path: reject public links before any
+  // service-role document lookup or private notes read, even when contact words match.
+  if (WEB_LINK_RE.test(raw)) return null
   // "show passport number" is the explicit confirmation phrase created by the
   // sensitive-field gate. Decline it here so buildAssetFieldReply can consume the
   // one-shot pending binding later in the WhatsApp route.
