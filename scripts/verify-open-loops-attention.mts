@@ -335,3 +335,30 @@ await assert.rejects(()=>inboxModule.__testUserConnection(unsafeNumber),/open_lo
 assert.doesNotMatch(openLoops,/Number\(telegramId\)/,'private owner predicates in this module must never round BIGINT IDs')
 console.log('Open Loops exact owner/privacy fixture: two neighboring BIGINTs, persisted-user mismatch, consent mismatch, unsafe numeric and valid exact owner verified offline')
 
+let scoutCandidate:string|number=unsafeNumber
+const scoutDb={from:(table:string)=>{
+  const q:any={
+    select:()=>q,eq:()=>q,in:()=>q,gte:()=>q,order:()=>q,
+    limit:async()=>({error:null,data:table==='users'
+      ? [{telegram_id:scoutCandidate,whatsapp_id:'whatsapp:+919999999999',gmail_connected:true}]
+      : table==='memories'?[{telegram_id:scoutCandidate}]:[]}),
+    maybeSingle:async()=>({error:null,data:null}),
+    range:async()=>({error:null,data:[]}),
+    update:()=>q,insert:async()=>({error:null}),
+  }
+  return q
+}}
+const scoutModule=loadFixture('lib/agent/open-loops.ts',name=>
+  name==='@/lib/supabase-admin'?{supabaseAdmin:scoutDb}:
+  name==='@/lib/security/google-token-crypto'?{decryptGoogleToken:(value:any)=>value||''}:
+  name==='@/lib/services/google-gmail'?{fetchGmailAttentionThreads:async()=>{throw Error('no real or mock Gmail should be called by scout')},refreshGmailAccessToken:async()=>''}:{}
+)
+const unsafeScout=await scoutModule.processOpenLoopScoutPass(2)
+assert.equal(unsafeScout.considered,0,'scout must reject already rounded numeric BIGINT IDs before String() preserves the wrong owner')
+assert.equal(unsafeScout.processed,0,'no private sync for ambiguous owner')
+scoutCandidate=highOwner
+const exactScout=await scoutModule.processOpenLoopScoutPass(2)
+assert.equal(exactScout.considered,1,'scout must retain canonical exact-string BIGINT owners')
+console.log('Open Loops scout unsafe numeric owner exclusion and valid exact-string candidate verified offline')
+
+
