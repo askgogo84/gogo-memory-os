@@ -17,10 +17,22 @@ const LEASE_MINUTES=8
 
 function safe(value:unknown,max=800){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}
 
+// AgentActor.legacyTelegramId is numeric: no owner outside JS safe integer range
+// can be represented exactly. Reject before service-role lookup or booking claim.
+function exactReservationOwner(value:unknown):string|null{
+  if(typeof value==='number')return Number.isSafeInteger(value)&&value!==0?String(value):null
+  if(typeof value!=='string'||! /^-?[1-9]\\d*$/.test(value))return null
+  const numeric=Number(value)
+  return Number.isSafeInteger(numeric)&&String(numeric)===value?value:null
+}
+
 async function actorFor(telegramId:string):Promise<AgentActor>{
-  const{data,error}=await supabaseAdmin.from('users').select('id,telegram_id,whatsapp_id,name,timezone').eq('telegram_id',Number(telegramId)).maybeSingle()
-  if(error||!data?.id||!data?.telegram_id)throw new Error('restaurant_reservation_actor_missing')
-  return{userId:String(data.id),legacyTelegramId:Number(data.telegram_id),whatsappId:String(data.whatsapp_id||''),name:String(data.name||'Gogo'),timezone:String(data.timezone||'Asia/Kolkata')}
+  const requestedOwner=exactReservationOwner(telegramId)
+  if(!requestedOwner)throw new Error('restaurant_reservation_invalid_owner')
+  const{data,error}=await supabaseAdmin.from('users').select('id,telegram_id,whatsapp_id,name,timezone').eq('telegram_id',requestedOwner).maybeSingle()
+  if(error||!data?.id||data.telegram_id==null)throw new Error('restaurant_reservation_actor_missing')
+  if(exactReservationOwner(data.telegram_id)!==requestedOwner)throw new Error('restaurant_reservation_actor_owner_mismatch')
+  return{userId:String(data.id),legacyTelegramId:Number(requestedOwner),whatsappId:String(data.whatsapp_id||''),name:String(data.name||'Gogo'),timezone:String(data.timezone||'Asia/Kolkata')}
 }
 
 async function browserPermission(telegramId:string):Promise<AgentPermissionLevel>{
@@ -87,7 +99,8 @@ async function failSafe(params:{action:any;event:any;runId:string;approvalId:str
 
 export async function processOne(action:any,reconciledResult?:Awaited<ReturnType<typeof runSecureBrowser>>){
   if(action.payload_json?.providerConfirmationVerified===true)throw new Error('restaurant_reservation_already_confirmed')
-  const tg=String(action.telegram_id)
+  const tg=exactReservationOwner(action.telegram_id)
+  if(!tg)throw new Error('restaurant_reservation_invalid_owner')
   if(!(await claim(action)))return{status:'skipped' as const}
   const{data:event,error:eventError}=await supabaseAdmin.from('life_events').select('id,event_type,subtype,title,provider,timezone,location,lifecycle_state,preferences_json,metadata_json,source_refs').eq('id',action.life_event_id).eq('telegram_id',tg).maybeSingle()
   if(eventError||!event)throw new Error('restaurant_reservation_event_missing')
