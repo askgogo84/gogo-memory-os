@@ -33,15 +33,28 @@ function permanentIntegrationFailure(error: unknown) {
 }
 
 async function resolveActor(telegramId: string): Promise<AgentActor> {
+  // A BIGINT owner must never be rounded into another account before looking
+  // up the user whose private browser or calendar approval would be used.
+  // The downstream AgentActor legacy ID is a number, so fail closed outside
+  // the exactly representable integer range until that contract changes.
+  if (typeof telegramId !== 'string' || !/^-?(?:0|[1-9]\d*)$/.test(telegramId)) {
+    throw new Error('life_event_actor_unsafe_owner')
+  }
+  const owner = BigInt(telegramId)
+  if (owner === BigInt(0) || owner > BigInt(Number.MAX_SAFE_INTEGER) || owner < BigInt(Number.MIN_SAFE_INTEGER)) {
+    throw new Error('life_event_actor_unsafe_owner')
+  }
+
   const { data, error } = await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name')
-    .eq('telegram_id', Number(telegramId))
+    .eq('telegram_id', telegramId)
     .maybeSingle()
   if (error) throw new Error(`life_event_integration_actor_failed:${error.message}`)
-  if (!data?.id || !data?.telegram_id) throw new Error('life_event_actor_missing')
+  if (!data?.id || data.telegram_id === null || data.telegram_id === undefined) throw new Error('life_event_actor_missing')
+  if (String(data.telegram_id) !== telegramId) throw new Error('life_event_actor_owner_mismatch')
   return {
     userId: String(data.id),
-    legacyTelegramId: Number(data.telegram_id),
+    legacyTelegramId: Number(owner),
     whatsappId: String(data.whatsapp_id || ''),
     name: String(data.name || 'Gogo'),
   }
