@@ -838,10 +838,12 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
     // The visible label must be exactly one of these ("Apply"/"Submit" would otherwise read as commit words).
     if(/^(?:continue|apply|submit|check|done|save|confirm location|update)$/.test(visibleText.trim())){
       const box=el.closest?.('[role="dialog"],[aria-modal="true"],form,[class*="modal" i],[class*="popup" i],[class*="location" i],[class*="pincode" i]');
-      const boxText=(box?.textContent||'').toLowerCase();
+      // 26 Oct live Croma: textContent ran words together ("select your locationto check") and "Pincode" was only the
+      // input's placeholder, so spaced text plus the input labels are read.
+      const boxText=box?[String(box.innerText||box.textContent||''),...Array.from(box.querySelectorAll?.('input')||[]).map((i)=>String(i.getAttribute?.('placeholder')||'')+' '+String(i.getAttribute?.('aria-label')||''))].join(' ').toLowerCase():'';
       const pinFilled=!!box&&Array.from(box.querySelectorAll?.('input')||[]).some((i)=>/^[1-9]\d{5}$/.test(String(i.value||'').trim()));
       const risky=!!box&&(box.querySelector?.('input[type="password"]')||/\b(?:card number|cvv|upi|pay now|place order)\b/.test(boxText));
-      if(box&&pinFilled&&!risky&&/\b(?:pin\s*code|pincode|delivery location|select your location|enter your location|delivery address|check delivery)\b/.test(boxText))return false;
+      if(box&&pinFilled&&!risky&&/\b(?:pin\s*code|pincode|delivery location|select your location|enter your location|delivery address|check delivery)/.test(boxText))return false;
     }
     if(consequential)return true;
     if(t==='submit'||(el.tagName==='BUTTON'&&t!=='button')||el.getAttribute('formaction')!==null)return true;

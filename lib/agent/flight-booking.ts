@@ -138,9 +138,10 @@ export function flightBookingObjective(params: { context: any; option: BrowserFl
   const round = isRound(context)
   return safe(`Flight booking up to payment on Google Flights: ${round ? 'round trip' : 'one-way'} ${context.origin?.code} to ${context.destination?.code}, depart ${context.startDate}${round ? `, return ${context.returnDate}` : ''}, ${travellers.length} adult${travellers.length === 1 ? '' : 's'}, ${String(context.cabin || 'economy').replace(/_/g, ' ')}. `
     + `Choose the ${option.airline} result that leaves ${option.departure} on ${context.startDate} (about ${fare} ${round ? 'round trip' : 'one-way'})${round ? `, then the cheapest return on ${context.returnDate}` : ''}, and continue (Select flight, Continue, Book) to the airline or booking site. `
+    + `On the booking options, pick "Continue to book with ${option.airline}" (the airline itself) when it is listed; otherwise MakeMyTrip, Cleartrip, Goibibo, ixigo, EaseMyTrip or Yatra. Never pick any other agency. `
     + `If the site asks for passenger details, use exactly: ${who}. Do not guess any other field; leave it for the person. `
     + `If the price on the booking page is more than 10% above ${fare}, or it is a different flight, stop and report. `
-    + `Stop on the payment step: never pay, never enter card, UPI or bank details, never press Pay.`, 1700)
+    + `Stop on the payment step: never pay, never enter card, UPI or bank details, never press Pay.`, 1800)
 }
 
 const askText = (count: number, problems: string[] = [], domestic = false) =>

@@ -71,7 +71,8 @@ export function senderDomainOf(from: unknown) {
 
 export function senderNameOf(from: unknown) {
   const raw = clean(from, 200)
-  const name = raw.split('<')[0]?.replace(/^["']|["']$/g, '').trim()
+  // 26 Oct live: '"Shubhaam Khurrana (via Google Sheets)" <...>' kept its closing quote (a space sat after it).
+  const name = raw.split('<')[0]?.trim().replace(/^["']|["']$/g, '').trim()
   if (name && !/@/.test(name)) return name.slice(0, 40)
   const email = senderEmailOf(raw)
   const local = email.split('@')[0] || ''
@@ -223,7 +224,8 @@ export function scoreEmail(email: AttentionEmail, ctx: ScoreContext = {}): Score
     if (ctx.repliedSenders?.has(senderEmail)) { score += 0.12; if (reasons.length < 2) reasons.push(`You often reply to ${firstName(senderName)}`) }
     if (email.isUnread) score += 0.04
   } else if (PROBLEM.test(text) && (category === 'order_update' || category === 'update' || category === 'receipt')) {
-    score = 0.62; reasons.push('Something went wrong')
+    // 26 Oct live: a Google Sheets "Spreadsheet shared with you" notice was labelled "Something went wrong".
+    score = 0.62; reasons.push(/\bshared with you\b/i.test(String(email.subject || '')) ? 'Shared a file with you' : 'Something went wrong')
   } else score = category === 'order_update' || category === 'update' ? 0.15 : 0.05
 
   if (rule?.kind === 'always' && score > 0) { score = Math.max(score, 0.7) + 0.1; reasons.unshift(rule.source === 'built_in' ? rule.label : `You flagged ${rule.label}`) }
