@@ -47,6 +47,7 @@ const rejected = [
   `https://attacker.example/?to=${ALIAS}@${DOMAIN}`,
   `foo+${ALIAS}@${DOMAIN}`,                  // not a full alias mailbox
   `other@external.example, ${ALIAS}@${DOMAIN}`, // ambiguous multiple recipients
+  `other@external.example, Display <${ALIAS}@${DOMAIN}>`, // display wrapper cannot hide another recipient
   `<${ALIAS}@${DOMAIN}>, other@external.example`,
   `evil-${ALIAS}@${DOMAIN}`, // not a complete generated alias (embedded substring)
   `${ALIAS}@example.com`,
