@@ -28,7 +28,7 @@ function canonicalSessionOwner(value: unknown): string | null {
   if (typeof value !== 'string' || !/^-?[1-9]\d{0,18}$/.test(value)) return null
   try {
     const owner = BigInt(value)
-    if (owner < -(1n << 63n) || owner > (1n << 63n) - 1n) return null
+    if (owner < BigInt('-9223372036854775808') || owner > BigInt('9223372036854775807')) return null
     return value
   } catch {
     return null
