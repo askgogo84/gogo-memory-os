@@ -171,4 +171,32 @@ await check('failed call with dialogue cannot claim that nothing was booked or p
   assert.equal(h.rows[0].status,'outcome_unknown');assert.equal(h.rows[0].metadata_json.reconciliation_required,true)
   assert.doesNotMatch(sent[0],/Nothing was booked/);assert.match(sent[0],/couldn't confirm/)
 })
+// Conditional tenant-isolation red control: PostgreSQL BIGINT owners 2^53 and
+// 2^53+1 are distinct, but Number(2^53+1) silently selects owner 2^53.
+// Execute the *real* result-worker body with only synthetic persistence/provider.
+await check('adjacent 64-bit voice-call owner can never route private results to another account',async()=>{
+  const h=processHarness('completed')
+  h.rows[0].telegram_id='9007199254740993'
+  h.other.users=[{telegram_id:'9007199254740992',whatsapp_id:'whatsapp:+15550001111'}]
+  const recipients:string[]=[]
+  const count=await h.voice.processVoiceCalls({send:async(to:string)=>{recipients.push(to)}})
+  assert.equal(count,0,'unsafe exact owner must not finalize under a rounded account')
+  assert.deepEqual(recipients,[],'no foreign WhatsApp delivery')
+  assert.equal(h.conversations.length,0,'no cross-tenant conversation insertion')
+  assert.equal(h.rows[0].status,'running','unsafe identity must be quarantined before a result claim')
+  assert.equal(h.other.life_events.length,0)
+  assert.equal(h.other.reminders.length,0)
+})
+await check('malformed voice-call result owner cannot trigger result delivery or side effects',async()=>{
+  for(const id of ['0','00123','+123','Infinity','9007199254740992']){
+    const h=processHarness('completed')
+    h.rows[0].telegram_id=id
+    const recipients:string[]=[]
+    const count=await h.voice.processVoiceCalls({send:async(to:string)=>{recipients.push(to)}})
+    assert.equal(count,0,'invalid owner '+id+' must not finalize')
+    assert.deepEqual(recipients,[])
+    assert.equal(h.conversations.length,0)
+    assert.equal(h.rows[0].status,'running')
+  }
+})
 if (failed) process.exit(1)
