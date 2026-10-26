@@ -841,7 +841,13 @@ export async function runBrowserCommand(params:{actor:AgentActor;surface:AgentSu
   if(!policy.allowed){
     if(command.mode==='execute' && command.approvalAction && (policy.reason==='approval_required'||policy.reason==='auto_not_allowed_for_consequential_action')){
       const approvalId=await approval({actor:params.actor,runId,stepId,command})
-      return {runId,status:'waiting_approval' as const,capability:'browser' as const,risk:'high' as const,text:'I can do this in the secure browser, but I need your approval before the final submit/booking/purchase.',approvalId,approvalRequired:true,handledBy:'secure-browser' as const}
+      // 26 Oct live: the cart approval said only "I need your approval before the final submit/booking/purchase"
+      // with no item or store. Say what Gogo will do, where, and what it will never do.
+      let site='the site';try{site=new URL(command.url).hostname.replace(/^www\./,'')}catch{}
+      const ask=String(command.objective||'').split(/(?<=[.!?])\s/)[0].replace(/\s+/g,' ').trim().slice(0,200)
+      const cart=/\b(?:cart|basket)\b/i.test(command.objective||'')
+      return {runId,status:'waiting_approval' as const,capability:'browser' as const,risk:'high' as const,
+        text:`Ready on ${site}: ${ask}\n\n${cart?'Gogo will add it to your cart in the secure browser and stop there. It never checks out or pays.':'Gogo will do this in the secure browser and stop before any payment.'}\n\nReply *APPROVE* to go ahead or *REJECT* to cancel.`,approvalId,approvalRequired:true,handledBy:'secure-browser' as const}
     }
     await supabaseAdmin.from('agent_runs').update({status:'paused',summary:`Browser blocked by Gogo Safe Mode: ${policy.reason}`,updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',String(tg))
     return {runId,status:'paused' as const,capability:'browser' as const,risk:command.risk,text:`Gogo Safe Mode blocked the browser action: ${policy.reason}`,handledBy:'secure-browser' as const}
