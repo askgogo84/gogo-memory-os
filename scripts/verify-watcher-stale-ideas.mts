@@ -18,3 +18,6 @@ assert.match(pulse,/watcherRefs\.length&&!watcherRefs\.some/)
 assert.match(pulse,/row\.active===true \|\| state\.triggered===true/)
 
 console.log('watcher stale-idea lifecycle contract passed')
+
+// Registered P1 owner-isolation runtime regression (inert only).
+await import('./verify-watcher-owner-precision.mts')
