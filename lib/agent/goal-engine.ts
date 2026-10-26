@@ -52,11 +52,18 @@ export async function buildGoalPlan(outcome:string):Promise<GoalPlan>{
 }
 
 async function actorForTelegram(telegramId:string):Promise<AgentActor|null>{
-  const n=Number(telegramId);if(!Number.isFinite(n))return null
-  const {data,error}=await supabaseAdmin.from('users').select('id,telegram_id,whatsapp_id,name').eq('telegram_id',n).maybeSingle()
-  if(error||!data)return null
+  // This legacy actor contract stores telegram IDs as JS numbers. An unsafe 64-bit
+  // persisted owner cannot be represented without rounding into another account.
+  // Fail closed until the actor contract can carry an exact string end-to-end.
+  if(!/^-?[1-9]\d*$/.test(telegramId))return null
+  const n=Number(telegramId)
+  if(!Number.isSafeInteger(n)||String(n)!==telegramId)return null
+  const {data,error}=await supabaseAdmin.from('users').select('id,telegram_id,whatsapp_id,name').eq('telegram_id',telegramId).maybeSingle()
+  // A service-role row must actually belong to the owner whose goal is running.
+  if(error||!data||String(data.telegram_id)!==telegramId)return null
+  if(typeof data.id==='number'&&!Number.isSafeInteger(data.id))return null
   const whatsappId=String(data.whatsapp_id||'').trim();if(!whatsappId)return null
-  return {userId:String(data.id),legacyTelegramId:Number(data.telegram_id),whatsappId,name:String(data.name||'Gogo')}
+  return {userId:String(data.id),legacyTelegramId:n,whatsappId,name:String(data.name||'Gogo')}
 }
 
 async function permission(tg:string,capability:string):Promise<AgentPermissionLevel>{
