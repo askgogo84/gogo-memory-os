@@ -86,8 +86,9 @@ function canonicalPlaceId(value: unknown): string | undefined {
 }
 
 // 26 Oct production: Serper hotel results carry only title, latitude, longitude and ratings (no address, cid or
-// place id), so all nine were omitted. The provider's own coordinates pin the listing exactly; Google's documented
-// Maps URL form for a point is used. Coordinates must be real numbers in range; no invented or free-text URL.
+// place id), so all nine were omitted. The provider's own coordinates locate the listing, so a Google Maps pin at
+// that point (documented URL form) is shown and labelled as a map pin, not a listing page. Coordinates must be real
+// numbers in range; no invented or free-text URL.
 function canonicalCoord(value: unknown, limit: number): number | undefined {
   const n = typeof value === 'number' ? value : typeof value === 'string' && /^-?\d{1,3}(?:\.\d+)?$/.test(value.trim()) ? Number(value) : NaN
   return Number.isFinite(n) && Math.abs(n) <= limit ? Math.round(n * 1e6) / 1e6 : undefined
@@ -169,16 +170,18 @@ export function formatPlaces(ask: PlaceAsk, places: Place[]) {
   if (!shown.length) return null
   const lines = shown.map((p, i) => {
     const rating = p.rating ? ` · ${p.rating}★${p.ratingCount ? ` (${new Intl.NumberFormat('en-IN').format(p.ratingCount)})` : ''}` : ''
-    const maps = `\n${p.source}`
+    // A coordinate pin opens a dropped pin, not the listing, so it is labelled as such.
+    const pinOnly = !canonicalPlaceCid(p.cid) && !canonicalPlaceId(p.placeId)
+    const maps = `\n${pinOnly ? 'Map pin: ' : ''}${p.source}`
     const detail = [p.address, p.category].filter(Boolean).join(' · ')
     return `${i + 1}. *${p.title}*${rating}${detail ? `\n${detail}` : ''}${maps}`
   })
   // Without an address we cannot tell whether a listing is inside the area, so we say that instead of guessing.
-  const unaddressed = shown.some(p => !p.address)
+  const unaddressed = shown.every(p => !p.address)
   const note = unaddressed ? `\n\nThe provider didn't supply addresses here, so check each location on its Maps link.`
     : local.length < Math.min(ask.count, 2) ? `\n\nFew results were inside ${ask.area}, so some are nearby.` : ''
   const sourceNote = omitted ? `\n\n${omitted} ${omitted === 1 ? 'listing' : 'listings'} omitted because no valid Maps source link was supplied.` : ''
-  return `📍 ${shown.length === 1 ? 'A good pick' : `${shown.length} good picks`} in ${ask.area}\n\n${lines.join('\n\n')}${note}${sourceNote}\n\nAsk "which of these is open late?" or "book a table at <name>".`
+  return `📍 ${shown.length === 1 ? 'A good pick' : `${shown.length} good picks`} ${unaddressed ? 'near' : 'in'} ${ask.area}\n\n${lines.join('\n\n')}${note}${sourceNote}\n\nAsk "which of these is open late?" or "book a table at <name>".`
 }
 
 export async function answerPlaces(text: string, fetchImpl: typeof fetch = fetch) {

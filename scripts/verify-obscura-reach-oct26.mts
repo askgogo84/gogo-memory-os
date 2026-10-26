@@ -140,7 +140,8 @@ console.log('Obscura reach: comparison reads try Obscura first with logged outco
   let out = ''
   try { out = String(await places5.answerPlaces('Find hotels near Mumbai Airport for 12–16 November for 2 adults. Show source links. Research only; do not book.', ff(rows))) } finally { console.warn = rw }
   assert.match(out, /Hotel Sahar Palace/)
-  assert.ok(out.includes('https://www.google.com/maps/search/?api=1&query=19.0989%2C72.8697'))
+  assert.ok(out.includes('Map pin: https://www.google.com/maps/search/?api=1&query=19.0989%2C72.8697'), 'a coordinate link is labelled as a map pin')
+  assert.match(out, /^📍 2 good picks near Mumbai Airport/, 'no "in <area>" claim without addresses')
   assert.ok(out.includes('https://www.google.com/maps/search/?api=1&query=19.1012%2C72.8721'), 'numeric strings accepted')
   assert.doesNotMatch(out, /No Coords Inn/, 'a listing with no source is still never recommended')
   assert.match(out, /1 listing omitted/)
@@ -150,5 +151,20 @@ console.log('Obscura reach: comparison reads try Obscura first with logged outco
   assert.equal((out.match(/[Nn]o booking was made/g) || []).length, 1)
   assert.match(out, /Room rates and availability for your dates are not verified here/)
   assert.equal(warn5.filter(l => l.startsWith('PLACES_UNLINKED:')).length, 1, 'only the coordinate-less row is unlinked')
+  // Rounding, southern/western points, padded strings.
+  assert.equal(places5.placeSourceUrl({ lat: 19.1234567, lng: 72.8 }), 'https://www.google.com/maps/search/?api=1&query=19.123457%2C72.8')
+  assert.equal(places5.placeSourceUrl({ lat: -33.8688, lng: -151.2093 }), 'https://www.google.com/maps/search/?api=1&query=-33.8688%2C-151.2093')
+  assert.equal(places5.placeSourceUrl({ lat: ' 19.1 ' as any, lng: '72.8' as any }), 'https://www.google.com/maps/search/?api=1&query=19.1%2C72.8')
+  assert.equal(places5.placeSourceUrl({ lat: '1e2' as any, lng: '72' as any }), undefined)
+  // Mixed list: restaurants with cid + address keep their old lines and notes; a cid always wins over coordinates.
+  const mixed = String(await places5.answerPlaces('Suggest 3 South Indian restaurants in Rajajinagar', ff([
+    { title: 'Mylari South Indian Restaurant', address: 'Rajajinagar, Bengaluru', category: 'South Indian restaurant', rating: 4.5, ratingCount: 900, cid: '1234567890123', latitude: 12.99, longitude: 77.55 },
+    { title: 'Udupi South Indian Restaurant', address: 'Rajajinagar, Bengaluru', category: 'South Indian restaurant', rating: 4.3, ratingCount: 500, cid: '2234567890123' },
+    { title: 'Pin South Indian Restaurant', category: 'South Indian restaurant', rating: 4.0, ratingCount: 40, latitude: 12.98, longitude: 77.56 },
+  ])))
+  assert.match(mixed, /in Rajajinagar/, 'addressed results keep "in <area>"')
+  assert.match(mixed, /https:\/\/maps\.google\.com\/\?cid=1234567890123/)
+  assert.doesNotMatch(mixed, /query=12\.99%2C77\.55/, 'cid wins over coordinates')
+  assert.doesNotMatch(mixed, /didn't supply addresses here/, 'the no-address note only appears when no row has an address')
 }
-console.log('Hotels: provider coordinates are an exact Maps source; no invented addresses or area claims')
+console.log('Hotels: provider coordinates give a labelled map pin; no invented addresses or area claims')
