@@ -62,8 +62,16 @@ function gmailLink(threadId: string) {
 export async function handleWhoPromisedQuery(params: { actor: AgentActor; text: string }) {
   const q = parseWhoPromisedQuery(params.text)
   if (!q) return null
-  const { listOpenLoops } = await import('./open-loops')
-  const loops = await listOpenLoops(params.actor.legacyTelegramId, 40)
+  // 27 Oct live: going through listOpenLoops re-synced Gmail first and the answer took ~60 s. Open loops are kept fresh
+  // by the scout pass, so read the stored active rows directly (owner-scoped).
+  const { supabaseAdmin: db } = await import('@/lib/supabase-admin')
+  const { data: rows, error } = await db.from('agent_open_loops')
+    .select('id,kind,title,summary,priority,due_at,source_type,source_id,evidence_json,last_seen_at,updated_at')
+    .eq('telegram_id', String(params.actor.legacyTelegramId)).eq('status', 'active')
+    .in('kind', ['waiting_on', 'commitment', 'followup', 'meeting_action'])
+    .order('updated_at', { ascending: false }).limit(80)
+  if (error) throw new Error('who_promised_read_failed')
+  const loops = rows || []
   const ranked = (loops || []).map((loop: any) => ({ loop, score: commitmentMatches(loop, q) })).filter(r => r.score > 0).sort((a, b) => b.score - a.score).slice(0, 5)
   const about = [q.person ? `from ${q.person}` : '', q.thing ? `about “${q.thing}”` : ''].filter(Boolean).join(' ')
   if (!ranked.length) {

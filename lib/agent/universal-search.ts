@@ -76,7 +76,9 @@ export async function runUniversalSearch(actor: AgentActor, term: string, deps: 
     wrap('gmail', async () => (await gmail(`"${term.replace(/"/g, '')}" newer_than:180d`)).map((m: any) => ({
       source: 'gmail' as const, title: `${short(m.subject, 90)} — ${short(String(m.from || '').replace(/<[^>]+>/, '').replace(/"/g, ''), 40)}`, when: day(m.date),
       link: /^[0-9a-f]{10,24}$/i.test(String(m.threadId || '')) ? `https://mail.google.com/mail/u/0/#all/${m.threadId}` : null, snippet: short(m.snippet, 120) }))),
-    wrap('drive', async () => (await drive(term)).map((f: any) => ({ source: 'drive' as const, title: short(f.name, 110), when: day(f.modifiedTime),
+    // 27 Oct live: Drive's full-text match returned 2018 zip files that contain the "toastr" JS library. Only files whose
+    // name carries every search word count here.
+    wrap('drive', async () => (await drive(term)).filter((f: any) => { const name = String(f?.name || '').toLowerCase(); return (term.toLowerCase().match(/[a-z0-9]+/g) || [] as string[]).every((w: string) => name.includes(w)) }).map((f: any) => ({ source: 'drive' as const, title: short(f.name, 110), when: day(f.modifiedTime),
       link: /^https:\/\/(?:docs|drive)\.google\.com\//.test(String(f.webViewLink || '')) ? String(f.webViewLink) : null }))),
   ])
 }

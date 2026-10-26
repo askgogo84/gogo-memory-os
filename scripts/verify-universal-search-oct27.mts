@@ -40,4 +40,8 @@ const bridge = readFileSync('lib/agent/whatsapp-bridge.ts', 'utf8'), route = rea
 assert.match(bridge, /await import\('\.\/universal-search'\)/)
 assert.match(route, /await import\('@\/lib\/agent\/universal-search'\)/)
 assert.doesNotMatch(route, /^import .*universal-search/m)
+// Drive: only files whose name carries the search words (not full-text hits inside archives).
+const driveOnly = await u.runUniversalSearch(actor, 'Toastr', { db, gmail: async () => [],
+  drive: async () => [{ name: 'RepuLink-master.zip', modifiedTime: '2018-05-08T00:00:00Z', webViewLink: 'https://drive.google.com/file/d/a/view' }, { name: 'Toastr partnership deck', modifiedTime: '2026-10-26T00:00:00Z', webViewLink: 'https://docs.google.com/presentation/d/b' }] })
+assert.deepEqual(driveOnly.find(r => r.source === 'drive')!.hits.map(h => h.title), ['Toastr partnership deck'])
 console.log('Universal search passed')
