@@ -9,7 +9,7 @@ import { runInNewContext } from 'node:vm'
 const src = readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
 const guard = src.match(/async function isConsequentialControl\(page,selector,onUnavailable,onContext\)\{[\s\S]*?\n\}\n(?=\/\/ 11 Oct live Playo)/)![0]
 
-function box(text: string, inputs: Array<{ value: string; type?: string; name?: string; autocomplete?: string }>, tagName = 'DIV') {
+function box(text: string, inputs: Array<{ value: string; type?: string; name?: string; id?: string; autocomplete?: string; placeholder?: string }>, tagName = 'DIV') {
   return {
     tagName, textContent: text, getAttribute: () => null,
     querySelectorAll: (sel: string) => sel === 'input' ? inputs : [],
@@ -66,4 +66,17 @@ assert.equal(await consequential(button('Continue', box(LOC, [{ value: '123456' 
 for (const label of ['Apply', 'Submit', 'Check', 'Done', 'Save', 'Confirm location', 'Update']) {
   assert.equal(await consequential(button(label, box('Enter delivery pincode', [{ value: '123456' }]), { type: 'button' })), false, 'non-form location-only controls retain their intended read behavior')
 }
+// Location-like controls are checked before legacy research/navigation exemptions.
+assert.equal(await consequential(button('Continue', box(LOC, [{ value: '123456' }], 'FORM'), { id: 'location-search', type: 'submit' })), true)
+assert.equal(await consequential(button('Continue', box(LOC, [{ value: '123456' }]), { id: 'search-save-address', type: 'button' })), true)
+assert.equal(await consequential(button('Continue', box(LOC, [{ value: '123456' }], 'FORM'), { id: 'location-search', type: 'submit', 'aria-label': 'Search' })), true)
+for (const name of ['fullName', 'dateOfBirth', 'firstName', 'lastName', 'customerCode', 'oneTimeCode']) {
+  assert.equal(await consequential(button('Continue', box(LOC, [{ value: '123456', name }]), { type: 'button' })), true, 'six digits alone do not turn a personal or unknown field into a pincode')
+}
+for (const context of ['OTP verification for account login', 'Date of birth', 'Sign in to your account', 'OTPVerification']) {
+  assert.equal(await consequential(button('Continue', box(LOC + ' ' + context, [{ value: '123456', name: 'pincode' }]), { type: 'button' })), true, 'explicit personal/authentication context is not setting a delivery location')
+}
+assert.equal(await consequential(button('Continue', box(LOC, [{ value: '123456', type: 'number', name: 'postalCode', id: 'delivery-pin-field', autocomplete: 'postal-code', placeholder: 'Enter your pincode' }]), { type: 'button' })), false)
+assert.equal(await consequential(button('Continue', box(LOC, [{ value: '123456', type: 'tel', name: 'pincode' }]), { type: 'button' })), false, 'phone keyboard with explicit pincode purpose remains a location field')
+assert.equal(await consequential(button('Search', box('Search catalogue', [], 'FORM'), { id: 'product-search', type: 'submit' })), false, 'unrelated research controls retain their original behavior')
 console.log('Store location Continue after Gogo enters the pincode is allowed in read mode; every commit stays blocked')
