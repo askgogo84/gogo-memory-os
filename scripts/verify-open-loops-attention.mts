@@ -270,7 +270,7 @@ const webInbox=loadFixture('app/api/dashboard/chat/route.ts',name=>
 )
 const webFresh=await webInbox.POST({headers:{get:()=> 'https://app.example.test'},nextUrl:{host:'app.example.test'},json:async()=>({text:exactInboxPrompt})})
 assert.equal(webFresh.handledBy,'inbox-reply-read','real web POST must claim the read before content/general planners')
-assert.ok(queries.every(q=>q.owner===42),'every connection/consent read is owner scoped')
+assert.ok(queries.every(q=>q.owner==='42'),'every connection/consent read preserves exact decimal owner')
 console.log('Fresh inbox reply reads: real handler + web POST + WhatsApp first refusal, ownership, consent, errors, automation suppression and secret-safe text verified')
 
 let failThread=false
