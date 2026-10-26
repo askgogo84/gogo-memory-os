@@ -1244,13 +1244,20 @@ export async function processOpenLoopScoutPass(limit=80){
   const ids=new Set<string>()
   for(const result of [conversationResult,approvalResult,runResult,lifeResult,memoryResult]){
     if(result.error)console.error('OPEN_LOOP_SCOUT_CANDIDATE_FAILED:',result.error.message)
-    for(const row of result.data||[])if((row as any).telegram_id)ids.add(String((row as any).telegram_id))
+    // Convert only original exact persisted representations. String(unsafeNumber)
+    // would silently turn a rounded 64-bit owner into a different tenant.
+    for(const row of result.data||[]){
+      const owner=exactOpenLoopOwnerId((row as any).telegram_id)
+      if(owner)ids.add(owner)
+    }
   }
   const phoneToTelegram=new Map<string,string>()
   for(const user of userResult.data||[]){
+    const owner=exactOpenLoopOwnerId((user as any).telegram_id)
+    if(!owner)continue
     const phone=normalizedPhone((user as any).whatsapp_id)
-    if(phone&&(user as any).telegram_id)phoneToTelegram.set(phone,String((user as any).telegram_id))
-    if((user as any).gmail_connected&&(user as any).telegram_id)ids.add(String((user as any).telegram_id))
+    if(phone)phoneToTelegram.set(phone,owner)
+    if((user as any).gmail_connected)ids.add(owner)
   }
   for(const follow of followupResult.data||[]){
     const tg=phoneToTelegram.get(normalizedPhone((follow as any).whatsapp_id))
