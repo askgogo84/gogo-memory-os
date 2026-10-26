@@ -25,7 +25,7 @@ export function exactWorkspaceUserId(value: unknown): string | null {
     if (!Number.isSafeInteger(value) || value === 0) return null
     return String(value)
   }
-  if (typeof value === 'bigint') return value === 0n ? null : String(value)
+  if (typeof value === 'bigint') return value.toString() === '0' ? null : value.toString()
   if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
   return value
 }
