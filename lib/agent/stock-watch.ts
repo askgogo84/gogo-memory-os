@@ -14,15 +14,48 @@ const reply = (status: StockWatchResult['status'], text: string, runId = 'stock-
   ({ runId, status, capability: 'browser', risk: 'low', text, handledBy: 'stock-price-watch' })
 
 /** "Watch Tata Motors share price, alert if it moves 10%": a live-quote rule, never a news or search watch. */
+// 26 Oct live: after "Tata Motors matches more than one listed company", the reply "Watch TMCV" became a news watch.
+// A reply that is just the symbol or the option number, soon after that question, completes the original rule.
+const CHOICE_WINDOW_MS = 10 * 60_000
+export function stockChoiceReply(text: string): { index: number | null; symbol: string | null } | null {
+  const m = String(text || '').trim().match(/^(?:(?:please\s+)?(?:watch|track|monitor|use|pick|choose|go\s+with)\s+)?(?:option\s+|no\.?\s*|#)?([1-4]|[A-Za-z][A-Za-z0-9&\-]{1,15}(?:\.(?:NS|BO))?)(?:\s+(?:share\s*price|stock|shares|please))?\s*[.!]?$/i)
+  if (!m) return null
+  return /^[1-4]$/.test(m[1]) ? { index: Number(m[1]) - 1, symbol: null } : { index: null, symbol: m[1].toUpperCase().replace(/\.(?:NS|BO)$/, '') }
+}
+
+async function pendingStockChoice(tg: string, text: string, now = Date.now()) {
+  const choice = stockChoiceReply(text)
+  if (!choice) return null
+  const { data } = await supabaseAdmin.from('agent_activity').select('event_type, metadata_json, created_at')
+    .eq('telegram_id', tg).in('event_type', ['stock_watch_choice', 'stock_watch_choice_used'])
+    .gte('created_at', new Date(now - CHOICE_WINDOW_MS).toISOString())
+    .order('created_at', { ascending: false }).limit(1)
+  const row: any = (data || [])[0]
+  if (!row || row.event_type !== 'stock_watch_choice') return null
+  const candidates: StockMatch[] = Array.isArray(row.metadata_json?.candidates) ? row.metadata_json.candidates : []
+  const picked = choice.index !== null ? candidates[choice.index]
+    : candidates.find(c => c.symbol.replace(/\.(?:NS|BO)$/, '') === choice.symbol)
+  const parsed = row.metadata_json?.parsed
+  if (!picked || !parsed || !/^[A-Z0-9&.\-]{1,24}\.(?:NS|BO)$/.test(String(picked.symbol))) return null
+  return { picked, parsed: parsed as NonNullable<ReturnType<typeof parseStockWatchCommand>>, original: String(row.metadata_json?.original || text) }
+}
+
 export async function tryCreateStockWatchFromCommand(params: { actor: AgentActor; surface: AgentSurface; text: string }, fetchImpl: typeof fetch = fetch): Promise<StockWatchResult | null> {
-  const parsed = parseStockWatchCommand(params.text)
-  if (!parsed) return null
   const tg = String(params.actor.legacyTelegramId)
+  let parsed = parseStockWatchCommand(params.text)
+  let chosen: StockMatch | null = null
+  let requestText = params.text
+  if (!parsed) {
+    const pending = await pendingStockChoice(tg, params.text).catch(() => null)
+    if (!pending) return null
+    parsed = pending.parsed; chosen = pending.picked; requestText = pending.original
+    await supabaseAdmin.from('agent_activity').insert({ telegram_id: tg, event_type: 'stock_watch_choice_used', message: `Chose ${chosen.symbol} for the share-price watch.`, metadata_json: { symbol: chosen.symbol } })
+  }
 
   // A ticker the person typed ("TMPV", "RELIANCE.NS") is tried first; otherwise the name is looked up.
-  let matches: StockMatch[] = []
+  let matches: StockMatch[] = chosen ? [chosen] : []
   const tickerish = parsed.company.replace(/\s+/g, '').toUpperCase()
-  if (/^[A-Z0-9&\-]{2,15}(?:\.(?:NS|BO))?$/.test(tickerish) && /[A-Z]/.test(parsed.company) && parsed.company === parsed.company.toUpperCase()) {
+  if (!matches.length && /^[A-Z0-9&\-]{2,15}(?:\.(?:NS|BO))?$/.test(tickerish) && /[A-Z]/.test(parsed.company) && parsed.company === parsed.company.toUpperCase()) {
     const symbol = /\.(?:NS|BO)$/.test(tickerish) ? tickerish : `${tickerish}.NS`
     const q = await fetchStockQuote(symbol, fetchImpl).catch(() => null)
     if (q) matches = [{ symbol, name: tickerish.replace(/\.(?:NS|BO)$/, ''), exchange: symbol.endsWith('.BO') ? 'BSE' : 'NSE' }]
@@ -37,7 +70,9 @@ export async function tryCreateStockWatchFromCommand(params: { actor: AgentActor
   if (matches.length > 1) {
     const lines = matches.slice(0, 4).map((m, i) => `${i + 1}. ${m.name} (${m.symbol.replace(/\.(?:NS|BO)$/, '')}, ${m.exchange})`)
     const example = matches[0].symbol.replace(/\.(?:NS|BO)$/, '')
-    return reply('waiting_user', `"${parsed.company}" matches more than one listed company:\n${lines.join('\n')}\n\nReply with the symbol you mean, e.g. "watch ${example} share price ${parsed.kind === 'level' ? `${parsed.direction} ${parsed.level}` : `${parsed.pct}%`}".`)
+    await supabaseAdmin.from('agent_activity').insert({ telegram_id: tg, event_type: 'stock_watch_choice', message: `Asked which listing "${parsed.company}" means.`.slice(0, 900),
+      metadata_json: { candidates: matches.slice(0, 4), parsed, original: String(params.text || '').slice(0, 2000) } })
+    return reply('waiting_user', `"${parsed.company}" matches more than one listed company:\n${lines.join('\n')}\n\nReply with the number or the symbol, e.g. "${example}" or "1".`)
   }
 
   const match = matches[0]
@@ -55,7 +90,7 @@ export async function tryCreateStockWatchFromCommand(params: { actor: AgentActor
   const condition = normalizeWebSearchWatcher({
     title, query: `${match.name} share price ${match.exchange}`, triggerKeywords: [], delivery: 'both',
     cadenceMinutes: STOCK_WATCH_CADENCE_MINUTES, requestedCadenceMinutes: STOCK_WATCH_CADENCE_MINUTES,
-    originalRequest: String(params.text || '').slice(0, 2000), stockRule: rule,
+    originalRequest: String(requestText || '').slice(0, 2000), stockRule: rule,
   })
   if (!(condition as any)?.stockRule) throw new Error('stock_watch_condition_invalid')
 
@@ -64,7 +99,7 @@ export async function tryCreateStockWatchFromCommand(params: { actor: AgentActor
     telegram_id: tg, type: 'watcher', capability: 'browser', status: 'completed', title,
     summary: `Background Gogo reads the ${match.exchange} price of ${match.name} about every ${STOCK_WATCH_CADENCE_MINUTES} minutes during market hours and alerts only when your rule is met.`,
     progress: 100, why: 'You asked Gogo to watch a share price.', source: params.surface,
-    metadata_json: { input_text: String(params.text || '').slice(0, 2000), watcher_type: 'web_search', stock_rule: rule },
+    metadata_json: { input_text: String(requestText || '').slice(0, 2000), watcher_type: 'web_search', stock_rule: rule },
     started_at: startedAt, updated_at: startedAt,
   }).select('id').single()
   if (runError || !run?.id) throw new Error(`agent_run_create_failed:${runError?.message || 'unknown'}`)
@@ -91,7 +126,8 @@ export async function tryCreateStockWatchFromCommand(params: { actor: AgentActor
       if (row.id === watcher.id || c.stockRule || c.goldRule || c.priceRule || c.contextual) continue
       const hay = `${c.title || ''} ${c.query || ''} ${c.originalRequest || ''}`.toLowerCase()
       const has = (w: string) => new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(hay)
-      if (key.length && key.every(has) && /\b(?:share|shares|stock|news)\b/.test(hay)) {
+      const sym = saved.symbol.replace(/\.(?:NS|BO)$/, '').toLowerCase()
+      if (((key.length && key.every(has)) || has(sym)) && /\b(?:share|shares|stock|news)\b/.test(hay)) {
         const { data: prev } = await supabaseAdmin.from('agent_watchers').select('last_state_json').eq('id', row.id).eq('telegram_id', tg).maybeSingle()
         const { error } = await supabaseAdmin.from('agent_watchers').update({ active: false, next_check_at: null, updated_at: new Date().toISOString(),
           last_state_json: { ...((prev?.last_state_json as any) || {}), retiredReason: 'replaced_by_share_price_watch', replacedBy: watcher.id } })

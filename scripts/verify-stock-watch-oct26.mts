@@ -3,6 +3,8 @@
 // Run: npx --yes tsx scripts/verify-stock-watch-oct26.mts
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://synthetic.supabase.co'
+process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'synthetic'
 import { evaluateStockRule, isStockWatchPhrasing, normalizeStockRule, parseStockWatchCommand, stockAlertText, stockStateFrom } from '../lib/agent/stock-rule'
 import { fetchStockQuote, resolveStockSymbols } from '../lib/agent/stock-quote'
 
@@ -105,3 +107,23 @@ assert.equal(nextNseOpen(new Date('2026-10-24T05:00:00Z')).toISOString(), '2026-
 assert.match(readFileSync(new URL('../lib/agent/watchers.ts', import.meta.url), 'utf8'), /nseMarketOpen\(now\) \? Infinity : nextNseOpen\(now\)\.getTime\(\)/)
 assert.match(readFileSync(new URL('../lib/agent/stock-watch.ts', import.meta.url), 'utf8'), /new RegExp\(`\\\\b\$\{w\.replace/, 'word-boundary match when retiring old news watches')
 console.log('Share-price review round 2: verb "shares" ignored, first minutes of trading watched')
+
+// ── 26 Oct 18:33 live: "Watch TMCV" after the "which listing?" question became a news watch ──
+{
+  const sw2 = await import('../lib/agent/stock-watch')
+  assert.deepEqual(sw2.stockChoiceReply('Watch TMCV'), { index: null, symbol: 'TMCV' })
+  assert.deepEqual(sw2.stockChoiceReply('TMPV'), { index: null, symbol: 'TMPV' })
+  assert.deepEqual(sw2.stockChoiceReply('2'), { index: 1, symbol: null })
+  assert.deepEqual(sw2.stockChoiceReply('option 1'), { index: 0, symbol: null })
+  assert.deepEqual(sw2.stockChoiceReply('watch TMCV share price'), { index: null, symbol: 'TMCV' })
+  for (const t of ['watch my reminders for tomorrow', 'what is the weather', '7', 'book option 1 for me please now'])
+    assert.equal(sw2.stockChoiceReply(t), null, t)
+  const src2 = readFileSync(new URL('../lib/agent/stock-watch.ts', import.meta.url), 'utf8')
+  assert.match(src2, /event_type: 'stock_watch_choice', message: `Asked which listing/, 'the question and its candidates are remembered')
+  assert.match(src2, /in\('event_type', \['stock_watch_choice', 'stock_watch_choice_used'\]\)/, 'a choice is used once')
+  assert.match(src2, /CHOICE_WINDOW_MS = 10 \* 60_000/)
+  assert.match(src2, /has\(sym\)/, 'a "News: TMCV" watch is retired by symbol too')
+  const pm = readFileSync(new URL('../lib/bot/process-message.ts', import.meta.url), 'utf8')
+  assert.match(pm, /const stockTickerReply=/)
+}
+console.log('Share-price choice: a bare symbol or number after "which listing?" completes the original rule')
