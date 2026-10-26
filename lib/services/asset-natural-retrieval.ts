@@ -9,8 +9,9 @@ const RESERVED_RETRIEVAL_RE = /^(?:show|open|find|get|send)(?:\s+me)?\s+(?:my\s+
 // an outside source (Drive, Gmail, inbox, Docs) belongs to that source's reader, never to saved-asset retrieval.
 export const EXTERNAL_SOURCE_RE = /\b(?:(?:in|from|on|inside|of|search|check)\s+(?:my\s+|the\s+)?(?:google\s+)?(?:drive|g-?drive|gmail|inbox|e-?mails?|mail|docs|sheets|dropbox|one\s?drive)|google\s+(?:drive|docs?|sheets?)|drive\s+(?:files?|folders?|docs?))\b/i
 const SENSITIVE_REVEAL_CONFIRM_RE = /^\s*show\s+(?:the\s+)?(?:passport|id|reference)\s*(?:number|no)?\s*[?.!]*$/i
-// Explicit public links belong to web/page readers, not a private saved-asset lookup.
-const WEB_LINK_RE = /\bhttps?:\/\/\S+|\bwww\.[a-z0-9-]+\.[a-z]{2,}/i
+// Detect full, underlined, protocol-relative and common bare URL forms before privileged reads.
+// The bare-domain branch avoids mistaking a saved contact's email for a webpage.
+const WEB_LINK_RE = /https?:\/\/[^\s<>"']+|\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:[/?#][^\s<>"']*)?|www\.[a-z0-9-]+(?:\.[a-z0-9-]+)+|(?:^|[\s_(\[{])(?:[a-z0-9-]+\.)+(?:(?:com|org|net|in|co|io|ai|gov|edu|app|dev|uk|info|me|xyz|shop|travel|online|store|site|biz|tech)(?=[:/?#\s)\]_]|$)|[a-z]{2,24}(?=\/))/i
 
 // Operational requests must never be stolen by a loose match against an old saved
 // document. This is especially important for booking flows where words such as
