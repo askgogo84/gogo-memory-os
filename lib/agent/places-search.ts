@@ -106,7 +106,7 @@ export function formatPlaces(ask: PlaceAsk, places: Place[]) {
     return cid ? [{ ...p, cid }] : []
   })
   const omitted = places.length - linked.length
-  if (places.length && !linked.length) return 'No valid Maps source link was supplied for these directory listings. I will not recommend unlinked listings. No booking was made.'
+  if (places.length && !linked.length) return `${omitted} ${omitted === 1 ? 'listing' : 'listings'} omitted because no valid Maps source link was supplied. I will not recommend unlinked listings. No booking was made.`
   // Prefer places whose address is really in the area asked for, then better-rated, well-reviewed ones.
   const kindOk = linked.filter(p => kindMatch(p, ask))
   const pool = kindOk.length >= Math.min(ask.count, 2) ? kindOk : linked

@@ -150,8 +150,12 @@ await check('missing and malformed source identifiers never become unlinked reco
   for (const cid of [undefined, '', '0', '-1', '+1', '01', ' 123', '123 ', '1e3', '1&query=private', '1\nhttps://hostile.invalid', 'https://hostile.invalid', '18446744073709551616', 9007199254740992, {}, ['123']]) {
     const out = P.formatPlaces(ask, [{title:'Unlinked fixture',address:'Indiranagar, Bengaluru',cid} as any])
     assert.match(out!, /no valid Maps source link/i)
+    assert.match(out!, /1 listing omitted/i)
     assert.doesNotMatch(out!, /Unlinked fixture|good pick|hostile\.invalid|query=private/)
   }
+  const allUnlinked=P.formatPlaces(ask,[{title:'Missing fixture',address:'Indiranagar'},{title:'Invalid fixture',address:'Indiranagar',cid:'0'}])
+  assert.match(allUnlinked!,/2 listings omitted/i)
+  assert.doesNotMatch(allUnlinked!,/Missing fixture|Invalid fixture|good pick/)
   process.env.SERPER_API_KEY='test'
   const reply=await P.answerPlaces('Find 3 restaurants in Indiranagar; do not book', (async()=>Response.json({places:[
     {title:'No source fixture',address:'Indiranagar, Bengaluru',website:'https://hostile.invalid'},
