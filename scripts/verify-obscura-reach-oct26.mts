@@ -168,3 +168,43 @@ console.log('Obscura reach: comparison reads try Obscura first with logged outco
   assert.doesNotMatch(mixed, /didn't supply addresses here/, 'the no-address note only appears when no row has an address')
 }
 console.log('Hotels: provider coordinates give a labelled map pin; no invented addresses or area claims')
+
+// ── 6. 26 Oct 14:11 live: one property listed twice as room types; restaurant branches stay separate ──
+{
+  const p6 = await import('../lib/agent/places-search')
+  process.env.SERPER_API_KEY = 'synthetic'
+  const ff = (rows: any[]) => (async () => new Response(JSON.stringify({ places: rows }), { status: 200 })) as any
+  const hotels = String(await p6.answerPlaces('Find hotels near Mumbai Airport for 12–16 November for 2 adults. Show source links. Research only; do not book.', ff([
+    { title: 'Ginger Mumbai Airport', latitude: 19.09731, longitude: 72.85384, rating: 4.2, ratingCount: 2633 },
+    { title: 'Home2 Suites and Service Apartments, Mumbai Airport - Deluxe Room', latitude: 19.08078, longitude: 72.853699, rating: 5, ratingCount: 8 },
+    { title: 'Home2 Suites and Service Apartments, Mumbai Airport - One-Bedroom Apartment', latitude: 19.080771, longitude: 72.853699, rating: 5, ratingCount: 8 },
+    { title: 'Hotel Sahar Palace', latitude: 19.0989, longitude: 72.8697, rating: 4.1, ratingCount: 820 },
+  ])))
+  assert.equal((hotels.match(/Home2 Suites/g) || []).length, 1, 'one entry per property')
+  assert.match(hotels, /Ginger Mumbai Airport/)
+  assert.match(hotels, /Hotel Sahar Palace/, 'the freed slot goes to another property')
+  assert.match(hotels, /^📍 3 good picks near Mumbai Airport/)
+  const food = String(await p6.answerPlaces('Suggest 3 cafes in Indiranagar', ff([
+    { title: 'Third Wave Coffee - Indiranagar 12th Main', address: '12th Main, Indiranagar, Bengaluru', category: 'Cafe', rating: 4.4, ratingCount: 900, cid: '1234567890123' },
+    { title: 'Third Wave Coffee - Indiranagar 100ft Road', address: '100 Feet Rd, Indiranagar, Bengaluru', category: 'Cafe', rating: 4.3, ratingCount: 700, cid: '2234567890123' },
+    { title: 'Dyu Art Cafe', address: 'Indiranagar, Bengaluru', category: 'Cafe', rating: 4.5, ratingCount: 1200, cid: '3234567890123' },
+  ])))
+  assert.equal((food.match(/Third Wave Coffee/g) || []).length, 2, 'restaurant/cafe branches are not merged')
+}
+
+// ── 7. Hand-back when the page itself is slow (26 Oct 14:13 live: Croma page.goto timeout) ──
+{
+  const src7 = readFileSync(new URL('../lib/agent/browser-command.ts', import.meta.url), 'utf8')
+  const i = src7.indexOf("outcome:'opened_after_read_failure'")
+  assert.ok(i > 0, 'a failed public read asked for control still opens Take Control')
+  const block = src7.slice(src7.lastIndexOf('// 26 Oct live: Croma', i), i + 900)
+  assert.match(block, /if\(params\.mode==='read'&&!persistentCommerce&&!persistentAccountSession&&!params\.command\.vaultCredentialId&&!resumedFromHandoff\s*&&!reconciledResult&&wantsBrowserHandBack\(params\.command\.objective\)/)
+  assert.match(block, /page\\\.goto: Timeout\|net::ERR_TIMED_OUT\|browser_read_deadline\|browser_objective_unverified\|browser_planning_failed/, 'only slow or unreadable pages, never auth, policy or busy-browser errors')
+  assert.match(block, /startProviderBrowserHandoff\(\{userId:browserOwner,url:params\.command\.url,sessionTaskId:params\.runId\}\)/)
+  assert.match(block, /handoff,handback:true\}/)
+  assert.match(block, /cancelProviderBrowserHandoff/)
+  assert.match(block, /was slow to load for me, so I couldn't read the page\. I've opened it in a secure browser for you\./)
+  // The unknown-outcome guard runs first, so a possibly-submitted action is never reopened.
+  assert.ok(src7.lastIndexOf("if(runMetadata.browser_safe_to_retry===false){\n      const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown", i) > 0)
+}
+console.log('Hotels list each property once; a slow page asked for control still hands control back')

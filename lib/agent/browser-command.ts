@@ -682,6 +682,29 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown(String(tg),params.runId,runMetadata)
       return {...outcome,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const}
     }
+    // 26 Oct live: Croma's page didn't load within 45s, so "hand control back to me" ended with "I couldn't open
+    // croma.com". The person asked to take over, so a slow or unreadable public page still gets the Take Control
+    // browser, opened on the page they sent. Same exclusions as the completed-read hand-back.
+    if(params.mode==='read'&&!persistentCommerce&&!persistentAccountSession&&!params.command.vaultCredentialId&&!resumedFromHandoff
+      &&!reconciledResult&&wantsBrowserHandBack(params.command.objective)
+      &&/page\.goto: Timeout|net::ERR_TIMED_OUT|browser_read_deadline|browser_objective_unverified|browser_planning_failed/.test(String(err?.message||''))){
+      const site=(()=>{try{return new URL(params.command.url).hostname.replace(/^www\./,'')}catch{return 'the site'}})()
+      const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
+      const controlUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
+      try{
+        const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
+        const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:params.command.url,sessionTaskId:params.runId})
+        const {data:saved,error}=await supabaseAdmin.from('agent_runs').update({status:'paused',metadata_json:{...runMetadata,handoff,handback:true},completed_at:null,updated_at:new Date().toISOString(),
+          summary:'The page is open for you. Take control in the secure browser; nothing is added to cart, ordered or submitted by Gogo.'})
+          .eq('id',params.runId).eq('telegram_id',String(tg)).select('id').maybeSingle()
+        if(error||!saved){await cancelProviderBrowserHandoff(browserOwner,handoff).catch(()=>{});throw new Error('browser_handback_save_failed')}
+        console.log('BROWSER_HANDBACK:',JSON.stringify({runId:params.runId,outcome:'opened_after_read_failure'}))
+        return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const,
+          text:`${site} was slow to load for me, so I couldn't read the page. I've opened it in a secure browser for you. Open this link and tap Take control:\n${controlUrl}\n\nGogo won't add to cart, order or submit anything. Never send passwords or codes in chat.`}
+      }catch(handbackErr:any){
+        console.error('BROWSER_HANDBACK:',JSON.stringify({runId:params.runId,outcome:'failed_after_read_failure',error:String(handbackErr?.message||'error').replace(/[^a-z0-9_]/gi,'_').slice(0,60)}))
+      }
+    }
     const message=String(err?.message||'secure_browser_failed');const at=new Date().toISOString()
     const failureSummary=params.mode==='read'?browserFailureSummary(message):'Gogo could not complete the secure browser session.'
     const readDiagnostics=params.mode==='read'?sanitizeBrowserReadDiagnostics(err?.browserReadDiagnostics):[]
