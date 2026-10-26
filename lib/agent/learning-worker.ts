@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { generateUserInsights } from '@/lib/bot/memory-twin/insight-generator'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 
 const MAX_USERS_PER_PASS = 80
 
@@ -15,9 +16,11 @@ export async function processLearningPass() {
 
   if (error) throw new Error(`learning_event_read_failed:${error.message}`)
 
+  // BIGINT owners must not collapse through JS Number before private synthesis.
+  // The parser rejects rounded numeric and malformed identities without guessing.
   const ids = Array.from(new Set((events || [])
-    .map((row:any) => Number(row.telegram_id))
-    .filter(Number.isFinite)))
+    .map((row:any) => exactSessionOwnerId(row.telegram_id))
+    .filter((id): id is string => id !== null)))
     .slice(0, MAX_USERS_PER_PASS)
 
   let processed=0
