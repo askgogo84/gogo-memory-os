@@ -33,6 +33,23 @@ type ContextMeta={
   userStoppedAt?:string|null
 }
 
+// Postgres BIGINT owner identifiers are precise decimal strings. A JS Number can
+// alias two different accounts at or beyond 2^53, so reject unsafe numeric IDs
+// before service-role reads or contextual watcher writes.
+function exactTravelOwner(value:unknown):string|null{
+  if(typeof value==='number')return Number.isSafeInteger(value)&&value!==0?String(value):null
+  if(typeof value!=='string'||! /^-?[1-9]\\d*$/.test(value))return null
+  return value
+}
+function requireTravelOwner(value:unknown):string{
+  const owner=exactTravelOwner(value)
+  if(!owner)throw new Error('context_travel_owner_invalid')
+  return owner
+}
+function travelRowsBelongToOwner(rows:TravelRow[],owner:string){
+  return rows.every(row=>exactTravelOwner(row.telegram_id)===owner)
+}
+
 function clean(value:unknown,max=160){
   return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)
 }
@@ -250,6 +267,8 @@ function nearestRetainedTrip(rows:TravelRow[],now:number){
       .find(row=>Date.parse(String(row.arrive_at||row.depart_at))>=now-72*3600_000)
 }
 async function compileForUser(telegramId:string,rows:TravelRow[]){
+  const owner=requireTravelOwner(telegramId)
+  if(!travelRowsBelongToOwner(rows,owner))throw new Error('context_travel_ticket_owner_mismatch')
   const now=Date.now()
   const sorted=rows.slice().sort((a,b)=>Date.parse(a.depart_at)-Date.parse(b.depart_at))
   const first=nearestRetainedTrip(sorted,now)
@@ -261,6 +280,18 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
   const root=rootFor(group)
   const expiresAt=tripExpiry(group)
   const refs=sourceRefs(group)
+
+  // Verify the owner of every private context row BEFORE touching watchers. A
+  // database adapter returning an already-rounded BIGINT must fail closed.
+  const {data:homeMemories,error:homeError}=await supabaseAdmin.from('memories')
+    .select('id,telegram_id,content').eq('telegram_id',owner)
+    .or('content.ilike.my home city%,content.ilike.home city:%,content.ilike.I live in%,content.ilike.I am based in%').order('created_at',{ascending:false}).limit(10)
+  if(homeError)throw new Error('context_home_lookup_failed')
+  if((homeMemories||[]).some(row=>exactTravelOwner(row.telegram_id)!==owner))throw new Error('context_home_owner_mismatch')
+  const {data:user,error:userError}=await supabaseAdmin.from('users')
+    .select('telegram_id,name,gmail_connected').eq('telegram_id',owner).maybeSingle()
+  if(userError)throw new Error('context_owner_profile_lookup_failed')
+  if(user&&exactTravelOwner(user.telegram_id)!==owner)throw new Error('context_profile_owner_mismatch')
 
   // Keep only the nearest active travel context. Older contextual monitors are
   // retired, but user-created/manual watchers are never touched.
@@ -291,12 +322,7 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
     .map((row:any)=>String(row.condition_json?.contextKey||'')))
   let slots=Math.max(0,Number(budget.activeWebWatchersMax||0)-manualCount)
   let created=0,reused=0,stopped=0,skipped=0
-  const {data:homeMemories,error:homeError}=await supabaseAdmin.from('memories').select('id,content').eq('telegram_id',Number(telegramId))
-    .or('content.ilike.my home city%,content.ilike.home city:%,content.ilike.I live in%,content.ilike.I am based in%').order('created_at',{ascending:false}).limit(10)
-  if(homeError)throw new Error('context_home_lookup_failed')
-  const {data:user,error:userError}=await supabaseAdmin.from('users').select('name,gmail_connected').eq('telegram_id',Number(telegramId)).maybeSingle()
-  if(userError)throw new Error('context_owner_profile_lookup_failed')
-  const names=group.flatMap(row=>[...(Array.isArray(row.passengers)?row.passengers:[]),...Object.values(row.raw?.travellerAliases||{})])
+remove old unsafe private records  const names=group.flatMap(row=>[...(Array.isArray(row.passengers)?row.passengers:[]),...Object.values(row.raw?.travellerAliases||{})])
   const normalizeName=(name:unknown)=>String(name||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
   const anotherTraveller=names.some(name=>!user?.name||normalizeName(name)!==normalizeName(user.name))
   const homeCity=anotherTraveller?'':declaredHomeCity(homeMemories||[])
@@ -356,7 +382,9 @@ export async function compileUpcomingTravelWatchers(limit=200){
   if(error)throw new Error(`context_travel_read_failed:${error.message}`)
   const byUser=new Map<string,TravelRow[]>()
   for(const row of data||[]){
-    const key=String((row as any).telegram_id)
+    // Never stringify an already-rounded JS Number: it may name another user.
+    const key=exactTravelOwner((row as any).telegram_id)
+    if(!key)continue
     const bucket=byUser.get(key)||[];bucket.push(row as TravelRow);byUser.set(key,bucket)
   }
   let users=0,created=0,reused=0,stopped=0,skipped=0,failed=0
@@ -374,22 +402,24 @@ export async function compileUpcomingTravelWatchers(limit=200){
 
 /** Same as the cron pass, for one user, right after a ticket is saved so tracking starts now. */
 export async function compileTravelWatchersForUser(telegramId:string|number){
+  const owner=requireTravelOwner(telegramId)
   const now=Date.now()
   const {data,error}=await supabaseAdmin.from('travel_tickets')
     .select('id,telegram_id,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no,passengers,raw')
-    .eq('telegram_id',telegramId).eq('type','flight')
+    .eq('telegram_id',owner).eq('type','flight')
     .or(`depart_at.gte.${new Date(now-72*3600_000).toISOString()},arrive_at.gte.${new Date(now-72*3600_000).toISOString()}`).lt('depart_at',new Date(now+14*86400_000).toISOString())
     .order('depart_at',{ascending:true}).limit(20)
   if(error)throw new Error(`context_travel_read_failed:${error.message}`)
   if(!data?.length)return {created:0,reused:0,stopped:0,skipped:0,tracking:false,flights:[] as string[]}
-  const r=await compileForUser(String(telegramId),data as TravelRow[])
+  if(!travelRowsBelongToOwner(data as TravelRow[],owner))throw new Error('context_travel_ticket_owner_mismatch')
+  const r=await compileForUser(owner,data as TravelRow[])
   const sorted=(data as TravelRow[]).slice().sort((a,b)=>Date.parse(a.depart_at)-Date.parse(b.depart_at))
   const first=nearestRetainedTrip(sorted,now)
   if(!first)return {...r,tracking:false,flights:[] as string[]}
   const group=first.booking_group?sorted.filter(row=>String(row.booking_group||'')===String(first.booking_group)):[first]
   // Report tracking only when the flight-status monitor is actually active (plan limits can skip it).
   const {data:active}=await supabaseAdmin.from('agent_watchers').select('id')
-    .eq('telegram_id',telegramId).eq('active',true)
+    .eq('telegram_id',owner).eq('active',true)
     .eq('condition_json->>contextualKind','travel').eq('condition_json->>contextClass','flight_status').limit(1)
   return {...r,tracking:Boolean(active?.length),flights:group.map(row=>normalizeFlightNo(clean(row.flight_no,20))).filter(Boolean)}
 }
