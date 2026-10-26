@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import './verify-food-compare-menu-oct26.mts'
 import { readFileSync } from 'node:fs'
 import { parsePriceComparison, comparisonSearchUrl, comparisonProductLead, comparisonObjective } from '../lib/commerce/comparison-model'
 // 16 Oct live: "compare price of iPhone 16 on Flipkart and Croma" kept "price of" in the product name; both stores failed.

@@ -800,7 +800,7 @@ export async function takeControlOfCommerceRead(params:{actor:AgentActor;runId:s
 function linkedBrowserOwner(userId:string,meta:any){
   if(meta?.comparison_parent_id){
     try{const host=new URL(String(meta.url||'')).hostname.replace(/^www\./,'')
-      const store=host==='amazon.in'?'amazon':host==='flipkart.com'?'flipkart':host==='croma.com'?'croma':host==='reliancedigital.in'?'reliance':null
+      const store=host==='amazon.in'?'amazon':host==='flipkart.com'?'flipkart':host==='croma.com'?'croma':host==='reliancedigital.in'?'reliance':host==='swiggy.com'?'swiggy':host==='zomato.com'?'zomato':null
       if(store)return userId+':commerce:'+store}catch{}
   }
   return userId+':commerce'
