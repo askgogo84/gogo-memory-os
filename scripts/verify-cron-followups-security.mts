@@ -36,10 +36,12 @@ console.log('cron + followups hardening verification passed')
 const ownerRouteModule = { exports: {} as Record<string, any> }
 let sessionOwner: unknown = '123'
 let dueRows: Record<string, unknown>[] = []
+let fakeDueOverride: Record<string, unknown>[] | null = null
 const ownerLookups: unknown[] = []
 const inserts: Record<string, any>[] = []
 const notifications: Record<string, any>[] = []
 const heldRows: Record<string, any>[] = []
+const holdAttempts: string[] = []
 const knownPhones = new Map<string, string>([
   ['123', 'whatsapp:+14155550123'],
   ['-123', 'whatsapp:+14155550124'],
@@ -83,12 +85,12 @@ const fakeDb = {
               updatePayload.delivery_status !== 'blocked_owner_precision') {
             throw new Error('Quarantine must never mark the message as sent or erase the follow-up')
           }
+          // Snapshot hold binds UUID + pending + due time + destination; the id fallback binds UUID + pending.
           if (!filters.some(([key, value]) => key === 'id' && typeof value === 'string') ||
-              !filters.some(([key, value]) => key === 'status' && value === 'pending') ||
-              !filters.some(([key]) => key === 'check_at') ||
-              !filters.some(([key]) => key === 'whatsapp_id')) {
-            throw new Error('Quarantine must bind source UUID, pending state, due time, and destination')
+              !filters.some(([key, value]) => key === 'status' && value === 'pending')) {
+            throw new Error('Quarantine must bind source UUID and pending state')
           }
+          holdAttempts.push(filters.some(([key]) => key === 'check_at') && filters.some(([key]) => key === 'whatsapp_id') ? 'snapshot' : 'id_fallback')
           const target = dueRows.find(row => filters.every(([key, value]) => String(row[key]) === String(value)))
           if (!target) return resolve({ data: [], error: null })
           const originalOwner = target.owner_id
@@ -121,7 +123,7 @@ const fakeModules: Record<string, unknown> = {
       return 'provider_accepted'
     },
   },
-  '@/lib/services/reminder-delivery': { deliveryRpc: async () => dueRows.filter(row => row.status === 'pending').slice(0, 50) },
+  '@/lib/services/reminder-delivery': { deliveryRpc: async () => (fakeDueOverride || dueRows.filter(row => row.status === 'pending')).slice(0, 50) },
   '@/lib/bot/handlers/reminder-optout': { isSuppressed: async () => false },
   '@/lib/security/cron-auth': { isCronAuthorized: () => true },
   '@/lib/agent/session': {
@@ -252,5 +254,22 @@ assert.deepEqual(JSON.parse(JSON.stringify(badSource.body.failures)),
   [{ id: 'not-a-uuid', status: 'invalid_owner_hold_failed' }])
 assert.equal(heldRows.length, 0)
 assert.equal(notifications.length, 0)
+
+// 26 Oct review: a due row edited after the RPC read (snapshot mismatch) is still held by exact UUID, so it
+// cannot sit pending forever and starve the 50-row queue.
+dueRows = [makeDue(makeUuid(77), '9007199254740993'), makeDue(makeUuid(78), '123')]
+const edited = { ...dueRows[0] }
+dueRows[0] = { ...dueRows[0], check_at: new Date(Date.parse(String(dueRows[0].check_at)) + 60_000).toISOString() }
+fakeDueOverride = [edited, dueRows[1]]
+notifications.length = 0
+heldRows.length = 0
+holdAttempts.length = 0
+const mismatch = await actualFollowups.GET({})
+fakeDueOverride = null
+assert.deepEqual(holdAttempts, ['snapshot', 'id_fallback'], 'snapshot miss falls back to an exact-UUID hold')
+assert.equal(dueRows[0].status, 'owner_verification_required', 'edited unsafe row is held, not left pending')
+assert.equal(heldRows.length, 1)
+assert.equal(notifications.length, 1, 'the safe row in the same batch still proceeds')
+assert.ok(JSON.stringify(mismatch.body.failures).includes('owner_verification_required'))
 
 console.log('followups actual-route two-owner precision, durable hold, bounded queue / no-send tests passed')

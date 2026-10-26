@@ -107,8 +107,27 @@ async function holdUnverifiableFollowup(f: any): Promise<boolean> {
   // predicates select the exact due source row without inventing an owner.
   if (typeof f.owner_id === 'string') query = query.eq('owner_id', f.owner_id)
   const { data, error } = await query.select('id')
-  return !error && Array.isArray(data) && data.length === 1 && String(data[0].id) === id
+  if (!error && Array.isArray(data) && data.length === 1 && String(data[0].id) === id) {
+    console.warn('FOLLOWUP_OWNER_HELD:', JSON.stringify({ id, mode: 'snapshot' }))
+    return true
+  }
+  // 26 Oct review: if the snapshot-bound hold misses (row edited after the due read) the row would stay
+  // pending with no delivery job and return in every 50-row batch, starving everyone. The owner id is what
+  // makes it unsendable, whatever its schedule, so hold the exact UUID while it is still pending. Owner,
+  // recipient and schedule are never written.
+  const fallback = await supabase.from('followups')
+    .update({ status: 'owner_verification_required', delivery_status: 'blocked_owner_precision' })
+    .eq('id', id)
+    .eq('status', 'pending')
+    .select('id')
+  const held = !fallback.error && Array.isArray(fallback.data) && fallback.data.length === 1 && String(fallback.data[0].id) === id
+  console[held ? 'warn' : 'error'](held ? 'FOLLOWUP_OWNER_HELD:' : 'FOLLOWUP_OWNER_HOLD_FAILED:', JSON.stringify({ id, mode: 'id_fallback' }))
+  return held
 }
+// Recovery (operator, Supabase SQL editor, after the owner link is verified and exact-owner delivery exists):
+//   select id, owner_id, whatsapp_id, check_at from followups where status = 'owner_verification_required';
+//   update followups set status = 'pending', delivery_status = null where id = '<uuid>';
+// Restoring 'pending' while the owner id is still unsafe just re-holds the row on the next run.
 
 async function runDelivery(req: NextRequest) {
 
