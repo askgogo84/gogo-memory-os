@@ -121,3 +121,34 @@ assert.match(hbBlock, /won't add to cart, order or submit anything/)
 assert.match(hbBlock, /couldn't open a browser for you to take control/, 'failure is said plainly, read result kept')
 
 console.log('Obscura reach: comparison reads try Obscura first with logged outcomes; hotels accept place ids as Maps sources')
+
+// ── 5. Hotels: production Serper rows carry only title, coordinates and ratings (26 Oct 13:20 log) ──
+{
+  const places5 = await import('../lib/agent/places-search')
+  assert.equal(places5.placeSourceUrl({ lat: 19.0974, lng: 72.8747 }), 'https://www.google.com/maps/search/?api=1&query=19.0974%2C72.8747')
+  assert.equal(places5.placeSourceUrl({ placeId: 'ChIJ2xUGxbLJ5zsRm0GPvA1yvQ8', lat: 19.1, lng: 72.8 }), 'https://www.google.com/maps/place/?q=place_id:ChIJ2xUGxbLJ5zsRm0GPvA1yvQ8', 'exact ids still preferred')
+  for (const [lat, lng] of [[0, 0], [91, 72], [19, 181], [NaN, 72], ['19.1; drop', '72'], [undefined, 72]] as any[])
+    assert.equal(places5.placeSourceUrl({ lat, lng }), undefined, `rejects ${lat},${lng}`)
+  process.env.SERPER_API_KEY = 'synthetic'
+  const ff = (rows: any[]) => (async () => new Response(JSON.stringify({ places: rows }), { status: 200 })) as any
+  const rows = [
+    { title: 'Hotel Sahar Palace', latitude: 19.0989, longitude: 72.8697, rating: 4.1, ratingCount: 820, position: 1 },
+    { title: 'Airport Lodge', latitude: '19.1012', longitude: '72.8721', rating: 3.9, ratingCount: 410, position: 2 },
+    { title: 'No Coords Inn', rating: 4.8, ratingCount: 50, position: 3 },
+  ]
+  const warn5: string[] = []; const rw = console.warn; console.warn = (...a: any[]) => { warn5.push(a.join(' ')) }
+  let out = ''
+  try { out = String(await places5.answerPlaces('Find hotels near Mumbai Airport for 12–16 November for 2 adults. Show source links. Research only; do not book.', ff(rows))) } finally { console.warn = rw }
+  assert.match(out, /Hotel Sahar Palace/)
+  assert.ok(out.includes('https://www.google.com/maps/search/?api=1&query=19.0989%2C72.8697'))
+  assert.ok(out.includes('https://www.google.com/maps/search/?api=1&query=19.1012%2C72.8721'), 'numeric strings accepted')
+  assert.doesNotMatch(out, /No Coords Inn/, 'a listing with no source is still never recommended')
+  assert.match(out, /1 listing omitted/)
+  assert.doesNotMatch(out, /\n\n\n|\nundefined|\n ·/, 'no blank or "undefined" address line')
+  assert.match(out, /didn't supply addresses here, so check each location on its Maps link/)
+  assert.doesNotMatch(out, /Few results were inside/, 'no area claim without addresses')
+  assert.equal((out.match(/[Nn]o booking was made/g) || []).length, 1)
+  assert.match(out, /Room rates and availability for your dates are not verified here/)
+  assert.equal(warn5.filter(l => l.startsWith('PLACES_UNLINKED:')).length, 1, 'only the coordinate-less row is unlinked')
+}
+console.log('Hotels: provider coordinates are an exact Maps source; no invented addresses or area claims')
