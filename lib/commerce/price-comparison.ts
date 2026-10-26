@@ -2,7 +2,7 @@ import {supabaseAdmin} from '@/lib/supabase-admin'
 import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-runtime-guard'
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
-import {COMPARISON_PROVIDERS, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
+import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, isFoodComparison, parseFoodSubject, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
 const TYPE = 'price_comparison'
@@ -62,7 +62,7 @@ function reply(task: PriceComparison, intro?: string) {
 /** Request-time web look for electronics: the product page to start from and the price its search result showed.
  *  A search snippet is never presented as confirmed; it is labelled and replaced by the store-page check. */
 async function quickWebLook(subject: string, providers: ComparisonProvider[]) {
-  const looks = await Promise.all(providers.filter(p => PARALLEL_COMPARISON_PROVIDERS.has(p)).map(async provider => {
+  const looks = await Promise.all(providers.filter(p => PARALLEL_COMPARISON_PROVIDERS.has(p) && !FOOD_PROVIDERS.has(p)).map(async provider => {
     const results = await searchWebResults(subject, {includeDomains: [COMPARISON_PROVIDERS[provider].domain], timeoutMs: 6_000}).catch(() => [] as any[])
     const lead = comparisonProductLead(provider, subject, results || [])
     if (!lead) return null
@@ -94,12 +94,13 @@ async function ownerWatchStorage(owner: string, subject: string): Promise<string
   return storageFromWatchTexts(subject, (data || []).map((row: any) => JSON.stringify(row?.condition_json || {})))
 }
 
-function startedText(subject: string, providers: ComparisonProvider[], looks: Record<string, {quickPrice?: string}>, remembered: string | null = null) {
+function startedText(subject: string, providers: ComparisonProvider[], looks: Record<string, {quickPrice?: string}>, remembered: string | null = null, request = '') {
   const names = providers.map(p => COMPARISON_PROVIDERS[p].label)
   const list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0]
   const quick = providers.filter(p => looks[p]?.quickPrice).map(p => `• ${COMPARISON_PROVIDERS[p].label}: about ${looks[p].quickPrice}`)
   // 16 Oct: say which variant is compared (the base model when no size was named) and the pincode used, so the person can correct it.
-  const pin = /^\d{6}$/.test(String(process.env.COMPARISON_PINCODE || '')) ? ` for PIN ${process.env.COMPARISON_PINCODE}` : ''
+  const foodPin = isFoodComparison(providers) ? pincodeInText(request || subject) : null
+  const pin = foodPin ? ` for PIN ${foodPin}` : /^\d{6}$/.test(String(process.env.COMPARISON_PINCODE || '')) ? ` for PIN ${process.env.COMPARISON_PINCODE}` : ''
   // Default and say so: no size → 128GB; no tier word → the base model, never Pro/Pro Max/Air.
   const isPhone = /\biPhone\b/i.test(subject)
   const plainModel = isPhone && !/\b(?:pro|max|plus|mini|air|e)\b/i.test(subject)
@@ -204,7 +205,7 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
     const current = await readPriceComparison(owner, String(data.id))
     if (!current) throw new Error('comparison_missing_after_create')
     return reply(current, current.metadata_json.providers.some(row => row.waitingForRunId)
-      ? undefined : startedText(parsed.subject, parsed.providers, looks, remembered))
+      ? undefined : startedText(parsed.subject, parsed.providers, looks, remembered, parsed.request))
   } finally { await releaseBrainUserLease(key, lease.ownerToken) }
 }
 
@@ -273,7 +274,9 @@ export function retryFailedStores<T extends StoreRow>(rows: T[]): T[] {
   return rows.map(row => row.status === 'failed' && (row.attempts || 1) < storeRetryLimit(row)
     ? {provider: row.provider, status: 'pending' as const, attempts: (row.attempts || 1) + 1, ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})} as T : row)
 }
-export const PARALLEL_COMPARISON_PROVIDERS = new Set(['amazon', 'flipkart', 'croma', 'reliance'])
+// 26 Oct: Swiggy and Zomato are separate sites with public menus, so each gets its own browser too; sharing one
+// let a paused Swiggy location step mark Zomato "browser busy".
+export const PARALLEL_COMPARISON_PROVIDERS = new Set(['amazon', 'flipkart', 'croma', 'reliance', 'swiggy', 'zomato'])
 
 async function withComparisonState<T>(id: string, fn: () => Promise<T>): Promise<T | null> {
   // Parallel store checks update one saved comparison; every read-modify-write holds this short lease.
@@ -302,7 +305,15 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     const {prepareLinkedBrowserRead} = await import('@/lib/agent/browser-command')
     const startedAt = new Date().toISOString()
     let startUrl: string = COMPARISON_PROVIDERS[next.provider].url
-    if (parallel) {
+    const food = FOOD_PROVIDERS.has(next.provider) ? parseFoodSubject(task.metadata_json.subject) : null
+    if (food) {
+      // The restaurant's own menu page on this app (the outlet in the person's city first), else Swiggy's search.
+      const pin = pincodeInText(task.metadata_json.request)
+      const {searchWebResults} = await import('@/lib/web-search')
+      const leads = await searchWebResults(`${food.restaurant} ${/^56/.test(pin || '') ? 'Bangalore ' : ''}order online ${COMPARISON_PROVIDERS[next.provider].label}`,
+        {includeDomains: [COMPARISON_PROVIDERS[next.provider].domain], timeoutMs: 10_000}).catch(() => [] as any[])
+      startUrl = foodRestaurantLead(next.provider, food.restaurant, leads || [], pin) || comparisonSearchUrl(next.provider, task.metadata_json.subject) || startUrl
+    } else if (parallel) {
       // The quick web look at request time may already have found the product page.
       // A retry alternates between the found product page and the store's own search, so a bad start is not repeated.
       const known = (next.attempts || 1) % 2 === 1 && next.leadUrl && comparisonSource(next.provider, next.leadUrl)

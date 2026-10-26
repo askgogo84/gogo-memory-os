@@ -3,8 +3,8 @@ import { readFileSync } from 'node:fs'
 // 16 Oct: comparisons took 5-10 minutes (one store per cron minute) and the reply carried a dashboard link.
 const read = (p: string) => readFileSync(new URL('../' + p, import.meta.url), 'utf8')
 const pc = read('lib/commerce/price-comparison.ts')
-// Electronics stores run at the same time in their own browser lanes; grocery/food share one browser, one at a time.
-assert.match(pc, /PARALLEL_COMPARISON_PROVIDERS = new Set\(\['amazon', 'flipkart', 'croma', 'reliance'\]\)/)
+// Electronics stores and the food apps (26 Oct) run at the same time in their own browser lanes; grocery shares one browser.
+assert.match(pc, /PARALLEL_COMPARISON_PROVIDERS = new Set\(\['amazon', 'flipkart', 'croma', 'reliance', 'swiggy', 'zomato'\]\)/)
 assert.match(pc, /row\.status === 'pending' && \(PARALLEL_COMPARISON_PROVIDERS\.has\(row\.provider\) \|\| !sharedBusy\)/)
 assert.match(pc, /const laneKey = 'commerce-browser:' \+ owner \+ \(parallel \? ':' \+ provider : ''\)/)
 // Every read-modify-write of the saved comparison holds the state lease, so parallel lanes never overwrite each other.
