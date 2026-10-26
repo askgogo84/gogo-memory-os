@@ -77,6 +77,39 @@ export async function GET(req: NextRequest) {
   return withDeliveryHeartbeat('followup', () => runDelivery(req))
 }
 
+/**
+ * Keep unsendable records inspectable for exact-owner reconciliation without
+ * letting 50 permanently-invalid due rows starve every later safe follow-up.
+ * This HOLD is never a send, a successful follow-up, or a retry. Original
+ * contact, schedule and owner fields remain intact for authorized repair.
+ *
+ * The source UUID, schedule and destination originate in the trusted due RPC,
+ * not the caller. Never derive or round an unsafe owner in the write predicate.
+ */
+async function holdUnverifiableFollowup(f: any): Promise<boolean> {
+  const id = String(f?.id ?? '')
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ||
+      typeof f?.check_at !== 'string' || !Number.isFinite(Date.parse(f.check_at)) ||
+      typeof f?.whatsapp_id !== 'string' || !f.whatsapp_id) return false
+
+  // Source-state HOLD, not cancellation: the due RPC excludes statuses other
+  // than pending. An operator may later restore pending after exact-owner
+  // delivery is supported and the original owner link independently verified.
+  let query = supabase.from('followups')
+    .update({ status: 'owner_verification_required', delivery_status: 'blocked_owner_precision' })
+    .eq('id', id)
+    .eq('status', 'pending')
+    .eq('check_at', f.check_at)
+    .eq('whatsapp_id', f.whatsapp_id)
+
+  // For DB drivers that preserve the original signed64 TEXT identity, bind
+  // that as well. For already-rounded numbers, the UUID + immutable snapshot
+  // predicates select the exact due source row without inventing an owner.
+  if (typeof f.owner_id === 'string') query = query.eq('owner_id', f.owner_id)
+  const { data, error } = await query.select('id')
+  return !error && Array.isArray(data) && data.length === 1 && String(data[0].id) === id
+}
+
 async function runDelivery(req: NextRequest) {
 
   const deadline = Date.now() + 45000
@@ -91,7 +124,11 @@ async function runDelivery(req: NextRequest) {
     // unsafe cases before notifier preparation/provider egress or owner lookup.
     const ownerId=safeFollowupOwnerId(f?.owner_id)
     if (ownerId === null) {
-      failures.push({id:String(f?.id ?? 'unknown'),status:'invalid_owner'})
+      // Fail closed BEFORE notifier/provider. Quarantine only the exact
+      // trusted due row so later valid recipients are not queue-starved.
+      let held = false
+      try { held = await holdUnverifiableFollowup(f) } catch { held = false }
+      failures.push({id:String(f?.id ?? 'unknown'),status:held?'owner_verification_required':'invalid_owner_hold_failed'})
       continue
     }
     // Each occurrence is isolated; one provider/DB failure cannot abort the batch.
