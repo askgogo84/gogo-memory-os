@@ -62,7 +62,10 @@ export async function generateDoc(format: 'deck' | 'sheet', request: string, dep
 export async function editDoc(doc: MakeDoc, instruction: string, deps: { model?: Model } = {}) {
   const model = deps.model || defaultModel
   for (let attempt = 0; attempt < 2; attempt++) {
-    const raw = unwrap(firstJson(await model(editPrompt(doc, instruction), instruction, { strong: attempt > 0 }).catch(() => '')))
+    // Stored Make documents are owner-private. Checking only the edit instruction would
+    // miss confidential content embedded in editPrompt(doc, instruction). Never send an
+    // existing owner's document to the cheap/free tier, on either attempt.
+    const raw = unwrap(firstJson(await model(editPrompt(doc, instruction), instruction, { strong: true }).catch(() => '')))
     const next = doc.format === 'deck' ? validDeck(raw) : validSheet(raw)
     // An edit may keep numbers already in the document or given in the instruction, never new ones.
     if (next) return next.format === 'deck' ? scrubInventedNumbers(next, JSON.stringify(doc), instruction) : next

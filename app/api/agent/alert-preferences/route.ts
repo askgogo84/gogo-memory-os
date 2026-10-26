@@ -4,13 +4,14 @@ import { NextResponse } from 'next/server'
 import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from '@/lib/agent/session'
 import { getAlertPreferences, parseAlertPreferencesBody, saveAlertPreferences } from '@/lib/agent/alert-preferences'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactAlertOwnerId } from '@/lib/agent/alert-owner-id'
 
 export const dynamic = 'force-dynamic'
 
 const BRIEF_TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/
 
 async function readBrief(telegramId: string) {
-  const { data, error } = await supabaseAdmin.from('users').select('briefing_enabled,briefing_time').eq('telegram_id', Number(telegramId)).maybeSingle()
+  const { data, error } = await supabaseAdmin.from('users').select('briefing_enabled,briefing_time').eq('telegram_id', telegramId).maybeSingle()
   if (error) throw new Error(`brief_read_failed:${error.message}`)
   return { enabled: Boolean(data?.briefing_enabled), time: String(data?.briefing_time || '08:00').slice(0, 5) }
 }
@@ -18,8 +19,10 @@ async function readBrief(telegramId: string) {
 export async function GET(request: Request) {
   const session = await requireAgentSession(request)
   if (!isAgentSession(session)) return session
+  const owner = exactAlertOwnerId(session.telegramId, session.surface)
+  if (!owner) return NextResponse.json({ error: 'invalid_session' }, { status: 403 })
   try {
-    const [prefs, brief] = await Promise.all([getAlertPreferences(session.telegramId), readBrief(session.telegramId)])
+    const [prefs, brief] = await Promise.all([getAlertPreferences(owner), readBrief(owner)])
     return NextResponse.json({ ...prefs, brief })
   } catch (err: any) {
     console.error('ALERT_PREFERENCES_GET_FAILED:', String(err?.message || err).slice(0, 200))
@@ -32,6 +35,9 @@ export async function PUT(request: Request) {
   if (blocked) return blocked
   const session = await requireAgentSession(request)
   if (!isAgentSession(session)) return session
+  const owner = exactAlertOwnerId(session.telegramId, session.surface)
+  // Authorization must happen before body parsing or any alert/briefing read or write.
+  if (!owner) return NextResponse.json({ error: 'invalid_session' }, { status: 403 })
   const body: any = await request.json().catch(() => null)
   const prefs = parseAlertPreferencesBody(body)
   if (!prefs) return NextResponse.json({ error: 'invalid_preferences' }, { status: 400 })
@@ -40,10 +46,10 @@ export async function PUT(request: Request) {
     return NextResponse.json({ error: 'invalid_brief' }, { status: 400 })
   }
   try {
-    const saved = await saveAlertPreferences(session.telegramId, prefs)
+    const saved = await saveAlertPreferences(owner, prefs)
     if (!saved.ok) return NextResponse.json({ error: saved.error }, { status: 503 })
     if (brief) {
-      const { error } = await supabaseAdmin.from('users').update({ briefing_enabled: brief.enabled, briefing_time: brief.time }).eq('telegram_id', Number(session.telegramId))
+      const { error } = await supabaseAdmin.from('users').update({ briefing_enabled: brief.enabled, briefing_time: brief.time }).eq('telegram_id', owner)
       if (error) throw new Error(`brief_write_failed:${error.message}`)
     }
     return NextResponse.json({ ok: true })

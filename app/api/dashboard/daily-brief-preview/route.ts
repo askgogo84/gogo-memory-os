@@ -18,13 +18,22 @@ function todayIst() {
 export async function GET() {
   const session = await getSession()
   if (!session) return NextResponse.json({ ok: false }, { status: 401 })
-  const telegramId = Number(session.telegramId)
-  if (!Number.isFinite(telegramId)) return NextResponse.json({ ok: false }, { status: 400 })
+  // This builder still accepts numeric owner IDs. Never round a persisted 64-bit
+  // session identity: two distinct owners can alias as the same JavaScript Number.
+  // Reject unsafe IDs before either privileged data access or briefing synthesis.
+  const ownerId = session.telegramId
+  if (!/^-?[1-9]\d*$/.test(ownerId)) {
+    return NextResponse.json({ ok: false, error: 'invalid_session' }, { status: 403 })
+  }
+  const telegramId = Number(ownerId)
+  if (!Number.isSafeInteger(telegramId) || String(telegramId) !== ownerId) {
+    return NextResponse.json({ ok: false, error: 'invalid_session' }, { status: 403 })
+  }
 
   const { data: user } = await supabaseAdmin
     .from('users')
     .select('name')
-    .eq('telegram_id', telegramId)
+    .eq('telegram_id', ownerId)
     .maybeSingle()
 
   const name = (user?.name || 'Gogo').trim().split(/\s+/)[0] || 'Gogo'

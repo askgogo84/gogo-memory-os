@@ -1,6 +1,7 @@
 // Duet parity step 3 (approved 22 Oct mock, screen 3): Make — the finished work Gogo produced (briefs, comparisons,
 // plans, trackers), separate from Library (documents the person sent in). Reads agent_artifacts, owner-scoped.
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from './owner-identity'
 
 export const MAKE_KINDS = [
   { key: 'all', label: 'All', types: [] as string[] },
@@ -30,12 +31,13 @@ export type MadeItem = { id: string; type: string; label: string; title: string;
 
 export async function getMadeForYou(telegramId: string, kind: MakeKind = 'all'): Promise<{ ok: boolean; items: MadeItem[]; counts: Record<MakeKind, number> }> {
   const counts = Object.fromEntries(MAKE_KINDS.map(k => [k.key, 0])) as Record<MakeKind, number>
-  const tg = String(telegramId || '')
-  if (!tg) return { ok: true, items: [], counts }
-  // Results made on WhatsApp may sit under the person's linked WhatsApp row (see owner-ids).
-  const ids = await (await import('./owner-ids')).linkedTelegramIds(tg).catch(() => [tg])
+  const tg = exactSessionOwnerId(telegramId)
+  if (!tg) return { ok: false, items: [], counts }
+  // Unverified cross-channel links cannot expand an authenticated owner.
+  const ids = await (await import('./owner-ids')).linkedTelegramIds(tg).catch(() => [])
+  if (ids.length !== 1 || ids[0] !== tg) return { ok: false, items: [], counts }
   const { data, error } = await supabaseAdmin.from('agent_artifacts').select('id,type,title,subtitle,updated_at,fmt:content_json->>format')
-    [ids.length > 1 ? 'in' : 'eq']('telegram_id', (ids.length > 1 ? ids : tg) as any).order('updated_at', { ascending: false }).limit(120)
+    .eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(120)
   if (error) { console.error('MAKE_READ_FAILED:', error.message); return { ok: false, items: [], counts } }
   // 23 Oct live: Make listed "walk 8000 steps daily" and "Keep my upcoming travel documents…" twice each (a goal
   // tracker saved again). Same type + same title is one card (newest), noting the earlier copies.
