@@ -72,18 +72,37 @@ export function pickFlight(options: BrowserFlightOption[], pick: FlightPick): Br
   return options[pick.n - 1] || null
 }
 
-export type Traveller = { name: string; dob: string }
+export type Traveller = { name: string; dob?: string }
+
+// 26 Oct (owner): domestic Indian flights need the name as on any government photo ID (Aadhaar, PAN, driving licence,
+// passport); a passport and date of birth are only needed for international trips.
+const INDIA_AIRPORTS = new Set(['BLR','BOM','DEL','HYD','MAA','CCU','PNQ','GOI','GOX','AMD','JAI','COK','TRV','LKO','IXC','CJB','IXE','VTZ','BBI','PAT','VNS','IDR','NAG','GAU','SXR','ATQ','UDR',
+  'IXB','IXR','IXZ','RPR','BHO','IXM','TRZ','IXA','IXJ','VGA','IXU','STV','BDQ','HBX','IXG','MYQ','IMF','DIB','DED','RJA','TIR','CCJ','IXL','GOP','AGR','JDH','BHJ','IXD','KNU','GWL','JLR','IXY','IXS','DMU','AJL','HSR','SAG','KLH','NDC','JGA','PNY','TCR','IXP','DHM','KUU','BEK','HJR','VDY','JRG','BPM','GBI','GAY'])
+export function isDomesticIndiaTrip(context: any) {
+  const o = String(context?.origin?.code || '').toUpperCase(), d = String(context?.destination?.code || '').toUpperCase()
+  return INDIA_AIRPORTS.has(o) && INDIA_AIRPORTS.has(d)
+}
 
 const pad = (n: number) => String(n).padStart(2, '0')
 
 /** One traveller per line (or separated by ";"): "Goverdhan Mandyam Dommane, 12 Mar 1985" or "... 12/03/1985". */
-export function parseTravellers(text: string, now = new Date()): { travellers: Traveller[]; problems: string[] } {
+export function parseTravellers(text: string, now = new Date(), options: { domestic?: boolean } = {}): { travellers: Traveller[]; problems: string[] } {
   const travellers: Traveller[] = []
   const problems: string[] = []
   const chunks = String(text || '').split(/[\n;]+/).map(c => c.trim()).filter(Boolean)
   for (const chunk of chunks) {
     const dateRe = /(\d{1,2})[\s/.\-]+(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2})[\s/.\-,]+(\d{4})/i
     const dm = chunk.match(dateRe)
+    const idLabel = options.domestic ? 'as on your government photo ID' : 'as on the passport'
+    // Domestic: the date of birth is optional; only the name matters.
+    if (!dm && options.domestic) {
+      const single = chunk.match(/^\s*single\s+name\s*[:\-]?\s*([A-Za-z][A-Za-z'-]{1,40})\s*$/i)
+      const name = (single ? single[1] : chunk).replace(/^\s*(?:name|passenger|traveller|traveler|adult)(?:\s+\d+)?\s*[:\-]\s*/i, ' ').replace(/[,:()\-]+/g, ' ').replace(/\s+/g, ' ').trim()
+      if (!/^[A-Za-z][A-Za-z .'-]{1,78}$/.test(name) || (!single && name.split(' ').filter(Boolean).length < 2)) {
+        problems.push(`“${name.slice(0, 40) || chunk.slice(0, 40)}” needs a first and last name ${idLabel} (if your ID shows only one name, send “single name ${name.split(' ')[0] || 'Name'}”)`); continue
+      }
+      travellers.push({ name: name.replace(/\b([a-z])/g, c => c.toUpperCase()) }); continue
+    }
     if (!dm) { problems.push(`no date of birth in “${chunk.slice(0, 40)}”`); continue }
     const day = Number(dm[1]); const monthRaw = dm[2].toLowerCase()
     const month = /^\d+$/.test(monthRaw) ? Number(monthRaw) : MONTHS[monthRaw.slice(0, 4)] || MONTHS[monthRaw.slice(0, 3)]
@@ -95,8 +114,10 @@ export function parseTravellers(text: string, now = new Date()): { travellers: T
       .replace(/\b(?:dob|d\.o\.b|date of birth|born(?: on)?)\b\s*[:\-]?\s*$/i,' ')
       .replace(/^\s*(?:name|passenger|traveller|traveler|adult)(?:\s+\d+)?\s*[:\-]\s*/i,' ')
       .replace(/[,:()\-]+/g, ' ').replace(/\s+/g, ' ').trim()
-    if (!/^[A-Za-z][A-Za-z .'-]{1,78}$/.test(name) || name.split(' ').filter(Boolean).length < 2) { problems.push(`“${name.slice(0, 40) || chunk.slice(0, 40)}” needs a first and last name as on the passport`); continue }
-    travellers.push({ name: name.replace(/\b([a-z])/g, c => c.toUpperCase()), dob: `${day} ${MONTH_NAMES[month - 1]} ${year}` })
+    const singleOk = Boolean(options.domestic) && /^\s*single\s+name\b/i.test(chunk)
+    const cleanName = singleOk ? name.replace(/^single\s+name\s*/i, '').trim() : name
+    if (!/^[A-Za-z][A-Za-z .'-]{1,78}$/.test(cleanName) || (!singleOk && cleanName.split(' ').filter(Boolean).length < 2)) { problems.push(`“${cleanName.slice(0, 40) || chunk.slice(0, 40)}” needs a first and last name ${idLabel}${options.domestic ? ` (if your ID shows only one name, send “single name ${cleanName.split(' ')[0] || 'Name'}”)` : ''}`); continue }
+    travellers.push({ name: cleanName.replace(/\b([a-z])/g, c => c.toUpperCase()), dob: `${day} ${MONTH_NAMES[month - 1]} ${year}` })
   }
   return { travellers, problems }
 }
@@ -113,7 +134,7 @@ const fareKind = (context: any) => isRound(context) ? 'round trip' : 'one-way'
 export function flightBookingObjective(params: { context: any; option: BrowserFlightOption; travellers: Traveller[] }) {
   const { context, option, travellers } = params
   const fare = option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')}` : 'the listed fare'
-  const who = travellers.map((t, i) => `traveller ${i + 1}: full name ${t.name}, date of birth ${t.dob}`).join('; ')
+  const who = travellers.map((t, i) => `traveller ${i + 1}: full name ${t.name}${t.dob ? `, date of birth ${t.dob}` : ''}`).join('; ')
   const round = isRound(context)
   return safe(`Flight booking up to payment on Google Flights: ${round ? 'round trip' : 'one-way'} ${context.origin?.code} to ${context.destination?.code}, depart ${context.startDate}${round ? `, return ${context.returnDate}` : ''}, ${travellers.length} adult${travellers.length === 1 ? '' : 's'}, ${String(context.cabin || 'economy').replace(/_/g, ' ')}. `
     + `Choose the ${option.airline} result that leaves ${option.departure} on ${context.startDate} (about ${fare} ${round ? 'round trip' : 'one-way'})${round ? `, then the cheapest return on ${context.returnDate}` : ''}, and continue (Select flight, Continue, Book) to the airline or booking site. `
@@ -122,8 +143,10 @@ export function flightBookingObjective(params: { context: any; option: BrowserFl
     + `Stop on the payment step: never pay, never enter card, UPI or bank details, never press Pay.`, 1700)
 }
 
-const askText = (count: number, problems: string[] = []) =>
-  `${problems.length ? `I could not use that: ${problems.slice(0, 2).join('; ')}.\n\n` : ''}Send ${count === 1 ? 'the traveller’s' : `each of the ${count} travellers’`} full name exactly as on the passport and date of birth, ${count === 1 ? 'for example' : 'one per line, for example'}:\n\nAsha Rao, 12 Mar 1985`
+const askText = (count: number, problems: string[] = [], domestic = false) =>
+  `${problems.length ? `I could not use that: ${problems.slice(0, 2).join('; ')}.\n\n` : ''}` + (domestic
+    ? `Send ${count === 1 ? 'the traveller’s' : `each of the ${count} travellers’`} full name exactly as on a government photo ID (Aadhaar, PAN, driving licence or passport), ${count === 1 ? 'for example' : 'one per line, for example'}:\n\nAsha Rao\n\nThis is a domestic flight, so no passport or date of birth is needed. Carry the same ID to the airport.`
+    : `Send ${count === 1 ? 'the traveller’s' : `each of the ${count} travellers’`} full name exactly as on the passport and date of birth, ${count === 1 ? 'for example' : 'one per line, for example'}:\n\nAsha Rao, 12 Mar 1985\n\nThis is an international flight, so the name must match the passport.`)
 
 type Waiting = { runId: undefined; status: 'waiting_user'; capability: 'travel'; risk: 'low'; handledBy: 'flight-booking'; text: string }
 const waiting = (text: string): Waiting => ({ runId: undefined, status: 'waiting_user', capability: 'travel', risk: 'low', handledBy: 'flight-booking', text })
@@ -175,9 +198,10 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
     const option = last.options[pending.optionIndex]
     if (!option) return null
     const count = Math.max(1, Number(last.context.adults) || 1)
-    const parsed = parseTravellers(text)
+    const domestic = isDomesticIndiaTrip(last.context)
+    const parsed = parseTravellers(text, new Date(), { domestic })
     if (parsed.travellers.length < count || parsed.problems.length) {
-      const reply = askText(count, parsed.problems.length ? parsed.problems : [`I need ${count} traveller${count === 1 ? '' : 's'}, I got ${parsed.travellers.length}`])
+      const reply = askText(count, parsed.problems.length ? parsed.problems : [`I need ${count} traveller${count === 1 ? '' : 's'}, I got ${parsed.travellers.length}`], domestic)
       await savePending(tg, { runId: pending.runId, optionIndex: pending.optionIndex }, reply)
       return waiting(reply)
     }
@@ -192,7 +216,7 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
   const index = last.options.indexOf(option)
   const count = Math.max(1, Number(last.context.adults) || 1)
   const fare = option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')}` : 'the listed fare'
-  const reply = `Booking: ${last.context.origin?.code} → ${last.context.destination?.code}, ${isRound(last.context) ? `${last.context.startDate} and back ${last.context.returnDate}` : `${last.context.startDate}, one-way`}.\n${describeFlight(option)}\nAbout ${fare} ${fareKind(last.context)} for ${count} adult${count === 1 ? '' : 's'}; fares move, so I will stop if the price on the booking page is more than 10% higher.\n\n${askText(count)}`
+  const reply = `Booking: ${last.context.origin?.code} → ${last.context.destination?.code}, ${isRound(last.context) ? `${last.context.startDate} and back ${last.context.returnDate}` : `${last.context.startDate}, one-way`}.\n${describeFlight(option)}\nAbout ${fare} ${fareKind(last.context)} for ${count} adult${count === 1 ? '' : 's'}; fares move, so I will stop if the price on the booking page is more than 10% higher.\n\n${askText(count, [], isDomesticIndiaTrip(last.context))}`
   await savePending(tg, { runId: last.runId, optionIndex: index }, reply)
   return waiting(reply)
 }
