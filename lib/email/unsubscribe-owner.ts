@@ -8,11 +8,11 @@
  */
 export function exactUnsubscribeOwnerId(input: unknown): string | null {
   if (typeof input !== 'string' || !/^-?[1-9]\d{0,18}$/.test(input)) return null
-  try {
-    const n = BigInt(input)
-    if (n === 0n || n < -(1n << 63n) || n > (1n << 63n) - 1n) return null
-    return input
-  } catch {
-    return null
-  }
+  // String magnitude comparisons are exact and work with the repo's pre-ES2020 TS target.
+  // The preceding regex rejects sign/zero/leading-zero ambiguity and limits to 19 digits.
+  const negative = input[0] === '-'
+  const digits = negative ? input.slice(1) : input
+  const bound = negative ? '9223372036854775808' : '9223372036854775807'
+  if (digits.length === bound.length && digits > bound) return null
+  return input
 }
