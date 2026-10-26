@@ -27,6 +27,8 @@ import {
 
 import { assessPriceCheck, appendPriceRun, buildPriceRun, normalizePriceRule, priceAlertText, priceStateFrom, type PriceRule } from './price-threshold'
 import { extractGoldQuotes } from '@/lib/bot/handlers/gold-quotes'
+import { evaluateStockRule, normalizeStockRule, stockAlertText, stockStateFrom, type StockRule } from './stock-rule'
+import { fetchStockQuote } from './stock-quote'
 import { matchingActiveWatches, planWatchCleanup, watchSpecificity, DEDUPE_WATCH_TYPES, type DedupeRow, type WatchRetirement } from './watch-dedupe'
 import { appendGoldRun, decideGoldAlert, evaluateGoldRule, goldAlertText, goldSearchContext, goldStateFrom, normalizeGoldRule, sourceHost, type GoldRule } from './gold-rate-rule'
 
@@ -98,6 +100,8 @@ export type WebSearchWatcherCondition = ContextualWatcherMeta & {
   priceRule?: PriceRule
   // Gold-rate watch: alert only when a single verified per-gram quote crosses the threshold.
   goldRule?: GoldRule
+  // Share-price watch: alert only when a live exchange quote meets the move/level rule.
+  stockRule?: StockRule
   originalRequest?: string
 }
 
@@ -208,6 +212,7 @@ export function normalizeWebSearchWatcher(input: any): WebSearchWatcherCondition
     priceRule:normalizePriceRule(input?.priceRule)||undefined,
     // Only a row that carries a gold rule reads it; every other watch is untouched.
     ...(input?.goldRule&&normalizeGoldRule(input.goldRule)?{goldRule:normalizeGoldRule(input.goldRule) as GoldRule}:{}),
+    ...(input?.stockRule&&normalizeStockRule(input.stockRule)?{stockRule:normalizeStockRule(input.stockRule) as StockRule}:{}),
     originalRequest:String(input?.originalRequest||'').trim().slice(0,2000)||undefined,
     // A cadence the person asked for ("every morning") is a floor the adaptive schedule never goes below.
     ...(Number(input?.requestedCadenceMinutes)>=60?{requestedCadenceMinutes:Math.min(24*60,Math.floor(Number(input.requestedCadenceMinutes)))}:{}),
@@ -1126,6 +1131,9 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
     return { triggered:false, failed:false }
   }
 
+  // A share-price check is a plain exchange quote with no search cost, so the search budget never defers it.
+  if (condition.stockRule) return await processStockCheck(watcher, condition, condition.stockRule, now)
+
   const allowance = await checkCostAllowance(telegramId, COST_ESTIMATES_PAISE.web_search_basic)
   const currentQuiet = Math.max(0, Number(watcher.last_state_json?.quietChecks || 0))
   const activeCount = await activeWebWatchCount(telegramId)
@@ -1405,6 +1413,58 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
   }).eq('id', watcher.id).eq('telegram_id', telegramId).eq('active', true)
     .eq('condition_json', JSON.stringify(watcher.condition_json))
   if (stateError) throw new Error('watch_alert_state_write_failed')
+  return { triggered:material, failed:false }
+}
+
+/** Ledger key for one share-price alert episode: watch id + rule identity + episode number. */
+export function stockAlertDeliveryKey(watcherId:string, rule:StockRule, episode:number) {
+  const identity = [watcherId, rule.symbol, rule.kind, rule.direction, rule.pct, rule.level, episode]
+  return 'watch/' + watcherId + '/stock/' + createHash('sha256').update(JSON.stringify(identity)).digest('hex')
+}
+
+// One check of a share-price watch (26 Oct): a plain exchange quote (no search or AI cost), decided by code. A failed
+// or unvalidated quote stays silent and records why; the alert episode only advances after a send is accepted.
+async function processStockCheck(watcher:any, condition:WebSearchWatcherCondition, rule:StockRule, now:Date) {
+  const telegramId = String(watcher.telegram_id)
+  const quote = await fetchStockQuote(rule.symbol).catch((err:any) => { console.error('STOCK_WATCH_QUOTE_FAILED:', String(err?.message||err).slice(0,120)); return null })
+  const prior = stockStateFrom(watcher.last_state_json, rule)
+  const verdict = quote ? evaluateStockRule(rule, quote.price, prior) : { notify:false, reason:'no_quote', changePct:null, next:prior }
+  let sent = false
+  if (verdict.notify && quote) {
+    const key = stockAlertDeliveryKey(String(watcher.id), rule, prior.alertCount)
+    const message = stockAlertText(rule, quote.price, verdict, quote.asOf, prior.baseline)
+    if (condition.delivery !== 'app') {
+      const delivery = await deliverWatchAlert({ watcherId:String(watcher.id), owner:telegramId, key, due:now.toISOString(), message, condition:watcher.condition_json })
+      if (['suppressed', 'cancelled'].includes(delivery.state)) return { triggered:false, failed:false }
+      if (!delivery.accepted && !['outcome_unknown', 'failed'].includes(delivery.state)) return { triggered:false, failed:true }
+      sent = delivery.accepted
+    } else sent = true
+    await writeActivity(telegramId, `Background Gogo saw your share-price rule met: ${condition.title}`, {
+      watcher_id:watcher.id, type:'web_search', kind:'stock_price', symbol:rule.symbol, observed:quote.price, change_pct:verdict.changePct, evidence_level:'exchange_quote',
+    })
+  }
+  const next = verdict.notify ? (sent ? verdict.next : prior) : verdict.next
+  const material = verdict.notify && sent
+  const cadenceMinutes = Math.max(15, Number((condition as any).requestedCadenceMinutes) || 30)
+  const alertTimes = Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : []
+  const { error } = await supabaseAdmin.from('agent_watchers').update({
+    cadence_minutes:cadenceMinutes,
+    last_checked_at:now.toISOString(),
+    next_check_at:new Date(now.getTime() + cadenceMinutes * 60_000).toISOString(),
+    last_state_json:{
+      ...(watcher.last_state_json || {}),
+      stockArmed:next.armed, stockBaseline:next.baseline, stockAlertCount:material ? prior.alertCount + 1 : prior.alertCount,
+      lastObservedPrice:quote?.price ?? watcher.last_state_json?.lastObservedPrice ?? null,
+      lastStockReason:verdict.reason, lastQuoteAsOf:quote?.asOf ?? null,
+      quietChecks:material ? 0 : (Number(watcher.last_state_json?.quietChecks) || 0) + 1,
+      lastAlertAt:material ? now.toISOString() : watcher.last_state_json?.lastAlertAt || null,
+      alertTimes:material ? [...alertTimes, now.toISOString()].slice(-20) : alertTimes,
+      costGuard:'ok',
+    },
+    updated_at:now.toISOString(),
+  }).eq('id', watcher.id).eq('telegram_id', telegramId).eq('active', true)
+    .eq('condition_json', JSON.stringify(watcher.condition_json))
+  if (error) throw new Error('watch_alert_state_write_failed')
   return { triggered:material, failed:false }
 }
 

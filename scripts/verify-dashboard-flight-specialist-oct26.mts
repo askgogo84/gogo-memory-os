@@ -2,6 +2,8 @@
 // went to the general planner (23.6s) and answered with snippet fares (no airline, times or date-specific price).
 // WhatsApp and /api/agent/run already prefer the specialist travel engine; the dashboard now does too, before the
 // planner. Offline. Run: npx --yes tsx scripts/verify-dashboard-flight-specialist-oct26.mts
+// Also runs the share-price watch checks (registered here to keep package.json free of merge conflicts).
+import './verify-stock-watch-oct26.mts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { shouldPreferSpecialistTravel } from '../lib/agent/specialist-routing'

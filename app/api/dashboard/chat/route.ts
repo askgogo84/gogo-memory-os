@@ -423,6 +423,14 @@ async function handleChatPost(req: NextRequest) {
       await saveConversation(user.telegram_id,text,goldWatch.text)
       return NextResponse.json(goldWatch)
     }
+    // Share-price watch (26 Oct): a live exchange-quote rule, never a news or search watch.
+    // Loaded only for messages that talk about a share/stock watch, so route harnesses keep their dependency maps.
+    const stockWatch=/\b(?:share|shares|stock)\b/i.test(text)&&/\b(?:watch|track|monitor|alert|notify|tell me|let me know|keep an eye)\b/i.test(text)
+      ?await (await import('@/lib/agent/stock-watch')).tryCreateStockWatchFromCommand({actor,surface:'web',text}):null
+    if(stockWatch){
+      await saveConversation(user.telegram_id,text,stockWatch.text)
+      return NextResponse.json(stockWatch)
+    }
     const contentDraft = await tryRunContentWorkflow(actor, text, `web-${randomUUID()}`)
     __trace.mark('contentDraft')
     if (contentDraft) return NextResponse.json(contentDraft)

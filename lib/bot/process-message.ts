@@ -628,6 +628,17 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       return {handledBy:goldWatch.handledBy,text:formatOutgoingText(params.channel,goldWatch.text),resolvedUser}
     }
   }
+  // Share-price watch (26 Oct): only messages phrased as a share/stock price watch load the module.
+  if(/\b(?:share|shares|stock)\b/i.test(incomingText)&&/\b(?:watch|track|monitor|alert|notify|tell me|let me know|keep an eye)\b/i.test(incomingText)&&resolvedUser.id&&resolvedUser.whatsappId&&(await import('@/lib/agent/stock-rule')).isStockWatchPhrasing(incomingText)){
+    const {tryCreateStockWatchFromCommand}=await import('@/lib/agent/stock-watch')
+    const stockWatch=await tryCreateStockWatchFromCommand({actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId),name:resolvedUser.name||'Gogo'},surface:params.channel==='whatsapp'?'whatsapp':'web',text:incomingText})
+    __trace.mark('stockWatch')
+    if(stockWatch){
+      await saveConversation(resolvedUser.telegramId,'user',incomingText)
+      await saveConversation(resolvedUser.telegramId,'assistant',stockWatch.text)
+      return {handledBy:stockWatch.handledBy,text:formatOutgoingText(params.channel,stockWatch.text),resolvedUser}
+    }
+  }
   // Route to the commerce browser read on an explicit "compare" OR a single named-retailer
   // price/stock read (namesRetailerPriceRead guards against hijacking bare "price" messages).
   const priceComparison=(/\bcompar(?:e|ison|isons)\b/i.test(incomingText)||namesRetailerPriceRead(incomingText)) ? await tryPriceComparison({telegramId:resolvedUser.telegramId,text:incomingText,surface:params.channel}) : null
