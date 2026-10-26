@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
+import ts from 'typescript'
 
 process.env.CRON_SECRET = process.env.CRON_SECRET || 'askgogo-google-workspace-test-secret'
 process.env.GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'test-client-id'
@@ -84,5 +86,65 @@ assert.equal(calendar.consumeCalendarOauthState(waCalState), whatsappId)
 assert.equal(gmail.buildGmailConnectUrl(0), null)
 assert.equal(gmail.buildGmailConnectUrl(Number.NaN), null)
 assert.equal(calendar.buildCalendarConnectUrl(0), null)
+
+
+// Composio Google consent is owner-bound. Exercise the ACTUAL transpiled GET
+// handler with inert session/provider mocks; no real OAuth, credentials or fetch.
+const gmailConnectSource = readFileSync(new URL('../app/api/email/google/connect/route.ts', import.meta.url), 'utf8')
+const gmailConnectJS = ts.transpileModule(gmailConnectSource, {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+}).outputText
+async function checkGmailConnect(session: unknown, configured = true) {
+  const calls: number[] = []
+  const locationUnavailable = 'https://app.askgogo.in/dashboard/settings/email?error=google_unavailable'
+  const deps: Record<string, unknown> = {
+    'next/server': { NextResponse: { redirect: (location: string) => ({ location: String(location), status: 307 }) } },
+    '@/lib/dashboard/session': { getSession: async () => session },
+    '@/lib/connectors/composio-gmail': {
+      composioConfigured: () => configured,
+      createGmailConnectLink: async (owner: number) => {
+        calls.push(owner)
+        return 'https://composio.fixture.invalid/consent?owner=' + owner
+      },
+    },
+  }
+  const exports: Record<string, any> = {}
+  runInNewContext(gmailConnectJS, {
+    exports,
+    require: (name: string) => {
+      assert.ok(Object.hasOwn(deps, name), 'unexpected route dependency: ' + name)
+      return deps[name]
+    },
+    console: { error: () => undefined },
+  }, { timeout: 1000 })
+  const response = await exports.GET()
+  return { location: String(response.location), calls, locationUnavailable }
+}
+for (const [raw, numeric] of [['123456789', 123456789], ['-876543210', -876543210], ['9007199254740991', 9007199254740991]] as const) {
+  const { location, calls } = await checkGmailConnect({ telegramId: raw })
+  assert.deepEqual(calls, [numeric], 'canonical safe owner must be passed unchanged')
+  assert.equal(location, 'https://composio.fixture.invalid/consent?owner=' + numeric)
+}
+assert.equal(Number('9007199254740992'), Number('9007199254740993'), 'historic JS bigint identity collision reproduced')
+for (const raw of [
+  '9007199254740992', '9007199254740993', '-9007199254740992',
+  '9223372036854775807', '', '0', '-0', '000123', '+123', '123 ',
+  ' 123', '1.5', '1e3', 'NaN', 'Infinity', 'not-an-owner',
+]) {
+  const { location, calls, locationUnavailable } = await checkGmailConnect({ telegramId: raw })
+  assert.equal(location, locationUnavailable, 'invalid or imprecise owner must fail closed: ' + JSON.stringify(raw))
+  assert.equal(calls.length, 0, 'no OAuth account link for invalid owner: ' + JSON.stringify(raw))
+}
+for (const malformed of [{ telegramId: 9007199254740993 }, { telegramId: 123.5 }, { telegramId: null }]) {
+  const { location, calls, locationUnavailable } = await checkGmailConnect(malformed)
+  assert.equal(location, locationUnavailable)
+  assert.equal(calls.length, 0)
+}
+const anonymousGmail = await checkGmailConnect(null)
+assert.equal(anonymousGmail.location, 'https://app.askgogo.in/dashboard')
+assert.equal(anonymousGmail.calls.length, 0)
+const noProviderGmail = await checkGmailConnect({ telegramId: '123' }, false)
+assert.equal(noProviderGmail.location, noProviderGmail.locationUnavailable)
+assert.equal(noProviderGmail.calls.length, 0)
 
 console.log('Google Workspace + Calendar signed OAuth verification passed')
