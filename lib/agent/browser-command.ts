@@ -275,6 +275,8 @@ export function parseConnectedProviderCartAction(text:string):BrowserCommand|nul
     alias:new RegExp('\\b(?:'+(provider.aliases||[provider.key]).map(name=>name.replace(/\./g,'\\.')).join('|')+')\\b','i'),
     loginUrl:provider.loginUrl,
   })).filter(provider=>provider.alias.test(raw))
+    // "Swiggy Instamart" names one store: the Swiggy login provider is the same site, not a second candidate.
+    .filter(provider=>!shoppingSites.some(site=>new URL(site.loginUrl).host===new URL(provider.loginUrl).host))
   const candidates=[...shoppingSites,...vaultCandidates]
   if(candidates.length!==1)return null
   return {
