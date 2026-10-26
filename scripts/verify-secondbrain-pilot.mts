@@ -221,3 +221,73 @@ console.log('verify-secondbrain-pilot: ok')
     'do not write an invitation for an unsafe recipient')
   console.log('SecondBrain recipient exact-owner security: inert two-owner and unsafe-number fixture PASS')
 }
+
+// 10. Exercise the real workspace invite entry point with a no-egress fake DB.
+// A rounded recipient must abort BEFORE any invitation write; a canonical BIGINT string still works.
+{
+  const { supabaseAdmin } = await import('../lib/supabase-admin')
+  const client = supabaseAdmin as any
+  const originalFrom = client.from
+  const workspaceId = '00000000-0000-4000-8000-000000000001'
+  const recipientExact = '9007199254740993'
+  let recipientFromDb: string | number = Number(recipientExact)
+  const invited: Array<{ telegram_id: string }> = []
+  const tables: string[] = []
+  client.from = (table: string) => {
+    tables.push(table)
+    const filters: Record<string, unknown> = {}
+    let mutation: 'read' | 'insert' | 'update' = 'read'
+    let payload: any = null
+    let head = false
+    const reply = () => {
+      if (table === 'workspace_members') {
+        if (head) return { count: 1, error: null }
+        return { data: filters.telegram_id === '1234' ? { role: 'admin' } : null, error: null }
+      }
+      if (table === 'users') return { data: [{ telegram_id: recipientFromDb }], error: null }
+      if (table === 'workspace_invites') {
+        if (mutation === 'insert') {
+          invited.push(payload)
+          return { data: { id: '00000000-0000-4000-8000-000000000002' }, error: null }
+        }
+        return { error: null }
+      }
+      if (table === 'workspace_audit_log') return { error: null }
+      throw new Error('unexpected database table: ' + table)
+    }
+    const q: any = {
+      select(_columns: string, options?: { head?: boolean }) { head = Boolean(options?.head); return q },
+      eq(k: string, v: unknown) { filters[k] = v; return q },
+      in(_k: string, _v: unknown) { return q },
+      lt(_k: string, _v: unknown) { return q },
+      limit(_n: number) { return Promise.resolve(reply()) },
+      maybeSingle() { return Promise.resolve(reply()) },
+      single() { return Promise.resolve(reply()) },
+      insert(value: any) { mutation = 'insert'; payload = value; return q },
+      update(value: any) { mutation = 'update'; payload = value; return q },
+      then(onfulfilled: (x: any) => any, onrejected?: (e: any) => any) {
+        return Promise.resolve(reply()).then(onfulfilled, onrejected)
+      },
+    }
+    return q
+  }
+  try {
+    await assert.rejects(
+      () => access.inviteMember('1234', workspaceId, '+14155552671', 'member'),
+      (e: any) => e?.code === 'user_not_found',
+      'already-rounded persisted owner cannot be invited as a different owner',
+    )
+    assert.deepEqual(invited, [], 'unsafe numeric owner causes zero invite inserts')
+    assert.deepEqual(tables, ['workspace_members', 'users'], 'unsafe recipient aborts before more data access')
+    recipientFromDb = recipientExact
+    tables.length = 0
+    const result = await access.inviteMember('1234', workspaceId, '+14155552671', 'member')
+    assert.equal(result.status, 'pending')
+    assert.equal(invited.length, 1)
+    assert.equal(invited[0].telegram_id, recipientExact, 'exact persisted BIGINT remains the actual invite target')
+    assert.ok(!tables.includes('conversations') && !tables.includes('memories'), 'never read private data')
+  } finally {
+    client.from = originalFrom
+  }
+  console.log('SecondBrain real invite entry point: unsafe BIGINT blocks before DB write; exact string invited (inert mock)')
+}
