@@ -9,7 +9,18 @@ import { decodeHtmlEntities } from './google-workspace-read'
 const PULSE_COOLDOWN_MINUTES=180
 const MAX_USERS_PER_PASS=80
 
-function clean(value:unknown,max=500){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}
+function clean(value:unknown,max=500){return String(value??'').replace(/\\s+/g,' ').trim().slice(0,max)}
+// The service-role pulse may address a WhatsApp recipient. Never choose a user
+// after lossy 64-bit Number coercion, including when a DB adapter already rounded
+// an integer before it reached this worker. Legitimate canonical safe IDs continue.
+function exactPulseOwner(value:unknown):string|null{
+  if(typeof value!=='string'&&typeof value!=='number')return null
+  if(typeof value==='number'&&!Number.isSafeInteger(value))return null
+  const id=typeof value==='number'?String(value):value
+  if(!/^-?[1-9]\\d*$/.test(id))return null
+  const numeric=Number(id)
+  return Number.isSafeInteger(numeric)&&String(numeric)===id?id:null
+}
 function fingerprint(parts:string[]){return createHash('sha256').update(parts.join('|')).digest('hex').slice(0,32)}
 
 function localHour(timezone:string){
@@ -263,21 +274,26 @@ async function hasRecentWhatsAppSession(telegramId:string){
 }
 
 async function sendPulse(telegramId:string){
+  const ownerId=exactPulseOwner(telegramId)
+  if(!ownerId)return {sent:false,reason:'owner_invalid'}
   const {data:user,error}=await supabaseAdmin.from('users')
     .select('telegram_id,whatsapp_id,name,timezone')
-    .eq('telegram_id',Number(telegramId))
+    .eq('telegram_id',ownerId)
     .maybeSingle()
   if(error||!user?.whatsapp_id)return {sent:false,reason:'user_unavailable'}
+  // Exact query filtering is necessary but not sufficient: check the returned
+  // persisted identity before loading private context or choosing an outbound address.
+  if(exactPulseOwner(user.telegram_id)!==ownerId)return {sent:false,reason:'owner_mismatch'}
   const timezone=String(user.timezone||'Asia/Kolkata')
   const hour=localHour(timezone)
   // Duet parity: the person's own quiet hours (default 10 pm–7 am, as before) and check frequency.
-  const prefs=await getAlertPreferences(telegramId)
+  const prefs=await getAlertPreferences(ownerId)
   if(isQuietHour(prefs,hour))return {sent:false,reason:'quiet_hours'}
-  if(!dueForCheck(prefs,await lastPulseAt(telegramId,prefs.checkEveryMinutes)))return {sent:false,reason:'frequency'}
+  if(!dueForCheck(prefs,await lastPulseAt(ownerId,prefs.checkEveryMinutes)))return {sent:false,reason:'frequency'}
 
-  const pulse=await buildPulse(telegramId,timezone,prefs)
+  const pulse=await buildPulse(ownerId,timezone,prefs)
   if(!pulse.items.length)return {sent:false,reason:'nothing_material'}
-  const previous=await lastPulse(telegramId)
+  const previous=await lastPulse(ownerId)
   if(String(previous?.metadata_json?.fingerprint||'')===pulse.fingerprint)return {sent:false,reason:'duplicate'}
 
   // Email subjects and snippets can arrive HTML-escaped ("company&#39;s"); never show the raw entity.
@@ -291,7 +307,7 @@ async function sendPulse(telegramId:string){
     .replace(/\b\d{9,20}\b/g,(digits:string)=>'••••'+digits.slice(-4))
   // Use natural free-form copy while the WhatsApp service window is open.
   // Outside the window we must fall back to an approved Utility template.
-  const activeSession=await hasRecentWhatsAppSession(telegramId)
+  const activeSession=await hasRecentWhatsAppSession(ownerId)
   let delivered:any=null
   if(activeSession){
     delivered=await sendWhatsApp(String(user.whatsapp_id),message)
@@ -311,12 +327,12 @@ async function sendPulse(telegramId:string){
     const {error:attentionError}=await supabaseAdmin.from('agent_open_loops')
       .update({proactive_backoff_until:nextAttentionAt,updated_at:new Date().toISOString()})
       .in('id',surfacedOpenLoopIds)
-      .eq('telegram_id',telegramId)
+      .eq('telegram_id',ownerId)
       .eq('status','active')
     if(attentionError)console.error('AUTONOMY_PULSE_OPEN_LOOP_BACKOFF_FAILED:',attentionError.message)
   }
   await supabaseAdmin.from('agent_activity').insert({
-    telegram_id:telegramId,
+    telegram_id:ownerId,
     event_type:'autonomy_pulse_sent',
     message:'Background Gogo proactively surfaced high-signal items.',
     metadata_json:{fingerprint:pulse.fingerprint,item_keys:pulse.items.map(x=>x.key),kinds:pulse.items.map(x=>x.kind),delivery_mode:activeSession?'freeform':'template',open_loop_backoff_ids:surfacedOpenLoopIds},
