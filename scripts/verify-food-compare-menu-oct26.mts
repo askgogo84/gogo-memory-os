@@ -1,4 +1,5 @@
 // 26 Oct live: "Compare chicken biryani at Meghana Foods on Swiggy and Zomato for 560086" ran as a product
+import './verify-food-menu-direct-oct26.mts'
 import './verify-comparison-no-login-oct26.mts'
 // comparison (home pages, Swiggy asked for a location, Zomato "browser busy", iPhone-style closing line).
 import assert from 'node:assert/strict'
@@ -37,7 +38,7 @@ assert.equal(m.comparisonSearchUrl('swiggy', live.subject), 'https://www.swiggy.
 const task: any = {id: 't', status: 'queued', title: live.subject, source: 'web', updated_at: '', metadata_json: {request: live.request, subject: live.subject, providers: []}}
 const obj = m.comparisonObjective(task, 'swiggy')
 assert.match(obj, /restaurant "Meghana Foods"/); assert.match(obj, /dish "chicken biryani"/); assert.match(obj, /enter 560086/)
-assert.match(obj, /<dish name as listed> — ₹<menu price>/); assert.match(obj, /Never add to cart, order, pay or submit/)
+assert.match(obj, /dish name and its menu price exactly as the page shows them/); assert.match(obj, /Never add to cart, order, pay or submit/)
 assert.match(m.comparisonObjective(task, 'zomato'), /On Zomato/)
 
 // Evidence: the dish line gives one price; another dish or an unrelated money figure does not.

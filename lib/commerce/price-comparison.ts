@@ -2,7 +2,7 @@ import {supabaseAdmin} from '@/lib/supabase-admin'
 import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-runtime-guard'
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
-import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, isFoodComparison, parseFoodSubject, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
+import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, outletAreaFromAddress, isFoodComparison, parseFoodSubject, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
 const TYPE = 'price_comparison'
@@ -309,10 +309,11 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     if (food) {
       // The restaurant's own menu page on this app (the outlet in the person's city first), else Swiggy's search.
       const pin = pincodeInText(task.metadata_json.request)
+      const area = await nearestOutletArea(food.restaurant, pin)
       const {searchWebResults} = await import('@/lib/web-search')
-      const leads = await searchWebResults(`${food.restaurant} ${/^56/.test(pin || '') ? 'Bangalore ' : ''}order online ${COMPARISON_PROVIDERS[next.provider].label}`,
+      const leads = await searchWebResults(`${food.restaurant} ${area ? area + ' ' : ''}${/^56/.test(pin || '') ? 'Bangalore ' : ''}order online ${COMPARISON_PROVIDERS[next.provider].label}`,
         {includeDomains: [COMPARISON_PROVIDERS[next.provider].domain], timeoutMs: 10_000}).catch(() => [] as any[])
-      startUrl = foodRestaurantLead(next.provider, food.restaurant, leads || [], pin) || comparisonSearchUrl(next.provider, task.metadata_json.subject) || startUrl
+      startUrl = foodRestaurantLead(next.provider, food.restaurant, leads || [], pin, area) || comparisonSearchUrl(next.provider, task.metadata_json.subject) || startUrl
     } else if (parallel) {
       // The quick web look at request time may already have found the product page.
       // A retry alternates between the found product page and the store's own search, so a bad start is not repeated.
@@ -384,6 +385,18 @@ export function withStoreFallback(meta: any) {
   meta.storeFallback = only.provider
   const others = ['flipkart', 'croma', 'reliance', 'amazon'].filter(p => p !== only.provider)
   return [...rows, ...others.map(provider => ({provider, status: 'pending', attempts: 1}))]
+}
+
+/** The area of the restaurant's outlet nearest the pincode, from a map search ("Meghana Foods near 560086" → "Rajajinagar"). */
+export async function nearestOutletArea(restaurant: string, pincode: string | null, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  if (!pincode) return null
+  try {
+    const {searchPlaces} = await import('@/lib/agent/places-search')
+    const words = (restaurant.toLowerCase().match(/[a-z0-9]+/g) || []).filter(w => w.length > 2)
+    const places = await searchPlaces(`${restaurant} near ${pincode}`, fetchImpl)
+    const match = places.find(p => words.every(w => p.title.toLowerCase().includes(w)))
+    return match ? outletAreaFromAddress(match.address) : null
+  } catch { return null }
 }
 
 /** Run every store that can start now, at the same time, then send the result if it is finished. */

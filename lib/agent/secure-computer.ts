@@ -355,6 +355,27 @@ export function comparisonReadEvidenceMatches(objective:string,evidence:string):
   if(!subject)return true
   return productIdentityMatches(subject,evidence)
 }
+// 26 Oct live: Swiggy's Meghana Foods menu showed "Chicken Boneless Biryani. This item is a Bestseller, Costs: 375 rupees",
+// but the model would not quote it (it had been told to report a ₹ price). A food comparison read takes the menu line
+// for the asked dish directly: exact page text, the dish's every word, one price.
+export function foodMenuEvidence(objective:string,pageText:string):string[]|null{
+  const ask=String(objective||'').match(/^On (?:Swiggy|Zomato), open the menu of the restaurant "([^"]{2,80})" and find the dish "([^"]{2,80})"/)
+  if(!ask)return null
+  const stop=new Set(['the','a','an','and','with','of','in'])
+  const tokens=(ask[2].toLowerCase().match(/[a-z0-9]+/g)||[]).filter(t=>!stop.has(t))
+  if(!tokens.length)return null
+  const flat=String(pageText||'').replace(/[ \t]+/g,' ')
+  const has=(name:string)=>{const w=new Set(name.toLowerCase().match(/[a-z0-9]+/g)||[]);return tokens.every(t=>w.has(t)||w.has(t.replace(/s$/,''))||w.has(t+'s'))}
+  const found:Array<{span:string;extra:number;at:number}>=[]
+  // Swiggy's item text, then a name with its ₹ price on the same or next line (Zomato).
+  for(const m of flat.matchAll(/([A-Z][^.|\n₹]{2,80}?)\.\s+(?:This item is a [A-Za-z ]{3,30}, )?Costs:\s*\d[\d,]*(?:\.\d{1,2})?\s*rupees/g))
+    if(has(m[1]))found.push({span:m[0],extra:(m[1].match(/[a-z0-9]+/gi)||[]).length-tokens.length,at:m.index||0})
+  for(const m of flat.matchAll(/(?:^|\n)([A-Za-z][^₹\n|]{2,80}?)[ \n]*₹\s?\d[\d,]*(?:\.\d{1,2})?/g))
+    if(has(m[1]))found.push({span:m[0].replace(/^\n/,''),extra:(m[1].match(/[a-z0-9]+/gi)||[]).length-tokens.length,at:m.index||0})
+  if(!found.length)return null
+  found.sort((a,b)=>a.extra-b.extra||a.at-b.at)
+  return [found[0].span.trim()]
+}
 export function productPagePriceEvidence(objective:string,title:string,pageText:string,product?:{name?:string;price?:string}|null):string[]|null{
   const ask=String(objective||'').match(/^Find the listed price of this product on [^:]{2,40}: "([^"]{2,200})"/)
   const skip=(why:string,extra?:string)=>{if(/^Find the listed price of this product/.test(String(objective||'')))console.warn('PRODUCT_PRICE_DIRECT_SKIP:',JSON.stringify({why,extra:extra||'',title:String(title||'').slice(0,120),objective:String(objective||'').slice(0,160)}));return null}
@@ -2007,6 +2028,11 @@ export async function assessReadOutcome(objective:string,page:any,diagnose:(even
   // A store price read ("Find the listed price of this product on Croma: …") on a page whose product name matches
   // the requested model reads the first price after that name directly. The evidence is still exact page text, and
   // the comparison's own strict price check decides whether it is one clear item price.
+  const food=foodMenuEvidence(objective,pageText)
+  if(food){
+    const direct=verifiedBrowserAnswer({complete:true,evidence:food},pageText,title)||verifiedBrowserAnswer({complete:true,evidence:food},pageText.replace(/[ \t]+/g,' '),title)
+    if(direct){diagnose({phase:'assessment',reason:'verified',pageChars:pageText.length});return direct}
+  }
   const directPrice=productPagePriceEvidence(objective,title,pageText,productLines.length===2?{name:productLines[0],price:productLines[1]}:null)
   if(directPrice){
     // The reader matched on whitespace-collapsed text, so verify against the same form (line breaks inside a price were the miss).
