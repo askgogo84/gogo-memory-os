@@ -19,6 +19,16 @@ for (const [text, query] of [
   ['Suggest 3 hotels in Indiranagar for 2 nights on 14 Nov', 'hotels in Indiranagar, Bengaluru'],
   ['Find hotels near Mumbai Airport for 1 room, 2 guests, check-in 12 Nov', 'hotels near Mumbai Airport'],
 ] as const) assert.equal(places.placeAsk(text)?.query, query, text)
+// 26 Oct review: words that merely start like a month are not dates; only stay asks lose dates.
+for (const [text, query] of [
+  ['Suggest 3 Marwari restaurants in Indiranagar', 'Marwari restaurants in Indiranagar, Bengaluru'],
+  ['Suggest 5 Junior Kuppanna restaurants in Jayanagar', 'Junior Kuppanna restaurants in Jayanagar, Bengaluru'],
+  ['Find 3 Marriott hotels in Whitefield', 'Marriott hotels in Whitefield, Bengaluru'],
+  ['Find 2 Mayura hotels in Mysuru', 'Mayura hotels in Mysuru'],
+  ['Suggest 4 Decent cafes in HSR', 'Decent cafes in HSR, Bengaluru'],
+  ['Find cafes near Church Street open on 25 Dec', 'cafes near Church Street open on 25 Dec, Bengaluru'],
+  ['Find hotels in Goa on 3 Jan for 2 adults', 'hotels in Goa'],
+] as const) assert.equal(places.placeAsk(text)?.query, query, text)
 // Restaurants are unchanged.
 const REST = 'Find restaurants in Indiranagar, Bengaluru, for 2 people tomorrow at 8 PM. Show evidence, availability only if provider-verified, and source links. Research only; do not book.'
 assert.equal(places.placeAsk(REST)?.query, 'restaurants in Indiranagar, Bengaluru')
@@ -46,6 +56,7 @@ assert.match(String(await places.answerPlaces(REST, fakeFetch([]))), /restaurant
 const URLREAD = 'Open https://www.flipkart.com/apple-iphone-16-white-128-gb/p/itm09e9f0a0f5ca0 read-only and tell me the listed price and product name shown on that page.'
 assert.equal(cmp.parsePriceComparison(URLREAD), null, 'a request with an explicit page URL is a page read, not a store comparison')
 assert.equal(cmp.parsePriceComparison('What is the price on https://www.croma.com/apple-iphone-16-128gb-black-/p/324488 ?'), null)
+assert.equal(cmp.parsePriceComparison('Compare https://www.amazon.in/dp/B0DGJHBX5Y and https://www.flipkart.com/x/p/itm1 prices'), null, 'page URLs are read as pages (pinned)')
 // Comparisons without a URL are unchanged.
 const four = cmp.parsePriceComparison('Compare iPhone 16 128GB across Amazon India, Flipkart, Croma and Reliance Digital. Show observed prices, timestamps and source links; research only, do not order.')
 assert.ok(four && four.providers.length === 4, 'four-store comparison still parses')

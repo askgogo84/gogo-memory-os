@@ -13,7 +13,8 @@ const COUNT_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4,
 // 26 Oct live: "Find hotels near Mumbai Airport for 12–16 November for 2 adults" sent the dates and guests to the
 // places search (zero results). A place search names the place; stay dates, nights, rooms and guests are not
 // searchable listing attributes, and their rates/availability are never verified here.
-const MONTH = '(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*'
+// Whole month tokens only: 'Marwari', 'Marriott', 'Mayura', 'Junior', 'Decent' are not months (26 Oct review).
+const MONTH = '(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sept?(?:ember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?![a-z])'
 const DAY = '\\d{1,2}(?:st|nd|rd|th)?'
 const STAY_DATE = new RegExp(`\\b(?:from|on|for|between|check-?in|checking in|check-?out)?\\s*(?:${DAY}\\s*(?:[–—-]|to|and|until|till)\\s*${DAY}\\s+${MONTH}|${DAY}\\s+${MONTH}(?:\\s*(?:[–—-]|to|and|until|till)\\s*${DAY}(?:\\s+${MONTH})?)?|${MONTH}\\s+${DAY}(?:\\s*(?:[–—-]|to|and|until|till)\\s*${DAY})?)\\b`, 'gi')
 const STAY_PARTY = /\b(?:for\s+)?\d{1,2}\s+(?:adults?|kids?|children|child|nights?|rooms?|guests?)\b/gi
@@ -22,6 +23,7 @@ function stripStayQualifiers(text: string) {
     .replace(/\b(?:check-?in|check-?out|checking in)\b/gi, ' ')
     .replace(/\s*,(?:\s*,)+/g, ',').replace(/(?:\s*,)+\s*$/, '').replace(/\s+(?:for|from|on|and)\s*$/i, '')
 }
+const OTHER_PLACE = /\b(?:bengaluru|bangalore|mumbai|delhi|new delhi|chennai|hyderabad|pune|kolkata|dubai|india|goa|jaipur|udaipur|jodhpur|kochi|cochin|mysuru|mysore|ooty|coorg|madikeri|chikmagalur|hampi|manali|shimla|agra|varanasi|rishikesh|kerala|munnar|alleppey|pondicherry|puducherry|gurgaon|gurugram|noida|ahmedabad|chandigarh|lonavala|amritsar|darjeeling|gangtok|leh|srinagar|london|singapore|bangkok|bali)\b/i
 const STAY_KIND = /\b(?:hotels?|stays?|resorts?|hostels?|lodges?|homestays?|guest ?houses?)\b/i
 const FOOD_KIND = /\b(?:restaurants?|caf(?:e|é)s?|coffee|bars?|pubs?|brewer(?:y|ies)|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets?)\b/i
 
@@ -50,7 +52,8 @@ export function placeAsk(text: string): PlaceAsk | null {
   const countPrefix = /^(?:(?:me|the|best|top|good|nice)\s+)*(\d{1,2}|one|two|three|four|five|six|seven|eight)\s+/i
   const explicitCount = primary.replace(LEAD, '').trimStart().match(countPrefix)?.[1]?.toLowerCase()
   const count = Math.max(1, Math.min(8, explicitCount ? (COUNT_WORDS[explicitCount] || Number(explicitCount)) : 5))
-  const discovery = stripStayQualifiers(primary)
+  // Only a stay ask drops dates/nights/rooms/guests; a food ask keeps its words ("open on 25 Dec").
+  const discovery = (STAY_KIND.test(primary) ? stripStayQualifiers(primary) : primary)
     .replace(/\bfor\s+\d{1,2}\s+(?:people|persons?|guests?|pax)\b/gi, ' ')
     .replace(/\b(?:today|tonight|tomorrow)\b/gi, ' ')
     .replace(/\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi, ' ')
@@ -58,7 +61,8 @@ export function placeAsk(text: string): PlaceAsk | null {
     .replace(countPrefix, '')
     .replace(/[\s,]+$/, '').replace(/\s+/g, ' ').trim()
   if (!discovery) return null
-  return { query: /\b(?:bengaluru|bangalore|mumbai|delhi|chennai|hyderabad|pune|kolkata|dubai|india)\b/i.test(discovery) ? discovery : `${discovery}, Bengaluru`, area, count }
+  // A place outside Bengaluru keeps its own city (26 Oct review: "hotels in Goa" became "…, Bengaluru").
+  return { query: OTHER_PLACE.test(discovery) ? discovery : `${discovery}, Bengaluru`, area, count }
 }
 
 export type Place = { title: string; address: string; rating?: number; ratingCount?: number; category?: string; phone?: string; website?: string; cid?: string }
