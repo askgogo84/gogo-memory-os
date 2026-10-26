@@ -39,8 +39,15 @@ export async function browserHandoffInUseReply(telegramId:number):Promise<string
       .eq('telegram_id',String(telegramId)).eq('type','secure_browser').eq('status','paused')
       .order('updated_at',{ascending:false}).limit(20)
     if(!error){
-      const waiting=(data||[]).find(row=>row.metadata_json?.handoff)
-      if(waiting)target=`${base}/dashboard/activity/${encodeURIComponent(waiting.id)}/browser`
+      // 26 Oct live: this pointed at a days-old paused task while the real holder was a timed-out read still
+      // finishing. Only a task whose takeover browser is actually live is named as the one waiting for the person.
+      const {browserHandoffIsLive}=await import('./browser-handoff-health')
+      for(const row of (data||[]).filter(r=>r.metadata_json?.handoff).slice(0,5)){
+        if(await browserHandoffIsLive(row.metadata_json.handoff.takeoverUrl).catch(()=>false)){
+          return `Another browser task is waiting for you to sign in or finish a secure step. Open it and complete that step before retrying this request. Nothing was submitted for this request.\n${base}/dashboard/activity/${encodeURIComponent(row.id)}/browser`
+        }
+      }
+      return `Gogo's browser is still finishing your previous request. Try again in a minute. Nothing was submitted for this request.\n${target}`
     }
   }catch{/* The user still receives the safe task-list handoff if lookup fails. */}
   return `Another browser task is waiting for you to sign in or finish a secure step. Open it and complete that step before retrying this request. Nothing was submitted for this request.\n${target}`

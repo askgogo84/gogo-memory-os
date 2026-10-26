@@ -816,6 +816,31 @@ export async function tryRunBrowserCommand(params:{actor:AgentActor;surface:Agen
   return runBrowserCommand({actor:params.actor,surface:params.surface,command})
 }
 
+/**
+ * 26 Oct live (WhatsApp): "Open <croma page> read-only and hand control back to me" ran inside the webhook's 42s
+ * window, timed out, and the orphaned read still held the browser, so the background retry failed with
+ * browser_handoff_in_use. A plain public page read now goes straight to the background worker (300s), which sends
+ * the result (including any Take Control link) on WhatsApp. Cart actions, drafts, executions and saved-login sites
+ * keep their existing inline paths.
+ */
+export async function tryQueueWhatsAppPublicRead(params:{actor:AgentActor;text:string}){
+  if(parseConnectedProviderCartAction(params.text))return null
+  const command=parseBrowserCommand(params.text)
+  if(!command||command.mode!=='read')return null
+  let host=''
+  try{host=new URL(command.url).hostname}catch{return null}
+  if(findVaultProviderForDomain(host))return null
+  const sentinel=evaluateAgentSentinel({capability:'browser',mode:'read',risk:'low',irreversible:false,approved:false,instruction:command.objective,url:command.url,actionCount:12})
+  if(!sentinel.allowed)return null
+  const existing=await findActiveBrowserRead(String(params.actor.legacyTelegramId),command)
+  if(existing)return {runId:existing.id,status:'running' as const,capability:'browser' as const,risk:'low' as const,
+    text:'I’m still working on this same browser task. You do not need to send it again.\nTask progress: https://app.askgogo.in/dashboard/activity/'+existing.id,handledBy:'secure-browser' as const}
+  const queued=await queueBrowserRead({actor:params.actor,surface:'whatsapp',text:params.text}).catch(()=>null)
+  if(!queued)return null
+  const site=host.replace(/^www\./,'')
+  return {...queued,text:`Opening ${site} now. I’ll send what I find here in a minute or two. Nothing will be bought, booked or submitted.`}
+}
+
 export async function executeApprovedBrowserCommand(params:{actor:AgentActor;runId:string;bookingOtp?:string|null}){
   const tg=params.actor.legacyTelegramId
   const {data:run,error}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',params.runId).eq('telegram_id',String(tg)).maybeSingle()
