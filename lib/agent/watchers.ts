@@ -27,7 +27,7 @@ import {
 
 import { assessPriceCheck, appendPriceRun, buildPriceRun, normalizePriceRule, priceAlertText, priceStateFrom, type PriceRule } from './price-threshold'
 import { extractGoldQuotes } from '@/lib/bot/handlers/gold-quotes'
-import { evaluateStockRule, normalizeStockRule, stockAlertText, stockStateFrom, type StockRule } from './stock-rule'
+import { evaluateStockRule, normalizeStockRule, nseMarketOpen, stockAlertText, stockStateFrom, type StockRule } from './stock-rule'
 import { fetchStockQuote } from './stock-quote'
 import { matchingActiveWatches, planWatchCleanup, watchSpecificity, DEDUPE_WATCH_TYPES, type DedupeRow, type WatchRetirement } from './watch-dedupe'
 import { appendGoldRun, decideGoldAlert, evaluateGoldRule, goldAlertText, goldSearchContext, goldStateFrom, normalizeGoldRule, sourceHost, type GoldRule } from './gold-rate-rule'
@@ -1435,17 +1435,20 @@ async function processStockCheck(watcher:any, condition:WebSearchWatcherConditio
     const message = stockAlertText(rule, quote.price, verdict, quote.asOf, prior.baseline)
     if (condition.delivery !== 'app') {
       const delivery = await deliverWatchAlert({ watcherId:String(watcher.id), owner:telegramId, key, due:now.toISOString(), message, condition:watcher.condition_json })
+      // "suppressed"/"cancelled": the watch was stopped or changed meanwhile, so nothing is sent or recorded.
+      // A retry after a lost state write finds the ledger row already accepted and moves on (same key).
       if (['suppressed', 'cancelled'].includes(delivery.state)) return { triggered:false, failed:false }
       if (!delivery.accepted && !['outcome_unknown', 'failed'].includes(delivery.state)) return { triggered:false, failed:true }
       sent = delivery.accepted
     } else sent = true
-    await writeActivity(telegramId, `Background Gogo saw your share-price rule met: ${condition.title}`, {
+    if (sent) await writeActivity(telegramId, `Background Gogo saw your share-price rule met: ${condition.title}`, {
       watcher_id:watcher.id, type:'web_search', kind:'stock_price', symbol:rule.symbol, observed:quote.price, change_pct:verdict.changePct, evidence_level:'exchange_quote',
     })
   }
   const next = verdict.notify ? (sent ? verdict.next : prior) : verdict.next
   const material = verdict.notify && sent
-  const cadenceMinutes = Math.max(15, Number((condition as any).requestedCadenceMinutes) || 30)
+  // Outside NSE hours a quote cannot move, so checks slow to every 2 hours.
+  const cadenceMinutes = nseMarketOpen(now) ? Math.max(15, Number((condition as any).requestedCadenceMinutes) || 30) : 120
   const alertTimes = Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : []
   const { error } = await supabaseAdmin.from('agent_watchers').update({
     cadence_minutes:cadenceMinutes,

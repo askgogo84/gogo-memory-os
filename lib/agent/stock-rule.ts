@@ -12,6 +12,7 @@ export type StockRule = {
   level: number | null      // for kind=level, INR
   baseline: number | null   // price when the watch started (or last alert, for moves)
   baselineAt: string | null
+  startArmed?: boolean      // false when a level was already past at creation: alert only after it comes back and crosses
 }
 
 export type ParsedStockWatch = {
@@ -28,12 +29,17 @@ export const DEFAULT_MOVE_PCT = 5
 const STOCK_WORDS = /\b(?:share\s*price|stock\s*price|share|shares|stock|stocks|scrip)\b/i
 const WATCH_WORDS = /\b(?:watch|track|monitor|alert|notify|tell\s+me|let\s+me\s+know|ping\s+me|keep\s+(?:an\s+)?eye)\b/i
 
-/** True for a share-price watch request; leaves product stock ("in stock") and gold alone. */
+const MOVE_WORDS = '(?:drops?|falls?|dips?|declines?|rises?|jumps?|gains?|climbs?|crosses|goes|moves?|is\\s+(?:up|down)|hits?|touches)'
+
+/** True for a share-price watch request; leaves product stock ("in stock"), gold, reminders and "X shares the doc" alone. */
 export function isStockWatchPhrasing(text: string) {
-  const t = String(text || '')
+  const t = String(text || '').replace(/[’']/g, "'")
   if (!STOCK_WORDS.test(t) || !WATCH_WORDS.test(t)) return false
-  if (/\b(?:in\s+stock|out\s+of\s+stock|back\s+in\s+stock|restock|gold|silver)\b/i.test(t)) return false
-  return /\b(?:share\s*price|stock\s*price|shares?\b|stock\s+(?:of|for)|nse|bse|sensex|nifty|scrip)\b/i.test(t)
+  if (/^\s*(?:please\s+|pls\s+)?remind\b/i.test(t)) return false
+  if (/\b(?:in\s+stock|out\s+of\s+stock|back\s+in\s+stock|restock|stock\s+up|gold|silver)\b/i.test(t)) return false
+  // "Divya shares the doc", "my shares are worth": a verb or a portfolio question, not a quote watch.
+  if (/\bshares\s+(?:the|a|an|my|his|her|their|this|that|it|with)\b/i.test(t) || /\b(?:my|our)\s+(?:shares|stocks|portfolio|holdings)\b/i.test(t)) return false
+  return new RegExp(`\\b(?:share\\s*price|stock\\s*price|shares|share\\s+of|(?:share|shares|stock)\\s+${MOVE_WORDS}|nse|bse|scrip)\\b`, 'i').test(t)
 }
 
 function cleanCompany(raw: string) {
@@ -45,7 +51,8 @@ function cleanCompany(raw: string) {
 }
 
 export function parseStockWatchCommand(text: string): ParsedStockWatch | null {
-  const raw = String(text || '').replace(/[’]/g, "'").trim()
+  // "Tata Motors' share price": drop possessive apostrophes so the company name stays whole.
+  const raw = String(text || '').replace(/[’]/g, "'").replace(/'s\b/g, '').replace(/(\w)'(?=\s)/g, '$1').trim()
   if (!isStockWatchPhrasing(raw)) return null
   // Company: the words right before "share/stock (price)", else right after the watch verb.
   let company = ''
@@ -58,6 +65,7 @@ export function parseStockWatchCommand(text: string): ParsedStockWatch | null {
   }
   company = company.replace(new RegExp(WATCH_WORDS.source, 'gi'), ' ').replace(/\b(?:if|when|it|by|drops?|falls?|rises?|goes|moves?|up|down)\b.*$/i, '').replace(/\s+/g, ' ').trim()
   if (!company || company.length < 2) return null
+  if (/^(?:how|what|which|when|why|it|this|that|they|we|i|you)\b/i.test(company)) return null
 
   const levelMatch = raw.match(/\b(below|under|less\s+than|falls?\s+(?:below|under)|drops?\s+(?:below|under)|above|over|more\s+than|crosses|goes\s+above|rises?\s+above)\s*(?:₹|rs\.?|inr)?\s*([\d,]+(?:\.\d+)?)(?!\s*%)/i)
   if (levelMatch) {
@@ -94,7 +102,15 @@ export function normalizeStockRule(input: any): StockRule | null {
     symbol, name: String(input.name || symbol).slice(0, 120), exchange: symbol.endsWith('.BO') ? 'BSE' : 'NSE',
     kind, direction, pct: kind === 'move' ? pct : null, level: kind === 'level' ? level : null,
     baseline: baseline ?? null, baselineAt: input.baselineAt ? String(input.baselineAt) : null,
+    ...(input.startArmed === false ? { startArmed: false } : {}),
   }
+}
+
+/** NSE trading window (IST, Mon–Fri, with a small margin). Outside it a quote cannot move, so checks are slower. */
+export function nseMarketOpen(now: Date) {
+  const ist = new Date(now.getTime() + 330 * 60_000)
+  const day = ist.getUTCDay(), mins = ist.getUTCHours() * 60 + ist.getUTCMinutes()
+  return day >= 1 && day <= 5 && mins >= 9 * 60 && mins <= 15 * 60 + 45
 }
 
 export const inr = (n: number) => `₹${n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -109,7 +125,7 @@ export type StockState = { armed: boolean; baseline: number | null; alertCount: 
 
 export function stockStateFrom(raw: any, rule: StockRule): StockState {
   return {
-    armed: raw?.stockArmed !== false,
+    armed: typeof raw?.stockArmed === 'boolean' ? raw.stockArmed : rule.startArmed !== false,
     baseline: Number(raw?.stockBaseline) > 0 ? Number(raw.stockBaseline) : rule.baseline,
     alertCount: Number.isInteger(raw?.stockAlertCount) && raw.stockAlertCount >= 0 ? raw.stockAlertCount : 0,
   }
@@ -143,5 +159,5 @@ export function stockAlertText(rule: StockRule, price: number, verdict: StockVer
     ? `It has gone ${rule.direction === 'below' ? 'below' : 'above'} your level of ${inr(rule.level!)}.`
     : `That is ${verdict.changePct! >= 0 ? 'up' : 'down'} ${Math.abs(verdict.changePct!).toFixed(1)}% from ${inr(previousBaseline || 0)}, past your ${rule.pct}% alert.`
   const next = rule.kind === 'move' ? ` I'll alert again if it moves another ${rule.pct}% from ${inr(price)}.` : ''
-  return `${head} (as of ${asOf}).\n${why}${next}\n\nQuote from the exchange feed; I never buy or sell. Say "stop watching ${rule.name}" to stop.`
+  return `${head} (as of ${asOf}).\n${why}${next}\n\nPrice from Yahoo Finance's market feed (can lag the exchange by a few minutes); I never buy or sell. Say "stop watching ${rule.name}" to stop.`
 }

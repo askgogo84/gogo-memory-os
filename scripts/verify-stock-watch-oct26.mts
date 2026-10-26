@@ -69,5 +69,28 @@ assert.ok(w.indexOf('if (condition.stockRule) return await processStockCheck') <
 const wa = readFileSync(new URL('../lib/agent/whatsapp-bridge.ts', import.meta.url), 'utf8')
 assert.ok(wa.indexOf("tryCreateStockWatchFromCommand({ actor, surface:'whatsapp'") < wa.indexOf('tryCreateWebWatchFromCommand({ actor, surface:'), 'share-price asks are claimed before generic web/news watches')
 const d = readFileSync(new URL('../lib/agent/watch-dedupe.ts', import.meta.url), 'utf8')
-assert.match(d, /key: `stock:\$\{String\(c\.stockRule\.symbol\)\.toUpperCase\(\)\}`/)
+assert.match(d, /key: `stock:\$\{String\(c\.stockRule\.symbol\)\.toUpperCase\(\)\}:/)
 console.log('Share-price watches: live NSE quote, move/level rules decided by code, never a news watch')
+
+// ── review round 1 ──
+for (const t of ['Alert me if Infosys stock drops 5%', 'alert me when Eternal stock rises above 300', "Notify me if Tata Motors' share price falls below 600", 'alert me when Adani Ports stock crosses 1,500'])
+  assert.ok(parseStockWatchCommand(t), `real share-price ask: ${t}`)
+assert.equal(parseStockWatchCommand("Notify me if Tata Motors' share price falls below 600")!.company, 'Tata Motors', 'possessive apostrophe keeps the name')
+assert.equal(parseStockWatchCommand('alert me when Adani Ports stock crosses 1,500')!.level, 1500)
+for (const t of ['tell me if Divya shares the doc', 'let me know when Nithin shares the deck', 'tell me how much my shares are worth', 'keep an eye on stock of rice at home', 'remind me at 5pm to watch the Tata Motors share price'])
+  assert.equal(parseStockWatchCommand(t), null, `not a share-price watch: ${t}`)
+// A level already past starts disarmed: no false "crossed" alert on the first check.
+const past = normalizeStockRule({ symbol: 'ETERNAL.NS', name: 'Eternal', kind: 'level', direction: 'above', level: 300, baseline: 320, startArmed: false })!
+let ps = stockStateFrom({}, past)
+assert.equal(evaluateStockRule(past, 330, ps).notify, false, 'already above at creation: silent')
+let pv = evaluateStockRule(past, 290, ps); assert.equal(pv.reason, 'rearmed'); ps = pv.next
+assert.equal(evaluateStockRule(past, 305, ps).notify, true, 'alerts after it comes back and crosses again')
+const sw = readFileSync(new URL('../lib/agent/stock-watch.ts', import.meta.url), 'utf8')
+assert.match(sw, /replaced_by_share_price_watch/, 'the older news watch about the company is retired')
+assert.match(sw, /Yahoo Finance; can lag the exchange by a few minutes/, 'source named honestly')
+assert.match(d, /key: `stock:\$\{String\(c\.stockRule\.symbol\)\.toUpperCase\(\)\}:\$\{c\.stockRule\.kind\}:\$\{c\.stockRule\.direction\}`/, 'above and below rules on one stock coexist')
+const { nseMarketOpen } = await import('../lib/agent/stock-rule')
+assert.equal(nseMarketOpen(new Date('2026-10-26T05:00:00Z')), true, 'Mon 10:30 IST open')
+assert.equal(nseMarketOpen(new Date('2026-10-25T05:00:00Z')), false, 'Sunday closed')
+assert.equal(nseMarketOpen(new Date('2026-10-26T13:00:00Z')), false, 'Mon 18:30 IST closed')
+console.log('Share-price review fixes: real asks claimed, verbs/portfolio/reminders left alone, no false level alert')
