@@ -39,6 +39,7 @@ let dueRows: Record<string, unknown>[] = []
 const ownerLookups: unknown[] = []
 const inserts: Record<string, any>[] = []
 const notifications: Record<string, any>[] = []
+const heldRows: Record<string, any>[] = []
 const knownPhones = new Map<string, string>([
   ['123', 'whatsapp:+14155550123'],
   ['-123', 'whatsapp:+14155550124'],
@@ -48,9 +49,12 @@ const knownPhones = new Map<string, string>([
 const fakeDb = {
   from(table: string) {
     let lookup: unknown
-    const builder = {
+    let updatePayload: Record<string, unknown> | null = null
+    const filters: Array<[string, unknown]> = []
+    const builder: any = {
       select(_columns: string) { return builder },
       eq(column: string, value: unknown) {
+        filters.push([column, value])
         if (table === 'users' && column === 'telegram_id') {
           lookup = value
           ownerLookups.push(value)
@@ -66,6 +70,40 @@ const fakeDb = {
         if (table !== 'followups') throw new Error('Unexpected write: ' + table)
         inserts.push(value)
         return { error: null }
+      },
+      update(value: Record<string, unknown>) {
+        if (table !== 'followups') throw new Error('Unexpected table update: ' + table)
+        updatePayload = value
+        return builder
+      },
+      then(resolve: (result: unknown) => unknown, reject?: (error: unknown) => unknown) {
+        try {
+          if (table !== 'followups' || !updatePayload) throw new Error('Unexpected select completion: ' + table)
+          if (updatePayload.status !== 'owner_verification_required' ||
+              updatePayload.delivery_status !== 'blocked_owner_precision') {
+            throw new Error('Quarantine must never mark the message as sent or erase the follow-up')
+          }
+          if (!filters.some(([key, value]) => key === 'id' && typeof value === 'string') ||
+              !filters.some(([key, value]) => key === 'status' && value === 'pending') ||
+              !filters.some(([key]) => key === 'check_at') ||
+              !filters.some(([key]) => key === 'whatsapp_id')) {
+            throw new Error('Quarantine must bind source UUID, pending state, due time, and destination')
+          }
+          const target = dueRows.find(row => filters.every(([key, value]) => String(row[key]) === String(value)))
+          if (!target) return resolve({ data: [], error: null })
+          const originalOwner = target.owner_id
+          const originalPhone = target.whatsapp_id
+          const originalDue = target.check_at
+          Object.assign(target, updatePayload)
+          if (target.owner_id !== originalOwner || target.whatsapp_id !== originalPhone || target.check_at !== originalDue) {
+            throw new Error('Quarantine changed a protected owner, recipient or schedule')
+          }
+          heldRows.push({ ...target })
+          return resolve({ data: [{ id: target.id }], error: null })
+        } catch (error) {
+          if (reject) return reject(error)
+          throw error
+        }
       },
     }
     return builder
@@ -83,7 +121,7 @@ const fakeModules: Record<string, unknown> = {
       return 'provider_accepted'
     },
   },
-  '@/lib/services/reminder-delivery': { deliveryRpc: async () => dueRows },
+  '@/lib/services/reminder-delivery': { deliveryRpc: async () => dueRows.filter(row => row.status === 'pending').slice(0, 50) },
   '@/lib/bot/handlers/reminder-optout': { isSuppressed: async () => false },
   '@/lib/security/cron-auth': { isCronAuthorized: () => true },
   '@/lib/agent/session': {
@@ -146,9 +184,16 @@ for (const safe of ['123', -123]) {
 
 // Cron input is the delivery RPC result, which may decode PostgreSQL BIGINT
 // as a string or already-imprecise JS number. Neither may reach notifier/send.
+// The source RPC is capped to the oldest 50 pending rows: reject-and-skip without
+// a durable hold would repeat the same batch forever and starve later safe owners.
+const makeDue = (id: string, owner: unknown) => ({
+  id, owner_id: owner, check_at: new Date(Date.now() - 1000).toISOString(),
+  whatsapp_id: '+14155550123', contact_name: 'Example contact', context: '', status: 'pending',
+})
+const makeUuid = (n: number) => '00000000-0000-4000-8000-' + n.toString(16).padStart(12, '0')
 const runDue = (owner: unknown) => {
-  dueRows = [{ id: 'synthetic-followup', owner_id: owner, check_at: new Date(Date.now()-1000).toISOString(),
-    whatsapp_id: '+14155550123', contact_name: 'Example contact', context: '' }]
+  dueRows = [makeDue(makeUuid(1), owner)]
+  heldRows.length = 0
   notifications.length = 0
   return actualFollowups.GET({})
 }
@@ -158,8 +203,15 @@ for (const unsafe of [
 ]) {
   const response = await runDue(unsafe)
   assert.equal(response.status, 503, 'unsafe RPC owner must fail closed')
-  assert.deepEqual(response.body.failures, [{ id: 'synthetic-followup', status: 'invalid_owner' }])
+  // Objects created in a separate VM realm require explicit structural
+  // normalization rather than strict prototype identity comparison.
+  assert.deepEqual(JSON.parse(JSON.stringify(response.body.failures)),
+    [{ id: makeUuid(1), status: 'owner_verification_required' }])
   assert.equal(notifications.length, 0, 'no notifier/provider invocation for unsafe owner')
+  assert.equal(heldRows.length, 1, 'exact invalid source is durably paused, not resent')
+  assert.equal(heldRows[0].owner_id, unsafe, 'retain original owner for a verified restoration')
+  assert.equal(heldRows[0].contact_name, 'Example contact', 'retain source follow-up')
+  assert.equal(dueRows[0].status, 'owner_verification_required')
 }
 const validDue = await runDue('123')
 assert.equal(validDue.status, 200)
@@ -167,5 +219,38 @@ assert.equal(notifications.length, 1, 'safe owner can still enter existing notif
 assert.equal(notifications[0].owner, 123)
 assert.equal(notifications[0].channel, 'whatsapp')
 assert.equal(typeof notifications[0].send, 'function', 'delivery provider remains controlled by notifier')
+assert.equal(heldRows.length, 0, 'valid owner is never put on hold')
 
-console.log('followups actual-route two-owner precision / no-send tests passed')
+// A saturated 50-row unsafe head MUST advance to the next safe source on the
+// following invocation; no live cron, DB, ledger, WhatsApp or account touched.
+dueRows = Array.from({length: 50}, (_, i) => makeDue(makeUuid(i+1), '9007199254740993'))
+dueRows.push(makeDue(makeUuid(51), '123'))
+notifications.length = 0
+heldRows.length = 0
+ownerLookups.length = 0
+const saturated = await actualFollowups.GET({})
+assert.equal(saturated.status, 503)
+assert.equal(saturated.body.checked, 50, 'RPC uses oldest 50 items')
+assert.equal(heldRows.length, 50, 'all unsafe head rows held, not permanently retried in the due batch')
+assert.equal(notifications.length, 0, 'no unsafe row reaches provider/notifier')
+assert.equal(ownerLookups.length, 0, 'no unsafe row reaches private owner lookup')
+assert.equal(dueRows.filter(row => row.status === 'pending').length, 1, 'safe item remains eligible')
+const nextCycle = await actualFollowups.GET({})
+assert.equal(nextCycle.status, 200, 'next RPC cycle advances past all held rows')
+assert.equal(nextCycle.body.checked, 1)
+assert.equal(notifications.length, 1, 'only subsequent safe follow-up enters controlled notifier')
+assert.equal(notifications[0].owner, 123)
+
+// An invalid/forged source UUID or changed source snapshot must fail closed,
+// without a notifier call or uncontrolled DB state change.
+dueRows = [makeDue('not-a-uuid', '9007199254740993')]
+notifications.length = 0
+heldRows.length = 0
+const badSource = await actualFollowups.GET({})
+assert.equal(badSource.status, 503)
+assert.deepEqual(JSON.parse(JSON.stringify(badSource.body.failures)),
+  [{ id: 'not-a-uuid', status: 'invalid_owner_hold_failed' }])
+assert.equal(heldRows.length, 0)
+assert.equal(notifications.length, 0)
+
+console.log('followups actual-route two-owner precision, durable hold, bounded queue / no-send tests passed')
