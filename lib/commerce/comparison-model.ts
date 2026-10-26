@@ -93,7 +93,7 @@ export function outletAreaFromAddress(address: string): string | null {
   return area ? area.slice(0, 40) : null
 }
 export function foodRestaurantLead(provider: ComparisonProvider, restaurant: string, leads: Array<{url: string; title?: string}>, pincode?: string | null, area?: string | null) {
-  const areaWords = (String(area || '').toLowerCase().replace(/rajaji nagar/g, 'rajajinagar').match(/[a-z]{4,}/g) || []).filter(w => !['road', 'layout', 'nagar', 'block', 'main', 'cross', 'stage', 'phase'].includes(w))
+  const areaWords = (String(area || '').toLowerCase().replace(/rajaji nagar/g, 'rajajinagar').match(/[a-z]{4,}/g) || [] as string[]).filter((w: string) => !['road', 'layout', 'nagar', 'block', 'main', 'cross', 'stage', 'phase'].includes(w))
   const tokens = foodTokens(restaurant)
   if (!tokens.length || !FOOD_PROVIDERS.has(provider)) return null
   const bangalore = /^56\d{4}$/.test(String(pincode || ''))

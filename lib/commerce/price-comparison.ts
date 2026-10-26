@@ -392,7 +392,7 @@ export async function nearestOutletArea(restaurant: string, pincode: string | nu
   if (!pincode) return null
   try {
     const {searchPlaces} = await import('@/lib/agent/places-search')
-    const words = (restaurant.toLowerCase().match(/[a-z0-9]+/g) || []).filter(w => w.length > 2)
+    const words: string[] = (restaurant.toLowerCase().match(/[a-z0-9]+/g) || [] as string[]).filter((w: string) => w.length > 2)
     const places = await searchPlaces(`${restaurant} near ${pincode}`, fetchImpl)
     const match = places.find(p => words.every(w => p.title.toLowerCase().includes(w)))
     return match ? outletAreaFromAddress(match.address) : null
