@@ -536,7 +536,7 @@ async function resolveOtherGmailLoopsForThread(telegramId:string,threadId:string
   return ids.length
 }
 
-async function readGmailAttention(telegramId:string){
+async function readGmailAttention(telegramId:string|number){
   const owner=requireOpenLoopOwnerId(telegramId)
   const [{data:user,error:userError},{data:consent,error:consentError}]=await Promise.all([
     supabaseAdmin.from('users')
@@ -580,7 +580,8 @@ export async function handleInboxReplyRead(params:{actor:AgentActor;text:string}
   if(!isInboxReplyReadQuery(params.text))return null
   const base={runId:'inbox-reply-read',capability:'orchestrator' as const,risk:'low' as const,handledBy:'inbox-reply-read'}
   try{
-    const read=await readGmailAttention(String(params.actor.legacyTelegramId))
+    // Preserve the incoming identity representation: String(unsafeNumber) cannot recover rounded BIGINT digits.
+    const read=await readGmailAttention(params.actor.legacyTelegramId)
     if('reason' in read)return {...base,status:'completed' as const,text:read.reason==='disabled'
       ? 'Email reading is turned off. Enable it in Connections to check emails needing a reply.'
       : 'Connect Gmail in Connections so I can check emails needing a reply.'}
