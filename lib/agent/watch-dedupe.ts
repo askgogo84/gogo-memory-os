@@ -106,6 +106,8 @@ export function watchSubject(row: DedupeRow): WatchSubject | null {
   }
   if (type !== 'web_search') return null
   if (isGoldPriceWatch(row)) return { key: 'gold:price', karat: goldKaratOf(row) }
+  // One share-price watch per listed symbol and rule shape: "above 900" and "below 700" on the same stock coexist.
+  if (c.stockRule?.symbol) return { key: `stock:${String(c.stockRule.symbol).toUpperCase()}:${c.stockRule.kind}:${c.stockRule.direction}`, karat: null }
   const text = textOf(row)
   const flight = flightSubjectOf(text)
   if (flight) return { key: `flight:${flight}:${dateTokenOf(text) || 'undated'}`, karat: null }
@@ -124,7 +126,7 @@ export function sameWatchSubject(a: DedupeRow, b: DedupeRow): boolean {
 /** Higher is more specific: a numeric rule beats a named karat beats a bare query. */
 export function watchSpecificity(row: DedupeRow): number {
   const c = row.condition_json || {}
-  if (c.goldRule || c.priceRule) return 2
+  if (c.goldRule || c.priceRule || c.stockRule) return 2
   if (goldKaratOf(row)) return 1
   return 0
 }
@@ -143,7 +145,7 @@ export function watchDatePassed(row: DedupeRow, now: Date = new Date()): { passe
   const c = row.condition_json || {}
   if (c.contextual === true) return { passed: false, label: '' }
   const hasExpiry = Number.isFinite(Date.parse(String(c.expiresAt || c.expires_at || '')))
-  const datedSearch = String(row.type || '') === 'web_search' && !c.goldRule && !c.priceRule && !isGoldPriceWatch(row)
+  const datedSearch = String(row.type || '') === 'web_search' && !c.goldRule && !c.priceRule && !c.stockRule && !isGoldPriceWatch(row)
   if (!hasExpiry && !datedSearch) return { passed: false, label: '' }
   const ends = watchEnds({ title: row.title, type: row.type, created_at: row.created_at, condition_json: c }, now)
   return { passed: ends.datePassed, label: ends.datePassed ? ends.label : '' }

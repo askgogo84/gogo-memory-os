@@ -15,6 +15,7 @@ import { decisionDomain, recordDecisionLearning, isSameBrainIntrospection, sameB
 import { observedOutcome, learningDecisionId } from './decision-evidence'
 import { isGmailVerificationQuery } from './gmail-verification'
 import { tryCreateGoldRateWatchFromCommand } from './gold-watch'
+import { tryCreateStockWatchFromCommand } from './stock-watch'
 import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand, tryUpdateWebWatchFromCommand } from './watch-command'
 import { tryRunBrowserCommand, tryQueueWhatsAppPublicRead, executeApprovedBrowserCommand, queueBrowserRead } from './browser-command'
 import { triggerApprovedBrowserRun } from './approved-browser-worker'
@@ -455,6 +456,8 @@ export async function tryRunWhatsAppJevSpecialist(params:{
   if(params.intent==='watcher'){
     const goldWatch=await tryCreateGoldRateWatchFromCommand({actor,surface:'whatsapp',text:params.text})
     if(goldWatch)return goldWatch
+    const stockWatch=await tryCreateStockWatchFromCommand({actor,surface:'whatsapp',text:params.text})
+    if(stockWatch)return stockWatch
     const priceClarification=await tryRunPriceWatchClarification({actor,surface:'whatsapp',text:params.text})
     if(priceClarification)return {...priceClarification,handledBy:String(priceClarification.handledBy||'price-watch-clarification')}
     const corrected=await tryUpdateWebWatchFromCommand({actor,text:params.text})
@@ -616,6 +619,9 @@ export async function tryRunWhatsAppAgent(params: {
   // handlers and before any path that would answer it with a one-off gold quote (19 Oct live).
   const goldWatch = await tryCreateGoldRateWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (goldWatch) return goldWatch
+  // 26 Oct: "Tata Motors share price watch" became a news watch. A share-price ask is a live-quote rule.
+  const stockWatch = await tryCreateStockWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
+  if (stockWatch) return stockWatch
 
   const accountReply = await accountSiteReply(actor, params.text)
   if (accountReply) return accountReply
