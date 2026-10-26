@@ -180,7 +180,7 @@ function Connections(props: Props) {
   }
 
   const q = query.trim().toLowerCase()
-  const connectedIds = new Set(sites.map(s => s.siteId))
+  const connectedIds = new Set(sites.filter(s => s.status === 'active').map(s => s.siteId))
   // Swiggy and Instamart share the Swiggy connection. When the provider connection is not open to us yet, the site
   // still works through a sign-in in the secure browser.
   const oauthState = (site: CatalogueSite) => providers.find(p => p.provider === (site.id === 'instamart' ? 'swiggy' : site.id))?.state || ''
