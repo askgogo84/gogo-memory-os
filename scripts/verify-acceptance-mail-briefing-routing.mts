@@ -1,3 +1,4 @@
+import './verify-dashboard-email-owner-precision.mts'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'

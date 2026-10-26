@@ -117,6 +117,7 @@ function RailRow({title,meta,tone='muted',href}:{title:string;meta:string;tone?:
 }
 
 export type ChatBrief={title:string;summary:string;items:{text:string;tone:'amber'|'teal'|'muted';href:string}[]}
+const HISTORY_LOAD_ERROR='I could not load the recent conversation. You can still start a new message.'
 
 export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initialDrink?:string;userName?:string;brief?:ChatBrief|null}){
   const searchParams=useSearchParams()
@@ -261,7 +262,8 @@ export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initial
         if(!live||sendingRef.current||version!==conversationVersion.current)return
         const next=Array.isArray(chat.messages)?chat.messages:[]
         setMessages(current=>JSON.stringify(current)===JSON.stringify(next)?current:next)
-      }catch{if(initial&&live)setError('I could not load the recent conversation. You can still start a new message.')}
+        setError(current=>current===HISTORY_LOAD_ERROR?'':current)
+      }catch{if(initial&&live&&!sendingRef.current&&version===conversationVersion.current)setError(HISTORY_LOAD_ERROR)}
       finally{refreshing=false;if(live)setLoading(false)}
     }
     refreshRef.current=refresh

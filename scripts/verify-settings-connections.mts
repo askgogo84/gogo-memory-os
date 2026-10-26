@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { CONNECTION_CATALOGUE, CONNECTION_CATEGORIES, catalogueDomain, findCatalogueSite } from '../lib/dashboard/connection-catalogue'
+import * as catalogue from '../lib/dashboard/connection-catalogue'
+import { createRequire } from 'node:module'
+import { runInNewContext } from 'node:vm'
+import ts from 'typescript'
 // Settings and Connections from the approved 15 Oct mock. Run: npx tsx scripts/verify-settings-connections.mts
 const read = (p: string) => readFileSync(new URL('../' + p, import.meta.url), 'utf8')
 
@@ -58,3 +62,61 @@ assert.match(browserPage, /<SignInOpening siteName=\{signInSite\.name\}\/>/)
 assert.ok(browserPage.indexOf('signInSite&&!run.metadata?.handoff') < browserPage.indexOf('if(!browser.hasBrowser)notFound()'), 'a starting sign-in is shown, not a 404')
 assert.match(read('components/dashboard/sign-in-opening.tsx'), /router\.refresh\(\), 3000/)
 console.log('verify-settings-connections: ok')
+
+// Render the actual Connections UI with inert saved-session/OAuth fixtures.
+// A recorded but expired login must not contradict the reauthentication message
+// by claiming Connected in the catalogue. No effects, events or providers run.
+{
+  const require = createRequire(import.meta.url)
+  const React = require('react')
+  const { renderToStaticMarkup } = require('react-dom/server')
+  let providers: Array<{provider:string;label:string;state:string}> = []
+  let hook = 0
+  const exports: any = {}
+  const forbidden = () => { throw new Error('unexpected provider or unrelated component in inert render') }
+  const dependencies: Record<string, unknown> = {
+    react: { ...React, useState: (initial: unknown) => React.useState(hook++ === 3 ? providers : initial) },
+    'react/jsx-runtime': require('react/jsx-runtime'),
+    'next/link': { __esModule: true, default: ({href, children, ...rest}: any) => React.createElement('a', {href, ...rest}, children) },
+    './theme-toggle': { ThemeToggle: forbidden },
+    './sign-out-button': { SignOutButton: forbidden },
+    './daily-brief-email': { DailyBriefEmail: forbidden },
+    './email-preferences': { EmailPreferences: forbidden },
+    '@/lib/dashboard/connection-catalogue': catalogue,
+    '@/lib/dashboard/approx-location': { LOCATION_STORAGE_KEY: 'synthetic', parseLocationPreference: forbidden },
+    '@/lib/product-urls': { waLink: forbidden },
+  }
+  const js = ts.transpileModule(view + '\nexports.ConnectionsForTest = Connections', {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },
+  }).outputText
+  runInNewContext(js, { exports, require: (id: string) => {
+    assert.ok(Object.hasOwn(dependencies, id), `unexpected import ${id}`)
+    return dependencies[id]
+  }, fetch: forbidden, console })
+  function render(status?: string, oauth: typeof providers = []) {
+    hook = 0; providers = oauth
+    return renderToStaticMarkup(React.createElement(exports.ConnectionsForTest, {
+      sites: status === undefined ? [] : [{siteId:'amazon',name:'Amazon.in',domain:'amazon.in',status,since:null}],
+      google: {gmail:false,calendar:false}, creditiq:false, phone:'',
+    })) as string
+  }
+  function amazonCatalogue(html: string) {
+    const shopping = html.split('>Shopping</h2>')[1]
+    assert.ok(shopping, 'rendered shopping catalogue exists')
+    const start = shopping.indexOf('>Amazon.in</div>')
+    const end = shopping.indexOf('>Flipkart</div>', start)
+    assert.ok(start >= 0 && end > start, 'actual Amazon catalogue row exists')
+    return shopping.slice(start, end)
+  }
+  assert.match(amazonCatalogue(render('active')), />Connected</)
+  for (const status of ['expired','revoked','needs_auth','unknown','']) {
+    const html = render(status)
+    assert.match(html, /Needs you to sign in again/)
+    assert.doesNotMatch(amazonCatalogue(html), />Connected</, `${status || 'missing'} must not claim an active login`)
+    assert.match(amazonCatalogue(html), />(?:Connect|Sign in)</, 'existing reconnection control remains available')
+  }
+  assert.doesNotMatch(amazonCatalogue(render()), />Connected</, 'absent session is not connected')
+  const oauth = render('expired', [{provider:'amazon',label:'Amazon.in',state:'authorized'}])
+  assert.match(oauth, /Connected through the provider/, 'independent authorized provider remains connected')
+  console.log('Settings actual render: active, expired, revoked, unknown, absent and authorized-provider states')
+}

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
+import {createHash} from 'node:crypto'
 import {otpReply} from '../lib/agent/provider-booking'
 import * as evidence from '../lib/agent/browser-evidence'
 import {detectHumanAuthGate} from '../lib/agent/browser-auth-gate'
@@ -120,3 +121,62 @@ if(process.env.AUTH_REVIEW_CASE!=='numbers'){
  console.log('Successful human authentication preserves the same page without speculative Vault retry')
 }
 }finally{globalThis.fetch=beforeFetch}
+
+// Execute the native bearer boundary itself; a valid token is not current owner authority.
+{
+ const token='fixture-mobile-token-'.repeat(3),userId='11111111-1111-4111-8111-111111111111',sessionId='22222222-2222-4222-8222-222222222222'
+ const liveSession={id:sessionId,user_id:userId,platform:'ios',expires_at:new Date(Date.now()+60_000).toISOString(),revoked_at:null}
+ const liveUser={id:userId,telegram_id:'123',whatsapp_id:'+15555550123',name:'Fixture',access_status:'active'}
+ async function mobileProbe(options:any={}){
+  const calls:any[]=[],session=options.session===null?null:{...liveSession,...options.session},user=options.user===null?null:{...liveUser,...options.user}
+  const db={from(table:string){calls.push([table,'from']);let writing=false
+   const q:any={select:(fields:string)=>{calls.push([table,'select',fields]);return q},eq:(key:string,value:any)=>{calls.push([table,'eq',key,value]);return q},is:(key:string,value:any)=>{calls.push([table,'is',key,value]);return q},gt:(key:string,value:any)=>{calls.push([table,'gt',key,value]);return q},update:(body:any)=>{writing=true;calls.push([table,'update',body]);if(options.touchSyncThrow)throw new Error('fixture touch unavailable');return q},
+    maybeSingle:async()=>{if(options.throwTable===table)throw new Error('fixture lookup unavailable');return{data:table==='mobile_sessions'?session:user,error:options.errorTable===table?{code:'FIXTURE',message:'fixture private error'}:null}},
+    then:(yes:any,no:any)=>options.touchReject?Promise.reject(new Error('fixture touch rejection')).then(yes,no):Promise.resolve({data:null,error:options.touchError?{code:'FIXTURE',message:'fixture private touch error'}:null}).then(yes,no)}
+   return q}}
+  const mobile=load('lib/mobile-auth/session.ts',{'crypto':{createHash},'@/lib/supabase-admin':{supabaseAdmin:db}})
+  const request=new Request('https://fixture.invalid/api/agent/home',{headers:options.noHeader?{}:{authorization:options.header??`Bearer ${token}`}})
+  const actor=await mobile.resolveMobileActor(request);await Promise.resolve();await Promise.resolve()
+  return{actor,calls,mobile,request}
+ }
+ const failed:string[]=[]
+ async function group(name:string,test:()=>Promise<void>){try{await test();console.log(`Mobile boundary PASS: ${name}`)}catch(error){failed.push(name);console.error(`Mobile boundary FAIL: ${name}: ${String(error)}`)}}
+ const noTouch=(result:any)=>assert.equal(result.calls.filter((c:any)=>c[1]==='update').length,0,'denied sessions must not touch last_seen')
+ await group('blocked and unreadable current owner',async()=>{
+  for(const options of [{user:{access_status:'blocked'}},{user:{access_status:undefined}},{user:{access_status:'unknown'}},{user:null},{errorTable:'users'},{throwTable:'users'},{errorTable:'mobile_sessions'},{throwTable:'mobile_sessions'}]){const r=await mobileProbe(options);assert.equal(r.actor,null);noTouch(r)}
+ })
+ await group('exact safe owner and returned UUID binding',async()=>{
+  for(const value of ['9007199254740993','9007199254740992',9007199254740992,' 123','123 ','+123','00123','1e3','0',0,-0,1.5,true,null,{},['123']]){const r=await mobileProbe({user:{telegram_id:value}});assert.equal(r.actor,null,`must deny ${String(value)}`);noTouch(r)}
+  for(const user of [{id:'foreign-owner'},{id:123},{whatsapp_id:null},{whatsapp_id:'  '},{whatsapp_id:{}}]){const r=await mobileProbe({user});assert.equal(r.actor,null);noTouch(r)}
+ })
+ await group('invalid session cannot read private user',async()=>{
+  for(const session of [null,{user_id:''},{user_id:123},{id:''},{id:123},{user_id:' '+userId},{platform:'web'},{revoked_at:new Date().toISOString()},{revoked_at:undefined},{expires_at:'invalid'},{expires_at:null},{expires_at:new Date(Date.now()-1).toISOString()}]){const r=await mobileProbe({session});assert.equal(r.actor,null);assert.equal(r.calls.filter((c:any)=>c[0]==='users').length,0);noTouch(r)}
+  for(const options of [{noHeader:true},{header:'Basic fixture'},{header:'Bearer short'}]){const r=await mobileProbe(options);assert.equal(r.actor,null);assert.equal(r.calls.length,0)}
+ })
+ await group('safe positive negative null-status platform and exact predicates',async()=>{
+  for(const value of ['123','-123','9007199254740991','-9007199254740991',123,-123])for(const platform of ['ios','android'])for(const status of ['active',null]){
+   const r=await mobileProbe({user:{telegram_id:value,access_status:status},session:{platform}})
+   assert.equal(r.actor?.legacyTelegramId,Number(value));assert.equal(r.actor?.userId,userId);assert.equal(r.actor?.platform,platform)
+   assert.ok(r.calls.some((c:any)=>c[0]==='users'&&c[1]==='select'&&c[2].split(/,\s*/).includes('access_status')))
+   assert.ok(r.calls.some((c:any)=>c[0]==='users'&&c[1]==='eq'&&c[2]==='id'&&c[3]===userId))
+   assert.ok(r.calls.some((c:any)=>c[0]==='mobile_sessions'&&c[1]==='eq'&&c[2]==='session_token_hash'&&c[3]===createHash('sha256').update(token).digest('hex')))
+   assert.equal(r.calls.filter((c:any)=>c[1]==='update').length,1)
+   const touchAt=r.calls.findIndex((c:any)=>c[1]==='update'),touch=r.calls.slice(touchAt)
+   assert.ok(touch.some((c:any)=>c[1]==='eq'&&c[2]==='id'&&c[3]===sessionId));assert.ok(touch.some((c:any)=>c[1]==='eq'&&c[2]==='user_id'&&c[3]===userId));assert.ok(touch.some((c:any)=>c[1]==='is'&&c[2]==='revoked_at'&&c[3]===null))
+  }
+ })
+ await group('best effort last_seen errors never authenticate denied owner or break valid owner',async()=>{
+  for(const options of [{touchError:true},{touchSyncThrow:true},{touchReject:true}]){const r=await mobileProbe(options);assert.equal(r.actor?.legacyTelegramId,123)}
+ })
+ await group('actual agent bearer branch denies without dashboard fallback',async()=>{
+  class FixtureResponse extends Response{static json(body:any,options:any={}){return new FixtureResponse(JSON.stringify(body),options)}}
+  for(const options of [{user:{access_status:'blocked'}},{user:{telegram_id:'9007199254740993'}},{user:{telegram_id:'-123'},session:{platform:'android'}}]){
+   const r=await mobileProbe(options)
+   const boundary=load('lib/agent/session.ts',{'next/server':{NextResponse:FixtureResponse},'@/lib/dashboard/session':{getSession:async()=>{throw new Error('bearer must never fall back to dashboard')}},'@/lib/dashboard/guard':{verifySameOrigin:()=>null},'@/lib/mobile-auth/session':r.mobile})
+   const result=await boundary.requireAgentSession(r.request)
+   if(r.actor){assert.equal(result.telegramId,'-123');assert.equal(result.userId,userId);assert.equal(result.surface,'android')}
+   else{assert.equal(result.status,401);assert.equal((await result.json()).error,'unauthorized');noTouch(r)}
+  }
+ })
+ if(failed.length)throw new Error(`Mobile boundary failures: ${failed.join('; ')}`)
+}

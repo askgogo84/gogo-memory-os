@@ -76,13 +76,35 @@ const database={rpc:async()=>({data:[],error:null}),from:(table:string)=>{
     if(rowLimit!==undefined)rows=rows.slice(0,rowLimit)
     return {data:table==='user_consent_settings'?{memory_enabled:consentEnabled,gmail_enabled:gmailRecallEnabled}:table==='user_memory_profile'?null:rows,error:(table==='user_memory_profile'&&profileLookupFails||table==='user_insights'&&insightLookupFails||table==='agent_ideas'&&inboxLookupFails||table==='user_consent_settings'&&consentLookupFails)?{message:'fixture lookup outage'}:null}
   }
-  const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push([key,value]);return q},contains:(key:string,value:any[])=>{if(key==='source_refs')requiredSourceRefs=value;return q},is:()=>q,or:(filter:string)=>{if(['memories','memory_embeddings'].includes(table))lexicalFilters.push(filter);return q},in:()=>q,gte:()=>q,lte:()=>q,order:(key:string,options?:{ascending?:boolean})=>{sortKey=key;descending=options?.ascending===false;return q},limit:(count:number)=>{rowLimit=count;return q},maybeSingle:async()=>result(),then:(resolve:any)=>Promise.resolve(result()).then(resolve)}
+  const q:any={select:()=>q,eq:(key:string,value:unknown)=>{filters.push([key,value]);return q},contains:(key:string,value:any[])=>{if(key==='source_refs')requiredSourceRefs=value;return q},is:()=>q,not:()=>q,or:(filter:string)=>{if(['memories','memory_embeddings'].includes(table))lexicalFilters.push(filter);return q},in:()=>q,gte:()=>q,lte:()=>q,order:(key:string,options?:{ascending?:boolean})=>{sortKey=key;descending=options?.ascending===false;return q},limit:(count:number)=>{rowLimit=count;return q},maybeSingle:async()=>result(),then:(resolve:any)=>Promise.resolve(result()).then(resolve)}
   return q
 }}
 const exports:any={}
 const mocks:any={'node:crypto':crypto,'@/lib/supabase-admin':{supabaseAdmin:database},'@/lib/services/embeddings':{embedText:async()=>{if(embeddingFails)throw new Error('fixture embedding outage');return []}},'@/lib/bot/memory-redaction':redaction,'@/lib/services/memory-index':memoryIndex,'@/lib/services/travel-time':travelTime,'./typed-object-context':{latestTypedContext:async()=>null}}
 runInNewContext(ts.transpileModule(readFileSync('lib/agent/context-brain.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:(name:string)=>mocks[name],console,Date,Intl})
 const actor={legacyTelegramId:17,userId:'fixture-owner'}
+// P1: two distinct BIGINT users can round to the same JS number. Never query
+// SecondBrain memory, private tickets or connected providers with that actor.
+const roundedOwner = Number('9007199254740993')
+assert.equal(roundedOwner, Number('9007199254740992'))
+for(const invalid of [roundedOwner,-roundedOwner,NaN,Infinity,-Infinity,1.5,0,'17',null]){
+ queries.length=0
+ await assert.rejects(
+   ()=>exports.buildContextPack({actor:{...actor,legacyTelegramId:invalid},text:'Show private flight tickets',options:{includeReservationTravel:true,includeSemantic:true}}),
+   /context_owner_identity_unsafe/,
+   'unsafe/noncanonical actor must fail before any owner-scoped service call',
+ )
+ assert.equal(queries.length,0,'denied context owner cannot initiate service-role data queries')
+}
+// A legitimate negative owner is allowed, and BOTH ticket retrieval paths use
+// the exact decimal string instead of a potentially lossy JS re-conversion.
+queries.length=0
+await exports.buildContextPack({actor:{...actor,legacyTelegramId:-17},text:'Show upcoming travel',options:{includeReservationTravel:true,includeSemantic:false}})
+const ticketOwnerFilters=queries.filter(query=>query.table==='travel_tickets')
+assert.equal(ticketOwnerFilters.length,2,'ordinary and reservation ticket contexts both execute')
+assert.ok(ticketOwnerFilters.every(query=>query.filters.some(([key,value])=>key==='telegram_id'&&value==='-17')),'exact decimal owner passed to both private travel ticket queries')
+queries.length=0
+console.log('PASS: SecondBrain unsafe 64-bit actor denied before reads; two travel scopes preserve valid exact owner')
 const recalled=await exports.buildContextPack({actor,text:'When does Divya arrive in New York?'})
 assert.ok(recalled.facts.some((fact:any)=>fact.id==='semantic:old-fact'))
 assert.equal(recalled.retrievalIncomplete,true)

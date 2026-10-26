@@ -84,3 +84,6 @@ for(const text of ['Open it','Show that link','Read the first link','Select the 
   assert.ok(result.text.includes('https://meet.google.com/ghm-npbd-uar'),`explicit link reference remains supported: ${text}`)
 }
 console.log('PASS: saved meeting link context cannot capture unrelated watch, reminder or calendar commands')
+
+// Actual import/export handlers must not alias distinct 64-bit session owners.
+await import('./verify-link-vault-owner-isolation.mts')

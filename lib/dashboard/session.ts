@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes } from 'crypto'
 import { cookies } from 'next/headers'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { dashboardAccountIsActive, dashboardSessionHasNotExpired } from '@/lib/dashboard/session-access'
 
 // ── Dashboard auth core ───────────────────────────────────────────────────────
 // The ONLY way into the dashboard is a WhatsApp-issued magic link: single-use,
@@ -161,12 +162,21 @@ export function redeemCode(code: string): Promise<string | null> {
   return burnCredential(hashCode(code))
 }
 
+// The session cookie alone must never preserve access after an admin revokes a user.
+// A lookup error or missing owner row makes BOTH minting and use fail closed.
+async function sessionOwnerAllowed(telegramId: unknown): Promise<boolean> {
+  return dashboardAccountIsActive(telegramId, async id => {
+    const result = await supabaseAdmin.from('users').select('access_status').eq('telegram_id', id).maybeSingle()
+    if (result.error) console.error('DASHBOARD_SESSION_OWNER_CHECK_FAILED:', result.error.code || 'db_error')
+    return result
+  })
+}
+
 // Create a session row for a redeemed telegram_id and return its random id (the
 // cookie value). 32 random bytes, base64url — carries no user information.
 export async function createSession(telegramId: string): Promise<string | null> {
-  // Blocked accounts (admin console) cannot start a dashboard session.
-  const { data: access } = await supabaseAdmin.from('users').select('access_status').eq('telegram_id', Number(telegramId)).maybeSingle()
-  if ((access as any)?.access_status === 'blocked') return null
+  // Do not mint a session without a currently allowed, exact persisted owner.
+  if (!(await sessionOwnerAllowed(telegramId))) return null
   const sessionId = randomBytes(32).toString('base64url')
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString()
   const { error } = await supabaseAdmin
@@ -195,7 +205,9 @@ export async function getSession(): Promise<{ telegramId: string } | null> {
     .maybeSingle()
 
   if (error || !data) return null
-  if (new Date(data.expires_at).getTime() <= Date.now()) return null
+  if (!dashboardSessionHasNotExpired(data.expires_at)) return null
+  // A valid unexpired 30-day cookie is not sufficient once this owner is blocked/deleted.
+  if (!(await sessionOwnerAllowed(data.telegram_id))) return null
   return { telegramId: String(data.telegram_id) }
 }
 

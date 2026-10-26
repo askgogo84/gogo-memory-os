@@ -1,6 +1,10 @@
 // Make: real slides and sheets (approved 24 Oct mock). Pure logic, generation with a fake model, and real exports.
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import vm from 'node:vm'
+import ts from 'typescript'
+import { exactSessionOwnerId } from '../lib/dashboard/owner-identity.ts'
+import { runInNewContext } from 'node:vm'
 import * as D from '../lib/make/documents.ts'
 import { generateDoc, editDoc } from '../lib/make/generate.ts'
 import { deckToPptx, sheetToXlsx } from '../lib/make/export.ts'
@@ -99,15 +103,161 @@ await check('amount is quantity x unit price, computed in code', () => {
 await check('in-page edits are signed-in and owner-scoped', () => {
   const route = readFileSync('app/api/make/[id]/edit/route.ts', 'utf8')
   assert.match(route, /getSession\(\)/); assert.match(route, /unauthorized/)
-  assert.match(route, /linkedTelegramIds\(session\.telegramId\)/)
+  assert.match(route, /exactSessionOwnerId\(session\.telegramId\)/)
   assert.match(readFileSync('components/dashboard/make-doc-viewer.tsx', 'utf8'), /\/api\/make\/\$\{encodeURIComponent\(id\)\}\/edit/)
 })
 
-await check('a wrapped or bad cheap edit retries on the strong model', async () => {
-  const s = D.validSheet({ title: 'Home', columns: ['Item', 'Amount'], rows: [['Rent', 30000]] })!
-  const calls: any[] = []
-  const next = await editDoc(s, 'add a row for school fees', { model: async (_p: string, _s: string, o?: any) => { calls.push(!!o?.strong); return o?.strong ? JSON.stringify({ spreadsheet: { ...s, rows: [...s.rows, ['School fees', 8000]] } }) : 'Sure! here it is' } })
-  assert.deepEqual(calls, [false, true]); assert.equal(D.sheetTotal(next as any), 38000)
+// Execute the real routes and real updateDoc with inert database/provider boundaries.
+function makeRouteProbe(owner: any, rowOwner = String(owner), readError = false) {
+  const calls: any = { reads: [], writes: [], body: 0, model: 0, exports: 0 }
+  const doc = { format: 'sheet', title: 'Fixture', columns: ['Item', 'Amount'], rows: [['A', 1]] }
+  const db = { from(table: string) {
+    const filters: any[] = []; let write = false
+    const q: any = {
+      select() { return q },
+      update(value: any) { write = true; calls.writes.push({ table, filters, value }); return q },
+      eq(key: string, value: any) { filters.push([key, value]); return q },
+      async maybeSingle() {
+        calls.reads.push({ table, filters })
+        return { data: { telegram_id: rowOwner, content_json: { doc } }, error: readError ? { message: 'inert read failure' } : null }
+      },
+      then(resolve: any, reject: any) { return Promise.resolve({ error: null }).then(resolve, reject) },
+    }
+    return q
+  } }
+  const dependencies: any = {
+    'next/server': { NextResponse: Response },
+    '@/lib/dashboard/session': { getSession: async () => owner === null ? null : { telegramId: owner } },
+    '@/lib/dashboard/owner-identity': { exactSessionOwnerId },
+    '@/lib/dashboard/owner-ids': { linkedTelegramIds: async () => [String(owner)] },
+    '@/lib/supabase-admin': { supabaseAdmin: db },
+    '@/lib/make/generate': { editDoc: async () => { calls.model++; return doc } },
+    '@/lib/make/export': { sheetToCsv: () => { calls.exports++; return 'Item,Amount\nA,1' }, exportFileName: () => 'fixture.csv' },
+    './documents': {}, './generate': {},
+  }
+  function load(path: string) {
+    const exports: any = {}
+    const code = ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
+    vm.runInNewContext(code, { exports, module: { exports }, require: (name: string) => {
+      assert.ok(name in dependencies, 'unexpected dependency: ' + name); return dependencies[name]
+    }, Response, URL, Buffer, Uint8Array, Date, console })
+    return exports
+  }
+  dependencies['@/lib/make/store'] = load('lib/make/store.ts')
+  const context = { params: Promise.resolve({ id: '11111111-2222-3333-4444-555555555555' }) }
+  const request: any = { url: 'https://example.test/api/make/fixture/export?format=csv', json: async () => { calls.body++; return { instruction: 'add a row' } } }
+  return { calls, edit: () => load('app/api/make/[id]/edit/route.ts').POST(request, context), download: () => load('app/api/make/[id]/export/route.ts').GET(request, context) }
+}
+
+await check('Make routes reject invalid original owners before private reads, body or providers', async () => {
+  for (const owner of [null, '', '0', ' 4242 ', '\u00a04242\u00a0', '01', '1e3', '9223372036854775808', 9007199254740992]) {
+    for (const route of ['edit', 'download'] as const) {
+      const p = makeRouteProbe(owner)
+      const response = await p[route]()
+      assert.ok(response.status >= 400)
+      assert.equal(p.calls.reads.length, 0); assert.equal(p.calls.body, 0)
+      assert.equal(p.calls.model, 0); assert.equal(p.calls.exports, 0); assert.equal(p.calls.writes.length, 0)
+    }
+  }
+})
+
+await check('Make routes bind SELECT and actual UPDATE to exact neighboring signed64 owners', async () => {
+  for (const owner of ['4242', '-4242', '9007199254740992', '9007199254740993', '9223372036854775807', '-9223372036854775808']) {
+    for (const route of ['edit', 'download'] as const) {
+      const p = makeRouteProbe(owner)
+      assert.equal((await p[route]()).status, 200)
+      assert.equal(p.calls.reads.length, 1)
+      assert.ok(p.calls.reads[0].filters.some(([k, v]: any) => k === 'telegram_id' && v === owner))
+      if (route === 'edit') {
+        assert.equal(p.calls.writes.length, 1)
+        assert.ok(p.calls.writes[0].filters.some(([k, v]: any) => k === 'telegram_id' && v === owner))
+        assert.equal(p.calls.model, 1)
+      } else { assert.equal(p.calls.exports, 1); assert.equal(p.calls.model, 0) }
+    }
+  }
+})
+
+await check('Make routes deny mismatched, padded rows and database errors without model/export/write', async () => {
+  for (const [rowOwner, error] of [['9007199254740992', false], [' 9007199254740993 ', false], ['9007199254740993', true]] as const) {
+    for (const route of ['edit', 'download'] as const) {
+      const p = makeRouteProbe('9007199254740993', rowOwner, error)
+      assert.ok((await p[route]()).status >= 400)
+      assert.equal(p.calls.model, 0); assert.equal(p.calls.exports, 0); assert.equal(p.calls.writes.length, 0)
+    }
+  }
+})
+
+await check('owner-private Make edits never reach a cheap model, including the invalid-output retry', async () => {
+  const confidential = 'Internal owner-only acquisition forecast'
+  const s = D.validSheet({ title: 'Private plan', columns: ['Item', 'Amount'], rows: [[confidential, 30000]] })!
+  const calls: boolean[] = []
+  const next = await editDoc(s, 'add a row for school fees', { model: async (prompt: string, scanText: string, opts?: any) => {
+    calls.push(!!opts?.strong)
+    assert.equal(scanText, 'add a row for school fees', 'innocent instructions cannot classify a stored private document')
+    assert.match(prompt, /Internal owner-only acquisition forecast/, 'existing private document is included in the model prompt')
+    return calls.length === 1 ? 'Sure! here it is' : JSON.stringify({ spreadsheet: { ...s, rows: [...s.rows, ['School fees', 8000]] } })
+  } })
+  assert.deepEqual(calls, [true, true], 'both attempts must stay on the strong/primary provider')
+  assert.equal(D.sheetTotal(next as any), 38000)
+  assert.match(readFileSync('lib/make/generate.ts', 'utf8'), /model\(editPrompt\(doc, instruction\), instruction, \{ strong: true \}\)/, 'privacy boundary must be applied by actual editDoc caller')
+})
+
+function actualMakeModelBoundary(doc: D.MakeDoc, options: { replies?: string[]; throwAt?: number[]; noKey?: boolean } = {}) {
+  const cheapCalls: any[] = [], primaryCalls: any[] = []
+  class FixturePrimary {
+    constructor(config: any) { assert.equal(config.apiKey, 'fixture-primary-only') }
+    messages = { create: async (params: any, requestOptions: any) => {
+      primaryCalls.push(params)
+      assert.equal(params.model, 'claude-haiku-4-5'); assert.equal(params.max_tokens, 4000)
+      assert.equal(requestOptions.timeout, 45_000)
+      if (options.throwAt?.includes(primaryCalls.length)) throw new Error('fixture primary unavailable')
+      return { content: [{ type: 'text', text: options.replies?.[primaryCalls.length - 1] ?? JSON.stringify(doc) }] }
+    } }
+  }
+  const exports: any = {}
+  const deps: Record<string, any> = {
+    './documents': D,
+    '@anthropic-ai/sdk': { __esModule: true, default: FixturePrimary },
+    '@/lib/inference/cheap': { cheapComplete: async (params: any) => { cheapCalls.push(params); return JSON.stringify(doc) } },
+  }
+  runInNewContext(ts.transpileModule(readFileSync('lib/make/generate.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText, {
+    exports, require: (name: string) => { if (!(name in deps)) throw new Error(`unexpected model-boundary dependency: ${name}`); return deps[name] },
+    process: { env: options.noKey ? {} : { ANTHROPIC_API_KEY: 'fixture-primary-only' } }, console,
+  })
+  return { api: exports, cheapCalls, primaryCalls }
+}
+
+await check('actual default model keeps saved sheet and deck prompts off cheap routing on first attempt and retry', async () => {
+  const privateText = 'SYNTHETIC OWNER ONLY ACQUISITION FORECAST'
+  const docs: D.MakeDoc[] = [
+    D.validSheet({ title: 'Private plan', columns: ['Item', 'Amount'], rows: [[privateText, 30000]] })!,
+    D.validDeck({ title: 'Private deck', slides: [{ title: 'Plan', points: ['Fixture'], notes: privateText }, { title: 'Next', points: ['Fixture'], notes: '' }] })!,
+  ]
+  for (const doc of docs) for (const retry of [false, true]) {
+    const fixture = actualMakeModelBoundary(doc, { replies: retry ? ['not document JSON', JSON.stringify(doc)] : [JSON.stringify(doc)] })
+    const result = await fixture.api.editDoc(doc, 'rename the final heading')
+    assert.equal(result?.format, doc.format)
+    assert.equal(fixture.cheapCalls.length, 0, 'a saved private prompt must never reach cheap routing')
+    assert.equal(fixture.primaryCalls.length, retry ? 2 : 1)
+    for (const call of fixture.primaryCalls) assert.ok(call.messages[0].content.includes(privateText), 'the actual primary call carries the existing document')
+  }
+})
+
+await check('actual private edits fail closed without a primary key or on primary failure; fresh nonpersonal creation keeps cheap routing', async () => {
+  const doc = D.validSheet({ title: 'Private plan', columns: ['Item', 'Amount'], rows: [['SYNTHETIC PRIVATE ROW', 30000]] })!
+  const retry = actualMakeModelBoundary(doc, { throwAt: [1] })
+  assert.equal((await retry.api.editDoc(doc, 'rename heading'))?.format, 'sheet')
+  assert.equal(retry.primaryCalls.length, 2); assert.equal(retry.cheapCalls.length, 0)
+  for (const options of [{ noKey: true }, { throwAt: [1, 2] }, { replies: ['invalid', 'invalid'] }]) {
+    const fixture = actualMakeModelBoundary(doc, options)
+    assert.equal(await fixture.api.editDoc(doc, 'rename heading'), null)
+    assert.equal(fixture.cheapCalls.length, 0, 'unavailable/invalid primary output must not fall back to cheap')
+  }
+  const creation = actualMakeModelBoundary(doc)
+  const made = await creation.api.generateDoc('sheet', 'Make a spreadsheet of public park names', { search: async () => [] })
+  assert.equal(made?.doc.format, 'sheet'); assert.equal(creation.cheapCalls.length, 1); assert.equal(creation.primaryCalls.length, 0)
+  assert.equal(creation.cheapCalls[0].taskClass, 'make_draft_nonpersonal')
+  assert.equal(creation.cheapCalls[0].scanText, 'Make a spreadsheet of public park names')
 })
 
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
