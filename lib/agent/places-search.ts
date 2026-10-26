@@ -65,7 +65,7 @@ export function placeAsk(text: string): PlaceAsk | null {
   return { query: OTHER_PLACE.test(discovery) ? discovery : `${discovery}, Bengaluru`, area, count }
 }
 
-export type Place = { title: string; address: string; rating?: number; ratingCount?: number; category?: string; phone?: string; website?: string; cid?: string; placeId?: string }
+export type Place = { title: string; address: string; rating?: number; ratingCount?: number; category?: string; phone?: string; website?: string; cid?: string; placeId?: string; lat?: number; lng?: number }
 
 // A source identifier must survive JSON transport losslessly. A rounded number
 // cannot identify the provider's original listing; arbitrary URLs are not a fallback.
@@ -85,11 +85,26 @@ function canonicalPlaceId(value: unknown): string | undefined {
   return /^[A-Za-z0-9_-]{16,300}$/.test(id) ? id : undefined
 }
 
-export function placeSourceUrl(p: Pick<Place, 'cid' | 'placeId'>): string | undefined {
+// 26 Oct production: Serper hotel results carry only title, latitude, longitude and ratings (no address, cid or
+// place id), so all nine were omitted. The provider's own coordinates locate the listing, so a Google Maps pin at
+// that point (documented URL form) is shown and labelled as a map pin, not a listing page. Coordinates must be real
+// numbers in range; no invented or free-text URL.
+function canonicalCoord(value: unknown, limit: number): number | undefined {
+  const n = typeof value === 'number' ? value : typeof value === 'string' && /^-?\d{1,3}(?:\.\d+)?$/.test(value.trim()) ? Number(value) : NaN
+  return Number.isFinite(n) && Math.abs(n) <= limit ? Math.round(n * 1e6) / 1e6 : undefined
+}
+function canonicalPoint(lat: unknown, lng: unknown): { lat: number; lng: number } | undefined {
+  const a = canonicalCoord(lat, 90), b = canonicalCoord(lng, 180)
+  return a !== undefined && b !== undefined && !(a === 0 && b === 0) ? { lat: a, lng: b } : undefined
+}
+
+export function placeSourceUrl(p: Pick<Place, 'cid' | 'placeId' | 'lat' | 'lng'>): string | undefined {
   const cid = canonicalPlaceCid(p.cid)
   if (cid) return `https://maps.google.com/?cid=${encodeURIComponent(cid)}`
   const id = canonicalPlaceId(p.placeId)
-  return id ? `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(id)}` : undefined
+  if (id) return `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(id)}`
+  const point = canonicalPoint(p.lat, p.lng)
+  return point ? `https://www.google.com/maps/search/?api=1&query=${point.lat}%2C${point.lng}` : undefined
 }
 
 function privatePlaceQuery(query: string) {
@@ -110,13 +125,14 @@ export async function searchPlaces(query: string, fetchImpl: typeof fetch = fetc
   if (!res.ok) throw new Error(`serper_places_${res.status}`)
   const data: any = await res.json()
   const raw: any[] = Array.isArray(data?.places) ? data.places : []
-  const unlinked = raw.filter(p => !canonicalPlaceCid(p?.cid) && !canonicalPlaceId(p?.placeId))
+  const unlinked = raw.filter(p => !canonicalPlaceCid(p?.cid) && !canonicalPlaceId(p?.placeId) && !canonicalPoint(p?.latitude, p?.longitude))
   // Field names only (never values) so a provider shape change is diagnosable.
   if (unlinked.length) console.warn('PLACES_UNLINKED:', JSON.stringify({ count: unlinked.length, of: raw.length, fields: [...new Set(unlinked.flatMap(p => Object.keys(p || {})))].sort().slice(0, 30) }))
   return raw.map((p: any): Place => ({
     title: String(p.title || '').trim(), address: String(p.address || '').trim(), rating: Number(p.rating) || undefined,
     ratingCount: Number(p.ratingCount) || undefined, category: p.category ? String(p.category) : undefined,
     phone: p.phoneNumber ? String(p.phoneNumber) : undefined, website: p.website ? String(p.website) : undefined, cid: canonicalPlaceCid(p.cid), placeId: canonicalPlaceId(p.placeId),
+    ...(canonicalPoint(p.latitude, p.longitude) || {}),
   })).filter((p: Place) => p.title)
 }
 
@@ -154,12 +170,18 @@ export function formatPlaces(ask: PlaceAsk, places: Place[]) {
   if (!shown.length) return null
   const lines = shown.map((p, i) => {
     const rating = p.rating ? ` · ${p.rating}★${p.ratingCount ? ` (${new Intl.NumberFormat('en-IN').format(p.ratingCount)})` : ''}` : ''
-    const maps = `\n${p.source}`
-    return `${i + 1}. *${p.title}*${rating}\n${p.address}${p.category ? ` · ${p.category}` : ''}${maps}`
+    // A coordinate pin opens a dropped pin, not the listing, so it is labelled as such.
+    const pinOnly = !canonicalPlaceCid(p.cid) && !canonicalPlaceId(p.placeId)
+    const maps = `\n${pinOnly ? 'Map pin: ' : ''}${p.source}`
+    const detail = [p.address, p.category].filter(Boolean).join(' · ')
+    return `${i + 1}. *${p.title}*${rating}${detail ? `\n${detail}` : ''}${maps}`
   })
-  const note = local.length < Math.min(ask.count, 2) ? `\n\nFew results were inside ${ask.area}, so some are nearby.` : ''
+  // Without an address we cannot tell whether a listing is inside the area, so we say that instead of guessing.
+  const unaddressed = shown.every(p => !p.address)
+  const note = unaddressed ? `\n\nThe provider didn't supply addresses here, so check each location on its Maps link.`
+    : local.length < Math.min(ask.count, 2) ? `\n\nFew results were inside ${ask.area}, so some are nearby.` : ''
   const sourceNote = omitted ? `\n\n${omitted} ${omitted === 1 ? 'listing' : 'listings'} omitted because no valid Maps source link was supplied.` : ''
-  return `📍 ${shown.length === 1 ? 'A good pick' : `${shown.length} good picks`} in ${ask.area}\n\n${lines.join('\n\n')}${note}${sourceNote}\n\nAsk "which of these is open late?" or "book a table at <name>".`
+  return `📍 ${shown.length === 1 ? 'A good pick' : `${shown.length} good picks`} ${unaddressed ? 'near' : 'in'} ${ask.area}\n\n${lines.join('\n\n')}${note}${sourceNote}\n\nAsk "which of these is open late?" or "book a table at <name>".`
 }
 
 export async function answerPlaces(text: string, fetchImpl: typeof fetch = fetch) {

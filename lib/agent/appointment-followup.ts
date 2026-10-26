@@ -643,7 +643,7 @@ async function queueVenueSlotCheck(params: { actor: AgentActor; surface: AgentSu
   const time = `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`
   const { queueBrowserRead } = await import('./browser-command')
   const queued: any = await queueBrowserRead({ actor: params.actor, surface: params.surface, text: `open ${url} and check the live slots`,
-    metadata: { slot_check: { listUrl: url, date, time, timezone: tz, service, location: String(params.research?.metadata_json?.location || ''), venues: 1 } } })
+    metadata: { slot_check: { listUrl: url, date, time, timezone: tz, service, location: String(params.research?.metadata_json?.location || ''), venues: 1 } } }).catch(() => null)
   if (!queued?.runId) return null
   const name = safe(String(params.selected?.title || '').replace(/\s*[-|]\s*Playo.*$/i, ''), 80) || 'that venue'
   return { runId: String(queued.runId), text: `Checking the live ${time} slots at ${name} on Playo now. I'll message you here in 1–2 minutes with the free courts and prices. Nothing is booked.` }

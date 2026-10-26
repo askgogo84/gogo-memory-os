@@ -16,7 +16,7 @@ import { observedOutcome, learningDecisionId } from './decision-evidence'
 import { isGmailVerificationQuery } from './gmail-verification'
 import { tryCreateGoldRateWatchFromCommand } from './gold-watch'
 import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand, tryUpdateWebWatchFromCommand } from './watch-command'
-import { tryRunBrowserCommand, executeApprovedBrowserCommand, queueBrowserRead } from './browser-command'
+import { tryRunBrowserCommand, tryQueueWhatsAppPublicRead, executeApprovedBrowserCommand, queueBrowserRead } from './browser-command'
 import { triggerApprovedBrowserRun } from './approved-browser-worker'
 import { tryRunExternalAccountFlow } from './external-account'
 import { tryPrepareTravelCalendarPlan, executeApprovedTravelCalendarPlan } from './travel-calendar-plan'
@@ -487,6 +487,8 @@ export async function tryRunWhatsAppJevSpecialist(params:{
 
   const accountReply=await accountSiteReply(actor,params.text)
   if(accountReply)return accountReply
+  const queuedRead=await tryQueueWhatsAppPublicRead({actor,text:params.text})
+  if(queuedRead)return {...(queuedRead as any),handledBy:'secure-browser-background-read'}
   const browser=await withWhatsAppBrowserBudget(actor,tryRunBrowserCommand({actor,surface:'whatsapp',text:params.text}))
   if(!browser)return null
   return {
@@ -746,6 +748,8 @@ export async function tryRunWhatsAppAgent(params: {
   const externalAccount = await tryRunExternalAccountFlow({ actor, surface:'whatsapp', text:params.text, messageId:params.messageId })
   if (externalAccount) return { ...(externalAccount as any), handledBy:String((externalAccount as any).handledBy || 'external-account-objective') }
 
+  const queuedRead = await tryQueueWhatsAppPublicRead({ actor, text:params.text })
+  if (queuedRead) return { ...(queuedRead as any), handledBy:'secure-browser-background-read' }
   const browser = await withWhatsAppBrowserBudget(actor, tryRunBrowserCommand({ actor, surface:'whatsapp', text:params.text }))
   if (browser) return { ...(browser as any), text:`${(browser as any).text || ''}${(browser as any).status === 'waiting_approval' ? '\n\nReply *APPROVE* to continue or *REJECT* to stop.' : ''}`, handledBy:String((browser as any).handledBy || 'secure-browser') }
 
