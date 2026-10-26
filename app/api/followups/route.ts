@@ -88,13 +88,16 @@ export async function GET(req: NextRequest) {
  */
 async function holdUnverifiableFollowup(f: any): Promise<boolean> {
   const id = String(f?.id ?? '')
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ||
-      typeof f?.check_at !== 'string' || !Number.isFinite(Date.parse(f.check_at)) ||
-      typeof f?.whatsapp_id !== 'string' || !f.whatsapp_id) return false
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) return false
+  // Only the UUID gates the hold; a legacy row with no destination or due time still goes to the id fallback
+  // below instead of staying pending forever (26 Oct review).
+  const snapshotOk = typeof f?.check_at === 'string' && Number.isFinite(Date.parse(f.check_at)) &&
+      typeof f?.whatsapp_id === 'string' && !!f.whatsapp_id
 
   // Source-state HOLD, not cancellation: the due RPC excludes statuses other
   // than pending. An operator may later restore pending after exact-owner
   // delivery is supported and the original owner link independently verified.
+  if (snapshotOk) {
   let query = supabase.from('followups')
     .update({ status: 'owner_verification_required', delivery_status: 'blocked_owner_precision' })
     .eq('id', id)
@@ -110,6 +113,7 @@ async function holdUnverifiableFollowup(f: any): Promise<boolean> {
   if (!error && Array.isArray(data) && data.length === 1 && String(data[0].id) === id) {
     console.warn('FOLLOWUP_OWNER_HELD:', JSON.stringify({ id, mode: 'snapshot' }))
     return true
+  }
   }
   // 26 Oct review: if the snapshot-bound hold misses (row edited after the due read) the row would stay
   // pending with no delivery job and return in every 50-row batch, starving everyone. The owner id is what

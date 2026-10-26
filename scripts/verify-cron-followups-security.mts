@@ -272,4 +272,26 @@ assert.equal(heldRows.length, 1)
 assert.equal(notifications.length, 1, 'the safe row in the same batch still proceeds')
 assert.ok(JSON.stringify(mismatch.body.failures).includes('owner_verification_required'))
 
+// A legacy unsafe row with no destination still leaves the due set through the exact-UUID hold.
+dueRows = [{ ...makeDue(makeUuid(79), '9007199254740993'), whatsapp_id: null }]
+heldRows.length = 0
+holdAttempts.length = 0
+await actualFollowups.GET({})
+assert.deepEqual(holdAttempts, ['id_fallback'], 'no snapshot update without destination; UUID hold instead')
+assert.equal(dueRows[0].status, 'owner_verification_required')
+
+// Both holds miss (row vanished/changed state): reported as hold failure, nothing sent, nothing else written.
+dueRows = [makeDue(makeUuid(80), '9007199254740993')]
+fakeDueOverride = [{ ...dueRows[0] }]
+dueRows[0] = { ...dueRows[0], status: 'fired' }
+notifications.length = 0
+heldRows.length = 0
+holdAttempts.length = 0
+const bothMiss = await actualFollowups.GET({})
+fakeDueOverride = null
+assert.deepEqual(holdAttempts, ['snapshot', 'id_fallback'])
+assert.equal(heldRows.length, 0)
+assert.equal(notifications.length, 0)
+assert.ok(JSON.stringify(bothMiss.body.failures).includes('invalid_owner_hold_failed'), 'a failed hold is reported, never counted as held')
+
 console.log('followups actual-route two-owner precision, durable hold, bounded queue / no-send tests passed')
