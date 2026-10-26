@@ -26,6 +26,14 @@ async function consequential(el: any) {
   return await runInNewContext(guard + 'isConsequentialControl(page,"#c")', { page: { url: () => 'https://www.croma.com/x/p/1', locator: () => ({ first: () => ({ evaluate: async (fn: any) => fn(el) }) }) }, location: { href: 'https://www.croma.com/x/p/1' } })
 }
 
+// The real Croma box (26 Oct 19:20): textContent runs words together and "Pincode" is only the input placeholder.
+const realCroma = box('select your locationto check products & delivery options available at your locationgrouporsign in to select addresscontinue',
+  [{ value: '560086', getAttribute: (k: string) => (k === 'placeholder' ? 'Enter Pincode' : null) } as any])
+assert.equal(await consequential(button('Continue', realCroma, { id: 'apply-pincode-btn' })), false, 'real Croma Continue (run-together text, placeholder-only pincode) is allowed')
+const realEmpty = box('select your locationto check products & delivery options available at your locationgrouporsign in to select addresscontinue',
+  [{ value: '', getAttribute: (k: string) => (k === 'placeholder' ? 'Enter Pincode' : null) } as any])
+assert.equal(await consequential(button('Continue', realEmpty)), true, 'real Croma box with no pincode entered stays blocked')
+
 const LOC = 'SELECT YOUR LOCATION To Check Products & Delivery Options available at your location Get Current Location OR Sign in to select address'
 assert.equal(await consequential(button('Continue', box(LOC, [{ value: '560086' }]))), false, 'Croma location Continue with a filled pincode is allowed')
 assert.equal(await consequential(button('Apply', box('Enter delivery pincode', [{ value: '400049' }]))), false)
@@ -79,4 +87,14 @@ for (const context of ['OTP verification for account login', 'Date of birth', 'S
 assert.equal(await consequential(button('Continue', box(LOC, [{ value: '123456', type: 'number', name: 'postalCode', id: 'delivery-pin-field', autocomplete: 'postal-code', placeholder: 'Enter your pincode' }]), { type: 'button' })), false)
 assert.equal(await consequential(button('Continue', box(LOC, [{ value: '123456', type: 'tel', name: 'pincode' }]), { type: 'button' })), false, 'phone keyboard with explicit pincode purpose remains a location field')
 assert.equal(await consequential(button('Search', box('Search catalogue', [], 'FORM'), { id: 'product-search', type: 'submit' })), false, 'unrelated research controls retain their original behavior')
+for (const attrs of [
+  { id: 'apply-pincode-btn', type: 'submit' },
+  { id: 'apply-pincode-btn', type: 'button', formaction: '/checkout' },
+  { id: 'apply-pincode-btn', type: 'button', name: 'submit' },
+  { id: 'apply-pincode-btn-checkout', type: 'button' },
+]) {
+  assert.equal(await consequential(button('Continue', realCroma, attrs)), true, 'the known pincode ID never exempts submission targets or extra commit metadata')
+}
+assert.equal(await consequential(button('Continue', box(LOC, [{ value: '123456', name: 'fullName' }]), { id: 'apply-pincode-btn', type: 'button' })), true)
+assert.equal(await consequential(button('Continue', box(LOC + ' OTP verification', [{ value: '123456' }]), { id: 'apply-pincode-btn', type: 'button' })), true)
 console.log('Store location Continue after Gogo enters the pincode is allowed in read mode; every commit stays blocked')

@@ -837,7 +837,8 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
       .map(value=>String(value||'').replace(/\s+/g,' ').trim().toLowerCase()).filter(Boolean)));
     if(el.tagName==='BUTTON'&&locationLabels.some(label=>/^(?:continue|apply|submit|check|done|save|confirm location|update)$/.test(label))){
       const box=el.closest?.('[role="dialog"],[aria-modal="true"],form,[class*="modal" i],[class*="popup" i],[class*="location" i],[class*="pincode" i]');
-      const boxText=(box?.textContent||'').replace(/([A-Z])([A-Z][a-z])/g,'$1 $2').replace(/([a-z])([A-Z])/g,'$1 $2').toLowerCase();
+      const boxText=(box?[String(box.innerText||box.textContent||''),...Array.from(box.querySelectorAll?.('input')||[]).map(i=>String(i.getAttribute?.('placeholder')||'')+' '+String(i.getAttribute?.('aria-label')||''))].join(' '):'')
+        .replace(/([A-Z])([A-Z][a-z])/g,'$1 $2').replace(/([a-z])([A-Z])/g,'$1 $2').toLowerCase();
       if(box&&/\b(?:pin\s*code|pincode|delivery location|select your location|enter your location|delivery address|check delivery)\b/.test(boxText)){
         const inputs=Array.from(box.querySelectorAll?.('input')||[]);
         const pinWords=new Set(['enter','your','delivery','location','pin','pincode','post','postal','postcode','zip','zipcode','code','input','field','on','off']);
@@ -851,7 +852,9 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
           return /^(?:text|number|tel|search)?$/.test(type)&&(type!=='tel'||labels.length>0)&&knownPurpose&&/^[1-9]\d{5}$/.test(String(i.value||'').trim());
         });
         const metadata=[el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').toLowerCase();
-        const metadataCommit=consequentialWords.test(metadata)||/\b(?:order|check\s*out|address|shipping|billing|account|profile|login|password|otp)\b/.test(metadata);
+        // This observed setting-location ID is meaningful only inside all the same structural/PIN/context checks.
+        const actionMetadata=metadata==='apply pincode btn'?'':metadata;
+        const metadataCommit=consequentialWords.test(actionMetadata)||/\b(?:order|check\s*out|address|shipping|billing|account|profile|login|password|otp)\b/.test(metadata);
         const nativeSubmit=!!searchForm||t==='submit'||t==='image'||el.getAttribute('form')!==null
           ||el.getAttribute('formaction')!==null||el.getAttribute('formmethod')!==null;
         // The existing alternative sign-in link is informational; other auth/account context is not a location setting.

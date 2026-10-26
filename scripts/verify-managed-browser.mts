@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import './verify-flight-handoff-domains-oct26.mts'
 import {runInNewContext} from 'node:vm'
 import {browserPageAllowlist} from '../lib/agent/browser-page-network'
 import {resolveManagedSession,managedScope,MANAGED_BROWSER_BROKER,type ManagedState} from '../lib/agent/managed-browser'
