@@ -117,7 +117,7 @@ export async function getLists(telegramId: string): Promise<Lists> {
   const tgNum = exactReminderSessionId(telegramId)
   // lists.telegram_id is numeric; only an exact, JS-safe session owner may read lists —
   // that's an empty account, not a failure. (Failures are actual read errors.)
-  if (!Number.isFinite(tgNum)) return { ok: true, lists: [] }
+  if (tgNum === null) return { ok: true, lists: [] }
 
   const { data, error } = await supabaseAdmin
     .from('lists')
@@ -260,7 +260,7 @@ export type Profile =
 
 export async function getProfile(telegramId: string): Promise<Profile> {
   const tgNum = exactReminderSessionId(telegramId)
-  if (!Number.isFinite(tgNum)) return { ok: false }
+  if (tgNum === null) return { ok: false }
   try {
     const { data: user, error } = await supabaseAdmin
       .from('users')
@@ -332,7 +332,7 @@ export type FriendContacts = { ok: true; contacts: FriendContact[]; count: numbe
 
 export async function getFriendContacts(telegramId: string): Promise<FriendContacts> {
   const tgNum = exactReminderSessionId(telegramId)
-  if (!Number.isFinite(tgNum)) return { ok: true, contacts: [], count: 0 }
+  if (tgNum === null) return { ok: true, contacts: [], count: 0 }
   const { data, error } = await supabaseAdmin
     .from('friend_contacts')
     .select('name, created_at')
@@ -361,7 +361,7 @@ export type TodayCalendar =
 
 export async function getTodayCalendar(telegramId: string): Promise<TodayCalendar> {
   const tgNum = exactReminderSessionId(telegramId)
-  if (!Number.isFinite(tgNum)) return { ok: true, connected: false }
+  if (tgNum === null) return { ok: true, connected: false }
   try {
     const { data: user, error } = await supabaseAdmin
       .from('users')
