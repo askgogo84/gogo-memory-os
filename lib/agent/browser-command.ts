@@ -646,7 +646,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
         if(error||!saved){await cancelProviderBrowserHandoff(browserOwner,handoff).catch(()=>{});throw new Error('browser_handback_save_failed')}
         console.log('BROWSER_HANDBACK:',JSON.stringify({runId:params.runId,outcome:'opened'}))
         return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,
-          text:`${base}\n\nThe page is open for you. Open this link and tap Take control:\n${controlUrl}\n\nGogo won't add to cart, order or submit anything. Never send passwords or codes in chat.`,handledBy:'secure-browser' as const}
+          text:`${base}\n\nThe page is open for you. Open this link and tap Take control:\n${controlUrl}\n\nTyping is easier in your own browser? Open the page directly (Gogo won't see what you do there):\n${sourceUrl||params.command.url}\n\nGogo won't add to cart, order or submit anything. Never send passwords or codes in chat.`,handledBy:'secure-browser' as const}
       }catch(err:any){
         console.error('BROWSER_HANDBACK:',JSON.stringify({runId:params.runId,outcome:'failed',error:String(err?.message||'error').replace(/[^a-z0-9_]/gi,'_').slice(0,60)}))
         return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,
@@ -706,7 +706,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
         await activity(tg,params.runId,'handback_opened','Gogo could not read the page and opened it for you to take control.',{host:site,error:safe(readError,250)}).catch(()=>{})
         console.log('BROWSER_HANDBACK:',JSON.stringify({runId:params.runId,outcome:'opened_after_read_failure'}))
         return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const,
-          text:`${slow?`${site} was slow to load for me, so I couldn't read the page.`:`I couldn't read the details on ${site}.`} I've opened it in a secure browser for you. Open this link and tap Take control:\n${controlUrl}\n\nGogo won't add to cart, order or submit anything. Never send passwords or codes in chat.`}
+          text:`${slow?`${site} was slow to load for me, so I couldn't read the page.`:`I couldn't read the details on ${site}.`} I've opened it in a secure browser for you. Open this link and tap Take control:\n${controlUrl}\n\nTyping is easier in your own browser? Open the page directly (Gogo won't see what you do there):\n${params.command.url}\n\nGogo won't add to cart, order or submit anything. Never send passwords or codes in chat.`}
       }catch(handbackErr:any){
         console.error('BROWSER_HANDBACK:',JSON.stringify({runId:params.runId,outcome:'failed_after_read_failure',error:String(handbackErr?.message||'error').replace(/[^a-z0-9_]/gi,'_').slice(0,60)}))
       }
