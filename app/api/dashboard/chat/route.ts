@@ -661,8 +661,9 @@ async function handleChatPost(req: NextRequest) {
     const browserTask = await tryRunBrowserCommand({ actor, surface:'web', text })
     __trace.mark('browserTask')
     if (browserTask) {
-      const suffix = browserTask.status === 'waiting_approval'
-        ? '\n\nI paused before the consequential provider action. Open Gogo Agent to approve or reject it.'
+      // The approval text already says what happens and how to approve (APPROVE / REJECT work here too).
+      const suffix = browserTask.status === 'waiting_approval' && !/\bAPPROVE\b/.test(String(browserTask.text || ''))
+        ? '\n\nReply APPROVE to go ahead or REJECT to cancel.'
         : ''
       const reply = `${browserTask.text || ''}${suffix}`
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:browserTask.handledBy,actualCapability:(browserTask as any).capability||'browser',status:browserTask.status,runId:browserTask.runId}).catch(()=>{})

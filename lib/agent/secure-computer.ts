@@ -2257,7 +2257,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     let readAnswer:string|null=null
     let assessedReadPage:any=null
     let unchangedReadWaves=0
-    let flightSearchRecoveryUsed=false
+    let flightSearchRecoveryUsed=false,bookingStartReloaded=false
     const readSnapshot=(p:any)=>JSON.stringify([p.url,p.text,p.controls,p.forms])
 
     const readWaves=googleFlightReadProgress(page)?MAX_FLIGHT_RESEARCH_WAVES:MAX_RESEARCH_WAVES
@@ -2597,6 +2597,14 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
           // A booking navigates only to observed links on the same site, never to a URL the page suggests elsewhere.
           &&(a.kind!=='goto'||(sameSite(a.url,String(page.url||params.url))&&(page.links||[]).some((l:any)=>String(l?.href||'')===a.url))))
         :plan.actions.filter(a=>!['fill_phone','fill_otp','click_text','choose','click_at','fill_phone_at','fill_otp_at','scroll_by'].includes(a.kind))
+      // 26 Oct live booking 46beb2e2: Google Flights opened its blank search form ("Where to?" empty) instead of the
+      // search link's results, and six waves re-typed the search until the 5-minute budget ran out. Reload the
+      // approved search link once instead; it is the same URL the approval was bound to.
+      if(providerBooking&&onGoogle&&!bookingStartReloaded&&wave<3){
+        let path='';try{path=new URL(String(page.url||'')).pathname}catch{}
+        const blank=/^\/travel\/flights\/?$/.test(path)&&(page.controls||[]).some((c:any)=>/^Where to\?/i.test(String(c?.label||'').trim())&&!String(c?.value||'').trim())
+        if(blank){bookingStartReloaded=true;actions.splice(0,actions.length,{kind:'goto',url:String(params.url)} as any);console.log('BROWSER_BOOKING_START_RELOAD:',JSON.stringify({runId:params.sessionTaskId||null,wave}))}
+      }
       // One bounded recovery for the actual travel adapter: use only an
       // observed public Search control after both airports/date are populated.
       // It still passes the worker's read action gates and final evidence checks.

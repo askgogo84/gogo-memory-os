@@ -314,6 +314,9 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
       const leads = await searchWebResults(`${food.restaurant} ${area ? area + ' ' : ''}${/^56/.test(pin || '') ? 'Bangalore ' : ''}order online ${COMPARISON_PROVIDERS[next.provider].label}`,
         {includeDomains: [COMPARISON_PROVIDERS[next.provider].domain], timeoutMs: 10_000}).catch(() => [] as any[])
       startUrl = foodRestaurantLead(next.provider, food.restaurant, leads || [], pin, area) || comparisonSearchUrl(next.provider, task.metadata_json.subject) || startUrl
+      // Which outlet was chosen and why (area from the map search, how many restaurant pages the search returned).
+      console.log('FOOD_OUTLET:', JSON.stringify({provider: next.provider, area: area || null, leads: (leads || []).length,
+        paths: (leads || []).slice(0, 6).map((l: any) => { try { return new URL(String(l?.url || '')).pathname.slice(0, 80) } catch { return null } }), start: (() => { try { return new URL(startUrl).pathname.slice(0, 80) } catch { return null } })()}))
     } else if (parallel) {
       // The quick web look at request time may already have found the product page.
       // A retry alternates between the found product page and the store's own search, so a bad start is not repeated.
