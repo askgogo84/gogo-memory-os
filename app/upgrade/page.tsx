@@ -22,6 +22,25 @@ function digitsOnly(value?: string | null) {
   return String(value || '').replace(/\D/g, '')
 }
 
+// Dashboard sessions preserve the database's signed BIGINT identity as decimal text.
+// Never round, partially parse or invent an owner before a service-role lookup.
+function canonicalSessionOwner(value: unknown): string | null {
+  if (typeof value !== 'string' || !/^-?[1-9]\d{0,18}$/.test(value)) return null
+  try {
+    const owner = BigInt(value)
+    if (owner < -(1n << 63n) || owner > (1n << 63n) - 1n) return null
+    return value
+  } catch {
+    return null
+  }
+}
+
+function matchesPersistedOwner(actual: unknown, expected: string): boolean {
+  if (typeof actual === 'string') return canonicalSessionOwner(actual) === expected
+  if (typeof actual === 'bigint') return actual.toString() === expected
+  return typeof actual === 'number' && Number.isSafeInteger(actual) && actual !== 0 && String(actual) === expected
+}
+
 export default async function UpgradePage({
   searchParams,
 }: {
@@ -32,9 +51,9 @@ export default async function UpgradePage({
   const selected = GOGO_INDIA_PLANS[planKey]
 
   const session = await getSession()
-  const telegramId = session ? parseInt(session.telegramId, 10) : null
+  const ownerId = canonicalSessionOwner(session?.telegramId)
 
-  if (!telegramId || Number.isNaN(telegramId)) {
+  if (!ownerId) {
     return (
       <main className="min-h-screen bg-gogo-cream px-6 py-20 text-center text-gogo-ink">
         <div className="mx-auto max-w-md rounded-[32px] border border-gogo-ink/8 bg-gogo-surface p-8 shadow-[0_28px_80px_rgba(22,19,15,.08)]">
@@ -47,11 +66,19 @@ export default async function UpgradePage({
     )
   }
 
-  const { data: user } = await supabaseAdmin
-    .from('users')
-    .select('name, tier, whatsapp_id, phone')
-    .eq('telegram_id', telegramId)
-    .single()
+  // Even an exact database filter is insufficient when a BIGINT arrives back
+  // as a rounded JavaScript number; never render another owner's private phone.
+  let user: { whatsapp_id?: string | null; phone?: string | null } | null = null
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('users')
+      .select('telegram_id, name, tier, whatsapp_id, phone')
+      .eq('telegram_id', ownerId)
+      .single()
+    if (!error && data && matchesPersistedOwner(data.telegram_id, ownerId)) user = data
+  } catch {
+    // Fail closed to the WhatsApp sign-in link when owner verification is unavailable.
+  }
 
   const phoneDigits = digitsOnly(user?.whatsapp_id || user?.phone)
   const phoneParam = phoneDigits ? `&phone=${encodeURIComponent(`+${phoneDigits}`)}` : ''
