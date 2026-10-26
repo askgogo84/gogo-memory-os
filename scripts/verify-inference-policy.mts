@@ -1,4 +1,5 @@
 // Synthetic dry-run for issue #274. No network, no keys: every provider here is a local fake.
+import './verify-openrouter-gateway-synthetic.mts'
 // Run: npx tsx scripts/verify-inference-policy.mts
 import assert from 'node:assert/strict'
 import {
