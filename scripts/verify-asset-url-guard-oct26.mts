@@ -86,7 +86,7 @@ for (const t of [
   assert.equal(noteReads, 0, 'public URL must not query saved notes: ' + t)
 }
 const savedContact = await build(101, "Find Jane Doe's phone")
-assert.match(savedContact || '', /jane@example\\.com/, 'genuine saved contact retrieval must still work')
+assert.match(savedContact || '', /jane@example\.com/, 'genuine saved contact retrieval must still work')
 assert.equal(documentReads, 1, 'saved contact queries only the authenticated owner documents')
 assert.equal(noteReads, 1, 'saved contact checks only the authenticated owner notes')
 console.log('URL + contact question: zero private DB/notes reads; genuine saved-contact lookup preserved')
