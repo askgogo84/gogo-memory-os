@@ -58,10 +58,11 @@ assert.match(wa, /meterAs\(resolvedUser\.telegramId, 'whatsapp'\)/)
 
 const gate = readFileSync('lib/access/gate.ts', 'utf8')
 assert.match(gate, /ACCESS_GATE_ENABLED !== 'false'/)
-assert.match(gate, /isAdminPhone\(p\)/)
+// Execute privilege boundaries instead of requiring a country-inferred admin argument.
+await import('./verify-admin-phone-isolation.mts')
 assert.match(gate, /access_status === 'blocked'/)
 assert.match(gate, /status === 'invited' \|\| row\?\.status === 'joined'/)
-assert.match(gate, /reason: 'gate_error'/, 'database trouble lets messages through')
+assert.match(gate, /reason: 'gate_error'/, 'database trouble has an explicit denial outcome')
 assert.match(gate, /NOTIFY_EVERY_MS = 24 \* 60 \* 60 \* 1000/)
 
 assert.match(readFileSync('lib/dashboard/session.ts', 'utf8'), /access_status === 'blocked'\) return null/)
