@@ -143,7 +143,7 @@ const COMPOSIO_MAX_OWNER = BigInt('9223372036854775807')
 function exactComposioOwnerId(value: string | number): string | null {
   if (typeof value === 'number' && (!Number.isSafeInteger(value) || value === 0)) return null
   const id = typeof value === 'number' ? String(value) : value
-  if (typeof id !== 'string' || id.length > 20 || !/^-?[1-9]\\d*$/.test(id)) return null
+  if (typeof id !== 'string' || id.length > 20 || !/^-?[1-9]\d*$/.test(id)) return null
   const exact = BigInt(id)
   return exact < COMPOSIO_MIN_OWNER || exact > COMPOSIO_MAX_OWNER ? null : id
 }
