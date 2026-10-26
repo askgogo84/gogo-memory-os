@@ -22,8 +22,8 @@ function button(label: string, container: any, extra: Record<string, any> = {}) 
     closest: (sel: string) => sel === 'form' ? (container?.tagName === 'FORM' ? container : null)
       : (sel.includes('dialog') || sel.includes('form') ? container : null) }
 }
-async function consequential(el: any) {
-  return await runInNewContext(guard + 'isConsequentialControl(page,"#c")', { page: { url: () => 'https://www.croma.com/x/p/1', locator: () => ({ first: () => ({ evaluate: async (fn: any) => fn(el) }) }) }, location: { href: 'https://www.croma.com/x/p/1' } })
+async function consequential(el: any, url = 'https://www.croma.com/x/p/1') {
+  return await runInNewContext(guard + 'isConsequentialControl(page,"#c")', { page: { url: () => url, locator: () => ({ first: () => ({ evaluate: async (fn: any) => fn(el) }) }) }, location: { href: url } })
 }
 
 // The real Croma box (26 Oct 19:20): textContent runs words together and "Pincode" is only the input placeholder.
@@ -97,4 +97,11 @@ for (const attrs of [
 }
 assert.equal(await consequential(button('Continue', box(LOC, [{ value: '123456', name: 'fullName' }]), { id: 'apply-pincode-btn', type: 'button' })), true)
 assert.equal(await consequential(button('Continue', box(LOC + ' OTP verification', [{ value: '123456' }]), { id: 'apply-pincode-btn', type: 'button' })), true)
+const flightLocation = button('Continue', box(LOC, [{ value: '123456' }]), { type: 'button', 'aria-label': '1 passengers' })
+const flightClosest = flightLocation.closest
+flightLocation.closest = (selector: string) => selector === '[role="search"]' ? {} : selector === '[role="dialog"]' ? null : flightClosest(selector)
+assert.equal(await consequential(flightLocation, 'https://www.google.com/travel/flights'), true, 'a passenger-shaped accessible label cannot bypass conflicting location controls')
+const flightPassenger = { ...flightLocation, textContent: '1 passengers', innerText: '1 passengers' }
+assert.equal(await consequential(flightPassenger, 'https://www.google.com/travel/flights'), false, 'the bounded passenger filter remains a read control')
+assert.equal(await consequential(button('Continue', box(LOC, [{ value: '123456' }]), { type: 'button', id: 'add-to-cart' })), true)
 console.log('Store location Continue after Gogo enters the pincode is allowed in read mode; every commit stays blocked')

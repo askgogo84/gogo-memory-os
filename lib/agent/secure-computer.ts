@@ -802,10 +802,10 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
       |(passengerDialog?.closest('[role="search"]')?2048:0)
       |(/^(?:Add adult|Remove adult|Done|Cancel)$/.test(passengerLabel)?4096:0):undefined;
     const consequential=(()=>{
-    if((guardContext&127)===127&&((guardContext&384)===384||(guardContext&7680)===7680))return false;
+    const flightResearch=(guardContext&127)===127&&((guardContext&384)===384||(guardContext&7680)===7680);
     const t=(el.getAttribute('type')||'').toLowerCase();
     const text=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value'),el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
-    if(/\b(add|remove|increase|decrease)\b/.test(text)||/^[+−-]$/.test(text))return true;
+    const adjustmentControl=/\b(add|remove|increase|decrease)\b/.test(text)||/^[+−-]$/.test(text);
     const safeResearch=/\b(search|find|show|filter|apply filters|see results|view results|check availability|update results|go)\b/i.test(text);
     const navigation=/\b(?:(?:view|manage|open|show|see|read|inspect|review)\s+(?:(?:my|your|the)\s+)?(?:booking|reservation|confirmation|order|payment|purchase|application|cancellation)s?(?:\s+(?:details|confirmation|status|history|receipt))?|(?:booking|reservation)\s+details)\b/gi;
     const visibleText=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value')].filter(Boolean).join(' ').toLowerCase();
@@ -862,9 +862,11 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
         const risky=!!box.querySelector?.('input[type="password"]')
           ||/\b(?:checkout|shipping address|billing address|save address|add address|card number|cvv|upi|pay now|place order|otp|verification|verify|password|account|login|log in|sign in|full\s*name|first\s*name|last\s*name|date\s*of\s*birth|dob)\b/.test(actionContext);
         const locationOnly=/\b(?:pin\s*code|pincode|delivery location|select your location|enter your location|check delivery)\b/.test(boxText);
-        return locationLabels.length!==1||nativeSubmit||metadataCommit||risky||!pinFilled||!locationOnly;
+        return adjustmentControl||locationLabels.length!==1||nativeSubmit||metadataCommit||risky||!pinFilled||!locationOnly;
       }
     }
+    if(flightResearch)return false;
+    if(adjustmentControl)return true;
     if(text!==commitText&&!consequential)return false;
     if(safeResearch && !consequential)return false;
     if(consequential)return true;
