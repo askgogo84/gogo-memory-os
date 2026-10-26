@@ -265,11 +265,20 @@ console.log('\n14. DASHBOARD LIST OWNER PRECISION — unauthorized session value
 
   function loadActualRoute(relativePath) {
     const source = readFileSync(new URL('../' + relativePath, import.meta.url), 'utf8')
-    const js = ts.transpileModule(source, {
+    // transpileModule returns { outputText, diagnostics }, not source text. Passing the object to the VM
+    // stringified it to "[object Object]" (CI job 121329064174). Run the emitted JS and fail on any
+    // syntax diagnostic so the owner-precision cases below always execute the real route.
+    const transpiled = ts.transpileModule(source, {
       fileName: relativePath,
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
       reportDiagnostics: true,
     })
+    const errors = (transpiled.diagnostics || []).filter((d) => d.category === ts.DiagnosticCategory.Error)
+    if (errors.length) {
+      throw new Error(relativePath + ': ' + errors.map((d) => ts.flattenDiagnosticMessageText(d.messageText, '\n')).join('; '))
+    }
+    const js = transpiled.outputText
+    if (typeof js !== 'string' || !js.includes('exports')) throw new Error(relativePath + ': transpile produced no CommonJS module')
     const actualModule = { exports: {} }
     const mockModules = {
       'next/server': {
