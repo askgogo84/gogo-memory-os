@@ -43,7 +43,7 @@ export async function readPriceComparison(owner: string, id: string): Promise<Pr
     const {data: step, error: stepError} = await supabaseAdmin.from('agent_steps').select('status,output_json')
       .eq('run_id', child.id).eq('telegram_id', owner).eq('tool_name', 'secure_browser').limit(1).maybeSingle()
     if (stepError) throw new Error('comparison_evidence_read_failed')
-    rows.push({...providerObservation(row.provider, child, step,task.metadata_json.subject), startUrl: row.startUrl, ...(row.attempts ? {attempts: row.attempts} : {}), ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})})
+    rows.push(withNavigationTimeout({...providerObservation(row.provider, child, step,task.metadata_json.subject), startUrl: row.startUrl, ...(row.attempts ? {attempts: row.attempts} : {}), ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})}, child.error))
   }
   const blocker = rows.some(row => row.status === 'pending' && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider))
     ? await sharedBrowserHandoffPending(owner) : null
@@ -240,6 +240,39 @@ async function sharedBrowserHandoffPending(owner: string) {
 // Electronics stores are public product pages, each read in its own browser, so they run at the same time.
 // Grocery and food stores share one browser that keeps the person's delivery location, so they run one by one.
 const MAX_STORE_ATTEMPTS = 3
+// 25 Oct live: Flipkart's product page hit "page.goto: Timeout 45000ms exceeded" three reads in a row (~3.5 min),
+// then the store line said only "couldn't confirm the item and price." A page that never loads is retried once
+// (two reads), then reported plainly. No price is invented and no search snippet stands in for a store quote.
+const NAV_TIMEOUT_ATTEMPTS = 2
+const NAV_TIMEOUT_FALLBACK_SECONDS = 45
+type StoreRow = PriceComparison['metadata_json']['providers'][number] & {navTimeout?: boolean}
+
+export function isNavigationTimeout(error: unknown): boolean {
+  return /\bpage\.goto: Timeout \d+ms exceeded\b/.test(String(error || ''))
+}
+
+/** A failed store whose LAST browser read timed out on navigation gets an honest, specific reason. Others are untouched.
+ *  The wait comes from the error itself; with several reads, only the last one is claimed to have timed out. */
+export function withNavigationTimeout<T extends {status?: string; attempts?: number}>(row: T, childError: unknown): T {
+  if (row?.status !== 'failed' || !isNavigationTimeout(childError)) return row
+  const ms = Number(String(childError).match(/\bpage\.goto: Timeout (\d+)ms exceeded\b/)?.[1])
+  const seconds = Number.isFinite(ms) && ms > 0 ? Math.round(ms / 1000) : NAV_TIMEOUT_FALLBACK_SECONDS
+  const tries = Math.max(1, Number(row.attempts) || 1)
+  const reason = tries === 1
+    ? `its page didn’t load within ${seconds} seconds, so I have no price from this store.`
+    : `I tried ${tries} times and the last time its page didn’t load within ${seconds} seconds, so I have no price from this store.`
+  return {...row, navTimeout: true, reason}
+}
+
+export function storeRetryLimit(row: {navTimeout?: boolean}): number {
+  return row?.navTimeout ? NAV_TIMEOUT_ATTEMPTS : MAX_STORE_ATTEMPTS
+}
+
+/** Failed stores go back in the queue until their budget is spent; observed, blocked and needs-input stores never do. */
+export function retryFailedStores<T extends StoreRow>(rows: T[]): T[] {
+  return rows.map(row => row.status === 'failed' && (row.attempts || 1) < storeRetryLimit(row)
+    ? {provider: row.provider, status: 'pending' as const, attempts: (row.attempts || 1) + 1, ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})} as T : row)
+}
 export const PARALLEL_COMPARISON_PROVIDERS = new Set(['amazon', 'flipkart', 'croma', 'reliance'])
 
 async function withComparisonState<T>(id: string, fn: () => Promise<T>): Promise<T | null> {
@@ -324,8 +357,7 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     if (!task) throw new Error('comparison_missing_after_read')
     // 16 Oct: "the page didn't finish loading" is not an answer. A store that failed is tried again (up to
     // three reads) before it is reported; one that needs the person's input or sign-in is not retried.
-    task.metadata_json.providers = task.metadata_json.providers.map(row => row.status === 'failed' && (row.attempts || 1) < MAX_STORE_ATTEMPTS
-      ? {provider: row.provider, status: 'pending' as const, attempts: (row.attempts || 1) + 1, ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})} : row)
+    task.metadata_json.providers = retryFailedStores(task.metadata_json.providers)
     task.metadata_json.providers = withStoreFallback(task.metadata_json) as any
     await saveProgress(owner, task)
     return task

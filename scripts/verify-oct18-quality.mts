@@ -60,3 +60,6 @@ assert.match(introspection,/feature-intent \(calendar\)/)
 assert.match(introspection,/feature-intent \(memory\)/)
 assert.match(introspection,/at least 20 identified samples/)
 console.log('D12–D17 targeted quality: source expiry, home-city weather, stale flight context, exact products, domain labels, traveller names passed; live location/provider acceptance pending')
+
+// 26 Oct: comparison navigation-timeout recovery (registered here; package.json is held by #914).
+await import('./verify-comparison-timeout-recovery.mts')
