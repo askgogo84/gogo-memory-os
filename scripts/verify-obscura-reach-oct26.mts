@@ -88,4 +88,27 @@ assert.equal(w.length, 2)
 assert.deepEqual(w[0], { count: 1, of: 2, fields: ['address', 'category', 'phoneNumber', 'rating', 'title'] }, 'field names only')
 assert.ok(!warns.join('').includes('99999'), 'no values logged')
 
+// ── 4. "Hand control back to me" after a plain public read opens Take Control ──
+const bc = await import('../lib/agent/browser-command')
+for (const t of [
+  'Open https://www.croma.com/x/p/1 read-only and hand control back to me so I can set my delivery pincode myself. Do not add to cart or order.',
+  'Open the page and give control back to me', 'read the page then pass the browser control to me',
+  'Open it and hand it back to me', 'open flipkart so I can take over', 'Open this page; I want to take control',
+]) assert.equal(bc.wantsBrowserHandBack(t), true, t)
+for (const t of [
+  'Open https://en.wikipedia.org/wiki/X read-only and tell me the title',
+  "Open the page but don't hand control back to me", 'Do not give control to me, just read it',
+  'what is the price shown? control panel settings', 'Take control of my reminders',
+]) assert.equal(bc.wantsBrowserHandBack(t), false, t)
+const cmd2 = readFileSync(new URL('../lib/agent/browser-command.ts', import.meta.url), 'utf8')
+const hbGate = cmd2.match(/if\((params\.mode==='read'&&!persistentCommerce&&!persistentAccountSession&&!params\.command\.vaultCredentialId&&wantsBrowserHandBack\(params\.command\.objective\))\)\{/)
+assert.ok(hbGate, 'hand-back only for plain public reads: no commerce, comparison, Vault, booking or sign-up session')
+const hbBlock = cmd2.slice(cmd2.indexOf(hbGate![0]), cmd2.indexOf("return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}"))
+assert.match(hbBlock, /startProviderBrowserHandoff\(\{userId:browserOwner,url:sourceUrl\|\|params\.command\.url,sessionTaskId:params\.runId\}\)/, 'no keepAlive, same owner, page that was read')
+assert.match(hbBlock, /\.eq\('status','completed'\)/, 'only a still-completed run is reopened')
+assert.match(hbBlock, /cancelProviderBrowserHandoff/, 'a failed save releases the browser')
+assert.match(hbBlock, /tap Take control/)
+assert.match(hbBlock, /won't add to cart, order or submit anything/)
+assert.match(hbBlock, /couldn't open a browser for you to take control/, 'failure is said plainly, read result kept')
+
 console.log('Obscura reach: comparison reads try Obscura first with logged outcomes; hotels accept place ids as Maps sources')
