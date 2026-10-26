@@ -29,7 +29,7 @@ export function excerptAround(text: unknown, term: string, n = 110) {
   return `${start > 0 ? '…' : ''}${t.slice(start, start + n).trim()}${start + n < t.length ? '…' : ''}`
 }
 /** Drops repeated hits (the same message sent twice) and internal state rows stored as JSON. */
-const unique = <T extends { title: string }>(hits: T[]) => { const seen = new Set<string>(); return hits.filter(h => { const k = h.title.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true }) }
+const unique = (hits: SearchHit[]): SearchHit[] => { const seen = new Set<string>(); return hits.filter(h => { const k = h.title.toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true }) }
 const isStateRow = (s: unknown) => /^\s*[{[]/.test(String(s || ''))
 const day = (v: unknown) => { const d = new Date(String(v || '')); return Number.isFinite(d.getTime()) ? d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric', timeZone: 'Asia/Kolkata' }) : null }
 
