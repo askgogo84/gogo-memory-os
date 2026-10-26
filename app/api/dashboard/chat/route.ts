@@ -364,6 +364,15 @@ async function handleChatPost(req: NextRequest) {
       await saveConversation(user.telegram_id,text,inboxReplyRead.text)
       return NextResponse.json(inboxReplyRead)
     }
+    // "Who promised to send the proposal?" — loaded only for those phrasings.
+    if (/\b(?:who\s+(?:promised|said\s+(?:they|he|she)|owes\s+me|was\s+(?:going|supposed)\s+to)|what\s+(?:did|has)\s+\S+(?:\s+\S+)?\s+promise|waiting\s+(?:on|for)\s+from\s+\S)/i.test(text)) {
+      const {handleWhoPromisedQuery} = await import('@/lib/agent/commitments-query')
+      const promised = await handleWhoPromisedQuery({actor,text}).catch(() => null)
+      if (promised) {
+        await saveConversation(user.telegram_id,text,promised.text)
+        return NextResponse.json(promised)
+      }
+    }
     // Same run cancel as WhatsApp ("cancel that task", "stop the flight booking"). Owner-bound; reminders,
     // calendar, watches, lists, orders and Gmail are refused by the parser and keep their own paths.
     const runCancel = await tryCancelRunFromChat({telegramId:actor.legacyTelegramId},text,{surface:'web'})

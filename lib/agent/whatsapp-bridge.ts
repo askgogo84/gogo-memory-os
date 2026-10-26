@@ -530,6 +530,12 @@ export async function tryRunWhatsAppAttentionCommand(params:{
 
   const query=await handleOpenLoopQuery({actor,text:params.text})
   if(query)return {...query,handledBy:String(query.handledBy||'open-loops')}
+  // "Who promised to send the proposal?" — loaded only for those phrasings (route harnesses stub this file's deps).
+  if(/\b(?:who\s+(?:promised|said\s+(?:they|he|she)|owes\s+me|was\s+(?:going|supposed)\s+to)|what\s+(?:did|has)\s+\S+(?:\s+\S+)?\s+promise|waiting\s+(?:on|for)\s+from\s+\S)/i.test(params.text)){
+    const {handleWhoPromisedQuery}=await import('./commitments-query')
+    const promised=await handleWhoPromisedQuery({actor,text:params.text})
+    if(promised)return {...promised,handledBy:'who-promised'}
+  }
   return null
 }
 

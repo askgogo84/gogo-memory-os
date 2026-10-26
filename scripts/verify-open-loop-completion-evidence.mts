@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import './verify-who-promised-oct27.mts'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
