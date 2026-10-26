@@ -26,7 +26,7 @@ import { parseTaskStatusQuery, tryGetTaskStatus } from '@/lib/agent/task-status'
 import { isLinkVaultSaveRequest, isLinkVaultQuery } from '@/lib/services/link-vault'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/day-chat'
-import { isPublicTravelResearchRequest, isTravelResearchDetailsReply, tryRunTravelResearch } from '@/lib/agent/travel-research'
+import { isPublicTravelResearchRequest, isTravelResearchDetailsReply, tryRunTravelResearch, shouldPreferSpecialistTravel } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { tryAccountSiteAnswer } from '@/lib/agent/account-site-gate'
@@ -711,6 +711,21 @@ async function handleChatPost(req: NextRequest) {
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'jev-clarification-guard',actualCapability:null,status:'paused'}).catch(()=>{})
       await saveConversation(user.telegram_id, text, jevClarify)
       return NextResponse.json({ text: jevClarify, handledBy: 'jev-clarification-guard', status: 'paused' })
+    }
+
+    // 26 Oct live: "Find the cheapest one-way flight from Bengaluru to Delhi on 20 November…" went to the general
+    // planner (23.6s) and came back as snippet fares with no airline, times or date-specific price. Pure travel
+    // research uses the specialist engine first, as WhatsApp and /api/agent/run already do. Route harnesses that
+    // stub travel-research without this export simply skip the step.
+    if (typeof shouldPreferSpecialistTravel === 'function' && shouldPreferSpecialistTravel(text)) {
+      const travel = await tryRunTravelResearch({ actor, surface:'web', text })
+      __trace.mark('specialistTravel')
+      if (travel) {
+        const hardened = await hardenTravelResearchResult(travel, text)
+        await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:travel.handledBy,actualCapability:(travel as any).capability||'travel',status:(travel as any).status||null,runId:(travel as any).runId||null}).catch(()=>{})
+        await saveConversation(user.telegram_id, text, hardened.text)
+        return NextResponse.json({ text: hardened.text, handledBy: hardened.handledBy, status: hardened.status, runId: 'runId' in hardened ? hardened.runId : undefined })
+      }
     }
 
     // Plain information questions skip the general planner (20 Oct: 1–2.4s, then it declined). So does a read-only

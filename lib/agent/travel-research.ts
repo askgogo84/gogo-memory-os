@@ -604,3 +604,6 @@ export function flightSearchStartedText(brief: FlightBrief): string {
     `${round ? 'I search the round trip as one booking for both dates, so the price is the round-trip total. ' : 'One-way, since you gave one date; for a return, send it again with “back <date>”. '}` +
     `I'm checking the flight sites for exactly these dates and will send the cheapest options here when it finishes. To change travellers or cabin, send the request again, like “flights BLR to SIN 28 Oct, back 2 Nov, 2 adults, business”. When it finishes, say “book the cheapest” and I will take it to the payment page; you pay yourself.${perAdult}`
 }
+
+// Re-exported so the dashboard route reads the same specialist-travel rule as WhatsApp and /api/agent/run.
+export { shouldPreferSpecialistTravel } from './specialist-routing'

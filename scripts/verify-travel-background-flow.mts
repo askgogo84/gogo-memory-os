@@ -83,6 +83,8 @@ const travel = load('lib/agent/travel-research.ts',{'./flight-timing':{formatFli
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(text:string)=>text},'./travel-browser-task':browser,
   './browser-read-diagnostics':diagnostics,
   './travel-research-queue':{enqueueTravelResearch:(params:any)=>queue.enqueueTravelResearch(params)},
+  // 26 Oct: travel-research re-exports the shared specialist-travel rule for the dashboard route.
+  './specialist-routing':load('lib/agent/specialist-routing.ts',{}),
 })
 const sanitizer = load('lib/agent/travel-research-sanitize.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./travel-research':travel})
 const fallback=sanitizer.sanitizeTravelResearchText('Task could not obtain verified live rows\n\n1. Airline\nPublic snippet mentions ₹4,159\nOpen source: https://example.com/flights\n\nThese are fallback sources only, not completed live inventory.',
