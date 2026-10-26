@@ -198,4 +198,83 @@ assert.match(bookingCalendar, /relinkExistingPending/)
 assert.match(bookingCalendar, /approval_relinked/)
 assert.match(bookingCalendar, /booking_calendar_persistence_failed/)
 
+
+// Exact production resolver source under test; all dependencies below are inert.
+// This specifically guards actor selection BEFORE calendar approval or browser account use.
+const actualResolverSource = worker.match(/async function resolveActor\(telegramId: string\): Promise<AgentActor> \{[\s\S]*?\n\}/)?.[0]
+assert.ok(actualResolverSource, 'integration actor resolver must be tested, not a copied helper')
+const executableResolver = actualResolverSource!
+  .replace('telegramId: string', 'telegramId')
+  .replace(': Promise<AgentActor>', '')
+
+function syntheticIntegrationActors(
+  rows: Array<{ id: string; telegram_id: string | number; whatsapp_id?: string; name?: string }>,
+  forceMismatch = false,
+) {
+  const reads: Array<{ table: string; column: string; value: unknown }> = []
+  const db = {
+    from(table: string) {
+      assert.equal(table, 'users', 'integration actor may read only the synthetic users table')
+      return {
+        select(_fields: string) {
+          return {
+            eq(column: string, value: unknown) {
+              assert.equal(column, 'telegram_id')
+              reads.push({ table, column, value })
+              return {
+                async maybeSingle() {
+                  const matched = forceMismatch ? rows[0] : rows.find(x => String(x.telegram_id) === String(value))
+                  return { data: matched || null, error: null }
+                },
+              }
+            },
+          }
+        },
+      }
+    },
+  }
+  const resolve = new Function('supabaseAdmin', executableResolver + '\nreturn resolveActor;')(db) as
+    (owner: string | number | null) => Promise<{ userId: string; legacyTelegramId: number; whatsappId: string; name: string }>
+  return { resolve, reads }
+}
+
+const syntheticOwnerA = '9007199254740992'
+const syntheticOwnerB = '9007199254740993'
+{
+  const firstOwner = syntheticIntegrationActors([{ id: 'synthetic-A', telegram_id: syntheticOwnerA, whatsapp_id: 'whatsapp:+15550000111' }])
+  await assert.rejects(firstOwner.resolve(syntheticOwnerB), /life_event_actor_(?:unsafe_owner|owner_mismatch|missing)/,
+    'neighboring 64-bit owner may not select the other person’s lifecycle browser/calendar actor')
+  assert.equal(firstOwner.reads.length, 0, 'unsafe actor must fail before any private user query')
+}
+for (const input of ['', '00', '042', '1e3', '+42', 'NaN', '9007199254740992', '9007199254740993', 9007199254740993, null]) {
+  const fake = syntheticIntegrationActors([{ id: 'synthetic-A', telegram_id: syntheticOwnerA }])
+  await assert.rejects(fake.resolve(input), /life_event_actor_unsafe_owner/,
+    'malformed or unsafe lifecycle integration actor cannot be resolved')
+  assert.equal(fake.reads.length, 0, 'invalid identifiers do not query private users')
+}
+{
+  const fake = syntheticIntegrationActors([{ id: 'synthetic-B', telegram_id: '43', whatsapp_id: 'whatsapp:+15550000222' }], true)
+  await assert.rejects(fake.resolve('42'), /life_event_actor_owner_mismatch/,
+    'unexpected returned user row must not become a lifecycle browser/calendar actor')
+}
+{
+  const fake = syntheticIntegrationActors([{ id: 'synthetic-42', telegram_id: '42', whatsapp_id: 'whatsapp:+15550000042', name: 'Test' }])
+  const actor = await fake.resolve('42')
+  assert.equal(actor.userId, 'synthetic-42')
+  assert.equal(actor.legacyTelegramId, 42)
+  assert.equal(actor.whatsappId, 'whatsapp:+15550000042')
+  assert.deepEqual(fake.reads, [{ table: 'users', column: 'telegram_id', value: '42' }],
+    'representable owners must use exact canonical STRING SQL predicates')
+}
+{
+  const fake = syntheticIntegrationActors([{ id: 'synthetic-negative', telegram_id: -42, whatsapp_id: 'whatsapp:+15550000042' }])
+  assert.equal((await fake.resolve('-42')).legacyTelegramId, -42)
+  assert.equal(fake.reads[0]?.value, '-42')
+}
+{
+  const fake = syntheticIntegrationActors([{ id: 'synthetic-A', telegram_id: '42' }])
+  await assert.rejects(fake.resolve('44'), /life_event_actor_missing/,
+    'missing associated owner must fail closed')
+}
+
 console.log('✅ Life-event calendar + safe saved-flight adoption + live disruption watch + appointment/reservation lifecycle regression passed')
