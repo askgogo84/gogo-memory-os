@@ -2,16 +2,18 @@ import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/dashboard/session'
 import { verifySameOrigin } from '@/lib/dashboard/guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 
 export const dynamic = 'force-dynamic'
 
 async function resolveWhatsAppId(telegramId: string) {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return null
+  // A rounded 64-bit identity or numeric prefix must never resolve another user's WhatsApp tasks.
+  const owner = exactSessionOwnerId(telegramId)
+  if (!owner) return null
   const { data, error } = await supabaseAdmin
     .from('users')
     .select('whatsapp_id')
-    .eq('telegram_id', tgNum)
+    .eq('telegram_id', owner)
     .maybeSingle()
   if (error) throw error
   const value = String(data?.whatsapp_id || '').trim()

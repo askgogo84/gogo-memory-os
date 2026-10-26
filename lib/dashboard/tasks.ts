@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from './owner-identity'
 
 export type DashboardTask = {
   id: string
@@ -15,14 +16,15 @@ export type DashboardTasks = {
 } | { ok: false }
 
 export async function getDashboardTasks(telegramId: string): Promise<DashboardTasks> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return { ok: true, open: [], completed: [] }
+  // Keep signed 64-bit session identities exact. parseInt/Number can select a neighboring owner.
+  const owner = exactSessionOwnerId(telegramId)
+  if (!owner) return { ok: true, open: [], completed: [] }
 
   try {
     const { data: user, error: userError } = await supabaseAdmin
       .from('users')
       .select('whatsapp_id')
-      .eq('telegram_id', tgNum)
+      .eq('telegram_id', owner)
       .maybeSingle()
 
     if (userError) {
