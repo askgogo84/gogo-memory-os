@@ -53,16 +53,18 @@ export function countryOf(phone: string): string | null {
 // goverdhan-7k2m9x") joins straight away when the code still has invites left; the waitlist row is marked joined.
 // Existing users, admins and blocked numbers are never affected by a code.
 export async function checkWhatsAppAccess(phone: string, profileName?: string, text?: string): Promise<AccessDecision> {
+  // Normal-user formatting may infer a country; privileged authority may not.
+  const admin = isAdminPhone(phone)
   const inviteCode = extractInviteCode(text)
   if (!accessGateEnabled()) {
     if (!inviteCode) return { allow: true, reason: 'gate_off' }
     const p = e164(phone)
-    const invite = p && !isAdminPhone(p) && !(await hasUserRow(p)) ? await redeemInvite(inviteCode, p, profileName) : null
+    const invite = p && !admin && !(await hasUserRow(p)) ? await redeemInvite(inviteCode, p, profileName) : null
     return invite?.ok ? { allow: true, reason: 'gate_off', invite } : { allow: true, reason: 'gate_off' }
   }
   const p = e164(phone)
   if (!p) return unavailableAccess()
-  if (isAdminPhone(p)) return { allow: true, reason: 'admin' }
+  if (admin) return { allow: true, reason: 'admin' }
   try {
     const { data: users, error: userError } = await supabaseAdmin
       .from('users').select('telegram_id, access_status').in('whatsapp_id', phoneCandidates(p)).limit(5)

@@ -148,4 +148,73 @@ sessionOwner = '101'
 await expectIdentity('+12025550111', 'operator', true)
 memberError = { code: 'inert' }
 await expectIdentity('+12025550111', null, true)
+memberError = null
+
+const boundaryFailures: string[] = []
+async function checkBoundary(name: string, run: () => Promise<void>) {
+  try { await run(); console.log('PASS ' + name) } catch (error: any) { boundaryFailures.push(name + ': ' + error.message) }
+}
+await checkBoundary('legacy admin uses exact original and returned owner', async () => {
+  const legacy = load('lib/admin/auth.ts', {
+    '@/lib/dashboard/session': { getSession: async () => activeSession ? { telegramId: sessionOwner } : null },
+    '@/lib/supabase-admin': { supabaseAdmin: db },
+    '@/lib/bot/handlers/admin-analytics': analytics,
+    '@/lib/admin/console-auth': consoleModule,
+  }, env)
+  for (const invalid of ['0', '00101', '+101', '1e3', ' 101 ', '\u00a0101\u00a0', '9007199254740993x', '9223372036854775808', 9007199254740992, null, undefined, {}, []]) {
+    sessionOwner = invalid; currentUser = { telegram_id: '101', whatsapp_id: '+919876543210' }; userReads = []
+    assert.equal((await legacy.requireAdminSession()).ok, false)
+    assert.equal(userReads.length, 0, 'invalid original owner cannot enter private users query')
+  }
+  for (const owner of ['101', '-101', '9007199254740992', '9007199254740993', '9223372036854775807', '-9223372036854775808', 101]) {
+    sessionOwner = owner; currentUser = { telegram_id: owner, whatsapp_id: '+919876543210' }; userReads = []
+    const result = await legacy.requireAdminSession()
+    assert.equal(result.ok, true); assert.equal(result.telegramId, String(owner))
+    assert.deepEqual(userReads, [String(owner)], 'legacy users predicate retains exact string')
+  }
+  sessionOwner = '9007199254740993'
+  for (const owner of ['9007199254740992', ' 9007199254740993 ', 9007199254740992, undefined]) {
+    currentUser = { telegram_id: owner, whatsapp_id: '+919876543210' }
+    assert.equal((await legacy.requireAdminSession()).ok, false, 'returned owner must match')
+  }
+  currentUser = { telegram_id: sessionOwner, whatsapp_id: '+919876543210' }; userError = { code: 'inert' }
+  assert.equal((await legacy.requireAdminSession()).ok, false)
+  userError = null; userThrows = true
+  assert.equal((await legacy.requireAdminSession()).ok, false)
+  userThrows = false; activeSession = false
+  assert.equal((await legacy.requireAdminSession()).ok, false)
+  activeSession = true; sessionOwner = '101'
+})
+
+await checkBoundary('access admin privilege uses original full phone, with normal policy preserved', async () => {
+  let gateUsers: any[] = [{ whatsapp_id: '+919876543210', access_status: 'blocked' }]
+  let gateReads = 0, redeemed = 0
+  const gate = load('lib/access/gate.ts', {
+    '@/lib/bot/handlers/admin-analytics': analytics,
+    '@/lib/invites/core': { extractInviteCode: (text?: string) => text === 'fixture invite' ? 'fixture' : null },
+    '@/lib/invites/store': { redeemInvite: async () => { redeemed++; return null } },
+    '@/lib/supabase-admin': { supabaseAdmin: { from(table: string) {
+      assert.equal(table, 'users', 'inert gate cases must not touch waitlist/other tables')
+      let candidates: string[] = []
+      const q: any = { select() { return q }, in(field: string, values: string[]) { assert.equal(field, 'whatsapp_id'); candidates = values; return q },
+        async limit() { gateReads++; return { data: gateUsers.filter(row => candidates.includes(row.whatsapp_id)), error: null } } }
+      return q
+    } } },
+  }, env)
+  let decision = await gate.checkWhatsAppAccess('9876543210')
+  assert.equal(decision.allow, false, 'country guessing cannot bypass blocked owner policy')
+  assert.equal(decision.reason, 'blocked')
+  gateReads = 0
+  assert.equal((await gate.checkWhatsAppAccess('+919876543210')).reason, 'admin')
+  assert.equal(gateReads, 0, 'explicit configured admin retains bypass')
+  gateUsers = [{ whatsapp_id: '+919900000001', access_status: 'active' }]
+  assert.equal((await gate.checkWhatsAppAccess('+919900000001')).reason, 'user')
+  env.ACCESS_GATE_ENABLED = 'false'; gateUsers = []; redeemed = 0
+  decision = await gate.checkWhatsAppAccess('9876543210', 'Fixture', 'fixture invite')
+  assert.equal(decision.reason, 'gate_off'); assert.equal(redeemed, 1, 'domestic inferred identity cannot skip normal invite path as admin')
+  await gate.checkWhatsAppAccess('+919876543210', 'Fixture', 'fixture invite')
+  assert.equal(redeemed, 1, 'explicit admin still skips invite consumption')
+  delete env.ACCESS_GATE_ENABLED
+})
+assert.deepEqual(boundaryFailures, [], 'actual legacy admin/access boundary regressions')
 console.log('Strict full-phone admin authentication: actual predicate + owner/member session boundary, foreign suffix, local legacy, malformed and unset config passed')
