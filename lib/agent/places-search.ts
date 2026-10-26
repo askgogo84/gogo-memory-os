@@ -48,6 +48,16 @@ export function placeAsk(text: string): PlaceAsk | null {
 
 export type Place = { title: string; address: string; rating?: number; ratingCount?: number; category?: string; phone?: string; website?: string; cid?: string }
 
+// A source identifier must survive JSON transport losslessly. A rounded number
+// cannot identify the provider's original listing; arbitrary URLs are not a fallback.
+function canonicalPlaceCid(value: unknown): string | undefined {
+  if (typeof value !== 'string' && typeof value !== 'number') return undefined
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) return undefined
+  const cid = String(value)
+  if (!/^[1-9]\d{0,19}$/.test(cid) || BigInt(cid) > BigInt('18446744073709551615')) return undefined
+  return cid
+}
+
 function privatePlaceQuery(query: string) {
   // The shared text filter can mistake a following "in <city>" for an expiry
   // sentence. Keep an explicit short labelled identifier out of public search.
@@ -68,7 +78,7 @@ export async function searchPlaces(query: string, fetchImpl: typeof fetch = fetc
   return (data?.places || []).map((p: any): Place => ({
     title: String(p.title || '').trim(), address: String(p.address || '').trim(), rating: Number(p.rating) || undefined,
     ratingCount: Number(p.ratingCount) || undefined, category: p.category ? String(p.category) : undefined,
-    phone: p.phoneNumber ? String(p.phoneNumber) : undefined, website: p.website ? String(p.website) : undefined, cid: p.cid ? String(p.cid) : undefined,
+    phone: p.phoneNumber ? String(p.phoneNumber) : undefined, website: p.website ? String(p.website) : undefined, cid: canonicalPlaceCid(p.cid),
   })).filter((p: Place) => p.title)
 }
 
@@ -91,20 +101,27 @@ function kindMatch(p: Place, ask: PlaceAsk) {
 }
 
 export function formatPlaces(ask: PlaceAsk, places: Place[]) {
+  const linked = places.flatMap(p => {
+    const cid = canonicalPlaceCid(p.cid)
+    return cid ? [{ ...p, cid }] : []
+  })
+  const omitted = places.length - linked.length
+  if (places.length && !linked.length) return 'No valid Maps source link was supplied for these directory listings. I will not recommend unlinked listings. No booking was made.'
   // Prefer places whose address is really in the area asked for, then better-rated, well-reviewed ones.
-  const kindOk = places.filter(p => kindMatch(p, ask))
-  const pool = kindOk.length >= Math.min(ask.count, 2) ? kindOk : places
+  const kindOk = linked.filter(p => kindMatch(p, ask))
+  const pool = kindOk.length >= Math.min(ask.count, 2) ? kindOk : linked
   const ranked = [...pool].sort((x, y) => Number(inArea(y, ask.area)) - Number(inArea(x, ask.area)) || (y.rating || 0) * Math.log10((y.ratingCount || 1) + 9) - (x.rating || 0) * Math.log10((x.ratingCount || 1) + 9))
   const local = ranked.filter(p => inArea(p, ask.area))
   const shown = (local.length >= Math.min(ask.count, 2) ? local : ranked).slice(0, ask.count)
   if (!shown.length) return null
   const lines = shown.map((p, i) => {
     const rating = p.rating ? ` · ${p.rating}★${p.ratingCount ? ` (${new Intl.NumberFormat('en-IN').format(p.ratingCount)})` : ''}` : ''
-    const maps = p.cid ? `\nhttps://maps.google.com/?cid=${p.cid}` : ''
+    const maps = `\nhttps://maps.google.com/?cid=${encodeURIComponent(p.cid)}`
     return `${i + 1}. *${p.title}*${rating}\n${p.address}${p.category ? ` · ${p.category}` : ''}${maps}`
   })
   const note = local.length < Math.min(ask.count, 2) ? `\n\nFew results were inside ${ask.area}, so some are nearby.` : ''
-  return `📍 ${shown.length === 1 ? 'A good pick' : `${shown.length} good picks`} in ${ask.area}\n\n${lines.join('\n\n')}${note}\n\nAsk "which of these is open late?" or "book a table at <name>".`
+  const sourceNote = omitted ? `\n\n${omitted} ${omitted === 1 ? 'listing' : 'listings'} omitted because no valid Maps source link was supplied.` : ''
+  return `📍 ${shown.length === 1 ? 'A good pick' : `${shown.length} good picks`} in ${ask.area}\n\n${lines.join('\n\n')}${note}${sourceNote}\n\nAsk "which of these is open late?" or "book a table at <name>".`
 }
 
 export async function answerPlaces(text: string, fetchImpl: typeof fetch = fetch) {

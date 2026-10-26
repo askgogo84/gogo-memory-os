@@ -145,16 +145,43 @@ await check('results inside the asked area come first, with rating and Maps link
   assert.doesNotMatch(out!, /Dakshin|Shivaji/)
 })
 
+await check('missing and malformed source identifiers never become unlinked recommendations', async () => {
+  const ask = {query:'restaurants in Indiranagar, Bengaluru',area:'Indiranagar',count:3}
+  for (const cid of [undefined, '', '0', '-1', '+1', '01', ' 123', '123 ', '1e3', '1&query=private', '1\nhttps://hostile.invalid', 'https://hostile.invalid', '18446744073709551616', 9007199254740992, {}, ['123']]) {
+    const out = P.formatPlaces(ask, [{title:'Unlinked fixture',address:'Indiranagar, Bengaluru',cid} as any])
+    assert.match(out!, /no valid Maps source link/i)
+    assert.doesNotMatch(out!, /Unlinked fixture|good pick|hostile\.invalid|query=private/)
+  }
+  process.env.SERPER_API_KEY='test'
+  const reply=await P.answerPlaces('Find 3 restaurants in Indiranagar; do not book', (async()=>Response.json({places:[
+    {title:'No source fixture',address:'Indiranagar, Bengaluru',website:'https://hostile.invalid'},
+    {title:'Safe source fixture',address:'Indiranagar, Bengaluru',cid:'18446744073709551615'},
+    {title:'Rounded source fixture',address:'Indiranagar, Bengaluru',cid:9007199254740992},
+  ]})) as typeof fetch)
+  assert.match(reply!, /A good pick/); assert.match(reply!, /Safe source fixture/)
+  assert.match(reply!, /https:\/\/maps\.google\.com\/\?cid=18446744073709551615/)
+  assert.match(reply!, /2 listings omitted.*valid Maps source link/i)
+  assert.doesNotMatch(reply!, /No source fixture|Rounded source fixture|hostile\.invalid|9007199254740992/)
+})
+
+await check('provider CID input remains lossless and bounded before formatting', async () => {
+  process.env.SERPER_API_KEY='test'
+  const cases:any[]=['1','9007199254740993','18446744073709551615',123,9007199254740991,9007199254740992,'18446744073709551616','1#secret','1?key=secret','0',null]
+  const rows=await P.searchPlaces('restaurants in Mumbai',(async()=>Response.json({places:cases.map((cid,i)=>({title:`CID fixture ${i}`,address:'Mumbai',cid}))})) as typeof fetch)
+  assert.deepEqual(rows.map(p=>p.cid),['1','9007199254740993','18446744073709551615','123','9007199254740991',undefined,undefined,undefined,undefined,undefined,undefined])
+  for(const cid of ['1','9007199254740993','18446744073709551615'])assert.match(P.formatPlaces({query:'restaurants',area:'Mumbai',count:1},[{title:'Linked fixture',address:'Mumbai',cid}])!,new RegExp(`https://maps\\.google\\.com/\\?cid=${cid}(?:\\n|$)`))
+})
+
 await check('when almost nothing is inside the area it says some picks are nearby', () => {
-  const out = P.formatPlaces({ query: 'x', area: 'Malleshwaram', count: 3 }, [{ title: 'A', address: 'Rajajinagar, Bengaluru', rating: 4 }, { title: 'B', address: 'Yeshwanthpur, Bengaluru' }])
+  const out = P.formatPlaces({ query: 'x', area: 'Malleshwaram', count: 3 }, [{ title: 'A', address: 'Rajajinagar, Bengaluru', rating: 4, cid:'1' }, { title: 'B', address: 'Yeshwanthpur, Bengaluru',cid:'2' }])
   assert.match(out!, /some are nearby/)
 })
 
 await check('the asked cuisine comes first: no North Indian dhaba for a South Indian ask', () => {
   const out = P.formatPlaces({ query: 'South Indian restaurants in Rajajinagar, Bengaluru', area: 'Rajajinagar', count: 2 }, [
-    { title: 'Chulha Chauki da Dhaba | Rajajinagar', address: 'Dr Rajkumar Rd', rating: 4.7, ratingCount: 7300, category: 'North Indian restaurant' },
-    { title: 'Sai Sogadu', address: '14th Cross, below Rajaji Nagar metro', rating: 4.4, ratingCount: 6100, category: 'South Indian restaurant' },
-    { title: 'Kakal Kai Ruchi @ Rajajinagar', address: 'Dr Rajkumar Rd', rating: 4.4, ratingCount: 4600, category: 'South Indian restaurant' },
+    { title: 'Chulha Chauki da Dhaba | Rajajinagar', address: 'Dr Rajkumar Rd', rating: 4.7, ratingCount: 7300, category: 'North Indian restaurant',cid:'1' },
+    { title: 'Sai Sogadu', address: '14th Cross, below Rajaji Nagar metro', rating: 4.4, ratingCount: 6100, category: 'South Indian restaurant',cid:'2' },
+    { title: 'Kakal Kai Ruchi @ Rajajinagar', address: 'Dr Rajkumar Rd', rating: 4.4, ratingCount: 4600, category: 'South Indian restaurant',cid:'3' },
   ])
   assert.doesNotMatch(out!, /Dhaba/); assert.match(out!, /Sai Sogadu/); assert.doesNotMatch(out!, /some are nearby/)
 })
