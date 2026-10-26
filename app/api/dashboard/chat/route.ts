@@ -373,6 +373,15 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json(promised)
       }
     }
+    // "Find everything about Toastr": one read-only search across chat, documents, notes, Gmail and Drive.
+    if (/\b(?:search\s+(?:everything|everywhere|all\s+(?:my\s+)?(?:stuff|things|sources|data))\s+(?:for|about)|(?:find|show)\s+(?:me\s+)?everything\s+(?:about|on|for|related\s+to)|everything\s+(?:i\s+have\s+)?(?:about|on)\s+\S)/i.test(text)) {
+      const {handleUniversalSearch} = await import('@/lib/agent/universal-search')
+      const found = await handleUniversalSearch({actor,text}).catch(() => null)
+      if (found) {
+        await saveConversation(user.telegram_id,text,found.text)
+        return NextResponse.json(found)
+      }
+    }
     // Same run cancel as WhatsApp ("cancel that task", "stop the flight booking"). Owner-bound; reminders,
     // calendar, watches, lists, orders and Gmail are refused by the parser and keep their own paths.
     const runCancel = await tryCancelRunFromChat({telegramId:actor.legacyTelegramId},text,{surface:'web'})

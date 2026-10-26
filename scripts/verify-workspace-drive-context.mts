@@ -1,4 +1,5 @@
 import {calendarAffirmativeText} from '../lib/agent/calendar-read'
+import './verify-universal-search-oct27.mts'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 import {NextRequest,NextResponse} from 'next/server'

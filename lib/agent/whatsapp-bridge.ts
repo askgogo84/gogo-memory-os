@@ -536,6 +536,12 @@ export async function tryRunWhatsAppAttentionCommand(params:{
     const promised=await handleWhoPromisedQuery({actor,text:params.text})
     if(promised)return {...promised,handledBy:'who-promised'}
   }
+  // "Find everything about Toastr": one read-only search across chat, documents, notes, Gmail and Drive.
+  if(/\b(?:search\s+(?:everything|everywhere|all\s+(?:my\s+)?(?:stuff|things|sources|data))\s+(?:for|about)|(?:find|show)\s+(?:me\s+)?everything\s+(?:about|on|for|related\s+to)|everything\s+(?:i\s+have\s+)?(?:about|on)\s+\S)/i.test(params.text)){
+    const {handleUniversalSearch}=await import('./universal-search')
+    const found=await handleUniversalSearch({actor,text:params.text})
+    if(found)return {...found,handledBy:'universal-search'}
+  }
   return null
 }
 
