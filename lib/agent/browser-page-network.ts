@@ -40,6 +40,10 @@ const CROMA_PAGE_DEPENDENCIES = ['assets.croma.com','media-ik.croma.com','api.cr
 // 7 Oct live flight read: the broker aborted these script/font hosts 12 times.
 // Grant only the observed hosts for Google Flights, never wildcard Google egress.
 const GOOGLE_FLIGHTS_PAGE_DEPENDENCIES = ['www.gstatic.com','fonts.googleapis.com','fonts.gstatic.com']
+// 27 Oct live booking 012d5fb1: Google Flights handed off to airindia.com (followed), but its booking page showed only the
+// chatbot greeting for ten waves. The page loads its app from these non-airindia.com hosts (observed in a normal browser).
+// Script/asset hosts only; top-level navigation stays limited to FLIGHT_BOOKING_HANDOFF_SITES.
+const AIR_INDIA_BOOKING_DEPENDENCIES = ['delivery-p104052-e1069093.adobeaemcloud.com','airindia.scene7.com','assets.adobedtm.com','cdn.cookielaw.org','geolocation.onetrust.com','cdnjs.cloudflare.com','cdn.jsdelivr.net']
 // 9 Oct Hugging Face takeover: the sign-up page answered 202 with the provider's AWS WAF
 // interstitial, and its token script host was blocked by the sandbox, so the visible human
 // check rendered as a blank frame. The token host differs per run (a different region and
@@ -100,7 +104,7 @@ export function browserPageAllowlist(url:string):Record<string,string[]>{
   // /travel/flights/booking), so IndiGo's flight-select-redirection page was refused. Any Google Flights page
   // may hand off to these sites; a fare read still never clicks a result or leaves Google.
   if((host==='www.google.com'||host==='google.com') && /^\/travel\/flights(?:\/|$)/.test(target.pathname))
-    for(const site of FLIGHT_BOOKING_HANDOFF_SITES)hosts.push(site,`*.${site}`)
+    {for(const site of FLIGHT_BOOKING_HANDOFF_SITES)hosts.push(site,`*.${site}`);hosts.push(...AIR_INDIA_BOOKING_DEPENDENCIES)}
   if(host==='www.instagram.com'||host==='instagram.com')hosts.push(...INSTAGRAM_PAGE_DEPENDENCIES)
   if(host==='huggingface.co'||host==='www.huggingface.co')hosts.push(...HUGGING_FACE_PAGE_DEPENDENCIES)
   if(host==='playo.co'||host==='www.playo.co')hosts.push(...PLAYO_PAGE_DEPENDENCIES)

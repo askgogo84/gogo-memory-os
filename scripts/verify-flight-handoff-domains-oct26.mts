@@ -25,3 +25,14 @@ assert.match(objective, /Continue to book with Air India/)
 assert.match(objective, /Never pick any other agency/)
 assert.match(objective, /never press Pay\.$/)
 console.log('Flight hand-off domains passed')
+{
+  // 27 Oct live booking 012d5fb1: Air India's booking page rendered only its chatbot; its app hosts were blocked.
+  const { browserPageAllowlist } = await import('../lib/agent/browser-page-network')
+  const flights = browserPageAllowlist('https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=x')
+  for (const h of ['delivery-p104052-e1069093.adobeaemcloud.com', 'airindia.scene7.com', 'assets.adobedtm.com', 'cdn.cookielaw.org', 'airindia.com', '*.airindia.com']) assert.ok(h in flights, h)
+  assert.ok(!('adobeaemcloud.com' in flights) && !('*.adobeaemcloud.com' in flights), 'only Air India\'s exact AEM host, not every AEM site')
+  assert.ok(!('cdn.cookielaw.org' in browserPageAllowlist('https://www.croma.com/p/1')), 'other sites unchanged')
+  // Navigation (Browserbase allowedDomains) still lists only google.com and the hand-off sites.
+  assert.ok(!managedAllowedDomains('https://www.google.com/travel/flights?q=x').includes('cdnjs.cloudflare.com'))
+  console.log('Air India booking page hosts passed')
+}
