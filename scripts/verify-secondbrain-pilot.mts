@@ -194,3 +194,30 @@ console.log('verify-secondbrain-pilot: ok')
   assert.match(page, /shareableSections\(artifactSections\(view\.contentJson\)\)/)
   console.log('Shared reports: only the report and its web sources; personal sections stay private')
 }
+
+// 9. P1 conditional: invite recipient identities may be persisted BIGINT strings or unsafe JS numbers.
+// A rounded numeric result must NEVER become a new workspace_invites recipient.
+{
+  const exactWorkspaceUserId = (rules as any).exactWorkspaceUserId as ((value: unknown) => string | null) | undefined
+  assert.equal(typeof exactWorkspaceUserId, 'function', 'workspace owner ID gate exists')
+  assert.equal(exactWorkspaceUserId!('9007199254740992'), '9007199254740992')
+  assert.equal(exactWorkspaceUserId!('9007199254740993'), '9007199254740993')
+  assert.notEqual(exactWorkspaceUserId!('9007199254740992'), exactWorkspaceUserId!('9007199254740993'))
+  assert.equal(exactWorkspaceUserId!(Number('9007199254740993')), null, 'rounded PostgREST number denies invitation')
+  assert.equal(exactWorkspaceUserId!(Number('9007199254740992')), null, 'unsafe numeric ID denies invitation')
+  assert.equal(exactWorkspaceUserId!(1234), '1234', 'safe legacy numeric caller remains supported')
+  assert.equal(exactWorkspaceUserId!(-1234), '-1234', 'actual negative legacy owner remains supported')
+  for (const bad of [null, undefined, 0, NaN, Infinity, 3.1, '', '00', '+123', ' 123 ', '1e3', '123abc', {}, []])
+    assert.equal(exactWorkspaceUserId!(bad), null, 'invalid owner identity fails closed: ' + String(bad))
+  const namesFn = src.slice(src.indexOf('async function displayNames('), src.indexOf('export async function createWorkspace('))
+  assert.match(namesFn, /map\(exactWorkspaceUserId\)/, 'display-name lookup must preserve exact DB owner IDs')
+  assert.doesNotMatch(namesFn, /\.map\(Number\)/, 'never round display-name owner IDs')
+  const inviteFn = src.slice(src.indexOf('export async function inviteMember('), src.indexOf('async function expireStaleInvites('))
+  assert.match(inviteFn, /const invitee = exactWorkspaceUserId\(users\[0\]\.telegram_id\)/,
+    'invite target must come from validated exact owner ID')
+  assert.match(inviteFn, /if \(!invitee\) throw new WorkspaceError\('user_not_found'\)/,
+    'unsafe numeric owner is rejected before any invite mutation')
+  assert.ok(inviteFn.indexOf('if (!invitee)') < inviteFn.indexOf("from('workspace_invites')"),
+    'do not write an invitation for an unsafe recipient')
+  console.log('SecondBrain recipient exact-owner security: inert two-owner and unsafe-number fixture PASS')
+}
