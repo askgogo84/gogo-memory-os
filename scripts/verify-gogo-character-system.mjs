@@ -54,4 +54,8 @@ for (const required of [
   assert.match(read(required), /GogoCharacter/, `Canonical Gogo missing from ${required}`)
 }
 
+// Keep the dashboard checkout owner-isolation security fixture inside npm test
+// without touching the concurrently integrated package.json or payment fixtures.
+await import('./verify-upgrade-owner-binding.mjs')
+
 console.log('Gogo character-system regression: OK')
