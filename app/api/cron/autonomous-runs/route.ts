@@ -23,14 +23,32 @@ function authorized(request: Request) {
 }
 
 async function actorFor(telegramId:string):Promise<AgentActor|null> {
+  // This actor powers background WhatsApp/browser/planner work. Telegram IDs are
+  // persisted as BIGINT, so converting an unverified decimal to JS Number can
+  // alias adjacent users before a service-role authorization decision.
+  // Downstream AgentActor still requires a number: reject IDs outside its safe
+  // range rather than guessing a cross-account actor or rounding a recipient.
+  const safeOwner = (value:unknown):{exact:string;numeric:number}|null => {
+    if(typeof value!=='string'&&typeof value!=='number')return null
+    if(typeof value==='number'&&!Number.isSafeInteger(value))return null
+    const exact=String(value)
+    if(!/^-?[1-9]\\d*$/.test(exact))return null
+    const numeric=Number(exact)
+    if(!Number.isSafeInteger(numeric)||String(numeric)!==exact)return null
+    return {exact,numeric}
+  }
+  const requested=safeOwner(telegramId)
+  if(!requested)return null
   const {data,error}=await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name')
-    .eq('telegram_id',Number(telegramId)).maybeSingle()
+    .eq('telegram_id',requested.exact).maybeSingle()
   if(error){console.error('AUTONOMOUS_CRON_ACTOR_FAILED:',error.message);return null}
-  if(!data?.id||!data?.telegram_id)return null
+  const persisted=safeOwner(data?.telegram_id)
+  // The query result is not by itself proof of the requested owner's identity.
+  if(!data?.id||!persisted||persisted.exact!==requested.exact)return null
   return {
     userId:String(data.id),
-    legacyTelegramId:Number(data.telegram_id),
+    legacyTelegramId:requested.numeric,
     whatsappId:String(data.whatsapp_id||''),
     name:String(data.name||'Gogo'),
   }
