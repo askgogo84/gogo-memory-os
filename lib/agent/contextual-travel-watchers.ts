@@ -322,7 +322,7 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
     .map((row:any)=>String(row.condition_json?.contextKey||'')))
   let slots=Math.max(0,Number(budget.activeWebWatchersMax||0)-manualCount)
   let created=0,reused=0,stopped=0,skipped=0
-remove old unsafe private records  const names=group.flatMap(row=>[...(Array.isArray(row.passengers)?row.passengers:[]),...Object.values(row.raw?.travellerAliases||{})])
+  const names=group.flatMap(row=>[...(Array.isArray(row.passengers)?row.passengers:[]),...Object.values(row.raw?.travellerAliases||{})])
   const normalizeName=(name:unknown)=>String(name||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
   const anotherTraveller=names.some(name=>!user?.name||normalizeName(name)!==normalizeName(user.name))
   const homeCity=anotherTraveller?'':declaredHomeCity(homeMemories||[])
