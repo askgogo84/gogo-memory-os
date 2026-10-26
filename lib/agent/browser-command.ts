@@ -15,6 +15,7 @@ import { buildSignupHandback, type SignupHandbackReason } from './signup-handbac
 import { buildApprovalBinding, assertApprovalBinding } from './approval-binding'
 import { hasLeadingReportMutation } from '@/lib/services/reporting-directive'
 import { findVaultProviderForDomain } from '@/lib/vault/providers'
+import { withDeliveryPincode } from './delivery-pincode'
 import { bookingDirectUrl, bookingOtpMessage, bookingPaymentMessage, bookingReviewMessage, bookingTargetFromObjective, indianMobileFromWhatsApp } from './provider-booking'
 
 export type BrowserCommand = {
@@ -510,8 +511,12 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     // The stateless observer cannot enter the comparison delivery PIN, so its evidence is the listed price only.
     if(comparisonResult)comparisonResult.summary=`${comparisonResult.summary} (Listed price; your delivery PIN was not applied on this read.)`
     const fallbackReadDeadline=publicReadDeadline||comparisonReadDeadline
+    // Store reads enter the delivery pincode themselves (the requested one, else the person's saved one) so nobody has
+    // to type it in the remote Take Control view. Reads only; executions keep their approved objective unchanged.
+    const readObjective=params.mode==='read'&&!params.command.vaultCredentialId&&typeof withDeliveryPincode==='function'
+      ?withDeliveryPincode(params.command.objective,params.command.url).objective:params.command.objective
     const result=reconciledResult||publicResult||comparisonResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,runId:params.runId,accountCreation,
-      ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),...(params.loginCode?{loginCode:params.loginCode}:{}),...(vaultAccountRead&&indianMobileFromWhatsApp(params.actor.whatsappId)?{phoneLogin:{number:indianMobileFromWhatsApp(params.actor.whatsappId)!,telegramId:String(tg)}}:{}),url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(fallbackReadDeadline?{readDeadline:fallbackReadDeadline}:{}),...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
+      ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),...(params.loginCode?{loginCode:params.loginCode}:{}),...(vaultAccountRead&&indianMobileFromWhatsApp(params.actor.whatsappId)?{phoneLogin:{number:indianMobileFromWhatsApp(params.actor.whatsappId)!,telegramId:String(tg)}}:{}),url:params.command.url,objective:readObjective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(fallbackReadDeadline?{readDeadline:fallbackReadDeadline}:{}),...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
     pendingHandoffReservation=result.handoffReservation
     // Why a run stopped, without page text, selectors or values: answers "why was it blocked?".
     try{console.log('BROWSER_RUN_RESULT:',JSON.stringify({runId:params.runId,status:result.status,blockReason:(result as any).blockReason||null,authReason:(result as any).authReason||null,host:(()=>{try{return new URL(String(result.url||'')).hostname}catch{return null}})(),title:String(result.title||'').slice(0,80),steps:(result.actions||[]).slice(0,20).map((a:any)=>`${a.kind}:${a.status}`),signupVault:(result as any).signupVault||null}))}catch{}

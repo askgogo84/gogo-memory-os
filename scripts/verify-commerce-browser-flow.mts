@@ -28,6 +28,8 @@ let browserResult:any={status:'blocked',url:'https://blinkit.com/',title:'Sign i
 let permissionAllowed=true
 const browserParams:any[]=[]
 const command=load('lib/agent/browser-command.ts',{
+  // 26 Oct: store reads add the delivery pincode instruction (no saved pincode in this harness, so a no-op).
+  './delivery-pincode':await import('../lib/agent/delivery-pincode'),
   './browser-failure-notice':{browserFailureSummary},
   'node:crypto':{},'@/lib/supabase-admin':{supabaseAdmin:db},'./typed-object-context':{rememberTypedObjects:async()=>{}},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},'./policy':{evaluateAgentExecutionPolicy:()=>({allowed:permissionAllowed,reason:'disabled'})},
