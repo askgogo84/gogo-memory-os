@@ -31,7 +31,7 @@ async function resolveActor(telegramId: string): Promise<AgentActor> {
   // select another account's linked Secure Computer or Vault session.
   // AgentActor.legacyTelegramId is numeric, so owners outside the safe
   // integer range must fail closed until that downstream contract is fixed.
-  if (typeof telegramId !== 'string' || !/^-?(?:0|[1-9]\\d*)$/.test(telegramId)) {
+  if (typeof telegramId !== 'string' || !/^-?(?:0|[1-9]\d*)$/.test(telegramId)) {
     throw new Error('life_event_actor_unsafe_owner')
   }
   const owner = BigInt(telegramId)
