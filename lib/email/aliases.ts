@@ -28,7 +28,7 @@ export function aliasFromAddress(address: string) {
   // legacy single display-name form, but reject lists or malformed wrappers.
   const bare = candidate.match(new RegExp(`^${mailbox}$`))
   if (bare) return bare[1]
-  const display = candidate.match(new RegExp(`^[^<>\\r\\n]{0,200}<\\s*${mailbox}\\s*>$`))
+  const display = candidate.match(new RegExp(`^[^<>,@\\r\\n]{0,200}<\\s*${mailbox}\\s*>$`))
   return display ? display[1] : null
 }
 
