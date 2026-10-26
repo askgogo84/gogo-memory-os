@@ -492,8 +492,20 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       ?await tryObscuraBrowserRead({userId:params.actor.userId,url:params.command.url,
           objective:params.command.objective,mode:'read'},publicReadDeadline)
       :null
-    const result=reconciledResult||publicResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,runId:params.runId,accountCreation,
-      ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),...(params.loginCode?{loginCode:params.loginCode}:{}),...(vaultAccountRead&&indianMobileFromWhatsApp(params.actor.whatsappId)?{phoneLogin:{number:indianMobileFromWhatsApp(params.actor.whatsappId)!,telegramId:String(tg)}}:{}),url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(publicReadDeadline?{readDeadline:publicReadDeadline}:{}),...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
+    // 26 Oct: comparison store reads are public product pages, but their kept-alive commerce session made Obscura
+    // ineligible, so it never ran in production. Try the stateless observer once first; the kept-alive browser keeps
+    // every fallback, handoff and sign-in path. Both share one read budget. No Vault, handoff or account flow here.
+    const comparisonObscuraAllowed=process.env.GOGO_OBSCURA_PUBLIC_READ==='1'&&params.mode==='read'
+      &&Boolean(runMetadata.comparison_parent_id)&&!runMetadata.handoff&&!params.command.vaultCredentialId
+      &&!params.bookingOtp&&!params.loginCode&&!reconciledResult&&!accountCreation&&!providerBooking&&!publicResult
+    const comparisonReadDeadline=comparisonObscuraAllowed?Date.now()+180_000:undefined
+    const comparisonResult=comparisonObscuraAllowed
+      ?await tryObscuraBrowserRead({userId:params.actor.userId,url:params.command.url,
+          objective:params.command.objective,mode:'read'},comparisonReadDeadline)
+      :null
+    const fallbackReadDeadline=publicReadDeadline||comparisonReadDeadline
+    const result=reconciledResult||publicResult||comparisonResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,runId:params.runId,accountCreation,
+      ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),...(params.loginCode?{loginCode:params.loginCode}:{}),...(vaultAccountRead&&indianMobileFromWhatsApp(params.actor.whatsappId)?{phoneLogin:{number:indianMobileFromWhatsApp(params.actor.whatsappId)!,telegramId:String(tg)}}:{}),url:params.command.url,objective:params.command.objective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(fallbackReadDeadline?{readDeadline:fallbackReadDeadline}:{}),...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
     pendingHandoffReservation=result.handoffReservation
     // Why a run stopped, without page text, selectors or values: answers "why was it blocked?".
     try{console.log('BROWSER_RUN_RESULT:',JSON.stringify({runId:params.runId,status:result.status,blockReason:(result as any).blockReason||null,authReason:(result as any).authReason||null,host:(()=>{try{return new URL(String(result.url||'')).hostname}catch{return null}})(),title:String(result.title||'').slice(0,80),steps:(result.actions||[]).slice(0,20).map((a:any)=>`${a.kind}:${a.status}`),signupVault:(result as any).signupVault||null}))}catch{}

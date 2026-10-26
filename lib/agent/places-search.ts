@@ -65,7 +65,7 @@ export function placeAsk(text: string): PlaceAsk | null {
   return { query: OTHER_PLACE.test(discovery) ? discovery : `${discovery}, Bengaluru`, area, count }
 }
 
-export type Place = { title: string; address: string; rating?: number; ratingCount?: number; category?: string; phone?: string; website?: string; cid?: string }
+export type Place = { title: string; address: string; rating?: number; ratingCount?: number; category?: string; phone?: string; website?: string; cid?: string; placeId?: string }
 
 // A source identifier must survive JSON transport losslessly. A rounded number
 // cannot identify the provider's original listing; arbitrary URLs are not a fallback.
@@ -75,6 +75,21 @@ function canonicalPlaceCid(value: unknown): string | undefined {
   const cid = String(value)
   if (!/^[1-9]\d{0,19}$/.test(cid) || BigInt(cid) > BigInt('18446744073709551615')) return undefined
   return cid
+}
+
+// 26 Oct: production hotel results carried no usable cid, so every listing was omitted. A Google place id is an
+// equally exact provider identifier and has an official Maps URL form. Arbitrary URLs are still never a fallback.
+function canonicalPlaceId(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const id = value.trim()
+  return /^[A-Za-z0-9_-]{16,300}$/.test(id) ? id : undefined
+}
+
+export function placeSourceUrl(p: Pick<Place, 'cid' | 'placeId'>): string | undefined {
+  const cid = canonicalPlaceCid(p.cid)
+  if (cid) return `https://maps.google.com/?cid=${encodeURIComponent(cid)}`
+  const id = canonicalPlaceId(p.placeId)
+  return id ? `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(id)}` : undefined
 }
 
 function privatePlaceQuery(query: string) {
@@ -94,10 +109,14 @@ export async function searchPlaces(query: string, fetchImpl: typeof fetch = fetc
   })
   if (!res.ok) throw new Error(`serper_places_${res.status}`)
   const data: any = await res.json()
-  return (data?.places || []).map((p: any): Place => ({
+  const raw: any[] = Array.isArray(data?.places) ? data.places : []
+  const unlinked = raw.filter(p => !canonicalPlaceCid(p?.cid) && !canonicalPlaceId(p?.placeId))
+  // Field names only (never values) so a provider shape change is diagnosable.
+  if (unlinked.length) console.warn('PLACES_UNLINKED:', JSON.stringify({ count: unlinked.length, of: raw.length, fields: [...new Set(unlinked.flatMap(p => Object.keys(p || {})))].sort().slice(0, 30) }))
+  return raw.map((p: any): Place => ({
     title: String(p.title || '').trim(), address: String(p.address || '').trim(), rating: Number(p.rating) || undefined,
     ratingCount: Number(p.ratingCount) || undefined, category: p.category ? String(p.category) : undefined,
-    phone: p.phoneNumber ? String(p.phoneNumber) : undefined, website: p.website ? String(p.website) : undefined, cid: canonicalPlaceCid(p.cid),
+    phone: p.phoneNumber ? String(p.phoneNumber) : undefined, website: p.website ? String(p.website) : undefined, cid: canonicalPlaceCid(p.cid), placeId: canonicalPlaceId(p.placeId),
   })).filter((p: Place) => p.title)
 }
 
@@ -121,8 +140,8 @@ function kindMatch(p: Place, ask: PlaceAsk) {
 
 export function formatPlaces(ask: PlaceAsk, places: Place[]) {
   const linked = places.flatMap(p => {
-    const cid = canonicalPlaceCid(p.cid)
-    return cid ? [{ ...p, cid }] : []
+    const source = placeSourceUrl(p)
+    return source ? [{ ...p, source }] : []
   })
   const omitted = places.length - linked.length
   if (places.length && !linked.length) return `${omitted} ${omitted === 1 ? 'listing' : 'listings'} omitted because no valid Maps source link was supplied. I will not recommend unlinked listings. No booking was made.`
@@ -135,7 +154,7 @@ export function formatPlaces(ask: PlaceAsk, places: Place[]) {
   if (!shown.length) return null
   const lines = shown.map((p, i) => {
     const rating = p.rating ? ` · ${p.rating}★${p.ratingCount ? ` (${new Intl.NumberFormat('en-IN').format(p.ratingCount)})` : ''}` : ''
-    const maps = `\nhttps://maps.google.com/?cid=${encodeURIComponent(p.cid)}`
+    const maps = `\n${p.source}`
     return `${i + 1}. *${p.title}*${rating}\n${p.address}${p.category ? ` · ${p.category}` : ''}${maps}`
   })
   const note = local.length < Math.min(ask.count, 2) ? `\n\nFew results were inside ${ask.area}, so some are nearby.` : ''
@@ -157,6 +176,8 @@ export async function answerPlaces(text: string, fetchImpl: typeof fetch = fetch
   const listing = formatPlaces(ask, places)
   if (!listing) return `I couldn't verify local listings in ${ask.area} right now. No booking was made.`
   // A place listing verifies the property, never a room rate or availability for dates.
+  // When every listing was omitted, the line already says no booking was made; don't repeat it.
+  if (stay && /I will not recommend unlinked listings\. No booking was made\.$/.test(listing)) return listing
   if (stay) return listing.replace(/\n\nAsk "which of these is open late\?" or "book a table at <name>"\.$/, '')
     + '\n\nRoom rates and availability for your dates are not verified here; no booking was made.'
   const tableRequest = /\bfor\s+\d{1,2}\s+(?:people|persons?|guests?|pax)\b/i.test(text)
