@@ -629,7 +629,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     }
   }
   // Share-price watch (26 Oct): only messages phrased as a share/stock price watch load the module.
-  if(/\b(?:share|shares|stock)\b/i.test(incomingText)&&/\b(?:watch|track|monitor|alert|notify|tell me|let me know|keep an eye)\b/i.test(incomingText)&&resolvedUser.id&&resolvedUser.whatsappId&&(await import('@/lib/agent/stock-rule')).isStockWatchPhrasing(incomingText)){
+  // A bare ticker reply ("Watch TMCV") may answer Gogo's "which listing?" question; the module checks for that question.
+  const stockTickerReply=/^\s*(?:watch|track|monitor)\s+[A-Z][A-Z0-9&-]{1,15}\s*$/.test(incomingText)
+  if(((/\b(?:share|shares|stock)\b/i.test(incomingText)&&/\b(?:watch|track|monitor|alert|notify|tell me|let me know|keep an eye)\b/i.test(incomingText)&&(await import('@/lib/agent/stock-rule')).isStockWatchPhrasing(incomingText))||stockTickerReply)&&resolvedUser.id&&resolvedUser.whatsappId){
     const {tryCreateStockWatchFromCommand}=await import('@/lib/agent/stock-watch')
     const stockWatch=await tryCreateStockWatchFromCommand({actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId),name:resolvedUser.name||'Gogo'},surface:params.channel==='whatsapp'?'whatsapp':'web',text:incomingText})
     __trace.mark('stockWatch')
