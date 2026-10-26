@@ -113,3 +113,138 @@ row.metadata_json.url = 'http://localhost/admin'
 await assert.rejects(() => restoreRead({actor, runId: row.id}), /browser_control_unavailable/, 'private host cannot be opened')
 assert.equal(created, 3)
 console.log('PASS: expired commerce and standalone read handoffs restore only the same owned safe task')
+
+
+/**
+ * Security(P1): exercise the ACTUAL dashboard browser-resume/restore route
+ * handlers through an entirely inert CommonJS VM harness. Session identity
+ * comes from trusted TEXT; legacy browser actors are numeric. 2^53 + 1
+ * must NEVER round into 2^53 before a privileged users lookup.
+ *
+ * No network, database, Vault, real browser, credentials or real accounts.
+ */
+const browserOwnerHelpers = await import('../lib/dashboard/browser-run-owner')
+const { browserRunOwnerFromSession, browserRunOwnerMatchesRow } = browserOwnerHelpers
+assert.equal(browserRunOwnerFromSession('9007199254740992'), null)
+assert.equal(browserRunOwnerFromSession('9007199254740993'), null)
+assert.deepEqual(browserRunOwnerFromSession('42'), { telegramId: '42', legacyTelegramId: 42 })
+assert.deepEqual(browserRunOwnerFromSession('-43'), { telegramId: '-43', legacyTelegramId: -43 })
+assert.equal(browserRunOwnerMatchesRow('42', {telegramId:'42',legacyTelegramId:42}), true)
+assert.equal(browserRunOwnerMatchesRow('43', {telegramId:'42',legacyTelegramId:42}), false)
+assert.equal(browserRunOwnerMatchesRow(42, {telegramId:'42',legacyTelegramId:42}), true)
+assert.equal(browserRunOwnerMatchesRow(9007199254740992, {telegramId:'42',legacyTelegramId:42}), false)
+
+let browserDashboardSession: string | null = null
+let browserBodyReads = 0
+let browserOriginChecks = 0
+let browserLookup: Array<{table:string;field:string;value:unknown}> = []
+let browserActions: Array<{kind:string;actor:any;runId:string}> = []
+let forcedWrongBrowserUser: any = null
+const browserRows = new Map<string,any>([
+  ['42', {id:'owner-uuid-42',telegram_id:'42',whatsapp_id:'whatsapp:+15550000042',name:'Owner Forty Two'}],
+  ['43', {id:'owner-uuid-43',telegram_id:'43',whatsapp_id:'whatsapp:+15550000043',name:'Owner Forty Three'}],
+  ['9007199254740992', {id:'synthetic-owner-2pow53',telegram_id:'9007199254740992',whatsapp_id:'whatsapp:+15550000055',name:'Unrelated Owner'}],
+])
+const browserDb = {
+  from(table:string) {
+    assert.equal(table, 'users', 'browser entry must fetch only the verified user row')
+    let field = '', value: unknown = null
+    const query: any = {
+      select: () => query,
+      eq(key:string, raw:unknown) { field=key; value=raw; browserLookup.push({table,field:key,value:raw}); return query },
+      maybeSingle: async () => {
+        assert.equal(field,'telegram_id')
+        return {data: forcedWrongBrowserUser || browserRows.get(String(value)) || null, error:null}
+      },
+    }
+    return query
+  },
+}
+function loadBrowserDashboardPost(filePath:string): any {
+  const code = ts.transpileModule(readFileSync(filePath,'utf8'), {
+    compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022},
+  }).outputText
+  const exports: any = {}
+  const mocks: Record<string,any> = {
+    'next/server': {NextResponse:{json:(body:any,options?:{status?:number}) =>
+      new Response(JSON.stringify(body),{status:options?.status ?? 200,headers:{'content-type':'application/json'}})}},
+    '@/lib/dashboard/session': {getSession:async () =>
+      browserDashboardSession === null ? null : {telegramId:browserDashboardSession}},
+    '@/lib/dashboard/guard': {verifySameOrigin:() => {browserOriginChecks++;return null}},
+    '@/lib/supabase-admin': {supabaseAdmin:browserDb},
+    '@/lib/dashboard/browser-run-owner':browserOwnerHelpers,
+    '@/lib/agent/browser-command':{
+      resumePausedBrowserRun:async ({actor,runId}:any) => {
+        browserActions.push({kind:'resume',actor,runId})
+        return {runId,status:'paused',text:'synthetic-owned-resume'}
+      },
+      restoreReadBrowserHandoff:async ({actor,runId}:any) => {
+        browserActions.push({kind:'restore',actor,runId})
+      },
+    },
+    '@/lib/agent/secondary-auth-handoff':{resumeSecondaryAuthRun:async () => null},
+    '@/lib/vault/credential-store':{listVaultCredentialsForDomain:async () => {throw new Error('Vault must not be touched')}},
+  }
+  runInNewContext(code, {
+    exports, console, URL, Date, String, Number,
+    require:(name:string) => {
+      assert.ok(Object.hasOwn(mocks,name),'Unexpected browser dashboard import: '+name)
+      return mocks[name]
+    },
+  })
+  assert.equal(typeof exports.POST,'function')
+  return exports.POST
+}
+const browserDashboardRoutes = [
+  {kind:'resume',handler:loadBrowserDashboardPost('app/api/dashboard/agent/runs/[runId]/resume/route.ts')},
+  {kind:'restore',handler:loadBrowserDashboardPost('app/api/dashboard/agent/runs/[runId]/restore-handoff/route.ts')},
+]
+function resetBrowserDashboard(session: string | null) {
+  browserDashboardSession=session; browserLookup=[]; browserActions=[]
+  browserBodyReads=0; browserOriginChecks=0; forcedWrongBrowserUser=null
+}
+async function callBrowserDashboard(handler:any) {
+  const request = {json:async () => {browserBodyReads++;return {}}}
+  return handler(request,{params:Promise.resolve({runId:'run-fixture'})}) as Promise<Response>
+}
+
+for (const {kind,handler} of browserDashboardRoutes) {
+  const blockedOwners: Array<string|null> = [
+    null, '9007199254740992','9007199254740993',
+    '-9007199254740993','9223372036854775808',
+    '0','-0','042','+42',' 42 ','42garbage','4.2e1','', '1e2',
+  ]
+  for (const raw of blockedOwners) {
+    resetBrowserDashboard(raw)
+    const res = await callBrowserDashboard(handler)
+    assert.equal(res.status,raw === null ? 401 : 403,
+      kind+' must deny noncanonical or lossy session owner '+JSON.stringify(raw))
+    assert.deepEqual(browserLookup,[],kind+' must not query any private owner before precise authentication')
+    assert.equal(browserBodyReads,0,kind+' must not read request body before owner validation')
+    assert.deepEqual(browserActions,[],kind+' must not access browser/Vault under unsafe identity')
+    assert.equal(browserOriginChecks,1,'existing same-origin verification must remain in force')
+  }
+
+  for (const id of ['42','43']) {
+    resetBrowserDashboard(id)
+    const res = await callBrowserDashboard(handler)
+    assert.equal(res.status,200,kind+' exact safe owner '+id+' should retain legitimate behavior')
+    assert.equal(browserLookup.length,1)
+    assert.deepEqual(browserLookup[0],{table:'users',field:'telegram_id',value:id},
+      kind+' must filter users by the EXACT persisted session text, not Number')
+    assert.equal(browserActions.length,1,kind+' only resumes the current safe owner')
+    assert.equal(browserActions[0].kind,kind)
+    assert.equal(browserActions[0].actor.userId,'owner-uuid-'+id)
+    assert.equal(browserActions[0].actor.legacyTelegramId,Number(id))
+    assert.equal(browserActions[0].runId,'run-fixture')
+  }
+
+  // Defense in depth against malformed/stale service-role records: an otherwise
+  // successful query must not mint a browser actor from a mismatched returned row.
+  resetBrowserDashboard('42')
+  forcedWrongBrowserUser=browserRows.get('43')
+  const mismatch = await callBrowserDashboard(handler)
+  assert.equal(mismatch.status,400,kind+' must reject a mismatched looked-up user row')
+  assert.deepEqual(browserActions,[],kind+' must not resume another row')
+}
+console.log('PASS: real dashboard browser resume/restore routes reject 64-bit owner aliases before private I/O')

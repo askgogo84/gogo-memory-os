@@ -32,7 +32,7 @@ export async function loadDoc(telegramId: number, id: string): Promise<{ doc: Ma
   return { doc: doc as MakeDoc, content, owner: telegramId }
 }
 
-export async function updateDoc(telegramId: number, id: string, content: any, doc: MakeDoc, instruction: string) {
+export async function updateDoc(telegramId: number | string, id: string, content: any, doc: MakeDoc, instruction: string) {
   const history = (Array.isArray(content?.history) ? content.history : []).slice(-9)
   history.push({ at: new Date().toISOString(), instruction: instruction.slice(0, 200), doc: content.doc })
   const { error } = await supabaseAdmin.from('agent_artifacts').update({

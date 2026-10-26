@@ -2,16 +2,17 @@ import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getAlertPreferences, DEFAULT_ALERT_PREFERENCES } from '@/lib/agent/alert-preferences'
 import { AlertSettings } from '@/components/dashboard/alert-settings'
+import { exactAlertOwnerId } from '@/lib/agent/alert-owner-id'
 
 export const dynamic = 'force-dynamic'
 
 // Duet parity step 2 (approved 22 Oct mock, screen 5): what you hear about and how often.
 export default async function AlertsPage() {
   const session = await getSession()
-  const tg = String(session?.telegramId || '')
+  const tg = exactAlertOwnerId(session?.telegramId)
   const [prefs, user] = await Promise.all([
     tg ? getAlertPreferences(tg) : Promise.resolve(DEFAULT_ALERT_PREFERENCES),
-    tg ? supabaseAdmin.from('users').select('briefing_enabled,briefing_time').eq('telegram_id', Number(tg)).maybeSingle().then(r => r.data) : Promise.resolve(null),
+    tg ? supabaseAdmin.from('users').select('briefing_enabled,briefing_time').eq('telegram_id', tg).maybeSingle().then(r => r.data) : Promise.resolve(null),
   ])
   const brief = { enabled: Boolean((user as any)?.briefing_enabled), time: String((user as any)?.briefing_time || '08:00').slice(0, 5) }
   return (

@@ -19,7 +19,9 @@ function table(name: string) {
     maybeSingle() { return run(true) }, then(res: any, rej: any) { return run(false).then(res, rej) },
   }
   async function run(single: boolean) {
+    if (db.fail === `throw-${name}`) throw new Error('fixture database outage')
     if (db.fail === name) return { data: null, error: { code: '42703', message: 'column does not exist' } }
+    if (db.fail === 'waitlist-insert' && name === 'waitlist' && op === 'insert') return { data: null, error: { code: 'DB_DOWN', message: 'fixture waitlist insert failed' } }
     const rows = (db as any)[name].filter((r: any) => filters.every(([k, c, v]) => k === 'in' ? v.includes(r[c]) : r[c] === v))
     if (op === 'insert') { if (rows.length && name === 'waitlist') return { error: { code: '23505' } }; (db as any)[name].push({ id: 'new', ...payload }); writes.push([name, 'insert', payload]); return { error: null } }
     if (op === 'update') { rows.forEach((r: any) => Object.assign(r, payload)); writes.push([name, 'update', payload]); return { error: null } }
@@ -64,11 +66,20 @@ assert.equal(db.waitlist[0].status, 'joined')
 // Website signup that was never approved is held too.
 db = { users: [], waitlist: [{ id: 'w', phone_e164: '+971501234567', status: 'waiting', last_notified_at: null }] }
 assert.equal((await checkWhatsAppAccess('+971501234567')).reason, 'waitlist')
-// Database trouble (e.g. migration not applied yet) never locks anyone out.
-db = { users: [], waitlist: [], fail: 'users' }
-assert.deepEqual(await checkWhatsAppAccess('+919900000003'), { allow: true, reason: 'gate_error' })
+// Authorization cannot be inferred from a failed users or waitlist read, even
+// when a legacy migration has not been applied. No reply/send for unknown owner.
+const unavailable = { allow: false, reason: 'gate_error', reply: null }
+db = { users: [{ telegram_id: 7, whatsapp_id: '+919900000003', access_status: 'blocked' }], waitlist: [], fail: 'users' }
+assert.deepEqual(await checkWhatsAppAccess('+919900000003'), unavailable, 'a blocked owner cannot bypass the gate during users lookup failure')
 db = { users: [], waitlist: [], fail: 'waitlist' }
-assert.deepEqual(await checkWhatsAppAccess('+919900000003'), { allow: true, reason: 'gate_error' })
+assert.deepEqual(await checkWhatsAppAccess('+919900000003'), unavailable, 'unapproved owner cannot bypass the gate during waitlist lookup failure')
+db = { users: [], waitlist: [] }
+assert.deepEqual(await checkWhatsAppAccess('not-a-number'), unavailable, 'unverifiable From must not be admitted')
+assert.deepEqual(await checkWhatsAppAccess(''), unavailable, 'empty From must not be admitted')
+db = { users: [], waitlist: [], fail: 'throw-users' }
+assert.deepEqual(await checkWhatsAppAccess('+919900000003'), unavailable, 'exceptional DB outage must also fail closed')
+db = { users: [], waitlist: [], fail: 'waitlist-insert' }
+assert.deepEqual(await checkWhatsAppAccess('+919900000003'), unavailable, 'failed waitlist insert cannot accidentally authorize a new number')
 // Kill switch.
 process.env.ACCESS_GATE_ENABLED = 'false'
 db = { users: [], waitlist: [] }

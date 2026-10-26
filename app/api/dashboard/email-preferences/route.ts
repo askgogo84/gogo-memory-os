@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/dashboard/session'
+import { exactDashboardOwnerId } from '@/lib/dashboard/exact-owner-id'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -16,8 +17,8 @@ export async function GET() {
   const session = await getSession()
   if (!session) return NextResponse.json({ ok: false }, { status: 401 })
 
-  const tg = Number(session.telegramId)
-  if (!Number.isFinite(tg)) return NextResponse.json({ ok: false }, { status: 400 })
+  const tg = exactDashboardOwnerId(session.telegramId)
+  if (!tg) return NextResponse.json({ ok: false, error: 'invalid_session' }, { status: 403 })
 
   const { data, error } = await supabaseAdmin
     .from('users')
@@ -41,8 +42,8 @@ export async function POST(req: NextRequest) {
   const session = await getSession()
   if (!session) return NextResponse.json({ ok: false }, { status: 401 })
 
-  const tg = Number(session.telegramId)
-  if (!Number.isFinite(tg)) return NextResponse.json({ ok: false }, { status: 400 })
+  const tg = exactDashboardOwnerId(session.telegramId)
+  if (!tg) return NextResponse.json({ ok: false, error: 'invalid_session' }, { status: 403 })
 
   const body = await req.json().catch(() => ({}))
   const email = normaliseEmail(body?.email)
@@ -86,8 +87,8 @@ export async function DELETE() {
   const session = await getSession()
   if (!session) return NextResponse.json({ ok: false }, { status: 401 })
 
-  const tg = Number(session.telegramId)
-  if (!Number.isFinite(tg)) return NextResponse.json({ ok: false }, { status: 400 })
+  const tg = exactDashboardOwnerId(session.telegramId)
+  if (!tg) return NextResponse.json({ ok: false, error: 'invalid_session' }, { status: 403 })
 
   const { error } = await supabaseAdmin
     .from('users')
