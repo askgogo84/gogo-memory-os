@@ -17,7 +17,7 @@ function exactWatchOwner(value: unknown): string | null {
   const id = String(value)
   if (!/^-?[1-9]\d*$/.test(id)) return null
   const n = BigInt(id)
-  if (n < -(1n << 63n) || n > ((1n << 63n) - 1n)) return null
+  if (n < BigInt('-9223372036854775808') || n > BigInt('9223372036854775807')) return null
   return id
 }
 async function actorUserId(telegramId: string) {
