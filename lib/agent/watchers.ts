@@ -41,10 +41,10 @@ function exactWatcherOwner(value: unknown): string | null {
   if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
   const id = String(value)
   if (!/^-?[1-9]\d*$/.test(id)) return null
-  try {
-    const signed = BigInt(id)
-    if (signed < BigInt('-9223372036854775808') || signed > BigInt('9223372036854775807')) return null
-  } catch { return null }
+  // Watcher rows may already have been rounded by a database client BEFORE callers String() them.
+  // Until every legacy caller is exact-text end-to-end, no unsafe numeric identity may authorize reads/sends.
+  const numeric = Number(id)
+  if (!Number.isSafeInteger(numeric) || String(numeric) !== id) return null
   return id
 }
 
