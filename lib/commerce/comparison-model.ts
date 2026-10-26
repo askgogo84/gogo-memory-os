@@ -84,6 +84,9 @@ function shoppingCore(text: string) {
 
 export function parsePriceComparison(text: string) {
   if (isPriceComparisonStatus(text)) return null
+  // 26 Oct live: "Open https://www.flipkart.com/…/p/… read-only and tell me the listed price" became a store
+  // comparison whose product name was the whole sentence. A message that gives a page URL asks about that page.
+  if (/\bhttps?:\/\/\S+/i.test(text)) return null
   const intentText = text.replace(/\b(?:do not|don't|never)\b[^.!?\n]*/gi, '')
     .replace(/\bno\s+(?:new\s+)?(?:watches|watch|monitors|monitor|reminders|reminder)\b/gi, '')
   if (/\b(?:watch|monitor|remind|remember|every|keep checking)\b/i.test(intentText)) return null
