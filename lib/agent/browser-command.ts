@@ -381,6 +381,8 @@ async function releaseOlderReadHandoffs(tg:number,userId:string,exceptRunId:stri
     const meta=run.metadata_json||{}
     if(String(meta.mode||'read')!=='read'||meta.flow||meta.commerce_parent_id||meta.comparison_parent_id||meta.site_session)continue
     const handoff=meta.handoff
+    // A page handed back on request may be in active use: leave it while its browser is live.
+    if(meta.handback&&await (await import('./browser-handoff-health')).browserHandoffIsLive(handoff?.takeoverUrl).catch(()=>false))continue
     if(handoff?.token&&handoff?.releaseUrl){
       const {cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
       await cancelProviderBrowserHandoff(userId,handoff).catch(()=>{})
@@ -453,6 +455,8 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   const persistentAccountSession=accountCreation||providerBooking||vaultAccountRead
   const browserOwner=persistentCommerce?linkedBrowserOwner(params.actor.userId,{...runMetadata,url:runMetadata.url||params.command.url}):accountCreation?params.actor.userId+':account:'+params.runId:providerBooking?params.actor.userId+':booking:'+params.runId:params.actor.userId
   const resumePage=(persistentCommerce||persistentAccountSession)&&Boolean(runMetadata.handoff)
+  // Captured before the handoff is released below: a resumed run must never hand the page back again.
+  const resumedFromHandoff=Boolean(runMetadata.handoff)||runMetadata.handback===true
   const reconciledResult=runMetadata.browser_safe_to_retry===false
     ? await (await import('./post-auth-outcome')).inspectPostAuthRun(String(tg),params.runId,runMetadata):undefined
   if(reconciledResult===null)return {runId:params.runId,status:'outcome_unknown' as const,capability:'browser' as const,risk:params.command.risk,text:'The browser session is unavailable. Verify the outcome directly with the provider; Gogo will not repeat the action.',handledBy:'secure-browser' as const}
@@ -628,14 +632,15 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     // 26 Oct live: "open <page> read-only and hand control back to me" read the page but offered no way to take over.
     // A plain public read (no commerce, comparison, Vault, booking or sign-up session) asked for control now opens
     // the same Take Control browser the activity page offers, on the page that was read.
-    if(params.mode==='read'&&!persistentCommerce&&!persistentAccountSession&&!params.command.vaultCredentialId&&wantsBrowserHandBack(params.command.objective)){
+    if(params.mode==='read'&&!persistentCommerce&&!persistentAccountSession&&!params.command.vaultCredentialId&&!resumedFromHandoff
+      &&!reconciledResult&&runMetadata.browser_safe_to_retry!==false&&wantsBrowserHandBack(params.command.objective)){
       const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
       const controlUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
       const base=`${result.summary}\n\n${result.title}${sourceText}`
       try{
         const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
         const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:sourceUrl||params.command.url,sessionTaskId:params.runId})
-        const {data:saved,error}=await supabaseAdmin.from('agent_runs').update({status:'paused',metadata_json:{...runMetadata,handoff},completed_at:null,updated_at:new Date().toISOString(),
+        const {data:saved,error}=await supabaseAdmin.from('agent_runs').update({status:'paused',metadata_json:{...runMetadata,handoff,handback:true},completed_at:null,updated_at:new Date().toISOString(),
           summary:'The page is open for you. Take control in the secure browser; nothing is added to cart, ordered or submitted by Gogo.'})
           .eq('id',params.runId).eq('telegram_id',String(tg)).eq('status','completed').select('id').maybeSingle()
         if(error||!saved){await cancelProviderBrowserHandoff(browserOwner,handoff).catch(()=>{});throw new Error('browser_handback_save_failed')}
@@ -645,7 +650,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       }catch(err:any){
         console.error('BROWSER_HANDBACK:',JSON.stringify({runId:params.runId,outcome:'failed',error:String(err?.message||'error').replace(/[^a-z0-9_]/gi,'_').slice(0,60)}))
         return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,
-          text:`${base}\n\nI couldn't open a browser for you to take control just now. You can open the page directly${sourceUrl?'':`: ${params.command.url}`}.`,handledBy:'secure-browser' as const}
+          text:`${base}\n\nI couldn't open a browser for you to take control just now. You can open the page directly: ${sourceUrl||params.command.url}`,handledBy:'secure-browser' as const}
       }
     }
     return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}\n\n${result.title}${sourceText}\n${params.mode==='read'?'':safe(result.pageText,1800)}`,handledBy:'secure-browser' as const}
@@ -701,7 +706,7 @@ export function wantsBrowserHandBack(objective:string){
   if(/\b(?:don'?t|do not|never|no need to|without)\s+(?:\w+\s+){0,3}(?:hand|give|pass|let me take|take)\b/i.test(t))return false
   return /\b(?:hand|give|pass|return)\s+(?:the\s+)?(?:browser\s+|page\s+)?control\s+(?:back\s+)?to\s+me\b/i.test(t)
     ||/\b(?:hand|give|pass)\s+(?:it|the\s+(?:browser|page))\s+back\s+to\s+me\b/i.test(t)
-    ||/\b(?:let me|so i can|i(?:'ll| will| want to))\s+take\s+(?:over|control)\b/i.test(t)
+    ||/\b(?:let me|so i can|i(?:'ll| will| want to))\s+take\s+(?:over|control)(?:\s+of)?\s+(?:the\s+(?:page|browser|tab)|it|from\s+(?:here|there))\b/i.test(t)
 }
 
 // Link a paused read before execution; a lost response must not spawn a second

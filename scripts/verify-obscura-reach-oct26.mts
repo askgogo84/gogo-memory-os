@@ -93,19 +93,28 @@ const bc = await import('../lib/agent/browser-command')
 for (const t of [
   'Open https://www.croma.com/x/p/1 read-only and hand control back to me so I can set my delivery pincode myself. Do not add to cart or order.',
   'Open the page and give control back to me', 'read the page then pass the browser control to me',
-  'Open it and hand it back to me', 'open flipkart so I can take over', 'Open this page; I want to take control',
+  'Open it and hand it back to me', 'open flipkart so I can take over the page', 'Open this page; I want to take control of the browser',
+  'open it and let me take over from here',
 ]) assert.equal(bc.wantsBrowserHandBack(t), true, t)
 for (const t of [
   'Open https://en.wikipedia.org/wiki/X read-only and tell me the title',
   "Open the page but don't hand control back to me", 'Do not give control to me, just read it',
   'what is the price shown? control panel settings', 'Take control of my reminders',
+  "Check the price; I'll take over the purchase myself later", 'read it so I can take control of my budget', 'open flipkart so I can take over',
 ]) assert.equal(bc.wantsBrowserHandBack(t), false, t)
 const cmd2 = readFileSync(new URL('../lib/agent/browser-command.ts', import.meta.url), 'utf8')
-const hbGate = cmd2.match(/if\((params\.mode==='read'&&!persistentCommerce&&!persistentAccountSession&&!params\.command\.vaultCredentialId&&wantsBrowserHandBack\(params\.command\.objective\))\)\{/)
-assert.ok(hbGate, 'hand-back only for plain public reads: no commerce, comparison, Vault, booking or sign-up session')
+const hbGate = cmd2.match(/if\(params\.mode==='read'&&!persistentCommerce&&!persistentAccountSession&&!params\.command\.vaultCredentialId&&!resumedFromHandoff\s*&&!reconciledResult&&runMetadata\.browser_safe_to_retry!==false&&wantsBrowserHandBack\(params\.command\.objective\)\)\{/)
+assert.ok(hbGate, 'hand-back only for fresh plain public reads: no commerce, comparison, Vault, booking, sign-up, resumed or unknown-outcome run')
+// Review: Resume re-runs the same objective after deleting the handoff; the flag is captured before that delete.
+assert.ok(cmd2.indexOf('const resumedFromHandoff=') < cmd2.indexOf('delete runMetadata.handoff'), 'resume state captured before the handoff is released')
+assert.match(cmd2, /const resumedFromHandoff=Boolean\(runMetadata\.handoff\)\|\|runMetadata\.handback===true/)
+// Review: a newer read never cancels a handed-back page the person may be driving.
+const rel = cmd2.slice(cmd2.indexOf('async function releaseOlderReadHandoffs'), cmd2.indexOf('async function releaseClosedReadHandoffs'))
+assert.match(rel, /if\(meta\.handback&&await \(await import\('\.\/browser-handoff-health'\)\)\.browserHandoffIsLive\(handoff\?\.takeoverUrl\)\.catch\(\(\)=>false\)\)continue/)
 const hbBlock = cmd2.slice(cmd2.indexOf(hbGate![0]), cmd2.indexOf("return {runId:params.runId,status:'completed' as const,capability:'browser' as const,risk:params.command.risk,text:`${result.summary}"))
 assert.match(hbBlock, /startProviderBrowserHandoff\(\{userId:browserOwner,url:sourceUrl\|\|params\.command\.url,sessionTaskId:params\.runId\}\)/, 'no keepAlive, same owner, page that was read')
 assert.match(hbBlock, /\.eq\('status','completed'\)/, 'only a still-completed run is reopened')
+assert.match(hbBlock, /handoff,handback:true\}/, 'the run is marked as handed back')
 assert.match(hbBlock, /cancelProviderBrowserHandoff/, 'a failed save releases the browser')
 assert.match(hbBlock, /tap Take control/)
 assert.match(hbBlock, /won't add to cart, order or submit anything/)
