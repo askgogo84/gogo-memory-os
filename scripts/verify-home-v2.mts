@@ -149,11 +149,11 @@ console.log('Home v2: ranked Needs you, five sections, companion registry, light
     const beforeReads = reads.length
     const beforeMeter = meterOwners.length
     const beforeCalendar = calendarAccess.length
-    assert.deepEqual(await queries.getLists(bad), { ok: true, lists: [] }, bad + ': no cross-owner list')
-    assert.deepEqual(await queries.getFriendContacts(bad), { ok: true, contacts: [], count: 0 }, bad + ': no contacts')
-    assert.deepEqual(await queries.getProfile(bad), { ok: false }, bad + ': no private profile/WhatsApp ID')
-    assert.deepEqual(await queries.getTodayCalendar(bad), { ok: true, connected: false }, bad + ': no calendar token')
-    assert.deepEqual(await queries.getUsageSummary(bad), { ok: false }, bad + ': no metering fallback')
+    assert.equal(JSON.stringify(await queries.getLists(bad)), JSON.stringify({ ok: true, lists: [] }), bad + ': no cross-owner list')
+    assert.equal(JSON.stringify(await queries.getFriendContacts(bad)), JSON.stringify({ ok: true, contacts: [], count: 0 }), bad + ': no contacts')
+    assert.equal(JSON.stringify(await queries.getProfile(bad)), JSON.stringify({ ok: false }), bad + ': no private profile/WhatsApp ID')
+    assert.equal(JSON.stringify(await queries.getTodayCalendar(bad)), JSON.stringify({ ok: true, connected: false }), bad + ': no calendar token')
+    assert.equal(JSON.stringify(await queries.getUsageSummary(bad)), JSON.stringify({ ok: false }), bad + ': no metering fallback')
     assert.equal(reads.length, beforeReads, bad + ': zero privileged DB queries')
     assert.equal(meterOwners.length, beforeMeter, bad + ': zero meter queries')
     assert.equal(calendarAccess.length, beforeCalendar, bad + ': zero calendar-account access')
@@ -164,7 +164,7 @@ console.log('Home v2: ranked Needs you, five sections, companion registry, light
     assert.equal((await queries.getFriendContacts(valid)).contacts[0].name, 'Owner friend')
     assert.equal((await queries.getProfile(valid)).whatsappId, 'whatsapp:+0000004242')
     assert.equal((await queries.getUsageSummary(valid)).ok, true)
-    assert.deepEqual(await queries.getTodayCalendar(valid), { ok: true, connected: false })
+    assert.equal(JSON.stringify(await queries.getTodayCalendar(valid)), JSON.stringify({ ok: true, connected: false }))
     assert.ok(reads.length > before)
     for (const read of reads.slice(before)) {
       for (const [column, value] of read.eqs) {
