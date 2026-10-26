@@ -24,3 +24,17 @@ export async function linkedTelegramIds(sessionTelegramId: string | number): Pro
     return [...ids]
   } catch { return [own] }
 }
+
+/** Every id this WhatsApp number may be stored under: users rows with the same number, the full digits, and the
+ *  resolve-user fallback -(last 9 digits). For reads only, keyed by the person's own verified number. */
+export async function idsForWhatsapp(whatsappId: string | null | undefined): Promise<string[]> {
+  const full = String(whatsappId || '').replace(/\D/g, '')
+  if (full.length < 10) return []
+  const digits = full.slice(-10)
+  const ids = new Set<string>([full, `-${full.slice(-9)}`])
+  try {
+    const { data } = await supabaseAdmin.from('users').select('telegram_id,whatsapp_id').ilike('whatsapp_id', `%${digits}`).limit(5)
+    for (const r of (data || []) as any[]) if (String(r.whatsapp_id || '').replace(/\D/g, '').endsWith(digits) && /^-?\d+$/.test(String(r.telegram_id))) ids.add(String(r.telegram_id))
+  } catch {}
+  return [...ids]
+}

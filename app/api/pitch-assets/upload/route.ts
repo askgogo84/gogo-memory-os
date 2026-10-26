@@ -1,11 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { timingSafeEqual } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 const BUCKET = 'pitch-assets'
-const UPLOAD_KEY = 'AGP-2026-09-14-d570c78f1b0846c8915fcaa8e74e79c1'
+// 24 Oct sweep: the key used to be hard-coded here and in the upload page, and this repo is public, so anyone could
+// overwrite the investor deck (served from the app origin at /pitch/content) or host HTML in this public bucket.
+// The key now lives only in the PITCH_UPLOAD_KEY env var; with it unset the route is disabled. Paths are fixed.
+const ALLOWED_PATHS: Record<string, string> = {
+  'askgogo-2026/AskGogo-Pitch-Deck.html': 'text/html',
+  'askgogo-2026/AskGogo_Investor_Deck.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+}
+function uploadAuthorized(req: NextRequest) {
+  const expected = String(process.env.PITCH_UPLOAD_KEY || '').trim()
+  const got = String(req.headers.get('x-pitch-upload-key') || '').trim()
+  if (expected.length < 24 || !got) return false
+  const a = Buffer.from(expected), b = Buffer.from(got)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
 const ALLOWED_MIME_TYPES = [
   'image/jpeg',
   'text/html',
@@ -28,7 +42,7 @@ async function ensureBucket() {
 }
 
 export async function POST(req: NextRequest) {
-  if (req.headers.get('x-pitch-upload-key') !== UPLOAD_KEY) {
+  if (!uploadAuthorized(req)) {
     return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   }
 
@@ -53,7 +67,7 @@ export async function POST(req: NextRequest) {
     const path = String(form.get('path') || '').replace(/^\/+/, '')
     const contentType = String(form.get('contentType') || (file instanceof File ? file.type : ''))
 
-    if (!(file instanceof File) || !path || !ALLOWED_MIME_TYPES.includes(contentType)) {
+    if (!(file instanceof File) || !path || ALLOWED_PATHS[path] !== contentType) {
       return NextResponse.json({ error: 'invalid_file_path_or_content_type' }, { status: 400 })
     }
 
@@ -79,7 +93,7 @@ export async function POST(req: NextRequest) {
 
   const path = String(body?.path || '').replace(/^\/+/, '')
   const contentType = String(body?.contentType || '')
-  if (!path || !ALLOWED_MIME_TYPES.includes(contentType)) {
+  if (!path || ALLOWED_PATHS[path] !== contentType) {
     return NextResponse.json({ error: 'invalid_path_or_content_type' }, { status: 400 })
   }
 

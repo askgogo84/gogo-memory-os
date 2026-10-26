@@ -5,6 +5,9 @@ import { stripReportingDirectives } from '@/lib/services/reporting-directive'
 
 const RETRIEVAL_VERB_RE = /\b(show me|find|send me|get me|pull up|do you have|where'?s|where is|open(?: my| the)?|retrieve)\b/i
 const RESERVED_RETRIEVAL_RE = /^(?:show|open|find|get|send)(?:\s+me)?\s+(?:my\s+)?(?:reminders?|tasks?|to-?dos?|lists?|calendar|events?|cards?|credit\s*cards?|emails?|mail|weather|briefing|today|memory|memories|preferences?|rules?|contacts?|expenses?|spending|saved\s+(?:reels?|videos?|posts?))\s*[?.!]*$/i
+// 25 Oct live: "Find my latest document in Drive" returned an old document saved in AskGogo. A request that names
+// an outside source (Drive, Gmail, inbox, Docs) belongs to that source's reader, never to saved-asset retrieval.
+export const EXTERNAL_SOURCE_RE = /\b(?:(?:in|from|on|inside|of|search|check)\s+(?:my\s+|the\s+)?(?:google\s+)?(?:drive|g-?drive|gmail|inbox|e-?mails?|mail|docs|sheets|dropbox|one\s?drive)|google\s+(?:drive|docs?|sheets?)|drive\s+(?:files?|folders?|docs?))\b/i
 const SENSITIVE_REVEAL_CONFIRM_RE = /^\s*show\s+(?:the\s+)?(?:passport|id|reference)\s*(?:number|no)?\s*[?.!]*$/i
 
 // Operational requests must never be stolen by a loose match against an old saved
@@ -59,7 +62,7 @@ function assetNoun(doc: any): string {
 
 export function shouldAttemptNaturalAssetRetrieval(text: string): boolean {
   const raw = String(text || '').trim()
-  if (!raw || !RETRIEVAL_VERB_RE.test(raw) || RESERVED_RETRIEVAL_RE.test(raw) || SENSITIVE_REVEAL_CONFIRM_RE.test(raw)) return false
+  if (!raw || !RETRIEVAL_VERB_RE.test(raw) || RESERVED_RETRIEVAL_RE.test(raw) || SENSITIVE_REVEAL_CONFIRM_RE.test(raw) || EXTERNAL_SOURCE_RE.test(raw)) return false
   // If this is an operational booking/travel/event flow, only permit Asset Memory to
   // claim it when the user explicitly asks for an asset-shaped object (document,
   // passport, receipt, file, etc.). Otherwise the real booking agent owns the turn.
@@ -91,7 +94,7 @@ export async function buildNaturalAssetRetrievalReply(
   // sensitive-field gate. Decline it here so buildAssetFieldReply can consume the
   // one-shot pending binding later in the WhatsApp route.
   const verbOk = shouldAttemptNaturalAssetRetrieval(raw)
-  const contactAsk = isContactQuestion(raw) && !RESERVED_RETRIEVAL_RE.test(raw) && !SENSITIVE_REVEAL_CONFIRM_RE.test(raw)
+  const contactAsk = isContactQuestion(raw) && !RESERVED_RETRIEVAL_RE.test(raw) && !SENSITIVE_REVEAL_CONFIRM_RE.test(raw) && !EXTERNAL_SOURCE_RE.test(raw)
   if (!verbOk && !contactAsk) return null
 
   const qTokens = tokens(raw)

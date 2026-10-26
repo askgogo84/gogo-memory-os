@@ -1,20 +1,11 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { eligibleThrowbackMemory } from './throwback-quality'
 
 // Phase 1B — "Throwback": resurface a random old saved memory.
 // Piggybacks on the weekly (Sunday) briefing; also triggerable via `test throwback`.
 
 const OLDER_DAYS = 21
 const COOLDOWN_DAYS = 90
-
-function isInternalContent(content: string): boolean {
-  const lower = (content || '').toLowerCase().trim()
-  if (!lower) return true
-  if (lower.startsWith('{') || lower.startsWith('[')) return true
-  if (lower.startsWith('askgogo_')) return true
-  if (lower.includes('followup_state') || lower.includes('meeting_action_items')) return true
-  if (lower.includes('founder pricing')) return true
-  return false
-}
 
 function clip(s: string, n = 140): string {
   return s.length > n ? s.slice(0, n - 1) + '…' : s
@@ -32,8 +23,9 @@ export async function buildThrowbackLine(
 
   let q = supabaseAdmin
     .from('memory_embeddings')
-    .select('id, content, created_at, resurfaced_at')
+    .select('id, content, created_at, resurfaced_at, source_table')
     .eq('telegram_id', telegramId)
+    .eq('source_table', 'memories')
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .limit(100)
@@ -45,7 +37,7 @@ export async function buildThrowbackLine(
   const { data } = await q
   const pool = (data || []).filter(
     (r: any) =>
-      !isInternalContent(r.content) &&
+      eligibleThrowbackMemory(r.content, r.source_table) &&
       (!r.resurfaced_at || r.resurfaced_at < cooldownIso)
   )
   if (!pool.length) return null

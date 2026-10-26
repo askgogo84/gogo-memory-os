@@ -30,6 +30,8 @@ function ConnRow({name,state,available,operations,approval,verification,detail,h
       {href&&<span className="text-[13px] text-[#2fb8a6]">Open →</span>}
     </div>
   </div>
+  // A connect route redirects off-site (Google consent), so it needs a full page load, not client navigation.
+  if(href?.startsWith('/api/'))return <a href={href} className="block hover:bg-[#141414]">{body}</a>
   return href?<Link href={href} className="block hover:bg-[#141414]">{body}</Link>:body
 }
 
@@ -68,6 +70,9 @@ export default async function ConnectionsPage(){
   const authKnown=!userResult.error&&!!u
   const creditiqKnown=profile.ok&&profile.connectionStateKnown?.creditiq===true
   const c={googleCalendar:authKnown&&!!u?.google_calendar_connected,gmail:authKnown&&!!u?.gmail_connected,creditiq:profile.ok&&profile.connections.creditiq}
+  // Drive via Composio (stopgap while AskGogo's own Google verification is pending, 24 Oct).
+  let driveComposio=false
+  try{const cg:any=await import('@/lib/connectors/composio-gmail');if(cg?.composioConfigured?.())driveComposio=!!(await cg.activeDriveAccount([tg]).catch(()=>null))}catch{}
   const browserLevel=String(browserPermission.data?.level||'draft')
   const browserKnown=!browserPermission.error&&['off','read','draft','ask','auto'].includes(browserLevel)
   const browserAvailable=browserKnown&&browserLevel!=='off'
@@ -131,10 +136,11 @@ export default async function ConnectionsPage(){
           approval="Reading never authorizes sending. Every consequential send requires the existing bounded approval."
           verification="Gmail provider message/thread evidence; send success requires provider read-back."
           detail={gmailReadUnknown?'Could not verify your reading preference.':gmailReadOff?'Email reading is disabled in your saved privacy preference.':'Connecting Gmail alone does not start an inbox watch.'} href="/dashboard/you"/>
-        <ConnRow name="Google Drive" state={!authKnown?'Connection status unavailable':c.gmail?'Connected via Workspace':'Not connected'} available={c.gmail}
+        <ConnRow name="Google Drive" state={driveComposio?'Connected via Google (Composio)':!authKnown?'Connection status unavailable':c.gmail?'Connected via Workspace':'Not connected'} available={c.gmail||driveComposio}
+          detail={driveComposio||c.gmail?undefined:'Tap to connect with Google. The consent screen says Composio while our own Google review is pending.'}
           operations="Read/search Drive context and fetch supported files for bounded analysis."
           approval="Read-only Workspace scope. File mutation is not granted by this connection."
-          verification="Drive file ID + bounded provider content; no substitute document on ambiguity." href="/dashboard/you"/>
+          verification="Drive file ID + bounded provider content; no substitute document on ambiguity." href={c.gmail||driveComposio?'/dashboard/you':'/api/connect/google-drive'}/>
         <ConnRow name="Secure Browser" state={browserState} available={browserAvailable}
           operations="Read websites, prepare forms, monitor pages and execute explicitly approved browser actions."
           approval="Consequential submit/book/buy actions require approval; passwords, OTPs, passkeys and payment auth stay human-only."
