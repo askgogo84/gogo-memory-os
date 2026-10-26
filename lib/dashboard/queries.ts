@@ -16,8 +16,9 @@ import {calendarInterval, calendarBlocksTime, type CalendarProviderEvent} from '
 // dashboard_sessions.telegram_id is TEXT; reminders.telegram_id is numeric. The
 // cast happens HERE, at the boundary, and nowhere else.
 
-// P1 temporary containment: reminders may be accessed only for the signed-in
-// session owner. Never use suffix-based inferred WhatsApp links to list reminders.
+// P1 temporary containment: only an exact JS-safe numeric session owner may access
+// numeric-keyed dashboard records (reminders, lists, profile, contacts, calendars).
+// Never use suffix-derived cross-channel ownership or rounded JS Numbers.
 // Rows belonging to a WhatsApp identity remain stored and deliver normally.
 function exactReminderSessionId(raw: string): number | null {
   if (!/^-?[1-9]\d*$/.test(raw)) return null
@@ -113,10 +114,10 @@ export type Lists = { ok: true; lists: DashboardList[] } | { ok: false }
  * never sees the storage column. items comes back as the raw JSONB array.
  */
 export async function getLists(telegramId: string): Promise<Lists> {
-  const tgNum = parseInt(telegramId, 10)
-  // lists.telegram_id is numeric; a non-numeric session id can't own any list —
+  const tgNum = exactReminderSessionId(telegramId)
+  // lists.telegram_id is numeric; only an exact, JS-safe session owner may read lists —
   // that's an empty account, not a failure. (Failures are actual read errors.)
-  if (!Number.isFinite(tgNum)) return { ok: true, lists: [] }
+  if (tgNum === null) return { ok: true, lists: [] }
 
   const { data, error } = await supabaseAdmin
     .from('lists')
@@ -201,7 +202,9 @@ export type UsageSummary =
   | { ok: false }
 
 export async function getUsageSummary(telegramId: string): Promise<UsageSummary> {
-  const tgNum = parseInt(telegramId, 10)
+  const tgNum = exactReminderSessionId(telegramId)
+  // Meter and connection reads are privileged; never query on a rounded/partial owner.
+  if (tgNum === null) return { ok: false }
   try {
     const plan = await getPlan(telegramId)
     const [limits, usage] = await Promise.all([getLimits(plan.plan_code), getUsage(telegramId)])
@@ -256,8 +259,8 @@ export type Profile =
   | { ok: false }
 
 export async function getProfile(telegramId: string): Promise<Profile> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return { ok: false }
+  const tgNum = exactReminderSessionId(telegramId)
+  if (tgNum === null) return { ok: false }
   try {
     const { data: user, error } = await supabaseAdmin
       .from('users')
@@ -328,8 +331,8 @@ export type FriendContact = { name: string; initials: string }
 export type FriendContacts = { ok: true; contacts: FriendContact[]; count: number } | { ok: false }
 
 export async function getFriendContacts(telegramId: string): Promise<FriendContacts> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return { ok: true, contacts: [], count: 0 }
+  const tgNum = exactReminderSessionId(telegramId)
+  if (tgNum === null) return { ok: true, contacts: [], count: 0 }
   const { data, error } = await supabaseAdmin
     .from('friend_contacts')
     .select('name, created_at')
@@ -357,8 +360,8 @@ export type TodayCalendar =
   | { ok: false }
 
 export async function getTodayCalendar(telegramId: string): Promise<TodayCalendar> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return { ok: true, connected: false }
+  const tgNum = exactReminderSessionId(telegramId)
+  if (tgNum === null) return { ok: true, connected: false }
   try {
     const { data: user, error } = await supabaseAdmin
       .from('users')
