@@ -13,11 +13,21 @@ export async function GET(req: NextRequest) {
   const index = Number.isFinite(indexRaw) ? Math.max(0, Math.min(LIFECYCLE_EMAILS.length - 1, Math.floor(indexRaw))) : 0
   const entry = LIFECYCLE_EMAILS[index]
 
-  const tg = Number(session.telegramId)
-  const { data: user } = Number.isFinite(tg)
-    ? await supabaseAdmin.from('users').select('name').eq('telegram_id', tg).maybeSingle()
-    : { data: null as any }
-  const firstName = String(user?.name || 'there').trim().split(/\s+/)[0] || 'there'
+  // A signed-in session's legacy owner can be a lossless BIGINT decimal string.
+  // Never coerce an imprecise or partial identity before a service-role read.
+  const owner = typeof session.telegramId === 'string' || typeof session.telegramId === 'number'
+    ? String(session.telegramId) : ''
+  if (!/^-?[1-9]\d*$/.test(owner) || !Number.isSafeInteger(Number(owner)) || String(Number(owner)) !== owner) {
+    return new NextResponse('Invalid session owner.', { status: 403 })
+  }
+
+  const { data: user, error } = await supabaseAdmin.from('users')
+    .select('telegram_id,name').eq('telegram_id', owner).maybeSingle()
+  if (error) return new NextResponse('Email preview temporarily unavailable.', { status: 503 })
+  if (!user || String(user.telegram_id) !== owner) {
+    return new NextResponse('Email preview account not found.', { status: 404 })
+  }
+  const firstName = String(user.name || 'there').trim().split(/\s+/)[0] || 'there'
 
   const rendered = renderLifecycleEmail({
     email: entry,
