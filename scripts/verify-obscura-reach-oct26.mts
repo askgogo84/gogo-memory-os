@@ -190,6 +190,11 @@ console.log('Hotels: provider coordinates give a labelled map pin; no invented a
     { title: 'Dyu Art Cafe', address: 'Indiranagar, Bengaluru', category: 'Cafe', rating: 4.5, ratingCount: 1200, cid: '3234567890123' },
   ])))
   assert.equal((food.match(/Third Wave Coffee/g) || []).length, 2, 'restaurant/cafe branches are not merged')
+  const court = String(await p6.answerPlaces('Suggest 3 cafes in Indiranagar', ff([
+    { title: 'Cafe One', address: 'Food court, Indiranagar, Bengaluru', category: 'Cafe', rating: 4.4, ratingCount: 300, cid: '4234567890123', latitude: 12.9719, longitude: 77.6412 },
+    { title: 'Cafe Two', address: 'Food court, Indiranagar, Bengaluru', category: 'Cafe', rating: 4.3, ratingCount: 200, cid: '5234567890123', latitude: 12.9719, longitude: 77.6412 },
+  ])))
+  assert.match(court, /Cafe One/); assert.match(court, /Cafe Two/, 'different places sharing a mall pin are both kept')
 }
 
 // ── 7. Hand-back when the page itself is slow (26 Oct 14:13 live: Croma page.goto timeout) ──
@@ -203,7 +208,10 @@ console.log('Hotels: provider coordinates give a labelled map pin; no invented a
   assert.match(block, /startProviderBrowserHandoff\(\{userId:browserOwner,url:params\.command\.url,sessionTaskId:params\.runId\}\)/)
   assert.match(block, /handoff,handback:true\}/)
   assert.match(block, /cancelProviderBrowserHandoff/)
-  assert.match(block, /was slow to load for me, so I couldn't read the page\. I've opened it in a secure browser for you\./)
+  assert.match(src7, /was slow to load for me, so I couldn't read the page\./)
+  assert.match(src7, /I couldn't read the details on \$\{site\}\./, 'an unreadable (not slow) page is not called slow')
+  assert.match(src7, /\.eq\('id',params\.runId\)\.eq\('telegram_id',String\(tg\)\)\.eq\('status','running'\)\.select\('id'\)\.maybeSingle\(\)/, 'a cancelled run is never reopened')
+  assert.match(src7, /activity\(tg,params\.runId,'handback_opened'/, 'the step and activity are closed out')
   // The unknown-outcome guard runs first, so a possibly-submitted action is never reopened.
   assert.ok(src7.lastIndexOf("if(runMetadata.browser_safe_to_retry===false){\n      const outcome=await (await import('./post-auth-outcome')).markAuthOutcomeUnknown", i) > 0)
 }

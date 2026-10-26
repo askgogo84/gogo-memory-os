@@ -170,7 +170,8 @@ export function formatPlaces(ask: PlaceAsk, places: Place[]) {
   const seen = new Set<string>()
   const distinct = <T extends Place>(list: T[]) => list.filter(p => {
     const name = p.title.split(/\s+[-–—]\s+/)[0].toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-    const pin = p.lat !== undefined && p.lng !== undefined ? `${p.lat.toFixed(4)},${p.lng.toFixed(4)}` : ''
+    // Same-pin merging is for stays only: different restaurants can share a mall or food-court pin.
+    const pin = stayAsk && p.lat !== undefined && p.lng !== undefined ? `${p.lat.toFixed(4)},${p.lng.toFixed(4)}` : ''
     // Room-type suffixes only exist for stays; restaurant branches ("X - Indiranagar") stay separate entries.
     const byName = stayAsk && Boolean(name)
     if ((byName && seen.has('n:' + name)) || (pin && seen.has('p:' + pin))) return false

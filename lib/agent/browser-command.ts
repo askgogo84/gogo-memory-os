@@ -691,16 +691,22 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
       const site=(()=>{try{return new URL(params.command.url).hostname.replace(/^www\./,'')}catch{return 'the site'}})()
       const appBase=String(process.env.NEXT_PUBLIC_APP_URL||process.env.APP_URL||'https://app.askgogo.in').replace(/\/$/,'')
       const controlUrl=`${appBase}/dashboard/activity/${encodeURIComponent(params.runId)}/browser`
+      const readError=String(err?.message||'')
+      const slow=/page\.goto: Timeout|net::ERR_TIMED_OUT|browser_read_deadline/.test(readError)
       try{
         const {startProviderBrowserHandoff,cancelProviderBrowserHandoff}=await import('./provider-browser-handoff')
         const handoff=await startProviderBrowserHandoff({userId:browserOwner,url:params.command.url,sessionTaskId:params.runId})
+        // Only a run still in flight is reopened; a cancelled one stays cancelled.
         const {data:saved,error}=await supabaseAdmin.from('agent_runs').update({status:'paused',metadata_json:{...runMetadata,handoff,handback:true},completed_at:null,updated_at:new Date().toISOString(),
           summary:'The page is open for you. Take control in the secure browser; nothing is added to cart, ordered or submitted by Gogo.'})
-          .eq('id',params.runId).eq('telegram_id',String(tg)).select('id').maybeSingle()
+          .eq('id',params.runId).eq('telegram_id',String(tg)).eq('status','running').select('id').maybeSingle()
         if(error||!saved){await cancelProviderBrowserHandoff(browserOwner,handoff).catch(()=>{});throw new Error('browser_handback_save_failed')}
+        const doneAt=new Date().toISOString()
+        await Promise.resolve(supabaseAdmin.from('agent_steps').update({status:'failed',error:safe(readError,500),completed_at:doneAt}).eq('id',params.stepId)).catch(()=>{})
+        await activity(tg,params.runId,'handback_opened','Gogo could not read the page and opened it for you to take control.',{host:site,error:safe(readError,250)}).catch(()=>{})
         console.log('BROWSER_HANDBACK:',JSON.stringify({runId:params.runId,outcome:'opened_after_read_failure'}))
         return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,handledBy:'secure-browser' as const,
-          text:`${site} was slow to load for me, so I couldn't read the page. I've opened it in a secure browser for you. Open this link and tap Take control:\n${controlUrl}\n\nGogo won't add to cart, order or submit anything. Never send passwords or codes in chat.`}
+          text:`${slow?`${site} was slow to load for me, so I couldn't read the page.`:`I couldn't read the details on ${site}.`} I've opened it in a secure browser for you. Open this link and tap Take control:\n${controlUrl}\n\nGogo won't add to cart, order or submit anything. Never send passwords or codes in chat.`}
       }catch(handbackErr:any){
         console.error('BROWSER_HANDBACK:',JSON.stringify({runId:params.runId,outcome:'failed_after_read_failure',error:String(handbackErr?.message||'error').replace(/[^a-z0-9_]/gi,'_').slice(0,60)}))
       }
