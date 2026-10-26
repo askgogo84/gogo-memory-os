@@ -32,7 +32,7 @@ async function actorFor(telegramId:string):Promise<AgentActor|null> {
     if(typeof value!=='string'&&typeof value!=='number')return null
     if(typeof value==='number'&&!Number.isSafeInteger(value))return null
     const exact=String(value)
-    if(!/^-?[1-9]\\d*$/.test(exact))return null
+    if(!/^-?[1-9]\d*$/.test(exact))return null
     const numeric=Number(exact)
     if(!Number.isSafeInteger(numeric)||String(numeric)!==exact)return null
     return {exact,numeric}
