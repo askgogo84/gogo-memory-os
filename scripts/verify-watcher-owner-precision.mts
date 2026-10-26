@@ -28,6 +28,7 @@ const accounts: Record<string, { id: string; telegram_id: string | number; whats
   [ownerA]: { id: 'actor-A', telegram_id: ownerA, whatsapp_id: 'whatsapp:+14155552671', name: 'A' },
   [ownerB]: { id: 'actor-B', telegram_id: ownerB, whatsapp_id: 'whatsapp:+14155552672', name: 'B' },
   [ownerSafe]: { id: 'actor-safe', telegram_id: ownerSafe, whatsapp_id: 'whatsapp:+14155552673', name: 'Safe' },
+  '102': { id: 'actor-safe2', telegram_id: '102', whatsapp_id: 'whatsapp:+14155552674', name: 'Safe 2' },
 }
 
 function fixture(forcedUser?: Record<string, unknown>) {
@@ -79,7 +80,7 @@ function fixture(forcedUser?: Record<string, unknown>) {
   return { functions: sandbox.__targets as Record<string, any>, queries, sends, costs }
 }
 
-for (const owner of [ownerSafe, ownerA, ownerB]) {
+for (const owner of [ownerSafe, '102']) {
   const f = fixture()
   await f.functions.sendWhatsAppIfWanted(owner, 'whatsapp', 'inert digest only')
   assert.deepEqual(f.queries.map((q) => q.owner), [owner], 'query must use exact TEXT owner, no numeric rounding')
@@ -87,7 +88,7 @@ for (const owner of [ownerSafe, ownerA, ownerB]) {
   assert.equal(f.costs.length, 1)
 }
 
-for (const bad of [Number(ownerB), 0, '0', '00101', '101junk', '+101', '1e2', '', null, undefined]) {
+for (const bad of [ownerA, ownerB, Number(ownerB), 0, '0', '00101', '101junk', '+101', '1e2', '', null, undefined]) {
   const f = fixture()
   await f.functions.sendWhatsAppIfWanted(bad, 'both', 'inert')
   assert.deepEqual(f.queries, [], 'untrusted or already rounded owner cannot touch private users')
@@ -95,9 +96,9 @@ for (const bad of [Number(ownerB), 0, '0', '00101', '101junk', '+101', '1e2', ''
   assert.deepEqual(f.costs, [])
 }
 
-for (const mismatch of [accounts[ownerA], { ...accounts[ownerB], telegram_id: Number(ownerB) }]) {
+for (const mismatch of [accounts['102'], { ...accounts[ownerB], telegram_id: Number(ownerB) }]) {
   const f = fixture(mismatch)
-  await f.functions.sendWhatsAppIfWanted(ownerB, 'whatsapp', 'inert')
+  await f.functions.sendWhatsAppIfWanted(ownerSafe, 'whatsapp', 'inert')
   assert.deepEqual(f.sends, [], 'wrong/rounded returned user cannot receive another tenant message')
 }
 
@@ -126,14 +127,14 @@ const travel = (owner: unknown) => ({
     expiresAt: null,
   },
 })
-for (const owner of [ownerSafe, ownerA, ownerB]) {
+for (const owner of [ownerSafe, '102']) {
   const f = fixture()
   const end = await f.functions.sourceBoundTravelExpiry(travel(owner))
   assert.equal(end, '2030-01-06T12:00:00.000Z')
   assert.deepEqual(f.queries.map((q) => q.owner), [owner], 'travel source reads must retain canonical string owner')
   assert.ok(f.queries[0]?.columns.includes('telegram_id'), 'source rows must include owner evidence')
 }
-for (const bad of [Number(ownerB), '00101', '101junk', 0, null]) {
+for (const bad of [ownerA, ownerB, Number(ownerB), '00101', '101junk', 0, null]) {
   const f = fixture()
   await assert.rejects(() => f.functions.sourceBoundTravelExpiry(travel(bad)))
   assert.deepEqual(f.queries, [], 'invalid owner may not read private travel tickets')
