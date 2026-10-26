@@ -133,8 +133,11 @@ for (const [text, item] of [
   ['Order milk on Swiggy Instamart', 'milk'], ['order milk on instamart', 'milk'], ['Buy Amul butter from Instamart.', 'Amul butter'],
   ['get me some eggs on swiggy instamart please', 'eggs'], ['Can you order bread from Swiggy Instamart?', 'bread'],
   ['Add Nandini curd to my Instamart cart', 'Nandini curd'], ['add 2 onions to my swiggy instamart cart', '2 onions'],
+  // 26 Oct live phrasing, with the safety note people add.
+  ['Add Amul Taaza toned milk 500 ml to my cart on Swiggy Instamart. Do not order or pay.', 'Amul Taaza toned milk 500 ml'],
+  ['add bread to the cart on instamart', 'bread'], ['Order eggs on Instamart, do not pay', 'eggs'],
 ] as const) assert.equal(chat.parseInstamartOrderRequest(text), item, text)
-for (const text of ['order milk', 'compare grocery prices for milk', 'get my order status from instamart', 'did my instamart order arrive', 'buy milk on zepto', 'what is the price of milk on instamart', 'order 560086 on instamart'])
+for (const text of ['add milk to my cart on blinkit. do not pay', 'Order milk on Instamart and pay for it', 'order milk', 'compare grocery prices for milk', 'get my order status from instamart', 'did my instamart order arrive', 'buy milk on zepto', 'what is the price of milk on instamart', 'order 560086 on instamart'])
   assert.equal(chat.parseInstamartOrderRequest(text), null, text)
 for (const [text, pick] of [['1', 1], ['2.', 2], ['#3', 3], ['add the first one', 1], ['second', 2], ['option 3', 3], ['add 2', 2], ['the 2nd one', 2]] as const) assert.equal(chat.parseInstamartPick(text), pick, text)
 for (const text of ['4', '0', '12', '100', '560086', '1234', '482913', '₹1', 'Rs 2', '1 kg', '2 litres', '1 2 3', 'yes'])
