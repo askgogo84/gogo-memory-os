@@ -20,6 +20,7 @@ import { storeDocument, getDocumentSignedUrl } from '@/lib/services/document-sto
 import { createDocumentShortLink, shortLinkUrl } from '@/lib/services/document-links'
 import { embedText } from '@/lib/services/embeddings'
 import { indexMemory } from '@/lib/services/memory-index'
+import { isSecretShapedMemory } from '@/lib/bot/memory-redaction'
 import { downloadTwilioMediaAsDataUrl } from '@/lib/services/image-note-reader'
 import {
   saveFollowupState,
@@ -1026,6 +1027,10 @@ export async function buildAssetRetrievalReply(
     // those values out of the embedding index. Semantic search remains the fallback.
     let doc = await findDocumentByMetadata(telegramId, text)
     if (!doc) {
+      // A metadata miss must not export credentials or document identifiers to
+      // the external embedding provider. Owner-scoped lexical lookup above still
+      // works, and normal semantic retrieval remains available for safe queries.
+      if (isSecretShapedMemory(text)) return null
       const embedding = await embedText(text)
       const { data: hits } = await supabaseAdmin.rpc('match_documents', {
         p_telegram_id: telegramId,
