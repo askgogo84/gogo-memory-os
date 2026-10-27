@@ -5,7 +5,8 @@ import { runApprovedBrowserRun, runBackgroundBrowserRead } from '@/lib/agent/app
 // action. It answers 202 immediately and runs the approved browser work in `after()`, so the
 // webhook never waits on the browser. Protected by the same CRON_SECRET as the cron routes.
 export const dynamic = 'force-dynamic'
-export const maxDuration = 300
+// 27 Oct: bookings need ~9 minutes of browser time after a ~90 s start (see BOOKING_BUDGET_MS).
+export const maxDuration = 800
 
 function authorized(request: Request) {
   const expected = process.env.CRON_SECRET

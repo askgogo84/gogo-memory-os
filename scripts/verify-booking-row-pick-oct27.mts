@@ -32,3 +32,19 @@ console.log('BOOKING_ROW_PICK_OK')
   assert.ok(!('cdn-app6.securiti.ai' in browserPageAllowlist('https://www.croma.com/p/1')), 'other sites unchanged')
   console.log('HANDOFF_LOADING_OK')
 }
+{
+  // 27 Oct 10:52: fewer wasted waves (direct airline Continue, cookie banner declined) and a 9-minute booking budget.
+  const { googleAirlineContinueControl, cookieDeclineControl } = await import('../lib/agent/secure-computer.ts')
+  const obj = 'Flight booking up to payment on Google Flights: one-way BLR to MAA, depart 2026-11-15, 1 adult, economy. Choose the IndiGo result that leaves 7:10 AM on 2026-11-15 (about ₹3,892 one-way)'
+  const google = [{ selector: '#ly', label: 'Continue to book with ly.com for 3880 Indian rupees' }, { selector: '#6e', label: 'Continue to book with IndiGo airline for 3892 Indian rupees. Includes 49 Indian rupees convenience fee' }, { selector: '#ct', label: 'Continue to book with Cleartrip for 3900 Indian rupees' }]
+  assert.equal(googleAirlineContinueControl(google, obj), '#6e')
+  assert.equal(googleAirlineContinueControl(google.filter(c => c.selector !== '#6e'), obj), null, 'never an agency in place of the airline')
+  assert.equal(cookieDeclineControl([{ selector: '#all', label: 'Accept All' }, { selector: '#ess', label: 'Accept Essential Only' }]), '#ess')
+  assert.equal(cookieDeclineControl([{ selector: '#r', label: 'Reject All' }]), '#r')
+  assert.equal(cookieDeclineControl([{ selector: '#all', label: 'Accept All' }, { selector: '#c', label: 'Customize Preferences' }]), null, 'never accepts all')
+  const src = (await import('node:fs')).readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
+  assert.ok(src.includes('const BOOKING_BUDGET_MS=540_000'))
+  const route = (await import('node:fs')).readFileSync(new URL('../app/api/agent/approved-browser/route.ts', import.meta.url), 'utf8')
+  assert.ok(/export const maxDuration = 800/.test(route), 'route budget covers the booking budget plus start-up')
+  console.log('BOOKING_FEWER_WAVES_OK')
+}
