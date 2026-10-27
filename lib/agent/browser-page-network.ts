@@ -48,7 +48,7 @@ const GOOGLE_FLIGHTS_PAGE_DEPENDENCIES = ['www.gstatic.com','fonts.googleapis.co
 const AKASA_BOOKING_DEPENDENCIES = ['api.storyblok.com','app.storyblok.com']
 // 27 Oct 10:08 live booking a58a0e36: IndiGo's flight-select-redirection page stayed on "Loading..." while its cookie-consent
 // manager (Securiti, observed loading on goindigo.in in a normal browser) was blocked. Script hosts only.
-const AIRLINE_CONSENT_DEPENDENCIES = ['cdn-app6.securiti.ai','app.securiti.ai']
+const AIRLINE_CONSENT_DEPENDENCIES = ['cdn-app6.securiti.ai','app.securiti.ai','app6.securiti.ai']
 const AIR_INDIA_BOOKING_DEPENDENCIES = ['delivery-p104052-e1069093.adobeaemcloud.com','airindia.scene7.com','assets.adobedtm.com','cdn.cookielaw.org','geolocation.onetrust.com','cdnjs.cloudflare.com','cdn.jsdelivr.net']
 // 9 Oct Hugging Face takeover: the sign-up page answered 202 with the provider's AWS WAF
 // interstitial, and its token script host was blocked by the sandbox, so the visible human

@@ -393,6 +393,11 @@ export function googleFlightRowControl(controls:{selector?:string;label?:string}
     return Boolean(r&&c.selector&&r[1].toLowerCase().split(/,\s*|\s+and\s+|\s*\+\s*/)[0]===airline.split(/,\s*|\s+and\s+|\s*\+\s*/)[0]&&r[2].toUpperCase()===time&&r[3].toLowerCase()===day.toLowerCase())})
   return hit?.selector||null
 }
+/** An airline's own flight-select page that loaded but shows no flights for the approved date. */
+export function airlineShowsNoFlights(page:{url?:unknown;text?:unknown}){
+  let path='';try{path=new URL(String(page?.url||'')).pathname}catch{}
+  return /flight-?select|select-?flight|availability|search/i.test(path)&&/\bno flights? (?:found|available)\b|\bflights? (?:are )?not available\b/i.test(String(page?.text||'').replace(/\s+/g,' ').slice(0,8000))
+}
 /** An edge/CDN refusal page (Akamai "Access Denied", Cloudflare block): the site will not load for this browser. */
 export function edgeBlockedPage(page:{text?:unknown;title?:unknown}){
   const t=String(page?.text||'').replace(/\s+/g,' ').slice(0,600),title=String(page?.title||'')
@@ -1113,7 +1118,7 @@ async function instagramPublicRead(page,url,navTimeout){
   const pageReadiness=observeBrowserPage(page);
   // Collect hostnames of requests the broker allowlist aborted (visibility for self-
   // inflicted starvation). Hostnames only; never URLs/query/tokens.
-  const __blocked={};if(page&&typeof page.on==='function')page.on('requestfailed',(req)=>{try{const h=new URL(req.url()).hostname;__blocked[h]=(__blocked[h]||0)+1}catch{}});
+  const __blocked={},__failWhy={};if(page&&typeof page.on==='function')page.on('requestfailed',(req)=>{try{const h=new URL(req.url()).hostname;__blocked[h]=(__blocked[h]||0)+1;if(!__failWhy[h]&&Object.keys(__failWhy).length<12)__failWhy[h]=String(req.failure()&&req.failure().errorText||'').slice(0,40)}catch{}});
   const log=[];
   let executionBeforeText=null;
   let executionAfterText=null;
@@ -1539,7 +1544,7 @@ return receiptCount(after)>receiptCount(before);
         await page.waitForTimeout(500);
       }
     }
-    const out=await model(page); out.pageLoad=pageLoad; out.draftVerified=draftVerified; out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; out.blockedHosts=__blocked; if(__handoff)out.handoff=__handoff;
+    const out=await model(page); out.pageLoad=pageLoad; out.draftVerified=draftVerified; out.actions=log; out.executionBeforeText=executionBeforeText; out.executionAfterText=executionAfterText; out.blockedHosts=__blocked;out.failedWhy=__failWhy; if(__handoff)out.handoff=__handoff;
     // Screenshot fallback: the visible viewport in CSS pixels, so the model's x/y map to page.mouse.
     if(payload.screenshot&&payload.bookingFlow){try{const vp=await page.evaluate(()=>({w:innerWidth,h:innerHeight}));const img=await page.screenshot({type:'jpeg',quality:55,scale:'css',fullPage:false,timeout:8000});out.shot=img.toString('base64');out.viewport=vp;}catch{}}
     console.log(JSON.stringify(out));
@@ -2286,7 +2291,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     releaseManaged=first.managed?.release
     let page=first.page
     const blockedHostsAll:Record<string,number>={}
-    const mergeBlocked=(p:any)=>{if(p&&p.blockedHosts)for(const [h,n] of Object.entries(p.blockedHosts))blockedHostsAll[h]=(blockedHostsAll[h]||0)+(Number(n)||0)}
+    const failedWhyAll:Record<string,string>={}
+    const mergeBlocked=(p:any)=>{if(p&&p.blockedHosts)for(const [h,n] of Object.entries(p.blockedHosts))blockedHostsAll[h]=(blockedHostsAll[h]||0)+(Number(n)||0);if(p&&p.failedWhy)for(const [h,w] of Object.entries(p.failedWhy))if(!failedWhyAll[h]&&/^[a-z0-9.-]{1,120}$/i.test(h))failedWhyAll[h]=String(w||'').replace(/[^A-Za-z0-9_:. -]/g,'').slice(0,40)}
     mergeBlocked(first.page)
     let approvedOperation:ApprovedBrowserOperation|null=null
     let draftReady=false
@@ -2626,7 +2632,9 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // so the planner kept pressing LOGIN (which toggles the box). Logging in is done by Gogo itself:
       // press Login once, then fill the number and press the send-code control.
       let edgeBack:BrowserAction[]|null=null
-      if(providerBooking&&!onGoogle&&googleBookingUrl&&edgeBlockedPage(page)&&edgeBlockedHosts.length<2){
+      // 27 Oct 12:09 live booking d89be008: goindigo.in's flight list request failed in the cloud browser and the page said
+      // "No flights found" for the approved date. That site cannot complete this booking either: back to Google, another site.
+      if(providerBooking&&!onGoogle&&googleBookingUrl&&(edgeBlockedPage(page)||airlineShowsNoFlights(page))&&edgeBlockedHosts.length<2){
         let host='';try{host=new URL(String(page.url||'')).hostname.replace(/^www\./,'')}catch{}
         if(host&&!edgeBlockedHosts.includes(host)){edgeBlockedHosts.push(host);edgeBack=[{kind:'goto',url:googleBookingUrl} as any];console.log('BROWSER_BOOKING_EDGE_BLOCKED:',JSON.stringify({runId:params.sessionTaskId||null,host,wave}))}
       }
@@ -2943,6 +2951,8 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     // One structured line per run of the hosts the broker allowlist aborted (hostnames
     // only). Surfaces self-inflicted starvation without a probe.
     if(Object.keys(blockedHostsAll).length){try{console.warn(blockedHostsLogLine({runId:params.sessionTaskId||null,site:new URL(params.url).hostname,hosts:blockedHostsAll}))}catch{}}
+    // 27 Oct: why each host failed (hostname + browser error code only), to tell our allowlist from a site's bot block.
+    if(Object.keys(failedWhyAll).length){try{console.warn('BROWSER_FAILED_WHY:',JSON.stringify({runId:params.sessionTaskId||null,why:failedWhyAll}))}catch{}}
 
     // A provider booking always ends with the person: OTP, payment, or wherever Gogo stopped.
     if(providerBooking){
