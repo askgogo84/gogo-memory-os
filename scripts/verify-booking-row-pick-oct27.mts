@@ -48,3 +48,14 @@ console.log('BOOKING_ROW_PICK_OK')
   assert.ok(/export const maxDuration = 800/.test(route), 'route budget covers the booking budget plus start-up')
   console.log('BOOKING_FEWER_WAVES_OK')
 }
+{
+  // 27 Oct 12:09: goindigo.in showed "No flights found" (its flight API failed in the cloud browser); go back to Google.
+  const { airlineShowsNoFlights } = await import('../lib/agent/secure-computer.ts')
+  assert.equal(airlineShowsNoFlights({ url: 'https://www.goindigo.in/book/flight-select.html/', text: 'Select Flight From Bengaluru to Chennai ... No flights found for the selected date' }), true)
+  assert.equal(airlineShowsNoFlights({ url: 'https://www.goindigo.in/book/flight-select.html/', text: '6E 6031 7:10 AM 8:15 AM ₹3,843 Select' }), false)
+  assert.equal(airlineShowsNoFlights({ url: 'https://www.goindigo.in/about-us.html', text: 'no flights found' }), false, 'only on a flight-select page')
+  const src = (await import('node:fs')).readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
+  assert.ok(src.includes('(edgeBlockedPage(page)||airlineShowsNoFlights(page))&&edgeBlockedHosts.length<2'), 'same bounded fallback as an edge block')
+  assert.ok(src.includes("console.warn('BROWSER_FAILED_WHY:'"), 'failure reasons are logged (hostnames + error codes)')
+  console.log('AIRLINE_NO_FLIGHTS_OK')
+}
