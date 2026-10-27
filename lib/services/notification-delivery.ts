@@ -11,6 +11,9 @@ export async function deliverNotification(p: {
   claim?: (token: string) => Promise<boolean>; begin?: (token: string) => Promise<boolean>
   deferUntil?: () => Promise<string | null>
 }): Promise<string> {
+  // Owner is a privileged ledger/recipient boundary. A rounded signed64 ID can
+  // alias another account before claim/prepare/send. Fail closed without side effects.
+  if (!Number.isSafeInteger(p.owner) || p.owner === 0) return 'failed'
   const token = randomUUID()
   let claimed = false, started = false, returned = false
   try {
