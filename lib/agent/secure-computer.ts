@@ -386,6 +386,11 @@ export function cookieDeclineControl(controls:{selector?:string;label?:string}[]
   return hit?.selector||null
 }
 
+/** Google's booking page still fetching its booking options ("Getting prices"), with no Continue buttons yet. */
+export function googleBookingStillPricing(page:{text?:unknown;controls?:any[]}){
+  const text=String(page?.text||'').replace(/\s+/g,' ')
+  return /\bGetting prices\b/i.test(text)&&!(page?.controls||[]).some((c:any)=>/^Continue to book with\b/i.test(String(c?.label||'').trim()))
+}
 /** A page that is visibly still loading: a "Loading…" placeholder or a redirect page with no form yet. */
 export function pageStillLoading(page:{url?:unknown;text?:unknown;controls?:any[]}){
   const text=String(page?.text||'').replace(/\s+/g,' ')
@@ -2331,6 +2336,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     let googleBookingUrl='';const edgeBlockedHosts:string[]=[]
     let flightRowPicks=0,handoffLoadingWaits=0,airlineContinuePressed=false,consentDeclines=0
     const agenciesTried:string[]=[]
+    let googlePriceWaits=0,googleBookingReloaded=false
     const avoidNote=()=>edgeBlockedHosts.length?` ${edgeBlockedHosts.join(' and ')} refused this browser (Access Denied), so on the booking options pick a different listed site (MakeMyTrip, Cleartrip, Goibibo, ixigo, EaseMyTrip or Yatra), never ${edgeBlockedHosts.join(' or ')}.`:''
     const readSnapshot=(p:any)=>JSON.stringify([p.url,p.text,p.controls,p.forms])
 
@@ -2817,6 +2823,14 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       }
       // 27 Oct live booking a58a0e36: IndiGo's flight-select-redirection page said "Loading..." and the run gave up after
       // two idle looks (about 15 s). A page that is still loading after a hand-off gets a few short waits first.
+      // 27 Oct 17:15 live booking 0f4a95c4: back on Google after the IndiGo fallback, the booking page sat on "Getting prices"
+      // and the run gave up after two idle looks. Wait for it (a few times), then reload that page once.
+      if(!actions.length&&providerBooking&&onGoogle&&edgeBlockedHosts.length&&googlePriceWaits<5&&googleBookingStillPricing(page)){
+        googlePriceWaits++
+        if(googlePriceWaits===3&&!googleBookingReloaded&&googleBookingUrl){googleBookingReloaded=true;actions.push({kind:'goto',url:googleBookingUrl} as any)}
+        else actions.push({kind:'wait',ms:3000} as any)
+        console.log('BROWSER_BOOKING_GOOGLE_PRICING_WAIT:',JSON.stringify({runId:params.sessionTaskId||null,wave,try:googlePriceWaits,reload:googleBookingReloaded}))
+      }
       if(!actions.length&&providerBooking&&!onGoogle&&handoffLoadingWaits<4&&pageStillLoading(page)){
         handoffLoadingWaits++;actions.push({kind:'wait',ms:3000} as any)
         console.log('BROWSER_BOOKING_LOADING_WAIT:',JSON.stringify({runId:params.sessionTaskId||null,wave,try:handoffLoadingWaits}))
