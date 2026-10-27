@@ -47,15 +47,18 @@ export type LastFlightResult = { runId: string; context: any; options: BrowserFl
  * 27 Oct 13:53 live: "flights … on 19 Nov", then "Book the cheapest" before those results arrived, booked from the
  * previous (18 Nov) result. A flight search still running that started after the result Gogo would book wins: say so.
  */
-export async function newerFlightSearchPending(actor: AgentActor, after: string | null): Promise<{ date: string | null; route: string | null } | null> {
+export async function newerFlightSearchPending(actor: AgentActor, after: string | null): Promise<{ date: string | null; route: string | null; failed?: boolean } | null> {
   const since = new Date(Date.now() - 30 * 60_000).toISOString()
-  let q = supabaseAdmin.from('agent_runs').select('id,metadata_json,started_at').eq('telegram_id', String(actor.legacyTelegramId)).eq('type', 'travel_research')
-    .in('status', ['queued', 'running']).gte('started_at', after && after > since ? after : since).order('started_at', { ascending: false }).limit(1)
+  // 27 Oct 15:56 live: the 20 Nov search failed (no live rows) and "Book 1" then booked the 19 Nov result. A newer
+  // search that failed also wins: Gogo says so instead of booking an older date.
+  const q = supabaseAdmin.from('agent_runs').select('id,status,metadata_json,started_at').eq('telegram_id', String(actor.legacyTelegramId)).eq('type', 'travel_research')
+    .in('status', ['queued', 'running', 'failed', 'completed']).gte('started_at', after && after > since ? after : since).order('started_at', { ascending: false }).limit(1)
   const { data, error } = await q
   if (error || !data?.length) return null
   if (after && !(String(data[0].started_at) > after)) return null
   const ctx: any = (data[0].metadata_json as any)?.context || {}
-  return { date: typeof ctx.startDate === 'string' ? ctx.startDate : null, route: ctx.origin?.code && ctx.destination?.code ? `${ctx.origin.code} → ${ctx.destination.code}` : null }
+  const status = String((data[0] as any).status || 'running')
+  return { date: typeof ctx.startDate === 'string' ? ctx.startDate : null, route: ctx.origin?.code && ctx.destination?.code ? `${ctx.origin.code} → ${ctx.destination.code}` : null, ...(status === 'failed' || status === 'completed' ? { failed: true } : {}) }
 }
 
 /** The newest completed round-trip result for this person, in the order it was shown. */
@@ -229,6 +232,25 @@ async function savePending(tg: string, state: Record<string, unknown>, reply: st
   if (error) throw new Error('flight_booking_state_write_failed')
 }
 
+/** The person's message before this one (the details they sent before a re-ask). Chat history only; nothing new is stored. */
+async function previousUserMessage(actor: AgentActor, current: string): Promise<string | null> {
+  const { data, error } = await supabaseAdmin.from('conversations').select('role,content,created_at').eq('telegram_id', Number(actor.legacyTelegramId)).eq('role', 'user').order('created_at', { ascending: false }).limit(3)
+  if (error || !Array.isArray(data)) return null
+  const rows = data.map(r => String(r.content || ''))
+  const i = rows.findIndex(r => norm(r) === norm(current))
+  const prev = rows[i >= 0 ? i + 1 : 0]
+  return prev && norm(prev) !== norm(current) ? prev : null
+}
+
+/** Puts the title in front of each traveller line that has none (email, mobile and seat lines are left alone). */
+export function withTitle(details: string, title: string) {
+  return String(details || '').split(/\n+/).map(line => {
+    const l = line.trim()
+    if (!l || /@/.test(l) || /^(?:\+?91|0)?[6-9]\d{9}$/.test(l.replace(/[\s()-]/g, '')) || /\b(?:seat|auto|free|window|aisle)\b/i.test(l) || /^(?:mr|mrs|ms|miss|mstr|master)\.?\s/i.test(l)) return l
+    return `${title} ${l}`
+  }).join('\n')
+}
+
 export type SavedBookingProfile = { travellers: Traveller[]; contact: BookingContact; seat: SeatChoice }
 
 /**
@@ -254,7 +276,7 @@ export async function loadSavedBookingProfile(actor: AgentActor, count: number):
 const profileLines = (p: SavedBookingProfile) => `${p.travellers.map(t => `${t.title} ${t.name}${t.dob ? `, ${t.dob}` : ''}`).join('\n')}\n${p.contact.email} · ${maskMobile(p.contact.mobile)}\n${seatLabel(p.seat)}`
 
 /** The traveller-details question is open only while it is the latest assistant message and recent. */
-async function loadPending(actor: AgentActor, text: string): Promise<{ runId: string; optionIndex: number; reuse?: boolean } | null> {
+async function loadPending(actor: AgentActor, text: string): Promise<{ runId: string; optionIndex: number; reuse?: boolean; retry?: boolean } | null> {
   const tg = String(actor.legacyTelegramId)
   const { data, error } = await supabaseAdmin.from('conversations').select('role,content,created_at').eq('telegram_id', Number(actor.legacyTelegramId)).order('created_at', { ascending: false }).limit(6)
   if (error) throw new Error('flight_booking_conversation_read_failed')
@@ -270,7 +292,7 @@ async function loadPending(actor: AgentActor, text: string): Promise<{ runId: st
   const savedAt = Date.parse(String(state?.at || ''))
   if (!Number.isFinite(savedAt) || savedAt > at || Date.now() - savedAt > 30 * 60_000) return null
   if (!state?.runId || !Number.isInteger(state?.optionIndex) || norm(state.reply) !== norm(previous.content)) return null
-  return { runId: String(state.runId), optionIndex: Number(state.optionIndex), reuse: state.reuse === true }
+  return { runId: String(state.runId), optionIndex: Number(state.optionIndex), reuse: state.reuse === true, retry: state.retry === true }
 }
 
 /** A read problem here must never break an ordinary message: treat it as "not a booking turn". */
@@ -298,18 +320,35 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
       const saved = await loadSavedBookingProfile(actor, count)
       if (saved) return await createBookingApproval({ actor, surface, last, option, travellers: saved.travellers, contact: saved.contact, seat: saved.seat })
     }
-    const parsed = parseBookingDetails(text, count, { domestic })
-    if (parsed.travellers.length < count || parsed.problems.length || !parsed.contact || !parsed.seat) {
-      const reply = askText(count, parsed.problems, domestic)
-      await savePending(tg, { runId: pending.runId, optionIndex: pending.optionIndex }, reply)
+    // 27 Oct 15:57 (owner): a missing "Mr" made him resend everything. After a re-ask, the reply is combined with the
+    // details message he already sent (read from the chat history, nothing new is stored), and only the gap is asked for.
+    const complete = (p: ReturnType<typeof parseBookingDetails>) => p.travellers.length >= count && !p.problems.length && Boolean(p.contact) && Boolean(p.seat)
+    let parsed = parseBookingDetails(text, count, { domestic })
+    const prev = !complete(parsed) && pending.retry ? await previousUserMessage(actor, text).catch(() => null) : null
+    if (prev) {
+      const title = text.match(/^\s*(mr|mrs|ms|miss|master)\.?\s*$/i)
+      const merged = parseBookingDetails(title ? withTitle(prev, title[1]) : `${prev}\n${text}`, count, { domestic })
+      if (complete(merged) || merged.problems.length < parsed.problems.length) parsed = merged
+    }
+    if (!complete(parsed)) {
+      const onlyTitle = parsed.problems.length > 0 && parsed.problems.every(p => /Mr, Ms or Mrs/.test(p)) && parsed.contact && parsed.seat
+      const reply = onlyTitle
+        ? `Almost done. Is that Mr, Ms or Mrs? Reply with just the title, for example:\n\nMr`
+        : prev || pending.retry
+          ? `I still need: ${parsed.problems.slice(0, 4).join('; ')}. Send just ${parsed.problems.length === 1 ? 'that' : 'those'}; I've kept the rest.`
+          : askText(count, parsed.problems, domestic)
+      await savePending(tg, { runId: pending.runId, optionIndex: pending.optionIndex, retry: true }, reply)
       return waiting(reply)
     }
     return await createBookingApproval({ actor, surface, last, option, travellers: parsed.travellers, contact: parsed.contact, seat: parsed.seat })
   }
-  const pick = flightBookingRequest(text)
+  // "book from the 2026-11-19 results": the person explicitly picks the older completed search.
+  const older = text.match(/\s*\bfrom the (20\d{2}-\d{2}-\d{2}) results\b/i)
+  const pick = flightBookingRequest(older ? text.replace(older[0], '').trim() : text)
   if (!pick) return null
   const last = await loadLastFlightResult(actor)
-  const newer = await newerFlightSearchPending(actor, last?.startedAt || null).catch(() => null)
+  const newer = older && last?.context?.startDate === older[1] ? null : await newerFlightSearchPending(actor, last?.startedAt || null).catch(() => null)
+  if (newer?.failed) return waiting(`Your latest search${newer.route ? ` (${newer.route}` : ''}${newer.date ? `${newer.route ? ', ' : ' ('}${newer.date})` : newer.route ? ')' : ''} didn't get live fares, so there's nothing from it to book. Send the search again${last ? `, or say "book from the ${last.context.startDate} results"` : ''}.`)
   if (newer) return waiting(`I'm still searching${newer.route ? ` ${newer.route}` : ''}${newer.date ? ` for ${newer.date}` : ''}. I'll send the options here in a minute or two; then say "book 1" (or "book the cheapest") and I'll book from those results, not the earlier search.`)
   if (!last) return null
   const option = pickFlight(last.options, pick)
