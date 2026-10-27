@@ -119,5 +119,80 @@ const approval = { execution_payload: { plan_type: 'booking_event_calendar' }, p
 check('past booking-calendar approval is not shown as pending', as.pastEventCalendarApproval(approval, now.getTime()) === true)
 check('future approval still shown', as.pastEventCalendarApproval({ ...approval, payload_preview: [{ label: 'Ends', value: '2026-11-01T10:00:00Z' }] }, now.getTime()) === false)
 
+
+// ── P1 MEMORY SEARCH PROVIDER EGRESS: ORIGINAL SOURCE + INERT DEPENDENCIES ──
+// This exercises the actual exported WhatsApp memory-search handler, not a copy
+// of the guard. No real database, embedding API, provider or shared-memory call.
+{
+  const {runInNewContext} = await import('node:vm')
+  const tsTranspile = await import('typescript')
+  const realRedaction = await import('../lib/bot/memory-redaction')
+  const emitted: string[] = []
+  const sharedQueries: string[] = []
+  const semanticRpcs: string[] = []
+  const fakeDb = {
+    from: (_table: string) => {
+      const q: any = {}
+      const result = () => ({data: [], error: null})
+      q.select = () => q
+      q.eq = () => q
+      q.order = () => q
+      q.limit = () => q
+      q.maybeSingle = async () => result()
+      q.then = (resolve: any, reject: any) => Promise.resolve(result()).then(resolve, reject)
+      return q
+    },
+    rpc: async (name: string) => {
+      semanticRpcs.push(name)
+      return {data: [], error: null}
+    },
+  }
+  const memoryExports: any = {}
+  const fakeImports: Record<string, unknown> = {
+    '@/lib/supabase-admin': {supabaseAdmin: fakeDb},
+    '@/lib/services/embeddings': {embedText: async (value: string) => {emitted.push(value); return [0.1]}},
+    '@/lib/services/memory-index': {unindexMemory: async () => {}},
+    '@/lib/bot/handlers/shared-memory': {
+      getSharedMemories: async (_owner: number, value: string) => {
+        sharedQueries.push(value)
+        return [{content: 'Design workshop notes', topic: 'design', owner_telegram_id: 99}]
+      },
+    },
+    '@/lib/bot/memory-redaction': realRedaction,
+  }
+  runInNewContext(
+    tsTranspile.transpileModule(src('lib/bot/handlers/memory-control.ts'), {
+      compilerOptions: {module: tsTranspile.ModuleKind.CommonJS, target: tsTranspile.ScriptTarget.ES2022},
+    }).outputText,
+    {
+      exports: memoryExports,
+      require: (name: string) => {
+        if (!(name in fakeImports)) throw new Error('Unexpected test dependency: ' + name)
+        return fakeImports[name]
+      },
+      console, Date, Intl,
+    },
+  )
+  for (const phrase of [
+    'search memory for password is synthetic-only',
+    'search my memory for API key: synthetic-only',
+    'show notes about passport AB1234567',
+  ]) {
+    const before = {embed: emitted.length, shared: sharedQueries.length, rpc: semanticRpcs.length}
+    const reply = await memoryExports.buildMemoryControlReply(42, phrase)
+    check('secret-shaped WhatsApp memory query stays local: ' + phrase.split(' ').slice(0, 4).join(' '),
+      typeof reply === 'string' && emitted.length === before.embed && sharedQueries.length === before.shared
+        && semanticRpcs.length === before.rpc,
+      'synthetic embedding calls=' + (emitted.length - before.embed) + '; shared calls=' + (sharedQueries.length - before.shared))
+  }
+  const benign = await memoryExports.buildMemoryControlReply(42, 'search memory for design planning')
+  check('benign WhatsApp memory query keeps semantic and shared retrieval',
+    emitted.length === 1 && emitted[0] === 'design planning' &&
+      semanticRpcs.length === 1 && semanticRpcs[0] === 'match_memories' &&
+      sharedQueries.length === 1 && sharedQueries[0] === 'design planning' &&
+      typeof benign === 'string' && benign.includes('Design workshop notes'),
+    'embedding calls=' + emitted.length + '; shared calls=' + sharedQueries.length)
+}
+
 console.log(fails ? `\n${fails} check(s) failed` : '\nall checks passed')
 process.exit(fails ? 1 : 0)
