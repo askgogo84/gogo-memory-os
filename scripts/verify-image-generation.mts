@@ -30,6 +30,8 @@ assert.match(readFileSync('lib/agent/content-workflows.ts', 'utf8'), /Never answ
   const ts = tsImport.default ?? tsImport
   const { createRequire } = await import('node:module')
   const nodeRequire = createRequire(import.meta.url)
+  // Reuse the real deployed signed-64 owner decoder, not a permissive mock.
+  const { exactSessionOwnerId } = await import('../lib/dashboard/owner-identity.ts')
   const events: string[] = []
   const paths: string[] = []
   class FakeOpenAI {
@@ -61,6 +63,7 @@ assert.match(readFileSync('lib/agent/content-workflows.ts', 'utf8'), /Never answ
   const cjs: { exports: any } = { exports: {} }
   const inertRequire = (id: string) => {
     if (id === 'openai') return FakeOpenAI
+    if (id === '@/lib/dashboard/owner-identity') return { exactSessionOwnerId }
     if (id === '@/lib/supabase-admin') return { supabaseAdmin: { storage } }
     if (id === 'node:crypto') return nodeRequire(id)
     throw Error('Unexpected non-inert import: ' + id)
