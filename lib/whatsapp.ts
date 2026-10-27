@@ -133,6 +133,22 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
   return lastMessage
 }
 
+/**
+ * Waits (bounded) until WhatsApp has the message: sent, delivered or read. Used so an image card lands before the
+ * text that follows it; media is fetched by Twilio first, so an immediate text overtakes it. Returns the last status.
+ */
+export async function waitForWhatsAppSent(sid: string, maxMs = 8000, deps: { fetchStatus?: (sid: string) => Promise<string>; sleep?: (ms: number) => Promise<void> } = {}) {
+  const fetchStatus = deps.fetchStatus || (async (id: string) => String((await client.messages(id).fetch())?.status || ''))
+  const sleep = deps.sleep || ((ms: number) => new Promise<void>(r => setTimeout(r, ms)))
+  let status = ''
+  for (let waited = 0; waited <= maxMs; waited += 1000) {
+    try { status = await fetchStatus(sid) } catch { return status || 'unknown' }
+    if (['sent', 'delivered', 'read', 'failed', 'undelivered'].includes(status)) return status
+    await sleep(1000)
+  }
+  return status || 'pending'
+}
+
 // WhatsApp template variables reject line breaks, tabs and repeated whitespace.
 // Keep the canonical reminder unchanged; normalize only the outbound variable.
 function reminderTemplateLabel(label:string):string {
