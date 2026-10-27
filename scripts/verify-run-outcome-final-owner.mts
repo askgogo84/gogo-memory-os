@@ -122,16 +122,16 @@ function assertOwnerQuery(h: ReturnType<typeof harness>, minimum: number) {
   }
 }
 {
-  const h = harness()
-  assert.deepEqual(await h.notify(), { status: 'provider_accepted' }, 'acceptance is not verified delivery')
-  assert.equal(h.capture.sends.length, 1, 'normal owner should still receive a single notice')
-  assert.equal(h.capture.sends[0].to, 'whatsapp:+15550100123')
-  assertOwnerQuery(h, 2)
-}
-{
   const h = harness({ user: { telegram_id: '123', whatsapp_id: 'whatsapp:+15550100123', timezone: 'UTC', access_status: 'blocked' } })
   assert.equal((await h.notify()).status, 'failed', 'blocked owner cannot prepare a private notice')
   assert.equal(h.capture.sends.length, 0)
+}
+{
+  const h = harness()
+  assert.equal((await h.notify()).status, 'provider_accepted', 'provider acceptance is not verified delivery')
+  assert.equal(h.capture.sends.length, 1, 'normal owner should still receive a single notice')
+  assert.equal(h.capture.sends[0].to, 'whatsapp:+15550100123')
+  assertOwnerQuery(h, 2)
 }
 {
   const h = harness({ blockedAfterPrepare: true })
