@@ -36,7 +36,11 @@ export function formatBrainIntrospection(rows:any[],limit=250){
 }
 
 export async function sameBrainIntrospection(p:{actor:{legacyTelegramId:number};text:string}){
-  if(!Number.isFinite(p.actor.legacyTelegramId))throw new Error('brain_identity_required')
+  // AgentActor's legacy owner is a JS number. A finite 64-bit BIGINT can be
+  // rounded to another tenant's identity before the private activity read.
+  // Fail closed when the owner cannot be represented exactly; standard actor
+  // resolution already enforces the same boundary, but direct callers must too.
+  if(!Number.isSafeInteger(p.actor.legacyTelegramId)||p.actor.legacyTelegramId===0)throw new Error('brain_identity_required')
   const {data,error}=await supabaseAdmin.from('agent_activity').select('metadata_json,created_at,event_type')
     .eq('telegram_id',String(p.actor.legacyTelegramId)).in('event_type',['decision_learning','shadow_brain_observation'])
     .gte('created_at',new Date(Date.now()-168*3600000).toISOString())
