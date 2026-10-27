@@ -41,6 +41,7 @@ const context:any={
 vm.runInNewContext(code,context,{filename:'email-attention-owner-actual-source.js'})
 const mod:any=context.exports
 const badOwners=[9007199254740992, '9007199254740993', 0, -0, 12.25, Number.NaN, Number.POSITIVE_INFINITY, '00101', '1e2']
+async function main(){
 for(const owner of badOwners){
   const before={lookups,records,providerReads}
   await assert.rejects(
@@ -71,3 +72,5 @@ for(const good of [101,-101,'101']){
 }
 assert.equal(records,0,'no state mutations are needed in this fixture')
 console.log('Email Attention exact-owner: actual handlers/readers deny ambiguous signed64/invalid owners before private query; safe legacy owners retained (inert)')
+}
+main().catch(error=>{console.error(error);process.exitCode=1})
