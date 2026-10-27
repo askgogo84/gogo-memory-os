@@ -2739,7 +2739,10 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // second account. A booking logs in only the way the person approved (their mobile number):
       // never another login method, and never an email, name or password into a form.
       if(providerBooking){
-        const cut=bookingLoginSwitchIndex(actions,page)
+        // 27 Oct (owner): a flight booking fills the airline's passenger page with the title, name and email the person
+        // approved. Only fills of those exact approved values, on a page with no password field, pass; logins and sign-ups
+        // are still refused.
+        const cut=flightHandoff?flightPassengerFillIndex(actions,page,String(params.objective||'')):bookingLoginSwitchIndex(actions,page)
         if(cut>=0){
           console.log('BROWSER_BOOKING_LOGIN_SWITCH_REFUSED:',JSON.stringify({runId:params.sessionTaskId||null,dropped:actions.length-cut}))
           actions.splice(cut)
@@ -3046,6 +3049,24 @@ export function otpChannelOf(text:string):'sms'|'email'{
 }
 
 /** Index of the first action that would log in some other way than the approved mobile number. */
+/** Flight hand-off variant of the login-switch guard: approved passenger values may be typed; logins never. */
+export function flightPassengerFillIndex(actions:BrowserAction[],page:any,objective:string):number{
+  const controls:any[]=page?.controls||[]
+  const passwordOnPage=controls.some((c:any)=>String(c?.type||'').toLowerCase()==='password')
+  const approved=(value:string)=>{const v=String(value||'').trim().toLowerCase();return v.length>=2&&objective.toLowerCase().includes(v)}
+  const LOGIN=/\b(?:google|apple|facebook|microsoft|continue with|sign\s*(?:in|up) with|use password|password|sign\s*up|register|create (?:an |your )?account|log\s*in|login|sign\s*in)\b/i
+  return actions.findIndex((a:any)=>{
+    if(a.kind==='fill'){
+      const c=controls.find((x:any)=>x?.selector===a.selector)
+      const sensitive=c?.type==='email'||c?.type==='password'||/\b(?:e-?mail|password|full\s*name|first\s*name|last\s*name|user\s*name|name)\b/i.test([c?.type,c?.field,c?.label,c?.hint,a.selector].map(x=>String(x||'')).join(' '))
+      if(!sensitive)return false
+      return passwordOnPage||c?.type==='password'||!approved(String(a.value||''))
+    }
+    const label=a.kind==='click_text'?String(a.text||''):a.kind==='click'?String(controls.find((x:any)=>x?.selector===a.selector)?.label||''):''
+    return Boolean(label)&&LOGIN.test(label)
+  })
+}
+
 export function bookingLoginSwitchIndex(actions:BrowserAction[],page:any):number{
   const controls:any[]=page?.controls||[]
   const of=(sel:string)=>controls.find((c:any)=>c?.selector===sel)

@@ -72,7 +72,53 @@ export function pickFlight(options: BrowserFlightOption[], pick: FlightPick): Br
   return options[pick.n - 1] || null
 }
 
-export type Traveller = { name: string; dob?: string }
+export type Traveller = { name: string; dob?: string; title?: string; gender?: 'Male' | 'Female' }
+export type BookingContact = { email: string; mobile: string }
+export type SeatChoice = 'free' | 'window' | 'aisle' | 'paid'
+
+const TITLE = /^(mr|mrs|ms|miss|mstr|master)\.?\s+/i
+const titleOf = (raw: string) => { const t = raw.toLowerCase(); return t === 'mr' ? 'Mr' : t === 'mrs' ? 'Mrs' : t === 'ms' ? 'Ms' : t === 'miss' ? 'Miss' : 'Master' }
+const genderOf = (title: string): 'Male' | 'Female' => /^(mr|master)$/i.test(title) ? 'Male' : 'Female'
+
+/**
+ * 27 Oct (owner): "let it ask all the details and it should be able to book, even ask for paid seat or auto selection".
+ * One reply carries everything the airline's passenger page needs: a line per traveller with title + name (and date of
+ * birth abroad), the ticket email, the ticket mobile, and the seat choice. Nothing is guessed; a missing part is asked for.
+ */
+export function parseBookingDetails(text: string, count: number, options: { domestic?: boolean; now?: Date } = {}) {
+  const problems: string[] = []
+  let email = '', mobile = '', seat: SeatChoice | null = null
+  const people: string[] = []
+  for (const raw of String(text || '').split(/[\n;]+/).map(l => l.trim()).filter(Boolean)) {
+    const line = raw.replace(/^\s*(?:email|e-mail|mobile|phone|seat|traveller|traveler|passenger|name)\s*\d*\s*[:\-]\s*/i, '')
+    const em = line.match(/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/)
+    if (em) { email = em[0].toLowerCase(); continue }
+    const digits = line.replace(/[\s()-]/g, '')
+    if (/^(?:\+?91|0)?[6-9]\d{9}$/.test(digits)) { mobile = digits.slice(-10); continue }
+    if (/\b(?:seat|auto|free|window|aisle)\b/i.test(line) && !TITLE.test(line)) {
+      seat = /\bwindow\b/i.test(line) ? 'window' : /\baisle\b/i.test(line) ? 'aisle' : /\bpaid\b/i.test(line) ? 'paid' : /\b(?:free|auto|any|no)\b/i.test(line) ? 'free' : null
+      if (!seat) problems.push(`“${line.slice(0, 30)}”: say free seat, paid window seat or paid aisle seat`)
+      continue
+    }
+    people.push(line)
+  }
+  const travellers: Traveller[] = []
+  for (const line of people) {
+    const t = line.match(TITLE)
+    if (!t) { problems.push(`add Mr, Ms or Mrs before “${line.slice(0, 30)}”`); continue }
+    const parsed = parseTravellers(line.replace(TITLE, ''), options.now || new Date(), { domestic: options.domestic })
+    problems.push(...parsed.problems)
+    for (const tr of parsed.travellers) { const title = titleOf(t[1]); travellers.push({ ...tr, title, gender: genderOf(title) }) }
+  }
+  if (travellers.length < count && !problems.length) problems.push(`I need ${count} traveller${count === 1 ? '' : 's'}, I got ${travellers.length}`)
+  if (!email) problems.push('the email for the ticket')
+  if (!mobile) problems.push('a 10-digit mobile for the ticket')
+  if (!seat) problems.push('the seat choice')
+  return { travellers: travellers.slice(0, count), contact: email && mobile ? { email, mobile } as BookingContact : null, seat, problems }
+}
+
+export const seatLabel = (seat: SeatChoice) => seat === 'free' ? 'Free seat (airline assigns it)' : seat === 'paid' ? 'Paid seat (cheapest available)' : `Paid ${seat} seat (cheapest available)`
+const maskMobile = (m: string) => `••••••${m.slice(-4)}`
 
 // 26 Oct (owner): domestic Indian flights need the name as on any government photo ID (Aadhaar, PAN, driving licence,
 // passport); a passport and date of birth are only needed for international trips.
@@ -131,23 +177,32 @@ const isRound = (context: any) => Boolean(context?.roundTrip && context?.returnD
 const datesLabel = (context: any) => isRound(context) ? `${context.startDate} → ${context.returnDate}` : `${context.startDate} (one-way)`
 const fareKind = (context: any) => isRound(context) ? 'round trip' : 'one-way'
 
-export function flightBookingObjective(params: { context: any; option: BrowserFlightOption; travellers: Traveller[] }) {
-  const { context, option, travellers } = params
+export function flightBookingObjective(params: { context: any; option: BrowserFlightOption; travellers: Traveller[]; contact?: BookingContact | null; seat?: SeatChoice | null }) {
+  const { context, option, travellers, contact, seat } = params
   const fare = option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')}` : 'the listed fare'
-  const who = travellers.map((t, i) => `traveller ${i + 1}: full name ${t.name}${t.dob ? `, date of birth ${t.dob}` : ''}`).join('; ')
+  const who = travellers.map((t, i) => `traveller ${i + 1}: ${t.title ? `title ${t.title}, gender ${t.gender}, ` : ''}full name ${t.name}${t.dob ? `, date of birth ${t.dob}` : ''}`).join('; ')
+  const seatRule = seat === 'free' ? 'On seat selection, skip it or keep the free seat the airline assigns; never choose a paid seat. ' : seat ? `On seat selection, choose the cheapest available ${seat === 'paid' ? '' : `${seat} `}seat for each traveller; its price is added to the fare. ` : ''
   const round = isRound(context)
   return safe(`Flight booking up to payment on Google Flights: ${round ? 'round trip' : 'one-way'} ${context.origin?.code} to ${context.destination?.code}, depart ${context.startDate}${round ? `, return ${context.returnDate}` : ''}, ${travellers.length} adult${travellers.length === 1 ? '' : 's'}, ${String(context.cabin || 'economy').replace(/_/g, ' ')}. `
     + `Choose the ${option.airline} result that leaves ${option.departure} on ${context.startDate} (about ${fare} ${round ? 'round trip' : 'one-way'})${round ? `, then the cheapest return on ${context.returnDate}` : ''}, and continue (Select flight, Continue, Book) to the airline or booking site. `
     + `On the booking options, pick "Continue to book with ${option.airline}" (the airline itself) when it is listed; otherwise MakeMyTrip, Cleartrip, Goibibo, ixigo, EaseMyTrip or Yatra. Never pick any other agency. `
-    + `If the site asks for passenger details, use exactly: ${who}. Do not guess any other field; leave it for the person. `
-    + `If the price on the booking page is more than 10% above ${fare}, or it is a different flight, stop and report. `
+    + `If the site asks for passenger details, use exactly: ${who}. `
+    + (contact ? `For contact details use email ${contact.email}, and fill the mobile number field with fill_phone (Gogo types the approved number). ` : '')
+    + `Do not guess any other field; leave it for the person. Continue as a guest; never log in or create an account. `
+    + seatRule + `Decline every other paid add-on (insurance, meals, extra baggage, priority, fare upgrades). `
+    + `If the fare on the booking page (not counting a seat you chose) is more than 10% above ${fare}, or it is a different flight, stop and report. `
     + `Stop on the payment step: never pay, never enter card, UPI or bank details, never press Pay.`, 1800)
 }
 
 const askText = (count: number, problems: string[] = [], domestic = false) =>
-  `${problems.length ? `I could not use that: ${problems.slice(0, 2).join('; ')}.\n\n` : ''}` + (domestic
-    ? `Send ${count === 1 ? 'the traveller’s' : `each of the ${count} travellers’`} full name exactly as on a government photo ID (Aadhaar, PAN, driving licence or passport), ${count === 1 ? 'for example' : 'one per line, for example'}:\n\nAsha Rao\n\nThis is a domestic flight, so no passport or date of birth is needed. Carry the same ID to the airport.`
-    : `Send ${count === 1 ? 'the traveller’s' : `each of the ${count} travellers’`} full name exactly as on the passport and date of birth, ${count === 1 ? 'for example' : 'one per line, for example'}:\n\nAsha Rao, 12 Mar 1985\n\nThis is an international flight, so the name must match the passport.`)
+  `${problems.length ? `I still need: ${problems.slice(0, 4).join('; ')}. Please send everything again in one message.\n\n` : ''}`
+  + `Send these in one message, one per line:\n`
+  + (domestic
+    ? `${count === 1 ? 'Title and full name' : `Title and full name of each of the ${count} travellers, one per line`}, as on a government photo ID (Aadhaar, PAN, driving licence or passport)\n`
+    : `${count === 1 ? 'Title, full name and date of birth' : `Title, full name and date of birth of each of the ${count} travellers, one per line`}, exactly as on the passport\n`)
+  + `Email for the ticket\nMobile for the ticket\nSeat: free seat, paid window seat or paid aisle seat\n\nFor example:\n\n`
+  + (domestic ? `Ms Divya Rao` : `Ms Divya Rao, 12 Mar 1990`) + `\ndivya.rao@gmail.com\n9876543210\nfree seat\n\n`
+  + (domestic ? 'This is a domestic flight, so no passport or date of birth is needed. Carry the same ID to the airport.' : 'This is an international flight, so the name must match the passport.')
 
 type Waiting = { runId: undefined; status: 'waiting_user'; capability: 'travel'; risk: 'low'; handledBy: 'flight-booking'; text: string }
 const waiting = (text: string): Waiting => ({ runId: undefined, status: 'waiting_user', capability: 'travel', risk: 'low', handledBy: 'flight-booking', text })
@@ -200,13 +255,13 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
     if (!option) return null
     const count = Math.max(1, Number(last.context.adults) || 1)
     const domestic = isDomesticIndiaTrip(last.context)
-    const parsed = parseTravellers(text, new Date(), { domestic })
-    if (parsed.travellers.length < count || parsed.problems.length) {
-      const reply = askText(count, parsed.problems.length ? parsed.problems : [`I need ${count} traveller${count === 1 ? '' : 's'}, I got ${parsed.travellers.length}`], domestic)
+    const parsed = parseBookingDetails(text, count, { domestic })
+    if (parsed.travellers.length < count || parsed.problems.length || !parsed.contact || !parsed.seat) {
+      const reply = askText(count, parsed.problems, domestic)
       await savePending(tg, { runId: pending.runId, optionIndex: pending.optionIndex }, reply)
       return waiting(reply)
     }
-    return await createBookingApproval({ actor, surface, last, option, travellers: parsed.travellers.slice(0, count) })
+    return await createBookingApproval({ actor, surface, last, option, travellers: parsed.travellers, contact: parsed.contact, seat: parsed.seat })
   }
   const pick = flightBookingRequest(text)
   if (!pick) return null
@@ -222,16 +277,16 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
   return waiting(reply)
 }
 
-async function createBookingApproval(p: { actor: AgentActor; surface: AgentSurface; last: LastFlightResult; option: BrowserFlightOption; travellers: Traveller[] }) {
-  const { actor, surface, last, option, travellers } = p
+async function createBookingApproval(p: { actor: AgentActor; surface: AgentSurface; last: LastFlightResult; option: BrowserFlightOption; travellers: Traveller[]; contact: BookingContact; seat: SeatChoice }) {
+  const { actor, surface, last, option, travellers, contact, seat } = p
   const tg = String(actor.legacyTelegramId)
   const url = last.searchLink
-  const objective = flightBookingObjective({ context: last.context, option, travellers })
+  const objective = flightBookingObjective({ context: last.context, option, travellers, contact, seat })
   const command = { url, objective, mode: 'execute' as const, risk: 'high' as const, approvalAction: 'booking' as const, flow: 'provider_booking' as const }
   const purgeAt = new Date(Date.now() + 24 * 3600_000).toISOString()
   const metadata = { plan_type: 'secure_browser', url, objective, mode: 'execute', risk: 'high', approval_action: 'booking', flow: 'provider_booking',
     flight_booking: { search_run_id: last.runId, route: `${last.context.origin?.code}-${last.context.destination?.code}`, depart: last.context.startDate, return: last.context.returnDate || null,
-      airline: option.airline, fare_inr: option.fareInr, travellers: travellers.length, pii_purge_at: purgeAt } }
+      airline: option.airline, fare_inr: option.fareInr, travellers: travellers.length, seat, contact_mobile: contact.mobile, pii_purge_at: purgeAt } }
   const booking = await createApprovalBrowserRun({ actor, surface, command, metadata })
   const { data: approval, error } = await supabaseAdmin.from('agent_approvals').insert({
     telegram_id: tg, run_id: booking.runId, action_type: 'booking',
@@ -240,7 +295,9 @@ async function createBookingApproval(p: { actor: AgentActor; surface: AgentSurfa
     payload_preview: [
       { label: 'Flight', value: safe(describeFlight(option), 220) },
       { label: 'Dates', value: datesLabel(last.context) },
-      { label: 'Travellers', value: safe(travellers.map(t => t.name).join(', '), 220) },
+      { label: 'Travellers', value: safe(travellers.map(t => `${t.title || ''} ${t.name}`.trim()).join(', '), 220) },
+      { label: 'Ticket contact', value: `${contact.email} · ${maskMobile(contact.mobile)}` },
+      { label: 'Seat', value: seatLabel(seat) },
       { label: 'Quoted fare', value: option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')} ${fareKind(last.context)}` : 'as listed' },
       { label: 'Risk', value: 'high' },
     ],
@@ -255,7 +312,7 @@ async function createBookingApproval(p: { actor: AgentActor; surface: AgentSurfa
   const fare = option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')}` : 'the listed fare'
   return {
     runId: booking.runId, status: 'waiting_approval' as const, capability: 'browser' as const, risk: 'high' as const,
-    text: `Ready to book:\n${describeFlight(option)}\n${datesLabel(last.context)} · ${fare} ${fareKind(last.context)}\nTravellers: ${travellers.map(t => t.name).join(', ')}\n\nAfter you approve, I fill the booking on the airline or booking site and stop at payment. I never enter card or UPI details and never press Pay; I send you a link to pay yourself. Your details are deleted after 24 hours.\n\nReply *APPROVE* to continue or *REJECT* to stop.`,
+    text: `Ready to book:\n${describeFlight(option)}\n${datesLabel(last.context)} · ${fare} ${fareKind(last.context)}\nTravellers: ${travellers.map(t => `${t.title || ''} ${t.name}`.trim()).join(', ')}\nTicket contact: ${contact.email} · ${maskMobile(contact.mobile)}\nSeat: ${seatLabel(seat)}${seat !== 'free' ? ' (its price is added to what you pay)' : ''}\n\nAfter you approve, I fill the booking on the airline or booking site and stop at payment. I never enter card or UPI details and never press Pay; I send you a link to pay yourself. Your details are deleted after 24 hours.\n\nReply *APPROVE* to continue or *REJECT* to stop.`,
     approvalId: String(approval.id), approvalRequired: true, handledBy: 'flight-booking' as const,
   }
 }
@@ -271,7 +328,7 @@ export async function purgeFlightBookingPii(options: { runId?: string } = {}) {
   for (const run of data || []) {
     const meta: any = run.metadata_json || {}
     if (meta.flight_booking?.pii_purged) continue
-    const next = { ...meta, objective: '[traveller details removed]', flight_booking: { ...meta.flight_booking, pii_purged: true } }
+    const next = { ...meta, objective: '[traveller details removed]', flight_booking: { ...meta.flight_booking, contact_mobile: null, pii_purged: true } }
     const { error: ue } = await supabaseAdmin.from('agent_runs').update({ metadata_json: next }).eq('id', run.id)
     if (!ue) purged++
   }
