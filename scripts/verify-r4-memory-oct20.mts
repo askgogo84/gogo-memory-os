@@ -185,6 +185,11 @@ check('future approval still shown', as.pastEventCalendarApproval({ ...approval,
         && semanticRpcs.length === before.rpc,
       'synthetic embedding calls=' + (emitted.length - before.embed) + '; shared calls=' + (sharedQueries.length - before.shared))
   }
+  // Independent positive control: exclude preceding expected RED calls from the
+  // immutable original-source regression before asserting benign semantic behavior.
+  emitted.length = 0
+  sharedQueries.length = 0
+  semanticRpcs.length = 0
   const benign = await memoryExports.buildMemoryControlReply(42, 'search memory for design planning')
   check('benign WhatsApp memory query keeps semantic and shared retrieval',
     emitted.length === 1 && emitted[0] === 'design planning' &&
