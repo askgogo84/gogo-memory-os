@@ -22,7 +22,7 @@ function likelyTicketDocument(doc:any,expectedTitle:string){const hay=`${doc?.ti
 // AgentActor still requires a numeric legacyTelegramId, so reject unsafe IDs.
 function exactScreenshotOwner(value:unknown):number|null{
   if(typeof value==='number')return Number.isSafeInteger(value)&&value!==0?value:null
-  if(typeof value!=='string'||! /^-?[1-9]\\d*$/.test(value))return null
+  if(typeof value!=='string'||! /^-?[1-9]\d*$/.test(value))return null
   const numberValue=Number(value)
   return Number.isSafeInteger(numberValue)&&String(numberValue)===value?numberValue:null
 }
