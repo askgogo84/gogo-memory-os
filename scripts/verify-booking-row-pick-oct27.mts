@@ -59,3 +59,12 @@ console.log('BOOKING_ROW_PICK_OK')
   assert.ok(src.includes("console.warn('BROWSER_FAILED_WHY:'"), 'failure reasons are logged (hostnames + error codes)')
   console.log('AIRLINE_NO_FLIGHTS_OK')
 }
+{
+  // 27 Oct 13:13: after the airline fallback, Gogo presses the next Indian agency itself (planner re-picked IndiGo).
+  const { googleAgencyContinueControl } = await import('../lib/agent/secure-computer.ts')
+  const opts = [{ selector: '#6e', label: 'Continue to book with IndiGo airline for 3892 Indian rupees' }, { selector: '#gi', label: 'Continue to book with Goibibo for 3900 Indian rupees' }, { selector: '#ct', label: 'Continue to book with Cleartrip for 3910 Indian rupees' }, { selector: '#bk', label: 'Continue to book with Booking.com for 4600 Indian rupees' }]
+  assert.deepEqual(googleAgencyContinueControl(opts), { selector: '#ct', name: 'cleartrip' }, 'preference order: MakeMyTrip, Cleartrip, Goibibo…')
+  assert.deepEqual(googleAgencyContinueControl(opts, ['cleartrip']), { selector: '#gi', name: 'goibibo' })
+  assert.equal(googleAgencyContinueControl(opts, ['cleartrip', 'goibibo']), null, 'never the airline again or an unlisted agency')
+  console.log('AGENCY_FALLBACK_OK')
+}
