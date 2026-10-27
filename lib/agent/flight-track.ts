@@ -421,5 +421,30 @@ export async function pronounFlightReply(telegramId: string | number, text: stri
   // Several flights: the active ones are what "it" most likely means; say which is which.
   const active = rows.filter((w: any) => w.active)
   const shown = active.length > 1 ? active : [rows[0]]
-  return shown.map((w: any) => describeTrackedFlight(w, now.getTime(), tz)).join('\n')
+  // 27 Oct live: a just-created watch had no check yet, so "Did it land?" said "checks start 3 h before take-off"
+  // right after Gogo showed QF1 in the air. An active watch answers from a fresh live lookup, as a direct answer.
+  const answers = await Promise.all(shown.map(async (w: any) => {
+    const code = String(w.condition_json?.adHocFlight?.flightNo || '')
+    const live = w.active && code ? await lookupLiveFlight(code, now, tz, fetchAeroDataBox, { telegramId: String(telegramId) }).catch(() => null) : null
+    return live ? conversationalFlightAnswer(live, tz) : describeTrackedFlight(w, now.getTime(), tz)
+  }))
+  return answers.join('\n\n')
+}
+
+/** "Did it land?" answered first with yes / not yet, then the times, from the live feed only. */
+export function conversationalFlightAnswer(f: LiveFlight, tz = 'Asia/Kolkata'): string {
+  const st = f.status
+  const local = (iso?: string | null, zone = tz) => { const ms = Date.parse(String(iso || '')); return Number.isFinite(ms) ? new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: zone }).format(new Date(ms)) : '' }
+  const clock = (l?: string) => clockOf({ local: l }) || ''
+  const arrivalWords = () => {
+    const at = clock(f.arrRevisedLocal) || clock(f.arrLocal)
+    const ist = local(st.revisedArrival || f.arrUtc)
+    return at ? `${at} ${f.to.name || f.to.iata} time${ist && tz === 'Asia/Kolkata' && f.to.iata !== 'BLR' ? ` (${ist} IST)` : ''}` : ''
+  }
+  const head = st.state === 'landed' ? `Yes, ${f.flightNo} has landed in ${f.to.name || f.to.iata}${arrivalWords() ? `, at ${arrivalWords()}` : ''}.`
+    : st.state === 'departed' ? `Not yet. ${f.flightNo} is in the air${st.delayMinutes ? `, about ${st.delayMinutes} min late` : ''}${arrivalWords() ? `, landing around ${arrivalWords()}` : ''}. I'll message you the moment it lands.`
+    : st.state === 'cancelled' ? `${f.flightNo} was cancelled.`
+    : st.state === 'diverted' ? `${f.flightNo} was diverted.`
+    : `Not yet. ${f.flightNo} hasn't taken off${st.delayMinutes ? ` (about ${st.delayMinutes} min late)` : ''}. I'll message you on take-off and landing.`
+  return `${head}\n\n${formatLiveFlight(f)}`
 }
