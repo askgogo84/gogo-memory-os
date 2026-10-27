@@ -103,7 +103,7 @@ async function storeCredential(params:{telegramId:number;bytes:Buffer;mimeType:s
 // intentionally fail closed until that contract has an exact-string migration.
 function exactBookingOwnerId(value: unknown): string | null {
   if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
-  if (typeof value !== 'string' || !/^-?[1-9]\\d*$/.test(value)) return null
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
   const asNumber = Number(value)
   return Number.isSafeInteger(asNumber) && String(asNumber) === value ? value : null
 }
