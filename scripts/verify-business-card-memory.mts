@@ -60,3 +60,82 @@ assert.equal(N.isContactQuestion('Pradip Kumar card saved show me'), true)
 assert.equal(N.isContactQuestion('remind me to call mom'), false)
 
 console.log('Business card memory: visiting cards save themselves with contact details, and "Pradip Kumar card" / "Pradip\'s number" find it — including older saves where the name is only in the text read from the card')
+
+
+//
+// Security regression (28 Oct): saved-asset retrieval must NOT export a user
+// search containing synthetic secrets to the embedding provider after an
+// owner-scoped metadata miss. Exercise the ACTUAL transpiled production function
+// with inert fake DB/provider functions. No credentials, network or storage.
+//
+{
+  const { readFileSync } = await import('node:fs')
+  const { runInNewContext } = await import('node:vm')
+  const ts = (await import('typescript')).default
+  const { isSecretShapedMemory } = await import('../lib/bot/memory-redaction')
+  const outboundEmbeddingInputs: string[] = []
+  const semanticRpcCalls: string[] = []
+  const source = readFileSync(new URL('../lib/services/asset-memory.ts', import.meta.url), 'utf8')
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText
+  const assetModule: Record<string, any> = {}
+  const fakeDocuments = {
+    select() { return this },
+    eq() { return this },
+    order() { return this },
+    limit() { return Promise.resolve({ data: [], error: null }) },
+  }
+  const fakeDb = {
+    from(table: string) {
+      assert.equal(table, 'documents', 'metadata-only private lookup must be the first operation')
+      return fakeDocuments
+    },
+    rpc(name: string) {
+      semanticRpcCalls.push(name)
+      assert.equal(name, 'match_documents', 'semantic lookup may only use owner-scoped document RPC')
+      return Promise.resolve({ data: [], error: null })
+    },
+  }
+  runInNewContext(compiled, {
+    exports: assetModule,
+    console, Buffer, URL, AbortController,
+    process: { env: { ANTHROPIC_API_KEY: 'synthetic-unusable-fixture' } },
+    require(name: string) {
+      if (name === '@anthropic-ai/sdk') return { default: class FakeAnthropic {
+        messages = { create: async () => { throw new Error('real model/provider calls are forbidden') } }
+      } }
+      if (name === '@/lib/supabase-admin') return { supabaseAdmin: fakeDb }
+      if (name === '@/lib/services/embeddings') return {
+        embedText: async (input: string) => {
+          outboundEmbeddingInputs.push(input)
+          return Array.from({ length: 1536 }, () => 0)
+        },
+      }
+      if (name === '@/lib/bot/memory-redaction') return { isSecretShapedMemory }
+      if (name.startsWith('@/lib/')) return {} // Unused imports are inert; unexpected usage fails the positive control.
+      throw new Error('Unexpected module during inert asset privacy fixture: ' + name)
+    },
+  })
+
+  const syntheticSecretQueries = [
+    'find my document password is synthetic-only-not-real',
+    'where is my passport number 123456789',
+    'look for account number 876543210987',
+  ]
+  for (const query of syntheticSecretQueries) {
+    assert.equal(isSecretShapedMemory(query), true, 'labelled synthetic query should exercise privacy boundary')
+    const before = outboundEmbeddingInputs.length
+    assert.equal(await assetModule.buildAssetRetrievalReply(42, query), null)
+    assert.equal(outboundEmbeddingInputs.length, before,
+      'asset retrieval must never export a synthetic secret-shaped query to embeddings: ' + query)
+  }
+  assert.equal(semanticRpcCalls.length, 0, 'withheld queries should not invoke semantic DB RPC')
+  const benign = 'find the archived workshop slides'
+  assert.equal(isSecretShapedMemory(benign), false)
+  assert.equal(await assetModule.buildAssetRetrievalReply(42, benign), null)
+  assert.deepEqual(outboundEmbeddingInputs, [benign],
+    'ordinary owner-scoped saved-asset semantic retrieval remains enabled')
+  assert.deepEqual(semanticRpcCalls, ['match_documents'])
+  console.log('PASS: actual saved-asset retrieval withholds synthetic secret-shaped search at embedding egress; benign semantic lookup retained')
+}
