@@ -358,6 +358,13 @@ export function comparisonReadEvidenceMatches(objective:string,evidence:string):
 // 26 Oct live: Swiggy's Meghana Foods menu showed "Chicken Boneless Biryani. This item is a Bestseller, Costs: 375 rupees",
 // but the model would not quote it (it had been told to report a ₹ price). A food comparison read takes the menu line
 // for the asked dish directly: exact page text, the dish's every word, one price.
+/** A page that is visibly still loading: a "Loading…" placeholder or a redirect page with no form yet. */
+export function pageStillLoading(page:{url?:unknown;text?:unknown;controls?:any[]}){
+  const text=String(page?.text||'').replace(/\s+/g,' ')
+  let path='';try{path=new URL(String(page?.url||'')).pathname}catch{}
+  const inputs=(page?.controls||[]).filter((c:any)=>['input','select','textarea'].includes(String(c?.tag||''))).length
+  return inputs===0&&(/\bLoading(?:\.\.\.|…)/i.test(text)||/redirect/i.test(path))
+}
 /** The results-list row link for the approved flight ("Choose the SpiceJet result that leaves 6:10 AM on 2026-11-09"). */
 export function googleFlightRowControl(controls:{selector?:string;label?:string}[],objective:string):string|null{
   const m=String(objective||'').match(/Choose the (.+?) result that leaves (\d{1,2}:\d{2}\s*[AP]M) on (\d{4}-\d{2}-\d{2})/i)
@@ -2288,7 +2295,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     // "Access Denied" to the cloud browser. That site will not load for this run, so go back to the Google
     // booking options once per blocked site and pick another listed site (never a retry of the same one).
     let googleBookingUrl='';const edgeBlockedHosts:string[]=[]
-    let flightRowPicks=0
+    let flightRowPicks=0,handoffLoadingWaits=0
     const avoidNote=()=>edgeBlockedHosts.length?` ${edgeBlockedHosts.join(' and ')} refused this browser (Access Denied), so on the booking options pick a different listed site (MakeMyTrip, Cleartrip, Goibibo, ixigo, EaseMyTrip or Yatra), never ${edgeBlockedHosts.join(' or ')}.`:''
     const readSnapshot=(p:any)=>JSON.stringify([p.url,p.text,p.controls,p.forms])
 
@@ -2747,6 +2754,12 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
           bookingMismatch=mismatch
           if(!actions.length){bookingIdleWaves++;if(bookingIdleWaves>=2)break;continue}
         }else bookingMismatch=[]
+      }
+      // 27 Oct live booking a58a0e36: IndiGo's flight-select-redirection page said "Loading..." and the run gave up after
+      // two idle looks (about 15 s). A page that is still loading after a hand-off gets a few short waits first.
+      if(!actions.length&&providerBooking&&!onGoogle&&handoffLoadingWaits<4&&pageStillLoading(page)){
+        handoffLoadingWaits++;actions.push({kind:'wait',ms:3000} as any)
+        console.log('BROWSER_BOOKING_LOADING_WAIT:',JSON.stringify({runId:params.sessionTaskId||null,wave,try:handoffLoadingWaits}))
       }
       // Reading found nothing to do: one more look, at the screenshot, before giving up.
       if(!actions.length&&providerBooking&&visionEnabled&&lastShot&&visionSteps<5&&bookingIdleWaves<2){bookingIdleWaves++;continue}

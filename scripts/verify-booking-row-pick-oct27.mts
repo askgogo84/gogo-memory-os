@@ -19,3 +19,16 @@ console.log('BOOKING_ROW_PICK_OK')
   assert.ok(src.includes('!onGoogle&&!flightHandoff&&loggedOutCue(page)'), 'a flight hand-off never presses Login on the airline site')
   console.log('FLIGHT_GUEST_OK')
 }
+{
+  // 27 Oct 10:08: IndiGo's redirect page said "Loading..." and the run gave up; it now waits a few times.
+  const { pageStillLoading } = await import('../lib/agent/secure-computer.ts')
+  assert.equal(pageStillLoading({ url: 'https://www.goindigo.in/flight-select-redirection.html', text: 'Book Trips Login Loading... COMPANY About us', controls: [] }), true)
+  assert.equal(pageStillLoading({ url: 'https://www.goindigo.in/book/passenger-edit.html', text: 'Passenger details', controls: [{ tag: 'input' }] }), false)
+  const src = (await import('node:fs')).readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
+  assert.ok(src.includes('handoffLoadingWaits<4&&pageStillLoading(page)'), 'bounded to four waits')
+  const { browserPageAllowlist } = await import('../lib/agent/browser-page-network.ts')
+  const flights = browserPageAllowlist('https://www.google.com/travel/flights?q=x')
+  assert.ok('cdn-app6.securiti.ai' in flights && 'app.securiti.ai' in flights && !('*.securiti.ai' in flights))
+  assert.ok(!('cdn-app6.securiti.ai' in browserPageAllowlist('https://www.croma.com/p/1')), 'other sites unchanged')
+  console.log('HANDOFF_LOADING_OK')
+}
