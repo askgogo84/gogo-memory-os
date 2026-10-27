@@ -3,7 +3,7 @@ import {purgeFlightBookingPii} from './flight-booking'
 import {resolveAgentActor} from './actor'
 import {runQueuedTravelResearch} from './travel-research-queue'
 import {deliverNotification} from '@/lib/services/notification-delivery'
-import {sendWhatsApp} from '@/lib/whatsapp'
+import {sendWhatsApp,waitForWhatsAppSent} from '@/lib/whatsapp'
 
 /**
  * Result cards, Phase 1 (docs/result-cards): the signed image link and caption for a completed flight run, or null.
@@ -107,7 +107,11 @@ export async function processTravelResearchQueue(deadline: number) {
             if(!run.metadata_json?.result_card_sent){
               try{
                 const card=await flightResultCard(run as any)
-                if(card&&(await sendWhatsApp(actor.whatsappId,card.caption,card.url))?.sid){
+                const cardMessage=card?await sendWhatsApp(actor.whatsappId,card.caption,card.url):null
+                if(card&&cardMessage?.sid){
+                  // 27 Oct live: the text arrived before the card (Twilio fetches the image first). Wait, bounded, for the card.
+                  const cardStatus=await waitForWhatsAppSent(String(cardMessage.sid)).catch(()=>'unknown')
+                  console.log('TRAVEL_RESULT_CARD_STATUS:',JSON.stringify({runId:run.id,status:cardStatus}))
                   run.metadata_json={...run.metadata_json,result_card_sent:true}
                   await supabaseAdmin.from('agent_runs').update({metadata_json:run.metadata_json}).eq('id',run.id).eq('telegram_id',String(run.telegram_id))
                   console.log('TRAVEL_RESULT_CARD_SENT:',JSON.stringify({runId:run.id}))

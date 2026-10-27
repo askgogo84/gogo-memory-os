@@ -44,3 +44,14 @@ const route = readFileSync('app/api/cards/flights/[runId]/route.ts', 'utf8')
 assert.ok(route.includes("verifyCardToken(`flights.${runId}`, owner"), 'route checks the signed link')
 assert.ok(route.includes(".eq('telegram_id', owner)"), 'route reads only the owner\'s run')
 console.log('FLIGHT_RESULT_CARD_OK')
+{
+  // 27 Oct live: the text overtook the card; the worker now waits (bounded) for the card to be sent.
+  const { waitForWhatsAppSent } = await import('../lib/whatsapp.ts')
+  const seq = ['queued', 'queued', 'sent']; let calls = 0
+  assert.equal(await waitForWhatsAppSent('SM1', 8000, { fetchStatus: async () => seq[Math.min(calls++, 2)], sleep: async () => {} }), 'sent')
+  assert.equal(await waitForWhatsAppSent('SM2', 3000, { fetchStatus: async () => 'queued', sleep: async () => {} }), 'queued', 'gives up after the limit')
+  assert.equal(await waitForWhatsAppSent('SM3', 3000, { fetchStatus: async () => { throw new Error('x') }, sleep: async () => {} }), 'unknown')
+  const w = readFileSync('lib/agent/travel-research-worker.ts', 'utf8')
+  assert.ok(w.indexOf('waitForWhatsAppSent(String(cardMessage.sid))') < w.indexOf('sendWhatsApp(actor.whatsappId,text,undefined'), 'wait happens before the text')
+  console.log('CARD_ORDER_OK')
+}
