@@ -265,6 +265,16 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json({ text: reply, handledBy: 'invite-links', status: 'completed' })
       }
     }
+    // Context-first brain (lib/agent/brain.ts), same as WhatsApp: context before keyword rules. Canary users only.
+    // Cheap env gate first: strict route harnesses (and previews) never load the module.
+    if((globalThis as any).process?.env?.GOGO_BRAIN!=='off'&&((globalThis as any).process?.env?.GOGO_BRAIN_USERS||(globalThis as any).process?.env?.VERCEL_ENV==='production')){
+      const brain:any=await import('@/lib/agent/brain').then(m=>m.runBrain({phone:String(user.whatsapp_id||''),telegramId:Number(user.telegram_id),text,name:user.name||null,timezone:(user as any).timezone||null,userId:String(actor.userId||''),whatsappId:String(user.whatsapp_id||''),surface:'web'})).catch((err:any)=>{console.error('BRAIN_FAILED:',String(err?.message||err).slice(0,160));return null})
+      if(brain?.reply){
+        await saveConversation(user.telegram_id,text,brain.reply)
+        return NextResponse.json({text:brain.reply,handledBy:'brain',status:'completed'})
+      }
+      if(brain?.text)text=brain.text
+    }
     // "Order milk on Swiggy Instamart" via the user's connected Swiggy account: three in-stock options, and a
     // 1/2/3 reply binds only while that list is Gogo's latest reply. Lazy so strict harnesses keep their maps.
     // Cheap pre-filter: only an Instamart mention or a bare 1/2/3-style pick loads the module.
