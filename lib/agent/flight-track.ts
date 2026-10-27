@@ -394,3 +394,32 @@ export async function flightTrackStatusReply(telegramId: string, text: string, n
   const head = active.length ? (active.length === 1 ? 'Tracking 1 flight:' : `Tracking ${active.length} flights:`) : 'No flights being tracked right now.'
   return [head, ...lines, ...missing.map(code => `${code}: I wasn't tracking it in the last 12 hours. Say "Track ${code}" to follow it.`)].join('\n')
 }
+
+// 27 Oct live: "Did it land?" after tracking QF67 was answered "Marked done: it land?" (the to-do "did <task>" rule).
+// A short question about "it" / "the flight" landing, taking off or running late, with no flight code, is about the
+// flight being tracked: answer from that watch. No tracked flight in the last 12 hours → null (normal routing).
+const PRONOUN_FLIGHT_Q = /^(?:so\s+|and\s+|ok\s+|hey\s+)?(?:did|has|have|is|was|will|when\s+(?:will|does|did|is)|where\s+is|what\s+time\s+(?:does|will|did|is))\s+(?:it|the\s+(?:flight|plane)|(?:my|her|his|their|our)\s+flight|she|he|they)\b[^?.!]{0,30}?\b(?:lands?|landed|landing|arrive[sd]?|arriving|take\s+off|taken\s+off|took\s+off|taking\s+off|depart(?:ed|s|ing)?|delayed|late|on\s+time|in\s+the\s+air|airborne|touch(?:ed)?\s+down|now)\b/i
+
+export function isPronounFlightQuestion(text: string): boolean {
+  const t = String(text || '').trim()
+  return t.length <= 80 && !trackCode(t) && PRONOUN_FLIGHT_Q.test(t)
+}
+
+export async function pronounFlightReply(telegramId: string | number, text: string, now = new Date(), tz = 'Asia/Kolkata'): Promise<string | null> {
+  if (!isPronounFlightQuestion(text)) return null
+  const { data, error } = await supabaseAdmin.from('agent_watchers').select('id,active,condition_json,last_state_json,updated_at,created_at')
+    .eq('telegram_id', String(telegramId)).not('condition_json->adHocFlight', 'is', null)
+    .or(`active.eq.true,updated_at.gte.${new Date(now.getTime() - 12 * 60 * MIN).toISOString()}`)
+    .order('updated_at', { ascending: false }).limit(10)
+  if (error || !data?.length) return null
+  const seen = new Set<string>()
+  const rows = data.filter((w: any) => {
+    const k = `${w.condition_json?.adHocFlight?.flightNo}|${w.condition_json?.adHocFlight?.departAt}`
+    if (seen.has(k)) return false
+    seen.add(k); return true
+  })
+  // Several flights: the active ones are what "it" most likely means; say which is which.
+  const active = rows.filter((w: any) => w.active)
+  const shown = active.length > 1 ? active : [rows[0]]
+  return shown.map((w: any) => describeTrackedFlight(w, now.getTime(), tz)).join('\n')
+}

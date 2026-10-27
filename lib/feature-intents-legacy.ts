@@ -258,7 +258,15 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   if (/^(tasks?|my tasks?|show tasks?|to-?do list?)$/i.test(t)) {
     return (await post('/api/todos', { phone, action: 'list' }))?.reply ?? null
   }
-  const doneMatch = t.match(/^(done|completed?|finished?|did)\s+(.+)/)
+  // 27 Oct live: "Did it land?" became "Marked done: it land?". A question is never a completion: "did <task>" only
+  // marks done when it is a statement and not about "it/you/he/she/they/we".
+  const doneQuestion = /\?\s*$/.test(t) || /^did\s+(?:it|you|he|she|they|we|i|this|that|the|my|your|his|her|their|our)\b/.test(t)
+  // "Did it land?" / "has the flight taken off?" right after tracking a flight: answer from that flight's watch.
+  if (extra?.telegramId && t.length <= 80 && /^(?:so\s+|and\s+|ok\s+|hey\s+)?(?:did|has|have|is|was|will|when|where|what)\s/.test(t)) {
+    const flight = await import('@/lib/agent/flight-track').then(m => m.pronounFlightReply(extra.telegramId!, text)).catch(() => null)
+    if (flight) return flight
+  }
+  const doneMatch = doneQuestion ? null : t.match(/^(done|completed?|finished?|did)\s+(.+)/)
   if (doneMatch && may('list', 'legacy_done')) {
     const arg = doneMatch[2].trim()
     // "done <number>" (done 1) stays EXACTLY as before → reminders/todos. Only a
