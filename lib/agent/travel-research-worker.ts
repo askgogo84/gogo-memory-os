@@ -5,6 +5,30 @@ import {runQueuedTravelResearch} from './travel-research-queue'
 import {deliverNotification} from '@/lib/services/notification-delivery'
 import {sendWhatsApp} from '@/lib/whatsapp'
 
+/**
+ * Result cards, Phase 1 (docs/result-cards): the signed image link and caption for a completed flight run, or null.
+ * The card is a best-effort extra; the text result is always sent as before.
+ */
+export async function flightResultCard(run:{id:string;telegram_id:string|number;status:string}, deps:{steps?:any[];appUrl?:string}={}){
+  if(run.status!=='completed')return null
+  // Loaded lazily: route harnesses stub this file's imports.
+  const {flightCardModel,flightCardCaption}=await import('./flight-card')
+  const {signCardToken}=await import('@/lib/security/card-link')
+  let steps=deps.steps
+  if(!steps){
+    const {data,error}=await supabaseAdmin.from('agent_steps').select('output_json,completed_at').eq('run_id',run.id).eq('telegram_id',String(run.telegram_id)).eq('status','completed').order('completed_at',{ascending:false}).limit(5)
+    if(error)return null
+    steps=data||[]
+  }
+  const step=steps.find((s:any)=>s?.output_json?.inventoryType==='browser-verified')
+  const model=step?flightCardModel({...step.output_json,observedAt:step.completed_at}):null
+  if(!model)return null
+  const token=await signCardToken(`flights.${run.id}`,String(run.telegram_id))
+  if(!token)return null
+  const base=(deps.appUrl||process.env.NEXT_PUBLIC_APP_URL||'https://app.askgogo.in').replace(/\/+$/,'')
+  return {url:`${base}/api/cards/flights/${run.id}?o=${encodeURIComponent(String(run.telegram_id))}&t=${encodeURIComponent(token)}`,caption:flightCardCaption(model)}
+}
+
 export async function processTravelResearchQueue(deadline: number) {
   await purgeFlightBookingPii().catch(() => 0)
   const staleBefore = new Date(Date.now()-10*60_000).toISOString()
@@ -78,7 +102,20 @@ export async function processTravelResearchQueue(deadline: number) {
         const status = await deliverNotification({
           key:`travel_research/${run.id}`,source:'travel_research',owner:actor.legacyTelegramId,channel:'whatsapp',due:run.updated_at,deadline,
           prepare:async()=>{},ready:async()=>Boolean(actor.whatsappId),
-          send:async token=>String((await sendWhatsApp(actor.whatsappId,text,undefined,process.env.TWILIO_STATUS_CALLBACK_URL?token:undefined))?.sid || ''),
+          send:async token=>{
+            // The card goes first and only once; a card failure never blocks or changes the text result.
+            if(!run.metadata_json?.result_card_sent){
+              try{
+                const card=await flightResultCard(run as any)
+                if(card&&(await sendWhatsApp(actor.whatsappId,card.caption,card.url))?.sid){
+                  run.metadata_json={...run.metadata_json,result_card_sent:true}
+                  await supabaseAdmin.from('agent_runs').update({metadata_json:run.metadata_json}).eq('id',run.id).eq('telegram_id',String(run.telegram_id))
+                  console.log('TRAVEL_RESULT_CARD_SENT:',JSON.stringify({runId:run.id}))
+                }
+              }catch(error){console.warn('TRAVEL_RESULT_CARD_FAILED:',error instanceof Error?error.message.slice(0,80):'unknown')}
+            }
+            return String((await sendWhatsApp(actor.whatsappId,text,undefined,process.env.TWILIO_STATUS_CALLBACK_URL?token:undefined))?.sid || '')
+          },
           accepted:async()=>{
             const {error:markError} = await supabaseAdmin.from('agent_runs').update({metadata_json:{...run.metadata_json,notified:true}})
               .eq('id',run.id).eq('telegram_id',String(actor.legacyTelegramId)).is('metadata_json->>notified',null)
