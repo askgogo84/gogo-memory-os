@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { embedText } from '@/lib/services/embeddings'
 import { unindexMemory } from '@/lib/services/memory-index'
+import { isSecretShapedMemory } from '@/lib/bot/memory-redaction'
 import { getSharedMemories } from '@/lib/bot/handlers/shared-memory'
 
 function cleanMemoryContent(content: string) {
@@ -270,22 +271,29 @@ async function buildMemorySearchReply(telegramId: number, text: string) {
     getMemoryTwinProfile(telegramId),
   ])
 
+  // A user can search for credentials or identifiers already in their own notes.
+  // Keep owner-bound lexical reads local, but never send secret-shaped query text
+  // to the external embedding provider (directly OR through Shared Memory).
+  const allowSemanticQuery = !isSecretShapedMemory(query)
+
   // Phase 1A: semantic pass — find saved notes by meaning, not just keywords.
-  // Falls back to keyword-only if embeddings are unavailable.
+  // Falls back to keyword-only if embeddings are unavailable or query is secret-shaped.
   let semanticContents: string[] = []
-  try {
-    const queryEmbedding = await embedText(query)
-    const { data: sem } = await supabaseAdmin.rpc('match_memories', {
-      p_telegram_id: telegramId,
-      p_query: queryEmbedding,
-      p_k: 5,
-    })
-    semanticContents = ((sem || []) as any[])
-      .filter((r) => (r.score ?? 0) >= 0.12) // lenient floor; RPC already returns top-k by similarity
-      .map((r) => cleanMemoryContent(String(r.content || '')))
-      .filter((c) => c && !isInternalMemory(c))
-  } catch (err: any) {
-    console.error('[memory-search] semantic pass failed, keyword only:', err?.message)
+  if (allowSemanticQuery) {
+    try {
+      const queryEmbedding = await embedText(query)
+      const { data: sem } = await supabaseAdmin.rpc('match_memories', {
+        p_telegram_id: telegramId,
+        p_query: queryEmbedding,
+        p_k: 5,
+      })
+      semanticContents = ((sem || []) as any[])
+        .filter((r) => (r.score ?? 0) >= 0.12) // lenient floor; RPC already returns top-k by similarity
+        .map((r) => cleanMemoryContent(String(r.content || '')))
+        .filter((c) => c && !isInternalMemory(c))
+    } catch (err: any) {
+      console.error('[memory-search] semantic pass failed, keyword only:', err?.message)
+    }
   }
 
   const keywordContents = memories
@@ -333,7 +341,7 @@ async function buildMemorySearchReply(telegramId: number, text: string) {
   if (reminderMatches.length) sections.push(`*Reminders*\n${reminderMatches.join('\n')}`)
   if (eventMatches.length) sections.push(`*Recent activity*\n${eventMatches.join('\n')}`)
 
-  const sharedHits = await getSharedMemories(telegramId, query, 3)
+  const sharedHits = allowSemanticQuery ? await getSharedMemories(telegramId, query, 3) : []
   if (sharedHits.length) {
     sections.push(`📂 *Shared with you*\n${sharedHits.map((s: any) => `• ${s.content} (${s.topic})`).join('\n')}`)
   }
