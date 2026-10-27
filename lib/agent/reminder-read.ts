@@ -40,6 +40,12 @@ export function reminderScope(step:{title:string;instruction:string},mission:str
 }
 
 export async function readScopedReminders(ownerId:number,step:{title:string;instruction:string},mission:string,temporal?:{timezone:string;dates:string[];clock:string|null;clocks?:string[];pairs?:Array<{date:string;clock:string}>}){
+  // An untrusted/imprecise exported caller must never authorize a service-role
+  // reminder read. Adjacent PostgreSQL BIGINT owners alias beyond 2^53 - 1.
+  // The ordinary AgentActor resolver checks this too; enforce at this boundary.
+  if (typeof ownerId !== 'number' || !Number.isSafeInteger(ownerId) || ownerId === 0) {
+    throw new Error('mission_reminder_owner_unsafe')
+  }
   const scope=reminderScope(step,mission)
   const reminders:Array<{id:string;message:string;remindAt:string;timezone:string}>=[]
   const now=new Date().toISOString()
