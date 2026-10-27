@@ -1,6 +1,7 @@
 import {decodeHtmlEntities,formatEmailSnippet} from '@/lib/security/email-redaction'
 export {decodeHtmlEntities,formatEmailSnippet,redactEmailAuthSecrets} from '@/lib/security/email-redaction'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { extractServerlessPdfText } from '@/lib/services/pdf-js-serverless'
 import { refreshGmailAccessToken } from '@/lib/google-gmail'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { decryptGoogleToken, encryptGoogleToken, hasGoogleTokenEncryptionKey, isEncryptedGoogleToken } from '@/lib/security/google-token-crypto'
@@ -504,15 +505,9 @@ async function extractAttachmentText(bytes:Buffer,filename:string,mimeType:strin
     return bytes.toString('utf8').slice(0,MAX_FILE_TEXT)
   }
   if(mime==='application/pdf'||name.endsWith('.pdf')) {
-    const pdf:any=await import('pdf-parse')
-    if(typeof pdf.PDFParse!=='function')throw new Error('workspace_pdf_parser_unavailable')
-    const parser=new pdf.PDFParse({data:bytes})
-    try {
-      const result=await parser.getText()
-      return String(result?.text||'').slice(0,MAX_FILE_TEXT)
-    } finally {
-      await parser.destroy?.()
-    }
+    // Install serverless PDF.js globals before module evaluation and keep the
+    // same 60k-character extraction cap and unreadable outcome on failure.
+    return extractServerlessPdfText(bytes,MAX_FILE_TEXT)
   }
   if(mime==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'||name.endsWith('.docx'))return extractOfficeText(bytes,'docx')
   if(mime==='application/vnd.openxmlformats-officedocument.presentationml.presentation'||name.endsWith('.pptx'))return extractOfficeText(bytes,'pptx')
