@@ -95,6 +95,8 @@ expectPlan(
 )
 
 console.log(`\n${fails === 0 ? '✅ all cases passed' : `❌ ${fails} case(s) failed`}\n`)
+// Registered inert owner-precision regression for the shared notification ledger.
+await import('./verify-notification-owner-guard.mts')
 process.exit(fails === 0 ? 0 : 1)
 
 import { reminderDuplicatesFlight } from '../lib/bot/handlers/morning-briefing'
@@ -104,5 +106,3 @@ assert.equal(reminderDuplicatesFlight({message:'Etihad EY 239 departs tonight'},
 assert.equal(reminderDuplicatesFlight({message:'Drink water'},[flight]),false)
 console.log('Morning briefing travel/reminder dedupe verified')
 
-// Registered inert owner-precision regression for the shared notification ledger.
-await import('./verify-notification-owner-guard.mts')
