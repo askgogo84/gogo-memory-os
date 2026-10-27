@@ -73,3 +73,12 @@ console.log('BOOKING_ROW_PICK_OK')
   assert.ok(src.includes("(providerBooking||(params.mode==='read'&&params.recoverFlightSearch===true))&&onGoogle&&!bookingStartReloaded"), '27 Oct 15:50: a fare read reloads a blank Google form once')
   console.log('READ_BLANK_RELOAD_OK')
 }
+{
+  // 27 Oct 17:15: back on Google after the fallback, "Getting prices" — wait, then reload the booking page once.
+  const { googleBookingStillPricing } = await import('../lib/agent/secure-computer.ts')
+  assert.equal(googleBookingStillPricing({ text: 'Itinerary summary Bengaluru Chennai One way Getting prices Language', controls: [{ label: 'Sign in' }] }), true)
+  assert.equal(googleBookingStillPricing({ text: 'Getting prices', controls: [{ label: 'Continue to book with Cleartrip for 3900 Indian rupees' }] }), false)
+  const src = (await import('node:fs')).readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
+  assert.ok(src.includes('googlePriceWaits<5&&googleBookingStillPricing(page)') && src.includes('googlePriceWaits===3&&!googleBookingReloaded&&googleBookingUrl'), 'bounded waits and one reload')
+  console.log('GOOGLE_PRICING_WAIT_OK')
+}
