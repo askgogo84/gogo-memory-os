@@ -24,7 +24,7 @@ export async function recordShadowRouterOutcome(params:{
   if(typeof params.telegramId!=='string'&&typeof params.telegramId!=='number')return
   const owner=String(params.telegramId)
   const numericOwner=Number(owner)
-  if(!/^-?[1-9]\\d*$/.test(owner)||!Number.isSafeInteger(numericOwner)||String(numericOwner)!==owner)return
+  if(!/^-?[1-9]\d*$/.test(owner)||!Number.isSafeInteger(numericOwner)||String(numericOwner)!==owner)return
   const {error}=await supabaseAdmin.from('agent_activity').insert({
     telegram_id:owner,
     run_id:learningDecisionId(null,params.runId),
