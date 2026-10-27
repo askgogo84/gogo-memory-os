@@ -100,3 +100,83 @@ assert.match(wa, /if \(link\) await sendWhatsAppMessage\(from, link\)/, 'link se
 const store = readFileSync('lib/invites/store.ts', 'utf8')
 assert.match(store, /key: `invite-joined\/\$\{p\.redemptionId\}`/, 'inviter told once per join')
 console.log('verify-invite-links: ok')
+
+
+// ── P1 private invite-redemption owner isolation (actual source, inert DB) ───
+// The RPC/access gate normally supplies these fields. A stale or mismatched
+// exported-worker payload must never link another inviter's redemption or alert
+// its claimed owner. No live database, accounts, notifications or network.
+import ts from 'typescript'
+import { runInNewContext } from 'node:vm'
+async function checkInviteRedemptionIsolation(options: {
+  inviter: number; invitee?: number; phone: string; expectedWrites: number; expectedSends: number; deny?: boolean
+}) {
+  const compiled = ts.transpileModule(readFileSync('lib/invites/store.ts','utf8'), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop:true }
+  }).outputText
+  const persisted = {id:'redemption-synthetic',inviter_telegram_id:222,invitee_phone_e164:'+919988776655'}
+  const writes: any[] = [], sends: any[] = [], reads: any[] = []
+  const db = {from(table: string) {
+    reads.push(table)
+    if (table === 'invite_redemptions') {
+      const pred: Record<string,unknown> = {}
+      let patch: any = null
+      const q: any = {
+        update(v:any){patch=v;return q},
+        eq(k:string,v:unknown){pred[k]=v;return q},
+        select(){return q},
+        async maybeSingle(){
+          const matches=Object.entries(pred).every(([k,v])=>(persisted as any)[k]===v)
+          if(!matches)return {data:null,error:null}
+          writes.push({pred:{...pred},patch})
+          return {data:{id:persisted.id},error:null}
+        },
+        then(resolve:any,reject:any) {
+          // The original unscoped update is awaitable without SELECT.
+          return q.maybeSingle().then(resolve,reject)
+        }
+      }
+      return q
+    }
+    if (table === 'users') {
+      const q:any={select(){return q},eq(){return q},async maybeSingle(){return {data:{name:'Synthetic inviter',whatsapp_id:'+919900000001'},error:null}}}
+      return q
+    }
+    throw Error('unexpected table: '+table)
+  }}
+  const api: any = {}
+  const deps: Record<string,any> = {
+    'node:crypto': {randomInt:()=>0},
+    '@/lib/supabase-admin': {supabaseAdmin:db},
+    '@/lib/whatsapp': {sendWhatsApp:async(...args:any[])=>{sends.push(args);return {sid:'inert-synthetic-id'}}},
+    '@/lib/services/notification-delivery': {deliverNotification:async (opts:any)=>{
+      const allowed=await opts.ready()
+      if(allowed)await opts.send('inert-dedupe-token')
+      return allowed?'provider_accepted':'skipped'
+    }},
+    './core': {...core}
+  }
+  runInNewContext(compiled,{exports:api,require:(name:string)=>{
+    if(!(name in deps))throw Error('unexpected external dependency: '+name)
+    return deps[name]
+  },Date,console,process:{env:{}}})
+  const payload={redemptionId:persisted.id,inviterTelegramId:options.inviter,
+    inviteeTelegramId:options.invitee??333,inviteePhone:options.phone,
+    inviteeName:'Synthetic friend',remaining:9}
+  if(options.deny) await assert.rejects(api.completeInviteJoin(payload),'invalid or foreign redemption must be denied')
+  else await api.completeInviteJoin(payload)
+  assert.equal(writes.length,options.expectedWrites,'no foreign invite redemption write')
+  assert.equal(sends.length,options.expectedSends,'no wrong-inviter notification')
+  if(options.expectedWrites){
+    assert.equal(writes[0].pred.id,persisted.id)
+    assert.equal(writes[0].pred.inviter_telegram_id,222,'update binds exact inviter')
+    assert.equal(writes[0].pred.invitee_phone_e164,persisted.invitee_phone_e164,'update binds verified invitee phone')
+    assert.equal(writes[0].patch.invitee_telegram_id,333)
+  }
+  if(options.deny && !Number.isSafeInteger(options.inviter))assert.equal(reads.length,0,'invalid owner rejected before private DB reads')
+}
+await checkInviteRedemptionIsolation({inviter:111,phone:'+919988776655',expectedWrites:0,expectedSends:0,deny:true})
+await checkInviteRedemptionIsolation({inviter:222,phone:'+919977776655',expectedWrites:0,expectedSends:0,deny:true})
+await checkInviteRedemptionIsolation({inviter:Number('9007199254740993'),phone:'+919988776655',expectedWrites:0,expectedSends:0,deny:true})
+await checkInviteRedemptionIsolation({inviter:222,invitee:333,phone:'+919988776655',expectedWrites:1,expectedSends:1})
+console.log('Invite owner/phone binding: four synthetic configurations passed')
