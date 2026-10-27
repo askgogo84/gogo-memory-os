@@ -63,7 +63,7 @@ assert.deepEqual(dup.find(r => r.source === 'notes')!.hits.map(h => h.title), ['
 // exercises the independently exported boundary with synthetic malformed/stale actors.
 const originalUnsafe = Number('9007199254740993')
 assert.equal(originalUnsafe, Number('9007199254740992'), 'test exercises a real adjacent 64-bit JS alias')
-for (const scenario of [
+const scenarios: Array<{label: string; input: any; row?: {id: string; telegram_id: string | number}}> = [
   { label: 'unsafe adjacent 64-bit owner', input: { ...actor, legacyTelegramId: originalUnsafe } },
   { label: 'fractional owner', input: { ...actor, legacyTelegramId: 4242.5 } },
   { label: 'zero owner', input: { ...actor, legacyTelegramId: 0 } },
@@ -75,7 +75,8 @@ for (const scenario of [
   { label: 'foreign returned UUID', input: { ...actor }, row: { id: 'synthetic-owner-b', telegram_id: '4242' } },
   { label: 'foreign returned numeric owner', input: { ...actor }, row: { id: 'synthetic-owner-a', telegram_id: '4243' } },
   { label: 'unsafe rounded returned owner', input: { ...actor }, row: { id: 'synthetic-owner-a', telegram_id: 9007199254740992 } },
-]) {
+]
+for (const scenario of scenarios) {
   const privateReads: string[] = []
   let providers = 0
   const actualRow = scenario.row ?? { id: 'synthetic-owner-a', telegram_id: '4242' }
