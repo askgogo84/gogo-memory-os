@@ -19,9 +19,26 @@ function clean(value: unknown, max = 600) {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
 }
 
+/** Email attention uses a legacy numeric owner ID for service-role private reads.
+ * Reject unrepresentable/ambiguous identities before querying any mailbox, rules or events.
+ * Preserve canonical safe negative IDs used by legacy channels; never guess an owner.
+ */
+function exactAttentionOwner(value: unknown): number {
+  if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'bigint')
+    throw new Error('email_attention_owner_invalid')
+  if (typeof value === 'string' && !/^(?:[1-9][0-9]*|-[1-9][0-9]*)$/.test(value))
+    throw new Error('email_attention_owner_invalid')
+  const owner = Number(value)
+  if (!Number.isSafeInteger(owner) || owner === 0 ||
+      (typeof value !== 'number' && BigInt(owner).toString() !== String(value)))
+    throw new Error('email_attention_owner_invalid')
+  return owner
+}
+
 // ---------- rules and events ----------
 
 export async function loadRules(telegramId: number): Promise<AttentionRule[]> {
+  telegramId = exactAttentionOwner(telegramId)
   const { data, error } = await supabaseAdmin.from('email_attention_rules')
     .select('id,kind,match_type,match_value,category,label,source').eq('telegram_id', telegramId).eq('active', true).limit(300)
   if (error) { console.error('EMAIL_RULES_READ_FAILED:', error.message); return [] }
@@ -29,6 +46,7 @@ export async function loadRules(telegramId: number): Promise<AttentionRule[]> {
 }
 
 export async function saveRule(telegramId: number, rule: AttentionRule): Promise<string | null> {
+  telegramId = exactAttentionOwner(telegramId)
   let q = supabaseAdmin.from('email_attention_rules').select('id').eq('telegram_id', telegramId)
     .eq('match_type', rule.matchType).eq('match_value', rule.matchValue.toLowerCase())
   q = rule.category ? q.eq('category', rule.category) : q.is('category', null)
@@ -133,6 +151,7 @@ async function readComposio(telegramId: number) {
 }
 
 export async function readAttentionSources(telegramId: number): Promise<AttentionRead> {
+  telegramId = exactAttentionOwner(telegramId)
   const [gmail, forwarded] = await Promise.all([
     readGmail(telegramId).catch((err: any) => { console.error('ATTENTION_GMAIL_READ_FAILED:', String(err?.message || err).slice(0, 160)); return null }),
     readForwarded(telegramId),
@@ -188,7 +207,7 @@ export async function polishAsks(picked: ScoredEmail[], polish: Polisher = defau
 // ---------- the card ----------
 
 export async function buildAttentionCard(actor: Pick<AgentActor, 'legacyTelegramId' | 'timezone'>, opts: { polish?: Polisher | null } = {}) {
-  const telegramId = Number(actor.legacyTelegramId)
+  const telegramId = exactAttentionOwner(actor.legacyTelegramId)
   const [read, rules] = await Promise.all([readAttentionSources(telegramId), loadRules(telegramId)])
   if (!read.connected) return { connected: false as const, text: `📬 Connect your email first and I'll tell you only what needs you.\n\nOpen https://app.askgogo.in/dashboard/settings/email to forward your mail or sign in with Google.`, pick: null }
   const pick: AttentionPick = pickAttention(read.emails, { rules, ownEmail: read.ownEmail, repliedSenders: read.repliedSenders })
@@ -246,7 +265,7 @@ export type AttentionCommandResult = Result | { rewrite: string }
 export async function handleEmailAttentionCommand(params: { actor: AgentActor; text: string; polish?: Polisher }): Promise<AttentionCommandResult | null> {
   const cmd: AttentionCommand | null = parseAttentionCommand(params.text) || (isUndo(params.text) ? { type: 'undo' } : null)
   if (!cmd) return null
-  const telegramId = Number(params.actor.legacyTelegramId)
+  const telegramId = exactAttentionOwner(params.actor.legacyTelegramId)
 
   if (cmd.type === 'show') {
     try { return ok((await buildAttentionCard(params.actor, { polish: params.polish })).text, 'email-attention-show') }
