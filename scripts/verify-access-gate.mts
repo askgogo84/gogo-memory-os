@@ -117,3 +117,6 @@ delete process.env.ACCESS_GATE_ENABLED
 assert.equal(e164('whatsapp:+91 98450 12345'), '+919845012345')
 assert.equal(e164('9845012345'), '+919845012345')
 console.log('verify-access-gate: ok')
+
+// Keep the lifecycle-email owner/consent regression in the existing npm test registry.
+await import('./verify-lifecycle-email-owner-isolation.mts')
