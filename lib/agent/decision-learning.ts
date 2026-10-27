@@ -17,7 +17,7 @@ function exactDecisionLearningOwner(actor:AgentActor):string {
   }
   // Preserve historical canonical safe-decimal callers without permitting
   // lossy BIGINT, padded, exponent or coerced object identities.
-  if(typeof raw==='string'&&/^-?[1-9]\\d*$/.test(raw)&&Number.isSafeInteger(Number(raw))&&String(Number(raw))===raw)return raw
+  if(typeof raw==='string'&&/^-?[1-9]\d*$/.test(raw)&&Number.isSafeInteger(Number(raw))&&String(Number(raw))===raw)return raw
   throw new Error('decision_learning_owner_invalid')
 }
 function clean(v:unknown,max=500){return String(v??'').replace(/\s+/g,' ').trim().slice(0,max)}
