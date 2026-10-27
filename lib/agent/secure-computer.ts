@@ -34,7 +34,9 @@ const MAX_SIGNUP_PAGES=4
 // It never submits: it stops on the payment step and hands the same browser to the person.
 const MAX_BOOKING_PAGES=14
 // The approved-browser route has 300s; keep time to hand the live browser over.
-const BOOKING_BUDGET_MS=225_000
+// 27 Oct live booking 13ebb3f2: browser start-up took ~90 s and the run reached IndiGo's flight page as the old 225 s
+// budget ended. The approved-browser route now has 800 s; a booking gets 9 minutes of browser time.
+const BOOKING_BUDGET_MS=540_000
 // On a resumed sign-up, the page the site shows once the account exists.
 const RESUMED_SIGNUP_CREATED=/\baccount\s+(?:(?:has\s+been|was|is)\s+)?(?:created|registered)\b|\bregistration\s+(?:is\s+)?complete\b|\b(?:confirm|verify)\s+your\s+(?:e-?mail|email\s+address)\b|\bcheck\s+your\s+(?:e-?mail|inbox)\b|\bwe(?:'ve|\s+have)?\s+sent\s+(?:you\s+)?(?:a|an)\s+(?:confirmation|verification)\s+(?:e-?mail|link)\b/i
 const MAX_ACTIONS = 12
@@ -358,6 +360,21 @@ export function comparisonReadEvidenceMatches(objective:string,evidence:string):
 // 26 Oct live: Swiggy's Meghana Foods menu showed "Chicken Boneless Biryani. This item is a Bestseller, Costs: 375 rupees",
 // but the model would not quote it (it had been told to report a ₹ price). A food comparison read takes the menu line
 // for the asked dish directly: exact page text, the dish's every word, one price.
+/** Google's "Continue to book with <approved airline> airline" button on the booking options page. */
+export function googleAirlineContinueControl(controls:{selector?:string;label?:string}[],objective:string):string|null{
+  const m=String(objective||'').match(/Choose the (.+?) result that leaves/i)
+  if(!m)return null
+  const airline=m[1].trim().toLowerCase().split(/,\s*|\s+and\s+|\s*\+\s*/)[0]
+  const hit=controls.find(c=>{const l=String(c?.label||'').replace(/\s+/g,' ').trim().toLowerCase();return Boolean(c?.selector)&&l.startsWith(`continue to book with ${airline} airline`)})
+  return hit?.selector||null
+}
+
+/** The privacy-preserving choice on a cookie banner: essential/necessary only or reject, never "accept all". */
+export function cookieDeclineControl(controls:{selector?:string;label?:string}[]):string|null{
+  const hit=controls.find(c=>Boolean(c?.selector)&&/^(?:accept (?:only )?(?:essential|necessary)(?: cookies)?(?: only)?|(?:use )?(?:essential|necessary|required) (?:cookies )?only|reject all(?: cookies)?|decline(?: all)?(?: cookies)?|only (?:essential|necessary)(?: cookies)?)$/i.test(String(c?.label||'').replace(/\s+/g,' ').trim()))
+  return hit?.selector||null
+}
+
 /** A page that is visibly still loading: a "Loading…" placeholder or a redirect page with no form yet. */
 export function pageStillLoading(page:{url?:unknown;text?:unknown;controls?:any[]}){
   const text=String(page?.text||'').replace(/\s+/g,' ')
@@ -2295,7 +2312,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     // "Access Denied" to the cloud browser. That site will not load for this run, so go back to the Google
     // booking options once per blocked site and pick another listed site (never a retry of the same one).
     let googleBookingUrl='';const edgeBlockedHosts:string[]=[]
-    let flightRowPicks=0,handoffLoadingWaits=0
+    let flightRowPicks=0,handoffLoadingWaits=0,airlineContinuePressed=false,consentDeclines=0
     const avoidNote=()=>edgeBlockedHosts.length?` ${edgeBlockedHosts.join(' and ')} refused this browser (Access Denied), so on the booking options pick a different listed site (MakeMyTrip, Cleartrip, Goibibo, ixigo, EaseMyTrip or Yatra), never ${edgeBlockedHosts.join(' or ')}.`:''
     const readSnapshot=(p:any)=>JSON.stringify([p.url,p.text,p.controls,p.forms])
 
@@ -2619,6 +2636,17 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         let path='';try{path=new URL(String(page.url||'')).pathname}catch{}
         const row=/^\/travel\/flights\/?$/.test(path)?googleFlightRowControl(page.controls||[],params.objective):null
         if(row){flightRowPicks++;edgeBack=[{kind:'click',selector:row} as any];console.log('BROWSER_BOOKING_ROW_PICK:',JSON.stringify({runId:params.sessionTaskId||null,wave,try:flightRowPicks}))}
+      }
+      // 27 Oct: on Google's booking options the planner spent a wave waiting before pressing "Continue to book with IndiGo".
+      // The approved airline's own button is pressed directly, once, unless that airline already blocked this browser.
+      if(!edgeBack&&providerBooking&&onGoogle&&!airlineContinuePressed&&!edgeBlockedHosts.length){
+        const cont=googleAirlineContinueControl(page.controls||[],params.objective)
+        if(cont){airlineContinuePressed=true;edgeBack=[{kind:'click',selector:cont} as any];console.log('BROWSER_BOOKING_AIRLINE_CONTINUE:',JSON.stringify({runId:params.sessionTaskId||null,wave}))}
+      }
+      // A cookie banner is declined (essential cookies only), never accepted, and costs no planner wave.
+      if(!edgeBack&&providerBooking&&consentDeclines<2){
+        const decline=cookieDeclineControl(page.controls||[])
+        if(decline){consentDeclines++;edgeBack=[{kind:'click',selector:decline} as any];console.log('BROWSER_BOOKING_COOKIES_DECLINED:',JSON.stringify({runId:params.sessionTaskId||null,wave}))}
       }
       let vision:{actions:BrowserAction[];why:string}|null=null
       if(!edgeBack&&providerBooking&&visionEnabled&&lastShot&&visionSteps<5&&(bookingStuck>=2||bookingIdleWaves>=1)){
