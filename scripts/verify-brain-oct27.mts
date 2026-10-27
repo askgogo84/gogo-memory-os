@@ -29,4 +29,11 @@ const d = await b.decide({ text: 'Did it land?', ctx, client })
 assert.equal(d.kind, 'flight'); assert.match(seen.system, /QF1 \(SYD → SIN\)/); assert.equal(seen.tool_choice.type, 'any'); assert.equal(seen.messages.at(-1).content, 'Did it land?')
 const broken: any = { messages: { create: async () => { throw new Error('timeout') } } }
 assert.equal((await b.decide({ text: 'hi there', ctx, client: broken })).kind, 'skip', 'any failure falls back to the old pipeline')
+assert.deepEqual(b.decisionFromToolUse('Which one is cheapest in the morning?', 'later', { question: 'Which BLR to DEL flight on 5 Nov is cheapest in the morning?' }), { kind: 'later', question: 'Which BLR to DEL flight on 5 Nov is cheapest in the morning?' })
+assert.ok(b.BRAIN_TOOLS.some(t => t.name === 'later'))
+let opts: any = null
+await b.decide({ text: 'hi', ctx, client: { messages: { create: async (_r: any, o: any) => { opts = o; return { content: [{ type: 'tool_use', name: 'reply', input: { text: 'Hi!' } }] } } } } as any })
+assert.equal(opts.maxRetries, 0, '27 Oct live: no silent retries (16.9 s decision)'); assert.ok(opts.timeout <= 8000)
+const worker = (await import('node:fs')).readFileSync(new URL('../lib/agent/travel-research-worker.ts', import.meta.url), 'utf8')
+assert.ok(worker.includes('brain.answerFollowups'), 'questions asked mid-search are answered after delivery')
 console.log('BRAIN_OK')
