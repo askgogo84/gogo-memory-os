@@ -11,6 +11,17 @@ export const maxDuration = 60
 const MIN_GAP_MS = 20 * 60 * 60 * 1000
 const MAX_SENDS_PER_RUN = 50
 
+// Stored BIGINT owner identity must not be rounded before accessing private logs
+// or constructing a provider idempotency key / unsubscribe link. The existing
+// numeric downstream API cannot represent unsafe IDs: quarantine, never guess.
+function exactSafeLifecycleOwner(raw: unknown): number | null {
+  if (typeof raw !== 'string' && typeof raw !== 'number') return null
+  const text = String(raw)
+  if (!/^-?[1-9]\\d*$/.test(text)) return null
+  const owner = Number(text)
+  return Number.isSafeInteger(owner) && String(owner) === text ? owner : null
+}
+
 function daysSince(value:unknown){
   const started=Date.parse(String(value||''))
   return Number.isFinite(started)?Math.floor((Date.now()-started)/86400000):-1
@@ -42,9 +53,9 @@ export async function GET(req: NextRequest) {
 
   for (const user of users || []) {
     if (sent >= MAX_SENDS_PER_RUN && !dryRun) break
-    const telegramId = Number(user.telegram_id)
+    const telegramId = exactSafeLifecycleOwner(user.telegram_id)
     const recipient = String(user.email || '').trim().toLowerCase()
-    if (!Number.isFinite(telegramId) || !recipient || user.email_opt_out === true) {
+    if (telegramId === null || !recipient || user.email_opt_out === true) {
       skipped++
       continue
     }
@@ -52,7 +63,7 @@ export async function GET(req: NextRequest) {
     const { data: logRows, error: logError } = await supabaseAdmin
       .from('lifecycle_email_log')
       .select('email_key, sent_at')
-      .eq('telegram_id', telegramId)
+      .eq('telegram_id', String(telegramId))
       .order('sent_at', { ascending: false })
       .limit(100)
 
@@ -83,6 +94,25 @@ export async function GET(req: NextRequest) {
     candidates.push({ telegramId, key: next.key, email: recipient, subject: rendered.subject })
 
     if (dryRun) continue
+
+    // The scan can precede an unsubscribe, email edit or account change.
+    // Immediately before any outbound email, re-read exact owner/recipient
+    // consent. A failed read or unexpected row must never authorize delivery.
+    // This narrows (but does not transactionally eliminate) concurrent edits.
+    const { data: fresh, error: freshError } = await supabaseAdmin
+      .from('users')
+      .select('telegram_id, email, email_opt_out')
+      .eq('telegram_id', String(telegramId))
+      .maybeSingle()
+    if (freshError) {
+      failures.push({ telegramId, key: next.key, error: 'lifecycle_consent_read_failed' })
+      continue
+    }
+    if (!fresh || exactSafeLifecycleOwner(fresh.telegram_id) !== telegramId ||
+        fresh.email_opt_out === true || String(fresh.email || '').trim().toLowerCase() !== recipient) {
+      skipped++
+      continue
+    }
 
     const send = await sendAskGogoEmail({
       to: recipient,
