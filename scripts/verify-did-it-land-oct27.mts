@@ -18,3 +18,6 @@ assert.ok(todos.includes("if (!updated?.length) return NextResponse.json({ ok: f
 const landed = describeTrackedFlight({ active: false, condition_json: { adHocFlight: { flightNo: 'QF67', from: 'SYD', to: 'JNB', departAt: '2026-10-27T00:00:00Z', arriveAt: '2026-10-27T12:30:00Z' } }, last_state_json: { tracking: { state: 'landed', actualArrival: '2026-10-27T12:35:00Z' } } }, Date.parse('2026-10-27T12:40:00Z'))
 assert.match(landed, /QF67 \(SYD → JNB\) landed in JNB/)
 console.log('DID_IT_LAND_OK')
+const { isFlightFollowUp } = await import('../lib/agent/flight-track.ts')
+assert.ok(isFlightFollowUp('Msg me when it lands and keep monitoring'), '27 Oct live: "Msg me when it lands" starts tracking')
+console.log('MSG_ME_WHEN_LANDS_OK')

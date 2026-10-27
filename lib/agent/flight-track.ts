@@ -298,7 +298,7 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
 // 23 Oct live (side by side with Instinct): after "Track VS 354", the follow-up "Alert me once it lands" fell to
 // general chat, which claimed a 9:25 reminder. A follow-up about "it" landing/departing/delay binds to the flight
 // in the last few hours of this conversation and starts (or reuses) the same tracking watch — never a reminder.
-const FOLLOW_UP = /\b(?:alert|notify|tell|ping|message|update|let)\s+(?:me|us)\b[^.?!]{0,40}\b(?:when|once|after|as soon as|if)\b[^.?!]{0,30}\b(?:lands?|landed|landing|arrives?|arrival|touches down|takes? off|departs?|departure|is delayed|gets delayed|delay)\b|^\s*(?:track|keep tracking|follow|monitor|watch)\s+(?:it|that|this|that flight|this flight)\s*[.!]?\s*$/i
+const FOLLOW_UP = /\b(?:alert|notify|tell|ping|message|msg|text|whatsapp|update|let)\s+(?:me|us)\b[^.?!]{0,40}\b(?:when|once|after|as soon as|if)\b[^.?!]{0,30}\b(?:lands?|landed|landing|arrives?|arrival|touches down|takes? off|departs?|departure|is delayed|gets delayed|delay)\b|^\s*(?:track|keep tracking|follow|monitor|watch)\s+(?:it|that|this|that flight|this flight)\s*[.!]?\s*$/i
 
 export function isFlightFollowUp(text: string): boolean {
   return FOLLOW_UP.test(String(text || '')) && !trackCode(text)
