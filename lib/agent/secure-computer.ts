@@ -369,6 +369,17 @@ export function googleAirlineContinueControl(controls:{selector?:string;label?:s
   return hit?.selector||null
 }
 
+const AGENCY_ORDER=['makemytrip','cleartrip','goibibo','ixigo','easemytrip','yatra']
+/** The first Indian agency on Google's booking options ("Continue to book with Cleartrip for …") not yet tried. */
+export function googleAgencyContinueControl(controls:{selector?:string;label?:string}[],tried:string[]=[]):{selector:string;name:string}|null{
+  for(const name of AGENCY_ORDER){
+    if(tried.includes(name))continue
+    const hit=controls.find(c=>{const l=String(c?.label||'').replace(/\s+/g,' ').trim().toLowerCase().replace(/[^a-z ]/g,'');return Boolean(c?.selector)&&l.startsWith(`continue to book with ${name}`)})
+    if(hit?.selector)return {selector:hit.selector,name}
+  }
+  return null
+}
+
 /** The privacy-preserving choice on a cookie banner: essential/necessary only or reject, never "accept all". */
 export function cookieDeclineControl(controls:{selector?:string;label?:string}[]):string|null{
   const hit=controls.find(c=>Boolean(c?.selector)&&/^(?:accept (?:only )?(?:essential|necessary)(?: cookies)?(?: only)?|(?:use )?(?:essential|necessary|required) (?:cookies )?only|reject all(?: cookies)?|decline(?: all)?(?: cookies)?|only (?:essential|necessary)(?: cookies)?)$/i.test(String(c?.label||'').replace(/\s+/g,' ').trim()))
@@ -2319,6 +2330,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     // booking options once per blocked site and pick another listed site (never a retry of the same one).
     let googleBookingUrl='';const edgeBlockedHosts:string[]=[]
     let flightRowPicks=0,handoffLoadingWaits=0,airlineContinuePressed=false,consentDeclines=0
+    const agenciesTried:string[]=[]
     const avoidNote=()=>edgeBlockedHosts.length?` ${edgeBlockedHosts.join(' and ')} refused this browser (Access Denied), so on the booking options pick a different listed site (MakeMyTrip, Cleartrip, Goibibo, ixigo, EaseMyTrip or Yatra), never ${edgeBlockedHosts.join(' or ')}.`:''
     const readSnapshot=(p:any)=>JSON.stringify([p.url,p.text,p.controls,p.forms])
 
@@ -2647,6 +2659,13 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       }
       // 27 Oct: on Google's booking options the planner spent a wave waiting before pressing "Continue to book with IndiGo".
       // The approved airline's own button is pressed directly, once, unless that airline already blocked this browser.
+      // 27 Oct 13:13 live booking 39ada00f: after goindigo.in showed no flights, the run went back to Google and the planner
+      // chose "Continue to book with IndiGo" again (the avoid note named goindigo.in, the button says IndiGo). After a
+      // fallback, Gogo presses the next listed Indian agency itself.
+      if(!edgeBack&&providerBooking&&onGoogle&&edgeBlockedHosts.length){
+        const agency=googleAgencyContinueControl(page.controls||[],agenciesTried)
+        if(agency){agenciesTried.push(agency.name);edgeBack=[{kind:'click',selector:agency.selector} as any];console.log('BROWSER_BOOKING_AGENCY_CONTINUE:',JSON.stringify({runId:params.sessionTaskId||null,wave,agency:agency.name}))}
+      }
       if(!edgeBack&&providerBooking&&onGoogle&&!airlineContinuePressed&&!edgeBlockedHosts.length){
         const cont=googleAirlineContinueControl(page.controls||[],params.objective)
         if(cont){airlineContinuePressed=true;edgeBack=[{kind:'click',selector:cont} as any];console.log('BROWSER_BOOKING_AIRLINE_CONTINUE:',JSON.stringify({runId:params.sessionTaskId||null,wave}))}
