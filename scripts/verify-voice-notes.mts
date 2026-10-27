@@ -92,7 +92,7 @@ assert.match(route, /startsWith\('audio\/'\)\) \{\s*\/\/ WhatsApp does not show 
     Number('9007199254740993'), -9007199254740992, 0, -0, NaN, Infinity, -Infinity, 1.5,
     '', '0', '-0', '+42', '042', '42 ', '42/../../owner', '42\\foo', '42\n',
     '9223372036854775808', '-9223372036854775809',
-    null, undefined, true, {}, 42n,
+    null, undefined, true, {}, BigInt(42),
   ]
   for (const owner of unsafeOwners) {
     events.length = 0
