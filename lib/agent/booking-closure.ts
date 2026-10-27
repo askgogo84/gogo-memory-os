@@ -97,7 +97,35 @@ async function storeCredential(params:{telegramId:number;bytes:Buffer;mimeType:s
   const {data,error}=await supabaseAdmin.from('documents').insert({telegram_id:params.telegramId,doc_type:'event_ticket',title:params.title.slice(0,300),summary:`Provider-issued event entry credential captured from ${params.source}.`,storage_path:path,mime:params.mimeType,size_bytes:params.bytes.length,extracted:{source:params.source,source_id:params.sourceId||null,providerIssued:true}}).select('id').single();if(error)throw new Error(`booking_credential_document_failed:${error.message}`)
   return{documentId:String(data.id),storagePath:path,mimeType:params.mimeType}
 }
-async function actorFor(telegramId:number):Promise<{actor:AgentActor;timezone:string}>{const{data,error}=await supabaseAdmin.from('users').select('id,telegram_id,whatsapp_id,name,timezone').eq('telegram_id',telegramId).maybeSingle();if(error||!data?.id)throw new Error('booking_actor_missing');return{actor:{userId:String(data.id),legacyTelegramId:Number(data.telegram_id),whatsappId:String(data.whatsapp_id||''),name:String(data.name||'Gogo')},timezone:String(data.timezone||'Asia/Kolkata')}}
+// Queued BIGINT owners may have been converted to JS numbers upstream. Never
+// let a rounded value select a neighboring user's Gmail/browser/ticket account.
+// Downstream AgentActor.legacyTelegramId is numeric, so unrepresentable owners
+// intentionally fail closed until that contract has an exact-string migration.
+function exactBookingOwnerId(value: unknown): string | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  if (typeof value !== 'string' || !/^-?[1-9]\\d*$/.test(value)) return null
+  const asNumber = Number(value)
+  return Number.isSafeInteger(asNumber) && String(asNumber) === value ? value : null
+}
+async function actorFor(telegramId: number): Promise<{actor: AgentActor; timezone: string}> {
+  const owner = exactBookingOwnerId(telegramId)
+  if (!owner) throw new Error('booking_actor_unsafe_owner')
+  const { data, error } = await supabaseAdmin.from('users')
+    .select('id,telegram_id,whatsapp_id,name,timezone')
+    .eq('telegram_id', owner)
+    .maybeSingle()
+  if (error || !data?.id) throw new Error('booking_actor_missing')
+  if (exactBookingOwnerId(data.telegram_id) !== owner) throw new Error('booking_actor_owner_mismatch')
+  return {
+    actor: {
+      userId: String(data.id),
+      legacyTelegramId: Number(owner),
+      whatsappId: String(data.whatsapp_id || ''),
+      name: String(data.name || 'Gogo'),
+    },
+    timezone: String(data.timezone || 'Asia/Kolkata'),
+  }
+}
 async function existingByUrl(telegramId:number,urls:string[]){const{data}=await supabaseAdmin.from('life_events').select('id,metadata_json,source_refs').eq('telegram_id',String(telegramId)).eq('event_type','event').order('updated_at',{ascending:false}).limit(40);return(data||[]).find((row:any)=>{const meta=row.metadata_json||{},refs=Array.isArray(row.source_refs)?row.source_refs:[];const known=[meta.bookingUrl,meta.resolvedUrl,...refs.map((r:any)=>r?.url)].filter(Boolean).map(String);return urls.some(u=>u&&known.includes(u))})||null}
 async function ensureReminder(telegramId:number,details:BookingDetails){if(!details.startAt)return false;const at=new Date(details.startAt).getTime()-2*3600_000;if(!Number.isFinite(at)||at<=Date.now())return false;const remindAt=new Date(at).toISOString(),message=`${details.title} starts in 2 hours${details.location?` at ${details.location}`:''}. Your ticket/QR is saved in AskGogo.`;const{data}=await supabaseAdmin.from('reminders').select('id').eq('telegram_id',telegramId).eq('message',message).eq('remind_at',remindAt).limit(1);if(data?.length)return true;const{error}=await supabaseAdmin.from('reminders').insert({telegram_id:telegramId,chat_id:telegramId,message,remind_at:remindAt,sent:false,timezone:details.timezone});return!error}
 function detailLines(d:BookingDetails){const out=[`🎟️ *${d.title}*`,`*Provider:* ${d.provider}`];if(d.startAt)out.push(`*Starts:* ${d.startAt}`);if(d.endAt)out.push(`*Ends:* ${d.endAt}`);if(d.location)out.push(`*Venue:* ${d.location}`);if(d.screen)out.push(`*Screen:* ${d.screen}`);if(d.seats.length)out.push(`*Seats:* ${d.seats.join(', ')}`);if(d.bookingRef)out.push(`*Booking ref:* ${d.bookingRef}`);return out}
