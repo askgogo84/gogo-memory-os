@@ -7,6 +7,7 @@ import {
   type FlightInfo,
   type PdfClass,
 } from './pdf-reader'
+import { extractServerlessPdfText } from './pdf-js-serverless'
 
 export { parseImageTicket, classifyPdfDocument, readAndSummarizePdfDocument }
 export type { PdfClass, TicketInfo, FlightInfo, TrainInfo, EventInfo } from './pdf-reader'
@@ -120,25 +121,11 @@ async function fetchTwilioPdfBuffer(mediaUrl: string, accountSid: string, authTo
 
 async function extractPdfText(pdfBuffer: Buffer): Promise<string> {
   try {
-    const mod: any = await import('pdf-parse')
-    if (typeof mod.PDFParse === 'function') {
-      const parser = new mod.PDFParse({ data: pdfBuffer })
-      try {
-        const result = await parser.getText()
-        return String(result?.text || '').trim()
-      } finally {
-        await parser.destroy?.()
-      }
-    }
-    const legacy = mod.default || mod
-    if (typeof legacy === 'function') {
-      const result = await legacy(pdfBuffer)
-      return String(result?.text || '').trim()
-    }
+    return await extractServerlessPdfText(pdfBuffer)
   } catch (error: any) {
     console.warn('[pdf-reader-whatsapp] local text extraction failed:', error?.message || error)
+    return ''
   }
-  return ''
 }
 
 /**
