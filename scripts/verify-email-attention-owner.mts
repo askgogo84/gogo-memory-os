@@ -28,9 +28,9 @@ const db={from(table:string){
   }
   return q
 }}
-const exports:any={}
+const loadedExports:any={}
 const context:any={
-  exports,module:{exports},supabaseAdmin:db,Number,BigInt,Object,String,Date,Set,Promise,console,
+  exports:loadedExports,module:{exports:loadedExports},supabaseAdmin:db,Number,BigInt,Object,String,Date,Set,Promise,console,
   readGmail:async()=>{providerReads++;return null},
   readForwarded:async()=>{providerReads++;return null},
   readComposio:async()=>{providerReads++;return null},
