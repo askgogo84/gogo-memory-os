@@ -2660,7 +2660,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // times (the row never opened). The approved flight's own row link is clicked directly instead, up to 3 times.
       if(!edgeBack&&providerBooking&&onGoogle&&flightRowPicks<3){
         let path='';try{path=new URL(String(page.url||'')).pathname}catch{}
-        const row=/^\/travel\/flights\/?$/.test(path)?googleFlightRowControl(page.controls||[],params.objective):null
+        const row=/^\/travel\/flights(?:\/search)?\/?$/.test(path)?googleFlightRowControl(page.controls||[],params.objective):null
         if(row){flightRowPicks++;edgeBack=[{kind:'click',selector:row} as any];console.log('BROWSER_BOOKING_ROW_PICK:',JSON.stringify({runId:params.sessionTaskId||null,wave,try:flightRowPicks}))}
       }
       // 27 Oct: on Google's booking options the planner spent a wave waiting before pressing "Continue to book with IndiGo".
@@ -2720,7 +2720,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // until the read deadline. A flight read reloads its search link once too.
       if((providerBooking||(params.mode==='read'&&params.recoverFlightSearch===true))&&onGoogle&&!bookingStartReloaded&&wave<3){
         let path='';try{path=new URL(String(page.url||'')).pathname}catch{}
-        const blank=/^\/travel\/flights\/?$/.test(path)&&(page.controls||[]).some((c:any)=>/^Where to\?/i.test(String(c?.label||'').trim())&&!String(c?.value||'').trim())
+        const blank=/^\/travel\/flights(?:\/search)?\/?$/.test(path)&&(page.controls||[]).some((c:any)=>/^Where to\?/i.test(String(c?.label||'').trim())&&!String(c?.value||'').trim())
         if(blank){bookingStartReloaded=true;actions.splice(0,actions.length,{kind:'goto',url:String(params.url)} as any);console.log('BROWSER_BOOKING_START_RELOAD:',JSON.stringify({runId:params.sessionTaskId||null,wave}))}
       }
       // One bounded recovery for the actual travel adapter: use only an
