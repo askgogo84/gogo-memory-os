@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import {readFileSync} from 'node:fs'
 import { classifyPdfTextLocally, extractPdfTextLocally, ensurePdfJsServerlessGlobals } from '../lib/services/pdf-reader'
 import { parseFlightTicketTextSafe } from '../lib/services/pdf-reader-whatsapp'
 
@@ -89,5 +90,25 @@ BLR 22:15 27 Sep 2026 Boeing 787-9 AUH 00:35 28 Sep 2026
 Booking reference B8XIQC
 EY 239 • Etihad
 ` )?.flights[0]?.flightNo,'EY239')
+
+// Workspace/PDF.js regression (registered in npm test): every real PDF entry
+// must use the shared initializer/parser before pdf-parse is evaluated. A
+// successful local-ticket path alone did not cover Workspace life-events.
+const readSource=(path:string)=>readFileSync(new URL('../'+path,import.meta.url),'utf8')
+const pdfEntrypoints:[string,string,RegExp][]=[
+  ['Workspace Gmail attachment','lib/agent/google-workspace-read.ts',/extractServerlessPdfText\(\s*bytes\s*,\s*MAX_FILE_TEXT\s*\)/],
+  ['Workspace Drive binary','lib/agent/google-workspace-drive-binary.ts',/extractServerlessPdfText\(\s*bytes\s*,\s*MAX_DRIVE_TEXT\s*\)/],
+  ['WhatsApp local ticket','lib/services/pdf-reader-whatsapp.ts',/extractServerlessPdfText\(\s*pdfBuffer\s*\)/],
+  ['Existing local reader','lib/services/pdf-reader.ts',/extractServerlessPdfText\(\s*pdfBuffer\s*\)/],
+]
+for(const [name,path,expected] of pdfEntrypoints){
+  const source=readSource(path)
+  assert.match(source,expected,name+' must use one serverless-safe PDF parser')
+}
+// Preserve the user-data guards and unreadable states while changing parser setup.
+assert.match(readSource('lib/agent/google-workspace-read.ts'),/MAX_ATTACHMENT_BYTES = 8 \* 1024 \* 1024/)
+assert.match(readSource('lib/agent/google-workspace-drive-binary.ts'),/MAX_DRIVE_BINARY_BYTES = 8 \* 1024 \* 1024/)
+assert.match(readSource('lib/agent/google-workspace-read.ts'),/status:'unreadable'/)
+assert.match(readSource('lib/agent/google-workspace-drive-binary.ts'),/reason:'unreadable'/)
 
 console.log('PDF local ticket fallback regression passed')
