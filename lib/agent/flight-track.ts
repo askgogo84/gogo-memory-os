@@ -438,7 +438,10 @@ export function conversationalFlightAnswer(f: LiveFlight, tz = 'Asia/Kolkata'): 
   const clock = (l?: string) => clockOf({ local: l }) || ''
   const arrivalWords = () => {
     const at = clock(f.arrRevisedLocal) || clock(f.arrLocal)
-    const ist = local(st.revisedArrival || f.arrUtc)
+    // 27 Oct live: "22:06 Singapore time (8:02 pm IST)" — the IST came from a stale revised-arrival field while the
+    // clock came from the local string. Convert the SAME local timestamp (it carries its UTC offset).
+    const shown = String(f.arrRevisedLocal || f.arrLocal || '').replace(' ', 'T')
+    const ist = Number.isFinite(Date.parse(shown)) && /[+-]\d{2}:?\d{2}$|Z$/.test(shown) ? local(shown) : local(st.revisedArrival || f.arrUtc)
     return at ? `${at} ${f.to.name || f.to.iata} time${ist && tz === 'Asia/Kolkata' && f.to.iata !== 'BLR' ? ` (${ist} IST)` : ''}` : ''
   }
   const head = st.state === 'landed' ? `Yes, ${f.flightNo} has landed in ${f.to.name || f.to.iata}${arrivalWords() ? `, at ${arrivalWords()}` : ''}.`
