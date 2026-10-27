@@ -20,7 +20,7 @@ function exactAudioOwner(value: number | string): string | null {
   if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
   try {
     const id = BigInt(value)
-    return id >= -(1n << 63n) && id <= (1n << 63n) - 1n ? value : null
+    return id >= BigInt('-9223372036854775808') && id <= BigInt('9223372036854775807') ? value : null
   } catch {
     return null
   }
