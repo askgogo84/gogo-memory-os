@@ -76,7 +76,7 @@ export async function runUniversalSearch(actor: AgentActor, term: string, deps: 
     const persisted = data?.telegram_id
     const exactStored = typeof persisted === 'number'
       ? (Number.isSafeInteger(persisted) ? String(persisted) : null)
-      : (typeof persisted === 'string' && /^-?[1-9]\\d*$/.test(persisted) ? persisted : null)
+      : (typeof persisted === 'string' && /^-?[1-9]\d*$/.test(persisted) ? persisted : null)
     if (error || String(data?.id ?? '') !== userId || exactStored !== String(tg)) return sourceUnavailable()
   } catch {
     return sourceUnavailable()
