@@ -14,3 +14,8 @@ assert.equal(googleFlightRowControl(controls, 'Provider booking up to payment fo
 const src = (await import('node:fs')).readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
 assert.ok(src.includes('flightRowPicks<3'), 'bounded to three tries')
 console.log('BOOKING_ROW_PICK_OK')
+{
+  const src = (await import('node:fs')).readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
+  assert.ok(src.includes('!onGoogle&&!flightHandoff&&loggedOutCue(page)'), 'a flight hand-off never presses Login on the airline site')
+  console.log('FLIGHT_GUEST_OK')
+}

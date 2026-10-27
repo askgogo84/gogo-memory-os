@@ -2593,7 +2593,9 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // 17 Oct 11:33: a flight booking starts on Google Flights, whose "Sign in" is a Google account
       // login, never the provider's. Logging in first there opened accounts.google.com and stopped the run.
       const onGoogle=(()=>{try{return /(^|\.)google\.com$/i.test(new URL(String(page.url||params.url)).hostname)}catch{return false}})()
-      const loginFirst=Boolean(providerBooking&&params.bookingPhone&&!bookingLoggedIn&&!otpWaiting&&!onGoogle&&loggedOutCue(page))
+      // 27 Oct live booking a2b51ab2: on akasaair.com the run pressed Login. A flight hand-off books as a guest; it never signs in.
+      const flightHandoff=/^Flight booking up to payment on Google Flights\b/i.test(String(params.objective||''))
+      const loginFirst=Boolean(providerBooking&&params.bookingPhone&&!bookingLoggedIn&&!otpWaiting&&!onGoogle&&!flightHandoff&&loggedOutCue(page))
       const bookingPlan=providerBooking?{otpAvailable:Boolean(otpWaiting&&params.bookingOtp&&!otpUsed),phoneAvailable:Boolean(params.bookingPhone),rehearsal:params.rehearsal===true,mismatch:bookingMismatch,loginFirst}:undefined
       // 12 Oct live run: the Playo login box was open, but its mobile input has no label of its own
       // ("+91" beside it, "Enter Mobile No" above) and Send OTP stays disabled until a number is typed,
