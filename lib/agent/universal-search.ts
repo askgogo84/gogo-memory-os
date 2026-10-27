@@ -53,9 +53,37 @@ export function formatUniversalSearch(term: string, results: SourceResult[]) {
   return lines.join('\n')
 }
 
+/** Never compose private sources from an ambiguous or stale actor. This exported
+ * boundary must not assume every caller went through resolveAgentActor. */
+const sourceUnavailable = (): SourceResult[] =>
+  (['chat', 'documents', 'notes', 'gmail', 'drive'] as const)
+    .map(source => ({ source, hits: [], error: 'failed' as const }))
+
 export async function runUniversalSearch(actor: AgentActor, term: string, deps: { db?: any; gmail?: (q: string) => Promise<any[]>; drive?: (q: string) => Promise<any[]> } = {}): Promise<SourceResult[]> {
+  // Exact signed64 owners above JS safe-integer range can alias each other.
+  // Reject BEFORE private DB queries and before Gmail/Drive callbacks.
+  const tg = actor?.legacyTelegramId
+  const userId = typeof actor?.userId === 'string' ? actor.userId.trim() : ''
+  if (typeof tg !== 'number' || !Number.isSafeInteger(tg) || tg === 0 || !userId) return sourceUnavailable()
+
   const db = deps.db || (await import('@/lib/supabase-admin')).supabaseAdmin
-  const tg = Number(actor.legacyTelegramId)
+  try {
+    const { data, error } = await db.from('users')
+      .select('id,telegram_id')
+      .eq('id', userId)
+      .eq('telegram_id', String(tg))
+      .maybeSingle()
+    const persisted = data?.telegram_id
+    const exactStored = typeof persisted === 'number'
+      ? (Number.isSafeInteger(persisted) ? String(persisted) : null)
+      : (typeof persisted === 'string' && /^-?[1-9]\\d*$/.test(persisted) ? persisted : null)
+    if (error || String(data?.id ?? '') !== userId || exactStored !== String(tg)) return sourceUnavailable()
+  } catch {
+    return sourceUnavailable()
+  }
+
+  // Capture the verified actor so mutable caller arguments cannot change owner mid-search.
+  const verifiedActor: AgentActor = { ...actor, userId, legacyTelegramId: tg }
   const like = `%${ilikeSafe(term)}%`
   const since = new Date(Date.now() - 180 * 86400_000).toISOString()
   const wrap = async (source: SearchHit['source'], run: () => Promise<SearchHit[]>): Promise<SourceResult> => {
@@ -66,8 +94,8 @@ export async function runUniversalSearch(actor: AgentActor, term: string, deps: 
       return { source, hits: [], error: /not_connected|reconnect|scope|no_token|workspace_not/i.test(String(err?.message || '')) ? 'not_connected' : 'failed' }
     }
   }
-  const gmail = deps.gmail || (async (q: string) => { const { searchWorkspaceEmailsByQuery } = await import('./google-workspace-read'); return searchWorkspaceEmailsByQuery(actor, q, 5) })
-  const drive = deps.drive || (async (q: string) => { const { searchWorkspaceDrive } = await import('./google-workspace-read'); return (await searchWorkspaceDrive(actor, q)).files })
+  const gmail = deps.gmail || (async (q: string) => { const { searchWorkspaceEmailsByQuery } = await import('./google-workspace-read'); return searchWorkspaceEmailsByQuery(verifiedActor, q, 5) })
+  const drive = deps.drive || (async (q: string) => { const { searchWorkspaceDrive } = await import('./google-workspace-read'); return (await searchWorkspaceDrive(verifiedActor, q)).files })
   return Promise.all([
     wrap('chat', async () => {
       const { data, error } = await db.from('conversations').select('role,content,created_at').eq('telegram_id', tg).eq('role', 'user').gte('created_at', since).ilike('content', like).order('created_at', { ascending: false }).limit(10)
