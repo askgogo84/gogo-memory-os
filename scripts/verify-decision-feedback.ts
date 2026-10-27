@@ -48,6 +48,26 @@ async function main(){
   }
   await recordShadowRouterOutcome({telegramId:123,surface:'system',eventId:'clarify',actualHandler:'jev-clarification-guard',status:'paused'})
   assert.equal(inserts.at(-1).metadata_json.outcome,'clarified')
+  // Two distinct persisted signed64 owners MUST NEVER share Same Brain user text.
+  // An unsafe caller previously read the exact high owner observation, rounded
+  // its AgentActor to the neighboring low owner, then wrote decision_learning.
+  assert.equal(Number('9007199254740992'),Number('9007199254740993'))
+  const originalWrites=inserts.length,originalReads=filters.length
+  const rejectedOwners:any[]=[
+   '9007199254740992','9007199254740993',Number('9007199254740993'),
+   0,-0,NaN,Infinity,-Infinity,1.25,'00123','12x','',null,undefined,
+  ]
+  for(const telegramId of rejectedOwners){
+   await recordShadowRouterOutcome({telegramId,surface:'system',eventId:'synthetic-private-observation',actualHandler:'calendar-named-read',status:'outcome_unknown'})
+   assert.equal(inserts.length,originalWrites,'ambiguous owner must not write telemetry/learning: '+String(telegramId))
+   assert.equal(filters.length,originalReads,'ambiguous owner must not read private observation: '+String(telegramId))
+  }
+  for(const telegramId of ['123','-123',9007199254740991]){
+   const start=inserts.length
+   await recordShadowRouterOutcome({telegramId,surface:'system',eventId:'safe-owner-control',actualHandler:'calendar-named-read',status:'outcome_unknown'})
+   assert.equal(inserts[start].telegram_id,String(telegramId),'safe owner outcome retains exact identity')
+   assert.equal(inserts.at(-1).telegram_id,String(telegramId),'safe owner decision learning stays isolated')
+  }
   assert.ok(filters.some(f=>f[1]==='eq'&&f[2]==='telegram_id'&&f[3]==='123'))
   assert.ok(filters.some(f=>f[1]==='eq'&&f[2]==='metadata_json->>event_id'&&f[3]==='correction-turn'))
  } finally {supabaseAdmin.from=original}
