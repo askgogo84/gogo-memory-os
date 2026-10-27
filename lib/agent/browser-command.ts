@@ -484,7 +484,9 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
   let pendingHandoffReservation:string|undefined
   try{
-    const bookingPhone=providerBooking?indianMobileFromWhatsApp(params.actor.whatsappId):null
+    // 27 Oct: a flight booking uses the ticket mobile the person gave and approved; other bookings use their WhatsApp number.
+    const approvedMobile=/^[6-9]\d{9}$/.test(String(runMetadata?.flight_booking?.contact_mobile||''))?String(runMetadata.flight_booking.contact_mobile):null
+    const bookingPhone=providerBooking?(approvedMobile||indianMobileFromWhatsApp(params.actor.whatsappId)):null
     // Read-only public search can use the disposable Obscura observer first.
     // Existing account/Take Control browser still owns any fallback. Only this
     // exact explicit Flipkart search shape can take the public preflight.
