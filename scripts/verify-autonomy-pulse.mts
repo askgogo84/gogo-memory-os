@@ -53,12 +53,12 @@ const browserRun=(id:string,host='www.zomato.com',objective='Find vegetarian bur
   summary:'Gogo could not complete the secure browser session.',error:'browser_objective_unverified',updated_at:now,
   metadata_json:{plan_type:'secure_browser',mode:'read',url:`https://${host}/`,objective},
 })
-let tables:Record<string,any[]>={},historyFails=false
+let tables:Record<string,any[]>={},historyFails=false,forceUserMismatch=false
 const deliveries:string[]=[]
 const db={from:(table:string)=>{
   let rows=[...(tables[table]||[])],single=false,history=false
   const q:any={select:()=>q,
-    eq:(key:string,value:any)=>{rows=rows.filter(r=>String(r[key])===String(value));if(key==='event_type'&&value==='autonomy_pulse_sent')history=true;return q},
+    eq:(key:string,value:any)=>{if(!(forceUserMismatch&&table==='users'&&key==='telegram_id'))rows=rows.filter(r=>String(r[key])===String(value));if(key==='event_type'&&value==='autonomy_pulse_sent')history=true;return q},
     in:(key:string,values:any[])=>{rows=rows.filter(r=>values.includes(r[key]));return q},
     gte:(key:string,value:any)=>{rows=rows.filter(r=>r[key]>=value);return q},lte:(key:string,value:any)=>{rows=rows.filter(r=>r[key]<=value);return q},
     order:(key:string,options:any)=>{rows.sort((a,b)=>String(a[key]).localeCompare(String(b[key]))*(options.ascending?1:-1));return q},
@@ -113,3 +113,40 @@ assert.match(changed.items[0].line,/Take Control/)
 tables.agent_runs=[browserRun('history-error')];historyFails=true
 await assert.rejects(()=>runtime.buildPulse(owner,'Asia/Kolkata'),/history/i,'do not send duplicates when history lookup fails')
 console.log('PASS: duplicate blockers, distinct requests, owner isolation, cooldown and human handoff')
+
+
+// P1 conditional 64-bit owner isolation: use the ACTUAL sendPulse module with
+// inert in-memory tables and a WhatsApp stub. These negative probes must never
+// deliver an owner's private pulse to an unrelated phone identity.
+historyFails=false
+const otherA='9007199254740992',otherB='9007199254740993'
+const initialDeliveryCount=deliveries.length
+tables={
+  users:[{telegram_id:otherA,whatsapp_id:'whatsapp:+15550000992',timezone:'Asia/Kolkata'}],
+  agent_runs:[{...browserRun('owner-b-private'),telegram_id:otherB}],
+  agent_activity:[{telegram_id:otherB,event_type:'shadow_brain_observation',created_at:now}],
+}
+for(const unsafe of [otherB,otherA,Number(otherB),'0101','101.0','1e2','not-a-user']){
+  const result=await runtime.sendPulse(unsafe as any)
+  assert.equal(result.sent,false,'ambiguous or noncanonical pulse owner must fail closed: '+unsafe)
+  assert.equal(deliveries.length,initialDeliveryCount,'unsafe owner must not trigger any WhatsApp send: '+unsafe)
+}
+tables={
+  users:[{telegram_id:'102',whatsapp_id:'whatsapp:+15550000102',timezone:'Asia/Kolkata'}],
+  agent_runs:[browserRun('mismatched-owner')],
+  agent_activity:[{telegram_id:owner,event_type:'shadow_brain_observation',created_at:now}],
+}
+forceUserMismatch=true // Mimic an erroneous/rounded upstream query response despite the requested predicate.
+const mismatchResult=await runtime.sendPulse(owner)
+forceUserMismatch=false
+assert.equal(mismatchResult.sent,false,'persisted user owner mismatch must fail closed')
+assert.equal(deliveries.length,initialDeliveryCount,'mismatched user must never receive another owner\'s pulse')
+tables={
+  users:[{telegram_id:owner,whatsapp_id:'whatsapp:+15550000101',timezone:'Asia/Kolkata'}],
+  agent_runs:[browserRun('valid-after-containment')],
+  agent_activity:[{telegram_id:owner,event_type:'shadow_brain_observation',created_at:now}],
+}
+const validResult=await runtime.sendPulse(owner)
+assert.equal(validResult.sent,true,'safe exact owner still receives an actionable pulse')
+assert.equal(deliveries.length,initialDeliveryCount+1,'one safe owner still receives exactly one pulse')
+console.log('PASS: Autonomy Pulse exact owner binding and inert no-cross-recipient delivery')

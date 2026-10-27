@@ -10,6 +10,17 @@ const PULSE_COOLDOWN_MINUTES=180
 const MAX_USERS_PER_PASS=80
 
 function clean(value:unknown,max=500){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}
+// The service-role pulse may address a WhatsApp recipient. Never choose a user
+// after lossy 64-bit Number coercion, including when a DB adapter already rounded
+// an integer before it reached this worker. Legitimate canonical safe IDs continue.
+function exactPulseOwner(value:unknown):string|null{
+  if(typeof value!=='string'&&typeof value!=='number')return null
+  if(typeof value==='number'&&!Number.isSafeInteger(value))return null
+  const id=typeof value==='number'?String(value):value
+  if(!/^-?[1-9]\d*$/.test(id))return null
+  const numeric=Number(id)
+  return Number.isSafeInteger(numeric)&&String(numeric)===id?id:null
+}
 function fingerprint(parts:string[]){return createHash('sha256').update(parts.join('|')).digest('hex').slice(0,32)}
 
 function localHour(timezone:string){
@@ -263,11 +274,19 @@ async function hasRecentWhatsAppSession(telegramId:string){
 }
 
 async function sendPulse(telegramId:string){
+  const ownerId=exactPulseOwner(telegramId)
+  if(!ownerId)return {sent:false,reason:'owner_invalid'}
+  // From this point forward the original parameter is the validated canonical
+  // decimal text. Preserve existing owner-scoped readers and delivery contracts.
+  telegramId=ownerId
   const {data:user,error}=await supabaseAdmin.from('users')
     .select('telegram_id,whatsapp_id,name,timezone')
-    .eq('telegram_id',Number(telegramId))
+    .eq('telegram_id',telegramId)
     .maybeSingle()
   if(error||!user?.whatsapp_id)return {sent:false,reason:'user_unavailable'}
+  // Query filtering is necessary but insufficient when an adapter returns a
+  // rounded or inconsistent ID. Never select a WhatsApp recipient on mismatch.
+  if(exactPulseOwner(user.telegram_id)!==telegramId)return {sent:false,reason:'owner_mismatch'}
   const timezone=String(user.timezone||'Asia/Kolkata')
   const hour=localHour(timezone)
   // Duet parity: the person's own quiet hours (default 10 pm–7 am, as before) and check frequency.
