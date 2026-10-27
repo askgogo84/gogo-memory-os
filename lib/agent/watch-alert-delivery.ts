@@ -13,7 +13,7 @@ export async function deliverWatchAlert(params: {
   // Private watch producers carry the exact persisted decimal owner. JavaScript
   // numeric coercion must never silently normalize another owner's identity.
   if (typeof params.owner !== 'string' ||
-      !/^-?[1-9]\\d*$/.test(params.owner) ||
+      !/^-?[1-9]\d*$/.test(params.owner) ||
       !Number.isSafeInteger(owner) ||
       String(owner) !== params.owner) throw new Error('watch_alert_owner_invalid')
   // Duet parity: a topic the person turned off stays in the app only (same path as an app-only watch), never on WhatsApp.
