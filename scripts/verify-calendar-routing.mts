@@ -1,3 +1,4 @@
+import './verify-meeting-nudge-owner.mts'
 // Verifies the calendar-create vs reminder routing precedence.
 // Run: npx tsx scripts/verify-calendar-routing.mts
 //
