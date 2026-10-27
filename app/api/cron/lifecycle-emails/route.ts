@@ -17,7 +17,7 @@ const MAX_SENDS_PER_RUN = 50
 function exactSafeLifecycleOwner(raw: unknown): number | null {
   if (typeof raw !== 'string' && typeof raw !== 'number') return null
   const text = String(raw)
-  if (!/^-?[1-9]\\d*$/.test(text)) return null
+  if (!/^-?[1-9]\d*$/.test(text)) return null
   const owner = Number(text)
   return Number.isSafeInteger(owner) && String(owner) === text ? owner : null
 }
