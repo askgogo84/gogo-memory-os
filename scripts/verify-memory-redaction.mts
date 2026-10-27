@@ -3,7 +3,8 @@
 //
 // Imports the REAL shipped filter so test and prod can't drift. Models getMemories'
 // post-fetch step: stripSecretShapedMemories over an in-memory row list.
-import { isSecretShapedMemory, stripSecretShapedMemories, redactSecretShapedText } from '../lib/bot/memory-redaction'\nimport { readFileSync } from 'node:fs'
+import { isSecretShapedMemory, stripSecretShapedMemories, redactSecretShapedText } from '../lib/bot/memory-redaction'
+import { readFileSync } from 'node:fs'
 import ts from 'typescript'
 
 let fails = 0
