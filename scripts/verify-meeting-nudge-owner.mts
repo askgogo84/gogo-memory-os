@@ -23,7 +23,7 @@ type Scenario = {
   failProvider?: boolean
 }
 function actualModuleScenario(s: Scenario = {}) {
-  const owner = s.owner ?? '42'
+  const owner = Object.prototype.hasOwnProperty.call(s, 'owner') ? s.owner : '42'
   const loop = {
     id: 'synthetic-loop-1', telegram_id: owner, source_id: 'synthetic-calendar-event',
     title: 'Confidential synthetic meeting', due_at: due,
