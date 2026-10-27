@@ -1,3 +1,4 @@
+import './verify-openui-activities.mts'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import ts from 'typescript'
