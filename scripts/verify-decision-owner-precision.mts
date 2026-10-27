@@ -59,7 +59,7 @@ const hint = (owner:unknown) => exportsFromRealModule.decisionHints({
 const invalidOwners:unknown[]=[
   Number('9007199254740993'), 9007199254740992, -9007199254740992,
   0,-0,Number.NaN,Number.POSITIVE_INFINITY,Number.NEGATIVE_INFINITY,
-  1.5,'42','9007199254740993',null,undefined,{valueOf:()=>42}
+  1.5,'+42','042','42.0','1e3','9007199254740992','9007199254740993',null,undefined,{valueOf:()=>42}
 ]
 for (const owner of invalidOwners) {
   const before=dbCalls.length, beforeEvidence=deliveryEvidenceCalls
@@ -68,7 +68,7 @@ for (const owner of invalidOwners) {
   assert.equal(dbCalls.length,before,'owner was allowed into private agent_activity: '+String(owner))
   assert.equal(deliveryEvidenceCalls,beforeEvidence,'invalid owner consulted receipt evidence: '+String(owner))
 }
-for (const owner of [42,-42,Number.MAX_SAFE_INTEGER]) {
+for (const owner of [42,-42,Number.MAX_SAFE_INTEGER,'42','-42']) {
   const prior=dbCalls.length
   await learn(owner)
   await hint(owner)
