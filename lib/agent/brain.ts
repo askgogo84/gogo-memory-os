@@ -15,6 +15,7 @@ export type BrainDecision =
   | { kind: 'ask'; text: string }
   | { kind: 'handle'; instruction: string; rewritten: boolean }
   | { kind: 'flight'; flightNo: string; track: boolean }
+  | { kind: 'later'; question: string }
   | { kind: 'skip'; reason: string }
 
 export type BrainTurn = { role: 'user' | 'assistant'; content: string; createdAt?: string | null }
@@ -27,7 +28,10 @@ export type BrainContext = {
 }
 
 const MODEL = () => process.env.GOGO_BRAIN_MODEL || 'claude-sonnet-4-5'
-const TIMEOUT_MS = 9_000
+const TIMEOUT_MS = 8_000
+// 27 Oct live: one decision took 16.9 s because the SDK silently retried after a slow first attempt. No retries:
+// a slow brain falls back to today's pipeline instead of making the person wait.
+const MAX_RETRIES = 0
 const clean = (v: unknown, max = 400) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
 const digits = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10)
 
@@ -57,6 +61,7 @@ Choose exactly one tool:
 - flight: the message is about a flight's status, landing, delay or take-off (including "did it land?" about a flight being tracked or just discussed), or asks to track one. Give the flight number.
 - reply: you can fully answer from the conversation and context alone (chat, thanks, a question about something already said, advice). Be warm, brief, WhatsApp-style. Never claim you did, saved, booked, set or sent anything. Never use reply for anything live (a flight's status, prices, weather, news, availability): earlier messages may be stale, so use flight or handle.
 - ask: the request is genuinely ambiguous even with context. One short question.
+- later: the user asks about the results of a search Gogo is still running (an open travel or flight search in Open tasks, results not yet shown). Gogo will answer it the moment the results arrive, so do not ask them anything.
 - handle: anything that needs Gogo's tools (reminders, lists, expenses, email, calendar, documents, web answers, prices, shopping, restaurants, travel search and booking, watches, memory). Write the instruction the way the user would say it if they had been fully explicit: resolve "it/that/this" to the named thing (flight number, date, product, person), keep every detail the user gave, add nothing they did not ask for. If the message is already explicit, or it answers a question Gogo just asked (a name, a choice, details for a booking), set keep_original true.
 
 Hard rules: never approve, confirm, pay or accept anything on the user's behalf; never add words like yes, approve, confirm or pay to an instruction; never invent facts, prices or statuses.
@@ -69,6 +74,7 @@ export const BRAIN_TOOLS: Anthropic.Tool[] = [
   { name: 'flight', description: 'Live status of a flight, or start tracking it.', input_schema: { type: 'object', properties: { flight_no: { type: 'string', description: 'IATA flight number, e.g. QF1' }, track: { type: 'boolean', description: 'true when the user asks to track/monitor/alert on it' } }, required: ['flight_no', 'track'] } },
   { name: 'reply', description: 'Answer directly from the conversation and context.', input_schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
   { name: 'ask', description: 'Ask one short clarifying question.', input_schema: { type: 'object', properties: { question: { type: 'string' } }, required: ['question'] } },
+  { name: 'later', description: 'Answer this question about a running search once its results arrive.', input_schema: { type: 'object', properties: { question: { type: 'string', description: 'The question, self-contained' } }, required: ['question'] } },
   { name: 'handle', description: "Hand the request to Gogo's capabilities.", input_schema: { type: 'object', properties: { instruction: { type: 'string', description: 'Self-contained request in the user\'s voice' }, keep_original: { type: 'boolean' } }, required: ['instruction', 'keep_original'] } },
 ]
 
@@ -90,6 +96,10 @@ export function decisionFromToolUse(original: string, name: string, input: any):
     // A rewrite may never introduce consent words the user did not write.
     if (input?.keep_original === true || !instruction || (CONSENT.test(instruction) && !CONSENT.test(original))) return { kind: 'handle', instruction: original, rewritten: false }
     return { kind: 'handle', instruction, rewritten: instruction !== original.trim() }
+  }
+  if (name === 'later') {
+    const question = clean(input?.question, 400) || clean(original, 400)
+    return { kind: 'later', question }
   }
   return { kind: 'skip', reason: `unknown_tool:${name}` }
 }
@@ -139,7 +149,7 @@ export async function decide(p: { text: string; ctx: BrainContext; now?: Date; c
     const res: any = await client.messages.create({
       model: MODEL(), max_tokens: 700, system: BRAIN_SYSTEM(p.ctx, p.now || new Date()),
       tools: BRAIN_TOOLS, tool_choice: { type: 'any' }, messages: brainMessages(p.ctx.turns, p.text),
-    }, { timeout: TIMEOUT_MS })
+    }, { timeout: TIMEOUT_MS, maxRetries: MAX_RETRIES })
     const use = (res.content || []).find((b: any) => b.type === 'tool_use')
     const d = use ? decisionFromToolUse(p.text, use.name, use.input) : { kind: 'skip' as const, reason: 'no_tool_use' }
     return { ...d, ms: Date.now() - t0 }
@@ -175,6 +185,57 @@ export async function runBrain(p: { phone: string; telegramId: number; text: str
     const answer = await flightAnswer(p.telegramId, d.flightNo, d.track, ctx.timezone).catch(() => null)
     return answer ? { reply: answer } : { text: `${d.track ? 'Track' : 'Status of'} flight ${d.flightNo}` }
   }
+  if (d.kind === 'later') {
+    const saved = await saveFollowup(p.telegramId, d.question).catch(() => false)
+    if (saved) return { reply: `Still searching. I'll answer that the moment the results are in.` }
+    return null
+  }
   if (d.kind === 'handle' && d.rewritten) return { text: d.instruction }
   return null
+}
+
+// ---------------------------------------------------------------- questions asked while a search runs
+// 27 Oct live: "Which one is cheapest in the morning?" asked mid-search got an odd question back and was never
+// answered when the results landed. The question is kept as a step on the running search (its own row, so it
+// can never overwrite the run's results) and answered right after the results are delivered.
+const FOLLOWUP_TOOL = 'user_followup'
+
+export async function saveFollowup(telegramId: number, question: string, now = new Date()): Promise<boolean> {
+  const { data: run } = await supabaseAdmin.from('agent_runs').select('id').eq('telegram_id', String(telegramId)).eq('type', 'travel_research')
+    .in('status', ['queued', 'running']).gte('updated_at', new Date(now.getTime() - 30 * 60_000).toISOString()).order('updated_at', { ascending: false }).limit(1).maybeSingle()
+  if (!run?.id) return false
+  for (const ordinal of [97, 98, 99]) {
+    const { error } = await supabaseAdmin.from('agent_steps').insert({ telegram_id: String(telegramId), run_id: run.id, ordinal, tool_name: FOLLOWUP_TOOL,
+      title: 'Question asked while searching', status: 'completed', input_json: { question: clean(question, 400) }, output_json: { answered: false }, completed_at: now.toISOString() })
+    if (!error) return true
+  }
+  return false
+}
+
+/** After a search's results are delivered: answer each question asked meanwhile, from the fresh conversation. */
+export async function answerFollowups(p: { runId: string; telegramId: number; send: (text: string) => Promise<unknown>; client?: Pick<Anthropic, 'messages'> }): Promise<number> {
+  const { data: steps } = await supabaseAdmin.from('agent_steps').select('id,input_json,output_json').eq('run_id', p.runId).eq('telegram_id', String(p.telegramId)).eq('tool_name', FOLLOWUP_TOOL).order('ordinal', { ascending: true })
+  const open = (steps || []).filter((s: any) => s?.output_json?.answered !== true && clean(s?.input_json?.question))
+  let answered = 0
+  for (const step of open) {
+    const question = clean(step.input_json.question, 400)
+    // Mark first so a retry of the delivery never answers twice.
+    const { error } = await supabaseAdmin.from('agent_steps').update({ output_json: { answered: true } }).eq('id', step.id).eq('telegram_id', String(p.telegramId))
+    if (error) continue
+    try {
+      const ctx = await loadBrainContext({ telegramId: p.telegramId, text: question })
+      const client = p.client || new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
+      const res: any = await client.messages.create({
+        model: MODEL(), max_tokens: 500, system: `${BRAIN_SYSTEM(ctx, new Date())}\n\nThe search results were just sent (latest assistant message). Answer the user's earlier question from those results only. Be brief, name the option number, airline, time and fare.`,
+        tools: BRAIN_TOOLS.filter(t => t.name === 'reply'), tool_choice: { type: 'tool', name: 'reply' }, messages: brainMessages(ctx.turns, `(Earlier, while you were searching, I asked:) ${question}`),
+      }, { timeout: TIMEOUT_MS * 2, maxRetries: 1 })
+      const text = clean((res.content || []).find((b: any) => b.type === 'tool_use')?.input?.text, 1200)
+      if (!text) continue
+      await p.send(text)
+      await supabaseAdmin.from('conversations').insert({ telegram_id: p.telegramId, role: 'assistant', content: text })
+      answered++
+    } catch (err: any) { console.error('BRAIN_FOLLOWUP_FAILED:', clean(err?.message || err, 120)) }
+  }
+  if (open.length) console.log('BRAIN_FOLLOWUPS:', JSON.stringify({ runId: p.runId, open: open.length, answered }))
+  return answered
 }
