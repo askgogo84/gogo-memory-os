@@ -68,3 +68,8 @@ console.log('BOOKING_ROW_PICK_OK')
   assert.equal(googleAgencyContinueControl(opts, ['cleartrip', 'goibibo']), null, 'never the airline again or an unlisted agency')
   console.log('AGENCY_FALLBACK_OK')
 }
+{
+  const src = (await import('node:fs')).readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
+  assert.ok(src.includes("(providerBooking||(params.mode==='read'&&params.recoverFlightSearch===true))&&onGoogle&&!bookingStartReloaded"), '27 Oct 15:50: a fare read reloads a blank Google form once')
+  console.log('READ_BLANK_RELOAD_OK')
+}

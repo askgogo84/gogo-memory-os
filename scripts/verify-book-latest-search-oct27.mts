@@ -11,7 +11,9 @@ const actor: any = { legacyTelegramId: '918884501501' }
 const now = Date.now(), iso = (m: number) => new Date(now - m * 60_000).toISOString()
 rows = [{ id: 'r2', started_at: iso(1), metadata_json: { context: { startDate: '2026-11-19', origin: { code: 'BLR' }, destination: { code: 'MAA' } } } }]
 assert.deepEqual(await b.newerFlightSearchPending(actor, iso(40)), { date: '2026-11-19', route: 'BLR → MAA' })
-assert.deepEqual(seen.status, ['queued', 'running']); assert.equal(seen.telegram_id, '918884501501'); assert.equal(seen.type, 'travel_research')
+assert.deepEqual(seen.status, ['queued', 'running', 'failed', 'completed']); assert.equal(seen.telegram_id, '918884501501'); assert.equal(seen.type, 'travel_research')
+rows = [{ id: 'r3', status: 'failed', started_at: iso(2), metadata_json: { context: { startDate: '2026-11-20', origin: { code: 'BLR' }, destination: { code: 'MAA' } } } }]
+assert.deepEqual(await b.newerFlightSearchPending(actor, iso(40)), { date: '2026-11-20', route: 'BLR → MAA', failed: true }, '27 Oct 15:56: a newer failed search blocks booking the older date')
 rows = [{ id: 'r1', started_at: iso(50), metadata_json: {} }]
 assert.equal(await b.newerFlightSearchPending(actor, iso(40)), null, 'an older running search does not block booking the newer result')
 rows = []
@@ -32,4 +34,13 @@ assert.deepEqual(b.flightBookingRequest('Book'), { kind: 'cheapest' }, 'bare "bo
 assert.deepEqual(b.flightBookingRequest('book 2'), { kind: 'number', n: 2 })
 assert.equal(b.flightBookingRequest('book a table for 2'), null)
 assert.ok(src.includes("profile: { travellers, email: contact.email, seat }") && src.includes("profile: null, pii_purged: true"), 'profile saved with the booking and purged with it')
+// 27 Oct 15:57: a missing title is asked for alone and merged with the details already sent.
+assert.equal(b.withTitle('Goverdhan MD\ngoverdhan.md@gmail.com\n8310441698\nFree seat', 'Mr'), 'Mr Goverdhan MD\ngoverdhan.md@gmail.com\n8310441698\nFree seat')
+const merged = b.parseBookingDetails(b.withTitle('Goverdhan MD\ngoverdhan.md@gmail.com\n8310441698\nFree seat', 'Mr'), 1, { domestic: true })
+assert.deepEqual(merged.problems, []); assert.equal(merged.travellers[0].title, 'Mr'); assert.equal(merged.seat, 'free')
+const noTitle = b.parseBookingDetails('Goverdhan MD\ngoverdhan.md@gmail.com\n8310441698\nFree seat', 1, { domestic: true })
+assert.ok(noTitle.problems.length === 1 && /Mr, Ms or Mrs/.test(noTitle.problems[0]) && noTitle.contact && noTitle.seat, 'only the title is missing')
+const src2 = (await import('node:fs')).readFileSync(new URL('../lib/agent/flight-booking.ts', import.meta.url), 'utf8')
+assert.ok(src2.includes('Almost done. Is that Mr, Ms or Mrs?') && src2.includes("I've kept the rest."))
+assert.ok(src2.includes('older && last?.context?.startDate === older[1] ? null'), '"book from the <date> results" books the named older search')
 console.log('BOOK_LATEST_SEARCH_OK')

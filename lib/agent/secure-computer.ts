@@ -2710,7 +2710,9 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // approved search link once instead; it is the same URL the approval was bound to.
       // The way back is the Google booking page this run already opened, not a link the blocked page offers.
       if(edgeBack)actions.splice(0,actions.length,...edgeBack)
-      if(providerBooking&&onGoogle&&!bookingStartReloaded&&wave<3){
+      // 27 Oct 15:50 live search 6a0aaef4: the same blank form appeared on a fare read, and 20+ waves re-typed the search
+      // until the read deadline. A flight read reloads its search link once too.
+      if((providerBooking||(params.mode==='read'&&params.recoverFlightSearch===true))&&onGoogle&&!bookingStartReloaded&&wave<3){
         let path='';try{path=new URL(String(page.url||'')).pathname}catch{}
         const blank=/^\/travel\/flights\/?$/.test(path)&&(page.controls||[]).some((c:any)=>/^Where to\?/i.test(String(c?.label||'').trim())&&!String(c?.value||'').trim())
         if(blank){bookingStartReloaded=true;actions.splice(0,actions.length,{kind:'goto',url:String(params.url)} as any);console.log('BROWSER_BOOKING_START_RELOAD:',JSON.stringify({runId:params.sessionTaskId||null,wave}))}
