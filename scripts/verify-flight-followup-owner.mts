@@ -94,7 +94,7 @@ for (const invalid of [
 
 // Exact legitimate safe owners retain the existing follow-up behavior, but the
 // service-role query must use the canonical persisted decimal string, not Number.
-for (const owner of ['42', 42, '-42']) {
+for (const owner of ['42', 42, '-42', '9007199254740991', '-9007199254740991']) {
   const f = scenario(owner)
   const result = await f.run()
   assert.equal(f.queries.length, 1, 'safe owner should read one owner-scoped history')
