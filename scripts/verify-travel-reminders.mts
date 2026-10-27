@@ -103,3 +103,6 @@ assert.equal(reminderDuplicatesFlight({message:'Bengaluru → Abu Dhabi departs 
 assert.equal(reminderDuplicatesFlight({message:'Etihad EY 239 departs tonight'},[flight]),true)
 assert.equal(reminderDuplicatesFlight({message:'Drink water'},[flight]),false)
 console.log('Morning briefing travel/reminder dedupe verified')
+
+// Registered inert owner-precision regression for the shared notification ledger.
+await import('./verify-notification-owner-guard.mts')
