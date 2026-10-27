@@ -3,6 +3,7 @@
 import { randomUUID } from 'node:crypto'
 import OpenAI from 'openai'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 
 const BUCKET = 'user-documents'
 
@@ -29,7 +30,10 @@ function prompt(text: string) {
 
 /** Generate one image; returns a signed PNG link, or null if it could not be made. */
 export async function createImage(telegramId: number | string, text: string): Promise<string | null> {
-  if (!process.env.OPENAI_API_KEY) return null
+  // Generated private assets must use the same exact signed-64 owner as authenticated sessions.
+  // An unsafe JS number may already be rounded; never produce media or a signed URL for it.
+  const owner = exactSessionOwnerId(telegramId)
+  if (!owner || !process.env.OPENAI_API_KEY) return null
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   const attempts: Array<Record<string, unknown>> = [
     { model: process.env.GOGO_IMAGE_MODEL || 'gpt-image-1', prompt: prompt(text), size: '1024x1024' },
@@ -40,7 +44,7 @@ export async function createImage(telegramId: number | string, text: string): Pr
       const res: any = await openai.images.generate(params as any)
       const b64 = res?.data?.[0]?.b64_json
       if (!b64) continue
-      const path = `${telegramId}/images/${randomUUID()}.png`
+      const path = `${owner}/images/${randomUUID()}.png`
       const { error } = await supabaseAdmin.storage.from(BUCKET).upload(path, Buffer.from(b64, 'base64'), { contentType: 'image/png', upsert: false })
       if (error) throw new Error(`image_upload_failed:${error.message}`)
       const { data, error: signError } = await supabaseAdmin.storage.from(BUCKET).createSignedUrl(path, 3600)
