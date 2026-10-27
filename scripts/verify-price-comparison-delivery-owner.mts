@@ -130,8 +130,12 @@ assert.equal(await web.send(), 'history_published', 'verified owner may publish 
 assert.deepEqual(web.events.publications, [{owner:'42',runId:baseTask.id}])
 assert.equal(web.events.sends.length, 0, 'web comparisons never send WhatsApp')
 
+const webWithoutPhone = fixture({ source: 'web' })
+assert.equal(await webWithoutPhone.send({...baseActor,whatsappId:''}), 'history_published', 'owner-bound web history must not require a phone')
+assert.deepEqual(webWithoutPhone.events.publications, [{owner:'42',runId:baseTask.id}])
+
 const webForeign = fixture({source: 'web'})
 assert.equal(await webForeign.send({...baseActor,userId:'foreign-uuid'}), 'skipped')
 assert.equal(webForeign.events.publications.length, 0, 'wrong owner cannot publish web history')
 
-console.log('Comparison delivery exact owner/recipient boundary: 10 inert scenarios passed')
+console.log('Comparison delivery exact owner/recipient boundary: 11 inert scenarios passed')
