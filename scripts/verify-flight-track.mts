@@ -1,3 +1,5 @@
+// Register the inert owner-isolation fixture in this existing npm-test suite.
+import './verify-flight-followup-owner.mts'
 // "Track Virgin Atlantic VS 354" (23 Oct live): live status from the flight-data feed + a watch until landing.
 // Run: npx tsx scripts/verify-flight-track.mts
 import assert from 'node:assert/strict'

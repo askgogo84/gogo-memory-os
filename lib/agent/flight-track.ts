@@ -3,6 +3,7 @@
 // watch that sends delay, gate, take-off and landing updates until it lands. The flight is NOT saved as the
 // owner's trip (they may be tracking someone else), so trip, conflict and briefing features never treat it as theirs.
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { requestedFlightCodes, normalizeNumericDates, icaoFlightCode } from '@/lib/bot/flight-codes'
 export { icaoFlightCode, IATA_TO_ICAO } from '@/lib/bot/flight-codes'
 import { ticketTimezone } from '@/lib/services/travel-time'
@@ -317,9 +318,14 @@ export function flightCodeFromHistory(rows: Array<{ content?: string | null; cre
 
 export async function handleFlightFollowUp(p: { telegramId: string | number; text: string; timezone?: string; now?: Date }): Promise<string | null> {
   if (!isFlightFollowUp(p.text)) return null
-  const tg = String(p.telegramId), now = p.now || new Date()
-  const { data } = await supabaseAdmin.from('conversations').select('content,created_at').eq('telegram_id', Number(tg))
+  // Refuse already-rounded numeric IDs and noncanonical persisted owners before a
+  // privileged private history read. This legacy flight path is numeric downstream.
+  const tg = exactSessionOwnerId(p.telegramId)
+  if (!tg || !Number.isSafeInteger(Number(tg)) || String(Number(tg)) !== tg) return null
+  const now = p.now || new Date()
+  const { data, error } = await supabaseAdmin.from('conversations').select('content,created_at').eq('telegram_id', tg)
     .order('created_at', { ascending: false }).limit(10)
+  if (error) return null
   const code = flightCodeFromHistory(data || [], now.getTime())
   if (!code) return null
   const live = await lookupLiveFlight(code, now, p.timezone || 'Asia/Kolkata', undefined, { telegramId: String(p.telegramId) }).catch(() => null)
