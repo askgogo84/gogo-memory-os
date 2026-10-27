@@ -25,7 +25,7 @@ function canonicalMeetingOwner(value: unknown): { id: string; numeric: number } 
   if (typeof value !== 'string' && typeof value !== 'number') return null
   if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
   const id = String(value)
-  if (!/^-?[1-9]\\d*$/.test(id)) return null
+  if (!/^-?[1-9]\d*$/.test(id)) return null
   const numeric = Number(id)
   return Number.isSafeInteger(numeric) && String(numeric) === id ? { id, numeric } : null
 }
