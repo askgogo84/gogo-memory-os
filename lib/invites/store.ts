@@ -63,7 +63,7 @@ export async function completeInviteJoin(p: { redemptionId: string; inviterTeleg
   // two distinct Postgres BIGINT owners to alias through number rounding.
   if (!Number.isSafeInteger(p.inviterTelegramId) || p.inviterTelegramId === 0 ||
       !Number.isSafeInteger(p.inviteeTelegramId) || p.inviteeTelegramId === 0 ||
-      !/^\\+[1-9]\\d{7,14}$/.test(p.inviteePhone)) {
+      !/^\+[1-9]\d{7,14}$/.test(p.inviteePhone)) {
     throw new Error('invite_join_identity_invalid')
   }
   // Access-gate redemption IDs do not authorize a cross-owner mutation by
