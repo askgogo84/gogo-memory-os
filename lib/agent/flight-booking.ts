@@ -27,9 +27,9 @@ export type FlightPick = { kind: 'cheapest' } | { kind: 'nonstop' } | { kind: 'n
 export function flightBookingRequest(text: string): FlightPick | null {
   const raw = String(text || '').trim()
   if (!raw || /https?:\/\//i.test(raw) || NOT_FLIGHT.test(raw)) return null
-  const m = raw.match(/^(?:(?:ok(?:ay)?|yes|yeah|sure|please)[,.! ]+)?(?:(?:go ahead|can you|could you|please|now)\s+(?:and\s+)?)*(?:book|reserve|buy|get me)\s+(?:me\s+)?(?:the\s+|that\s+|this\s+)?(.*?)[.!?\s]*$/i)
+  const m = raw.match(/^(?:(?:ok(?:ay)?|yes|yeah|sure|please)[,.! ]+)?(?:(?:go ahead|can you|could you|please|now)\s+(?:and\s+)?)*(?:book|reserve|buy|get me)(?:\s+(?:me\s+)?(?:the\s+|that\s+|this\s+)?(.*?))?[.!?\s]*$/i)
   if (!m) return null
-  const rest = m[1].toLowerCase()
+  const rest = (m[1] || '').toLowerCase()
   if (/\bnon[- ]?stop\b|\bdirect\b/.test(rest)) return { kind: 'nonstop' }
   const num = rest.match(/(?:#|option\s*|number\s*|no\.?\s*)(\d)\b/) || rest.match(/^(\d)$/)
   if (num) return { kind: 'number', n: Number(num[1]) }
@@ -41,7 +41,22 @@ export function flightBookingRequest(text: string): FlightPick | null {
   return null
 }
 
-export type LastFlightResult = { runId: string; context: any; options: BrowserFlightOption[]; searchLink: string }
+export type LastFlightResult = { runId: string; context: any; options: BrowserFlightOption[]; searchLink: string; startedAt?: string }
+
+/**
+ * 27 Oct 13:53 live: "flights … on 19 Nov", then "Book the cheapest" before those results arrived, booked from the
+ * previous (18 Nov) result. A flight search still running that started after the result Gogo would book wins: say so.
+ */
+export async function newerFlightSearchPending(actor: AgentActor, after: string | null): Promise<{ date: string | null; route: string | null } | null> {
+  const since = new Date(Date.now() - 30 * 60_000).toISOString()
+  let q = supabaseAdmin.from('agent_runs').select('id,metadata_json,started_at').eq('telegram_id', String(actor.legacyTelegramId)).eq('type', 'travel_research')
+    .in('status', ['queued', 'running']).gte('started_at', after && after > since ? after : since).order('started_at', { ascending: false }).limit(1)
+  const { data, error } = await q
+  if (error || !data?.length) return null
+  if (after && !(String(data[0].started_at) > after)) return null
+  const ctx: any = (data[0].metadata_json as any)?.context || {}
+  return { date: typeof ctx.startDate === 'string' ? ctx.startDate : null, route: ctx.origin?.code && ctx.destination?.code ? `${ctx.origin.code} → ${ctx.destination.code}` : null }
+}
 
 /** The newest completed round-trip result for this person, in the order it was shown. */
 export async function loadLastFlightResult(actor: AgentActor): Promise<LastFlightResult | null> {
@@ -61,7 +76,7 @@ export async function loadLastFlightResult(actor: AgentActor): Promise<LastFligh
     // 18 Oct: a one-way result can be booked too; the list order is the one the person saw.
     const round = Boolean(context.roundTrip && context.returnDate)
     const options = round ? roundTripDisplayOrder(flights as BrowserFlightOption[]) : oneWayDisplayOrder(flights as BrowserFlightOption[])
-    if (options.length) return { runId: String(run.id), context, options, searchLink: round ? roundTripSearchLink(context) : oneWaySearchLink(context) }
+    if (options.length) return { runId: String(run.id), context, options, searchLink: round ? roundTripSearchLink(context) : oneWaySearchLink(context), startedAt: String(run.started_at || '') }
   }
   return null
 }
@@ -214,8 +229,32 @@ async function savePending(tg: string, state: Record<string, unknown>, reply: st
   if (error) throw new Error('flight_booking_state_write_failed')
 }
 
+export type SavedBookingProfile = { travellers: Traveller[]; contact: BookingContact; seat: SeatChoice }
+
+/**
+ * 27 Oct (owner): "why does it keep asking the same details again and again". The details from the person's last
+ * approved flight booking (kept only until that booking's 24-hour purge) are offered again with one YES.
+ */
+export async function loadSavedBookingProfile(actor: AgentActor, count: number): Promise<SavedBookingProfile | null> {
+  const since = new Date(Date.now() - 24 * 3600_000).toISOString()
+  const { data, error } = await supabaseAdmin.from('agent_runs').select('metadata_json,created_at').eq('telegram_id', String(actor.legacyTelegramId))
+    .eq('metadata_json->>plan_type', 'secure_browser').not('metadata_json->flight_booking', 'is', null).gte('created_at', since).order('created_at', { ascending: false }).limit(5)
+  if (error) return null
+  for (const row of data || []) {
+    const fb: any = (row.metadata_json as any)?.flight_booking
+    const p: any = fb?.profile
+    if (!fb || fb.pii_purged || !p || !Array.isArray(p.travellers) || p.travellers.length !== count) continue
+    if (!/^[6-9]\d{9}$/.test(String(fb.contact_mobile || '')) || !/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(String(p.email || '')) || !['free', 'window', 'aisle', 'paid'].includes(p.seat)) continue
+    if (!p.travellers.every((t: any) => typeof t?.name === 'string' && typeof t?.title === 'string')) continue
+    return { travellers: p.travellers, contact: { email: p.email, mobile: String(fb.contact_mobile) }, seat: p.seat }
+  }
+  return null
+}
+
+const profileLines = (p: SavedBookingProfile) => `${p.travellers.map(t => `${t.title} ${t.name}${t.dob ? `, ${t.dob}` : ''}`).join('\n')}\n${p.contact.email} · ${maskMobile(p.contact.mobile)}\n${seatLabel(p.seat)}`
+
 /** The traveller-details question is open only while it is the latest assistant message and recent. */
-async function loadPending(actor: AgentActor, text: string): Promise<{ runId: string; optionIndex: number } | null> {
+async function loadPending(actor: AgentActor, text: string): Promise<{ runId: string; optionIndex: number; reuse?: boolean } | null> {
   const tg = String(actor.legacyTelegramId)
   const { data, error } = await supabaseAdmin.from('conversations').select('role,content,created_at').eq('telegram_id', Number(actor.legacyTelegramId)).order('created_at', { ascending: false }).limit(6)
   if (error) throw new Error('flight_booking_conversation_read_failed')
@@ -231,7 +270,7 @@ async function loadPending(actor: AgentActor, text: string): Promise<{ runId: st
   const savedAt = Date.parse(String(state?.at || ''))
   if (!Number.isFinite(savedAt) || savedAt > at || Date.now() - savedAt > 30 * 60_000) return null
   if (!state?.runId || !Number.isInteger(state?.optionIndex) || norm(state.reply) !== norm(previous.content)) return null
-  return { runId: String(state.runId), optionIndex: Number(state.optionIndex) }
+  return { runId: String(state.runId), optionIndex: Number(state.optionIndex), reuse: state.reuse === true }
 }
 
 /** A read problem here must never break an ordinary message: treat it as "not a booking turn". */
@@ -255,6 +294,10 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
     if (!option) return null
     const count = Math.max(1, Number(last.context.adults) || 1)
     const domestic = isDomesticIndiaTrip(last.context)
+    if (pending.reuse && /^(?:yes|y|yeah|yep|ok(?:ay)?|sure|same|same details|use (?:the )?same|use them|yes(?:,)? (?:same|use them|please))[.! ]*$/i.test(text)) {
+      const saved = await loadSavedBookingProfile(actor, count)
+      if (saved) return await createBookingApproval({ actor, surface, last, option, travellers: saved.travellers, contact: saved.contact, seat: saved.seat })
+    }
     const parsed = parseBookingDetails(text, count, { domestic })
     if (parsed.travellers.length < count || parsed.problems.length || !parsed.contact || !parsed.seat) {
       const reply = askText(count, parsed.problems, domestic)
@@ -266,14 +309,20 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
   const pick = flightBookingRequest(text)
   if (!pick) return null
   const last = await loadLastFlightResult(actor)
+  const newer = await newerFlightSearchPending(actor, last?.startedAt || null).catch(() => null)
+  if (newer) return waiting(`I'm still searching${newer.route ? ` ${newer.route}` : ''}${newer.date ? ` for ${newer.date}` : ''}. I'll send the options here in a minute or two; then say "book 1" (or "book the cheapest") and I'll book from those results, not the earlier search.`)
   if (!last) return null
   const option = pickFlight(last.options, pick)
   if (!option) return waiting(pick.kind === 'nonstop' ? 'None of the options I showed is non-stop. Tell me which number to book, for example “book #1”.' : 'Which one should I book? Tell me the number from the list, for example “book #1”.')
   const index = last.options.indexOf(option)
   const count = Math.max(1, Number(last.context.adults) || 1)
   const fare = option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')}` : 'the listed fare'
-  const reply = `Booking: ${last.context.origin?.code} → ${last.context.destination?.code}, ${isRound(last.context) ? `${last.context.startDate} and back ${last.context.returnDate}` : `${last.context.startDate}, one-way`}.\n${describeFlight(option)}\nAbout ${fare} ${fareKind(last.context)} for ${count} adult${count === 1 ? '' : 's'}; fares move, so I will stop if the price on the booking page is more than 10% higher.\n\n${askText(count, [], isDomesticIndiaTrip(last.context))}`
-  await savePending(tg, { runId: last.runId, optionIndex: index }, reply)
+  const head = `Booking: ${last.context.origin?.code} → ${last.context.destination?.code}, ${isRound(last.context) ? `${last.context.startDate} and back ${last.context.returnDate}` : `${last.context.startDate}, one-way`}.\n${describeFlight(option)}\nAbout ${fare} ${fareKind(last.context)} for ${count} adult${count === 1 ? '' : 's'}; fares move, so I will stop if the price on the booking page is more than 10% higher.`
+  const saved = await loadSavedBookingProfile(actor, count).catch(() => null)
+  const reply = saved
+    ? `${head}\n\nUse the same details as your last booking?\n${profileLines(saved)}\n\nReply *YES* to use them, or send new details (title and name, email, mobile, seat; one per line).`
+    : `${head}\n\n${askText(count, [], isDomesticIndiaTrip(last.context))}`
+  await savePending(tg, { runId: last.runId, optionIndex: index, ...(saved ? { reuse: true } : {}) }, reply)
   return waiting(reply)
 }
 
@@ -286,7 +335,8 @@ async function createBookingApproval(p: { actor: AgentActor; surface: AgentSurfa
   const purgeAt = new Date(Date.now() + 24 * 3600_000).toISOString()
   const metadata = { plan_type: 'secure_browser', url, objective, mode: 'execute', risk: 'high', approval_action: 'booking', flow: 'provider_booking',
     flight_booking: { search_run_id: last.runId, route: `${last.context.origin?.code}-${last.context.destination?.code}`, depart: last.context.startDate, return: last.context.returnDate || null,
-      airline: option.airline, fare_inr: option.fareInr, travellers: travellers.length, seat, contact_mobile: contact.mobile, pii_purge_at: purgeAt } }
+      airline: option.airline, fare_inr: option.fareInr, travellers: travellers.length, seat, contact_mobile: contact.mobile,
+      profile: { travellers, email: contact.email, seat }, pii_purge_at: purgeAt } }
   const booking = await createApprovalBrowserRun({ actor, surface, command, metadata })
   const { data: approval, error } = await supabaseAdmin.from('agent_approvals').insert({
     telegram_id: tg, run_id: booking.runId, action_type: 'booking',
@@ -328,7 +378,7 @@ export async function purgeFlightBookingPii(options: { runId?: string } = {}) {
   for (const run of data || []) {
     const meta: any = run.metadata_json || {}
     if (meta.flight_booking?.pii_purged) continue
-    const next = { ...meta, objective: '[traveller details removed]', flight_booking: { ...meta.flight_booking, contact_mobile: null, pii_purged: true } }
+    const next = { ...meta, objective: '[traveller details removed]', flight_booking: { ...meta.flight_booking, contact_mobile: null, profile: null, pii_purged: true } }
     const { error: ue } = await supabaseAdmin.from('agent_runs').update({ metadata_json: next }).eq('id', run.id)
     if (!ue) purged++
   }
