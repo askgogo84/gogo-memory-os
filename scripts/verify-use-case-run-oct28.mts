@@ -28,3 +28,8 @@ assert.equal(extractCheckItemText('Tick off eggs from my grocery list'), 'eggs')
 assert.equal(extractCheckItemText('check milk'), 'milk')
 assert.equal(extractCheckItemText('mark bread as done'), 'bread')
 console.log('✓ 28 Oct use-case run: list+reminder not a time move; "tick off X from my list"')
+
+const { parseSplitIntent } = await import('../lib/splitwise/split-parser') as any
+const split = parseSplitIntent('Split 2400 dinner between me, Divya and Nithin')
+assert.equal(split.description, 'dinner', JSON.stringify(split))
+console.log('✓ 28 Oct use-case run: split description')
