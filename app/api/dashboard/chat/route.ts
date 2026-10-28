@@ -111,7 +111,7 @@ async function resolveDashboardUser(telegramId: string) {
   const { data, error } = await supabaseAdmin
     .from('users')
     .select('telegram_id, whatsapp_id, name')
-    .eq('telegram_id', owner)
+    .eq('telegram_id', numericOwner)
     .maybeSingle()
   // Refuse a mismatched DB row even if an adapter returns unexpected data.
   if (error || !data || String(data.telegram_id) !== owner) return null
