@@ -318,7 +318,21 @@ export function stripGogoSignoff(reply: string): string {
 export function finishChatReply(userMessage: string, reply: string, preferenceBlock = ''): string {
   const text = stripGogoSignoff(stripUnrequestedAddress(reply, preferenceBlock))
   if (/^\s*(?:REMINDER|MEMORY|LIST_[A-Z]+|SEARCH):/m.test(text)) return text
-  return groundTransportTimes(userMessage, text, '')
+  return groundTransportTimes(userMessage, inventedApprovalGuard(text), '')
+}
+
+/**
+ * 28 Oct live: the chat model answered traveller details with "Got it. Booking Air India Express IX 355 … Reply
+ * confirm to open the payment page" (an invented flight number and an approval step that does not exist), then
+ * "I cannot complete bookings" when the person replied Confirm. A chat reply may never start a booking or ask for a
+ * confirm/approve reply: only Gogo's booking and approval flows do that.
+ */
+export function inventedApprovalGuard(text: string): string {
+  const t = String(text || '')
+  const asksApproval = /\b(?:reply|say|send|type)\s+\*?(?:confirm|approve|yes)\*?\s+(?:to|and)\s+(?:open|book|proceed|pay|continue|confirm)/i.test(t)
+  const startsBooking = /^\s*(?:got it[.!]?\s*)?(?:i(?:'m| am) |i(?:'ll| will) )?(?:booking|reserving|book)\s+(?:your\s+|the\s+)?[^\n.]{0,40}\b(?:flight|express|airlines?|indigo|air india|spicejet|akasa|vistara|hotel|table|tickets?)\b/i.test(t)
+  if (!asksApproval && !startsBooking) return t
+  return `I can't start or confirm a booking from this chat, and nothing has been booked. To book a flight from your search, say "book" and the option number from the list (for example "book 3"), and I'll take you through the booking steps.`
 }
 
 /** Shared post-processor for every web-answer provider (Mercury, Claude, OpenAI fallback). */
