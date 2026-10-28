@@ -122,4 +122,6 @@ assert.ok(b.contextDependent('Book the evening one') && b.contextDependent('did 
 assert.ok(b.brainEnabledFor('+918884501501', { GOGO_BRAIN_USERS: '8884501501' }) && !b.brainEnabledFor('+448884501501', { GOGO_BRAIN_USERS: '8884501501' }), 'whole-number match, not last ten digits')
 const brainSrc2 = (await import('node:fs')).readFileSync(new URL('../lib/agent/brain.ts', import.meta.url), 'utf8')
 assert.ok(brainSrc2.includes('m.after(logShadows)'), 'shadow never delays the reply')
+assert.equal(b.costPaise({ telegramId: 1, source: 'brain_decide', model: 'claude-sonnet-4-5', ms: 1, ok: true, usage: { input: 2707, output: 64, cacheRead: 0, cacheCreation: 1193 } as any }), 129, 'D2: real cost (~₹1.29), not the flat ₹5')
+assert.equal(b.costPaise({ telegramId: 1, source: 'brain_shadow', model: 'claude-haiku-5-5', ms: 1, ok: true, usage: { input: 2707, output: 64, cacheRead: 0, cacheCreation: 0 } as any }), 0, 'shadow never uses the person\'s budget')
 console.log('BRAIN_OK')

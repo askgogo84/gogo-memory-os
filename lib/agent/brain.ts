@@ -243,12 +243,21 @@ export function brainUsage(res: any): BrainUsage {
 
 export type BrainMeterEvent = { telegramId: number; source: 'brain_decide' | 'brain_followup' | 'brain_shadow'; model: string; ms: number; ok: boolean; usage: BrainUsage }
 /** Best-effort cost metering through the existing cost ledger (gogo_cost_events). Never blocks, never throws. */
+const USD_TO_PAISE = 95 * 100
+export function costPaise(e: BrainMeterEvent): number | null {
+  if (e.source === 'brain_shadow') return 0
+  const usd = estimateCostUsd(e.model, e.usage)
+  return usd == null ? null : Math.max(0, Math.round(usd * USD_TO_PAISE))
+}
 export function meterBrainCall(e: BrainMeterEvent): void {
   if (!Number.isSafeInteger(e.telegramId) || e.telegramId <= 0) return
   try {
     import('@/lib/services/cost-guard').then(m => m.recordCostEvent({
       telegramId: e.telegramId, category: /haiku/i.test(e.model) ? 'llm_haiku' : 'llm_sonnet',
-      metadata: { source: e.source, model: e.model, ok: e.ok, ms: e.ms, input_tokens: e.usage.input, output_tokens: e.usage.output,
+      // 28 Oct audit (D2): the flat category estimate (₹5 per Sonnet call) would exhaust a Free budget in ~4 turns.
+      // Charge the real token cost; shadow evaluation calls are ours, so they never consume the person's budget.
+      ...(costPaise(e) != null ? { estimatedCostPaise: costPaise(e)! } : {}),
+      metadata: { source: e.source, model: e.model, ok: e.ok, ms: e.ms, usd: estimateCostUsd(e.model, e.usage), input_tokens: e.usage.input, output_tokens: e.usage.output,
         cache_read_input_tokens: e.usage.cacheRead, cache_creation_input_tokens: e.usage.cacheCreation },
     })).catch(() => {})
   } catch { /* metering never affects the reply */ }
