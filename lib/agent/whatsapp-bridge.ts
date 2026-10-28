@@ -7,7 +7,7 @@ import { executeApprovedReminderUpdate } from './reminder-update'
 import { verifiedReadEvidence } from './read-evidence'
 import { approvalChoiceList, bareApprovalTarget, expiredApprovalReply, isBareApprovalNumber, latestTurnIsApprovalList, partitionPendingApprovals } from './approval-ttl'
 import { readRecentTurns } from '@/lib/bot/pending-questions'
-import { expirePendingApproval, guardApprovalFreshness, latestApprovalChoices, rememberApprovalChoices } from './approval-guard'
+import { expirePendingApproval, guardApprovalCapability, guardApprovalFreshness, latestApprovalChoices, rememberApprovalChoices } from './approval-guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
@@ -266,6 +266,11 @@ async function resolveApprovalDecision(actor: AgentActor, pending: any, decision
   // The shared freshness guard runs at the moment of the transition, not only when the list was built.
   const fresh = await guardApprovalFreshness({ telegramId: actor.legacyTelegramId, row: pending, surface: 'whatsapp' })
   if (fresh.expired) return { text: fresh.text, runId: pending.run_id || undefined, status: 'expired', handledBy: 'whatsapp-agent-approval' }
+  // Launch kill switch: an APPROVE for a paused capability is not recorded and nothing runs (REJECT still works).
+  if (decision === 'approve' && typeof guardApprovalCapability === 'function') {
+    const paused = await guardApprovalCapability({ telegramId: actor.legacyTelegramId, row: pending })
+    if (paused.paused) return { text: paused.text, runId: pending.run_id || undefined, status: 'paused', handledBy: 'whatsapp-agent-approval' }
+  }
   const now = new Date().toISOString()
   const status = decision === 'approve' ? 'approved' : 'rejected'
   const { data, error } = await supabaseAdmin.from('agent_approvals')

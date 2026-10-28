@@ -7,6 +7,7 @@ import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { checkCostAllowance, COST_ESTIMATES_PAISE, getCostBudget, recordCostEvent } from '@/lib/services/cost-guard'
 import { adaptiveWatcherCadence } from './watch-cost-policy'
 import { runSecureBrowser } from './secure-computer'
+import { capabilityPaused } from './policy'
 import { listRecentWorkspaceInbox } from './google-workspace-read'
 import { buildVaultAddLink } from '@/lib/vault/connect-link'
 import type { AgentActor } from './actor'
@@ -926,7 +927,10 @@ async function processProductStockWatcher(watcher:any, now:Date) {
   let cartStatus = 'not_requested'
   let handoffReason:string | null = null
 
-  if (condition.addToCart) {
+  // Launch kill switch: adding to the person's own cart uses their signed-in browser.
+  const cartPaused = condition.addToCart && typeof capabilityPaused === 'function' && capabilityPaused('logged_in_browser')
+  if (cartPaused) cartStatus = 'paused'
+  if (condition.addToCart && !cartPaused) {
     cartStatus = 'attempted'
     try {
       const cart = await runSecureBrowser({
@@ -951,6 +955,8 @@ async function processProductStockWatcher(watcher:any, now:Date) {
   await createProductIdea(telegramId, condition, String(watcher.id), cartVerified)
   const actionText = !condition.addToCart
     ? 'I found it available.'
+    : cartPaused
+      ? 'I found it available. Adding to your cart is paused right now, so I did not touch your cart.'
     : cartVerified
       ? 'I added one to your cart and verified the cart state.'
       : handoffReason

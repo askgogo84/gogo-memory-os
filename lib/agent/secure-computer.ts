@@ -25,6 +25,7 @@ import { findVaultProviderForDomain, phoneLoginProviderForDomain } from '@/lib/v
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_GENERATION, SANDBOX_IMAGE, SANDBOX_WORKDIR, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 import { canAuthorizeConsequentialAction, type TrustClass } from './trust'
+import { capabilityPaused } from './policy'
 
 // A sign-up can span pages (for example email and password, then Next, then username and terms).
 // One approved account creation may fill up to this many pages (a homepage step plus up to three
@@ -2268,6 +2269,16 @@ export async function tryObscuraBrowserRead(
 
 export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;loginCode?:string|null;phoneLogin?:{number:string;telegramId:string}|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number;publicOnly?:boolean}):Promise<SecureBrowserResult>{
   if(params.loginCode!=null||params.bookingOtp!=null)throw new Error('human_auth_takeover_required')
+  // Launch kill switches, last line of defence for every caller (bookings, sign-ups, saved Vault logins). Thrown
+  // before any sandbox, browser or provider request, so nothing was done. A read under GOGO_LOGGED_IN_BROWSER=off
+  // still runs, but public-only: no saved login is filled and no phone sign-in is attempted.
+  if(typeof capabilityPaused==='function'){
+    if(params.providerBooking===true&&capabilityPaused('booking'))throw new Error('capability_paused:booking')
+    if(capabilityPaused('logged_in_browser')){
+      if(params.providerBooking===true||params.accountCreation===true||(params.mode!=='read'&&String(params.vaultCredentialId||'').trim()))throw new Error('capability_paused:logged_in_browser')
+      if(params.mode==='read'&&!params.publicOnly)params={...params,publicOnly:true,vaultCredentialId:null,phoneLogin:null}
+    }
+  }
   assertBrowserAuthorityFits(params.objective,params.mode)
   let publicFlightRead=false
   try{const target=new URL(params.url);publicFlightRead=params.recoverFlightSearch===true&&target.protocol==='https:'&&['google.com','www.google.com'].includes(target.hostname)&&/^\/travel\/flights(?:\/|$)/.test(target.pathname)}catch{}
