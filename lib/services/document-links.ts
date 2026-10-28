@@ -47,7 +47,7 @@ function isWithinSensitiveWindow(link: { created_at?: unknown; expires_at?: unkn
 
 // Mirror the current dashboard's sensitivity signals so a title-only passport
 // cannot be exposed through a long-lived link after its classification changes.
-const SENSITIVE_TITLE_RE = /\\b(passport|aadhaar|aadhar|pan\\s*card|driving\\s+licen[cs]e|identity\\s+card|national\\s+id|government\\s+id|govt\\s+id|voter\\s+id|residence\\s+permit|bank\\s+statement|account\\s+statement)\\b/i
+const SENSITIVE_TITLE_RE = /\b(passport|aadhaar|aadhar|pan\s*card|driving\s+licen[cs]e|identity\s+card|national\s+id|government\s+id|govt\s+id|voter\s+id|residence\s+permit|bank\s+statement|account\s+statement)\b/i
 function isSensitiveStoredDocument(doc: { doc_type?: unknown; title?: unknown; extracted?: unknown }): boolean {
   const ex = doc.extracted && typeof doc.extracted === 'object' && !Array.isArray(doc.extracted)
     ? doc.extracted as Record<string, unknown> : {}
