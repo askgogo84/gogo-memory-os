@@ -50,8 +50,7 @@ assert.deepEqual(b.decisionFromToolUse("I prefer aisle, not window, for the QF1 
   { kind: 'handle', instruction: "I prefer aisle, not window, for the QF1 booking", rewritten: false })
 assert.deepEqual(b.decisionFromToolUse("don't remind me about it tomorrow", 'handle', { instruction: 'Remind me about the dentist tomorrow', keep_original: false }),
   { kind: 'handle', instruction: "don't remind me about it tomorrow", rewritten: false })
-assert.deepEqual(b.decisionFromToolUse("don't remind me about it tomorrow", 'handle', { instruction: "Don't remind me about the dentist tomorrow", keep_original: false }),
-  { kind: 'handle', instruction: "Don't remind me about the dentist tomorrow", rewritten: true }, 'a rewrite that keeps the negation is fine')
+assert.deepEqual(b.decisionFromToolUse("don't remind me about it tomorrow", 'handle', { instruction: "Don't remind me about the dentist tomorrow", keep_original: false }), { kind: 'handle', instruction: "don't remind me about it tomorrow", rewritten: false }, '28 Oct review: a negated message is never rewritten')
 // Track consent: track:true only when the user's own words ask for it.
 assert.equal((b.decisionFromToolUse('Did it land?', 'flight', { flight_no: 'QF1', track: true }) as any).track, false, 'status question: no watch')
 assert.equal((b.decisionFromToolUse("don't track it, just tell me if it landed", 'flight', { flight_no: 'QF1', track: true }) as any).track, false)
@@ -105,11 +104,24 @@ assert.deepEqual(b.shadowModels({ VERCEL_ENV: 'production' }), ['claude-haiku-5-
 assert.deepEqual(b.shadowModels({}), [], 'no shadow calls in tests or previews')
 assert.deepEqual(b.shadowModels({ VERCEL_ENV: 'production', GOGO_BRAIN_SHADOW: 'off' }), [])
 assert.deepEqual(b.shadowModels({ GOGO_BRAIN_SHADOW: 'claude-haiku-5-5, gpt-6.1-terra, claude-sonnet-5-5' }), ['claude-haiku-5-5', 'claude-sonnet-5-5'], 'only Anthropic models via this path')
-assert.equal(b.estimateCostUsd('claude-sonnet-4-5', { input: 5000, output: 150, cacheRead: 0, cacheCreation: 0 } as any), 0.017)
-assert.equal(b.estimateCostUsd('claude-haiku-5-5', { input: 5000, output: 150, cacheRead: 0, cacheCreation: 0 } as any), 0.001)
+assert.equal(b.estimateCostUsd('claude-sonnet-4-5', { input: 5000, output: 150, cacheRead: 0, cacheCreation: 0 } as any), 0.01725)
+assert.equal(b.estimateCostUsd('claude-haiku-5-5', { input: 5000, output: 150, cacheRead: 0, cacheCreation: 0 } as any), 0.000575, 'micro-dollar precision')
 assert.ok(b.decisionsAgree({ kind: 'handle', instruction: 'Remind me to check QF1 at 8 pm', rewritten: true }, { kind: 'handle', instruction: 'remind me to check QF1 at 8 pm.', rewritten: true }))
 assert.ok(!b.decisionsAgree({ kind: 'flight', flightNo: 'QF1', track: false }, { kind: 'flight', flightNo: 'QF1', track: true }))
 const ctxModel: any[] = []
 await b.decide({ text: 'hi', ctx, model: 'claude-haiku-5-5', source: 'brain_shadow', telegramId: 5, meter: (e: any) => ctxModel.push(e), client: { messages: { create: async (r: any) => { ctxModel.push(r.model); return { content: [{ type: 'tool_use', name: 'reply', input: { text: 'Hi' } }] } } } } as any })
 assert.equal(ctxModel[0], 'claude-haiku-5-5'); assert.equal(ctxModel[1].source, 'brain_shadow')
+// 28 Oct ChatGPT review findings
+assert.equal(b.agreement({ kind: 'reply', text: 'It landed at 5' }, { kind: 'reply', text: 'Not yet' }), 'same_kind', 'different replies are not "agreeing"')
+assert.equal(b.agreement({ kind: 'handle', instruction: 'book 3', rewritten: true }, { kind: 'ask', text: 'Which one?' }), 'different')
+assert.equal(b.decisionFromToolUse('No tracking, just status of QF1', 'flight', { flight_no: 'QF1', track: true }).kind === 'flight' && (b.decisionFromToolUse('No tracking, just status of QF1', 'flight', { flight_no: 'QF1', track: true }) as any).track, false)
+assert.equal((b.decisionFromToolUse('Track QF1 for me', 'flight', { flight_no: 'QF1', track: true }) as any).track, true)
+assert.deepEqual(b.decisionFromToolUse('Book the evening one', 'handle', { instruction: 'book evening flight Bengaluru to Mumbai tomorrow', keep_original: false }), { kind: 'handle', instruction: 'Book the evening one', rewritten: false }, '28 Oct live: a booking pick is never restated as a route')
+assert.deepEqual(b.decisionFromToolUse('Book the evening one', 'handle', { instruction: 'book 3', keep_original: false }), { kind: 'handle', instruction: 'book 3', rewritten: true })
+assert.ok(b.contextDependent('Book the evening one') && b.contextDependent('did it land?') && !b.contextDependent('Find flights from Bangalore to Mumbai on 8 Nov'))
+assert.ok(b.brainEnabledFor('+918884501501', { GOGO_BRAIN_USERS: '8884501501' }) && !b.brainEnabledFor('+448884501501', { GOGO_BRAIN_USERS: '8884501501' }), 'whole-number match, not last ten digits')
+const brainSrc2 = (await import('node:fs')).readFileSync(new URL('../lib/agent/brain.ts', import.meta.url), 'utf8')
+assert.ok(brainSrc2.includes('m.after(logShadows)'), 'shadow never delays the reply')
+assert.equal(b.costPaise({ telegramId: 1, source: 'brain_decide', model: 'claude-sonnet-4-5', ms: 1, ok: true, usage: { input: 2707, output: 64, cacheRead: 0, cacheCreation: 1193 } as any }), 129, 'D2: real cost (~₹1.29), not the flat ₹5')
+assert.equal(b.costPaise({ telegramId: 1, source: 'brain_shadow', model: 'claude-haiku-5-5', ms: 1, ok: true, usage: { input: 2707, output: 64, cacheRead: 0, cacheCreation: 0 } as any }), 0, 'shadow never uses the person\'s budget')
 console.log('BRAIN_OK')

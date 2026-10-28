@@ -10,6 +10,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { inventedApprovalGuard } from '@/lib/services/claude'
+import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 
 export type BrainDecision =
   | { kind: 'reply'; text: string }
@@ -34,7 +35,8 @@ const TIMEOUT_MS = 8_000
 // a slow brain falls back to today's pipeline instead of making the person wait.
 const MAX_RETRIES = 0
 const clean = (v: unknown, max = 400) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
-const digits = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10)
+// 28 Oct review: match the whole number, not its last ten digits (a 10-digit list entry means +91).
+const digits = (v: unknown) => { const d = String(v ?? '').replace(/\D/g, ''); return d.length === 10 ? `91${d}` : d }
 
 /** Canary: on for GOGO_BRAIN_USERS (default: the owner's two test numbers); GOGO_BRAIN=off turns it off for everyone. */
 const OWNER_CANARY = '8884501501,8310441698'
@@ -107,7 +109,7 @@ const CONSENT = /\b(?:approve[ds]?|confirm(?:ed|s)?|pay|payment|accept|authori[s
 // 28 Oct review (G7): safety in code, not only in the prompt.
 const NEGATION = /\b(?:don['’]?t|do not|never|no longer|stop|cancel|without|not)\b/i
 const TRACK_ASK = /\b(?:track(?:ing)?|monitor(?:ing)?|alerts?|notify|notifications?|message me|msg me|text me|ping me|keep me (?:posted|updated)|keep posted|let me know when|tell me when)\b/i
-const TRACK_REFUSED = /\b(?:don['’]?t|do not|never|no need to|stop|without|not)\s+(?:\w+\s+)?(?:track|monitor|alert|notify|message|msg|text|ping)/i
+const TRACK_REFUSED = /\b(?:don['’]?t|do not|never|no need to|stop|without|not)\s+(?:\w+\s+)?(?:track|monitor|alert|notify|message|msg|text|ping)|\bno\s+(?:need\s+(?:for|to)\s+)?(?:tracking|alerts?|updates?|notifications?|messages?)\b|\b(?:just|only)\s+(?:the\s+)?(?:status|check)\b/i
 const COMPLETION_CLAIM = /\b(?:i(?:'ve| have)|done|saved|booked|set|sent|scheduled|added|reminded)\b.*\b(?:reminder|booking|flight|email|message|calendar|list|ticket)\b/i
 /** The user asked to track/monitor/be messaged about it, in their own words, and did not refuse it. Pure. */
 export function userAskedToTrack(original: string): boolean {
@@ -134,7 +136,12 @@ export function decisionFromToolUse(original: string, name: string, input: any):
     const instruction = clean(input?.instruction, 600)
     // A rewrite may never introduce consent words the user did not write, nor drop a negation they did write.
     if (input?.keep_original === true || !instruction || (CONSENT.test(instruction) && !CONSENT.test(original))
-      || (NEGATION.test(original) && !NEGATION.test(instruction))) return { kind: 'handle', instruction: original, rewritten: false }
+      // 28 Oct review: a kept "not" does not prove the scope survived ("don't book" → "book … not now"). A message
+      // with any negation is never rewritten; the handlers get the person's own words.
+      || NEGATION.test(original)
+      // 28 Oct live: "book the evening one" became "book evening flight Bengaluru to Mumbai tomorrow", which the
+      // travel handler reads as a new search. A booking pick is never restated as a route.
+      || (/^\s*(?:please\s+)?(?:book|reserve)\b/i.test(original) && /\bto\b|\b(?:today|tomorrow|tonight|on \d|\d{1,2}\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec))/i.test(instruction) && !/\bbook\s+#?\d\b/i.test(instruction))) return { kind: 'handle', instruction: original, rewritten: false }
     return { kind: 'handle', instruction, rewritten: instruction !== original.trim() }
   }
   if (name === 'later') {
@@ -236,12 +243,21 @@ export function brainUsage(res: any): BrainUsage {
 
 export type BrainMeterEvent = { telegramId: number; source: 'brain_decide' | 'brain_followup' | 'brain_shadow'; model: string; ms: number; ok: boolean; usage: BrainUsage }
 /** Best-effort cost metering through the existing cost ledger (gogo_cost_events). Never blocks, never throws. */
+const USD_TO_PAISE = 95 * 100
+export function costPaise(e: BrainMeterEvent): number | null {
+  if (e.source === 'brain_shadow') return 0
+  const usd = estimateCostUsd(e.model, e.usage)
+  return usd == null ? null : Math.max(0, Math.round(usd * USD_TO_PAISE))
+}
 export function meterBrainCall(e: BrainMeterEvent): void {
   if (!Number.isSafeInteger(e.telegramId) || e.telegramId <= 0) return
   try {
     import('@/lib/services/cost-guard').then(m => m.recordCostEvent({
       telegramId: e.telegramId, category: /haiku/i.test(e.model) ? 'llm_haiku' : 'llm_sonnet',
-      metadata: { source: e.source, model: e.model, ok: e.ok, ms: e.ms, input_tokens: e.usage.input, output_tokens: e.usage.output,
+      // 28 Oct audit (D2): the flat category estimate (₹5 per Sonnet call) would exhaust a Free budget in ~4 turns.
+      // Charge the real token cost; shadow evaluation calls are ours, so they never consume the person's budget.
+      ...(costPaise(e) != null ? { estimatedCostPaise: costPaise(e)! } : {}),
+      metadata: { source: e.source, model: e.model, ok: e.ok, ms: e.ms, usd: estimateCostUsd(e.model, e.usage), input_tokens: e.usage.input, output_tokens: e.usage.output,
         cache_read_input_tokens: e.usage.cacheRead, cache_creation_input_tokens: e.usage.cacheCreation },
     })).catch(() => {})
   } catch { /* metering never affects the reply */ }
@@ -291,6 +307,10 @@ export async function flightAnswer(telegramId: number, flightNo: string, track: 
 // A short or multi-line reply right after Gogo asked something is an answer to that question: the handler that
 // asked it owns the reply, so the brain leaves the text unchanged.
 const ASKED = /\?\s*$|\?\s*\n|\breply with\b|\bsend (?:these|just|me)\b|\breply \*?yes\*?\b/i
+export function contextDependent(text: string): boolean {
+  const t = String(text || '').trim()
+  return t.split(/\s+/).length <= 10 && /\b(?:it|that|this|those|these|them|the (?:one|first|second|third|last|cheapest|evening|morning|other)|same|again)\b/i.test(t)
+}
 export function answersGogosQuestion(turns: BrainTurn[], text: string, now = Date.now()): boolean {
   const last = turns[turns.length - 1]
   if (!last || last.role !== 'assistant' || !ASKED.test(String(last.content || ''))) return false
@@ -310,13 +330,17 @@ export async function runBrain(p: { phone: string; telegramId: number; text: str
   const shadows = shadowModels().filter(m => m !== MODEL()).map(m => decide({ text: p.text, ctx, telegramId: p.telegramId, model: m, source: 'brain_shadow' }).then(r => ({ m, r })))
   const d = await decide({ text: p.text, ctx, telegramId: p.telegramId })
   if (shadows.length) {
-    const settled = await Promise.race([Promise.allSettled(shadows), new Promise<null>(r => setTimeout(() => r(null), 2500))])
-    for (const s of settled || []) if (s.status === 'fulfilled') console.log('BRAIN_SHADOW:', JSON.stringify(shadowReport(MODEL(), d, s.value.m, s.value.r)))
+    // 28 Oct review: the reply never waits for a shadow model. The log is written after the response (Next after()).
+    const logShadows = async () => { for (const s of await Promise.allSettled(shadows)) if (s.status === 'fulfilled') console.log('BRAIN_SHADOW:', JSON.stringify(shadowReport(MODEL(), d, s.value.m, s.value.r))) }
+    await import('next/server').then(m => m.after(logShadows)).catch(() => { void logShadows() })
   }
   console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: d.kind, ms: d.ms, model: MODEL(), turns: ctx.turns.length, flights: ctx.trackedFlights.length,
     input_tokens: d.usage.input, output_tokens: d.usage.output, cache_read_input_tokens: d.usage.cacheRead, cache_creation_input_tokens: d.usage.cacheCreation,
-    ...(d.kind === 'handle' ? { rewritten: d.rewritten, instruction: d.rewritten ? d.instruction.slice(0, 200) : undefined } : {}), ...(d.kind === 'flight' ? { flightNo: d.flightNo, track: d.track } : {}), ...(d.kind === 'skip' ? { reason: d.reason } : {}) }))
+    ...(d.kind === 'handle' ? { rewritten: d.rewritten, instruction: d.rewritten ? redactSecretShapedText(d.instruction).slice(0, 120) : undefined } : {}), ...(d.kind === 'flight' ? { flightNo: d.flightNo, track: d.track } : {}), ...(d.kind === 'skip' ? { reason: d.reason } : {}) }))
   if (d.kind === 'reply' || d.kind === 'ask') return { reply: d.text }
+  // 28 Oct review: a failed brain call must not hand a context-dependent message ("book the evening one", "did it
+  // land?") back to the context-blind keyword pipeline, which caused the original failures. Ask instead.
+  if (d.kind === 'skip' && /^error:/.test(d.reason) && contextDependent(p.text)) return { reply: `Sorry, I lost the thread for a moment. Which one do you mean? Send it with the name or number, for example "book 3" or "status of QF1".` }
   if (d.kind === 'flight') {
     const answer = await flightAnswer(p.telegramId, d.flightNo, d.track, ctx.timezone).catch(() => null)
     return answer ? { reply: answer } : { text: `${d.track ? 'Track' : 'Status of'} flight ${d.flightNo}` }
@@ -394,7 +418,8 @@ export const MODEL_PRICES: Record<string, { input: number; cacheRead: number; ca
 export function estimateCostUsd(model: string, u: BrainUsage): number | null {
   const p = MODEL_PRICES[model]
   if (!p || u.input == null) return null
-  return Math.round(((u.input || 0) * p.input + (u.cacheRead || 0) * p.cacheRead + (u.cacheCreation || 0) * p.cacheWrite + (u.output || 0) * p.output) / 1e3) / 1e3
+  // Micro-dollar precision (28 Oct review: rounding to $0.001 hid Haiku's real cost); round only for display.
+  return Math.round((u.input || 0) * p.input + (u.cacheRead || 0) * p.cacheRead + (u.cacheCreation || 0) * p.cacheWrite + (u.output || 0) * p.output) / 1e6
 }
 
 /** GOGO_BRAIN_SHADOW: comma list of models to shadow; "off" disables. Default: Haiku 5.5 on production. */
@@ -405,17 +430,26 @@ export function shadowModels(env: Record<string, string | undefined> = (globalTh
 }
 
 const norm = (t: string) => clean(t, 600).toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ')
-export function decisionsAgree(a: BrainDecision, b: BrainDecision): boolean {
-  if (a.kind !== b.kind) return false
-  if (a.kind === 'handle' && b.kind === 'handle') return a.rewritten === b.rewritten && (!a.rewritten || norm(a.instruction) === norm(b.instruction))
-  if (a.kind === 'flight' && b.kind === 'flight') return a.flightNo === b.flightNo && a.track === b.track
-  return true
+/**
+ * 28 Oct review: two replies, asks or "later"s were counted as agreeing even when they said different things.
+ * Agreement is now graded: 'exact' (same action and target), 'same_kind' (same tool, content differs or isn't
+ * comparable), 'different'. Model agreement diagnoses; a human-labelled set decides correctness.
+ */
+export type Agreement = 'exact' | 'same_kind' | 'different'
+export function agreement(a: BrainDecision, b: BrainDecision): Agreement {
+  if (a.kind !== b.kind) return 'different'
+  if (a.kind === 'handle' && b.kind === 'handle') return a.rewritten === b.rewritten && (!a.rewritten || norm(a.instruction) === norm(b.instruction)) ? 'exact' : 'same_kind'
+  if (a.kind === 'flight' && b.kind === 'flight') return a.flightNo === b.flightNo && a.track === b.track ? 'exact' : 'same_kind'
+  if ((a.kind === 'reply' || a.kind === 'ask') && (b.kind === 'reply' || b.kind === 'ask')) return norm(a.text) === norm(b.text) ? 'exact' : 'same_kind'
+  if (a.kind === 'later' && b.kind === 'later') return norm(a.question) === norm(b.question) ? 'exact' : 'same_kind'
+  return a.kind === 'skip' ? 'same_kind' : 'exact'
 }
+export const decisionsAgree = (a: BrainDecision, b: BrainDecision) => agreement(a, b) === 'exact'
 
 export function shadowReport(mainModel: string, main: BrainDecision & { ms: number; usage: BrainUsage }, model: string, shadow: BrainDecision & { ms: number; usage: BrainUsage }) {
   return {
     main: { model: mainModel, kind: main.kind, ms: main.ms, usd: estimateCostUsd(mainModel, main.usage) },
-    shadow: { model, kind: shadow.kind, ms: shadow.ms, usd: estimateCostUsd(model, shadow.usage), ...(shadow.kind === 'handle' && shadow.rewritten ? { instruction: shadow.instruction.slice(0, 160) } : {}), ...(shadow.kind === 'skip' ? { reason: shadow.reason } : {}) },
-    agree: decisionsAgree(main, shadow),
+    shadow: { model, kind: shadow.kind, ms: shadow.ms, usd: estimateCostUsd(model, shadow.usage), ...(shadow.kind === 'handle' && shadow.rewritten ? { instruction: redactSecretShapedText(shadow.instruction).slice(0, 120) } : {}), ...(shadow.kind === 'skip' ? { reason: shadow.reason } : {}) },
+    agreement: agreement(main, shadow),
   }
 }
