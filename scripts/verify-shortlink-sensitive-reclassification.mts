@@ -78,10 +78,11 @@ const longLink: LinkRow = {
 const normal = { storage_path: 'owner-42/document.pdf', doc_type: 'generic_document', extracted: { assetType: 'generic_document' } }
 const sensitive = { storage_path: 'owner-42/document.pdf', doc_type: 'passport', extracted: { assetType: 'passport', privacyClass: 'sensitive' } }
 const reclassified = { storage_path: 'owner-42/document.pdf', doc_type: 'generic_document', extracted: { assetType: 'id_document', privacyClass: 'sensitive' } }
+const titleClassified = { storage_path: 'owner-42/document.pdf', doc_type: 'generic_document', title: 'Passport scan', extracted: { assetType: 'generic_document' } }
 
 // Test-FIRST RED: an old 30-day bearer token must stop resolving as soon as
 // the SAME owner/document's current classification becomes sensitive.
-for (const doc of [sensitive, reclassified]) {
+for (const doc of [sensitive, reclassified, titleClassified]) {
   const { service, seen } = sandbox(longLink, doc)
   const result = await service.resolveShortLinkToSignedUrl(oldToken)
   assert.equal(result, null, 'long-lived token may not access a reclassified sensitive document')
