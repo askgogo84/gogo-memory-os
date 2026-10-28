@@ -2,6 +2,7 @@
  // All transport requests are intercepted; no real provider, network, secret or tenant access.
 import assert from 'node:assert/strict'
 import { fetchReceivedEmail, rawFromParsed } from '../lib/email/resend-inbound'
+import { parseMail } from '../lib/email/mime'
 
 process.env.RESEND_API_KEY = 'fixture-only-never-real'
 const email = {
@@ -48,4 +49,16 @@ const plain = await fetchReceivedEmail('ordinary-fixture', (async (input) => {
 }) as typeof fetch)
 assert.deepEqual(plainCalls, ['https://api.resend.com/emails/receiving/ordinary-fixture'])
 assert.equal(plain.raw, rawFromParsed(email))
+// Preserve the original Gmail-forwarding evidence interpreted by processInboundEmail.
+const forwarded = { ...email, to: ['owner-alias@in.askgogo.in'], headers: {
+  'X-Forwarded-To': 'owner@example.test',
+  'X-Forwarded-For': 'owner@example.test',
+} }
+const rebuilt = parseMail(rawFromParsed(forwarded))
+assert.equal(rebuilt.to, 'owner-alias@in.askgogo.in')
+assert.equal(rebuilt.headers['x-forwarded-to'], 'owner@example.test',
+  'Structured-email reconstruction must retain X-Forwarded-To for first-forward detection')
+assert.equal(rebuilt.headers['x-forwarded-for'], 'owner@example.test',
+  'Structured-email reconstruction must retain X-Forwarded-For for first-forward detection')
+
 console.log('PASS RESEND_RAW_FETCH_BOUNDARY: no second-hop URL egress, provider auth fixed, structured fallback preserved; synthetic only')
