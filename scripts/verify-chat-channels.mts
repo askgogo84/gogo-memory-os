@@ -19,6 +19,64 @@ assert.match(route, /\.eq\('telegram_id', tg\)\.is\('thread_id', null\)\.gte\('c
 assert.match(route, /await import\('@\/lib\/agent\/thread-context'\)/, 'lazy import keeps strict route harnesses working')
 assert.equal((route.match(/^import .*thread-context/gm) || []).length, 0, 'no eager import')
 
+// DASHBOARD CHAT EXACT OWNER FIXTURE — invoke deployed helper with an inert, owner-tagged database.
+// A session ID is exact TEXT. Never allow bigint rounding or parseInt prefix truncation
+// to choose a different user's chat history or WhatsApp recipient.
+{
+  const start = route.indexOf('async function resolveDashboardUser(telegramId: string)')
+  const end = route.indexOf('\nasync function saveConversation(', start)
+  assert.ok(start >= 0 && end > start, 'test must use the real dashboard-chat owner resolver')
+  const actual = route.slice(start, end)
+  const compiled = ts.transpileModule(actual + '\nexports.lookup = resolveDashboardUser',
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
+
+  async function inspectOwner(sessionOwner: string, returnedOwner: string | number | null) {
+    const reads: { column: string, value: unknown }[] = []
+    const fakeDb = {
+      from(table: string) {
+        assert.equal(table, 'users', 'only the user lookup may be reached')
+        return {
+          select(columns: string) {
+            assert.equal(columns, 'telegram_id, whatsapp_id, name')
+            return this
+          },
+          eq(column: string, value: unknown) {
+            reads.push({ column, value })
+            return this
+          },
+          async maybeSingle() {
+            return { data: returnedOwner === null ? null : {
+              telegram_id: returnedOwner, whatsapp_id: 'whatsapp:+15550000042', name: 'Synthetic fixture'
+            }, error: null }
+          },
+        }
+      },
+    }
+    const exports: any = {}
+    runInNewContext(compiled, { exports, supabaseAdmin: fakeDb, Promise, Number, String, parseInt })
+    return { row: await exports.lookup(sessionOwner), reads }
+  }
+
+  for (const unsafe of ['9007199254740992', '9007199254740993', '4242suffix', '4242e4',
+    ' 4242', '90071992547409931234']) {
+    const got = await inspectOwner(unsafe, '9007199254740992')
+    assert.equal(got.row, null, 'an unsafe session owner must not resolve a foreign user: ' + unsafe)
+    assert.equal(got.reads.length, 0, 'an unsafe owner must fail before privileged user lookup: ' + unsafe)
+  }
+  const valid = await inspectOwner('4242', 4242)
+  assert.equal(valid.row?.name, 'Synthetic fixture', 'a valid canonical owner still resolves')
+  assert.deepEqual(valid.reads, [{ column: 'telegram_id', value: '4242' }],
+    'the DB predicate must retain the exact string owner')
+  const negative = await inspectOwner('-4242', -4242)
+  assert.equal(negative.row?.telegram_id, -4242, 'existing safe negative WhatsApp owner remains usable')
+  assert.deepEqual(negative.reads, [{ column: 'telegram_id', value: '-4242' }])
+  const mismatch = await inspectOwner('4243', 4242)
+  assert.equal(mismatch.row, null, 'the returned DB owner must match the authenticated owner')
+  const absent = await inspectOwner('4244', null)
+  assert.equal(absent.row, null, 'missing owner row must fail closed')
+  console.log('PASS: Dashboard Chat exact session owner prevents alias/prefix cross-account reads; safe owners retained')
+}
+
 // The wrapper never breaks callers that pass a minimal request without clone().
 {
   const wrapper = route.slice(route.indexOf('async function withChatChannel(req: NextRequest)'))
