@@ -11,3 +11,5 @@ assert.equal(inventedApprovalGuard('Booking.com and MakeMyTrip both list it.'), 
 const src = readFileSync(new URL('../lib/agent/flight-booking.ts', import.meta.url), 'utf8')
 assert.ok(src.includes('const late = await lateBookingDetails(actor, text)'), 'complete details bind to the open booking from the last 2 h')
 console.log('BOOKING_LATE_DETAILS_OK')
+assert.ok(src.includes('const url = googleFlightsTfsUrl(last.context) || last.searchLink'), '28 Oct live: booking opened the q= link and Google used Pune as origin')
+console.log('BOOKING_TFS_START_OK')

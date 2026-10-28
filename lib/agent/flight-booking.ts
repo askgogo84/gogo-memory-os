@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { browserApprovalBinding, createApprovalBrowserRun } from './browser-command'
-import { oneWayDisplayOrder, oneWaySearchLink, roundTripDisplayOrder, roundTripSearchLink } from './travel-browser-task'
+import { googleFlightsTfsUrl, oneWayDisplayOrder, oneWaySearchLink, roundTripDisplayOrder, roundTripSearchLink } from './travel-browser-task'
 import type { BrowserFlightOption } from './travel-browser-task'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
@@ -437,7 +437,10 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
 async function createBookingApproval(p: { actor: AgentActor; surface: AgentSurface; last: LastFlightResult; option: BrowserFlightOption; travellers: Traveller[]; contact: BookingContact; seat: SeatChoice }) {
   const { actor, surface, last, option, travellers, contact, seat } = p
   const tg = String(actor.legacyTelegramId)
-  const url = last.searchLink
+  // 28 Oct live: the booking opened the prose q= link, Google ignored it and filled Pune (the cloud browser's
+  // location) as the origin, and the planner could not get back to BLR. Bookings start from Google's own encoded
+  // search (same as the search read), so route, date, travellers and cabin are set on load.
+  const url = googleFlightsTfsUrl(last.context) || last.searchLink
   const objective = flightBookingObjective({ context: last.context, option, travellers, contact, seat })
   const command = { url, objective, mode: 'execute' as const, risk: 'high' as const, approvalAction: 'booking' as const, flow: 'provider_booking' as const }
   const purgeAt = new Date(Date.now() + 24 * 3600_000).toISOString()
