@@ -29,7 +29,7 @@ export function rawFromParsed(e: ReceivedEmail) {
     `From: ${get('from') || e.from}`, `To: ${get('to') || (e.to || []).join(', ')}`, `Subject: ${get('subject') || e.subject || ''}`,
     `Message-ID: ${get('message-id') || e.message_id || ''}`, `Date: ${get('date') || e.created_at || ''}`,
   ]
-  for (const k of ['list-id', 'list-unsubscribe', 'auto-submitted', 'precedence', 'in-reply-to', 'references']) { const v = get(k); if (v) lines.push(`${k}: ${v}`) }
+  for (const k of ['list-id', 'list-unsubscribe', 'auto-submitted', 'precedence', 'in-reply-to', 'references', 'x-forwarded-to', 'x-forwarded-for']) { const v = get(k); if (v) lines.push(`${k}: ${v}`) }
   const body = e.text || (e.html ? e.html : '')
   lines.push(`Content-Type: ${e.text ? 'text/plain' : 'text/html'}; charset=utf-8`, '', body)
   return Buffer.from(lines.join('\r\n'), 'utf8').toString('latin1')
