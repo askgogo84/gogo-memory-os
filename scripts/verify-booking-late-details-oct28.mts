@@ -13,3 +13,11 @@ assert.ok(src.includes('const late = await lateBookingDetails(actor, text)'), 'c
 console.log('BOOKING_LATE_DETAILS_OK')
 assert.ok(src.includes('const url = googleFlightsTfsUrl(last.context) || last.searchLink'), '28 Oct live: booking opened the q= link and Google used Pune as origin')
 console.log('BOOKING_TFS_START_OK')
+const fb = await import('../lib/agent/flight-booking.ts')
+assert.deepEqual(fb.flightBookingRequest('Book the evening one'), { kind: 'time', window: 'evening' })
+const opts: any[] = [{ airline: 'AI Express', departure: '12:05 PM', fareInr: 4620, stops: 1 }, { airline: 'SpiceJet', departure: '11:20 PM', fareInr: 4735, stops: 0 }, { airline: 'AI Express', departure: '5:00 PM', fareInr: 4880, stops: 0 }, { airline: 'SpiceJet', departure: '5:50 AM', fareInr: 5051, stops: 0 }]
+assert.equal(fb.pickFlight(opts, { kind: 'time', window: 'evening' })?.departure, '5:00 PM', '28 Oct live: the evening one = 5:00 PM')
+assert.equal(fb.pickFlight(opts, { kind: 'time', window: 'night' })?.departure, '11:20 PM')
+assert.equal(fb.pickFlight(opts, { kind: 'time', window: 'earliest' })?.departure, '5:50 AM')
+assert.equal(fb.pickFlight(opts, { kind: 'time', window: 'morning' })?.departure, '5:50 AM')
+console.log('BOOKING_TIME_PICK_OK')

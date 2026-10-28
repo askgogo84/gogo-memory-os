@@ -22,7 +22,7 @@ function safe(value: unknown, max = 400) {
   return redactSecretShapedText(String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max))
 }
 
-export type FlightPick = { kind: 'cheapest' } | { kind: 'nonstop' } | { kind: 'number'; n: number }
+export type FlightPick = { kind: 'cheapest' } | { kind: 'nonstop' } | { kind: 'number'; n: number } | { kind: 'time'; window: 'morning' | 'afternoon' | 'evening' | 'night' | 'earliest' | 'latest' }
 
 /** "Go ahead and book the cheapest option", "book #2", "book the non-stop". Null when it is not a booking request. */
 export function flightBookingRequest(text: string): FlightPick | null {
@@ -36,6 +36,9 @@ export function flightBookingRequest(text: string): FlightPick | null {
   if (num) return { kind: 'number', n: Number(num[1]) }
   const ord = Object.keys(ORDINALS).find(word => new RegExp(`\\b${word}\\b`).test(rest))
   if (ord) return { kind: 'number', n: ORDINALS[ord] }
+  // 28 Oct live: "Book the evening one" — a time-of-day pick from the list Gogo showed.
+  const tod = rest.match(/\b(morning|afternoon|evening|night|earliest|latest|early|late)\b/)
+  if (tod) return { kind: 'time', window: (tod[1] === 'early' ? 'earliest' : tod[1] === 'late' ? 'latest' : tod[1]) as any }
   if (/\b(?:cheapest|lowest|best|cheap)\b/.test(rest)) return { kind: 'cheapest' }
   // "book it", "book that flight", "book this", "book the flight", "book the ticket"
   if (/^(?:it|that|this|that flight|this flight|the flight|flight|the ticket|ticket|that one|this one|the option|option)$/.test(rest) || rest === '') return { kind: 'cheapest' }
@@ -88,6 +91,15 @@ export async function loadLastFlightResult(actor: AgentActor): Promise<LastFligh
 export function pickFlight(options: BrowserFlightOption[], pick: FlightPick): BrowserFlightOption | null {
   if (pick.kind === 'cheapest') return options[0] || null
   if (pick.kind === 'nonstop') return options.find(o => o.stops === 0) || null
+  if (pick.kind === 'time') {
+    const mins = (o: BrowserFlightOption) => { const m = String(o.departure || '').match(/(\d{1,2}):(\d{2})\s*([AP]M)/i); return m ? (Number(m[1]) % 12 + (/p/i.test(m[3]) ? 12 : 0)) * 60 + Number(m[2]) : NaN }
+    const timed = options.filter(o => Number.isFinite(mins(o)))
+    if (pick.window === 'earliest') return [...timed].sort((a, b) => mins(a) - mins(b))[0] || null
+    if (pick.window === 'latest') return [...timed].sort((a, b) => mins(b) - mins(a))[0] || null
+    const [from, to] = ({ morning: [300, 720], afternoon: [720, 1020], evening: [1020, 1260], night: [1260, 1740] } as const)[pick.window]
+    // Options are in display order (cheapest first), so the first match is the cheapest in that window.
+    return timed.find(o => { const m = mins(o); return (m >= from && m < to) || (to > 1440 && m < to - 1440) }) || null
+  }
   return options[pick.n - 1] || null
 }
 
@@ -428,7 +440,7 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
   if (newer) return waiting(`I'm still searching${newer.route ? ` ${newer.route}` : ''}${newer.date ? ` for ${newer.date}` : ''}. I'll send the options here in a minute or two; then say "book 1" (or "book the cheapest") and I'll book from those results, not the earlier search.`)
   if (!last) return null
   const option = pickFlight(last.options, pick)
-  if (!option) return waiting(pick.kind === 'nonstop' ? 'None of the options I showed is non-stop. Tell me which number to book, for example “book #1”.' : 'Which one should I book? Tell me the number from the list, for example “book #1”.')
+  if (!option) return waiting(pick.kind === 'nonstop' ? 'None of the options I showed is non-stop. Tell me which number to book, for example “book #1”.' : pick.kind === 'time' ? `None of the options I showed leaves in the ${pick.window}. Tell me which number to book, for example “book #1”.` : 'Which one should I book? Tell me the number from the list, for example “book #1”.')
   const index = last.options.indexOf(option)
   const count = Math.max(1, Number(last.context.adults) || 1)
   const fare = option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')}` : 'the listed fare'
