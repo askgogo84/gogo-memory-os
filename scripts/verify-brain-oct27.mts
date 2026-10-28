@@ -36,4 +36,5 @@ await b.decide({ text: 'hi', ctx, client: { messages: { create: async (_r: any, 
 assert.equal(opts.maxRetries, 0, '27 Oct live: no silent retries (16.9 s decision)'); assert.ok(opts.timeout <= 8000)
 const worker = (await import('node:fs')).readFileSync(new URL('../lib/agent/travel-research-worker.ts', import.meta.url), 'utf8')
 assert.ok(worker.includes('brain.answerFollowups'), 'questions asked mid-search are answered after delivery')
+assert.match(b.BRAIN_SYSTEM(ctx, new Date()), /exactly "book <number>"/, '28 Oct live: "Book the evening one" restated the route and started a new search')
 console.log('BRAIN_OK')
