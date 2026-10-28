@@ -155,7 +155,13 @@ export function previewText(text: string, max = 500) {
 
 /** Gmail's forwarding confirmation: "(#123456789) Gmail Forwarding Confirmation - Receive Mail from x@gmail.com". */
 export function gmailForwardingConfirmation(mail: Pick<ParsedMail, 'from' | 'subject' | 'text'>) {
-  if (!/forwarding-noreply@google\.com/i.test(mail.from)) return null
+  // Display names are arbitrary text: only the actual mailbox, not a name
+  // containing Google's address, may trigger a Gmail-branded confirmation.
+  // This validates From syntax, NOT SPF/DKIM or SMTP sender authentication.
+  const from = String(mail.from || '').trim()
+  const bare = /^forwarding-noreply@google\.com$/i.test(from)
+  const angle = /^(?:(?:"[^"]*"|[^<>",]+)\s*)?<\s*forwarding-noreply@google\.com\s*>$/i.test(from)
+  if (!bare && !angle) return null
   if (!/forwarding confirmation/i.test(mail.subject)) return null
   const code = mail.subject.match(/\(#(\d{6,12})\)/)?.[1] || mail.text.match(/confirmation code:?\s*(\d{6,12})/i)?.[1] || null
   const forwarder = mail.subject.match(/receive mail from\s+([^\s]+@[^\s]+)/i)?.[1] || mail.text.match(/([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}) has requested/i)?.[1] || null
