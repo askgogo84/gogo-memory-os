@@ -275,8 +275,40 @@ export async function loadSavedBookingProfile(actor: AgentActor, count: number):
 
 const profileLines = (p: SavedBookingProfile) => `${p.travellers.map(t => `${t.title} ${t.name}${t.dob ? `, ${t.dob}` : ''}`).join('\n')}\n${p.contact.email} · ${maskMobile(p.contact.mobile)}\n${seatLabel(p.seat)}`
 
+// 28 Oct (owner): booking asked for every detail again though Gogo already knew his name, mobile and that he prefers
+// window seats. With no recent booking to reuse, it now proposes what it knows and asks only for the title.
+export type KnownDetails = { name: string; email: string; mobile: string; seat: SeatChoice; seatFromMemory: boolean }
+
+export function seatFromPreference(texts: string[]): SeatChoice | null {
+  for (const t of texts) {
+    const l = String(t || '').toLowerCase()
+    if (!/\bseat|\bprefer|\blike/.test(l)) continue
+    if (/\bwindow\b/.test(l)) return 'window'
+    if (/\baisle\b/.test(l)) return 'aisle'
+  }
+  return null
+}
+
+export async function loadKnownDetails(actor: AgentActor): Promise<KnownDetails | null> {
+  const tg = Number(actor.legacyTelegramId)
+  const [user, mems, prefs] = await Promise.all([
+    supabaseAdmin.from('users').select('name,email,gmail_email').eq('telegram_id', tg).maybeSingle().then(r => r.data as any, () => null),
+    supabaseAdmin.from('memories').select('content').eq('telegram_id', tg).order('created_at', { ascending: false }).limit(40).then(r => (r.data || []).map((m: any) => String(m.content || '')), () => []),
+    supabaseAdmin.from('user_preferences').select('rule_text').eq('telegram_id', tg).limit(20).then(r => (r.data || []).map((m: any) => String(m.rule_text || '')), () => []),
+  ])
+  const name = String(user?.name || '').replace(/[^A-Za-z .'-]/g, ' ').replace(/\s+/g, ' ').trim()
+  const email = [user?.email, user?.gmail_email].map(e => String(e || '').trim().toLowerCase()).find(e => /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(e)) || ''
+  const mobile = String(actor.whatsappId || '').replace(/\D/g, '').slice(-10)
+  if (name.split(' ').length < 2 || !email || !/^[6-9]\d{9}$/.test(mobile)) return null
+  const remembered = seatFromPreference([...mems, ...prefs])
+  return { name, email, mobile, seat: remembered || 'free', seatFromMemory: Boolean(remembered) }
+}
+
+export const knownDetailsText = (k: KnownDetails) => `Shall I use what I already know?\n${k.name}\n${k.email} · ${maskMobile(k.mobile)}\n${seatLabel(k.seat)}${k.seatFromMemory ? ` (you said you prefer ${k.seat})` : ''}\n\nIf the name is exactly as on your photo ID, reply with just your title to book with these, for example:\n\nMr\n\nOr send new details (title and name, email, mobile, seat; one per line).`
+const knownDetailsLines = (k: KnownDetails, title: string) => `${title} ${k.name}\n${k.email}\n${k.mobile}\n${k.seat === 'free' ? 'free seat' : `paid ${k.seat === 'paid' ? '' : `${k.seat} `}seat`}`
+
 /** The traveller-details question is open only while it is the latest assistant message and recent. */
-async function loadPending(actor: AgentActor, text: string): Promise<{ runId: string; optionIndex: number; reuse?: boolean; retry?: boolean } | null> {
+async function loadPending(actor: AgentActor, text: string): Promise<{ runId: string; optionIndex: number; reuse?: boolean; retry?: boolean; known?: boolean } | null> {
   const tg = String(actor.legacyTelegramId)
   const { data, error } = await supabaseAdmin.from('conversations').select('role,content,created_at').eq('telegram_id', Number(actor.legacyTelegramId)).order('created_at', { ascending: false }).limit(6)
   if (error) throw new Error('flight_booking_conversation_read_failed')
@@ -292,7 +324,7 @@ async function loadPending(actor: AgentActor, text: string): Promise<{ runId: st
   const savedAt = Date.parse(String(state?.at || ''))
   if (!Number.isFinite(savedAt) || savedAt > at || Date.now() - savedAt > 30 * 60_000) return null
   if (!state?.runId || !Number.isInteger(state?.optionIndex) || norm(state.reply) !== norm(previous.content)) return null
-  return { runId: String(state.runId), optionIndex: Number(state.optionIndex), reuse: state.reuse === true, retry: state.retry === true }
+  return { runId: String(state.runId), optionIndex: Number(state.optionIndex), reuse: state.reuse === true, retry: state.retry === true, known: state.known === true }
 }
 
 /** A read problem here must never break an ordinary message: treat it as "not a booking turn". */
@@ -319,6 +351,20 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
     if (pending.reuse && /^(?:yes|y|yeah|yep|ok(?:ay)?|sure|same|same details|use (?:the )?same|use them|yes(?:,)? (?:same|use them|please))[.! ]*$/i.test(text)) {
       const saved = await loadSavedBookingProfile(actor, count)
       if (saved) return await createBookingApproval({ actor, surface, last, option, travellers: saved.travellers, contact: saved.contact, seat: saved.seat })
+    }
+    // Only a flag is stored with the pending question; the details are read again from the profile, never copied.
+    const known = pending.known && count === 1 ? await loadKnownDetails(actor).catch(() => null) : null
+    if (known) {
+      const t = text.match(/^\s*(?:(?:yes|ok(?:ay)?|sure)[,.!\s]*)?(mr|mrs|ms|miss)\.?\s*[.!]?\s*$/i)
+      if (t) {
+        const p = parseBookingDetails(knownDetailsLines(known, t[1]), count, { domestic })
+        if (p.travellers.length === 1 && p.contact && p.seat && !p.problems.length) return await createBookingApproval({ actor, surface, last, option, travellers: p.travellers, contact: p.contact, seat: p.seat })
+      }
+      if (/^(?:yes|y|yeah|yep|ok(?:ay)?|sure|use them|same)[.! ]*$/i.test(text)) {
+        const reply = `Almost done. Is that Mr, Ms or Mrs? Reply with just the title, for example:\n\nMr`
+        await savePending(tg, { runId: pending.runId, optionIndex: pending.optionIndex, known: true }, reply)
+        return waiting(reply)
+      }
     }
     // 27 Oct 15:57 (owner): a missing "Mr" made him resend everything. After a re-ask, the reply is combined with the
     // details message he already sent (read from the chat history, nothing new is stored), and only the gap is asked for.
@@ -358,10 +404,12 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
   const fare = option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')}` : 'the listed fare'
   const head = `Booking: ${last.context.origin?.code} → ${last.context.destination?.code}, ${isRound(last.context) ? `${last.context.startDate} and back ${last.context.returnDate}` : `${last.context.startDate}, one-way`}.\n${describeFlight(option)}\nAbout ${fare} ${fareKind(last.context)} for ${count} adult${count === 1 ? '' : 's'}; fares move, so I will stop if the price on the booking page is more than 10% higher.`
   const saved = await loadSavedBookingProfile(actor, count).catch(() => null)
+  const known = !saved && count === 1 && isDomesticIndiaTrip(last.context) ? await loadKnownDetails(actor).catch(() => null) : null
   const reply = saved
     ? `${head}\n\nUse the same details as your last booking?\n${profileLines(saved)}\n\nReply *YES* to use them, or send new details (title and name, email, mobile, seat; one per line).`
+    : known ? `${head}\n\n${knownDetailsText(known)}`
     : `${head}\n\n${askText(count, [], isDomesticIndiaTrip(last.context))}`
-  await savePending(tg, { runId: last.runId, optionIndex: index, ...(saved ? { reuse: true } : {}) }, reply)
+  await savePending(tg, { runId: last.runId, optionIndex: index, ...(saved ? { reuse: true } : {}), ...(known ? { known: true } : {}) }, reply)
   return waiting(reply)
 }
 
