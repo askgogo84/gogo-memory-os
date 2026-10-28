@@ -337,7 +337,9 @@ import { resolvePendingCalendar } from '../lib/bot/pending-followup'
   assert.equal(prep2?.title, 'Dentist appointment', 'preparation title is normalized to the appointment, not the full sentence')
 
   // The date follow-up folds the preserved time back in so date + time resolve together.
-  const completed = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, '28 October 2026')
+  // 28 Oct 2026: this used a fixed '28 October 2026', which became the past at 5 pm IST that day. Use a date a week ahead.
+  const weekAhead = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Asia/Kolkata' }).format(new Date(Date.now() + 7 * 86400000))
+  const completed = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, weekAhead)
   assert.ok(completed, 'a date reply completes the pending calendar with the preserved 5 pm')
 
   // A corrected time in the follow-up overrides the stored time — am/pm AND 24-hour forms (Codex P1).
@@ -390,7 +392,7 @@ import { resolvePendingCalendar } from '../lib/bot/pending-followup'
   // needsDate follow-up: a time-only correction must NOT resolve an event (keep waiting for the date).
   assert.equal(resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, 'actually 6 pm'), null, 'a time-only reply to a date prompt does not create an event')
   // needsDate follow-up: an ISO date reply resolves to that date (not misread as 20:00).
-  const iso = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, '2026-10-28') as any
+  const iso = resolvePendingCalendar({ title: 'dentist appointment', timeText: '5:00 PM' }, '2027-10-28') as any
   assert.ok(iso?.remindAtIso, 'an ISO date reply resolves the pending calendar')
   if (iso?.remindAtIso) { const d = new Date(iso.remindAtIso); assert.equal(d.getUTCMonth(), 9, 'ISO month is October'); assert.equal(d.getUTCDate() >= 27 && d.getUTCDate() <= 28, true, 'ISO day is 28 (IST)') }
 

@@ -257,11 +257,10 @@ async function model(page){
   let usernameFilled=false,passwordFilled=false,submitted=false,openerClicked=false,openerLabel='',openerClicks=0;
   const ambiguous=[];
   try{
-    await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000}).catch(async e=>{
-      if(!/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_CONNECTION_RESET/.test(String(e&&e.message||e)))throw e;
-      await page.waitForTimeout(1500);
-      return page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
-    });
+    for(let attempt=0;;attempt++){try{await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});break}catch(e){
+      if(attempt>=3||!/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_CONNECTION_RESET|ERR_TIMED_OUT/.test(String(e&&e.message||e)))throw e;
+      await page.waitForTimeout([1500,4000,8000][attempt]);
+    }}
     await page.waitForTimeout(800);
     const USER_FIELDS='input[autocomplete~="username"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[type="tel"], input[name*="mobile" i], input[name*="phone" i], input[placeholder*="phone" i], input[placeholder*="mobile" i], input[placeholder*="username" i], input[placeholder*="email" i]';
     // Sites like Swiggy and Zomato keep the login in a panel opened from the header.
@@ -1154,11 +1153,12 @@ async function instagramPublicRead(page,url,navTimeout){
       if(!reuse)fs.writeFileSync('${SANDBOX_WORKDIR}/commerce-active-task',payload.taskId||'');
     }
     // 16 Oct live: one ERR_TUNNEL_CONNECTION_FAILED from the India proxy failed a whole Swiggy read; retry it once.
-    if(!reuse)await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout}).catch(async e=>{
-      if(!/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_CONNECTION_RESET/.test(String(e&&e.message||e)))throw e;
-      await page.waitForTimeout(1500);
-      return page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
-    });
+    // 28 Oct live booking 345b27ba: the one retry also hit ERR_TUNNEL_CONNECTION_FAILED. The first page load (nothing
+    // done yet, no side effect) is retried up to 3 times with growing waits.
+    if(!reuse){for(let attempt=0;;attempt++){try{await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});break}catch(e){
+      if(attempt>=3||!/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_CONNECTION_RESET|ERR_TIMED_OUT/.test(String(e&&e.message||e)))throw e;
+      await page.waitForTimeout([1500,4000,8000][attempt]);
+    }}}
     await page.waitForTimeout(900);
     // 22 Oct live: instagram.com showed a blank splash, or bounced to /accounts/login, in the cloud browser, so a
     // read of a PUBLIC profile paused for sign-in. For reads only: let it render, close the sign-up popup, and retry
