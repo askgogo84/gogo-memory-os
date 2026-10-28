@@ -21,3 +21,6 @@ assert.equal(fb.pickFlight(opts, { kind: 'time', window: 'night' })?.departure, 
 assert.equal(fb.pickFlight(opts, { kind: 'time', window: 'earliest' })?.departure, '5:50 AM')
 assert.equal(fb.pickFlight(opts, { kind: 'time', window: 'morning' })?.departure, '5:50 AM')
 console.log('BOOKING_TIME_PICK_OK')
+const sc = (await import('node:fs')).readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
+assert.ok(/handoff[\s\S]{0,200}chromewebdata[\s\S]{0,300}edgeBlockedHosts\.push\('the airline site'\)/.test(sc), '28 Oct live: an airline hand-off ending on Chrome\'s error page falls back to an agency')
+console.log('BOOKING_HANDOFF_FALLBACK_OK')

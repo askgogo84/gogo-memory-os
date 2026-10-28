@@ -2898,6 +2898,11 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
       const previousPage=page
       page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]));mergeBlocked(page);if(page?.handoff)console.log('BOOKING_GOOGLE_HANDOFF:',JSON.stringify({runId:params.sessionTaskId||null,...page.handoff}))
+      // 28 Oct live booking 926c1b59: "Continue to book with Air India Express" opened a tab that ended on Chrome's own
+      // error page (chromewebdata: the airline site did not load), then the planner pressed the same button again and
+      // the run stopped. A hand-off that lands on an error page counts as that airline refusing this browser, so the
+      // next wave on Google picks a listed Indian agency instead.
+      if(providerBooking&&page?.handoff&&(/chromewebdata/i.test(String(page.handoff.finalHost||''))||(Array.isArray(page.handoff.failed)&&page.handoff.failed.length))&&!edgeBlockedHosts.includes('the airline site')&&edgeBlockedHosts.length<2){edgeBlockedHosts.push('the airline site');console.log('BROWSER_BOOKING_HANDOFF_FAILED:',JSON.stringify({runId:params.sessionTaskId||null,finalHost:page.handoff.finalHost||null}))}
       if(providerBooking&&/^https:\/\/(?:www\.)?google\.com\/travel\/flights\/booking/i.test(String(page.url||'')))googleBookingUrl=String(page.url)
       // The screenshot is kept only for the next vision step; it never reaches logs or results.
       lastShot=typeof page.shot==='string'?page.shot:null;lastViewport=page.viewport||null;delete page.shot;delete page.viewport
