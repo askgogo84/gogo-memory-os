@@ -234,7 +234,7 @@ export function brainUsage(res: any): BrainUsage {
   return { input: n(u.input_tokens), output: n(u.output_tokens), cacheRead: n(u.cache_read_input_tokens), cacheCreation: n(u.cache_creation_input_tokens) }
 }
 
-export type BrainMeterEvent = { telegramId: number; source: 'brain_decide' | 'brain_followup'; model: string; ms: number; ok: boolean; usage: BrainUsage }
+export type BrainMeterEvent = { telegramId: number; source: 'brain_decide' | 'brain_followup' | 'brain_shadow'; model: string; ms: number; ok: boolean; usage: BrainUsage }
 /** Best-effort cost metering through the existing cost ledger (gogo_cost_events). Never blocks, never throws. */
 export function meterBrainCall(e: BrainMeterEvent): void {
   if (!Number.isSafeInteger(e.telegramId) || e.telegramId <= 0) return
@@ -247,9 +247,9 @@ export function meterBrainCall(e: BrainMeterEvent): void {
   } catch { /* metering never affects the reply */ }
 }
 
-export async function decide(p: { text: string; ctx: BrainContext; now?: Date; client?: Pick<Anthropic, 'messages'>; telegramId?: number; meter?: (e: BrainMeterEvent) => void }): Promise<BrainDecision & { ms: number; usage: BrainUsage }> {
+export async function decide(p: { text: string; ctx: BrainContext; now?: Date; client?: Pick<Anthropic, 'messages'>; telegramId?: number; meter?: (e: BrainMeterEvent) => void; model?: string; source?: BrainMeterEvent['source'] }): Promise<BrainDecision & { ms: number; usage: BrainUsage }> {
   const t0 = Date.now()
-  const model = MODEL()
+  const model = p.model || MODEL()
   let usage: BrainUsage = brainUsage(null)
   let ok = false
   try {
@@ -267,7 +267,7 @@ export async function decide(p: { text: string; ctx: BrainContext; now?: Date; c
   } catch (err: any) {
     return { kind: 'skip', reason: `error:${clean(err?.message || err, 120)}`, ms: Date.now() - t0, usage }
   } finally {
-    const event: BrainMeterEvent = { telegramId: Number(p.telegramId), source: 'brain_decide', model, ms: Date.now() - t0, ok, usage }
+    const event: BrainMeterEvent = { telegramId: Number(p.telegramId), source: p.source || 'brain_decide', model, ms: Date.now() - t0, ok, usage }
     try { (p.meter || meterBrainCall)(event) } catch { /* never */ }
   }
 }
@@ -305,7 +305,14 @@ export async function runBrain(p: { phone: string; telegramId: number; text: str
   const ctx = await loadBrainContext(p).catch(() => null)
   if (!ctx) return null
   if (answersGogosQuestion(ctx.turns, p.text)) { console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: 'skip', reason: 'answers_question' })); return null }
+  // Shadow models answer the same turn in parallel and are only logged (BRAIN_SHADOW), never acted on: the
+  // 28 Oct cost question ("which model is cheapest without losing understanding") answered on real turns.
+  const shadows = shadowModels().filter(m => m !== MODEL()).map(m => decide({ text: p.text, ctx, telegramId: p.telegramId, model: m, source: 'brain_shadow' }).then(r => ({ m, r })))
   const d = await decide({ text: p.text, ctx, telegramId: p.telegramId })
+  if (shadows.length) {
+    const settled = await Promise.race([Promise.allSettled(shadows), new Promise<null>(r => setTimeout(() => r(null), 2500))])
+    for (const s of settled || []) if (s.status === 'fulfilled') console.log('BRAIN_SHADOW:', JSON.stringify(shadowReport(MODEL(), d, s.value.m, s.value.r)))
+  }
   console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: d.kind, ms: d.ms, model: MODEL(), turns: ctx.turns.length, flights: ctx.trackedFlights.length,
     input_tokens: d.usage.input, output_tokens: d.usage.output, cache_read_input_tokens: d.usage.cacheRead, cache_creation_input_tokens: d.usage.cacheCreation,
     ...(d.kind === 'handle' ? { rewritten: d.rewritten, instruction: d.rewritten ? d.instruction.slice(0, 200) : undefined } : {}), ...(d.kind === 'flight' ? { flightNo: d.flightNo, track: d.track } : {}), ...(d.kind === 'skip' ? { reason: d.reason } : {}) }))
@@ -374,4 +381,41 @@ export async function answerFollowups(p: { runId: string; telegramId: number; se
   }
   if (open.length) console.log('BRAIN_FOLLOWUPS:', JSON.stringify({ runId: p.runId, open: open.length, answered }))
   return answered
+}
+
+// ---------------------------------------------------------------- shadow models and cost
+// USD per million tokens (platform.claude.com/docs/en/about-claude/pricing, 28 Oct 2026; Haiku 5.5 ≤100k tier).
+export const MODEL_PRICES: Record<string, { input: number; cacheRead: number; cacheWrite: number; output: number }> = {
+  'claude-sonnet-4-5': { input: 3, cacheRead: 0.3, cacheWrite: 3.75, output: 15 },
+  'claude-haiku-4-5': { input: 1, cacheRead: 0.1, cacheWrite: 1.25, output: 5 },
+  'claude-haiku-5-5': { input: 0.1, cacheRead: 0.01, cacheWrite: 0.125, output: 0.5 },
+  'claude-sonnet-5-5': { input: 2, cacheRead: 0.1, cacheWrite: 2.5, output: 10 },
+}
+export function estimateCostUsd(model: string, u: BrainUsage): number | null {
+  const p = MODEL_PRICES[model]
+  if (!p || u.input == null) return null
+  return Math.round(((u.input || 0) * p.input + (u.cacheRead || 0) * p.cacheRead + (u.cacheCreation || 0) * p.cacheWrite + (u.output || 0) * p.output) / 1e3) / 1e3
+}
+
+/** GOGO_BRAIN_SHADOW: comma list of models to shadow; "off" disables. Default: Haiku 5.5 on production. */
+export function shadowModels(env: Record<string, string | undefined> = (globalThis as any).process?.env || {}): string[] {
+  const raw = String(env.GOGO_BRAIN_SHADOW ?? (env.VERCEL_ENV === 'production' ? 'claude-haiku-5-5' : '')).trim()
+  if (!raw || raw.toLowerCase() === 'off') return []
+  return raw.split(',').map(x => x.trim()).filter(x => /^claude-[a-z0-9.-]+$/.test(x)).slice(0, 2)
+}
+
+const norm = (t: string) => clean(t, 600).toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ')
+export function decisionsAgree(a: BrainDecision, b: BrainDecision): boolean {
+  if (a.kind !== b.kind) return false
+  if (a.kind === 'handle' && b.kind === 'handle') return a.rewritten === b.rewritten && (!a.rewritten || norm(a.instruction) === norm(b.instruction))
+  if (a.kind === 'flight' && b.kind === 'flight') return a.flightNo === b.flightNo && a.track === b.track
+  return true
+}
+
+export function shadowReport(mainModel: string, main: BrainDecision & { ms: number; usage: BrainUsage }, model: string, shadow: BrainDecision & { ms: number; usage: BrainUsage }) {
+  return {
+    main: { model: mainModel, kind: main.kind, ms: main.ms, usd: estimateCostUsd(mainModel, main.usage) },
+    shadow: { model, kind: shadow.kind, ms: shadow.ms, usd: estimateCostUsd(model, shadow.usage), ...(shadow.kind === 'handle' && shadow.rewritten ? { instruction: shadow.instruction.slice(0, 160) } : {}), ...(shadow.kind === 'skip' ? { reason: shadow.reason } : {}) },
+    agree: decisionsAgree(main, shadow),
+  }
 }

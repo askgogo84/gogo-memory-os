@@ -100,4 +100,16 @@ assert.ok(b.summaryLines({ summary: Array.from({ length: 20 }, (_, i) => `Line $
 assert.deepEqual(b.summaryLines({ summary: 'prose' }, 'quoted one\nquoted two'), ['quoted one', 'quoted two'], 'source quotations win over prose')
 const brainSrc = (await import('node:fs')).readFileSync(new URL('../lib/agent/brain.ts', import.meta.url), 'utf8')
 assert.ok(brainSrc.includes("withTimeout(import('./conversation-summary')") && /, 900\)/.test(brainSrc), 'summary read is bounded at 900 ms')
+// Shadow models (28 Oct cost question): logged only, never acted on.
+assert.deepEqual(b.shadowModels({ VERCEL_ENV: 'production' }), ['claude-haiku-5-5'])
+assert.deepEqual(b.shadowModels({}), [], 'no shadow calls in tests or previews')
+assert.deepEqual(b.shadowModels({ VERCEL_ENV: 'production', GOGO_BRAIN_SHADOW: 'off' }), [])
+assert.deepEqual(b.shadowModels({ GOGO_BRAIN_SHADOW: 'claude-haiku-5-5, gpt-6.1-terra, claude-sonnet-5-5' }), ['claude-haiku-5-5', 'claude-sonnet-5-5'], 'only Anthropic models via this path')
+assert.equal(b.estimateCostUsd('claude-sonnet-4-5', { input: 5000, output: 150, cacheRead: 0, cacheCreation: 0 } as any), 0.017)
+assert.equal(b.estimateCostUsd('claude-haiku-5-5', { input: 5000, output: 150, cacheRead: 0, cacheCreation: 0 } as any), 0.001)
+assert.ok(b.decisionsAgree({ kind: 'handle', instruction: 'Remind me to check QF1 at 8 pm', rewritten: true }, { kind: 'handle', instruction: 'remind me to check QF1 at 8 pm.', rewritten: true }))
+assert.ok(!b.decisionsAgree({ kind: 'flight', flightNo: 'QF1', track: false }, { kind: 'flight', flightNo: 'QF1', track: true }))
+const ctxModel: any[] = []
+await b.decide({ text: 'hi', ctx, model: 'claude-haiku-5-5', source: 'brain_shadow', telegramId: 5, meter: (e: any) => ctxModel.push(e), client: { messages: { create: async (r: any) => { ctxModel.push(r.model); return { content: [{ type: 'tool_use', name: 'reply', input: { text: 'Hi' } }] } } } } as any })
+assert.equal(ctxModel[0], 'claude-haiku-5-5'); assert.equal(ctxModel[1].source, 'brain_shadow')
 console.log('BRAIN_OK')
