@@ -372,7 +372,8 @@ export function googleAirlineContinueControl(controls:{selector?:string;label?:s
 // 28 Oct (owner): "why go to the airline's site, why not MakeMyTrip, Goibibo…". Airline sites keep refusing the cloud
 // browser (Air India Akamai, IndiGo's flight API, Air India Express not loading), so Indian agencies are tried first.
 // GOGO_BOOKING_PREFER=airline restores airline-first. Order: guest-checkout-friendly sites first (to be measured).
-const AGENCY_ORDER=['cleartrip','makemytrip','goibibo','ixigo','easemytrip','yatra']
+// 28 Oct (owner, phone screenshots): Agoda's page took contact details as a guest; Agoda added and tried first.
+const AGENCY_ORDER=['agoda','cleartrip','goibibo','makemytrip','ixigo','easemytrip','yatra']
 export const bookingPrefersAgency=(env:Record<string,string|undefined>=(globalThis as any).process?.env||{})=>String(env.GOGO_BOOKING_PREFER||'agency').toLowerCase()!=='airline'
 /** The first Indian agency on Google's booking options ("Continue to book with Cleartrip for …") not yet tried. */
 export function googleAgencyContinueControl(controls:{selector?:string;label?:string}[],tried:string[]=[]):{selector:string;name:string}|null{
@@ -1019,6 +1020,12 @@ async function watchGoogleBookingHandoff(page,payload,selector){
   if(!payload.bookingFlow||!isGoogleBooking(page))return null;
   const named=await page.locator(selector).first().evaluate(el=>/^Continue to book with\b/i.test((el.getAttribute('aria-label')||el.textContent||'').trim())).catch(()=>false);
   if(!named)return null;
+  // 28 Oct live bookings 926c1b59 and b98b2a57: the new tab Google opens for "Continue to book with Air India
+  // Express" and "…with Cleartrip" both landed straight on Chrome's error page (chromewebdata) and never reached
+  // google.com or the site. The hand-off is kept in THIS tab instead: the button's form or link targets the current
+  // tab and a scripted window.open navigates here. The new-tab follow below stays as the fallback.
+  await page.locator(selector).first().evaluate(el=>{const f=el.closest('form');if(f)f.setAttribute('target','_self');const a=el.closest('a');if(a)a.setAttribute('target','_self');}).catch(()=>{});
+  await page.evaluate(()=>{try{window.open=function(u){if(u){location.assign(String(u))}return window}}catch(e){}}).catch(()=>{});
   const ctx=page.context();let tab=null;const on=(p)=>{tab=p};
   try{ctx.on('page',on);}catch{}
   return async()=>{
@@ -2811,7 +2818,12 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         const repeat=actions.findIndex(a=>{const k=advanceKey(a);return Boolean(k)&&bookingAdvancePressed.has(k)})
         if(repeat>=0){
           console.log('BROWSER_BOOKING_REPEAT:',JSON.stringify({runId:params.sessionTaskId||null,control:advanceKey(actions[repeat]).slice(0,40)}))
+          // 28 Oct live booking b98b2a57: Cleartrip's hand-off failed and the planner pressed Cleartrip again, so the run
+          // stopped with Agoda, Goibibo and others still listed. A repeated "Continue to book with …" moves on to the
+          // next listed booking site instead (each tried once).
+          const next=onGoogle&&/^continue to book with/i.test(advanceKey(actions[repeat]))?googleAgencyContinueControl(page.controls||[],agenciesTried):null
           actions.splice(repeat)
+          if(next){agenciesTried.push(next.name);actions.push({kind:'click',selector:next.selector} as any);console.log('BROWSER_BOOKING_AGENCY_CONTINUE:',JSON.stringify({runId:params.sessionTaskId||null,wave,agency:next.name,after:'repeat'}))}
           if(!actions.length)break
         }
       }

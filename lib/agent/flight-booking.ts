@@ -216,7 +216,7 @@ export function flightBookingObjective(params: { context: any; option: BrowserFl
   const round = isRound(context)
   return safe(`Flight booking up to payment on Google Flights: ${round ? 'round trip' : 'one-way'} ${context.origin?.code} to ${context.destination?.code}, depart ${context.startDate}${round ? `, return ${context.returnDate}` : ''}, ${travellers.length} adult${travellers.length === 1 ? '' : 's'}, ${String(context.cabin || 'economy').replace(/_/g, ' ')}. `
     + `Choose the ${option.airline} result that leaves ${option.departure} on ${context.startDate} (about ${fare} ${round ? 'round trip' : 'one-way'})${round ? `, then the cheapest return on ${context.returnDate}` : ''}, and continue (Select flight, Continue, Book) to the airline or booking site. `
-    + `On the booking options, pick a listed Indian booking site first: Cleartrip, MakeMyTrip, Goibibo, ixigo, EaseMyTrip or Yatra; use "Continue to book with ${option.airline}" (the airline itself) only when none of those is listed. Never pick any other agency. `
+    + `On the booking options, pick a listed booking site first: Agoda, Cleartrip, Goibibo, MakeMyTrip, ixigo, EaseMyTrip or Yatra; use "Continue to book with ${option.airline}" (the airline itself) only when none of those is listed. Never pick any other agency. `
     + `If the site asks for passenger details, use exactly: ${who}. `
     + (contact ? `For contact details use email ${contact.email}, and fill the mobile number field with fill_phone (Gogo types the approved number). ` : '')
     + `Do not guess any other field; leave it for the person. Continue as a guest; never log in or create an account. `
