@@ -46,7 +46,7 @@ export function brainEnabledFor(phone: string, env: Record<string, string | unde
 }
 
 // Exact commands keep their deterministic handlers: approvals, yes/no, numbered picks, STOP, OTPs, buttons.
-const EXACT = /^\s*(?:yes|y|yeah|yep|yup|no|n|nope|ok|okay|sure|approve[d]?|reject|deny|decline|confirm|cancel|stop|start|unsubscribe|help|done|snooze(?:\s+\d+\s*m(?:in(?:utes?)?)?)?|book|book\s+(?:it|1|2|3|this|that)|haan|ha|nahi)\s*[.!]*\s*$|^\s*#?\d{1,6}\s*$|^\s*(?:option\s*)?[1-9](?:st|nd|rd|th)?\s*$/i
+const EXACT = /^\s*(?:yes|y|yeah|yep|yup|no|n|nope|ok|okay|sure|approve[d]?|reject|deny|decline|confirm|cancel|stop|start|unsubscribe|help|done|snooze(?:\s+\d+\s*m(?:in(?:utes?)?)?)?|book|book\s+(?:it|1|2|3|this|that)|haan|ha|nahi|mr|mrs|ms|miss|master)\s*[.!]*\s*$|^\s*#?\d{1,6}\s*$|^\s*(?:option\s*)?[1-9](?:st|nd|rd|th)?\s*$/i
 export function isExactCommand(text: string): boolean {
   const t = String(text || '').trim()
   return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t)
@@ -173,10 +173,24 @@ export async function flightAnswer(telegramId: number, flightNo: string, track: 
  * The single entry the surfaces call. Returns a reply to send, a rewritten text to continue with, or null to
  * continue unchanged. Never throws.
  */
+// 28 Oct live: Gogo asked "Is that Mr, Ms or Mrs?", the person replied "Mr", and the brain rewrote it to "book 3".
+// A short or multi-line reply right after Gogo asked something is an answer to that question: the handler that
+// asked it owns the reply, so the brain leaves the text unchanged.
+const ASKED = /\?\s*$|\?\s*\n|\breply with\b|\bsend (?:these|just|me)\b|\breply \*?yes\*?\b/i
+export function answersGogosQuestion(turns: BrainTurn[], text: string, now = Date.now()): boolean {
+  const last = turns[turns.length - 1]
+  if (!last || last.role !== 'assistant' || !ASKED.test(String(last.content || ''))) return false
+  const at = Date.parse(String(last.createdAt || ''))
+  if (Number.isFinite(at) && now - at > 30 * 60_000) return false
+  const t = String(text || '').trim()
+  return t.includes('\n') || t.split(/\s+/).length <= 4
+}
+
 export async function runBrain(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; surface: 'whatsapp' | 'web' }): Promise<{ reply?: string; text?: string } | null> {
   if (!brainEnabledFor(p.phone) || isExactCommand(p.text)) return null
   const ctx = await loadBrainContext(p).catch(() => null)
   if (!ctx) return null
+  if (answersGogosQuestion(ctx.turns, p.text)) { console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: 'skip', reason: 'answers_question' })); return null }
   const d = await decide({ text: p.text, ctx })
   console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: d.kind, ms: d.ms, model: MODEL(), turns: ctx.turns.length, flights: ctx.trackedFlights.length,
     ...(d.kind === 'handle' ? { rewritten: d.rewritten, instruction: d.rewritten ? d.instruction.slice(0, 200) : undefined } : {}), ...(d.kind === 'flight' ? { flightNo: d.flightNo, track: d.track } : {}), ...(d.kind === 'skip' ? { reason: d.reason } : {}) }))

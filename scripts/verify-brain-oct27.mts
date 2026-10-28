@@ -37,4 +37,10 @@ assert.equal(opts.maxRetries, 0, '27 Oct live: no silent retries (16.9 s decisio
 const worker = (await import('node:fs')).readFileSync(new URL('../lib/agent/travel-research-worker.ts', import.meta.url), 'utf8')
 assert.ok(worker.includes('brain.answerFollowups'), 'questions asked mid-search are answered after delivery')
 assert.match(b.BRAIN_SYSTEM(ctx, new Date()), /exactly "book <number>"/, '28 Oct live: "Book the evening one" restated the route and started a new search')
+assert.ok(b.isExactCommand('Mr') && b.isExactCommand('ms.'), 'titles are exact answers')
+const asked = [{ role: 'assistant' as const, content: 'Almost done. Is that Mr, Ms or Mrs? Reply with just the title', createdAt: new Date().toISOString() }]
+assert.ok(b.answersGogosQuestion(asked, 'Mr Goverdhan'), '28 Oct live: a short reply to Gogo\'s question is left to the handler')
+assert.ok(b.answersGogosQuestion([{ role: 'assistant', content: 'Send these in one message, one per line:', createdAt: new Date().toISOString() }], 'Goverdhan MD\nme@x.com\n8310441698\nFree seat'))
+assert.ok(!b.answersGogosQuestion([{ role: 'assistant', content: 'Tracking QF1.', createdAt: new Date().toISOString() }], 'Did it land?'))
+assert.ok(!b.answersGogosQuestion(asked, 'Actually find me hotels in Mumbai for the same dates please'), 'a new request still goes to the brain')
 console.log('BRAIN_OK')
