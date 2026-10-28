@@ -30,5 +30,11 @@ assert.equal(scm.bookingPrefersAgency({ GOGO_BOOKING_PREFER: 'airline' }), false
 const ctl = [{ selector: '#a', label: 'Continue to book with Air India Express' }, { selector: '#m', label: 'Continue to book with MakeMyTrip for ₹4,900' }, { selector: '#c', label: 'Continue to book with Cleartrip for ₹4,950' }]
 assert.deepEqual(scm.googleAgencyContinueControl(ctl, []), { selector: '#c', name: 'cleartrip' })
 assert.deepEqual(scm.googleAgencyContinueControl(ctl, ['cleartrip']), { selector: '#m', name: 'makemytrip' })
-assert.ok(src.includes('pick a listed Indian booking site first'), 'objective asks for an agency first')
+assert.ok(src.includes('pick a listed booking site first: Agoda'), 'objective asks for a booking site first')
 console.log('BOOKING_AGENCY_FIRST_OK')
+assert.deepEqual(scm.googleAgencyContinueControl([{ selector: '#g', label: 'Continue to book with Goibibo for ₹5,001' }, { selector: '#ag', label: 'Continue to book with Agoda for ₹4,915' }], []), { selector: '#ag', name: 'agoda' }, '28 Oct: Agoda first (guest checkout seen on the owner\'s phone)')
+assert.ok(sc.includes("const next=onGoogle&&/^continue to book with/i.test(advanceKey(actions[repeat]))"), 'a repeated booking-site click moves to the next site')
+assert.ok(sc.includes("if(f)f.setAttribute('target','_self')"), 'hand-off kept in the same tab')
+const net = (await import('node:fs')).readFileSync(new URL('../lib/agent/browser-page-network.ts', import.meta.url), 'utf8')
+assert.ok(net.includes("'airindiaexpress.com'") && net.includes("'agoda.com'"), 'Air India Express and Agoda reachable from the hand-off')
+console.log('BOOKING_HANDOFF_SAME_TAB_OK')
