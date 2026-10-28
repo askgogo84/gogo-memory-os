@@ -327,6 +327,22 @@ async function loadPending(actor: AgentActor, text: string): Promise<{ runId: st
   return { runId: String(state.runId), optionIndex: Number(state.optionIndex), reuse: state.reuse === true, retry: state.retry === true, known: state.known === true }
 }
 
+async function lateBookingDetails(actor: AgentActor, text: string) {
+  if (!/@/.test(text) || !/\n/.test(text)) return null
+  const { data: pending } = await supabaseAdmin.from('agent_activity').select('metadata_json,created_at').eq('telegram_id', String(actor.legacyTelegramId)).eq('event_type', 'flight_booking_details')
+    .gte('created_at', new Date(Date.now() - 2 * 3600_000).toISOString()).order('created_at', { ascending: false }).limit(1).maybeSingle()
+  const state: any = pending?.metadata_json
+  if (!state?.runId || !Number.isInteger(state?.optionIndex)) return null
+  const last = await loadLastFlightResult(actor)
+  if (!last || last.runId !== String(state.runId)) return null
+  const option = last.options[Number(state.optionIndex)]
+  const count = Math.max(1, Number(last.context.adults) || 1)
+  if (!option) return null
+  const parsed = parseBookingDetails(text, count, { domestic: isDomesticIndiaTrip(last.context) })
+  if (parsed.travellers.length < count || parsed.problems.length || !parsed.contact || !parsed.seat) return null
+  return { last, option, travellers: parsed.travellers, contact: parsed.contact, seat: parsed.seat }
+}
+
 /** A read problem here must never break an ordinary message: treat it as "not a booking turn". */
 export async function tryFlightBooking(params: { actor: AgentActor; surface: AgentSurface; text: string }) {
   try { return await runFlightBooking(params) } catch (error: any) {
@@ -388,6 +404,11 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
     }
     return await createBookingApproval({ actor, surface, last, option, travellers: parsed.travellers, contact: parsed.contact, seat: parsed.seat })
   }
+  // 28 Oct live: a status message Gogo sent at 10:40 sat between the details question and the person's details
+  // (11:06), so the details were not treated as an answer and the chat model invented a booking. A message that is
+  // complete booking details answers the latest open booking question from the last 2 hours, whatever came between.
+  const late = await lateBookingDetails(actor, text).catch(() => null)
+  if (late) return await createBookingApproval({ actor, surface, ...late })
   // "book from the 2026-11-19 results": the person explicitly picks the older completed search.
   const older = text.match(/\s*\bfrom the (20\d{2}-\d{2}-\d{2}) results\b/i)
   const pick = flightBookingRequest(older ? text.replace(older[0], '').trim() : text)
