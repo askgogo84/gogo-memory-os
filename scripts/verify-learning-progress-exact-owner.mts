@@ -93,7 +93,11 @@ for (const owner of ['9007199254740992', '9007199254740993', '42', '-123', 42] a
     const result = await exercise(owner, action)
     assert.equal(result.status, 200, action + ' should work for valid synthetic owner ' + owner)
     const ownerSelectors = result.selectors.filter(r => r.column === 'telegram_id')
-    assert.ok(ownerSelectors.length, 'expected exact owner selector for ' + action)
+    if (action === 'complete') {
+      assert.equal(result.upserts.length, 1, 'completion must use an explicit owner-bound upsert')
+    } else {
+      assert.ok(ownerSelectors.length, 'expected exact owner selector for ' + action)
+    }
     for (const row of ownerSelectors) {
       assert.equal(row.value, String(owner), action + ' must not round/parse owner at ' + row.table)
       assert.equal(typeof row.value, 'string', 'service-role selector requires decimal TEXT for exact bigint')
