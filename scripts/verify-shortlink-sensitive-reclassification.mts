@@ -28,13 +28,13 @@ type LinkRow = {
 }
 
 function sandbox(link: LinkRow | null, doc: Record<string, unknown> | null) {
-  const seen = { signs: 0, updates: 0, inserts: [] as Array<Record<string, unknown>>, reads: [] as string[] }
+  const seen = { signs: 0, updates: 0, inserts: [] as Array<Record<string, unknown>>, reads: [] as string[], predicates: [] as Array<{table: string; field: string; value: unknown}> }
   const db = {
     from(table: string) {
       seen.reads.push(table)
       const query = {
         select(_fields: string) { return query },
-        eq(_field: string, _value: unknown) { return query },
+        eq(field: string, value: unknown) { seen.predicates.push({ table, field, value }); return query },
         is(_field: string, _value: unknown) { return query },
         gt(_field: string, _value: unknown) { return query },
         order(_field: string, _options: unknown) { return query },
@@ -102,6 +102,10 @@ const recentShort: LinkRow = { ...longLink, token: 'synthetic-short', created_at
   const { service, seen } = sandbox(recentShort, sensitive)
   assert.equal(await service.resolveShortLinkToSignedUrl(recentShort.token), signed)
   assert.equal(seen.signs, 1)
+  assert.ok(seen.predicates.some(p => p.table === 'documents' && p.field === 'id' && p.value === 'doc-42'),
+    'resolver must address the original linked document')
+  assert.ok(seen.predicates.some(p => p.table === 'documents' && p.field === 'telegram_id' && p.value === '42'),
+    'resolver must retain exact persisted owner predicate')
 }
 
 // No valid issuance timestamp: fail closed for private documents.
