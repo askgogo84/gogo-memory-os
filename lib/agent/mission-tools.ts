@@ -234,6 +234,12 @@ async function dailyMissionReminders(params:{actor:AgentActor;step:MissionStep;m
 export async function executeVerifiedMissionReminder(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
   const {actor,step,missionText}=params
   const stepIntent=reminderStepIntent(step)
+  // 28 Oct run: "daily packing plan in 30-minute sessions with reminders" planned one step that creates
+  // several daily reminders. Only creation (no review verb) plus a daily cadence uses the daily writer.
+  if(stepIntent==='mixed'&&!/(?<![\w-])(?:review|list|show|find|retriev|read|check|inspect|look(?:ing)? up)\w*/i.test(`${step.title} ${step.instruction}`)){
+    const daily=await dailyMissionReminders({actor,step,missionText})
+    if(daily)return daily
+  }
   if(stepIntent==='mixed')throw new Error('mission_reminder_mixed_read_write_requires_separate_steps')
   if(stepIntent==='unknown')throw new Error('mission_reminder_intent_unverified')
   if(stepIntent==='read'){

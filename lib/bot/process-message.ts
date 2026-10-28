@@ -836,7 +836,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(friend.name, friendTaskWithoutTime(friend.rest), 'time'))
         const reply = reminderTimingProblem(friend.rest)
           ? `That time has already passed. What future date and time should I remind ${cap0(friend.name)}? Nothing has been saved.`
-          : `What exact date and time should I remind ${cap0(friend.name)}? I won't guess from “when they wake up.” Nothing has been saved.`
+          : `What exact date and time should I remind ${cap0(friend.name)}? I won't guess the time. Nothing has been saved.`
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         return { text: formatOutgoingText(params.channel, reply), resolvedUser }
       }

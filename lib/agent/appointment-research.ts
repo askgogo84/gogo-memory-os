@@ -72,9 +72,18 @@ function locationMatch(result: WebSearchResult, location: string) {
   return resultInPlace(`${result.title || ''} ${result.snippet || ''} ${result.url || ''}`, resolveIndiaPlace(location))
 }
 
+// Search snippets carry HTML entities ("men&#39;s"); decode them before the "#" stripper turns them into "men& 39;s".
+function decodeEntities(text: string) {
+  return text
+    .replace(/&#(\d{1,6});/g, (_, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-f]{1,6});/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+}
+
 // Search snippets arrive as scraped page text (markdown, image names, menus). Keep one readable line.
 export function readableSnippet(raw: string) {
-  const cleaned = String(raw || '')
+  const cleaned = decodeEntities(String(raw || ''))
     .replace(/!?\[[^\]]*\]\([^)]*\)/g, ' ')
     .replace(/\S+\.(?:webp|png|jpe?g|svg|gif)\)?/gi, ' ')
     .replace(/#+\s*/g, ' ')

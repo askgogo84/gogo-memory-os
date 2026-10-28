@@ -49,7 +49,11 @@ export function parseGmailReadFilter(text: string): GmailReadFilter {
   const from = raw.match(/\bfrom\s+([A-Za-z0-9][A-Za-z0-9 .&'@-]{1,40}?)(?=\s*(?:[?.!,]|$|\bto\b|\babout\b|\bregarding\b))/i)
   const topic = raw.match(/\b(?:latest|last|newest|recent|unread)\s+([A-Za-z][A-Za-z '&-]{2,40}?)\s+(?:e-?mails?|mails?|messages?)\b/i)
   const topicWords = String(topic?.[1] || '').replace(/\b(?:my|the|a|an|new|unread|important|urgent)\b/gi, '').replace(/\s+/g, ' ').trim()
-  return { sender: from?.[1]?.trim() || null, topic: topicWords || null }
+  // "emails from today" / "from this week" name a time, not a sender; "work emails" names no searchable topic.
+  const sender = from?.[1]?.trim() || ''
+  const timeSender = /^(?:today|yesterday|tonight|this (?:morning|afternoon|evening|week|month)|last (?:night|week|month|\d+ (?:hours?|days?))|the (?:past|last) .+)$/i.test(sender)
+  const genericTopic = /^(?:work|office|personal|all|pending|new|recent)$/i.test(topicWords)
+  return { sender: (!timeSender && sender) || null, topic: (!genericTopic && topicWords) || null }
 }
 
 function matchesFilter(row: any, filter?: GmailReadFilter) {
