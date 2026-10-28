@@ -132,12 +132,29 @@ export async function storeDocument(params: {
   let storagePath: string | null = null
   if (params.file) {
     const up = await uploadToBucket(params.telegramId, params.file)
-    storagePath = up.storagePath
     if (up.storagePath) {
-      await supabaseAdmin
-        .from('documents')
-        .update({ storage_path: up.storagePath, mime: up.mime, size_bytes: up.sizeBytes })
-        .eq('id', id)
+      // Blob upload acknowledgement is NOT a committed documents row. A row
+      // update can fail or silently match zero rows; only an exact owner-bound
+      // readback proves that the original file is discoverable by this record.
+      // Never replay the upload or delete an unknown-outcome blob automatically.
+      try {
+        const { data: patched, error: patchError } = await supabaseAdmin
+          .from('documents')
+          .update({ storage_path: up.storagePath, mime: up.mime, size_bytes: up.sizeBytes })
+          .eq('id', id)
+          .eq('telegram_id', params.telegramId)
+          .select('id')
+          .maybeSingle()
+        if (!patchError && patched && String(patched.id) === id) {
+          storagePath = up.storagePath
+        } else {
+          // Metadata remains saved; the original attachment path is NOT verified.
+          // Do not disclose file paths, content or DB error details in logs.
+          console.error('DOCUMENT_STORAGE_PATH_UNCONFIRMED: patch not acknowledged')
+        }
+      } catch {
+        console.error('DOCUMENT_STORAGE_PATH_UNCONFIRMED: patch threw')
+      }
     }
   }
 
