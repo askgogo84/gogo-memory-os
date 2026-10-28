@@ -5,6 +5,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from '@/lib/agent/actor'
 import { listVaultSessions, upsertVaultSession, markVaultSessionStatus } from '@/lib/vault/session-store'
+import { capabilityPaused } from '@/lib/agent/policy'
 import { CONNECTION_CATALOGUE, VAULT_CONNECT_SITES, catalogueDomain, findCatalogueSite, type CatalogueSite } from './connection-catalogue'
 
 export type SiteConnection = { siteId: string; name: string; domain: string; status: string; since: string | null; via?: 'session' | 'vault' }
@@ -28,6 +29,8 @@ export async function startSiteSignIn(actor: AgentActor, siteId: string) {
 export async function createSiteSignInRun(actor: AgentActor, siteId: string) {
   const site = findCatalogueSite(siteId)
   if (!site || site.kind === 'soon') throw new Error('site_not_available')
+  // Launch kill switch (GOGO_LOGGED_IN_BROWSER=off): no sign-in task or browser is created.
+  if (capabilityPaused('logged_in_browser')) throw new Error('capability_paused')
   const owner = String(actor.legacyTelegramId)
   const now = new Date().toISOString()
   const { data: run, error } = await supabaseAdmin.from('agent_runs').insert({
@@ -47,6 +50,11 @@ export async function openSiteSignInBrowser(actor: AgentActor, runId: string, si
   const site = findCatalogueSite(siteId)
   if (!site || site.kind === 'soon') throw new Error('site_not_available')
   const owner = String(actor.legacyTelegramId)
+  if (capabilityPaused('logged_in_browser')) {
+    const at = new Date().toISOString()
+    await supabaseAdmin.from('agent_runs').update({ status: 'failed', error: 'capability_paused:logged_in_browser', summary: `Signing in to sites is paused right now. Nothing was opened for ${site.name}.`, completed_at: at, updated_at: at }).eq('id', runId).eq('telegram_id', owner)
+    throw new Error('capability_paused')
+  }
   const { startProviderBrowserHandoff } = await import('@/lib/agent/provider-browser-handoff')
   const start = () => startProviderBrowserHandoff({ userId: actor.userId, url: site.url, sessionTaskId: runId })
   let handoff: Awaited<ReturnType<typeof start>>

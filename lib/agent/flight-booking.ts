@@ -3,6 +3,7 @@ import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { browserApprovalBinding, createApprovalBrowserRun } from './browser-command'
 import { googleFlightsTfsUrl, oneWayDisplayOrder, oneWaySearchLink, roundTripDisplayOrder, roundTripSearchLink } from './travel-browser-task'
 import type { BrowserFlightOption } from './travel-browser-task'
+import { capabilityPaused, capabilityPausedText } from './policy'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 
@@ -351,13 +352,20 @@ export async function tryFlightBooking(params: { actor: AgentActor; surface: Age
   }
 }
 
+/** Launch kill switch: bookings run in the person's signed-in browser, so either switch pauses them. */
+const bookingPaused = () => capabilityPaused('booking') || capabilityPaused('logged_in_browser')
+const bookingPausedReply = (last: LastFlightResult | null) =>
+  waiting(capabilityPausedText('booking', { searchLink: last ? (googleFlightsTfsUrl(last.context) || last.searchLink) : null }))
+
 async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurface; text: string }) {
   const { actor, surface } = params
   const text = String(params.text || '').trim()
   const tg = String(actor.legacyTelegramId)
+  const paused = bookingPaused()
   const pending = await loadPending(actor, text)
   if (pending) {
     if (/^(?:cancel|stop|never ?mind|no|don'?t book|forget it)\b/i.test(text)) return waiting('Okay, I won’t book it. The search link is in the results above if you want to book it yourself.')
+    if (paused) return bookingPausedReply(await loadLastFlightResult(actor).catch(() => null))
     const last = await loadLastFlightResult(actor)
     if (!last || last.runId !== pending.runId) return null
     const option = last.options[pending.optionIndex]
@@ -408,11 +416,12 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
   // (11:06), so the details were not treated as an answer and the chat model invented a booking. A message that is
   // complete booking details answers the latest open booking question from the last 2 hours, whatever came between.
   const late = await lateBookingDetails(actor, text).catch(() => null)
-  if (late) return await createBookingApproval({ actor, surface, ...late })
+  if (late) return paused ? bookingPausedReply(late.last) : await createBookingApproval({ actor, surface, ...late })
   // "book from the 2026-11-19 results": the person explicitly picks the older completed search.
   const older = text.match(/\s*\bfrom the (20\d{2}-\d{2}-\d{2}) results\b/i)
   const pick = flightBookingRequest(older ? text.replace(older[0], '').trim() : text)
   if (!pick) return null
+  if (paused) return bookingPausedReply(await loadLastFlightResult(actor).catch(() => null))
   const last = await loadLastFlightResult(actor)
   const newer = older && last?.context?.startDate === older[1] ? null : await newerFlightSearchPending(actor, last?.startedAt || null).catch(() => null)
   if (newer?.failed) return waiting(`Your latest search${newer.route ? ` (${newer.route}` : ''}${newer.date ? `${newer.route ? ', ' : ' ('}${newer.date})` : newer.route ? ')' : ''} didn't get live fares, so there's nothing from it to book. Send the search again${last ? `, or say "book from the ${last.context.startDate} results"` : ''}.`)
@@ -436,6 +445,8 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
 
 async function createBookingApproval(p: { actor: AgentActor; surface: AgentSurface; last: LastFlightResult; option: BrowserFlightOption; travellers: Traveller[]; contact: BookingContact; seat: SeatChoice }) {
   const { actor, surface, last, option, travellers, contact, seat } = p
+  // Defence in depth: no booking run or approval is ever created while bookings are paused.
+  if (bookingPaused()) return bookingPausedReply(last)
   const tg = String(actor.legacyTelegramId)
   // 28 Oct live: the booking opened the prose q= link, Google ignored it and filled Pune (the cloud browser's
   // location) as the origin, and the planner could not get back to BLR. Bookings start from Google's own encoded

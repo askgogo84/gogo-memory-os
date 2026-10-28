@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from '@/lib/agent/session'
-import { guardApprovalFreshness } from '@/lib/agent/approval-guard'
+import { guardApprovalCapability, guardApprovalFreshness } from '@/lib/agent/approval-guard'
 import { parseDeferHours } from '@/lib/agent/approval-card'
 
 export const dynamic = 'force-dynamic'
@@ -42,6 +42,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return NextResponse.json({ error: 'resolve_failed' }, { status: 500 })
   }
   if (fresh.expired) return NextResponse.json({ error: 'approval_expired', message: fresh.text }, { status: 409 })
+  // Launch kill switch: approving a paused capability (booking / signed-in browser) records nothing and runs nothing.
+  if (decision === 'approve' && typeof guardApprovalCapability === 'function') {
+    const paused = await guardApprovalCapability({ telegramId: session.telegramId, row: pending as any })
+    if (paused.paused) return NextResponse.json({ error: 'capability_paused', capability: paused.capability, message: paused.text }, { status: 409 })
+  }
 
   // Approval card v2 "Later": nothing is approved, rejected or executed. The card stays pending (and still expires
   // on its own clock); Gogo only records when to bring it back.

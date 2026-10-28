@@ -4,6 +4,7 @@
 // of THAT list and never a list recomputed after an item expired or a new one arrived.
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { APPROVAL_LIST_LIMIT, approvalRelativeAge, expiredApprovalReply, isApprovalExpired, type ApprovalTtlRow } from './approval-ttl'
+import { capabilityPaused, capabilityPausedText, pausedBrowserCapability, type PausableCapability } from './policy'
 
 export type GuardedApprovalRow = ApprovalTtlRow & { id: string; run_id?: string | null; title?: string | null; action_type?: string | null; risk_level?: string | null }
 export type ApprovalSurface = 'whatsapp' | 'dashboard' | 'typed'
@@ -55,6 +56,36 @@ export async function guardApprovalFreshness(p: { telegramId: number | string; r
   if (!isApprovalExpired(p.row, now)) return { expired: false }
   await expirePendingApproval(p.telegramId, p.row, now, p.surface)
   return { expired: true, text: expiredApprovalReply(p.row.requested_at, now) }
+}
+
+// Approval plan types that arm or perform a provider booking outside the secure-browser path.
+const BOOKING_PLAN_TYPES = new Set(['restaurant_reservation_release'])
+
+/**
+ * Launch kill switches at the approval transition. Call right before an approval becomes approved (WhatsApp bridge
+ * and dashboard button). When the run's capability is paused (GOGO_BOOKING / GOGO_LOGGED_IN_BROWSER), the card is
+ * NOT approved and stays pending, nothing is queued or executed, and the caller replies with `text`.
+ * Fails open on a run read error: the executor-side choke point in browser-command.ts still refuses the run.
+ */
+export async function guardApprovalCapability(p: { telegramId: number | string; row: GuardedApprovalRow & { execution_payload?: any } }): Promise<{ paused: false } | { paused: true; capability: PausableCapability; text: string }> {
+  const env = (globalThis as any).process?.env
+  if (!capabilityPaused('booking', env) && !capabilityPaused('logged_in_browser', env)) return { paused: false }
+  let meta: any = {}
+  if (p.row.run_id) {
+    const { data, error } = await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id', p.row.run_id).eq('telegram_id', String(p.telegramId)).maybeSingle()
+    if (!error) meta = (data as any)?.metadata_json || {}
+  }
+  const planType = String(meta.plan_type || p.row.execution_payload?.plan_type || '')
+  let capability: PausableCapability | null = null
+  if (planType === 'secure_browser') {
+    capability = pausedBrowserCapability({ mode: meta.mode || 'execute', flow: meta.flow || null, approvalAction: meta.approval_action || p.row.action_type || null,
+      vaultCredentialId: meta.vault_credential_id || null, commerceSession: Boolean(meta.commerce_parent_id) && !meta.comparison_parent_id, siteSession: Boolean(meta.site_session) }, env)
+  } else if (BOOKING_PLAN_TYPES.has(planType) && capabilityPaused('booking', env)) {
+    capability = 'booking'
+  }
+  if (!capability) return { paused: false }
+  const searchLink = planType === 'secure_browser' ? String(meta.url || p.row.execution_payload?.url || '') : ''
+  return { paused: true, capability, text: `${capabilityPausedText(capability, { searchLink })} Your approval was not used; nothing was done.` }
 }
 
 /** Persists the exact ordered approval ids a person was just shown as a numbered list. */

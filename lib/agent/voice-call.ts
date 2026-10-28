@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { beginApprovedVoiceCall, voicePlanHash, voiceAttemptId } from './voice-call-execution'
+import { capabilityPaused, capabilityPausedText } from './policy'
 
 const BOLNA = 'https://api.bolna.ai'
 export const CALL_AGENT_NAME = 'AskGogo booking caller v2'
@@ -267,6 +268,9 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     // after the plan is the approval; anywhere else it belongs to some other question.
     if (!(await latestAssistantText(tg)).includes('CALL PLAN')) return null
   }
+  // Launch kill switch (GOGO_VOICE_CALLS=off): no plan is made and no call is placed, including a yes to a plan
+  // shown before the switch was flipped. "No" still clears the plan.
+  if (cmd.kind !== 'decline' && capabilityPaused('voice_calls')) return { text: capabilityPausedText('voice_calls'), handledBy: 'voice-call' }
   if (cmd.kind === 'approve' || cmd.kind === 'affirm' || cmd.kind === 'redial' || cmd.kind === 'decline') {
     const state: any = await fs.getLatestFollowupState(tg, PLAN_STATE)
     const plan: CallPlan | undefined = state?.payload?.plan

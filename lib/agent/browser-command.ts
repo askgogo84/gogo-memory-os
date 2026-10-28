@@ -4,7 +4,7 @@ import { browserFailureSummary } from './browser-failure-notice'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rememberTypedObjects } from './typed-object-context'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
-import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
+import { capabilityPausedText, evaluateAgentExecutionPolicy, pausedBrowserCapability, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
 import { runSecureBrowser, tryObscuraBrowserRead, type BrowserMode } from './secure-computer'
 import type { AgentActor } from './actor'
@@ -456,6 +456,19 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   // typed into the same page when the person sends it (16 Oct). Same owner as ordinary reads: same saved cookies.
   const vaultAccountRead=params.mode==='read'&&!persistentCommerce&&(()=>{try{return Boolean(findVaultProviderForDomain(new URL(params.command.url).hostname))}catch{return false}})()
   const persistentAccountSession=accountCreation||providerBooking||vaultAccountRead
+  // Launch kill switches (GOGO_BOOKING / GOGO_LOGGED_IN_BROWSER): the one place every secure-browser run passes
+  // before a browser starts, including approved runs already queued when the switch was flipped. Nothing is opened.
+  const pausedCapability=typeof pausedBrowserCapability==='function'&&pausedBrowserCapability({mode:params.mode,flow:params.command.flow||null,approvalAction:params.command.approvalAction||null,
+    vaultCredentialId:params.command.vaultCredentialId||null,accountSite:vaultAccountRead,
+    commerceSession:Boolean(runMetadata.commerce_parent_id)&&!runMetadata.comparison_parent_id,siteSession:Boolean(runMetadata.site_session)})
+  if(pausedCapability){
+    const text=capabilityPausedText(pausedCapability,{searchLink:params.command.url})
+    const at=new Date().toISOString()
+    await supabaseAdmin.from('agent_steps').update({status:'failed',error:`capability_paused:${pausedCapability}`,completed_at:at}).eq('id',params.stepId)
+    await supabaseAdmin.from('agent_runs').update({status:'failed',error:`capability_paused:${pausedCapability}`,summary:safe(text,600),completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
+    await activity(tg,params.runId,'capability_paused',`Not started: ${pausedCapability} is paused. Nothing was done.`,{capability:pausedCapability})
+    return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text,handledBy:'secure-browser' as const}
+  }
   const browserOwner=persistentCommerce?linkedBrowserOwner(params.actor.userId,{...runMetadata,url:runMetadata.url||params.command.url}):accountCreation?params.actor.userId+':account:'+params.runId:providerBooking?params.actor.userId+':booking:'+params.runId:params.actor.userId
   const resumePage=(persistentCommerce||persistentAccountSession)&&Boolean(runMetadata.handoff)
   // Captured before the handoff is released below: a resumed run must never hand the page back again.
@@ -831,6 +844,11 @@ export async function runBrowserCommand(params:{actor:AgentActor;surface:AgentSu
   if(!sentinel.allowed && sentinel.reason!=='approval_missing'){
     return {runId:'',status:'paused' as const,capability:'browser' as const,risk:command.risk,text:`Gogo Sentinel blocked this browser request: ${sentinel.reason}`,handledBy:'secure-browser' as const}
   }
+
+  // Launch kill switches: refuse before any run or approval is created (cart actions, account flows, saved logins).
+  const pausedCapability=typeof pausedBrowserCapability==='function'&&pausedBrowserCapability({mode:command.mode,flow:command.flow||null,approvalAction:command.approvalAction||null,
+    vaultCredentialId:command.vaultCredentialId||null,accountSite:(()=>{try{return Boolean(findVaultProviderForDomain(new URL(command.url).hostname))}catch{return false}})()})
+  if(pausedCapability)return {runId:'',status:'paused' as const,capability:'browser' as const,risk:command.risk,text:capabilityPausedText(pausedCapability,{searchLink:command.url}),handledBy:'secure-browser' as const}
 
   const tg=params.actor.legacyTelegramId
   const existing=await findActiveBrowserRead(String(tg),command)
