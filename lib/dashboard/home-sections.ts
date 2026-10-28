@@ -18,7 +18,7 @@ export type HomeSections = {
 
 // What blocks Gogo hardest comes first: a code or sign-in waits on a live page, a yes/no unlocks a prepared action,
 // "you said not yet" waits for a detail. Equal weight: the oldest first (it is closest to expiring).
-const NOW_WEIGHT: Record<string, number> = { 'Code needed': 100, 'Sign-in needed': 95, 'Needs your yes': 90, 'You said not yet': 70 }
+const NOW_WEIGHT: Record<string, number> = { 'Code needed': 100, 'Sign-in needed': 95, 'Not sure it happened': 92, 'Needs your yes': 90, 'You said not yet': 70 }
 
 export function rankNow(items: FeedItem[]): FeedItem[] {
   const t = (i: FeedItem) => { const v = Date.parse(String(i.at || '')); return Number.isFinite(v) ? v : Number.MAX_SAFE_INTEGER }
@@ -40,9 +40,24 @@ export function buildHomeSections(input: { feed: TaskFeed; today: HomeReminder[]
   const now = input.now || new Date()
   const tz = input.tz || 'Asia/Kolkata'
   const today = dayKey(now, tz)
-  // "Gogo thinks done" waits only for a tidy-up tap; nothing is blocked by it.
-  const urgent = input.feed.need.filter(i => !i.confirm)
-  const tidy = input.feed.need.filter(i => i.confirm)
+  // An unverified external effect needs human/provider reconciliation before any retry.
+  // The feed is already owner-scoped: project its existing result, never re-query or retry it.
+  // Only the explicit unknown label is elevated; ordinary failed/completed work is unchanged.
+  const uncertainIds = new Set<string>()
+  const uncertain: FeedItem[] = []
+  for (const i of input.feed.recent) {
+    if (i.tag !== 'Not sure it happened' || uncertainIds.has(i.id)) continue
+    uncertainIds.add(i.id)
+    uncertain.push({
+      ...i, tab: 'need', state: 'blocked', action: 'Review',
+      live: 'Verify the external result before any retry',
+    })
+  }
+  // A run can appear in both feed projections; prefer its truthful unknown-state
+  // review card and dedupe by exact run ID, never by matching display text.
+  const otherNeed = input.feed.need.filter(i => !uncertainIds.has(i.id))
+  const urgent = [...otherNeed.filter(i => !i.confirm), ...uncertain]
+  const tidy = otherNeed.filter(i => i.confirm)
   // A watch whose own date is over is a review, not live work.
   const handling = input.feed.radar.filter(i => i.tag !== 'Date passed')
   const passed = input.feed.radar.filter(i => i.tag === 'Date passed')
