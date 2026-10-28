@@ -268,7 +268,9 @@ export function detectIntent(text: string): DetectedIntent {
   // verb, and not an explicit reminder/watch request. hasConcreteFlightCode filters out date
   // fragments so a codeless "did my flight land on 28 September?" is NOT sent to the dedicated
   // status handler (where an empty flight list would let any dated result be summarised).
-  if (!/\b(remind me|remind to|set (?:a )?reminder|reminder for|alert me|notify me|let me know when|keep me posted|keep (?:me )?tracking|watch (?:this|the|my))\b/i.test(lower) &&
+  // 28 Oct run: "6E 2134 was delayed 4 hours, check if I qualify for compensation" is a refund/claim ask, not live status.
+  if (!/\b(?:compensation|refund|reimburse(?:ment)?|claim|complain(?:t)?|dgca|passenger rights)\b/i.test(lower) &&
+      !/\b(remind me|remind to|set (?:a )?reminder|reminder for|alert me|notify me|let me know when|keep me posted|keep (?:me )?tracking|watch (?:this|the|my))\b/i.test(lower) &&
       hasConcreteFlightCode(lower) &&
       /\b(land(?:s|ed|ing)?|arriv(?:e|ed|es|al|ing)|(?:flight )?status|delay(?:ed|s)?|on[- ]time|diverted|departed|take[n]?\s?off|tracker|track(?:ing)?)\b/i.test(lower))
     // Tag as flight status so the executor runs a tracker-scoped STATUS lookup and never a

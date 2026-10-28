@@ -11,7 +11,7 @@ import { parseReminderIntent, reminderTimingProblem } from './reminders'
 export function detectFriendReminder(text: string): { name: string; rest: string } | null {
   const cleaned = (text || '').replace(/^\s*(?:hey\s+)?gogo[,!\s]+/i, '')
     .replace(/^\s*(?:can|could|would)\s+you\s+/i, '').replace(/^\s*please\s+/i, '')
-  const m = cleaned.match(/^\s*(?:remind|ask|tell|ping|message)\s+(?!me\b|myself\b|us\b|everyone\b|everybody\b)([a-z][\w'-]{1,24})\s+to\s+(.+)$/i)
+  const m = cleaned.match(/^\s*(?:remind|ask|tell|ping|message)\s+(?!me\b|myself\b|us\b|everyone\b|everybody\b|claude\b|chatgpt\b|gpt\b|gemini\b|gogo\b|siri\b|alexa\b|google\b|ai\b|perplexity\b|copilot\b)([a-z][\w'-]{1,24})\s+to\s+(.+)$/i)
   if (!m) return null
   return { name: m[1].trim().toLowerCase(), rest: m[2].trim() }
 }

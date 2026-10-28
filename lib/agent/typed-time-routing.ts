@@ -16,6 +16,9 @@ import type { AgentActor } from './actor'
 
 export function parseTypedTimeRequest(raw:string){
   const text=raw.trim().replace(/^please\s+/i,'')
+  // 28 Oct run: "Make a grocery list with milk … and remind me to buy them at 6 pm today" read as
+  // "move <object> to 6 pm". Creating something, or asking for a new reminder, is never a time change.
+  if(/\bremind\s+me\b/i.test(text)||/^(?:make|change|update)\s+(?:a|an|me|new)\b/i.test(text))return null
   const m=text.match(/^(?:move|reschedule|resched|postpone|push|shift|change|update|make)\s+(.+?)(?:\s+(?:to|for|at)\s+|\s+)(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)(?:\s+(?:instead|today|tomorrow))?[.!?]*$/i)
   if(!m)return null
   const target=m[1].replace(/^the\s+/i,'').replace(/\s+(?:time|to|for|at)$/i,'').trim()

@@ -123,6 +123,16 @@ async function gmailAccess(actor:AgentActor,{requireSend=false}:{requireSend?:bo
 async function resolveThread(actor:AgentActor,target:string){
   const access=await gmailAccess(actor)
   if(!access.ok)return {access,match:null as any,ambiguous:false}
+  // 28 Oct run: "Draft a reply to my latest email saying …" searched Gmail for the words "my latest".
+  // "my latest / last / most recent email" means the newest thread that needs a reply.
+  if(/^(?:my|the)\s+(?:latest|last|newest|most\s+recent)(?:\s+(?:email|mail|message|one))?$/i.test(target.trim())){
+    const recent=await fetchGmailAttentionThreads(access.accessToken,20)
+    const thread=recent[0]
+    if(!thread)return {access,match:null as any,ambiguous:false}
+    const messages=thread.messages||[]
+    const incoming=[...messages].reverse().find((m:any)=>emailFromHeader(m.from)!==String(access.user?.gmail_email||'').toLowerCase())||messages[messages.length-1]
+    return {access,match:{thread,incoming,score:1},ambiguous:false}
+  }
   let threads=await searchGmailThreads(access.accessToken,target,30)
   if(!threads.length)threads=await fetchGmailAttentionThreads(access.accessToken,20)
   const q=norm(target)
