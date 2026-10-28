@@ -370,7 +370,11 @@ export function googleAirlineContinueControl(controls:{selector?:string;label?:s
   return hit?.selector||null
 }
 
-const AGENCY_ORDER=['makemytrip','cleartrip','goibibo','ixigo','easemytrip','yatra']
+// 28 Oct (owner): "why go to the airline's site, why not MakeMyTrip, Goibibo…". Airline sites keep refusing the cloud
+// browser (Air India Akamai, IndiGo's flight API, Air India Express not loading), so Indian agencies are tried first.
+// GOGO_BOOKING_PREFER=airline restores airline-first. Order: guest-checkout-friendly sites first (to be measured).
+const AGENCY_ORDER=['cleartrip','makemytrip','goibibo','ixigo','easemytrip','yatra']
+export const bookingPrefersAgency=(env:Record<string,string|undefined>=(globalThis as any).process?.env||{})=>String(env.GOGO_BOOKING_PREFER||'agency').toLowerCase()!=='airline'
 /** The first Indian agency on Google's booking options ("Continue to book with Cleartrip for …") not yet tried. */
 export function googleAgencyContinueControl(controls:{selector?:string;label?:string}[],tried:string[]=[]):{selector:string;name:string}|null{
   for(const name of AGENCY_ORDER){
@@ -2679,7 +2683,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // 27 Oct 13:13 live booking 39ada00f: after goindigo.in showed no flights, the run went back to Google and the planner
       // chose "Continue to book with IndiGo" again (the avoid note named goindigo.in, the button says IndiGo). After a
       // fallback, Gogo presses the next listed Indian agency itself.
-      if(!edgeBack&&providerBooking&&onGoogle&&edgeBlockedHosts.length){
+      if(!edgeBack&&providerBooking&&onGoogle&&(edgeBlockedHosts.length||bookingPrefersAgency())){
         const agency=googleAgencyContinueControl(page.controls||[],agenciesTried)
         if(agency){agenciesTried.push(agency.name);edgeBack=[{kind:'click',selector:agency.selector} as any];console.log('BROWSER_BOOKING_AGENCY_CONTINUE:',JSON.stringify({runId:params.sessionTaskId||null,wave,agency:agency.name}))}
       }
