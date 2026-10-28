@@ -100,14 +100,22 @@ function cleanHistory(role: string, raw: string): string | null {
 }
 
 async function resolveDashboardUser(telegramId: string) {
-  const tg = parseInt(telegramId, 10)
-  if (!Number.isFinite(tg)) return null
-  const { data } = await supabaseAdmin
+  // A dashboard session carries an exact TEXT owner. Parsing it into an unsafe
+  // JS number could select a different BIGINT account or truncate a prefix.
+  // Until every downstream chat/actor path supports bigint-exact identities,
+  // deny unsafe owners before any service-role read.
+  const owner = String(telegramId)
+  const numericOwner = Number(owner)
+  if (!/^-?[1-9]\d*$/.test(owner) || !Number.isSafeInteger(numericOwner) || String(numericOwner) !== owner) return null
+
+  const { data, error } = await supabaseAdmin
     .from('users')
     .select('telegram_id, whatsapp_id, name')
-    .eq('telegram_id', tg)
+    .eq('telegram_id', owner)
     .maybeSingle()
-  return data || null
+  // Refuse a mismatched DB row even if an adapter returns unexpected data.
+  if (error || !data || String(data.telegram_id) !== owner) return null
+  return data
 }
 
 async function saveConversation(telegramId: number | string, userText: string, assistantText: string) {
