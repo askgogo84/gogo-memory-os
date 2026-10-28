@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/dashboard/session'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { GOGO_LESSONS } from '@/lib/dashboard/lessons'
 
@@ -14,7 +15,7 @@ function sameOrigin(req: NextRequest): boolean {
   try { return new URL(origin).host === req.nextUrl.host } catch { return false }
 }
 
-async function readProgress(telegramId: number, lessonKey: string) {
+async function readProgress(telegramId: string, lessonKey: string) {
   const { data, error } = await supabaseAdmin
     .from('learning_progress')
     .select('lesson_key, watched_at, completed')
@@ -24,7 +25,7 @@ async function readProgress(telegramId: number, lessonKey: string) {
   return { data, error }
 }
 
-async function beginLesson(telegramId: number, lessonKey: string) {
+async function beginLesson(telegramId: string, lessonKey: string) {
   const current = await readProgress(telegramId, lessonKey)
   if (current.error) return { ok: false as const, error: 'read_failed' }
   if (current.data?.completed) return { ok: true as const, completed: true, watchedAt: current.data.watched_at }
@@ -38,7 +39,7 @@ async function beginLesson(telegramId: number, lessonKey: string) {
   return { ok: true as const, completed: false, watchedAt }
 }
 
-async function verifyLesson(telegramId: number, lessonKey: string) {
+async function verifyLesson(telegramId: string, lessonKey: string) {
   const current = await readProgress(telegramId, lessonKey)
   if (current.error) return { ok: false as const, error: 'read_failed' }
   if (current.data?.completed) return { ok: true as const, completed: true }
@@ -86,8 +87,8 @@ async function verifyLesson(telegramId: number, lessonKey: string) {
 export async function GET() {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const tg = parseInt(session.telegramId, 10)
-  if (!Number.isFinite(tg)) return NextResponse.json({ error: 'invalid_session' }, { status: 400 })
+  const tg = exactSessionOwnerId(session.telegramId)
+  if (!tg) return NextResponse.json({ error: 'invalid_session' }, { status: 400 })
 
   const { data, error } = await supabaseAdmin
     .from('learning_progress')
@@ -103,8 +104,8 @@ export async function POST(req: NextRequest) {
   if (!sameOrigin(req)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const tg = parseInt(session.telegramId, 10)
-  if (!Number.isFinite(tg)) return NextResponse.json({ error: 'invalid_session' }, { status: 400 })
+  const tg = exactSessionOwnerId(session.telegramId)
+  if (!tg) return NextResponse.json({ error: 'invalid_session' }, { status: 400 })
 
   const body = await req.json().catch(() => null) as any
   const lessonKey = String(body?.lessonKey || '').trim().slice(0, 80)
