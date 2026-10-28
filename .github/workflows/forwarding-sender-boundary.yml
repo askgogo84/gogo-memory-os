@@ -1,0 +1,29 @@
+name: Forwarding Sender Boundary
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/email/mime.ts'
+      - 'scripts/verify-forwarding-sender-boundary.mts'
+      - '.github/workflows/forwarding-sender-boundary.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-sender:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Forwarding sender identity regression (no provider or network)
+        run: npx --no-install tsx scripts/verify-forwarding-sender-boundary.mts
