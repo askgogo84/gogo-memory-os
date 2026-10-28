@@ -19,3 +19,12 @@ assert.notEqual(comp?.meta?.flightStatus, true, 'a compensation claim is not a l
 const status = await detectIntent('Is 6E 6453 delayed today?')
 assert.equal(status?.meta?.flightStatus, true, 'live status still routes')
 console.log('✓ 28 Oct use-case run: AI names, Gmail time filters, snippet entities, compensation routing')
+
+const { parseTypedTimeRequest } = await import('../lib/agent/typed-time-routing')
+assert.equal(parseTypedTimeRequest('Make a grocery list with milk, eggs and bread and remind me to buy them at 6 pm today'), null)
+assert.ok(parseTypedTimeRequest('Move the standup to 5 pm'), 'real time changes still parse')
+const { extractCheckItemText } = await import('../lib/bot/process-message') as any
+assert.equal(extractCheckItemText('Tick off eggs from my grocery list'), 'eggs')
+assert.equal(extractCheckItemText('check milk'), 'milk')
+assert.equal(extractCheckItemText('mark bread as done'), 'bread')
+console.log('✓ 28 Oct use-case run: list+reminder not a time move; "tick off X from my list"')

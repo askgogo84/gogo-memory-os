@@ -4,7 +4,8 @@ import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 import { formatEmailSnippet, redactEmailAuthSecrets } from '@/lib/agent/google-workspace-read'
 
 function clean(value:unknown,max=500){
-  return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)
+  // Marketing mail pads previews with invisible joiners (U+034F etc.); they showed as rows of "͏ ͏ ͏".
+  return String(value??'').replace(/[\u034F\u00AD\u200B-\u200F\u2060-\u2064\uFEFF\u180E]/g,'').replace(/\s+/g,' ').trim().slice(0,max)
 }
 
 async function gmailAccess(telegramId:number){

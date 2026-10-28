@@ -436,11 +436,14 @@ function extractListNameFromText(text: string): string {
 
 // Item text for a bare "check/uncheck/tick/mark X" command: drop the leading verb and a
 // trailing "done"/"off" so "mark milk done" and "uncheck milk" both yield "milk".
-function extractCheckItemText(text: string): string {
+export function extractCheckItemText(text: string): string {
   return text
     .replace(/^\s*un(check|tick|mark|done)\s+/i, '')
     .replace(/^\s*(check|tick|mark|done)\s+/i, '')
-    .replace(/\s+(done|off)\s*$/i, '')
+    // 28 Oct run: "Tick off eggs from my grocery list" looked for an item called "off eggs from my grocery list".
+    .replace(/^\s*off\s+/i, '')
+    .replace(/\s+(?:from|on|in)\s+(?:my|the)\s+[\w' -]{1,30}?\s*list\s*[.!]?\s*$/i, '')
+    .replace(/\s+(?:as\s+)?(done|off|complete|completed|bought)\s*[.!]?\s*$/i, '')
     .trim()
 }
 
@@ -1376,6 +1379,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       reply = `Got it \u2014 *${about}* on the ${dayNum}th of every month.\n\nWhat time should I remind you?\n_e.g. \"10 AM\" or \"9:30 AM\"_`
     } else if (hasDate && about) {
       reply = `Got it \u2014 *${about}*.\n\nWhat time should I remind you?\n_e.g. \"10 AM\" or \"6 PM\"_`
+    } else if (about && /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i.test(about)) {
+      // 28 Oct run: "I have training at 6am" answered "Got it \u2014 I have training 6am. What time and when?"
+      // although the time was given. Name the event and its time; ask only which day and how early.
+      const clock = about.match(/\b(\d{1,2}(?::\d{2})?)\s*(am|pm)\b/i)!
+      const event = about.replace(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi, '').replace(/^\s*(?:i\s+have|i've\s+got|i\s+got|there\s+is|there's)\s+/i, '').replace(/\s+/g, ' ').trim() || 'that'
+      reply = `Got it \u2014 *${event}* at ${clock[1]} ${clock[2].toLowerCase()}.\n\nWhich day, and how early should I remind you?\n_e.g. \"tomorrow 5:30 am\" or \"every weekday 5:30 am\"_`
     } else if (about) {
       reply = `Got it \u2014 *${about}*.\n\nWhat time and when?\n_e.g. \"9 AM daily\", \"every Monday 10 AM\", \"in 2 hours\"_`
     } else {
