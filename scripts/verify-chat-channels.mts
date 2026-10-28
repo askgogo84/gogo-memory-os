@@ -65,11 +65,11 @@ assert.equal((route.match(/^import .*thread-context/gm) || []).length, 0, 'no ea
   }
   const valid = await inspectOwner('4242', 4242)
   assert.equal(valid.row?.name, 'Synthetic fixture', 'a valid canonical owner still resolves')
-  assert.deepEqual(valid.reads, [{ column: 'telegram_id', value: '4242' }],
-    'the DB predicate must retain the exact string owner')
+  assert.deepEqual(valid.reads, [{ column: 'telegram_id', value: 4242 }],
+    'the DB predicate must retain the validated safe numeric owner')
   const negative = await inspectOwner('-4242', -4242)
   assert.equal(negative.row?.telegram_id, -4242, 'existing safe negative WhatsApp owner remains usable')
-  assert.deepEqual(negative.reads, [{ column: 'telegram_id', value: '-4242' }])
+  assert.deepEqual(negative.reads, [{ column: 'telegram_id', value: -4242 }])
   const mismatch = await inspectOwner('4243', 4242)
   assert.equal(mismatch.row, null, 'the returned DB owner must match the authenticated owner')
   const absent = await inspectOwner('4244', null)
