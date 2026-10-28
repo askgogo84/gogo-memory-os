@@ -24,7 +24,7 @@ const payload = (kind: string, ownerId: string, exp: number) => `askgogo-card.v1
 // previously signed links; signer-only checks would leave old unsafe URLs valid.
 function isExactCardOwner(ownerId: string | number): boolean {
   const raw = String(ownerId)
-  if (!/^-?[1-9]\\d{0,15}$/.test(raw)) return false
+  if (!/^-?[1-9]\d{0,15}$/.test(raw)) return false
   const numeric = Number(raw)
   return Number.isSafeInteger(numeric) && String(numeric) === raw
 }
