@@ -310,7 +310,12 @@ export async function loadKnownDetails(actor: AgentActor): Promise<KnownDetails 
     supabaseAdmin.from('user_preferences').select('rule_text').eq('telegram_id', tg).limit(20).then(r => (r.data || []).map((m: any) => String(m.rule_text || '')), () => []),
   ])
   const name = String(user?.name || '').replace(/[^A-Za-z .'-]/g, ' ').replace(/\s+/g, ' ').trim()
-  const email = [user?.email, user?.gmail_email].map(e => String(e || '').trim().toLowerCase()).find(e => /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(e)) || ''
+  // 28 Oct live: no email on the profile → no suggestion at all. Fall back to an email the person typed themselves
+  // in the last 30 days (their own words, owner-bound).
+  const typed = !user?.email && !user?.gmail_email ? await supabaseAdmin.from('conversations').select('content').eq('telegram_id', tg).eq('role', 'user').ilike('content', '%@%')
+    .gte('created_at', new Date(Date.now() - 30 * 86400_000).toISOString()).order('created_at', { ascending: false }).limit(10)
+    .then(r => (r.data || []).map((m: any) => String(m.content || '').match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/)?.[0] || '').find(Boolean) || '', () => '') : ''
+  const email = [user?.email, user?.gmail_email, typed].map(e => String(e || '').trim().toLowerCase()).find(e => /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(e)) || ''
   const mobile = String(actor.whatsappId || '').replace(/\D/g, '').slice(-10)
   if (name.split(' ').length < 2 || !email || !/^[6-9]\d{9}$/.test(mobile)) return null
   const remembered = seatFromPreference([...mems, ...prefs])
@@ -502,7 +507,7 @@ async function createBookingApproval(p: { actor: AgentActor; surface: AgentSurfa
 }
 
 /** Removes traveller names and dates of birth from finished or old flight booking runs. */
-export async function purgeFlightBookingPii(options: { runId?: string } = {}) {
+export async function purgeFlightBookingPii(options: { runId?: string; keepProfile?: boolean } = {}) {
   let query = supabaseAdmin.from('agent_runs').select('id,telegram_id,metadata_json').eq('metadata_json->>plan_type', 'secure_browser').not('metadata_json->flight_booking', 'is', null)
   if (options.runId) query = query.eq('id', options.runId)
   else query = query.lt('metadata_json->flight_booking->>pii_purge_at', new Date().toISOString())
@@ -512,7 +517,13 @@ export async function purgeFlightBookingPii(options: { runId?: string } = {}) {
   for (const run of data || []) {
     const meta: any = run.metadata_json || {}
     if (meta.flight_booking?.pii_purged) continue
-    const next = { ...meta, objective: '[traveller details removed]', flight_booking: { ...meta.flight_booking, contact_mobile: null, profile: null, pii_purged: true } }
+    // 28 Oct live: purging the moment a run finished meant the next booking asked for every detail again, though
+    // the approval card tells people their details are deleted after 24 hours. A finished run drops the objective
+    // text now; the reusable profile stays until its 24-hour purge time.
+    const keep = options.keepProfile === true && Date.parse(String(meta.flight_booking?.pii_purge_at || '')) > Date.now()
+    const next = keep
+      ? { ...meta, objective: '[traveller details removed]' }
+      : { ...meta, objective: '[traveller details removed]', flight_booking: { ...meta.flight_booking, contact_mobile: null, profile: null, pii_purged: true } }
     const { error: ue } = await supabaseAdmin.from('agent_runs').update({ metadata_json: next }).eq('id', run.id)
     if (!ue) purged++
   }
