@@ -99,6 +99,7 @@ function synthetic(scenario: Scenario = {}) {
         limit(_count: number) { return query },
         maybeSingle: async () => {
           const result = execute()
+          if (!result.data?.length) console.log('FIXTURE QUERY MISS', table, JSON.stringify(predicates), 'action', action)
           return { data: result.data?.[0] ?? null, error: result.error }
         },
         then(resolve: (result: unknown) => unknown, reject?: (err: unknown) => unknown) {
