@@ -1,0 +1,29 @@
+# TEST ONLY. Expected RED until implementation owner fixes source. DO NOT MERGE.
+name: "Life Graph #1092 review safety (expected RED)"
+on:
+  pull_request:
+    paths:
+      - "scripts/verify-life-graph-replay-expiry-pagination-testonly.mts"
+      - ".github/workflows/life-graph-replay-expiry-pagination-testonly.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-negative-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout exact PR HEAD, not synthetic merge ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Execute actual module in fake-only TS VM (expected safety RED)
+        run: npx --no-install tsx scripts/verify-life-graph-replay-expiry-pagination-testonly.mts
