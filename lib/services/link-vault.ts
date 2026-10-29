@@ -100,6 +100,29 @@ export function titleFromArticleUrl(url:string){
     return t.charAt(0).toUpperCase()+t.slice(1)
   }catch{return null}
 }
+// A LinkedIn post's og:title is the start of the post itself ("Hone raises … outcomes Hone, a San Francisco AI company,
+// has raised a $60 millio"). Keep a headline and move the rest to the description, ending on a whole word.
+export function shortText(text:string,max:number){
+  const t=clean(text,4000);if(t.length<=max)return t
+  const cut=t.slice(0,max+1).replace(/\s+\S*$/,'').replace(/[\s,;:–—-]+$/,'')
+  return cut+'…'
+}
+export function splitPostTitle(rawTitle:string,rawDescription=''){
+  const full=clean(rawTitle,4000),desc=clean(rawDescription,4000)
+  let title=full
+  if(full.length>110){
+    const sentence=full.slice(0,150).match(/^(.{30,}?[.!?])\s/)?.[1]
+    const first=full.match(/^[A-Z][\w&'-]{2,}/)?.[0]
+    const again=first?full.indexOf(' '+first,20):-1
+    title=sentence||(again>20&&again<=150?full.slice(0,again):shortText(full,110))
+  }
+  title=title.replace(/[\s,;:–—-]+$/,'')
+  const base=title.replace(/…$/,'')
+  const source=desc&&desc.length>=full.length*0.6?desc:full
+  let rest=source.toLowerCase().startsWith(base.toLowerCase())?source.slice(base.length):source===full?'':source
+  rest=rest.replace(/^[\s.,;:–—-]+/,'')
+  return{title:clean(title,160),description:shortText(rest,400)}
+}
 export async function linkPreview(url:string,fetchImpl:typeof fetch=fetch):Promise<{title:string;description:string;resolvedUrl:string}|null>{
   let current=url
   for(let hop=0;hop<4;hop++){
@@ -115,7 +138,8 @@ export async function linkPreview(url:string,fetchImpl:typeof fetch=fetch):Promi
     const external=html.match(/<a\b[^>]*external_url_click[^>]*>/i)?.[0]?.match(/href=["']([^"']+)["']/i)?.[1]
     if(external&&(!title||/^(?:LinkedIn|Redirecting|External link)/i.test(title))){current=decodeEntities(external);continue}
     if(!title||/^(?:LinkedIn|Sign\s*Up|Log\s*In|Redirecting)\b/i.test(title))return null
-    return{title:clean(title,160),description:clean(metaContent(html,'og:description')||metaContent(html,'description'),400),resolvedUrl:current}
+    const split=splitPostTitle(title,metaContent(html,'og:description')||metaContent(html,'description'))
+    return{title:split.title,description:split.description,resolvedUrl:current}
   }
   return null
 }
@@ -371,7 +395,7 @@ export async function handleLinkVaultText(params:{actor:AgentActor;text:string;s
     const r=saved.row,restrictedNote=r.auth_required?' I saved only the URL and visible/user-supplied metadata; I did not pretend to read restricted content.':''
     // A bare shared link that could be read: say what it is and offer to dig in, the way a person would.
     if(saved.previewed&&saved.bare){
-      const about=r.description&&!r.description.toLowerCase().startsWith(r.title.toLowerCase().slice(0,40))?'\n'+clean(r.description,260):''
+      const about=r.description&&!r.description.toLowerCase().startsWith(r.title.toLowerCase().slice(0,40))?'\n'+shortText(r.description,260):''
       await clearFollowupState(params.actor.legacyTelegramId,LINK_DIG).catch(()=>{})
       await saveFollowupState(params.actor.legacyTelegramId,LINK_DIG,{title:r.title,url:r.canonical_url,description:clean(r.description,400)}).catch(()=>{})
       return{text:'🔗 *'+r.title+'*'+about+'\n\nSaved to your links. Want me to dig into this? Reply *yes*.',status:'completed',handledBy:'link-vault',capability:'memory',runId:''}

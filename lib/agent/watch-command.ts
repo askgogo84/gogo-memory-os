@@ -630,11 +630,15 @@ async function finalizePriceWatch(params:{actor:AgentActor;surface:AgentSurface}
       handledBy:'price-watch-clarification',
     }
   }
-  const basisText=persistedOffers==='included'?'including bank/card offers':'excluding bank/card offers'
-  const storageText=persistedStorage?persistedStorage:'no storage variant (N/A)'
+  const basisText=persistedOffers==='included'?'including bank/card offers':'excluding bank/card offers, at the listed price'
+  // 30 Oct live: the confirmation was a 120-word block repeating the product, storage and offers rule twice.
+  const product=p.product.replace(/\s*,?\s*(?:including|incl\.?|with|excluding|without)\s+(?:bank\s*\/?\s*card\s+)?offers?\b.*$/i,'').trim()
+  const storageText=persistedStorage&&!product.replace(/\s+/g,'').toUpperCase().includes(persistedStorage.replace(/\s+/g,'').toUpperCase())?` ${persistedStorage}`:''
+  const cadence=String(created.text||'').match(/I[’']ll check (.+?) at first/)?.[1]||'regularly'
+  const short=product.split(/\s+/).slice(0,2).join(' ')
   return {
     ...created,
-    text:`Persistent watch created: ${p.product}, ${storageText}, India, threshold ${formatRupees(thresholdAmount)}, ${basisText}. I compare the price shown in each search result with that number: strictly below alerts, equal or above stays silent, and I never buy. ${created.text}`,
+    text:`👀 Watching *${product}${storageText}*. I'll message you when it's below ${formatRupees(thresholdAmount)} (${basisText}).\n\nI check ${cadence} and never buy. Say *show my watches* or *stop the ${short} alert*.`,
     handledBy:'price-watch-clarification',
   }
 }
