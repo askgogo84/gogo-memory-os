@@ -369,7 +369,10 @@ async function handleWhatsAppPost(req: NextRequest) {
     // being read. Rejecting them (503) let Twilio's quick retries run out and the photo was lost,
     // so wait for the user's turn instead, in arrival order.
     let brainLease = await acquireBrainUserLease(brainUserKey, 90)
-    for (const waitStart = Date.now(); !brainLease && Date.now() - waitStart < 45_000;) {
+    // 29 Oct live: eight forwards in a row (one PDF being read) dropped a text forward after 45 s. Text is quick to
+    // handle, so a text message waits up to 70 s; a file still waits 45 s (maxDuration is 120 s).
+    const leaseWaitMs = numMedia > 0 ? 45_000 : 70_000
+    for (const waitStart = Date.now(); !brainLease && Date.now() - waitStart < leaseWaitMs;) {
       await new Promise(resolve => setTimeout(resolve, 1_000))
       brainLease = await acquireBrainUserLease(brainUserKey, 90)
     }

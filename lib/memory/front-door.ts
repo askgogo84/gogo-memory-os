@@ -41,6 +41,18 @@ export function parseReplyDates(text: string, now = new Date()): string[] {
   return [...new Map(found.sort((a, b) => a.at - b.at).map(f => [f.ymd, f.ymd])).values()].slice(0, 2)
 }
 
+/** A reply that is only dates ("31st", "29 Oct to 31 Oct", "checking out Saturday"), not "the 2nd guest". Pure. */
+export function isDateAnswer(text: string): boolean {
+  const rest = String(text || '').toLowerCase()
+    .replace(/\b\d{1,2}(?:st|nd|rd|th)?\s*(?:of\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/g, ' ')
+    .replace(/\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}(?:st|nd|rd|th)?\b/g, ' ')
+    .replace(/\b\d{1,2}(?:st|nd|rd|th)\b/g, ' ')
+    .replace(/\b(?:today|tonight|tomorrow|day after tomorrow|sunday|monday|tuesday|wednesday|thursday|friday|saturday|this|next)\b/g, ' ')
+    .replace(/\b(?:on|the|from|to|till|until|and|check(?:ing)?|out|in|i|am|will|be|its|it's|it|is|we|are|leaving|staying|arriving|stay|dates?)\b/g, ' ')
+    .replace(/[^a-z]+/g, ' ').trim()
+  return parseReplyDates(text).length > 0 && rest.split(/\s+/).filter(Boolean).length === 0
+}
+
 /** Which stay field a Gogo question asked for. Pure. */
 export function askedStayField(assistantText: string): 'both' | 'checkOut' | 'checkIn' | null {
   const t = String(assistantText || '')
@@ -92,7 +104,7 @@ export async function tryLifeGraphTurn(p: { telegramId: number; whatsappTo?: str
       if (reply) return { text: reply, handledBy: 'life-graph-stay' }
     }
     // 2. A date answer to Gogo's own stay question (within 6 hours).
-    if (text.length <= 80) {
+    if (!p.forwarded && text.length <= 80 && isDateAnswer(text)) {
       const last = await latestAssistant(p.telegramId)
       const field = last && now.getTime() - last.at < 6 * 36e5 ? askedStayField(last.content) : null
       const dates = field ? parseReplyDates(text, now) : []
@@ -144,6 +156,15 @@ export async function tryLifeGraphTurn(p: { telegramId: number; whatsappTo?: str
           if (cur) {
             const saved = await saveStay(p.telegramId, { ...cur, userRole: 'guest' }, { kind: 'forwarded_message', text })
             if (saved) return { text: `📌 Noted: you've been added as a guest at ${saved.stay.hotel}${saved.stay.bookedBy ? ` (booking under ${saved.stay.bookedBy})` : ''}.`, handledBy: 'life-graph-note' }
+          }
+        }
+        // "Booking is in the name of Aman Chamedia" / "booked under X": the name the hotel will look up.
+        const under = text.match(/\b(?:booking|booked|reservation|reserved|room)\b[^.]{0,30}?\b(?:in\s+the\s+name\s+of|under|in\s+the\s+name)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})/)
+        if (stayItem && under) {
+          const cur = stayFromJson(stayItem.meta?.stay)
+          if (cur) {
+            const saved = await saveStay(p.telegramId, { ...cur, bookedBy: under[1].trim() }, { kind: 'forwarded_message', text })
+            if (saved) return { text: `📌 Noted: the ${saved.stay.hotel} booking is in the name of ${saved.stay.bookedBy}.`, handledBy: 'life-graph-note' }
           }
         }
         const key = `note:${trip.key}:${text.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 80)}`

@@ -33,3 +33,8 @@ const { parseSplitIntent } = await import('../lib/splitwise/split-parser') as an
 const split = parseSplitIntent('Split 2400 dinner between me, Divya and Nithin')
 assert.equal(split.description, 'dinner', JSON.stringify(split))
 console.log('✓ 28 Oct use-case run: split description')
+const remParse = await import('../lib/bot/handlers/reminders') as any
+const rent = remParse.parseReminderIntent("Remind me to pay rent on the 1st and also what's the weather tomorrow?")
+assert.equal(rent.message, 'pay rent'); assert.match(rent.remindAtIso, /-11-01T/)
+assert.equal(remParse.stripTrailingQuestion('remind me to buy milk and check the oven at 6pm'), 'remind me to buy milk and check the oven at 6pm')
+console.log('✓ 29 Oct: a trailing question is not part of the reminder')

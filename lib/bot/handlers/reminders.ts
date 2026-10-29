@@ -653,7 +653,19 @@ export function reminderLeadTime(text: string) {
 // Moved to ../reminder-command so detect-intent can share it without loading this module.
 export { isContentlessReminderRequest } from '../reminder-command'
 
+/** "remind me to X and also what's the weather tomorrow?" → "remind me to X". Pure. */
+export function stripTrailingQuestion(text: string): string {
+  const t = String(text || '')
+  const also = /[,;]?\s+(?:and\s+also|also|plus)\s+(?:what|what's|whats|how|how's|when|where|who|why|is|are|will|can|could|tell\s+me)\b[\s\S]*$/i
+  const question = /[,;]?\s+and\s+(?:what|what's|whats|how|how's|when|where|who|why|is|are|will|can|could)\b[^?]*\?\s*$/i
+  return t.replace(also, '').replace(question, '').trim()
+}
+
 export function parseReminderIntent(text: string): ParsedReminder {
+  // 29 Oct live: "Remind me to pay rent on the 1st and also what's the weather tomorrow?" fired today at 1 pm as
+  // "pay rent the 1st and also what's the weather": the second ask's "tomorrow" set the time. A trailing question
+  // is a separate ask and never part of the reminder.
+  text=stripTrailingQuestion(text)
   text=normalizeReminderDate(text)
   if (isTimeFirstReminder(text)) text = `remind me at ${text.trim().replace(/\breminder[.!]*\s*$/i, '').trim()}`
   if(reminderTimingProblem(text))return null

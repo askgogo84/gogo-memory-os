@@ -328,6 +328,17 @@ function shortSafeSummary(value: string | undefined, max = 220): string {
   return stripLongDigits(fmt(value)).replace(/\s+/g, ' ').slice(0, max)
 }
 
+/** True when a printed expiry date (DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD or "21 Jan 2023") is in the past. Pure. */
+export function documentExpired(raw: string | null | undefined, now = Date.now()): boolean {
+  const t = String(raw || '').trim()
+  let d: number = NaN
+  let m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/)
+  if (m) d = Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1]))
+  else if ((m = t.match(/^(\d{4})-(\d{2})-(\d{2})/))) d = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  else if (/\d{4}/.test(t)) d = Date.parse(t)
+  return Number.isFinite(d) && d + 86_400_000 < now
+}
+
 function buildConfirmation(ex: AssetExtraction): string {
   const f = ex.fields
 
@@ -354,7 +365,9 @@ function buildConfirmation(ex: AssetExtraction): string {
       expiry ? `- "When does ${fmt(f.name) || who} ${isPassport ? 'passport' : 'ID'} expire?"` : null,
       `- "Send me the original ${isPassport ? 'passport' : 'ID'} file"`,
     ].filter(Boolean).join('\n')
-    return `✅ Saved — ${label}${line2 ? `\n${line2}` : ''}\n\nI've securely saved the original file and the details.\n\nYou can ask later:\n${asks}`
+    // 29 Oct live: a passport that expired in 2023 was saved with no warning before the owner's hotel check-in.
+    const expired = documentExpired(fmt(f.expiry_date) || expiry)
+    return `✅ Saved — ${label}${line2 ? `\n${line2}` : ''}${expired ? `\n\n⚠️ This ${isPassport ? 'passport' : 'ID'} has expired. A hotel or airline may not accept it.` : ''}\n\nI've securely saved the original file and the details.\n\nYou can ask later:\n${asks}`
   }
 
   if (ex.assetType === 'business_card') return `${businessCardLines(f, `📇 Saved ${fmt(f.name) ? `${fmt(f.name)}'s card` : 'business card'}`)}\n\nI've kept the original too. Ask anytime, e.g. "${fmt(f.name) || 'their'}${fmt(f.name) ? "'s" : ''} number" or "show me ${fmt(f.name) || 'that'} card".`
