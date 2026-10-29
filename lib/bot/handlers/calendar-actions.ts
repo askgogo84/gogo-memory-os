@@ -199,7 +199,6 @@ function cleanTitle(text: string) {
     .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
-    .replace(/^(?:a|an|my)\s+(?=\S)/i, '')
     .replace(/[\s,.;:–-]+$/, '')
 }
 
