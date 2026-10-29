@@ -1,0 +1,29 @@
+name: Library Exact Owner Isolation (synthetic)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/dashboard/(app)/library/page.tsx'
+      - 'scripts/verify-library-owner-isolation.mts'
+      - '.github/workflows/library-owner-isolation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-library:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install fixture dependencies
+        run: npm ci
+      - name: Verify exact document owner on real transpiled Library page (fake DB only)
+        run: npx --no-install tsx scripts/verify-library-owner-isolation.mts
