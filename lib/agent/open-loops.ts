@@ -896,6 +896,9 @@ export function isOpenLoopQuery(text:string){
   return /^(?:what|which|show|list)\s+(?:are\s+)?(?:my\s+)?(?:open loops|pending follow[- ]?ups|follow[- ]?ups|things i(?:'m| am) waiting on|things still pending|pending items|unresolved items|pending tasks?)$/.test(t)
     || /^what\s+(?:am i waiting on|still needs follow[- ]?up|is still pending|needs my attention|needs attention|should i follow up on)$/.test(t)
     || /^(?:show|give)\s+me\s+(?:what\s+)?needs\s+my\s+attention$/.test(t)
+    // 29 Oct live (Duet 03): "Which emails am I waiting on replies for?" was told Gmail is not connected.
+    || /^(?:which|what)\s+(?:e-?mails?|mails?|messages?|threads?|replies)\s+(?:am\s+i|are\s+we)\s+(?:still\s+)?waiting\s+(?:on|for)(?:\s+(?:a\s+)?(?:replies|reply|responses?)(?:\s+(?:on|for|to))?)?$/.test(t)
+    || /^who\s+(?:hasn'?t|has\s+not|didn'?t|did\s+not)\s+(?:replied|responded|got\s+back)(?:\s+to\s+(?:me|my\s+e-?mails?))?(?:\s+yet)?$/.test(t)
 }
 
 export function isOpenLoopResolutionCandidate(text:string){

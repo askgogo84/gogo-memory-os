@@ -73,8 +73,15 @@ export async function recordJevRoutingHint(params:{
 }
 
 
-export function jevClarificationReply(jev:JevShadowResult|null|undefined):string|null{
+const DOC_NOUN=/\b(?:this|the|my)\s+(business\s+plan|plan|document|doc|deck|pitch\s+deck|pdf|file|proposal|contract|report|draft|essay|cv|resume|résumé|spreadsheet|sheet)\b/i
+
+export function jevClarificationReply(jev:JevShadowResult|null|undefined,text?:string|null):string|null{
   if(!jev?.ok||!jev.contextual)return null
+  // 29 Oct live (Muse 23): "Ask Claude to review this business plan…" with nothing attached got "I'm not certain which
+  // item you mean". What is missing is the document itself: ask for it.
+  const doc=String(text||'').match(DOC_NOUN)
+  if(doc&&/\b(?:review|summari[sz]e|check|read|look\s+(?:at|over)|feedback|critique|improve|proofread|edit)\b/i.test(String(text||'')))
+    return `Send me the ${doc[1].toLowerCase()} first: paste the text here or attach the file. I'll review it and summarise the feedback.`
   // The guard exists so Gogo never acts on the wrong object. Reading or searching acts on nothing: listing
   // every match ("find my Amsterdam flight ticket" with three saved) beats asking which one first.
   const mode=String(jev.actionMode?.choice||'')

@@ -55,7 +55,7 @@ import { gateDetectedIntent } from '@/lib/agent/semantic-gate'
 import { isCalendarMutation, isCalendarMutationConfirm, buildCalendarMutationReply, confirmCalendarMutation } from './handlers/calendar-mutations'
 import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './handlers/calendar-conflict-followup'
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
-import { buildGmailConnectReply, buildGmailReadReply, parseGmailReadFilter } from './handlers/gmail-read'
+import { buildGmailConnectReply, buildGmailReadReply, parseGmailReadFilter, BULK_DRAFT_RE, buildDraftRepliesReply } from './handlers/gmail-read'
 import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
 import { recallQuery } from '@/lib/agent/recall-query'
@@ -194,6 +194,8 @@ async function recordWebSearch(
 
 export type ProcessIncomingParams = {
   internalStep?: boolean
+  /** Set on the halves of a split "remind me … and also what's …?" so they are not split again. */
+  splitPart?: boolean
   channel: Channel
   externalUserId: string
   text: string
@@ -481,7 +483,32 @@ export function isUsageCommand(text: string) {
     || /^(?:what(?:'s|\s+is)\s+)?my\s+(?:usage|quota|allowance)(?:\s+this\s+month)?\??$/.test(lower)
 }
 
+/** A message handing Gogo a secret to keep: a card number, an OTP, a password, PIN or CVV. Pure. */
+export function secretDeclaration(text: string): 'card' | 'otp' | 'password' | null {
+  const t = String(text || '')
+  if (/\b(?:\d[ -]?){13,19}\b/.test(t) && (/\b(?:card|visa|master\s*card|amex|rupay|debit|credit)\b/i.test(t) || /\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{1,7}\b/.test(t))) return 'card'
+  if (/\b(?:otp|one[- ]time\s+(?:password|code)|verification\s+code)\b[^\d]{0,20}\d{4,8}\b/i.test(t)) return 'otp'
+  if (/\b(?:password|passcode|pin|cvv|cvc)\b\s*(?:is|:|=|-)\s*\S{3,}/i.test(t)) return 'password'
+  return null
+}
+
+/** "Remind me to pay rent on the 1st and also what's the weather tomorrow?" → the reminder and the question. Pure. */
+export function splitReminderAndQuestion(text: string): { reminder: string; question: string } | null {
+  const t = String(text || '').trim()
+  if (!/^(?:please\s+)?(?:remind|set\s+(?:a\s+)?reminder)\b/i.test(t)) return null
+  const m = t.match(/^(.*?\S)[,;]?\s+(?:and\s+also|also|plus|and)\s+((?:what|what's|whats|how|how's|when|where|who|why|is|are|will|can|could|tell\s+me)\b[\s\S]*\?)\s*$/i)
+  if (!m || m[1].length < 12 || m[2].length < 8) return null
+  return { reminder: m[1].trim(), question: m[2].trim() }
+}
+
 export async function processIncomingMessage(params: ProcessIncomingParams): Promise<ProcessIncomingResult> {
+  // 29 Oct live (CV4): the reminder was set and the weather question was silently dropped. Two asks, two answers.
+  const split = params.splitPart || params.internalStep ? null : splitReminderAndQuestion(params.text)
+  if (split) {
+    const first = await processIncomingMessage({ ...params, text: split.reminder, splitPart: true })
+    const second = await processIncomingMessage({ ...params, text: split.question, splitPart: true, messageId: params.messageId ? `${params.messageId}:q` : params.messageId, pendingQuestionChecked: false } as any)
+    return { ...first, text: `${first.text}\n\n—\n\n${second.text}` }
+  }
   const __trace = startTrace('pim')
   // Generated plan instructions are not user-authored conversation evidence.
   const saveConversation = async (telegramId:number,role:'user'|'assistant',content:string) => {
@@ -503,9 +530,45 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       return {text,handledBy:'human-auth-required',resolvedUser}
     }
   }
+  // 29 Oct live (SEC1/SEC2): "Save my card number 4111 1111 1111 1111" and "My OTP is 482913" were answered
+  // "Saved, boss." by the chat model. Card numbers, OTPs, CVVs, PINs and passwords are never stored or repeated.
+  const secretKind=secretDeclaration(codeText)
+  if(secretKind&&!params.internalStep){
+    const reply=secretKind==='card'
+      ?"I don't save full card numbers, so nothing was stored. To track a card's rewards or bills, tell me the card's name and last 4 digits instead."
+      :secretKind==='otp'
+        ?"I don't keep OTPs or one-time codes, so nothing was stored. If a website asked for it, enter it there directly."
+        :"I don't save passwords, PINs or CVVs in chat, so nothing was stored. Use the Vault in your dashboard for logins."
+    await saveConversation(resolvedUser.telegramId,'user','[sensitive detail withheld]')
+    await saveConversation(resolvedUser.telegramId,'assistant',reply)
+    return {text:reply,handledBy:'secret-guard',resolvedUser}
+  }
   console.log('PIM:start', { channel: params.channel, externalUserId: params.externalUserId, text: params.text })
 
   const incomingText = (params.text || '').trim()
+  // Cheap pre-filter + env gate: the vm route harnesses never load the module.
+  const alertFrequency=(globalThis as any).process?.env?.VERCEL_ENV&&/\b(?:less|fewer|more\s+often|only\s+(?:the\s+)?(?:important|urgent|critical)|too\s+many)\b/i.test(incomingText)
+    ?await import('@/lib/agent/alert-preferences').then(m=>m.tryAlertFrequencyCommand({telegramId:resolvedUser.telegramId,text:incomingText}),()=>null):null
+  if(alertFrequency){
+    await saveConversation(resolvedUser.telegramId,'user',incomingText)
+    await saveConversation(resolvedUser.telegramId,'assistant',alertFrequency)
+    return {text:formatOutgoingText(params.channel,alertFrequency),handledBy:'alert-preferences',resolvedUser}
+  }
+  // "If Nithin doesn't reply to my last email by Friday, remind me": a follow-up check on that day, not a plain reminder.
+  if(/^\s*(?:please\s+)?if\s+\S+.*\b(?:reply|respond|get\s+back)\b.*\bremind\s+me\b/i.test(incomingText)){
+    const rw=await import('@/lib/agent/reply-watch').then(m=>m.parseReplyWatch(incomingText),()=>null)
+    if(rw){
+      const { supabaseAdmin } = await import('@/lib/supabase-admin')
+      const {error}=await supabaseAdmin.from('reminders').insert({telegram_id:resolvedUser.telegramId,chat_id:resolvedUser.telegramId,whatsapp_to:resolvedUser.whatsappId||null,timezone:'Asia/Kolkata',message:rw.message,remind_at:rw.atIso,sent:false,created_at:new Date().toISOString()})
+      const when=new Intl.DateTimeFormat('en-IN',{weekday:'long',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true,timeZone:'Asia/Kolkata'}).format(new Date(rw.atIso))
+      const reply=error
+        ?"I couldn't set that follow-up check just now. Nothing was saved; please try again."
+        :`✅ *Follow-up check set* for ${when}.\nI'll look in your Gmail for a reply from ${rw.name}. If one has come in, I'll just tell you; if not, I'll remind you to follow up.`
+      await saveConversation(resolvedUser.telegramId,'user',incomingText)
+      await saveConversation(resolvedUser.telegramId,'assistant',reply)
+      return {text:formatOutgoingText(params.channel,reply),handledBy:'reply-watch',resolvedUser}
+    }
+  }
   const connectionCapabilities=await tryGetConnectionCapabilities({actor:{legacyTelegramId:resolvedUser.telegramId},text:incomingText})
   __trace.mark('connectionCapabilities')
   if(connectionCapabilities){
@@ -1437,6 +1500,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const mode=/\bunread\b/i.test(incomingText)?'unread':'latest'
     let reply=''
     try{
+      if(BULK_DRAFT_RE.test(incomingText)){
+        reply=await buildDraftRepliesReply(resolvedUser.telegramId)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+      }
       reply=await buildGmailReadReply(resolvedUser.telegramId,mode,5,parseGmailReadFilter(incomingText),/\bsummar(?:y|ise|ize|ies)\b|\boverview\b|\bwhat(?:'s| is) in my inbox\b/i.test(incomingText),/^(?:what|which|anything|any)\b[\s\S]*\b(?:attention|actionable|urgent|important)\b/i.test(incomingText))
       if(/\bdraft\b/i.test(incomingText))reply+=`\n\nI can draft one reply at a time for you to approve. Say *draft a reply to <sender>*. Nothing was drafted or sent yet.`
     }catch(err:any){
@@ -1964,7 +2032,7 @@ async function goalsReplyFor(telegramId: number, listName: string): Promise<stri
     .eq('telegram_id', String(telegramId)).in('status', ['active', 'blocked', 'waiting']).order('updated_at', { ascending: false }).limit(10)
   if (error) return null
   if (!data?.length) return 'You have no active goals. Start one like “set a goal to walk 8000 steps daily”.'
-  return `🎯 *Your goals*\n\n${data.map((g: any, i: number) => `${i + 1}. ${g.title}${g.status === 'active' ? '' : ` (${g.status})`}`).join('\n')}\n\nProgress is in *Dashboard → Goals*.`
+  return `🎯 *Your goals*\n\n${data.map((g: any, i: number) => `${i + 1}. ${g.title}${g.status === 'active' ? '' : g.status === 'blocked' ? ' (needs your input)' : ` (${g.status})`}`).join('\n')}\n\nProgress is in *Dashboard → Goals*.`
 }
 
 // 18 Oct live: "remember that my gym locker number is 42" was echoed as "I'll remember that my gym locker…".

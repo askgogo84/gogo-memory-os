@@ -261,7 +261,7 @@ console.log(`PASS (b)+(e) golden replay: ${golden.cases.length} cases`)
   assert.ok(at(wa, 'if (bookingCode)') < waChoke, 'after secondary-auth codes')
   assert.ok(at(wa, 'if (approvalIntent(text)) {') < waChoke, 'after APPROVE/REJECT handling')
   assert.ok(waChoke < at(wa, 'const unsupported=unsupportedCapability(text)'), 'before the capability and reservation matchers')
-  assert.ok(waChoke < at(wa, 'jevClarificationReply(brainObservation?.jev)'), 'before the Jev clarification guard')
+  assert.ok(waChoke < at(wa, 'jevClarificationReply(brainObservation?.jev,text)'), 'before the Jev clarification guard')
   assert.ok(waChoke < at(wa, 'routeFeatureIntent(from, text'), 'before feature keyword matchers')
   assert.match(wa, /approvalIntent\(text\) \? 'approval_reply'/, 'APPROVE/REJECT never enter understand-first')
   // Single owner for pending answers (PR #668 registry first, understand-first only when it had nothing).

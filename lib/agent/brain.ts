@@ -337,6 +337,9 @@ export const FORWARDED_NOTE = 'The latest message was FORWARDED by the user from
 
 export async function runBrain(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; surface: 'whatsapp' | 'web'; forwarded?: boolean }): Promise<{ reply?: string; text?: string } | null> {
   if (!brainEnabledFor(p.phone) || isExactCommand(p.text)) return null
+  // Saved-state answers the brain cannot see (connected apps) go to their handler, never a guess.
+  if (await import('./autonomy-status').then(m => m.isConnectionCapabilityQuery(p.text), () => false)) return null
+  if (await import('./alert-preferences-shared').then(m => !!m.alertFrequencyCommand(p.text), () => false)) return null
   const ctx = await loadBrainContext(p).catch(() => null)
   if (!ctx) return null
   // 29 Oct live: forwarded lines from the hotel booker ("Have added you as the 2nd guest") were answered "you've added

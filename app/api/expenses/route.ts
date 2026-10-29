@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { parseExpenseText, generateDailyInsight } from '@/lib/bot/services/expense-analyzer'
-import { saveExpense, getTodayExpenses, getPeriodExpenses, expensePeriodRange, deleteMatchingExpense } from '@/lib/bot/services/expense-storage'
+import { saveExpense, getTodayExpenses, getPeriodExpenses, expensePeriodRange, deleteMatchingExpense, namedMonthRange, getRangeExpenses } from '@/lib/bot/services/expense-storage'
 import { isInternalServiceAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
@@ -130,6 +130,21 @@ export async function GET(req: NextRequest) {
     ].join('\n')
 
     return NextResponse.json({ reply })
+  }
+
+  // A named month ("spending statement for September"): the whole calendar month, plus a cash-spend question.
+  const monthParam = req.nextUrl.searchParams.get('month')
+  const named = monthParam && /^20\d\d-\d\d$/.test(monthParam) ? namedMonthRange(`${['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'][Number(monthParam.slice(5)) - 1]} ${monthParam.slice(0, 4)}`) : null
+  if (named) {
+    const got = await getRangeExpenses(telegramId, named.start, named.end, phone || null).then(d => d, () => null)
+    if (!got) return NextResponse.json({ reply: 'I could not read your expense records right now. Your spending total is unavailable; I have not changed any records.' }, { status: 503 })
+    const cash = req.nextUrl.searchParams.get('cash') === '1'
+    const short = named.label.split(' ')[0]
+    const cashAsk = cash ? `\n\n💵 *Cash spends:* anything you paid in cash in ${short} that isn't here? Reply like *spent 300 cash on auto on 12 ${short.slice(0, 3)}* and I'll add it.` : ''
+    if (!got.count) return NextResponse.json({ reply: `📊 *Spending statement · ${named.label}*\nNo expenses are logged for ${named.label}.${cashAsk}` })
+    const cats = Object.entries(got.byCategory).sort((a: any, b: any) => b[1] - a[1]).map(([cat, amt]: any) => `${catEmoji[cat] || '📦'} ${cat}: ₹${amt} (${Math.round(amt / got.total * 100)}%)`).join('\n')
+    const top = [...got.entries].sort((a: any, b: any) => Number(b.amount) - Number(a.amount)).slice(0, 5).map((e: any) => `• ₹${e.amount} — ${e.description} (${new Date(e.logged_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })})`)
+    return NextResponse.json({ reply: [`📊 *Spending statement · ${named.label}*`, `Total: *₹${got.total}* · ${transactionCount(got.count)}`, '', cats, '', 'Largest:', ...top].join('\n') + cashAsk })
   }
 
   // Week or month

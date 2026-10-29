@@ -314,6 +314,9 @@ function classifyStep(step: GeneralPlanStep) {
   if (step.tool === 'web_search') return { capability:'browser' as const, mode:'read' as const, risk:'low' as const, irreversible:false, title:step.title, why:'This only searches the public web.' }
   if (step.tool === 'artifact') return { capability:'memory' as const, mode:'execute' as const, risk:'low' as const, irreversible:false, title:step.title, why:'This creates a private AskGogo artifact.' }
   if (step.tool === 'tasks') return { capability:'tasks' as const, mode:taskStepIntent(step)==='read'?'read' as const:'execute' as const, risk:'low' as const, irreversible:false, title:step.title, why:taskStepIntent(step)==='read'?'This only reads private AskGogo tasks.':'This creates or updates a private AskGogo task.' }
+  // 29 Oct live (RL03): "Set purchase reminder" was classified as a high-risk purchase and waited for approval.
+  // A reminder or a list item is a private, reversible note to the user, whatever it is about.
+  if (step.tool === 'reminders' || step.tool === 'lists') return { capability:step.tool as AgentCapability, mode:'execute' as const, risk:'low' as const, irreversible:false, title:step.title, why:step.tool==='reminders'?'This sets a private reminder.':'This updates a private list.' }
   if (step.tool === 'calendar') {
     const mutation = /\b(add|create|change|move|schedule|write|modify|prepare|invite|cancel|delete|event\s+titled|spanning)\b/i.test(step.instruction)
     return mutation

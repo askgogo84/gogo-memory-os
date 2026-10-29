@@ -139,3 +139,58 @@ export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unrea
   })
   return `${heading}\n\n${lines.join('\n\n')}\n\nI only read the Google context you approved. I have not sent, deleted, archived or modified anything.${attentionWarning}`
 }
+
+// ── 29 Oct: "Draft replies to my unread work emails from today" (Muse 18) ──────────────────────────────────────────
+// Before: it listed the unread mail (a Quora digest, a Naukri promo, a verification code) and drafted nothing.
+// Now: automated mail is skipped, up to three emails a person wrote get a short draft each. Nothing is sent.
+
+export const BULK_DRAFT_RE = /\bdraft\s+(?:some\s+)?repl(?:y|ies)\s+(?:to|for)\s+(?:all\s+)?(?:my\s+)?(?:unread|new|latest|today'?s|work|pending)\b[^.?!]{0,30}\b(?:e-?mails?|mails?|inbox)\b/i
+
+/** Emails a person wrote that could need a reply: not automated, not a code or alert. Pure. */
+export async function bulkDraftCandidates(rows:any[]):Promise<any[]>{
+  const loops=await import('@/lib/agent/open-loops')
+  return rows.filter(r=>!loops.isAutomatedGmailMessage(r)&&!/\b(?:verification|security|login|one[- ]time)\s+code\b|\bOTP\b/i.test(`${r?.subject||''} ${r?.snippet||''}`))
+}
+
+async function draftOne(row:any,name:string|null):Promise<string|null>{
+  const apiKey=(globalThis as any).process?.env?.ANTHROPIC_API_KEY
+  if(!apiKey)return null
+  const prompt=`Write a short reply (2 to 4 sentences) to this email for ${name||'the user'} to review. Acknowledge what was asked, commit to nothing specific (no dates, amounts or decisions that are not in the email), and leave a [placeholder] where the user must add a fact. No subject line, no sign-off.
+From: ${clean(row.from,120)}
+Subject: ${clean(redactEmailAuthSecrets(String(row.subject||'')),160)}
+Preview: ${clean(redactEmailAuthSecrets(String(row.snippet||'')),400)}`
+  try{
+    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'content-type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01'},
+      body:JSON.stringify({model:'claude-haiku-4-5',max_tokens:220,messages:[{role:'user',content:prompt}]}),signal:AbortSignal.timeout(12000)})
+    if(!res.ok)return null
+    const data:any=await res.json()
+    return String((data?.content||[]).filter((b:any)=>b?.type==='text').map((b:any)=>b.text).join('')).trim()||null
+  }catch{return null}
+}
+
+export async function buildDraftRepliesReply(telegramId:number){
+  const access=await gmailAccess(telegramId)
+  if(access.disabled)return 'Google Workspace access is turned off in your privacy settings.'
+  if(!access.connected)return buildGmailConnectReply(telegramId)
+  const unread=await fetchUnreadEmails(access.accessToken,15)
+  const people=await bulkDraftCandidates(unread)
+  if(!people.length)return `None of your ${unread.length} unread emails look like they need a reply: they are newsletters, alerts, promotions or codes. Name one ("draft a reply to Nithin") and I'll draft it.`
+  const {data:user}=await supabaseAdmin.from('users').select('name').eq('telegram_id',telegramId).maybeSingle()
+  const picked=people.slice(0,3)
+  const drafts=await Promise.all(picked.map(r=>draftOne(r,user?.name||null)))
+  const blocks=picked.map((r,i)=>`${i+1}. *Re: ${clean(redactEmailAuthSecrets(String(r.subject||'(no subject)')),120)}*\nTo: ${clean(r.from,120)}\n${drafts[i]||'(I could not write this draft just now; ask again for this one.)'}`)
+  const skipped=unread.length-people.length
+  return `✍️ *Draft replies* (${picked.length} of ${people.length} emails from people${skipped?`; ${skipped} newsletters, alerts or codes skipped`:''})\n\n${blocks.join('\n\n')}\n\nThese are drafts only. Nothing was sent. Tell me what to change in any of them.`
+}
+
+/** The newest email from someone whose name or address contains `name`, received after `sinceIso`. Null when none
+ * or when Gmail cannot be read (the caller then sends the plain reminder). */
+export async function latestEmailFrom(telegramId:number,name:string,sinceIso:string):Promise<{subject:string;at:string}|null>{
+  const access=await gmailAccess(telegramId)
+  if(!access.connected)return null
+  const rows=await fetchLatestEmails(access.accessToken,30)
+  const needle=String(name||'').toLowerCase().split(/\s+/)[0]
+  const since=Date.parse(sinceIso)
+  const hit=rows.find((r:any)=>String(r.from||'').toLowerCase().includes(needle)&&Number(r.internalDate||Date.parse(r.date||''))>since)
+  return hit?{subject:clean(redactEmailAuthSecrets(String(hit.subject||'')),120),at:new Date(Number(hit.internalDate||Date.parse(hit.date))).toISOString()}:null
+}

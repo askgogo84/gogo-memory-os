@@ -16,7 +16,14 @@ function fmt(iso:string|null|undefined,timezone='Asia/Kolkata'){
 export { isAutonomyStatus } from './attention-state'
 
 export function isConnectionCapabilityQuery(text:string){
-  return /^(?:please\s+)?(?:show|list)\s+(?:my\s+)?connected\s+(?:services|integrations|connections)\b/i.test(String(text||'').trim())
+  // 29 Oct live (Duet 07): "What apps are connected to you?" got "I don't have a list of connected apps".
+  const t=String(text||'').trim()
+  const ask=/^(?:please\s+)?(?:show|list)\s+(?:my\s+)?connected\s+(?:services|integrations|connections|apps)\b/i.test(t)
+    ||/^(?:what|which)\s+(?:apps?|services|accounts|integrations|tools)\s+(?:are|have\s+i|have\s+you|do\s+you\s+have|do\s+i\s+have)\s+(?:been\s+)?(?:connected|linked)\b[^?]{0,30}\??$/i.test(t)
+    ||/^(?:what|which)\s+(?:apps?|services|accounts)\s+(?:can\s+you|do\s+you)\s+(?:access|see|use)\b[^?]{0,20}\??$/i.test(t)
+    ||/^(?:what(?:\x27s| is)|what all is)\s+(?:connected|linked)(?:\s+to\s+(?:you|gogo|askgogo|my\s+account))?\s*\??$/i.test(t)
+    ||/^what\s+do\s+you\s+have\s+access\s+to\s*\??$/i.test(t)
+  return ask
     && !/(?:\b(?:and|then|also)\s+|[.;]\s*)(?:connect|disconnect|reconnect|switch|grant|revoke)\b/i.test(text)
 }
 

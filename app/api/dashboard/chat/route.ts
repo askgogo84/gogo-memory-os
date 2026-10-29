@@ -7,7 +7,7 @@ import {namesRetailerPriceRead} from '@/lib/commerce/comparison-model'
 import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
 import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
 import { tryCreateGoldRateWatchFromCommand } from '@/lib/agent/gold-watch'
-import { tryCreateInboxTriageWatchFromCommand, tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand, tryGetWatcherStatusFromCommand, tryRunPriceWatchClarification, tryStopWatcherFromCommand } from '@/lib/agent/watch-command'
+import { tryCreateInboxTriageWatchFromCommand, tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand, tryGetWatcherStatusFromCommand, tryRunPriceWatchClarification, tryStopWatcherFromCommand, parsePriceWatchCommand, parseWebWatchCommand } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
@@ -46,7 +46,7 @@ import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
 import { queueRestaurantReservationResearch } from '@/lib/agent/restaurant-reservation'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunTrainResearch } from '@/lib/agent/train-research'
-import { handleInboxReplyRead } from '@/lib/agent/open-loops'
+import { handleInboxReplyRead, handleOpenLoopQuery, isOpenLoopQuery } from '@/lib/agent/open-loops'
 import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
 import { tryCancelRunFromChat } from '@/lib/agent/run-cancel'
 import { isTicketRetrievalAsk, buildTicketRetrievalReply } from '@/lib/services/asset-memory'
@@ -285,6 +285,16 @@ async function handleChatPost(req: NextRequest) {
       }
       if(brain?.text)text=brain.text
     }
+    // "Which emails am I waiting on replies for?" / "what am I waiting on": the follow-up tracker, not chat.
+    // Guarded: strict route harnesses supply module maps without these exports.
+    const tryPure=(f:()=>boolean)=>{try{return f()}catch{return false}}
+    if(tryPure(()=>typeof isOpenLoopQuery==='function'&&typeof handleOpenLoopQuery==='function'&&isOpenLoopQuery(text))){
+      const loops=await handleOpenLoopQuery({actor,text}).catch((err:any)=>{console.error('OPEN_LOOP_QUERY_FAILED:',String(err?.message||err).slice(0,160));return null})
+      if(loops?.text){
+        await saveConversation(user.telegram_id,text,loops.text)
+        return NextResponse.json(loops)
+      }
+    }
     // "Order milk on Swiggy Instamart" via the user's connected Swiggy account: three in-stock options, and a
     // 1/2/3 reply binds only while that list is Gogo's latest reply. Lazy so strict harnesses keep their maps.
     // Cheap pre-filter: only an Instamart mention or a bare 1/2/3-style pick loads the module.
@@ -460,6 +470,18 @@ async function handleChatPost(req: NextRequest) {
     if(goldWatch){
       await saveConversation(user.telegram_id,text,goldWatch.text)
       return NextResponse.json(goldWatch)
+    }
+    // 29 Oct live: "Tell me when the iPhone 16 128GB drops below ₹65,000 on Croma" became a daily reminder to check
+    // by hand, and "find me … and keep looking every day" got one search: a planner path claimed both before the watch
+    // handlers. Watches are claimed right after the gold-rule handler, before planners.
+    const earlyPrice=tryPure(()=>typeof parsePriceWatchCommand==='function'&&!!parsePriceWatchCommand(text))
+    const earlyKeepLooking=/\bkeep\s+(?:looking|searching|checking|hunting)\b/i.test(text)&&tryPure(()=>typeof parseWebWatchCommand==='function'&&!!parseWebWatchCommand(text))
+    if(earlyPrice||earlyKeepLooking){
+      const early=(earlyPrice?await tryRunPriceWatchClarification({actor,surface:'web',text}):await tryCreateWebWatchFromCommand({actor,surface:'web',text}))
+      if(early){
+        await saveConversation(user.telegram_id,text,early.text)
+        return NextResponse.json(early)
+      }
     }
     // Share-price watch (26 Oct): a live exchange-quote rule, never a news or search watch.
     // Loaded only for messages that talk about a share/stock watch, so route harnesses keep their dependency maps.
@@ -753,7 +775,7 @@ async function handleChatPost(req: NextRequest) {
     // High-confidence semantic ambiguity stops before the broad planner can act on the wrong object
     // (same guard WhatsApp has). Jev only asks for the missing detail; it never gets execution authority.
     // Grounded reminder commands ("move it", "what reminders do I have") are never second-guessed.
-    const jevClarify = isGroundedReminderCommand(text) ? null : jevClarificationReply(webObservation?.jev)
+    const jevClarify = isGroundedReminderCommand(text) ? null : jevClarificationReply(webObservation?.jev,text)
     if (jevClarify) {
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'jev-clarification-guard',actualCapability:null,status:'paused'}).catch(()=>{})
       await saveConversation(user.telegram_id, text, jevClarify)

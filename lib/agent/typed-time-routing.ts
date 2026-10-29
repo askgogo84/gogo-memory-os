@@ -103,13 +103,14 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
         const owned=/^send/i.test(text)?await tryRunGmailSendCommand({actor:p.actor,text:text.replace(/[.!?]+$/,'')}):await tryRunGmailContextCommand({actor:p.actor,text})
         return owned||await clarify('Please select the Gmail message or draft again. This reference could not be bound to a current email object.')
       }
-      if(!context||!selected)return clarify('Please select the exact object from a current list. This reference is missing, stale or ambiguous; nothing has changed.')
+      if(!context||!selected)return clarify("I'm not sure which one you mean. Tell me its name or pick it from the list again. Nothing has changed.")
       if(/^(?:open|show|show me|read|select)$/.test(action)){
         await rememberTypedObjects(p.actor.legacyTelegramId,context.domain,context.items,selected.id)
-        return response(`Selected ${context.domain} object: ${selected.title}. Ask for its specific details or action. This confirms selection only.`,'completed',context.domain)
+        return response(`Got it: ${selected.title}. What would you like to do with it?`,'completed',context.domain)
       }
       if(context.domain==='watchers'&&/^(?:stop|cancel)$/.test(action))return await tryStopWatcherFromCommand({actor:p.actor,text:'stop monitoring that'})
-      return clarify(`The selected object is ${selected.title} (${context.domain}). Please specify the ${context.domain} action and any required details. I have not executed or reinterpreted this reference.`)
+      // 29 Oct live: "Book it" right after a reminder got "The selected object is … (reminders). Please specify the reminders action".
+      return clarify(`${reference[1].replace(/^\w/,c=>c.toUpperCase())} what exactly? The last thing we discussed was "${selected.title}" (${context.domain==='reminders'?'a reminder':context.domain==='calendar'?'a calendar event':context.domain}). Tell me what to ${reference[1].toLowerCase()} and I'll do it. Nothing has changed yet.`)
     }
     if(selection){
       if(!context||!['calendar','reminders'].includes(context.domain))return null

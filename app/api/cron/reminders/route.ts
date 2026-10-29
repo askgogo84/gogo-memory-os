@@ -206,6 +206,15 @@ async function runDelivery(req: Request) {
       // owner's own flight departure reminder now carry the answer: the live lookup runs here and its result is
       // sent. Any failure leaves the plain reminder untouched.
       let jobDone = false
+      // A follow-up check ("has Nithin replied to your last email?"): look in Gmail first; only nudge without a reply.
+      if (raw.startsWith('📧 Follow-up check:') && !followup && Date.now() - started < 25000) {
+        const rw = await import('@/lib/agent/reply-watch').catch(() => null)
+        const name = rw?.replyCheckName(raw)
+        const gm = name ? await import('@/lib/bot/handlers/gmail-read').catch(() => null) : null
+        const got = gm && name ? await gm.latestEmailFrom(Number(reminder.telegram_id), name, String(reminder.created_at || reminder.remind_at)).catch(() => undefined) : undefined
+        if (name && got) { text = `✅ ${name} replied (${new Date(got.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}: "${got.subject}"). No follow-up needed.`; jobDone = true }
+        else if (name && got === null) { text = `📧 ${name} hasn't replied to your last email yet. Want me to draft a short follow-up?`; jobDone = true }
+      }
       if (owner && whatsappTo && !topic && !isBriefing && !followup && Date.now() - started < 25000 &&
         /\bdeparts?\b|^(?:\W*\s*)?(?:to\s+)?(?:check|see|look\s+up|find\s+out|get|tell\s+me|update\s+me|what|how\s+did)\b/i.test(raw)) {
         const jobs = await import('@/lib/agent/lookup-reminder').catch(() => null)

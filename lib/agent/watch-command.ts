@@ -200,6 +200,8 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
 function stopWatcherIntent(text:string) {
   const raw=clean(text,400).toLowerCase()
   if(/^(?:stop|cancel|remove|disable)\s+.+?\s+(?:watcher|watch|monitor)\b/.test(raw))return 'named'
+  // 29 Oct live: "Stop the Tata Motors alert" and "Cancel the 2BHK search" were not read as stopping a watch.
+  if(!/\b(?:reminders?|alarms?|meeting|event|order|booking|subscription)\b/.test(raw)&&/^(?:stop|cancel|remove|disable|turn\s+off)\s+(?:the\s+|my\s+)?.+?\s+(?:alerts?|search|tracker|tracking|price\s+alert)\s*[.!]*$/.test(raw))return 'named'
   // "stop watching Sony WH-1000XM5": the thing named after the verb is the watch to stop. Only a bare verb or
   // "that / it / this / all" falls through to the latest/all rules below.
   if(/^(?:stop|cancel|remove|disable)\s+(?:monitoring|watching|tracking)\s+(?!(?:that|it|this|all|everything|them|these|those)\b)\S/.test(raw))return 'named'
@@ -327,7 +329,7 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
   const intent=stopWatcherIntent(params.text)
   if(!intent)return null
   const tg=String(params.actor.legacyTelegramId)
-  if(intent==='named'){    const target=clean(params.text,400).toLowerCase().replace(/^(?:stop|cancel|remove|disable)\s+/,'').replace(/^(?:monitoring|watching|tracking)\s+/,'').replace(/^(?:the|my)\s+/,'').replace(/\s+(?:watcher|watch|monitor)\b.*$/,'').trim()
+  if(intent==='named'){    const target=clean(params.text,400).toLowerCase().replace(/^(?:stop|cancel|remove|disable|turn\s+off)\s+/,'').replace(/^(?:monitoring|watching|tracking)\s+/,'').replace(/^(?:the|my)\s+/,'').replace(/\s+(?:watcher|watch|monitor|alerts?|search|tracker|tracking)\b.*$/,'').trim()
     const rows=await canonicalActiveWatchers(tg)
     const tokens=watcherIdentityTokens(target)
     const ranked=rows.map((row:any)=>{
@@ -695,6 +697,9 @@ export function parseWebWatchCommand(text: string) {
 
   const patterns = [
     /^(?:please\s+)?keep\s+(?:searching|looking)\s+(?:the\s+web\s+)?for\s+(.+)$/i,
+    // 29 Oct live (P01): "Find me a 2BHK to rent in Rajajinagar under ₹35,000 and keep looking every day" got one
+    // search and advice to set alerts on MagicBricks. "…and keep looking/checking" is a standing search.
+    /^(?:please\s+)?(?:find|search\s+for|look\s+for|hunt\s+for)\s+(?:me\s+)?(.+?)\s+and\s+keep\s+(?:looking|searching|checking|hunting)\b.*$/i,
     /^(?:please\s+)?(?:watch|monitor|track)\s+(?:the\s+)?(?:web|internet|online)\s+(?:for\s+)?(.+)$/i,
     /^(?:please\s+)?watch\s+(.+?)\s+(?:online|on\s+the\s+web)(?:\s+.*)?$/i,
     // Muse parity case 01 (10 Oct live run): "Watch the news on humanoid robots and Indian AI
