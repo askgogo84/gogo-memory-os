@@ -7,6 +7,7 @@ import { latestTypedContext, rememberTypedObjects, selectedTypedObject } from '@
 import type { AgentActor } from '@/lib/agent/actor'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { getLocalParts, zonedLocalTimeToUtc } from '@/lib/timezone'
+import { clearFollowupState, getLatestFollowupState, isStrictlyFreshFollowupState, saveFollowupState } from '@/lib/bot/handlers/followup-state'
 
 export type LinkPlatform='instagram'|'youtube'|'twitter'|'linkedin'|'tiktok'|'github'|'facebook'|'web'
 export type LinkVaultRow={
@@ -78,6 +79,45 @@ function titleFromUrl(url:string,note:string){
     const slug=decodeURIComponent(u.pathname.split('/').filter(Boolean).pop()||'').replace(/[-_]+/g,' ').trim()
     return clean(u.hostname==='github.com'?slug:note?note.split(/[.!?]/)[0]:slug||u.hostname,120)||u.hostname
   }catch{return clean(note||'Saved link',120)}
+}
+// 29 Oct live: a forwarded lnkd.in link was saved as "gjKPc2zn" with nothing about what it was, while another
+// assistant explained the post and offered to dig in. LinkedIn's own pages are read for their preview (the same
+// og:title WhatsApp shows); redirects are followed only while they stay on LinkedIn. An outside article is never
+// fetched from our server: its title comes from its address.
+const PREVIEW_HOSTS=/^(?:lnkd\.in|(?:[a-z]{2,3}\.)?linkedin\.com)$/i
+export function isPreviewHost(url:string){try{return PREVIEW_HOSTS.test(new URL(url).hostname.replace(/^www\./i,''))}catch{return false}}
+function decodeEntities(s:string){return s.replace(/&quot;/g,'"').replace(/&#x27;|&#39;|&apos;/g,"'").replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n))).replace(/&#x([0-9a-f]+);/gi,(_,n)=>String.fromCharCode(parseInt(n,16)))}
+function metaContent(html:string,name:string){
+  const tag=html.match(new RegExp('<meta[^>]+(?:property|name)=["\']'+name.replace(/[.:]/g,'\\$&')+'["\'][^>]*>','i'))?.[0]
+  return tag?decodeEntities(tag.match(/content=["']([^"']*)["']/i)?.[1]||'').trim():''
+}
+export function titleFromArticleUrl(url:string){
+  try{
+    const slug=decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop()||'').replace(/\.[a-z]{2,5}$/i,'').replace(/[-_]\d{5,}$/,'')
+    const words=slug.split(/[-_]+/).filter(Boolean)
+    if(words.length<4||words.some(w=>w.length>24))return null
+    const t=words.join(' ')
+    return t.charAt(0).toUpperCase()+t.slice(1)
+  }catch{return null}
+}
+export async function linkPreview(url:string,fetchImpl:typeof fetch=fetch):Promise<{title:string;description:string;resolvedUrl:string}|null>{
+  let current=url
+  for(let hop=0;hop<4;hop++){
+    if(!isPreviewHost(current)){const t=titleFromArticleUrl(current);return t?{title:clean(t,160),description:'',resolvedUrl:current}:null}
+    let res:Response|null=null
+    try{res=await fetchImpl(current,{redirect:'manual',headers:{'user-agent':'WhatsApp/2.23.20.0',accept:'text/html'},signal:AbortSignal.timeout(5000)})}catch{return null}
+    const loc=res.headers.get('location')
+    if(res.status>=300&&res.status<400&&loc){try{current=new URL(loc,current).toString()}catch{return null};continue}
+    if(!res.ok)return null
+    const html=(await res.text()).slice(0,400_000)
+    const title=(metaContent(html,'og:title')||decodeEntities(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1]||'')).replace(/\s*\|\s*LinkedIn\s*$/i,'').replace(/\s+/g,' ').trim()
+    // lnkd.in shows a "you're leaving LinkedIn" page for outside links; its button holds the real address.
+    const external=html.match(/<a\b[^>]*external_url_click[^>]*>/i)?.[0]?.match(/href=["']([^"']+)["']/i)?.[1]
+    if(external&&(!title||/^(?:LinkedIn|Redirecting|External link)/i.test(title))){current=decodeEntities(external);continue}
+    if(!title||/^(?:LinkedIn|Sign\s*Up|Log\s*In|Redirecting)\b/i.test(title))return null
+    return{title:clean(title,160),description:clean(metaContent(html,'og:description')||metaContent(html,'description'),400),resolvedUrl:current}
+  }
+  return null
 }
 const STOP=new Set(['this','that','link','saved','save','about','with','from','what','show','find','open','all','links','last','month','instagram','youtube','twitter','linkedin','github','repo','repository'])
 function keywordTags(text:string,platform:LinkPlatform){
@@ -204,7 +244,8 @@ export async function saveLinkVaultItem(params:{telegramId:number;text:string;ur
   if(!canonical)throw new Error('link_vault_url_invalid')
   const platform=detectLinkPlatform(canonical),type=itemType(platform,canonical),note=noteFromText(params.text,original)
   const metadata=await publicRepositoryMetadata(canonical)
-  const title=clean(params.visibleTitle,160)||metadata?.title||titleFromUrl(canonical,note),source=sourceHost(canonical)
+  const preview=!clean(params.visibleTitle,160)&&!metadata&&isPreviewHost(canonical)?await linkPreview(original).catch(()=>null):null
+  const title=clean(params.visibleTitle,160)||metadata?.title||preview?.title||titleFromUrl(canonical,note),source=sourceHost(canonical)
   const explicitTags=clean(params.text.replace(original,''),500).match(/\btag\s+(?:it\s+|this\s+)?([^:;]+)[:;]?\s*$/i)?.[1]?.toLowerCase().split(/[\s,]+/).filter(Boolean)||[]
   const baseTags=Array.from(new Set([...explicitTags,...keywordTags(title+' '+note,platform)])).slice(0,12),shelf=(await jevShelf({platform,type,title,note}))||fallbackShelf(platform,type)
   const topic=baseTags.find(t=>t!==platform)||platform,authRequired=restricted(platform),now=new Date().toISOString()
@@ -216,11 +257,11 @@ export async function saveLinkVaultItem(params:{telegramId:number;text:string;ur
   const mergedTags=Array.from(new Set([...explicitTags,...(Array.isArray((existing as any)?.tags)?(existing as any).tags:[]),...baseTags])).slice(0,12)
   const payload:any={
     telegram_id:params.telegramId,canonical_url:canonical,original_url:original,platform,item_type:type,title,
-    description:metadata?.description||(existing as any)?.description||'',source,user_note:mergedNote,note_history:history,last_saved_at:now,
+    description:metadata?.description||preview?.description||(existing as any)?.description||'',source,user_note:mergedNote,note_history:history,last_saved_at:now,
     topic:(existing as any)?.topic||topic,tags:mergedTags,shelf:(existing as any)?.shelf||shelf,
     preview_image:params.previewImage||(existing as any)?.preview_image||null,screenshot_url:(existing as any)?.screenshot_url||null,
     enrichment_status:(existing as any)?.enrichment_status||'metadata_only',auth_required:authRequired,
-    source_evidence:{...((existing as any)?.source_evidence||{}),capture:params.sourceSurface||'chat',content_fetched:false,metadata_fetched:Boolean(metadata),metadata_source:metadata?.source||null,visible_title:Boolean(params.visibleTitle),last_captured_at:now},
+    source_evidence:{...((existing as any)?.source_evidence||{}),capture:params.sourceSurface||'chat',content_fetched:false,metadata_fetched:Boolean(metadata||preview),metadata_source:metadata?.source||(preview?'link_preview':null),resolved_url:preview?.resolvedUrl||null,visible_title:Boolean(params.visibleTitle),last_captured_at:now},
     updated_at:now
   }
   let row:any
@@ -233,7 +274,7 @@ export async function saveLinkVaultItem(params:{telegramId:number;text:string;ur
   }
   await indexMemory({telegramId:params.telegramId,sourceId:'link_vault:'+row.id,sourceTable:'link_vault_items',content:indexContent(row),topic:row.topic})
   await rememberTypedObjects(params.telegramId,'links',[{id:String(row.id),title:String(row.title||row.canonical_url)}]).catch(()=>{})
-  return{row:row as LinkVaultRow,created:!existing?.id,merged:Boolean(existing?.id)}
+  return{row:row as LinkVaultRow,created:!existing?.id,merged:Boolean(existing?.id),previewed:Boolean(preview),bare:!note}
 }
 
 export async function queryLinkVault(telegramId:number,text:string,timezone='Asia/Kolkata'){
@@ -273,7 +314,21 @@ export function formatLinkVaultResults(rows:LinkVaultRow[],text:string){
   const lines=rows.slice(0,10).map((row,i)=>String(i+1)+'. *'+(row.title||'Saved link')+'*\n   '+row.canonical_url+(row.user_note?'\n   Note: '+clean(row.user_note,140):'')+'\n   _'+row.platform+(row.tags?.length?' · '+row.tags.slice(0,4).join(', '):'')+'_')
   return'🔗 *Saved links* ('+rows.length+' matches)\n\n'+lines.join('\n\n')+'\n\n_You can say “open the second one”, “tag this AI”, or “delete that” after selecting an exact result._'
 }
+const LINK_DIG='link_dig'
+export const LINK_DIG_YES=/^\s*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|haan|dig\s+in(?:to\s+(?:it|this|them))?|go\s+ahead|tell\s+me\s+more|please\s+do|do\s+it)(?:\s+please)?\s*[.!]*\s*$/i
+export function linkDigQuestion(p:{title:string;description?:string}){
+  return `Research this and brief me: ${p.title}.${p.description?' Context: '+clean(p.description,300):''} Who they are, what they do, the facts behind the news (numbers, dates, people), and why it matters`
+}
 export async function handleLinkVaultFollowup(actor:AgentActor,text:string){
+  if(LINK_DIG_YES.test(text)){
+    const state=await getLatestFollowupState(actor.legacyTelegramId,LINK_DIG).catch(()=>null)
+    if(state&&isStrictlyFreshFollowupState(state,30)&&state.payload?.title){
+      await clearFollowupState(actor.legacyTelegramId,LINK_DIG).catch(()=>{})
+      const dr:any=await import('@/lib/agent/deep-research').catch(()=>null)
+      const out=dr?.runDeepResearch?await Promise.resolve().then(()=>dr.runDeepResearch(linkDigQuestion(state.payload))).catch((err:any)=>{console.error('LINK_DIG_FAILED:',clean(err?.message||err,160));return null}):null
+      return{text:out?.text||'I could not research that right now. Ask me again in a minute, or tell me what you want to know about it.',status:'completed',handledBy:'link-vault-dig',capability:'web',runId:''}
+    }
+  }
   // A remembered selection resolves a reference, not an unrelated new command.
   const target=String.raw`(?:(?:it|this|that)(?:\s+(?:one|link|reel|repo|repository))?|(?:the\s+)?selected(?:\s+(?:one|link|reel|repo|repository))?|(?:the\s+)?(?:first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)\s+(?:one|link|reel|repo|repository))`
   const explicitReference=new RegExp(String.raw`^\s*(?:open|show(?:\s+me)?|read|select|delete|remove|forget)\s+${target}[.!?]*\s*$`,'i')
@@ -314,6 +369,13 @@ export async function handleLinkVaultText(params:{actor:AgentActor;text:string;s
   if(isLinkVaultSaveRequest(params.text)){
     const saved=await saveLinkVaultItem({telegramId:params.actor.legacyTelegramId,text:params.text,sourceSurface:params.sourceSurface})
     const r=saved.row,restrictedNote=r.auth_required?' I saved only the URL and visible/user-supplied metadata; I did not pretend to read restricted content.':''
+    // A bare shared link that could be read: say what it is and offer to dig in, the way a person would.
+    if(saved.previewed&&saved.bare){
+      const about=r.description&&!r.description.toLowerCase().startsWith(r.title.toLowerCase().slice(0,40))?'\n'+clean(r.description,260):''
+      await clearFollowupState(params.actor.legacyTelegramId,LINK_DIG).catch(()=>{})
+      await saveFollowupState(params.actor.legacyTelegramId,LINK_DIG,{title:r.title,url:r.canonical_url,description:clean(r.description,400)}).catch(()=>{})
+      return{text:'🔗 *'+r.title+'*'+about+'\n\nSaved to your links. Want me to dig into this? Reply *yes*.',status:'completed',handledBy:'link-vault',capability:'memory',runId:''}
+    }
     const baseReply='🔗 '+(saved.merged?'Updated existing saved link':'Saved to Link Vault')+': *'+r.title+'*\n'+r.canonical_url+(r.user_note?'\nNote: '+r.user_note:'')+restrictedNote
     const reply=await contextualizeSavedItemReply({
       userId:String(params.actor.userId),
