@@ -320,6 +320,9 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     const venuePart = parts ? parts[1].replace(/\s+(?:on|at|via)\s+[+\d][\d\s-]{8,16}$/i, '').trim() : ''
     const bookingText = parts ? `Book ${parts[2].trim()} at ${venuePart}` : cmd.text
     const intent = rr.parseRestaurantReservationIntent(bookingText)
+    // 29 Oct live: "Call Toit Indiranagar on 831… and book a table for 4 at 8 pm on Saturday" read "at 8 pm" as the
+    // venue ("Calling 8 pm now"). The venue named after "call" is the venue.
+    if (intent && venuePart && (!intent.restaurant || /^\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(String(intent.restaurant).trim()) || !venuePart.toLowerCase().includes(String(intent.restaurant).toLowerCase().split(/\s+/)[0]))) intent.restaurant = venuePart
     if (!intent?.restaurant) return { text: 'Which restaurant should I call, and for when? For example: *call District 6 and book a table for 2 Saturday 8pm*.', handledBy: 'voice-call' }
     const explicit = indianPhoneFrom(cmd.text)
     const area = (cmd.text.match(/\bnear\s+([a-z0-9 .'-]{2,40}?)(?:\s+(?:for|on|at|this|tomorrow|today)\b|$)/i)?.[1] || '').trim()
