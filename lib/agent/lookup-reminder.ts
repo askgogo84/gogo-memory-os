@@ -14,6 +14,16 @@ export function isLookupReminder(message: string): boolean {
   return LOOKUP_VERB.test(t) && LOOKUP_SUBJECT.test(t)
 }
 
+const FUTURE_TIME = /\b(?:at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)|every\s+(?:day|morning|evening|hour)|in\s+\d+\s+(?:minutes?|hours?))\b/i
+
+/** 29 Oct live: "Check the India vs NZ match score at 9 pm on Friday" was answered now ("no match at that time")
+ * instead of being scheduled. A lookup with a future time is a scheduled check: it becomes a reminder that does the
+ * lookup when it fires. */
+export function isScheduledLookup(text: string): boolean {
+  const t = String(text || '').trim()
+  return isLookupReminder(t.replace(FUTURE_TIME, ' ').replace(/\s+/g, ' ').trim()) && FUTURE_TIME.test(t)
+}
+
 /** A flight departure reminder that names its flight: "✈️ IndiGo 6E 5256 · Bengaluru → Mumbai departs in 3 hours". */
 export function departureFlightCode(message: string): string {
   const t = String(message || '')
