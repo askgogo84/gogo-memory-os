@@ -986,9 +986,13 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     }
     // 29 Oct live (web): a price alert became a daily manual-check reminder. A price alert is a watch; lazy and
     // pre-filtered so the strict route harnesses never load the module for other messages.
-    if (/\b(?:below|under|less\s+than|lower\s+than|cheaper\s+than)\b/i.test(text) && /(?:₹|\brs\.?|\binr\b|\d{3,})/i.test(text) && (globalThis as any).process?.env?.VERCEL_ENV) {
+    // 29 Oct live (WhatsApp): "Yes" to "include offers or listed price only?" skipped this block (no "below ₹")
+    // and reached chat, which falsely said "I'll track it". Short replies to that question are checked here too.
+    const priceNew = /\b(?:below|under|less\s+than|lower\s+than|cheaper\s+than)\b/i.test(text) && /(?:₹|\brs\.?|\binr\b|\d{3,})/i.test(text)
+    const priceReply = text.length <= 60 && /^\s*(?:yes|yeah|yep|yup|ok|okay|sure|no|nope|both|either|any|haan|ha|listed|with\s+offers|offers|incl\w*\s+offers|without\s+offers|excl\w*\s+offers|\d{2,4}\s*gb|\d\s*tb|not\s+applicable|n\/?a)\b/i.test(text)
+    if ((priceNew || priceReply) && (globalThis as any).process?.env?.VERCEL_ENV) {
       const wc: any = await import('@/lib/agent/watch-command').catch(() => null)
-      if (wc?.parsePriceWatchCommand?.(text)) {
+      if (priceReply || wc?.parsePriceWatchCommand?.(text)) {
         const actorForWatch: any = { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, name: resolvedUser.name || profileName, whatsappId: String(resolvedUser.whatsappId || from) }
         const pw = await Promise.resolve().then(() => wc.tryRunPriceWatchClarification({ actor: actorForWatch, surface: 'whatsapp', text })).catch((err: any) => { console.error('PRICE_WATCH_EARLY_FAILED:', String(err?.message || err).slice(0, 160)); return null })
         if (pw?.text) {

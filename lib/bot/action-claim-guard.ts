@@ -21,6 +21,9 @@ const FAKE_ACTION_CLAIMS: RegExp[] = [
   /\bi(?:'ve| have)\s+(?:checked|looked\s+at|seen)\s+(?:the\s+)?(?:live\s+)?(?:slots?|availability)\b/i,
 ]
 
+export const NO_WATCH_REPLY =
+  "No alert is set up yet. Send it in one message, like *Tell me when the iPhone 16 128GB drops below ₹65,000 on Croma*, and I'll confirm once the watch is running."
+
 export const NO_ACTION_REPLY =
   "Nothing has been started. Gogo only runs a task after it sends you a real approval request for it, and there isn't one waiting. Send the request again in one message (for example: create a Hugging Face account for you@example.com) and I'll set it up."
 
@@ -108,9 +111,11 @@ export function isReadOnlyRecapRequest(userText: string): boolean {
 }
 
 /** Replace a chat reply that claims an action Gogo did not take. */
-export function guardChatActionClaims(reply: string, opts: { userText?: string } = {}): { text: string; blocked: boolean } {
+export function guardChatActionClaims(original: string, opts: { userText?: string } = {}): { text: string; blocked: boolean } {
+  // 29 Oct live: "I’ll track the iPhone … and notify you when" passed because of the curly apostrophe.
+  const reply = original.replace(/[\u2018\u2019\u02bc]/g, "'")
   if (claimsUnplacedCall(reply)) return { text: NO_CALL_REPLY, blocked: true }
-  if (claimsUnperformedAction(reply)) return { text: NO_ACTION_REPLY, blocked: true }
+  if (claimsUnperformedAction(reply)) return { text: FAKE_ACTION_CLAIMS.slice(7, 9).some(re => re.test(reply)) ? NO_WATCH_REPLY : NO_ACTION_REPLY, blocked: true }
   if (!isReadOnlyRecapRequest(opts.userText || '') && claimsCompletedChange(reply)) return { text: NO_CHANGE_REPLY, blocked: true }
-  return { text: reply, blocked: false }
+  return { text: original, blocked: false }
 }
