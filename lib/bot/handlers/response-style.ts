@@ -17,6 +17,9 @@ function cleanTask(text: string) {
   return (text || 'Reminder').replace(/^to\s+/i, '').trim()
 }
 
+const LOOKUP_TASK = /^(?:check|see|look up|find out|get)\b/i
+const LOOKUP_SUBJECT = /\b(?:results?|news|score|scores|status|updates?|price|prices|rate|rates|weather|forecast|winner|winning|election|elections|match|verdict|outcome)\b/i
+
 export function styleReminderConfirmation(message: string) {
   const text = compact(message)
 
@@ -26,6 +29,10 @@ export function styleReminderConfirmation(message: string) {
     text.match(/^Done\s*—\s*I'll remind you to (.+?) (tomorrow at .+)$/i)
 
   if (m) {
+    // 29 Oct: a "check X" reminder is a job: at that time Gogo looks it up and sends the answer. Say so.
+    if (LOOKUP_TASK.test(cleanTask(m[1])) && LOOKUP_SUBJECT.test(m[1])) {
+      return `✅ *Scheduled*\n\nI'll check ${cleanTask(m[1]).replace(/^(?:check|see|look up|find out|get)\s+/i, '')} ${m[2].replace(/[.!]+$/, '')} and send you what I find.`
+    }
     return `✅ *Reminder set*\n\n${titleCaseFirst(cleanTask(m[1]))}\n${m[2]}`
   }
 
