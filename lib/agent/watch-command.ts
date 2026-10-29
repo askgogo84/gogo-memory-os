@@ -691,6 +691,14 @@ export async function tryRunPriceWatchClarification(params:{actor:AgentActor;sur
   return await finalizePriceWatch(params,p)
 }
 
+/** 1440 → "once a day", 180 → "every 3 hours", 15 → "every 15 minutes". Pure. */
+export function cadenceWords(minutes: number): string {
+  const m = Number(minutes) || 0
+  if (m >= 1440 && m % 1440 === 0) return m === 1440 ? 'once a day' : `every ${m / 1440} days`
+  if (m >= 60 && m % 60 === 0) return m === 60 ? 'every hour' : `every ${m / 60} hours`
+  return `every ${m} minutes`
+}
+
 export function parseWebWatchCommand(text: string) {
   const raw = clean(text, 2000)
   if (!raw) return null
@@ -1391,7 +1399,7 @@ export async function tryCreateWebWatchFromCommand(params: {
     status: 'completed' as const,
     capability: 'browser' as const,
     risk: 'low' as const,
-    text: `${'reused' in watcher ? `${reusedWatchText((watcher as ReusedWatcher).updated, condition.query)} ` : ''}Background Gogo is now watching “${condition.query}”. Your request is saved. I’ll check about every ${condition.cadenceMinutes} minutes initially and send the first relevant result with its source link${condition.delivery !== 'app' ? ' in WhatsApp and Ideas' : ' in Ideas'}. Quiet checks may slow down within your plan. Search results are leads; prices, availability and offer terms need provider verification. Say “show my watches” for status or stop a watch by name.`,
+    text: `${'reused' in watcher ? `${reusedWatchText((watcher as ReusedWatcher).updated, condition.query)} ` : ''}Background Gogo is now watching “${condition.query}”. Your request is saved. I’ll check ${cadenceWords(condition.cadenceMinutes)} at first and send the first relevant result with its source link${condition.delivery !== 'app' ? ' in WhatsApp and Ideas' : ' in Ideas'}. Quiet checks may slow down within your plan. Search results are leads; prices, availability and offer terms need provider verification. Say “show my watches” for status or stop a watch by name.`,
     handledBy: 'background-web-watch',
   }
 }
