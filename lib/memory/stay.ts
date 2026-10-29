@@ -96,6 +96,17 @@ export function inferGuestRole(text: string, userNames: string[]): boolean {
   return mine.some(w => named.includes(w))
 }
 
+/** "Booking is in the name of Aman Chamedia" / "booked under Aman" → "Aman Chamedia". Pure. */
+export function bookingNameFrom(text: string): string | null {
+  const m = String(text || '').match(/\b(?:booking|booked|reservation|reserved|room)\b[^.]{0,30}?\b(?:in\s+the\s+name\s+of|under\s+the\s+name(?:\s+of)?|under)\s+([a-z][a-z.'-]+(?:\s+(?!for\b|and\b|at\b|in\b|on\b|so\b)[a-z][a-z.'-]+){0,3})/i)
+  return m ? m[1].trim().replace(/\b\w/g, c => c.toUpperCase()) : null
+}
+
+/** "Have added you as the 2nd guest" (said to the user). Pure. */
+export function addedAsGuest(text: string): boolean {
+  return /\b(?:added|add(?:ing)?)\s+you\b[^.]*\bguest\b/i.test(String(text || ''))
+}
+
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
 
 /** Same hotel and city is one stay unless both carry different check-in dates. Pure. */
@@ -204,6 +215,20 @@ export async function ingestStayFromText(p: { telegramId: number; whatsappTo?: s
   const live = !read.city && !read.checkIn ? currentTrip(trips, now.getTime()) : null
   const city = read.city || live?.city || null
   const stay: Stay = { ...read, city, hotel: propertyName(read.hotel, city), userRole: read.userRole === 'unknown' && read.bookedBy && inferGuestRole(p.text, names) ? 'guest' : read.userRole }
+  // 29 Oct live: forwards sent together with the email ("Have added you as the 2nd guest", "Booking is in the name
+  // of Aman Chamedia") were saved as trip notes before the email was read. Apply the last 30 minutes of them.
+  if (city) {
+    const since = new Date(now.getTime() - 30 * 60_000).toISOString()
+    const { data: notes } = await supabaseAdmin.from('life_events').select('metadata_json,updated_at').eq('telegram_id', String(p.telegramId))
+      .eq('subtype', 'trip_note').gte('updated_at', since).order('updated_at', { ascending: true }).limit(20).then(r => r, () => ({ data: [] as any[] }))
+    for (const n of (notes || []) as any[]) {
+      if (normCity(n.metadata_json?.city) !== normCity(city)) continue
+      const t = String(n.metadata_json?.text || '')
+      if (addedAsGuest(t)) stay.userRole = 'guest'
+      const name = bookingNameFrom(t)
+      if (name) stay.bookedBy = name
+    }
+  }
   const saved = await saveStay(p.telegramId, stay, { kind: p.source, text: p.text })
   if (!saved) return null
   const trip = saved.stay.city ? tripFor(await loadTrips(p.telegramId, now), saved.stay.city, saved.stay.checkIn) : null
