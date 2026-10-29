@@ -1,0 +1,29 @@
+# TEST-ONLY EXPECTED RED. Inert actual-source lifecycle Resend transport regression.
+# DO NOT MERGE while ambiguous provider acceptance can be retried.
+name: Lifecycle Email Unknown-Outcome — Inert Test-Only Regression
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-lifecycle-email-unknown-testonly.mts'
+      - '.github/workflows/lifecycle-email-unknown-testonly.yml'
+      - 'lib/email/resend.ts'
+      - 'app/api/cron/lifecycle-emails/route.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  negative-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install exact lockfile
+        run: npm ci
+      - name: Execute actual Resend sender and lifecycle cron against inert DB/provider
+        run: npx --no-install tsx scripts/verify-lifecycle-email-unknown-testonly.mts
