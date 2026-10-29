@@ -147,7 +147,7 @@ async function test(kind: 'control' | 'safety', label: string, f: () => Promise<
     console.log('PASS [' + kind + '] ' + label)
   } catch (e) {
     failures++
-    console.error('FAIL [' + kind + '] ' + label + ': ' + String(e).slice(0, 260))
+    console.error('FAIL [' + kind + '] ' + label + ': ' + (e instanceof Error ? e.stack : String(e)).slice(0, 1500))
   }
 }
 
