@@ -175,7 +175,7 @@ export function stayReply(stay: Stay, trip: Trip | null): string {
   const who = stay.userRole === 'guest' && stay.bookedBy
     ? `you're a guest on ${stay.bookedBy}'s booking${stay.isRequest ? ` (${firstName(stay.bookedBy)} has asked the hotel to add you)` : ''}`
     : stay.bookedBy ? `booking under ${stay.bookedBy}` : ''
-  lines.push(`🏨 *Saved: ${stay.hotel}${stay.city ? `, ${stay.city}` : ''}*${who ? `\n${who.charAt(0).toUpperCase()}${who.slice(1)}.` : ''}`)
+  lines.push(`🏨 *Saved: ${stay.hotel}${stay.city && !stay.hotel.toLowerCase().includes(stay.city.toLowerCase()) ? `, ${stay.city}` : ''}*${who ? `\n${who.charAt(0).toUpperCase()}${who.slice(1)}.` : ''}`)
   const dates = [stay.checkIn ? `Check-in ${fmtDay(stay.checkIn)}${stay.checkInTime ? `, ${stay.checkInTime}` : ''}` : '', stay.checkOut ? `check-out ${fmtDay(stay.checkOut)}` : ''].filter(Boolean).join(' · ')
   if (dates) lines.push(dates)
   if (stay.bookingRef) lines.push(`Ref: ${stay.bookingRef}`)

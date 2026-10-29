@@ -102,7 +102,8 @@ export function itemLine(i: GraphItem, tz: string): string {
     const m = i.meta || {}
     const dates = m.checkIn || m.checkOut ? `${m.checkIn ? `check-in ${m.checkIn}` : 'check-in date not given'}${m.checkOut ? `, check-out ${m.checkOut}` : ', check-out date not given'}` : 'dates not given'
     const who = m.bookedBy ? `booking under ${m.bookedBy}${m.userRole === 'guest' ? ', you are an added guest' : ''}` : ''
-    return `🏨 ${m.hotel || i.title}${m.city ? `, ${m.city}` : ''} · ${dates}${who ? ` · ${who}` : ''}${i.ref ? ` · ref ${i.ref}` : ''}`
+    const hotelName = String(m.hotel || i.title)
+    return `🏨 ${hotelName}${m.city && !hotelName.toLowerCase().includes(String(m.city).toLowerCase()) ? `, ${m.city}` : ''} · ${dates}${who ? ` · ${who}` : ''}${i.ref ? ` · ref ${i.ref}` : ''}`
   }
   if (i.kind === 'note') return `📌 ${i.meta?.text || i.title}${i.meta?.from ? ` (from ${i.meta.from})` : ''}`
   if (i.kind === 'cab') return `🚕 Cab: ${i.meta?.details || i.title}${i.startAt ? ` · ${clock(i.startAt, tz)}` : ''}`

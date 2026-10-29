@@ -19,7 +19,7 @@ assert.ok(trips.find(t => t.city === 'Kochi' && t.items.length === 1), 'a differ
 assert.equal(g.normCity('Mumbai, T1'), 'mumbai'); assert.equal(g.normCity('Bombay'), 'mumbai'); assert.equal(g.normCity('BLR'), 'bengaluru')
 const lines = g.tripLines(trips, 'Asia/Kolkata', Date.parse('2026-10-29T03:00:00Z'))
 assert.ok(lines.some(l => /^Mumbai trip/.test(l)), lines.join('\n'))
-assert.ok(lines.some(l => /Four Seasons Hotel Mumbai.*booking under Mukesh Chamedia, you are an added guest/.test(l)), lines.join('\n'))
+assert.ok(lines.some(l => /Four Seasons Hotel Mumbai · dates not given · booking under Mukesh Chamedia, you are an added guest/.test(l)), lines.join('\n'))
 assert.ok(lines.some(l => /6E5256.*PNR F8C4UF/.test(l)))
 
 // The stay read from Mukesh's email.
@@ -29,7 +29,7 @@ const stay = st.stayFromJson({ hotel: 'Four Seasons Hotel Mumbai', city: 'Mumbai
 assert.equal(st.stayFromJson({ hotel: 'hotel' }), null, 'no hotel name, no stay')
 assert.equal(st.stayFromJson({ hotel: 'X', checkIn: '28 Oct' })!.checkIn, null, 'only ISO dates are kept')
 const reply = st.stayReply(stay, mumbai)
-assert.match(reply, /Saved: Four Seasons Hotel Mumbai, Mumbai/)
+assert.match(reply, /Saved: Four Seasons Hotel Mumbai\*/)
 assert.match(reply, /You're a guest on Mukesh Chamedia's booking \(Mukesh has asked the hotel to add you\)/)
 assert.match(reply, /Linked to your Mumbai trip: you arrive Thu, 29 Oct at 11:45 am/)
 assert.match(reply, /Which dates is the stay\?/)
@@ -112,3 +112,9 @@ assert.equal(st.bookingNameFrom('Room is paid for'), null)
 assert.equal(st.addedAsGuest('Have added you as the 2nd guest for check-in'), true)
 assert.match(readFileSync('lib/memory/stay.ts', 'utf8'), /subtype', 'trip_note'\)\.gte\('updated_at', since\)/, 'a stay applies notes forwarded just before it')
 console.log('✓ 29 Oct round 4: booking name read in any case; earlier forwards apply to the stay')
+// 29 Oct live round 5: "29 Oct to 31 Oct" came after an email alert, went to the brain, and "✅ Updated your Mumbai
+// trip hotel stay" saved nothing.
+assert.match(readFileSync('lib/memory/front-door.ts', 'utf8'), /rows\.find\(\(r: any\) => askedStayField/, 'the stay question is found past later alerts')
+const dec = b.decisionFromToolUse('29 Oct to 31 Oct', 'reply', { text: '✅ Updated your Mumbai trip hotel stay: Four Seasons Mumbai, Thu 29 Oct – Sat 31 Oct' })
+assert.equal(dec.kind, 'handle', 'a reply claiming an update is never sent as a reply')
+console.log('✓ 29 Oct round 5: stay dates bind past an alert; claimed updates are not replies')
