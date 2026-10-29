@@ -1,0 +1,33 @@
+// 29 Oct live: a forwarded lnkd.in post was saved as "gjKPc2zn"; another assistant said what it was and offered to dig in.
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+const lv = await import('../lib/services/link-vault')
+const page = (status: number, body = '', location?: string) => new Response(body, { status, headers: location ? { location } : { 'content-type': 'text/html' } })
+const calls: string[] = []
+const post = '<html><head><title>x</title><meta property="og:title" content="Hone raises $60 million seed from Benchmark and Index Ventures | LinkedIn"><meta property="og:description" content="Hone, a San Francisco AI company, has raised a $60 million seed to build AI that owns business outcomes."></head></html>'
+const fake: any = async (u: string) => { calls.push(u); return u.startsWith('https://lnkd.in/') ? page(301, '', 'https://www.linkedin.com/posts/startup-times_hone-activity-1') : page(200, post) }
+const p = await lv.linkPreview('https://lnkd.in/p/gjKPc2zn', fake)
+assert.equal(p?.title, 'Hone raises $60 million seed from Benchmark and Index Ventures')
+assert.match(p!.description, /San Francisco AI company/)
+assert.deepEqual(calls, ['https://lnkd.in/p/gjKPc2zn', 'https://www.linkedin.com/posts/startup-times_hone-activity-1'])
+
+// An outside article behind lnkd.in is never fetched: its title comes from its address.
+calls.length = 0
+const out: any = async (u: string) => { calls.push(u); return page(301, '', 'https://thestartuptimes.com/hone-raises-60-million-seed-from-benchmark-and-index-ventures/') }
+const ext = await lv.linkPreview('https://lnkd.in/abc', out)
+assert.equal(ext?.title, 'Hone raises 60 million seed from benchmark and index ventures')
+assert.deepEqual(calls, ['https://lnkd.in/abc'], 'only LinkedIn hosts are requested')
+const inter: any = async (u: string) => { calls.push(u); return page(200, '<title>LinkedIn</title><a class="btn" data-tracking-control-name="external_url_click" href="https://example.com/news/acme-raises-big-new-round-today">Continue</a>') }
+calls.length = 0
+assert.equal((await lv.linkPreview('https://lnkd.in/xyz', inter))?.title, 'Acme raises big new round today')
+assert.equal(calls.length, 1)
+assert.equal(await lv.linkPreview('https://lnkd.in/q', (async () => page(200, '<title>Sign Up | LinkedIn</title>')) as any), null, 'a login wall is not a title')
+assert.equal(lv.isPreviewHost('https://evil.com/x'), false); assert.equal(lv.isPreviewHost('https://in.linkedin.com/posts/x'), true)
+assert.equal(lv.titleFromArticleUrl('https://lnkd.in/p/gjKPc2zn'), null)
+
+// Yes digs in; the reply says what it is.
+assert.ok(lv.LINK_DIG_YES.test('Yes')); assert.ok(lv.LINK_DIG_YES.test('dig into it')); assert.ok(!lv.LINK_DIG_YES.test('yes call'))
+assert.match(lv.linkDigQuestion({ title: 'Hone raises $60 million seed' }), /^Research this and brief me: Hone raises \$60 million seed\./)
+const src = readFileSync('lib/services/link-vault.ts', 'utf8')
+assert.match(src, /Saved to your links\. Want me to dig into this\? Reply \*yes\*\./)
+console.log('✓ a shared LinkedIn link is read for what it is, outside sites are never fetched, and "yes" digs in')
