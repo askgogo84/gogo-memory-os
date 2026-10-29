@@ -76,9 +76,12 @@ export function frontDoorCandidate(text: string): boolean {
   return t.length <= 80 && /\b(?:\d{1,2}(?:st|nd|rd|th)\b|\d{1,2}\s*(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)|today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i.test(t)
 }
 
+/** Gogo's most recent stay-date question in the last 24 messages. 29 Oct live: an email alert arrived between
+ * "Which dates is the stay?" and the owner's "29 Oct to 31 Oct", so only checking the latest reply missed it. */
 async function latestAssistant(tg: number): Promise<{ content: string; at: number } | null> {
-  const { data } = await supabaseAdmin.from('conversations').select('role,content,created_at').eq('telegram_id', tg).order('created_at', { ascending: false }).limit(4)
-  const row = (data || []).find((r: any) => r.role === 'assistant')
+  const { data } = await supabaseAdmin.from('conversations').select('role,content,created_at').eq('telegram_id', tg).order('created_at', { ascending: false }).limit(24)
+  const rows = (data || []).filter((r: any) => r.role === 'assistant')
+  const row = rows.find((r: any) => askedStayField(String(r.content || ''))) || rows[0]
   return row ? { content: String(row.content || ''), at: Date.parse(String(row.created_at || '')) } : null
 }
 
