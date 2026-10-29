@@ -6,6 +6,7 @@ import * as timezone from '../lib/timezone'
 import * as intervals from '../lib/calendar-intervals'
 import * as calendarWord from '../lib/data/calendar-word'
 import {redactSecretShapedText} from '../lib/bot/memory-redaction'
+import {exactDashboardOwnerId} from '../lib/dashboard/session-access'
 
 // Actual read/helper/briefing exports with inert transports. No live tokens,
 // provider mutations, notifications or reminder writes are allowed here.
@@ -114,7 +115,8 @@ await check('dashboard retains healthy events with partial access',async()=>{
  failedRefresh.add('fixture-extra');eventRows=[{summary:'Fixture healthy event',start:{dateTime:'2026-10-18T14:00:00+05:30'}}]
  const result=await dashboard.getTodayCalendar('123');assert.equal(result.ok,true);assert.equal(result.incomplete,true);assert.equal(result.events[0].title,'Fixture healthy event')
 })
-const dayChat=load('lib/dashboard/day-chat.ts',{'@/lib/dashboard/queries':dashboard,'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/calendar-intervals':intervals,'@/lib/timezone':timezone})
+const dayChat=load('lib/dashboard/day-chat.ts',{'@/lib/dashboard/queries':dashboard,'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/calendar-intervals':intervals,'@/lib/timezone':timezone,
+ '@/lib/dashboard/session-access':{exactDashboardOwnerId}})
 for(const intent of ['summary','next','plan'])await check('dashboard '+intent+' cannot imply a free day from incomplete calendars',async()=>{
  const text=dayChat.formatDashboardDayReply({intent,tz:'Asia/Kolkata',remindersOk:true,reminders:[],calendarOk:true,calendarConnected:true,calendarIncomplete:true,calendarEvents:[],now:new Date('2026-10-18T08:00:00Z')})
  assert.match(text,/incomplete|couldn.t|missing/i);assert.doesNotMatch(text,/clear|quiet day|Longest free stretch|Nothing scheduled from now on/i)

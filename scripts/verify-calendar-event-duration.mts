@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
+import {exactDashboardOwnerId} from '../lib/dashboard/session-access'
 import * as intervals from '../lib/calendar-intervals'
 import * as timezone from '../lib/timezone'
 
@@ -20,7 +21,7 @@ const accounts=load('lib/services/google-calendar-accounts.ts',{'@/lib/supabase-
 const query=load('lib/dashboard/queries.ts',{'@/lib/dashboard/owner-ids':{linkedTelegramIds:async(id:any)=>[String(id)]},'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/ist':{istDayWindow:()=>({startUtc:new Date('2026-10-17T18:30:00Z'),endUtc:new Date('2026-10-18T18:30:00Z')})},
  '@/lib/services/meter':{},'@/lib/data/limits':{},'@/lib/calendar-intervals':intervals,'@/lib/services/google-calendar-accounts':{getCalendarAccountAccess:async()=>[{accessToken:'fixture-only',email:'synthetic@example.test'}],mergeAccountEvents:accounts.mergeAccountEvents}},
  async(_url:unknown,init:any)=>{assert.ok(!init.method||init.method==='GET');return {ok:true,json:async()=>({items:providerEvents})}})
-const day=load('lib/dashboard/day-chat.ts',{'@/lib/dashboard/queries':query,'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/calendar-intervals':intervals,'@/lib/timezone':timezone})
+const day=load('lib/dashboard/day-chat.ts',{'@/lib/dashboard/queries':query,'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/calendar-intervals':intervals,'@/lib/timezone':timezone ,'@/lib/dashboard/session-access':{exactDashboardOwnerId}})
 async function plan(now:string){
  const projected=await query.getTodayCalendar('123');assert.equal(projected.ok,true);assert.equal(projected.connected,true);assert.equal(projected.incomplete,false)
  const reply=day.formatDashboardDayReply({intent:'plan',tz:'Asia/Kolkata',remindersOk:true,reminders:[],calendarOk:true,calendarConnected:true,calendarIncomplete:false,calendarEvents:projected.events,now:new Date(now)})

@@ -2,6 +2,7 @@ import { getTodayCalendar, getTodayReminders, type ReminderRow, type CalendarEve
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {calendarInterval, collapseCalendarEntries, dailyOccurrenceOn, longSpanNote} from '@/lib/calendar-intervals'
 import {isValidTimezone, parseLocalDateTime} from '@/lib/timezone'
+import { exactDashboardOwnerId } from '@/lib/dashboard/session-access'
 
 export type DashboardDayIntent = 'summary' | 'next' | 'plan'
 
@@ -241,12 +242,14 @@ function formatDayPlan(params: Parameters<typeof formatDashboardDayReply>[0], no
 }
 
 export async function getDashboardDayReply(telegramId: string, intent: DashboardDayIntent) {
-  const tgNum = parseInt(telegramId, 10)
+  // Normal dashboard sessions already validate this owner, but this helper can
+  // also be called directly. Never truncate a malformed ID or round a BIGINT
+  // before private timezone, calendar, reminders, or approval reads.
+  const tgNum = exactDashboardOwnerId(telegramId)
+  if (tgNum === null) return "I couldn't read your full day right now. Try again in a moment."
   let tz = 'Asia/Kolkata'
-  if (Number.isFinite(tgNum)) {
-    const { data } = await supabaseAdmin.from('users').select('timezone').eq('telegram_id', tgNum).maybeSingle()
-    if (data?.timezone) tz = String(data.timezone)
-  }
+  const { data } = await supabaseAdmin.from('users').select('timezone').eq('telegram_id', tgNum).maybeSingle()
+  if (data?.timezone) tz = String(data.timezone)
 
   const [reminders, calendar, approvals] = await Promise.all([
     getTodayReminders(telegramId),
