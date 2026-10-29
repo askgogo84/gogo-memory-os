@@ -14,6 +14,7 @@ const intervals = await import('../lib/calendar-intervals.ts')
 const timezone = await import('../lib/timezone.ts')
 const calendarWord = await import('../lib/data/calendar-word.ts')
 const {redactSecretShapedText} = await import('../lib/bot/memory-redaction.ts')
+const {exactDashboardOwnerId} = await import('../lib/dashboard/session-access.ts')
 
 function load(file: string, deps: Record<string, unknown>) {
   const exports: any = {}
@@ -77,7 +78,7 @@ assert.doesNotMatch(direct.text, /Showing \d+ of/)
 console.log('PASS canonical reader collapses before bounding the display')
 
 // 2. "Plan my day" (dashboard-day) — same collapse; a daily 11:30–11:45 slot is not "ongoing" at 10:43 PM.
-const day = load('lib/dashboard/day-chat.ts', {'@/lib/dashboard/queries': {}, '@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/calendar-intervals': intervals, '@/lib/timezone': timezone})
+const day = load('lib/dashboard/day-chat.ts', {'@/lib/dashboard/queries': {}, '@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/calendar-intervals': intervals, '@/lib/timezone': timezone, '@/lib/dashboard/session-access': {exactDashboardOwnerId}})
 assert.equal(day.detectDashboardDayIntent('Plan my day'), 'plan')
 const dayEvents = [...standupCopies(9), ...real(today).slice(0, 2)].map(e => ({id: e.id, title: e.summary, time: null, startAt: e.start.dateTime, endAt: e.end.dateTime, allDay: false, blocksTime: true, timingKnown: true}))
 const planAt = (hhmm: string, events = dayEvents) => day.formatDashboardDayReply({intent: 'plan', tz, remindersOk: true, reminders: [], calendarOk: true, calendarConnected: true, calendarIncomplete: false, calendarEvents: events, now: new Date(at(today, hhmm))})
