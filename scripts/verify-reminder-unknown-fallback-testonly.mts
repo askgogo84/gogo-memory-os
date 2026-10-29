@@ -41,12 +41,12 @@ async function simulate(outcome, mode = 'template') {
       events.push('text-attempt')
       if (outcome === 'timeout_after_accept') {
         events.push('mock-provider-accepted-before-timeout')
-        const error = new Error('Synthetic network timeout; upstream may already have accepted')
+        const error = new Error('Synthetic network timeout; upstream may already have accepted') as Error & { code?: string; status?: number }
         error.code = 'ETIMEDOUT'
         throw error
       }
       if (outcome === 'definite_rejection') {
-        const error = new Error('Synthetic provider rejection; never accepted')
+        const error = new Error('Synthetic provider rejection; never accepted') as Error & { code?: number; status?: number }
         error.status = 400
         error.code = 63016
         throw error
