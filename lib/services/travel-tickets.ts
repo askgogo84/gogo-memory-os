@@ -86,7 +86,7 @@ function refreshFlightReminderText(leg:Leg){
   const zone=leg.departTz||'timezone unverified',pnr=leg.pnr||'not recorded'
   const service=[leg.airline,leg.flightNo].filter(Boolean).join(' ')||'Flight'
   const link=checkInLink(iataFromFlightNo(leg.flightNo))
-  leg.reminderMsg=`✈️ ${leg.fromCity} → ${leg.toCity} departs in 3 hours at ${leg.departLocal} (${zone})! PNR: ${pnr}`
+  leg.reminderMsg=`✈️ ${leg.flightNo?`${service} · `:''}${leg.fromCity} → ${leg.toCity} departs in 3 hours at ${leg.departLocal} (${zone})! PNR: ${pnr}`
   leg.checkinMsg=`🧳 Web check-in open — ${service} (${leg.fromCity} → ${leg.toCity}) departs ${leg.dateLabel} at ${leg.departLocal} (${zone}). Check in now to pick your seat. PNR: ${pnr}`+(link?`\n${link}`:'')
 }
 
@@ -114,7 +114,7 @@ export function buildLegs(info: NonNullable<TicketInfo>): Leg[] {
         pnr: f.pnr, seat: f.seat || null,
         passengers: fi.passengers || null,
         raw: f,
-        reminderMsg: `✈️ ${f.from} → ${f.to} departs in 3 hours at ${f.departure} (${tz || "timezone unverified"})! PNR: ${f.pnr}`,
+        reminderMsg: `✈️ ${f.flightNo ? `${[f.airline, f.flightNo].filter(Boolean).join(" ")} · ` : ""}${f.from} → ${f.to} departs in 3 hours at ${f.departure} (${tz || "timezone unverified"})! PNR: ${f.pnr}`,
         checkinMsg:
           `🧳 Web check-in open — ${f.airline} ${f.flightNo} (${f.from} → ${f.to}) ` +
           `departs ${departLabel} at ${f.departure} (${tz || "timezone unverified"}). Check in now to pick your seat. PNR: ${f.pnr}` +
@@ -193,8 +193,10 @@ export function eventReminderText(e: { name: string; time: string; venue?: strin
   return `${parts.join(', ')}.${leave ? ` Aim to leave by ${leave}.` : ''}`
 }
 /** Pre-19-Oct texts of the same reminders, so re-forwarding an old ticket updates its reminder instead of adding a second one. */
-export function legacyReminderTexts(leg: { type: string; eventName?: string | null; departLocal?: string | null; fromCity?: string | null; toCity?: string | null }): string[] {
+export function legacyReminderTexts(leg: { type: string; eventName?: string | null; departLocal?: string | null; fromCity?: string | null; toCity?: string | null; pnr?: string | null }): string[] {
   if (leg.type === 'event' && leg.eventName) return [`🎟️ ${leg.eventName} starts in 3 hours at ${leg.departLocal}!`]
+  // 29 Oct: departure reminders now name the flight; the older wording still identifies the same alert.
+  if (leg.type === 'flight') return [`✈️ ${leg.fromCity} → ${leg.toCity} departs in 3 hours at ${leg.departLocal}! PNR: ${leg.pnr || 'not recorded'}`]
   if (leg.type === 'train') return [`🚆 ${leg.fromCity} → ${leg.toCity} starts in 3 hours at ${leg.departLocal}!`]
   return []
 }
