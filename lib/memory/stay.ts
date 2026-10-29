@@ -12,7 +12,8 @@ export type Stay = {
   checkOut: string | null     // YYYY-MM-DD
   checkInTime: string | null  // "3:00 pm"
   bookingRef: string | null
-  bookedBy: string | null
+  bookedBy: string | null    // the name the hotel holds the room under
+  arrangedBy?: string | null // who made or forwarded the booking, when that is someone else
   guests: string[]
   userRole: 'booker' | 'guest' | 'unknown'
   isRequest: boolean          // a request to the hotel (add a guest, change dates), not the hotel's confirmation
@@ -40,7 +41,7 @@ export function stayFromJson(raw: any): Stay | null {
   const role = raw.userRole === 'booker' || raw.userRole === 'guest' ? raw.userRole : 'unknown'
   return {
     hotel, city: str(raw.city, 60), checkIn: iso(raw.checkIn), checkOut: iso(raw.checkOut), checkInTime: str(raw.checkInTime, 20),
-    bookingRef: str(raw.bookingRef, 40), bookedBy: str(raw.bookedBy, 80),
+    bookingRef: str(raw.bookingRef, 40), bookedBy: str(raw.bookedBy, 80), arrangedBy: str(raw.arrangedBy, 80),
     guests: Array.isArray(raw.guests) ? raw.guests.map((g: unknown) => str(g, 80)).filter(Boolean).slice(0, 8) as string[] : [],
     userRole: role, isRequest: raw.isRequest === true, address: str(raw.address, 200),
   }
@@ -55,7 +56,7 @@ export async function extractStay(text: string, opts: { userName?: string | null
   const now = opts.now || new Date()
   const prompt = `Today is ${now.toISOString().slice(0, 10)}. The user is ${opts.userName || 'the user'} (their name may appear in other spellings).
 Read this forwarded email or screenshot text. If it is about a hotel stay (a confirmation, a change, or a request to a hotel), return JSON only:
-{"isHotelStay":true,"hotel":"","city":"","checkIn":"YYYY-MM-DD or null","checkOut":"YYYY-MM-DD or null","checkInTime":"or null","bookingRef":"or null","bookedBy":"name of the person the booking is under, or null","guests":["names"],"userRole":"booker|guest|unknown","isRequest":true|false,"address":"or null"}
+{"isHotelStay":true,"hotel":"","city":"","checkIn":"YYYY-MM-DD or null","checkOut":"YYYY-MM-DD or null","checkInTime":"or null","bookingRef":"or null","bookedBy":"the name the room is booked under, or null","arrangedBy":"the person who made or sent the booking when that is a different person, or null","guests":["names"],"userRole":"booker|guest|unknown","isRequest":true|false,"address":"or null"}
 Rules: dates only when the text states the stay dates; the date an email was SENT is never a check-in date. userRole is "guest" when someone else's booking adds the user as a guest. isRequest is true when the text asks the hotel to do something (add a guest, change dates) rather than confirming. If it is not a hotel stay, return {"isHotelStay":false}. Never invent.
 TEXT:
 ${String(text).slice(0, 6000)}`
@@ -114,6 +115,8 @@ export function stayDedupeKey(s: Stay): string {
   return `stay:${slug(s.hotel)}:${slug(normCity(s.city) || 'city')}`
 }
 
+const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
+
 /** Merge a new read into what was saved: keep known facts, add new ones, never blank a field. Pure. */
 export function mergeStay(prev: Partial<Stay> | null | undefined, next: Stay): Stay {
   const p = prev || {}
@@ -124,7 +127,9 @@ export function mergeStay(prev: Partial<Stay> | null | undefined, next: Stay): S
     checkOut: next.checkOut || p.checkOut || null,
     checkInTime: next.checkInTime || p.checkInTime || null,
     bookingRef: next.bookingRef || p.bookingRef || null,
-    bookedBy: next.bookedBy || p.bookedBy || null,
+    // The forwarder re-read from the same email is not a new booking name once the real one is known.
+    bookedBy: (p.arrangedBy && next.bookedBy && same(p.arrangedBy, next.bookedBy) ? p.bookedBy : next.bookedBy) || p.bookedBy || null,
+    arrangedBy: next.arrangedBy || p.arrangedBy || (next.bookedBy && p.bookedBy && !same(next.bookedBy, p.bookedBy) ? p.bookedBy : null),
     guests: [...new Set([...(p.guests || []), ...next.guests])].slice(0, 8),
     userRole: next.userRole !== 'unknown' ? next.userRole : (p.userRole || 'unknown'),
     isRequest: next.isRequest && !!p.isRequest,
@@ -150,7 +155,7 @@ export async function saveStay(telegramId: number | string, stay: Stay, source: 
     start_at: dayStartIso(merged.checkIn, 14), end_at: dayStartIso(merged.checkOut, 11), timezone: 'Asia/Kolkata',
     location: merged.city, confirmation_ref: merged.bookingRef,
     lifecycle_state: 'planned', participants: merged.guests,
-    metadata_json: { stay: merged, city: merged.city, hotel: merged.hotel, checkIn: merged.checkIn, checkOut: merged.checkOut, bookedBy: merged.bookedBy, userRole: merged.userRole },
+    metadata_json: { stay: merged, city: merged.city, hotel: merged.hotel, checkIn: merged.checkIn, checkOut: merged.checkOut, bookedBy: merged.bookedBy, arrangedBy: merged.arrangedBy || null, userRole: merged.userRole },
     source_refs: [{ kind: source.kind, at: new Date().toISOString(), excerpt: String(source.text || '').slice(0, 300) }],
     dedupe_key: key, updated_at: new Date().toISOString(),
   }
@@ -175,7 +180,8 @@ export function stayReply(stay: Stay, trip: Trip | null): string {
   const who = stay.userRole === 'guest' && stay.bookedBy
     ? `you're a guest on ${stay.bookedBy}'s booking${stay.isRequest ? ` (${firstName(stay.bookedBy)} has asked the hotel to add you)` : ''}`
     : stay.bookedBy ? `booking under ${stay.bookedBy}` : ''
-  lines.push(`🏨 *Saved: ${stay.hotel}${stay.city && !stay.hotel.toLowerCase().includes(stay.city.toLowerCase()) ? `, ${stay.city}` : ''}*${who ? `\n${who.charAt(0).toUpperCase()}${who.slice(1)}.` : ''}`)
+  const arranged = stay.arrangedBy && stay.bookedBy && stay.arrangedBy.toLowerCase() !== stay.bookedBy.toLowerCase() ? ` Arranged by ${stay.arrangedBy}.` : ''
+  lines.push(`🏨 *Saved: ${stay.hotel}${stay.city && !stay.hotel.toLowerCase().includes(stay.city.toLowerCase()) ? `, ${stay.city}` : ''}*${who ? `\n${who.charAt(0).toUpperCase()}${who.slice(1)}.${arranged}` : ''}`)
   const dates = [stay.checkIn ? `Check-in ${fmtDay(stay.checkIn)}${stay.checkInTime ? `, ${stay.checkInTime}` : ''}` : '', stay.checkOut ? `check-out ${fmtDay(stay.checkOut)}` : ''].filter(Boolean).join(' · ')
   if (dates) lines.push(dates)
   if (stay.bookingRef) lines.push(`Ref: ${stay.bookingRef}`)
@@ -226,7 +232,7 @@ export async function ingestStayFromText(p: { telegramId: number; whatsappTo?: s
       const t = String(n.metadata_json?.text || '')
       if (addedAsGuest(t)) stay.userRole = 'guest'
       const name = bookingNameFrom(t)
-      if (name) stay.bookedBy = name
+      if (name) { if (stay.bookedBy && stay.bookedBy.toLowerCase() !== name.toLowerCase() && !stay.arrangedBy) stay.arrangedBy = stay.bookedBy; stay.bookedBy = name }
     }
   }
   const saved = await saveStay(p.telegramId, stay, { kind: p.source, text: p.text })

@@ -226,6 +226,22 @@ export async function getExecution(executionId: string, fetchImpl: typeof fetch 
 type Actor = { userId: string; legacyTelegramId: number; whatsappId: string; name: string }
 type Reply = { text: string; handledBy: string }
 
+const BOOKING_NAME = 'BOOKING_NAME:'
+
+/** The booking name the user last gave ("under the name Goverdhan"). */
+export async function savedBookingName(telegramId: number): Promise<string | null> {
+  const { data } = await supabaseAdmin.from('memories').select('content').eq('telegram_id', telegramId).like('content', `${BOOKING_NAME}%`).order('id', { ascending: false }).limit(1)
+  const v = String(data?.[0]?.content || '').slice(BOOKING_NAME.length).trim()
+  return v && /^[A-Za-z][A-Za-z .'-]{1,60}$/.test(v) ? v : null
+}
+
+async function rememberBookingName(telegramId: number, name: string) {
+  const clean = String(name || '').trim()
+  if (!/^[A-Za-z][A-Za-z .'-]{1,60}$/.test(clean) || /^(?:gogo|askgogo|me|myself)$/i.test(clean)) return
+  if ((await savedBookingName(telegramId))?.toLowerCase() === clean.toLowerCase()) return
+  await supabaseAdmin.from('memories').insert({ telegram_id: telegramId, content: `${BOOKING_NAME}${clean}` })
+}
+
 async function latestAssistantText(telegramId: number) {
   const { data } = await supabaseAdmin.from('conversations').select('role,content').eq('telegram_id', telegramId).order('created_at', { ascending: false }).limit(3)
   return String((data || []).find((r: any) => r.role === 'assistant')?.content || '')
@@ -304,8 +320,13 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
   }
 
   // "…under the name Goverdhan" wins; otherwise the account name.
-  const named = params.text.match(/\bunder\s+(?:the\s+name\s+(?:of\s+)?)?([A-Z][A-Za-z.'-]{1,30}(?:\s+[A-Z][A-Za-z.'-]{1,30})?)/)
-  const guestName = named?.[1] || String(params.actor.name || 'my client').split(/\s+/)[0]
+  const namedRaw = params.text.match(/\bunder\s+the\s+name\s+(?:of\s+)?([a-z][a-z.'-]{1,30}(?:\s+(?!for\b|at\b|on\b|and\b|please\b)[a-z][a-z.'-]{1,30})?)/i) || params.text.match(/\bunder\s+([A-Z][A-Za-z.'-]{1,30}(?:\s+[A-Z][A-Za-z.'-]{1,30})?)/)
+  const named = namedRaw ? [namedRaw[0], namedRaw[1].replace(/\b\w/g, c => c.toUpperCase())] : null
+  // 29 Oct live: both demo bookings were made "under Gogo" (the account name, which a restaurant hears as AskGogo).
+  // A name the user gave once ("under the name Goverdhan") is remembered and used for later calls.
+  const savedName = named?.[1] ? null : await savedBookingName(tg).catch(() => null)
+  const guestName = named?.[1] || savedName || String(params.actor.name || 'my client').split(/\s+/)[0]
+  if (named?.[1]) await rememberBookingName(tg, named[1]).catch(() => {})
   const now = new Date().toISOString()
   let plan: CallPlan
   if (cmd.kind === 'test') {

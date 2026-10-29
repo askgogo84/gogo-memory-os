@@ -1987,7 +1987,7 @@ async function selectedSavedContextBlock(user: Pick<ResolvedUser,'id'|'telegramI
   // Env-gated so strict vm harnesses (no process) never load the module.
   const memEnv=(globalThis as any).process?.env
   const trips:string[]=memEnv&&memEnv.GOGO_MEMORY!=='off'&&(memEnv.GOGO_BRAIN_USERS||memEnv.VERCEL_ENV==='production')
-    ?await import('@/lib/memory/life-graph').then(async m=>m.tripLines(await m.loadTrips(user.telegramId))).catch(()=>[] as string[]):[]
+    ?await import('@/lib/memory/life-graph').then(m=>m.tripContextLines(user.telegramId)).catch(()=>[] as string[]):[]
   const tripBlock=trips.length?`\n\nTrips (linked bookings, owner-bound):\n${trips.map(l=>`- ${l}`).join('\n')}`:''
   return contextPack?renderContextBlock(contextPack,3200)+tripBlock:'Saved-context lookup failed. Tell the user retrieval is unavailable; do not claim no saved record exists.'+tripBlock
 }
