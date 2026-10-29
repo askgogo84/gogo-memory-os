@@ -184,8 +184,9 @@ function calendarRangeForTarget(target: CalendarDateTarget) {
 
 function cleanTitle(text: string) {
   return (text || 'Meeting')
-    .replace(/^(add|create|schedule|book|set up)\s+/i, '')
-    .replace(/\b(?:to|on|in|into)\s+(?:my|the|your)\s+(?:calendar|calender|calandar)\b/gi, '')
+    .replace(/^(add|create|schedule|book|set up|put)\s+/i, '')
+    // 29 Oct live: "Add to calendar meeting at 4 pm" was titled "To meeting". The possessive is optional.
+    .replace(/\b(?:to|on|in|into)\s+(?:(?:my|the|your)\s+)?(?:google\s+)?(?:calendar|calender|calandar)\b\s*[:\-–]?/gi, '')
     .replace(/\b(on|in my)?\s*calendar\b/gi, '')
     .replace(/\btomorrow\b/gi, '')
     .replace(/\btoday\b/gi, '')
@@ -198,6 +199,7 @@ function cleanTitle(text: string) {
     .replace(/\b\d{1,2}(:\d{2})?\s*(am|pm)\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
+    .replace(/[\s,.;:–-]+$/, '')
 }
 
 // A concise event title for a preparation / needs-date request, so the persisted follow-up doesn't

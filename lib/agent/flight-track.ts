@@ -235,9 +235,14 @@ async function landedTripNote(tg: string, arrivalCity: string, now: Date): Promi
   if (!arrivalCity || !env || env.GOGO_MEMORY === 'off' || !(env.GOGO_BRAIN_USERS || env.VERCEL_ENV === 'production')) return ''
   try {
     const g = await import('../memory/life-graph')
-    const trip = g.tripFor(await g.loadTrips(tg, now), arrivalCity, now.toISOString())
+    const trips = g.applyTripNotes(await g.loadTrips(tg, now))
+    const trip = g.tripFor(trips, arrivalCity, now.toISOString())
     if (!trip) return ''
-    const extras = trip.items.filter(i => i.kind === 'stay' || i.kind === 'cab').map(i => g.itemLine(i, 'Asia/Kolkata'))
+    // Meetings later today in the city, so the landing alert says how much time there is.
+    const events = await Promise.race([g.loadTripCalendar(tg, [trip], now.getTime()), new Promise<any[]>(r => setTimeout(() => r([]), 2500))]).catch(() => [])
+    g.linkCalendar([trip], events)
+    const endOfDay = now.getTime() + 14 * 36e5
+    const extras = g.orderItems(trip.items).filter(i => i.kind === 'stay' || i.kind === 'cab' || i.kind === 'note' || (i.kind === 'event' && Date.parse(String(i.startAt)) >= now.getTime() && Date.parse(String(i.startAt)) <= endOfDay)).map(i => g.itemLine(i, 'Asia/Kolkata'))
     return extras.length ? `\n\nFor your ${trip.city} trip:\n${extras.join('\n')}` : ''
   } catch { return '' }
 }

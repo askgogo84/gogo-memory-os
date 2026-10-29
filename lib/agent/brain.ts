@@ -69,7 +69,7 @@ Choose exactly one tool:
 - later: the user asks about the results of a search Gogo is still running (an open travel or flight search in Open tasks, results not yet shown). Gogo will answer it the moment the results arrive, so do not ask them anything.
 - handle: anything that needs Gogo's tools (reminders, lists, expenses, email, calendar, documents, web answers, prices, shopping, restaurants, travel search and booking, watches, memory). Write the instruction the way the user would say it if they had been fully explicit: resolve "it/that/this" to the named thing (flight number, date, product, person), keep every detail the user gave (including every "not", "don't", "never" and "without"), add nothing they did not ask for. If the message is already explicit, or it answers a question Gogo just asked (a name, a choice, details for a booking), set keep_original true. To book or pick an option from a numbered list Gogo already showed (flights, hotels, products), the instruction is exactly "book <number>" (or "pick <number>") using that list's number: never restate the route, date or airline, because that starts a new search.
 
-Trips: the Trips section links each trip's flights, hotel stay and cab. Questions like "where am I staying?", "what's the booking under?", "when do I check out?" or "my cab details" are answered with reply from that section; if a detail is not there, say it is not saved yet and ask for it.
+Trips: the Trips section links each trip's flights, hotel stay and cab. Questions like "where am I staying?", "what's the booking under?", "when do I check out?" or "my cab details" are answered with reply from that section; if a detail is not there, say it is not saved yet and ask for it. When asked about a trip, give every linked line: flights, cab, stay, 📅 meetings in that city (with the gap after landing), 📌 notes (e.g. the card for incidentals) and 🛂 travel documents. "Booking name" is the name the hotel holds the room under, the one to give at check-in; "arranged by" is who made the booking. Never combine them as one name. If a document line says the name may be misread, say so and ask the user to confirm the name.
 
 Hard rules: never approve, confirm, pay or accept anything on the user's behalf; never add words like yes, approve, confirm or pay to an instruction; never invent facts, prices or statuses.
 
@@ -186,7 +186,7 @@ export async function loadBrainContext(p: { telegramId: number; text: string; na
       return summaryLines(s, evidence)
     }), 900),
     // 29 Oct: connected memory. Flights, stays and cabs that share a city and dates are one trip.
-    withTimeout(import('../memory/life-graph').then(async m => m.tripLines(await m.loadTrips(p.telegramId, now), timezone, now.getTime())), 1200),
+    withTimeout(import('../memory/life-graph').then(m => m.tripContextLines(p.telegramId, now, timezone)), 2000),
   ])
   const turns = (convo as any[]).filter(r => r.role === 'user' || r.role === 'assistant').reverse()
     .map(r => ({ role: r.role, content: clean(r.content, 900), createdAt: r.created_at || null })) as BrainTurn[]
@@ -196,7 +196,7 @@ export async function loadBrainContext(p: { telegramId: number; text: string; na
     'Upcoming reminders': ctx.upcomingReminders.map(line), 'Travel': ctx.travelLegs.map(line), 'Calendar (today/tomorrow)': ctx.calendarEvents.map(line),
     'Saved documents and tickets': ctx.savedAssetsIndex.map(line), 'Standing preferences': ctx.preferences.map(x => clean(x, 160)), 'Relevant memories': ctx.memoryFacts.map(line),
   } : {}
-  if ((trips as string[] | null)?.length) sections['Trips (linked bookings: flights, hotel stays, cabs)'] = trips as string[]
+  if ((trips as string[] | null)?.length) sections['Trips (linked bookings: flights, hotel stays, cabs, meetings in the city, notes, travel documents)'] = trips as string[]
   const earlier = summary || []
   if (earlier.length) sections['Earlier conversation summary'] = earlier
   const other = otherContextLines(otherFacts)

@@ -19,7 +19,7 @@ assert.ok(trips.find(t => t.city === 'Kochi' && t.items.length === 1), 'a differ
 assert.equal(g.normCity('Mumbai, T1'), 'mumbai'); assert.equal(g.normCity('Bombay'), 'mumbai'); assert.equal(g.normCity('BLR'), 'bengaluru')
 const lines = g.tripLines(trips, 'Asia/Kolkata', Date.parse('2026-10-29T03:00:00Z'))
 assert.ok(lines.some(l => /^Mumbai trip/.test(l)), lines.join('\n'))
-assert.ok(lines.some(l => /Four Seasons Hotel Mumbai · dates not given · booking under Mukesh Chamedia, you are an added guest/.test(l)), lines.join('\n'))
+assert.ok(lines.some(l => /Four Seasons Hotel Mumbai · dates not given · booking name: Mukesh Chamedia, you are an added guest/.test(l)), lines.join('\n'))
 assert.ok(lines.some(l => /6E5256.*PNR F8C4UF/.test(l)))
 
 // The stay read from Mukesh's email.

@@ -166,8 +166,9 @@ export async function tryLifeGraphTurn(p: { telegramId: number; whatsappTo?: str
         if (stayItem && underName) {
           const cur = stayFromJson(stayItem.meta?.stay)
           if (cur) {
-            const saved = await saveStay(p.telegramId, { ...cur, bookedBy: underName }, { kind: 'forwarded_message', text })
-            if (saved) return { text: `📌 Noted: the ${saved.stay.hotel} booking is in the name of ${saved.stay.bookedBy}.`, handledBy: 'life-graph-note' }
+            const arrangedBy = cur.bookedBy && cur.bookedBy.toLowerCase() !== underName.toLowerCase() ? (cur.arrangedBy || cur.bookedBy) : cur.arrangedBy || null
+            const saved = await saveStay(p.telegramId, { ...cur, bookedBy: underName, arrangedBy }, { kind: 'forwarded_message', text })
+            if (saved) return { text: `📌 Noted: the ${saved.stay.hotel} booking is in the name of ${saved.stay.bookedBy}${saved.stay.arrangedBy ? ` (arranged by ${saved.stay.arrangedBy})` : ''}. Give that name at check-in.`, handledBy: 'life-graph-note' }
           }
         }
         const key = `note:${trip.key}:${text.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 80)}`

@@ -20,6 +20,7 @@ import { storeDocument, getDocumentSignedUrl } from '@/lib/services/document-sto
 import { createDocumentShortLink, shortLinkUrl } from '@/lib/services/document-links'
 import { embedText } from '@/lib/services/embeddings'
 import { indexMemory } from '@/lib/services/memory-index'
+import { labelNameMismatch } from '@/lib/memory/names'
 import { downloadTwilioMediaAsDataUrl } from '@/lib/services/image-note-reader'
 import {
   saveFollowupState,
@@ -183,6 +184,7 @@ Per-type fields:
 - receipt: { "merchant": , "amount": , "date": , "reference_number": , "summary": }
 - order_estimate: { "vendor": , "customer": , "amount": , "date": , "reference_number": , "summary": }
 - passport: { "name": , "passport_number": , "dob": , "issue_date": , "expiry_date": , "nationality": }
+  For a passport "name", read Given Name(s) then Surname exactly as printed and cross-check the two machine-readable lines at the bottom (P<IND SURNAME<<GIVEN<NAMES). If the printed name is unclear, use the MRZ spelling. Never guess letters.
 - id_document: { "name": , "document_kind": , "id_number": , "dob": , "expiry_date": }
 - invoice: { "vendor": , "amount": , "date": , "reference_number": , "summary": }
 - business_card: { "name": , "designation": , "company": , "phones": "<all phone/mobile numbers, comma-separated, as printed>", "emails": "<comma-separated>", "address": , "website": }
@@ -339,7 +341,7 @@ export function documentExpired(raw: string | null | undefined, now = Date.now()
   return Number.isFinite(d) && d + 86_400_000 < now
 }
 
-function buildConfirmation(ex: AssetExtraction): string {
+function buildConfirmation(ex: AssetExtraction, userLabel: string | null = null): string {
   const f = ex.fields
 
   if (ex.assetType === 'payment_proof') {
@@ -367,7 +369,9 @@ function buildConfirmation(ex: AssetExtraction): string {
     ].filter(Boolean).join('\n')
     // 29 Oct live: a passport that expired in 2023 was saved with no warning before the owner's hotel check-in.
     const expired = documentExpired(fmt(f.expiry_date) || expiry)
-    return `✅ Saved — ${label}${line2 ? `\n${line2}` : ''}${expired ? `\n\n⚠️ This ${isPassport ? 'passport' : 'ID'} has expired. A hotel or airline may not accept it.` : ''}\n\nI've securely saved the original file and the details.\n\nYou can ask later:\n${asks}`
+    // 29 Oct live: a file saved as "Aman passport" was read as "RUDITA CHANEDJA". Say so instead of filing it silently.
+    const mismatch = userLabel && fmt(f.name) && labelNameMismatch(userLabel, fmt(f.name)) ? `\n\n⚠️ You called this "${userLabel}", but I read the name as ${fmt(f.name)}. If I misread it, reply with the correct name.` : ''
+    return `✅ Saved — ${label}${line2 ? `\n${line2}` : ''}${mismatch}${expired ? `\n\n⚠️ This ${isPassport ? 'passport' : 'ID'} has expired. A hotel or airline may not accept it.` : ''}\n\nI've securely saved the original file and the details.\n\nYou can ask later:\n${asks}`
   }
 
   if (ex.assetType === 'business_card') return `${businessCardLines(f, `📇 Saved ${fmt(f.name) ? `${fmt(f.name)}'s card` : 'business card'}`)}\n\nI've kept the original too. Ask anytime, e.g. "${fmt(f.name) || 'their'}${fmt(f.name) ? "'s" : ''} number" or "show me ${fmt(f.name) || 'that'} card".`
@@ -559,7 +563,7 @@ export async function saveAssetMemory(params: {
       })
     }
 
-    return { reply: buildConfirmation(ex) }
+    return { reply: buildConfirmation(ex, userLabel) }
   } catch (err: any) {
     console.error('[asset-memory] save failed (non-fatal):', err?.message || err)
     return null
