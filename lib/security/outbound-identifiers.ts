@@ -36,5 +36,14 @@ export function maskOutboundIdentifiers(text: string): string {
   })
   // PAN: AAAAA9999A, 4th letter is the holder type.
   out = out.replace(/\b[A-Z]{3}[ABCFGHLJPT][A-Z]\d{4}[A-Z]\b/g, m => `PAN ending ${m.slice(-4)}`)
-  return out
+  return brandSafe(out)
+}
+
+// 29 Oct live: "Please send a specific future date and time for Claude first" (an old test reminder named the
+// model). The assistant is Gogo; the underlying model or vendor is never named to a user. Links and email addresses
+// (claude.ai, anthropic.com) are left alone. Pure.
+export function brandSafe(text: string): string {
+  return String(text ?? '')
+    .replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g, m => /['’]s$/.test(m) ? 'Gogo’s' : 'Gogo')
+    .replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, 'our AI provider')
 }

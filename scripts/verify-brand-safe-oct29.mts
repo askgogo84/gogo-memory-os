@@ -1,0 +1,21 @@
+// 29 Oct live: "Please send a specific future date and time for Claude first" — after "Yes" to a price-watch question.
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+const { brandSafe } = await import('../lib/security/outbound-identifiers')
+assert.equal(brandSafe('Please send a specific future date and time for Claude first.'), 'Please send a specific future date and time for Gogo first.')
+assert.equal(brandSafe("I'm Claude, made by Anthropic."), "I'm Gogo, made by our AI provider.")
+assert.equal(brandSafe("Claude's answer"), 'Gogo’s answer')
+assert.equal(brandSafe('Built on Claude Sonnet 4.5'), 'Built on Gogo')
+assert.equal(brandSafe('See https://claude.ai/artifact/x and support@anthropic.com'), 'See https://claude.ai/artifact/x and support@anthropic.com', 'links and emails are untouched')
+assert.equal(brandSafe('Claudette and Claudia'), 'Claudette and Claudia')
+assert.match(readFileSync('lib/security/outbound-identifiers.ts', 'utf8'), /return brandSafe\(out\)/)
+assert.match(readFileSync('app/api/dashboard/chat/route.ts', 'utf8'), /return brandSafeResponse\(res\)/)
+assert.match(readFileSync('components/dashboard/gogo-chat.tsx', 'utf8'), /content:brandSafe\(message\.content\)/)
+console.log('✓ replies never name Claude or Anthropic (WhatsApp, web chat, chat history)')
+const wc = await import('../lib/agent/watch-command')
+assert.equal(wc.parseOffersBasis('listed price'), 'excluded'); assert.equal(wc.parseOffersBasis('Listed'), 'excluded')
+assert.equal(wc.parseOffersBasis('with offers'), 'included'); assert.equal(wc.parseOffersBasis('offers'), 'included')
+assert.equal(wc.parseOffersBasis('yes'), null)
+assert.match(readFileSync('lib/agent/watch-command.ts', 'utf8'), /reply \*listed price\* to use the price the store shows, or \*with offers\*/)
+assert.match(readFileSync('lib/bot/process-message.ts', 'utf8'), /lastAssistantMentions\(resolvedUser\.telegramId, pendingRaw\.name\)/)
+console.log('✓ "Yes" to the offers question re-asks with two exact replies; an old friend reminder never claims it')

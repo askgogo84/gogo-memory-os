@@ -899,5 +899,17 @@ async function withChatChannel(req: NextRequest) {
       }
     } catch (err: any) { console.error('DASHBOARD_CHAT_CHANNEL_FAILED:', String(err?.message || err).slice(0, 160)) }
   }
-  return res
+  return brandSafeResponse(res)
+}
+
+// The assistant is Gogo: a reply never names the underlying model or vendor (29 Oct live: "…for Claude first").
+async function brandSafeResponse(res: any) {
+  try {
+    if (!res || typeof res.clone !== 'function') return res
+    const body: any = await res.clone().json()
+    if (!body || typeof body.text !== 'string') return res
+    // Same rule as lib/security/outbound-identifiers brandSafe, inline: route harnesses cannot load extra modules.
+    const text = String(body.text).replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g, (m: string) => /['’]s$/.test(m) ? 'Gogo’s' : 'Gogo').replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, 'our AI provider')
+    return text === body.text ? res : NextResponse.json({ ...body, text }, { status: res.status })
+  } catch { return res }
 }

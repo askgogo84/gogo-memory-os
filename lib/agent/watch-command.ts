@@ -462,6 +462,9 @@ function productHasStorageEvidence(product:string){
 // Returns null when the text does not decide the basis.
 export function parseOffersBasis(text:string):'included'|'excluded'|null{
   const raw=clean(text,600).toLowerCase()
+  // Short answers to "include bank/card offers or listed price only?": "listed", "listed price", "with offers".
+  if(/^\s*(?:the\s+)?(?:listed|selling|list)(?:\s+(?:selling\s+)?price)?(?:\s+only)?\s*[.!]*\s*$/.test(raw))return 'excluded'
+  if(/^\s*(?:with\s+|include\s+|including\s+)?(?:bank\s+|card\s+|bank\/card\s+)?offers?(?:\s+included)?\s*[.!]*\s*$/.test(raw)||/^\s*(?:include|included|include\s+them)\s*[.!]*\s*$/.test(raw))return 'included'
   if(/\blisted?\s+(?:selling\s+)?price\s+only\b/.test(raw))return 'excluded'
   if(/\bselling\s+price\s+only\b/.test(raw))return 'excluded'
   if(/\b(?:exclude|excluding|without|no|not|don'?t|do\s+not|ignore|ignoring|skip)\b[^.!?]*\boffers?\b/.test(raw))return 'excluded'
@@ -668,6 +671,12 @@ export async function tryRunPriceWatchClarification(params:{actor:AgentActor;sur
   const replyNA=declaresStorageNotApplicable(params.text)
   // If the reply advances no open slot it is unrelated to this clarification — let normal
   // routing handle it rather than hijacking the message.
+  // 29 Oct live: "Yes" to "include offers or listed price only?" fell through to an old friend-reminder question.
+  // A bare yes/no/ok to an either-or question is not an answer: ask once more with the two exact replies.
+  if(!replyStorage&&!replyOffers&&!replyNA&&/^\s*(?:yes|yeah|yep|yup|ok|okay|sure|no|nope|both|either|any|haan|ha)\s*[.!]*\s*$/i.test(params.text)&&p.offers==='unspecified'){
+    return {runId:'price-watch-clarify',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+      text:`Just to be sure for the ${p.threshold} alert: reply *listed price* to use the price the store shows, or *with offers* to count bank/card offers.`,handledBy:'price-watch-clarification'}
+  }
   if(!replyStorage&&!replyOffers&&!replyNA)return null
 
   if(replyStorage){p.storage=replyStorage;p.storageNA=false}

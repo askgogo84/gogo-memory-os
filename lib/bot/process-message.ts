@@ -483,6 +483,16 @@ export function isUsageCommand(text: string) {
     || /^(?:what(?:'s|\s+is)\s+)?my\s+(?:usage|quota|allowance)(?:\s+this\s+month)?\??$/.test(lower)
 }
 
+/** True when Gogo's most recent reply names `name` or a friend reminder. Fails open (true) if the read fails. */
+async function lastAssistantMentions(telegramId: number, name: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabaseAdmin.from('conversations').select('content').eq('telegram_id', telegramId).eq('role', 'assistant').order('created_at', { ascending: false }).limit(1)
+    if (error || !data?.length) return true
+    const last = String(data[0].content || '').toLowerCase()
+    return last.includes(String(name || '').toLowerCase()) || /\bfriend\b|\bwhatsapp number\b|\bremind (?:him|her|them)\b/.test(last)
+  } catch { return true }
+}
+
 /** A message handing Gogo a secret to keep: a card number, an OTP, a password, PIN or CVV. Pure. */
 export function secretDeclaration(text: string): 'card' | 'otp' | 'password' | null {
   const t = String(text || '')
@@ -828,7 +838,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // ── Friend reminders (1C) — establish time, recipient and owner approval first ──
   {
     const mayContinueFriend = isFriendReminderFollowupCandidate(incomingText)
-    const pending = mayContinueFriend ? await getPendingFriend(resolvedUser.telegramId) : null
+    const pendingRaw = mayContinueFriend ? await getPendingFriend(resolvedUser.telegramId) : null
+    // 29 Oct live: "Yes" to a price-watch question was taken as an answer to a friend-reminder question from five
+    // hours earlier. A reply belongs to the friend reminder only when Gogo's latest message was about it.
+    const pending = pendingRaw && await lastAssistantMentions(resolvedUser.telegramId, pendingRaw.name) ? pendingRaw : null
     if (pending && !detectFriendReminder(incomingText)) {
       const maybeNumber = normalizePhoneNumber(incomingText)
       const answer = incomingText.trim()
