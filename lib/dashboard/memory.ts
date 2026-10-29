@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactDashboardOwnerId } from '@/lib/dashboard/session-access'
 import { createDocumentShortLink, shortLinkUrl } from '@/lib/services/document-links'
 
 type RawDoc = {
@@ -135,8 +136,10 @@ function safeSubtitle(doc: RawDoc, sensitive: boolean): string {
 }
 
 export async function getDashboardMemory(telegramId: string): Promise<DashboardMemory> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return { ok: true, items: [] }
+  // The downstream document/link contracts take a safe numeric legacy owner.
+  // Never round a persisted BIGINT or partially accept a malformed session ID.
+  const tgNum = exactDashboardOwnerId(telegramId)
+  if (tgNum === null) return { ok: true, items: [] }
 
   try {
     const { data, error } = await supabaseAdmin
