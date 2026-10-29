@@ -99,7 +99,6 @@ function synthetic(scenario: Scenario = {}) {
         limit(_count: number) { return query },
         maybeSingle: async () => {
           const result = execute()
-          if (!result.data?.length) console.log('FIXTURE QUERY MISS', table, JSON.stringify(predicates), 'action', action)
           return { data: result.data?.[0] ?? null, error: result.error }
         },
         then(resolve: (result: unknown) => unknown, reject?: (err: unknown) => unknown) {
@@ -132,7 +131,7 @@ function synthetic(scenario: Scenario = {}) {
   const removeMember = compiledFunction('removeMember', { supabaseAdmin: db, applyMemberChange, check, audit })
   const getSharedArtifact = compiledFunction('getSharedArtifact', {
     supabaseAdmin: db, requireWorkspaceRole, check, audit,
-    WorkspaceError, UUID_RE: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+    WorkspaceError, UUID_RE: /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     displayNames: async () => new Map([['departing', 'Fixture contributor']]),
   })
   return { members, shares, log, removeMember, getSharedArtifact }
@@ -147,7 +146,7 @@ async function test(kind: 'control' | 'safety', label: string, f: () => Promise<
     console.log('PASS [' + kind + '] ' + label)
   } catch (e) {
     failures++
-    console.error('FAIL [' + kind + '] ' + label + ': ' + (e instanceof Error ? e.stack : String(e)).slice(0, 1500))
+    console.error('FAIL [' + kind + '] ' + label + ': ' + String(e).slice(0, 350))
   }
 }
 
