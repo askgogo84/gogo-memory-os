@@ -128,3 +128,5 @@ for (const t of ['test call me', 'Call Toit Indiranagar and book a table for 4 a
 for (const t of ['Call Airtel customer care about my broadband outage', 'Remind me to call Nithin tomorrow', 'What time is my call with Divya?']) assert.ok(!callTest.test(t), t)
 assert.match(readFileSync('app/api/dashboard/chat/route.ts', 'utf8'), /if\(!callCommand&&/, 'web chat also sends call commands to the call flow')
 console.log('✓ 29 Oct: call commands skip the brain and reach the call flow')
+assert.match(readFileSync('lib/agent/voice-call.ts', 'utf8'), /The venue named after "call" is the venue/, 'a call names the venue, never "8 pm"')
+console.log('✓ 29 Oct: the call plan names the venue')
