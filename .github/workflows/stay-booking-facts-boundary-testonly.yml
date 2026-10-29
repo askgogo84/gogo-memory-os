@@ -1,0 +1,31 @@
+# TEST-ONLY EXPECTED RED: independent synthetic review of already-deployed #1084 stay facts.
+# Do NOT merge or deploy. No provider/DB/production/customer actions.
+name: Stay Booking Facts Boundary — Inert Test-Only
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-stay-booking-facts-boundary-testonly.mts'
+      - '.github/workflows/stay-booking-facts-boundary-testonly.yml'
+      - 'lib/memory/stay.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-negative-boundary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install exact lockfile
+        run: npm ci
+      - name: Exercise actual stay booking helper and note replay loop with inert synthetic inputs
+        run: npx --no-install tsx scripts/verify-stay-booking-facts-boundary-testonly.mts
