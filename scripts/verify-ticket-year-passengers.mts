@@ -51,7 +51,7 @@ assert.match(tickets, /compileTravelWatchersForUser\(ctx\.telegramId\)/)
 assert.match(tickets, /if \(t\.tracking\) trackingTail/, 'tracking is claimed only when the monitor is active')
 const route = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
 const lease = route.slice(route.indexOf('let brainLease = await acquireBrainUserLease'), route.indexOf("return new NextResponse('Busy'"))
-assert.match(lease, /Date\.now\(\) - waitStart < 45_000/, 'a busy user makes the next photo wait, not fail')
+assert.match(lease, /numMedia > 0 \? 45_000 : 70_000[\s\S]*Date\.now\(\) - waitStart < leaseWaitMs/, 'a busy user makes the next photo wait, not fail')
 assert.match(route, /export const maxDuration = 120/)
 
 console.log('Ticket year + passengers: boarding passes without a year are dated, both legs are scheduled, passengers are named as people say them, and a second forwarded photo waits its turn')

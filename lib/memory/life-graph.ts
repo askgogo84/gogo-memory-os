@@ -6,7 +6,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export type GraphItem = {
   id: string
-  kind: 'flight' | 'train' | 'stay' | 'cab' | 'event' | 'other'
+  kind: 'flight' | 'train' | 'stay' | 'cab' | 'note' | 'event' | 'other'
   title: string
   city: string | null
   fromCity: string | null
@@ -40,10 +40,10 @@ export function itemFromLifeEvent(row: any): GraphItem | null {
   const meta = row.metadata_json && typeof row.metadata_json === 'object' ? row.metadata_json : {}
   const loc = String(row.location || '')
   const [from, to] = loc.includes('→') ? loc.split('→').map(s => s.trim()) : [null, loc || null]
-  const kind: GraphItem['kind'] = sub === 'flight' ? 'flight' : sub === 'train' ? 'train' : sub === 'hotel_stay' ? 'stay' : sub === 'cab' ? 'cab' : row.event_type === 'event' ? 'event' : 'other'
+  const kind: GraphItem['kind'] = sub === 'flight' ? 'flight' : sub === 'train' ? 'train' : sub === 'hotel_stay' ? 'stay' : sub === 'cab' ? 'cab' : sub === 'trip_note' ? 'note' : row.event_type === 'event' ? 'event' : 'other'
   return {
     id: String(row.id), kind, title: String(row.title || '').slice(0, 160),
-    city: kind === 'stay' || kind === 'cab' ? (meta.city || to || null) : to, fromCity: from,
+    city: kind === 'stay' || kind === 'cab' || kind === 'note' ? (meta.city || to || null) : to, fromCity: from,
     startAt: row.start_at || null, endAt: row.end_at || null, ref: row.confirmation_ref || null, meta,
   }
 }
@@ -59,7 +59,7 @@ export function linkTrips(items: GraphItem[]): { trips: Trip[]; loose: GraphItem
   const returned = new Set<Trip>()
   for (const item of sorted) {
     const city = normCity(item.city)
-    if (!city || !['flight', 'train', 'stay', 'cab'].includes(item.kind)) { loose.push(item); continue }
+    if (!city || !['flight', 'train', 'stay', 'cab', 'note'].includes(item.kind)) { loose.push(item); continue }
     const s = ms(item.startAt), e = Number.isFinite(ms(item.endAt)) ? ms(item.endAt) : s
     // A flight or train leaving a trip city within 21 days of arriving is that trip's way home, not a new trip.
     if ((item.kind === 'flight' || item.kind === 'train') && Number.isFinite(s)) {
@@ -104,6 +104,7 @@ export function itemLine(i: GraphItem, tz: string): string {
     const who = m.bookedBy ? `booking under ${m.bookedBy}${m.userRole === 'guest' ? ', you are an added guest' : ''}` : ''
     return `🏨 ${m.hotel || i.title}${m.city ? `, ${m.city}` : ''} · ${dates}${who ? ` · ${who}` : ''}${i.ref ? ` · ref ${i.ref}` : ''}`
   }
+  if (i.kind === 'note') return `📌 ${i.meta?.text || i.title}${i.meta?.from ? ` (from ${i.meta.from})` : ''}`
   if (i.kind === 'cab') return `🚕 Cab: ${i.meta?.details || i.title}${i.startAt ? ` · ${clock(i.startAt, tz)}` : ''}`
   const icon = i.kind === 'train' ? '🚆' : '✈️'
   return `${icon} ${i.title} · departs ${clock(i.startAt, tz) || 'time not recorded'}${i.endAt ? ` · arrives ${clock(i.endAt, tz)}` : ''}${i.ref ? ` · PNR ${i.ref}` : ''}`
@@ -172,4 +173,10 @@ export function tripFor(trips: Trip[], city: string, dayIso?: string | null): Tr
 /** The arriving leg of a trip (first flight or train into the city). Pure. */
 export function arrivalLeg(t: Trip): GraphItem | null {
   return t.items.find(i => (i.kind === 'flight' || i.kind === 'train') && normCity(i.city) === normCity(t.city)) || null
+}
+
+/** The trip happening now, or starting within 3 days (the one forwarded notes and cab details belong to). Pure. */
+export function currentTrip(trips: Trip[], now = Date.now()): Trip | null {
+  const live = trips.find(t => { const st = Date.parse(String(t.startAt)), e = Date.parse(String(t.endAt || t.startAt)); return st - 12 * 36e5 <= now && now <= e + DAY })
+  return live || trips.find(t => Date.parse(String(t.startAt)) > now && Date.parse(String(t.startAt)) - now < 3 * DAY) || null
 }

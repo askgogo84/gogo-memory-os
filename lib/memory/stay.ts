@@ -3,7 +3,7 @@
 // "you've added me as the 2nd guest", filed as a generic note dated 28 Oct, and never linked to the
 // BLR → BOM flight landing that morning.
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { loadTrips, tripFor, arrivalLeg, normCity, type Trip } from './life-graph'
+import { loadTrips, tripFor, arrivalLeg, normCity, currentTrip, type Trip } from './life-graph'
 
 export type Stay = {
   hotel: string
@@ -76,6 +76,24 @@ ${String(text).slice(0, 6000)}`
     console.error('STAY_EXTRACT_FAILED:', String(err?.message || err).slice(0, 120))
     return null
   }
+}
+
+/** "Four Seasons Hotels and Resorts" + Mumbai → "Four Seasons Mumbai": a chain name is not the property. Pure. */
+export function propertyName(hotel: string, city: string | null): string {
+  const raw = String(hotel || '').trim()
+  const base = raw.replace(/\s+(?:hotels?\s*(?:and|&)\s*resorts?|hotels?|resorts?|group|international)\s*$/i, '').trim() || raw
+  if (base === raw || !city) return base
+  const esc = city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`\\b${esc}\\b`, 'i').test(base) ? base : `${base} ${city}`
+}
+
+/** "pls add Goverdhan Dodammane as the 2nd guest" on someone else's booking: the user is a guest. Pure. */
+export function inferGuestRole(text: string, userNames: string[]): boolean {
+  const m = String(text || '').match(/\badd\s+([A-Za-z][A-Za-z .'-]{1,60}?)\s+as\s+(?:the\s+|a\s+|an\s+)?(?:\d+(?:st|nd|rd|th)\s+|second\s+|additional\s+|extra\s+)?guest\b/i)
+  if (!m) return false
+  const named = m[1].toLowerCase().split(/\s+/)
+  const mine = userNames.flatMap(n => String(n || '').toLowerCase().split(/\s+/)).filter(w => w.length > 2)
+  return mine.some(w => named.includes(w))
 }
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
@@ -174,14 +192,21 @@ export async function scheduleStayReminders(tg: number, whatsappTo: string | nul
 }
 
 /** Full path: read → save → link → reminders → reply. Null when the text is not a hotel stay. */
-export async function ingestStayFromText(p: { telegramId: number; whatsappTo?: string | null; userName?: string | null; text: string; source: string; now?: Date }): Promise<string | null> {
+export async function ingestStayFromText(p: { telegramId: number; whatsappTo?: string | null; userName?: string | null; userNames?: string[]; text: string; source: string; now?: Date }): Promise<string | null> {
   if (!looksLikeHotelBooking(p.text)) return null
-  const stay = await extractStay(p.text, { userName: p.userName, now: p.now })
-  if (!stay) return null
+  const names = [...new Set([p.userName, ...(p.userNames || [])].filter(Boolean) as string[])]
+  const read = await extractStay(p.text, { userName: names.join(' / ') || null, now: p.now })
+  if (!read) return null
+  const now = p.now || new Date()
+  const trips = await loadTrips(p.telegramId, now)
+  // 29 Oct live: Mukesh's email named no city, so the stay saved with no trip. A stay with no city and no dates that
+  // arrives during (or just before) a trip belongs to that trip.
+  const live = !read.city && !read.checkIn ? currentTrip(trips, now.getTime()) : null
+  const city = read.city || live?.city || null
+  const stay: Stay = { ...read, city, hotel: propertyName(read.hotel, city), userRole: read.userRole === 'unknown' && read.bookedBy && inferGuestRole(p.text, names) ? 'guest' : read.userRole }
   const saved = await saveStay(p.telegramId, stay, { kind: p.source, text: p.text })
   if (!saved) return null
-  const trips = await loadTrips(p.telegramId, p.now || new Date())
-  const trip = saved.stay.city ? tripFor(trips, saved.stay.city, saved.stay.checkIn) : null
+  const trip = saved.stay.city ? tripFor(await loadTrips(p.telegramId, now), saved.stay.city, saved.stay.checkIn) : null
   await scheduleStayReminders(p.telegramId, p.whatsappTo || null, saved.stay).catch(() => {})
   console.log('STAY_SAVED:', JSON.stringify({ created: saved.created, hotel: saved.stay.hotel, city: saved.stay.city, linkedTrip: trip?.key || null, dated: !!saved.stay.checkIn }))
   return stayReply(saved.stay, trip)

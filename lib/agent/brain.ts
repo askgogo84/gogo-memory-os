@@ -325,10 +325,15 @@ export function answersGogosQuestion(turns: BrainTurn[], text: string, now = Dat
   return t.includes('\n') || t.split(/\s+/).length <= 4
 }
 
-export async function runBrain(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; surface: 'whatsapp' | 'web' }): Promise<{ reply?: string; text?: string } | null> {
+export const FORWARDED_NOTE = 'The latest message was FORWARDED by the user from someone else (a host, colleague or friend). It is information shared with Gogo, not the user speaking to Gogo and not a request. "You" in it means the user, never Gogo. Never reply as its recipient (never "you\'ve added me"); acknowledge what it means for the user in one short line, or handle it if it contains a clear task for Gogo.'
+
+export async function runBrain(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; surface: 'whatsapp' | 'web'; forwarded?: boolean }): Promise<{ reply?: string; text?: string } | null> {
   if (!brainEnabledFor(p.phone) || isExactCommand(p.text)) return null
   const ctx = await loadBrainContext(p).catch(() => null)
   if (!ctx) return null
+  // 29 Oct live: forwarded lines from the hotel booker ("Have added you as the 2nd guest") were answered "you've added
+  // me". WhatsApp marks forwards; the brain is told the latest message is someone else's words shared with Gogo.
+  if (p.forwarded) ctx.sections['About the latest message'] = [FORWARDED_NOTE]
   if (answersGogosQuestion(ctx.turns, p.text)) { console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: 'skip', reason: 'answers_question' })); return null }
   // Shadow models answer the same turn in parallel and are only logged (BRAIN_SHADOW), never acted on: the
   // 28 Oct cost question ("which model is cheapest without losing understanding") answered on real turns.
