@@ -1,0 +1,30 @@
+# TEST ONLY / EXPECTED RED: #1102 outbound approval-name integrity.
+# DO NOT MERGE OR DEPLOY; fake text only, no real user/provider operations.
+name: "Approval-name brand boundary — fake-only expected RED"
+on:
+  pull_request:
+    paths:
+      - "scripts/verify-approval-name-brand-boundary-testonly.mts"
+      - ".github/workflows/approval-name-brand-boundary-testonly.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  synthetic-approval-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Checkout literal pull request HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Test shipped outbound, dashboard and UI name integrity with synthetic text
+        run: npx --no-install tsx scripts/verify-approval-name-brand-boundary-testonly.mts
