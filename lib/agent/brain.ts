@@ -133,7 +133,12 @@ export function decisionFromToolUse(original: string, name: string, input: any):
     const raw = clean(name === 'reply' ? input?.text : input?.question, 1500)
     if (!raw) return { kind: 'skip', reason: 'empty_text' }
     // A chat reply that claims an action was done hands the message to the real handlers instead.
-    if (name === 'reply' && COMPLETION_CLAIM.test(raw)) return { kind: 'handle', instruction: original, rewritten: false }
+    // 29 Oct live: "When do I check out and is there a reminder for it?" was answered from context ("a check-out
+    // reminder is set for 7:30 am") and that factual answer was treated as an action claim. An answer to a question
+    // about saved state stays a reply unless it opens by announcing an action ("Done", "Updated", "I've set").
+    const asked = /\?\s*$/.test(original.trim()) || /^(?:when|what|where|which|who|whose|how|is|are|do|does|did|can|could|have|has|will)\b/i.test(original.trim())
+    const announces = /^\W*(?:done|updated|saved|set|booked|added|noted|scheduled|cancelled|canceled|deleted|i(?:'ve| have| just))\b/i.test(raw)
+    if (name === 'reply' && COMPLETION_CLAIM.test(raw) && (!asked || announces)) return { kind: 'handle', instruction: original, rewritten: false }
     return { kind: name, text: inventedApprovalGuard(raw) }
   }
   if (name === 'handle') {
