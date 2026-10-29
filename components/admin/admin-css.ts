@@ -45,6 +45,22 @@ export const ADMIN_CSS = `
 .adm-table td{font-size:14px;padding:11px 12px;border-bottom:1px solid var(--line);white-space:nowrap;vertical-align:middle}
 .adm-table td.wrap{white-space:normal;min-width:200px}
 .adm-table tr:hover td{background:#FAFAF9}
+.adm-table th.act,.adm-table td.act{position:sticky;right:0;background:#fff;box-shadow:-12px 0 12px -12px rgba(0,0,0,.14)}
+.adm-table tr:hover td.act{background:#FAFAF9}
+.adm-table td.clip{max-width:240px;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:1180px){
+.adm-table.rt{border-top:0;overflow:visible}
+.adm-table.rt table,.adm-table.rt tbody{display:block}
+.adm-table.rt thead{display:none}
+.adm-table.rt tr{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px 16px;padding:14px;border:1px solid var(--line2);border-radius:14px;margin-bottom:10px;background:#fff}
+.adm-table.rt tr:hover td{background:transparent}
+.adm-table.rt td{display:block;border:0;padding:0;white-space:normal;overflow-wrap:anywhere;max-width:none}
+.adm-table.rt td[data-label]::before{content:attr(data-label);display:block;font-size:11px;font-weight:500;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);margin-bottom:3px}
+.adm-table.rt td.act{position:static;box-shadow:none;grid-column:1/-1;background:transparent}
+.adm-table.rt td.act>div{flex-wrap:wrap}
+.adm-table.rt td.primary,.adm-table.rt td.sel{grid-column:1/-1}
+.adm-table.rt td.primary{font-size:16px}
+}
 .adm .pill{display:inline-block;font-size:12px;font-weight:500;padding:3px 10px;border-radius:999px;white-space:nowrap;background:var(--nbg);color:var(--nfg)}
 .adm .pill.ok{background:var(--okbg);color:var(--okfg)} .adm .pill.bad{background:var(--badbg);color:var(--badfg)} .adm .pill.warn{background:var(--warnbg);color:var(--warnfg)}
 .adm .btn{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 14px;border-radius:999px;border:1px solid var(--line2);background:#fff;font-size:13px;font-weight:500;cursor:pointer;text-decoration:none;white-space:nowrap;color:var(--ink)}
