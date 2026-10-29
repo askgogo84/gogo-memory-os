@@ -529,7 +529,19 @@ async function handleWhatsAppPost(req: NextRequest) {
         actor: { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, whatsappId: resolvedUser.whatsappId, name: resolvedUser.name || 'Gogo' },
         readerText, caption: bodyText,
       })
-      if (!result) return false
+      if (!result) {
+        // 29 Oct: a hotel booking screenshot becomes a saved stay linked to its trip (lib/memory/stay.ts), not a loose note.
+        const env = (globalThis as any).process?.env
+        if (env?.GOGO_MEMORY === 'off' || !(env?.GOGO_BRAIN_USERS || env?.VERCEL_ENV === 'production')) return false
+        const stayMod: any = await import('@/lib/memory/stay').catch(() => null)
+        const stayText = stayMod?.looksLikeHotelBooking?.(`${bodyText || ''}\n${readerText}`) ? await stayMod.ingestStayFromText({ telegramId: resolvedUser.telegramId, whatsappTo: from, userName: resolvedUser.name || profileName, text: `${bodyText || ''}\n${readerText}`, source: 'image' }).catch(() => null) : null
+        if (!stayText) return false
+        await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[hotel booking image]')
+        await saveConversation(resolvedUser.telegramId, 'assistant', stayText)
+        await sendWhatsAppMessage(from, stayText)
+        await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
+        return true
+      }
       await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[meeting invitation image]')
       await saveConversation(resolvedUser.telegramId, 'assistant', result.text)
       await sendWhatsAppMessage(from, result.text)
@@ -936,6 +948,19 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     if (!text) {
       await sendWhatsAppMessage(from, `I can read text, voice notes, images and PDFs now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    // Connected memory front door (lib/memory/front-door.ts): a forwarded hotel booking, a date answer to Gogo's stay
+    // question, or cab details during a trip are saved and linked to the trip before the brain runs.
+    if (!preserveFriendFlow && (globalThis as any).process?.env?.GOGO_MEMORY !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production')) {
+      const door: any = await import('@/lib/memory/front-door').catch(() => null)
+      const memoryTurn = door?.frontDoorCandidate?.(text) ? await door.tryLifeGraphTurn({ telegramId: resolvedUser.telegramId, whatsappTo: from, userName: resolvedUser.name || profileName, text, surface: 'whatsapp' }).catch(() => null) : null
+      if (memoryTurn) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', memoryTurn.text)
+        await sendWhatsAppMessage(from, memoryTurn.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
     }
 
     // Context-first brain (lib/agent/brain.ts): reads the conversation and saved context BEFORE any keyword rule.

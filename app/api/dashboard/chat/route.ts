@@ -265,6 +265,15 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json({ text: reply, handledBy: 'invite-links', status: 'completed' })
       }
     }
+    // Connected memory front door, same as WhatsApp (lib/memory/front-door.ts).
+    if((globalThis as any).process?.env?.GOGO_MEMORY!=='off'&&((globalThis as any).process?.env?.GOGO_BRAIN_USERS||(globalThis as any).process?.env?.VERCEL_ENV==='production')){
+      const door:any=await import('@/lib/memory/front-door').catch(()=>null)
+      const memoryTurn=door?.frontDoorCandidate?.(text)?await door.tryLifeGraphTurn({telegramId:Number(user.telegram_id),whatsappTo:user.whatsapp_id?String(user.whatsapp_id):null,userName:user.name||null,text,surface:'web'}).catch(()=>null):null
+      if(memoryTurn){
+        await saveConversation(user.telegram_id,text,memoryTurn.text)
+        return NextResponse.json({text:memoryTurn.text,handledBy:memoryTurn.handledBy,status:'completed'})
+      }
+    }
     // Context-first brain (lib/agent/brain.ts), same as WhatsApp: context before keyword rules. Canary users only.
     // Cheap env gate first: strict route harnesses (and previews) never load the module.
     if((globalThis as any).process?.env?.GOGO_BRAIN!=='off'&&((globalThis as any).process?.env?.GOGO_BRAIN_USERS||(globalThis as any).process?.env?.VERCEL_ENV==='production')){

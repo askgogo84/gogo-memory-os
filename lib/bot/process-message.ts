@@ -1983,7 +1983,13 @@ async function selectedSavedContextBlock(user: Pick<ResolvedUser,'id'|'telegramI
     text:recallQuery(text,history),
     options:{includeSemantic:true,maxFacts:12,horizonDays:60},
   }).catch(()=>null)
-  return contextPack?renderContextBlock(contextPack,3200):'Saved-context lookup failed. Tell the user retrieval is unavailable; do not claim no saved record exists.'
+  // 29 Oct: connected memory. The user's trips with their linked flights, stays and cabs.
+  // Env-gated so strict vm harnesses (no process) never load the module.
+  const memEnv=(globalThis as any).process?.env
+  const trips:string[]=memEnv&&memEnv.GOGO_MEMORY!=='off'&&(memEnv.GOGO_BRAIN_USERS||memEnv.VERCEL_ENV==='production')
+    ?await import('@/lib/memory/life-graph').then(async m=>m.tripLines(await m.loadTrips(user.telegramId))).catch(()=>[] as string[]):[]
+  const tripBlock=trips.length?`\n\nTrips (linked bookings, owner-bound):\n${trips.map(l=>`- ${l}`).join('\n')}`:''
+  return contextPack?renderContextBlock(contextPack,3200)+tripBlock:'Saved-context lookup failed. Tell the user retrieval is unavailable; do not claim no saved record exists.'+tripBlock
 }
 
 export function planningCalendarInstruction(text: string): string | null {
