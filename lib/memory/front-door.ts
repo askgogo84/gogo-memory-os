@@ -4,7 +4,7 @@
 // 3. Cab details sent during a trip are saved to that trip.
 // Anything else returns null and the normal pipeline runs untouched.
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { ingestStayFromText, looksLikeHotelBooking, saveStay, scheduleStayReminders, stayFromJson, type Stay } from './stay'
+import { ingestStayFromText, looksLikeHotelBooking, saveStay, scheduleStayReminders, stayFromJson, bookingNameFrom, addedAsGuest, type Stay } from './stay'
 import { loadTrips, normCity, currentTrip } from './life-graph'
 
 const MONTHS: Record<string, number> = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 }
@@ -151,7 +151,7 @@ export async function tryLifeGraphTurn(p: { telegramId: number; whatsappTo?: str
       const trip = currentTrip(trips, now.getTime())
       if (trip) {
         const stayItem = trip.items.find(i => i.kind === 'stay')
-        if (stayItem && /\b(?:added|add(?:ing)?)\s+you\b[^.]*\bguest\b/i.test(text)) {
+        if (stayItem && addedAsGuest(text)) {
           const cur = stayFromJson(stayItem.meta?.stay)
           if (cur) {
             const saved = await saveStay(p.telegramId, { ...cur, userRole: 'guest' }, { kind: 'forwarded_message', text })
@@ -159,11 +159,11 @@ export async function tryLifeGraphTurn(p: { telegramId: number; whatsappTo?: str
           }
         }
         // "Booking is in the name of Aman Chamedia" / "booked under X": the name the hotel will look up.
-        const under = text.match(/\b(?:booking|booked|reservation|reserved|room)\b[^.]{0,30}?\b(?:in\s+the\s+name\s+of|under|in\s+the\s+name)\s+([A-Z][A-Za-z.'-]+(?:\s+[A-Z][A-Za-z.'-]+){0,3})/)
-        if (stayItem && under) {
+        const underName = bookingNameFrom(text)
+        if (stayItem && underName) {
           const cur = stayFromJson(stayItem.meta?.stay)
           if (cur) {
-            const saved = await saveStay(p.telegramId, { ...cur, bookedBy: under[1].trim() }, { kind: 'forwarded_message', text })
+            const saved = await saveStay(p.telegramId, { ...cur, bookedBy: underName }, { kind: 'forwarded_message', text })
             if (saved) return { text: `📌 Noted: the ${saved.stay.hotel} booking is in the name of ${saved.stay.bookedBy}.`, handledBy: 'life-graph-note' }
           }
         }

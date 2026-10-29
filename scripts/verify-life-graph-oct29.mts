@@ -95,7 +95,7 @@ assert.equal(fd.isDateAnswer('checking out on Saturday'), true)
 assert.equal(fd.isDateAnswer('the 2nd one'), false)
 const fdSrc = readFileSync('lib/memory/front-door.ts', 'utf8')
 assert.match(fdSrc, /!p\.forwarded && text\.length <= 80 && isDateAnswer\(text\)/, 'a forward is never a date answer')
-assert.match(fdSrc, /in\\s\+the\\s\+name\\s\+of/, 'a forwarded "booking is in the name of" updates the stay')
+assert.match(fdSrc, /bookingNameFrom\(text\)/, 'a forwarded "booking is in the name of" updates the stay')
 assert.match(readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8'), /numMedia > 0 \? 45_000 : 70_000/, 'text forwards wait longer instead of being dropped')
 console.log('✓ 29 Oct round 3: ordinals are not dates, booking name updates, bursts of forwards are not dropped')
 const am = await import('../lib/services/asset-memory') as any
@@ -103,3 +103,12 @@ assert.equal(am.documentExpired('21/01/2023', Date.parse('2026-10-29T00:00:00Z')
 assert.equal(am.documentExpired('2031-05-01', Date.parse('2026-10-29T00:00:00Z')), false)
 assert.equal(am.documentExpired('', Date.parse('2026-10-29T00:00:00Z')), false)
 console.log('✓ 29 Oct: an expired passport is flagged when saved')
+
+// 29 Oct live round 4: "Booking is in the name of Aman Chamedia" (capital B) was not read; forwards that arrived
+// before the email stayed as quotes.
+assert.equal(st.bookingNameFrom('Booking is in the name of Aman Chamedia'), 'Aman Chamedia')
+assert.equal(st.bookingNameFrom('room booked under mukesh for 2 nights'), 'Mukesh')
+assert.equal(st.bookingNameFrom('Room is paid for'), null)
+assert.equal(st.addedAsGuest('Have added you as the 2nd guest for check-in'), true)
+assert.match(readFileSync('lib/memory/stay.ts', 'utf8'), /subtype', 'trip_note'\)\.gte\('updated_at', since\)/, 'a stay applies notes forwarded just before it')
+console.log('✓ 29 Oct round 4: booking name read in any case; earlier forwards apply to the stay')
