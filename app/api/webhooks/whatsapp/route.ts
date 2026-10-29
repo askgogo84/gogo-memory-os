@@ -534,7 +534,7 @@ async function handleWhatsAppPost(req: NextRequest) {
         const env = (globalThis as any).process?.env
         if (env?.GOGO_MEMORY === 'off' || !(env?.GOGO_BRAIN_USERS || env?.VERCEL_ENV === 'production')) return false
         const stayMod: any = await import('@/lib/memory/stay').catch(() => null)
-        const stayText = stayMod?.looksLikeHotelBooking?.(`${bodyText || ''}\n${readerText}`) ? await stayMod.ingestStayFromText({ telegramId: resolvedUser.telegramId, whatsappTo: from, userName: resolvedUser.name || profileName, text: `${bodyText || ''}\n${readerText}`, source: 'image' }).catch(() => null) : null
+        const stayText = stayMod?.looksLikeHotelBooking?.(`${bodyText || ''}\n${readerText}`) ? await stayMod.ingestStayFromText({ telegramId: resolvedUser.telegramId, whatsappTo: from, userName: resolvedUser.name || profileName, userNames: [resolvedUser.name, profileName].filter(Boolean), text: `${bodyText || ''}\n${readerText}`, source: 'image' }).catch(() => null) : null
         if (!stayText) return false
         await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[hotel booking image]')
         await saveConversation(resolvedUser.telegramId, 'assistant', stayText)
@@ -950,11 +950,13 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    // WhatsApp marks forwarded messages; they are someone else's words shared with Gogo (29 Oct live).
+    const forwardedMessage = String(formData.get('Forwarded') || '').toLowerCase() === 'true'
     // Connected memory front door (lib/memory/front-door.ts): a forwarded hotel booking, a date answer to Gogo's stay
     // question, or cab details during a trip are saved and linked to the trip before the brain runs.
     if (!preserveFriendFlow && (globalThis as any).process?.env?.GOGO_MEMORY !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production')) {
       const door: any = await import('@/lib/memory/front-door').catch(() => null)
-      const memoryTurn = door?.frontDoorCandidate?.(text) ? await door.tryLifeGraphTurn({ telegramId: resolvedUser.telegramId, whatsappTo: from, userName: resolvedUser.name || profileName, text, surface: 'whatsapp' }).catch(() => null) : null
+      const memoryTurn = (forwardedMessage || door?.frontDoorCandidate?.(text)) && door?.tryLifeGraphTurn ? await door.tryLifeGraphTurn({ telegramId: resolvedUser.telegramId, whatsappTo: from, userName: resolvedUser.name || profileName, userNames: [resolvedUser.name, profileName].filter(Boolean), text, surface: 'whatsapp', forwarded: forwardedMessage }).catch(() => null) : null
       if (memoryTurn) {
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', memoryTurn.text)
@@ -967,7 +969,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // It answers, asks one question, or rewrites the message into an explicit instruction for the handlers below.
     // Canary users only; exact commands (yes/approve/1/2/3) and any failure keep today's pipeline untouched.
     if (!preserveFriendFlow && (globalThis as any).process?.env?.GOGO_BRAIN !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production')) {
-      const brain = await import('@/lib/agent/brain').then(m => m.runBrain({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), surface: 'whatsapp' })).catch((err: any) => { console.error('BRAIN_FAILED:', String(err?.message || err).slice(0, 160)); return null })
+      const brain = await import('@/lib/agent/brain').then(m => m.runBrain({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), surface: 'whatsapp', forwarded: forwardedMessage })).catch((err: any) => { console.error('BRAIN_FAILED:', String(err?.message || err).slice(0, 160)); return null })
       if (brain?.reply) {
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', brain.reply)

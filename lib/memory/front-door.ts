@@ -5,7 +5,7 @@
 // Anything else returns null and the normal pipeline runs untouched.
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { ingestStayFromText, looksLikeHotelBooking, saveStay, scheduleStayReminders, stayFromJson, type Stay } from './stay'
-import { loadTrips, normCity, type Trip } from './life-graph'
+import { loadTrips, normCity, currentTrip } from './life-graph'
 
 const MONTHS: Record<string, number> = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 }
 const WEEKDAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday']
@@ -51,6 +51,8 @@ export function askedStayField(assistantText: string): 'both' | 'checkOut' | 'ch
   return null
 }
 
+const TRIP_TALK = /\b(?:hotel|room|check[- ]?in|check[- ]?out|guest|stay|booking|reservation|incidentals?|deposit|card|cab|taxi|driver|car|pick\s?-?up|airport|flight|land(?:s|ed|ing)?|late|arriv(?:e|al|ing)|breakfast|lobby|reception|key)\b/i
+
 const CAB_WORD = /\b(?:cab|taxi|driver|chauffeur|car\s+(?:no|number|details)|pick\s?-?up|pickup|uber|ola|blusmart|meru)\b/i
 const CAB_DETAIL = /\b[A-Z]{2}\s?-?\d{1,2}\s?-?[A-Z]{1,3}\s?-?\d{3,4}\b|(?:\+?91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}\b|\b(?:driver(?:'s)?\s+(?:name|is)|name\s*:)/i
 
@@ -77,20 +79,16 @@ async function latestStay(tg: number): Promise<{ id: string; stay: Stay } | null
 
 function fmtDay(day: string) { return new Intl.DateTimeFormat('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(`${day}T00:00:00Z`)) }
 
-/** The trip happening now or next (the one cab details belong to). Pure. */
-export function currentTrip(trips: Trip[], now = Date.now()): Trip | null {
-  const live = trips.find(t => { const s = Date.parse(String(t.startAt)), e = Date.parse(String(t.endAt || t.startAt)); return s - 36e5 * 12 <= now && now <= e + 864e5 })
-  return live || trips.find(t => Date.parse(String(t.startAt)) > now && Date.parse(String(t.startAt)) - now < 3 * 864e5) || null
-}
+export { currentTrip } from './life-graph'
 
-export async function tryLifeGraphTurn(p: { telegramId: number; whatsappTo?: string | null; userName?: string | null; text: string; surface: 'whatsapp' | 'web'; now?: Date }): Promise<{ text: string; handledBy: string } | null> {
+export async function tryLifeGraphTurn(p: { telegramId: number; whatsappTo?: string | null; userName?: string | null; userNames?: string[]; text: string; surface: 'whatsapp' | 'web'; now?: Date; forwarded?: boolean }): Promise<{ text: string; handledBy: string } | null> {
   const text = String(p.text || '').trim()
   const now = p.now || new Date()
   if (!text) return null
   try {
     // 1. A forwarded hotel booking.
     if (text.length >= 40 && looksLikeHotelBooking(text)) {
-      const reply = await ingestStayFromText({ telegramId: p.telegramId, whatsappTo: p.whatsappTo, userName: p.userName, text, source: `${p.surface}_text`, now })
+      const reply = await ingestStayFromText({ telegramId: p.telegramId, whatsappTo: p.whatsappTo, userName: p.userName, userNames: p.userNames, text, source: `${p.surface}_text`, now })
       if (reply) return { text: reply, handledBy: 'life-graph-stay' }
     }
     // 2. A date answer to Gogo's own stay question (within 6 hours).
@@ -131,6 +129,32 @@ export async function tryLifeGraphTurn(p: { telegramId: number; whatsappTo?: str
         }, { onConflict: 'telegram_id,dedupe_key' })
         if (!error) return { text: `🚕 Saved the cab details to your ${trip.city} trip.\n\n${details}\n\nAsk *my cab details* any time.`, handledBy: 'life-graph-cab' }
         console.error('CAB_SAVE_FAILED:', error.message)
+      }
+    }
+    // 4. A forwarded message during a trip (29 Oct live: "Have added you as the 2nd guest", "Room is paid for but they
+    //    might take your card for incidentals" were answered as if the owner said them to Gogo: "you've added me").
+    //    It is information from someone else for the trip: saved to the trip and acknowledged in the owner's terms.
+    if (p.forwarded && text.length <= 600 && TRIP_TALK.test(text)) {
+      const trips = await loadTrips(p.telegramId, now)
+      const trip = currentTrip(trips, now.getTime())
+      if (trip) {
+        const stayItem = trip.items.find(i => i.kind === 'stay')
+        if (stayItem && /\b(?:added|add(?:ing)?)\s+you\b[^.]*\bguest\b/i.test(text)) {
+          const cur = stayFromJson(stayItem.meta?.stay)
+          if (cur) {
+            const saved = await saveStay(p.telegramId, { ...cur, userRole: 'guest' }, { kind: 'forwarded_message', text })
+            if (saved) return { text: `📌 Noted: you've been added as a guest at ${saved.stay.hotel}${saved.stay.bookedBy ? ` (booking under ${saved.stay.bookedBy})` : ''}.`, handledBy: 'life-graph-note' }
+          }
+        }
+        const key = `note:${trip.key}:${text.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 80)}`
+        const { error } = await supabaseAdmin.from('life_events').upsert({
+          telegram_id: String(p.telegramId), event_type: 'other', subtype: 'trip_note', source: 'forwarded_message',
+          title: text.slice(0, 200), start_at: trip.startAt, location: trip.city, lifecycle_state: 'captured',
+          metadata_json: { city: trip.city, text: text.slice(0, 600), from: 'a forwarded message', tripKey: trip.key },
+          source_refs: [{ kind: 'forwarded_message', at: now.toISOString() }], dedupe_key: key, updated_at: now.toISOString(),
+        }, { onConflict: 'telegram_id,dedupe_key' })
+        if (!error) return { text: `📌 Noted for your ${trip.city} trip:\n"${text.replace(/\s+/g, ' ').slice(0, 300)}"`, handledBy: 'life-graph-note' }
+        console.error('TRIP_NOTE_SAVE_FAILED:', error.message)
       }
     }
   } catch (err: any) {

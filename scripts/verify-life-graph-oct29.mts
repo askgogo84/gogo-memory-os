@@ -67,3 +67,22 @@ console.log('✓ 29 Oct connected memory: flight + stay + return are one trip; s
 assert.match(readFileSync('lib/agent/flight-track.ts', 'utf8'), /landedTripNote\(tg, String\(c\.to/, 'a landing alert carries the trip\'s stay and cab')
 assert.equal(g.normCity('COK'), 'kochi')
 console.log('✓ 29 Oct: landing alerts carry the linked stay and cab')
+
+// 29 Oct live round 2: the email named no city; the forwarded lines were answered as if Gogo was their recipient.
+assert.equal(st.propertyName('Four Seasons Hotels and Resorts', 'Mumbai'), 'Four Seasons Mumbai')
+assert.equal(st.propertyName('Four Seasons Hotel Mumbai', 'Mumbai'), 'Four Seasons Hotel Mumbai')
+assert.equal(st.propertyName('Taj Lands End', 'Mumbai'), 'Taj Lands End')
+assert.equal(st.inferGuestRole('Hi, pls add Goverdhan Dodammane as the 2nd guest', ['Goverdhan M D']), true)
+assert.equal(st.inferGuestRole('Hi, pls add Divya as the 2nd guest', ['Goverdhan M D']), false)
+assert.equal(g.currentTrip(trips, Date.parse('2026-10-29T07:00:00Z'))?.city, 'Mumbai', 'a stay with no city joins the trip happening now')
+const noteItem = g.itemFromLifeEvent({ id: 'n1', subtype: 'trip_note', title: 'Room is paid for', location: 'Mumbai', start_at: '2026-10-29T04:25:00Z', metadata_json: { city: 'Mumbai', text: 'Room is paid for but they might take your card for incidentals', from: 'a forwarded message' } })!
+const withNote = g.linkTrips([flight, noteItem]).trips[0]
+assert.ok(withNote.items.some(i => i.kind === 'note'), 'forwarded notes join the trip')
+assert.match(g.itemLine(noteItem, 'Asia/Kolkata'), /📌 Room is paid for but they might take your card for incidentals \(from a forwarded message\)/)
+const b = await import('../lib/agent/brain')
+assert.match(b.FORWARDED_NOTE, /never "you\\'ve added me"|Never reply as its recipient/)
+const wa2 = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')
+assert.match(wa2, /formData\.get\('Forwarded'\)/, 'WhatsApp forwards are detected')
+assert.match(wa2, /forwarded: forwardedMessage \}\)\)\.catch/, 'the brain is told the message was forwarded')
+assert.match(readFileSync('lib/memory/front-door.ts', 'utf8'), /p\.forwarded && text\.length <= 600 && TRIP_TALK/, 'forwarded trip talk becomes a trip note')
+console.log('✓ 29 Oct round 2: stays join the current trip, chain names become the property, forwards are notes not replies')
