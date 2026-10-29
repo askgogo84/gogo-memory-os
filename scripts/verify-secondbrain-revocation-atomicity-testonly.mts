@@ -48,8 +48,8 @@ function synthetic(scenario: Scenario = {}) {
   ]
   if (scenario.extraWorkspaceShare) shares.push({ workspace_id: WS_OTHER, artifact_id: FIRST, shared_by: 'departing' })
   const artifacts: Artifact[] = [
-    { id: FIRST, telegram_id: 'departing', title: 'Private fixture document', content_json: { sections: [{ tool: 'memory', result: { text: 'INERT_PRIVATE_FIXTURE_A' } }] } },
-    { id: RACING, telegram_id: 'departing', title: 'Private fixture document B', content_json: { sections: [{ tool: 'memory', result: { text: 'INERT_PRIVATE_FIXTURE_B' } }] } },
+    { id: FIRST, telegram_id: 'departing', title: 'Private fixture document', content_json: { sections: [{ tool: 'artifact', result: { text: 'INERT_OWNER_SHARED_REPORT_A' } }] } },
+    { id: RACING, telegram_id: 'departing', title: 'Private fixture document B', content_json: { sections: [{ tool: 'artifact', result: { text: 'INERT_OWNER_SHARED_REPORT_B' } }] } },
   ]
   const log: string[] = []
   const db = {
@@ -137,6 +137,12 @@ function synthetic(scenario: Scenario = {}) {
   return { members, shares, log, removeMember, getSharedArtifact }
 }
 
+// The shipped Server Component renders artifact/web_search sections only; these inert
+// fixtures use a displayed 'artifact' section, not a withheld private memory section.
+const sharedPage = readFileSync('app/dashboard/(app)/business/[ws]/shared/[id]/page.tsx', 'utf8')
+const sharingRules = readFileSync('lib/workspaces/rules.ts', 'utf8')
+assert.match(sharedPage, /shareableSections\(artifactSections\(view\.contentJson\)\)/)
+assert.match(sharingRules, /SHAREABLE_SECTION_TOOLS\s*=\s*\['artifact', 'web_search'\]/)
 let passes = 0
 let failures = 0
 async function test(kind: 'control' | 'safety', label: string, f: () => Promise<void>) {
@@ -185,7 +191,7 @@ await test('safety', 'concurrent share cannot survive successful member removal'
   assert.ok(!x.members.some(m => m.workspace_id === WS && m.telegram_id === 'departing'))
   assert.ok(!x.shares.some(s => s.workspace_id === WS && s.shared_by === 'departing'), 'Member revocation must also revoke concurrently added shares')
 })
-await test('safety', 'workspace viewer must not read former contributor artifact after revocation', async () => {
+await test('safety', 'workspace viewer must not receive a former contributor displayable report after revocation', async () => {
   const x = synthetic({ shareInsertedDuringRemoval: true })
   await x.removeMember('owner', WS, 'departing')
   assert.ok(x.shares.some(s => s.artifact_id === RACING), 'Fixture reproduces a post-revocation stale share')
@@ -194,7 +200,7 @@ await test('safety', 'workspace viewer must not read former contributor artifact
     error => ({ ok: false, error: String(error instanceof Error ? error.message : error) }),
   )
   assert.ok(!readOutcome.ok && /artifact_not_found|workspace_forbidden/.test('error' in readOutcome ? readOutcome.error : ''),
-    'Revoked contributor report must fail closed, received: ' + JSON.stringify(readOutcome))
+    'Revoked contributor displayable report must fail closed, received: ' + JSON.stringify(readOutcome))
 })
 
 console.log('SecondBrain synthetic revocation: ' + passes + '/' + (passes + failures) + ' pass; ' + failures + ' fail.')
