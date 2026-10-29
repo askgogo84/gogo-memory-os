@@ -75,7 +75,11 @@ function connectCard(text:string){
 
 type Chip={title:string;description?:string}
 
-function Message({message,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPick?:(title:string)=>void}){
+// Same rule as lib/security/outbound-identifiers brandSafe (kept local: the chat harness loads this file alone).
+const brandSafe=(t:string)=>String(t??'').replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g,m=>/['’]s$/.test(m)?'Gogo’s':'Gogo').replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g,'our AI provider')
+
+function Message({message:incoming,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPick?:(title:string)=>void}){
+  let message=incoming
   if(message.role==='user'){
     return <div className="flex justify-end">
       <div className="max-w-[86%] whitespace-pre-wrap break-words rounded-[20px] bg-[#1c1c1c] px-5 py-3.5 text-[16px] leading-[1.65] text-[#f2efea] sm:max-w-[72%] sm:text-[17px]">
@@ -84,6 +88,8 @@ function Message({message,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPic
       </div>
     </div>
   }
+  // Older saved replies may name the model; the assistant is always Gogo.
+  message={...message,content:brandSafe(message.content)}
   const attentionCard=parseAttentionCard(message.content)
   return <div className="flex items-start gap-3 sm:gap-3.5">
     <Avatar size={40}/>
