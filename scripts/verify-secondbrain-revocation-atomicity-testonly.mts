@@ -168,6 +168,11 @@ await test('control', 'unrelated workspace share is not deleted', async () => {
   assert.equal(x.shares.filter(s => s.workspace_id === WS_OTHER).length, 1)
   assert.equal(x.shares.filter(s => s.workspace_id === WS).length, 0)
 })
+await test('control', 'current workspace viewer can read a legitimately shared report', async () => {
+  const x = synthetic()
+  const view = await x.getSharedArtifact('viewer', WS, FIRST)
+  assert.equal(view.artifactId, FIRST, 'Fixture reader must work before revocation')
+})
 await test('safety', 'failed membership removal must not destroy the contributor existing share', async () => {
   const x = synthetic({ memberDeleteFails: true })
   await assert.rejects(x.removeMember('owner', WS, 'departing'), /member deletion denied/)
@@ -184,11 +189,12 @@ await test('safety', 'workspace viewer must not read former contributor artifact
   const x = synthetic({ shareInsertedDuringRemoval: true })
   await x.removeMember('owner', WS, 'departing')
   assert.ok(x.shares.some(s => s.artifact_id === RACING), 'Fixture reproduces a post-revocation stale share')
-  await assert.rejects(
-    x.getSharedArtifact('viewer', WS, RACING),
-    (e: unknown) => e instanceof Error && /artifact_not_found|workspace_forbidden/.test(e.message),
-    'Revoked contributor personal report must not be exposed by stale shared row',
+  const readOutcome = await x.getSharedArtifact('viewer', WS, RACING).then(
+    value => ({ ok: true, value }),
+    error => ({ ok: false, error: String(error instanceof Error ? error.message : error) }),
   )
+  assert.ok(!readOutcome.ok && /artifact_not_found|workspace_forbidden/.test('error' in readOutcome ? readOutcome.error : ''),
+    'Revoked contributor report must fail closed, received: ' + JSON.stringify(readOutcome))
 })
 
 console.log('SecondBrain synthetic revocation: ' + passes + '/' + (passes + failures) + ' pass; ' + failures + ' fail.')
