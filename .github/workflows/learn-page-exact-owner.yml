@@ -1,0 +1,26 @@
+name: Learn Page Exact Owner (synthetic)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/dashboard/(app)/learn/page.tsx'
+      - 'scripts/verify-learn-page-exact-owner.mts'
+      - '.github/workflows/learn-page-exact-owner.yml'
+permissions:
+  contents: read
+jobs:
+  synthetic-learn-page:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install fixture dependencies
+        run: npm ci
+      - name: Verify real LearnPage owner boundary using inert services
+        run: npx --no-install tsx scripts/verify-learn-page-exact-owner.mts

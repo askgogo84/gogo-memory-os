@@ -1,6 +1,7 @@
 import { LearnWithGogo } from '@/components/dashboard/learn-with-gogo'
 import { GOGO_LESSONS } from '@/lib/dashboard/lessons'
 import { getSession } from '@/lib/dashboard/session'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
@@ -10,8 +11,8 @@ export default async function LearnPage() {
   const completedKeys: string[] = []
 
   if (session) {
-    const tg = parseInt(session.telegramId, 10)
-    if (Number.isFinite(tg)) {
+    const tg = exactSessionOwnerId(session.telegramId)
+    if (tg) {
       const { data } = await supabaseAdmin
         .from('learning_progress')
         .select('lesson_key')
