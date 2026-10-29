@@ -118,3 +118,7 @@ assert.match(readFileSync('lib/memory/front-door.ts', 'utf8'), /rows\.find\(\(r:
 const dec = b.decisionFromToolUse('29 Oct to 31 Oct', 'reply', { text: '✅ Updated your Mumbai trip hotel stay: Four Seasons Mumbai, Thu 29 Oct – Sat 31 Oct' })
 assert.equal(dec.kind, 'handle', 'a reply claiming an update is never sent as a reply')
 console.log('✓ 29 Oct round 5: stay dates bind past an alert; claimed updates are not replies')
+const qa = b.decisionFromToolUse('When do I check out and is there a reminder for it?', 'reply', { text: 'You check out on Sat, 31 Oct. A check-out reminder is set for 7:30 am that morning.' })
+assert.equal(qa.kind, 'reply', 'an answer about saved state stays a reply')
+assert.equal(b.decisionFromToolUse('When do I check out?', 'reply', { text: '✅ Updated your stay: check-out Sat 31 Oct' }).kind, 'handle', 'an announced action is never a reply')
+console.log('✓ 29 Oct round 6: answers to questions about saved state stay replies')
