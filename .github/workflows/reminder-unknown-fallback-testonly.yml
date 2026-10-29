@@ -1,0 +1,28 @@
+# TEST-ONLY EXPECTED RED. This asserts a deployed P1 source-level hazard without
+# invoking Twilio or any customer account. Never merge until Claude repairs implementation.
+name: Reminder Unknown-Outcome — Inert Test-Only Regression
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-reminder-unknown-fallback-testonly.mts'
+      - '.github/workflows/reminder-unknown-fallback-testonly.yml'
+      - 'app/api/cron/reminders/route.ts'
+
+permissions:
+  contents: read
+
+jobs:
+  negative-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install exact lockfile
+        run: npm ci
+      - name: Execute actual jobDone send branch against inert accepted-timeout mocks
+        run: npx --no-install tsx scripts/verify-reminder-unknown-fallback-testonly.mts
