@@ -94,14 +94,22 @@ const definite = await simulate('definite_rejection', 'template')
 assert.equal(noFallbackEvents(definite.events).length <= 1, true, 'definite rejection permits at most one fallback')
 console.log('PASS definite-rejection control: at most one known-safe template alternative')
 
+const unsafeCases = []
 for (const kind of ['template', 'buttons']) {
   const uncertain = await simulate('timeout_after_accept', kind)
-  assert.deepEqual(
-    noFallbackEvents(uncertain.events),
-    [],
-    'P1 unknown outcome: DO NOT send a ' + kind + ' after an accepted-but-timed-out free-text attempt; events=' + uncertain.events.join(','),
-  )
-  assert.ok(uncertain.error, 'P1 unknown outcome must propagate to the outer outcome_unknown fence')
-  console.log('PASS unknown-outcome ' + kind + ': zero blind retry, outer fence remains in charge')
+  const fallbackAttempts = noFallbackEvents(uncertain.events)
+  if (fallbackAttempts.length) {
+    unsafeCases.push(kind + ':blind-fallback')
+    console.error('FAIL P1 ' + kind + ': synthetic provider accepted before timeout, but a fallback was attempted: ' + uncertain.events.join(','))
+  } else {
+    console.log('PASS ' + kind + ': no second network attempt after ambiguous provider result')
+  }
+  if (!uncertain.error) {
+    unsafeCases.push(kind + ':outcome-swallowed')
+    console.error('FAIL P1 ' + kind + ': synthetic ambiguous exception was swallowed instead of reaching outcome_unknown')
+  } else {
+    console.log('PASS ' + kind + ': unknown outcome propagated')
+  }
 }
+assert.deepEqual(unsafeCases, [], 'P1 ambiguous provider results must produce no fallback and must propagate for outcome_unknown')
 console.log('PASS REMINDER_UNKNOWN_FALLBACK_TESTONLY: source-executed inert Twilio scenarios; no live sending')
