@@ -971,7 +971,10 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // Context-first brain (lib/agent/brain.ts): reads the conversation and saved context BEFORE any keyword rule.
     // It answers, asks one question, or rewrites the message into an explicit instruction for the handlers below.
     // Canary users only; exact commands (yes/approve/1/2/3) and any failure keep today's pipeline untouched.
-    if (!preserveFriendFlow && (globalThis as any).process?.env?.GOGO_BRAIN !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production')) {
+    // 29 Oct: phone-call commands ("test call me", "call <venue> and book…", "yes call") go to the call flow; the brain
+    // had answered "Call … and book" with "I can't make calls".
+    const callCommand = /^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
+    if (!preserveFriendFlow && !callCommand && (globalThis as any).process?.env?.GOGO_BRAIN !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production')) {
       const brain = await import('@/lib/agent/brain').then(m => m.runBrain({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), surface: 'whatsapp', forwarded: forwardedMessage })).catch((err: any) => { console.error('BRAIN_FAILED:', String(err?.message || err).slice(0, 160)); return null })
       if (brain?.reply) {
         await saveConversation(resolvedUser.telegramId, 'user', text)
