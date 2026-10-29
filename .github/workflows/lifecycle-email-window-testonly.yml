@@ -1,0 +1,28 @@
+name: Lifecycle-email eligible window regression (test-only expected RED)
+on:
+  pull_request:
+    paths:
+      - scripts/verify-lifecycle-email-window-testonly.mts
+      - .github/workflows/lifecycle-email-window-testonly.yml
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-lifecycle-window:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout literal pull request HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Execute shipped lifecycle-email cron with inert 251-user DB and dry-run
+        run: npx --yes tsx scripts/verify-lifecycle-email-window-testonly.mts
