@@ -228,6 +228,20 @@ export async function processDueFlightTracks(limit = 10, now = new Date()) {
 }
 
 /** Watcher pass for an ad-hoc tracked flight: feed status → new events only → owner's alert settings → next check. */
+/** 29 Oct (connected memory): when a tracked flight lands, add the stay and cab saved for that trip. Env-gated so
+ * strict harnesses never load the memory module; any failure adds nothing. */
+async function landedTripNote(tg: string, arrivalCity: string, now: Date): Promise<string> {
+  const env = (globalThis as any).process?.env
+  if (!arrivalCity || !env || env.GOGO_MEMORY === 'off' || !(env.GOGO_BRAIN_USERS || env.VERCEL_ENV === 'production')) return ''
+  try {
+    const g = await import('../memory/life-graph')
+    const trip = g.tripFor(await g.loadTrips(tg, now), arrivalCity, now.toISOString())
+    if (!trip) return ''
+    const extras = trip.items.filter(i => i.kind === 'stay' || i.kind === 'cab').map(i => g.itemLine(i, 'Asia/Kolkata'))
+    return extras.length ? `\n\nFor your ${trip.city} trip:\n${extras.join('\n')}` : ''
+  } catch { return '' }
+}
+
 export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher: FlightFetcher = fetchAeroDataBox, search?: WebSearchFn) {
   const c = watcher.condition_json?.adHocFlight || {}
   const tg = String(watcher.telegram_id)
@@ -278,7 +292,8 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
         if (e.kind === 'gate') tracking.gateNotified = status.depGate
         continue
       }
-      await deliverWatchAlert({ watcherId: String(watcher.id), owner: tg, key: `flight-track/${watcher.id}/${e.key}`, due: new Date(now.getTime() - 60_000).toISOString(), condition: watcher.condition_json, message: e.text, topic: 'travel' })
+      const message = e.kind === 'landed' ? e.text + await landedTripNote(tg, String(c.to || ''), now) : e.text
+      await deliverWatchAlert({ watcherId: String(watcher.id), owner: tg, key: `flight-track/${watcher.id}/${e.key}`, due: new Date(now.getTime() - 60_000).toISOString(), condition: watcher.condition_json, message, topic: 'travel' })
       tracking.sent = [...new Set([...(tracking.sent || []), e.key])]
       if (e.kind === 'delayed') tracking.delayNotified = status.delayMinutes || 0
       if (e.kind === 'gate') tracking.gateNotified = status.depGate

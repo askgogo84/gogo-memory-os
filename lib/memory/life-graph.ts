@@ -21,7 +21,9 @@ export type Trip = { key: string; city: string; startAt: string | null; endAt: s
 const CITY_ALIASES: Record<string, string> = {
   bombay: 'mumbai', bom: 'mumbai', bangalore: 'bengaluru', blr: 'bengaluru', bengaluru: 'bengaluru', del: 'delhi', 'new delhi': 'delhi',
   madras: 'chennai', maa: 'chennai', calcutta: 'kolkata', ccu: 'kolkata', hyd: 'hyderabad', goi: 'goa', pnq: 'pune', poona: 'pune',
-  dxb: 'dubai', sin: 'singapore', lhr: 'london',
+  dxb: 'dubai', sin: 'singapore', lhr: 'london', amd: 'ahmedabad', cok: 'kochi', cochin: 'kochi', jai: 'jaipur', lko: 'lucknow',
+  ixc: 'chandigarh', trv: 'thiruvananthapuram', trivandrum: 'thiruvananthapuram', ixe: 'mangaluru', mangalore: 'mangaluru', mysore: 'mysuru',
+  gau: 'guwahati', bbi: 'bhubaneswar', nag: 'nagpur', idr: 'indore', sxr: 'srinagar', vns: 'varanasi', auh: 'abu dhabi', doh: 'doha',
 }
 
 export function normCity(raw: unknown): string {
