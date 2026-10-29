@@ -16,6 +16,9 @@ jobs:
   synthetic-negative-boundary:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
