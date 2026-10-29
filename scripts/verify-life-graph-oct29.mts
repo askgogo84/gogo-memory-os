@@ -122,3 +122,9 @@ const qa = b.decisionFromToolUse('When do I check out and is there a reminder fo
 assert.equal(qa.kind, 'reply', 'an answer about saved state stays a reply')
 assert.equal(b.decisionFromToolUse('When do I check out?', 'reply', { text: '✅ Updated your stay: check-out Sat 31 Oct' }).kind, 'handle', 'an announced action is never a reply')
 console.log('✓ 29 Oct round 6: answers to questions about saved state stay replies')
+const callRx = /const callCommand = (\/.*\/i)\.test\(text\)/.exec(readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8'))!
+const callTest = eval(callRx[1]) as RegExp
+for (const t of ['test call me', 'Call Toit Indiranagar and book a table for 4 at 8 pm Friday', 'yes call', 'call again']) assert.ok(callTest.test(t), t)
+for (const t of ['Call Airtel customer care about my broadband outage', 'Remind me to call Nithin tomorrow', 'What time is my call with Divya?']) assert.ok(!callTest.test(t), t)
+assert.match(readFileSync('app/api/dashboard/chat/route.ts', 'utf8'), /if\(!callCommand&&/, 'web chat also sends call commands to the call flow')
+console.log('✓ 29 Oct: call commands skip the brain and reach the call flow')
