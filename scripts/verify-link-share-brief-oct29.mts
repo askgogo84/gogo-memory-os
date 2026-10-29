@@ -31,3 +31,11 @@ assert.match(lv.linkDigQuestion({ title: 'Hone raises $60 million seed' }), /^Re
 const src = readFileSync('lib/services/link-vault.ts', 'utf8')
 assert.match(src, /Saved to your links\. Want me to dig into this\? Reply \*yes\*\./)
 console.log('✓ a shared LinkedIn link is read for what it is, outside sites are never fetched, and "yes" digs in')
+
+// 30 Oct live: the post's own text as og:title ran into the description and was cut mid-word.
+const live = lv.splitPostTitle('Hone raises $60 million seed from Benchmark and Index Ventures to build AI that owns business outcomes Hone, a San Francisco AI company, has raised a $60 million seed round', 'Hone raises $60 million seed from Benchmark and Index Ventures to build AI that owns business outcomes Hone, a San Francisco AI company, has raised a $60 million seed round led by Benchmark and Index Ventures.')
+assert.equal(live.title, 'Hone raises $60 million seed from Benchmark and Index Ventures to build AI that owns business outcomes')
+assert.equal(live.description, 'Hone, a San Francisco AI company, has raised a $60 million seed round led by Benchmark and Index Ventures.')
+assert.deepEqual(lv.splitPostTitle('Short headline here', 'A separate description.'), { title: 'Short headline here', description: 'A separate description.' })
+assert.equal(lv.shortText('one two three four five', 12), 'one two…')
+console.log('✓ a long post title is split into a headline and a description that ends on a whole word')
