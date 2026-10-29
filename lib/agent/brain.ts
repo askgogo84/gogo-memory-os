@@ -30,7 +30,8 @@ export type BrainContext = {
 }
 
 const MODEL = () => process.env.GOGO_BRAIN_MODEL || 'claude-sonnet-4-5'
-const TIMEOUT_MS = 8_000
+// 29 Oct live: one WhatsApp turn hit 8 s and fell to the older path, which took 31 s. Typical is 2-4 s.
+const TIMEOUT_MS = 12_000
 // 27 Oct live: one decision took 16.9 s because the SDK silently retried after a slow first attempt. No retries:
 // a slow brain falls back to today's pipeline instead of making the person wait.
 const MAX_RETRIES = 0

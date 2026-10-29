@@ -113,7 +113,9 @@ export async function refreshConversationSummary(telegramId: number, deps: { db?
     if (newSources.length && fold.length < MIN_NEW_MESSAGES && rows.length < MAX_OLDER) return 'not_needed'
     let evidence: SummaryEvidence, resultText: string | undefined
     if (newSources.length) {
-      const result = await (deps.ask || askMercury)(groundedSummaryPrompt(sources), { maxTokens: 600, label: 'chat_summary' })
+      // 29 Oct live: mercury-3 spent all 600 tokens reasoning and returned an empty summary (chars 0), so long-term
+      // conversation memory silently stopped updating. Reasoning needs headroom before the answer is written.
+      const result = await (deps.ask || askMercury)(groundedSummaryPrompt(sources), { maxTokens: 3000, timeoutMs: 25_000, label: 'chat_summary' })
       if (!result?.text?.trim()) return 'failed'
       resultText = result.text
     } else {

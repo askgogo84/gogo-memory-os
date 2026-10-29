@@ -1,0 +1,21 @@
+// 29 Oct: long-term summary budget, JEV not skipped for phone numbers in context, brain timeout cap.
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+const j = await import('../lib/typesafe/jev-shadow')
+assert.equal(j.keywordSecretTurn('My OTP is 482913'), true)
+assert.equal(j.keywordSecretTurn('482913'), true, 'a bare code is a secret')
+assert.equal(j.keywordSecretTurn('Save my card number 4111 1111 1111 1111'), true)
+assert.equal(j.keywordSecretTurn('4111 1111 1111 1111'), true, 'a card-length number is a secret')
+assert.equal(j.keywordSecretTurn('Call Toit Indiranagar on 8310441698 and book a table for 4'), false, 'a phone number is not a secret turn')
+assert.equal(j.keywordSecretTurn("What's my Mumbai trip plan"), false)
+assert.equal(j.keywordSecretTurn('Is my passport valid for the trip?'), false, 'the word passport alone is not a secret')
+const s = j.scrubForTypeSafe('call me on +91 98765 43210 or mail me@example.com, PNR flight at 4 pm')
+assert.doesNotMatch(s, /98765|43210|me@example\.com/); assert.match(s, /\[email\]/); assert.match(s, /4 pm/, 'times survive')
+const req: any = j.buildJevShadowRequest({ text: 'Call Toit on 8310441698', currentCapability: 'x', currentActionFamily: 'y', needsContext: true, focusKind: 'none', recentContext: 'user: my passport is saved; Gogo: called 8310441698' })
+const body = JSON.stringify(req)
+assert.doesNotMatch(body, /8310441698/); assert.doesNotMatch(body, /withheld from TypeSafe/); assert.match(body, /"user_message":"Call Toit on \[/, "the sentence still goes")
+console.log('✓ JEV runs on turns with numbers in them, masked; only secret turns are withheld')
+assert.match(readFileSync('lib/agent/conversation-summary.ts', 'utf8'), /maxTokens: 3000, timeoutMs: 25_000, label: 'chat_summary'/)
+console.log('✓ the conversation summary has room to reason before writing')
+assert.match(readFileSync('lib/agent/brain.ts', 'utf8'), /const TIMEOUT_MS = 12_000/)
+console.log('✓ the brain waits 12 s before falling back')
