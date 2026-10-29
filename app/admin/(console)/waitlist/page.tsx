@@ -31,10 +31,10 @@ export default async function WaitlistPage() {
         { label: 'UAE', value: rows.filter(r => r.country === 'AE').length },
       ]} />
       <div className="adm-cols" style={{ alignItems: 'flex-start' }}>
-        <div style={{ flex: '999 1 620px' }}>
+        <div style={{ flex: '1 1 100%', minWidth: 0 }}>
           <WaitlistTable canAct={canAct} rows={rows.map(r => ({ id: r.id, phone: r.phone_e164, email: r.email, country: r.country, source: r.source, optin: r.whatsapp_opt_in, created: r.created_at, status: r.status, invite: r.invite_status, name: r.profile_name }))} />
         </div>
-        <aside style={{ flex: '1 1 280px', display: 'flex', flexDirection: 'column', gap: 28 }}>
+        <aside style={{ flex: '1 1 100%', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 28 }}>
           <section>
             <h3>Message sent when you approve</h3>
             <div className="card" style={{ whiteSpace: 'pre-line', fontSize: 14, lineHeight: 1.6 }}>{INVITE_TEXT}</div>
