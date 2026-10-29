@@ -1364,7 +1364,7 @@ _"${originalText}"_
       }
     }
     // Local places: Google local results in the area asked (same as the dashboard).
-    if (text.length <= 200 && /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert)/i.test(text)&&/\b(?:in|near|around|at)\s+[a-z]/i.test(text)) {
+    if (text.length <= 200 && /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert)/i.test(text)&&/\b(?:in|near|around|at)\s+[a-z]/i.test(text)&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text)) {
       const pl: any = await import('@/lib/agent/places-search').catch(() => null)
       const out = pl?.answerPlaces ? await Promise.resolve().then(() => pl.answerPlaces(text)).catch(() => null) : null
       if (typeof out === 'string' && out) {
