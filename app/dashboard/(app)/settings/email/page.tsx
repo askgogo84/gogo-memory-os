@@ -1,4 +1,5 @@
 import { getSession } from '@/lib/dashboard/session'
+import { exactDashboardOwnerId } from '@/lib/dashboard/session-access'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getOrCreateAlias, aliasAddress } from '@/lib/email/aliases'
 import { activeGmailAccount } from '@/lib/connectors/composio-gmail'
@@ -9,8 +10,8 @@ export const dynamic = 'force-dynamic'
 export default async function EmailSettingsPage({ searchParams }: { searchParams: Promise<{ connected?: string; error?: string }> }) {
   const session = await getSession()
   const params = await searchParams
-  const tg = Number(session?.telegramId || 0)
-  if (!tg) return null
+  const tg = exactDashboardOwnerId(session?.telegramId)
+  if (tg === null) return null
   const { data: user } = await supabaseAdmin.from('users').select('name,gmail_connected,gmail_email').eq('telegram_id', tg).maybeSingle()
   const [alias, composioAccount, confirm] = await Promise.all([
     getOrCreateAlias(tg, user?.name || null).catch(() => null),
