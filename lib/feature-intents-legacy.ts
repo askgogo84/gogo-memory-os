@@ -243,6 +243,14 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     if (expReply) return expReply
   }
 
+  // 29 Oct (Muse 15): "Make my monthly spending statement for September … ask me about any cash spends".
+  if (/^(?:please\s+)?(?:make|show|give|prepare|create|send|get)\s+(?:me\s+)?(?:my\s+)?(?:monthly\s+)?(?:spending|expenses?|spends?)\s+(?:statement|report|summary|breakdown)\b/i.test(t) && may('money', 'legacy_expense_query')) {
+    const { namedMonthRange } = await import('@/lib/bot/services/expense-storage')
+    const named = namedMonthRange(t)
+    const cash = /\bcash\b/i.test(t) ? '1' : '0'
+    return (await get('/api/expenses', { phone, period: 'month', insight: '0', cash, ...(named ? { month: named.month } : {}), ...(extra?.telegramId ? { telegramId: String(extra.telegramId) } : {}) }))?.reply ?? null
+  }
+
   // Query: "expenses today", "expense insight", "my spending this week"
   if (/^(my expenses?|expenses? today|spending today|expense (report|insight|summary)|how much.*(spend|spent)|analy[sz]e.*spend|what did i spend|where did my money go|my spending)/i.test(t) && may('money', 'legacy_expense_query')) {
     const insight = /insight|analys|ai/i.test(t) ? '1' : '0'

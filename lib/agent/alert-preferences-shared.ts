@@ -95,3 +95,20 @@ export function allowedByTopic(prefs: Pick<AlertPreferences, 'topics'>, topic: A
   return topic === null || prefs.topics[topic] !== false
 }
 
+
+// 29 Oct live (Proactive 06): "Message me less often, only important stuff" got "Got it boss" and nothing changed.
+/** "message me less often", "only important stuff", "fewer alerts" → 'less'; "message me more often" → 'more'. Pure. */
+export function alertFrequencyCommand(text: string): 'less' | 'more' | null {
+  const t = String(text || '').trim().toLowerCase()
+  if (t.length > 160 || /\b(?:remind|reminder|email\s+\w+\s+that)\b/.test(t)) return null
+  if (/\b(?:message|ping|notify|alert|disturb|bother|text)\s+me\s+less(?:\s+often)?\b|\b(?:fewer|less)\s+(?:alerts|messages|notifications|pings|updates)\b|\bonly\s+(?:the\s+)?(?:important|urgent|critical)\s+(?:stuff|things|alerts|messages|ones|updates)\b|\btoo\s+many\s+(?:alerts|messages|notifications)\b/.test(t)) return 'less'
+  if (/\b(?:message|ping|notify|alert|update)\s+me\s+more(?:\s+often)?\b|\bmore\s+(?:alerts|updates|notifications)\b/.test(t)) return 'more'
+  return null
+}
+
+/** The settings for "less" (every 4 hours, no suggestions) or "more" (hourly, everything on). Pure. */
+export function applyAlertFrequency(prefs: AlertPreferences, dir: 'less' | 'more'): AlertPreferences {
+  return dir === 'less'
+    ? { ...prefs, checkEveryMinutes: 240, topics: { ...prefs.topics, ideas: false } }
+    : { ...prefs, checkEveryMinutes: 60, topics: Object.fromEntries(ALERT_TOPICS.map(t => [t, true])) as Record<AlertTopic, boolean> }
+}

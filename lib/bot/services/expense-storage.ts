@@ -123,6 +123,31 @@ export function expensePeriodRange(period: 'week' | 'month' = 'week', now = new 
   return {start:new Date(localDay.getTime()-330*60_000).toISOString(),end:now.toISOString(),timezone:'Asia/Kolkata'}
 }
 
+const MONTHS=['january','february','march','april','may','june','july','august','september','october','november','december']
+
+/** 29 Oct (Muse 15): "spending statement for September" — the named calendar month in IST, the most recent one not in
+ * the future. Null when no month is named. Pure. */
+export function namedMonthRange(text: string, now = new Date()): { start: string; end: string; label: string; month: string } | null {
+  const m = String(text || '').toLowerCase().match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b(?:\s+(20\d\d))?/)
+  if (!m) return null
+  const idx = MONTHS.findIndex(x => x.startsWith(m[1].slice(0, 3)))
+  const {dateStr}=getTodayRange('Asia/Kolkata',now)
+  const curY = Number(dateStr.slice(0, 4)), curM = Number(dateStr.slice(5, 7)) - 1
+  const year = m[2] ? Number(m[2]) : idx > curM ? curY - 1 : curY
+  const startLocal = Date.UTC(year, idx, 1), endLocal = Date.UTC(year, idx + 1, 1)
+  const start = new Date(startLocal - 330 * 60_000).toISOString()
+  const end = new Date(Math.min(endLocal - 330 * 60_000, now.getTime())).toISOString()
+  return { start, end, label: `${MONTHS[idx][0].toUpperCase()}${MONTHS[idx].slice(1)} ${year}`, month: `${year}-${String(idx + 1).padStart(2, '0')}` }
+}
+
+export async function getRangeExpenses(telegramId: number, start: string, end: string, whatsappId?: string | null) {
+  const rows = await expenseRows(telegramId, whatsappId, start, end)
+  const byCategory: Record<string, number> = {}
+  let total = 0
+  for (const r of rows || []) { total += Number(r.amount); byCategory[r.category] = (byCategory[r.category] || 0) + Number(r.amount) }
+  return { total, count: (rows || []).length, byCategory, entries: rows || [] }
+}
+
 export async function getPeriodExpenses(telegramId: number, period: 'week' | 'month' = 'week', whatsappId?: string | null) {
   const {start,end}=expensePeriodRange(period)
   const rows = await expenseRows(telegramId, whatsappId, start,end)

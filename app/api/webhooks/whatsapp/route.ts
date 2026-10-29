@@ -984,6 +984,21 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       }
       if (brain?.text) text = brain.text
     }
+    // 29 Oct live (web): a price alert became a daily manual-check reminder. A price alert is a watch; lazy and
+    // pre-filtered so the strict route harnesses never load the module for other messages.
+    if (/\b(?:below|under|less\s+than|lower\s+than|cheaper\s+than)\b/i.test(text) && /(?:₹|\brs\.?|\binr\b|\d{3,})/i.test(text) && (globalThis as any).process?.env?.VERCEL_ENV) {
+      const wc: any = await import('@/lib/agent/watch-command').catch(() => null)
+      if (wc?.parsePriceWatchCommand?.(text)) {
+        const actorForWatch: any = { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, name: resolvedUser.name || profileName, whatsappId: String(resolvedUser.whatsappId || from) }
+        const pw = await Promise.resolve().then(() => wc.tryRunPriceWatchClarification({ actor: actorForWatch, surface: 'whatsapp', text })).catch((err: any) => { console.error('PRICE_WATCH_EARLY_FAILED:', String(err?.message || err).slice(0, 160)); return null })
+        if (pw?.text) {
+          await saveConversation(resolvedUser.telegramId, 'user', text)
+          await saveConversation(resolvedUser.telegramId, 'assistant', pw.text)
+          await sendWhatsAppMessage(from, pw.text)
+          return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+        }
+      }
+    }
 
     // "Order milk on Swiggy Instamart" via the user's connected Swiggy account: three in-stock options, and a
     // 1/2/3 reply binds only while that list is Gogo's latest reply. Lazy so strict harnesses keep their maps.
@@ -1697,7 +1712,7 @@ _"${originalText}"_
         return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
       }
     }
-    const jevClarify=jevClarificationReply(brainObservation?.jev)
+    const jevClarify=jevClarificationReply(brainObservation?.jev,text)
     if(jevClarify && !preserveFriendFlow){
       await recordShadowRouterOutcome({
         telegramId:resolvedUser.telegramId,

@@ -459,8 +459,17 @@ function addDaysIso(iso:string,days:number){
 }
 
 function isCalendarWriteStep(step:MissionStep){
+  // 29 Oct live (packing plan): a step titled "Review calendar through move date" created a 4-week calendar event.
+  // A step that says it reviews/checks the calendar is a read, whatever words its instruction uses.
+  if(/^\s*(?:review|check|look\s+at|see|read|find|list|verify|scan|inspect)\b/i.test(String(step.title||'')))return false
   const request=calendarAffirmativeText(`${step.title} ${step.instruction}`)
   return /\b(add|create|change|move|schedule|write|modify|prepare|invite|cancel|delete|event\s+titled|spanning)\b/i.test(request)
+}
+
+/** A multi-day calendar block is only for a trip, stay, leave or event the user named. Pure. */
+export function longSpanAllowed(startDate:string,endInclusive:string,text:string){
+  const days=(Date.parse(`${endInclusive}T00:00:00Z`)-Date.parse(`${startDate}T00:00:00Z`))/86_400_000+1
+  return days<=3||/\b(?:trip|travel|holiday|vacation|stay|conference|leave|visit|festival|offsite|retreat|wedding|tour)\b/i.test(text)
 }
 
 export async function executeVerifiedMissionCalendar(params:{actor:AgentActor;step:MissionStep;missionText:string;runId:string}){
@@ -481,6 +490,9 @@ export async function executeVerifiedMissionCalendar(params:{actor:AgentActor;st
   const startDate=dates[0]
   const endInclusive=dates[1]||dates[0]
   if(!startDate||!endInclusive)throw new Error('mission_calendar_dates_missing')
+  if(!longSpanAllowed(startDate,endInclusive,`${params.missionText} ${params.step.title} ${params.step.instruction}`)){
+    return executeReadOnlyCalendarStep({actor:params.actor,instruction:params.step.instruction,missionText:params.missionText})
+  }
   const endExclusive=addDaysIso(endInclusive,1)
   const title=calendarTitle(params.step)
   const location=destinationLabel(params.missionText)

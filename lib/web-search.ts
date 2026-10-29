@@ -246,8 +246,19 @@ export function isRecentNewsQuery(query: string) {
   return /\b(?:latest|news|headlines?|updates?|what(?:'s| is) happening)\b/i.test(query) && !/\b(?:price|rate|cost|score|weather|flight|pnr)\b/i.test(query)
 }
 
+const CITY_WORD = /\b(?:bengaluru|bangalore|mumbai|bombay|delhi|gurgaon|gurugram|noida|chennai|hyderabad|kolkata|pune|kochi|cochin|ahmedabad|jaipur|lucknow|chandigarh|goa|mysuru|mysore|mangaluru|coimbatore|indore|bhopal|nagpur|surat|vizag|visakhapatnam|thiruvananthapuram|trivandrum|dubai|london|singapore)\b/i
+
+/** 29 Oct live: "Check what's playing at PVR Forum Mall" answered for Forum Mall Kochi. A cinema or mall named without
+ * a city is looked up in the home city (DEFAULT_HOME_CITY, Bengaluru by default for the India launch). Pure. */
+export function withHomeCity(query: string, home = String((globalThis as any).process?.env?.DEFAULT_HOME_CITY || 'Bengaluru')): string {
+  const q = String(query || '')
+  if (!/\b(?:pvr|inox|cinepolis|cinema|multiplex|showtimes?|what'?s\s+playing|movies?\s+(?:playing|showing)|mall)\b/i.test(q) || CITY_WORD.test(q)) return q
+  return `${q} ${home}`
+}
+
 export async function searchWeb(query: string): Promise<string> {
   try {
+    query = withHomeCity(query)
     const loc = indiaShoppingSearch(query)
     // 19 Oct live: "Latest news on Tata Motors" led with a year-old demerger story. News asks are
     // limited to the last 7 days at the provider; price and fact lookups are not date-restricted.
