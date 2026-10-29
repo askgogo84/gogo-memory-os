@@ -81,6 +81,22 @@ function watchCheckTime(value:unknown){
   return Number.isFinite(time)?new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(time))+' IST':null
 }
 
+const every=(m:number)=>m>=1440?'daily':m>=60?`every ${Math.round(m/60)} h`:`every ${m} min`
+export function compactWatchLine(row:any){
+  const c:any=row.condition_json||{}
+  let t=String(c.title||c.query||row.type||'Watch').replace(/^watch:\s*/i,'').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi,'$1')
+  const raw=String(c.query||c.title||'')
+  const amount=c.priceRule?.threshold??(raw.match(/\b(?:below|under)\s+(₹?\s?[\d,]{3,})/i)?parseMoneyAmount(raw.match(/\b(?:below|under)\s+(₹?\s?[\d,]{3,})/i)![1]):null)
+  if(amount){
+    const offers=c.priceRule?.offers||(/including bank\/card offers/i.test(raw)?'included':/excluding bank\/card offers/i.test(raw)?'excluded':null)
+    t=t.replace(/\s*(?:price\s+)?(?:in\s+India\s+)?\b(?:below|under)\b.*$/i,'').replace(/\s*,?\s*(?:including|excluding|with|without)\s+(?:bank\/card\s+)?offers?\b.*$/i,'').replace(/\s+price(?:\s+in\s+India)?$/i,'').trim()
+    t+=` · below ${formatRupees(Number(amount))}${offers==='included'?', with offers':offers==='excluded'?', listed price':''}`
+  }
+  const d=row.last_state_json?.alertDelivery?.state
+  const flag=d==='failed'||d==='outcome_unknown'||row.last_state_json?.pendingAlert?' · ⚠️ last alert not delivered':''
+  return {text:`${clean(t,110)} · ${every(Math.max(1,Number(row.cadence_minutes||60)))}${flag}`,price:Boolean(amount)}
+}
+
 export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;text:string}) {
   const tg=String(params.actor.legacyTelegramId)
   if(!isWatcherStatusQuery(params.text)){
@@ -142,6 +158,34 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
     return {
       runId:'watcher-status-none',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
       text:'You do not have any active background monitors right now.',
+      handledBy:'watcher-status',
+      verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
+    }
+  }
+  // 30 Oct live: "show my watches" sent four long messages of internal fields (Criteria, Source, Expires, itinerary-owned).
+  // The default list is one short line per watch; "what are you watching and why" keeps the full detail below.
+  if(/^\s*(?:please\s+)?(?:show|list|see|view)\s+(?:me\s+)?(?:all\s+)?(?:of\s+)?my\s+(?:active\s+)?(?:watch(?:es|ers|list)?|alerts|monitors|price\s+alerts)\s*[.!?]*\s*$/i.test(params.text)){
+    const line=compactWatchLine
+    const day=(v:unknown)=>{const t=Date.parse(String(v||''));return Number.isFinite(t)?new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short'}).format(new Date(t)):null}
+    const ordered:any[]=[],groups:string[]=[]
+    const priceRows=data.filter((r:any)=>r.condition_json?.contextual!==true&&line(r).price)
+    const tripRows=data.filter((r:any)=>r.condition_json?.contextual===true)
+    const otherRows=data.filter((r:any)=>r.condition_json?.contextual!==true&&!line(r).price)
+    const block=(title:string,rows:any[])=>{if(!rows.length)return;groups.push(`*${title}*\n`+rows.map(r=>{ordered.push(r);return `${ordered.length}. ${line(r).text}`}).join('\n'))}
+    block('Price alerts',priceRows)
+    block('Searches and pages',otherRows)
+    const until=tripRows.map((r:any)=>Date.parse(String(r.condition_json?.expiresAt||''))).filter(Number.isFinite).sort((a,b)=>b-a)[0]
+    block(`For your trip${until?` (until ${day(until)})`:''}`,tripRows)
+    await rememberTypedObjects(params.actor.legacyTelegramId,'watchers',ordered.map((row:any)=>({id:String(row.id),title:String(row.condition_json?.title||row.type||'Watch')})))
+    const {data:steps}=await supabaseAdmin.from('life_event_actions').select('title,action_key,status')
+      .eq('telegram_id',tg).in('action_key',['prepare-web-checkin','watch-boarding-pass-email','travel-disruption-watch'])
+      .in('status',['ready','waiting_approval','blocked','running']).limit(12)
+    const stepTitles=Array.from(new Set((steps||[]).map((r:any)=>clean(r.title,60)).filter(Boolean)))
+    const stepLine=stepTitles.length?`\n\n✈️ Also on your trip plan: ${stepTitles.join(', ')}.`:''
+    const named=priceRows[0]?line(priceRows[0]).text.split(' · ')[0].split(/\s+/).slice(0,3).join(' '):'iPhone'
+    return {
+      runId:'watcher-status-active',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
+      text:`👀 *Your watches* (${ordered.length})\n\n${groups.join('\n\n')}${stepLine}\n\nStop one by name, like *stop the ${named} alert*. Ask *what are you watching and why* for reasons and check times.`,
       handledBy:'watcher-status',
       verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
     }

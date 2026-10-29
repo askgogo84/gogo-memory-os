@@ -53,7 +53,8 @@ export function brainEnabledFor(phone: string, env: Record<string, string | unde
 const EXACT = /^\s*(?:yes|y|yeah|yep|yup|no|n|nope|ok|okay|sure|approve[d]?|reject|deny|decline|confirm|cancel|stop|start|unsubscribe|help|done|snooze(?:\s+\d+\s*m(?:in(?:utes?)?)?)?|book|book\s+(?:it|1|2|3|this|that)|haan|ha|nahi|mr|mrs|ms|miss|master)\s*[.!]*\s*$|^\s*#?\d{1,6}\s*$|^\s*(?:option\s*)?[1-9](?:st|nd|rd|th)?\s*$/i
 export function isExactCommand(text: string): boolean {
   const t = String(text || '').trim()
-  return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t)
+  // 30 Oct live: a re-forwarded bare link was answered by the brain ("Already saved: gjKPc2zn") instead of Link Vault.
+  return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t) || /^https?:\/\/\S+$/i.test(t)
 }
 
 // 28 Oct review (G5): the static rules come first and are cached together with the tool list; the user's name,
