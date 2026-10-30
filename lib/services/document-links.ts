@@ -34,6 +34,30 @@ const SIGNED_URL_TTL_SECONDS = 120
 const EXPIRY_MINUTES_SENSITIVE = 15
 const EXPIRY_DAYS_NORMAL = 30
 
+// Older 'normal' bearer links must not survive a document's later promotion to
+// private identity/payment material. Check the actual issued window, not merely
+// whether the old 30-day token is still valid today.
+function isWithinSensitiveWindow(link: { created_at?: unknown; expires_at?: unknown }, now = Date.now()): boolean {
+  const created = Date.parse(String(link.created_at ?? ''))
+  const expires = Date.parse(String(link.expires_at ?? ''))
+  return Number.isFinite(created) && Number.isFinite(expires)
+    && created <= now && expires > now && expires > created
+    && expires <= created + EXPIRY_MINUTES_SENSITIVE * 60_000
+}
+
+// Mirror the current dashboard's sensitivity signals so a title-only passport
+// cannot be exposed through a long-lived link after its classification changes.
+const SENSITIVE_TITLE_RE = /\b(passport|aadhaar|aadhar|pan\s*card|driving\s+licen[cs]e|identity\s+card|national\s+id|government\s+id|govt\s+id|voter\s+id|residence\s+permit|bank\s+statement|account\s+statement)\b/i
+function isSensitiveStoredDocument(doc: { doc_type?: unknown; title?: unknown; extracted?: unknown }): boolean {
+  const ex = doc.extracted && typeof doc.extracted === 'object' && !Array.isArray(doc.extracted)
+    ? doc.extracted as Record<string, unknown> : {}
+  const restricted = ['passport', 'id_document', 'payment_proof']
+  return ex.privacyClass === 'sensitive'
+    || restricted.includes(String(ex.assetType || ''))
+    || restricted.includes(String(doc.doc_type || ''))
+    || SENSITIVE_TITLE_RE.test(`${String(doc.doc_type || '')} ${String(doc.title || '')}`)
+}
+
 const BASE_URL = (
   process.env.NEXT_PUBLIC_SHORTLINK_BASE_URL ||
   process.env.NEXT_PUBLIC_APP_URL ||
@@ -77,7 +101,7 @@ export async function createDocumentShortLink(params: {
     // Reuse a still-valid token for this doc if one exists.
     const { data: existing } = await supabaseAdmin
       .from(TABLE)
-      .select('token')
+      .select('token,created_at,expires_at')
       .eq('telegram_id', params.telegramId)
       .eq('document_id', params.documentId)
       .is('revoked_at', null)
@@ -85,7 +109,7 @@ export async function createDocumentShortLink(params: {
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle()
-    if (existing?.token) return existing.token as string
+    if (existing?.token && (!params.sensitive || isWithinSensitiveWindow(existing))) return existing.token as string
 
     const token = mintToken()
     const expiresAt = params.sensitive
@@ -121,7 +145,7 @@ export async function resolveShortLinkToSignedUrl(token: string): Promise<string
 
     const { data: link } = await supabaseAdmin
       .from(TABLE)
-      .select('document_id, telegram_id, expires_at, revoked_at, accessed_count')
+      .select('document_id, telegram_id, created_at, expires_at, revoked_at, accessed_count')
       .eq('token', t)
       .maybeSingle()
     if (!link) return null
@@ -131,12 +155,13 @@ export async function resolveShortLinkToSignedUrl(token: string): Promise<string
     // Re-scope to the owner's row; only this row's storage_path is ever signed.
     const { data: doc } = await supabaseAdmin
       .from('documents')
-      .select('storage_path')
+      .select('storage_path, doc_type, title, extracted')
       .eq('id', link.document_id)
       .eq('telegram_id', link.telegram_id)
       .maybeSingle()
     const storagePath = (doc?.storage_path as string | null) || null
     if (!storagePath) return null
+    if (isSensitiveStoredDocument(doc) && !isWithinSensitiveWindow(link)) return null
 
     const url = await getDocumentSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS)
     if (!url) return null
