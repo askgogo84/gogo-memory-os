@@ -368,14 +368,18 @@ const defaultPostModel:PostModel=async prompt=>{
 export async function summarizeSharedPost(p:{title:string;text:string;author?:string},model:PostModel=defaultPostModel){
   const body=clean(p.text||p.title,1500)
   if(body.length<40)return null
-  const prompt=`Someone shared this public post with you on WhatsApp. In 2 or 3 short sentences, plain text, no markdown, no emoji, under 380 characters: start with "That's a <kind of post> by <author>:" (leave out "by <author>" if unknown), say what it says or teaches, and mark any numbers, results or time claims as the author's own ("he claims", "their claim, not verified"). Use only the text below.\n\nAuthor: ${clean(p.author,60)||'unknown'}\nTitle: ${clean(p.title,200)}\nPost text: ${body}`
+  const prompt=`Someone shared this public post with you on WhatsApp. In 2 or 3 short sentences, plain text, no markdown, no emoji, under 380 characters: start with "That's a <kind of post> by <author>:" (leave out "by <author>" if unknown), say what it says or teaches, leave out likes, comments and follower counts, and mark any numbers, results or time claims as the author's own ("he claims", "their claim, not verified"). Use only the text below.\n\nAuthor: ${clean(p.author,60)||'unknown'}\nTitle: ${clean(p.title,200)}\nPost text: ${body}`
   const out=clean(await model(prompt),500).replace(/^["“]|["”]$/g,'')
   if(out.length<40||/^(?:i\s+(?:can(?:not|'t)|don't)|sorry)\b/i.test(out))return null
   return out
 }
 const LINK_DIG='link_dig'
 export const LINK_DIG_YES=/^\s*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|haan|dig\s+in(?:to\s+(?:it|this|them))?|go\s+ahead|tell\s+me\s+more|please\s+do|do\s+it)(?:\s+please)?\s*[.!]*\s*$/i
-export function linkDigQuestion(p:{title:string;description?:string}){
+export function isHowToPost(p:{title:string;description?:string}){
+  return /\b(?:how\s+(?:to|i|we|people)|guide|step[- ]by[- ]step|steps|tutorial|playbook|template|prompts?|framework|tips|build(?:ing)?|recreate|learn|show\s+you|here'?s\s+how|walkthrough|cheat\s*sheet)\b/i.test(`${p.title} ${p.description||''}`)
+}
+export function linkDigQuestion(p:{title:string;description?:string;author?:string;url?:string}){
+  if(isHowToPost(p))return `Find the full guide behind this post${p.author?` by ${clean(p.author,60)}`:''}: "${clean(p.title,200)}".${p.description?' Post text: '+clean(p.description,300):''} Look for the post itself and the article, repo or template it points to, and give what it actually teaches: the steps, any prompt or command it shares, the tools and links, and what you need`
   return `Research this and brief me: ${p.title}.${p.description?' Context: '+clean(p.description,300):''} Who they are, what they do, the facts behind the news (numbers, dates, people), and why it matters`
 }
 export async function handleLinkVaultFollowup(actor:AgentActor,text:string){
@@ -384,7 +388,7 @@ export async function handleLinkVaultFollowup(actor:AgentActor,text:string){
     if(state&&isStrictlyFreshFollowupState(state,30)&&state.payload?.title){
       await clearFollowupState(actor.legacyTelegramId,LINK_DIG).catch(()=>{})
       const dr:any=await import('@/lib/agent/deep-research').catch(()=>null)
-      const out=dr?.runDeepResearch?await Promise.resolve().then(()=>dr.runDeepResearch(linkDigQuestion(state.payload))).catch((err:any)=>{console.error('LINK_DIG_FAILED:',clean(err?.message||err,160));return null}):null
+      const out=dr?.runDeepResearch?await Promise.resolve().then(()=>dr.runDeepResearch(linkDigQuestion(state.payload),isHowToPost(state.payload)?{format:'guide'}:{})).catch((err:any)=>{console.error('LINK_DIG_FAILED:',clean(err?.message||err,160));return null}):null
       // A cited brief about someone else's post (often about AI products) is quoted, not rebranded.
       return{text:out?.text?quotedText(out.text):'I could not research that right now. Ask me again in a minute, or tell me what you want to know about it.',status:'completed',handledBy:'link-vault-dig',capability:'web',runId:''}
     }
@@ -433,14 +437,14 @@ export async function handleLinkVaultText(params:{actor:AgentActor;text:string;s
     if(saved.previewed&&saved.bare){
       const about=r.description&&!r.description.toLowerCase().startsWith(r.title.toLowerCase().slice(0,40))?'\n'+shortText(r.description,260):''
       await clearFollowupState(params.actor.legacyTelegramId,LINK_DIG).catch(()=>{})
-      await saveFollowupState(params.actor.legacyTelegramId,LINK_DIG,{title:r.title,url:r.canonical_url,description:clean(r.description,400)}).catch(()=>{})
+      await saveFollowupState(params.actor.legacyTelegramId,LINK_DIG,{title:r.title,url:r.canonical_url,description:clean(r.description,400),author:clean((saved as any).preview?.author||'',60)}).catch(()=>{})
       // 30 Oct, side by side with another assistant: say who posted it and what it says, mark their numbers as their
       // claims, then why it matters to this person. The post's own words are quoted, never rebranded.
       const summary=await summarizeSharedPost({title:r.title,text:(saved as any).preview?.postText||r.description,author:(saved as any).preview?.author||''}).catch(()=>null)
       const base=summary?`🔗 ${quotedText(summary)}`:'🔗 *'+quotedText(r.title)+'*'+(about?quotedText(about):'')
       const withContext=summary?await contextualizeSavedItemReply({userId:String(params.actor.userId),telegramId:params.actor.legacyTelegramId,whatsappId:params.actor.whatsappId,name:params.actor.name,baseReply:base,
         item:{kind:'link',platform:r.platform,title:r.title,summary:clean(summary,600),tags:r.tags||[]}}).catch(()=>base):base
-      return{text:withContext+'\n\nSaved to your links. Want me to dig into this? Reply *yes*.',status:'completed',handledBy:'link-vault',capability:'memory',runId:''}
+      return{text:withContext+(isHowToPost({title:r.title,description:r.description})?'\n\nSaved to your links. Want the full guide, step by step? Reply *yes*.':'\n\nSaved to your links. Want me to dig into this? Reply *yes*.'),status:'completed',handledBy:'link-vault',capability:'memory',runId:''}
     }
     const baseReply='🔗 '+(saved.merged?'Updated existing saved link':'Saved to Link Vault')+': *'+r.title+'*\n'+r.canonical_url+(r.user_note?'\nNote: '+r.user_note:'')+restrictedNote
     const reply=await contextualizeSavedItemReply({
