@@ -107,6 +107,53 @@ console.log('BOOKING_COMPARE_OK')
   console.log('PASS listing offers: public page read, scripts ignored, blocked pages tolerated')
 }
 console.log('BOOKING_LISTING_OFFERS_OK')
+
+ // Security P1: reservation offers may contain untrusted search-result/redirect URLs.
+ // Missing discount snippets must NOT cause application-server fetches to any host.
+{
+  const options = be.collectBookingOptions([
+    { url: 'https://www.zomato.com/bangalore/example/book', title: 'Example venue', snippet: '' },
+  ], [])
+  assert.equal(options.length, 1)
+  const originalFetch = globalThis.fetch
+  const attempts: string[] = []
+  globalThis.fetch = (async (url: any) => {
+    attempts.push(String(url))
+    throw new Error('production server fetch should never be called')
+  }) as typeof fetch
+  try {
+    const inputs = [
+      ...options,
+      { ...options[0], url: 'https://169.254.169.254/latest/meta-data' },
+      { ...options[0], url: 'https://public.example/redirect-to-private' },
+      { ...options[0], url: 'https://127.0.0.1/internal' },
+    ]
+    const returned = await be.enrichOffersFromListings(inputs)
+    assert.deepEqual(returned, inputs, 'production returns search-provider evidence untouched')
+    assert.deepEqual(attempts, [], 'no server call even for permitted initial host or private redirect')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+  console.log('PASS booking listing SSRF: no default fetch, including metadata IP or redirect')
+}
+
+// The only allowed HTML fetching is by an explicitly injected inert fixture.
+// It must use manual redirects and refuse the 302 response without following.
+{
+  const options = be.collectBookingOptions([
+    { url: 'https://www.zomato.com/bangalore/example/book', title: 'Example venue', snippet: '' },
+  ], [])
+  const redirectPolicies: string[] = []
+  const fakeRedirect = (async (_url: string, init: any) => {
+    redirectPolicies.push(String(init.redirect))
+    return Response.redirect('http://169.254.169.254/latest/meta-data', 302)
+  }) as typeof fetch
+  const out = await be.enrichOffersFromListings(options, fakeRedirect)
+  assert.equal(out.length, 1)
+  assert.equal(out[0].offer, null, 'synthetic redirect is not treated as offer evidence')
+  assert.deepEqual(redirectPolicies, ['manual'], 'injected fixture forbids automatic redirect follow')
+  console.log('PASS booking listing injected fixture rejects public-to-internal redirect')
+}
 {
   const next = '<script id="__NEXT_DATA__" type="application/json">{"props":{"offers":[{"title":"Flat 15% off on total bill"}],"track":"abc"}}</script><script>analytics("90% off")</script><div>District 6</div>'
   assert.equal(be.offerFrom(be.listingText(next))?.percent, 15, 'offer from embedded page data; other scripts ignored')

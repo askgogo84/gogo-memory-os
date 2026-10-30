@@ -160,17 +160,22 @@ export function listingText(html: string): string {
 }
 
 /**
- * The offer on each app's public listing page, read with a plain GET (6s, no cookies, no sign-in). Search snippets
- * rarely carry the discount (20 Oct live: four apps found, no offers). Pages that need JS or block bots just keep
- * the snippet result. Never throws.
+ * The offer on each app's public listing page, when explicitly given an inert test fetcher.
+ * Untrusted search-result URLs and redirects MUST NOT be fetched by the production app server:
+ * destination IPs are not pinned and public hosts can redirect to private networks (SSRF).
+ * Live callers retain search snippets, including any already-advertised discount, until a
+ * separately reviewed outbound browser/egress transport exists. Never throws.
  */
-export async function enrichOffersFromListings(options: BookingOption[], fetchImpl: typeof fetch = fetch): Promise<BookingOption[]> {
+export async function enrichOffersFromListings(options: BookingOption[], fetchImpl?: typeof fetch): Promise<BookingOption[]> {
+  // No global fetch fallback. Explicit transport injection is for inert unit fixtures only.
+  if (!fetchImpl) return options
   return Promise.all(options.map(async o => {
     if (o.offer) return o
     try {
       const controller = typeof AbortController === 'function' ? new AbortController() : null
       const timer = controller ? setTimeout(() => controller.abort(), 6000) : null
-      const res = await fetchImpl(o.url, { headers: { 'user-agent': 'Mozilla/5.0 (compatible; AskGogo/1.0)', accept: 'text/html' }, redirect: 'follow', signal: controller?.signal } as any)
+      // Even injected fixtures must not opt into redirect following.
+      const res = await fetchImpl(o.url, { headers: { 'user-agent': 'Mozilla/5.0 (compatible; AskGogo/1.0)', accept: 'text/html' }, redirect: 'manual', signal: controller?.signal } as any)
       if (timer) clearTimeout(timer)
       if (!res.ok) return o
       const offer = offerFrom(listingText(await res.text()))
