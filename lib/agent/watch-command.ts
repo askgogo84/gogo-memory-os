@@ -88,8 +88,8 @@ export function shortCheckTime(value:unknown,now=Date.now()){
   const time=new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(t)).replace(/\s?([ap])\.?m\.?/i,' $1m')
   return istDay(t)===istDay(now)?time:`${istDay(t)}, ${time}`
 }
-const priceAmount=(c:any)=>{const raw=String(c.query||c.title||'');const m=raw.match(/\b(?:below|under)\s+(₹?\s?[\d,]{3,})/i);return c.priceRule?.threshold??(m?parseMoneyAmount(m[1]):null)}
-const priceOffers=(c:any)=>{const raw=String(c.query||c.title||'');return c.priceRule?.offers||(/including bank\/card offers/i.test(raw)?'included':/excluding bank\/card offers/i.test(raw)?'excluded':null)}
+const priceAmount=(c:any)=>{const raw=`${c.query||''} ${c.title||''}`;const m=raw.match(/\b(?:below|under)\s+(₹?\s?[\d,]{3,})/i);return c.priceRule?.threshold??(m?parseMoneyAmount(m[1]):null)}
+const priceOffers=(c:any)=>{const raw=`${c.query||''} ${c.title||''}`;return c.priceRule?.offers||(/including bank\/card offers/i.test(raw)?'included':/excluding bank\/card offers/i.test(raw)?'excluded':null)}
 /** The thing being watched, without the rule: "iPhone 16 128GB on Croma". */
 export function watchName(row:any){
   const c:any=row.condition_json||{}
@@ -308,8 +308,17 @@ export async function tryRestartWatcherFromCommand(params:{actor:AgentActor;text
     const score=tokens.filter(t=>labelTokens.has(t)).length
     return {row,label,score}
   }).filter((x:any)=>x.score>0).sort((a:any,b:any)=>b.score-a.score)
-  const best:any=ranked[0],second:any=ranked[1]
-  if(!best||second?.score===best.score){
+  let best:any=ranked[0];const second:any=ranked[1]
+  let tie=Boolean(best&&second?.score===best.score)
+  // "restart the iPhone 17 alert watch" after the alert and a plain search for the same phone were both stopped.
+  if(tie){
+    const tied=ranked.filter((x:any)=>x.score===best.score),said=String(params.text||'')
+    const wantsSearch=/\bsearch(?:es)?\b/i.test(said)&&!/\b(?:price\s+alert|below|under)\b/i.test(said)
+    const wantsAlert=/\b(?:price\s+)?alerts?\b|\bbelow\b|\bunder\b/i.test(said)&&!wantsSearch
+    const pick=wantsSearch?tied.filter((x:any)=>!priceAmount(x.row.condition_json||{})):wantsAlert?tied.filter((x:any)=>priceAmount(x.row.condition_json||{})):[]
+    if(pick.length===1){best=pick[0];tie=false}
+  }
+  if(!best||tie){
     return {runId:'watcher-restart-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
       text:best?'I found more than one plausible stopped watcher. Please be more specific.':'I could not find that stopped watcher in persistent watcher state.',handledBy:'watcher-restart'}
   }
@@ -384,9 +393,27 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
         if(!distinctive.some(t=>labelTokens.has(t)))ranked.splice(i,1)
       }
     }
-    const best:any=ranked[0],second:any=ranked[1]
+    let best:any=ranked[0];const second:any=ranked[1]
     if(best&&second?.score===best.score){
-      const tied=ranked.filter((x:any)=>x.score===best.score)
+      let tied=ranked.filter((x:any)=>x.score===best.score)
+      // 30 Oct live: "stop the iPhone 17 256GB price India search" also stopped the ₹70,000 price alert for the same
+      // phone. A price alert and a plain search are different watches: "search" picks the search, "alert" the alert,
+      // and anything still mixed is asked about rather than stopped together.
+      const kindOf=(x:any)=>priceAmount(x.row.condition_json||{})?'price':`${x.row.type}`
+      if(new Set(tied.map(kindOf)).size>1){
+        const said=String(params.text||'')
+        const wantsSearch=/\bsearch(?:es)?\b/i.test(said)&&!/\b(?:price\s+alert|below|under)\b/i.test(said)
+        const wantsAlert=/\b(?:price\s+)?alerts?\b|\bbelow\b|\bunder\b/i.test(said)&&!wantsSearch
+        const pick=wantsSearch?tied.filter((x:any)=>!priceAmount(x.row.condition_json||{})):wantsAlert?tied.filter((x:any)=>priceAmount(x.row.condition_json||{})):[]
+        if(pick.length&&new Set(pick.map(kindOf)).size===1)tied=pick
+        else{
+          const list=tied.slice(0,6).map((x:any,i:number)=>`${i+1}. ${compactWatchLine(x.row).text}`).join('\n')
+          return {runId:'watcher-stop-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+            text:`Two different watches match:\n${list}\n\nWhich one? Say *stop the ${typedWatchName(params.text)} alert* for the price alert, or *… search* for the general search.`,handledBy:'watcher-stop'}
+        }
+      }
+      if(tied.length===1){best=tied[0]}
+      else{
       // Every tied watch names the whole target ("Sony WH-1000XM5" twice): they are the same watch saved more than
       // once, so stopping all of them is what the person asked. Different watches that only share a word are listed.
       // A one-word name ("Sony") can mean different products, so that case is listed instead.
@@ -409,6 +436,7 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
       const list=tied.slice(0,6).map((x:any,i:number)=>`${i+1}. ${String(x.label)}`).join('\n')
       return {runId:'watcher-stop-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
         text:`More than one watch matches:\n${list}\n\nSay stop watching followed by the exact name.`,handledBy:'watcher-stop'}
+      }
     }
     if(!best){
       // Say what is running, so the person can pick the right name instead of guessing again.
@@ -434,7 +462,7 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
     if(remaining.some((row:any)=>String(row.id)===String(chosen.id)))throw new Error('watcher_stop_read_after_write_failed')
     await dismissIdeasForWatcherIds(tg,[String(chosen.id)])
     return {runId:`watcher-stop-${chosen.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-      text:`Stopped ${String((chosen.condition_json as any)?.title||'that monitor')}. ${remaining.length} other watch${remaining.length===1?' is':'es are'} still running.`,handledBy:'watcher-stop'}
+      text:`Stopped ${chosen.type==='web_search'&&!(chosen.condition_json as any)?.goldRule?`the ${watchName(chosen)} ${priceAmount(chosen.condition_json||{})?'price alert':chosen.condition_json?.contextual===true?'trip watch':'search'}`:String((chosen.condition_json as any)?.title||'that monitor')}. ${remaining.length} other watch${remaining.length===1?' is':'es are'} still running.`,handledBy:'watcher-stop'}
   }
   if(intent==='all'){
     const rows=await canonicalActiveWatchers(tg)
