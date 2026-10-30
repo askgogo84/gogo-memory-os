@@ -125,3 +125,57 @@ liveAction={...liveAction,status:'waiting_approval',updated_at:'2026-10-18T09:00
 await assert.rejects(()=>racingArm.armApprovedRestaurantReservation({actor,runId:'fixture-run'}),/restaurant_reservation_action_changed/,'Zero affected action rows cannot be reported as armed')
 assert.equal(liveAction.status,'waiting_approval')
 console.log('Actual reservation worker and real approval fingerprint: bounded context, material-change and failed-refresh guards passed. Inert synthetic I/O only.')
+
+
+// BEGIN RESTAURANT ACTOR OWNER PRECISION AUDIT — actual worker module, inert DB/provider
+// Postgres BIGINT 2^53 and 2^53+1 are different owners even though Number(...) aliases them.
+function reservationActorFixture(row:any){
+ const selectors:Array<[string,unknown]>=[]
+ const database={from(table:string){
+   assert.equal(table,'users','owner resolver may read only its owner row')
+   const q:any={select:()=>q,eq:(column:string,value:unknown)=>{selectors.push([column,value]);return q},
+     maybeSingle:async()=>({data:row,error:null})}
+   return q
+ }}
+ const extra='\nexports.__auditRestaurantActorFor = actorFor'
+ const output=ts.transpileModule(readFileSync('lib/agent/restaurant-reservation-worker.ts','utf8')+extra,
+   {compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
+ const isolated:any={}
+ runInNewContext(output,{exports:isolated,require:(name:string)=>name==='@/lib/supabase-admin'?{supabaseAdmin:database}:{},
+   Date:FixtureDate,Intl,console,URL,Set,Map})
+ return {resolve:isolated.__auditRestaurantActorFor as (owner:string)=>Promise<any>,selectors}
+}
+const neighboringOwner='9007199254740993'
+const foreignOwner={id:'owner-A',telegram_id:'9007199254740992',whatsapp_id:'whatsapp:+15550111111',name:'Foreign'}
+const neighboring=reservationActorFixture(foreignOwner)
+await assert.rejects(()=>neighboring.resolve(neighboringOwner),/restaurant_reservation_invalid_owner/,
+  'unsafe 64-bit owner may not select another person for browser/booking authority')
+assert.deepEqual(neighboring.selectors,[],'reject unsafe input before any service-role owner read')
+for(const malformed of ['9007199254740992','+123','00123','12.3','', 'Infinity']){
+ const sample=reservationActorFixture(foreignOwner)
+ await assert.rejects(()=>sample.resolve(malformed),/restaurant_reservation_invalid_owner/,
+   'ambiguous/malformed owner must fail closed')
+ assert.deepEqual(sample.selectors,[])
+}
+const verified=reservationActorFixture({id:'owner-123',telegram_id:123,whatsapp_id:'whatsapp:+15550123456',name:'Owner'})
+const goodActor=await verified.resolve('123')
+assert.equal(goodActor.userId,'owner-123')
+assert.equal(goodActor.legacyTelegramId,123)
+assert.deepEqual(verified.selectors,[['telegram_id','123']],
+ 'service-role lookup must preserve exact owner string, never Number rounding')
+const wrongRow=reservationActorFixture({id:'owner-456',telegram_id:'456',whatsapp_id:'whatsapp:+15550123456'})
+await assert.rejects(()=>wrongRow.resolve('123'),/restaurant_reservation_actor_owner_mismatch/,
+  'DB response must be bound to requested canonical owner before browser context')
+const unsafeDb=reservationActorFixture({id:'owner-123',telegram_id:9007199254740992,whatsapp_id:'whatsapp:+15550123456'})
+await assert.rejects(()=>unsafeDb.resolve('123'),/restaurant_reservation_actor_owner_mismatch/,
+  'already-rounded database owner result cannot confer browser authority')
+let attemptedDbReads=0
+const preClaim=load('lib/agent/restaurant-reservation-worker.ts',{
+ '@/lib/supabase-admin':{supabaseAdmin:{from:()=>{attemptedDbReads++;throw Error('unsafe owner reached DB')}}}
+})
+await assert.rejects(()=>preClaim.processOne({id:'inert-action',telegram_id:neighboringOwner,payload_json:{}}),
+ /restaurant_reservation_invalid_owner/,
+ 'reject unsafe reservation owner before claiming action or reading approvals')
+assert.equal(attemptedDbReads,0,'unsafe owner must have zero side effects before refusal')
+console.log('Restaurant booking actor: exact owner, cross-tenant 64-bit denial and pre-claim fencing passed (inert actual-module).')
+// END RESTAURANT ACTOR OWNER PRECISION AUDIT

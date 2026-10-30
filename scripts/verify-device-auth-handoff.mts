@@ -476,7 +476,7 @@ for(const kind of ['flight','restaurant'])for(const busy of [true,false]){
   rows.life_events={id:'event',telegram_id:'1',event_type:'travel',subtype:'flight',confirmation_ref:'fixture',metadata_json:{}}
   rows.life_event_actions={id:'action',telegram_id:'1',life_event_id:'event',status:kind==='flight'?'waiting_approval':'ready',payload_json:{approvalId:'approval',reservationUrl:'https://provider.example',releaseAt:executionRelease,diningContext:executionDining,timeConstraint:{version:1,kind:'unrestricted',start:'',end:''}}}
   rows.agent_approvals={id:'approval',telegram_id:'1',run_id:'run',status:'approved',action_type:'booking',execution_payload:{action:'submit_web_checkin'}}
-  rows.users={id:'owner',telegram_id:1}
+  rows.users={id:'owner',telegram_id:'1'}
   const result=kind==='flight'?await flightExecutor.executeApprovedLifeEventCheckin({actor:{userId:'owner',legacyTelegramId:1},runId:'run'}):await restaurantExecutor.processOne(structuredClone(rows.life_event_actions))
   assert.equal(result.status,busy?(kind==='flight'?'paused':'queued'):'outcome_unknown')
   assert.equal(rows.agent_runs.status,result.status)
