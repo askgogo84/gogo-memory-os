@@ -1,0 +1,35 @@
+name: Forwarding activation provenance (test-only expected RED)
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-forwarding-activation-evidence-testonly.mts'
+      - '.github/workflows/forwarding-activation-evidence-testonly.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-forwarding-activation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout literal pull request HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify literal head commit SHA
+        run: |
+          HEAD="$(git rev-parse HEAD)"
+          echo "Checked-out head: $HEAD"
+          test "$HEAD" = "${{ github.event.pull_request.head.sha }}"
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Execute actual inbound-email handler with inert forwarding fixtures
+        run: npx --yes tsx scripts/verify-forwarding-activation-evidence-testonly.mts
