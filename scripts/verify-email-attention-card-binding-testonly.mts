@@ -20,7 +20,7 @@ function fixtureFor(name: string, address: string, id: string) {
     from: name + ' <' + address + '>', to: 'owner@example.test',
     subject: 'Please approve the vendor report',
     snippet: 'Could you review and approve the report by Friday? I need your sign-off.',
-    internalDate: now - 10 * 60_000, isUnread: true, source: 'gmail',
+    internalDate: now - 10 * 60_000, isUnread: true, source: 'gmail' as const,
   }
   const score = attention.scoreEmail(email, {now})
   assert.equal(score.category, 'person', 'fixture must be an actionable person email')
