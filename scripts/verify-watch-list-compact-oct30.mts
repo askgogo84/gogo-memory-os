@@ -37,3 +37,4 @@ assert.equal(wc.finishedWatchLine({ type: 'web_search', condition_json: { title:
 const alerted = wc.compactWatchLine({ type: 'web_search', condition_json: { query: 'Sony WH-1000XM5 below 22000', priceRule: { threshold: 22000 } }, last_state_json: { lastAlertAt: new Date(Date.now() - 86400_000).toISOString() } })
 assert.match(alerted.text, / · last alert \d{1,2} [A-Z][a-z]{2}$/)
 console.log('✓ finished watches are reported in plain words; running alerts show when they last fired')
+assert.equal((await import('../lib/agent/watch-command')).shortCheckTime(Date.parse('2026-10-30T03:45:00Z'), Date.parse('2026-10-30T05:00:00Z')), '9:15 am', 'a number time is read, never "null"')

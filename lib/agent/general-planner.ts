@@ -565,7 +565,7 @@ async function pauseForInput(params:{actor:AgentActor;runId:string;stepId:string
 async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan:GeneralPlan;stepIds:string[];startOrdinal:number;missionText:string;messageId?:string|number|null;approvedOrdinal?:number}) : Promise<GeneralPlanResult> {
   const tg = params.actor.legacyTelegramId
   let highestRisk:'low'|'medium'|'high'='low'
-  let lastText=''
+  let lastText='';const receipts:string[]=[]
   for (let index=params.startOrdinal-1; index<params.plan.steps.length; index++) {
     const ordinal=index+1
     const step=params.plan.steps[index]
@@ -596,6 +596,7 @@ async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan
     try {
       const result=await executeTool({actor:params.actor,runId:params.runId,step,stepId,missionText:params.missionText,messageId:params.messageId})
       lastText=result.text
+      if((result.output as any)?.verifiedStore&&!(result.output as any)?.readOnly&&String(result.text||'').length<400)receipts.push(String(result.text))
       await updateStep(stepId,'completed',{...result.output,reply:String(result.text||'').slice(0,20000)})
       const progress=Math.round((ordinal/params.plan.steps.length)*100)
       await supabaseAdmin.from('agent_runs').update({status:'running',progress,summary:safeLog(result.text,1000),updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
@@ -612,7 +613,9 @@ async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan
   const completedAt=new Date().toISOString()
   await supabaseAdmin.from('agent_runs').update({status:'completed',progress:100,summary:safeLog(lastText||'Multi-step plan completed.',1800),completed_at:completedAt,updated_at:completedAt}).eq('id',params.runId).eq('telegram_id',String(tg))
   await activity(tg,params.runId,'run_completed','Gogo completed the multi-tool plan.',{step_count:params.plan.steps.length})
-  return {runId:params.runId,status:'completed',capability:capabilityForStep(params.plan.steps[params.plan.steps.length-1]),risk:highestRisk,text:lastText||'Done. I completed the plan.',handledBy:'general-plan'}
+  // 30 Oct live: "Make a grocery list … and remind me at 6 pm" replied only about the reminder. Every saved change is said.
+  const said=Array.from(new Set([...receipts.filter(t=>t!==lastText),lastText].filter(Boolean)))
+  return {runId:params.runId,status:'completed',capability:capabilityForStep(params.plan.steps[params.plan.steps.length-1]),risk:highestRisk,text:said.join('\n')||'Done. I completed the plan.',handledBy:'general-plan'}
 }
 
 export async function tryRunGeneralPlan(params:{actor:AgentActor;surface:AgentSurface;text:string;messageId?:string|number|null;prepared?:PreparedGeneralPlan}):Promise<GeneralPlanResult|null>{

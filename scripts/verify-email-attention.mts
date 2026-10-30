@@ -34,7 +34,7 @@ await check('each pick says why in a few words', () => {
   assert.equal(by['1'].why, 'Asks you to decide · due Fri')
   assert.equal(by['2'].why, 'Payment due tomorrow')
   assert.match(by['2'].ask, /₹18,420/)
-  assert.equal(by['7'].why, 'Something went wrong')
+  assert.equal(by['7'].why, 'Problem with an order')
   assert.match(by['1'].ask, /^Can you sign off on the Q4 vendor contract before Friday\?$/)
 })
 

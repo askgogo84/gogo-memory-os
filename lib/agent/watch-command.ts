@@ -84,7 +84,7 @@ function watchCheckTime(value:unknown){
 const every=(m:number)=>m>=1440&&m%1440===0?'daily':m>=60&&m%60===0?`every ${m/60} h`:`every ${m} min`
 const istDay=(t:number)=>new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short'}).format(new Date(t))
 export function shortCheckTime(value:unknown,now=Date.now()){
-  const t=Date.parse(String(value||''));if(!Number.isFinite(t))return null
+  const t=typeof value==='number'?value:Date.parse(String(value||''));if(!Number.isFinite(t))return null
   const time=new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(t)).replace(/\s?([ap])\.?m\.?/i,' $1m')
   return istDay(t)===istDay(now)?time:`${istDay(t)}, ${time}`
 }
