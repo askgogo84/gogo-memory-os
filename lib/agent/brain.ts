@@ -51,6 +51,9 @@ export function brainEnabledFor(phone: string, env: Record<string, string | unde
 
 // Exact commands keep their deterministic handlers: approvals, yes/no, numbered picks, STOP, OTPs, buttons.
 const EXACT = /^\s*(?:yes|y|yeah|yep|yup|no|n|nope|ok|okay|sure|approve[d]?|reject|deny|decline|confirm|cancel|stop|start|unsubscribe|help|done|snooze(?:\s+\d+\s*m(?:in(?:utes?)?)?)?|book|book\s+(?:it|1|2|3|this|that)|haan|ha|nahi|mr|mrs|ms|miss|master)\s*[.!]*\s*$|^\s*#?\d{1,6}\s*$|^\s*(?:option\s*)?[1-9](?:st|nd|rd|th)?\s*$/i
+export function whatsAppMarkdown(text: string) {
+  return String(text || '').replace(/\*\*([^*\n]+)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '').replace(/__([^_\n]+)__/g, '_$1_')
+}
 export function isExactCommand(text: string): boolean {
   const t = String(text || '').trim()
   // 30 Oct live: a re-forwarded bare link was answered by the brain ("Already saved: gjKPc2zn") instead of Link Vault.
@@ -66,7 +69,7 @@ Read the WHOLE conversation and the user's context before deciding. The latest m
 
 Choose exactly one tool:
 - flight: the message is about a flight's status, landing, delay or take-off (including "did it land?" about a flight being tracked or just discussed), or asks to track one. Give the flight number. Set track true only when the user asks to track, monitor, be alerted, notified or messaged about it.
-- reply: you can fully answer from the conversation and context alone (chat, thanks, a question about something already said, advice). Be warm, brief, WhatsApp-style. Never claim you did, saved, booked, set or sent anything. Never use reply for anything live (a flight's status, prices, weather, news, availability): earlier messages may be stale, so use flight or handle.
+- reply: you can fully answer from the conversation and context alone (chat, thanks, a question about something already said, advice). Be warm, brief, WhatsApp-style. Never claim you did, saved, booked, set or sent anything. A search, booking or call that is queued, running or waiting for approval is not done: say "looking for a table at Toit", never list it as booked or as a plan. Format for WhatsApp: *single asterisks* for bold, never **double**, no # headings. Never use reply for anything live (a flight's status, prices, weather, news, availability): earlier messages may be stale, so use flight or handle.
 - ask: the request is genuinely ambiguous even with context. One short question. Missing saved notes or details are not ambiguity: for a plan, outline or prep ("prep a 30-minute plan for Sunday's coaching from my notes"), reply with a useful general plan, saying in one line that nothing specific is saved and inviting details to tailor it. Never invent saved notes.
 - later: the user asks about the results of a search Gogo is still running (an open travel or flight search in Open tasks, results not yet shown). Gogo will answer it the moment the results arrive, so do not ask them anything.
 - handle: anything that needs Gogo's tools (reminders, lists, expenses, email, calendar, documents, web answers, prices, shopping, restaurants, travel search and booking, watches, memory). Write the instruction the way the user would say it if they had been fully explicit: resolve "it/that/this" to the named thing (flight number, date, product, person), keep every detail the user gave (including every "not", "don't", "never" and "without"), add nothing they did not ask for. If the message is already explicit, or it answers a question Gogo just asked (a name, a choice, details for a booking), set keep_original true. To book or pick an option from a numbered list Gogo already showed (flights, hotels, products), the instruction is exactly "book <number>" (or "pick <number>") using that list's number: never restate the route, date or airline, because that starts a new search.
@@ -141,7 +144,8 @@ export function decisionFromToolUse(original: string, name: string, input: any):
     const asked = /\?\s*$/.test(original.trim()) || /^(?:when|what|where|which|who|whose|how|is|are|do|does|did|can|could|have|has|will)\b/i.test(original.trim())
     const announces = /^\W*(?:done|updated|saved|set|booked|added|noted|scheduled|cancelled|canceled|deleted|i(?:'ve| have| just))\b/i.test(raw)
     if (name === 'reply' && COMPLETION_CLAIM.test(raw) && (!asked || announces)) return { kind: 'handle', instruction: original, rewritten: false }
-    return { kind: name, text: inventedApprovalGuard(raw) }
+    // 30 Oct live: "**Preferences**" showed literally on WhatsApp. WhatsApp bold is *one* asterisk.
+    return { kind: name, text: inventedApprovalGuard(whatsAppMarkdown(raw)) }
   }
   if (name === 'handle') {
     const instruction = clean(input?.instruction, 600)

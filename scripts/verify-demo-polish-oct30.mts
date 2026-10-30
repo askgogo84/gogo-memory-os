@@ -41,3 +41,10 @@ assert.deepEqual(cwm.unsupportedClaims('Vault keeps documents encrypted for you.
 assert.match(cwm.claimRewriteRequest('Draft a post', post, claims), /remove every one of these claims/)
 assert.match(readFileSync('lib/bot/process-message.ts', 'utf8'), /CONTENT_UNSUPPORTED_CLAIMS/)
 console.log('✓ launch posts with invented numbers, security or "the only" claims are rewritten without them')
+
+// 30 Oct live: "Summarise my week" listed a queued Toit table as booked; brain replies used **bold**.
+const br = await import('../lib/agent/brain')
+assert.equal(br.whatsAppMarkdown('**Preferences**\n## Week\n• **Tomorrow:** flight'), '*Preferences*\nWeek\n• *Tomorrow:* flight')
+assert.match(readFileSync('lib/agent/brain.ts', 'utf8'), /queued, running or waiting for approval is not done/)
+assert.match(readFileSync('lib/agent/understanding-context.ts', 'utf8'), /— not done yet/)
+console.log('✓ brain replies use WhatsApp bold and never present a queued booking as done')
