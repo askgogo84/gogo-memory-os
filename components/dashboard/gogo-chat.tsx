@@ -76,7 +76,7 @@ function connectCard(text:string){
 type Chip={title:string;description?:string}
 
 // Same rule as lib/security/outbound-identifiers brandSafe (kept local: the chat harness loads this file alone).
-const brandSafe=(t:string)=>String(t??'').replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g,m=>/['’]s$/.test(m)?'Gogo’s':'Gogo').replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g,'our AI provider')
+const brandSafe=(t:string)=>String(t??'').split(/(\u2063[\s\S]*?\u2063)/).map(part=>part.length>1&&part.startsWith('\u2063')&&part.endsWith('\u2063')?part:part.replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g,m=>/['’]s$/.test(m)?'Gogo’s':'Gogo').replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g,'our AI provider')).join('').replace(/\u2063/g,'')
 
 function Message({message:incoming,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPick?:(title:string)=>void}){
   let message=incoming

@@ -89,7 +89,9 @@ export function isPreviewHost(url:string){try{return PREVIEW_HOSTS.test(new URL(
 function decodeEntities(s:string){return s.replace(/&quot;/g,'"').replace(/&#x27;|&#39;|&apos;/g,"'").replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&#(\d+);/g,(_,n)=>String.fromCharCode(Number(n))).replace(/&#x([0-9a-f]+);/gi,(_,n)=>String.fromCharCode(parseInt(n,16)))}
 function metaContent(html:string,name:string){
   const tag=html.match(new RegExp('<meta[^>]+(?:property|name)=["\']'+name.replace(/[.:]/g,'\\$&')+'["\'][^>]*>','i'))?.[0]
-  return tag?decodeEntities(tag.match(/content=["']([^"']*)["']/i)?.[1]||'').trim():''
+  // 30 Oct live: content="… and you don't …" was cut at the apostrophe. Match the quote that opened the value.
+  const m=tag?.match(/content=(?:"([^"]*)"|'([^']*)')/i)
+  return m?decodeEntities(m[1]??m[2]??'').trim():''
 }
 export function titleFromArticleUrl(url:string){
   try{
@@ -123,7 +125,7 @@ export function splitPostTitle(rawTitle:string,rawDescription=''){
   rest=rest.replace(/^[\s.,;:–—-]+/,'')
   return{title:clean(title,160),description:shortText(rest,400)}
 }
-export async function linkPreview(url:string,fetchImpl:typeof fetch=fetch):Promise<{title:string;description:string;resolvedUrl:string}|null>{
+export async function linkPreview(url:string,fetchImpl:typeof fetch=fetch):Promise<{title:string;description:string;resolvedUrl:string;author?:string;postText?:string}|null>{
   let current=url
   for(let hop=0;hop<4;hop++){
     if(!isPreviewHost(current)){const t=titleFromArticleUrl(current);return t?{title:clean(t,160),description:'',resolvedUrl:current}:null}
@@ -138,8 +140,10 @@ export async function linkPreview(url:string,fetchImpl:typeof fetch=fetch):Promi
     const external=html.match(/<a\b[^>]*external_url_click[^>]*>/i)?.[0]?.match(/href=["']([^"']+)["']/i)?.[1]
     if(external&&(!title||/^(?:LinkedIn|Redirecting|External link)/i.test(title))){current=decodeEntities(external);continue}
     if(!title||/^(?:LinkedIn|Sign\s*Up|Log\s*In|Redirecting)\b/i.test(title))return null
-    const split=splitPostTitle(title,metaContent(html,'og:description')||metaContent(html,'description'))
-    return{title:split.title,description:split.description,resolvedUrl:current}
+    const rawDescription=metaContent(html,'og:description')||metaContent(html,'description')
+    const split=splitPostTitle(title,rawDescription)
+    const author=clean(metaContent(html,'author')||html.match(/"author"\s*:\s*\{[^}]*?"name"\s*:\s*"([^"]{2,60})"/)?.[1]||'',60)
+    return{title:split.title,description:split.description,resolvedUrl:current,author,postText:clean(rawDescription||title,1500)}
   }
   return null
 }
@@ -285,7 +289,7 @@ export async function saveLinkVaultItem(params:{telegramId:number;text:string;ur
     topic:(existing as any)?.topic||topic,tags:mergedTags,shelf:(existing as any)?.shelf||shelf,
     preview_image:params.previewImage||(existing as any)?.preview_image||null,screenshot_url:(existing as any)?.screenshot_url||null,
     enrichment_status:(existing as any)?.enrichment_status||'metadata_only',auth_required:authRequired,
-    source_evidence:{...((existing as any)?.source_evidence||{}),capture:params.sourceSurface||'chat',content_fetched:false,metadata_fetched:Boolean(metadata||preview),metadata_source:metadata?.source||(preview?'link_preview':null),resolved_url:preview?.resolvedUrl||null,visible_title:Boolean(params.visibleTitle),last_captured_at:now},
+    source_evidence:{...((existing as any)?.source_evidence||{}),capture:params.sourceSurface||'chat',content_fetched:false,metadata_fetched:Boolean(metadata||preview),metadata_source:metadata?.source||(preview?'link_preview':null),resolved_url:preview?.resolvedUrl||null,preview_author:preview?.author||null,preview_text:preview?.postText||null,visible_title:Boolean(params.visibleTitle),last_captured_at:now},
     updated_at:now
   }
   let row:any
@@ -298,7 +302,7 @@ export async function saveLinkVaultItem(params:{telegramId:number;text:string;ur
   }
   await indexMemory({telegramId:params.telegramId,sourceId:'link_vault:'+row.id,sourceTable:'link_vault_items',content:indexContent(row),topic:row.topic})
   await rememberTypedObjects(params.telegramId,'links',[{id:String(row.id),title:String(row.title||row.canonical_url)}]).catch(()=>{})
-  return{row:row as LinkVaultRow,created:!existing?.id,merged:Boolean(existing?.id),previewed:Boolean(preview),bare:!note}
+  return{row:row as LinkVaultRow,created:!existing?.id,merged:Boolean(existing?.id),previewed:Boolean(preview),bare:!note,preview}
 }
 
 export async function queryLinkVault(telegramId:number,text:string,timezone='Asia/Kolkata'){
@@ -338,6 +342,30 @@ export function formatLinkVaultResults(rows:LinkVaultRow[],text:string){
   const lines=rows.slice(0,10).map((row,i)=>String(i+1)+'. *'+(row.title||'Saved link')+'*\n   '+row.canonical_url+(row.user_note?'\n   Note: '+clean(row.user_note,140):'')+'\n   _'+row.platform+(row.tags?.length?' · '+row.tags.slice(0,4).join(', '):'')+'_')
   return'🔗 *Saved links* ('+rows.length+' matches)\n\n'+lines.join('\n\n')+'\n\n_You can say “open the second one”, “tag this AI”, or “delete that” after selecting an exact result._'
 }
+// Words quoted from someone else's post are wrapped so the outbound brand filter leaves them as written
+// ("If you are a Claude freak like me" must not become "a Gogo freak"). The markers are invisible and stripped on send.
+export const QUOTE_MARK='⁣'
+export function quotedText(s:string){return `${QUOTE_MARK}${String(s||'').replace(/⁣/g,'')}${QUOTE_MARK}`}
+type PostModel=(prompt:string)=>Promise<string>
+const defaultPostModel:PostModel=async prompt=>{
+  const { cheapComplete }=await import('@/lib/inference/cheap')
+  const cheap=await cheapComplete({taskClass:'public_web_research',prompt,scanText:prompt,maxTokens:300}).catch(()=>null)
+  if(cheap)return cheap
+  const key=(globalThis as any).process?.env?.ANTHROPIC_API_KEY
+  if(!key)throw new Error('no_model')
+  const { default: Anthropic }=await import('@anthropic-ai/sdk')
+  const res=await new Anthropic({apiKey:key}).messages.create({model:'claude-haiku-4-5',max_tokens:300,temperature:0.2,messages:[{role:'user',content:prompt}]},{timeout:12_000})
+  return (res.content.find((b:any)=>b.type==='text') as any)?.text||''
+}
+/** Two or three plain sentences on a public post someone shared: who, what it says, their numbers marked as claims. */
+export async function summarizeSharedPost(p:{title:string;text:string;author?:string},model:PostModel=defaultPostModel){
+  const body=clean(p.text||p.title,1500)
+  if(body.length<40)return null
+  const prompt=`Someone shared this public post with you on WhatsApp. In 2 or 3 short sentences, plain text, no markdown, no emoji, under 380 characters: start with "That's a <kind of post> by <author>:" (leave out "by <author>" if unknown), say what it says or teaches, and mark any numbers, results or time claims as the author's own ("he claims", "their claim, not verified"). Use only the text below.\n\nAuthor: ${clean(p.author,60)||'unknown'}\nTitle: ${clean(p.title,200)}\nPost text: ${body}`
+  const out=clean(await model(prompt),500).replace(/^["“]|["”]$/g,'')
+  if(out.length<40||/^(?:i\s+(?:can(?:not|'t)|don't)|sorry)\b/i.test(out))return null
+  return out
+}
 const LINK_DIG='link_dig'
 export const LINK_DIG_YES=/^\s*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|haan|dig\s+in(?:to\s+(?:it|this|them))?|go\s+ahead|tell\s+me\s+more|please\s+do|do\s+it)(?:\s+please)?\s*[.!]*\s*$/i
 export function linkDigQuestion(p:{title:string;description?:string}){
@@ -350,7 +378,8 @@ export async function handleLinkVaultFollowup(actor:AgentActor,text:string){
       await clearFollowupState(actor.legacyTelegramId,LINK_DIG).catch(()=>{})
       const dr:any=await import('@/lib/agent/deep-research').catch(()=>null)
       const out=dr?.runDeepResearch?await Promise.resolve().then(()=>dr.runDeepResearch(linkDigQuestion(state.payload))).catch((err:any)=>{console.error('LINK_DIG_FAILED:',clean(err?.message||err,160));return null}):null
-      return{text:out?.text||'I could not research that right now. Ask me again in a minute, or tell me what you want to know about it.',status:'completed',handledBy:'link-vault-dig',capability:'web',runId:''}
+      // A cited brief about someone else's post (often about AI products) is quoted, not rebranded.
+      return{text:out?.text?quotedText(out.text):'I could not research that right now. Ask me again in a minute, or tell me what you want to know about it.',status:'completed',handledBy:'link-vault-dig',capability:'web',runId:''}
     }
   }
   // A remembered selection resolves a reference, not an unrelated new command.
@@ -398,7 +427,13 @@ export async function handleLinkVaultText(params:{actor:AgentActor;text:string;s
       const about=r.description&&!r.description.toLowerCase().startsWith(r.title.toLowerCase().slice(0,40))?'\n'+shortText(r.description,260):''
       await clearFollowupState(params.actor.legacyTelegramId,LINK_DIG).catch(()=>{})
       await saveFollowupState(params.actor.legacyTelegramId,LINK_DIG,{title:r.title,url:r.canonical_url,description:clean(r.description,400)}).catch(()=>{})
-      return{text:'🔗 *'+r.title+'*'+about+'\n\nSaved to your links. Want me to dig into this? Reply *yes*.',status:'completed',handledBy:'link-vault',capability:'memory',runId:''}
+      // 30 Oct, side by side with another assistant: say who posted it and what it says, mark their numbers as their
+      // claims, then why it matters to this person. The post's own words are quoted, never rebranded.
+      const summary=await summarizeSharedPost({title:r.title,text:(saved as any).preview?.postText||r.description,author:(saved as any).preview?.author||''}).catch(()=>null)
+      const base=summary?`🔗 ${quotedText(summary)}`:'🔗 *'+quotedText(r.title)+'*'+(about?quotedText(about):'')
+      const withContext=summary?await contextualizeSavedItemReply({userId:String(params.actor.userId),telegramId:params.actor.legacyTelegramId,whatsappId:params.actor.whatsappId,name:params.actor.name,baseReply:base,
+        item:{kind:'link',platform:r.platform,title:r.title,summary:clean(summary,600),tags:r.tags||[]}}).catch(()=>base):base
+      return{text:withContext+'\n\nSaved to your links. Want me to dig into this? Reply *yes*.',status:'completed',handledBy:'link-vault',capability:'memory',runId:''}
     }
     const baseReply='🔗 '+(saved.merged?'Updated existing saved link':'Saved to Link Vault')+': *'+r.title+'*\n'+r.canonical_url+(r.user_note?'\nNote: '+r.user_note:'')+restrictedNote
     const reply=await contextualizeSavedItemReply({
