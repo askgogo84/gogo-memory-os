@@ -28,3 +28,12 @@ assert.equal(wc.isWatcherStatusQuery('what are you watching and why'), true)
 assert.equal(wc.isWatcherStatusQuery('show my watches'), true)
 assert.match(readFileSync('lib/agent/brain.ts', 'utf8'), /m\.isWatcherStatusQuery\(p\.text\)/, 'watch questions are answered from the saved watches, never by the brain')
 console.log('✓ watch questions skip the brain')
+
+// Instinct parity: watches that finished on their own are reported; ones you stopped are not.
+const polo = wc.finishedWatchLine({ type: 'product_stock', updated_at: '2026-10-21T06:00:00Z', condition_json: { title: 'Fossil Grey polo', variant: 'XL' }, last_state_json: { triggered: true, triggeredAt: '2026-10-21T06:00:00Z', cartVerified: true } })
+assert.equal(polo, 'Fossil Grey polo XL came back in stock on 21 Oct. One is in your cart, not ordered.')
+assert.equal(wc.finishedWatchLine({ type: 'web_search', condition_json: { title: 'x', userStoppedAt: '2026-10-30' }, last_state_json: { triggered: true } }), null)
+assert.equal(wc.finishedWatchLine({ type: 'web_search', condition_json: { title: 'x' }, last_state_json: {} }), null)
+const alerted = wc.compactWatchLine({ type: 'web_search', condition_json: { query: 'Sony WH-1000XM5 below 22000', priceRule: { threshold: 22000 } }, last_state_json: { lastAlertAt: new Date(Date.now() - 86400_000).toISOString() } })
+assert.match(alerted.text, / · last alert \d{1,2} [A-Z][a-z]{2}$/)
+console.log('✓ finished watches are reported in plain words; running alerts show when they last fired')

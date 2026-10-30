@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { buildGmailConnectUrl, fetchLatestEmails, fetchUnreadEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
+import { buildGmailConnectUrl, fetchLatestEmails, fetchUnreadEmails, refreshGmailAccessToken, searchGmailThreads } from '@/lib/google-gmail'
 import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 import { formatEmailSnippet, redactEmailAuthSecrets } from '@/lib/agent/google-workspace-read'
 
@@ -193,4 +193,36 @@ export async function latestEmailFrom(telegramId:number,name:string,sinceIso:str
   const since=Date.parse(sinceIso)
   const hit=rows.find((r:any)=>String(r.from||'').toLowerCase().includes(needle)&&Number(r.internalDate||Date.parse(r.date||''))>since)
   return hit?{subject:clean(redactEmailAuthSecrets(String(hit.subject||'')),120),at:new Date(Number(hit.internalDate||Date.parse(hit.date))).toISOString()}:null
+}
+
+
+// Duet 03 (29 Oct live): "Which emails am I waiting on replies for?" read every open loop for 68 s and mixed in
+// non-email items. The answer is in Sent mail: threads where you wrote last, to a person, more than a day ago.
+export type AwaitingReply={to:string;subject:string;sentAt:number}
+export function awaitingRepliesFrom(threads:{subject:string;messages:{from:string;to:string;labelIds:string[];internalDate:number;subject:string}[]}[],myEmail:string,now=Date.now()):AwaitingReply[]{
+  const me=String(myEmail||'').toLowerCase()
+  const out:AwaitingReply[]=[]
+  for(const t of threads){
+    const last=t.messages[t.messages.length-1]
+    if(!last||!last.labelIds.includes('SENT'))continue
+    if(now-last.internalDate<20*3600_000)continue
+    const to=String(last.to||'').split(',')[0].trim()
+    const addr=(to.match(/<([^>]+)>/)?.[1]||to).toLowerCase()
+    if(!addr||(me&&addr===me)||AUTOMATED_SENDER.test(addr)||/\b(?:support|help|billing|team|hello|contact)@/i.test(addr))continue
+    const name=clean(to.replace(/<[^>]+>/,'').replace(/"/g,''),60)||addr
+    out.push({to:name,subject:clean(redactEmailAuthSecrets(String(last.subject||t.subject||'(no subject)')).replace(/^(?:re|fwd?):\s*/i,''),90),sentAt:last.internalDate})
+  }
+  return out.sort((a,b)=>a.sentAt-b.sentAt).slice(0,8)
+}
+export function formatAwaitingReplies(rows:AwaitingReply[],now=Date.now()){
+  if(!rows.length)return '📨 Nobody owes you a reply right now. Every email you sent in the last 3 weeks has an answer, or was sent less than a day ago.'
+  const ago=(t:number)=>{const d=Math.floor((now-t)/86400_000);return d<=1?'yesterday':`${d} days ago`}
+  const first=rows[0].to.split(/\s+/)[0]
+  return `📨 *Waiting on replies* (${rows.length})\n\n${rows.map((r,i)=>`${i+1}. ${r.to} — “${r.subject}” · sent ${ago(r.sentAt)}`).join('\n')}\n\nWant a nudge? Say *remind me if ${first} doesn't reply by Friday* and I'll check Gmail on Friday before reminding you.`
+}
+export async function awaitingRepliesReply(telegramId:number):Promise<string|null>{
+  const access=await gmailAccess(telegramId)
+  if(!access.connected)return null
+  const threads=await searchGmailThreads(access.accessToken,'in:sent newer_than:21d',15)
+  return formatAwaitingReplies(awaitingRepliesFrom(threads as any,String(access.email||'')))
 }

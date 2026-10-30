@@ -9,7 +9,8 @@ const WORKFLOWS: Record<ContentWorkflowId, ContentWorkflow> = {
 If there is no raw material, ask for the topic or experience rather than inventing a personal story.
 Choose a hook that fits the material, add short paragraphs with context and a useful lesson, then a natural closing.
 Return the complete post, two alternative hooks and one optional closing variation. Respect an explicit requested length.
-Do not invent achievements, customer stories, statistics, testimonials or engagement results. Use hashtags or emoji only if requested or supported by the user's writing preference.`},
+Do not invent achievements, customer stories, statistics, testimonials or engagement results. Use hashtags or emoji only if requested or supported by the user's writing preference.
+For a product or feature launch, describe only what the user's message or saved context says the product does. Never add capabilities, security claims (such as encryption, compliance or certifications), integrations, pricing, user counts or launch dates on your own; where a specific detail would help, write a short [placeholder] in square brackets for the user to fill, such as [one thing it does for you].`},
   leadmagnet: {id: 'leadmagnet', maxTokens: 4096, research: false, instructions:
     `Prepare a useful lead magnet draft. Use the topic and target audience already supplied.
 If either is missing, ask together for the missing topic and specific audience in one short message.
