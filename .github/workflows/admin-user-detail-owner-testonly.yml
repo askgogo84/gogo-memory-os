@@ -1,0 +1,34 @@
+name: Admin user-detail owner identity (test-only expected RED)
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-admin-user-detail-owner-testonly.mjs'
+      - '.github/workflows/admin-user-detail-owner-testonly.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  admin-user-detail-owner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Attest literal PR head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$EXPECTED_SHA" = "$ACTUAL_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Execute shipped admin-profile owner predicate with synthetic 64-bit owners
+        run: node scripts/verify-admin-user-detail-owner-testonly.mjs
