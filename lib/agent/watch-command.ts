@@ -110,7 +110,9 @@ export function watchRule(row:any){
 }
 function undelivered(row:any){const d=row.last_state_json?.alertDelivery?.state;return d==='failed'||d==='outcome_unknown'||Boolean(row.last_state_json?.pendingAlert)}
 export function compactWatchLine(row:any){
-  return {text:`${watchName(row)} — ${watchRule(row)}${undelivered(row)?' · ⚠️ last alert didn’t reach you':''}`,price:Boolean(priceAmount(row.condition_json||{}))}
+  const alertedAt=Date.parse(String(row.last_state_json?.lastAlertAt||''))
+  const alerted=!undelivered(row)&&Number.isFinite(alertedAt)&&Date.now()-alertedAt<7*86400_000?` · last alert ${istDay(alertedAt)}`:''
+  return {text:`${watchName(row)} — ${watchRule(row)}${undelivered(row)?' · ⚠️ last alert didn’t reach you':alerted}`,price:Boolean(priceAmount(row.condition_json||{}))}
 }
 /** "Trip airline news · IndiGo" → "IndiGo airline news". */
 export function tripWatchLabel(row:any){
@@ -118,6 +120,24 @@ export function tripWatchLabel(row:any){
   if(/^email/i.test(t))return 'trip emails'
   const [what,where]=t.split(/\s+·\s+/)
   return clean(where?`${where} ${what}`:what||'trip update',60)
+}
+/** A watch that finished on its own in the last two weeks, said the way a person would. Stopped-by-you rows are left out. */
+export function finishedWatchLine(row:any):string|null{
+  const st:any=row.last_state_json||{},c:any=row.condition_json||{}
+  if(c.userStoppedAt||st.stoppedByUser)return null
+  if(st.triggered===true){
+    const when=Date.parse(String(st.triggeredAt||row.updated_at||''))
+    const day=Number.isFinite(when)?` on ${istDay(when)}`:''
+    const name=clean(String(c.title||c.query||'Your watch').replace(/^watch:\s*/i,''),70)
+    if(row.type==='product_stock'){
+      const variant=c.variant?` ${clean(c.variant,30)}`:''
+      const cart=st.cartVerified?' One is in your cart, not ordered.':st.handoffReason?' You can finish on the store page.':''
+      return `${name}${variant} came back in stock${day}.${cart}`
+    }
+    if(row.type==='deadline')return `${name} — reminded you${day}.`
+    return `${name} — found what you asked for${day}.`
+  }
+  return null
 }
 const TRIP_STEP_LABEL:Record<string,string>={'prepare-web-checkin':'web check-in','watch-boarding-pass-email':'your boarding pass email','travel-disruption-watch':'flight changes'}
 
@@ -222,12 +242,18 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
     if(why)trip+=`\n   Set up from your saved itinerary so a strike, delay or weather change reaches you early.${nextTrip?` Next check ${shortCheckTime(nextTrip)}.`:''}`
     if(stepLabels.length)trip+=`\n   Also handled with the itinerary: ${stepLabels.join(', ')}.`
   }
+  // Instinct parity (30 Oct): say what already finished, e.g. "Fossil polo XL came back in stock on 21 Oct. One is in your cart, not ordered."
+  const since=new Date(Date.now()-14*86400_000).toISOString()
+  const {data:ended}=await supabaseAdmin.from('agent_watchers').select('id,type,condition_json,last_state_json,updated_at')
+    .eq('telegram_id',tg).eq('active',false).gte('updated_at',since).order('updated_at',{ascending:false}).limit(20)
+  const finished=Array.from(new Set((ended||[]).map(finishedWatchLine).filter(Boolean) as string[])).slice(0,3)
+  const finishedBlock=finished.length?`\n\n✅ *Recently finished*\n${finished.map(l=>`• ${l}`).join('\n')}`:''
   await rememberTypedObjects(params.actor.legacyTelegramId,'watchers',[...ownRows,...tripRows].map((row:any)=>({id:String(row.id),title:row.condition_json?.contextual===true?tripWatchLabel(row):watchName(row)})))
   const example=ownRows[0]?watchName(ownRows[0]).split(/\s+/).slice(0,3).join(' '):'trip'
   const head=why?'Here’s what I’m watching for you and why:':`👀 *Your watches* (${data.length})`
   return {
     runId:'watcher-status-active',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-    text:`${head}${lines.length?'\n\n'+lines.join(why?'\n\n':'\n'):''}${trip}\n\nWant any stopped? Tell me which, like *stop the ${example} alert*.`,
+    text:`${head}${lines.length?'\n\n'+lines.join(why?'\n\n':'\n'):''}${trip}${finishedBlock}\n\nWant any stopped? Tell me which, like *stop the ${example} alert*.`,
     handledBy:'watcher-status',
     verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
   }

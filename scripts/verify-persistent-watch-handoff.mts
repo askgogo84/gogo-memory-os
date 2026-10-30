@@ -32,7 +32,7 @@ const db={from(table:string){
     neq(k:string,v:any){filters.push(r=>String(r[k])!==String(v));return b},
     in(k:string,v:any[]){filters.push(r=>v.includes(r[k]));return b},
     lte(k:string,v:any){filters.push(r=>r[k]!=null&&r[k]<=v);return b},
-    order(){return b},limit(){return b},or(){return b},is(){return b},contains(){filters.push(()=>false);return b},range(){return b},update(v:any){changes=v;return b},insert(v:any){insert=v;return b},upsert(v:any){if(!store[table].some(r=>r.id===v.id))insert=v;return b},
+    order(){return b},limit(){return b},or(){return b},is(){return b},contains(){filters.push(()=>false);return b},range(){return b},gte(k:string,v:any){filters.push(r=>r[k]!=null&&String(r[k])>=String(v));return b},update(v:any){changes=v;return b},insert(v:any){insert=v;return b},upsert(v:any){if(!store[table].some(r=>r.id===v.id))insert=v;return b},
     maybeSingle(){single=true;return b},single(){single=true;return b},
     then(resolve:any,reject:any){return Promise.resolve().then(()=>{
       if(table==='agent_watchers'&&watcherReadError)return {data:null,error:{message:'fixture read unavailable'}}

@@ -978,6 +978,15 @@ export async function listOpenLoops(telegramId:string|number,limit=10){
 
 export async function handleOpenLoopQuery(params:{actor:AgentActor;text:string}){
   if(!isOpenLoopQuery(params.text))return null
+  // An email question is answered from Sent mail, fast and email-only; the general list is the fallback.
+  if(/\b(?:e-?mails?|mails?|threads?|replies|replied|responded)\b/i.test(params.text)&&(globalThis as any).process?.env?.VERCEL_ENV){
+    const gr:any=await import('@/lib/bot/handlers/gmail-read').catch(()=>null)
+    const reply=gr?.awaitingRepliesReply?await Promise.race([
+      Promise.resolve().then(()=>gr.awaitingRepliesReply(params.actor.legacyTelegramId)).catch((err:any)=>{console.error('AWAITING_REPLIES_FAILED:',clean(err?.message||err,160));return null}),
+      new Promise(resolve=>setTimeout(()=>resolve(null),15_000)),
+    ]):null
+    if(typeof reply==='string'&&reply)return {runId:'awaiting-replies',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:reply,handledBy:'open-loops'}
+  }
   const loops=await listOpenLoops(params.actor.legacyTelegramId,12)
   if(!loops.length){
     return {runId:'open-loops-none',status:'completed' as const,capability:'orchestrator' as const,risk:'low' as const,text:'✅ You have no active open loops right now.',handledBy:'open-loops'}
