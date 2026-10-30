@@ -17,3 +17,7 @@ assert.equal(brain.isExactCommand('https://lnkd.in/p/gjKPc2zn'), true, 'a bare s
 assert.equal(brain.isExactCommand('what is this https://lnkd.in/p/gjKPc2zn'), false)
 console.log('✓ "show my watches" is one short line per watch; a re-forwarded link reaches Link Vault')
 assert.match(src, /\(\?:show\|list\|see\|view\)/, 'only a plain "show my watches" is compact; questions keep the detailed answer')
+assert.equal(wc.isWatcherStatusQuery('what are you watching and why'), true)
+assert.equal(wc.isWatcherStatusQuery('show my watches'), true)
+assert.match(readFileSync('lib/agent/brain.ts', 'utf8'), /m\.isWatcherStatusQuery\(p\.text\)/, 'watch questions are answered from the saved watches, never by the brain')
+console.log('✓ watch questions skip the brain')

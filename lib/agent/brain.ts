@@ -341,6 +341,8 @@ export async function runBrain(p: { phone: string; telegramId: number; text: str
   // Saved-state answers the brain cannot see (connected apps) go to their handler, never a guess.
   if (await import('./autonomy-status').then(m => m.isConnectionCapabilityQuery(p.text), () => false)) return null
   if (await import('./alert-preferences-shared').then(m => !!m.alertFrequencyCommand(p.text), () => false)) return null
+  // 30 Oct live: "what are you watching and why" was answered from chat history and left out two active watches.
+  if (await import('./watch-command').then(m => m.isWatcherStatusQuery(p.text), () => false)) return null
   const ctx = await loadBrainContext(p).catch(() => null)
   if (!ctx) return null
   // 29 Oct live: forwarded lines from the hotel booker ("Have added you as the 2nd guest") were answered "you've added
