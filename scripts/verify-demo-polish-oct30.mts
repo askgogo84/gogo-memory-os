@@ -48,3 +48,10 @@ assert.equal(br.whatsAppMarkdown('**Preferences**\n## Week\n• **Tomorrow:** fl
 assert.match(readFileSync('lib/agent/brain.ts', 'utf8'), /queued, running or waiting for approval is not done/)
 assert.match(readFileSync('lib/agent/understanding-context.ts', 'utf8'), /— not done yet/)
 console.log('✓ brain replies use WhatsApp bold and never present a queued booking as done')
+
+// RL03 live: the grocery reminder was saved as "Set purchase reminder".
+assert.equal(mt.reminderTaskFromRequest('Make a grocery list with milk, eggs and bread and remind me to buy them at 6 pm today'), 'buy milk, eggs and bread')
+assert.equal(mt.reminderTaskFromRequest('Plan my week and remind me to call Nithin tomorrow at 11 am'), 'call Nithin')
+assert.equal(mt.reminderTaskFromRequest('Plan my packing'), null)
+assert.ok(cwm.unsupportedClaims('Your life is scattered across 47 apps and 6 inboxes.', 'Draft a post').length >= 2)
+console.log('✓ planner reminders use the person\'s words; invented counts are caught')

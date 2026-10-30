@@ -142,7 +142,24 @@ function reminderMessage(step:MissionStep,missionText:string,hours?:number){
   const quoted=step.instruction.match(/(?:with\s+the\s+)?(?:message|saying|text)\s*:?[\s]*['“\"]([^'”\"]+)['”\"]/i)?.[1]
   if(quoted)return safe(quoted,500)
   const destination=destinationLabel(missionText)
-  return hours ? `${destination} trip departure in ${hours} hours — confirm packing and check-in status.` : safe(step.title,500)
+  if(hours)return `${destination} trip departure in ${hours} hours — confirm packing and check-in status.`
+  // Only a generic step title ("Set purchase reminder") is replaced; a plan with several named reminders keeps them.
+  const generic=/^(?:set|create|add|schedule)\b[^.]{0,40}\breminder\b/i.test(step.title)
+  return safe((generic&&reminderTaskFromRequest(missionText))||step.title,500)
+}
+
+// 30 Oct live: "Make a grocery list with milk, eggs and bread and remind me to buy them at 6 pm today" saved the
+// reminder as the plan's step title, "Set purchase reminder". The person's own words are the reminder.
+export function reminderTaskFromRequest(text:string){
+  const raw=String(text||'').replace(/\s+/g,' ').trim()
+  const m=raw.match(/\bremind\s+me\s+(?:to\s+|about\s+)?(.+?)(?=\s+(?:at|on|by|before|after|around|tomorrow|today|tonight|this|next|every|in\s+\d)\b|[.!?;]|$)/i)
+  if(!m)return null
+  let task=m[1].trim()
+  if(/\b(?:them|it|these|those)\b/i.test(task)){
+    const items=raw.match(/\b(?:with|of|containing|for)\s+(.+?)\s*(?:,\s*)?(?:and\s+(?:then\s+)?|,\s*)remind\b/i)?.[1]
+    if(items)task=task.replace(/\b(?:them|it|these|those)\b/i,items.trim())
+  }
+  return task.length>=3?task:null
 }
 
 function normalizeReminderIdentity(value:unknown){

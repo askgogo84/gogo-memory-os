@@ -74,6 +74,8 @@ const CLAIM_PATTERNS: RegExp[] = [
   /\b(?:no extra cost|free for (?:all|everyone)|live (?:today|now) for (?:all|every)[^.!?\n]{0,30})\b/gi,
   /\b(?:SOC\s?2|ISO\s?27001|HIPAA|GDPR|DPDP)\b/g,
   /\b\d{1,3}(?:\.\d+)?\s?%/g,
+  // "47 apps", "6 inboxes and 4 cloud drives": made-up counts of things.
+  /\b\d{1,3}\s+(?:apps?|inboxes|drives|tools|tabs|accounts|hours|minutes|clicks|steps|documents|messages)\b/gi,
 ]
 export function unsupportedClaims(draft: string, sources: string): string[] {
   const src = String(sources || '').toLowerCase()
