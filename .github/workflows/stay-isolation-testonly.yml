@@ -1,0 +1,26 @@
+name: Connected Stay Isolation — Test-Only Negative Regression
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/verify-stay-isolation-testonly.mts'
+      - '.github/workflows/stay-isolation-testonly.yml'
+      - 'lib/memory/stay.ts'
+permissions:
+  contents: read
+jobs:
+  isolated-stay-negative:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout inert test branch
+        uses: actions/checkout@v4
+      - name: Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependency fixtures
+        run: npm ci
+      - name: Run real source with inert transports — EXPECT RED on deployed source
+        run: npx --no-install tsx scripts/verify-stay-isolation-testonly.mts
