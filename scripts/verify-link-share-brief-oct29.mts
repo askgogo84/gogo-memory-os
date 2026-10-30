@@ -39,3 +39,21 @@ assert.equal(live.description, 'Hone, a San Francisco AI company, has raised a $
 assert.deepEqual(lv.splitPostTitle('Short headline here', 'A separate description.'), { title: 'Short headline here', description: 'A separate description.' })
 assert.equal(lv.shortText('one two three four five', 12), 'one two…')
 console.log('✓ a long post title is split into a headline and a description that ends on a whole word')
+
+// 30 Oct night, side by side with another assistant: "If you are a Claude freak like me, and you don't…" came back as
+// "a Gogo freak … and you don" with no summary.
+const page2 = `<meta property="og:title" content="If you are a Claude freak like me, and you don't know how to build sites"><meta property="og:description" content="If you are a Claude freak like me, and you don't know how to build sites: use Claude Code to recreate any site from Awwwards in 58 minutes."><meta name="author" content="Ruben Hassid">`
+const pv = await lv.linkPreview('https://www.linkedin.com/posts/x', (async () => new Response(page2, { status: 200 })) as any)
+assert.equal(pv?.title, "If you are a Claude freak like me, and you don't know how to build sites", 'an apostrophe never cuts the title')
+assert.equal(pv?.author, 'Ruben Hassid')
+const sum = await lv.summarizeSharedPost({ title: pv!.title, text: pv!.postText!, author: pv!.author }, async (prompt: string) => {
+  assert.match(prompt, /Author: Ruben Hassid/); assert.match(prompt, /mark any numbers/)
+  return "That's a how-to post by Ruben Hassid: use Claude Code to recreate any site from Awwwards. He claims it takes about 58 minutes."
+})
+assert.match(sum!, /^That's a how-to post by Ruben Hassid/)
+assert.equal(await lv.summarizeSharedPost({ title: 'x', text: 'short' }, async () => 'never'), null)
+const { brandSafe } = await import('../lib/security/outbound-identifiers')
+assert.equal(brandSafe(`🔗 ${lv.quotedText('If you are a Claude freak like me')}\n\nI'm Claude.`), "🔗 If you are a Claude freak like me\n\nI'm Gogo.", 'quoted post text stays as written; Gogo still never names itself Claude')
+assert.match(readFileSync('app/api/dashboard/chat/route.ts', 'utf8'), /split\(\/\(\\u2063/)
+assert.match(readFileSync('components/dashboard/gogo-chat.tsx', 'utf8'), /split\(\/\(\\u2063/)
+console.log('✓ shared posts: full title, who posted it and what it says, quoted words never rebranded')

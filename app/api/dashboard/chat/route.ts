@@ -909,7 +909,8 @@ async function brandSafeResponse(res: any) {
     const body: any = await res.clone().json()
     if (!body || typeof body.text !== 'string') return res
     // Same rule as lib/security/outbound-identifiers brandSafe, inline: route harnesses cannot load extra modules.
-    const text = String(body.text).replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g, (m: string) => /['’]s$/.test(m) ? 'Gogo’s' : 'Gogo').replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, 'our AI provider')
+    // Quoted text between U+2063 markers is left as written; the markers stay for the chat screen to strip.
+    const text = String(body.text).split(/(\u2063[\s\S]*?\u2063)/).map((part: string) => part.length > 1 && part.startsWith('\u2063') && part.endsWith('\u2063') ? part : part.replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g, (m: string) => /['’]s$/.test(m) ? 'Gogo’s' : 'Gogo').replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, 'our AI provider')).join('')
     return text === body.text ? res : NextResponse.json({ ...body, text }, { status: res.status })
   } catch { return res }
 }

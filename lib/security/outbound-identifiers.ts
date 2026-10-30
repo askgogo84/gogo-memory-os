@@ -42,7 +42,12 @@ export function maskOutboundIdentifiers(text: string): string {
 // 29 Oct live: "Please send a specific future date and time for Claude first" (an old test reminder named the
 // model). The assistant is Gogo; the underlying model or vendor is never named to a user. Links and email addresses
 // (claude.ai, anthropic.com) are left alone. Pure.
+// Text between U+2063 markers is quoted from someone else (a shared post's title) and is sent as written; the markers
+// are removed here, the last step before WhatsApp.
 export function brandSafe(text: string): string {
+  return String(text ?? '').split(/(\u2063[\s\S]*?\u2063)/).map(part => part.length > 1 && part.startsWith('\u2063') && part.endsWith('\u2063') ? part : brandSafeOutside(part)).join('').replace(/\u2063/g, '')
+}
+function brandSafeOutside(text: string): string {
   return String(text ?? '')
     .replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g, m => /['’]s$/.test(m) ? 'Gogo’s' : 'Gogo')
     .replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, 'our AI provider')
