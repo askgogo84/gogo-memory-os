@@ -81,21 +81,45 @@ function watchCheckTime(value:unknown){
   return Number.isFinite(time)?new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(time))+' IST':null
 }
 
-const every=(m:number)=>m>=1440?'daily':m>=60?`every ${Math.round(m/60)} h`:`every ${m} min`
-export function compactWatchLine(row:any){
-  const c:any=row.condition_json||{}
-  let t=String(c.title||c.query||row.type||'Watch').replace(/^watch:\s*/i,'').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi,'$1')
-  const raw=String(c.query||c.title||'')
-  const amount=c.priceRule?.threshold??(raw.match(/\b(?:below|under)\s+(₹?\s?[\d,]{3,})/i)?parseMoneyAmount(raw.match(/\b(?:below|under)\s+(₹?\s?[\d,]{3,})/i)![1]):null)
-  if(amount){
-    const offers=c.priceRule?.offers||(/including bank\/card offers/i.test(raw)?'included':/excluding bank\/card offers/i.test(raw)?'excluded':null)
-    t=t.replace(/\s*(?:price\s+)?(?:in\s+India\s+)?\b(?:below|under)\b.*$/i,'').replace(/\s*,?\s*(?:including|excluding|with|without)\s+(?:bank\/card\s+)?offers?\b.*$/i,'').replace(/\s+price(?:\s+in\s+India)?$/i,'').trim()
-    t+=` · below ${formatRupees(Number(amount))}${offers==='included'?', with offers':offers==='excluded'?', listed price':''}`
-  }
-  const d=row.last_state_json?.alertDelivery?.state
-  const flag=d==='failed'||d==='outcome_unknown'||row.last_state_json?.pendingAlert?' · ⚠️ last alert not delivered':''
-  return {text:`${clean(t,110)} · ${every(Math.max(1,Number(row.cadence_minutes||60)))}${flag}`,price:Boolean(amount)}
+const every=(m:number)=>m>=1440&&m%1440===0?'daily':m>=60&&m%60===0?`every ${m/60} h`:`every ${m} min`
+const istDay=(t:number)=>new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short'}).format(new Date(t))
+export function shortCheckTime(value:unknown,now=Date.now()){
+  const t=Date.parse(String(value||''));if(!Number.isFinite(t))return null
+  const time=new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(t)).replace(/\s?([ap])\.?m\.?/i,' $1m')
+  return istDay(t)===istDay(now)?time:`${istDay(t)}, ${time}`
 }
+const priceAmount=(c:any)=>{const raw=String(c.query||c.title||'');const m=raw.match(/\b(?:below|under)\s+(₹?\s?[\d,]{3,})/i);return c.priceRule?.threshold??(m?parseMoneyAmount(m[1]):null)}
+const priceOffers=(c:any)=>{const raw=String(c.query||c.title||'');return c.priceRule?.offers||(/including bank\/card offers/i.test(raw)?'included':/excluding bank\/card offers/i.test(raw)?'excluded':null)}
+/** The thing being watched, without the rule: "iPhone 16 128GB on Croma". */
+export function watchName(row:any){
+  const c:any=row.condition_json||{}
+  // A price watch's query carries the store ("… on amazon.in"); its title often does not.
+  let t=String((priceAmount(c)?c.query||c.title:c.title||c.query)||row.type||'Watch').replace(/^watch:\s*/i,'').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi,'$1')
+  if(row.type==='email_triage')return 'Your inbox'
+  if(priceAmount(c))t=t.replace(/\s*(?:price\s+)?(?:in\s+India\s+)?\b(?:below|under)\b.*$/i,'').replace(/\s*,?\s*(?:including|excluding|with|without)\s+(?:bank\/card\s+)?offers?\b.*$/i,'').replace(/\s+price(?:\s+in\s+India)?$/i,'').trim()
+  return clean(t,80)
+}
+/** What makes it alert, in plain words. */
+export function watchRule(row:any){
+  const c:any=row.condition_json||{},amount=priceAmount(c)
+  if(amount){const o=priceOffers(c);return `alert below ${formatRupees(Number(amount))}${o==='included'?' (with offers)':o==='excluded'?' (listed price)':''}`}
+  if(row.type==='email_triage')return 'emails that need your action'
+  if(row.type==='product_stock')return `alert when ${c.variant?clean(c.variant,40)+' is ':''}back in stock`
+  if(row.type==='web_page')return c.watch==='title'?'alert when the page title changes':'alert when the page changes'
+  return 'new results'
+}
+function undelivered(row:any){const d=row.last_state_json?.alertDelivery?.state;return d==='failed'||d==='outcome_unknown'||Boolean(row.last_state_json?.pendingAlert)}
+export function compactWatchLine(row:any){
+  return {text:`${watchName(row)} — ${watchRule(row)}${undelivered(row)?' · ⚠️ last alert didn’t reach you':''}`,price:Boolean(priceAmount(row.condition_json||{}))}
+}
+/** "Trip airline news · IndiGo" → "IndiGo airline news". */
+export function tripWatchLabel(row:any){
+  const t=String(row.condition_json?.title||'').replace(/^trip\s+/i,'').trim()
+  if(/^email/i.test(t))return 'trip emails'
+  const [what,where]=t.split(/\s+·\s+/)
+  return clean(where?`${where} ${what}`:what||'trip update',60)
+}
+const TRIP_STEP_LABEL:Record<string,string>={'prepare-web-checkin':'web check-in','watch-boarding-pass-email':'your boarding pass email','travel-disruption-watch':'flight changes'}
 
 export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;text:string}) {
   const tg=String(params.actor.legacyTelegramId)
@@ -162,82 +186,50 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
       verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
     }
   }
-  // 30 Oct live: "show my watches" sent four long messages of internal fields (Criteria, Source, Expires, itinerary-owned).
-  // The default list is one short line per watch; "what are you watching and why" keeps the full detail below.
-  if(/^\s*(?:please\s+)?(?:show|list|see|view)\s+(?:me\s+)?(?:all\s+)?(?:of\s+)?my\s+(?:active\s+)?(?:watch(?:es|ers|list)?|alerts|monitors|price\s+alerts)\s*[.!?]*\s*$/i.test(params.text)){
-    const line=compactWatchLine
-    const day=(v:unknown)=>{const t=Date.parse(String(v||''));return Number.isFinite(t)?new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short'}).format(new Date(t)):null}
-    const ordered:any[]=[],groups:string[]=[]
-    const priceRows=data.filter((r:any)=>r.condition_json?.contextual!==true&&line(r).price)
-    const tripRows=data.filter((r:any)=>r.condition_json?.contextual===true)
-    const otherRows=data.filter((r:any)=>r.condition_json?.contextual!==true&&!line(r).price)
-    const block=(title:string,rows:any[])=>{if(!rows.length)return;groups.push(`*${title}*\n`+rows.map(r=>{ordered.push(r);return `${ordered.length}. ${line(r).text}`}).join('\n'))}
-    block('Price alerts',priceRows)
-    block('Searches and pages',otherRows)
-    const until=tripRows.map((r:any)=>Date.parse(String(r.condition_json?.expiresAt||''))).filter(Number.isFinite).sort((a,b)=>b-a)[0]
-    block(`For your trip${until?` (until ${day(until)})`:''}`,tripRows)
-    await rememberTypedObjects(params.actor.legacyTelegramId,'watchers',ordered.map((row:any)=>({id:String(row.id),title:String(row.condition_json?.title||row.type||'Watch')})))
-    const {data:steps}=await supabaseAdmin.from('life_event_actions').select('title,action_key,status')
-      .eq('telegram_id',tg).in('action_key',['prepare-web-checkin','watch-boarding-pass-email','travel-disruption-watch'])
-      .in('status',['ready','waiting_approval','blocked','running']).limit(12)
-    const stepTitles=Array.from(new Set((steps||[]).map((r:any)=>clean(r.title,60)).filter(Boolean)))
-    const stepLine=stepTitles.length?`\n\n✈️ Also on your trip plan: ${stepTitles.join(', ')}.`:''
-    const named=priceRows[0]?line(priceRows[0]).text.split(' · ')[0].split(/\s+/).slice(0,3).join(' '):'iPhone'
-    return {
-      runId:'watcher-status-active',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-      text:`👀 *Your watches* (${ordered.length})\n\n${groups.join('\n\n')}${stepLine}\n\nStop one by name, like *stop the ${named} alert*. Ask *what are you watching and why* for reasons and check times.`,
-      handledBy:'watcher-status',
-      verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
+  // 30 Oct live, side by side with another assistant: our list was 10 lines of cadences plus a 4-message "why" view of
+  // internal fields; theirs said what each watch alerts on, in plain words. Both views now read like a person.
+  const why=!/^\s*(?:please\s+)?(?:show|list|see|view)\s+(?:me\s+)?(?:all\s+)?(?:of\s+)?my\s+(?:active\s+)?(?:watch(?:es|ers|list)?|alerts|monitors|price\s+alerts)\s*[.!?]*\s*$/i.test(params.text)
+  const tripRows=data.filter((r:any)=>r.condition_json?.contextual===true)
+  const ownRows=data.filter((r:any)=>r.condition_json?.contextual!==true)
+    .sort((x:any,y:any)=>Number(Boolean(priceAmount(y.condition_json||{})))-Number(Boolean(priceAmount(x.condition_json||{}))))
+  const words=(v:string)=>new Set(v.toLowerCase().replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(w=>w.length>1&&!['price','india','on','in','the'].includes(w)))
+  const lines=ownRows.map((row:any,i:number)=>{
+    const c:any=row.condition_json||{}
+    let line=`${i+1}. ${compactWatchLine(row).text}`
+    // A general search for something that already has a price alert is a near-duplicate; say so instead of hiding it.
+    if(!priceAmount(c)){
+      const mine=words(watchName(row))
+      const twin=ownRows.findIndex((o:any)=>o!==row&&priceAmount(o.condition_json||{})&&(()=>{const theirs=words(watchName(o));return [...theirs].every(w=>mine.has(w))||(mine.size>1&&[...mine].every(w=>theirs.has(w)))})())
+      if(twin>=0)line+=` (overlaps #${twin+1})`
     }
-  }
-  const formatWatcher=(row:any,index:number)=>{
-    const condition:any=row.condition_json||{}
-    let label=String(condition.title||row.type||'Watch').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi,'$1')
-    if(row.type==='web_page') label=`${label} — ${condition.watch==='title'?'page title':'page content'}`
-    else if(row.type==='web_search') label=`${label} — web search`
-    else if(row.type==='product_stock') label=`${label} — ${condition.variant||'stock'}`
-    else if(row.type==='email_triage') label=condition.title||'Inbox action watch'
-    const cadence=Math.max(1,Number(row.cadence_minutes||60))
-    const contextual=condition.contextual===true
-    const criteria=condition.query||condition.productUrl||condition.url||condition.originalRequest
-    const criteriaLine=criteria?`\n   Criteria: ${clean(criteria,1000)}`:''
-    const why=contextual&&condition.reason?`\n   Why: ${String(condition.reason)}`:''
-    const source=contextual?`\n   Source: saved ${condition.contextualKind||'context'}`:`\n   Source: your existing watch`
-    const expires=contextual&&condition.expiresAt&&Number.isFinite(Date.parse(String(condition.expiresAt)))
-      ? `\n   Expires: ${new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(condition.expiresAt))}`
-      : contextual?'':'\n   Expires: stays active until you stop it'
-    const delivery=row.last_state_json?.alertDelivery?.state
-    const notification=delivery==='outcome_unknown'?'\n   WhatsApp alert: delivery is unconfirmed; no blind resend.'
-      :delivery==='failed'?'\n   WhatsApp alert: failed after bounded attempts; result remains in the app.'
-      :row.last_state_json?.pendingAlert?'\n   WhatsApp alert: pending retry.':''
-    const checkTime=(value:unknown)=>{
-      const time=Date.parse(String(value||''))
-      return Number.isFinite(time)?new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(time))+' IST':null
+    if(why){
+      const reason=c.originalRequest&&!priceAmount(c)?` You asked: “${clean(c.originalRequest,90)}”.`:''
+      const last=shortCheckTime(row.last_checked_at),next=shortCheckTime(row.next_check_at)
+      line+=`\n   ${[reason.trim(),last?`Checked ${last}`:'Not checked yet',next?`next ${next} (${every(Math.max(1,Number(row.cadence_minutes||60)))})`:''].filter(Boolean).join(' · ')}`
     }
-    const last='\n   Last checked: '+(checkTime(row.last_checked_at)||'no completed check recorded')
-    const next='\n   Next check: '+(checkTime(row.next_check_at)||'not scheduled')
-    return `${index+1}. ${label} — active, checking about every ${cadence} min${criteriaLine}${why}${source}${expires}${last}${next}${notification}`
+    return line
+  })
+  const tripEnd=tripRows.map((r:any)=>Date.parse(String(r.condition_json?.expiresAt||''))).filter(Number.isFinite).sort((x,y)=>y-x)[0]
+  const tripLabels=Array.from(new Set(tripRows.map(tripWatchLabel)))
+  const {data:steps}=await supabaseAdmin.from('life_event_actions').select('action_key,status')
+    .eq('telegram_id',tg).in('action_key',Object.keys(TRIP_STEP_LABEL))
+    .in('status',['ready','waiting_approval','blocked','running']).limit(12)
+  const stepLabels=Array.from(new Set((steps||[]).map((r:any)=>TRIP_STEP_LABEL[String(r.action_key)]).filter(Boolean)))
+  let trip=''
+  if(tripLabels.length){
+    const nextTrip=tripRows.map((r:any)=>Date.parse(String(r.next_check_at||''))).filter(Number.isFinite).sort((x,y)=>x-y)[0]
+    trip=`\n\n✈️ *For your trip*${tripEnd?` (stops ${istDay(tripEnd)})`:''}: ${tripLabels.join(', ')}.`
+    if(why)trip+=`\n   Set up from your saved itinerary so a strike, delay or weather change reaches you early.${nextTrip?` Next check ${shortCheckTime(nextTrip)}.`:''}`
+    if(stepLabels.length)trip+=`\n   Also handled with the itinerary: ${stepLabels.join(', ')}.`
   }
-  const contextualRows=data.filter((row:any)=>row.condition_json?.contextual===true)
-  const manualRows=data.filter((row:any)=>row.condition_json?.contextual!==true)
-  const contextualLines=contextualRows.map((row:any,index:number)=>formatWatcher(row,index))
-  const manualLines=manualRows.map((row:any,index:number)=>formatWatcher(row,index))
-  const contextualBlock=contextualLines.length?`🧭 *Contextual watches created from your current context*\n\n${contextualLines.join('\n')}`:''
-  const manualBlock=manualLines.length?`👤 *Your other existing watches*\n\n${manualLines.join('\n')}`:''
-  const watcherBlocks=[contextualBlock,manualBlock].filter(Boolean).join('\n\n')
-  const {data:tripSteps}=await supabaseAdmin.from('life_event_actions')
-    .select('id,title,action_key,status,due_at')
-    .eq('telegram_id',tg)
-    .in('action_key',['prepare-web-checkin','watch-boarding-pass-email','travel-disruption-watch'])
-    .in('status',['ready','waiting_approval','blocked','running'])
-    .order('due_at',{ascending:true}).limit(6)
-  const itinerary=(tripSteps||[]).map((row:any)=>`• ${row.title} — ${String(row.status).replace(/_/g,' ')} (itinerary-owned)`)
-  const itineraryBlock=itinerary.length?`\n\n✈️ *Itinerary-owned trip steps*\n${itinerary.join('\n')}\n_These are tied to the saved itinerary rather than duplicated as extra monitors._`:''
+  await rememberTypedObjects(params.actor.legacyTelegramId,'watchers',[...ownRows,...tripRows].map((row:any)=>({id:String(row.id),title:row.condition_json?.contextual===true?tripWatchLabel(row):watchName(row)})))
+  const example=ownRows[0]?watchName(ownRows[0]).split(/\s+/).slice(0,3).join(' '):'trip'
+  const head=why?'Here’s what I’m watching for you and why:':`👀 *Your watches* (${data.length})`
   return {
     runId:'watcher-status-active',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-    text:`🔎 *Active background monitors*\n\n${watcherBlocks}${itineraryBlock}\n\nSelect a watcher from this list before saying *stop it*, or stop a watcher by name.`,
+    text:`${head}${lines.length?'\n\n'+lines.join(why?'\n\n':'\n'):''}${trip}\n\nWant any stopped? Tell me which, like *stop the ${example} alert*.`,
     handledBy:'watcher-status',
-      verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
+    verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
   }
 }
 

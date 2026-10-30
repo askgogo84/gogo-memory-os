@@ -332,9 +332,16 @@ const beforeRecall=JSON.stringify(store.agent_watchers)
 for(const text of recallQuestions){
   const reply=await dashboardExports.POST({headers:{get:()=> 'https://app.askgogo.in'},nextUrl:{host:'app.askgogo.in'},json:async()=>({text})})
   assert.equal(reply.body.handledBy,'watcher-status',text)
+  if(text===recallQuestions[2]){
+    // 30 Oct: the full list reads in plain words: what is watched, what alerts, when it was checked.
+    assert.match(reply.body.text,/Sony WH-1000XM5 on amazon\.in — alert below ₹22,000 \(listed price\)/)
+    assert.match(reply.body.text,/Checked 4 Oct, 4:00 pm · next 4 Oct, 6:30 pm/)
+    assert.match(reply.body.text,/Sony WH-1000XM5 — new results \(overlaps #1\)/,'the broader Sony search is shown and marked as overlapping')
+  }else{
   assert.match(reply.body.text,/Sony WH-1000XM5 on amazon.in below 22000 excluding bank\/card offers/)
   assert.match(reply.body.text,/Last checked:.*4 Oct.*4:00 pm/)
   assert.match(reply.body.text,/Next check:.*4 Oct.*6:30 pm/)
+  }
   assert.match(reply.body.text,/150 min/)
   assert.doesNotMatch(reply.body.text,/PRIVATE OTHER OWNER|SECRET/)
   if(text!==recallQuestions[2]){
