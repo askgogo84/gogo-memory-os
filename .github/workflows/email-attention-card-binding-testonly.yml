@@ -1,0 +1,29 @@
+name: Email attention visible-card binding (test-only expected RED)
+
+on:
+  pull_request:
+    paths:
+      - scripts/verify-email-attention-card-binding-testonly.mts
+      - .github/workflows/email-attention-card-binding-testonly.yml
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-attention-card-binding:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout literal pull request HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Execute shipped attention command handler against synthetic owner-visible cards
+        run: npx --yes tsx scripts/verify-email-attention-card-binding-testonly.mts
