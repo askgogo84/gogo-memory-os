@@ -316,11 +316,15 @@ export async function tryRestartWatcherFromCommand(params:{actor:AgentActor;text
     const wantsSearch=/\bsearch(?:es)?\b/i.test(said)&&!/\b(?:price\s+alert|below|under)\b/i.test(said)
     const wantsAlert=/\b(?:price\s+)?alerts?\b|\bbelow\b|\bunder\b/i.test(said)&&!wantsSearch
     const pick=wantsSearch?tied.filter((x:any)=>!priceAmount(x.row.condition_json||{})):wantsAlert?tied.filter((x:any)=>priceAmount(x.row.condition_json||{})):[]
-    if(pick.length===1){best=pick[0];tie=false}
+    // 30 Oct live: older stopped copies of the same alert made "restart the iPhone 17 256GB price alert watch" ask
+    // "be more specific". Rows are newest-stopped first, so the most recently stopped match is the one meant.
+    if(pick.length){best=pick[0];tie=false}
+    else if(new Set(tied.map((x:any)=>priceAmount(x.row.condition_json||{})?'price':x.row.type)).size===1){best=tied[0];tie=false}
   }
   if(!best||tie){
+    const options=ranked.filter((x:any)=>x.score===best?.score).slice(0,5).map((x:any,i:number)=>`${i+1}. ${compactWatchLine(x.row).text}`).join('\n')
     return {runId:'watcher-restart-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
-      text:best?'I found more than one plausible stopped watcher. Please be more specific.':'I could not find that stopped watcher in persistent watcher state.',handledBy:'watcher-restart'}
+      text:best?`More than one stopped watch matches:\n${options}\n\nSay *restart the … price alert watch* for the price alert, or *restart the … search watch* for the search.`:`I couldn't find a stopped watch called ${clean(target,80)}. Say *show my watches* to see what's running.`,handledBy:'watcher-restart'}
   }
   const chosen=best.row
   const now=new Date().toISOString()
@@ -336,7 +340,7 @@ export async function tryRestartWatcherFromCommand(params:{actor:AgentActor;text
   await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,event_type:'watcher_restarted',
     message:`Gogo restarted ${best.label}.`.slice(0,900),metadata_json:{watcher_id:chosen.id,type:chosen.type}})
   return {runId:`watcher-restart-${chosen.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-    text:`Watch restarted: ${best.label} — active, checking about every ${Math.max(1,Number(chosen.cadence_minutes||60))} min. You have ${active.length} active watch${active.length===1?'':'es'}.`,handledBy:'watcher-restart'}
+    text:`Restarted: ${chosen.type==='web_search'&&!chosenCondition.goldRule?compactWatchLine(chosen).text:best.label}. You have ${active.length} active watch${active.length===1?'':'es'}.`,handledBy:'watcher-restart'}
 }
 
 // Explicit replacement criteria, not a guessed edit to an ambiguous watch.

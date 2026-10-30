@@ -376,6 +376,15 @@ assert.equal(JSON.stringify(store.agent_watchers),beforeRecall,'recall never cre
   assert.equal(store.agent_watchers.find((w:any)=>w.id==='watch-one').active,true,'"alert" restarts the price alert')
   assert.equal(store.agent_watchers.find((w:any)=>w.id==='sony-broad').active,false,'the search stays stopped')
   store.agent_watchers=structuredClone(saved)
+  // An older stopped copy of the same alert: the most recently stopped one comes back, without "be more specific".
+  for(const w of store.agent_watchers)if(w.id==='watch-one'||w.id==='sony-broad'){w.active=false;w.updated_at='2026-10-30T05:37:00Z'}
+  store.agent_watchers.push({...structuredClone(store.agent_watchers.find((w:any)=>w.id==='watch-one')),id:'sony-old',updated_at:'2026-09-01T00:00:00Z'})
+  store.agent_watchers.sort((x:any,y:any)=>String(y.updated_at||'').localeCompare(String(x.updated_at||'')))
+  const recent=await commandExports.tryRestartWatcherFromCommand({actor:{legacyTelegramId:101},text:'restart the Sony WH-1000XM5 price alert watch'})
+  assert.equal(recent.status,'completed',recent.text); assert.match(recent.text,/^Restarted: Sony WH-1000XM5 on amazon\.in — alert below ₹22,000/)
+  assert.equal(store.agent_watchers.find((w:any)=>w.id==='watch-one').active,true,'the most recently stopped alert is restarted')
+  assert.equal(store.agent_watchers.find((w:any)=>w.id==='sony-old').active,false,'the older copy stays stopped')
+  store.agent_watchers=structuredClone(saved)
   console.log('PASS: stopping by name tells a price alert from a search and never stops both by accident')
 }
 // Missing product identity is not empty memory.
