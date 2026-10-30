@@ -20,7 +20,7 @@ const built = ts.transpileModule(original, {
 const errors = (built.diagnostics || []).filter(d => d.category === ts.DiagnosticCategory.Error)
 assert.equal(errors.length, 0, 'actual shipped module must transpile')
 
-function fixture(options = {}) {
+function fixture(options: Record<string, any> = {}) {
   const opt = options
   const events = []
   const waitRows = (opt.waitRows || [{
@@ -94,7 +94,7 @@ function fixture(options = {}) {
       setPasswordHash: async () => { throw Error('BLOCKED auth mutation') },
     },
   }
-  const exports = {}
+  const exports: Record<string, any> = {}
   runInNewContext(built.outputText, {
     exports,
     require(name) {
