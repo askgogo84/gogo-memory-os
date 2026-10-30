@@ -87,4 +87,78 @@ assert.match(cronRoute, /processDueLifeEventActions/)
 assert.match(vercel, /\/api\/cron\/life-events/)
 assert.match(vercel, /\*\/5 \* \* \* \*/)
 
+// Actual resolver execution with an inert users-table fake: no provider,
+// browser, real database, or user information is accessed by these cases.
+const resolverSource = worker.match(/async function resolveActor\(telegramId: string\): Promise<AgentActor> \{[\s\S]*?\n\}/)?.[0]
+assert.ok(resolverSource, 'must exercise the real life-event browser actor resolver')
+const resolverJavaScript = resolverSource!
+  .replace('telegramId: string', 'telegramId')
+  .replace(': Promise<AgentActor>', '')
+function inertLifeEventActorLookup(persisted: any) {
+  const reads: Array<{ table: string; column: string; value: unknown }> = []
+  const fakeSupabase = {
+    from(table: string) {
+      assert.equal(table, 'users', 'browser actor may only resolve through users')
+      return {
+        select(_columns: string) {
+          return {
+            eq(column: string, value: unknown) {
+              reads.push({ table, column, value })
+              return {
+                async maybeSingle() { return { data: persisted, error: null } }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  // The only generated code is the unchanged function body extracted above.
+  // Its sole dependency is this strict synthetic users-table adapter.
+  const resolve = new Function('supabaseAdmin', resolverJavaScript + '\nreturn resolveActor;')(fakeSupabase) as
+    (owner: string) => Promise<{ userId: string; legacyTelegramId: number; whatsappId: string; name: string }>
+  return { resolve, reads }
+}
+const ownerA = '9007199254740992'
+const ownerB = '9007199254740993'
+{
+  const lookup = inertLifeEventActorLookup({
+    id: 'synthetic-actor-A', telegram_id: ownerA, whatsapp_id: 'whatsapp:+15550000001', name: 'Account A',
+  })
+  await assert.rejects(lookup.resolve(ownerB), /life_event_actor_(?:unsafe_owner|owner_mismatch)/,
+    'an adjacent 64-bit owner must not select another owner as browser actor')
+  assert.equal(lookup.reads.length, 0, 'unsafe owner fails before private user lookup')
+}
+for (const malformed of ['', '01', '+42', '1e3', '9007199254740992', '9007199254740993', 'not-an-id']) {
+  const lookup = inertLifeEventActorLookup({ id: 'synthetic-actor-A', telegram_id: '42' })
+  await assert.rejects(lookup.resolve(malformed), /life_event_actor_unsafe_owner/,
+    'noncanonical or unsafe browser actor owner must fail closed')
+  assert.equal(lookup.reads.length, 0, 'invalid owner causes no private read')
+}
+{
+  const lookup = inertLifeEventActorLookup({
+    id: 'synthetic-actor-B', telegram_id: '43', whatsapp_id: 'whatsapp:+15550000002',
+  })
+  await assert.rejects(lookup.resolve('42'), /life_event_actor_owner_mismatch/,
+    'a mismatched persisted user row must never become the check-in browser actor')
+}
+{
+  const lookup = inertLifeEventActorLookup({
+    id: 'synthetic-actor-42', telegram_id: '42', whatsapp_id: 'whatsapp:+15550000042', name: 'Synthetic',
+  })
+  const actor = await lookup.resolve('42')
+  assert.equal(actor.userId, 'synthetic-actor-42')
+  assert.equal(actor.legacyTelegramId, 42)
+  assert.equal(actor.whatsappId, 'whatsapp:+15550000042')
+  assert.deepEqual(lookup.reads, [{ table: 'users', column: 'telegram_id', value: '42' }],
+    'query precise canonical string, never JavaScript Number')
+}
+{
+  const lookup = inertLifeEventActorLookup({
+    id: 'synthetic-actor-negative', telegram_id: -42, whatsapp_id: 'whatsapp:+15550000042',
+  })
+  assert.equal((await lookup.resolve('-42')).legacyTelegramId, -42)
+  assert.equal(lookup.reads[0]?.value, '-42')
+}
+
 console.log('✅ Life Event background executor regression passed')
