@@ -57,3 +57,7 @@ assert.equal(brandSafe(`🔗 ${lv.quotedText('If you are a Claude freak like me'
 assert.match(readFileSync('app/api/dashboard/chat/route.ts', 'utf8'), /split\(\/\(\\u2063/)
 assert.match(readFileSync('components/dashboard/gogo-chat.tsx', 'utf8'), /split\(\/\(\\u2063/)
 console.log('✓ shared posts: full title, who posted it and what it says, quoted words never rebranded')
+assert.equal(lv.authorFromLinkedInUrl('https://www.linkedin.com/posts/ruben-hassid_if-you-are-a-claude-freak-activity-7389-abc'), 'Ruben Hassid')
+assert.equal(lv.authorFromLinkedInUrl('https://www.linkedin.com/posts/startup-times-2_hone-activity-1'), 'Startup Times')
+assert.equal(lv.authorFromLinkedInUrl('https://example.com/x'), null)
+console.log('✓ the poster is named from the post address when the page does not say')

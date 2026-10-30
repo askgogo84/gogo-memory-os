@@ -93,6 +93,13 @@ function metaContent(html:string,name:string){
   const m=tag?.match(/content=(?:"([^"]*)"|'([^']*)')/i)
   return m?decodeEntities(m[1]??m[2]??'').trim():''
 }
+/** "linkedin.com/posts/ruben-hassid_if-you-are…" → "Ruben Hassid" (the address carries the poster's name). */
+export function authorFromLinkedInUrl(url:string){
+  const slug=String(url||'').match(/linkedin\.com\/posts\/([a-z0-9-]{3,80}?)_/i)?.[1]
+  if(!slug)return null
+  const words=slug.split('-').filter(w=>w&&!/\d/.test(w)&&w.length<=20).slice(0,4)
+  return words.length?words.map(w=>w.charAt(0).toUpperCase()+w.slice(1)).join(' '):null
+}
 export function titleFromArticleUrl(url:string){
   try{
     const slug=decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop()||'').replace(/\.[a-z]{2,5}$/i,'').replace(/[-_]\d{5,}$/,'')
@@ -142,7 +149,7 @@ export async function linkPreview(url:string,fetchImpl:typeof fetch=fetch):Promi
     if(!title||/^(?:LinkedIn|Sign\s*Up|Log\s*In|Redirecting)\b/i.test(title))return null
     const rawDescription=metaContent(html,'og:description')||metaContent(html,'description')
     const split=splitPostTitle(title,rawDescription)
-    const author=clean(metaContent(html,'author')||html.match(/"author"\s*:\s*\{[^}]*?"name"\s*:\s*"([^"]{2,60})"/)?.[1]||'',60)
+    const author=clean(metaContent(html,'author')||html.match(/"author"\s*:\s*\{[^}]*?"name"\s*:\s*"([^"]{2,60})"/)?.[1]||authorFromLinkedInUrl(current)||'',60)
     return{title:split.title,description:split.description,resolvedUrl:current,author,postText:clean(rawDescription||title,1500)}
   }
   return null
