@@ -137,7 +137,7 @@ function fixture(input: {
   })
   assert.equal(typeof mod.exports.actorForTelegramId, 'function')
   assert.equal(typeof mod.exports.runApprovedBrowserRun, 'function')
-  return { functions: mod.exports, obs, run, updated }
+  return { functions: mod.exports, obs, run }
 }
 
 let controls = 0
