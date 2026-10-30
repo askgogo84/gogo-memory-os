@@ -32,7 +32,7 @@ const db={from(table:string){
     neq(k:string,v:any){filters.push(r=>String(r[k])!==String(v));return b},
     in(k:string,v:any[]){filters.push(r=>v.includes(r[k]));return b},
     lte(k:string,v:any){filters.push(r=>r[k]!=null&&r[k]<=v);return b},
-    order(){return b},limit(){return b},or(){return b},is(){return b},update(v:any){changes=v;return b},insert(v:any){insert=v;return b},upsert(v:any){if(!store[table].some(r=>r.id===v.id))insert=v;return b},
+    order(){return b},limit(){return b},or(){return b},is(){return b},contains(){filters.push(()=>false);return b},range(){return b},update(v:any){changes=v;return b},insert(v:any){insert=v;return b},upsert(v:any){if(!store[table].some(r=>r.id===v.id))insert=v;return b},
     maybeSingle(){single=true;return b},single(){single=true;return b},
     then(resolve:any,reject:any){return Promise.resolve().then(()=>{
       if(table==='agent_watchers'&&watcherReadError)return {data:null,error:{message:'fixture read unavailable'}}
@@ -354,6 +354,30 @@ for(const text of recallQuestions){
   assert.equal(routesToWatch(text),true,'same recall intent must enter WhatsApp bridge')
 }
 assert.equal(JSON.stringify(store.agent_watchers),beforeRecall,'recall never creates, changes or stops a watch')
+// 30 Oct live: "stop the iPhone 17 256GB price India search" also stopped the price alert for the same phone.
+{
+  const saved=structuredClone(store.agent_watchers)
+  const ask=await commandExports.tryStopWatcherFromCommand({actor:{legacyTelegramId:101},text:'stop the Sony WH-1000XM5 watch'})
+  assert.equal(ask.runId,'watcher-stop-ambiguous','a price alert and a search with the same name are asked about, not both stopped')
+  assert.match(ask.text,/alert below ₹22,000/); assert.match(ask.text,/new results/)
+  assert.equal(JSON.stringify(store.agent_watchers),JSON.stringify(saved),'asking changes nothing')
+  const search=await commandExports.tryStopWatcherFromCommand({actor:{legacyTelegramId:101},text:'stop the Sony WH-1000XM5 search'})
+  assert.equal(search.status,'completed'); assert.match(search.text,/^Stopped the Sony WH-1000XM5 search\./)
+  assert.equal(store.agent_watchers.find((w:any)=>w.id==='sony-broad').active,false,'"search" stops the search')
+  assert.equal(store.agent_watchers.find((w:any)=>w.id==='watch-one').active,true,'the price alert keeps running')
+  store.agent_watchers=structuredClone(saved)
+  const alert=await commandExports.tryStopWatcherFromCommand({actor:{legacyTelegramId:101},text:'stop the Sony WH-1000XM5 alert'})
+  assert.match(alert.text,/^Stopped the Sony WH-1000XM5 on amazon\.in price alert\./)
+  assert.equal(store.agent_watchers.find((w:any)=>w.id==='sony-broad').active,true,'"alert" leaves the search running')
+  // Both stopped, then only the alert brought back.
+  for(const w of store.agent_watchers)if(w.id==='watch-one'||w.id==='sony-broad')w.active=false
+  const back=await commandExports.tryRestartWatcherFromCommand({actor:{legacyTelegramId:101},text:'restart the Sony WH-1000XM5 price alert watch'})
+  assert.equal(back.status,'completed',back.text)
+  assert.equal(store.agent_watchers.find((w:any)=>w.id==='watch-one').active,true,'"alert" restarts the price alert')
+  assert.equal(store.agent_watchers.find((w:any)=>w.id==='sony-broad').active,false,'the search stays stopped')
+  store.agent_watchers=structuredClone(saved)
+  console.log('PASS: stopping by name tells a price alert from a search and never stops both by accident')
+}
 // Missing product identity is not empty memory.
 const unmatchedWatch=await commandExports.tryGetWatcherStatusFromCommand({actor:{legacyTelegramId:101},text:'Which Samsung products am I watching?'})
 assert.equal(unmatchedWatch.status,'paused')
