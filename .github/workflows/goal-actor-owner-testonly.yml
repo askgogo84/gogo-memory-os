@@ -1,0 +1,33 @@
+name: Background goal owner identity (TEST ONLY, expected security RED)
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-goal-actor-owner-testonly.mjs'
+      - '.github/workflows/goal-actor-owner-testonly.yml'
+
+jobs:
+  verify-owner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Attest literal source SHA
+        run: |
+          echo "EXPECTED_SHA=$EXPECTED_HEAD"
+          echo "ACTUAL_SHA=$(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - name: Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install frozen dependencies
+        run: npm ci
+      - name: Source-executed synthetic goal actor regression
+        run: node scripts/verify-goal-actor-owner-testonly.mjs
