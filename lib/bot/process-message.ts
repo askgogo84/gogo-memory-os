@@ -8,7 +8,7 @@ import { unsupportedCapability } from './unsupported-capabilities'
 import { guardChatActionClaims } from './action-claim-guard'
 import { guardCompletionClaims } from './completion-claim-guard'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
-import {selectContentWorkflow, contentWorkflowInputQuestion} from '@/lib/agent/content-workflows'
+import {selectContentWorkflow, contentWorkflowInputQuestion, unsupportedClaims, claimRewriteRequest} from '@/lib/agent/content-workflows'
 import {researchRedditDiscussions} from '@/lib/agent/content-workflow-research'
 import { namesRetailerPriceRead } from '@/lib/commerce/comparison-model'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
@@ -665,9 +665,18 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       __trace.mark('savedContext')
       evidence=[evidence,savedContext].filter(Boolean).join('\n\n')
     }
-    const draft = await askClaude(incomingText, history, memories, resolvedUser.name, preferences, evidence)
+    let draft = await askClaude(incomingText, history, memories, resolvedUser.name, preferences, evidence)
     __trace.mark('draft')
     if (!draft.trim()) throw new Error('content_workflow_empty_response')
+    if (contentWorkflow.id === 'linkedin-post' && typeof unsupportedClaims === 'function' && typeof claimRewriteRequest === 'function') {
+      const sources = [incomingText, JSON.stringify(memories || []), String(preferences || ''), evidence].join('\n')
+      const claims = unsupportedClaims(draft, sources)
+      if (claims.length) {
+        console.warn('CONTENT_UNSUPPORTED_CLAIMS:', JSON.stringify(claims))
+        const second = await askClaude(claimRewriteRequest(incomingText, draft, claims), history, memories, resolvedUser.name, preferences, evidence).catch(() => '')
+        if (second.trim() && unsupportedClaims(second, sources).length < claims.length) draft = second
+      }
+    }
     const reply = formatOutgoingText(params.channel, draft + footer)
     // A draft is returned as text even if it contains a control-line example.
     // It never passes through parseClaudeResponse's mutation dispatcher.

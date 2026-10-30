@@ -62,3 +62,32 @@ export function contentWorkflowInputQuestion(text: string, workflow: ContentWork
   if (workflow.id === 'leadmagnet') return 'What topic and target audience should the lead magnet cover? For example: “Create a lead magnet about reducing cloud costs for startup founders.”'
   return 'What thought, story or lesson should the post cover? For example: “Write a LinkedIn post about what I learned building AskGogo.”'
 }
+
+
+// 30 Oct live: even told not to, a Vault launch post claimed "8 months", "end-to-end encrypted, zero-knowledge" and
+// "the only AI assistant you can trust". Claims of these kinds must already be in the person's words or saved context.
+const CLAIM_PATTERNS: RegExp[] = [
+  /\b(?:end-to-end(?:\s+encrypted)?|e2e(?:e|\s+encrypted)?|zero[- ]knowledge(?:\s+architecture)?|bank[- ]grade|military[- ]grade|encrypt(?:ed|ion|s)?)\b/gi,
+  /\b\d+\s+(?:months?|weeks?|years?)\b/gi,
+  /\b\d[\d,.]*\s*(?:k|K|\+)?\s*(?:users|customers|people|downloads|sign-?ups|teams|companies)\b/g,
+  /\bthe only\b[^.!?\n]{0,60}/gi,
+  /\b(?:no extra cost|free for (?:all|everyone)|live (?:today|now) for (?:all|every)[^.!?\n]{0,30})\b/gi,
+  /\b(?:SOC\s?2|ISO\s?27001|HIPAA|GDPR|DPDP)\b/g,
+  /\b\d{1,3}(?:\.\d+)?\s?%/g,
+]
+export function unsupportedClaims(draft: string, sources: string): string[] {
+  const src = String(sources || '').toLowerCase()
+  const out = new Set<string>()
+  for (const re of CLAIM_PATTERNS) {
+    for (const m of String(draft || '').matchAll(re)) {
+      const phrase = m[0].trim()
+      const key = phrase.toLowerCase().replace(/\s+/g, ' ')
+      const core = key.replace(/^the only\s+/, 'only ').split(/\s+/).slice(0, 3).join(' ')
+      if (!src.includes(key) && !src.includes(core)) out.add(phrase)
+    }
+  }
+  return [...out].slice(0, 8)
+}
+export function claimRewriteRequest(original: string, draft: string, claims: string[]) {
+  return `${original}\n\nRewrite the draft below in the same voice and structure, but remove every one of these claims, because they are not in my message or saved notes: ${claims.map(c => `"${c}"`).join(', ')}. Do not replace them with other specific claims; where a concrete detail would help, write a short [placeholder] in square brackets. Return only the rewritten post with its alternative hooks and closing.\n\nDRAFT:\n${draft}`
+}

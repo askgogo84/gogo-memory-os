@@ -23,6 +23,18 @@ const DEFAULT_BUSINESS_PACKING=['Laptop','Charger','Phone charger','Power bank',
 function safe(value:unknown,max=1200){return redactSecretShapedText(String(value??'').replace(/\s+/g,' ').trim().slice(0,max))}
 function pad(n:number){return String(n).padStart(2,'0')}
 
+// 30 Oct live: "Created reminder for 2026-10-30 at 18:00 (Asia/Kolkata)." A person reads "today 6:00 pm".
+export function friendlyReminderWhen(dueIso:string,timezone:string,now=new Date()){
+  const tz=timezone||'Asia/Kolkata'
+  const day=(d:Date)=>new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).format(d)
+  const due=new Date(dueIso)
+  const time=new Intl.DateTimeFormat('en-IN',{timeZone:tz,hour:'numeric',minute:'2-digit',hour12:true}).format(due).replace(/\s?([ap])\.?m\.?/i,' $1m')
+  const tomorrow=new Date(now.getTime()+86400_000)
+  if(day(due)===day(now))return `today at ${time}`
+  if(day(due)===day(tomorrow))return `tomorrow at ${time}`
+  return `${new Intl.DateTimeFormat('en-IN',{timeZone:tz,weekday:'short',day:'numeric',month:'short'}).format(due)} at ${time}`
+}
+
 export function explicitDates(text:string, defaultYear=new Date().getUTCFullYear(), upcomingFrom?:string){
   const out:string[]=[]
   const add=(year:number,month:number,day:number,yearless=false)=>{
@@ -165,14 +177,14 @@ async function persistMissionReminder(params:{actor:AgentActor;date:string;time:
       if(updateError)throw new Error(`mission_reminder_canonicalize_failed:${updateError.message}`)
       if(updated)row=updated
     }
-    return {text:`Reminder already set for ${params.date} at ${params.time} (${params.timezone}).`,output:{reminderId:String(row.id),message:String(row.message||params.message),remindAt:String(row.remind_at||dueIso),timezone:String(row.timezone||params.timezone),reused:true,verifiedStore:'reminders'}}
+    return {text:`⏰ Already set: I'll remind you to ${String(row.message||params.message).replace(/^remind me to\s+/i,'')} ${friendlyReminderWhen(String(row.remind_at||dueIso),params.timezone)}.`,output:{reminderId:String(row.id),message:String(row.message||params.message),remindAt:String(row.remind_at||dueIso),timezone:String(row.timezone||params.timezone),reused:true,verifiedStore:'reminders'}}
   }
   const {data,error}=await supabaseAdmin.from('reminders').insert({
     telegram_id:params.actor.legacyTelegramId,chat_id:params.actor.legacyTelegramId,whatsapp_to:params.actor.whatsappId,
     message:params.message,remind_at:dueIso,sent:false,timezone:params.timezone,
   }).select('id,message,remind_at,timezone').single()
   if(error||!data?.id||!data.remind_at)throw new Error(`mission_reminder_create_failed:${error?.message||'missing_due_time'}`)
-  return {text:`Created reminder for ${params.date} at ${params.time} (${params.timezone}).`,output:{reminderId:String(data.id),message:String(data.message||params.message),remindAt:String(data.remind_at),timezone:String(data.timezone||params.timezone),reused:false,verifiedStore:'reminders'}}
+  return {text:`⏰ I'll remind you to ${String(data.message||params.message).replace(/^remind me to\s+/i,'')} ${friendlyReminderWhen(String(data.remind_at),params.timezone)}.`,output:{reminderId:String(data.id),message:String(data.message||params.message),remindAt:String(data.remind_at),timezone:String(data.timezone||params.timezone),reused:false,verifiedStore:'reminders'}}
 }
 
 export function reminderStepIntent(step:{title:string;instruction:string}):'read'|'write'|'mixed'|'unknown'{
@@ -378,7 +390,8 @@ export async function executeVerifiedMissionList(params:{actor:AgentActor;step:M
   const verified=await getList(params.actor.legacyTelegramId,listName)
   if(!verified?.id)throw new Error('mission_list_write_unverified')
   const items=Array.isArray(verified.items)?verified.items:[]
-  return {text:`Using ${verified.list_name} with ${items.length} items.`,output:{listId:String(verified.id),listName:String(verified.list_name),itemCount:items.length,items:items.slice(0,80),reused:Boolean(chosen),verifiedStore:'lists'}}
+  const added=ensure.map((i:any)=>String(i?.text||i?.name||i)).filter(Boolean)
+  return {text:added.length?`📝 Added ${added.join(', ')} to your ${verified.list_name} list (${items.length} item${items.length===1?'':'s'} now).`:`📝 Your ${verified.list_name} list has ${items.length} item${items.length===1?'':'s'}.`,output:{listId:String(verified.id),listName:String(verified.list_name),itemCount:items.length,items:items.slice(0,80),reused:Boolean(chosen),verifiedStore:'lists'}}
 }
 
 function resultDatesAreInsideWindow(result:WebSearchResult,startDate?:string,endDate?:string){
