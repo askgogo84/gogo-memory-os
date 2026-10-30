@@ -61,3 +61,17 @@ assert.equal(lv.authorFromLinkedInUrl('https://www.linkedin.com/posts/ruben-hass
 assert.equal(lv.authorFromLinkedInUrl('https://www.linkedin.com/posts/startup-times-2_hone-activity-1'), 'Startup Times')
 assert.equal(lv.authorFromLinkedInUrl('https://example.com/x'), null)
 console.log('✓ the poster is named from the post address when the page does not say')
+
+// 31 Oct: "yes" to a how-to post profiled the author; the guide itself is what was wanted.
+const howto = { title: "If you are a Claude freak like me, and you don't know how people are building crazy websites", description: 'this post will show you', author: 'Ruben Hassid' }
+assert.equal(lv.isHowToPost(howto), true)
+assert.equal(lv.isHowToPost({ title: 'Hone raises $60 million seed from Benchmark and Index Ventures' }), false, 'news stays a facts brief')
+assert.match(lv.linkDigQuestion(howto), /^Find the full guide behind this post by Ruben Hassid/)
+assert.match(lv.linkDigQuestion({ title: 'Hone raises $60 million seed' }), /^Research this and brief me/)
+const drm = await import('../lib/agent/deep-research')
+let seen = ''
+const guide = await drm.runDeepResearch(lv.linkDigQuestion(howto), { format: 'guide', search: (async () => [{ title: 'Clauned', url: 'https://ruben.substack.com/p/clauned', snippet: 'Remake any site: pick a site, run /goal Remake [URL] with github.com/rubenhassid1/remake' }]) as any, fetchImpl: (async () => new Response('', { status: 404 })) as any, model: async (prompt: string) => { seen += prompt; return prompt.includes('Sources:') ? '1. Pick an inspiration site [1]\n2. Run the prompt [1]\nNeeds: paid plan [1]' : '["remake website guide"]' } })
+assert.match(seen, /steps in order as a numbered list/); assert.match(seen, /Do not describe the author/)
+assert.match(guide.text, /1\. Pick an inspiration site/)
+assert.match(readFileSync('lib/services/link-vault.ts', 'utf8'), /Want the full guide, step by step\?/)
+console.log('✓ "yes" to a how-to post brings back the steps, prompt and links, not an author profile')
