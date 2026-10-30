@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import {readFileSync} from 'node:fs'
+import {extractServerlessPdfText} from '../lib/services/pdf-js-serverless'
 import { classifyPdfTextLocally, extractPdfTextLocally, ensurePdfJsServerlessGlobals } from '../lib/services/pdf-reader'
 import { parseFlightTicketTextSafe } from '../lib/services/pdf-reader-whatsapp'
 
@@ -79,6 +81,23 @@ assert.equal(typeof (globalThis as any).DOMMatrix,'function')
 assert.equal(typeof (globalThis as any).ImageData,'function')
 assert.equal(typeof (globalThis as any).Path2D,'function')
 const tinyPdf=Buffer.from('JVBERi0xLjMKJZOMi54gUmVwb3J0TGFiIEdlbmVyYXRlZCBQREYgZG9jdW1lbnQgKG9wZW5zb3VyY2UpCjEgMCBvYmoKPDwKL0YxIDIgMCBSCj4+CmVuZG9iagoyIDAgb2JqCjw8Ci9CYXNlRm9udCAvSGVsdmV0aWNhIC9FbmNvZGluZyAvV2luQW5zaUVuY29kaW5nIC9OYW1lIC9GMSAvU3VidHlwZSAvVHlwZTEgL1R5cGUgL0ZvbnQKPj4KZW5kb2JqCjMgMCBvYmoKPDwKL0NvbnRlbnRzIDcgMCBSIC9NZWRpYUJveCBbIDAgMCAzMDAgMjAwIF0gL1BhcmVudCA2IDAgUiAvUmVzb3VyY2VzIDw8Ci9Gb250IDEgMCBSIC9Qcm9jU2V0IFsgL1BERiAvVGV4dCAvSW1hZ2VCIC9JbWFnZUMgL0ltYWdlSSBdCj4+IC9Sb3RhdGUgMCAvVHJhbnMgPDwKCj4+IAogIC9UeXBlIC9QYWdlCj4+CmVuZG9iago0IDAgb2JqCjw8Ci9QYWdlTW9kZSAvVXNlTm9uZSAvUGFnZXMgNiAwIFIgL1R5cGUgL0NhdGFsb2cKPj4KZW5kb2JqCjUgMCBvYmoKPDwKL0F1dGhvciAoYW5vbnltb3VzKSAvQ3JlYXRpb25EYXRlIChEOjIwMjYwOTIwMTgxNjEyKzAwJzAwJykgL0NyZWF0b3IgKGFub255bW91cykgL0tleXdvcmRzICgpIC9Nb2REYXRlIChEOjIwMjYwOTIwMTgxNjEyKzAwJzAwJykgL1Byb2R1Y2VyIChSZXBvcnRMYWIgUERGIExpYnJhcnkgLSBcKG9wZW5zb3VyY2VcKSkgCiAgL1N1YmplY3QgKHVuc3BlY2lmaWVkKSAvVGl0bGUgKHVudGl0bGVkKSAvVHJhcHBlZCAvRmFsc2UKPj4KZW5kb2JqCjYgMCBvYmoKPDwKL0NvdW50IDEgL0tpZHMgWyAzIDAgUiBdIC9UeXBlIC9QYWdlcwo+PgplbmRvYmoKNyAwIG9iago8PAovRmlsdGVyIFsgL0FTQ0lJODVEZWNvZGUgL0ZsYXRlRGVjb2RlIF0gL0xlbmd0aCAxNzEKPj4Kc3RyZWFtCkdhcm84XSswRWgmNENsWmlmbjJPRzhLYTctT0llRTklTGtKPl9qPDZuR2UyJDhyU0k5MS9qXmVOOFQ8S1EkIT5CWXJXL2I9RyVtQiI9a29QJD0nSEMpQyFmcEIpKy45WUM0VVgpYUYyNXAvazFba1QlM0NNXV1pXSlPO2FNMUosdCdRJSxIJWZCZ2dSU0JLbldbaWJKSDlBWCRwImNbXzUyNTJIXEYiX2J+PmVuZHN0cmVhbQplbmRvYmoKeHJlZgowIDgKMDAwMDAwMDAwMCA2NTUzNSBmIAowMDAwMDAwMDYxIDAwMDAwIG4gCjAwMDAwMDAwOTIgMDAwMDAgbiAKMDAwMDAwMDE5OSAwMDAwMCBuIAowMDAwMDAwMzkyIDAwMDAwIG4gCjAwMDAwMDA0NjAgMDAwMDAgbiAKMDAwMDAwMDcyMSAwMDAwMCBuIAowMDAwMDAwNzgwIDAwMDAwIG4gCnRyYWlsZXIKPDwKL0lEIApbPGMzYjZhOGE3ZDAyZDg5OGE2NjI1NTcyMTAyZGRmODhjPjxjM2I2YThhN2QwMmQ4OThhNjYyNTU3MjEwMmRkZjg4Yz5dCiUgUmVwb3J0TGFiIGdlbmVyYXRlZCBQREYgZG9jdW1lbnQgLS0gZGlnZXN0IChvcGVuc291cmNlKQoKL0luZm8gNSAwIFIKL1Jvb3QgNCAwIFIKL1NpemUgOAo+PgpzdGFydHhyZWYKMTA0MQolJUVPRgo=','base64')
+// Recreate Vercel Node's missing canvas globals immediately BEFORE the first
+// pdf-parse import. This parses a synthetic PDF without any Gmail/Drive/Twilio
+// network calls, user data or credentials. The legacy ticket helper's tests
+// alone would miss the Workspace module-load failure seen on production.
+;(globalThis as any).DOMMatrix=undefined
+;(globalThis as any).ImageData=undefined
+;(globalThis as any).Path2D=undefined
+const workspacePdfText=await extractServerlessPdfText(tinyPdf,60_000)
+assert.match(workspacePdfText,/Booking reference TEST12/)
+assert.match(workspacePdfText,/BLR 22:15 27 Sep 2026/)
+assert.equal(typeof (globalThis as any).DOMMatrix,'function')
+assert.equal(typeof (globalThis as any).ImageData,'function')
+assert.equal(typeof (globalThis as any).Path2D,'function')
+assert.ok((await extractServerlessPdfText(tinyPdf,24)).length<=24,'Workspace text length cap')
+await assert.rejects(()=>extractServerlessPdfText(Buffer.from('corrupt non-PDF synthetic bytes'),60_000),
+  'Malformed PDF must fail rather than invent verified text')
+
 const tinyText=await extractPdfTextLocally(tinyPdf)
 assert.match(tinyText,/Booking reference TEST12/)
 assert.match(tinyText,/BLR 22:15 27 Sep 2026/)
@@ -89,5 +108,25 @@ BLR 22:15 27 Sep 2026 Boeing 787-9 AUH 00:35 28 Sep 2026
 Booking reference B8XIQC
 EY 239 • Etihad
 ` )?.flights[0]?.flightNo,'EY239')
+
+// Workspace/PDF.js regression (registered in npm test): every real PDF entry
+// must use the shared initializer/parser before pdf-parse is evaluated. A
+// successful local-ticket path alone did not cover Workspace life-events.
+const readSource=(path:string)=>readFileSync(new URL('../'+path,import.meta.url),'utf8')
+const pdfEntrypoints:[string,string,RegExp][]=[
+  ['Workspace Gmail attachment','lib/agent/google-workspace-read.ts',/extractServerlessPdfText\(\s*bytes\s*,\s*MAX_FILE_TEXT\s*\)/],
+  ['Workspace Drive binary','lib/agent/google-workspace-drive-binary.ts',/extractServerlessPdfText\(\s*bytes\s*,\s*MAX_DRIVE_TEXT\s*\)/],
+  ['WhatsApp local ticket','lib/services/pdf-reader-whatsapp.ts',/extractServerlessPdfText\(\s*pdfBuffer\s*\)/],
+  ['Existing local reader','lib/services/pdf-reader.ts',/extractServerlessPdfText\(\s*pdfBuffer\s*\)/],
+]
+for(const [name,path,expected] of pdfEntrypoints){
+  const source=readSource(path)
+  assert.match(source,expected,name+' must use one serverless-safe PDF parser')
+}
+// Preserve the user-data guards and unreadable states while changing parser setup.
+assert.match(readSource('lib/agent/google-workspace-read.ts'),/MAX_ATTACHMENT_BYTES = 8 \* 1024 \* 1024/)
+assert.match(readSource('lib/agent/google-workspace-drive-binary.ts'),/MAX_DRIVE_BINARY_BYTES = 8 \* 1024 \* 1024/)
+assert.match(readSource('lib/agent/google-workspace-read.ts'),/status:'unreadable'/)
+assert.match(readSource('lib/agent/google-workspace-drive-binary.ts'),/reason:'unreadable'/)
 
 console.log('PDF local ticket fallback regression passed')
