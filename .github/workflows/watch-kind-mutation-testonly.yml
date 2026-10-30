@@ -1,0 +1,37 @@
+name: Explicit watch-kind mutation safety (test-only expected RED)
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/watch-kind-mutation-testonly.yml'
+      - 'scripts/verify-watch-kind-mutation-testonly.mts'
+      - 'lib/agent/watch-command.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-watch-kind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert exact PR head SHA (not GitHub merge ref)
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_HEAD="$(git rev-parse HEAD)"
+          echo "EXPECTED_HEAD=$EXPECTED_HEAD ACTUAL_HEAD=$ACTUAL_HEAD"
+          test "$EXPECTED_HEAD" = "$ACTUAL_HEAD"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Execute actual watcher command in inert owner-scoped VM (expected safety RED)
+        run: npx --yes tsx scripts/verify-watch-kind-mutation-testonly.mts
