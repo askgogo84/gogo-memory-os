@@ -33,4 +33,4 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Execute unchanged ReserveGo and booking-engine functions with synthetic injected fetch
-        run: npx --no-install tsx scripts/verify-reservation-egress-ssrf-testonly.mts
+        run: npx --yes tsx scripts/verify-reservation-egress-ssrf-testonly.mts
