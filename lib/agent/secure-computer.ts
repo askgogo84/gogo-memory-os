@@ -890,10 +890,10 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
       |(passengerDialog?.closest('[role="search"]')?2048:0)
       |(/^(?:Add adult|Remove adult|Done|Cancel)$/.test(passengerLabel)?4096:0):undefined;
     const consequential=(()=>{
-    if((guardContext&127)===127&&((guardContext&384)===384||(guardContext&7680)===7680))return false;
+    const flightResearch=(guardContext&127)===127&&((guardContext&384)===384||(guardContext&7680)===7680);
     const t=(el.getAttribute('type')||'').toLowerCase();
     const text=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value'),el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().toLowerCase();
-    if(/\b(add|remove|increase|decrease)\b/.test(text)||/^[+−-]$/.test(text))return true;
+    const adjustmentControl=/\b(add|remove|increase|decrease)\b/.test(text)||/^[+−-]$/.test(text);
     const safeResearch=/\b(search|find|show|filter|apply filters|see results|view results|check availability|update results|go)\b/i.test(text);
     const navigation=/\b(?:(?:view|manage|open|show|see|read|inspect|review)\s+(?:(?:my|your|the)\s+)?(?:booking|reservation|confirmation|order|payment|purchase|application|cancellation)s?(?:\s+(?:details|confirmation|status|history|receipt))?|(?:booking|reservation)\s+details)\b/gi;
     const visibleText=[el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value')].filter(Boolean).join(' ').toLowerCase();
@@ -917,22 +917,46 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
     commitText=commitText.replace(/\bapply\s+filters?\b/gi,' ');
     // Observed headphone links describe noise cancellation, not an account action.
     if(el.tagName==='A')commitText=commitText.replace(/\bnoise[ -]+cancellation\b/gi,' ');
-    const consequential=/\b(book|booking|cancel|cancellation|buy|purchase|checkout|pay|payment|reserve|reservation|place order|order now|apply|send application|check\s*-?\s*in|confirm(?:ation)?|complete purchase|finish purchase|finali[sz]e|submit)\b/i.test(commitText);
+    const consequentialWords=/\b(book|booking|cancel|cancellation|buy|purchase|checkout|pay|payment|reserve|reservation|place order|order now|apply|send application|check\s*-?\s*in|confirm(?:ation)?|complete purchase|finish purchase|finali[sz]e|submit)\b/i;
+    const consequential=consequentialWords.test(commitText);
+    // Only an unambiguous non-form location control can use this read exception.
+    // Equivalent accessible labels are one label; conflicting labels retain the normal checks.
+    const locationLabels=Array.from(new Set([el.textContent,el.getAttribute('aria-label'),el.getAttribute('title'),el.getAttribute('value')]
+      .map(value=>String(value||'').replace(/\s+/g,' ').trim().toLowerCase()).filter(Boolean)));
+    if(el.tagName==='BUTTON'&&locationLabels.some(label=>/^(?:continue|apply|submit|check|done|save|confirm location|update)$/.test(label))){
+      const box=el.closest?.('[role="dialog"],[aria-modal="true"],form,[class*="modal" i],[class*="popup" i],[class*="location" i],[class*="pincode" i]');
+      const boxText=(box?[String(box.innerText||box.textContent||''),...Array.from(box.querySelectorAll?.('input')||[]).map(i=>String(i.getAttribute?.('placeholder')||'')+' '+String(i.getAttribute?.('aria-label')||''))].join(' '):'')
+        .replace(/([A-Z])([A-Z][a-z])/g,'$1 $2').replace(/([a-z])([A-Z])/g,'$1 $2').toLowerCase();
+      if(box&&/\b(?:pin\s*code|pincode|delivery location|select your location|enter your location|delivery address|check delivery)\b/.test(boxText)){
+        const inputs=Array.from(box.querySelectorAll?.('input')||[]);
+        const pinWords=new Set(['enter','your','delivery','location','pin','pincode','post','postal','postcode','zip','zipcode','code','input','field','on','off']);
+        const pinFilled=inputs.length>0&&inputs.every(i=>{
+          const type=String(i.type||'').toLowerCase();
+          const labels=[i.name,i.id,i.autocomplete,i.placeholder,i.getAttribute?.('name'),i.getAttribute?.('id'),i.getAttribute?.('autocomplete'),i.getAttribute?.('placeholder'),i.getAttribute?.('aria-label')]
+            .filter(Boolean).map(value=>String(value).replace(/([A-Z])([A-Z][a-z])/g,'$1 $2').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/([a-zA-Z])(\d)/g,'$1 $2').replace(/[_-]+/g,' ').replace(/\s+/g,' ').trim().toLowerCase());
+          const purpose=labels.join(' ');
+          const knownPurpose=!labels.length||(labels.every(label=>label.split(' ').every(word=>pinWords.has(word)||/^\d+$/.test(word)))
+            &&/\b(?:pin|pincode|postal|postcode|zip|zipcode|post code)\b/.test(purpose));
+          return /^(?:text|number|tel|search)?$/.test(type)&&(type!=='tel'||labels.length>0)&&knownPurpose&&/^[1-9]\d{5}$/.test(String(i.value||'').trim());
+        });
+        const metadata=[el.getAttribute('name'),el.id].filter(Boolean).join(' ').replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').toLowerCase();
+        // This observed setting-location ID is meaningful only inside all the same structural/PIN/context checks.
+        const actionMetadata=metadata==='apply pincode btn'?'':metadata;
+        const metadataCommit=consequentialWords.test(actionMetadata)||/\b(?:order|check\s*out|address|shipping|billing|account|profile|login|password|otp)\b/.test(metadata);
+        const nativeSubmit=!!searchForm||t==='submit'||t==='image'||el.getAttribute('form')!==null
+          ||el.getAttribute('formaction')!==null||el.getAttribute('formmethod')!==null;
+        // The existing alternative sign-in link is informational; other auth/account context is not a location setting.
+        const actionContext=boxText.replace(/\bsign in to select address\b/g,' ');
+        const risky=!!box.querySelector?.('input[type="password"]')
+          ||/\b(?:checkout|shipping address|billing address|save address|add address|card number|cvv|upi|pay now|place order|otp|verification|verify|password|account|login|log in|sign in|full\s*name|first\s*name|last\s*name|date\s*of\s*birth|dob)\b/.test(actionContext);
+        const locationOnly=/\b(?:pin\s*code|pincode|delivery location|select your location|enter your location|check delivery)\b/.test(boxText);
+        return adjustmentControl||locationLabels.length!==1||nativeSubmit||metadataCommit||risky||!pinFilled||!locationOnly;
+      }
+    }
+    if(flightResearch)return false;
+    if(adjustmentControl)return true;
     if(text!==commitText&&!consequential)return false;
     if(safeResearch && !consequential)return false;
-    // 26 Oct (owner): a store's "Select your location" box needs Continue/Apply after Gogo enters the delivery
-    // pincode. Only a plain apply-type label, inside a dialog/form about the delivery location, holding a filled
-    // 6-digit pincode, with no password or payment field nearby, counts as setting the location (not a commit).
-    // The visible label must be exactly one of these ("Apply"/"Submit" would otherwise read as commit words).
-    if(/^(?:continue|apply|submit|check|done|save|confirm location|update)$/.test(visibleText.trim())){
-      const box=el.closest?.('[role="dialog"],[aria-modal="true"],form,[class*="modal" i],[class*="popup" i],[class*="location" i],[class*="pincode" i]');
-      // 26 Oct live Croma: textContent ran words together ("select your locationto check") and "Pincode" was only the
-      // input's placeholder, so spaced text plus the input labels are read.
-      const boxText=box?[String(box.innerText||box.textContent||''),...Array.from(box.querySelectorAll?.('input')||[]).map((i)=>String(i.getAttribute?.('placeholder')||'')+' '+String(i.getAttribute?.('aria-label')||''))].join(' ').toLowerCase():'';
-      const pinFilled=!!box&&Array.from(box.querySelectorAll?.('input')||[]).some((i)=>/^[1-9]\d{5}$/.test(String(i.value||'').trim()));
-      const risky=!!box&&(box.querySelector?.('input[type="password"]')||/\b(?:card number|cvv|upi|pay now|place order)\b/.test(boxText));
-      if(box&&pinFilled&&!risky&&/\b(?:pin\s*code|pincode|delivery location|select your location|enter your location|delivery address|check delivery)/.test(boxText))return false;
-    }
     if(consequential)return true;
     if(t==='submit'||(el.tagName==='BUTTON'&&t!=='button')||el.getAttribute('formaction')!==null)return true;
     return false;
