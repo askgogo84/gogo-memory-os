@@ -23,3 +23,6 @@ assert.equal(shouldAttemptNaturalAssetRetrieval('Open my flight invoice document
 assert.equal(shouldAttemptNaturalAssetRetrieval('Find my hotel receipt'), true)
 
 console.log('✅ Booking context isolation regression passed: operational flows cannot be hijacked by stale Asset Memory')
+
+// Execute the actual screenshot worker's fail-closed owner and recipient regression in npm test.
+await import('./verify-booking-screenshot-owner.mts')
