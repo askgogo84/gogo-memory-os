@@ -232,7 +232,8 @@ export async function jobApplicationsReply(telegramId:number):Promise<string|nul
   const access=await gmailAccess(telegramId)
   if(!access.connected)return null
   const jobs:any=await import('@/lib/agent/jobs')
-  const threads=await searchGmailThreads(access.accessToken,'application OR applying OR applied OR interview OR candidacy OR assessment newer_than:60d',25)
+  // 31 Oct live: GitHub notices about this very feature filled the results and pushed out the real ones.
+  const threads=await searchGmailThreads(access.accessToken,'subject:(application OR applying OR applied OR interview OR candidacy OR "next step" OR "next steps" OR assessment OR offer) -from:github.com -from:notifications@github.com -category:promotions -in:sent newer_than:60d',25,{raw:true})
   const rows=threads.flatMap((t:any)=>t.messages.filter((m:any)=>!m.labelIds.includes('SENT')).map((m:any)=>jobs.classifyApplicationEmail({from:m.from,subject:m.subject,snippet:m.snippet,at:m.internalDate}))).filter(Boolean)
   return jobs.formatApplications(jobs.mergeApplications(rows))
 }

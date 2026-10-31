@@ -446,10 +446,11 @@ export async function fetchGmailAttentionThreads(accessToken:string,maxThreads=1
 }
 
 
-export async function searchGmailThreads(accessToken:string,searchText:string,maxThreads=20):Promise<GmailAttentionThread[]>{
-  const q=String(searchText||'').trim().slice(0,180)
+export async function searchGmailThreads(accessToken:string,searchText:string,maxThreads=20,options:{raw?:boolean}={}):Promise<GmailAttentionThread[]>{
+  const q=String(searchText||'').trim().slice(0,options.raw?400:180)
   if(!q)return []
-  const terms=q.replace(/["{}()]/g,' ').replace(/\s+/g,' ').trim()
+  // A caller-built Gmail query (options.raw) keeps its operators: subject:(…), quotes, -from:.
+  const terms=options.raw?q:q.replace(/["{}()]/g,' ').replace(/\s+/g,' ').trim()
   const gmailQuery=encodeURIComponent(`${terms} newer_than:90d -in:spam -in:trash`)
   const res=await gmailFetchJson(
     accessToken,

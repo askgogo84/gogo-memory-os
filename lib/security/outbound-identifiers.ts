@@ -22,7 +22,7 @@ function verhoeffValid(digits: string): boolean {
 }
 
 export function maskOutboundIdentifiers(text: string): string {
-  let out = String(text ?? '')
+  let out = tidyLinks(String(text ?? ''))
   // Card: 13–19 digits, optionally grouped by spaces or dashes.
   out = out.replace(/(?<![\d])(?:\d[ -]?){12,18}\d(?![\d])/g, m => {
     const digits = m.replace(/\D/g, '')
@@ -51,4 +51,33 @@ function brandSafeOutside(text: string): string {
   return String(text ?? '')
     .replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g, m => /['’]s$/.test(m) ? 'Gogo’s' : 'Gogo')
     .replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, 'our AI provider')
+}
+
+
+// 31 Oct live: salon results came as 300-character google.com/goto?url=… redirects. A link is sent as the page it
+// points to, without tracking parameters, so it reads as an address. Pure.
+const TRACKING = /^(?:utm_[a-z]+|gclid|fbclid|srsltid|ved|usg|sa|ei|igshid|igsh|si|ref|ref_src|ref_url|mc_cid|mc_eid|_hsenc|_hsmi|opi|sca_esv|rlz|oq|gs_lcrp|sourceid|ie)$/i
+export function tidyUrl(raw: string): string {
+  let url = raw
+  for (let i = 0; i < 2; i++) {
+    const m = url.match(/^https?:\/\/(?:www\.)?google\.[a-z.]+\/(?:goto|url)\?(.*)$/i)
+    if (!m) break
+    const params = new URLSearchParams(m[1])
+    const target = [...params.getAll('url'), ...params.getAll('q'), ...params.getAll('u')].find(v => /^https?:\/\//i.test(v))
+    if (!target || !/^https?:\/\//i.test(target)) break
+    url = target
+  }
+  try {
+    const u = new URL(url)
+    for (const key of Array.from(u.searchParams.keys())) if (TRACKING.test(key)) u.searchParams.delete(key)
+    let out = u.toString()
+    if (!u.search) out = out.replace(/\?$/, '')
+    return out.replace(/\/$/, '') === `${u.origin}` ? u.origin : out
+  } catch { return url }
+}
+export function tidyLinks(text: string): string {
+  return String(text ?? '').replace(/https?:\/\/[^\s<>)\]]+/g, m => {
+    const trail = m.match(/[.,;!?]+$/)?.[0] || ''
+    return tidyUrl(trail ? m.slice(0, -trail.length) : m) + trail
+  })
 }

@@ -54,7 +54,7 @@ assert.match(research, /I haven't checked live slots/)
 assert.match(research, /bookableScore/)
 assert.match(research, /bookableRanked/)
 assert.match(research, /I put direct booking pages first/i)
-assert.match(research, /Booking\/provider page: \$\{o\.url\}/, 'the follow-up binds an option number to this exact line')
+assert.match(research, /Booking\/provider page: \$\{bookLink\(o\.url, o\.title, location\)\}/, 'the follow-up binds an option number to this exact line (the link is tidied, the label is kept)')
 
 assert.match(recovery, /appointment_selection/)
 assert.match(recovery, /resolveBookableTarget/)
