@@ -1,0 +1,33 @@
+name: Flight passenger profile exact owner (TEST ONLY, expected safety RED)
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-flight-known-details-owner-testonly.mjs'
+      - '.github/workflows/flight-known-details-owner-testonly.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert literal pull-request HEAD checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='${{ github.event.pull_request.head.sha || github.sha }}'
+          actual="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$expected ACTUAL_SHA=$actual"
+          test "$expected" = "$actual"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Execute original flight-booking passenger profile in sealed synthetic VM (EXPECTED SAFETY RED)
+        run: node scripts/verify-flight-known-details-owner-testonly.mjs
