@@ -481,6 +481,11 @@ export function isUsageCommand(text: string) {
   // it could not see usage. Plain questions about usage or what is left answer from the meter.
   return /\b(?:how\s+(?:much|many)|what(?:'s|\s+is)|show|check)\b[^?]{0,40}\b(?:my\s+)?(?:plan|usage|limits?|quota|allowance|credits?)\b[^?]{0,40}\b(?:used|left|remaining|usage|limit|this\s+month)\b/.test(lower)
     || /^(?:what(?:'s|\s+is)\s+)?my\s+(?:usage|quota|allowance)(?:\s+this\s+month)?\??$/.test(lower)
+    // 31 Oct (Muse users' usage dashboards): "show my usage", "usage stats", "how many tasks have you done for me".
+    || /^(?:show|check|see|view)\s+(?:me\s+)?(?:my\s+)?(?:usage|usage\s+(?:dashboard|stats|trends)|stats)(?:\s+this\s+(?:week|month))?[.!?]*$/.test(lower)
+    || /^usage\s+(?:stats|trends|dashboard|this\s+week)[.!?]*$/.test(lower)
+    || /^how\s+much\s+(?:have\s+i|did\s+i)\s+used?(?:\s+(?:you|gogo|askgogo))?(?:\s+this\s+(?:week|month))?\??$/.test(lower)
+    || /^how\s+many\s+(?:tasks|things)\s+(?:have\s+you|did\s+you)\s+(?:done|do|finished)\s+for\s+me(?:\s+this\s+(?:week|month))?\??$/.test(lower)
 }
 
 /** True when Gogo's most recent reply names `name` or a friend reminder. Fails open (true) if the read fails. */
@@ -1034,8 +1039,26 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
+  // 31 Oct (Muse users' job hunting): preferences, a daily job radar, the application tracker, prepare-to-apply.
+  if (/\b(?:jobs?|applications?|applied|apply|cover\s+letter|openings?|roles?|positions?)\b/i.test(incomingText) && (globalThis as any).process?.env?.VERCEL_ENV) {
+    const jc: any = await import('@/lib/agent/jobs-command').catch(() => null)
+    const jobReply = jc?.tryJobCommand ? await Promise.resolve().then(() => jc.tryJobCommand({ actor: { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, whatsappId: String(resolvedUser.whatsappId || ''), name: resolvedUser.name || 'Gogo' }, surface: params.channel === 'whatsapp' ? 'whatsapp' : 'web', text: incomingText })).catch((err: any) => { console.error('JOB_COMMAND_FAILED:', String(err?.message || err).slice(0, 160)); return null }) : null
+    if (jobReply?.text) {
+      await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+      await saveConversation(resolvedUser.telegramId, 'assistant', jobReply.text)
+      return { text: formatOutgoingText(params.channel, jobReply.text), resolvedUser, handledBy: jobReply.handledBy }
+    }
+  }
   if (isUsageCommand(incomingText)) {
-    const reply = await getUsageStatusReply(resolvedUser.telegramId)
+    let reply = await getUsageStatusReply(resolvedUser.telegramId)
+    // Trends over 7/30/60/90 days and this week against the weekly allowance. Lazy and env-gated (strict harnesses).
+    if ((globalThis as any).process?.env?.VERCEL_ENV) {
+      const act: any = await import('@/lib/dashboard/activity').catch(() => null)
+      const q: any = await import('@/lib/dashboard/queries').catch(() => null)
+      const summary = q?.getUsageSummary ? await q.getUsageSummary(String(resolvedUser.telegramId)).catch(() => null) : null
+      const trends = act?.getActivityTrends ? await Promise.resolve().then(() => act.getActivityTrends(resolvedUser.telegramId, summary?.ok ? summary.limits.aiPerDay : 0)).catch((err: any) => { console.error('USAGE_TRENDS_FAILED:', String(err?.message || err).slice(0, 160)); return null }) : null
+      if (trends) reply = `${reply}\n\n${act.formatActivityTrends(trends, '').replace(/^📊 \*Your usage\*\s*\n\n/, '')}`
+    }
     __trace.mark('reply')
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)

@@ -226,3 +226,13 @@ export async function awaitingRepliesReply(telegramId:number):Promise<string|nul
   const threads=await searchGmailThreads(access.accessToken,'in:sent newer_than:21d',15)
   return formatAwaitingReplies(awaitingRepliesFrom(threads as any,String(access.email||'')))
 }
+
+// 31 Oct (Muse users: "it tracks the status of all jobs we applied for from my email"). Read-only.
+export async function jobApplicationsReply(telegramId:number):Promise<string|null>{
+  const access=await gmailAccess(telegramId)
+  if(!access.connected)return null
+  const jobs:any=await import('@/lib/agent/jobs')
+  const threads=await searchGmailThreads(access.accessToken,'application OR applying OR applied OR interview OR candidacy OR assessment newer_than:60d',25)
+  const rows=threads.flatMap((t:any)=>t.messages.filter((m:any)=>!m.labelIds.includes('SENT')).map((m:any)=>jobs.classifyApplicationEmail({from:m.from,subject:m.subject,snippet:m.snippet,at:m.internalDate}))).filter(Boolean)
+  return jobs.formatApplications(jobs.mergeApplications(rows))
+}
