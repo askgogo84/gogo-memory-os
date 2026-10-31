@@ -73,7 +73,8 @@ export function buildActivityTrends(input: ActivityInput, now = Date.now(), aiPe
 export function formatActivityTrends(a: ActivityTrends, planLabel = '') {
   const pct = a.weekLimit > 0 ? Math.round((a.weekUsed / a.weekLimit) * 100) : null
   const t = (d: number) => a.trends.find(x => x.days === d)!
-  const row = (d: number) => `${d} days: ${t(d).ai} AI actions · ${t(d).tasks} tasks · ${t(d).reminders} reminders · ${t(d).alerts} alerts`
+  const n = (v: number, w: string) => `${v} ${w}${v === 1 ? '' : 's'}`
+  const row = (d: number) => `${d} days: ${n(t(d).ai, 'AI action')} · ${n(t(d).tasks, 'task')} · ${n(t(d).reminders, 'reminder')} · ${n(t(d).alerts, 'alert')}`
   const top = a.topActions.length ? `\n\n*Most used (30 days):* ${a.topActions.map(x => `${x.action} ${x.count}`).join(', ')}` : ''
   return `📊 *Your usage*${planLabel ? ` (${planLabel})` : ''}\n\n*This week:* ${a.weekUsed}${a.weekLimit ? ` of ${a.weekLimit} AI actions${pct !== null ? ` (${pct}%)` : ''}` : ' AI actions'} · resets Monday\n\n${[7, 30, 60, 90].map(row).join('\n')}${top}\n\nThe full view with charts is under Usage in your dashboard.`
 }

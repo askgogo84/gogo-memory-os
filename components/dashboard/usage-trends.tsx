@@ -3,6 +3,7 @@
 import type { ActivityTrends } from '@/lib/dashboard/activity'
 import { QuotaBar } from './quota-bar'
 
+const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 const shortDay = (iso: string) => new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' }).format(new Date(iso))
 
 function WeeksChart({ weeks }: { weeks: ActivityTrends['weeks'] }) {
@@ -19,7 +20,7 @@ function WeeksChart({ weeks }: { weeks: ActivityTrends['weeks'] }) {
             <title>{`Week of ${shortDay(w.start)}: ${w.ai} AI actions, ${w.tasks} tasks`}</title>
             <rect x={x} y={H - h} width={bw} height={Math.max(h, 1)} rx={3} className={last ? 'fill-gogo-orange' : 'fill-gogo-plum/60'} />
             {(i === 0 || last || i === 6) && (
-              <text x={x + bw / 2} y={H + 14} textAnchor="middle" className="fill-gogo-ink-4 text-[10px]">{shortDay(w.start)}</text>
+              <text x={i === 0 ? x : last ? x + bw : x + bw / 2} y={H + 14} textAnchor={i === 0 ? 'start' : last ? 'end' : 'middle'} className="fill-gogo-ink-4 text-[10px]">{shortDay(w.start)}</text>
             )}
           </g>
         )
@@ -41,7 +42,7 @@ export function UsageTrends({ a }: { a: ActivityTrends }) {
           <div key={t.days} className="rounded-[16px] border border-gogo-ink/10 bg-gogo-surface px-[14px] py-[12px]">
             <div className="text-[14px] font-medium text-gogo-ink-3">Last {t.days} days</div>
             <div className="mt-1 font-serif text-[26px] font-semibold tabular-nums text-gogo-ink">{t.ai}</div>
-            <div className="text-[13px] leading-[1.45] text-gogo-ink-3">AI actions · {t.tasks} tasks · {t.reminders} reminders · {t.alerts} alerts</div>
+            <div className="text-[13px] leading-[1.45] text-gogo-ink-3">AI actions · {plural(t.tasks, 'task')} · {plural(t.reminders, 'reminder')} · {plural(t.alerts, 'alert')}</div>
           </div>
         ))}
       </div>
