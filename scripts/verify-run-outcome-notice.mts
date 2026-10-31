@@ -1,6 +1,7 @@
 // One WhatsApp outcome message per finished / failed / stale-swept agent run (19 Oct).
 // Inert DB and transport only: no network, no Supabase, no Twilio.
 import assert from 'node:assert/strict'
+import './verify-run-outcome-final-owner.mts'
 import { runInNewContext } from 'node:vm'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
