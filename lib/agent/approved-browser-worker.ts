@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { sendWhatsApp } from '@/lib/whatsapp'
 import type { AgentActor } from './actor'
 import { executeApprovedBrowserCommand, resumePausedBrowserRun } from './browser-command'
@@ -15,14 +16,22 @@ import { evaluateAgentExecutionPolicy } from './policy'
 export type ApprovedBrowserRunOutcome = 'skipped' | 'completed' | 'blocked' | 'failed'
 
 export async function actorForTelegramId(telegramId: string): Promise<AgentActor | null> {
+  // AgentActor.legacyTelegramId is a JS number. Never round a signed64 owner
+  // into a different person's service-role user row and browser/Vault identity.
+  const owner = exactSessionOwnerId(telegramId)
+  if (!owner) return null
+  const legacyTelegramId = Number(owner)
+  if (!Number.isSafeInteger(legacyTelegramId) || String(legacyTelegramId) !== owner) return null
   const { data, error } = await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name')
-    .eq('telegram_id', Number(telegramId)).maybeSingle()
+    .eq('telegram_id', owner).maybeSingle()
   if (error) { console.error('APPROVED_BROWSER_ACTOR_FAILED:', error.message); return null }
-  if (!data?.id || !data?.telegram_id) return null
+  // DB clients may return unsafe BIGINTs already rounded. Only a canonical,
+  // exact owner match can authorize private browsing or WhatsApp delivery.
+  if (!data?.id || exactSessionOwnerId(data.telegram_id) !== owner) return null
   return {
     userId: String(data.id),
-    legacyTelegramId: Number(data.telegram_id),
+    legacyTelegramId,
     whatsappId: String(data.whatsapp_id || ''),
     name: String(data.name || 'Gogo'),
   }
