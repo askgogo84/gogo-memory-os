@@ -9,7 +9,7 @@ type Row=Record<string,any>
 const events: Row[]=[]
 const actions: Row[]=[]
 let nextEvent=0, registrationCalls=0, actionUpserts=0, eventUpdates=0
-const copy=(v:Row):Row=>structuredClone(v)
+const copy=<T>(v:T):T=>structuredClone(v)
 
 class EventQuery {
   filters: Array<[string,string]> = []
