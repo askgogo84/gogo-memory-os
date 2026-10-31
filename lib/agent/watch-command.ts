@@ -282,7 +282,7 @@ async function dismissIdeasForWatcherIds(telegramId:string,watcherIds:string[]){
     for(let from=0;;from+=pageSize){
       const {data,error}=await supabaseAdmin.from('agent_ideas')
         .select('id').eq('telegram_id',telegramId).eq('status','new')
-        .contains('source_refs',[{type:'watcher',id:watcherId}])
+        .contains('source_refs',JSON.stringify([{type:'watcher',id:watcherId}]))
         .order('created_at',{ascending:true}).range(from,from+pageSize-1)
       if(error){console.error('WATCHER_STOP_IDEA_READ_FAILED:',error.message);break}
       const ideaIds=(data||[]).map((row:any)=>row.id).filter(Boolean)
