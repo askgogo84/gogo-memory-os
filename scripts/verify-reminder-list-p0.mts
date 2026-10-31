@@ -64,3 +64,5 @@ assert.doesNotMatch(tomorrow,/Past reminder/)
 const upcoming=await realReader.readReminderQuery({legacyTelegramId:42},'Show my upcoming reminders')
 assert.match(upcoming,/Tomorrow reminder/);assert.doesNotMatch(upcoming,/Past reminder/)
 console.log('verify-reminder-list-p0: PASS')
+// Opt-out owner precision is exercised with an inert production-module VM fixture.
+await import('./verify-reminder-optout-precision.mts')
