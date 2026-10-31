@@ -56,3 +56,6 @@ const drive=readFileSync('lib/agent/google-workspace-drive-binary.ts','utf8')
 assert.doesNotMatch(drive,/update\(\{gmail_access_token:token\}\)/)
 
 console.log('Google token consistency regression passed')
+
+// Registered test-Gmail preview owner and credential boundary regression.
+await import('./verify-test-gmail-owner.mts')
