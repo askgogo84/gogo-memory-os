@@ -10,7 +10,12 @@ export async function deliverWatchAlert(params: {
   watcherId: string; owner: string; key: string; due: string; message: string; condition: unknown; topic?: AlertTopic | AlertTopic[]
 }) {
   const owner = Number(params.owner)
-  if (!Number.isSafeInteger(owner)) throw new Error('watch_alert_owner_invalid')
+  // Private watch producers carry the exact persisted decimal owner. JavaScript
+  // numeric coercion must never silently normalize another owner's identity.
+  if (typeof params.owner !== 'string' ||
+      !/^-?[1-9]\d*$/.test(params.owner) ||
+      !Number.isSafeInteger(owner) ||
+      String(owner) !== params.owner) throw new Error('watch_alert_owner_invalid')
   // Duet parity: a topic the person turned off stays in the app only (same path as an app-only watch), never on WhatsApp.
   const prefs = await getAlertPreferences(params.owner)
   // Several topics (the inbox digest is bills and replies): muted only when every one of them is off.
@@ -22,16 +27,24 @@ export async function deliverWatchAlert(params: {
     key: params.key, source: 'watch_alert', owner, channel: 'whatsapp', due: params.due,
     deadline: Date.now() + 30_000,
     prepare: async () => {
-      const { data, error } = await supabaseAdmin.from('users').select('whatsapp_id').eq('telegram_id', owner).maybeSingle()
-      if (error || !data?.whatsapp_id) throw new Error('watch_alert_recipient_unavailable')
+      const { data, error } = await supabaseAdmin.from('users').select('telegram_id,whatsapp_id').eq('telegram_id', params.owner).maybeSingle()
+      if (error || String(data?.telegram_id ?? '') !== params.owner || !data?.whatsapp_id)
+        throw new Error('watch_alert_recipient_unavailable')
       phone = String(data.whatsapp_id)
     },
     ready: async () => {
       const { data, error } = await supabaseAdmin.from('agent_watchers').select('active,condition_json')
         .eq('id', params.watcherId).eq('telegram_id', params.owner).maybeSingle()
       if (error) throw new Error('watch_alert_owner_read_failed')
-      // An intervening stop or correction revokes the old notification.
-      return data?.active === true && JSON.stringify(data.condition_json) === JSON.stringify(params.condition)
+      // An intervening stop/correction, muted topic or recipient relink revokes
+      // this notification BEFORE the receipt ledger begins the provider send.
+      if (data?.active !== true || JSON.stringify(data.condition_json) !== JSON.stringify(params.condition)) return false
+      const latestPrefs = await getAlertPreferences(params.owner)
+      if (topics.every(t => latestPrefs.topics[t] === false)) return false
+      const { data: latestUser, error: userError } = await supabaseAdmin.from('users')
+        .select('telegram_id,whatsapp_id').eq('telegram_id', params.owner).maybeSingle()
+      if (userError || String(latestUser?.telegram_id ?? '') !== params.owner || !latestUser?.whatsapp_id) return false
+      return String(latestUser.whatsapp_id) === phone
     },
     accepted: async () => { await recordCostEvent({telegramId:params.owner,category:'whatsapp_outbound',metadata:{source:'background_gogo',watcher_id:params.watcherId}}).catch(()=>{}) },
     send: async token => String((await sendWhatsApp(phone, params.message, null, token))?.sid || ''),

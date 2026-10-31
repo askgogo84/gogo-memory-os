@@ -281,3 +281,6 @@ try {
   assert.deepEqual(count(), invalidPage, 'logged-out SSR must not query private settings')
   console.log('PASS P1: actual agent alert GET/PUT and SSR use exact 64-bit session owners; mobile unsafe aliases, malformed sessions and blocked origins fail closed')
 }
+
+// Execute the inert original-module watch-alert consent/recipient regression in npm test.
+await import('./verify-watch-alert-consent.mts')
