@@ -65,6 +65,21 @@ export function getNextOccurrence(pattern: string, fromDate: Date): Date {
     }
     return new Date(istNext.getTime() - IST)
   }
+  // Calendar-month recurrence is a different cadence from daily. In particular,
+  // Date.setUTCMonth alone would roll 31 Jan into March on short February months.
+  // Clamp to the target month's last day while keeping the exact UTC clock time.
+  // This shared primitive also drives skip and crash catch-up.
+  if (lower.includes('monthly') || lower.includes('every month')) {
+    const year = next.getUTCFullYear()
+    const month = next.getUTCMonth()
+    const day = next.getUTCDate()
+    const lastDay = new Date(Date.UTC(year, month + 2, 0)).getUTCDate()
+    next.setUTCDate(1)
+    next.setUTCMonth(month + 1)
+    next.setUTCDate(Math.min(day, lastDay))
+    return next
+  }
+
   if (lower.includes('every day') || lower.includes('daily')) next.setDate(next.getDate() + 1)
   else if (lower.includes('every week') || lower.includes('weekly')) next.setDate(next.getDate() + 7)
   else if (lower.includes('monday')) next.setDate(next.getDate() + ((1 + 7 - next.getDay()) % 7 || 7))

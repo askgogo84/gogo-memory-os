@@ -45,6 +45,22 @@ expectAdvance('every_1d', 1440, 60)
 // non-interval sanity: plain daily still advances one day, not parsed as an interval.
 expectAdvance('daily', 1440, 60, 'not an interval')
 
+// A monthly reminder must never silently become a daily alert. The shared
+// getNextOccurrence export is used by both the cron and the skip action.
+function expectMonthly(pattern: string, fromIso: string, wantIso: string) {
+  const got = getNextOccurrence(pattern, new Date(fromIso)).toISOString()
+  const ok = got === wantIso
+  if (!ok) fails++
+  console.log(`  ${ok ? '✓' : '✗'}  monthly "${pattern}" from ${fromIso} → ${got} (want ${wantIso})`)
+}
+console.log('\nmonthly recurrence must advance one calendar month, not one day\n')
+expectMonthly('monthly', '2026-01-15T03:30:00.000Z', '2026-02-15T03:30:00.000Z')
+expectMonthly('every month', '2026-11-08T18:45:17.123Z', '2026-12-08T18:45:17.123Z')
+expectMonthly('monthly', '2027-01-31T03:30:00.000Z', '2027-02-28T03:30:00.000Z')
+expectMonthly('every month', '2028-01-31T03:30:00.000Z', '2028-02-29T03:30:00.000Z')
+expectMonthly('monthly', '2028-02-29T03:30:00.000Z', '2028-03-29T03:30:00.000Z')
+expectMonthly('every month', '2026-12-31T03:30:00.000Z', '2027-01-31T03:30:00.000Z')
+
 // ── describeCadence: sentence + label per form ────────────────────────────────
 function expectText(pattern: string, style: 'sentence' | 'label', want: string) {
   const got = describeCadence(pattern, style)
