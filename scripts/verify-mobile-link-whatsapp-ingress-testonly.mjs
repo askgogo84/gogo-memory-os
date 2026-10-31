@@ -119,7 +119,7 @@ await check('control','unchanged LINK parser recognizes the displayed fictional 
   assert.equal(h.parse('link gogo-' + syntheticCode),normalizedCode)
 })
 await check('control','unrelated commands and trailing text do not become LINK codes', () => {
-  assert.equal(h.parse('connect calendar'),null)
+  assert.equal(h.parse('connect my calendar'),null)
   assert.equal(h.parse('LINK ' + syntheticCode + ' now'),null)
   assert.equal(h.parse(''),null)
 })
@@ -148,6 +148,10 @@ await check('control','source scan covers genuine app and bot files, not fixture
   assert.ok(appSources.some(p=>p.startsWith('lib/bot/')))
   assert.ok(appSources.some(p=>p.startsWith('app/api/')))
 })
+await check('mandatory','ordinary Calendar connection commands must not parse as an 8-character device code', () => {
+  assert.equal(h.parse('connect calendar'),null)
+  assert.equal(h.parse('link calendar'),null)
+})
 await check('mandatory','production WhatsApp ingress must call the original LINK parser', () => {
   assert.ok(parserCallers.length>0,
     'no production caller of parseMobileLinkCommand exists outside link.ts')
@@ -164,6 +168,6 @@ await check('mandatory','LINK parsing and approval must be wired in a shared rea
 console.log('CALLSITES parser=' + JSON.stringify(parserCallers) +
   ' approval=' + JSON.stringify(approvalCallers))
 console.log('RESULT controls_pass=' + controlPass + '/6 controls_fail=' + controlFail +
-  ' mandatory_pass=' + safetyPass + '/3 mandatory_fail=' + safetyFail)
+  ' mandatory_pass=' + safetyPass + '/4 mandatory_fail=' + safetyFail)
 if (controlFail) process.exit(2)
 if (safetyFail) process.exit(1)
