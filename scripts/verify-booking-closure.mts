@@ -1,3 +1,4 @@
+import './verify-booking-watch-owner-precision.mts'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
