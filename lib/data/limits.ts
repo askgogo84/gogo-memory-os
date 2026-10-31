@@ -61,6 +61,17 @@ const LIMITS: Record<PlanKey, PlanLimit> = {
   },
 }
 
+/** Fail closed before any service-role usage/entitlement owner read or write.
+ * SQL BIGINT account IDs can alias when represented as unsafe JS numbers.
+ * The numeric caller contract intentionally rejects such identities until
+ * exact decimal-string owner IDs are supported end-to-end.
+ */
+function assertUsageOwner(telegramId: number): void {
+  if (typeof telegramId !== 'number' || !Number.isSafeInteger(telegramId) || telegramId === 0) {
+    throw new Error('usage_owner_invalid')
+  }
+}
+
 function currentMonthKey() {
   return new Date().toLocaleDateString('en-CA', { timeZone:'Asia/Kolkata', year:'numeric', month:'2-digit' })
 }
@@ -135,6 +146,7 @@ async function countUsageFromMemories(telegramId:number, kind:UsageKind, periodK
 }
 
 export async function logUsage(telegramId:number, kind:UsageKind, meta?:Record<string,any>) {
+  assertUsageOwner(telegramId)
   const monthKey=currentMonthKey(); const dayKey=currentDayKey()
   await supabaseAdmin.from('memories').insert({ telegram_id:telegramId, content:usageMemoryPrefix(kind,monthKey)+JSON.stringify({kind,monthKey,dayKey,meta:meta||{},created_at:new Date().toISOString()}) })
   if(kind==='ai_action') await supabaseAdmin.from('memories').insert({ telegram_id:telegramId, content:usageMemoryPrefix(kind,dayKey)+JSON.stringify({kind,monthKey,dayKey,meta:meta||{},created_at:new Date().toISOString()}) })
@@ -146,6 +158,7 @@ async function getActiveReminderCount(telegramId:number) {
 }
 
 export async function checkFeatureLimit(telegramId:number, kind:UsageKind):Promise<{allowed:boolean;tier:PlanKey;plan:PlanLimit;used:number;limit:number;upgradeMessage?:string}> {
+  assertUsageOwner(telegramId)
   const {tier,plan}=await getUserPlan(telegramId); const monthKey=currentMonthKey()
   if(kind==='reminder_create'){
     const used=await getActiveReminderCount(telegramId); const limit=plan.activeReminders
@@ -163,6 +176,7 @@ export async function checkFeatureLimit(telegramId:number, kind:UsageKind):Promi
 }
 
 export async function checkAndIncrementLimit(telegramId:number):Promise<{allowed:boolean;tier:string;remaining:number;monthlyLimit:number;usedThisMonth:number;upgradeMessage?:string}> {
+  assertUsageOwner(telegramId)
   const {user,tier,plan}=await getUserPlan(telegramId)
   if(!user){ await logUsage(telegramId,'ai_action'); return{allowed:true,tier:'free',remaining:plan.monthlyActions-1,monthlyLimit:plan.monthlyActions,usedThisMonth:1} }
   const monthKey=currentMonthKey(); const dayKey=currentDayKey(); let usedCount=user.daily_count||0
@@ -178,6 +192,7 @@ export async function checkAndIncrementLimit(telegramId:number):Promise<{allowed
 }
 
 export async function getUsageStatusReply(telegramId:number) {
+  assertUsageOwner(telegramId)
   const {user,tier,plan}=await getUserPlan(telegramId); const monthKey=currentMonthKey()
   const monthlyActionsUsed=user?.daily_count||0
   const activeReminders=await getActiveReminderCount(telegramId)
