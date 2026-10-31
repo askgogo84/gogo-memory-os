@@ -18,6 +18,18 @@ export const ACTION_MIN_ROLE: Record<WorkspaceAction, WorkspaceRole> = {
   rename: 'admin',
 }
 
+/** Preserve a persisted BIGINT owner exactly, or fail closed before permission writes.
+ * JSON numeric values outside MAX_SAFE_INTEGER may already represent another owner. */
+export function exactWorkspaceUserId(value: unknown): string | null {
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value) || value === 0) return null
+    return String(value)
+  }
+  if (typeof value === 'bigint') return value.toString() === '0' ? null : value.toString()
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
+  return value
+}
+
 export const MAX_WORKSPACES_PER_USER = 5
 export const MAX_MEMBERS_PER_WORKSPACE = 50
 /** Roles an admin+ may hand out by invitation. Owner is never granted by invite. */
