@@ -16,8 +16,17 @@ export async function recordShadowRouterOutcome(params:{
 }){
   const eventId=String(params.eventId||'').trim()
   if(!eventId)return
+  // The observation is read under this persisted decimal owner, while Same Brain
+  // learning uses AgentActor.legacyTelegramId (a JS number). Distinct BIGINT IDs
+  // outside the safe-integer range alias under Number(), which could write one
+  // owner's observed text into a different owner's learning records. Reject
+  // before ANY service-role read/write, not only before learning.
+  if(typeof params.telegramId!=='string'&&typeof params.telegramId!=='number')return
+  const owner=String(params.telegramId)
+  const numericOwner=Number(owner)
+  if(!/^-?[1-9]\d*$/.test(owner)||!Number.isSafeInteger(numericOwner)||String(numericOwner)!==owner)return
   const {error}=await supabaseAdmin.from('agent_activity').insert({
-    telegram_id:String(params.telegramId),
+    telegram_id:owner,
     run_id:learningDecisionId(null,params.runId),
     event_type:'shadow_router_outcome',
     message:'Current production router handled the turn.',
@@ -34,13 +43,12 @@ export async function recordShadowRouterOutcome(params:{
   // Pair the actual chosen handler with this exact user's observation. This
   // captures every instrumented web/WhatsApp domain, including browser tasks.
   const {data:observation,error:readError}=await supabaseAdmin.from('agent_activity')
-    .select('metadata_json').eq('telegram_id',String(params.telegramId))
+    .select('metadata_json').eq('telegram_id',owner)
     .eq('event_type','shadow_brain_observation').eq('metadata_json->>event_id',eventId)
     .order('created_at',{ascending:false}).limit(1).maybeSingle()
   const m=observation?.metadata_json
   if(readError||!m?.user_text)return
-  const actor={legacyTelegramId:Number(params.telegramId)} as AgentActor
-  if(!Number.isFinite(actor.legacyTelegramId))return
+  const actor={legacyTelegramId:numericOwner} as AgentActor
   const domain=decisionDomain(String(params.actualCapability||m.capability||''),params.actualHandler)
   const verified=verifiedReadEvidence(params.actualHandler,params.status,params.verification)
   const outcome=verified?'verified_success':params.actualHandler==='jev-clarification-guard'?'clarified':observedOutcome(params.status)
