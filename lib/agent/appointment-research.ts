@@ -16,7 +16,8 @@ function host(url: string) {
 
 function locationHint(text: string) {
   const match = String(text || '').match(/\b(?:in|near|around)\s+([A-Za-z][A-Za-z .'-]{2,45}?)(?=\s+(?:next|this|tomorrow|today|on|for|at|after|before|with|and|but|are|is|that|which|free|available|open|do\s+not|don't)\b|[,.!?]|$)/i)
-  return safe(match?.[1] || '', 80)
+  const clock = String(text || '').match(/\b(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i)?.[1]
+  return safe([match?.[1] || '', clock ? `at ${clock.toLowerCase().replace(/\s+/g, ' ')}` : ''].filter(Boolean).join(' '), 80)
 }
 
 // India-first: a locality resolves to its Indian city ("HSR Layout" -> Bengaluru) and every
@@ -34,6 +35,8 @@ export function serviceHint(text: string) {
   // One spelling for the search and the booking objective ("pickle ball" → "pickleball").
   const named = sport ? sport.toLowerCase().replace(/^(pickle|foot|basket|volley)[\s-]?ball$/, '$1ball').replace(/^table[\s-]?tennis$/, 'table tennis') : ''
   if (named) return safe(`${named} court`.replace(/(turf|nets|pool) court$/,'$1'), 80)
+  const beauty = raw.match(/\b(hair\s*cut|haircut|barber|hairdresser|beard\s+trim|hair\s+(?:spa|colou?r|trim)|manicure|pedicure|massage|facial|waxing|threading)\b/i)?.[1]
+  if (beauty) return safe(beauty.toLowerCase().replace(/^hair\s+cut$/, 'haircut'), 80)
   const category = raw.match(/\b(dentist|dental|doctor|physician|dermatologist|cardiologist|ophthalmologist|optometrist|physiotherapist|therapist|psychologist|psychiatrist|clinic|hospital|salon|spa|visa|passport)\b/i)?.[1]
   return safe(category || 'appointment provider', 80)
 }
@@ -59,7 +62,8 @@ export function isSportsVenueRequest(raw: string) {
 export function isAppointmentResearchRequest(raw: string) {
   const text = String(raw || '').trim().toLowerCase()
   if (!text) return false
-  const appointment = /\b(appointment|consultation|doctor|dentist|dental|clinic|dermatologist|physiotherapist|therapist|salon|spa)\b/.test(text)
+  // 31 Oct (Muse users: "book a haircut Saturday at 11 am"): the service itself names the appointment.
+  const appointment = /\b(appointment|consultation|doctor|dentist|dental|clinic|dermatologist|physiotherapist|therapist|salon|spa|hair\s*cut|haircut|barber|hairdresser|hair\s+(?:spa|colou?r|wash|trim)|beard\s+trim|grooming|manicure|pedicure|nails?|massage|facial|waxing|threading)\b/.test(text)
   if (isSportsVenueRequest(raw)) return true
   const discovery = /\b(find|look for|search|show|compare|available|availability|options?|slot|slots|book|booking|schedule)\b/.test(text)
   const directCalendarMutation = /\b(create|add|move|change)\s+(?:a\s+|an\s+|my\s+)?(?:calendar\s+)?(?:event|appointment)\b/.test(text)
@@ -212,7 +216,7 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
     let text = options.length
       ? `${heading}${location ? ` · ${location}` : ''}${timing ? ` · ${timing}` : ''}\n\n${options.map((o,i) => `${i+1}. ${o.title}\n${o.snippet ? `${o.snippet}\n` : ''}Booking/provider page: ${o.url}`).join('\n\n')}\n\n${sportsVenue
         ? `I haven't checked live slots or booked anything. Reply *open option 1* (or any number) and I'll open that booking page and look for your time before asking you to approve anything.`
-        : `I put direct booking pages first. I haven't checked live slots or changed anything. Reply *open option 1* (or any number) and I'll open that booking page before asking you to approve anything.`}`
+        : `I put direct booking pages first. I haven't checked live slots or changed anything. Reply *open option 1* (or any number) and I'll open that booking page before asking you to approve anything.${beauty && options[0] ? ` Or say *call ${String(options[0].title).split(/[|–—-]/)[0].trim().slice(0, 40)} and book ${service === 'appointment provider' ? 'an appointment' : service}${timing ? ` ${timing}` : ''}* and I'll phone them after you approve the call.` : ''}`}`
       : `I couldn't find a provider page I can verify for ${service}${location ? ` in ${location}` : ''}. I rejected results from other cities/countries rather than showing you the wrong location. I did not invent availability or change anything.`
 
     // 12 Oct (modelled on Instinct): for sports venues on a booking site, check the live slots at the
