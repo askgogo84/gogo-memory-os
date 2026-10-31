@@ -3,6 +3,7 @@
 // only from facts we can check. Any read failure degrades that card, never the page.
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { getUsageSummary } from '@/lib/dashboard/queries'
+import { exactSessionOwnerId } from './owner-identity'
 
 export type UsageMeter = { label: string; used: number; limit: number | null; resets: string }
 export type ShellData = {
@@ -13,12 +14,17 @@ export type ShellData = {
 }
 
 export async function getShellData(telegramId: string): Promise<ShellData> {
-  const tgNum = parseInt(telegramId, 10)
   const empty: ShellData = { name: '', plan: null, meters: [], setup: [] }
-  if (!Number.isFinite(tgNum)) return empty
+  // This shell reads a user's first name, Google-connection state and usage.
+  // An authenticated session owner must never be rounded through parseInt/
+  // Number to a neighbouring signed64 account or truncated at a suffix.
+  // Until all downstream numeric metering readers support exact signed64 IDs,
+  // fail closed on unsafe numbers before ANY service-role/usage read.
+  const exactOwner = exactSessionOwnerId(telegramId)
+  if (exactOwner === null || !Number.isSafeInteger(Number(exactOwner))) return empty
   const [userRes, usage, runRes, watchRes] = await Promise.all([
-    supabaseAdmin.from('users').select('name, google_calendar_connected, gmail_connected').eq('telegram_id', tgNum).maybeSingle().then(r => r, () => ({ data: null } as any)),
-    getUsageSummary(telegramId).catch(() => ({ ok: false } as const)),
+    supabaseAdmin.from('users').select('name, google_calendar_connected, gmail_connected').eq('telegram_id', exactOwner).maybeSingle().then(r => r, () => ({ data: null } as any)),
+    getUsageSummary(exactOwner).catch(() => ({ ok: false } as const)),
     supabaseAdmin.from('agent_runs').select('id', { count: 'exact', head: true }).eq('telegram_id', telegramId).then(r => r, () => ({ count: null } as any)),
     supabaseAdmin.from('agent_watchers').select('id', { count: 'exact', head: true }).eq('telegram_id', telegramId).neq('type', 'goal_review').then(r => r, () => ({ count: null } as any)),
   ])
