@@ -55,7 +55,7 @@ const registerLifeEvent=async(params:Row)=>{
   return {id}
 }
 const original=readFileSync('lib/agent/booking-queue.ts','utf8')
-assert.match(original,/action_key:\\s*'booking-closure'/)
+assert.ok(original.includes("action_key: 'booking-closure'"),'test must exercise the active booking-closure queue')
 const generated=ts.transpileModule(original,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText
 const moduleRef:{exports:Row}={exports:{}}
 vm.runInNewContext(generated,{
