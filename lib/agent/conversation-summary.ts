@@ -47,6 +47,12 @@ function parseSummary(content: unknown, owner: number): StoredSummary | null {
 // A slower refresh can insert AFTER a newer one. Insertion time is not message
 // coverage: always pick the greatest source cursor, and never clean up a higher one.
 async function summaryCandidates(telegramId: number, db: Pick<SupabaseClient,'from'>): Promise<{ id: unknown; value: StoredSummary }[]> {
+  // Persisted account IDs can be signed 64-bit decimals. A rounded or malformed
+  // JavaScript Number is not an account identity: never query private memories,
+  // send context for synthesis, or write compaction under an ambiguous owner.
+  if (typeof telegramId !== 'number' || !Number.isSafeInteger(telegramId) || telegramId === 0) {
+    throw new Error('chat_summary_owner_invalid')
+  }
   const { data, error } = await db.from('memories').select('id, content')
     .eq('telegram_id', telegramId)
     .like('content', `%"kind":"${SUMMARY_KIND}"%`)
