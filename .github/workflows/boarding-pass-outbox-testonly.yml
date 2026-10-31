@@ -1,0 +1,36 @@
+name: Boarding-pass outbox no-device receipt (TEST ONLY - safety RED)
+
+on:
+  pull_request:
+    paths:
+      - scripts/verify-boarding-pass-outbox-testonly.mjs
+      - .github/workflows/boarding-pass-outbox-testonly.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-source-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout literal PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert immutable checkout provenance
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Execute original boarding-pass outbox and push source in inert synthetic VM
+        run: node scripts/verify-boarding-pass-outbox-testonly.mjs
