@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
+// Actual Gmail-ticket booking actor fixture; synthetic DB, no provider calls.
+import './verify-booking-closure-actor-owner.mts'
+
 process.env.GOOGLE_TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString('base64')
 
 const crypto = await import('../lib/security/google-token-crypto.ts')
