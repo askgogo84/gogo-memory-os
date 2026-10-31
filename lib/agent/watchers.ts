@@ -35,14 +35,32 @@ import { appendGoldRun, decideGoldAlert, evaluateGoldRule, goldAlertText, goldSe
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
 
+// A persisted owner is an authorization key, not a JavaScript floating-point value.
+// TEXT signed64 IDs stay exact; already-rounded JS numbers and ambiguous encodings deny.
+function exactWatcherOwner(value: unknown): string | null {
+  if (typeof value !== 'string' && typeof value !== 'number') return null
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
+  const id = String(value)
+  if (!/^-?[1-9]\d*$/.test(id)) return null
+  // Watcher rows may already have been rounded by a database client BEFORE callers String() them.
+  // Until every legacy caller is exact-text end-to-end, no unsafe numeric identity may authorize reads/sends.
+  const numeric = Number(id)
+  if (!Number.isSafeInteger(numeric) || String(numeric) !== id) return null
+  return id
+}
+
 export async function sourceBoundTravelExpiry(watcher:{telegram_id:string|number;condition_json?:ContextualWatcherMeta}):Promise<string|null>{
   const condition=watcher.condition_json||{}
   const current=validDate(condition.expiresAt)
   if(condition.contextual!==true||condition.contextualKind!=='travel')return current
   const ids=(condition.sourceRefs||[]).filter(ref=>ref?.type==='travel_ticket'&&/^[a-f0-9-]{36}$/i.test(String(ref.id))).map(ref=>String(ref.id))
   if(!ids.length)return current
-  const {data,error}=await supabaseAdmin.from('travel_tickets').select('id,depart_at,arrive_at').eq('telegram_id',Number(watcher.telegram_id)).in('id',ids)
+  const owner = exactWatcherOwner(watcher.telegram_id)
+  if (!owner) throw new Error('context_travel_expiry_owner_invalid')
+  const {data,error}=await supabaseAdmin.from('travel_tickets').select('id,telegram_id,depart_at,arrive_at').eq('telegram_id',owner).in('id',ids)
   if(error)throw new Error('context_travel_expiry_source_unavailable')
+  // Even an unexpectedly inconsistent service-role result cannot contribute a different owner's itinerary.
+  if ((data||[]).some(row=>exactWatcherOwner(row.telegram_id)!==owner)) throw new Error('context_travel_expiry_owner_mismatch')
   const times=(data||[]).map(row=>Date.parse(String(row.arrive_at||row.depart_at||''))).filter(Number.isFinite)
   if(!times.length)throw new Error('context_travel_expiry_source_missing')
   const bound=new Date(Math.max(...times)+72*3600_000).toISOString()
@@ -448,13 +466,14 @@ async function createWebIdea(telegramId: string, condition: WebSearchWatcherCond
 
 async function sendWhatsAppIfWanted(telegramId: string, delivery: WatcherDelivery, message: string) {
   if (delivery !== 'whatsapp' && delivery !== 'both') return
-  const tg = Number(telegramId)
-  if (!Number.isFinite(tg)) return
-  const { data } = await supabaseAdmin.from('users').select('whatsapp_id').eq('telegram_id', tg).maybeSingle()
+  const owner = exactWatcherOwner(telegramId)
+  if (!owner) return
+  const { data, error } = await supabaseAdmin.from('users').select('telegram_id,whatsapp_id').eq('telegram_id',owner).maybeSingle()
+  if (error || exactWatcherOwner(data?.telegram_id) !== owner) return
   const phone = String(data?.whatsapp_id || '').trim()
   if (!phone) return
   await sendWhatsAppMessage(phone, message)
-  await recordCostEvent({ telegramId, category:'whatsapp_outbound', metadata:{ source:'background_gogo' } })
+  await recordCostEvent({ telegramId:owner, category:'whatsapp_outbound', metadata:{ source:'background_gogo' } })
 }
 
 function searchFingerprint(results: WebSearchResult[]) {
@@ -626,15 +645,20 @@ export function inboxActionStep(message:any): {subject:string;from:string;step:s
 }
 
 async function watcherActor(telegramId:string):Promise<AgentActor|null> {
+  const owner=exactWatcherOwner(telegramId)
+  if(!owner)return null
+  // AgentActor.legacyTelegramId is still a number: never choose any actor by an unsafe rounded owner.
+  const legacy=Number(owner)
+  if(!Number.isSafeInteger(legacy)||String(legacy)!==owner)return null
   const {data,error}=await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name')
-    .eq('telegram_id',Number(telegramId))
+    .eq('telegram_id',owner)
     .maybeSingle()
   if(error)throw new Error(`email_triage_user_read_failed:${error.message}`)
-  if(!data?.id||!data?.whatsapp_id||!Number.isFinite(Number(data.telegram_id)))return null
+  if(!data?.id||!data?.whatsapp_id||exactWatcherOwner(data.telegram_id)!==owner)return null
   return {
     userId:String(data.id),
-    legacyTelegramId:Number(data.telegram_id),
+    legacyTelegramId:legacy,
     whatsappId:String(data.whatsapp_id),
     name:String(data.name||'Gogo'),
   }
