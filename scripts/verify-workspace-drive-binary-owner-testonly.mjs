@@ -131,7 +131,7 @@ const unsafeCases = [
   ['64-bit source identity already rounded by JS Number', Number('9007199254740993')],
   ['unsafe decimal string (invalid AgentActor runtime input)', '9007199254740993'],
   ['zero identifier', 0],
-  ['negative identifier', -101],
+  ['infinite numeric identifier', Number.POSITIVE_INFINITY],
   ['fractional identifier', 101.25],
   ['not-a-number identifier', Number.NaN],
 ]
