@@ -17,7 +17,8 @@ export async function tryJobCommand(params: { actor: AgentActor; surface: AgentS
   if (isJobRadarRequest(params.text)) {
     const prefs = await savedJobPrefs(tg).catch(() => null)
     const query = jobRadarQuery(params.text, prefs)
-    if (!/\w{3,}\s+jobs/i.test(query)) return done("💼 Which roles should I look for? Tell me once, like *my job preferences: Head of AI or VP Engineering in Bengaluru or remote, above 80 LPA*, then say *scan for jobs every day*.", 'job-radar')
+    // 31 Oct live: "…Head of AI jobs" failed a 3-letter check after preferences were saved. Any role word counts.
+    if (!/\S\s+jobs\b/i.test(query)) return done("💼 Which roles should I look for? Tell me once, like *my job preferences: Head of AI or VP Engineering in Bengaluru or remote, above 80 LPA*, then say *scan for jobs every day*.", 'job-radar')
     const wc: any = await import('./watch-command')
     const created = await wc.tryCreateWebWatchFromCommand({ actor: params.actor, surface: params.surface, text: `Find me ${query} and keep looking every day` })
     if (!created) return done("I couldn't set up the daily job search just now. Nothing was created; try again in a minute.", 'job-radar')

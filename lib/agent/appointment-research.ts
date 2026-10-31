@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { tidyUrl } from '@/lib/security/outbound-identifiers'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { tryResumeAppointmentAfterHumanAuth } from './appointment-auth-resume'
@@ -68,6 +69,14 @@ export function isAppointmentResearchRequest(raw: string) {
   const discovery = /\b(find|look for|search|show|compare|available|availability|options?|slot|slots|book|booking|schedule)\b/.test(text)
   const directCalendarMutation = /\b(create|add|move|change)\s+(?:a\s+|an\s+|my\s+)?(?:calendar\s+)?(?:event|appointment)\b/.test(text)
   return appointment && discovery && !directCalendarMutation
+}
+
+// Google's goto links hide the page inside a token; such a result is linked as a short Maps search for the place.
+function bookLink(url: string, title: string, location: string) {
+  const clean = tidyUrl(url)
+  if (!/google\.[a-z.]+\/goto\?/i.test(clean)) return clean
+  const name = String(title || '').split(/[|–—]/)[0].trim().slice(0, 60)
+  return `https://maps.google.com/?q=${encodeURIComponent([name, location].filter(Boolean).join(' '))}`
 }
 
 type AppointmentOption = { title: string; snippet: string; url: string; provider: string; bookableScore: number }
@@ -214,7 +223,7 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
     const sportsVenue = isSportsVenueRequest(params.text)
     const heading = sportsVenue ? `Places to book ${service}s` : `Appointment options · ${service}`
     let text = options.length
-      ? `${heading}${location ? ` · ${location}` : ''}${timing ? ` · ${timing}` : ''}\n\n${options.map((o,i) => `${i+1}. ${o.title}\n${o.snippet ? `${o.snippet}\n` : ''}Booking/provider page: ${o.url}`).join('\n\n')}\n\n${sportsVenue
+      ? `${heading}${location ? ` · ${location}` : ''}${timing ? ` · ${timing}` : ''}\n\n${options.map((o,i) => `${i+1}. ${o.title}\n${o.snippet ? `${o.snippet}\n` : ''}Booking/provider page: ${bookLink(o.url, o.title, location)}`).join('\n\n')}\n\n${sportsVenue
         ? `I haven't checked live slots or booked anything. Reply *open option 1* (or any number) and I'll open that booking page and look for your time before asking you to approve anything.`
         : `I put direct booking pages first. I haven't checked live slots or changed anything. Reply *open option 1* (or any number) and I'll open that booking page before asking you to approve anything.${beauty && options[0] ? ` Or say *call ${String(options[0].title).split(/[|–—-]/)[0].trim().slice(0, 40)} and book ${service === 'appointment provider' ? 'an appointment' : service}${timing ? ` ${timing}` : ''}* and I'll phone them after you approve the call.` : ''}`}`
       : `I couldn't find a provider page I can verify for ${service}${location ? ` in ${location}` : ''}. I rejected results from other cities/countries rather than showing you the wrong location. I did not invent availability or change anything.`

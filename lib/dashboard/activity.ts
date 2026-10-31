@@ -91,9 +91,10 @@ export async function getActivityTrends(telegramId: string | number, aiPerDay = 
   const [ai, rem, runs, alerts] = await Promise.all([
     supabaseAdmin.from('usage_events').select('created_at,action').eq('telegram_id', tg).eq('counter', 'ai_action').gte('created_at', since).limit(5000),
     supabaseAdmin.from('reminders').select('remind_at').eq('telegram_id', Number(tg)).eq('sent', true).gte('remind_at', since).lte('remind_at', until).limit(5000),
-    supabaseAdmin.from('agent_runs').select('created_at,status,title,type').eq('telegram_id', tg).gte('created_at', since).order('created_at', { ascending: false }).limit(2000),
+    // agent_runs has no created_at (31 Oct live: "column agent_runs.created_at does not exist"); a run starts at started_at.
+    supabaseAdmin.from('agent_runs').select('started_at,status,title,type').eq('telegram_id', tg).gte('started_at', since).order('started_at', { ascending: false }).limit(2000),
     supabaseAdmin.from('agent_activity').select('created_at').eq('telegram_id', tg).eq('event_type', 'watcher_triggered').gte('created_at', since).limit(5000),
   ])
   for (const r of [ai, rem, runs, alerts]) if ((r as any).error) throw new Error(`activity_read_failed:${(r as any).error.message}`)
-  return buildActivityTrends({ aiEvents: (ai.data || []) as any, reminders: (rem.data || []) as any, runs: (runs.data || []) as any, alerts: (alerts.data || []) as any }, now, aiPerDay)
+  return buildActivityTrends({ aiEvents: (ai.data || []) as any, reminders: (rem.data || []) as any, runs: ((runs.data || []) as any[]).map(r => ({ ...r, created_at: r.started_at })), alerts: (alerts.data || []) as any }, now, aiPerDay)
 }

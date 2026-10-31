@@ -92,3 +92,19 @@ assert.deepEqual(board.map((a: any) => `${a.company}|${a.status}`), ['Jobgether|
 assert.equal(board[0].role, 'Director, Engineering - Marketplace & Dev Ecosystem', 'a role-less "next steps" email joins the company\'s known role')
 assert.match(j.formatApplications(board, now), /📝 Next step · 3 days ago/)
 console.log('✓ real inbox: companies from subjects, grants and GitHub notices skipped, "next steps" counted as progress')
+
+// 31 Oct live: salon links were 300-character google.com/goto redirects; usage trends failed on agent_runs.created_at;
+// "scan for new jobs every day" asked for roles already saved ("Head of AI" has a two-letter word).
+const oi = await import('../lib/security/outbound-identifiers')
+assert.equal(oi.tidyUrl('https://www.google.com/goto?url=CAESeWFkSmA&url=https%3A%2F%2Fwww.envisalons.com%2Fsalon%2Frajajinagar%3Futm_source%3Dgoogle%26utm_medium%3Dorganic&ved=2ahUKE'), 'https://www.envisalons.com/salon/rajajinagar')
+assert.match(readFileSync('lib/agent/appointment-research.ts', 'utf8'), /maps\.google\.com\/\?q=/, 'a token-only goto link becomes a short Maps search')
+assert.equal(oi.tidyUrl('https://www.google.com/url?q=https://naturals.in/bangalore/rajajinagar&sa=U&usg=AOv'), 'https://naturals.in/bangalore/rajajinagar')
+assert.equal(oi.tidyUrl('https://example.com/p?id=7&utm_campaign=x&srsltid=AfmB'), 'https://example.com/p?id=7')
+assert.equal(oi.tidyLinks('Book: https://www.google.com/url?q=https://naturals.in/x&sa=U. Thanks'), 'Book: https://naturals.in/x. Thanks')
+assert.match(oi.maskOutboundIdentifiers('see https://www.google.com/url?q=https://naturals.in/x&sa=U'), /see https:\/\/naturals\.in\/x$/, 'every WhatsApp send gets tidy links')
+assert.match(readFileSync('lib/agent/appointment-research.ts', 'utf8'), /Booking\/provider page: \$\{bookLink\(o\.url, o\.title, location\)\}/)
+assert.match(readFileSync('lib/dashboard/activity.ts', 'utf8'), /select\('started_at,status,title,type'\)/)
+assert.match(readFileSync('lib/agent/jobs-command.ts', 'utf8'), /\\S\\s\+jobs\\b/)
+assert.ok(/\S\s+jobs\b/i.test(j.jobRadarQuery('scan for new jobs every day', j.jobPrefsFrom('Forward Deployed Engineer or Head of AI roles in Bengaluru or remote'))))
+assert.match(readFileSync('lib/bot/handlers/gmail-read.ts', 'utf8'), /-from:notifications@github\.com/)
+console.log('✓ links read as addresses; usage trends read started_at; saved preferences start the job radar; tracker skips GitHub')
