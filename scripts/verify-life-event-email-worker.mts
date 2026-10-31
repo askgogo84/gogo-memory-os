@@ -1,3 +1,4 @@
+import './verify-life-event-email-owner-precision.mts'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { scoreBoardingPassCandidate, buildBoardingPassSearchTexts, eligibleBoardingPassMessages, assertBoardingPassSchedule, completeAction, publishBoardingPass } from '../lib/agent/life-event-email-worker'
