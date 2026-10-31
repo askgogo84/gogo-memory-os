@@ -59,14 +59,41 @@ export async function listJoinedFriends(telegramId: number): Promise<JoinedFrien
 
 /** After the new number's users row exists: link it, and tell the inviter once (delivery ledger key). */
 export async function completeInviteJoin(p: { redemptionId: string; inviterTelegramId: number; inviteeTelegramId: number; inviteePhone: string; inviteeName?: string | null; remaining: number }) {
-  await supabaseAdmin.from('invite_redemptions').update({ invitee_telegram_id: p.inviteeTelegramId }).eq('id', p.redemptionId)
-  const { data: inviter } = await supabaseAdmin.from('users').select('name,whatsapp_id').eq('telegram_id', p.inviterTelegramId).maybeSingle()
+  // These legacy owner IDs enter service-role queries as JS numbers. Never allow
+  // two distinct Postgres BIGINT owners to alias through number rounding.
+  if (!Number.isSafeInteger(p.inviterTelegramId) || p.inviterTelegramId === 0 ||
+      !Number.isSafeInteger(p.inviteeTelegramId) || p.inviteeTelegramId === 0 ||
+      !/^\+[1-9]\d{7,14}$/.test(p.inviteePhone)) {
+    throw new Error('invite_join_identity_invalid')
+  }
+  // Access-gate redemption IDs do not authorize a cross-owner mutation by
+  // themselves. Re-bind the persisted inviter and exact E.164 invitee phone
+  // atomically in the UPDATE predicate before notifying anyone.
+  const { data: linked, error: linkError } = await supabaseAdmin.from('invite_redemptions')
+    .update({ invitee_telegram_id: p.inviteeTelegramId })
+    .eq('id', p.redemptionId)
+    .eq('inviter_telegram_id', p.inviterTelegramId)
+    .eq('invitee_phone_e164', p.inviteePhone)
+    .select('id').maybeSingle()
+  if (linkError || !linked?.id) throw new Error('invite_redemption_binding_failed')
+
+  const { data: inviter, error: inviterError } = await supabaseAdmin.from('users')
+    .select('name,whatsapp_id').eq('telegram_id', p.inviterTelegramId).maybeSingle()
+  if (inviterError) throw new Error('invite_inviter_lookup_failed')
   if (inviter?.whatsapp_id) {
+    const recipient = String(inviter.whatsapp_id)
     const message = inviterJoinedText({ friendName: p.inviteeName || null, friendPhone: p.inviteePhone, remaining: p.remaining })
     await deliverNotification({
       key: `invite-joined/${p.redemptionId}`, source: 'watch_alert', owner: p.inviterTelegramId, channel: 'whatsapp', due: new Date().toISOString(), deadline: Date.now() + 15_000,
-      prepare: async () => {}, ready: async () => true,
-      send: async token => String((await sendWhatsApp(String(inviter.whatsapp_id), message, null, token))?.sid || ''),
+      prepare: async () => {},
+      // Keep the exact original recipient and owner: an account/phone may have
+      // been reassigned while the durable notification job was preparing.
+      ready: async () => {
+        const { data: current, error } = await supabaseAdmin.from('users')
+          .select('whatsapp_id,access_status').eq('telegram_id', p.inviterTelegramId).maybeSingle()
+        return !error && !!current && current.access_status !== 'blocked' && String(current.whatsapp_id || '') === recipient
+      },
+      send: async token => String((await sendWhatsApp(recipient, message, null, token))?.sid || ''),
     }).catch(err => console.error('INVITE_NOTIFY_FAILED', err?.message || err))
   }
   return { inviterName: (inviter?.name as string | null) || null }
