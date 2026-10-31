@@ -29,6 +29,16 @@ export class MeterUnavailableError extends Error {
   }
 }
 
+/** Reject already-rounded numeric tenant keys before privileged meter reads/writes.
+ * Exact persisted BIGINT owner strings must remain strings all the way to PostgREST.
+ */
+function exactMeterOwnerId(telegramId: string | number): string {
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) {
+    throw new MeterUnavailableError('Unsafe numeric owner identity')
+  }
+  return String(telegramId)
+}
+
 // ── Counters & actions ──────────────────────────────────────────────────────
 //
 // Final action enum (per Phase 2 spec):
@@ -132,7 +142,7 @@ export function nextIstMonthStartMs(nowMs: number): number {
 // A missing row at either step is NOT an error; only a query failure raises
 // MeterUnavailableError.
 export async function getPlan(db: MeterDb, telegramId: string | number): Promise<UserPlan> {
-  const tid = String(telegramId)
+  const tid = exactMeterOwnerId(telegramId)
 
   const { data: planRow, error: planErr } = await db
     .from('user_plans')
@@ -222,12 +232,12 @@ async function countUsage(
 }
 
 async function countFriendContacts(db: MeterDb, tid: string): Promise<number> {
-  // friend_contacts.owner_telegram_id is BIGINT — cast at the boundary only.
-  // telegram_id values (real and negative synthesized) are within JS safe-int range.
+  // friend_contacts.owner_telegram_id is BIGINT: do NOT cast exact decimal owner text
+  // through JS Number, where adjacent 64-bit persisted tenant IDs can alias.
   const { count, error } = await db
     .from('friend_contacts')
     .select('owner_telegram_id', { count: 'exact', head: true })
-    .eq('owner_telegram_id', Number(tid))
+    .eq('owner_telegram_id', tid)
   if (error) throw new MeterUnavailableError('Failed to count friend_contacts', { cause: error })
   return count || 0
 }
@@ -237,7 +247,7 @@ export async function getUsage(
   telegramId: string | number,
   now: Date = new Date(),
 ): Promise<Usage> {
-  const tid = String(telegramId)
+  const tid = exactMeterOwnerId(telegramId)
   const nowMs = now.getTime()
   const [aiToday, docsThisMonth, friendContacts] = await Promise.all([
     countUsage(db, tid, 'ai_action', istDayStartMs(nowMs)),
@@ -255,7 +265,7 @@ export async function checkAllowance(
   counter: Counter,
   now: Date = new Date(),
 ): Promise<AllowanceResult> {
-  const tid = String(telegramId)
+  const tid = exactMeterOwnerId(telegramId)
   const nowMs = now.getTime()
 
   // Any DB error inside getPlan / getLimits / count* throws MeterUnavailableError
@@ -298,6 +308,7 @@ export async function recordUsage(
 ): Promise<RecordResult> {
   const tid = String(telegramId)
   try {
+    exactMeterOwnerId(telegramId) // reject unsafe numeric owner within never-throw boundary
     const messageId = meta.message_id != null ? String(meta.message_id) : null
 
     if (messageId) {
