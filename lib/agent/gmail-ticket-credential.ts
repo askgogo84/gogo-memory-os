@@ -13,12 +13,36 @@ function decode64(v: string) { return Buffer.from(String(v || '').replace(/-/g, 
 function header(headers: any[], name: string) { return String((headers || []).find((h: any) => String(h?.name || '').toLowerCase() === name.toLowerCase())?.value || '') }
 function flatten(part: any, out: any[] = []) { if (!part) return out; out.push(part); for (const c of Array.isArray(part?.parts) ? part.parts : []) flatten(c, out); return out }
 
+// A private Gmail token must never be selected using a rounded or unbound legacy
+// chat ID. The normal actor resolver has these checks, but this exported private
+// credential boundary must also reject malformed/stale caller-supplied actors.
+function gmailTicketOwner(actor: AgentActor): { userId: string; telegramId: string } {
+  const userId = typeof actor?.userId === 'string' ? actor.userId : ''
+  const legacyTelegramId = actor?.legacyTelegramId
+  if (!userId || !userId.trim() || userId !== userId.trim() || userId === '0'
+    || typeof legacyTelegramId !== 'number'
+    || !Number.isSafeInteger(legacyTelegramId) || legacyTelegramId === 0) {
+    throw new Error('gmail_ticket_actor_owner_invalid')
+  }
+  return { userId, telegramId: String(legacyTelegramId) }
+}
+
 async function token(actor: AgentActor) {
+  const owner = gmailTicketOwner(actor)
   const { data, error } = await supabaseAdmin.from('users')
-    .select('gmail_connected,gmail_access_token,gmail_refresh_token')
-    .eq('telegram_id', actor.legacyTelegramId).maybeSingle()
+    .select('id,telegram_id,gmail_connected,gmail_access_token,gmail_refresh_token')
+    .eq('id', owner.userId)
+    .eq('telegram_id', owner.telegramId).maybeSingle()
   if (error) throw new Error(`gmail_ticket_credentials_failed:${error.message}`)
-  if (!data?.gmail_connected) return null
+  if (!data) return null
+  // Even if a service-role stub/driver returns a row, never decrypt its private
+  // token unless both original identities match the persisted exact owner.
+  if (String(data.id ?? '') !== owner.userId
+    || (typeof data.telegram_id === 'number' && !Number.isSafeInteger(data.telegram_id))
+    || String(data.telegram_id ?? '') !== owner.telegramId) {
+    throw new Error('gmail_ticket_actor_owner_mismatch')
+  }
+  if (!data.gmail_connected) return null
   let access = decryptGoogleToken(String(data.gmail_access_token || ''))
   const refreshToken = decryptGoogleToken(String(data.gmail_refresh_token || ''))
   if (!access && refreshToken) access = await refreshGmailAccessToken(refreshToken) || ''
@@ -33,7 +57,10 @@ async function gmailFetch(actor: AgentActor, url: string) {
   if (response.status === 401 && creds.refreshToken) {
     const next = await refreshGmailAccessToken(creds.refreshToken)
     if (!next) return null
-    await supabaseAdmin.from('users').update({ gmail_access_token: encryptGoogleToken(next) }).eq('telegram_id', actor.legacyTelegramId)
+    // Rebind any refreshed credential write to the same exact account, too.
+    const owner = gmailTicketOwner(actor)
+    await supabaseAdmin.from('users').update({ gmail_access_token: encryptGoogleToken(next) })
+      .eq('id', owner.userId).eq('telegram_id', owner.telegramId)
     response = await fetch(url, { headers: { Authorization: `Bearer ${next}` }, cache: 'no-store' })
   }
   if (!response.ok) return null
