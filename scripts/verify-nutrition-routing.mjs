@@ -1,3 +1,9 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { runInNewContext } from 'node:vm'
+import { webcrypto } from 'node:crypto'
+import ts from 'typescript'
+
 // Verifies feature-router decision (routeFeatureIntent order) for the milk/list
 // bug. Models the two gates that matter — the NEW "add X to Y" list route and the
 // nutrition gate — with OLD vs NEW matcher logic copied verbatim from the source.
@@ -145,4 +151,69 @@ for (const [phrase, want, note] of cases) {
 }
 console.log('-'.repeat(120))
 console.log(fails === 0 ? 'ALL NEW ROUTES MATCH EXPECTED ✓' : `${fails} MISMATCH(ES) ✗`)
+// SIGNED CARD OWNER BOUNDARY REGRESSION — compiled production helper + synthetic WebCrypto.
+// A valid signed URL must not authorize service-role reads for a different rounded BIGINT ID.
+{
+  const cardSource = readFileSync('lib/security/card-link.ts', 'utf8')
+  const compiledCard = ts.transpileModule(cardSource,
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
+  const exported = {}
+  const fakeSecret = 'ci-synthetic-nutrition-card-link-test-key'
+  runInNewContext(compiledCard, {
+    exports: exported, TextEncoder, Uint8Array, crypto: webcrypto, btoa,
+    process: { env: { CARD_LINK_SECRET: fakeSecret } }, Date, String, Number, Math,
+  })
+  const { signCardToken, verifyCardToken } = exported
+  assert.equal(typeof signCardToken, 'function')
+  assert.equal(typeof verifyCardToken, 'function')
+  const now = Date.parse('2026-10-28T00:00:00.000Z')
+  const enc = new TextEncoder()
+
+  // Independently pre-sign the old exact-string format: a verifier-side guard
+  // must revoke old unsafe 16-digit links, not only stop minting future links.
+  async function legacySignedToken(kind, owner) {
+    const exp = Math.floor(now / 1000) + 2 * 3600
+    const key = await webcrypto.subtle.importKey('raw', enc.encode(fakeSecret),
+      { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'])
+    const payload = 'askgogo-card.v1.' + kind + '.' + owner + '.' + exp
+    const signed = new Uint8Array(await webcrypto.subtle.sign('HMAC', key, enc.encode(payload)))
+    return exp + '.' + Buffer.from(signed).toString('base64url')
+  }
+
+  const kind = 'nutrition-daily'
+  for (const unsafe of ['9007199254740992', '9007199254740993']) {
+    assert.equal(await signCardToken(kind, unsafe, now), null,
+      'do not mint a card link for a BIGINT owner that route parseInt could round: ' + unsafe)
+    const oldValidToken = await legacySignedToken(kind, unsafe)
+    assert.equal(await verifyCardToken(kind, unsafe, oldValidToken, now), false,
+      'already-issued unsafe owner tokens must be rejected before data access: ' + unsafe)
+  }
+
+  for (const owner of ['4242', '-4242', '9007199254740991']) {
+    const token = await signCardToken(kind, owner, now)
+    assert.ok(token, 'ordinary signed-safe owner must still be able to mint link: ' + owner)
+    assert.equal(await verifyCardToken(kind, owner, token, now), true,
+      'signed-safe owner card must continue working: ' + owner)
+    assert.equal(await verifyCardToken('nutrition-weekly', owner, token, now), false,
+      'card kind remains strictly bound')
+    assert.equal(await verifyCardToken(kind, owner, token, now + 8 * 24 * 3600_000), false,
+      'expired token must never be accepted')
+  }
+
+  for (const [cardKind, file] of [
+    ['nutrition-daily', 'app/api/nutrition/daily-card/[telegramId]/route.ts'],
+    ['nutrition-weekly', 'app/api/nutrition/weekly-card/[telegramId]/route.ts'],
+    ['nutrition-report', 'app/api/nutrition/report-card/[telegramId]/route.ts'],
+  ]) {
+    const routeSource = readFileSync(file, 'utf8')
+    assert.ok(routeSource.includes("verifyCardToken('" + cardKind + "', telegramId,"),
+      'every service-role nutrition card route must keep exact HMAC gate: ' + file)
+    const authPosition = routeSource.indexOf('verifyCardToken(')
+    const parsePosition = routeSource.indexOf('const tgId = parseInt(telegramId)')
+    assert.ok(authPosition >= 0 && parsePosition > authPosition,
+      'shared verifier must deny unsafe owner BEFORE all rounded DB predicates: ' + file)
+  }
+  console.log('PASS: synthetic signed nutrition cards reject unsafe BIGINT owner before all three private reads')
+}
+
 process.exit(fails === 0 ? 0 : 1)
