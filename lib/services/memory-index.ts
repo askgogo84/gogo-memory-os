@@ -64,8 +64,10 @@ export async function indexMemory(params: {
 }): Promise<void> {
   try {
     const raw = (params.content || '').slice(0, 2000).trim()
-    const content = sanitizeSensitiveDocumentIndex(raw, params.sourceTable)
-    if (!isIndexable(content)) return
+    // The final outbound embedding boundary must enforce the same secret gate
+    // as freeform recall; a successful memory save must not export secrets.
+    const content = recallableMemoryText(raw, params.sourceTable)
+    if (!content) return
     const embedding = await embedText(content)
     const {error} = await supabaseAdmin.from('memory_embeddings').upsert(
       {
