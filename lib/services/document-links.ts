@@ -126,7 +126,10 @@ export async function resolveShortLinkToSignedUrl(token: string): Promise<string
       .maybeSingle()
     if (!link) return null
     if (link.revoked_at) return null
-    if (link.expires_at && new Date(link.expires_at as string).getTime() < Date.now()) return null
+    // The schema permits legacy NULL expiry values. Never turn a malformed
+    // or missing expiry into an indefinitely reusable private-file bearer link.
+    const expiresAt = typeof link.expires_at === 'string' ? Date.parse(link.expires_at) : NaN
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return null
 
     // Re-scope to the owner's row; only this row's storage_path is ever signed.
     const { data: doc } = await supabaseAdmin
