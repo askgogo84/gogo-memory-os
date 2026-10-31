@@ -64,11 +64,11 @@ const STATUS_RULES: [AppStatus, RegExp][] = [
   ['offer', /\b(?:offer\s+letter|pleased\s+to\s+offer|job\s+offer|extend(?:ing)?\s+an?\s+offer)\b/i],
   ['rejected', /\b(?:unfortunately|regret\s+to|not\s+(?:to\s+)?(?:move|moving|proceed|be\s+moving)\s+forward|decided\s+to\s+(?:pursue|move\s+forward\s+with)\s+other|position\s+has\s+been\s+filled|not\s+selected|will\s+not\s+be\s+progressing)\b/i],
   ['interview', /\b(?:interview|schedule\s+(?:a\s+)?(?:call|chat|time)|next\s+round|speak\s+with\s+you|meet\s+the\s+team)\b/i],
-  ['assessment', /\b(?:assessment|assignment|coding\s+(?:test|challenge)|take-?home|hackerrank|codility|test\s+link)\b/i],
+  ['assessment', /\b(?:assessment|assignment|coding\s+(?:test|challenge)|take-?home|hackerrank|codility|test\s+link|next\s+steps?\b[^.]{0,30}\bapplication|quick\s+action\s+required)\b/i],
   ['viewed', /\b(?:viewed\s+your\s+application|application\s+was\s+viewed|recruiter\s+viewed)\b/i],
   ['applied', /\b(?:thank(?:s|\s+you)\s+for\s+(?:applying|your\s+(?:application|interest))|application\s+(?:received|submitted|has\s+been\s+received|was\s+sent)|we(?:'ve|\s+have)\s+received\s+your\s+application|you\s+applied|your\s+application\s+(?:for|to))\b/i],
 ]
-const NOT_APPLICATION = /\b(?:loan|credit\s+card|mutual\s+fund|insurance|visa\s+application|passport|admission|scholarship|app\s+store|newsletter|webinar)\b/i
+const NOT_APPLICATION = /\b(?:loan|credit\s+card|mutual\s+fund|insurance|visa\s+application|passport|admission|scholarship|app\s+store|newsletter|webinar|grant|fellowship|funding|accelerator|incubator|investors?|pull\s+request|PR\s+#\d+)\b/i
 
 export function classifyApplicationEmail(e: { from: string; subject: string; snippet?: string; at?: number }): Application | null {
   const text = `${e.subject} ${e.snippet || ''}`
@@ -76,22 +76,43 @@ export function classifyApplicationEmail(e: { from: string; subject: string; sni
   const status = STATUS_RULES.find(([, re]) => re.test(text))?.[0]
   if (!status) return null
   if (status !== 'applied' && !/\b(?:application|applied|role|position|candidacy|interview|opening|job|search|opportunity|your\s+interest|profile)\b/i.test(text)) return null
-  const fromName = clean(String(e.from || '').replace(/<[^>]+>/, '').replace(/"/g, ''), 60)
-  const domain = (String(e.from || '').match(/@([a-z0-9.-]+)/i)?.[1] || '').toLowerCase()
-  const viaBoard = /linkedin|naukri|indeed|instahyre|iimjobs|workday|greenhouse|lever|ashby|smartrecruiters|myworkday|hirist|wellfound|cutshort/.test(domain)
-  const STOP = /^(?:You|Your|We|Our|The|This|Thanks?|Hi|Hello|Dear|Unfortunately|Regards)$/
-  const companyRaw = text.match(/\b(?:at|with|from|to)\s+([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})(?=[\s,.!:]|$)/)?.[1]
-  const words = companyRaw ? companyRaw.split(/\s+/) : []
-  const cut = words.findIndex(w => STOP.test(w))
-  const companyFromText = (cut < 0 ? words : words.slice(0, cut)).join(' ') || undefined
-  const company = clean((viaBoard ? companyFromText : null) || fromName.replace(/\b(?:careers?|recruiting|talent(?:\s+acquisition)?|hiring\s+team|jobs|team|hr|no-?reply)\b/gi, '').trim() || companyFromText || domain.split('.')[0] || 'Unknown company', 50)
-  const role = clean(text.match(/\b(?:for|as)\s+(?:the\s+|a\s+|an\s+)?([A-Z][\w/&+\-]*(?:\s+(?:of|and|for|&|-|[A-Z][\w/&+\-]*)){0,6}?)(?:\s+(?:role|position|at|with)\b|[,.!:]|$)/)?.[1] || '', 60)
+  // 31 Oct, run against a real inbox: senders are often bare addresses (no-reply@openai.com) on hiring platforms
+  // (workablemail, zohorecruit); the company is in the subject ("Thanks for applying to Ajaib").
+  const ROLE_WORD = /\b(?:engineer(?:ing)?|director|head|manager|lead|developer|scientist|designer|analyst|vp|vice\s+president|officer|architect|product|intern|consultant|specialist|cto|principal|staff)\b/i
+  const rawFrom = String(e.from || '')
+  const fromName = /@/.test(rawFrom.replace(/<[^>]+>/, '')) ? '' : clean(rawFrom.replace(/<[^>]+>/, '').replace(/"/g, ''), 60)
+  const address = (rawFrom.match(/([a-z0-9._+-]+)@([a-z0-9.-]+)/i) || [])
+  const domain = String(address[2] || '').toLowerCase()
+  const platform = /linkedin|naukri|indeed|instahyre|iimjobs|workday|greenhouse|lever|ashby|smartrecruiters|myworkday|hirist|wellfound|cutshort|workable|zohorecruit|recruitee|airtable|gmail|outlook|freshteam|keka|darwinbox/.test(domain)
+  const STOP = /^(?:You|Your|We|Our|The|This|Thanks?|Hi|Hello|Dear|Unfortunately|Regards|Quick|Action)$/
+  const pickName = (raw?: string) => {
+    const words = raw ? raw.split(/\s+/) : []
+    const cut = words.findIndex(w => STOP.test(w))
+    const name = (cut < 0 ? words : words.slice(0, cut)).join(' ').replace(/[!.,:]+$/, '')
+    return name && !ROLE_WORD.test(name) ? name : undefined
+  }
+  const companyFromText = pickName(text.match(/\bat\s+([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})(?=[\s,.!:]|$)/)?.[1])
+    || pickName(text.match(/\b(?:applying|applied|application)\s+(?:to|with)\s+([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})(?=[\s,.!:]|$)/)?.[1])
+    || pickName(text.match(/\b(?:with|from|to)\s+([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})(?=[\s,.!:]|$)/)?.[1])
+  const fromCompany = fromName.replace(/\b(?:careers?|recruiting|recruitment|talent(?:\s+acquisition)?|hiring\s+team|jobs|team|hr|no-?reply)\b/gi, '').trim()
+  const local = String(address[1] || '').toLowerCase().replace(/[._+-]/g, '').replace(/^(?:support|noreply|careers?|jobs|hr|talent|hiring|recruit(?:ing|ment|er)?|info|hello|team|mail)+/, '').replace(/(?:support|careers?|jobs|hr|talent|hiring|recruit(?:ing|ment)?|team)+$/, '')
+  const domainRoot = platform ? '' : domain.replace(/^(?:mail|email|em|careers|jobs|notifications?)\./, '').split('.')[0]
+  const title = (v: string) => v.charAt(0).toUpperCase() + v.slice(1)
+  const company = clean(companyFromText || fromCompany || (domainRoot ? title(domainRoot) : '') || (local.length >= 3 ? title(local) : '') || 'Unknown company', 50)
+  const forAs = text.match(/\b(?:for|as)\s+(?:the\s+|a\s+|an\s+)?([A-Z][\w/&+\-]*(?:\s+(?:of|and|for|&|-|[A-Z][\w/&+\-]*)){0,6}?)(?:\s+(?:role|position|at|with)\b|[,.!:]|$)/)?.[1]
+  const roleMatch = (forAs && !/application/i.test(forAs) ? forAs : undefined)
+    || text.match(/\b(?:application|applying|applied)\s*(?:to|for|:)\s*(?:the\s+)?(.{3,80}?)(?=\s+at\s+[A-Z]|\s+[–—]\s|[!?]|$)/i)?.[1]
+  const role = clean(roleMatch && ROLE_WORD.test(roleMatch) ? roleMatch.replace(/^(?:your\s+)?(?:job\s+)?application\s*:?\s*/i, '') : '', 60)
   return { company, role, status, at: Number(e.at || 0) }
 }
 
 const RANK: Record<AppStatus, number> = { applied: 1, viewed: 2, assessment: 3, interview: 4, rejected: 5, offer: 6 }
 /** One row per company + role; the newest email decides the status (a rejection after an interview is a rejection). */
 export function mergeApplications(rows: Application[]) {
+  // A company's email without a role ("Next steps for your application") belongs to its one known role.
+  const roles = new Map<string, Set<string>>()
+  for (const r of rows) if (r.role) roles.set(r.company.toLowerCase(), (roles.get(r.company.toLowerCase()) || new Set()).add(r.role))
+  rows = rows.map(r => !r.role && roles.get(r.company.toLowerCase())?.size === 1 ? { ...r, role: [...roles.get(r.company.toLowerCase())!][0] } : r)
   const by = new Map<string, Application>()
   for (const r of rows.sort((a, b) => a.at - b.at)) {
     const key = `${r.company.toLowerCase()}|${r.role.toLowerCase() || '-'}`
@@ -100,7 +121,7 @@ export function mergeApplications(rows: Application[]) {
   }
   return [...by.values()].sort((a, b) => b.at - a.at)
 }
-const LABEL: Record<AppStatus, string> = { applied: '📨 Applied', viewed: '👀 Viewed', assessment: '📝 Assessment', interview: '🗓️ Interview', rejected: '✖️ Not moving forward', offer: '🎉 Offer' }
+const LABEL: Record<AppStatus, string> = { applied: '📨 Applied', viewed: '👀 Viewed', assessment: '📝 Next step', interview: '🗓️ Interview', rejected: '✖️ Not moving forward', offer: '🎉 Offer' }
 export function formatApplications(apps: Application[], now = Date.now()) {
   if (!apps.length) return "📂 I couldn't find job application emails in the last 60 days. When you apply, the confirmation email is enough: ask *show my job applications* again and I'll track it."
   const ago = (t: number) => { const d = Math.floor((now - t) / 86400_000); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago` }
