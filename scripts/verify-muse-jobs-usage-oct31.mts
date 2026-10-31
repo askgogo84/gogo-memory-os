@@ -74,3 +74,21 @@ assert.equal(ar.isAppointmentResearchRequest('Remind me to get a haircut Saturda
 assert.equal(ar.serviceHint('Book a haircut on Saturday at 11 am'), 'haircut')
 assert.match(readFileSync('lib/agent/appointment-research.ts', 'utf8'), /and I'll phone them after you approve the call/)
 console.log('✓ "book a haircut Saturday at 11 am" finds salon booking pages and offers an approved call')
+
+// Run against a real inbox (31 Oct): bare no-reply senders on hiring platforms, grants and GitHub notices mixed in.
+const real = [
+  ['supportfinkraftai@viazohorecruit.com', 'Next Step in Your Application for Forward Deployed Engineer – Quick Action Required', 9],
+  ['shortlist@jobgether.com', 'Next Steps for Your Job Application: Director, Engineering - Marketplace & Dev Ecosystem at Jobgether', 3],
+  ['shortlist@jobgether.com', 'Follow-up on your application to Director, Engineering - Marketplace & Dev Ecosystem', 5],
+  ['no-reply@nextiva.com', 'Thank you for applying to Nextiva!', 12],
+  ['noreply@candidates.workablemail.com', 'Thanks for applying to Ajaib', 6],
+  ['noreply@airtableemail.com', 'Solo Grant Application Received!', 20],
+  ['no-reply@openai.com', 'Thank you for applying to OpenAI', 15],
+  ['notifications@github.com', '[askgogo84/gogo-memory-os] Muse parity: usage trends and job hunting (prefs, daily radar, application tracker, prepare-to-apply) (PR #1161)', 1],
+  ['mail@fundizr.com', '5 Funding Applications Are Live', 2],
+].map(([from, subject, d]) => j.classifyApplicationEmail({ from: String(from), subject: String(subject), snippet: '', at: now - Number(d) * 86400_000 })).filter(Boolean) as any[]
+const board = j.mergeApplications(real)
+assert.deepEqual(board.map((a: any) => `${a.company}|${a.status}`), ['Jobgether|assessment', 'Ajaib|applied', 'Finkraftai|assessment', 'Nextiva|applied', 'OpenAI|applied'])
+assert.equal(board[0].role, 'Director, Engineering - Marketplace & Dev Ecosystem', 'a role-less "next steps" email joins the company\'s known role')
+assert.match(j.formatApplications(board, now), /📝 Next step · 3 days ago/)
+console.log('✓ real inbox: companies from subjects, grants and GitHub notices skipped, "next steps" counted as progress')
