@@ -65,3 +65,12 @@ const pm = await import('../lib/bot/process-message')
 assert.equal(pm.isUsageCommand('show my usage'), true); assert.equal(pm.isUsageCommand('How many tasks have you done for me?'), true)
 assert.match(readFileSync('app/dashboard/(app)/usage/page.tsx', 'utf8'), /<UsageTrends a=\{trends\} \/>/)
 console.log('✓ usage: this week against the weekly allowance, 7/30/60/90-day trends, 12 weeks, top uses, recent tasks')
+
+// Muse users: "book a haircut x day at x time".
+const ar = await import('../lib/agent/appointment-research')
+assert.equal(ar.isAppointmentResearchRequest('Book a haircut on Saturday at 11 am'), true)
+assert.equal(ar.isAppointmentResearchRequest('find a barber in Indiranagar tomorrow evening'), true)
+assert.equal(ar.isAppointmentResearchRequest('Remind me to get a haircut Saturday'), false, 'a reminder stays a reminder')
+assert.equal(ar.serviceHint('Book a haircut on Saturday at 11 am'), 'haircut')
+assert.match(readFileSync('lib/agent/appointment-research.ts', 'utf8'), /and I'll phone them after you approve the call/)
+console.log('✓ "book a haircut Saturday at 11 am" finds salon booking pages and offers an approved call')
