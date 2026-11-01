@@ -613,7 +613,7 @@ async function syncGmailAttention(telegramId:string,current:Set<string>,gmailRea
   // "what needs my attention". Guarded so a missing module or rules read never blocks the sync.
   let attentionScore:((message:any)=>{picked:boolean}|null)=()=>null
   try{
-    const {data:ruleRows}=await supabaseAdmin.from('email_attention_rules').select('kind,match_type,match_value,category,label,source').eq('telegram_id',Number(telegramId)).eq('active',true).limit(300)
+    const {data:ruleRows}=await supabaseAdmin.from('email_attention_rules').select('kind,match_type,match_value,category,label,source').eq('telegram_id',(()=>{const n=Number(telegramId);return Number.isSafeInteger(n)&&String(n)===String(telegramId)?n:String(telegramId)})()).eq('active',true).limit(300)
     const rules=(Array.isArray(ruleRows)?ruleRows:[]).map((r:any)=>({kind:r.kind,matchType:r.match_type,matchValue:String(r.match_value||''),category:r.category,label:String(r.label||''),source:r.source}))
     if(typeof scoreAttentionEmail==='function')attentionScore=(message:any)=>{const r=scoreAttentionEmail(message,{rules,ownEmail});return r&&typeof r.score==='number'?r:null}
   }catch{}
