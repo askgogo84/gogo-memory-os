@@ -148,6 +148,16 @@ await check('exact owner B string is retained in private query, never coerced to
   assert.notEqual(String(h.queries[0].owner),A)
 })
 
+await check('explicit recipient cannot bypass malformed owner validation',true,async()=>{
+  const h=harness()
+  assert.equal(await h.findWhatsAppForReminder({telegram_id:'4.2e1',whatsapp_to:PHONE_B}),null)
+  assert.equal(h.queries.length,0)
+})
+await check('explicit recipient cannot bypass unsafe rounded numeric owner validation',true,async()=>{
+  const h=harness()
+  assert.equal(await h.findWhatsAppForReminder({telegram_id:9007199254740992,whatsapp_to:PHONE_B}),null)
+  assert.equal(h.queries.length,0)
+})
 await check('large canonical negative WhatsApp owner retains exact lookup identity',true,async()=>{
   const h=harness({rows:{[NEG]:ownerRow(NEG,PHONE_B)}})
   assert.equal(await h.findWhatsAppForReminder({telegram_id:NEG}),PHONE_B)
