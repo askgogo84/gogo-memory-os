@@ -45,9 +45,14 @@ async function notify(telegramId: number, key: string, text: string) {
     prepare: async () => {}, ready: async () => true,
     send: async token => String((await sendWhatsApp(String(user.whatsapp_id), text, null, token))?.sid || ''),
   }).catch((err: any) => { console.error('INBOUND_NOTIFY_FAILED:', err?.message || err); return 'failed' })
+  // Only a provider-accepted outcome counts as a push. A skipped, deferred,
+  // suppressed, persistence-failed or unknown outcome must never advance
+  // notified_at or create sent-looking chat history. The durable delivery
+  // ledger owns reconciliation; unknown outcomes are never blindly retried.
+  const providerAccepted = result === 'provider_accepted'
   // The chat history carries the card so "draft 1" / "not important 1" bind to it on WhatsApp and the dashboard.
-  if (result !== 'skipped' && result !== 'failed') await supabaseAdmin.from('conversations').insert({ telegram_id: telegramId, role: 'assistant', content: text }).then(() => {}, () => {})
-  return result !== 'failed'
+  if (providerAccepted) await supabaseAdmin.from('conversations').insert({ telegram_id: telegramId, role: 'assistant', content: text }).then(() => {}, () => {})
+  return providerAccepted
 }
 
 export type InboundResult = { status: 'stored' | 'duplicate' | 'unknown_alias' | 'confirmation' | 'ignored'; pushed?: boolean; telegramId?: number }
