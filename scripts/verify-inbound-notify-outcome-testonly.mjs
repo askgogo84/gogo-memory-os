@@ -14,13 +14,13 @@ const inboundNode = ast.statements.find(s => ts.isFunctionDeclaration(s) && s.na
 assert.ok(inboundNode, 'downstream inbound mail handler must remain present')
 const inboundBody = inboundNode.getText(ast)
 // The caller treats the helper's returned "pushed" boolean as notification accounting.
-assert.match(inboundBody, /const pushed\\s*=\\s*await notify\\(/, 'must exercise actual pushed boolean returned to caller')
-assert.match(inboundBody, /if\\s*\\(pushed\\)\\s*await supabaseAdmin\\.from\\(['"]inbound_emails['"]\\)\\.update\\(\\{\\s*notified_at:/,
+assert.match(inboundBody, /const pushed\s*=\s*await notify\(/, 'must exercise actual pushed boolean returned to caller')
+assert.match(inboundBody, /if\s*\(pushed\)\s*await supabaseAdmin\.from\(['"]inbound_emails['"]\)\.update\(\{\s*notified_at:/,
   'caller writes notified_at when helper incorrectly claims a push')
 const compiled = ts.transpileModule(notifyNode.getText(ast), {
   compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 }
 }).outputText
-assert.match(compiled, /async function notify\\(/, 'test production AST rather than a rewritten test double')
+assert.match(compiled, /async function notify\(/, 'test production AST rather than a rewritten test double')
 
 function harness(status, { missingRecipient=false, throwDelivery=false }={}) {
   const conversations=[]
@@ -67,7 +67,7 @@ function harness(status, { missingRecipient=false, throwDelivery=false }={}) {
     sendWhatsApp: async () => {throw new Error('NETWORK_AND_PROVIDER_FORBIDDEN')},
     String,Date,Promise,console: {error:()=>{}}
   }
-  const fn=vm.runInNewContext(compiled+'\\nnotify',context,{timeout:1500})
+  const fn=vm.runInNewContext(compiled+'\nnotify',context,{timeout:1500})
   assert.equal(typeof fn,'function')
   return {
     call:()=>fn(owner,'fictional-email-urgent-key','Fictional attention card'),
