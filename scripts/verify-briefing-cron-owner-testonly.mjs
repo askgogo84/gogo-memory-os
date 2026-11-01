@@ -51,7 +51,7 @@ function fixture(opts = {}) {
           if (table === 'delivery_scan_cursors')
             return Promise.resolve({data: {cursor_value: Number.MIN_SAFE_INTEGER}, error: null})
           if (table === 'users')
-            return Promise.resolve({data: fresh.get(String(queryArgs.telegram_id)) ?? null, error: opts.freshError ?? null})
+            return Promise.resolve({data: opts.forceFreshRow ?? fresh.get(String(queryArgs.telegram_id)) ?? null, error: opts.freshError ?? null})
           return Promise.resolve({data: null, error: null})
         },
         insert(row) {
@@ -82,7 +82,7 @@ function fixture(opts = {}) {
     },
     buildThrowbackLine:async()=>null,
     weekAheadSummary:async()=>null,
-    firstName:v=>String(v||'there').split(/\\s+/)[0],
+    firstName:v=>String(v||'there').split(/\s+/)[0],
     isSuppressed:async()=>false,
     buildDailyBriefUnsubscribeUrl:(owner,email)=>{
       unsubscribeOwners.push({owner,email})
@@ -109,7 +109,7 @@ function fixture(opts = {}) {
     },
     NextResponse:{json:(payload,options)=>({payload,status:options?.status??200})},
   }
-  const run = vm.runInNewContext(compiled + '\\nrunDelivery', context, {timeout:1000})
+  const run = vm.runInNewContext(compiled + '\nrunDelivery', context, {timeout:1000})
   assert.equal(typeof run,'function')
   return {run:()=>run({url:'https://fixture.invalid/cron'}),queries,deliveryAttempts,privateBriefReads,
     transports,unsubscribeOwners,cursorSaves}
@@ -231,11 +231,10 @@ await check('adjacent int64 owners must not collide in idempotency keys',true,as
   assert.equal(new Set(keys).size,keys.length,'distinct owners shared a delivery idempotency key')
 })
 await check('returned mismatched persisted recipient row must not authorize a send',true,async()=>{
-  const h=fixture({rows:[user('42')],freshRows:[user('99')]})
+  const h=fixture({rows:[user('42')],forceFreshRow:user('99')})
   // The fake database intentionally returns a wrong-owner row for any requested key.
   // The real `users` lookup omits telegram_id from its selection, so test this explicit mismatch
   // using a separate mock that preserves the row but lies about the key.
-  const row=h.queries
   await quietRun(h)
   assert.equal(h.transports.length,0,'mismatched owner row authorized send')
 })
