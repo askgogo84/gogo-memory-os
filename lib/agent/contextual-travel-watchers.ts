@@ -42,7 +42,7 @@ function exactTravelOwner(value:unknown):string|null{
   if(typeof value!=='string'||! /^-?[1-9]\d*$/.test(value))return null
   try{
     const parsed=BigInt(value)
-    if(parsed < -9223372036854775808n || parsed > 9223372036854775807n)return null
+    if(parsed < BigInt('-9223372036854775808') || parsed > BigInt('9223372036854775807'))return null
   }catch{return null}
   return value
 }
