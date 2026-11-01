@@ -1,0 +1,39 @@
+name: Negative WhatsApp owner guards — literal head (TEST ONLY)
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-negative-whatsapp-owner-guards-testonly.mjs'
+      - '.github/workflows/negative-whatsapp-owner-guards-literal-head.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  literal-head-negative-owner:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout literal pull-request head, not merge ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert exact checked-out feature SHA
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies without postinstall
+        run: npm ci --ignore-scripts
+      - name: Execute sealed negative-owner source-path safety checks
+        run: node scripts/verify-negative-whatsapp-owner-guards-testonly.mjs
