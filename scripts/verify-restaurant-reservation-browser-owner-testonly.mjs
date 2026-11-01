@@ -121,7 +121,7 @@ await check('mandatory','already-rounded input is denied before selecting a user
   assert.equal(r.queries.length,0,'untrusted rounded number queried privileged users')
   assert.equal(r.actor,null)
 })
-await check('mandatory','mismatched returned row cannot select another owner's browser context',async()=>{
+await check('mandatory','mismatched returned row cannot select another tenant browser context',async()=>{
   const r=await outcome('42',{overrideRow:users.get('43')})
   assert.equal(r.actor,null,'wrong owner row accepted without explicit binding check')
 })
