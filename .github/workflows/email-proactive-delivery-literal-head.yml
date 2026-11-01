@@ -1,0 +1,44 @@
+name: Proactive email durable delivery — literal PR HEAD isolated diagnostic
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-email-proactive-delivery-testonly.mjs'
+      - '.github/workflows/email-proactive-delivery-literal-head.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  email-proactive-delivery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert literal feature head, not synthetic merge
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Full registered regressions on literal feature head
+        run: npm test
+      - name: Typecheck on literal feature head
+        run: npm run typecheck
+      - name: Production build with fixture credentials
+        run: npm run build
+      - name: Test unchanged proactive email sender with fictional inputs and zero network
+        run: node scripts/verify-email-proactive-delivery-testonly.mjs
