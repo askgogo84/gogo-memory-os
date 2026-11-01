@@ -1,5 +1,6 @@
 // 28 Oct live use-case run: routing and formatting failures found on production.
 import assert from 'node:assert/strict'
+import { mock } from 'node:test'
 const { detectFriendReminder } = await import('../lib/bot/handlers/friend-reminders')
 assert.equal(detectFriendReminder('Ask Claude to review this business plan and summarise its feedback for me.'), null, 'an AI model is not a friend to remind')
 assert.equal(detectFriendReminder('ask chatgpt to write a poem'), null)
@@ -34,7 +35,30 @@ const split = parseSplitIntent('Split 2400 dinner between me, Divya and Nithin')
 assert.equal(split.description, 'dinner', JSON.stringify(split))
 console.log('✓ 28 Oct use-case run: split description')
 const remParse = await import('../lib/bot/handlers/reminders') as any
-const rent = remParse.parseReminderIntent("Remind me to pay rent on the 1st and also what's the weather tomorrow?")
-assert.equal(rent.message, 'pay rent'); assert.match(rent.remindAtIso, /-11-01T/)
+// The bare ordinal means the next future 1st at 9:00 AM IST. Pin the test clock:
+// this used to assume November forever and broke CI after 9:00 AM IST on Nov 1.
+const monthlyRentText = "Remind me to pay rent on the 1st and also what's the weather tomorrow?"
+const monthlyRentBoundaries = [
+  ['2026-10-31T03:29:00.000Z', '2026-11-01T03:30:00.000Z', 'previous month'],
+  ['2026-11-01T03:29:00.000Z', '2026-11-01T03:30:00.000Z', 'first day before 9 AM IST'],
+  ['2026-11-01T03:30:00.000Z', '2026-12-01T03:30:00.000Z', 'first day at 9 AM IST'],
+  ['2026-12-01T03:29:00.000Z', '2026-12-01T03:30:00.000Z', 'December first before deadline'],
+  ['2026-12-01T03:30:00.000Z', '2027-01-01T03:30:00.000Z', 'December first at deadline'],
+  ['2026-12-31T18:29:00.000Z', '2027-01-01T03:30:00.000Z', 'year rollover'],
+  ['2027-01-01T03:30:00.000Z', '2027-02-01T03:30:00.000Z', 'new-year first at deadline'],
+] as const
+mock.timers.enable({ apis: ['Date'], now: new Date(monthlyRentBoundaries[0][0]) })
+try {
+  for (const [now, expected, caseName] of monthlyRentBoundaries) {
+    mock.timers.setTime(Date.parse(now))
+    const rent = remParse.parseReminderIntent(monthlyRentText)
+    assert.ok(rent && rent.kind === 'one_time', caseName)
+    assert.equal(rent.message, 'pay rent', caseName + ': question excluded from task')
+    assert.equal(rent.remindAtIso, expected, caseName + ': next future 9 AM IST first-of-month')
+    assert.ok(Date.parse(rent.remindAtIso) > Date.now(), caseName + ': never schedule in past')
+  }
+} finally {
+  mock.timers.reset()
+}
 assert.equal(remParse.stripTrailingQuestion('remind me to buy milk and check the oven at 6pm'), 'remind me to buy milk and check the oven at 6pm')
 console.log('✓ 29 Oct: a trailing question is not part of the reminder')
