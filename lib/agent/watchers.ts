@@ -625,16 +625,23 @@ export function inboxActionStep(message:any): {subject:string;from:string;step:s
   return {subject,from,step}
 }
 
-async function watcherActor(telegramId:string):Promise<AgentActor|null> {
+async function watcherActor(telegramId:string|number):Promise<AgentActor|null> {
+  // Exact owner (P0.1): exact decimal lookup, row must echo the id, unsafe ids refused (never rounded).
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return null
+  const owner = String(telegramId ?? '').trim()
+  const legacy = Number(owner)
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner) || !Number.isSafeInteger(legacy) || String(legacy) !== owner) return null
+
   const {data,error}=await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name')
-    .eq('telegram_id',Number(telegramId))
+    .eq('telegram_id', legacy)
     .maybeSingle()
   if(error)throw new Error(`email_triage_user_read_failed:${error.message}`)
-  if(!data?.id||!data?.whatsapp_id||!Number.isFinite(Number(data.telegram_id)))return null
+  if(!data?.id||!data?.whatsapp_id)return null
+  if (String(data.telegram_id) !== owner) return null
   return {
     userId:String(data.id),
-    legacyTelegramId:Number(data.telegram_id),
+    legacyTelegramId: legacy,
     whatsappId:String(data.whatsapp_id),
     name:String(data.name||'Gogo'),
   }

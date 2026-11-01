@@ -301,12 +301,18 @@ async function upsertOpenLoop(input:OpenLoopInput){
   return {id:String(data.id),fingerprint,created:true}
 }
 
-async function userConnection(telegramId:string){
+// Exact owner (P0.1): same rule as readGmailAttention; the returned row must belong to this owner.
+async function userConnection(telegramId:string|number){
+  if(typeof telegramId==='number'&&!Number.isSafeInteger(telegramId))throw new Error('open_loop_owner_invalid')
+  const owner=String(telegramId??'').trim(),legacy=Number(owner)
+  if(!/^-?(?:0|[1-9]\d{0,18})$/.test(owner))throw new Error('open_loop_owner_invalid')
+  const key:string|number=Number.isSafeInteger(legacy)&&String(legacy)===owner?legacy:owner
   const {data,error}=await supabaseAdmin.from('users')
-    .select('whatsapp_id')
-    .eq('telegram_id',Number(telegramId))
+    .select('whatsapp_id,telegram_id')
+    .eq('telegram_id',key)
     .maybeSingle()
   if(error)throw new Error(`open_loop_user_read_failed:${error.message}`)
+  if(data&&data.telegram_id!=null&&String(data.telegram_id)!==owner)return null
   return data||null
 }
 
@@ -518,17 +524,25 @@ async function resolveOtherGmailLoopsForThread(telegramId:string,threadId:string
   return ids.length
 }
 
-async function readGmailAttention(telegramId:string){
+// Exact owner (P0.1): a rounded number is refused before any read; a safe id is queried as its exact number and an
+// id above 2^53 as its exact decimal string, never through Number. A returned row must belong to this owner.
+async function readGmailAttention(telegramId:string|number){
+  if(typeof telegramId==='number'&&!Number.isSafeInteger(telegramId))throw new Error('open_loop_gmail_owner_invalid')
+  const owner=String(telegramId??'').trim(),legacy=Number(owner)
+  if(!/^-?(?:0|[1-9]\d{0,18})$/.test(owner))throw new Error('open_loop_gmail_owner_invalid')
+  const key:string|number=Number.isSafeInteger(legacy)&&String(legacy)===owner?legacy:owner
   const [{data:user,error:userError},{data:consent,error:consentError}]=await Promise.all([
     supabaseAdmin.from('users')
-      .select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token')
-      .eq('telegram_id',Number(telegramId)).maybeSingle(),
+      .select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token,telegram_id')
+      .eq('telegram_id',key).maybeSingle(),
     supabaseAdmin.from('user_consent_settings')
-      .select('gmail_enabled').eq('telegram_id',Number(telegramId)).maybeSingle(),
+      .select('gmail_enabled,telegram_id').eq('telegram_id',key).maybeSingle(),
   ])
   if(userError)throw new Error(`open_loop_gmail_user_failed:${userError.message}`)
   if(consentError)throw new Error(`open_loop_gmail_consent_failed:${consentError.message}`)
+  if(consent&&consent.telegram_id!=null&&String(consent.telegram_id)!==owner)return {reason:'disabled' as const}
   if(consent?.gmail_enabled===false)return {reason:'disabled' as const}
+  if(user&&user.telegram_id!=null&&String(user.telegram_id)!==owner)return {reason:'disconnected' as const}
   if(!user?.gmail_connected)return {reason:'disconnected' as const}
 
   const ownEmail=String(user.gmail_email||'').trim().toLowerCase()

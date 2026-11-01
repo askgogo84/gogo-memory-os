@@ -303,12 +303,18 @@ export function seatFromPreference(texts: string[]): SeatChoice | null {
 }
 
 export async function loadKnownDetails(actor: AgentActor): Promise<KnownDetails | null> {
-  const tg = Number(actor.legacyTelegramId)
+  // Exact owner (P0.1): only a safe, canonical positive owner id reads the profile; anything rounded, padded or
+  // malformed returns null before any read. The profile row must be this owner and, when known, this user UUID.
+  const raw: unknown = actor.legacyTelegramId
+  if (typeof raw === 'number' && !Number.isSafeInteger(raw)) return null
+  const owner = String(raw ?? '').trim(), tg = Number(owner)
+  if (!/^[1-9]\d{0,18}$/.test(owner) || !Number.isSafeInteger(tg) || String(tg) !== owner) return null
   const [user, mems, prefs] = await Promise.all([
-    supabaseAdmin.from('users').select('name,email,gmail_email').eq('telegram_id', tg).maybeSingle().then(r => r.data as any, () => null),
+    supabaseAdmin.from('users').select('id,telegram_id,name,email,gmail_email').eq('telegram_id', tg).maybeSingle().then(r => r.data as any, () => null),
     supabaseAdmin.from('memories').select('content').eq('telegram_id', tg).order('created_at', { ascending: false }).limit(40).then(r => (r.data || []).map((m: any) => String(m.content || '')), () => []),
     supabaseAdmin.from('user_preferences').select('rule_text').eq('telegram_id', tg).limit(20).then(r => (r.data || []).map((m: any) => String(m.rule_text || '')), () => []),
   ])
+  if (!user || (user.telegram_id != null && String(user.telegram_id) !== owner) || (actor.userId && user.id != null && String(user.id) !== String(actor.userId))) return null
   const name = String(user?.name || '').replace(/[^A-Za-z .'-]/g, ' ').replace(/\s+/g, ' ').trim()
   // 28 Oct live: no email on the profile → no suggestion at all. Fall back to an email the person typed themselves
   // in the last 30 days (their own words, owner-bound).

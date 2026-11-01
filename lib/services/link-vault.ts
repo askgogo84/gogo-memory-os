@@ -465,8 +465,14 @@ export async function handleLinkVaultText(params:{actor:AgentActor;text:string;s
 }
 
 
-export async function exportLinkVaultJson(telegramId:number){
-  const{data,error}=await supabaseAdmin.from('link_vault_items').select('canonical_url,original_url,platform,item_type,title,description,user_note,saved_at,topic,tags,shelf,preview_image,enrichment_status,auth_required').eq('telegram_id',telegramId).order('saved_at',{ascending:true})
+// Exact owner (P0.1): a rounded, fractional or malformed owner id is refused before the service-role read; an id
+// above 2^53 is queried as its exact decimal string, never through Number.
+export async function exportLinkVaultJson(telegramId:number|string){
+  if(typeof telegramId==='number'&&!Number.isSafeInteger(telegramId))throw new Error('link_vault_owner_invalid')
+  const owner=String(telegramId??'').trim(),legacy=Number(owner)
+  if(!/^-?(?:0|[1-9]\d{0,18})$/.test(owner))throw new Error('link_vault_owner_invalid')
+  const key:number|string=Number.isSafeInteger(legacy)&&String(legacy)===owner?legacy:owner
+  const{data,error}=await supabaseAdmin.from('link_vault_items').select('canonical_url,original_url,platform,item_type,title,description,user_note,saved_at,topic,tags,shelf,preview_image,enrichment_status,auth_required').eq('telegram_id',key).order('saved_at',{ascending:true})
   if(error)throw new Error('link_vault_export_failed:'+error.message)
   return{
     version:'askgogo-link-vault-v1',

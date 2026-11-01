@@ -27,12 +27,22 @@ export function jobPrefsFrom(raw: string): JobPrefs {
   return { raw: r, roles, locations, minSalaryLpa, remote: /\bremote\b/i.test(r) }
 }
 
-export async function saveJobPrefs(telegramId: number, raw: string) {
-  const { error } = await supabaseAdmin.from('memories').insert({ telegram_id: telegramId, content: `${PREFS}${clean(raw, 400)}` })
+/** False (nothing written) when the owner id is not exact; throws on a database error. */
+export async function saveJobPrefs(telegramId: number | string, raw: string): Promise<boolean> {
+  // Exact owner (P0.1): only a safe canonical id reads or writes private job data (functions run standalone, so inline).
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return false
+  const owner = String(telegramId ?? '').trim(), legacy = Number(owner)
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner) || !Number.isSafeInteger(legacy) || String(legacy) !== owner) return false
+  const { error } = await supabaseAdmin.from('memories').insert({ telegram_id: legacy, content: `${PREFS}${clean(raw, 400)}` })
   if (error) throw new Error(`job_prefs_save_failed:${error.message}`)
+  return true
 }
-export async function savedJobPrefs(telegramId: number): Promise<JobPrefs | null> {
-  const { data } = await supabaseAdmin.from('memories').select('content').eq('telegram_id', telegramId).like('content', `${PREFS}%`).order('id', { ascending: false }).limit(1)
+export async function savedJobPrefs(telegramId: number | string): Promise<JobPrefs | null> {
+  // Exact owner (P0.1): only a safe canonical id reads or writes private job data (functions run standalone, so inline).
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return null
+  const owner = String(telegramId ?? '').trim(), legacy = Number(owner)
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner) || !Number.isSafeInteger(legacy) || String(legacy) !== owner) return null
+  const { data } = await supabaseAdmin.from('memories').select('content').eq('telegram_id', legacy).like('content', `${PREFS}%`).order('id', { ascending: false }).limit(1)
   const raw = String(data?.[0]?.content || '').slice(PREFS.length).trim()
   return raw ? jobPrefsFrom(raw) : null
 }
@@ -144,9 +154,14 @@ export function parsePrepareApplication(text: string): { job: string } | null {
   return m ? { job: clean(m[1], 400) } : null
 }
 /** The person's resumes among saved documents, newest first. */
-export async function savedResumes(telegramId: number) {
-  const { data } = await supabaseAdmin.from('documents').select('id,title,doc_type,summary,created_at').eq('telegram_id', telegramId).order('created_at', { ascending: false }).limit(200)
-  return (data || []).filter((d: any) => /\b(?:resume|résumé|cv|curriculum\s+vitae)\b/i.test(`${d.title} ${d.doc_type} ${String(d.summary || '').slice(0, 200)}`))
+export async function savedResumes(telegramId: number | string) {
+  // Exact owner (P0.1): only a safe canonical id reads or writes private job data (functions run standalone, so inline).
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return []
+  const owner = String(telegramId ?? '').trim(), legacy = Number(owner)
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner) || !Number.isSafeInteger(legacy) || String(legacy) !== owner) return []
+  const { data } = await supabaseAdmin.from('documents').select('id,title,doc_type,summary,created_at').eq('telegram_id', legacy).order('created_at', { ascending: false }).limit(200)
+  // A row that carries an owner id must carry this one (defence in depth on top of the owner filter).
+  return (data || []).filter((d: any) => (d.telegram_id === undefined || String(d.telegram_id) === owner) && /\b(?:resume|résumé|cv|curriculum\s+vitae)\b/i.test(`${d.title} ${d.doc_type} ${String(d.summary || '').slice(0, 200)}`))
 }
 /** The resume whose title or summary shares the most words with the job. */
 export function pickResume(resumes: { title: string; summary?: string | null }[], job: string) {

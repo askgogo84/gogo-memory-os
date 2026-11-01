@@ -87,10 +87,14 @@ export function isUsageQuery(text: string) {
 }
 
 export async function getActivityTrends(telegramId: string | number, aiPerDay = 0, now = Date.now()): Promise<ActivityTrends> {
-  const tg = String(telegramId), since = new Date(now - 90 * DAY).toISOString(), until = new Date(now).toISOString()
+  // Exact owner (P0.1): every query uses the exact decimal owner id; a rounded number is refused before any read.
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) throw new Error('owner_identity_invalid:unsafe_number')
+  const tg = String(telegramId ?? '').trim()
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(tg)) throw new Error('owner_identity_invalid:format')
+  const since = new Date(now - 90 * DAY).toISOString(), until = new Date(now).toISOString()
   const [ai, rem, runs, alerts] = await Promise.all([
     supabaseAdmin.from('usage_events').select('created_at,action').eq('telegram_id', tg).eq('counter', 'ai_action').gte('created_at', since).limit(5000),
-    supabaseAdmin.from('reminders').select('remind_at').eq('telegram_id', Number(tg)).eq('sent', true).gte('remind_at', since).lte('remind_at', until).limit(5000),
+    supabaseAdmin.from('reminders').select('remind_at').eq('telegram_id', tg).eq('sent', true).gte('remind_at', since).lte('remind_at', until).limit(5000),
     // agent_runs has no created_at (31 Oct live: "column agent_runs.created_at does not exist"); a run starts at started_at.
     supabaseAdmin.from('agent_runs').select('started_at,status,title,type').eq('telegram_id', tg).gte('started_at', since).order('started_at', { ascending: false }).limit(2000),
     supabaseAdmin.from('agent_activity').select('created_at').eq('telegram_id', tg).eq('event_type', 'watcher_triggered').gte('created_at', since).limit(5000),

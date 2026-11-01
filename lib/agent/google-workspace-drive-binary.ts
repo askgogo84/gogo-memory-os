@@ -34,11 +34,18 @@ export function driveBinaryKind(file:DriveBinaryFile):DriveBinaryKind|null {
   return null
 }
 
+// Exact owner (P0.1): only a safe, canonical positive owner id may read or persist OAuth tokens. A rounded, zero,
+// fractional, NaN or out-of-range id fails before any service-role read; the row read back must be this owner.
 async function credentials(actor:AgentActor){
+  const raw:unknown=actor.legacyTelegramId
+  if(typeof raw==='number'&&!Number.isSafeInteger(raw))throw new Error('workspace_owner_invalid')
+  const owner=String(raw??'').trim(),tg=Number(owner)
+  if(!/^[1-9]\d{0,18}$/.test(owner)||!Number.isSafeInteger(tg)||String(tg)!==owner)throw new Error('workspace_owner_invalid')
   const {data,error}=await supabaseAdmin.from('users')
-    .select('gmail_connected,gmail_access_token,gmail_refresh_token')
-    .eq('telegram_id',actor.legacyTelegramId).maybeSingle()
+    .select('gmail_connected,gmail_access_token,gmail_refresh_token,telegram_id')
+    .eq('telegram_id',tg).maybeSingle()
   if(error)throw new Error(`workspace_credentials_failed:${error.message}`)
+  if(data&&data.telegram_id!=null&&String(data.telegram_id)!==owner)throw new Error('workspace_owner_invalid')
   if(!data?.gmail_connected)throw new Error('workspace_not_connected')
   if(!data.gmail_access_token&&!data.gmail_refresh_token)throw new Error('workspace_reconnect_required')
   return {
@@ -51,7 +58,9 @@ async function credentials(actor:AgentActor){
 async function refresh(actor:AgentActor,refreshToken:string){
   const token=await refreshGmailAccessToken(refreshToken)
   if(!token)throw new Error('workspace_reconnect_required')
-  const {error}=await supabaseAdmin.from('users').update({gmail_access_token:encryptGoogleToken(token)}).eq('telegram_id',actor.legacyTelegramId)
+  const raw:unknown=actor.legacyTelegramId
+  if(typeof raw!=='number'||!Number.isSafeInteger(raw)||raw<=0)return token
+  const {error}=await supabaseAdmin.from('users').update({gmail_access_token:encryptGoogleToken(token)}).eq('telegram_id',raw)
   if(error)console.error('WORKSPACE_DRIVE_BINARY_TOKEN_PERSIST_FAILED:',error.message)
   return token
 }

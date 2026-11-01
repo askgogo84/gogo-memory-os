@@ -51,13 +51,22 @@ export async function buildGoalPlan(outcome:string):Promise<GoalPlan>{
   }catch(err:any){console.error('GOAL_PLAN_FAILED:',err?.message||err);return {version:1,steps:[{id:'g1',title:'Review goal',kind:'review',instruction:'Review this goal and choose the next action.',status:'pending'}]}}
 }
 
-async function actorForTelegram(telegramId:string):Promise<AgentActor|null>{
-  const n=Number(telegramId);if(!Number.isFinite(n))return null
-  const {data,error}=await supabaseAdmin.from('users').select('id,telegram_id,whatsapp_id,name').eq('telegram_id',n).maybeSingle()
+async function actorForTelegram(telegramId:string|number):Promise<AgentActor|null>{
+  // Exact owner (P0.1): a canonical decimal id is matched exactly (as a number only while it is a safe integer,
+  // otherwise as its exact string), and the row must echo that id. A rounded number or a rounded stored row is
+  // refused; two distinct 64-bit owners can never select one account.
+  if(typeof telegramId==='number'&&!Number.isSafeInteger(telegramId))return null
+  const owner=String(telegramId??'').trim()
+  if(!/^-?(?:0|[1-9]\d{0,18})$/.test(owner))return null
+  const legacy=Number(owner),safe=Number.isSafeInteger(legacy)&&String(legacy)===owner
+  const {data,error}=await supabaseAdmin.from('users').select('id,telegram_id,whatsapp_id,name').eq('telegram_id',safe?legacy:owner).maybeSingle()
   if(error||!data)return null
+  if(typeof data.telegram_id==='number'&&!Number.isSafeInteger(data.telegram_id))return null
+  if(String(data.telegram_id)!==owner)return null
   const whatsappId=String(data.whatsapp_id||'').trim();if(!whatsappId)return null
-  return {userId:String(data.id),legacyTelegramId:Number(data.telegram_id),whatsappId,name:String(data.name||'Gogo')}
+  return {userId:String(data.id),legacyTelegramId:legacy,whatsappId,name:String(data.name||'Gogo')}
 }
+
 
 async function permission(tg:string,capability:string):Promise<AgentPermissionLevel>{
   const {data}=await supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id',tg).eq('capability',capability).maybeSingle()

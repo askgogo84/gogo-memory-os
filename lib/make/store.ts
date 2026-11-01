@@ -7,7 +7,7 @@ import { chatReply, editedReply, isMakeEdit, madeIdFromReply, makeDocRequest, ty
 import { editDoc, generateDoc } from './generate'
 
 export const MAKE_TYPES = { deck: 'slide_deck', sheet: 'spreadsheet' } as const
-export async function saveDoc(telegramId: number, doc: MakeDoc, request: string, sources: string[]) {
+export async function saveDoc(telegramId: number | string, doc: MakeDoc, request: string, sources: string[]) {
   const content_json = { format: doc.format, doc, request, sources, notes: '' }
   const row = (type: string) => ({
     telegram_id: String(telegramId), type, title: doc.title,
@@ -24,7 +24,7 @@ export async function saveDoc(telegramId: number, doc: MakeDoc, request: string,
   return String(data.id)
 }
 
-export async function loadDoc(telegramId: number, id: string): Promise<{ doc: MakeDoc; content: any; owner: number } | null> {
+export async function loadDoc(telegramId: number | string, id: string): Promise<{ doc: MakeDoc; content: any; owner: number | string } | null> {
   const { data } = await supabaseAdmin.from('agent_artifacts').select('type,content_json').eq('id', id).eq('telegram_id', String(telegramId)).maybeSingle()
   const content: any = data?.content_json
   const doc = content?.doc
@@ -42,39 +42,51 @@ export async function updateDoc(telegramId: number | string, id: string, content
   if (error) throw new Error(`make_update_failed:${error.message}`)
 }
 
-async function lastAssistantReply(telegramId: number) {
-  const { data } = await supabaseAdmin.from('conversations').select('content').eq('telegram_id', telegramId).eq('role', 'assistant').order('created_at', { ascending: false }).limit(1)
+async function lastAssistantReply(telegramId: string) {
+  const legacy = Number(telegramId)
+  const { data } = await supabaseAdmin.from('conversations').select('content').eq('telegram_id', Number.isSafeInteger(legacy) && String(legacy) === telegramId ? legacy : telegramId).eq('role', 'assistant').order('created_at', { ascending: false }).limit(1)
   return String((data || [])[0]?.content || '')
 }
 
 /** Chat entry: a new deck/sheet, or a change to the one Gogo just made. Null when the message is neither. */
 /** The dashboard owner id. 24 Oct live: on WhatsApp the actor's legacy id is the phone-based chat id, so decks made
- * there were saved under it and the dashboard (users.telegram_id) showed 404. Artifacts always use users.telegram_id. */
-async function ownerTelegramId(actor: Pick<AgentActor, 'legacyTelegramId'> & { userId?: string }) {
+ * there were saved under it and the dashboard (users.telegram_id) showed 404. Artifacts always use users.telegram_id.
+ * Exact owner (P0.1): the id is returned as its exact decimal string. A UUID-bound actor whose users row cannot be
+ * read gets null (never the unverified legacy id); a rounded, fractional, zero or malformed id is also null. */
+function exactLegacyOwner(value: unknown): string | null {
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
+  if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'bigint') return null
+  const owner = String(value).trim()
+  return /^[1-9]\d{0,18}$/.test(owner) ? owner : null
+}
+async function ownerTelegramId(actor: Pick<AgentActor, 'legacyTelegramId'> & { userId?: string }): Promise<string | null> {
   if (actor.userId) {
     try {
-      const { data } = await supabaseAdmin.from('users').select('telegram_id').eq('id', actor.userId).maybeSingle()
-      const tg = Number((data as any)?.telegram_id)
-      if (Number.isFinite(tg) && tg) return tg
-    } catch {}
+      const { data, error } = await supabaseAdmin.from('users').select('telegram_id').eq('id', actor.userId).maybeSingle()
+      if (error || !data) return null
+      return exactLegacyOwner((data as any).telegram_id)
+    } catch { return null }
   }
-  return Number(actor.legacyTelegramId)
+  return exactLegacyOwner(actor.legacyTelegramId)
 }
 
 export async function handleMakeDoc(params: { actor: Pick<AgentActor, 'legacyTelegramId'> & { userId?: string }; text: string }): Promise<{ text: string; handledBy: string; status: string } | null> {
-  const chatId = Number(params.actor.legacyTelegramId)
+  const chatId = exactLegacyOwner(params.actor.legacyTelegramId)
   const text = String(params.text || '').trim()
   const ask = makeDocRequest(text)
   if (ask) {
+    const owner = await ownerTelegramId(params.actor)
+    if (!owner) return { text: `I couldn't confirm which account to save this ${ask.format === 'deck' ? 'deck' : 'sheet'} to, so I didn't make it. Please try again in a minute.`, handledBy: 'make-doc', status: 'failed' }
     const made = await generateDoc(ask.format, ask.request)
     if (!made) return { text: `I couldn't build that ${ask.format === 'deck' ? 'deck' : 'sheet'} just now. Try again in a minute, or tell me a bit more about what it should cover.`, handledBy: 'make-doc', status: 'failed' }
-    const id = await saveDoc(await ownerTelegramId(params.actor), made.doc, ask.request, made.sources)
+    const id = await saveDoc(owner, made.doc, ask.request, made.sources)
     return { text: chatReply(made.doc, id), handledBy: 'make-doc', status: 'completed' }
   }
-  if (!isMakeEdit(text)) return null
+  if (!isMakeEdit(text) || !chatId) return null
   const id = madeIdFromReply(await lastAssistantReply(chatId))
   if (!id) return null
   const telegramId = await ownerTelegramId(params.actor)
+  if (!telegramId) return null
   const loaded = await loadDoc(telegramId, id) || (telegramId !== chatId ? await loadDoc(chatId, id) : null)
   if (!loaded) return null
   const next = await editDoc(loaded.doc, text)
