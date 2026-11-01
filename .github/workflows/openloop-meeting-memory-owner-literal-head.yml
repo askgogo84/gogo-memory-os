@@ -1,0 +1,32 @@
+name: Open-loop meeting memories — literal HEAD owner/consent diagnostic
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-openloop-meeting-memory-owner-testonly.mjs'
+      - '.github/workflows/openloop-meeting-memory-owner-literal-head.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  openloop-meeting-memory-owner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: \${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Confirm exact literal feature SHA
+        env:
+          EXPECTED_SHA: \${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install pinned inert test dependencies
+        run: npm ci --ignore-scripts
+      - name: Execute unchanged meeting-memory reader with fictional intercepted DB/upsert
+        run: node scripts/verify-openloop-meeting-memory-owner-testonly.mjs
