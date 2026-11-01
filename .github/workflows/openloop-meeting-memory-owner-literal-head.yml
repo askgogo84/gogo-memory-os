@@ -13,11 +13,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: \${{ github.event.pull_request.head.sha || github.sha }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Confirm exact literal feature SHA
         env:
-          EXPECTED_SHA: \${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           ACTUAL_SHA=$(git rev-parse HEAD)
           echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
