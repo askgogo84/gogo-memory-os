@@ -11,7 +11,7 @@ export async function tryJobCommand(params: { actor: AgentActor; surface: AgentS
   const tg = params.actor.legacyTelegramId
   const prefsText = parseJobPrefsCommand(params.text)
   if (prefsText) {
-    await saveJobPrefs(tg, prefsText)
+    if (!(await saveJobPrefs(tg, prefsText))) return done("I couldn't save your job preferences just now. Nothing was stored; please try again.", 'job-prefs')
     return done(jobPrefsReply(jobPrefsFrom(prefsText)), 'job-prefs')
   }
   if (isJobRadarRequest(params.text)) {

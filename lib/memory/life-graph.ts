@@ -140,13 +140,27 @@ export function tripLines(trips: Trip[], tz = 'Asia/Kolkata', now = Date.now()):
   return out.slice(0, 24)
 }
 
+/**
+ * Exact owner (P0.1): the canonical owner string and the value to query by — the exact number for a safe id, the
+ * exact decimal string above 2^53 (never Number-rounded). Null for a rounded number or a malformed id.
+ */
+function ownerKey(telegramId: number | string): { owner: string; key: number | string } | null {
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return null
+  const owner = String(telegramId ?? '').trim(), legacy = Number(owner)
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner)) return null
+  return { owner, key: Number.isSafeInteger(legacy) && String(legacy) === owner ? legacy : owner }
+}
+const ownRow = (r: any, owner: string) => r?.telegram_id == null || String(r.telegram_id) === owner
+
 /** The user's trips: life_events from 2 days ago to 45 days ahead (and undated stays), linked. Fails soft to []. */
 export async function loadTrips(telegramId: number | string, now = new Date()): Promise<Trip[]> {
+  const id = ownerKey(telegramId)
+  if (!id) return []
   try {
     const lower = new Date(now.getTime() - 2 * DAY).toISOString(), upper = new Date(now.getTime() + 45 * DAY).toISOString()
     const { data, error } = await supabaseAdmin.from('life_events')
       .select('id,event_type,subtype,title,provider,start_at,end_at,location,confirmation_ref,lifecycle_state,metadata_json')
-      .eq('telegram_id', String(telegramId))
+      .eq('telegram_id', id.owner)
       .not('lifecycle_state', 'in', '(cancelled,expired)')
       .or(`and(start_at.gte.${lower},start_at.lte.${upper}),and(end_at.gte.${lower},start_at.lte.${upper}),and(start_at.is.null,subtype.eq.hotel_stay)`)
       .order('start_at', { ascending: true, nullsFirst: false })
@@ -157,10 +171,11 @@ export async function loadTrips(telegramId: number | string, now = new Date()): 
     // still links. A ticket already present as a life event is not added twice.
     const promoted = new Set(items.map(i => String(i.meta?.travel_ticket_id || '')).filter(Boolean))
     const { data: tickets } = await supabaseAdmin.from('travel_tickets')
-      .select('id,type,from_city,to_city,depart_at,arrive_at,airline,flight_no,train_no,train_name,pnr')
-      .eq('telegram_id', Number(telegramId)).gte('depart_at', lower).lte('depart_at', upper).limit(40)
+      .select('id,telegram_id,type,from_city,to_city,depart_at,arrive_at,airline,flight_no,train_no,train_name,pnr')
+      .eq('telegram_id', id.key).gte('depart_at', lower).lte('depart_at', upper).limit(40)
       .then(r => r, () => ({ data: [] as any[] }))
     for (const t of (tickets || []) as any[]) {
+      if (!ownRow(t, id.owner)) continue
       if (promoted.has(String(t.id)) || (t.type !== 'flight' && t.type !== 'train')) continue
       items.push({
         id: `tt:${t.id}`, kind: t.type, title: t.type === 'flight' ? [t.airline || 'Flight', t.flight_no, `${t.from_city} → ${t.to_city}`].filter(Boolean).join(' ') : [t.train_name || 'Train', t.train_no, `${t.from_city} → ${t.to_city}`].filter(Boolean).join(' '),
@@ -309,10 +324,12 @@ function expiredIso(v: string | null, now: number) {
 
 /** Passports and IDs the user saved (no numbers selected). Fails soft to []. */
 export async function loadTravelDocs(telegramId: number | string, now = Date.now()): Promise<TravelDoc[]> {
+  const id = ownerKey(telegramId)
+  if (!id) return []
   try {
-    const { data } = await supabaseAdmin.from('documents').select('doc_type,title,extracted,expires_on,created_at')
-      .eq('telegram_id', Number(telegramId)).in('doc_type', ['passport', 'id_document']).order('created_at', { ascending: false }).limit(8)
-    return ((data || []) as any[]).map(r => {
+    const { data } = await supabaseAdmin.from('documents').select('telegram_id,doc_type,title,extracted,expires_on,created_at')
+      .eq('telegram_id', id.key).in('doc_type', ['passport', 'id_document']).order('created_at', { ascending: false }).limit(8)
+    return ((data || []) as any[]).filter(r => ownRow(r, id.owner)).map(r => {
       const f = r.extracted?.fields || {}
       const expiry = r.expires_on || r.extracted?.expiryHuman || f.expiry_date || null
       return { kind: r.doc_type, label: r.extracted?.userLabel || null, holder: f.name || null, expiry: expiry ? String(expiry).slice(0, 20) : null, expired: expiredIso(r.expires_on, now), title: String(r.title || '') } as TravelDoc

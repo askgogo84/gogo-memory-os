@@ -150,11 +150,15 @@ function safeText(value:unknown,max=1200){
 
 const userSandboxName=browserSandboxNameFor
 
-async function canonicalBrowserOwnerId(value:string){
-  const raw=String(value||'').trim()
+// Exact owner (P0.1): a legacy numeric id is looked up by its exact decimal string, never through Number(), so
+// distinct 64-bit ids cannot alias one sandbox; a rounded number or non-canonical digits are refused.
+async function canonicalBrowserOwnerId(value:string|number){
+  if(typeof value==='number'&&!Number.isSafeInteger(value))throw new Error('browser_owner_identity_unsafe')
+  const raw=String(value??'').trim()
   if(!raw)throw new Error('browser_owner_missing')
   if(!/^-?\d+$/.test(raw))return raw
-  const {data,error}=await supabaseAdmin.from('users').select('id').eq('telegram_id',Number(raw)).maybeSingle()
+  if(!/^-?(?:0|[1-9]\d{0,18})$/.test(raw))throw new Error('browser_owner_identity_invalid')
+  const {data,error}=await supabaseAdmin.from('users').select('id').eq('telegram_id',raw).maybeSingle()
   if(error)throw new Error(`browser_owner_lookup_failed:${error.message}`)
   return data?.id?String(data.id):raw
 }
