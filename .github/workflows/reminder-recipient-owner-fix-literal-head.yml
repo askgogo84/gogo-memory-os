@@ -1,0 +1,45 @@
+name: Reminder recipient owner isolation — literal PR HEAD
+on:
+  pull_request:
+    paths:
+      - 'app/api/cron/reminders/route.ts'
+      - 'scripts/verify-reminder-recipient-owner-fix.mjs'
+      - '.github/workflows/reminder-recipient-owner-fix-literal-head.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reminder-recipient-exact-owner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert literal PR feature HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Full registered regressions on literal source HEAD
+        run: npm test
+      - name: Typecheck on literal source HEAD
+        run: npm run typecheck
+      - name: Production fixture build on literal source HEAD
+        run: npm run build
+      - name: Real reminder helper fault-injection — five controls and 14 mandatory tests
+        run: node scripts/verify-reminder-recipient-owner-fix.mjs
