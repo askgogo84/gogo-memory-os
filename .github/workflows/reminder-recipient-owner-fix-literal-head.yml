@@ -41,5 +41,5 @@ jobs:
         run: npm run typecheck
       - name: Production fixture build on literal source HEAD
         run: npm run build
-      - name: Real reminder helper fault-injection — five controls and 14 mandatory tests
+      - name: Real reminder helper fault-injection — five controls and 16 mandatory tests
         run: node scripts/verify-reminder-recipient-owner-fix.mjs
