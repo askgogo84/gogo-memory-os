@@ -121,10 +121,11 @@ function canonicalReminderWhatsApp(value: unknown): string | null {
 }
 
 async function findWhatsAppForReminder(reminder: any): Promise<string | null> {
-  // Explicit friend destinations still require the existing F2F/opt-out gates.
-  if (reminder.whatsapp_to) return reminder.whatsapp_to
   const owner = exactReminderOwner(reminder.telegram_id)
   if (!owner) return null
+  // Even explicit friend destinations need an exactly identified owning actor.
+  // Existing default-off F2F/opt-out gates still determine whether to send.
+  if (reminder.whatsapp_to) return reminder.whatsapp_to
   const { data, error } = await supabaseAdmin
     .from('users')
     .select('telegram_id, whatsapp_id, phone')
