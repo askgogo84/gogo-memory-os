@@ -100,39 +100,55 @@ async function resolveUserTimezone(telegramId: number | null | undefined): Promi
   return data?.timezone || 'Asia/Kolkata'
 }
 
+// Privileged reminder-owner lookups must preserve exact signed BIGINT identities.
+// Never round unsafe numbers or infer an owner from a phone-number suffix.
+function exactReminderOwner(value: unknown): string | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  if (typeof value !== 'string' || !/^-?[1-9][0-9]*$/.test(value)) return null
+  try {
+    const id = BigInt(value)
+    return id >= BigInt('-9223372036854775808') && id <= BigInt('9223372036854775807') ? value : null
+  } catch { return null }
+}
+
+// Compare full, already-international numbers only. Missing country codes and
+// differing country prefixes must never elevate friend reminders to owner actions.
+function canonicalReminderWhatsApp(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const raw = value.trim().replace(/^whatsapp:/i, '')
+  if (!/^\+?[1-9][0-9]{10,14}$/.test(raw)) return null
+  return raw.startsWith('+') ? raw.slice(1) : raw
+}
+
 async function findWhatsAppForReminder(reminder: any): Promise<string | null> {
+  // Explicit friend destinations still require the existing F2F/opt-out gates.
   if (reminder.whatsapp_to) return reminder.whatsapp_to
-  if (reminder.telegram_id) {
-    const { data } = await supabaseAdmin
-      .from('users')
-      .select('whatsapp_id, phone')
-      .eq('telegram_id', reminder.telegram_id)
-      .maybeSingle()
-    if (data?.whatsapp_id) return data.whatsapp_id
-    if (data?.phone) return data.phone
-  }
-  return null
-}
-
-// Quick-Reply buttons (Done / Snooze 10m / Move to 8pm) mutate the reminder row by
-// the OWNER's telegram_id, so a tap only works for the person who owns the row. A
-// friend-reminder recipient does NOT own the row — their tap 404s ("couldn't find a
-// recent reminder"). So buttons are for the owner's OWN reminders only: true iff the
-// delivery number is the owner's own WhatsApp number. Note both owner and friend
-// reminders carry whatsapp_to, so we compare numbers (last 10 digits) rather than
-// gating on whatsapp_to being set.
-async function reminderGoesToOwner(reminder: any, whatsappTo: string): Promise<boolean> {
-  if (!reminder.telegram_id) return false
-  const { data } = await supabaseAdmin
+  const owner = exactReminderOwner(reminder.telegram_id)
+  if (!owner) return null
+  const { data, error } = await supabaseAdmin
     .from('users')
-    .select('whatsapp_id')
-    .eq('telegram_id', reminder.telegram_id)
+    .select('telegram_id, whatsapp_id, phone')
+    .eq('telegram_id', owner)
     .maybeSingle()
-  const ownDigits = String(data?.whatsapp_id || '').replace(/\D/g, '').slice(-10)
-  const toDigits = String(whatsappTo || '').replace(/\D/g, '').slice(-10)
-  return !!ownDigits && ownDigits === toDigits
+  if (error || exactReminderOwner(data?.telegram_id) !== owner) return null
+  return data?.whatsapp_id || data?.phone || null
 }
 
+// Owner-only quick replies must bind both exact database owner and complete
+// international WhatsApp identity. A shared ten-digit suffix proves nothing.
+async function reminderGoesToOwner(reminder: any, whatsappTo: string): Promise<boolean> {
+  const owner = exactReminderOwner(reminder.telegram_id)
+  if (!owner) return false
+  const { data, error } = await supabaseAdmin
+    .from('users')
+    .select('telegram_id, whatsapp_id')
+    .eq('telegram_id', owner)
+    .maybeSingle()
+  if (error || exactReminderOwner(data?.telegram_id) !== owner) return false
+  const from = canonicalReminderWhatsApp(data?.whatsapp_id)
+  const to = canonicalReminderWhatsApp(whatsappTo)
+  return from !== null && to !== null && from === to
+}
 
 export async function GET(req: Request) {
   if (!isAuthorized(req)) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
