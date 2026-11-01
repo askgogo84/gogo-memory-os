@@ -10,6 +10,12 @@ permissions:
 jobs:
   email-proactive-delivery:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
     steps:
       - uses: actions/checkout@v4
         with:
@@ -24,9 +30,15 @@ jobs:
           test "$ACTUAL_SHA" = "$EXPECTED_SHA"
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: 'npm'
-      - name: Install locked test dependencies without lifecycle scripts
-        run: npm ci --ignore-scripts
-      - name: Test unchanged candidate proactive email sender with fictional inputs and zero network
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Full registered regressions on literal feature head
+        run: npm test
+      - name: Typecheck on literal feature head
+        run: npm run typecheck
+      - name: Production build with fixture credentials
+        run: npm run build
+      - name: Test unchanged proactive email sender with fictional inputs and zero network
         run: node scripts/verify-email-proactive-delivery-testonly.mjs
