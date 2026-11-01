@@ -1,0 +1,37 @@
+# TEST ONLY / EXPECTED PRIVACY SAFETY RED. Never release this diagnostic workflow.
+name: SecondBrain generated-sharing privacy (TEST ONLY - safety RED)
+
+on:
+  pull_request:
+    paths:
+      - scripts/verify-secondbrain-synthesis-sharing-privacy-testonly.mjs
+      - .github/workflows/secondbrain-synthesis-sharing-privacy-testonly.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-privacy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Confirm literal GitHub head, not synthetic merge
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Execute actual shipped source with synthetic private owner context only
+        run: node scripts/verify-secondbrain-synthesis-sharing-privacy-testonly.mjs
