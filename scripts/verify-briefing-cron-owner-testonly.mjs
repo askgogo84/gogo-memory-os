@@ -68,6 +68,8 @@ function fixture(opts = {}) {
     },
   }
   const context = {
+    // Synthetic inert key only to reach the mocked email-send branch; no real provider I/O.
+    process:{env:{RESEND_API_KEY:'fictional-unusable-test-key'}},
     Date, Number, String, Math, console, supabaseAdmin:db,
     nowIstParts:() => ({date:'2026-11-01',hour:10,minute:0}),
     reconcileBriefingEmailReceipts:async()=>0,
@@ -193,7 +195,9 @@ await check('owner B cannot claim owner-A idempotency key',true,async()=>{
 await check('owner B scan cursor must preserve exact distinct owner identity',true,async()=>{
   const h=fixture({rows:[user(B)]})
   await quietRun(h)
-  assert.ok(!h.cursorSaves.some(x=>String(x.cursor_value)===A),'owner-B cursor silently rounded to A')
+  const nextScan=h.queries.filter(x=>x.table==='users'&&x.kind==='scan').at(-1)
+  assert.ok(nextScan,'expected a second scan after the fictional owner')
+  assert.notEqual(String(nextScan.gt_telegram_id),A,'owner B advanced queue cursor as owner A')
 })
 await check('owner B recheck query must never fetch owner A',true,async()=>{
   const h=fixture({rows:[user(B)]})
