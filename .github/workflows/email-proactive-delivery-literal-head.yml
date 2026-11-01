@@ -1,0 +1,32 @@
+name: Proactive email durable delivery — literal PR HEAD isolated diagnostic
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-email-proactive-delivery-testonly.mjs'
+      - '.github/workflows/email-proactive-delivery-literal-head.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  email-proactive-delivery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert literal feature head, not synthetic merge
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install locked test dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Test unchanged candidate proactive email sender with fictional inputs and zero network
+        run: node scripts/verify-email-proactive-delivery-testonly.mjs
