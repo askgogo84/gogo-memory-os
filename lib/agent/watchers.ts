@@ -446,15 +446,27 @@ async function createWebIdea(telegramId: string, condition: WebSearchWatcherCond
   if (error) throw new Error('watch_alert_idea_write_failed')
 }
 
-async function sendWhatsAppIfWanted(telegramId: string, delivery: WatcherDelivery, message: string) {
+async function sendWhatsAppIfWanted(telegramId: string | number, delivery: WatcherDelivery, message: string) {
   if (delivery !== 'whatsapp' && delivery !== 'both') return
-  const tg = Number(telegramId)
-  if (!Number.isFinite(tg)) return
-  const { data } = await supabaseAdmin.from('users').select('whatsapp_id').eq('telegram_id', tg).maybeSingle()
-  const phone = String(data?.whatsapp_id || '').trim()
+  // Service-role recipient resolution must never round signed 64-bit owners.
+  // Reject numeric IDs that have already lost precision before reaching this helper.
+  if (typeof telegramId !== 'string' && (typeof telegramId !== 'number' || !Number.isSafeInteger(telegramId))) return
+  const owner = String(telegramId)
+  if (owner.length > 20 || !/^-?[1-9]\\d*$/.test(owner)) return
+  const exactId = BigInt(owner)
+  if (exactId < BigInt('-9223372036854775808') || exactId > BigInt('9223372036854775807')) return
+  const safeId = Number(owner)
+  const queryOwner = Number.isSafeInteger(safeId) ? safeId : owner
+  const { data, error } = await supabaseAdmin.from('users')
+    .select('telegram_id,whatsapp_id').eq('telegram_id', queryOwner).maybeSingle()
+  if (error || !data) return
+  // A JSON-decoded unsafe Number is not trustworthy even if it appears to match.
+  if (typeof data.telegram_id !== 'string' && (typeof data.telegram_id !== 'number' || !Number.isSafeInteger(data.telegram_id))) return
+  if (String(data.telegram_id) !== owner) return
+  const phone = String(data.whatsapp_id || '').trim()
   if (!phone) return
   await sendWhatsAppMessage(phone, message)
-  await recordCostEvent({ telegramId, category:'whatsapp_outbound', metadata:{ source:'background_gogo' } })
+  await recordCostEvent({ telegramId: owner, category:'whatsapp_outbound', metadata:{ source:'background_gogo' } })
 }
 
 function searchFingerprint(results: WebSearchResult[]) {
