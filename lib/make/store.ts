@@ -57,7 +57,7 @@ function exactLegacyOwner(value: unknown): string | null {
   if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
   if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'bigint') return null
   const owner = String(value).trim()
-  return /^[1-9]\d{0,18}$/.test(owner) ? owner : null
+  return /^-?[1-9]\d{0,18}$/.test(owner) ? owner : null
 }
 async function ownerTelegramId(actor: Pick<AgentActor, 'legacyTelegramId'> & { userId?: string }): Promise<string | null> {
   if (actor.userId) {
