@@ -135,7 +135,7 @@ async function runDelivery(req: NextRequest) {
     const storedCursor = saved?.cursor_value
     const cursorText = storedCursor == null ? String(Number.MIN_SAFE_INTEGER) : String(storedCursor)
     if ((storedCursor != null && typeof storedCursor !== 'string' && (typeof storedCursor !== 'number' || !Number.isSafeInteger(storedCursor))) ||
-        !/^(?:0|-?[1-9]\\d*)$/.test(cursorText) ||
+        !/^(?:0|-?[1-9]\d*)$/.test(cursorText) ||
         BigInt(cursorText) < BigInt('-9223372036854775808') || BigInt(cursorText) > BigInt('9223372036854775807')) {
       throw new Error('briefing_cursor_identity_invalid')
     }
@@ -155,7 +155,7 @@ async function runDelivery(req: NextRequest) {
         const persistedOwner = user.telegram_id
         const ownerExact = typeof persistedOwner === 'string' || typeof persistedOwner === 'number' ? String(persistedOwner) : ''
         if ((typeof persistedOwner !== 'string' && (typeof persistedOwner !== 'number' || !Number.isSafeInteger(persistedOwner))) ||
-            !/^-?[1-9]\\d*$/.test(ownerExact) ||
+            !/^-?[1-9]\d*$/.test(ownerExact) ||
             BigInt(ownerExact) < BigInt('-9223372036854775808') || BigInt(ownerExact) > BigInt('9223372036854775807')) {
           throw new Error('briefing_owner_identity_invalid')
         }
