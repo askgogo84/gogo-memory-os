@@ -110,7 +110,7 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
     const {data:consent,error}=await supabaseAdmin.from('user_consent_settings')
       .select('gmail_enabled').eq('telegram_id',actor.legacyTelegramId).maybeSingle()
     if(error)throw new Error('workspace_email_consent_unavailable')
-    if(consent?.gmail_enabled===false)throw new Error('workspace_email_reading_disabled')
+    if(consent?.gmail_enabled!==true)throw new Error('workspace_email_reading_disabled')
   }
   // Google Drive while AskGogo's own Google verification is pending (24 Oct): use the person's Composio Drive
   // connection when there is one; their own Workspace token is still preferred when it works.
