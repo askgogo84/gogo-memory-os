@@ -308,7 +308,7 @@ export async function loadKnownDetails(actor: AgentActor): Promise<KnownDetails 
   const raw: unknown = actor.legacyTelegramId
   if (typeof raw === 'number' && !Number.isSafeInteger(raw)) return null
   const owner = String(raw ?? '').trim(), tg = Number(owner)
-  if (!/^[1-9]\d{0,18}$/.test(owner) || !Number.isSafeInteger(tg) || String(tg) !== owner) return null
+  if (!/^-?[1-9]\d{0,18}$/.test(owner) || !Number.isSafeInteger(tg) || String(tg) !== owner) return null
   const [user, mems, prefs] = await Promise.all([
     supabaseAdmin.from('users').select('id,telegram_id,name,email,gmail_email').eq('telegram_id', tg).maybeSingle().then(r => r.data as any, () => null),
     supabaseAdmin.from('memories').select('content').eq('telegram_id', tg).order('created_at', { ascending: false }).limit(40).then(r => (r.data || []).map((m: any) => String(m.content || '')), () => []),

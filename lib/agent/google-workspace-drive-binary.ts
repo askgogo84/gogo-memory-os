@@ -41,7 +41,7 @@ async function credentials(actor:AgentActor){
   const raw:unknown=actor.legacyTelegramId
   if(typeof raw==='number'&&!Number.isSafeInteger(raw))throw new Error('workspace_owner_invalid')
   const owner=String(raw??'').trim(),tg=Number(owner)
-  if(!/^[1-9]\d{0,18}$/.test(owner)||!Number.isSafeInteger(tg)||String(tg)!==owner)throw new Error('workspace_owner_invalid')
+  if(!/^-?[1-9]\d{0,18}$/.test(owner)||!Number.isSafeInteger(tg)||String(tg)!==owner)throw new Error('workspace_owner_invalid')
   const {data,error}=await supabaseAdmin.from('users')
     .select('gmail_connected,gmail_access_token,gmail_refresh_token,telegram_id')
     .eq('telegram_id',tg).maybeSingle()
@@ -60,7 +60,7 @@ async function refresh(actor:AgentActor,refreshToken:string){
   const token=await refreshGmailAccessToken(refreshToken)
   if(!token)throw new Error('workspace_reconnect_required')
   const raw:unknown=actor.legacyTelegramId
-  if(typeof raw!=='number'||!Number.isSafeInteger(raw)||raw<=0)return token
+  if(typeof raw!=='number'||!Number.isSafeInteger(raw)||raw===0)return token
   const {error}=await supabaseAdmin.from('users').update({gmail_access_token:encryptGoogleToken(token)}).eq('telegram_id',raw)
   if(error)console.error('WORKSPACE_DRIVE_BINARY_TOKEN_PERSIST_FAILED:',error.message)
   return token

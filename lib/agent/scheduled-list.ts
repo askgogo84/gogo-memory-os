@@ -90,7 +90,7 @@ const ownerKey = (tg: string): number | string => { const n = Number(tg); return
 export async function loadScheduledList(telegramId: string | number, now = Date.now()) {
   if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) throw new Error('scheduled_owner_invalid')
   const tg = String(telegramId ?? '').trim()
-  if (!/^[1-9]\d{0,18}$/.test(tg)) throw new Error('scheduled_owner_invalid')
+  if (!/^-?[1-9]\d{0,18}$/.test(tg)) throw new Error('scheduled_owner_invalid')
   const key = ownerKey(tg)
   const since = new Date(now - 3600_000).toISOString()
   const [rem, wat, goals, user] = await Promise.all([
