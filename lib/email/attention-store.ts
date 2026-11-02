@@ -22,6 +22,7 @@ function clean(value: unknown, max = 600) {
 // ---------- rules and events ----------
 
 export async function loadRules(telegramId: number): Promise<AttentionRule[]> {
+  if (!exactEmailAttentionOwner(telegramId)) throw new Error('email_attention_owner_invalid')
   const { data, error } = await supabaseAdmin.from('email_attention_rules')
     .select('id,kind,match_type,match_value,category,label,source').eq('telegram_id', telegramId).eq('active', true).limit(300)
   if (error) { console.error('EMAIL_RULES_READ_FAILED:', error.message); return [] }
@@ -29,6 +30,7 @@ export async function loadRules(telegramId: number): Promise<AttentionRule[]> {
 }
 
 export async function saveRule(telegramId: number, rule: AttentionRule): Promise<string | null> {
+  if (!exactEmailAttentionOwner(telegramId)) throw new Error('email_attention_owner_invalid')
   let q = supabaseAdmin.from('email_attention_rules').select('id').eq('telegram_id', telegramId)
     .eq('match_type', rule.matchType).eq('match_value', rule.matchValue.toLowerCase())
   q = rule.category ? q.eq('category', rule.category) : q.is('category', null)
@@ -221,7 +223,9 @@ export async function polishAsks(picked: ScoredEmail[], polish: Polisher = defau
 // ---------- the card ----------
 
 export async function buildAttentionCard(actor: Pick<AgentActor, 'legacyTelegramId' | 'timezone'>, opts: { polish?: Polisher | null } = {}) {
-  const telegramId = Number(actor.legacyTelegramId)
+  const owner = exactEmailAttentionOwner(actor.legacyTelegramId)
+  if (!owner) throw new Error('email_attention_owner_invalid')
+  const telegramId = Number(owner)
   const [read, rules] = await Promise.all([readAttentionSources(telegramId), loadRules(telegramId)])
   if (!read.connected) return { connected: false as const, text: `📬 Connect your email first and I'll tell you only what needs you.\n\nOpen https://app.askgogo.in/dashboard/settings/email to forward your mail or sign in with Google.`, pick: null }
   const pick: AttentionPick = pickAttention(read.emails, { rules, ownEmail: read.ownEmail, repliedSenders: read.repliedSenders })
@@ -279,7 +283,9 @@ export type AttentionCommandResult = Result | { rewrite: string }
 export async function handleEmailAttentionCommand(params: { actor: AgentActor; text: string; polish?: Polisher }): Promise<AttentionCommandResult | null> {
   const cmd: AttentionCommand | null = parseAttentionCommand(params.text) || (isUndo(params.text) ? { type: 'undo' } : null)
   if (!cmd) return null
-  const telegramId = Number(params.actor.legacyTelegramId)
+  const owner = exactEmailAttentionOwner(params.actor.legacyTelegramId)
+  if (!owner) throw new Error('email_attention_owner_invalid')
+  const telegramId = Number(owner)
 
   if (cmd.type === 'show') {
     try { return ok((await buildAttentionCard(params.actor, { polish: params.polish })).text, 'email-attention-show') }
