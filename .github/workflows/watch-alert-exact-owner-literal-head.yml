@@ -5,6 +5,7 @@ on:
       - 'lib/agent/watch-alert-delivery.ts'
       - 'lib/services/notification-delivery.ts'
       - 'scripts/verify-watch-alert-exact-owner-fix.mjs'
+      - 'scripts/verify-persistent-watch-handoff.mts'
       - '.github/workflows/watch-alert-exact-owner-literal-head.yml'
 permissions:
   contents: read
