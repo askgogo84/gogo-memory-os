@@ -1,0 +1,45 @@
+name: Watcher outbound exact-owner recipient isolation — literal PR HEAD
+on:
+  pull_request:
+    paths:
+      - 'lib/agent/watchers.ts'
+      - 'scripts/verify-watcher-outbound-owner-bound-fix.mts'
+      - '.github/workflows/watcher-outbound-owner-bound-literal-head.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  watcher-outbound-owner-bound:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert literal feature HEAD, never synthetic PR merge
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Full registered regressions on exact source HEAD
+        run: npm test
+      - name: Typecheck on exact source HEAD
+        run: npm run typecheck
+      - name: Production fixture build on exact source HEAD
+        run: npm run build
+      - name: Run sealed original-source watcher recipient and owner-binding regressions
+        run: npx --no-install tsx scripts/verify-watcher-outbound-owner-bound-fix.mts
