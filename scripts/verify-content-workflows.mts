@@ -4,6 +4,7 @@ import {runInNewContext} from 'node:vm'
 import {randomUUID} from 'node:crypto'
 import ts from 'typescript'
 import * as workflows from '../lib/agent/content-workflows'
+import * as modelPolicy from '../lib/services/anthropic-models'
 import {formatOutgoingText} from '../lib/bot/format-response'
 import {handleInboxReplyRead} from '../lib/agent/open-loops'
 import {tryCancelRunFromChat} from '../lib/agent/run-cancel'
@@ -71,6 +72,7 @@ class OpenAIFixture {chat = {completions: {create: async (payload: any) => {
   return {choices: [{message: {content: 'Fallback draft'}}]}
 }}}}
 const model = load('lib/services/claude.ts', {
+  '@/lib/services/anthropic-models': modelPolicy,
   '@anthropic-ai/sdk': {default: AnthropicFixture}, openai: {default: OpenAIFixture},
   '@/lib/bot/memory-redaction': {redactSecretShapedText: (s: string) => s}, '@/lib/agent/content-workflows': workflows,
 }, {OPENAI_API_KEY: 'fixture-not-a-real-key'})
