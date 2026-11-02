@@ -349,6 +349,8 @@ export async function runBrain(p: { phone: string; telegramId: number; text: str
   if (await import('./watch-command').then(m => m.isWatcherStatusQuery(p.text), () => false)) return null
   // 2 Nov (Dots parity): "what's scheduled" reads saved schedules, never chat history.
   if (await import('./scheduled-list').then(m => m.isScheduledListQuery(p.text), () => false)) return null
+  // 2 Nov live: open product asks go to Google Shopping results, not a chat-history answer.
+  if (await import('./product-discovery').then(m => !!m.parseProductAsk(p.text), () => false)) return null
   if (await import('@/lib/dashboard/activity').then(m => m.isUsageQuery(p.text), () => false)) return null
   if (await import('./jobs').then(m => m.isJobCommand(p.text), () => false)) return null
   const ctx = await loadBrainContext(p).catch(() => null)

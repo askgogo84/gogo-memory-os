@@ -132,6 +132,7 @@ const common = {'@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>f
   '@/lib/bot/pending-question-resolver':{tryResolvePendingQuestion:async()=>null},
   // The real run-cancel handler: a writing request is not a cancel, so it returns null without any read.
   '@/lib/agent/run-cancel':{tryCancelRunFromChat},
+  '@/lib/agent/product-discovery':{tryProductDiscovery:async()=>null},'@/lib/agent/scheduled-list':{tryGetScheduledList:async()=>null},
   // The real ticket matcher: a writing request is not a ticket/QR ask, so no ticket lookup ever runs.
   '@/lib/services/asset-memory':{isTicketRetrievalAsk,buildTicketRetrievalReply:async()=>{throw new Error('ticket retrieval must not claim a content workflow')}},
   // Inert gold-rate watch: a writing request is never a gold alert, so it must return null with no I/O.
