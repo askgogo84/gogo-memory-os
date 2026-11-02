@@ -1,0 +1,48 @@
+name: Proactive Gmail email durable-claim regression — literal PR HEAD
+on:
+  pull_request:
+    paths:
+      - 'lib/agent/autonomy-pulse.ts'
+      - 'supabase/migrations/20261102092000_autonomy_email_atomic_claim.sql'
+      - 'scripts/verify-autonomy-email-durable-claim.mjs'
+      - '.github/workflows/autonomy-email-durable-claim-literal-head.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  proactive-email-durable-claim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert literal source SHA, never synthetic PR merge
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Full existing registered regressions
+        run: npm test
+      - name: Generate Next types
+        run: npm run typegen
+      - name: Typecheck with fixture credentials
+        run: npm run typecheck
+      - name: Fixture production build
+        run: npm run build
+      - name: Synthetic original-source durable claim, concurrency, and no-retry checks
+        run: node scripts/verify-autonomy-email-durable-claim.mjs
