@@ -46,6 +46,7 @@ import { tryRunAppointmentResearch } from './appointment-research'
 import { armApprovedRestaurantReservation, continueRestaurantReservationGuestReply, looksLikeReservationGuestReply, queueRestaurantReservationResearch, tryRunRestaurantReservation } from './restaurant-reservation'
 import { isDecisionRecallQuery } from './recall-query'
 import { tryCancelRunFromChat } from './run-cancel'
+import { tryGetScheduledList } from './scheduled-list'
 
 export type WhatsAppAgentResult = {
   text: string
@@ -675,6 +676,9 @@ export async function tryRunWhatsAppAgent(params: {
   // A named task ("how's the Goa trip going") gets its own card; no matching run returns null.
   const taskStatus = await tryGetTaskStatus({ telegramId:actor.legacyTelegramId }, params.text)
   if (taskStatus) return taskStatus
+
+  const scheduledList = await tryGetScheduledList({ actor, text:params.text })
+  if (scheduledList) return scheduledList
 
   const autonomyStatus = await tryGetAutonomyStatus({ actor, text:params.text })
   if (autonomyStatus) return { ...autonomyStatus, handledBy:String(autonomyStatus.handledBy || 'autonomy-status') }
