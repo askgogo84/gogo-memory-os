@@ -98,7 +98,7 @@ export async function audit(workspaceId: string, actor: string, action: string, 
 /** No Number() on workspace owner identities: Postgres BIGINT has 64-bit precision. */
 function exactWorkspaceNameOwner(value: unknown): string | null {
   if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
-  if (typeof value !== 'string' || !/^-?[1-9]\\d*$/.test(value)) return null
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
   return value
 }
 
