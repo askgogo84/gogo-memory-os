@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { allowedByTopic, dueForCheck, getAlertPreferences, isQuietHour, topicForPulse, DEFAULT_ALERT_PREFERENCES, type AlertPreferences, type AlertTopic } from './alert-preferences'
 import { browserFailureSummary } from './browser-failure-notice'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -302,7 +302,8 @@ async function sendPulse(telegramId:string){
 
   const activeSession=await hasRecentWhatsAppSession(telegramId)
   const emailCard=await sendProactiveEmailCard(telegramId,user,timezone,prefs,activeSession)
-  if(emailCard.sent)return emailCard
+  // An unknown provider outcome or broken receipt is not permission to send another alert in this pass.
+  if(emailCard.sent||emailCard.reason==='outcome_unknown'||emailCard.reason==='recording_failed')return emailCard
 
   const pulse=await buildPulse(telegramId,timezone,prefs)
   if(!pulse.items.length)return {sent:false,reason:'nothing_material'}
@@ -353,7 +354,11 @@ async function sendPulse(telegramId:string){
 }
 
 // The selective email card: only email that clearly needs the person, at most 2 a day, each email once.
+// Proactive notifications use a DB-atomic owner/day reservation BEFORE the first provider attempt.
+// A lost/unknown provider outcome leaves the reservation permanently fenced: manual review only.
 async function sendProactiveEmailCard(telegramId:string,user:any,timezone:string,prefs:AlertPreferences,activeSession:boolean):Promise<{sent:boolean;reason?:string;count?:number}>{
+  if(!user?.whatsapp_id||String(user.telegram_id??'')!==telegramId)
+    return {sent:false,reason:'recipient_owner_unverified'}
   const {data:loops,error:loopError}=await supabaseAdmin.from('agent_open_loops')
     .select('id,kind,title,summary,source_type,source_id,evidence_json,created_at')
     .eq('telegram_id',telegramId).eq('status','active').in('source_type',['gmail_thread','gmail_service_notice'])
@@ -364,18 +369,45 @@ async function sendProactiveEmailCard(telegramId:string,user:any,timezone:string
   const history=await recentSurfacedKeys(telegramId,30*24)
   const alreadySurfaced=new Set(history.flatMap(r=>r.keys))
   const today=localDay(Date.now(),timezone)
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(today))return {sent:false,reason:'local_day_invalid'}
   const sentToday=history.filter(r=>r.type==='autonomy_email_sent'&&localDay(r.at,timezone)===today).reduce((n,r)=>n+r.keys.length,0)
-  const {data:ruleRows}=await supabaseAdmin.from('email_attention_rules').select('kind,match_type,match_value,category,label,source').eq('telegram_id',ownerKey(telegramId)).eq('active',true).limit(300)
+  const {data:ruleRows,error:ruleError}=await supabaseAdmin.from('email_attention_rules').select('kind,match_type,match_value,category,label,source').eq('telegram_id',ownerKey(telegramId)).eq('active',true).limit(300)
+  if(ruleError)return {sent:false,reason:'email_rules_unavailable'}
   const rules=(ruleRows||[]).map((r:any)=>({kind:r.kind,matchType:r.match_type,matchValue:String(r.match_value||''),category:r.category,label:String(r.label||''),source:r.source}))
   const picked=selectProactiveEmails(allowed,{rules,ownEmail:String(user.gmail_email||'').toLowerCase()||null,alreadySurfaced,sentToday})
   if(!picked.length)return {sent:false,reason:'no_important_email'}
+
+  // Claims are unique by exact owner and thread across all time, and the DB serializes
+  // the two-item local-day budget. Activity history alone is NOT a concurrency lock.
+  const claimToken=randomUUID()
+  const threadKeys=picked.map(p=>`email:${p.threadId||p.loopId}`)
+  const {data:claimed,error:claimError}=await supabaseAdmin.rpc('claim_autonomy_email_card',{
+    p_owner:telegramId,p_day:today,p_threads:threadKeys,p_token:claimToken,p_prior_count:sentToday,
+  })
+  if(claimError){console.error('AUTONOMY_EMAIL_CLAIM_FAILED:',claimError.message);return {sent:false,reason:'claim_unavailable'}}
+  if(claimed!==true)return {sent:false,reason:'already_claimed_or_daily_cap'}
+
   const text=decodeHtmlEntities(formatProactiveEmailCard(picked,{timezone})).replace(/\b\d{9,20}\b/g,(digits:string)=>'••••'+digits.slice(-4))
-  const delivered=activeSession
-    ?await sendWhatsApp(String(user.whatsapp_id),text)
-    :await sendWhatsAppReminderTemplate(String(user.whatsapp_id),['Gogo update',...picked.map(p=>`${p.senderName}: ${p.why}`)].join(' · ').slice(0,400))
-  if(!delivered?.sid)throw new Error('autonomy_email_delivery_not_accepted')
+  let delivered:any
+  try{
+    delivered=activeSession
+      ?await sendWhatsApp(String(user.whatsapp_id),text)
+      :await sendWhatsAppReminderTemplate(String(user.whatsapp_id),['Gogo update',...picked.map(p=>`${p.senderName}: ${p.why}`)].join(' · ').slice(0,400))
+  }catch{
+    // Provider may have accepted an apparently failed request. Never reclaim or resend.
+    console.error('AUTONOMY_EMAIL_PROVIDER_OUTCOME_UNKNOWN')
+    return {sent:false,reason:'outcome_unknown'}
+  }
+  if(!delivered?.sid)return {sent:false,reason:'outcome_unknown'}
+  const {data:accepted,error:acceptError}=await supabaseAdmin.rpc('finish_autonomy_email_card',{
+    p_owner:telegramId,p_token:claimToken,p_provider_id:String(delivered.sid),
+  })
+  if(acceptError||accepted!==true){
+    console.error('AUTONOMY_EMAIL_ACCEPTANCE_RECORD_FAILED:',acceptError?.message||'not_recorded')
+    return {sent:false,reason:'recording_failed'}
+  }
   const key=ownerKey(telegramId)
-  // "open 1" / "not important 1" bind to the latest 📬 reply and its recorded items, as with the on-demand card.
+  // "open 1" / "not important 1" bind to the latest 📬 reply, not merely the provider SID.
   const [convo,shown]=await Promise.all([
     supabaseAdmin.from('conversations').insert({telegram_id:key,role:'assistant',content:text}),
     supabaseAdmin.from('email_attention_events').insert({telegram_id:key,kind:'shown',payload:{proactive:true,gmailEmail:user.gmail_email||null,items:picked.map((p,i)=>({
@@ -385,16 +417,20 @@ async function sendProactiveEmailCard(telegramId:string,user:any,timezone:string
   ])
   if(convo.error)console.error('AUTONOMY_EMAIL_CONVERSATION_FAILED:',convo.error.message)
   if(shown.error)console.error('AUTONOMY_EMAIL_SHOWN_FAILED:',shown.error.message)
+  if(convo.error||shown.error)return {sent:false,reason:'recording_failed'}
   const loopIds=picked.map(p=>p.loopId)
   const {error:backoffError}=await supabaseAdmin.from('agent_open_loops')
     .update({proactive_backoff_until:new Date(Date.now()+30*86400_000).toISOString(),updated_at:new Date().toISOString()})
     .in('id',loopIds).eq('telegram_id',telegramId).eq('status','active')
   if(backoffError)console.error('AUTONOMY_EMAIL_BACKOFF_FAILED:',backoffError.message)
-  await supabaseAdmin.from('agent_activity').insert({
+  const {error:activityError}=await supabaseAdmin.from('agent_activity').insert({
     telegram_id:telegramId,event_type:'autonomy_email_sent',
     message:'Background Gogo surfaced email that clearly needs the person.',
-    metadata_json:{item_keys:picked.map(p=>`email:${p.threadId||p.loopId}`),open_loop_ids:loopIds,scores:picked.map(p=>p.score),categories:picked.map(p=>p.category),delivery_mode:activeSession?'freeform':'template'},
+    metadata_json:{item_keys:threadKeys,open_loop_ids:loopIds,scores:picked.map(p=>p.score),categories:picked.map(p=>p.category),
+      delivery_mode:activeSession?'freeform':'template',provider_acceptance_only:true},
   })
+  if(activityError){console.error('AUTONOMY_EMAIL_ACTIVITY_WRITE_FAILED:',activityError.message);return {sent:false,reason:'recording_failed'}}
+  // "sent" means provider accepted AND local durable records exist, not recipient-visible delivery.
   return {sent:true,count:picked.length}
 }
 
