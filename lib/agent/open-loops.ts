@@ -702,7 +702,7 @@ async function syncMeetingActionMemories(telegramId:string|number){
   if(typeof telegramId!=='string'&&typeof telegramId!=='number')return 0
   if(typeof telegramId==='number'&&(!Number.isSafeInteger(telegramId)||telegramId===0))return 0
   const owner=String(telegramId)
-  if(!/^-?[1-9]\\d*$/.test(owner))return 0
+  if(!/^-?[1-9][0-9]*$/.test(owner))return 0
   let exactOwner:bigint
   try{exactOwner=BigInt(owner)}catch{return 0}
   if(exactOwner<BigInt('-9223372036854775808')||exactOwner>BigInt('9223372036854775807'))return 0
