@@ -180,6 +180,18 @@ async function activity(telegramId: string, runId: string, eventType: string, me
   if (error) console.error('AUTONOMOUS_ACTIVITY_FAILED:', error.message)
 }
 
+// 2 Nov live: "make a grocery list … and remind me at 6 pm" failed with agent_runs_capability_check — the
+// specialist id ("grocery") was written into the capability column, which accepts only the original capability
+// set. The specialist stays in metadata_json.route; the column gets the nearest original capability.
+const SPECIALIST_CAPABILITY: Record<string, string> = {
+  orchestrator: 'memory', travel: 'travel', ticketing: 'browser', food: 'browser', grocery: 'browser', shopping: 'browser',
+  local_services: 'browser', communications: 'email', documents: 'files', calendar: 'calendar', life_events: 'memory',
+  payments: 'payments', research: 'browser', secure_browser: 'browser',
+}
+export function capabilityForSpecialist(id: unknown): string {
+  return SPECIALIST_CAPABILITY[String(id || '')] || 'memory'
+}
+
 export async function createAutonomousRun(params: {
   actor: AgentActor
   source: string
@@ -192,7 +204,7 @@ export async function createAutonomousRun(params: {
   const { data: run, error } = await supabaseAdmin.from('agent_runs').insert({
     telegram_id: telegramId,
     type: 'autonomous',
-    capability: route.primary,
+    capability: capabilityForSpecialist(route.primary),
     status: 'running',
     title: safe(params.plan.objective, 180),
     summary: 'I’m working through this request.',
