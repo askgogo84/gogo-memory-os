@@ -22,7 +22,7 @@ const OWNER=123456789, USER='fictional-uuid-owner-123'
 const state={
   consent:{telegram_id:OWNER,gmail_enabled:true},consentError:false,
   user:{id:USER,telegram_id:OWNER,gmail_connected:true,gmail_access_token:'fictional-access',gmail_refresh_token:'',timezone:'Asia/Kolkata'},
-  userError:false,queries:[],decryptions:0,refreshes:0,
+  userError:false,queryOwner:OWNER,queries:[],decryptions:0,refreshes:0,
 }
 const db={from(table){
   assert.ok(['user_consent_settings','users'].includes(table),'no other table allowed: '+table)
@@ -32,7 +32,7 @@ const db={from(table){
     async maybeSingle(){
       state.queries.push({table:this.table,fields:this.fields,filters:this.filters})
       const map=new Map(this.filters)
-      assert.equal(map.get('telegram_id'),String(OWNER),'tenant query must bind exact owner, never a rounded owner')
+      assert.equal(map.get('telegram_id'),String(state.queryOwner),'tenant query must bind exact owner, never a rounded owner')
       if(this.table==='user_consent_settings')return {data:state.consent,error:state.consentError?{message:'fictional-consent-db-unavailable'}:null}
       assert.equal(map.get('id'),USER,'credential query must also bind actor users.id')
       assert.match(this.fields,/id,telegram_id/, 'users row must include returned exact identities')
@@ -68,12 +68,12 @@ await check('BENIGN','signed negative WhatsApp owner is preserved without Number
   state.consent={telegram_id:neg,gmail_enabled:true};state.user={...state.user,telegram_id:neg}
   try{
     // The mock binds safe negative owner when explicitly switched.
-    const orig=String(OWNER)
+    state.queryOwner=neg
     const reads=state.queries.length
     const out=await actual(actor(neg))
     assert.equal(out?.access,'fictional-access')
     assert.ok(state.queries.slice(reads).every(q=>q.filters.some(([k,v])=>k==='telegram_id'&&v===String(neg))))
-  }finally{state.consent={telegram_id:old,gmail_enabled:true};state.user={...state.user,telegram_id:old}}
+  }finally{state.queryOwner=old;state.consent={telegram_id:old,gmail_enabled:true};state.user={...state.user,telegram_id:old}}
 })
 await check('BENIGN','affirmative consent but disconnected account does not decrypt',async()=>{
   state.user={...state.user,gmail_connected:false}
