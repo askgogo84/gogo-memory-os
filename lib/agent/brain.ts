@@ -347,6 +347,8 @@ export async function runBrain(p: { phone: string; telegramId: number; text: str
   if (await import('./alert-preferences-shared').then(m => !!m.alertFrequencyCommand(p.text), () => false)) return null
   // 30 Oct live: "what are you watching and why" was answered from chat history and left out two active watches.
   if (await import('./watch-command').then(m => m.isWatcherStatusQuery(p.text), () => false)) return null
+  // 2 Nov (Dots parity): "what's scheduled" reads saved schedules, never chat history.
+  if (await import('./scheduled-list').then(m => m.isScheduledListQuery(p.text), () => false)) return null
   if (await import('@/lib/dashboard/activity').then(m => m.isUsageQuery(p.text), () => false)) return null
   if (await import('./jobs').then(m => m.isJobCommand(p.text), () => false)) return null
   const ctx = await loadBrainContext(p).catch(() => null)

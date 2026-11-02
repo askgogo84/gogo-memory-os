@@ -23,6 +23,7 @@ import { processIncomingMessage } from '@/lib/bot/process-message'
 import { isDecisionRecallQuery } from '@/lib/agent/recall-query'
 import { isConnectionCapabilityQuery, tryGetAutonomyStatus } from '@/lib/agent/autonomy-status'
 import { parseTaskStatusQuery, tryGetTaskStatus } from '@/lib/agent/task-status'
+import { tryGetScheduledList } from '@/lib/agent/scheduled-list'
 import { isLinkVaultSaveRequest, isLinkVaultQuery } from '@/lib/services/link-vault'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/day-chat'
@@ -611,6 +612,12 @@ async function handleChatPost(req: NextRequest) {
     }
     // Same task-status read as WhatsApp, before the general planner can treat it as a new request.
     // A named ask with no matching task returns null and routing continues.
+    // Dots parity: "what's scheduled" lists saved schedules, same as WhatsApp.
+    const scheduledList = await tryGetScheduledList({ actor, text })
+    if (scheduledList) {
+      await saveConversation(user.telegram_id, text, scheduledList.text)
+      return NextResponse.json(scheduledList)
+    }
     if (parseTaskStatusQuery(text)) {
       const taskStatus = await tryGetTaskStatus({ telegramId: actor.legacyTelegramId }, text) || await tryGetAutonomyStatus({ actor, text })
       __trace.mark('taskStatus')
