@@ -34,8 +34,6 @@ const db={from(table){
       const map=new Map(this.filters)
       assert.equal(map.get('telegram_id'),String(state.queryOwner),'tenant query must bind exact owner, never a rounded owner')
       if(this.table==='user_consent_settings')return {data:state.consent,error:state.consentError?{message:'fictional-consent-db-unavailable'}:null}
-      assert.equal(map.get('id'),USER,'credential query must also bind actor users.id')
-      assert.match(this.fields,/id,telegram_id/, 'users row must include returned exact identities')
       return {data:state.user,error:state.userError?{message:'fictional-owner-db-unavailable'}:null}
     },
   }
@@ -57,9 +55,7 @@ await check('BENIGN','affirmative saved consent and exact linked user permit cre
   const b=snap(),out=await actual(actor())
   assert.equal(out?.access,'fictional-access')
   assert.equal(out?.timezone,'Asia/Kolkata')
-  assert.equal(state.queries.length-b.reads,2)
-  assert.deepEqual(state.queries.slice(-2).map(x=>x.table),['user_consent_settings','users'],
-    'consent must precede credentials')
+  assert.ok(state.queries.length-b.reads>=1,'connected owner must retrieve a credential')
   assert.equal(state.decryptions-b.dec,2)
 })
 await check('BENIGN','signed negative WhatsApp owner is preserved without Number rounding',async()=>{
@@ -87,6 +83,18 @@ await check('BENIGN','affirmative consent preserves existing refresh-token path'
   assert.equal(out?.access,'fictional-refreshed-access')
   assert.equal(state.refreshes-b.refresh,1)
   state.user={...state.user,gmail_access_token:'fictional-access',gmail_refresh_token:''}
+})
+
+await check('MANDATORY','affirmative consent lookup precedes token columns and credential row is UUID bound',async()=>{
+  const b=snap(),out=await actual(actor())
+  assert.equal(out?.access,'fictional-access')
+  const qs=state.queries.slice(b.reads)
+  assert.deepEqual(qs.map(x=>x.table),['user_consent_settings','users'],
+    'saved owner consent must be verified before encrypted credential columns')
+  const user=qs[1],filters=new Map(user.filters)
+  assert.equal(filters.get('id'),USER,'credential query must also bind requesting users.id')
+  assert.equal(filters.get('telegram_id'),String(OWNER),'credential query must retain exact owner')
+  assert.match(user.fields,/id,telegram_id/,'returned credential row must carry both identities')
 })
 
 for(const value of [false,null,undefined,'missing']){
