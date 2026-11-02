@@ -843,7 +843,16 @@ async function syncCalendarConflicts(telegramId:string,current:Set<string>,gmail
 }
 
 export async function syncOpenLoopsForUser(telegramId:string|number){
+  // Validate numeric owner BEFORE converting it to text. Otherwise callers that
+  // pass imprecise JS numbers can select a different private account's sources.
+  if(typeof telegramId==='number'&&(!Number.isSafeInteger(telegramId)||telegramId===0))
+    throw new Error('open_loop_invalid_owner')
   const tg=String(telegramId)
+  if(!/^-?[1-9]\d*$/.test(tg))throw new Error('open_loop_invalid_owner')
+  let exactOwner:bigint
+  try{exactOwner=BigInt(tg)}catch{throw new Error('open_loop_invalid_owner')}
+  if(exactOwner<BigInt('-9223372036854775808')||exactOwner>BigInt('9223372036854775807'))
+    throw new Error('open_loop_invalid_owner')
   const current=new Set<string>()
   const sourceTypes=['followup','approval','agent_run','life_event_action','calendar_conflict'] as const
   // One Gmail read per sync, shared by email attention and meeting prep.
