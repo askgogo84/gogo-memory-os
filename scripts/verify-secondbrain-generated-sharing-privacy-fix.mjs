@@ -70,12 +70,12 @@ function check(kind, title, fn) {
 }
 
 check('control', 'real planner passes owner-private context to saved report synthesis', () => {
-  assert.match(plannerSource, /OWNER_CONTEXT_CHECKED:\\s*\\$\\{JSON\\.stringify\\(ownerContextForReport\\(sections\\)\\)\\}/)
-  assert.match(plannerSource, /sections\\.unshift\\(\\{title:'Research report',tool:'artifact'/)
+  assert.match(plannerSource, /OWNER_CONTEXT_CHECKED:\s*\$\{JSON\.stringify\(ownerContextForReport\(sections\)\)\}/)
+  assert.match(plannerSource, /sections\.unshift\(\{title:'Research report',tool:'artifact'/)
 })
 check('control', 'shared page uses membership-bound artifact read and shared filter', () => {
-  assert.match(sharedPage, /getSharedArtifact\\(String\\(session\\.telegramId\\), ws, id\\)/)
-  assert.match(sharedPage, /shareableSections\\(artifactSections\\(view\\.contentJson\\)\\)/)
+  assert.match(sharedPage, /getSharedArtifact\(String\(session\.telegramId\), ws, id\)/)
+  assert.match(sharedPage, /shareableSections\(artifactSections\(view\.contentJson\)\)/)
 })
 check('control', 'public web result remains visible to workspace members', () => {
   const view = workspaceView([section('web_search', 'Public commuter train timetable.', {sourceUrls:[publicUrl]})])
