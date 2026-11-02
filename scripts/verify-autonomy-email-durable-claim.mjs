@@ -115,7 +115,7 @@ function harness(opts={}){
     localDay:()=> '2026-11-02',
     Date,Set,Number,String,Promise,console
   }
-  const run=vm.runInNewContext(compiled+'\\n({sendProactiveEmailCard})',context,{timeout:1000}).sendProactiveEmailCard
+  const run=vm.runInNewContext(compiled+'\n({sendProactiveEmailCard})',context,{timeout:1000}).sendProactiveEmailCard
   return {
     call:(r=recipient)=>run(OWNER,r,'Asia/Kolkata',{},true),
     sends,history,activityWrites,rpcCalls,claims,
