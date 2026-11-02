@@ -83,11 +83,11 @@ export type AttentionRead = {
 }
 
 // Never turn a private Gmail consent or owner into a rounded JavaScript number.
- // Both Gmail read transports must prove the same exact, safe, signed owner
- // and an explicit, persisted affirmative opt-in before contacting a provider.
+// Both Gmail read transports must prove the same exact, safe, signed owner
+// and an explicit, persisted affirmative opt-in before contacting a provider.
 function exactEmailAttentionOwner(value: unknown): string | null {
   if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
-  if (typeof value !== 'string' || !/^-?[1-9]\\d*$/.test(value)) return null
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
   const number = Number(value)
   return Number.isSafeInteger(number) && number !== 0 && String(number) === value ? value : null
 }
