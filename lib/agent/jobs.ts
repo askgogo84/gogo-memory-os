@@ -78,7 +78,8 @@ const STATUS_RULES: [AppStatus, RegExp][] = [
   ['viewed', /\b(?:viewed\s+your\s+application|application\s+was\s+viewed|recruiter\s+viewed)\b/i],
   ['applied', /\b(?:thank(?:s|\s+you)\s+for\s+(?:applying|your\s+(?:application|interest))|application\s+(?:received|submitted|has\s+been\s+received|was\s+sent)|we(?:'ve|\s+have)\s+received\s+your\s+application|you\s+applied|your\s+application\s+(?:for|to))\b/i],
 ]
-const NOT_APPLICATION = /\b(?:loan|credit\s+card|mutual\s+fund|insurance|visa\s+application|passport|admission|scholarship|app\s+store|newsletter|webinar|grant|fellowship|funding|accelerator|incubator|investors?|pull\s+request|PR\s+#\d+)\b/i
+// 2 Nov live: an "Elementary School" email showed as a job offer; schools, classes and parents are never applications.
+const NOT_APPLICATION = /\b(?:loan|credit\s+card|mutual\s+fund|insurance|visa\s+application|passport|admission|scholarship|app\s+store|newsletter|webinar|grant|fellowship|funding|accelerator|incubator|investors?|pull\s+request|PR\s+#\d+|(?:elementary|primary|high|public|international)\s+school|school\s+(?:fees?|bus|trip|calendar|holiday)|parents?|PTA|class\s+teacher|report\s+card|tuition)\b/i
 
 export function classifyApplicationEmail(e: { from: string; subject: string; snippet?: string; at?: number }): Application | null {
   const text = `${e.subject} ${e.snippet || ''}`
@@ -101,10 +102,19 @@ export function classifyApplicationEmail(e: { from: string; subject: string; sni
     const name = (cut < 0 ? words : words.slice(0, cut)).join(' ').replace(/[!.,:]+$/, '')
     return name && !ROLE_WORD.test(name) ? name : undefined
   }
-  const companyFromText = pickName(text.match(/\bat\s+([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})(?=[\s,.!:]|$)/)?.[1])
-    || pickName(text.match(/\b(?:applying|applied|application)\s+(?:to|with)\s+([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})(?=[\s,.!:]|$)/)?.[1])
-    || pickName(text.match(/\b(?:with|from|to)\s+([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})(?=[\s,.!:]|$)/)?.[1])
-  const fromCompany = fromName.replace(/\b(?:careers?|recruiting|recruitment|talent(?:\s+acquisition)?|hiring\s+team|jobs|team|hr|no-?reply)\b/gi, '').trim()
+  // 2 Nov live: "Ajaib Ajaib" and "Blue Machines AI Blue" — the name ran from the subject into the snippet's first
+  // word. Read the subject on its own first, then the snippet, and never let a name repeat its own first word.
+  const companyIn = (s: string) => pickName(s.match(/\bat\s+([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})(?=[\s,.!:]|$)/)?.[1])
+    || pickName(s.match(/\b(?:applying|applied|application)\s+(?:to|with)\s+([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})(?=[\s,.!:]|$)/)?.[1])
+    || pickName(s.match(/\b(?:with|from|to)\s+([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})(?=[\s,.!:]|$)/)?.[1])
+  const noEcho = (name?: string) => {
+    if (!name) return name
+    const w = name.split(/\s+/)
+    const again = w.findIndex((x, i) => i > 0 && x.toLowerCase() === w[0].toLowerCase())
+    return again > 0 ? w.slice(0, again).join(' ') : name
+  }
+  const companyFromText = noEcho(companyIn(String(e.subject || '')) || companyIn(String(e.snippet || '')))
+  const fromCompany = fromName.replace(/\b(?:careers?|recruiting|recruitment|talent(?:\s+acquisition)?|hiring\s+team|jobs|team|hr|no-?reply|support|notifications?)\b/gi, '').replace(/\s+/g, ' ').trim()
   const local = String(address[1] || '').toLowerCase().replace(/[._+-]/g, '').replace(/^(?:support|noreply|careers?|jobs|hr|talent|hiring|recruit(?:ing|ment|er)?|info|hello|team|mail)+/, '').replace(/(?:support|careers?|jobs|hr|talent|hiring|recruit(?:ing|ment)?|team)+$/, '')
   const domainRoot = platform ? '' : domain.replace(/^(?:mail|email|em|careers|jobs|notifications?)\./, '').split('.')[0]
   const title = (v: string) => v.charAt(0).toUpperCase() + v.slice(1)

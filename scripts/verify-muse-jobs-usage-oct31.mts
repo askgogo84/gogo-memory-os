@@ -107,4 +107,15 @@ assert.match(readFileSync('lib/dashboard/activity.ts', 'utf8'), /select\('starte
 assert.match(readFileSync('lib/agent/jobs-command.ts', 'utf8'), /\\S\\s\+jobs\\b/)
 assert.ok(/\S\s+jobs\b/i.test(j.jobRadarQuery('scan for new jobs every day', j.jobPrefsFrom('Forward Deployed Engineer or Head of AI roles in Bengaluru or remote'))))
 assert.match(readFileSync('lib/bot/handlers/gmail-read.ts', 'utf8'), /-from:notifications@github\.com/)
+
+// 2 Nov live tracker: names ran from subject into snippet, "Support" prefixes, and a school email read as an offer.
+{
+  const c = (from: string, subject: string, snippet: string) => j.classifyApplicationEmail({ from, subject, snippet, at: now })
+  assert.equal(c('noreply@candidates.workablemail.com', 'Thanks for applying to Ajaib', 'Ajaib team has received your application')?.company, 'Ajaib')
+  assert.equal(c('jobs@ashbyhq.com', 'Thank you for applying to Blue Machines AI', 'Blue Machines AI team will review your profile')?.company, 'Blue Machines AI')
+  assert.equal(c('"Support Finkraft" <support@finkraft.ai>', 'Next steps on your application', 'Please complete the assessment for the role')?.company, 'Finkraft')
+  assert.equal(c('office@greenwoodschool.in', 'Elementary School: offer letter for the Annual Day volunteer role', 'Dear parents, we are pleased to offer'), null)
+  assert.equal(c('hr@stripe.com', 'Your application for Staff Engineer at Stripe', 'Thanks for your application')?.company, 'Stripe', 'one-word company names still read')
+  console.log('✓ tracker: no repeated names, no Support prefix, school emails are never offers')
+}
 console.log('✓ links read as addresses; usage trends read started_at; saved preferences start the job radar; tracker skips GitHub')

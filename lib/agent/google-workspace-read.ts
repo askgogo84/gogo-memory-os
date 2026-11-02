@@ -381,7 +381,9 @@ export async function readWorkspaceDriveText(actor:AgentActor,file:{id:string;mi
   const mime=String(file.mimeType||'')
   if(!id)throw new Error('workspace_file_id_missing')
   let content:{text:string;truncated:boolean}
-  if(mime==='application/vnd.google-apps.document') {
+  // 2 Nov live: "summarise the latest document in my Google Drive" picked a Google Slides file and said it could not
+  // be read. Drive exports Slides as plain text (each slide's text in order), the same way it exports Docs.
+  if(mime==='application/vnd.google-apps.document'||mime==='application/vnd.google-apps.presentation') {
     content=await workspaceText(actor,`https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=${encodeURIComponent('text/plain')}`)
   } else if(mime==='application/vnd.google-apps.spreadsheet') {
     content=await workspaceText(actor,`https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=${encodeURIComponent('text/csv')}`)
