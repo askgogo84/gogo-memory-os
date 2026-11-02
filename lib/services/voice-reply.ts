@@ -1,3 +1,4 @@
+import { sonnetOptions, messageText } from '@/lib/services/anthropic-models'
 // Real voice-note replies and two-voice podcasts (Muse parity cases 12 and 13).
 //
 // 11 Oct live test: "reply as a voice note" got a text block titled "Voice Note Transcript" and no
@@ -98,10 +99,10 @@ export async function createPodcast(telegramId: number | string, topic: string, 
   const words = minutes * 150
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5', max_tokens: 3000,
+    ...sonnetOptions(), max_tokens: 3000,
     messages: [{ role: 'user', content: `Write a balanced, factual two-host podcast debate for listeners in India on: ${JSON.stringify(topic)}. About ${words} words in total, 10 to 18 turns. Host A argues for, host B argues against; both stay civil, concrete and accurate, and say "we don't know" rather than inventing numbers. No sound effects or stage directions. Return ONLY a JSON array like [{"speaker":"A","text":"..."},{"speaker":"B","text":"..."}].` }],
   })
-  const raw = msg.content[0]?.type === 'text' ? msg.content[0].text : ''
+  const raw = messageText(msg)
   const script = parsePodcastScript(raw)
   if (!script.length) return { script, url: null }
   try {

@@ -26,7 +26,7 @@ let seen: any = null
 const client: any = { messages: { create: async (req: any) => { seen = req; return { content: [{ type: 'tool_use', name: 'flight', input: { flight_no: 'QF1', track: false } }] } } } }
 const ctx = { turns: [{ role: 'user' as const, content: 'Track QF1' }, { role: 'assistant' as const, content: 'Tracking QF1, in the air' }], trackedFlights: ['QF1 (SYD → SIN)'], sections: { 'Active watches': ['QF1 flight'] }, name: 'Divya', timezone: 'Asia/Kolkata' }
 const d = await b.decide({ text: 'Did it land?', ctx, client })
-assert.equal(d.kind, 'flight'); assert.match(seen.system.map((x: any) => x.text).join('\n'), /QF1 \(SYD → SIN\)/); assert.equal(seen.tool_choice.type, 'any'); assert.equal(seen.messages.at(-1).content, 'Did it land?')
+assert.equal(d.kind, 'flight'); assert.match(seen.system.map((x: any) => x.text).join('\n'), /QF1 \(SYD → SIN\)/); assert.equal(seen.tool_choice.type, 'auto'); assert.equal(seen.messages.at(-1).content, 'Did it land?')
 const broken: any = { messages: { create: async () => { throw new Error('timeout') } } }
 assert.equal((await b.decide({ text: 'hi there', ctx, client: broken })).kind, 'skip', 'any failure falls back to the old pipeline')
 assert.deepEqual(b.decisionFromToolUse('Which one is cheapest in the morning?', 'later', { question: 'Which BLR to DEL flight on 5 Nov is cheapest in the morning?' }), { kind: 'later', question: 'Which BLR to DEL flight on 5 Nov is cheapest in the morning?' })

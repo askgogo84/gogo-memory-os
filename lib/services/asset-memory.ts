@@ -1,3 +1,4 @@
+import { sonnetOptions, messageText } from '@/lib/services/anthropic-models'
 /**
  * Asset Memory — unified save + retrieve for WhatsApp images/screenshots/PDFs.
  *
@@ -300,7 +301,7 @@ export async function classifyAndExtractAsset(params: {
     }
 
     const result = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      ...sonnetOptions(),
       max_tokens: 1000,
       system: CLASSIFY_SYSTEM,
       messages: [{
@@ -311,7 +312,7 @@ export async function classifyAndExtractAsset(params: {
         ],
       }],
     })
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    const text = messageText(result)
     console.log('[asset-memory] classify raw:', text.slice(0, 300))
     return normalizeExtraction(parseJsonLoose(text))
   } catch (err: any) {

@@ -1,3 +1,4 @@
+import { sonnetOptions, messageText } from '@/lib/services/anthropic-models'
 import Anthropic from '@anthropic-ai/sdk'
 import { askMercury, mercuryWebAnswersEnabled } from './mercury'
 import OpenAI from 'openai'
@@ -175,12 +176,12 @@ ${workflow ? contentWorkflowPrompt(workflow) : ''}`
 
   try{
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      ...sonnetOptions(),
       max_tokens: maxTokens,
       system: systemPrompt,
       messages,
     })
-    return finishChatReply(userMessage, response.content[0].type === 'text' ? response.content[0].text : '', preferenceBlock)
+    return finishChatReply(userMessage, messageText(response), preferenceBlock)
   }catch(error:any){
     console.error('ANTHROPIC_FREEFORM_FAILED_FALLING_BACK:',providerErrorSummary(error))
     return finishChatReply(userMessage, await askOpenAiFallback({system:systemPrompt,messages,maxTokens}), preferenceBlock)
@@ -214,11 +215,11 @@ FORMATTING: Delivered over WhatsApp (no markdown). Never emit [text](url); write
 
   try {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      ...sonnetOptions(),
       max_tokens: 900,
       messages: [{ role: 'user', content: prompt }],
     })
-    return response.content[0].type === 'text' ? response.content[0].text : ''
+    return messageText(response)
   } catch (error: any) {
     console.error('ANTHROPIC_FLIGHT_STATUS_FAILED_FALLING_BACK:', providerErrorSummary(error))
     return await askOpenAiFallback({ messages: [{ role: 'user', content: prompt }], maxTokens: 900 })
@@ -382,11 +383,11 @@ FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF
   }
   try{
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      ...sonnetOptions(),
       max_tokens: 1500,
       messages:[{role:'user',content:prompt}],
     })
-    return finishWebAnswer(userMessage, response.content[0].type === 'text' ? response.content[0].text : '', context)
+    return finishWebAnswer(userMessage, messageText(response), context)
   }catch(error:any){
     console.error('ANTHROPIC_CONTEXT_FAILED_FALLING_BACK:',providerErrorSummary(error))
     return finishWebAnswer(userMessage, await askOpenAiFallback({messages:[{role:'user',content:prompt}],maxTokens:1500}), context)

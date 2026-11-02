@@ -13,7 +13,7 @@ What runs (lib/agent/brain.ts), before any keyword rule on WhatsApp and the dash
    approvals and Sentinel checks. Any error or timeout (9 s) falls back to today's pipeline unchanged.
 
 Canary: production only, numbers in GOGO_BRAIN_USERS (default: the owner's 8884501501, 8310441698).
-Kill switch: GOGO_BRAIN=off. Model: GOGO_BRAIN_MODEL (default claude-sonnet-4-5; benchmark decides later).
+Kill switch: GOGO_BRAIN=off. Model: GOGO_BRAIN_MODEL (default claude-sonnet-5-5; supported overrides are validated in lib/services/anthropic-models.ts).
 Logs: BRAIN_DECISION (kind, ms, rewritten instruction), BRAIN_FAILED.
 
 Next (Phase 1): shadow-run the brain for every user, replay 30 days of chats, then retire keyword routers.
