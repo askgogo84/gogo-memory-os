@@ -38,6 +38,7 @@ import { tryResolvePendingQuestion } from '@/lib/bot/pending-question-resolver'
 import { tryFlightBooking } from '@/lib/agent/flight-booking'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
 import { tryUnderstandFirst } from '@/lib/agent/understand-first'
+import { tryProductDiscovery } from '@/lib/agent/product-discovery'
 import { isGroundedReminderCommand, jevClarificationReply } from '@/lib/agent/jev-router'
 import { parseApproxLocation } from '@/lib/dashboard/approx-location'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
@@ -434,6 +435,12 @@ async function handleChatPost(req: NextRequest) {
           return NextResponse.json({ text: safeReplyText(reply), handledBy: 'edit-reminder', status: 'completed' })
         }
       }
+    }
+    // Open product asks ("find me a navy linen shirt under 2000") read Google Shopping, same as WhatsApp.
+    const productDiscovery = await tryProductDiscovery({ text })
+    if (productDiscovery) {
+      await saveConversation(user.telegram_id, text, productDiscovery.text)
+      return NextResponse.json(productDiscovery)
     }
     // One event id per turn, shared by the understand-first reading and the shadow router outcome.
     const shadowEventId = `web-${randomUUID()}`

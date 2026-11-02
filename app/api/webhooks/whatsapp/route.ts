@@ -65,6 +65,7 @@ import { parseTaskStatusQuery } from '@/lib/agent/task-status'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { tryResolvePendingQuestion } from '@/lib/bot/pending-question-resolver'
 import { tryUnderstandFirst, isUnderstandFirstReady } from '@/lib/agent/understand-first'
+import { tryProductDiscovery } from '@/lib/agent/product-discovery'
 import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, parseLooseAccountProfile, tryRunExternalAccountFlow } from '@/lib/agent/external-account'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
@@ -1444,6 +1445,16 @@ _"${originalText}"_
         await sendWhatsAppMessage(from, pendingAnswer.text)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
+    }
+
+    // 2 Nov live: "find me a navy linen shirt under 2000" got a web answer pointing at a category page.
+    // Open product asks read Google Shopping results (real products, prices, stores) before the web answer.
+    const productDiscovery = await tryProductDiscovery({ text })
+    if (productDiscovery) {
+      await saveConversation(resolvedUser.telegramId, 'user', text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', productDiscovery.text)
+      await sendWhatsAppMessage(from, productDiscovery.text)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
     // Understand-first choke point (docs/architecture/06-understand-first-shadow.md): one reading of the whole
