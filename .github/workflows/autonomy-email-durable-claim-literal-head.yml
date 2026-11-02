@@ -39,7 +39,7 @@ jobs:
       - name: Full existing registered regressions
         run: npm test
       - name: Generate Next types
-        run: npm run typegen
+        run: npx next typegen
       - name: Typecheck with fixture credentials
         run: npm run typecheck
       - name: Fixture production build
