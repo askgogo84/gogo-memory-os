@@ -696,17 +696,40 @@ async function syncGmailAttention(telegramId:string,current:Set<string>,gmailRea
   return 'ok' as const
 }
 
-async function syncMeetingActionMemories(telegramId:string){
+async function syncMeetingActionMemories(telegramId:string|number){
+  // Service-role private-memory reads require lossless, canonical owner identity.
+  // Already-rounded JS numbers, nondecimal forms and zero cannot authorize reads.
+  if(typeof telegramId!=='string'&&typeof telegramId!=='number')return 0
+  if(typeof telegramId==='number'&&(!Number.isSafeInteger(telegramId)||telegramId===0))return 0
+  const owner=String(telegramId)
+  if(!/^-?[1-9]\\d*$/.test(owner))return 0
+  let exactOwner:bigint
+  try{exactOwner=BigInt(owner)}catch{return 0}
+  if(exactOwner<BigInt('-9223372036854775808')||exactOwner>BigInt('9223372036854775807'))return 0
+
+  // Missing, disabled, unreadable or different-account consent is not permission
+  // to scan historical meeting data. Verify persisted owner, not only WHERE.
+  const {data:consent,error:consentError}=await supabaseAdmin.from('user_consent_settings')
+    .select('telegram_id,memory_enabled').eq('telegram_id',owner).maybeSingle()
+  if(consentError)throw new Error(`open_loop_meeting_consent_read_failed:${consentError.message}`)
+  if(!consent||consent.memory_enabled!==true
+      ||String(consent.telegram_id??'')!==owner
+      ||(typeof consent.telegram_id==='number'&&!Number.isSafeInteger(consent.telegram_id)))return 0
+
   const since=new Date(Date.now()-30*86400_000).toISOString()
   const {data,error}=await supabaseAdmin.from('memories')
-    .select('id,content,created_at')
-    .eq('telegram_id',Number(telegramId))
+    .select('id,telegram_id,content,created_at')
+    .eq('telegram_id',owner)
     .gte('created_at',since)
     .order('created_at',{ascending:false})
     .limit(120)
   if(error)throw new Error(`open_loop_meeting_memory_read_failed:${error.message}`)
   let captured=0
   for(const row of data||[]){
+    // A database adapter may return BIGINT as an unsafe rounded Number or a
+    // mismatched owner despite a filtered query. Neither can be trusted.
+    if(String(row.telegram_id??'')!==owner
+      ||(typeof row.telegram_id==='number'&&!Number.isSafeInteger(row.telegram_id)))continue
     let parsed:any=null
     try{parsed=JSON.parse(String(row.content||''))}catch{continue}
     if(parsed?.type!=='followup_state'||parsed?.kind!=='meeting_action_items')continue
@@ -717,7 +740,7 @@ async function syncMeetingActionMemories(telegramId:string){
       if(!message)continue
       const due=String(item?.remindAtIso||'').trim()
       await upsertOpenLoop({
-        telegramId,kind:'meeting_action',
+        telegramId:owner,kind:'meeting_action',
         title:message,
         summary:`Meeting action item: ${message}`,
         priority:0.87,
