@@ -157,6 +157,15 @@ check('mandatory', 'mixed generated and deliberately owner-rewritten sections sh
   assert.equal(view.withheld, 1)
 })
 
+check('mandatory', 'owner title-or-notes edit cannot declassify untouched generated sections', () => {
+  const view = rules.shareableSections(presentation.artifactSections({
+    editedBy: 'owner', // top-level metadata can change when only a title/notes are edited
+    sections: [section('artifact', 'Generated and unreviewed owner-private text.')],
+  }))
+  assert.equal(view.shown.length, 0)
+  assert.equal(view.withheld, 1)
+})
+
 console.log('SUMMARY control=' + goodControls + '/6 controlFail=' + badControls +
   ' mandatory=' + goodMandatory + '/11 mandatoryFail=' + badMandatory + ' synthetic=true')
 if (badControls || badMandatory) process.exitCode = 1
