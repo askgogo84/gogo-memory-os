@@ -42,4 +42,4 @@ jobs:
       - name: Production fixture build on exact source HEAD
         run: npm run build
       - name: Run sealed original-source watcher recipient and owner-binding regressions
-        run: npx --no-install tsx scripts/verify-watcher-outbound-owner-bound-fix.mts
+        run: node scripts/verify-watcher-outbound-owner-bound-fix.mjs
