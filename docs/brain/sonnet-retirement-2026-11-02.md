@@ -56,7 +56,7 @@ Eleven runtime retired-model literals were removed/replaced; the only exact quot
 
 ## Verification and release gates
 
-Focused test: `npx --yes tsx scripts/verify-sonnet-retirement.mts`. It executes real SDK serialization with fictional data and sealed fetches across brain, all three chat paths, native PDFs, ticket-image fallback, asset classification, voice script generation and research. It checks retired overrides, refusal/truncation, allowed shadows, consent and unexpected network rejection. Voice audio/storage is deliberately not invoked. Run the existing `verify-brain-oct27.mts` safety tests too.
+Focused test: `npx --yes tsx scripts/verify-sonnet-retirement.mts`. It executes real SDK serialization with fictional data and sealed fetches across brain, all three chat paths, native PDFs, ticket-image fallback, asset classification, voice script generation and research. It checks retired overrides, refusal/truncation, allowed shadows, consent and unexpected network rejection. Voice audio/storage is deliberately not invoked. Both this fixture and the existing `verify-brain-oct27.mts` safety suite are registered in default `npm test`, so unrelated future runtime edits also run the retirement audit. All 420 existing commands are preserved (422 total).
 
 Dedicated `Sonnet retirement literal head` workflow checks out `pull_request.head.sha`, asserts it, installs the lockfile, runs both focused suites, full registered `npm test`, Next typegen, typecheck and production build with fixture credentials. Ordinary PR CI remains separate. Finished runs and SHA are recorded in the PR/#274 rather than claiming an unobserved result here.
 
