@@ -44,9 +44,27 @@ export async function redeemInvite(code: string, phoneE164: string, name?: strin
   const { data, error } = await supabaseAdmin.rpc('redeem_invite', { p_code: code, p_phone: phoneE164, p_name: name && !/^friend$/i.test(name) ? String(name).slice(0, 80) : null })
   if (error) { console.error('INVITE_REDEEM_FAILED', error.code || error.message); return { ok: false, reason: 'error', redemptionId: null, inviterTelegramId: null, remaining: 0, code } }
   const row = Array.isArray(data) ? data[0] : data
+  // PostgreSQL BIGINT arrives as a decimal string in some RPC transports.
+  // Never round a private inviter owner into a different JavaScript number.
+  // The current downstream notification contract is number-only, so reject
+  // otherwise valid but unsafe 64-bit owners until that entire path can carry strings.
+  const rawOwner = row?.inviter_telegram_id
+  let inviterTelegramId: number | null = null
+  if (typeof rawOwner === 'number') {
+    if (Number.isSafeInteger(rawOwner) && rawOwner !== 0) inviterTelegramId = rawOwner
+  } else if (typeof rawOwner === 'string' && /^-?[1-9]\\d*$/.test(rawOwner)) {
+    const candidate = Number(rawOwner)
+    if (Number.isSafeInteger(candidate) && String(candidate) === rawOwner) inviterTelegramId = candidate
+  }
+  if (row?.ok && inviterTelegramId === null) {
+    // RPC side effects may already have committed: this is a fail-closed
+    // notification boundary, NOT proof that invitation redemption was rolled back.
+    console.error('INVITE_REDEEM_OWNER_INVALID')
+    return { ok: false, reason: 'error', redemptionId: null, inviterTelegramId: null, remaining: 0, code }
+  }
   return {
     ok: !!row?.ok, reason: (row?.reason || 'invalid') as RedeemResult['reason'], redemptionId: row?.redemption_id || null,
-    inviterTelegramId: row?.inviter_telegram_id == null ? null : Number(row.inviter_telegram_id), remaining: Number(row?.remaining || 0), code,
+    inviterTelegramId, remaining: Number(row?.remaining || 0), code,
   }
 }
 
