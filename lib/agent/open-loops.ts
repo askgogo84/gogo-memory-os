@@ -735,22 +735,39 @@ async function syncMeetingActionMemories(telegramId:string){
   return captured
 }
 
-async function syncConversationSignals(telegramId:string){
-  const {data:consent}=await supabaseAdmin.from('user_consent_settings')
-    .select('memory_enabled').eq('telegram_id',Number(telegramId)).maybeSingle()
-  if(consent?.memory_enabled===false)return 0
+async function syncConversationSignals(telegramId:string|number){
+  // Postgres signed BIGINT owners must never transit through JS Number: adjacent
+  // private account identifiers above 2^53 can otherwise alias before consent.
+  // Reject already-rounded numeric input and malformed/noncanonical owner strings.
+  if(typeof telegramId==='number'&&(!Number.isSafeInteger(telegramId)||telegramId===0))return 0
+  if(typeof telegramId!=='string'&&typeof telegramId!=='number')return 0
+  const owner=String(telegramId)
+  if(!/^-?[1-9]\d*$/.test(owner))return 0
+  let ownerBig:bigint
+  try{ownerBig=BigInt(owner)}catch{return 0}
+  if(ownerBig<BigInt('-9223372036854775808')||ownerBig>BigInt('9223372036854775807'))return 0
+
+  const {data:consent,error:consentError}=await supabaseAdmin.from('user_consent_settings')
+    .select('telegram_id,memory_enabled').eq('telegram_id',owner).maybeSingle()
+  if(consentError)throw new Error('open_loop_consent_read_failed:'+consentError.message)
+  // Absence of a verified, exact owner and explicit enabled consent is not permission
+  // to scan previous private conversation content with a privileged DB client.
+  if(!consent||String(consent.telegram_id)!==owner||consent.memory_enabled!==true)return 0
   const since=new Date(Date.now()-7*86400_000).toISOString()
   const {data,error}=await supabaseAdmin.from('conversations')
-    .select('id,content,created_at')
-    .eq('telegram_id',Number(telegramId)).eq('role','user')
+    .select('id,telegram_id,content,created_at')
+    .eq('telegram_id',owner).eq('role','user')
     .gte('created_at',since).order('created_at',{ascending:false}).limit(80)
-  if(error)throw new Error(`open_loop_conversation_read_failed:${error.message}`)
+  if(error)throw new Error('open_loop_conversation_read_failed:'+error.message)
   let captured=0
   for(const row of (data||[]).slice().reverse()){
+    // An unsafe numeric echo or another owner's persisted row must not be
+    // synthesized into this owner's open loops even if the query was scoped.
+    if(String(row.telegram_id??'')!==owner)continue
     const parsed=parseExplicitOpenLoop(String(row.content||''))
     if(!parsed)continue
     await upsertOpenLoop({
-      telegramId,kind:parsed.kind,title:parsed.title,summary:parsed.summary,priority:parsed.priority,
+      telegramId:owner,kind:parsed.kind,title:parsed.title,summary:parsed.summary,priority:parsed.priority,
       nextCheckAt:parsed.kind==='followup'||parsed.kind==='waiting_on'
         ? isoPlusHoursFrom(row.created_at,24)
         : isoPlusHoursFrom(row.created_at,12),
