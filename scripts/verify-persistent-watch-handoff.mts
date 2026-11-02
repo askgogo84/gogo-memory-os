@@ -247,7 +247,7 @@ const deliveryMocks:any={
   }},
   '@/lib/services/notification-delivery':{
     exactNotificationOwnerId:(value:unknown)=>{
-      if(typeof value!=='string'||!/^-?[1-9]\\d*$/.test(value))throw new Error('notification_owner_invalid')
+      if(typeof value!=='string'||!/^-?[1-9]\d*$/.test(value))throw new Error('notification_owner_invalid')
       return value
     },
     deliverNotification:async(p:any)=>{
