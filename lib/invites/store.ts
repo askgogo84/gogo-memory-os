@@ -52,7 +52,7 @@ export async function redeemInvite(code: string, phoneE164: string, name?: strin
   let inviterTelegramId: number | null = null
   if (typeof rawOwner === 'number') {
     if (Number.isSafeInteger(rawOwner) && rawOwner !== 0) inviterTelegramId = rawOwner
-  } else if (typeof rawOwner === 'string' && /^-?[1-9]\\d*$/.test(rawOwner)) {
+  } else if (typeof rawOwner === 'string' && /^-?[1-9]\d*$/.test(rawOwner)) {
     const candidate = Number(rawOwner)
     if (Number.isSafeInteger(candidate) && String(candidate) === rawOwner) inviterTelegramId = candidate
   }
