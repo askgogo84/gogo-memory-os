@@ -196,6 +196,23 @@ await check('valid safe numeric input is canonically owner-bound',false,async()=
   assert.deepEqual(h.reads.map(x=>x.selected),['42','42'])
 })
 
+
+// The exported scout must reject imprecise/malformed input before it stringifies
+// the owner and invokes ANY of the service-role private-source readers.
+const scoutNode=ast.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==='syncOpenLoopsForUser')
+assert.ok(scoutNode,'production open-loop scout export must exist')
+const scoutJs=ts.transpileModule(scoutNode.getText(ast).replace(/^export\s+/,''),{
+  compilerOptions:{module:ts.ModuleKind.None,target:ts.ScriptTarget.ES2022},
+}).outputText
+const scout=vm.runInNewContext(scoutJs+'\nsyncOpenLoopsForUser',{Date,console},{timeout:1000})
+await check('exported scout rejects already-rounded unsafe number before any source lookup',true,async()=>{
+  await assert.rejects(scout(9007199254740992),/open_loop_invalid_owner/)
+})
+await check('exported scout rejects exponent and out-of-range identities before source lookup',true,async()=>{
+  await assert.rejects(scout('4.2e1'),/open_loop_invalid_owner/)
+  await assert.rejects(scout('9223372036854775808'),/open_loop_invalid_owner/)
+})
+
 console.log('OPEN_LOOP_CONVERSATION_OWNER_FIX control PASS=' + controlPass +
   ' FAIL=' + controlFail + '; mandatory PASS=' + mandatoryPass + ' FAIL=' + mandatoryFail)
 if(controlFail) process.exitCode=2
