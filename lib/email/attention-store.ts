@@ -82,12 +82,40 @@ export type AttentionRead = {
   gmailEmail: string | null
 }
 
+// Never turn a private Gmail consent or owner into a rounded JavaScript number.
+ // Both Gmail read transports must prove the same exact, safe, signed owner
+ // and an explicit, persisted affirmative opt-in before contacting a provider.
+function exactEmailAttentionOwner(value: unknown): string | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  if (typeof value !== 'string' || !/^-?[1-9]\\d*$/.test(value)) return null
+  const number = Number(value)
+  return Number.isSafeInteger(number) && number !== 0 && String(number) === value ? value : null
+}
+
+async function verifiedGmailReadConsent(telegramId: number): Promise<boolean> {
+  const owner = exactEmailAttentionOwner(telegramId)
+  if (!owner) return false
+  try {
+    const [{ data: consent, error: consentError }, { data: user, error: ownerError }] = await Promise.all([
+      supabaseAdmin.from('user_consent_settings').select('telegram_id,gmail_enabled').eq('telegram_id', owner).maybeSingle(),
+      supabaseAdmin.from('users').select('telegram_id').eq('telegram_id', owner).maybeSingle(),
+    ])
+    return !consentError && !ownerError && consent?.gmail_enabled === true &&
+      exactEmailAttentionOwner(consent.telegram_id) === owner &&
+      exactEmailAttentionOwner(user?.telegram_id) === owner
+  } catch {
+    return false // Unknown consent/owner state is not permission to read Gmail.
+  }
+}
+
 async function gmailToken(telegramId: number) {
-  const [{ data: user }, { data: consent }] = await Promise.all([
-    supabaseAdmin.from('users').select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token').eq('telegram_id', telegramId).maybeSingle(),
-    supabaseAdmin.from('user_consent_settings').select('gmail_enabled').eq('telegram_id', telegramId).maybeSingle(),
-  ])
-  if (consent?.gmail_enabled === false || !user?.gmail_connected) return null
+  if (!(await verifiedGmailReadConsent(telegramId))) return null
+  const owner = exactEmailAttentionOwner(telegramId)
+  if (!owner) return null
+  const { data: user, error } = await supabaseAdmin.from('users')
+    .select('telegram_id,gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token')
+    .eq('telegram_id', owner).maybeSingle()
+  if (error || exactEmailAttentionOwner(user?.telegram_id) !== owner || !user?.gmail_connected) return null
   let token = ''
   const refresh = decryptGoogleToken(user.gmail_refresh_token)
   if (refresh) token = String(await refreshGmailAccessToken(refresh) || '')
@@ -127,12 +155,17 @@ async function readForwarded(telegramId: number) {
 }
 
 async function readComposio(telegramId: number) {
+  // A valid Composio connected account is not a replacement for Gmail consent.
+  // This is a separate transport from native Google OAuth and must independently
+  // respect an explicit Gmail opt-out, missing consent, DB errors and owner mismatch.
+  if (!(await verifiedGmailReadConsent(telegramId))) return null
   const mod: any = await import('@/lib/connectors/composio-gmail').catch(() => null)
   if (!mod?.fetchComposioRecentEmails) return null
   return await mod.fetchComposioRecentEmails(telegramId).catch((err: any) => { console.error('COMPOSIO_GMAIL_READ_FAILED:', String(err?.message || err).slice(0, 160)); return null })
 }
 
 export async function readAttentionSources(telegramId: number): Promise<AttentionRead> {
+  if (!exactEmailAttentionOwner(telegramId)) throw new Error('email_attention_owner_invalid')
   const [gmail, forwarded] = await Promise.all([
     readGmail(telegramId).catch((err: any) => { console.error('ATTENTION_GMAIL_READ_FAILED:', String(err?.message || err).slice(0, 160)); return null }),
     readForwarded(telegramId),
