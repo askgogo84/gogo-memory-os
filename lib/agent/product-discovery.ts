@@ -90,6 +90,22 @@ export function formatProducts(ask: ProductAsk, result: { picked: ShoppingItem[]
   return `🛍️ ${result.picked.length} ${ask.query}${budget}\n\n${lines.join('\n\n')}\n\nPrices from Google Shopping just now; check size and colour on the store page before you buy. I haven't added anything to a cart.`
 }
 
+// 2 Nov live: Serper's shopping links are Google product-viewer URLs full of long catalogue ids
+// ("prds=catalogid:…,headlineOfferDocid:…"). The reply's privacy filter withholds long digit runs, so every link
+// arrived broken ("[sensitive detail withheld],pvo:2,…"). Keep a store's own address when Serper gives one; else
+// link a Google Shopping search for that exact product, which carries no ids.
+export function shopLink(r: any): string {
+  const raw = String(r?.link || '')
+  try {
+    const u = new URL(raw)
+    const google = /(^|\.)google\.[a-z.]+$/i.test(u.hostname)
+    if (/^https?:$/.test(u.protocol) && !google && !/\d{8,}/.test(raw)) return raw
+  } catch { /* fall through to a search link */ }
+  const q = `${clean(r?.title, 120)} ${clean(r?.source, 40)}`.replace(/\d{8,}/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!q) return ''
+  return `https://www.google.com/search?${new URLSearchParams({ udm: '28', gl: 'in', q }).toString()}`
+}
+
 export async function searchShopping(query: string, fetchImpl: typeof fetch = fetch): Promise<ShoppingItem[]> {
   const key = process.env.SERPER_API_KEY
   if (!key) throw new Error('serper_missing_key')
@@ -101,7 +117,7 @@ export async function searchShopping(query: string, fetchImpl: typeof fetch = fe
   const data: any = await res.json()
   const raw: any[] = Array.isArray(data?.shopping) ? data.shopping : []
   return raw.map((r: any): ShoppingItem => ({
-    title: clean(r?.title, 160), source: clean(r?.source, 40), link: String(r?.link || ''),
+    title: clean(r?.title, 160), source: clean(r?.source, 40), link: shopLink(r),
     price: priceFrom(r?.price), priceText: clean(r?.price, 30),
     rating: Number(r?.rating) || undefined, ratingCount: Number(r?.ratingCount) || undefined,
   }))
