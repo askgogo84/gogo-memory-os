@@ -177,7 +177,7 @@ async function runDelivery(req: NextRequest) {
         }
         const ready = async (channel: 'email' | 'whatsapp', target: string) => {
           const { data: fresh, error } = await supabaseAdmin.from('users')
-            .select('telegram_id, whatsapp_id, email, briefing_enabled, briefing_time, daily_brief_email_enabled').eq('telegram_id', ownerExact).maybeSingle()
+            .select('telegram_id, whatsapp_id, email, briefing_enabled, briefing_time, daily_brief_email_enabled').eq('telegram_id', owner).maybeSingle()
           if (error) throw new Error('briefing_consent_read_failed')
           // A query predicate alone is insufficient authorization under a
           // service-role adapter: verify the returned row's exact owner too.
