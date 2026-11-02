@@ -452,7 +452,7 @@ async function sendWhatsAppIfWanted(telegramId: string | number, delivery: Watch
   // Reject numeric IDs that have already lost precision before reaching this helper.
   if (typeof telegramId !== 'string' && (typeof telegramId !== 'number' || !Number.isSafeInteger(telegramId))) return
   const owner = String(telegramId)
-  if (owner.length > 20 || !/^-?[1-9]\\d*$/.test(owner)) return
+  if (owner.length > 20 || !/^-?[1-9]\d*$/.test(owner)) return
   const exactId = BigInt(owner)
   if (exactId < BigInt('-9223372036854775808') || exactId > BigInt('9223372036854775807')) return
   const safeId = Number(owner)
