@@ -12,7 +12,7 @@ const baseEvent={id:'calendar-exact',summary:'A event called Same Brain Learning
 let db:Record<string,any[]>,event:any,patches=0,unknown=false,mismatch=false,wrongTime=false,rejectPatch=0,reminderWriteUnknown=false,reminderWrites=0,permission:string|null=null,seq=0
 const oldFrom=supabaseAdmin.from,oldFetch=globalThis.fetch
 const copy=(v:any)=>JSON.parse(JSON.stringify(v))
-function reset(){db={agent_activity:[],agent_runs:[],agent_approvals:[],reminders:[],conversations:[],memories:[],agent_permissions:[],agent_watchers:[],agent_ideas:[],users:[{telegram_id:123,timezone:'Asia/Kolkata',google_calendar_connected:true,google_refresh_token:'fixture'}]};event=copy(baseEvent);patches=0;unknown=false;mismatch=false;wrongTime=false;rejectPatch=0;reminderWriteUnknown=false;reminderWrites=0;permission=null;seq=0}
+function reset(){db={agent_activity:[],agent_runs:[],agent_approvals:[],reminders:[],conversations:[],memories:[],agent_permissions:[],agent_watchers:[],agent_ideas:[],user_consent_settings:[{telegram_id:123,gmail_enabled:true}],users:[{id:'test-user',telegram_id:123,gmail_connected:false,timezone:'Asia/Kolkata',google_calendar_connected:true,google_refresh_token:'fixture'}]};event=copy(baseEvent);patches=0;unknown=false;mismatch=false;wrongTime=false;rejectPatch=0;reminderWriteUnknown=false;reminderWrites=0;permission=null;seq=0}
 function value(row:any,key:string){return key.split(/->>?/).reduce((v,k)=>v?.[k],row)}
 ;(supabaseAdmin as any).from=(table:string)=>{
  const filters:any[]=[],order:any[]=[];let mode='read',payload:any,lim=Infinity,single=false,selected=false
