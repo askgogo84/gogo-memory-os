@@ -4,6 +4,7 @@ on:
     paths:
       - 'app/api/cron/daily-briefings/route.ts'
       - 'scripts/verify-daily-briefing-exact-owner-fix.mjs'
+      - 'scripts/verify-delivery-reliability.cjs'
       - '.github/workflows/daily-briefing-exact-owner-fix-literal-head.yml'
   workflow_dispatch:
 permissions:
