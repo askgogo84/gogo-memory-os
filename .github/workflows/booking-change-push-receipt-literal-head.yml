@@ -4,6 +4,7 @@ on:
     paths:
       - 'lib/agent/booking-change-worker.ts'
       - 'scripts/verify-booking-change-push-receipt-fix.mjs'
+      - 'scripts/verify-booking-closure.mts'
       - '.github/workflows/booking-change-push-receipt-literal-head.yml'
 permissions:
   contents: read
