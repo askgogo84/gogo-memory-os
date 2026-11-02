@@ -30,7 +30,8 @@ try{
  const workflows=await import(pathToFileURL(path.join(repo,'lib/agent/content-workflows.ts')).href)
  let captured:any,modelCalls=0,calendarCalls=0,contextFailure=false,historical=false,lastContextQuery=''
  class InertAnthropic{messages={create:async(params:unknown)=>{modelCalls++;captured=params;return{content:[{type:'text',text:'Bounded synthetic response'}]}}}}
- const services=load('lib/services/claude.ts',{'@anthropic-ai/sdk':InertAnthropic,openai:class{},'@/lib/bot/memory-redaction':redaction,'@/lib/agent/content-workflows':workflows})
+ const modelPolicy=await import(pathToFileURL(path.join(repo,'lib/services/anthropic-models.ts')).href)
+ const services=load('lib/services/claude.ts',{'@/lib/services/anthropic-models':modelPolicy,'@anthropic-ai/sdk':InertAnthropic,openai:class{},'@/lib/bot/memory-redaction':redaction,'@/lib/agent/content-workflows':workflows})
  const old='Synthetic Guest arrives on flight ZX123 on 13 October 2026.'
  const move='Owner is moving house on 25 October 2026.'
  const unrelated='Synthetic Noodle Bar was an unrelated earlier assistant suggestion.'

@@ -1,3 +1,4 @@
+import { SONNET_MODEL, resolveBrainModel, isBrainModel, modelOptions } from '@/lib/services/anthropic-models'
 // Context-first brain (docs/brain/README.md). One model call reads the conversation, the open topic and the
 // user's saved context BEFORE any keyword rule sees the message, then either answers, asks one question, or
 // hands Gogo's existing capabilities a self-contained instruction (pronouns resolved, details kept).
@@ -29,7 +30,7 @@ export type BrainContext = {
   timezone: string
 }
 
-const MODEL = () => process.env.GOGO_BRAIN_MODEL || 'claude-sonnet-4-5'
+const MODEL = () => resolveBrainModel(process.env.GOGO_BRAIN_MODEL)
 // 29 Oct live: one WhatsApp turn hit 8 s and fell to the older path, which took 31 s. Typical is 2-4 s.
 const TIMEOUT_MS = 12_000
 // 27 Oct live: one decision took 16.9 s because the SDK silently retried after a slow first attempt. No retries:
@@ -105,11 +106,11 @@ export function brainSystemBlocks(ctx: BrainContext, now: Date, extra = ''): Ant
 export const BRAIN_SYSTEM = (ctx: BrainContext, now: Date) => `${BRAIN_STATIC}\n\n${brainContextBlock(ctx, now)}`
 
 export const BRAIN_TOOLS: Anthropic.Tool[] = [
-  { name: 'flight', description: 'Live status of a flight, or start tracking it.', input_schema: { type: 'object', properties: { flight_no: { type: 'string', description: 'IATA flight number, e.g. QF1' }, track: { type: 'boolean', description: 'true when the user asks to track/monitor/alert on it' } }, required: ['flight_no', 'track'] } },
-  { name: 'reply', description: 'Answer directly from the conversation and context.', input_schema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
-  { name: 'ask', description: 'Ask one short clarifying question.', input_schema: { type: 'object', properties: { question: { type: 'string' } }, required: ['question'] } },
-  { name: 'later', description: 'Answer this question about a running search once its results arrive.', input_schema: { type: 'object', properties: { question: { type: 'string', description: 'The question, self-contained' } }, required: ['question'] } },
-  { name: 'handle', description: "Hand the request to Gogo's capabilities.", input_schema: { type: 'object', properties: { instruction: { type: 'string', description: 'Self-contained request in the user\'s voice' }, keep_original: { type: 'boolean' } }, required: ['instruction', 'keep_original'] } },
+  { strict: true, name: 'flight', description: 'Live status of a flight, or start tracking it.', input_schema: { type: 'object', additionalProperties: false, properties: { flight_no: { type: 'string', description: 'IATA flight number, e.g. QF1' }, track: { type: 'boolean', description: 'true when the user asks to track/monitor/alert on it' } }, required: ['flight_no', 'track'] } },
+  { strict: true, name: 'reply', description: 'Answer directly from the conversation and context.', input_schema: { type: 'object', additionalProperties: false, properties: { text: { type: 'string' } }, required: ['text'] } },
+  { strict: true, name: 'ask', description: 'Ask one short clarifying question.', input_schema: { type: 'object', additionalProperties: false, properties: { question: { type: 'string' } }, required: ['question'] } },
+  { strict: true, name: 'later', description: 'Answer this question about a running search once its results arrive.', input_schema: { type: 'object', additionalProperties: false, properties: { question: { type: 'string', description: 'The question, self-contained' } }, required: ['question'] } },
+  { strict: true, name: 'handle', description: "Hand the request to Gogo's capabilities.", input_schema: { type: 'object', additionalProperties: false, properties: { instruction: { type: 'string', description: 'Self-contained request in the user\'s voice' }, keep_original: { type: 'boolean' } }, required: ['instruction', 'keep_original'] } },
 ]
 
 const CONSENT = /\b(?:approve[ds]?|confirm(?:ed|s)?|pay|payment|accept|authori[sz]e|yes)\b/i
@@ -283,19 +284,20 @@ export function meterBrainCall(e: BrainMeterEvent): void {
 
 export async function decide(p: { text: string; ctx: BrainContext; now?: Date; client?: Pick<Anthropic, 'messages'>; telegramId?: number; meter?: (e: BrainMeterEvent) => void; model?: string; source?: BrainMeterEvent['source'] }): Promise<BrainDecision & { ms: number; usage: BrainUsage }> {
   const t0 = Date.now()
-  const model = p.model || MODEL()
+  let model = p.model || process.env.GOGO_BRAIN_MODEL || SONNET_MODEL
   let usage: BrainUsage = brainUsage(null)
   let ok = false
   try {
+    model = resolveBrainModel(model)
     const client = p.client || new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
     // Order matters for caching: tools, then the cached static block, then the dynamic block and the turns.
     const res: any = await client.messages.create({
-      model, max_tokens: 700, system: brainSystemBlocks(p.ctx, p.now || new Date()),
-      tools: BRAIN_TOOLS, tool_choice: { type: 'any' }, messages: brainMessages(p.ctx.turns, p.text),
+      ...modelOptions(model), max_tokens: 700, system: brainSystemBlocks(p.ctx, p.now || new Date()),
+      tools: BRAIN_TOOLS, tool_choice: { type: 'auto' }, messages: brainMessages(p.ctx.turns, p.text),
     }, { timeout: TIMEOUT_MS, maxRetries: MAX_RETRIES })
     usage = brainUsage(res)
     ok = true
-    const use = (res?.content || []).find((b: any) => b.type === 'tool_use')
+    const use = res?.stop_reason && res.stop_reason !== 'tool_use' ? undefined : (res?.content || []).find((b: any) => b.type === 'tool_use')
     const d = use ? decisionFromToolUse(p.text, use.name, use.input) : { kind: 'skip' as const, reason: 'no_tool_use' }
     return { ...d, ms: Date.now() - t0, usage }
   } catch (err: any) {
@@ -357,14 +359,16 @@ export async function runBrain(p: { phone: string; telegramId: number; text: str
   if (answersGogosQuestion(ctx.turns, p.text)) { console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: 'skip', reason: 'answers_question' })); return null }
   // Shadow models answer the same turn in parallel and are only logged (BRAIN_SHADOW), never acted on: the
   // 28 Oct cost question ("which model is cheapest without losing understanding") answered on real turns.
-  const shadows = shadowModels().filter(m => m !== MODEL()).map(m => decide({ text: p.text, ctx, telegramId: p.telegramId, model: m, source: 'brain_shadow' }).then(r => ({ m, r })))
+  let mainModel: string
+  try { mainModel = MODEL() } catch { return null } // invalid config never escapes the brain boundary
+  const shadows = shadowModels().filter(m => m !== mainModel).map(m => decide({ text: p.text, ctx, telegramId: p.telegramId, model: m, source: 'brain_shadow' }).then(r => ({ m, r })))
   const d = await decide({ text: p.text, ctx, telegramId: p.telegramId })
   if (shadows.length) {
     // 28 Oct review: the reply never waits for a shadow model. The log is written after the response (Next after()).
-    const logShadows = async () => { for (const s of await Promise.allSettled(shadows)) if (s.status === 'fulfilled') console.log('BRAIN_SHADOW:', JSON.stringify(shadowReport(MODEL(), d, s.value.m, s.value.r))) }
+    const logShadows = async () => { for (const s of await Promise.allSettled(shadows)) if (s.status === 'fulfilled') console.log('BRAIN_SHADOW:', JSON.stringify(shadowReport(mainModel, d, s.value.m, s.value.r))) }
     await import('next/server').then(m => m.after(logShadows)).catch(() => { void logShadows() })
   }
-  console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: d.kind, ms: d.ms, model: MODEL(), turns: ctx.turns.length, flights: ctx.trackedFlights.length,
+  console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: d.kind, ms: d.ms, model: mainModel, turns: ctx.turns.length, flights: ctx.trackedFlights.length,
     input_tokens: d.usage.input, output_tokens: d.usage.output, cache_read_input_tokens: d.usage.cacheRead, cache_creation_input_tokens: d.usage.cacheCreation,
     ...(d.kind === 'handle' ? { rewritten: d.rewritten, instruction: d.rewritten ? redactSecretShapedText(d.instruction).slice(0, 120) : undefined } : {}), ...(d.kind === 'flight' ? { flightNo: d.flightNo, track: d.track } : {}), ...(d.kind === 'skip' ? { reason: d.reason } : {}) }))
   if (d.kind === 'reply' || d.kind === 'ask') return { reply: d.text }
@@ -420,13 +424,16 @@ export async function answerFollowups(p: { runId: string; telegramId: number; se
       let res: any = null
       try {
         res = await client.messages.create({
-          model, max_tokens: 500, system: brainSystemBlocks(ctx, new Date(), `The search results were just sent (latest assistant message). Answer the user's earlier question from those results only. Be brief, name the option number, airline, time and fare.`),
-          tools: BRAIN_TOOLS.filter(t => t.name === 'reply'), tool_choice: { type: 'tool', name: 'reply' }, messages: brainMessages(ctx.turns, `(Earlier, while you were searching, I asked:) ${question}`),
+          ...modelOptions(model), max_tokens: 500, system: brainSystemBlocks(ctx, new Date(), `Use the reply tool. The search results were just sent (latest assistant message). Answer the user's earlier question from those results only. Be brief, name the option number, airline, time and fare.`),
+          tools: BRAIN_TOOLS.filter(t => t.name === 'reply'), tool_choice: { type: 'auto' }, messages: brainMessages(ctx.turns, `(Earlier, while you were searching, I asked:) ${question}`),
         }, { timeout: TIMEOUT_MS * 2, maxRetries: 1 })
       } finally {
         try { (p.meter || meterBrainCall)({ telegramId: p.telegramId, source: 'brain_followup', model, ms: Date.now() - t0, ok: !!res, usage: brainUsage(res) }) } catch { /* never */ }
       }
-      const text = inventedApprovalGuard(clean((res?.content || []).find((b: any) => b.type === 'tool_use')?.input?.text, 1200))
+      if (res?.stop_reason && res.stop_reason !== 'tool_use') continue
+      const reply = (res?.content || []).find((b: any) => b.type === 'tool_use' && b.name === 'reply')
+      if (typeof reply?.input?.text !== 'string') continue
+      const text = inventedApprovalGuard(clean(reply.input.text, 1200))
       if (!text) continue
       await p.send(text)
       await supabaseAdmin.from('conversations').insert({ telegram_id: p.telegramId, role: 'assistant', content: text })
@@ -443,6 +450,7 @@ export const MODEL_PRICES: Record<string, { input: number; cacheRead: number; ca
   'claude-sonnet-4-5': { input: 3, cacheRead: 0.3, cacheWrite: 3.75, output: 15 },
   'claude-haiku-4-5': { input: 1, cacheRead: 0.1, cacheWrite: 1.25, output: 5 },
   'claude-haiku-5-5': { input: 0.1, cacheRead: 0.01, cacheWrite: 0.125, output: 0.5 },
+  'claude-sonnet-4-6': { input: 3, cacheRead: 0.3, cacheWrite: 3.75, output: 15 },
   'claude-sonnet-5-5': { input: 2, cacheRead: 0.1, cacheWrite: 2.5, output: 10 },
 }
 export function estimateCostUsd(model: string, u: BrainUsage): number | null {
@@ -456,7 +464,7 @@ export function estimateCostUsd(model: string, u: BrainUsage): number | null {
 export function shadowModels(env: Record<string, string | undefined> = (globalThis as any).process?.env || {}): string[] {
   const raw = String(env.GOGO_BRAIN_SHADOW ?? (env.VERCEL_ENV === 'production' ? 'claude-haiku-5-5' : '')).trim()
   if (!raw || raw.toLowerCase() === 'off') return []
-  return raw.split(',').map(x => x.trim()).filter(x => /^claude-[a-z0-9.-]+$/.test(x)).slice(0, 2)
+  return raw.split(',').map(x => x.trim()).filter(isBrainModel).slice(0, 2)
 }
 
 const norm = (t: string) => clean(t, 600).toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ')

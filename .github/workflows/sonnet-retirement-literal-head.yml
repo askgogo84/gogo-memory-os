@@ -1,0 +1,44 @@
+name: Sonnet retirement literal head
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/services/anthropic-models.ts'
+      - 'lib/services/claude.ts'
+      - 'lib/services/pdf-reader.ts'
+      - 'lib/services/voice-reply.ts'
+      - 'lib/services/asset-memory.ts'
+      - 'lib/agent/brain.ts'
+      - 'lib/agent/deep-research.ts'
+      - 'scripts/verify-sonnet-retirement.mts'
+      - '.github/workflows/sonnet-retirement-literal-head.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Assert literal feature head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx --yes tsx scripts/verify-sonnet-retirement.mts
+      - run: npx --yes tsx scripts/verify-brain-oct27.mts
+      - run: npm test
+      - run: npx next typegen
+      - run: npm run typecheck
+      - run: npm run build

@@ -1,3 +1,4 @@
+import { sonnetOptions, messageText, modelOptions, SONNET_MODEL, DOCUMENT_FALLBACK_MODEL } from '@/lib/services/anthropic-models'
 import Anthropic from '@anthropic-ai/sdk'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
@@ -286,7 +287,7 @@ export async function parsePdfTicket(
 
   const base64Pdf=pdfBuffer.toString('base64')
   const result = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+    ...sonnetOptions(),
     max_tokens: 1024,
     messages: [
       {
@@ -309,7 +310,7 @@ export async function parsePdfTicket(
     ],
   })
 
-  const text=result.content[0]?.type==='text'?result.content[0].text.trim():''
+  const text=messageText(result)
   return parseTicketJson(text)
 }
 
@@ -372,7 +373,7 @@ export async function classifyPdfDocument(
       },
     ],
   })
-  const ans = (result.content[0]?.type === 'text' ? result.content[0].text : '').trim().toUpperCase()
+  const ans = (messageText(result)).trim().toUpperCase()
   console.log('[pdf-reader] first-page class:', ans.slice(0, 20))
   if (ans.includes('TICKET')) return 'TICKET'
   if (ans.includes('OTHER')) return 'OTHER'
@@ -397,7 +398,7 @@ export async function readAndSummarizePdfDocument(params: {
 }): Promise<string> {
   const base64Pdf = await fetchTwilioPdfBase64(params.mediaUrl, params.accountSid, params.authToken)
   const result = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
+    ...sonnetOptions(),
     max_tokens: 1200,
     system: PDF_SUMMARY_SYSTEM,
     messages: [
@@ -440,7 +441,7 @@ export async function readAndSummarizePdfDocument(params: {
       },
     ],
   })
-  const text = result.content[0]?.type === 'text' ? result.content[0].text.trim() : ''
+  const text = messageText(result)
   if (!text) throw new Error('Could not read document')
   return text
 }
@@ -473,9 +474,9 @@ export async function parseImageTicket(
   const base64Img = Buffer.from(imgBuffer).toString('base64')
   const cleanMediaType = mediaType.includes('png') ? 'image/png' : 'image/jpeg'
 
-  // Small forwarded screenshots are hard to read; prefer the newer model, fall back if unavailable.
+  // Only a missing-model error may use the reviewed supported fallback. Never retry a refusal.
   const ask = (model: string) => anthropic.messages.create({
-    model,
+    ...modelOptions(model),
     max_tokens: 1024,
     messages: [
       {
@@ -497,12 +498,13 @@ export async function parseImageTicket(
       },
     ],
   })
-  const result = await ask('claude-sonnet-5-5').catch((err: any) => {
-    console.error('[ticket-reader] newer model unavailable, falling back:', String(err?.message || err).slice(0, 120))
-    return ask('claude-sonnet-4-5')
+  const result = await ask(SONNET_MODEL).catch((err: any) => {
+    if (err?.status !== 404) throw err
+    console.error('[ticket-reader] model unavailable; using supported document fallback')
+    return ask(DOCUMENT_FALLBACK_MODEL)
   })
 
-  const text = result.content[0]?.type === 'text' ? result.content[0].text.trim() : ''
+  const text = messageText(result)
   return parseTicketJson(text)
 }
 

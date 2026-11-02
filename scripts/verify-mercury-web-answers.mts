@@ -31,7 +31,7 @@ console.log('PASS error, network failure, empty reply and timeout all return nul
 
 const src = readFileSync(new URL('../lib/services/claude.ts', import.meta.url), 'utf8')
 const fn = src.slice(src.indexOf('export async function askClaudeWithContext('))
-const mi = fn.indexOf('askMercury(prompt'), ci = fn.indexOf("model: 'claude-sonnet-4-5'")
+const mi = fn.indexOf('askMercury(prompt'), ci = fn.indexOf("...sonnetOptions()")
 assert.ok(mi > 0 && ci > mi, 'Mercury runs before Claude, inside the web-answer function')
 assert.ok(fn.indexOf('never say you booked') < mi, 'Mercury gets the same safety prompt')
 // R4 (20 Oct): every provider shares finishWebAnswer, which still runs stripSearchPreamble first.

@@ -1,3 +1,4 @@
+import { SONNET_MODEL, modelOptions, messageText } from '@/lib/services/anthropic-models'
 // Research mode (24 Oct live): "Research the best electric scooters under 1.5 lakh in India with sources" ran one
 // search, got kick scooters and extension boards, and gave up. A research ask now runs several focused searches,
 // reads the best pages, and writes a short cited answer, the way a person researching would.
@@ -26,8 +27,8 @@ const defaultModel: Model = async (prompt, maxTokens, model) => {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) throw new Error('no_model')
   const client = new Anthropic({ apiKey: key })
-  const res = await client.messages.create({ model, max_tokens: maxTokens, temperature: 0.2, messages: [{ role: 'user', content: prompt }] }, { timeout: 30_000 })
-  return (res.content.find((b: any) => b.type === 'text') as any)?.text || ''
+  const res = await client.messages.create({ ...modelOptions(model), max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }, { timeout: 30_000 })
+  return messageText(res)
 }
 
 // 31 Oct, side by side with another assistant: "yes" to a how-to post brought back a profile of its author; theirs
@@ -116,7 +117,7 @@ Request: ${question}
 Sources:
 ${corpus.slice(0, 24_000)}`
   let body = ''
-  try { body = (await model(prompt, 900, 'claude-sonnet-4-5')).trim() } catch {}
+  try { body = (await model(prompt, 900, SONNET_MODEL)).trim() } catch {}
   if (!body) body = sources.slice(0, 5).map(s => `• ${s.title} [${s.n}]`).join('\n')
   // Some models write markdown bold (**x**); WhatsApp bold is *x*.
   body = body.replace(/\*\*([^*\n]+)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '')
