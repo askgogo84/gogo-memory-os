@@ -13,7 +13,7 @@ export function exactNotificationOwnerId(value: string | number): string {
   if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) throw new Error('notification_owner_invalid')
   try {
     const owner = BigInt(value)
-    if (owner < -(1n << 63n) || owner > (1n << 63n) - 1n) throw new Error('notification_owner_invalid')
+    if (owner < BigInt('-9223372036854775808') || owner > BigInt('9223372036854775807')) throw new Error('notification_owner_invalid')
   } catch {
     throw new Error('notification_owner_invalid')
   }
