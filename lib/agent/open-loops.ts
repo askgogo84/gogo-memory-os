@@ -540,10 +540,10 @@ async function readGmailAttention(telegramId:string|number){
   ])
   if(userError)throw new Error(`open_loop_gmail_user_failed:${userError.message}`)
   if(consentError)throw new Error(`open_loop_gmail_consent_failed:${consentError.message}`)
-  if(consent&&consent.telegram_id!=null&&String(consent.telegram_id)!==owner)return {reason:'disabled' as const}
-  if(consent?.gmail_enabled===false)return {reason:'disabled' as const}
-  if(user&&user.telegram_id!=null&&String(user.telegram_id)!==owner)return {reason:'disconnected' as const}
-  if(!user?.gmail_connected)return {reason:'disconnected' as const}
+  // Absence of explicit owner-bound Gmail consent is never permission to read.
+  // Check BEFORE decrypting or refreshing any stored OAuth token.
+  if(!consent||consent.gmail_enabled!==true||String(consent.telegram_id??'')!==owner)return {reason:'disabled' as const}
+  if(!user||String(user.telegram_id??'')!==owner||!user.gmail_connected)return {reason:'disconnected' as const}
 
   const ownEmail=String(user.gmail_email||'').trim().toLowerCase()
   if(!ownEmail)return {reason:'disconnected' as const}
