@@ -138,14 +138,15 @@ export async function shadowFlightStatus(f: { flightNo: string; departAt: string
     const gogo = gogoFlightChoice(f.gogoState)
     const questions = { status: { type: 'choice' as const, instructions: `What is the current status of flight ${state.flight_number} departing on ${state.departure_date_utc} (UTC date)${(f.now ? `, as of ${f.now.toISOString().slice(0, 16)}Z` : '')}? Pick unknown if the evidence is insufficient.`, criteria: FLIGHT_STATE_CRITERIA } }
     const r = await callParallelDecisions(state, questions, opts)
-    if (!r.ok && r.reason === 'disabled') return null
+    const failure = 'reason' in r ? r.reason : undefined
+    if (failure === 'disabled') return null
     const a = r.ok ? r.answers.status : undefined
     const parallel = !r.ok ? 'error' : a?.type === 'choice' ? a.choice : a?.type || 'invalid'
     const comparable = a?.type === 'choice' && parallel !== 'unknown' && gogo !== 'unknown'
     const rec: ShadowLog = {
       kind: 'flight_status', gogo, parallel, agree: comparable ? parallel === gogo : null,
       ...(a?.type === 'choice' ? { confidence: Math.round(Number(a.probabilities[a.choice] || 0) * 100) / 100 } : {}),
-      ms: r.ms, usd: r.ok ? PARALLEL_USD_PER_CALL : 0, ...(r.ok ? { citations: r.citations.length } : { reason: r.reason }),
+      ms: r.ms, usd: r.ok ? PARALLEL_USD_PER_CALL : 0, ...(r.ok ? { citations: r.citations.length } : { reason: failure }),
     }
     ;(opts.log || ((l: string) => console.log(l)))(`PARALLEL_SHADOW ${JSON.stringify(rec)}`)
     return rec
