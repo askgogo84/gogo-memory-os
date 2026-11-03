@@ -64,11 +64,27 @@ async function saveResumeState(tg:number, run:any, patch:Record<string,unknown>)
 }
 
 async function gmailToken(actor: AgentActor) {
+  // Private Gmail credentials require a fresh owner and saved-consent check,
+  // even when the upstream AgentActor normally has already validated identity.
+  const legacy = actor?.legacyTelegramId
+  if (typeof legacy !== 'number' || !Number.isSafeInteger(legacy) || legacy === 0) return null
+  const userId = typeof actor?.userId === 'string' ? actor.userId.trim() : ''
+  if (!userId) return null
+  const owner = String(legacy)
+
+  // A Google connection is not itself permission to read Gmail. Read saved
+  // positive consent BEFORE any service-role user credential columns.
+  const { data: consent, error: consentError } = await supabaseAdmin
+    .from('user_consent_settings').select('telegram_id,gmail_enabled')
+    .eq('telegram_id', owner).maybeSingle()
+  if (consentError) throw new Error('appointment_gmail_consent_failed:' + consentError.message)
+  if (consent?.gmail_enabled !== true || String(consent?.telegram_id ?? '') !== owner) return null
+
   const { data, error } = await supabaseAdmin.from('users')
-    .select('gmail_connected,gmail_access_token,gmail_refresh_token,timezone')
-    .eq('telegram_id', actor.legacyTelegramId).maybeSingle()
-  if (error) throw new Error(`appointment_gmail_credentials_failed:${error.message}`)
-  if (!data?.gmail_connected) return null
+    .select('id,telegram_id,gmail_connected,gmail_access_token,gmail_refresh_token,timezone')
+    .eq('telegram_id', owner).eq('id', userId).maybeSingle()
+  if (error) throw new Error('appointment_gmail_credentials_failed:' + error.message)
+  if (!data || String(data.id || '') !== userId || String(data.telegram_id ?? '') !== owner || !data.gmail_connected) return null
   let access = decryptGoogleToken(String(data.gmail_access_token || ''))
   const refresh = decryptGoogleToken(String(data.gmail_refresh_token || ''))
   if (!access && refresh) access = await refreshGmailAccessToken(refresh) || ''
