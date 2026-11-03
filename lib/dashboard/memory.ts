@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createDocumentShortLink, shortLinkUrl } from '@/lib/services/document-links'
+import { exactSessionOwnerId } from './owner-identity'
 
 type RawDoc = {
   id: string | number
@@ -135,8 +136,13 @@ function safeSubtitle(doc: RawDoc, sensitive: boolean): string {
 }
 
 export async function getDashboardMemory(telegramId: string): Promise<DashboardMemory> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return { ok: true, items: [] }
+  // Session IDs are canonical decimal strings. parseInt/Number without an exact
+  // safe-integer boundary can select a different tenant's private documents.
+  // This numeric-backed document + short-link path cannot safely serve >53-bit
+  // legacy identities until both consumers support exact-string owner IDs.
+  const exactOwner = exactSessionOwnerId(telegramId)
+  const tgNum = exactOwner === null ? NaN : Number(exactOwner)
+  if (!Number.isSafeInteger(tgNum) || String(tgNum) !== exactOwner) return { ok: true, items: [] }
 
   try {
     const { data, error } = await supabaseAdmin
