@@ -203,7 +203,7 @@ await guard('missing returned owner and missing phone both fail closed', async (
 await guard('invalid or overflowing session owners never reach privileged DB', async () => {
   for (const owner of ['123extra', '123.4', ' 123', '123 ', '+123', '0', '-0', '9223372036854775808', '-9223372036854775809', '1e2', '', 123.4, Number(B)]) {
     const x = await exercise('POST', { owner })
-    assert.equal(x.result.status, owner === '' ? 401 : 409, String(owner))
+    assert.equal(x.result.status, 409, String(owner))
     assert.deepEqual(x.ledger.userReads, [])
     assert.deepEqual(x.ledger.inserts, [])
   }
