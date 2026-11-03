@@ -127,12 +127,10 @@ await safety('Instagram URL fragment is not forwarded',async()=>{
   await f.api.saveReel({url:SAFE_URL+'#fragment'})
   assert.equal(f.calls.length,0)
 })
-await safety('Instagram redirect status must not be followed even if transport says ok',async()=>{
-  const f=isolated({finalUrl:SAFE_URL})
-  // Existing stub returns HTTP 200; the earlier redirect:manual control covers
-  // transport-level redirects. Source guard separately rejects response.url mismatch.
-  const r=await f.api.saveReel({url:SAFE_URL})
-  assert.equal(r.title,'Synthetic safe title')
+await safety('unapproved Instagram path does not trigger a metadata request',async()=>{
+  const f=isolated()
+  await f.api.saveReel({url:'https://www.instagram.com/direct/inbox/'})
+  assert.equal(f.calls.length,0)
 })
 console.log('CONTROLS='+controls+' SAFETY_PASS='+securityPass)
 assert.equal(controls,4)
