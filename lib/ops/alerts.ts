@@ -7,6 +7,7 @@
 // Phase 1 detectors: billing emails in the owner's Gmail, failed metered API calls, failed tasks.
 // Until the migration runs, every database call reports the table missing and nothing is sent.
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { canonicalAdminPhone } from '@/lib/bot/handlers/admin-analytics'
 
 export type Severity = 'P1' | 'P2' | 'P3'
 export type AlertSource = 'billing' | 'errors' | 'tasks' | 'provider' | 'jobs' | 'security' | 'whatsapp' | 'code' | 'quality'
@@ -24,10 +25,11 @@ export const OPS_ALERT_NUMBER_DEFAULT = '+918310441698'
 export function opsAlertNumber() {
   return clean(process.env.OPS_ALERT_WHATSAPP_NUMBER || OPS_ALERT_NUMBER_DEFAULT, 40)
 }
-const last10 = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10)
+/** Privileged commands require the complete E.164 identity, never a shared national suffix. */
 export function isOpsAlertNumber(phone: unknown) {
-  const a = last10(phone), b = last10(opsAlertNumber())
-  return a.length === 10 && a === b
+  const sender = typeof phone === 'string' ? canonicalAdminPhone(phone) : null
+  const owner = canonicalAdminPhone(opsAlertNumber())
+  return Boolean(sender && owner && sender === owner)
 }
 
 // ------------------------------------------------------------------ detectors (pure)
