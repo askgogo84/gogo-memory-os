@@ -142,7 +142,9 @@ export async function lookupLiveFlight(code: string, now = new Date(), tz = 'Asi
   const days = [...new Set([ymd(now.getTime() - 86_400_000), ymd(now.getTime()), ymd(now.getTime() + 86_400_000)])]
   const list = (await Promise.all(days.map(d => fetcher(code, d).catch(() => [])))).flat()
   const o = pickLiveOccurrence(list, now.getTime())
-  if (!o) return null
+  // 3 Nov live: the feed was over quota (429) and the shadow never ran. Ask Parallel on a miss too (Gogo had no
+  // answer), so the trial measures coverage as well as agreement. Background, never shown.
+  if (!o) { if (fetcher === fetchAeroDataBox) void shadowLookup(normalizeFlightNo(code), now.toISOString(), '', '', 'unknown', now); return null }
   const depUtc = new Date(utcOf(o.departure?.scheduledTime)).toISOString()
   const arrMs = utcOf(o.arrival?.scheduledTime)
   let status = parseFlightData([o], depUtc)
