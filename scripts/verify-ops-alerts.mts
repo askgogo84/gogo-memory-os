@@ -12,7 +12,25 @@ assert.equal(o.isOpsAlertNumber('whatsapp:+918310441698'), true)
 assert.equal(o.isOpsAlertNumber('918310441698'), true)
 assert.equal(o.isOpsAlertNumber('+918884501501'), false)
 assert.equal(o.isOpsAlertNumber(''), false)
-console.log('✓ alerts go to 8310441698 only')
+// Authorization must not treat two different international identities sharing their last ten digits as one owner.
+assert.equal(o.isOpsAlertNumber('+918310441698'), true)
+assert.equal(o.isOpsAlertNumber('whatsapp:918310441698'), true)
+assert.equal(o.isOpsAlertNumber('whatsapp:+18310441698'), false, 'US country code cannot impersonate India owner')
+assert.equal(o.isOpsAlertNumber('+448310441698'), false, 'UK country code cannot impersonate India owner')
+assert.equal(o.isOpsAlertNumber('8310441698'), false, 'bare local suffix cannot be privileged')
+assert.equal(o.isOpsAlertNumber('whatsapp:8310441698'), false, 'bare WhatsApp local suffix cannot be privileged')
+assert.equal(o.isOpsAlertNumber('whatsapp:+918310441698?x'), false, 'unexpected appended data is invalid')
+assert.equal(o.isOpsAlertNumber(918310441698), false, 'untyped sender values fail closed')
+// A second synthetic owner verifies no hard-coded default-number authorization.
+process.env.OPS_ALERT_WHATSAPP_NUMBER = '+14155552671'
+assert.equal(o.isOpsAlertNumber('whatsapp:+14155552671'), true)
+assert.equal(o.isOpsAlertNumber('14155552671'), true)
+assert.equal(o.isOpsAlertNumber('whatsapp:+914155552671'), false, 'same national digits, different country code')
+assert.equal(o.isOpsAlertNumber('4155552671'), false, 'local digits alone are never admin identity')
+process.env.OPS_ALERT_WHATSAPP_NUMBER = '4155552671'
+assert.equal(o.isOpsAlertNumber('whatsapp:+14155552671'), false, 'misconfigured local owner must fail closed')
+delete process.env.OPS_ALERT_WHATSAPP_NUMBER
+console.log('✓ privileged ops commands require exact international owner; country-prefix collisions and local suffixes denied')
 
 // Error spikes: 20+ failures in 15 min at ≥50% failure rate is P1; otherwise 5+ in an hour is P2; one incident each.
 {
