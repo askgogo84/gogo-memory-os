@@ -157,6 +157,8 @@ export async function lookupLiveFlight(code: string, now = new Date(), tz = 'Asi
     if (web) { status = { ...status, state: web.state, url: web.url, ...(web.state === 'landed' ? { landedBy: now.toISOString() } : {}) }; if (web.state === 'landed' && !(o.arrival?.runwayTime?.local || o.arrival?.actualTime?.local)) arrRevisedLocal = undefined }
   }
   const ap = (a: any) => ({ iata: String(a?.iata || a?.icao || '').slice(0, 4), name: String(a?.municipalityName || a?.shortName || a?.name || a?.iata || '').slice(0, 60) })
+  // 3 Nov: "did it land?" — Parallel shadow in the background (live feed only; never awaited, never shown).
+  if (fetcher === fetchAeroDataBox) void shadowLookup(normalizeFlightNo(String(o.number || code)), depUtc, ap(o.departure?.airport).iata, ap(o.arrival?.airport).iata, status.state, now)
   return {
     flightNo: normalizeFlightNo(String(o.number || code)), airline: o.airline?.name ? String(o.airline.name).slice(0, 60) : undefined,
     from: ap(o.departure?.airport), to: ap(o.arrival?.airport),
@@ -247,6 +249,24 @@ async function landedTripNote(tg: string, arrivalCity: string, now: Date): Promi
   } catch { return '' }
 }
 
+function shadowLookup(flightNo: string, departAt: string, fromIata: string, toIata: string, state: string, now: Date): Promise<unknown> {
+  const env = (globalThis as any).process?.env
+  if (!env?.PARALLEL_API_KEY || String(env.PARALLEL_SHADOW || '').toLowerCase() === 'off') return Promise.resolve()
+  return import('./parallel-decisions').then(p => p.shadowFlightStatus({ flightNo, departAt, fromIata, toIata, gogoState: state, now })).catch(() => {})
+}
+
+/** Shadow call at most once per state change, plus every 10 minutes near landing. Env-gated; dynamic import so strict
+ * harnesses never load it. Returns a promise that always resolves. */
+function parallelShadow(c: any, state: string | undefined, prev: TrackingState & { parallelAt?: string }, tracking: TrackingState & { parallelAt?: string }, now: Date, nearLand: boolean): Promise<unknown> {
+  const env = (globalThis as any).process?.env
+  if (!env?.PARALLEL_API_KEY || String(env.PARALLEL_SHADOW || '').toLowerCase() === 'off') return Promise.resolve()
+  const last = Date.parse(String(prev.parallelAt || ''))
+  const changed = (state || 'unknown') !== (prev.state || 'unknown')
+  if (!changed && !(nearLand && (!Number.isFinite(last) || now.getTime() - last >= 10 * MIN))) return Promise.resolve()
+  tracking.parallelAt = now.toISOString()
+  return import('./parallel-decisions').then(p => p.shadowFlightStatus({ flightNo: String(c.flightNo), departAt: String(c.departAt), fromIata: c.from, toIata: c.to, gogoState: state, now })).catch(() => {})
+}
+
 export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher: FlightFetcher = fetchAeroDataBox, search?: WebSearchFn) {
   const c = watcher.condition_json?.adHocFlight || {}
   const tg = String(watcher.telegram_id)
@@ -283,6 +303,8 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
       if (status?.state === 'landed' && !status.actualArrival && !status.landedBy) status = { ...status, landedBy: now.toISOString() }
     }
   }
+  // 3 Nov: Parallel Decisions shadow — same public question, logged for comparison only (never changes alerts).
+  const shadow = parallelShadow(c, status?.state, prev, tracking, now, wantWeb)
   let sent = 0
   if (status) {
     const leg = { id: String(watcher.id), telegramId: tg, flightNo: String(c.flightNo), airline: c.airline, fromCity: String(c.from || ''), toCity: String(c.to || ''), departAt: String(c.departAt), arriveAt: c.arriveAt, tracking: prev }
@@ -311,6 +333,7 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
     if (status.actualArrival) tracking.actualArrival = status.actualArrival
     if (status.landedBy && !tracking.landedBy) tracking.landedBy = status.landedBy
   }
+  await Promise.race([shadow, new Promise(r => setTimeout(r, 1500))]).catch(() => {})
   await save({ next_check_at: new Date(now.getTime() + nextCheckMinutes(now.getTime(), w.dep, tracking) * MIN).toISOString(), last_state_json: { ...(watcher.last_state_json || {}), tracking, source: status ? 'flight_data' : 'unavailable' } })
   return { triggered: sent > 0, failed: false }
 }
