@@ -1,0 +1,32 @@
+name: Make negative WhatsApp owner — literal HEAD test-only diagnostic
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-make-negative-owner-testonly.mjs'
+      - '.github/workflows/make-negative-owner-literal-head.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  make-negative-owner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact literal feature HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install pinned, inert test dependencies
+        run: npm ci --ignore-scripts
+      - name: Exercise unchanged Make production owner functions with fictional account/document stubs
+        run: node scripts/verify-make-negative-owner-testonly.mjs
