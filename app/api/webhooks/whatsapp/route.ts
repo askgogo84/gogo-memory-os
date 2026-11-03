@@ -36,6 +36,7 @@ import { buildMemoryControlReply, isMemoryControlCommand } from '@/lib/bot/handl
 import { buildNotesReply, isNotesCommand, isMeetingNotesCommand, buildMeetingNotesListReply } from '@/lib/bot/handlers/notes-control'
 import { buildPaymentIntentReply, isPaymentIntentCommand } from '@/lib/bot/handlers/payment-intent'
 import { buildAdminWhatsAppReply, isAdminCommand, isAdminPhone } from '@/lib/bot/handlers/admin-analytics'
+import { isOpsAlertNumber, parseOpsCommand, runOpsCommand } from '@/lib/ops/alerts'
 import { buildFirstValueReferralNudge } from '@/lib/bot/handlers/first-value-nudge'
 import { getLatestFollowupState } from '@/lib/bot/handlers/followup-state'
 import {
@@ -456,6 +457,16 @@ async function handleWhatsAppPost(req: NextRequest) {
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
       const reply = await buildAdminWhatsAppReply(bodyText)
+      await saveConversation(resolvedUser.telegramId, 'user', bodyText)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await sendWhatsAppMessage(from, reply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    // Ops alerts (3 Nov): "alerts", "ack 3", "mute 3 for 1d", "details 3" from the owner's alert number only.
+    const opsCommand = isOpsAlertNumber(from) ? parseOpsCommand(bodyText) : null
+    if (opsCommand) {
+      const reply = await runOpsCommand(opsCommand)
       await saveConversation(resolvedUser.telegramId, 'user', bodyText)
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       await sendWhatsAppMessage(from, reply)
