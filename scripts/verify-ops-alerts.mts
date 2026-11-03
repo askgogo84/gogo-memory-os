@@ -92,6 +92,8 @@ console.log('✓ ack / mute / details / alerts parse; ordinary messages are left
   assert.match(hook, /const opsCommand = isOpsAlertNumber\(from\) \? parseOpsCommand\(bodyText\) : null/)
   const mig = readFileSync('supabase/migrations/20261103120000_ops_alerts.sql', 'utf8')
   assert.match(mig, /enable row level security/); assert.doesNotMatch(mig, /create policy/i, 'service role only')
+  assert.match(mig, /grant select, insert, update, delete on public\.ops_alerts to service_role;/, 'Supabase 30 Oct: explicit service-role grant')
+  assert.match(mig, /revoke all on public\.ops_alerts from anon, authenticated;/)
   assert.match(mig, /ops_alerts_one_live_per_fingerprint on public\.ops_alerts \(fingerprint\) where status <> 'resolved'/)
   assert.match(readFileSync('supabase/migrations/20261103120000_ops_alerts.rollback.sql', 'utf8'), /drop table if exists public\.ops_alerts/)
   assert.ok(JSON.parse(readFileSync('vercel.json', 'utf8')).crons.some((c: any) => c.path === '/api/cron/ops-alerts' && c.schedule === '*/5 * * * *'))

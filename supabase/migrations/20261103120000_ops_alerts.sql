@@ -27,3 +27,8 @@ create unique index if not exists ops_alerts_one_live_per_fingerprint on public.
 create index if not exists ops_alerts_status_last_seen on public.ops_alerts (status, last_seen desc);
 
 alter table public.ops_alerts enable row level security;
+
+-- Supabase (30 Oct 2026): new public tables get no Data API grants by default. Server only: grant the service role,
+-- keep anon and signed-in clients out.
+revoke all on public.ops_alerts from anon, authenticated;
+grant select, insert, update, delete on public.ops_alerts to service_role;
