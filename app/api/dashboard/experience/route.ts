@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,8 +17,8 @@ function sameOrigin(req: NextRequest): boolean {
 export async function GET() {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const tg = parseInt(session.telegramId, 10)
-  if (!Number.isFinite(tg)) return NextResponse.json({ error: 'invalid_session' }, { status: 400 })
+  const tg = exactSessionOwnerId(session.telegramId)
+  if (!tg) return NextResponse.json({ error: 'invalid_session' }, { status: 400 })
 
   const { data, error } = await supabaseAdmin
     .from('user_experience_preferences')
@@ -36,8 +37,8 @@ export async function POST(req: NextRequest) {
   if (!sameOrigin(req)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const tg = parseInt(session.telegramId, 10)
-  if (!Number.isFinite(tg)) return NextResponse.json({ error: 'invalid_session' }, { status: 400 })
+  const tg = exactSessionOwnerId(session.telegramId)
+  if (!tg) return NextResponse.json({ error: 'invalid_session' }, { status: 400 })
 
   const body = await req.json().catch(() => null) as any
   const personality = String(body?.personality || '')

@@ -1,0 +1,29 @@
+name: Dashboard Experience Exact Owner (synthetic)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/api/dashboard/experience/route.ts'
+      - 'scripts/verify-experience-exact-owner.mts'
+      - '.github/workflows/experience-exact-owner.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-experience-owner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install fixture dependencies
+        run: npm ci
+      - name: Verify route owner-bound reads/writes with inert fake services
+        run: npx --no-install tsx scripts/verify-experience-exact-owner.mts
