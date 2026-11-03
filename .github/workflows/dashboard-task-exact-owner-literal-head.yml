@@ -4,6 +4,7 @@ on:
     paths:
       - 'lib/dashboard/tasks.ts'
       - 'scripts/verify-dashboard-task-exact-owner-fix.mts'
+      - 'scripts/verify-dashboard-tasks-source.mts'
       - '.github/workflows/dashboard-task-exact-owner-literal-head.yml'
 permissions:
   contents: read
