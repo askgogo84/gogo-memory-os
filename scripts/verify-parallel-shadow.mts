@@ -50,6 +50,16 @@ console.log('✓ only a clean flight number, date and airport codes are sent; pr
   console.log('✓ choice / noul parsed; refusal kept separate; unknown choice and junk are invalid')
 }
 
+// Feed miss: Gogo has no answer, so a Parallel answer is coverage (agree: null), never a disagreement.
+{
+  const lines: string[] = []
+  const miss = await p.shadowFlightStatus({ flightNo: 'EK569', departAt: '2026-11-03T11:49:00Z', fromIata: '', toIata: '', gogoState: 'unknown' },
+    { env: { PARALLEL_API_KEY: 'k' }, fetcher: (async () => ({ ok: true, status: 200, json: async () => ({ answers: { status: { type: 'choice', choice: 'landed', probabilities: { landed: 0.88 } } } }) })) as any, log: l => lines.push(l) })
+  assert.deepEqual([miss!.gogo, miss!.parallel, miss!.agree, miss!.confidence], ['unknown', 'landed', null, 0.88])
+  assert.equal(lines.length, 1)
+  console.log('✓ feed miss is logged as coverage (Gogo unknown, Parallel answered), not as disagreement')
+}
+
 // Gogo states map like for like.
 assert.deepEqual(['landed', 'departed', 'scheduled', 'delayed', 'cancelled', 'diverted', 'unknown', undefined].map(s => p.gogoFlightChoice(s as any)),
   ['landed', 'airborne', 'not_departed', 'not_departed', 'cancelled', 'diverted', 'unknown', 'unknown'])
@@ -89,6 +99,7 @@ assert.deepEqual(['landed', 'departed', 'scheduled', 'delayed', 'cancelled', 'di
 {
   const src = readFileSync('lib/agent/flight-track.ts', 'utf8')
   assert.match(src, /if \(fetcher === fetchAeroDataBox\) void shadowLookup\(/, 'live lookup: background, live feed only')
+  assert.match(src, /if \(!o\) \{ if \(fetcher === fetchAeroDataBox\) void shadowLookup\(normalizeFlightNo\(code\), now\.toISOString\(\), '', '', 'unknown', now\); return null \}/, 'feed miss: still shadowed (coverage), still returns null')
   assert.match(src, /await Promise\.race\(\[shadow, new Promise\(r => setTimeout\(r, 1500\)\)\]\)/)
   assert.match(src, /import\('\.\/parallel-decisions'\)/, 'dynamic import keeps strict harnesses clean')
   assert.doesNotMatch(src, /shadow[^\n]*(?:deliverWatchAlert|status = |sendWhatsApp)/, 'shadow result never feeds an alert or status')
