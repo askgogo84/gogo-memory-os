@@ -22,6 +22,7 @@ function clean(value: unknown, max = 600) {
 // ---------- rules and events ----------
 
 export async function loadRules(telegramId: number): Promise<AttentionRule[]> {
+  if (!exactEmailAttentionOwner(telegramId)) throw new Error('email_attention_owner_invalid')
   const { data, error } = await supabaseAdmin.from('email_attention_rules')
     .select('id,kind,match_type,match_value,category,label,source').eq('telegram_id', telegramId).eq('active', true).limit(300)
   if (error) { console.error('EMAIL_RULES_READ_FAILED:', error.message); return [] }
@@ -29,6 +30,7 @@ export async function loadRules(telegramId: number): Promise<AttentionRule[]> {
 }
 
 export async function saveRule(telegramId: number, rule: AttentionRule): Promise<string | null> {
+  if (!exactEmailAttentionOwner(telegramId)) throw new Error('email_attention_owner_invalid')
   let q = supabaseAdmin.from('email_attention_rules').select('id').eq('telegram_id', telegramId)
     .eq('match_type', rule.matchType).eq('match_value', rule.matchValue.toLowerCase())
   q = rule.category ? q.eq('category', rule.category) : q.is('category', null)
@@ -82,12 +84,40 @@ export type AttentionRead = {
   gmailEmail: string | null
 }
 
+// Never turn a private Gmail consent or owner into a rounded JavaScript number.
+// Both Gmail read transports must prove the same exact, safe, signed owner
+// and an explicit, persisted affirmative opt-in before contacting a provider.
+function exactEmailAttentionOwner(value: unknown): string | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
+  const number = Number(value)
+  return Number.isSafeInteger(number) && number !== 0 && String(number) === value ? value : null
+}
+
+async function verifiedGmailReadConsent(telegramId: number): Promise<boolean> {
+  const owner = exactEmailAttentionOwner(telegramId)
+  if (!owner) return false
+  try {
+    const [{ data: consent, error: consentError }, { data: user, error: ownerError }] = await Promise.all([
+      supabaseAdmin.from('user_consent_settings').select('telegram_id,gmail_enabled').eq('telegram_id', owner).maybeSingle(),
+      supabaseAdmin.from('users').select('telegram_id').eq('telegram_id', owner).maybeSingle(),
+    ])
+    return !consentError && !ownerError && consent?.gmail_enabled === true &&
+      exactEmailAttentionOwner(consent.telegram_id) === owner &&
+      exactEmailAttentionOwner(user?.telegram_id) === owner
+  } catch {
+    return false // Unknown consent/owner state is not permission to read Gmail.
+  }
+}
+
 async function gmailToken(telegramId: number) {
-  const [{ data: user }, { data: consent }] = await Promise.all([
-    supabaseAdmin.from('users').select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token').eq('telegram_id', telegramId).maybeSingle(),
-    supabaseAdmin.from('user_consent_settings').select('gmail_enabled').eq('telegram_id', telegramId).maybeSingle(),
-  ])
-  if (consent?.gmail_enabled === false || !user?.gmail_connected) return null
+  if (!(await verifiedGmailReadConsent(telegramId))) return null
+  const owner = exactEmailAttentionOwner(telegramId)
+  if (!owner) return null
+  const { data: user, error } = await supabaseAdmin.from('users')
+    .select('telegram_id,gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token')
+    .eq('telegram_id', owner).maybeSingle()
+  if (error || exactEmailAttentionOwner(user?.telegram_id) !== owner || !user?.gmail_connected) return null
   let token = ''
   const refresh = decryptGoogleToken(user.gmail_refresh_token)
   if (refresh) token = String(await refreshGmailAccessToken(refresh) || '')
@@ -127,12 +157,17 @@ async function readForwarded(telegramId: number) {
 }
 
 async function readComposio(telegramId: number) {
+  // A valid Composio connected account is not a replacement for Gmail consent.
+  // This is a separate transport from native Google OAuth and must independently
+  // respect an explicit Gmail opt-out, missing consent, DB errors and owner mismatch.
+  if (!(await verifiedGmailReadConsent(telegramId))) return null
   const mod: any = await import('@/lib/connectors/composio-gmail').catch(() => null)
   if (!mod?.fetchComposioRecentEmails) return null
   return await mod.fetchComposioRecentEmails(telegramId).catch((err: any) => { console.error('COMPOSIO_GMAIL_READ_FAILED:', String(err?.message || err).slice(0, 160)); return null })
 }
 
 export async function readAttentionSources(telegramId: number): Promise<AttentionRead> {
+  if (!exactEmailAttentionOwner(telegramId)) throw new Error('email_attention_owner_invalid')
   const [gmail, forwarded] = await Promise.all([
     readGmail(telegramId).catch((err: any) => { console.error('ATTENTION_GMAIL_READ_FAILED:', String(err?.message || err).slice(0, 160)); return null }),
     readForwarded(telegramId),
@@ -188,7 +223,9 @@ export async function polishAsks(picked: ScoredEmail[], polish: Polisher = defau
 // ---------- the card ----------
 
 export async function buildAttentionCard(actor: Pick<AgentActor, 'legacyTelegramId' | 'timezone'>, opts: { polish?: Polisher | null } = {}) {
-  const telegramId = Number(actor.legacyTelegramId)
+  const owner = exactEmailAttentionOwner(actor.legacyTelegramId)
+  if (!owner) throw new Error('email_attention_owner_invalid')
+  const telegramId = Number(owner)
   const [read, rules] = await Promise.all([readAttentionSources(telegramId), loadRules(telegramId)])
   if (!read.connected) return { connected: false as const, text: `📬 Connect your email first and I'll tell you only what needs you.\n\nOpen https://app.askgogo.in/dashboard/settings/email to forward your mail or sign in with Google.`, pick: null }
   const pick: AttentionPick = pickAttention(read.emails, { rules, ownEmail: read.ownEmail, repliedSenders: read.repliedSenders })
@@ -246,7 +283,9 @@ export type AttentionCommandResult = Result | { rewrite: string }
 export async function handleEmailAttentionCommand(params: { actor: AgentActor; text: string; polish?: Polisher }): Promise<AttentionCommandResult | null> {
   const cmd: AttentionCommand | null = parseAttentionCommand(params.text) || (isUndo(params.text) ? { type: 'undo' } : null)
   if (!cmd) return null
-  const telegramId = Number(params.actor.legacyTelegramId)
+  const owner = exactEmailAttentionOwner(params.actor.legacyTelegramId)
+  if (!owner) throw new Error('email_attention_owner_invalid')
+  const telegramId = Number(owner)
 
   if (cmd.type === 'show') {
     try { return ok((await buildAttentionCard(params.actor, { polish: params.polish })).text, 'email-attention-show') }
