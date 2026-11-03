@@ -62,6 +62,10 @@
     {
       "path": "/api/cron/booking-rehearsal",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/email-attention-retention",
+      "schedule": "23 * * * *"
     }
   ]
 }
