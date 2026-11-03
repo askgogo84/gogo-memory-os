@@ -109,13 +109,29 @@ export function parseGmailReplyCommand(text:string){
   return {target,body,draftOnly:draftOnly||stop}
 }
 
+// A Gmail Send OAuth grant and a connected token do not override a saved Gmail-read
+// privacy preference. This guard is shared by draft/search, provider verification,
+// and approved send. It runs before decrypting or refreshing any credential.
 async function gmailAccess(actor:AgentActor,{requireSend=false}:{requireSend?:boolean}={}){
+  const raw:unknown=actor.legacyTelegramId
+  if(typeof raw!=='number'||!Number.isSafeInteger(raw)||raw===0||!actor.userId)
+    return {ok:false as const,reason:'gmail_owner_invalid',user:null,accessToken:''}
+  const owner=String(raw)
+  // Query the consent row FIRST: a missing/NULL/disabled or unreadable setting
+  // must never reach private token columns or any Gmail provider operation.
+  const {data:consent,error:consentError}=await supabaseAdmin.from('user_consent_settings')
+    .select('telegram_id,gmail_enabled').eq('telegram_id',owner).maybeSingle()
+  if(consentError)throw new Error('gmail_send_consent_read_failed')
+  if(consent?.gmail_enabled!==true||String(consent?.telegram_id??'')!==owner)
+    return {ok:false as const,reason:'gmail_read_disabled',user:null,accessToken:''}
   const {data:user,error}=await supabaseAdmin.from('users')
-    .select('gmail_connected,gmail_send_connected,gmail_email,gmail_access_token,gmail_refresh_token')
-    .eq('telegram_id',actor.legacyTelegramId).maybeSingle()
+    .select('id,telegram_id,gmail_connected,gmail_send_connected,gmail_email,gmail_access_token,gmail_refresh_token')
+    .eq('telegram_id',owner).eq('id',actor.userId).maybeSingle()
   if(error)throw new Error(`gmail_send_user_read_failed:${error.message}`)
-  if(!user?.gmail_connected)return {ok:false as const,reason:'gmail_not_connected',user:null,accessToken:''}
-  if(requireSend&&!user?.gmail_send_connected)return {ok:false as const,reason:'gmail_send_not_connected',user,accessToken:''}
+  if(!user||String(user.telegram_id??'')!==owner||String(user.id??'')!==actor.userId)
+    return {ok:false as const,reason:'gmail_owner_invalid',user:null,accessToken:''}
+  if(!user.gmail_connected)return {ok:false as const,reason:'gmail_not_connected',user:null,accessToken:''}
+  if(requireSend&&!user.gmail_send_connected)return {ok:false as const,reason:'gmail_send_not_connected',user,accessToken:''}
   let accessToken=''
   const refresh=decryptGoogleToken(user.gmail_refresh_token)
   if(refresh)accessToken=String(await refreshGmailAccessToken(refresh)||'')

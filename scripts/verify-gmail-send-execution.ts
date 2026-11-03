@@ -4,7 +4,7 @@ import { buildApprovalBinding } from '../lib/agent/approval-binding'
 import { supabaseAdmin } from '../lib/supabase-admin'
 async function main(){
  const oldFrom=supabaseAdmin.from,oldFetch=globalThis.fetch
- const actor={legacyTelegramId:123} as any,runId='00000000-0000-4000-8000-000000000001'
+ const actor={legacyTelegramId:123,userId:'fixture-owner-uuid'} as any,runId='00000000-0000-4000-8000-000000000001'
  const draft={threadId:'expected-thread',to:'fixture@example.invalid',subject:'Fixture',body:'Fixture only'}
  let status='queued',approved=true,bindingChanged=false,providerMode='verified',sends=0
  const activity:any[]=[]
@@ -22,7 +22,18 @@ async function main(){
     return {data:{id:runId,status,metadata_json:{draft:{...draft,body:bindingChanged?'tampered':draft.body}}},error:null}
    }
    if(table==='agent_approvals')return {data:{id:'approval',status:approved?'approved':'pending',...buildApprovalBinding({missionId:runId,stepId:'send',capability:'email',actionType:'send_email',target:'gmail_thread:'+draft.threadId,payload:draft})},error:null}
-   if(table==='users')return {data:{gmail_connected:true,gmail_send_connected:true,gmail_access_token:'fixture-token'},error:null}
+   if(table==='user_consent_settings'){
+    assert.ok(filters.some(f=>f[0]==='eq'&&f[1]==='telegram_id'&&String(f[2])==='123'),
+      'saved Gmail consent must bind exact fictional owner')
+    return {data:{telegram_id:123,gmail_enabled:true},error:null}
+   }
+   if(table==='users'){
+    assert.ok(filters.some(f=>f[0]==='eq'&&f[1]==='telegram_id'&&String(f[2])==='123'),
+      'Gmail credential row must bind exact fictional owner')
+    assert.ok(filters.some(f=>f[0]==='eq'&&f[1]==='id'&&f[2]===actor.userId),
+      'Gmail credential row must bind actor UUID')
+    return {data:{id:actor.userId,telegram_id:123,gmail_connected:true,gmail_send_connected:true,gmail_access_token:'fixture-token'},error:null}
+   }
    if(insert)activity.push(insert)
    return {data:[],error:null}
   }
