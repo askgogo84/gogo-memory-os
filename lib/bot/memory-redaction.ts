@@ -17,6 +17,20 @@ const SECRET_KEYWORDS =
 const LABELED_SECRET_VALUE_RE =
   /\b(pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|passport(?:\s*(?:number|no))?|aadhaar|aadhar|ssn|cvv|cvc|card\s*number|account\s*number|api[\s_-]?key|secret\s*key|security\s*code|routing\s*number|ifsc)\b\s*(?:is|:|=|-)?\s*([A-Z0-9][A-Z0-9\s._\-/]{2,})/gi
 
+// 3 Nov (Gogo): "all phone numbers to be seen, so that we can make the calls easily". Business numbers in search
+// results ("Tel No : 080 2310 3567", "+91 98450 12345") were withheld as long digit runs, and calling a salon needs
+// them. A number written as a phone is shown: it starts with a +country code, or it comes right after a phone word.
+// Unlabelled long digit runs (card, account and Aadhaar shapes) stay withheld, and the labelled pass already hides
+// anything called an account, card or passport number before this runs.
+const PHONE_LABEL = /\b(?:tel(?:ephone)?|ph(?:one)?|mob(?:ile)?|cell|call(?:\s+us)?(?:\s+on)?|contact(?:\s+us)?|whats\s?app|landline|helpline|hotline|reach\s+us|phone\s+number|mobile\s+number|contact\s+number)\s*(?:no\.?|number|#)?\s*(?:[:.\-–]|is)?\s*(?:at|on)?\s*\(?$/i
+export function isPhoneNumber(value: string, before: string): boolean {
+  const digits = String(value || '').replace(/\D/g, '')
+  if (digits.length < 8 || digits.length > 13) return false
+  const lead = String(before || '').slice(-40)
+  if (/\+\s?$/.test(lead)) return true
+  return PHONE_LABEL.test(lead)
+}
+
 // Heuristic: does this memory look like it carries a credential/identifier we must not
 // surface to the model?
 //   - keyword match (labelled secrets), OR
@@ -33,7 +47,10 @@ export function isSecretShapedMemory(content: string): boolean {
   const text = content.trim()
   if (!text) return false
   if (SECRET_KEYWORDS.test(text)) return true
-  const digitsOnly = text.replace(/[\s-]/g, '')
+  // A phone number written as one (see isPhoneNumber) is not an identifier to hide.
+  const withoutPhones = text.replace(/\+?\b(?:\d[\s-]?){8,}\b/g, (value, offset: number) =>
+    isPhoneNumber(value, text.slice(0, offset) + (value.startsWith('+') ? '+' : '')) ? ' ' : value)
+  const digitsOnly = withoutPhones.replace(/[\s-]/g, '')
   if (/\d{8,}/.test(digitsOnly)) return true
   return false
 }
@@ -73,6 +90,7 @@ export function redactSecretShapedText(content: string): string {
   out = out.replace(/\b(?:\d[\s-]?){8,}\b/g, (value, offset: number) =>
     reportLinks.some(link => offset >= link.index! && offset + value.length <= link.index! + link[0].length)
       || /^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/.test(value.trim())
+      || isPhoneNumber(value, out.slice(0, offset))
       ? value : '[sensitive detail withheld]')
 
   return out

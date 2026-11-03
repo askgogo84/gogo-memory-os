@@ -49,5 +49,26 @@ for (const url of [report.replace('app.askgogo.in','app.askgogo.in.evil.test'),r
   check('unsupported/secret-bearing URL gets no exemption', redactSecretShapedText(url).includes('[sensitive detail withheld]'))
 check('labelled password still redacted', !redactSecretShapedText('password: hunter2').includes('hunter2'))
 
+// 3 Nov (Gogo): phone numbers must be visible so Gogo can call a salon or a restaurant. Shown when written as a phone
+// (+country code, or right after a phone word); card, account and Aadhaar shapes stay hidden.
+{
+  const { isPhoneNumber } = await import('../lib/bot/memory-redaction')
+  const shown = (t: string, n: string) => check(`phone visible: ${t}`, redactSecretShapedText(t).includes(n) && !redactSecretShapedText(t).includes('withheld'))
+  shown('Rajajinagar, Bengaluru, Tel No : 08023103567 Share On', '08023103567')
+  shown('Call us on +91 98450 12345 for bookings', '+91 98450 12345')
+  shown('Phone: 080-2310-3567', '080-2310-3567')
+  shown('Contact: 9845012345', '9845012345')
+  shown('WhatsApp 98450 12345', '98450 12345')
+  shown('Reach us at +971 4 123 4567', '+971 4 123 4567')
+  check('phone memory is not treated as secret', !isSecretShapedMemory('Naturals salon phone number is 080 2310 3567'))
+  check('labelled account number still hidden', !redactSecretShapedText('account number 98450123456').includes('98450123456'))
+  check('labelled card number still hidden', !redactSecretShapedText('card number 4111 1111 1111 1111').includes('4111'))
+  check('unlabelled long number still hidden', !redactSecretShapedText('ref 4111111111111111 for you').includes('4111111111111111'))
+  check('Aadhaar-shaped unlabelled number still hidden', !redactSecretShapedText('my id 2345 6789 0123').includes('2345 6789 0123'))
+  check('account memory still secret', isSecretShapedMemory('my account is 98450123456789'))
+  check('a phone word far before the number does not count', !redactSecretShapedText('I lost my phone yesterday and the order id was 123456789012 and that is it').includes('123456789012'))
+  check('isPhoneNumber rejects 16-digit runs even with a label', !isPhoneNumber('4111111111111111', 'Phone: '))
+}
+
 console.log(`\n${fails === 0 ? '✅ all cases passed' : `❌ ${fails} case(s) failed`}\n`)
 process.exit(fails === 0 ? 0 : 1)
