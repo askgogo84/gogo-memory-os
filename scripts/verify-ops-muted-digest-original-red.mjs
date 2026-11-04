@@ -78,7 +78,7 @@ function fixture(alerts) {
       },
     },
   }
-  vm.runInNewContext(original + '\\nthis.originalRun = runOpsAlertsPass', sandbox, { timeout: 1000 })
+  vm.runInNewContext(original + '\nthis.originalRun = runOpsAlertsPass', sandbox, { timeout: 1000 })
   return { run: () => sandbox.originalRun(NOW), digests, sends, writes }
 }
 
