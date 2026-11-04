@@ -190,7 +190,9 @@ export function formatPlaces(ask: PlaceAsk, places: Place[]) {
     const pinOnly = !canonicalPlaceCid(p.cid) && !canonicalPlaceId(p.placeId)
     const maps = `\n${pinOnly ? 'Map pin: ' : ''}${p.source}`
     const detail = [p.address, p.category].filter(Boolean).join(' · ')
-    return `${i + 1}. *${p.title}*${rating}${detail ? `\n${detail}` : ''}${maps}`
+    // 4 Nov (retest): the phone came back from search but was never shown, and calling a salon needs it.
+    const phone = p.phone && /^[+\d][\d\s()-]{6,18}\d$/.test(p.phone.trim()) ? `\n📞 ${p.phone.trim()}` : ''
+    return `${i + 1}. *${p.title}*${rating}${detail ? `\n${detail}` : ''}${phone}${maps}`
   })
   // Without an address we cannot tell whether a listing is inside the area, so we say that instead of guessing.
   const unaddressed = shown.every(p => !p.address)
