@@ -406,7 +406,17 @@ export async function routeFeatureIntent(
   }
 
   if(extra?.telegramId&&isGmailReplyCommand(text)){
-    const actor={userId:String(extra.telegramId),legacyTelegramId:extra.telegramId,whatsappId:phone,name:'Gogo'}
+    // Legacy feature routing happens before the shared agent-user resolution below.
+    // The numeric owner is NOT users.id (UUID). Resolve the persisted exact row
+    // instead of manufacturing an actor that would fail Gmail's UUID/consent guard.
+    const owner=extra.telegramId
+    if(!Number.isSafeInteger(owner)||owner===0)
+      return 'I could not verify the account for this Gmail request. Nothing was drafted or sent.'
+    const {data:gmailUser,error:gmailUserError}=await supabaseAdmin.from('users')
+      .select('id,telegram_id,whatsapp_id,name').eq('telegram_id',String(owner)).maybeSingle()
+    if(gmailUserError||!gmailUser?.id||String(gmailUser.telegram_id??'')!==String(owner))
+      return 'I could not verify the account for this Gmail request. Nothing was drafted or sent.'
+    const actor={userId:String(gmailUser.id),legacyTelegramId:owner,whatsappId:String(gmailUser.whatsapp_id||phone),name:String(gmailUser.name||'Gogo')}
     const gmail=await tryRunGmailSendCommand({actor,text})
     __trace.mark('gmail')
     if(gmail?.text)return gmail.text
