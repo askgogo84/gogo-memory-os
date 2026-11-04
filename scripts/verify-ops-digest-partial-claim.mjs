@@ -10,18 +10,18 @@ function extract(path, names) {
   return names.map(name => {
     const node = ast.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === name)
     assert.ok(node, 'missing original function ' + name + ' in ' + path)
-    const out = ts.transpileModule(node.getText(ast).replace(/^export\\s+/, ''), {
+    const out = ts.transpileModule(node.getText(ast).replace(/^export\s+/, ''), {
       compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
       reportDiagnostics: true,
     })
     assert.equal((out.diagnostics || []).filter(d => d.category === ts.DiagnosticCategory.Error).length, 0)
     return out.outputText
-  }).join('\\n')
+  }).join('\n')
 }
 const shipped = [
   extract('lib/ops/alerts.ts', ['shouldSendDigest', 'digestEligible']),
   extract('lib/ops/run.ts', ['claimNotification', 'definiteSendFailure', 'releaseClaim', 'runOpsAlertsPass']),
-].join('\\n')
+].join('\n')
 
 const NOW = new Date('2026-11-04T00:07:00.000Z') // skips the billing-Gmail read
 const prior = new Date(NOW.getTime() - 60_000).toISOString()
@@ -55,7 +55,7 @@ function setup({ bothClaimed = false, outcome = 'success' } = {}) {
           filters.push(r => !denied.includes(r.status)); return q
         },
         or(expr) {
-          const m = expr.match(/^notified_at\\.is\\.null,notified_at\\.lt\\.(.+)$/)
+          const m = expr.match(/^notified_at\.is\.null,notified_at\.lt\.(.+)$/)
           assert.ok(m, 'unknown conditional cursor filter: ' + expr)
           filters.push(r => r.notified_at == null || Date.parse(r.notified_at) < Date.parse(m[1]))
           return q
@@ -65,8 +65,10 @@ function setup({ bothClaimed = false, outcome = 'success' } = {}) {
           const hit = rows.filter(r => filters.every(f => f(r)))
           for (const r of hit) Object.assign(r, update)
           const ids = hit.map(r => r.id)
-          if (update.notified_at === null) releases.push(ids)
-          else writes.push(ids)
+          if (ids.length) {
+            if (update.notified_at === null) releases.push(ids)
+            else writes.push(ids)
+          }
           return Promise.resolve({ data: hit.map(r => ({ id: r.id })), error: null })
         },
       }
@@ -92,7 +94,7 @@ function setup({ bothClaimed = false, outcome = 'success' } = {}) {
       return 'template'
     },
   }
-  vm.runInNewContext(shipped + '\\nthis.run = runOpsAlertsPass', sandbox, { timeout: 1000 })
+  vm.runInNewContext(shipped + '\nthis.run = runOpsAlertsPass', sandbox, { timeout: 1000 })
   return { rows, sends, writes, releases, run: now => sandbox.run(now) }
 }
 let passed = 0
@@ -106,7 +108,7 @@ await check('partially won claim: digest and template contain ONLY owned row', a
   assert.equal(r.sent, 1)
   assert.equal(x.sends.length, 1)
   assert.equal(x.sends[0].body, 'Digest(mine)')
-  assert.match(x.sends[0].template, /Ops digest: 1 open\\. 11\\. FICTIONAL mine\\./)
+  assert.match(x.sends[0].template, /Ops digest: 1 open\. 11\. FICTIONAL mine\./)
   assert.doesNotMatch(x.sends[0].template, /FICTIONAL already/)
   assert.deepEqual(x.writes, [['mine']])
   assert.equal(x.rows[0].notified_at, prior, 'other worker claim untouched')
@@ -136,7 +138,7 @@ await check('all rows already claimed: no digest and no unowned release', async 
   const r = await x.run(NOW)
   assert.equal(r.sent, 0)
   assert.equal(x.sends.length, 0)
-  assert.deepEqual(x.writes, [[]].filter(x => x.length)) // no update matches
+  assert.deepEqual(x.writes, []) // no update matches
   assert.deepEqual(x.releases, [])
 })
 console.log('OPS_DIGEST_PARTIAL_CLAIM: PASS=' + passed + ' FAIL=0')
