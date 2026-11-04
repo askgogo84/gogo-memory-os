@@ -14,7 +14,7 @@ function originalFunction(code, name, filename) {
   const file = ts.createSourceFile(filename, code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const declaration = file.statements.find(s => ts.isFunctionDeclaration(s) && s.name?.text === name)
   assert.ok(declaration, `Expected original ${name} declaration; inspect test after refactor`)
-  const compiled = ts.transpileModule(declaration.getText(file).replace(/^export\\s+/, ''), {
+  const compiled = ts.transpileModule(declaration.getText(file).replace(/^export\s+/, ''), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
     reportDiagnostics: true,
   })
@@ -25,7 +25,7 @@ function originalFunction(code, name, filename) {
 const original = [
   originalFunction(helpers, 'shouldSendDigest', 'lib/ops/alerts.ts'),
   originalFunction(source, 'runOpsAlertsPass', 'lib/ops/run.ts'),
-].join('\\n')
+].join('\n')
 
 function alert(id, status = 'open', mutedUntil = null) {
   return {
@@ -139,7 +139,7 @@ await check('REQUIRED: mixed digest template must exclude still-muted P2 details
   await x.run()
   assert.equal(x.sends.length, 1)
   assert.ok(!x.sends[0].template.includes('Fictional P2 102'), 'template must not include muted details')
-  assert.match(x.sends[0].template, /Ops digest: 1 open\\./, 'count must describe eligible alerts')
+  assert.match(x.sends[0].template, /Ops digest: 1 open\./, 'count must describe eligible alerts')
 })
 await check('REQUIRED: mixed digest must not advance a still-muted P2 notified cursor', async () => {
   const x = fixture([ACTIVE, MUTED])
