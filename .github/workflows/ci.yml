@@ -28,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Composio owner isolation regression (synthetic only)
+        run: npx tsx scripts/verify-composio-owner-identity.mts
+
       - name: Full regression suite
         run: npm test
 
