@@ -22,6 +22,9 @@ export default async function EmailSettingsPage({ searchParams }: { searchParams
   if (params?.connected === 'google' && composioAccount && session?.telegramId) {
     await import('@/lib/agent/gmail-consent').then(m => m.recordGmailConnectConsent(String(session.telegramId))).catch((e: any) => console.error('GMAIL_CONSENT_SAVE_FAILED:', String(e?.message || e).slice(0, 120)))
   }
+  // Review P2: people connected only through Composio before 4 Nov have no saved yes. Tell them, here.
+  const consentState = composioAccount && params?.connected !== 'google' && session?.telegramId
+    ? await import('@/lib/agent/gmail-consent').then(m => m.gmailConsentState(String(session.telegramId))).catch(() => null) : null
   const code = String((confirm as any)?.data?.[0]?.snippet || '').match(/(\d{6,12})/)?.[1] || null
   const confirmLink = /^https:\/\/mail(?:-settings)?\.google\.com\//.test(String((confirm as any)?.data?.[0]?.body_text || '')) ? String((confirm as any).data[0].body_text) : null
   return <EmailSetup
@@ -31,6 +34,6 @@ export default async function EmailSettingsPage({ searchParams }: { searchParams
     confirmationLink={alias?.forwarding_confirmed_at ? null : confirmLink}
     googleConnected={Boolean(composioAccount) || Boolean(user?.gmail_connected)}
     googleEmail={user?.gmail_connected ? String(user?.gmail_email || '') : null}
-    notice={params?.connected === 'google' ? 'Google is connected. Ask Gogo "emails that need me" to try it.' : params?.error === 'google_unavailable' ? 'Google sign-in is not available right now. Forwarding works meanwhile.' : null}
+    notice={consentState === 'missing' ? 'Gogo needs your OK to read Gmail. Tap Connect Google once more to give it.' : params?.connected === 'google' ? 'Google is connected. Ask Gogo "emails that need me" to try it.' : params?.error === 'google_unavailable' ? 'Google sign-in is not available right now. Forwarding works meanwhile.' : null}
   />
 }

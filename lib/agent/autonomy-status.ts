@@ -45,7 +45,7 @@ export async function tryGetConnectionCapabilities(params:{actor:Pick<AgentActor
   const count=(result:{error?:unknown;count?:number|null},noun:string)=>result.error||!Number.isInteger(result.count)||Number(result.count)<0?'Unknown — saved state unavailable':`${result.count} ${noun}`
   const level=String(browser.data?.level||'draft')
   const browserState=browser.error||!['off','read','draft','ask','auto'].includes(level)?'Unknown — permission unavailable':`Permission: ${level}`
-  const gmailRead=consent.error?'Reading preference unknown':consent.data?.gmail_enabled===false?'Reading is off in privacy settings':'Reading follows saved consent'
+  const gmailRead=consent.error?'Reading preference unknown':consent.data?.gmail_enabled===false?'Reading is off in privacy settings':consent.data?.gmail_enabled===true?'Reading on (you said yes when connecting)':'Reading needs your OK: reconnect Google once'
   const link=known&&user.data.whatsapp_id?await read(()=>supabaseAdmin.from('wa_creditiq_links').select('consumer_user_id').eq('sender',user.data.whatsapp_id).maybeSingle()):null
   const creditState=!known||link?.error?'Unknown — linkage unavailable':link?.data?.consumer_user_id?'Linked (saved state)':'Not linked (saved state)'
   const text=[
@@ -86,7 +86,7 @@ export async function tryGetConnectionStatus(params:{actor:AgentActor;text:strin
   const lines:string[]=[]
   if(data.gmail_connected){
     lines.push(`📧 Gmail / Workspace: connected${data.gmail_email?` as *${clean(data.gmail_email,160)}*`:''}`)
-    lines.push(`Gmail reading: ${consent?.gmail_enabled===false?'off in your saved privacy preference':'enabled; connecting alone does not start an inbox watch'}`)
+    lines.push(`Gmail reading: ${consent?.gmail_enabled===false?'off in your saved privacy preference':consent?.gmail_enabled===true?'on; connecting alone does not start an inbox watch':'needs your OK: reconnect Google once at app.askgogo.in/dashboard/settings/email'}`)
     lines.push(`✉️ Gmail Send: ${data.gmail_send_connected?'enabled (approval-gated)':'not enabled'}`)
   }else lines.push('📧 Gmail / Workspace: not connected')
   if(data.google_calendar_connected){

@@ -97,13 +97,33 @@ async function sendToOps(text: string, line: string) {
 async function claimNotification(rows: { id: string }[], now: Date, cond: { eq?: string; isNull?: true; olderThan?: string }): Promise<'claimed' | 'taken' | 'error'> {
   const ids = rows.map(r => r.id)
   if (!ids.length) return 'taken'
-  let q: any = supabaseAdmin.from('ops_alerts').update({ notified_at: now.toISOString() }).in('id', ids)
+  // An incident acked or resolved after this pass read it is not claimed (review P3).
+  let q: any = supabaseAdmin.from('ops_alerts').update({ notified_at: now.toISOString() }).in('id', ids).not('status', 'in', '(acked,resolved)')
   if (cond.eq) q = q.eq('notified_at', cond.eq)
   else if (cond.isNull) q = q.is('notified_at', null)
   else if (cond.olderThan) q = q.or(`notified_at.is.null,notified_at.lt.${cond.olderThan}`)
   const { data, error } = await q.select('id')
   if (error) return 'error'
   return (data || []).length ? 'claimed' : 'taken'
+}
+
+/** A send that certainly reached nobody: missing configuration, or a Twilio client error (4xx) on the first chunk.
+ * Timeouts, network errors, 5xx and partial multi-chunk sends are UNKNOWN and keep the claim (review P2). */
+function definiteSendFailure(e: any) {
+  if (e?.partialSend) return false
+  if (/^Missing [A-Z_]+/.test(String(e?.message || ''))) return true
+  const status = Number(e?.status)
+  return Number.isInteger(status) && status >= 400 && status < 500
+}
+
+/** Give a claim back after a definite failure, only where this pass's claim still stands (compare-and-swap). */
+async function releaseClaim(rows: { id: string; notified_at?: string | null }[], now: Date) {
+  for (const r of rows) {
+    const q: any = supabaseAdmin.from('ops_alerts').update({ notified_at: r.notified_at ?? null }).in('id', [r.id]).eq('notified_at', now.toISOString())
+    const { error } = await q.select('id')
+    if (error) return false
+  }
+  return true
 }
 
 export async function runOpsAlertsPass(now = new Date()) {
@@ -154,7 +174,10 @@ export async function runOpsAlertsPass(now = new Date()) {
     try {
       await sendToOps(formatP1(a, Boolean(a.notified_at)), formatP1Line(a))
       sent++
-    } catch (e: any) { errors.push(`p1_send_outcome_unknown:${String(e?.message || e).slice(0, 80)}`) }
+    } catch (e: any) {
+      if (definiteSendFailure(e)) { const back = await releaseClaim([a], now); errors.push(`p1_send_failed${back ? '' : '_claim_kept'}:${String(e?.message || e).slice(0, 80)}`) }
+      else errors.push(`p1_send_outcome_unknown:${String(e?.message || e).slice(0, 80)}`)
+    }
   }
   const p2 = digestEligible(open, now)
   const lastDigest = p2.map(a => a.notified_at).filter(Boolean).sort().pop() || null
@@ -165,7 +188,10 @@ export async function runOpsAlertsPass(now = new Date()) {
       try {
         await sendToOps(formatDigest(p2), `Ops digest: ${p2.length} open. ${p2.slice(0, 3).map(a => `${a.no}. ${a.title}`).join('; ')}. Reply alerts for the list.`)
         sent++
-      } catch (e: any) { errors.push(`digest_send_outcome_unknown:${String(e?.message || e).slice(0, 80)}`) }
+      } catch (e: any) {
+        if (definiteSendFailure(e)) { const back = await releaseClaim(p2, now); errors.push(`digest_send_failed${back ? '' : '_claim_kept'}:${String(e?.message || e).slice(0, 80)}`) }
+        else errors.push(`digest_send_outcome_unknown:${String(e?.message || e).slice(0, 80)}`)
+      }
     }
   }
   return { ...result, signals: signals.length, open: open.length, sent, errors }

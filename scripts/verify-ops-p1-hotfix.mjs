@@ -21,7 +21,7 @@ function extract(path, names) {
 }
 const shipped = [
   extract('lib/ops/alerts.ts', ['shouldNotifyP1', 'shouldSendDigest', 'digestEligible', 'taskAlerts']),
-  extract('lib/ops/run.ts', ['claimNotification', 'failedTasks', 'runOpsAlertsPass']),
+  extract('lib/ops/run.ts', ['claimNotification', 'definiteSendFailure', 'releaseClaim', 'failedTasks', 'runOpsAlertsPass']),
 ].join('\n')
 
 /** A table that evaluates eq / is / in / gte / or(notified_at.is.null,notified_at.lt.X) filters at execution time. */
@@ -31,6 +31,7 @@ function table(rows, { failWrites = false, failReads = false } = {}) {
     op === 'eq' ? String(r[field]) === String(v)
       : op === 'is' ? (v === null ? r[field] == null : r[field] === v)
       : op === 'in' ? v.map(String).includes(String(r[field]))
+      : op === 'notin' ? !v.includes(String(r[field]))
       : op === 'gte' ? r[field] != null && Date.parse(r[field]) >= Date.parse(v)
       : op === 'or' ? (r.notified_at == null || Date.parse(r.notified_at) < Date.parse(v.match(/notified_at\.lt\.(.+)$/)[1]))
       : false)
@@ -45,6 +46,7 @@ function table(rows, { failWrites = false, failReads = false } = {}) {
         eq(f, v) { filters.push(['eq', f, v]); return q },
         is(f, v) { filters.push(['is', f, v]); return q },
         in(f, v) { filters.push(['in', f, v]); return q },
+        not(f, op, list) { assert.equal(op, 'in'); filters.push(['notin', f, String(list).replace(/[()]/g, '').split(',')]); return q },
         gte(f, v) { filters.push(['gte', f, v]); return q },
         or(expr) { assert.match(expr, /^notified_at\.is\.null,notified_at\.lt\./); filters.push(['or', 'notified_at', expr]); return q },
         then(res, rej) { return run().then(res, rej) },
@@ -74,12 +76,16 @@ function harness(rows, opts = {}) {
     MIN: 60_000, Date, Map, Set, Promise, Number, Error, String, console: { log() {}, error() {} },
     meterRows: async () => [], meterAlerts: () => [],
     billingSignals: async () => { throw new Error('unexpected billing/Gmail read') },
-    openAlerts: async () => rows.filter(r => !r._table && ['open', 'muted', 'acked'].includes(r.status)).map(r => ({ ...r })),
+    openAlerts: async () => rows.filter(r => !r._table && ['open', 'muted', 'acked'].includes(r.status)).map(r => ({ ...r, ...(opts.staleRead ? { status: 'open' } : {}) })),
     raiseAlerts: async () => ({ ok: true }), resolveQuiet: async () => 0,
     formatP1: a => `P1 ${a.title}`, formatP1Line: a => `P1 line ${a.title}`,
     sendToOps: async (body, template) => {
       sends.push({ body, template })
       if (opts.outcome === 'unknown') throw new Error('provider_timeout_outcome_unknown')
+      if (opts.outcome === 'config' && sends.length === 1) throw new Error('Missing TWILIO_REMINDER_CONTENT_SID')
+      if (opts.outcome === '4xx' && sends.length === 1) throw Object.assign(new Error('Invalid To'), { status: 400, code: 21211 })
+      if (opts.outcome === '5xx') throw Object.assign(new Error('Service unavailable'), { status: 503 })
+      if (opts.outcome === 'partial') throw Object.assign(new Error('chunk 2 failed'), { status: 400, partialSend: true })
       return 'template'
     },
     supabaseAdmin: db,
@@ -133,6 +139,41 @@ await check('#1250 control: an unacknowledged P1 still repeats after 6 hours', a
   const x = harness([p1()])
   await x.run(NOW); await x.run(later(6 * 60 + 1))
   assert.equal(x.sends.length, 2)
+})
+
+await check('review P2: a definite config failure gives the claim back, so the next pass delivers', async () => {
+  const rows = [p1()], x = harness(rows, { outcome: 'config' })
+  const r = await x.run(NOW)
+  assert.equal(r.sent, 0); assert.ok(r.errors.some(e => e.startsWith('p1_send_failed:')))
+  assert.equal(rows[0].notified_at, null, 'claim released')
+  const r2 = await x.run(later(5)); assert.equal(r2.sent, 1); assert.equal(x.sends.length, 2)
+})
+await check('review P2: a Twilio 4xx on the only chunk gives the claim back', async () => {
+  const x = harness([p1()], { outcome: '4xx' }); await x.run(NOW); await x.run(later(5))
+  assert.equal(x.sends.length, 2)
+})
+await check('review P2: a 5xx keeps the claim (outcome unknown, no blind retry)', async () => {
+  const x = harness([p1()], { outcome: '5xx' }); const r = await x.run(NOW); await x.run(later(5))
+  assert.equal(x.sends.length, 1); assert.ok(r.errors.some(e => e.startsWith('p1_send_outcome_unknown')))
+})
+await check('review P2: a partial multi-chunk send keeps the claim', async () => {
+  const x = harness([p1()], { outcome: 'partial' }); await x.run(NOW); await x.run(later(5))
+  assert.equal(x.sends.length, 1)
+})
+await check('review P2: a released repeat P1 goes back to its previous notified_at', async () => {
+  const prev = new Date(NOW.getTime() - 7 * 3600_000).toISOString()
+  const rows = [{ ...p1(), notified_at: prev }], x = harness(rows, { outcome: 'config' })
+  await x.run(NOW); assert.equal(rows[0].notified_at, prev)
+})
+await check('review P3: an incident acked after this pass read it is not claimed or sent', async () => {
+  const row = { ...p1(), status: 'acked' }            // the table: acked a moment ago
+  const x = harness([row], { staleRead: true })        // this pass still read it as open
+  const r = await x.run(NOW)
+  assert.equal(x.sends.length, 0); assert.equal(r.sent, 0); assert.equal(row.notified_at, null)
+})
+await check('review P3: claim filter excludes acked and resolved rows', async () => {
+  const src = readFileSync('lib/ops/run.ts', 'utf8')
+  assert.match(src, /\.update\(\{ notified_at: now\.toISOString\(\) \}\)\.in\('id', ids\)\.not\('status', 'in', '\(acked,resolved\)'\)/)
 })
 
 // ---- #1251: muted P2 kept out of the digest body, template and cursor

@@ -3,7 +3,8 @@
 -- user_consent_settings.gmail_enabled is true; this records that yes for people who ALREADY connected Gmail through
 -- Google sign-in (users.gmail_connected). It never overrides an explicit false. People connected only through the
 -- Composio link get it recorded the next time they open Settings -> Email after reconnecting.
--- Rollback: 20261104 rollback block at the bottom (only rows this backfill touched, by its marker).
+-- Rollback: the block at the bottom, using the telegram_ids listed by step 0 (save that result before running).
+-- Rows it inserts stay (with gmail_enabled set back to null, which means "no yes saved").
 
 -- 0. Look first (read-only): who would change.
 select u.telegram_id, c.gmail_enabled as current_value
