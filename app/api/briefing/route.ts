@@ -110,6 +110,17 @@ function getDayWindowUtc(timezone: string) {
   }
 }
 
+// 5 Nov: briefings are on request now (quiet WhatsApp), so they can come at any hour; 18:36 said "Good morning".
+function localHour(timezone: string, now = Date.now()) {
+  try { return Number(new Intl.DateTimeFormat('en-GB', { timeZone: timezone || 'Asia/Kolkata', hour: '2-digit', hour12: false }).format(new Date(now))) % 24 }
+  catch { return Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', hour: '2-digit', hour12: false }).format(new Date(now))) % 24 }
+}
+function greetingForHour(h: number) {
+  if (h >= 5 && h < 12) return '🌅 *Good morning'
+  if (h >= 12 && h < 17) return '☀️ *Good afternoon'
+  return '🌙 *Good evening'
+}
+
 function formatDateHeader(timezone: string) {
   return new Date().toLocaleDateString('en-IN', {
     weekday: 'long',
@@ -549,7 +560,7 @@ async function buildBriefing(user: UserRecord) {
   } catch {}
 
   const sections = [
-    `🌅 *Good morning, ${name}!*`,
+    `${greetingForHour(localHour(ctx.timezone))}, ${name}!*`,
     dateStr,
     weatherLine,
     '',
