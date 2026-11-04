@@ -73,4 +73,15 @@ process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
   assert.match(news, /… · new results/, 'a long title is cut at a word with an ellipsis')
   console.log('✓ what\'s scheduled: watch names without repeats or dangling words, with the alert rule')
 }
+// 5. Salon results list numbers with no label; the privacy filter hid them. Indian phone layouts show on their own.
+{
+  const r = await import('../lib/bot/memory-redaction')
+  for (const shown of ['Envi Salon · 080 4123 4567 · 4.5★', 'Naturals · 98450 12345', 'Green Trends 📞 9845012345', 'Envi 080-41234567', 'Lakme 098450 12345'])
+    assert.equal(r.redactSecretShapedText(shown), shown, shown)
+  for (const hidden of ['card 4111 1111 1111 1111', 'ref 2345 6789 0123', 'acct 50100234567891', 'number 9845012345', 'id 0123 4567 8901 2345'])
+    assert.match(r.redactSecretShapedText(hidden), /\[sensitive detail withheld\]/, hidden)
+  assert.equal(r.isSecretShapedMemory('Envi Salon Rajajinagar 080 4123 4567'), false)
+  assert.equal(r.isSecretShapedMemory('my card 4111 1111 1111 1111'), true)
+  console.log('✓ privacy filter: landline and 5+5 mobile layouts shown; card, Aadhaar-style and account numbers still hidden')
+}
 console.log('Launch use-case checks passed')
