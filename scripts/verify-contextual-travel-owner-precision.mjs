@@ -91,7 +91,7 @@ await check('original periodic compiler discards rounded JSON owner; keeps exact
   assert.equal(result.users,1)
   assert.equal(called.length,1)
   assert.equal(called[0].owner,B)
-  assert.deepEqual(called[0].rows.map(row=>row.id),['exact-b'])
+  assert.deepEqual(Array.from(called[0].rows,row=>row.id),['exact-b'])
 })
 await check('original immediate compiler rejects rounded owner before query and exact-B ticket lookup remains scoped',async()=>{
   const db=fakeDB({travelRows:[]})
