@@ -66,4 +66,16 @@ for (const f of ['lib/agent/open-loops.ts', 'lib/bot/handlers/gmail-read.ts', 'l
   assert.equal(await state({ gmail_enabled: 'true' }), 'missing', 'only boolean true is a yes')
   await assert.rejects(state(null, { message: 'x' }), /gmail_consent_read_failed/)
 }
+// 4 Nov production: 138 rows false, 1 true. No code writes false, so every false is the column default; the reviewed
+// SQL drops the default and clears those to "no answer" before backfilling the yes for connected users.
+{
+  const sql = readFileSync('supabase/gmail-consent-backfill-20261104.sql', 'utf8')
+  assert.match(sql, /alter table public\.user_consent_settings alter column gmail_enabled drop default;/)
+  assert.match(sql, /update public\.user_consent_settings set gmail_enabled = null where gmail_enabled is false;/)
+  assert.ok(sql.indexOf('drop default') < sql.indexOf('gmail_enabled = null where') && sql.indexOf('gmail_enabled = null where') < sql.indexOf('set gmail_enabled = true'), 'reset before backfill')
+  assert.match(sql, /set default false;/, 'rollback restores the old default')
+  const { execSync } = await import('node:child_process')
+  const writers = execSync("git grep -n -E 'gmail_enabled\\s*:\\s*false|gmail_enabled\\s*=\\s*false' -- 'lib' 'app' || true", { encoding: 'utf8' }).trim()
+  assert.equal(writers, '', 'no code writes gmail_enabled false; a future "turn off" control must be added on purpose')
+}
 console.log('PASS: Gmail yes saved on connect (Google or Composio), explicit off kept, other owners untouched, unsafe ids and DB errors fail closed')
