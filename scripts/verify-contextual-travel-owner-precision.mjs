@@ -10,12 +10,12 @@ const ast=ts.createSourceFile(path,source,ts.ScriptTarget.Latest,true,ts.ScriptK
 function original(name,sandbox){
   const node=ast.statements.find(s=>ts.isFunctionDeclaration(s)&&s.name?.text===name)
   assert.ok(node,'original source function missing: '+name)
-  const compiled=ts.transpileModule(node.getText(ast).replace(/^export\\s+/,''),{
+  const compiled=ts.transpileModule(node.getText(ast).replace(/^export\s+/,''),{
     compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None},
     reportDiagnostics:true,
   })
   assert.equal((compiled.diagnostics||[]).filter(x=>x.category===ts.DiagnosticCategory.Error).length,0)
-  vm.runInNewContext(compiled.outputText+'\\nthis.__function = '+name,sandbox,{timeout:1000})
+  vm.runInNewContext(compiled.outputText+'\nthis.__function = '+name,sandbox,{timeout:1000})
   return {fn:sandbox.__function,body:node.getText(ast)}
 }
 let pass=0
@@ -65,8 +65,8 @@ await check('original travel compiler reads exact B home memory and B Gmail/prof
     desiredWebConditions:(_group,_root,_expiry,home)=>{seen.push(home);throw new Error('BOUNDED_STOP_BEFORE_WATCHER_WRITES')},
   }
   const {fn,body}=original('compileForUser',sandbox)
-  assert.equal([...body.matchAll(/\\.eq\\('telegram_id',telegramId\\)/g)].length>=2,true)
-  assert.doesNotMatch(body,/\\.eq\\('telegram_id',\\s*Number\\(telegramId\\)\\)/)
+  assert.equal([...body.matchAll(/\.eq\('telegram_id',telegramId\)/g)].length>=2,true)
+  assert.doesNotMatch(body,/\.eq\('telegram_id',\s*Number\(telegramId\)\)/)
   await assert.rejects(()=>fn(B,[trip(B,'ticket-b')]),/BOUNDED_STOP_BEFORE_WATCHER_WRITES/)
   assert.deepEqual(db.queries.filter(q=>['memories','users'].includes(q.table)).map(q=>[q.table,q.owner]),
     [['memories',B],['users',B]])
