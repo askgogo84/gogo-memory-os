@@ -255,7 +255,7 @@ function exactTravelOwnerId(value:unknown):string|null{
   const owner=String(value)
   if(owner.length>20||!/^-[1-9]\d*$|^[1-9]\d*$/.test(owner))return null
   const n=BigInt(owner)
-  return n>=-9223372036854775808n&&n<=9223372036854775807n?owner:null
+  return n>=BigInt('-9223372036854775808')&&n<=BigInt('9223372036854775807')?owner:null
 }
 async function compileForUser(telegramId:string,rows:TravelRow[]){
   if(!exactTravelOwnerId(telegramId))throw new Error('context_travel_owner_invalid')
