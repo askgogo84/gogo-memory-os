@@ -79,6 +79,9 @@ async function idea(tg:string,title:string,reason:string,goalId:string,action='R
 
 async function notify(actor:AgentActor,message:string){
   if(!actor.whatsappId)return
+  // 4 Nov quiet WhatsApp: goal reviews stay on the dashboard (the idea is still saved); no WhatsApp ping.
+  const {mayVolunteer}=await import('@/lib/channels/proactive-policy')
+  if(!mayVolunteer('goal_review'))return
   await sendWhatsAppMessage(actor.whatsappId,message).catch((e:any)=>console.error('GOAL_WHATSAPP_FAILED:',e?.message||e))
 }
 

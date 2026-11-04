@@ -116,6 +116,9 @@ function firstName(value: string | null | undefined) {
 
 export async function GET(req: NextRequest) {
   if (!isCronAuthorized(req)) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  // 4 Nov quiet WhatsApp: no scheduled morning briefing; people get it by asking ("good morning", "brief me").
+  const { mayVolunteer } = await import('@/lib/channels/proactive-policy')
+  if (!mayVolunteer('morning_briefing')) return NextResponse.json({ ok: true, skipped: 'quiet_whatsapp' })
   return withDeliveryHeartbeat('briefing', () => runDelivery(req))
 }
 
