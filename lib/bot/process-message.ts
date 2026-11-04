@@ -1056,7 +1056,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       const act: any = await import('@/lib/dashboard/activity').catch(() => null)
       const q: any = await import('@/lib/dashboard/queries').catch(() => null)
       const summary = q?.getUsageSummary ? await q.getUsageSummary(String(resolvedUser.telegramId)).catch(() => null) : null
-      const trends = act?.getActivityTrends ? await Promise.resolve().then(() => act.getActivityTrends(resolvedUser.telegramId, summary?.ok ? summary.limits.aiPerDay : 0)).catch((err: any) => { console.error('USAGE_TRENDS_FAILED:', String(err?.message || err).slice(0, 160)); return null }) : null
+      const monthlyAllowance = (await import('@/lib/data/limits').catch(() => null))?.monthlyAllowanceFor(summary?.ok ? summary.planCode : 'free').monthly || 0
+      const trends = act?.getActivityTrends ? await Promise.resolve().then(() => act.getActivityTrends(resolvedUser.telegramId, summary?.ok ? summary.limits.aiPerDay : 0, Date.now(), monthlyAllowance)).catch((err: any) => { console.error('USAGE_TRENDS_FAILED:', String(err?.message || err).slice(0, 160)); return null }) : null
       if (trends) reply = `${reply}\n\n${act.formatActivityTrends(trends, '').replace(/^📊 \*Your usage\*\s*\n\n/, '')}`
     }
     __trace.mark('reply')
