@@ -138,7 +138,7 @@ async function setMemoryEnabled(telegramId: number, enabled: boolean) {
 
 function extractForgetQuery(text: string) {
   return (text || '')
-    .replace(/^(forget|delete memory|remove memory)\s+/i, '')
+    .replace(/^(forget|delete memory|remove memory)(?:\s+|$)/i, '')
     .replace(/\babout\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
