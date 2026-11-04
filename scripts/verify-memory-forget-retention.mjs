@@ -144,6 +144,18 @@ const foreign = [
   console.log('PASS targeted older-than-50 owner fact and no foreign deletion')
 }
 
+// A phrase with no actual target cannot turn into an unrestricted deletion.
+{
+  const { reply, state } = fixture([...notes(65), ...foreign])
+  for (const command of ['delete memory', 'remove memory', 'forget about']) {
+    const response = await reply(71, command)
+    assert.match(response, /haven't deleted anything/i)
+    assert.equal(state.deletes, 0)
+  }
+  assert.equal(state.memories.length, 65 + foreign.length)
+  console.log('PASS empty forget targets never delete all notes')
+}
+
 for (const [description, opts, command] of [
   ['read outage', { fail: { table: 'memories', action: 'read' } }, 'forget everything'],
   ['delete outage', { fail: { table: 'memories', action: 'delete' } }, 'forget oak tree secret'],
