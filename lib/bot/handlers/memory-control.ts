@@ -437,6 +437,8 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
 
   if (lower.startsWith('forget ') || lower.startsWith('delete memory') || lower.startsWith('remove memory')) {
     const query = extractForgetQuery(text)
+    // An empty or unparseable target must NEVER become a global forget.
+    if (!query) return `Tell me which saved memory to forget, e.g. *forget my old address*. I haven't deleted anything.`
     try {
       const matched = await forgetPersonalRows(telegramId, query)
       if (!matched.length) {
