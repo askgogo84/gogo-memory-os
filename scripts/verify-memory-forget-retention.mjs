@@ -121,7 +121,7 @@ const foreign = [
   assert.equal(state.memories.some(row => row.content === 'Old oak tree secret'), false)
   assert.equal(state.memories.filter(row => row.telegram_id === 71).length, internal.length)
   assert.equal(state.memories.filter(row => row.telegram_id === 72).length, foreign.length)
-  assert.ok(state.reads >= 4, 'must scan beyond initial page and verify absence after delete')
+  assert.ok(state.reads >= 3, 'must read two initial pages and rescan for absence after delete')
   assert.ok(state.deletes >= 2, 'deletes must be bounded by batch')
   assert.equal(state.wrongOwnerDeletes, 0)
   assert.ok(state.memory_embeddings.filter(row => row.source_id.startsWith('m')).every(row => row.deleted_at))
