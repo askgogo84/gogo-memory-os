@@ -206,6 +206,7 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
     }
   } catch(err:any) {
     const code=String(err?.message||'')
+    if(code==='workspace_email_consent_missing')return 'I haven’t got your OK to read Gmail yet, so I didn’t read any mail. Reconnect Google once at app.askgogo.in/dashboard/settings/email and I’ll read only what you ask for.'
     if(code==='workspace_email_reading_disabled')return 'Gmail is connected, but reading is disabled in your saved privacy preference. I did not read your mail. Reconnecting Google will not change that preference.'
     if(['workspace_not_connected','workspace_reconnect_required','workspace_scope_required'].includes(code)){console.log('WORKSPACE_CONNECT_NEEDED:',JSON.stringify({code,drive:isDriveRead(text)}));return workspaceConnectionReply(actor)}
     console.error('AGENT_WORKSPACE_READ_FAILED:',code.slice(0,120))

@@ -18,6 +18,10 @@ export default async function EmailSettingsPage({ searchParams }: { searchParams
     supabaseAdmin.from('inbound_emails').select('snippet,body_text,received_at').eq('telegram_id', tg).eq('category', 'forwarding_confirmation')
       .gte('received_at', new Date(Date.now() - 48 * 3600_000).toISOString()).order('received_at', { ascending: false }).limit(1),
   ])
+  // 4 Nov: back from the Composio Gmail link with a live connection = the person's yes to reading Gmail.
+  if (params?.connected === 'google' && composioAccount && session?.telegramId) {
+    await import('@/lib/agent/gmail-consent').then(m => m.recordGmailConnectConsent(String(session.telegramId))).catch((e: any) => console.error('GMAIL_CONSENT_SAVE_FAILED:', String(e?.message || e).slice(0, 120)))
+  }
   const code = String((confirm as any)?.data?.[0]?.snippet || '').match(/(\d{6,12})/)?.[1] || null
   const confirmLink = /^https:\/\/mail(?:-settings)?\.google\.com\//.test(String((confirm as any)?.data?.[0]?.body_text || '')) ? String((confirm as any).data[0].body_text) : null
   return <EmailSetup
