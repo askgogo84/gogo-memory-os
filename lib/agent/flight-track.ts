@@ -137,7 +137,24 @@ export async function trackerCrossCheck(p: { flightNo: string; departAt: string;
 
 export type LiveLookupOptions = { telegramId?: string; crossCheck?: boolean; search?: WebSearchFn }
 
-export async function lookupLiveFlight(code: string, now = new Date(), tz = 'Asia/Kolkata', fetcher: FlightFetcher = fetchAeroDataBox, opts: LiveLookupOptions = {}): Promise<LiveFlight | null> {
+// 4 Nov live: one "did it land?" looked the flight up twice (brain + status handler) — six feed calls and two
+// Parallel shadow calls. The same live-feed lookup within a minute reuses the first answer. Only for the real feed.
+const LIVE_CACHE = new Map<string, { at: number; p: Promise<LiveFlight | null> }>()
+const LIVE_TTL_MS = 60_000
+export function lookupLiveFlight(code: string, now = new Date(), tz = 'Asia/Kolkata', fetcher: FlightFetcher = fetchAeroDataBox, opts: LiveLookupOptions = {}): Promise<LiveFlight | null> {
+  if (fetcher !== fetchAeroDataBox || opts.search || opts.crossCheck === false) return lookupLiveFlightUncached(code, now, tz, fetcher, opts)
+  const key = `${normalizeFlightNo(code)}|${tz}`
+  const t = Date.now()
+  for (const [k, v] of LIVE_CACHE) if (t - v.at > LIVE_TTL_MS) LIVE_CACHE.delete(k)
+  const hit = LIVE_CACHE.get(key)
+  if (hit) return hit.p
+  const p = lookupLiveFlightUncached(code, now, tz, fetcher, opts)
+  LIVE_CACHE.set(key, { at: t, p })
+  p.catch(() => LIVE_CACHE.delete(key))
+  return p
+}
+
+async function lookupLiveFlightUncached(code: string, now: Date, tz: string, fetcher: FlightFetcher, opts: LiveLookupOptions): Promise<LiveFlight | null> {
   const ymd = (ms: number) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date(ms))
   const days = [...new Set([ymd(now.getTime() - 86_400_000), ymd(now.getTime()), ymd(now.getTime() + 86_400_000)])]
   const list = (await Promise.all(days.map(d => fetcher(code, d).catch(() => [])))).flat()
