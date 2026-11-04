@@ -6,11 +6,13 @@ export async function browserHandoffIsLive(takeoverUrl: unknown): Promise<boolea
   let url: URL
   try { url = new URL(takeoverUrl) } catch { return false }
   if (url.protocol !== 'https:' || !/^sb-[a-z0-9-]+\.vercel\.run$/i.test(url.hostname)
-    || url.username || url.password || !url.searchParams.get('token')) return false
+    || url.username || url.password || url.port || !url.searchParams.get('token')) return false
   url.pathname = '/health'
   url.hash = ''
   try {
-    const response = await fetch(url, {cache: 'no-store', signal: AbortSignal.timeout(2500)})
-    return response.ok && (await response.json().catch(() => null))?.ready === true
+    // Do not let a sandbox 30x redirect make this server probe an arbitrary destination.
+    // A health check is authoritative only for the exact pinned sandbox origin.
+    const response = await fetch(url, {cache: 'no-store', redirect: 'manual', signal: AbortSignal.timeout(2500)})
+    return response.status === 200 && (await response.json().catch(() => null))?.ready === true
   } catch { return false }
 }
