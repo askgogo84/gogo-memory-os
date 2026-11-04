@@ -4,6 +4,7 @@ on:
     paths:
       - 'lib/agent/open-loops.ts'
       - 'scripts/verify-open-loop-exact-owner-reads.mjs'
+      - 'scripts/verify-calendar-conflict-discovery.mts'
       - '.github/workflows/open-loop-exact-owner-literal-head.yml'
 permissions:
   contents: read
