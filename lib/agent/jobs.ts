@@ -58,6 +58,57 @@ export function isJobRadarRequest(text: string) {
     || /^(?:start|set\s+up|turn\s+on)\s+(?:a\s+|my\s+)?job\s+(?:radar|alerts?|scan)\b/i.test(t)
     || /\b(?:send|tell|show)\s+me\s+new\s+(?:jobs?|openings?)\s+(?:daily|every\s*day|each\s+day)\b/i.test(t)
 }
+// 4 Nov (retest #10): "scan for jobs now" fell to a general web answer and 2 of 3 openings had no link. A one-off
+// scan searches job boards directly, so every opening listed is a real result with its own link.
+export const JOB_BOARD_DOMAINS = ['linkedin.com', 'naukri.com', 'indeed.com', 'instahyre.com', 'iimjobs.com', 'wellfound.com', 'cutshort.io', 'hirist.tech', 'greenhouse.io', 'lever.co', 'ashbyhq.com', 'glassdoor.co.in']
+export function isJobScanNow(text: string) {
+  const t = clean(text, 200).toLowerCase().replace(/[?.!]+$/, '')
+  return /^(?:please\s+)?(?:scan|search|find|look|check|hunt)\s+(?:for\s+)?(?:new\s+)?(?:jobs?|openings?|job\s+openings?)(?:\s+(?:now|today|for\s+me|right\s+now|again))*$/.test(t)
+    || /^(?:find|show)\s+me\s+(?:new\s+)?(?:jobs?|openings?)(?:\s+(?:now|today))?$/.test(t)
+    || /^(?:any\s+)?new\s+(?:jobs?|openings?)(?:\s+(?:today|for\s+me))?$/.test(t)
+}
+/** Board search/listing pages (many openings) as opposed to one posting. */
+export function isJobListingUrl(url: string) {
+  try {
+    const u = new URL(url), h = u.hostname.replace(/^(?:www|in|uk)\./, ''), p = u.pathname
+    if (h.endsWith('indeed.com')) return !/^\/(?:viewjob|rc\/clk|pagead\/clk|cmp\/[^/]+\/jobs\/)/.test(p)
+    if (h.endsWith('linkedin.com')) return !/^\/jobs\/view\//.test(p)
+    if (h.endsWith('naukri.com')) return !/^\/job-listings-/.test(p)
+    if (h.endsWith('glassdoor.co.in')) return !/^\/job-listing\//.test(p)
+    if (h.endsWith('wellfound.com')) return !/^\/jobs\/\d/.test(p)
+    if (h.endsWith('instahyre.com')) return !/^\/job-\d/.test(p)
+    if (h.endsWith('iimjobs.com') || h.endsWith('hirist.tech')) return !/^\/j\//.test(p)
+    if (h.endsWith('cutshort.io')) return !/^\/job\//.test(p)
+    if (h.endsWith('lever.co')) return p.split('/').filter(Boolean).length < 2
+    if (h.endsWith('greenhouse.io')) return !/\/jobs\/\d/.test(p)
+    if (h.endsWith('ashbyhq.com')) return p.split('/').filter(Boolean).length < 2
+    return false
+  } catch { return true }
+}
+type JobHit = { title?: string; url?: string; snippet?: string }
+/** Job-board results as a numbered list; each line carries its own link. Listing pages and duplicates dropped. */
+export function formatJobScan(results: JobHit[], query: string) {
+  const seen = new Set<string>()
+  const rows: string[] = []
+  for (const r of results) {
+    let host = ''
+    try { const u = new URL(String(r.url || '')); if (u.protocol !== 'https:') continue; host = u.hostname.replace(/^www\./, '').replace(/^in\./, '') } catch { continue }
+    if (!JOB_BOARD_DOMAINS.some(d => host === d || host.endsWith('.' + d))) continue
+    const title = clean(r.title, 110).replace(/\s*[|·-]\s*(?:LinkedIn|Naukri(?:\.com)?|Indeed(?:\.com)?|Glassdoor|Instahyre|Wellfound|Cutshort)\s*$/i, '')
+    if (!title || /^\d[\d,]*\+?\s+.*\bjobs\b/i.test(title) || /\bjobs\s+in\b.*\(\d/i.test(title)) continue // "1,200 AI jobs in Bengaluru" listing pages
+    // 4 Nov live: Indeed search pages ("Forward Deployed Engineer jobs", /q-…-jobs.html) came through. A title ending in
+    // "jobs" or a board's search/listing URL is a list of openings, not one opening.
+    if (/\bjobs?(?:\s+in\s+[\w\s,]+)?\s*$/i.test(title) || isJobListingUrl(String(r.url))) continue
+    const key = title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    if (seen.has(key)) continue
+    seen.add(key)
+    rows.push(`${rows.length + 1}. *${title}* · ${host}\n${r.url}`)
+    if (rows.length >= 6) break
+  }
+  if (!rows.length) return `💼 I searched the job boards for ${query} and found no individual openings just now. Say *scan for jobs every day* and I'll message you when new ones appear.`
+  return `💼 *Openings for ${query}*\n\n${rows.join('\n\n')}\n\nWhen one looks right, say *prepare application for <role at company or link>*. Say *scan for jobs every day* to get new ones daily. I never apply for you.`
+}
+
 /** The search a daily job watch runs: the request's own role words, else the saved preferences. */
 export function jobRadarQuery(text: string, prefs: JobPrefs | null) {
   const own = clean(text, 300).replace(/\b(?:please|can\s+you|find|scan|look|search|check|hunt|for|me|new|every\s*day|daily|each\s+day|every\s+morning|once\s+a\s+day|and|report|send|tell|show|the\s+ones?|i(?:'d| would)\s+be\s+qualified\s+for|start|set\s+up|turn\s+on|a|my|job\s+radar|job\s+alerts?)\b/gi, ' ').replace(/\b(?:jobs?|openings?|positions?)\b/gi, ' ').replace(/\s+/g, ' ').trim()

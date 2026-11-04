@@ -186,6 +186,7 @@ function formatClock(iso: string, tz: string): string {
 export type UsageSummary =
   | {
       ok: true
+      planCode: string
       planLabel: string
       planPriceInr: number
       usage: { aiToday: number; docsThisMonth: number; friendContacts: number }
@@ -219,6 +220,7 @@ export async function getUsageSummary(telegramId: string): Promise<UsageSummary>
     const display = planDisplayFor(plan.plan_code)
     return {
       ok: true,
+      planCode: String(plan.plan_code || 'free'),
       planLabel: display.label,
       planPriceInr: display.priceInr,
       usage,

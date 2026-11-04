@@ -24,19 +24,28 @@ type PlanLimit = {
   costGuardrailInr: number
 }
 
+// 4 Nov (Gogo: "at least 30% profit, fit it accordingly"). Allowances are set so that a person who uses ALL of them
+// still leaves a 30% margin on what we actually keep from the price. From the admin console (rate card + 4 days of
+// metered spend, 4-5 active users):
+//   kept per month = price / 1.18 GST x 0.98 Razorpay  -> Essential ₹207, Plus ₹414, Pro ₹830
+//   one AI action ≈ ₹1.00 (Claude ≈ ₹0.15 a call x ~2, Serper ₹0.09 on about half, WhatsApp ₹0.35 x ~1.5 replies)
+//   background per active person ≈ ₹60 a month (briefing, reminders, check-ins: ~170 WhatsApp messages)
+//   cost ceiling = 70% of kept; actions = (ceiling - background) / ₹1, rounded down
+//   -> Essential 80, Plus 220, Pro 500 a month. Daily caps are ~1/4 of the month so a burst can't empty it in a day.
+// costGuardrailInr is that same 70% ceiling. Fixed bills (Vercel, Supabase, ~₹9,500 a month) are covered by volume.
 const LIMITS: Record<PlanKey, PlanLimit> = {
   free: {
     label: 'Gogo Free', priceInr: 0,
-    monthlyActions: 25, dailyActions: 10, activeReminders: 3,
+    monthlyActions: 25, dailyActions: 5, activeReminders: 3,
     voiceNotesMonthly: 5, webSearchesMonthly: 3, calendarEventsMonthly: 3,
     friendRemindersDaily: 5, costGuardrailInr: 25,
   },
   // Stable entitlement behind public Gogo Essential.
   lite: {
     label: 'Gogo Essential', priceInr: 249,
-    monthlyActions: 120, dailyActions: 30, activeReminders: 20,
+    monthlyActions: 80, dailyActions: 20, activeReminders: 20,
     voiceNotesMonthly: 20, webSearchesMonthly: 15, calendarEventsMonthly: 30,
-    friendRemindersDaily: 20, costGuardrailInr: 120,
+    friendRemindersDaily: 20, costGuardrailInr: 145,
   },
   // Historical entitlement only; no longer sold.
   starter: {
@@ -48,16 +57,16 @@ const LIMITS: Record<PlanKey, PlanLimit> = {
   // Stable entitlement behind public Gogo Plus.
   pro: {
     label: 'Gogo Plus', priceInr: 499,
-    monthlyActions: 300, dailyActions: 75, activeReminders: 75,
+    monthlyActions: 220, dailyActions: 55, activeReminders: 75,
     voiceNotesMonthly: 120, webSearchesMonthly: 45, calendarEventsMonthly: 150,
-    friendRemindersDaily: 75, costGuardrailInr: 240,
+    friendRemindersDaily: 75, costGuardrailInr: 290,
   },
   // Stable entitlement behind public Gogo Pro.
   founder_pro: {
     label: 'Gogo Pro', priceInr: 999,
-    monthlyActions: 750, dailyActions: 180, activeReminders: 250,
+    monthlyActions: 500, dailyActions: 125, activeReminders: 250,
     voiceNotesMonthly: 350, webSearchesMonthly: 120, calendarEventsMonthly: 400,
-    friendRemindersDaily: 250, costGuardrailInr: 480,
+    friendRemindersDaily: 250, costGuardrailInr: 580,
   },
 }
 
@@ -80,7 +89,7 @@ function normalizeTier(tier?: string | null): PlanKey {
   const clean = (tier || 'free').toLowerCase().trim().replace(/[\s-]+/g,'_')
   if (clean === 'lite' || clean === 'essential') return 'lite'
   if (clean === 'starter') return 'starter'
-  if (clean === 'pro' || clean === 'plus' || clean === 'gogo_plus') return 'pro'
+  if (clean === 'pro' || clean === 'pro_annual' || clean === 'plus' || clean === 'gogo_plus') return 'pro'
   if (['power','founder','founder_pro','gogo_pro'].includes(clean)) return 'founder_pro'
   return 'free'
 }
@@ -140,6 +149,17 @@ export async function logUsage(telegramId:number, kind:UsageKind, meta?:Record<s
   if(kind==='ai_action') await supabaseAdmin.from('memories').insert({ telegram_id:telegramId, content:usageMemoryPrefix(kind,dayKey)+JSON.stringify({kind,monthKey,dayKey,meta:meta||{},created_at:new Date().toISOString()}) })
 }
 
+/** AI actions this IST month, from the same usage_events the dashboard and trends count (4 Nov: the chat showed
+ * "1 / 750" from users.daily_count while trends showed 206 in 30 days). Null when the read fails. */
+async function monthlyAiUsed(telegramId:number|string):Promise<number|null> {
+  const ist=new Date(Date.now()+330*60_000)
+  const start=new Date(Date.UTC(ist.getUTCFullYear(),ist.getUTCMonth(),1)-330*60_000).toISOString()
+  const { count, error }=await supabaseAdmin.from('usage_events').select('id',{count:'exact',head:true}).eq('telegram_id',String(telegramId)).eq('counter','ai_action').gte('created_at',start)
+  return error?null:Number(count||0)
+}
+/** The one monthly allowance shown everywhere, for a plan code from either meter. */
+export function monthlyAllowanceFor(planCode?:string|null){ const p=LIMITS[normalizeTier(planCode)]; return {monthly:p.monthlyActions,daily:p.dailyActions,label:p.label} }
+
 async function getActiveReminderCount(telegramId:number) {
   const { count }=await supabaseAdmin.from('reminders').select('id',{count:'exact',head:true}).eq('telegram_id',telegramId).eq('sent',false)
   return count||0
@@ -167,6 +187,9 @@ export async function checkAndIncrementLimit(telegramId:number):Promise<{allowed
   if(!user){ await logUsage(telegramId,'ai_action'); return{allowed:true,tier:'free',remaining:plan.monthlyActions-1,monthlyLimit:plan.monthlyActions,usedThisMonth:1} }
   const monthKey=currentMonthKey(); const dayKey=currentDayKey(); let usedCount=user.daily_count||0
   if(user.last_reset!==monthKey){ usedCount=0; await supabaseAdmin.from('users').update({daily_count:0,last_reset:monthKey}).eq('telegram_id',telegramId) }
+  // The monthly check counts the same events everyone sees; the old counter is only a fallback when that read fails.
+  const events=await monthlyAiUsed(telegramId).catch(()=>null)
+  if(events!==null)usedCount=Math.max(usedCount,events)
   const dailyUsed=await countUsageFromMemories(telegramId,'ai_action',dayKey)
   if(dailyUsed>=plan.dailyActions)return{allowed:false,tier,remaining:Math.max(plan.monthlyActions-usedCount,0),monthlyLimit:plan.monthlyActions,usedThisMonth:usedCount,upgradeMessage:buildLimitReachedMessage({planLabel:plan.label,limitLabel:'daily AI actions',limitValue:plan.dailyActions})}
   const remainingBefore=plan.monthlyActions-usedCount
@@ -179,7 +202,7 @@ export async function checkAndIncrementLimit(telegramId:number):Promise<{allowed
 
 export async function getUsageStatusReply(telegramId:number) {
   const {user,tier,plan}=await getUserPlan(telegramId); const monthKey=currentMonthKey()
-  const monthlyActionsUsed=user?.daily_count||0
+  const monthlyActionsUsed=(await monthlyAiUsed(telegramId).catch(()=>null))??(user?.daily_count||0)
   const activeReminders=await getActiveReminderCount(telegramId)
   const voiceUsed=await countUsageFromMemories(telegramId,'voice_note',monthKey)
   const webUsed=await countUsageFromMemories(telegramId,'web_search',monthKey)
@@ -187,7 +210,7 @@ export async function getUsageStatusReply(telegramId:number) {
   const resetLabel=nextResetLabel()
   return (
     `📊 *Gogo capacity*\n\nPlan: *${plan.label}*\nResets on: *${resetLabel}*\n\n`+
-    `${usageLine('AI actions',monthlyActionsUsed,plan.monthlyActions,' this month')}\n\n`+
+    `${usageLine('AI actions',monthlyActionsUsed,plan.monthlyActions,' this month')}\nUp to ${plan.dailyActions} a day\n\n`+
     `${usageLine('Active reminders',activeReminders,plan.activeReminders)}\n\n`+
     `${usageLine('Voice notes',voiceUsed,plan.voiceNotesMonthly,' this month')}\n\n`+
     `${usageLine('Calendar events',calendarUsed,plan.calendarEventsMonthly,' this month')}\n\n`+

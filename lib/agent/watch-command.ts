@@ -94,7 +94,7 @@ const priceOffers=(c:any)=>{const raw=`${c.query||''} ${c.title||''}`;return c.p
 export function watchName(row:any){
   const c:any=row.condition_json||{}
   // A price watch's query carries the store ("… on amazon.in"); its title often does not.
-  let t=String((priceAmount(c)?c.query||c.title:c.title||c.query)||row.type||'Watch').replace(/^watch:\s*/i,'').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi,'$1')
+  let t=String((priceAmount(c)?c.query||c.title:c.title||c.query)||row.type||'Watch').replace(/^watch:\s*/i,'').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi,'$1').replace(/\b([A-Za-z0-9][\w.+-]*)(?:\s+\1\b)+/gi,'$1')
   if(row.type==='email_triage')return 'Your inbox'
   if(priceAmount(c))t=t.replace(/\s*(?:price\s+)?(?:in\s+India\s+)?\b(?:below|under)\b.*$/i,'').replace(/\s*,?\s*(?:including|excluding|with|without)\s+(?:bank\/card\s+)?offers?\b.*$/i,'').replace(/\s+price(?:\s+in\s+India)?$/i,'').trim()
   return clean(t,80)
