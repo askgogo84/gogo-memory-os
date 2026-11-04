@@ -20,7 +20,7 @@ export function TasteList({ initial }: { initial: Fact[] }) {
 
   if (!facts.length) return <p className="border-t border-[#1f1f1f] py-4 text-[15px] text-[#9a9a9a]">Nothing saved. Gogo will ask before it suggests.</p>
   return <div>
-    {error ? <p role="alert" className="mb-2 text-[14px] text-[#e0806b]">{error}</p> : null}
+    {error ? <p role="alert" className="mb-2 text-[14px] text-[#d96c5f]">{error}</p> : null}
     <ul>
       {facts.map(f => <li key={f.id} className="flex items-start gap-3 border-t border-[#1f1f1f] py-3.5">
         <div className="min-w-0 flex-1">
@@ -28,7 +28,7 @@ export function TasteList({ initial }: { initial: Fact[] }) {
           <div className="mt-0.5 text-[13px] text-[#7a7a7a]">{f.from}</div>
         </div>
         <button type="button" onClick={() => forget(f.id)} disabled={busy === f.id} aria-label={`Forget ${f.text}`}
-          className="min-h-[44px] min-w-[72px] rounded-full border border-[#2c2c2c] px-3 text-[13px] font-medium text-[#f2efea] hover:border-[#4a4a4a] disabled:opacity-50">
+          className="min-h-[44px] min-w-[72px] rounded-full border border-[#2f2f2f] px-3 text-[13px] font-medium text-[#f2efea] hover:border-[#6a6a6a] disabled:opacity-50">
           {busy === f.id ? 'Forgetting…' : 'Forget'}
         </button>
       </li>)}
