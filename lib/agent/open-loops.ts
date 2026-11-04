@@ -541,9 +541,10 @@ async function readGmailAttention(telegramId:string|number){
   if(userError)throw new Error(`open_loop_gmail_user_failed:${userError.message}`)
   if(consentError)throw new Error(`open_loop_gmail_consent_failed:${consentError.message}`)
   if(consent&&consent.telegram_id!=null&&String(consent.telegram_id)!==owner)return {reason:'disabled' as const}
-  if(consent?.gmail_enabled!==true)return {reason:'disabled' as const} // 4 Nov: affirmative yes only
+  if(consent?.gmail_enabled===false)return {reason:'disabled' as const}
   if(user&&user.telegram_id!=null&&String(user.telegram_id)!==owner)return {reason:'disconnected' as const}
   if(!user?.gmail_connected)return {reason:'disconnected' as const}
+  if(consent?.gmail_enabled!==true)return {reason:'disabled' as const} // 4 Nov: affirmative yes only
 
   const ownEmail=String(user.gmail_email||'').trim().toLowerCase()
   if(!ownEmail)return {reason:'disconnected' as const}
