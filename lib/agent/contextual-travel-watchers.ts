@@ -253,7 +253,7 @@ function nearestRetainedTrip(rows:TravelRow[],now:number){
 function exactTravelOwnerId(value:unknown):string|null{
   if(typeof value!=='string'&&(typeof value!=='number'||!Number.isSafeInteger(value)))return null
   const owner=String(value)
-  if(owner.length>20||!/^-[1-9]\\d*$|^[1-9]\\d*$/.test(owner))return null
+  if(owner.length>20||!/^-[1-9]\d*$|^[1-9]\d*$/.test(owner))return null
   const n=BigInt(owner)
   return n>=-9223372036854775808n&&n<=9223372036854775807n?owner:null
 }
