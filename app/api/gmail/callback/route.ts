@@ -88,6 +88,8 @@ export async function GET(req: NextRequest) {
         { status: 500 }
       )
     }
+    // 4 Nov: connecting Gmail is the person's yes to reading it (owner decision). Never overrides an explicit off.
+    await import('@/lib/agent/gmail-consent').then(m => m.recordGmailConnectConsent(telegramId)).catch((e: any) => console.error('GMAIL_CONSENT_SAVE_FAILED:', String(e?.message || e).slice(0, 120)))
 
     return new NextResponse(
       `<!doctype html>

@@ -676,7 +676,9 @@ async function processInboxTriageWatcher(watcher:any,now:Date) {
     if(!alreadyNotified) {
       await sendWhatsAppIfWanted(
         telegramId,condition.delivery,
-        reason.includes('workspace_email_reading_disabled')
+        reason.includes('workspace_email_consent_missing')
+          ? 'Your inbox watch is paused: I haven’t got your OK to read Gmail yet. Reconnect Google once at app.askgogo.in/dashboard/settings/email to start it. I did not read any mail.'
+          : reason.includes('workspace_email_reading_disabled')
           ? 'Your inbox watch cannot read mail because Gmail reading is disabled in your saved privacy preference. Connecting Google does not enable it.'
           : reason.includes('workspace_reconnect_required')||reason.includes('workspace_not_connected')
           ? 'Your inbox watch is paused because Google Workspace needs to be reconnected. I did not read or change any mail.'

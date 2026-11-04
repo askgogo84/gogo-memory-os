@@ -24,10 +24,22 @@ export const OPS_ALERT_NUMBER_DEFAULT = '+918310441698'
 export function opsAlertNumber() {
   return clean(process.env.OPS_ALERT_WHATSAPP_NUMBER || OPS_ALERT_NUMBER_DEFAULT, 40)
 }
-const last10 = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10)
+/** 4 Nov P1 hotfix (#274 review): a phone identity is the complete E.164 number, never a shared national suffix.
+ * "+918310441698", "918310441698" and "whatsapp:+918310441698" are one identity; "8310441698" (no country code),
+ * "+18310441698" and anything with extra characters are not. Same rule as canonicalAdminPhone. */
+export function canonicalE164(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const raw = value.trim().replace(/^whatsapp:/i, '').trim()
+  const prefixed = raw.startsWith('+')
+  const digits = prefixed ? raw.slice(1) : raw
+  if (!/^[1-9][0-9]{7,14}$/.test(digits)) return null
+  if (!prefixed && digits.length <= 10) return null
+  return '+' + digits
+}
+/** Privileged Ops commands only from the exact configured alert number. */
 export function isOpsAlertNumber(phone: unknown) {
-  const a = last10(phone), b = last10(opsAlertNumber())
-  return a.length === 10 && a === b
+  const sender = canonicalE164(phone), owner = canonicalE164(opsAlertNumber())
+  return Boolean(sender && owner && sender === owner)
 }
 
 // ------------------------------------------------------------------ detectors (pure)
@@ -177,6 +189,12 @@ export function shouldSendDigest(open: Pick<OpsAlert, 'severity' | 'status' | 'm
   if (lastDigestAt && now.getTime() - Date.parse(lastDigestAt) < 55 * MIN) return false
   return open.some(a => a.severity === 'P2' && (a.status === 'open' || a.status === 'muted') && !(a.muted_until && Date.parse(a.muted_until) > now.getTime())
     && (!a.notified_at || Date.parse(a.notified_at) < Date.parse(a.last_seen)))
+}
+
+/** P2 incidents that may appear in a digest: open, or muted with the mute expired. Acked and actively muted ones are
+ * left out of the body, the template line and the digest cursor (4 Nov P2 review). */
+export function digestEligible<T extends Pick<OpsAlert, 'severity' | 'status' | 'muted_until'>>(open: T[], now = new Date()): T[] {
+  return open.filter(a => a.severity === 'P2' && (a.status === 'open' || (a.status === 'muted' && !(a.muted_until && Date.parse(a.muted_until) > now.getTime()))))
 }
 
 export async function openAlerts(): Promise<OpsAlert[] | null> {

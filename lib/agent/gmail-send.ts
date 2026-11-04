@@ -115,6 +115,8 @@ async function gmailAccess(actor:AgentActor,{requireSend=false}:{requireSend?:bo
     .eq('telegram_id',actor.legacyTelegramId).maybeSingle()
   if(error)throw new Error(`gmail_send_user_read_failed:${error.message}`)
   if(!user?.gmail_connected)return {ok:false as const,reason:'gmail_not_connected',user:null,accessToken:''}
+  // 4 Nov: reading threads to reply needs the affirmative Gmail yes too.
+  if(await import('./gmail-consent').then(m=>m.gmailConsentState(actor.legacyTelegramId))!=='on')return {ok:false as const,reason:'gmail_consent_missing',user:null,accessToken:''}
   if(requireSend&&!user?.gmail_send_connected)return {ok:false as const,reason:'gmail_send_not_connected',user,accessToken:''}
   let accessToken=''
   const refresh=decryptGoogleToken(user.gmail_refresh_token)

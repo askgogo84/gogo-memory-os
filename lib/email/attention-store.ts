@@ -87,7 +87,7 @@ async function gmailToken(telegramId: number) {
     supabaseAdmin.from('users').select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token').eq('telegram_id', telegramId).maybeSingle(),
     supabaseAdmin.from('user_consent_settings').select('gmail_enabled').eq('telegram_id', telegramId).maybeSingle(),
   ])
-  if (consent?.gmail_enabled === false || !user?.gmail_connected) return null
+  if (consent?.gmail_enabled !== true || !user?.gmail_connected) return null // 4 Nov: affirmative yes only
   let token = ''
   const refresh = decryptGoogleToken(user.gmail_refresh_token)
   if (refresh) token = String(await refreshGmailAccessToken(refresh) || '')
@@ -127,6 +127,9 @@ async function readForwarded(telegramId: number) {
 }
 
 async function readComposio(telegramId: number) {
+  // 4 Nov: the Composio Gmail path had no consent check at all; it needs the same affirmative yes.
+  const consent = await import('@/lib/agent/gmail-consent').then(m => m.gmailConsentState(telegramId)).catch(() => 'missing' as const)
+  if (consent !== 'on') return null
   const mod: any = await import('@/lib/connectors/composio-gmail').catch(() => null)
   if (!mod?.fetchComposioRecentEmails) return null
   return await mod.fetchComposioRecentEmails(telegramId).catch((err: any) => { console.error('COMPOSIO_GMAIL_READ_FAILED:', String(err?.message || err).slice(0, 160)); return null })

@@ -18,7 +18,7 @@ async function gmailAccess(telegramId:number){
   ])
   if(userError)throw new Error(`gmail_user_read_failed:${userError.message}`)
   if(consentError)throw new Error(`gmail_consent_read_failed:${consentError.message}`)
-  if(consent?.gmail_enabled===false)return {connected:false,disabled:true,email:null,accessToken:''}
+  if(consent?.gmail_enabled!==true)return {connected:false,disabled:true,missing:consent?.gmail_enabled!==false,email:null,accessToken:''} // 4 Nov: affirmative yes only
   if(!user?.gmail_connected)return {connected:false,disabled:false,email:null,accessToken:''}
 
   let accessToken=''
@@ -30,7 +30,7 @@ async function gmailAccess(telegramId:number){
 
 export async function buildGmailConnectReply(telegramId:number){
   const access=await gmailAccess(telegramId)
-  if(access.disabled)return 'Google Workspace access is turned off in your privacy settings.'
+  if(access.disabled)return (access as any).missing?'I haven’t got your OK to read Gmail yet, so I didn’t read any mail. Reconnect Google once at app.askgogo.in/dashboard/settings/email and I’ll read only what you ask for.':'Google Workspace access is turned off in your privacy settings.'
   if(access.connected){
     return `✅ *Google Workspace is connected*${access.email?` as *${access.email}*`:''}.\n\nGogo can use the read-only Gmail context you approved. Sending or modifying email is still a separate approval-gated action.`
   }
@@ -93,7 +93,7 @@ export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unrea
     }
   }
   const access=await gmailAccess(telegramId)
-  if(access.disabled)return 'Google Workspace access is turned off in your privacy settings.'
+  if(access.disabled)return (access as any).missing?'I haven’t got your OK to read Gmail yet, so I didn’t read any mail. Reconnect Google once at app.askgogo.in/dashboard/settings/email and I’ll read only what you ask for.':'Google Workspace access is turned off in your privacy settings.'
   if(!access.connected){
     const url=buildGmailConnectUrl(telegramId)
     return url
@@ -170,7 +170,7 @@ Preview: ${clean(redactEmailAuthSecrets(String(row.snippet||'')),400)}`
 
 export async function buildDraftRepliesReply(telegramId:number){
   const access=await gmailAccess(telegramId)
-  if(access.disabled)return 'Google Workspace access is turned off in your privacy settings.'
+  if(access.disabled)return (access as any).missing?'I haven’t got your OK to read Gmail yet, so I didn’t read any mail. Reconnect Google once at app.askgogo.in/dashboard/settings/email and I’ll read only what you ask for.':'Google Workspace access is turned off in your privacy settings.'
   if(!access.connected)return buildGmailConnectReply(telegramId)
   const unread=await fetchUnreadEmails(access.accessToken,15)
   const people=await bulkDraftCandidates(unread)

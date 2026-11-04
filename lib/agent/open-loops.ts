@@ -544,6 +544,7 @@ async function readGmailAttention(telegramId:string|number){
   if(consent?.gmail_enabled===false)return {reason:'disabled' as const}
   if(user&&user.telegram_id!=null&&String(user.telegram_id)!==owner)return {reason:'disconnected' as const}
   if(!user?.gmail_connected)return {reason:'disconnected' as const}
+  if(consent?.gmail_enabled!==true)return {reason:'disabled' as const} // 4 Nov: affirmative yes only
 
   const ownEmail=String(user.gmail_email||'').trim().toLowerCase()
   if(!ownEmail)return {reason:'disconnected' as const}

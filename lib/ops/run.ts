@@ -4,31 +4,53 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp, sendWhatsAppReminderTemplate } from '@/lib/whatsapp'
 import {
-  BILLING_GMAIL_QUERY, billingAlert, formatDigest, formatP1, formatP1Line, meterAlerts, openAlerts, opsAlertNumber,
+  BILLING_GMAIL_QUERY, billingAlert, digestEligible, formatDigest, formatP1, formatP1Line, meterAlerts, openAlerts, opsAlertNumber,
   raiseAlerts, resolveQuiet, shouldNotifyP1, shouldSendDigest, taskAlerts, type AlertInput, type MeterRow,
 } from './alerts'
 
 const MIN = 60_000
-const last10 = (v: unknown) => String(v ?? '').replace(/\D/g, '').slice(-10)
 
 async function meterRows(since: Date): Promise<MeterRow[]> {
   const { data, error } = await supabaseAdmin.rpc('admin_meter_failures', { p_since: since.toISOString() })
   if (error) throw new Error(`meter_failures_read_failed:${error.message}`)
   return (data || []).map((r: any) => ({ vendor: String(r.vendor || ''), category: String(r.category || ''), failures: Number(r.failures || 0), calls: Number(r.calls || 0) }))
 }
+/** Failed tasks by when they FAILED (4 Nov P2 review), not when they started: a run that began yesterday and failed
+ * three minutes ago counts now; an old failure touched later for bookkeeping does not. The terminal time is
+ * completed_at; failure writes that never set it fall back to updated_at. A read error is raised, never zero. */
 async function failedTasks(since: Date) {
-  const { count, error } = await supabaseAdmin.from('agent_runs').select('id', { count: 'exact', head: true }).eq('status', 'failed').gte('started_at', since.toISOString())
+  const iso = since.toISOString()
+  const [ended, unstamped] = await Promise.all([
+    supabaseAdmin.from('agent_runs').select('id', { count: 'exact', head: true }).eq('status', 'failed').gte('completed_at', iso),
+    supabaseAdmin.from('agent_runs').select('id', { count: 'exact', head: true }).eq('status', 'failed').is('completed_at', null).gte('updated_at', iso),
+  ])
+  const error = ended.error || unstamped.error
   if (error) throw new Error(`failed_tasks_read_failed:${error.message}`)
-  return Number(count || 0)
+  return Number(ended.count || 0) + Number(unstamped.count || 0)
 }
 
-/** The user row behind a phone number (stored as +91…, 91… or whatsapp:+91…), exact on the last 10 digits. */
+/** The ONE owner resolver for privileged Ops paths (inbound commands, billing Gmail, alert recipient). 4 Nov P1
+ * hotfix: exact full E.164 only, never a 10-digit suffix. A number without a country code is refused before any read;
+ * the stored forms "+91…", "91…" and "whatsapp:+91…" are matched exactly; two different owners for one number, or an
+ * owner id that isn't an exact decimal string or safe integer, fail closed. Self-contained on purpose. */
 async function userByPhone(phone: string): Promise<{ telegram_id: string } | null> {
-  const ten = last10(phone)
-  if (ten.length !== 10) return null
-  const { data } = await supabaseAdmin.from('users').select('telegram_id,whatsapp_id').ilike('whatsapp_id', `%${ten}`).limit(5)
-  const row = (data || []).find((u: any) => last10(u.whatsapp_id) === ten)
-  return row ? { telegram_id: String(row.telegram_id) } : null
+  const raw = String(phone ?? '').trim().replace(/^whatsapp:/i, '').trim()
+  const prefixed = raw.startsWith('+')
+  const digits = prefixed ? raw.slice(1) : raw
+  if (!/^[1-9][0-9]{7,14}$/.test(digits) || (!prefixed && digits.length <= 10)) return null
+  const forms = [`whatsapp:+${digits}`, `+${digits}`, digits]
+  const owners = new Set<string>()
+  for (const form of forms) {
+    const { data, error } = await supabaseAdmin.from('users').select('telegram_id,whatsapp_id').eq('whatsapp_id', form).limit(3)
+    if (error) return null
+    for (const u of (data || []) as any[]) {
+      const id = u?.telegram_id
+      const exact = typeof id === 'string' ? /^-?(?:0|[1-9]\d{0,18})$/.test(id) : typeof id === 'number' && Number.isSafeInteger(id)
+      if (!exact) return null
+      owners.add(String(id))
+    }
+  }
+  return owners.size === 1 ? { telegram_id: [...owners][0] } : null
 }
 
 /** Billing problems in the owner's connected Gmail (the admin numbers' accounts). Metadata only, newest first. */
@@ -70,6 +92,40 @@ async function sendToOps(text: string, line: string) {
   return active ? 'freeform' : 'template'
 }
 
+/** Atomic notification claim: set notified_at only where it still holds the value this pass saw. 'claimed' when
+ * this pass won at least one row, 'taken' when another pass already did, 'error' when the write failed. */
+async function claimNotification(rows: { id: string }[], now: Date, cond: { eq?: string; isNull?: true; olderThan?: string }): Promise<'claimed' | 'taken' | 'error'> {
+  const ids = rows.map(r => r.id)
+  if (!ids.length) return 'taken'
+  // An incident acked or resolved after this pass read it is not claimed (review P3).
+  let q: any = supabaseAdmin.from('ops_alerts').update({ notified_at: now.toISOString() }).in('id', ids).not('status', 'in', '(acked,resolved)')
+  if (cond.eq) q = q.eq('notified_at', cond.eq)
+  else if (cond.isNull) q = q.is('notified_at', null)
+  else if (cond.olderThan) q = q.or(`notified_at.is.null,notified_at.lt.${cond.olderThan}`)
+  const { data, error } = await q.select('id')
+  if (error) return 'error'
+  return (data || []).length ? 'claimed' : 'taken'
+}
+
+/** A send that certainly reached nobody: missing configuration, or a Twilio client error (4xx) on the first chunk.
+ * Timeouts, network errors, 5xx and partial multi-chunk sends are UNKNOWN and keep the claim (review P2). */
+function definiteSendFailure(e: any) {
+  if (e?.partialSend) return false
+  if (/^Missing [A-Z_]+/.test(String(e?.message || ''))) return true
+  const status = Number(e?.status)
+  return Number.isInteger(status) && status >= 400 && status < 500
+}
+
+/** Give a claim back after a definite failure, only where this pass's claim still stands (compare-and-swap). */
+async function releaseClaim(rows: { id: string; notified_at?: string | null }[], now: Date) {
+  for (const r of rows) {
+    const q: any = supabaseAdmin.from('ops_alerts').update({ notified_at: r.notified_at ?? null }).in('id', [r.id]).eq('notified_at', now.toISOString())
+    const { error } = await q.select('id')
+    if (error) return false
+  }
+  return true
+}
+
 export async function runOpsAlertsPass(now = new Date()) {
   const result: Record<string, unknown> = { ok: true }
   const signals: AlertInput[] = []
@@ -107,21 +163,36 @@ export async function runOpsAlertsPass(now = new Date()) {
 
   const open = (await openAlerts()) || []
   let sent = 0
+  // 4 Nov P1 hotfix: each notification is CLAIMED in the database before it is sent — a compare-and-swap on the
+  // notified_at value this pass read — so two overlapping cron passes can never both send, and a failed claim sends
+  // nothing. The claim stands even when the send outcome is unknown (timeout, provider error): it is never retried
+  // blind on the next pass; the P1 repeat (6 h) or the next digest is the only resend.
   for (const a of open.filter(x => shouldNotifyP1(x, now)).slice(0, 3)) {
+    const claim = await claimNotification([a], now, a.notified_at ? { eq: a.notified_at } : { isNull: true })
+    if (claim === 'error') { errors.push('p1_claim_failed'); continue }
+    if (claim === 'taken') continue
     try {
       await sendToOps(formatP1(a, Boolean(a.notified_at)), formatP1Line(a))
-      await supabaseAdmin.from('ops_alerts').update({ notified_at: now.toISOString() }).eq('id', a.id)
       sent++
-    } catch (e: any) { errors.push(`p1_send_failed:${String(e?.message || e).slice(0, 80)}`) }
+    } catch (e: any) {
+      if (definiteSendFailure(e)) { const back = await releaseClaim([a], now); errors.push(`p1_send_failed${back ? '' : '_claim_kept'}:${String(e?.message || e).slice(0, 80)}`) }
+      else errors.push(`p1_send_outcome_unknown:${String(e?.message || e).slice(0, 80)}`)
+    }
   }
-  const p2 = open.filter(a => a.severity === 'P2' && a.status !== 'acked')
+  const p2 = digestEligible(open, now)
   const lastDigest = p2.map(a => a.notified_at).filter(Boolean).sort().pop() || null
   if (shouldSendDigest(p2, lastDigest, now)) {
-    try {
-      await sendToOps(formatDigest(p2), `Ops digest: ${p2.length} open. ${p2.slice(0, 3).map(a => `${a.no}. ${a.title}`).join('; ')}. Reply alerts for the list.`)
-      await supabaseAdmin.from('ops_alerts').update({ notified_at: now.toISOString() }).in('id', p2.map(a => a.id))
-      sent++
-    } catch (e: any) { errors.push(`digest_send_failed:${String(e?.message || e).slice(0, 80)}`) }
+    const claim = await claimNotification(p2, now, { olderThan: new Date(now.getTime() - 55 * MIN).toISOString() })
+    if (claim === 'error') errors.push('digest_claim_failed')
+    else if (claim === 'claimed') {
+      try {
+        await sendToOps(formatDigest(p2), `Ops digest: ${p2.length} open. ${p2.slice(0, 3).map(a => `${a.no}. ${a.title}`).join('; ')}. Reply alerts for the list.`)
+        sent++
+      } catch (e: any) {
+        if (definiteSendFailure(e)) { const back = await releaseClaim(p2, now); errors.push(`digest_send_failed${back ? '' : '_claim_kept'}:${String(e?.message || e).slice(0, 80)}`) }
+        else errors.push(`digest_send_outcome_unknown:${String(e?.message || e).slice(0, 80)}`)
+      }
+    }
   }
   return { ...result, signals: signals.length, open: open.length, sent, errors }
 }
