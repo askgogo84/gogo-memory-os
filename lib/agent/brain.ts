@@ -30,6 +30,18 @@ export type BrainContext = {
 }
 
 const MODEL = () => process.env.GOGO_BRAIN_MODEL || 'claude-sonnet-4-5'
+// 4 Nov (owner approved): a cheaper first pass. With GOGO_BRAIN_FAST=on, Haiku 5.5 decides first. Its routing decisions
+// (hand to a handler, flight, later) are used as they are; when it would write the reply itself, or fails, the main
+// model (Sonnet) decides instead, so replies keep today's quality. Off by default until the admin console shows
+// enough agreement (Costs › Cheaper brain): flip the env var, no code change.
+export const FAST_MODEL = 'claude-haiku-5-5'
+export function brainFastOn(env: Record<string, string | undefined> = (globalThis as any).process?.env || {}) {
+  return String(env.GOGO_BRAIN_FAST || '').trim().toLowerCase() === 'on'
+}
+/** Haiku's decision stands unless it writes the reply itself or failed: then the main model decides. */
+export function needsMainModel(d: BrainDecision) {
+  return d.kind === 'reply' || d.kind === 'ask' || (d.kind === 'skip' && /^error:/.test(d.reason))
+}
 // 29 Oct live: one WhatsApp turn hit 8 s and fell to the older path, which took 31 s. Typical is 2-4 s.
 const TIMEOUT_MS = 12_000
 // 27 Oct live: one decision took 16.9 s because the SDK silently retried after a slow first attempt. No retries:
@@ -361,14 +373,29 @@ export async function runBrain(p: { phone: string; telegramId: number; text: str
   if (answersGogosQuestion(ctx.turns, p.text)) { console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: 'skip', reason: 'answers_question' })); return null }
   // Shadow models answer the same turn in parallel and are only logged (BRAIN_SHADOW), never acted on: the
   // 28 Oct cost question ("which model is cheapest without losing understanding") answered on real turns.
-  const shadows = shadowModels().filter(m => m !== MODEL()).map(m => decide({ text: p.text, ctx, telegramId: p.telegramId, model: m, source: 'brain_shadow' }).then(r => ({ m, r })))
-  const d = await decide({ text: p.text, ctx, telegramId: p.telegramId })
+  const fast = brainFastOn()
+  const shadows = fast ? [] : shadowModels().filter(m => m !== MODEL()).map(m => decide({ text: p.text, ctx, telegramId: p.telegramId, model: m, source: 'brain_shadow' }).then(r => ({ m, r })))
+  let d = await decide({ text: p.text, ctx, telegramId: p.telegramId, ...(fast ? { model: FAST_MODEL } : {}) })
+  let usedModel = fast ? FAST_MODEL : MODEL()
+  if (fast && needsMainModel(d)) {
+    const first = d.kind
+    d = await decide({ text: p.text, ctx, telegramId: p.telegramId })
+    usedModel = MODEL()
+    console.log('BRAIN_FALLBACK:', JSON.stringify({ from: FAST_MODEL, to: usedModel, firstKind: first, kind: d.kind }))
+  }
   if (shadows.length) {
     // 28 Oct review: the reply never waits for a shadow model. The log is written after the response (Next after()).
-    const logShadows = async () => { for (const s of await Promise.allSettled(shadows)) if (s.status === 'fulfilled') console.log('BRAIN_SHADOW:', JSON.stringify(shadowReport(MODEL(), d, s.value.m, s.value.r))) }
+    // 4 Nov: each comparison is also saved (agent_activity 'brain_shadow') so the admin console can show agreement.
+    const logShadows = async () => {
+      for (const s of await Promise.allSettled(shadows)) if (s.status === 'fulfilled') {
+        const report = shadowReport(MODEL(), d, s.value.m, s.value.r)
+        console.log('BRAIN_SHADOW:', JSON.stringify(report))
+        await recordShadow(p.telegramId, report).catch(() => {})
+      }
+    }
     await import('next/server').then(m => m.after(logShadows)).catch(() => { void logShadows() })
   }
-  console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: d.kind, ms: d.ms, model: MODEL(), turns: ctx.turns.length, flights: ctx.trackedFlights.length,
+  console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: d.kind, ms: d.ms, model: usedModel, turns: ctx.turns.length, flights: ctx.trackedFlights.length,
     input_tokens: d.usage.input, output_tokens: d.usage.output, cache_read_input_tokens: d.usage.cacheRead, cache_creation_input_tokens: d.usage.cacheCreation,
     ...(d.kind === 'handle' ? { rewritten: d.rewritten, instruction: d.rewritten ? redactSecretShapedText(d.instruction).slice(0, 120) : undefined } : {}), ...(d.kind === 'flight' ? { flightNo: d.flightNo, track: d.track } : {}), ...(d.kind === 'skip' ? { reason: d.reason } : {}) }))
   if (d.kind === 'reply' || d.kind === 'ask') return { reply: d.text }
@@ -479,6 +506,13 @@ export function agreement(a: BrainDecision, b: BrainDecision): Agreement {
   return a.kind === 'skip' ? 'same_kind' : 'exact'
 }
 export const decisionsAgree = (a: BrainDecision, b: BrainDecision) => agreement(a, b) === 'exact'
+
+/** One saved comparison per shadowed turn: kinds, agreement and cost only — never the message text. */
+async function recordShadow(telegramId: number, report: ReturnType<typeof shadowReport>) {
+  if (!Number.isSafeInteger(telegramId)) return
+  await supabaseAdmin.from('agent_activity').insert({ telegram_id: String(telegramId), event_type: 'brain_shadow', message: `${report.shadow.model} vs ${report.main.model}: ${report.agreement}`,
+    metadata_json: { agreement: report.agreement, main: { model: report.main.model, kind: report.main.kind, usd: report.main.usd, ms: report.main.ms }, shadow: { model: report.shadow.model, kind: report.shadow.kind, usd: report.shadow.usd, ms: report.shadow.ms } } })
+}
 
 export function shadowReport(mainModel: string, main: BrainDecision & { ms: number; usage: BrainUsage }, model: string, shadow: BrainDecision & { ms: number; usage: BrainUsage }) {
   return {

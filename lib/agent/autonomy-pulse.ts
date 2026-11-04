@@ -399,6 +399,9 @@ async function sendProactiveEmailCard(telegramId:string,user:any,timezone:string
 }
 
 export async function processAutonomyPulse(){
+  // 4 Nov quiet WhatsApp: no volunteered 4-hourly check-ins.
+  const { mayVolunteer }=await import('@/lib/channels/proactive-policy')
+  if(!mayVolunteer('check_in'))return {considered:0,sent:0,skipped:0,failed:0,results:[],quiet:true}
   const ids=await candidateUserIds()
   let sent=0,skipped=0,failed=0
   const results:any[]=[]
