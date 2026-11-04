@@ -2083,6 +2083,17 @@ _Reminder cancelled._`
       }
     }
 
+    // Remember and suggest, Phase 1: food taste beats the generic memory 'forget' (it returns null when nothing matches).
+    if ((globalThis as any).process?.env?.VERCEL_ENV && /^\s*(?:(?:please\s+)?forget\b|what\s+do\s+you\s+(?:know|remember)\s+about\s+my\s+(?:food|taste|diet)|(?:show\s+)?my\s+(?:food|taste))/i.test(text)) {
+      const taste = await import('@/lib/agent/taste').then(m => m.tryTasteCommand({ telegramId: String(resolvedUser.telegramId), text }), () => null)
+      if (taste) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', taste)
+        await sendWhatsAppMessage(from, taste)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
     // Preference forget (1D) must beat the generic memory 'forget' handler.
     {
       const prefForget = detectPreferenceForget(text)

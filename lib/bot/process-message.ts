@@ -516,6 +516,8 @@ export function splitReminderAndQuestion(text: string): { reminder: string; ques
   return { reminder: m[1].trim(), question: m[2].trim() }
 }
 
+// Cheap gate before the taste module loads: only messages that could be a taste statement, list or forget.
+const TASTE_PREFILTER=/^\s*(?:(?:please\s+)?(?:remember|note|save|forget|avoid|keep|make|show)\b|i\b|i'm|we\b|we're|my\b|no\b|never\b|what\s+do\s+you\s+(?:know|remember)\s+about\s+my\b)/i
 export async function processIncomingMessage(params: ProcessIncomingParams): Promise<ProcessIncomingResult> {
   // 29 Oct live (CV4): the reminder was set and the weather question was silently dropped. Two asks, two answers.
   const split = params.splitPart || params.internalStep ? null : splitReminderAndQuestion(params.text)
@@ -568,6 +570,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     await saveConversation(resolvedUser.telegramId,'user',incomingText)
     await saveConversation(resolvedUser.telegramId,'assistant',alertFrequency)
     return {text:formatOutgoingText(params.channel,alertFrequency),handledBy:'alert-preferences',resolvedUser}
+  }
+  // Remember and suggest, Phase 1: food taste the person states, lists or forgets (null = not a taste message).
+  const taste=(globalThis as any).process?.env?.VERCEL_ENV&&TASTE_PREFILTER.test(incomingText)
+    ?await import('@/lib/agent/taste').then(m=>m.tryTasteCommand({telegramId:String(resolvedUser.telegramId),text:incomingText}),()=>null):null
+  if(taste){
+    await saveConversation(resolvedUser.telegramId,'user',incomingText)
+    await saveConversation(resolvedUser.telegramId,'assistant',taste)
+    return {text:formatOutgoingText(params.channel,taste),handledBy:'taste',resolvedUser}
   }
   // "If Nithin doesn't reply to my last email by Friday, remind me": a follow-up check on that day, not a plain reminder.
   if(/^\s*(?:please\s+)?if\s+\S+.*\b(?:reply|respond|get\s+back)\b.*\bremind\s+me\b/i.test(incomingText)){
