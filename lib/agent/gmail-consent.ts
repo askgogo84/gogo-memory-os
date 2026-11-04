@@ -22,3 +22,14 @@ export async function recordGmailConnectConsent(telegramId: string | number): Pr
   }
   return 'saved'
 }
+
+export type GmailConsentState = 'on' | 'off' | 'missing'
+/** The one Gmail-read gate: only 'on' (an affirmative yes) permits reading mail. A read error throws (fail closed). */
+export async function gmailConsentState(telegramId: string | number): Promise<GmailConsentState> {
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) throw new Error('owner_identity_invalid:unsafe_number')
+  const tg = String(telegramId ?? '').trim()
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(tg)) throw new Error('owner_identity_invalid:format')
+  const { data, error } = await supabaseAdmin.from('user_consent_settings').select('gmail_enabled').eq('telegram_id', tg).maybeSingle()
+  if (error) throw new Error(`gmail_consent_read_failed:${error.message}`)
+  return data?.gmail_enabled === true ? 'on' : data?.gmail_enabled === false ? 'off' : 'missing'
+}

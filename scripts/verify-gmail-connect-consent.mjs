@@ -38,4 +38,32 @@ const page = readFileSync('app/dashboard/(app)/settings/email/page.tsx', 'utf8')
 assert.match(page, /params\?\.connected === 'google' && composioAccount && session\?\.telegramId[\s\S]{0,200}recordGmailConnectConsent/, 'Composio return records only with a live connection')
 const read = readFileSync('lib/agent/google-workspace-read.ts', 'utf8')
 assert.match(read, /if\(consent\?\.gmail_enabled===false\)throw new Error\('workspace_email_reading_disabled'\)\n    if\(consent\?\.gmail_enabled!==true\)throw new Error\('workspace_email_consent_missing'\)/)
+// Every Gmail reader requires the affirmative yes (4 Nov: the reviewer's draft covered two; five more treated a missing record as yes).
+const gates = {
+  'lib/agent/open-loops.ts': /if\(consent\?\.gmail_enabled!==true\)return \{reason:'disabled' as const\}/,
+  'lib/bot/handlers/gmail-read.ts': /if\(consent\?\.gmail_enabled!==true\)return \{connected:false,disabled:true/,
+  'lib/email/attention-store.ts': /if \(consent\?\.gmail_enabled !== true \|\| !user\?\.gmail_connected\) return null[\s\S]*async function readComposio[\s\S]{0,200}gmailConsentState\(telegramId\)[\s\S]{0,80}if \(consent !== 'on'\) return null/,
+  'lib/agent/gmail-ticket-credential.ts': /gmailConsentState\(actor\.legacyTelegramId\)\) !== 'on'\) return null/,
+  'lib/agent/appointment-auth-resume.ts': /gmailConsentState\(actor\.legacyTelegramId\)\) !== 'on'\) return null/,
+  'lib/agent/gmail-send.ts': /gmailConsentState\(actor\.legacyTelegramId\)\)!=='on'\)return \{ok:false as const,reason:'gmail_consent_missing'/,
+}
+for (const [f, re] of Object.entries(gates)) assert.match(readFileSync(f, 'utf8'), re, f)
+// No reader may be gated only on an explicit false: every `gmail_enabled===false` must be paired with a `!==true` gate.
+for (const f of ['lib/agent/open-loops.ts', 'lib/bot/handlers/gmail-read.ts', 'lib/email/attention-store.ts', 'lib/agent/google-workspace-read.ts', 'lib/agent/watch-command.ts']) {
+  const code = readFileSync(f, 'utf8')
+  const onlyFalse = (code.match(/gmail_enabled\s*===\s*false/g) || []).length
+  const affirmative = (code.match(/gmail_enabled\s*!==\s*true/g) || []).length
+  assert.ok(affirmative >= 1 && affirmative >= onlyFalse, `${f}: ${onlyFalse} explicit-false checks but ${affirmative} affirmative gates`)
+}
+{
+  const fn2 = ast.statements.find(s => ts.isFunctionDeclaration(s) && s.name?.text === 'gmailConsentState')
+  const c2 = ts.transpileModule(fn2.getText(ast).replace(/^export\s+/, ''), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText
+  const state = async (row, err) => { const sb = { Number, String, Error, supabaseAdmin: { from: () => ({ select() { return this }, eq() { return this }, maybeSingle: async () => ({ data: row, error: err || null }) }) } }; vm.runInNewContext(c2 + '\nthis.f = gmailConsentState', sb); return sb.f('101') }
+  assert.equal(await state({ gmail_enabled: true }), 'on')
+  assert.equal(await state({ gmail_enabled: false }), 'off')
+  assert.equal(await state({ gmail_enabled: null }), 'missing')
+  assert.equal(await state(null), 'missing')
+  assert.equal(await state({ gmail_enabled: 'true' }), 'missing', 'only boolean true is a yes')
+  await assert.rejects(state(null, { message: 'x' }), /gmail_consent_read_failed/)
+}
 console.log('PASS: Gmail yes saved on connect (Google or Composio), explicit off kept, other owners untouched, unsafe ids and DB errors fail closed')
