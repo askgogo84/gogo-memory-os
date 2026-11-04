@@ -67,6 +67,24 @@ export function isJobScanNow(text: string) {
     || /^(?:find|show)\s+me\s+(?:new\s+)?(?:jobs?|openings?)(?:\s+(?:now|today))?$/.test(t)
     || /^(?:any\s+)?new\s+(?:jobs?|openings?)(?:\s+(?:today|for\s+me))?$/.test(t)
 }
+/** Board search/listing pages (many openings) as opposed to one posting. */
+export function isJobListingUrl(url: string) {
+  try {
+    const u = new URL(url), h = u.hostname.replace(/^(?:www|in|uk)\./, ''), p = u.pathname
+    if (h.endsWith('indeed.com')) return !/^\/(?:viewjob|rc\/clk|pagead\/clk|cmp\/[^/]+\/jobs\/)/.test(p)
+    if (h.endsWith('linkedin.com')) return !/^\/jobs\/view\//.test(p)
+    if (h.endsWith('naukri.com')) return !/^\/job-listings-/.test(p)
+    if (h.endsWith('glassdoor.co.in')) return !/^\/job-listing\//.test(p)
+    if (h.endsWith('wellfound.com')) return !/^\/jobs\/\d/.test(p)
+    if (h.endsWith('instahyre.com')) return !/^\/job-\d/.test(p)
+    if (h.endsWith('iimjobs.com') || h.endsWith('hirist.tech')) return !/^\/j\//.test(p)
+    if (h.endsWith('cutshort.io')) return !/^\/job\//.test(p)
+    if (h.endsWith('lever.co')) return p.split('/').filter(Boolean).length < 2
+    if (h.endsWith('greenhouse.io')) return !/\/jobs\/\d/.test(p)
+    if (h.endsWith('ashbyhq.com')) return p.split('/').filter(Boolean).length < 2
+    return false
+  } catch { return true }
+}
 type JobHit = { title?: string; url?: string; snippet?: string }
 /** Job-board results as a numbered list; each line carries its own link. Listing pages and duplicates dropped. */
 export function formatJobScan(results: JobHit[], query: string) {
@@ -78,6 +96,9 @@ export function formatJobScan(results: JobHit[], query: string) {
     if (!JOB_BOARD_DOMAINS.some(d => host === d || host.endsWith('.' + d))) continue
     const title = clean(r.title, 110).replace(/\s*[|·-]\s*(?:LinkedIn|Naukri(?:\.com)?|Indeed(?:\.com)?|Glassdoor|Instahyre|Wellfound|Cutshort)\s*$/i, '')
     if (!title || /^\d[\d,]*\+?\s+.*\bjobs\b/i.test(title) || /\bjobs\s+in\b.*\(\d/i.test(title)) continue // "1,200 AI jobs in Bengaluru" listing pages
+    // 4 Nov live: Indeed search pages ("Forward Deployed Engineer jobs", /q-…-jobs.html) came through. A title ending in
+    // "jobs" or a board's search/listing URL is a list of openings, not one opening.
+    if (/\bjobs?(?:\s+in\s+[\w\s,]+)?\s*$/i.test(title) || isJobListingUrl(String(r.url))) continue
     const key = title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
     if (seen.has(key)) continue
     seen.add(key)

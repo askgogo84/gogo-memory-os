@@ -84,4 +84,25 @@ process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
   assert.equal(r.isSecretShapedMemory('my card 4111 1111 1111 1111'), true)
   console.log('✓ privacy filter: landline and 5+5 mobile layouts shown; card, Aadhaar-style and account numbers still hidden')
 }
+// 6. Live after #1254: the scan listed Indeed search pages; salon results never showed the phone they carried.
+{
+  const j = await import('../lib/agent/jobs')
+  const out = j.formatJobScan([
+    { title: 'Forward deployed ai engineer jobs', url: 'https://www.indeed.com/q-forward-deployed-ai-engineer-jobs.html' },
+    { title: 'Forward Deployed Engineer jobs in Remote', url: 'https://www.indeed.com/q-forward-deployed-engineer-l-remote-jobs.html' },
+    { title: 'Forward Deployed Engineer - Sarvam AI', url: 'https://in.indeed.com/viewjob?jk=abc123' },
+    { title: 'Head of AI - Razorpay', url: 'https://www.naukri.com/job-listings-head-of-ai-razorpay-bengaluru-10-to-15-years-041126500123' },
+    { title: 'Head of AI roles', url: 'https://www.naukri.com/head-of-ai-jobs-in-bangalore' },
+    { title: 'Staff Engineer, Applied AI', url: 'https://jobs.ashbyhq.com/acme/1f2e3d' },
+    { title: 'Careers at Acme', url: 'https://jobs.ashbyhq.com/acme' },
+  ], 'FDE')
+  assert.doesNotMatch(out, /q-forward|head-of-ai-jobs-in|Head of AI roles|Careers at Acme/)
+  assert.match(out, /1\. \*Forward Deployed Engineer - Sarvam AI\*/); assert.match(out, /2\. \*Head of AI - Razorpay\*/); assert.match(out, /3\. \*Staff Engineer, Applied AI\*/)
+  const src = readFileSync('lib/agent/places-search.ts', 'utf8')
+  assert.match(src, /const phone = p\.phone && [^\n]+`\\n📞 \$\{p\.phone\.trim\(\)\}`/)
+  const r = await import('../lib/bot/memory-redaction')
+  for (const n of ['080 4123 4567', '098450 12345', '+91 98450 12345', '08041234567', '9845012345'])
+    assert.equal(r.redactSecretShapedText(`1. *Green Trends*\n📞 ${n}`), `1. *Green Trends*\n📞 ${n}`, n)
+  console.log('✓ job scan lists single postings only; salon listings show their phone and the filter keeps it')
+}
 console.log('Launch use-case checks passed')
