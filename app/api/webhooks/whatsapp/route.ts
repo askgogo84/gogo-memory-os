@@ -684,8 +684,9 @@ async function handleWhatsAppPost(req: NextRequest) {
             const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
             if (await handleImageMeeting(noteReply)) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
             await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
-            await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
-            await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
+            const shownNote = await import('@/lib/services/image-note-reader').then(m => m.explainReaderNote?.({ readerText: noteReply, caption: bodyText }), () => null) || noteReply
+            await saveConversation(resolvedUser.telegramId, 'assistant', shownNote)
+            await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: shownNote })
             // Additive: durably store the document image (captioned ticket that didn't parse).
             await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: noteReply, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
           }
@@ -760,8 +761,9 @@ async function handleWhatsAppPost(req: NextRequest) {
               const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
               if (await handleImageMeeting(noteReply)) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
               await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
-              await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
-              await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
+              const shownNote = await import('@/lib/services/image-note-reader').then(m => m.explainReaderNote?.({ readerText: noteReply, caption: bodyText }), () => null) || noteReply
+              await saveConversation(resolvedUser.telegramId, 'assistant', shownNote)
+              await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: shownNote })
               // Additive: durably store the document image (existing note behaviour unchanged).
               await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: noteReply, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
               }
@@ -931,9 +933,10 @@ async function handleWhatsAppPost(req: NextRequest) {
           const savedNote = compactImageNoteForSaving(noteReply, 'Document')
           await addToList(resolvedUser.telegramId, 'notes', [savedNote])
           await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[PDF] ${bodyText}` : '[PDF document]')
-          await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
+          const shownPdf = await import('@/lib/services/image-note-reader').then(m => m.explainReaderNote?.({ readerText: noteReply, caption: bodyText, kind: 'document' }), () => null) || noteReply
+          await saveConversation(resolvedUser.telegramId, 'assistant', shownPdf)
           const pdfDocTitle = deriveNoteTitleFromReader(noteReply)
-          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[PDF document]', reply: `${noteReply}\n\n🗂️ Filed under *${pdfDocTitle}* — say *my notes* to get it back.` })
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[PDF document]', reply: `${shownPdf}\n\n🗂️ Filed under *${pdfDocTitle}*. Say *my notes* to get it back.` })
           // Additive: durably store the file + documents row (notes behaviour unchanged above).
           // doc_type carries the classifier verdict (document/other, or ticket on a parse miss).
           await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: noteReply, docType: pdfClass.toLowerCase(), messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid, authToken, contentType: firstMediaType } })
