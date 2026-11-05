@@ -72,29 +72,75 @@ const where = (p: SavedPlace) => p.area || p.pincode || ''
 const ASK = `What's your home area or pincode? Reply like "Rajajinagar 560086". I'll save it once and use it every time you ask for something nearby.`
 const PENDING_MINUTES = 15
 
-async function setPending(tg: string, text: string, kind: SavedPlace['kind']) {
-  await supabaseAdmin.from('agent_activity').insert({ telegram_id: tg, event_type: 'nearby_area_asked', message: 'Asked for home area once.', metadata_json: { text: text.slice(0, 200), kind } })
+async function setPending(tg: string, text: string, kind: SavedPlace['kind'], onboarding = false) {
+  await supabaseAdmin.from('agent_activity').insert({ telegram_id: tg, event_type: 'nearby_area_asked', message: onboarding ? `Onboarding: asked for ${kind} area.` : 'Asked for home area once.', metadata_json: { text: text.slice(0, 200), kind, onboarding } })
 }
-async function pendingAsk(tg: string): Promise<{ text: string; kind: SavedPlace['kind'] } | null> {
-  const since = new Date(Date.now() - PENDING_MINUTES * 60_000).toISOString()
+type Pending = { text: string; kind: SavedPlace['kind']; onboarding: boolean; at: number }
+async function pendingAsk(tg: string, minutes = PENDING_MINUTES): Promise<Pending | null> {
+  const since = new Date(Date.now() - minutes * 60_000).toISOString()
   const { data } = await supabaseAdmin.from('agent_activity').select('event_type,metadata_json,created_at').eq('telegram_id', tg)
     .in('event_type', ['nearby_area_asked', 'nearby_area_saved']).gte('created_at', since).order('created_at', { ascending: false }).limit(1)
   const row: any = data?.[0]
-  return row?.event_type === 'nearby_area_asked' && row.metadata_json?.text ? { text: String(row.metadata_json.text), kind: row.metadata_json.kind === 'office' ? 'office' : 'home' } : null
+  if (row?.event_type !== 'nearby_area_asked') return null
+  const m = row.metadata_json || {}
+  const onboarding = m.onboarding === true
+  if (!onboarding && !m.text) return null
+  return { text: String(m.text || ''), kind: m.kind === 'office' ? 'office' : 'home', onboarding, at: Date.parse(String(row.created_at || '')) || 0 }
+}
+/** Onboarding questions stay open a day; a "nearby" question only PENDING_MINUTES. */
+async function openQuestion(tg: string): Promise<Pending | null> {
+  const p = await pendingAsk(tg, ONBOARD_MINUTES).catch(() => null)
+  if (!p) return null
+  return p.onboarding || Date.now() - p.at <= PENDING_MINUTES * 60_000 ? p : null
 }
 
-/** Home/office statements, and the one-time answer to the area question (which then runs the original search). */
+// Onboarding (approved screen 3, 5 Nov): after the welcome, ask home, then office, once. Either can be skipped.
+export const ONBOARD_HOME_Q = `Two quick things so I never have to ask later.\n\n*1 of 2 · Where's home?*\nJust the area or pincode, like "Rajajinagar 560086". I use it for nearby places, deliveries and price checks. Say *later* to skip.`
+export const ONBOARD_OFFICE_Q = `*2 of 2 · And work?*\nOffice area or pincode, so "near the office" works. Say *I work from home* to skip.`
+const ONBOARD_MINUTES = 24 * 60
+const SKIP = /^\s*(?:later|skip|not now|no|nope|none|no office|i work from home|work from home|wfh|i don'?t have an office)[\s.!]*$/i
+export function isPlaceSkip(text: string) { return SKIP.test(String(text || '')) }
+
+/** Ask the home question once for a new person (nothing saved yet). Returns the question to send, or null. */
+export async function startPlaceOnboarding(telegramId: string | number): Promise<string | null> {
+  const tg = String(telegramId)
+  const places = await savedPlaces(tg).catch(() => ({ home: null, office: null }))
+  if (places.home) return null
+  await setPending(tg, '', 'home', true)
+  return ONBOARD_HOME_Q
+}
+
+function onboardingDone(places: { home: SavedPlace | null; office: SavedPlace | null }) {
+  const bits = [places.home ? `Home: ${where(places.home)}` : null, places.office ? `Office: ${where(places.office)}` : null].filter(Boolean)
+  return `Saved. ${bits.length ? bits.join(' · ') + '. ' : ''}I won't ask again.\n\nTry "pizza nearby" or "remind me to call Nithin at 5". Change these any time by saying "I moved to HSR Layout".`
+}
+
+/** Home/office statements, the one-time answer to the area question (which then runs the original search),
+ *  and the two onboarding answers. */
 export async function tryPlaceCommand(p: { telegramId: string | number; text: string }, fetchImpl: typeof fetch = fetch): Promise<string | null> {
   const tg = String(p.telegramId)
   const stated = detectPlaceStatement(p.text)
-  const pending = stated ? null : (placeAnswer(p.text) ? await pendingAsk(tg).catch(() => null) : null)
-  const place = stated || (pending ? { ...placeAnswer(p.text)!, kind: pending.kind } : null)
+  const skip = !stated && isPlaceSkip(p.text)
+  const asked = (stated || skip || placeAnswer(p.text)) ? await openQuestion(tg) : null
+  // A statement ("I live in X") only continues onboarding; it never answers a nearby question's search.
+  const live = stated ? (asked?.onboarding ? asked : null) : asked
+  if (skip) {
+    if (!live?.onboarding) return null
+    if (live.kind === 'home') { await setPending(tg, '', 'office', true).catch(() => {}); return `No problem, I'll ask the first time you need it.\n\n${ONBOARD_OFFICE_Q}` }
+    await supabaseAdmin.from('agent_activity').insert({ telegram_id: tg, event_type: 'nearby_area_saved', message: 'Onboarding finished.', metadata_json: { kind: 'office', skipped: true } }).then(() => {}, () => {})
+    return onboardingDone(await savedPlaces(tg).catch(() => ({ home: null, office: null })))
+  }
+  const place = stated || (live ? { ...placeAnswer(p.text)!, kind: live.kind } : null)
   if (!place) return null
   if (!(await savePlace(tg, place).catch(() => false))) return null
   await supabaseAdmin.from('agent_activity').insert({ telegram_id: tg, event_type: 'nearby_area_saved', message: `${place.kind} area saved.`, metadata_json: { kind: place.kind } }).then(() => {}, () => {})
+  if (live?.onboarding) {
+    if (place.kind === 'home') { await setPending(tg, '', 'office', true).catch(() => {}); return `Saved your home: ${where(place)}.\n\n${ONBOARD_OFFICE_Q}` }
+    return onboardingDone(await savedPlaces(tg).catch(() => ({ home: null, office: null })))
+  }
   const saved = `Saved your ${place.kind}: ${where(place)}. I'll use it whenever you ask for something ${place.kind === 'home' ? 'nearby' : 'near the office'}, and won't ask again. Say "I live in <area>" any time to change it.`
-  if (!pending) return saved
-  const out = await answerPlacesWithContext({ text: pending.text, telegramId: tg }, fetchImpl).catch(() => null)
+  if (!live?.text) return saved
+  const out = await answerPlacesWithContext({ text: live.text, telegramId: tg }, fetchImpl).catch(() => null)
   return out ? `${saved}\n\n${out}` : saved
 }
 
