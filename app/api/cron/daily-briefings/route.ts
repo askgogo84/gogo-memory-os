@@ -10,6 +10,7 @@ import { buildThrowbackLine } from '@/lib/bot/handlers/throwback'
 import { sendAskGogoEmail } from '@/lib/email/resend'
 import { renderDailyBriefEmail } from '@/lib/email/daily-brief'
 import { buildDailyBriefUnsubscribeUrl } from '@/lib/email/daily-brief-unsubscribe'
+import { mayVolunteer } from '@/lib/channels/proactive-policy'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -116,9 +117,8 @@ function firstName(value: string | null | undefined) {
 
 export async function GET(req: NextRequest) {
   if (!isCronAuthorized(req)) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
-  // 4 Nov quiet WhatsApp: no scheduled morning briefing; people get it by asking ("good morning", "brief me").
-  const { mayVolunteer } = await import('@/lib/channels/proactive-policy')
-  if (!mayVolunteer('morning_briefing')) return NextResponse.json({ ok: true, skipped: 'quiet_whatsapp' })
+  // Quiet mode suppresses VOLUNTEERED WHATSAPP only. Explicitly subscribed daily EMAIL
+  // briefings and provider-receipt reconciliation must continue through this worker.
   return withDeliveryHeartbeat('briefing', () => runDelivery(req))
 }
 
@@ -126,6 +126,7 @@ async function runDelivery(req: NextRequest) {
   const deadline = Date.now() + 45000
   const now = nowIstParts()
   const nowMinutes = now.hour * 60 + now.minute
+  const allowVolunteeredWhatsApp = mayVolunteer('morning_briefing')
   const failures: { owner?: number; channel: string; status: string }[] = []
   let sentWhatsapp = 0, sentEmail = 0, checked = 0
   try {
@@ -162,14 +163,14 @@ async function runDelivery(req: NextRequest) {
           if (error) throw new Error('briefing_consent_read_failed')
           if (!fresh || nowIstParts().date !== now.date || !shouldRunForTime(fresh.briefing_time, nowMinutes)) return false
           return channel === 'email' ? fresh.daily_brief_email_enabled === true && String(fresh.email || '').trim().toLowerCase() === target
-            : fresh.briefing_enabled === true && normalizePhone(fresh.whatsapp_id) === target && !await isSuppressed(owner, target)
+            : allowVolunteeredWhatsApp && fresh.briefing_enabled === true && normalizePhone(fresh.whatsapp_id) === target && !await isSuppressed(owner, target)
         }
         try {
           if (shouldRunForTime(user.briefing_time, nowMinutes)) {
             const phone = normalizePhone(user.whatsapp_id)
             const email = String(user.email || '').trim().toLowerCase()
             // Legacy logs protect the rollout day; all new sends also use atomic jobs.
-            if (user.briefing_enabled && phone && !await alreadyWhatsappSentToday(owner, now.date)) {
+            if (allowVolunteeredWhatsApp && user.briefing_enabled && phone && !await alreadyWhatsappSentToday(owner, now.date)) {
               const status = await deliverNotification({ key: 'briefing/' + owner + '/' + now.date + '/whatsapp', source: 'briefing', owner,
                 channel: 'whatsapp', due: new Date().toISOString(), deadline, prepare, ready: () => ready('whatsapp', phone),
                 send: async token => (await sendWhatsApp(phone, '☀️ *Good morning*\n\n' + fullBriefing + '\n\nReply *plan my day* to turn this into reminders.', null, token))?.sid || '',
