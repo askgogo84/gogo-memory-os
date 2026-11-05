@@ -67,10 +67,13 @@ const EXACT = /^\s*(?:yes|y|yeah|yep|yup|no|n|nope|ok|okay|sure|approve[d]?|reje
 export function whatsAppMarkdown(text: string) {
   return String(text || '').replace(/\*\*([^*\n]+)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '').replace(/__([^_\n]+)__/g, '_$1_')
 }
+const DAY_PLAN = /^(?:please\s+)?(?:can you\s+)?(?:help me\s+)?(?:plan|schedule|organi[sz]e|block out)\s+(?:out\s+)?(?:my\s+)?(?:day|today|tomorrow|morning|evening|schedule)(?:\s+(?:today|tomorrow))?(?:\s+for me)?[?.!]*$|^(?:day plan|make my day plan|plan today)[?.!]*$/i
 export function isExactCommand(text: string): boolean {
   const t = String(text || '').trim()
   // 30 Oct live: a re-forwarded bare link was answered by the brain ("Already saved: gjKPc2zn") instead of Link Vault.
-  return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t) || /^https?:\/\/\S+$/i.test(t)
+  // 5 Nov live: "plan my day" was answered from context ("nothing else scheduled") while three meetings were on
+  // the calendar. Day plans have a handler that reads the calendar and reminders; it must get the message.
+  return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t) || /^https?:\/\/\S+$/i.test(t) || DAY_PLAN.test(t)
 }
 
 // 28 Oct review (G5): the static rules come first and are cached together with the tool list; the user's name,
