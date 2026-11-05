@@ -100,11 +100,50 @@ async function activeFacts(telegramId: string) {
   return (data || []) as TasteFact[]
 }
 
+// Mutation reads must not reuse the 50-row display cap. A stable secondary order
+// prevents page boundaries from dropping tied timestamps.
+async function allActiveFacts(telegramId: string): Promise<TasteFact[] | null> {
+  const pageSize = 200
+  const facts: TasteFact[] = []
+  for (let start = 0; ; start += pageSize) {
+    const { data, error } = await supabaseAdmin.from(TABLE)
+      .select('id,kind,value,context,source,evidence_count,last_seen,created_at')
+      .eq('telegram_id', telegramId).eq('domain', DOMAIN).is('forgotten_at', null)
+      .order('last_seen', { ascending: false }).order('id', { ascending: false })
+      .range(start, start + pageSize - 1)
+    if (error) {
+      if (!missingTable(String(error.message || error.code || ''))) console.error('TASTE_MUTATION_READ_FAILED:', error.message)
+      return null
+    }
+    const page = (data || []) as TasteFact[]
+    facts.push(...page)
+    if (page.length < pageSize) return facts
+  }
+}
+
+// Verify every requested row stopped being active; a failed write or stale
+// readback must not become a "forgotten" success response.
+async function markTasteFactsForgotten(telegramId: string, ids: string[], now: string): Promise<boolean> {
+  if (!ids.length) return true
+  for (let offset = 0; offset < ids.length; offset += 100) {
+    const { error } = await supabaseAdmin.from(TABLE).update({ forgotten_at: now })
+      .eq('telegram_id', telegramId).eq('domain', DOMAIN).is('forgotten_at', null)
+      .in('id', ids.slice(offset, offset + 100))
+    if (error) {
+      console.error('TASTE_FORGET_WRITE_FAILED:', error.message)
+      return false
+    }
+  }
+  const remaining = await allActiveFacts(telegramId)
+  const requested = new Set(ids)
+  return remaining !== null && !remaining.some(f => requested.has(f.id))
+}
+
 export async function listTaste(telegramId: string | number): Promise<TasteFact[] | null> { return activeFacts(String(telegramId)) }
 
 export async function saveTaste(telegramId: string | number, s: TasteStatement): Promise<{ ok: true; repeated: boolean } | { ok: false }> {
   const tg = String(telegramId)
-  const facts = await activeFacts(tg)
+  const facts = await allActiveFacts(tg)
   if (!facts) return { ok: false }
   const now = new Date().toISOString()
   const same = facts.find(f => tasteKey(f.kind, f.value, f.context) === tasteKey(s.kind, s.value, s.context))
@@ -115,11 +154,11 @@ export async function saveTaste(telegramId: string | number, s: TasteStatement):
   // A new stated diet for the same day (or none) replaces the old one; it never merges with it.
   if (s.kind === 'diet_stated') {
     const old = facts.filter(f => f.kind === 'diet_stated' && (f.context || '') === (s.context || '')).map(f => f.id)
-    if (old.length) await supabaseAdmin.from(TABLE).update({ forgotten_at: now }).in('id', old).eq('telegram_id', tg)
+    if (old.length && !await markTasteFactsForgotten(tg, old, now)) return { ok: false }
   }
   if (s.kind === 'budget') {
     const old = facts.filter(f => f.kind === 'budget' && (f.context || '') === (s.context || '')).map(f => f.id)
-    if (old.length) await supabaseAdmin.from(TABLE).update({ forgotten_at: now }).in('id', old).eq('telegram_id', tg)
+    if (old.length && !await markTasteFactsForgotten(tg, old, now)) return { ok: false }
   }
   const { error } = await supabaseAdmin.from(TABLE).insert({ telegram_id: tg, domain: DOMAIN, kind: s.kind, value: s.value, context: s.context, source: 'said', evidence_count: 1, last_seen: now })
   if (error) { if (!missingTable(String(error.message || ''))) console.error('TASTE_WRITE_FAILED:', error.message); return { ok: false } }
@@ -129,7 +168,7 @@ export async function saveTaste(telegramId: string | number, s: TasteStatement):
 /** Forget by id (dashboard) or by words (chat). Returns what was forgotten; null when the table isn't there. */
 export async function forgetTaste(telegramId: string | number, by: { id: string } | { match: string } | { all: true }): Promise<string[] | null> {
   const tg = String(telegramId)
-  const facts = await activeFacts(tg)
+  const facts = await allActiveFacts(tg)
   if (!facts) return null
   let hits: TasteFact[]
   if ('id' in by) hits = facts.filter(f => f.id === by.id)
@@ -140,8 +179,14 @@ export async function forgetTaste(telegramId: string | number, by: { id: string 
     hits = facts.filter(f => `${f.value} ${f.context || ''}`.toLowerCase().replace(/[^a-z0-9₹ ]+/g, ' ').replace(/\s+/g, ' ').includes(q))
   }
   if (!hits.length) return []
-  const { error } = await supabaseAdmin.from(TABLE).update({ forgotten_at: new Date().toISOString() }).in('id', hits.map(h => h.id)).eq('telegram_id', tg)
-  return error ? null : hits.map(h => h.value)
+  if (!await markTasteFactsForgotten(tg, hits.map(h => h.id), new Date().toISOString())) return null
+  // For a request to forget ALL, a concurrent insert also prevents an
+  // unqualified success claim. This readback isn't a database transaction.
+  if ('all' in by) {
+    const remaining = await allActiveFacts(tg)
+    if (!remaining || remaining.length) return null
+  }
+  return hits.map(h => h.value)
 }
 
 const SOURCE_LABEL: Record<string, string> = { said: 'You told Gogo', order_confirmed: 'From orders you confirmed', pick_accepted: 'From picks you chose', rating: 'Rated well after delivery' }
