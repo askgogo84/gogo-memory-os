@@ -40,7 +40,7 @@ export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
 function exactWatcherOwner(value:string|number|null|undefined):string|null{
   if(typeof value==='number'&&!Number.isSafeInteger(value))return null
   const owner=String(value??'').trim()
-  return /^-?[1-9]\\d*$/.test(owner)?owner:null
+  return /^-?[1-9]\d*$/.test(owner)?owner:null
 }
 
 export async function sourceBoundTravelExpiry(watcher:{telegram_id:string|number;condition_json?:ContextualWatcherMeta}):Promise<string|null>{
