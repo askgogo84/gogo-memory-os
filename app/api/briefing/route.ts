@@ -403,6 +403,8 @@ async function briefingCalendar(telegramId: unknown): Promise<{ title: string; t
     const cal = await Promise.race([getTodayCalendar(id), new Promise<null>(r => setTimeout(() => r(null), 8000))])
     if (!cal || !cal.ok || !cal.connected) { console.log('BRIEFING_CALENDAR:', JSON.stringify({ skipped: !cal ? 'timeout' : !cal.ok ? 'read_failed' : 'not_connected' })); return [] }
     const seen = new Set<string>()
+    // Trace (5 Nov live): the section stayed empty with no skip logged, so record what came back and what was kept.
+    console.log('BRIEFING_CALENDAR:', JSON.stringify({ events: cal.events.length, allDay: cal.events.filter(e => e.allDay).length, untimed: cal.events.filter(e => !e.time).length, timingUnknown: cal.events.filter(e => e.timingKnown === false).length }))
     return cal.events
       .filter(e => !e.allDay && e.timingKnown !== false && e.time)
       .filter(e => { const k = `${e.title}|${e.time}`; if (seen.has(k)) return false; seen.add(k); return true })
