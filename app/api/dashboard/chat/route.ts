@@ -280,7 +280,7 @@ async function handleChatPost(req: NextRequest) {
     if((globalThis as any).process?.env?.VERCEL_ENV){
       const inv=await import('@/lib/agent/occasion-invite').then(m=>m.INVITE_GATE.test(text)?m.tryOccasionInvite({telegramId:String(user.telegram_id),text,name:user.name}):null,()=>null)
       if(inv){
-        const out=inv.mediaUrl?`${inv.text}\n\nCard: ${inv.mediaUrl}`:inv.text
+        const out=(inv.mediaUrl?`${inv.text}\n\nCard: ${inv.mediaUrl}`:inv.text)+(inv.followUp?`\n\n${inv.followUp}`:'')
         await saveConversation(user.telegram_id,text,out)
         return NextResponse.json({text:out,handledBy:'occasion-invite',status:'completed',...(inv.mediaUrl?{imageUrl:inv.mediaUrl}:{})})
       }
