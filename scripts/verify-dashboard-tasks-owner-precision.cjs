@@ -142,7 +142,7 @@ async function run() {
     sessionOwner = invalid
     const badView = await assertNoNewReadsOrWrites(() => tasks.getDashboardTasks(invalid), 'read ' + invalid)
     assert.equal(badView.ok, true)
-    assert.deepEqual(badView.open, [])
+    assert.equal(badView.open.length, 0, 'invalid owner must have no visible tasks')
     const badPost = await assertNoNewReadsOrWrites(() => route.POST(request({ text: 'MUST_NOT_CREATE' })), 'post ' + invalid)
     assert.equal(badPost.status, 409)
     const badPatch = await assertNoNewReadsOrWrites(() => route.PATCH(request({ id: 'todo-A', done: true })), 'patch ' + invalid)
