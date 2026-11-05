@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from './owner-identity'
 
 export type DashboardTask = {
   id: string
@@ -15,14 +16,15 @@ export type DashboardTasks = {
 } | { ok: false }
 
 export async function getDashboardTasks(telegramId: string): Promise<DashboardTasks> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return { ok: true, open: [], completed: [] }
+  // Session IDs are persisted signed BIGINTs. parseInt/Number can alias different owners.
+  const owner = exactSessionOwnerId(telegramId)
+  if (!owner) return { ok: true, open: [], completed: [] }
 
   try {
     const { data: user, error: userError } = await supabaseAdmin
       .from('users')
-      .select('whatsapp_id')
-      .eq('telegram_id', tgNum)
+      .select('telegram_id,whatsapp_id')
+      .eq('telegram_id', owner)
       .maybeSingle()
 
     if (userError) {
@@ -30,7 +32,10 @@ export async function getDashboardTasks(telegramId: string): Promise<DashboardTa
       return { ok: false }
     }
 
-    const whatsappId = String(user?.whatsapp_id || '').trim()
+    // A DB adapter might return a lossy numeric BIGINT; never use its WhatsApp ID
+    // to authorize service-role reads unless the returned owner matches exactly.
+    if (!user || exactSessionOwnerId(user.telegram_id) !== owner) return { ok: true, open: [], completed: [] }
+    const whatsappId = String(user.whatsapp_id || '').trim()
     if (!whatsappId) return { ok: true, open: [], completed: [] }
 
     const { data, error } = await supabaseAdmin
