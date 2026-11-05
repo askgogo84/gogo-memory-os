@@ -68,8 +68,8 @@ export function triageTipplrIncident(i: EnterpriseIncident): TriageResult {
     proposedNextStep: 'Collect order evidence and route a proposed refund for authorized human review. Do not issue payment.',
     idempotencyTuple, externalMutationAuthorized: false, evidenceVerified: false,
   }
-  const actual = isVerified(i.actualPosStoreId) ? i.actualPosStoreId.value : null
-  const expected = isVerified(i.expectedPosStoreId) ? i.expectedPosStoreId.value : null
+  const actual = isVerified(i.actualPosStoreId) && ['flipkart', 'tipplr', 'petpooja'].includes(i.actualPosStoreId.source) ? i.actualPosStoreId.value : null
+  const expected = isVerified(i.expectedPosStoreId) && ['petpooja', 'tipplr'].includes(i.expectedPosStoreId.source) ? i.expectedPosStoreId.value : null
   const needsMapping = i.kind === 'mapping_check' || ['order_cancelled', 'order_rejected'].includes(i.kind)
   if (needsMapping && actual && expected && actual !== expected) return {
     category: 'mapping_discrepancy', priority: 'critical', humanReviewRequired: true,
