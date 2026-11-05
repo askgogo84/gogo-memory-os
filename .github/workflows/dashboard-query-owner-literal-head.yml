@@ -5,6 +5,8 @@ on:
       - 'lib/dashboard/queries.ts'
       - 'scripts/verify-dashboard-query-owner-precision.cjs'
       - 'scripts/verify-connections-state-errors.mts'
+      - 'scripts/verify-calendar-read-uncertainty.mts'
+      - 'scripts/verify-calendar-event-duration.mts'
       - '.github/workflows/dashboard-query-owner-literal-head.yml'
 permissions:
   contents: read
