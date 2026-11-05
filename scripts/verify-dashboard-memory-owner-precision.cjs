@@ -98,7 +98,7 @@ async function run() {
     const before = reads.length
     const result = await memory.getDashboardMemory(owner)
     assert.equal(result.ok, true)
-    assert.deepEqual(result.items.map(x => x.id), [expectedDoc], 'no other owner document exposed')
+    assert.equal(result.items.map(x => x.id).join(','), expectedDoc, 'no other owner document exposed')
     assert.equal(reads.length, before + 1)
     const dbOwner = reads.at(-1).owner
     assert.equal(String(dbOwner), owner)
@@ -114,7 +114,7 @@ async function run() {
     const beforeRead = reads.length, beforeLink = linkMints.length
     const result = await memory.getDashboardMemory(invalid)
     assert.equal(result.ok, true)
-    assert.deepEqual(result.items, [])
+    assert.equal(result.items.length, 0)
     assert.equal(reads.length, beforeRead, 'invalid owner cannot query documents: ' + invalid)
     assert.equal(linkMints.length, beforeLink, 'invalid owner cannot mint link: ' + invalid)
   }
