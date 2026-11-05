@@ -220,7 +220,15 @@ export async function tryTasteCommand(p: { telegramId: string | number; text: st
   const forget = detectTasteForget(text)
   if (forget) {
     const gone = await forgetTaste(p.telegramId, forget)
-    if (gone === null) return null
+    if (gone === null) {
+      // Missing schema is the existing pre-migration fallthrough. For a present
+      // table, a failed/uncertain deletion must NOT fall through to the generic
+      // memory handler, which could reply "forgotten" for an unrelated record.
+      const probe = await supabaseAdmin.from(TABLE).select('id')
+        .eq('telegram_id', String(p.telegramId)).limit(1).then(result => result, () => null)
+      if (probe?.error && missingTable(String(probe.error.message || probe.error.code || ''))) return null
+      return "I couldn't verify that your food taste was forgotten. Some facts may have changed; please check your Food taste list."
+    }
     if (!gone.length) return 'all' in forget ? formatTasteList([]) : null // no food match: the memory forget handles it
     return `Done, I've forgotten: ${gone.join('; ')}.`
   }
