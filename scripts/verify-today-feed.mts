@@ -21,7 +21,10 @@ const tables: Record<string, any[]> = {
   agent_watchers: [{ id: 'w1', telegram_id: A, condition_json: { query: 'iPhone 17 256GB price' } }, { id: 'w2', telegram_id: A, condition_json: { query: 'product manager jobs in Bangalore' } }],
   agent_open_loops: [
     { id: 'l1', telegram_id: A, status: 'active', kind: 'commitment', source_type: 'gmail_service_notice', title: 'Airtel postpaid ₹799 due Friday', summary: 'Bill email on 1 Nov.', updated_at: iso(120), last_seen_at: iso(120) },
-    { id: 'l2', telegram_id: A, status: 'active', kind: 'followup', source_type: 'gmail', title: 'Nithin has not replied about the Q4 invoice', summary: 'Two days with no reply.', updated_at: iso(200) },
+    { id: 'l2', telegram_id: A, status: 'active', kind: 'followup', source_type: 'gmail_thread', title: 'Nithin has not replied about the Q4 invoice', summary: 'Two days with no reply.', updated_at: iso(200) },
+    { id: 'l1b', telegram_id: A, status: 'active', kind: 'commitment', source_type: 'gmail_service_notice', title: 'Airtel postpaid ₹799 due Friday', summary: 'Bill email on 1 Nov.', updated_at: iso(130), last_seen_at: iso(130) },
+    { id: 'l4', telegram_id: A, status: 'active', kind: 'waiting_on', source_type: 'approval', title: 'Waiting on my approval', updated_at: iso(20) },
+    { id: 'l5', telegram_id: A, status: 'active', kind: 'waiting_on', source_type: 'conversation', title: 'Waiting on: Alert me once it lands', updated_at: iso(25) },
     { id: 'l3', telegram_id: B, status: 'active', kind: 'commitment', source_type: 'gmail_service_notice', title: 'B bill', updated_at: iso(10) },
   ],
   travel_tickets: [
@@ -58,6 +61,8 @@ assert.match(feed.noticed.find(c => c.kind === 'food')!.title, /Veg · Lunch und
 assert.deepEqual(feed.done, { remindersSent: 1, watchHits: 3, receiptsFiled: 1 }, 'done counts are today only (3 hits today, the 30-hour-old one excluded)')
 assert.deepEqual(feed.failed, [])
 assert.ok(!reads.some(t => /gmail|inbound_emails|email_attention/.test(t)), 'no Gmail or email store is read')
+assert.equal(feed.needs.filter(c => c.kind === 'bill').length, 1, 'the same notice in two threads shows once')
+assert.ok(!keys(feed.noticed).includes('reply:l4') && !keys(feed.noticed).includes('reply:l5'), 'approvals and chat lines are not replies')
 console.log('✓ ranked cards from stored data; owner-scoped; one card per watch; stopped-watch notices and far flights left out')
 
 // Unsafe links never become hrefs.
