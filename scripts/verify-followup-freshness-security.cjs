@@ -13,9 +13,9 @@ const output = ts.transpileModule(source, {
 }).outputText
 const fixedNow = Date.parse('2026-11-05T08:00:00.000Z')
 class FrozenDate extends Date { static now() { return fixedNow } }
-const exports = {}
+const moduleExports = {}
 vm.runInNewContext(output, {
-  exports,
+  exports: moduleExports,
   console,
   Date: FrozenDate,
   require(name) {
@@ -24,7 +24,7 @@ vm.runInNewContext(output, {
   },
 }, { filename: 'followup-state.original-handler.js', timeout: 1000 })
 
-const fresh = exports.isFreshFollowupState
+const fresh = moduleExports.isFreshFollowupState
 assert.equal(typeof fresh, 'function', 'original exported helper must execute')
 let n = 0
 function check(label, state, expected, maxMinutes) {
