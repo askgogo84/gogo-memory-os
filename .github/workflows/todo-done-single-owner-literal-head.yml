@@ -4,6 +4,7 @@ on:
     paths:
       - 'app/api/todos/route.ts'
       - 'scripts/verify-todo-done-single-owner-literal.cjs'
+      - 'scripts/verify-did-it-land-oct27.mts'
       - '.github/workflows/todo-done-single-owner-literal-head.yml'
 permissions:
   contents: read
