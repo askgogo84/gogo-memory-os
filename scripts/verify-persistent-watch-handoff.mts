@@ -245,12 +245,17 @@ const deliveryMocks:any={
     assert.equal(phone,'fixture-phone');assert.equal(token,'fixture-receipt-token');assert.equal(media,null)
     providerCalls++;return {sid:'SM-verified-adapter-fixture'}
   }},
-  '@/lib/services/notification-delivery':{deliverNotification:async(p:any)=>{
-    assert.equal(p.source,'watch_alert');assert.equal(p.owner,101) // 13 Oct: 'followup' was cancelled by the database
+  '@/lib/services/notification-delivery':{
+    exactNotificationOwnerId:(value:unknown)=>{
+      if(typeof value!=='string'||!/^-?[1-9]\d*$/.test(value))throw new Error('notification_owner_invalid')
+      return value
+    },
+    deliverNotification:async(p:any)=>{
+    assert.equal(p.source,'watch_alert');assert.equal(p.owner,'101') // 13 Oct: 'followup' was cancelled by the database
     await p.prepare();readyMutation?.()
     if(!await p.ready())return 'suppressed'
     const id=await p.send('fixture-receipt-token')
-    store.notification_deliveries=[{delivery_key:p.key,owner_id:101,state:'provider_accepted',provider_id:id}]
+    store.notification_deliveries=[{delivery_key:p.key,owner_id:'101',state:'provider_accepted',provider_id:id}]
     return 'provider_accepted'
   }},
 }
