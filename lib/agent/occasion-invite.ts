@@ -58,7 +58,7 @@ export function parseOccasionDetails(text: string): { who: string | null; number
 const ordinal = (n: number) => `${n}${n % 100 >= 11 && n % 100 <= 13 ? 'th' : ['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`
 const NOTES: Record<Occasion, [string, string][]> = {
   birthday: [['You are invited', 'Cake on us. Come hungry.'], ['Birthday dinner', 'Dress up a little.']],
-  anniversary: [['Celebrating', 'Join us for dinner and a toast.'], ['Together', 'An evening with our favourite people.']],
+  anniversary: [['Anniversary dinner', 'Join us for dinner and a toast.'], ['Together', 'An evening with our favourite people.']],
   dinner: [['Dinner plan', 'See you there.'], ['Table booked', 'See you there.']],
 }
 
@@ -107,7 +107,25 @@ const ANOTHER = /^\s*(?:try\s+)?(?:another|different|new|change(?:\s+the)?)\s+(?
 const SEND = /^\s*(?:send(?: it)?(?: to (?:my )?friends)?|share(?: it)?|looks good|perfect|done)[\s.!]*$/i
 const ASK_OCCASION = `Is it for an occasion? I'll make an invite you can send to the others.\n\nReply *birthday*, *anniversary*, *just dinner* or *not now*.`
 
-export type InviteReply = { text: string; mediaUrl?: string | null }
+export type InviteReply = { text: string; mediaUrl?: string | null; followUp?: string | null }
+
+// ── short share link ─────────────────────────────────────────────────────────────
+// The friend-facing link is app.askgogo.in/e/<id>: short, unguessable, no phone number in it. Its page shows the
+// card (link preview image), a map button and the owner's AskGogo invite. The row is the card's only source.
+export const CARD_EVENT = 'occasion_invite_card'
+export const CARD_ID_RE = /^[A-Za-z0-9]{10}$/
+const ID_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'
+export function newCardId() {
+  const r = crypto.getRandomValues(new Uint8Array(10)); let id = ''
+  for (const b of r) id += ID_CHARS[b % ID_CHARS.length]
+  return id
+}
+export const shareUrl = (id: string) => `${(process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in').replace(/\/$/, '')}/e/${id}`
+export function shareHeadline(spec: CardSpec) {
+  if (spec.kind === 'birthday') return /turns \d/.test(spec.title) ? `🎂 ${spec.title}! Birthday dinner` : `🎂 ${spec.title}`
+  if (spec.kind === 'anniversary') { const n = spec.kicker.match(/\d+/)?.[0]; return `🥂 ${spec.title}'s ${n ? `${ordinal(Number(n))} ` : ''}anniversary dinner` }
+  return '🍽️ Dinner plan'
+}
 
 async function showCard(tg: string, state: State, name?: string | null): Promise<InviteReply> {
   const spec = cardSpec(state)
@@ -119,21 +137,30 @@ async function showCard(tg: string, state: State, name?: string | null): Promise
 
 async function shareReply(tg: string, state: State, name?: string | null): Promise<InviteReply> {
   const spec = cardSpec(state)
-  const url = await cardUrl(spec, tg).catch(() => null)
-  let invite = ''
+  let invite: string | null = null
   const id = Number(tg)
   if (Number.isSafeInteger(id)) {
     const store: any = await import('@/lib/invites/store').catch(() => null)
-    const core: any = await import('@/lib/invites/core').catch(() => null)
     const got = await store?.getOrCreateInviteCode?.(id, name).catch(() => null)
-    if (got?.code && got.remaining > 0 && core?.inviteUrl) invite = `\n\nPlanned with AskGogo, it books tables and reminds you on WhatsApp. Try it free: ${core.inviteUrl(got.code)}`
+    if (got?.code && got.remaining > 0) invite = String(got.code)
   }
-  const map = `https://maps.google.com/?q=${encodeURIComponent(`${state.booking.venue} Bengaluru`)}`
-  const note = `${spec.kicker}: ${spec.title}\n${spec.venue}\n${whenLabel(state.booking, true)} · ${spec.party}\nMap: ${map}${url ? `\nInvite: ${url}` : ''}${invite}`
-  // A share link with no number opens WhatsApp's contact picker; the person chooses who gets it.
-  const share = `https://wa.me/?text=${encodeURIComponent(note)}`
+  const cardId = newCardId()
+  const { error } = await supabaseAdmin.from('agent_activity').insert({ telegram_id: tg, event_type: CARD_EVENT, message: `card ${cardId}`, metadata_json: { id: cardId, spec, invite, map: state.booking.venue } })
   await save(tg, null, 'Invite shared.')
-  return { text: `Forward the card above to your group, or tap this to pick friends with the message ready (you press send):\n${share}\n\nI never message your friends myself.` }
+  if (error) return { text: "I couldn't make the share link just now. Forward the card image above to your group instead." }
+  const forward = `${shareHeadline(spec)}\n${whenLabel(state.booking)} · ${spec.venue}\n${shareUrl(cardId)}`
+  return { text: 'Forward the next message to your group. It opens the invite with the map. I never message your friends myself.', followUp: forward }
+}
+
+// "It's actually Divya and Gogo" · "change the names to X and Y" · "make it 15 years" · "it's our 15th". Pure.
+const FIX_RE = /^\s*(?:no,?\s*)?(?:it'?s\s+actually|actually(?:\s+it'?s)?|change\s+(?:the\s+)?(?:names?|title)\s+to|(?:the\s+)?names?\s+(?:are|is|should be|:)|make\s+it|call\s+it|it'?s\s+(?:our|my|the)|it\s+should\s+(?:be|say))\s+(.{2,80})$/i
+export function correction(text: string, state: Pick<State, 'kind' | 'who' | 'number'>): Partial<State> | null {
+  const m = text.match(FIX_RE)
+  const body = m?.[1] || (/^\s*\d{1,3}(?:st|nd|rd|th)?(?:\s+(?:years?|yrs?|anniversary|birthday))?[\s.!]*$/i.test(text) ? text : null)
+  if (!body || state.kind === 'dinner') return null
+  const d = parseOccasionDetails(body)
+  if (!d.who && !d.number) return null
+  return { who: d.who || state.who, number: d.number ?? state.number ?? null, style: 0 }
 }
 
 /** One entry point. Returns a reply, or null when the message isn't part of an invite. */
@@ -175,9 +202,11 @@ export async function tryOccasionInvite(p: { telegramId: string | number; text: 
   if (state.step === 'card' && Date.now() - state.at <= 86_400_000) {
     if (ANOTHER.test(text)) return showCard(tg, { ...state, style: (state.style || 0) + 1 }, p.name)
     if (SEND.test(text)) return shareReply(tg, state, p.name)
+    const fix = correction(text, state)
+    if (fix) return showCard(tg, { ...state, ...fix }, p.name)
     if (NOT_NOW.test(text)) { await save(tg, null, 'Invite closed.'); return { text: 'Okay. The card stays above if you want it later.' } }
   }
   return null
 }
 
-export const INVITE_GATE = /\b(?:reservation|table|booking|confirmed|invite|invitation|birthday|b'?day|anniversary|dinner|occasion|style|design|send|share|not now|skip|later|turning|turns)\b|^\s*[A-Za-z][A-Za-z .&'-]{1,60},?\s*\d{0,3}(?:st|nd|rd|th)?\s*$/i
+export const INVITE_GATE = /\b(?:reservation|table|booking|confirmed|invite|invitation|birthday|b'?day|anniversary|dinner|occasion|style|design|send|share|not now|skip|later|turning|turns|actually|names?|make it|call it|years?)\b|\b\d{1,3}(?:st|nd|rd|th)\b|^\s*[A-Za-z][A-Za-z .&'-]{1,60},?\s*\d{0,3}(?:st|nd|rd|th)?\s*$/i
