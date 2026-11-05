@@ -227,3 +227,26 @@ export async function answerPlaces(text: string, fetchImpl: typeof fetch = fetch
     + '\n\nThese are directory listings, not live table availability. Your requested party/date/time is unverified; no booking was made.'
   return listing
 }
+
+// 5 Nov live: "I love pizza, can you find one nearby" became a web search with Mumbai and Hyderabad lists, then
+// asked for the city. "Nearby" now means the area the person told Gogo they live in; without one, Gogo asks once.
+export const NEARBY = /\b(?:nearby|near\s+by|near\s+me|around\s+me|close\s+to\s+me|close\s+by|around\s+here|near\s+here|near\s+my\s+(?:home|house|place))\b/i
+/** The home area from memories the person saved ("I live in Rajajinagar"). Pure; null when none is stated. */
+export function homeAreaFrom(contents: string[]): string | null {
+  for (const c of contents) {
+    const m = String(c || '').match(/\b(?:i\s+(?:live|stay)|i\s*'?m\s+based|we\s+(?:live|stay)|my\s+home\s+is|home\s+is)\s+(?:in|at|near|around)\s+([A-Za-z][A-Za-z .'-]{2,40}?)(?=[,.;!]|\s+(?:and|but|with|since|for|near)\b|$)/i)
+    if (m && !/^(?:a|an|the|my|our)\b/i.test(m[1].trim())) return m[1].trim().replace(/\s+/g, ' ')
+  }
+  return null
+}
+/** "Find pizza nearby" with a home area becomes "Find pizza in <area>"; null when it is not a nearby place ask. */
+export function nearbyRewrite(text: string, homeArea: string | null): { text: string } | { needArea: true } | null {
+  const t = String(text || '').trim()
+  if (!NEARBY.test(t) || !LEAD.test(t) || !KIND.test(t)) return null
+  if (!homeArea) return { needArea: true }
+  return { text: t.replace(NEARBY, `in ${homeArea}`) }
+}
+export function nearbyNeedsArea(text: string) {
+  const kind = (String(text).match(KIND)?.[1] || 'places').toLowerCase()
+  return `Which area should I look in? Reply like "${kind} in Rajajinagar".\n\nSay "I live in <area>" once and I'll use it whenever you ask for something nearby.`
+}
