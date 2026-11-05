@@ -21,6 +21,7 @@ type UserRecord = {
 type BriefingContext = {
   user: UserRecord
   timezone: string
+  calendar: { title: string; time: string | null; startAt: string | null }[]
   todayStartUtc: string
   tomorrowStartUtc: string
   reminders: any[]
@@ -335,7 +336,8 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
           .select('id, text, done, created_at')
           .eq('whatsapp_id', phone)
           .eq('done', false)
-          .order('created_at', { ascending: true })
+          // 5 Nov live: oldest-first made a weeks-old test task "Top priority". Newest first.
+          .order('created_at', { ascending: false })
           .limit(6)
       : Promise.resolve({ data: [] as any[] }),
 
@@ -384,12 +386,36 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
     followups: followupsResult.data || [],
     notes,
     memoryProfile: memoryResult.data || null,
+    calendar: await briefingCalendar(telegramId),
   }
+}
+
+// Today's timed meetings for the briefing. Only a decimal id that is a safe integer goes to the calendar reader
+// (it parses the id), so no unsafe 64-bit id is ever converted. Failures leave the section out.
+async function briefingCalendar(telegramId: unknown): Promise<{ title: string; time: string | null; startAt: string | null }[]> {
+  const id = String(telegramId ?? '')
+  if (!/^[1-9]\d{0,14}$/.test(id)) return []
+  try {
+    const { getTodayCalendar } = await import('@/lib/dashboard/queries')
+    const cal = await Promise.race([getTodayCalendar(id), new Promise<null>(r => setTimeout(() => r(null), 3000))])
+    if (!cal || !cal.ok || !cal.connected) return []
+    const seen = new Set<string>()
+    return cal.events
+      .filter(e => !e.allDay && e.timingKnown !== false && e.time)
+      .filter(e => { const k = `${e.title}|${e.time}`; if (seen.has(k)) return false; seen.add(k); return true })
+      .map(e => ({ title: String(e.title || 'Event').slice(0, 80), time: e.time, startAt: e.startAt || null }))
+      .slice(0, 6)
+  } catch { return [] }
 }
 
 function buildPriorityLine(ctx: BriefingContext) {
   const firstReminder = ctx.reminders[0]
 
+  // 5 Nov live: the briefing ignored three meetings. The next meeting leads when it comes before the first reminder.
+  const nextMeeting = ctx.calendar.find(e => e.startAt && Date.parse(e.startAt) > Date.now())
+  if (nextMeeting && (!firstReminder || Date.parse(String(nextMeeting.startAt)) < Date.parse(firstReminder.remind_at))) {
+    return `Next up: ${nextMeeting.time || formatTime(String(nextMeeting.startAt), ctx.timezone)} — ${nextMeeting.title}`
+  }
   if (firstReminder) {
     return `Top priority: ${formatTime(firstReminder.remind_at, ctx.timezone)} — ${humanizeReminderMessage(firstReminder.message)}`
   }
@@ -398,8 +424,9 @@ function buildPriorityLine(ctx: BriefingContext) {
     return `Top priority: follow up with ${ctx.followups[0].contact_name}`
   }
 
-  if (ctx.todos[0]) {
-    return `Top priority: ${ctx.todos[0].text}`
+  const freshTodo = ctx.todos.find((t: any) => Date.now() - Date.parse(String(t.created_at || '')) <= 7 * 86_400_000)
+  if (freshTodo) {
+    return `Top priority: ${shortTask(freshTodo.text)}`
   }
 
   return 'Top priority: keep the day light and focused.'
@@ -436,12 +463,23 @@ function formatFollowups(ctx: BriefingContext) {
     .join('\n')}`
 }
 
+function shortTask(text: string) {
+  const t = String(text || '').replace(/\s+/g, ' ').trim()
+  const first = t.split(/(?<=[.!?])\s/)[0]
+  return first.length > 90 ? `${first.slice(0, 87).trimEnd()}…` : first
+}
+
+function formatCalendar(ctx: BriefingContext) {
+  if (!ctx.calendar.length) return ''
+  return `📅 *Today's calendar*\n${ctx.calendar.slice(0, 5).map(e => `• ${e.time || 'All day'} — ${e.title}`).join('\n')}`
+}
+
 function formatTodos(ctx: BriefingContext) {
   if (!ctx.todos.length) return ''
 
   return `*Open tasks*\n${ctx.todos
     .slice(0, 5)
-    .map((t) => `• ${t.text}`)
+    .map((t) => `• ${shortTask(t.text)}`)
     .join('\n')}`
 }
 
@@ -566,6 +604,7 @@ async function buildBriefing(user: UserRecord) {
     '',
     `🎯 ${buildPriorityLine(ctx)}`,
     '',
+    formatCalendar(ctx),
     formatReminderBlock(ctx),
     formatFollowups(ctx),
     formatTodos(ctx),

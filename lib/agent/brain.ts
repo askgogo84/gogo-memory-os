@@ -11,6 +11,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { inventedApprovalGuard } from '@/lib/services/claude'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { isJobScanNow, jobScanQuery } from './jobs'
 
 export type BrainDecision =
   | { kind: 'reply'; text: string }
@@ -48,6 +49,7 @@ const TIMEOUT_MS = 12_000
 // a slow brain falls back to today's pipeline instead of making the person wait.
 const MAX_RETRIES = 0
 const clean = (v: unknown, max = 400) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
+export const cleanReply = (v: unknown, max = 1500) => String(v ?? '').replace(/\r\n?/g, '\n').replace(/[ \t\f\v]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, max)
 // 28 Oct review: match the whole number, not its last ten digits (a 10-digit list entry means +91).
 const digits = (v: unknown) => { const d = String(v ?? '').replace(/\D/g, ''); return d.length === 10 ? `91${d}` : d }
 
@@ -66,10 +68,14 @@ const EXACT = /^\s*(?:yes|y|yeah|yep|yup|no|n|nope|ok|okay|sure|approve[d]?|reje
 export function whatsAppMarkdown(text: string) {
   return String(text || '').replace(/\*\*([^*\n]+)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '').replace(/__([^_\n]+)__/g, '_$1_')
 }
+const DAY_PLAN = /^(?:please\s+)?(?:can you\s+)?(?:help me\s+)?(?:plan|schedule|organi[sz]e|block out)\s+(?:out\s+)?(?:my\s+)?(?:day|today|tomorrow|morning|evening|schedule)(?:\s+(?:today|tomorrow))?(?:\s+for me)?[?.!]*$|^(?:day plan|make my day plan|plan today)[?.!]*$/i
 export function isExactCommand(text: string): boolean {
   const t = String(text || '').trim()
   // 30 Oct live: a re-forwarded bare link was answered by the brain ("Already saved: gjKPc2zn") instead of Link Vault.
-  return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t) || /^https?:\/\/\S+$/i.test(t)
+  // 5 Nov live: "plan my day" was answered from context ("nothing else scheduled") while three meetings were on
+  // the calendar. Day plans have a handler that reads the calendar and reminders; it must get the message.
+  // Same for a job scan (5 Nov live: answered with board listing counts instead of single postings).
+  return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t) || /^https?:\/\/\S+$/i.test(t) || DAY_PLAN.test(t) || isJobScanNow(t) || !!jobScanQuery(t)
 }
 
 // 28 Oct review (G5): the static rules come first and are cached together with the tool list; the user's name,
@@ -147,7 +153,9 @@ export function decisionFromToolUse(original: string, name: string, input: any):
     return { kind: 'flight', flightNo: code, track: input?.track === true && userAskedToTrack(original) }
   }
   if (name === 'reply' || name === 'ask') {
-    const raw = clean(name === 'reply' ? input?.text : input?.question, 1500)
+    // 5 Nov live: clean() squashed newlines, so every list the brain wrote ("show my reminders") arrived as one
+    // paragraph on WhatsApp. Replies keep their line breaks; only runs of spaces and extra blank lines are tidied.
+    const raw = cleanReply(name === 'reply' ? input?.text : input?.question, 1500)
     if (!raw) return { kind: 'skip', reason: 'empty_text' }
     // A chat reply that claims an action was done hands the message to the real handlers instead.
     // 29 Oct live: "When do I check out and is there a reminder for it?" was answered from context ("a check-out
