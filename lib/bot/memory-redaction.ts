@@ -24,7 +24,7 @@ const LABELED_SECRET_VALUE_RE =
 // them. A number written as a phone is shown: it starts with a +country code, or it comes right after a phone word.
 // Unlabelled long digit runs (card, account and Aadhaar shapes) stay withheld, and the labelled pass already hides
 // anything called an account, card or passport number before this runs.
-const PHONE_LABEL = /\b(?:tel(?:ephone)?|ph(?:one)?|mob(?:ile)?|cell|call(?:\s+us)?(?:\s+on)?|contact(?:\s+us)?|whats\s?app|landline|helpline|hotline|reach\s+us|phone\s+number|mobile\s+number|contact\s+number)\s*(?:no\.?|number|#)?\s*(?:[:.\-–]|is)?\s*(?:at|on)?\s*\(?$/i
+const PHONE_LABEL = /\b(?:tel(?:ephone)?|ph(?:one)?|mob(?:ile)?|cell|call(?:\s+us)?(?:\s+on)?|contact(?:\s+us)?|whats\s?app|landline|helpline|hotline|reach\s+us|phone\s+number|mobile\s+number|contact\s+number|book(?:ings?)?\s+(?:at|on|via)|reservations?|reserve\s+(?:at|on)|dial)\s*(?:no\.?|number|#)?\s*(?:[:.\-–]|is)?\s*(?:at|on)?\s*\(?$/i
 export function isPhoneNumber(value: string, before: string): boolean {
   const digits = String(value || '').replace(/\D/g, '')
   if (digits.length < 8 || digits.length > 13) return false
@@ -78,8 +78,10 @@ export function redactSecretShapedText(content: string): string {
   out = out.replace(LABELED_SECRET_VALUE_RE, (match, label, value) => {
     const v = String(value || '')
     const sentence = /\b(?:expires?|expiry|expired|valid|renew(?:al|ed)?|issued|until|till|due|in|on|from|at)\b/i.test(v.split(/\s+/).slice(0, 2).join(' '))
-    // Passwords, keys and the like are always withheld; only passport/PIN-style labels need an identifier value.
-    if (!/^(?:passport|pin)\b/i.test(String(label))) return `${label} [sensitive detail withheld]`
+    // Passwords, OTPs, keys and security codes are always withheld. Identifier labels (card, account, passport,
+    // Aadhaar, PIN) need an identifier-shaped value: 6 Nov live, "check your bank/credit card statements" became
+    // "credit card [sensitive detail withheld]".
+    if (/^(?:pass(?:word|wd|code)|otp|one[\s-]?time|api|secret|security|cvv|cvc)/i.test(String(label))) return `${label} [sensitive detail withheld]`
     return /\d/.test(v) && !sentence ? `${label} [sensitive detail withheld]` : match
   })
 

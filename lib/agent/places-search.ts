@@ -6,7 +6,7 @@ import { redactSecretShapedText } from '../bot/memory-redaction'
 
 export type PlaceAsk = { query: string; area: string; count: number }
 
-const KIND = /\b(restaurants?|caf(?:e|é)s?|coffee (?:shops?|places?)|bars?|pubs?|breweries|brewery|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets? shops?|gyms?|salons?|spas?|parks?|hospitals?|clinics?|pharmac(?:y|ies)|chemists?|hotels?|stays?|co-?working spaces?|malls?|supermarkets?)\b/i
+const KIND = /\b(restaurants?|caf(?:e|é)s?|coffee (?:shops?|places?)|bars?|pubs?|breweries|brewery|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets? shops?|gyms?|salons?|spas?|parks?|hospitals?|clinics?|pharmac(?:y|ies)|chemists?|hotels?|stays?|co-?working spaces?|malls?|supermarkets?|barbers?|barber ?shops?|dentists?|dental clinics?|doctors?|pediatricians?|dermatologists?|physiotherapists?|plumbers?|electricians?|carpenters?|mechanics?|car service(?: centres?| centers?)?|bike service(?: centres?| centers?)?|tailors?|laundr(?:y|ies)|dry cleaners?|vets?|veterinar(?:y|ians?)(?: clinics?)?|pet shops?|opticians?|florists?|atms?|petrol (?:pumps?|bunks?)|ev chargers?|charging stations?)\b/i
 const LEAD = /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show(?: me)?|list|give me|what are|which are|any|best|top|good|nice|where can i (?:get|find|eat|have))\b/i
 const COUNT_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 }
 

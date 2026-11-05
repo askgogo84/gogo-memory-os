@@ -1020,6 +1020,17 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
+    // Meeting prep (Duet benchmark, 6 Nov): "prep me for my next meeting" reads the calendar and recent emails.
+    if ((globalThis as any).process?.env?.VERCEL_ENV && /\b(?:prep|prepare|brief)\b[\s\S]{0,40}\b(?:meeting|call|appointment)\b|\bnext\s+(?:meeting|call)\s+about\b|^\s*meeting\s+prep\b/i.test(text)) {
+      const prepActor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' })
+      const prep = await import('@/lib/agent/meeting-prep-ask').then(m => m.tryMeetingPrep(prepActor, text), () => null)
+      if (prep) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', prep)
+        await sendWhatsAppMessage(from, prep)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
     // Home/office saved once (5 Nov, owner): a statement, or the one answer to "what's your home area?".
     if ((globalThis as any).process?.env?.VERCEL_ENV && PLACE_GATE.test(text)) {
       const placeTurn = await import('@/lib/agent/places-context').then(m => m.tryPlaceCommand({ telegramId: String(resolvedUser.telegramId), text }), () => null)
@@ -1445,7 +1456,7 @@ _"${originalText}"_
       }
     }
     // Local places: Google local results in the area asked (same as the dashboard).
-    if (text.length <= 200 && /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert)/i.test(text)&&(/\b(?:in|near|around|at)\s+[a-z]/i.test(text)||/\b(?:nearby|near\s+by|close\s+by)\b/i.test(text))&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text)) {
+    if (text.length <= 200 && /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert|barber|dentist|dental|doctor|pediatrician|dermatologist|physio|plumber|electrician|carpenter|mechanic|car service|bike service|tailor|laundr|dry clean|vets?\b|veterinar|pet shop|optician|florist|atms?\b|petrol|ev charg|charging station)/i.test(text)&&(/\b(?:in|near|around|at)\s+[a-z]/i.test(text)||/\b(?:nearby|near\s+by|close\s+by)\b/i.test(text))&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text)) {
       const pl: any = await import('@/lib/agent/places-context').catch(() => null)
       const out = pl?.answerPlacesWithContext ? await Promise.resolve().then(() => pl.answerPlacesWithContext({ text, telegramId: String(resolvedUser.telegramId) })).catch(() => null) : null
       if (typeof out === 'string' && out) {
