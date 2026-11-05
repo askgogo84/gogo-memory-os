@@ -259,6 +259,8 @@ export async function GET(req: NextRequest) {
 }
 
 // Messages that could be a food-taste statement, the list or a forget; everything else skips the taste module.
+// Home/office statements, or a short reply that could answer the one-time area question.
+const PLACE_GATE=/^\s*(?:(?:please\s+)?(?:remember|note|save)\s+(?:that\s+)?)?(?:i\s+(?:live|stay)|we\s+(?:live|stay)|my\s+(?:home|house|office|work)|home|office|work)\b|^\s*[A-Za-z0-9][A-Za-z0-9 .,'-]{1,58}$/i
 const TASTE_GATE=/^\s*(?:(?:please\s+)?(?:remember|note|save|forget|avoid|keep|make|show)\b|i\b|i'm|we\b|we're|my\b|no\b|never\b|what\s+do\s+you\s+(?:know|remember)\s+about\s+my\b)/i
 
 export async function POST(req: NextRequest) {
@@ -985,6 +987,16 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
 
     // Food taste before the brain (5 Nov live): the brain answered "what do you know about my food" from chat
     // history, unformatted. Statements, the list and forget are exact commands; null falls through.
+    // Home/office saved once (5 Nov, owner): a statement, or the one answer to "what's your home area?".
+    if ((globalThis as any).process?.env?.VERCEL_ENV && PLACE_GATE.test(text)) {
+      const placeTurn = await import('@/lib/agent/places-context').then(m => m.tryPlaceCommand({ telegramId: String(resolvedUser.telegramId), text }), () => null)
+      if (placeTurn) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', placeTurn)
+        await sendWhatsAppMessage(from, placeTurn)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
     if ((globalThis as any).process?.env?.VERCEL_ENV && TASTE_GATE.test(text)) {
       const taste = await import('@/lib/agent/taste').then(m => m.tryTasteCommand({ telegramId: String(resolvedUser.telegramId), text }), () => null)
       if (taste) {

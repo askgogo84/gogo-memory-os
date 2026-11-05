@@ -276,6 +276,14 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json({text:memoryTurn.text,handledBy:memoryTurn.handledBy,status:'completed'})
       }
     }
+    // Home/office saved once, same as WhatsApp (5 Nov, owner).
+    if((globalThis as any).process?.env?.VERCEL_ENV&&/^\s*(?:(?:please\s+)?(?:remember|note|save)\s+(?:that\s+)?)?(?:i\s+(?:live|stay)|we\s+(?:live|stay)|my\s+(?:home|house|office|work)|home|office|work)\b|^\s*[A-Za-z0-9][A-Za-z0-9 .,'-]{1,58}$/i.test(text)){
+      const placeTurn=await import('@/lib/agent/places-context').then(m=>m.tryPlaceCommand({telegramId:String(user.telegram_id),text}),()=>null)
+      if(placeTurn){
+        await saveConversation(user.telegram_id,text,placeTurn)
+        return NextResponse.json({text:placeTurn,handledBy:'saved-places',status:'completed'})
+      }
+    }
     // Food taste before the brain, same as WhatsApp (5 Nov live).
     if((globalThis as any).process?.env?.VERCEL_ENV&&/^\s*(?:(?:please\s+)?(?:remember|note|save|forget|avoid|keep|make|show)\b|i\b|i'm|we\b|we're|my\b|no\b|never\b|what\s+do\s+you\s+(?:know|remember)\s+about\s+my\b)/i.test(text)){
       const taste=await import('@/lib/agent/taste').then(m=>m.tryTasteCommand({telegramId:String(user.telegram_id),text}),()=>null)
