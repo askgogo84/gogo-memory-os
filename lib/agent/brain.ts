@@ -48,6 +48,7 @@ const TIMEOUT_MS = 12_000
 // a slow brain falls back to today's pipeline instead of making the person wait.
 const MAX_RETRIES = 0
 const clean = (v: unknown, max = 400) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
+export const cleanReply = (v: unknown, max = 1500) => String(v ?? '').replace(/\r\n?/g, '\n').replace(/[ \t\f\v]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, max)
 // 28 Oct review: match the whole number, not its last ten digits (a 10-digit list entry means +91).
 const digits = (v: unknown) => { const d = String(v ?? '').replace(/\D/g, ''); return d.length === 10 ? `91${d}` : d }
 
@@ -147,7 +148,9 @@ export function decisionFromToolUse(original: string, name: string, input: any):
     return { kind: 'flight', flightNo: code, track: input?.track === true && userAskedToTrack(original) }
   }
   if (name === 'reply' || name === 'ask') {
-    const raw = clean(name === 'reply' ? input?.text : input?.question, 1500)
+    // 5 Nov live: clean() squashed newlines, so every list the brain wrote ("show my reminders") arrived as one
+    // paragraph on WhatsApp. Replies keep their line breaks; only runs of spaces and extra blank lines are tidied.
+    const raw = cleanReply(name === 'reply' ? input?.text : input?.question, 1500)
     if (!raw) return { kind: 'skip', reason: 'empty_text' }
     // A chat reply that claims an action was done hands the message to the real handlers instead.
     // 29 Oct live: "When do I check out and is there a reminder for it?" was answered from context ("a check-out
