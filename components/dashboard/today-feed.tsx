@@ -63,7 +63,7 @@ export function TodayFeed({ needs, noticed, done, tz }: { needs: TodayCard[]; no
       {doneBits.length ? (
         <p className="rounded-2xl bg-gogo-ink/5 px-4 py-3 text-[15px] leading-relaxed text-gogo-ink-2"><span className="font-semibold">Done for you today:</span> {doneBits.join(' · ')}</p>
       ) : null}
-      <p className="text-[13px] leading-relaxed text-gogo-ink-3">WhatsApp stays quiet. Only reminders you set and urgent alerts go there.</p>
+      <p className="text-[13px] leading-relaxed text-gogo-ink-3">WhatsApp stays quiet. Only reminders you set and urgent alerts go there. <a href="/dashboard/alerts" className="inline-flex min-h-[44px] items-center font-medium text-gogo-ink underline">Choose what can reach WhatsApp</a></p>
     </div>
   )
 }
