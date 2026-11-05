@@ -12,6 +12,15 @@ const personal = [
   'Compare my blood test results with references',
   'Do a deep research on my health records',
   'Research my bank statement with sources',
+  'Research my bank transactions with sources',
+  'Investigate our bank activity with sources',
+  'Research my UPI payments with citations',
+  'Compare my credit card transactions with references',
+  'Research my payslip with sources',
+  'Research my MRI scan with citations',
+  'Research my lab tests with sources',
+  'Research my insurance policy with sources',
+  'Research my PAN number with sources',
   'Research my income tax returns with citations',
   'Investigate my salary slips',
   'Research my Aadhaar details with sources',
@@ -48,6 +57,7 @@ const publicQuestions = [
   'Research the best electric scooters under 1.5 lakh in India with sources',
   'Compare electric scooters and bicycles with references',
   'Research medical journal reports on cancer treatment with sources',
+  'Research UPI payment fraud trends in India with sources',
 ]
 for (const question of publicQuestions) {
   assert.equal(researchContainsPrivateData(question), false, `public classification: ${question}`)
