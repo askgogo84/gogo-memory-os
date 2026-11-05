@@ -2,19 +2,24 @@ import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/dashboard/session'
 import { verifySameOrigin } from '@/lib/dashboard/guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 
 export const dynamic = 'force-dynamic'
 
 async function resolveWhatsAppId(telegramId: string) {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return null
+  // Session owner IDs are persisted signed BIGINTs. parseInt/Number can alias
+  // distinct owners before a service-role todo mutation is authorized.
+  const owner = exactSessionOwnerId(telegramId)
+  if (!owner) return null
   const { data, error } = await supabaseAdmin
     .from('users')
-    .select('whatsapp_id')
-    .eq('telegram_id', tgNum)
+    .select('telegram_id,whatsapp_id')
+    .eq('telegram_id', owner)
     .maybeSingle()
   if (error) throw error
-  const value = String(data?.whatsapp_id || '').trim()
+  // Never trust a phone returned for a different or lossy numeric owner.
+  if (!data || exactSessionOwnerId(data.telegram_id) !== owner) return null
+  const value = String(data.whatsapp_id || '').trim()
   return value || null
 }
 
