@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     // A partial name is a hint, NOT permission to finish every task containing it.
     // SQL ILIKE also treats "%" and "_" as wildcards. Select exactly one owned
     // pending task in memory, then bind the write to that task ID + owner.
-    const term = typeof text === 'string' ? text.replace(/\\s+/g, ' ').trim().toLowerCase() : ''
+    const term = typeof text === 'string' ? text.replace(/\s+/g, ' ').trim().toLowerCase() : ''
     if (!term || term.length > 160) return NextResponse.json({ ok: false, reply: null })
 
     const { data: pending, error: readError } = await supabase.from('todos')
@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
     if (pending.length > 100) {
       return NextResponse.json({ ok: false, reply: 'Please use the exact task name. I could not safely identify one task.' })
     }
-    const norm = (v: unknown) => String(v || '').replace(/\\s+/g, ' ').trim().toLowerCase()
+    const norm = (v: unknown) => String(v || '').replace(/\s+/g, ' ').trim().toLowerCase()
     const exact = pending.filter((r: any) => norm(r.text) === term)
     const matches = exact.length ? exact : pending.filter((r: any) => norm(r.text).includes(term))
     if (matches.length !== 1) {
