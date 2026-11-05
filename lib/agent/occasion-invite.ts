@@ -151,6 +151,10 @@ export async function tryOccasionInvite(p: { telegramId: string | number; text: 
   if (!state) return MAKE_INVITE.test(text) ? { text: "Forward me the table booking confirmation first (the SMS or WhatsApp from the restaurant or booking app), and I'll make the invite from it." } : null
   if (MAKE_INVITE.test(text)) { await save(tg, { ...state, step: 'occasion' }, 'Asked the occasion again.'); return { text: ASK_OCCASION } }
 
+  // Open questions expire, so a later unrelated message is never read as an answer.
+  const age = Date.now() - state.at
+  if (state.step === 'occasion' && age > 86_400_000) return null
+  if (state.step === 'details' && (age > 7_200_000 || /\?|^\s*(?:what|how|why|when|where|who|which|show|find|book|remind|plan|my|is|are|can|do|does)\b/i.test(text))) return null
   if (state.step === 'occasion') {
     if (NOT_NOW.test(text)) { await save(tg, null, 'Invite skipped.'); return { text: 'No problem. Say *make an invite* any time before the day.' } }
     const kind = (Object.keys(OCCASION_RE) as Occasion[]).find(k => OCCASION_RE[k].test(text))

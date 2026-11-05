@@ -277,7 +277,7 @@ async function handleChatPost(req: NextRequest) {
       }
     }
     // Occasion invites, same as WhatsApp (approved canvas screen 4).
-    {
+    if((globalThis as any).process?.env?.VERCEL_ENV){
       const inv=await import('@/lib/agent/occasion-invite').then(m=>m.INVITE_GATE.test(text)?m.tryOccasionInvite({telegramId:String(user.telegram_id),text,name:user.name}):null,()=>null)
       if(inv){
         const out=inv.mediaUrl?`${inv.text}\n\nCard: ${inv.mediaUrl}`:inv.text

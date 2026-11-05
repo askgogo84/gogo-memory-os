@@ -57,6 +57,8 @@ const r1 = await say(A, sms)
 assert.match(r1!.text, /^✅ Table confirmed at \*Dali and Gala Cocktail Bar\*\n4 guests · Fri, 6 Nov · 7:30 pm\n\nIs it for an occasion\?/)
 assert.equal(await say(B, 'anniversary'), null, "another person's booking never starts my flow")
 assert.match((await say(A, 'Anniversary'))!.text, /Whose anniversary is it/)
+assert.equal(await say(A, 'what is the weather'), null, 'an unrelated question is not read as the names')
+assert.equal(await say(A, 'remind me to call mom'), null, 'nor is a command')
 const r3 = await say(A, 'Goverdhan and Divyashree, 15th')
 assert.match(r3!.text, /^Here's your invite: \*Goverdhan and Divyashree\*/)
 assert.match(String(r3!.mediaUrl), /\/api\/invite-card\?o=918884501501&d=/)
@@ -72,6 +74,11 @@ await say(A, sms); assert.match((await say(A, 'birthday, Divya turning 30'))!.te
 await say(A, sms); assert.match((await say(A, 'just dinner'))!.text, /^Here's your invite: \*Dinner with friends\*/)
 assert.equal((await say(A, sms.replace('4 guests', '1 guest')))!.text.includes('occasion'), false)
 assert.match((await say(B, 'make an invite'))!.text, /Forward me the table booking confirmation first/)
+// Open questions expire: a details question left 3 hours ago no longer captures a short line.
+await say(A, sms); await say(A, 'birthday'); clock += 3 * 3_600_000; rows.push({ ...rows[rows.length - 1], created_at: new Date(clock).toISOString() })
+const realNow = Date.now; Date.now = () => clock + 10_800_000
+assert.equal(await say(A, 'Nithin Kumar'), null, 'expired details question')
+Date.now = realNow
 console.log('✓ booking → occasion → who → card → style → share; owner-scoped; shortcuts work')
 
 // 5. Wiring.
@@ -80,6 +87,6 @@ assert.ok(wa.indexOf('m.tryOccasionInvite(') > 0 && wa.indexOf('m.tryOccasionInv
 assert.match(wa, /if \(inv\.mediaUrl\) await sendWhatsAppMediaMessage\(from, inv\.text, inv\.mediaUrl\)/)
 const route = readFileSync('app/api/invite-card/route.ts', 'utf8')
 assert.match(route, /if \(!\(await verifyCardToken\(kind, owner, t\)\)\) return new NextResponse\(null, \{ status: 404 \}\)/)
-assert.match(readFileSync('app/api/dashboard/chat/route.ts', 'utf8'), /m\.tryOccasionInvite\(\{telegramId:String\(user\.telegram_id\),text,name:user\.name\}\)/)
+assert.match(readFileSync('app/api/dashboard/chat/route.ts', 'utf8'), /VERCEL_ENV\)\{\n\s*const inv=await import\('@\/lib\/agent\/occasion-invite'\)\.then\(m=>m\.INVITE_GATE\.test\(text\)\?m\.tryOccasionInvite\(\{telegramId:String\(user\.telegram_id\),text,name:user\.name\}\)/)
 console.log('✓ wired into WhatsApp (card sent as an image) and dashboard chat; card route verifies the signature')
 console.log('Occasion invite checks passed')
