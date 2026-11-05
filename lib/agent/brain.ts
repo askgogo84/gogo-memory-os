@@ -139,7 +139,9 @@ const TRACK_ASK = /\b(?:track(?:ing)?|monitor(?:ing)?|alerts?|notify|notificatio
 const TRACK_REFUSED = /\b(?:don['’]?t|do not|never|no need to|stop|without|not)\s+(?:\w+\s+)?(?:track|monitor|alert|notify|message|msg|text|ping)|\bno\s+(?:need\s+(?:for|to)\s+)?(?:tracking|alerts?|updates?|notifications?|messages?)\b|\b(?:just|only)\s+(?:the\s+)?(?:status|check)\b/i
 // 29 Oct live: "✅ Updated your Mumbai trip hotel stay" was a reply that saved nothing. Any completion claim about a
 // saved thing goes to the handlers instead.
-const COMPLETION_CLAIM = /\b(?:i(?:'ve| have)|done|saved|booked|set|sent|scheduled|added|reminded|updated|changed|noted|recorded|moved|cancelled|canceled|deleted|removed|logged|stored)\b.*\b(?:reminder|booking|flight|email|message|calendar|list|ticket|stay|hotel|trip|event|expense|note|cab|dates?|check-?(?:in|out))\b/i
+// cleanReply preserves newlines, so action-claim checks must recognize claims split over lines.
+// Never trust a multi-line "Done!" statement as proof of a saved reminder or other action.
+const COMPLETION_CLAIM = /\b(?:i(?:'ve| have)|done|saved|booked|set|sent|scheduled|added|reminded|updated|changed|noted|recorded|moved|cancelled|canceled|deleted|removed|logged|stored)\b.*\b(?:reminder|booking|flight|email|message|calendar|list|ticket|stay|hotel|trip|event|expense|note|cab|dates?|check-?(?:in|out))\b/is
 /** The user asked to track/monitor/be messaged about it, in their own words, and did not refuse it. Pure. */
 export function userAskedToTrack(original: string): boolean {
   const t = String(original || '')
