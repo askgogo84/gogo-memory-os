@@ -11,11 +11,12 @@ import { hotelResearchEvidence, isHotelDiscoveryResearch } from './hotel-researc
 // request must stay in the owner-bound Same Brain route instead of public search.
 const PERSONAL = /\b(?:my|our)\s+(?:e-?mails?|inbox|calendar|meetings?|vault|documents?|files?|drive|expenses?|bills?|account|reminders?|contacts?|messages?|chats?|photos?)\b/i
 const PERSONAL_RECORD = /\b(?:my|our)\s+(?:(?:personal|private|own)\s+)?(?:(?:medical|health|hospital|lab|blood|mri|ct|scan)\s+(?:(?:test|scan|lab|medical|blood)\s+)?(?:reports?|records?|results?|history|documents?|files?)|(?:bank|credit\s+card|debit\s+card|salary|payroll|income\s+tax|tax|insurance)\s+(?:statements?|returns?|records?|reports?|details?|claims?|slips?)|aadh?aar|aadhar|passport|pan\s+card|prescriptions?|diagnos(?:is|es))\b/i
+const PRIVATE_ACTIVITY = /\b(?:my|our)\s+(?:(?:personal|private|own)\s+)?(?:(?:bank|credit\s+card|debit\s+card|upi|income\s+tax|tax|salary|payroll|insurance)\s+(?:transactions?|payments?|refunds?|activity|payslips?|history|filings?|polic(?:y|ies))|(?:payslips?|mri\s+scans?|ct\s+scans?|lab\s+tests?|blood\s+tests?|medical\s+(?:scans?|tests?)|pan\s+(?:number|details)))\b/i
 const EXPLICIT_EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i
 
 export function researchContainsPrivateData(text: string): boolean {
   const t = String(text || '')
-  return PERSONAL.test(t) || PERSONAL_RECORD.test(t) || EXPLICIT_EMAIL.test(t)
+  return PERSONAL.test(t) || PERSONAL_RECORD.test(t) || PRIVATE_ACTIVITY.test(t) || EXPLICIT_EMAIL.test(t)
 }
 
 export function isDeepResearchRequest(text: string) {
