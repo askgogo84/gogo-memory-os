@@ -154,6 +154,14 @@ async function saveConversation(telegramId: number, role: 'user' | 'assistant', 
   await supabaseAdmin.from('conversations').insert({ telegram_id: telegramId, role, content })
 }
 
+// Onboarding (approved screen 3, 5 Nov): after the welcome, ask home once (then office). Never blocks the welcome.
+async function askHomeOnce(telegramId: number, to: string) {
+  const q = await import('@/lib/agent/places-context').then(m => m.startPlaceOnboarding?.(String(telegramId)), () => null).catch(() => null)
+  if (!q) return
+  await saveConversation(telegramId, 'assistant', q)
+  await sendWhatsAppMessage(to, q)
+}
+
 async function saveMemory(telegramId: number, content: string) {
   const { data } = await supabaseAdmin
     .from('memories')
@@ -422,6 +430,7 @@ async function handleWhatsAppPost(req: NextRequest) {
         await saveConversation(resolvedUser.telegramId, 'user', bodyText)
         await saveConversation(resolvedUser.telegramId, 'assistant', welcome)
         await sendWhatsAppMessage(from, welcome)
+        await askHomeOnce(resolvedUser.telegramId, from)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
@@ -452,6 +461,7 @@ async function handleWhatsAppPost(req: NextRequest) {
       // A bare "Hi" is fully answered by the intro; anything else is processed too.
       if (isGreeting(bodyText)) {
         await saveConversation(resolvedUser.telegramId, 'user', bodyText)
+        await askHomeOnce(resolvedUser.telegramId, from)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
