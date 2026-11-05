@@ -33,8 +33,15 @@ export async function tryJobCommand(params: { actor: AgentActor; surface: AgentS
     const allowance = await cg.checkCostAllowance(tg, cg.COST_ESTIMATES_PAISE.web_search_basic).catch(() => ({ allowed: false }))
     if (!allowance.allowed) return done("💼 You've reached this month's search allowance, so I didn't run the job scan. It resets next month.", 'job-scan')
     const { searchWebResults } = await import('@/lib/web-search')
-    const results = await searchWebResults(query, { includeDomains: JOB_BOARD_DOMAINS }).catch(() => null)
+    // 5 Nov live: board searches return mostly listing pages (dropped), leaving one opening. Company job sites
+    // (Greenhouse, Lever, Ashby) only hold single postings, so a second search there lifts recall.
+    const [boards, ats] = await Promise.all([
+      searchWebResults(query, { includeDomains: JOB_BOARD_DOMAINS }).catch(() => null),
+      searchWebResults(`${query} apply`, { includeDomains: ['greenhouse.io', 'lever.co', 'ashbyhq.com'] }).catch(() => null),
+    ])
     await cg.recordCostEvent({ telegramId: tg, category: 'web_search_basic', metadata: { source: 'job_scan' } }).catch(() => {})
+    await cg.recordCostEvent({ telegramId: tg, category: 'web_search_basic', metadata: { source: 'job_scan_ats' } }).catch(() => {})
+    const results = boards || ats ? [...(ats || []), ...(boards || [])] : null
     if (!results) return done("💼 I couldn't reach the job boards just now. Nothing changed; ask me again in a minute.", 'job-scan')
     return done(formatJobScan(results, query.replace(/\s+jobs\b/i, '')), 'job-scan')
   }
