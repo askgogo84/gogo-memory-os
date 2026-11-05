@@ -17,6 +17,9 @@ export type TodayFeed = { needs: TodayCard[]; noticed: TodayCard[]; done: TodayD
 const LABEL: Record<TodayKind, string> = { watch: 'Price watch', bill: 'Account or bill', flight: 'Flight', reply: 'Waiting on a reply', food: 'Food idea', jobs: 'Job radar' }
 const WATCH_TYPES = new Set(['web_search', 'product_stock', 'web_page', 'deadline'])
 const SOURCE_BUDGET_MS = 1500
+// 5 Nov live: approvals, background runs and chat lines ("Waiting on my approval") showed as replies. Only email
+// threads (written behind the Gmail consent gate) and follow-ups a person set are about someone replying.
+export const REPLY_SOURCES = ['gmail_thread', 'followup']
 export const FEWER_DAYS = 14
 export const MAX_NOTICED = 5
 
@@ -68,8 +71,11 @@ export function buildWatchCards(events: any[], watchers: any[], since: string): 
   return out
 }
 
+// 5 Nov live: one provider warning arrived in two threads and showed twice; same title and text = one card.
+const sameNotice = (r: any) => `${clean(r.title, 240).toLowerCase()}|${clean(r.summary, 200).toLowerCase()}`
 export function buildBillCards(rows: any[]): TodayCard[] {
-  return rows.slice(0, 5).map(r => ({
+  const seen = new Set<string>()
+  return rows.filter(r => { const k = sameNotice(r); if (seen.has(k)) return false; seen.add(k); return true }).slice(0, 5).map(r => ({
     key: `bill:${r.id}`, kind: 'bill' as const, section: 'needs' as const, label: LABEL.bill,
     title: clean(r.title || 'Review this notice', 140), why: clean(r.summary, 180) || 'From an email Gogo flagged for you.',
     action: { label: 'Remind me tomorrow', message: `Remind me tomorrow at 10am about: ${clean(r.title, 100)}` },
@@ -152,7 +158,7 @@ export async function getTodayFeed(telegramId: string | number, now = new Date()
     run('watches', () => rows(db.from('agent_activity').select('id,message,metadata_json,created_at').eq('telegram_id', tg).eq('event_type', 'watcher_triggered').gte('created_at', since24).order('created_at', { ascending: false }).limit(40)), [] as any[]),
     run('watchers', () => rows(db.from('agent_watchers').select('id,condition_json').eq('telegram_id', tg).limit(200)), [] as any[]),
     run('bills', () => rows(db.from('agent_open_loops').select('id,title,summary,last_seen_at,updated_at').eq('telegram_id', tg).eq('status', 'active').eq('kind', 'commitment').eq('source_type', 'gmail_service_notice').gte('updated_at', since7d).order('updated_at', { ascending: false }).limit(5)), [] as any[]),
-    run('replies', () => rows(db.from('agent_open_loops').select('id,title,summary,updated_at').eq('telegram_id', tg).eq('status', 'active').in('kind', ['followup', 'waiting_on']).order('updated_at', { ascending: false }).limit(3)), [] as any[]),
+    run('replies', () => rows(db.from('agent_open_loops').select('id,title,summary,updated_at').eq('telegram_id', tg).eq('status', 'active').in('kind', ['followup', 'waiting_on']).in('source_type', REPLY_SOURCES).order('updated_at', { ascending: false }).limit(3)), [] as any[]),
     // travel_tickets keeps the owner as a number in this codebase's writers; the session id is a decimal string,
     // and PostgREST compares it as text against the column, so no JS Number conversion is needed here.
     run('flights', () => rows(db.from('travel_tickets').select('id,flight_no,airline,from_city,to_city,depart_at').eq('telegram_id', tg).eq('type', 'flight').gte('depart_at', now.toISOString()).order('depart_at', { ascending: true }).limit(5)), [] as any[]),
