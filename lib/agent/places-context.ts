@@ -38,7 +38,10 @@ export function placeAnswer(text: string): SavedPlace | null {
   const t = String(text || '').trim().replace(/[.!]+$/, '')
   if (!t || t.length > 60 || NOT_AREA.test(t)) return null
   // A command is never an area, even right after the question.
-  if (/^(?:call|remind|set|show|find|what|when|where|who|why|how|tell|send|add|book|order|buy|search|check|cancel|stop|play|open|get|make|create|delete|forget|list|track|watch|scan)\b/i.test(t)) return null
+  if (/^(?:call|remind|set|show|find|what|when|where|who|why|how|tell|send|add|book|order|buy|search|check|cancel|stop|play|open|get|make|create|delete|forget|list|track|watch|scan|plan|compare|my|the|a|an|i|is|are|do|can|please|any|weather|gold|price|usage|briefing|help)\b/i.test(t)) return null
+  // 5 Nov live: "my briefing", sent right after the office question, was saved as the office. An answer is an area
+  // name (or pincode), so app words anywhere in it rule it out.
+  if (/\b(?:briefing|reminders?|usage|calendar|emails?|jobs?|prices?|weather|pending|today|tomorrow|tonight|plan|notes?|expenses?|spend|spent|food|taste|order|status)\b/i.test(t)) return null
   const stated = detectPlaceStatement(t)
   if (stated) return stated
   const pincode = t.match(PIN)?.[1] || null

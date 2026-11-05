@@ -11,6 +11,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { inventedApprovalGuard } from '@/lib/services/claude'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { isJobScanNow, jobScanQuery } from './jobs'
 
 export type BrainDecision =
   | { kind: 'reply'; text: string }
@@ -73,7 +74,8 @@ export function isExactCommand(text: string): boolean {
   // 30 Oct live: a re-forwarded bare link was answered by the brain ("Already saved: gjKPc2zn") instead of Link Vault.
   // 5 Nov live: "plan my day" was answered from context ("nothing else scheduled") while three meetings were on
   // the calendar. Day plans have a handler that reads the calendar and reminders; it must get the message.
-  return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t) || /^https?:\/\/\S+$/i.test(t) || DAY_PLAN.test(t)
+  // Same for a job scan (5 Nov live: answered with board listing counts instead of single postings).
+  return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t) || /^https?:\/\/\S+$/i.test(t) || DAY_PLAN.test(t) || isJobScanNow(t) || !!jobScanQuery(t)
 }
 
 // 28 Oct review (G5): the static rules come first and are cached together with the tool list; the user's name,
