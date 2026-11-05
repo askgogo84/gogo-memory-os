@@ -276,6 +276,15 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json({text:memoryTurn.text,handledBy:memoryTurn.handledBy,status:'completed'})
       }
     }
+    // Occasion invites, same as WhatsApp (approved canvas screen 4).
+    {
+      const inv=await import('@/lib/agent/occasion-invite').then(m=>m.INVITE_GATE.test(text)?m.tryOccasionInvite({telegramId:String(user.telegram_id),text,name:user.name}):null,()=>null)
+      if(inv){
+        const out=inv.mediaUrl?`${inv.text}\n\nCard: ${inv.mediaUrl}`:inv.text
+        await saveConversation(user.telegram_id,text,out)
+        return NextResponse.json({text:out,handledBy:'occasion-invite',status:'completed',...(inv.mediaUrl?{imageUrl:inv.mediaUrl}:{})})
+      }
+    }
     // Home/office saved once, same as WhatsApp (5 Nov, owner).
     if((globalThis as any).process?.env?.VERCEL_ENV&&/^\s*(?:(?:please\s+)?(?:remember|note|save)\s+(?:that\s+)?)?(?:i\s+(?:live|stay)|we\s+(?:live|stay)|my\s+(?:home|house|office|work)|home|office|work)\b|^\s*[A-Za-z0-9][A-Za-z0-9 .,'-]{1,58}$/i.test(text)){
       const placeTurn=await import('@/lib/agent/places-context').then(m=>m.tryPlaceCommand({telegramId:String(user.telegram_id),text}),()=>null)

@@ -268,6 +268,8 @@ export async function GET(req: NextRequest) {
 
 // Messages that could be a food-taste statement, the list or a forget; everything else skips the taste module.
 // Home/office statements, or a short reply that could answer the one-time area question.
+// Messages that could be part of an occasion invite (a booking confirmation, the occasion, names, send/style).
+const INVITE_GATE=/\b(?:reservation|table|booking|confirmed|invite|invitation|birthday|b'?day|anniversary|dinner|occasion|style|design|send|share|not now|skip|later|turning|turns)\b|^\s*[A-Za-z][A-Za-z .&'-]{1,60},?\s*\d{0,3}(?:st|nd|rd|th)?\s*$/i
 const PLACE_GATE=/^\s*(?:(?:please\s+)?(?:remember|note|save)\s+(?:that\s+)?)?(?:i\s+(?:live|stay)|we\s+(?:live|stay)|my\s+(?:home|house|office|work)|home|office|work)\b|^\s*[A-Za-z0-9][A-Za-z0-9 .,'-]{1,58}$/i
 const TASTE_GATE=/^\s*(?:(?:please\s+)?(?:remember|note|save|forget|avoid|keep|make|show)\b|i\b|i'm|we\b|we're|my\b|no\b|never\b|what\s+do\s+you\s+(?:know|remember)\s+about\s+my\b)/i
 
@@ -1006,6 +1008,17 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
 
     // Food taste before the brain (5 Nov live): the brain answered "what do you know about my food" from chat
     // history, unformatted. Statements, the list and forget are exact commands; null falls through.
+    // Occasion invites (approved canvas screen 4): a forwarded table booking asks the occasion and makes a card.
+    if ((globalThis as any).process?.env?.VERCEL_ENV && INVITE_GATE.test(text)) {
+      const inv = await import('@/lib/agent/occasion-invite').then(m => m.tryOccasionInvite({ telegramId: String(resolvedUser.telegramId), text, name: resolvedUser.name || profileName }), () => null)
+      if (inv) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', inv.text)
+        if (inv.mediaUrl) await sendWhatsAppMediaMessage(from, inv.text, inv.mediaUrl)
+        else await sendWhatsAppMessage(from, inv.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
     // Home/office saved once (5 Nov, owner): a statement, or the one answer to "what's your home area?".
     if ((globalThis as any).process?.env?.VERCEL_ENV && PLACE_GATE.test(text)) {
       const placeTurn = await import('@/lib/agent/places-context').then(m => m.tryPlaceCommand({ telegramId: String(resolvedUser.telegramId), text }), () => null)
