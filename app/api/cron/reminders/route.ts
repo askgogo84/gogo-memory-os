@@ -114,23 +114,36 @@ async function findWhatsAppForReminder(reminder: any): Promise<string | null> {
   return null
 }
 
-// Quick-Reply buttons (Done / Snooze 10m / Move to 8pm) mutate the reminder row by
-// the OWNER's telegram_id, so a tap only works for the person who owns the row. A
-// friend-reminder recipient does NOT own the row — their tap 404s ("couldn't find a
-// recent reminder"). So buttons are for the owner's OWN reminders only: true iff the
-// delivery number is the owner's own WhatsApp number. Note both owner and friend
-// reminders carry whatsapp_to, so we compare numbers (last 10 digits) rather than
-// gating on whatsapp_to being set.
+// Only compare a *full* international WhatsApp identity, never a shared
+// national-number suffix. Persisted values can be "whatsapp:+<E164>", "+<E164>"
+// or the complete E164 digits. A bare 10-digit national number is ambiguous and
+// must not grant the owner-only delivery exemption. Keep this fail closed.
+function canonicalReminderWhatsapp(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const raw = value.trim().replace(/^whatsapp:/i, '').trim()
+  const hasPlus = raw.startsWith('+')
+  const digits = hasPlus ? raw.slice(1) : raw
+  if (!/^[1-9][0-9]{7,14}$/.test(digits)) return null
+  if (!hasPlus && digits.length <= 10) return null
+  return '+' + digits
+}
+
+// Quick-Reply buttons and F2F_REMINDERS_ENABLED's default-OFF bypass are
+// OWNER-only. A different international recipient with identical last ten
+// digits remains a friend: never classify them as the owner. Any unresolved
+// owner row, lookup failure or ambiguous phone identity fails closed.
 async function reminderGoesToOwner(reminder: any, whatsappTo: string): Promise<boolean> {
   if (!reminder.telegram_id) return false
-  const { data } = await supabaseAdmin
+  const destination = canonicalReminderWhatsapp(whatsappTo)
+  if (!destination) return false
+  const { data, error } = await supabaseAdmin
     .from('users')
     .select('whatsapp_id')
     .eq('telegram_id', reminder.telegram_id)
     .maybeSingle()
-  const ownDigits = String(data?.whatsapp_id || '').replace(/\D/g, '').slice(-10)
-  const toDigits = String(whatsappTo || '').replace(/\D/g, '').slice(-10)
-  return !!ownDigits && ownDigits === toDigits
+  if (error) return false
+  const owner = canonicalReminderWhatsapp(data?.whatsapp_id)
+  return !!owner && owner === destination
 }
 
 
