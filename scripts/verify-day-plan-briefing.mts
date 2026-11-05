@@ -52,4 +52,13 @@ assert.match(ps, /const decisions = feed\.need\.filter\(i => i\.state !== 'done'
 assert.match(ps, /section\('Needs your yes', decisions\.slice\(0, 5\)/)
 assert.match(ps, /finished task\$\{finished\.length === 1 \? '' : 's'\} to check off on the dashboard/)
 console.log('✓ pending summary keeps "Needs your yes" for real decisions')
+// A stated diet steers food searches (5 Nov: "Kept in mind: Veg" under a seafood restaurant).
+const veg = [{ kind: 'diet_stated', value: 'Veg', context: null }], tue = [{ kind: 'diet_stated', value: 'Veg on Tuesdays', context: 'Tuesdays' }]
+assert.equal(pc.withStatedDiet('suggest 3 restaurants in Indiranagar for dinner', veg, 'Thursday'), 'suggest 3 pure veg restaurants in Indiranagar for dinner')
+assert.equal(pc.withStatedDiet('seafood restaurants in Indiranagar', veg, 'Thursday'), 'seafood restaurants in Indiranagar', 'an explicit cuisine wins')
+assert.equal(pc.withStatedDiet('restaurants in Indiranagar', tue, 'Tuesday'), 'pure veg restaurants in Indiranagar')
+assert.equal(pc.withStatedDiet('restaurants in Indiranagar', tue, 'Thursday'), 'restaurants in Indiranagar', 'a Tuesday rule stays on Tuesdays')
+assert.equal(pc.withStatedDiet('restaurants in Indiranagar', [{ kind: 'diet_stated', value: 'Vegan', context: null }], 'Monday'), 'vegan restaurants in Indiranagar')
+assert.equal(pc.withStatedDiet('restaurants in Indiranagar', [{ kind: 'avoids', value: 'No mushrooms', context: null }], 'Monday'), 'restaurants in Indiranagar', 'only a stated diet steers')
+console.log('✓ a stated diet steers restaurant searches; explicit cuisines and other days are left alone')
 console.log('Day plan and briefing checks passed')

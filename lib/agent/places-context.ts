@@ -149,6 +149,18 @@ export async function tryPlaceCommand(p: { telegramId: string | number; text: st
 
 const NEAR_OFFICE = /\b(?:near|around|close\s+to)\s+(?:my\s+|the\s+)?(?:office|work(?:place)?)\b/i
 
+const weekdayIst = (now = new Date()) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', weekday: 'long' }).format(now)
+/** "restaurants in Indiranagar" → "pure veg restaurants in Indiranagar" when the person said they're veg (today). Pure.
+ *  An explicit dish or cuisine in the ask ("seafood", "biryani", "non-veg") is left alone. */
+export function withStatedDiet(text: string, facts: { kind: string; value: string; context?: string | null }[], weekday: string) {
+  if (/\b(?:veg|vegetarian|vegan|jain|non[\s-]?veg|chicken|mutton|fish|seafood|prawns?|egg|biryani|kebab|meat|steak|bbq|barbecue|sushi)\b/i.test(text)) return text
+  const diet = facts.find(f => f.kind === 'diet_stated' && (!f.context || weekday.toLowerCase().startsWith(String(f.context).toLowerCase().replace(/s$/, ''))))
+  if (!diet) return text
+  const word = /^vegan/i.test(diet.value) ? 'vegan' : /^jain/i.test(diet.value) ? 'jain' : /^(?:veg|eggetarian)/i.test(diet.value) ? 'pure veg' : null
+  if (!word) return text
+  return text.replace(/\b(restaurants?|places? to eat|caf(?:e|é)s?|dhabas?|lunch|dinner|breakfast|food)\b/i, m => `${word} ${m}`)
+}
+
 export function tasteNote(values: string[]) {
   const keep = values.filter(v => !/^Likes:/i.test(v)).slice(0, 4)
   return keep.length ? `\n\nKept in mind: ${keep.join(' · ')}. Check the menu before ordering.` : ''
@@ -169,8 +181,11 @@ export async function answerPlacesWithContext(p: { text: string; telegramId: str
     }
     text = rewritten.text
   }
+  const food = FOOD.test(text)
+  const facts = food ? await listTaste(tg).catch(() => null) : null
+  // 5 Nov live: "Kept in mind: Veg" sat under a seafood restaurant. A stated diet steers the search itself.
+  text = withStatedDiet(text, facts || [], weekdayIst())
   const out = await answerPlaces(text, fetchImpl)
-  if (!out || !FOOD.test(text) || !out.startsWith('📍')) return out
-  const facts = await listTaste(tg).catch(() => null)
+  if (!out || !food || !out.startsWith('📍')) return out
   return facts?.length ? out.replace(/(\n\nAsk "which of these is open late\?"[^\n]*)?$/, m => tasteNote(facts.map(f => f.value)) + m) : out
 }
