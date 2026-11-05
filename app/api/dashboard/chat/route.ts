@@ -276,6 +276,22 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json({text:memoryTurn.text,handledBy:memoryTurn.handledBy,status:'completed'})
       }
     }
+    // Home/office saved once, same as WhatsApp (5 Nov, owner).
+    if((globalThis as any).process?.env?.VERCEL_ENV&&/^\s*(?:(?:please\s+)?(?:remember|note|save)\s+(?:that\s+)?)?(?:i\s+(?:live|stay)|we\s+(?:live|stay)|my\s+(?:home|house|office|work)|home|office|work)\b|^\s*[A-Za-z0-9][A-Za-z0-9 .,'-]{1,58}$/i.test(text)){
+      const placeTurn=await import('@/lib/agent/places-context').then(m=>m.tryPlaceCommand({telegramId:String(user.telegram_id),text}),()=>null)
+      if(placeTurn){
+        await saveConversation(user.telegram_id,text,placeTurn)
+        return NextResponse.json({text:placeTurn,handledBy:'saved-places',status:'completed'})
+      }
+    }
+    // Food taste before the brain, same as WhatsApp (5 Nov live).
+    if((globalThis as any).process?.env?.VERCEL_ENV&&/^\s*(?:(?:please\s+)?(?:remember|note|save|forget|avoid|keep|make|show)\b|i\b|i'm|we\b|we're|my\b|no\b|never\b|what\s+do\s+you\s+(?:know|remember)\s+about\s+my\b)/i.test(text)){
+      const taste=await import('@/lib/agent/taste').then(m=>m.tryTasteCommand({telegramId:String(user.telegram_id),text}),()=>null)
+      if(taste){
+        await saveConversation(user.telegram_id,text,taste)
+        return NextResponse.json({text:taste,handledBy:'taste',status:'completed'})
+      }
+    }
     // Context-first brain (lib/agent/brain.ts), same as WhatsApp: context before keyword rules. Canary users only.
     // Cheap env gate first: strict route harnesses (and previews) never load the module.
     const callCommand=/^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
@@ -334,9 +350,9 @@ async function handleChatPost(req: NextRequest) {
       }
     }
     // Local places ("Suggest 3 South Indian restaurants in Rajajinagar"): Google local results, in the area asked.
-    if(text.length<=200&&/^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert)/i.test(text)&&/\b(?:in|near|around|at)\s+[a-z]/i.test(text)&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text)){
-      const pl:any=await import('@/lib/agent/places-search').catch(()=>null)
-      const out=pl?.answerPlaces?await Promise.resolve().then(()=>pl.answerPlaces(text)).catch(()=>null):null
+    if(text.length<=200&&/^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert)/i.test(text)&&(/\b(?:in|near|around|at)\s+[a-z]/i.test(text)||/\b(?:nearby|near\s+by|close\s+by)\b/i.test(text))&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text)){
+      const pl:any=await import('@/lib/agent/places-context').catch(()=>null)
+      const out=pl?.answerPlacesWithContext?await Promise.resolve().then(()=>pl.answerPlacesWithContext({text,telegramId:String(user.telegram_id)})).catch(()=>null):null
       if(typeof out==='string'&&out){
         await saveConversation(user.telegram_id,text,out)
         return NextResponse.json({text:out,handledBy:'places-search',status:'completed'})

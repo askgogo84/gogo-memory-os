@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs'
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
 process.env.ANTHROPIC_API_KEY ||= 'test'
+process.env.SERPER_API_KEY ||= 'test'
 const read = (f: string) => readFileSync(f, 'utf8')
 
 const { supabaseAdmin } = await import('../lib/supabase-admin')
@@ -144,4 +145,94 @@ assert.match(sql, /enable row level security/)
 assert.match(sql, /revoke all on table public\.taste_facts from public, anon, authenticated/)
 assert.match(sql, /drop table if exists public\.taste_facts/)
 console.log('✓ wired into WhatsApp (before memory forget), dashboard chat and suggestions; reviewed migration with rollback')
+// 5. Live follow-ups (5 Nov): taste runs before the brain; "nearby" uses the saved home area; food results show taste.
+assert.ok(wa.indexOf('m.tryTasteCommand({ telegramId: String(resolvedUser.telegramId), text })') < wa.indexOf("import('@/lib/agent/brain').then(m => m.runBrain("), 'WhatsApp: taste before the brain')
+const chat = read('app/api/dashboard/chat/route.ts')
+assert.ok(chat.indexOf("m.tryTasteCommand({telegramId:String(user.telegram_id),text})") > 0 && chat.indexOf("m.tryTasteCommand({telegramId:String(user.telegram_id),text})") < chat.indexOf("import('@/lib/agent/brain').then(m=>m.runBrain("), 'dashboard: taste before the brain')
+assert.match(wa, /answerPlacesWithContext\(\{ text, telegramId: String\(resolvedUser\.telegramId\) \}\)/)
+assert.match(chat, /answerPlacesWithContext\(\{text,telegramId:String\(user\.telegram_id\)\}\)/)
+const ps = await import('../lib/agent/places-search')
+assert.equal(ps.homeAreaFrom(['My gym locker is 42', 'I live in Rajajinagar, near the metro']), 'Rajajinagar')
+assert.equal(ps.homeAreaFrom(['remember I stay in HSR Layout']), 'HSR Layout')
+assert.equal(ps.homeAreaFrom(['I live in a flat']), null)
+assert.equal(ps.homeAreaFrom(['I love pizza']), null)
+assert.deepEqual(ps.nearbyRewrite('Find pizza nearby', 'Rajajinagar'), { text: 'Find pizza in Rajajinagar' })
+assert.deepEqual(ps.nearbyRewrite('suggest cafes near me', 'Indiranagar'), { text: 'suggest cafes in Indiranagar' })
+assert.deepEqual(ps.nearbyRewrite('Find pizza nearby', null), { needArea: true })
+assert.equal(ps.nearbyRewrite('Find pizza in Rajajinagar', 'X'), null, 'an area already named is left alone')
+assert.equal(ps.nearbyRewrite('what is nearby', 'X'), null)
+assert.match(ps.nearbyNeedsArea('Find pizza nearby'), /^Which area should I look in\? Reply like "pizza in Rajajinagar"/)
+assert.equal(ps.placeAsk('Find pizza in Rajajinagar')?.area, 'Rajajinagar', 'the rewrite is a normal place ask')
+const pc = await import('../lib/agent/places-context')
+assert.equal(pc.tasteNote(['No mushrooms', 'Lunch under ₹350', 'Likes: biryani']), '\n\nKept in mind: No mushrooms · Lunch under ₹350. Check the menu before ordering.')
+assert.equal(pc.tasteNote(['Likes: biryani']), '')
+// Home/office saved once (owner, 5 Nov): parse, save (replacing the old line), ask once, answer runs the search.
+const d2 = pc.detectPlaceStatement
+assert.deepEqual(d2('I live in Rajajinagar'), { kind: 'home', area: 'Rajajinagar', pincode: null })
+assert.deepEqual(d2('my home address is 12, 3rd cross, Rajajinagar, Bengaluru 560010'), { kind: 'home', area: 'Rajajinagar', pincode: '560010' })
+assert.deepEqual(d2('office: MG Road 560001'), { kind: 'office', area: 'MG Road', pincode: '560001' })
+assert.deepEqual(d2('my office is in Whitefield'), { kind: 'office', area: 'Whitefield', pincode: null })
+assert.deepEqual(d2('home pincode is 560086'), { kind: 'home', area: null, pincode: '560086' })
+for (const x of ['my work is hectic', 'home is where the heart is', 'I live in a flat', 'work is boring', 'I stay at home', 'office party tonight', 'where do I live?'])
+  assert.equal(d2(x), null, `not a place: ${x}`)
+assert.deepEqual(pc.placeAnswer('Rajajinagar 560086'), { kind: 'home', area: 'Rajajinagar', pincode: '560086' })
+for (const x of ['ok', 'thanks', 'call mom', 'what is this', 'remind me at 5', 'stop']) assert.equal(pc.placeAnswer(x), null, `not an answer: ${x}`)
+assert.equal(pc.placeLine({ kind: 'home', area: 'Rajajinagar', pincode: '560086' }), 'Home area: Rajajinagar (560086)')
+assert.deepEqual(pc.parsePlaceLine('Home area: Rajajinagar (560086)'), { kind: 'home', area: 'Rajajinagar', pincode: '560086' })
+assert.deepEqual(pc.parsePlaceLine('Office area: 560001'), { kind: 'office', area: null, pincode: '560001' })
+
+// A small owner-scoped fake for memories + agent_activity.
+const mem: Row[] = [], act: Row[] = []
+function tq(rows: Row[]) {
+  const f: Array<(r: Row) => boolean> = []; let op = 'select', ins: Row | null = null
+  const b: any = {
+    select() { return b }, insert(r: Row) { op = 'insert'; ins = r; return b }, delete() { op = 'delete'; return b },
+    eq(k: string, v: any) { assert.equal(typeof v, k === 'telegram_id' ? 'string' : typeof v); f.push(r => r[k] === v); return b },
+    neq(k: string, v: any) { f.push(r => r[k] !== v); return b }, in(k: string, vs: any[]) { f.push(r => vs.includes(r[k])); return b },
+    gte(k: string, v: any) { f.push(r => r[k] >= v); return b }, ilike(k: string, v: string) { const re = new RegExp('^' + v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*') + '$', 'i'); f.push(r => re.test(r[k])); return b },
+    or(expr: string) { const res = expr.split(',').map(x => x.replace(/^content\.ilike\./, '')).map(v => new RegExp('^' + v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/%/g, '.*') + '$', 'i')); f.push(r => res.some(re => re.test(r.content || ''))); return b },
+    order() { return b }, limit() { return b }, single() { return b },
+    then(res: any, rej: any) {
+      let out: any
+      if (op === 'insert') { const r = { id: `r${rows.length + 1}-${Math.random()}`, created_at: new Date(Date.now() + rows.length).toISOString(), ...ins }; rows.push(r); out = { data: { id: r.id }, error: null } }
+      else if (op === 'delete') { for (const r of rows.filter(r => f.every(fn => fn(r)))) rows.splice(rows.indexOf(r), 1); out = { data: null, error: null } }
+      else out = { data: rows.filter(r => f.every(fn => fn(r))).sort((a, b) => b.created_at.localeCompare(a.created_at)), error: null }
+      return Promise.resolve(out).then(res, rej)
+    },
+  }
+  return b
+}
+;(supabaseAdmin as any).from = (table: string) => table === 'memories' ? tq(mem) : table === 'agent_activity' ? tq(act) : q(table)
+const fetchCalls: string[] = []
+const fakeFetch: any = async (u: string, init: any) => { fetchCalls.push(String(init?.body || u)); return { ok: true, json: async () => ({ places: [] }) } }
+
+// Nothing saved: ask once, no wrong-city search.
+assert.match(String(await pc.answerPlacesWithContext({ text: 'Find pizza nearby', telegramId: A }, fakeFetch)), /^What's your home area or pincode\?/)
+assert.equal(fetchCalls.length, 0, 'no search without an area')
+// The answer saves home and runs the original search in the same reply.
+const answered = String(await pc.tryPlaceCommand({ telegramId: A, text: 'Rajajinagar 560086' }, fakeFetch))
+assert.match(answered, /^Saved your home: Rajajinagar\. I'll use it whenever you ask for something nearby, and won't ask again\./)
+assert.deepEqual(mem.filter(r => r.telegram_id === A).map(r => r.content), ['Home area: Rajajinagar (560086)'])
+assert.ok(fetchCalls.some(c => /pizza in Rajajinagar/i.test(c)), 'the original ask ran with the saved area')
+// Next time: straight to the search, no question.
+fetchCalls.length = 0
+assert.doesNotMatch(String(await pc.answerPlacesWithContext({ text: 'suggest cafes near me', telegramId: A }, fakeFetch)), /What's your home area/)
+assert.ok(fetchCalls.some(c => /cafes in Rajajinagar/i.test(c)))
+// A later answer-shaped message is not taken as an area once nothing is pending.
+assert.equal(await pc.tryPlaceCommand({ telegramId: A, text: 'Malleshwaram' }, fakeFetch), null)
+// Moving replaces the old line; another person is untouched; office is separate.
+await pc.tryPlaceCommand({ telegramId: B, text: 'I live in Indiranagar' }, fakeFetch)
+await pc.tryPlaceCommand({ telegramId: A, text: 'I live in Malleshwaram' }, fakeFetch)
+await pc.tryPlaceCommand({ telegramId: A, text: 'my office is in Whitefield' }, fakeFetch)
+assert.deepEqual(mem.filter(r => r.telegram_id === A).map(r => r.content).sort(), ['Home area: Malleshwaram', 'Office area: Whitefield'])
+assert.deepEqual(mem.filter(r => r.telegram_id === B).map(r => r.content), ['Home area: Indiranagar'])
+fetchCalls.length = 0
+await pc.answerPlacesWithContext({ text: 'find cafes near my office', telegramId: A }, fakeFetch)
+assert.ok(fetchCalls.some(c => /cafes in Whitefield/i.test(c)), 'near the office uses the office area')
+assert.match(String(await pc.answerPlacesWithContext({ text: 'find cafes near office', telegramId: B }, fakeFetch)), /^What's your office area or pincode\?/)
+assert.match(wa, /PLACE_GATE\.test\(text\)\) \{\n\s+const placeTurn = await import\('@\/lib\/agent\/places-context'\)\.then\(m => m\.tryPlaceCommand/)
+assert.ok(wa.indexOf('m.tryPlaceCommand(') < wa.indexOf("import('@/lib/agent/brain').then(m => m.runBrain("), 'home/office before the brain')
+assert.ok(chat.indexOf('m.tryPlaceCommand(') > 0 && chat.indexOf('m.tryPlaceCommand(') < chat.indexOf("import('@/lib/agent/brain').then(m=>m.runBrain("))
+console.log('✓ home and office are saved once (replaced on change, owner-scoped); nearby asks once, then always uses them')
+console.log('✓ taste runs before the brain; "nearby" uses the saved home area or asks once; food picks show the taste kept in mind')
 console.log('Taste facts checks passed')
