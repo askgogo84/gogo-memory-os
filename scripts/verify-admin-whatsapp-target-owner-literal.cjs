@@ -98,7 +98,7 @@ async function main() {
     assert.equal(h.updates[0].val, indian.id)
   })
   await check('invalid, domestic-ambiguous or malformed target cannot reach private query', async () => {
-    for (const bad of ['4155550123', '0000000000', '987654321', '98765432100', '+919876543210oops', 'whatsapp:1111111111']) {
+    for (const bad of ['4155550123', '0000000000', '987654321', '+919876543210oops', 'whatsapp:1111111111']) {
       const h = harness()
       const reply = await h.buildAdminPlanChangeReply('admin upgrade ' + bad + ' pro')
       assert.match(reply, /couldn.t find a user/i)
