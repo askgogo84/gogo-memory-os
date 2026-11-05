@@ -30,7 +30,9 @@ export async function tryJobCommand(params: { actor: AgentActor; surface: AgentS
     const query = jobRadarQuery('', prefs)
     if (!prefs || !/\S\s+jobs\b/i.test(query)) return done("💼 Which roles should I look for? Tell me once, like *my job preferences: Head of AI or VP Engineering in Bengaluru or remote, above 80 LPA*, then say *scan for jobs now*.", 'job-scan')
     const cg: any = await import('@/lib/services/cost-guard')
-    const allowance = await cg.checkCostAllowance(tg, cg.COST_ESTIMATES_PAISE.web_search_basic).catch(() => ({ allowed: false }))
+    // Two paid searches (job boards + ATS) run together. Check the combined estimated cost
+    // before either request; the cost guard is a read/check, not an atomic reservation.
+    const allowance = await cg.checkCostAllowance(tg, 2 * cg.COST_ESTIMATES_PAISE.web_search_basic).catch(() => ({ allowed: false }))
     if (!allowance.allowed) return done("💼 You've reached this month's search allowance, so I didn't run the job scan. It resets next month.", 'job-scan')
     const { searchWebResults } = await import('@/lib/web-search')
     // 5 Nov live: board searches return mostly listing pages (dropped), leaving one opening. Company job sites
