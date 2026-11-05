@@ -51,7 +51,7 @@ export function placeAnswer(text: string): SavedPlace | null {
 function exactPlaceOwnerId(value: string | number): string | null {
   if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
   const id = String(value).trim()
-  return /^-?[1-9]\\d*$/.test(id) ? id : null
+  return /^-?[1-9]\d*$/.test(id) ? id : null
 }
 
 async function savedPlaces(telegramId: string) {
