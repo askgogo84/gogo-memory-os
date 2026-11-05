@@ -14,6 +14,7 @@ assert.equal(t().category, 'mapping_evidence_needed')
 assert.equal(t({ actualPosStoreId: good('store_001', 'tipplr'), expectedPosStoreId: good('store_002', 'petpooja') }).category, 'mapping_discrepancy')
 assert.equal(t({ actualPosStoreId: good('store_001', 'tipplr'), expectedPosStoreId: good('store_001', 'petpooja') }).category, 'cancellation_investigation')
 assert.equal(t({ actualPosStoreId: { ...good('store_001', 'tipplr'), verified: false }, expectedPosStoreId: good('store_002', 'petpooja') }).category, 'mapping_evidence_needed')
+assert.equal(t({ actualPosStoreId: { ...good('store_001', 'tipplr'), source: 'buyer' }, expectedPosStoreId: good('store_002', 'petpooja') }).category, 'mapping_evidence_needed')
 assert.equal(t({ actualPosStoreId: good('store_001', 'tipplr'), expectedPosStoreId: good('store_002', 'petpooja'), kind: 'refund_requested' }).category, 'refund_review')
 assert.equal(t({ kind: 'order_delayed' }).safeAutomaticActions.includes('read_only_status_lookup'), true)
 assert.equal(t({ kind: 'other', reportedReason: 'Wrong store ID' }).category, 'general_triage')
@@ -28,4 +29,4 @@ for (const kind of ['order_cancelled','order_rejected','order_delayed','refund_r
 }
 assert.equal(t({ actualPosStoreId: { ...good('store_001', 'tipplr'), observedAt: '2070-01-01T00:00:00Z' }, expectedPosStoreId: good('store_002', 'petpooja') }).category, 'mapping_evidence_needed')
 assert.equal(t({ actualPosStoreId: { ...good('store_001', 'tipplr'), observedAt: '2020-01-01T00:00:00Z' }, expectedPosStoreId: good('store_002', 'petpooja') }).category, 'mapping_evidence_needed')
-console.log('verify-tipplr-enterprise-triage: 14 assertions + 6 no-external-mutation cases passed')
+console.log('verify-tipplr-enterprise-triage: 15 assertions + 6 no-external-mutation cases passed')
