@@ -4,6 +4,7 @@ on:
     paths:
       - 'lib/dashboard/queries.ts'
       - 'scripts/verify-dashboard-query-owner-precision.cjs'
+      - 'scripts/verify-connections-state-errors.mts'
       - '.github/workflows/dashboard-query-owner-literal-head.yml'
 permissions:
   contents: read
