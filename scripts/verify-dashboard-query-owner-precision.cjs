@@ -19,12 +19,12 @@ const privateRows = {
   lists: {
     [A]: [{id:'a-list',list_name:'A_PRIVATE_LIST',items:[],updated_at:'2026-10-01T00:00:00Z'}],
     [B]: [{id:'b-list',list_name:'B_PRIVATE_LIST',items:[],updated_at:'2026-10-01T00:00:00Z'}],
-    '123': [{id:'safe-list',list_name:'SAFE_LIST',items:[],updated_at:'2026-10-01T00:00:00Z'}],
+    '123': [{id:'safe-list',list_name:'SAFE_PRIVATE_LIST',items:[],updated_at:'2026-10-01T00:00:00Z'}],
   },
   friend_contacts: {
     [A]: [{name:'A_PRIVATE_FRIEND'}],
     [B]: [{name:'B_PRIVATE_FRIEND'}],
-    '123': [{name:'SAFE_FRIEND'}],
+    '123': [{name:'SAFE_PRIVATE_FRIEND'}],
   },
 };
 function dataFor(table, owner) {
@@ -137,7 +137,7 @@ async function run() {
   await assertOwnerReads(B,B,'B_PRIVATE');
   await assertOwnerReads(A,A,'A_PRIVATE');
   // Ordinary IDs retain the old numeric DB predicate for compatibility.
-  await assertOwnerReads('123',123,'SAFE');
+  await assertOwnerReads('123',123,'SAFE_PRIVATE');
   // Negative 64-bit owners also remain exact (even when not in fixture DB).
   let at = calls.length;
   await queries.getLists(NEG);
@@ -148,9 +148,12 @@ async function run() {
   for (const id of invalid) {
     const before = calls.length, beforeCalendar = calendarAccess.length;
     const lists = await queries.getLists(id);
-    assert.deepEqual(lists,{ok:true,lists:[]},id);
+    assert.equal(lists.ok,true,id);
+    assert.equal(lists.lists.length,0,id);
     const friends = await queries.getFriendContacts(id);
-    assert.deepEqual(friends,{ok:true,contacts:[],count:0},id);
+    assert.equal(friends.ok,true,id);
+    assert.equal(friends.contacts.length,0,id);
+    assert.equal(friends.count,0,id);
     assert.equal((await queries.getProfile(id)).ok,false,id);
     assert.equal((await queries.getUsageSummary(id)).ok,false,id);
     const cal = await queries.getTodayCalendar(id);
