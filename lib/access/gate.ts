@@ -103,9 +103,9 @@ export async function checkWhatsAppAccess(phone: string, profileName?: string, t
           console.error('ACCESS_GATE_INVITE_WAITLIST_WRITE_FAILED', write.error.code)
           return unavailableAccess()
         }
-        const { data: joined, error: joinedError } = await supabaseAdmin
+        const { data: verifiedJoin, error: joinedError } = await supabaseAdmin
           .from('waitlist').select('phone_e164, status, approved_by').eq('phone_e164', p).maybeSingle()
-        if (joinedError || joined?.phone_e164 !== p || joined?.status !== 'joined' || joined?.approved_by !== `invite:${invite.code}`) {
+        if (joinedError || verifiedJoin?.phone_e164 !== p || verifiedJoin?.status !== 'joined' || verifiedJoin?.approved_by !== `invite:${invite.code}`) {
           if (joinedError) console.error('ACCESS_GATE_INVITE_WAITLIST_VERIFY_FAILED', joinedError.code)
           return unavailableAccess()
         }
