@@ -689,7 +689,9 @@ async function handleWhatsAppPost(req: NextRequest) {
             const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
             if (await handleImageMeeting(noteReply)) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
             await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
-            const shownNote = await import('@/lib/services/image-note-reader').then(m => m.explainReaderNote?.({ readerText: noteReply, caption: bodyText }), () => null) || noteReply
+            const explained = await import('@/lib/services/image-note-reader').then(m => m.explainReaderNoteWithOffer?.({ readerText: noteReply, caption: bodyText }), () => null)
+            const shownNote = explained?.text || noteReply
+            if (explained?.offer) await import('@/lib/agent/image-offer').then(m => m.saveImageOffer(String(resolvedUser.telegramId), explained.offer)).catch(() => {})
             await saveConversation(resolvedUser.telegramId, 'assistant', shownNote)
             await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: shownNote })
             // Additive: durably store the document image (captioned ticket that didn't parse).
@@ -766,7 +768,9 @@ async function handleWhatsAppPost(req: NextRequest) {
               const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
               if (await handleImageMeeting(noteReply)) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
               await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
-              const shownNote = await import('@/lib/services/image-note-reader').then(m => m.explainReaderNote?.({ readerText: noteReply, caption: bodyText }), () => null) || noteReply
+              const explained = await import('@/lib/services/image-note-reader').then(m => m.explainReaderNoteWithOffer?.({ readerText: noteReply, caption: bodyText }), () => null)
+              const shownNote = explained?.text || noteReply
+              if (explained?.offer) await import('@/lib/agent/image-offer').then(m => m.saveImageOffer(String(resolvedUser.telegramId), explained.offer)).catch(() => {})
               await saveConversation(resolvedUser.telegramId, 'assistant', shownNote)
               await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: shownNote })
               // Additive: durably store the document image (existing note behaviour unchanged).
@@ -938,10 +942,12 @@ async function handleWhatsAppPost(req: NextRequest) {
           const savedNote = compactImageNoteForSaving(noteReply, 'Document')
           await addToList(resolvedUser.telegramId, 'notes', [savedNote])
           await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[PDF] ${bodyText}` : '[PDF document]')
-          const shownPdf = await import('@/lib/services/image-note-reader').then(m => m.explainReaderNote?.({ readerText: noteReply, caption: bodyText, kind: 'document' }), () => null) || noteReply
+          const explainedPdf = await import('@/lib/services/image-note-reader').then(m => m.explainReaderNoteWithOffer?.({ readerText: noteReply, caption: bodyText, kind: 'document' }), () => null)
+          const shownPdf = explainedPdf?.text || noteReply
+          if (explainedPdf?.offer) await import('@/lib/agent/image-offer').then(m => m.saveImageOffer(String(resolvedUser.telegramId), explainedPdf.offer)).catch(() => {})
           await saveConversation(resolvedUser.telegramId, 'assistant', shownPdf)
           const pdfDocTitle = deriveNoteTitleFromReader(noteReply)
-          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[PDF document]', reply: `${shownPdf}\n\n🗂️ Filed under *${pdfDocTitle}*. Say *my notes* to get it back.` })
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[PDF document]', reply: explainedPdf?.offer ? `${shownPdf.slice(0, shownPdf.length - explainedPdf.offer.question.length).trim()}\n\n🗂️ Filed under *${pdfDocTitle}*. Say *my notes* to get it back.\n\n${explainedPdf.offer.question}` : `${shownPdf}\n\n🗂️ Filed under *${pdfDocTitle}*. Say *my notes* to get it back.` })
           // Additive: durably store the file + documents row (notes behaviour unchanged above).
           // doc_type carries the classifier verdict (document/other, or ticket on a parse miss).
           await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: noteReply, docType: pdfClass.toLowerCase(), messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid, authToken, contentType: firstMediaType } })
@@ -1010,6 +1016,11 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       }
     }
 
+    // A "yes" to the question an image/PDF reply ended with runs that exact reminder/calendar instruction.
+    if ((globalThis as any).process?.env?.VERCEL_ENV && text.length <= 24 && /^\s*(?:yes|yeah|yep|yup|ok|okay|sure|haan|ha|ji|please|go ahead|do it|sounds good)\b/i.test(text)) {
+      const offered = await import('@/lib/agent/image-offer').then(m => m.takeImageOffer(String(resolvedUser.telegramId), text), () => null)
+      if (offered) text = offered
+    }
     // Context-first brain (lib/agent/brain.ts): reads the conversation and saved context BEFORE any keyword rule.
     // It answers, asks one question, or rewrites the message into an explicit instruction for the handlers below.
     // Canary users only; exact commands (yes/approve/1/2/3) and any failure keep today's pipeline untouched.

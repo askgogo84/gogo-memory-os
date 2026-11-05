@@ -28,7 +28,9 @@ const STAY_KIND = /\b(?:hotels?|stays?|resorts?|hostels?|lodges?|homestays?|gues
 const FOOD_KIND = /\b(?:restaurants?|caf(?:e|é)s?|coffee|bars?|pubs?|brewer(?:y|ies)|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets?)\b/i
 
 export function placeAsk(text: string): PlaceAsk | null {
-  const t = String(text || '').trim().replace(/[?.!]+$/, '')
+  // 5 Nov live: the brain wrote "suggest cafes near Rajajinagar 560086"; a pincode after the area broke the match.
+  // A pincode beside an area is dropped (the area is searched); a pincode alone is kept as the area.
+  const t = String(text || '').trim().replace(/[?.!]+$/, '').replace(/\b([A-Za-z]+)(\s*,?\s*)\(?\b(\d{6})\b\)?/g, (m, word: string) => /^(?:in|near|at|around|to|pincode|pin)$/i.test(word) ? m : word)
   if (!t || t.length > 200) return null
   if (!LEAD.test(t) || !KIND.test(t)) return null
   // A negated action is a safety constraint, not an instruction to book.
@@ -46,7 +48,7 @@ export function placeAsk(text: string): PlaceAsk | null {
     .split(/\b(?:do\s+not|don['’]?t|never|without)\s+(?:book|reserve|order|buy|purchase)\b/i)[0]
     .replace(/[\s,]+$/, '').trim()
   if (!KIND.test(primary)) return null
-  const area = primary.match(/\b(?:in|near|around|at|close to)\s+([A-Za-z][A-Za-z .'-]{2,40}?)(?=,|\s+(?:for|with|that|which|open|under|below|within|from|on|between|check-?in|checking in)\b|$)/i)?.[1]?.trim()
+  const area = primary.match(/\b(?:in|near|around|at|close to)\s+([A-Za-z][A-Za-z .'-]{2,40}?|\d{6})(?=,|\s+(?:for|with|that|which|open|under|below|within|from|on|between|check-?in|checking in)\b|$)/i)?.[1]?.trim()
   if (!area || /^(?:me|here|my (?:area|place|home|office))$/i.test(area)) return null
   // Only an explicit requested number of venues sets result count; "for 2 people" is party size.
   const countPrefix = /^(?:(?:me|the|best|top|good|nice)\s+)*(\d{1,2}|one|two|three|four|five|six|seven|eight)\s+/i
