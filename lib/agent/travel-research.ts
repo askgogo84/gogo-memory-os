@@ -450,7 +450,7 @@ export function parseFlightBriefText(raw: string, now = new Date(), timezone = '
   const routeOnly = text.replace(/\b(?:premium[\s-]*economy|business|economy|first)(?:[\s-]*class)?\b/gi, ' ').replace(/\b(?:round[\s-]*trip|one[\s-]*way|two[\s-]*way|non[\s-]*stop|direct)\b/gi, ' ')
     // 6 Nov: "Bengaluru to Delhi flight on 20 Dec" read the destination as "Delhi Flight" (no airport code), and
     // "book a Bengaluru to Delhi flight" lost the origin. Ticket words and a leading "book a" are not places.
-    .replace(/\b(?:flights?|air\s*tickets?|plane\s*tickets?|air\s*fares?)\b/gi, ' ').replace(/^\s*(?:please\s+)?(?:book|find|search|get|show)\s+(?:me\s+)?(?:an?\s+|the\s+|some\s+)?(?:cheap(?:est)?\s+)?/i, '')
+    .replace(/(\bto\s+[A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*)?)\s+(?:flights?|air\s*tickets?|plane\s*tickets?|air\s*fares?|fares?)\b/gi, '$1').replace(/^\s*(?:please\s+)?(?:book|find|search|get|show)\s+(?:me\s+)?(?:an?\s+|the\s+|some\s+)?(?:cheap(?:est)?\s+)?/i, '')
     .replace(/\s{2,}/g, ' ').trim()
   const context = buildTravelResearchContext(routeOnly, now, timezone)
   const brief: FlightBrief = watchAsked ? { watchAsked: true } : {}
