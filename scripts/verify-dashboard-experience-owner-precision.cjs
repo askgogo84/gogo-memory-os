@@ -81,7 +81,7 @@ const route = original('app/api/dashboard/experience/route.ts', {
       json(body, opts = {}) { return { status: opts.status || 200, body } },
     },
   },
-  '@/lib/dashboard/session': { getSession: async () => sessionOwner ? { telegramId: sessionOwner } : null },
+  '@/lib/dashboard/session': { getSession: async () => sessionOwner !== null ? { telegramId: sessionOwner } : null },
   '@/lib/supabase-admin': { supabaseAdmin },
   '@/lib/dashboard/exact-owner-id': exactOwner,
 })
