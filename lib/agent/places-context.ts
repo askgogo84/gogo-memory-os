@@ -50,6 +50,13 @@ export function placeAnswer(text: string): SavedPlace | null {
   return pincode || area ? { kind: 'home', area, pincode } : null
 }
 
+/** Never turn a rounded JavaScript number into somebody else's BIGINT owner key. */
+function exactPlaceOwnerId(value: string | number): string | null {
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
+  const id = String(value).trim()
+  return /^-?[1-9]\d*$/.test(id) ? id : null
+}
+
 async function savedPlaces(telegramId: string) {
   const { data, error } = await supabaseAdmin.from('memories').select('content').eq('telegram_id', telegramId)
     .or('content.ilike.Home area:%,content.ilike.Office area:%,content.ilike.%live in%,content.ilike.%live at%,content.ilike.%stay in%,content.ilike.%based in%,content.ilike.%home is%')
@@ -62,13 +69,24 @@ async function savedPlaces(telegramId: string) {
 }
 
 export async function savePlace(telegramId: string | number, p: SavedPlace) {
-  const tg = String(telegramId)
+  const tg = exactPlaceOwnerId(telegramId)
+  if (!tg) return false
+  const prefix = p.kind === 'home' ? 'Home area:%' : 'Office area:%'
   const { data, error } = await supabaseAdmin.from('memories').insert({ telegram_id: tg, content: placeLine(p) }).select('id').single()
-  if (error || !data?.id) return false
-  const { data: older } = await supabaseAdmin.from('memories').select('id,content').eq('telegram_id', tg).ilike('content', `${p.kind === 'home' ? 'Home' : 'Office'} area:%`).neq('id', data.id)
-  const stale = (older || []).map((r: any) => r.id)
-  if (stale.length) await supabaseAdmin.from('memories').delete().in('id', stale).eq('telegram_id', tg)
-  return true
+  if (error || data?.id == null) return false
+
+  // The old address is personal information. A successful insert alone is NOT
+  // proof that superseded addresses were removed. Keep the deletion owner-bound.
+  const { error: deleteError } = await supabaseAdmin.from('memories').delete()
+    .eq('telegram_id', tg).ilike('content', prefix).neq('id', data.id)
+  if (deleteError) return false
+
+  // PostgREST can acknowledge a query even when policies suppress its effects.
+  // Verify one exact current row before saying the replacement succeeded.
+  const { data: remaining, error: verifyError } = await supabaseAdmin.from('memories').select('id')
+    .eq('telegram_id', tg).ilike('content', prefix).limit(2)
+  return !verifyError && Array.isArray(remaining) && remaining.length === 1
+    && String(remaining[0].id) === String(data.id)
 }
 
 const where = (p: SavedPlace) => p.area || p.pincode || ''
@@ -121,7 +139,8 @@ function onboardingDone(places: { home: SavedPlace | null; office: SavedPlace | 
 /** Home/office statements, the one-time answer to the area question (which then runs the original search),
  *  and the two onboarding answers. */
 export async function tryPlaceCommand(p: { telegramId: string | number; text: string }, fetchImpl: typeof fetch = fetch): Promise<string | null> {
-  const tg = String(p.telegramId)
+  const tg = exactPlaceOwnerId(p.telegramId)
+  if (!tg) return null
   const stated = detectPlaceStatement(p.text)
   const skip = !stated && isPlaceSkip(p.text)
   const asked = (stated || skip || placeAnswer(p.text)) ? await openQuestion(tg) : null
@@ -135,7 +154,7 @@ export async function tryPlaceCommand(p: { telegramId: string | number; text: st
   }
   const place = stated || (live ? { ...placeAnswer(p.text)!, kind: live.kind } : null)
   if (!place) return null
-  if (!(await savePlace(tg, place).catch(() => false))) return null
+  if (!(await savePlace(tg, place).catch(() => false))) return `I couldn't verify that your ${place.kind} area was updated. Please try again; I won't treat an unverified change as saved.`
   await supabaseAdmin.from('agent_activity').insert({ telegram_id: tg, event_type: 'nearby_area_saved', message: `${place.kind} area saved.`, metadata_json: { kind: place.kind } }).then(() => {}, () => {})
   if (live?.onboarding) {
     if (place.kind === 'home') { await setPending(tg, '', 'office', true).catch(() => {}); return `Saved your home: ${where(place)}.\n\n${ONBOARD_OFFICE_Q}` }
@@ -167,7 +186,8 @@ export function tasteNote(values: string[]) {
 }
 
 export async function answerPlacesWithContext(p: { text: string; telegramId: string | number }, fetchImpl: typeof fetch = fetch): Promise<string | null> {
-  const tg = String(p.telegramId)
+  const tg = exactPlaceOwnerId(p.telegramId)
+  if (!tg) return null
   let text = p.text
   const office = NEAR_OFFICE.test(text)
   const asOffice = office ? text.replace(NEAR_OFFICE, 'nearby') : text
