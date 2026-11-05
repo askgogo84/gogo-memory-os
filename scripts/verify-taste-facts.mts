@@ -150,6 +150,8 @@ assert.deepEqual(await t.forgetTaste(A, { match: 'sesame' }), ['No sesame'], 'ta
 assert.ok(rows.find(r => r.id === 'older-taste-243')?.forgotten_at)
 failUpdate = true
 assert.equal(await t.forgetTaste(A, { all: true }), null, 'DB write failure cannot claim all forgotten')
+assert.match(String(await t.tryTasteCommand({ telegramId: A, text: 'forget my food taste' })),
+  /couldn't verify/, 'a failed taste deletion must not fall through to generic memory success')
 failUpdate = false
 ignoreUpdate = true
 assert.equal(await t.forgetTaste(A, { all: true }), null, 'DB reported success without tombstones cannot claim all forgotten')
