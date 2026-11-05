@@ -22,7 +22,14 @@ function table(name: string) {
     if (db.fail === `throw-${name}`) throw new Error('fixture database outage')
     if (db.fail === name) return { data: null, error: { code: '42703', message: 'column does not exist' } }
     if (db.fail === 'waitlist-insert' && name === 'waitlist' && op === 'insert') return { data: null, error: { code: 'DB_DOWN', message: 'fixture waitlist insert failed' } }
+    if (db.fail === 'waitlist-update' && name === 'waitlist' && op === 'update') return { data: null, error: { code: 'DB_DOWN', message: 'fixture waitlist update failed' } }
+    if (db.fail === 'waitlist-conflict' && name === 'waitlist' && op === 'insert') return { data: null, error: { code: '23505', message: 'fixture competing insert' } }
     const rows = (db as any)[name].filter((r: any) => filters.every(([k, c, v]) => k === 'in' ? v.includes(r[c]) : r[c] === v))
+    if (name === 'waitlist' && op === 'select' && rows[0]?.status === 'joined' && filters.some(([, c]) => c === 'phone_e164')) {
+      if (db.fail === 'waitlist-readback-stale') return { data: { ...rows[0], status: 'waiting' }, error: null }
+      if (db.fail === 'waitlist-readback-blocked') return { data: { ...rows[0], status: 'blocked' }, error: null }
+      if (db.fail === 'waitlist-readback-error') return { data: null, error: { code: 'DB_DOWN', message: 'fixture verification failed' } }
+    }
     if (op === 'insert') { if (rows.length && name === 'waitlist') return { error: { code: '23505' } }; (db as any)[name].push({ id: 'new', ...payload }); writes.push([name, 'insert', payload]); return { error: null } }
     if (op === 'update') { rows.forEach((r: any) => Object.assign(r, payload)); writes.push([name, 'update', payload]); return { error: null } }
     return { data: single ? rows[0] || null : rows, error: null }
@@ -95,6 +102,17 @@ assert.equal(db.waitlist[0].status, 'joined'); assert.equal(db.waitlist[0].appro
 db = { users: [], waitlist: [{ id: 'w2', phone_e164: '+919900000011', status: 'waiting', last_notified_at: new Date().toISOString() }] }
 assert.equal((await checkWhatsAppAccess('+919900000011', 'Friend', JOIN)).reason, 'invited')
 assert.equal(db.waitlist[0].status, 'joined'); assert.equal(redeemed.at(-1).p_name, null, 'placeholder name not stored')
+// A valid, separately committed redemption is NOT evidence that authorization was
+// persisted. Both create and update writes, duplicate races and ambiguous readbacks
+// must fail closed without ever entering the bot. No provider is called in this fixture.
+for (const fail of ['waitlist-insert', 'waitlist-conflict', 'waitlist-readback-stale', 'waitlist-readback-blocked', 'waitlist-readback-error']) {
+  db = { users: [], waitlist: [], fail }
+  const decision = await checkWhatsAppAccess('+919900000016', 'Fixture', JOIN)
+  assert.deepEqual(decision, unavailable, `invite ${fail} must not bypass the waitlist gate`)
+}
+db = { users: [], waitlist: [{ id: 'w3', phone_e164: '+919900000017', status: 'waiting', last_notified_at: new Date().toISOString() }], fail: 'waitlist-update' }
+assert.deepEqual(await checkWhatsAppAccess('+919900000017', 'Fixture', JOIN), unavailable, 'failed update must not admit a waiting owner')
+assert.equal(db.waitlist[0].status, 'waiting', 'failed update must not appear joined')
 // Used-up / wrong code: waitlist, told why.
 db = { users: [], waitlist: [] }
 assert.deepEqual(await checkWhatsAppAccess('+919900000012', 'Nithin', "I'm joining with invite full-abc234"), { allow: false, reason: 'waitlist', reply: INVITE_USED_UP_REPLY })
