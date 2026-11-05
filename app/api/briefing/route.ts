@@ -299,6 +299,8 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
   const telegramId = user.telegram_id
   const phone = user.whatsapp_id
 
+  // Started alongside the other reads: a calendar read can take ~10 s (5 Nov live), so it must not wait in line.
+  const calendarPromise = briefingCalendar(user.telegram_id)
   const [
     remindersResult,
     overdueResult,
@@ -386,7 +388,7 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
     followups: followupsResult.data || [],
     notes,
     memoryProfile: memoryResult.data || null,
-    calendar: await briefingCalendar(telegramId),
+    calendar: await calendarPromise,
   }
 }
 
@@ -397,7 +399,7 @@ async function briefingCalendar(telegramId: unknown): Promise<{ title: string; t
   if (!/^[1-9]\d{0,14}$/.test(id)) return []
   try {
     const { getTodayCalendar } = await import('@/lib/dashboard/queries')
-    const cal = await Promise.race([getTodayCalendar(id), new Promise<null>(r => setTimeout(() => r(null), 3000))])
+    const cal = await Promise.race([getTodayCalendar(id), new Promise<null>(r => setTimeout(() => r(null), 8000))])
     if (!cal || !cal.ok || !cal.connected) return []
     const seen = new Set<string>()
     return cal.events
