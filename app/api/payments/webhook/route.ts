@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { verifyWebhookSignature, getPlan, ASKGOGO_PLANS } from '@/lib/razorpay'
 import { createClient } from '@supabase/supabase-js'
 import { sendWhatsApp } from '@/lib/whatsapp'
+import { exactBillingOwnerId, resolveBillingOwner, type BillingOwnerInput } from '@/lib/services/billing-owner-identity'
 
 export const dynamic = 'force-dynamic'
 
@@ -19,26 +20,31 @@ function tierFromEntitlement(planKey?: string | null): string {
   return 'pro'
 }
 
-// Tolerant matching: phone digits (ignores +, spaces, "whatsapp:"), telegram_id,
-// user id, or the subscription id. Handles the "whatsapp:+91..." vs "+91..." rows.
-function buildMatchClauses(p: {
-  phone?: string | null
-  whatsappId?: string | null
-  telegramId?: string | number | null
-  userId?: string | null
-  subscriptionId?: string | null
-}): string[] {
-  const clauses: string[] = []
-  const digits = String(p.phone || p.whatsappId || '').replace(/\D/g, '')
-  const last10 = digits.slice(-10)
-  if (last10.length === 10) {
-    clauses.push(`phone.ilike.*${last10}*`, `whatsapp_id.ilike.*${last10}*`)
+// Authenticated payment-provider events do NOT prove that similarly numbered
+// accounts have the same owner. Resolve exactly one existing row before writing.
+async function resolveVerifiedBillingOwner(input: BillingOwnerInput): Promise<string | null> {
+  return resolveBillingOwner(input, async claim => {
+    const base = supabase.from('users').select('telegram_id,whatsapp_id,id,razorpay_subscription_id')
+    const query = claim.lookup.field === 'whatsapp_id'
+      ? base.in('whatsapp_id', claim.lookup.values)
+      : base.eq(claim.lookup.field, claim.lookup.value)
+    const { data, error } = await query.limit(2)
+    if (error) throw error
+    return data || []
+  })
+}
+
+// Never claim a paid, activated or halted plan from an unconfirmed mutation.
+// An unknown database outcome is logged for reconciliation, never blindly retried.
+async function writeVerifiedBillingOwner(ownerId: string, update: Record<string, unknown>): Promise<boolean> {
+  const { data, error } = await supabase.from('users')
+    .update(update).eq('telegram_id', ownerId).select('telegram_id')
+  if (error || !Array.isArray(data) || data.length !== 1 ||
+      exactBillingOwnerId(data[0]?.telegram_id) !== ownerId) {
+    console.error('BILLING_OWNER_WRITE_UNCONFIRMED')
+    return false
   }
-  const tg = p.telegramId != null ? String(p.telegramId).replace(/[^\d-]/g, '') : ''
-  if (tg && tg !== '0') clauses.push(`telegram_id.eq.${tg}`)
-  if (p.userId) clauses.push(`id.eq.${p.userId}`)
-  if (p.subscriptionId) clauses.push(`razorpay_subscription_id.eq.${p.subscriptionId}`)
-  return clauses
+  return true
 }
 
 // One-time payment-link activation (existing flow, now also sets tier).
@@ -57,28 +63,23 @@ async function activateUserPlan(params: {
   const now = new Date()
   const expiry = new Date(now.getTime() + plan.validityDays * 24 * 60 * 60 * 1000)
 
-  const orClauses = buildMatchClauses({
+  const ownerId = await resolveVerifiedBillingOwner({
     phone: params.phone,
     whatsappId: params.whatsappId,
     telegramId: params.telegramId,
     userId: params.userId,
   })
-
-  if (orClauses.length > 0) {
-    await supabase
-      .from('users')
-      .update({
-        tier,
-        tier_expires_at: expiry.toISOString(),
-        plan: plan.key,
-        plan_name: plan.name,
-        plan_active: true,
-        plan_status: 'active',
-        plan_started_at: now.toISOString(),
-        plan_expires_at: expiry.toISOString(),
-      })
-      .or(orClauses.join(','))
-  }
+  if (!ownerId) return null
+  if (!await writeVerifiedBillingOwner(ownerId, {
+    tier,
+    tier_expires_at: expiry.toISOString(),
+    plan: plan.key,
+    plan_name: plan.name,
+    plan_active: true,
+    plan_status: 'active',
+    plan_started_at: now.toISOString(),
+    plan_expires_at: expiry.toISOString(),
+  })) return null
 
   await supabase.from('payment_records').upsert({
     whatsapp_id: params.phone || params.whatsappId || null,
@@ -120,32 +121,27 @@ async function activateSubscription(entity: any, rawPayload: unknown) {
     ? new Date(entity.current_end * 1000)
     : new Date(now.getTime() + plan.validityDays * 24 * 60 * 60 * 1000)
 
-  const orClauses = buildMatchClauses({
+  const ownerId = await resolveVerifiedBillingOwner({
     phone: notes.whatsapp_id || notes.phone,
     whatsappId: notes.whatsapp_id,
     telegramId: notes.telegram_id,
     userId: notes.user_id,
     subscriptionId: entity.id,
   })
-
-  if (orClauses.length > 0) {
-    await supabase
-      .from('users')
-      .update({
-        tier,
-        tier_expires_at: expiry.toISOString(),
-        plan: plan.key,
-        plan_name: plan.name,
-        plan_active: true,
-        plan_status: 'active',
-        plan_started_at: now.toISOString(),
-        plan_expires_at: expiry.toISOString(),
-        razorpay_subscription_id: entity.id,
-        subscription_id: entity.id,
-        subscription_status: entity.status,
-      })
-      .or(orClauses.join(','))
-  }
+  if (!ownerId) return null
+  if (!await writeVerifiedBillingOwner(ownerId, {
+    tier,
+    tier_expires_at: expiry.toISOString(),
+    plan: plan.key,
+    plan_name: plan.name,
+    plan_active: true,
+    plan_status: 'active',
+    plan_started_at: now.toISOString(),
+    plan_expires_at: expiry.toISOString(),
+    razorpay_subscription_id: entity.id,
+    subscription_id: entity.id,
+    subscription_status: entity.status,
+  })) return null
 
   await supabase.from('payment_records').insert({
     whatsapp_id: notes.whatsapp_id || null,
@@ -167,14 +163,14 @@ async function activateSubscription(entity: any, rawPayload: unknown) {
 
 async function updateSubscriptionStatus(entity: any, opts: { revokeNow: boolean }) {
   const notes = entity?.notes || {}
-  const orClauses = buildMatchClauses({
+  const ownerId = await resolveVerifiedBillingOwner({
     phone: notes.whatsapp_id || notes.phone,
     whatsappId: notes.whatsapp_id,
     telegramId: notes.telegram_id,
     userId: notes.user_id,
     subscriptionId: entity.id,
   })
-  if (orClauses.length === 0) return
+  if (!ownerId) return false
 
   const update: Record<string, any> = { subscription_status: entity.status }
   if (opts.revokeNow) {
@@ -189,7 +185,7 @@ async function updateSubscriptionStatus(entity: any, opts: { revokeNow: boolean 
   }
   // On plain cancellation we leave tier + tier_expires_at intact — the user keeps
   // access until the paid period ends, then the gate downgrades them automatically.
-  await supabase.from('users').update(update).or(orClauses.join(','))
+  return writeVerifiedBillingOwner(ownerId, update)
 }
 
 function buildConfirmationMessage(plan: ReturnType<typeof getPlan>, name?: string): string {
@@ -276,9 +272,9 @@ export async function POST(req: NextRequest) {
       const planKey = notes.plan || 'pro'
       const name = entity.customer?.name || notes.name || 'AskGogo User'
 
-      const { plan } = await activateUserPlan({
-        phone,
-        whatsappId: notes.whatsapp_id || phone,
+      const result = await activateUserPlan({
+        phone: notes.whatsapp_id || notes.phone || phone,
+        whatsappId: notes.whatsapp_id || null,
         telegramId: notes.telegram_id || null,
         userId: notes.user_id || null,
         planKey,
@@ -287,7 +283,8 @@ export async function POST(req: NextRequest) {
         rawPayload: body.payload,
       })
 
-      await notifyWhatsApp(phone, buildConfirmationMessage(plan, name), 'payment_link.paid')
+      if (!result) return NextResponse.json({ ok: true, event, ignored: 'owner_unverified' })
+      await notifyWhatsApp(phone, buildConfirmationMessage(result.plan, name), 'payment_link.paid')
       return NextResponse.json({ ok: true, event, plan: planKey })
     }
 
@@ -317,7 +314,8 @@ export async function POST(req: NextRequest) {
     if (event === 'subscription.halted') {
       const entity = body.payload?.subscription?.entity
       if (entity) {
-        await updateSubscriptionStatus(entity, { revokeNow: true })
+        const updated = await updateSubscriptionStatus(entity, { revokeNow: true })
+        if (!updated) return NextResponse.json({ ok: true, event, ignored: 'owner_unverified' })
         const phone = entity?.notes?.whatsapp_id || null
         await notifyWhatsApp(
           phone,
@@ -345,16 +343,17 @@ export async function POST(req: NextRequest) {
 
       // Skip subscription-driven payments here - handled by subscription.charged.
       if ((phone || notes.telegram_id || notes.user_id) && !payment.invoice_id) {
-        const { plan } = await activateUserPlan({
-          phone,
-          whatsappId: notes.whatsapp_id || phone,
+        const result = await activateUserPlan({
+          phone: notes.whatsapp_id || notes.phone || phone,
+          whatsappId: notes.whatsapp_id || null,
           telegramId: notes.telegram_id || null,
           userId: notes.user_id || null,
           planKey,
           paymentId: payment.id,
           rawPayload: body.payload,
         })
-        await notifyWhatsApp(phone, buildConfirmationMessage(plan, name), 'payment.captured')
+        if (!result) return NextResponse.json({ ok: true, event, ignored: 'owner_unverified' })
+        await notifyWhatsApp(phone, buildConfirmationMessage(result.plan, name), 'payment.captured')
       }
       return NextResponse.json({ ok: true, event })
     }
