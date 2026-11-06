@@ -23,3 +23,13 @@ const fi = readFileSync('lib/feature-intents.ts', 'utf8')
 assert.match(fi, /if \(isWorkspaceConnect\(text\)\) \{\n[\s\S]{0,400}buildGmailConnectReply\(user\.telegramId, text\)/, 'feature-intents defers to the shared Gmail connect reply')
 console.log('✓ dashboard "connect gmail" uses the shared connected-state reply')
 console.log('Overnight (7 Nov) replays passed')
+
+// 3. "Got it, boss." / "…so far, boss." reached WhatsApp and the dashboard from paths that skip stripUnrequestedAddress.
+{
+  const { sanitizeWhatsAppReply } = await import('../lib/channels/whatsapp')
+  assert.equal(sanitizeWhatsAppReply("Got it, boss. Divya's birthday is 14 Feb — saved."), "Got it. Divya's birthday is 14 Feb — saved.")
+  assert.equal(sanitizeWhatsAppReply("Nithin is vegetarian — that's all you've told me so far, boss."), "Nithin is vegetarian — that's all you've told me so far.")
+  assert.equal(sanitizeWhatsAppReply('Your boss emailed about the review.'), 'Your boss emailed about the review.', 'the word boss in content stays')
+  assert.match(dash, /noBoss = text\.replace/, 'dashboard outbound strips it too')
+  console.log('✓ no unrequested "boss" on either surface')
+}
