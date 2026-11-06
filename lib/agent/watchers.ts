@@ -450,7 +450,7 @@ async function sendWhatsAppIfWanted(telegramId: string, delivery: WatcherDeliver
   if (delivery !== 'whatsapp' && delivery !== 'both') return
   // Watcher owner IDs are PostgreSQL BIGINTs. Number(owner) rounds distinct owners
   // above 2^53 and could send a private alert to another account's WhatsApp.
-  if (typeof telegramId !== 'string' || !/^-?(?:0|[1-9]\d{0,18})$/.test(telegramId)) return
+  if (typeof telegramId !== 'string' || !/^(?:0|[1-9]\d{0,18}|-[1-9]\d{0,18})$/.test(telegramId)) return
   const owner = BigInt(telegramId)
   if (owner < -9223372036854775808n || owner > 9223372036854775807n) return
   const { data, error } = await supabaseAdmin.from('users')
