@@ -27,5 +27,6 @@ create index if not exists gmail_accounts_owner_live on public.gmail_accounts (t
 
 -- Service role only, same as the other agent tables: RLS on, no policies.
 alter table public.gmail_accounts enable row level security;
+grant select, insert, update, delete on table public.gmail_accounts to service_role;
 
 commit;

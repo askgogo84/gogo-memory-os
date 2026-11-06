@@ -99,7 +99,7 @@ async function readGmail(telegramId: number) {
   const access = await gmailToken(telegramId)
   if (!access) return null
   // 6 Nov (owner): the extra Google accounts are read alongside the primary; one failing never drops the rest.
-  const extras = await import('@/lib/agent/gmail-accounts').then(m => m.listExtraGmailAccounts(telegramId), () => [])
+  const extras = await import('@/lib/agent/gmail-accounts').then(m => typeof m?.listExtraGmailAccounts === 'function' ? m.listExtraGmailAccounts(telegramId) : []).catch(() => [] as import('@/lib/agent/gmail-accounts').ExtraGmailAccount[])
   const extraThreads = await Promise.all(extras.map(async a => {
     try {
       const token = (a.refreshToken && await refreshGmailAccessToken(a.refreshToken)) || a.accessToken

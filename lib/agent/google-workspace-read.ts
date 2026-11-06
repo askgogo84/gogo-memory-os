@@ -181,17 +181,17 @@ async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, accou
 // Every Google account the person connected (6 Nov, owner: gmail.com and tipplr.in): the primary (null) first,
 // then the extras. An extra account that fails is logged and skipped, never a reason to lose the primary's results.
 async function allAccounts(actor:AgentActor):Promise<(ExtraAccount|null)[]> {
-  const extras=await import('./gmail-accounts').then(m=>m.listExtraGmailAccounts(actor.legacyTelegramId),()=>[] as ExtraAccount[])
+  const extras:ExtraAccount[]=await import('./gmail-accounts').then(m=>typeof m?.listExtraGmailAccounts==='function'?m.listExtraGmailAccounts(actor.legacyTelegramId):[]).catch(()=>[])
   return [null,...extras]
 }
 async function acrossAccounts<T>(actor:AgentActor, read:(account:ExtraAccount|null)=>Promise<T[]>):Promise<T[]> {
-  const accounts=await allAccounts(actor)
-  const settled=await Promise.allSettled(accounts.map(read))
-  const out:T[]=[]
+  // The primary first: its consent and connection checks decide whether any mail is read at all.
+  const out:T[]=await read(null)
+  const extras=(await allAccounts(actor)).filter((a):a is ExtraAccount=>!!a)
+  const settled=await Promise.allSettled(extras.map(read))
   settled.forEach((s,i)=>{
     if(s.status==='fulfilled')out.push(...s.value)
-    else if(i===0)throw s.reason
-    else console.error('WORKSPACE_EXTRA_ACCOUNT_FAILED:',JSON.stringify({email:accounts[i]?.email,error:String(s.reason?.message||s.reason).slice(0,100)}))
+    else console.error('WORKSPACE_EXTRA_ACCOUNT_FAILED:',JSON.stringify({email:extras[i]?.email,error:String(s.reason?.message||s.reason).slice(0,100)}))
   })
   return out
 }

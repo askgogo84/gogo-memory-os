@@ -105,7 +105,9 @@ export function redactSecretShapedText(content: string): string {
       // 6 Nov live: 'Payment order successful - 6856147904' (a CCAvenue order number) was withheld. An order,
       // invoice, booking, PNR, tracking or reference number is the detail the person needs; only unlabelled runs
       // and card/account/ID labels stay hidden.
-      || (/\b(?:order|invoice|booking|pnr|tracking|awb|shipment|reference|ref|txn|transaction|utr|receipt|ticket|consignment|docket)\b[^\d\n]{0,30}$/i.test(out.slice(Math.max(0, offset - 40), offset))
+      // Only a contiguous run: "2345 6789 0123" in groups is card- or account-shaped and stays hidden.
+      || (!/[\s-]/.test(value.trim())
+        && /\b(?:order|invoice|booking|pnr|tracking|awb|shipment|reference|txn|transaction|utr|receipt|ticket|consignment|docket)\b[^\d\n]{0,30}$/i.test(out.slice(Math.max(0, offset - 40), offset))
         && !/\b(?:account|a\/c|card|aadhaar|pan|passport|ifsc|cvv|pin|otp|mobile|phone)\b/i.test(out.slice(Math.max(0, offset - 40), offset)))
       ? value : '[sensitive detail withheld]')
 
