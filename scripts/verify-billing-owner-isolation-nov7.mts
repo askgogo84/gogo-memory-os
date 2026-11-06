@@ -133,6 +133,8 @@ await check('original checkout and webhook enforce exact owner and confirmed sin
   assert.match(webhook, /\.eq\('telegram_id', ownerId\)\.select\('telegram_id'\)/)
   assert.match(webhook, /data\.length !== 1/)
   assert.match(webhook, /requireRecordedSubscription: true/)
+  assert.match(webhook, /notifyWhatsApp\(notes\.whatsapp_id \|\| notes\.phone \|\| phone, buildConfirmationMessage\(result\.plan, name\), 'payment_link\.paid'\)/)
+  assert.match(webhook, /notifyWhatsApp\(notes\.whatsapp_id \|\| notes\.phone \|\| phone, buildConfirmationMessage\(result\.plan, name\), 'payment\.captured'\)/)
   assert.match(webhook, /if \(!result\) return NextResponse\.json\(\{ ok: true, event, ignored: 'owner_unverified' \}\)/)
   assert.doesNotMatch(webhook, /last10|buildMatchClauses|\.or\(orClauses|\.ilike\(\*/)
 })
