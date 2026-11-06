@@ -14,7 +14,15 @@ const doneQuestion = (t: string) => /\?\s*$/.test(t) || /^did\s+(?:it|you|he|she
 assert.ok(doneQuestion('did it land?') && doneQuestion('did it land') && doneQuestion('done milk?'))
 assert.ok(!doneQuestion('did groceries') && !doneQuestion('done 1'))
 const todos = readFileSync(new URL('../app/api/todos/route.ts', import.meta.url), 'utf8')
-assert.ok(todos.includes("if (!updated?.length) return NextResponse.json({ ok: false, reply: null })"), 'no blind Marked done')
+// Preserve the 27 Oct invariant after the TODO handler was made single-task/owner bound.
+// The original-handler two-owner behavioral tests live in verify-todo-done-single-owner-literal.cjs.
+assert.match(todos, /if \(matches\.length !== 1\)/, 'ambiguous task matches cannot complete anything')
+assert.match(todos, /\.eq\('id', key\)\.eq\('whatsapp_id', phone\)\.eq\('done', false\)/,
+  'completion must bind one exact task, its owner and pending state')
+assert.match(todos, /updateError \|\| !Array\.isArray\(updated\) \|\| updated\.length !== 1/,
+  'no blind Marked done without a single mutation receipt')
+assert.match(todos, /String\(updated\[0\]\.id\) !== String\(key\)/,
+  'a mutation receipt for the wrong task must never count as success')
 const landed = describeTrackedFlight({ active: false, condition_json: { adHocFlight: { flightNo: 'QF67', from: 'SYD', to: 'JNB', departAt: '2026-10-27T00:00:00Z', arriveAt: '2026-10-27T12:30:00Z' } }, last_state_json: { tracking: { state: 'landed', actualArrival: '2026-10-27T12:35:00Z' } } }, Date.parse('2026-10-27T12:40:00Z'))
 assert.match(landed, /QF67 \(SYD → JNB\) landed in JNB/)
 console.log('DID_IT_LAND_OK')
