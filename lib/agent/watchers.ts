@@ -769,8 +769,25 @@ async function processInboxTriageWatcher(watcher:any,now:Date) {
     })
   }
 
+  // Order tracking (6 Nov, owner): one message per order problem or missed delivery day, from the shop's own emails.
+  let orderTracking=watcher.last_state_json?.orderTracking||null
+  try{
+    const ot=await import('./order-tracking')
+    const orders=await ot.readOrders(actor as any)
+    const sentIds:string[]=Array.isArray(orderTracking?.alerted)?orderTracking.alerted.map(String):[]
+    const alerts=ot.orderAlerts(orders,sentIds,now.getTime())
+    if(alerts.length&&condition.delivery!=='app'){
+      const key='orders/'+watcher.id+'/'+createHash('sha256').update(alerts.map(a=>a.id).sort().join('\n')).digest('hex')
+      const message=`📦 *Order update*\n\n${alerts.map(a=>a.line).join('\n\n')}\n\nFrom the shop's emails. Say "track my orders" for all of them.`
+      const delivery=await deliverWatchAlert({watcherId:String(watcher.id),owner:telegramId,key,due:now.toISOString(),message,condition:watcher.condition_json,topic:'watches'})
+      if(delivery.accepted||['suppressed','cancelled','app_only'].includes(delivery.state))orderTracking={alerted:[...alerts.map(a=>a.id),...sentIds].slice(0,200),checkedAt:now.toISOString()}
+      console.log('ORDER_ALERT:',JSON.stringify({alerts:alerts.length,state:delivery.state}))
+    }else orderTracking={alerted:[...(condition.delivery==='app'?alerts.map(a=>a.id):[]),...sentIds].slice(0,200),checkedAt:now.toISOString()}
+  }catch(err:any){console.error('ORDER_TRACKING_FAILED:',String(err?.message||err).slice(0,120))}
+
   const finalState={
     ...(watcher.last_state_json||{}),pendingInboxAlert:null,inboxAlertDelivery:deliveryState,
+    orderTracking,
     seenMessageIds:nextSeen,lastActionCount:actions.length,
     lastActionAt:actions.length?now.toISOString():watcher.last_state_json?.lastActionAt||null,
     workspaceErrorNotified:false,lastError:null,
