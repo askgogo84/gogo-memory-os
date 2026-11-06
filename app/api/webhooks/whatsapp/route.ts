@@ -1051,6 +1051,18 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       }
     }
 
+    // A forwarded payment confirmation (6 Nov live: a ₹41,898 bank SMS became a ₹41 split expense) is read as a
+    // payment; "yes" to its question looks for the merchant's receipt in Gmail. Read-only.
+    if ((globalThis as any).process?.env?.VERCEL_ENV) {
+      const pay = await import('@/lib/agent/payment-confirmation').then(async m => m.PAYMENT_GATE.test(text) ? m.tryPaymentConfirmation(String(resolvedUser.telegramId), text)
+        : text.length <= 24 ? m.takeReceiptCheck(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), text) : null, () => null)
+      if (pay) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', pay)
+        await sendWhatsAppMessage(from, pay)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
     // A "yes" to the question an image/PDF reply ended with runs that exact reminder/calendar instruction.
     if ((globalThis as any).process?.env?.VERCEL_ENV && text.length <= 24 && /^\s*(?:yes|yeah|yep|yup|ok|okay|sure|haan|ha|ji|please|go ahead|do it|sounds good)\b/i.test(text)) {
       const offered = await import('@/lib/agent/image-offer').then(m => m.takeImageOffer(String(resolvedUser.telegramId), text), () => null)

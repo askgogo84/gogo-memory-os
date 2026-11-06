@@ -9,6 +9,7 @@
 // that answer an approval or a numbered pick bypass it entirely, and any failure falls back to today's pipeline.
 import { isMailAlertCommand } from '@/lib/email/mail-alert-commands'
 import { ORDER_LIST_RE } from './order-tracking'
+import { PAYMENT_GATE } from './payment-confirmation'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { inventedApprovalGuard } from '@/lib/services/claude'
@@ -83,6 +84,8 @@ export function isExactCommand(text: string): boolean {
     // 6 Nov live: "what do you alert me about?" was answered from the brain's own idea of its features; the
     // mail-alert rules handler owns that question and the "stop renewals" family.
     || isMailAlertCommand(t) || ORDER_LIST_RE.test(t)
+    // 6 Nov live: a forwarded bank confirmation is a payment record, never something to chat about.
+    || PAYMENT_GATE.test(t)
 }
 
 // 28 Oct review (G5): the static rules come first and are cached together with the tool list; the user's name,
