@@ -89,9 +89,11 @@ export function receiptVerdict(p: PaymentConfirmation, mails: Mail[]): string {
   const amountRe = new RegExp(String(Math.round(p.amount)).replace(/\B(?=(\d{3})+(?!\d))/g, ',?'))
   const about = mails.filter(m => amountRe.test(`${m.subject} ${m.snippet || ''}`) || [p.reference, p.transactionId].some(r => r && `${m.subject} ${m.snippet || ''}`.includes(r)))
   const merchantMail = about.find(m => words.some(w => m.from.toLowerCase().includes(w)) || /\b(?:receipt|credited|received|acknowledg|emi\s+received|payment\s+received|thank you for (?:your )?payment)\b/i.test(`${m.subject} ${m.snippet || ''}`) && !GATEWAY.test(m.from))
-  const gatewayMail = about.find(m => GATEWAY.test(`${m.from} ${m.subject}`) && m !== merchantMail)
+  // A reminder or a failure from a gateway is not a receipt (6 Nov: an Amazon Pay "Payment Reminder" for the same amount).
+  const confirms = (m: Mail) => /\b(?:successful|success|received|confirm\w*|completed|processed|paid)\b/i.test(`${m.subject} ${m.snippet || ''}`) && !/\b(?:reminder|due\s+on|failed|unsuccessful|declined)\b/i.test(m.subject)
+  const gatewayMail = about.find(m => GATEWAY.test(`${m.from} ${m.subject}`) && confirms(m) && m !== merchantMail)
   // 6 Nov live: HDFC's "Confirmation of Payment Using HDFC NetBanking" is the bank confirming the payment went out.
-  const bankMail = about.find(m => BANK.test(m.from) && /\b(?:confirm|successful|processed|debited)\b/i.test(`${m.subject} ${m.snippet || ''}`) && m !== merchantMail)
+  const bankMail = about.find(m => BANK.test(m.from) && confirms(m) && m !== merchantMail)
   const line = (m: Mail) => `${m.from.replace(/\s*<[^>]+>/, '').replace(/^"|"$/g, '')}: "${m.subject.replace(/\s+/g, ' ').slice(0, 90)}"`
   if (merchantMail) return `Found it. ${line(merchantMail)}. That's ${p.merchant}'s own confirmation of the ${p.amountText}, so this payment is settled on their side too.${gatewayMail ? `\nThe gateway confirmation is there as well (${line(gatewayMail)}).` : ''}`
   if (gatewayMail || bankMail) {
