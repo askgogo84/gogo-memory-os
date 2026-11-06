@@ -22,7 +22,7 @@ function tierFromEntitlement(planKey?: string | null): string {
 
 // Authenticated payment-provider events do NOT prove that similarly numbered
 // accounts have the same owner. Resolve exactly one existing row before writing.
-async function resolveVerifiedBillingOwner(input: BillingOwnerInput): Promise<string | null> {
+async function resolveVerifiedBillingOwner(input: BillingOwnerInput, options: { requireRecordedSubscription?: boolean } = {}): Promise<string | null> {
   return resolveBillingOwner(input, async claim => {
     const base = supabase.from('users').select('telegram_id,whatsapp_id,id,razorpay_subscription_id')
     const query = claim.lookup.field === 'whatsapp_id'
@@ -31,7 +31,7 @@ async function resolveVerifiedBillingOwner(input: BillingOwnerInput): Promise<st
     const { data, error } = await query.limit(2)
     if (error) throw error
     return data || []
-  })
+  }, options)
 }
 
 // Never claim a paid, activated or halted plan from an unconfirmed mutation.
@@ -169,7 +169,7 @@ async function updateSubscriptionStatus(entity: any, opts: { revokeNow: boolean 
     telegramId: notes.telegram_id,
     userId: notes.user_id,
     subscriptionId: entity.id,
-  })
+  }, { requireRecordedSubscription: true })
   if (!ownerId) return false
 
   const update: Record<string, any> = { subscription_status: entity.status }
