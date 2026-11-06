@@ -570,7 +570,7 @@ export function isInboxReplyReadQuery(text:string){
 
 // Always read current Gmail thread metadata. Never substitute reminders, old
 // attention rows or model memory, and never write a draft or send a message.
-export async function handleInboxReplyRead(params:{actor:AgentActor;text:string}){
+export async function handleInboxReplyRead(params:{actor:AgentActor;text:string;minAgeDays?:number}){
   if(!isInboxReplyReadQuery(params.text))return null
   const base={runId:'inbox-reply-read',capability:'orchestrator' as const,risk:'low' as const,handledBy:'inbox-reply-read'}
   try{
@@ -581,6 +581,8 @@ export async function handleInboxReplyRead(params:{actor:AgentActor;text:string}
     const candidates=read.threads.flatMap(thread=>{
       const last=[...thread.messages].sort((a,b)=>a.internalDate-b.internalDate).at(-1)
       if(!last||headerEmail(last.from)===read.ownEmail||isAutomatedGmailMessage(last))return []
+      // "Waited more than 3 days for my reply" (6 Nov): only threads whose last message is at least that old.
+      if(params.minAgeDays&&!(Number(last.internalDate)>0&&Date.now()-Number(last.internalDate)>=params.minAgeDays*86_400_000))return []
       const combined=clean(`${last.subject||thread.subject} ${last.snippet}`,900)
       // Subject words such as "Update" and promotional "Activate now" are
       // notifications, not requests for a human response.
@@ -598,7 +600,8 @@ export async function handleInboxReplyRead(params:{actor:AgentActor;text:string}
         ? new Date(last.internalDate).toLocaleString('en-GB',{timeZone:timezone}) : 'date unavailable'
       return `${index+1}. ${formatEmailSnippet(headerName(last.from),100)} — ${formatEmailSnippet(last.subject,180)}\nReceived: ${received}\n${formatEmailSnippet(last.snippet,240)}`
     })
-    const result=lines.length ? `These may need your reply:\n\n${lines.join('\n\n')}` : 'No likely reply requests found in the threads checked.'
+    const age=params.minAgeDays?` waiting ${params.minAgeDays}+ days`:''
+    const result=lines.length ? `These may need your reply${age}:\n\n${lines.join('\n\n')}` : `No likely reply requests${age} found in the threads checked.`
     return {...base,status:'completed' as const,text:`Gmail checked at ${stamp} (${timezone}).\nChecked ${read.threads.length} recent threads from the last 14 days; this is a limited scan.\n\n${result}\n\nNothing sent.`,
       verification:{verified:true,source:'gmail_api',kind:'read',objectKind:'gmail_threads',objectRef:null}}
   }catch{

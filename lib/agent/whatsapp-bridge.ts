@@ -518,6 +518,8 @@ export async function tryRunWhatsAppAttentionCommand(params:{
 
   const inboxReplyRead=await handleInboxReplyRead({actor,text:params.text})
   if(inboxReplyRead)return inboxReplyRead
+  const emailAsk=await import('./email-asks').then(m=>m.tryEmailAsk(actor,params.text),()=>null)
+  if(emailAsk)return {runId:emailAsk.handledBy,status:'completed',capability:'orchestrator',risk:'low',...emailAsk} as any
 
   // "cancel that task" / "stop the flight booking": cancels the owner's in-flight agent run.
   // The parser refuses reminders, calendar, watches, lists, orders and Gmail, so their own cancel paths still win.

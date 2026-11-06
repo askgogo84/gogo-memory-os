@@ -429,6 +429,13 @@ async function handleChatPost(req: NextRequest) {
       await saveConversation(user.telegram_id,text,inboxReplyRead.text)
       return NextResponse.json(inboxReplyRead)
     }
+    // Plain inbox questions (6 Nov live): "emails waiting 3 days for my reply", "subscriptions renewing soon",
+    // "free trials I forgot", "unpaid bills" read Gmail instead of the brain saying it has no access.
+    const emailAsk=await import('@/lib/agent/email-asks').then(m=>m.tryEmailAsk(actor,text),()=>null)
+    if(emailAsk){
+      await saveConversation(user.telegram_id,text,emailAsk.text)
+      return NextResponse.json({runId:emailAsk.handledBy,status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,...emailAsk})
+    }
     // "Who promised to send the proposal?" — loaded only for those phrasings.
     if (/\b(?:who\s+(?:promised|said\s+(?:they|he|she)|owes\s+me|was\s+(?:going|supposed)\s+to)|what\s+(?:did|has)\s+\S+(?:\s+\S+)?\s+promise|waiting\s+(?:on|for)\s+from\s+\S)/i.test(text)) {
       const {handleWhoPromisedQuery} = await import('@/lib/agent/commitments-query')
