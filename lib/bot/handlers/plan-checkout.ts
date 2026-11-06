@@ -20,23 +20,50 @@ export function parsePlanSelection(text: string): CheckoutPlanKey | null {
   return null
 }
 
-async function hasActiveSubscription(telegramId: number, whatsappId: string | null): Promise<boolean> {
-  const digits = String(whatsappId || '').replace(/\D/g, '').slice(-10)
-  const clauses: string[] = [`telegram_id.eq.${telegramId}`]
-  if (digits.length === 10) clauses.push(`whatsapp_id.ilike.*${digits}*`)
+type CheckoutOwnerStatus = 'active' | 'eligible' | 'blocked'
 
-  const { data } = await supabaseAdmin
+/** Identity checks for a financial action must never infer an owner from a phone suffix. */
+function exactSafeOwnerId(value: unknown): string | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
+  const numeric = Number(value)
+  return Number.isSafeInteger(numeric) && String(numeric) === value ? value : null
+}
+
+function internationalWhatsAppPhone(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const raw = value.trim().replace(/^whatsapp:\s*/i, '').trim()
+  if (!/^\+?[0-9][0-9\s()\-]*$/.test(raw)) return null
+  const digits = raw.replace(/\D/g, '')
+  // Full country code is required. A ten-digit local phone never authorizes billing.
+  return /^[1-9]\d{10,14}$/.test(digits) ? digits : null
+}
+
+/**
+ * Read one persisted, exact sender account before either relying on a paid
+ * entitlement or creating a new Razorpay authorization link. Database errors,
+ * ambiguous rows and mismatched stored phones are not evidence of ownership.
+ */
+async function verifiedOwnerCheckoutStatus(telegramId: number, whatsappId: string | null): Promise<CheckoutOwnerStatus> {
+  const owner = exactSafeOwnerId(telegramId)
+  const senderPhone = internationalWhatsAppPhone(whatsappId)
+  if (!owner || !senderPhone) return 'blocked'
+
+  const { data: row, error } = await supabaseAdmin
     .from('users')
-    .select('tier, tier_expires_at, subscription_status')
-    .or(clauses.join(','))
-    .limit(5)
+    .select('telegram_id, whatsapp_id, tier, tier_expires_at, subscription_status')
+    .eq('telegram_id', owner)
+    .maybeSingle()
+  if (error || !row) return 'blocked'
+  if (exactSafeOwnerId(row.telegram_id) !== owner) return 'blocked'
+  if (internationalWhatsAppPhone(row.whatsapp_id) !== senderPhone) return 'blocked'
 
-  const now = Date.now()
-  return (data || []).some((u: any) =>
-    (u.subscription_status === 'active' || u.subscription_status === 'authenticated') &&
-    u.tier && u.tier !== 'free' &&
-    (!u.tier_expires_at || new Date(u.tier_expires_at).getTime() > now)
-  )
+  const expiration = row.tier_expires_at ? Date.parse(String(row.tier_expires_at)) : null
+  if (expiration !== null && !Number.isFinite(expiration)) return 'blocked'
+  const active = (row.subscription_status === 'active' || row.subscription_status === 'authenticated') &&
+    Boolean(row.tier && row.tier !== 'free') &&
+    (expiration === null || expiration > Date.now())
+  return active ? 'active' : 'eligible'
 }
 
 export async function buildPlanCheckoutReply(
@@ -45,12 +72,17 @@ export async function buildPlanCheckoutReply(
 ): Promise<string> {
   const label = PLAN_LABELS[planKey] || PLAN_LABELS.plus
 
+  let checkoutStatus: CheckoutOwnerStatus = 'blocked'
   try {
-    if (await hasActiveSubscription(user.telegramId, user.whatsappId)) {
-      return `You're already on an active Gogo plan. 🎉\n\nReply *usage* to see your capacity, or *cancel* if you'd like to stop.`
-    }
+    checkoutStatus = await verifiedOwnerCheckoutStatus(user.telegramId, user.whatsappId)
   } catch (err) {
-    console.error('plan-checkout: active-sub check failed:', err)
+    console.error('plan-checkout: owner verification failed:', err)
+  }
+  if (checkoutStatus === 'blocked') {
+    return "I couldn't verify that this WhatsApp number belongs to your billing account. No subscription link was created. Please check the connected number before trying again."
+  }
+  if (checkoutStatus === 'active') {
+    return `You're already on an active Gogo plan. 🎉\n\nReply *usage* to see your capacity, or *cancel* if you'd like to stop.`
   }
 
   const phone = user.whatsappId || ''
