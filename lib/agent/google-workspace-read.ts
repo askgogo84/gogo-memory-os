@@ -53,7 +53,9 @@ export function extractEmailSender(input: string): { sender: string | null; rest
   return { sender, rest: raw.replace(m[0], ' ').replace(/\s+/g, ' ').trim() }
 }
 
-async function credentials(actor: AgentActor) {
+type ExtraAccount = import('./gmail-accounts').ExtraGmailAccount
+async function credentials(actor: AgentActor, account?: ExtraAccount | null) {
+  if (account) return { gmail_connected: true, gmail_email: account.email, gmail_access_token: account.accessToken, gmail_refresh_token: account.refreshToken } as any
   const { data, error } = await supabaseAdmin.from('users')
     .select('gmail_connected,gmail_access_token,gmail_refresh_token,gmail_email')
     .eq('telegram_id', actor.legacyTelegramId).maybeSingle()
@@ -82,9 +84,10 @@ async function credentials(actor: AgentActor) {
   return {...data,gmail_access_token:access,gmail_refresh_token:refresh} as any
 }
 
-async function refresh(actor: AgentActor, refreshToken: string) {
+async function refresh(actor: AgentActor, refreshToken: string, account?: ExtraAccount | null) {
   const token = await refreshGmailAccessToken(refreshToken)
   if (!token) throw new Error('workspace_reconnect_required')
+  if (account) { await import('./gmail-accounts').then(m => m.saveExtraAccessToken(account.id, token)); return token }
   const { error } = await supabaseAdmin.from('users').update({ gmail_access_token: encryptGoogleToken(token) }).eq('telegram_id', actor.legacyTelegramId)
   if (error) console.error('WORKSPACE_ACCESS_TOKEN_PERSIST_FAILED:', error.message)
   return token
@@ -102,7 +105,7 @@ async function composioDriveFor(actor: AgentActor): Promise<((url:string)=>Promi
   }catch(err:any){console.error('COMPOSIO_DRIVE_LOOKUP_FAILED:',String(err?.message||err).slice(0,160));return null}
 }
 
-async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit = {}) {
+async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit = {}, account?: ExtraAccount | null) {
   if (!Number.isSafeInteger(actor.legacyTelegramId) || actor.legacyTelegramId === 0) throw new Error('workspace_owner_invalid')
   // OAuth reach and the user's read preference are separate. Check before even
   // loading credentials; Drive/Contacts retain their independent Workspace access.
@@ -127,9 +130,9 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
       if(!native)return viaComposio(url)
     }
   }
-  const creds = await credentials(actor)
+  const creds = await credentials(actor, account)
   let token = String(creds.gmail_access_token || '')
-  if (!token && creds.gmail_refresh_token) token = await refresh(actor, String(creds.gmail_refresh_token))
+  if (!token && creds.gmail_refresh_token) token = await refresh(actor, String(creds.gmail_refresh_token), account)
 
   const run = (accessToken:string) => fetch(url, {
     ...init,
@@ -138,7 +141,7 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
   })
   let response = await run(token)
   if (response.status === 401 && creds.gmail_refresh_token) {
-    token = await refresh(actor, String(creds.gmail_refresh_token))
+    token = await refresh(actor, String(creds.gmail_refresh_token), account)
     response = await run(token)
   }
   if ((response.status === 403 || response.status === 401) && viaComposio) return viaComposio(url)
@@ -150,9 +153,9 @@ function header(headers:any[], name:string) {
   return String((headers || []).find((x:any) => String(x?.name || '').toLowerCase() === name.toLowerCase())?.value || '')
 }
 
-async function gmailMetadata(actor:AgentActor, id:string, auditBody=false) {
+async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, account?:ExtraAccount|null) {
   const url=`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=${auditBody?'full':'metadata'}&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID`
-  const response=await workspaceFetch(actor,url)
+  const response=await workspaceFetch(actor,url,{},account)
   if(!response.ok)throw new Error(`workspace_email_message_failed:${response.status}`)
   const data:any=await response.json()
   const headers=data?.payload?.headers||[]
@@ -170,18 +173,39 @@ async function gmailMetadata(actor:AgentActor, id:string, auditBody=false) {
     to:formatEmailSnippet(header(headers,'To'),240),
     date:clean(header(headers,'Date'),120),
     snippet:formatEmailSnippet(data?.snippet||''),
+    ...(account?{account:account.email}:{}),
     ...(auditBody?{evidence:formatEmailSnippet(body||data?.snippet||'',5000)}:{}),
   }
+}
+
+// Every Google account the person connected (6 Nov, owner: gmail.com and tipplr.in): the primary (null) first,
+// then the extras. An extra account that fails is logged and skipped, never a reason to lose the primary's results.
+async function allAccounts(actor:AgentActor):Promise<(ExtraAccount|null)[]> {
+  const extras=await import('./gmail-accounts').then(m=>m.listExtraGmailAccounts(actor.legacyTelegramId),()=>[] as ExtraAccount[])
+  return [null,...extras]
+}
+async function acrossAccounts<T>(actor:AgentActor, read:(account:ExtraAccount|null)=>Promise<T[]>):Promise<T[]> {
+  const accounts=await allAccounts(actor)
+  const settled=await Promise.allSettled(accounts.map(read))
+  const out:T[]=[]
+  settled.forEach((s,i)=>{
+    if(s.status==='fulfilled')out.push(...s.value)
+    else if(i===0)throw s.reason
+    else console.error('WORKSPACE_EXTRA_ACCOUNT_FAILED:',JSON.stringify({email:accounts[i]?.email,error:String(s.reason?.message||s.reason).slice(0,100)}))
+  })
+  return out
 }
 
 /** Messages for an exact Gmail query (newest first), metadata only. */
 export async function searchWorkspaceEmailsByQuery(actor:AgentActor, q:string, maxResults=5) {
   const params=new URLSearchParams({maxResults:String(Math.max(1,Math.min(10,Math.floor(maxResults||5)))),q})
-  const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`)
-  if(!response.ok)throw new Error(`workspace_email_search_failed:${response.status}`)
-  const data:any=await response.json()
-  const ids=(Array.isArray(data?.messages)?data.messages:[]).map((x:any)=>String(x?.id||'')).filter(Boolean)
-  const messages=await Promise.all(ids.map((id:string)=>gmailMetadata(actor,id)))
+  const messages=await acrossAccounts(actor,async account=>{
+    const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,{},account)
+    if(!response.ok)throw new Error(`workspace_email_search_failed:${response.status}`)
+    const data:any=await response.json()
+    const ids=(Array.isArray(data?.messages)?data.messages:[]).map((x:any)=>String(x?.id||'')).filter(Boolean)
+    return Promise.all(ids.map((id:string)=>gmailMetadata(actor,id,false,account)))
+  })
   return messages.filter(Boolean).sort((a:any,b:any)=>(Date.parse(b.date||'')||0)-(Date.parse(a.date||'')||0))
 }
 
@@ -190,15 +214,15 @@ export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12
     maxResults:String(Math.max(1,Math.min(20,Math.floor(maxResults||12)))),
     q:'in:inbox newer_than:2d',
   })
-  const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`)
-  if(!response.ok)throw new Error(`workspace_email_recent_failed:${response.status}`)
-  const data:any=await response.json()
-  const ids=(Array.isArray(data?.messages)?data.messages:[]).slice(0,20).map((x:any)=>String(x?.id||'')).filter(Boolean)
-  const settled=await Promise.allSettled(ids.map((id:string)=>gmailMetadata(actor,id)))
-  const messages=settled
-    .filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled')
-    .map(x=>x.value)
-    .filter(Boolean)
+  const messages=await acrossAccounts(actor,async account=>{
+    const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,{},account)
+    if(!response.ok)throw new Error(`workspace_email_recent_failed:${response.status}`)
+    const data:any=await response.json()
+    const ids=(Array.isArray(data?.messages)?data.messages:[]).slice(0,20).map((x:any)=>String(x?.id||'')).filter(Boolean)
+    const settled=await Promise.allSettled(ids.map((id:string)=>gmailMetadata(actor,id,false,account)))
+    return settled.filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled').map(x=>x.value).filter(Boolean)
+  })
+  messages.sort((a:any,b:any)=>(Date.parse(b.date||'')||0)-(Date.parse(a.date||'')||0))
   return {messages}
 }
 

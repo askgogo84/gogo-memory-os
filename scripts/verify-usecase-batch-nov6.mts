@@ -51,6 +51,9 @@ assert.equal(redactSecretShapedText('Review your bank/credit card statements for
 assert.match(redactSecretShapedText('my card number is 4111 1111 1111 1111'), /withheld/, 'a real card number stays hidden')
 assert.match(redactSecretShapedText('password: hunter2'), /withheld/, 'passwords always hidden')
 assert.match(redactSecretShapedText('send it to 123456789012 please'), /withheld/, 'unlabelled long digit runs stay hidden')
+assert.equal(redactSecretShapedText('Payment order successful - 6856147904'), 'Payment order successful - 6856147904', 'an order number is shown (6 Nov live)')
+assert.equal(redactSecretShapedText('Order ID: OD123456789012345 shipped'), 'Order ID: OD123456789012345 shipped')
+assert.match(redactSecretShapedText('account number 123456789012'), /withheld/, 'account numbers still hidden')
 console.log('✓ business phone numbers shown; card, password and unlabelled ids still withheld')
 
 // M10 and W9 wiring.

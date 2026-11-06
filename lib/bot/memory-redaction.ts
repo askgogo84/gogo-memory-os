@@ -102,6 +102,11 @@ export function redactSecretShapedText(content: string): string {
     reportLinks.some(link => offset >= link.index! && offset + value.length <= link.index! + link[0].length)
       || /^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/.test(value.trim())
       || isPhoneNumber(value, out.slice(0, offset))
+      // 6 Nov live: 'Payment order successful - 6856147904' (a CCAvenue order number) was withheld. An order,
+      // invoice, booking, PNR, tracking or reference number is the detail the person needs; only unlabelled runs
+      // and card/account/ID labels stay hidden.
+      || (/\b(?:order|invoice|booking|pnr|tracking|awb|shipment|reference|ref|txn|transaction|utr|receipt|ticket|consignment|docket)\b[^\d\n]{0,30}$/i.test(out.slice(Math.max(0, offset - 40), offset))
+        && !/\b(?:account|a\/c|card|aadhaar|pan|passport|ifsc|cvv|pin|otp|mobile|phone)\b/i.test(out.slice(Math.max(0, offset - 40), offset)))
       ? value : '[sensitive detail withheld]')
 
   return out
