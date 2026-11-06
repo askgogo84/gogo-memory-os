@@ -256,7 +256,7 @@ export function exactTravelOwnerId(input: unknown): string | null {
   if (typeof input === 'number' && !Number.isSafeInteger(input)) return null
   if (typeof input !== 'string' && typeof input !== 'number') return null
   const id = String(input).trim()
-  if (!/^-?[1-9]\\d*$/.test(id)) return null
+  if (!/^-?[1-9]\d*$/.test(id)) return null
   const n = BigInt(id)
   return n >= BigInt('-9223372036854775808') && n <= BigInt('9223372036854775807') ? id : null
 }
