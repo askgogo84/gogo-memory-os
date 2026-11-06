@@ -93,13 +93,14 @@ const USmatch = await f.functions.resolveRecipientTelegramId(1001, 'alex')
 assert.equal(USmatch.telegramId, 2002, 'complete US identity must not authorize an Indian owner')
 assert.equal(USmatch.hasContact, true)
 assert.equal(f.calls.filter(c => c.table === 'users' && c.method === 'in').length, 1)
-assert.equal(f.calls.filter(c => c.table === 'users' && c.method === 'in')[0].value.includes('whatsapp:+14155552671'), true)
-assert.equal(f.calls.filter(c => c.table === 'users' && c.method === 'in')[0].value.includes('whatsapp:+914155552671'), false)
+const candidatePhones = f.calls.filter(c => c.table === 'users' && c.method === 'in')[0].value as string[]
+assert.equal(candidatePhones.includes('whatsapp:+14155552671'), true)
+assert.equal(candidatePhones.includes('whatsapp:+914155552671'), false)
 assert.equal(f.writes.length, 0, 'recipient resolution is read-only')
 const reply = await f.functions.handleBucketCommand(1001, 'share my travel topic with alex')
 assert.match(reply, /Shared your/)
 assert.equal(f.writes.length, 1)
-assert.equal(f.writes[0].recipient_telegram_id, 2002, 'same last ten digits must never grant wrong recipient')
+assert.equal((f.writes[0] as { recipient_telegram_id: number }).recipient_telegram_id, 2002, 'same last ten digits must never grant wrong recipient')
 
 for (const [label, options] of [
   ['India matches India alone', { phone: '+914155552671', users: [US, IN] }],
