@@ -23,36 +23,82 @@ export async function hasTopic(telegramId: number, topic: string): Promise<boole
   return (count || 0) > 0
 }
 
-/** Resolve a contact name -> recipient telegram_id (must be an existing AskGogo user). */
+/**
+ * Private memory sharing is an authorization decision. A saved friend contact
+ * must contain the complete international number. Country-code/suffix guesses,
+ * multiple matching users, unsafe BIGINTs and lookup errors fail closed.
+ */
+export function canonicalSharePhone(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const raw = value.trim().replace(/^whatsapp:\s*/i, '')
+  if (!/^\+?[0-9][0-9 ()-]*$/.test(raw)) return null
+  const digits = raw.replace(/\D/g, '')
+  if (digits.length < 11 || digits.length > 15 || digits.startsWith('0')) return null
+  return digits
+}
+
+function exactSafeRecipientId(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? value : null
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
+  const n = Number(value)
+  return Number.isSafeInteger(n) && String(n) === value ? n : null
+}
+
+function explicitPhoneVariants(fullDigits: string): string[] {
+  return [
+    `whatsapp:+${fullDigits}`,
+    `+${fullDigits}`,
+    fullDigits,
+    `whatsapp:${fullDigits}`,
+  ]
+}
+
+/** Resolve a contact name to exactly ONE verified AskGogo owner, never by suffix. */
 export async function resolveRecipientTelegramId(
   ownerTelegramId: number,
   name: string
 ): Promise<{ telegramId: number | null; hasContact: boolean }> {
-  const { data: c } = await supabaseAdmin
+  if (!Number.isSafeInteger(ownerTelegramId) || ownerTelegramId === 0) {
+    return { telegramId: null, hasContact: false }
+  }
+  const { data: contact, error: contactError } = await supabaseAdmin
     .from('friend_contacts')
     .select('whatsapp_id')
     .eq('owner_telegram_id', ownerTelegramId)
     .eq('name', name)
     .maybeSingle()
-  if (!c?.whatsapp_id) return { telegramId: null, hasContact: false }
-  const last10 = String(c.whatsapp_id).replace(/\D/g, '').slice(-10)
-  const { data: u } = await supabaseAdmin
+  if (contactError || !contact?.whatsapp_id) return { telegramId: null, hasContact: false }
+  const full = canonicalSharePhone(contact.whatsapp_id)
+  if (!full) return { telegramId: null, hasContact: true }
+
+  // Never resolve an ambiguous number to the first row or invent an owner ID.
+  const { data: rows, error: recipientError } = await supabaseAdmin
     .from('users')
-    .select('telegram_id, whatsapp_id')
-    .ilike('whatsapp_id', `%${last10}%`)
-    .not('telegram_id', 'is', null)
-    .order('telegram_id', { ascending: true })
-    .limit(1)
-  return { telegramId: u?.[0]?.telegram_id ?? null, hasContact: true }
+    .select('telegram_id,whatsapp_id')
+    .in('whatsapp_id', explicitPhoneVariants(full))
+    .limit(2)
+  if (recipientError || !Array.isArray(rows) || rows.length !== 1) {
+    return { telegramId: null, hasContact: true }
+  }
+  const recipient = rows[0]
+  if (canonicalSharePhone(recipient.whatsapp_id) !== full) {
+    return { telegramId: null, hasContact: true }
+  }
+  return { telegramId: exactSafeRecipientId(recipient.telegram_id), hasContact: true }
 }
 
 export async function grantShare(owner: number, recipient: number, topic: string): Promise<void> {
-  await supabaseAdmin
+  if (!Number.isSafeInteger(owner) || owner === 0 || !Number.isSafeInteger(recipient) || recipient === 0) {
+    throw new Error('shared_memory_owner_invalid')
+  }
+  const { error } = await supabaseAdmin
     .from('memory_shares')
     .upsert(
       { owner_telegram_id: owner, recipient_telegram_id: recipient, topic },
       { onConflict: 'owner_telegram_id,recipient_telegram_id,topic' }
     )
+  // An unsuccessful/unknown DB write must not be reported as a successful share.
+  if (error) throw new Error('shared_memory_grant_unconfirmed')
 }
 
 /** Read path: memories shared TO this user, semantically matched to a query. */
