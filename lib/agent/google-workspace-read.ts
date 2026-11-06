@@ -216,7 +216,7 @@ export function workspaceEmailAuditScope(input:string) {
 // Search is candidate discovery, not proof that every keyword match is a bill.
 // Keep explicit receipts, dues and dated renewal notices; do not infer a bill
 // from developer threads, newsletters or generic subscription/payment marketing.
-function emailBillingAmounts(evidence:string) {
+export function emailBillingAmounts(evidence:string) {
   // Preserve explicit currency codes instead of inferring USD from "$" or a
   // currency from the account locale. Uppercase ISO codes avoid prose like "all 15".
   const codes=Intl.supportedValuesOf('currency').join('|')
