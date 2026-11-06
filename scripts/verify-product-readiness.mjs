@@ -88,7 +88,6 @@ for (const path of [
   'app/api/debug/voice-version/route.ts',
   'app/api/debug/whatsapp-version/route.ts',
   'app/api/dev/migrate-nutrition/route.ts',
-  'app/api/payment/trial/route.ts',
   'app/api/payment/create/route.ts',
   'app/api/payments/create-link/route.ts',
 ]) {
@@ -96,6 +95,15 @@ for (const path of [
     assert.match(read(path), /(?:VERCEL_ENV|NODE_ENV)\s*===\s*['"]production['"]/)
   })
 }
+
+// The retired arbitrary-user trial grant is not safe even in preview environments.
+// A preview may share a production DB, and no unauthenticated route can grant tiers.
+check('legacy public trial endpoint retired on preview, development and production', () => {
+  const source = read('app/api/payment/trial/route.ts')
+  assert.match(source, /export async function POST\\s*\\(/)
+  assert.match(source, /status:\\s*404\\b/)
+  assert.doesNotMatch(source, /\\b(?:supabaseAdmin|createClient|trial_started_at|tier_expires_at|VERCEL_ENV|NODE_ENV)\\b/)
+})
 
 // This retired preview control-plane endpoint is stricter than the standard
 // dev/debug routes: it must fail closed in *all* environments, not only prod.
