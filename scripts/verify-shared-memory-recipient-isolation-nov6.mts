@@ -89,7 +89,9 @@ const exactRecipient = { telegram_id: 1001, whatsapp_id: 'whatsapp:+14155552671'
 console.log('PASS same last ten digits from different countries never select wrong owner')
 {
   const h = fixture({ users: [sameSuffixWrongCountry] })
-  assert.deepEqual(await h.api.resolveRecipientTelegramId(600, 'divya'), { telegramId: null, hasContact: true })
+  const noRecipient = await h.api.resolveRecipientTelegramId(600, 'divya')
+  assert.equal(noRecipient.telegramId, null)
+  assert.equal(noRecipient.hasContact, true)
   assert.equal(h.state.writes.length, 0)
 }
 console.log('PASS no verified recipient = no cross-account authorization')
