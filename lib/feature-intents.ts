@@ -322,6 +322,16 @@ export async function routeFeatureIntent(
   const normalized=normalizeUserInputForRouting(text)
   if(normalized.changed) console.info('INPUT_NORMALIZED_FOR_FEATURE_ROUTING:',{reasons:normalized.reasons,originalLength:String(text||'').length,normalizedLength:normalized.text.length})
   text=normalized.text
+  // A named secondary Gmail revocation must run before legacy/agent routing and
+  // before the generic Workspace "connect" link branch below. Never turn an
+  // explicit stop-reading command into an OAuth connect URL.
+  if (extra?.telegramId && /^\\s*(?:please\\s+)?(?:disconnect|remove|unlink|stop\\s+reading)\\b/i.test(text)) {
+    const { REMOVE_ACCOUNT_RE } = await import('@/lib/agent/gmail-accounts')
+    if (REMOVE_ACCOUNT_RE.test(text)) {
+      const { buildGmailConnectReply } = await import('@/lib/bot/handlers/gmail-read')
+      return buildGmailConnectReply(extra.telegramId, text)
+    }
+  }
   if(extra?.telegramId&&(/^\s*(?:compare grocery prices for\s|(?:show|check)\s+(?:my|the)\s+(?:food|grocery) comparison(?: status)?[.!]?\s*$)/i.test(text)||isFoodComparisonRequest(text)||/\b[1-9]\d{5}\b/.test(text)||/^(?:stop|cancel) (?:the )?food comparison/i.test(text))){
     const food=await tryFoodComparison({telegramId:extra.telegramId,text})
     __trace.mark('food')
