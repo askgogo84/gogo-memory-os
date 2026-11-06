@@ -14,7 +14,8 @@ export function replyWaitAsk(text: string): { minAgeDays: number } | null {
   if (!mail || !waiting) return null
   const m = t.match(/\b(?:more than|over|at least|older than|for)\s+(\d{1,2}|one|two|three|four|five|six|seven|ten|a)\s+(day|days|week|weeks)\b/)
   const n = m ? (NUM[m[1]] ?? Number(m[1])) * (/week/.test(m[2]) ? 7 : 1) : 0
-  return { minAgeDays: Math.min(n, 14) }
+  // Preserve the user's explicit age; the bounded Gmail reader must not silently rewrite it.
+  return { minAgeDays: n }
 }
 
 export type BillingAskKind = 'renewals' | 'trials' | 'bills'
@@ -52,6 +53,15 @@ const notConnected = (code: string) => /workspace_not_connected|workspace_reconn
 export async function tryEmailAsk(actor: AgentActor, text: string): Promise<{ text: string; handledBy: string } | null> {
   const wait = replyWaitAsk(text)
   if (wait) {
+    // The underlying Gmail attention reader examines only the last 14 days. For
+    // older-than-window questions, a 14-day search cannot establish an absence;
+    // do not silently substitute a different age or claim a Gmail verification.
+    if (wait.minAgeDays >= 14) {
+      return {
+        text: `I can currently check only Gmail threads from the last 14 days for reply requests. You asked about emails waiting ${wait.minAgeDays}+ days, outside that limited scan, so I cannot verify them. I did not read Gmail, send, draft or change anything.`,
+        handledBy: 'inbox-reply-read',
+      }
+    }
     const { handleInboxReplyRead } = await import('./open-loops')
     const out: any = await handleInboxReplyRead({ actor, text: 'which emails need my reply', ...(wait.minAgeDays ? { minAgeDays: wait.minAgeDays } : {}) })
     return out?.text ? { text: out.text, handledBy: 'inbox-reply-read' } : null
