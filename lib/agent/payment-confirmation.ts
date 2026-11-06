@@ -81,6 +81,7 @@ export function receiptQuery(p: PaymentConfirmation): string {
 
 type Mail = { from: string; subject: string; snippet?: string; date?: string }
 // Payment gateways and UPI apps. A bank's own debit alert is the forwarded SMS again, not a receipt.
+const BANK = /\b(?:hdfc|icici|sbi|axis|kotak\s+bank|idfc|yes\s*bank|indusind|pnb|federal|rbl|canara|union\s+bank|bank\s+of\s+baroda)\b/i
 const GATEWAY = /\b(?:ccavenue|razorpay|payu|billdesk|paytm|phonepe|gpay|google\s*pay|cashfree|instamojo|juspay|stripe|npci|bharatpe|amazon\s*pay)\b/i
 /** Reads what the emails prove. Pure. */
 export function receiptVerdict(p: PaymentConfirmation, mails: Mail[]): string {
@@ -89,9 +90,14 @@ export function receiptVerdict(p: PaymentConfirmation, mails: Mail[]): string {
   const about = mails.filter(m => amountRe.test(`${m.subject} ${m.snippet || ''}`) || [p.reference, p.transactionId].some(r => r && `${m.subject} ${m.snippet || ''}`.includes(r)))
   const merchantMail = about.find(m => words.some(w => m.from.toLowerCase().includes(w)) || /\b(?:receipt|credited|received|acknowledg|emi\s+received|payment\s+received|thank you for (?:your )?payment)\b/i.test(`${m.subject} ${m.snippet || ''}`) && !GATEWAY.test(m.from))
   const gatewayMail = about.find(m => GATEWAY.test(`${m.from} ${m.subject}`) && m !== merchantMail)
+  // 6 Nov live: HDFC's "Confirmation of Payment Using HDFC NetBanking" is the bank confirming the payment went out.
+  const bankMail = about.find(m => BANK.test(m.from) && /\b(?:confirm|successful|processed|debited)\b/i.test(`${m.subject} ${m.snippet || ''}`) && m !== merchantMail)
   const line = (m: Mail) => `${m.from.replace(/\s*<[^>]+>/, '').replace(/^"|"$/g, '')}: "${m.subject.replace(/\s+/g, ' ').slice(0, 90)}"`
   if (merchantMail) return `Found it. ${line(merchantMail)}. That's ${p.merchant}'s own confirmation of the ${p.amountText}, so this payment is settled on their side too.${gatewayMail ? `\nThe gateway confirmation is there as well (${line(gatewayMail)}).` : ''}`
-  if (gatewayMail) return `Found the gateway confirmation: ${line(gatewayMail)}: ${p.amountText} to ${p.merchant}, payment successful.\n\nNo receipt from ${p.merchant} itself yet. The payment succeeded at the gateway; ${LENDER.test(p.merchant) ? 'the loan credit' : 'their side'} is still unconfirmed. They usually send one within a day or two; say "check again tomorrow" and I'll look.`
+  if (gatewayMail || bankMail) {
+    const m = (gatewayMail || bankMail)!, who = gatewayMail ? 'the gateway' : 'your bank'
+    return `Found ${who}'s confirmation: ${line(m)}: ${p.amountText} to ${p.merchant}, payment successful.\n\nNo receipt from ${p.merchant} itself yet. The payment went through on ${who === 'your bank' ? "your bank's" : "the gateway's"} side; ${LENDER.test(p.merchant) ? 'the loan credit' : 'their side'} is still unconfirmed. They usually send one within a day or two; say "check again tomorrow" and I'll look.`
+  }
   if (about.length) return `I found ${about.length} email${about.length === 1 ? '' : 's'} mentioning ${p.amountText}, but none from ${p.merchant} or a payment gateway about this payment. ${line(about[0])}.`
   return `No email about this ${p.amountText} payment to ${p.merchant} in the last 10 days, from them or a payment gateway. The bank confirmation you forwarded is the only record so far. Say "check again tomorrow" and I'll look again.`
 }
