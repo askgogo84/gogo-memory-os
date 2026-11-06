@@ -285,6 +285,14 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json({text:out,handledBy:'occasion-invite',status:'completed',...(inv.mediaUrl?{imageUrl:inv.mediaUrl}:{})})
       }
     }
+    // Meeting prep, same as WhatsApp (Duet benchmark, 6 Nov).
+    if((globalThis as any).process?.env?.VERCEL_ENV){
+      const prep=await import('@/lib/agent/meeting-prep-ask').then(m=>m.isMeetingPrepAsk(text)?m.tryMeetingPrep(actor,text):null,()=>null)
+      if(prep){
+        await saveConversation(user.telegram_id,text,prep)
+        return NextResponse.json({text:prep,handledBy:'meeting-prep',status:'completed',readOnly:true,mutated:false})
+      }
+    }
     // Home/office saved once, same as WhatsApp (5 Nov, owner).
     if((globalThis as any).process?.env?.VERCEL_ENV&&/^\s*(?:(?:please\s+)?(?:remember|note|save)\s+(?:that\s+)?)?(?:i\s+(?:live|stay)|we\s+(?:live|stay)|my\s+(?:home|house|office|work)|home|office|work)\b|^\s*[A-Za-z0-9][A-Za-z0-9 .,'-]{1,58}$/i.test(text)){
       const placeTurn=await import('@/lib/agent/places-context').then(m=>m.tryPlaceCommand({telegramId:String(user.telegram_id),text}),()=>null)
@@ -359,7 +367,7 @@ async function handleChatPost(req: NextRequest) {
       }
     }
     // Local places ("Suggest 3 South Indian restaurants in Rajajinagar"): Google local results, in the area asked.
-    if(text.length<=200&&/^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert)/i.test(text)&&(/\b(?:in|near|around|at)\s+[a-z]/i.test(text)||/\b(?:nearby|near\s+by|close\s+by)\b/i.test(text))&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text)){
+    if(text.length<=200&&/^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert|barber|dentist|dental|doctor|pediatrician|dermatologist|physio|plumber|electrician|carpenter|mechanic|car service|bike service|tailor|laundr|dry clean|vets?\b|veterinar|pet shop|optician|florist|atms?\b|petrol|ev charg|charging station)/i.test(text)&&(/\b(?:in|near|around|at)\s+[a-z]/i.test(text)||/\b(?:nearby|near\s+by|close\s+by)\b/i.test(text))&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text)){
       const pl:any=await import('@/lib/agent/places-context').catch(()=>null)
       const out=pl?.answerPlacesWithContext?await Promise.resolve().then(()=>pl.answerPlacesWithContext({text,telegramId:String(user.telegram_id)})).catch(()=>null):null
       if(typeof out==='string'&&out){

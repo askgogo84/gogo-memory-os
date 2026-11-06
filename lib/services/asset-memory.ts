@@ -710,6 +710,9 @@ export function isTicketRetrievalAsk(text: string): boolean {
   if (isBookingRecallAsk(t)) return true
   if (!TICKET_NOUN.test(t)) return false
   if (/\b(?:book|buy|purchase|reserve|cancel|refund|price|cost|how much|available|availability|get\s+tickets?\s+for)\b/.test(t)) return false
+  // 6 Nov live: "Watch for Coldplay concert tickets in Mumbai and alert me when they open" showed an old flight
+  // ticket ("open" read as "open my ticket"). Watching for tickets to go on sale is not retrieving a saved one.
+  if (/\b(?:watch|alert|notify|monitor|track|keep an eye|let me know|tell me when|when (?:they|it|tickets?|bookings?|sales?) (?:open|go|are|is|drop|release|start)|on sale|go live|goes live)\b/.test(t)) return false
   const words = t.split(/\s+/).filter(Boolean).length
   const verb = /\b(show|send|share|give|find|get|pull up|open|where'?s|where is|need|my)\b/.test(t)
   return words <= 6 || verb

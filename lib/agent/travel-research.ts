@@ -369,6 +369,8 @@ export type FlightBrief = {
   nonStop?: boolean
   timeOfDay?: TimeOfDay | 'any'
   useDefaults?: boolean
+  /** The person asked to watch or be alerted about fares; Gogo can't watch fares yet, so it says so. */
+  watchAsked?: boolean
 }
 export type FlightBriefSlot = 'route' | 'date' | 'trip' | 'return' | 'return_confirm' | 'travellers' | 'cabin' | 'time'
 
@@ -439,11 +441,19 @@ function travellersFrom(text: string): Pick<FlightBrief, 'adults' | 'children' |
 
 /** Everything the sentence says about the trip. Fields it does not mention stay undefined. */
 export function parseFlightBriefText(raw: string, now = new Date(), timezone = 'Asia/Kolkata'): FlightBrief {
-  const text = String(raw || '')
+  // 6 Nov live: "Monitor prices for a Bengaluru to Delhi flight…" searched "Prices For A Bengaluru", and "Alert me
+  // when Bengaluru to Delhi flight fares…" searched "Alert Me When Bengaluru". Watch wording is not the route.
+  const WATCH = /\b(?:(?:please\s+)?(?:alert|notify|tell|ping|message|update)\s+me\s+(?:when|if|once|whenever)\s+(?:the\s+)?|(?:monitor|watch|track|keep\s+an\s+eye\s+on)\s+(?:the\s+)?(?:prices?|fares?|rates?)\s+(?:for|of|on)\s+(?:a\s+|an\s+|the\s+)?|(?:monitor|watch|track)\s+(?:the\s+)?|(?:and\s+)?(?:tell|alert|notify)\s+me\s+when\s+(?:it|they|the\s+(?:price|fare)s?)\s+(?:drops?|falls?|goes\s+down)\b.*$|(?:flight\s+)?(?:fares?|prices?)\s+(?:drop|fall|go\s+down)s?\s+(?:below|under)\s+(?:rs\.?|inr|₹)?\s*[\d,]+k?|\bflight\s+fares?\b)/gi
+  const watchAsked = /\b(?:alert|notify|monitor|watch|track|keep\s+an\s+eye|tell\s+me\s+when|drops?|falls?)\b/i.test(String(raw || ''))
+  const text = String(raw || '').replace(WATCH, ' ').replace(/\s{2,}/g, ' ').trim()
   // Cabin and trip-type words describe the ticket, not the route; take them out before reading the route.
-  const routeOnly = text.replace(/\b(?:premium[\s-]*economy|business|economy|first)(?:[\s-]*class)?\b/gi, ' ').replace(/\b(?:round[\s-]*trip|one[\s-]*way|two[\s-]*way|non[\s-]*stop|direct)\b/gi, ' ').replace(/\s{2,}/g, ' ').trim()
+  const routeOnly = text.replace(/\b(?:premium[\s-]*economy|business|economy|first)(?:[\s-]*class)?\b/gi, ' ').replace(/\b(?:round[\s-]*trip|one[\s-]*way|two[\s-]*way|non[\s-]*stop|direct)\b/gi, ' ')
+    // 6 Nov: "Bengaluru to Delhi flight on 20 Dec" read the destination as "Delhi Flight" (no airport code), and
+    // "book a Bengaluru to Delhi flight" lost the origin. Ticket words and a leading "book a" are not places.
+    .replace(/(\bto\s+[A-Za-z][A-Za-z.'-]*(?:\s+[A-Za-z][A-Za-z.'-]*)?)\s+(?:flights?|air\s*tickets?|plane\s*tickets?|air\s*fares?|fares?)\b/gi, '$1').replace(/^\s*(?:please\s+)?(?:book|find|search|get|show)\s+(?:me\s+)?(?:an?\s+|the\s+|some\s+)?(?:cheap(?:est)?\s+)?/i, '')
+    .replace(/\s{2,}/g, ' ').trim()
   const context = buildTravelResearchContext(routeOnly, now, timezone)
-  const brief: FlightBrief = {}
+  const brief: FlightBrief = watchAsked ? { watchAsked: true } : {}
   if (context.origin) { brief.originLabel = context.origin.label; if (context.origin.code) brief.originCode = context.origin.code }
   if (context.destination) { brief.destinationLabel = context.destination.label; if (context.destination.code) brief.destinationCode = context.destination.code }
 
@@ -602,7 +612,7 @@ export function flightSearchStartedText(brief: FlightBrief): string {
   const perAdult = b.children || b.infants ? ' Fares are per adult; child and infant fares can differ.' : ''
   return `Searching ${cityOf(b, 'origin')} to ${cityOf(b, 'destination')}, ${when}: ${travellersLabel(b)}, ${CABIN_TEXT[b.cabin!]}, ${b.timeOfDay && b.timeOfDay !== 'any' ? `${b.timeOfDay} departures, ` : ''}${round ? 'round trip' : 'one-way'}.\n\n` +
     `${round ? 'I search the round trip as one booking for both dates, so the price is the round-trip total. ' : 'One-way, since you gave one date; for a return, send it again with “back <date>”. '}` +
-    `I'm checking the flight sites for exactly these dates and will send the cheapest options here when it finishes. To change travellers or cabin, send the request again, like “flights BLR to SIN 28 Oct, back 2 Nov, 2 adults, business”. When it finishes, say “book the cheapest” and I will take it to the payment page; you pay yourself.${perAdult}`
+    `I'm checking the flight sites for exactly these dates and will send the cheapest options here when it finishes.${b.watchAsked ? ' I can\'t keep watching flight fares on my own yet, so this is today\'s price; say "check fares again" any time.' : ''} To change travellers or cabin, send the request again, like “flights BLR to SIN 28 Oct, back 2 Nov, 2 adults, business”. When it finishes, say “book the cheapest” and I will take it to the payment page; you pay yourself.${perAdult}`
 }
 
 // Re-exported so the dashboard route reads the same specialist-travel rule as WhatsApp and /api/agent/run.

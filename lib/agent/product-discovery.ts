@@ -10,7 +10,10 @@ const PRODUCT_NOUN = /\b(shirts?|t-?shirts?|tees?|polos?|kurtas?|kurtis?|sarees?
 const ASK = /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:find|show|suggest|recommend|get|search(?: for)?|look(?:ing)? for|i (?:want|need)(?: to buy)?|buy|shop for|any good)\b/i
 const NOT_DISCOVERY = /\b(compare|comparison|price of|track|watch|alert|order status|my order|delivered|return|refund|recipe|restaurant|swiggy|zomato|instamart|blinkit|zepto|grocer(?:y|ies)|flight|hotel|train|ticket|movie)\b/i
 
-export type ProductAsk = { query: string; maxPrice: number | null; minPrice: number | null }
+export type ProductAsk = { query: string; maxPrice: number | null; minPrice: number | null; rated?: boolean }
+// 6 Nov live: "a standing desk under ₹25,000 with good reviews" searched for titles containing "good reviews". A wish
+// for good reviews is a ranking (rating first), not words in the product name.
+const RATED = /\b(?:with\s+|that\s+(?:has|have)\s+)?(?:good|great|high|top|best|excellent|positive|strong|solid)\s+(?:reviews?|ratings?)\b|\b(?:highly|well|top|best)[\s-]rated\b|\b(?:with|and)\s+reviews?\b/gi
 
 function rupees(raw: string) {
   const m = String(raw || '').toLowerCase().replace(/,/g, '').match(/(\d+(?:\.\d+)?)\s*(k)?/)
@@ -29,14 +32,15 @@ export function parseProductAsk(text: string): ProductAsk | null {
   const above = t.match(/\b(?:above|over|more than)\s*(?:rs\.?|inr|₹)?\s*([\d,.]+\s*k?)/i)
   if (between) { minPrice = rupees(between[1]); maxPrice = rupees(between[2]) }
   else { if (under) maxPrice = rupees(under[1]); if (above) minPrice = rupees(above[1]) }
-  const query = t
+  const rated = RATED.test(t); RATED.lastIndex = 0
+  const query = t.replace(RATED, ' ')
     .replace(ASK, '')
     .replace(/\b(?:between|from)\s*(?:rs\.?|inr|₹)?\s*[\d,.]+\s*k?\s*(?:and|to|-)\s*(?:rs\.?|inr|₹)?\s*[\d,.]+\s*k?/i, '')
     .replace(/\b(?:under|below|less than|within|upto|up to|max(?:imum)?|budget(?: of)?|not more than|above|over|more than)\s*(?:rs\.?|inr|₹)?\s*[\d,.]+\s*k?\b(?:\s*(?:rs|rupees|inr))?/gi, '')
     .replace(/^\s*(?:me|us)\b/i, '').replace(/^\s*(?:a|an|some|the|good|nice|best)\b\s*/gi, '').replace(/\b(?:online|for me|please|in india)\b/gi, '')
     .replace(/\s+/g, ' ').trim()
   if (!query || !PRODUCT_NOUN.test(query)) return null
-  return { query: clean(query, 80), maxPrice, minPrice }
+  return { query: clean(query.replace(/\s+(?:and|with)\s*$/i, ''), 80), maxPrice, minPrice, ...(rated ? { rated: true } : {}) }
 }
 
 export type ShoppingItem = { title: string; source: string; link: string; price: number | null; priceText: string; rating?: number; ratingCount?: number }
@@ -66,7 +70,9 @@ export function pickProducts(ask: ProductAsk, items: ShoppingItem[], limit = 5):
   const inBudget = scored.filter(x => x.i.price !== null && (ask.maxPrice === null || x.i.price <= ask.maxPrice) && (ask.minPrice === null || x.i.price >= ask.minPrice))
   const seen = new Set<string>()
   const picked = inBudget
-    .sort((a, b) => b.hits - a.hits || (b.i.rating || 0) - (a.i.rating || 0) || (a.i.price || 0) - (b.i.price || 0))
+    .sort((a, b) => ask.rated
+      ? ((b.i.rating || 0) >= 4 ? 1 : 0) - ((a.i.rating || 0) >= 4 ? 1 : 0) || (b.i.ratingCount || 0) - (a.i.ratingCount || 0) || b.hits - a.hits
+      : b.hits - a.hits || (b.i.rating || 0) - (a.i.rating || 0) || (a.i.price || 0) - (b.i.price || 0))
     .map(x => x.i)
     .filter(i => { const k = i.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').slice(0, 60); if (seen.has(k)) return false; seen.add(k); return true })
     .slice(0, limit)
