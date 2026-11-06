@@ -67,8 +67,13 @@ export async function POST(req: NextRequest) {
     }
 
     const user = (users || [])[0] as any
+    // Do not create a Razorpay mandate that can never be attached to a
+    // uniquely identified AskGogo account. A new user must first join/login.
+    if (!user) {
+      return NextResponse.json({ success: false, error: 'account_not_found' }, { status: 409 })
+    }
     const ownerId = user?.telegram_id == null ? null : exactBillingOwnerId(user.telegram_id)
-    if (user?.telegram_id != null && !ownerId) {
+    if (!ownerId) {
       return NextResponse.json({ success: false, error: 'invalid_billing_owner' }, { status: 409 })
     }
     const now = Date.now()
