@@ -30,6 +30,11 @@ function fixture(options: Fixture) {
           calls.push({ table, method: 'in', field, value }); filters[field] = value
           return query
         },
+        ilike(field: string, value: string) {
+          // Existing hasTopic() uses this on memory_embeddings, never for user lookup.
+          if (table !== 'memory_embeddings' || field !== 'topic') throw new Error('unexpected ilike')
+          calls.push({ table, method: 'ilike', field, value }); return query
+        },
         not(_field: string, _op: string, _v: unknown) { return query },
         is(_field: string, _v: unknown) {
           if (table !== 'memory_embeddings') throw new Error('unexpected is')
