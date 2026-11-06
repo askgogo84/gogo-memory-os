@@ -436,6 +436,12 @@ async function handleChatPost(req: NextRequest) {
       await saveConversation(user.telegram_id,text,emailAsk.text)
       return NextResponse.json({runId:emailAsk.handledBy,status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,...emailAsk})
     }
+    // Mail-alert rules (6 Nov, owner): "what do you alert me about?", "stop renewals", "add newsletters".
+    const mailRules=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/email/mail-alert-commands').then(m=>m.tryMailAlertCommand(user.telegram_id,text),()=>null):null
+    if(mailRules){
+      await saveConversation(user.telegram_id,text,mailRules)
+      return NextResponse.json({runId:'mail-alert-rules',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,text:mailRules,handledBy:'mail-alert-rules'})
+    }
     // "Track my orders" (6 Nov, owner): open orders from the shops' emails in Gmail, read-only.
     const orderList=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/agent/order-tracking').then(m=>m.tryOrderList(actor,text),()=>null):null
     if(orderList){
