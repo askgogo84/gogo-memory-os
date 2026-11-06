@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import './verify-usage-owner-isolation.mts'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
 import {randomUUID} from 'node:crypto'
