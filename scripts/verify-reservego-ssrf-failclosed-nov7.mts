@@ -60,8 +60,13 @@ try {
 
 const source = readFileSync('lib/agent/reservego.ts', 'utf8')
 const caller = readFileSync('lib/agent/restaurant-reservation.ts', 'utf8')
-assert.match(source, /if \(!fetcher\) return null/, 'production default fail-closed guard is mandatory')
-assert.doesNotMatch(source, /fetcher:\s*typeof fetch\s*=\s*fetch/, 'must not default to global fetch')
+const widgetStart = source.indexOf('export async function findReservegoWidget(')
+const widgetEnd = source.indexOf('/** "07:00 PM"', widgetStart)
+assert.ok(widgetStart >= 0 && widgetEnd > widgetStart, 'isolate original widget discovery only')
+const widgetSource = source.slice(widgetStart, widgetEnd)
+assert.match(widgetSource, /if \(!fetcher\) return null/, 'production default fail-closed guard is mandatory')
+assert.doesNotMatch(widgetSource, /fetcher:\s*typeof fetch\s*=\s*fetch/,
+  'widget discovery must not default to global fetch; fixed ReserveGo API feed is separate')
 assert.match(caller, /findReservegoWidget\(provider\.url\)/,
   'production caller must not inject unreviewed transport')
 assert.match(caller, /runSecureBrowser\(/,
