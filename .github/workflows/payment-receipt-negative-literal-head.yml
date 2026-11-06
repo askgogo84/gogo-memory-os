@@ -38,10 +38,8 @@ jobs:
         run: npm ci
       - name: New original-module negative-receipt regression
         run: npx tsx scripts/verify-payment-receipt-negative-status-nov6.mts
-      - name: Existing original payment-confirmation and mail regressions
-        run: |
-          npx tsx scripts/verify-payment-confirmation-nov6.mts
-          npx tsx scripts/verify-mail-attention-nov6.mts
+      - name: Existing original payment-confirmation regression
+        run: npx tsx scripts/verify-payment-confirmation-nov6.mts
       - name: Full registered regression suite
         run: npm test
       - name: Next type generation
