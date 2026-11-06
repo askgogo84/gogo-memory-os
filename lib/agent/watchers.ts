@@ -448,9 +448,17 @@ async function createWebIdea(telegramId: string, condition: WebSearchWatcherCond
 
 async function sendWhatsAppIfWanted(telegramId: string, delivery: WatcherDelivery, message: string) {
   if (delivery !== 'whatsapp' && delivery !== 'both') return
-  const tg = Number(telegramId)
-  if (!Number.isFinite(tg)) return
-  const { data } = await supabaseAdmin.from('users').select('whatsapp_id').eq('telegram_id', tg).maybeSingle()
+  // Watcher owner IDs are PostgreSQL BIGINTs. Number(owner) rounds distinct owners
+  // above 2^53 and could send a private alert to another account's WhatsApp.
+  if (typeof telegramId !== 'string' || !/^(?:0|[1-9]\d{0,18}|-[1-9]\d{0,18})$/.test(telegramId)) return
+  const owner = BigInt(telegramId)
+  if (owner < BigInt('-9223372036854775808') || owner > BigInt('9223372036854775807')) return
+  const { data, error } = await supabaseAdmin.from('users')
+    .select('telegram_id, whatsapp_id').eq('telegram_id', telegramId).maybeSingle()
+  if (error) throw new Error('watch_alert_owner_lookup_failed')
+  // The service-role result must echo the requested exact owner before egress.
+  // An imprecise or absent owner echo is not permission to deliver anything.
+  if (String(data?.telegram_id ?? '') !== telegramId) return
   const phone = String(data?.whatsapp_id || '').trim()
   if (!phone) return
   await sendWhatsAppMessage(phone, message)
