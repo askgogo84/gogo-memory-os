@@ -52,7 +52,9 @@ function isSimpleWorkspaceRead(text:string) {
 
 function isWorkspaceConnect(text:string) {
   const t=String(text||'').toLowerCase()
-  return /\b(connect|link|reconnect|refresh)\b/.test(t) && /\b(gmail|google workspace|google account|email)\b/.test(t)
+  // 6 Nov: "connect another gmail", "connect goverdhan@tipplr.in", "disconnect <address>" belong here too.
+  return (/\b(connect|link|reconnect|refresh|add|disconnect|unlink|remove)\b/.test(t) && /\b(gmail|google workspace|google account|email|mailbox|inbox)\b/.test(t))
+    || /^\s*(?:connect|add|link|disconnect|unlink|remove|stop reading)\s+[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\s*[.!]*$/.test(t)
 }
 
 function normListItem(value:unknown){return String(value||'').trim().toLowerCase().replace(/\s+/g,' ')}

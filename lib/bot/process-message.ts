@@ -1573,7 +1573,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'connect_gmail') {
     let reply=''
-    try{reply=await buildGmailConnectReply(resolvedUser.telegramId)}
+    try{reply=await buildGmailConnectReply(resolvedUser.telegramId, incomingText)}
     catch(err:any){
       console.error('GMAIL_CONNECT_HANDLER_FAILED:',err?.message||err)
       reply='Google Workspace connection is temporarily unavailable.'
