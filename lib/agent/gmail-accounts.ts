@@ -23,9 +23,23 @@ export async function upsertExtraGmailAccount(telegramId: string | number, email
   if (error) throw new Error(`gmail_account_save_failed:${error.message}`)
 }
 
-export async function saveExtraAccessToken(id: string, accessToken: string) {
-  const { error } = await supabaseAdmin.from('gmail_accounts').update({ access_token: encryptGoogleToken(accessToken), updated_at: new Date().toISOString() }).eq('id', id)
-  if (error) console.error('GMAIL_ACCOUNT_TOKEN_PERSIST_FAILED:', error.message)
+// A refresh can finish after the owner disconnects an account. Never repopulate a
+// revoked token or authorize a read based on a refresh whose owner-scoped,
+// still-connected persistence was not confirmed by the database.
+export async function saveExtraAccessToken(telegramId: string | number, id: string, accessToken: string) {
+  const owner = String(telegramId)
+  if ((typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) || !/^-?[1-9]\\d*$/.test(owner)) {
+    throw new Error('gmail_account_owner_invalid')
+  }
+  const accountId = String(id || '').trim()
+  if (!accountId) throw new Error('gmail_account_identity_missing')
+  const { data, error } = await supabaseAdmin.from('gmail_accounts')
+    .update({ access_token: encryptGoogleToken(accessToken), updated_at: new Date().toISOString() })
+    .eq('id', accountId).eq('telegram_id', owner).is('disconnected_at', null).select('id')
+  if (error) throw new Error('gmail_account_token_persist_failed')
+  if (!Array.isArray(data) || data.length !== 1 || String(data[0]?.id || '') !== accountId) {
+    throw new Error('gmail_account_disconnected_or_owner_mismatch')
+  }
 }
 
 export async function disconnectExtraGmailAccount(telegramId: string | number, email: string) {
