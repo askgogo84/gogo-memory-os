@@ -100,6 +100,27 @@ await check('subscription reconciliation matches a single recorded subscription 
   }), '9007199254740993')
 })
 
+await check('stale cancelled or halted mandate cannot mutate a different active subscription', async () => {
+  const oldId = 'sub_OldMandate'
+  const activeId = 'sub_CurrentMandate'
+  const activeRow = { ...owner, razorpay_subscription_id: activeId }
+  assert.equal(await resolveBillingOwner(
+    { telegramId: String(owner.telegram_id), subscriptionId: oldId },
+    async () => [activeRow],
+    { requireRecordedSubscription: true },
+  ), null, 'older cancelled subscription must not revoke active entitlement')
+  assert.equal(await resolveBillingOwner(
+    { telegramId: String(owner.telegram_id), subscriptionId: activeId },
+    async () => [activeRow],
+    { requireRecordedSubscription: true },
+  ), String(owner.telegram_id))
+  assert.equal(await resolveBillingOwner(
+    { telegramId: String(owner.telegram_id) },
+    async () => [activeRow],
+    { requireRecordedSubscription: true },
+  ), null, 'a status update needs a recorded subscription ID')
+})
+
 await check('original checkout and webhook enforce exact owner and confirmed single-row updates', () => {
   const checkout = readFileSync('app/api/subscription/create/route.ts', 'utf8')
   const webhook = readFileSync('app/api/payments/webhook/route.ts', 'utf8')
@@ -111,6 +132,7 @@ await check('original checkout and webhook enforce exact owner and confirmed sin
   assert.match(webhook, /resolveBillingOwner\(input, async claim =>/)
   assert.match(webhook, /\.eq\('telegram_id', ownerId\)\.select\('telegram_id'\)/)
   assert.match(webhook, /data\.length !== 1/)
+  assert.match(webhook, /requireRecordedSubscription: true/)
   assert.match(webhook, /if \(!result\) return NextResponse\.json\(\{ ok: true, event, ignored: 'owner_unverified' \}\)/)
   assert.doesNotMatch(webhook, /last10|buildMatchClauses|\.or\(orClauses|\.ilike\(\*/)
 })
