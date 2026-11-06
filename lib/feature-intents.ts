@@ -325,7 +325,7 @@ export async function routeFeatureIntent(
   // A named secondary Gmail revocation must run before legacy/agent routing and
   // before the generic Workspace "connect" link branch below. Never turn an
   // explicit stop-reading command into an OAuth connect URL.
-  if (extra?.telegramId && /^\\s*(?:please\\s+)?(?:disconnect|remove|unlink|stop\\s+reading)\\b/i.test(text)) {
+  if (extra?.telegramId && /^\s*(?:please\s+)?(?:disconnect|remove|unlink|stop\s+reading)\b/i.test(text)) {
     const { REMOVE_ACCOUNT_RE } = await import('@/lib/agent/gmail-accounts')
     if (REMOVE_ACCOUNT_RE.test(text)) {
       const { buildGmailConnectReply } = await import('@/lib/bot/handlers/gmail-read')
