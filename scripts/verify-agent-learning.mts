@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import ts from 'typescript'
+import { runInNewContext } from 'node:vm'
 
 const read = (path: string) => fs.readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
@@ -38,4 +40,153 @@ assert.match(insights, /return 'late-night'/)
 assert.match(insights, /reason:usualTimeReason\(String\(topTime\.value\)\)/)
 assert.doesNotMatch(insights, /when you say [“"]morning[”"]/i, 'a learned afternoon/evening time must never be described as a morning default')
 
-console.log('agent learning verification passed')
+
+
+
+// Exact 64-bit identity regression: execute ACTUAL worker and synthesis modules
+// against inert DB stubs. No provider, user table, or production access.
+function loadActual(path: string, mocks: Record<string, any>) {
+  const js = ts.transpileModule(read(path), {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+  }).outputText
+  const moduleExports: Record<string, any> = {}
+  runInNewContext(js, {
+    exports: moduleExports,
+    require: (id: string) => {
+      if (!(id in mocks)) throw new Error('unexpected_module:' + id)
+      return mocks[id]
+    },
+    console, Date, Number, String, Set, Promise, BigInt, Buffer, Error,
+  })
+  return moduleExports
+}
+
+const ownerIdentity = loadActual('lib/dashboard/owner-identity.ts', {
+  'node:crypto': { randomBytes: () => Buffer.alloc(7) },
+})
+const ownerOf = ownerIdentity.exactSessionOwnerId
+const idA = '9007199254740992'
+const idB = '9007199254740993'
+assert.equal(ownerOf(idA), idA)
+assert.equal(ownerOf(idB), idB)
+
+const seen: string[] = []
+const syntheticEvents = [
+  { telegram_id: idA }, { telegram_id: idB }, { telegram_id: idB },
+  { telegram_id: 42 }, { telegram_id: Number(idB) },
+  { telegram_id: '00042' }, { telegram_id: 'not-an-owner' },
+]
+const workerActual = loadActual('lib/agent/learning-worker.ts', {
+  '@/lib/supabase-admin': {
+    supabaseAdmin: { from(table: string) {
+      assert.equal(table, 'user_behavior_events')
+      return {
+        select(_fields: string) { return this },
+        gte(_field: string, _since: string) { return this },
+        order(_field: string, _options: any) { return this },
+        limit(_count: number) { return Promise.resolve({ data: syntheticEvents, error: null }) },
+      }
+    } },
+  },
+  '@/lib/bot/memory-twin/insight-generator': {
+    generateUserInsights: async (id: string) => { seen.push(id); return [] },
+  },
+  '@/lib/dashboard/owner-identity': { exactSessionOwnerId: ownerOf },
+})
+const pass = await workerActual.processLearningPass()
+assert.deepEqual([...seen].sort(), ['42', idA, idB].sort(),
+  'distinct signed-64 owners must reach distinct synthesis; unsafe rounded numeric and malformed IDs must be skipped')
+assert.equal(pass.usersConsidered, 3)
+
+const queriedOwners: Array<{ table: string; owner: unknown }> = []
+const generatorActual = loadActual('lib/bot/memory-twin/insight-generator.ts', {
+  '@/lib/supabase-admin': {
+    supabaseAdmin: { from(table: string) {
+      let eqId: unknown
+      return {
+        select(_fields: string) { return this },
+        eq(field: string, value: unknown) {
+          if (field === 'telegram_id') eqId = value
+          return this
+        },
+        maybeSingle() {
+          queriedOwners.push({ table, owner: eqId })
+          return Promise.resolve({ data: null, error: null })
+        },
+      }
+    } },
+  },
+  '@/lib/dashboard/owner-identity': { exactSessionOwnerId: ownerOf },
+})
+await generatorActual.generateUserInsights(Number(idB))
+await generatorActual.generateUserInsights('00042')
+assert.equal(queriedOwners.length, 0,
+  'a rounded numeric or noncanonical identifier may never trigger private learning reads')
+const safeResult = await generatorActual.generateUserInsights(idB)
+assert.equal(safeResult.length, 0)
+assert.deepEqual(queriedOwners, [
+  { table: 'user_memory_profile', owner: idB },
+  { table: 'user_consent_settings', owner: idB },
+], 'both private learning reads must retain the exact original 64-bit owner')
+
+
+// Verify the real synthesis WRITE paths retain the same exact BIGINT owner.
+// All Supabase calls are captured in memory: no database, provider or side effects.
+const synthesisReads: Array<{ table: string; owner: unknown }> = []
+const synthesisWrites: Array<{ table: string; owner: unknown }> = []
+const generatorWithWrites = loadActual('lib/bot/memory-twin/insight-generator.ts', {
+  '@/lib/supabase-admin': {
+    supabaseAdmin: { from(table: string) {
+      let owner: unknown
+      return {
+        select(_fields: string) { return this },
+        eq(field: string, value: unknown) {
+          if (field === 'telegram_id') owner = value
+          return this
+        },
+        order(_field: string, _opts: any) { return this },
+        limit(_count: number) { return this },
+        in(_field: string, _values: string[]) { return this },
+        gte(_field: string, _cutoff: string) { return this },
+        async maybeSingle() {
+          synthesisReads.push({ table, owner })
+          if (table === 'user_memory_profile') {
+            return { data: { common_times: [{ value: '8 am', count: 8 }] }, error: null }
+          }
+          if (table === 'user_consent_settings') {
+            return { data: { memory_enabled: true, proactive_suggestions_enabled: true }, error: null }
+          }
+          if (table === 'user_insights' || table === 'agent_ideas') {
+            return { data: null, error: null }
+          }
+          throw new Error('unexpected_read:' + table)
+        },
+        insert(row: any) {
+          assert.equal(row.telegram_id, idB, 'private synthesis write must carry exact signed-64 owner')
+          synthesisWrites.push({ table, owner: row.telegram_id })
+          if (table === 'user_insights') {
+            return { select(_field: string) {
+              return { async single() { return { data: { id: 'synthetic-insight' }, error: null } } }
+            } }
+          }
+          if (table === 'agent_ideas') return Promise.resolve({ error: null })
+          throw new Error('unexpected_write:' + table)
+        },
+      }
+    } },
+  },
+  '@/lib/dashboard/owner-identity': { exactSessionOwnerId: ownerOf },
+})
+const generated = await generatorWithWrites.generateUserInsights(idB)
+assert.equal(generated.length, 1)
+assert.equal(generated[0].ideaCreated, true, 'a valid opted-in owner retains proactive insight creation')
+assert.deepEqual(synthesisReads.map(row => row.table), [
+  'user_memory_profile', 'user_consent_settings', 'user_insights', 'agent_ideas',
+])
+assert.ok(synthesisReads.every(row => row.owner === idB),
+  'all private profile, consent, insight and idea reads must use same exact owner')
+assert.deepEqual(synthesisWrites, [
+  { table: 'user_insights', owner: idB }, { table: 'agent_ideas', owner: idB },
+], 'all insight and idea writes must retain full signed-64 owner without Number conversion')
+
+console.log('agent learning verification passed — exact-owner inert worker/synthesis regressions')
