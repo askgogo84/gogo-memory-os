@@ -10,6 +10,7 @@ import { isSuppressed } from '@/lib/bot/handlers/reminder-optout'
 // advances a series exactly the way this cron does — one implementation, no drift.
 import { describeCadence } from '@/lib/services/reminder-series'
 import { internalServiceAuthHeaders } from '@/lib/security/cron-auth'
+import { isReminderDestinationOwner } from '@/lib/services/reminder-recipient-owner'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -119,8 +120,8 @@ async function findWhatsAppForReminder(reminder: any): Promise<string | null> {
 // friend-reminder recipient does NOT own the row — their tap 404s ("couldn't find a
 // recent reminder"). So buttons are for the owner's OWN reminders only: true iff the
 // delivery number is the owner's own WhatsApp number. Note both owner and friend
-// reminders carry whatsapp_to, so we compare numbers (last 10 digits) rather than
-// gating on whatsapp_to being set.
+// reminders carry whatsapp_to, so we compare the ENTIRE persisted international
+// WhatsApp identity. Never infer ownership from a national-number suffix.
 async function reminderGoesToOwner(reminder: any, whatsappTo: string): Promise<boolean> {
   if (!reminder.telegram_id) return false
   const { data } = await supabaseAdmin
@@ -128,9 +129,7 @@ async function reminderGoesToOwner(reminder: any, whatsappTo: string): Promise<b
     .select('whatsapp_id')
     .eq('telegram_id', reminder.telegram_id)
     .maybeSingle()
-  const ownDigits = String(data?.whatsapp_id || '').replace(/\D/g, '').slice(-10)
-  const toDigits = String(whatsappTo || '').replace(/\D/g, '').slice(-10)
-  return !!ownDigits && ownDigits === toDigits
+  return isReminderDestinationOwner(data?.whatsapp_id, whatsappTo)
 }
 
 
