@@ -28,7 +28,7 @@ export async function upsertExtraGmailAccount(telegramId: string | number, email
 // still-connected persistence was not confirmed by the database.
 export async function saveExtraAccessToken(telegramId: string | number, id: string, accessToken: string) {
   const owner = String(telegramId)
-  if ((typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) || !/^-?[1-9]\\d*$/.test(owner)) {
+  if ((typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) || !/^-?[1-9]\d*$/.test(owner)) {
     throw new Error('gmail_account_owner_invalid')
   }
   const accountId = String(id || '').trim()
