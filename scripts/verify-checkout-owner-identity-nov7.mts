@@ -70,6 +70,7 @@ function sandbox(rows: any[], mode: 'ok' | 'error' | 'throw' = 'ok') {
       throw Error('Unexpected import: ' + id)
     },
     console: { error: () => {} },
+    process: { env: { RAZORPAY_TRIAL_DAYS: '7' } },
   }, { timeout: 3000, filename: 'inert-original-plan-checkout.js' })
   return {
     reply: (user: any = { telegramId: owner, whatsappId: correctPhone, name: 'Synthetic' }) =>
