@@ -92,4 +92,8 @@ assert.match(w, /const waitingIds=new Set\(deferred\)/, 'deferred emails stay fr
 for (const p of ['app/api/dashboard/chat/route.ts', 'lib/agent/whatsapp-bridge.ts']) assert.match(readFileSync(p, 'utf8'), /mail-alert-commands'\)\.then\(m=>m\.tryMailAlertCommand\(/, p)
 assert.match(readFileSync('lib/agent/brain.ts', 'utf8'), /never write as if that product were you or did something for the user/)
 console.log('✓ wired: per-email alerts in the inbox watch, rule commands on WhatsApp and dashboard, brain never speaks as Dots')
+const brain = await import('../lib/agent/brain')
+for (const t of ['what do you alert me about?', 'stop renewals', 'track my orders', 'any deliveries today']) assert.ok(brain.isExactCommand(t), `${t} skips the brain`)
+assert.equal(brain.isExactCommand('what do you think about Instinct?'), false)
+console.log('✓ the brain never answers the alert-rules or order questions itself (6 Nov live)')
 console.log('Mail alerts (6 Nov) checks passed')

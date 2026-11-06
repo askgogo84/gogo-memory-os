@@ -70,7 +70,7 @@ const MANDATE = /\b(?:new\s+)?(?:recurring[- ]payment\s+)?mandate\b|\bautopay\b.
 const CONFIRM_CHARGE = /\b(?:confirm|authori[sz]e|verify|approve)\b.{0,50}\b(?:payment|charge|transaction|purchase)\b|\b(?:did\s+you|was\s+this\s+you)\b.{0,40}\b(?:authori[sz]e|make|charge)\b/i
 const DEADLINE = /\b(?:expires?|expiring|expiry|valid\s+(?:till|until|for)|last\s+date|deadline|closes?\s+on|due\s+(?:by|on|date)|respond\s+by|reply\s+by|within\s+\d+\s+(?:hours?|days?)|before\s+\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/i
 const DEADLINE_SUBJECT = /\b(?:interview|assessment|assignment|offer|verification|verify|application|visa|appointment|renewal\s+due|kyc|re-?kyc|nomination|e-?sign|signature)\b/i
-const SECURITY = /\b(?:granted\s+access|was\s+given\s+access|has\s+access\s+to\s+your|third[- ]party\s+access|connected\s+app|new\s+(?:sign[- ]?in|login|device)|signed\s+in\s+(?:from|on)\s+a\s+new|unusual\s+(?:sign[- ]?in|activity)|password\s+(?:was\s+)?(?:changed|reset)|recovery\s+(?:phone|email)\s+(?:was\s+)?(?:changed|added)|2[- ]?step\s+verification\s+(?:turned|was)|security\s+alert)\b/i
+const SECURITY = /\b(?:granted\s+access|allowed\s+\S+\s+access|was\s+given\s+access|has\s+access\s+to\s+your|third[- ]party\s+access|connected\s+app|new\s+(?:sign[- ]?in|login|device)|signed\s+in\s+(?:from|on)\s+a\s+new|unusual\s+(?:sign[- ]?in|activity)|password\s+(?:was\s+)?(?:changed|reset)|recovery\s+(?:phone|email)\s+(?:was\s+)?(?:changed|added)|2[- ]?step\s+verification\s+(?:turned|was)|security\s+alert)\b/i
 const AMOUNT = /(?:₹|\brs\.?|\binr)\s?([\d,]+(?:\.\d{1,2})?)|(?:\busd\s?|\$)([\d,]+(?:\.\d{1,2})?)/i
 
 export function amountOf(text: string): { value: number; text: string } | null {
@@ -162,7 +162,9 @@ export function composeAlert(kind: AlertKind, s: ScoredEmail, ctx: AlertContext 
   } else if (kind === 'deadline') {
     body = `${name}${who} sent "${subject}".${day || time ? ` It ${/expir/i.test(text) ? 'expires' : 'is due'} ${day ? `${day}${time ? ` at ${time}` : ''}` : `at ${time}`}.` : ' It has a deadline.'} I can't tell whether you've already done it.`
   } else if (kind === 'security') {
+    // Google's live wording (6 Nov): "You allowed Instinct access to some of your Google Account data".
     const app = text.match(/\b([A-Z][\w.]+(?:\s+[A-Z][\w.]+)?)\s+(?:was\s+)?(?:granted|given)\s+access\b/)?.[1]
+      || text.match(/\b(?:you\s+allowed|allowed|gave)\s+([A-Z][\w.]+(?:\s+[A-Z][\w.]+)?)\s+access\b/)?.[1]
     body = `${name}${who} says ${app ? `*${app}* was granted access to your account` : subject.toLowerCase()}${day || time ? ` (${[day, time].filter(Boolean).join(' ')})` : ''}. If that was you, nothing to do. If not, check your account's connected apps and sign-ins. The email doesn't say what data was shared.`
   } else if (kind === 'reply_waiting') {
     body = `${name}${who} is waiting on you: "${subject}".${s.ask ? ` ${s.ask}` : ''}${s.due ? ` (${s.due})` : ''} Say "draft a reply" and I'll show it before anything is sent.`
