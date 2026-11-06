@@ -13,7 +13,7 @@ const js = ts.transpileModule(full.slice(start, end), {
 }).outputText
 
 function harness(send: () => Promise<unknown>, failHistory = false) {
-  const state = { answered: false, sends: 0, messages: [] as string[], updates: 0, historyWrites: 0 }
+  const state = { answered: false, sends: 0, messages: [] as string[], updates: 0, historyWrites: 0, errors: [] as string[] }
   const step = { id: 'synthetic-step', input_json: { question: 'What did flight option one cost?' } }
   const db = {
     from(table: string) {
@@ -57,7 +57,7 @@ function harness(send: () => Promise<unknown>, failHistory = false) {
     brainSystemBlocks: () => [], brainMessages: () => [],
     brainUsage: () => ({}), meterBrainCall: () => {},
     inventedApprovalGuard: (v: any) => String(v ?? '').trim(),
-    console: { log() {}, warn() {}, error() {} },
+    console: { log() {}, warn() {}, error(...args: any[]) { state.errors.push(args.map(String).join(' ')) } },
     process: { env: {} }, Date, Promise, JSON, Number, String,
   })
   assert.equal(typeof exported.answerFollowups, 'function')
@@ -82,7 +82,7 @@ for (const [label, receipt] of [
   assert.equal(h.state.messages.length, 0, label + ' must not persist a reply')
   assert.equal(h.state.answered, true, label + ' retains no-blind-retry marker')
   assert.equal(await h.run(), 0, label + ' remains non-retriable')
-  assert.equal(h.state.sends, 1, label + ' sends only once')
+  assert.equal(h.state.sends, 1, label + ' sends only once | ' + h.state.errors.join(' | '))
 }
 console.log('PASS no provider acceptance never claims an answered follow-up or retries')
 
