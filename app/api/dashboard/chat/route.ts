@@ -436,6 +436,12 @@ async function handleChatPost(req: NextRequest) {
       await saveConversation(user.telegram_id,text,emailAsk.text)
       return NextResponse.json({runId:emailAsk.handledBy,status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,...emailAsk})
     }
+    // "Track my orders" (6 Nov, owner): open orders from the shops' emails in Gmail, read-only.
+    const orderList=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/agent/order-tracking').then(m=>m.tryOrderList(actor,text),()=>null):null
+    if(orderList){
+      await saveConversation(user.telegram_id,text,orderList)
+      return NextResponse.json({runId:'order-tracking',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,text:orderList,handledBy:'order-tracking'})
+    }
     // "Who promised to send the proposal?" — loaded only for those phrasings.
     if (/\b(?:who\s+(?:promised|said\s+(?:they|he|she)|owes\s+me|was\s+(?:going|supposed)\s+to)|what\s+(?:did|has)\s+\S+(?:\s+\S+)?\s+promise|waiting\s+(?:on|for)\s+from\s+\S)/i.test(text)) {
       const {handleWhoPromisedQuery} = await import('@/lib/agent/commitments-query')
