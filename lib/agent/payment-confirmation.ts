@@ -94,7 +94,7 @@ export function receiptVerdict(p: PaymentConfirmation, mails: Mail[]): string {
   const confirms = (m: Mail) => {
     const evidence = `${m.subject} ${m.snippet || ''}`
     if (/\b(?:reminder|overdue|past\s+due|due\s+(?:on|by)|fail(?:ed|ure)?|unsuccessful|declin(?:ed|e)|reject(?:ed|ion)|revers(?:ed|al)|refund(?:ed|s)?|return(?:ed)?|cancel(?:led|ed|ation)|pending|processing|awaiting|initiated|scheduled|in\s+progress)\b/i.test(evidence)) return false
-    if (/\b(?:not\s+(?:yet\s+)?(?:paid|received|processed|completed|confirmed|successful|successfully)|could\s+not\s+(?:be\s+)?(?:paid|received|processed|completed|confirmed)|couldn't\s+(?:be\s+)?(?:paid|received|processed|completed|confirmed)|unable\s+to\s+(?:pay|process|complete|confirm|receive)|will\s+be\s+(?:paid|processed|completed))\b/i.test(evidence)) return false
+    if (/\b(?:not\s+(?:yet\s+)?(?:paid|received|processed|completed|confirmed|successful|successfully)|could\s+not\s+(?:be\s+)?(?:paid|received|processed|completed|confirmed)|couldn't\s+(?:be\s+)?(?:paid|received|processed|completed|confirmed)|unable\s+to\s+(?:pay|process|complete|confirm|receive)|will\s+be\s+(?:paid|processed|completed)|(?:has(?:n't| not)|have(?:n't| not)|was(?:n't| not)|were(?:n't| not)|is(?:n't| not))\s+(?:(?:been|yet|successfully)\s+){0,2}(?:paid|received|processed|completed|confirmed|successful))\b/i.test(evidence)) return false
     // Require an affirmative completion term about a payment, not "confirmation"
     // or "processing" on its own.
     return /\b(?:successful(?:ly)?|success|received|confirmed|completed|processed|paid)\b/i.test(evidence)
