@@ -37,7 +37,7 @@ console.log('✓ compact list: service, subject, the amount and date the email s
 // 4. Wiring: before the brain on both surfaces; the reply-needed reader takes an age.
 const dash = readFileSync('app/api/dashboard/chat/route.ts', 'utf8'), bridge = readFileSync('lib/agent/whatsapp-bridge.ts', 'utf8')
 assert.ok(dash.indexOf("lib/agent/email-asks") > 0 && dash.indexOf("lib/agent/email-asks") < dash.indexOf("same-brain"), 'dashboard: before the brain')
-assert.match(bridge, /import\('\.\/email-asks'\)\.then\(m=>m\.tryEmailAsk\(actor,params\.text\)/)
+assert.match(bridge, /VERCEL_ENV\?await import\('\.\/email-asks'\)\.then\(m=>m\.tryEmailAsk\(actor,params\.text\)/)
 const loops = readFileSync('lib/agent/open-loops.ts', 'utf8')
 assert.match(loops, /if\(params\.minAgeDays&&!\(Number\(last\.internalDate\)>0&&Date\.now\(\)-Number\(last\.internalDate\)>=params\.minAgeDays\*86_400_000\)\)return \[\]/)
 console.log('✓ wired before the brain on dashboard and WhatsApp')

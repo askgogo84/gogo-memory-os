@@ -431,7 +431,7 @@ async function handleChatPost(req: NextRequest) {
     }
     // Plain inbox questions (6 Nov live): "emails waiting 3 days for my reply", "subscriptions renewing soon",
     // "free trials I forgot", "unpaid bills" read Gmail instead of the brain saying it has no access.
-    const emailAsk=await import('@/lib/agent/email-asks').then(m=>m.tryEmailAsk(actor,text),()=>null)
+    const emailAsk=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/agent/email-asks').then(m=>m.tryEmailAsk(actor,text),()=>null):null
     if(emailAsk){
       await saveConversation(user.telegram_id,text,emailAsk.text)
       return NextResponse.json({runId:emailAsk.handledBy,status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,...emailAsk})

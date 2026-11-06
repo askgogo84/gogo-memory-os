@@ -518,7 +518,7 @@ export async function tryRunWhatsAppAttentionCommand(params:{
 
   const inboxReplyRead=await handleInboxReplyRead({actor,text:params.text})
   if(inboxReplyRead)return inboxReplyRead
-  const emailAsk=await import('./email-asks').then(m=>m.tryEmailAsk(actor,params.text),()=>null)
+  const emailAsk=(globalThis as any).process?.env?.VERCEL_ENV?await import('./email-asks').then(m=>m.tryEmailAsk(actor,params.text),()=>null):null
   if(emailAsk)return {runId:emailAsk.handledBy,status:'completed',capability:'orchestrator',risk:'low',...emailAsk} as any
 
   // "cancel that task" / "stop the flight booking": cancels the owner's in-flight agent run.
