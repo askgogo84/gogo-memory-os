@@ -96,7 +96,19 @@ export async function checkWhatsAppAccess(phone: string, profileName?: string, t
           ? await supabaseAdmin.from('waitlist').update(joined).eq('id', row.id)
           : await supabaseAdmin.from('waitlist').insert({ phone_e164: p, source: 'whatsapp', country: countryOf(p), whatsapp_opt_in: true,
               profile_name: profileName ? String(profileName).slice(0, 80) : null, admin_note: `Joined with invite ${invite.code}`, ...joined })
-        if (write.error && write.error.code !== '23505') console.error('ACCESS_GATE_INVITE_WAITLIST_WRITE_FAILED', write.error.code)
+        // The redeem_invite RPC commits a redemption, not the separate waitlist
+        // authorization write. Never let a failed (including 23505) or racing
+        // join-state write authorize this incoming message.
+        if (write.error) {
+          console.error('ACCESS_GATE_INVITE_WAITLIST_WRITE_FAILED', write.error.code)
+          return unavailableAccess()
+        }
+        const { data: verifiedJoin, error: joinedError } = await supabaseAdmin
+          .from('waitlist').select('phone_e164, status, approved_by').eq('phone_e164', p).maybeSingle()
+        if (joinedError || verifiedJoin?.phone_e164 !== p || verifiedJoin?.status !== 'joined' || verifiedJoin?.approved_by !== `invite:${invite.code}`) {
+          if (joinedError) console.error('ACCESS_GATE_INVITE_WAITLIST_VERIFY_FAILED', joinedError.code)
+          return unavailableAccess()
+        }
         return { allow: true, reason: 'invited', invite }
       }
       if (invite.reason === 'used_up') inviteReply = INVITE_USED_UP_REPLY
