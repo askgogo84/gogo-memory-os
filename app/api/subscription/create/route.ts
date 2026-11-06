@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createSubscription } from '@/lib/services/razorpay-subscriptions'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { billingPhoneVariants, exactBillingOwnerId } from '@/lib/services/billing-owner-identity'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,31 +49,42 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: 'invalid_phone' }, { status: 400 })
     }
 
-    const last10 = phoneDigits.slice(-10)
-    const { data: users } = await supabaseAdmin
+    // Never bind a new Razorpay subscription to a different-country account
+    // merely because its saved WhatsApp number shares the last ten digits.
+    const { data: users, error: ownerLookupError } = await supabaseAdmin
       .from('users')
       .select('telegram_id, whatsapp_id, name, tier, tier_expires_at, subscription_status')
-      .ilike('whatsapp_id', `%${last10}%`)
-      .limit(3)
+      .in('whatsapp_id', billingPhoneVariants(phoneDigits))
+      .limit(2)
 
-    const now = Date.now()
-    const active = (users || []).find((user: any) =>
-      (user.subscription_status === 'active' || user.subscription_status === 'authenticated') &&
-      user.tier && user.tier !== 'free' &&
-      (!user.tier_expires_at || new Date(user.tier_expires_at).getTime() > now)
-    )
-
-    if (active) {
-      return NextResponse.json({ success: false, error: 'already_subscribed' }, { status: 409 })
+    if (ownerLookupError) {
+      return NextResponse.json({ success: false, error: 'owner_lookup_unavailable' }, { status: 503 })
+    }
+    // Multiple persisted owner rows cannot safely receive one billing identity.
+    // Reconciliation requires independently verified account linking.
+    if ((users || []).length > 1) {
+      return NextResponse.json({ success: false, error: 'ambiguous_billing_owner' }, { status: 409 })
     }
 
     const user = (users || [])[0] as any
+    const ownerId = user?.telegram_id == null ? null : exactBillingOwnerId(user.telegram_id)
+    if (user?.telegram_id != null && !ownerId) {
+      return NextResponse.json({ success: false, error: 'invalid_billing_owner' }, { status: 409 })
+    }
+    const now = Date.now()
+    if (user &&
+        (user.subscription_status === 'active' || user.subscription_status === 'authenticated') &&
+        user.tier && user.tier !== 'free' &&
+        (!user.tier_expires_at || new Date(user.tier_expires_at).getTime() > now)) {
+      return NextResponse.json({ success: false, error: 'already_subscribed' }, { status: 409 })
+    }
+
     const whatsappId = `+${phoneDigits}`
     const result = await createSubscription({
       planKey: plan,
       phone: whatsappId,
       whatsappId: user?.whatsapp_id || whatsappId,
-      telegramId: user?.telegram_id || null,
+      telegramId: ownerId,
       name: user?.name || 'AskGogo User',
     })
 
