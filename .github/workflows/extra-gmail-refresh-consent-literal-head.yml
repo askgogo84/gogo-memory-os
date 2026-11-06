@@ -41,8 +41,8 @@ jobs:
         run: npx tsx scripts/verify-extra-gmail-refresh-consent-nov6.mts
       - name: Existing secondary Gmail regression
         run: npx tsx scripts/verify-second-gmail-account.mts
-      - name: Existing Workspace Gmail regression
-        run: npx tsx scripts/verify-google-workspace-read.mts
+      - name: Existing email attention regression
+        run: npx tsx scripts/verify-email-attention.mts
       - name: Full registered regression suite
         run: npm test
       - name: Next type generation
