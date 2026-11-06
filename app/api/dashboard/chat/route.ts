@@ -289,6 +289,7 @@ async function handleChatPost(req: NextRequest) {
     if((globalThis as any).process?.env?.VERCEL_ENV){
       const prep=(await import('@/lib/agent/meeting-prep-ask').then(m=>m.isMeetingPrepAsk(text)?m.tryMeetingPrep(actor,text):null,()=>null))
         ||(await import('@/lib/agent/trip-plan').then(m=>m.tryTripPlan(actor,'web',text),()=>null))
+        ||(await import('@/lib/agent/people').then(m=>m.tryPersonAsk(actor,text),()=>null))
       if(prep){
         await saveConversation(user.telegram_id,text,prep)
         return NextResponse.json({text:prep,handledBy:'meeting-prep',status:'completed',readOnly:true,mutated:false})

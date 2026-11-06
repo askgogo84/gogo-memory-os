@@ -9,6 +9,7 @@
 // that answer an approval or a numbered pick bypass it entirely, and any failure falls back to today's pipeline.
 import { isMailAlertCommand } from '@/lib/email/mail-alert-commands'
 import { tripAsk } from '@/lib/agent/trip-plan'
+import { personAsk } from '@/lib/agent/people'
 import { ORDER_LIST_RE } from './order-tracking'
 import { PAYMENT_GATE } from './payment-confirmation'
 import Anthropic from '@anthropic-ai/sdk'
@@ -84,7 +85,7 @@ export function isExactCommand(text: string): boolean {
   return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t) || /^https?:\/\/\S+$/i.test(t) || DAY_PLAN.test(t) || isJobScanNow(t) || !!jobScanQuery(t) || !!placeAsk(t) || !!nearbyRewrite(t, 'x')
     // 6 Nov live: "what do you alert me about?" was answered from the brain's own idea of its features; the
     // mail-alert rules handler owns that question and the "stop renewals" family.
-    || isMailAlertCommand(t) || ORDER_LIST_RE.test(t)
+    || isMailAlertCommand(t) || ORDER_LIST_RE.test(t) || personAsk(t) !== null
     // 6 Nov live: a forwarded bank confirmation is a payment record, never something to chat about.
     || PAYMENT_GATE.test(t)
     // 7 Nov live: a trip with a place and dates has a plan handler; the brain asked what it should include.
