@@ -79,7 +79,9 @@ const sameSuffixWrongCountry = { telegram_id: 2002, whatsapp_id: 'whatsapp:+9141
 const exactRecipient = { telegram_id: 1001, whatsapp_id: 'whatsapp:+14155552671' }
 {
   const h = fixture({ users: [sameSuffixWrongCountry, exactRecipient] })
-  assert.deepEqual(await h.api.resolveRecipientTelegramId(600, 'divya'), { telegramId: 1001, hasContact: true })
+  const resolved = await h.api.resolveRecipientTelegramId(600, 'divya')
+  assert.equal(resolved.telegramId, 1001)
+  assert.equal(resolved.hasContact, true)
   assert.equal(h.state.suffixCalls, 0)
   assert.ok(!h.state.candidatePhones.includes(sameSuffixWrongCountry.whatsapp_id))
   assert.equal(h.state.writes.length, 0, 'lookup must not share')
