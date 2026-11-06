@@ -54,7 +54,7 @@ function harness(send: () => Promise<unknown>, failHistory = false) {
     clean: (v: any) => String(v ?? '').trim(),
     loadBrainContext: async () => ({ turns: [] }),
     MODEL: () => 'fixture-model', TIMEOUT_MS: 1000,
-    brainSystemBlocks: () => [], brainMessages: () => [],
+    brainSystemBlocks: () => [], brainMessages: () => [], BRAIN_TOOLS: [{ name: 'reply' }],
     brainUsage: () => ({}), meterBrainCall: () => {},
     inventedApprovalGuard: (v: any) => String(v ?? '').trim(),
     console: { log() {}, warn() {}, error(...args: any[]) { state.errors.push(args.map(String).join(' ')) } },
