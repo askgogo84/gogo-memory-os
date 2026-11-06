@@ -110,7 +110,7 @@ runInNewContext(code, {
 const read = await exported.readAttentionSources(owner)
 assert.equal(read.connected, true)
 assert.equal(read.emails.length, 2, 'outgoing secondary work mail is NOT a new incoming task')
-assert.deepEqual(read.emails.map((e: any) => [e.id, e.gmailAccount]).sort(), [
+assert.deepEqual(JSON.parse(JSON.stringify(read.emails.map((e: any) => [e.id, e.gmailAccount]).sort())), [
   ['111aaa', primary], ['222bbb', work],
 ])
 assert.equal(read.repliedSenders.has('sam@example.test'), true, 'outgoing work email still boosts replied sender')
