@@ -21,9 +21,16 @@ export function reservegoWidgetLinkFromHtml(html: string): string | null {
 }
 
 /** The ReserveGo widget for a provider URL: the URL itself, or a widget link on the restaurant's own page. */
-export async function findReservegoWidget(url: string, fetcher: typeof fetch = fetch): Promise<{outletId: string; widgetUrl: string} | null> {
+export async function findReservegoWidget(url: string, fetcher?: typeof fetch): Promise<{outletId: string; widgetUrl: string} | null> {
   const direct = reservegoOutletId(url)
   if (direct) return {outletId: direct, widgetUrl: url}
+  // A provider page URL can come from a public search result. Its HTTPS scheme
+  // does not make its destination safe: automatic redirects can reach internal IPs.
+  // Until a DNS-pinned, redirect-by-redirect public egress transport is reviewed,
+  // production must not fetch arbitrary restaurant pages from the app server.
+  // Only inert tests pass an explicit fake fetcher; regular callers fall back
+  // to the existing permission-gated secure browser instead.
+  if (!fetcher) return null
   try {
     const u = new URL(url)
     if (u.protocol !== 'https:') return null
