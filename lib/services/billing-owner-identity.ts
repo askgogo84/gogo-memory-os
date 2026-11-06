@@ -91,6 +91,7 @@ export function billingOwnerClaim(input: BillingOwnerInput): BillingOwnerClaim |
 export async function resolveBillingOwner(
   input: BillingOwnerInput,
   lookup: (claim: BillingOwnerClaim) => Promise<BillingOwnerRow[]>,
+  options: { requireRecordedSubscription?: boolean } = {},
 ): Promise<string | null> {
   const claim = billingOwnerClaim(input)
   if (!claim) return null
@@ -107,5 +108,9 @@ export async function resolveBillingOwner(
   if (claim.telegramId && claim.telegramId !== owner) return null
   if (claim.userId && String(row.id ?? '') !== claim.userId) return null
   if (claim.phone && canonicalBillingPhone(row.whatsapp_id) !== claim.phone) return null
+  // A stale halted/cancelled event for an earlier subscription must never
+  // revoke an owner's current (different) paid subscription.
+  if (options.requireRecordedSubscription &&
+      (!input.subscriptionId || row.razorpay_subscription_id !== input.subscriptionId)) return null
   return owner
 }
