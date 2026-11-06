@@ -47,6 +47,6 @@ assert.equal(gmailForwardingConfirmation({
   from: 'Gmail Team <forwarding-noreply@google.com>', subject: 'Your order shipped', text: body,
 }), null, 'non-confirmation subject must still fail')
 assert.equal(gmailForwardingConfirmation({
-  from: 'Gmail Team <forwarding-noreply@google.com>', subject, text: 'No code or link',
+  from: 'Gmail Team <forwarding-noreply@google.com>', subject: 'Gmail Forwarding Confirmation - Receive Mail from owner@example.test', text: 'No code or link',
 }), null, 'missing confirmation evidence must still fail')
 console.log('forwarding confirmation sender binding: all inert original-module checks passed')
