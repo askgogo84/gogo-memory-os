@@ -40,8 +40,8 @@ jobs:
         run: npx tsx scripts/verify-shared-memory-recipient-isolation-nov6.mts
       - name: Existing ownership and sharing regression
         run: |
-          npx tsx scripts/verify-owner-identity.mts
-          npx tsx scripts/verify-memory-rpc-permissions.mts
+          node scripts/verify-memory-rpc-permissions.cjs
+          npx tsx scripts/verify-make-tab.mts
       - name: Full registered regression suite
         run: npm test
       - name: Next type generation
