@@ -1051,11 +1051,12 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       }
     }
 
-    // A forwarded payment confirmation (6 Nov live: a ₹41,898 bank SMS became a ₹41 split expense) is read as a
-    // payment; "yes" to its question looks for the merchant's receipt in Gmail. Read-only.
+    // Understand first (6 Nov live: a ₹41,898 bank SMS became a ₹41 split expense): a forwarded SMS, bank alert, OTP,
+    // delivery, booking, bill or security notice is read as what it is, with one offer; "yes" within 30 min does
+    // that one thing (log the expense, set the reminder, save the ticket, check the order, find the receipt). Read-only otherwise.
     if ((globalThis as any).process?.env?.VERCEL_ENV) {
-      const pay = await import('@/lib/agent/payment-confirmation').then(async m => m.PAYMENT_GATE.test(text) ? m.tryPaymentConfirmation(String(resolvedUser.telegramId), text)
-        : text.length <= 24 ? m.takeReceiptCheck(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), text) : null, () => null)
+      const pay = await import('@/lib/agent/shared-content').then(async m => (await m.tryShared(String(resolvedUser.telegramId), text))
+        || (text.length <= 24 ? m.takeSharedFollowUp(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), text) : null), () => null)
       if (pay) {
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', pay)
