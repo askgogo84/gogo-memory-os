@@ -8,6 +8,7 @@
 // to phrase the request for the existing handlers, which keep every approval and Sentinel check. Short replies
 // that answer an approval or a numbered pick bypass it entirely, and any failure falls back to today's pipeline.
 import { isMailAlertCommand } from '@/lib/email/mail-alert-commands'
+import { tripAsk } from '@/lib/agent/trip-plan'
 import { ORDER_LIST_RE } from './order-tracking'
 import { PAYMENT_GATE } from './payment-confirmation'
 import Anthropic from '@anthropic-ai/sdk'
@@ -86,6 +87,8 @@ export function isExactCommand(text: string): boolean {
     || isMailAlertCommand(t) || ORDER_LIST_RE.test(t)
     // 6 Nov live: a forwarded bank confirmation is a payment record, never something to chat about.
     || PAYMENT_GATE.test(t)
+    // 7 Nov live: a trip with a place and dates has a plan handler; the brain asked what it should include.
+    || !!tripAsk(t)
 }
 
 // 28 Oct review (G5): the static rules come first and are cached together with the tool list; the user's name,

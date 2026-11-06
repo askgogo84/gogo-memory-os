@@ -1021,9 +1021,11 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       }
     }
     // Meeting prep (Duet benchmark, 6 Nov): "prep me for my next meeting" reads the calendar and recent emails.
-    if ((globalThis as any).process?.env?.VERCEL_ENV && /\b(?:prep|prepare|brief)\b[\s\S]{0,40}\b(?:meeting|call|appointment)\b|\bnext\s+(?:meeting|call)\s+about\b|^\s*meeting\s+prep\b/i.test(text)) {
+    // Trip plan (7 Nov): "plan a Goa trip 12 to 15 Dec with Divya and Nithin" gets a plan skeleton, not a question.
+    if ((globalThis as any).process?.env?.VERCEL_ENV && (/\b(?:prep|prepare|brief)\b[\s\S]{0,40}\b(?:meeting|call|appointment)\b|\bnext\s+(?:meeting|call)\s+about\b|^\s*meeting\s+prep\b/i.test(text) || /^\s*(?:please\s+)?(?:can you\s+|could you\s+|help me\s+)?(?:plan|organi[sz]e|put together|arrange)\b/i.test(text))) {
       const prepActor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' })
-      const prep = await import('@/lib/agent/meeting-prep-ask').then(m => m.tryMeetingPrep(prepActor, text), () => null)
+      const prep = (await import('@/lib/agent/meeting-prep-ask').then(m => m.tryMeetingPrep(prepActor, text), () => null))
+        || (await import('@/lib/agent/trip-plan').then(m => m.tryTripPlan(prepActor, 'whatsapp', text), () => null))
       if (prep) {
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', prep)
@@ -1469,7 +1471,7 @@ _"${originalText}"_
       }
     }
     // Local places: Google local results in the area asked (same as the dashboard).
-    if (text.length <= 200 && /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert|barber|dentist|dental|doctor|pediatrician|dermatologist|physio|plumber|electrician|carpenter|mechanic|car service|bike service|tailor|laundr|dry clean|vets?\b|veterinar|pet shop|optician|florist|atms?\b|petrol|ev charg|charging station)/i.test(text)&&(/\b(?:in|near|around|at)\s+[a-z]/i.test(text)||/\b(?:nearby|near\s+by|close\s+by)\b/i.test(text))&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text)) {
+    if (text.length <= 200 && (/^(?:(?:a|an|the|some|good|best|top|nice|cheap|open|veg|non-veg|\d{1,2})\s+){0,3}\b(restaurants?|caf(?:e|é)s?|coffee (?:shops?|places?)|bars?|pubs?|breweries|brewery|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets? shops?|gyms?|salons?|spas?|parks?|hospitals?|clinics?|pharmac(?:y|ies)|chemists?|hotels?|stays?|co-?working spaces?|malls?|supermarkets?|barbers?|barber ?shops?|dentists?|dental clinics?|doctors?|pediatricians?|dermatologists?|physiotherapists?|plumbers?|electricians?|carpenters?|mechanics?|car service(?: centres?| centers?)?|bike service(?: centres?| centers?)?|tailors?|laundr(?:y|ies)|dry cleaners?|vets?|veterinar(?:y|ians?)(?: clinics?)?|pet shops?|opticians?|florists?|atms?|petrol (?:pumps?|bunks?)|ev chargers?|charging stations?)\b\s*(?:near|nearby|in|around|close to)\b/i.test(text) || text.length <= 200 && /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert|barber|dentist|dental|doctor|pediatrician|dermatologist|physio|plumber|electrician|carpenter|mechanic|car service|bike service|tailor|laundr|dry clean|vets?\b|veterinar|pet shop|optician|florist|atms?\b|petrol|ev charg|charging station)/i.test(text)&&(/\b(?:in|near|around|at)\s+[a-z]/i.test(text)||/\b(?:nearby|near\s+by|close\s+by)\b/i.test(text))&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text))) {
       const pl: any = await import('@/lib/agent/places-context').catch(() => null)
       const out = pl?.answerPlacesWithContext ? await Promise.resolve().then(() => pl.answerPlacesWithContext({ text, telegramId: String(resolvedUser.telegramId) })).catch(() => null) : null
       if (typeof out === 'string' && out) {
