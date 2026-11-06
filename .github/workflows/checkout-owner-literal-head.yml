@@ -41,7 +41,7 @@ jobs:
       - name: Existing billing owner and policy safety tests
         run: |
           npx tsx scripts/verify-owner-confirmation.mts
-          npx tsx scripts/verify-approval-policy.mts
+          npx tsx scripts/verify-alert-preferences.mts
       - name: Full registered regression suite
         run: npm test
       - name: Next type generation
