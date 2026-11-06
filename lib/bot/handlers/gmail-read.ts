@@ -29,13 +29,15 @@ async function gmailAccess(telegramId:number){
 }
 
 export async function buildGmailConnectReply(telegramId:number, text=''){
-  const access=await gmailAccess(telegramId)
   const { ADD_ACCOUNT_RE, REMOVE_ACCOUNT_RE } = await import('@/lib/agent/gmail-accounts')
+  // Revocation is independent of primary Gmail health/consent reads. Even if
+  // those fail, the owner must still be able to stop secondary-mail access.
   const removeM = text.match(REMOVE_ACCOUNT_RE)
   if (removeM) {
     const gone = await import('@/lib/agent/gmail-accounts').then(m => m.disconnectExtraGmailAccount(telegramId, removeM[1]))
     return gone ? `Done. I no longer read ${removeM[1].toLowerCase()}.` : `${removeM[1].toLowerCase()} isn't one of the extra accounts I read. Your main Google account is managed at app.askgogo.in/dashboard/settings/email.`
   }
+  const access=await gmailAccess(telegramId)
   if (access.connected && ADD_ACCOUNT_RE.test(text)) {
     const url=buildGmailConnectUrl(telegramId)
     if(!url)return 'Google Workspace connection is temporarily unavailable.'
