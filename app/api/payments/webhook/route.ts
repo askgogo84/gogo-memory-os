@@ -284,7 +284,9 @@ export async function POST(req: NextRequest) {
       })
 
       if (!result) return NextResponse.json({ ok: true, event, ignored: 'owner_unverified' })
-      await notifyWhatsApp(phone, buildConfirmationMessage(result.plan, name), 'payment_link.paid')
+      // The payment provider's customer contact is not necessarily the
+      // WhatsApp identity that was independently matched to our owner row.
+      await notifyWhatsApp(notes.whatsapp_id || notes.phone || phone, buildConfirmationMessage(result.plan, name), 'payment_link.paid')
       return NextResponse.json({ ok: true, event, plan: planKey })
     }
 
@@ -353,7 +355,7 @@ export async function POST(req: NextRequest) {
           rawPayload: body.payload,
         })
         if (!result) return NextResponse.json({ ok: true, event, ignored: 'owner_unverified' })
-        await notifyWhatsApp(phone, buildConfirmationMessage(result.plan, name), 'payment.captured')
+        await notifyWhatsApp(notes.whatsapp_id || notes.phone || phone, buildConfirmationMessage(result.plan, name), 'payment.captured')
       }
       return NextResponse.json({ ok: true, event })
     }
