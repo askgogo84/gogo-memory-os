@@ -38,7 +38,10 @@ export function shopOf(from: string, subject = '', snippet = '') {
   if (QUICK.test(from)) return null
   const known = SHOPS.find(([, re]) => re.test(from))?.[0]
   if (known) return known
-  const brand = `${subject} ${snippet}`.match(/\b(?:order|purchase|package|shipment)\s+from\s+([A-Z][\w'&.-]*(?:\s+[A-Z0-9][\w'&.-]*){0,3})/)?.[1]?.trim()
+  const text = `${subject} ${snippet}`.replace(/&#39;|&apos;/g, "'").replace(/&amp;/g, '&')
+  // "order from Drip N' Dip" or (Shiprocket's live subjects, 6 Nov) "your Drip N' Dip order is out for delivery".
+  const brand = (text.match(/\b(?:order|purchase|package|shipment)\s+from\s+([A-Z][\w'&.-]*(?:\s+[A-Z0-9][\w'&.-]*){0,3})/)?.[1]
+    || text.match(/\byour\s+([A-Z0-9][\w'&.-]*(?:\s+[A-Z0-9][\w'&.-]*){0,3})\s+(?:order|package|shipment|parcel)\b/)?.[1])?.trim()
   if (brand && !/^(?:Amazon|Flipkart)$/i.test(brand)) return brand.slice(0, 40)
   const courier = COURIERS.find(([, re]) => re.test(from))?.[0]
   const name = displayName(from)
@@ -58,8 +61,8 @@ export function orderStatus(subject: string, snippet = ''): OrderStatus | null {
   if (/\b(?:delayed|delay in|running late|new delivery date|revised delivery|rescheduled)\b/.test(all)) return 'delayed'
   if (/\bdelivered\b/.test(s)) return 'delivered'
   if (/\bout for delivery\b/.test(s)) return 'out_for_delivery'
-  if (/\b(?:shipped|dispatched|on (?:its|the) way|in transit|arriving)\b/.test(s)) return 'shipped'
-  if (/\b(?:order (?:placed|confirm(?:ed|ation)|received)|thank you for (?:your )?order|your order (?:of|for|has been placed|is confirmed)|ordered:)\b/.test(s)) return 'placed'
+  if (/\b(?:shipped|dispatched|on (?:its|the) way|in transit|arriving|reached your city|in your city|arrived (?:at|in))\b/.test(s)) return 'shipped'
+  if (/\b(?:order (?:placed|confirm(?:ed|ation)|received)|thank you for (?:your )?order|your order (?:of|for|has been placed|is confirmed)|ordered:|order (?:has been |is )?packed)\b/.test(s)) return 'placed'
   return null
 }
 
@@ -76,6 +79,15 @@ export function expectedDay(text: string, sentAt: string): string | null {
   if (/\b(?:arriving|delivery|expected|by)\s+tomorrow\b/.test(t)) return istDay(sent + 86_400_000)
   const dm = t.match(/\b(?:arriv\w*|deliver\w*|expected|estimated|eta)\b[^.]{0,40}?\b(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b(?:,?\s+(\d{4}))?/)
     || t.match(/\bby\s+(?:[a-z]{3,9},?\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b(?:,?\s+(\d{4}))?/)
+  const md = !dm ? t.match(/\b(?:arriv\w*|deliver\w*|expected|estimated|eta)\b[^.]{0,40}?\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s+(\d{4}))?/) : null
+  if (md) {
+    const base = new Date(sent + 330 * 60_000)
+    let year = md[3] ? Number(md[3]) : base.getUTCFullYear()
+    const month = MONTHS[md[1]], day = Number(md[2])
+    if (!md[3] && month < base.getUTCMonth() - 6) year += 1
+    const d = new Date(Date.UTC(year, month, day))
+    return d.getUTCDate() === day ? d.toISOString().slice(0, 10) : null
+  }
   if (dm) {
     const base = new Date(sent + 330 * 60_000)
     let year = dm[3] ? Number(dm[3]) : base.getUTCFullYear()
@@ -131,7 +143,11 @@ export function trackOrders(mails: OrderMail[]): TrackedOrder[] {
   for (const e of events) byKey.set(e.key, [...(byKey.get(e.key) || []), e])
   return [...byKey.values()].map(events => {
     events.sort((a, b) => a.at.localeCompare(b.at))
-    const last = events[events.length - 1]
+    // A later "arriving early" or "reached your city" email must not move an order back from "out for delivery".
+    const RANK: Partial<Record<OrderStatus, number>> = { placed: 1, shipped: 2, out_for_delivery: 3, delivered: 4 }
+    let last = events[events.length - 1]
+    const furthest = events.reduce((a, e) => (RANK[e.status] || 0) > (RANK[a.status] || 0) ? e : a, events[0])
+    if (RANK[last.status] && (RANK[furthest.status] || 0) > (RANK[last.status] || 0)) last = { ...last, status: furthest.status }
     const expected = [...events].reverse().find(e => e.expected)?.expected || null
     const label = events.find(e => !e.label.startsWith(`${e.shop} order`))?.label || last.label
     return { shop: last.shop, key: last.key, label, orderId: last.orderId, status: last.status, expected, updated: last.at, problem: last.status === 'delayed' || last.status === 'attempt_failed' }
