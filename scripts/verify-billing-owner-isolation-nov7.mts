@@ -127,6 +127,8 @@ await check('original checkout and webhook enforce exact owner and confirmed sin
   assert.match(checkout, /\.in\('whatsapp_id', billingPhoneVariants\(phoneDigits\)\)/)
   assert.match(checkout, /ambiguous_billing_owner/)
   assert.match(checkout, /owner_lookup_unavailable/)
+  assert.match(checkout, /account_not_found/)
+  assert.match(checkout, /if \(!ownerId\) \{/)
   assert.match(checkout, /telegramId: ownerId/)
   assert.doesNotMatch(checkout, /\.ilike\('whatsapp_id'/)
   assert.match(webhook, /resolveBillingOwner\(input, async claim =>/)
