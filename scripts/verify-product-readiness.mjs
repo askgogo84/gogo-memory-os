@@ -100,9 +100,9 @@ for (const path of [
 // A preview may share a production DB, and no unauthenticated route can grant tiers.
 check('legacy public trial endpoint retired on preview, development and production', () => {
   const source = read('app/api/payment/trial/route.ts')
-  assert.match(source, /export async function POST\\s*\\(/)
-  assert.match(source, /status:\\s*404\\b/)
-  assert.doesNotMatch(source, /\\b(?:supabaseAdmin|createClient|trial_started_at|tier_expires_at|VERCEL_ENV|NODE_ENV)\\b/)
+  assert.match(source, /export async function POST\s*\(/)
+  assert.match(source, /status:\s*404\b/)
+  assert.doesNotMatch(source, /\b(?:supabaseAdmin|createClient|trial_started_at|tier_expires_at|VERCEL_ENV|NODE_ENV)\b/)
 })
 
 // This retired preview control-plane endpoint is stricter than the standard
