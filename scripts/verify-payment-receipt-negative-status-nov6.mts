@@ -54,6 +54,14 @@ unconfirmed('receipt subject does not establish paid status when snippet rejects
   from: merchantFrom, subject: 'Payment received',
   snippet: 'Payment of 41,898 could not be processed; please retry.',
 }])
+unconfirmed('bank contraction has not been processed', [{
+  from: bankFrom, subject: 'Payment confirmation',
+  snippet: "Your Rs 41,898 payment hasn't been processed by the bank.",
+}])
+unconfirmed('merchant contraction was not received', [{
+  from: merchantFrom, subject: 'Payment received',
+  snippet: "The Rs 41,898 payment wasn't received by Kotak Mahindra Prime.",
+}])
 accepted('completed HDFC NetBanking payment remains evidence from bank', [{
   from: bankFrom, subject: 'Confirmation of Payment Using HDFC NetBanking',
   snippet: 'We confirm that your payment has been successfully processed. Amount Rs 41898.00.',
