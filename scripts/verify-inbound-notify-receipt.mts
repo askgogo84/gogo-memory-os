@@ -75,7 +75,7 @@ for (const status of [
   assert.deepEqual(h.lookedUp, [{ table: 'users', field: 'telegram_id', id: 42 }])
   assert.deepEqual(h.notifications, [{ key, owner: 42, channel: 'whatsapp', source: 'watch_alert' }])
   assert.equal(h.cards.length, accepted ? 1 : 0, status + ' must not create phantom WhatsApp cards')
-  if (accepted) assert.deepEqual(h.cards[0], { telegram_id: 42, role: 'assistant', content: cardText })
+  if (accepted) assert.deepEqual(JSON.parse(JSON.stringify(h.cards[0])), { telegram_id: 42, role: 'assistant', content: cardText })
   assert.equal(h.outboundCalls, 0, 'a gateway result is simulated; never contact a provider')
   console.log('PASS original inbound notify gateway status ' + status)
 }
