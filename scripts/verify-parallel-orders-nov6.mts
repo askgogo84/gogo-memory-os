@@ -97,4 +97,24 @@ assert.deepEqual(today.map(a => a.line), ["Your *Drip N' Dip order* is out for d
 assert.equal(ot.orderAlerts(drip, today.map(a => a.id), Date.parse('2026-11-06T15:00:00+05:30')).length, 0, 'once')
 assert.equal(ot.orderAlerts(drip, [], Date.parse('2026-11-07T10:00:00+05:30')).length, 0, 'not repeated as "today" on a later day')
 console.log('✓ any shop or courier (Shiprocket brands too); food/quick commerce, flights and statements skipped; "out for delivery today" once')
+
+// 6. Shiprocket's live subjects (6 Nov, first deploy showed "Shiprocket order · Shipped · expected Fri"):
+// brand in "your X order", no step backwards after "arriving early", month-first dates.
+const sr = (subject: string, snippet: string, iso: string) => ({ id: iso, threadId: iso, from: 'Shiprocket <info@net.shiprocket.in>', subject, snippet, date: new Date(iso).toUTCString() })
+const live = [
+  sr("Goverdhan M D, your Drip N' Dip order has been packed!", 'Your order is packed! We are happy to inform you that your Drip N&#39; Dip order is packed', '2026-11-05T09:56:45Z'),
+  sr("Goverdhan M D, your Drip N' Dip order has been shipped.", 'We have shipped your Drip N&#39; Dip order. Arriving on Saturday, November 7th Track', '2026-11-05T13:46:20Z'),
+  sr("Goverdhan M D your Drip N' Dip order has reached your city.", 'Your Drip N&#39; Dip order has arrived in your city. Arriving on Saturday, November 7th Track', '2026-11-06T01:45:14Z'),
+  sr("Goverdhan M D, your Drip N' Dip order is out for delivery!", 'Your Drip N&#39; Dip order will be delivered to you in the next few hours. Arriving on Friday, November 6th', '2026-11-06T03:37:56Z'),
+  sr("Goverdhan M D, your Drip N' Dip order is arriving early!", 'Your Drip N&#39; Dip order is arriving earlier than expected and will be delivered today before 7 pm. Arriving on Friday, November 6th', '2026-11-06T03:40:18Z'),
+]
+assert.equal(ot.shopOf(live[0].from, live[0].subject, live[0].snippet), "Drip N' Dip")
+assert.equal(ot.expectedDay('Arriving on Saturday, November 7th Track', live[1].date), '2026-11-07')
+const liveOrders = ot.trackOrders(live)
+assert.equal(liveOrders.length, 1, 'five Shiprocket emails, one order')
+assert.equal(liveOrders[0].shop, "Drip N' Dip"); assert.equal(liveOrders[0].status, 'out_for_delivery', '"arriving early" after "out for delivery" does not move it back')
+assert.equal(liveOrders[0].expected, '2026-11-06')
+assert.deepEqual(ot.orderAlerts(liveOrders, [], Date.parse('2026-11-06T09:40:00+05:30')).map(a => a.line), ["Your *Drip N' Dip order* is out for delivery today."])
+assert.match(ot.formatOrders(liveOrders, Date.parse('2026-11-06T12:00:00+05:30')), /• \*Drip N' Dip order\* · Drip N' Dip\n  Out for delivery · expected Fri, 6 Nov/)
+console.log("✓ Shiprocket's real emails: Drip N' Dip, out for delivery today, Fri 6 Nov")
 console.log('Parallel search + order tracking (6 Nov) checks passed')
