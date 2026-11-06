@@ -83,7 +83,7 @@ async function activateUserPlan(params: {
 
   await supabase.from('payment_records').upsert({
     whatsapp_id: params.phone || params.whatsappId || null,
-    telegram_id: params.telegramId ? Number(params.telegramId) : null,
+    telegram_id: ownerId,
     plan: plan.key,
     amount: plan.amountInPaise,
     currency: 'INR',
@@ -145,7 +145,7 @@ async function activateSubscription(entity: any, rawPayload: unknown) {
 
   await supabase.from('payment_records').insert({
     whatsapp_id: notes.whatsapp_id || null,
-    telegram_id: notes.telegram_id ? Number(notes.telegram_id) : null,
+    telegram_id: ownerId,
     plan: plan.key,
     amount: plan.amountInPaise,
     currency: 'INR',
