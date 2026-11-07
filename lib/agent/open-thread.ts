@@ -53,10 +53,25 @@ const RE: Record<ThreadIntent, RegExp> = {
   what: /^\s*(?:what(?:'s| is| was)?\s+(?:this|that|it)(?:\s+about)?|which\s+(?:payment|order|email|one)|huh|\?+)\s*\??\s*$/i,
   thanks: /^\s*(?:thanks|thank you|ok(?:ay)?|got it|noted|fine|cool|great|👍|🙏)\s*[.!]*\s*$/i,
 }
+const COMMAND_NOT_REPLY = new RegExp([
+  // send/write/draft/forward/reply … (an) email|mail|message|note|whatsapp|text … to|for <someone>
+  String.raw`\b(?:send|write|draft|compose|forward|reply|shoot|ping|mail|email|message|text|whatsapp)\b[^.?!]{0,40}\b(?:to|for)\s+(?!me\b|myself\b)(?:my\s+|the\s+)?[a-z@][\w.@'-]*`,
+  // send|write|draft an email / a message / a note (no pronoun object)
+  String.raw`\b(?:send|write|draft|compose)\s+(?:an?|the|my)\s+(?:email|mail|message|msg|note|reply|whatsapp|text)\b`,
+  // email|message|text <Name> …  ("email Divya the summary", "message Nithin")
+  String.raw`^\s*(?:please\s+)?(?:email|message|text|whatsapp|ping)\s+(?!me\b|it\b|this\b|that\b|them\b)[a-z]`,
+  // mail/email/messages from|with|about <someone/something> ("check mail from Nithin", "any email from Divya")
+  String.raw`\b(?:mail|email|emails|message|messages)\s+(?:from|with|about|regarding)\s+[a-z@]`,
+].join('|'), 'i')
+
 /** The intents in a reply, in the order they appear ("check the mail again and track the order" → check, track). Pure. */
 export function threadIntents(text: string): ThreadIntent[] {
   const t = String(text || '').trim()
   if (!t || t.length > 160) return []
+  // A new instruction is never a thread reply: composing or forwarding something to someone ("send an email to Divya
+  // about the invoice", "message Nithin the link", "forward this to Divya"), or reading mail from/for a named person
+  // ("check mail from Nithin"). These go to the brain even while an alert thread is open.
+  if (COMMAND_NOT_REPLY.test(t)) return []
   if (RE.what.test(t)) return ['what']
   if (RE.thanks.test(t)) return ['thanks']
   const hits = (Object.keys(RE) as ThreadIntent[]).filter(k => k !== 'what' && k !== 'thanks' && RE[k].test(t)).map(k => ({ k, i: t.search(RE[k]) })).sort((a, b) => a.i - b.i).map(x => x.k)
