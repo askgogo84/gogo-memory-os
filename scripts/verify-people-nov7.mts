@@ -66,6 +66,7 @@ console.log('✓ meeting prep: "Nithin works from home on Fridays" under the gue
 
 // 6. The directory gathers from a fake DB and fake Google; a failing source never loses the others.
 const { supabaseAdmin } = await import('../lib/supabase-admin')
+let seq = 1000
 const tables: Record<string, any[]> = {
   friend_contacts: [{ owner_telegram_id: 777, name: 'Nithin', whatsapp_id: '919845012345' }],
   memories: [{ telegram_id: 777, content: 'Nithin works from home on Fridays', created_at: '2026-11-01T00:00:00Z' }, { telegram_id: 777, content: 'My office is in Rajajinagar', created_at: '2026-11-01T00:00:00Z' }, { telegram_id: 777, content: 'Divya likes filter coffee', created_at: '2026-11-01T00:00:00Z' }],
@@ -73,10 +74,13 @@ const tables: Record<string, any[]> = {
 }
 ;(supabaseAdmin as any).from = (name: string) => {
   const rows = tables[name]; const f: [string, any][] = []
-  const b: any = { select() { return b }, eq(k: string, v: any) { f.push([k, v]); return b }, order() { return b }, limit() { return b }, ilike() { return b },
+  let patch: any = null
+  const b: any = { select() { return b }, eq(k: string, v: any) { f.push([k, v]); return b }, gte() { return b }, order() { return b }, limit() { return b }, ilike() { return b },
+    insert(row: any) { (tables[name] ||= []).push({ id: ++seq, created_at: new Date().toISOString(), ...row }); return b },
+    update(pp: any) { patch = pp; return b },
     maybeSingle() { return Promise.resolve({ data: hit()[0] || null, error: null }) },
-    then(res: any, rej: any) { if (!rows) return Promise.resolve({ data: null, error: { message: `relation "${name}" does not exist` } }).then(res, rej); return Promise.resolve({ data: hit(), error: null }).then(res, rej) } }
-  const hit = () => (rows || []).filter(r => f.every(([k, v]) => String(r[k]) === String(v)))
+    then(res: any, rej: any) { if (!tables[name]) return Promise.resolve({ data: null, error: { message: `relation "${name}" does not exist` } }).then(res, rej); if (patch) hit().forEach(r => Object.assign(r, patch)); return Promise.resolve({ data: hit().slice().reverse(), error: null }).then(res, rej) } }
+  const hit = () => (tables[name] || []).filter(r => f.every(([k, v]) => String(r[k]) === String(v)))
   return b
 }
 const actor: any = { userId: 'u', legacyTelegramId: 777, whatsappId: '918884501501', timezone: 'Asia/Kolkata' }
@@ -89,8 +93,39 @@ assert.match(ask!, /^\*Nithin\* · \+91 9845012345\n\n• Nithin works from home
 assert.match((await pp.tryPersonAsk(actor, 'who is Mathew'))!, /^I don't have anything on Mathew yet/)
 console.log('✓ directory: contacts + memory with calendar and Gmail unavailable; brief and honest miss')
 
+// 6b. Live 7 Nov 11:21: two Nithins by address only → numbered candidates, the reply picks one, and the bare-name note still shows.
+const two = pp.mergePeople([
+  { name: null, email: 'nithin@tipplr.in', source: 'calendar' }, { name: null, email: 'nithin@tipplr.in', source: 'gmail' },
+  { name: null, email: 'nithin.mdn@gmail.com', source: 'gmail' },
+  { name: 'Nithin', source: 'memory', note: 'Nithin is vegetarian' },
+])
+assert.equal(two.length, 2); assert.deepEqual(pp.looseNotes(two, 'Nithin'), ['Nithin is vegetarian'])
+const r2 = pp.resolvePerson('Nithin', two); assert.equal(r2.person, null); assert.equal(r2.candidates.length, 2)
+assert.deepEqual(r2.candidates.map(pp.candidateLine), ['1. nithin@tipplr.in — Tipplr; on your calendar, emails you', '2. nithin.mdn@gmail.com; emails you'])
+for (const [reply, expect] of [['1', 'nithin@tipplr.in'], ['2', 'nithin.mdn@gmail.com'], ['the first one', 'nithin@tipplr.in'], ['tipplr', 'nithin@tipplr.in'], ['work', 'nithin@tipplr.in'], ['gmail', 'nithin.mdn@gmail.com'], ['the gmail one', 'nithin.mdn@gmail.com'], ['nithin.mdn@gmail.com', 'nithin.mdn@gmail.com']] as const)
+  assert.equal(pp.pickCandidate(reply, r2.candidates)?.emails[0], expect, `reply "${reply}"`)
+assert.equal(pp.pickCandidate('Nithin', r2.candidates, 'Nithin'), null, 'the same first name is not an answer')
+assert.equal(pp.pickCandidate('yes', r2.candidates), null)
+// End to end through the fake DB: contacts without Nithin, memory note, Gmail unavailable → the two addresses come from "calendar" rows we seed via contacts? No: seed friend_contacts with both addresses is not real; instead run the pure pieces above and the choice persistence below.
+tables.agent_activity = []
+tables.friend_contacts = []
+tables.memories = [{ telegram_id: 777, content: 'Nithin is vegetarian', created_at: '2026-11-05T00:00:00Z' }]
+const miss = await pp.tryPersonAsk(actor, 'what do I know about Nithin?')
+assert.match(miss!, /^\*Nithin\*\n\n• Nithin is vegetarian/, 'one Nithin (memory only) is answered directly')
+// Persisted question → reply picks → brief with loose note labelled.
+tables.agent_activity.push({ id: ++seq, telegram_id: '777', event_type: pp.PERSON_CHOICE_EVENT, created_at: new Date().toISOString(), message: 'Nithin', metadata_json: { who: 'Nithin', open: true, candidates: r2.candidates } })
+const picked = await pp.tryPersonAsk(actor, '1')
+assert.match(picked!, /^\*nithin\* · nithin@tipplr\.in\n\n\*Your notes on nithin\*\n• Nithin is vegetarian/, picked!)
+assert.equal(tables.agent_activity[0].metadata_json.open, false, 'the question closes after a pick')
+assert.equal(await pp.tryPersonAsk(actor, '1'), null, 'a closed question does not fire again')
+tables.agent_activity.push({ id: ++seq, telegram_id: '777', event_type: pp.PERSON_CHOICE_EVENT, created_at: new Date().toISOString(), message: 'Nithin', metadata_json: { who: 'Nithin', open: true, candidates: r2.candidates } })
+assert.match((await pp.tryPersonAsk(actor, 'Nithin'))!, /^Reply with the number:\n1\. nithin@tipplr\.in/, 'the same first name re-asks with numbers')
+assert.equal(await pp.tryPersonAsk(actor, 'remind me to call mum'), null, 'an unrelated message closes the question and falls through')
+assert.equal(tables.agent_activity[1].metadata_json.open, false)
+console.log('✓ two Nithins: numbered candidates, number/word/address replies pick one, bare-name note shown, question closes')
+
 // 7. Wiring: both surfaces, and the brain leaves these alone.
 const wa = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8'), dash = readFileSync('app/api/dashboard/chat/route.ts', 'utf8'), brain = readFileSync('lib/agent/brain.ts', 'utf8')
-assert.match(wa, /m\.tryPersonAsk\(prepActor, text\)/); assert.match(dash, /m\.tryPersonAsk\(actor,text\)/); assert.match(brain, /personAsk\(t\) !== null/)
+assert.match(wa, /m\.tryPersonAsk\(prepActor, text\)/); assert.match(wa, /text\.trim\(\)\.length <= 60\)\) \{/, 'short replies reach the choice handler'); assert.match(dash, /m\.tryPersonAsk\(actor,text\)/); assert.match(brain, /personAsk\(t\) !== null/)
 console.log('✓ wired on WhatsApp and the dashboard; exact command for the brain')
 console.log('People (7 Nov) checks passed')

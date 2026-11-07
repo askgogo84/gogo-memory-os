@@ -1023,7 +1023,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // Meeting prep (Duet benchmark, 6 Nov): "prep me for my next meeting" reads the calendar and recent emails.
     // Trip plan (7 Nov): "plan a Goa trip 12 to 15 Dec with Divya and Nithin" gets a plan skeleton, not a question.
     // "What do I know about Nithin?" (7 Nov): one person across memory, contacts, calendar guests and Gmail.
-    if ((globalThis as any).process?.env?.VERCEL_ENV && (/\b(?:prep|prepare|brief)\b[\s\S]{0,40}\b(?:meeting|call|appointment)\b|\bnext\s+(?:meeting|call)\s+about\b|^\s*meeting\s+prep\b/i.test(text) || /^\s*(?:please\s+)?(?:can you\s+|could you\s+|help me\s+)?(?:plan|organi[sz]e|put together|arrange)\b/i.test(text) || /^(?:what|who|tell me about|catch me up on|brief me on|remind me who|when)\b/i.test(text))) {
+    if ((globalThis as any).process?.env?.VERCEL_ENV && (/\b(?:prep|prepare|brief)\b[\s\S]{0,40}\b(?:meeting|call|appointment)\b|\bnext\s+(?:meeting|call)\s+about\b|^\s*meeting\s+prep\b/i.test(text) || /^\s*(?:please\s+)?(?:can you\s+|could you\s+|help me\s+)?(?:plan|organi[sz]e|put together|arrange)\b/i.test(text) || /^(?:what|who|tell me about|catch me up on|brief me on|remind me who|when)\b/i.test(text) || text.trim().length <= 60)) {
       const prepActor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' })
       const prep = (await import('@/lib/agent/meeting-prep-ask').then(m => m.tryMeetingPrep(prepActor, text), () => null))
         || (await import('@/lib/agent/trip-plan').then(m => m.tryTripPlan(prepActor, 'whatsapp', text), () => null))
