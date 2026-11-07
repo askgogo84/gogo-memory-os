@@ -22,6 +22,8 @@ export async function GET(request: Request) {
   if (!workspaceId) return NextResponse.json({ error: 'pilot_not_configured' }, { status: 503 })
   try {
     const [{ SupabaseAdapter }, { SupabaseScheduleStore, runDueSchedules, proposeCutoffs }] = await Promise.all([import('@/lib/enterprise/tipplr/supabase-adapter'), import('@/lib/enterprise/tipplr/schedules')])
+    const { seedIfEmpty } = await import('@/lib/enterprise/tipplr/supabase-adapter')
+    const seed = await seedIfEmpty(supabaseAdmin, workspaceId)
     const adapter = new SupabaseAdapter(supabaseAdmin, workspaceId)
     const store = new SupabaseScheduleStore(supabaseAdmin)
     const persist = (rec: any) => saveActionRecord(supabaseAdmin, rec)
@@ -43,7 +45,7 @@ export async function GET(request: Request) {
       }
     }
     console.log('TIPPLR_PILOT_CRON:', JSON.stringify({ ran: ran.length, proposals: proposals.length, sent, meta: wa.metaConfigured() }))
-    return NextResponse.json({ ok: true, sent, ran: ran.map(r => ({ outlet: r.outlet.id, text: r.text })), proposals: proposals.map(p => ({ outlet: p.outlet.id, text: p.message.text, buttons: p.message.buttons })) })
+    return NextResponse.json({ ok: true, seeded: seed.seeded, sent, ran: ran.map(r => ({ outlet: r.outlet.id, text: r.text })), proposals: proposals.map(p => ({ outlet: p.outlet.id, text: p.message.text, buttons: p.message.buttons })) })
   } catch (err: any) {
     const msg = String(err?.message || err)
     if (msg === 'pilot_not_enabled') return NextResponse.json({ error: 'pilot_not_enabled' }, { status: 503 })
