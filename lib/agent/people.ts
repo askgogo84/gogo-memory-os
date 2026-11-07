@@ -106,7 +106,8 @@ export function personMailQuery(p: Person, days = 90): string | null {
 }
 
 /** The display name to use: the longest saved name, else the address's local part. Pure. */
-export const displayName = (p: Person) => [...p.names].sort((a, b) => b.length - a.length)[0] || (p.emails[0] ? p.emails[0].split('@')[0] : p.phones[0] ? `+91 ${p.phones[0]}` : 'them')
+export const displayName = (p: Person) => [...p.names].sort((a, b) => b.length - a.length)[0]
+  || (p.emails[0] ? p.emails[0].split('@')[0].split(/[._-]+/).filter(Boolean).map(w => w.replace(/^\w/, c => c.toUpperCase())).join(' ') : p.phones[0] ? `+91 ${p.phones[0]}` : 'them')
 
 // ── gathering from the connected sources (each best-effort; a failing source never loses the others) ────────────
 const nameFromHeader = (h: string) => { const m = String(h || '').match(/^\s*"?([^"<]+?)"?\s*<([^>]+)>/); return m ? { name: m[1].trim(), email: m[2].trim() } : { name: null, email: String(h || '').trim() } }
@@ -176,6 +177,7 @@ export function formatPersonBrief(p: Person, extra: { nextEvent?: { summary: str
   if (extra.nextEvent) lines.push('', `Next with ${name.split(' ')[0]}: ${extra.nextEvent.summary}, ${extra.nextEvent.when}.`)
   if (extra.emails === null) lines.push('', 'Connect Gmail and I can add your latest emails with them.')
   else if (extra.emails?.length) lines.push('', '*Latest emails*', ...extra.emails.slice(0, 3).map(m => `• ${m.subject}${m.date ? ` · ${m.date}` : ''}`))
+  else if (extra.emails && p.emails.some(isPersonEmail)) lines.push('', `No emails with ${name.split(' ')[0]} in the last 90 days in the inboxes I can read.`)
   if (extra.openLoops?.length) lines.push('', '*Open with them*', ...extra.openLoops.slice(0, 3).map(l => `• ${l}`))
   if (lines.length === 1) lines.push('', `That's all I have on ${name}: no notes, no meetings in the next month, no recent emails.`)
   return lines.join('\n')
