@@ -4,7 +4,7 @@
 import { attachEvidence, openActionRecord, recordVerification, transition, type ActionRecord } from '@/lib/agent/action-record'
 import type { CancelReason, Order, Outlet, TipplrAdapter } from './types'
 import { acceptReceipt, availabilityReceipt, markOutOfStockOffer, newOrderMessage, POS_REFUSAL, rejectReceipt, type MerchantMessage } from './merchant-messages'
-import { dayStats, stockFlags } from './stock-rules'
+import { cutoffProposal, dayStats, stockFlags } from './stock-rules'
 import { inr } from './types'
 
 export type Persist = (rec: ActionRecord) => Promise<void>
@@ -86,13 +86,24 @@ export function todayReply(outletId: string, orders: Order[], now = Date.now()):
 export const outletForPhone = (outlets: Outlet[], phone: string) => { const d = phone.replace(/\D/g, '').slice(-12); return outlets.find(o => o.phoneNumbers.some(p => p.replace(/\D/g, '').slice(-12) === d)) || null }
 
 /** The router for a merchant's tap or text. Button ids: accept:<order>:<min> · reject:<order>:<reason> · oos:<outlet>:<item>:<hour>. */
-export async function handleMerchantInput(adapter: TipplrAdapter, fromPhone: string, input: string, persist: Persist = noPersist, now = Date.now()): Promise<{ texts: string[]; buttons?: MerchantMessage['buttons'] } | null> {
+export async function handleMerchantInput(adapter: TipplrAdapter, fromPhone: string, input: string, persist: Persist = noPersist, now = Date.now(), store?: import('./schedules').ScheduleStore): Promise<{ texts: string[]; buttons?: MerchantMessage['buttons'] } | null> {
   const outlets = await adapter.listOutlets()
   const outlet = outletForPhone(outlets, fromPhone)
   if (!outlet) return null
   const tg = `merchant:${outlet.id}`
   const t = input.trim()
   let m: RegExpMatchArray | null
+  // Phase 2: the cut-off proposal's buttons and the schedule edits (screen 2).
+  if (store && (m = t.match(/^cutoff:([A-Za-z0-9_-]+):(daily|today|no)$/))) {
+    if (m[1] !== outlet.id) return { texts: ['That proposal belongs to another outlet.'] }
+    const sch = await import('./schedules')
+    const items = await adapter.listItems(outlet.id)
+    const history = await adapter.listOrders(outlet.id, new Date(now - 7 * 86_400_000).toISOString())
+    const p = cutoffProposal(outlet.id, history, items, now)
+    if (!p) return { texts: ['The pattern is gone this week, so there is nothing to schedule.'] }
+    return { texts: [await sch.applyCutoffChoice(adapter, store, outlet, m[2] as 'daily' | 'today' | 'no', p, persist, now)] }
+  }
+  if (store) { const sch = await import('./schedules'); const edited = await sch.editSchedule(adapter, store, outlet, t, persist, now); if (edited) return { texts: [edited] } }
   if ((m = t.match(/^accept:([A-Za-z0-9-]+):(\d{1,3})$/))) { const r = await acceptOrder(adapter, tg, m[1], Number(m[2]), persist); return { texts: [r.text] } }
   if ((m = t.match(/^reject:([A-Za-z0-9-]+):(out_of_stock|no_response)$/))) { const r = await rejectOrder(adapter, tg, m[1], m[2] as CancelReason, persist); return r.followUp ? { texts: [r.text, r.followUp.text], buttons: r.followUp.buttons } : { texts: [r.text] } }
   if ((m = t.match(/^oos:([A-Za-z0-9_-]+):([^:]+):(\d{1,2})$/))) { if (m[1] !== outlet.id) return { texts: ['That item belongs to another outlet.'] }; const r = await setAvailability(adapter, tg, outlet, decodeURIComponent(m[2]), false, Number(m[3]), persist, now); return { texts: [r.text] } }
