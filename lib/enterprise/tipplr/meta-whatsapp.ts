@@ -61,3 +61,16 @@ export function parseInbound(body: any): Inbound[] {
   }
   return out
 }
+
+/** Meta redelivers webhooks it thinks failed. Each message id is handled once: the first caller claims it, later ones get false.
+ *  The claim lives in agent_activity (event tipplr_wa_inbound); a store error is treated as "not claimed" so a real message is never dropped. */
+export async function claimInbound(db: { from: (t: string) => any }, messageId: string, from: string): Promise<boolean> {
+  if (!messageId) return true
+  try {
+    const { data } = await db.from('agent_activity').select('id').eq('telegram_id', 'tipplr-wa').eq('event_type', 'tipplr_wa_inbound').eq('message', messageId).limit(1)
+    if (data?.length) { console.log('TIPPLR_WA_DUPLICATE:', JSON.stringify({ messageId, from: from.slice(-4) })); return false }
+    const { error } = await db.from('agent_activity').insert({ telegram_id: 'tipplr-wa', event_type: 'tipplr_wa_inbound', message: messageId, metadata_json: { from: from.slice(-4), at: new Date().toISOString() } })
+    if (error) console.error('TIPPLR_WA_CLAIM_FAILED:', String(error.message || '').slice(0, 120))
+    return true
+  } catch { return true }
+}

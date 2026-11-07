@@ -18,8 +18,22 @@ function approvedRecord(telegramId: string, action: string, request: string): Ac
   return transition(rec, 'running', { note: 'merchant_tap' })
 }
 
-export async function acceptOrder(adapter: TipplrAdapter, telegramId: string, orderId: string, prepMinutes: number, persist: Persist = noPersist): Promise<{ record: ActionRecord; text: string; order: Order | null }> {
-  let rec = approvedRecord(telegramId, 'merchant.order.accept', `accept ${orderId} ${prepMinutes} min`)
+/** The order must belong to the outlet whose number is acting. Read before any write; a mismatch is a blocked record, never a mutation. */
+async function outletBound(adapter: TipplrAdapter, rec: ActionRecord, orderId: string, outletId: string | undefined, persist: Persist): Promise<{ rec: ActionRecord; text: string } | null> {
+  if (!outletId) return null
+  const o = await adapter.getOrder(orderId).catch(() => null)
+  if (o && o.outletId === outletId) return null
+  const blocked = transition(rec, 'blocked', { note: o ? `cross_outlet: order ${orderId} belongs to ${o.outletId}, actor outlet ${outletId}` : `order_not_found: ${orderId} for outlet ${outletId}`, error: o ? 'cross_outlet' : 'order_not_found' })
+  await persist(blocked)
+  console.warn('TIPPLR_CROSS_OUTLET_BLOCKED:', JSON.stringify({ orderId, outletId, orderOutletId: o?.outletId ?? null }))
+  return { rec: blocked, text: o ? `#${orderId} isn't one of your outlet's orders, so I haven't touched it.` : `I don't have an order #${orderId} for your outlet.` }
+}
+
+export async function acceptOrder(adapter: TipplrAdapter, telegramId: string, orderId: string, prepMinutes: number, persist: Persist = noPersist, outletId?: string): Promise<{ record: ActionRecord; text: string; order: Order | null }> {
+  let rec = openActionRecord({ telegramId, capability: 'merchant', action: 'merchant.order.accept', request: `accept ${orderId} ${prepMinutes} min`, policy })
+  const bound = await outletBound(adapter, rec, orderId, outletId, persist)
+  if (bound) return { record: bound.rec, text: bound.text, order: null }
+  rec = transition(rec, 'running', { note: 'merchant_tap' })
   const res = await adapter.acceptOrder(orderId, prepMinutes)
   rec = attachEvidence(rec, { provider: 'tipplr.orders', ids: { orderId, prepMinutes: String(prepMinutes) }, httpStatus: res.status, note: res.ok ? null : JSON.stringify(res.body || {}).slice(0, 120) })
   const back = await adapter.getOrder(orderId).catch(() => null)
@@ -32,8 +46,11 @@ export async function acceptOrder(adapter: TipplrAdapter, telegramId: string, or
   return { record: rec, text: back ? acceptReceipt(rec, back) : acceptReceipt(rec, { id: orderId } as Order), order: back }
 }
 
-export async function rejectOrder(adapter: TipplrAdapter, telegramId: string, orderId: string, reason: CancelReason, persist: Persist = noPersist): Promise<{ record: ActionRecord; text: string; followUp: MerchantMessage | null; order: Order | null }> {
-  let rec = approvedRecord(telegramId, 'merchant.order.reject', `reject ${orderId} ${reason}`)
+export async function rejectOrder(adapter: TipplrAdapter, telegramId: string, orderId: string, reason: CancelReason, persist: Persist = noPersist, outletId?: string): Promise<{ record: ActionRecord; text: string; followUp: MerchantMessage | null; order: Order | null }> {
+  let rec = openActionRecord({ telegramId, capability: 'merchant', action: 'merchant.order.reject', request: `reject ${orderId} ${reason}`, policy })
+  const bound = await outletBound(adapter, rec, orderId, outletId, persist)
+  if (bound) return { record: bound.rec, text: bound.text, followUp: null, order: null }
+  rec = transition(rec, 'running', { note: 'merchant_tap' })
   const res = await adapter.rejectOrder(orderId, reason)
   rec = attachEvidence(rec, { provider: 'tipplr.orders', ids: { orderId, reason }, httpStatus: res.status })
   const back = await adapter.getOrder(orderId).catch(() => null)
@@ -104,8 +121,8 @@ export async function handleMerchantInput(adapter: TipplrAdapter, fromPhone: str
     return { texts: [await sch.applyCutoffChoice(adapter, store, outlet, m[2] as 'daily' | 'today' | 'no', p, persist, now)] }
   }
   if (store) { const sch = await import('./schedules'); const edited = await sch.editSchedule(adapter, store, outlet, t, persist, now); if (edited) return { texts: [edited] } }
-  if ((m = t.match(/^accept:([A-Za-z0-9-]+):(\d{1,3})$/))) { const r = await acceptOrder(adapter, tg, m[1], Number(m[2]), persist); return { texts: [r.text] } }
-  if ((m = t.match(/^reject:([A-Za-z0-9-]+):(out_of_stock|no_response)$/))) { const r = await rejectOrder(adapter, tg, m[1], m[2] as CancelReason, persist); return r.followUp ? { texts: [r.text, r.followUp.text], buttons: r.followUp.buttons } : { texts: [r.text] } }
+  if ((m = t.match(/^accept:([A-Za-z0-9-]+):(\d{1,3})$/))) { const r = await acceptOrder(adapter, tg, m[1], Number(m[2]), persist, outlet.id); return { texts: [r.text] } }
+  if ((m = t.match(/^reject:([A-Za-z0-9-]+):(out_of_stock|no_response)$/))) { const r = await rejectOrder(adapter, tg, m[1], m[2] as CancelReason, persist, outlet.id); return r.followUp ? { texts: [r.text, r.followUp.text], buttons: r.followUp.buttons } : { texts: [r.text] } }
   if ((m = t.match(/^oos:([A-Za-z0-9_-]+):([^:]+):(\d{1,2})$/))) { if (m[1] !== outlet.id) return { texts: ['That item belongs to another outlet.'] }; const r = await setAvailability(adapter, tg, outlet, decodeURIComponent(m[2]), false, Number(m[3]), persist, now); return { texts: [r.text] } }
   if (/^(?:turn|put|mark)\s+(.+?)\s+back\s+on$|^(.+?)\s+(?:is\s+)?back\s+(?:on|in stock)$/i.test(t)) { const name = (t.match(/^(?:turn|put|mark)\s+(.+?)\s+back\s+on$/i)?.[1] || t.match(/^(.+?)\s+(?:is\s+)?back\s+(?:on|in stock)$/i)?.[1] || '').trim(); const r = await setAvailability(adapter, tg, outlet, name, true, null, persist, now); return { texts: [r.text] } }
   if (/^(?:how many orders|orders)\s+(?:today|so far)\??$|^today'?s orders\??$/i.test(t)) { const orders = await adapter.listOrders(outlet.id, new Date(now - 2 * 86_400_000).toISOString()); return { texts: [todayReply(outlet.id, orders, now)] } }
