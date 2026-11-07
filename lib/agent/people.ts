@@ -43,6 +43,19 @@ export function mergePeople(observations: Observation[]): Person[] {
     if (o.note && !p.notes.includes(o.note)) p.notes.push(o.note)
     if (o.at && (!p.lastSeen || o.at > p.lastSeen)) p.lastSeen = o.at
   }
+  // Check the COMPLETE set before first-name heuristic joins. Gathering is concurrent:
+  // a phone-only "Divya" can arrive before two different calendar guests "Divya S"
+  // and "Divya Rao". Without this preflight, the first guest inherits the phone and
+  // any bare-name memory simply because it finished first (cross-person disclosure).
+  const fullNamesByFirst = new Map<string, Set<string>>()
+  for (const o of observations) {
+    const parts = normName(String(o.name || '')).split(' ').filter(Boolean)
+    if (parts.length < 2) continue
+    const surnames = fullNamesByFirst.get(parts[0]) || new Set<string>()
+    surnames.add(parts.slice(1).join(' '))
+    fullNamesByFirst.set(parts[0], surnames)
+  }
+  const ambiguousFirstNames = new Set([...fullNamesByFirst].filter(([, names]) => names.size > 1).map(([first]) => first))
   // Pass 1: observations with an identifier (email or phone) seed and merge people.
   for (const o of observations) {
     const e = normEmail(o.email || ''), ph = normPhone(o.phone || '')
@@ -55,7 +68,7 @@ export function mergePeople(observations: Observation[]): Person[] {
     const byName = allFirst.filter(p => !p.names.some(x => surnameConflict(x, n)))
     const sameFull = byName.filter(p => p.names.some(x => normName(x) === normName(n)))
     // The address joins a first-name-only match only when nobody else in the directory shares that first name.
-    const target = sameFull.length === 1 ? sameFull[0] : (allFirst.length === 1 && byName.length === 1 && e && localPartHasName(e, byName[0].names[0]) ? byName[0] : null)
+    const target = sameFull.length === 1 ? sameFull[0] : (!ambiguousFirstNames.has(first) && allFirst.length === 1 && byName.length === 1 && e && localPartHasName(e, byName[0].names[0]) ? byName[0] : null)
     if (target) { add(target, o); continue }
     const p: Person = { key: e || ph, names: [], emails: [], phones: [], sources: [], notes: [], lastSeen: null }
     people.push(p); add(p, o)
@@ -83,6 +96,9 @@ export function resolvePerson(query: string, people: Person[]): Resolution {
   if (ph) { const p = people.find(x => x.phones.includes(ph)) || null; return { person: p, candidates: p ? [p] : [], query: q } }
   const full = people.filter(p => p.names.some(x => normName(x) === normName(q)))
   if (full.length === 1) return { person: full[0], candidates: full, query: q }
+  // An explicitly requested full name is not permission to reveal a different
+  // surname's mail, memory or meeting notes. Only an exact known full name qualifies.
+  if (normName(q).split(' ').length > 1 && full.length === 0) return { person: null, candidates: [], query: q }
   const first = firstName(q)
   const cands = full.length ? full : people.filter(p => p.names.some(x => firstName(x) === first) || p.emails.some(em => localPartHasName(em, q)))
   return { person: cands.length === 1 ? cands[0] : null, candidates: cands, query: q }
