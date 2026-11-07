@@ -128,3 +128,16 @@ const seed = readFileSync('scripts/seed-tipplr-pilot.mts', 'utf8')
 assert.match(seed, /from\('workspaces'\)\.select\('id,name'\)\.eq\('id', ws\)/); assert.ok(!/from\('(?:memories|reminders|users|conversations|expenses)'\)/.test(seed))
 console.log('✓ cron: secret + workspace gates, 503 until enabled, sends nothing; seed touches only pilot tables')
 console.log('Tipplr pilot phase 2 checks passed')
+
+// Auto-seed (7 Nov, owner on phone): an empty workspace is seeded on the first cron run; a seeded one is left alone.
+{
+  const { seedIfEmpty } = await import('../lib/enterprise/tipplr/supabase-adapter')
+  const t: Record<string, any[]> = { merchant_outlets: [], merchant_items: [], merchant_orders: [] }
+  const fdb = { from: (name: string) => { const f: [string, any][] = []; let ins: any = null; const b: any = { select() { return b }, eq(k: string, v: any) { f.push([k, v]); return b }, limit() { return b }, insert(r: any) { ins = r; return b }, then(res: any, rej: any) { if (!t[name]) return Promise.resolve({ data: null, error: { code: '42P01', message: 'relation does not exist' } }).then(res, rej); if (ins) { t[name].push(...ins); return Promise.resolve({ data: null, error: null }).then(res, rej) } return Promise.resolve({ data: t[name].filter(x => f.every(([k, v]) => String(x[k]) === String(v))), error: null }).then(res, rej) } }; return b } }
+  const first = await seedIfEmpty(fdb, 'ws_tipplr', AT(10))
+  assert.equal(first.seeded, true); assert.equal(first.rows!.merchant_outlets, 48); assert.ok(first.rows!.merchant_orders > 20_000)
+  assert.deepEqual(await seedIfEmpty(fdb, 'ws_tipplr', AT(10)), { seeded: false })
+  await assert.rejects(() => seedIfEmpty({ from: () => ({ select() { return this }, eq() { return this }, limit() { return this }, then(res: any) { return Promise.resolve({ data: null, error: { code: '42P01', message: 'relation "merchant_outlets" does not exist' } }).then(res) } }) } as any, 'ws'), /pilot_not_enabled/)
+  assert.match(readFileSync('app/api/cron/tipplr-pilot/route.ts', 'utf8'), /seedIfEmpty\(supabaseAdmin, workspaceId\)/)
+  console.log('✓ auto-seed: empty workspace seeded once by the cron; missing table → pilot_not_enabled')
+}
