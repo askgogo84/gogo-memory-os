@@ -27,6 +27,8 @@ export type InvoiceFiler = (d: InvoiceDraft) => Promise<{ ok: boolean; status: n
 /** On "approve": file through the filer (ledger event in the pilot), read it back, receipt. */
 export async function fileInvoice(d: InvoiceDraft, file: InvoiceFiler, readBack: (orderId: string) => Promise<boolean>, persist: (r: ActionRecord) => Promise<void>): Promise<string> {
   let rec = transition(openActionRecord({ telegramId: 'ops', capability: 'merchant', action: 'merchant.invoice.file', request: `invoice ${d.orderId}`, policy: { capability: 'merchant', permissionLevel: 'ask', mode: 'execute', risk: 'medium', irreversible: true } }), 'running', { note: 'ops_approve' })
+  // Idempotent: one invoice per order. A second "generate … approve" (or a redelivered approve) files nothing.
+  if (await readBack(d.orderId).catch(() => false)) { rec = transition(rec, 'failed', { error: 'already_filed', note: 'invoice already on the ledger' }); await persist(rec); return `An invoice for #${d.orderId} is already filed. Nothing changed.` }
   const r = await file(d)
   rec = attachEvidence(rec, { provider: 'tipplr.invoices', ids: { orderId: d.orderId, ref: String(r.ref || '') }, httpStatus: r.status, note: r.error || null })
   const present = r.ok ? await readBack(d.orderId).catch(() => false) : false
@@ -36,7 +38,8 @@ export async function fileInvoice(d: InvoiceDraft, file: InvoiceFiler, readBack:
 }
 
 /** Pilot filer: an order event in the ledger (merchant_order_events via the adapter's db when available). */
-export function ledgerFiler(db: { from: (t: string) => any } | null, memory: InvoiceDraft[] = []) {
+const MEMORY_LEDGER: InvoiceDraft[] = [] // no db (tests/preview): one process-wide ledger, so idempotency holds across approves
+export function ledgerFiler(db: { from: (t: string) => any } | null, memory: InvoiceDraft[] = MEMORY_LEDGER) {
   const filed = memory
   const file: InvoiceFiler = async d => {
     if (!db) { filed.push(d); return { ok: true, status: 200, ref: `inv-${d.orderId}` } }
