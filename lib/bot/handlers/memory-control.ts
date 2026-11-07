@@ -74,7 +74,8 @@ export function isMemoryControlCommand(text: string) {
     lower.startsWith('delete memory') ||
     lower.startsWith('remove memory') ||
     lower === 'clear my memory' ||
-    lower === 'forget everything'
+    lower === 'forget everything' ||
+    /^(?:export|download|send me|give me)\s+(?:all\s+)?(?:my\s+)?(?:memory|memories|everything you (?:know|remember)(?: about me)?|my data)\s*[.!]?$/i.test(lower)
   )
 }
 
@@ -350,6 +351,15 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
 
   if (isMemorySearchCommand(text)) {
     return buildMemorySearchReply(telegramId, text)
+  }
+
+  if (/^(?:export|download|send me|give me)\s+(?:all\s+)?(?:my\s+)?(?:memory|memories|everything you (?:know|remember)(?: about me)?|my data)\s*[.!]?$/i.test(lower)) {
+    // Export: the file comes from the dashboard (signed in as this owner), never as a WhatsApp attachment.
+    const { exportMemory } = await import('@/lib/agent/memory-export')
+    const x = await exportMemory(String(telegramId))
+    const base = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
+    const parts = Object.entries(x.counts).map(([k, n]) => `${n} ${k.replace('user_', '').replace(/_/g, ' ')}`).join(', ')
+    return `🧠 *Your memory export*\n\n${x.facts.length} items${parts ? ` (${parts})` : ''}.\n\nDownload (sign in as you):\n${base}/api/dashboard/memory/export?format=md\n\nJSON with provenance: ${base}/api/dashboard/memory/export\n\nSay "forget <what it says>" to remove one item.`
   }
 
   if (lower === 'memory off' || lower === 'turn memory off') {
