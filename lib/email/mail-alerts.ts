@@ -84,6 +84,26 @@ export function amountOf(text: string): { value: number; text: string } | null {
   return { value: m[1] ? value : value * 84, text: m[1] ? `₹${raw}` : `$${raw}` }
 }
 
+/** An email can mention a ₹100 late fee before its ₹24,000 balance.
+ * Prefer the explicitly labelled bill total; never guess from multiple unlabeled amounts.
+ */
+const ALL_AMOUNTS = new RegExp(AMOUNT.source, 'gi')
+const BILL_AMOUNT_LABEL = new RegExp(
+  '\\b(?:total\\s+amount\\s+due|amount\\s+due|balance\\s+due|total\\s+(?:amount|bill)|outstanding\\s+(?:amount|balance)|amount\\s+payable|payment\\s+due|bill\\s+(?:of|for)|invoice\\s+(?:of|for))\\s*(?::|is|of|=)?\\s*(' + AMOUNT.source + ')',
+  'i',
+)
+function mentionedAmounts(text: string): { value: number; text: string }[] {
+  return Array.from(String(text || '').matchAll(ALL_AMOUNTS), m => amountOf(m[0]))
+    .filter((v): v is { value: number; text: string } => v !== null)
+}
+export function billAmountOf(text: string): { value: number; text: string } | null {
+  const source = String(text || '')
+  const explicit = source.match(BILL_AMOUNT_LABEL)
+  if (explicit) return amountOf(explicit[1])
+  const amounts = mentionedAmounts(source)
+  return amounts.length === 1 ? amounts[0] : null
+}
+
 /** Which alert an email is, or null when it should wait for "any important emails?". Pure. */
 export function alertKindOf(s: ScoredEmail): AlertKind | null {
   const e = s.email, text = `${e.subject} ${e.snippet}`.replace(/\s+/g, ' ')
@@ -95,8 +115,11 @@ export function alertKindOf(s: ScoredEmail): AlertKind | null {
   if (c === 'service_risk' || FAILED.test(text)) return 'payment_failed'
   if (c === 'bill_due') {
     // A ₹15 "Payment Reminder" (Amazon Pay, 6 Nov) is not money worth a message; it waits for "any important emails?".
-    const amt = amountOf(text)
-    return amt && amt.value < SMALL_BILL ? null : 'money_leaving'
+    const amt = billAmountOf(text)
+    if (amt) return amt.value < SMALL_BILL ? null : 'money_leaving'
+    // A small late fee must not silence an unlabeled, larger payable.
+    const amounts = mentionedAmounts(text)
+    return amounts.length > 0 && amounts.every(a => a.value < SMALL_BILL) ? null : 'money_leaving'
   }
   if (c === 'transaction_alert') {
     const amt = amountOf(text)
@@ -151,10 +174,18 @@ export function dueDayOf(text: string, now: number): number | null {
   }
   return Date.UTC(year, month, day)
 }
+const EXPLICIT_PAYMENT_DUE_DATE = new RegExp(
+  '\\b(?:due(?:\\s+date)?\\s*(?:(?:on|by|is)\\s+|:\\s*)?|pay\\s+(?:on|by|before)\\s+|payment\\s+deadline\\s*(?:is|:)?\\s*|last\\s+date\\s*(?:is|:)?\\s*)((?:\\d{1,2}\\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*(?:,?\\s+\\d{4})?|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\\s+\\d{1,2}(?:st|nd|rd|th)?(?:,?\\s+\\d{4})?|\\d{1,2}\\/\\d{1,2}\\/\\d{2,4}|today|tomorrow))\\b',
+  'i',
+)
+/** A statement date does not establish that payment is already overdue. */
+export function paymentDueDateInText(text: string): string | null {
+  return String(text || '').match(EXPLICIT_PAYMENT_DUE_DATE)?.[1] || null
+}
 const OVERDUE_WINDOW = 45 * 86_400_000
 /** "was due 5 Nov" when the day has passed (within 45 days), "due 5 Nov" otherwise. */
 const dueWords = (text: string, now: number) => {
-  const d = dateInText(text), ts = dueDayOf(text, now)
+  const d = paymentDueDateInText(text), ts = d ? dueDayOf(d, now) : null
   if (!d || ts === null) return ''
   const today = Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), new Date(now).getUTCDate())
   return ts < today && today - ts <= OVERDUE_WINDOW ? `was due ${d}, so it's overdue unless you've paid` : `due ${d}`
@@ -174,7 +205,10 @@ export function contextLine(kind: AlertKind, s: ScoredEmail, ctx: AlertContext):
     const away = Date.parse(trip.departAt) <= now
     if (away) return `You're travelling${trip.returnAt ? ` until ${fmtDay(trip.returnAt, tz)}` : ''}, so handle this from your phone or leave it for when you're back.`
     // Before a trip the flight matters only when the date in the email falls while you're away (6 Nov: a bill due 5 Nov got "you fly on 8 Nov").
-    const due = dueDayOf(`${s.email.subject} ${s.email.snippet}`, now)
+    const dateText = `${s.email.subject} ${s.email.snippet}`
+    const due = kind === 'money_leaving'
+      ? dueDayOf(paymentDueDateInText(dateText) || '', now)
+      : dueDayOf(dateText, now)
     const inTrip = due !== null && due >= Date.parse(trip.departAt) - 86_400_000 && (!trip.returnAt || due <= Date.parse(trip.returnAt))
     if (inTrip) return `You fly${trip.toCity ? ` to ${trip.toCity}` : ''} on ${fmtDay(trip.departAt, tz)} and this falls while you're away; best to settle it before then.`
   }
@@ -194,7 +228,7 @@ const TAG: Record<AlertKind, string> = { payment_failed: '⚠️ Payment failed'
 /** One short message for one email. Says what the email states, what Gogo cannot tell, and the context line. Pure. */
 export function composeAlert(kind: AlertKind, s: ScoredEmail, ctx: AlertContext = {}): string {
   const e = s.email, text = `${e.subject} ${e.snippet}`.replace(/\s+/g, ' ')
-  const who = senderOf(e), subject = subjectOf(e), amt = amountOf(text), day = dateInText(text), time = timeInText(text)
+  const who = senderOf(e), subject = subjectOf(e), amt = s.category === 'bill_due' ? billAmountOf(text) : amountOf(text), day = dateInText(text), time = timeInText(text)
   const name = ctx.name ? `${ctx.name.split(' ')[0]}, ` : ''
   let body = ''
   if (kind === 'payment_failed') {
@@ -205,7 +239,7 @@ export function composeAlert(kind: AlertKind, s: ScoredEmail, ctx: AlertContext 
     else if (MANDATE.test(text)) body = `${name}${who} reports a new recurring-payment mandate${amt ? ` with a *${amt.text}* maximum` : ''}. "${subject}". If you didn't set this up, cancel it from your bank's app.`
     else if (RENEW.test(text)) body = `${name}your ${subject.replace(/\byour\b/gi, '').trim()} renews${day ? ` on ${day}` : ' soon'}${amt ? ` for *${amt.text}*` : ''}, from ${who}. Say "remind me to decide on this" with a date if you want a nudge first.`
     else {
-      const due = dueWords(text, ctx.now ?? Date.now()) || s.due || ''
+      const due = dueWords(text, ctx.now ?? Date.now()) || (dateInText(text) ? '' : s.due || '')
       const ask = s.ask && !restates(s.ask, subject, amt?.text) ? ` ${s.ask}` : ''
       body = `${name}${who}: ${amt ? `*${amt.text}* ` : ''}${due ? `${due}, ` : ''}"${subject}".${ask}`
     }
