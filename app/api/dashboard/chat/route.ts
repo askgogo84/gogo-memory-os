@@ -437,7 +437,7 @@ async function handleChatPost(req: NextRequest) {
       return NextResponse.json({runId:emailAsk.handledBy,status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,...emailAsk})
     }
     // A forwarded payment confirmation, and "yes" to its receipt question (6 Nov live).
-    const pay=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/agent/payment-confirmation').then(m=>m.PAYMENT_GATE.test(text)?m.tryPaymentConfirmation(user.telegram_id,text):text.length<=24?m.takeReceiptCheck(actor,text):null,()=>null):null
+    const pay=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/agent/shared-content').then(async m=>(await m.tryShared(user.telegram_id,text))||(text.length<=24?m.takeSharedFollowUp(actor,text):null),()=>null):null
     if(pay){
       await saveConversation(user.telegram_id,text,pay)
       return NextResponse.json({runId:'payment-confirmation',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,text:pay,handledBy:'payment-confirmation'})
