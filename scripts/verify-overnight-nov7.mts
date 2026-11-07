@@ -22,6 +22,8 @@ console.log('✓ trip plan: place + dates → plan skeleton with flights and sta
 const fi = readFileSync('lib/feature-intents.ts', 'utf8')
 assert.match(fi, /if \(isWorkspaceConnect\(text\)\) \{\n[\s\S]{0,400}buildGmailConnectReply\(user\.telegramId, text\)/, 'feature-intents defers to the shared Gmail connect reply')
 console.log('✓ dashboard "connect gmail" uses the shared connected-state reply')
+// Keep year and downstream flight-query fidelity in the registered overnight suite.
+await import('./verify-trip-date-fidelity-nov7.mts')
 console.log('Overnight (7 Nov) replays passed')
 
 // 3. "Got it, boss." / "…so far, boss." reached WhatsApp and the dashboard from paths that skip stripUnrequestedAddress.
