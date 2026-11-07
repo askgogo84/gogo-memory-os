@@ -59,7 +59,10 @@ export function threadIntents(text: string): ThreadIntent[] {
   if (!t || t.length > 160) return []
   if (RE.what.test(t)) return ['what']
   if (RE.thanks.test(t)) return ['thanks']
-  const hits = (Object.keys(RE) as ThreadIntent[]).filter(k => k !== 'what' && k !== 'thanks' && RE[k].test(t)).map(k => ({ k, i: t.search(RE[k]) })).sort((a, b) => a.i - b.i).map(x => x.k)
+  // A negative payment-status report must never close an alert as paid.
+  // In particular, the permissive "paid it" / "settled" alternatives also match inside "not paid it" and "not settled".
+  const negatedPayment = /\b(?:not|never)\s+(?:(?:yet|already|been|fully|actually|really)\s+){0,3}(?:paid|settled|cleared)\b|\b(?:haven['’]?t|hasn['’]?t|wasn['’]?t|isn['’]?t|ain['’]?t)\s+(?:(?:been|already|fully|actually|really)\s+){0,3}(?:paid|settled|cleared)\b/i.test(t)
+  const hits = (Object.keys(RE) as ThreadIntent[]).filter(k => k !== 'what' && k !== 'thanks' && RE[k].test(t) && !(k === 'paid' && negatedPayment)).map(k => ({ k, i: t.search(RE[k]) })).sort((a, b) => a.i - b.i).map(x => x.k)
   // "paid" wins over "later" when both appear ("it was paid later"); "ignore" is exclusive.
   if (hits.includes('ignore')) return ['ignore']
   return hits.filter((k, i, a) => a.indexOf(k) === i && !(k === 'later' && a.includes('paid')))
