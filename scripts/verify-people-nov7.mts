@@ -115,7 +115,8 @@ assert.match(miss!, /^\*Nithin\*\n\n• Nithin is vegetarian/, 'one Nithin (memo
 // Persisted question → reply picks → brief with loose note labelled.
 tables.agent_activity.push({ id: ++seq, telegram_id: '777', event_type: pp.PERSON_CHOICE_EVENT, created_at: new Date().toISOString(), message: 'Nithin', metadata_json: { who: 'Nithin', open: true, candidates: r2.candidates } })
 const picked = await pp.tryPersonAsk(actor, '1')
-assert.match(picked!, /^\*nithin\* · nithin@tipplr\.in\n\n\*Your notes on nithin\*\n• Nithin is vegetarian/, picked!)
+assert.match(picked!, /^\*Nithin\* · nithin@tipplr\.in\n\n\*Your notes on Nithin\*\n• Nithin is vegetarian/, picked!)
+assert.match(picked!, /No emails with Nithin in the last 90 days in the inboxes I can read\.$/, 'an empty email search is said, not hidden')
 assert.equal(tables.agent_activity[0].metadata_json.open, false, 'the question closes after a pick')
 assert.equal(await pp.tryPersonAsk(actor, '1'), null, 'a closed question does not fire again')
 tables.agent_activity.push({ id: ++seq, telegram_id: '777', event_type: pp.PERSON_CHOICE_EVENT, created_at: new Date().toISOString(), message: 'Nithin', metadata_json: { who: 'Nithin', open: true, candidates: r2.candidates } })
