@@ -79,10 +79,10 @@ export async function draftOffers(adapter: TipplrAdapter, store: ScheduleStore, 
   return out
 }
 
-export type OpsPending = { kind: 'offers'; drafts: { outletId: string; phone: string; message: MerchantMessage }[]; at: string }
+export type OpsPending = { kind: 'offers'; drafts: { outletId: string; phone: string; message: MerchantMessage }[]; at: string } | { kind: 'invoice'; draft: import('./invoice').InvoiceDraft; at: string }
 
 /** The ops number's asks. `pending` holds the last draft awaiting "approve". */
-export async function handleOpsInput(adapter: TipplrAdapter, store: ScheduleStore, text: string, send: Sender, pending: { get(): Promise<OpsPending | null>; set(p: OpsPending | null): Promise<void> }, persist: (r: ActionRecord) => Promise<void>, now = Date.now()): Promise<string | null> {
+export async function handleOpsInput(adapter: TipplrAdapter, store: ScheduleStore, text: string, send: Sender, pending: { get(): Promise<OpsPending | null>; set(p: OpsPending | null): Promise<void> }, persist: (r: ActionRecord) => Promise<void>, now = Date.now(), filerDb: { from: (t: string) => any } | null = null): Promise<string | null> {
   const t = text.trim()
   if (OPS_ASK.digest.test(t)) return formatDigest(await buildDigest(adapter, store, now))
   if (OPS_ASK.reasons.test(t)) { const all: Order[] = []; for (const o of await adapter.listOutlets()) all.push(...await adapter.listOrders(o.id, new Date(now - 7 * DAY).toISOString())); return reasonsReply(all, now) }
@@ -91,6 +91,12 @@ export async function handleOpsInput(adapter: TipplrAdapter, store: ScheduleStor
     const name = m[1].toLowerCase(); const outlet = (await adapter.listOutlets()).find(o => o.name.toLowerCase().includes(name))
     if (!outlet) return `I don't have an outlet matching "${m[1]}".`
     const { todayReply } = await import('./actions'); return todayReply(outlet.id, await adapter.listOrders(outlet.id, new Date(now - 2 * DAY).toISOString()), now)
+  }
+  // Phase 4: "generate invoice for #T-4512" → draft; "approve" files it.
+  {
+    const inv = await import('./invoice')
+    const ask = await inv.tryInvoiceAsk(adapter, t, process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in')
+    if (ask) { if (ask.draft) await pending.set({ kind: 'invoice', draft: ask.draft, at: new Date(now).toISOString() }); return ask.text }
   }
   if ((m = t.match(OPS_ASK.offer))) {
     const drafts = await draftOffers(adapter, store, Number(m[1]), now)
@@ -102,6 +108,7 @@ export async function handleOpsInput(adapter: TipplrAdapter, store: ScheduleStor
     const p = await pending.get()
     if (!p || now - Date.parse(p.at) > 30 * 60_000) return 'There is nothing waiting for approval.'
     await pending.set(null)
+    if (p.kind === 'invoice') { const inv = await import('./invoice'); const f = inv.ledgerFiler(filerDb); return inv.fileInvoice(p.draft, f.file, f.readBack, persist) }
     const lines: string[] = []
     for (const d of p.drafts) {
       let rec = transition(openActionRecord({ telegramId: 'ops', capability: 'merchant', action: 'merchant.offer.cutoff', request: `offer cut-off to ${d.outletId}`, policy: { capability: 'merchant', permissionLevel: 'ask', mode: 'execute', risk: 'medium', irreversible: true } }), 'running', { note: 'ops_approve' })
