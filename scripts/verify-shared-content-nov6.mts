@@ -69,4 +69,6 @@ assert.match(wa, /@\/lib\/agent\/shared-content/); assert.match(wa, /m\.tryShare
 assert.match(dash, /@\/lib\/agent\/shared-content/); assert.match(dash, /m\.tryShared\(user\.telegram_id,text\)/); assert.match(dash, /m\.takeSharedFollowUp\(/)
 assert.ok(!/@\/lib\/agent\/payment-confirmation'\)\.then/.test(wa) && !/@\/lib\/agent\/payment-confirmation'\)\.then/.test(dash), 'payment flow now runs inside shared-content, not as a second hook')
 console.log('✓ wired on WhatsApp and the dashboard; payment confirmations flow through the same gate')
+// 7 Nov: exercise the original expense-receipt contract as part of registered npm test.
+await import('./verify-shared-content-expense-receipt-nov7.mts')
 console.log('Shared content (6 Nov) checks passed')

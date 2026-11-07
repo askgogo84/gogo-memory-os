@@ -174,6 +174,21 @@ export function dayBeforeAt9(dateText: string, now: number, tz: string): string 
   return at > now ? new Date(at).toISOString() : null
 }
 
+/** Require a real expense-insert receipt before claiming the bank debit was logged.
+ * saveExpense returns null on DB errors; an unknown outcome is not safe to retry.
+ */
+export function expenseSaveReceiptReply(
+  saved: { id?: string | number | null } | null | undefined,
+  amountText: string,
+  description: string,
+): string {
+  const id = saved?.id
+  const received = (typeof id === 'string' && id.trim().length > 0)
+    || (typeof id === 'number' && Number.isSafeInteger(id) && id > 0)
+  if (!received) return 'I couldn\'t confirm the expense was saved. Check "expenses today" before trying again, to avoid a duplicate.'
+  return `Logged ${amountText} as ${description}. Say "expenses today" to see the day.`
+}
+
 /** "Yes" to a shared-content offer (Gogo's latest message, within 30 min) → the one thing offered. */
 export async function takeSharedOffer(actor: AgentActor, text: string): Promise<string | null> {
   if (!YES.test(text)) return null
@@ -193,8 +208,8 @@ export async function takeSharedOffer(actor: AgentActor, text: string): Promise<
     if (r.offer === 'log_expense' && r.amount) {
       const { saveExpense } = await import('@/lib/bot/services/expense-storage')
       const description = r.merchant || r.sender || 'Bank debit'
-      await saveExpense({ telegramId: actor.legacyTelegramId, whatsappId: actor.whatsappId || null, expense: { amount: r.amount.value, category: 'other', description, rawText: original.slice(0, 500) } as any })
-      return `Logged ${r.amount.text} as ${description}. Say "expenses today" to see the day.`
+      const saved = await saveExpense({ telegramId: actor.legacyTelegramId, whatsappId: actor.whatsappId || null, expense: { amount: r.amount.value, category: 'other', description, rawText: original.slice(0, 500) } as any })
+      return expenseSaveReceiptReply(saved, r.amount.text, description)
     }
     if (r.offer === 'remind_bill' && r.date) {
       const at = dayBeforeAt9(r.date, Date.now(), tz)
