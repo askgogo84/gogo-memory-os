@@ -29,8 +29,21 @@ export async function GET(request: Request) {
     const ran = await runDueSchedules(adapter, store, persist, now)
     const istMin = (new Date(now + 5.5 * 3_600_000).getUTCHours() * 60) + new Date(now + 5.5 * 3_600_000).getUTCMinutes()
     const proposals = istMin >= 11 * 60 + 20 && istMin < 11 * 60 + 30 ? await proposeCutoffs(adapter, store, now) : []
-    console.log('TIPPLR_PILOT_CRON:', JSON.stringify({ ran: ran.length, proposals: proposals.length }))
-    return NextResponse.json({ ok: true, ran: ran.map(r => ({ outlet: r.outlet.id, text: r.text })), proposals: proposals.map(p => ({ outlet: p.outlet.id, text: p.message.text, buttons: p.message.buttons })) })
+    // Phase 3: send through the Meta test number when configured; otherwise the messages are only returned here.
+    const wa = await import('@/lib/enterprise/tipplr/meta-whatsapp')
+    let sent = 0
+    if (wa.metaConfigured()) {
+      for (const r of ran) for (const to of r.outlet.phoneNumbers.slice(0, 1)) { const res = await wa.sendViaMeta(to, { text: r.text, buttons: [] }); if (res.ok) sent++ }
+      for (const p of proposals) for (const to of p.outlet.phoneNumbers.slice(0, 1)) { const res = await wa.sendViaMeta(to, p.message); if (res.ok) sent++ }
+      const opsNumbers = String(process.env.TIPPLR_PILOT_OPS_NUMBERS || '').split(',').map(s => s.replace(/\D/g, '')).filter(Boolean)
+      if (istMin >= 9 * 60 && istMin < 9 * 60 + 5 && opsNumbers.length) {
+        const { buildDigest, formatDigest } = await import('@/lib/enterprise/tipplr/digest')
+        const text = formatDigest(await buildDigest(adapter, store, now))
+        for (const to of opsNumbers) { const res = await wa.sendViaMeta(to, { text, buttons: [] }); if (res.ok) sent++ }
+      }
+    }
+    console.log('TIPPLR_PILOT_CRON:', JSON.stringify({ ran: ran.length, proposals: proposals.length, sent, meta: wa.metaConfigured() }))
+    return NextResponse.json({ ok: true, sent, ran: ran.map(r => ({ outlet: r.outlet.id, text: r.text })), proposals: proposals.map(p => ({ outlet: p.outlet.id, text: p.message.text, buttons: p.message.buttons })) })
   } catch (err: any) {
     const msg = String(err?.message || err)
     if (msg === 'pilot_not_enabled') return NextResponse.json({ error: 'pilot_not_enabled' }, { status: 503 })
