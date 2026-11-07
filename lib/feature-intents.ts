@@ -485,6 +485,10 @@ export async function routeFeatureIntent(
     const actor={ userId:String(user.id),legacyTelegramId:user.telegramId, whatsappId:String(user.whatsappId||phone),name:String(user.name||'Gogo') }
 
     if (isWorkspaceConnect(text)) {
+      // 7 Nov live (dashboard): "connect gmail" handed out a fresh connect link although Gmail was connected. The
+      // WhatsApp handler already answers with the connected state, the extra accounts and the add/remove commands.
+      const shared = await import('@/lib/bot/handlers/gmail-read').then(m => m.buildGmailConnectReply(user.telegramId, text), () => null).catch(() => null)
+      if (shared) return shared
       const url=buildGmailConnectUrl(user.telegramId)
       return url
         ? `Connect Google Workspace here:\n${url}\n\nThis gives Gogo only the read-only Gmail, Contacts and Drive context you approve. Sending email, changing files or scheduling still requires the normal approval boundary.`

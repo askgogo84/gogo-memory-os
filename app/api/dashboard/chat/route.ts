@@ -287,7 +287,8 @@ async function handleChatPost(req: NextRequest) {
     }
     // Meeting prep, same as WhatsApp (Duet benchmark, 6 Nov).
     if((globalThis as any).process?.env?.VERCEL_ENV){
-      const prep=await import('@/lib/agent/meeting-prep-ask').then(m=>m.isMeetingPrepAsk(text)?m.tryMeetingPrep(actor,text):null,()=>null)
+      const prep=(await import('@/lib/agent/meeting-prep-ask').then(m=>m.isMeetingPrepAsk(text)?m.tryMeetingPrep(actor,text):null,()=>null))
+        ||(await import('@/lib/agent/trip-plan').then(m=>m.tryTripPlan(actor,'web',text),()=>null))
       if(prep){
         await saveConversation(user.telegram_id,text,prep)
         return NextResponse.json({text:prep,handledBy:'meeting-prep',status:'completed',readOnly:true,mutated:false})
@@ -367,7 +368,7 @@ async function handleChatPost(req: NextRequest) {
       }
     }
     // Local places ("Suggest 3 South Indian restaurants in Rajajinagar"): Google local results, in the area asked.
-    if(text.length<=200&&/^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert|barber|dentist|dental|doctor|pediatrician|dermatologist|physio|plumber|electrician|carpenter|mechanic|car service|bike service|tailor|laundr|dry clean|vets?\b|veterinar|pet shop|optician|florist|atms?\b|petrol|ev charg|charging station)/i.test(text)&&(/\b(?:in|near|around|at)\s+[a-z]/i.test(text)||/\b(?:nearby|near\s+by|close\s+by)\b/i.test(text))&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text)){
+    if(text.length<=200&&(/^(?:(?:a|an|the|some|good|best|top|nice|cheap|open|veg|non-veg|\d{1,2})\s+){0,3}\b(restaurants?|caf(?:e|é)s?|coffee (?:shops?|places?)|bars?|pubs?|breweries|brewery|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets? shops?|gyms?|salons?|spas?|parks?|hospitals?|clinics?|pharmac(?:y|ies)|chemists?|hotels?|stays?|co-?working spaces?|malls?|supermarkets?|barbers?|barber ?shops?|dentists?|dental clinics?|doctors?|pediatricians?|dermatologists?|physiotherapists?|plumbers?|electricians?|carpenters?|mechanics?|car service(?: centres?| centers?)?|bike service(?: centres?| centers?)?|tailors?|laundr(?:y|ies)|dry cleaners?|vets?|veterinar(?:y|ians?)(?: clinics?)?|pet shops?|opticians?|florists?|atms?|petrol (?:pumps?|bunks?)|ev chargers?|charging stations?)\b\s*(?:near|nearby|in|around|close to)\b/i.test(text)||text.length<=200&&/^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert|barber|dentist|dental|doctor|pediatrician|dermatologist|physio|plumber|electrician|carpenter|mechanic|car service|bike service|tailor|laundr|dry clean|vets?\b|veterinar|pet shop|optician|florist|atms?\b|petrol|ev charg|charging station)/i.test(text)&&(/\b(?:in|near|around|at)\s+[a-z]/i.test(text)||/\b(?:nearby|near\s+by|close\s+by)\b/i.test(text))&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text))){
       const pl:any=await import('@/lib/agent/places-context').catch(()=>null)
       const out=pl?.answerPlacesWithContext?await Promise.resolve().then(()=>pl.answerPlacesWithContext({text,telegramId:String(user.telegram_id)})).catch(()=>null):null
       if(typeof out==='string'&&out){
@@ -983,6 +984,7 @@ async function brandSafeResponse(res: any) {
     // Same rule as lib/security/outbound-identifiers brandSafe, inline: route harnesses cannot load extra modules.
     // Quoted text between U+2063 markers is left as written; the markers stay for the chat screen to strip.
     const text = String(body.text).split(/(\u2063[\s\S]*?\u2063)/).map((part: string) => part.length > 1 && part.startsWith('\u2063') && part.endsWith('\u2063') ? part : part.replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g, (m: string) => /['’]s$/.test(m) ? 'Gogo’s' : 'Gogo').replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, 'our AI provider')).join('')
-    return text === body.text ? res : NextResponse.json({ ...body, text }, { status: res.status })
+    const noBoss = text.replace(/,[ \t]*boss(?=[ \t]*(?:[.!?…:]|$))/gim, '').replace(/^([ \t]*(?:got it|okay|ok|sure|done|noted|alright|right|hey|hi|hello))[,]?[ \t]+boss\b/gim, '$1')
+    return noBoss === body.text ? res : NextResponse.json({ ...body, text: noBoss }, { status: res.status })
   } catch { return res }
 }
