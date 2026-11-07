@@ -38,7 +38,7 @@ export async function POST(request: Request) {
     for (const msg of inbound) {
       const isOps = opsNumbers.some(n => n.slice(-10) === msg.from.slice(-10))
       const reply = isOps
-        ? await handleOpsInput(adapter, store, msg.text, wa.sendViaMeta, pendingStore(supabaseAdmin), persist)
+        ? await handleOpsInput(adapter, store, msg.text, wa.sendViaMeta, pendingStore(supabaseAdmin), persist, Date.now(), supabaseAdmin)
         : await handleMerchantInput(adapter, msg.from, msg.text, persist, Date.now(), store)
       if (!reply) continue
       const texts = typeof reply === 'string' ? [{ text: reply, buttons: [] }] : reply.texts.map((text, i, arr) => ({ text, buttons: i === arr.length - 1 ? reply.buttons || [] : [] }))
