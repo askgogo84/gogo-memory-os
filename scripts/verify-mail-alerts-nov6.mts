@@ -101,7 +101,7 @@ console.log('✓ "what do you alert me about?", "stop renewals", "add newsletter
 const w = readFileSync('lib/agent/watchers.ts', 'utf8')
 assert.match(w, /\(watcher\.condition_json as any\)\?\.digest!==true&&!condition\.matchTerms\?\.length\)\{\n    return processMailAlerts\(/)
 assert.match(w, /const \{alerts,deferred,state,quiet\}=ma\.selectAlerts\(emails,\{rules,attention,state:prior,ctx:\{name:actor\.name,timezone:tz,now:now\.getTime\(\),today,trips,gmailEmail/)
-assert.match(w, /deliverWatchAlert\(\{watcherId:String\(watcher\.id\),owner:telegramId,key,due:now\.toISOString\(\),message:a\.message,condition:watcher\.condition_json,topic:a\.topic\}\)/)
+assert.match(w, /deliverWatchAlert\(\{watcherId:String\(watcher\.id\),owner:telegramId,key,due:now\.toISOString\(\),message:a\.message,condition:watcher\.condition_json,topic:a\.topic,thread:\{kind:'mail_alert'/)
 assert.match(w, /const waitingIds=new Set\(deferred\)/, 'deferred emails stay fresh for the next check')
 for (const p of ['app/api/dashboard/chat/route.ts', 'lib/agent/whatsapp-bridge.ts']) assert.match(readFileSync(p, 'utf8'), /mail-alert-commands'\)\.then\(m=>m\.tryMailAlertCommand\(/, p)
 assert.match(readFileSync('lib/agent/brain.ts', 'utf8'), /never write as if that product were you or did something for the user/)
