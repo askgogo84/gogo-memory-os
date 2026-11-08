@@ -7,6 +7,7 @@ import { randomUUID } from 'node:crypto'
 import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { SONNET_MODEL } from '@/lib/services/model-ids'
 
 const BUCKET = 'user-documents'
 const MAX_SPEECH_CHARS = 3500
@@ -98,7 +99,7 @@ export async function createPodcast(telegramId: number | string, topic: string, 
   const words = minutes * 150
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const msg = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5', max_tokens: 3000,
+    model: SONNET_MODEL, max_tokens: 3000,
     messages: [{ role: 'user', content: `Write a balanced, factual two-host podcast debate for listeners in India on: ${JSON.stringify(topic)}. About ${words} words in total, 10 to 18 turns. Host A argues for, host B argues against; both stay civil, concrete and accurate, and say "we don't know" rather than inventing numbers. No sound effects or stage directions. Return ONLY a JSON array like [{"speaker":"A","text":"..."},{"speaker":"B","text":"..."}].` }],
   })
   const raw = msg.content[0]?.type === 'text' ? msg.content[0].text : ''

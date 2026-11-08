@@ -18,6 +18,7 @@ import { inventedApprovalGuard } from '@/lib/services/claude'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { isJobScanNow, jobScanQuery } from './jobs'
 import { nearbyRewrite, placeAsk } from './places-search'
+import { SONNET_MODEL } from '@/lib/services/model-ids'
 
 export type BrainDecision =
   | { kind: 'reply'; text: string }
@@ -36,7 +37,7 @@ export type BrainContext = {
   timezone: string
 }
 
-const MODEL = () => process.env.GOGO_BRAIN_MODEL || 'claude-sonnet-4-5'
+const MODEL = () => process.env.GOGO_BRAIN_MODEL || SONNET_MODEL
 // 4 Nov (owner approved): a cheaper first pass. With GOGO_BRAIN_FAST=on, Haiku 5.5 decides first. Its routing decisions
 // (hand to a handler, flight, later) are used as they are; when it would write the reply itself, or fails, the main
 // model (Sonnet) decides instead, so replies keep today's quality. Off by default until the admin console shows
