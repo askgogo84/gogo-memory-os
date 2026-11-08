@@ -6,6 +6,8 @@ import { getUsageSummary } from '@/lib/dashboard/queries'
 
 export type UsageMeter = { label: string; used: number; limit: number | null; resets: string }
 export type ShellData = {
+  /** Gogo Spaces is on for this account (GOGO_SPACES / GOGO_SPACES_OWNERS); shows the Spaces link. */
+  spaces?: boolean
   name: string
   plan: string | null
   meters: UsageMeter[]
