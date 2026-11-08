@@ -6,7 +6,10 @@ const NOW = new Date('2026-11-08T05:05:00Z') // 10:35 IST Sun
 
 const live = f.parseFriendTime('attend the 9am meeting at Starbucks with Pradip tomorrow at 8am', NOW)!
 assert.equal(live.task, 'attend the 9am meeting at Starbucks with Pradip', live.task)
-assert.equal(live.remindAtIso, '2026-11-09T02:30:00.000Z', 'Mon 9 Nov 8:00 IST')
+// The general reminder parser reads the real clock, so "tomorrow" is tomorrow in IST from when the test runs.
+const istToday = new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 10)
+const tomorrow8 = new Date(Date.parse(`${istToday}T02:30:00.000Z`) + 86_400_000).toISOString()
+assert.equal(live.remindAtIso, tomorrow8, 'tomorrow 8:00 IST')
 console.log('✓ live case: "the 9am meeting at Starbucks" kept; scheduled Mon 8:00 am')
 
 const cases: [string, string][] = [
