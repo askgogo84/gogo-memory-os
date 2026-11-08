@@ -41,7 +41,7 @@ assert.equal(r.ok, false, 'no device-runtime engine yet; browser engines are not
 r = v.routeVoice({ kind: 'tts', language: 'en', platform: 'dashboard', privacy: 'local_preferred', commercialUse: true, hardware: { memoryMb: 1024 }, available: { 'kokoro-82m': true, 'openai-tts': true } })
 assert.ok(r.ok && r.chosen.id === 'openai-tts'); if (r.ok) assert.ok(r.rejected.some(x => x.id === 'kokoro-82m' && x.reason === 'hardware'), 'low-memory device: Kokoro skipped')
 r = v.routeVoice({ kind: 'tts', language: 'en', platform: 'phone_call', privacy: 'cloud_ok', commercialUse: true, available: ALL })
-assert.deepEqual([r.ok, !r.ok && r.reason], [false, 'telephony_unchanged'])
+assert.deepEqual([r.ok, !r.ok && (r as any).reason], [false, 'telephony_unchanged'])
 r = v.routeVoice({ kind: 'stt', language: 'en', platform: 'whatsapp', privacy: 'cloud_ok', commercialUse: true, available: ALL })
 assert.ok(r.ok && r.chosen.id === 'openai-whisper')
 assert.equal(v.voiceRouterEnabled({}), false, 'flag off by default')
