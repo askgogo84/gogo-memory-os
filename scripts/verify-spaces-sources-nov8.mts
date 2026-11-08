@@ -58,6 +58,18 @@ let n = 0; const ok = (name: string) => { n++; console.log('PASS', name) }
   const u = await resolveSpace(templateSpace('tipplr_exceptions', { kind: 'user', telegramId: OWNER }, NOW), ctx(deps({ tipplr: tip })), () => 'read')
   assert.equal(u.exceptions.status, 'error'); ok('tipplr blocks need a workspace scope')
 }
+{ // live data shapes seen on 8 Nov: one meeting from several calendars, the same loop twice, HTML entities
+  const r = await resolveSpace(templateSpace('my_day', { kind: 'user', telegramId: OWNER }, NOW), ctx(deps({
+    todayCalendar: async () => ({ ok: true, connected: true, events: [
+      ...Array.from({ length: 10 }, () => ({ title: 'Daily Connect-Standup Call', time: '11:30am', startAt: '2026-11-08T06:00:00Z' })),
+      { title: 'Review calendar through move date', time: '12:00 am', startAt: '2026-11-07T18:30:00Z' },
+    ] }),
+    openLoops: async () => [{ title: 'Review service billing notice' }, { title: 'Review service billing notice ' }, { title: 'Reply to IndiaFilings', summary: 'your company&#39;s annual accounts &amp; filings' }],
+  })), () => 'read')
+  assert.deepEqual((r.today as any).items.map((i: any) => i.title), ['Review calendar through move date', 'Daily Connect-Standup Call'])
+  assert.equal((r.loops as any).items.length, 2)
+  assert.equal((r.loops as any).items[1].sub, "your company's annual accounts & filings"); ok('duplicates collapse, calendar sorted, entities decoded')
+}
 { // flag
   assert.equal(spacesEnabledFor(OWNER, {}), false)
   assert.equal(spacesEnabledFor(OWNER, { GOGO_SPACES_OWNERS: `123, ${OWNER}` }), true)
