@@ -24,7 +24,7 @@ export default async function SpacesPage() {
       <p className="mt-1.5 text-[15px] text-[#a8a8a4]">Each block reads one thing you already connected. Nothing here sends or buys anything.</p>
     </header>
     {setup && <p className="final-dark-card final-dark-amber mb-4 p-4 text-[14px]">Spaces storage isn't set up yet.</p>}
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">{spaces.map(s => <Link key={s.slug} href={`/dashboard/spaces/${s.slug}`} className="final-dark-card block p-4"><div className="text-[16px] font-medium text-[#f2f2ee]">{s.title}</div><div className="final-dark-muted mt-1 text-[13px]">Version {s.version} · updated {new Date(s.updatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}</div></Link>)}</div>
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">{spaces.map(s => <Link key={s.slug} href={`/dashboard/spaces/${s.slug}`} className="final-dark-card block p-4"><div className="text-[16px] font-medium text-[#f2efea]">{s.title}</div><div className="final-dark-muted mt-1 text-[13px]">Version {s.version} · updated {new Date(s.updatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}</div></Link>)}</div>
     {templates.length > 0 && <div className="mt-5"><div className="final-dark-eyebrow mb-2">Start from a template</div><CreateSpace templates={templates}/></div>}
   </div>
 }

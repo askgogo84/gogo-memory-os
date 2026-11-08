@@ -16,5 +16,5 @@ export function CreateSpace({ templates }: { templates: string[] }) {
       setErr(j.error === 'spaces_not_enabled' ? 'Spaces is being set up. Try again shortly.' : "Couldn't create it just now.")
     } finally { setBusy(null) }
   }
-  return <div className="flex flex-col gap-2 sm:flex-row">{templates.map(t => <button key={t} disabled={!!busy} onClick={() => make(t)} className="final-dark-card min-h-[48px] px-4 py-3 text-left text-[15px] font-medium text-[#ececea] disabled:opacity-60">{busy === t ? 'Creating…' : `+ ${LABEL[t] || t}`}</button>)}{err && <p className="final-dark-danger text-[13px]">{err}</p>}</div>
+  return <div className="flex flex-col gap-2 sm:flex-row">{templates.map(t => <button key={t} disabled={!!busy} onClick={() => make(t)} className="final-dark-card min-h-[48px] px-4 py-3 text-left text-[15px] font-medium text-[#ecebe8] disabled:opacity-60">{busy === t ? 'Creating…' : `+ ${LABEL[t] || t}`}</button>)}{err && <p className="final-dark-danger text-[13px]">{err}</p>}</div>
 }
