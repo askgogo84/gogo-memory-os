@@ -31,17 +31,19 @@ export async function POST(request: Request) {
     // A team Space: only for the Tipplr pilot workspace, and only an admin of it may add one.
     const ws = String(body?.workspace || '').toLowerCase()
     const { tipplrPilotWorkspace } = await import('@/lib/spaces/sources-live')
+    if (!ws || ws !== tipplrPilotWorkspace()) console.error('SPACE_CREATE_REFUSED: not the pilot workspace')
     if (!ws || ws !== tipplrPilotWorkspace()) return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 })
     const access = await import('@/lib/workspaces/access')
-    try { await access.requireWorkspaceRole(owner, ws, 'rename') } catch { return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 }) }
+    try { await access.requireWorkspaceRole(owner, ws, 'rename') } catch (e: any) { console.error('SPACE_CREATE_REFUSED: role', e?.code || e?.message); return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 }) }
     scope = { kind: 'workspace', workspaceId: ws }
   } else if (!['my_day', 'trip_board'].includes(template)) return NextResponse.json({ ok: false, error: 'invalid_template' }, { status: 400 })
   const st = await import('@/lib/spaces/store'); const { skillDefinition } = await import('@/lib/agent/skill-registry'); const { ensureBuiltinSkills } = await import('@/lib/agent/skills-builtin')
   ensureBuiltinSkills()
   try {
     const s = await st.createFromTemplate(supabaseAdmin, scope, template as any, owner, id => skillDefinition(id))
+    console.info('SPACE_CREATED:', template, scope.kind)
     if (scope.kind === 'workspace') await (await import('@/lib/workspaces/access')).audit(scope.workspaceId, owner, 'space_created', s.id, { template }).catch(() => {})
     return NextResponse.json({ ok: true, slug: s.id, version: s.version, workspace: scope.kind === 'workspace' ? scope.workspaceId : null })
   }
-  catch (e: any) { const code = e?.code || 'failed'; return NextResponse.json({ ok: false, error: code }, { status: code === 'exists' ? 409 : code === 'spaces_not_enabled' ? 503 : code === 'invalid' ? 400 : 500 }) }
+  catch (e: any) { const code = e?.code || 'failed'; console.error('SPACE_CREATE_FAILED:', template, scope.kind, code, String(e?.message || '').slice(0, 300)); return NextResponse.json({ ok: false, error: code }, { status: code === 'exists' ? 409 : code === 'spaces_not_enabled' ? 503 : code === 'invalid' ? 400 : 500 }) }
 }
