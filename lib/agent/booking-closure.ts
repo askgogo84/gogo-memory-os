@@ -169,7 +169,7 @@ export function pickUpcomingEvent<T extends { title?: string | null; subtype?: s
 export async function upcomingEventDetails(telegramId: number | string, requestText: string, tz = 'Asia/Kolkata'): Promise<string | null> {
   const { data } = await supabaseAdmin.from('life_events').select('id,title,subtype,start_at,location,provider,metadata_json').eq('telegram_id', String(telegramId)).eq('event_type', 'event').gte('start_at', new Date(Date.now() - 3 * 3_600_000).toISOString()).order('start_at', { ascending: true }).limit(20)
   const ev: any = pickUpcomingEvent((data || []) as any[], requestText)
-  if (!ev) return null
+  if (!ev) return upcomingTicketReminder(telegramId, requestText, tz)
   const d = ev.metadata_json?.bookingDetails || {}
   const when = ev.start_at ? new Date(ev.start_at).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: tz }) : null
   const seats = Array.isArray(d.seats) && d.seats.length ? d.seats.join(', ') : null
@@ -184,4 +184,15 @@ export async function upcomingEventDetails(telegramId: number | string, requestT
     '',
     `I don't have the QR image saved for this one.${link ? ` Open it in ${ev.provider || 'the provider'}: ${link}` : ` Open ${ev.provider || 'the provider'} app → Your Orders.`}`,
   ].filter((l, i, a) => l || (i > 0 && a[i - 1])).join('\n')
+}
+
+/** No Life Event either: a ticket the owner saved only as a reminder (an emailed booking). Its own text, never a guess. */
+async function upcomingTicketReminder(telegramId: number | string, requestText: string, tz: string): Promise<string | null> {
+  const { isTicketReminder } = await import('@/lib/bot/completion-claim-guard')
+  const { data } = await supabaseAdmin.from('reminders').select('message,remind_at').eq('telegram_id', String(telegramId)).gte('remind_at', new Date(Date.now() - 3 * 3_600_000).toISOString()).lte('remind_at', new Date(Date.now() + 14 * 86_400_000).toISOString()).order('remind_at', { ascending: true }).limit(40)
+  const tokens = queryTokens(requestText)
+  const rows = ((data || []) as any[]).filter(r => isTicketReminder(String(r.message || '')))
+  const pick = (tokens.length ? rows.find(r => tokens.some(t => String(r.message).toLowerCase().includes(t))) : null) || rows[0]
+  if (!pick) return null
+  return [`🎟️ ${safe(pick.message, 300)}`, '', `I don't have the QR image saved for this one. Open your ticket in the provider's app (BookMyShow → Your Orders), or send me a screenshot of it and I'll keep it.`].join('\n')
 }
