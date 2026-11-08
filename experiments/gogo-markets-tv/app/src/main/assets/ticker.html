@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;background:transparent;color:#f1f5f9;font:12px system-ui,sans-serif;overflow:hidden}
+#header{padding:5px 15px 1px;display:flex;align-items:center;justify-content:space-between;height:18px;box-sizing:border-box}
+#header strong{font-size:12px;letter-spacing:1px}
+#status{font-size:10px;color:#c1cbd5}
+#strip{height:calc(100% - 42px);margin:0 7px;overflow:hidden}
+tv-ticker-tape{display:block;width:100%;height:100%;min-height:50px}
+#provider{color:#c9d4df;font-size:13px;text-align:right;padding-right:16px;height:22px;line-height:22px}
+#provider a{color:#d9e4ef;text-decoration:none}
+</style>
+<script type="module" src="https://www.tradingview-widget.com/w/en/tv-ticker-tape.js"></script>
+</head><body>
+<div id="header"><strong>GOGO MARKETS</strong><span id="status">Prices may be delayed · market hours vary</span></div>
+<div id="strip">
+  <tv-ticker-tape id="tape" item-size="compact" direction="horizontal" symbols="BSE:SENSEX,NSE:NIFTY,NSE:BANKNIFTY">
+    <div style="padding:12px;font-size:13px;color:#e2e8f0">Connecting to TradingView…</div>
+  </tv-ticker-tape>
+</div>
+<div id="provider">Data by <a href="https://www.tradingview.com" rel="noopener noreferrer">TradingView</a></div>
+<script>
+(function(){
+'use strict';
+const groups=['BSE:SENSEX,NSE:NIFTY,NSE:BANKNIFTY','NASDAQ:IXIC,SP:SPX,DJ:DJI','TVC:GOLD,FX_IDC:USDINR'];
+let groupIndex=0;
+setInterval(function(){
+  groupIndex=(groupIndex+1)%groups.length;
+  const tape=document.getElementById('tape');
+  if(tape) tape.setAttribute('symbols',groups[groupIndex]);
+},10000);
+window.addEventListener('online',function(){document.getElementById('status').textContent='Prices may be delayed · market hours vary';});
+window.addEventListener('offline',function(){document.getElementById('status').textContent='Offline · prices unavailable';});
+})()
+</script>
+</body></html>
