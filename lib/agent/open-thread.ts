@@ -14,7 +14,7 @@ export type OpenThread = {
   /** The text the person saw. */
   message: string
   /** What the message was about, as far as the sender knew. All optional; the reply handler uses what is there. */
-  data: { subject?: string | null; sender?: string | null; senderEmail?: string | null; merchant?: string | null; amount?: string | null; threadId?: string | null; emailId?: string | null; alertKind?: string | null; gmailEmail?: string | null; orderShop?: string | null }
+  data: { subject?: string | null; sender?: string | null; senderEmail?: string | null; merchant?: string | null; amount?: string | null; threadId?: string | null; emailId?: string | null; alertKind?: string | null; gmailEmail?: string | null; orderShop?: string | null; snippet?: string | null; receivedAt?: string | null }
   at: string
 }
 
@@ -94,6 +94,25 @@ const minutesFromLater = (t: string, now: number, tz: string): number | null => 
 }
 
 const short = (s: string) => s.replace(/\s+/g, ' ').trim()
+
+/** "open it": the email itself in WhatsApp, a line to paste into the Gmail app's search, and the computer link last. Pure. */
+export function openReply(th: OpenThread, tz = 'Asia/Kolkata'): string {
+  const d = th.data || {}
+  const subject = short(String(d.subject || ''))
+  const from = d.sender ? `${d.sender}${d.senderEmail ? ` <${d.senderEmail}>` : ''}` : d.senderEmail || ''
+  const when = d.receivedAt ? new Date(d.receivedAt).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: tz }) : ''
+  const lines: string[] = []
+  if (from) lines.push(`*From:* ${from}`)
+  if (subject) lines.push(`*Subject:* ${subject}`)
+  if (when) lines.push(`*Received:* ${when}`)
+  if (d.snippet) lines.push('', `"${short(String(d.snippet))}${String(d.snippet).length >= 300 ? '…' : ''}"`)
+  // Gmail search treats ':' and quotes as operators, so only plain words go in ("1:1" and "?" are dropped).
+  const words = subject.split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}'-]/gu, '')).filter(w => w.length > 2).slice(0, 6).join(' ')
+  const search = [d.senderEmail ? `from:${d.senderEmail}` : '', words ? `subject:(${words})` : ''].filter(Boolean).join(' ')
+  if (search) lines.push('', 'To open it in the Gmail app, paste this into its search bar:', search)
+  if (d.threadId && d.gmailEmail && /^[a-f0-9]{6,64}$/i.test(d.threadId)) lines.push('', `On a computer: https://mail.google.com/mail/u/?authuser=${encodeURIComponent(d.gmailEmail)}#all/${d.threadId}`)
+  return lines.length ? lines.join('\n') : `I don't have the details for that one; search your mail for "${short(String(d.subject || about(th))).slice(0, 60)}".`
+}
 const about = (th: OpenThread) => th.data.merchant || th.data.sender || th.data.subject || 'this'
 
 /** A short reply against the open thread → the reply, or null when there is no thread or the text isn't about it. */
@@ -150,8 +169,9 @@ export async function tryThreadReply(actor: AgentActor, text: string, now = Date
       continue
     }
     if (intent === 'open') {
-      const link = th.data.threadId && th.data.gmailEmail && /^[a-f0-9]{6,64}$/i.test(th.data.threadId) ? `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(th.data.gmailEmail)}#all/${th.data.threadId}` : null
-      parts.push(link ? `Here it is:\n${link}` : `I don't have a link for that one; search your mail for "${short(th.data.subject || about(th)).slice(0, 60)}".`)
+      // 8 Nov: a Gmail web link opens the right email only on a computer; on a phone it lands on the inbox and the Gmail
+      // app does not take web links to one email. So the email comes to WhatsApp, with a search line for the app.
+      parts.push(openReply(th, tz))
       continue
     }
     if (intent === 'later') {

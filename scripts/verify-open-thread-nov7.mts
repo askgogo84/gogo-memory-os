@@ -71,13 +71,22 @@ console.log('✓ what / check + track / paid resolve against the alert; paid clo
 
 // Open, later and ignore on a fresh thread.
 await ot.openThread(777, { kind: 'mail_alert', message: text, data })
-assert.equal(await ot.tryThreadReply(actor, 'open it'), 'Here it is:\nhttps://mail.google.com/mail/u/?authuser=goverdhan.md%40gmail.com#all/abc123def456')
+// 8 Nov: the email comes to WhatsApp; a search line for the Gmail app; the web link last and labelled for a computer.
+const opened = (await ot.tryThreadReply(actor, 'open it'))!
+assert.match(opened, /^\*From:\* /, opened); assert.match(opened, /\*Subject:\* /)
+assert.match(opened, /To open it in the Gmail app, paste this into its search bar:\nfrom:\S+@\S+ subject:\(/)
+assert.match(opened, /\nOn a computer: https:\/\/mail\.google\.com\/mail\/u\/\?authuser=goverdhan\.md%40gmail\.com#all\/abc123def456$/)
+assert.ok(opened.indexOf('*From:*') < opened.indexOf('https://'), 'the email before any link')
+// The Cooper case: snippet decoded and quoted, received time, search line.
+const coop = ot.openReply({ kind: 'mail_alert', message: '', rowId: 'x', at: '', data: { subject: 'Want some 1:1 help with Cofounder?', sender: 'Cooper Schoenthaler', senderEmail: 'cooper@generalintelligencecompany.com', snippet: "Hi Goverdhan, Thanks for signing up for Cofounder. I'm Cooper", receivedAt: '2026-11-07T15:45:38Z', threadId: '1a1b6afdb1d327fc', gmailEmail: 'goverdhan.md@gmail.com' } } as any)
+assert.equal(coop, `*From:* Cooper Schoenthaler <cooper@generalintelligencecompany.com>\n*Subject:* Want some 1:1 help with Cofounder?\n*Received:* ${new Date('2026-11-07T15:45:38Z').toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Kolkata' })}\n\n"Hi Goverdhan, Thanks for signing up for Cofounder. I'm Cooper"\n\nTo open it in the Gmail app, paste this into its search bar:\nfrom:cooper@generalintelligencecompany.com subject:(Want some help with Cofounder)\n\nOn a computer: https://mail.google.com/mail/u/?authuser=goverdhan.md%40gmail.com#all/1a1b6afdb1d327fc`, coop)
+assert.match(ot.openReply({ kind: 'order_alert', message: '', data: {} } as any), /^I don't have the details/)
 const later = await ot.tryThreadReply(actor, 'remind me at 9pm', Date.parse('2026-11-07T13:20:00+05:30'))
 assert.match(later!, /^I'll bring it back Sat,? 9:00 pm\.$/, later!)
 assert.equal(rows.reminders.length, 1); assert.match(rows.reminders[0].message, /^Email: ⚠️ Payment failed/)
 await ot.openThread(777, { kind: 'order_alert', message: '📦 Order update: your Philips WiZ order is out for delivery today.', data: { orderShop: 'Amazon', merchant: 'Amazon', subject: 'PHILIPS WiZ Neo' } })
 assert.equal(await ot.tryThreadReply(actor, 'ignore'), "Okay, dropping it. I won't mention Amazon again.")
-console.log('✓ open → Gmail link; later → reminder; ignore → closed')
+console.log('✓ open → the email in WhatsApp + Gmail-app search line + computer link; later → reminder; ignore → closed')
 
 // 4. Wiring: deliveries open threads; mail and order steps pass data; both routes try the thread reply before anything else.
 const del = readFileSync('lib/agent/watch-alert-delivery.ts', 'utf8'), w = readFileSync('lib/agent/watchers.ts', 'utf8'), wa = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8'), dash = readFileSync('app/api/dashboard/chat/route.ts', 'utf8')
