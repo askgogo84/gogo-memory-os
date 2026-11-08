@@ -10,7 +10,15 @@ const DAY = 86_400_000
 const safeNumericId = (owner: string) => { const n = Number(owner); return Number.isSafeInteger(n) && String(n) === String(owner) }
 const istStart = (now: number) => { const ist = now + 5.5 * 3_600_000; return ist - (ist % DAY) - 5.5 * 3_600_000 }
 
+/** The one workspace whose Tipplr pilot tables Spaces may read. Unset → no Tipplr block reads anywhere. */
+export function tipplrPilotWorkspace(env: Record<string, string | undefined> = process.env): string | null {
+  const id = String(env.TIPPLR_PILOT_WORKSPACE_ID || '').trim()
+  return /^[0-9a-f-]{36}$/i.test(id) ? id.toLowerCase() : null
+}
+
 export function liveSourceDeps(): SourceDeps {
+  const pilot = tipplrPilotWorkspace()
+  const onlyPilot = (ws: string) => { if (!pilot || ws.toLowerCase() !== pilot) throw new Error('not the Tipplr pilot workspace') }
   return {
     todayCalendar: async owner => safeNumericId(owner) ? (await import('@/lib/dashboard/queries')).getTodayCalendar(owner) : { ok: false },
     todayReminders: async owner => {
@@ -40,6 +48,7 @@ export function liveSourceDeps(): SourceDeps {
     },
     tipplr: {
       exceptions: async (workspaceId, now) => {
+        onlyPilot(workspaceId)
         const { SupabaseAdapter } = await import('@/lib/enterprise/tipplr/supabase-adapter')
         const a = new SupabaseAdapter(supabaseAdmin, workspaceId)
         const out: { orderId: string; outlet: string; items: string; waitingMin: number }[] = []
@@ -50,6 +59,7 @@ export function liveSourceDeps(): SourceDeps {
         return out.sort((x, y) => y.waitingMin - x.waitingMin)
       },
       oosToday: async (workspaceId, now) => {
+        onlyPilot(workspaceId)
         const { SupabaseAdapter } = await import('@/lib/enterprise/tipplr/supabase-adapter')
         const { dayStats } = await import('@/lib/enterprise/tipplr/stock-rules')
         const a = new SupabaseAdapter(supabaseAdmin, workspaceId)
@@ -65,6 +75,7 @@ export function liveSourceDeps(): SourceDeps {
         return { cancelledOos: total, outlets, peak: peak ? `${String(peak[0]).padStart(2, '0')}:00` : null }
       },
       digest: async (workspaceId, now) => {
+        onlyPilot(workspaceId)
         const { SupabaseAdapter } = await import('@/lib/enterprise/tipplr/supabase-adapter')
         const { SupabaseScheduleStore } = await import('@/lib/enterprise/tipplr/schedules')
         const dg = await import('@/lib/enterprise/tipplr/digest')

@@ -20,5 +20,5 @@ const html2 = renderToStaticMarkup(React.createElement(SpaceBlocks, { space, dat
 assert.match(html2, /href="\/dashboard\/connections"/)
 const t = templateSpace('tipplr_exceptions', { kind: 'workspace', workspaceId: '7e1b6f4a-2c0d-4b58-9c3e-5a1f0d9b2e77' })
 const html3 = renderToStaticMarkup(React.createElement(SpaceBlocks, { space: t, data: { oos: { status: 'ok', readAt: now, stats: [{ n: '3', label: 'cancelled out of stock' }] }, exceptions: { status: 'ok', readAt: now, table: { columns: ['Order', 'Outlet', 'Items', 'Waiting'], rows: [['#T1', 'Indiranagar', '2× Paneer roll', '9 min']] } } } }))
-assert.match(html3, /Indiranagar/); assert.match(html3, /Digest arrives at 9:00/)
+assert.match(html3, /Indiranagar/); assert.match(html3, /Not read yet/)
 console.log('verify-spaces-render-nov8: 3 passed')

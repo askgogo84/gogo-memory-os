@@ -175,6 +175,6 @@ export function templateSpace(template: Exclude<SpaceTemplate, 'custom'>, scope:
   return { ...base, id: 'tipplr_exceptions', title: 'Tipplr Outlet Exceptions', template, refreshMinutes: 5, blocks: [
     { id: 'oos', type: 'stat', title: 'Out of stock today', source: { id: 'tipplr.oos_today' } },
     { id: 'exceptions', type: 'table', title: 'Needs a decision', source: { id: 'tipplr.exceptions' }, columns: ['Order', 'Outlet', 'Items', 'Waiting'] },
-    { id: 'digest', type: 'note', title: 'Yesterday', source: undefined, text: 'Digest arrives at 9:00 on the ops number.' },
+    { id: 'digest', type: 'list', title: 'Yesterday', source: { id: 'tipplr.digest' }, span: 2 },
   ] }
 }
