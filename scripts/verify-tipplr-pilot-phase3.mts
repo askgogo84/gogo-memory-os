@@ -29,6 +29,15 @@ assert.ok(wa.verifySignature(raw, sig, 'secret1')); assert.ok(!wa.verifySignatur
 const inbound = wa.parseInbound(JSON.parse(raw))
 assert.deepEqual(inbound.map(i => [i.kind, i.text]), [['button', 'accept:T-4512:15'], ['text', 'how many orders today']])
 console.log('✓ handshake and HMAC signature; taps and texts parsed, statuses ignored')
+// Redelivered webhooks: a message id is claimed once; the route skips the rest before any handler runs.
+{
+  const seen: any[] = []
+  const cdb = { from: () => { const f: any = {}; let ins: any = null; const b: any = { select() { return b }, eq(k: string, v: any) { f[k] = v; return b }, limit() { return b }, insert(r: any) { ins = r; return b }, then(res: any) { if (ins) { seen.push(ins); return Promise.resolve({ data: null, error: null }).then(res) } return Promise.resolve({ data: seen.filter(x => x.message === f.message), error: null }).then(res) } }; return b } }
+  assert.equal(await wa.claimInbound(cdb, 'wamid.1', '918310441698'), true); assert.equal(await wa.claimInbound(cdb, 'wamid.1', '918310441698'), false); assert.equal(await wa.claimInbound(cdb, 'wamid.2', '918310441698'), true)
+  assert.equal(await wa.claimInbound({ from: () => { throw new Error('db down') } }, 'wamid.3', '9'), true, 'a store failure never drops a real message')
+  const hook2 = (await import('node:fs')).readFileSync('app/api/enterprise/tipplr/webhook/route.ts', 'utf8'); assert.ok(hook2.indexOf('claimInbound') < hook2.indexOf('handleOpsInput(adapter'), 'claim before handling')
+  console.log('✓ webhook idempotency: each Meta message id handled once')
+}
 
 // 3. Digest equals the ledger; screen-3 wording.
 const NOW = Date.parse('2026-11-07T03:30:00Z') // 9:00 IST

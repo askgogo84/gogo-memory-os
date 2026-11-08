@@ -79,6 +79,14 @@ assert.equal((await store.list(todayOnly.outlet.id)).filter(x => x.active).lengt
 const it = await adapter.getItem(todayOnly.outlet.id, todayOnly.proposal.items[0].itemId)
 assert.ok(it && !it.available && it.availableUntil && it.availableUntil.startsWith('2026-11-08T01:30'), `until 7 am IST next day: ${it?.availableUntil}`)
 console.log('✓ "Only today": off now until 7 am tomorrow, nothing scheduled')
+// 6b. …and the cron turns those items back on once available_until has passed (P1, 7 Nov review: nothing else restores them).
+assert.equal((await sch.runDueSchedules(adapter, store, persist, Date.parse('2026-11-08T01:00:00Z'))).filter(r => r.outlet.id === todayOnly.outlet.id).length, 0, 'not before 7 am')
+const restored = (await sch.runDueSchedules(adapter, store, persist, Date.parse('2026-11-08T01:35:00Z'))).find(r => r.outlet.id === todayOnly.outlet.id)
+assert.ok(restored && /^Done\nTurned on .+ \(checked back: .+\*available\*\)\.$/.test(restored.text), `restored at 7:05: ${restored?.text}`)
+const it2 = await adapter.getItem(todayOnly.outlet.id, todayOnly.proposal.items[0].itemId)
+assert.ok(it2 && it2.available && !it2.availableUntil, 'item back on, until cleared')
+assert.equal((await sch.runDueSchedules(adapter, store, persist, Date.parse('2026-11-08T01:40:00Z'))).filter(r => r.outlet.id === todayOnly.outlet.id).length, 0, 'restore runs once')
+console.log('✓ "Only today" items come back on at 7 am through the cron, once, with read-back')
 
 // 7. Supabase adapter and store over a fake DB: compare-and-set, 409 on a second accept, availability write + read-back, schedule rows, missing table → pilot_not_enabled.
 const { SupabaseAdapter, worldToRows } = await import('../lib/enterprise/tipplr/supabase-adapter')
@@ -133,10 +141,13 @@ console.log('Tipplr pilot phase 2 checks passed')
 {
   const { seedIfEmpty } = await import('../lib/enterprise/tipplr/supabase-adapter')
   const t: Record<string, any[]> = { merchant_outlets: [], merchant_items: [], merchant_orders: [] }
-  const fdb = { from: (name: string) => { const f: [string, any][] = []; let ins: any = null; const b: any = { select() { return b }, eq(k: string, v: any) { f.push([k, v]); return b }, limit() { return b }, insert(r: any) { ins = r; return b }, then(res: any, rej: any) { if (!t[name]) return Promise.resolve({ data: null, error: { code: '42P01', message: 'relation does not exist' } }).then(res, rej); if (ins) { t[name].push(...ins); return Promise.resolve({ data: null, error: null }).then(res, rej) } return Promise.resolve({ data: t[name].filter(x => f.every(([k, v]) => String(x[k]) === String(v))), error: null }).then(res, rej) } }; return b } }
+  const fdb = { from: (name: string) => { const f: [string, any][] = []; let ins: any = null; const b: any = { select() { return b }, eq(k: string, v: any) { f.push([k, v]); return b }, limit() { return b }, insert(r: any) { ins = r; return b }, upsert(r: any) { ins = r; return b }, then(res: any, rej: any) { if (!t[name]) return Promise.resolve({ data: null, error: { code: '42P01', message: 'relation does not exist' } }).then(res, rej); if (ins) { t[name].push(...ins); return Promise.resolve({ data: null, error: null }).then(res, rej) } return Promise.resolve({ data: t[name].filter(x => f.every(([k, v]) => String(x[k]) === String(v))), error: null }).then(res, rej) } }; return b } }
   const first = await seedIfEmpty(fdb, 'ws_tipplr', AT(10))
   assert.equal(first.seeded, true); assert.equal(first.rows!.merchant_outlets, 48); assert.ok(first.rows!.merchant_orders > 20_000)
   assert.deepEqual(await seedIfEmpty(fdb, 'ws_tipplr', AT(10)), { seeded: false })
+  // A seed that died after outlets (orders table empty) resumes on the next run instead of reporting seeded:false forever.
+  const half = t.merchant_orders.splice(0); assert.equal(t.merchant_orders.length, 0)
+  const resumed = await seedIfEmpty(fdb, 'ws_tipplr', AT(10)); assert.equal(resumed.seeded, true); assert.equal(t.merchant_orders.length, half.length)
   await assert.rejects(() => seedIfEmpty({ from: () => ({ select() { return this }, eq() { return this }, limit() { return this }, then(res: any) { return Promise.resolve({ data: null, error: { code: '42P01', message: 'relation "merchant_outlets" does not exist' } }).then(res) } }) } as any, 'ws'), /pilot_not_enabled/)
   assert.match(readFileSync('app/api/cron/tipplr-pilot/route.ts', 'utf8'), /seedIfEmpty\(supabaseAdmin, workspaceId\)/)
   console.log('✓ auto-seed: empty workspace seeded once by the cron; missing table → pilot_not_enabled')

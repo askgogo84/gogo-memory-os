@@ -36,6 +36,7 @@ export async function POST(request: Request) {
     const persist = (rec: any) => saveActionRecord(supabaseAdmin, rec)
     const opsNumbers = String(process.env.TIPPLR_PILOT_OPS_NUMBERS || '').split(',').map(s => s.replace(/\D/g, '')).filter(Boolean)
     for (const msg of inbound) {
+      if (!(await wa.claimInbound(supabaseAdmin, msg.messageId, msg.from))) continue
       const isOps = opsNumbers.some(n => n.slice(-10) === msg.from.slice(-10))
       const reply = isOps
         ? await handleOpsInput(adapter, store, msg.text, wa.sendViaMeta, pendingStore(supabaseAdmin), persist, Date.now(), supabaseAdmin)

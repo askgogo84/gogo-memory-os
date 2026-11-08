@@ -59,6 +59,20 @@ assert.equal(again!.texts[0], `#${queue[0].id} is already accepted (15 min). Not
 assert.notEqual(saved[1].state, 'verified_success')
 console.log('✓ accept: verified by read-back; a repeat tap never claims Done again')
 
+// 3b. Cross-outlet: the testing outlet's number cannot accept or reject another outlet's order (P1, 7 Nov review). Read before write; no mutation; blocked record.
+const foreign = world.orders.find(o => o.outletId !== 'out_cunningham_test' && o.state === 'delivered')!
+foreign.state = 'new'; foreign.prepMinutes = null // one live order at another outlet
+const otherOutlet = world.outlets.find(o => o.id === foreign.outletId)!
+const before = saved.length
+const x = await act.handleMerchantInput(adapter, phone, `accept:${foreign.id}:15`, persist, NOW)
+assert.equal(x!.texts[0], `#${foreign.id} isn't one of your outlet's orders, so I haven't touched it.`, x!.texts[0])
+assert.equal((await adapter.getOrder(foreign.id))!.state, 'new', 'foreign order untouched')
+assert.equal(saved.at(-1).state, 'blocked'); assert.equal(saved.at(-1).error, 'cross_outlet'); assert.match(saved.at(-1).history.at(-1).note, new RegExp(`belongs to ${otherOutlet.id}`)); assert.equal(saved.length, before + 1)
+const y = await act.handleMerchantInput(adapter, phone, `reject:${foreign.id}:out_of_stock`, persist, NOW)
+assert.match(y!.texts[0], /isn't one of your outlet's orders/); assert.equal((await adapter.getOrder(foreign.id))!.state, 'new'); assert.equal(saved.at(-1).state, 'blocked')
+assert.match((await act.handleMerchantInput(adapter, phone, 'accept:T-000000:15', persist, NOW))!.texts[0], /don't have an order #T-000000 for your outlet/)
+console.log('✓ cross-outlet accept/reject blocked before any write; unknown order refused')
+
 // 4. Reject as out of stock → verified, then the one follow-up; the follow-up marks the item off with read-back.
 const r = await act.handleMerchantInput(adapter, phone, `reject:${queue[1].id}:out_of_stock`, persist, NOW)
 assert.match(r!.texts[0], new RegExp(`^Done: #${queue[1].id} rejected as out of stock\\.$`), r!.texts[0])

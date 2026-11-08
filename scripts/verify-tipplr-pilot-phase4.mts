@@ -33,6 +33,10 @@ const done = await ops('approve')
 assert.equal(done, `Done: invoice for #${delivered.id} filed, ${(await import('../lib/enterprise/tipplr/types')).inr(d.totalPaise)}.`, done!)
 assert.equal(saved.at(-1).action, 'merchant.invoice.file'); assert.equal(saved.at(-1).state, 'verified_success')
 assert.equal(await ops('approve'), 'There is nothing waiting for approval.')
+// Idempotent: asking again for the same order and approving files nothing (P2 on #1358).
+assert.match((await ops(`generate invoice for #${delivered.id}`))!, /^Needs approval/)
+assert.equal(await ops('approve'), `An invoice for #${delivered.id} is already filed. Nothing changed.`)
+assert.equal(saved.at(-1).error, 'already_filed'); assert.equal(saved.filter(r => r.action === 'merchant.invoice.file' && r.state === 'verified_success').length, 1)
 const live = (await adapter.listNewOrders('out_cunningham_test'))[0]
 assert.match((await ops(`generate invoice for #${live.id}`))!, /is new; an invoice is raised only for an accepted or delivered order/)
 assert.match((await ops('generate invoice for #T-nope'))!, /don't have an order #T-nope/)
@@ -40,7 +44,8 @@ console.log('✓ approve files with read-back; repeat approve empty; new/unknown
 
 // 3. A filer failure: "didn't go through", nothing claimed.
 const failing = inv.ledgerFiler(null)
-const bad = await inv.fileInvoice(d, async () => ({ ok: false, status: 502, error: 'upstream' }), failing.readBack, persist)
+const other = world.orders.find(o => o.outletId === 'out_cunningham_test' && o.state === 'delivered' && o.id !== delivered.id)!
+const bad = await inv.fileInvoice(inv.draftInvoice(other, world.outlets[0]), async () => ({ ok: false, status: 502, error: 'upstream' }), failing.readBack, persist)
 assert.match(bad, /^That didn't go through: invoice for #T-\d+ filed, ₹[\d,]+ \(verified absent\)\. Nothing was changed\.$/, bad)
 console.log('✓ filer failure is reported, not claimed')
 

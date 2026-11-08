@@ -119,6 +119,14 @@ export async function runDueSchedules(adapter: TipplrAdapter, store: ScheduleSto
   const outlets = await adapter.listOutlets()
   const out: { outlet: Outlet; text: string }[] = []
   const minutes = istMinutes(now), day = istDayKey(now)
+  // "Only today" (and any timed off) sets available_until; nothing else turns those items back on. Restore the expired ones first.
+  for (const outlet of outlets) {
+    if (outlet.posIntegrated) continue
+    const expired = (await adapter.listItems(outlet.id)).filter(i => !i.available && i.availableUntil && Date.parse(i.availableUntil) <= now)
+    if (!expired.length) continue
+    const results = await runItems(adapter, outlet, expired.map(i => i.id), false, null, persist, now)
+    out.push({ outlet, text: runReceipt(results, false, '') })
+  }
   for (const s of await store.list()) {
     if (!s.active) continue
     const outlet = outlets.find(o => o.id === s.outletId); if (!outlet) continue
