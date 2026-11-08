@@ -102,7 +102,7 @@ export class SkillRegistryError extends Error { constructor(public code: string,
 /** Registers one skill. Throws on a definition that does not vet or a duplicate id. Only this module's callers hold handlers. */
 export function registerSkill(def: SkillDefinition, handler: SkillHandler): void {
   const v = vetSkill(def)
-  if (!v.ok) throw new SkillRegistryError('skill_not_vetted', `${def.id}: ${v.reasons.join('; ')}`)
+  if (v.ok === false) throw new SkillRegistryError('skill_not_vetted', `${def.id}: ${v.reasons.join('; ')}`)
   if (typeof handler !== 'function') throw new SkillRegistryError('skill_handler_invalid', def.id)
   if (REGISTRY.has(def.id)) throw new SkillRegistryError('skill_duplicate', def.id)
   REGISTRY.set(def.id, { def, handler })
@@ -132,9 +132,10 @@ export function canRunSkill(id: string, input: unknown, ctx: SkillContext, env: 
 }
 
 /** Runs a registered skill after canRunSkill passes, within its time limit; validates the output shape too. */
-export async function runSkill(id: string, input: Record<string, unknown>, ctx: SkillContext, env: Record<string, string | undefined> = process.env, bindings: SkillBindings = {}): Promise<{ ok: true; output: Record<string, unknown> } | { ok: false; code: RunDecision extends { ok: false; code: infer C } ? C | 'timeout' | 'bad_output' | 'failed' : never; detail: string }> {
+export type RunSkillResult = { ok: true; output: Record<string, unknown> } | { ok: false; code: 'unknown_skill' | 'bad_input' | 'adapter_off' | 'permission' | 'approval_required' | 'timeout' | 'bad_output' | 'failed'; detail: string }
+export async function runSkill(id: string, input: Record<string, unknown>, ctx: SkillContext, env: Record<string, string | undefined> = process.env, bindings: SkillBindings = {}): Promise<RunSkillResult> {
   const d = canRunSkill(id, input, ctx, env)
-  if (!d.ok) return d
+  if (d.ok === false) return { ok: false, code: d.code, detail: d.detail }
   const e = REGISTRY.get(id)!
   let timer: any
   try {
