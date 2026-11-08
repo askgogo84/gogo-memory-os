@@ -10,7 +10,8 @@ export async function GET(request: Request) {
   const session = await getSession()
   if (!session) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   const owner = String(session.telegramId)
-  if (!/^\d{1,20}$/.test(owner)) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+  // Owner ids can be negative (legacy WhatsApp-only accounts, e.g. -884501501): 8 Nov live 401 for the owner himself.
+  if (!/^-?\d{1,20}$/.test(owner)) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
   const x = await exportMemory(owner)
   const md = new URL(request.url).searchParams.get('format') === 'md'
   const stamp = x.generatedAt.slice(0, 10)
