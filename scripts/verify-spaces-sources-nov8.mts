@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict'
 import { resolveSpace, READERS, type SourceDeps } from '../lib/spaces/sources'
 import { templateSpace } from '../lib/spaces/schema'
-import { spacesEnabledFor } from '../lib/spaces/sources-live'
+import { spacesEnabledFor, tipplrPilotWorkspace, liveSourceDeps } from '../lib/spaces/sources-live'
+import { validateSpace } from '../lib/spaces/schema'
 
 const OWNER = '-884501501'
 const NOW = Date.parse('2026-11-08T06:30:00Z')
@@ -69,6 +70,21 @@ let n = 0; const ok = (name: string) => { n++; console.log('PASS', name) }
   assert.deepEqual((r.today as any).items.map((i: any) => i.title), ['Review calendar through move date', 'Daily Connect-Standup Call'])
   assert.equal((r.loops as any).items.length, 2)
   assert.equal((r.loops as any).items[1].sub, "your company's annual accounts & filings"); ok('duplicates collapse, calendar sorted, entities decoded')
+}
+{ // Tipplr reads: only the pilot workspace, never another one
+  assert.equal(tipplrPilotWorkspace({}), null)
+  assert.equal(tipplrPilotWorkspace({ TIPPLR_PILOT_WORKSPACE_ID: '7E1B6F4A-2C0D-4B58-9C3E-5A1F0D9B2E77' }), '7e1b6f4a-2c0d-4b58-9c3e-5a1f0d9b2e77')
+  assert.equal(tipplrPilotWorkspace({ TIPPLR_PILOT_WORKSPACE_ID: 'x; drop' }), null)
+  const prev = process.env.TIPPLR_PILOT_WORKSPACE_ID; process.env.TIPPLR_PILOT_WORKSPACE_ID = '7e1b6f4a-2c0d-4b58-9c3e-5a1f0d9b2e77'
+  const live = liveSourceDeps()
+  await assert.rejects(live.tipplr!.exceptions('00000000-0000-4000-8000-000000000000', NOW), /not the Tipplr pilot/)
+  delete process.env.TIPPLR_PILOT_WORKSPACE_ID
+  await assert.rejects(liveSourceDeps().tipplr!.oosToday('7e1b6f4a-2c0d-4b58-9c3e-5a1f0d9b2e77', NOW), /not the Tipplr pilot/)
+  if (prev !== undefined) process.env.TIPPLR_PILOT_WORKSPACE_ID = prev
+  // the team template is valid and its digest is a live block, not a promise of a send
+  const t = templateSpace('tipplr_exceptions', { kind: 'workspace', workspaceId: '7e1b6f4a-2c0d-4b58-9c3e-5a1f0d9b2e77' }, NOW)
+  assert.deepEqual(validateSpace(t, () => null), [])
+  assert.equal(t.blocks.find(b => b.id === 'digest')!.source!.id, 'tipplr.digest'); ok('Tipplr reads are pilot-only; team template valid')
 }
 { // flag
   assert.equal(spacesEnabledFor(OWNER, {}), false)

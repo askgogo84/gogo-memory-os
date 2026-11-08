@@ -481,6 +481,10 @@ function looksLikeIncomingPromise(text:string){
 
 export function isAutomatedGmailMessage(message:any){
   const from=headerEmail(message?.from)
+  // 8 Nov Spaces live test: AskGogo's own product mail ("Gogo from AskGogo") and sign-up welcomes ("Thanks for signing
+  // up for Cofounder… I meet with users 1:1") showed as emails to reply to.
+  if(/@(?:[\w-]+\.)*askgogo\.(?:in|com|ai)$/i.test(from))return true
+  if(/\bthanks?\s+(?:you\s+)?for\s+(?:signing\s+up|joining|registering|subscribing)\b|\b(?:i|we)\s+meet\s+with\s+(?:users|customers|founders)\b/i.test(clean(`${message?.subject||''} ${message?.snippet||''}`,600)))return true
   if(/(?:^|[._+-])(no-?reply|do-?not-?reply|newsletter|digest|notifications?|alerts?|instaalerts?|mailers?|marketing|promotions?|offers|updates|feedback|surveys?|bounces?)(?:[._+-]|@)/i.test(from))return true
   // Bank transaction alerts, OTPs and feedback surveys never need a reply (HDFC "Rs.2249.38 debited", JioFiber "Share your experience").
   const text=clean(`${message?.subject||''} ${message?.snippet||''}`,600)
