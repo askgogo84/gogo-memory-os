@@ -80,7 +80,7 @@ export function validateSpace(space: unknown, knownSkill: (id: string) => { exac
   checkText('title', s.title, p, 80); if (!s.title) p.push({ path: 'title', problem: 'required' })
   if (!['my_day', 'trip_board', 'tipplr_exceptions', 'custom'].includes(s.template)) p.push({ path: 'template', problem: 'unknown template' })
   const sc = s.scope
-  if (!sc || (sc.kind === 'user' ? !/^\d{1,20}$/.test(String(sc.telegramId)) : sc.kind === 'workspace' ? !/^[0-9a-f-]{36}$/i.test(String(sc.workspaceId)) : true)) p.push({ path: 'scope', problem: 'user (telegramId digits) or workspace (uuid)' })
+  if (!sc || (sc.kind === 'user' ? !/^-?\d{1,20}$/.test(String(sc.telegramId)) : sc.kind === 'workspace' ? !/^[0-9a-f-]{36}$/i.test(String(sc.workspaceId)) : true)) p.push({ path: 'scope', problem: 'user (telegramId digits) or workspace (uuid)' })
   if (!Number.isInteger(s.version) || s.version < 1) p.push({ path: 'version', problem: 'positive integer' })
   if (!Number.isInteger(s.refreshMinutes) || s.refreshMinutes < 5 || s.refreshMinutes > 1440) p.push({ path: 'refreshMinutes', problem: '5..1440' })
   if (!Array.isArray(s.blocks)) { p.push({ path: 'blocks', problem: 'array' }); return p }
