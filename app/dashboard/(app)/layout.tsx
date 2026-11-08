@@ -14,7 +14,8 @@ export const dynamic = 'force-dynamic'
 export default async function DashboardShell({ children }: { children: React.ReactNode }) {
   const session=await getSession()
   if(!session)redirect('/dashboard')
-  const shell=await getShellData(session.telegramId).catch(()=>({name:'',plan:null,meters:[],setup:[]}))
+  const base=await getShellData(session.telegramId).catch(()=>({name:'',plan:null,meters:[],setup:[]}))
+  const shell={...base,spaces:(await import('@/lib/spaces/sources-live')).spacesEnabledFor(String(session.telegramId))}
 
   return (
     <GogoLiveProvider>

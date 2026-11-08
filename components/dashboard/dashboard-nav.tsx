@@ -75,10 +75,13 @@ function NavLink({ item, collapsed, counts, onNavigate, pathname, section }: { i
   </Link>
 }
 
-export function NavLinks({ collapsed = false, counts, onNavigate }: { collapsed?: boolean; counts: NavCounts; onNavigate?: () => void }) {
+export const SPACES_ITEM: NavItem = { href:'/dashboard/spaces', label:'Spaces', glyph:'▦' }
+
+export function NavLinks({ collapsed = false, counts, onNavigate, spaces = false }: { collapsed?: boolean; counts: NavCounts; onNavigate?: () => void; spaces?: boolean }) {
   const pathname = usePathname()
   const section = useSearchParams().get('section') || ''
-  const inMore = MORE.some(item => isActive(item, pathname, section))
+  const more = spaces ? [SPACES_ITEM, ...MORE] : MORE
+  const inMore = more.some(item => isActive(item, pathname, section))
   const [moreOpen, setMoreOpen] = useState(inMore)
   return <nav className="space-y-1" aria-label="AskGogo dashboard">
     {NAV.map(item => <NavLink key={item.label} item={item} collapsed={collapsed} counts={counts} onNavigate={onNavigate} pathname={pathname} section={section}/>)}
@@ -87,7 +90,7 @@ export function NavLinks({ collapsed = false, counts, onNavigate }: { collapsed?
         className="flex min-h-10 w-full items-center gap-2 rounded-[12px] px-3 text-[13px] font-medium text-[#8a8a86] hover:text-[#f2efea]">
         <span aria-hidden="true">{moreOpen || inMore ? '▾' : '▸'}</span>More
       </button>
-      {(moreOpen || inMore) && <div className="space-y-1">{MORE.map(item => <NavLink key={item.label} item={item} collapsed={false} counts={counts} onNavigate={onNavigate} pathname={pathname} section={section}/>)}</div>}
+      {(moreOpen || inMore) && <div className="space-y-1">{more.map(item => <NavLink key={item.label} item={item} collapsed={false} counts={counts} onNavigate={onNavigate} pathname={pathname} section={section}/>)}</div>}
     </>}
   </nav>
 }
