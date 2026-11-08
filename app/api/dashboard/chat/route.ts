@@ -451,6 +451,14 @@ async function handleChatPost(req: NextRequest) {
       await saveConversation(user.telegram_id,text,mailRules)
       return NextResponse.json({runId:'mail-alert-rules',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,text:mailRules,handledBy:'mail-alert-rules'})
     }
+    // "export my memory" (8 Nov live): the brain answered with its own summary; the export command answers instead.
+    if(/^(?:export|download|send me|give me)\s+(?:all\s+)?(?:my\s+)?(?:memory|memories|everything you (?:know|remember)(?: about me)?|my data)\s*[.!]?$/i.test(text.trim())){
+      const exported=await import('@/lib/bot/handlers/memory-control').then(m=>typeof m?.buildMemoryControlReply==='function'?m.buildMemoryControlReply(user.telegram_id as any,text.trim().toLowerCase()):null,()=>null)
+      if(exported){
+        await saveConversation(user.telegram_id,text,exported)
+        return NextResponse.json({runId:'memory-export',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,text:exported,handledBy:'memory-export'})
+      }
+    }
     // "Track my orders" (6 Nov, owner): open orders from the shops' emails in Gmail, read-only.
     const orderList=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/agent/order-tracking').then(m=>m.tryOrderList(actor,text),()=>null):null
     if(orderList){
