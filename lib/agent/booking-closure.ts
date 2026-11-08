@@ -1,3 +1,4 @@
+import { reconcileShowTime } from './show-time'
 import Anthropic from '@anthropic-ai/sdk'
 import { randomUUID } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -83,7 +84,9 @@ async function extractDetails(input:{originalText:string;provider:string;pageTit
     const raw=r.content[0]?.type==='text'?parseJsonLoose(r.content[0].text):null
     // 20 Oct live: "Sat, 19 Oct" was saved as 19 Oct 2024. A year the evidence never states is re-anchored.
     const evidence=[input.originalText,input.pageTitle,input.pageText,input.gmailText].join('\n')
-    const start=raw?.startAt&&Number.isFinite(Date.parse(raw.startAt))?anchorYearlessInstant(String(raw.startAt),evidence):null
+    const anchored=raw?.startAt&&Number.isFinite(Date.parse(raw.startAt))?anchorYearlessInstant(String(raw.startAt),evidence):null
+    // 8 Nov live: the printed show clock wins over an instant that is one zone offset away from it.
+    const start=reconcileShowTime(anchored,evidence,input.timezone||'Asia/Kolkata').startAt
     const end=raw?.endAt&&Number.isFinite(Date.parse(raw.endAt))?anchorYearlessInstant(String(raw.endAt),evidence):null
     return {title:safe(raw?.title||titleFrom(input.originalText),200)||'Event booking',provider:safe(raw?.provider||input.provider,120)||input.provider,startAt:start,endAt:end,timezone:safe(raw?.timezone||input.timezone,80)||input.timezone,location:raw?.location?safe(raw.location,300):null,city:raw?.city?safe(raw.city,120):null,screen:raw?.screen?safe(raw.screen,120):null,seats:Array.isArray(raw?.seats)?raw.seats.map((x:any)=>safe(x,50)).filter(Boolean).slice(0,12):[],bookingRef:raw?.bookingRef?safe(raw.bookingRef,120):null,durationMinutes:Number.isFinite(Number(raw?.durationMinutes))?Math.max(1,Math.min(600,Number(raw.durationMinutes))):null,status:['confirmed','unknown','cancelled','rescheduled'].includes(raw?.status)?raw.status:'unknown'}
   }catch{return {title:titleFrom(input.originalText),provider:input.provider,startAt:null,endAt:null,timezone:input.timezone,location:null,city:null,screen:null,seats:[],bookingRef:null,durationMinutes:null,status:'unknown'}}
