@@ -32,7 +32,11 @@ export type SourceDeps = {
 const fmtTime = (iso: string | null | undefined, tz: string) => iso ? new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: tz }) : ''
 const fmtDay = (iso: string, tz: string) => new Date(iso).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: tz })
 const at = (now: number) => new Date(now).toISOString()
-const clip = (s: unknown, n: number) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n)
+const ENT: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+const decode = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)) : ENT[e.toLowerCase()] ?? m)
+const clip = (s: unknown, n: number) => decode(String(s || '')).replace(/\s+/g, ' ').trim().slice(0, n)
+/** Keep the first of each key; the same meeting from two linked calendars or the same loop twice shows once. */
+function uniq<T>(rows: T[], key: (r: T) => string): T[] { const seen = new Set<string>(); return rows.filter(r => { const k = key(r).toLowerCase().replace(/\s+/g, ' ').trim(); if (seen.has(k)) return false; seen.add(k); return true }) }
 
 export const READERS: Record<SpaceSourceId, Reader> = {
   'today.calendar': async ({ owner, now, tz, deps }) => {
@@ -40,19 +44,19 @@ export const READERS: Record<SpaceSourceId, Reader> = {
     if (!c.ok) return { status: 'error', message: "I couldn't read your calendar just now." }
     if (!c.connected) return { status: 'not_connected', capability: 'calendar', message: 'Connect Google Calendar and today shows here.' }
     if (!c.events?.length) return { status: 'empty', message: 'Nothing on your calendar today.', readAt: at(now) }
-    return { status: 'ok', items: c.events.slice(0, 12).map(e => ({ time: e.time || fmtTime(e.startAt, tz) || 'All day', title: clip(e.title, 80) })), readAt: at(now) }
+    return { status: 'ok', items: uniq([...c.events].sort((a, b) => (Date.parse(a.startAt || '') || 0) - (Date.parse(b.startAt || '') || 0)), e => `${e.time || e.startAt || ''}|${e.title}`).slice(0, 12).map(e => ({ time: e.time || fmtTime(e.startAt, tz) || 'All day', title: clip(e.title, 80) })), readAt: at(now) }
   },
   'today.reminders': async ({ owner, now, tz, deps }) => {
     const r = await deps.todayReminders(owner)
     if (!r.ok) return { status: 'error', message: "I couldn't read your reminders just now." }
     if (!r.reminders?.length) return { status: 'empty', message: 'No reminders left today.', readAt: at(now) }
-    return { status: 'ok', items: r.reminders.slice(0, 10).map(x => ({ time: fmtTime(x.remind_at, tz), title: clip(x.message, 100) })), readAt: at(now) }
+    return { status: 'ok', items: uniq(r.reminders, x => `${x.remind_at}|${x.message}`).slice(0, 10).map(x => ({ time: fmtTime(x.remind_at, tz), title: clip(x.message, 100) })), readAt: at(now) }
   },
   'today.open_loops': async ({ owner, now, deps }) => {
     const rows = await deps.openLoops(owner)
     if (!rows) return { status: 'error', message: "I couldn't read your open loops just now." }
     if (!rows.length) return { status: 'empty', message: 'No open loops. Nice.', readAt: at(now) }
-    return { status: 'ok', readAt: at(now), items: rows.slice(0, 8).map(l => {
+    return { status: 'ok', readAt: at(now), items: uniq(rows, l => l.title).slice(0, 8).map(l => {
       const due = l.due_at ? Date.parse(l.due_at) : NaN
       const pill = Number.isFinite(due) ? (due < now ? { text: 'overdue', tone: 'crit' as Tone } : due - now < 86_400_000 ? { text: 'today', tone: 'warn' as Tone } : undefined) : undefined
       return { title: clip(l.title, 90), sub: clip(l.summary, 120) || undefined, pill }
@@ -69,7 +73,7 @@ export const READERS: Record<SpaceSourceId, Reader> = {
     const rows = await deps.nextTrip(owner, at(now))
     if (!rows) return { status: 'error', message: "I couldn't read your trips just now." }
     if (!rows.length) return { status: 'empty', message: 'No upcoming trip. Forward a booking or ask Gogo to plan one.', readAt: at(now) }
-    return { status: 'ok', readAt: at(now), items: rows.slice(0, 6).map(t => ({ time: fmtDay(t.start_at, tz), title: clip(t.title, 80), sub: clip([t.location, t.end_at ? `until ${fmtDay(t.end_at, tz)}` : ''].filter(Boolean).join(' · '), 100) || undefined })) }
+    return { status: 'ok', readAt: at(now), items: uniq(rows, t => `${t.start_at}|${t.title}`).slice(0, 6).map(t => ({ time: fmtDay(t.start_at, tz), title: clip(t.title, 80), sub: clip([t.location, t.end_at ? `until ${fmtDay(t.end_at, tz)}` : ''].filter(Boolean).join(' · '), 100) || undefined })) }
   },
   'trip.fares': async ({ now }) => ({ status: 'empty', message: 'No fare watch for this trip yet. Ask Gogo: "watch fares BLR to GOI on 12 Dec".', readAt: at(now) }),
   'tipplr.exceptions': async ({ workspaceId, now, deps }) => {

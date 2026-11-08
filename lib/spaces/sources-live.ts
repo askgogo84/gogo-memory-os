@@ -19,8 +19,9 @@ export function liveSourceDeps(): SourceDeps {
       return r.ok ? { ok: true, reminders: r.reminders.map(x => ({ message: String(x.message || ''), remind_at: x.remind_at })) } : { ok: false }
     },
     openLoops: async owner => {
-      const { data, error } = await supabaseAdmin.from('agent_open_loops').select('title,summary,due_at,kind').eq('telegram_id', String(owner)).eq('status', 'active').not('source_type', 'in', '(approval,agent_run,life_event_action)').order('priority', { ascending: false }).order('updated_at', { ascending: false }).limit(8)
-      return error ? null : (data || [])
+      const { data, error } = await supabaseAdmin.from('agent_open_loops').select('title,summary,due_at,kind').eq('telegram_id', String(owner)).eq('status', 'active').not('source_type', 'in', '(approval,agent_run,life_event_action)').order('priority', { ascending: false }).order('updated_at', { ascending: false }).limit(16)
+      if (error) { console.error('SPACE_LOOPS_READ_FAILED:', error.message); return null }
+      return data || []
     },
     mailNeedsYou: async owner => {
       // The attention reader takes a number; refuse ids that a JS number cannot hold exactly instead of converting them.
@@ -33,8 +34,9 @@ export function liveSourceDeps(): SourceDeps {
       return { connected: true, items: pick.picked.map((s: any) => ({ subject: s.email.subject, from: s.senderName || s.senderEmail, ask: s.ask || null })) }
     },
     nextTrip: async (owner, nowIso) => {
-      const { data, error } = await supabaseAdmin.from('life_events').select('title,location,start_at,end_at,status').eq('telegram_id', String(owner)).gte('start_at', nowIso).order('start_at', { ascending: true }).limit(6)
-      return error ? null : (data || [])
+      const { data, error } = await supabaseAdmin.from('life_events').select('title,location,start_at,end_at,lifecycle_state').eq('telegram_id', String(owner)).eq('event_type', 'travel').gte('start_at', nowIso).order('start_at', { ascending: true }).limit(6)
+      if (error) { console.error('SPACE_TRIPS_READ_FAILED:', error.message); return null }
+      return (data || []).map((r: any) => ({ title: r.title, location: r.location, start_at: r.start_at, end_at: r.end_at, status: r.lifecycle_state }))
     },
     tipplr: {
       exceptions: async (workspaceId, now) => {
