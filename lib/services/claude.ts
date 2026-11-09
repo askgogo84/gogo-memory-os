@@ -3,6 +3,7 @@ import { askMercury, mercuryWebAnswersEnabled } from './mercury'
 import OpenAI from 'openai'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import {selectContentWorkflow, contentWorkflowPrompt} from '@/lib/agent/content-workflows'
+import { SONNET_MODEL } from '@/lib/services/model-ids'
 
 export interface Message {
   role: 'user' | 'assistant'
@@ -175,7 +176,7 @@ ${workflow ? contentWorkflowPrompt(workflow) : ''}`
 
   try{
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: SONNET_MODEL,
       max_tokens: maxTokens,
       system: systemPrompt,
       messages,
@@ -214,7 +215,7 @@ FORMATTING: Delivered over WhatsApp (no markdown). Never emit [text](url); write
 
   try {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: SONNET_MODEL,
       max_tokens: 900,
       messages: [{ role: 'user', content: prompt }],
     })
@@ -382,7 +383,7 @@ FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF
   }
   try{
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: SONNET_MODEL,
       max_tokens: 1500,
       messages:[{role:'user',content:prompt}],
     })
