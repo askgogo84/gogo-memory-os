@@ -228,6 +228,21 @@ await check('already-rounded unsafe numeric owner must never reach queue/provide
   assert.equal(h.deliveryAttempts.length,0,'unsafe numeric actor was accepted')
   assert.equal(h.transports.length,0)
 })
+// 9 Nov: a malformed owner row is skipped and counted; it no longer stops every later owner's briefing or loses the cursor.
+await check('a zero owner row is skipped; the next valid owner is still briefed and the cursor is saved',true,async()=>{
+  const h=fixture({rows:[user('0'),user('42')],freshRows:[user('42')]})
+  await quietRun(h)
+  assert.ok(h.deliveryAttempts.length>=1,'valid owner after a malformed row still briefed')
+  assert.ok(h.deliveryAttempts.every(x=>String(x.owner)==='42'),'only the valid owner')
+  assert.ok(h.deliveryAttempts.every(x=>!String(x.key||'').includes(':0:')),'nothing delivered for the zero owner')
+  assert.equal(h.cursorSaves.length,1,'scan progress saved')
+})
+await check('a non-integral owner stops the pass without delivery but still saves progress',true,async()=>{
+  const h=fixture({rows:[user('4.2e1'),user('42')],freshRows:[user('42')]})
+  await quietRun(h)
+  assert.equal(h.deliveryAttempts.length,0); assert.equal(h.privateBriefReads.length,0)
+  assert.equal(h.cursorSaves.length,1,'cursor saved instead of lost to a throw')
+})
 await check('adjacent int64 owners must not collide in idempotency keys',true,async()=>{
   const h=fixture({rows:[user(A),user(B)],freshRows:[user(A)]})
   await quietRun(h)
