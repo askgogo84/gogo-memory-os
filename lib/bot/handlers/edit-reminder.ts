@@ -205,7 +205,11 @@ function isSnoozeOrMoveCommand(input: string) {
 
 function extractReminderIndex(input: string) {
   const lower = normalizeNumberWords(input.toLowerCase().trim())
-  const match = lower.match(/\b(\d+)\b/)
+  // 29 Oct live: "Cancel the Check iPhone 16 128GB price reminder" cancelled reminder #16 (pay rent) and "Cancel the
+  // Meeting reminder tomorrow at 9 am" cancelled #9 (a match-score check): any number in the sentence was read as
+  // a list position. Only a number straight after the verb ("cancel 3", "cancel reminder 3", "snooze 2 for 10
+  // min", "cancel the 2nd one") is a position.
+  const match = lower.match(/^(?:please\s+)?(?:cancel|delete|remove|clear|stop|skip|done|mark|snooze|move|reschedule|change|edit)(?:\s+(?:reminder|number|no\.?|the))?\s*#?\s*(\d{1,2})(?:st|nd|rd|th)?(?:\s+(?:one|reminder))?(?![\d:])(?!\s*(?:am|pm|a\.m|p\.m|gb|tb|mins?|minutes?|hours?|hrs?)\b)/)
   if (!match) return null
 
   const index = parseInt(match[1], 10) - 1
@@ -528,7 +532,17 @@ export async function cancelReminder(telegramId: number, input: string) {
   }
 
   if (!reminder) {
-    const query = extractCancelQuery(lower)
+    const query = extractCancelQuery(lower.replace(/\b(?:all|every|each)\b/g, ' ').replace(/\breminders\b/g, 'reminder'))
+    // "cancel all packing session reminders": every pending reminder with that name, not just the first page.
+    if (query && /\b(?:all|every|each)\b/.test(lower)) {
+      const wide = await getActiveReminders(telegramId, 100)
+      const every = wide.filter((item: any) => reminderMatches(item, query))
+      if (every.length) {
+        let done = 0
+        for (const item of every) { const r = await stopReminderSeries(telegramId, item); if (r.ok) done++ }
+        return `🗑️ *Cancelled ${done} reminder${done === 1 ? '' : 's'}* named *${cleanReminderName(every[0].message)}*.`
+      }
+    }
     if (query) {
       const matches = reminders.filter((item: any) => reminderMatches(item, query))
       // MORE THAN ONE match → do NOT act. Cancel stopping the wrong series (the hourly
