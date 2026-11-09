@@ -18,7 +18,7 @@ async function gmailAccess(telegramId:number){
   ])
   if(userError)throw new Error(`gmail_user_read_failed:${userError.message}`)
   if(consentError)throw new Error(`gmail_consent_read_failed:${consentError.message}`)
-  if(consent?.gmail_enabled===false)return {connected:false,disabled:true,email:null,accessToken:''}
+  if(consent?.gmail_enabled!==true)return {connected:false,disabled:true,missing:consent?.gmail_enabled!==false,email:null,accessToken:''} // 4 Nov: affirmative yes only
   if(!user?.gmail_connected)return {connected:false,disabled:false,email:null,accessToken:''}
 
   let accessToken=''
@@ -28,11 +28,26 @@ async function gmailAccess(telegramId:number){
   return {connected:Boolean(accessToken),disabled:false,email:String(user.gmail_email||'').toLowerCase()||null,accessToken}
 }
 
-export async function buildGmailConnectReply(telegramId:number){
+export async function buildGmailConnectReply(telegramId:number, text=''){
+  const { ADD_ACCOUNT_RE, REMOVE_ACCOUNT_RE } = await import('@/lib/agent/gmail-accounts')
+  // Revocation is independent of primary Gmail health/consent reads. Even if
+  // those fail, the owner must still be able to stop secondary-mail access.
+  const removeM = text.match(REMOVE_ACCOUNT_RE)
+  if (removeM) {
+    const gone = await import('@/lib/agent/gmail-accounts').then(m => m.disconnectExtraGmailAccount(telegramId, removeM[1]))
+    return gone ? `Done. I no longer read ${removeM[1].toLowerCase()}.` : `${removeM[1].toLowerCase()} isn't one of the extra accounts I read. Your main Google account is managed at app.askgogo.in/dashboard/settings/email.`
+  }
   const access=await gmailAccess(telegramId)
-  if(access.disabled)return 'Google Workspace access is turned off in your privacy settings.'
+  if (access.connected && ADD_ACCOUNT_RE.test(text)) {
+    const url=buildGmailConnectUrl(telegramId)
+    if(!url)return 'Google Workspace connection is temporarily unavailable.'
+    return `📧 *Add another Google account*\n\nOpen this link and pick the account to add (for a work account, choose it on Google's account screen). Read-only, kept beside ${access.email||'your main account'}:\n${url}\n\nSay "disconnect <address>" any time to stop reading it.`
+  }
+  if(access.disabled)return (access as any).missing?'I haven’t got your OK to read Gmail yet, so I didn’t read any mail. Reconnect Google once at app.askgogo.in/dashboard/settings/email and I’ll read only what you ask for.':'Google Workspace access is turned off in your privacy settings.'
   if(access.connected){
-    return `✅ *Google Workspace is connected*${access.email?` as *${access.email}*`:''}.\n\nGogo can use the read-only Gmail context you approved. Sending or modifying email is still a separate approval-gated action.`
+    const extras=await import('@/lib/agent/gmail-accounts').then(m=>m.listExtraGmailAccounts(telegramId),()=>[])
+    const also=extras.length?`\nAlso reading: ${extras.map(a=>`*${a.email}*`).join(', ')}. Say "connect another gmail" to add one or "disconnect <address>" to remove one.`:'\nSay "connect another gmail" to add a second account (work mail, say).'
+    return `✅ *Google Workspace is connected*${access.email?` as *${access.email}*`:''}.${also}\n\nGogo can use the read-only Gmail context you approved. Sending or modifying email is still a separate approval-gated action.`
   }
   const url=buildGmailConnectUrl(telegramId)
   if(!url)return 'Google Workspace connection is temporarily unavailable.'
@@ -93,7 +108,7 @@ export async function buildGmailReadReply(telegramId:number,mode:'latest'|'unrea
     }
   }
   const access=await gmailAccess(telegramId)
-  if(access.disabled)return 'Google Workspace access is turned off in your privacy settings.'
+  if(access.disabled)return (access as any).missing?'I haven’t got your OK to read Gmail yet, so I didn’t read any mail. Reconnect Google once at app.askgogo.in/dashboard/settings/email and I’ll read only what you ask for.':'Google Workspace access is turned off in your privacy settings.'
   if(!access.connected){
     const url=buildGmailConnectUrl(telegramId)
     return url
@@ -170,7 +185,7 @@ Preview: ${clean(redactEmailAuthSecrets(String(row.snippet||'')),400)}`
 
 export async function buildDraftRepliesReply(telegramId:number){
   const access=await gmailAccess(telegramId)
-  if(access.disabled)return 'Google Workspace access is turned off in your privacy settings.'
+  if(access.disabled)return (access as any).missing?'I haven’t got your OK to read Gmail yet, so I didn’t read any mail. Reconnect Google once at app.askgogo.in/dashboard/settings/email and I’ll read only what you ask for.':'Google Workspace access is turned off in your privacy settings.'
   if(!access.connected)return buildGmailConnectReply(telegramId)
   const unread=await fetchUnreadEmails(access.accessToken,15)
   const people=await bulkDraftCandidates(unread)
