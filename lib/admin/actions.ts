@@ -23,6 +23,22 @@ export async function sendInvite(phone: string, name?: string | null): Promise<s
   return sendWhatsAppAccessGranted(phone, welcomeFirstName(name), buildAccessGrantedText(name), ACCESS_GRANTED_TEMPLATE_BODY)
 }
 
+// Exact owner (P0.1): an admin account change targets exactly one existing user. A rounded number or a malformed id
+// is refused; a safe id is matched as its exact number, an id above 2^53 as its exact decimal string (never through
+// Number). The row read back must be that owner, so a missing account never gets a "done" receipt.
+async function exactAdminTarget(raw: unknown): Promise<{ ok: true; tid: string; key: number | string; user: any } | { ok: false; error: string }> {
+  if (typeof raw === 'number' && !Number.isSafeInteger(raw)) return { ok: false, error: 'invalid_user' }
+  if (typeof raw !== 'number' && typeof raw !== 'string') return { ok: false, error: 'no_user' }
+  const tid = String(raw).trim(), legacy = Number(tid)
+  if (!tid) return { ok: false, error: 'no_user' }
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(tid)) return { ok: false, error: 'invalid_user' }
+  const key: number | string = Number.isSafeInteger(legacy) && String(legacy) === tid ? legacy : tid
+  const { data: user, error } = await supabaseAdmin.from('users').select('telegram_id, whatsapp_id, name').eq('telegram_id', key).maybeSingle()
+  if (error) return { ok: false, error: 'lookup_failed' }
+  if (!user || String((user as any).telegram_id) !== tid) return { ok: false, error: 'no_user' }
+  return { ok: true, tid, key, user }
+}
+
 export async function runAdminAction(admin: AdminIdentity, action: string, body: any): Promise<Result> {
   const min = roleFor(action)
   if (!min) return { ok: false, error: 'unknown_action' }
@@ -62,21 +78,25 @@ export async function runAdminAction(admin: AdminIdentity, action: string, body:
     }
     case 'user.block':
     case 'user.unblock': {
-      const tid = String(body?.telegramId || '')
-      if (!tid) return { ok: false, error: 'no_user' }
+      if (!body?.telegramId) return { ok: false, error: 'no_user' }
+      const target = await exactAdminTarget(body.telegramId)
+      if (target.ok === false) return { ok: false, error: (target as { error: string }).error }
+      const { tid, key, user: u } = target
       const block = action === 'user.block'
-      const { data: u } = await supabaseAdmin.from('users').select('whatsapp_id, name').eq('telegram_id', Number(tid)).maybeSingle()
-      if (block && u && e164((u as any).whatsapp_id) === admin.phone) return { ok: false, error: 'cannot_block_yourself' }
-      const { error } = await supabaseAdmin.from('users').update({ access_status: block ? 'blocked' : 'active', access_changed_at: now, access_changed_by: admin.phone }).eq('telegram_id', Number(tid))
+      if (block && e164((u as any).whatsapp_id) === admin.phone) return { ok: false, error: 'cannot_block_yourself' }
+      const { error } = await supabaseAdmin.from('users').update({ access_status: block ? 'blocked' : 'active', access_changed_at: now, access_changed_by: admin.phone }).eq('telegram_id', key)
       if (error) return { ok: false, error: 'update_failed' }
       if (block) await supabaseAdmin.from('dashboard_sessions').delete().eq('telegram_id', tid)
       await audit(admin, block ? 'Blocked user' : 'Unblocked user', `${(u as any)?.name || ''} ${e164((u as any)?.whatsapp_id || '')}`.trim(), { telegramId: tid })
       return { ok: true, message: block ? 'Blocked. Their dashboard sessions were signed out.' : 'Unblocked.' }
     }
     case 'user.plan': {
-      const tid = String(body?.telegramId || ''), tier = String(body?.tier || '')
+      const tier = String(body?.tier || '')
       if (!VALID_TIERS.includes(tier)) return { ok: false, error: 'invalid_plan' }
-      const { error } = await supabaseAdmin.from('users').update({ tier }).eq('telegram_id', Number(tid))
+      const target = await exactAdminTarget(body?.telegramId)
+      if (target.ok === false) return { ok: false, error: (target as { error: string }).error }
+      const { tid, key } = target
+      const { error } = await supabaseAdmin.from('users').update({ tier }).eq('telegram_id', key)
       if (error) return { ok: false, error: 'update_failed' }
       await audit(admin, 'Changed plan', tid, { tier })
       return { ok: true, message: `Plan set to ${tier}.` }
