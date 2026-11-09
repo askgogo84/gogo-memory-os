@@ -8,7 +8,7 @@ import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { isFoodComparisonRequest } from '@/lib/agent/food-comparison-intent'
 import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
 import { dispatchThroughSameBrain } from '@/lib/agent/same-brain'
-import { isEventCredentialRetrieval, retrieveEventCredential } from '@/lib/agent/booking-closure'
+import { isEventCredentialRetrieval, retrieveEventCredential, upcomingEventDetails } from '@/lib/agent/booking-closure'
 import { queueBookingClosure } from '@/lib/agent/booking-queue'
 import { buildGmailConnectUrl } from '@/lib/google-gmail'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -364,6 +364,10 @@ export async function routeFeatureIntent(
       await sendWhatsAppMediaMessage(phone, ticket.caption, ticket.mediaUrl).catch((err:any) => console.error('EVENT_TICKET_MEDIA_SEND_FAILED:', err?.message || err))
       return `Sent the provider-issued ticket/QR for *${ticket.title}*. It stays attached to the same Life Event.`
     }
+    // No saved QR: the upcoming booking's details, never an older ticket from the photo library.
+    const upcoming = await upcomingEventDetails(extra.telegramId, text).catch(() => null)
+    __trace.mark('ticket-upcoming')
+    if (upcoming) return upcoming
   }
 
   if (extra?.telegramId && isBookingOrEventLinkText(text)) {
@@ -485,6 +489,10 @@ export async function routeFeatureIntent(
     const actor={ userId:String(user.id),legacyTelegramId:user.telegramId, whatsappId:String(user.whatsappId||phone),name:String(user.name||'Gogo') }
 
     if (isWorkspaceConnect(text)) {
+      // 7 Nov live (dashboard): "connect gmail" handed out a fresh connect link although Gmail was connected. The
+      // WhatsApp handler already answers with the connected state, the extra accounts and the add/remove commands.
+      const shared = await import('@/lib/bot/handlers/gmail-read').then(m => m.buildGmailConnectReply(user.telegramId, text), () => null).catch(() => null)
+      if (shared) return shared
       const url=buildGmailConnectUrl(user.telegramId)
       return url
         ? `Connect Google Workspace here:\n${url}\n\nThis gives Gogo only the read-only Gmail, Contacts and Drive context you approve. Sending email, changing files or scheduling still requires the normal approval boundary.`
