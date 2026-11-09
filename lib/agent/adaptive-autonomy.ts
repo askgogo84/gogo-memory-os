@@ -7,7 +7,7 @@ const LEVELS:AgentPermissionLevel[]=['off','read','draft','ask','auto']
 
 const DEFAULT_LEVEL:Record<AgentCapability,AgentPermissionLevel>={
   memory:'ask',files:'ask',reminders:'auto',lists:'auto',tasks:'auto',
-  email:'draft',calendar:'ask',browser:'draft',contacts:'read',travel:'draft',payments:'ask',
+  email:'draft',calendar:'ask',browser:'draft',contacts:'read',travel:'draft',payments:'ask', merchant: 'ask',
 }
 
 function clean(value:unknown,max=500){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}

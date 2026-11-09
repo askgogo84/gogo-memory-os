@@ -55,7 +55,7 @@ process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
   assert.match(out, /I never apply for you\./)
   assert.match(j.formatJobScan([], 'Head of AI'), /found no individual openings just now/)
   const cmd = readFileSync('lib/agent/jobs-command.ts', 'utf8')
-  assert.match(cmd, /checkCostAllowance[\s\S]{0,400}searchWebResults\(query, \{ includeDomains: JOB_BOARD_DOMAINS \}\)[\s\S]{0,200}recordCostEvent/, 'scan is within the cost allowance and recorded')
+  assert.match(cmd, /checkCostAllowance[\s\S]{0,700}searchWebResults\(query, \{ includeDomains: JOB_BOARD_DOMAINS \}\)[\s\S]{0,300}includeDomains: \['greenhouse\.io', 'lever\.co', 'ashbyhq\.com'\][\s\S]{0,300}recordCostEvent/, 'scan is within the cost allowance, searches boards and company job sites, and is recorded')
   console.log('✓ job scan now: every opening listed has its own link; listing pages, duplicates and non-job sites dropped')
 }
 // 4. "What's scheduled" showed "…below" and "256GB 256GB". Watch lines use the shared name and rule, cut at a word.
