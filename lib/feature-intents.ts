@@ -104,8 +104,19 @@ async function tryHandleSnoozeCommand(telegramId:number,phone:string,text:string
   const newRemindAt=new Date(Date.now()+parsed.ms).toISOString()
 
   if(reminder.is_recurring){
+    // Red #1174: one snooze per fired occurrence. A replayed or concurrent "snooze 10m", or a retry after an insert
+    // whose outcome is unknown, must not create a second one-off copy. The claim is taken synchronously (no await
+    // between check and set) so parallel calls in one instance cannot both pass; snooze_key + its unique index
+    // (migration 20261109200000_reminders_snooze_key) makes it durable across instances.
+    const snoozeKey=`snooze:${reminder.id}:${reminder.sent_at}`
+    const claims:Map<string,number>=((globalThis as any).__gogoSnoozeClaims ??= new Map())
+    const now=Date.now()
+    for(const [k,at] of claims)if(now-at>30*60*1000)claims.delete(k)
+    if(claims.has(snoozeKey))return `I've already handled a snooze for *${reminder.message}*. Check *my reminders* before snoozing it again.`
+    claims.set(snoozeKey,now)
     // Keep the normal recurrence intact. Snooze creates a one-off replay only.
     const {error:insertError}=await supabaseAdmin.from('reminders').insert({
+      snooze_key:snoozeKey,
       telegram_id:reminder.telegram_id,
       chat_id:reminder.chat_id ?? reminder.telegram_id,
       message:reminder.message,
@@ -117,8 +128,10 @@ async function tryHandleSnoozeCommand(telegramId:number,phone:string,text:string
       timezone:reminder.timezone || 'Asia/Kolkata',
     })
     if(insertError){
+      if((insertError as any).code==='23505')return `I've already handled a snooze for *${reminder.message}*. Check *my reminders* before snoozing it again.`
+      // The claim is kept: the insert may have committed before the error reached us, so a blind retry could duplicate.
       console.error('RECURRING_SNOOZE_INSERT_FAILED:',reminder.id,insertError.message)
-      return `I couldn't snooze that reminder just now. Please try once more.`
+      return `I couldn't snooze that reminder just now. Check *my reminders* to see whether it was saved.`
     }
   }else{
     const {error:updateError}=await supabaseAdmin
