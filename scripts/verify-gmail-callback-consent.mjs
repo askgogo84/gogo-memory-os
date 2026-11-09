@@ -45,6 +45,15 @@ async function callGet({ outcome = 'saved', state = 'on', saveError = false, con
         from: table => {
           assert.equal(table, 'users')
           return {
+            // Main's second-account support (#1326) reads the current primary first.
+            // No primary is connected here, so the original single-account path runs.
+            select: () => ({
+              eq: (key, value) => {
+                assert.equal(key, 'telegram_id')
+                assert.equal(String(value), '101')
+                return { maybeSingle: async () => ({ data: null, error: null }) }
+              },
+            }),
             update: payload => {
               tokenSaves++
               assert.equal(payload.gmail_connected, true)
