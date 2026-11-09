@@ -23,6 +23,7 @@ async function main(){
    }
    if(table==='agent_approvals')return {data:{id:'approval',status:approved?'approved':'pending',...buildApprovalBinding({missionId:runId,stepId:'send',capability:'email',actionType:'send_email',target:'gmail_thread:'+draft.threadId,payload:draft})},error:null}
    if(table==='users')return {data:{gmail_connected:true,gmail_send_connected:true,gmail_access_token:'fixture-token'},error:null}
+   if(table==='user_consent_settings')return {data:{gmail_enabled:true},error:null} // 4 Nov: Gmail reads need the saved yes
    if(insert)activity.push(insert)
    return {data:[],error:null}
   }
