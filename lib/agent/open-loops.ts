@@ -481,6 +481,10 @@ function looksLikeIncomingPromise(text:string){
 
 export function isAutomatedGmailMessage(message:any){
   const from=headerEmail(message?.from)
+  // 8 Nov Spaces live test: AskGogo's own product mail ("Gogo from AskGogo") and sign-up welcomes ("Thanks for signing
+  // up for Cofounder… I meet with users 1:1") showed as emails to reply to.
+  if(/@(?:[\w-]+\.)*askgogo\.(?:in|com|ai)$/i.test(from))return true
+  if(/\bthanks?\s+(?:you\s+)?for\s+(?:signing\s+up|joining|registering|subscribing)\b|\b(?:i|we)\s+meet\s+with\s+(?:users|customers|founders)\b/i.test(clean(`${message?.subject||''} ${message?.snippet||''}`,600)))return true
   if(/(?:^|[._+-])(no-?reply|do-?not-?reply|newsletter|digest|notifications?|alerts?|instaalerts?|mailers?|marketing|promotions?|offers|updates|feedback|surveys?|bounces?)(?:[._+-]|@)/i.test(from))return true
   // Bank transaction alerts, OTPs and feedback surveys never need a reply (HDFC "Rs.2249.38 debited", JioFiber "Share your experience").
   const text=clean(`${message?.subject||''} ${message?.snippet||''}`,600)
@@ -544,6 +548,7 @@ async function readGmailAttention(telegramId:string|number){
   if(consent?.gmail_enabled===false)return {reason:'disabled' as const}
   if(user&&user.telegram_id!=null&&String(user.telegram_id)!==owner)return {reason:'disconnected' as const}
   if(!user?.gmail_connected)return {reason:'disconnected' as const}
+  if(consent?.gmail_enabled!==true)return {reason:'disabled' as const} // 4 Nov: affirmative yes only
 
   const ownEmail=String(user.gmail_email||'').trim().toLowerCase()
   if(!ownEmail)return {reason:'disconnected' as const}
@@ -569,7 +574,7 @@ export function isInboxReplyReadQuery(text:string){
 
 // Always read current Gmail thread metadata. Never substitute reminders, old
 // attention rows or model memory, and never write a draft or send a message.
-export async function handleInboxReplyRead(params:{actor:AgentActor;text:string}){
+export async function handleInboxReplyRead(params:{actor:AgentActor;text:string;minAgeDays?:number}){
   if(!isInboxReplyReadQuery(params.text))return null
   const base={runId:'inbox-reply-read',capability:'orchestrator' as const,risk:'low' as const,handledBy:'inbox-reply-read'}
   try{
@@ -580,6 +585,8 @@ export async function handleInboxReplyRead(params:{actor:AgentActor;text:string}
     const candidates=read.threads.flatMap(thread=>{
       const last=[...thread.messages].sort((a,b)=>a.internalDate-b.internalDate).at(-1)
       if(!last||headerEmail(last.from)===read.ownEmail||isAutomatedGmailMessage(last))return []
+      // "Waited more than 3 days for my reply" (6 Nov): only threads whose last message is at least that old.
+      if(params.minAgeDays&&!(Number(last.internalDate)>0&&Date.now()-Number(last.internalDate)>=params.minAgeDays*86_400_000))return []
       const combined=clean(`${last.subject||thread.subject} ${last.snippet}`,900)
       // Subject words such as "Update" and promotional "Activate now" are
       // notifications, not requests for a human response.
@@ -597,7 +604,8 @@ export async function handleInboxReplyRead(params:{actor:AgentActor;text:string}
         ? new Date(last.internalDate).toLocaleString('en-GB',{timeZone:timezone}) : 'date unavailable'
       return `${index+1}. ${formatEmailSnippet(headerName(last.from),100)} — ${formatEmailSnippet(last.subject,180)}\nReceived: ${received}\n${formatEmailSnippet(last.snippet,240)}`
     })
-    const result=lines.length ? `These may need your reply:\n\n${lines.join('\n\n')}` : 'No likely reply requests found in the threads checked.'
+    const age=params.minAgeDays?` waiting ${params.minAgeDays}+ days`:''
+    const result=lines.length ? `These may need your reply${age}:\n\n${lines.join('\n\n')}` : `No likely reply requests${age} found in the threads checked.`
     return {...base,status:'completed' as const,text:`Gmail checked at ${stamp} (${timezone}).\nChecked ${read.threads.length} recent threads from the last 14 days; this is a limited scan.\n\n${result}\n\nNothing sent.`,
       verification:{verified:true,source:'gmail_api',kind:'read',objectKind:'gmail_threads',objectRef:null}}
   }catch{
@@ -613,7 +621,7 @@ async function syncGmailAttention(telegramId:string,current:Set<string>,gmailRea
   // "what needs my attention". Guarded so a missing module or rules read never blocks the sync.
   let attentionScore:((message:any)=>{picked:boolean}|null)=()=>null
   try{
-    const {data:ruleRows}=await supabaseAdmin.from('email_attention_rules').select('kind,match_type,match_value,category,label,source').eq('telegram_id',Number(telegramId)).eq('active',true).limit(300)
+    const {data:ruleRows}=await supabaseAdmin.from('email_attention_rules').select('kind,match_type,match_value,category,label,source').eq('telegram_id',(()=>{const n=Number(telegramId);return Number.isSafeInteger(n)&&String(n)===String(telegramId)?n:String(telegramId)})()).eq('active',true).limit(300)
     const rules=(Array.isArray(ruleRows)?ruleRows:[]).map((r:any)=>({kind:r.kind,matchType:r.match_type,matchValue:String(r.match_value||''),category:r.category,label:String(r.label||''),source:r.source}))
     if(typeof scoreAttentionEmail==='function')attentionScore=(message:any)=>{const r=scoreAttentionEmail(message,{rules,ownEmail});return r&&typeof r.score==='number'?r:null}
   }catch{}
@@ -849,8 +857,33 @@ export async function syncOpenLoopsForUser(telegramId:string|number){
   if(results[4]?.status==='fulfilled')successfulSourceTypes.push('meeting_prep')
   // Reconcile only sources that were read successfully. A transient provider/DB
   // failure must never make an existing open loop disappear.
-  const resolved=await resolveMissingSourceLoops(tg,current,successfulSourceTypes).catch(err=>{failures.push(clean(err?.message||err,180));return 0})
+  let resolved=await resolveMissingSourceLoops(tg,current,successfulSourceTypes).catch(err=>{failures.push(clean(err?.message||err,180));return 0})
+  // Loops made from automated mail before the sender filter existed go quietly; the Gmail read need not have succeeded.
+  resolved+=await dismissAutomatedGmailLoops(tg).catch(err=>{failures.push(clean(err?.message||err,180));return 0})
   return {telegramId:tg,resolved,failures}
+}
+
+/** Pure: which active Gmail loops were made from mail we no longer treat as needing a reply (AskGogo's own mail,
+ *  sign-up welcomes, no-reply senders). 9 Nov: the filter only stopped NEW loops; these were already on My Day. */
+export function automatedGmailLoopIds(rows:{id:string|number;title?:string|null;summary?:string|null;evidence_json?:any}[]):string[]{
+  const out:string[]=[]
+  for(const r of rows){
+    const from=String(r.evidence_json?.last_message_from||'')
+    const subject=String(r.title||'').replace(/^(?:Reply to|Waiting on)\s+.*?\s+—\s+/,'')
+    if(isAutomatedGmailMessage({from,subject,snippet:String(r.summary||'')}))out.push(String(r.id))
+  }
+  return out
+}
+
+async function dismissAutomatedGmailLoops(tg:string){
+  const {data}=await supabaseAdmin.from('agent_open_loops').select('id,title,summary,evidence_json').eq('telegram_id',tg).eq('status','active').eq('source_type','gmail_thread').limit(200)
+  const ids=automatedGmailLoopIds((data||[]) as any[])
+  if(!ids.length)return 0
+  const at=new Date().toISOString()
+  const {error}=await supabaseAdmin.from('agent_open_loops').update({status:'dismissed',resolved_at:at,updated_at:at}).eq('telegram_id',tg).in('id',ids)
+  if(error)throw new Error(`dismiss_automated_failed:${error.message}`)
+  console.log('OPEN_LOOPS_AUTOMATED_DISMISSED:',JSON.stringify({telegramId:tg,count:ids.length}))
+  return ids.length
 }
 
 export async function captureJevOpenLoopFromTurn(params:{actor:AgentActor;text:string;jev?:JevShadowResult|null;observedAt?:string|null}){

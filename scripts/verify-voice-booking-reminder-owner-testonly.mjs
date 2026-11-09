@@ -110,8 +110,17 @@ await check('P1: already-rounded unsafe numeric owner must not create ANY record
   const x = await invoke(Number(OWNER_B))
   assert.equal(x.all.length, 0, 'ambiguous owner must fail closed before any write')
 })
-await check('P1: negative owner must not create any record', async () => {
+// 2 Nov correction: WhatsApp owners are negative by design (allocateWhatsAppOwnerId returns -(2^51 + random)).
+// Refusing negatives refused every WhatsApp user. A negative owner must write only under its exact id; zero stays refused.
+await check('P1: negative WhatsApp owner writes only under its exact id', async () => {
   const x = await invoke(-42)
+  assert.deepEqual([x.events.length, x.reminders.length], [1, 1])
+  assert.equal(String(x.events[0].record.telegram_id), '-42')
+  assert.equal(String(x.reminders[0].record.telegram_id), '-42')
+  assert.equal(String(x.reminders[0].record.chat_id), '-42')
+})
+await check('P1: zero owner must not create any record', async () => {
+  const x = await invoke(0)
   assert.equal(x.all.length, 0)
 })
 await check('P1: fractional owner must not create any record', async () => {

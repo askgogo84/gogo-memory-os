@@ -296,6 +296,8 @@ async function main() {
   const briefing=load('app/api/cron/daily-briefings/route.ts',{
     '@/lib/services/delivery-monitoring':monitoring,
     '@/lib/security/cron-auth':{isCronAuthorized:()=>true},'@/lib/whatsapp':{},
+    // 4 Nov: the scheduled briefing is quiet by default; this test exercises delivery with it switched on (GOGO_PROACTIVE=all).
+    '@/lib/channels/proactive-policy':{mayVolunteer:()=>true},
     '@/lib/services/notification-delivery':{reconcileBriefingEmailReceipts:async()=>0,deliverNotification:async p=>{seen.push(p.owner);assert.equal(await p.ready(),!disabled);return 'skipped'}},
     '@/lib/bot/handlers/reminder-optout':{isSuppressed:async()=>false},'@/lib/supabase-admin':{supabaseAdmin:briefingDb},
     '@/lib/bot/handlers/morning-briefing':{},'@/lib/bot/handlers/throwback':{},'@/lib/email/resend':{},'@/lib/email/daily-brief':{},'@/lib/email/daily-brief-unsubscribe':{}

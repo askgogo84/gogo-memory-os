@@ -2,6 +2,7 @@ import { processRunOutcomeNotices } from '@/lib/agent/run-outcome-delivery'
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { resumePersistentGeneralPlan } from '@/lib/agent/persistent-general-plan'
+import { resumeProcedureRun } from '@/lib/procedures/runtime'
 import type { AgentActor } from '@/lib/agent/actor'
 import { runQueuedTrainResearch } from '@/lib/agent/train-research'
 import { resumePausedBrowserRun } from '@/lib/agent/browser-command'
@@ -162,11 +163,14 @@ export async function GET(request:Request){
     for(const run of runs||[]){
       checked++
       const meta:any=run.metadata_json||{}
-      if(!meta.persistent_general_plan){skipped++;continue}
+      const isProcedure=meta.plan_kind==='procedure-plan-v1'&&meta.procedure?.id
+      if(!meta.persistent_general_plan&&!isProcedure){skipped++;continue}
       const actor=await actorFor(String(run.telegram_id))
       if(!actor){skipped++;continue}
       try{
-        const result=await resumePersistentGeneralPlan({actor,runId:String(run.id),maxWaves:6})
+        const result=isProcedure
+          ? await resumeProcedureRun({actor,runId:String(run.id),maxWaves:6})
+          : await resumePersistentGeneralPlan({actor,runId:String(run.id),maxWaves:6})
         resumed++
         if(result.status==='completed')completed++
         results.push({runId:String(run.id),status:result.status,executed:result.executed})
