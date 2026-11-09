@@ -180,6 +180,8 @@ export async function getWorkspaceDetail(telegramId: string, workspaceId: string
   }
   const memberRows = ((members.data || []) as { telegram_id: unknown; role: unknown }[])
     .filter((m): m is { telegram_id: unknown; role: WorkspaceRole } => isWorkspaceRole(m.role))
+  // A share whose sharer is no longer a member is never listed (see getSharedArtifact).
+  const currentMembers = new Set(memberRows.map(m => String(m.telegram_id)))
   const names = await displayNames([...memberRows.map(m => String(m.telegram_id)), ...shareRows.map(s => s.shared_by)])
   const me = membership.telegramId
   const admin = canRole(membership.role, 'remove_member')
@@ -190,7 +192,7 @@ export async function getWorkspaceDetail(telegramId: string, workspaceId: string
     members: memberRows.map(m => ({ telegramId: String(m.telegram_id), name: names.get(String(m.telegram_id)) || 'AskGogo user', role: m.role, isYou: String(m.telegram_id) === me })),
     artifacts: shareRows.flatMap(s => {
       const art = titles.get(s.artifact_id)
-      if (!art || art.owner !== s.shared_by) return []
+      if (!art || art.owner !== s.shared_by || !currentMembers.has(s.shared_by)) return []
       return [{ artifactId: s.artifact_id, title: art.title, sharedBy: s.shared_by, sharedByName: names.get(s.shared_by) || 'AskGogo user', sharedByYou: s.shared_by === me, sharedAt: s.created_at ?? null }]
     }),
   }
@@ -372,6 +374,12 @@ export async function getSharedArtifact(telegramId: string, workspaceId: string,
     .eq('workspace_id', membership.workspaceId).eq('artifact_id', id).maybeSingle()
   check(error, 'shared_lookup')
   if (!share) throw new WorkspaceError('artifact_not_found')
+  // Only while the sharer is still a member: a share left behind by a removed member (failed or racing
+  // revocation) must never stay readable.
+  const { data: sharer, error: sharerError } = await supabaseAdmin.from('workspace_members').select('role')
+    .eq('workspace_id', membership.workspaceId).eq('telegram_id', String(share.shared_by)).maybeSingle()
+  check(sharerError, 'shared_sharer')
+  if (!sharer) throw new WorkspaceError('artifact_not_found')
   // Only while the sharer still owns it.
   const { data: art, error: artError } = await supabaseAdmin.from('agent_artifacts').select('id,title,content_json,telegram_id')
     .eq('id', id).eq('telegram_id', String(share.shared_by)).maybeSingle()
