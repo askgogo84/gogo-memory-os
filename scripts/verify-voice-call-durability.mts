@@ -5,6 +5,7 @@ import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
 import * as crypto from 'node:crypto'
 import * as execution from '../lib/agent/voice-call-execution'
+import * as policy from '../lib/agent/policy'
 const now = new Date('2026-10-21T18:00:00Z')
 const plan = () => ({ venue: 'Fixture restaurant', to: '+919999999999', source: 'fixture', guestName: 'Fixture', partySize: 2,
   date: '2026-10-22', dateLabel: 'tomorrow', timeLabel: '8:00 pm', flexWindow: '7:30–9pm', seating: 'no preference',
@@ -116,7 +117,7 @@ await check('actual chat entry cannot call when task persistence fails', async (
   let providerCalls = 0
   const source = readFileSync(process.env.VOICE_CALL_AUDIT_SOURCE || 'lib/agent/voice-call.ts', 'utf8')
   const mocks: any = {
-    'node:crypto': crypto, '@/lib/supabase-admin': { supabaseAdmin: h.db }, './voice-call-execution': execution,
+    'node:crypto': crypto, '@/lib/supabase-admin': { supabaseAdmin: h.db }, './voice-call-execution': execution, './policy': policy,
     '@/lib/bot/handlers/followup-state': { getLatestFollowupState: async () => ({ payload: { plan: p, approvalHash: execution.voicePlanHash('123', p) } }), saveFollowupState: async () => {}, clearFollowupState: async () => {} },
   }
   runInNewContext(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText,
@@ -132,7 +133,7 @@ await check('actual chat entry cannot call when task persistence fails', async (
 function processHarness(status='completed') {
   const h = fakeDb(), exports:any={}, p={...plan(),test:true,date:new Date(Date.now()+3*86400_000).toISOString().slice(0,10)}
   h.rows.push({id:'call-run',telegram_id:'123',type:'voice_call',status:'running',started_at:new Date().toISOString(),metadata_json:{plan:p,execution_id:'inert-execution'}})
-  const mocks:any={'node:crypto':crypto,'@/lib/supabase-admin':{supabaseAdmin:h.db},'./voice-call-execution':execution,'@anthropic-ai/sdk':{__esModule:true,default:class {messages={create:async()=>({content:[{text:JSON.stringify({booked:true,confirmed_time:'8:00 pm',staff_name:'Fixture'})}]})}}}}
+  const mocks:any={'node:crypto':crypto,'@/lib/supabase-admin':{supabaseAdmin:h.db},'./voice-call-execution':execution,'./policy':policy,'@anthropic-ai/sdk':{__esModule:true,default:class {messages={create:async()=>({content:[{text:JSON.stringify({booked:true,confirmed_time:'8:00 pm',staff_name:'Fixture'})}]})}}}}
   runInNewContext(ts.transpileModule(readFileSync('lib/agent/voice-call.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,
     {exports,require:(name:string)=>{if(!(name in mocks))throw Error('Unexpected '+name);return mocks[name]},console,Date,Intl,URL,AbortSignal,process:{env:{BOLNA_API_KEY:'inert'}},fetch:async()=>new Response(JSON.stringify({status,transcript:'inert transcript'}))})
   return {...h,voice:exports}

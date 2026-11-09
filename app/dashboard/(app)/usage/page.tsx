@@ -1,8 +1,11 @@
+import { monthlyAllowanceFor } from '@/lib/data/limits'
 import { getSession } from '@/lib/dashboard/session'
 import { getUsageSummary } from '@/lib/dashboard/queries'
 import { CardError } from '@/components/dashboard/card-error'
 import { BreathRing } from '@/components/dashboard/breath-ring'
 import { QuotaBar } from '@/components/dashboard/quota-bar'
+import { UsageTrends } from '@/components/dashboard/usage-trends'
+import { getActivityTrends } from '@/lib/dashboard/activity'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,6 +45,10 @@ export default async function UsagePage() {
         : 'At today’s pace — nothing stops, I just slow down and tell you.'
 
   const priceLine = planPriceInr > 0 ? `₹${planPriceInr} / month` : 'Free'
+  // Trends are extra: a read failure hides them and never breaks today's view.
+  // 4 Nov: one monthly allowance (the plan's), the same number the chat shows.
+  const monthly = monthlyAllowanceFor(summary.planCode)
+  const trends = session ? await getActivityTrends(session.telegramId, aiLimit, Date.now(), monthly.monthly).catch(() => null) : null
 
   return (
     // temporary desktop freeze — removed in this surface's own 5c phase
@@ -74,6 +81,8 @@ export default async function UsagePage() {
         Reminders aren’t metered — they run under a fair-use daily ceiling
         {limits.remindersFairUse > 0 ? ` of ${limits.remindersFairUse}` : ''}.
       </p>
+
+      {trends && <UsageTrends a={trends} />}
     </div>
   )
 }

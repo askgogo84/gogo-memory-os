@@ -1,13 +1,18 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/dashboard/session'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { verifySameOrigin } from '@/lib/dashboard/guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
 export const dynamic = 'force-dynamic'
 
 async function resolveWhatsAppId(telegramId: string) {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return null
+  // Signed64 owner IDs are strings. Number/parseInt may silently resolve a
+  // different account before an owner-scoped task write.
+  const exactOwner = exactSessionOwnerId(telegramId)
+  if (exactOwner === null) return null
+  const numeric = Number(exactOwner)
+  const tgNum = Number.isSafeInteger(numeric) ? numeric : exactOwner
   const { data, error } = await supabaseAdmin
     .from('users')
     .select('whatsapp_id')
