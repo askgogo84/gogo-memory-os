@@ -37,8 +37,7 @@ type Model = (prompt: string) => Promise<string>
 const defaultModel: Model = async prompt => {
   // Cheapest configured provider first (public page, non-personal ask), Claude as the backstop.
   const { cheapComplete } = await import('@/lib/inference/cheap')
-  const ask = prompt.split('.')[0] || 'Summarise'
-  const cheap = await cheapComplete({ taskClass: 'public_web_research', prompt, scanText: ask, maxTokens: 700 }).catch(() => null)
+  const cheap = await cheapComplete({ taskClass: 'public_web_research', prompt, scanText: prompt, maxTokens: 700 }).catch(() => null)
   if (cheap) return cheap
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) throw new Error('no_model')
@@ -48,7 +47,11 @@ const defaultModel: Model = async prompt => {
 }
 
 export async function summariseUrl(req: { url: string; ask: string }, deps: { fetchImpl?: typeof fetch; model?: Model } = {}) {
-  const fetchImpl = deps.fetchImpl || fetch
+  // Production containment: arbitrary URLs must NOT be fetched from our application server.
+  // The normal chat path can still use its separately policy-guarded secure browser.
+  // Only tests may inject a fake fetch transport until pinned-address public egress is reviewed.
+  if (!deps.fetchImpl) return null
+  const fetchImpl = deps.fetchImpl
   let res: Response
   try {
     res = await fetchImpl(req.url, { headers: { 'user-agent': 'Mozilla/5.0 (compatible; AskGogo/1.0)', accept: 'text/html,application/xhtml+xml' }, redirect: 'follow', signal: AbortSignal.timeout(8000) })
