@@ -30,6 +30,24 @@ async function existingByUrl(telegramId: number, url: string) {
   }) || null
 }
 
+type ClosureAction = { status: string; payload_json: any }
+const UNCERTAIN = ['outcomeUnknown', 'sendStarted', 'reconciliationRequired', 'deviceHandoffRequired', 'providerBlock', 'leaseUntil', 'closedAt', 'receipt', 'unresolvedAttempts']
+
+/** The event's booking-closure action, 'missing' when there verifiably is none, 'unreadable' when it could not be read. */
+async function existingClosureAction(lifeEventId: string, telegramId: number): Promise<ClosureAction | 'missing' | 'unreadable'> {
+  try {
+    const { data, error } = await supabaseAdmin.from('life_event_actions').select('status,payload_json')
+      .eq('life_event_id', lifeEventId).eq('telegram_id', String(telegramId)).eq('action_key', 'booking-closure').limit(1)
+    if (error || !Array.isArray(data)) return 'unreadable'
+    return data[0] ? { status: String(data[0].status || ''), payload_json: data[0].payload_json || {} } : 'missing'
+  } catch { return 'unreadable' }
+}
+
+/** Only a plain failure, with no evidence that work started or a provider effect may have happened, is re-armed. */
+function retryable(a: ClosureAction) {
+  return (a.status === 'failed' || a.status === 'cancelled') && !UNCERTAIN.some(k => a.payload_json?.[k])
+}
+
 function bookingWorkerDueAt(now: Date) {
   // The generic life-event cron runs earlier in the minute than the dedicated
   // booking cron. Make booking closure visible just before the dedicated worker
@@ -62,6 +80,30 @@ export async function queueBookingClosure(params: { telegramId: number; text: st
   const lifeEventId = String(event.id)
   const nowDate = new Date()
   const now = nowDate.toISOString()
+
+  // 31 Oct review: a re-forwarded link must never re-arm closure work that is done, running, blocked on a person, or
+  // whose provider effect is unknown. Once this event's closure was durably queued (closureQueuedAt is written only
+  // after the queue upsert succeeded), the action is left untouched unless it is verifiably missing or a plain
+  // failure with no uncertain-outcome evidence. If its state cannot be read, nothing is re-armed.
+  let prior: ClosureAction | null = null
+  if (event.metadata_json?.closureQueuedAt) {
+    const existing = await existingClosureAction(lifeEventId, params.telegramId)
+    if (existing !== 'missing' && existing !== 'unreadable') prior = existing
+    if (existing !== 'missing' && !(existing !== 'unreadable' && retryable(existing))) {
+      const { error: touchError } = await supabaseAdmin.from('life_events').update({
+        metadata_json: { ...(event.metadata_json || {}), lastForwardedAt: now },
+        updated_at: now,
+      }).eq('id', lifeEventId).eq('telegram_id', String(params.telegramId))
+      if (touchError) console.error('BOOKING_CLOSURE_EVENT_UPDATE_FAILED:', touchError.message)
+      const done = existing !== 'unreadable' && existing.status === 'completed'
+      return {
+        lifeEventId,
+        text: done
+          ? `🎟️ *This booking is already done.*\n\nI sent the completed booking and ticket/QR here earlier; I'm not starting it again. Ask me for the ticket any time.`
+          : `🎟️ *I already have this booking link.*\n\nI'm not starting it again; I'll send the result here as soon as it's ready.`,
+      }
+    }
+  }
   const dueAt = bookingWorkerDueAt(nowDate)
   const payload = {
     originalText: String(params.text || '').slice(0, 4000),
@@ -74,6 +116,8 @@ export async function queueBookingClosure(params: { telegramId: number; text: st
   // One action per Life Event makes webhook retries/repeated forwards idempotent.
   // browser_prepare is intentionally NOT the generic prepare action type: the
   // dedicated booking worker owns this action key and performs the real closure.
+  // A plain failure being retried keeps its earlier evidence alongside the new request.
+  if (prior) Object.assign(payload, { ...(prior.payload_json || {}), ...payload, retriedFrom: prior.status })
   const { error } = await supabaseAdmin.from('life_event_actions').upsert({
     life_event_id: lifeEventId,
     telegram_id: String(params.telegramId),
