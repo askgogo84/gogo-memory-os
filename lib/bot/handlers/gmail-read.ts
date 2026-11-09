@@ -9,16 +9,22 @@ function clean(value:unknown,max=500){
 }
 
 async function gmailAccess(telegramId:number){
-  const [{data:user,error:userError},{data:consent,error:consentError}]=await Promise.all([
-    supabaseAdmin.from('users')
-      .select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token')
-      .eq('telegram_id',telegramId).maybeSingle(),
-    supabaseAdmin.from('user_consent_settings')
-      .select('gmail_enabled').eq('telegram_id',telegramId).maybeSingle(),
-  ])
-  if(userError)throw new Error(`gmail_user_read_failed:${userError.message}`)
+  // Never round a persisted signed 64-bit owner into a different account.
+  // Valid negative Telegram/WhatsApp identifiers remain supported.
+  if(!Number.isSafeInteger(telegramId)||telegramId===0){
+    return {connected:false,disabled:true,email:null,accessToken:''}
+  }
+  // Consult the owner's saved opt-in BEFORE retrieving encrypted Gmail tokens.
+  // Missing/NULL/error consent is not affirmative permission to read a mailbox.
+  const {data:consent,error:consentError}=await supabaseAdmin.from('user_consent_settings')
+    .select('gmail_enabled').eq('telegram_id',telegramId).maybeSingle()
   if(consentError)throw new Error(`gmail_consent_read_failed:${consentError.message}`)
   if(consent?.gmail_enabled!==true)return {connected:false,disabled:true,missing:consent?.gmail_enabled!==false,email:null,accessToken:''} // 4 Nov: affirmative yes only
+
+  const {data:user,error:userError}=await supabaseAdmin.from('users')
+    .select('gmail_connected,gmail_email,gmail_access_token,gmail_refresh_token')
+    .eq('telegram_id',telegramId).maybeSingle()
+  if(userError)throw new Error(`gmail_user_read_failed:${userError.message}`)
   if(!user?.gmail_connected)return {connected:false,disabled:false,email:null,accessToken:''}
 
   let accessToken=''

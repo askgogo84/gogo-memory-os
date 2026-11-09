@@ -3,11 +3,22 @@
 // short message, and never another until they write again. Reminders, watches and everything they asked for keep
 // running; nothing else is volunteered (lib/channels/proactive-policy.ts).
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { createHash } from 'node:crypto'
 
 export const QUIET_DAYS = 3
 export const ACTIVE_WINDOW_DAYS = 30
 export const REENGAGE_TEXT = "👋 Gogo here. It's been a few days. Your reminders and watches are still running. Reply anything, even hi, whenever you need me."
 const DAY = 86_400_000
+
+/** Stable UUIDv8-shaped claim from exact owner + last inbound. The existing
+ * agent_activity UUID primary key is the atomic cross-worker uniqueness gate.
+ * Never create an auto-random row for the same quiet spell. */
+export function reengagementClaimId(telegramId: string, lastInboundIso: string): string {
+  const digest = createHash('sha256')
+    .update(JSON.stringify(['askgogo.reengage.v1', String(telegramId), lastInboundIso]))
+    .digest('hex')
+  return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-8${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`
+}
 
 /** Who gets the nudge: quiet for QUIET_DAYS+, active within ACTIVE_WINDOW_DAYS, and not already nudged since their last message. */
 export function pickQuietUsers(lastInbound: Map<string, number>, lastNudge: Map<string, number>, now: number, limit = 200): string[] {
@@ -51,7 +62,14 @@ export async function runReengagePass(now = Date.now(), send?: Sender) {
     const { data: user } = await supabaseAdmin.from('users').select('whatsapp_id,access_status').eq('telegram_id', tg).maybeSingle()
     if (!user?.whatsapp_id || (user.access_status && user.access_status !== 'active')) continue
     // Record first, then send: a crash between the two can only skip a nudge, never send two.
-    const { error: logErr } = await supabaseAdmin.from('agent_activity').insert({ telegram_id: tg, event_type: 'reengagement_sent', message: REENGAGE_TEXT, metadata_json: { quiet_since: new Date(lastInbound.get(tg)!).toISOString() } })
+    const { error: logErr } = await supabaseAdmin.from('agent_activity').insert({
+      id: reengagementClaimId(tg, new Date(lastInbound.get(tg)!).toISOString()),
+      telegram_id: tg, event_type: 'reengagement_sent',
+      message: REENGAGE_TEXT, metadata_json: { quiet_since: new Date(lastInbound.get(tg)!).toISOString() },
+    })
+    // The other invocation already claimed this exact owner's quiet spell.
+    // No provider send and no retry on conflict or any uncertain first send.
+    if (logErr?.code === '23505') continue
     if (logErr) { errors.push(`log_failed:${logErr.message.slice(0, 60)}`); continue }
     try { await sender(String(user.whatsapp_id), REENGAGE_TEXT); sent++ } catch (e: any) { errors.push(`send_failed:${String(e?.message || e).slice(0, 60)}`) }
   }
