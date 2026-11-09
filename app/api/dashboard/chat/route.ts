@@ -164,7 +164,12 @@ export async function GET(req?: NextRequest) {
     }))
     .filter((row: any) => row.content)
 
-  return NextResponse.json({ messages, name: user.name || 'Gogo' })
+  // v2 (9 Nov): today's saved topic brief rides along with the main thread, for the brief card with topic chips.
+  let brief: unknown = null
+  if (!threadId) {
+    try { const w = await import('@/lib/briefing/daily-brief-writer'); brief = await w.readTodaysBrief(String(user.telegram_id)) } catch { brief = null }
+  }
+  return NextResponse.json({ messages, name: user.name || 'Gogo', brief })
 }
 
 async function makeDocWasLastReply(telegramId:number|string){

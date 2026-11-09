@@ -68,3 +68,36 @@ export function InlineApprovals({ approvals, onChanged }: { approvals: ApprovalC
     {error && <p role="alert" className="text-[13px] text-[#d96c5f]">{error}</p>}
   </div>
 }
+
+// Morning brief card (v2 mock scene "Morning brief"): one line per topic, each starting with a chip. Amber = needs
+// you, blue = Gogo has it. Tapping a chip opens a channel of that name when one exists, else asks Gogo about it.
+export type BriefItemView = { topic: string; tone: 'needs_you' | 'handled'; text: string; href?: string }
+export type BriefView = { date: string; items: BriefItemView[]; needsYou: number; artifactId?: string }
+
+export function BriefCard({ brief, channels, onOpenChannel, onAsk }: { brief: BriefView; channels: { id: string; title: string }[]; onOpenChannel: (id: string) => void; onAsk: (text: string) => void }) {
+  if (!brief.items.length) return null
+  const chip = (tone: BriefItemView['tone']) => tone === 'needs_you' ? 'bg-[#3a2a10] text-[#e2b04a]' : 'bg-[#123d38] text-[#8be6d8]'
+  const pick = (it: BriefItemView) => {
+    const ch = channels.find(c => c.title.trim().toLowerCase() === it.topic.trim().toLowerCase())
+    if (ch) onOpenChannel(ch.id); else onAsk(`Tell me more about ${it.topic.toLowerCase() === 'today' ? 'today' : `the ${it.topic} item in my brief`}`)
+  }
+  return <section aria-label="Morning brief" className="flex items-start gap-3 sm:gap-3.5" data-brief-card>
+    <div className="w-10 shrink-0" aria-hidden="true"/>
+    <div className="min-w-0 max-w-[90%] sm:max-w-[84%]">
+      <div className="mb-1 flex items-center gap-2 text-[12.5px] text-[#a8a8a4]"><span className="grid h-[14px] w-[14px] place-items-center rounded-[4px] border border-[#a8a8a4] text-[10px]">✓</span>Morning brief{brief.needsYou ? ` · ${brief.needsYou} need${brief.needsYou === 1 ? 's' : ''} you` : ''}</div>
+      <ul className="m-0 flex list-none flex-col gap-2.5 rounded-[18px] bg-[#161616] px-4 py-3.5 pl-4 text-[16px] leading-[1.6] text-[#dcdad5]">
+        {brief.items.map((it, i) => <li key={i} className="flex gap-2">
+          <span aria-hidden="true" className="text-[#6a6a6a]">•</span>
+          <span className="min-w-0">
+            <button type="button" onClick={() => pick(it)} className={`mr-1 inline-flex items-center gap-1.5 rounded-[8px] px-2 py-0.5 text-[15px] font-medium ${chip(it.tone)}`}>
+              <span aria-hidden="true" className={`inline-block h-[9px] w-[9px] ${it.tone === 'needs_you' ? 'rounded-[2px] bg-current' : 'rounded-full border-[1.5px] border-current'}`}/>{it.topic}
+            </button>
+            <span>: {it.text}</span>
+            {it.href && <Link href={it.href} className="ml-1 text-[14px] text-[#4cd0bd]">Open</Link>}
+          </span>
+        </li>)}
+      </ul>
+      {brief.artifactId && <Link href={`/dashboard/reports/${brief.artifactId}`} className="mt-1.5 inline-block text-[13px] text-[#a8a8a4]">Saved in Make</Link>}
+    </div>
+  </section>
+}
