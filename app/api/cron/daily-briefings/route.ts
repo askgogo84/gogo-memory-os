@@ -116,6 +116,9 @@ function firstName(value: string | null | undefined) {
 
 export async function GET(req: NextRequest) {
   if (!isCronAuthorized(req)) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  // 4 Nov quiet WhatsApp: no scheduled morning briefing; people get it by asking ("good morning", "brief me").
+  const { mayVolunteer } = await import('@/lib/channels/proactive-policy')
+  if (!mayVolunteer('morning_briefing')) return NextResponse.json({ ok: true, skipped: 'quiet_whatsapp' })
   return withDeliveryHeartbeat('briefing', () => runDelivery(req))
 }
 
@@ -201,6 +204,13 @@ async function runDelivery(req: NextRequest) {
                 accepted: () => markWhatsappSentToday(owner, now.date) })
               if (status === 'provider_accepted') sentWhatsapp++
               if (['failed','outcome_unknown','persistence_failed'].includes(status)) failures.push({ owner, channel: 'whatsapp', status })
+            }
+            // v2 (9 Nov): the same morning, a topic brief is saved under Make for the dashboard chat (Spaces accounts only).
+            if (Date.now() < deadline) {
+              try {
+                const live = await import('@/lib/spaces/sources-live')
+                if (live.spacesEnabledFor(String(owner))) await (await import('@/lib/briefing/daily-brief-writer')).writeDailyBrief(String(owner))
+              } catch (e: any) { console.error('DAILY_BRIEF_TOPIC_FAILED:', String(e?.message || e).slice(0, 160)) }
             }
             if (Date.now() < deadline && user.daily_brief_email_enabled && email && !await alreadyEmailSentToday(owner, now.date)) {
               let rendered: ReturnType<typeof renderDailyBriefEmail>

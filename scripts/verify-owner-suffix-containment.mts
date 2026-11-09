@@ -183,6 +183,8 @@ await check('Workspace rejects unsafe numeric actor before credential or provide
     '@/lib/security/email-redaction': { decodeHtmlEntities: (x: string) => x, formatEmailSnippet: (x: string) => x },
     '@/lib/supabase-admin': { supabaseAdmin: { from: () => { dbCalls++; return q } } }, '@/lib/google-gmail': {},
     '@/lib/bot/memory-redaction': { redactSecretShapedText: (x: string) => x }, '@/lib/security/google-token-crypto': {},
+    // Workspace imports the safe PDF helper at module load; forbid PDF IO in this owner-only test.
+    '@/lib/services/pdf-js-serverless': { extractServerlessPdfText: () => { throw Error('PDF parsing not allowed in owner isolation fixture') } },
     '@/lib/connectors/composio-gmail': { composioConfigured: () => true, activeDriveAccount: async (ids: string[]) => { providerCalls++; selection.push(Array.from(ids)); return 'fixture-account' },
       composioDriveFetch: async () => Response.json({ files: [] }) },
   }, '\nexport { workspaceFetch as __ownerTestFetch };')

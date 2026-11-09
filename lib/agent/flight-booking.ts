@@ -31,6 +31,9 @@ export function flightBookingRequest(text: string): FlightPick | null {
   const m = raw.match(/^(?:(?:ok(?:ay)?|yes|yeah|sure|please)[,.! ]+)?(?:(?:go ahead|can you|could you|please|now)\s+(?:and\s+)?)*(?:book|reserve|buy|get me)(?:\s+(?:me\s+)?(?:the\s+|that\s+|this\s+)?(.*?))?[.!?\s]*$/i)
   if (!m) return null
   const rest = (m[1] || '').toLowerCase()
+  // 6 Nov live: "Book a dentist for Thursday afternoon" was read as "book the afternoon flight". A pick refers to the
+  // list Gogo showed ("the evening one", "#2"); "a/an <something>" or "… for <when>" is a new booking request.
+  if (/^(?:a|an|some|my)\b/.test(rest) || /\bfor\b/.test(rest) || rest.split(/\s+/).filter(Boolean).length > 5) return null
   if (/\bnon[- ]?stop\b|\bdirect\b/.test(rest)) return { kind: 'nonstop' }
   const num = rest.match(/(?:#|option\s*|number\s*|no\.?\s*)(\d)\b/) || rest.match(/^(\d)$/)
   if (num) return { kind: 'number', n: Number(num[1]) }
@@ -308,7 +311,7 @@ export async function loadKnownDetails(actor: AgentActor): Promise<KnownDetails 
   const raw: unknown = actor.legacyTelegramId
   if (typeof raw === 'number' && !Number.isSafeInteger(raw)) return null
   const owner = String(raw ?? '').trim(), tg = Number(owner)
-  if (!/^[1-9]\d{0,18}$/.test(owner) || !Number.isSafeInteger(tg) || String(tg) !== owner) return null
+  if (!/^-?[1-9]\d{0,18}$/.test(owner) || !Number.isSafeInteger(tg) || String(tg) !== owner) return null
   const [user, mems, prefs] = await Promise.all([
     supabaseAdmin.from('users').select('id,telegram_id,name,email,gmail_email').eq('telegram_id', tg).maybeSingle().then(r => r.data as any, () => null),
     supabaseAdmin.from('memories').select('content').eq('telegram_id', tg).order('created_at', { ascending: false }).limit(40).then(r => (r.data || []).map((m: any) => String(m.content || '')), () => []),

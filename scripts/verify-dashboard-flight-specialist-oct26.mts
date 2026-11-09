@@ -17,7 +17,7 @@ assert.equal(shouldPreferSpecialistTravel('Is my flight 6E 6240 on time?'), fals
 const route = readFileSync(new URL('../app/api/dashboard/chat/route.ts', import.meta.url), 'utf8')
 const specialist = route.indexOf("shouldPreferSpecialistTravel(text)) {")
 const planner = route.indexOf('await tryRunGeneralPlan({')
-const places = route.indexOf("import('@/lib/agent/places-search')")
+const places = route.indexOf("import('@/lib/agent/places-context')") // places-search behind saved home area + taste (5 Nov)
 assert.ok(specialist > 0 && planner > 0 && specialist < planner, 'specialist travel runs before the general planner')
 assert.ok(places > 0 && places < specialist, 'hotel/restaurant place asks are still answered by places search first')
 const block = route.slice(specialist, planner)

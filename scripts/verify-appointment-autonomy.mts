@@ -130,6 +130,7 @@ const dependencies:any={
   './browser-command':{tryRunBrowserCommand:async()=>{browserCalls++;return {status:'completed',text:'Fixture provider page'}},browserApprovalBinding:()=>({}),createApprovalBrowserRun:async()=>({runId:'booking-run',stepId:'booking-step'})},
   './provider-booking':await import('../lib/agent/provider-booking.ts'),
   './life-event-engine':{},
+  '@/lib/security/outbound-identifiers':await import('../lib/security/outbound-identifiers.ts'),
 }
 runInNewContext(ts.transpileModule(followup,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:exportsFixture,require:(name:string)=>name==='./sentinel'?sentinel:dependencies[name],console,Date,Intl,URL})
 const actor={legacyTelegramId:42} as any

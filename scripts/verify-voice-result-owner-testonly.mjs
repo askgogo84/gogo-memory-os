@@ -179,8 +179,15 @@ await check('P1: already-rounded unsafe numeric owner cannot finalize/send/write
   assert.equal(x.conversations.length, 0)
   assert.equal(x.userQueries.length, 0)
 })
-await check('P1: negative owner cannot look up recipient or write a conversation', async () => {
+// 2 Nov correction: WhatsApp owners are negative by design; a negative owner is looked up and written exactly.
+await check('P1: negative WhatsApp owner is looked up and written only under its exact id', async () => {
   const x = await simulate('-42')
+  assert.ok(x.userQueries.length >= 1 && x.userQueries.every(v => String(v) === '-42'), 'recipient lookup used another owner')
+  assert.ok(x.conversations.length === 1 && x.conversations.every(r => String(r.telegram_id) === '-42'), 'conversation written under another owner')
+  assert.ok(x.sends.every(s => ![WA_A, WA_B, '15550000042', '15550000043'].includes(s.to)), 'result sent to another owner')
+})
+await check('P1: zero owner cannot look up recipient or write a conversation', async () => {
+  const x = await simulate('0')
   assert.equal(x.userQueries.length, 0)
   assert.equal(x.conversations.length, 0)
 })
