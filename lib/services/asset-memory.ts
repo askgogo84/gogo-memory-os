@@ -17,6 +17,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { safeDocumentSummary, redactDocumentMetadata } from '@/lib/services/document-summary-privacy'
 import { storeDocument, getDocumentSignedUrl } from '@/lib/services/document-store'
+import { fetchTwilioVaultDocumentMedia } from '@/lib/services/twilio-document-store-egress'
 import { createDocumentShortLink, shortLinkUrl } from '@/lib/services/document-links'
 import { embedText } from '@/lib/services/embeddings'
 import { indexMemory } from '@/lib/services/memory-index'
@@ -275,12 +276,18 @@ function fallbackExtraction(kind: 'image' | 'pdf', userLabel: string | null): As
   }
 }
 
-async function fetchTwilioBase64(mediaUrl: string, contentType: string): Promise<{ b64: string; isPdf: boolean }> {
-  const auth = Buffer.from(`${process.env.TWILIO_ACCOUNT_SID}:${process.env.TWILIO_AUTH_TOKEN}`).toString('base64')
-  const res = await fetch(mediaUrl, { headers: { Authorization: `Basic ${auth}` } })
-  if (!res.ok) throw new Error(`Twilio fetch ${res.status}`)
-  const b64 = Buffer.from(await res.arrayBuffer()).toString('base64')
-  return { b64, isPdf: (contentType || '').toLowerCase().includes('pdf') }
+/**
+ * Used by PDF asset classification. The inbound media URL is NOT authority to use our Twilio
+ * credentials: Basic auth goes only to the configured account's exact api.twilio.com Media
+ * resource, and one CDN hop is fetched without it (twilio-document-store-egress.ts).
+ */
+export async function fetchTwilioBase64(mediaUrl: string, contentType: string): Promise<{ b64: string; isPdf: boolean }> {
+  const bytes = await fetchTwilioVaultDocumentMedia({
+    mediaUrl,
+    accountSid: process.env.TWILIO_ACCOUNT_SID,
+    authToken: process.env.TWILIO_AUTH_TOKEN,
+  })
+  return { b64: bytes.toString('base64'), isPdf: (contentType || '').toLowerCase().includes('pdf') }
 }
 
 export async function classifyAndExtractAsset(params: {

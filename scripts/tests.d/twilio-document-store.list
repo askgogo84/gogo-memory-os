@@ -1,0 +1,2 @@
+# Twilio Basic-auth media egress: Vault document store + asset-memory PDF (supersedes #931, #863)
+npx tsx scripts/verify-twilio-egress-document-store.mts
