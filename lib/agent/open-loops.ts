@@ -481,6 +481,10 @@ function looksLikeIncomingPromise(text:string){
 
 export function isAutomatedGmailMessage(message:any){
   const from=headerEmail(message?.from)
+  // 8 Nov Spaces live test: AskGogo's own product mail ("Gogo from AskGogo") and sign-up welcomes ("Thanks for signing
+  // up for Cofounder… I meet with users 1:1") showed as emails to reply to.
+  if(/@(?:[\w-]+\.)*askgogo\.(?:in|com|ai)$/i.test(from))return true
+  if(/\bthanks?\s+(?:you\s+)?for\s+(?:signing\s+up|joining|registering|subscribing)\b|\b(?:i|we)\s+meet\s+with\s+(?:users|customers|founders)\b/i.test(clean(`${message?.subject||''} ${message?.snippet||''}`,600)))return true
   if(/(?:^|[._+-])(no-?reply|do-?not-?reply|newsletter|digest|notifications?|alerts?|instaalerts?|mailers?|marketing|promotions?|offers|updates|feedback|surveys?|bounces?)(?:[._+-]|@)/i.test(from))return true
   // Bank transaction alerts, OTPs and feedback surveys never need a reply (HDFC "Rs.2249.38 debited", JioFiber "Share your experience").
   const text=clean(`${message?.subject||''} ${message?.snippet||''}`,600)
@@ -853,8 +857,33 @@ export async function syncOpenLoopsForUser(telegramId:string|number){
   if(results[4]?.status==='fulfilled')successfulSourceTypes.push('meeting_prep')
   // Reconcile only sources that were read successfully. A transient provider/DB
   // failure must never make an existing open loop disappear.
-  const resolved=await resolveMissingSourceLoops(tg,current,successfulSourceTypes).catch(err=>{failures.push(clean(err?.message||err,180));return 0})
+  let resolved=await resolveMissingSourceLoops(tg,current,successfulSourceTypes).catch(err=>{failures.push(clean(err?.message||err,180));return 0})
+  // Loops made from automated mail before the sender filter existed go quietly; the Gmail read need not have succeeded.
+  resolved+=await dismissAutomatedGmailLoops(tg).catch(err=>{failures.push(clean(err?.message||err,180));return 0})
   return {telegramId:tg,resolved,failures}
+}
+
+/** Pure: which active Gmail loops were made from mail we no longer treat as needing a reply (AskGogo's own mail,
+ *  sign-up welcomes, no-reply senders). 9 Nov: the filter only stopped NEW loops; these were already on My Day. */
+export function automatedGmailLoopIds(rows:{id:string|number;title?:string|null;summary?:string|null;evidence_json?:any}[]):string[]{
+  const out:string[]=[]
+  for(const r of rows){
+    const from=String(r.evidence_json?.last_message_from||'')
+    const subject=String(r.title||'').replace(/^(?:Reply to|Waiting on)\s+.*?\s+—\s+/,'')
+    if(isAutomatedGmailMessage({from,subject,snippet:String(r.summary||'')}))out.push(String(r.id))
+  }
+  return out
+}
+
+async function dismissAutomatedGmailLoops(tg:string){
+  const {data}=await supabaseAdmin.from('agent_open_loops').select('id,title,summary,evidence_json').eq('telegram_id',tg).eq('status','active').eq('source_type','gmail_thread').limit(200)
+  const ids=automatedGmailLoopIds((data||[]) as any[])
+  if(!ids.length)return 0
+  const at=new Date().toISOString()
+  const {error}=await supabaseAdmin.from('agent_open_loops').update({status:'dismissed',resolved_at:at,updated_at:at}).eq('telegram_id',tg).in('id',ids)
+  if(error)throw new Error(`dismiss_automated_failed:${error.message}`)
+  console.log('OPEN_LOOPS_AUTOMATED_DISMISSED:',JSON.stringify({telegramId:tg,count:ids.length}))
+  return ids.length
 }
 
 export async function captureJevOpenLoopFromTurn(params:{actor:AgentActor;text:string;jev?:JevShadowResult|null;observedAt?:string|null}){

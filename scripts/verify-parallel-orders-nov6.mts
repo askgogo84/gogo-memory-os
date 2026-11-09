@@ -74,7 +74,7 @@ for (const t of ['track my orders', 'where are my orders?', 'any deliveries toda
 for (const t of ['where is my Amazon order', 'order a pizza', 'cancel my order']) assert.equal(ot.ORDER_LIST_RE.test(t), false, t)
 const w = readFileSync('lib/agent/watchers.ts', 'utf8')
 assert.match(w, /const alerts=ot\.orderAlerts\(orders,sentIds,now\.getTime\(\)\)/)
-assert.match(w, /topic:'watches'\}\)/)
+assert.match(w, /topic:'watches',thread:\{kind:'order_alert'/)
 for (const p of ['app/api/dashboard/chat/route.ts', 'lib/agent/whatsapp-bridge.ts']) assert.match(readFileSync(p, 'utf8'), /order-tracking'\)\.then\(m=>m\.tryOrderList\(actor,/, p)
 assert.match(readFileSync('lib/agent/same-brain.ts', 'utf8'), /📦 \*Orders on the way\*/, 'important-mail digest includes orders')
 console.log('✓ "track my orders" on both surfaces; the inbox watch sends order alerts; the mail digest lists orders')
