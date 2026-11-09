@@ -1,0 +1,1 @@
+npx tsx scripts/verify-lifecycle-email-owner-isolation.mts
