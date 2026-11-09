@@ -139,6 +139,9 @@ export async function dispatchUnderstanding(u: UnderstandingResult, ctx: Underst
       // "Plan my day/week" is answered from the calendar, reminders and open items (the briefing path), not with a
       // question back (23 Oct live: it asked "going out, food, rest, errands?").
       if (/\bplan\s+(?:my|the|out\s+my)\s+(?:day|week|morning|afternoon|evening|today|tomorrow)\b/i.test(text)) return null
+      // 6 Nov live: "Help me organise my move to Whitefield next month" got "going out, food, rest, errands?". A move,
+      // renovation, wedding or other project needs a checklist from the assistant, not a leisure-plan question.
+      if (/\b(?:move|moving|shift(?:ing)?|relocat\w*|renovat\w*|wedding|house\s?warming|griha\s?pravesh|exam|interview|launch|project|admission|visa)\b/i.test(text)) return null
       // One question, nothing executed.
       return u.clarifyingQuestion ? { text: u.clarifyingQuestion, handledBy: 'understand-first-clarify', status: 'paused', persisted: false } : null
     default:
