@@ -552,3 +552,38 @@ else process.env.TWILIO_STATUS_CALLBACK_URL = oldCallbackUrl
 const deliveryMigration = readFileSync('supabase/migrations/20261007044858_comparison_result_delivery.sql', 'utf8')
 assert.match(deliveryMigration, /'price_comparison'/)
 assert.match(deliveryMigration, /outcome_unknown.*p_definite/s)
+
+
+// Conditional privacy regression: an ambiguous browser quote must never copy raw
+// potentially owner-private retail page text into application/server logs.
+// This executes the real summary function with inert fixture-only evidence.
+{
+  const privateMarker = 'SYNTHETIC_OWNER_PRIVATE_DELIVERY_560001_DO_NOT_LOG'
+  const warnings: string[] = []
+  const priorWarn = console.warn
+  let output = ''
+  try {
+    console.warn = (...parts: unknown[]) => { warnings.push(parts.map(String).join(' ')) }
+    output = model.comparisonWhatsAppSummary({
+      id: '00000000-0000-4000-8000-000000000001',
+      title: 'fixture', source: 'web', status: 'paused', updated_at: '2026-10-25T13:00:00Z',
+      metadata_json: {
+        subject: 'Sony WH-1000XM5', request: 'Synthetic read-only comparison',
+        providers: [{
+          provider: 'amazon', status: 'observed',
+          sourceUrl: 'https://www.amazon.in/dp/B09XS7JWHH',
+          checkedAt: '2026-10-25T13:00:00Z',
+          evidence: 'Sony WH-1000XM4 Headphones\n' + privateMarker + '\n₹9,999',
+        }],
+      },
+    } as model.PriceComparison)
+  } finally {
+    console.warn = priorWarn
+  }
+  assert.equal(warnings.length, 1, 'ambiguous quote emits one fixed diagnostic')
+  assert.match(warnings[0], /COMPARISON_QUOTE_UNPARSED.*exact_item_price_unverified/)
+  assert.doesNotMatch(warnings.join(' '), /SYNTHETIC_OWNER_PRIVATE_DELIVERY|560001|WH-1000XM4/,
+    'owner/browser evidence must never enter provider-unparsed logs')
+  assert.match(output, /couldn.t pick out one price/,
+    'user must still receive honest unverified-price language')
+}

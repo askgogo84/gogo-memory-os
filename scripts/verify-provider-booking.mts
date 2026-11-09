@@ -1,4 +1,5 @@
 import * as sentinel from '../lib/agent/sentinel'
+import './verify-booking-start-reload-oct27.mts'
 // 11 Oct: the person asked for the real booking flow: open the venue, pick the slot, log in with
 // their number, ask for the OTP on WhatsApp, continue to the cart, and send a link to pay there.
 // This checks the pure rules, the routing words, and the real secure-browser loop with a fake
