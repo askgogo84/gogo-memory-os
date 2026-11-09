@@ -1,0 +1,2 @@
+# Twilio Basic-auth media egress: nutrition photos (supersedes #860)
+npx tsx scripts/verify-twilio-egress-nutrition.mts
