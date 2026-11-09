@@ -1,0 +1,2 @@
+# tests added by PR #1414
+npx tsx scripts/verify-reply-watch-unknown-testonly.mts

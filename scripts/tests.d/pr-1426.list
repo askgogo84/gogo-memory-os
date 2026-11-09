@@ -1,0 +1,2 @@
+# tests added by PR #1426
+npx tsx scripts/verify-life-graph-replay-expiry-pagination-testonly.mts

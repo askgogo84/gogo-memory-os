@@ -330,6 +330,18 @@ export function narrowByWhen(matches: any[], input: string): any[] {
   return out
 }
 
+/** Bulk selection: every clock-time, weekday or cadence qualifier in the sentence must hold. Never falls back. */
+export function strictlyByWhen(matches: any[], input: string): any[] {
+  let out = matches
+  const hour = extractWhenHour(input)
+  if (hour !== null) out = out.filter((item) => reminderHour(item) === hour)
+  const weekday = extractWhenWeekday(input)
+  if (weekday) out = out.filter((item) => String(item?.recurring_pattern || '').toLowerCase().includes(weekday) || reminderIstWeekday(item) === weekday)
+  const cadence = cadenceWord(input)
+  if (cadence) out = out.filter((item) => reminderMatchesCadence(item, cadence))
+  return out
+}
+
 /** The single active reminder whose name appears in Gogo's most recent reply (within 30 minutes). */
 export async function reminderNamedInLastReply(telegramId: number, reminders: any[]): Promise<any | 'ambiguous' | null> {
   const { data } = await supabaseAdmin.from('conversations').select('role, content, created_at')
@@ -536,7 +548,13 @@ export async function cancelReminder(telegramId: number, input: string) {
     // "cancel all packing session reminders": every pending reminder with that name, not just the first page.
     if (query && /\b(?:all|every|each)\b/.test(lower)) {
       const wide = await getActiveReminders(telegramId, 100)
-      const every = wide.filter((item: any) => reminderMatches(item, query))
+      const named = wide.filter((item: any) => reminderMatches(item, query))
+      // Red #1100: "cancel all water reminders at 6am" / "… on monday" must spare the 9am and Tuesday series.
+      // Qualifiers filter strictly here: a destructive bulk action never widens back to every same-named reminder.
+      const every = strictlyByWhen(named, lower)
+      if (named.length && !every.length) {
+        return `I couldn’t find a *${cleanReminderName(named[0].message)}* reminder at that time or day, so I didn’t cancel anything.`
+      }
       if (every.length) {
         let done = 0
         for (const item of every) { const r = await stopReminderSeries(telegramId, item); if (r.ok) done++ }

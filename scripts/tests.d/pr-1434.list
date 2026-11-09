@@ -1,0 +1,2 @@
+# tests added by PR #1434
+npx tsx scripts/verify-admin-invite-approval-receipt-testonly.mts

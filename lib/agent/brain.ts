@@ -180,8 +180,11 @@ export function decisionFromToolUse(original: string, name: string, input: any):
     // 29 Oct live: "When do I check out and is there a reminder for it?" was answered from context ("a check-out
     // reminder is set for 7:30 am") and that factual answer was treated as an action claim. An answer to a question
     // about saved state stays a reply unless it opens by announcing an action ("Done", "Updated", "I've set").
-    const asked = /\?\s*$/.test(original.trim()) || /^(?:when|what|where|which|who|whose|how|is|are|do|does|did|can|could|have|has|will)\b/i.test(original.trim())
-    const announces = /^\W*(?:done|updated|saved|set|booked|added|noted|scheduled|cancelled|canceled|deleted|i(?:'ve| have| just))\b/i.test(raw)
+    // Red #1091: "Could you set a reminder…?" is a polite request for a NEW side effect, not a status question, and
+    // a reply opening "Sure, I've set…" / "Absolutely, I've added…" announces an action as much as "Done" does.
+    const requestsAction = /^\W*(?:please\s+)?(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+|kindly\s+|just\s+|also\s+)*(?:set|add|create|make|send|email|text|message|book|reserve|schedule|remind|update|change|edit|move|reschedule|cancel|delete|remove|save|log|note|record|put|mark|track)\b/i.test(original)
+    const asked = !requestsAction && (/\?\s*$/.test(original.trim()) || /^(?:when|what|where|which|who|whose|how|is|are|do|does|did|can|could|have|has|will)\b/i.test(original.trim()))
+    const announces = /^\W*(?:(?:sure|absolutely|of course|certainly|ok(?:ay)?|yes|yep|alright|all right|no problem|got it)\b[\s,.!:-]*)?(?:done|updated|saved|set|booked|added|noted|scheduled|cancelled|canceled|deleted|i(?:'ve| have| just))\b/i.test(raw)
     if (name === 'reply' && COMPLETION_CLAIM.test(raw) && (!asked || announces)) return { kind: 'handle', instruction: original, rewritten: false }
     // 30 Oct live: "**Preferences**" showed literally on WhatsApp. WhatsApp bold is *one* asterisk.
     return { kind: name, text: inventedApprovalGuard(whatsAppMarkdown(raw)) }

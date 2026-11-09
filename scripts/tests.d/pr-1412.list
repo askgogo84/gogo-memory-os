@@ -1,0 +1,2 @@
+# tests added by PR #1412
+npx tsx scripts/verify-bulk-reminder-when-boundary-testonly.mts

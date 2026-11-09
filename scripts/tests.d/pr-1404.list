@@ -1,0 +1,2 @@
+# tests added by PR #1404
+npx tsx scripts/verify-procedures-whatsapp-entry-nov9.mts

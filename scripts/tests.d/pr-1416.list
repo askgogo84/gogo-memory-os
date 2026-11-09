@@ -1,0 +1,2 @@
+# tests added by PR #1416
+node scripts/verify-mobile-otp-e164-testonly.mjs

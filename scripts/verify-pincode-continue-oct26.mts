@@ -44,4 +44,15 @@ assert.equal(await consequential(button('Continue', box(LOC, [{ value: '560086' 
 assert.equal(await consequential(button('Place order', box(LOC, [{ value: '560086' }]))), true, 'commit labels never exempt')
 assert.equal(await consequential(button('Continue to checkout', box(LOC, [{ value: '560086' }]))), true, 'only a bare apply-type label')
 assert.equal(await consequential(button('Continue', null)), true, 'no surrounding box: still blocked')
+// 9 Nov (#953 assessors): payment, email and phone contexts are never a location box, even with a 6-digit value.
+assert.equal(await consequential(button('Continue', box(LOC + ' Payment details', [{ value: '560086' }]))), true, 'payment details context')
+assert.equal(await consequential(button('Continue', box('Payment', [{ value: '560086' }]))), true, 'bare payment box')
+assert.equal(await consequential(button('Continue', box(LOC + ' Email address', [{ value: '560086' }]))), true, 'email context')
+assert.equal(await consequential(button('Continue', box(LOC + ' Phone number', [{ value: '560086' }]))), true, 'phone context')
+assert.equal(await consequential(button('Continue', box(LOC, [{ value: '560086' }, { value: 'divya@example.com', type: 'email' }]))), true, 'email input nearby')
+assert.equal(await consequential(button('Continue', box(LOC, [{ value: '560086' }, { value: '9876543210', type: 'tel' }]))), true, 'phone input nearby')
+assert.equal(await consequential(button('Continue', box(LOC, [{ value: '560086' }, { value: 'Nithin' }]))), true, 'a second filled field (an address or name form) is not a pincode box')
+assert.equal(await consequential(button('Continue', box(LOC, [{ value: '123456', getAttribute: (k: string) => (k === 'autocomplete' ? 'one-time-code' : null) } as any]))), true, 'a one-time-code input is not a pincode')
+// Positive control still allowed after tightening.
+assert.equal(await consequential(button('Continue', box(LOC, [{ value: '560086' }, { value: '', type: 'hidden' }]))), false, 'hidden inputs do not count as fields')
 console.log('Store location Continue after Gogo enters the pincode is allowed in read mode; every commit stays blocked')

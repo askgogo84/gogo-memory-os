@@ -1,0 +1,2 @@
+# tests added by PR #1418
+npx tsx scripts/verify-connected-memory-canary-testonly.mts

@@ -934,7 +934,14 @@ async function isConsequentialControl(page,selector,onUnavailable,onContext){
       // input's placeholder, so spaced text plus the input labels are read.
       const boxText=box?[String(box.innerText||box.textContent||''),...Array.from(box.querySelectorAll?.('input')||[]).map((i)=>String(i.getAttribute?.('placeholder')||'')+' '+String(i.getAttribute?.('aria-label')||''))].join(' ').toLowerCase():'';
       const pinFilled=!!box&&Array.from(box.querySelectorAll?.('input')||[]).some((i)=>/^[1-9]\d{5}$/.test(String(i.value||'').trim()));
-      const risky=!!box&&(box.querySelector?.('input[type="password"]')||/\b(?:card number|cvv|upi|pay now|place order)\b/.test(boxText));
+      // 9 Nov (#953 assessors): a PIN-only Continue inside a payment-details, email or phone box was still read as
+      // setting the location. The box must hold the pincode as its only filled field, no email/phone/password input,
+      // and no payment, contact or one-time-code wording.
+      const fields=box?Array.from(box.querySelectorAll?.('input')||[]).filter((i)=>!/^(?:hidden|submit|button|checkbox|radio|reset|image)$/i.test(String(i.type||i.getAttribute?.('type')||''))):[]
+      const filledFields=fields.filter((i)=>String(i.value||'').trim()!=='')
+      const contactInput=fields.some((i)=>/^(?:email|tel|password)$/i.test(String(i.type||i.getAttribute?.('type')||''))||/\b(?:e-?mail|phone|mobile|otp|one-time|card|cvv|upi|cc-[a-z]+|tel)\b/i.test(String(i.getAttribute?.('autocomplete')||'')+' '+String(i.getAttribute?.('name')||'')+' '+String(i.getAttribute?.('placeholder')||'')+' '+String(i.getAttribute?.('aria-label')||'')))
+      const risky=!!box&&(box.querySelector?.('input[type="password"]')||contactInput||filledFields.length!==1
+        ||/\b(?:card number|card|cvv|expiry|upi|pay now|pay|payment|payment details|billing|place order|checkout|e-?mail|email address|phone|phone number|mobile|mobile number|otp|one[- ]time)\b/.test(boxText));
       if(box&&pinFilled&&!risky&&/\b(?:pin\s*code|pincode|delivery location|select your location|enter your location|delivery address|check delivery)/.test(boxText))return false;
     }
     if(consequential)return true;
