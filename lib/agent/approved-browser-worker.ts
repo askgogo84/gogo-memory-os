@@ -14,18 +14,33 @@ import { evaluateAgentExecutionPolicy } from './policy'
 
 export type ApprovedBrowserRunOutcome = 'skipped' | 'completed' | 'blocked' | 'failed'
 
-export async function actorForTelegramId(telegramId: string): Promise<AgentActor | null> {
+// Exact owner (P0.1): the owner id is looked up by its exact decimal string and the row must echo it exactly.
+// AgentActor carries the legacy id as a JS number, so an id outside the safe-integer range cannot be represented
+// and is refused rather than rounded onto another account.
+export async function actorForTelegramId(telegramId: string | number): Promise<AgentActor | null> {
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return null
+  const owner = String(telegramId ?? '').trim()
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner)) return null
+  const legacy = Number(owner)
+  if (!Number.isSafeInteger(legacy) || String(legacy) !== owner) return null
   const { data, error } = await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name')
-    .eq('telegram_id', Number(telegramId)).maybeSingle()
+    .eq('telegram_id', legacy).maybeSingle()
   if (error) { console.error('APPROVED_BROWSER_ACTOR_FAILED:', error.message); return null }
   if (!data?.id || !data?.telegram_id) return null
+  if (String(data.telegram_id) !== owner) return null
   return {
     userId: String(data.id),
-    legacyTelegramId: Number(data.telegram_id),
+    legacyTelegramId: legacy,
     whatsappId: String(data.whatsapp_id || ''),
     name: String(data.name || 'Gogo'),
   }
+}
+
+/** The outcome line in the shared conversation, so the dashboard thread shows how an approved run ended. */
+async function recordThreadOutcome(actor: AgentActor, text: string) {
+  const { error } = await supabaseAdmin.from('conversations').insert({ telegram_id: actor.legacyTelegramId, role: 'assistant', content: String(text).slice(0, 4000) })
+  if (error) console.error('APPROVED_BROWSER_THREAD_SAVE_FAILED:', error.message)
 }
 
 /** Claim one queued, approved, execute-mode secure-browser run and execute it once. */
@@ -70,14 +85,16 @@ export async function runApprovedBrowserRun(runId: string): Promise<ApprovedBrow
 
   try {
     const result = await executeApprovedBrowserCommand({ actor, runId: String(run.id) })
-    if (actor.whatsappId && result?.text) {
-      await sendWhatsApp(actor.whatsappId,
-        result.status === 'completed'
-          ? `✅ Done. ${result.text}`
-          : result.status === 'paused'
-            ? result.text
-            : / account not created: /.test(String(result.text||"").split("\n")[0]) ? String(result.text) : `Gogo could not finish this task.\n\n${result.text}`
-      )
+    if (result?.text) {
+      const outcome = result.status === 'completed'
+        ? `✅ Done. ${result.text}`
+        : result.status === 'paused'
+          ? result.text
+          : / account not created: /.test(String(result.text||"").split("\n")[0]) ? String(result.text) : `Gogo could not finish this task.\n\n${result.text}`
+      if (actor.whatsappId) await sendWhatsApp(actor.whatsappId, outcome)
+      // 26 Oct live: approved bookings and cart runs told only WhatsApp how they ended; the dashboard thread ("one
+      // conversation, across here and WhatsApp") showed "Approved…" and then nothing. Record the outcome there too.
+      await recordThreadOutcome(actor, outcome)
     }
     return result?.status === 'completed' ? 'completed' : 'blocked'
   } catch (err: any) {
@@ -89,9 +106,9 @@ export async function runApprovedBrowserRun(runId: string): Promise<ApprovedBrow
       summary: 'Gogo could not finish the approved browser task.',
       completed_at: at, updated_at: at,
     }).eq('id', run.id).eq('telegram_id', String(run.telegram_id)).eq('status', 'running')
-    if (actor.whatsappId) {
-      await sendWhatsApp(actor.whatsappId, 'Gogo could not finish the approved browser task. Nothing was repeated. Check the activity page before retrying.').catch(() => {})
-    }
+    const failure = 'Gogo could not finish the approved browser task. Nothing was repeated. Check the activity page before retrying.'
+    if (actor.whatsappId) await sendWhatsApp(actor.whatsappId, failure).catch(() => {})
+    await recordThreadOutcome(actor, failure).catch(() => {})
     return 'failed'
   }
 }

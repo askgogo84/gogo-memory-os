@@ -25,6 +25,14 @@ async function consequential(el: any) {
   return await runInNewContext(guard + 'isConsequentialControl(page,"#c")', { page: { url: () => 'https://www.croma.com/x/p/1', locator: () => ({ first: () => ({ evaluate: async (fn: any) => fn(el) }) }) }, location: { href: 'https://www.croma.com/x/p/1' } })
 }
 
+// The real Croma box (26 Oct 19:20): textContent runs words together and "Pincode" is only the input placeholder.
+const realCroma = box('select your locationto check products & delivery options available at your locationgrouporsign in to select addresscontinue',
+  [{ value: '560086', getAttribute: (k: string) => (k === 'placeholder' ? 'Enter Pincode' : null) } as any])
+assert.equal(await consequential(button('Continue', realCroma, { id: 'apply-pincode-btn' })), false, 'real Croma Continue (run-together text, placeholder-only pincode) is allowed')
+const realEmpty = box('select your locationto check products & delivery options available at your locationgrouporsign in to select addresscontinue',
+  [{ value: '', getAttribute: (k: string) => (k === 'placeholder' ? 'Enter Pincode' : null) } as any])
+assert.equal(await consequential(button('Continue', realEmpty)), true, 'real Croma box with no pincode entered stays blocked')
+
 const LOC = 'SELECT YOUR LOCATION To Check Products & Delivery Options available at your location Get Current Location OR Sign in to select address'
 assert.equal(await consequential(button('Continue', box(LOC, [{ value: '560086' }]))), false, 'Croma location Continue with a filled pincode is allowed')
 assert.equal(await consequential(button('Apply', box('Enter delivery pincode', [{ value: '400049' }]))), false)

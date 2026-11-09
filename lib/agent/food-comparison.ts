@@ -83,6 +83,12 @@ export async function tryFoodComparison(params:{telegramId:number;text:string;su
     }
   }
   if(location)meta.location={...location,source:'user'}
+  // 6 Nov live: "Find me a Swiggy offer for food today" asked for a PIN the person had already saved as their home.
+  // The home pincode they told Gogo ("Home area: Rajajinagar (560086)") is user-supplied, so it is used here.
+  if(!meta.location){
+    const home=await import('./places-context').then(m=>m.savedPlaces(owner)).then(p=>p.home,()=>null)
+    if(home?.pincode&&/^[1-9]\d{5}$/.test(home.pincode))meta.location={pin:home.pincode,country:'India',...(home.area?{area:home.area}:{}),source:'user',from:'saved_home'}
+  }
   const reply=(text:string):Result=>({runId:runId!,status:'paused',capability:'browser',risk:'low',text,handledBy:'food-comparison'})
   const save=async(summary:string)=>{
     const {data,error}=await supabaseAdmin.from('agent_runs').update({status:'paused',summary,metadata_json:meta,updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',owner).select('id').maybeSingle()
