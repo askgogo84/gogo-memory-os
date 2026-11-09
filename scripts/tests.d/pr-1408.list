@@ -1,0 +1,2 @@
+# tests added by PR #1408
+node scripts/verify-email-triage-watcher-owner-testonly.mjs
