@@ -82,6 +82,8 @@ function actualModuleScenario(s: Scenario = {}) {
       return 'provider_accepted'
     } },
     '@/lib/services/cost-guard': { recordCostEvent: async () => {} },
+    // Main's quiet-WhatsApp gate (#1259) runs first; enable volunteered sends so the owner checks are exercised.
+    '@/lib/channels/proactive-policy': { mayVolunteer: () => true },
     './alert-preferences': {
       getAlertPreferences: async () => {
         preferencesReads++

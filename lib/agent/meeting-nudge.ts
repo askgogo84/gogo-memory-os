@@ -57,14 +57,13 @@ export async function processMeetingNudges(now = new Date(), limit = 30) {
     const { id: tg, numeric: owner } = identity
     const prefs = await getAlertPreferences(tg).catch(() => null)
     const user = await verifiedMeetingRecipient(tg)
-    if (!prefs || !user || prefs.topics.calendar === false) { skipped++; continue }
+    if (!prefs || !user) { skipped++; continue }
     const tz = user.timezone
-    let quiet = true
+    let hour = NaN
     try {
-      const hour = Number(new Intl.DateTimeFormat('en-US', { hour: '2-digit', hourCycle: 'h23', timeZone: tz }).format(now))
-      quiet = isQuietHour(prefs, hour)
-    } catch { /* Unknown timezone or preference state: do not send. */ }
-    if (quiet) { skipped++; continue }
+      hour = Number(new Intl.DateTimeFormat('en-US', { hour: '2-digit', hourCycle: 'h23', timeZone: tz }).format(now))
+    } catch { /* Unknown timezone: hour stays NaN and the nudge is skipped below. */ }
+    if (!Number.isFinite(hour) || prefs.topics.calendar === false || isQuietHour(prefs, hour)) { skipped++; continue }
     const recipient = user.whatsappId
     const ev = loop.evidence_json || {}
     const name = String(ev.meetingName || String(loop.title || '').replace(/^Prepare for\s+/i, '').replace(/\s+·\s+.*$/, '') || 'meeting').slice(0, 100)
