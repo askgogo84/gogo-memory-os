@@ -6,8 +6,14 @@ import { redactSecretShapedText } from '../bot/memory-redaction'
 
 export type PlaceAsk = { query: string; area: string; count: number }
 
-const KIND = /\b(restaurants?|caf(?:e|é)s?|coffee (?:shops?|places?)|bars?|pubs?|breweries|brewery|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets? shops?|gyms?|salons?|spas?|parks?|hospitals?|clinics?|pharmac(?:y|ies)|chemists?|hotels?|stays?|co-?working spaces?|malls?|supermarkets?)\b/i
+const KIND = /\b(restaurants?|caf(?:e|é)s?|coffee (?:shops?|places?)|bars?|pubs?|breweries|brewery|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets? shops?|gyms?|salons?|spas?|parks?|hospitals?|clinics?|pharmac(?:y|ies)|chemists?|hotels?|stays?|co-?working spaces?|malls?|supermarkets?|barbers?|barber ?shops?|dentists?|dental clinics?|doctors?|pediatricians?|dermatologists?|physiotherapists?|plumbers?|electricians?|carpenters?|mechanics?|car service(?: centres?| centers?)?|bike service(?: centres?| centers?)?|tailors?|laundr(?:y|ies)|dry cleaners?|vets?|veterinar(?:y|ians?)(?: clinics?)?|pet shops?|opticians?|florists?|atms?|petrol (?:pumps?|bunks?)|ev chargers?|charging stations?)\b/i
+// 7 Nov live: "dentist near me" had no verb, went to a web search and asked for a city although home is saved.
+// A bare "<kind> near me / in <area>" is a place ask too, so LEAD is optional when the text is just kind + place.
 const LEAD = /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show(?: me)?|list|give me|what are|which are|any|best|top|good|nice|where can i (?:get|find|eat|have))\b/i
+const BARE = new RegExp('^(?:(?:a|an|the|some|good|best|top|nice|cheap|open|veg|non-veg|\\d{1,2})\\s+){0,3}' + KIND.source + '\\s*(?:near|nearby|in|around|close to)\\b', 'i')
+const leads = (t: string) => LEAD.test(t) || BARE.test(t)
+/** Route gate: a verb-led or kind-led place ask ("dentist near me", "barbers in Rajajinagar"). Pure. */
+export const looksLikePlaceAsk = (text: string) => { const t = String(text || '').trim(); return t.length <= 200 && leads(t) && KIND.test(t) }
 const COUNT_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 }
 
 // 26 Oct live: "Find hotels near Mumbai Airport for 12–16 November for 2 adults" sent the dates and guests to the
@@ -28,9 +34,11 @@ const STAY_KIND = /\b(?:hotels?|stays?|resorts?|hostels?|lodges?|homestays?|gues
 const FOOD_KIND = /\b(?:restaurants?|caf(?:e|é)s?|coffee|bars?|pubs?|brewer(?:y|ies)|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets?)\b/i
 
 export function placeAsk(text: string): PlaceAsk | null {
-  const t = String(text || '').trim().replace(/[?.!]+$/, '')
+  // 5 Nov live: the brain wrote "suggest cafes near Rajajinagar 560086"; a pincode after the area broke the match.
+  // A pincode beside an area is dropped (the area is searched); a pincode alone is kept as the area.
+  const t = String(text || '').trim().replace(/[?.!]+$/, '').replace(/\b([A-Za-z]+)(\s*,?\s*)\(?\b(\d{6})\b\)?/g, (m, word: string) => /^(?:in|near|at|around|to|pincode|pin)$/i.test(word) ? m : word)
   if (!t || t.length > 200) return null
-  if (!LEAD.test(t) || !KIND.test(t)) return null
+  if (!leads(t) || !KIND.test(t)) return null
   // A negated action is a safety constraint, not an instruction to book.
   // Keep affirmative booking/ordering requests on their separate approval-gated routes.
   // Bound negation at punctuation, contrast or another action. Explicitly
@@ -46,7 +54,7 @@ export function placeAsk(text: string): PlaceAsk | null {
     .split(/\b(?:do\s+not|don['’]?t|never|without)\s+(?:book|reserve|order|buy|purchase)\b/i)[0]
     .replace(/[\s,]+$/, '').trim()
   if (!KIND.test(primary)) return null
-  const area = primary.match(/\b(?:in|near|around|at|close to)\s+([A-Za-z][A-Za-z .'-]{2,40}?)(?=,|\s+(?:for|with|that|which|open|under|below|within|from|on|between|check-?in|checking in)\b|$)/i)?.[1]?.trim()
+  const area = primary.match(/\b(?:in|near|around|at|close to)\s+([A-Za-z][A-Za-z .'-]{2,40}?|\d{6})(?=,|\s+(?:for|with|that|which|open|under|below|within|from|on|between|check-?in|checking in)\b|$)/i)?.[1]?.trim()
   if (!area || /^(?:me|here|my (?:area|place|home|office))$/i.test(area)) return null
   // Only an explicit requested number of venues sets result count; "for 2 people" is party size.
   const countPrefix = /^(?:(?:me|the|best|top|good|nice)\s+)*(\d{1,2}|one|two|three|four|five|six|seven|eight)\s+/i
@@ -65,7 +73,7 @@ export function placeAsk(text: string): PlaceAsk | null {
   return { query: OTHER_PLACE.test(discovery) ? discovery : `${discovery}, Bengaluru`, area, count }
 }
 
-export type Place = { title: string; address: string; rating?: number; ratingCount?: number; category?: string; phone?: string; website?: string; cid?: string; placeId?: string }
+export type Place = { title: string; address: string; rating?: number; ratingCount?: number; category?: string; phone?: string; website?: string; cid?: string; placeId?: string; lat?: number; lng?: number }
 
 // A source identifier must survive JSON transport losslessly. A rounded number
 // cannot identify the provider's original listing; arbitrary URLs are not a fallback.
@@ -85,11 +93,26 @@ function canonicalPlaceId(value: unknown): string | undefined {
   return /^[A-Za-z0-9_-]{16,300}$/.test(id) ? id : undefined
 }
 
-export function placeSourceUrl(p: Pick<Place, 'cid' | 'placeId'>): string | undefined {
+// 26 Oct production: Serper hotel results carry only title, latitude, longitude and ratings (no address, cid or
+// place id), so all nine were omitted. The provider's own coordinates locate the listing, so a Google Maps pin at
+// that point (documented URL form) is shown and labelled as a map pin, not a listing page. Coordinates must be real
+// numbers in range; no invented or free-text URL.
+function canonicalCoord(value: unknown, limit: number): number | undefined {
+  const n = typeof value === 'number' ? value : typeof value === 'string' && /^-?\d{1,3}(?:\.\d+)?$/.test(value.trim()) ? Number(value) : NaN
+  return Number.isFinite(n) && Math.abs(n) <= limit ? Math.round(n * 1e6) / 1e6 : undefined
+}
+function canonicalPoint(lat: unknown, lng: unknown): { lat: number; lng: number } | undefined {
+  const a = canonicalCoord(lat, 90), b = canonicalCoord(lng, 180)
+  return a !== undefined && b !== undefined && !(a === 0 && b === 0) ? { lat: a, lng: b } : undefined
+}
+
+export function placeSourceUrl(p: Pick<Place, 'cid' | 'placeId' | 'lat' | 'lng'>): string | undefined {
   const cid = canonicalPlaceCid(p.cid)
   if (cid) return `https://maps.google.com/?cid=${encodeURIComponent(cid)}`
   const id = canonicalPlaceId(p.placeId)
-  return id ? `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(id)}` : undefined
+  if (id) return `https://www.google.com/maps/place/?q=place_id:${encodeURIComponent(id)}`
+  const point = canonicalPoint(p.lat, p.lng)
+  return point ? `https://www.google.com/maps/search/?api=1&query=${point.lat}%2C${point.lng}` : undefined
 }
 
 function privatePlaceQuery(query: string) {
@@ -110,13 +133,14 @@ export async function searchPlaces(query: string, fetchImpl: typeof fetch = fetc
   if (!res.ok) throw new Error(`serper_places_${res.status}`)
   const data: any = await res.json()
   const raw: any[] = Array.isArray(data?.places) ? data.places : []
-  const unlinked = raw.filter(p => !canonicalPlaceCid(p?.cid) && !canonicalPlaceId(p?.placeId))
+  const unlinked = raw.filter(p => !canonicalPlaceCid(p?.cid) && !canonicalPlaceId(p?.placeId) && !canonicalPoint(p?.latitude, p?.longitude))
   // Field names only (never values) so a provider shape change is diagnosable.
   if (unlinked.length) console.warn('PLACES_UNLINKED:', JSON.stringify({ count: unlinked.length, of: raw.length, fields: [...new Set(unlinked.flatMap(p => Object.keys(p || {})))].sort().slice(0, 30) }))
   return raw.map((p: any): Place => ({
     title: String(p.title || '').trim(), address: String(p.address || '').trim(), rating: Number(p.rating) || undefined,
     ratingCount: Number(p.ratingCount) || undefined, category: p.category ? String(p.category) : undefined,
     phone: p.phoneNumber ? String(p.phoneNumber) : undefined, website: p.website ? String(p.website) : undefined, cid: canonicalPlaceCid(p.cid), placeId: canonicalPlaceId(p.placeId),
+    ...(canonicalPoint(p.latitude, p.longitude) || {}),
   })).filter((p: Place) => p.title)
 }
 
@@ -148,18 +172,42 @@ export function formatPlaces(ask: PlaceAsk, places: Place[]) {
   // Prefer places whose address is really in the area asked for, then better-rated, well-reviewed ones.
   const kindOk = linked.filter(p => kindMatch(p, ask))
   const pool = kindOk.length >= Math.min(ask.count, 2) ? kindOk : linked
-  const ranked = [...pool].sort((x, y) => Number(inArea(y, ask.area)) - Number(inArea(x, ask.area)) || (y.rating || 0) * Math.log10((y.ratingCount || 1) + 9) - (x.rating || 0) * Math.log10((x.ratingCount || 1) + 9))
+  // 26 Oct live: hotel results listed one property twice as room types ("Home2 Suites … - Deluxe Room",
+  // "… - One-Bedroom Apartment"). One entry per property: the name before a room-type suffix, or the same pin.
+  const stayAsk = STAY_KIND.test(ask.query) && !FOOD_KIND.test(ask.query)
+  const seen = new Set<string>()
+  const distinct = <T extends Place>(list: T[]) => list.filter(p => {
+    const name = p.title.split(/\s+[-–—]\s+/)[0].toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    // Same-pin merging is for stays only: different restaurants can share a mall or food-court pin.
+    const pin = stayAsk && p.lat !== undefined && p.lng !== undefined ? `${p.lat.toFixed(4)},${p.lng.toFixed(4)}` : ''
+    // Room-type suffixes only exist for stays; restaurant branches ("X - Indiranagar") stay separate entries.
+    const byName = stayAsk && Boolean(name)
+    if ((byName && seen.has('n:' + name)) || (pin && seen.has('p:' + pin))) return false
+    if (byName) seen.add('n:' + name); if (pin) seen.add('p:' + pin)
+    return true
+  })
+  const ranked = distinct([...pool].sort((x, y) => Number(inArea(y, ask.area)) - Number(inArea(x, ask.area)) || (y.rating || 0) * Math.log10((y.ratingCount || 1) + 9) - (x.rating || 0) * Math.log10((x.ratingCount || 1) + 9)))
   const local = ranked.filter(p => inArea(p, ask.area))
-  const shown = (local.length >= Math.min(ask.count, 2) ? local : ranked).slice(0, ask.count)
+  // Without addresses "in the area" can only be guessed from names, so no listing is dropped on that guess.
+  const addressKnown = ranked.some(p => p.address)
+  const shown = (addressKnown && local.length >= Math.min(ask.count, 2) ? local : ranked).slice(0, ask.count)
   if (!shown.length) return null
   const lines = shown.map((p, i) => {
     const rating = p.rating ? ` · ${p.rating}★${p.ratingCount ? ` (${new Intl.NumberFormat('en-IN').format(p.ratingCount)})` : ''}` : ''
-    const maps = `\n${p.source}`
-    return `${i + 1}. *${p.title}*${rating}\n${p.address}${p.category ? ` · ${p.category}` : ''}${maps}`
+    // A coordinate pin opens a dropped pin, not the listing, so it is labelled as such.
+    const pinOnly = !canonicalPlaceCid(p.cid) && !canonicalPlaceId(p.placeId)
+    const maps = `\n${pinOnly ? 'Map pin: ' : ''}${p.source}`
+    const detail = [p.address, p.category].filter(Boolean).join(' · ')
+    // 4 Nov (retest): the phone came back from search but was never shown, and calling a salon needs it.
+    const phone = p.phone && /^[+\d][\d\s()-]{6,18}\d$/.test(p.phone.trim()) ? `\n📞 ${p.phone.trim()}` : ''
+    return `${i + 1}. *${p.title}*${rating}${detail ? `\n${detail}` : ''}${phone}${maps}`
   })
-  const note = local.length < Math.min(ask.count, 2) ? `\n\nFew results were inside ${ask.area}, so some are nearby.` : ''
+  // Without an address we cannot tell whether a listing is inside the area, so we say that instead of guessing.
+  const unaddressed = shown.every(p => !p.address)
+  const note = unaddressed ? `\n\nThe provider didn't supply addresses here, so check each location on its Maps link.`
+    : local.length < Math.min(ask.count, 2) ? `\n\nFew results were inside ${ask.area}, so some are nearby.` : ''
   const sourceNote = omitted ? `\n\n${omitted} ${omitted === 1 ? 'listing' : 'listings'} omitted because no valid Maps source link was supplied.` : ''
-  return `📍 ${shown.length === 1 ? 'A good pick' : `${shown.length} good picks`} in ${ask.area}\n\n${lines.join('\n\n')}${note}${sourceNote}\n\nAsk "which of these is open late?" or "book a table at <name>".`
+  return `📍 ${shown.length === 1 ? 'A good pick' : `${shown.length} good picks`} ${unaddressed ? 'near' : 'in'} ${ask.area}\n\n${lines.join('\n\n')}${note}${sourceNote}\n\nAsk "which of these is open late?" or "book a table at <name>".`
 }
 
 export async function answerPlaces(text: string, fetchImpl: typeof fetch = fetch) {
@@ -186,4 +234,27 @@ export async function answerPlaces(text: string, fetchImpl: typeof fetch = fetch
   if (tableRequest) return listing.replace(/\n\nAsk "which of these is open late\?" or "book a table at <name>"\.$/, '')
     + '\n\nThese are directory listings, not live table availability. Your requested party/date/time is unverified; no booking was made.'
   return listing
+}
+
+// 5 Nov live: "I love pizza, can you find one nearby" became a web search with Mumbai and Hyderabad lists, then
+// asked for the city. "Nearby" now means the area the person told Gogo they live in; without one, Gogo asks once.
+export const NEARBY = /\b(?:nearby|near\s+by|near\s+me|around\s+me|close\s+to\s+me|close\s+by|around\s+here|near\s+here|near\s+my\s+(?:home|house|place))\b/i
+/** The home area from memories the person saved ("I live in Rajajinagar"). Pure; null when none is stated. */
+export function homeAreaFrom(contents: string[]): string | null {
+  for (const c of contents) {
+    const m = String(c || '').match(/\b(?:i\s+(?:live|stay)|i\s*'?m\s+based|we\s+(?:live|stay)|my\s+home\s+is|home\s+is)\s+(?:in|at|near|around)\s+([A-Za-z][A-Za-z .'-]{2,40}?)(?=[,.;!]|\s+(?:and|but|with|since|for|near)\b|$)/i)
+    if (m && !/^(?:a|an|the|my|our)\b/i.test(m[1].trim())) return m[1].trim().replace(/\s+/g, ' ')
+  }
+  return null
+}
+/** "Find pizza nearby" with a home area becomes "Find pizza in <area>"; null when it is not a nearby place ask. */
+export function nearbyRewrite(text: string, homeArea: string | null): { text: string } | { needArea: true } | null {
+  const t = String(text || '').trim()
+  if (!NEARBY.test(t) || !leads(t) || !KIND.test(t)) return null
+  if (!homeArea) return { needArea: true }
+  return { text: t.replace(NEARBY, `in ${homeArea}`) }
+}
+export function nearbyNeedsArea(text: string) {
+  const kind = (String(text).match(KIND)?.[1] || 'places').toLowerCase()
+  return `Which area should I look in? Reply like "${kind} in Rajajinagar".\n\nSay "I live in <area>" once and I'll use it whenever you ask for something nearby.`
 }
