@@ -10,6 +10,7 @@ const WIDGET_LINK_RE = /https?:\/\/widget\.reservego\.co(?:m)?\/reserveOutlets\/
 export function reservegoOutletId(url: string): string | null {
   try {
     const u = new URL(url)
+    if (u.protocol !== 'https:' || u.username || u.password) return null
     if (!/(?:^|\.)reservego\.co(?:m)?$/i.test(u.hostname)) return null
     return u.pathname.match(OUTLET_RE)?.[1]?.toLowerCase() || null
   } catch { return null }
@@ -20,14 +21,19 @@ export function reservegoWidgetLinkFromHtml(html: string): string | null {
   return hit ? hit[0] : null
 }
 
-/** The ReserveGo widget for a provider URL: the URL itself, or a widget link on the restaurant's own page. */
-export async function findReservegoWidget(url: string, fetcher: typeof fetch = fetch): Promise<{outletId: string; widgetUrl: string} | null> {
+/** Recognize verified ReserveGo widget links without reading any provider site. */
+// Production MUST NOT directly fetch an arbitrary discovered restaurant URL: it can
+// point at private networks or redirect to an internal service (SSRF). The caller
+// already falls back to its secure browser read when no direct widget is present.
+// The optional fetcher is reserved for inert fixture tests, not production callers.
+export async function findReservegoWidget(url: string, fetcher?: typeof fetch): Promise<{outletId: string; widgetUrl: string} | null> {
   const direct = reservegoOutletId(url)
   if (direct) return {outletId: direct, widgetUrl: url}
+  if (!fetcher) return null
   try {
     const u = new URL(url)
-    if (u.protocol !== 'https:') return null
-    const res = await fetcher(url, {cache: 'no-store', redirect: 'follow', signal: AbortSignal.timeout(6_000), headers: {'User-Agent': 'Mozilla/5.0 (compatible; AskGogo/1.0)'}})
+    if (u.protocol !== 'https:' || u.username || u.password) return null
+    const res = await fetcher(url, {cache: 'no-store', redirect: 'manual', signal: AbortSignal.timeout(6_000), headers: {'User-Agent': 'Mozilla/5.0 (compatible; AskGogo/1.0)'}})
     if (!res.ok) return null
     const link = reservegoWidgetLinkFromHtml((await res.text()).slice(0, 2_000_000))
     const outletId = link ? reservegoOutletId(link) : null

@@ -19,7 +19,7 @@ import { isConnectionCapabilityQuery } from '@/lib/agent/autonomy-status'
 import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { isGoldRateAlertPhrasing, isGoldWatchEditCommand } from '@/lib/agent/gold-rate-rule'
-import { auditInboundTwilioSignature } from '@/lib/security/webhook-signature'
+import { auditInboundTwilioSignature, parseTwilioSignatureParams } from '@/lib/security/webhook-signature'
 import { runWithQaTrace } from '@/lib/qa-trace'
 import { sendWhatsAppMessage, sendWhatsAppMediaMessage, sendWhatsAppTyping } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
@@ -36,6 +36,7 @@ import { buildMemoryControlReply, isMemoryControlCommand } from '@/lib/bot/handl
 import { buildNotesReply, isNotesCommand, isMeetingNotesCommand, buildMeetingNotesListReply } from '@/lib/bot/handlers/notes-control'
 import { buildPaymentIntentReply, isPaymentIntentCommand } from '@/lib/bot/handlers/payment-intent'
 import { buildAdminWhatsAppReply, isAdminCommand, isAdminPhone } from '@/lib/bot/handlers/admin-analytics'
+import { isOpsAlertNumber, parseOpsCommand, runOpsCommand } from '@/lib/ops/alerts'
 import { buildFirstValueReferralNudge } from '@/lib/bot/handlers/first-value-nudge'
 import { getLatestFollowupState } from '@/lib/bot/handlers/followup-state'
 import {
@@ -65,6 +66,7 @@ import { parseTaskStatusQuery } from '@/lib/agent/task-status'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { tryResolvePendingQuestion } from '@/lib/bot/pending-question-resolver'
 import { tryUnderstandFirst, isUnderstandFirstReady } from '@/lib/agent/understand-first'
+import { tryProductDiscovery } from '@/lib/agent/product-discovery'
 import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfile, parseExternalAccountRequest, parseLooseAccountProfile, tryRunExternalAccountFlow } from '@/lib/agent/external-account'
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
@@ -150,6 +152,14 @@ function emptyTwiml() {
 
 async function saveConversation(telegramId: number, role: 'user' | 'assistant', content: string) {
   await supabaseAdmin.from('conversations').insert({ telegram_id: telegramId, role, content })
+}
+
+// Onboarding (approved screen 3, 5 Nov): after the welcome, ask home once (then office). Never blocks the welcome.
+async function askHomeOnce(telegramId: number, to: string) {
+  const q = await import('@/lib/agent/places-context').then(m => m.startPlaceOnboarding?.(String(telegramId)), () => null).catch(() => null)
+  if (!q) return
+  await saveConversation(telegramId, 'assistant', q)
+  await sendWhatsAppMessage(to, q)
 }
 
 async function saveMemory(telegramId: number, content: string) {
@@ -256,6 +266,13 @@ export async function GET(req: NextRequest) {
   return new NextResponse('Forbidden', { status: 403 })
 }
 
+// Messages that could be a food-taste statement, the list or a forget; everything else skips the taste module.
+// Home/office statements, or a short reply that could answer the one-time area question.
+// Messages that could be part of an occasion invite (a booking confirmation, the occasion, names, send/style).
+const INVITE_GATE=/\b(?:reservation|table|booking|confirmed|invite|invitation|birthday|b'?day|anniversary|dinner|occasion|style|design|send|share|not now|skip|later|turning|turns|actually|names?|make it|call it|years?)\b|\b\d{1,3}(?:st|nd|rd|th)\b|^\s*[A-Za-z][A-Za-z .&'-]{1,60},?\s*\d{0,3}(?:st|nd|rd|th)?\s*$/i
+const PLACE_GATE=/^\s*(?:(?:please\s+)?(?:remember|note|save)\s+(?:that\s+)?)?(?:i\s+(?:live|stay)|we\s+(?:live|stay)|my\s+(?:home|house|office|work)|home|office|work)\b|^\s*[A-Za-z0-9][A-Za-z0-9 .,'-]{1,58}$/i
+const TASTE_GATE=/^\s*(?:(?:please\s+)?(?:remember|note|save|forget|avoid|keep|make|show)\b|i\b|i'm|we\b|we're|my\b|no\b|never\b|what\s+do\s+you\s+(?:know|remember)\s+about\s+my\b)/i
+
 export async function POST(req: NextRequest) {
   // QA: replies to simulated messages (MessageSid SMqa…) are logged as QA_REPLY.
   const qaSid=String((await req.clone().formData().catch(()=>null))?.get('MessageSid')||'')
@@ -291,17 +308,14 @@ async function handleWhatsAppPost(req: NextRequest) {
   try {
     const formData = await req.formData()
 
-    // ── Inbound signature audit ───────────────────────────────────────────────
-    // LOG-ONLY unless WEBHOOK_SIGNATURE_ENFORCE is set. Every request is evaluated
-    // and the verdict emitted as WEBHOOK_SIGNATURE_AUDIT; nothing is rejected while
-    // the flag is unset, so this cannot change behaviour on its own. The evidence
-    // that this path is Twilio's (not Meta's) is recorded in the module header.
-    // Params are built from the ALREADY-PARSED formData: the request body can only
-    // be read once, so re-reading it here would break every downstream handler.
-    const signatureParams: Record<string, string> = {}
-    for (const [key, value] of formData.entries()) {
-      signatureParams[key] = typeof value === 'string' ? value : ''
-    }
+    // Reject ambiguous form data before any signature/identity/event processing.
+    // Otherwise a last-value signature map can authenticate different values
+    // from the first-value FormData.get calls below, even in strict mode.
+    const signatureParams = parseTwilioSignatureParams(formData)
+    if (!signatureParams) return new NextResponse('Bad Request', { status: 400 })
+
+    // Strict by default in production; explicit opt-out/nonproduction behavior
+    // and genuine provider callback compatibility are documented in the helper.
     const signatureAudit = auditInboundTwilioSignature({
       requestUrl: req.url,
       headers: req.headers,
@@ -372,7 +386,10 @@ async function handleWhatsAppPost(req: NextRequest) {
     // being read. Rejecting them (503) let Twilio's quick retries run out and the photo was lost,
     // so wait for the user's turn instead, in arrival order.
     let brainLease = await acquireBrainUserLease(brainUserKey, 90)
-    for (const waitStart = Date.now(); !brainLease && Date.now() - waitStart < 45_000;) {
+    // 29 Oct live: eight forwards in a row (one PDF being read) dropped a text forward after 45 s. Text is quick to
+    // handle, so a text message waits up to 70 s; a file still waits 45 s (maxDuration is 120 s).
+    const leaseWaitMs = numMedia > 0 ? 45_000 : 70_000
+    for (const waitStart = Date.now(); !brainLease && Date.now() - waitStart < leaseWaitMs;) {
       await new Promise(resolve => setTimeout(resolve, 1_000))
       brainLease = await acquireBrainUserLease(brainUserKey, 90)
     }
@@ -415,6 +432,7 @@ async function handleWhatsAppPost(req: NextRequest) {
         await saveConversation(resolvedUser.telegramId, 'user', bodyText)
         await saveConversation(resolvedUser.telegramId, 'assistant', welcome)
         await sendWhatsAppMessage(from, welcome)
+        await askHomeOnce(resolvedUser.telegramId, from)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
@@ -445,6 +463,7 @@ async function handleWhatsAppPost(req: NextRequest) {
       // A bare "Hi" is fully answered by the intro; anything else is processed too.
       if (isGreeting(bodyText)) {
         await saveConversation(resolvedUser.telegramId, 'user', bodyText)
+        await askHomeOnce(resolvedUser.telegramId, from)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
@@ -455,6 +474,16 @@ async function handleWhatsAppPost(req: NextRequest) {
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
       const reply = await buildAdminWhatsAppReply(bodyText)
+      await saveConversation(resolvedUser.telegramId, 'user', bodyText)
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      await sendWhatsAppMessage(from, reply)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    // Ops alerts (3 Nov): "alerts", "ack 3", "mute 3 for 1d", "details 3" from the owner's alert number only.
+    const opsCommand = isOpsAlertNumber(from) ? parseOpsCommand(bodyText) : null
+    if (opsCommand) {
+      const reply = await runOpsCommand(opsCommand)
       await saveConversation(resolvedUser.telegramId, 'user', bodyText)
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       await sendWhatsAppMessage(from, reply)
@@ -532,7 +561,19 @@ async function handleWhatsAppPost(req: NextRequest) {
         actor: { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, whatsappId: resolvedUser.whatsappId, name: resolvedUser.name || 'Gogo' },
         readerText, caption: bodyText,
       })
-      if (!result) return false
+      if (!result) {
+        // 29 Oct: a hotel booking screenshot becomes a saved stay linked to its trip (lib/memory/stay.ts), not a loose note.
+        const env = (globalThis as any).process?.env
+        if (env?.GOGO_MEMORY === 'off' || !(env?.GOGO_BRAIN_USERS || env?.VERCEL_ENV === 'production')) return false
+        const stayMod: any = await import('@/lib/memory/stay').catch(() => null)
+        const stayText = stayMod?.looksLikeHotelBooking?.(`${bodyText || ''}\n${readerText}`) ? await stayMod.ingestStayFromText({ telegramId: resolvedUser.telegramId, whatsappTo: from, userName: resolvedUser.name || profileName, userNames: [resolvedUser.name, profileName].filter(Boolean), text: `${bodyText || ''}\n${readerText}`, source: 'image' }).catch(() => null) : null
+        if (!stayText) return false
+        await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[hotel booking image]')
+        await saveConversation(resolvedUser.telegramId, 'assistant', stayText)
+        await sendWhatsAppMessage(from, stayText)
+        await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
+        return true
+      }
       await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[meeting invitation image]')
       await saveConversation(resolvedUser.telegramId, 'assistant', result.text)
       await sendWhatsAppMessage(from, result.text)
@@ -660,8 +701,11 @@ async function handleWhatsAppPost(req: NextRequest) {
             const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
             if (await handleImageMeeting(noteReply)) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
             await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
-            await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
-            await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
+            const explained = await import('@/lib/services/image-note-reader').then(m => m.explainReaderNoteWithOffer?.({ readerText: noteReply, caption: bodyText }), () => null)
+            const shownNote = explained?.text || noteReply
+            if (explained?.offer) await import('@/lib/agent/image-offer').then(m => m.saveImageOffer(String(resolvedUser.telegramId), explained.offer)).catch(() => {})
+            await saveConversation(resolvedUser.telegramId, 'assistant', shownNote)
+            await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: shownNote })
             // Additive: durably store the document image (captioned ticket that didn't parse).
             await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: noteReply, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
           }
@@ -736,8 +780,11 @@ async function handleWhatsAppPost(req: NextRequest) {
               const noteReply = await readAndSummarizeImageNote({ mediaUrl: firstMediaUrl, contentType: firstMediaType, userCaption: bodyText })
               if (await handleImageMeeting(noteReply)) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
               await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[image] ${bodyText}` : '[image]')
-              await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
-              await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: noteReply })
+              const explained = await import('@/lib/services/image-note-reader').then(m => m.explainReaderNoteWithOffer?.({ readerText: noteReply, caption: bodyText }), () => null)
+              const shownNote = explained?.text || noteReply
+              if (explained?.offer) await import('@/lib/agent/image-offer').then(m => m.saveImageOffer(String(resolvedUser.telegramId), explained.offer)).catch(() => {})
+              await saveConversation(resolvedUser.telegramId, 'assistant', shownNote)
+              await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[image]', reply: shownNote })
               // Additive: durably store the document image (existing note behaviour unchanged).
               await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: noteReply, docType: 'document', messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid: process.env.TWILIO_ACCOUNT_SID!, authToken: process.env.TWILIO_AUTH_TOKEN!, contentType: firstMediaType } })
               }
@@ -907,9 +954,12 @@ async function handleWhatsAppPost(req: NextRequest) {
           const savedNote = compactImageNoteForSaving(noteReply, 'Document')
           await addToList(resolvedUser.telegramId, 'notes', [savedNote])
           await saveConversation(resolvedUser.telegramId, 'user', bodyText ? `[PDF] ${bodyText}` : '[PDF document]')
-          await saveConversation(resolvedUser.telegramId, 'assistant', noteReply)
+          const explainedPdf = await import('@/lib/services/image-note-reader').then(m => m.explainReaderNoteWithOffer?.({ readerText: noteReply, caption: bodyText, kind: 'document' }), () => null)
+          const shownPdf = explainedPdf?.text || noteReply
+          if (explainedPdf?.offer) await import('@/lib/agent/image-offer').then(m => m.saveImageOffer(String(resolvedUser.telegramId), explainedPdf.offer)).catch(() => {})
+          await saveConversation(resolvedUser.telegramId, 'assistant', shownPdf)
           const pdfDocTitle = deriveNoteTitleFromReader(noteReply)
-          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[PDF document]', reply: `${noteReply}\n\n🗂️ Filed under *${pdfDocTitle}* — say *my notes* to get it back.` })
+          await sendWithFirstValueNudge({ from, telegramId: resolvedUser.telegramId, userText: bodyText || '[PDF document]', reply: explainedPdf?.offer ? `${shownPdf.slice(0, shownPdf.length - explainedPdf.offer.question.length).trim()}\n\n🗂️ Filed under *${pdfDocTitle}*. Say *my notes* to get it back.\n\n${explainedPdf.offer.question}` : `${shownPdf}\n\n🗂️ Filed under *${pdfDocTitle}*. Say *my notes* to get it back.` })
           // Additive: durably store the file + documents row (notes behaviour unchanged above).
           // doc_type carries the classifier verdict (document/other, or ticket on a parse miss).
           await saveDocumentNote({ telegramId: resolvedUser.telegramId, readerText: noteReply, docType: pdfClass.toLowerCase(), messageId: inboundMessageSid || null, file: { mediaUrl: firstMediaUrl, accountSid, authToken, contentType: firstMediaType } })
@@ -939,6 +989,133 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     if (!text) {
       await sendWhatsAppMessage(from, `I can read text, voice notes, images and PDFs now.\n\nFor Split Receipt, send a clear bill photo with caption: *split receipt Goa Test*.`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+    }
+
+    // WhatsApp marks forwarded messages; they are someone else's words shared with Gogo (29 Oct live).
+    const forwardedMessage = String(formData.get('Forwarded') || '').toLowerCase() === 'true'
+    // Connected memory front door (lib/memory/front-door.ts): a forwarded hotel booking, a date answer to Gogo's stay
+    // question, or cab details during a trip are saved and linked to the trip before the brain runs.
+    if (!preserveFriendFlow && (globalThis as any).process?.env?.GOGO_MEMORY !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production')) {
+      const door: any = await import('@/lib/memory/front-door').catch(() => null)
+      const memoryTurn = (forwardedMessage || door?.frontDoorCandidate?.(text)) && door?.tryLifeGraphTurn ? await door.tryLifeGraphTurn({ telegramId: resolvedUser.telegramId, whatsappTo: from, userName: resolvedUser.name || profileName, userNames: [resolvedUser.name, profileName].filter(Boolean), text, surface: 'whatsapp', forwarded: forwardedMessage }).catch(() => null) : null
+      if (memoryTurn) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', memoryTurn.text)
+        await sendWhatsAppMessage(from, memoryTurn.text)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
+    // Food taste before the brain (5 Nov live): the brain answered "what do you know about my food" from chat
+    // history, unformatted. Statements, the list and forget are exact commands; null falls through.
+    // Occasion invites (approved canvas screen 4): a forwarded table booking asks the occasion and makes a card.
+    if ((globalThis as any).process?.env?.VERCEL_ENV && INVITE_GATE.test(text)) {
+      const inv = await import('@/lib/agent/occasion-invite').then(m => m.tryOccasionInvite({ telegramId: String(resolvedUser.telegramId), text, name: resolvedUser.name || profileName }), () => null)
+      if (inv) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', inv.text)
+        if (inv.mediaUrl) await sendWhatsAppMediaMessage(from, inv.text, inv.mediaUrl)
+        else await sendWhatsAppMessage(from, inv.text)
+        if (inv.followUp) { await saveConversation(resolvedUser.telegramId, 'assistant', inv.followUp); await sendWhatsAppMessage(from, inv.followUp) }
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+    // Meeting prep (Duet benchmark, 6 Nov): "prep me for my next meeting" reads the calendar and recent emails.
+    // Trip plan (7 Nov): "plan a Goa trip 12 to 15 Dec with Divya and Nithin" gets a plan skeleton, not a question.
+    // "What do I know about Nithin?" (7 Nov): one person across memory, contacts, calendar guests and Gmail.
+    if ((globalThis as any).process?.env?.VERCEL_ENV && (/\b(?:prep|prepare|brief)\b[\s\S]{0,40}\b(?:meeting|call|appointment)\b|\bnext\s+(?:meeting|call)\s+about\b|^\s*meeting\s+prep\b/i.test(text) || /^\s*(?:please\s+)?(?:can you\s+|could you\s+|help me\s+)?(?:plan|organi[sz]e|put together|arrange)\b/i.test(text) || /^(?:what|who|tell me about|catch me up on|brief me on|remind me who|when)\b/i.test(text) || text.trim().length <= 60)) {
+      const prepActor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' })
+      const prep = (await import('@/lib/agent/meeting-prep-ask').then(m => m.tryMeetingPrep(prepActor, text), () => null))
+        || (await import('@/lib/agent/trip-plan').then(m => m.tryTripPlan(prepActor, 'whatsapp', text), () => null))
+        || (await import('@/lib/agent/people').then(m => m.tryPersonAsk(prepActor, text), () => null))
+      if (prep) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', prep)
+        await sendWhatsAppMessage(from, prep)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+    // Home/office saved once (5 Nov, owner): a statement, or the one answer to "what's your home area?".
+    if ((globalThis as any).process?.env?.VERCEL_ENV && PLACE_GATE.test(text)) {
+      const placeTurn = await import('@/lib/agent/places-context').then(m => m.tryPlaceCommand({ telegramId: String(resolvedUser.telegramId), text }), () => null)
+      if (placeTurn) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', placeTurn)
+        await sendWhatsAppMessage(from, placeTurn)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+    if ((globalThis as any).process?.env?.VERCEL_ENV && TASTE_GATE.test(text)) {
+      const taste = await import('@/lib/agent/taste').then(m => m.tryTasteCommand({ telegramId: String(resolvedUser.telegramId), text }), () => null)
+      if (taste) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', taste)
+        await sendWhatsAppMessage(from, taste)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
+    // Understand first (6 Nov live: a ₹41,898 bank SMS became a ₹41 split expense): a forwarded SMS, bank alert, OTP,
+    // delivery, booking, bill or security notice is read as what it is, with one offer; "yes" within 30 min does
+    // that one thing (log the expense, set the reminder, save the ticket, check the order, find the receipt). Read-only otherwise.
+    if ((globalThis as any).process?.env?.VERCEL_ENV) {
+      // 7 Nov: a short reply to Gogo's own proactive message ("it was paid", "check the mail again and track the order",
+      // "open it") is read against that message first (lib/agent/open-thread), never as a new question to the brain.
+      const threaded = text.length <= 160 ? await import('@/lib/agent/open-thread').then(async m => m.tryThreadReply(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), text), () => null) : null
+      if (threaded) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', threaded)
+        await sendWhatsAppMessage(from, threaded)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+      const pay = await import('@/lib/agent/shared-content').then(async m => (await m.tryShared(String(resolvedUser.telegramId), text))
+        || (text.length <= 24 ? m.takeSharedFollowUp(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), text) : null), () => null)
+      if (pay) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', pay)
+        await sendWhatsAppMessage(from, pay)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+    // A "yes" to the question an image/PDF reply ended with runs that exact reminder/calendar instruction.
+    if ((globalThis as any).process?.env?.VERCEL_ENV && text.length <= 24 && /^\s*(?:yes|yeah|yep|yup|ok|okay|sure|haan|ha|ji|please|go ahead|do it|sounds good)\b/i.test(text)) {
+      const offered = await import('@/lib/agent/image-offer').then(m => m.takeImageOffer(String(resolvedUser.telegramId), text), () => null)
+      if (offered) text = offered
+    }
+    // Context-first brain (lib/agent/brain.ts): reads the conversation and saved context BEFORE any keyword rule.
+    // It answers, asks one question, or rewrites the message into an explicit instruction for the handlers below.
+    // Canary users only; exact commands (yes/approve/1/2/3) and any failure keep today's pipeline untouched.
+    // 29 Oct: phone-call commands ("test call me", "call <venue> and book…", "yes call") go to the call flow; the brain
+    // had answered "Call … and book" with "I can't make calls".
+    const callCommand = /^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
+    if (!preserveFriendFlow && !callCommand && (globalThis as any).process?.env?.GOGO_BRAIN !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production')) {
+      const brain = await import('@/lib/agent/brain').then(m => m.runBrain({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), surface: 'whatsapp', forwarded: forwardedMessage })).catch((err: any) => { console.error('BRAIN_FAILED:', String(err?.message || err).slice(0, 160)); return null })
+      if (brain?.reply) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', brain.reply)
+        await sendWhatsAppMessage(from, brain.reply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+      if (brain?.text) text = brain.text
+    }
+    // 29 Oct live (web): a price alert became a daily manual-check reminder. A price alert is a watch; lazy and
+    // pre-filtered so the strict route harnesses never load the module for other messages.
+    // 29 Oct live (WhatsApp): "Yes" to "include offers or listed price only?" skipped this block (no "below ₹")
+    // and reached chat, which falsely said "I'll track it". Short replies to that question are checked here too.
+    const priceNew = /\b(?:below|under|less\s+than|lower\s+than|cheaper\s+than)\b/i.test(text) && /(?:₹|\brs\.?|\binr\b|\d{3,})/i.test(text)
+    const priceReply = text.length <= 60 && /^\s*(?:yes|yeah|yep|yup|ok|okay|sure|no|nope|both|either|any|haan|ha|listed|with\s+offers|offers|incl\w*\s+offers|without\s+offers|excl\w*\s+offers|\d{2,4}\s*gb|\d\s*tb|not\s+applicable|n\/?a)\b/i.test(text)
+    if ((priceNew || priceReply) && (globalThis as any).process?.env?.VERCEL_ENV) {
+      const wc: any = await import('@/lib/agent/watch-command').catch(() => null)
+      if (priceReply || wc?.parsePriceWatchCommand?.(text)) {
+        const actorForWatch: any = { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, name: resolvedUser.name || profileName, whatsappId: String(resolvedUser.whatsappId || from) }
+        const pw = await Promise.resolve().then(() => wc.tryRunPriceWatchClarification({ actor: actorForWatch, surface: 'whatsapp', text })).catch((err: any) => { console.error('PRICE_WATCH_EARLY_FAILED:', String(err?.message || err).slice(0, 160)); return null })
+        if (pw?.text) {
+          await saveConversation(resolvedUser.telegramId, 'user', text)
+          await saveConversation(resolvedUser.telegramId, 'assistant', pw.text)
+          await sendWhatsAppMessage(from, pw.text)
+          return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+        }
+      }
     }
 
     // "Order milk on Swiggy Instamart" via the user's connected Swiggy account: three in-stock options, and a
@@ -1305,9 +1482,9 @@ _"${originalText}"_
       }
     }
     // Local places: Google local results in the area asked (same as the dashboard).
-    if (text.length <= 200 && /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert)/i.test(text)&&/\b(?:in|near|around|at)\s+[a-z]/i.test(text)) {
-      const pl: any = await import('@/lib/agent/places-search').catch(() => null)
-      const out = pl?.answerPlaces ? await Promise.resolve().then(() => pl.answerPlaces(text)).catch(() => null) : null
+    if (text.length <= 200 && (/^(?:(?:a|an|the|some|good|best|top|nice|cheap|open|veg|non-veg|\d{1,2})\s+){0,3}\b(restaurants?|caf(?:e|é)s?|coffee (?:shops?|places?)|bars?|pubs?|breweries|brewery|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets? shops?|gyms?|salons?|spas?|parks?|hospitals?|clinics?|pharmac(?:y|ies)|chemists?|hotels?|stays?|co-?working spaces?|malls?|supermarkets?|barbers?|barber ?shops?|dentists?|dental clinics?|doctors?|pediatricians?|dermatologists?|physiotherapists?|plumbers?|electricians?|carpenters?|mechanics?|car service(?: centres?| centers?)?|bike service(?: centres?| centers?)?|tailors?|laundr(?:y|ies)|dry cleaners?|vets?|veterinar(?:y|ians?)(?: clinics?)?|pet shops?|opticians?|florists?|atms?|petrol (?:pumps?|bunks?)|ev chargers?|charging stations?)\b\s*(?:near|nearby|in|around|close to)\b/i.test(text) || text.length <= 200 && /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert|barber|dentist|dental|doctor|pediatrician|dermatologist|physio|plumber|electrician|carpenter|mechanic|car service|bike service|tailor|laundr|dry clean|vets?\b|veterinar|pet shop|optician|florist|atms?\b|petrol|ev charg|charging station)/i.test(text)&&(/\b(?:in|near|around|at)\s+[a-z]/i.test(text)||/\b(?:nearby|near\s+by|close\s+by)\b/i.test(text))&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text))) {
+      const pl: any = await import('@/lib/agent/places-context').catch(() => null)
+      const out = pl?.answerPlacesWithContext ? await Promise.resolve().then(() => pl.answerPlacesWithContext({ text, telegramId: String(resolvedUser.telegramId) })).catch(() => null) : null
       if (typeof out === 'string' && out) {
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', out)
@@ -1381,6 +1558,16 @@ _"${originalText}"_
         await sendWhatsAppMessage(from, pendingAnswer.text)
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
+    }
+
+    // 2 Nov live: "find me a navy linen shirt under 2000" got a web answer pointing at a category page.
+    // Open product asks read Google Shopping results (real products, prices, stores) before the web answer.
+    const productDiscovery = await tryProductDiscovery({ text })
+    if (productDiscovery) {
+      await saveConversation(resolvedUser.telegramId, 'user', text)
+      await saveConversation(resolvedUser.telegramId, 'assistant', productDiscovery.text)
+      await sendWhatsAppMessage(from, productDiscovery.text)
+      return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
     // Understand-first choke point (docs/architecture/06-understand-first-shadow.md): one reading of the whole
@@ -1653,7 +1840,7 @@ _"${originalText}"_
         return new NextResponse(emptyTwiml(),{status:200,headers:{'Content-Type':'text/xml'}})
       }
     }
-    const jevClarify=jevClarificationReply(brainObservation?.jev)
+    const jevClarify=jevClarificationReply(brainObservation?.jev,text)
     if(jevClarify && !preserveFriendFlow){
       await recordShadowRouterOutcome({
         telegramId:resolvedUser.telegramId,

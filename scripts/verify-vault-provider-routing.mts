@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import './verify-cart-store-oct26.mts'
 import { findVaultProviderInText } from '../lib/vault/providers'
 import { parseConnectedProviderReadCommand, isExplicitProviderBrowserRead } from '../lib/agent/browser-command'
 import { redactSecretShapedText } from '../lib/bot/memory-redaction'

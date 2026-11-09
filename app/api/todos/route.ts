@@ -19,8 +19,10 @@ export async function POST(req: NextRequest) {
   }
 
   if (action === 'done') {
-    await supabase.from('todos').update({ done: true, done_at: new Date().toISOString() }).eq('whatsapp_id', phone).ilike('text', '%' + text + '%').eq('done', false)
-    return NextResponse.json({ ok: true, reply: 'Marked done: ' + text })
+    const { data: updated } = await supabase.from('todos').update({ done: true, done_at: new Date().toISOString() }).eq('whatsapp_id', phone).ilike('text', '%' + text + '%').eq('done', false).select('text')
+    // Never claim a completion that did not happen (27 Oct: "Marked done: it land?" with no such task).
+    if (!updated?.length) return NextResponse.json({ ok: false, reply: null })
+    return NextResponse.json({ ok: true, reply: 'Marked done: ' + updated.map((r: any) => r.text).join(', ') })
   }
 
   if (action === 'list') {
