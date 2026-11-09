@@ -67,12 +67,13 @@ For flights preserve the separate arrivalDate when printed (same date format as 
 
 function parseTicketJson(text: string): TicketInfo {
   const clean = text.replace(/```json|```/g, '').trim()
-  console.log('[ticket-reader] Claude response:', clean.slice(0, 400))
+  // Ticket output carries PNRs and passenger names: log only its size.
+  console.log('[ticket-reader] Claude response:', { chars: clean.length })
   if (!clean || clean.toLowerCase() === 'null') return null
   try {
     return JSON.parse(clean) as TicketInfo
   } catch {
-    console.error('[ticket-reader] JSON parse failed:', clean)
+    console.error('[ticket-reader] JSON parse failed:', { chars: clean.length })
     return null
   }
 }
@@ -187,7 +188,8 @@ export async function parsePdfTicket(
   accountSid: string,
   authToken: string
 ): Promise<TicketInfo> {
-  console.log('[pdf-reader] Fetching PDF from Twilio:', mediaUrl)
+  // A Twilio media URL identifies a private message's media: never log it.
+  console.log('[pdf-reader] Fetching PDF from Twilio:', { hasMediaUrl: Boolean(mediaUrl) })
   const pdfBuffer=await fetchTwilioPdfBuffer(mediaUrl,accountSid,authToken)
   console.log('[pdf-reader] PDF fetched, bytes:',pdfBuffer.byteLength)
 
@@ -373,7 +375,7 @@ export async function parseImageTicket(
   authToken: string,
   mediaType: string = 'image/jpeg'
 ): Promise<TicketInfo> {
-  console.log('[ticket-reader] Fetching ticket image from Twilio:', mediaUrl)
+  console.log('[ticket-reader] Fetching ticket image from Twilio:', { hasMediaUrl: Boolean(mediaUrl) })
 
   const response = await fetch(mediaUrl, {
     headers: {
