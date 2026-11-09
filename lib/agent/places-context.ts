@@ -38,7 +38,10 @@ export function placeAnswer(text: string): SavedPlace | null {
   const t = String(text || '').trim().replace(/[.!]+$/, '')
   if (!t || t.length > 60 || NOT_AREA.test(t)) return null
   // A command is never an area, even right after the question.
-  if (/^(?:call|remind|set|show|find|what|when|where|who|why|how|tell|send|add|book|order|buy|search|check|cancel|stop|play|open|get|make|create|delete|forget|list|track|watch|scan)\b/i.test(t)) return null
+  if (/^(?:call|remind|set|show|find|what|when|where|who|why|how|tell|send|add|book|order|buy|search|check|cancel|stop|play|open|get|make|create|delete|forget|list|track|watch|scan|plan|compare|my|the|a|an|i|is|are|do|can|please|any|weather|gold|price|usage|briefing|help)\b/i.test(t)) return null
+  // 5 Nov live: "my briefing", sent right after the office question, was saved as the office. An answer is an area
+  // name (or pincode), so app words anywhere in it rule it out.
+  if (/\b(?:briefing|reminders?|usage|calendar|emails?|jobs?|prices?|weather|pending|today|tomorrow|tonight|plan|notes?|expenses?|spend|spent|food|taste|order|status)\b/i.test(t)) return null
   const stated = detectPlaceStatement(t)
   if (stated) return stated
   const pincode = t.match(PIN)?.[1] || null
@@ -47,7 +50,7 @@ export function placeAnswer(text: string): SavedPlace | null {
   return pincode || area ? { kind: 'home', area, pincode } : null
 }
 
-async function savedPlaces(telegramId: string) {
+export async function savedPlaces(telegramId: string) {
   const { data, error } = await supabaseAdmin.from('memories').select('content').eq('telegram_id', telegramId)
     .or('content.ilike.Home area:%,content.ilike.Office area:%,content.ilike.%live in%,content.ilike.%live at%,content.ilike.%stay in%,content.ilike.%based in%,content.ilike.%home is%')
     .order('created_at', { ascending: false }).limit(30)
@@ -72,33 +75,91 @@ const where = (p: SavedPlace) => p.area || p.pincode || ''
 const ASK = `What's your home area or pincode? Reply like "Rajajinagar 560086". I'll save it once and use it every time you ask for something nearby.`
 const PENDING_MINUTES = 15
 
-async function setPending(tg: string, text: string, kind: SavedPlace['kind']) {
-  await supabaseAdmin.from('agent_activity').insert({ telegram_id: tg, event_type: 'nearby_area_asked', message: 'Asked for home area once.', metadata_json: { text: text.slice(0, 200), kind } })
+async function setPending(tg: string, text: string, kind: SavedPlace['kind'], onboarding = false) {
+  await supabaseAdmin.from('agent_activity').insert({ telegram_id: tg, event_type: 'nearby_area_asked', message: onboarding ? `Onboarding: asked for ${kind} area.` : 'Asked for home area once.', metadata_json: { text: text.slice(0, 200), kind, onboarding } })
 }
-async function pendingAsk(tg: string): Promise<{ text: string; kind: SavedPlace['kind'] } | null> {
-  const since = new Date(Date.now() - PENDING_MINUTES * 60_000).toISOString()
+type Pending = { text: string; kind: SavedPlace['kind']; onboarding: boolean; at: number }
+async function pendingAsk(tg: string, minutes = PENDING_MINUTES): Promise<Pending | null> {
+  const since = new Date(Date.now() - minutes * 60_000).toISOString()
   const { data } = await supabaseAdmin.from('agent_activity').select('event_type,metadata_json,created_at').eq('telegram_id', tg)
     .in('event_type', ['nearby_area_asked', 'nearby_area_saved']).gte('created_at', since).order('created_at', { ascending: false }).limit(1)
   const row: any = data?.[0]
-  return row?.event_type === 'nearby_area_asked' && row.metadata_json?.text ? { text: String(row.metadata_json.text), kind: row.metadata_json.kind === 'office' ? 'office' : 'home' } : null
+  if (row?.event_type !== 'nearby_area_asked') return null
+  const m = row.metadata_json || {}
+  const onboarding = m.onboarding === true
+  if (!onboarding && !m.text) return null
+  return { text: String(m.text || ''), kind: m.kind === 'office' ? 'office' : 'home', onboarding, at: Date.parse(String(row.created_at || '')) || 0 }
+}
+/** Onboarding questions stay open a day; a "nearby" question only PENDING_MINUTES. */
+async function openQuestion(tg: string): Promise<Pending | null> {
+  const p = await pendingAsk(tg, ONBOARD_MINUTES).catch(() => null)
+  if (!p) return null
+  return p.onboarding || Date.now() - p.at <= PENDING_MINUTES * 60_000 ? p : null
 }
 
-/** Home/office statements, and the one-time answer to the area question (which then runs the original search). */
+// Onboarding (approved screen 3, 5 Nov): after the welcome, ask home, then office, once. Either can be skipped.
+export const ONBOARD_HOME_Q = `Two quick things so I never have to ask later.\n\n*1 of 2 · Where's home?*\nJust the area or pincode, like "Rajajinagar 560086". I use it for nearby places, deliveries and price checks. Say *later* to skip.`
+export const ONBOARD_OFFICE_Q = `*2 of 2 · And work?*\nOffice area or pincode, so "near the office" works. Say *I work from home* to skip.`
+const ONBOARD_MINUTES = 24 * 60
+const SKIP = /^\s*(?:later|skip|not now|no|nope|none|no office|i work from home|work from home|wfh|i don'?t have an office)[\s.!]*$/i
+export function isPlaceSkip(text: string) { return SKIP.test(String(text || '')) }
+
+/** Ask the home question once for a new person (nothing saved yet). Returns the question to send, or null. */
+export async function startPlaceOnboarding(telegramId: string | number): Promise<string | null> {
+  const tg = String(telegramId)
+  const places = await savedPlaces(tg).catch(() => ({ home: null, office: null }))
+  if (places.home) return null
+  await setPending(tg, '', 'home', true)
+  return ONBOARD_HOME_Q
+}
+
+function onboardingDone(places: { home: SavedPlace | null; office: SavedPlace | null }) {
+  const bits = [places.home ? `Home: ${where(places.home)}` : null, places.office ? `Office: ${where(places.office)}` : null].filter(Boolean)
+  return `Saved. ${bits.length ? bits.join(' · ') + '. ' : ''}I won't ask again.\n\nTry "pizza nearby" or "remind me to call Nithin at 5". Change these any time by saying "I moved to HSR Layout".`
+}
+
+/** Home/office statements, the one-time answer to the area question (which then runs the original search),
+ *  and the two onboarding answers. */
 export async function tryPlaceCommand(p: { telegramId: string | number; text: string }, fetchImpl: typeof fetch = fetch): Promise<string | null> {
   const tg = String(p.telegramId)
   const stated = detectPlaceStatement(p.text)
-  const pending = stated ? null : (placeAnswer(p.text) ? await pendingAsk(tg).catch(() => null) : null)
-  const place = stated || (pending ? { ...placeAnswer(p.text)!, kind: pending.kind } : null)
+  const skip = !stated && isPlaceSkip(p.text)
+  const asked = (stated || skip || placeAnswer(p.text)) ? await openQuestion(tg) : null
+  // A statement ("I live in X") only continues onboarding; it never answers a nearby question's search.
+  const live = stated ? (asked?.onboarding ? asked : null) : asked
+  if (skip) {
+    if (!live?.onboarding) return null
+    if (live.kind === 'home') { await setPending(tg, '', 'office', true).catch(() => {}); return `No problem, I'll ask the first time you need it.\n\n${ONBOARD_OFFICE_Q}` }
+    await supabaseAdmin.from('agent_activity').insert({ telegram_id: tg, event_type: 'nearby_area_saved', message: 'Onboarding finished.', metadata_json: { kind: 'office', skipped: true } }).then(() => {}, () => {})
+    return onboardingDone(await savedPlaces(tg).catch(() => ({ home: null, office: null })))
+  }
+  const place = stated || (live ? { ...placeAnswer(p.text)!, kind: live.kind } : null)
   if (!place) return null
   if (!(await savePlace(tg, place).catch(() => false))) return null
   await supabaseAdmin.from('agent_activity').insert({ telegram_id: tg, event_type: 'nearby_area_saved', message: `${place.kind} area saved.`, metadata_json: { kind: place.kind } }).then(() => {}, () => {})
+  if (live?.onboarding) {
+    if (place.kind === 'home') { await setPending(tg, '', 'office', true).catch(() => {}); return `Saved your home: ${where(place)}.\n\n${ONBOARD_OFFICE_Q}` }
+    return onboardingDone(await savedPlaces(tg).catch(() => ({ home: null, office: null })))
+  }
   const saved = `Saved your ${place.kind}: ${where(place)}. I'll use it whenever you ask for something ${place.kind === 'home' ? 'nearby' : 'near the office'}, and won't ask again. Say "I live in <area>" any time to change it.`
-  if (!pending) return saved
-  const out = await answerPlacesWithContext({ text: pending.text, telegramId: tg }, fetchImpl).catch(() => null)
+  if (!live?.text) return saved
+  const out = await answerPlacesWithContext({ text: live.text, telegramId: tg }, fetchImpl).catch(() => null)
   return out ? `${saved}\n\n${out}` : saved
 }
 
 const NEAR_OFFICE = /\b(?:near|around|close\s+to)\s+(?:my\s+|the\s+)?(?:office|work(?:place)?)\b/i
+
+const weekdayIst = (now = new Date()) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', weekday: 'long' }).format(now)
+/** "restaurants in Indiranagar" → "pure veg restaurants in Indiranagar" when the person said they're veg (today). Pure.
+ *  An explicit dish or cuisine in the ask ("seafood", "biryani", "non-veg") is left alone. */
+export function withStatedDiet(text: string, facts: { kind: string; value: string; context?: string | null }[], weekday: string) {
+  if (/\b(?:veg|vegetarian|vegan|jain|non[\s-]?veg|chicken|mutton|fish|seafood|prawns?|egg|biryani|kebab|meat|steak|bbq|barbecue|sushi)\b/i.test(text)) return text
+  const diet = facts.find(f => f.kind === 'diet_stated' && (!f.context || weekday.toLowerCase().startsWith(String(f.context).toLowerCase().replace(/s$/, ''))))
+  if (!diet) return text
+  const word = /^vegan/i.test(diet.value) ? 'vegan' : /^jain/i.test(diet.value) ? 'jain' : /^(?:veg|eggetarian)/i.test(diet.value) ? 'pure veg' : null
+  if (!word) return text
+  return text.replace(/\b(restaurants?|places? to eat|caf(?:e|é)s?|dhabas?|lunch|dinner|breakfast|food)\b/i, m => `${word} ${m}`)
+}
 
 export function tasteNote(values: string[]) {
   const keep = values.filter(v => !/^Likes:/i.test(v)).slice(0, 4)
@@ -120,8 +181,11 @@ export async function answerPlacesWithContext(p: { text: string; telegramId: str
     }
     text = rewritten.text
   }
+  const food = FOOD.test(text)
+  const facts = food ? await listTaste(tg).catch(() => null) : null
+  // 5 Nov live: "Kept in mind: Veg" sat under a seafood restaurant. A stated diet steers the search itself.
+  text = withStatedDiet(text, facts || [], weekdayIst())
   const out = await answerPlaces(text, fetchImpl)
-  if (!out || !FOOD.test(text) || !out.startsWith('📍')) return out
-  const facts = await listTaste(tg).catch(() => null)
+  if (!out || !food || !out.startsWith('📍')) return out
   return facts?.length ? out.replace(/(\n\nAsk "which of these is open late\?"[^\n]*)?$/, m => tasteNote(facts.map(f => f.value)) + m) : out
 }
