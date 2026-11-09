@@ -20,6 +20,14 @@ function unauthorized() {
   return NextResponse.json({ ok: false }, { status: 401 })
 }
 
+// Never parseInt an owner: partial or unsafe 64-bit session IDs can alias
+// another numeric telegram_id before a service-role reminder read/write.
+function exactSessionReminderOwner(raw: string): number | null {
+  if (!/^-?[1-9]\d*$/.test(raw)) return null
+  const value = Number(raw)
+  return Number.isSafeInteger(value) ? value : null
+}
+
 // Wall-clock → UTC lives in the zero-import lib/dashboard/wall-time.ts so it can be
 // unit-tested; the route just supplies the AUTHORITATIVE stored tz (never a client zone).
 async function userTimezone(telegramId: number): Promise<string> {
@@ -37,8 +45,8 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ i
 
   const session = await getSession()
   if (!session) return unauthorized()
-  const tgNum = parseInt(session.telegramId, 10)
-  if (!Number.isFinite(tgNum)) return unauthorized()
+  const tgNum = exactSessionReminderOwner(session.telegramId)
+  if (tgNum === null) return unauthorized()
 
   const { id } = await params
   const res = await deleteReminderById(await resolveReminderOwner(tgNum, id), id)
@@ -58,8 +66,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
 
   const session = await getSession()
   if (!session) return unauthorized()
-  const tgNum = parseInt(session.telegramId, 10)
-  if (!Number.isFinite(tgNum)) return unauthorized()
+  const tgNum = exactSessionReminderOwner(session.telegramId)
+  if (tgNum === null) return unauthorized()
 
   const { id } = await params
 
@@ -93,8 +101,8 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   const session = await getSession()
   if (!session) return unauthorized()
-  const tgNum = parseInt(session.telegramId, 10)
-  if (!Number.isFinite(tgNum)) return unauthorized()
+  const tgNum = exactSessionReminderOwner(session.telegramId)
+  if (tgNum === null) return unauthorized()
 
   const { id } = await params
   const owner = await resolveReminderOwner(tgNum, id)

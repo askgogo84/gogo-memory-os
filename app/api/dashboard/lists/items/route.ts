@@ -17,8 +17,15 @@ export async function PATCH(request: Request) {
 
   const session = await getSession()
   if (!session) return NextResponse.json({ ok: false }, { status: 401 })
-  const tgNum = parseInt(session.telegramId, 10)
-  if (!Number.isFinite(tgNum)) return NextResponse.json({ ok: false }, { status: 401 })
+  // List storage still accepts JS numbers. Reject noncanonical and JS-unsafe
+  // session owners before any list query/write; distinct signed64 owners must
+  // never alias through parseInt/Number rounding.
+  const rawOwner = session.telegramId
+  if (typeof rawOwner !== 'string' || !/^-?[1-9]\d*$/.test(rawOwner)) {
+    return NextResponse.json({ ok: false }, { status: 401 })
+  }
+  const tgNum = Number(rawOwner)
+  if (!Number.isSafeInteger(tgNum)) return NextResponse.json({ ok: false }, { status: 401 })
 
   let body: unknown
   try {

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import './verify-food-compare-menu-oct26.mts'
 import { readFileSync } from 'node:fs'
 import { parsePriceComparison, comparisonSearchUrl, comparisonProductLead, comparisonObjective } from '../lib/commerce/comparison-model'
 // 16 Oct live: "compare price of iPhone 16 on Flipkart and Croma" kept "price of" in the product name; both stores failed.
@@ -81,4 +82,14 @@ console.log('verify-comparison-subject: subject, search start and product goto o
     'https://www.reliancedigital.in/product/apple-iphone-16-128-gb-black-m0xrrm-8590265')
   assert.equal(source('reliance', 'https://www.reliancedigital.in/products?q=iphone'), null)
   console.log('verify-comparison-subject: reliance product address ok')
+}
+
+// 7 Nov live: "compare biryani prices near me" went to Amazon/Flipkart/Croma/Reliance. Dishes without a shop named are not a store comparison.
+{
+  const { parsePriceComparison } = await import('../lib/commerce/comparison-model')
+  assert.equal(parsePriceComparison('compare biryani prices near me'), null)
+  assert.equal(parsePriceComparison('compare pizza on swiggy and zomato') === null, false, 'a dish with Swiggy/Zomato named still parses as the food store comparison')
+  assert.ok(parsePriceComparison('compare iPhone 17 on Amazon and Flipkart'))
+  assert.ok(parsePriceComparison('compare coffee maker prices on Amazon and Croma'), 'coffee maker is an appliance when a shop is named')
+  console.log('✓ dishes with no shop named skip the store comparison')
 }
