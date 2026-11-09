@@ -1,0 +1,3 @@
+# tests added by PR #1429
+npx tsx scripts/verify-meeting-upload-auth-testonly.mts
+npx tsx scripts/verify-meeting-upload-token.mts

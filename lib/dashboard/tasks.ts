@@ -26,7 +26,7 @@ export async function getDashboardTasks(telegramId: string): Promise<DashboardTa
   try {
     const { data: user, error: userError } = await supabaseAdmin
       .from('users')
-      .select('whatsapp_id')
+      .select('telegram_id,whatsapp_id')
       .eq('telegram_id', tgNum)
       .maybeSingle()
 
@@ -35,6 +35,11 @@ export async function getDashboardTasks(telegramId: string): Promise<DashboardTa
       return { ok: false }
     }
 
+    // The returned row must be this owner's before its WhatsApp id scopes a service-role
+    // todos read: a null, foreign or already-rounded numeric telegram_id fails closed.
+    if (user && user.telegram_id !== undefined && exactSessionOwnerId(user.telegram_id) !== exactOwner) {
+      return { ok: true, open: [], completed: [] }
+    }
     const whatsappId = String(user?.whatsapp_id || '').trim()
     if (!whatsappId) return { ok: true, open: [], completed: [] }
 
