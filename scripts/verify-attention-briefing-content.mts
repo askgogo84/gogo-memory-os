@@ -58,4 +58,74 @@ await check('actual provider outage cannot become a successful empty inbox',asyn
 await check('failed message detail read cannot become an authoritative empty inbox',async()=>{
  transportFailure='metadata';try{await assert.rejects(()=>provider.fetchLatestEmails('fixture-access',25),/incomplete|unavailable/i)}finally{transportFailure=''}
 })
+
+await check('private dashboard briefing preview never aliases 64-bit tenant identities', async () => {
+  // Run the actual transpiled HTTP entry point. All DB and briefing calls below
+  // are inert sentinels: no credentials, real accounts, messages or live providers.
+  let sessionOwner: string | null = null
+  const lookedUp: string[] = []
+  const synthesized: number[] = []
+  const accounts = new Map([['123', {name: 'Synthetic Alpha'}], ['124', {name: 'Synthetic Beta'}]])
+  const db = {from: (table: string) => {
+    assert.equal(table, 'users')
+    let selected = ''
+    const q = {
+      select: (fields: string) => { assert.equal(fields, 'name'); return q },
+      eq: (col: string, owner: unknown) => {
+        assert.equal(col, 'telegram_id')
+        assert.equal(typeof owner, 'string', 'DB query must retain original owner TEXT, not rounded Number')
+        selected = String(owner); lookedUp.push(selected); return q
+      },
+      maybeSingle: async () => ({data: accounts.get(selected) ?? null, error: null}),
+    }
+    return q
+  }}
+  class FakeNextResponse extends Response {
+    static json(body: unknown, opts: {status?: number} = {}) {
+      return new FakeNextResponse(JSON.stringify(body), {status: opts.status ?? 200})
+    }
+  }
+  const route = load('app/api/dashboard/daily-brief-preview/route.ts', {
+    'next/server': {NextResponse: FakeNextResponse},
+    '@/lib/dashboard/session': {getSession: async () => sessionOwner === null ? null : {telegramId: sessionOwner}},
+    '@/lib/supabase-admin': {supabaseAdmin: db},
+    '@/lib/bot/handlers/morning-briefing': {
+      buildMorningBriefing: async (owner: number) => { synthesized.push(owner); return 'PRIVATE_BRIEF_FOR_' + owner },
+    },
+    '@/lib/email/daily-brief': {
+      renderDailyBriefEmail: ({firstName, briefing}: any) => ({html: '<p>' + firstName + ': ' + briefing + '</p>'}),
+    },
+  })
+  // IEEE-754 aliases these two DISTINCT persisted signed-64-bit account IDs.
+  assert.equal(Number('9007199254740992'), Number('9007199254740993'))
+  for (const invalid of [
+    '9007199254740992', '9007199254740993', '-9007199254740992',
+    '9223372036854775808', '1e3', '+123', '000123', '0', '-0', '123junk', ' 123',
+  ]) {
+    sessionOwner = invalid
+    const prevReads = lookedUp.length, prevBriefs = synthesized.length
+    const denied: Response = await route.GET()
+    assert.equal(denied.status, 403, 'deny invalid/unsafe owner before any private access: ' + invalid)
+    assert.equal(lookedUp.length, prevReads, 'no DB owner lookup for ' + invalid)
+    assert.equal(synthesized.length, prevBriefs, 'no private briefing generation for ' + invalid)
+  }
+  sessionOwner = null
+  assert.equal((await route.GET()).status, 401, 'unauthenticated request remains denied')
+  assert.deepEqual(lookedUp, [])
+  assert.deepEqual(synthesized, [])
+
+  sessionOwner = '123'
+  const alpha: Response = await route.GET()
+  assert.equal(alpha.status, 200)
+  assert.match(await alpha.text(), /Synthetic: PRIVATE_BRIEF_FOR_123/)
+  assert.deepEqual(lookedUp, ['123'])
+  assert.deepEqual(synthesized, [123])
+  sessionOwner = '124'
+  const beta: Response = await route.GET()
+  assert.equal(beta.status, 200)
+  assert.match(await beta.text(), /Synthetic: PRIVATE_BRIEF_FOR_124/)
+  assert.deepEqual(lookedUp, ['123', '124'], 'every privileged lookup must use exact session owner TEXT')
+  assert.deepEqual(synthesized, [123, 124], 'each synthetic tenant gets only its own briefing')
+})
+
 if(failures.length){console.error(failures.join('\n'));process.exitCode=1}

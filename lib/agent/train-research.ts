@@ -200,9 +200,9 @@ async function tryHandleTrainDeviceHandoffFollowup(params:{actor:AgentActor;text
 }
 
 async function latestPreferenceRun(tg:number){
-  const {data,error}=await supabaseAdmin.from('agent_runs').select('id,metadata_json,status,source').eq('telegram_id',String(tg)).eq('type','train_research').eq('status','paused').order('updated_at',{ascending:false}).limit(6)
+  const {data,error}=await supabaseAdmin.from('agent_runs').select('id,metadata_json,status,source,updated_at').eq('telegram_id',String(tg)).eq('type','train_research').eq('status','paused').order('updated_at',{ascending:false}).limit(6)
   if(error)throw new Error(`train_preference_lookup_failed:${error.message}`)
-  return (data||[]).find((r:any)=>r?.metadata_json?.state==='awaiting_train_preference')||null
+  return (data||[]).find((r:any)=>r?.metadata_json?.state==='awaiting_train_preference'&&Date.now()-Date.parse(String(r?.updated_at||''))<2*3600_000)||null
 }
 
 export async function executeTrainRun(params:{actor:AgentActor;surface:AgentSurface;runId:string;c:any;inputText:string;directOnly:boolean;fromWorker?:boolean}){
@@ -284,8 +284,12 @@ export async function tryRunTrainResearch(params:{actor:AgentActor;surface:Agent
   const deviceFollowup=await tryHandleTrainDeviceHandoffFollowup({actor:params.actor,text:params.text})
   if(deviceFollowup)return deviceFollowup
 
+  // 28 Oct run: "Find me direct trains from Bangalore to Mysuru on 5 November" answered a stale
+  // 22 Oct run, because "direct" read as the answer to an old "direct or connections?" question.
+  // A message that names its own route is a new search; only a bare answer resumes a recent run.
   const pref=trainPreference(params.text)
-  if(pref!==null){
+  const ownRoute=context(params.text)
+  if(pref!==null&&!(ownRoute.from&&ownRoute.to)){
     const pending=await latestPreferenceRun(params.actor.legacyTelegramId)
     if(pending?.id&&pending?.metadata_json?.context){
       const meta:any=pending.metadata_json

@@ -13,12 +13,14 @@ import * as chatText from '../lib/dashboard/chat-text'
 // clock/network. This reproduces a worker finishing while chat stays open.
 const states:any[]=[]
 const effects:Array<()=>any>=[]
+const refs:Array<{current:any}>=[]
 let tick:(()=>void)|undefined
 let cleared=false
 let removed=false
 let chatReads=0
 let history:any[]=[{role:'user',content:'Compare the test item'}]
 let pendingRead:Promise<any>|null=null
+let historyFailure:Error|null=new Error('synthetic initial history timeout')
 let resolvePost:(value:any)=>void=()=>{}
 const post=new Promise(resolve=>{resolvePost=resolve})
 const reply=(data:any)=>({ok:true,json:async()=>data})
@@ -32,14 +34,14 @@ runInNewContext(ts.transpileModule(readFileSync('components/dashboard/gogo-chat.
   requestAnimationFrame:()=>{},
   fetch:async(url:string,options:any={})=>{
     if(options.method==='POST')return post
-    if(url==='/api/dashboard/chat'){chatReads++;return pendingRead||reply({messages:history.slice()})}
+    if(url==='/api/dashboard/chat'){chatReads++;if(historyFailure)throw historyFailure;return pendingRead||reply({messages:history.slice()})}
     // A stalled activity request must never hold chat history or its poll open.
     return new Promise(()=>{})
   },
   require:(id:string)=>{
     if(id==='react')return {
       useState:(initial:any)=>{const i=states.length;states.push(initial);return [initial,(v:any)=>{states[i]=typeof v==='function'?v(states[i]):v}]},
-      useRef:(current:any)=>({current}),useEffect:(fn:()=>any)=>effects.push(fn),useMemo:(fn:()=>any)=>fn(),
+      useRef:(current:any)=>{const ref={current};refs.push(ref);return ref},useEffect:(fn:()=>any)=>effects.push(fn),useMemo:(fn:()=>any)=>fn(),
     }
     if(id==='react/jsx-runtime')return {jsx:(type:any,props:any)=>({type,props}),jsxs:(type:any,props:any)=>({type,props})}
     if(id==='next/navigation')return {useSearchParams:()=>({get:()=>null})}
@@ -56,6 +58,11 @@ const tree=exports.GogoChat({})
 const cleanups=effects.map(fn=>fn())
 const flush=async()=>{for(let i=0;i<6;i++)await new Promise(resolve=>setImmediate(resolve))}
 await flush()
+assert.match(states[5],/could not load the recent conversation/,'initial history failure is visible')
+assert.equal(states[2],false,'history failure ends the loading state')
+historyFailure=null
+tick!();await flush()
+assert.equal(states[5],'','successful persisted history refresh clears its stale warning')
 assert.equal(states[0].length,1)
 assert.equal(states[2],false,'history finishes loading even when the activity rail stalls')
 assert.ok(tick,'an already-open chat must refresh completed background tasks')
@@ -92,9 +99,25 @@ tick!();await flush()
 assert.equal(chatReads,sendingReads,'poll skips an active send')
 resolvePost(reply({text:'Your schedule'}));await flush()
 assert.equal(states[0].at(-1).content,'Your schedule')
+states[5]='Synthetic send error: outcome must be checked'
+tick!();await flush()
+assert.equal(states[5],'Synthetic send error: outcome must be checked','successful history must not erase unrelated send errors')
+
+// An older initial read failing after a newer send must not clobber its state.
+const refresh=refs.find(ref=>typeof ref.current==='function'&&ref.current.name==='refresh')?.current
+assert.ok(refresh,'actual mounted refresh callback is available')
+let rejectOldRead:(reason:Error)=>void=()=>{}
+pendingRead=new Promise((_resolve,reject)=>{rejectOldRead=reject})
+const oldRead=refresh(true)
+button.props.onClick();await flush()
+states[5]='Synthetic newer send error'
+rejectOldRead(new Error('superseded initial timeout'));await oldRead;await flush()
+assert.equal(states[5],'Synthetic newer send error','superseded initial error cannot overwrite the newer send')
+pendingRead=null
 for(const cleanup of cleanups)if(typeof cleanup==='function')cleanup()
 assert.ok(cleared&&removed,'unmount removes timer and visibility listener')
 console.log('PASS: live background delivery, stable refresh, hidden-tab pause and in-flight send isolation')
+console.log('PASS: history failure recovery preserves unrelated send errors and ignores superseded failures')
 
 const historyRoute:any={}
 runInNewContext(ts.transpileModule(readFileSync('app/api/dashboard/chat/route.ts','utf8')+'\nexport {cleanHistory}',{

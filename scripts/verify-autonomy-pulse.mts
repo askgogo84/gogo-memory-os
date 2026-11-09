@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import ts from 'typescript'
 import { readFileSync } from 'node:fs'
 import { isAutonomyStatus, isConnectionStatus } from '../lib/agent/autonomy-status'
+const proactiveEmail = await import('../lib/email/proactive')
 
 assert.equal(isAutonomyStatus('What are you working on for me?'),true)
 assert.equal(isAutonomyStatus('Show me my agent status'),true)
@@ -75,6 +76,7 @@ function loadPulseModule(file:string,extra=''):any{
       if(name==='node:crypto')return {createHash}
       if(name==='@/lib/supabase-admin')return {supabaseAdmin:db}
       if(name==='@/lib/whatsapp')return {sendWhatsApp:async(_to:string,text:string)=>{deliveries.push(text);return {sid:'fixture'}},sendWhatsAppReminderTemplate:async()=>{throw new Error('unexpected template')}}
+      if(name==='@/lib/email/proactive')return proactiveEmail
       if(name==='./task-lifecycle')return {retiredRunReason:()=>null,isRelevantOpenLoop:()=>true}
       if(name==='./google-workspace-read')return {decodeHtmlEntities:(v:string)=>String(v).replace(/&#39;/g,"'").replace(/&amp;/g,'&')}
       if(name==='./browser-failure-notice')return loadPulseModule('browser-failure-notice')

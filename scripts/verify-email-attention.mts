@@ -34,7 +34,7 @@ await check('each pick says why in a few words', () => {
   assert.equal(by['1'].why, 'Asks you to decide · due Fri')
   assert.equal(by['2'].why, 'Payment due tomorrow')
   assert.match(by['2'].ask, /₹18,420/)
-  assert.equal(by['7'].why, 'Something went wrong')
+  assert.equal(by['7'].why, 'Problem with an order')
   assert.match(by['1'].ask, /^Can you sign off on the Q4 vendor contract before Friday\?$/)
 })
 
@@ -192,3 +192,12 @@ await check('AskGogo\'s own digest emails never need you', () => {
 
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('email attention: all checks passed')
+
+// 26 Oct live: a Google Sheets share kept a stray quote in the sender and was labelled "Something went wrong".
+{
+  assert.equal(A.senderNameOf('"Shubhaam Khurrana (via Google Sheets)" <drive-shares-dm-noreply@google.com>'), 'Shubhaam Khurrana (via Google Sheets)')
+  assert.equal(A.senderNameOf("'Divya' <divya@x.in>"), 'Divya')
+  const share = A.scoreEmail({ id: 's1', from: '"Shubhaam Khurrana (via Google Sheets)" <drive-shares-dm-noreply@google.com>', subject: 'Spreadsheet shared with you: "TIpplr Phase 1 P1 Menu\'s"', snippet: 'Shubhaam shared a spreadsheet. Please fix the menu issue before launch.', internalDate: Date.now(), labelIds: ['INBOX'] } as any, { now: Date.now() })
+  assert.ok(!share.why.includes('Something went wrong'), share.why)
+  console.log('Share notice wording passed')
+}

@@ -2,6 +2,7 @@
 
 // Settings, one page with a section picker (approved mock, 15 Oct): General, Connections, Permissions, Payments and
 // spending, Addresses, Notifications, Voice and keyboard, Invites. Phone-first: one column, 44px tap targets.
+import { VoiceSourceSetting } from '@/components/dashboard/listen-button'
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { ThemeToggle } from './theme-toggle'
@@ -180,7 +181,7 @@ function Connections(props: Props) {
   }
 
   const q = query.trim().toLowerCase()
-  const connectedIds = new Set(sites.map(s => s.siteId))
+  const connectedIds = new Set(sites.filter(s => s.status === 'active').map(s => s.siteId))
   // Swiggy and Instamart share the Swiggy connection. When the provider connection is not open to us yet, the site
   // still works through a sign-in in the secure browser.
   const oauthState = (site: CatalogueSite) => providers.find(p => p.provider === (site.id === 'instamart' ? 'swiggy' : site.id))?.state || ''
@@ -349,6 +350,10 @@ function Voice() {
     <h2 className={heading}>Talk to Gogo</h2>
     <p className={`mt-1 ${muted}`}>In Gogo chat, tap the mic to dictate instead of typing. It works in Chrome, Edge and Safari. On WhatsApp, send a voice note.</p>
     <Link href="/dashboard/chat" className="mt-3 inline-block text-[14px] text-[#2fb8a6]">Open Gogo chat →</Link>
+    <h2 className={`${heading} mt-6`}>Listen to replies</h2>
+    <p className={`mt-1 ${muted}`}>Every Gogo reply in chat has a Listen button. It reads that one reply aloud when you tap it and never plays on its own. Choose where the voice is made:</p>
+    <VoiceSourceSetting />
+    <p className={`mt-3 ${muted}`}>English is read fully. Hindi is partial: names and ₹ amounts may sound off. Kannada needs the AskGogo voice. Listening never sends, books or pays for anything.</p>
   </div>
 }
 

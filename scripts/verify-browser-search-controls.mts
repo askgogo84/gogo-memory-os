@@ -882,7 +882,10 @@ let duplicateExecutions=0
 const reuseDb={from:(table:string)=>{
  assert.equal(table,'agent_runs')
  const filters:Array<(row:any)=>boolean>=[]
- const q:any={select:()=>q,eq:(key:string,value:any)=>{filters.push(r=>r[key]===value);return q},gte:(key:string,value:any)=>{filters.push(r=>r[key]>=value);return q},order:()=>q,limit:()=>q,maybeSingle:async()=>({data:runningReads.find(r=>filters.every(f=>f(r)))||null,error:null}),insert:()=>{throw new Error('duplicate task insert')}}
+ const q:any={select:()=>q,eq:(key:string,value:any)=>{filters.push(r=>r[key]===value);return q},gte:(key:string,value:any)=>{filters.push(r=>r[key]>=value);return q},
+  // 26 Oct: a background-queued read is still the same task (status running, or paused while queued/claimed).
+  or:(expr:string)=>{assert.match(expr,/status\.eq\.running/);assert.match(expr,/background_read_queued/);filters.push(r=>r.status==='running'||(r.status==='paused'&&(['background_read_queued','background_read_running','whatsapp_browser_response_timeout'].includes(r.error)||String(r.error||'').startsWith('background_resume_claimed'))));return q},
+  order:()=>q,limit:()=>q,maybeSingle:async()=>({data:runningReads.find(r=>filters.every(f=>f(r)))||null,error:null}),insert:()=>{throw new Error('duplicate task insert')}}
  return q
 }}
 const reuseCommand:any={}
@@ -903,6 +906,16 @@ const repeatedCommand=reuseCommand.parseBrowserCommand(repeatedText)
 runningReads.push({id:'original-read',telegram_id:'42',type:'secure_browser',status:'running',started_at:new Date().toISOString(),'metadata_json->>mode':'read','metadata_json->>url':repeatedCommand.url,'metadata_json->>objective':repeatedCommand.objective})
 const reused=await reuseCommand.tryRunBrowserCommand({actor:{legacyTelegramId:42},surface:'web',text:repeatedText})
 assert.equal(reused.runId,'original-read')
+{
+  // A queued (paused) background read for the same page is reused too; a stale paused row with another error is not.
+  runningReads.length=0
+  runningReads.push({id:'stale-paused',telegram_id:'42',type:'secure_browser',status:'paused',error:'human_auth_required',started_at:new Date().toISOString(),'metadata_json->>mode':'read','metadata_json->>url':repeatedCommand.url,'metadata_json->>objective':repeatedCommand.objective})
+  runningReads.push({id:'queued-read',telegram_id:'42',type:'secure_browser',status:'paused',error:'background_read_queued',started_at:new Date().toISOString(),'metadata_json->>mode':'read','metadata_json->>url':repeatedCommand.url,'metadata_json->>objective':repeatedCommand.objective})
+  const queuedReuse=await reuseCommand.tryRunBrowserCommand({actor:{legacyTelegramId:42},surface:'web',text:repeatedText})
+  assert.equal(queuedReuse.runId,'queued-read')
+  runningReads.length=0
+  runningReads.push({id:'original-read',telegram_id:'42',type:'secure_browser',status:'running',started_at:new Date().toISOString(),'metadata_json->>mode':'read','metadata_json->>url':repeatedCommand.url,'metadata_json->>objective':repeatedCommand.objective})
+}
 assert.equal(reused.status,'running')
 assert.equal(duplicateExecutions,0)
 assert.match(reused.text,/same browser task/)

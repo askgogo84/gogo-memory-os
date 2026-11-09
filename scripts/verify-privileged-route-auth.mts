@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
+import * as twilioSignature from '../lib/security/webhook-signature'
 import {
   isInternalServiceAuthorized,
   internalServiceAuthHeaders,
@@ -276,6 +277,83 @@ function adminStats(verdict: any) {
   const source = readFileSync('app/api/dev/webhook/route.ts', 'utf8')
   check('dev/webhook: no credential or provider-control imports/calls', !/(?:VERCEL_TOKEN|GITHUB_TOKEN|ADMIN_PHONES|sendWhatsAppMessage|triggerRedeploy|createGitHubIssue|fetch\s*\(|req\.json\s*\()/i.test(source))
   check('dev/webhook: POST disabled independent of preview/production env', !/(?:VERCEL_ENV|NODE_ENV)/.test(source))
+}
+
+// ── 5. Actual inbound POST: authenticated form must be unambiguous ──────────
+// Real Request parsing and real signature policy; every downstream boundary is
+// inert. A duplicate event stops valid controls before account/provider actions.
+{
+  const url = 'https://example.invalid/api/webhooks/whatsapp'
+  const production = { NODE_ENV: 'production', TWILIO_AUTH_TOKEN: 'inert-test-token', TWILIO_WHATSAPP_WEBHOOK_URL: url }
+  const params = { From: 'whatsapp:+12025550101', Body: 'synthetic instruction', NumMedia: '0', MessageSid: 'SMsynthetic', ProfileName: 'Synthetic' }
+  const signature = twilioSignature.computeTwilioSignature(production.TWILIO_AUTH_TOKEN, url, params)
+  const source = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')
+  const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
+  async function inbound(entries: [string, string | Blob][], sig: string | null, expected: number, env: Record<string, string | undefined> = production, multipart = false) {
+    const claims: any[] = [], unexpected: string[] = []
+    let audits = 0
+    const exports: any = {}
+    const blocked = new Proxy({}, { get: (_target, name) => {
+      if (name === '__esModule') return false
+      return () => { unexpected.push(String(name)); throw new Error(`Unexpected external boundary: ${String(name)}`) }
+    } })
+    class ResponseFixture { status: number; constructor(_body: string, init?: { status?: number }) { this.status = init?.status ?? 200 } }
+    const mocks: Record<string, any> = {
+      'next/server': { NextResponse: ResponseFixture },
+      '@/lib/qa-trace': { runWithQaTrace: (_sid: string, fn: () => unknown) => fn() },
+      '@/lib/security/webhook-signature': { ...twilioSignature, auditInboundTwilioSignature: (input: any) => { audits++; return twilioSignature.auditInboundTwilioSignature({ ...input, env }) } },
+      '@/lib/agent/brain-runtime-guard': { claimInboundEvent: async (input: any) => { claims.push(input); return { duplicate: true, status: 'inert_completed' } } },
+    }
+    runInNewContext(code, { exports, module: { exports }, require: (name: string) => mocks[name] || blocked, console: { log() {}, error() {} }, process: { env: {} }, URL, Buffer, Date, setTimeout, clearTimeout })
+    const headers = new Headers()
+    if (sig !== null) headers.set('x-twilio-signature', sig)
+    let body: FormData | URLSearchParams
+    if (multipart) { body = new FormData(); for (const [key, value] of entries) body.append(key, value) }
+    else { body = new URLSearchParams(entries as [string, string][]); headers.set('content-type', 'application/x-www-form-urlencoded') }
+    const response = await exports.POST(new Request(url, { method: 'POST', headers, body }))
+    assert.equal(response.status, expected)
+    assert.equal(unexpected.length, 0, 'no account/provider/DB/worker boundary is allowed')
+    assert.equal(claims.length, expected === 200 ? 1 : 0)
+    assert.equal(audits, expected === 400 ? 0 : 1, 'ambiguous input must reject before signature audit')
+    if (expected === 200) { assert.equal(claims[0].externalUserId, '+12025550101'); assert.equal(claims[0].eventKey, 'SMsynthetic') }
+  }
+  const original = Object.entries(params) as [string, string][]
+  await inbound(original, signature, 200)
+  await inbound(original, signature, 200, production, true)
+  await inbound(original, null, 403)
+  await inbound(original, 'AAAA=', 403)
+  await inbound(original, signature, 403, { ...production, TWILIO_AUTH_TOKEN: '' })
+  await inbound(Object.entries({ ...params, From: 'whatsapp:+12025550102' }), signature, 403)
+  for (const [key, value] of Object.entries({ ...params, Body: 'different instruction', NumMedia: '1', MessageSid: 'SMdifferent', MediaUrl0: 'https://example.invalid/inert', ButtonPayload: 'done', NewTwilioField: 'one' })) {
+    const signedParams = { ...params, [key]: value }
+    const signed = twilioSignature.computeTwilioSignature(production.TWILIO_AUTH_TOKEN, url, signedParams)
+    const unique = Object.entries(signedParams) as [string, string][]
+    await inbound([[key, 'different first'], ...unique], signed, 400)
+    await inbound([...unique, [key, 'different last']], signed, 400)
+    await inbound([...unique, [key, value]], signed, 400)
+  }
+  await inbound([['From', 'different first'], ...original], signature, 400, { ...production, WEBHOOK_SIGNATURE_ENFORCE: '0' })
+  await inbound([['From', new Blob(['synthetic file'])], ...original], signature, 400, production, true)
+  await inbound([...original, ['NewTwilioField', new Blob(['synthetic file'])]], signature, 400, production, true)
+  const future: Record<string, string> = Object.assign(Object.create(null), params)
+  future.NewTwilioField = 'unicode ✓ & exact spaces '
+  future.__proto__ = 'literal prototype field'
+  Object.defineProperty(future, 'constructor', { value: 'literal constructor field', enumerable: true })
+  await inbound(Object.entries(future), twilioSignature.computeTwilioSignature(production.TWILIO_AUTH_TOKEN, url, future), 200)
+  const direct = new FormData()
+  direct.append('EmptyFutureField', '')
+  direct.append('__proto__', 'literal field')
+  const parsed = twilioSignature.parseTwilioSignatureParams(direct)!
+  assert.equal(Object.getPrototypeOf(parsed), null)
+  assert.equal(parsed.EmptyFutureField, '')
+  assert.equal(parsed.__proto__, 'literal field')
+  assert.equal(twilioSignature.auditInboundTwilioSignature({ requestUrl: 'invalid-url', headers: new Headers({ 'x-twilio-signature': signature }), params, route: 'inert-test', env: { NODE_ENV: 'production', TWILIO_AUTH_TOKEN: production.TWILIO_AUTH_TOKEN } }).reject, true)
+  for (const mode of ['0', 'false', 'off', 'log-only']) assert.equal(twilioSignature.signatureEnforcementMode({ ...production, WEBHOOK_SIGNATURE_ENFORCE: mode }), 'log-only')
+  assert.equal(twilioSignature.signatureEnforcementMode(production), 'strict')
+  assert.equal(twilioSignature.signatureEnforcementMode({ ...production, WEBHOOK_SIGNATURE_ENFORCE: 'typo' }), 'strict')
+  assert.equal(twilioSignature.signatureEnforcementMode({ ...production, NODE_ENV: 'test' }), 'log-only')
+  assert.equal(twilioSignature.signatureEnforcementMode({ ...production, NODE_ENV: 'test', WEBHOOK_SIGNATURE_ENFORCE: '1' }), 'enforce')
+  console.log('actual inbound form/signature binding controls passed')
 }
 
 if (failures > 0) {
