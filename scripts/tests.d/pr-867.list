@@ -1,0 +1,3 @@
+# tests added by PR #867
+npx tsx scripts/verify-minimax-evaluation.mts
+npx tsx scripts/verify-minimax-gateway-evaluation.mts

@@ -77,7 +77,7 @@ export async function cheapComplete(p: { taskClass: AllowedTaskClass; prompt: st
   if (!providers.length) return null
   const now = Date.now()
   const coolingDown = new Set([...cooling].filter(([, until]) => until > now).map(([id]) => id))
-  const decision = routeTask({ taskClass: p.taskClass, containsPersonalData: false, text: p.scanText, providers, coolingDown })
+  const decision = routeTask({ taskClass: p.taskClass, containsPersonalData: false, text: `${p.scanText}\n${p.prompt}`, providers, coolingDown })
   if (decision.allowed !== true) { console.log('CHEAP_INFERENCE_REFUSED:', JSON.stringify({ taskClass: p.taskClass, reason: (decision as any).reason })); return null }
   const started = Date.now()
   try {
