@@ -1,0 +1,3 @@
+# OAuth browser binding for Google Calendar / Gmail connect (port of old PR #850)
+npx tsx scripts/verify-oauth-browser-binding.mts
+node scripts/verify-gmail-callback-consent.mjs
