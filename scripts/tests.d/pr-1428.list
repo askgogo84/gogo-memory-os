@@ -1,0 +1,2 @@
+# tests added by PR #1428
+npx tsx scripts/verify-email-attention-card-binding-testonly.mts
