@@ -393,6 +393,9 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
         .eq('telegram_id', telegramId),
     ])
 
+    // Same Brain 3.0: the semantic graph forgets too (retracted, not deleted); flag-gated, never blocks the clear.
+    try { const sem = await import('@/lib/semantic/repo'); const repo = typeof sem?.semanticRepoFor === 'function' ? await sem.semanticRepoFor({ legacyTelegramId: Number(telegramId) }) : null; if (repo) await repo.forgetEverything() } catch (e: any) { console.error('SEMANTIC_FORGET_FAILED:', String(e?.message || e).slice(0, 120)) }
+
     return `🧠 *Memory cleared*\n\nI deleted saved personal memories and reset your Memory Twin patterns. Usage/system logs were not touched.`
   }
 
