@@ -284,7 +284,7 @@ async function main() {
   // Actual briefing route paginates beyond the old 150-user cap, including negative
   // legacy IDs, catches up later today, and propagates final preferences into ready.
   let scanCursor=null,seen=[],disabled=false
-  const users=Array.from({length:161},(_,i)=>({telegram_id:i-80,name:'Fixture',whatsapp_id:'+15555550100',briefing_enabled:true,briefing_time:'00:00'}))
+  const users=Array.from({length:161},(_,i)=>({telegram_id:i<80?i-80:i-79,name:'Fixture',whatsapp_id:'+15555550100',briefing_enabled:true,briefing_time:'00:00'}))
   const briefingDb={from(table){let after=-Infinity,id=null,payload,write=false;const q={
     select:()=>q,or:()=>q,order:()=>q,limit:()=>q,gt:(k,v)=>{after=v;return q},eq:(k,v)=>{if(k==='telegram_id')id=v;return q},maybeSingle:()=>q,
     upsert:p=>{write=true;payload=p;return q},then(resolve,reject){
