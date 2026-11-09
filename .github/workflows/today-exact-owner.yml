@@ -1,0 +1,29 @@
+name: Today Exact Owner (synthetic)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/dashboard/(app)/today/page.tsx'
+      - 'scripts/verify-today-exact-owner.mts'
+      - '.github/workflows/today-exact-owner.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-today:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install fixture dependencies
+        run: npm ci
+      - name: Verify original Today page reads under inert fake session and database
+        run: npx --no-install tsx scripts/verify-today-exact-owner.mts

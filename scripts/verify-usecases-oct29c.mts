@@ -71,7 +71,10 @@ const fri = rw.parseReplyWatch("If Nithin doesn't reply to my last email by Frid
 assert.equal(fri.name, 'Nithin'); assert.equal(fri.atIso, '2026-10-30T04:30:00.000Z', 'Friday 10:00 IST')
 assert.equal(rw.replyCheckName(fri.message), 'Nithin')
 assert.equal(rw.parseReplyWatch('Remind me to email Nithin on Friday'), null)
-assert.match(src('app/api/cron/reminders/route.ts'), /latestEmailFrom\(Number\(reminder\.telegram_id\), name/)
+assert.match(src('app/api/cron/reminders/route.ts'), /latestEmailFrom\(gmailOwnerId, name/)
+// The Gmail lookup never receives a rounded 64-bit owner: only an exact owner that round-trips is converted.
+assert.match(src('app/api/cron/reminders/route.ts'), /const gmailOwner = exactReminderOwner\(reminder\.telegram_id\)/)
+assert.doesNotMatch(src('app/api/cron/reminders/route.ts'), /latestEmailFrom\(Number\(/)
 console.log('✓ "if Nithin doesn\'t reply by Friday" checks Gmail on Friday and nudges only without a reply')
 
 // Alerts, connections, follow-ups, documents.
