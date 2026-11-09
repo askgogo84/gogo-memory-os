@@ -19,6 +19,8 @@ import { splitChatText } from '@/lib/dashboard/chat-text'
 import { MobileMenuButton } from '@/components/dashboard/mobile-nav'
 import { RunStepsLine } from '@/components/dashboard/run-steps'
 import { OpenUIComparisonInline } from '@/components/dashboard/openui-comparison-inline'
+import { ListenButton } from '@/components/dashboard/listen-button'
+import { BriefCard, InlineApprovals, WorkCards, type BriefView } from '@/components/dashboard/chat-cards'
 import { LOCATION_STORAGE_KEY, locationIsStale, locationTag, parseApproxLocation, parseLocationPreference, type LocationPreference } from '@/lib/dashboard/approx-location'
 
 type ChatMessage={
@@ -75,7 +77,11 @@ function connectCard(text:string){
 
 type Chip={title:string;description?:string}
 
-function Message({message,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPick?:(title:string)=>void}){
+// Same rule as lib/security/outbound-identifiers brandSafe (kept local: the chat harness loads this file alone).
+const brandSafe=(t:string)=>String(t??'').split(/(\u2063[\s\S]*?\u2063)/).map(part=>part.length>1&&part.startsWith('\u2063')&&part.endsWith('\u2063')?part:part.replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g,m=>/['’]s$/.test(m)?'Gogo’s':'Gogo').replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g,'our AI provider')).join('').replace(/\u2063/g,'')
+
+function Message({message:incoming,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPick?:(title:string)=>void}){
+  let message=incoming
   if(message.role==='user'){
     return <div className="flex justify-end">
       <div className="max-w-[86%] whitespace-pre-wrap break-words rounded-[20px] bg-[#1c1c1c] px-5 py-3.5 text-[16px] leading-[1.65] text-[#f2efea] sm:max-w-[72%] sm:text-[17px]">
@@ -84,6 +90,8 @@ function Message({message,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPic
       </div>
     </div>
   }
+  // Older saved replies may name the model; the assistant is always Gogo.
+  message={...message,content:brandSafe(message.content)}
   const attentionCard=parseAttentionCard(message.content)
   return <div className="flex items-start gap-3 sm:gap-3.5">
     <Avatar size={40}/>
@@ -94,7 +102,9 @@ function Message({message,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPic
         {message.mediaUrl&&<img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 rounded-xl border border-[#2a2a2a]"/>}
       </div>}
       {connectCard(message.content)}
+      <WorkCards text={message.content} createdAt={message.createdAt}/>
       <OpenUIComparisonInline text={message.content}/>
+      {!attentionCard&&<ListenButton text={message.content}/>}
       {chips&&chips.length>0&&onPick&&<div className="mt-4 flex flex-wrap gap-2.5" role="group" aria-label="Quick answers">
         {chips.map(c=><button key={c.title} type="button" onClick={()=>onPick(c.title)} className="min-h-12 rounded-full border border-[#2f2f2f] bg-[#161616] px-5 text-left text-[16px] font-semibold text-[#f2efea] transition hover:border-[#4cd0bd] hover:bg-[#123d38] hover:text-[#8be6d8] sm:text-[17px]">
           {c.title}{c.description&&<span className="ml-2 text-[14px] font-normal text-[#a8a8a4]">{c.description}</span>}
@@ -149,6 +159,8 @@ export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initial
   const [locNote,setLocNote]=useState('')
   // Duet parity step 4: one ongoing thread ('') plus optional channels. Memory, tasks and approvals stay shared.
   const [channels,setChannels]=useState<ChatChannel[]>([])
+  // v2 (9 Nov): the saved topic brief (chips) replaces the server summary box when today's exists.
+  const [topicBrief,setTopicBrief]=useState<BriefView|null>(null)
   const [channel,setChannel]=useState('')
   const channelRef=useRef('')
   const refreshRef=useRef<((initial?:boolean)=>Promise<void>)|null>(null)
@@ -262,6 +274,7 @@ export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initial
         if(!live||sendingRef.current||version!==conversationVersion.current)return
         const next=Array.isArray(chat.messages)?chat.messages:[]
         setMessages(current=>JSON.stringify(current)===JSON.stringify(next)?current:next)
+        setTopicBrief(chat.brief&&Array.isArray(chat.brief.items)?chat.brief:null)
         setError(current=>current===HISTORY_LOAD_ERROR?'':current)
       }catch{if(initial&&live&&!sendingRef.current&&version===conversationVersion.current)setError(HISTORY_LOAD_ERROR)}
       finally{refreshing=false;if(live)setLoading(false)}
@@ -418,7 +431,7 @@ export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initial
       </header>
 
       <div ref={messageScrollRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4 pt-16 sm:px-6 lg:px-10 lg:py-6">
-        {brief&&!channel&&!historyOpen&&<ChatBriefCard brief={brief}/>}
+        {brief&&!topicBrief&&!channel&&!historyOpen&&<ChatBriefCard brief={brief}/>}
         {loading&&<div className="py-16 text-center text-[16px] text-[#a8a8a4]">Bringing your conversation in…</div>}
         {!loading&&visible.length===0&&<div className="mx-auto max-w-[980px] py-8 text-center lg:py-14">
           <div className="mx-auto w-fit"><Avatar state={gogoState} size={104}/></div>
@@ -446,7 +459,10 @@ export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initial
           </div>}
         </div>}
         <div className="mx-auto flex max-w-[980px] flex-col gap-6">
+          {topicBrief&&!channel&&!historyOpen&&<BriefCard brief={topicBrief} channels={channels} onOpenChannel={pickChannel} onAsk={v=>void submit(v)}/>}
           {visible.map((message,index)=><Message key={`${index}-${message.createdAt||''}`} message={message} chips={index===visible.length-1?lastChips:undefined} onPick={v=>void submit(v)}/>)}
+          {/* v2 (9 Nov): approvals appear in the conversation where you asked; the same cards as Tasks. */}
+          {!sending&&snapshot.approvals.length>0&&<InlineApprovals approvals={snapshot.approvals} onChanged={note=>{setMessages(m=>[...m,{role:'assistant',content:note}]);setSnapshot(c=>({...c,approvals:[]}));void loadSnapshot()}}/>}
           {/* While the reply is pending, the live line follows the task Gogo just started (real steps only). */}
           {sending&&<RunStepsLine since={sentAt} fallback="Gogo is working"/>}
           <div ref={endRef}/>

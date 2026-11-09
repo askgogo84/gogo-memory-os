@@ -34,6 +34,8 @@ export async function GET(req: NextRequest) {
     )
   }
 
+  // 4 Nov review P3: even this internal diagnostic needs the person's saved Gmail yes.
+  if ((await import('@/lib/agent/gmail-consent').then(m => m.gmailConsentState(String(user.telegram_id))).catch(() => 'missing')) !== 'on') return NextResponse.json({ ok: false, stage: 'consent', error: 'gmail_consent_missing' }, { status: 403 })
   let accessToken = decryptGoogleToken(String(user.gmail_access_token || '')) || null
   let refreshed = false
   let emails: any[] = []
