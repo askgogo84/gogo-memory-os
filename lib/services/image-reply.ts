@@ -34,11 +34,18 @@ export async function createImage(telegramId: number | string, text: string): Pr
   const attempts: Array<Record<string, unknown>> = [
     { model: process.env.GOGO_IMAGE_MODEL || 'gpt-image-1', prompt: prompt(text), size: '1024x1024' },
     { model: 'dall-e-3', prompt: prompt(text), size: '1024x1024', response_format: 'b64_json' },
+    // 28 Oct live: dall-e-3 rejected response_format; ask without it and download the returned link.
+    { model: 'dall-e-3', prompt: prompt(text), size: '1024x1024' },
   ]
   for (const params of attempts) {
     try {
       const res: any = await openai.images.generate(params as any)
-      const b64 = res?.data?.[0]?.b64_json
+      let b64 = res?.data?.[0]?.b64_json
+      const link = res?.data?.[0]?.url
+      if (!b64 && link) {
+        const got = await fetch(String(link), { signal: AbortSignal.timeout(20000) })
+        if (got.ok) b64 = Buffer.from(await got.arrayBuffer()).toString('base64')
+      }
       if (!b64) continue
       const path = `${telegramId}/images/${randomUUID()}.png`
       const { error } = await supabaseAdmin.storage.from(BUCKET).upload(path, Buffer.from(b64, 'base64'), { contentType: 'image/png', upsert: false })
