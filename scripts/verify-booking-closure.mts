@@ -91,7 +91,12 @@ assert.match(executeRoute,/executeApprovedBookingCalendar/)
 
 assert.match(watcher,/lifecycle_state:cancelled\?'cancelled':'watching'/)
 assert.doesNotMatch(watcher,/needs_attention/)
-assert.match(watcher,/cancellationNotified:true/)
+// Provider-ticket acceptance, not merely an attempted push, controls the legacy notification flag.
+assert.match(watcher,/cancellationNotified:pushReceipt==='provider_accepted'/)
+assert.match(watcher,/cancellationPushState:pushReceipt/)
+assert.match(watcher,/Number\.isSafeInteger\(sent\)/)
+assert.match(watcher,/Number\.isSafeInteger\(rejected\)/)
+assert.doesNotMatch(watcher,/cancellationNotified:true/)
 assert.match(watcher,/await complete\(row\.id/)
 assert.match(watcher,/sendAgentPush/)
 assert.match(cron,/CRON_SECRET/)

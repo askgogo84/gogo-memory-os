@@ -1,4 +1,5 @@
 import { getSession } from '@/lib/dashboard/session'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { safeDocumentSummary, redactDocumentMetadata } from '@/lib/services/document-summary-privacy'
 
@@ -18,9 +19,9 @@ function size(bytes:number|null){
 
 export default async function LibraryPage(){
   const session=await getSession()
-  const tgNum=parseInt(session?.telegramId||'',10)
-  const {data,error}=Number.isFinite(tgNum)
-    ?await supabaseAdmin.from('documents').select('id,doc_type,title,summary,doc_date,expires_on,mime,size_bytes,created_at,extracted').eq('telegram_id',tgNum).order('created_at',{ascending:false}).limit(100)
+  const ownerId=exactSessionOwnerId(session?.telegramId)
+  const {data,error}=ownerId
+    ?await supabaseAdmin.from('documents').select('id,doc_type,title,summary,doc_date,expires_on,mime,size_bytes,created_at,extracted').eq('telegram_id',ownerId).order('created_at',{ascending:false}).limit(100)
     :{data:[],error:null}
 
   return <div className="mx-auto w-full max-w-[1100px] pb-10">
