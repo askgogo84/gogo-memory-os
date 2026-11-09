@@ -1043,7 +1043,9 @@ async function brandSafeResponse(res: any) {
     if (!body || typeof body.text !== 'string') return res
     // Same rule as lib/security/outbound-identifiers brandSafe, inline: route harnesses cannot load extra modules.
     // Quoted text between U+2063 markers is left as written; the markers stay for the chat screen to strip.
-    const text = String(body.text).split(/(\u2063[\s\S]*?\u2063)/).map((part: string) => part.length > 1 && part.startsWith('\u2063') && part.endsWith('\u2063') ? part : part.replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g, (m: string) => /['’]s$/.test(m) ? 'Gogo’s' : 'Gogo').replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, 'our AI provider')).join('')
+    // Approval prompts, double-quoted text and factual mentions of Anthropic are left as written (#1104).
+    const rw = ((s:string)=>/\bReply\s+\*?YES\b|\bPlease confirm\b|^\s*Approve\b/im.test(s)||/\bClaude\s+(?:Duet|Cowork|Design|Desktop|Chrome|Max|Pro|Team|Enterprise)\b/.test(s)||(/\b(?:ChatGPT|GPT|OpenAI|Gemini|Perplexity|Copilot|Manus|Muse|Instinct|Wajo|Hermes|Grok|Mistral|Llama|DeepSeek|Dots)\b/i.test(s)&&/\bClaude\b/.test(s))?s:s.split(/("[^"\n]*"|“[^”\n]*”)/).map((q:string,i:number)=>i%2?q:q.replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g,(m:string)=>/['’]s$/.test(m)?'Gogo’s':'Gogo').replace(/\b(made|built|created|developed|trained|powered)\s+by\s+Anthropic(?![\w@/-]|\.com\b)/gi,'$1 by our AI provider')).join(''))
+    const text = String(body.text).split(/(\u2063[\s\S]*?\u2063)/).map((part: string) => part.length > 1 && part.startsWith('\u2063') && part.endsWith('\u2063') ? part : rw(part)).join('')
     const noBoss = text.replace(/,[ \t]*boss(?=[ \t]*(?:[.!?…:]|$))/gim, '').replace(/^([ \t]*(?:got it|okay|ok|sure|done|noted|alright|right|hey|hi|hello))[,]?[ \t]+boss\b/gim, '$1')
     return noBoss === body.text ? res : NextResponse.json({ ...body, text: noBoss }, { status: res.status })
   } catch { return res }

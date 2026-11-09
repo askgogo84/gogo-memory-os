@@ -49,13 +49,21 @@ export function brandSafe(text: string): string {
 }
 // 6 Nov live: a competitor summary listed "Muse, Hermes, Claude, ChatGPT…" and came out as "…Gogo…". When Claude is
 // named beside other AI products, or as a product (Claude Duet, Claude Cowork, Claude Design), it is a product name.
-const OTHER_AI = /\b(?:ChatGPT|OpenAI|Gemini|Perplexity|Copilot|Manus|Muse|Instinct|Wajo|Hermes|Grok|Mistral|Llama|DeepSeek|Dots)\b/i
+const OTHER_AI = /\b(?:ChatGPT|GPT|OpenAI|Gemini|Perplexity|Copilot|Manus|Muse|Instinct|Wajo|Hermes|Grok|Mistral|Llama|DeepSeek|Dots)\b/i
 const CLAUDE_PRODUCT = /\bClaude\s+(?:Duet|Cowork|Design|Desktop|Chrome|Max|Pro|Team|Enterprise)\b/
+// 9 Nov (#1104): branding must never change what the owner approves or what a source says. An approval prompt is
+// shown exactly as it will be executed (a contact may really be called Claude), double-quoted text is someone
+// else's words, and "Anthropic" is renamed only where it names the assistant's maker ("made by Anthropic"), not in
+// factual statements about the company.
+const APPROVAL_PROMPT = /\bReply\s+\*?YES\b|\bPlease confirm\b|^\s*Approve\b/im
+const QUOTED_SPAN = /("[^"\n]*"|“[^”\n]*”)/
+const MAKER_PHRASE = /\b(made|built|created|developed|trained|powered)\s+by\s+Anthropic(?![\w@/-]|\.com\b)/gi
 function brandSafeOutside(text: string): string {
-  if (CLAUDE_PRODUCT.test(text) || (OTHER_AI.test(text) && /\bClaude\b/.test(text))) return text.replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, m => m)
-  return String(text ?? '')
+  const s = String(text ?? '')
+  if (APPROVAL_PROMPT.test(s) || CLAUDE_PRODUCT.test(s) || (OTHER_AI.test(s) && /\bClaude\b/.test(s))) return s
+  return s.split(QUOTED_SPAN).map((part, i) => i % 2 ? part : part
     .replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g, m => /['’]s$/.test(m) ? 'Gogo’s' : 'Gogo')
-    .replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, 'our AI provider')
+    .replace(MAKER_PHRASE, '$1 by our AI provider')).join('')
 }
 
 
