@@ -45,9 +45,13 @@ async function notify(telegramId: number, key: string, text: string) {
     prepare: async () => {}, ready: async () => true,
     send: async token => String((await sendWhatsApp(String(user.whatsapp_id), text, null, token))?.sid || ''),
   }).catch((err: any) => { console.error('INBOUND_NOTIFY_FAILED:', err?.message || err); return 'failed' })
-  // The chat history carries the card so "draft 1" / "not important 1" bind to it on WhatsApp and the dashboard.
-  if (result !== 'skipped' && result !== 'failed') await supabaseAdmin.from('conversations').insert({ telegram_id: telegramId, role: 'assistant', content: text }).then(() => {}, () => {})
-  return result !== 'failed'
+  // Only a recorded provider acceptance can seed a visible conversation card or the
+  // inbound message's notified_at receipt. "skipped", "deferred", "suppressed",
+  // "persistence_failed" and "outcome_unknown" are NOT evidence of a send.
+  // Acceptance still is not verified delivery; the delivery ledger reconciles it.
+  // Never retry an unknown outcome from here.
+  if (result === 'provider_accepted') await supabaseAdmin.from('conversations').insert({ telegram_id: telegramId, role: 'assistant', content: text }).then(() => {}, () => {})
+  return result === 'provider_accepted'
 }
 
 export type InboundResult = { status: 'stored' | 'duplicate' | 'unknown_alias' | 'confirmation' | 'ignored'; pushed?: boolean; telegramId?: number }

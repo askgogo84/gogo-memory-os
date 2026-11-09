@@ -54,6 +54,12 @@ function encodeState(payload: SignedGoogleState) {
   return signature ? `${encoded}.${signature}` : null
 }
 
+// Gmail OAuth owner IDs flow through JavaScript numbers and eventually authorize a
+// service-role credential write. Never sign or accept an imprecise BIGINT identity.
+function exactGmailStateOwner(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value !== 0
+}
+
 function decodeState(token: string, purpose: SignedGoogleState['purpose']): SignedGoogleState | null {
   const [encoded, supplied] = String(token || '').split('.')
   if (!encoded || !supplied) return null
@@ -64,7 +70,7 @@ function decodeState(token: string, purpose: SignedGoogleState['purpose']): Sign
   if (a.length !== b.length || !timingSafeEqual(a, b)) return null
   try {
     const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as SignedGoogleState
-    if (payload?.purpose !== purpose || !Number.isFinite(payload?.tg) || payload.tg === 0) return null
+    if (payload?.purpose !== purpose || !exactGmailStateOwner(payload?.tg)) return null
     if (!Number.isFinite(payload?.exp) || payload.exp <= Date.now()) return null
     if (!payload?.nonce || String(payload.nonce).length < 12) return null
     return payload
@@ -76,7 +82,7 @@ function decodeState(token: string, purpose: SignedGoogleState['purpose']): Sign
 export function buildGmailConnectUrl(telegramId: number): string | null {
   // WhatsApp users carry a NEGATIVE telegram_id by design (resolve-user.ts generateNegativeTelegramId),
   // so only 0 is invalid. A positive-only check here refused every WhatsApp user a connect link.
-  if (!Number.isFinite(telegramId) || telegramId === 0) return null
+  if (!exactGmailStateOwner(telegramId)) return null
   const token = encodeState({
     tg: telegramId,
     purpose: 'connect',
@@ -91,7 +97,7 @@ export function verifyGmailConnectToken(token: string): number | null {
 }
 
 export function buildGmailSendConnectUrl(telegramId:number):string|null {
-  if(!Number.isFinite(telegramId)||telegramId===0)return null
+  if(!exactGmailStateOwner(telegramId))return null
   const token=encodeState({
     tg:telegramId,
     purpose:'send_connect',
@@ -106,6 +112,7 @@ export function verifyGmailSendConnectToken(token:string):number|null {
 }
 
 function issueGmailOauthState(telegramId: number): string | null {
+  if (!exactGmailStateOwner(telegramId)) return null
   return encodeState({
     tg: telegramId,
     purpose: 'oauth',
@@ -115,6 +122,7 @@ function issueGmailOauthState(telegramId: number): string | null {
 }
 
 function issueGmailSendOauthState(telegramId:number):string|null {
+  if(!exactGmailStateOwner(telegramId))return null
   return encodeState({
     tg:telegramId,
     purpose:'send_oauth',
@@ -446,10 +454,11 @@ export async function fetchGmailAttentionThreads(accessToken:string,maxThreads=1
 }
 
 
-export async function searchGmailThreads(accessToken:string,searchText:string,maxThreads=20):Promise<GmailAttentionThread[]>{
-  const q=String(searchText||'').trim().slice(0,180)
+export async function searchGmailThreads(accessToken:string,searchText:string,maxThreads=20,options:{raw?:boolean}={}):Promise<GmailAttentionThread[]>{
+  const q=String(searchText||'').trim().slice(0,options.raw?400:180)
   if(!q)return []
-  const terms=q.replace(/["{}()]/g,' ').replace(/\s+/g,' ').trim()
+  // A caller-built Gmail query (options.raw) keeps its operators: subject:(…), quotes, -from:.
+  const terms=options.raw?q:q.replace(/["{}()]/g,' ').replace(/\s+/g,' ').trim()
   const gmailQuery=encodeURIComponent(`${terms} newer_than:90d -in:spam -in:trash`)
   const res=await gmailFetchJson(
     accessToken,

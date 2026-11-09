@@ -4,7 +4,7 @@ import type { AgentCapability, AgentPermissionLevel } from './policy'
 
 const DEFAULT_LEVEL:Record<AgentCapability,AgentPermissionLevel>={
   memory:'ask',files:'ask',reminders:'auto',lists:'auto',tasks:'auto',
-  email:'draft',calendar:'ask',browser:'draft',contacts:'read',travel:'draft',payments:'ask',
+  email:'draft',calendar:'ask',browser:'draft',contacts:'read',travel:'draft',payments:'ask', merchant: 'ask',
 }
 const CAPABILITIES:AgentCapability[]=['memory','files','reminders','lists','tasks','email','calendar','browser','contacts','travel','payments']
 
