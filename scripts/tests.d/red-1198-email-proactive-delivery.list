@@ -1,0 +1,2 @@
+# red #1198 test, harness adapted to the merged #1209 claim RPC contract
+node scripts/verify-email-proactive-delivery-testonly.mjs
