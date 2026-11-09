@@ -23,6 +23,7 @@ import { isCalendarListName } from '@/lib/data/calendar-word'
 import { buildNaturalAssetRetrievalReply } from '@/lib/services/asset-natural-retrieval'
 import { handleLinkVaultText } from '@/lib/services/link-vault'
 import { internalServiceAuthHeaders } from '@/lib/security/cron-auth'
+import { signMeetingUploadToken } from '@/lib/security/meeting-upload-token'
 import type { JevShadowResult } from '@/lib/typesafe/jev-shadow'
 import { mayClaim, type RuleCapability } from '@/lib/agent/semantic-gate'
 import { isDriveWriteRequest } from '@/lib/bot/drive-write-request'
@@ -110,7 +111,9 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
       (t.includes('record') && t.length < 25)) {
     const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
     const encodedPhone = encodeURIComponent(phone)
-    const recordUrl = `${appUrl}/record.html?phone=${encodedPhone}&autostart=1`
+    // Signed for this owner's number; the upload route refuses unsigned uploads.
+    const uploadToken = encodeURIComponent(signMeetingUploadToken(phone))
+    const recordUrl = `${appUrl}/record.html?phone=${encodedPhone}&t=${uploadToken}&autostart=1`
     return (
       `🎙️ *AskGogo Meeting Recorder*\n\n` +
       `Tap the link below — recording starts automatically in your browser. Lock your screen anytime, recording continues.\n\n` +
