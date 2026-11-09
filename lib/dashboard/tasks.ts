@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 
 export type DashboardTask = {
   id: string
@@ -15,8 +16,12 @@ export type DashboardTasks = {
 } | { ok: false }
 
 export async function getDashboardTasks(telegramId: string): Promise<DashboardTasks> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return { ok: true, open: [], completed: [] }
+  // Never round an authenticated BIGINT owner or truncate malformed text into
+  // another person's WhatsApp identity before listing their private tasks.
+  const exactOwner = exactSessionOwnerId(telegramId)
+  if (exactOwner === null) return { ok: true, open: [], completed: [] }
+  const numeric = Number(exactOwner)
+  const tgNum = Number.isSafeInteger(numeric) ? numeric : exactOwner
 
   try {
     const { data: user, error: userError } = await supabaseAdmin
