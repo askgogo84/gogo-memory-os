@@ -37,8 +37,8 @@ const full = {
   assert.match(text, /\*Reminders in the next 7 days\*\n3\. Call Nithin about POS · /)
   assert.doesNotMatch(text, /Renew passport/, 'one-time reminders beyond 7 days are left out')
   assert.doesNotMatch(text, /Follow up ·/, 'internal follow-up series are not listed')
-  assert.match(text, /\*Watches\*\n4\. iPhone 17 under ₹70,000 · checks every 6 hours · next /)
-  assert.match(text, /5\. AskGogo launch news · checks once a day/)
+  assert.match(text, /\*Watches\*\n4\. iPhone 17 · alert below ₹70,000 · checks every 6 hours · next /) // 4 Nov: same name + rule as "show my watches"
+  assert.match(text, /5\. AskGogo launch news · alert when the page changes · checks once a day/)
   assert.doesNotMatch(text, /internal goal review/, 'goal-review plumbing is not a user schedule')
   assert.match(text, /\*Goals Gogo is working on\*\n6\. Keep the Goa trip on track · next: Book the airport cab/)
   assert.match(text, /\*Routine\*\n7\. Morning briefing · daily at 8:30 am\n8\. Gogo check-ins · every 4 hours, quiet 22:00 to 07:00/)
