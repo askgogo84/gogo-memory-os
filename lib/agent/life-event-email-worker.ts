@@ -92,15 +92,22 @@ export function buildBoardingPassSearchTexts(event: any, action: any) {
   ].map((parts) => parts.join(' ')).filter((value, index, all) => all.indexOf(value) === index)
 }
 
-async function resolveActor(telegramId: string): Promise<AgentActor> {
+async function resolveActor(telegramId: string | number): Promise<AgentActor> {
+  // Exact owner (P0.1): exact decimal lookup, row must echo the id, unsafe ids refused (never rounded).
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) throw new Error('life_event_email_actor_missing')
+  const owner = String(telegramId ?? '').trim()
+  const legacy = Number(owner)
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner) || !Number.isSafeInteger(legacy) || String(legacy) !== owner) throw new Error('life_event_email_actor_missing')
+
   const { data, error } = await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name,gmail_connected')
-    .eq('telegram_id', Number(telegramId))
+    .eq('telegram_id', legacy)
     .maybeSingle()
   if (error) throw new Error(`life_event_email_actor_lookup_failed:${error.message}`)
   if (!data?.id || !data?.telegram_id) throw new Error('life_event_email_actor_missing')
   if (!data.gmail_connected) throw new Error('workspace_not_connected')
-  return { userId: String(data.id), legacyTelegramId: Number(data.telegram_id), whatsappId: String(data.whatsapp_id || ''), name: String(data.name || 'Gogo') }
+  if (String(data.telegram_id) !== owner) throw new Error('life_event_email_actor_missing')
+  return { userId: String(data.id), legacyTelegramId: legacy, whatsappId: String(data.whatsapp_id || ''), name: String(data.name || 'Gogo') }
 }
 
 async function claimAction(action: any, now: Date) {
