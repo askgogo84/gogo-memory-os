@@ -10,7 +10,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   canRole, cleanWorkspaceName, INVITABLE_ROLES, isMissingTableError, isWorkspaceRole, MAX_MEMBERS_PER_WORKSPACE,
-  MAX_WORKSPACES_PER_USER, memberChangeProblem, UUID_RE, whatsappIdCandidates,
+  MAX_WORKSPACES_PER_USER, memberChangeProblem, UUID_RE, whatsappIdCandidates, exactWorkspaceUserId,
   type MemberChange, type WorkspaceAction, type WorkspaceRole,
 } from './rules'
 
@@ -91,11 +91,17 @@ export async function audit(workspaceId: string, actor: string, action: string, 
 }
 
 async function displayNames(telegramIds: string[]): Promise<Map<string, string>> {
-  const numeric = [...new Set(telegramIds)].map(Number).filter(Number.isFinite)
-  if (!numeric.length) return new Map()
-  const { data, error } = await supabaseAdmin.from('users').select('telegram_id,name').in('telegram_id', numeric)
+  // PostgreSQL BIGINT identities must not round during name lookup or owner mapping.
+  const exact = [...new Set(telegramIds.map(exactWorkspaceUserId).filter((id): id is string => id !== null))]
+  if (!exact.length) return new Map()
+  const { data, error } = await supabaseAdmin.from('users').select('telegram_id,name').in('telegram_id', exact)
   if (error) { console.error('WORKSPACE_NAMES_FAILED:', String(error.code || '')); return new Map() }
-  return new Map(((data || []) as { telegram_id: unknown; name: unknown }[]).map(u => [String(u.telegram_id), String(u.name || '').trim() || 'AskGogo user']))
+  const names = new Map<string, string>()
+  for (const row of ((data || []) as { telegram_id: unknown; name: unknown }[])) {
+    const id = exactWorkspaceUserId(row.telegram_id)
+    if (id && exact.includes(id)) names.set(id, String(row.name || '').trim() || 'AskGogo user')
+  }
+  return names
 }
 
 export async function createWorkspace(telegramId: string, rawName: unknown): Promise<MyWorkspace> {
@@ -204,7 +210,9 @@ export async function inviteMember(telegramId: string, workspaceId: string, rawN
   check(error, 'invite_lookup')
   if (!users?.length) throw new WorkspaceError('user_not_found')
   if (users.length > 1) throw new WorkspaceError('ambiguous_number')
-  const invitee = String(users[0].telegram_id)
+  // Reject imprecise JSON numeric BIGINT results: coercion could invite a different owner.
+  const invitee = exactWorkspaceUserId(users[0].telegram_id)
+  if (!invitee) throw new WorkspaceError('user_not_found')
   if (await memberRow(membership.workspaceId, invitee)) throw new WorkspaceError('already_member')
   const { count, error: countError } = await supabaseAdmin.from('workspace_members')
     .select('telegram_id', { count: 'exact', head: true }).eq('workspace_id', membership.workspaceId)
