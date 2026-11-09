@@ -4,6 +4,7 @@
  * No DNS/IP pinning: security review and benign Twilio URL compatibility proof
  * are prerequisites for any production rollout.
  */
+import { isTwilioMediaCdnUrl, logRejectedTwilioRedirect } from './twilio-cdn'
 export const TWILIO_SOCIAL_PREVIEW_MAX_BYTES = 12 * 1024 * 1024
 
 const accountSidPattern = /^AC[0-9a-fA-F]{32}$/
@@ -27,7 +28,8 @@ function checkedCdnRedirect(location: string | null): URL {
   if (!location || location.length > 8192) throw new Error('Invalid Twilio CDN redirect')
   let url: URL
   try { url = new URL(location) } catch { throw new Error('Invalid Twilio CDN redirect') }
-  if (url.origin !== 'https://mms.twiliocdn.com' || url.username || url.password || url.hash || url.pathname === '/') {
+  if (!isTwilioMediaCdnUrl(url)) {
+    logRejectedTwilioRedirect('social-preview', location)
     throw new Error('Twilio media redirected outside approved HTTPS CDN')
   }
   return url
