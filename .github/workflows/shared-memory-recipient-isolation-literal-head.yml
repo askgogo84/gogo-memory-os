@@ -1,0 +1,52 @@
+name: Shared-memory recipient isolation - immutable PR head
+on:
+  pull_request:
+    paths:
+      - 'lib/bot/handlers/shared-memory.ts'
+      - 'scripts/verify-shared-memory-recipient-isolation-nov6.mts'
+      - '.github/workflows/shared-memory-recipient-isolation-literal-head.yml'
+permissions:
+  contents: read
+jobs:
+  shared-memory-recipient-literal:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+      CRON_SECRET: ci-placeholder-cron-secret
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert exact literal feature head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Locked dependency installation
+        run: npm ci
+      - name: Inert original-module two-owner sharing regression
+        run: npx tsx scripts/verify-shared-memory-recipient-isolation-nov6.mts
+      - name: Existing ownership and sharing regression
+        run: |
+          node scripts/verify-memory-rpc-permissions.cjs
+          npx tsx scripts/verify-make-tab.mts
+      - name: Full registered regression suite
+        run: npm test
+      - name: Next type generation
+        run: npx next typegen
+      - name: TypeScript check
+        run: npm run typecheck
+      - name: Fixture production build
+        run: npm run build
