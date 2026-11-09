@@ -111,7 +111,7 @@ function contentTokens(phrase: string) {
 
 const ACTIVE = new Set(['queued', 'running', 'waiting_approval', 'paused', 'outcome_unknown'])
 // Runs a named ask may match regardless of age. Anything else must have been updated recently.
-const MATCHABLE_STATUSES = ['queued', 'running', 'waiting_approval', 'paused', 'watching']
+const MATCHABLE_STATUSES = ['queued', 'running', 'waiting_approval', 'paused', 'watching', 'outcome_unknown']
 const MATCHABLE = new Set(MATCHABLE_STATUSES)
 const RECENT_MATCH_HOURS = 24
 // An explicit task word in the ask is enough on its own; otherwise two content words must overlap.

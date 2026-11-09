@@ -64,8 +64,12 @@ function outcomeUnknown(run: any) {
 /** The one owner-facing state of an agent_runs row (raw row with metadata_json, or a dashboard run with metadata). */
 export function taskStateOf(run: any): TaskState {
   const status = String(run?.status || '')
-  if (isCancelled(run)) return 'cancelled'
+  // An unverified external effect cannot be declared cancelled by stale error/closure metadata.
+  // Keep an actual terminal cancelled status authoritative over conflicting old metadata.
+  if (status === 'outcome_unknown') return 'unknown'
+  if (status === 'cancelled') return 'cancelled'
   if (outcomeUnknown(run)) return 'unknown'
+  if (isCancelled(run)) return 'cancelled'
   if (status === 'running') return 'running'
   if (status === 'queued' || status === 'scheduled' || status === 'watching') return 'waiting'
   if (status === 'waiting_approval') return 'needs_you'

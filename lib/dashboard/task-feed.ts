@@ -9,7 +9,7 @@ import { friendlyTaskTitle } from '@/lib/agent/task-title'
 import { GOGO_STATE_LINE, liveLineFor, stateForHandoff, stateForRun, type GogoAgentState } from '@/lib/gogo/agent-states'
 import { CONFIRM_MAX, CONFIRMABLE_RUN_TYPES, continuePrompt, needsOwnerConfirmation, ownerConfirmationOf, ownerReopened, watchEnds, watchWhy } from '@/lib/agent/owner-confirmation'
 // Every run card's tag is its one owner-facing state (Working now · Needs you · Gogo thinks it's done · Done …).
-import { TASK_STATE_LABEL, taskStateLabel } from '@/lib/dashboard/task-state'
+import { TASK_STATE_LABEL, taskStateLabel, taskStateOf } from '@/lib/dashboard/task-state'
 
 export type FeedTab = 'need' | 'radar' | 'recent'
 export type FeedItem = {
@@ -50,7 +50,7 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
     supabaseAdmin.from('agent_watchers').select('id,type,next_check_at,created_at,condition_json', { count: 'exact' }).eq('telegram_id', tg).eq('active', true).neq('type', 'goal_review').order('next_check_at', { ascending: true }).limit(12),
     supabaseAdmin.from('agent_runs').select('id,type,capability,title,summary,status,error,metadata_json,updated_at').eq('telegram_id', tg).in('status', ['running', 'queued']).order('updated_at', { ascending: false }).limit(8),
     supabaseAdmin.from('agent_runs').select('id,type,capability,title,summary,status,source,error,metadata_json,updated_at')
-      .eq('telegram_id', tg).in('status', ['completed', 'paused', 'failed']).neq('type', 'secure_browser')
+      .eq('telegram_id', tg).in('status', ['completed', 'paused', 'failed', 'outcome_unknown']).neq('type', 'secure_browser')
       .order('updated_at', { ascending: false }).limit(20),
     // Outcome tasks Gogo finished recently: the owner confirms them (Duet parity) or sends them back.
     supabaseAdmin.from('agent_runs').select('id,type,title,summary,status,error,metadata_json,updated_at')
@@ -157,8 +157,11 @@ export async function getTaskFeed(telegramId: string, now = new Date()): Promise
     .filter((run: any, i: number, all: any[]) => all.findIndex((x: any) => x.title === run.title && x.summary === run.summary && x.status === run.status) === i)
     .slice(0, 12)
   const recentItems: FeedItem[] = recentRows.map(r => {
-    const state = stateForRun(r)
-    return { id: `run-${r.id}`, tab: 'recent', state, tag: taskStateLabel(r), title: friendlyTaskTitle(r.title || 'Gogo task'), sub: readableRunSummary(r.summary) || 'Open the task to see what happened.', live: GOGO_STATE_LINE[state], href: `/dashboard/activity/${encodeURIComponent(String(r.id))}`, action: 'Details', at: r.updated_at || null }
+    // A provider effect with an unknown outcome needs verification; a recent-task
+    // card must never animate as still working or imply completion.
+    const unverified = taskStateOf(r) === 'unknown'
+    const state: GogoAgentState = unverified ? 'blocked' : stateForRun(r)
+    return { id: `run-${r.id}`, tab: 'recent', state, tag: taskStateLabel(r), title: friendlyTaskTitle(r.title || 'Gogo task'), sub: readableRunSummary(r.summary) || 'Open the task to see what happened.', live: unverified ? 'Outcome unverified — review before trying again.' : GOGO_STATE_LINE[state], href: `/dashboard/activity/${encodeURIComponent(String(r.id))}`, action: 'Details', at: r.updated_at || null }
   })
     // The tab count is the untruncated total, not the display rows (12 shown of 30 watches still says 30).
   const watcherTotal = Number((watchers as any)?.count ?? ((watchers as any)?.data || []).length)

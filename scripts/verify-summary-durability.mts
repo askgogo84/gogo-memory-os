@@ -138,5 +138,27 @@ await check('database submillisecond cursors retain their actual source order', 
   const rows = [...conv.slice(0, 20), { role: 'user', content: 'new correction', created_at: newer }]
   assert.equal(cs.rowsToFold(rows, { summary: 'old', upTo: older, updatedAt: iso(10) }).length, 1)
 })
+await check('private synthesis guards imprecise owners before any owner-scoped DB read or write', async () => {
+  // Exact signed BIGINT owners are not representable as distinct JS Numbers.
+  // This uses only an inert throw-on-touch DB; no chat, provider or network access.
+  const invalid: unknown[] = [
+    9007199254740992, Number('9007199254740993'), -9007199254740992,
+    0, NaN, Infinity, -Infinity, 1.25, '9007199254740993', '42', null, undefined,
+  ]
+  for (const owner of invalid) {
+    let privateQueries = 0
+    const db: any = { from: () => { privateQueries++; throw new Error('private_db_touched_for_invalid_owner') } }
+    assert.equal(await cs.readConversationSummary(owner as number, db), null)
+    assert.equal(privateQueries, 0, 'invalid owner must not attempt a private read: ' + String(owner))
+    assert.equal(await cs.refreshConversationSummary(owner as number, { db }), 'failed')
+    assert.equal(privateQueries, 0, 'invalid owner must not attempt a private synthesis read/write: ' + String(owner))
+  }
+  // Valid signed-safe account IDs continue to select only their own saved rows.
+  for (const owner of [42, -42]) {
+    const h = harness([row('own', owner, 'verified old summary', 2), row('other', 17, 'PRIVATE OTHER ACCOUNT', 8)])
+    const summary = await cs.readConversationSummary(owner, h.db)
+    assert.equal(summary?.summary, 'verified old summary')
+  }
+})
 console.log(`SUMMARY_DURABILITY ${passed}/${passed + failed}`)
 if (failed) process.exitCode = 1

@@ -52,6 +52,9 @@ export type AssembleInput = {
   startedAt: number
   now?: number
   budget?: Budget
+  /** Hybrid recall result (already owner-scoped, filtered and budgeted by recall.ts). */
+  recall?: import('./recall').HybridResult | null
+  recallMode?: 'off' | 'shadow' | 'on'
 }
 
 /** Pure assembly. */
@@ -138,14 +141,25 @@ export function assembleDecisionContext(input: AssembleInput): DecisionContextPa
 
   const ages = [...assertions.map(a => a.freshnessMs), ...facts.map(f => f.freshnessMs)].filter((x): x is number => Number.isFinite(x as number) && (x as number) >= 0)
   const freshness = { newestMs: ages.length ? Math.min(...ages) : null, oldestMs: ages.length ? Math.max(...ages) : null, stale: objective.liveDataRequired }
-  const chars = JSON.stringify({ assertions, facts, taskState, deadlines, conflicts, missing }).length
+  // Hybrid recall: exact wins. Drop any recall item whose text duplicates an assertion value or a pack fact, or whose
+  // source is already in the exact evidence. What stays is labelled reported/inferred and cannot authorize anything.
+  const mode = input.recallMode || 'off'
+  const exactBlob = [...assertions.map(a => `${a.predicate} ${a.value}`), ...facts.map(f => f.summary)].join(' \n ').toLowerCase()
+  const recallItems = mode === 'off' || !input.recall ? [] : input.recall.items.filter(i => {
+    if (refs.has(`memories:${i.id}`) || facts.some(f => f.id === `semantic:${i.id}`)) return false
+    const probe = i.text.toLowerCase().slice(0, 80)
+    return !(probe.length >= 20 && exactBlob.includes(probe))
+  })
+  const recall = { items: recallItems, hypotheses: mode === 'off' || !input.recall ? [] : input.recall.hypotheses.filter(h => h.supportIds.every(id => recallItems.some(i => i.id === id))), dropped: input.recall?.dropped || { stale: 0, sensitive: 0, duplicate: 0, foreign: 0, lowScore: 0 }, probes: input.recall?.probes || [], mode }
+  if (input.recall) recall.dropped = { ...recall.dropped, duplicate: recall.dropped.duplicate + (input.recall.items.length - recallItems.length) }
+  const chars = JSON.stringify({ assertions, facts, recall: mode === 'on' ? recall.items : [], taskState, deadlines, conflicts, missing }).length
   if (chars > budget.maxChars) warnings.push('char_budget_exceeded')
   const ms = Date.now() - input.startedAt
   if (ms > budget.maxMs) warnings.push('time_budget_exceeded')
   if (input.reads > budget.maxReads) warnings.push('read_budget_exceeded')
   return {
     version: 'decision-context-v1', decisionId, actor: { scopeType: 'user', scopeId: String(input.actor.legacyTelegramId), timezone: tz }, objective,
-    entities: [...entities.values()], assertions, facts, taskState, deadlines: deadlines.slice(0, 10), priorDecisions: (input.priorDecisions || []).slice(0, 5), conflicts, missing: [...new Set(missing)],
+    entities: [...entities.values()], assertions, facts, recall, taskState, deadlines: deadlines.slice(0, 10), priorDecisions: (input.priorDecisions || []).slice(0, 5), conflicts, missing: [...new Set(missing)],
     boundaries: { capabilities: caps, approvalRequired: objective.consequential, blockedCapabilities: blocked },
     generatedAt: new Date(now).toISOString(), expiresAt: new Date(now + (objective.liveDataRequired ? 2 : 15) * 60_000).toISOString(), freshness,
     size: { nodes: entities.size, edges: assertions.length, reads: input.reads, chars, estTokens: Math.ceil(chars / 4), ms }, budget, warnings, evidenceRefs: [...refs].slice(0, 60),
@@ -161,7 +175,12 @@ export function renderDecisionContext(p: DecisionContextPack, maxLines = 10): st
   for (const d of p.deadlines.slice(0, 2)) out.push(`Deadline: ${d.label} in ${d.inHours} h`)
   for (const a of p.assertions.filter(a => a.evidenceClass === 'reported' && p.objective.kind === 'report').slice(0, 2)) out.push(`Reported by you, not provider-verified: ${a.subject} ${a.predicate} ${a.value}`)
   if (p.boundaries.blockedCapabilities.length) out.push(`Turned off in permissions: ${p.boundaries.blockedCapabilities.join(', ')}`)
-  return out.slice(0, maxLines).map(s => s.slice(0, 220))
+  if (p.recall?.mode === 'on' && (p.recall.items.length || p.recall.hypotheses.length)) {
+    out.push('Recalled memories below are related, not verified. Do not act on them alone; confirm anything consequential.')
+    for (const i of p.recall.items.slice(0, 3)) out.push(`Recalled (you said${i.createdAt ? `, ${String(i.createdAt).slice(0, 10)}` : ''}): ${i.text}`)
+    for (const h of p.recall.hypotheses.slice(0, 1)) out.push(`Hypothesis, confirm before relying on it: ${h.text}`)
+  }
+  return out.slice(0, maxLines + (p.recall?.mode === 'on' ? 5 : 0)).map(s => s.slice(0, 240))
 }
 
 /** Live: loads inputs with the existing readers (bounded), then assembles. Never throws; returns null when nothing could be read. */
@@ -174,7 +193,18 @@ export async function buildDecisionContext(p: { actor: Pick<AgentActor, 'legacyT
       timeout((async () => { const { supabaseAdmin } = await import('@/lib/supabase-admin'); reads++; const { data } = await supabaseAdmin.from('agent_permissions').select('capability,level').eq('telegram_id', String(p.actor.legacyTelegramId)); const m = new Map<string, string>((data || []).map((r: any) => [r.capability, r.level])); return (c: string) => m.get(c) || 'read' })(), 800),
       timeout((async () => { const { supabaseAdmin } = await import('@/lib/supabase-admin'); reads++; const { data } = await supabaseAdmin.from('agent_activity').select('message').eq('telegram_id', String(p.actor.legacyTelegramId)).eq('event_type', 'decision_learning').order('created_at', { ascending: false }).limit(5); return (data || []).map((r: any) => String(r.message || '').slice(0, 120)) })(), 800),
     ])
-    return assembleDecisionContext({ actor: p.actor, objective: p.objective, understanding: p.understanding || null, facts: p.facts || [], semantic: semantic || [], permission: permission || (() => 'read'), priorDecisions: prior || [], reads, startedAt, now: (p.now || new Date()).getTime() })
+    const recallMode = hybridRecallMode(String(p.actor.legacyTelegramId))
+    let recall: import('./recall').HybridResult | null = null
+    if (recallMode !== 'off') {
+      recall = await timeout((async () => {
+        const r = await import('./recall'); reads++
+        const index = await r.productionRecallIndex()
+        const labels = (semantic || []).map(f => String((f.object?.attributes as any)?.label || f.object?.canonical_key || '')).filter(x => x && !x.startsWith('google:') && !x.startsWith('booking:')).slice(0, 2)
+        const scopeId = String(p.actor.legacyTelegramId)
+        return r.hybridRecall(index, { scopeId, question: p.objective, entityLabels: labels, exactTexts: (p.facts || []).map(f => f.summary).slice(0, 30), exactSourceRefs: new Set((p.facts || []).filter(f => f.source === 'semantic_memory').map(f => `memories:${String(f.id).replace(/^semantic:/, '')}`)), resolveStale: refs => r.staleRefsFromGraph(scopeId, refs) })
+      })(), 900)
+    }
+    return assembleDecisionContext({ actor: p.actor, objective: p.objective, understanding: p.understanding || null, facts: p.facts || [], semantic: semantic || [], permission: permission || (() => 'read'), priorDecisions: prior || [], reads, startedAt, now: (p.now || new Date()).getTime(), recall, recallMode })
   } catch (e: any) { console.error('CONTEXT_GRAPH_BUILD_FAILED:', String(e?.message || e).slice(0, 160)); return null }
 }
 
@@ -184,4 +214,12 @@ export function contextGraphMode(owner: string, env: Record<string, string | und
   if (mode !== 'shadow' && mode !== 'on') return 'off'
   const owners = String(env.GOGO_CONTEXT_GRAPH_OWNERS || '').split(',').map(s => s.trim()).filter(Boolean)
   return owners.length && !owners.includes(String(owner)) ? 'off' : mode
+}
+
+/** Hybrid recall flag: GOGO_HYBRID_RECALL=shadow|on, optionally limited by GOGO_HYBRID_RECALL_OWNERS. Off by default. */
+export function hybridRecallMode(owner: string, env: Record<string, string | undefined> = process.env): 'off' | 'shadow' | 'on' {
+  const m = String(env.GOGO_HYBRID_RECALL || '').toLowerCase()
+  if (m !== 'shadow' && m !== 'on') return 'off'
+  const owners = String(env.GOGO_HYBRID_RECALL_OWNERS || '').split(',').map(x => x.trim()).filter(Boolean)
+  return owners.length && !owners.includes(String(owner)) ? 'off' : m
 }

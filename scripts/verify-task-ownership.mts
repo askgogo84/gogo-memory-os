@@ -33,6 +33,11 @@ const cases: Array<[string, any, string]> = [
   ['completed wrapper, outcome paused', { status: 'completed', type: 'booking', metadata_json: { outcome_status: 'paused' } }, 'needs_you'],
   ['completed wrapper, outcome failed', { status: 'completed', type: 'booking', metadata_json: { outcome_status: 'failed' } }, 'could_not_finish'],
   ['outcome_unknown status', { status: 'outcome_unknown' }, 'unknown'],
+  // P1: no stale cancellation metadata may turn an unverified effect into a settled cancellation.
+  ['outcome_unknown overrides stale error cancellation', { status: 'outcome_unknown', error: 'user_cancelled', metadata_json: { state: 'closed_stale' } }, 'unknown'],
+  ['outcome_unknown overrides stale closure cancellation', { status: 'outcome_unknown', metadata_json: { closure_reason: 'user_cancelled', state: 'closed_stale' } }, 'unknown'],
+  ['metadata outcome_unknown overrides stale cancellation error', { status: 'completed', error: 'user_cancelled', metadata_json: { outcome_status: 'unknown' } }, 'unknown'],
+  ['metadata outcome_unknown overrides stale cancellation reason', { status: 'failed', metadata_json: { outcome_unknown: true, closure_reason: 'user_cancelled' } }, 'unknown'],
   ['metadata outcome unknown', { status: 'completed', type: 'booking', metadata_json: { outcome_status: 'unknown' } }, 'unknown'],
   ['unknown beats owner confirm', { status: 'completed', metadata_json: { outcome_status: 'unknown', ...confirmed('done') } }, 'unknown'],
   ['cancelled status', { status: 'cancelled' }, 'cancelled'],
