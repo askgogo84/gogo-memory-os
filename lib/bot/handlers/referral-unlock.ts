@@ -35,15 +35,38 @@ async function findUserByReferralCode(code: string) {
   const referralId = referralIdFromCode(code)
   if (!referralId) return null
 
-  const { data } = await supabaseAdmin
+  // Legacy public codes are derived from the final 10 digits of signed owner
+  // IDs, not from WhatsApp phone numbers. Resolve across ALL persisted owner
+  // IDs in ONE bounded database read (one consistent SQL statement), or refuse
+  // to credit anyone. An indexed durable code mapping is needed at scale.
+  const MAX_SINGLE_SNAPSHOT_OWNERS = 1000
+  const { data, error, count } = await supabaseAdmin
     .from('users')
-    .select('telegram_id, whatsapp_id')
-    .ilike('whatsapp_id', `%${referralId}%`)
+    .select('telegram_id', { count: 'exact' })
     .not('telegram_id', 'is', null)
-    .order('telegram_id', { ascending: true })
-    .limit(1)
+    .limit(MAX_SINGLE_SNAPSHOT_OWNERS)
 
-  return data?.[0] || null
+  // A PostgREST max-rows setting can silently return fewer than requested.
+  // Only a complete one-statement result can establish uniqueness; refuse
+  // oversized, truncated or unknown-count tables instead of paginating.
+  if (error || !Array.isArray(data) || !Number.isSafeInteger(count)
+    || count === null || count < 0 || count > MAX_SINGLE_SNAPSHOT_OWNERS
+    || data.length !== count) return null
+
+  let found: { telegram_id: number } | null = null
+  for (const row of data) {
+    // PostgREST may JSON-decode BIGINT into an imprecise JavaScript Number
+    // before we see it. Such a row could hide a colliding referral suffix.
+    if (typeof row?.telegram_id === 'number' && !Number.isSafeInteger(row.telegram_id)) return null
+    const rawId = String(row?.telegram_id ?? '').trim()
+    if (!/^-?[1-9][0-9]*$/.test(rawId)) continue
+    if (cleanReferralId(rawId) !== referralId) continue
+    const owner = Number(rawId)
+    if (!Number.isSafeInteger(owner) || owner === 0 || String(owner) !== rawId) return null
+    if (found) return null
+    found = { telegram_id: owner }
+  }
+  return found
 }
 
 export function isShareMyWinCommand(text: string) {
@@ -91,10 +114,15 @@ export async function recordReferralJoinFromText(params: {
   const code = extractReferralCode(params.text)
   if (!code) return null
 
+  // Inbound identity must be a safe exact actor before any cross-owner write.
+  if (!Number.isSafeInteger(params.referredTelegramId) || params.referredTelegramId === 0)
+    return { code, saved: false, reason: 'invalid_referred_owner' }
+
   const referrer = await findUserByReferralCode(code)
   if (!referrer?.telegram_id) return null
 
   const referrerTelegramId = Number(referrer.telegram_id)
+  if (!Number.isSafeInteger(referrerTelegramId) || referrerTelegramId === 0) return null
 
   if (referrerTelegramId === params.referredTelegramId) {
     return { code, saved: false, reason: 'self_referral' }
@@ -102,13 +130,14 @@ export async function recordReferralJoinFromText(params: {
 
   const uniqueKey = `ASKGOGO_REFERRAL_JOINED:${code}:${params.referredExternalId}`
 
-  const { data: existing } = await supabaseAdmin
+  const { data: existing, error: existingError } = await supabaseAdmin
     .from('memories')
     .select('id')
     .eq('telegram_id', referrerTelegramId)
     .like('content', `${uniqueKey}%`)
     .limit(1)
 
+  if (existingError) return { code, saved: false, reason: 'lookup_unavailable' }
   if (existing?.length) return { code, saved: false, reason: 'already_recorded' }
 
   await supabaseAdmin.from('memories').insert({

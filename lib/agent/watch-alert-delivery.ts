@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp } from '@/lib/whatsapp'
 import { recordCostEvent } from '@/lib/services/cost-guard'
-import { deliverNotification } from '@/lib/services/notification-delivery'
+import { deliverNotification, exactNotificationOwnerId } from '@/lib/services/notification-delivery'
 import { getAlertPreferences, type AlertTopic } from './alert-preferences'
 
 // Reuse the receipt-backed notification ledger. A watch alert is a follow-up;
@@ -11,10 +11,9 @@ export async function deliverWatchAlert(params: {
   /** What the message is about, so a short reply can be read against it (lib/agent/open-thread). */
   thread?: { kind: 'mail_alert' | 'order_alert' | 'watch_alert'; data: Record<string, unknown> }
 }) {
-  const owner = Number(params.owner)
-  if (!Number.isSafeInteger(owner)) throw new Error('watch_alert_owner_invalid')
+  const owner = exactNotificationOwnerId(params.owner)
   // Duet parity: a topic the person turned off stays in the app only (same path as an app-only watch), never on WhatsApp.
-  const prefs = await getAlertPreferences(params.owner)
+  const prefs = await getAlertPreferences(owner)
   // Several topics (the inbox digest is bills and replies): muted only when every one of them is off.
   const topics = Array.isArray(params.topic) ? params.topic : [params.topic || 'watches']
   if (topics.every(t => prefs.topics[t] === false)) return { state: 'app_only', accepted: true, providerId: null as string | null }
@@ -30,7 +29,7 @@ export async function deliverWatchAlert(params: {
     },
     ready: async () => {
       const { data, error } = await supabaseAdmin.from('agent_watchers').select('active,condition_json')
-        .eq('id', params.watcherId).eq('telegram_id', params.owner).maybeSingle()
+        .eq('id', params.watcherId).eq('telegram_id', owner).maybeSingle()
       if (error) throw new Error('watch_alert_owner_read_failed')
       // An intervening stop or correction revokes the old notification.
       return data?.active === true && JSON.stringify(data.condition_json) === JSON.stringify(params.condition)

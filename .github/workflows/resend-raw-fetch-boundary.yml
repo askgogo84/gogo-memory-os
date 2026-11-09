@@ -1,0 +1,29 @@
+name: Resend Raw Fetch Boundary
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/email/resend-inbound.ts'
+      - 'scripts/verify-resend-raw-fetch-boundary.mts'
+      - '.github/workflows/resend-raw-fetch-boundary.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-egress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Resend raw fetch SSRF containment regression (fake transport only)
+        run: npx --no-install tsx scripts/verify-resend-raw-fetch-boundary.mts

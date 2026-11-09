@@ -1,5 +1,6 @@
 // Same Brain 3.0 Phase 2: the decision context pack. Small, bounded, typed; every item carries why it is here.
 import type { EvidenceClass } from '@/lib/semantic/types'
+import type { RecallHypothesis, RecallItem } from './recall'
 
 export type ObjectiveKind = 'live_status' | 'prepare' | 'report' | 'action' | 'question' | 'other'
 export type ObjectiveDomain = 'travel' | 'calendar' | 'email' | 'payments' | 'reminders' | 'shopping' | 'dining' | 'enterprise' | 'memory' | 'other'
@@ -38,6 +39,8 @@ export type DecisionContextPack = {
   entities: PackEntity[]
   assertions: PackAssertion[]
   facts: PackFact[]
+  /** Hybrid recall: related memories (reported, relevance inferred). Never authoritative; never authorizes an action. */
+  recall: { items: RecallItem[]; hypotheses: RecallHypothesis[]; dropped: { stale: number; sensitive: number; duplicate: number; foreign: number; lowScore: number }; probes: string[]; mode: 'off' | 'shadow' | 'on' }
   taskState: { openTasks: string[]; pendingApprovals: string[]; watches: string[]; reminders: string[]; travel: string[]; calendar: string[] }
   deadlines: Deadline[]
   priorDecisions: string[]

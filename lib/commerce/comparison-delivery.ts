@@ -5,9 +5,35 @@ import type {AgentActor} from '@/lib/agent/actor'
 import {comparisonState, comparisonWhatsAppSummary, type PriceComparison} from './comparison-model'
 import {comparisonWebFallback, readPriceComparison} from './price-comparison'
 
+// Defense in depth: private result delivery must not trust a rounded 64-bit
+// actor ID or a stale recipient even if the normal actor resolver is guarded.
+async function currentComparisonRecipient(actor: AgentActor, requireRecipient = true): Promise<{ owner: number; recipient: string } | null> {
+  const owner = actor?.legacyTelegramId
+  const userId = String(actor?.userId || '').trim()
+  const expectedPhone = String(actor?.whatsappId || '').trim()
+  if (typeof owner !== 'number' || !Number.isSafeInteger(owner) || owner === 0 || !userId || (requireRecipient && !expectedPhone)) return null
+  try {
+    const { data, error } = await supabaseAdmin.from('users')
+      .select('id,telegram_id,whatsapp_id')
+      .eq('id', userId).eq('telegram_id', String(owner)).maybeSingle()
+    if (error || !data || String(data.id) !== userId) return null
+    const storedId = data.telegram_id
+    if (typeof storedId === 'number'
+      ? !Number.isSafeInteger(storedId) || storedId !== owner
+      : String(storedId) !== String(owner)) return null
+    const recipient = String(data.whatsapp_id || '').trim()
+    if (requireRecipient && (!recipient || recipient !== expectedPhone)) return null
+    return { owner, recipient }
+  } catch {
+    return null // unknown authorization never permits outbound private delivery
+  }
+}
+
 /** The notification outbox owns retries and callback receipts for a finished read. */
 export async function deliverCompletedComparison(task: PriceComparison, actor: AgentActor, deadline: number) {
-  const owner = Number(actor.legacyTelegramId)
+  const binding = await currentComparisonRecipient(actor, task.source === 'whatsapp')
+  if (!binding) return 'skipped'
+  const { owner } = binding
   if(task.source==='web'){
     if(Date.now()>=deadline)return 'skipped'
     const current=await readPriceComparison(String(owner),task.id)
@@ -15,6 +41,7 @@ export async function deliverCompletedComparison(task: PriceComparison, actor: A
     const fallback=await comparisonWebFallback(current)
     const content=comparisonWhatsAppSummary(current)+(fallback?'\n\n'+fallback:'')
     if(Date.now()>=deadline)return 'skipped'
+    if (!(await currentComparisonRecipient(actor, false))) return 'skipped'
     // Publish and mark notified in one transaction. Overlapping workers cannot
     // duplicate history or lose the result between two database writes.
     const {data,error}=await supabaseAdmin.rpc('publish_web_comparison_result',{p_owner:String(owner),p_run_id:task.id,p_content:content})
@@ -22,7 +49,7 @@ export async function deliverCompletedComparison(task: PriceComparison, actor: A
     return data===true?'history_published':'skipped'
   }
   if(task.source!=='whatsapp')return 'skipped'
-  const recipient = actor.whatsappId || ''
+  const recipient = binding.recipient
   let current: PriceComparison | null = null
   let message = ''
 
@@ -31,24 +58,28 @@ export async function deliverCompletedComparison(task: PriceComparison, actor: A
     channel: 'whatsapp', due: task.updated_at, deadline,
     prepare: async () => {
       current = await readPriceComparison(String(owner), task.id)
-      if (!current || comparisonState(current.metadata_json.providers) === 'queued') throw new Error('comparison_not_terminal')
+      if (!current || current.source !== 'whatsapp' || comparisonState(current.metadata_json.providers) === 'queued') throw new Error('comparison_not_terminal')
       const fallback = await comparisonWebFallback(current)
       message = comparisonWhatsAppSummary(current) + (fallback ? '\n\n' + fallback : '')
     },
     ready: async () => {
-      if (!recipient) return false
+      const latest = await currentComparisonRecipient(actor)
+      if (!latest || latest.owner !== owner || latest.recipient !== recipient) return false
       const {data, error} = await supabaseAdmin.from('agent_runs')
         .select('status,source').eq('id', task.id).eq('telegram_id', String(owner)).eq('type', 'price_comparison').maybeSingle()
       if (error) throw new Error('comparison_delivery_read_failed')
       return Boolean(data && data.source === 'whatsapp' && ['completed', 'paused'].includes(data.status))
     },
     send: async token => {
+      // Recheck immediately before the provider call. This is not atomic with Twilio.
+      const latest = await currentComparisonRecipient(actor)
+      if (!latest || latest.owner !== owner || latest.recipient !== recipient) throw new Error('comparison_delivery_owner_or_recipient_changed')
       // A callback adds recipient-delivery proof when configured. Provider
       // acceptance still works without it, so missing optional config cannot
       // strand the result before Twilio is even called.
       const receiptToken = process.env.TWILIO_STATUS_CALLBACK_URL ? token : undefined
       try {
-        const sent = await sendWhatsApp(recipient, message, undefined, receiptToken)
+        const sent = await sendWhatsApp(latest.recipient, message, undefined, receiptToken)
         return String(sent?.sid || '')
       } catch (error: any) {
         console.error('COMPARISON_WHATSAPP_SEND_FAILED:', {runId: task.id, status: error?.status || null, code: error?.code || null})

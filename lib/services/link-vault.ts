@@ -326,7 +326,10 @@ export async function queryLinkVault(telegramId:number,text:string,timezone='Asi
     return{row,score:tokens.length?tokens.reduce((n,t)=>n+(hay.includes(t)?1:0),0):1}
   }).filter(x=>tokens.length===0||x.score>0).sort((a,b)=>b.score-a.score||Date.parse(b.row.saved_at)-Date.parse(a.row.saved_at))
   let matches=scored.map(x=>x.row)
-  if(terms.length>=3&&matches.length<5){
+  // Link retrieval may be based on a personal search phrase. The embedding
+  // provider must never receive secret-shaped user text, including identifiers
+  // that searchTerms() may have stripped or normalized. Lexical reads still work.
+  if(terms.length>=3&&matches.length<5&&!isSecretShapedMemory(text)&&!isSecretShapedMemory(terms)){
     try{
       const vector=await embedText(terms.slice(0,500))
       const{data:semantic}=await supabaseAdmin.rpc('match_memories',{p_telegram_id:telegramId,p_query:vector,p_k:40})

@@ -28,10 +28,12 @@ export async function deliverRunOutcomeNotice(runId:string, ownerId:string, rend
     prepare:async token=>{
       const [record,user]=await Promise.all([
         db.from('agent_runs').select('id,telegram_id,type,status,title,summary,error,metadata_json,completed_at').eq('id',runId).eq('telegram_id',ownerId).maybeSingle(),
-        db.from('users').select('telegram_id,whatsapp_id,timezone').eq('telegram_id',owner).maybeSingle(),
+        db.from('users').select('telegram_id,whatsapp_id,timezone,access_status').eq('telegram_id',ownerId).maybeSingle(),
       ])
-      if(record.error||!record.data||user.error||!user.data?.whatsapp_id)throw Error('run_notice_owner_unavailable')
-      run=record.data;phone=String(user.data.whatsapp_id);timezone=String(user.data.timezone||'Asia/Kolkata');text=render(run)
+      if(record.error||!record.data||String(record.data.telegram_id??'')!==ownerId
+        ||user.error||!user.data||String(user.data.telegram_id??'')!==ownerId
+        ||!String(user.data.whatsapp_id||'').trim()||user.data.access_status==='blocked')throw Error('run_notice_owner_unavailable')
+      run=record.data;phone=String(user.data.whatsapp_id).trim();timezone=String(user.data.timezone||'Asia/Kolkata');text=render(run)
       // 23 Oct: task results follow the owner's quiet hours, not a fixed 22–07. A missing row or table keeps the defaults.
       try{
         const prefs=await db.from('user_alert_preferences').select('check_every_minutes,topics,quiet_start,quiet_end').eq('telegram_id',ownerId).maybeSingle()
@@ -43,7 +45,21 @@ export async function deliverRunOutcomeNotice(runId:string, ownerId:string, rend
       }
     },
     deferUntil:async()=>runOutcomeQuietUntil(timezone,deps.now?deps.now():new Date(),quiet),
-    ready:async()=>!await isSuppressed(owner,phone),
+    ready:async()=>{
+      // Preparation does not confer permission to deliver later. Check the exact
+      // owner and the same recipient again immediately before the ledger begin.
+      // The existing begin_run_outcome_delivery SQL additionally fences recipient
+      // changes, STOP and outcome snapshot atomically with the send intent.
+      const {data:fresh,error}=await db.from('users')
+        .select('telegram_id,whatsapp_id,access_status')
+        .eq('telegram_id',ownerId).maybeSingle()
+      if(error)throw Error('run_notice_final_owner_unavailable')
+      if(!fresh||String(fresh.telegram_id??'')!==ownerId
+        ||!String(fresh.whatsapp_id||'').trim()
+        ||String(fresh.whatsapp_id).trim()!==phone
+        ||fresh.access_status==='blocked')return false
+      return !await isSuppressed(owner,phone)
+    },
     begin:token=>rpc('begin_run_outcome_delivery',{p_key:key,p_token:token,p_target:phone,p_snapshot:runOutcomeSnapshot(run)}),
     accepted:async()=>{try{await rpc('reconcile_run_outcome_notice_flags',{p_limit:10})}catch{console.error('RUN_NOTICE_COMPAT_ACK_FAILED')}},
     send:async token=>{
