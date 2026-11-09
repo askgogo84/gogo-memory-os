@@ -22,11 +22,11 @@ import { workspaceEmailAuditScope } from './google-workspace-read'
 import { mergeRegenerated } from './artifact-versions'
 
 const MAX_STEPS = 10
-const CONSEQUENTIAL = new Set<AgentCapability>(['email', 'calendar', 'browser', 'travel', 'payments'])
+const CONSEQUENTIAL = new Set<AgentCapability>(['email', 'calendar', 'browser', 'travel', 'payments', 'merchant'])
 
 const DEFAULT_LEVEL: Record<AgentCapability, AgentPermissionLevel> = {
   memory: 'ask', files: 'ask', reminders: 'auto', lists: 'auto', tasks: 'auto',
-  email: 'draft', calendar: 'ask', browser: 'draft', contacts: 'read', travel: 'draft', payments: 'ask',
+  email: 'draft', calendar: 'ask', browser: 'draft', contacts: 'read', travel: 'draft', payments: 'ask', merchant: 'ask',
 }
 
 export type GeneralPlanTool =
@@ -314,6 +314,9 @@ function classifyStep(step: GeneralPlanStep) {
   if (step.tool === 'web_search') return { capability:'browser' as const, mode:'read' as const, risk:'low' as const, irreversible:false, title:step.title, why:'This only searches the public web.' }
   if (step.tool === 'artifact') return { capability:'memory' as const, mode:'execute' as const, risk:'low' as const, irreversible:false, title:step.title, why:'This creates a private AskGogo artifact.' }
   if (step.tool === 'tasks') return { capability:'tasks' as const, mode:taskStepIntent(step)==='read'?'read' as const:'execute' as const, risk:'low' as const, irreversible:false, title:step.title, why:taskStepIntent(step)==='read'?'This only reads private AskGogo tasks.':'This creates or updates a private AskGogo task.' }
+  // 29 Oct live (RL03): "Set purchase reminder" was classified as a high-risk purchase and waited for approval.
+  // A reminder or a list item is a private, reversible note to the user, whatever it is about.
+  if (step.tool === 'reminders' || step.tool === 'lists') return { capability:step.tool as AgentCapability, mode:'execute' as const, risk:'low' as const, irreversible:false, title:step.title, why:step.tool==='reminders'?'This sets a private reminder.':'This updates a private list.' }
   if (step.tool === 'calendar') {
     const mutation = /\b(add|create|change|move|schedule|write|modify|prepare|invite|cancel|delete|event\s+titled|spanning)\b/i.test(step.instruction)
     return mutation
@@ -562,7 +565,7 @@ async function pauseForInput(params:{actor:AgentActor;runId:string;stepId:string
 async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan:GeneralPlan;stepIds:string[];startOrdinal:number;missionText:string;messageId?:string|number|null;approvedOrdinal?:number}) : Promise<GeneralPlanResult> {
   const tg = params.actor.legacyTelegramId
   let highestRisk:'low'|'medium'|'high'='low'
-  let lastText=''
+  let lastText='';const receipts:string[]=[]
   for (let index=params.startOrdinal-1; index<params.plan.steps.length; index++) {
     const ordinal=index+1
     const step=params.plan.steps[index]
@@ -593,6 +596,7 @@ async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan
     try {
       const result=await executeTool({actor:params.actor,runId:params.runId,step,stepId,missionText:params.missionText,messageId:params.messageId})
       lastText=result.text
+      if((result.output as any)?.verifiedStore&&!(result.output as any)?.readOnly&&String(result.text||'').length<400)receipts.push(String(result.text))
       await updateStep(stepId,'completed',{...result.output,reply:String(result.text||'').slice(0,20000)})
       const progress=Math.round((ordinal/params.plan.steps.length)*100)
       await supabaseAdmin.from('agent_runs').update({status:'running',progress,summary:safeLog(result.text,1000),updated_at:new Date().toISOString()}).eq('id',params.runId).eq('telegram_id',String(tg))
@@ -609,7 +613,9 @@ async function executePlanFromOrdinal(params:{actor:AgentActor;runId:string;plan
   const completedAt=new Date().toISOString()
   await supabaseAdmin.from('agent_runs').update({status:'completed',progress:100,summary:safeLog(lastText||'Multi-step plan completed.',1800),completed_at:completedAt,updated_at:completedAt}).eq('id',params.runId).eq('telegram_id',String(tg))
   await activity(tg,params.runId,'run_completed','Gogo completed the multi-tool plan.',{step_count:params.plan.steps.length})
-  return {runId:params.runId,status:'completed',capability:capabilityForStep(params.plan.steps[params.plan.steps.length-1]),risk:highestRisk,text:lastText||'Done. I completed the plan.',handledBy:'general-plan'}
+  // 30 Oct live: "Make a grocery list … and remind me at 6 pm" replied only about the reminder. Every saved change is said.
+  const said=Array.from(new Set([...receipts.filter(t=>t!==lastText),lastText].filter(Boolean)))
+  return {runId:params.runId,status:'completed',capability:capabilityForStep(params.plan.steps[params.plan.steps.length-1]),risk:highestRisk,text:said.join('\n')||'Done. I completed the plan.',handledBy:'general-plan'}
 }
 
 export async function tryRunGeneralPlan(params:{actor:AgentActor;surface:AgentSurface;text:string;messageId?:string|number|null;prepared?:PreparedGeneralPlan}):Promise<GeneralPlanResult|null>{

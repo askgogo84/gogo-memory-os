@@ -7,6 +7,7 @@ import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { checkCostAllowance, COST_ESTIMATES_PAISE, getCostBudget, recordCostEvent } from '@/lib/services/cost-guard'
 import { adaptiveWatcherCadence } from './watch-cost-policy'
 import { runSecureBrowser } from './secure-computer'
+import { capabilityPaused } from './policy'
 import { listRecentWorkspaceInbox } from './google-workspace-read'
 import { buildVaultAddLink } from '@/lib/vault/connect-link'
 import type { AgentActor } from './actor'
@@ -27,6 +28,8 @@ import {
 
 import { assessPriceCheck, appendPriceRun, buildPriceRun, normalizePriceRule, priceAlertText, priceStateFrom, type PriceRule } from './price-threshold'
 import { extractGoldQuotes } from '@/lib/bot/handlers/gold-quotes'
+import { evaluateStockRule, nextNseOpen, normalizeStockRule, nseMarketOpen, stockAlertText, stockStateFrom, type StockRule } from './stock-rule'
+import { fetchStockQuote } from './stock-quote'
 import { matchingActiveWatches, planWatchCleanup, watchSpecificity, DEDUPE_WATCH_TYPES, type DedupeRow, type WatchRetirement } from './watch-dedupe'
 import { appendGoldRun, decideGoldAlert, evaluateGoldRule, goldAlertText, goldSearchContext, goldStateFrom, normalizeGoldRule, sourceHost, type GoldRule } from './gold-rate-rule'
 
@@ -98,6 +101,8 @@ export type WebSearchWatcherCondition = ContextualWatcherMeta & {
   priceRule?: PriceRule
   // Gold-rate watch: alert only when a single verified per-gram quote crosses the threshold.
   goldRule?: GoldRule
+  // Share-price watch: alert only when a live exchange quote meets the move/level rule.
+  stockRule?: StockRule
   originalRequest?: string
 }
 
@@ -208,6 +213,7 @@ export function normalizeWebSearchWatcher(input: any): WebSearchWatcherCondition
     priceRule:normalizePriceRule(input?.priceRule)||undefined,
     // Only a row that carries a gold rule reads it; every other watch is untouched.
     ...(input?.goldRule&&normalizeGoldRule(input.goldRule)?{goldRule:normalizeGoldRule(input.goldRule) as GoldRule}:{}),
+    ...(input?.stockRule&&normalizeStockRule(input.stockRule)?{stockRule:normalizeStockRule(input.stockRule) as StockRule}:{}),
     originalRequest:String(input?.originalRequest||'').trim().slice(0,2000)||undefined,
     // A cadence the person asked for ("every morning") is a floor the adaptive schedule never goes below.
     ...(Number(input?.requestedCadenceMinutes)>=60?{requestedCadenceMinutes:Math.min(24*60,Math.floor(Number(input.requestedCadenceMinutes)))}:{}),
@@ -442,9 +448,17 @@ async function createWebIdea(telegramId: string, condition: WebSearchWatcherCond
 
 async function sendWhatsAppIfWanted(telegramId: string, delivery: WatcherDelivery, message: string) {
   if (delivery !== 'whatsapp' && delivery !== 'both') return
-  const tg = Number(telegramId)
-  if (!Number.isFinite(tg)) return
-  const { data } = await supabaseAdmin.from('users').select('whatsapp_id').eq('telegram_id', tg).maybeSingle()
+  // Watcher owner IDs are PostgreSQL BIGINTs. Number(owner) rounds distinct owners
+  // above 2^53 and could send a private alert to another account's WhatsApp.
+  if (typeof telegramId !== 'string' || !/^(?:0|[1-9]\d{0,18}|-[1-9]\d{0,18})$/.test(telegramId)) return
+  const owner = BigInt(telegramId)
+  if (owner < BigInt('-9223372036854775808') || owner > BigInt('9223372036854775807')) return
+  const { data, error } = await supabaseAdmin.from('users')
+    .select('telegram_id, whatsapp_id').eq('telegram_id', telegramId).maybeSingle()
+  if (error) throw new Error('watch_alert_owner_lookup_failed')
+  // The service-role result must echo the requested exact owner before egress.
+  // An imprecise or absent owner echo is not permission to deliver anything.
+  if (String(data?.telegram_id ?? '') !== telegramId) return
   const phone = String(data?.whatsapp_id || '').trim()
   if (!phone) return
   await sendWhatsAppMessage(phone, message)
@@ -619,19 +633,96 @@ export function inboxActionStep(message:any): {subject:string;from:string;step:s
   return {subject,from,step}
 }
 
-async function watcherActor(telegramId:string):Promise<AgentActor|null> {
+async function watcherActor(telegramId:string|number):Promise<AgentActor|null> {
+  // Exact owner (P0.1): exact decimal lookup, row must echo the id, unsafe ids refused (never rounded).
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return null
+  const owner = String(telegramId ?? '').trim()
+  const legacy = Number(owner)
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner) || !Number.isSafeInteger(legacy) || String(legacy) !== owner) return null
+
   const {data,error}=await supabaseAdmin.from('users')
-    .select('id,telegram_id,whatsapp_id,name')
-    .eq('telegram_id',Number(telegramId))
+    .select('id,telegram_id,whatsapp_id,name,gmail_email,timezone')
+    .eq('telegram_id', legacy)
     .maybeSingle()
   if(error)throw new Error(`email_triage_user_read_failed:${error.message}`)
-  if(!data?.id||!data?.whatsapp_id||!Number.isFinite(Number(data.telegram_id)))return null
+  if(!data?.id||!data?.whatsapp_id)return null
+  if (String(data.telegram_id) !== owner) return null
   return {
     userId:String(data.id),
-    legacyTelegramId:Number(data.telegram_id),
+    legacyTelegramId: legacy,
     whatsappId:String(data.whatsapp_id),
     name:String(data.name||'Gogo'),
+    ...(data.timezone?{timezone:String(data.timezone)}:{}),
+    ...(data.gmail_email?{gmailEmail:String(data.gmail_email).toLowerCase()}:{}),
+  } as AgentActor
+}
+
+// One WhatsApp message per email that needs the person (payments failed, money leaving, deadlines, security, replies
+// waiting), each sent once, quiet hours and a daily cap from the watch's mailAlerts rules. Orders are alerted by the
+// order-tracking step that follows. Read-only.
+// The per-email and legacy digest paths must both check order problems. Keep the
+// original receipt-backed delivery key and alerted IDs; no extra fetch or send
+// on already-alerted orders, and unknown delivery outcomes are never retried
+// with a new key. Owner/recipient authorization remains in deliverWatchAlert.
+async function continueInboxOrderAlerts(watcher:any,condition:InboxTriageWatcherCondition,actor:AgentActor,telegramId:string,now:Date){
+  // Order tracking (6 Nov, owner): one message per order problem or missed delivery day, from the shop's own emails.
+  let orderTracking=watcher.last_state_json?.orderTracking||null
+  try{
+    const ot=await import('./order-tracking')
+    const orders=await ot.readOrders(actor as any)
+    const sentIds:string[]=Array.isArray(orderTracking?.alerted)?orderTracking.alerted.map(String):[]
+    const alerts=ot.orderAlerts(orders,sentIds,now.getTime())
+    if(alerts.length&&condition.delivery!=='app'){
+      const key='orders/'+watcher.id+'/'+createHash('sha256').update(alerts.map(a=>a.id).sort().join('\n')).digest('hex')
+      const message=`📦 *Order update*\n\n${alerts.map(a=>a.line).join('\n\n')}\n\nFrom the shop's emails. Say "track my orders" for all of them.`
+      const delivery=await deliverWatchAlert({watcherId:String(watcher.id),owner:telegramId,key,due:now.toISOString(),message,condition:watcher.condition_json,topic:'watches',thread:{kind:'order_alert',data:{orderShop:(alerts[0] as any)?.shop||null,merchant:(alerts[0] as any)?.shop||null,subject:(alerts[0] as any)?.label||(alerts[0] as any)?.line||null}}})
+      if(delivery.accepted||['suppressed','cancelled','app_only'].includes(delivery.state))orderTracking={alerted:[...alerts.map(a=>a.id),...sentIds].slice(0,200),checkedAt:now.toISOString()}
+      console.log('ORDER_ALERT:',JSON.stringify({alerts:alerts.length,state:delivery.state}))
+    }else orderTracking={alerted:[...(condition.delivery==='app'?alerts.map(a=>a.id):[]),...sentIds].slice(0,200),checkedAt:now.toISOString()}
+  }catch(err:any){console.error('ORDER_TRACKING_FAILED:',String(err?.message||err).slice(0,120))}
+  return orderTracking
+}
+
+async function processMailAlerts(watcher:any,condition:InboxTriageWatcherCondition,actor:AgentActor,telegramId:string,fresh:any[],seen:string[],messages:any[],now:Date) {
+  const ma=await import('@/lib/email/mail-alerts')
+  const rules=ma.normalizeRules((watcher.condition_json as any)?.mailAlerts)
+  const tz=(actor as any).timezone||'Asia/Kolkata'
+  const prior:any=watcher.last_state_json?.mailAlerts||null
+  const attention=await import('@/lib/email/attention-store').then(m=>m.loadRules(Number(telegramId))).catch(()=>[] as any[])
+  // Context the person would want with the alert: today's meetings and saved trips. Best effort, never required.
+  const today=await Promise.race([
+    import('./calendar-read').then(m=>m.executeReadOnlyCalendarStep({actor,instruction:'what is on my calendar today',missionText:'what is on my calendar today'} as any))
+      .then((out:any)=>Array.isArray(out?.output?.events)?out.output.events.filter((e:any)=>/T\d{2}:\d{2}/.test(String(e.start||''))).map((e:any)=>({summary:String(e.summary||''),start:String(e.start),end:e.end?String(e.end):undefined,attendees:(e.attendees||[]).map((a:any)=>({email:String(a.email||'')}))})):[]),
+    new Promise<any[]>(r=>setTimeout(()=>r([]),6000)),
+  ]).catch(()=>[] as any[])
+  const trips=await supabaseAdmin.from('travel_tickets').select('from_city,to_city,depart_at,arrive_at').eq('telegram_id',Number(telegramId))
+    .gte('depart_at',new Date(now.getTime()-2*86_400_000).toISOString()).lte('depart_at',new Date(now.getTime()+14*86_400_000).toISOString()).order('depart_at',{ascending:true}).limit(4)
+    .then(({data}:any)=>(data||[]).map((t:any)=>({fromCity:t.from_city,toCity:t.to_city,departAt:String(t.depart_at),returnAt:null})),()=>[])
+  const emails=fresh.map(ma.toAttentionEmail).filter((e:any):e is NonNullable<typeof e>=>!!e)
+  const {alerts,deferred,state,quiet}=ma.selectAlerts(emails,{rules,attention,state:prior,ctx:{name:actor.name,timezone:tz,now:now.getTime(),today,trips,gmailEmail:(actor as any).gmailEmail||null},ownEmail:(actor as any).gmailEmail||null})
+  let sent=0
+  const alerted:string[]=[]
+  for(const a of alerts){
+    const key='mail/'+watcher.id+'/'+createHash('sha256').update(a.id).digest('hex').slice(0,24)
+    if(condition.delivery==='app'){alerted.push(a.id);continue}
+    const delivery=await deliverWatchAlert({watcherId:String(watcher.id),owner:telegramId,key,due:now.toISOString(),message:a.message,condition:watcher.condition_json,topic:a.topic,thread:{kind:'mail_alert',data:ma.alertThreadData(a.kind,a.scored,(actor as any).gmailEmail||null)}})
+    if(delivery.accepted||['suppressed','cancelled','app_only'].includes(delivery.state)){alerted.push(a.id);sent+=delivery.accepted?1:0}
+    else console.error('MAIL_ALERT_DELIVERY:',JSON.stringify({kind:a.kind,state:delivery.state}))
   }
+  // Emails alerted or judged not worth an alert are seen; deferred ones (quiet hours, daily cap) stay fresh for the next check.
+  const alertedSet=new Set(alerted)
+  const deferredIds=new Set(alerts.filter(a=>!alertedSet.has(a.id)).map(a=>a.id))
+  const waitingIds=new Set(deferred)
+  const consumed=messages.map((m:any)=>String(m?.id||'')).filter((id:string)=>id&&!deferredIds.has(id)&&!waitingIds.has(id))
+  const nextSeen=Array.from(new Set([...alerted,...consumed,...seen])).slice(0,160)
+  // #1321 per-email mode must not swallow the independently promised order watch.
+  const orderTracking=await continueInboxOrderAlerts(watcher,condition,actor,telegramId,now)
+  const nextState={...(watcher.last_state_json||{}),seenMessageIds:nextSeen,mailAlerts:{...state,alerted:[...alerted,...(prior?.alerted||[])].slice(0,400)},orderTracking,pendingInboxAlert:null,lastCheckedAt:now.toISOString()}
+  await supabaseAdmin.from('agent_watchers').update({last_state_json:nextState,last_checked_at:now.toISOString(),
+    next_check_at:new Date(now.getTime()+(quiet?60:condition.cadenceMinutes)*60_000).toISOString(),updated_at:now.toISOString()}).eq('id',watcher.id).eq('telegram_id',telegramId)
+  console.log('MAIL_ALERTS:',JSON.stringify({fresh:fresh.length,alerts:alerts.length,sent,deferred:deferred.length,quiet,today:today.length,trips:trips.length}))
+  if(alerted.length)await writeActivity(telegramId,`Mail alerts: ${alerted.length} email(s) flagged.`,{watcher_id:watcher.id,type:'email_triage',kinds:alerts.map(a=>a.kind)}).catch(()=>{})
+  return {triggered:alerted.length>0,failed:false}
 }
 
 async function processInboxTriageWatcher(watcher:any,now:Date) {
@@ -663,7 +754,9 @@ async function processInboxTriageWatcher(watcher:any,now:Date) {
     if(!alreadyNotified) {
       await sendWhatsAppIfWanted(
         telegramId,condition.delivery,
-        reason.includes('workspace_email_reading_disabled')
+        reason.includes('workspace_email_consent_missing')
+          ? 'Your inbox watch is paused: I haven’t got your OK to read Gmail yet. Reconnect Google once at app.askgogo.in/dashboard/settings/email to start it. I did not read any mail.'
+          : reason.includes('workspace_email_reading_disabled')
           ? 'Your inbox watch cannot read mail because Gmail reading is disabled in your saved privacy preference. Connecting Google does not enable it.'
           : reason.includes('workspace_reconnect_required')||reason.includes('workspace_not_connected')
           ? 'Your inbox watch is paused because Google Workspace needs to be reconnected. I did not read or change any mail.'
@@ -682,6 +775,10 @@ async function processInboxTriageWatcher(watcher:any,now:Date) {
   const seen=Array.isArray(watcher.last_state_json?.seenMessageIds)?watcher.last_state_json.seenMessageIds.map(String):[]
   const seenSet=new Set(seen)
   const fresh=messages.filter((m:any)=>m?.id&&!seenSet.has(String(m.id)))
+  // Important mail, one message at a time (owner-approved 6 Nov). Replaces the digest unless the watch asks for it.
+  if((globalThis as any).process?.env?.VERCEL_ENV&&(watcher.condition_json as any)?.digest!==true&&!condition.matchTerms?.length){
+    return processMailAlerts(watcher,condition,actor,telegramId,fresh,seen,messages,now)
+  }
   const scoped=condition.matchTerms?.length
     ? fresh.filter((m:any)=>{
         const hay=`${m?.subject||''} ${m?.from||''} ${m?.snippet||''}`.toLowerCase()
@@ -754,8 +851,11 @@ async function processInboxTriageWatcher(watcher:any,now:Date) {
     })
   }
 
+  const orderTracking=await continueInboxOrderAlerts(watcher,condition,actor,telegramId,now)
+
   const finalState={
     ...(watcher.last_state_json||{}),pendingInboxAlert:null,inboxAlertDelivery:deliveryState,
+    orderTracking,
     seenMessageIds:nextSeen,lastActionCount:actions.length,
     lastActionAt:actions.length?now.toISOString():watcher.last_state_json?.lastActionAt||null,
     workspaceErrorNotified:false,lastError:null,
@@ -921,7 +1021,10 @@ async function processProductStockWatcher(watcher:any, now:Date) {
   let cartStatus = 'not_requested'
   let handoffReason:string | null = null
 
-  if (condition.addToCart) {
+  // Launch kill switch: adding to the person's own cart uses their signed-in browser.
+  const cartPaused = condition.addToCart && typeof capabilityPaused === 'function' && capabilityPaused('logged_in_browser')
+  if (cartPaused) cartStatus = 'paused'
+  if (condition.addToCart && !cartPaused) {
     cartStatus = 'attempted'
     try {
       const cart = await runSecureBrowser({
@@ -946,6 +1049,8 @@ async function processProductStockWatcher(watcher:any, now:Date) {
   await createProductIdea(telegramId, condition, String(watcher.id), cartVerified)
   const actionText = !condition.addToCart
     ? 'I found it available.'
+    : cartPaused
+      ? 'I found it available. Adding to your cart is paused right now, so I did not touch your cart.'
     : cartVerified
       ? 'I added one to your cart and verified the cart state.'
       : handoffReason
@@ -1125,6 +1230,9 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
       .eq('condition_json', JSON.stringify(watcher.condition_json))
     return { triggered:false, failed:false }
   }
+
+  // A share-price check is a plain exchange quote with no search cost, so the search budget never defers it.
+  if (condition.stockRule) return await processStockCheck(watcher, condition, condition.stockRule, now)
 
   const allowance = await checkCostAllowance(telegramId, COST_ESTIMATES_PAISE.web_search_basic)
   const currentQuiet = Math.max(0, Number(watcher.last_state_json?.quietChecks || 0))
@@ -1405,6 +1513,62 @@ async function processWebSearchWatcher(watcher:any, now:Date) {
   }).eq('id', watcher.id).eq('telegram_id', telegramId).eq('active', true)
     .eq('condition_json', JSON.stringify(watcher.condition_json))
   if (stateError) throw new Error('watch_alert_state_write_failed')
+  return { triggered:material, failed:false }
+}
+
+/** Ledger key for one share-price alert episode: watch id + rule identity + episode number. */
+export function stockAlertDeliveryKey(watcherId:string, rule:StockRule, episode:number) {
+  const identity = [watcherId, rule.symbol, rule.kind, rule.direction, rule.pct, rule.level, episode]
+  return 'watch/' + watcherId + '/stock/' + createHash('sha256').update(JSON.stringify(identity)).digest('hex')
+}
+
+// One check of a share-price watch (26 Oct): a plain exchange quote (no search or AI cost), decided by code. A failed
+// or unvalidated quote stays silent and records why; the alert episode only advances after a send is accepted.
+async function processStockCheck(watcher:any, condition:WebSearchWatcherCondition, rule:StockRule, now:Date) {
+  const telegramId = String(watcher.telegram_id)
+  const quote = await fetchStockQuote(rule.symbol).catch((err:any) => { console.error('STOCK_WATCH_QUOTE_FAILED:', String(err?.message||err).slice(0,120)); return null })
+  const prior = stockStateFrom(watcher.last_state_json, rule)
+  const verdict = quote ? evaluateStockRule(rule, quote.price, prior) : { notify:false, reason:'no_quote', changePct:null, next:prior }
+  let sent = false
+  if (verdict.notify && quote) {
+    const key = stockAlertDeliveryKey(String(watcher.id), rule, prior.alertCount)
+    const message = stockAlertText(rule, quote.price, verdict, quote.asOf, prior.baseline)
+    if (condition.delivery !== 'app') {
+      const delivery = await deliverWatchAlert({ watcherId:String(watcher.id), owner:telegramId, key, due:now.toISOString(), message, condition:watcher.condition_json })
+      // "suppressed"/"cancelled": the watch was stopped or changed meanwhile, so nothing is sent or recorded.
+      // A retry after a lost state write finds the ledger row already accepted and moves on (same key).
+      if (['suppressed', 'cancelled'].includes(delivery.state)) return { triggered:false, failed:false }
+      if (!delivery.accepted && !['outcome_unknown', 'failed'].includes(delivery.state)) return { triggered:false, failed:true }
+      sent = delivery.accepted
+    } else sent = true
+    if (sent) await writeActivity(telegramId, `Background Gogo saw your share-price rule met: ${condition.title}`, {
+      watcher_id:watcher.id, type:'web_search', kind:'stock_price', symbol:rule.symbol, observed:quote.price, change_pct:verdict.changePct, evidence_level:'exchange_quote',
+    })
+  }
+  const next = verdict.notify ? (sent ? verdict.next : prior) : verdict.next
+  const material = verdict.notify && sent
+  // Outside NSE hours a quote cannot move, so checks slow to every 2 hours.
+  const cadenceMinutes = nseMarketOpen(now) ? Math.max(15, Number((condition as any).requestedCadenceMinutes) || 30) : 120
+  const alertTimes = Array.isArray(watcher.last_state_json?.alertTimes) ? watcher.last_state_json.alertTimes : []
+  const { error } = await supabaseAdmin.from('agent_watchers').update({
+    cadence_minutes:cadenceMinutes,
+    last_checked_at:now.toISOString(),
+    // Closed market: the next check is at most the next 09:15 IST opening, so the first minutes of trading are watched.
+    next_check_at:new Date(Math.min(now.getTime() + cadenceMinutes * 60_000, nseMarketOpen(now) ? Infinity : nextNseOpen(now).getTime())).toISOString(),
+    last_state_json:{
+      ...(watcher.last_state_json || {}),
+      stockArmed:next.armed, stockBaseline:next.baseline, stockAlertCount:material ? prior.alertCount + 1 : prior.alertCount,
+      lastObservedPrice:quote?.price ?? watcher.last_state_json?.lastObservedPrice ?? null,
+      lastStockReason:verdict.reason, lastQuoteAsOf:quote?.asOf ?? null,
+      quietChecks:material ? 0 : (Number(watcher.last_state_json?.quietChecks) || 0) + 1,
+      lastAlertAt:material ? now.toISOString() : watcher.last_state_json?.lastAlertAt || null,
+      alertTimes:material ? [...alertTimes, now.toISOString()].slice(-20) : alertTimes,
+      costGuard:'ok',
+    },
+    updated_at:now.toISOString(),
+  }).eq('id', watcher.id).eq('telegram_id', telegramId).eq('active', true)
+    .eq('condition_json', JSON.stringify(watcher.condition_json))
+  if (error) throw new Error('watch_alert_state_write_failed')
   return { triggered:material, failed:false }
 }
 
