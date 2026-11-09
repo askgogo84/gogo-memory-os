@@ -39,8 +39,22 @@ export async function processBookingChangeWatches(limit=8){
       const{error:updateError}=await supabaseAdmin.from('life_events').update({lifecycle_state:cancelled?'cancelled':'watching',metadata_json:nextMeta,updated_at:at}).eq('id',event.id).eq('telegram_id',String(row.telegram_id));if(updateError)throw new Error(`booking_watch_event_update_failed:${updateError.message}`)
       const { error: activityError } = await supabaseAdmin.from('agent_activity').insert({telegram_id:String(row.telegram_id),event_type:'booking_change_detected',message:`Booking change detected: ${safe(delta.reason||'provider changed the event',600)}`,metadata_json:{life_event_id:event.id,delta}})
       if(activityError) console.error('BOOKING_CHANGE_ACTIVITY_FAILED:',activityError.message)
-      await sendAgentPush(String(row.telegram_id),{title:cancelled?'Booking cancelled':'Booking changed',body:safe(delta.reason||`${event.title} changed on the provider page.`,260),path:'/dashboard/today',data:{lifeEventId:String(event.id)}}).catch(()=>{})
-      if(cancelled)await complete(row.id,{...(row.payload_json||{}),snapshot:nextSnapshot,lastChangeAt:at,cancellationNotified:true});else{await defer(row.id,{...(row.payload_json||{}),snapshot:nextSnapshot,lastChangeAt:at});deferred++}
+      // Expo ticket acceptance is not evidence a device displayed this notice.
+      // Keep the provider-confirmed change in life_events even if push cannot be accepted.
+      // A thrown send may have reached Expo: complete cancelled watches without blind replay.
+      let pushReceipt: 'provider_accepted' | 'not_accepted' | 'partial' | 'outcome_unknown' = 'outcome_unknown'
+      try {
+        const push = await sendAgentPush(String(row.telegram_id),{title:cancelled?'Booking cancelled':'Booking changed',body:safe(delta.reason||`${event.title} changed on the provider page.`,260),path:'/dashboard/today',data:{lifeEventId:String(event.id)}})
+        const sent = push?.sent, rejected = push?.failed
+        if (Number.isSafeInteger(sent) && Number.isSafeInteger(rejected) && sent >= 0 && rejected >= 0) {
+          pushReceipt = sent > 0 ? (rejected === 0 ? 'provider_accepted' : 'partial') : 'not_accepted'
+        }
+      } catch {
+        // Unknown outcome is not a definite rejection. Never retry just because the call threw.
+      }
+      if(cancelled)await complete(row.id,{...(row.payload_json||{}),snapshot:nextSnapshot,lastChangeAt:at,
+        cancellationNotified:pushReceipt==='provider_accepted',cancellationPushState:pushReceipt})
+      else{await defer(row.id,{...(row.payload_json||{}),snapshot:nextSnapshot,lastChangeAt:at});deferred++}
     }catch(err:any){failed++;console.error('BOOKING_CHANGE_WATCH_FAILED:',err?.message||err);try{await defer(row.id,{...(row.payload_json||{}),lastError:safe(err?.message||'booking_watch_failed',300)},12)}catch(deferErr:any){console.error('BOOKING_CHANGE_DEFER_FAILED:',deferErr?.message||deferErr)}}
   }
   return{checked,changed,deferred,failed}

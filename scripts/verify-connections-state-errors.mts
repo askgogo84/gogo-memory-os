@@ -33,6 +33,9 @@ function load(file:string){
  runInNewContext(source,{exports,require:(name:string)=>deps[name]||{},Date,Number,String,Boolean,parseInt,Promise,console:{error:()=>{}},fetch:()=>{throw new Error('provider I/O forbidden')}})
  return exports
 }
+// Mirror the production pure signed64 owner validator when executing the original
+// dashboard query module; keep all DB/provider dependencies inert.
+deps['./owner-identity']=load('lib/dashboard/owner-identity.ts')
 const profile=load('lib/dashboard/queries.ts')
 deps['@/lib/dashboard/queries']={getProfile:profile.getProfile}
 const page=load('app/dashboard/(app)/connections/page.tsx')
