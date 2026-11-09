@@ -193,7 +193,7 @@ export async function tryRecoverAppointmentOption(params: { actor: AgentActor; s
       service:safe(meta.service || '',120),location:safe(meta.location || '',120),timing:safe(meta.timing || '',120),recoveredContext:true,
       providerLocked:true,locationLocked:true,requestedTime,requestedDate,
     }
-    const queued = await queueBrowserRead({ actor:params.actor, surface:params.surface, text:objective, notifySuffix:bookingNextStepHint(option), metadata:{ appointment_selection, appointment_prepared:true } })
+    const queued = await queueBrowserRead({ actor:params.actor, surface:params.surface, text:objective, notifySuffix:bookingNextStepHint(option), metadata:{ appointment_selection, appointment_prepared:true } }).catch(() => null)
     if (queued?.runId) {
       return {
         runId:queued.runId, status:'running' as const, capability:'browser' as const, risk:'low' as const,
