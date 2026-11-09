@@ -1,0 +1,2 @@
+# tests added by PR #1430
+node scripts/verify-inbound-retention-testonly.mjs

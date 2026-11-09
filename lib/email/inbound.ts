@@ -65,6 +65,13 @@ export async function processInboundEmail(input: { to: string; from?: string; ra
   if (!owner) return { status: 'unknown_alias' }
   const telegramId = owner.telegramId
 
+  // Opportunistic 30-day retention for this person, on every accepted path (new, duplicate and Gmail confirmation
+  // mail). A failed purge never blocks the new message, but it is logged for repair instead of being swallowed.
+  await supabaseAdmin.from('inbound_emails').delete().eq('telegram_id', telegramId).lt('received_at', new Date(now - 30 * 86400_000).toISOString()).then(
+    (res: any) => { if (res?.error) console.error('INBOUND_RETENTION_FAILED:', String(res.error.message || res.error).slice(0, 160)) },
+    (err: any) => { console.error('INBOUND_RETENTION_FAILED:', String(err?.message || err).slice(0, 160)) },
+  )
+
   const confirm = gmailForwardingConfirmation(mail)
   if (confirm) {
     await supabaseAdmin.from('inbound_emails').upsert({
@@ -98,8 +105,6 @@ export async function processInboundEmail(input: { to: string; from?: string; ra
   const firstForward = !owner.confirmedAt && forwarded && !/@(?:google|accounts\.google)\.com\b/i.test(mail.from)
   await supabaseAdmin.from('email_aliases').update({ last_received_at: at, ...(firstForward ? { forwarding_confirmed_at: at } : {}) }).eq('alias', alias)
   if (firstForward) await notify(telegramId, `email-forward-on/${telegramId}`, FORWARDING_ON_TEXT)
-  // Opportunistic 30-day retention for this person.
-  await supabaseAdmin.from('inbound_emails').delete().eq('telegram_id', telegramId).lt('received_at', new Date(now - 30 * 86400_000).toISOString()).then(() => {}, () => {})
 
   if (scored.score < PUSH_SCORE) return { status: 'stored', pushed: false, telegramId }
   const { data: user } = await supabaseAdmin.from('users').select('timezone').eq('telegram_id', telegramId).maybeSingle()
