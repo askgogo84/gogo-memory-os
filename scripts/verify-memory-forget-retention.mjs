@@ -6,6 +6,13 @@ import vm from 'node:vm'
 import ts from 'typescript'
 
 const source = readFileSync('lib/bot/handlers/memory-control.ts', 'utf8')
+let redactionModule = null
+function realRedaction() {
+  if (redactionModule) return redactionModule
+  const js = ts.transpileModule(readFileSync('lib/bot/memory-redaction.ts', 'utf8'), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText
+  const exp = {}; vm.runInNewContext(js, { exports: exp, require: n => { throw Error('memory-redaction must stay import-free: ' + n) } }, { filename: 'lib/bot/memory-redaction.ts' })
+  return (redactionModule = exp)
+}
 const compiled = ts.transpileModule(source, {
   fileName: 'lib/bot/handlers/memory-control.ts',
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
@@ -89,6 +96,7 @@ function fixture(initialMemories, options = {}) {
     if (name === '@/lib/supabase-admin') return { supabaseAdmin: db }
     if (name === '@/lib/services/embeddings') return { embedText: async () => [] }
     if (name === '@/lib/bot/handlers/shared-memory') return { getSharedMemories: async () => [] }
+    if (name === '@/lib/bot/memory-redaction') return realRedaction() // pure, import-free: the real module, not a stub
     throw Error('Unexpected import: ' + name)
   }
   vm.runInNewContext(compiled, { exports, require: requireModule, console, Date, Intl },

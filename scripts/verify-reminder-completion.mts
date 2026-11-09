@@ -72,3 +72,6 @@ assert.equal(reminderStateLabel({sent:true,delivery_state:'provider_accepted'}),
 assert.equal(reminderStateLabel({sent:true,delivery_state:'read'}),'Read')
 assert.equal(reminderStateLabel({sent:true,delivery_state:'outcome_unknown'}),'Delivery unverified')
 console.log('PASS: occurrence-bound Done, durable completion, unchanged recurrence, tenant isolation, ambiguity, write failure and dashboard truth')
+
+// Scoped exported reminder reader authorization regression (inert).
+await import('./verify-mission-reminder-owner.mts')

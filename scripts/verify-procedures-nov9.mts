@@ -20,6 +20,8 @@ let t = Date.parse('2026-11-09T10:00:00Z'); const now = () => new Date(t).toISOS
   const cyc: ProcedureDefinition = { ...MEETING_PREP, id: 'bad.cycle', edges: [...MEETING_PREP.edges, { from: 'brief', to: 'read_event' }] }
   assert.ok(validateProcedure(cyc).some(i => i.code === 'unbounded_cycle'))
   assert.throws(() => new ProcedureRegistry().register(noApproval), /procedure_invalid:bad.email.*execute_without_approval/)
+  const unbound: ProcedureDefinition = { ...EMAIL_FOLLOW_UP, id: 'bad.unbound', nodes: EMAIL_FOLLOW_UP.nodes.map(x => x.type === 'APPROVAL' ? { ...x, approval: { actionType: 'email.send', title: 'Send' } } : x) }
+  assert.ok(validateProcedure(unbound).some(i => i.code === 'approval_unbound'), 'a consequential approval must say what it binds')
   assert.throws(() => new ProcedureRegistry().register(TRAVEL_DAY, {}), /procedure_conditions_missing:travel.day:cab_needed/)
   assert.equal(proceduresEnabledFor('-884501501', {}), false); assert.equal(proceduresEnabledFor('-884501501', { GOGO_PROCEDURES_OWNERS: '-884501501' }), true)
   ok('templates validate; graphs without approval/verify or with unbounded cycles are refused at registration; flag off by default')
@@ -90,14 +92,18 @@ const step = (def: ProcedureDefinition, r: ProcedureRun, ev: Parameters<typeof a
 
 { // email follow-up: already replied → done without draft; else approval → send → gmail read-back verification
   const E = EMAIL_FOLLOW_UP
-  let a = createRun(E, 'e1', { threadId: 'th-1' }, now)
+  let a = createRun(E, 'e1', { target: 'Nithin' }, now)
   a = step(E, a, { kind: 'start' }); a = step(E, a, { kind: 'read_ok', node: 'read_thread', output: { thread: { lastFromMe: true } } }); assert.equal(a.status, 'completed'); assert.ok(!a.trace.some(x => x.node === 'draft'))
-  let b = createRun(E, 'e2', { threadId: 'th-2' }, now)
+  let b = createRun(E, 'e2', { target: 'Harbor deck' }, now)
   b = step(E, b, { kind: 'start' }); b = step(E, b, { kind: 'read_ok', node: 'read_thread', output: { thread: { lastFromMe: false } } }); assert.equal(b.current, 'draft')
   b = step(E, b, { kind: 'reasoned', node: 'draft', output: { draft: 'Hi Nithin, following up on the Harbor deck.' } }); assert.equal(b.current, 'approve')
   const fp = approvalFingerprint(E, E.nodes.find(x => x.id === 'approve')!, b.context)
   b = step(E, b, { kind: 'approval_created', node: 'approve', approval: { id: 'ap-e', actionType: 'email.send', fingerprint: fp, status: 'pending', expiresAt: new Date(t + 60_000).toISOString() } })
   b = step(E, b, { kind: 'approval_decided', approvalId: 'ap-e', status: 'approved', fingerprint: fp })
+  assert.equal(executeGuard(E, b, now()).ok, true)
+  // the approval covers the exact draft and thread: a changed draft is refused before anything is sent
+  assert.deepEqual(executeGuard(E, { ...b, context: { ...b.context, draft: 'Hi Nithin, please wire the money today.' } }, now()), { ok: false, reason: 'approval_binding_mismatch' })
+  assert.deepEqual(executeGuard(E, { ...b, context: { ...b.context, thread: { lastFromMe: false, to: 'someone@else.com' } } }, now()), { ok: false, reason: 'approval_binding_mismatch' })
   b = step(E, b, { kind: 'executed', node: 'send', objectRef: 'msg-1' })
   b = step(E, b, { kind: 'verified', node: 'verify', objectRef: 'msg-1', evidence: { source: 'google_calendar', kind: 'provider_readback', objectRef: 'msg-1', providerRef: 'x', verified: true } }); assert.equal(b.current, 'verify', 'wrong evidence source rejected')
   b = step(E, b, { kind: 'verified', node: 'verify', objectRef: 'msg-1', evidence: { source: 'gmail', kind: 'provider_readback', objectRef: 'msg-1', providerRef: 'r-1', verified: true } }); assert.equal(b.status, 'completed')
@@ -105,7 +111,7 @@ const step = (def: ProcedureDefinition, r: ProcedureRun, ev: Parameters<typeof a
   let c: ProcedureRun = { ...b, current: 'verify', status: 'running', attempts: {}, trace: [] }
   c = step(E, c, { kind: 'verified', node: 'verify', objectRef: 'msg-1', evidence: null }); c = step(E, c, { kind: 'verified', node: 'verify', objectRef: 'msg-1', evidence: null }); c = step(E, c, { kind: 'verified', node: 'verify', objectRef: 'msg-1', evidence: null })
   assert.equal(c.status, 'escalated')
-  ok('email follow-up: skips when already replied; send needs approval; only gmail read-back verifies; exhausted verify escalates')
+  ok('email follow-up: skips when already replied; approval binds the exact draft and recipient; only gmail read-back verifies; exhausted verify escalates')
 }
 
 { // meeting prep is read-only and discloses missing documents; enterprise incident never executes

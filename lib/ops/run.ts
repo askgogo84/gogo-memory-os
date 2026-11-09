@@ -92,19 +92,22 @@ async function sendToOps(text: string, line: string) {
   return active ? 'freeform' : 'template'
 }
 
-/** Atomic notification claim: set notified_at only where it still holds the value this pass saw. 'claimed' when
- * this pass won at least one row, 'taken' when another pass already did, 'error' when the write failed. */
-async function claimNotification(rows: { id: string }[], now: Date, cond: { eq?: string; isNull?: true; olderThan?: string }): Promise<'claimed' | 'taken' | 'error'> {
+/** Return the exact rows claimed by THIS pass, not merely a boolean for a bulk update.
+ * Partial PostgREST updates are possible when another cron pass or owner command wins some rows. */
+type NotificationClaim = { state: 'claimed' | 'taken' | 'error'; ids: string[] }
+async function claimNotification(rows: { id: string }[], now: Date, cond: { eq?: string; isNull?: true; olderThan?: string }): Promise<NotificationClaim> {
   const ids = rows.map(r => r.id)
-  if (!ids.length) return 'taken'
+  if (!ids.length) return { state: 'taken', ids: [] }
   // An incident acked or resolved after this pass read it is not claimed (review P3).
   let q: any = supabaseAdmin.from('ops_alerts').update({ notified_at: now.toISOString() }).in('id', ids).not('status', 'in', '(acked,resolved)')
   if (cond.eq) q = q.eq('notified_at', cond.eq)
   else if (cond.isNull) q = q.is('notified_at', null)
   else if (cond.olderThan) q = q.or(`notified_at.is.null,notified_at.lt.${cond.olderThan}`)
   const { data, error } = await q.select('id')
-  if (error) return 'error'
-  return (data || []).length ? 'claimed' : 'taken'
+  if (error) return { state: 'error', ids: [] }
+  const wanted = new Set(ids.map(String))
+  const claimed = (data || []).map((row: { id: string }) => String(row.id)).filter((id: string) => wanted.has(id))
+  return { state: claimed.length ? 'claimed' : 'taken', ids: claimed }
 }
 
 /** A send that certainly reached nobody: missing configuration, or a Twilio client error (4xx) on the first chunk.
@@ -169,8 +172,8 @@ export async function runOpsAlertsPass(now = new Date()) {
   // blind on the next pass; the P1 repeat (6 h) or the next digest is the only resend.
   for (const a of open.filter(x => shouldNotifyP1(x, now)).slice(0, 3)) {
     const claim = await claimNotification([a], now, a.notified_at ? { eq: a.notified_at } : { isNull: true })
-    if (claim === 'error') { errors.push('p1_claim_failed'); continue }
-    if (claim === 'taken') continue
+    if (claim.state === 'error') { errors.push('p1_claim_failed'); continue }
+    if (claim.state === 'taken') continue
     try {
       await sendToOps(formatP1(a, Boolean(a.notified_at)), formatP1Line(a))
       sent++
@@ -183,14 +186,20 @@ export async function runOpsAlertsPass(now = new Date()) {
   const lastDigest = p2.map(a => a.notified_at).filter(Boolean).sort().pop() || null
   if (shouldSendDigest(p2, lastDigest, now)) {
     const claim = await claimNotification(p2, now, { olderThan: new Date(now.getTime() - 55 * MIN).toISOString() })
-    if (claim === 'error') errors.push('digest_claim_failed')
-    else if (claim === 'claimed') {
-      try {
-        await sendToOps(formatDigest(p2), `Ops digest: ${p2.length} open. ${p2.slice(0, 3).map(a => `${a.no}. ${a.title}`).join('; ')}. Reply alerts for the list.`)
-        sent++
-      } catch (e: any) {
-        if (definiteSendFailure(e)) { const back = await releaseClaim(p2, now); errors.push(`digest_send_failed${back ? '' : '_claim_kept'}:${String(e?.message || e).slice(0, 80)}`) }
-        else errors.push(`digest_send_outcome_unknown:${String(e?.message || e).slice(0, 80)}`)
+    if (claim.state === 'error') errors.push('digest_claim_failed')
+    else if (claim.state === 'claimed') {
+      // A bulk conditional update can win only SOME rows (intervening ack/other cron claim).
+      // Never include an unclaimed incident in the digest, template or definite-failure release.
+      const claimedIds = new Set(claim.ids)
+      const claimedRows = p2.filter(a => claimedIds.has(String(a.id)))
+      if (claimedRows.length) {
+        try {
+          await sendToOps(formatDigest(claimedRows), `Ops digest: ${claimedRows.length} open. ${claimedRows.slice(0, 3).map(a => `${a.no}. ${a.title}`).join('; ')}. Reply alerts for the list.`)
+          sent++
+        } catch (e: any) {
+          if (definiteSendFailure(e)) { const back = await releaseClaim(claimedRows, now); errors.push(`digest_send_failed${back ? '' : '_claim_kept'}:${String(e?.message || e).slice(0, 80)}`) }
+          else errors.push(`digest_send_outcome_unknown:${String(e?.message || e).slice(0, 80)}`)
+        }
       }
     }
   }

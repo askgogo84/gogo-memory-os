@@ -11,6 +11,19 @@ export const maxDuration = 60
 const MIN_GAP_MS = 20 * 60 * 60 * 1000
 const MAX_SENDS_PER_RUN = 50
 
+// Supabase BIGINT owners must never pass through a lossy JavaScript Number.
+// Keep the exact signed 64-bit decimal owner for private history, unsubscribe,
+// provider idempotency and delivery receipts. Reject unsafe numeric DB echoes.
+function exactLifecycleOwnerId(value: unknown): string | null {
+  if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
+  if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'bigint') return null
+  const owner = String(value)
+  if (!/^-?[1-9]\d{0,18}$/.test(owner)) return null
+  const signed = BigInt(owner)
+  if (signed < BigInt('-9223372036854775808') || signed > BigInt('9223372036854775807')) return null
+  return owner
+}
+
 function daysSince(value:unknown){
   const started=Date.parse(String(value||''))
   return Number.isFinite(started)?Math.floor((Date.now()-started)/86400000):-1
@@ -37,27 +50,34 @@ export async function GET(req: NextRequest) {
 
   let sent = 0
   let skipped = 0
-  const candidates: Array<{ telegramId: number; key: string; email: string; subject: string }> = []
-  const failures: Array<{ telegramId: number; key?: string; error: string }> = []
+  const candidates: Array<{ telegramId: string; key: string; email: string; subject: string }> = []
+  const failures: Array<{ telegramId: string; key?: string; error: string }> = []
 
   for (const user of users || []) {
     if (sent >= MAX_SENDS_PER_RUN && !dryRun) break
-    const telegramId = Number(user.telegram_id)
+    const telegramId = exactLifecycleOwnerId(user.telegram_id)
     const recipient = String(user.email || '').trim().toLowerCase()
-    if (!Number.isFinite(telegramId) || !recipient || user.email_opt_out === true) {
+    if (!telegramId || !recipient || user.email_opt_out === true) {
       skipped++
       continue
     }
 
     const { data: logRows, error: logError } = await supabaseAdmin
       .from('lifecycle_email_log')
-      .select('email_key, sent_at')
+      .select('telegram_id,email_key,sent_at')
       .eq('telegram_id', telegramId)
       .order('sent_at', { ascending: false })
       .limit(100)
 
     if (logError) {
       failures.push({ telegramId, error: `lifecycle_email_log: ${logError.message}` })
+      continue
+    }
+
+    // An unverified or rounded returned owner must not authorize a send.
+    // A DB adapter may surface a BIGINT as an already-unsafe Number; fail closed.
+    if ((logRows || []).some((row: any) => exactLifecycleOwnerId(row.telegram_id) !== telegramId)) {
+      failures.push({ telegramId, error: 'lifecycle_email_log: owner_verification_failed' })
       continue
     }
 

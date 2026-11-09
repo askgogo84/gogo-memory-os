@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { isSameBrainIntrospection, formatBrainIntrospection, trySameBrainIntrospection } from '../lib/agent/brain-introspection'
+import { isSameBrainIntrospection, formatBrainIntrospection, sameBrainIntrospection, trySameBrainIntrospection } from '../lib/agent/brain-introspection'
 import { supabaseAdmin } from '../lib/supabase-admin'
 
 for(const text of ['How is Same Brain learning from my outcomes?','What have you learned from my corrections?','Which routes are shadow-only?','Show routing confidence','Same Brain v2','What can you route automatically?'])assert.equal(isSameBrainIntrospection(text),true,text)
@@ -28,6 +28,22 @@ async function main(){
     assert.equal(reply?.handledBy,'same-brain-introspection');assert.equal(reply?.mutated,false)
     assert.match(reply!.text,/Verified successes: 1/)
     assert.ok(calls.some(c=>c[0]==='eq'&&c[1]==='telegram_id'&&c[2]==='123'))
+    // Conditional 64-bit precision guard: NEVER read someone else's private learning events
+    // when an unsafe or ambiguous legacy owner arrives at this direct module boundary.
+    // All database calls are inert mocked reads; no user records/provider is touched.
+    for (const invalid of [9007199254740992, 9007199254740993, 0, -0, 12.5, NaN, Infinity, '9007199254740993', null]) {
+      calls.length=0
+      const unsafe={actor:{legacyTelegramId:invalid as number},text:p.text}
+      await assert.rejects(()=>sameBrainIntrospection(unsafe),/brain_identity_required/,
+        'reject ambiguous owner before private telemetry query: '+String(invalid))
+      assert.equal(calls.length,0,'invalid owner reached the private telemetry store: '+String(invalid))
+      assert.equal((await trySameBrainIntrospection(unsafe))?.status,'unavailable')
+      assert.equal(calls.length,0,'fallback must also skip all private reads')
+    }
+    calls.length=0
+    await sameBrainIntrospection({actor:{legacyTelegramId:-124},text:p.text})
+    assert.ok(calls.some(c=>c[0]==='eq'&&c[1]==='telegram_id'&&c[2]==='-124'),
+      'existing safe negative legacy owner continues to read its own telemetry')
     failed=true
     assert.equal((await trySameBrainIntrospection(p))?.status,'unavailable')
     assert.doesNotMatch((await trySameBrainIntrospection(p))!.text,/private error/)

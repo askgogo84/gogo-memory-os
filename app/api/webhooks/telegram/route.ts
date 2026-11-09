@@ -1,4 +1,5 @@
 ﻿import { NextRequest, NextResponse } from 'next/server'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { processIncomingMessage } from '@/lib/bot/process-message'
 import { resolveUser } from '@/lib/bot/resolve-user'
 import { acquireBrainUserLease, claimInboundEvent, completeInboundEvent, failInboundEvent, releaseBrainUserLease } from '@/lib/agent/brain-runtime-guard'
@@ -27,6 +28,23 @@ function getTelegramUserName(message: any): string {
 }
 
 export async function POST(req: NextRequest) {
+  // Verify Telegram's configured webhook secret before reading or claiming any untrusted update.
+  // When setWebhook uses secret_token, Telegram echoes it in this request header.
+  // Missing configuration must fail CLOSED: never treat unsigned input as an owner.
+  const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET
+  if (!expectedSecret || !/^[A-Za-z0-9_-]{1,256}$/.test(expectedSecret)) {
+    return NextResponse.json({ ok: false, error: 'telegram_webhook_unavailable' }, { status: 503 })
+  }
+  const suppliedSecret = req.headers.get('x-telegram-bot-api-secret-token')
+  if (!suppliedSecret || !/^[A-Za-z0-9_-]{1,256}$/.test(suppliedSecret)) {
+    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+  }
+  // Compare fixed-length digests; avoid leaking the configured token's length or contents.
+  const expectedDigest = createHash('sha256').update(expectedSecret, 'utf8').digest()
+  const suppliedDigest = createHash('sha256').update(suppliedSecret, 'utf8').digest()
+  if (!timingSafeEqual(expectedDigest, suppliedDigest)) {
+    return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
+  }
   // Hoisted out of the try so the catch can reach it to send a user-facing error reply.
   // Null until we've parsed the inbound chat; the catch guards on it.
   let chatId: number | null = null

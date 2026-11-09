@@ -266,4 +266,28 @@ assert.ok(dashGate > 0 && dash.indexOf('tryGetTaskStatus({ telegramId: actor.leg
 assert.ok(dashGate < dash.indexOf('await tryRunGeneralPlan('), 'dashboard: status before the general planner')
 assert.ok(dash.indexOf('const accountGate = await tryAccountSiteAnswer(actor, text)') > dashGate, 'shop orders are excluded by the parser, not by order')
 console.log('PASS wiring: WhatsApp webhook + bridge + dashboard chat, before the general planner')
+// UNKNOWN_OUTCOME_RETIRED_REGRESSION: real lifecycle + real task-card formatter, synthetic only.
+// A stale browser/duplicate/cancellation tag must not erase an unverified outcome.
+{
+  const { retiredRunReason } = await import('../lib/agent/task-lifecycle.ts')
+  const unknownCases = [
+    { label: 'stale browser handoff', metadata_json: { state: 'closed_stale' } },
+    { label: 'old browser expiry', error: 'background_browser_resume_expired' },
+    { label: 'cancel metadata', metadata_json: { state: 'closed', closure_reason: 'user_cancelled' } },
+    { label: 'superseded copy', summary: 'Superseded by duplicate mission submission' },
+  ]
+  for (const test of unknownCases) {
+    const item = run({ id: 'synthetic-unknown', title: 'Confirm the payment outcome', status: 'outcome_unknown', ...test })
+    assert.equal(retiredRunReason(item, NOW.getTime()), null, 'unknown outcome must not be retired by ' + test.label)
+    const card = formatRunStatus(item, [], lastRunActivity(item, []), NOW)
+    assert.match(card, /has an unconfirmed outcome/, 'unknown effect remains visible: ' + test.label)
+    assert.match(card, /check with the provider before retrying/, 'unknown effect requires verification: ' + test.label)
+    assert.doesNotMatch(card, /is closed|nothing left pending|is done/i, 'never declare an unknown effect resolved: ' + test.label)
+  }
+  assert.equal(retiredRunReason(run({status:'paused', metadata_json:{state:'closed_stale'}}), NOW.getTime()), 'Closed stale handoff', 'genuine stale pause still retires')
+  assert.equal(retiredRunReason(run({status:'paused', error:'background_browser_resume_expired'}), NOW.getTime()), 'Closed session', 'expired pause still retires')
+  assert.equal(retiredRunReason(run({status:'failed', error:'user_cancelled'}), NOW.getTime()), 'Cancelled by you', 'real explicit cancellation still retires')
+  console.log('PASS unknown-outcome verification retains uncertain effect despite stale contradictory metadata')
+}
+
 console.log('verify-task-status-query: ok')
