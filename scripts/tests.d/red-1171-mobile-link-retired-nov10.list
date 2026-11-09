@@ -1,0 +1,2 @@
+# red #1171: retired WhatsApp LINK device-code pairing
+npx tsx scripts/verify-mobile-link-retired-nov10.mts
