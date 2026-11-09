@@ -73,7 +73,7 @@ function harness() {
   const db = fakeDB(), created = []
   return {
     db, created, sandbox: {
-      Date, Promise, String, Number, Error, Set,
+      Date, Promise, String, Number, Error, Set, BigInt,
       supabaseAdmin: db,
       clean: text => String(text ?? '').trim(),
       isoPlusHoursFrom: () => NOW,

@@ -1,0 +1,2 @@
+# tests added by PR #1438
+node scripts/verify-adaptive-trust-outcome-evidence-testonly.mjs
