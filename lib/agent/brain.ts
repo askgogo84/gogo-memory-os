@@ -501,8 +501,21 @@ export async function answerFollowups(p: { runId: string; telegramId: number; se
       }
       const text = inventedApprovalGuard(clean((res?.content || []).find((b: any) => b.type === 'tool_use')?.input?.text, 1200))
       if (!text) continue
-      await p.send(text)
-      await supabaseAdmin.from('conversations').insert({ telegram_id: p.telegramId, role: 'assistant', content: text })
+      const receipt = await p.send(text)
+      // A fulfilled send promise is not evidence of provider acceptance: preserve
+      // unknown-outcome no-retry, but do not fabricate an answered conversation.
+      const sid = receipt && typeof receipt === 'object' && 'sid' in receipt
+        ? String((receipt as { sid?: unknown }).sid || '').trim()
+        : ''
+      if (!sid) {
+        console.warn('BRAIN_FOLLOWUP_ACCEPTANCE_UNKNOWN:', JSON.stringify({ runId: p.runId, stepId: step.id }))
+        continue
+      }
+      const { error: historyError } = await supabaseAdmin.from('conversations').insert({ telegram_id: p.telegramId, role: 'assistant', content: text })
+      if (historyError) {
+        console.error('BRAIN_FOLLOWUP_HISTORY_FAILED:', JSON.stringify({ runId: p.runId, stepId: step.id }))
+        continue
+      }
       answered++
     } catch (err: any) { console.error('BRAIN_FOLLOWUP_FAILED:', clean(err?.message || err, 120)) }
   }
