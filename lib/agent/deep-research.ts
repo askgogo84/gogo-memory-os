@@ -5,6 +5,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { hotelResearchEvidence, isHotelDiscoveryResearch } from './hotel-research-evidence'
+import { SONNET_MODEL } from '@/lib/services/model-ids'
 
 // Public web-research queries are sent to external search and inference services.
 // Even if their private records have not been fetched yet, a personal research
@@ -136,7 +137,7 @@ Request: ${question}
 Sources:
 ${corpus.slice(0, 24_000)}`
   let body = ''
-  try { body = (await model(prompt, 900, 'claude-sonnet-4-5')).trim() } catch {}
+  try { body = (await model(prompt, 900, SONNET_MODEL)).trim() } catch {}
   if (!body) body = sources.slice(0, 5).map(s => `• ${s.title} [${s.n}]`).join('\n')
   // Some models write markdown bold (**x**); WhatsApp bold is *x*.
   body = body.replace(/\*\*([^*\n]+)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '')

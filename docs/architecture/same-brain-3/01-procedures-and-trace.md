@@ -1,0 +1,47 @@
+# Same Brain 3.0 — Phases 3 and 4 (procedures, decision trace)
+
+Status: implemented behind flags, nothing enabled in production. Companion to `00-current-state.md`.
+
+## Phase 3: procedural graph engine (`lib/procedures/`)
+
+| File | Role |
+| --- | --- |
+| `schema.ts` | Node/edge types; `validateProcedure` — one START, COMPLETE and FAIL present, every node reachable and able to terminate, READ/EXECUTE/VERIFY carry a capability, every EXECUTE is followed by a VERIFY, every path to a consequential EXECUTE passes an APPROVAL (dominance check), cycles only on edges with `loop.maxIterations`. |
+| `engine.ts` | Pure interpreter: `createRun`, `advance(run, event)`, `evaluateCondition`, `executeGuard`, `approvalFingerprint`. No I/O. |
+| `templates.ts` | `travel.day`, `email.follow_up`, `meetings.prepare` (consumer), `enterprise.cancellation_incident` (enterprise, read-only remediation: creates a task, no merchant call). CONDITION predicates live here in code. |
+| `registry.ts` | Versioned registry; registration throws on validation issues or a CONDITION without a predicate. Flag `GOGO_PROCEDURES=1` or `GOGO_PROCEDURES_OWNERS=<ids>` (off). |
+| `compile.ts` | Durable adapter: a procedure becomes an `AutonomousPlan` for the existing runtime (`createAutonomousRun`). No second orchestrator. |
+
+Mapping onto the existing runtime: READ / PARALLEL_READ / REASON / DECIDE / CONDITION / WAIT_EVENT / ESCALATE → one `agent_steps` row each (`procedure.<type>`), with the node's retry budget as `maxAttempts`; APPROVAL + EXECUTE + VERIFY fold into one mutation step with `requiresApproval`, `approvalAction` and `verificationRequired`, `maxAttempts: 1` — which is already how the runtime binds an approval to a step, refuses completion without evidence and never retries a mutation (`retryable && !meta.mutation`). COMPLETE/FAIL are the run's own terminal statuses; `outcome_unknown` is the runtime's existing state for a write the engine marks uncertain.
+
+Invariants the tests pin (`scripts/verify-procedures-nov9.mts`, 6 groups):
+
+- The model fills only the keys a REASON/DECIDE node declares in `produces`; a branch label or "approved: true" in its output is dropped. CONDITION branches come from the predicate table.
+- `executeGuard` refuses: no approval, pending/rejected/expired approval, approval past `expiresAt`, fingerprint from another procedure/version, and any EXECUTE whose outcome is unknown (`outcome_unknown_never_replay`).
+- `approval_created` with a different `actionType` or fingerprint than the node's → run fails closed. `approval_decided` with a tampered fingerprint → fails closed.
+- VERIFY passes only when `hasExecutionEvidence` accepts the evidence for the EXECUTE's object (source, kind, objectRef, providerRef). A returned id or null evidence is a retry, then `unverified` → ESCALATE. Merchant evidence must still be provider read-back with matching objectRef.
+- Only READ / PARALLEL_READ / VERIFY retry; `retryDelayMinutes` follows the node's backoff.
+- Stale events for another node are ignored; wrong WAIT_EVENT names are ignored.
+
+## Phase 4: decision trace (`lib/agent/decision-trace.ts`)
+
+Additive. Rows go to `agent_activity` with `event_type = 'decision_trace'` and `metadata_json.schema = 'same-brain-v3'`: `decision_id`, `procedure_id/version/run_id`, `context_pack_ref`, `objective_kind`, `evidence_class` (weakest decisive step: verified | reported | inferred), `outcome`, per-step classes. `learningSignalFrom(trace)` is the only bridge to the v2 learner: verified completion → `verified_success` (caller must still pass provider evidence to `recordDecisionLearning`, which re-checks it); reported/inferred completion → `success` (unverified; `rankEvidence` does not count it toward calibrated confidence); escalated → `unknown`; waiting → nothing.
+
+Untouched and pinned by `scripts/verify-decision-trace-nov9.mts`: `schema:'same-brain-v2'`, `MIN_CALIBRATION_SAMPLES = 20`, `p.confidence<0.82`, `SAFE_LEARNED_HANDLERS`, `actionRequiresApproval` block, `canLearningOverrideSafety(){return false}`, and `decisionHints` filtering to v2 rows (so v3 trace rows cannot feed routing).
+
+## Phase 1 wiring added in this PR
+
+`syncSemanticForEnabledOwners()` runs at the end of `/api/cron/agent-learning` only when `GOGO_SEMANTIC=1` or `GOGO_SEMANTIC_OWNERS` is set; failures are logged, never fail the pass. The migration `20261109160000_semantic_graph.sql` is still prepared, not run.
+
+## Not in this PR (next)
+
+- Step handlers `procedure.read|reason|decide|condition|wait_event|execute|escalate` in the autonomous tool registry, so a compiled plan actually runs (today the engine is exercised by tests and the adapter produces plans; no production path creates procedure runs).
+- A chat entry that proposes a procedure (`travel.day` when a leg is within 24h, `meetings.prepare` from "prepare for tomorrow's meeting") behind `GOGO_PROCEDURES_OWNERS`.
+- Writing a `decision_trace` row from `loadBrainContext` when `GOGO_CONTEXT_GRAPH` is on, carrying the pack's `decisionId`.
+
+## Enable order (owner)
+
+1. Supabase SQL editor (project qenhjcooyecmatwducpu): run `supabase/migrations/20261109160000_semantic_graph.sql`. Expected: three tables, RLS enabled, no rows.
+2. Vercel → `GOGO_SEMANTIC_OWNERS=-884501501`, redeploy. Next agent-learning cron logs `SEMANTIC_SYNC` and the tables fill for that owner only.
+3. Vercel → `GOGO_CONTEXT_GRAPH=shadow`, `GOGO_CONTEXT_GRAPH_OWNERS=-884501501`. Logs show `CONTEXT_GRAPH_SHADOW` per turn; replies unchanged.
+4. Only after reviewing shadow packs: `GOGO_CONTEXT_GRAPH=on`. `GOGO_PROCEDURES_OWNERS` stays unset until the step handlers land.
