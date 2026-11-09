@@ -92,6 +92,15 @@ export function buildBoardingPassSearchTexts(event: any, action: any) {
   ].map((parts) => parts.join(' ')).filter((value, index, all) => all.indexOf(value) === index)
 }
 
+// Pre-claim owner fence: canonical non-zero decimal that round-trips through a safe integer.
+// A rounded 64-bit or malformed owner never claims a watch, reads a flight or selects a mailbox.
+function exactEmailWatchOwner(value: unknown): string | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  if (typeof value !== 'string' || !/^-?[1-9]\d{0,18}$/.test(value)) return null
+  const legacy = Number(value)
+  return Number.isSafeInteger(legacy) && String(legacy) === value ? value : null
+}
+
 async function resolveActor(telegramId: string | number): Promise<AgentActor> {
   // Exact owner (P0.1): exact decimal lookup, row must echo the id, unsafe ids refused (never rounded).
   if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) throw new Error('life_event_email_actor_missing')
@@ -110,12 +119,12 @@ async function resolveActor(telegramId: string | number): Promise<AgentActor> {
   return { userId: String(data.id), legacyTelegramId: legacy, whatsappId: String(data.whatsapp_id || ''), name: String(data.name || 'Gogo') }
 }
 
-async function claimAction(action: any, now: Date) {
+async function claimAction(action: any, now: Date, owner: string) {
   const leaseUntil = plusMinutes(now, EMAIL_WATCH_LEASE_MINUTES)
   const expectedStatus = String(action.status || 'ready')
   let query = supabaseAdmin.from('life_event_actions')
     .update({ status: 'running', updated_at: now.toISOString(), payload_json: { ...(action.payload_json || {}), emailWatchLeaseUntil: leaseUntil } })
-    .eq('id', action.id).eq('status', expectedStatus)
+    .eq('id', action.id).eq('telegram_id', owner).eq('status', expectedStatus)
   if (expectedStatus === 'running' && action.updated_at) query = query.eq('updated_at', action.updated_at)
   const { data, error } = await query.select('id').maybeSingle()
   if (error) throw new Error(`life_event_email_claim_failed:${error.message}`)
@@ -221,15 +230,21 @@ export async function processDueLifeEventEmailWatches(limit = 10) {
   let checked = 0, claimed = 0, matched = 0, deferred = 0, completed = 0, failed = 0
   for (const action of rows) {
     checked++
-    if (!(await claimAction(action, now))) continue
+    const owner = exactEmailWatchOwner(action.telegram_id)
+    if (!owner) {
+      failed++
+      console.error('LIFE_EVENT_EMAIL_OWNER_INVALID', action.id)
+      continue
+    }
+    if (!(await claimAction(action, now, owner))) continue
     claimed++
     try {
-      const { data: event, error } = await supabaseAdmin.from('life_events').select('id,telegram_id,event_type,subtype,title,provider,start_at,confirmation_ref,lifecycle_state,metadata_json,source_refs').eq('id', action.life_event_id).eq('telegram_id', String(action.telegram_id)).maybeSingle()
+      const { data: event, error } = await supabaseAdmin.from('life_events').select('id,telegram_id,event_type,subtype,title,provider,start_at,confirmation_ref,lifecycle_state,metadata_json,source_refs').eq('id', action.life_event_id).eq('telegram_id', owner).maybeSingle()
       if (error) throw new Error(`life_event_email_event_read_failed:${error.message}`)
       if (!event) throw new Error('life_event_email_event_missing')
       assertBoardingPassSchedule(action,event)
       if (event.event_type !== 'travel' || event.subtype !== 'flight' || action.action_key !== 'watch-boarding-pass-email') { await completeAction(action, { skippedReason: 'unsupported_email_watch' }); completed++; continue }
-      const result = await processBoardingPassWatch(action, event, String(action.telegram_id))
+      const result = await processBoardingPassWatch(action, event, owner)
       if (result.status === 'completed') { completed++; if (result.matched) matched++ } else deferred++
     } catch (error: any) {
       failed++
