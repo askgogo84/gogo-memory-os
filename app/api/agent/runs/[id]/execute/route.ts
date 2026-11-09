@@ -54,7 +54,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       // appointment_selection metadata; those are fail-closed here and only become
       // Life Events when provider confirmation plus an exact slot are verified.
       result = await finalizeApprovedAppointmentRun({ actor, runId: id, result: browserResult })
-      if (['completed', 'failed', 'cancelled'].includes(String((result as any)?.status))) await purgeFlightBookingPii({ runId: id }).catch(() => 0)
+      if (['completed', 'failed', 'cancelled'].includes(String((result as any)?.status))) await purgeFlightBookingPii({ runId: id, keepProfile: true }).catch(() => 0)
     } else if (planType === 'general_multi_tool') {
       result = await resumeApprovedGeneralPlan({ actor, runId: id })
     } else if (planType === 'workspace_meeting_prep') {
