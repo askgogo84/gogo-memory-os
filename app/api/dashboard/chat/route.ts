@@ -7,7 +7,7 @@ import {namesRetailerPriceRead} from '@/lib/commerce/comparison-model'
 import {tryRunContentWorkflow} from '@/lib/agent/content-workflow-entry'
 import { tryMeetingShareFollowup } from '@/lib/agent/meeting-share-followup'
 import { tryCreateGoldRateWatchFromCommand } from '@/lib/agent/gold-watch'
-import { tryCreateInboxTriageWatchFromCommand, tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand, tryGetWatcherStatusFromCommand, tryRunPriceWatchClarification, tryStopWatcherFromCommand } from '@/lib/agent/watch-command'
+import { tryCreateInboxTriageWatchFromCommand, tryCreateWebWatchFromCommand, tryUpdateWebWatchFromCommand, tryGetWatcherStatusFromCommand, tryRunPriceWatchClarification, tryStopWatcherFromCommand, parsePriceWatchCommand, parseWebWatchCommand } from '@/lib/agent/watch-command'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
@@ -23,10 +23,11 @@ import { processIncomingMessage } from '@/lib/bot/process-message'
 import { isDecisionRecallQuery } from '@/lib/agent/recall-query'
 import { isConnectionCapabilityQuery, tryGetAutonomyStatus } from '@/lib/agent/autonomy-status'
 import { parseTaskStatusQuery, tryGetTaskStatus } from '@/lib/agent/task-status'
+import { tryGetScheduledList } from '@/lib/agent/scheduled-list'
 import { isLinkVaultSaveRequest, isLinkVaultQuery } from '@/lib/services/link-vault'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { detectDashboardDayIntent, getDashboardDayReply } from '@/lib/dashboard/day-chat'
-import { isPublicTravelResearchRequest, isTravelResearchDetailsReply, tryRunTravelResearch } from '@/lib/agent/travel-research'
+import { isPublicTravelResearchRequest, isTravelResearchDetailsReply, tryRunTravelResearch, shouldPreferSpecialistTravel } from '@/lib/agent/travel-research'
 import { hardenTravelResearchResult } from '@/lib/agent/travel-research-sanitize'
 import { tryRunGeneralPlan } from '@/lib/agent/general-planner'
 import { tryAccountSiteAnswer } from '@/lib/agent/account-site-gate'
@@ -37,6 +38,7 @@ import { tryResolvePendingQuestion } from '@/lib/bot/pending-question-resolver'
 import { tryFlightBooking } from '@/lib/agent/flight-booking'
 import { observeShadowBrainTurn } from '@/lib/agent/shadow-brain'
 import { tryUnderstandFirst } from '@/lib/agent/understand-first'
+import { tryProductDiscovery } from '@/lib/agent/product-discovery'
 import { isGroundedReminderCommand, jevClarificationReply } from '@/lib/agent/jev-router'
 import { parseApproxLocation } from '@/lib/dashboard/approx-location'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
@@ -46,7 +48,7 @@ import { tryRunAppointmentFollowup } from '@/lib/agent/appointment-followup'
 import { queueRestaurantReservationResearch } from '@/lib/agent/restaurant-reservation'
 import { tryRunBrowserCommand } from '@/lib/agent/browser-command'
 import { tryRunTrainResearch } from '@/lib/agent/train-research'
-import { handleInboxReplyRead } from '@/lib/agent/open-loops'
+import { handleInboxReplyRead, handleOpenLoopQuery, isOpenLoopQuery } from '@/lib/agent/open-loops'
 import { tryRunExpiryReminderPlan } from '@/lib/agent/compound-planner'
 import { tryCancelRunFromChat } from '@/lib/agent/run-cancel'
 import { isTicketRetrievalAsk, buildTicketRetrievalReply } from '@/lib/services/asset-memory'
@@ -162,7 +164,12 @@ export async function GET(req?: NextRequest) {
     }))
     .filter((row: any) => row.content)
 
-  return NextResponse.json({ messages, name: user.name || 'Gogo' })
+  // v2 (9 Nov): today's saved topic brief rides along with the main thread, for the brief card with topic chips.
+  let brief: unknown = null
+  if (!threadId && (globalThis as any).process?.env?.VERCEL_ENV) {
+    try { const w = await import('@/lib/briefing/daily-brief-writer'); brief = typeof w?.readTodaysBrief === 'function' ? await w.readTodaysBrief(String(user.telegram_id)) : null } catch { brief = null }
+  }
+  return NextResponse.json({ messages, name: user.name || 'Gogo', brief })
 }
 
 async function makeDocWasLastReply(telegramId:number|string){
@@ -265,6 +272,71 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json({ text: reply, handledBy: 'invite-links', status: 'completed' })
       }
     }
+    // Connected memory front door, same as WhatsApp (lib/memory/front-door.ts).
+    if((globalThis as any).process?.env?.GOGO_MEMORY!=='off'&&((globalThis as any).process?.env?.GOGO_BRAIN_USERS||(globalThis as any).process?.env?.VERCEL_ENV==='production')){
+      const door:any=await import('@/lib/memory/front-door').catch(()=>null)
+      const memoryTurn=door?.frontDoorCandidate?.(text)?await door.tryLifeGraphTurn({telegramId:Number(user.telegram_id),whatsappTo:user.whatsapp_id?String(user.whatsapp_id):null,userName:user.name||null,text,surface:'web'}).catch(()=>null):null
+      if(memoryTurn){
+        await saveConversation(user.telegram_id,text,memoryTurn.text)
+        return NextResponse.json({text:memoryTurn.text,handledBy:memoryTurn.handledBy,status:'completed'})
+      }
+    }
+    // Occasion invites, same as WhatsApp (approved canvas screen 4).
+    if((globalThis as any).process?.env?.VERCEL_ENV){
+      const inv=await import('@/lib/agent/occasion-invite').then(m=>m.INVITE_GATE.test(text)?m.tryOccasionInvite({telegramId:String(user.telegram_id),text,name:user.name}):null,()=>null)
+      if(inv){
+        const out=(inv.mediaUrl?`${inv.text}\n\nCard: ${inv.mediaUrl}`:inv.text)+(inv.followUp?`\n\n${inv.followUp}`:'')
+        await saveConversation(user.telegram_id,text,out)
+        return NextResponse.json({text:out,handledBy:'occasion-invite',status:'completed',...(inv.mediaUrl?{imageUrl:inv.mediaUrl}:{})})
+      }
+    }
+    // Meeting prep, same as WhatsApp (Duet benchmark, 6 Nov).
+    if((globalThis as any).process?.env?.VERCEL_ENV){
+      const prep=(await import('@/lib/agent/meeting-prep-ask').then(m=>m.isMeetingPrepAsk(text)?m.tryMeetingPrep(actor,text):null,()=>null))
+        ||(await import('@/lib/agent/trip-plan').then(m=>m.tryTripPlan(actor,'web',text),()=>null))
+        ||(await import('@/lib/agent/people').then(m=>m.tryPersonAsk(actor,text),()=>null))
+      if(prep){
+        await saveConversation(user.telegram_id,text,prep)
+        return NextResponse.json({text:prep,handledBy:'meeting-prep',status:'completed',readOnly:true,mutated:false})
+      }
+    }
+    // Home/office saved once, same as WhatsApp (5 Nov, owner).
+    if((globalThis as any).process?.env?.VERCEL_ENV&&/^\s*(?:(?:please\s+)?(?:remember|note|save)\s+(?:that\s+)?)?(?:i\s+(?:live|stay)|we\s+(?:live|stay)|my\s+(?:home|house|office|work)|home|office|work)\b|^\s*[A-Za-z0-9][A-Za-z0-9 .,'-]{1,58}$/i.test(text)){
+      const placeTurn=await import('@/lib/agent/places-context').then(m=>m.tryPlaceCommand({telegramId:String(user.telegram_id),text}),()=>null)
+      if(placeTurn){
+        await saveConversation(user.telegram_id,text,placeTurn)
+        return NextResponse.json({text:placeTurn,handledBy:'saved-places',status:'completed'})
+      }
+    }
+    // Food taste before the brain, same as WhatsApp (5 Nov live).
+    if((globalThis as any).process?.env?.VERCEL_ENV&&/^\s*(?:(?:please\s+)?(?:remember|note|save|forget|avoid|keep|make|show)\b|i\b|i'm|we\b|we're|my\b|no\b|never\b|what\s+do\s+you\s+(?:know|remember)\s+about\s+my\b)/i.test(text)){
+      const taste=await import('@/lib/agent/taste').then(m=>m.tryTasteCommand({telegramId:String(user.telegram_id),text}),()=>null)
+      if(taste){
+        await saveConversation(user.telegram_id,text,taste)
+        return NextResponse.json({text:taste,handledBy:'taste',status:'completed'})
+      }
+    }
+    // Context-first brain (lib/agent/brain.ts), same as WhatsApp: context before keyword rules. Canary users only.
+    // Cheap env gate first: strict route harnesses (and previews) never load the module.
+    const callCommand=/^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
+    if(!callCommand&&(globalThis as any).process?.env?.GOGO_BRAIN!=='off'&&((globalThis as any).process?.env?.GOGO_BRAIN_USERS||(globalThis as any).process?.env?.VERCEL_ENV==='production')){
+      const brain:any=await import('@/lib/agent/brain').then(m=>m.runBrain({phone:String(user.whatsapp_id||''),telegramId:Number(user.telegram_id),text,name:user.name||null,timezone:(user as any).timezone||null,userId:String(actor.userId||''),whatsappId:String(user.whatsapp_id||''),surface:'web'})).catch((err:any)=>{console.error('BRAIN_FAILED:',String(err?.message||err).slice(0,160));return null})
+      if(brain?.reply){
+        await saveConversation(user.telegram_id,text,brain.reply)
+        return NextResponse.json({text:brain.reply,handledBy:'brain',status:'completed'})
+      }
+      if(brain?.text)text=brain.text
+    }
+    // "Which emails am I waiting on replies for?" / "what am I waiting on": the follow-up tracker, not chat.
+    // Guarded: strict route harnesses supply module maps without these exports.
+    const tryPure=(f:()=>boolean)=>{try{return f()}catch{return false}}
+    if(tryPure(()=>typeof isOpenLoopQuery==='function'&&typeof handleOpenLoopQuery==='function'&&isOpenLoopQuery(text))){
+      const loops=await handleOpenLoopQuery({actor,text}).catch((err:any)=>{console.error('OPEN_LOOP_QUERY_FAILED:',String(err?.message||err).slice(0,160));return null})
+      if(loops?.text){
+        await saveConversation(user.telegram_id,text,loops.text)
+        return NextResponse.json(loops)
+      }
+    }
     // "Order milk on Swiggy Instamart" via the user's connected Swiggy account: three in-stock options, and a
     // 1/2/3 reply binds only while that list is Gogo's latest reply. Lazy so strict harnesses keep their maps.
     // Cheap pre-filter: only an Instamart mention or a bare 1/2/3-style pick loads the module.
@@ -302,9 +374,9 @@ async function handleChatPost(req: NextRequest) {
       }
     }
     // Local places ("Suggest 3 South Indian restaurants in Rajajinagar"): Google local results, in the area asked.
-    if(text.length<=200&&/^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert)/i.test(text)&&/\b(?:in|near|around|at)\s+[a-z]/i.test(text)){
-      const pl:any=await import('@/lib/agent/places-search').catch(()=>null)
-      const out=pl?.answerPlaces?await Promise.resolve().then(()=>pl.answerPlaces(text)).catch(()=>null):null
+    if(text.length<=200&&(/^(?:(?:a|an|the|some|good|best|top|nice|cheap|open|veg|non-veg|\d{1,2})\s+){0,3}\b(restaurants?|caf(?:e|é)s?|coffee (?:shops?|places?)|bars?|pubs?|breweries|brewery|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets? shops?|gyms?|salons?|spas?|parks?|hospitals?|clinics?|pharmac(?:y|ies)|chemists?|hotels?|stays?|co-?working spaces?|malls?|supermarkets?|barbers?|barber ?shops?|dentists?|dental clinics?|doctors?|pediatricians?|dermatologists?|physiotherapists?|plumbers?|electricians?|carpenters?|mechanics?|car service(?: centres?| centers?)?|bike service(?: centres?| centers?)?|tailors?|laundr(?:y|ies)|dry cleaners?|vets?|veterinar(?:y|ians?)(?: clinics?)?|pet shops?|opticians?|florists?|atms?|petrol (?:pumps?|bunks?)|ev chargers?|charging stations?)\b\s*(?:near|nearby|in|around|close to)\b/i.test(text)||text.length<=200&&/^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert|barber|dentist|dental|doctor|pediatrician|dermatologist|physio|plumber|electrician|carpenter|mechanic|car service|bike service|tailor|laundr|dry clean|vets?\b|veterinar|pet shop|optician|florist|atms?\b|petrol|ev charg|charging station)/i.test(text)&&(/\b(?:in|near|around|at)\s+[a-z]/i.test(text)||/\b(?:nearby|near\s+by|close\s+by)\b/i.test(text))&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text))){
+      const pl:any=await import('@/lib/agent/places-context').catch(()=>null)
+      const out=pl?.answerPlacesWithContext?await Promise.resolve().then(()=>pl.answerPlacesWithContext({text,telegramId:String(user.telegram_id)})).catch(()=>null):null
       if(typeof out==='string'&&out){
         await saveConversation(user.telegram_id,text,out)
         return NextResponse.json({text:out,handledBy:'places-search',status:'completed'})
@@ -364,6 +436,92 @@ async function handleChatPost(req: NextRequest) {
       await saveConversation(user.telegram_id,text,inboxReplyRead.text)
       return NextResponse.json(inboxReplyRead)
     }
+    // Plain inbox questions (6 Nov live): "emails waiting 3 days for my reply", "subscriptions renewing soon",
+    // "free trials I forgot", "unpaid bills" read Gmail instead of the brain saying it has no access.
+    const emailAsk=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/agent/email-asks').then(m=>m.tryEmailAsk(actor,text),()=>null):null
+    if(emailAsk){
+      await saveConversation(user.telegram_id,text,emailAsk.text)
+      return NextResponse.json({runId:emailAsk.handledBy,status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,...emailAsk})
+    }
+    // A forwarded payment confirmation, and "yes" to its receipt question (6 Nov live).
+    const threaded=(globalThis as any).process?.env?.VERCEL_ENV&&text.length<=160?await import('@/lib/agent/open-thread').then(m=>m.tryThreadReply(actor,text),()=>null):null
+    const pay=threaded||((globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/agent/shared-content').then(async m=>(await m.tryShared(user.telegram_id,text))||(text.length<=24?m.takeSharedFollowUp(actor,text):null),()=>null):null)
+    if(pay){
+      await saveConversation(user.telegram_id,text,pay)
+      return NextResponse.json({runId:'payment-confirmation',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,text:pay,handledBy:'payment-confirmation'})
+    }
+    // Mail-alert rules (6 Nov, owner): "what do you alert me about?", "stop renewals", "add newsletters".
+    const mailRules=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/email/mail-alert-commands').then(m=>m.tryMailAlertCommand(user.telegram_id,text),()=>null):null
+    if(mailRules){
+      await saveConversation(user.telegram_id,text,mailRules)
+      return NextResponse.json({runId:'mail-alert-rules',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,text:mailRules,handledBy:'mail-alert-rules'})
+    }
+    // "morning brief" / "brief me" (9 Nov): write today's topic brief now and answer with it; the card appears on top of the thread.
+    if(/^(?:(?:my|the|today'?s)\s+)?(?:morning\s+)?brief(?:ing)?(?:\s+me)?(?:\s+now)?\s*[.!?]?$|^brief\s+me\s*[.!?]?$/i.test(text.trim())&&(globalThis as any).process?.env?.VERCEL_ENV){
+      const live=await import('@/lib/spaces/sources-live').catch(()=>null)
+      if(live&&typeof live.spacesEnabledFor==='function'&&live.spacesEnabledFor(String(user.telegram_id))===true){
+        const made=await import('@/lib/briefing/daily-brief-writer').then(async w=>{const b=await w.writeDailyBrief(String(user.telegram_id));if(!b)return null;const t=await import('@/lib/briefing/topic-brief');return `☀️ *Your brief*\n${t.formatTopicBrief(b)}\n\nTap a topic above to open it. Saved under Make → Briefs.`},()=>null).catch(()=>null)
+        if(made){
+          await saveConversation(user.telegram_id,text,made)
+          return NextResponse.json({runId:'topic-brief',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,text:made,handledBy:'topic-brief'})
+        }
+      }
+    }
+    // "Build me one page I can check every morning" (9 Nov, v2 mock): a living page (Space) from chat, Spaces accounts only.
+    const pageAskRaw:any=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/spaces/from-chat').then(m=>typeof m?.parsePageAsk==='function'?m.parsePageAsk(text):null,()=>null):null
+    const pageAsk=pageAskRaw&&typeof pageAskRaw==='object'&&typeof pageAskRaw.template==='string'?pageAskRaw as {template:'my_day'|'trip_board';title:string|null}:null
+    if(pageAsk){
+      const live=await import('@/lib/spaces/sources-live').catch(()=>null)
+      if(live&&typeof live.spacesEnabledFor==='function'&&live.spacesEnabledFor(String(user.telegram_id))===true){
+        const made=await (async()=>{
+          const st=await import('@/lib/spaces/store');const fc=await import('@/lib/spaces/from-chat');const reg=await import('@/lib/agent/skill-registry');const bi=await import('@/lib/agent/skills-builtin')
+          bi.ensureBuiltinSkills()
+          const scope={kind:'user' as const,telegramId:String(user.telegram_id)}
+          const existing=await st.getSpace(supabaseAdmin,scope,pageAsk.template).catch(()=>null)
+          if(existing)return fc.pageReply({created:false,title:existing.title,slug:existing.id,refreshMinutes:existing.refreshMinutes})
+          let space=await st.createFromTemplate(supabaseAdmin,scope,pageAsk.template,String(user.telegram_id),id=>reg.skillDefinition(id))
+          if(pageAsk.title)space=await st.applyEdit(supabaseAdmin,scope,space.id,space.version,{op:'rename',title:pageAsk.title},String(user.telegram_id),id=>reg.skillDefinition(id)).catch(()=>space)
+          console.info('SPACE_FROM_CHAT:',JSON.stringify({template:pageAsk.template,named:!!pageAsk.title}))
+          return fc.pageReply({created:true,title:space.title,slug:space.id,refreshMinutes:space.refreshMinutes})
+        })().catch((e:any)=>{console.error('SPACE_FROM_CHAT_FAILED:',String(e?.message||e).slice(0,160));return null})
+        if(made){
+          await saveConversation(user.telegram_id,text,made)
+          return NextResponse.json({runId:'space-from-chat',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:true,text:made,handledBy:'space-from-chat'})
+        }
+      }
+    }
+    // "export my memory" (8 Nov live): the brain answered with its own summary; the export command answers instead.
+    if(/^(?:export|download|send me|give me)\s+(?:all\s+)?(?:my\s+)?(?:memory|memories|everything you (?:know|remember)(?: about me)?|my data)\s*[.!]?$/i.test(text.trim())){
+      const exported=await import('@/lib/bot/handlers/memory-control').then(m=>typeof m?.buildMemoryControlReply==='function'?m.buildMemoryControlReply(user.telegram_id as any,text.trim().toLowerCase()):null,()=>null)
+      if(exported){
+        await saveConversation(user.telegram_id,text,exported)
+        return NextResponse.json({runId:'memory-export',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,text:exported,handledBy:'memory-export'})
+      }
+    }
+    // "Track my orders" (6 Nov, owner): open orders from the shops' emails in Gmail, read-only.
+    const orderList=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/agent/order-tracking').then(m=>m.tryOrderList(actor,text),()=>null):null
+    if(orderList){
+      await saveConversation(user.telegram_id,text,orderList)
+      return NextResponse.json({runId:'order-tracking',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,text:orderList,handledBy:'order-tracking'})
+    }
+    // "Who promised to send the proposal?" — loaded only for those phrasings.
+    if (/\b(?:who\s+(?:promised|said\s+(?:they|he|she)|owes\s+me|was\s+(?:going|supposed)\s+to)|what\s+(?:did|has)\s+\S+(?:\s+\S+)?\s+promise|waiting\s+(?:on|for)\s+from\s+\S)/i.test(text)) {
+      const {handleWhoPromisedQuery} = await import('@/lib/agent/commitments-query')
+      const promised = await handleWhoPromisedQuery({actor,text}).catch(() => null)
+      if (promised) {
+        await saveConversation(user.telegram_id,text,promised.text)
+        return NextResponse.json(promised)
+      }
+    }
+    // "Find everything about Toastr": one read-only search across chat, documents, notes, Gmail and Drive.
+    if (/\b(?:search\s+(?:everything|everywhere|all\s+(?:my\s+)?(?:stuff|things|sources|data))\s+(?:for|about)|(?:find|show)\s+(?:me\s+)?everything\s+(?:about|on|for|related\s+to)|everything\s+(?:i\s+have\s+)?(?:about|on)\s+\S)/i.test(text)) {
+      const {handleUniversalSearch} = await import('@/lib/agent/universal-search')
+      const found = await handleUniversalSearch({actor,text}).catch(() => null)
+      if (found) {
+        await saveConversation(user.telegram_id,text,found.text)
+        return NextResponse.json(found)
+      }
+    }
     // Same run cancel as WhatsApp ("cancel that task", "stop the flight booking"). Owner-bound; reminders,
     // calendar, watches, lists, orders and Gmail are refused by the parser and keep their own paths.
     const runCancel = await tryCancelRunFromChat({telegramId:actor.legacyTelegramId},text,{surface:'web'})
@@ -385,6 +543,12 @@ async function handleChatPost(req: NextRequest) {
           return NextResponse.json({ text: safeReplyText(reply), handledBy: 'edit-reminder', status: 'completed' })
         }
       }
+    }
+    // Open product asks ("find me a navy linen shirt under 2000") read Google Shopping, same as WhatsApp.
+    const productDiscovery = await tryProductDiscovery({ text })
+    if (productDiscovery) {
+      await saveConversation(user.telegram_id, text, productDiscovery.text)
+      return NextResponse.json(productDiscovery)
     }
     // One event id per turn, shared by the understand-first reading and the shadow router outcome.
     const shadowEventId = `web-${randomUUID()}`
@@ -422,6 +586,26 @@ async function handleChatPost(req: NextRequest) {
     if(goldWatch){
       await saveConversation(user.telegram_id,text,goldWatch.text)
       return NextResponse.json(goldWatch)
+    }
+    // 29 Oct live: "Tell me when the iPhone 16 128GB drops below ₹65,000 on Croma" became a daily reminder to check
+    // by hand, and "find me … and keep looking every day" got one search: a planner path claimed both before the watch
+    // handlers. Watches are claimed right after the gold-rule handler, before planners.
+    const earlyPrice=tryPure(()=>typeof parsePriceWatchCommand==='function'&&!!parsePriceWatchCommand(text))
+    const earlyKeepLooking=/\bkeep\s+(?:looking|searching|checking|hunting)\b/i.test(text)&&tryPure(()=>typeof parseWebWatchCommand==='function'&&!!parseWebWatchCommand(text))
+    if(earlyPrice||earlyKeepLooking){
+      const early=(earlyPrice?await tryRunPriceWatchClarification({actor,surface:'web',text}):await tryCreateWebWatchFromCommand({actor,surface:'web',text}))
+      if(early){
+        await saveConversation(user.telegram_id,text,early.text)
+        return NextResponse.json(early)
+      }
+    }
+    // Share-price watch (26 Oct): a live exchange-quote rule, never a news or search watch.
+    // Loaded only for messages that talk about a share/stock watch, so route harnesses keep their dependency maps.
+    const stockWatch=/\b(?:share|shares|stock)\b/i.test(text)&&/\b(?:watch|track|monitor|alert|notify|tell me|let me know|keep an eye)\b/i.test(text)
+      ?await (await import('@/lib/agent/stock-watch')).tryCreateStockWatchFromCommand({actor,surface:'web',text}):null
+    if(stockWatch){
+      await saveConversation(user.telegram_id,text,stockWatch.text)
+      return NextResponse.json(stockWatch)
     }
     const contentDraft = await tryRunContentWorkflow(actor, text, `web-${randomUUID()}`)
     __trace.mark('contentDraft')
@@ -543,6 +727,12 @@ async function handleChatPost(req: NextRequest) {
     }
     // Same task-status read as WhatsApp, before the general planner can treat it as a new request.
     // A named ask with no matching task returns null and routing continues.
+    // Dots parity: "what's scheduled" lists saved schedules, same as WhatsApp.
+    const scheduledList = await tryGetScheduledList({ actor, text })
+    if (scheduledList) {
+      await saveConversation(user.telegram_id, text, scheduledList.text)
+      return NextResponse.json(scheduledList)
+    }
     if (parseTaskStatusQuery(text)) {
       const taskStatus = await tryGetTaskStatus({ telegramId: actor.legacyTelegramId }, text) || await tryGetAutonomyStatus({ actor, text })
       __trace.mark('taskStatus')
@@ -653,8 +843,9 @@ async function handleChatPost(req: NextRequest) {
     const browserTask = await tryRunBrowserCommand({ actor, surface:'web', text })
     __trace.mark('browserTask')
     if (browserTask) {
-      const suffix = browserTask.status === 'waiting_approval'
-        ? '\n\nI paused before the consequential provider action. Open Gogo Agent to approve or reject it.'
+      // The approval text already says what happens and how to approve (APPROVE / REJECT work here too).
+      const suffix = browserTask.status === 'waiting_approval' && !/\bAPPROVE\b/.test(String(browserTask.text || ''))
+        ? '\n\nReply APPROVE to go ahead or REJECT to cancel.'
         : ''
       const reply = `${browserTask.text || ''}${suffix}`
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:browserTask.handledBy,actualCapability:(browserTask as any).capability||'browser',status:browserTask.status,runId:browserTask.runId}).catch(()=>{})
@@ -706,11 +897,26 @@ async function handleChatPost(req: NextRequest) {
     // High-confidence semantic ambiguity stops before the broad planner can act on the wrong object
     // (same guard WhatsApp has). Jev only asks for the missing detail; it never gets execution authority.
     // Grounded reminder commands ("move it", "what reminders do I have") are never second-guessed.
-    const jevClarify = isGroundedReminderCommand(text) ? null : jevClarificationReply(webObservation?.jev)
+    const jevClarify = isGroundedReminderCommand(text) ? null : jevClarificationReply(webObservation?.jev,text)
     if (jevClarify) {
       await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:'jev-clarification-guard',actualCapability:null,status:'paused'}).catch(()=>{})
       await saveConversation(user.telegram_id, text, jevClarify)
       return NextResponse.json({ text: jevClarify, handledBy: 'jev-clarification-guard', status: 'paused' })
+    }
+
+    // 26 Oct live: "Find the cheapest one-way flight from Bengaluru to Delhi on 20 November…" went to the general
+    // planner (23.6s) and came back as snippet fares with no airline, times or date-specific price. Pure travel
+    // research uses the specialist engine first, as WhatsApp and /api/agent/run already do. Route harnesses that
+    // stub travel-research without this export simply skip the step.
+    if (typeof shouldPreferSpecialistTravel === 'function' && shouldPreferSpecialistTravel(text)) {
+      const travel = await tryRunTravelResearch({ actor, surface:'web', text })
+      __trace.mark('specialistTravel')
+      if (travel) {
+        const hardened = await hardenTravelResearchResult(travel, text)
+        await recordShadowRouterOutcome({telegramId:user.telegram_id,surface:'web',eventId:shadowEventId,actualHandler:travel.handledBy,actualCapability:(travel as any).capability||'travel',status:(travel as any).status||null,runId:(travel as any).runId||null}).catch(()=>{})
+        await saveConversation(user.telegram_id, text, hardened.text)
+        return NextResponse.json({ text: hardened.text, handledBy: hardened.handledBy, status: hardened.status, runId: 'runId' in hardened ? hardened.runId : undefined })
+      }
     }
 
     // Plain information questions skip the general planner (20 Oct: 1–2.4s, then it declined). So does a read-only
@@ -815,5 +1021,19 @@ async function withChatChannel(req: NextRequest) {
       }
     } catch (err: any) { console.error('DASHBOARD_CHAT_CHANNEL_FAILED:', String(err?.message || err).slice(0, 160)) }
   }
-  return res
+  return brandSafeResponse(res)
+}
+
+// The assistant is Gogo: a reply never names the underlying model or vendor (29 Oct live: "…for Claude first").
+async function brandSafeResponse(res: any) {
+  try {
+    if (!res || typeof res.clone !== 'function') return res
+    const body: any = await res.clone().json()
+    if (!body || typeof body.text !== 'string') return res
+    // Same rule as lib/security/outbound-identifiers brandSafe, inline: route harnesses cannot load extra modules.
+    // Quoted text between U+2063 markers is left as written; the markers stay for the chat screen to strip.
+    const text = String(body.text).split(/(\u2063[\s\S]*?\u2063)/).map((part: string) => part.length > 1 && part.startsWith('\u2063') && part.endsWith('\u2063') ? part : part.replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g, (m: string) => /['’]s$/.test(m) ? 'Gogo’s' : 'Gogo').replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, 'our AI provider')).join('')
+    const noBoss = text.replace(/,[ \t]*boss(?=[ \t]*(?:[.!?…:]|$))/gim, '').replace(/^([ \t]*(?:got it|okay|ok|sure|done|noted|alright|right|hey|hi|hello))[,]?[ \t]+boss\b/gim, '$1')
+    return noBoss === body.text ? res : NextResponse.json({ ...body, text: noBoss }, { status: res.status })
+  } catch { return res }
 }

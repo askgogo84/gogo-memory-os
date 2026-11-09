@@ -2,7 +2,7 @@ import {supabaseAdmin} from '@/lib/supabase-admin'
 import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-runtime-guard'
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
-import {COMPARISON_PROVIDERS, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
+import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, outletAreaFromAddress, isFoodComparison, parseFoodSubject, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
 const TYPE = 'price_comparison'
@@ -43,7 +43,7 @@ export async function readPriceComparison(owner: string, id: string): Promise<Pr
     const {data: step, error: stepError} = await supabaseAdmin.from('agent_steps').select('status,output_json')
       .eq('run_id', child.id).eq('telegram_id', owner).eq('tool_name', 'secure_browser').limit(1).maybeSingle()
     if (stepError) throw new Error('comparison_evidence_read_failed')
-    rows.push({...providerObservation(row.provider, child, step,task.metadata_json.subject), startUrl: row.startUrl, ...(row.attempts ? {attempts: row.attempts} : {}), ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})})
+    rows.push(withNavigationTimeout({...providerObservation(row.provider, child, step,task.metadata_json.subject), startUrl: row.startUrl, ...(row.attempts ? {attempts: row.attempts} : {}), ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})}, child.error))
   }
   const blocker = rows.some(row => row.status === 'pending' && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider))
     ? await sharedBrowserHandoffPending(owner) : null
@@ -62,7 +62,7 @@ function reply(task: PriceComparison, intro?: string) {
 /** Request-time web look for electronics: the product page to start from and the price its search result showed.
  *  A search snippet is never presented as confirmed; it is labelled and replaced by the store-page check. */
 async function quickWebLook(subject: string, providers: ComparisonProvider[]) {
-  const looks = await Promise.all(providers.filter(p => PARALLEL_COMPARISON_PROVIDERS.has(p)).map(async provider => {
+  const looks = await Promise.all(providers.filter(p => PARALLEL_COMPARISON_PROVIDERS.has(p) && !FOOD_PROVIDERS.has(p)).map(async provider => {
     const results = await searchWebResults(subject, {includeDomains: [COMPARISON_PROVIDERS[provider].domain], timeoutMs: 6_000}).catch(() => [] as any[])
     const lead = comparisonProductLead(provider, subject, results || [])
     if (!lead) return null
@@ -94,12 +94,13 @@ async function ownerWatchStorage(owner: string, subject: string): Promise<string
   return storageFromWatchTexts(subject, (data || []).map((row: any) => JSON.stringify(row?.condition_json || {})))
 }
 
-function startedText(subject: string, providers: ComparisonProvider[], looks: Record<string, {quickPrice?: string}>, remembered: string | null = null) {
+function startedText(subject: string, providers: ComparisonProvider[], looks: Record<string, {quickPrice?: string}>, remembered: string | null = null, request = '') {
   const names = providers.map(p => COMPARISON_PROVIDERS[p].label)
   const list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0]
   const quick = providers.filter(p => looks[p]?.quickPrice).map(p => `• ${COMPARISON_PROVIDERS[p].label}: about ${looks[p].quickPrice}`)
   // 16 Oct: say which variant is compared (the base model when no size was named) and the pincode used, so the person can correct it.
-  const pin = /^\d{6}$/.test(String(process.env.COMPARISON_PINCODE || '')) ? ` for PIN ${process.env.COMPARISON_PINCODE}` : ''
+  const foodPin = isFoodComparison(providers) ? pincodeInText(request || subject) : null
+  const pin = foodPin ? ` for PIN ${foodPin}` : /^\d{6}$/.test(String(process.env.COMPARISON_PINCODE || '')) ? ` for PIN ${process.env.COMPARISON_PINCODE}` : ''
   // Default and say so: no size → 128GB; no tier word → the base model, never Pro/Pro Max/Air.
   const isPhone = /\biPhone\b/i.test(subject)
   const plainModel = isPhone && !/\b(?:pro|max|plus|mini|air|e)\b/i.test(subject)
@@ -204,7 +205,7 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
     const current = await readPriceComparison(owner, String(data.id))
     if (!current) throw new Error('comparison_missing_after_create')
     return reply(current, current.metadata_json.providers.some(row => row.waitingForRunId)
-      ? undefined : startedText(parsed.subject, parsed.providers, looks, remembered))
+      ? undefined : startedText(parsed.subject, parsed.providers, looks, remembered, parsed.request))
   } finally { await releaseBrainUserLease(key, lease.ownerToken) }
 }
 
@@ -240,7 +241,42 @@ async function sharedBrowserHandoffPending(owner: string) {
 // Electronics stores are public product pages, each read in its own browser, so they run at the same time.
 // Grocery and food stores share one browser that keeps the person's delivery location, so they run one by one.
 const MAX_STORE_ATTEMPTS = 3
-export const PARALLEL_COMPARISON_PROVIDERS = new Set(['amazon', 'flipkart', 'croma', 'reliance'])
+// 25 Oct live: Flipkart's product page hit "page.goto: Timeout 45000ms exceeded" three reads in a row (~3.5 min),
+// then the store line said only "couldn't confirm the item and price." A page that never loads is retried once
+// (two reads), then reported plainly. No price is invented and no search snippet stands in for a store quote.
+const NAV_TIMEOUT_ATTEMPTS = 2
+const NAV_TIMEOUT_FALLBACK_SECONDS = 45
+type StoreRow = PriceComparison['metadata_json']['providers'][number] & {navTimeout?: boolean}
+
+export function isNavigationTimeout(error: unknown): boolean {
+  return /\bpage\.goto: Timeout \d+ms exceeded\b/.test(String(error || ''))
+}
+
+/** A failed store whose LAST browser read timed out on navigation gets an honest, specific reason. Others are untouched.
+ *  The wait comes from the error itself; with several reads, only the last one is claimed to have timed out. */
+export function withNavigationTimeout<T extends {status?: string; attempts?: number}>(row: T, childError: unknown): T {
+  if (row?.status !== 'failed' || !isNavigationTimeout(childError)) return row
+  const ms = Number(String(childError).match(/\bpage\.goto: Timeout (\d+)ms exceeded\b/)?.[1])
+  const seconds = Number.isFinite(ms) && ms > 0 ? Math.round(ms / 1000) : NAV_TIMEOUT_FALLBACK_SECONDS
+  const tries = Math.max(1, Number(row.attempts) || 1)
+  const reason = tries === 1
+    ? `its page didn’t load within ${seconds} seconds, so I have no price from this store.`
+    : `I tried ${tries} times and the last time its page didn’t load within ${seconds} seconds, so I have no price from this store.`
+  return {...row, navTimeout: true, reason}
+}
+
+export function storeRetryLimit(row: {navTimeout?: boolean}): number {
+  return row?.navTimeout ? NAV_TIMEOUT_ATTEMPTS : MAX_STORE_ATTEMPTS
+}
+
+/** Failed stores go back in the queue until their budget is spent; observed, blocked and needs-input stores never do. */
+export function retryFailedStores<T extends StoreRow>(rows: T[]): T[] {
+  return rows.map(row => row.status === 'failed' && (row.attempts || 1) < storeRetryLimit(row)
+    ? {provider: row.provider, status: 'pending' as const, attempts: (row.attempts || 1) + 1, ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})} as T : row)
+}
+// 26 Oct: Swiggy and Zomato are separate sites with public menus, so each gets its own browser too; sharing one
+// let a paused Swiggy location step mark Zomato "browser busy".
+export const PARALLEL_COMPARISON_PROVIDERS = new Set(['amazon', 'flipkart', 'croma', 'reliance', 'swiggy', 'zomato'])
 
 async function withComparisonState<T>(id: string, fn: () => Promise<T>): Promise<T | null> {
   // Parallel store checks update one saved comparison; every read-modify-write holds this short lease.
@@ -269,7 +305,19 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     const {prepareLinkedBrowserRead} = await import('@/lib/agent/browser-command')
     const startedAt = new Date().toISOString()
     let startUrl: string = COMPARISON_PROVIDERS[next.provider].url
-    if (parallel) {
+    const food = FOOD_PROVIDERS.has(next.provider) ? parseFoodSubject(task.metadata_json.subject) : null
+    if (food) {
+      // The restaurant's own menu page on this app (the outlet in the person's city first), else Swiggy's search.
+      const pin = pincodeInText(task.metadata_json.request)
+      const area = await nearestOutletArea(food.restaurant, pin)
+      const {searchWebResults} = await import('@/lib/web-search')
+      const leads = await searchWebResults(`${food.restaurant} ${area ? area + ' ' : ''}${/^56/.test(pin || '') ? 'Bangalore ' : ''}order online ${COMPARISON_PROVIDERS[next.provider].label}`,
+        {includeDomains: [COMPARISON_PROVIDERS[next.provider].domain], timeoutMs: 10_000}).catch(() => [] as any[])
+      startUrl = foodRestaurantLead(next.provider, food.restaurant, leads || [], pin, area) || comparisonSearchUrl(next.provider, task.metadata_json.subject) || startUrl
+      // Which outlet was chosen and why (area from the map search, how many restaurant pages the search returned).
+      console.log('FOOD_OUTLET:', JSON.stringify({provider: next.provider, area: area || null, leads: (leads || []).length,
+        paths: (leads || []).slice(0, 6).map((l: any) => { try { return new URL(String(l?.url || '')).pathname.slice(0, 80) } catch { return null } }), start: (() => { try { return new URL(startUrl).pathname.slice(0, 80) } catch { return null } })()}))
+    } else if (parallel) {
       // The quick web look at request time may already have found the product page.
       // A retry alternates between the found product page and the store's own search, so a bad start is not repeated.
       const known = (next.attempts || 1) % 2 === 1 && next.leadUrl && comparisonSource(next.provider, next.leadUrl)
@@ -324,8 +372,7 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     if (!task) throw new Error('comparison_missing_after_read')
     // 16 Oct: "the page didn't finish loading" is not an answer. A store that failed is tried again (up to
     // three reads) before it is reported; one that needs the person's input or sign-in is not retried.
-    task.metadata_json.providers = task.metadata_json.providers.map(row => row.status === 'failed' && (row.attempts || 1) < MAX_STORE_ATTEMPTS
-      ? {provider: row.provider, status: 'pending' as const, attempts: (row.attempts || 1) + 1, ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})} : row)
+    task.metadata_json.providers = retryFailedStores(task.metadata_json.providers)
     task.metadata_json.providers = withStoreFallback(task.metadata_json) as any
     await saveProgress(owner, task)
     return task
@@ -341,6 +388,18 @@ export function withStoreFallback(meta: any) {
   meta.storeFallback = only.provider
   const others = ['flipkart', 'croma', 'reliance', 'amazon'].filter(p => p !== only.provider)
   return [...rows, ...others.map(provider => ({provider, status: 'pending', attempts: 1}))]
+}
+
+/** The area of the restaurant's outlet nearest the pincode, from a map search ("Meghana Foods near 560086" → "Rajajinagar"). */
+export async function nearestOutletArea(restaurant: string, pincode: string | null, fetchImpl: typeof fetch = fetch): Promise<string | null> {
+  if (!pincode) return null
+  try {
+    const {searchPlaces} = await import('@/lib/agent/places-search')
+    const words: string[] = (restaurant.toLowerCase().match(/[a-z0-9]+/g) || [] as string[]).filter((w: string) => w.length > 2)
+    const places = await searchPlaces(`${restaurant} near ${pincode}`, fetchImpl)
+    const match = places.find(p => words.every(w => p.title.toLowerCase().includes(w)))
+    return match ? outletAreaFromAddress(match.address) : null
+  } catch { return null }
 }
 
 /** Run every store that can start now, at the same time, then send the result if it is finished. */

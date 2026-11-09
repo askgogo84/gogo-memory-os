@@ -94,6 +94,13 @@ export default async function ActivityRunPage({params}:{params:Promise<{runId:st
       </section>
 
       <aside className="space-y-4">
+        {['restaurant_reservation_slot','restaurant_reservation_research'].includes(run.type)&&<section className="rounded-[16px] border border-[#24433e] bg-[#111111] p-4">
+          <p className="text-[13px] font-bold uppercase tracking-[.12em] text-[#2fb8a6]">Dining observations</p>
+          <p className="mt-2 text-[14px] leading-5 text-[#9a9a9a]">Explore previously recorded provider results. Saved slots are not guaranteed available now, and nothing is booked here.</p>
+          <Link href={`/dashboard/dining-results/${encodeURIComponent(run.id)}`}
+            className="mt-3 inline-flex min-h-11 items-center rounded-xl border border-[#24433e] px-4 text-[14px] font-semibold text-[#2fb8a6]">View dining results →</Link>
+        </section>}
+
         {browser.hasBrowser&&<section className="rounded-[16px] border border-[#2A2A2A] bg-[#111111] p-4">
           <p className="text-[13px] font-bold uppercase tracking-[.12em] text-[#6A6A6A]">Gogo&apos;s browser</p>
           <h2 className="mt-2 text-[16px] font-semibold text-[#F2EFEA]">{browser.providerBlocked?'Blocked by provider':browser.takeoverAvailable?'Waiting for you':'Browser task'}</h2>
