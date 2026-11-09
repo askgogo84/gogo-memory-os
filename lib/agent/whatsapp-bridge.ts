@@ -46,6 +46,7 @@ import { tryRunAppointmentResearch } from './appointment-research'
 import { armApprovedRestaurantReservation, continueRestaurantReservationGuestReply, looksLikeReservationGuestReply, queueRestaurantReservationResearch, tryRunRestaurantReservation } from './restaurant-reservation'
 import { isDecisionRecallQuery } from './recall-query'
 import { tryCancelRunFromChat } from './run-cancel'
+import { tryGetScheduledList } from './scheduled-list'
 
 export type WhatsAppAgentResult = {
   text: string
@@ -355,7 +356,7 @@ async function tryListGoals(actor: AgentActor, text: string): Promise<WhatsAppAg
     .eq('telegram_id', String(actor.legacyTelegramId)).in('status', ['active', 'blocked', 'waiting']).order('updated_at', { ascending: false }).limit(10)
   if (error) throw new Error(`goal_list_failed:${error.message}`)
   if (!data?.length) return { text: 'You have no active goals. Start one like “set a goal to walk 8000 steps daily”.', status: 'completed', handledBy: 'whatsapp-agent-goal' }
-  const lines = data.map((g: any, i: number) => `${i + 1}. ${g.title}${g.status === 'active' ? '' : ` (${g.status})`}`)
+  const lines = data.map((g: any, i: number) => `${i + 1}. ${g.title}${g.status === 'active' ? '' : g.status === 'blocked' ? ' (needs your input)' : ` (${g.status})`}`)
   return { text: `🎯 *Your goals*\n\n${lines.join('\n')}\n\nProgress is in *Dashboard → Goals*.`, status: 'completed', handledBy: 'whatsapp-agent-goal' }
 }
 
@@ -517,6 +518,12 @@ export async function tryRunWhatsAppAttentionCommand(params:{
 
   const inboxReplyRead=await handleInboxReplyRead({actor,text:params.text})
   if(inboxReplyRead)return inboxReplyRead
+  const emailAsk=(globalThis as any).process?.env?.VERCEL_ENV?await import('./email-asks').then(m=>m.tryEmailAsk(actor,params.text),()=>null):null
+  if(emailAsk)return {runId:emailAsk.handledBy,status:'completed',capability:'orchestrator',risk:'low',...emailAsk} as any
+  const mailRules=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/email/mail-alert-commands').then(m=>m.tryMailAlertCommand(actor.legacyTelegramId,params.text),()=>null):null
+  if(mailRules)return {runId:'mail-alert-rules',status:'completed',capability:'orchestrator',risk:'low',text:mailRules,handledBy:'mail-alert-rules'} as any
+  const orderList=(globalThis as any).process?.env?.VERCEL_ENV?await import('./order-tracking').then(m=>m.tryOrderList(actor,params.text),()=>null):null
+  if(orderList)return {runId:'order-tracking',status:'completed',capability:'orchestrator',risk:'low',text:orderList,handledBy:'order-tracking'} as any
 
   // "cancel that task" / "stop the flight booking": cancels the owner's in-flight agent run.
   // The parser refuses reminders, calendar, watches, lists, orders and Gmail, so their own cancel paths still win.
@@ -675,6 +682,9 @@ export async function tryRunWhatsAppAgent(params: {
   // A named task ("how's the Goa trip going") gets its own card; no matching run returns null.
   const taskStatus = await tryGetTaskStatus({ telegramId:actor.legacyTelegramId }, params.text)
   if (taskStatus) return taskStatus
+
+  const scheduledList = await tryGetScheduledList({ actor, text:params.text })
+  if (scheduledList) return scheduledList
 
   const autonomyStatus = await tryGetAutonomyStatus({ actor, text:params.text })
   if (autonomyStatus) return { ...autonomyStatus, handledBy:String(autonomyStatus.handledBy || 'autonomy-status') }

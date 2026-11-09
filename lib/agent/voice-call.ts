@@ -226,6 +226,22 @@ export async function getExecution(executionId: string, fetchImpl: typeof fetch 
 type Actor = { userId: string; legacyTelegramId: number; whatsappId: string; name: string }
 type Reply = { text: string; handledBy: string }
 
+const BOOKING_NAME = 'BOOKING_NAME:'
+
+/** The booking name the user last gave ("under the name Goverdhan"). */
+export async function savedBookingName(telegramId: number): Promise<string | null> {
+  const { data } = await supabaseAdmin.from('memories').select('content').eq('telegram_id', telegramId).like('content', `${BOOKING_NAME}%`).order('id', { ascending: false }).limit(1)
+  const v = String(data?.[0]?.content || '').slice(BOOKING_NAME.length).trim()
+  return v && /^[A-Za-z][A-Za-z .'-]{1,60}$/.test(v) ? v : null
+}
+
+async function rememberBookingName(telegramId: number, name: string) {
+  const clean = String(name || '').trim()
+  if (!/^[A-Za-z][A-Za-z .'-]{1,60}$/.test(clean) || /^(?:gogo|askgogo|me|myself)$/i.test(clean)) return
+  if ((await savedBookingName(telegramId))?.toLowerCase() === clean.toLowerCase()) return
+  await supabaseAdmin.from('memories').insert({ telegram_id: telegramId, content: `${BOOKING_NAME}${clean}` })
+}
+
 async function latestAssistantText(telegramId: number) {
   const { data } = await supabaseAdmin.from('conversations').select('role,content').eq('telegram_id', telegramId).order('created_at', { ascending: false }).limit(3)
   return String((data || []).find((r: any) => r.role === 'assistant')?.content || '')
@@ -304,8 +320,13 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
   }
 
   // "…under the name Goverdhan" wins; otherwise the account name.
-  const named = params.text.match(/\bunder\s+(?:the\s+name\s+(?:of\s+)?)?([A-Z][A-Za-z.'-]{1,30}(?:\s+[A-Z][A-Za-z.'-]{1,30})?)/)
-  const guestName = named?.[1] || String(params.actor.name || 'my client').split(/\s+/)[0]
+  const namedRaw = params.text.match(/\bunder\s+the\s+name\s+(?:of\s+)?([a-z][a-z.'-]{1,30}(?:\s+(?!for\b|at\b|on\b|and\b|please\b)[a-z][a-z.'-]{1,30})?)/i) || params.text.match(/\bunder\s+([A-Z][A-Za-z.'-]{1,30}(?:\s+[A-Z][A-Za-z.'-]{1,30})?)/)
+  const named = namedRaw ? [namedRaw[0], namedRaw[1].replace(/\b\w/g, c => c.toUpperCase())] : null
+  // 29 Oct live: both demo bookings were made "under Gogo" (the account name, which a restaurant hears as AskGogo).
+  // A name the user gave once ("under the name Goverdhan") is remembered and used for later calls.
+  const savedName = named?.[1] ? null : await savedBookingName(tg).catch(() => null)
+  const guestName = named?.[1] || savedName || String(params.actor.name || 'my client').split(/\s+/)[0]
+  if (named?.[1]) await rememberBookingName(tg, named[1]).catch(() => {})
   const now = new Date().toISOString()
   let plan: CallPlan
   if (cmd.kind === 'test') {
@@ -320,6 +341,9 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     const venuePart = parts ? parts[1].replace(/\s+(?:on|at|via)\s+[+\d][\d\s-]{8,16}$/i, '').trim() : ''
     const bookingText = parts ? `Book ${parts[2].trim()} at ${venuePart}` : cmd.text
     const intent = rr.parseRestaurantReservationIntent(bookingText)
+    // 29 Oct live: "Call Toit Indiranagar on 831… and book a table for 4 at 8 pm on Saturday" read "at 8 pm" as the
+    // venue ("Calling 8 pm now"). The venue named after "call" is the venue.
+    if (intent && venuePart && (!intent.restaurant || /^\d{1,2}(?::\d{2})?\s*(?:am|pm)?$/i.test(String(intent.restaurant).trim()) || !venuePart.toLowerCase().includes(String(intent.restaurant).toLowerCase().split(/\s+/)[0]))) intent.restaurant = venuePart
     if (!intent?.restaurant) return { text: 'Which restaurant should I call, and for when? For example: *call District 6 and book a table for 2 Saturday 8pm*.', handledBy: 'voice-call' }
     const explicit = indianPhoneFrom(cmd.text)
     const area = (cmd.text.match(/\bnear\s+([a-z0-9 .'-]{2,40}?)(?:\s+(?:for|on|at|this|tomorrow|today)\b|$)/i)?.[1] || '').trim()
@@ -343,12 +367,18 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
 // ---- cron: read finished calls and report ----------------------------------------------------------------------
 
 /** A venue's yes on the call becomes a booking in My bookings plus a 2-hour reminder (approved mock). */
-async function recordPhoneBooking(telegramId: string, executionId: string, plan: CallPlan, outcome: CallOutcome): Promise<{ saved: boolean; reminderScheduled: boolean }> {
+async function recordPhoneBooking(telegramId: string | number, executionId: string, plan: CallPlan, outcome: CallOutcome): Promise<{ saved: boolean; reminderScheduled: boolean }> {
+  // Exact owner (P0.1): only a canonical non-zero owner id is written (WhatsApp owners are negative by design). A rounded number, zero, fractional
+  // or malformed id writes nothing; an id above 2^53 is written as its exact decimal string, never through Number.
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return { saved: false, reminderScheduled: false }
+  const owner = String(telegramId ?? '').trim(), legacy = Number(owner)
+  if (!/^-?[1-9]\d{0,18}$/.test(owner)) return { saved: false, reminderScheduled: false }
+  const ownerKey: number | string = Number.isSafeInteger(legacy) && String(legacy) === owner ? legacy : owner
   const startAt = bookedStartAt(plan, outcome)
   if (!startAt) return { saved: false, reminderScheduled: false }
   const now = new Date().toISOString()
   const { error } = await supabaseAdmin.from('life_events').upsert({
-    telegram_id: telegramId, event_type: 'reservation', subtype: 'phone_booking', source: 'voice_call',
+    telegram_id: owner, event_type: 'reservation', subtype: 'phone_booking', source: 'voice_call',
     title: `Table at ${plan.venue} · ${plan.partySize || 2} guests (phone booking)`.slice(0, 240), provider: 'phone',
     start_at: startAt, end_at: new Date(Date.parse(startAt) + 90 * 60_000).toISOString(), timezone: 'Asia/Kolkata', location: null,
     lifecycle_state: 'planned', participants: [],
@@ -361,8 +391,8 @@ async function recordPhoneBooking(telegramId: string, executionId: string, plan:
   let reminderScheduled = false
   if (remindAt > Date.now()) {
     // Existing reminder PK makes interrupted/concurrent result persistence idempotent.
-    const reminderId = voiceAttemptId(telegramId, { createdAt: executionId, purpose: 'phone-booking-reminder' }, 0)
-    const { error: reminderError } = await supabaseAdmin.from('reminders').upsert({ id: reminderId, telegram_id: Number(telegramId), chat_id: Number(telegramId), message: `Table at ${plan.venue} in 2 hours (${plan.partySize || 2} guests, under ${plan.guestName}).`, remind_at: new Date(remindAt).toISOString(), sent: false, timezone: 'Asia/Kolkata' }, { onConflict: 'id', ignoreDuplicates: true })
+    const reminderId = voiceAttemptId(owner, { createdAt: executionId, purpose: 'phone-booking-reminder' }, 0)
+    const { error: reminderError } = await supabaseAdmin.from('reminders').upsert({ id: reminderId, telegram_id: ownerKey, chat_id: ownerKey, message: `Table at ${plan.venue} in 2 hours (${plan.partySize || 2} guests, under ${plan.guestName}).`, remind_at: new Date(remindAt).toISOString(), sent: false, timezone: 'Asia/Kolkata' }, { onConflict: 'id', ignoreDuplicates: true })
     if (reminderError) return { saved: true, reminderScheduled: false }
     reminderScheduled = true
   }
@@ -375,6 +405,15 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
   for (const run of (runs || []) as any[]) {
     const meta = run.metadata_json || {}
     const plan: CallPlan = meta.plan
+    // Exact owner (P0.1): a run whose owner id is rounded, non-positive, fractional or malformed is never finalized,
+    // notified or written to a conversation; it is parked for reconciliation by its unique run id.
+    const owner = typeof run.telegram_id === 'number' && !Number.isSafeInteger(run.telegram_id) ? '' : String(run.telegram_id ?? '').trim()
+    if (!/^-?[1-9]\d{0,18}$/.test(owner)) {
+      console.error('VOICE_CALL_OWNER_INVALID:', run.id)
+      await supabaseAdmin.from('agent_runs').update({ status: 'outcome_unknown', summary: 'The call owner could not be verified, so no result was sent. Check the provider outcome before repeating it.', metadata_json: { ...meta, outcome_state: 'unknown', reconciliation_required: true, owner_invalid: true }, updated_at: new Date().toISOString() }).eq('id', run.id).eq('status', 'running')
+      continue
+    }
+    const ownerKey: number | string = Number.isSafeInteger(Number(owner)) && String(Number(owner)) === owner ? Number(owner) : owner
     if (!meta.execution_id || meta.result_claim) {
       // A killed sender/result worker may already have called/notified. Never reclaim by age alone.
       if (!meta.execution_id || !Number.isFinite(Date.parse(String(meta.result_claimed_at || ''))) || Date.parse(String(meta.result_claimed_at || '')) > Date.now() || Date.now() - Date.parse(String(meta.result_claimed_at || '')) > 10 * 60_000) {
@@ -409,16 +448,17 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
       }
     }
     let saved = { saved: false, reminderScheduled: false }
-    if (status === 'completed' && outcome?.booked && !plan.test) saved = await recordPhoneBooking(String(run.telegram_id), String(meta.execution_id), plan, outcome).catch((err: any) => { console.error('VOICE_CALL_RECORD_FAILED:', run.id, String(err?.message || err).slice(0, 160)); return { saved: false, reminderScheduled: false } })
+    if (status === 'completed' && outcome?.booked && !plan.test) saved = await recordPhoneBooking(owner, String(meta.execution_id), plan, outcome).catch((err: any) => { console.error('VOICE_CALL_RECORD_FAILED:', run.id, String(err?.message || err).slice(0, 160)); return { saved: false, reminderScheduled: false } })
     const outcomeUncertain = !TERMINAL.has(status) || (status !== 'completed' && Boolean(transcript.trim()))
     const text = !outcomeUncertain ? callResultText(plan, status, outcome, transcript.split('\n').filter(Boolean).slice(-1)[0]?.slice(0, 160) || '', saved.saved, saved.reminderScheduled) : `I couldn't confirm the outcome of the call to ${plan.venue}. I haven't repeated it. Check the task before trying again.`
     const at = new Date().toISOString()
     const { data: finalized, error: finalizeError } = await supabaseAdmin.from('agent_runs').update({ status: outcomeUncertain ? 'outcome_unknown' : status === 'completed' ? 'completed' : 'failed', progress: 100, summary: text.slice(0, 500), completed_at: at, updated_at: at,
       metadata_json: { ...meta, result_claim: resultClaim, result_claimed_at: new Date().toISOString(), final_status: status, outcome, booking_saved: saved.saved, reminder_scheduled: saved.reminderScheduled, reconciliation_required: outcomeUncertain, recording_url: exec?.telephony_data?.recording_url || null } }).eq('id', run.id).eq('telegram_id', String(run.telegram_id)).eq('status', 'running').eq('metadata_json->>result_claim', resultClaim).select('id').maybeSingle()
     if (finalizeError || !finalized) continue
-    const { data: user } = await supabaseAdmin.from('users').select('whatsapp_id').eq('telegram_id', Number(run.telegram_id)).maybeSingle()
-    try { if (user?.whatsapp_id) await deps.send(String(user.whatsapp_id), text) } catch {}
-    await supabaseAdmin.from('conversations').insert({ telegram_id: Number(run.telegram_id), role: 'assistant', content: text })
+    const { data: user } = await supabaseAdmin.from('users').select('whatsapp_id,telegram_id').eq('telegram_id', ownerKey).maybeSingle()
+    const ownUser = user && (user.telegram_id == null || String(user.telegram_id) === owner) ? user : null
+    try { if (ownUser?.whatsapp_id) await deps.send(String(ownUser.whatsapp_id), text) } catch {}
+    await supabaseAdmin.from('conversations').insert({ telegram_id: ownerKey, role: 'assistant', content: text })
     done++
   }
   return done
