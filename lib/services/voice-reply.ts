@@ -12,6 +12,21 @@ import { SONNET_MODEL } from '@/lib/services/model-ids'
 
 const BUCKET = 'user-documents'
 
+/** Exact private storage owner: never let a rounded JS number, malformed string or
+ * out-of-range signed 64-bit ID choose a different account's audio prefix. */
+function exactAudioOwner(value: number | string): string | null {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  }
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
+  try {
+    const id = BigInt(value)
+    return id >= BigInt('-9223372036854775808') && id <= BigInt('9223372036854775807') ? value : null
+  } catch {
+    return null
+  }
+}
+
 /** The person asked for the answer as audio ("reply as a voice note", "send it as audio"). */
 export function wantsVoiceReply(text: string): boolean {
   const t = String(text || '')
@@ -43,7 +58,7 @@ async function speak(openai: OpenAI, input: string, voice: string): Promise<Buff
   throw lastError instanceof Error ? lastError : new Error('tts_failed')
 }
 
-async function storeAudio(telegramId: number | string, audio: Buffer): Promise<string> {
+async function storeAudio(telegramId: string, audio: Buffer): Promise<string> {
   const path = `${telegramId}/voice-replies/${randomUUID()}.mp3`
   const { error } = await supabaseAdmin.storage.from(BUCKET).upload(path, audio, { contentType: 'audio/mpeg', upsert: false })
   if (error) throw new Error(`voice_upload_failed:${error.message}`)
@@ -62,12 +77,14 @@ export async function synthesizeSpeech(text: string, maxChars = 1500): Promise<B
 
 /** Synthesise a voice note of `text`; returns a signed MP3 link, or null if it could not be made. */
 export async function createVoiceNote(telegramId: number | string, text: string): Promise<string | null> {
+  const owner = exactAudioOwner(telegramId)
+  if (!owner) return null
   const input = speechText(text)
   if (!input || !process.env.OPENAI_API_KEY) return null
   try {
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
     const audio = await speak(openai, input, 'alloy')
-    return await storeAudio(telegramId, audio)
+    return await storeAudio(owner, audio)
   } catch (error: any) {
     console.error('VOICE_NOTE_FAILED:', String(error?.message || error).slice(0, 160))
     return null
@@ -91,6 +108,8 @@ export function parsePodcastScript(raw: string): PodcastLine[] {
 
 /** Write a balanced two-host debate, voice each line, and return the script and a signed MP3 link. */
 export async function createPodcast(telegramId: number | string, topic: string, minutes: number): Promise<{ script: PodcastLine[]; url: string | null }> {
+  const owner = exactAudioOwner(telegramId)
+  if (!owner) return { script: [], url: null }
   if (!process.env.ANTHROPIC_API_KEY || !process.env.OPENAI_API_KEY) return { script: [], url: null }
   const words = minutes * 150
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
@@ -105,7 +124,7 @@ export async function createPodcast(telegramId: number | string, topic: string, 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
     const parts = await Promise.all(script.map((l) => speak(openai, l.text, l.speaker === 'A' ? 'alloy' : 'onyx')))
     // MP3 frames are self-contained, so joining whole files plays back as one episode.
-    return { script, url: await storeAudio(telegramId, Buffer.concat(parts)) }
+    return { script, url: await storeAudio(owner, Buffer.concat(parts)) }
   } catch (error: any) {
     console.error('PODCAST_AUDIO_FAILED:', String(error?.message || error).slice(0, 160))
     return { script, url: null }

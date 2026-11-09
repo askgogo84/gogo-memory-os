@@ -168,11 +168,14 @@ await check('unreadable consent must not authorize private memory scan',true,asy
   assert.equal(h.writes.length,0)
 })
 
-await check('absent affirmative memory consent must prevent private scan',true,async()=>{
+// Owner decision 9 Nov 2026: memory is ON unless the owner turned it off, so a missing consent row is the default and
+// the scan proceeds for that exact owner only (explicit false, other-account rows and read errors still stop it).
+await check('no consent row means the default (on): scan reads only the exact owner',true,async()=>{
   const h=harness({consent:[]})
   await nonThrowingRun(h,'42')
-  assert.equal(h.reads.filter(x=>x.table==='memories').length,0)
-  assert.equal(h.writes.length,0)
+  const mem=h.reads.filter(x=>x.table==='memories')
+  assert.equal(mem.length,1)
+  assert.ok(mem.every(x=>String(x.owner??x.value??'42')==='42'))
 })
 await check('different owner echoed by consent row cannot authorize memory scan',true,async()=>{
   const h=harness({consent:[['42',{telegram_id:'99',memory_enabled:true}]]})

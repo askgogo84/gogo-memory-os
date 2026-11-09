@@ -1,0 +1,29 @@
+name: Named Task Unknown-Outcome Contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/agent/task-status.ts'
+      - 'scripts/verify-unknown-task-status-retention.mts'
+      - '.github/workflows/task-unknown-status-contract.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-status:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Named task unknown-outcome regression (inert)
+        run: npx --no-install tsx scripts/verify-unknown-task-status-retention.mts

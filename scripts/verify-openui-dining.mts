@@ -142,3 +142,5 @@ assert.match(activity,/\/dashboard\/dining-results\//)
 }
 
 console.log('OPENUI-DINING-03: source, identity, historical-slot and read-only contracts PASS (synthetic)')
+
+await import('./verify-openui-dining-revalidation.mts')

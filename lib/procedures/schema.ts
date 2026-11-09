@@ -15,7 +15,8 @@ export type ProcedureNode = {
   /** Context keys the node writes. */
   produces?: string[]
   /** APPROVAL: what the card will say and bind to. */
-  approval?: { actionType: string; title: string }
+  /** `bind`: context keys whose exact values the approval covers (the draft, the recipient…). Changed after approval → refused. */
+  approval?: { actionType: string; title: string; bind?: string[] }
   /** VERIFY: the trusted evidence source for the preceding EXECUTE. */
   verify?: { source: 'gmail' | 'google_calendar' | 'browser' | 'travel' | 'merchant' }
   retry?: { max: number; backoffMinutes: number[] }
@@ -61,6 +62,7 @@ export function validateProcedure(def: ProcedureDefinition): ValidationIssue[] {
   for (const n of def.nodes) {
     if ((n.type === 'READ' || n.type === 'EXECUTE' || n.type === 'VERIFY' || n.type === 'PARALLEL_READ') && !n.capability) issues.push({ code: 'capability_required', node: n.id, detail: `${n.type} needs a capability` })
     if (n.type === 'APPROVAL' && !n.approval) issues.push({ code: 'approval_shape', node: n.id, detail: 'APPROVAL needs actionType and title' })
+    if (n.type === 'APPROVAL' && n.approval && !(n.approval.bind || []).length && def.consequential) issues.push({ code: 'approval_unbound', node: n.id, detail: 'a consequential APPROVAL must bind the values it approves (approval.bind)' })
     if (n.type === 'VERIFY' && !n.verify) issues.push({ code: 'verify_shape', node: n.id, detail: 'VERIFY needs a trusted source' })
     if (n.type === 'WAIT_EVENT' && !n.event) issues.push({ code: 'event_required', node: n.id, detail: 'WAIT_EVENT needs an event name' })
     if (n.type === 'EXECUTE') {
