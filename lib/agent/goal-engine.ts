@@ -69,8 +69,15 @@ async function actorForTelegram(telegramId:string|number):Promise<AgentActor|nul
 
 
 async function permission(tg:string,capability:string):Promise<AgentPermissionLevel>{
-  const {data}=await supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id',tg).eq('capability',capability).maybeSingle()
-  return (data?.level as AgentPermissionLevel|undefined)||DEFAULT_LEVEL[capability]||'ask'
+  // A failed permissions lookup is NOT proof that the owner has no saved override.
+  // In particular, a read failure must never turn an explicit "off"/"ask" into
+  // the "auto" default for background reminders, lists, or tasks.
+  const {data,error}=await supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id',tg).eq('capability',capability).maybeSingle()
+  if(error)throw new Error('goal_permission_lookup_failed')
+  if(!data)return DEFAULT_LEVEL[capability]||'ask' // an actual missing row retains existing defaults
+  const level:unknown=data.level
+  if(level==='off'||level==='read'||level==='draft'||level==='ask'||level==='auto')return level
+  throw new Error('goal_permission_lookup_failed') // malformed persisted authority fails closed
 }
 
 async function idea(tg:string,title:string,reason:string,goalId:string,action='Review goal'){
