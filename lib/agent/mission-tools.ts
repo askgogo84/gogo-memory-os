@@ -23,6 +23,18 @@ const DEFAULT_BUSINESS_PACKING=['Laptop','Charger','Phone charger','Power bank',
 function safe(value:unknown,max=1200){return redactSecretShapedText(String(value??'').replace(/\s+/g,' ').trim().slice(0,max))}
 function pad(n:number){return String(n).padStart(2,'0')}
 
+// 30 Oct live: "Created reminder for 2026-10-30 at 18:00 (Asia/Kolkata)." A person reads "today 6:00 pm".
+export function friendlyReminderWhen(dueIso:string,timezone:string,now=new Date()){
+  const tz=timezone||'Asia/Kolkata'
+  const day=(d:Date)=>new Intl.DateTimeFormat('en-CA',{timeZone:tz,year:'numeric',month:'2-digit',day:'2-digit'}).format(d)
+  const due=new Date(dueIso)
+  const time=new Intl.DateTimeFormat('en-IN',{timeZone:tz,hour:'numeric',minute:'2-digit',hour12:true}).format(due).replace(/\s?([ap])\.?m\.?/i,' $1m')
+  const tomorrow=new Date(now.getTime()+86400_000)
+  if(day(due)===day(now))return `today at ${time}`
+  if(day(due)===day(tomorrow))return `tomorrow at ${time}`
+  return `${new Intl.DateTimeFormat('en-IN',{timeZone:tz,weekday:'short',day:'numeric',month:'short'}).format(due)} at ${time}`
+}
+
 export function explicitDates(text:string, defaultYear=new Date().getUTCFullYear(), upcomingFrom?:string){
   const out:string[]=[]
   const add=(year:number,month:number,day:number,yearless=false)=>{
@@ -130,7 +142,24 @@ function reminderMessage(step:MissionStep,missionText:string,hours?:number){
   const quoted=step.instruction.match(/(?:with\s+the\s+)?(?:message|saying|text)\s*:?[\s]*['“\"]([^'”\"]+)['”\"]/i)?.[1]
   if(quoted)return safe(quoted,500)
   const destination=destinationLabel(missionText)
-  return hours ? `${destination} trip departure in ${hours} hours — confirm packing and check-in status.` : safe(step.title,500)
+  if(hours)return `${destination} trip departure in ${hours} hours — confirm packing and check-in status.`
+  // Only a generic step title ("Set purchase reminder") is replaced; a plan with several named reminders keeps them.
+  const generic=/^(?:set|create|add|schedule)\b[^.]{0,40}\breminder\b/i.test(step.title)
+  return safe((generic&&reminderTaskFromRequest(missionText))||step.title,500)
+}
+
+// 30 Oct live: "Make a grocery list with milk, eggs and bread and remind me to buy them at 6 pm today" saved the
+// reminder as the plan's step title, "Set purchase reminder". The person's own words are the reminder.
+export function reminderTaskFromRequest(text:string){
+  const raw=String(text||'').replace(/\s+/g,' ').trim()
+  const m=raw.match(/\bremind\s+me\s+(?:to\s+|about\s+)?(.+?)(?=\s+(?:at|on|by|before|after|around|tomorrow|today|tonight|this|next|every|in\s+\d)\b|[.!?;]|$)/i)
+  if(!m)return null
+  let task=m[1].trim()
+  if(/\b(?:them|it|these|those)\b/i.test(task)){
+    const items=raw.match(/\b(?:with|of|containing|for)\s+(.+?)\s*(?:,\s*)?(?:and\s+(?:then\s+)?|,\s*)remind\b/i)?.[1]
+    if(items)task=task.replace(/\b(?:them|it|these|those)\b/i,items.trim())
+  }
+  return task.length>=3?task:null
 }
 
 function normalizeReminderIdentity(value:unknown){
@@ -165,14 +194,14 @@ async function persistMissionReminder(params:{actor:AgentActor;date:string;time:
       if(updateError)throw new Error(`mission_reminder_canonicalize_failed:${updateError.message}`)
       if(updated)row=updated
     }
-    return {text:`Reminder already set for ${params.date} at ${params.time} (${params.timezone}).`,output:{reminderId:String(row.id),message:String(row.message||params.message),remindAt:String(row.remind_at||dueIso),timezone:String(row.timezone||params.timezone),reused:true,verifiedStore:'reminders'}}
+    return {text:`⏰ Already set: I'll remind you to ${String(row.message||params.message).replace(/^remind me to\s+/i,'')} ${friendlyReminderWhen(String(row.remind_at||dueIso),params.timezone)}.`,output:{reminderId:String(row.id),message:String(row.message||params.message),remindAt:String(row.remind_at||dueIso),timezone:String(row.timezone||params.timezone),reused:true,verifiedStore:'reminders'}}
   }
   const {data,error}=await supabaseAdmin.from('reminders').insert({
     telegram_id:params.actor.legacyTelegramId,chat_id:params.actor.legacyTelegramId,whatsapp_to:params.actor.whatsappId,
     message:params.message,remind_at:dueIso,sent:false,timezone:params.timezone,
   }).select('id,message,remind_at,timezone').single()
   if(error||!data?.id||!data.remind_at)throw new Error(`mission_reminder_create_failed:${error?.message||'missing_due_time'}`)
-  return {text:`Created reminder for ${params.date} at ${params.time} (${params.timezone}).`,output:{reminderId:String(data.id),message:String(data.message||params.message),remindAt:String(data.remind_at),timezone:String(data.timezone||params.timezone),reused:false,verifiedStore:'reminders'}}
+  return {text:`⏰ I'll remind you to ${String(data.message||params.message).replace(/^remind me to\s+/i,'')} ${friendlyReminderWhen(String(data.remind_at),params.timezone)}.`,output:{reminderId:String(data.id),message:String(data.message||params.message),remindAt:String(data.remind_at),timezone:String(data.timezone||params.timezone),reused:false,verifiedStore:'reminders'}}
 }
 
 export function reminderStepIntent(step:{title:string;instruction:string}):'read'|'write'|'mixed'|'unknown'{
@@ -378,7 +407,8 @@ export async function executeVerifiedMissionList(params:{actor:AgentActor;step:M
   const verified=await getList(params.actor.legacyTelegramId,listName)
   if(!verified?.id)throw new Error('mission_list_write_unverified')
   const items=Array.isArray(verified.items)?verified.items:[]
-  return {text:`Using ${verified.list_name} with ${items.length} items.`,output:{listId:String(verified.id),listName:String(verified.list_name),itemCount:items.length,items:items.slice(0,80),reused:Boolean(chosen),verifiedStore:'lists'}}
+  const added=ensure.map((i:any)=>String(i?.text||i?.name||i)).filter(Boolean)
+  return {text:added.length?`📝 Added ${added.join(', ')} to your ${verified.list_name} list (${items.length} item${items.length===1?'':'s'} now).`:`📝 Your ${verified.list_name} list has ${items.length} item${items.length===1?'':'s'}.`,output:{listId:String(verified.id),listName:String(verified.list_name),itemCount:items.length,items:items.slice(0,80),reused:Boolean(chosen),verifiedStore:'lists'}}
 }
 
 function resultDatesAreInsideWindow(result:WebSearchResult,startDate?:string,endDate?:string){
@@ -459,8 +489,17 @@ function addDaysIso(iso:string,days:number){
 }
 
 function isCalendarWriteStep(step:MissionStep){
+  // 29 Oct live (packing plan): a step titled "Review calendar through move date" created a 4-week calendar event.
+  // A step that says it reviews/checks the calendar is a read, whatever words its instruction uses.
+  if(/^\s*(?:review|check|look\s+at|see|read|find|list|verify|scan|inspect)\b/i.test(String(step.title||'')))return false
   const request=calendarAffirmativeText(`${step.title} ${step.instruction}`)
   return /\b(add|create|change|move|schedule|write|modify|prepare|invite|cancel|delete|event\s+titled|spanning)\b/i.test(request)
+}
+
+/** A multi-day calendar block is only for a trip, stay, leave or event the user named. Pure. */
+export function longSpanAllowed(startDate:string,endInclusive:string,text:string){
+  const days=(Date.parse(`${endInclusive}T00:00:00Z`)-Date.parse(`${startDate}T00:00:00Z`))/86_400_000+1
+  return days<=3||/\b(?:trip|travel|holiday|vacation|stay|conference|leave|visit|festival|offsite|retreat|wedding|tour)\b/i.test(text)
 }
 
 export async function executeVerifiedMissionCalendar(params:{actor:AgentActor;step:MissionStep;missionText:string;runId:string}){
@@ -481,6 +520,9 @@ export async function executeVerifiedMissionCalendar(params:{actor:AgentActor;st
   const startDate=dates[0]
   const endInclusive=dates[1]||dates[0]
   if(!startDate||!endInclusive)throw new Error('mission_calendar_dates_missing')
+  if(!longSpanAllowed(startDate,endInclusive,`${params.missionText} ${params.step.title} ${params.step.instruction}`)){
+    return executeReadOnlyCalendarStep({actor:params.actor,instruction:params.step.instruction,missionText:params.missionText})
+  }
   const endExclusive=addDaysIso(endInclusive,1)
   const title=calendarTitle(params.step)
   const location=destinationLabel(params.missionText)
