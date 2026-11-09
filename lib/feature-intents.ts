@@ -107,7 +107,7 @@ async function tryHandleSnoozeCommand(telegramId:number,phone:string,text:string
     // Red #1174: one snooze per fired occurrence. A replayed or concurrent "snooze 10m", or a retry after an insert
     // whose outcome is unknown, must not create a second one-off copy. The claim is taken synchronously (no await
     // between check and set) so parallel calls in one instance cannot both pass; snooze_key + its unique index
-    // (migration 20261109200000_reminders_snooze_key) makes it durable across instances.
+    // (migration 20261109201000_reminders_snooze_key) makes it durable across instances.
     const snoozeKey=`snooze:${reminder.id}:${reminder.sent_at}`
     const claims:Map<string,number>=((globalThis as any).__gogoSnoozeClaims ??= new Map())
     const now=Date.now()
