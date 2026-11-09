@@ -667,7 +667,7 @@ async function continueInboxOrderAlerts(watcher:any,condition:InboxTriageWatcher
     if(alerts.length&&condition.delivery!=='app'){
       const key='orders/'+watcher.id+'/'+createHash('sha256').update(alerts.map(a=>a.id).sort().join('\n')).digest('hex')
       const message=`📦 *Order update*\n\n${alerts.map(a=>a.line).join('\n\n')}\n\nFrom the shop's emails. Say "track my orders" for all of them.`
-      const delivery=await deliverWatchAlert({watcherId:String(watcher.id),owner:telegramId,key,due:now.toISOString(),message,condition:watcher.condition_json,topic:'watches'})
+      const delivery=await deliverWatchAlert({watcherId:String(watcher.id),owner:telegramId,key,due:now.toISOString(),message,condition:watcher.condition_json,topic:'watches',thread:{kind:'order_alert',data:{orderShop:(alerts[0] as any)?.shop||null,merchant:(alerts[0] as any)?.shop||null,subject:(alerts[0] as any)?.label||(alerts[0] as any)?.line||null}}})
       if(delivery.accepted||['suppressed','cancelled','app_only'].includes(delivery.state))orderTracking={alerted:[...alerts.map(a=>a.id),...sentIds].slice(0,200),checkedAt:now.toISOString()}
       console.log('ORDER_ALERT:',JSON.stringify({alerts:alerts.length,state:delivery.state}))
     }else orderTracking={alerted:[...(condition.delivery==='app'?alerts.map(a=>a.id):[]),...sentIds].slice(0,200),checkedAt:now.toISOString()}
@@ -697,7 +697,7 @@ async function processMailAlerts(watcher:any,condition:InboxTriageWatcherConditi
   for(const a of alerts){
     const key='mail/'+watcher.id+'/'+createHash('sha256').update(a.id).digest('hex').slice(0,24)
     if(condition.delivery==='app'){alerted.push(a.id);continue}
-    const delivery=await deliverWatchAlert({watcherId:String(watcher.id),owner:telegramId,key,due:now.toISOString(),message:a.message,condition:watcher.condition_json,topic:a.topic})
+    const delivery=await deliverWatchAlert({watcherId:String(watcher.id),owner:telegramId,key,due:now.toISOString(),message:a.message,condition:watcher.condition_json,topic:a.topic,thread:{kind:'mail_alert',data:ma.alertThreadData(a.kind,a.scored,(actor as any).gmailEmail||null)}})
     if(delivery.accepted||['suppressed','cancelled','app_only'].includes(delivery.state)){alerted.push(a.id);sent+=delivery.accepted?1:0}
     else console.error('MAIL_ALERT_DELIVERY:',JSON.stringify({kind:a.kind,state:delivery.state}))
   }
