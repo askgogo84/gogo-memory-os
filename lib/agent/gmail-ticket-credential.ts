@@ -43,6 +43,7 @@ async function token(actor: AgentActor) {
     throw new Error('gmail_ticket_actor_owner_mismatch')
   }
   if (!data.gmail_connected) return null
+  if (await import('./gmail-consent').then(m => m.gmailConsentState(actor.legacyTelegramId)) !== 'on') return null // 4 Nov: affirmative yes only
   let access = decryptGoogleToken(String(data.gmail_access_token || ''))
   const refreshToken = decryptGoogleToken(String(data.gmail_refresh_token || ''))
   if (!access && refreshToken) access = await refreshGmailAccessToken(refreshToken) || ''

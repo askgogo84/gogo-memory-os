@@ -1,6 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { embedText } from '@/lib/services/embeddings'
-import { unindexMemory } from '@/lib/services/memory-index'
 import { getSharedMemories } from '@/lib/bot/handlers/shared-memory'
 
 function cleanMemoryContent(content: string) {
@@ -74,7 +73,8 @@ export function isMemoryControlCommand(text: string) {
     lower.startsWith('delete memory') ||
     lower.startsWith('remove memory') ||
     lower === 'clear my memory' ||
-    lower === 'forget everything'
+    lower === 'forget everything' ||
+    /^(?:export|download|send me|give me)\s+(?:all\s+)?(?:my\s+)?(?:memory|memories|everything you (?:know|remember)(?: about me)?|my data)\s*[.!]?$/i.test(lower)
   )
 }
 
@@ -139,7 +139,7 @@ async function setMemoryEnabled(telegramId: number, enabled: boolean) {
 
 function extractForgetQuery(text: string) {
   return (text || '')
-    .replace(/^(forget|delete memory|remove memory)\s+/i, '')
+    .replace(/^(forget|delete memory|remove memory)(?:\s+|$)/i, '')
     .replace(/\babout\b/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
@@ -345,11 +345,73 @@ async function buildMemorySearchReply(telegramId: number, text: string) {
   return `🔎 *Memory search: ${query}*\n\n${sections.join('\n\n')}\n\nYou can say:\n• my memory\n• forget ${query}`
 }
 
+// User-visible forgetting must not scan only the 50 newest rows. Never mistake a
+// truncated or failed owner-scoped read for evidence that an old fact is gone.
+const FORGET_SCAN_PAGE_SIZE = 200
+const FORGET_SCAN_MAX_PAGES = 100
+
+async function personalMemoryRows(telegramId: number, query?: string) {
+  const rows: { id: string | number; content: string }[] = []
+  for (let page = 0; page < FORGET_SCAN_MAX_PAGES; page++) {
+    const from = page * FORGET_SCAN_PAGE_SIZE
+    const { data, error } = await supabaseAdmin.from('memories')
+      .select('id,content').eq('telegram_id', telegramId)
+      .order('id', { ascending: true }).range(from, from + FORGET_SCAN_PAGE_SIZE - 1)
+    if (error || !Array.isArray(data)) throw new Error('personal_memory_scan_failed')
+    for (const row of data) {
+      const content = String(row.content || '')
+      const cleaned = cleanMemoryContent(content)
+      if (!content || isInternalMemory(content) || !cleaned || isInternalMemory(cleaned)) continue
+      if (query && !matchesMemory(cleaned, query)) continue
+      rows.push({ id: row.id, content: cleaned })
+    }
+    if (data.length < FORGET_SCAN_PAGE_SIZE) return rows
+  }
+  throw new Error('personal_memory_scan_incomplete')
+}
+
+// Delete only explicitly selected rows for the authenticated owner. Require DB
+// confirmation and a second owner-scoped scan before reporting "forgotten".
+async function forgetPersonalRows(telegramId: number, query?: string) {
+  const rows = await personalMemoryRows(telegramId, query)
+  for (let from = 0; from < rows.length; from += FORGET_SCAN_PAGE_SIZE) {
+    const ids = rows.slice(from, from + FORGET_SCAN_PAGE_SIZE).map(r => r.id)
+    const { data: deleted, error: deleteError } = await supabaseAdmin.from('memories')
+      .delete().eq('telegram_id', telegramId).in('id', ids).select('id')
+    if (deleteError || !Array.isArray(deleted) || deleted.length !== ids.length)
+      throw new Error('personal_memory_delete_unverified')
+
+    // The normal unindexMemory helper deliberately swallows storage errors. A
+    // "forget" acknowledgement needs a checked write, not a best-effort one.
+    const { error: indexError } = await supabaseAdmin.from('memory_embeddings')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('source_table', 'memories').in('source_id', ids.map(String))
+    if (indexError) throw new Error('personal_memory_unindex_failed')
+    const { data: liveIndexes, error: indexReadError } = await supabaseAdmin.from('memory_embeddings')
+      .select('source_id').eq('source_table', 'memories').in('source_id', ids.map(String))
+      .is('deleted_at', null).limit(1)
+    if (indexReadError || !Array.isArray(liveIndexes) || liveIndexes.length)
+      throw new Error('personal_memory_unindex_unverified')
+  }
+  if ((await personalMemoryRows(telegramId, query)).length)
+    throw new Error('personal_memory_delete_incomplete')
+  return rows
+}
+
 export async function buildMemoryControlReply(telegramId: number, text: string) {
   const lower = (text || '').toLowerCase().trim()
 
   if (isMemorySearchCommand(text)) {
     return buildMemorySearchReply(telegramId, text)
+  }
+
+  if (/^(?:export|download|send me|give me)\s+(?:all\s+)?(?:my\s+)?(?:memory|memories|everything you (?:know|remember)(?: about me)?|my data)\s*[.!]?$/i.test(lower)) {
+    // Export: the file comes from the dashboard (signed in as this owner), never as a WhatsApp attachment.
+    const { exportMemory } = await import('@/lib/agent/memory-export')
+    const x = await exportMemory(String(telegramId))
+    const base = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
+    const parts = Object.entries(x.counts).map(([k, n]) => `${n} ${k.replace('user_', '').replace(/_/g, ' ')}`).join(', ')
+    return `🧠 *Your memory export*\n\n${x.facts.length} items${parts ? ` (${parts})` : ''}.\n\nDownload (sign in as you):\n${base}/api/dashboard/memory/export?format=md\n\nJSON with provenance: ${base}/api/dashboard/memory/export\n\nSay "forget <what it says>" to remove one item.`
   }
 
   if (lower === 'memory off' || lower === 'turn memory off') {
@@ -367,43 +429,42 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
   }
 
   if (lower === 'clear my memory' || lower === 'forget everything') {
-    const memories = await getUserMemories(telegramId)
-    const ids = memories.map((m: any) => m.id)
-
-    if (ids.length) {
-      await supabaseAdmin.from('memories').delete().in('id', ids)
-      for (const id of ids) await unindexMemory(String(id))
+    try {
+      await forgetPersonalRows(telegramId)
+      const results = await Promise.all([
+        supabaseAdmin.from('user_insights').update({ status: 'deleted' }).eq('telegram_id', telegramId),
+        supabaseAdmin.from('user_memory_profile')
+          .update({ common_times: [], frequent_contacts: [], frequent_tasks: [], preferences: {}, last_updated: new Date().toISOString() })
+          .eq('telegram_id', telegramId),
+      ])
+      if (results.some(result => result.error)) throw new Error('personal_memory_profile_reset_failed')
+      // Same Brain 3.0: the semantic graph forgets too (retracted, not deleted); flag-gated, never blocks the clear.
+      try { const sem = await import('@/lib/semantic/repo'); const repo = typeof sem?.semanticRepoFor === 'function' ? await sem.semanticRepoFor({ legacyTelegramId: Number(telegramId) }) : null; if (repo) await repo.forgetEverything() } catch (e: any) { console.error('SEMANTIC_FORGET_FAILED:', String(e?.message || e).slice(0, 120)) }
+      return `🧠 *Memory cleared*\n\nI deleted saved personal notes and reset your Memory Twin patterns. Usage/system logs and structured state were not touched.`
+    } catch (err: any) {
+      console.error('MEMORY_CLEAR_NOT_VERIFIED', err?.message)
+      return `I couldn't verify that all your saved personal notes and Memory Twin patterns were cleared. Some may remain. Please try again later.`
     }
-
-    await Promise.all([
-      supabaseAdmin.from('user_insights').update({ status: 'deleted' }).eq('telegram_id', telegramId),
-      supabaseAdmin
-        .from('user_memory_profile')
-        .update({ common_times: [], frequent_contacts: [], frequent_tasks: [], preferences: {}, last_updated: new Date().toISOString() })
-        .eq('telegram_id', telegramId),
-    ])
-
-    return `🧠 *Memory cleared*\n\nI deleted saved personal memories and reset your Memory Twin patterns. Usage/system logs were not touched.`
   }
 
   if (lower.startsWith('forget ') || lower.startsWith('delete memory') || lower.startsWith('remove memory')) {
     const query = extractForgetQuery(text)
-    const memories = await getUserMemories(telegramId)
-    const matched = memories.filter((m: any) => matchesMemory(m.content, query))
-
-    if (!matched.length) {
-      return `I couldn’t find a saved memory matching *${query || 'that'}*.\n\nTry:\n• my memory\n• forget my office address\n• clear my memory`
+    // An empty or unparseable target must NEVER become a global forget.
+    if (!query) return `Tell me which saved memory to forget, e.g. *forget my old address*. I haven't deleted anything.`
+    try {
+      const matched = await forgetPersonalRows(telegramId, query)
+      if (!matched.length) {
+        return `I couldn’t find a saved memory matching *${query || 'that'}*.\n\nTry:\n• my memory\n• forget my office address\n• clear my memory`
+      }
+      return (
+        `🧠 *Forgotten*\n\n` +
+        matched.slice(0, 3).map((m: any) => `• ${m.content}`).join('\n') +
+        (matched.length > 3 ? `\n• and ${matched.length - 3} more` : '')
+      )
+    } catch (err: any) {
+      console.error('MEMORY_FORGET_NOT_VERIFIED', err?.message)
+      return `I couldn't verify that all matching saved notes were forgotten. Some may remain. Please try again later.`
     }
-
-    const matchedIds = matched.map((m: any) => m.id)
-    await supabaseAdmin.from('memories').delete().in('id', matchedIds)
-    for (const id of matchedIds) await unindexMemory(String(id))
-
-    return (
-      `🧠 *Forgotten*\n\n` +
-      matched.slice(0, 3).map((m: any) => `• ${m.content}`).join('\n') +
-      (matched.length > 3 ? `\n• and ${matched.length - 3} more` : '')
-    )
   }
 
   const [memories, twin] = await Promise.all([
