@@ -81,19 +81,25 @@ async function probe({ patch, duplicate = false, uploadFailure = false }: Scenar
     '@/lib/services/document-summary-privacy': {
       safeDocumentSummary: (text: string) => text, redactDocumentMetadata: (text: string) => text,
     },
+    // The Twilio download goes through the bound transport (twilio-document-store-egress.ts, which has its own
+    // test); here it is intercepted so this probe stays about storage-commit truth.
+    '@/lib/services/twilio-document-store-egress': {
+      fetchTwilioVaultDocumentMedia: async (args: any) => {
+        calls.downloads++
+        assert.equal(args.mediaUrl, 'https://fixture.invalid/media') // intercepted: not a real request
+        assert.equal(args.accountSid, 'fixture-sid', 'configured account only')
+        assert.equal(args.authToken, 'fixture-secret')
+        return Buffer.from([1, 2, 3, 4])
+      },
+    },
   }
   const module: any = { exports: {} }
   runInNewContext(compiled, {
     module, exports: module.exports,
     require: (key: string) => { if (!(key in stubs)) throw new Error('Unexpected import: ' + key); return stubs[key] },
-    process: { env: { METER_ENABLED: 'false' } },
+    process: { env: { METER_ENABLED: 'false', TWILIO_ACCOUNT_SID: 'fixture-sid', TWILIO_AUTH_TOKEN: 'fixture-secret' } },
     Buffer,
-    fetch: async (url: string, init: any) => {
-      calls.downloads++
-      assert.equal(url, 'https://fixture.invalid/media') // intercepted: not a real request
-      assert.match(String(init?.headers?.Authorization), /^Basic /)
-      return new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 })
-    },
+    fetch: async () => { throw new Error('document-store must not fetch Twilio media directly') },
     console: { log: () => {}, error: () => {} },
   }, { filename: 'document-store-fixture.cjs', timeout: 5000 })
 
