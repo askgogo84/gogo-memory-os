@@ -68,16 +68,18 @@ export async function clearFollowupState(telegramId: number, kind: string): Prom
   }
 }
 
-// TTL guard shared by every follow-up consumer: a stored pending record is only honored for
-// `maxMinutes` (default 10). Missing/unparseable timestamps are treated as fresh (fail-open)
-// so a legacy record without created_at still works. Reads created_at off the row or the
-// embedded payload, whichever is present.
+// TTL guard for pending reminder/calendar clarification: a short answer may only bind
+// to a provably recent question. An unknown/malformed timestamp must NEVER authorize a
+// legacy pending action; new followup states always store an ISO created_at timestamp.
+// Permit at most 60 seconds of clock skew, not arbitrary future-dated state.
 export function isFreshFollowupState(state: any, maxMinutes = 10): boolean {
-  if (!state?.created_at && !state?.payload?.created_at) return true
-  const raw = state.created_at || state.payload.created_at
+  const raw = state?.created_at || state?.payload?.created_at
+  if (!raw) return false
   const createdAt = new Date(raw).getTime()
-  if (!Number.isFinite(createdAt)) return true
-  return Date.now() - createdAt <= maxMinutes * 60 * 1000
+  const ttlMs = maxMinutes * 60_000
+  if (!Number.isFinite(createdAt) || !Number.isFinite(ttlMs) || ttlMs <= 0) return false
+  const ageMs = Date.now() - createdAt
+  return ageMs >= -60_000 && ageMs <= ttlMs
 }
 
 // STRICT variant for asset / media references ("this", field follow-ups): fails CLOSED.
