@@ -56,7 +56,10 @@ const PLACES: Record<string, Place> = {
   ccu: { label: 'Kolkata', code: 'CCU', aliases: ['kolkata','calcutta','ccu'] },
   pune: { label: 'Pune', code: 'PNQ', aliases: ['pune','pnq'] },
   pnq: { label: 'Pune', code: 'PNQ', aliases: ['pune','pnq'] },
-  goa: { label: 'Goa', aliases: ['goa','goi','gox'] },
+  // 7 Nov live: without a code the browser flight read bailed at once and "plan a goa trip" got ixigo fallback links.
+  // GOI (Dabolim) is the code Google Flights resolves "Goa" to; the row check also accepts Mopa (see AIRPORT_NAMES).
+  goa: { label: 'Goa', code: 'GOI', aliases: ['goa','goi','gox','dabolim','mopa'] },
+  goi: { label: 'Goa', code: 'GOI', aliases: ['goa','goi','gox','dabolim','mopa'] },
   dubai: { label: 'Dubai', code: 'DXB', aliases: ['dubai','dxb'] },
   dxb: { label: 'Dubai', code: 'DXB', aliases: ['dubai','dxb'] },
   'new york': { label: 'New York', code: 'NYC', aliases: ['new york','nyc','jfk','ewr','lga'] },
