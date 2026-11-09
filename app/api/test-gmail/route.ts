@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { fetchLatestEmails, refreshGmailAccessToken } from '@/lib/google-gmail'
+import { isInternalServiceAuthorized } from '@/lib/security/cron-auth'
 import { decryptGoogleToken, encryptGoogleToken } from '@/lib/security/google-token-crypto'
 
 export const dynamic = 'force-dynamic'
@@ -9,6 +10,9 @@ export async function GET(req: NextRequest) {
   if (process.env.VERCEL_ENV === 'production') {
     return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 })
   }
+  // 24 Oct: on a preview deployment this returned any user's latest emails for ?telegramId=. Now also needs the
+  // internal Bearer secret, so a preview URL alone exposes nothing.
+  if (!isInternalServiceAuthorized(req)) return NextResponse.json({ ok: false, error: 'unauthorized' }, { status: 401 })
 
   const url = new URL(req.url)
   const telegramId = url.searchParams.get('telegramId')
@@ -30,6 +34,8 @@ export async function GET(req: NextRequest) {
     )
   }
 
+  // 4 Nov review P3: even this internal diagnostic needs the person's saved Gmail yes.
+  if ((await import('@/lib/agent/gmail-consent').then(m => m.gmailConsentState(String(user.telegram_id))).catch(() => 'missing')) !== 'on') return NextResponse.json({ ok: false, stage: 'consent', error: 'gmail_consent_missing' }, { status: 403 })
   let accessToken = decryptGoogleToken(String(user.gmail_access_token || '')) || null
   let refreshed = false
   let emails: any[] = []

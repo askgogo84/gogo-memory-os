@@ -6,7 +6,7 @@ import { isValidTimezone, normalizeTimezone, parseLocalDateTime } from '@/lib/ti
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
 import { CALENDAR_WORD_RE } from '@/lib/data/calendar-word'
-import { collapseCalendarEntries, longSpanNote, type CalendarCollapseGroup } from '@/lib/calendar-intervals'
+import { collapseCalendarEntries, dailyOccurrenceOn, longSpanNote, type CalendarCollapseGroup } from '@/lib/calendar-intervals'
 
 const MAX_EVENTS = 40
 const MAX_SLOTS = 6
@@ -327,6 +327,17 @@ type CalendarLineItem={summary:string;label:string;account?:string;start?:string
 export function collapseCalendarItems<T extends CalendarLineItem>(items:T[],tz:string):CalendarCollapseGroup<T>[]{
   return collapseCalendarEntries(items,e=>({title:e.summary,account:e.account,start:e.start,end:e.end,dupKey:`${e.summary}|${e.label}|${e.account||''}`}),tz)
 }
+/** 27 Oct live: "calendar tomorrow" listed an 11:30 multi-day standup above a 10:30 meeting, because a long-span entry
+ *  starts weeks earlier. When every ordinary entry is on one local day, a long-span group sorts by its time on that day. */
+export function sortCalendarGroupsByDay<T extends CalendarLineItem>(groups:CalendarCollapseGroup<T>[],tz:string):CalendarCollapseGroup<T>[]{
+  // All-day entries (date-only start) keep their place after the timed ones.
+  const timed=(g:CalendarCollapseGroup<T>)=>/T/.test(String(g.first.start||''))
+  const days=new Set(groups.filter(g=>!g.daily&&timed(g)).map(g=>localYmd(new Date(String(g.first.start)),tz)))
+  if(days.size!==1)return groups
+  const day=[...days][0]
+  const key=(g:CalendarCollapseGroup<T>)=>g.daily?(dailyOccurrenceOn(g.daily,day,tz)?.start??Infinity):timed(g)?Date.parse(String(g.first.start)):Infinity
+  return groups.map((g,i)=>({g,i,k:key(g)})).sort((a,b)=>(a.k===b.k?0:a.k<b.k?-1:1)||a.i-b.i).map(x=>x.g)
+}
 export function calendarGroupLines<T extends CalendarLineItem>(groups:CalendarCollapseGroup<T>[],tz:string):string[]{
   const clockFmt=new Intl.DateTimeFormat('en-IN',{timeZone:tz,hour:'numeric',minute:'2-digit',hour12:true})
   return groups.map((g,i)=>{
@@ -337,7 +348,7 @@ export function calendarGroupLines<T extends CalendarLineItem>(groups:CalendarCo
   })
 }
 export function calendarItemLines(items:CalendarLineItem[],tz:string):string[]{
-  return calendarGroupLines(collapseCalendarItems(items,tz),tz)
+  return calendarGroupLines(sortCalendarGroupsByDay(collapseCalendarItems(items,tz),tz),tz)
 }
 
 function slotLabel(startIso:string,endIso:string,tz:string){
@@ -416,7 +427,8 @@ export async function executeReadOnlyCalendarStep(params:{actor:AgentActor;instr
       label:eventInterval(event,timezone)?.allDay?`All day · ${event.start.date} (end ${event.end.date} exclusive)`:
         eventInterval(event,timezone)?slotLabel(event.start.dateTime,event.end.dateTime,timezone):`${event.start?.dateTime||event.start?.date||'Start not verified'} · end time not verified`,
     }))
-    const groups=collapseCalendarItems(allItems,timezone)
+    // Sorted before the cap and the remembered selection, so "the 2nd meeting" is the 2nd line shown.
+    const groups=sortCalendarGroupsByDay(collapseCalendarItems(allItems,timezone),timezone)
     // A week summary needs more than a single day's 12 lines.
     const displayCap=window.endDate>=addDays(window.startDate,2)?24:12
     const shownGroups=groups.slice(0,displayCap)

@@ -76,7 +76,17 @@ export async function GET(req: NextRequest) {
 
     if (tokens.refresh_token) payload.gmail_refresh_token = encryptGoogleToken(tokens.refresh_token)
 
-    const { error } = await supabaseAdmin
+    // 6 Nov (owner): a second Google account (work mail) is kept beside the first, never in its place. The read-only
+    // connect of a different address than the one already connected goes to gmail_accounts; the primary is untouched.
+    const { data: current } = await supabaseAdmin.from('users').select('gmail_connected,gmail_email').eq('telegram_id', telegramId).maybeSingle()
+    const primary = String(current?.gmail_email || '').toLowerCase()
+    let extra = false
+    if (!sendUpgrade && current?.gmail_connected && primary && primary !== email.toLowerCase()) {
+      if (!tokens.refresh_token) return NextResponse.json({ ok: false, error: 'Google did not return durable access for this account. Please retry the link.' }, { status: 400 })
+      await import('@/lib/agent/gmail-accounts').then(m => m.upsertExtraGmailAccount(telegramId, email, tokens))
+      extra = true
+    }
+    const { error } = extra ? { error: null } : await supabaseAdmin
       .from('users')
       .update(payload)
       .eq('telegram_id', telegramId)
@@ -87,6 +97,19 @@ export async function GET(req: NextRequest) {
         { ok: false, error: 'Could not save Google connection' },
         { status: 500 }
       )
+    }
+    // Linking Google saves encrypted credentials, but that alone is not proof Gmail reads are enabled.
+    // The consent write may be refused, fail, or lose an optimistic concurrency race.
+    // Only an affirmative, freshly verified owner-bound consent row permits a "ready" message.
+    let gmailConsentReady = false
+    try {
+      const consent = await import('@/lib/agent/gmail-consent')
+      const outcome = await consent.recordGmailConnectConsent(telegramId)
+      if (outcome === 'saved' || outcome === 'already_on') {
+        gmailConsentReady = (await consent.gmailConsentState(telegramId)) === 'on'
+      }
+    } catch (e: any) {
+      console.error('GMAIL_CONSENT_SAVE_FAILED:', String(e?.message || e).slice(0, 120))
     }
 
     return new NextResponse(
@@ -103,12 +126,13 @@ export async function GET(req: NextRequest) {
         <body>
           <div class="card">
             <div class="mark">✓</div>
-            <div class="eyebrow">One Gogo · connected</div>
-            <h1>Google Workspace is ready.</h1>
-            <p class="ok">${sendUpgrade?'Gogo now has the Gmail Send access you explicitly approved.':'Gogo now has the read-only Google access you approved.'}</p>
+            <div class="eyebrow">${gmailConsentReady?'One Gogo · connected':'One Gogo · attention needed'}</div>
+            <h1>${gmailConsentReady?'Google Workspace is ready.':'Google linked. Gmail reading is paused.'}</h1>
+            <p class="ok">${gmailConsentReady?(sendUpgrade?'Gogo now has the Gmail Send access you explicitly approved.':extra?`Gogo now also reads ${email}, beside ${primary}. Read-only.`:'Gogo now has the read-only Google access you approved.'):'The Google connection was saved, but Gmail consent is not confirmed. Gogo will not read or send Gmail until this is resolved.'}</p>
             <p>Connected account: <span class="email">${email.replace(/[<>&"']/g, '')}</span></p>
-            <div class="privacy">${sendUpgrade?'Gogo may send Gmail only after the AskGogo approval boundary. This upgrade does not grant automatic sending, Drive mutation, booking or payment authority.':'Gogo can read the approved Gmail, Contacts and Drive context to help with your requests. Sending email, changing files, scheduling, booking or spending still requires the appropriate permission and approval boundary.'}</div>
-            <p style="margin-top:22px">You can close this window and return to AskGogo.</p>
+            <div class="privacy">${gmailConsentReady?(sendUpgrade?'Gogo may send Gmail only after the AskGogo approval boundary. This upgrade does not grant automatic sending, Drive mutation, booking or payment authority.':'Gogo can read the approved Gmail, Contacts and Drive context to help with your requests. Sending email, changing files, scheduling, booking or spending still requires the appropriate permission and approval boundary.'):'Review Email settings. An explicit Gmail disable setting is never overridden by reconnecting. Gmail reads and sends remain unavailable until consent is confirmed; this screen does not grant approval for any action.'}</div>
+            <a href="${gmailConsentReady?'https://app.askgogo.in/dashboard/connections':'https://app.askgogo.in/dashboard/settings/email'}" style="display:block;margin-top:24px;min-height:48px;line-height:48px;text-align:center;border-radius:14px;background:#0f6f64;color:#fff;font-weight:600;font-size:16px;text-decoration:none">${gmailConsentReady?'Back to AskGogo':'Review Email settings'}</a>
+            <a href="https://wa.me/17605483659" style="display:block;margin-top:10px;min-height:48px;line-height:48px;text-align:center;border-radius:14px;border:1px solid #d9d2c7;color:#1f1b16;font-weight:600;font-size:16px;text-decoration:none">Open WhatsApp chat</a>
           </div>
         </body>
       </html>`,

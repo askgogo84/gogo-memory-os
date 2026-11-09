@@ -1,4 +1,6 @@
 import { Suspense } from 'react'
+import { getTodayFeed } from '@/lib/dashboard/today-feed'
+import { TodayFeed } from '@/components/dashboard/today-feed'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
@@ -93,7 +95,7 @@ async function CalendarRestRow({ telegramId }: { telegramId: string }) {
 
 export default async function TodayPage() {
   const session = await getSession()
-  const [{ data: user }, today, lists, usage, memory, profile, friends] = await Promise.all([
+  const [{ data: user }, today, lists, usage, memory, profile, friends, feed] = await Promise.all([
     session
       ? supabaseAdmin
           .from('users')
@@ -107,6 +109,8 @@ export default async function TodayPage() {
     session ? getDashboardMemory(session.telegramId) : Promise.resolve({ ok: true as const, items: [] }),
     session ? getProfile(session.telegramId) : Promise.resolve({ ok: false } as const),
     session ? getFriendContacts(session.telegramId) : Promise.resolve({ ok: true as const, contacts: [], count: 0 }),
+    // Today feed (5 Nov): what Gogo noticed while WhatsApp stayed quiet. Never fails the page.
+    session ? getTodayFeed(session.telegramId).catch(() => null) : Promise.resolve(null),
   ])
 
   const tz = user?.timezone || 'Asia/Kolkata'
@@ -194,6 +198,8 @@ export default async function TodayPage() {
           )}
         </header>
 
+        {feed ? <TodayFeed needs={feed.needs} noticed={feed.noticed} done={feed.done} tz={tz} /> : null}
+
         {!today.ok ? (
           <CardError message="Couldn’t load your reminders right now." />
         ) : today.reminders.length === 0 ? (
@@ -219,6 +225,7 @@ export default async function TodayPage() {
         )}
       </div>
 
+      {feed ? <div className="mb-6 hidden max-w-[720px] lg:block"><TodayFeed needs={feed.needs} noticed={feed.noticed} done={feed.done} tz={tz} /></div> : null}
       <div className="hidden lg:block [&>div]:mx-0 [&>div]:max-w-none">
         <TodayDesktop
           greeting={greeting}

@@ -1,6 +1,7 @@
 import {decodeHtmlEntities,formatEmailSnippet} from '@/lib/security/email-redaction'
 export {decodeHtmlEntities,formatEmailSnippet,redactEmailAuthSecrets} from '@/lib/security/email-redaction'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { extractServerlessPdfText } from '@/lib/services/pdf-js-serverless'
 import { refreshGmailAccessToken } from '@/lib/google-gmail'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { decryptGoogleToken, encryptGoogleToken, hasGoogleTokenEncryptionKey, isEncryptedGoogleToken } from '@/lib/security/google-token-crypto'
@@ -52,7 +53,9 @@ export function extractEmailSender(input: string): { sender: string | null; rest
   return { sender, rest: raw.replace(m[0], ' ').replace(/\s+/g, ' ').trim() }
 }
 
-async function credentials(actor: AgentActor) {
+type ExtraAccount = import('./gmail-accounts').ExtraGmailAccount
+async function credentials(actor: AgentActor, account?: ExtraAccount | null) {
+  if (account) return { gmail_connected: true, gmail_email: account.email, gmail_access_token: account.accessToken, gmail_refresh_token: account.refreshToken } as any
   const { data, error } = await supabaseAdmin.from('users')
     .select('gmail_connected,gmail_access_token,gmail_refresh_token,gmail_email')
     .eq('telegram_id', actor.legacyTelegramId).maybeSingle()
@@ -81,26 +84,61 @@ async function credentials(actor: AgentActor) {
   return {...data,gmail_access_token:access,gmail_refresh_token:refresh} as any
 }
 
-async function refresh(actor: AgentActor, refreshToken: string) {
+async function refresh(actor: AgentActor, refreshToken: string, account?: ExtraAccount | null) {
   const token = await refreshGmailAccessToken(refreshToken)
   if (!token) throw new Error('workspace_reconnect_required')
+  if (account) {
+    // Revocation can race this network refresh. Only issue a new Gmail read if
+    // the exact owner's account is still connected when the token is persisted.
+    // Unknown or failed persistence is NOT successful authorization.
+    await import('./gmail-accounts').then(m => m.saveExtraAccessToken(actor.legacyTelegramId, account.id, token))
+    return token
+  }
   const { error } = await supabaseAdmin.from('users').update({ gmail_access_token: encryptGoogleToken(token) }).eq('telegram_id', actor.legacyTelegramId)
   if (error) console.error('WORKSPACE_ACCESS_TOKEN_PERSIST_FAILED:', error.message)
   return token
 }
 
-async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit = {}) {
+async function composioDriveFor(actor: AgentActor): Promise<((url:string)=>Promise<Response>)|null> {
+  try{
+    const c:any=await import('@/lib/connectors/composio-gmail')
+    if(typeof c?.composioConfigured!=='function'||!c.composioConfigured())return null
+    // Credential selection is owner-bound; raw phone numbers cannot expand accounts.
+    const ids=[String(actor.legacyTelegramId)]
+    const account=await c.activeDriveAccount(ids)
+    if(!account)console.log('COMPOSIO_DRIVE_NONE:',JSON.stringify({ids:ids.map(v=>`${v.slice(0,1)}…${v.slice(-4)}`)}))
+    return account?(url:string)=>c.composioDriveFetch(account,url):null
+  }catch(err:any){console.error('COMPOSIO_DRIVE_LOOKUP_FAILED:',String(err?.message||err).slice(0,160));return null}
+}
+
+async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit = {}, account?: ExtraAccount | null) {
+  if (!Number.isSafeInteger(actor.legacyTelegramId) || actor.legacyTelegramId === 0) throw new Error('workspace_owner_invalid')
   // OAuth reach and the user's read preference are separate. Check before even
   // loading credentials; Drive/Contacts retain their independent Workspace access.
   if(url.startsWith('https://gmail.googleapis.com/')){
     const {data:consent,error}=await supabaseAdmin.from('user_consent_settings')
       .select('gmail_enabled').eq('telegram_id',actor.legacyTelegramId).maybeSingle()
     if(error)throw new Error('workspace_email_consent_unavailable')
+    // 4 Nov P1 hotfix: Gmail is read only after an affirmative yes (saved when the person connects Gmail).
     if(consent?.gmail_enabled===false)throw new Error('workspace_email_reading_disabled')
+    if(consent?.gmail_enabled!==true)throw new Error('workspace_email_consent_missing')
   }
-  const creds = await credentials(actor)
+  // Google Drive while AskGogo's own Google verification is pending (24 Oct): use the person's Composio Drive
+  // connection when there is one; their own Workspace token is still preferred when it works.
+  // 24 Oct live: the native token existed (from a Gmail Send upgrade) but had no Drive scope, so Drive got 403 and
+  // the Composio connection was never tried. Composio is now used when native is missing OR answers 401/403.
+  let viaComposio:((url:string)=>Promise<Response>)|null=null
+  if(url.startsWith('https://www.googleapis.com/drive/v3/')){
+    viaComposio=await composioDriveFor(actor)
+    if(viaComposio){
+      let native:any=null
+      try{native=await credentials(actor)}catch{}
+      if(!native)return viaComposio(url)
+    }
+  }
+  const creds = await credentials(actor, account)
   let token = String(creds.gmail_access_token || '')
-  if (!token && creds.gmail_refresh_token) token = await refresh(actor, String(creds.gmail_refresh_token))
+  if (!token && creds.gmail_refresh_token) token = await refresh(actor, String(creds.gmail_refresh_token), account)
 
   const run = (accessToken:string) => fetch(url, {
     ...init,
@@ -109,9 +147,10 @@ async function workspaceFetch(actor: AgentActor, url: string, init: RequestInit 
   })
   let response = await run(token)
   if (response.status === 401 && creds.gmail_refresh_token) {
-    token = await refresh(actor, String(creds.gmail_refresh_token))
+    token = await refresh(actor, String(creds.gmail_refresh_token), account)
     response = await run(token)
   }
+  if ((response.status === 403 || response.status === 401) && viaComposio) return viaComposio(url)
   if (response.status === 403) throw new Error('workspace_scope_required')
   return response
 }
@@ -120,9 +159,9 @@ function header(headers:any[], name:string) {
   return String((headers || []).find((x:any) => String(x?.name || '').toLowerCase() === name.toLowerCase())?.value || '')
 }
 
-async function gmailMetadata(actor:AgentActor, id:string, auditBody=false) {
+async function gmailMetadata(actor:AgentActor, id:string, auditBody=false, account?:ExtraAccount|null) {
   const url=`https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(id)}?format=${auditBody?'full':'metadata'}&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date&metadataHeaders=Message-ID`
-  const response=await workspaceFetch(actor,url)
+  const response=await workspaceFetch(actor,url,{},account)
   if(!response.ok)throw new Error(`workspace_email_message_failed:${response.status}`)
   const data:any=await response.json()
   const headers=data?.payload?.headers||[]
@@ -140,18 +179,39 @@ async function gmailMetadata(actor:AgentActor, id:string, auditBody=false) {
     to:formatEmailSnippet(header(headers,'To'),240),
     date:clean(header(headers,'Date'),120),
     snippet:formatEmailSnippet(data?.snippet||''),
+    ...(account?{account:account.email}:{}),
     ...(auditBody?{evidence:formatEmailSnippet(body||data?.snippet||'',5000)}:{}),
   }
+}
+
+// Every Google account the person connected (6 Nov, owner: gmail.com and tipplr.in): the primary (null) first,
+// then the extras. An extra account that fails is logged and skipped, never a reason to lose the primary's results.
+async function allAccounts(actor:AgentActor):Promise<(ExtraAccount|null)[]> {
+  const extras:ExtraAccount[]=await import('./gmail-accounts').then(m=>typeof m?.listExtraGmailAccounts==='function'?m.listExtraGmailAccounts(actor.legacyTelegramId):[]).catch(()=>[])
+  return [null,...extras]
+}
+async function acrossAccounts<T>(actor:AgentActor, read:(account:ExtraAccount|null)=>Promise<T[]>):Promise<T[]> {
+  // The primary first: its consent and connection checks decide whether any mail is read at all.
+  const out:T[]=await read(null)
+  const extras=(await allAccounts(actor)).filter((a):a is ExtraAccount=>!!a)
+  const settled=await Promise.allSettled(extras.map(read))
+  settled.forEach((s,i)=>{
+    if(s.status==='fulfilled')out.push(...s.value)
+    else console.error('WORKSPACE_EXTRA_ACCOUNT_FAILED:',JSON.stringify({email:extras[i]?.email,error:String(s.reason?.message||s.reason).slice(0,100)}))
+  })
+  return out
 }
 
 /** Messages for an exact Gmail query (newest first), metadata only. */
 export async function searchWorkspaceEmailsByQuery(actor:AgentActor, q:string, maxResults=5) {
   const params=new URLSearchParams({maxResults:String(Math.max(1,Math.min(10,Math.floor(maxResults||5)))),q})
-  const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`)
-  if(!response.ok)throw new Error(`workspace_email_search_failed:${response.status}`)
-  const data:any=await response.json()
-  const ids=(Array.isArray(data?.messages)?data.messages:[]).map((x:any)=>String(x?.id||'')).filter(Boolean)
-  const messages=await Promise.all(ids.map((id:string)=>gmailMetadata(actor,id)))
+  const messages=await acrossAccounts(actor,async account=>{
+    const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,{},account)
+    if(!response.ok)throw new Error(`workspace_email_search_failed:${response.status}`)
+    const data:any=await response.json()
+    const ids=(Array.isArray(data?.messages)?data.messages:[]).map((x:any)=>String(x?.id||'')).filter(Boolean)
+    return Promise.all(ids.map((id:string)=>gmailMetadata(actor,id,false,account)))
+  })
   return messages.filter(Boolean).sort((a:any,b:any)=>(Date.parse(b.date||'')||0)-(Date.parse(a.date||'')||0))
 }
 
@@ -160,15 +220,15 @@ export async function listRecentWorkspaceInbox(actor:AgentActor, maxResults = 12
     maxResults:String(Math.max(1,Math.min(20,Math.floor(maxResults||12)))),
     q:'in:inbox newer_than:2d',
   })
-  const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`)
-  if(!response.ok)throw new Error(`workspace_email_recent_failed:${response.status}`)
-  const data:any=await response.json()
-  const ids=(Array.isArray(data?.messages)?data.messages:[]).slice(0,20).map((x:any)=>String(x?.id||'')).filter(Boolean)
-  const settled=await Promise.allSettled(ids.map((id:string)=>gmailMetadata(actor,id)))
-  const messages=settled
-    .filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled')
-    .map(x=>x.value)
-    .filter(Boolean)
+  const messages=await acrossAccounts(actor,async account=>{
+    const response=await workspaceFetch(actor,`https://gmail.googleapis.com/gmail/v1/users/me/messages?${params}`,{},account)
+    if(!response.ok)throw new Error(`workspace_email_recent_failed:${response.status}`)
+    const data:any=await response.json()
+    const ids=(Array.isArray(data?.messages)?data.messages:[]).slice(0,20).map((x:any)=>String(x?.id||'')).filter(Boolean)
+    const settled=await Promise.allSettled(ids.map((id:string)=>gmailMetadata(actor,id,false,account)))
+    return settled.filter((x):x is PromiseFulfilledResult<any>=>x.status==='fulfilled').map(x=>x.value).filter(Boolean)
+  })
+  messages.sort((a:any,b:any)=>(Date.parse(b.date||'')||0)-(Date.parse(a.date||'')||0))
   return {messages}
 }
 
@@ -186,7 +246,7 @@ export function workspaceEmailAuditScope(input:string) {
 // Search is candidate discovery, not proof that every keyword match is a bill.
 // Keep explicit receipts, dues and dated renewal notices; do not infer a bill
 // from developer threads, newsletters or generic subscription/payment marketing.
-function emailBillingAmounts(evidence:string) {
+export function emailBillingAmounts(evidence:string) {
   // Preserve explicit currency codes instead of inferring USD from "$" or a
   // currency from the account locale. Uppercase ISO codes avoid prose like "all 15".
   const codes=Intl.supportedValuesOf('currency').join('|')
@@ -353,7 +413,9 @@ export async function readWorkspaceDriveText(actor:AgentActor,file:{id:string;mi
   const mime=String(file.mimeType||'')
   if(!id)throw new Error('workspace_file_id_missing')
   let content:{text:string;truncated:boolean}
-  if(mime==='application/vnd.google-apps.document') {
+  // 2 Nov live: "summarise the latest document in my Google Drive" picked a Google Slides file and said it could not
+  // be read. Drive exports Slides as plain text (each slide's text in order), the same way it exports Docs.
+  if(mime==='application/vnd.google-apps.document'||mime==='application/vnd.google-apps.presentation') {
     content=await workspaceText(actor,`https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=${encodeURIComponent('text/plain')}`)
   } else if(mime==='application/vnd.google-apps.spreadsheet') {
     content=await workspaceText(actor,`https://www.googleapis.com/drive/v3/files/${id}/export?mimeType=${encodeURIComponent('text/csv')}`)
@@ -477,15 +539,9 @@ async function extractAttachmentText(bytes:Buffer,filename:string,mimeType:strin
     return bytes.toString('utf8').slice(0,MAX_FILE_TEXT)
   }
   if(mime==='application/pdf'||name.endsWith('.pdf')) {
-    const pdf:any=await import('pdf-parse')
-    if(typeof pdf.PDFParse!=='function')throw new Error('workspace_pdf_parser_unavailable')
-    const parser=new pdf.PDFParse({data:bytes})
-    try {
-      const result=await parser.getText()
-      return String(result?.text||'').slice(0,MAX_FILE_TEXT)
-    } finally {
-      await parser.destroy?.()
-    }
+    // Install serverless PDF.js globals before module evaluation and keep the
+    // same 60k-character extraction cap and unreadable outcome on failure.
+    return extractServerlessPdfText(bytes,MAX_FILE_TEXT)
   }
   if(mime==='application/vnd.openxmlformats-officedocument.wordprocessingml.document'||name.endsWith('.docx'))return extractOfficeText(bytes,'docx')
   if(mime==='application/vnd.openxmlformats-officedocument.presentationml.presentation'||name.endsWith('.pptx'))return extractOfficeText(bytes,'pptx')

@@ -8,6 +8,7 @@ import { registerLifeEvent } from './life-event-engine'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
 import { searchWebResults } from '@/lib/web-search'
+import { tidyUrl } from '@/lib/security/outbound-identifiers'
 
 function safe(value: unknown, max = 1400) {
   return redactSecretShapedText(String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max))
@@ -239,11 +240,29 @@ export async function currentAppointmentReply(tg: number): Promise<string | null
   return appointmentPrompt ? text : null
 }
 
+// 2 Nov live: "open option 1" right after the list said "I could not match option 1 safely". Since 31 Oct the list
+// shows each link tidied (tracking parameters and trailing slashes dropped, Google goto links shown as a Maps
+// search), while the saved option keeps the raw address, so the exact-string check never matched. The same page
+// still matches: same host, path and remaining query once both are tidied.
+function linkKey(raw: string) {
+  try { const u = new URL(raw); return `${u.hostname.replace(/^www\./, '')}${u.pathname.replace(/\/+$/, '')}${u.search}`.toLowerCase() } catch { return '' }
+}
+export function sameShownLink(shown: string, url: string): boolean {
+  if (!shown || !url) return false
+  if (shown === url) return true
+  const key = linkKey(shown)
+  if (!key) return false
+  if (key === linkKey(url) || key === linkKey(tidyUrl(url))) return true
+  try { return /google\.[a-z.]+\/goto\?/i.test(tidyUrl(url)) && /^(?:www\.)?maps\.google\.com$/i.test(new URL(shown).hostname) } catch { return false }
+}
 export function appointmentReplySelects(reply: string, option: number, url: string): boolean {
   // Bind the chosen number to its exact provider page in the displayed list.
   const blocks = reply.split(/\n(?=\d+\.\s)/)
   return blocks.some(block => new RegExp(`^${option}\\.\\s`).test(block)
-    && block.split(/\r?\n/).some(line => line.trim() === `Booking/provider page: ${url}`))
+    && block.split(/\r?\n/).some(line => {
+      const m = line.trim().match(/^Booking\/provider page:\s*(\S+)$/)
+      return Boolean(m && sameShownLink(m[1], url))
+    }))
 }
 
 async function latestAppointmentResearch(tg: number) {
@@ -643,7 +662,7 @@ async function queueVenueSlotCheck(params: { actor: AgentActor; surface: AgentSu
   const time = `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h >= 12 ? 'PM' : 'AM'}`
   const { queueBrowserRead } = await import('./browser-command')
   const queued: any = await queueBrowserRead({ actor: params.actor, surface: params.surface, text: `open ${url} and check the live slots`,
-    metadata: { slot_check: { listUrl: url, date, time, timezone: tz, service, location: String(params.research?.metadata_json?.location || ''), venues: 1 } } })
+    metadata: { slot_check: { listUrl: url, date, time, timezone: tz, service, location: String(params.research?.metadata_json?.location || ''), venues: 1 } } }).catch(() => null)
   if (!queued?.runId) return null
   const name = safe(String(params.selected?.title || '').replace(/\s*[-|]\s*Playo.*$/i, ''), 80) || 'that venue'
   return { runId: String(queued.runId), text: `Checking the live ${time} slots at ${name} on Playo now. I'll message you here in 1–2 minutes with the free courts and prices. Nothing is booked.` }
