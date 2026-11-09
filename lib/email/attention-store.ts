@@ -8,7 +8,7 @@ import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 import { fetchGmailAttentionThreads, refreshGmailAccessToken } from '@/lib/services/google-gmail'
 import {
   type AttentionEmail, type AttentionRule, type ScoredEmail, type AttentionPick,
-  pickAttention, formatAttentionCard, ruleFromFeedback, scoreEmail, senderEmailOf, senderDomainOf, senderNameOf,
+  pickAttention, formatAttentionCard, parseAttentionCard, ruleFromFeedback, scoreEmail, senderEmailOf, senderDomainOf, senderNameOf,
 } from './attention'
 import { parseAttentionCommand, isUndo, type AttentionCommand } from './attention-commands'
 
@@ -75,12 +75,50 @@ type ShownItem = {
   gmailAccount?: string | null // exact connected mailbox provenance; old cards omit this field
 }
 
-async function lastShown(telegramId: number): Promise<ShownItem[] | null> {
+// Numbered actions ("draft 1", "remind 1", "open 1") bind to the card the owner actually saw, not merely the
+// newest "shown" event: inbound.ts records a shown event before its separately gated push, so a newer event can
+// exist for a card that was never delivered. A failed scan, "nothing needs you", a connect prompt or the rules
+// view is the owner's latest list-level reply, so it ends the binding: an older card is not revived by it.
+const ATTENTION_LIST_CARD = /^📬 \d+ emails? needs? you/
+const ATTENTION_NO_LIST_REPLY = /^📬 (?:I couldn't read your email|Nothing in your email needs you|Connect your email first|What I flag for you)/
+const CARD_EVENT_SKEW_MS = 10_000
+
+async function visibleAttentionCard(telegramId: number): Promise<{ content: string; at: number } | null> {
+  const { data } = await supabaseAdmin.from('conversations').select('content,created_at')
+    .eq('telegram_id', telegramId).eq('role', 'assistant').order('created_at', { ascending: false }).limit(10)
+  for (const row of (data || []) as any[]) {
+    const content = String(row?.content || '')
+    if (!content.startsWith('📬') || ATTENTION_NO_LIST_REPLY.test(content)) return null
+    if (ATTENTION_LIST_CARD.test(content)) {
+      const at = Date.parse(String(row.created_at || ''))
+      return Number.isFinite(at) ? { content, at } : null
+    }
+    // Any other 📬 reply is a follow-up to a numbered item on that card ("why 1", a draft): keep looking back.
+  }
+  return null
+}
+
+async function lastShownEvent(telegramId: number, card?: { content: string; at: number }): Promise<{ items: ShownItem[]; payload: any } | null> {
   const since = new Date(Date.now() - 24 * 3600_000).toISOString()
   const { data } = await supabaseAdmin.from('email_attention_events').select('payload,created_at')
-    .eq('telegram_id', telegramId).eq('kind', 'shown').gte('created_at', since).order('created_at', { ascending: false }).limit(1)
-  const items = (data?.[0] as any)?.payload?.items
-  return Array.isArray(items) && items.length ? items as ShownItem[] : null
+    .eq('telegram_id', telegramId).eq('kind', 'shown').gte('created_at', since).order('created_at', { ascending: false }).limit(10)
+  const listed = card ? parseAttentionCard(card.content)?.items || [] : []
+  const norm = (v: unknown) => String(v ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
+  for (const row of (data || []) as any[]) {
+    const at = Date.parse(String(row?.created_at || ''))
+    // The shown event is written just before (or, for proactive cards, alongside) the visible card.
+    if (card && (!Number.isFinite(at) || at > card.at + CARD_EVENT_SKEW_MS)) continue
+    const items = row?.payload?.items
+    if (!Array.isArray(items) || !items.length) continue
+    // When the card's numbered senders can be read back, the event must list the same senders at the same numbers.
+    if (listed.length && !listed.every(l => norm(items.find((i: any) => i?.index === l.index)?.senderName) === norm(l.sender))) continue
+    return { items: items as ShownItem[], payload: row.payload }
+  }
+  return null
+}
+
+async function lastShown(telegramId: number, card?: { content: string; at: number }): Promise<ShownItem[] | null> {
+  return (await lastShownEvent(telegramId, card))?.items || null
 }
 
 async function lastAssistantReply(telegramId: number): Promise<{ content: string; at: number } | null> {
@@ -360,8 +398,10 @@ export async function handleEmailAttentionCommand(params: { actor: AgentActor; t
     return ok(`📬 Undone. I'm back to my usual judgement for ${ev.payload.label || 'that sender'}.`, 'email-attention-undo')
   }
 
-  const items = await lastShown(telegramId)
-  const item = items?.find(i => i.index === cmd.index)
+  const card = await visibleAttentionCard(telegramId)
+  if (!card) return null
+  const shown = await lastShownEvent(telegramId, card)
+  const item = shown?.items.find(i => i.index === cmd.index)
   if (!item) return ok(`📬 I don't see email ${cmd.index} in the list I just showed. Say "emails that need me" for a fresh list.`)
   const senderKey = item.category === 'person' ? item.senderEmail : senderDomainOf(item.from)
 
@@ -384,8 +424,7 @@ export async function handleEmailAttentionCommand(params: { actor: AgentActor; t
 
   if (cmd.type === 'open') {
     await recordEvent(telegramId, 'open', { index: item.index, senderKey })
-    const ev = await supabaseAdmin.from('email_attention_events').select('payload').eq('telegram_id', telegramId).eq('kind', 'shown').order('created_at', { ascending: false }).limit(1)
-    const link = gmailLink(item, (ev.data?.[0] as any)?.payload?.gmailEmail || null)
+    const link = gmailLink(item, shown?.payload?.gmailEmail || null)
     return ok(`📬 ${item.senderName}: ${item.subject}\n\n${item.snippet}${link ? `\n\nOpen in Gmail: ${link}` : ''}`, 'email-attention-open')
   }
 
