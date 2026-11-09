@@ -107,6 +107,28 @@ export async function GET(req: NextRequest) {
 
     if (dryRun) continue
 
+    // The scan can precede an unsubscribe, email edit or account change.
+    // Immediately before any outbound email, re-read the exact owner's consent
+    // and destination. A failed read or an unexpected row never authorizes a send.
+    // This narrows (but does not transactionally eliminate) concurrent edits.
+    const { data: freshRows, error: freshError } = await supabaseAdmin
+      .from('users')
+      .select('telegram_id, email, email_opt_out')
+      .eq('telegram_id', telegramId)
+      .limit(2)
+    if (freshError) {
+      failures.push({ telegramId, key: next.key, error: 'lifecycle_consent_read_failed' })
+      continue
+    }
+    // Only a row whose returned owner is exactly this owner can authorize; a missing,
+    // duplicated or rounded owner row fails closed.
+    const ownerRows = (Array.isArray(freshRows) ? freshRows : []).filter((row: any) => exactLifecycleOwnerId(row?.telegram_id) === telegramId)
+    const fresh: any = ownerRows.length === 1 ? ownerRows[0] : null
+    if (!fresh || fresh.email_opt_out === true || String(fresh.email || '').trim().toLowerCase() !== recipient) {
+      skipped++
+      continue
+    }
+
     const send = await sendAskGogoEmail({
       to: recipient,
       subject: rendered.subject,
