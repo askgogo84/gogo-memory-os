@@ -96,6 +96,14 @@ await assert.rejects(api.suppressAllForRecipient(recipient), /owner|unsafe|inval
 assert.equal(inserts.length, 0)
 assert.ok(tableCalls >= beforeReject)
 
+// Mixed case (#1021 review): one ambiguous row must not stop the exact owners' opt-outs from being written.
+inserts.length = 0
+ownerRows = [{ owner_telegram_id: adjacent[0] }, { owner_telegram_id: Number(adjacent[1]) }]
+await assert.rejects(api.suppressAllForRecipient(recipient), /ambiguous_reminder_optout_owner:recorded_1_skipped_1/,
+  'the ambiguity is still reported to the caller')
+assert.deepEqual(inserts.map(r => String(r.owner_telegram_id)), [adjacent[0]], 'the exact owner is suppressed anyway')
+console.log('PASS STOP still suppresses every exact owner when another row is ambiguous')
+
 // The send-path STOP gate must not query or send under rounded owner IDs.
 const beforeUnsafeRead = tableCalls
 await assert.rejects(api.isSuppressed(Number(adjacent[1]), recipient), /owner|unsafe|invalid|ambiguous/i)

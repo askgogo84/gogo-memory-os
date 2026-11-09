@@ -37,14 +37,21 @@ export async function suppressAllForRecipient(recipientWhatsappId: string): Prom
   // Persisted BIGINT owner IDs may arrive as exact decimal strings. Converting to
   // Number() rounds adjacent 64-bit owners together and silently drops one STOP.
   // When a value has ALREADY arrived as an unsafe JS number, do not guess its owner.
+  // STOP is honoured for every sender we can identify exactly, even if another row is ambiguous: an ambiguous
+  // owner can never send anyway (isSuppressed throws → the cron does not send). The ambiguity is still reported,
+  // after the exact opt-outs are written, so the caller logs it.
   const uniqueOwnerIds = new Set<string>()
+  let ambiguous = 0
   for (const row of owners || []) {
     const id = exactSessionOwnerId((row as any).owner_telegram_id)
-    if (!id) throw new Error('ambiguous_reminder_optout_owner')
+    if (!id) { ambiguous++; continue }
     uniqueOwnerIds.add(id)
   }
   const uniqueOwners = [...uniqueOwnerIds]
-  if (!uniqueOwners.length) return 0
+  if (!uniqueOwners.length) {
+    if (ambiguous) throw new Error('ambiguous_reminder_optout_owner')
+    return 0
+  }
 
   const rows = uniqueOwners.map((owner) => ({
     owner_telegram_id: owner,
@@ -54,6 +61,7 @@ export async function suppressAllForRecipient(recipientWhatsappId: string): Prom
     .from('reminder_optout')
     .upsert(rows, { onConflict: 'owner_telegram_id,recipient_whatsapp_id' })
   if (upErr) throw upErr
+  if (ambiguous) throw new Error(`ambiguous_reminder_optout_owner:recorded_${rows.length}_skipped_${ambiguous}`)
 
   return rows.length
 }
