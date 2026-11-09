@@ -1,0 +1,2 @@
+# Twilio Basic-auth media egress: PDF + ticket readers (supersedes #934, #855)
+npx tsx scripts/verify-twilio-egress-pdf-ticket.mts

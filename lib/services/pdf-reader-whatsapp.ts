@@ -1,3 +1,4 @@
+import { fetchTwilioBoundDocumentMedia } from './twilio-pdf-egress'
 import {
   parsePdfTicket as parsePdfTicketWithProviderFallback,
   parseImageTicket,
@@ -110,13 +111,8 @@ export function parseFlightTicketTextSafe(text: string): FlightInfo | null {
 }
 
 async function fetchTwilioPdfBuffer(mediaUrl: string, accountSid: string, authToken: string): Promise<Buffer> {
-  const response = await fetch(mediaUrl, {
-    headers: {
-      Authorization: 'Basic ' + Buffer.from(`${accountSid}:${authToken}`).toString('base64'),
-    },
-  })
-  if (!response.ok) throw new Error(`Failed to fetch PDF: ${response.status}`)
-  return Buffer.from(await response.arrayBuffer())
+  // Basic auth only to the configured account's exact api.twilio.com Media resource; see twilio-pdf-egress.ts.
+  return fetchTwilioBoundDocumentMedia(mediaUrl, accountSid, authToken)
 }
 
 async function extractPdfText(pdfBuffer: Buffer): Promise<string> {
