@@ -14,6 +14,7 @@ import { ORDER_LIST_RE } from './order-tracking'
 import { PAYMENT_GATE } from './payment-confirmation'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { OWNER_CANARY } from '@/lib/memory/canary'
 import { inventedApprovalGuard } from '@/lib/services/claude'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { isJobScanNow, jobScanQuery } from './jobs'
@@ -61,7 +62,6 @@ export const cleanReply = (v: unknown, max = 1500) => String(v ?? '').replace(/\
 const digits = (v: unknown) => { const d = String(v ?? '').replace(/\D/g, ''); return d.length === 10 ? `91${d}` : d }
 
 /** Canary: on for GOGO_BRAIN_USERS (default: the owner's two test numbers); GOGO_BRAIN=off turns it off for everyone. */
-const OWNER_CANARY = '8884501501,8310441698'
 export function brainEnabledFor(phone: string, env: Record<string, string | undefined> = process.env): boolean {
   if (String(env.GOGO_BRAIN || '').toLowerCase() === 'off') return false
   // The owner default applies on production only, so tests and previews stay on today's pipeline unless set.
