@@ -1,0 +1,4 @@
+# tests added by PR #1407
+npx tsx scripts/verify-reservego-server-egress-testonly.mts
+npx tsx scripts/verify-reservation-egress-ssrf-testonly.mts
+npx tsx scripts/verify-reservego-widget-ssrf-testonly.mts
