@@ -1,0 +1,2 @@
+# tests added by PR #1431
+npx tsx scripts/verify-watch-kind-mutation-testonly.mts
