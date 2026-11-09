@@ -60,4 +60,25 @@ const items = [
   assert.match(readFileSync('lib/agent/brain.ts', 'utf8'), /parseProductAsk\(p\.text\)/)
   console.log('✓ read-only; wired on WhatsApp and dashboard before the web answer; the brain hands it over')
 }
+// 2 Nov live: Google product-viewer links carry long catalogue ids that the reply's privacy filter withholds,
+// so every link arrived broken. Store links pass through; Google links become an id-free Shopping search.
+{
+  const { shopLink } = await import('../lib/agent/product-discovery')
+  const { redactSecretShapedText } = await import('../lib/bot/memory-redaction')
+  assert.equal(shopLink({ link: 'https://www.myntra.com/shirts/blu/123', title: 'x', source: 'Myntra' }), 'https://www.myntra.com/shirts/blu/123')
+  const google = shopLink({ link: 'https://www.google.com/search?ibp=oshop&q=navy&prds=catalogid:17045821123456789,headlineOfferDocid:9876543210123,pvo:2&gl=in', title: 'Snitch Navy Linen Shirt', source: 'snitch.com' })
+  assert.match(google, /^https:\/\/www\.google\.com\/search\?udm=28&gl=in&q=Snitch\+Navy\+Linen\+Shirt\+snitch\.com$/)
+  assert.equal(redactSecretShapedText(google), google, 'the link survives the privacy filter unchanged')
+  assert.doesNotMatch(shopLink({ link: 'https://shop.example.in/p/1234567890123', title: 'Shirt', source: 'Shop' }), /1234567890123/)
+  assert.equal(shopLink({ link: '', title: '', source: '' }), '')
+  console.log('✓ product links survive the privacy filter: store links kept, Google viewer links become id-free searches')
+}
 console.log('Product discovery checks passed')
+
+// 7 Nov live: "best standing desk under 15000" had no verb, so it went to a web answer and came back with US desks in dollars.
+assert.deepEqual(parseProductAsk('best standing desk under 15000'), { query: 'standing desk', maxPrice: 15000, minPrice: null })
+assert.deepEqual(parseProductAsk('which laptop under 60000 has good reviews'), { query: 'laptop', maxPrice: 60000, minPrice: null, rated: true })
+assert.deepEqual(parseProductAsk('top 5 running shoes under 4000'), { query: 'running shoes', maxPrice: 4000, minPrice: null })
+assert.deepEqual(parseProductAsk('cheapest 55 inch tv'), { query: '55 inch tv', maxPrice: null, minPrice: null })
+for (const t of ['best way to go to goa', 'best restaurant in indiranagar', 'best time to visit goa', 'which day is good for a haircut']) assert.equal(parseProductAsk(t), null, t)
+console.log('✓ superlative product asks (best/top/cheapest/which + product noun) are discovery; places, times and routes are not')

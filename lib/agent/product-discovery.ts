@@ -6,11 +6,16 @@
 
 const clean = (v: unknown, max = 120) => String(v ?? '').replace(/[*_~`]/g, '').replace(/\s+/g, ' ').trim().slice(0, max)
 
-const PRODUCT_NOUN = /\b(shirts?|t-?shirts?|tees?|polos?|kurtas?|kurtis?|sarees?|sari|lehengas?|dress(?:es)?|tops?|blouses?|jeans|trousers?|pants|chinos|shorts|joggers|track ?pants|jackets?|blazers?|hoodies?|sweaters?|sweatshirts?|coats?|suits?|nehru jackets?|shoes|sneakers|loafers|sandals|slippers|heels|boots|flip ?flops|socks|belts?|wallets?|bags?|backpacks?|handbags?|totes?|luggage|suitcases?|trolley ?bags?|watch(?:es)?|smart ?watch(?:es)?|sunglasses|spectacles|caps?|hats?|scarf|scarves|earrings|necklaces?|rings?|bracelets?|perfumes?|deodorants?|headphones|earbuds|earphones|speakers?|power ?banks?|chargers?|mouse|keyboards?|monitors?|water ?bottles?|bottles?|mugs?|pillows?|bedsheets?|curtains?|towels?|lamps?|chairs?|desks?|mattress(?:es)?|cookware|pans?|kettles?|mixers?|toys?|books?)\b/i
-const ASK = /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:find|show|suggest|recommend|get|search(?: for)?|look(?:ing)? for|i (?:want|need)(?: to buy)?|buy|shop for|any good)\b/i
+const PRODUCT_NOUN = /\b(shirts?|t-?shirts?|tees?|polos?|kurtas?|kurtis?|sarees?|sari|lehengas?|dress(?:es)?|tops?|blouses?|jeans|trousers?|pants|chinos|shorts|joggers|track ?pants|jackets?|blazers?|hoodies?|sweaters?|sweatshirts?|coats?|suits?|nehru jackets?|shoes|sneakers|loafers|sandals|slippers|heels|boots|flip ?flops|socks|belts?|wallets?|bags?|backpacks?|handbags?|totes?|luggage|suitcases?|trolley ?bags?|watch(?:es)?|smart ?watch(?:es)?|sunglasses|spectacles|caps?|hats?|scarf|scarves|earrings|necklaces?|rings?|bracelets?|perfumes?|deodorants?|headphones|earbuds|earphones|speakers?|power ?banks?|chargers?|mouse|keyboards?|monitors?|water ?bottles?|bottles?|mugs?|pillows?|bedsheets?|curtains?|towels?|lamps?|chairs?|desks?|mattress(?:es)?|cookware|pans?|kettles?|mixers?|toys?|books?|laptops?|notebooks?|tvs?|televisions?|phones?|smartphones?|mobiles?|earbuds|earphones?|headphones?|headsets?|monitors?|printers?|tablets?|ipads?|smart ?watch(?:es)?|fitness bands?|speakers?|soundbars?|cameras?|mixers?|grinders?|fridges?|refrigerators?|washing machines?|microwaves?|ovens?|air fryers?|air purifiers?|acs?|air conditioners?|coolers?|geysers?|water heaters?|mattress(?:es)?|pillows?|chairs?|office chairs?|sofas?|bookshelves|routers?|power ?banks?|chargers?|keyboards?|mice|mouse|trimmers?|hair dryers?|shavers?|strollers?|car seats?|helmets?|cycles?|bicycles?|treadmills?|dumbbells?)\b/i
+// 7 Nov live: "best standing desk under 15000" had no verb, went to a web answer, and came back with US desks in
+// dollars. A superlative plus a product noun is a product ask too.
+const ASK = /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:find|show|suggest|recommend|get|search(?: for)?|look(?:ing)? for|i (?:want|need)(?: to buy)?|buy|shop for|any good|(?:what(?:'s| is| are)\s+(?:a|the|some)\s+)?(?:best|good|top(?:\s+\d{1,2})?|cheapest|most affordable|value for money|decent)\b(?!\s+(?:way|time|place|restaurant|cafe|area|route))|which)\b/i
 const NOT_DISCOVERY = /\b(compare|comparison|price of|track|watch|alert|order status|my order|delivered|return|refund|recipe|restaurant|swiggy|zomato|instamart|blinkit|zepto|grocer(?:y|ies)|flight|hotel|train|ticket|movie)\b/i
 
-export type ProductAsk = { query: string; maxPrice: number | null; minPrice: number | null }
+export type ProductAsk = { query: string; maxPrice: number | null; minPrice: number | null; rated?: boolean }
+// 6 Nov live: "a standing desk under ₹25,000 with good reviews" searched for titles containing "good reviews". A wish
+// for good reviews is a ranking (rating first), not words in the product name.
+const RATED = /\b(?:with\s+|that\s+(?:has|have)\s+)?(?:good|great|high|top|best|excellent|positive|strong|solid)\s+(?:reviews?|ratings?)\b|\b(?:highly|well|top|best)[\s-]rated\b|\b(?:with|and)\s+reviews?\b/gi
 
 function rupees(raw: string) {
   const m = String(raw || '').toLowerCase().replace(/,/g, '').match(/(\d+(?:\.\d+)?)\s*(k)?/)
@@ -29,14 +34,15 @@ export function parseProductAsk(text: string): ProductAsk | null {
   const above = t.match(/\b(?:above|over|more than)\s*(?:rs\.?|inr|₹)?\s*([\d,.]+\s*k?)/i)
   if (between) { minPrice = rupees(between[1]); maxPrice = rupees(between[2]) }
   else { if (under) maxPrice = rupees(under[1]); if (above) minPrice = rupees(above[1]) }
-  const query = t
+  const rated = RATED.test(t); RATED.lastIndex = 0
+  const query = t.replace(RATED, ' ')
     .replace(ASK, '')
     .replace(/\b(?:between|from)\s*(?:rs\.?|inr|₹)?\s*[\d,.]+\s*k?\s*(?:and|to|-)\s*(?:rs\.?|inr|₹)?\s*[\d,.]+\s*k?/i, '')
     .replace(/\b(?:under|below|less than|within|upto|up to|max(?:imum)?|budget(?: of)?|not more than|above|over|more than)\s*(?:rs\.?|inr|₹)?\s*[\d,.]+\s*k?\b(?:\s*(?:rs|rupees|inr))?/gi, '')
-    .replace(/^\s*(?:me|us)\b/i, '').replace(/^\s*(?:a|an|some|the|good|nice|best)\b\s*/gi, '').replace(/\b(?:online|for me|please|in india)\b/gi, '')
+    .replace(/^\s*(?:me|us)\b/i, '').replace(/^\s*(?:a|an|some|the|good|nice|best|top|cheapest|decent|most affordable|value for money)\b\s*/gi, '').replace(/^\s*(?:is|are)\s+(?:a|the|some)\s+/i, '').replace(/\b(?:online|for me|please|in india)\b/gi, '')
     .replace(/\s+/g, ' ').trim()
   if (!query || !PRODUCT_NOUN.test(query)) return null
-  return { query: clean(query, 80), maxPrice, minPrice }
+  return { query: clean(query.replace(/\s+(?:and|with|has|have|that|which|is|are)\s*$/i, ''), 80), maxPrice, minPrice, ...(rated ? { rated: true } : {}) }
 }
 
 export type ShoppingItem = { title: string; source: string; link: string; price: number | null; priceText: string; rating?: number; ratingCount?: number }
@@ -66,7 +72,9 @@ export function pickProducts(ask: ProductAsk, items: ShoppingItem[], limit = 5):
   const inBudget = scored.filter(x => x.i.price !== null && (ask.maxPrice === null || x.i.price <= ask.maxPrice) && (ask.minPrice === null || x.i.price >= ask.minPrice))
   const seen = new Set<string>()
   const picked = inBudget
-    .sort((a, b) => b.hits - a.hits || (b.i.rating || 0) - (a.i.rating || 0) || (a.i.price || 0) - (b.i.price || 0))
+    .sort((a, b) => ask.rated
+      ? ((b.i.rating || 0) >= 4 ? 1 : 0) - ((a.i.rating || 0) >= 4 ? 1 : 0) || (b.i.ratingCount || 0) - (a.i.ratingCount || 0) || b.hits - a.hits
+      : b.hits - a.hits || (b.i.rating || 0) - (a.i.rating || 0) || (a.i.price || 0) - (b.i.price || 0))
     .map(x => x.i)
     .filter(i => { const k = i.title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').slice(0, 60); if (seen.has(k)) return false; seen.add(k); return true })
     .slice(0, limit)
@@ -90,6 +98,22 @@ export function formatProducts(ask: ProductAsk, result: { picked: ShoppingItem[]
   return `🛍️ ${result.picked.length} ${ask.query}${budget}\n\n${lines.join('\n\n')}\n\nPrices from Google Shopping just now; check size and colour on the store page before you buy. I haven't added anything to a cart.`
 }
 
+// 2 Nov live: Serper's shopping links are Google product-viewer URLs full of long catalogue ids
+// ("prds=catalogid:…,headlineOfferDocid:…"). The reply's privacy filter withholds long digit runs, so every link
+// arrived broken ("[sensitive detail withheld],pvo:2,…"). Keep a store's own address when Serper gives one; else
+// link a Google Shopping search for that exact product, which carries no ids.
+export function shopLink(r: any): string {
+  const raw = String(r?.link || '')
+  try {
+    const u = new URL(raw)
+    const google = /(^|\.)google\.[a-z.]+$/i.test(u.hostname)
+    if (/^https?:$/.test(u.protocol) && !google && !/\d{8,}/.test(raw)) return raw
+  } catch { /* fall through to a search link */ }
+  const q = `${clean(r?.title, 120)} ${clean(r?.source, 40)}`.replace(/\d{8,}/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!q) return ''
+  return `https://www.google.com/search?${new URLSearchParams({ udm: '28', gl: 'in', q }).toString()}`
+}
+
 export async function searchShopping(query: string, fetchImpl: typeof fetch = fetch): Promise<ShoppingItem[]> {
   const key = process.env.SERPER_API_KEY
   if (!key) throw new Error('serper_missing_key')
@@ -101,7 +125,7 @@ export async function searchShopping(query: string, fetchImpl: typeof fetch = fe
   const data: any = await res.json()
   const raw: any[] = Array.isArray(data?.shopping) ? data.shopping : []
   return raw.map((r: any): ShoppingItem => ({
-    title: clean(r?.title, 160), source: clean(r?.source, 40), link: String(r?.link || ''),
+    title: clean(r?.title, 160), source: clean(r?.source, 40), link: shopLink(r),
     price: priceFrom(r?.price), priceText: clean(r?.price, 30),
     rating: Number(r?.rating) || undefined, ratingCount: Number(r?.ratingCount) || undefined,
   }))

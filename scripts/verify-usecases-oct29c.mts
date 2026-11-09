@@ -90,6 +90,10 @@ const jr = await import('../lib/agent/jev-router')
 const jev: any = { ok: true, contextual: true, actionMode: { choice: 'consequential_write', confidence: 0.4 }, decisionReadiness: { choice: 'clarify', confidence: 0.95 }, referentKind: { choice: 'other_context', confidence: 0.3 } }
 assert.match(jr.jevClarificationReply(jev, 'Ask Claude to review this business plan and summarise its feedback for me.')!, /^Send me the business plan first/)
 assert.match(jr.jevClarificationReply(jev, 'Move it')!, /not certain which item/)
+// 2 Nov live: a document the person places in their email or Drive is fetched, never asked for.
+assert.equal(jr.jevClarificationReply(jev, 'summarise the PDF attached to my latest email that has a PDF'), null)
+assert.equal(jr.jevClarificationReply(jev, 'review the proposal in my Google Drive'), null)
+assert.match(jr.jevClarificationReply(jev, 'delete the PDF in my email')!, /not certain which item/, 'a destructive ask still clarifies')
 console.log('✓ "message me less often" changes alert settings; connected apps, waiting-on replies and missing documents are answered')
 
 // Planner: reminders are private, a "review calendar" step never writes a month-long event.
