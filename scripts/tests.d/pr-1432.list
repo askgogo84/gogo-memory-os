@@ -1,0 +1,2 @@
+# tests added by PR #1432
+npx tsx scripts/verify-jev-typesafe-secret-boundary-testonly.mts

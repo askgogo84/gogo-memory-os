@@ -14,7 +14,11 @@ function check(ok:boolean, label:string){
 
 check(data.includes(".from('todos')"), 'Tasks dashboard reads the real todos table')
 check(!data.includes(".from('reminders')"), 'Tasks dashboard does not duplicate reminders')
-check(data.includes(".select('whatsapp_id')"), 'Tasks resolve the signed-in user to the shared WhatsApp identity')
+check(
+  data.includes(".select('telegram_id,whatsapp_id')") &&
+  data.includes("exactSessionOwnerId(user.telegram_id) !== exactOwner"),
+  'Tasks resolve the signed-in user to the shared WhatsApp identity and verify the returned owner first',
+)
 check(page.includes('TaskManager') && page.includes('Open') && page.includes('Completed'), 'Tasks UI exposes Open and Completed boards')
 check(!page.includes('title="Today"') && !page.includes('title="Upcoming"'), 'Tasks UI no longer presents reminder-style Today/Upcoming buckets')
 check(manager.includes("'/api/dashboard/tasks'") && manager.includes("method:'POST'"), 'Tasks can be added directly inside the dashboard')

@@ -1,0 +1,1 @@
+node scripts/verify-gmail-send-credential-uuid-nov9.mjs

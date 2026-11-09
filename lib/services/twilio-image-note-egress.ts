@@ -6,6 +6,7 @@
  * formats and image UX still need owner-approved provider compatibility review.
  * Origin checks are not DNS/IP pinning.
  */
+import { isTwilioMediaCdnUrl, logRejectedTwilioRedirect } from './twilio-cdn'
 export const TWILIO_IMAGE_NOTE_MAX_BYTES = 18 * 1024 * 1024
 
 const accountSidPattern = /^AC[0-9a-fA-F]{32}$/
@@ -29,7 +30,8 @@ function exactTwilioCdnRedirect(location: string | null, previous: URL): URL {
   if (!location || location.length > 8192) throw new Error('twilio_image_redirect_invalid')
   let url: URL
   try { url = new URL(location, previous) } catch { throw new Error('twilio_image_redirect_invalid') }
-  if (url.origin !== 'https://mms.twiliocdn.com' || url.username || url.password || url.hash || url.pathname === '/') {
+  if (!isTwilioMediaCdnUrl(url)) {
+    logRejectedTwilioRedirect('image-note', location)
     throw new Error('twilio_image_redirect_not_authorized')
   }
   // Signed CDN query strings are allowed. No other host, scheme, or hop is.
