@@ -76,7 +76,17 @@ export async function GET(req: NextRequest) {
 
     if (tokens.refresh_token) payload.gmail_refresh_token = encryptGoogleToken(tokens.refresh_token)
 
-    const { error } = await supabaseAdmin
+    // 6 Nov (owner): a second Google account (work mail) is kept beside the first, never in its place. The read-only
+    // connect of a different address than the one already connected goes to gmail_accounts; the primary is untouched.
+    const { data: current } = await supabaseAdmin.from('users').select('gmail_connected,gmail_email').eq('telegram_id', telegramId).maybeSingle()
+    const primary = String(current?.gmail_email || '').toLowerCase()
+    let extra = false
+    if (!sendUpgrade && current?.gmail_connected && primary && primary !== email.toLowerCase()) {
+      if (!tokens.refresh_token) return NextResponse.json({ ok: false, error: 'Google did not return durable access for this account. Please retry the link.' }, { status: 400 })
+      await import('@/lib/agent/gmail-accounts').then(m => m.upsertExtraGmailAccount(telegramId, email, tokens))
+      extra = true
+    }
+    const { error } = extra ? { error: null } : await supabaseAdmin
       .from('users')
       .update(payload)
       .eq('telegram_id', telegramId)
@@ -107,7 +117,7 @@ export async function GET(req: NextRequest) {
             <div class="mark">✓</div>
             <div class="eyebrow">One Gogo · connected</div>
             <h1>Google Workspace is ready.</h1>
-            <p class="ok">${sendUpgrade?'Gogo now has the Gmail Send access you explicitly approved.':'Gogo now has the read-only Google access you approved.'}</p>
+            <p class="ok">${sendUpgrade?'Gogo now has the Gmail Send access you explicitly approved.':extra?`Gogo now also reads ${email}, beside ${primary}. Read-only.`:'Gogo now has the read-only Google access you approved.'}</p>
             <p>Connected account: <span class="email">${email.replace(/[<>&"']/g, '')}</span></p>
             <div class="privacy">${sendUpgrade?'Gogo may send Gmail only after the AskGogo approval boundary. This upgrade does not grant automatic sending, Drive mutation, booking or payment authority.':'Gogo can read the approved Gmail, Contacts and Drive context to help with your requests. Sending email, changing files, scheduling, booking or spending still requires the appropriate permission and approval boundary.'}</div>
             <a href="https://app.askgogo.in/dashboard/connections" style="display:block;margin-top:24px;min-height:48px;line-height:48px;text-align:center;border-radius:14px;background:#0f6f64;color:#fff;font-weight:600;font-size:16px;text-decoration:none">Back to AskGogo</a>

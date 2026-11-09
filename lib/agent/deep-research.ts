@@ -5,6 +5,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { hotelResearchEvidence, isHotelDiscoveryResearch } from './hotel-research-evidence'
+import { SONNET_MODEL } from '@/lib/services/model-ids'
 
 const PERSONAL = /\b(?:my|our)\s+(?:e-?mails?|inbox|calendar|meetings?|vault|documents?|files?|drive|expenses?|bills?|account|reminders?|contacts?)\b/i
 
@@ -116,7 +117,7 @@ Request: ${question}
 Sources:
 ${corpus.slice(0, 24_000)}`
   let body = ''
-  try { body = (await model(prompt, 900, 'claude-sonnet-4-5')).trim() } catch {}
+  try { body = (await model(prompt, 900, SONNET_MODEL)).trim() } catch {}
   if (!body) body = sources.slice(0, 5).map(s => `• ${s.title} [${s.n}]`).join('\n')
   // Some models write markdown bold (**x**); WhatsApp bold is *x*.
   body = body.replace(/\*\*([^*\n]+)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '')
