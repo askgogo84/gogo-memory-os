@@ -40,6 +40,17 @@ function localTime(iso: unknown, tz: string) {
   catch { return new Date(t).toISOString() }
 }
 
+export const CONTEXT_PACK_OPTIONS = { includeSemantic: true, maxFacts: 16 } as const
+type PackFact = { id: string; source: string; summary: string; startAt?: string | null }
+/** Maps context-brain facts onto the watcher / travel / memory sources. Pure; the brain reuses it (lib/agent/brain.ts). */
+export function contextPackSources(facts: PackFact[]) {
+  return {
+    watches: facts.filter(f => f.source === 'watcher').slice(0, 8).map(f => ({ id: `watch:${f.id}`, title: clean(f.summary, 120) })),
+    travelLegs: facts.filter(f => f.source === 'travel_ticket' || f.source === 'travel_presence').slice(0, 6).map(f => ({ id: `travel:${f.id}`, title: clean(f.summary, 140), at: f.startAt || null })),
+    memoryFacts: facts.filter(f => ['semantic_memory', 'memory_insight', 'memory_profile', 'open_loop', 'goal'].includes(f.source)).slice(0, 6).map(f => ({ id: `memory:${f.id}`, title: clean(f.summary, 160) })),
+  }
+}
+
 export const defaultSourceLoaders: Required<SourceLoaders> = {
   // Same ordering as getConversationHistory: newest first with role ascending, so a user/assistant
   // pair saved in the same instant reverses to user -> assistant.
@@ -52,12 +63,12 @@ export const defaultSourceLoaders: Required<SourceLoaders> = {
   async open_tasks({ actor }) {
     const data = rows(await supabaseAdmin.from('agent_runs').select('id,title,status,type,updated_at')
       .eq('telegram_id', String(actor.legacyTelegramId)).in('status', ACTIVE_RUN).order('updated_at', { ascending: false }).limit(6))
-    return data.map((r): ContextItem => ({ id: `run:${r.id}`, title: clean(r.title || r.type, 120), detail: clean(r.status, 30), at: r.updated_at || null }))
+    return data.map((r): ContextItem => ({ id: `run:${r.id}`, title: clean(r.title || r.type, 120), detail: `${clean(r.status, 30).replace(/_/g, ' ')} — not done yet`, at: r.updated_at || null }))
   },
   async pending_approvals({ actor }) {
     const data = rows(await supabaseAdmin.from('agent_approvals').select('id,title,risk_level,requested_at')
       .eq('telegram_id', String(actor.legacyTelegramId)).eq('status', 'pending').order('requested_at', { ascending: false }).limit(5))
-    return data.map((r): ContextItem => ({ id: `approval:${r.id}`, title: clean(r.title, 120), detail: r.risk_level ? `risk ${clean(r.risk_level, 20)}` : null, at: r.requested_at || null }))
+    return data.map((r): ContextItem => ({ id: `approval:${r.id}`, title: clean(r.title, 120), detail: `waiting for your approval — not done yet${r.risk_level ? `, risk ${clean(r.risk_level, 20)}` : ''}`, at: r.requested_at || null }))
   },
   async saved_documents({ actor }) {
     const data = rows(await supabaseAdmin.from('documents').select('id,doc_type,title,created_at')
@@ -95,13 +106,8 @@ export const defaultSourceLoaders: Required<SourceLoaders> = {
   // Watches, travel legs and long-term memory come from the existing context brain (semantic + lexical).
   async context_pack({ actor, text }) {
     const { buildContextPack } = await import('./context-brain')
-    const pack = await buildContextPack({ actor: actor as any, text, options: { includeSemantic: true, maxFacts: 16 } })
-    const facts = pack.facts || []
-    return {
-      watches: facts.filter(f => f.source === 'watcher').slice(0, 8).map(f => ({ id: `watch:${f.id}`, title: clean(f.summary, 120) })),
-      travelLegs: facts.filter(f => f.source === 'travel_ticket' || f.source === 'travel_presence').slice(0, 6).map(f => ({ id: `travel:${f.id}`, title: clean(f.summary, 140), at: f.startAt || null })),
-      memoryFacts: facts.filter(f => ['semantic_memory', 'memory_insight', 'memory_profile', 'open_loop', 'goal'].includes(f.source)).slice(0, 6).map(f => ({ id: `memory:${f.id}`, title: clean(f.summary, 160) })),
-    }
+    const pack = await buildContextPack({ actor: actor as any, text, options: CONTEXT_PACK_OPTIONS })
+    return contextPackSources(pack.facts || [])
   },
   async calendar({ actor, now, timezone }) {
     const { data, error } = await supabaseAdmin.from('users').select('google_calendar_connected,google_refresh_token').eq('telegram_id', actor.legacyTelegramId).maybeSingle()

@@ -72,6 +72,8 @@ const EXACT_COMMANDS = new Set([
   'my reminders', 'show my reminders', 'show reminders', 'pending reminders', 'active reminders', 'list reminders',
   'my cards', 'show my cards', 'my points', 'my expenses', 'expenses today', 'nutrition', 'nutrition today',
   'my tasks', 'tasks', 'show my lists', 'show all lists', 'my notes', 'my day', 'today', 'brief me', 'morning briefing',
+  // 7 Nov live: "my briefing" was understood as "what are you working on" and answered with the approvals queue.
+  'my briefing', 'briefing', 'daily briefing', 'today briefing', 'today summary', 'my day today', "what's my day", 'whats my day', "what's my day today",
 ])
 
 const wordCount = (text: string) => String(text || '').trim().split(/\s+/).filter(Boolean).length

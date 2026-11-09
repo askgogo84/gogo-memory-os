@@ -58,3 +58,14 @@ assert.match(runtimeSource,/autonomous_run_resumed/)
 assert.match(runtimeSource,/autonomous_plan_revised/)
 
 console.log('✅ Persistent autonomous runtime + specialist routing regression passed')
+
+// 2 Nov live: a specialist id ("grocery") in agent_runs.capability broke the original check constraint.
+{
+  const { capabilityForSpecialist } = await import('../lib/agent/autonomous-runtime')
+  const allowed = new Set(['memory', 'files', 'email', 'calendar', 'browser', 'contacts', 'travel', 'payments'])
+  for (const id of ['orchestrator', 'travel', 'ticketing', 'food', 'grocery', 'shopping', 'local_services', 'communications', 'documents', 'calendar', 'life_events', 'payments', 'research', 'secure_browser', 'unknown', ''])
+    if (!allowed.has(capabilityForSpecialist(id))) throw new Error(`capability for ${id} outside the original agent_runs check: ${capabilityForSpecialist(id)}`)
+  const src = (await import('node:fs')).readFileSync('lib/agent/autonomous-runtime.ts', 'utf8')
+  if (/capability:\s*route\.primary/.test(src)) throw new Error('raw specialist id written to agent_runs.capability')
+  console.log('✓ autonomous runs store a valid capability; the specialist stays in metadata_json.route')
+}
