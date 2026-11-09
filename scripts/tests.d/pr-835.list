@@ -1,0 +1,2 @@
+# tests added by PR #835
+npx --yes tsx scripts/verify-inbound-email-retention.mts
