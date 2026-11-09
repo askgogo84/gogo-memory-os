@@ -708,7 +708,7 @@ async function syncMeetingActionMemories(telegramId:string){
   const since=new Date(Date.now()-30*86400_000).toISOString()
   const {data,error}=await supabaseAdmin.from('memories')
     .select('id,content,created_at')
-    .eq('telegram_id',Number(telegramId))
+    .eq('telegram_id',telegramId)
     .gte('created_at',since)
     .order('created_at',{ascending:false})
     .limit(120)
@@ -745,12 +745,12 @@ async function syncMeetingActionMemories(telegramId:string){
 
 async function syncConversationSignals(telegramId:string){
   const {data:consent}=await supabaseAdmin.from('user_consent_settings')
-    .select('memory_enabled').eq('telegram_id',Number(telegramId)).maybeSingle()
+    .select('memory_enabled').eq('telegram_id',telegramId).maybeSingle()
   if(consent?.memory_enabled===false)return 0
   const since=new Date(Date.now()-7*86400_000).toISOString()
   const {data,error}=await supabaseAdmin.from('conversations')
     .select('id,content,created_at')
-    .eq('telegram_id',Number(telegramId)).eq('role','user')
+    .eq('telegram_id',telegramId).eq('role','user')
     .gte('created_at',since).order('created_at',{ascending:false}).limit(80)
   if(error)throw new Error(`open_loop_conversation_read_failed:${error.message}`)
   let captured=0
@@ -794,7 +794,7 @@ async function resolveMissingSourceLoops(telegramId:string,current:Set<string>,s
 // is one deduped open loop with its event/ticket evidence, and it resolves itself once the calendar no longer
 // shows it. The pulse surfaces it with the owner's quiet hours and topics, like every other open loop.
 async function syncCalendarConflicts(telegramId:string,current:Set<string>,gmailRead?:()=>Promise<Awaited<ReturnType<typeof readGmailAttention>>>){
-  const {data:user}=await supabaseAdmin.from('users').select('google_calendar_connected,timezone,name').eq('telegram_id',Number(telegramId)).maybeSingle()
+  const {data:user}=await supabaseAdmin.from('users').select('google_calendar_connected,timezone,name').eq('telegram_id',telegramId).maybeSingle()
   if(!user?.google_calendar_connected)throw new Error('skip:calendar_not_connected')
   const [{resolveAgentActor},{executeReadOnlyCalendarStep},{findScheduleConflicts}]=await Promise.all([import('./actor'),import('./calendar-read'),import('./calendar-conflicts')])
   const actor=await resolveAgentActor({telegramId,surface:'whatsapp'} as any)
@@ -806,7 +806,7 @@ async function syncCalendarConflicts(telegramId:string,current:Set<string>,gmail
   const events=Array.isArray(out.events)?out.events:[]
   if(out.complete!==true||Number(out.unknownIntervals||0)>0||Number(out.entryCount??events.length)!==events.length)throw new Error('skip:calendar_read_incomplete')
   const {data:tickets}=await supabaseAdmin.from('travel_tickets').select('id,flight_no,from_city,to_city,depart_at,passengers')
-    .eq('telegram_id',Number(telegramId)).gte('depart_at',new Date().toISOString()).lte('depart_at',new Date(Date.now()+3*86_400_000).toISOString()).limit(20)
+    .eq('telegram_id',telegramId).gte('depart_at',new Date().toISOString()).lte('depart_at',new Date(Date.now()+3*86_400_000).toISOString()).limit(20)
   const owner=String(user.name||'').toLowerCase().replace(/[^a-z]+/g,' ').trim()
   // A ticket counts only when the owner is a named passenger (another traveller's flight is not their conflict).
   const mine=(tickets||[]).filter((t:any)=>owner&&Array.isArray(t.passengers)&&t.passengers.some((p:unknown)=>String(p||'').toLowerCase().replace(/[^a-z]+/g,' ').trim()===owner))
@@ -834,7 +834,10 @@ async function syncCalendarConflicts(telegramId:string,current:Set<string>,gmail
 }
 
 export async function syncOpenLoopsForUser(telegramId:string|number){
-  const tg=String(telegramId)
+  // PostgREST accepts exact decimal IDs. Never coerce a persisted BIGINT owner into an imprecise JS number.
+  if(typeof telegramId==='number'&&!Number.isSafeInteger(telegramId))throw new Error('open_loop_owner_invalid:unsafe_number')
+  const tg=String(telegramId??'').trim()
+  if(!/^-?(?:0|[1-9]\d{0,18})$/.test(tg))throw new Error('open_loop_owner_invalid:format')
   const current=new Set<string>()
   const sourceTypes=['followup','approval','agent_run','life_event_action','calendar_conflict'] as const
   // One Gmail read per sync, shared by email attention and meeting prep.

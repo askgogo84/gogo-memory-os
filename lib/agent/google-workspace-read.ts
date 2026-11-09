@@ -87,7 +87,13 @@ async function credentials(actor: AgentActor, account?: ExtraAccount | null) {
 async function refresh(actor: AgentActor, refreshToken: string, account?: ExtraAccount | null) {
   const token = await refreshGmailAccessToken(refreshToken)
   if (!token) throw new Error('workspace_reconnect_required')
-  if (account) { await import('./gmail-accounts').then(m => m.saveExtraAccessToken(account.id, token)); return token }
+  if (account) {
+    // Revocation can race this network refresh. Only issue a new Gmail read if
+    // the exact owner's account is still connected when the token is persisted.
+    // Unknown or failed persistence is NOT successful authorization.
+    await import('./gmail-accounts').then(m => m.saveExtraAccessToken(actor.legacyTelegramId, account.id, token))
+    return token
+  }
   const { error } = await supabaseAdmin.from('users').update({ gmail_access_token: encryptGoogleToken(token) }).eq('telegram_id', actor.legacyTelegramId)
   if (error) console.error('WORKSPACE_ACCESS_TOKEN_PERSIST_FAILED:', error.message)
   return token
