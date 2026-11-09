@@ -1,10 +1,10 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from './owner-identity'
 import { istDayWindow } from '@/lib/ist'
 import type { ListItem } from '@/lib/data/lists'
 import { getPlan, getLimits, getUsage } from '@/lib/services/meter'
 import { getPlanLimits } from '@/lib/data/limits'
 import { getCalendarAccountAccess, mergeAccountEvents } from '@/lib/services/google-calendar-accounts'
-import { linkedTelegramIds } from '@/lib/dashboard/owner-ids'
 import {calendarInterval, calendarBlocksTime, type CalendarProviderEvent} from '@/lib/calendar-intervals'
 
 // ── The dashboard's read layer ────────────────────────────────────────────────
@@ -14,14 +14,27 @@ import {calendarInterval, calendarBlocksTime, type CalendarProviderEvent} from '
 // "is this scoped to the signed-in user?" — auditable in a single place. No
 // Supabase call ever lives inline in a component.
 //
-// dashboard_sessions.telegram_id is TEXT; reminders.telegram_id is numeric. The
-// cast happens HERE, at the boundary, and nowhere else.
+// dashboard_sessions.telegram_id is TEXT and private tables use BIGINT keys.
+// Owner predicates are validated HERE without lossy numeric casts.
 
-// One person can have a dashboard row and a WhatsApp row (24 Oct live: reminders set on WhatsApp were saved under the
-// WhatsApp id and the signed-in dashboard showed none). Reminder reads cover every row linked to the same verified number.
-async function reminderOwnerIds(tgNum: number): Promise<number[]> {
-  const ids = (await linkedTelegramIds(tgNum)).map(v => Number(v)).filter(n => Number.isSafeInteger(n) && n !== 0)
-  return ids.length ? [...new Set(ids)] : [tgNum]
+// P1 temporary containment: reminders may be accessed only for the signed-in
+// session owner. Never use suffix-based inferred WhatsApp links to list reminders.
+// Rows belonging to a WhatsApp identity remain stored and deliver normally.
+function exactReminderSessionId(raw: string): number | null {
+  if (!/^-?[1-9]\d*$/.test(raw)) return null
+  const parsed = Number(raw)
+  return Number.isSafeInteger(parsed) ? parsed : null
+}
+
+// Dashboard owner rows use PostgreSQL BIGINT. Avoid parseInt/Number aliasing two
+// authenticated owners above 2^53 or truncating malformed values like "123junk".
+// Retain the historical numeric predicate for safe IDs; use exact decimal TEXT
+// for valid signed-64-bit owners beyond JS integer precision (PostgREST accepts it).
+function exactDashboardQueryOwner(raw: string): number | string | null {
+  const owner = exactSessionOwnerId(raw)
+  if (owner === null) return null
+  const numeric = Number(owner)
+  return Number.isSafeInteger(numeric) ? numeric : owner
 }
 
 export type ReminderRow = {
@@ -51,16 +64,16 @@ export type TodayReminders = { ok: true; reminders: ReminderRow[] } | { ok: fals
  * layer splits them into past/upcoming around the now-marker.
  */
 export async function getTodayReminders(telegramId: string): Promise<TodayReminders> {
-  const tgNum = parseInt(telegramId, 10)
+  const tgNum = exactReminderSessionId(telegramId)
   // A non-numeric session id can't own numeric-keyed reminders — that's an empty
   // day, not a failure. (Failures are reserved for actual read errors below.)
-  if (!Number.isFinite(tgNum)) return { ok: true, reminders: [] }
+  if (tgNum === null) return { ok: true, reminders: [] }
 
   const { startUtc, endUtc } = istDayWindow()
   const { data, error } = await supabaseAdmin
     .from('reminders')
     .select('id, message, remind_at, timezone, recurring_pattern, is_recurring, sent, sent_at, status, delivery_state')
-    .in('telegram_id', await reminderOwnerIds(tgNum))
+    .eq('telegram_id', tgNum)
     .gte('remind_at', startUtc.toISOString())
     .lt('remind_at', endUtc.toISOString())
     .order('remind_at', { ascending: true })
@@ -74,13 +87,13 @@ export async function getTodayReminders(telegramId: string): Promise<TodayRemind
 
 // Home v2 "Can wait": reminders after today, up to `days` ahead. A read failure is an empty list (Home still renders).
 export async function getUpcomingReminders(telegramId: string, days = 7): Promise<ReminderRow[]> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return []
+  const tgNum = exactReminderSessionId(telegramId)
+  if (tgNum === null) return []
   const { endUtc } = istDayWindow()
   const { data, error } = await supabaseAdmin
     .from('reminders')
     .select('id, message, remind_at, timezone, recurring_pattern, is_recurring, sent, sent_at, status, delivery_state')
-    .in('telegram_id', await reminderOwnerIds(tgNum))
+    .eq('telegram_id', tgNum)
     .gte('remind_at', endUtc.toISOString())
     .lt('remind_at', new Date(endUtc.getTime() + days * 864e5).toISOString())
     .order('remind_at', { ascending: true })
@@ -112,10 +125,10 @@ export type Lists = { ok: true; lists: DashboardList[] } | { ok: false }
  * never sees the storage column. items comes back as the raw JSONB array.
  */
 export async function getLists(telegramId: string): Promise<Lists> {
-  const tgNum = parseInt(telegramId, 10)
+  const tgNum = exactDashboardQueryOwner(telegramId)
   // lists.telegram_id is numeric; a non-numeric session id can't own any list —
   // that's an empty account, not a failure. (Failures are actual read errors.)
-  if (!Number.isFinite(tgNum)) return { ok: true, lists: [] }
+  if (tgNum === null) return { ok: true, lists: [] }
 
   const { data, error } = await supabaseAdmin
     .from('lists')
@@ -185,6 +198,7 @@ function formatClock(iso: string, tz: string): string {
 export type UsageSummary =
   | {
       ok: true
+      planCode: string
       planLabel: string
       planPriceInr: number
       usage: { aiToday: number; docsThisMonth: number; friendContacts: number }
@@ -200,13 +214,14 @@ export type UsageSummary =
   | { ok: false }
 
 export async function getUsageSummary(telegramId: string): Promise<UsageSummary> {
-  const tgNum = parseInt(telegramId, 10)
+  const tgNum = exactDashboardQueryOwner(telegramId)
+  if (tgNum === null) return { ok: false }
   try {
     const plan = await getPlan(telegramId)
     const [limits, usage] = await Promise.all([getLimits(plan.plan_code), getUsage(telegramId)])
 
     let calendarsConnected = 0
-    if (Number.isFinite(tgNum)) {
+    if (tgNum !== null) {
       const { data: u } = await supabaseAdmin
         .from('users')
         .select('google_calendar_connected')
@@ -218,6 +233,7 @@ export async function getUsageSummary(telegramId: string): Promise<UsageSummary>
     const display = planDisplayFor(plan.plan_code)
     return {
       ok: true,
+      planCode: String(plan.plan_code || 'free'),
       planLabel: display.label,
       planPriceInr: display.priceInr,
       usage,
@@ -255,8 +271,8 @@ export type Profile =
   | { ok: false }
 
 export async function getProfile(telegramId: string): Promise<Profile> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return { ok: false }
+  const tgNum = exactDashboardQueryOwner(telegramId)
+  if (tgNum === null) return { ok: false }
   try {
     const { data: user, error } = await supabaseAdmin
       .from('users')
@@ -327,8 +343,8 @@ export type FriendContact = { name: string; initials: string }
 export type FriendContacts = { ok: true; contacts: FriendContact[]; count: number } | { ok: false }
 
 export async function getFriendContacts(telegramId: string): Promise<FriendContacts> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return { ok: true, contacts: [], count: 0 }
+  const tgNum = exactDashboardQueryOwner(telegramId)
+  if (tgNum === null) return { ok: true, contacts: [], count: 0 }
   const { data, error } = await supabaseAdmin
     .from('friend_contacts')
     .select('name, created_at')
@@ -356,8 +372,8 @@ export type TodayCalendar =
   | { ok: false }
 
 export async function getTodayCalendar(telegramId: string): Promise<TodayCalendar> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return { ok: true, connected: false }
+  const tgNum = exactDashboardQueryOwner(telegramId)
+  if (tgNum === null) return { ok: true, connected: false }
   try {
     const { data: user, error } = await supabaseAdmin
       .from('users')

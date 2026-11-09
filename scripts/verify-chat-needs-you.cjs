@@ -22,6 +22,11 @@ function harness(initial){
     if(id==='@/components/dashboard/mobile-nav')return{MobileMenuButton:()=>null};
     if(id==='./chat-channels')return{ChatChannels:()=>null,ChannelPill:()=>null};
     if(id==='@/components/dashboard/run-steps')return{RunStepsLine:()=>null};
+    // Search cards do not participate in Needs You counts; keep the full real rail harness intact.
+    if(id==='@/components/dashboard/openui-comparison-inline')return{OpenUIComparisonInline:()=>null};
+    // 9 Nov: the Listen button and the inline approval/work/brief cards do not change Needs You counts either.
+    if(id==='@/components/dashboard/listen-button')return{ListenButton:()=>null};
+    if(id==='@/components/dashboard/chat-cards')return{InlineApprovals:()=>null,WorkCards:()=>null,BriefCard:()=>null};
     if(id.startsWith('@/')){
      const relative=id.slice(2),ext=relative.startsWith('components/')?'.tsx':'.ts';
      assert(/^(lib\/(dashboard|agent\/flight-choices|email\/attention$)|components\/dashboard\/(service-notice-cards|email-attention-card))/.test(relative),'Unexpected dependency '+id);

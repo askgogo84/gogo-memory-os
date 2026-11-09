@@ -19,10 +19,18 @@ function table(name: string) {
     maybeSingle() { return run(true) }, then(res: any, rej: any) { return run(false).then(res, rej) },
   }
   async function run(single: boolean) {
+    if (db.fail === `throw-${name}`) throw new Error('fixture database outage')
     if (db.fail === name) return { data: null, error: { code: '42703', message: 'column does not exist' } }
+    if (name === 'waitlist') {
+      if (db.fail === 'waitlist-insert' && op === 'insert') return { data: null, error: { code: 'DB_DOWN', message: 'fixture waitlist insert failed' } }
+      if (db.fail === 'waitlist-update' && op === 'update') return { data: null, error: { code: 'DB_DOWN', message: 'fixture waitlist update failed' } }
+      if (db.fail === 'waitlist-insert-conflict' && op === 'insert') return { data: null, error: { code: '23505' } }
+      if (db.fail === 'waitlist-insert-zero' && op === 'insert') return { data: [], error: null }
+      if (db.fail === 'waitlist-update-zero' && op === 'update') return { data: [], error: null }
+    }
     const rows = (db as any)[name].filter((r: any) => filters.every(([k, c, v]) => k === 'in' ? v.includes(r[c]) : r[c] === v))
-    if (op === 'insert') { if (rows.length && name === 'waitlist') return { error: { code: '23505' } }; (db as any)[name].push({ id: 'new', ...payload }); writes.push([name, 'insert', payload]); return { error: null } }
-    if (op === 'update') { rows.forEach((r: any) => Object.assign(r, payload)); writes.push([name, 'update', payload]); return { error: null } }
+    if (op === 'insert') { if (rows.length && name === 'waitlist') return { data: null, error: { code: '23505' } }; (db as any)[name].push({ id: 'new', ...payload }); writes.push([name, 'insert', payload]); return { data: [{ id: 'new' }], error: null } }
+    if (op === 'update') { rows.forEach((r: any) => Object.assign(r, payload)); writes.push([name, 'update', payload]); return { data: rows.map((r: any) => ({ id: r.id })), error: null } }
     return { data: single ? rows[0] || null : rows, error: null }
   }
   return q
@@ -64,11 +72,20 @@ assert.equal(db.waitlist[0].status, 'joined')
 // Website signup that was never approved is held too.
 db = { users: [], waitlist: [{ id: 'w', phone_e164: '+971501234567', status: 'waiting', last_notified_at: null }] }
 assert.equal((await checkWhatsAppAccess('+971501234567')).reason, 'waitlist')
-// Database trouble (e.g. migration not applied yet) never locks anyone out.
-db = { users: [], waitlist: [], fail: 'users' }
-assert.deepEqual(await checkWhatsAppAccess('+919900000003'), { allow: true, reason: 'gate_error' })
+// Authorization cannot be inferred from a failed users or waitlist read, even
+// when a legacy migration has not been applied. No reply/send for unknown owner.
+const unavailable = { allow: false, reason: 'gate_error', reply: null }
+db = { users: [{ telegram_id: 7, whatsapp_id: '+919900000003', access_status: 'blocked' }], waitlist: [], fail: 'users' }
+assert.deepEqual(await checkWhatsAppAccess('+919900000003'), unavailable, 'a blocked owner cannot bypass the gate during users lookup failure')
 db = { users: [], waitlist: [], fail: 'waitlist' }
-assert.deepEqual(await checkWhatsAppAccess('+919900000003'), { allow: true, reason: 'gate_error' })
+assert.deepEqual(await checkWhatsAppAccess('+919900000003'), unavailable, 'unapproved owner cannot bypass the gate during waitlist lookup failure')
+db = { users: [], waitlist: [] }
+assert.deepEqual(await checkWhatsAppAccess('not-a-number'), unavailable, 'unverifiable From must not be admitted')
+assert.deepEqual(await checkWhatsAppAccess(''), unavailable, 'empty From must not be admitted')
+db = { users: [], waitlist: [], fail: 'throw-users' }
+assert.deepEqual(await checkWhatsAppAccess('+919900000003'), unavailable, 'exceptional DB outage must also fail closed')
+db = { users: [], waitlist: [], fail: 'waitlist-insert' }
+assert.deepEqual(await checkWhatsAppAccess('+919900000003'), unavailable, 'failed waitlist insert cannot accidentally authorize a new number')
 // Kill switch.
 process.env.ACCESS_GATE_ENABLED = 'false'
 db = { users: [], waitlist: [] }
@@ -84,6 +101,30 @@ assert.equal(db.waitlist[0].status, 'joined'); assert.equal(db.waitlist[0].appro
 db = { users: [], waitlist: [{ id: 'w2', phone_e164: '+919900000011', status: 'waiting', last_notified_at: new Date().toISOString() }] }
 assert.equal((await checkWhatsAppAccess('+919900000011', 'Friend', JOIN)).reason, 'invited')
 assert.equal(db.waitlist[0].status, 'joined'); assert.equal(redeemed.at(-1).p_name, null, 'placeholder name not stored')
+// A successful invite redemption is not sufficient when the durable access grant
+// (waitlist write) failed, was ambiguous, or matched no row. Never silently admit.
+for (const fail of ['waitlist-insert', 'waitlist-insert-zero', 'waitlist-insert-conflict']) {
+  db = { users: [], waitlist: [], fail }
+  const redeemedBefore = redeemed.length
+  assert.deepEqual(await checkWhatsAppAccess('+919900000016', 'Divya', JOIN), unavailable, `insert ${fail} must deny`)
+  assert.equal(redeemed.length, redeemedBefore + 1, 'no blind retry of the redemption')
+  assert.equal(db.waitlist.length, 0, 'failure may not persist an approved waitlist row')
+}
+for (const fail of ['waitlist-update', 'waitlist-update-zero']) {
+  db = { users: [], waitlist: [{ id: 'unapproved', phone_e164: '+919900000017', status: 'waiting', last_notified_at: null }], fail }
+  const redeemedBefore = redeemed.length
+  assert.deepEqual(await checkWhatsAppAccess('+919900000017', 'Divya', JOIN), unavailable, `update ${fail} must deny`)
+  assert.equal(redeemed.length, redeemedBefore + 1, 'no blind retry of redemption after uncertain update')
+  assert.equal(db.waitlist[0].status, 'waiting', 'failed update does not authorize')
+}
+// A valid receipt still admits the correct new or existing waitlist account.
+db = { users: [], waitlist: [] }
+assert.equal((await checkWhatsAppAccess('+919900000018', 'Divya', JOIN)).reason, 'invited')
+assert.equal(db.waitlist[0].phone_e164, '+919900000018')
+db = { users: [], waitlist: [{ id: 'w-ok', phone_e164: '+919900000019', status: 'waiting' }] }
+assert.equal((await checkWhatsAppAccess('+919900000019', 'Divya', JOIN)).reason, 'invited')
+assert.equal(db.waitlist[0].status, 'joined')
+
 // Used-up / wrong code: waitlist, told why.
 db = { users: [], waitlist: [] }
 assert.deepEqual(await checkWhatsAppAccess('+919900000012', 'Nithin', "I'm joining with invite full-abc234"), { allow: false, reason: 'waitlist', reply: INVITE_USED_UP_REPLY })
