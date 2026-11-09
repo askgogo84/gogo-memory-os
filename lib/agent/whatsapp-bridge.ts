@@ -7,7 +7,7 @@ import { executeApprovedReminderUpdate } from './reminder-update'
 import { verifiedReadEvidence } from './read-evidence'
 import { approvalChoiceList, bareApprovalTarget, expiredApprovalReply, isBareApprovalNumber, latestTurnIsApprovalList, partitionPendingApprovals } from './approval-ttl'
 import { readRecentTurns } from '@/lib/bot/pending-questions'
-import { expirePendingApproval, guardApprovalFreshness, latestApprovalChoices, rememberApprovalChoices } from './approval-guard'
+import { expirePendingApproval, guardApprovalCapability, guardApprovalFreshness, latestApprovalChoices, rememberApprovalChoices } from './approval-guard'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { ResolvedUser } from '@/lib/bot/resolve-user'
 import type { AgentActor } from './actor'
@@ -15,6 +15,7 @@ import { decisionDomain, recordDecisionLearning, isSameBrainIntrospection, sameB
 import { observedOutcome, learningDecisionId } from './decision-evidence'
 import { isGmailVerificationQuery } from './gmail-verification'
 import { tryCreateGoldRateWatchFromCommand } from './gold-watch'
+import { tryCreateStockWatchFromCommand } from './stock-watch'
 import { tryCreateFlightWatchFromCommand, tryCreateInboxTriageWatchFromCommand, tryCreateProductStockWatchFromCommand, tryCreateWebPageWatchFromCommand, tryCreateWebWatchFromCommand, tryGetProductStockWatchStatusFromCommand, tryRunPriceWatchClarification, tryGetWatcherStatusFromCommand, tryStopWatcherFromCommand, tryRestartWatcherFromCommand, tryUpdateWebWatchFromCommand } from './watch-command'
 import { tryRunBrowserCommand, tryQueueWhatsAppPublicRead, executeApprovedBrowserCommand, queueBrowserRead } from './browser-command'
 import { triggerApprovedBrowserRun } from './approved-browser-worker'
@@ -45,6 +46,7 @@ import { tryRunAppointmentResearch } from './appointment-research'
 import { armApprovedRestaurantReservation, continueRestaurantReservationGuestReply, looksLikeReservationGuestReply, queueRestaurantReservationResearch, tryRunRestaurantReservation } from './restaurant-reservation'
 import { isDecisionRecallQuery } from './recall-query'
 import { tryCancelRunFromChat } from './run-cancel'
+import { tryGetScheduledList } from './scheduled-list'
 
 export type WhatsAppAgentResult = {
   text: string
@@ -265,6 +267,11 @@ async function resolveApprovalDecision(actor: AgentActor, pending: any, decision
   // The shared freshness guard runs at the moment of the transition, not only when the list was built.
   const fresh = await guardApprovalFreshness({ telegramId: actor.legacyTelegramId, row: pending, surface: 'whatsapp' })
   if (fresh.expired) return { text: fresh.text, runId: pending.run_id || undefined, status: 'expired', handledBy: 'whatsapp-agent-approval' }
+  // Launch kill switch: an APPROVE for a paused capability is not recorded and nothing runs (REJECT still works).
+  if (decision === 'approve' && typeof guardApprovalCapability === 'function') {
+    const paused = await guardApprovalCapability({ telegramId: actor.legacyTelegramId, row: pending })
+    if (paused.paused) return { text: paused.text, runId: pending.run_id || undefined, status: 'paused', handledBy: 'whatsapp-agent-approval' }
+  }
   const now = new Date().toISOString()
   const status = decision === 'approve' ? 'approved' : 'rejected'
   const { data, error } = await supabaseAdmin.from('agent_approvals')
@@ -349,7 +356,7 @@ async function tryListGoals(actor: AgentActor, text: string): Promise<WhatsAppAg
     .eq('telegram_id', String(actor.legacyTelegramId)).in('status', ['active', 'blocked', 'waiting']).order('updated_at', { ascending: false }).limit(10)
   if (error) throw new Error(`goal_list_failed:${error.message}`)
   if (!data?.length) return { text: 'You have no active goals. Start one like “set a goal to walk 8000 steps daily”.', status: 'completed', handledBy: 'whatsapp-agent-goal' }
-  const lines = data.map((g: any, i: number) => `${i + 1}. ${g.title}${g.status === 'active' ? '' : ` (${g.status})`}`)
+  const lines = data.map((g: any, i: number) => `${i + 1}. ${g.title}${g.status === 'active' ? '' : g.status === 'blocked' ? ' (needs your input)' : ` (${g.status})`}`)
   return { text: `🎯 *Your goals*\n\n${lines.join('\n')}\n\nProgress is in *Dashboard → Goals*.`, status: 'completed', handledBy: 'whatsapp-agent-goal' }
 }
 
@@ -455,6 +462,8 @@ export async function tryRunWhatsAppJevSpecialist(params:{
   if(params.intent==='watcher'){
     const goldWatch=await tryCreateGoldRateWatchFromCommand({actor,surface:'whatsapp',text:params.text})
     if(goldWatch)return goldWatch
+    const stockWatch=await tryCreateStockWatchFromCommand({actor,surface:'whatsapp',text:params.text})
+    if(stockWatch)return stockWatch
     const priceClarification=await tryRunPriceWatchClarification({actor,surface:'whatsapp',text:params.text})
     if(priceClarification)return {...priceClarification,handledBy:String(priceClarification.handledBy||'price-watch-clarification')}
     const corrected=await tryUpdateWebWatchFromCommand({actor,text:params.text})
@@ -509,6 +518,12 @@ export async function tryRunWhatsAppAttentionCommand(params:{
 
   const inboxReplyRead=await handleInboxReplyRead({actor,text:params.text})
   if(inboxReplyRead)return inboxReplyRead
+  const emailAsk=(globalThis as any).process?.env?.VERCEL_ENV?await import('./email-asks').then(m=>m.tryEmailAsk(actor,params.text),()=>null):null
+  if(emailAsk)return {runId:emailAsk.handledBy,status:'completed',capability:'orchestrator',risk:'low',...emailAsk} as any
+  const mailRules=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/email/mail-alert-commands').then(m=>m.tryMailAlertCommand(actor.legacyTelegramId,params.text),()=>null):null
+  if(mailRules)return {runId:'mail-alert-rules',status:'completed',capability:'orchestrator',risk:'low',text:mailRules,handledBy:'mail-alert-rules'} as any
+  const orderList=(globalThis as any).process?.env?.VERCEL_ENV?await import('./order-tracking').then(m=>m.tryOrderList(actor,params.text),()=>null):null
+  if(orderList)return {runId:'order-tracking',status:'completed',capability:'orchestrator',risk:'low',text:orderList,handledBy:'order-tracking'} as any
 
   // "cancel that task" / "stop the flight booking": cancels the owner's in-flight agent run.
   // The parser refuses reminders, calendar, watches, lists, orders and Gmail, so their own cancel paths still win.
@@ -527,6 +542,18 @@ export async function tryRunWhatsAppAttentionCommand(params:{
 
   const query=await handleOpenLoopQuery({actor,text:params.text})
   if(query)return {...query,handledBy:String(query.handledBy||'open-loops')}
+  // "Who promised to send the proposal?" — loaded only for those phrasings (route harnesses stub this file's deps).
+  if(/\b(?:who\s+(?:promised|said\s+(?:they|he|she)|owes\s+me|was\s+(?:going|supposed)\s+to)|what\s+(?:did|has)\s+\S+(?:\s+\S+)?\s+promise|waiting\s+(?:on|for)\s+from\s+\S)/i.test(params.text)){
+    const {handleWhoPromisedQuery}=await import('./commitments-query')
+    const promised=await handleWhoPromisedQuery({actor,text:params.text})
+    if(promised)return {...promised,handledBy:'who-promised'}
+  }
+  // "Find everything about Toastr": one read-only search across chat, documents, notes, Gmail and Drive.
+  if(/\b(?:search\s+(?:everything|everywhere|all\s+(?:my\s+)?(?:stuff|things|sources|data))\s+(?:for|about)|(?:find|show)\s+(?:me\s+)?everything\s+(?:about|on|for|related\s+to)|everything\s+(?:i\s+have\s+)?(?:about|on)\s+\S)/i.test(params.text)){
+    const {handleUniversalSearch}=await import('./universal-search')
+    const found=await handleUniversalSearch({actor,text:params.text})
+    if(found)return {...found,handledBy:'universal-search'}
+  }
   return null
 }
 
@@ -616,6 +643,9 @@ export async function tryRunWhatsAppAgent(params: {
   // handlers and before any path that would answer it with a one-off gold quote (19 Oct live).
   const goldWatch = await tryCreateGoldRateWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
   if (goldWatch) return goldWatch
+  // 26 Oct: "Tata Motors share price watch" became a news watch. A share-price ask is a live-quote rule.
+  const stockWatch = await tryCreateStockWatchFromCommand({ actor, surface:'whatsapp', text:params.text })
+  if (stockWatch) return stockWatch
 
   const accountReply = await accountSiteReply(actor, params.text)
   if (accountReply) return accountReply
@@ -652,6 +682,9 @@ export async function tryRunWhatsAppAgent(params: {
   // A named task ("how's the Goa trip going") gets its own card; no matching run returns null.
   const taskStatus = await tryGetTaskStatus({ telegramId:actor.legacyTelegramId }, params.text)
   if (taskStatus) return taskStatus
+
+  const scheduledList = await tryGetScheduledList({ actor, text:params.text })
+  if (scheduledList) return scheduledList
 
   const autonomyStatus = await tryGetAutonomyStatus({ actor, text:params.text })
   if (autonomyStatus) return { ...autonomyStatus, handledBy:String(autonomyStatus.handledBy || 'autonomy-status') }

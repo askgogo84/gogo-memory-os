@@ -1,4 +1,5 @@
 // 20 Oct live: a standup series whose entries each span ~3 weeks was listed 8 times as multi-week ranges.
+import './verify-calendar-day-order-oct27.mts'
 import assert from 'node:assert/strict'
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://example.supabase.co'; process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'x'
 process.env.OPENAI_API_KEY ||= 'x'; process.env.ANTHROPIC_API_KEY ||= 'x'
