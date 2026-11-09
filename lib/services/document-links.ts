@@ -90,12 +90,14 @@ function isoDaysFromNow(days: number): string {
  * signed URL).
  */
 export async function createDocumentShortLink(params: {
-  telegramId: number
+  telegramId: string | number
   documentId: string
   sensitive: boolean
 }): Promise<string | null> {
   try {
-    if (!params.documentId) return null
+    // Reject imprecise numeric IDs: two different BIGINT owners can round to one number.
+    // Exact decimal-string BIGINT IDs are preserved unchanged in PostgREST predicates.
+    if (!params.documentId || (typeof params.telegramId === 'number' && !Number.isSafeInteger(params.telegramId))) return null
     const nowIso = new Date().toISOString()
 
     // Reuse a still-valid token for this doc if one exists.
