@@ -73,7 +73,12 @@ assert.match(route, /startsWith\('audio\/'\)\) \{\s*\/\/ WhatsApp does not show 
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
   }).outputText
   const cjs: { exports: any } = { exports: {} }
+  // Pure, provider-free helpers main later split out of voice-reply.ts.
+  const pureSpeech = await import('../lib/voice/speech-text.ts')
+  const pureModels = await import('../lib/services/model-ids.ts')
   const inertRequire = (id: string) => {
+    if (id === '@/lib/voice/speech-text') return pureSpeech
+    if (id === '@/lib/services/model-ids') return pureModels
     if (id === 'openai') return FakeOpenAI
     if (id === '@anthropic-ai/sdk') return FakeAnthropic
     if (id === '@/lib/supabase-admin') return { supabaseAdmin: { storage } }
