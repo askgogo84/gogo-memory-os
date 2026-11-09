@@ -1,0 +1,2 @@
+# tests added by PR #1406
+npx tsx scripts/verify-lifecycle-email-unknown-testonly.mts

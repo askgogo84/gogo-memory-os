@@ -18,13 +18,15 @@ export async function deliverWatchAlert(params: {
   const topics = Array.isArray(params.topic) ? params.topic : [params.topic || 'watches']
   if (topics.every(t => prefs.topics[t] === false)) return { state: 'app_only', accepted: true, providerId: null as string | null }
   let phone = ''
+  // A returned users row that names a different owner is never this owner's recipient.
+  const foreignRow = (row: any) => row?.telegram_id != null && String(row.telegram_id) !== owner
   const status = await deliverNotification({
     // 'watch_alert', not 'followup': the database cancels a 'followup' with no scheduled followups row.
     key: params.key, source: 'watch_alert', owner, channel: 'whatsapp', due: params.due,
     deadline: Date.now() + 30_000,
     prepare: async () => {
-      const { data, error } = await supabaseAdmin.from('users').select('whatsapp_id').eq('telegram_id', owner).maybeSingle()
-      if (error || !data?.whatsapp_id) throw new Error('watch_alert_recipient_unavailable')
+      const { data, error } = await supabaseAdmin.from('users').select('telegram_id,whatsapp_id').eq('telegram_id', owner).maybeSingle()
+      if (error || foreignRow(data) || !data?.whatsapp_id) throw new Error('watch_alert_recipient_unavailable')
       phone = String(data.whatsapp_id)
     },
     ready: async () => {
@@ -32,7 +34,12 @@ export async function deliverWatchAlert(params: {
         .eq('id', params.watcherId).eq('telegram_id', owner).maybeSingle()
       if (error) throw new Error('watch_alert_owner_read_failed')
       // An intervening stop or correction revokes the old notification.
-      return data?.active === true && JSON.stringify(data.condition_json) === JSON.stringify(params.condition)
+      if (data?.active !== true || JSON.stringify(data.condition_json) !== JSON.stringify(params.condition)) return false
+      // A recipient relinked (or unlinked) since prepare cancels BEFORE the provider send.
+      const { data: latest, error: latestError } = await supabaseAdmin.from('users')
+        .select('telegram_id,whatsapp_id').eq('telegram_id', owner).maybeSingle()
+      if (latestError || foreignRow(latest) || !latest?.whatsapp_id) return false
+      return String(latest.whatsapp_id) === phone
     },
     accepted: async () => { await recordCostEvent({telegramId:params.owner,category:'whatsapp_outbound',metadata:{source:'background_gogo',watcher_id:params.watcherId}}).catch(()=>{}) },
     send: async token => String((await sendWhatsApp(phone, params.message, null, token))?.sid || ''),

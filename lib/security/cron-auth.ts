@@ -29,8 +29,19 @@ export function isCronAuthorized(request:Request, env:Record<string,string|undef
 // cron, with the same timing-safe shared-secret check. A caller-supplied phone is
 // therefore NEVER authorization; the Bearer secret is. Fails closed when the
 // secret is unset (isCronAuthorized returns false), never a permissive fallback.
+//
+// Unlike legacy cron, a URL ?secret= is NOT accepted here: query strings end up in
+// access logs, proxies and referrers, and a valid query must never rescue a wrong
+// Bearer. Our own callers always send internalServiceAuthHeaders().
 export function isInternalServiceAuthorized(request:Request, env:Record<string,string|undefined>=process.env){
-  return isCronAuthorized(request, env)
+  const expected=String(env.CRON_SECRET||'').trim()
+  if(!expected){
+    console.error('CRON_SECRET_MISSING')
+    return false
+  }
+  const header=request.headers.get('authorization')||''
+  if(!/^Bearer\s+/i.test(header)) return false
+  return safeEqual(header.replace(/^Bearer\s+/i,'').trim(),expected)
 }
 
 // Header a trusted internal caller attaches so isInternalServiceAuthorized accepts

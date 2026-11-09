@@ -205,7 +205,8 @@ export async function buildDraftRepliesReply(telegramId:number){
 }
 
 /** The newest email from someone whose name or address contains `name`, received after `sinceIso`. Null when none
- * or when Gmail cannot be read (the caller then sends the plain reminder). */
+ * is seen in the latest 30 INBOX emails or when Gmail cannot be read (the caller then sends the plain reminder).
+ * Null is inconclusive: it must never be reported as "hasn't replied". */
 export async function latestEmailFrom(telegramId:number,name:string,sinceIso:string):Promise<{subject:string;at:string}|null>{
   const access=await gmailAccess(telegramId)
   if(!access.connected)return null

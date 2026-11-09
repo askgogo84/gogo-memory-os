@@ -57,19 +57,24 @@ export async function buildAdaptiveTrustSuggestions(actor:AgentActor){
 
   const runIds=[...new Set(approvals.map((a:any)=>String(a.run_id||'')).filter(Boolean))]
   const runCapability=new Map<string,AgentCapability>()
+  // 31 Oct review: an executed approval is only an attempt. Its success is the run's verified outcome: reminder and
+  // Calendar updates mark the run 'completed' only after an exact read-back, 'outcome_unknown' when they could not
+  // verify, 'failed' when the provider refused. Unknown, failed, in-progress or missing runs never count as success.
+  const runStatus=new Map<string,string>()
   for(let i=0;i<runIds.length;i+=100){
     const batch=runIds.slice(i,i+100)
     const {data:runs,error:runError}=await supabaseAdmin.from('agent_runs')
-      .select('id,capability')
+      .select('id,capability,status')
       .in('id',batch)
     if(runError)throw new Error(`adaptive_trust_run_read_failed:${runError.message}`)
     for(const run of runs||[]){
+      runStatus.set(String(run.id),String(run.status||''))
       const cap=String(run.capability||'') as AgentCapability
       if(CAPABILITIES.includes(cap))runCapability.set(String(run.id),cap)
     }
   }
 
-  type TrustStat={lowRiskSuccess:number;mediumRiskSuccess:number;highRiskSuccess:number;rejected:number;failed:number;latest:string|null}
+  type TrustStat={lowRiskSuccess:number;mediumRiskSuccess:number;highRiskSuccess:number;rejected:number;failed:number;unverified:number;latest:string|null}
   const stats=new Map<AgentCapability,TrustStat>()
   for(const a of approvals){
     const payloadCap=String((a.execution_payload as any)?.capability||'') as AgentCapability
@@ -77,10 +82,13 @@ export async function buildAdaptiveTrustSuggestions(actor:AgentActor){
       ||capabilityFromActionType(String(a.action_type||''))
       ||runCapability.get(String(a.run_id||''))
     if(!cap)continue
-    const s=stats.get(cap)||{lowRiskSuccess:0,mediumRiskSuccess:0,highRiskSuccess:0,rejected:0,failed:0,latest:null}
+    const s=stats.get(cap)||{lowRiskSuccess:0,mediumRiskSuccess:0,highRiskSuccess:0,rejected:0,failed:0,unverified:0,latest:null}
     const status=String(a.status||'')
     const risk=String(a.risk_level||'')
-    if(status==='executed'){
+    const run=runStatus.get(String(a.run_id||''))
+    if(status==='executed'&&run==='failed')s.failed++
+    else if(status==='executed'&&run!=='completed')s.unverified++
+    else if(status==='executed'){
       if(risk==='low')s.lowRiskSuccess++
       else if(risk==='medium')s.mediumRiskSuccess++
       else if(risk==='high')s.highRiskSuccess++

@@ -1,0 +1,2 @@
+# tests added by PR #1424
+npx tsx scripts/verify-privileged-query-secret-testonly.mts

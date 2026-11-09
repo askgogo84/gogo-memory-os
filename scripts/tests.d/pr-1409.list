@@ -1,0 +1,3 @@
+# tests added by PR #1409
+npx tsx scripts/verify-secondbrain-invite-claim-order-testonly.mts
+node scripts/verify-secondbrain-invite-atomicity-testonly.mjs

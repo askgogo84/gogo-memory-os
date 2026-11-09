@@ -7,6 +7,7 @@
  * production UX have been independently accepted. Real credentials/media are
  * deliberately not needed by the injected synthetic regression tests.
  */
+import { isTwilioMediaCdnUrl, logRejectedTwilioRedirect } from './twilio-cdn'
 export const TWILIO_WHATSAPP_IMAGE_MAX_BYTES = 12 * 1024 * 1024
 export const TWILIO_WHATSAPP_AUDIO_MAX_BYTES = 20 * 1024 * 1024
 
@@ -43,8 +44,7 @@ function validApiMediaUrl(mediaUrl: string, accountSid: string): URL | null {
 function validCdnRedirect(location: string, previous: URL): URL | null {
   try {
     const url = new URL(location, previous)
-    if (url.origin !== 'https://mms.twiliocdn.com'
-      || url.username || url.password || url.hash || url.pathname === '/') return null
+    if (!isTwilioMediaCdnUrl(url)) { logRejectedTwilioRedirect('whatsapp-inbound', location); return null }
     return url
   } catch {
     return null
