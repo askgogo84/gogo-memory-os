@@ -17,6 +17,17 @@ const LEASE_MINUTES=8
 
 function safe(value:unknown,max=800){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}
 
+// Exact owner string for pre-claim fencing: canonical decimal that round-trips through a safe integer.
+// Anything else (rounded 64-bit, malformed) is refused before any lease claim or owner-scoped read.
+function exactReservationOwner(value:unknown):string|null{
+  if(typeof value==='number')return Number.isSafeInteger(value)?String(value):null
+  if(typeof value!=='string')return null
+  const owner=value.trim()
+  if(owner!==value||!/^-?(?:0|[1-9]\d{0,18})$/.test(owner))return null
+  const legacy=Number(owner)
+  return Number.isSafeInteger(legacy)&&String(legacy)===owner?owner:null
+}
+
 async function actorFor(telegramId:string|number):Promise<AgentActor>{
   // Exact owner (P0.1): exact decimal lookup, row must echo the id, unsafe ids refused (never rounded).
   if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) throw new Error('restaurant_reservation_actor_missing')
@@ -94,7 +105,8 @@ async function failSafe(params:{action:any;event:any;runId:string;approvalId:str
 
 export async function processOne(action:any,reconciledResult?:Awaited<ReturnType<typeof runSecureBrowser>>){
   if(action.payload_json?.providerConfirmationVerified===true)throw new Error('restaurant_reservation_already_confirmed')
-  const tg=String(action.telegram_id)
+  const tg=exactReservationOwner(action?.telegram_id)
+  if(!tg)throw new Error('restaurant_reservation_invalid_owner')
   if(!(await claim(action)))return{status:'skipped' as const}
   const{data:event,error:eventError}=await supabaseAdmin.from('life_events').select('id,event_type,subtype,title,provider,timezone,location,lifecycle_state,preferences_json,metadata_json,source_refs').eq('id',action.life_event_id).eq('telegram_id',tg).maybeSingle()
   if(eventError||!event)throw new Error('restaurant_reservation_event_missing')
