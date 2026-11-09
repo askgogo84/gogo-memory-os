@@ -28,6 +28,12 @@ export function redactEmailAuthSecrets(value:string) {
     (_m,label)=>`${label}[authentication detail withheld]`
   )
 
+  // 29 Oct live: the subject "690267 is your verification code" was shown in full: the code comes first.
+  out=out.replace(
+    /\b([A-Z0-9]{4,10})(\s+is\s+your\s+(?:[\w-]+\s+){0,3}(?:verification|login|sign[ -]?in|one[ -]?time|security|confirmation|access|otp|auth(?:entication)?)\s*(?:code|password|pin|otp)?\b)/gi,
+    (m,code,rest)=>/\d/.test(code)?`[authentication detail withheld]${rest}`:m
+  )
+
   out=out.replace(
     /\b((?:use|enter|type)\s+(?:this\s+)?code(?:\s+(?:to|for)\s+[^\s,.!?]+)?(?:\s*(?:is|:|=)\s*|\s+))([A-Z0-9-]{4,12})\b/gi,
     (_m,label)=>`${label}[authentication detail withheld]`

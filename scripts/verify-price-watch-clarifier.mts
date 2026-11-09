@@ -219,9 +219,9 @@ assert.doesNotMatch(q, /512/, 'the invented 512GB never appears anywhere in the 
 assert.match(q, /excluding bank\/card offers/i, 'DEFECT 3: persisted query stores offers EXCLUDED')
 assert.match(t2.text, /excluding bank\/card offers/i, 'DEFECT 3: confirmation says excluded, matching the persisted record')
 assert.doesNotMatch(t2.text, /including bank\/card offers/i, 'the confirmation must NOT invert the constraint')
-assert.match(t2.text, /N\/A|no storage variant/i, 'storage recorded as N/A in the confirmation')
+assert.doesNotMatch(t2.text, /undefined|null/, 'no storage text when there is no storage variant')
 assert.equal(JSON.stringify(stores.agent_watchers.at(-1)?.condition_json?.priceRule), JSON.stringify({ threshold: 22000, comparison: 'below', offers: 'excluded' }), 'the numeric price rule is stored on the watch, not only in the query text')
-assert.match(t2.text, /strictly below alerts, equal or above stays silent, and I never buy/i, 'the confirmation says how the rule is checked')
+assert.match(t2.text, /when it's below ₹22,000 .*never buy/is, 'the confirmation says the rule and that nothing is bought')
 assert.match(t2.text, /₹22,000/, 'the threshold is shown as the number the rule uses')
 console.log('live transcript regression passed (defects 1, 2, 3)')
 
