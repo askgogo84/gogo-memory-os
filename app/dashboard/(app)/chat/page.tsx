@@ -1,5 +1,6 @@
 import { Suspense } from 'react'
 import { getSession } from '@/lib/dashboard/session'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { GogoChat, type ChatBrief } from '@/components/dashboard/gogo-chat'
 import { firstNameOf } from '@/lib/dashboard/chat-suggestions'
@@ -34,18 +35,18 @@ async function loadBrief(tg: string, tz: string): Promise<ChatBrief | null> {
 
 export default async function ChatPage() {
   const session = await getSession()
-  const tg = parseInt(session?.telegramId || '', 10)
+  const tg = exactSessionOwnerId(session?.telegramId)
   let comfortDrink = 'coffee'
   let userName = ''
   let brief: ChatBrief | null = null
-  if (Number.isFinite(tg)) {
+  if (tg) {
     const [{ data }, { data: user }] = await Promise.all([
       supabaseAdmin.from('user_experience_preferences').select('comfort_drink').eq('telegram_id', tg).maybeSingle(),
       supabaseAdmin.from('users').select('name,timezone').eq('telegram_id', tg).maybeSingle(),
     ])
     comfortDrink = data?.comfort_drink || 'coffee'
     userName = firstNameOf(user?.name)
-    brief = await loadBrief(String(tg), user?.timezone || 'Asia/Kolkata').catch(() => null)
+    brief = await loadBrief(tg, user?.timezone || 'Asia/Kolkata').catch(() => null)
   }
 
   return (

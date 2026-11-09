@@ -1,3 +1,4 @@
+import './verify-price-comparison-delivery-owner.mts'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
@@ -121,7 +122,7 @@ assert.equal(model.providerObservation('amazon', {id: 'c3', status: 'failed', er
 const blocked = model.providerObservation('zepto', {id: 'c4', status: 'paused', error: 'delivery_location_required', updated_at: 'x'}, null)
 assert.equal(blocked.status, 'blocked'); assert.equal(blocked.needsInput, true)
 
-const tables: Record<string, any[]> = {agent_runs: [], agent_steps: [], conversations: []}
+const tables: Record<string, any[]> = {agent_runs: [], agent_steps: [], conversations: [], users: [{id: 'fixture-owner', telegram_id: '42', whatsapp_id: 'fixture'}]}
 let seq = 0, locked = false, calls = 0, failStart = false, auth = true, owner = '42'
 const id = () => '00000000-0000-4000-8000-' + String(++seq).padStart(12, '0')
 const value = (row: any, key: string) => key.includes('->>') ? row[key.split('->>')[0]]?.[key.split('->>')[1]] : row[key]
@@ -529,7 +530,7 @@ assert.doesNotMatch(tables.conversations.at(-1).content, /Full saved report:|app
 let webWriteFails=true,webWrites=0
 const webDeliveryTask={...structuredClone(deliveryTask),id:id(),source:'web',metadata_json:{...deliveryTask.metadata_json,notified:undefined}}
 const webDelivery=load('lib/commerce/comparison-delivery.ts',{
-  '@/lib/supabase-admin':{supabaseAdmin:{rpc:async(name:string,args:any)=>{
+  '@/lib/supabase-admin':{supabaseAdmin:{...db,rpc:async(name:string,args:any)=>{
     assert.equal(name,'publish_web_comparison_result');assert.equal(args.p_owner,'42');assert.equal(args.p_run_id,webDeliveryTask.id)
     assert.match(args.p_content,/₹28,926/);assert.doesNotMatch(args.p_content,/Full saved report:/)
     if(webWriteFails)return {error:{message:'fixture failure'}}

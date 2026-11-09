@@ -46,11 +46,13 @@ console.log('✓ list and forget phrases')
 type Row = Record<string, any>
 let rows: Row[] = []
 let missing = false
+let failUpdate = false
+let ignoreUpdate = false
 let seq = 0
 const calls: string[] = []
 function q(table: string) {
   const f: Array<(r: Row) => boolean> = []
-  let op: 'select' | 'update' | 'insert' = 'select', patch: Row = {}, ins: Row | null = null, lim = 1e9
+  let op: 'select' | 'update' | 'insert' = 'select', patch: Row = {}, ins: Row | null = null, lim = 1e9, offset = 0
   const b: any = {
     select() { op = 'select'; return b },
     update(p: Row) { op = 'update'; patch = p; return b },
@@ -60,6 +62,7 @@ function q(table: string) {
     in(k: string, vs: any[]) { f.push(r => vs.includes(r[k])); return b },
     order() { return b },
     limit(n: number) { lim = n; return b },
+    range(start: number, end: number) { offset = start; lim = end - start + 1; return b },
     then(res: any, rej: any) {
       const err = missing ? { message: 'relation "public.taste_facts" does not exist', code: '42P01' } : null
       let out: any = { data: null, error: err }
@@ -72,8 +75,10 @@ function q(table: string) {
           else rows.push(r)
         } else {
           const hit = rows.filter(r => f.every(fn => fn(r)))
-          if (op === 'update') hit.forEach(r => Object.assign(r, patch))
-          else out = { data: hit.slice(0, lim).map(r => ({ ...r })), error: null }
+          if (op === 'update') {
+            if (failUpdate) out = { data: null, error: { message: 'fixture database update failed' } }
+            else if (!ignoreUpdate) hit.forEach(r => Object.assign(r, patch))
+          } else out = { data: hit.slice(offset, offset + lim).map(r => ({ ...r })), error: null }
         }
       }
       return Promise.resolve(out).then(res, rej)
@@ -118,6 +123,45 @@ const block = await t.getTasteBlock(B)
 assert.match(block, /Likes: biryani/); assert.match(block, /never order or pay on your own/); assert.match(block, /never assume a diet they did not state/)
 assert.equal(await t.getTasteBlock(A), '')
 console.log('✓ save, dedupe, replace budget/diet, list, forget (words, id, all); owner-scoped with ids kept as text')
+
+
+// 2b. A display of 50 must not hide older facts from mutation reads or let
+// "forget all" claim success after only the newest page was tombstoned.
+const oldRow = (n: number, kind: string, value: string, context: string | null = null): Row => ({
+  id: `older-taste-${n}`, telegram_id: A, domain: 'food', kind, value, context, source: 'said',
+  evidence_count: 1, last_seen: '2026-01-01T00:00:00Z', created_at: '2026-01-01T00:00:00Z',
+  forgotten_at: null,
+})
+for (let n = 0; n < 240; n++) rows.push(oldRow(n, 'avoids', `No ingredient ${n}`))
+rows.push(oldRow(241, 'avoids', 'No turmeric'))
+rows.push(oldRow(242, 'budget', 'Lunch under ₹250', 'Lunch'))
+rows.push(oldRow(243, 'avoids', 'No sesame'))
+assert.equal((await t.listTaste(A))?.length, 50, 'presentation still caps at 50')
+assert.deepEqual(await t.saveTaste(A, { kind: 'avoids', value: 'No turmeric', context: null }), { ok: true, repeated: true },
+  'repeating a hidden old fact dedupes rather than inserting/conflicting')
+assert.equal(rows.find(r => r.id === 'older-taste-241')?.evidence_count, 2)
+failUpdate = true
+assert.deepEqual(await t.saveTaste(A, { kind: 'budget', value: 'Lunch under ₹275', context: 'Lunch' }), { ok: false },
+  'failed retirement must not insert a contradictory new budget')
+assert.equal(rows.some(r => !r.forgotten_at && r.value === 'Lunch under ₹275' && r.telegram_id === A), false)
+failUpdate = false
+assert.deepEqual(await t.saveTaste(A, { kind: 'budget', value: 'Lunch under ₹275', context: 'Lunch' }), { ok: true, repeated: false })
+assert.ok(rows.find(r => r.id === 'older-taste-242')?.forgotten_at, 'hidden old budget must be retired')
+assert.deepEqual(await t.forgetTaste(A, { match: 'sesame' }), ['No sesame'], 'targeted old taste is found beyond display page')
+assert.ok(rows.find(r => r.id === 'older-taste-243')?.forgotten_at)
+failUpdate = true
+assert.equal(await t.forgetTaste(A, { all: true }), null, 'DB write failure cannot claim all forgotten')
+assert.match(String(await t.tryTasteCommand({ telegramId: A, text: 'forget my food taste' })),
+  /couldn't verify/, 'a failed taste deletion must not fall through to generic memory success')
+failUpdate = false
+ignoreUpdate = true
+assert.equal(await t.forgetTaste(A, { all: true }), null, 'DB reported success without tombstones cannot claim all forgotten')
+ignoreUpdate = false
+assert.ok((await t.forgetTaste(A, { all: true }))!.length > 200, 'all owner facts across multiple pages are forgotten')
+assert.equal(rows.filter(r => r.telegram_id === A && !r.forgotten_at).length, 0, 'not one older owner fact remains')
+assert.equal(rows.find(r => r.id === bId)?.forgotten_at, null, 'other owner is untouched')
+assert.equal((await t.listTaste(A))?.length, 0, 'no older facts reappear in list')
+console.log('✓ 240+ facts: paged dedupe/replace/targeted/all forget; denied writes and unverifiable tombstones fail closed')
 
 // 3. Table not there yet: everything falls through to normal chat.
 missing = true

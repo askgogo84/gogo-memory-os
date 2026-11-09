@@ -20,12 +20,27 @@ export function correctionTarget(params:{text:string;previous:any;previousUserTe
   return {decisionId:m.decision_id,handler:m.handler,domain:m.domain,text:m.user_text}
 }
 
+/** An already-rounded signed64 JS number is not an authenticated exact owner. */
+function preciseCorrectionOwner(value: unknown): string | null {
+  if (typeof value === 'number') {
+    return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  }
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
+  const numeric = Number(value)
+  return Number.isSafeInteger(numeric) && String(numeric) === value ? value : null
+}
+
 export async function captureExplicitRoutingCorrection(actor:AgentActor,text:string):Promise<CorrectionTarget|null>{
   if(!isExplicitRoutingCorrection(text))return null
+  // This exported entrypoint can be called outside the ordinary actor resolver.
+  // Validate BEFORE either service-role private query; do not coerce an
+  // ambiguous owner or let activity and conversation queries use different IDs.
+  const owner = preciseCorrectionOwner(actor?.legacyTelegramId)
+  if(!owner)return null
   const [decision,conversation]=await Promise.all([
-    supabaseAdmin.from('agent_activity').select('metadata_json,created_at').eq('telegram_id',String(actor.legacyTelegramId))
+    supabaseAdmin.from('agent_activity').select('metadata_json,created_at').eq('telegram_id',owner)
       .eq('event_type','decision_learning').order('created_at',{ascending:false}).limit(1).maybeSingle(),
-    supabaseAdmin.from('conversations').select('content').eq('telegram_id',actor.legacyTelegramId)
+    supabaseAdmin.from('conversations').select('content').eq('telegram_id',owner)
       .eq('role','user').order('created_at',{ascending:false}).limit(1).maybeSingle(),
   ])
   if(decision.error||conversation.error)return null

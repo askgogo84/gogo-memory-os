@@ -30,9 +30,9 @@ async function main(){
   }
 
 await db.exec(`alter table agent_runs add column title text,add column summary text,add column error text,add column completed_at timestamptz;
-create table users(telegram_id bigint primary key,whatsapp_id text,timezone text);
+create table users(telegram_id bigint primary key,whatsapp_id text,timezone text,access_status text default 'active');
 create table reminder_optout(owner_telegram_id bigint,recipient_whatsapp_id text);
-insert into users values(1,'+15555550100','UTC'),(2,'+15555550200','UTC');`)
+insert into users(telegram_id,whatsapp_id,timezone) values(1,'+15555550100','UTC'),(2,'+15555550200','UTC');`)
 const migrations=fs.readdirSync('supabase/migrations').filter(x=>x.endsWith('_run_outcome_gateway.sql')).sort()
 assert.equal(migrations.length,1,'one reviewed gateway migration')
 await db.exec(fs.readFileSync('supabase/migrations/'+migrations[0],'utf8'))
@@ -74,6 +74,17 @@ let defaultSends=0
 const producer=load('lib/agent/run-outcome-delivery.ts',{'./alert-preferences-shared':load('lib/agent/alert-preferences-shared.ts',{}),'@/lib/supabase-admin':{supabaseAdmin:adapter},'@/lib/services/notification-delivery':shared,'@/lib/services/delivery-callback':callback,'@/lib/bot/handlers/reminder-optout':{isSuppressed:async(owner,phone)=>(await query('select 1 from reminder_optout where owner_telegram_id=$1 and recipient_whatsapp_id=$2',[owner,phone])).length>0},'@/lib/whatsapp':{sendWhatsApp:async(to,text,unused,token)=>{assert.ok(token);defaultSends++;return{sid:'SM'+crypto.randomUUID()}}}})
 const notifier=load('lib/agent/run-notify.ts',{'@/lib/supabase-admin':{supabaseAdmin:adapter},'@/lib/services/delivery-state':states,'./run-outcome-delivery':producer})
 const notify=(r,send)=>notifier.notifyRunOutcome({id:r.id,telegram_id:r.telegram_id},{db:adapter,...(send?{send}:{})})
+await test('blocked account cannot prepare a private outcome notice or invoke provider',async()=>{
+ const r=await add();let attempted=0
+ await query("update users set access_status='blocked' where telegram_id=1")
+ try{
+  const result=await notify(r,async()=>{attempted++;return{sid:'INERT_WRONG_SEND'}})
+  assert.equal(result.status,'failed')
+  assert.equal(attempted,0)
+ }finally{
+  await query("update users set access_status='active' where telegram_id=1")
+ }
+})
 await test('actual notifier uses token/SID gateway and never claims delivered',async()=>{const r=await add();let count=0;const send=async(to,text,token)=>{assert.equal(to,'+15555550100');assert.match(text,/^Done/);assert.match(token,/^[0-9a-f-]{36}$/);count++;return{sid:'SM'+crypto.randomUUID()}};assert.equal((await notify(r,send)).status,'provider_accepted');assert.equal((await notify(r,send)).status,'skipped');assert.equal(count,1);assert.equal((await job(r)).state,'provider_accepted')})
 await test('actual notifier preserves timeout after synthetic effect',async()=>{const r=await add();let count=0;const send=async()=>{count++;throw Error('fixture timeout after effect')};assert.equal((await notify(r,send)).status,'outcome_unknown');assert.equal((await notify(r,send)).status,'skipped');assert.equal(count,1);assert.equal((await job(r)).state,'outcome_unknown')})
 await test('actual notifier definite rejection is retryable only after backoff',async()=>{const r=await add();let count=0;const send=async()=>{count++;throw Object.assign(Error('fixture rejection'),{status:400})};assert.equal((await notify(r,send)).status,'failed');assert.equal((await job(r)).state,'pending');assert.equal((await notify(r,send)).status,'skipped');assert.equal(count,1)})
