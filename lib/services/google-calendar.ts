@@ -29,7 +29,7 @@ function decodeCalendarState(token:string,purpose:CalendarState['purpose']) {
   if(a.length!==b.length||!timingSafeEqual(a,b))return null
   try{
     const payload=JSON.parse(Buffer.from(encoded,'base64url').toString('utf8')) as CalendarState
-    if(payload?.purpose!==purpose||!Number.isFinite(payload?.tg)||payload.tg===0)return null
+    if(payload?.purpose!==purpose||!Number.isSafeInteger(payload?.tg)||payload.tg===0)return null
     if(!Number.isFinite(payload?.exp)||payload.exp<=Date.now()||!payload?.nonce)return null
     return payload
   }catch{return null}
@@ -43,8 +43,9 @@ function shortConnectSignature(payload:string) {
   return createHmac('sha256',secret).update('calendar_connect.c1.'+payload).digest('base64url').slice(0,22)
 }
 export function buildCalendarConnectUrl(telegramId:number):string|null {
-  // WhatsApp users have NEGATIVE telegram_ids (resolve-user.ts); only 0 is invalid.
-  if(!Number.isFinite(telegramId)||telegramId===0)return null
+  // Persisted BIGINT owner IDs must never alias through lossy JS numbers.
+  // WhatsApp users have negative IDs; preserve all safe non-zero integers.
+  if(!Number.isSafeInteger(telegramId)||telegramId===0)return null
   const payload=`${Math.trunc(telegramId)}.${Math.floor((Date.now()+CALENDAR_CONNECT_TTL_MS)/1000).toString(36)}.${randomBytes(8).toString('base64url')}`
   const signature=shortConnectSignature(payload)
   return signature?`https://app.askgogo.in/api/calendar/connect?token=c1.${payload}.${signature}`:null
@@ -59,8 +60,11 @@ export function verifyCalendarConnectToken(token:string):number|null {
     if(!expected)return null
     const a=Buffer.from(supplied),b=Buffer.from(expected)
     if(a.length!==b.length||!timingSafeEqual(a,b))return null
+    // The HMAC proves the token was signed, NOT that an imprecise owner ID is safe.
+    // A distinct BIGINT like 9007199254740993 becomes 9007199254740992 as Number.
+    if(!/^-?[1-9]\d*$/.test(tg))return null
     const id=Number(tg),expiresAt=parseInt(expiry,36)*1000
-    if(!Number.isInteger(id)||id===0||!Number.isFinite(expiresAt)||expiresAt<=Date.now()||!nonce)return null
+    if(!Number.isSafeInteger(id)||String(id)!==tg||!Number.isFinite(expiresAt)||expiresAt<=Date.now()||!nonce)return null
     return id
   }
   return decodeCalendarState(value,'calendar_connect')?.tg||null
@@ -70,6 +74,8 @@ export function consumeCalendarOauthState(state:string):number|null {
 }
 
 export function getAuthUrl(telegramId: number): string {
+  // Do not issue a validly signed OAuth callback state for a rounded BIGINT owner.
+  if(!Number.isSafeInteger(telegramId)||telegramId===0)throw new Error('calendar_oauth_owner_invalid')
   const state=encodeCalendarState({tg:telegramId,purpose:'calendar_oauth',exp:Date.now()+CALENDAR_STATE_TTL_MS,nonce:randomBytes(16).toString('base64url')})
   if(!state)throw new Error('calendar_oauth_state_secret_missing')
   const params = new URLSearchParams({

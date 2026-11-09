@@ -130,9 +130,10 @@ export function anthropicSearchResults(data: any): WebSearchResult[] {
 // a while and go to the next one. Other errors (timeouts, 5xx) are retried normally.
 const QUOTA_BACKOFF_MS = 30 * 60_000
 const blockedUntil: Record<string, number> = {}
-export function providerQuotaBlocked(provider: 'tavily' | 'serper', now = Date.now()) { return now < (blockedUntil[provider] || 0) }
+type Provider = 'parallel' | 'serper' | 'tavily'
+export function providerQuotaBlocked(provider: Provider, now = Date.now()) { return now < (blockedUntil[provider] || 0) }
 export function tavilyQuotaBlocked(now = Date.now()) { return providerQuotaBlocked('tavily', now) }
-export function noteProviderFailure(provider: 'tavily' | 'serper', err: unknown, now = Date.now()) {
+export function noteProviderFailure(provider: Provider, err: unknown, now = Date.now()) {
   if (new RegExp(`${provider}_failed:(?:401|402|403|429|432)\\b`).test(String((err as any)?.message || err))) {
     if (!providerQuotaBlocked(provider, now)) console.error(`SEARCH_QUOTA_BACKOFF: skipping ${provider} for 30 min on this instance`)
     blockedUntil[provider] = now + QUOTA_BACKOFF_MS
@@ -191,10 +192,51 @@ async function searchWithSerper(query: string, opts: WebSearchOptions = {}): Pro
   return dated.slice(0, 5)
 }
 
-export function searchProviderOrder(env: Record<string, string | undefined> = process.env): Array<'serper' | 'tavily'> {
-  const raw = String(env.SEARCH_PROVIDER_ORDER || '').toLowerCase().split(',').map(v => v.trim()).filter((v): v is 'serper' | 'tavily' => v === 'serper' || v === 'tavily')
-  const order = raw.length ? raw : ['serper', 'tavily'] as Array<'serper' | 'tavily'>
-  return [...new Set([...order, 'serper', 'tavily'] as Array<'serper' | 'tavily'>)]
+// 6 Nov (owner): Parallel is the main web search when its key is set; Serper and Tavily stay as fallbacks.
+// SEARCH_PROVIDER_ORDER=serper,tavily puts the old order back without a deploy of code.
+export function searchProviderOrder(env: Record<string, string | undefined> = process.env): Provider[] {
+  const known = (v: string): v is Provider => v === 'parallel' || v === 'serper' || v === 'tavily'
+  const raw = String(env.SEARCH_PROVIDER_ORDER || '').toLowerCase().split(',').map(v => v.trim()).filter(known)
+  const order: Provider[] = raw.length ? raw : (env.PARALLEL_API_KEY ? ['parallel', 'serper', 'tavily'] : ['serper', 'tavily'])
+  const all = [...new Set([...order, ...(env.PARALLEL_API_KEY ? ['parallel'] : []), 'serper', 'tavily'] as Provider[])]
+  return env.PARALLEL_API_KEY ? all : all.filter(p => p !== 'parallel')
+}
+
+/** Parallel Search (POST https://api.parallel.ai/v1/search, x-api-key). Results come ranked with page excerpts. */
+export function parallelSearchBody(query: string, opts: WebSearchOptions = {}) {
+  const includeDomains = (opts.includeDomains || []).map(d => String(d || '').trim().toLowerCase()).filter(Boolean)
+  const after = opts.startDate ? new Date(opts.startDate).toISOString().slice(0, 10) : ''
+  const policy = { ...(includeDomains.length ? { include_domains: includeDomains } : {}), ...(/^\d{4}-\d{2}-\d{2}$/.test(after) ? { after_date: after } : {}) }
+  return {
+    objective: query, search_queries: [query], mode: 'fast',
+    advanced_settings: { max_results: 8, location: 'in', excerpt_settings: { max_chars_per_result: 600 }, ...(Object.keys(policy).length ? { source_policy: policy } : {}) },
+  }
+}
+export function parallelResults(data: any, opts: WebSearchOptions = {}): WebSearchResult[] {
+  const out: WebSearchResult[] = []
+  for (const r of Array.isArray(data?.results) ? data.results : []) {
+    if (!r?.url || !/^https?:\/\//i.test(String(r.url)) || out.some(o => o.url === r.url)) continue
+    const excerpt = cleanText((Array.isArray(r.excerpts) ? r.excerpts : []).join(' … ')).slice(0, 600)
+    const day = typeof r.publish_date === 'string' && /^\d{4}-\d{2}-\d{2}/.test(r.publish_date) ? new Date(r.publish_date).toISOString() : ''
+    out.push({ title: cleanText(r.title || ''), snippet: excerpt, url: String(r.url), ...(day ? { publishedDate: day } : {}) })
+  }
+  return opts.filterByPublishedDate && (opts.startDate || opts.endDate)
+    ? out.filter(r => r.publishedDate && (!opts.startDate || r.publishedDate >= new Date(opts.startDate).toISOString()) && (!opts.endDate || r.publishedDate.slice(0, 10) <= opts.endDate.slice(0, 10)))
+    : out
+}
+async function searchWithParallel(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
+  const apiKey = process.env.PARALLEL_API_KEY
+  if (!apiKey) throw new Error('parallel_missing_key')
+  const res = await fetch('https://api.parallel.ai/v1/search', {
+    method: 'POST', headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+    body: JSON.stringify(parallelSearchBody(query, opts)), cache: 'no-store',
+    signal: AbortSignal.timeout(Math.max(1000, Math.min(opts.timeoutMs || 12_000, 30_000))),
+  })
+  if (!res.ok) {
+    console.error('Parallel search failed:', res.status, (await res.text()).slice(0, 300))
+    throw new Error(`parallel_failed:${res.status}`)
+  }
+  return parallelResults(await res.json(), opts)
 }
 
 export async function searchWebResults(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
@@ -209,16 +251,16 @@ export async function searchWebResults(query: string, opts: WebSearchOptions = {
   // SEARCH_PROVIDER_ORDER=tavily,serper restores the old order. A provider that reported quota/auth
   // exhaustion is skipped for 30 minutes; an empty answer moves on to the next one.
   for (const provider of searchProviderOrder()) {
-    const key = provider === 'tavily' ? process.env.TAVILY_API_KEY : process.env.SERPER_API_KEY
+    const key = provider === 'parallel' ? process.env.PARALLEL_API_KEY : provider === 'tavily' ? process.env.TAVILY_API_KEY : process.env.SERPER_API_KEY
     if (!key || providerQuotaBlocked(provider)) continue
     const started = Date.now()
     try {
-      const results = provider === 'tavily' ? await searchWithTavily(cleanQuery, opts) : await searchWithSerper(cleanQuery, opts)
+      const results = provider === 'parallel' ? await searchWithParallel(cleanQuery, opts) : provider === 'tavily' ? await searchWithTavily(cleanQuery, opts) : await searchWithSerper(cleanQuery, opts)
       console.log('SEARCH:', JSON.stringify({ provider, ms: Date.now() - started, results: results.length }))
       if (results.length) return results
     } catch (err: any) {
       noteProviderFailure(provider, err)
-      console.error(provider === 'tavily' ? 'searchWebResults failed:' : 'SERPER_SEARCH_FAILED:', err?.message || err, `(${Date.now() - started}ms)`)
+      console.error(provider === 'tavily' ? 'searchWebResults failed:' : provider === 'parallel' ? 'PARALLEL_SEARCH_FAILED:' : 'SERPER_SEARCH_FAILED:', err?.message || err, `(${Date.now() - started}ms)`)
     }
   }
   // 18 Oct live: Tavily hit its plan limit (432) and every web answer — petrol, gold, news — came back

@@ -7,10 +7,18 @@
 // Safety: the brain never approves, pays, books, sends or changes accounts. It only chooses what to say or how
 // to phrase the request for the existing handlers, which keep every approval and Sentinel check. Short replies
 // that answer an approval or a numbered pick bypass it entirely, and any failure falls back to today's pipeline.
+import { isMailAlertCommand } from '@/lib/email/mail-alert-commands'
+import { tripAsk } from '@/lib/agent/trip-plan'
+import { personAsk } from '@/lib/agent/people'
+import { ORDER_LIST_RE } from './order-tracking'
+import { PAYMENT_GATE } from './payment-confirmation'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { inventedApprovalGuard } from '@/lib/services/claude'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { isJobScanNow, jobScanQuery } from './jobs'
+import { nearbyRewrite, placeAsk } from './places-search'
+import { SONNET_MODEL } from '@/lib/services/model-ids'
 
 export type BrainDecision =
   | { kind: 'reply'; text: string }
@@ -29,7 +37,7 @@ export type BrainContext = {
   timezone: string
 }
 
-const MODEL = () => process.env.GOGO_BRAIN_MODEL || 'claude-sonnet-4-5'
+const MODEL = () => process.env.GOGO_BRAIN_MODEL || SONNET_MODEL
 // 4 Nov (owner approved): a cheaper first pass. With GOGO_BRAIN_FAST=on, Haiku 5.5 decides first. Its routing decisions
 // (hand to a handler, flight, later) are used as they are; when it would write the reply itself, or fails, the main
 // model (Sonnet) decides instead, so replies keep today's quality. Off by default until the admin console shows
@@ -48,6 +56,7 @@ const TIMEOUT_MS = 12_000
 // a slow brain falls back to today's pipeline instead of making the person wait.
 const MAX_RETRIES = 0
 const clean = (v: unknown, max = 400) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
+export const cleanReply = (v: unknown, max = 1500) => String(v ?? '').replace(/\r\n?/g, '\n').replace(/[ \t\f\v]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, max)
 // 28 Oct review: match the whole number, not its last ten digits (a 10-digit list entry means +91).
 const digits = (v: unknown) => { const d = String(v ?? '').replace(/\D/g, ''); return d.length === 10 ? `91${d}` : d }
 
@@ -66,10 +75,22 @@ const EXACT = /^\s*(?:yes|y|yeah|yep|yup|no|n|nope|ok|okay|sure|approve[d]?|reje
 export function whatsAppMarkdown(text: string) {
   return String(text || '').replace(/\*\*([^*\n]+)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '').replace(/__([^_\n]+)__/g, '_$1_')
 }
+const DAY_PLAN = /^(?:please\s+)?(?:can you\s+)?(?:help me\s+)?(?:plan|schedule|organi[sz]e|block out)\s+(?:out\s+)?(?:my\s+)?(?:day|today|tomorrow|morning|evening|schedule)(?:\s+(?:today|tomorrow))?(?:\s+for me)?[?.!]*$|^(?:day plan|make my day plan|plan today)[?.!]*$/i
 export function isExactCommand(text: string): boolean {
   const t = String(text || '').trim()
   // 30 Oct live: a re-forwarded bare link was answered by the brain ("Already saved: gjKPc2zn") instead of Link Vault.
-  return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t) || /^https?:\/\/\S+$/i.test(t)
+  // 5 Nov live: "plan my day" was answered from context ("nothing else scheduled") while three meetings were on
+  // the calendar. Day plans have a handler that reads the calendar and reminders; it must get the message.
+  // Same for a job scan (5 Nov live: answered with board listing counts instead of single postings), and a place
+  // search (5 Nov live: "Same picks as earlier" was repeated from chat history, so the veg search never ran).
+  return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t) || /^https?:\/\/\S+$/i.test(t) || DAY_PLAN.test(t) || isJobScanNow(t) || !!jobScanQuery(t) || !!placeAsk(t) || !!nearbyRewrite(t, 'x')
+    // 6 Nov live: "what do you alert me about?" was answered from the brain's own idea of its features; the
+    // mail-alert rules handler owns that question and the "stop renewals" family.
+    || isMailAlertCommand(t) || ORDER_LIST_RE.test(t) || personAsk(t) !== null
+    // 6 Nov live: a forwarded bank confirmation is a payment record, never something to chat about.
+    || PAYMENT_GATE.test(t)
+    // 7 Nov live: a trip with a place and dates has a plan handler; the brain asked what it should include.
+    || !!tripAsk(t)
 }
 
 // 28 Oct review (G5): the static rules come first and are cached together with the tool list; the user's name,
@@ -85,6 +106,8 @@ Choose exactly one tool:
 - ask: the request is genuinely ambiguous even with context. One short question. Missing saved notes or details are not ambiguity: for a plan, outline or prep ("prep a 30-minute plan for Sunday's coaching from my notes"), reply with a useful general plan, saying in one line that nothing specific is saved and inviting details to tailor it. Never invent saved notes.
 - later: the user asks about the results of a search Gogo is still running (an open travel or flight search in Open tasks, results not yet shown). Gogo will answer it the moment the results arrive, so do not ask them anything.
 - handle: anything that needs Gogo's tools (reminders, lists, expenses, email, calendar, documents, web answers, prices, shopping, restaurants, travel search and booking, watches, memory). Write the instruction the way the user would say it if they had been fully explicit: resolve "it/that/this" to the named thing (flight number, date, product, person), keep every detail the user gave (including every "not", "don't", "never" and "without"), add nothing they did not ask for. If the message is already explicit, or it answers a question Gogo just asked (a name, a choice, details for a booking), set keep_original true. To book or pick an option from a numbered list Gogo already showed (flights, hotels, products), the instruction is exactly "book <number>" (or "pick <number>") using that list's number: never restate the route, date or airline, because that starts a new search.
+
+You are Gogo and only Gogo. When the user names another assistant (Dots, Instinct, Wajo, Fo, Muse, Duet, ChatGPT) they are describing a style to match or asking a question about that product; never write as if that product were you or did something for the user ("Dots checks your mail" is wrong; say what you do).
 
 Trips: the Trips section links each trip's flights, hotel stay and cab. Questions like "where am I staying?", "what's the booking under?", "when do I check out?" or "my cab details" are answered with reply from that section; if a detail is not there, say it is not saved yet and ask for it. When asked about a trip, give every linked line: flights, cab, stay, 📅 meetings in that city (with the gap after landing), 📌 notes (e.g. the card for incidentals) and 🛂 travel documents. "Booking name" is the name the hotel holds the room under, the one to give at check-in; "arranged by" is who made the booking. Never combine them as one name. If a document line says the name may be misread, say so and ask the user to confirm the name.
 
@@ -131,7 +154,9 @@ const TRACK_ASK = /\b(?:track(?:ing)?|monitor(?:ing)?|alerts?|notify|notificatio
 const TRACK_REFUSED = /\b(?:don['’]?t|do not|never|no need to|stop|without|not)\s+(?:\w+\s+)?(?:track|monitor|alert|notify|message|msg|text|ping)|\bno\s+(?:need\s+(?:for|to)\s+)?(?:tracking|alerts?|updates?|notifications?|messages?)\b|\b(?:just|only)\s+(?:the\s+)?(?:status|check)\b/i
 // 29 Oct live: "✅ Updated your Mumbai trip hotel stay" was a reply that saved nothing. Any completion claim about a
 // saved thing goes to the handlers instead.
-const COMPLETION_CLAIM = /\b(?:i(?:'ve| have)|done|saved|booked|set|sent|scheduled|added|reminded|updated|changed|noted|recorded|moved|cancelled|canceled|deleted|removed|logged|stored)\b.*\b(?:reminder|booking|flight|email|message|calendar|list|ticket|stay|hotel|trip|event|expense|note|cab|dates?|check-?(?:in|out))\b/i
+// cleanReply preserves newlines, so action-claim checks must recognize claims split over lines.
+// Never trust a multi-line "Done!" statement as proof of a saved reminder or other action.
+const COMPLETION_CLAIM = /\b(?:i(?:'ve| have)|done|saved|booked|set|sent|scheduled|added|reminded|updated|changed|noted|recorded|moved|cancelled|canceled|deleted|removed|logged|stored)\b.*\b(?:reminder|booking|flight|email|message|calendar|list|ticket|stay|hotel|trip|event|expense|note|cab|dates?|check-?(?:in|out))\b/is
 /** The user asked to track/monitor/be messaged about it, in their own words, and did not refuse it. Pure. */
 export function userAskedToTrack(original: string): boolean {
   const t = String(original || '')
@@ -147,7 +172,9 @@ export function decisionFromToolUse(original: string, name: string, input: any):
     return { kind: 'flight', flightNo: code, track: input?.track === true && userAskedToTrack(original) }
   }
   if (name === 'reply' || name === 'ask') {
-    const raw = clean(name === 'reply' ? input?.text : input?.question, 1500)
+    // 5 Nov live: clean() squashed newlines, so every list the brain wrote ("show my reminders") arrived as one
+    // paragraph on WhatsApp. Replies keep their line breaks; only runs of spaces and extra blank lines are tidied.
+    const raw = cleanReply(name === 'reply' ? input?.text : input?.question, 1500)
     if (!raw) return { kind: 'skip', reason: 'empty_text' }
     // A chat reply that claims an action was done hands the message to the real handlers instead.
     // 29 Oct live: "When do I check out and is there a reminder for it?" was answered from context ("a check-out
@@ -219,6 +246,21 @@ export async function loadBrainContext(p: { telegramId: number; text: string; na
   if (earlier.length) sections['Earlier conversation summary'] = earlier
   const other = otherContextLines(otherFacts)
   if (other.length) sections['Other context'] = other
+  // Same Brain 3.0 Phase 2: the decision context pack. 'shadow' only logs; 'on' adds one bounded section. Off by default,
+  // never blocks the turn (its own timeout), and never changes routing, approvals or STOP handling.
+  if ((globalThis as any).process?.env?.VERCEL_ENV) {
+    try {
+      const cg = await import('./context-graph/build')
+      const mode = typeof cg?.contextGraphMode === 'function' ? cg.contextGraphMode(String(p.telegramId)) : 'off'
+      if (mode !== 'off') {
+        const pack = await withTimeout(cg.buildDecisionContext({ actor: { legacyTelegramId: p.telegramId, timezone, name: p.name, userId: p.userId, whatsappId: p.whatsappId }, objective: p.text, understanding: ctx, facts: otherFacts as any, now }), 2500)
+        if (pack) {
+          console.log('CONTEXT_GRAPH_SHADOW:', JSON.stringify({ mode, decisionId: pack.decisionId, kind: pack.objective.kind, domain: pack.objective.domain, live: pack.objective.liveDataRequired, conflicts: pack.conflicts.length, missing: pack.missing.length, size: pack.size, warnings: pack.warnings }))
+          if (mode === 'on') { const lines = cg.renderDecisionContext(pack); if (lines.length) sections['Decision context'] = lines }
+        }
+      }
+    } catch (e: any) { console.error('CONTEXT_GRAPH_HOOK_FAILED:', String(e?.message || e).slice(0, 120)) }
+  }
   const trackedFlights = [...new Set((flights as any[]).map(w => {
     const f = w.condition_json?.adHocFlight || {}
     return f.flightNo ? `${f.flightNo}${f.from && f.to ? ` (${f.from} → ${f.to})` : ''}${w.active ? '' : ' [tracking ended]'}` : ''
@@ -459,8 +501,21 @@ export async function answerFollowups(p: { runId: string; telegramId: number; se
       }
       const text = inventedApprovalGuard(clean((res?.content || []).find((b: any) => b.type === 'tool_use')?.input?.text, 1200))
       if (!text) continue
-      await p.send(text)
-      await supabaseAdmin.from('conversations').insert({ telegram_id: p.telegramId, role: 'assistant', content: text })
+      const receipt = await p.send(text)
+      // A fulfilled send promise is not evidence of provider acceptance: preserve
+      // unknown-outcome no-retry, but do not fabricate an answered conversation.
+      const sid = receipt && typeof receipt === 'object' && 'sid' in receipt
+        ? String((receipt as { sid?: unknown }).sid || '').trim()
+        : ''
+      if (!sid) {
+        console.warn('BRAIN_FOLLOWUP_ACCEPTANCE_UNKNOWN:', JSON.stringify({ runId: p.runId, stepId: step.id }))
+        continue
+      }
+      const { error: historyError } = await supabaseAdmin.from('conversations').insert({ telegram_id: p.telegramId, role: 'assistant', content: text })
+      if (historyError) {
+        console.error('BRAIN_FOLLOWUP_HISTORY_FAILED:', JSON.stringify({ runId: p.runId, stepId: step.id }))
+        continue
+      }
       answered++
     } catch (err: any) { console.error('BRAIN_FOLLOWUP_FAILED:', clean(err?.message || err, 120)) }
   }
