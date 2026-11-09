@@ -47,9 +47,14 @@ try {
   Date.now = origNow
 }
 const roundedOwnerLink = cal.buildCalendarConnectUrl(Number('9007199254740993'))
-assert.ok(roundedOwnerLink)
-const roundedToken = new URL(roundedOwnerLink).searchParams.get('token')!
-assert.equal(calendarOwnerForLegacyEntry(new URLSearchParams({ token: roundedToken })), null, 'unsafe 64-bit numeric owner must fail closed')
+// Since #1311 the issuer itself refuses an unsafe owner. Either refusal point
+// (no link issued, or the legacy entry rejects its token) must fail closed.
+if (roundedOwnerLink === null) {
+  assert.equal(roundedOwnerLink, null, 'unsafe 64-bit numeric owner gets no connect link')
+} else {
+  const roundedToken = new URL(roundedOwnerLink).searchParams.get('token')!
+  assert.equal(calendarOwnerForLegacyEntry(new URLSearchParams({ token: roundedToken })), null, 'unsafe 64-bit numeric owner must fail closed')
+}
 
 const route = readFileSync(new URL('../app/calendar/route.ts', import.meta.url), 'utf8')
 assert.match(route, /calendarOwnerForLegacyEntry\(new URL\(req\.url\)\.searchParams\)/, 'legacy route validates bearer ownership')
