@@ -1,0 +1,14 @@
+# tests added by PR #1411
+npx tsx scripts/verify-reminder-unknown-fallback-testonly.mts
+npx tsx scripts/verify-booking-listing-egress-testonly.mts
+node scripts/verify-inbound-notify-outcomes-testonly.mjs
+node scripts/verify-booking-change-push-testonly.mjs
+node scripts/verify-boarding-pass-outbox-testonly.mjs
+node scripts/verify-goal-actor-legacy-downstream-testonly.mjs
+node scripts/verify-negative-whatsapp-owner-guards-testonly.mjs
+node scripts/verify-watcher-outbound-owner-precision-testonly.mjs
+node scripts/verify-make-negative-owner-testonly.mjs
+node scripts/verify-briefing-cron-owner-testonly.mjs
+node scripts/verify-invite-rpc-exact-owner-testonly.mjs
+node scripts/verify-inbound-notify-outcome-testonly.mjs
+node scripts/verify-ops-billing-owner-isolation-red.mjs
