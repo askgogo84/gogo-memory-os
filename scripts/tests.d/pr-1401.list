@@ -1,0 +1,2 @@
+# tests added by PR #1401
+npx tsx scripts/verify-twilio-cdn-host-nov9.mts
