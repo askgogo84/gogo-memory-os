@@ -12,6 +12,7 @@ import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
 import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
 import { isSameBrainIntrospection, trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
+import { memoryEnabledFor } from '@/lib/memory/canary'
 import { randomUUID } from 'crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { buildReferenceFxReply } from '@/lib/bot/handlers/reference-fx'
@@ -278,7 +279,7 @@ async function handleChatPost(req: NextRequest) {
       }
     }
     // Connected memory front door, same as WhatsApp (lib/memory/front-door.ts).
-    if((globalThis as any).process?.env?.GOGO_MEMORY!=='off'&&((globalThis as any).process?.env?.GOGO_BRAIN_USERS||(globalThis as any).process?.env?.VERCEL_ENV==='production')){
+    if((globalThis as any).process?.env?.GOGO_MEMORY!=='off'&&((globalThis as any).process?.env?.GOGO_BRAIN_USERS||(globalThis as any).process?.env?.VERCEL_ENV==='production')&&memoryEnabledFor(user.whatsapp_id)){
       const door:any=await import('@/lib/memory/front-door').catch(()=>null)
       const memoryTurn=door?.frontDoorCandidate?.(text)?await door.tryLifeGraphTurn({telegramId:Number(user.telegram_id),whatsappTo:user.whatsapp_id?String(user.whatsapp_id):null,userName:user.name||null,text,surface:'web'}).catch(()=>null):null
       if(memoryTurn){
