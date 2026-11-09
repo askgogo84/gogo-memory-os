@@ -1021,9 +1021,13 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       }
     }
     // Meeting prep (Duet benchmark, 6 Nov): "prep me for my next meeting" reads the calendar and recent emails.
-    if ((globalThis as any).process?.env?.VERCEL_ENV && /\b(?:prep|prepare|brief)\b[\s\S]{0,40}\b(?:meeting|call|appointment)\b|\bnext\s+(?:meeting|call)\s+about\b|^\s*meeting\s+prep\b/i.test(text)) {
+    // Trip plan (7 Nov): "plan a Goa trip 12 to 15 Dec with Divya and Nithin" gets a plan skeleton, not a question.
+    // "What do I know about Nithin?" (7 Nov): one person across memory, contacts, calendar guests and Gmail.
+    if ((globalThis as any).process?.env?.VERCEL_ENV && (/\b(?:prep|prepare|brief)\b[\s\S]{0,40}\b(?:meeting|call|appointment)\b|\bnext\s+(?:meeting|call)\s+about\b|^\s*meeting\s+prep\b/i.test(text) || /^\s*(?:please\s+)?(?:can you\s+|could you\s+|help me\s+)?(?:plan|organi[sz]e|put together|arrange)\b/i.test(text) || /^(?:what|who|tell me about|catch me up on|brief me on|remind me who|when)\b/i.test(text) || text.trim().length <= 60)) {
       const prepActor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' })
-      const prep = await import('@/lib/agent/meeting-prep-ask').then(m => m.tryMeetingPrep(prepActor, text), () => null)
+      const prep = (await import('@/lib/agent/meeting-prep-ask').then(m => m.tryMeetingPrep(prepActor, text), () => null))
+        || (await import('@/lib/agent/trip-plan').then(m => m.tryTripPlan(prepActor, 'whatsapp', text), () => null))
+        || (await import('@/lib/agent/people').then(m => m.tryPersonAsk(prepActor, text), () => null))
       if (prep) {
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', prep)
@@ -1051,6 +1055,28 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       }
     }
 
+    // Understand first (6 Nov live: a ₹41,898 bank SMS became a ₹41 split expense): a forwarded SMS, bank alert, OTP,
+    // delivery, booking, bill or security notice is read as what it is, with one offer; "yes" within 30 min does
+    // that one thing (log the expense, set the reminder, save the ticket, check the order, find the receipt). Read-only otherwise.
+    if ((globalThis as any).process?.env?.VERCEL_ENV) {
+      // 7 Nov: a short reply to Gogo's own proactive message ("it was paid", "check the mail again and track the order",
+      // "open it") is read against that message first (lib/agent/open-thread), never as a new question to the brain.
+      const threaded = text.length <= 160 ? await import('@/lib/agent/open-thread').then(async m => m.tryThreadReply(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), text), () => null) : null
+      if (threaded) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', threaded)
+        await sendWhatsAppMessage(from, threaded)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+      const pay = await import('@/lib/agent/shared-content').then(async m => (await m.tryShared(String(resolvedUser.telegramId), text))
+        || (text.length <= 24 ? m.takeSharedFollowUp(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), text) : null), () => null)
+      if (pay) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', pay)
+        await sendWhatsAppMessage(from, pay)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
     // A "yes" to the question an image/PDF reply ended with runs that exact reminder/calendar instruction.
     if ((globalThis as any).process?.env?.VERCEL_ENV && text.length <= 24 && /^\s*(?:yes|yeah|yep|yup|ok|okay|sure|haan|ha|ji|please|go ahead|do it|sounds good)\b/i.test(text)) {
       const offered = await import('@/lib/agent/image-offer').then(m => m.takeImageOffer(String(resolvedUser.telegramId), text), () => null)
@@ -1456,7 +1482,7 @@ _"${originalText}"_
       }
     }
     // Local places: Google local results in the area asked (same as the dashboard).
-    if (text.length <= 200 && /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert|barber|dentist|dental|doctor|pediatrician|dermatologist|physio|plumber|electrician|carpenter|mechanic|car service|bike service|tailor|laundr|dry clean|vets?\b|veterinar|pet shop|optician|florist|atms?\b|petrol|ev charg|charging station)/i.test(text)&&(/\b(?:in|near|around|at)\s+[a-z]/i.test(text)||/\b(?:nearby|near\s+by|close\s+by)\b/i.test(text))&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text)) {
+    if (text.length <= 200 && (/^(?:(?:a|an|the|some|good|best|top|nice|cheap|open|veg|non-veg|\d{1,2})\s+){0,3}\b(restaurants?|caf(?:e|é)s?|coffee (?:shops?|places?)|bars?|pubs?|breweries|brewery|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets? shops?|gyms?|salons?|spas?|parks?|hospitals?|clinics?|pharmac(?:y|ies)|chemists?|hotels?|stays?|co-?working spaces?|malls?|supermarkets?|barbers?|barber ?shops?|dentists?|dental clinics?|doctors?|pediatricians?|dermatologists?|physiotherapists?|plumbers?|electricians?|carpenters?|mechanics?|car service(?: centres?| centers?)?|bike service(?: centres?| centers?)?|tailors?|laundr(?:y|ies)|dry cleaners?|vets?|veterinar(?:y|ians?)(?: clinics?)?|pet shops?|opticians?|florists?|atms?|petrol (?:pumps?|bunks?)|ev chargers?|charging stations?)\b\s*(?:near|nearby|in|around|close to)\b/i.test(text) || text.length <= 200 && /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show|list|give me|what are|which are|any|best|top|good|nice|where can i)\b/i.test(text)&&/\b(?:restaurants?|caf|bars?\b|pubs?|bakery|bakeries|dhaba|darshini|biryani|dosa|pizza|gyms?|salons?|spas?|hospitals?|clinics?|pharmac|hotels?|malls?|supermarkets?|places? to eat|coffee|brewer|ice ?cream|dessert|barber|dentist|dental|doctor|pediatrician|dermatologist|physio|plumber|electrician|carpenter|mechanic|car service|bike service|tailor|laundr|dry clean|vets?\b|veterinar|pet shop|optician|florist|atms?\b|petrol|ev charg|charging station)/i.test(text)&&(/\b(?:in|near|around|at)\s+[a-z]/i.test(text)||/\b(?:nearby|near\s+by|close\s+by)\b/i.test(text))&&!/\b(?:shows?|showtimes?|movies?|films?|screening|tickets?|seats?|playing)\b/i.test(text))) {
       const pl: any = await import('@/lib/agent/places-context').catch(() => null)
       const out = pl?.answerPlacesWithContext ? await Promise.resolve().then(() => pl.answerPlacesWithContext({ text, telegramId: String(resolvedUser.telegramId) })).catch(() => null) : null
       if (typeof out === 'string' && out) {

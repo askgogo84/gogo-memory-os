@@ -77,3 +77,11 @@ for (const t of ['what did you think of that restaurant', 'is it near the metro?
   assert.notEqual(t === 'thanks' ? false : brain.isExactCommand(t), true, `not a place search: ${t}`)
 console.log('✓ place searches skip the brain, so a repeat ask runs a fresh search')
 console.log('Day plan and briefing checks passed')
+
+// 7 Nov live: "my briefing" on the dashboard was understood as task_status and answered with the approvals queue.
+{
+  const { isExactCommand } = await import('../lib/agent/semantic-gate')
+  for (const t of ['my briefing', 'My briefing!', 'daily briefing', 'today briefing', "what's my day"]) assert.ok(isExactCommand(t), `briefing phrase skips understanding: ${t}`)
+  assert.ok(!isExactCommand('what are you working on'), 'status questions still go through understanding')
+  console.log('✓ briefing phrases are exact commands')
+}
