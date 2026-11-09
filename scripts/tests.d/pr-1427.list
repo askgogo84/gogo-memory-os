@@ -1,3 +1,2 @@
 # tests added by PR #1427
-package.json
 node scripts/verify-recurring-snooze-idempotency-testonly.mjs
