@@ -62,7 +62,16 @@ verification, India-first providers, WhatsApp-first, merchant mode, per-capabili
 4. **G4** Spaces pinned in Make; "build me a page…" creates a Space from chat behind the same flag.
 5. **G7** sidebar cut to Chat / Tasks / Make + avatar menu (mock approved separately).
 
-G5, G6, G8, G9 are listed for the next block; G6 depends on Twilio's reply-to support.
+Shipped 9 Nov: G1, G3 (#1387), G2 (#1387, #1389), G4 (#1387), G7 behind `GOGO_NAV_V2` (#1388, off until the
+owner approves the v2 mock).
+
+Findings on the rest:
+- **G5 scheduled runs with pause**: `agent_watchers` has only `active`; a real pause needs a `paused_at` column
+  (migration, owner-run) plus a resume path. Prepared next; not started without the migration.
+- **G6 quoted-reply outbound**: Twilio's WhatsApp API has no outbound reply-context parameter (its blog shows
+  `OriginalRepliedMessageSid` only on inbound quick-reply taps). Outbound quoting needs the Meta Cloud API directly,
+  which is the Tipplr Meta track. Not possible on the current transport.
+- **G8, G9**: unchanged; next block.
 
 ## Sources
 
