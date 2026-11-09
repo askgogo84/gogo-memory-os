@@ -3,6 +3,7 @@
 // running tasks, active watches and tasks completed in the last day. Empty sections are left out; a failed read
 // leaves its section out rather than claiming "nothing" (the dashboard remains the full view).
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { taskDisplayTitle } from '@/lib/agent/task-title'
 
 export type IntelInput = {
   approvals: Array<{ title?: string | null }>
@@ -16,6 +17,18 @@ const clean = (s: unknown, n = 90) => String(s ?? '').replace(/[*_~`]/g, '').rep
 const list = (items: string[], max: number) => items.slice(0, max).map(x => `• ${x}`).join('\n') + (items.length > max ? `\n• +${items.length - max} more on your dashboard` : '')
 const uniq = (xs: string[]) => [...new Set(xs.filter(Boolean))]
 
+// 2 Nov live brief: "Done since yesterday" listed "the what's the weather in bangalore the", "what is ask google
+// launched blank" and "your google" — the raw wording of quick questions, not finished work. A done item must read
+// as a task: a few words, not a question, not a fragment.
+const QUESTION_START = /^(?:what|what's|whats|who|whom|whose|when|where|why|how|which|is|are|was|were|am|do|does|did|can|could|would|should|will|shall|may|might|the|your|my|a|an|this|that|it|and|or|but|of|to|in|on)\b/i
+export function isMeaningfulDoneTitle(raw: unknown) {
+  const t = clean(taskDisplayTitle(raw), 120)
+  if (!t || t.length < 6) return false
+  if (/\?\s*$/.test(t) || QUESTION_START.test(t)) return false
+  if (/\b(?:blank|undefined|null|untitled)\b/i.test(t)) return false
+  return t.split(/\s+/).length >= 2
+}
+
 export function composeIntelligence(i: IntelInput): string[] {
   const blocks: string[] = []
   const urgent = i.loops.filter(l => Number(l.priority || 0) >= 0.85 && l.source_type !== 'meeting_prep')
@@ -28,8 +41,8 @@ export function composeIntelligence(i: IntelInput): string[] {
   if (prep.length) blocks.push(`📝 *Meeting prep*\n${prep.slice(0, 3).map(p => `• ${clean(p.title, 80)}\n  ${clean(p.summary, 220)}`).join('\n')}`)
   const doing = uniq([...i.running.map(r => clean(r.title)), ...i.watchers.map(w => clean(w.title || w.condition_json?.title))])
   if (doing.length) blocks.push(`🤖 *Gogo is handling*\n${list(doing, 4)}`)
-  const done = uniq(i.done.map(d => clean(d.title)))
-  if (done.length) blocks.push(`✅ *Done since yesterday*\n${list(done, 4)}`)
+  const done = uniq(i.done.filter(d => isMeaningfulDoneTitle(d.title)).map(d => clean(taskDisplayTitle(d.title))))
+  if (done.length) blocks.push(`✅ *Done since yesterday*\n${list(done, 3)}`)
   const later = i.loops.filter(l => Number(l.priority || 0) < 0.85 && l.source_type !== 'meeting_prep').length
   if (later) blocks.push(`⏳ *Can wait*\n• ${later} lower-priority item${later > 1 ? 's' : ''} — on your dashboard when you have time`)
   return blocks
