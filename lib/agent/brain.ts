@@ -8,6 +8,8 @@
 // to phrase the request for the existing handlers, which keep every approval and Sentinel check. Short replies
 // that answer an approval or a numbered pick bypass it entirely, and any failure falls back to today's pipeline.
 import { isMailAlertCommand } from '@/lib/email/mail-alert-commands'
+import { tripAsk } from '@/lib/agent/trip-plan'
+import { personAsk } from '@/lib/agent/people'
 import { ORDER_LIST_RE } from './order-tracking'
 import { PAYMENT_GATE } from './payment-confirmation'
 import Anthropic from '@anthropic-ai/sdk'
@@ -16,6 +18,7 @@ import { inventedApprovalGuard } from '@/lib/services/claude'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { isJobScanNow, jobScanQuery } from './jobs'
 import { nearbyRewrite, placeAsk } from './places-search'
+import { SONNET_MODEL } from '@/lib/services/model-ids'
 
 export type BrainDecision =
   | { kind: 'reply'; text: string }
@@ -34,7 +37,7 @@ export type BrainContext = {
   timezone: string
 }
 
-const MODEL = () => process.env.GOGO_BRAIN_MODEL || 'claude-sonnet-4-5'
+const MODEL = () => process.env.GOGO_BRAIN_MODEL || SONNET_MODEL
 // 4 Nov (owner approved): a cheaper first pass. With GOGO_BRAIN_FAST=on, Haiku 5.5 decides first. Its routing decisions
 // (hand to a handler, flight, later) are used as they are; when it would write the reply itself, or fails, the main
 // model (Sonnet) decides instead, so replies keep today's quality. Off by default until the admin console shows
@@ -83,9 +86,11 @@ export function isExactCommand(text: string): boolean {
   return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t) || /^https?:\/\/\S+$/i.test(t) || DAY_PLAN.test(t) || isJobScanNow(t) || !!jobScanQuery(t) || !!placeAsk(t) || !!nearbyRewrite(t, 'x')
     // 6 Nov live: "what do you alert me about?" was answered from the brain's own idea of its features; the
     // mail-alert rules handler owns that question and the "stop renewals" family.
-    || isMailAlertCommand(t) || ORDER_LIST_RE.test(t)
+    || isMailAlertCommand(t) || ORDER_LIST_RE.test(t) || personAsk(t) !== null
     // 6 Nov live: a forwarded bank confirmation is a payment record, never something to chat about.
     || PAYMENT_GATE.test(t)
+    // 7 Nov live: a trip with a place and dates has a plan handler; the brain asked what it should include.
+    || !!tripAsk(t)
 }
 
 // 28 Oct review (G5): the static rules come first and are cached together with the tool list; the user's name,
@@ -149,7 +154,9 @@ const TRACK_ASK = /\b(?:track(?:ing)?|monitor(?:ing)?|alerts?|notify|notificatio
 const TRACK_REFUSED = /\b(?:don['’]?t|do not|never|no need to|stop|without|not)\s+(?:\w+\s+)?(?:track|monitor|alert|notify|message|msg|text|ping)|\bno\s+(?:need\s+(?:for|to)\s+)?(?:tracking|alerts?|updates?|notifications?|messages?)\b|\b(?:just|only)\s+(?:the\s+)?(?:status|check)\b/i
 // 29 Oct live: "✅ Updated your Mumbai trip hotel stay" was a reply that saved nothing. Any completion claim about a
 // saved thing goes to the handlers instead.
-const COMPLETION_CLAIM = /\b(?:i(?:'ve| have)|done|saved|booked|set|sent|scheduled|added|reminded|updated|changed|noted|recorded|moved|cancelled|canceled|deleted|removed|logged|stored)\b.*\b(?:reminder|booking|flight|email|message|calendar|list|ticket|stay|hotel|trip|event|expense|note|cab|dates?|check-?(?:in|out))\b/i
+// cleanReply preserves newlines, so action-claim checks must recognize claims split over lines.
+// Never trust a multi-line "Done!" statement as proof of a saved reminder or other action.
+const COMPLETION_CLAIM = /\b(?:i(?:'ve| have)|done|saved|booked|set|sent|scheduled|added|reminded|updated|changed|noted|recorded|moved|cancelled|canceled|deleted|removed|logged|stored)\b.*\b(?:reminder|booking|flight|email|message|calendar|list|ticket|stay|hotel|trip|event|expense|note|cab|dates?|check-?(?:in|out))\b/is
 /** The user asked to track/monitor/be messaged about it, in their own words, and did not refuse it. Pure. */
 export function userAskedToTrack(original: string): boolean {
   const t = String(original || '')
@@ -239,6 +246,26 @@ export async function loadBrainContext(p: { telegramId: number; text: string; na
   if (earlier.length) sections['Earlier conversation summary'] = earlier
   const other = otherContextLines(otherFacts)
   if (other.length) sections['Other context'] = other
+  // Same Brain 3.0 Phase 2: the decision context pack. 'shadow' only logs; 'on' adds one bounded section. Off by default,
+  // never blocks the turn (its own timeout), and never changes routing, approvals or STOP handling.
+  if ((globalThis as any).process?.env?.VERCEL_ENV) {
+    try {
+      const cg = await import('./context-graph/build')
+      const mode = typeof cg?.contextGraphMode === 'function' ? cg.contextGraphMode(String(p.telegramId)) : 'off'
+      if (mode !== 'off') {
+        const pack = await withTimeout(cg.buildDecisionContext({ actor: { legacyTelegramId: p.telegramId, timezone, name: p.name, userId: p.userId, whatsappId: p.whatsappId }, objective: p.text, understanding: ctx, facts: otherFacts as any, now }), 2500)
+        if (pack) {
+          console.log('CONTEXT_GRAPH_SHADOW:', JSON.stringify({ mode, decisionId: pack.decisionId, kind: pack.objective.kind, domain: pack.objective.domain, live: pack.objective.liveDataRequired, conflicts: pack.conflicts.length, missing: pack.missing.length, size: pack.size, warnings: pack.warnings }))
+          if (mode === 'on') {
+            const lines = cg.renderDecisionContext(pack); if (lines.length) sections['Decision context'] = lines
+            // Phase 4: link this turn's decision id to the pack it was made from. Outcome is 'waiting' here (decided and
+            // learned by the existing v2 path); the row is the join key, it teaches nothing by itself.
+            void import('./decision-trace').then(dt => dt.recordDecisionTrace({ legacyTelegramId: p.telegramId }, dt.buildDecisionTrace({ decisionId: pack.decisionId, contextPackRef: `pack:${pack.decisionId}`, objectiveKind: pack.objective.kind, status: 'running', trace: pack.assertions.slice(0, 20).map(a => ({ at: pack.generatedAt, node: a.predicate, type: 'READ' as const, outcome: a.status, evidenceClass: a.evidenceClass })) }))).catch((e: any) => console.error('DECISION_TRACE_WRITE_FAILED:', String(e?.message || e).slice(0, 120)))
+          }
+        }
+      }
+    } catch (e: any) { console.error('CONTEXT_GRAPH_HOOK_FAILED:', String(e?.message || e).slice(0, 120)) }
+  }
   const trackedFlights = [...new Set((flights as any[]).map(w => {
     const f = w.condition_json?.adHocFlight || {}
     return f.flightNo ? `${f.flightNo}${f.from && f.to ? ` (${f.from} → ${f.to})` : ''}${w.active ? '' : ' [tracking ended]'}` : ''
@@ -479,8 +506,21 @@ export async function answerFollowups(p: { runId: string; telegramId: number; se
       }
       const text = inventedApprovalGuard(clean((res?.content || []).find((b: any) => b.type === 'tool_use')?.input?.text, 1200))
       if (!text) continue
-      await p.send(text)
-      await supabaseAdmin.from('conversations').insert({ telegram_id: p.telegramId, role: 'assistant', content: text })
+      const receipt = await p.send(text)
+      // A fulfilled send promise is not evidence of provider acceptance: preserve
+      // unknown-outcome no-retry, but do not fabricate an answered conversation.
+      const sid = receipt && typeof receipt === 'object' && 'sid' in receipt
+        ? String((receipt as { sid?: unknown }).sid || '').trim()
+        : ''
+      if (!sid) {
+        console.warn('BRAIN_FOLLOWUP_ACCEPTANCE_UNKNOWN:', JSON.stringify({ runId: p.runId, stepId: step.id }))
+        continue
+      }
+      const { error: historyError } = await supabaseAdmin.from('conversations').insert({ telegram_id: p.telegramId, role: 'assistant', content: text })
+      if (historyError) {
+        console.error('BRAIN_FOLLOWUP_HISTORY_FAILED:', JSON.stringify({ runId: p.runId, stepId: step.id }))
+        continue
+      }
       answered++
     } catch (err: any) { console.error('BRAIN_FOLLOWUP_FAILED:', clean(err?.message || err, 120)) }
   }

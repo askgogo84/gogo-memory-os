@@ -88,9 +88,24 @@ export function receiptVerdict(p: PaymentConfirmation, mails: Mail[]): string {
   const words = p.merchant.toLowerCase().split(/\s+/).filter(w => w.length > 2 && !/^(?:limited|ltd|pvt|private|the|and)$/.test(w))
   const amountRe = new RegExp(String(Math.round(p.amount)).replace(/\B(?=(\d{3})+(?!\d))/g, ',?'))
   const about = mails.filter(m => amountRe.test(`${m.subject} ${m.snippet || ''}`) || [p.reference, p.transactionId].some(r => r && `${m.subject} ${m.snippet || ''}`.includes(r)))
-  const merchantMail = about.find(m => words.some(w => m.from.toLowerCase().includes(w)) || /\b(?:receipt|credited|received|acknowledg|emi\s+received|payment\s+received|thank you for (?:your )?payment)\b/i.test(`${m.subject} ${m.snippet || ''}`) && !GATEWAY.test(m.from))
-  // A reminder or a failure from a gateway is not a receipt (6 Nov: an Amazon Pay "Payment Reminder" for the same amount).
-  const confirms = (m: Mail) => /\b(?:successful|success|received|confirm\w*|completed|processed|paid)\b/i.test(`${m.subject} ${m.snippet || ''}`) && !/\b(?:reminder|due\s+on|failed|unsuccessful|declined)\b/i.test(m.subject)
+  // Do not infer a paid receipt from a positive word in a *negative* status notice.
+  // Both the subject and snippet are untrusted excerpts: the subject may say
+  // "Confirmation" while the snippet says "could not be processed".
+  const confirms = (m: Mail) => {
+    const evidence = `${m.subject} ${m.snippet || ''}`
+    if (/\b(?:reminder|overdue|past\s+due|due\s+(?:on|by)|fail(?:ed|ure)?|unsuccessful|declin(?:ed|e)|reject(?:ed|ion)|revers(?:ed|al)|refund(?:ed|s)?|return(?:ed)?|cancel(?:led|ed|ation)|pending|processing|awaiting|initiated|scheduled|in\s+progress)\b/i.test(evidence)) return false
+    if (/\b(?:not\s+(?:yet\s+)?(?:paid|received|processed|completed|confirmed|successful|successfully)|could\s+not\s+(?:be\s+)?(?:paid|received|processed|completed|confirmed)|couldn't\s+(?:be\s+)?(?:paid|received|processed|completed|confirmed)|unable\s+to\s+(?:pay|process|complete|confirm|receive)|will\s+be\s+(?:paid|processed|completed)|(?:has(?:n't| not)|have(?:n't| not)|was(?:n't| not)|were(?:n't| not)|is(?:n't| not))\s+(?:(?:been|yet|successfully)\s+){0,2}(?:paid|received|processed|completed|confirmed|successful))\b/i.test(evidence)) return false
+    // Require an affirmative completion term about a payment, not "confirmation"
+    // or "processing" on its own.
+    return /\b(?:successful(?:ly)?|success|received|confirmed|completed|processed|paid)\b/i.test(evidence)
+      && /\b(?:payment|transaction|amount|emi|order|loan)\b/i.test(evidence)
+  }
+  // Merchant branding or receipt-like keywords alone can appear in a failed-payment
+  // notice. Bank/gateway senders must not be represented as a merchant receipt.
+  const merchantMail = about.find(m => confirms(m)
+    && !BANK.test(m.from) && !GATEWAY.test(m.from)
+    && (words.some(w => m.from.toLowerCase().includes(w))
+      || /\b(?:receipt|credited|received|acknowledg|emi\s+received|payment\s+received|thank you for (?:your )?payment)\b/i.test(`${m.subject} ${m.snippet || ''}`)))
   const gatewayMail = about.find(m => GATEWAY.test(`${m.from} ${m.subject}`) && confirms(m) && m !== merchantMail)
   // 6 Nov live: HDFC's "Confirmation of Payment Using HDFC NetBanking" is the bank confirming the payment went out.
   const bankMail = about.find(m => BANK.test(m.from) && confirms(m) && m !== merchantMail)
