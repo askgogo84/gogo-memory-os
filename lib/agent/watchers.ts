@@ -448,9 +448,17 @@ async function createWebIdea(telegramId: string, condition: WebSearchWatcherCond
 
 async function sendWhatsAppIfWanted(telegramId: string, delivery: WatcherDelivery, message: string) {
   if (delivery !== 'whatsapp' && delivery !== 'both') return
-  const tg = Number(telegramId)
-  if (!Number.isFinite(tg)) return
-  const { data } = await supabaseAdmin.from('users').select('whatsapp_id').eq('telegram_id', tg).maybeSingle()
+  // Watcher owner IDs are PostgreSQL BIGINTs. Number(owner) rounds distinct owners
+  // above 2^53 and could send a private alert to another account's WhatsApp.
+  if (typeof telegramId !== 'string' || !/^(?:0|[1-9]\d{0,18}|-[1-9]\d{0,18})$/.test(telegramId)) return
+  const owner = BigInt(telegramId)
+  if (owner < BigInt('-9223372036854775808') || owner > BigInt('9223372036854775807')) return
+  const { data, error } = await supabaseAdmin.from('users')
+    .select('telegram_id, whatsapp_id').eq('telegram_id', telegramId).maybeSingle()
+  if (error) throw new Error('watch_alert_owner_lookup_failed')
+  // The service-role result must echo the requested exact owner before egress.
+  // An imprecise or absent owner echo is not permission to deliver anything.
+  if (String(data?.telegram_id ?? '') !== telegramId) return
   const phone = String(data?.whatsapp_id || '').trim()
   if (!phone) return
   await sendWhatsAppMessage(phone, message)
@@ -633,7 +641,7 @@ async function watcherActor(telegramId:string|number):Promise<AgentActor|null> {
   if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner) || !Number.isSafeInteger(legacy) || String(legacy) !== owner) return null
 
   const {data,error}=await supabaseAdmin.from('users')
-    .select('id,telegram_id,whatsapp_id,name')
+    .select('id,telegram_id,whatsapp_id,name,gmail_email,timezone')
     .eq('telegram_id', legacy)
     .maybeSingle()
   if(error)throw new Error(`email_triage_user_read_failed:${error.message}`)
@@ -644,7 +652,77 @@ async function watcherActor(telegramId:string|number):Promise<AgentActor|null> {
     legacyTelegramId: legacy,
     whatsappId:String(data.whatsapp_id),
     name:String(data.name||'Gogo'),
+    ...(data.timezone?{timezone:String(data.timezone)}:{}),
+    ...(data.gmail_email?{gmailEmail:String(data.gmail_email).toLowerCase()}:{}),
+  } as AgentActor
+}
+
+// One WhatsApp message per email that needs the person (payments failed, money leaving, deadlines, security, replies
+// waiting), each sent once, quiet hours and a daily cap from the watch's mailAlerts rules. Orders are alerted by the
+// order-tracking step that follows. Read-only.
+// The per-email and legacy digest paths must both check order problems. Keep the
+// original receipt-backed delivery key and alerted IDs; no extra fetch or send
+// on already-alerted orders, and unknown delivery outcomes are never retried
+// with a new key. Owner/recipient authorization remains in deliverWatchAlert.
+async function continueInboxOrderAlerts(watcher:any,condition:InboxTriageWatcherCondition,actor:AgentActor,telegramId:string,now:Date){
+  // Order tracking (6 Nov, owner): one message per order problem or missed delivery day, from the shop's own emails.
+  let orderTracking=watcher.last_state_json?.orderTracking||null
+  try{
+    const ot=await import('./order-tracking')
+    const orders=await ot.readOrders(actor as any)
+    const sentIds:string[]=Array.isArray(orderTracking?.alerted)?orderTracking.alerted.map(String):[]
+    const alerts=ot.orderAlerts(orders,sentIds,now.getTime())
+    if(alerts.length&&condition.delivery!=='app'){
+      const key='orders/'+watcher.id+'/'+createHash('sha256').update(alerts.map(a=>a.id).sort().join('\n')).digest('hex')
+      const message=`📦 *Order update*\n\n${alerts.map(a=>a.line).join('\n\n')}\n\nFrom the shop's emails. Say "track my orders" for all of them.`
+      const delivery=await deliverWatchAlert({watcherId:String(watcher.id),owner:telegramId,key,due:now.toISOString(),message,condition:watcher.condition_json,topic:'watches',thread:{kind:'order_alert',data:{orderShop:(alerts[0] as any)?.shop||null,merchant:(alerts[0] as any)?.shop||null,subject:(alerts[0] as any)?.label||(alerts[0] as any)?.line||null}}})
+      if(delivery.accepted||['suppressed','cancelled','app_only'].includes(delivery.state))orderTracking={alerted:[...alerts.map(a=>a.id),...sentIds].slice(0,200),checkedAt:now.toISOString()}
+      console.log('ORDER_ALERT:',JSON.stringify({alerts:alerts.length,state:delivery.state}))
+    }else orderTracking={alerted:[...(condition.delivery==='app'?alerts.map(a=>a.id):[]),...sentIds].slice(0,200),checkedAt:now.toISOString()}
+  }catch(err:any){console.error('ORDER_TRACKING_FAILED:',String(err?.message||err).slice(0,120))}
+  return orderTracking
+}
+
+async function processMailAlerts(watcher:any,condition:InboxTriageWatcherCondition,actor:AgentActor,telegramId:string,fresh:any[],seen:string[],messages:any[],now:Date) {
+  const ma=await import('@/lib/email/mail-alerts')
+  const rules=ma.normalizeRules((watcher.condition_json as any)?.mailAlerts)
+  const tz=(actor as any).timezone||'Asia/Kolkata'
+  const prior:any=watcher.last_state_json?.mailAlerts||null
+  const attention=await import('@/lib/email/attention-store').then(m=>m.loadRules(Number(telegramId))).catch(()=>[] as any[])
+  // Context the person would want with the alert: today's meetings and saved trips. Best effort, never required.
+  const today=await Promise.race([
+    import('./calendar-read').then(m=>m.executeReadOnlyCalendarStep({actor,instruction:'what is on my calendar today',missionText:'what is on my calendar today'} as any))
+      .then((out:any)=>Array.isArray(out?.output?.events)?out.output.events.filter((e:any)=>/T\d{2}:\d{2}/.test(String(e.start||''))).map((e:any)=>({summary:String(e.summary||''),start:String(e.start),end:e.end?String(e.end):undefined,attendees:(e.attendees||[]).map((a:any)=>({email:String(a.email||'')}))})):[]),
+    new Promise<any[]>(r=>setTimeout(()=>r([]),6000)),
+  ]).catch(()=>[] as any[])
+  const trips=await supabaseAdmin.from('travel_tickets').select('from_city,to_city,depart_at,arrive_at').eq('telegram_id',Number(telegramId))
+    .gte('depart_at',new Date(now.getTime()-2*86_400_000).toISOString()).lte('depart_at',new Date(now.getTime()+14*86_400_000).toISOString()).order('depart_at',{ascending:true}).limit(4)
+    .then(({data}:any)=>(data||[]).map((t:any)=>({fromCity:t.from_city,toCity:t.to_city,departAt:String(t.depart_at),returnAt:null})),()=>[])
+  const emails=fresh.map(ma.toAttentionEmail).filter((e:any):e is NonNullable<typeof e>=>!!e)
+  const {alerts,deferred,state,quiet}=ma.selectAlerts(emails,{rules,attention,state:prior,ctx:{name:actor.name,timezone:tz,now:now.getTime(),today,trips,gmailEmail:(actor as any).gmailEmail||null},ownEmail:(actor as any).gmailEmail||null})
+  let sent=0
+  const alerted:string[]=[]
+  for(const a of alerts){
+    const key='mail/'+watcher.id+'/'+createHash('sha256').update(a.id).digest('hex').slice(0,24)
+    if(condition.delivery==='app'){alerted.push(a.id);continue}
+    const delivery=await deliverWatchAlert({watcherId:String(watcher.id),owner:telegramId,key,due:now.toISOString(),message:a.message,condition:watcher.condition_json,topic:a.topic,thread:{kind:'mail_alert',data:ma.alertThreadData(a.kind,a.scored,(actor as any).gmailEmail||null)}})
+    if(delivery.accepted||['suppressed','cancelled','app_only'].includes(delivery.state)){alerted.push(a.id);sent+=delivery.accepted?1:0}
+    else console.error('MAIL_ALERT_DELIVERY:',JSON.stringify({kind:a.kind,state:delivery.state}))
   }
+  // Emails alerted or judged not worth an alert are seen; deferred ones (quiet hours, daily cap) stay fresh for the next check.
+  const alertedSet=new Set(alerted)
+  const deferredIds=new Set(alerts.filter(a=>!alertedSet.has(a.id)).map(a=>a.id))
+  const waitingIds=new Set(deferred)
+  const consumed=messages.map((m:any)=>String(m?.id||'')).filter((id:string)=>id&&!deferredIds.has(id)&&!waitingIds.has(id))
+  const nextSeen=Array.from(new Set([...alerted,...consumed,...seen])).slice(0,160)
+  // #1321 per-email mode must not swallow the independently promised order watch.
+  const orderTracking=await continueInboxOrderAlerts(watcher,condition,actor,telegramId,now)
+  const nextState={...(watcher.last_state_json||{}),seenMessageIds:nextSeen,mailAlerts:{...state,alerted:[...alerted,...(prior?.alerted||[])].slice(0,400)},orderTracking,pendingInboxAlert:null,lastCheckedAt:now.toISOString()}
+  await supabaseAdmin.from('agent_watchers').update({last_state_json:nextState,last_checked_at:now.toISOString(),
+    next_check_at:new Date(now.getTime()+(quiet?60:condition.cadenceMinutes)*60_000).toISOString(),updated_at:now.toISOString()}).eq('id',watcher.id).eq('telegram_id',telegramId)
+  console.log('MAIL_ALERTS:',JSON.stringify({fresh:fresh.length,alerts:alerts.length,sent,deferred:deferred.length,quiet,today:today.length,trips:trips.length}))
+  if(alerted.length)await writeActivity(telegramId,`Mail alerts: ${alerted.length} email(s) flagged.`,{watcher_id:watcher.id,type:'email_triage',kinds:alerts.map(a=>a.kind)}).catch(()=>{})
+  return {triggered:alerted.length>0,failed:false}
 }
 
 async function processInboxTriageWatcher(watcher:any,now:Date) {
@@ -697,6 +775,10 @@ async function processInboxTriageWatcher(watcher:any,now:Date) {
   const seen=Array.isArray(watcher.last_state_json?.seenMessageIds)?watcher.last_state_json.seenMessageIds.map(String):[]
   const seenSet=new Set(seen)
   const fresh=messages.filter((m:any)=>m?.id&&!seenSet.has(String(m.id)))
+  // Important mail, one message at a time (owner-approved 6 Nov). Replaces the digest unless the watch asks for it.
+  if((globalThis as any).process?.env?.VERCEL_ENV&&(watcher.condition_json as any)?.digest!==true&&!condition.matchTerms?.length){
+    return processMailAlerts(watcher,condition,actor,telegramId,fresh,seen,messages,now)
+  }
   const scoped=condition.matchTerms?.length
     ? fresh.filter((m:any)=>{
         const hay=`${m?.subject||''} ${m?.from||''} ${m?.snippet||''}`.toLowerCase()
@@ -769,8 +851,11 @@ async function processInboxTriageWatcher(watcher:any,now:Date) {
     })
   }
 
+  const orderTracking=await continueInboxOrderAlerts(watcher,condition,actor,telegramId,now)
+
   const finalState={
     ...(watcher.last_state_json||{}),pendingInboxAlert:null,inboxAlertDelivery:deliveryState,
+    orderTracking,
     seenMessageIds:nextSeen,lastActionCount:actions.length,
     lastActionAt:actions.length?now.toISOString():watcher.last_state_json?.lastActionAt||null,
     workspaceErrorNotified:false,lastError:null,
