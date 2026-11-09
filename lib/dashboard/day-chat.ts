@@ -16,6 +16,8 @@ export function detectDashboardDayIntent(rawText: string): DashboardDayIntent | 
 
   if (
     /\b(what do i have today|what(?:'s| is) on today|what do i need to do today|what am i doing today|show me my day|brief my day|my day today)\b/.test(text)
+    // 2 Nov live: "what's on my schedule today" fell through to general chat, which invented a calendar failure.
+    || /\b(what(?:'s| is) on my (?:schedule|agenda|plate) (?:for )?today|(?:show|check|tell me)(?: me)? my (?:schedule|agenda) (?:for )?today|my (?:schedule|agenda) (?:for )?today|today'?s (?:schedule|agenda))\b/.test(text)
   ) return 'summary'
 
   return null

@@ -25,6 +25,13 @@ import { stopReminderSeries, skipReminderOccurrence } from '@/lib/services/remin
 // recurrence), not just blank one occurrence. skipReminderOccurrenceById writes only
 // remind_at + sent, advancing the pending occurrence so the series keeps regenerating.
 
+// P1 temporary containment: no suffix-linked cross-owner reminder mutations.
+// Historic WhatsApp-owned rows remain intact; session-only writes are safe until
+// an explicit, verified identity link has passed separate security review.
+export async function resolveReminderOwner(sessionTelegramId: number, _id: string): Promise<number> {
+  return sessionTelegramId
+}
+
 export type DeleteReminderResult = { ok: true } | { ok: false; reason: 'not_found' | 'error' }
 
 // Hard-delete one reminder the signed-in user owns. Hard delete (not sent=true) so

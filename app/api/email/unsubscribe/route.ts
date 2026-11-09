@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { verifyUnsubscribeToken } from '@/lib/email/unsubscribe'
+import { exactUnsubscribeOwnerId } from '@/lib/email/unsubscribe-owner'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,17 +18,15 @@ export async function GET(req: NextRequest) {
   const email = (url.searchParams.get('e') || '').trim().toLowerCase()
   const signature = (url.searchParams.get('s') || '').trim()
 
-  if (!telegramId || !email || !verifyUnsubscribeToken(telegramId, email, signature)) {
+  const ownerId = exactUnsubscribeOwnerId(telegramId)
+  if (!ownerId || !email || !verifyUnsubscribeToken(telegramId, email, signature)) {
     return page('That link is not valid', 'Please open your AskGogo dashboard if you want to manage your email preferences.', false)
   }
-
-  const tg = Number(telegramId)
-  if (!Number.isFinite(tg)) return page('That link is not valid', 'Please open your AskGogo dashboard if you want to manage your email preferences.', false)
 
   const { error } = await supabaseAdmin
     .from('users')
     .update({ email_opt_out: true })
-    .eq('telegram_id', tg)
+    .eq('telegram_id', ownerId)
     .eq('email', email)
 
   if (error) {

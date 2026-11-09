@@ -142,7 +142,10 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
       if(isGeneralInboxDigest(text)){
         const store:any=await import('@/lib/email/attention-store').catch(()=>null)
         if(store?.buildAttentionCard){
-          try{const card=await store.buildAttentionCard({legacyTelegramId:actor.legacyTelegramId,timezone:actor.timezone});if(card?.text)return card.text}
+          try{const card=await store.buildAttentionCard({legacyTelegramId:actor.legacyTelegramId,timezone:actor.timezone});if(card?.text){
+            // 6 Nov (owner): important mail includes orders on the way; a missed or delayed delivery is flagged here too.
+            const orders=card.connected===false||!(globalThis as any).process?.env?.VERCEL_ENV?'':await import('./order-tracking').then(async m=>{const list=await m.readOrders(actor);const open=list.filter(o=>!['delivered','cancelled','returned','refunded'].includes(o.status));return open.length?`\n\n📦 *Orders on the way*\n${open.slice(0,4).map(o=>`• ${o.label} · ${o.shop} · ${m.isMissed(o)?'⚠️ due date passed':o.problem?'⚠️ '+o.status.replace('_',' '):o.status.replace(/_/g,' ')}`).join('\n')}`:''},()=>'')
+            return card.text+orders}}
           catch(err:any){console.error('ATTENTION_DIGEST_FAILED:',String(err?.message||err).slice(0,160))}
         }
       }
@@ -206,8 +209,9 @@ async function tryWorkspaceRead(actor:AgentActor,text:string,missionText?:string
     }
   } catch(err:any) {
     const code=String(err?.message||'')
+    if(code==='workspace_email_consent_missing')return 'I haven’t got your OK to read Gmail yet, so I didn’t read any mail. Reconnect Google once at app.askgogo.in/dashboard/settings/email and I’ll read only what you ask for.'
     if(code==='workspace_email_reading_disabled')return 'Gmail is connected, but reading is disabled in your saved privacy preference. I did not read your mail. Reconnecting Google will not change that preference.'
-    if(['workspace_not_connected','workspace_reconnect_required','workspace_scope_required'].includes(code))return workspaceConnectionReply(actor)
+    if(['workspace_not_connected','workspace_reconnect_required','workspace_scope_required'].includes(code)){console.log('WORKSPACE_CONNECT_NEEDED:',JSON.stringify({code,drive:isDriveRead(text)}));return workspaceConnectionReply(actor)}
     console.error('AGENT_WORKSPACE_READ_FAILED:',code.slice(0,120))
     return 'I could not read that Google Workspace context just now. I did not guess or fall back to another account.'
   }
