@@ -233,7 +233,9 @@ async function runDelivery(req: Request) {
         const gmailOwnerId = gmailOwner !== null && String(Number(gmailOwner)) === gmailOwner && Number.isSafeInteger(Number(gmailOwner)) ? Number(gmailOwner) : null
         const got = gm && name && gmailOwnerId !== null ? await gm.latestEmailFrom(gmailOwnerId, name, String(reminder.created_at || reminder.remind_at)).catch(() => undefined) : undefined
         if (name && got) { text = `✅ ${name} replied (${new Date(got.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}: "${got.subject}"). No follow-up needed.`; jobDone = true }
-        else if (name && got === null) { text = `📧 ${name} hasn't replied to your last email yet. Want me to draft a short follow-up?`; jobDone = true }
+        // A null read is inconclusive, never proof of no reply: only the latest 30 INBOX emails are checked (older,
+        // archived or filtered replies are missed) and null also covers Gmail being unconnected or without consent.
+        // So no "hasn't replied" claim is made; the owner gets the plain follow-up question instead.
       }
       if (owner && whatsappTo && !topic && !isBriefing && !followup && Date.now() - started < 25000 &&
         /\bdeparts?\b|^(?:\W*\s*)?(?:to\s+)?(?:check|see|look\s+up|find\s+out|get|tell\s+me|update\s+me|what|how\s+did)\b/i.test(raw)) {
