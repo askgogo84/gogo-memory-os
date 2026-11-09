@@ -114,7 +114,7 @@ export default async function TodayPage() {
     ownerId ? getProfile(ownerId) : Promise.resolve({ ok: false } as const),
     ownerId ? getFriendContacts(ownerId) : Promise.resolve({ ok: true as const, contacts: [], count: 0 }),
     // Today feed (5 Nov): what Gogo noticed while WhatsApp stayed quiet. Never fails the page.
-    ownerId ? getTodayFeed(ownerId).catch(() => null) : Promise.resolve(null),
+    session ? getTodayFeed(session.telegramId).catch(() => null) : Promise.resolve(null),
   ])
 
   const tz = user?.timezone || 'Asia/Kolkata'

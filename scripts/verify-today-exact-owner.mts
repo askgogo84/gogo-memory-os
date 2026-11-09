@@ -64,6 +64,9 @@ async function render(owner: string | number | null) {
       getDashboardMemory: (id: unknown) => record('getDashboardMemory', id, { ok: true, items: [] }),
     },
     '@/lib/dashboard/thread': { countRecurringSeries: () => 0 },
+    // main's later Today feed (5 Nov); inert here — it never fails the page.
+    '@/lib/dashboard/today-feed': { getTodayFeed: async () => null },
+    '@/components/dashboard/today-feed': { TodayFeed: dummy('TodayFeed') },
     '@/components/dashboard/empty-state': { EmptyState: dummy('EmptyState') },
     '@/components/dashboard/whatsapp-chip': { WhatsAppChip: dummy('WhatsAppChip') },
     '@/components/dashboard/reminder-thread': { ReminderThread: dummy('ReminderThread') },
