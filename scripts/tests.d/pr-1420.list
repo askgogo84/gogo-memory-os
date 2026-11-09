@@ -1,0 +1,2 @@
+# tests added by PR #1420
+node scripts/verify-pdf-ticket-log-privacy-testonly.mjs
