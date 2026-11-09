@@ -1,0 +1,2 @@
+# tests added by PR #1421
+npx tsx scripts/verify-lifecycle-email-window-testonly.mts
