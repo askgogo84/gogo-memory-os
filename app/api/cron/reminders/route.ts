@@ -100,39 +100,56 @@ async function resolveUserTimezone(telegramId: number | null | undefined): Promi
   return data?.timezone || 'Asia/Kolkata'
 }
 
+// Privileged reminder-owner lookups must preserve exact signed BIGINT identities.
+// Never round unsafe numbers or infer an owner from a phone-number suffix.
+function exactReminderOwner(value: unknown): string | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  if (typeof value !== 'string' || !/^-?[1-9][0-9]*$/.test(value)) return null
+  try {
+    const id = BigInt(value)
+    return id >= BigInt('-9223372036854775808') && id <= BigInt('9223372036854775807') ? value : null
+  } catch { return null }
+}
+
+// Compare full, already-international numbers only. Missing country codes and
+// differing country prefixes must never elevate friend reminders to owner actions.
+function canonicalReminderWhatsApp(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const raw = value.trim().replace(/^whatsapp:/i, '')
+  if (!/^\+?[1-9][0-9]{10,14}$/.test(raw)) return null
+  return raw.startsWith('+') ? raw.slice(1) : raw
+}
+
 async function findWhatsAppForReminder(reminder: any): Promise<string | null> {
+  const owner = exactReminderOwner(reminder.telegram_id)
+  if (!owner) return null
+  // Even explicit friend destinations need an exactly identified owning actor.
+  // Existing default-off F2F/opt-out gates still determine whether to send.
   if (reminder.whatsapp_to) return reminder.whatsapp_to
-  if (reminder.telegram_id) {
-    const { data } = await supabaseAdmin
-      .from('users')
-      .select('whatsapp_id, phone')
-      .eq('telegram_id', reminder.telegram_id)
-      .maybeSingle()
-    if (data?.whatsapp_id) return data.whatsapp_id
-    if (data?.phone) return data.phone
-  }
-  return null
-}
-
-// Quick-Reply buttons (Done / Snooze 10m / Move to 8pm) mutate the reminder row by
-// the OWNER's telegram_id, so a tap only works for the person who owns the row. A
-// friend-reminder recipient does NOT own the row — their tap 404s ("couldn't find a
-// recent reminder"). So buttons are for the owner's OWN reminders only: true iff the
-// delivery number is the owner's own WhatsApp number. Note both owner and friend
-// reminders carry whatsapp_to, so we compare numbers (last 10 digits) rather than
-// gating on whatsapp_to being set.
-async function reminderGoesToOwner(reminder: any, whatsappTo: string): Promise<boolean> {
-  if (!reminder.telegram_id) return false
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from('users')
-    .select('whatsapp_id')
-    .eq('telegram_id', reminder.telegram_id)
+    .select('telegram_id, whatsapp_id, phone')
+    .eq('telegram_id', owner)
     .maybeSingle()
-  const ownDigits = String(data?.whatsapp_id || '').replace(/\D/g, '').slice(-10)
-  const toDigits = String(whatsappTo || '').replace(/\D/g, '').slice(-10)
-  return !!ownDigits && ownDigits === toDigits
+  if (error || exactReminderOwner(data?.telegram_id) !== owner) return null
+  return data?.whatsapp_id || data?.phone || null
 }
 
+// Owner-only quick replies must bind both exact database owner and complete
+// international WhatsApp identity. A shared ten-digit suffix proves nothing.
+async function reminderGoesToOwner(reminder: any, whatsappTo: string): Promise<boolean> {
+  const owner = exactReminderOwner(reminder.telegram_id)
+  if (!owner) return false
+  const { data, error } = await supabaseAdmin
+    .from('users')
+    .select('telegram_id, whatsapp_id')
+    .eq('telegram_id', owner)
+    .maybeSingle()
+  if (error || exactReminderOwner(data?.telegram_id) !== owner) return false
+  const from = canonicalReminderWhatsApp(data?.whatsapp_id)
+  const to = canonicalReminderWhatsApp(whatsappTo)
+  return from !== null && to !== null && from === to
+}
 
 export async function GET(req: Request) {
   if (!isAuthorized(req)) return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
@@ -202,6 +219,36 @@ async function runDelivery(req: Request) {
         next = nextFutureOccurrence(reminder.recurring_pattern, new Date(reminder.remind_at), new Date()).toISOString()
       }
       const timezone = reminder.timezone || await resolveUserTimezone(reminder.telegram_id)
+      // 29 Oct live: a reminder that asks Gogo to check something (election results, a score, a status) and the
+      // owner's own flight departure reminder now carry the answer: the live lookup runs here and its result is
+      // sent. Any failure leaves the plain reminder untouched.
+      let jobDone = false
+      // A follow-up check ("has Nithin replied to your last email?"): look in Gmail first; only nudge without a reply.
+      if (raw.startsWith('📧 Follow-up check:') && !followup && Date.now() - started < 25000) {
+        const rw = await import('@/lib/agent/reply-watch').catch(() => null)
+        const name = rw?.replyCheckName(raw)
+        const gm = name ? await import('@/lib/bot/handlers/gmail-read').catch(() => null) : null
+        const got = gm && name ? await gm.latestEmailFrom(Number(reminder.telegram_id), name, String(reminder.created_at || reminder.remind_at)).catch(() => undefined) : undefined
+        if (name && got) { text = `✅ ${name} replied (${new Date(got.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}: "${got.subject}"). No follow-up needed.`; jobDone = true }
+        else if (name && got === null) { text = `📧 ${name} hasn't replied to your last email yet. Want me to draft a short follow-up?`; jobDone = true }
+      }
+      if (owner && whatsappTo && !topic && !isBriefing && !followup && Date.now() - started < 25000 &&
+        /\bdeparts?\b|^(?:\W*\s*)?(?:to\s+)?(?:check|see|look\s+up|find\s+out|get|tell\s+me|update\s+me|what|how\s+did)\b/i.test(raw)) {
+        const jobs = await import('@/lib/agent/lookup-reminder').catch(() => null)
+        const code = jobs?.departureFlightCode(raw) || ''
+        if (code) {
+          const ft = await import('@/lib/agent/flight-track').catch(() => null)
+          const live = ft ? await ft.lookupLiveFlight(code, new Date(), timezone || 'Asia/Kolkata', undefined, { telegramId: String(reminder.telegram_id) }).catch(() => null) : null
+          if (ft && live) {
+            const watch = live.status.state === 'landed' ? null : await ft.createFlightTrackWatch(String(reminder.telegram_id), live).catch(() => null)
+            text = label + '\n\n' + ft.formatLiveFlight(live) + (watch ? "\n\n✅ I'm tracking it and will message you on any delay, gate change, take-off and landing." : '')
+            jobDone = true
+          }
+        } else if (jobs?.isLookupReminder(raw)) {
+          const answer = await jobs.answerLookupReminder(raw, { timezone: timezone || 'Asia/Kolkata' })
+          if (answer) { text = '🔎 *Your update: ' + raw.replace(/^to\s+/i, '') + '*\n\n' + answer; jobDone = true }
+        }
+      }
       // Final consent check follows all content preparation. begin RPC fences
       // cancellation/move and commits recurrence + intent before the network boundary.
       if (whatsappTo && await isSuppressed(reminder.telegram_id, whatsappTo)) {
@@ -215,7 +262,20 @@ async function runDelivery(req: Request) {
       if (empty) { await finish('suppressed'); results.push({ id: reminder.id, status: 'suppressed' }); continue }
       let message: any = null
       if (whatsappTo) {
-        if (!topic && !isBriefing && (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID || process.env.TWILIO_REMINDER_CONTENT_SID)) {
+        if (jobDone) {
+          // The answer is free text; outside WhatsApp's 24-hour window it is refused, so fall back to the template.
+          try { message = await sendWhatsApp(whatsappTo, text, null, token) }
+          catch (jobErr) {
+            // A timeout may follow provider acceptance. Never make a second send
+            // without definite rejection: let the outer fence record outcome_unknown.
+            if (!isDefiniteProviderRejection(jobErr)) throw jobErr
+            if (!process.env.TWILIO_REMINDER_CONTENT_SID && !process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID) throw jobErr
+            console.error('REMINDER_JOB_TEXT_REFUSED:', reminder.id, jobErr instanceof Error ? jobErr.message.slice(0, 120) : 'unknown')
+            message = process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID
+              ? await sendWhatsAppReminderButtons(whatsappTo, label, token)
+              : await sendWhatsAppReminderTemplate(whatsappTo, label, token)
+          }
+        } else if (!topic && !isBriefing && (process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID || process.env.TWILIO_REMINDER_CONTENT_SID)) {
           message = process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID && owner
             ? await sendWhatsAppReminderButtons(whatsappTo, label, token)
             : await sendWhatsAppReminderTemplate(whatsappTo, label, token)

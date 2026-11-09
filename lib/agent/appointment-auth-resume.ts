@@ -69,6 +69,7 @@ async function gmailToken(actor: AgentActor) {
     .eq('telegram_id', actor.legacyTelegramId).maybeSingle()
   if (error) throw new Error(`appointment_gmail_credentials_failed:${error.message}`)
   if (!data?.gmail_connected) return null
+  if (await import('./gmail-consent').then(m => m.gmailConsentState(actor.legacyTelegramId)) !== 'on') return null // 4 Nov: affirmative yes only
   let access = decryptGoogleToken(String(data.gmail_access_token || ''))
   const refresh = decryptGoogleToken(String(data.gmail_refresh_token || ''))
   if (!access && refresh) access = await refreshGmailAccessToken(refresh) || ''

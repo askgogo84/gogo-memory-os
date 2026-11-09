@@ -100,9 +100,13 @@ export function parseGmailReplyCommand(text:string){
     || raw.match(/^(?:draft\s+(?:a\s+)?reply|reply|respond)\s+to\s+(?:the\s+)?(.+?)\s+(?:email|mail|message)\s+(?:saying|with|:)\s*(.+)$/i)
   if(!m)return null
   const target=clean(m[1],180)
-  const body=String(m[2]||'').trim().slice(0,6000)
+  // 29 Oct live: "… saying I'll get back by Friday. Don't send." put "Don't send." into the email itself.
+  // A trailing instruction to Gogo is not part of the message, and it makes the request draft-only.
+  const tail=/[\s.,;!-]*\b(?:(?:please\s+)?(?:don'?t|do\s+not|dont)\s+send(?:\s+(?:it|this|yet|anything))*|just\s+(?:draft|show)(?:\s+(?:it|me))*|draft\s+only|show\s+me\s+(?:first|before\s+sending))[\s.!]*$/i
+  const stop=tail.test(String(m[2]||''))
+  const body=String(m[2]||'').replace(tail,'').trim().replace(/\s*[,;]$/,'').slice(0,6000)
   if(!target||!body)return null
-  return {target,body,draftOnly}
+  return {target,body,draftOnly:draftOnly||stop}
 }
 
 async function gmailAccess(actor:AgentActor,{requireSend=false}:{requireSend?:boolean}={}){
@@ -111,6 +115,8 @@ async function gmailAccess(actor:AgentActor,{requireSend=false}:{requireSend?:bo
     .eq('telegram_id',actor.legacyTelegramId).maybeSingle()
   if(error)throw new Error(`gmail_send_user_read_failed:${error.message}`)
   if(!user?.gmail_connected)return {ok:false as const,reason:'gmail_not_connected',user:null,accessToken:''}
+  // 4 Nov: reading threads to reply needs the affirmative Gmail yes too.
+  if(await import('./gmail-consent').then(m=>m.gmailConsentState(actor.legacyTelegramId))!=='on')return {ok:false as const,reason:'gmail_consent_missing',user:null,accessToken:''}
   if(requireSend&&!user?.gmail_send_connected)return {ok:false as const,reason:'gmail_send_not_connected',user,accessToken:''}
   let accessToken=''
   const refresh=decryptGoogleToken(user.gmail_refresh_token)
@@ -123,6 +129,16 @@ async function gmailAccess(actor:AgentActor,{requireSend=false}:{requireSend?:bo
 async function resolveThread(actor:AgentActor,target:string){
   const access=await gmailAccess(actor)
   if(!access.ok)return {access,match:null as any,ambiguous:false}
+  // 28 Oct run: "Draft a reply to my latest email saying …" searched Gmail for the words "my latest".
+  // "my latest / last / most recent email" means the newest thread that needs a reply.
+  if(/^(?:my|the)\s+(?:latest|last|newest|most\s+recent)(?:\s+(?:email|mail|message|one))?$/i.test(target.trim())){
+    const recent=await fetchGmailAttentionThreads(access.accessToken,20)
+    const thread=recent[0]
+    if(!thread)return {access,match:null as any,ambiguous:false}
+    const messages=thread.messages||[]
+    const incoming=[...messages].reverse().find((m:any)=>emailFromHeader(m.from)!==String(access.user?.gmail_email||'').toLowerCase())||messages[messages.length-1]
+    return {access,match:{thread,incoming,score:1},ambiguous:false}
+  }
   let threads=await searchGmailThreads(access.accessToken,target,30)
   if(!threads.length)threads=await fetchGmailAttentionThreads(access.accessToken,20)
   const q=norm(target)

@@ -162,6 +162,9 @@ function isBriefingSettingsIntent(lower: string) {
   )
 }
 
+const SCHEDULED_LOOKUP_SUBJECT = /\b(?:results?|news|score|scores|status|updates?|price|prices|rate|rates|weather|forecast|winner|winning|election|elections|match|verdict|outcome)\b/i
+const SCHEDULED_LOOKUP_TIME = /\b(?:at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)|every\s+(?:day|morning|evening|hour)|in\s+\d+\s+(?:minutes?|hours?))\b/i
+
 export function detectIntent(text: string): DetectedIntent {
   const t = (text || '').trim()
   const lower = t.toLowerCase()
@@ -172,6 +175,9 @@ export function detectIntent(text: string): DetectedIntent {
   const calendarClarification=calendarReadClarificationReply(lower)
   if(calendarClarification)return {type:'calendar_read_clarify',confidence:'high',meta:{calendarReadClarificationReply:calendarClarification}}
   if (isFoodComparisonRequest(t)) return { type: 'food_comparison', confidence: 'high' }
+  // 29 Oct live: "Check the India vs NZ match score at 9 pm on Friday" was answered now. A lookup with a future time is
+  // a reminder; the reminder delivery runs the lookup when it fires (lib/agent/lookup-reminder).
+  if (/^(?:please\s+)?(?:check|see|look\s+up|find\s+out|get)\b/i.test(lower) && SCHEDULED_LOOKUP_SUBJECT.test(lower) && SCHEDULED_LOOKUP_TIME.test(lower)) return { type: 'set_reminder', confidence: 'high' }
   if (/^(hi|hello|hey|start|\/start)$/i.test(lower)) return { type: 'welcome_menu', confidence: 'high' }
   if (/^(?:help|\/help|menu|commands|what can you do)[?!.]*$/i.test(lower)) return { type: 'help_menu', confidence: 'high' }
 
@@ -268,7 +274,9 @@ export function detectIntent(text: string): DetectedIntent {
   // verb, and not an explicit reminder/watch request. hasConcreteFlightCode filters out date
   // fragments so a codeless "did my flight land on 28 September?" is NOT sent to the dedicated
   // status handler (where an empty flight list would let any dated result be summarised).
-  if (!/\b(remind me|remind to|set (?:a )?reminder|reminder for|alert me|notify me|let me know when|keep me posted|keep (?:me )?tracking|watch (?:this|the|my))\b/i.test(lower) &&
+  // 28 Oct run: "6E 2134 was delayed 4 hours, check if I qualify for compensation" is a refund/claim ask, not live status.
+  if (!/\b(?:compensation|refund|reimburse(?:ment)?|claim|complain(?:t)?|dgca|passenger rights)\b/i.test(lower) &&
+      !/\b(remind me|remind to|set (?:a )?reminder|reminder for|alert me|notify me|let me know when|keep me posted|keep (?:me )?tracking|watch (?:this|the|my))\b/i.test(lower) &&
       hasConcreteFlightCode(lower) &&
       /\b(land(?:s|ed|ing)?|arriv(?:e|ed|es|al|ing)|(?:flight )?status|delay(?:ed|s)?|on[- ]time|diverted|departed|take[n]?\s?off|tracker|track(?:ing)?)\b/i.test(lower))
     // Tag as flight status so the executor runs a tracker-scoped STATUS lookup and never a
