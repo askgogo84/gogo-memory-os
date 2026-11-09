@@ -6,8 +6,13 @@ import type { AttentionEmail } from '@/lib/email/attention'
 const BASE = 'https://backend.composio.dev/api/v3.1'
 export const COMPOSIO_CALLBACK = 'https://app.askgogo.in/dashboard/settings/email?connected=google'
 
-export function composioUserId(telegramId: number) {
-  return `askgogo-${telegramId}`
+/** Preserve the persisted owner identity exactly. JS Number can alias distinct BIGINT rows,
+ * so a rounded or non-canonical owner throws before any Composio link or lookup. */
+export function composioUserId(telegramId: string | number) {
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) throw new Error('composio_owner_id_unsafe_number')
+  const id = exactComposioOwnerId(telegramId)
+  if (id === null) throw new Error('composio_owner_id_invalid')
+  return `askgogo-${id}`
 }
 
 export function composioConfigured() {
@@ -51,7 +56,8 @@ export async function gmailAuthConfigId() {
 }
 
 export async function createGmailConnectLink(telegramId: number) {
-  const out = await composio('/connected_accounts/link', { method: 'POST', body: { auth_config_id: await gmailAuthConfigId(), user_id: composioUserId(telegramId), callback_url: COMPOSIO_CALLBACK } })
+  const userId = composioUserId(telegramId) // validate the exact owner before any provider call
+  const out = await composio('/connected_accounts/link', { method: 'POST', body: { auth_config_id: await gmailAuthConfigId(), user_id: userId, callback_url: COMPOSIO_CALLBACK } })
   const url = String(out?.redirect_url || '')
   if (!/^https:\/\//.test(url)) throw new Error('composio_link_missing')
   return url
@@ -129,8 +135,9 @@ export async function toolkitAuthConfigId(toolkit: 'googledrive') {
   return String(id)
 }
 
-export async function createDriveConnectLink(telegramId: number) {
-  const out = await composio('/connected_accounts/link', { method: 'POST', body: { auth_config_id: await toolkitAuthConfigId('googledrive'), user_id: composioUserId(telegramId), callback_url: DRIVE_CALLBACK } })
+export async function createDriveConnectLink(telegramId: string | number) {
+  const userId = composioUserId(telegramId) // validate the exact owner before any provider call
+  const out = await composio('/connected_accounts/link', { method: 'POST', body: { auth_config_id: await toolkitAuthConfigId('googledrive'), user_id: userId, callback_url: DRIVE_CALLBACK } })
   const url = String(out?.redirect_url || '')
   if (!/^https:\/\//.test(url)) throw new Error('composio_link_missing')
   return url

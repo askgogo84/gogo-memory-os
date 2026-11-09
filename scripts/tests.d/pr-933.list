@@ -1,0 +1,2 @@
+# tests added by PR #933
+npx tsx scripts/verify-email-alias-domain.mts

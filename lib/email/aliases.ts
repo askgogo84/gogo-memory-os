@@ -18,9 +18,18 @@ export function aliasAddress(alias: string) {
 
 /** "Divya <divya-k7q2mx@in.askgogo.in>" or the envelope address → "divya-k7q2mx", only for our domain. */
 export function aliasFromAddress(address: string) {
+  // Owner selection requires ONE complete mailbox in the configured inbound domain.
+  // A substring match could route foreign-domain recipients or embedded addresses
+  // into a different user's private inbox. Do not infer a recipient from fragments.
   const domain = INBOUND_DOMAIN.replace(/[.]/g, '\\.')
-  const m = String(address || '').toLowerCase().match(new RegExp(`([a-z0-9]{1,16}-[a-z0-9]{6})(?:\\+[^@]*)?@${domain}`))
-  return m ? m[1] : null
+  const mailbox = `([a-z0-9]{1,16}-[a-z0-9]{6})(?:\\+[a-z0-9._-]{1,64})?@${domain}`
+  const candidate = String(address || '').toLowerCase().trim()
+  // Signed provider envelope recipients are bare mailboxes. Preserve the
+  // legacy single display-name form, but reject lists or malformed wrappers.
+  const bare = candidate.match(new RegExp(`^${mailbox}$`))
+  if (bare) return bare[1]
+  const display = candidate.match(new RegExp(`^[^<>,@\\r\\n]{0,200}<\\s*${mailbox}\\s*>$`))
+  return display ? display[1] : null
 }
 
 export async function getOrCreateAlias(telegramId: number, name?: string | null) {

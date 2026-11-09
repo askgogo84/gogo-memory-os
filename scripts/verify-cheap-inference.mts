@@ -38,6 +38,20 @@ await check('personal classes are refused outright', async () => {
   assert.equal(await cheapComplete({ taskClass: 'gmail' as any, prompt: 'x', scanText: 'inbox', providers: cheapProviders(env) }), null)
   assert.equal(calls.length, 0)
 })
+await check('private data assembled into full provider prompt is denied even when ask is public', async () => {
+  const calls = stub(() => groqOk())
+  assert.equal(await cheapComplete({ taskClass: 'public_web_research',
+    scanText: 'summarise this article', prompt: 'Public article plus private divya@example.com',
+    providers: cheapProviders(env) }), null)
+  assert.equal(calls.length, 0)
+})
+await check('approval records inside full provider prompt are denied', async () => {
+  const calls = stub(() => groqOk())
+  assert.equal(await cheapComplete({ taskClass: 'public_web_research',
+    scanText: 'public research', prompt: 'Summary context\n[APPROVAL id=synthetic] approved payment',
+    providers: cheapProviders(env) }), null)
+  assert.equal(calls.length, 0)
+})
 globalThis.fetch = realFetch
 if (failures.length) { console.error(failures.join('\n')); process.exit(1) }
 console.log('cheap inference: all checks passed')
