@@ -1,3 +1,4 @@
+import './verify-email-attention-owner.mts'
 import assert from 'node:assert/strict'
 import { isGmailVerificationQuery, readGmailSendVerification } from '../lib/agent/gmail-verification'
 import { partitionAttentionRuns, currentWatcherIdeas, watcherSupportsCurrentIdea } from '../lib/agent/attention-state'

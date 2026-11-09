@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto'
 import {isIP} from 'node:net'
-import {browserPageAllowlist} from './browser-page-network'
+import {browserPageAllowlist,FLIGHT_BOOKING_HANDOFF_SITES} from './browser-page-network'
 import {SANDBOX_WORKDIR} from './secure-browser-bootstrap'
 
 // Browserbase is infrastructure, never an authority source. Existing action,
@@ -31,7 +31,16 @@ export const NORMAL_SESSION_TIMEOUT_SECONDS=300
 export const KEEPALIVE_SESSION_TIMEOUT_SECONDS=1200
 // Advanced Stealth (Browserbase Scale plan) makes the browser look like a normal one to sites that refuse automated
 // browsers (amazon.in answered 503 on 15 Oct). Off unless GOGO_BROWSER_ADVANCED_STEALTH=1; CAPTCHAs are still never solved.
-export function managedSessionConfig(projectId:string,contextId:string,owner:string,scope:string,timeoutSeconds:number,keepAlive:boolean,envTag:string,recordSession:boolean,advancedStealth=false){
+// 26 Oct live booking 412f5a03: Google Flights' "Continue to book with Air India" was refused by Browserbase
+// (browserbase.com/navigation-blocked) because the session only allowed google.com. A Google Flights run may
+// hand off to the airlines and Indian agencies in FLIGHT_BOOKING_HANDOFF_SITES, so the session allows those too.
+export function managedAllowedDomains(url:string):string[]{
+  const scope=managedScope(url)
+  let path='';try{path=new URL(url).pathname}catch{}
+  if(scope==='google.com'&&/^\/travel\/flights(?:\/|$)/.test(path))return [scope,...FLIGHT_BOOKING_HANDOFF_SITES]
+  return [scope]
+}
+export function managedSessionConfig(projectId:string,contextId:string,owner:string,scope:string,timeoutSeconds:number,keepAlive:boolean,envTag:string,recordSession:boolean,advancedStealth=false,allowedDomains:string[]=[scope]){
   // keepAlive is ALWAYS true for managed sessions: the broker and the per-wave executor
   // each open their own CDP connection (managed-browser.ts broker connectOverCDP +
   // secure-computer.ts executor connectOverCDP that closes after every runCommand), so a
@@ -43,7 +52,7 @@ export function managedSessionConfig(projectId:string,contextId:string,owner:str
   // debug flag (off unless GOGO_BROWSER_RECORD_SESSIONS==='1').
   return {projectId,region:'ap-southeast-1',timeout:timeoutSeconds,keepAlive,
     proxies:[{type:'browserbase',geolocation:{country:'IN'}}],
-    browserSettings:{context:{id:contextId,persist:true},allowedDomains:[scope],solveCaptchas:false,...(advancedStealth?{advancedStealth:true}:{}),recordSession,logSession:recordSession,ignoreCertificateErrors:false,viewport:{width:1280,height:900}},
+    browserSettings:{context:{id:contextId,persist:true},allowedDomains,solveCaptchas:false,...(advancedStealth?{advancedStealth:true}:{}),recordSession,logSession:recordSession,ignoreCertificateErrors:false,viewport:{width:1280,height:900}},
     userMetadata:{owner,scope,application:'askgogo',app:'askgogo',env:envTag}}
 }
 function connection(data:any){
@@ -92,7 +101,7 @@ export async function resolveManagedSession(owner:string,url:string,store:Store,
       state.contexts[scope]=imported;await store.save(state)
     }
   }
-  const fingerprint=createHash('sha256').update(JSON.stringify({project,scope,policy:browserPageAllowlist(url),version:1,persistent})).digest('hex')
+  const fingerprint=createHash('sha256').update(JSON.stringify({project,scope,policy:browserPageAllowlist(url),domains:managedAllowedDomains(url),version:2,persistent})).digest('hex')
   const connect=async(data:any)=>{try{return connection(data)}catch(error){await api(`sessions/${data.id}`,{status:'REQUEST_RELEASE'}).catch(()=>{});throw error}}
   if(state.session){
     if(!uuid.test(state.session.id))throw Error('managed_browser_session_invalid')
@@ -119,7 +128,7 @@ export async function resolveManagedSession(owner:string,url:string,store:Store,
   if(!uuid.test(state.contexts[scope]))throw Error('managed_browser_context_invalid')
   state.pending='session';await store.save(state)
   const stealth=String(env.GOGO_BROWSER_ADVANCED_STEALTH||'')==='1'
-  const sessionConfig=(withStealth:boolean)=>managedSessionConfig(project,state.contexts[scope],digest,scope,sessionTimeout,true,String(env.VERCEL_ENV||''),recordSessions,withStealth)
+  const sessionConfig=(withStealth:boolean)=>managedSessionConfig(project,state.contexts[scope],digest,scope,sessionTimeout,true,String(env.VERCEL_ENV||''),recordSessions,withStealth,managedAllowedDomains(url))
   // A plan without Advanced Stealth answers 403 (15 Oct live); fall back to a normal session instead of failing every run.
   const created=await api('sessions',sessionConfig(stealth)).catch(async(error:any)=>{
     if(!stealth||String(error?.message||'')!=='managed_browser_provider_http_403')throw error
