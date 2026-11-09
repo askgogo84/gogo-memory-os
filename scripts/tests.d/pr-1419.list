@@ -1,0 +1,2 @@
+# tests added by PR #1419
+npx tsx scripts/verify-secondbrain-share-audit-atomicity-testonly.mts

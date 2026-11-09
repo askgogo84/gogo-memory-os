@@ -95,6 +95,11 @@ export async function audit(workspaceId: string, actor: string, action: string, 
   check(error, 'audit')
 }
 
+/** Records that a just-audited write did not happen. The audit log is append-only, so the earlier line stays. */
+async function auditBestEffort(workspaceId: string, actor: string, action: string, target: string | null) {
+  try { await audit(workspaceId, actor, action, target, {}) } catch { console.error('WORKSPACE_AUDIT_FOLLOWUP_FAILED:', action) }
+}
+
 /** No Number() on workspace owner identities: Postgres BIGINT has 64-bit precision. */
 function exactWorkspaceNameOwner(value: unknown): string | null {
   if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
@@ -448,10 +453,12 @@ export async function shareArtifact(telegramId: string, workspaceId: string, art
     .select('id,telegram_id,title').eq('id', id).eq('telegram_id', membership.telegramId).maybeSingle()
   check(error, 'share_lookup')
   if (!artifact || String(artifact.telegram_id) !== membership.telegramId) throw new WorkspaceError('artifact_not_found')
+  // Durable audit evidence first: if it cannot be written, the personal report is never exposed.
+  await audit(membership.workspaceId, membership.telegramId, 'artifact.share', id, {})
   const { error: shareError } = await supabaseAdmin.from('workspace_artifacts')
     .upsert({ workspace_id: membership.workspaceId, artifact_id: id, shared_by: membership.telegramId }, { onConflict: 'workspace_id,artifact_id', ignoreDuplicates: true })
+  if (shareError) await auditBestEffort(membership.workspaceId, membership.telegramId, 'artifact.share_failed', id)
   check(shareError, 'share')
-  await audit(membership.workspaceId, membership.telegramId, 'artifact.share', id, {})
   return { ok: true as const }
 }
 
@@ -465,9 +472,11 @@ export async function unshareArtifact(telegramId: string, workspaceId: string, a
   check(error, 'unshare_lookup')
   if (!share) throw new WorkspaceError('artifact_not_found')
   if (share.shared_by !== membership.telegramId && !canRole(membership.role, 'remove_member')) throw new WorkspaceError('workspace_forbidden')
+  // Audit first: an access change that cannot be evidenced is not made (the share stays as it was).
+  await audit(membership.workspaceId, membership.telegramId, 'artifact.unshare', id, { sharedBy: share.shared_by })
   const { error: deleteError } = await supabaseAdmin.from('workspace_artifacts').delete()
     .eq('workspace_id', membership.workspaceId).eq('artifact_id', id)
+  if (deleteError) await auditBestEffort(membership.workspaceId, membership.telegramId, 'artifact.unshare_failed', id)
   check(deleteError, 'unshare')
-  await audit(membership.workspaceId, membership.telegramId, 'artifact.unshare', id, { sharedBy: share.shared_by })
   return { ok: true as const }
 }
