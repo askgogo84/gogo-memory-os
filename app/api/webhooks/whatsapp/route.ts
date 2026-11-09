@@ -1059,6 +1059,15 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // delivery, booking, bill or security notice is read as what it is, with one offer; "yes" within 30 min does
     // that one thing (log the expense, set the reminder, save the ticket, check the order, find the receipt). Read-only otherwise.
     if ((globalThis as any).process?.env?.VERCEL_ENV) {
+      // 7 Nov: a short reply to Gogo's own proactive message ("it was paid", "check the mail again and track the order",
+      // "open it") is read against that message first (lib/agent/open-thread), never as a new question to the brain.
+      const threaded = text.length <= 160 ? await import('@/lib/agent/open-thread').then(async m => m.tryThreadReply(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), text), () => null) : null
+      if (threaded) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', threaded)
+        await sendWhatsAppMessage(from, threaded)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
       const pay = await import('@/lib/agent/shared-content').then(async m => (await m.tryShared(String(resolvedUser.telegramId), text))
         || (text.length <= 24 ? m.takeSharedFollowUp(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), text) : null), () => null)
       if (pay) {
