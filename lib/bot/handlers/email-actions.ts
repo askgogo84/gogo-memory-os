@@ -27,6 +27,8 @@ function connectReply(telegramId: number, prefix: string) {
 }
 
 export async function buildEmailActionReply(telegramId: number, input: string) {
+  // 4 Nov review P3: no caller today; gated anyway so it can never read mail without the saved Gmail yes.
+  if ((await import('@/lib/agent/gmail-consent').then(m => m.gmailConsentState(telegramId)).catch(() => 'missing')) !== 'on') return "I haven’t got your OK to read Gmail yet, so I didn’t read any mail. Reconnect Google once at app.askgogo.in/dashboard/settings/email."
   const { data: user } = await supabaseAdmin
     .from('users')
     .select('name, gmail_connected, gmail_access_token, gmail_refresh_token, gmail_email')

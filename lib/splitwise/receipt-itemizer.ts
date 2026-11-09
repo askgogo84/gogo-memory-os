@@ -34,23 +34,25 @@ async function findGroup(phone: string, groupName?: string | null) {
   const memberGroupIds = await groupIdsForPhone(phone)
 
   if (cleanName) {
-    const exact = await supabaseAdmin
+    // The user named a group: never silently record a receipt in another group's
+    // latest ledger, and never interpret % or _ in the name as SQL LIKE wildcards.
+    // Read only groups the caller owns or has joined, then match literal text.
+    const { data, error } = await supabaseAdmin
       .from('split_groups')
       .select('id,name,owner_phone,currency')
       .or(`owner_phone.eq.${phone},id.in.(${memberGroupIds})`)
-      .ilike('name', cleanName)
       .order('created_at', { ascending: false })
-      .limit(1)
-    if (exact.data?.[0]) return exact.data[0]
-
-    const fuzzy = await supabaseAdmin
-      .from('split_groups')
-      .select('id,name,owner_phone,currency')
-      .or(`owner_phone.eq.${phone},id.in.(${memberGroupIds})`)
-      .ilike('name', `%${cleanName}%`)
-      .order('created_at', { ascending: false })
-      .limit(1)
-    if (fuzzy.data?.[0]) return fuzzy.data[0]
+      .limit(101)
+    // A truncated or failed owner-scoped read cannot establish a unique match.
+    if (error || !data || data.length >= 101) throw new Error('split_group_lookup_unavailable')
+    const literal = (value: unknown) => String(value || '').trim().replace(/\s+/g, ' ').toLowerCase()
+    const requested = literal(cleanName)
+    const exact = data.filter((row) => literal(row.name) === requested)
+    if (exact.length > 1) throw new Error('split_group_ambiguous')
+    if (exact.length === 1) return exact[0]
+    const partial = data.filter((row) => literal(row.name).includes(requested))
+    if (partial.length > 1) throw new Error('split_group_ambiguous')
+    return partial.length === 1 ? partial[0] : null
   }
 
   const latest = await supabaseAdmin

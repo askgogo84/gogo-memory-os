@@ -5,10 +5,13 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp, sendWhatsAppReminderTemplate } from '@/lib/whatsapp'
 import { retiredRunReason, isRelevantOpenLoop } from './task-lifecycle'
 import { decodeHtmlEntities } from './google-workspace-read'
+import { isEmailLoop, selectProactiveEmails, formatProactiveEmailCard, type EmailLoop } from '@/lib/email/proactive'
 
 const PULSE_COOLDOWN_MINUTES=180
 const MAX_USERS_PER_PASS=80
 
+// Exact owner (P0.1): a safe id is queried as its exact number, a larger id as its exact decimal string.
+function ownerKey(telegramId:string):number|string{const n=Number(telegramId);return Number.isSafeInteger(n)&&String(n)===telegramId?n:telegramId}
 function clean(value:unknown,max=500){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}
 function fingerprint(parts:string[]){return createHash('sha256').update(parts.join('|')).digest('hex').slice(0,32)}
 
@@ -72,7 +75,7 @@ async function candidateUserIds(){
 
 async function lastPulseAt(telegramId:string,withinMinutes:number):Promise<string|null>{
   const {data,error}=await supabaseAdmin.from('agent_activity').select('created_at')
-    .eq('telegram_id',telegramId).eq('event_type','autonomy_pulse_sent')
+    .eq('telegram_id',telegramId).in('event_type',['autonomy_pulse_sent','autonomy_email_sent'])
     .gte('created_at',new Date(Date.now()-withinMinutes*60_000).toISOString())
     .order('created_at',{ascending:false}).limit(1).maybeSingle()
   if(error)console.error('AUTONOMY_PULSE_LAST_READ_FAILED:',error.message)
@@ -128,6 +131,23 @@ async function recentBrowserNotices(telegramId:string){
   return new Set<string>((data||[]).flatMap((row:any)=>Array.isArray(row.metadata_json?.item_keys)?row.metadata_json.item_keys:[]))
 }
 
+// Keys of everything surfaced proactively in the last `hours` (pulse lines and email cards).
+async function recentSurfacedKeys(telegramId:string,hours:number){
+  const {data,error}=await supabaseAdmin.from('agent_activity').select('event_type,metadata_json,created_at')
+    .eq('telegram_id',telegramId).in('event_type',['autonomy_pulse_sent','autonomy_email_sent'])
+    .gte('created_at',new Date(Date.now()-hours*3600_000).toISOString())
+    .order('created_at',{ascending:false}).limit(300)
+  if(error)throw new Error('autonomy_pulse_history_read_failed')
+  return (data||[]).map((row:any)=>({type:String(row.event_type),at:String(row.created_at||''),keys:Array.isArray(row.metadata_json?.item_keys)?row.metadata_json.item_keys.map(String):[] as string[]}))
+}
+
+function localDay(iso:string|number,timezone:string){
+  try{return new Intl.DateTimeFormat('en-CA',{timeZone:timezone||'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(iso))}catch{return ''}
+}
+
+const EVENT_BADGE:Record<string,string>={flight:'✈️',travel:'✈️',train:'🚆',hotel:'🏨',stay:'🏨',hotel_stay:'🏨',reservation:'🍽️',dining:'🍽️',meeting:'📅',appointment:'📅',event:'🎟️',movie:'🎬',cab:'🚕'}
+function eventBadge(type:unknown){return EVENT_BADGE[String(type||'').toLowerCase()]||'📅'}
+
 async function buildPulse(telegramId:string,timezone:string,prefs:AlertPreferences=DEFAULT_ALERT_PREFERENCES):Promise<{items:PulseItem[];fingerprint:string}>{
   const nowIso=new Date().toISOString()
   const future72=new Date(Date.now()+72*3600_000).toISOString()
@@ -172,6 +192,8 @@ async function buildPulse(telegramId:string,timezone:string,prefs:AlertPreferenc
   }
   for(const loop of openLoops||[]){
     if(!isRelevantOpenLoop(loop))continue
+    // Email goes only through the selective email card (at most 2 a day), never as a pulse line.
+    if(isEmailLoop(loop))continue
     if(loop.next_check_at && Date.parse(String(loop.next_check_at))>Date.now())continue
     const score=Math.round(Math.max(0,Math.min(1,Number(loop.priority||0.8)))*100)
     const title=usefulOpenLoopTitle(loop.title)
@@ -181,12 +203,15 @@ async function buildPulse(telegramId:string,timezone:string,prefs:AlertPreferenc
     const source=openLoopSourceLink(loop)
     items.push({key:`open_loop:${loop.id}`,score,line:`${badge} ${title}${action&&action.toLowerCase()!==title.toLowerCase()?` — ${action}`:''}${source?`\n   ${source}`:''}`,kind:'open_loop',topic:topicForPulse('open_loop',loop)})
   }
+  // 1 Nov live: the same hotel stay was repeated in every pulse. An upcoming event is mentioned once a day.
+  const eventKeysToday=events.length?new Set((await recentSurfacedKeys(telegramId,20)).flatMap(r=>r.keys).filter(k=>k.startsWith('event:'))):new Set<string>()
   for(const e of events||[]){
+    if(eventKeysToday.has(`event:${e.id}:${e.start_at}`))continue
     const hours=(new Date(e.start_at).getTime()-Date.now())/3600_000
     const score=hours<=24?94:hours<=48?84:76
     const when=fmtWhen(e.start_at,timezone)
     const where=clean(e.location,100)
-    items.push({key:`event:${e.id}:${e.start_at}`,score,line:`✈️ ${clean(e.title,150)} — ${when}${where?` · ${where}`:''}`,kind:'life_event'})
+    items.push({key:`event:${e.id}:${e.start_at}`,score,line:`${eventBadge(e.event_type)} ${clean(e.title,150)} — ${when}${where?` · ${where}`:''}`,kind:'life_event'})
   }
   const suppressedRunErrors=new Set([
     'stale_provider_access_limited',
@@ -264,16 +289,20 @@ async function hasRecentWhatsAppSession(telegramId:string){
 
 async function sendPulse(telegramId:string){
   const {data:user,error}=await supabaseAdmin.from('users')
-    .select('telegram_id,whatsapp_id,name,timezone')
-    .eq('telegram_id',Number(telegramId))
+    .select('telegram_id,whatsapp_id,name,timezone,gmail_email')
+    .eq('telegram_id',ownerKey(telegramId))
     .maybeSingle()
-  if(error||!user?.whatsapp_id)return {sent:false,reason:'user_unavailable'}
+  if(error||!user?.whatsapp_id||String(user.telegram_id)!==telegramId)return {sent:false,reason:'user_unavailable'}
   const timezone=String(user.timezone||'Asia/Kolkata')
   const hour=localHour(timezone)
   // Duet parity: the person's own quiet hours (default 10 pm–7 am, as before) and check frequency.
   const prefs=await getAlertPreferences(telegramId)
   if(isQuietHour(prefs,hour))return {sent:false,reason:'quiet_hours'}
   if(!dueForCheck(prefs,await lastPulseAt(telegramId,prefs.checkEveryMinutes)))return {sent:false,reason:'frequency'}
+
+  const activeSession=await hasRecentWhatsAppSession(telegramId)
+  const emailCard=await sendProactiveEmailCard(telegramId,user,timezone,prefs,activeSession)
+  if(emailCard.sent)return emailCard
 
   const pulse=await buildPulse(telegramId,timezone,prefs)
   if(!pulse.items.length)return {sent:false,reason:'nothing_material'}
@@ -291,7 +320,6 @@ async function sendPulse(telegramId:string){
     .replace(/\b\d{9,20}\b/g,(digits:string)=>'••••'+digits.slice(-4))
   // Use natural free-form copy while the WhatsApp service window is open.
   // Outside the window we must fall back to an approved Utility template.
-  const activeSession=await hasRecentWhatsAppSession(telegramId)
   let delivered:any=null
   if(activeSession){
     delivered=await sendWhatsApp(String(user.whatsapp_id),message)
@@ -324,7 +352,56 @@ async function sendPulse(telegramId:string){
   return {sent:true,count:pulse.items.length}
 }
 
+// The selective email card: only email that clearly needs the person, at most 2 a day, each email once.
+async function sendProactiveEmailCard(telegramId:string,user:any,timezone:string,prefs:AlertPreferences,activeSession:boolean):Promise<{sent:boolean;reason?:string;count?:number}>{
+  const {data:loops,error:loopError}=await supabaseAdmin.from('agent_open_loops')
+    .select('id,kind,title,summary,source_type,source_id,evidence_json,created_at')
+    .eq('telegram_id',telegramId).eq('status','active').in('source_type',['gmail_thread','gmail_service_notice'])
+    .order('updated_at',{ascending:false}).limit(40)
+  if(loopError){console.error('AUTONOMY_EMAIL_LOOP_READ_FAILED:',loopError.message);return {sent:false,reason:'email_read_failed'}}
+  const allowed=((loops||[]) as EmailLoop[]).filter(loop=>allowedByTopic(prefs,topicForPulse('open_loop',loop)))
+  if(!allowed.length)return {sent:false,reason:'no_email'}
+  const history=await recentSurfacedKeys(telegramId,30*24)
+  const alreadySurfaced=new Set(history.flatMap(r=>r.keys))
+  const today=localDay(Date.now(),timezone)
+  const sentToday=history.filter(r=>r.type==='autonomy_email_sent'&&localDay(r.at,timezone)===today).reduce((n,r)=>n+r.keys.length,0)
+  const {data:ruleRows}=await supabaseAdmin.from('email_attention_rules').select('kind,match_type,match_value,category,label,source').eq('telegram_id',ownerKey(telegramId)).eq('active',true).limit(300)
+  const rules=(ruleRows||[]).map((r:any)=>({kind:r.kind,matchType:r.match_type,matchValue:String(r.match_value||''),category:r.category,label:String(r.label||''),source:r.source}))
+  const picked=selectProactiveEmails(allowed,{rules,ownEmail:String(user.gmail_email||'').toLowerCase()||null,alreadySurfaced,sentToday})
+  if(!picked.length)return {sent:false,reason:'no_important_email'}
+  const text=decodeHtmlEntities(formatProactiveEmailCard(picked,{timezone})).replace(/\b\d{9,20}\b/g,(digits:string)=>'••••'+digits.slice(-4))
+  const delivered=activeSession
+    ?await sendWhatsApp(String(user.whatsapp_id),text)
+    :await sendWhatsAppReminderTemplate(String(user.whatsapp_id),['Gogo update',...picked.map(p=>`${p.senderName}: ${p.why}`)].join(' · ').slice(0,400))
+  if(!delivered?.sid)throw new Error('autonomy_email_delivery_not_accepted')
+  const key=ownerKey(telegramId)
+  // "open 1" / "not important 1" bind to the latest 📬 reply and its recorded items, as with the on-demand card.
+  const [convo,shown]=await Promise.all([
+    supabaseAdmin.from('conversations').insert({telegram_id:key,role:'assistant',content:text}),
+    supabaseAdmin.from('email_attention_events').insert({telegram_id:key,kind:'shown',payload:{proactive:true,gmailEmail:user.gmail_email||null,items:picked.map((p,i)=>({
+      index:i+1,id:p.email.id,threadId:p.threadId,messageId:null,from:p.email.from,subject:clean(p.email.subject,200),snippet:clean(p.email.snippet,500),
+      category:p.category,senderEmail:p.senderEmail,senderName:p.senderName,why:p.why,ask:p.ask,source:'gmail',score:p.score,
+    }))}}),
+  ])
+  if(convo.error)console.error('AUTONOMY_EMAIL_CONVERSATION_FAILED:',convo.error.message)
+  if(shown.error)console.error('AUTONOMY_EMAIL_SHOWN_FAILED:',shown.error.message)
+  const loopIds=picked.map(p=>p.loopId)
+  const {error:backoffError}=await supabaseAdmin.from('agent_open_loops')
+    .update({proactive_backoff_until:new Date(Date.now()+30*86400_000).toISOString(),updated_at:new Date().toISOString()})
+    .in('id',loopIds).eq('telegram_id',telegramId).eq('status','active')
+  if(backoffError)console.error('AUTONOMY_EMAIL_BACKOFF_FAILED:',backoffError.message)
+  await supabaseAdmin.from('agent_activity').insert({
+    telegram_id:telegramId,event_type:'autonomy_email_sent',
+    message:'Background Gogo surfaced email that clearly needs the person.',
+    metadata_json:{item_keys:picked.map(p=>`email:${p.threadId||p.loopId}`),open_loop_ids:loopIds,scores:picked.map(p=>p.score),categories:picked.map(p=>p.category),delivery_mode:activeSession?'freeform':'template'},
+  })
+  return {sent:true,count:picked.length}
+}
+
 export async function processAutonomyPulse(){
+  // 4 Nov quiet WhatsApp: no volunteered 4-hourly check-ins.
+  const { mayVolunteer }=await import('@/lib/channels/proactive-policy')
+  if(!mayVolunteer('check_in'))return {considered:0,sent:0,skipped:0,failed:0,results:[],quiet:true}
   const ids=await candidateUserIds()
   let sent=0,skipped=0,failed=0
   const results:any[]=[]
