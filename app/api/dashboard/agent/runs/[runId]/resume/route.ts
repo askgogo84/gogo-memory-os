@@ -6,6 +6,7 @@ import { resumePausedBrowserRun } from '@/lib/agent/browser-command'
 import { resumeSecondaryAuthRun } from '@/lib/agent/secondary-auth-handoff'
 import type { AgentActor } from '@/lib/agent/actor'
 import { listVaultCredentialsForDomain } from '@/lib/vault/credential-store'
+import { browserRunOwnerFromSession, browserRunOwnerMatchesRow } from '@/lib/dashboard/browser-run-owner'
 
 export const dynamic='force-dynamic'
 
@@ -14,6 +15,10 @@ export async function POST(request:Request,{params}:{params:Promise<{runId:strin
   if(blocked)return blocked
   const session=await getSession()
   if(!session)return NextResponse.json({ok:false},{status:401})
+  // The stored dashboard identity is TEXT. Do not round it before an owner-scoped lookup
+  // or pass an imprecise legacy numeric actor into a browser/Vault continuation.
+  const owner=browserRunOwnerFromSession(session.telegramId)
+  if(!owner)return NextResponse.json({ok:false,error:'owner_unavailable'},{status:403})
   const {runId}=await params
   let body:any={}
   try{body=await request.json()}catch{}
@@ -21,13 +26,13 @@ export async function POST(request:Request,{params}:{params:Promise<{runId:strin
 
   const {data:user,error:userError}=await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name')
-    .eq('telegram_id',Number(session.telegramId))
+    .eq('telegram_id',owner.telegramId)
     .maybeSingle()
-  if(userError||!user?.id||!user?.whatsapp_id)return NextResponse.json({ok:false,error:'user_unavailable'},{status:400})
+  if(userError||!user?.id||!user?.whatsapp_id||!browserRunOwnerMatchesRow(user.telegram_id,owner))return NextResponse.json({ok:false,error:'user_unavailable'},{status:400})
 
   const actor:AgentActor={
     userId:String(user.id),
-    legacyTelegramId:Number(user.telegram_id),
+    legacyTelegramId:owner.legacyTelegramId,
     whatsappId:String(user.whatsapp_id),
     name:String(user.name||'Gogo'),
   }
@@ -36,7 +41,7 @@ export async function POST(request:Request,{params}:{params:Promise<{runId:strin
     const {data:run,error:runError}=await supabaseAdmin.from('agent_runs')
       .select('metadata_json')
       .eq('id',String(runId))
-      .eq('telegram_id',String(session.telegramId))
+      .eq('telegram_id',owner.telegramId)
       .maybeSingle()
     if(runError||!run)return NextResponse.json({ok:false,error:'run_unavailable'},{status:404})
     const meta:any=run.metadata_json||{}
@@ -50,7 +55,7 @@ export async function POST(request:Request,{params}:{params:Promise<{runId:strin
     const {error:updateError}=await supabaseAdmin.from('agent_runs')
       .update({metadata_json:{...meta,vault_credential_id:requestedCredentialId},updated_at:new Date().toISOString()})
       .eq('id',String(runId))
-      .eq('telegram_id',String(session.telegramId))
+      .eq('telegram_id',owner.telegramId)
     if(updateError)return NextResponse.json({ok:false,error:'credential_select_failed'},{status:500})
   }
 

@@ -66,12 +66,14 @@ function isoDaysFromNow(days: number): string {
  * signed URL).
  */
 export async function createDocumentShortLink(params: {
-  telegramId: number
+  telegramId: string | number
   documentId: string
   sensitive: boolean
 }): Promise<string | null> {
   try {
-    if (!params.documentId) return null
+    // Reject imprecise numeric IDs: two different BIGINT owners can round to one number.
+    // Exact decimal-string BIGINT IDs are preserved unchanged in PostgREST predicates.
+    if (!params.documentId || (typeof params.telegramId === 'number' && !Number.isSafeInteger(params.telegramId))) return null
     const nowIso = new Date().toISOString()
 
     // Reuse a still-valid token for this doc if one exists.
@@ -126,7 +128,10 @@ export async function resolveShortLinkToSignedUrl(token: string): Promise<string
       .maybeSingle()
     if (!link) return null
     if (link.revoked_at) return null
-    if (link.expires_at && new Date(link.expires_at as string).getTime() < Date.now()) return null
+    // The schema permits legacy NULL expiry values. Never turn a malformed
+    // or missing expiry into an indefinitely reusable private-file bearer link.
+    const expiresAt = typeof link.expires_at === 'string' ? Date.parse(link.expires_at) : NaN
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return null
 
     // Re-scope to the owner's row; only this row's storage_path is ever signed.
     const { data: doc } = await supabaseAdmin

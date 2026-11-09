@@ -1,4 +1,5 @@
 import {calendarAffirmativeText} from '../lib/agent/calendar-read'
+import './verify-universal-search-oct27.mts'
 import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 import {NextRequest,NextResponse} from 'next/server'
@@ -8,6 +9,7 @@ import { readFileSync } from 'node:fs'
 const helper = readFileSync(new URL('../lib/agent/workspace-drive-context.ts', import.meta.url), 'utf8')
 const readLayer = readFileSync(new URL('../lib/agent/google-workspace-read.ts', import.meta.url), 'utf8')
 const binary = readFileSync(new URL('../lib/agent/google-workspace-drive-binary.ts', import.meta.url), 'utf8')
+const serverlessPdf = readFileSync(new URL('../lib/services/pdf-js-serverless.ts', import.meta.url), 'utf8')
 const runRoute = readFileSync(new URL('../app/api/agent/run/route.ts', import.meta.url), 'utf8')
 const google = readFileSync(new URL('../lib/services/google-gmail.ts', import.meta.url), 'utf8')
 
@@ -20,7 +22,9 @@ assert.match(binary, /application\/pdf/, 'Drive binary reader must support PDF')
 assert.match(binary, /wordprocessingml\.document/, 'Drive binary reader must support DOCX')
 assert.match(binary, /presentationml\.presentation/, 'Drive binary reader must support PPTX')
 assert.match(binary, /spreadsheetml\.sheet/, 'Drive binary reader must support XLSX')
-assert.match(binary, /pdf-parse/, 'PDF extraction must use the existing bounded parser')
+assert.match(binary, /extractServerlessPdfText\(bytes,MAX_DRIVE_TEXT\)/, 'PDF extraction must use the bounded serverless parser')
+assert.match(serverlessPdf, /ensurePdfJsServerlessGlobals\(\)\s*\n\s*const mod:any=await import\('pdf-parse'\)/,
+ 'PDF.js globals must be installed before the parser module is first imported')
 assert.match(binary, /jszip/, 'Office document extraction must use bounded OOXML parsing')
 assert.match(binary, /xlsx/, 'Workbook extraction must use bounded spreadsheet parsing')
 assert.match(binary, /response\.arrayBuffer\(\)/, 'Drive binaries must be downloaded as bytes rather than coerced to text')
@@ -29,7 +33,8 @@ assert.match(helper, /mutationsAllowed:false/, 'Drive context run metadata must 
 assert.match(helper, /safety:\{readOnly:true,mutationsAllowed:false,credentialsStored:false\}/, 'Drive artifact must preserve explicit read-only and credential safety metadata')
 assert.match(helper, /source_refs:\[\{type:'google_drive_file'/, 'Drive artifact must carry file provenance')
 assert.match(helper, /I did not pretend to read it/, 'Unsupported or unreadable file types must fail transparently instead of fabricating document content')
-assert.match(helper, /I found several plausible Drive files, so I stopped rather than choosing the wrong document/, 'Ambiguous Drive results must stop rather than guess')
+assert.match(helper, /Drive files that could match, so I haven't opened one/, 'Ambiguous Drive results must stop rather than guess')
+assert.match(helper, /edited \$\{when\}/, 'Ambiguous Drive results show a readable edit date, not a raw timestamp')
 assert.match(helper, /Answer the user's request using ONLY the supplied Google Drive document/, 'Document answers must remain grounded in the selected Drive file')
 assert.match(helper, /No Drive file was changed/, 'User-facing result must state the read-only boundary')
 assert.doesNotMatch(helper, /drive\/v3\/files[^`'"\n]*\{[^}]*method:\s*['"](?:POST|PATCH|PUT|DELETE)/i, 'Drive context mission must not introduce Drive write calls')
