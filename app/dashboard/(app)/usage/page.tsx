@@ -1,3 +1,4 @@
+import { monthlyAllowanceFor } from '@/lib/data/limits'
 import { getSession } from '@/lib/dashboard/session'
 import { getUsageSummary } from '@/lib/dashboard/queries'
 import { CardError } from '@/components/dashboard/card-error'
@@ -45,7 +46,9 @@ export default async function UsagePage() {
 
   const priceLine = planPriceInr > 0 ? `₹${planPriceInr} / month` : 'Free'
   // Trends are extra: a read failure hides them and never breaks today's view.
-  const trends = session ? await getActivityTrends(session.telegramId, aiLimit).catch(() => null) : null
+  // 4 Nov: one monthly allowance (the plan's), the same number the chat shows.
+  const monthly = monthlyAllowanceFor(summary.planCode)
+  const trends = session ? await getActivityTrends(session.telegramId, aiLimit, Date.now(), monthly.monthly).catch(() => null) : null
 
   return (
     // temporary desktop freeze — removed in this surface's own 5c phase

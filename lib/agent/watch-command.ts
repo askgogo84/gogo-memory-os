@@ -94,7 +94,7 @@ const priceOffers=(c:any)=>{const raw=`${c.query||''} ${c.title||''}`;return c.p
 export function watchName(row:any){
   const c:any=row.condition_json||{}
   // A price watch's query carries the store ("… on amazon.in"); its title often does not.
-  let t=String((priceAmount(c)?c.query||c.title:c.title||c.query)||row.type||'Watch').replace(/^watch:\s*/i,'').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi,'$1')
+  let t=String((priceAmount(c)?c.query||c.title:c.title||c.query)||row.type||'Watch').replace(/^watch:\s*/i,'').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi,'$1').replace(/\b([A-Za-z0-9][\w.+-]*)(?:\s+\1\b)+/gi,'$1')
   if(row.type==='email_triage')return 'Your inbox'
   if(priceAmount(c))t=t.replace(/\s*(?:price\s+)?(?:in\s+India\s+)?\b(?:below|under)\b.*$/i,'').replace(/\s*,?\s*(?:including|excluding|with|without)\s+(?:bank\/card\s+)?offers?\b.*$/i,'').replace(/\s+price(?:\s+in\s+India)?$/i,'').trim()
   return clean(t,80)
@@ -890,7 +890,12 @@ export async function tryCreateInboxTriageWatchFromCommand(params:{
   const {data:consent,error:consentError}=await supabaseAdmin.from('user_consent_settings')
     .select('gmail_enabled').eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
   if(consentError)throw new Error('inbox_watch_consent_read_failed')
-  if(consent?.gmail_enabled===false)return {
+  if(consent?.gmail_enabled!==true&&consent?.gmail_enabled!==false)return {
+    runId:'inbox-watch-consent-missing',status:'paused' as const,capability:'email' as const,risk:'low' as const,
+    text:'I haven’t got your OK to read Gmail yet, so I haven’t started an inbox watch or read any mail. Reconnect Google once at app.askgogo.in/dashboard/settings/email and I’ll read only what you ask for.',
+    blockedReason:'workspace_email_consent_missing',handledBy:'inbox-triage-watch',
+  }
+  if(consent?.gmail_enabled!==true)return {
     runId:'inbox-watch-reading-disabled',status:'paused' as const,capability:'email' as const,risk:'low' as const,
     text:'Gmail reading is disabled in your saved privacy preference. Connecting Google does not change that preference. I haven’t started an inbox watch or read any mail.',
     blockedReason:'workspace_email_reading_disabled',handledBy:'inbox-triage-watch',
