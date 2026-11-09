@@ -47,7 +47,12 @@ export function maskOutboundIdentifiers(text: string): string {
 export function brandSafe(text: string): string {
   return String(text ?? '').split(/(\u2063[\s\S]*?\u2063)/).map(part => part.length > 1 && part.startsWith('\u2063') && part.endsWith('\u2063') ? part : brandSafeOutside(part)).join('').replace(/\u2063/g, '')
 }
+// 6 Nov live: a competitor summary listed "Muse, Hermes, Claude, ChatGPT…" and came out as "…Gogo…". When Claude is
+// named beside other AI products, or as a product (Claude Duet, Claude Cowork, Claude Design), it is a product name.
+const OTHER_AI = /\b(?:ChatGPT|OpenAI|Gemini|Perplexity|Copilot|Manus|Muse|Instinct|Wajo|Hermes|Grok|Mistral|Llama|DeepSeek|Dots)\b/i
+const CLAUDE_PRODUCT = /\bClaude\s+(?:Duet|Cowork|Design|Desktop|Chrome|Max|Pro|Team|Enterprise)\b/
 function brandSafeOutside(text: string): string {
+  if (CLAUDE_PRODUCT.test(text) || (OTHER_AI.test(text) && /\bClaude\b/.test(text))) return text.replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, m => m)
   return String(text ?? '')
     .replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g, m => /['’]s$/.test(m) ? 'Gogo’s' : 'Gogo')
     .replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, 'our AI provider')
