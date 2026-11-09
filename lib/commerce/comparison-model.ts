@@ -184,6 +184,12 @@ export function parsePriceComparison(text: string) {
   const compares = /\bcompar(?:e|ison|isons)\b/i.test(text)
   if (!compares && !namesRetailerPriceRead(text)) return null
   const lower = text.toLowerCase()
+  // 7 Nov live: "compare biryani prices near me" was sent to Amazon, Flipkart, Croma and Reliance Digital. A dish
+  // near the person, with no shop or restaurant named, is the food comparison's job (it runs after this one).
+  if (/\b(?:burgers?|pizzas?|biryanis?|dosas?|meals?|food|thalis?|momos?|rolls?|shawarma|idli|vada|noodles|fried rice)\b/i.test(lower)
+    && /\b(?:near|nearby|near ?by|around|close to)\s+(?:me|here|my\s+(?:home|office|place|area))\b/i.test(lower)
+    && !/\b(?:amazon|flipkart|croma|reliance|instamart|blinkit|zepto|bigbasket|jiomart|dmart|swiggy|zomato|magicpin)\b/i.test(lower)
+    && !/\b(?:at|from)\s+[A-Z][\w']+/.test(text)) return null
   const providers = compares ? (Object.keys(COMPARISON_PROVIDERS) as ComparisonProvider[]).filter(key => {
     if (key === 'swiggy') return compares && (!/instamart/.test(lower) || /swiggy\s+(?:food|and\s+zomato)/.test(lower)) && /\bswiggy\b/.test(lower)
     if (key === 'zomato') return compares && /\bzomato\b/.test(lower)
