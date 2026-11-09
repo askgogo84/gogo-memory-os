@@ -30,6 +30,8 @@ console.log('Flight hand-off domains passed')
   const { browserPageAllowlist } = await import('../lib/agent/browser-page-network')
   const flights = browserPageAllowlist('https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=x')
   for (const h of ['delivery-p104052-e1069093.adobeaemcloud.com', 'airindia.scene7.com', 'assets.adobedtm.com', 'cdn.cookielaw.org', 'airindia.com', '*.airindia.com']) assert.ok(h in flights, h)
+  for (const h of ['api.storyblok.com', 'app.storyblok.com', '*.akasaair.com']) assert.ok(h in flights, h) // 27 Oct Akasa page content
+  assert.ok(!('*.storyblok.com' in flights), 'exact Storyblok hosts only')
   assert.ok(!('adobeaemcloud.com' in flights) && !('*.adobeaemcloud.com' in flights), 'only Air India\'s exact AEM host, not every AEM site')
   assert.ok(!('cdn.cookielaw.org' in browserPageAllowlist('https://www.croma.com/p/1')), 'other sites unchanged')
   // Navigation (Browserbase allowedDomains) still lists only google.com and the hand-off sites.

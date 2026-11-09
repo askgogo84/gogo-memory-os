@@ -24,7 +24,8 @@ function stripDateExpressions(text: string): string {
 // >12; for genuinely ambiguous values it follows the app's India-default day-first convention
 // (dayFirst) rather than silently assuming US month-first, which would change the occurrence.
 export function normalizeNumericDates(text: string, dayFirst = true): string {
-  return String(text || '').replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g, (m, a, b, y) => {
+  // 4 Nov live: trackers write "01-Nov-2026"; the hyphens hid the date, so a 2-day-old landing passed as today's.
+  return String(text || '').replace(/\b(\d{1,2})-(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*-(\d{4}|\d{2})\b/gi, (_m, d, mon, y) => `${Number(d)} ${mon.slice(0, 1).toUpperCase()}${mon.slice(1, 3).toLowerCase()} ${String(y).length === 2 ? `20${y}` : y}`).replace(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/g, (m, a, b, y) => {
     let A = Number(a), B = Number(b), Y = Number(y)
     if (Y < 100) Y += 2000
     let month: number, day: number
