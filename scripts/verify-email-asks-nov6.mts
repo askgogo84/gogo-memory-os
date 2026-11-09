@@ -14,6 +14,27 @@ assert.deepEqual(ea.replyWaitAsk('any unreplied emails from the last week?'), { 
 assert.deepEqual(ea.replyWaitAsk('emails waiting on my reply for over a week'), { minAgeDays: 7 })
 assert.deepEqual(ea.replyWaitAsk('show messages that need my reply'), { minAgeDays: 0 })
 for (const t of ['send a reply to Nithin', 'draft a reply to the ONDC email', 'remind me to reply to Rishi tomorrow at 5', 'what is the weather']) assert.equal(ea.replyWaitAsk(t), null, t)
+// A 14-day bounded scan cannot verify emails older than the window: preserve intent,
+// reject before touching the Gmail provider and do not report "none found".
+assert.deepEqual(ea.replyWaitAsk('Which emails have waited over three weeks for my reply?'), { minAgeDays: 21 })
+assert.deepEqual(ea.replyWaitAsk('Which emails have waited over two weeks for my reply?'), { minAgeDays: 14 })
+assert.deepEqual(ea.replyWaitAsk('Which emails have waited more than 14 days for my reply?'), { minAgeDays: 14 })
+let readActor = false
+const noGmailActor = new Proxy({}, { get() { readActor = true; throw Error('Gmail actor must not be touched for unsupported age') } })
+for (const [ask, age] of [
+  ['Which emails have waited over three weeks for my reply?', 21],
+  ['Which emails have waited more than 14 days for my reply?', 14],
+] as const) {
+  const response = await ea.tryEmailAsk(noGmailActor as any, ask)
+  assert.equal(response?.handledBy, 'inbox-reply-read')
+  assert.match(response?.text || '', /last 14 days/)
+  assert.ok(response?.text?.includes(`${age}+ days`), 'requested threshold was not preserved')
+  assert.match(response?.text || '', /cannot verify/i)
+  assert.match(response?.text || '', /did not read Gmail/i)
+  assert.doesNotMatch(response?.text || '', /no likely reply requests|found no/i)
+}
+assert.equal(readActor, false, 'unsupported window must not call Gmail or inspect credentials')
+console.log('✓ requested 14+ day reply age preserved; honest unsupported-window response without Gmail access')
 console.log('✓ "waited more than 3 days for my reply" and similar read Gmail; send/draft/remind are not caught')
 
 // 2. Billing questions.

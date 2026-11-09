@@ -46,11 +46,19 @@ export async function GET(request: Request) {
   const session = await requireAgentSession(request)
   if (!isAgentSession(session)) return session
   const tg = session.telegramId
+  const watcherCols = 'id, goal_id, type, condition_json, cadence_minutes, active, last_checked_at, next_check_at, created_at, updated_at'
+  const watchersWithPause = async (owner: string) => {
+    const q = (cols: string) => supabaseAdmin.from('agent_watchers').select(cols).eq('telegram_id', owner).eq('active', true).neq('type','goal_review').order('created_at', { ascending: false }).limit(30)
+    const first = await q(`${watcherCols}, paused_at`)
+    if (first.error && (first.error.code === '42703' || /paused_at/.test(String(first.error.message || '')))) return q(watcherCols)
+    return first
+  }
 
   const [runs, steps, watchers, goals, ideas, approvals, permissions, artifacts, handoffs, serviceNotices] = await Promise.all([
     supabaseAdmin.from('agent_runs').select('id, type, goal_id, title, summary, status, capability, progress, started_at, updated_at, next_check_at, why, error, metadata_json').eq('telegram_id', tg).order('updated_at', { ascending: false }).limit(20),
     supabaseAdmin.from('agent_steps').select('id, run_id, ordinal, tool_name, title, status, output_json, error, started_at, completed_at').eq('telegram_id', tg).order('created_at', { ascending: false }).limit(120),
-    supabaseAdmin.from('agent_watchers').select('id, goal_id, type, condition_json, cadence_minutes, active, last_checked_at, next_check_at, created_at, updated_at').eq('telegram_id', tg).eq('active', true).neq('type','goal_review').order('created_at', { ascending: false }).limit(30),
+    // G5: paused_at exists only after migration 20261109190000; until then the same query runs without it.
+    watchersWithPause(tg),
     supabaseAdmin.from('agent_goals').select('id, title, outcome, status, progress, deadline, next_action, blockers').eq('telegram_id', tg).neq('status', 'cancelled').order('updated_at', { ascending: false }).limit(20),
     supabaseAdmin.from('agent_ideas').select('id, title, reason, expected_value, action_label, source_refs, status, created_at, snoozed_until').eq('telegram_id', tg).in('status', ['new','snoozed']).order('created_at', { ascending: false }).limit(20),
     supabaseAdmin.from('agent_approvals').select('id, run_id, action_type, title, description, payload_preview, risk_level, status, requested_at, resolved_at, execution_payload').eq('telegram_id', tg).eq('status', 'pending').order('requested_at', { ascending: false }).limit(20),
@@ -123,6 +131,8 @@ export async function GET(request: Request) {
       active: w.active,
       lastCheckedAt: w.last_checked_at,
       nextCheckAt: w.next_check_at,
+      pausedAt: w.paused_at || null,
+      state: w.paused_at ? 'paused' : 'active',
       createdAt: w.created_at,
     })),
     goals: (goals.data || []).map((g: any) => ({
