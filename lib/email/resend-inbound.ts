@@ -29,7 +29,7 @@ export function rawFromParsed(e: ReceivedEmail) {
     `From: ${get('from') || e.from}`, `To: ${get('to') || (e.to || []).join(', ')}`, `Subject: ${get('subject') || e.subject || ''}`,
     `Message-ID: ${get('message-id') || e.message_id || ''}`, `Date: ${get('date') || e.created_at || ''}`,
   ]
-  for (const k of ['list-id', 'list-unsubscribe', 'auto-submitted', 'precedence', 'in-reply-to', 'references']) { const v = get(k); if (v) lines.push(`${k}: ${v}`) }
+  for (const k of ['list-id', 'list-unsubscribe', 'auto-submitted', 'precedence', 'in-reply-to', 'references', 'x-forwarded-to', 'x-forwarded-for']) { const v = get(k); if (v) lines.push(`${k}: ${v}`) }
   const body = e.text || (e.html ? e.html : '')
   lines.push(`Content-Type: ${e.text ? 'text/plain' : 'text/html'}; charset=utf-8`, '', body)
   return Buffer.from(lines.join('\r\n'), 'utf8').toString('latin1')
@@ -41,10 +41,10 @@ export async function fetchReceivedEmail(emailId: string, fetchImpl: typeof fetc
   const res = await fetchImpl(`https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(10_000) })
   if (!res.ok) throw new Error(`resend_receiving_${res.status}`)
   const email = await res.json() as ReceivedEmail
-  let raw = ''
-  if (email.raw?.download_url && /^https:\/\//.test(email.raw.download_url)) {
-    const r = await fetchImpl(email.raw.download_url, { signal: AbortSignal.timeout(10_000) }).catch(() => null)
-    if (r?.ok) raw = Buffer.from(await r.arrayBuffer()).toString('latin1')
-  }
-  return { email, raw: raw || rawFromParsed(email) }
+  // The API response is authenticated, but its raw.download_url is not a pinned
+  // destination. Following it from our server would allow arbitrary HTTPS hosts,
+  // loopback/link-local addresses, or redirects to receive an outbound fetch.
+  // Rebuild from the already-authenticated Receiving API fields instead.
+  // Reintroducing raw MIME fidelity requires a separately reviewed, pinned transport.
+  return { email, raw: rawFromParsed(email) }
 }

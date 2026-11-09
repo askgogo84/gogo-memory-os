@@ -165,11 +165,12 @@ await check('scientific-notation owner string must never be normalized into a di
 })
 
 
-await check('no consent record fails closed before conversation content query',true,async()=>{
+// Owner decision 9 Nov 2026: memory is ON unless the owner turned it off, so a missing consent row is the default
+// and the scan proceeds for that exact owner only (explicit false, other-account rows and read errors still stop it).
+await check('no consent record means the default (on): scan proceeds for the exact owner only',true,async()=>{
   const h=harness({consent:[]})
-  assert.equal(await h.run('42'),0)
-  assert.deepEqual(h.reads.map(x=>x.table),['user_consent_settings'])
-  assert.equal(h.writes.length,0)
+  await h.run('42')
+  assert.deepEqual(h.reads.map(x=>x.table).slice(0,2),['user_consent_settings','conversations'])
 })
 await check('signed bigint owner B reads only exact B with consent and echo verified',true,async()=>{
   const h=harness({consent:[[B,{telegram_id:B,memory_enabled:true}]],
@@ -206,11 +207,11 @@ const scoutJs=ts.transpileModule(scoutNode.getText(ast).replace(/^export\s+/,'')
 }).outputText
 const scout=vm.runInNewContext(scoutJs+'\nsyncOpenLoopsForUser',{Date,console},{timeout:1000})
 await check('exported scout rejects already-rounded unsafe number before any source lookup',true,async()=>{
-  await assert.rejects(scout(9007199254740992),/open_loop_invalid_owner/)
+  await assert.rejects(scout(9007199254740992),/open_loop_(?:invalid_owner|owner_invalid)/)
 })
 await check('exported scout rejects exponent and out-of-range identities before source lookup',true,async()=>{
-  await assert.rejects(scout('4.2e1'),/open_loop_invalid_owner/)
-  await assert.rejects(scout('9223372036854775808'),/open_loop_invalid_owner/)
+  await assert.rejects(scout('4.2e1'),/open_loop_(?:invalid_owner|owner_invalid)/)
+  await assert.rejects(scout('9223372036854775808'),/open_loop_(?:invalid_owner|owner_invalid)/)
 })
 
 console.log('OPEN_LOOP_CONVERSATION_OWNER_FIX control PASS=' + controlPass +

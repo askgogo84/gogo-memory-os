@@ -158,7 +158,11 @@ export async function deliverBoardingPassNotices(){
     // an old pass remains valid after a later schedule change. Never replay a
     // claimed send automatically: delivery may have happened before a crash.
     const result=await sendAgentPush(String(notice.telegramId),{title:'Saved flight update',body:'Gogo recorded a flight update. Open AskGogo for the current schedule and boarding-pass details.',path:'/dashboard/today',data:{runId:notice.runId,lifeEventId:notice.lifeEventId,scheduleRevision:notice.scheduleRevision}})
-    const {error:updateError}=await supabaseAdmin.from('boarding_pass_outbox').update({status:result.failed?'failed':'sent',updated_at:new Date().toISOString()}).eq('id',row.id).eq('status','claimed')
+    // A zero-device / empty-token / device-read-error push returns {sent: 0, failed: 0}.
+    // Provider acceptance, not a zero-error counter, is the minimum for a `sent` receipt.
+    // Keep non-fully-accepted claims terminal (never blindly requeue after an uncertain send).
+    const providerAcceptedAll = Number.isSafeInteger(result.sent) && result.sent > 0 && result.failed === 0
+    const {error:updateError}=await supabaseAdmin.from('boarding_pass_outbox').update({status:providerAcceptedAll?'sent':'failed',updated_at:new Date().toISOString()}).eq('id',row.id).eq('status','claimed')
     if(updateError)throw new Error(`life_event_email_outbox_finish_failed:${updateError.message}`)
   }
 }

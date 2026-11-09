@@ -1,4 +1,5 @@
 import { getSession } from '@/lib/dashboard/session'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { PersonalizeGogo } from '@/components/dashboard/personalize-gogo'
 
@@ -6,15 +7,15 @@ export const dynamic = 'force-dynamic'
 
 export default async function PersonalizePage() {
   const session = await getSession()
-  const tg = parseInt(session?.telegramId || '', 10)
+  const owner = exactSessionOwnerId(session?.telegramId)
   let initialPersonality = 'calm_companion'
   let initialDrink = 'coffee'
 
-  if (Number.isFinite(tg)) {
+  if (owner) {
     const { data } = await supabaseAdmin
       .from('user_experience_preferences')
       .select('personality, comfort_drink')
-      .eq('telegram_id', tg)
+      .eq('telegram_id', owner)
       .maybeSingle()
     initialPersonality = data?.personality || initialPersonality
     initialDrink = data?.comfort_drink || initialDrink

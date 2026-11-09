@@ -9,6 +9,7 @@
 // and only for states that are possible at that point in the schedule. Nothing is guessed from the
 // timetable.
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { checkCostAllowance, COST_ESTIMATES_PAISE, recordCostEvent } from '@/lib/services/cost-guard'
 import { FLIGHT_TRACKER_DOMAINS, isFareShoppingResult, classifyOccurrence, stripNegatedStates } from '@/lib/bot/handlers/flight-status'
@@ -235,9 +236,17 @@ export async function runFlightLegTracker(nowMs = Date.now()) {
   let checked = 0, sent = 0, skipped = 0
   const monitors = new Map<string, any>()
   for (const row of data || []) {
+    // The service-role travel query can return a BIGINT as a JS number: two distinct
+    // owners then alias above MAX_SAFE_INTEGER. Never dispatch using a rounded identity.
+    const ownerId = exactSessionOwnerId(row.telegram_id)
+    if (!ownerId) {
+      skipped++
+      console.error('FLIGHT_TRACKER_OWNER_INVALID:', String(row.id))
+      continue
+    }
     const raw: any = row.raw || {}
     const leg: TrackedLeg = {
-      id: String(row.id), telegramId: String(row.telegram_id), flightNo: String(row.flight_no), airline: row.airline,
+      id: String(row.id), telegramId: ownerId, flightNo: String(row.flight_no), airline: row.airline,
       fromCity: String(row.from_city || ''), toCity: String(row.to_city || ''), departAt: String(row.depart_at), arriveAt: row.arrive_at,
       alias: Object.values(raw.travellerAliases || {})[0] as string || null, tracking: raw.liveTracking || {},
     }
@@ -270,7 +279,7 @@ export async function runFlightLegTracker(nowMs = Date.now()) {
         console.log('FLIGHT_TRACKER_DELIVERY:', JSON.stringify({ leg: leg.id, event: e.key, state: delivery.state, accepted: delivery.accepted }))
         if (delivery.accepted || ['outcome_unknown'].includes(delivery.state)) {
           delivered.add(e.key); sent++
-          await supabaseAdmin.from('conversations').insert({ telegram_id: Number(leg.telegramId), role: 'assistant', content: e.text }).then(() => {}, () => {})
+          await supabaseAdmin.from('conversations').insert({ telegram_id: leg.telegramId, role: 'assistant', content: e.text }).then(() => {}, () => {})
         }
       }
       const delayEvent = events.find(e => e.kind === 'delayed' && delivered.has(e.key))
@@ -282,7 +291,7 @@ export async function runFlightLegTracker(nowMs = Date.now()) {
         etaArrival: status?.revisedArrival || prev.etaArrival, actualArrival: status?.actualArrival || prev.actualArrival,
         scheduledArrival: status?.scheduledArrival || prev.scheduledArrival,
       }
-      await supabaseAdmin.from('travel_tickets').update({ raw: { ...raw, liveTracking: tracking } }).eq('id', leg.id).eq('telegram_id', row.telegram_id)
+      await supabaseAdmin.from('travel_tickets').update({ raw: { ...raw, liveTracking: tracking } }).eq('id', leg.id).eq('telegram_id', leg.telegramId)
     } catch (err: any) {
       console.error('FLIGHT_TRACKER_LEG_FAILED:', leg.id, String(err?.message || err).slice(0, 200))
     }

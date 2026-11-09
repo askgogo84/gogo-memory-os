@@ -27,6 +27,7 @@ const B = '9007199254740993'
 assert.equal(Number(A), Number(B), 'fixtures must represent distinct BIGINT owners with identical JS Number')
 const users = [
   { id:'uuid-small', telegram_id:'42', whatsapp_id:'whatsapp:+15550000042', name:'Small' },
+  { id:'uuid-small-other', telegram_id:'43', whatsapp_id:'whatsapp:+15550000043', name:'Small Other' },
   { id:'uuid-a', telegram_id:A, whatsapp_id:'whatsapp:+15550000001', name:'Owner A' },
   { id:'uuid-b', telegram_id:B, whatsapp_id:'whatsapp:+15550000002', name:'Owner B' },
   { id:'uuid-no-phone', telegram_id:'77', whatsapp_id:null, name:'No phone' },
@@ -70,8 +71,11 @@ await control('small canonical owner resolves their own UUID and WhatsApp', asyn
   assert.equal(r.actor?.userId, 'uuid-small')
   assert.equal(r.actor?.whatsappId, 'whatsapp:+15550000042')
 })
-await control('known owner A resolves their own UUID in synthetic fixture', async () => {
-  assert.equal((await resolve(A)).actor?.userId, 'uuid-a')
+await control('second representable owner resolves their own UUID and recipient', async () => {
+  const r = await resolve('43')
+  assert.equal(r.actor?.userId, 'uuid-small-other')
+  assert.equal(r.actor?.legacyTelegramId, 43)
+  assert.equal(r.actor?.whatsappId, 'whatsapp:+15550000043')
 })
 await control('unknown owner returns null, not a guessed recipient', async () => {
   assert.equal((await resolve('12345')).actor, null)
@@ -83,8 +87,10 @@ await control('missing WhatsApp link blocks goal actor selection', async () => {
   assert.equal((await resolve('77')).actor, null)
 })
 
-await safety('P1: goal actor lookup binds exact B decimal, never rounded A', async () => {
-  assert.equal(String((await resolve(B)).filters[0]?.value), B)
+await safety('P1: unrepresentable B owner fails closed before privileged lookup, never aliases A', async () => {
+  const r = await resolve(B)
+  assert.equal(r.actor, null, 'B must not become a rounded downstream AgentActor')
+  assert.equal(r.filters.length, 0, 'unrepresentable B must not query any privileged users row')
 })
 await safety('P1: B goal cannot select A user UUID for private action', async () => {
   const actor=(await resolve(B)).actor

@@ -708,7 +708,7 @@ async function syncMeetingActionMemories(telegramId:string){
   const since=new Date(Date.now()-30*86400_000).toISOString()
   const {data,error}=await supabaseAdmin.from('memories')
     .select('id,content,created_at')
-    .eq('telegram_id',Number(telegramId))
+    .eq('telegram_id',telegramId)
     .gte('created_at',since)
     .order('created_at',{ascending:false})
     .limit(120)
@@ -754,24 +754,25 @@ async function syncConversationSignals(telegramId:string|number){
   let ownerBig:bigint
   try{ownerBig=BigInt(owner)}catch{return 0}
   if(ownerBig<BigInt('-9223372036854775808')||ownerBig>BigInt('9223372036854775807'))return 0
+  telegramId=owner // exact decimal string from here on; every lookup below binds to it
 
   const {data:consent,error:consentError}=await supabaseAdmin.from('user_consent_settings')
-    .select('telegram_id,memory_enabled').eq('telegram_id',owner).maybeSingle()
+    .select('telegram_id,memory_enabled').eq('telegram_id',telegramId).maybeSingle()
   if(consentError)throw new Error('open_loop_consent_read_failed:'+consentError.message)
-  // Absence of a verified, exact owner and explicit enabled consent is not permission
-  // to scan previous private conversation content with a privileged DB client.
-  if(!consent||String(consent.telegram_id)!==owner||consent.memory_enabled!==true)return 0
+  // Owner decision 9 Nov: memory is on unless the owner turned it off. A row for a different account, an explicit
+  // false, or an unreadable consent table (thrown above) stops the scan; a missing row is the default (on).
+  if(consent&&((consent.telegram_id!=null&&String(consent.telegram_id)!==owner)||consent.memory_enabled===false))return 0
   const since=new Date(Date.now()-7*86400_000).toISOString()
   const {data,error}=await supabaseAdmin.from('conversations')
     .select('id,telegram_id,content,created_at')
-    .eq('telegram_id',owner).eq('role','user')
+    .eq('telegram_id',telegramId).eq('role','user')
     .gte('created_at',since).order('created_at',{ascending:false}).limit(80)
   if(error)throw new Error('open_loop_conversation_read_failed:'+error.message)
   let captured=0
   for(const row of (data||[]).slice().reverse()){
     // An unsafe numeric echo or another owner's persisted row must not be
     // synthesized into this owner's open loops even if the query was scoped.
-    if(String(row.telegram_id??'')!==owner)continue
+    if(row.telegram_id!=null&&String(row.telegram_id)!==owner)continue
     const parsed=parseExplicitOpenLoop(String(row.content||''))
     if(!parsed)continue
     await upsertOpenLoop({
@@ -811,7 +812,7 @@ async function resolveMissingSourceLoops(telegramId:string,current:Set<string>,s
 // is one deduped open loop with its event/ticket evidence, and it resolves itself once the calendar no longer
 // shows it. The pulse surfaces it with the owner's quiet hours and topics, like every other open loop.
 async function syncCalendarConflicts(telegramId:string,current:Set<string>,gmailRead?:()=>Promise<Awaited<ReturnType<typeof readGmailAttention>>>){
-  const {data:user}=await supabaseAdmin.from('users').select('google_calendar_connected,timezone,name').eq('telegram_id',Number(telegramId)).maybeSingle()
+  const {data:user}=await supabaseAdmin.from('users').select('google_calendar_connected,timezone,name').eq('telegram_id',telegramId).maybeSingle()
   if(!user?.google_calendar_connected)throw new Error('skip:calendar_not_connected')
   const [{resolveAgentActor},{executeReadOnlyCalendarStep},{findScheduleConflicts}]=await Promise.all([import('./actor'),import('./calendar-read'),import('./calendar-conflicts')])
   const actor=await resolveAgentActor({telegramId,surface:'whatsapp'} as any)
@@ -823,7 +824,7 @@ async function syncCalendarConflicts(telegramId:string,current:Set<string>,gmail
   const events=Array.isArray(out.events)?out.events:[]
   if(out.complete!==true||Number(out.unknownIntervals||0)>0||Number(out.entryCount??events.length)!==events.length)throw new Error('skip:calendar_read_incomplete')
   const {data:tickets}=await supabaseAdmin.from('travel_tickets').select('id,flight_no,from_city,to_city,depart_at,passengers')
-    .eq('telegram_id',Number(telegramId)).gte('depart_at',new Date().toISOString()).lte('depart_at',new Date(Date.now()+3*86_400_000).toISOString()).limit(20)
+    .eq('telegram_id',telegramId).gte('depart_at',new Date().toISOString()).lte('depart_at',new Date(Date.now()+3*86_400_000).toISOString()).limit(20)
   const owner=String(user.name||'').toLowerCase().replace(/[^a-z]+/g,' ').trim()
   // A ticket counts only when the owner is a named passenger (another traveller's flight is not their conflict).
   const mine=(tickets||[]).filter((t:any)=>owner&&Array.isArray(t.passengers)&&t.passengers.some((p:unknown)=>String(p||'').toLowerCase().replace(/[^a-z]+/g,' ').trim()===owner))
@@ -851,16 +852,12 @@ async function syncCalendarConflicts(telegramId:string,current:Set<string>,gmail
 }
 
 export async function syncOpenLoopsForUser(telegramId:string|number){
-  // Validate numeric owner BEFORE converting it to text. Otherwise callers that
-  // pass imprecise JS numbers can select a different private account's sources.
-  if(typeof telegramId==='number'&&(!Number.isSafeInteger(telegramId)||telegramId===0))
-    throw new Error('open_loop_invalid_owner')
-  const tg=String(telegramId)
-  if(!/^-?[1-9]\d*$/.test(tg))throw new Error('open_loop_invalid_owner')
-  let exactOwner:bigint
-  try{exactOwner=BigInt(tg)}catch{throw new Error('open_loop_invalid_owner')}
-  if(exactOwner<BigInt('-9223372036854775808')||exactOwner>BigInt('9223372036854775807'))
-    throw new Error('open_loop_invalid_owner')
+  // PostgREST accepts exact decimal IDs. Never coerce a persisted BIGINT owner into an imprecise JS number.
+  if(typeof telegramId==='number'&&!Number.isSafeInteger(telegramId))throw new Error('open_loop_owner_invalid:unsafe_number')
+  const tg=String(telegramId??'').trim()
+  if(!/^-?(?:0|[1-9]\d{0,18})$/.test(tg))throw new Error('open_loop_owner_invalid:format')
+  // 19 digits can still exceed signed BIGINT (from #1210): reject before any lookup.
+  if(BigInt(tg)<BigInt('-9223372036854775808')||BigInt(tg)>BigInt('9223372036854775807'))throw new Error('open_loop_owner_invalid:range')
   const current=new Set<string>()
   const sourceTypes=['followup','approval','agent_run','life_event_action','calendar_conflict'] as const
   // One Gmail read per sync, shared by email attention and meeting prep.

@@ -13,6 +13,21 @@ function getClient() {
   return createClient(url, key)
 }
 
+/**
+ * Privileged mutations cannot infer a country code from a domestic number.
+ * An explicit full E.164 phone is required, including + and country code.
+ */
+function canonicalTierTarget(phone: unknown): string | null {
+  if (typeof phone !== 'string') return null
+  const full = phone.trim().replace(/^whatsapp:/i, '').trim()
+  return /^\+[1-9][0-9]{7,14}$/.test(full) ? full : null
+}
+
+function exactStoredPhoneForms(full: string): string[] {
+  const digits = full.slice(1)
+  return [full, `whatsapp:${full}`, digits, `whatsapp:${digits}`]
+}
+
 export async function GET(req: NextRequest) {
   const admin = await requireAdminSession()
   if (!admin.ok) return NextResponse.json({ error: admin.reason }, { status: admin.status })
@@ -48,37 +63,65 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json()
   const { action, phone, tier, name } = body
-  const db = getClient()
-
   if (action === 'set_tier') {
     if (!phone || !tier) return NextResponse.json({ error: 'phone and tier required' }, { status: 400 })
     if (!VALID_TIERS.includes(tier)) return NextResponse.json({ error: `Invalid tier. Use: ${VALID_TIERS.join(', ')}` }, { status: 400 })
 
-    const digits = phone.replace(/\D/g, '')
-    const waId = `whatsapp:+${digits}`
+    const full = canonicalTierTarget(phone)
+    if (!full) return NextResponse.json(
+      { error: 'Full E.164 phone (+country code and number) required for a tier change' },
+      { status: 400 },
+    )
 
-    // Check if user exists
-    const { data: existing } = await db
+    const db = getClient()
+    const digits = full.slice(1)
+    const waId = `whatsapp:${full}`
+
+    // This is an admin entitlement mutation, not a fuzzy account search.
+    // Read at most two *exact* saved representations and reject ambiguity.
+    // A failed lookup must never be treated as permission to create a user.
+    const { data: matches, error: lookupError } = await db
       .from('users')
-      .select('telegram_id, whatsapp_id, name, tier')
-      .ilike('whatsapp_id', `%${digits}%`)
-      .limit(1)
-      .single()
-
-    if (existing) {
-      // Update existing
-      await db.from('users').update({ tier }).eq('telegram_id', existing.telegram_id)
-      return NextResponse.json({ ok: true, action: 'updated', user: { ...existing, tier } })
+      .select('id, telegram_id, whatsapp_id, name, tier')
+      .in('whatsapp_id', exactStoredPhoneForms(full))
+      .limit(2)
+    if (lookupError || !Array.isArray(matches)) {
+      return NextResponse.json({ error: 'User lookup unavailable; no tier change made' }, { status: 503 })
+    }
+    if (matches.length > 1) {
+      return NextResponse.json({ error: 'Multiple accounts match this complete phone; select an explicit account' }, { status: 409 })
     }
 
-    // Create new pre-provisioned user
+    const existing = matches[0]
+    if (existing) {
+      // IDs are stable row keys. A null/legacy telegram_id cannot target a
+      // separate user's entitlement, and the matching phone is rechecked in
+      // the UPDATE predicate to fail closed on an intervening identity change.
+      if (typeof existing.id !== 'string' || !existing.id || typeof existing.whatsapp_id !== 'string') {
+        return NextResponse.json({ error: 'Account identity is incomplete; no tier change made' }, { status: 409 })
+      }
+      const { data: updated, error: updateError } = await db
+        .from('users')
+        .update({ tier })
+        .eq('id', existing.id)
+        .eq('whatsapp_id', existing.whatsapp_id)
+        .select('id, telegram_id, whatsapp_id, name, tier')
+        .maybeSingle()
+      if (updateError) return NextResponse.json({ error: 'Tier update failed' }, { status: 503 })
+      if (!updated || updated.id !== existing.id || updated.whatsapp_id !== existing.whatsapp_id || updated.tier !== tier) {
+        return NextResponse.json({ error: 'Account changed during update; verify and retry' }, { status: 409 })
+      }
+      return NextResponse.json({ ok: true, action: 'updated', user: updated })
+    }
+
+    // Pre-provisioning is allowed only after a successful exact zero-match
+    // lookup for a complete international phone, never after a DB outage.
     const { data: newUser, error: createErr } = await db
       .from('users')
       .insert({ whatsapp_id: waId, name: name || `User +${digits}`, tier })
       .select()
       .single()
-
-    if (createErr) return NextResponse.json({ error: createErr.message }, { status: 500 })
+    if (createErr || !newUser) return NextResponse.json({ error: 'User provisioning failed' }, { status: 503 })
     return NextResponse.json({ ok: true, action: 'created', user: newUser })
   }
 
