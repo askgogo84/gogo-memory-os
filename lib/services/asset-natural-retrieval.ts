@@ -63,6 +63,9 @@ function assetNoun(doc: any): string {
 export function shouldAttemptNaturalAssetRetrieval(text: string): boolean {
   const raw = String(text || '').trim()
   if (!raw || !RETRIEVAL_VERB_RE.test(raw) || RESERVED_RETRIEVAL_RE.test(raw) || SENSITIVE_REVEAL_CONFIRM_RE.test(raw) || EXTERNAL_SOURCE_RE.test(raw)) return false
+  // 26 Oct live: "Open https://www.croma.com/… read-only and tell me the price and delivery date for my pincode" was
+  // answered with a saved loan agreement. A message carrying a web link is about that page, never a saved asset.
+  if (/\bhttps?:\/\/\S+|\bwww\.[a-z0-9-]+\.[a-z]{2,}/i.test(raw)) return false
   // If this is an operational booking/travel/event flow, only permit Asset Memory to
   // claim it when the user explicitly asks for an asset-shaped object (document,
   // passport, receipt, file, etc.). Otherwise the real booking agent owns the turn.

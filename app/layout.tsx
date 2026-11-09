@@ -35,8 +35,13 @@ export const metadata: Metadata = {
   title: "AskGogo — Meet Gogo",
   description,
   icons: {
-    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
-    shortcut: "/icon.svg",
+    // 8 Nov: every icon is drawn from the approved Gogo character (scripts/brand/generate.py). favicon.ico carries
+    // 16/32/48 frames; it replaced Vercel's default triangle that browsers fetched at /favicon.ico.
+    icon: [
+      { url: "/favicon.ico", sizes: "16x16 32x32 48x48" },
+      { url: "/icon.svg", type: "image/svg+xml" },
+    ],
+    shortcut: "/favicon.ico",
     apple: [{ url: "/icons/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
   appleWebApp: { capable: true, title: "AskGogo", statusBarStyle: "black-translucent" },
@@ -47,14 +52,17 @@ export const metadata: Metadata = {
     description,
     url: "https://app.askgogo.in",
     images: [
-      {
-        // Square and large so WhatsApp's small thumbnail stays sharp (23 Oct: the wide image was smudged).
-        url: "/askgogo-share.png",
-        width: 800,
-        height: 800,
-        alt: "AskGogo — Meet Gogo",
-      },
+      // Square first so WhatsApp's small thumbnail stays sharp (23 Oct: the wide image was smudged there);
+      // the wide one is for LinkedIn and X large cards. Versioned names so cached previews refresh.
+      { url: "/askgogo-share-square-20261108.png", width: 800, height: 800, alt: "Gogo, the AskGogo assistant" },
+      { url: "/askgogo-share-20261108.png", width: 1200, height: 630, alt: "AskGogo: your Gogo, on every screen" },
     ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "AskGogo — Meet Gogo",
+    description,
+    images: ["/askgogo-share-20261108.png"],
   },
 };
 

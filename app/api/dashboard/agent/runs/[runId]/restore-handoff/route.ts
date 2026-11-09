@@ -3,6 +3,7 @@ import {getSession} from '@/lib/dashboard/session'
 import {verifySameOrigin} from '@/lib/dashboard/guard'
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {restoreReadBrowserHandoff} from '@/lib/agent/browser-command'
+import {browserRunOwnerFromSession,browserRunOwnerMatchesRow} from '@/lib/dashboard/browser-run-owner'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,14 +14,17 @@ export async function POST(request: Request, {params}: {params: Promise<{runId: 
   if (blocked) return blocked
   const session = await getSession()
   if (!session) return NextResponse.json({ok: false, error: 'unauthorized'}, {status: 401})
+  // Never permit lossy BIGINT -> Number coercion to pick another owner's browser actor.
+  const owner = browserRunOwnerFromSession(session.telegramId)
+  if (!owner) return NextResponse.json({ok: false, error: 'owner_unavailable'}, {status: 403})
   const {runId} = await params
   const {data: user, error} = await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name')
-    .eq('telegram_id', Number(session.telegramId)).maybeSingle()
-  if (error || !user?.id || !user.whatsapp_id) return NextResponse.json({ok: false, error: 'user_unavailable'}, {status: 400})
+    .eq('telegram_id', owner.telegramId).maybeSingle()
+  if (error || !user?.id || !user.whatsapp_id || !browserRunOwnerMatchesRow(user.telegram_id, owner)) return NextResponse.json({ok: false, error: 'user_unavailable'}, {status: 400})
   try {
     await restoreReadBrowserHandoff({actor: {
-      userId: String(user.id), legacyTelegramId: Number(user.telegram_id),
+      userId: String(user.id), legacyTelegramId: owner.legacyTelegramId,
       whatsappId: String(user.whatsapp_id), name: String(user.name || 'Gogo'),
     }, runId})
     return NextResponse.json({ok: true})

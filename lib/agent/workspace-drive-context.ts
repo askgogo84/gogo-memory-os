@@ -165,10 +165,12 @@ export async function tryRunWorkspaceDriveContext(params:{actor:AgentActor;surfa
       return {runId,status:'paused',capability:'files',risk:'low',text:summary,handledBy:'workspace-drive-context'}
     }
     if(choice.status==='ambiguous'){
-      const options=choice.files.map((file,i)=>`${i+1}. ${safe(file.name,180)}${file.modifiedTime?` · ${safe(file.modifiedTime,60)}`:''}`).join('\n')
-      const summary='I found several plausible Drive files, so I stopped rather than choosing the wrong document.'
+      // 26 Oct live: the list showed raw timestamps ("2026-10-26T13:03:00.732Z") and no way to open a file.
+      const edited=(iso?:string)=>{const d=new Date(String(iso||''));return Number.isFinite(d.getTime())?d.toLocaleDateString('en-IN',{day:'numeric',month:'short',year:d.getFullYear()===new Date().getFullYear()?undefined:'numeric',timeZone:'Asia/Kolkata'}):''}
+      const options=choice.files.map((file,i)=>{const when=edited(file.modifiedTime);const link=/^https:\/\/(?:docs|drive)\.google\.com\//.test(String(file.webViewLink||''))?`\n   ${file.webViewLink}`:'';return `${i+1}. ${safe(file.name,180)}${when?` · edited ${when}`:''}${link}`}).join('\n')
+      const summary=`I found ${choice.files.length} Drive files that could match, so I haven't opened one.`
       await finishRun(actor,runId,{status:'paused',summary,metadata:{plan_type:'workspace_drive_context',input_text:text,mutationsAllowed:false,candidateFileIds:choice.files.map(f=>f.id)}})
-      return {runId,status:'paused',capability:'files',risk:'low',text:`${summary}\n\n${options}\n\nAsk for the file by name to continue.`,handledBy:'workspace-drive-context'}
+      return {runId,status:'paused',capability:'files',risk:'low',text:`${summary}\n\n${options}\n\nAsk for the file by name and I'll read it, or open it from the link.`,handledBy:'workspace-drive-context'}
     }
 
     if(choice.status!=='selected')throw new Error('workspace_drive_selection_invalid')
