@@ -1,0 +1,48 @@
+name: Legacy Gmail reply UUID actor - immutable PR HEAD
+on:
+  pull_request:
+    paths:
+      - 'lib/feature-intents.ts'
+      - 'scripts/verify-feature-gmail-reply-actor-uuid.mjs'
+      - '.github/workflows/feature-gmail-reply-actor-uuid-literal-head.yml'
+permissions:
+  contents: read
+jobs:
+  feature-gmail-reply-owner:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+      CRON_SECRET: ci-placeholder-cron-secret
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert literal immutable PR feature SHA
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Locked install
+        run: npm ci
+      - name: Full registered regression tests
+        run: npm test
+      - name: Next type generation
+        run: npx next typegen
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Fixture production build
+        run: npm run build
+      - name: Original-source Gmail reply UUID/tenant isolation
+        run: node scripts/verify-feature-gmail-reply-actor-uuid.mjs
