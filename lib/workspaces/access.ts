@@ -433,10 +433,9 @@ export async function changeMemberRole(telegramId: string, workspaceId: string, 
 
 export async function removeMember(telegramId: string, workspaceId: string, targetTelegramId: string) {
   const { membership, target, targetRole } = await applyMemberChange(telegramId, workspaceId, targetTelegramId, { kind: 'remove' })
-  // Shares made by the departing member leave with them.
-  const { error: shareError } = await supabaseAdmin.from('workspace_artifacts').delete()
-    .eq('workspace_id', membership.workspaceId).eq('shared_by', target)
-  check(shareError, 'remove_shares')
+  // One statement: the composite FK workspace_artifacts(workspace_id, shared_by) -> workspace_members
+  // ON DELETE CASCADE (migration 20261109200000, applied) removes the departing member's shares in the same
+  // transaction, so a failed removal keeps them and a share added concurrently cannot outlive the membership.
   const { error } = await supabaseAdmin.from('workspace_members').delete()
     .eq('workspace_id', membership.workspaceId).eq('telegram_id', target)
   check(error, 'remove')
