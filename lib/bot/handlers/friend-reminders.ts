@@ -113,6 +113,10 @@ export async function createFriendReminder(params: {
   whenIso?: string
   task?: string
 }): Promise<{ whenHuman: string }> {
+  // Red #1159: the reminders cron suppresses a friend's delivery unless F2F_REMINDERS_ENABLED is '1' or 'true'. Saving
+  // the row anyway produced "Done — I'll remind Divya" for a message that would never be sent. Same rule as the cron.
+  const f2f = process.env.F2F_REMINDERS_ENABLED
+  if (f2f !== '1' && f2f !== 'true') throw new Error('friend_reminder_delivery_disabled')
   const parsed = params.whenIso && params.task
     ? (Date.parse(params.whenIso) > Date.now() ? {remindAtIso: params.whenIso, task: params.task} : null)
     : parseFriendTime(params.rest)

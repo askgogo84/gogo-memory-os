@@ -61,9 +61,11 @@ const friendDb = {from(table: string) {
   throw new Error(`Unexpected friend table: ${table}`)
 }}
 const friend: any = {}
+// friend-reminders reads F2F_REMINDERS_ENABLED (red #1159); the sandbox gets its own env, switched on below.
+const friendEnv: Record<string, string> = {}
 runInNewContext(ts.transpileModule(readFileSync(new URL('../lib/bot/handlers/friend-reminders.ts', import.meta.url), 'utf8'),
   {compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022}}).outputText,
-{exports: friend, Date: FixedDate, Intl, console, require(name: string) {
+{exports: friend, Date: FixedDate, Intl, console, process: {env: friendEnv}, require(name: string) {
   if (name === './reminders') return reminders
   if (name === '@/lib/supabase-admin') return {supabaseAdmin: friendDb}
   if (name === '@/lib/ist') return {istDayWindow: () => {throw new Error('No live clock')}}
@@ -260,6 +262,8 @@ try {
   assert.match(yes.text, /Done.*remind Matthew/i)
   assert.equal(created, 1)
   assert.equal(pending?.stage, 'done')
+  // This section exercises the switched-on path (red #1159 made saving refuse while F2F_REMINDERS_ENABLED is off).
+  friendEnv.F2F_REMINDERS_ENABLED = '1'
   await friend.createFriendReminder({ownerTelegramId: 42, senderName: 'Gogo', recipientWhatsapp: '+919876543210',
     rest: 'check with Tom tomorrow at 11am', whenIso: '2026-10-08T05:30:00.000Z', task: 'check with Tom about the Patek for Mukesh'})
   assert.equal(insertedFriends[0].remind_at, '2026-10-08T05:30:00.000Z')
