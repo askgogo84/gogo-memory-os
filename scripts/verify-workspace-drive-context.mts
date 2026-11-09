@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs'
 const helper = readFileSync(new URL('../lib/agent/workspace-drive-context.ts', import.meta.url), 'utf8')
 const readLayer = readFileSync(new URL('../lib/agent/google-workspace-read.ts', import.meta.url), 'utf8')
 const binary = readFileSync(new URL('../lib/agent/google-workspace-drive-binary.ts', import.meta.url), 'utf8')
+const serverlessPdf = readFileSync(new URL('../lib/services/pdf-js-serverless.ts', import.meta.url), 'utf8')
 const runRoute = readFileSync(new URL('../app/api/agent/run/route.ts', import.meta.url), 'utf8')
 const google = readFileSync(new URL('../lib/services/google-gmail.ts', import.meta.url), 'utf8')
 
@@ -21,7 +22,9 @@ assert.match(binary, /application\/pdf/, 'Drive binary reader must support PDF')
 assert.match(binary, /wordprocessingml\.document/, 'Drive binary reader must support DOCX')
 assert.match(binary, /presentationml\.presentation/, 'Drive binary reader must support PPTX')
 assert.match(binary, /spreadsheetml\.sheet/, 'Drive binary reader must support XLSX')
-assert.match(binary, /pdf-parse/, 'PDF extraction must use the existing bounded parser')
+assert.match(binary, /extractServerlessPdfText\(bytes,MAX_DRIVE_TEXT\)/, 'PDF extraction must use the bounded serverless parser')
+assert.match(serverlessPdf, /ensurePdfJsServerlessGlobals\(\)\s*\n\s*const mod:any=await import\('pdf-parse'\)/,
+ 'PDF.js globals must be installed before the parser module is first imported')
 assert.match(binary, /jszip/, 'Office document extraction must use bounded OOXML parsing')
 assert.match(binary, /xlsx/, 'Workbook extraction must use bounded spreadsheet parsing')
 assert.match(binary, /response\.arrayBuffer\(\)/, 'Drive binaries must be downloaded as bytes rather than coerced to text')
