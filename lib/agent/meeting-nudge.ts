@@ -43,6 +43,9 @@ async function verifiedMeetingRecipient(ownerId: string): Promise<{ whatsappId: 
 }
 
 export async function processMeetingNudges(now = new Date(), limit = 30) {
+  // 4 Nov quiet WhatsApp: no volunteered meeting nudges (the meeting stays in the calendar and on the dashboard).
+  const { mayVolunteer } = await import('@/lib/channels/proactive-policy')
+  if (!mayVolunteer('meeting_nudge')) return { sent: 0, skipped: 0, quiet: true } as any
   const nowIso = now.toISOString(), soon = new Date(now.getTime() + NUDGE_LEAD_MIN * MIN + 30_000).toISOString()
   const { data, error } = await supabaseAdmin.from('agent_open_loops').select('id,telegram_id,source_id,title,due_at,evidence_json')
     .eq('source_type', 'meeting_prep').eq('status', 'active').gt('due_at', nowIso).lte('due_at', soon).order('due_at', { ascending: true }).limit(limit)

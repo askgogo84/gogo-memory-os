@@ -139,6 +139,9 @@ export async function dispatchUnderstanding(u: UnderstandingResult, ctx: Underst
       // "Plan my day/week" is answered from the calendar, reminders and open items (the briefing path), not with a
       // question back (23 Oct live: it asked "going out, food, rest, errands?").
       if (/\bplan\s+(?:my|the|out\s+my)\s+(?:day|week|morning|afternoon|evening|today|tomorrow)\b/i.test(text)) return null
+      // 6 Nov live: "Help me organise my move to Whitefield next month" got "going out, food, rest, errands?". A move,
+      // renovation, wedding or other project needs a checklist from the assistant, not a leisure-plan question.
+      if (/\b(?:move|moving|shift(?:ing)?|relocat\w*|renovat\w*|wedding|house\s?warming|griha\s?pravesh|exam|interview|launch|project|admission|visa)\b/i.test(text)) return null
       // One question, nothing executed.
       return u.clarifyingQuestion ? { text: u.clarifyingQuestion, handledBy: 'understand-first-clarify', status: 'paused', persisted: false } : null
     default:
@@ -232,6 +235,12 @@ export async function runUnderstandFirst(p: {
     if (p.skip) return none(p.skip)
     // Fixed commands and bare menu numbers are unambiguous by construction; no reading is spent on them.
     if (isExactCommand(text)) return none('exact_command')
+    // 29 Oct live: "check the match score at 9 pm on Friday" is a scheduled check (a reminder that looks it up when
+    // it fires), never an answer now.
+    if (/\b(?:check|see|look\s+up|find\s+out|get)\b/i.test(text)) {
+      const jobs: any = await import('./lookup-reminder').catch(() => null)
+      if (jobs?.isScheduledLookup?.(text)) return none('scheduled_lookup')
+    }
     // 20 Oct live: "Train from Bangalore to Mysore tomorrow morning" was read as chat/web and answered by the
     // chat model with invented train times. A rail route belongs to the train specialist, which reads the
     // provider or says it could not verify. Loaded only when a rail word is present.

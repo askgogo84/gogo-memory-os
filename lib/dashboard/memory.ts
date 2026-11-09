@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { createDocumentShortLink, shortLinkUrl } from '@/lib/services/document-links'
+import { exactSessionOwnerId } from './owner-identity'
 
 type RawDoc = {
   id: string | number
@@ -135,14 +136,18 @@ function safeSubtitle(doc: RawDoc, sensitive: boolean): string {
 }
 
 export async function getDashboardMemory(telegramId: string): Promise<DashboardMemory> {
-  const tgNum = parseInt(telegramId, 10)
-  if (!Number.isFinite(tgNum)) return { ok: true, items: [] }
+  const owner = exactSessionOwnerId(telegramId)
+  if (!owner) return { ok: true, items: [] }
+  // PostgreSQL BIGINT owners above JS safe-integer range must stay exact strings.
+  // Keep legacy numeric predicates for safe IDs so existing reads behave identically.
+  const numericOwner = Number(owner)
+  const databaseOwner: string | number = Number.isSafeInteger(numericOwner) ? numericOwner : owner
 
   try {
     const { data, error } = await supabaseAdmin
       .from('documents')
       .select('id, doc_type, title, summary, extracted, doc_date, expires_on, storage_path, mime, created_at')
-      .eq('telegram_id', tgNum)
+      .eq('telegram_id', databaseOwner)
       .order('created_at', { ascending: false })
       .limit(80)
 
@@ -155,7 +160,7 @@ export async function getDashboardMemory(telegramId: string): Promise<DashboardM
       const sensitive = isSensitive(doc)
       let openUrl: string | null = null
       if (doc.storage_path) {
-        const token = await createDocumentShortLink({ telegramId: tgNum, documentId: String(doc.id), sensitive })
+        const token = await createDocumentShortLink({ telegramId: databaseOwner, documentId: String(doc.id), sensitive })
         if (token) openUrl = shortLinkUrl(token)
       }
       return {

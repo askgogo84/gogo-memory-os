@@ -20,7 +20,12 @@ export async function GET(request: Request) {
 
   try {
     const result = await processLearningPass()
-    return NextResponse.json({ ok: true, ...result })
+    // Same Brain 3.0 Phase 1: semantic graph sync for flagged owners only (GOGO_SEMANTIC / GOGO_SEMANTIC_OWNERS). Never fails the pass.
+    let semantic: unknown = null
+    if (process.env.GOGO_SEMANTIC === '1' || process.env.GOGO_SEMANTIC_OWNERS) {
+      try { const { syncSemanticForEnabledOwners } = await import('@/lib/semantic/sync'); semantic = await syncSemanticForEnabledOwners() } catch (e: any) { console.error('SEMANTIC_SYNC_CRON_FAILED', e?.message || e); semantic = { error: 'semantic_sync_failed' } }
+    }
+    return NextResponse.json({ ok: true, ...result, semantic })
   } catch (err: any) {
     console.error('AGENT_LEARNING_CRON_FAILED:', err?.message || err)
     return NextResponse.json({ ok: false, error: 'learning_worker_failed' }, { status: 500 })

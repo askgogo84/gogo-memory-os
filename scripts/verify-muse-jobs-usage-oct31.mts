@@ -1,0 +1,124 @@
+// 31 Oct, from r/MuseAgent: usage dashboards with weekly gauges and 7/30/60/90-day trends; a daily job scan with saved
+// preferences; tracking applications from email; the right resume and a custom cover letter for each job.
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+const j = await import('../lib/agent/jobs')
+
+// Preferences.
+assert.equal(j.parseJobPrefsCommand('My job preferences: Head of AI or VP Engineering roles in Bengaluru or remote, above 80 LPA'), 'Head of AI or VP Engineering roles in Bengaluru or remote, above 80 LPA')
+assert.equal(j.parseJobPrefsCommand("I'm looking for Forward Deployed Engineer roles in Bengaluru"), 'Forward Deployed Engineer roles in Bengaluru')
+assert.equal(j.parseJobPrefsCommand('My job is stressful'), null)
+const p = j.jobPrefsFrom('Head of AI or VP Engineering roles in Bengaluru or remote, above 80 LPA')
+assert.deepEqual(p.roles, ['Head of AI', 'VP Engineering']); assert.deepEqual(p.locations, ['bengaluru', 'remote']); assert.equal(p.minSalaryLpa, 80)
+assert.match(j.jobPrefsReply(p), /at least ₹80 LPA/)
+
+// Daily radar.
+assert.equal(j.isJobRadarRequest('Scan for new jobs every day and report the ones I would be qualified for'), true)
+assert.equal(j.isJobRadarRequest('Find Forward Deployed Engineer jobs every day'), true)
+assert.equal(j.isJobRadarRequest('find jobs'), false, 'a one-off search is not a daily radar')
+assert.equal(j.jobRadarQuery('Scan for new jobs every day and report the ones I would be qualified for', p), 'Head of AI OR VP Engineering jobs bengaluru OR remote 80+ LPA')
+assert.equal(j.jobRadarQuery('Find Forward Deployed Engineer jobs every day', null), 'Forward Deployed Engineer jobs')
+
+// Application tracker.
+const now = Date.parse('2026-10-31T06:00:00Z')
+const rows = [
+  { from: 'LinkedIn <jobs-noreply@linkedin.com>', subject: 'Your application was sent to Razorpay', snippet: 'You applied for Head of AI at Razorpay', at: now - 9 * 86400_000 },
+  { from: 'Egon Zehnder <bangalore@egonzehnder.com>', subject: 'Re: Leadership search: Director / VP Engineering', snippet: 'Thank you for your interest. We would like to schedule a call next week', at: now - 2 * 86400_000 },
+  { from: 'Stripe Recruiting <no-reply@stripe.com>', subject: 'Thanks for applying', snippet: 'Thank you for applying for the Staff Engineer role', at: now - 20 * 86400_000 },
+  { from: 'Stripe Recruiting <no-reply@stripe.com>', subject: 'Update on your application', snippet: 'Unfortunately we have decided to move forward with other candidates for the Staff Engineer role', at: now - 5 * 86400_000 },
+  { from: 'HDFC Bank <x@hdfcbank.com>', subject: 'Your loan application received', snippet: '', at: now },
+].map(e => j.classifyApplicationEmail(e)).filter(Boolean) as any[]
+const merged = j.mergeApplications(rows)
+assert.deepEqual(merged.map((a: any) => `${a.company}|${a.role}|${a.status}`), ['Egon Zehnder||interview', 'Stripe|Staff Engineer|rejected', 'Razorpay|Head of AI|applied'])
+const text = j.formatApplications(merged, now)
+assert.match(text, /Your job applications\* \(3, 2 still open\)/); assert.match(text, /🗓️ Interview · 2 days ago/); assert.match(text, /✖️ Not moving forward/)
+assert.equal(j.isJobApplicationsQuery('show my job applications'), true)
+assert.equal(j.isJobApplicationsQuery('What jobs have I applied for?'), true)
+assert.equal(j.isJobApplicationsQuery('show my visa application'), false)
+
+// Prepare an application: the matching resume, never a submit.
+assert.deepEqual(j.parsePrepareApplication('Prepare application for Head of AI at Razorpay https://jobs.lever.co/razorpay/123'), { job: 'Head of AI at Razorpay https://jobs.lever.co/razorpay/123' })
+assert.equal(j.parsePrepareApplication('Write a cover letter for Staff Engineer at Stripe')?.job, 'Staff Engineer at Stripe')
+assert.equal(j.pickResume([{ title: 'Resume - Engineering leadership', summary: 'VP Engineering, infrastructure' }, { title: 'Resume - AI product', summary: 'Head of AI, LLM products, agents' }], 'Head of AI at Razorpay').title, 'Resume - AI product')
+const cmd = readFileSync('lib/agent/jobs-command.ts', 'utf8')
+assert.match(cmd, /I haven't applied\. Submit it yourself/); assert.doesNotMatch(cmd, /tryRunGeneralPlan|secure browser/i, 'preparing never starts a browser submit')
+assert.match(readFileSync('lib/agent/brain.ts', 'utf8'), /m\.isJobCommand\(p\.text\)/)
+console.log('✓ job preferences, a daily job radar, applications tracked from email, the right resume and a cover letter')
+
+// Usage trends.
+const act = await import('../lib/dashboard/activity')
+const t0 = Date.parse('2026-10-31T06:00:00Z') // Saturday
+const iso = (d: number) => new Date(t0 - d * 86400_000).toISOString()
+const tr = act.buildActivityTrends({
+  aiEvents: [{ created_at: iso(0), action: 'chat' }, { created_at: iso(1), action: 'web_search' }, { created_at: iso(10), action: 'chat' }, { created_at: iso(45), action: 'chat' }, { created_at: iso(80), action: 'expense' }],
+  reminders: [{ remind_at: iso(2) }, { remind_at: iso(40) }],
+  runs: [{ created_at: iso(3), status: 'completed', title: 'Grocery list and reminder' }, { created_at: iso(3), status: 'failed', title: 'Browser · x' }],
+  alerts: [{ created_at: iso(1) }],
+}, t0, 40, 220)
+assert.deepEqual(tr.trends.map(x => [x.days, x.ai, x.tasks, x.reminders, x.alerts]), [[7, 2, 1, 1, 1], [30, 3, 1, 1, 1], [60, 4, 1, 2, 1], [90, 5, 1, 2, 1]])
+assert.equal(tr.weekLimit, 280); assert.equal(tr.weekStart, '2026-10-25T18:30:00.000Z', 'the week starts Monday 00:00 IST')
+assert.equal(tr.weekUsed, 2); assert.equal(tr.weeks.length, 12); assert.equal(tr.weeks[11].ai, 2)
+assert.equal(tr.topActions[0].action, 'Questions answered')
+// 4 Nov: one allowance everywhere — the plan's monthly number, with the daily cap beside it.
+assert.equal(tr.monthUsed, 3); assert.equal(tr.monthLimit, 220); assert.equal(tr.monthStart, '2026-09-30T18:30:00.000Z', 'the month starts on the 1st, 00:00 IST')
+assert.match(act.formatActivityTrends(tr, 'Free'), /This month:\* 3 of 220 AI actions \(1%\) · up to 40 a day · resets 1 Nov/)
+assert.doesNotMatch(act.formatActivityTrends(tr, 'Free'), /This week/)
+assert.equal(act.isUsageQuery('show my usage'), true); assert.equal(act.isUsageQuery('how many tasks have you done for me this week'), true); assert.equal(act.isUsageQuery('show my expenses'), false)
+const pm = await import('../lib/bot/process-message')
+assert.equal(pm.isUsageCommand('show my usage'), true); assert.equal(pm.isUsageCommand('How many tasks have you done for me?'), true)
+assert.match(readFileSync('app/dashboard/(app)/usage/page.tsx', 'utf8'), /<UsageTrends a=\{trends\} \/>/)
+console.log('✓ usage: this week against the weekly allowance, 7/30/60/90-day trends, 12 weeks, top uses, recent tasks')
+
+// Muse users: "book a haircut x day at x time".
+const ar = await import('../lib/agent/appointment-research')
+assert.equal(ar.isAppointmentResearchRequest('Book a haircut on Saturday at 11 am'), true)
+assert.equal(ar.isAppointmentResearchRequest('find a barber in Indiranagar tomorrow evening'), true)
+assert.equal(ar.isAppointmentResearchRequest('Remind me to get a haircut Saturday'), false, 'a reminder stays a reminder')
+assert.equal(ar.serviceHint('Book a haircut on Saturday at 11 am'), 'haircut')
+assert.match(readFileSync('lib/agent/appointment-research.ts', 'utf8'), /and I'll phone them after you approve the call/)
+console.log('✓ "book a haircut Saturday at 11 am" finds salon booking pages and offers an approved call')
+
+// Run against a real inbox (31 Oct): bare no-reply senders on hiring platforms, grants and GitHub notices mixed in.
+const real = [
+  ['supportfinkraftai@viazohorecruit.com', 'Next Step in Your Application for Forward Deployed Engineer – Quick Action Required', 9],
+  ['shortlist@jobgether.com', 'Next Steps for Your Job Application: Director, Engineering - Marketplace & Dev Ecosystem at Jobgether', 3],
+  ['shortlist@jobgether.com', 'Follow-up on your application to Director, Engineering - Marketplace & Dev Ecosystem', 5],
+  ['no-reply@nextiva.com', 'Thank you for applying to Nextiva!', 12],
+  ['noreply@candidates.workablemail.com', 'Thanks for applying to Ajaib', 6],
+  ['noreply@airtableemail.com', 'Solo Grant Application Received!', 20],
+  ['no-reply@openai.com', 'Thank you for applying to OpenAI', 15],
+  ['notifications@github.com', '[askgogo84/gogo-memory-os] Muse parity: usage trends and job hunting (prefs, daily radar, application tracker, prepare-to-apply) (PR #1161)', 1],
+  ['mail@fundizr.com', '5 Funding Applications Are Live', 2],
+].map(([from, subject, d]) => j.classifyApplicationEmail({ from: String(from), subject: String(subject), snippet: '', at: now - Number(d) * 86400_000 })).filter(Boolean) as any[]
+const board = j.mergeApplications(real)
+assert.deepEqual(board.map((a: any) => `${a.company}|${a.status}`), ['Jobgether|assessment', 'Ajaib|applied', 'Finkraftai|assessment', 'Nextiva|applied', 'OpenAI|applied'])
+assert.equal(board[0].role, 'Director, Engineering - Marketplace & Dev Ecosystem', 'a role-less "next steps" email joins the company\'s known role')
+assert.match(j.formatApplications(board, now), /📝 Next step · 3 days ago/)
+console.log('✓ real inbox: companies from subjects, grants and GitHub notices skipped, "next steps" counted as progress')
+
+// 31 Oct live: salon links were 300-character google.com/goto redirects; usage trends failed on agent_runs.created_at;
+// "scan for new jobs every day" asked for roles already saved ("Head of AI" has a two-letter word).
+const oi = await import('../lib/security/outbound-identifiers')
+assert.equal(oi.tidyUrl('https://www.google.com/goto?url=CAESeWFkSmA&url=https%3A%2F%2Fwww.envisalons.com%2Fsalon%2Frajajinagar%3Futm_source%3Dgoogle%26utm_medium%3Dorganic&ved=2ahUKE'), 'https://www.envisalons.com/salon/rajajinagar')
+assert.match(readFileSync('lib/agent/appointment-research.ts', 'utf8'), /maps\.google\.com\/\?q=/, 'a token-only goto link becomes a short Maps search')
+assert.equal(oi.tidyUrl('https://www.google.com/url?q=https://naturals.in/bangalore/rajajinagar&sa=U&usg=AOv'), 'https://naturals.in/bangalore/rajajinagar')
+assert.equal(oi.tidyUrl('https://example.com/p?id=7&utm_campaign=x&srsltid=AfmB'), 'https://example.com/p?id=7')
+assert.equal(oi.tidyLinks('Book: https://www.google.com/url?q=https://naturals.in/x&sa=U. Thanks'), 'Book: https://naturals.in/x. Thanks')
+assert.match(oi.maskOutboundIdentifiers('see https://www.google.com/url?q=https://naturals.in/x&sa=U'), /see https:\/\/naturals\.in\/x$/, 'every WhatsApp send gets tidy links')
+assert.match(readFileSync('lib/agent/appointment-research.ts', 'utf8'), /Booking\/provider page: \$\{bookLink\(o\.url, o\.title, location\)\}/)
+assert.match(readFileSync('lib/dashboard/activity.ts', 'utf8'), /select\('started_at,status,title,type'\)/)
+assert.match(readFileSync('lib/agent/jobs-command.ts', 'utf8'), /\\S\\s\+jobs\\b/)
+assert.ok(/\S\s+jobs\b/i.test(j.jobRadarQuery('scan for new jobs every day', j.jobPrefsFrom('Forward Deployed Engineer or Head of AI roles in Bengaluru or remote'))))
+assert.match(readFileSync('lib/bot/handlers/gmail-read.ts', 'utf8'), /-from:notifications@github\.com/)
+
+// 2 Nov live tracker: names ran from subject into snippet, "Support" prefixes, and a school email read as an offer.
+{
+  const c = (from: string, subject: string, snippet: string) => j.classifyApplicationEmail({ from, subject, snippet, at: now })
+  assert.equal(c('noreply@candidates.workablemail.com', 'Thanks for applying to Ajaib', 'Ajaib team has received your application')?.company, 'Ajaib')
+  assert.equal(c('jobs@ashbyhq.com', 'Thank you for applying to Blue Machines AI', 'Blue Machines AI team will review your profile')?.company, 'Blue Machines AI')
+  assert.equal(c('"Support Finkraft" <support@finkraft.ai>', 'Next steps on your application', 'Please complete the assessment for the role')?.company, 'Finkraft')
+  assert.equal(c('office@greenwoodschool.in', 'Elementary School: offer letter for the Annual Day volunteer role', 'Dear parents, we are pleased to offer'), null)
+  assert.equal(c('hr@stripe.com', 'Your application for Staff Engineer at Stripe', 'Thanks for your application')?.company, 'Stripe', 'one-word company names still read')
+  console.log('✓ tracker: no repeated names, no Support prefix, school emails are never offers')
+}
+console.log('✓ links read as addresses; usage trends read started_at; saved preferences start the job radar; tracker skips GitHub')
