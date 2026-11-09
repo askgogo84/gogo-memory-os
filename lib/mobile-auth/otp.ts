@@ -7,7 +7,11 @@ const OTP_TTL_MS = 10 * 60 * 1000
 const sha256 = (value: string) => createHash('sha256').update(value).digest('hex')
 
 export function normalizeWhatsappLogin(value: string): string | null {
-  const digits = String(value || '').replace(/\D/g, '')
+  const raw = String(value || '').trim()
+  let digits = raw.replace(/\D/g, '')
+  // A bare India mobile number (10 digits starting 6-9, optionally with a trunk 0) is the
+  // +91 owner, not a phantom "+98..." identity. Explicit "+" or longer numbers keep their prefix.
+  if (!raw.startsWith('+') && /^0?[6-9]\d{9}$/.test(digits)) digits = `91${digits.slice(-10)}`
   if (digits.length < 10 || digits.length > 15) return null
   return `+${digits}`
 }
