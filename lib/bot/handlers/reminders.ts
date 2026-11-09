@@ -653,12 +653,24 @@ export function reminderLeadTime(text: string) {
 // Moved to ../reminder-command so detect-intent can share it without loading this module.
 export { isContentlessReminderRequest } from '../reminder-command'
 
+/** "remind me to X and also what's the weather tomorrow?" → "remind me to X". Pure. */
+export function stripTrailingQuestion(text: string): string {
+  const t = String(text || '')
+  const also = /[,;]?\s+(?:and\s+also|also|plus)\s+(?:what|what's|whats|how|how's|when|where|who|why|is|are|will|can|could|tell\s+me)\b[\s\S]*$/i
+  const question = /[,;]?\s+and\s+(?:what|what's|whats|how|how's|when|where|who|why|is|are|will|can|could)\b[^?]*\?\s*$/i
+  return t.replace(also, '').replace(question, '').trim()
+}
+
 export function parseReminderIntent(text: string): ParsedReminder {
+  // 29 Oct live: "Remind me to pay rent on the 1st and also what's the weather tomorrow?" fired today at 1 pm as
+  // "pay rent the 1st and also what's the weather": the second ask's "tomorrow" set the time. A trailing question
+  // is a separate ask and never part of the reminder.
+  text=stripTrailingQuestion(text)
   text=normalizeReminderDate(text)
   if (isTimeFirstReminder(text)) text = `remind me at ${text.trim().replace(/\breminder[.!]*\s*$/i, '').trim()}`
   if(reminderTimingProblem(text))return null
   const lead = reminderLeadTime(text)
-  if (!lead) return parseReminderBase(text)
+  if (!lead) return tidyParsedReminder(parseReminderBase(text))
 
   // Oct 1 production incident: "Aqua appointment at 4.30pm..remind me..10 mins
   // earlier" fell into model datetime arithmetic and was saved at 17:20 IST.
@@ -673,7 +685,21 @@ export function parseReminderIntent(text: string): ParsedReminder {
   const fireMs = Date.parse(event.remindAtIso) - offsetMs
   // Do not silently move an already-missed advance notice to another day.
   if (!Number.isFinite(fireMs) || fireMs <= Date.now()) return null
-  return { ...event, remindAtIso: new Date(fireMs).toISOString() }
+  return tidyParsedReminder({ ...event, remindAtIso: new Date(fireMs).toISOString() })
+}
+
+/** 29 Oct live (Kannada "…meeting ide anta nenapisu"): "remind me that I have a meeting" was saved as "That I have
+ * a meeting". The reminder is the thing itself: "Meeting". Pure. */
+export function tidyReminderMessage(message: string): string {
+  const m = String(message || '').trim()
+  const cut = m.replace(/^that\s+(?:i\s+(?:have|'ve\s+got|have\s+got|got)|there\s+is|there's|i\s+am\s+having)\s+(?:a\s+|an\s+|my\s+|the\s+)?/i, '')
+    .replace(/^(?:go|going)\s+the\s+/i, 'Go to the ')
+  if (!cut || cut.length < 2 || cut === m) return m
+  return cut.charAt(0).toUpperCase() + cut.slice(1)
+}
+
+function tidyParsedReminder<T extends { message: string } | null>(r: T): T {
+  return r ? { ...r, message: tidyReminderMessage(r.message) } : r
 }
 
 export function buildReminderConfirmation(parsed: Exclude<ParsedReminder, null>): string {
