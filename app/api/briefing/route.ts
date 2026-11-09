@@ -399,7 +399,10 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
 async function briefingCalendar(telegramId: unknown): Promise<{ title: string; time: string | null; startAt: string | null }[]> {
   const id = String(telegramId ?? '')
   // A 16-digit id can still be a safe integer; the check is the exact limit, never a digit count.
-  if (!/^[1-9]\d{0,15}$/.test(id) || BigInt(id) > BigInt(Number.MAX_SAFE_INTEGER)) { console.log('BRIEFING_CALENDAR:', JSON.stringify({ skipped: 'unsafe_id', digits: id.length })); return [] }
+  // 6 Nov live log: {"skipped":"unsafe_id","digits":10} for the owner. WhatsApp-only users have a negative id
+  // ("-123456789"), which the old pattern refused, so the calendar section never appeared. Negative ids are allowed
+  // (as in lib/security/card-link.ts); the magnitude must still be within the safe-integer limit.
+  if (!/^-?[1-9]\d{0,15}$/.test(id) || (id.startsWith('-') ? -BigInt(id) : BigInt(id)) > BigInt(Number.MAX_SAFE_INTEGER)) { console.log('BRIEFING_CALENDAR:', JSON.stringify({ skipped: 'unsafe_id', digits: id.replace(/^-/, '').length, negative: id.startsWith('-') })); return [] }
   try {
     const { getTodayCalendar } = await import('@/lib/dashboard/queries')
     const cal = await Promise.race([getTodayCalendar(id), new Promise<null>(r => setTimeout(() => r(null), 8000))])
