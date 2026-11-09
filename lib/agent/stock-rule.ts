@@ -22,6 +22,7 @@ export type ParsedStockWatch = {
   pct: number | null
   level: number | null
   defaulted: boolean        // no threshold given: default 5% either way
+  cadenceMinutes?: number   // "every 6 hours" when the person asked for a pace
 }
 
 export const DEFAULT_MOVE_PCT = 5
@@ -32,8 +33,16 @@ const WATCH_WORDS = /\b(?:watch|track|monitor|alert|notify|tell\s+me|let\s+me\s+
 const MOVE_WORDS = '(?:drops?|falls?|dips?|declines?|rises?|jumps?|gains?|climbs?|crosses|goes|moves?|is\\s+(?:up|down)|hits?|touches)'
 
 /** True for a share-price watch request; leaves product stock ("in stock"), gold, reminders and "X shares the doc" alone. */
+// Muse 16 (29 Oct): "Check Tata Motors every 6 hours and tell me if it moved more than 2% since your last update" names
+// no share or stock, but a capitalised name plus a % move is a market quote watch. Products, metals and crypto are not.
+const NAMED_MOVE = /\b(?:[Cc]heck|[Ww]atch|[Tt]rack|[Mm]onitor|[Kk]eep\s+(?:an\s+)?eye\s+on)\s+([A-Z][A-Za-z0-9&.\-]*(?:\s+[A-Z][A-Za-z0-9&.\-]*){0,3})\b/
+function isNamedMoveWatch(t: string) {
+  return NAMED_MOVE.test(t) && /\b(?:mov(?:ed|es|e)|changed?|changes)\b[^.?!]{0,40}?\d{1,2}(?:\.\d+)?\s*(?:%|percent)/i.test(t)
+    && !/(?:₹|\brs\.?\s*\d|\b(?:phone|iphone|laptop|tv|flight|fare|hotel|gold|silver|bitcoin|btc|eth|crypto|price\s+of|on\s+(?:amazon|flipkart|croma|myntra))\b)/i.test(t)
+}
 export function isStockWatchPhrasing(text: string) {
   const t = String(text || '').replace(/[’']/g, "'")
+  if (!STOCK_WORDS.test(t) && isNamedMoveWatch(t) && WATCH_WORDS.test(t)) return true
   if (!STOCK_WORDS.test(t) || !WATCH_WORDS.test(t)) return false
   if (/^\s*(?:please\s+|pls\s+)?remind\b/i.test(t)) return false
   if (/\b(?:in\s+stock|out\s+of\s+stock|back\s+in\s+stock|restock|stock\s+up|gold|silver)\b/i.test(t)) return false
@@ -60,7 +69,8 @@ export function parseStockWatchCommand(text: string): ParsedStockWatch | null {
   let company = ''
   const before = raw.match(/([A-Za-z0-9&.\- ]{2,60}?)\s*(?:'s\s+)?(?:share\s*price|stock\s*price|shares?|stock)\b/i)
   // Everything up to the last command/filler word ("alert me if", "keep an eye on") is not the company.
-  if (before) company = cleanCompany(before[1].replace(/^.*\b(?:watch|track|monitor|alert|notify|tell\s+me|let\s+me\s+know|ping\s+me|keep\s+(?:an\s+)?eye\s+on|me|if|when|whenever|about|on)\b\s*/i, ''))
+  if (before) company = cleanCompany(before[1].replace(/^.*\b(?:check|watch|track|monitor|alert|notify|tell\s+me|let\s+me\s+know|ping\s+me|keep\s+(?:an\s+)?eye\s+on|me|if|when|whenever|about|on)\b\s*/i, ''))
+  if (!company && !STOCK_WORDS.test(raw)) company = cleanCompany(raw.match(NAMED_MOVE)?.[1] || '')
   if (!company) {
     const after = raw.match(new RegExp(`${WATCH_WORDS.source}\\s+(?:me\\s+)?(?:on\\s+|about\\s+)?([A-Za-z0-9&.\\- ]{2,60})`, 'i'))
     if (after) company = cleanCompany(after[1].replace(STOCK_WORDS, ' '))
@@ -84,7 +94,9 @@ export function parseStockWatchCommand(text: string): ParsedStockWatch | null {
   const either = /\b(?:either|both|any\s+direction|up\s+or\s+down|down\s+or\s+up|moves?|changes?)\b/i.test(raw) || (down && up)
   const direction: StockRule['direction'] = either || (!down && !up) ? 'any' : down ? 'down' : 'up'
   if (pct !== null && (!(pct > 0) || pct > 50)) return null
-  return { company, kind: 'move', direction, pct: pct ?? DEFAULT_MOVE_PCT, level: null, defaulted: pct === null }
+  const every = raw.match(/\bevery\s+(\d{1,2})\s*(?:hours?|hrs?|h)\b/i)
+  const cadenceMinutes = every ? Math.min(1440, Math.max(30, Number(every[1]) * 60)) : undefined
+  return { company, kind: 'move', direction, pct: pct ?? DEFAULT_MOVE_PCT, level: null, defaulted: pct === null, ...(cadenceMinutes ? { cadenceMinutes } : {}) }
 }
 
 export function normalizeStockRule(input: any): StockRule | null {
