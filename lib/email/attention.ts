@@ -225,7 +225,8 @@ export function scoreEmail(email: AttentionEmail, ctx: ScoreContext = {}): Score
     if (email.isUnread) score += 0.04
   } else if (PROBLEM.test(text) && (category === 'order_update' || category === 'update' || category === 'receipt')) {
     // 26 Oct live: a Google Sheets "Spreadsheet shared with you" notice was labelled "Something went wrong".
-    score = 0.62; reasons.push(/\bshared with you\b/i.test(String(email.subject || '')) ? 'Shared a file with you' : 'Something went wrong')
+    // 30 Oct live: three GitHub CI failures each said "Why: Something went wrong". Name the kind of problem.
+    score = 0.62; reasons.push(problemReason(String(email.subject || ''), text))
   } else score = category === 'order_update' || category === 'update' ? 0.15 : 0.05
 
   if (rule?.kind === 'always' && score > 0) { score = Math.max(score, 0.7) + 0.1; reasons.unshift(rule.source === 'built_in' ? rule.label : `You flagged ${rule.label}`) }
@@ -339,4 +340,16 @@ export function ruleFromFeedback(s: Pick<ScoredEmail, 'category' | 'senderEmail'
   const cat = SKIP_LABEL[s.category]?.[1] || 'mail'
   if (kind === 'always') return { kind, matchType: 'domain', matchValue: domain, label: `mail from ${s.senderName}`, source: 'feedback' }
   return { kind, matchType: 'sender_category', matchValue: domain, category: s.category, label: `${s.senderName} ${cat}`, source: 'feedback' }
+}
+
+
+/** A short, specific reason for a problem notice ("A build or CI run failed"), never a bare "Something went wrong". */
+export function problemReason(subject: string, text = '') {
+  const s = `${subject} ${text}`
+  if (/\bshared with you\b/i.test(subject)) return 'Shared a file with you'
+  if (/\b(?:security|breach|credentials?|password|suspicious|unauthori[sz]ed|sign-?in attempt)\b/i.test(s)) return 'Security alert'
+  if (/\b(?:payment|card|charge|billing|invoice)\b[^.]{0,40}\b(?:fail|declin|unsuccessful|overdue)/i.test(s) || /\b(?:fail|declin)\w*\b[^.]{0,40}\b(?:payment|card|charge)\b/i.test(s)) return 'Payment failed'
+  if (/\b(?:run|build|deploy(?:ment)?|workflow|pipeline|check|ci|tests?)\b[^.]{0,30}\bfail/i.test(s) || /\bfail\w*\b[^.]{0,30}\b(?:run|build|deploy(?:ment)?|workflow|pipeline|checks?)\b/i.test(s)) return 'A build or CI run failed'
+  if (/\b(?:order|delivery|shipment|parcel|refund)\b/i.test(s)) return 'Problem with an order'
+  return 'Reports a problem'
 }

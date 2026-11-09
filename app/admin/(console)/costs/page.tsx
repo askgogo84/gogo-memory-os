@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { Kpis, Head, BarList, VBars, Pill } from '@/components/admin/ui'
 import { RateTable } from '@/components/admin/rate-table'
-import { costByUser, costByVendor, costByDay, userRows, payments, runCounts, messageCounts, rateCard, istMonthStart, istDateKey, inr, inrSmart, PLAN_LABEL, PLAN_BUDGET_INR, VENDOR_LABEL, CATEGORY_GROUP } from '@/lib/admin/console-data'
+import { brainShadowStats, costByUser, costByVendor, costByDay, userRows, payments, runCounts, messageCounts, rateCard, istMonthStart, istDateKey, inr, inrSmart, PLAN_LABEL, PLAN_BUDGET_INR, VENDOR_LABEL, CATEGORY_GROUP } from '@/lib/admin/console-data'
 import { requireAdminConsole } from '@/lib/admin/console-auth'
 
 export const dynamic = 'force-dynamic'
@@ -21,6 +21,7 @@ export default async function CostsPage({ searchParams }: { searchParams: Promis
     userRows(), costByVendor(since), range === 'last' ? costByVendor(monthStart) : Promise.resolve([]), costByUser(since), range === 'last' ? costByUser(monthStart) : Promise.resolve([]),
     costByDay(since), payments(since), runCounts(since), messageCounts(since), rateCard(),
   ])
+  const shadow = await brainShadowStats(since).catch(() => null)
   const minus = <T extends { cost: number }>(a: T[], b: T[], key: (x: T) => string) => { const m = new Map(b.map(x => [key(x), x.cost])); return a.map(x => ({ ...x, cost: x.cost - (m.get(key(x)) || 0) })).filter(x => x.cost > 0.00005) }
   const vendors = range === 'last' ? minus(vSince, vThis as any, v => v.vendor + v.category) : vSince
   const byUser = range === 'last' ? minus(uSince, uThis as any, u => u.telegram_id) : uSince
@@ -52,6 +53,8 @@ export default async function CostsPage({ searchParams }: { searchParams: Promis
         { label: 'Per active user', value: activeN ? inrSmart(total / activeN) : '—', sub: `${activeN} active` },
         { label: 'Revenue', value: inr(revenue), sub: 'payments received' },
         { label: 'Over budget', value: over.length, sub: 'users past plan budget' },
+        // 4 Nov: how often Haiku 5.5 decided the same as the main brain; switch with GOGO_BRAIN_FAST=on at 95%+ over 200+ turns.
+        { label: 'Cheaper brain', value: shadow && shadow.turns ? `${Math.round((shadow.sameAction / shadow.turns) * 100)}%` : '—', sub: shadow && shadow.turns ? `same action, ${shadow.turns} turns · ${Math.round((shadow.exact / shadow.turns) * 100)}% identical` : 'no comparisons yet' },
       ]} />
       <section>
         <h2>Daily usage cost</h2>

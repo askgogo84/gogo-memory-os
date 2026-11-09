@@ -17,10 +17,17 @@ const LEASE_MINUTES=8
 
 function safe(value:unknown,max=800){return String(value??'').replace(/\s+/g,' ').trim().slice(0,max)}
 
-async function actorFor(telegramId:string):Promise<AgentActor>{
-  const{data,error}=await supabaseAdmin.from('users').select('id,telegram_id,whatsapp_id,name,timezone').eq('telegram_id',Number(telegramId)).maybeSingle()
+async function actorFor(telegramId:string|number):Promise<AgentActor>{
+  // Exact owner (P0.1): exact decimal lookup, row must echo the id, unsafe ids refused (never rounded).
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) throw new Error('restaurant_reservation_actor_missing')
+  const owner = String(telegramId ?? '').trim()
+  const legacy = Number(owner)
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner) || !Number.isSafeInteger(legacy) || String(legacy) !== owner) throw new Error('restaurant_reservation_actor_missing')
+
+  const{data,error}=await supabaseAdmin.from('users').select('id,telegram_id,whatsapp_id,name,timezone').eq('telegram_id', legacy).maybeSingle()
   if(error||!data?.id||!data?.telegram_id)throw new Error('restaurant_reservation_actor_missing')
-  return{userId:String(data.id),legacyTelegramId:Number(data.telegram_id),whatsappId:String(data.whatsapp_id||''),name:String(data.name||'Gogo'),timezone:String(data.timezone||'Asia/Kolkata')}
+  if (String(data.telegram_id) !== owner) throw new Error('restaurant_reservation_actor_missing')
+  return{userId:String(data.id),legacyTelegramId: legacy,whatsappId:String(data.whatsapp_id||''),name:String(data.name||'Gogo'),timezone:String(data.timezone||'Asia/Kolkata')}
 }
 
 async function browserPermission(telegramId:string):Promise<AgentPermissionLevel>{
