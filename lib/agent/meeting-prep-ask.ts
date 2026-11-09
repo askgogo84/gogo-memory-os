@@ -10,6 +10,7 @@ export const MEETING_PREP_RE = /^\s*(?:please\s+|can you\s+|could you\s+)?(?:pre
 export function isMeetingPrepAsk(text: string) { return MEETING_PREP_RE.test(String(text || '').trim()) && String(text).length <= 160 }
 
 export type PrepEvent = { summary: string; start: string; label: string; meetLink?: string; attendees?: { email: string; displayName?: string; self?: boolean; resource?: boolean; responseStatus?: string }[] }
+export type GuestNotes = Map<string, string[]>
 export type PrepEmail = { subject: string; from: string; date: string; snippet: string }
 
 export type RequestedMeetingClock = { hour: number; minute: number }
@@ -61,7 +62,7 @@ export function nextMeeting(
 const who = (a: { email: string; displayName?: string }) => a.displayName || a.email.split('@')[0]
 
 /** The prep note. Pure. */
-export function formatPrep(e: PrepEvent, emails: PrepEmail[] | null, now = Date.now()): string {
+export function formatPrep(e: PrepEvent, emails: PrepEmail[] | null, now = Date.now(), notes: GuestNotes = new Map()): string {
   const others = (e.attendees || []).filter(a => !a.self && !a.resource && a.email)
   const mins = Math.round((Date.parse(e.start) - now) / 60_000)
   const when = mins <= 0 ? 'starting now' : mins < 60 ? `in ${mins} min` : mins < 24 * 60 ? `in about ${Math.round(mins / 60)} h` : ''
@@ -70,7 +71,8 @@ export function formatPrep(e: PrepEvent, emails: PrepEmail[] | null, now = Date.
   if (join) lines.push(`Join: ${join}`)
   if (others.length) {
     const status = (s?: string) => s === 'accepted' ? '✓' : s === 'declined' ? '✗ declined' : s === 'tentative' ? 'maybe' : 'no reply yet'
-    lines.push('', `*Who's coming (${others.length})*`, ...others.slice(0, 8).map(a => `• ${who(a)} · ${status(a.responseStatus)}`))
+    // What you've told Gogo about a guest (7 Nov, via lib/agent/people): "Nithin works from home on Fridays".
+    lines.push('', `*Who's coming (${others.length})*`, ...others.slice(0, 8).flatMap(a => [`• ${who(a)} · ${status(a.responseStatus)}`, ...(notes.get(a.email.toLowerCase()) || []).map(n => `  ${n}`)]))
     if (others.length > 8) lines.push(`• and ${others.length - 8} more`)
   } else lines.push('', 'No other guests on the invite.')
   if (emails === null) lines.push('', 'Connect Gmail and I can add your latest emails with these people.')
@@ -116,6 +118,7 @@ export async function tryMeetingPrep(actor: AgentActor, text: string): Promise<s
       emails = null
     }
   }
-  console.log('MEETING_PREP:', JSON.stringify({ guests: guests.length, emails: emails === null ? 'no_gmail' : emails.length }))
-  return formatPrep(next, emails)
+  const notes = await import('./people').then(m => m.guestNotes(actor, guests), () => new Map<string, string[]>())
+  console.log('MEETING_PREP:', JSON.stringify({ guests: guests.length, emails: emails === null ? 'no_gmail' : emails.length, notes: notes.size }))
+  return formatPrep(next, emails, Date.now(), notes)
 }
