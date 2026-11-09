@@ -14,10 +14,10 @@ const fromRow = (r: any): Space & { rowId: string } => ({ ...(r.doc as Space), v
 
 export type SkillLookup = (id: string) => { exactActionApproval: boolean } | null
 
-export async function listSpaces(db: Db, scope: SpaceScope): Promise<{ slug: string; title: string; template: SpaceTemplate; version: number; updatedAt: string }[]> {
+export async function listSpaces(db: Db, scope: SpaceScope): Promise<{ slug: string; title: string; template: SpaceTemplate; version: number; updatedAt: string; refreshMinutes: number }[]> {
   const { data, error } = await scoped(db.from('spaces').select('slug,template,version,doc,updated_at'), scope).order('updated_at', { ascending: false }).limit(50)
   check(error, 'list')
-  return (data || []).map((r: any) => ({ slug: r.slug, title: String(r.doc?.title || r.slug), template: r.template, version: r.version, updatedAt: r.updated_at }))
+  return (data || []).map((r: any) => ({ slug: r.slug, title: String(r.doc?.title || r.slug), template: r.template, version: r.version, updatedAt: r.updated_at, refreshMinutes: Number(r.doc?.refreshMinutes) || 15 }))
 }
 
 export async function getSpace(db: Db, scope: SpaceScope, slug: string): Promise<(Space & { rowId: string }) | null> {

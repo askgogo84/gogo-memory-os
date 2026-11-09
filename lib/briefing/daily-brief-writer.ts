@@ -40,7 +40,12 @@ export async function writeDailyBrief(owner: string, now = Date.now()): Promise<
   const brief = composeTopicBrief(blocks, { date, now, tipplrHref })
   const title = briefTitle(date)
   const { data: existing } = await supabaseAdmin.from('agent_artifacts').select('id').eq('telegram_id', tg).eq('type', 'daily_brief').eq('title', title).maybeSingle()
-  const row = { telegram_id: tg, type: 'daily_brief', title, subtitle: `${brief.items.length} items · ${brief.needsYou} needed you`, schema_version: DAILY_BRIEF_SCHEMA, content_json: { format: 'topic_brief', ...brief }, source_refs: Object.keys(blocks).map(k => `space_block:${k}`) }
+  // Sections so the saved brief reads in /dashboard/reports like any other Make result.
+  const sections = [
+    { title: 'Needs you', tool: 'brief', result: { text: brief.items.filter(i => i.tone === 'needs_you').map(i => `${i.topic}: ${i.text}`).join('\n') || 'Nothing needs you this morning.' } },
+    { title: 'Gogo has it', tool: 'brief', result: { text: brief.items.filter(i => i.tone === 'handled').map(i => `${i.topic}: ${i.text}`).join('\n') || 'Nothing else to report.' } },
+  ]
+  const row = { telegram_id: tg, type: 'daily_brief', title, subtitle: `${brief.items.length} items · ${brief.needsYou} needed you`, schema_version: DAILY_BRIEF_SCHEMA, content_json: { format: 'topic_brief', ...brief, sections }, source_refs: Object.keys(blocks).map(k => `space_block:${k}`) }
   const res = existing?.id
     ? await supabaseAdmin.from('agent_artifacts').update({ ...row, updated_at: new Date(now).toISOString() }).eq('id', existing.id).eq('telegram_id', tg)
     : await supabaseAdmin.from('agent_artifacts').insert(row)
