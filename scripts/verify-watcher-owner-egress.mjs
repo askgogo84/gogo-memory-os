@@ -113,7 +113,9 @@ for (const bad of [Number(B), NaN, Infinity, 0, 'garbage', '00071', null]) {
 console.log('PASS ambiguous numeric and invalid owner identities fail closed without reads or sends')
 for (const options of [{ dbError: true }, { wrongOwnerResult: true }, { unsafeOwnerResult: true }]) {
   const f = fixture(options)
-  await f.sendWhatsAppIfWanted(B, 'whatsapp', 'confidential watch')
+  // main (#1319) fails closed on an owner-lookup DB error by throwing; it must still never send.
+  if (options.dbError) await assert.rejects(f.sendWhatsAppIfWanted(B, 'whatsapp', 'confidential watch'), /watch_alert_owner_lookup_failed/)
+  else await f.sendWhatsAppIfWanted(B, 'whatsapp', 'confidential watch')
   assert.equal(f.sent.length, 0, 'unverified lookup never permits outbound content')
   assert.equal(f.costs.length, 0, 'unverified send must not charge owner')
 }
