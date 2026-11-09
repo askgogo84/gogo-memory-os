@@ -110,9 +110,12 @@ export function addedAsGuest(text: string): boolean {
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
 
-/** Same hotel and city is one stay unless both carry different check-in dates. Pure. */
+/** Same hotel and city is one stay unless both carry different check-in dates. Pure.
+ *  An undated read keys on hotel + city; a dated one adds its check-in day so two reservations at the same hotel
+ *  on different dates never share (and overwrite) one row. saveStay still folds a dated read into an undated row. */
 export function stayDedupeKey(s: Stay): string {
-  return `stay:${slug(s.hotel)}:${slug(normCity(s.city) || 'city')}`
+  const base = `stay:${slug(s.hotel)}:${slug(normCity(s.city) || 'city')}`
+  return s.checkIn ? `${base}:${s.checkIn}` : base
 }
 
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
@@ -132,7 +135,8 @@ export function mergeStay(prev: Partial<Stay> | null | undefined, next: Stay): S
     arrangedBy: next.arrangedBy || p.arrangedBy || (next.bookedBy && p.bookedBy && !same(next.bookedBy, p.bookedBy) ? p.bookedBy : null),
     guests: [...new Set([...(p.guests || []), ...next.guests])].slice(0, 8),
     userRole: next.userRole !== 'unknown' ? next.userRole : (p.userRole || 'unknown'),
-    isRequest: next.isRequest && !!p.isRequest,
+    // A first read that is a request stays a request; once saved, a hotel confirmation clears it for good.
+    isRequest: prev ? next.isRequest && !!p.isRequest : next.isRequest,
     address: next.address || p.address || null,
   }
 }
@@ -146,8 +150,16 @@ function dayStartIso(day: string | null, hour = 14) {
 /** Save (or merge into) the stay. Returns the merged stay and whether it was new. */
 export async function saveStay(telegramId: number | string, stay: Stay, source: { kind: string; text?: string }): Promise<{ stay: Stay; created: boolean } | null> {
   const tg = String(telegramId)
-  const key = stayDedupeKey(stay)
-  const { data: existing } = await supabaseAdmin.from('life_events').select('id,metadata_json').eq('telegram_id', tg).eq('dedupe_key', key).maybeSingle()
+  let key = stayDedupeKey(stay)
+  let { data: existing } = await supabaseAdmin.from('life_events').select('id,metadata_json').eq('telegram_id', tg).eq('dedupe_key', key).maybeSingle()
+  if (!existing && stay.checkIn) {
+    // An earlier undated read (or a legacy hotel+city row) of this same stay: fold into it, but only when it carries
+    // no check-in or this same one, so a different dated reservation never overwrites it.
+    const baseKey = stayDedupeKey({ ...stay, checkIn: null })
+    const { data: base } = await supabaseAdmin.from('life_events').select('id,metadata_json').eq('telegram_id', tg).eq('dedupe_key', baseKey).maybeSingle()
+    const baseIn = base?.metadata_json?.stay?.checkIn || null
+    if (base && (!baseIn || baseIn === stay.checkIn)) { existing = base; key = baseKey }
+  }
   const merged = mergeStay(existing?.metadata_json?.stay, stay)
   const row = {
     telegram_id: tg, event_type: 'reservation', subtype: 'hotel_stay', source: source.kind,
