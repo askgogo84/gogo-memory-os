@@ -23,6 +23,13 @@ const stubs = {
   '@/lib/bot/memory-redaction': { redactSecretShapedText: text => text },
   './jobs': { isJobScanNow: () => false, jobScanQuery: () => null },
   './places-search': { placeAsk: () => null, nearbyRewrite: () => null },
+  // Imports main added to brain.ts after this harness was written; inert, never-matching stubs.
+  '@/lib/email/mail-alert-commands': { isMailAlertCommand: () => false },
+  '@/lib/agent/trip-plan': { tripAsk: () => null },
+  '@/lib/agent/people': { personAsk: () => null },
+  './order-tracking': { ORDER_LIST_RE: /(?!)/ },
+  './payment-confirmation': { PAYMENT_GATE: /(?!)/ },
+  '@/lib/services/model-ids': { SONNET_MODEL: 'fixture-model' },
 }
 const brainExports = {}
 vm.runInNewContext(js, {
