@@ -32,6 +32,11 @@ function check(error: PgError, context: string) {
 }
 
 function tg(value: unknown): string {
+  // A rounded JS number must never become another tenant's owner id.
+  // Exact BIGINT decimal strings remain valid; signed WhatsApp ids may be negative.
+  if (typeof value === 'number' && (!Number.isSafeInteger(value) || value === 0)) {
+    throw new WorkspaceError('invalid_session')
+  }
   const id = String(value ?? '').trim()
   if (!id) throw new WorkspaceError('invalid_session')
   return id
@@ -90,12 +95,27 @@ export async function audit(workspaceId: string, actor: string, action: string, 
   check(error, 'audit')
 }
 
+/** No Number() on workspace owner identities: Postgres BIGINT has 64-bit precision. */
+function exactWorkspaceNameOwner(value: unknown): string | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
+  return value
+}
+
 async function displayNames(telegramIds: string[]): Promise<Map<string, string>> {
-  const numeric = [...new Set(telegramIds)].map(Number).filter(Number.isFinite)
-  if (!numeric.length) return new Map()
-  const { data, error } = await supabaseAdmin.from('users').select('telegram_id,name').in('telegram_id', numeric)
+  // Use exact decimal strings in the service-role filter. An unsafe numeric
+  // response is ambiguous, even if its rounded value matches a requested ID.
+  const ids = [...new Set(telegramIds.map(exactWorkspaceNameOwner).filter((id): id is string => id !== null))]
+  if (!ids.length) return new Map()
+  const requested = new Set(ids)
+  const { data, error } = await supabaseAdmin.from('users').select('telegram_id,name').in('telegram_id', ids)
   if (error) { console.error('WORKSPACE_NAMES_FAILED:', String(error.code || '')); return new Map() }
-  return new Map(((data || []) as { telegram_id: unknown; name: unknown }[]).map(u => [String(u.telegram_id), String(u.name || '').trim() || 'AskGogo user']))
+  const names = new Map<string, string>()
+  for (const user of (data || []) as { telegram_id: unknown; name: unknown }[]) {
+    const id = exactWorkspaceNameOwner(user.telegram_id)
+    if (id && requested.has(id)) names.set(id, String(user.name || '').trim() || 'AskGogo user')
+  }
+  return names
 }
 
 export async function createWorkspace(telegramId: string, rawName: unknown): Promise<MyWorkspace> {
@@ -204,7 +224,13 @@ export async function inviteMember(telegramId: string, workspaceId: string, rawN
   check(error, 'invite_lookup')
   if (!users?.length) throw new WorkspaceError('user_not_found')
   if (users.length > 1) throw new WorkspaceError('ambiguous_number')
-  const invitee = String(users[0].telegram_id)
+  // Postgres BIGINT identities must not be rounded into another account before
+  // creating a pending invitation. Preserve exact signed decimal strings.
+  const rawInvitee: unknown = users[0].telegram_id
+  if (typeof rawInvitee === 'number' && (!Number.isSafeInteger(rawInvitee) || rawInvitee === 0)) throw new WorkspaceError('invalid_owner')
+  if (typeof rawInvitee !== 'string' && typeof rawInvitee !== 'number') throw new WorkspaceError('invalid_owner')
+  const invitee = String(rawInvitee).trim()
+  if (!/^-?[1-9]\d*$/.test(invitee)) throw new WorkspaceError('invalid_owner')
   if (await memberRow(membership.workspaceId, invitee)) throw new WorkspaceError('already_member')
   const { count, error: countError } = await supabaseAdmin.from('workspace_members')
     .select('telegram_id', { count: 'exact', head: true }).eq('workspace_id', membership.workspaceId)

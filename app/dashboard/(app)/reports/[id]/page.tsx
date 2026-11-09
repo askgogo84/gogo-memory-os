@@ -8,7 +8,7 @@ import { ReportEditor } from '@/components/dashboard/report-editor'
 import { canRole, listMyWorkspaces } from '@/lib/workspaces/access'
 import { ShareToWorkspace } from '../../business/share-to-workspace'
 import { MakeDocViewer } from '@/components/dashboard/make-doc-viewer'
-import { linkedTelegramIds } from '@/lib/dashboard/owner-ids'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 
 // SecondBrain pilot: workspaces where I may share. Empty when workspaces are not enabled yet.
 async function shareTargets(telegramId:string){
@@ -36,26 +36,11 @@ export default async function ReportPage({params}:{params:Promise<{id:string}>})
   // signed in. Sign in first, then land back on this result (the link itself is never a login credential).
   const session=await getSession()
   if(!session)redirect('/dashboard?next='+encodeURIComponent(`/dashboard/reports/${id}`))
-  const telegramId=String(session.telegramId)
+  const telegramId=exactSessionOwnerId(session.telegramId)
+  if(!telegramId)notFound()
   let {data:report,error}=await supabaseAdmin.from('agent_artifacts')
     .select('title,subtitle,content_json,source_refs,updated_at').eq('id',id).eq('telegram_id',telegramId).maybeSingle()
   if(error)throw new Error('report_read_unavailable')
-  // Made on WhatsApp: the person's linked WhatsApp row may own it (same whatsapp_id; see owner-ids).
-  if(!report&&typeof linkedTelegramIds==='function'){
-    const others=(await linkedTelegramIds(telegramId)).filter(v=>v!==telegramId)
-    if(others.length){
-      // Read by id, then authorise in code: the owner must be one of this person's linked ids (exact string match).
-      const linked=await supabaseAdmin.from('agent_artifacts').select('telegram_id,title,subtitle,content_json,source_refs,updated_at').eq('id',id).maybeSingle()
-      const owner=String((linked.data as any)?.telegram_id??'').trim()
-      if(!linked.error&&linked.data&&others.includes(owner))report=linked.data as any
-      else if(linked.data)console.error('REPORT_LINK_MISMATCH:',JSON.stringify({owner:owner.slice(-4),ownerLen:owner.length,others:others.map(v=>`${v.slice(-4)}/${v.length}`)}))
-    }
-  }
-  if(!report){
-    // Diagnose without revealing anything: does the row exist under another owner id?
-    const {data:other}=await supabaseAdmin.from('agent_artifacts').select('telegram_id').eq('id',id).maybeSingle()
-    console.error('REPORT_NOT_IN_ACCOUNT:',JSON.stringify({id,exists:!!other,ownerMatchesType:other?typeof other.telegram_id:null,sessionTg:String(telegramId).slice(-4),ownerTg:other?String(other.telegram_id).slice(-4):null,ownerShape:other?`${String(other.telegram_id).startsWith('-')?'neg':'pos'}${String(other.telegram_id).replace('-','').length}`:null}))
-  }
   if(!report)notFound()
   // Make: a deck or a sheet has its own viewer and downloads.
   const made:any=(report.content_json as any)?.doc

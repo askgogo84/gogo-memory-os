@@ -34,3 +34,27 @@ const oneWayObj = b.flightBookingObjective({context: {origin: {code: 'BLR'}, des
 assert.match(oneWayObj, /one-way BLR to DEL, depart 2026-11-06, 1 adult/); assert.doesNotMatch(oneWayObj, /return/)
 assert.match(src, /oneWayDisplayOrder\(flights/, 'a one-way result is booked from the list the person saw')
 console.log('flight booking ok')
+
+// 26 Oct (owner): domestic flights need the name as on any government photo ID; passport + date of birth only abroad.
+{
+  const dom = { origin: { code: 'BLR' }, destination: { code: 'DEL' } }, intl = { origin: { code: 'BLR' }, destination: { code: 'SIN' } }
+  assert.equal(b.isDomesticIndiaTrip(dom), true)
+  assert.equal(b.isDomesticIndiaTrip(intl), false)
+  assert.equal(b.isDomesticIndiaTrip({}), false, 'unknown route is treated as international (stricter)')
+  const now = new Date('2026-10-26')
+  const d1 = b.parseTravellers('Goverdhan Mandyam Dommane', now, { domestic: true })
+  assert.deepEqual(d1, { travellers: [{ name: 'Goverdhan Mandyam Dommane' }], problems: [] }, 'domestic: name only, no date of birth')
+  const d2 = b.parseTravellers('Asha Rao, 12 Mar 1985', now, { domestic: true })
+  assert.equal(d2.travellers[0].dob, '12 Mar 1985', 'a date of birth given anyway is kept')
+  const d3 = b.parseTravellers('Goverdhan 12 march 1984', now, { domestic: true })
+  assert.equal(d3.travellers.length, 0)
+  assert.match(d3.problems[0], /as on your government photo ID/)
+  assert.doesNotMatch(d3.problems[0], /passport/, 'no passport wording for a domestic trip')
+  assert.match(d3.problems[0], /single name Goverdhan/, 'tells a one-name person exactly what to send')
+  assert.deepEqual(b.parseTravellers('single name Goverdhan', now, { domestic: true }).travellers, [{ name: 'Goverdhan' }])
+  assert.equal(b.parseTravellers('single name Goverdhan', now).travellers.length, 0, 'abroad: passport name and date of birth still required')
+  assert.match(b.parseTravellers('Goverdhan, 12 Mar 1984', now).problems[0], /as on the passport/)
+  const objDom = b.flightBookingObjective({ context: { ...dom, startDate: '2026-11-20', cabin: 'economy', adults: 1 }, option: { airline: 'Air India', departure: '12:15 AM', stops: 0, fareInr: 10327 } as any, travellers: d1.travellers })
+  assert.match(objDom, /traveller 1: full name Goverdhan Mandyam Dommane\./)
+  assert.doesNotMatch(objDom, /date of birth undefined/)
+}
