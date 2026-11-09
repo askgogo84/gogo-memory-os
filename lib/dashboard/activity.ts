@@ -10,6 +10,11 @@ export type ActivityInput = {
 }
 export type Trend = { days: 7 | 30 | 60 | 90; ai: number; reminders: number; tasks: number; alerts: number }
 export type ActivityTrends = {
+  /** 4 Nov: the one allowance shown everywhere is monthly; the week view only shows progress. */
+  monthUsed: number
+  monthLimit: number
+  dayLimit: number
+  monthStart: string
   weekUsed: number
   weekLimit: number
   weekStart: string
@@ -38,7 +43,13 @@ export function actionLabel(action: string) {
   return ACTION_LABEL[a] || a.replace(/[_-]+/g, ' ').replace(/^\w/, c => c.toUpperCase())
 }
 
-export function buildActivityTrends(input: ActivityInput, now = Date.now(), aiPerDay = 0): ActivityTrends {
+/** 1st of the month 00:00 IST that contains `t`, as a UTC timestamp. */
+export function istMonthStart(t: number) {
+  const ist = new Date(t + IST)
+  return Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), 1) - IST
+}
+
+export function buildActivityTrends(input: ActivityInput, now = Date.now(), aiPerDay = 0, monthLimit = 0): ActivityTrends {
   const ts = (s: string) => Date.parse(String(s || ''))
   const within = (t: number, days: number) => Number.isFinite(t) && t <= now && now - t < days * DAY
   const done = input.runs.filter(r => String(r.status || '') === 'completed')
@@ -61,7 +72,12 @@ export function buildActivityTrends(input: ActivityInput, now = Date.now(), aiPe
   const recent = [...input.runs].filter(r => r.title && Number.isFinite(ts(r.created_at)))
     .sort((a, b) => ts(b.created_at) - ts(a.created_at)).slice(0, 8)
     .map(r => ({ title: String(r.title).slice(0, 90), status: String(r.status || ''), at: r.created_at }))
+  const monthStart = istMonthStart(now)
   return {
+    monthUsed: input.aiEvents.filter(e => ts(e.created_at) >= monthStart && ts(e.created_at) <= now).length,
+    monthLimit: Math.max(0, monthLimit),
+    dayLimit: Math.max(0, aiPerDay),
+    monthStart: new Date(monthStart).toISOString(),
     weekUsed: input.aiEvents.filter(e => ts(e.created_at) >= thisWeek && ts(e.created_at) <= now).length,
     weekLimit: Math.max(0, aiPerDay * 7),
     weekStart: new Date(thisWeek).toISOString(),
@@ -71,12 +87,14 @@ export function buildActivityTrends(input: ActivityInput, now = Date.now(), aiPe
 
 /** The WhatsApp version: a few lines, numbers first. */
 export function formatActivityTrends(a: ActivityTrends, planLabel = '') {
-  const pct = a.weekLimit > 0 ? Math.round((a.weekUsed / a.weekLimit) * 100) : null
+  const pct = a.monthLimit > 0 ? Math.round((a.monthUsed / a.monthLimit) * 100) : null
+  const nextMonth = istMonthStart(Date.parse(a.monthStart) + 32 * DAY)
+  const resets = new Intl.DateTimeFormat('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' }).format(new Date(nextMonth))
   const t = (d: number) => a.trends.find(x => x.days === d)!
   const n = (v: number, w: string) => `${v} ${w}${v === 1 ? '' : 's'}`
   const row = (d: number) => `${d} days: ${n(t(d).ai, 'AI action')} · ${n(t(d).tasks, 'task')} · ${n(t(d).reminders, 'reminder')} · ${n(t(d).alerts, 'alert')}`
   const top = a.topActions.length ? `\n\n*Most used (30 days):* ${a.topActions.map(x => `${x.action} ${x.count}`).join(', ')}` : ''
-  return `📊 *Your usage*${planLabel ? ` (${planLabel})` : ''}\n\n*This week:* ${a.weekUsed}${a.weekLimit ? ` of ${a.weekLimit} AI actions${pct !== null ? ` (${pct}%)` : ''}` : ' AI actions'} · resets Monday\n\n${[7, 30, 60, 90].map(row).join('\n')}${top}\n\nThe full view with charts is under Usage in your dashboard.`
+  return `📊 *Your usage*${planLabel ? ` (${planLabel})` : ''}\n\n*This month:* ${a.monthUsed}${a.monthLimit ? ` of ${a.monthLimit} AI actions${pct !== null ? ` (${pct}%)` : ''}` : ' AI actions'}${a.dayLimit ? ` · up to ${a.dayLimit} a day` : ''} · resets ${resets}\n\n${[7, 30, 60, 90].map(row).join('\n')}${top}\n\nThe full view with charts is under Usage in your dashboard.`
 }
 
 export function isUsageQuery(text: string) {
@@ -86,7 +104,7 @@ export function isUsageQuery(text: string) {
     || /^how\s+many\s+(?:tasks|things)\s+(?:have\s+you|did\s+you)\s+(?:done|do|finished)\s+for\s+me(?:\s+this\s+(?:week|month))?$/.test(t)
 }
 
-export async function getActivityTrends(telegramId: string | number, aiPerDay = 0, now = Date.now()): Promise<ActivityTrends> {
+export async function getActivityTrends(telegramId: string | number, aiPerDay = 0, now = Date.now(), monthLimit = 0): Promise<ActivityTrends> {
   // Exact owner (P0.1): every query uses the exact decimal owner id; a rounded number is refused before any read.
   if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) throw new Error('owner_identity_invalid:unsafe_number')
   const tg = String(telegramId ?? '').trim()
@@ -100,5 +118,5 @@ export async function getActivityTrends(telegramId: string | number, aiPerDay = 
     supabaseAdmin.from('agent_activity').select('created_at').eq('telegram_id', tg).eq('event_type', 'watcher_triggered').gte('created_at', since).limit(5000),
   ])
   for (const r of [ai, rem, runs, alerts]) if ((r as any).error) throw new Error(`activity_read_failed:${(r as any).error.message}`)
-  return buildActivityTrends({ aiEvents: (ai.data || []) as any, reminders: (rem.data || []) as any, runs: ((runs.data || []) as any[]).map(r => ({ ...r, created_at: r.started_at })), alerts: (alerts.data || []) as any }, now, aiPerDay)
+  return buildActivityTrends({ aiEvents: (ai.data || []) as any, reminders: (rem.data || []) as any, runs: ((runs.data || []) as any[]).map(r => ({ ...r, created_at: r.started_at })), alerts: (alerts.data || []) as any }, now, aiPerDay, monthLimit)
 }

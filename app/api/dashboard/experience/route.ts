@@ -1,11 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactDashboardOwnerId } from '@/lib/dashboard/exact-owner-id'
 
 export const dynamic = 'force-dynamic'
 
 const PERSONALITIES = new Set(['calm_companion', 'sharp_professional', 'straight_talking_coach', 'quiet_minimalist'])
 const DRINKS = new Set(['coffee', 'tea', 'matcha', 'water', 'hot_chocolate', 'coconut_water'])
+
+// Preserve legacy numeric predicates for safely representable owners; all other
+// signed BIGINT session identities remain exact decimal strings in PostgREST.
+// Invalid/truncated owner IDs must not cause any service-role query or write.
+function experienceOwnerId(raw: unknown): number | string | null {
+  const owner = exactDashboardOwnerId(raw)
+  if (!owner) return null
+  const n = Number(owner)
+  return Number.isSafeInteger(n) && String(n) === owner ? n : owner
+}
 
 function sameOrigin(req: NextRequest): boolean {
   const origin = req.headers.get('origin')
@@ -16,8 +27,8 @@ function sameOrigin(req: NextRequest): boolean {
 export async function GET() {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const tg = parseInt(session.telegramId, 10)
-  if (!Number.isFinite(tg)) return NextResponse.json({ error: 'invalid_session' }, { status: 400 })
+  const tg = experienceOwnerId(session.telegramId)
+  if (tg === null) return NextResponse.json({ error: 'invalid_session' }, { status: 400 })
 
   const { data, error } = await supabaseAdmin
     .from('user_experience_preferences')
@@ -36,8 +47,8 @@ export async function POST(req: NextRequest) {
   if (!sameOrigin(req)) return NextResponse.json({ error: 'forbidden' }, { status: 403 })
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
-  const tg = parseInt(session.telegramId, 10)
-  if (!Number.isFinite(tg)) return NextResponse.json({ error: 'invalid_session' }, { status: 400 })
+  const tg = experienceOwnerId(session.telegramId)
+  if (tg === null) return NextResponse.json({ error: 'invalid_session' }, { status: 400 })
 
   const body = await req.json().catch(() => null) as any
   const personality = String(body?.personality || '')

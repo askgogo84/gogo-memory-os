@@ -170,7 +170,13 @@ export async function tryRunAppointmentResearch(params: { actor: AgentActor; sur
 
   if (!isAppointmentResearchRequest(params.text)) return null
   const service = serviceHint(params.text)
-  const locationRaw = locationHint(params.text)
+  // 6 Nov live: "Book a dentist for Thursday afternoon" listed dentist sites from all over India. With no place
+  // named, the home area the person saved ("Home area: Rajajinagar (560086)") is where they want the appointment.
+  let locationRaw = locationHint(params.text)
+  if (!locationRaw) {
+    const home = await import('./places-context').then(m => m.savedPlaces(String(params.actor.legacyTelegramId))).then(p => p.home, () => null)
+    if (home?.area) locationRaw = /bengaluru|bangalore/i.test(home.area) ? home.area : `${home.area}, Bengaluru`
+  }
   const profile = locationProfile(locationRaw)
   const location = profile.canonical || locationRaw
   const timing = timingHint(params.text)
