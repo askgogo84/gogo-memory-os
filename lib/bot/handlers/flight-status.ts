@@ -58,7 +58,7 @@ export function buildFlightStatusQuery(userText: string, refYmd = localTodayYmd(
   return `${codePart} flight status ${dateHint} arrival landed on time delayed`.replace(/\s+/g, ' ').trim()
 }
 
-export type OccurrenceReason = 'ok' | 'flight_number_mismatch' | 'dateless_for_dated_request' | 'wrong_year' | 'date_contradiction'
+export type OccurrenceReason = 'ok' | 'flight_number_mismatch' | 'dateless_for_dated_request' | 'wrong_year' | 'date_contradiction' | 'stale_date'
 
 // Classify whether a result concerns the REQUESTED flight occurrence, returning a REASON so the
 // decision is traceable (query logs) and testable — the difference between "no evidence exists"
@@ -106,7 +106,18 @@ export function classifyOccurrence(r: WebSearchResult, userText: string, refYmd 
     if (datesContradict(norm, urlDates.join(' '))) return { usable: false, reason: 'date_contradiction' }
   }
   if (datesContradict(norm, hay)) return { usable: false, reason: 'date_contradiction' }
+  // 4 Nov live: "did EK 569 land today?" was answered with a landing from 1 Nov. With no date asked, a live status
+  // question means the current trip: a result dated outside yesterday..tomorrow (user's calendar) is stale.
+  if (!reqDates.length && !reqYears.length) {
+    const near = [-1, 0, 1].map(d => shiftYmd(refYmd, d)).join(' ')
+    if (datesContradict(near, hay) || (urlDates.length && datesContradict(near, urlDates.join(' ')))) return { usable: false, reason: 'stale_date' }
+  }
   return { usable: true, reason: 'ok' }
+}
+
+function shiftYmd(ymd: string, days: number) {
+  const t = Date.parse(`${ymd}T12:00:00Z`)
+  return Number.isFinite(t) ? new Date(t + days * 86_400_000).toISOString().slice(0, 10) : ymd
 }
 
 export function matchesRequestedOccurrence(r: WebSearchResult, userText: string, refYmd = localTodayYmd()): boolean {

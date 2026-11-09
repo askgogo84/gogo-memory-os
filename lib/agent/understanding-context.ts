@@ -63,12 +63,12 @@ export const defaultSourceLoaders: Required<SourceLoaders> = {
   async open_tasks({ actor }) {
     const data = rows(await supabaseAdmin.from('agent_runs').select('id,title,status,type,updated_at')
       .eq('telegram_id', String(actor.legacyTelegramId)).in('status', ACTIVE_RUN).order('updated_at', { ascending: false }).limit(6))
-    return data.map((r): ContextItem => ({ id: `run:${r.id}`, title: clean(r.title || r.type, 120), detail: clean(r.status, 30), at: r.updated_at || null }))
+    return data.map((r): ContextItem => ({ id: `run:${r.id}`, title: clean(r.title || r.type, 120), detail: `${clean(r.status, 30).replace(/_/g, ' ')} — not done yet`, at: r.updated_at || null }))
   },
   async pending_approvals({ actor }) {
     const data = rows(await supabaseAdmin.from('agent_approvals').select('id,title,risk_level,requested_at')
       .eq('telegram_id', String(actor.legacyTelegramId)).eq('status', 'pending').order('requested_at', { ascending: false }).limit(5))
-    return data.map((r): ContextItem => ({ id: `approval:${r.id}`, title: clean(r.title, 120), detail: r.risk_level ? `risk ${clean(r.risk_level, 20)}` : null, at: r.requested_at || null }))
+    return data.map((r): ContextItem => ({ id: `approval:${r.id}`, title: clean(r.title, 120), detail: `waiting for your approval — not done yet${r.risk_level ? `, risk ${clean(r.risk_level, 20)}` : ''}`, at: r.requested_at || null }))
   },
   async saved_documents({ actor }) {
     const data = rows(await supabaseAdmin.from('documents').select('id,doc_type,title,created_at')

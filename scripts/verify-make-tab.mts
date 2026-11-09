@@ -27,7 +27,7 @@ globalThis.fetch = (async (input: any) => {
 try {
   const m = await import('../lib/dashboard/make')
   const all = await m.getMadeForYou('123')
-  assert.equal(all.items.length, 5); assert.deepEqual(all.counts, { all: 5, briefs: 1, comparisons: 1, plans: 2, trackers: 0, slides: 1, sheets: 0 })
+  assert.equal(all.items.length, 5); assert.deepEqual(all.counts, { all: 5, pages: 0, briefs: 1, comparisons: 1, plans: 2, trackers: 0, slides: 1, sheets: 0 })
   assert.equal(all.items.find(i => i.id === 'a6')!.label, 'Slides')
   assert.equal(all.items[0].href, '/dashboard/reports/a1'); assert.equal(all.items[0].label, 'Brief')
   assert.equal(all.items.find(i => i.id === 'a4')!.subtitle, '2 saved versions', 'duplicate title collapses to the newest card')

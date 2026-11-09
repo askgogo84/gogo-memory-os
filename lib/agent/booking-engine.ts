@@ -160,21 +160,31 @@ export function listingText(html: string): string {
 }
 
 /**
- * The offer on each app's public listing page, read with a plain GET (6s, no cookies, no sign-in). Search snippets
- * rarely carry the discount (20 Oct live: four apps found, no offers). Pages that need JS or block bots just keep
- * the snippet result. Never throws.
+ * Listing URLs come from web/search results. Even an apparently trusted initial platform URL can
+ * redirect a server-side fetch to a private/link-local host; a final-URL check is already too late.
+ * Production therefore uses public search snippets, not an ambient server GET. Browser-backed
+ * inspection is handled by the separate secure-browser reservation flow.
+ *
+ * An explicit transport is retained ONLY for inert synthetic fixtures. Callers must not inject
+ * the global fetch here; this is not a production network adapter. Redirects never auto-follow.
  */
-export async function enrichOffersFromListings(options: BookingOption[], fetchImpl: typeof fetch = fetch): Promise<BookingOption[]> {
+export async function enrichOffersFromListings(options: BookingOption[], fetchImpl?: typeof fetch): Promise<BookingOption[]> {
+  if (!fetchImpl) return options
   return Promise.all(options.map(async o => {
     if (o.offer) return o
+    let timer: ReturnType<typeof setTimeout> | null = null
     try {
+      const url = new URL(o.url)
+      // Defense in depth for the injected-test transport as well: it only receives a
+      // syntactically valid URL belonging to the platform attached to this option.
+      if (url.protocol !== 'https:' || url.username || url.password || platformForUrl(o.url)?.id !== o.platform.id) return o
       const controller = typeof AbortController === 'function' ? new AbortController() : null
-      const timer = controller ? setTimeout(() => controller.abort(), 6000) : null
-      const res = await fetchImpl(o.url, { headers: { 'user-agent': 'Mozilla/5.0 (compatible; AskGogo/1.0)', accept: 'text/html' }, redirect: 'follow', signal: controller?.signal } as any)
-      if (timer) clearTimeout(timer)
+      timer = controller ? setTimeout(() => controller.abort(), 6000) : null
+      const res = await fetchImpl(o.url, { headers: { 'user-agent': 'Mozilla/5.0 (compatible; AskGogo/1.0)', accept: 'text/html' }, redirect: 'manual', signal: controller?.signal } as any)
       if (!res.ok) return o
       const offer = offerFrom(listingText(await res.text()))
       return offer ? { ...o, offer } : o
     } catch { return o }
+    finally { if (timer) clearTimeout(timer) }
   }))
 }

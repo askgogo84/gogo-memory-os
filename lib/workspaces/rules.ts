@@ -92,12 +92,21 @@ export function isMissingTableError(error: { code?: string | null; message?: str
 export const ROLE_LABEL: Record<WorkspaceRole, string> = { owner: 'Owner', admin: 'Admin', member: 'Member', viewer: 'Viewer' }
 
 /**
- * 23 Oct live test: a shared research brief showed the owner's own calendar entries and flights to a workspace
- * Viewer ("Review travel and calendar context", "Check calendar availability"). Personal data is never shared by
- * default: a workspace sees only the report itself and its public web sources.
+ * A tool name is not a privacy provenance guarantee. General-planner model reports
+ * can contain OWNER_CONTEXT_CHECKED (private calendar/travel/memory), and secret
+ * redaction cannot remove a private fact paraphrased in generated prose.
+ *
+ * Fail closed for workspace viewers: show public web-search excerpts and sections
+ * whose entire prose was explicitly replaced by the report owner. Do NOT show
+ * unreviewed model-generated or legacy artifact sections merely because their tool
+ * says "artifact". Owner-private report rendering is unaffected. A future public
+ * release workflow needs its own authenticated per-section provenance/consent.
  */
 export const SHAREABLE_SECTION_TOOLS = ['artifact', 'web_search'] as const
-export function shareableSections<T extends { tool: string }>(sections: T[]): { shown: T[]; withheld: number } {
-  const shown = sections.filter(s => (SHAREABLE_SECTION_TOOLS as readonly string[]).includes(String(s.tool)))
+export function shareableSections<T extends { tool: string; edited?: boolean }>(sections: T[]): { shown: T[]; withheld: number } {
+  const shown = sections.filter(s => {
+    const tool = String(s.tool)
+    return tool === 'web_search' || (tool === 'artifact' && s.edited === true)
+  })
   return { shown, withheld: sections.length - shown.length }
 }
