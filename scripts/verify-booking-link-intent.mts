@@ -32,3 +32,6 @@ assert.match(closure, /show my movie ticket/i)
 assert.match(closure, /Provider-issued event entry credential/)
 
 console.log('✅ BookMyShow queued booking closure intent regression passed')
+
+// Run the actual-module private Gmail credential owner guard in the registered suite.
+await import('./verify-gmail-ticket-credential-owner.mts')

@@ -134,6 +134,25 @@ check('labelled password still redacted', !redactSecretShapedText('password: hun
   check('isPhoneNumber rejects 16-digit runs even with a label', !isPhoneNumber('4111111111111111', 'Phone: '))
 }
 
+// 4 Nov independent P2 privacy regression (#1254 review): unlabeled 0-prefixed 12-digit
+// account-like groups are not Indian STD landlines. Never pass them into freeform LLM memory.
+{
+  const { isPhoneNumber } = await import('../lib/bot/memory-redaction')
+  const accountLike = 'acct 0123 4567 8901' // synthetic identifier, not customer data
+  check('unlabelled 12-digit account-like grouping is not a phone',
+    !isPhoneNumber('0123 4567 8901', 'acct '))
+  check('unlabelled 12-digit account-like grouping redacted in text',
+    !redactSecretShapedText(accountLike).includes('0123 4567 8901')
+      && redactSecretShapedText(accountLike).includes('[sensitive detail withheld]'))
+  check('unlabelled 12-digit account-like grouping excluded from LLM memories',
+    isSecretShapedMemory(accountLike))
+  check('valid unlabelled 11-digit STD landline stays visible',
+    redactSecretShapedText('Envi Salon · 080 4123 4567 · 4.5').includes('080 4123 4567'))
+  check('valid unlabelled 11-digit STD landline stays eligible as memory',
+    !isSecretShapedMemory('Envi Salon · 080 4123 4567 · 4.5'))
+  check('explicitly labelled international mobile remains visible',
+    redactSecretShapedText('Call us on +91 98450 12345').includes('+91 98450 12345'))
+}
 
 /**
  * 3 Nov regression: a plus-prefixed labelled SECRET must not become an exempt

@@ -32,9 +32,9 @@ export function isPhoneNumber(value: string, before: string): boolean {
   if (/\+\s?$/.test(lead)) return true
   // 4 Nov (retest): salon results list numbers with no label ("Envi Salon · 080 4123 4567 · 4.5★"). Indian phone
   // layouts are shown on their own: a 0-prefixed STD landline (080 4123 4567) or a mobile split 5+5 (98450 12345).
-  // Card (4-4-4-4) and Aadhaar (4-4-4, never starting 0) groupings don't fit either shape, so they stay hidden.
+  // An Indian STD landline in national format is trunk 0 plus 10 digits. Reject 10/12-digit\n  // lookalikes (including unlabelled 4-4-4 account identifiers) instead of trusting grouping alone.\n  // Card (4-4-4-4) and Aadhaar (4-4-4, never starting 0) remain hidden.
   const v = String(value || '').trim()
-  if (/^0\d{2,4}[\s-]\d{3,4}[\s-]?\d{3,4}$/.test(v) && digits.length >= 10 && digits.length <= 12) return true
+  if (/^0\d{2,4}[\s-]\d{3,4}[\s-]?\d{3,4}$/.test(v) && digits.length === 11) return true
   if (/^0?[6-9]\d{4}[\s-]\d{5}$/.test(v)) return true
   if (/(?:📞|☎️?|📱)\s*$/u.test(lead)) return true
   return PHONE_LABEL.test(lead)
