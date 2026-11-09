@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
 import ts from 'typescript'
+const pureShowTime = await import('../lib/agent/show-time.ts')
 
 const source = fs.readFileSync('lib/agent/booking-screenshot-worker.ts', 'utf8')
 const compiled = ts.transpileModule(source + '\nexport { actorFor as __actorFor };', {
@@ -57,6 +58,8 @@ function actualWorkerScenario(config: Scenario = {}) {
     }) } }] }) } }
   }
   const mocks: Record<string, any> = {
+    // Pure, import-free helper main later added to the worker.
+    './show-time': pureShowTime,
     openai: FakeOpenAI,
     '@/lib/supabase-admin': { supabaseAdmin: db },
     '@/lib/services/document-store': { getDocumentSignedUrl: async () => 'https://fixture.invalid/signed-ticket' },
