@@ -1,3 +1,2 @@
 # tests added by PR #1417
-package.json
 npx tsx scripts/verify-planner-reminder-task-scope-testonly.mts
