@@ -92,15 +92,22 @@ export function buildBoardingPassSearchTexts(event: any, action: any) {
   ].map((parts) => parts.join(' ')).filter((value, index, all) => all.indexOf(value) === index)
 }
 
-async function resolveActor(telegramId: string): Promise<AgentActor> {
+async function resolveActor(telegramId: string | number): Promise<AgentActor> {
+  // Exact owner (P0.1): exact decimal lookup, row must echo the id, unsafe ids refused (never rounded).
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) throw new Error('life_event_email_actor_missing')
+  const owner = String(telegramId ?? '').trim()
+  const legacy = Number(owner)
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner) || !Number.isSafeInteger(legacy) || String(legacy) !== owner) throw new Error('life_event_email_actor_missing')
+
   const { data, error } = await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name,gmail_connected')
-    .eq('telegram_id', Number(telegramId))
+    .eq('telegram_id', legacy)
     .maybeSingle()
   if (error) throw new Error(`life_event_email_actor_lookup_failed:${error.message}`)
   if (!data?.id || !data?.telegram_id) throw new Error('life_event_email_actor_missing')
   if (!data.gmail_connected) throw new Error('workspace_not_connected')
-  return { userId: String(data.id), legacyTelegramId: Number(data.telegram_id), whatsappId: String(data.whatsapp_id || ''), name: String(data.name || 'Gogo') }
+  if (String(data.telegram_id) !== owner) throw new Error('life_event_email_actor_missing')
+  return { userId: String(data.id), legacyTelegramId: legacy, whatsappId: String(data.whatsapp_id || ''), name: String(data.name || 'Gogo') }
 }
 
 async function claimAction(action: any, now: Date) {
@@ -151,7 +158,11 @@ export async function deliverBoardingPassNotices(){
     // an old pass remains valid after a later schedule change. Never replay a
     // claimed send automatically: delivery may have happened before a crash.
     const result=await sendAgentPush(String(notice.telegramId),{title:'Saved flight update',body:'Gogo recorded a flight update. Open AskGogo for the current schedule and boarding-pass details.',path:'/dashboard/today',data:{runId:notice.runId,lifeEventId:notice.lifeEventId,scheduleRevision:notice.scheduleRevision}})
-    const {error:updateError}=await supabaseAdmin.from('boarding_pass_outbox').update({status:result.failed?'failed':'sent',updated_at:new Date().toISOString()}).eq('id',row.id).eq('status','claimed')
+    // A zero-device / empty-token / device-read-error push returns {sent: 0, failed: 0}.
+    // Provider acceptance, not a zero-error counter, is the minimum for a `sent` receipt.
+    // Keep non-fully-accepted claims terminal (never blindly requeue after an uncertain send).
+    const providerAcceptedAll = Number.isSafeInteger(result.sent) && result.sent > 0 && result.failed === 0
+    const {error:updateError}=await supabaseAdmin.from('boarding_pass_outbox').update({status:providerAcceptedAll?'sent':'failed',updated_at:new Date().toISOString()}).eq('id',row.id).eq('status','claimed')
     if(updateError)throw new Error(`life_event_email_outbox_finish_failed:${updateError.message}`)
   }
 }

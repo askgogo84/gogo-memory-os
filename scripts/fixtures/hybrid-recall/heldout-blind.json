@@ -1,0 +1,1136 @@
+{
+  "about": "Held-out recall eval for a personal-assistant memory retrieval system. Written blind from a spec (no code read). 3 synthetic tenants (Arjun, Meera: individuals in India; Farah: Hyderabad bakery owner) with dated first-person memories, exact facts (verified/reported/inferred with sourceRef), and stale ids superseded by later corrections. 30 cases, 3 per category; required ids must be in retrieved context, forbidden ids must not. Questions are paraphrased to avoid keyword overlap.",
+  "tenants": {
+    "-200001": {
+      "name": "Arjun",
+      "memories": [
+        {
+          "id": "a01",
+          "text": "I'm vegetarian but I do eat eggs, so no meat or fish please.",
+          "createdAt": "2026-01-12"
+        },
+        {
+          "id": "a02",
+          "text": "My usual Sunday breakfast spot is Vaishali on FC Road, I go most weeks.",
+          "createdAt": "2026-01-20"
+        },
+        {
+          "id": "a03",
+          "text": "I'm allergic to cashews, so flag any dish that uses kaju paste or nuts.",
+          "createdAt": "2026-02-03"
+        },
+        {
+          "id": "a04",
+          "text": "My sister Kavya is getting married in Jaipur on the 14th of December.",
+          "createdAt": "2026-02-10"
+        },
+        {
+          "id": "a06",
+          "text": "My manager Rohan wants the quarterly vendor report on the first Monday of every month.",
+          "createdAt": "2026-02-22"
+        },
+        {
+          "id": "a07",
+          "text": "I take Thyronorm 50 for my thyroid every morning on an empty stomach.",
+          "createdAt": "2026-03-01"
+        },
+        {
+          "id": "a08",
+          "text": "My home loan EMI of 42,000 rupees goes out on the 5th of every month.",
+          "createdAt": "2026-03-05"
+        },
+        {
+          "id": "a09",
+          "text": "Dad's sugar readings have been really bad lately, remind me to pick up his strips.",
+          "createdAt": "2026-03-12"
+        },
+        {
+          "id": "a10",
+          "text": "I always want a window seat and I refuse to take red-eye flights.",
+          "createdAt": "2026-03-18"
+        },
+        {
+          "id": "a11",
+          "text": "I reorder Blue Tokai Attikan Estate beans, medium grind, roughly every three weeks.",
+          "createdAt": "2026-03-25"
+        },
+        {
+          "id": "a12",
+          "text": "I visit Dagdusheth Ganpati temple every Tuesday evening after work.",
+          "createdAt": "2026-04-02"
+        },
+        {
+          "id": "a13",
+          "text": "My gym is Cult on Baner Road, I go at 6:30 every morning.",
+          "createdAt": "2026-04-09"
+        },
+        {
+          "id": "a14",
+          "text": "My friend Siddharth borrowed 25,000 from me in March and promised to return it by June.",
+          "createdAt": "2026-04-15"
+        },
+        {
+          "id": "a15",
+          "text": "I'm leading the Pune warehouse migration project, go-live is planned for end of August.",
+          "createdAt": "2026-04-20"
+        },
+        {
+          "id": "a16",
+          "text": "Update: Kavya's wedding has moved to Udaipur, the date is still the same.",
+          "createdAt": "2026-05-02"
+        },
+        {
+          "id": "a17",
+          "text": "We've switched to Third Wave Coffee beans now, Blue Tokai got too pricey.",
+          "createdAt": "2026-05-10"
+        },
+        {
+          "id": "a18",
+          "text": "My wife Nisha's birthday is on 9th July and she absolutely loves orchids.",
+          "createdAt": "2026-05-14"
+        },
+        {
+          "id": "a19",
+          "text": "The doctor increased my thyroid dose, I'm on Thyronorm 75 from this month.",
+          "createdAt": "2026-05-20"
+        },
+        {
+          "id": "a20",
+          "text": "I'm trying to cut down on sugar, suggest desserts without refined sugar.",
+          "createdAt": "2026-05-28"
+        },
+        {
+          "id": "a21",
+          "text": "My Cult membership lapsed, I run at Aundh park in the mornings instead.",
+          "createdAt": "2026-06-04"
+        },
+        {
+          "id": "a22",
+          "text": "Siddharth paid back the whole 25,000 last week, so that's settled.",
+          "createdAt": "2026-06-11"
+        },
+        {
+          "id": "a23",
+          "text": "I watch a Marathi film with my parents every Saturday night.",
+          "createdAt": "2026-06-18"
+        },
+        {
+          "id": "a24",
+          "text": "The warehouse migration go-live slipped to 30th November, Rohan has told the client.",
+          "createdAt": "2026-06-25"
+        },
+        {
+          "id": "a25",
+          "text": "Our house help Sunita comes at 8 and gets 6,000 on the 1st of each month.",
+          "createdAt": "2026-07-03"
+        },
+        {
+          "id": "a26",
+          "text": "I got a traffic challan for jumping a signal and must clear it before the court date.",
+          "createdAt": "2026-07-15"
+        },
+        {
+          "id": "a27",
+          "text": "I always order Nisha's orchids from Ferns N Petals, they deliver on time in Pune.",
+          "createdAt": "2026-07-22"
+        },
+        {
+          "id": "a28",
+          "text": "I need to renew my passport soon, it expires in February next year.",
+          "createdAt": "2026-08-05"
+        },
+        {
+          "id": "a29",
+          "text": "On work trips I stay at Lemon Tree because the company has a corporate rate there.",
+          "createdAt": "2026-08-19"
+        },
+        {
+          "id": "a30",
+          "text": "Dad uses Accu-Chek Instant strips, I buy the pack of 50.",
+          "createdAt": "2026-09-02"
+        },
+        {
+          "id": "a31",
+          "text": "Kavya's mehendi is the day before the wedding and I promised to arrange the dhol band.",
+          "createdAt": "2026-09-10"
+        }
+      ],
+      "exact": [
+        {
+          "id": "ax1",
+          "text": "Kavya's wedding: 14 Dec 2026, Udaipur",
+          "class": "verified",
+          "sourceRef": "memories:a16"
+        },
+        {
+          "id": "ax2",
+          "text": "Flight: IndiGo 6E-2134 Pune to Udaipur, 12 Dec 2026, window seat 14A, PNR K7QZ2M",
+          "class": "verified",
+          "sourceRef": "bookings:bk_a1"
+        },
+        {
+          "id": "ax3",
+          "text": "Recurring: vendor report review with Rohan, first Monday monthly 10:00",
+          "class": "verified",
+          "sourceRef": "calendar:ev_a1"
+        },
+        {
+          "id": "ax4",
+          "text": "Current thyroid medication: Thyronorm 75 mcg daily",
+          "class": "verified",
+          "sourceRef": "memories:a19"
+        },
+        {
+          "id": "ax5",
+          "text": "Coffee beans brand: Third Wave Coffee",
+          "class": "verified",
+          "sourceRef": "memories:a17"
+        },
+        {
+          "id": "ax6",
+          "text": "Warehouse migration go-live: 30 Nov 2026",
+          "class": "verified",
+          "sourceRef": "memories:a24"
+        },
+        {
+          "id": "ax7",
+          "text": "Passport expiry: Feb 2027",
+          "class": "reported",
+          "sourceRef": "memories:a28"
+        },
+        {
+          "id": "ax8",
+          "text": "Hotel: Lemon Tree Premier, Gurugram, 18-20 Nov 2026, booked as work trip",
+          "class": "verified",
+          "sourceRef": "bookings:bk_a2"
+        },
+        {
+          "id": "ax9",
+          "text": "Home loan EMI: Rs 42,000 on the 5th",
+          "class": "reported",
+          "sourceRef": "memories:a08"
+        },
+        {
+          "id": "ax10",
+          "text": "Nisha's birthday: 9 July",
+          "class": "verified",
+          "sourceRef": "memories:a18"
+        }
+      ],
+      "stale": [
+        "a04",
+        "a07",
+        "a11",
+        "a13",
+        "a14",
+        "a15"
+      ]
+    },
+    "-200002": {
+      "name": "Meera",
+      "memories": [
+        {
+          "id": "m01",
+          "text": "I don't eat beef or pork, but chicken and fish are completely fine.",
+          "createdAt": "2026-01-08"
+        },
+        {
+          "id": "m02",
+          "text": "My mom in Thrissur has early Parkinson's, I go see her every other weekend.",
+          "createdAt": "2026-01-15"
+        },
+        {
+          "id": "m03",
+          "text": "My husband Varun's Canadian work permit application is still pending, it's stressful.",
+          "createdAt": "2026-01-22"
+        },
+        {
+          "id": "m04",
+          "text": "I like strong filter coffee with no sugar and just a splash of milk.",
+          "createdAt": "2026-02-02"
+        },
+        {
+          "id": "m05",
+          "text": "My design retainer with Kayal Studio pays 1.2 lakh a month.",
+          "createdAt": "2026-02-09"
+        },
+        {
+          "id": "m06",
+          "text": "Varun and I have started seeing a couples counsellor on Thursday evenings.",
+          "createdAt": "2026-02-14"
+        },
+        {
+          "id": "m07",
+          "text": "Anika's school, Choice School, holds the parent-teacher meeting on second Saturdays.",
+          "createdAt": "2026-02-20"
+        },
+        {
+          "id": "m08",
+          "text": "I buy Anika's storybooks from Pai and Co near MG Road.",
+          "createdAt": "2026-03-01"
+        },
+        {
+          "id": "m09",
+          "text": "I go to Guruvayur temple on the first day of every Malayalam month.",
+          "createdAt": "2026-03-08"
+        },
+        {
+          "id": "m10",
+          "text": "I hate long flights, I'd rather take a train if it's under 12 hours.",
+          "createdAt": "2026-03-15"
+        },
+        {
+          "id": "m11",
+          "text": "My Kayal Studio deliverable is the app onboarding redesign, due on 30 April.",
+          "createdAt": "2026-03-22"
+        },
+        {
+          "id": "m12",
+          "text": "Anika is allergic to peanuts, so every snack label needs checking.",
+          "createdAt": "2026-03-29"
+        },
+        {
+          "id": "m13",
+          "text": "I get groceries from Supermart in Panampilly Nagar, they deliver by 6.",
+          "createdAt": "2026-04-05"
+        },
+        {
+          "id": "m14",
+          "text": "We use two packets of Milma toned milk every day.",
+          "createdAt": "2026-04-12"
+        },
+        {
+          "id": "m15",
+          "text": "I owe about 85,000 on my HDFC credit card and I'm paying it off in parts.",
+          "createdAt": "2026-04-19"
+        },
+        {
+          "id": "m16",
+          "text": "Kayal Studio pushed the onboarding redesign deadline to 20 May.",
+          "createdAt": "2026-04-26"
+        },
+        {
+          "id": "m17",
+          "text": "We moved our groceries to BigBasket since Supermart stopped delivering to our area.",
+          "createdAt": "2026-05-03"
+        },
+        {
+          "id": "m18",
+          "text": "Varun's permit finally got approved, he leaves for Toronto in September.",
+          "createdAt": "2026-05-10"
+        },
+        {
+          "id": "m19",
+          "text": "I want an October break in Coorg, ideally a plantation stay.",
+          "createdAt": "2026-05-17"
+        },
+        {
+          "id": "m20",
+          "text": "My college friend Leena lives in Bengaluru, we always meet at Koshy's.",
+          "createdAt": "2026-05-24"
+        },
+        {
+          "id": "m21",
+          "text": "I have veena class with Lakshmi teacher every Wednesday evening.",
+          "createdAt": "2026-05-31"
+        },
+        {
+          "id": "m22",
+          "text": "Kayal revised my retainer, they pay 1.5 lakh a month now.",
+          "createdAt": "2026-06-07"
+        },
+        {
+          "id": "m23",
+          "text": "Mom's neurologist is Dr. Thomas at Amrita, her next review is in August.",
+          "createdAt": "2026-06-14"
+        },
+        {
+          "id": "m24",
+          "text": "We've stopped counselling, Varun and I are separating amicably.",
+          "createdAt": "2026-06-21"
+        },
+        {
+          "id": "m25",
+          "text": "For Coorg I always book through Airbnb rather than hotels.",
+          "createdAt": "2026-06-28"
+        },
+        {
+          "id": "m26",
+          "text": "Anika outgrows her uniform every June, she's on size 28 now.",
+          "createdAt": "2026-07-05"
+        },
+        {
+          "id": "m27",
+          "text": "For Onam we order sadya for six from the Grand Hotel restaurant.",
+          "createdAt": "2026-07-12"
+        },
+        {
+          "id": "m28",
+          "text": "Landlord Mr. Joseph wants 28,000 rent by the 3rd, paid over UPI.",
+          "createdAt": "2026-07-19"
+        },
+        {
+          "id": "m29",
+          "text": "I've hired Adv. Rekha Menon to handle the custody paperwork for Anika.",
+          "createdAt": "2026-08-02"
+        },
+        {
+          "id": "m30",
+          "text": "Anika loves the Malayalam Amar Chitra Katha comics, she has the first ten.",
+          "createdAt": "2026-08-16"
+        }
+      ],
+      "exact": [
+        {
+          "id": "mx1",
+          "text": "Kayal Studio retainer: Rs 1,50,000/month",
+          "class": "verified",
+          "sourceRef": "memories:m22"
+        },
+        {
+          "id": "mx2",
+          "text": "Onboarding redesign deadline: 20 May 2026",
+          "class": "verified",
+          "sourceRef": "memories:m16"
+        },
+        {
+          "id": "mx3",
+          "text": "Grocery provider: BigBasket",
+          "class": "verified",
+          "sourceRef": "memories:m17"
+        },
+        {
+          "id": "mx4",
+          "text": "Airbnb: Kaapi Kaadu Plantation Stay, Madikeri, 17-20 Oct 2026",
+          "class": "verified",
+          "sourceRef": "bookings:bk_m1"
+        },
+        {
+          "id": "mx5",
+          "text": "Appointment: Mom's neurology review, Dr. Thomas, Amrita Hospital, 22 Aug 2026 11:00",
+          "class": "verified",
+          "sourceRef": "calendar:ev_m1"
+        },
+        {
+          "id": "mx6",
+          "text": "Recurring: Anika PTM, Choice School, second Saturday monthly 10:00",
+          "class": "verified",
+          "sourceRef": "calendar:ev_m2"
+        },
+        {
+          "id": "mx7",
+          "text": "Varun's departure to Toronto: September 2026",
+          "class": "reported",
+          "sourceRef": "memories:m18"
+        },
+        {
+          "id": "mx8",
+          "text": "Rent: Rs 28,000 to Mr. Joseph by the 3rd via UPI",
+          "class": "verified",
+          "sourceRef": "memories:m28"
+        },
+        {
+          "id": "mx9",
+          "text": "Anika: peanut allergy",
+          "class": "verified",
+          "sourceRef": "memories:m12"
+        }
+      ],
+      "stale": [
+        "m03",
+        "m05",
+        "m06",
+        "m11",
+        "m13"
+      ]
+    },
+    "-200003": {
+      "name": "Farah",
+      "memories": [
+        {
+          "id": "f01",
+          "text": "My bakery uses only Amul butter, never margarine, especially in the croissants.",
+          "createdAt": "2026-01-05"
+        },
+        {
+          "id": "f02",
+          "text": "Our flour comes from Ravi Traders in Begum Bazaar, 50 kg every Monday.",
+          "createdAt": "2026-01-11"
+        },
+        {
+          "id": "f03",
+          "text": "My head chef Imran runs the morning bake starting at 4 am.",
+          "createdAt": "2026-01-18"
+        },
+        {
+          "id": "f04",
+          "text": "I fast during Ramzan, so keep my meetings after iftar that month.",
+          "createdAt": "2026-01-25"
+        },
+        {
+          "id": "f05",
+          "text": "CA Pradeep Reddy handles my GST filing, it's due on the 20th.",
+          "createdAt": "2026-02-01"
+        },
+        {
+          "id": "f06",
+          "text": "Instagram is my biggest order channel, I post the new menu every Friday.",
+          "createdAt": "2026-02-08"
+        },
+        {
+          "id": "f07",
+          "text": "I still have about 9 lakh outstanding on my SIDBI business loan.",
+          "createdAt": "2026-02-15"
+        },
+        {
+          "id": "f08",
+          "text": "Swiggy takes 22 percent commission, I'm seriously thinking of leaving them.",
+          "createdAt": "2026-02-22"
+        },
+        {
+          "id": "f09",
+          "text": "My brother Zaid's German student visa got rejected the first time.",
+          "createdAt": "2026-03-01"
+        },
+        {
+          "id": "f10",
+          "text": "I have PCOS and my doctor wants me to stop tasting the sugary batches.",
+          "createdAt": "2026-03-08"
+        },
+        {
+          "id": "f11",
+          "text": "Our boxes come from Pack-It in Kukatpally, the kraft ones with a window.",
+          "createdAt": "2026-03-15"
+        },
+        {
+          "id": "f12",
+          "text": "Imran earns 35,000 a month and he asked me for a raise in April.",
+          "createdAt": "2026-03-22"
+        },
+        {
+          "id": "f13",
+          "text": "Novartis in Hitec City orders 200 cupcakes on the last Friday of each month.",
+          "createdAt": "2026-03-29"
+        },
+        {
+          "id": "f14",
+          "text": "My own favourite drink is strong cardamom tea with no sugar.",
+          "createdAt": "2026-04-05"
+        },
+        {
+          "id": "f15",
+          "text": "We moved flour to Annapurna Mills because Ravi Traders kept delaying deliveries.",
+          "createdAt": "2026-04-12"
+        },
+        {
+          "id": "f16",
+          "text": "I've given Imran a raise to 40,000 starting May.",
+          "createdAt": "2026-04-19"
+        },
+        {
+          "id": "f17",
+          "text": "A neighbour filed a police complaint about smoke from our oven, the hearing is pending.",
+          "createdAt": "2026-04-26"
+        },
+        {
+          "id": "f18",
+          "text": "I want to open a second outlet in Jubilee Hills before Diwali.",
+          "createdAt": "2026-05-03"
+        },
+        {
+          "id": "f19",
+          "text": "We've left Swiggy completely, now it's only Zomato and direct orders.",
+          "createdAt": "2026-05-10"
+        },
+        {
+          "id": "f20",
+          "text": "My daughter Zoya has board exams in March, so no travel for us then.",
+          "createdAt": "2026-05-17"
+        },
+        {
+          "id": "f21",
+          "text": "Novartis bumped their order to 300 cupcakes, still on the last Friday.",
+          "createdAt": "2026-05-24"
+        },
+        {
+          "id": "f22",
+          "text": "Zaid reapplied and got his German visa, he flies to Frankfurt in August.",
+          "createdAt": "2026-05-31"
+        },
+        {
+          "id": "f23",
+          "text": "Packaging now comes from Boxify online since Pack-It raised prices by 18 percent.",
+          "createdAt": "2026-06-07"
+        },
+        {
+          "id": "f24",
+          "text": "The smoke complaint got settled after we installed a chimney filter.",
+          "createdAt": "2026-06-14"
+        },
+        {
+          "id": "f25",
+          "text": "Signed the lease for the second outlet on Road No. 36, rent is 1.8 lakh.",
+          "createdAt": "2026-06-21"
+        },
+        {
+          "id": "f26",
+          "text": "Sana Interiors will do the new outlet's fit-out, their quote was 12 lakh.",
+          "createdAt": "2026-06-28"
+        },
+        {
+          "id": "f27",
+          "text": "My husband Adil checks the accounts on weekends, send him the P&L summary.",
+          "createdAt": "2026-07-05"
+        },
+        {
+          "id": "f28",
+          "text": "Our bestseller is the pistachio kunafa cheesecake, it sells out by 3 pm.",
+          "createdAt": "2026-07-12"
+        },
+        {
+          "id": "f29",
+          "text": "I buy Tahitian vanilla beans from Kerala Spice Co, 100 grams every month.",
+          "createdAt": "2026-07-19"
+        },
+        {
+          "id": "f30",
+          "text": "Mrs. Lalitha orders a 3 kg eggless cake every year for her son's birthday.",
+          "createdAt": "2026-08-02"
+        },
+        {
+          "id": "f31",
+          "text": "Ammi is on dialysis twice a week at Care Hospital now.",
+          "createdAt": "2026-08-09"
+        }
+      ],
+      "exact": [
+        {
+          "id": "fx1",
+          "text": "Flour supplier: Annapurna Mills",
+          "class": "verified",
+          "sourceRef": "memories:f15"
+        },
+        {
+          "id": "fx2",
+          "text": "Imran's salary: Rs 40,000/month from May 2026",
+          "class": "verified",
+          "sourceRef": "memories:f16"
+        },
+        {
+          "id": "fx3",
+          "text": "Novartis Hitec City standing order: 300 cupcakes, last Friday monthly",
+          "class": "verified",
+          "sourceRef": "memories:f21"
+        },
+        {
+          "id": "fx4",
+          "text": "Packaging supplier: Boxify",
+          "class": "verified",
+          "sourceRef": "memories:f23"
+        },
+        {
+          "id": "fx5",
+          "text": "Order: Mrs. Lalitha, 3 kg eggless cake, deliver 12 Nov 2026 17:00",
+          "class": "verified",
+          "sourceRef": "calendar:ev_f1"
+        },
+        {
+          "id": "fx6",
+          "text": "Lease: second outlet, Road No. 36 Jubilee Hills, Rs 1,80,000/month",
+          "class": "verified",
+          "sourceRef": "memories:f25"
+        },
+        {
+          "id": "fx7",
+          "text": "Recurring: GST filing with CA Pradeep Reddy, 20th monthly",
+          "class": "verified",
+          "sourceRef": "calendar:ev_f2"
+        },
+        {
+          "id": "fx8",
+          "text": "Delivery channels: Zomato and direct only",
+          "class": "verified",
+          "sourceRef": "memories:f19"
+        },
+        {
+          "id": "fx9",
+          "text": "Zaid flight to Frankfurt: August 2026",
+          "class": "reported",
+          "sourceRef": "memories:f22"
+        },
+        {
+          "id": "fx10",
+          "text": "Last order: Kerala Spice Co Tahitian vanilla 100 g, 19 Oct 2026",
+          "class": "verified",
+          "sourceRef": "orders:ord_f1"
+        }
+      ],
+      "stale": [
+        "f02",
+        "f08",
+        "f09",
+        "f11",
+        "f12",
+        "f13",
+        "f17"
+      ]
+    }
+  },
+  "cases": [
+    {
+      "id": "pref-1",
+      "category": "preference",
+      "tenant": "-200001",
+      "question": "We're getting Mughlai takeaway tonight, what should I pick for myself?",
+      "entities": [],
+      "required": [
+        "a01",
+        "a03"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "pref-2",
+      "category": "preference",
+      "tenant": "-200002",
+      "question": "What can I send in my kid's lunchbox for the school picnic?",
+      "entities": [],
+      "required": [
+        "m12"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "pref-3",
+      "category": "preference",
+      "tenant": "-200003",
+      "question": "The flour rep is coming by the cafe, tell the counter what to make me.",
+      "entities": [],
+      "required": [
+        "f14"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "mc-1",
+      "category": "multi_conversation",
+      "tenant": "-200001",
+      "question": "Help me sort out getting to my sister's big day, keeping in mind how I like to fly.",
+      "entities": [
+        "Kavya"
+      ],
+      "required": [
+        "a16",
+        "a10"
+      ],
+      "forbidden": [
+        "a04"
+      ],
+      "leakyIndex": false
+    },
+    {
+      "id": "mc-2",
+      "category": "multi_conversation",
+      "tenant": "-200002",
+      "question": "I feel stretched thin. Lay out everything I've committed to on a weekly or monthly rhythm.",
+      "entities": [],
+      "required": [
+        "m02",
+        "m07",
+        "m21",
+        "m28"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "mc-3",
+      "category": "multi_conversation",
+      "tenant": "-200003",
+      "question": "Who are my regular suppliers right now and what do I get from each?",
+      "entities": [],
+      "required": [
+        "f15",
+        "f23",
+        "f29"
+      ],
+      "forbidden": [
+        "f02",
+        "f11"
+      ],
+      "leakyIndex": false
+    },
+    {
+      "id": "mh-1",
+      "category": "multi_hop",
+      "tenant": "-200001",
+      "question": "Is that Gurgaon stay later this month going to be at the office discount?",
+      "entities": [
+        "Gurugram"
+      ],
+      "required": [
+        "ax8",
+        "a29"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "mh-2",
+      "category": "multi_hop",
+      "tenant": "-200002",
+      "question": "Should I swap my usual weekend in Thrissur so I'm there right before Dr. Thomas sees Amma?",
+      "entities": [
+        "Dr. Thomas",
+        "Thrissur"
+      ],
+      "required": [
+        "mx5",
+        "m02",
+        "m23"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "mh-3",
+      "category": "multi_hop",
+      "tenant": "-200003",
+      "question": "What will I be paying every month for the space Sana is fitting out?",
+      "entities": [
+        "Sana Interiors"
+      ],
+      "required": [
+        "f26",
+        "fx6"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "tc-1",
+      "category": "task_continuation",
+      "tenant": "-200001",
+      "question": "Let's continue with the music arrangement I volunteered for at the wedding. Where were we?",
+      "entities": [],
+      "required": [
+        "a31",
+        "a16"
+      ],
+      "forbidden": [
+        "a04"
+      ],
+      "leakyIndex": false
+    },
+    {
+      "id": "tc-2",
+      "category": "task_continuation",
+      "tenant": "-200002",
+      "question": "Picking up the hill-station holiday plan: what's locked in and what's still open?",
+      "entities": [
+        "Coorg"
+      ],
+      "required": [
+        "m19",
+        "mx4",
+        "m25"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "tc-3",
+      "category": "task_continuation",
+      "tenant": "-200003",
+      "question": "Back to the new branch. What's done and what's still pending?",
+      "entities": [
+        "Jubilee Hills"
+      ],
+      "required": [
+        "f18",
+        "f25",
+        "f26"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "corr-1",
+      "category": "corrections",
+      "tenant": "-200001",
+      "question": "Which beans am I supposed to reorder this time?",
+      "entities": [],
+      "required": [
+        "ax5"
+      ],
+      "forbidden": [
+        "a11"
+      ],
+      "leakyIndex": false
+    },
+    {
+      "id": "corr-2",
+      "category": "corrections",
+      "tenant": "-200002",
+      "question": "When was the Kayal app work actually due in the end?",
+      "entities": [
+        "Kayal Studio"
+      ],
+      "required": [
+        "mx2"
+      ],
+      "forbidden": [
+        "m11"
+      ],
+      "leakyIndex": false
+    },
+    {
+      "id": "corr-3",
+      "category": "corrections",
+      "tenant": "-200003",
+      "question": "How many cupcakes is the pharma office in Hitec City expecting this month?",
+      "entities": [
+        "Novartis"
+      ],
+      "required": [
+        "fx3"
+      ],
+      "forbidden": [
+        "f13"
+      ],
+      "leakyIndex": false
+    },
+    {
+      "id": "ef-1",
+      "category": "exact_fact",
+      "tenant": "-200001",
+      "question": "What's the reference number for my flight to the wedding?",
+      "entities": [],
+      "required": [
+        "ax2"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "ef-2",
+      "category": "exact_fact",
+      "tenant": "-200002",
+      "question": "Which day and time is the school's parents' meeting each month?",
+      "entities": [
+        "Choice School"
+      ],
+      "required": [
+        "mx6"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "ef-3",
+      "category": "exact_fact",
+      "tenant": "-200003",
+      "question": "When exactly is Lalitha's cake going out, and how big is it?",
+      "entities": [
+        "Lalitha"
+      ],
+      "required": [
+        "fx5"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "sens-1",
+      "category": "sensitive",
+      "tenant": "-200001",
+      "question": "Recommend a good place in Pune for a lazy Sunday breakfast.",
+      "entities": [
+        "Pune"
+      ],
+      "required": [
+        "a02"
+      ],
+      "forbidden": [
+        "a07",
+        "a19",
+        "ax4"
+      ],
+      "leakyIndex": false
+    },
+    {
+      "id": "sens-2",
+      "category": "sensitive",
+      "tenant": "-200002",
+      "question": "Plan a fun Saturday for just me and my daughter.",
+      "entities": [
+        "Anika"
+      ],
+      "required": [
+        "m30"
+      ],
+      "forbidden": [
+        "m24",
+        "m29",
+        "m06",
+        "m15"
+      ],
+      "leakyIndex": false
+    },
+    {
+      "id": "sens-3",
+      "category": "sensitive",
+      "tenant": "-200003",
+      "question": "Write an Instagram caption for this Friday's dessert drop.",
+      "entities": [],
+      "required": [
+        "f06",
+        "f28"
+      ],
+      "forbidden": [
+        "f10",
+        "f31",
+        "f07"
+      ],
+      "leakyIndex": false
+    },
+    {
+      "id": "sa-1",
+      "category": "sensitive_allowed",
+      "tenant": "-200001",
+      "question": "My endocrinologist wants to know exactly what I'm on now. What do I tell her?",
+      "entities": [],
+      "required": [
+        "a19",
+        "ax4"
+      ],
+      "forbidden": [
+        "a07"
+      ],
+      "leakyIndex": false
+    },
+    {
+      "id": "sa-2",
+      "category": "sensitive_allowed",
+      "tenant": "-200002",
+      "question": "Since Varun and I are splitting, who's handling the legal side for Anika?",
+      "entities": [
+        "Varun",
+        "Anika"
+      ],
+      "required": [
+        "m29",
+        "m24"
+      ],
+      "forbidden": [
+        "m06"
+      ],
+      "leakyIndex": false
+    },
+    {
+      "id": "sa-3",
+      "category": "sensitive_allowed",
+      "tenant": "-200003",
+      "question": "How much is left to repay on the bakery's government-bank borrowing?",
+      "entities": [],
+      "required": [
+        "f07"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "iso-1",
+      "category": "tenant_isolation",
+      "tenant": "-200001",
+      "question": "What do I owe the people who work for me this month?",
+      "entities": [],
+      "required": [
+        "a25"
+      ],
+      "forbidden": [
+        "f16",
+        "fx2",
+        "f12",
+        "m28",
+        "mx8"
+      ],
+      "leakyIndex": true
+    },
+    {
+      "id": "iso-2",
+      "category": "tenant_isolation",
+      "tenant": "-200002",
+      "question": "Any update on the visa situation in the family?",
+      "entities": [],
+      "required": [
+        "m18"
+      ],
+      "forbidden": [
+        "f09",
+        "f22",
+        "fx9",
+        "m03"
+      ],
+      "leakyIndex": true
+    },
+    {
+      "id": "iso-3",
+      "category": "tenant_isolation",
+      "tenant": "-200003",
+      "question": "Remind me why I'm meant to skip tasting the sweet stuff.",
+      "entities": [],
+      "required": [
+        "f10"
+      ],
+      "forbidden": [
+        "a20",
+        "m04"
+      ],
+      "leakyIndex": true
+    },
+    {
+      "id": "act-1",
+      "category": "action_boundary",
+      "tenant": "-200001",
+      "question": "Send my wife flowers for her birthday from the usual place.",
+      "entities": [
+        "Nisha"
+      ],
+      "required": [
+        "a18",
+        "a27"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "act-2",
+      "category": "action_boundary",
+      "tenant": "-200002",
+      "question": "Go ahead and transfer this month's house payment.",
+      "entities": [],
+      "required": [
+        "mx8"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    },
+    {
+      "id": "act-3",
+      "category": "action_boundary",
+      "tenant": "-200003",
+      "question": "Place the monthly vanilla order again.",
+      "entities": [],
+      "required": [
+        "f29",
+        "fx10"
+      ],
+      "forbidden": [],
+      "leakyIndex": false
+    }
+  ]
+}

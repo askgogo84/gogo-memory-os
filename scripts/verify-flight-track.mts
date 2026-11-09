@@ -1,3 +1,5 @@
+// Register the inert owner-isolation fixture in this existing npm-test suite.
+import './verify-flight-followup-owner.mts'
 // "Track Virgin Atlantic VS 354" (23 Oct live): live status from the flight-data feed + a watch until landing.
 // Run: npx tsx scripts/verify-flight-track.mts
 import assert from 'node:assert/strict'
@@ -48,7 +50,7 @@ assert.ok(searched > 0)
 const src = readFileSync('lib/agent/flight-track.ts', 'utf8')
 assert.match(src, /\.eq\('telegram_id', tg\)\.eq\('active', true\)\s*\.eq\('condition_json->adHocFlight->>flightNo', f\.flightNo\)/, 'one watch per flight occurrence, owner-scoped')
 assert.doesNotMatch(src, /from\('travel_tickets'\)\.(?:insert|upsert)/, 'a tracked flight is never saved as the owner\'s trip')
-assert.ok(src.includes("message: e.text, topic: 'travel' })"), 'alerts go through deliverWatchAlert (owner alert settings)')
+assert.ok(src.includes("message: e.text, topic: 'travel' })") || src.includes("condition: watcher.condition_json, message, topic: 'travel' })"), 'alerts go through deliverWatchAlert (owner alert settings)')
 assert.match(readFileSync('lib/agent/watchers.ts', 'utf8'), /watcher\.condition_json\?\.adHocFlight\s*\?\s*await import\('\.\/flight-track'\)/)
 assert.match(readFileSync('lib/bot/process-message.ts', 'utf8'), /trackAsk\.createFlightTrackWatch\(resolvedUser\.telegramId, live\)/)
 console.log('Flight tracking: live feed status, one watch per flight until landing, ICAO search fallback')
