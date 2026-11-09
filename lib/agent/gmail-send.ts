@@ -110,10 +110,16 @@ export function parseGmailReplyCommand(text:string){
 }
 
 export async function gmailAccess(actor:AgentActor,{requireSend=false}:{requireSend?:boolean}={}){
-  const {data:user,error}=await supabaseAdmin.from('users')
-    .select('gmail_connected,gmail_send_connected,gmail_email,gmail_access_token,gmail_refresh_token')
-    .eq('telegram_id',actor.legacyTelegramId).maybeSingle()
+  // The token-bearing row is bound to BOTH the owner and the actor's user UUID, and the
+  // returned row must echo them: a foreign or rounded row never supplies credentials.
+  let userQuery:any=supabaseAdmin.from('users')
+    .select('id,telegram_id,gmail_connected,gmail_send_connected,gmail_email,gmail_access_token,gmail_refresh_token')
+    .eq('telegram_id',actor.legacyTelegramId)
+  if(actor.userId)userQuery=userQuery.eq('id',actor.userId)
+  const {data:user,error}=await userQuery.maybeSingle()
   if(error)throw new Error(`gmail_send_user_read_failed:${error.message}`)
+  if(user&&((user.telegram_id!==undefined&&String(user.telegram_id??'')!==String(actor.legacyTelegramId))||(user.id!==undefined&&(!actor.userId||String(user.id??'')!==String(actor.userId)))))
+    return {ok:false as const,reason:'gmail_owner_invalid',user:null,accessToken:''}
   if(!user?.gmail_connected)return {ok:false as const,reason:'gmail_not_connected',user:null,accessToken:''}
   // 4 Nov: reading threads to reply needs the affirmative Gmail yes too.
   if(await import('./gmail-consent').then(m=>m.gmailConsentState(actor.legacyTelegramId))!=='on')return {ok:false as const,reason:'gmail_consent_missing',user:null,accessToken:''}
