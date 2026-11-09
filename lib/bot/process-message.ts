@@ -1573,7 +1573,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'connect_gmail') {
     let reply=''
-    try{reply=await buildGmailConnectReply(resolvedUser.telegramId)}
+    try{reply=await buildGmailConnectReply(resolvedUser.telegramId, incomingText)}
     catch(err:any){
       console.error('GMAIL_CONNECT_HANDLER_FAILED:',err?.message||err)
       reply='Google Workspace connection is temporarily unavailable.'
@@ -1647,10 +1647,20 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const listsMod: any = await import('@/lib/lists').catch(() => null)
     if (typeof listsMod?.removeItemByText === 'function') {
       const listName = normalizeListName(listRemove[2])
-      const r = await listsMod.removeItemByText(resolvedUser.telegramId, listName, listRemove[1])
-      const reply = r.status === 'removed' ? `🗑️ Removed *${r.matched}* from your ${listName} list.`
-        : r.status === 'ambiguous' ? `More than one item matches "${listRemove[1]}" on your ${listName} list: ${r.options.slice(0, 5).join(', ')}. Which one should I remove?`
-        : `I could not find "${listRemove[1]}" on your ${listName} list.`
+      // 7 Nov live: "remove milk and eggs from my grocery list" looked for one item called "milk and eggs".
+      // The whole phrase first (an item can be called "milk and eggs"); only when nothing matches is it split.
+      const whole = await listsMod.removeItemByText(resolvedUser.telegramId, listName, listRemove[1])
+      const wanted = whole.status === 'removed' || whole.status === 'ambiguous' ? [] : listRemove[1].split(/\s*(?:,|\band\b|&)\s*/i).map(x => x.trim()).filter(Boolean).slice(0, 8)
+      const results = wanted.length > 1 ? [] as { item: string; r: any }[] : [{ item: listRemove[1], r: whole }]
+      if (wanted.length > 1) for (const item of wanted) results.push({ item, r: await listsMod.removeItemByText(resolvedUser.telegramId, listName, item) })
+      const removed = results.filter(x => x.r.status === 'removed').map(x => x.r.matched)
+      const ambiguous = results.filter(x => x.r.status === 'ambiguous')
+      const missing = results.filter(x => x.r.status !== 'removed' && x.r.status !== 'ambiguous').map(x => x.item)
+      const parts = [] as string[]
+      if (removed.length) parts.push(`🗑️ Removed *${removed.join('*, *')}* from your ${listName} list.`)
+      for (const a of ambiguous) parts.push(`More than one item matches "${a.item}" on your ${listName} list: ${a.r.options.slice(0, 5).join(', ')}. Which one should I remove?`)
+      if (missing.length) parts.push(`I could not find ${missing.map(m => `"${m}"`).join(' or ')} on your ${listName} list.`)
+      const reply = parts.join('\n')
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser, handledBy: 'list-remove' }
     }
@@ -2056,7 +2066,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const completion = await guardCompletionClaims(finalReply, resolvedUser.telegramId)
     __trace.mark('completion')
     if (completion.blocked) {
-      console.warn('CHAT_COMPLETION_CLAIM_BLOCKED:', JSON.stringify({ telegramId: resolvedUser.telegramId, kind: completion.claim?.kind || null, parsedType: parsed.type || null }))
+      console.warn('CHAT_COMPLETION_CLAIM_BLOCKED:', JSON.stringify({ telegramId: resolvedUser.telegramId, kind: completion.claim?.kind || null, parsedType: parsed.type || null, sentence: String(completion.claim?.sentence || '').slice(0, 160) }))
       finalReply = completion.text
     }
   }

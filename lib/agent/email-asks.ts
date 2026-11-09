@@ -31,6 +31,13 @@ export function billingAsk(text: string): BillingAskKind | null {
 }
 
 type Mail = { subject: string; from: string; date?: string; snippet?: string; evidence?: string }
+/** A subscription/renewal email, not a payment reminder, card alert or one-off receipt. Pure. */
+export function isRenewalMail(m: Mail): boolean {
+  const subject = String(m.subject || ''), body = `${subject} ${m.snippet || ''} ${m.evidence || ''}`
+  if (/\b(?:payment reminder|was successful|payment was made|transaction alert|debited|credited|otp|your order|order confirmed|delivered)\b/i.test(subject)) return false
+  if (/\b(?:subscription|membership|renew\w*|auto-?renew|annual plan|monthly plan|yearly plan|your plan|billing cycle|next billing|trial ends?)\b/i.test(subject)) return true
+  return /\b(?:subscription|membership|renew\w*|auto-?renew|billing cycle|next billing date|plan renews)\b/i.test(body) && !/\b(?:payment reminder|one-?time)\b/i.test(body)
+}
 const DATE = '(?:\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[/-]\\d{1,2}[/-]\\d{2,4}|\\d{1,2}\\s+[A-Za-z]{3,9},?\\s+\\d{4}|[A-Za-z]{3,9}\\s+\\d{1,2},?\\s+\\d{4})'
 
 /** Compact lines: who, what, the amount and the date the email itself shows. Nothing guessed. Pure. */
@@ -79,6 +86,9 @@ export async function tryEmailAsk(actor: AgentActor, text: string): Promise<{ te
       const res = await g.searchWorkspaceEmails(actor, `audit my gmail emails for subscription receipts and renewal notices in the last ${days} days, at most 20 messages`)
       mails = res.messages as Mail[]
       if (kind === 'bills') mails = mails.filter(m => /\b(?:invoice|bill|due|payment|outstanding|statement)\b/i.test(`${m.subject} ${m.evidence || ''}`))
+      // 7 Nov live: "subscriptions renewing soon" listed Amazon Pay payment reminders, a credit-card payment alert and
+      // a Zepto receipt. A renewal email names a subscription, membership, plan or renewal; a one-off payment does not.
+      if (kind === 'renewals') mails = mails.filter(m => isRenewalMail(m))
     }
     console.log('EMAIL_ASK:', JSON.stringify({ kind, found: mails.length }))
     return { text: formatBilling(kind, mails, g.emailBillingAmounts, days), handledBy: 'email-billing-read' }
