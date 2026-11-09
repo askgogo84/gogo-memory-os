@@ -72,6 +72,7 @@ async function recordEvent(telegramId: number, kind: string, payload: Record<str
 type ShownItem = {
   index: number; id: string; threadId: string | null; messageId: string | null; from: string; subject: string; snippet: string
   category: string; senderEmail: string; senderName: string; why: string; ask: string; source: string; score: number
+  gmailAccount?: string | null // exact connected mailbox provenance; old cards omit this field
 }
 
 async function lastShown(telegramId: number): Promise<ShownItem[] | null> {
@@ -116,7 +117,8 @@ async function gmailToken(telegramId: number) {
 async function readGmail(telegramId: number) {
   const access = await gmailToken(telegramId)
   if (!access) return null
-  // 6 Nov (owner): the extra Google accounts are read alongside the primary; one failing never drops the rest.
+  // Keep each Gmail thread tied to the actual connected account that read it.
+  // Thread/message identifiers are mailbox-local and From headers are NOT proof of account ownership.
   const extras = await import('@/lib/agent/gmail-accounts').then(m => typeof m?.listExtraGmailAccounts === 'function' ? m.listExtraGmailAccounts(telegramId) : []).catch(() => [] as import('@/lib/agent/gmail-accounts').ExtraGmailAccount[])
   const extraThreads = await Promise.all(extras.map(async a => {
     try {
@@ -124,18 +126,27 @@ async function readGmail(telegramId: number) {
       return token ? await fetchGmailAttentionThreads(String(token), 12) : []
     } catch (err: any) { console.error('ATTENTION_EXTRA_ACCOUNT_FAILED:', JSON.stringify({ email: a.email, error: String(err?.message || err).slice(0, 100) })); return [] }
   }))
-  const threads = [...await fetchGmailAttentionThreads(access.token, 20), ...extraThreads.flat()]
-  const own = access.email
+  const primaryThreads = await fetchGmailAttentionThreads(access.token, 20)
+  const accounts = [
+    { account: access.email, threads: primaryThreads },
+    ...extras.map((a, i) => ({ account: String(a.email || '').toLowerCase(), threads: extraThreads[i] })),
+  ]
+  const ownAddresses = new Set(accounts.map(a => a.account).filter((a): a is string => Boolean(a)))
   const replied = new Set<string>()
   const emails: AttentionEmail[] = []
-  for (const thread of threads) {
+  for (const { account, threads } of accounts) for (const thread of threads) {
     const msgs = thread.messages || []
-    // A thread where the person has written is a conversation they care about: remember who they write to.
-    for (const m of msgs) if (own && senderEmailOf(m.from) === own) for (const addr of String(m.to || '').match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) || []) replied.add(addr.toLowerCase())
+    // Every connected mailbox's own outgoing messages are self-authored, not incoming tasks.
+    // Still remember who the owner replied to for the scoring boost.
+    for (const m of msgs) if (ownAddresses.has(senderEmailOf(m.from))) {
+      for (const addr of String(m.to || '').match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi) || []) replied.add(addr.toLowerCase())
+    }
     const last = msgs[msgs.length - 1]
-    if (last) emails.push({ ...last, threadId: thread.id, source: 'gmail' })
+    if (last && !ownAddresses.has(senderEmailOf(last.from))) {
+      emails.push({ ...last, threadId: thread.id, source: 'gmail', gmailAccount: account })
+    }
   }
-  return { emails, own, replied }
+  return { emails, own: access.email, replied }
 }
 
 async function readForwarded(telegramId: number) {
@@ -172,7 +183,9 @@ export async function readAttentionSources(telegramId: number): Promise<Attentio
   const seen = new Set<string>()
   const add = (list: AttentionEmail[] | null | undefined) => {
     for (const e of list || []) {
-      const key = clean(e.messageId, 300).toLowerCase() || `${senderEmailOf(e.from)}|${clean(e.subject, 120).toLowerCase()}`
+      const key = e.source === 'gmail' && e.gmailAccount
+        ? `gmail:${e.gmailAccount.toLowerCase()}:${clean(e.messageId || e.id, 300).toLowerCase()}`
+        : clean(e.messageId, 300).toLowerCase() || `${senderEmailOf(e.from)}|${clean(e.subject, 120).toLowerCase()}`
       if (seen.has(key)) continue
       seen.add(key); emails.push(e)
     }
@@ -230,6 +243,7 @@ export async function buildAttentionCard(actor: Pick<AgentActor, 'legacyTelegram
       index: i + 1, id: s.email.id, threadId: s.email.threadId || null, messageId: s.email.messageId || null, from: s.email.from,
       subject: clean(s.email.subject, 200), snippet: clean(s.email.snippet, 500), category: s.category, senderEmail: s.senderEmail,
       senderName: s.senderName, why: s.why, ask: s.ask, source: s.email.source || 'gmail', score: s.score,
+      gmailAccount: s.email.source === 'gmail' ? s.email.gmailAccount || null : null,
     })),
     gmailEmail: read.ownEmail,
   })
@@ -259,7 +273,13 @@ async function learnFromBehaviour(telegramId: number, item: ShownItem) {
 
 function gmailLink(item: ShownItem, gmailEmail: string | null) {
   const ref = String(item.threadId || '')
-  return (item.source === 'gmail' || item.source === 'composio') && /^[a-f0-9]{6,64}$/i.test(ref) ? `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(gmailEmail || '')}#all/${ref}` : null
+  // Never guess the primary mailbox for an older multi-account card without provenance.
+  // Composio retains its existing explicitly read primary account handling.
+  const account = item.source === 'gmail' ? item.gmailAccount : gmailEmail
+  if (!account || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(account)) return null
+  return (item.source === 'gmail' || item.source === 'composio') && /^[a-f0-9]{6,64}$/i.test(ref)
+    ? `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(account.toLowerCase())}#all/${ref}`
+    : null
 }
 
 async function draftBody(item: ShownItem, polish: Polisher = defaultPolisher) {
