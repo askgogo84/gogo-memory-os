@@ -39,25 +39,25 @@ export default async function UsersPage({ searchParams }: { searchParams: Promis
         <input id="u-q" name="q" className="field" type="search" placeholder="Search name or phone" defaultValue={q} style={{ flex: '1 1 200px' }} />
         <button className="btn lg" type="submit">Apply</button>
       </form>
-      <div className="adm-table">
+      <div className="adm-table rt">
         <table>
-          <thead><tr><th scope="col">Name</th><th scope="col">Phone</th><th scope="col">Plan</th><th scope="col">Status</th><th scope="col">Last message</th><th scope="col">Messages</th><th scope="col">Tasks</th><th scope="col">Cost</th><th scope="col">Paid, month</th><th scope="col">Budget used</th><th scope="col">Actions</th></tr></thead>
+          <thead><tr><th scope="col">Name</th><th scope="col">Phone</th><th scope="col">Plan</th><th scope="col">Status</th><th scope="col">Last message</th><th scope="col">Messages</th><th scope="col">Tasks</th><th scope="col">Cost</th><th scope="col">Paid, month</th><th scope="col">Budget used</th><th scope="col" className="act">Actions</th></tr></thead>
           <tbody>
             {list.slice(0, 300).map(u => {
               const budget = PLAN_BUDGET_INR[u.tier] ?? 25, pct = (u.cost / budget) * 100
               return (
                 <tr key={u.telegram_id}>
-                  <td style={{ fontWeight: 500 }}><Link href={`/admin/users/${encodeURIComponent(u.telegram_id)}`}>{u.name}</Link></td>
-                  <td style={{ color: 'var(--ink2)' }}>{u.whatsapp_id || '—'}</td>
-                  <td>{PLAN_LABEL[u.tier] || u.tier}</td>
-                  <td>{u.access_status === 'blocked' ? <Pill tone="bad">Blocked</Pill> : pct >= 100 ? <Pill tone="warn">Over budget</Pill> : <Pill tone="ok">Active</Pill>}</td>
-                  <td style={{ color: 'var(--ink3)' }}>{ago(u.last)}</td>
-                  <td>{u.msgs}</td>
-                  <td>{u.tasks}</td>
-                  <td style={{ fontWeight: 500 }}>{inrSmart(u.cost)}</td>
-                  <td style={{ color: 'var(--ink2)' }}>{u.paid ? inr(u.paid) : '—'}</td>
-                  <td><div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 130 }}><Bar pct={pct} tone={pct >= 90 ? 'warn' : undefined} /><span style={{ fontSize: 13, color: 'var(--ink2)' }}>{Math.round(pct)}%</span></div></td>
-                  <td><div style={{ display: 'flex', gap: 6 }}>
+                  <td className="primary clip" style={{ fontWeight: 500 }}><Link href={`/admin/users/${encodeURIComponent(u.telegram_id)}`}>{u.name}</Link></td>
+                  <td data-label="Phone" style={{ color: 'var(--ink2)' }}>{u.whatsapp_id || '—'}</td>
+                  <td data-label="Plan">{PLAN_LABEL[u.tier] || u.tier}</td>
+                  <td data-label="Status">{u.access_status === 'blocked' ? <Pill tone="bad">Blocked</Pill> : pct >= 100 ? <Pill tone="warn">Over budget</Pill> : <Pill tone="ok">Active</Pill>}</td>
+                  <td data-label="Last message" style={{ color: 'var(--ink3)' }}>{ago(u.last)}</td>
+                  <td data-label="Messages">{u.msgs}</td>
+                  <td data-label="Tasks">{u.tasks}</td>
+                  <td data-label="Cost" style={{ fontWeight: 500 }}>{inrSmart(u.cost)}</td>
+                  <td data-label="Paid, month" style={{ color: 'var(--ink2)' }}>{u.paid ? inr(u.paid) : '—'}</td>
+                  <td data-label="Budget used"><div style={{ display: 'flex', alignItems: 'center', gap: 8, width: 110 }}><Bar pct={pct} tone={pct >= 90 ? 'warn' : undefined} /><span style={{ fontSize: 13, color: 'var(--ink2)' }}>{Math.round(pct)}%</span></div></td>
+                  <td className="act"><div style={{ display: 'flex', gap: 6 }}>
                     <Link className="btn sm" href={`/admin/users/${encodeURIComponent(u.telegram_id)}`}>View</Link>
                     {canAct ? (u.access_status === 'blocked'
                       ? <ActionButton action="user.unblock" body={{ telegramId: u.telegram_id }} label="Unblock" className="btn sm solid" />
