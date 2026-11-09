@@ -101,3 +101,15 @@ assert.match(started, /I can't keep watching flight fares on my own yet, so this
 assert.doesNotMatch(tr.flightSearchStartedText(tr.parseFlightBriefText('flights BLR to DEL 20 Dec', at)), /keep watching/)
 console.log('✓ flight routes ignore "flight", "book a" and watch wording; a fare-watch ask is told plainly it is a one-time check')
 console.log('Use-case batch (6 Nov) checks passed')
+
+// 7 Nov live: "dentist near me" (no verb) went to a web search and asked for a city although home is saved.
+{
+  const pl = await import('../lib/agent/places-search')
+  assert.deepEqual(pl.nearbyRewrite('dentist near me', 'Rajajinagar'), { text: 'dentist in Rajajinagar' })
+  assert.deepEqual(pl.nearbyRewrite('pizza nearby', 'Rajajinagar'), { text: 'pizza in Rajajinagar' })
+  assert.deepEqual(pl.nearbyRewrite('dentist near me', null), { needArea: true })
+  assert.equal(pl.placeAsk('dentist in Rajajinagar')?.area, 'Rajajinagar')
+  assert.ok(pl.looksLikePlaceAsk('dentist near me') && pl.looksLikePlaceAsk('good gym around Malleshwaram') && pl.looksLikePlaceAsk('find a dentist near me'))
+  for (const t of ['i had pizza in goa', 'weather in bangalore', 'dentist appointment tomorrow', 'my dentist is in Jayanagar']) assert.ok(!pl.looksLikePlaceAsk(t), `not a place ask: ${t}`)
+  console.log('✓ a bare "<kind> near me / in <area>" is a place ask; stories, weather and appointments are not')
+}

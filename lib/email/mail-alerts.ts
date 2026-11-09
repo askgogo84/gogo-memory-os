@@ -104,6 +104,10 @@ export function billAmountOf(text: string): { value: number; text: string } | nu
   return amounts.length === 1 ? amounts[0] : null
 }
 
+// A founder-signed onboarding or drip mail ("Thanks for signing up for Cofounder. I'm Cooper… sign up here", 8 Nov) comes
+// from a person's name with no list headers, so it scores as a person. It is not someone waiting on a reply.
+const ONBOARDING = /\bthanks?\s+(?:you\s+)?for\s+(?:signing\s+up|joining|registering|subscribing|trying|creating\s+(?:an|your)\s+account|your\s+interest)\b|\bwelcome\s+(?:to|aboard)\b|\b(?:just\s+)?sign\s+up\s+here\b|\bbook\s+(?:a|some)\s+(?:time|call|slot|demo)\b|\b(?:grab|pick)\s+a\s+(?:time|slot)\b|\bcalendly\.com\b|\bcal\.com\/|\b(?:i|we)\s+meet\s+with\s+(?:users|customers|founders)\b|\bhelp\s+(?:you\s+)?get\s+(?:started|the\s+most)\b|\bget\s+started\s+with\b|\bfree\s+trial\b|\bunsubscribe\b/i
+
 /** Which alert an email is, or null when it should wait for "any important emails?". Pure. */
 export function alertKindOf(s: ScoredEmail): AlertKind | null {
   const e = s.email, text = `${e.subject} ${e.snippet}`.replace(/\s+/g, ' ')
@@ -135,6 +139,7 @@ export function alertKindOf(s: ScoredEmail): AlertKind | null {
     // A renewal notice signed by a person (an account manager) is still money leaving.
     if (RENEW.test(text) && amountOf(text)) return 'money_leaving'
     if (DEADLINE.test(text) && DEADLINE_SUBJECT.test(text)) return 'deadline'
+    if (ONBOARDING.test(text)) return null
     return s.score >= 0.6 ? 'reply_waiting' : null
   }
   return null
@@ -197,6 +202,24 @@ const restates = (ask: string, subject: string, amt: string | undefined) => {
   return words.length === 0 || words.every(w => pool.includes(w))
 }
 
+const GATEWAY_SENDER = /\b(?:payment-?report|razorpay|payu|ccavenue|cashfree|paytm|phonepe|billdesk|instamojo|stripe|juspay|easebuzz|payments?@|noreply@pay)\b/i
+/** "Your Order at CARPEDIEM STORE PRIVATE LIMITED is unsuccessful" → "Carpediem Store". Pure. */
+export function merchantFromSubject(subject: string): string | null {
+  const m = String(subject || '').match(/\b(?:order|payment|purchase|booking|subscription)\s+(?:at|to|with|from|for)\s+([A-Z][A-Za-z0-9&'.\- ]{2,60}?)(?=\s+(?:is|was|has|failed|unsuccessful|could|did|\(|-|–|—|:|,)|\s*$)/i)
+    || String(subject || '').match(/^([A-Z][A-Za-z0-9&'.\- ]{2,40}?)\s*[:\-–—]\s*(?:payment|order|transaction)/i)
+  if (!m) return null
+  return m[1].replace(/\s+(?:private|pvt\.?|limited|ltd\.?|llp|inc\.?)\b/gi, '').replace(/\s+/g, ' ').trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
+}
+/** What the alert was about, for the thread behind it (open-thread.ts). Pure. */
+const decodeEntities = (t: string) => t.replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n))).replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
+
+export function alertThreadData(kind: AlertKind, s: ScoredEmail, gmailEmail?: string | null) {
+  const e = s.email, subject = String(e.subject || ''), text = `${subject} ${e.snippet || ''}`
+  const amt = amountOf(text)
+  const snippet = decodeEntities(String(e.snippet || '')).replace(/\s+/g, ' ').trim().slice(0, 300) || null
+  return { subject, snippet, receivedAt: e.internalDate ? new Date(Number(e.internalDate)).toISOString() : null, sender: senderOf(e), senderEmail: (String(e.from || '').match(/<([^>]+)>/)?.[1] || (String(e.from || '').includes('@') ? String(e.from).trim() : null)) || null, merchant: merchantFromSubject(subject) || (GATEWAY_SENDER.test(String(e.from)) ? null : senderOf(e)), amount: amt?.text || null, threadId: e.threadId || null, emailId: e.id || null, alertKind: kind, gmailEmail: gmailEmail || null }
+}
+
 /** A line from the calendar or trips that changes what the person should do; nothing is guessed. Pure. */
 export function contextLine(kind: AlertKind, s: ScoredEmail, ctx: AlertContext): string | null {
   const tz = ctx.timezone || 'Asia/Kolkata', now = ctx.now ?? Date.now()
@@ -232,7 +255,11 @@ export function composeAlert(kind: AlertKind, s: ScoredEmail, ctx: AlertContext 
   const name = ctx.name ? `${ctx.name.split(' ')[0]}, ` : ''
   let body = ''
   if (kind === 'payment_failed') {
-    body = `${name}${who} says a payment${amt ? ` of *${amt.text}*` : ''} failed${/again|twice|second|repeated/i.test(text) ? ' again' : ''}${/insufficient/i.test(text) ? ' for insufficient funds' : ''}. "${subject}".`
+    // 7 Nov live: "Payment-report says a payment of ₹3398.00 failed" — the gateway's name, not the shop's. Name the shop.
+    const shop = merchantFromSubject(subject)
+    const viaGateway = GATEWAY_SENDER.test(`${e.from} ${who}`)
+    if (shop && viaGateway) body = `${name}your${amt ? ` *${amt.text}*` : ''} payment to *${shop}* failed${/\b(?:failed\s+again|again\s+failed|second\s+(?:attempt|time)|twice|repeated(?:ly)?)\b/i.test(text) ? ' again' : ''} (${who} handles their payments). "${subject}".`
+    else body = `${name}${who} says a payment${amt ? ` of *${amt.text}*` : ''} failed${/\b(?:failed\s+again|again\s+failed|second\s+(?:attempt|time)|twice|repeated(?:ly)?)\b/i.test(text) ? ' again' : ''}${/insufficient/i.test(text) ? ' for insufficient funds' : ''}. "${subject}".`
     body += /\b(?:suspend|pause|interrupt|shutdown|shut down|disconnect|cancel)/i.test(text) ? ' The email says the service may be paused, so update the payment method first.' : " The email doesn't say whether it was paid another way, so check before paying again."
   } else if (kind === 'money_leaving') {
     if (CONFIRM_CHARGE.test(text)) body = `${name}${who} is asking you to confirm a${amt ? ` *${amt.text}*` : ''} payment. "${subject}". If you don't recognise it, don't confirm; contact them through their own app or site.`
@@ -251,7 +278,8 @@ export function composeAlert(kind: AlertKind, s: ScoredEmail, ctx: AlertContext 
       || text.match(/\b(?:you\s+allowed|allowed|gave)\s+([A-Z][\w.]+(?:\s+[A-Z][\w.]+)?)\s+access\b/)?.[1]
     body = `${name}${who} says ${app ? `*${app}* was granted access to your account` : subject.toLowerCase()}${day || time ? ` (${[day, time].filter(Boolean).join(' ')})` : ''}. If that was you, nothing to do. If not, check your account's connected apps and sign-ins. The email doesn't say what data was shared.`
   } else if (kind === 'reply_waiting') {
-    body = `${name}${who} is waiting on you: "${subject}".${s.ask ? ` ${s.ask}` : ''}${s.due ? ` (${s.due})` : ''} Say "draft a reply" and I'll show it before anything is sent.`
+    const ask = s.ask && !restates(s.ask, subject, undefined) ? ` ${s.ask}` : ''
+    body = `${name}${who} is waiting on you: "${subject}".${ask}${s.due ? ` (${s.due})` : ''} Say "draft a reply" and I'll show it before anything is sent.`
   } else {
     body = `${name}${who}: "${subject}".`
   }
@@ -262,7 +290,7 @@ export function composeAlert(kind: AlertKind, s: ScoredEmail, ctx: AlertContext 
 
 // ── selection ──────────────────────────────────────────────────────────────────
 export type AlertState = { alerted: string[]; day: string; sentToday: number }
-export type MailAlert = { id: string; kind: AlertKind; message: string; topic: 'bills' | 'replies' | 'watches'; email: AttentionEmail }
+export type MailAlert = { id: string; kind: AlertKind; message: string; topic: 'bills' | 'replies' | 'watches'; email: AttentionEmail; scored: ScoredEmail }
 const TOPIC: Record<AlertKind, MailAlert['topic']> = { payment_failed: 'bills', money_leaving: 'bills', deadline: 'watches', security: 'watches', reply_waiting: 'replies', newsletter: 'watches' }
 
 export const dayKey = (now: number, tz: string) => new Date(now).toLocaleDateString('en-CA', { timeZone: tz })
@@ -287,7 +315,7 @@ export function selectAlerts(emails: AttentionEmail[], opts: { rules: MailAlertR
     const kind = alertKindOf(s)
     if (!kind || !opts.rules.kinds[kind]) continue
     if (quiet || prior + out.length >= opts.rules.maxPerDay) { deferred.push(id); continue }
-    out.push({ id, kind, message: composeAlert(kind, s, opts.ctx), topic: TOPIC[kind], email: e })
+    out.push({ id, kind, message: composeAlert(kind, s, opts.ctx), topic: TOPIC[kind], email: e, scored: s })
   }
   const nextState: AlertState = { alerted: [...out.map(a => a.id), ...(opts.state?.alerted || [])].slice(0, 400), day: today, sentToday: prior + out.length }
   return { alerts: out, deferred, state: nextState, quiet }

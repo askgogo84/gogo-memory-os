@@ -8,6 +8,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import type { AgentActor } from './actor'
 import { PAYMENT_GATE, parsePaymentConfirmation, tryPaymentConfirmation, takeReceiptCheck } from './payment-confirmation'
+import { attachEvidence, openActionRecord, receiptLine, recordVerification, saveActionRecord, transition } from './action-record'
 
 export type SharedKind = 'payment' | 'bank_debit' | 'bank_credit' | 'otp' | 'delivery' | 'booking' | 'bill_due' | 'security' | 'promo'
 export type SharedReading = {
@@ -193,16 +194,32 @@ export async function takeSharedOffer(actor: AgentActor, text: string): Promise<
     if (r.offer === 'log_expense' && r.amount) {
       const { saveExpense } = await import('@/lib/bot/services/expense-storage')
       const description = r.merchant || r.sender || 'Bank debit'
-      await saveExpense({ telegramId: actor.legacyTelegramId, whatsappId: actor.whatsappId || null, expense: { amount: r.amount.value, category: 'other', description, rawText: original.slice(0, 500) } as any })
-      return `Logged ${r.amount.text} as ${description}. Say "expenses today" to see the day.`
+      // One action record: request → policy (lists, low risk, reversible → auto) → the row → read back → receipt.
+      let rec = transition(openActionRecord({ telegramId: tg, capability: 'lists', action: 'expense.log', request: text, policy: { capability: 'lists', permissionLevel: 'auto', mode: 'execute', risk: 'low', irreversible: false } }), 'running')
+      const saved = await saveExpense({ telegramId: actor.legacyTelegramId, whatsappId: actor.whatsappId || null, expense: { amount: r.amount.value, category: 'other', description, rawText: original.slice(0, 500) } as any })
+      if (saved?.id) {
+        rec = attachEvidence(rec, { provider: 'supabase.expenses', ids: { id: String(saved.id) } })
+        const { data: back } = await supabaseAdmin.from('expenses').select('id,amount').eq('id', saved.id).maybeSingle()
+        rec = recordVerification(rec, back?.id ? { state: 'verified_completed', evidence: { id: String(back.id), amount: back.amount } } : { state: 'still_unknown', evidence: {}, reason: 'read_back_missing' })
+      } else rec = transition(rec, 'failed', { error: 'expense_insert_failed' })
+      await saveActionRecord(supabaseAdmin, rec)
+      return `${receiptLine(rec, `${r.amount.text} logged as ${description}`)}${rec.state === 'verified_success' ? ' Say "expenses today" to see the day.' : ''}`
     }
     if (r.offer === 'remind_bill' && r.date) {
       const at = dayBeforeAt9(r.date, Date.now(), tz)
       if (!at) return `That date has already passed, so there's nothing to remind you about. Say "remind me to pay ${r.sender || 'it'} tomorrow at 9am" if you still want one.`
       const message = `${r.sender || 'A bill'}${r.amount ? ` ${r.amount.text}` : ''} is due ${/^(?:today|tomorrow)$/i.test(r.date) ? 'tomorrow' : `on ${r.date}`}.`
-      const { error } = await supabaseAdmin.from('reminders').insert({ telegram_id: actor.legacyTelegramId, chat_id: actor.legacyTelegramId, message, remind_at: at, sent: false, timezone: tz, whatsapp_to: actor.whatsappId || null })
-      if (error) throw new Error(error.message)
-      return `Reminder set for ${new Date(at).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: tz })}: ${message}`
+      let rec = transition(openActionRecord({ telegramId: tg, capability: 'reminders', action: 'reminder.create', request: text, policy: { capability: 'reminders', permissionLevel: 'auto', mode: 'execute', risk: 'low', irreversible: false } }), 'running')
+      const { data: ins, error } = await supabaseAdmin.from('reminders').insert({ telegram_id: actor.legacyTelegramId, chat_id: actor.legacyTelegramId, message, remind_at: at, sent: false, timezone: tz, whatsapp_to: actor.whatsappId || null }).select('id').single()
+      if (error || !ins?.id) rec = transition(rec, 'failed', { error: String(error?.message || 'reminder_insert_failed').slice(0, 80) })
+      else {
+        rec = attachEvidence(rec, { provider: 'supabase.reminders', ids: { id: String(ins.id) } })
+        const { data: back } = await supabaseAdmin.from('reminders').select('id,remind_at').eq('id', ins.id).maybeSingle()
+        rec = recordVerification(rec, back?.id ? { state: 'verified_completed', evidence: { id: String(back.id), remindAt: back.remind_at } } : { state: 'still_unknown', evidence: {}, reason: 'read_back_missing' })
+      }
+      await saveActionRecord(supabaseAdmin, rec)
+      const when = new Date(at).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: tz })
+      return `${receiptLine(rec, `reminder for ${when}`)}${rec.state === 'verified_success' ? ` ${message}` : ''}`
     }
     if (r.offer === 'save_booking') {
       const { parseFlightTicketTextSafe } = await import('@/lib/services/pdf-reader-whatsapp')

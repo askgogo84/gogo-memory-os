@@ -7,7 +7,13 @@ import { redactSecretShapedText } from '../bot/memory-redaction'
 export type PlaceAsk = { query: string; area: string; count: number }
 
 const KIND = /\b(restaurants?|caf(?:e|é)s?|coffee (?:shops?|places?)|bars?|pubs?|breweries|brewery|bakery|bakeries|places? to eat|dhabas?|darshinis?|mess(?:es)?|biryani|dosa|pizza|burgers?|ice ?cream|desserts?|sweets? shops?|gyms?|salons?|spas?|parks?|hospitals?|clinics?|pharmac(?:y|ies)|chemists?|hotels?|stays?|co-?working spaces?|malls?|supermarkets?|barbers?|barber ?shops?|dentists?|dental clinics?|doctors?|pediatricians?|dermatologists?|physiotherapists?|plumbers?|electricians?|carpenters?|mechanics?|car service(?: centres?| centers?)?|bike service(?: centres?| centers?)?|tailors?|laundr(?:y|ies)|dry cleaners?|vets?|veterinar(?:y|ians?)(?: clinics?)?|pet shops?|opticians?|florists?|atms?|petrol (?:pumps?|bunks?)|ev chargers?|charging stations?)\b/i
+// 7 Nov live: "dentist near me" had no verb, went to a web search and asked for a city although home is saved.
+// A bare "<kind> near me / in <area>" is a place ask too, so LEAD is optional when the text is just kind + place.
 const LEAD = /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:suggest|recommend|find|show(?: me)?|list|give me|what are|which are|any|best|top|good|nice|where can i (?:get|find|eat|have))\b/i
+const BARE = new RegExp('^(?:(?:a|an|the|some|good|best|top|nice|cheap|open|veg|non-veg|\\d{1,2})\\s+){0,3}' + KIND.source + '\\s*(?:near|nearby|in|around|close to)\\b', 'i')
+const leads = (t: string) => LEAD.test(t) || BARE.test(t)
+/** Route gate: a verb-led or kind-led place ask ("dentist near me", "barbers in Rajajinagar"). Pure. */
+export const looksLikePlaceAsk = (text: string) => { const t = String(text || '').trim(); return t.length <= 200 && leads(t) && KIND.test(t) }
 const COUNT_WORDS: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8 }
 
 // 26 Oct live: "Find hotels near Mumbai Airport for 12–16 November for 2 adults" sent the dates and guests to the
@@ -32,7 +38,7 @@ export function placeAsk(text: string): PlaceAsk | null {
   // A pincode beside an area is dropped (the area is searched); a pincode alone is kept as the area.
   const t = String(text || '').trim().replace(/[?.!]+$/, '').replace(/\b([A-Za-z]+)(\s*,?\s*)\(?\b(\d{6})\b\)?/g, (m, word: string) => /^(?:in|near|at|around|to|pincode|pin)$/i.test(word) ? m : word)
   if (!t || t.length > 200) return null
-  if (!LEAD.test(t) || !KIND.test(t)) return null
+  if (!leads(t) || !KIND.test(t)) return null
   // A negated action is a safety constraint, not an instruction to book.
   // Keep affirmative booking/ordering requests on their separate approval-gated routes.
   // Bound negation at punctuation, contrast or another action. Explicitly
@@ -244,7 +250,7 @@ export function homeAreaFrom(contents: string[]): string | null {
 /** "Find pizza nearby" with a home area becomes "Find pizza in <area>"; null when it is not a nearby place ask. */
 export function nearbyRewrite(text: string, homeArea: string | null): { text: string } | { needArea: true } | null {
   const t = String(text || '').trim()
-  if (!NEARBY.test(t) || !LEAD.test(t) || !KIND.test(t)) return null
+  if (!NEARBY.test(t) || !leads(t) || !KIND.test(t)) return null
   if (!homeArea) return { needArea: true }
   return { text: t.replace(NEARBY, `in ${homeArea}`) }
 }
