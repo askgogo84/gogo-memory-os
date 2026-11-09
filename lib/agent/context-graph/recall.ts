@@ -57,7 +57,7 @@ const SENSITIVE: [SensitiveCategory, RegExp][] = [
   ['sexuality', /\b(gay|lesbian|bisexual|queer|transgender|sexual orientation|coming out|dating app|hookup)\b/i],
   ['caste', /\b(caste|dalit|brahmin|obc|sc\/st|jati)\b/i],
   ['immigration', /\b(visa (?:status|rejected|denied)|green card|citizenship (?:test|application)|asylum|undocumented|naturali[sz]ation|immigra\w*)\b/i],
-  ['legal', /\b(arrest\w*|police (?:case|complaint)|fir\b|lawsuit|court case|criminal record|convicted|bail)\b/i],
+  ['legal', /\b(arrest\w*|police (?:case|complaint|station)|fir\b|lawsuit|court (?:case|hearing|date)|criminal record|convicted|bail|custody|divorce|separation (?:papers|agreement)|lawyer|advocate|adv\.\s|legal notice|challan)\b/i],
 ]
 
 export function sensitiveCategory(text: string): SensitiveCategory | null {
@@ -67,6 +67,8 @@ export function sensitiveCategory(text: string): SensitiveCategory | null {
 
 const tokens = (s: string) => new Set(String(s).toLowerCase().replace(/[^a-z0-9@.\s-]/g, ' ').split(/\s+/).filter(w => w.length > 2 && !STOP.has(w)))
 const STOP = new Set('the and for with that this what when where which who how are was were you your yours have has had from about into some any can could would should will just like make made does did not but our out get got want need tell give show me my mine its it\'s there their them they then than also very really please gogo'.split(' '))
+/** Share of `a`'s tokens also in `b`: 1 when b says everything a says. */
+const containment = (a: Set<string>, b: Set<string>) => { if (!a.size) return 1; let i = 0; for (const x of a) if (b.has(x)) i++; return i / a.size }
 const jaccard = (a: Set<string>, b: Set<string>) => { if (!a.size || !b.size) return 0; let i = 0; for (const x of a) if (b.has(x)) i++; return i / (a.size + b.size - i) }
 const cosine = (a: number[], b: number[]) => { let d = 0, x = 0, y = 0; for (let i = 0; i < Math.min(a.length, b.length); i++) { d += a[i] * b[i]; x += a[i] * a[i]; y += b[i] * b[i] } return x && y ? d / Math.sqrt(x * y) : 0 }
 
@@ -87,8 +89,18 @@ export function recallProbes(question: string, entityLabels: string[] = [], maxP
   return [...new Set(out.map(s => s.trim()).filter(s => s.length >= 3))].slice(0, maxProbes)
 }
 
+const QUESTION_TOPIC: Record<SensitiveCategory, RegExp> = {
+  health: /\b(health|medical|medicine|medication|doctor|symptom|condition|tablet|pill|treatment|hospital)\b/i,
+  finance: /\b(money|finances?|salary|pay|budget|savings|loan|debt|emi|bank)\b/i,
+  religion: /\b(religio\w*|faith|prayer|festival fast\w*)\b/i,
+  politics: /\b(politic\w*|vote|election)\b/i,
+  sexuality: /\b(dating|partner|relationship|orientation)\b/i,
+  caste: /\b(caste|community)\b/i,
+  immigration: /\b(visa|immigration|passport|citizenship)\b/i,
+  legal: /\b(legal|lawyer|advocate|custody|court|police|case|divorce|splitting|separation)\b/i,
+}
 /** Is the question itself about this sensitive category? Only then may the owner's own words on it be shown. */
-export function questionAllows(question: string, cat: SensitiveCategory): boolean { return sensitiveCategory(question) === cat }
+export function questionAllows(question: string, cat: SensitiveCategory): boolean { return sensitiveCategory(question) === cat || QUESTION_TOPIC[cat].test(question) }
 
 export type HybridInput = {
   scopeId: string
@@ -127,9 +139,11 @@ export async function hybridRecall(index: RecallIndex, input: HybridInput): Prom
   for (const h of byId.values()) {
     const ref = `${h.sourceTable || 'memories'}:${h.id}`
     if (stale.has(ref)) { dropped.stale++; continue }
-    if (input.exactSourceRefs?.has(ref)) { dropped.duplicate++; continue }
     const tok = tokens(h.text)
-    if (exactTok.some(e => jaccard(e, tok) >= 0.6)) { dropped.duplicate++; continue }
+    // Same source as an exact assertion: drop only if the exact path already carries what the memory says.
+    if (input.exactSourceRefs?.has(ref) && (!exactTok.length || exactTok.some(e => containment(tok, e) >= 0.8))) { dropped.duplicate++; continue }
+    // Drop only when the exact path already says everything this memory says (a memory with extra detail stays).
+    if (exactTok.some(e => containment(tok, e) >= 0.8)) { dropped.duplicate++; continue }
     const cat = sensitiveCategory(h.text)
     if (cat && !questionAllows(input.question, cat)) { dropped.sensitive++; continue }
     const adj = h.score + 0.03 * (h.probes.length - 1)

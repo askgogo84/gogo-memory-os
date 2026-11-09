@@ -40,10 +40,13 @@ let n = 0; const ok = (s: string) => { n++; console.log('PASS', s) }
 { // stale corrections and exact-wins dedupe
   const f = loadFixture()
   const r = await hybridRecall(memoryIndex(f), { scopeId: '-100001', question: 'Where do I live now?', staleSourceRefs: new Set(['memories:d9']), exactTexts: ['self in_city Indiranagar'], exactSourceRefs: new Set(['memories:d10']) })
-  assert.ok(!r.items.some(i => i.id === 'd9'), 'superseded address not recalled'); assert.ok(!r.items.some(i => i.id === 'd10'), 'already in the exact path'); assert.ok(r.dropped.stale >= 1 && r.dropped.duplicate >= 1)
+  assert.ok(!r.items.some(i => i.id === 'd9'), 'superseded address not recalled'); assert.ok(r.dropped.stale >= 1)
+  assert.ok(r.items.some(i => i.id === 'd10'), 'same source as the exact fact but with more detail (new flat, 12th main): kept')
+  const full = await hybridRecall(memoryIndex(f), { scopeId: '-100001', question: 'Where do I live now?', exactTexts: ['Moved to Indiranagar last week, new flat on 12th main'], exactSourceRefs: new Set(['memories:d10']) })
+  assert.ok(!full.items.some(i => i.id === 'd10') && full.dropped.duplicate >= 1, 'dropped only when the exact path already says all of it')
   const resolved = await hybridRecall(memoryIndex(f), { scopeId: '-100001', question: 'Where do I live now?', resolveStale: async refs => new Set(refs.filter(x => x === 'memories:d9')) })
   assert.ok(!resolved.items.some(i => i.id === 'd9'), 'graph lookup after search suppresses the stale memory')
-  ok('corrections suppress stale memories (given or resolved from the graph); exact path wins duplicates')
+  ok('corrections suppress stale memories (given or resolved from the graph); exact path wins true duplicates, memories with extra detail stay')
 }
 
 { // pack wiring: off by default; on → items in pack + render warns; consequential stays approval-bound
@@ -66,5 +69,11 @@ let n = 0; const ok = (s: string) => { n++; console.log('PASS', s) }
   assert.ok(r.totals.currentLeaks > 0, 'the current path does leak on these fixtures (the gap this closes)')
   assert.ok(r.totals.hybridTokens <= r.totals.currentTokens + 10, 'no material token increase')
   ok(`fixtures: hybrid ${r.totals.hybridPass}/${r.totals.cases}, current ${r.totals.currentPass}/${r.totals.cases}; leaks ${r.totals.currentLeaks} → 0`)
+}
+{ // held-out set written blind by a separate agent (no longer blind after the two fixes it prompted; kept as a regression guard)
+  const h = await evaluate(loadFixture('scripts/fixtures/hybrid-recall/heldout-blind.json'))
+  assert.equal(h.totals.hybridLeaks, 0, 'no stale, sensitive or other-tenant item reaches the pack')
+  assert.ok(h.totals.hybridPass >= h.totals.currentPass, 'hybrid never below the current path')
+  ok(`held-out: hybrid ${h.totals.hybridPass}/${h.totals.cases}, current ${h.totals.currentPass}/${h.totals.cases}; leaks ${h.totals.currentLeaks} → ${h.totals.hybridLeaks}`)
 }
 console.log(`verify-hybrid-recall-nov9: ${n} passed`)

@@ -66,7 +66,9 @@ Files: `lib/agent/context-graph/recall.ts` (path), `build.ts` (merge + render + 
 
 Rules, each pinned in `scripts/verify-hybrid-recall-nov9.mts`:
 
-1. **Exact wins.** Recall items duplicating a graph assertion, a pack fact or an exact source ref are dropped.
+1. **Exact wins.** A recall item is dropped when the exact path (graph assertions, pack facts) already contains at
+   least 80% of what it says, including when it is the very memory an assertion came from. A memory with extra detail
+   stays.
 2. **Provenance labels.** Every recall item is `evidenceClass: reported` (the owner said it), `relevance: inferred`,
    `mayAuthorize: false`. The prompt says "related, not verified. Do not act on them alone".
 3. **Corrections.** A memory whose graph assertions were all superseded/retracted (`staleRefsFromGraph`, one owner-scoped
@@ -106,8 +108,8 @@ Run: `npx tsx scripts/eval-hybrid-recall.mts`.
 |---|---|---|
 | Required evidence missing | 0 | 0 |
 | Forbidden items in context (stale, sensitive, other tenant) | 9 | 0 |
-| Context tokens per question (exact + recall) | 66 | 65 |
-| Retrieval pipeline time, offline | 0.26 ms | 1.02 ms |
+| Context tokens per question (exact + recall) | 66 | 66 |
+| Retrieval pipeline time, offline | ≈ 0.2–0.4 ms | ≈ 1–2 ms |
 | Embedding calls per question | 1 | 2.17 |
 
 **How to read this honestly.**
@@ -121,9 +123,43 @@ Run: `npx tsx scripts/eval-hybrid-recall.mts`.
   "headphones finally broke"), which is a real false positive, not fixture tuning. A blind held-out set written by a
   separate agent is in 4b.
 
-### 4b. Blind held-out set
+### 4b. Blind held-out set (`scripts/fixtures/hybrid-recall/heldout-blind.json`)
 
-See the section appended after the held-out run (written without access to the code or the fixtures above).
+Written by a separate agent with no access to the code or the fixtures above: three tenants (Arjun, Meera, Farah — a
+bakery owner), 91 memories, 29 exact facts, 18 corrections, 30 cases (3 per category), questions deliberately
+paraphrased away from the memory wording.
+
+| | Current | Hybrid, first blind run | Hybrid after the two fixes below |
+|---|---|---|---|
+| Cases passed (of 30) | 6 | 8 | 9 |
+| Forbidden items in context | 2 | 1 | 0 |
+| Required evidence missing (total) | 35 | 31 | 30 |
+| Context tokens per question | 57 | 57 | 58 |
+| Embedding calls per question | 1 | 1.83 | 1.83 |
+
+Per category after fixes (current → hybrid): preference 0 → 0, multi_conversation 0 → 0, multi_hop 0 → 1,
+task_continuation 1 → 1, corrections 0 → 1, exact_fact 3 → 3, sensitive 1 → 1, sensitive_allowed 0 → 1,
+tenant_isolation 0 → 0 (both miss the required item; neither leaks the other tenants'), action_boundary 1 → 1.
+
+What the blind run found, both real flaws in my implementation, now fixed and pinned:
+1. **Sensitive leak.** "I've hired Adv. Rekha Menon to handle the custody paperwork for Anika" reached a "plan a fun
+   Saturday with my daughter" question: the legal pattern knew "court case" and "lawsuit" but not custody, advocate,
+   lawyer or divorce. Patterns widened; the question side now also recognises topic words ("the legal side",
+   "medication"), so the owner can still ask about her own case.
+2. **Over-eager dedupe.** "My wife Nisha's birthday is on 9th July and she absolutely loves orchids" was dropped because
+   the exact path held "Nisha's birthday: 9 July" from the same memory. The orchids detail (what to send) was lost.
+   Dedupe now drops a memory only when the exact path already contains ≥ 80% of what it says.
+
+What it says about the numbers:
+- **Both systems miss most paraphrased questions.** 30 of the hybrid's misses and 35 of the current path's are the
+  offline embedder failing to connect, for example, "something sweet for the team" with "kaju katli". That is the
+  embedder's limit, not a pipeline result. The pipeline gains are small on misses (+3 cases) and decisive on leaks
+  (to zero). Whether real embeddings plus multi-probe recall close the misses is exactly what 4c measures.
+- The keyword sensitive guard is the weakest part: it caught this case only after widening. A classifier evaluated on
+  a labelled set is the first item of future work. Until then, everything recalled is labelled "not verified" and
+  cannot authorise an action.
+- The held-out set is no longer blind after these fixes. It stays in the CI pin as a regression guard (zero leaks,
+  hybrid never below current). A fresh blind set should be written before any production promotion.
 
 ### 4c. Research benchmarks (prepared, not run here)
 
@@ -177,12 +213,13 @@ synthetic-data-only evaluation on a separate GPU host, never on live user data a
 
 **Implemented:** `recall.ts` (probes, owner-scoped index over `match_memories`, scope re-check, sensitive guard, stale
 suppression, exact dedupe, MMR, fixed budget, labelled hypotheses); pack wiring with `off|shadow|on` flag; shadow
-counts in the brain log; fixtures; offline harness; live benchmark runner; CI pin (6 groups).
+counts in the brain log; fixtures; offline harness; live benchmark runner; CI pin (7 groups).
 
-**Evaluated:** Memorilla code and published results; AskGogo synthetic fixtures (18 cases, 10 categories); blind
-held-out set (§4b); cost and latency model.
+**Evaluated:** Memorilla code and published results; AskGogo synthetic fixtures (18 cases, 10 categories): current
+10/18 with 9 leaks, hybrid 18/18 with 0; blind held-out set (30 cases, §4b): current 6/30 with 2 leaks, hybrid 9/30
+with 0 after two fixes it surfaced; cost and latency model. Not evaluated: real-embedding accuracy, PV4, PMv2.
 
-**Future work:** run the PV4/PMv2 runner with real embeddings; replace the keyword sensitive guard with a small
+**Future work:** a fresh blind fixture set before promotion; run the PV4/PMv2 runner with real embeddings; replace the keyword sensitive guard with a small
 classifier evaluated on a labelled set; add conversation summaries (not just memories) to `memory_embeddings` so
 multi-conversation recall has more to draw on; per-workspace recall for enterprise Spaces (scope `workspace`), which
 this PR deliberately does not enable.
