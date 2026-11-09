@@ -93,3 +93,19 @@ let n = 0; const ok = (name: string) => { n++; console.log('PASS', name) }
   assert.equal(spacesEnabledFor('5', { GOGO_SPACES: '1' }), true); ok('flag off by default; allowlist is exact')
 }
 console.log(`verify-spaces-sources-nov8: ${n} passed`)
+
+// 9 Nov live: recurring events carry their series start date; the Today block orders by clock of day, all-day first.
+import { clockMinutes } from '../lib/spaces/sources'
+{
+  const r = await resolveSpace(templateSpace('my_day', { kind: 'user', telegramId: OWNER }, NOW), ctx(deps({
+    todayCalendar: async () => ({ ok: true, connected: true, events: [
+      { title: 'Daily Connect-Standup Call', time: '11:30am', startAt: '2026-10-01T06:00:00Z' },
+      { title: 'Review calendar through move date', time: null, startAt: '2026-11-07T18:30:00Z', allDay: true },
+      { title: 'FnB daily syncup <> Tipplr', time: '11:30am', startAt: '2026-09-15T06:00:00Z' },
+      { title: 'ONDC| Food Readiness', time: '7:30pm', startAt: '2026-11-08T14:00:00Z' },
+    ] }),
+  })), () => 'read')
+  assert.deepEqual((r.today as any).items.map((i: any) => `${i.time} ${i.title}`), ['All day Review calendar through move date', '11:30am Daily Connect-Standup Call', '11:30am FnB daily syncup <> Tipplr', '7:30pm ONDC| Food Readiness'])
+  assert.equal(clockMinutes('7:30 pm', null, 'Asia/Kolkata'), 19 * 60 + 30); assert.equal(clockMinutes(null, '2026-11-08T06:00:00Z', 'Asia/Kolkata'), 11 * 60 + 30); assert.equal(clockMinutes(null, null, 'Asia/Kolkata'), 1440)
+  console.log('PASS today ordered by clock of day, all-day first')
+}

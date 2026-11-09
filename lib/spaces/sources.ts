@@ -17,7 +17,7 @@ export type ReadCtx = { owner: string; workspaceId: string | null; now: number; 
 
 /** Everything a resolver touches comes through deps, so tests run without Supabase or Gmail. */
 export type SourceDeps = {
-  todayCalendar: (owner: string) => Promise<{ ok: boolean; connected?: boolean; events?: { title: string; time: string | null; startAt?: string | null }[] }>
+  todayCalendar: (owner: string) => Promise<{ ok: boolean; connected?: boolean; events?: { title: string; time: string | null; startAt?: string | null; allDay?: boolean }[] }>
   todayReminders: (owner: string) => Promise<{ ok: boolean; reminders?: { message: string; remind_at: string }[] }>
   openLoops: (owner: string) => Promise<{ title: string; summary?: string | null; due_at?: string | null; kind?: string }[] | null>
   mailNeedsYou: (owner: string) => Promise<{ connected: boolean; items: { subject: string; from: string; ask?: string | null }[] } | null>
@@ -32,6 +32,16 @@ export type SourceDeps = {
 const fmtTime = (iso: string | null | undefined, tz: string) => iso ? new Date(iso).toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', timeZone: tz }) : ''
 const fmtDay = (iso: string, tz: string) => new Date(iso).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: tz })
 const at = (now: number) => new Date(now).toISOString()
+/** Minutes past midnight from a printed clock ("11:30am", "7:30 pm") or, failing that, an instant in tz. 24h*60 when unknown. */
+export function clockMinutes(time: string | null | undefined, iso: string | null | undefined, tz: string): number {
+  const m = String(time || '').match(/(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m/i)
+  if (m) return ((+m[1] % 12) + (/p/i.test(m[3]) ? 12 : 0)) * 60 + (+(m[2] || 0))
+  const t = iso ? Date.parse(iso) : NaN
+  if (!Number.isFinite(t)) return 24 * 60
+  const p = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hourCycle: 'h23', hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(t))
+  const h = +(p.find(x => x.type === 'hour')?.value || 0), mi = +(p.find(x => x.type === 'minute')?.value || 0)
+  return h * 60 + mi
+}
 const ENT: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
 const decode = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => e[0] === '#' ? String.fromCodePoint(e[1] === 'x' || e[1] === 'X' ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10)) : ENT[e.toLowerCase()] ?? m)
 const clip = (s: unknown, n: number) => decode(String(s || '')).replace(/\s+/g, ' ').trim().slice(0, n)
@@ -44,7 +54,11 @@ export const READERS: Record<SpaceSourceId, Reader> = {
     if (!c.ok) return { status: 'error', message: "I couldn't read your calendar just now." }
     if (!c.connected) return { status: 'not_connected', capability: 'calendar', message: 'Connect Google Calendar and today shows here.' }
     if (!c.events?.length) return { status: 'empty', message: 'Nothing on your calendar today.', readAt: at(now) }
-    return { status: 'ok', items: uniq([...c.events].sort((a, b) => (Date.parse(a.startAt || '') || 0) - (Date.parse(b.startAt || '') || 0)), e => `${e.time || e.startAt || ''}|${e.title}`).slice(0, 12).map(e => ({ time: e.time || fmtTime(e.startAt, tz) || 'All day', title: clip(e.title, 80) })), readAt: at(now) }
+    // Recurring events arrive with their series start date, so the instant is useless for ordering today; the clock of
+    // day in the owner's zone is what the eye expects. All-day items first.
+    const rows = c.events.map(e => ({ e, key: e.allDay ? -1 : clockMinutes(e.time, e.startAt, tz) }))
+    rows.sort((a, b) => a.key - b.key)
+    return { status: 'ok', items: uniq(rows.map(r => r.e), e => `${e.time || e.startAt || ''}|${e.title}`).slice(0, 12).map(e => ({ time: e.allDay ? 'All day' : (e.time || fmtTime(e.startAt, tz) || 'All day'), title: clip(e.title, 80) })), readAt: at(now) }
   },
   'today.reminders': async ({ owner, now, tz, deps }) => {
     const r = await deps.todayReminders(owner)
