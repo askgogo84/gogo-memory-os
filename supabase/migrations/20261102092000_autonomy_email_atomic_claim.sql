@@ -1,4 +1,4 @@
--- DRAFT ONLY: no production migration permitted without separate owner/security gate.
+-- Owner-approved 9 Nov 2026 (run by the owner in the Supabase SQL editor; rollback: 20261102092000_autonomy_email_atomic_claim.rollback.sql).
 -- Atomic per-owner proactive Gmail attention notification reservation.
 -- A reservation is deliberately permanent even if a worker crashes before the provider
 -- call or receives an unknown outcome: reconciliation is manual, never blind-retry.
