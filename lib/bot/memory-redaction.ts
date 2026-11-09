@@ -14,15 +14,17 @@ const SECRET_KEYWORDS =
 
 // Sensitive values that may appear in conversation history. Keep this deliberately
 // conservative: it is only a prompt-boundary redactor, not a parser for the source data.
+// Explicit credential/account labels always outrank the international-phone exemption,
+// including values beginning with +, '+ 91', or a parenthesized +country code.
 const LABELED_SECRET_VALUE_RE =
-  /\b(pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|passport(?:\s*(?:number|no))?|aadhaar|aadhar|ssn|cvv|cvc|card\s*number|account\s*number|api[\s_-]?key|secret\s*key|security\s*code|routing\s*number|ifsc)\b\s*(?:is|:|=|-)?\s*([A-Z0-9][A-Z0-9\s._\-/]{2,})/gi
+  /\b(pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|passport(?:\s*(?:number|no))?|aadhaar|aadhar|ssn|cvv|cvc|(?:credit\s*|debit\s*)?card\s*number|(?:credit\s*|debit\s*)card|account\s*(?:number|no\.?)|api[\s_-]?key|secret\s*key|security\s*code|routing\s*number|ifsc)\b\s*(?:is|:|=|-)?\s*(\(?\+?\s*[A-Z0-9][A-Z0-9\s._\-/()]{2,})/gi
 
 // 3 Nov (Gogo): "all phone numbers to be seen, so that we can make the calls easily". Business numbers in search
 // results ("Tel No : 080 2310 3567", "+91 98450 12345") were withheld as long digit runs, and calling a salon needs
 // them. A number written as a phone is shown: it starts with a +country code, or it comes right after a phone word.
 // Unlabelled long digit runs (card, account and Aadhaar shapes) stay withheld, and the labelled pass already hides
 // anything called an account, card or passport number before this runs.
-const PHONE_LABEL = /\b(?:tel(?:ephone)?|ph(?:one)?|mob(?:ile)?|cell|call(?:\s+us)?(?:\s+on)?|contact(?:\s+us)?|whats\s?app|landline|helpline|hotline|reach\s+us|phone\s+number|mobile\s+number|contact\s+number)\s*(?:no\.?|number|#)?\s*(?:[:.\-–]|is)?\s*(?:at|on)?\s*\(?$/i
+const PHONE_LABEL = /\b(?:tel(?:ephone)?|ph(?:one)?|mob(?:ile)?|cell|call(?:\s+us)?(?:\s+on)?|contact(?:\s+us)?|whats\s?app|landline|helpline|hotline|reach\s+us|phone\s+number|mobile\s+number|contact\s+number|book(?:ings?)?\s+(?:at|on|via)|reservations?|reserve\s+(?:at|on)|dial)\s*(?:no\.?|number|#)?\s*(?:[:.\-–]|is)?\s*(?:at|on)?\s*\(?$/i
 export function isPhoneNumber(value: string, before: string): boolean {
   const digits = String(value || '').replace(/\D/g, '')
   if (digits.length < 8 || digits.length > 13) return false
@@ -76,8 +78,10 @@ export function redactSecretShapedText(content: string): string {
   out = out.replace(LABELED_SECRET_VALUE_RE, (match, label, value) => {
     const v = String(value || '')
     const sentence = /\b(?:expires?|expiry|expired|valid|renew(?:al|ed)?|issued|until|till|due|in|on|from|at)\b/i.test(v.split(/\s+/).slice(0, 2).join(' '))
-    // Passwords, keys and the like are always withheld; only passport/PIN-style labels need an identifier value.
-    if (!/^(?:passport|pin)\b/i.test(String(label))) return `${label} [sensitive detail withheld]`
+    // Passwords, OTPs, keys and security codes are always withheld. Identifier labels (card, account, passport,
+    // Aadhaar, PIN) need an identifier-shaped value: 6 Nov live, "check your bank/credit card statements" became
+    // "credit card [sensitive detail withheld]".
+    if (/^(?:pass(?:word|wd|code)|otp|one[\s-]?time|api|secret|security|cvv|cvc)/i.test(String(label))) return `${label} [sensitive detail withheld]`
     return /\d/.test(v) && !sentence ? `${label} [sensitive detail withheld]` : match
   })
 
@@ -98,6 +102,13 @@ export function redactSecretShapedText(content: string): string {
     reportLinks.some(link => offset >= link.index! && offset + value.length <= link.index! + link[0].length)
       || /^(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/.test(value.trim())
       || isPhoneNumber(value, out.slice(0, offset))
+      // 6 Nov live: 'Payment order successful - 6856147904' (a CCAvenue order number) was withheld. An order,
+      // invoice, booking, PNR, tracking or reference number is the detail the person needs; only unlabelled runs
+      // and card/account/ID labels stay hidden.
+      // Only a contiguous run: "2345 6789 0123" in groups is card- or account-shaped and stays hidden.
+      || (!/[\s-]/.test(value.trim())
+        && /\b(?:order|invoice|booking|pnr|tracking|awb|shipment|reference|txn|transaction|utr|receipt|ticket|consignment|docket)\b[^\d\n]{0,30}$/i.test(out.slice(Math.max(0, offset - 40), offset))
+        && !/\b(?:account|a\/c|card|aadhaar|pan|passport|ifsc|cvv|pin|otp|mobile|phone)\b/i.test(out.slice(Math.max(0, offset - 40), offset)))
       ? value : '[sensitive detail withheld]')
 
   return out

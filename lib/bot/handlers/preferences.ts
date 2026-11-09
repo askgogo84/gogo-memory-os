@@ -98,5 +98,9 @@ export async function getPreferenceBlock(telegramId: number): Promise<string> {
     )
   }
 
+  // Remember and suggest, Phase 1: food taste the person stated, for suggestions only.
+  const taste = await import('@/lib/agent/taste').then(m => m.getTasteBlock(String(telegramId)), () => '').catch(() => '')
+  if (taste) parts.push(taste)
+
   return parts.join('\n')
 }

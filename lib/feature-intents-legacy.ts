@@ -3,6 +3,7 @@
 // Returns a reply string if handled, null to fall through to Claude
 
 import { parseSplitIntent } from '@/lib/splitwise/split-parser'
+const PAYMENT_CONFIRMATION = /\b(?:payment\s+status|merchant\s+name|transaction\s+(?:id|no|ref)|txn\s+(?:id|no|ref)|utr|upi\s+ref|reference\s+(?:no|number)|paid\s+successfully|payment\s+(?:was\s+)?successful|successfully\s+(?:paid|debited))\b/i
 import { handleNutritionText, isNutritionLogText, isNutritionCommand } from '@/lib/bot/handlers/nutrition'
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard, saveReel } from '@/lib/services/reel-saver'
 import { saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
@@ -217,7 +218,8 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
 
   // ── ASK GOGO SPLIT ──────────────────────────────────────────────────────
   // Guard: skip split parser for food-logging sentences
-  if (!isNutritionLogText(text) && parseSplitIntent(text) && may('money', 'legacy_split')) {
+  // 6 Nov live: "Payment Status: SUCCESS, Merchant Name: … Amount: ₹41,898.00, Paid By: …" became a ₹41 split.
+  if (!isNutritionLogText(text) && !PAYMENT_CONFIRMATION.test(text) && parseSplitIntent(text) && may('money', 'legacy_split')) {
     return (await post('/api/splitbill', { phone, text }))?.reply ?? null
   }
 

@@ -518,6 +518,12 @@ export async function tryRunWhatsAppAttentionCommand(params:{
 
   const inboxReplyRead=await handleInboxReplyRead({actor,text:params.text})
   if(inboxReplyRead)return inboxReplyRead
+  const emailAsk=(globalThis as any).process?.env?.VERCEL_ENV?await import('./email-asks').then(m=>m.tryEmailAsk(actor,params.text),()=>null):null
+  if(emailAsk)return {runId:emailAsk.handledBy,status:'completed',capability:'orchestrator',risk:'low',...emailAsk} as any
+  const mailRules=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/email/mail-alert-commands').then(m=>m.tryMailAlertCommand(actor.legacyTelegramId,params.text),()=>null):null
+  if(mailRules)return {runId:'mail-alert-rules',status:'completed',capability:'orchestrator',risk:'low',text:mailRules,handledBy:'mail-alert-rules'} as any
+  const orderList=(globalThis as any).process?.env?.VERCEL_ENV?await import('./order-tracking').then(m=>m.tryOrderList(actor,params.text),()=>null):null
+  if(orderList)return {runId:'order-tracking',status:'completed',capability:'orchestrator',risk:'low',text:orderList,handledBy:'order-tracking'} as any
 
   // "cancel that task" / "stop the flight booking": cancels the owner's in-flight agent run.
   // The parser refuses reminders, calendar, watches, lists, orders and Gmail, so their own cancel paths still win.

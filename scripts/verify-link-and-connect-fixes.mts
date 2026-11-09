@@ -25,3 +25,6 @@ assert.equal(cal.verifyCalendarConnectToken('c1.-884501501.zzzzzzzz.nonce.sig'),
 assert.equal(cal.buildCalendarConnectUrl(0), null)
 assert.match(new URL(cal.getAuthUrl(-884501501)).searchParams.get('prompt') || '', /select_account/)
 console.log('Links: reel links are not provider reads; the calendar connect link is short and signed')
+
+// Private document bearer link expiry regression. Isolated VM; no provider/DB reads.
+await import('./verify-document-shortlink-expiry.mts')
