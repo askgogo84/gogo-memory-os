@@ -396,18 +396,24 @@ async function loadBriefingContext(user: UserRecord): Promise<BriefingContext> {
 // (it parses the id), so no unsafe 64-bit id is ever converted. Failures leave the section out.
 async function briefingCalendar(telegramId: unknown): Promise<{ title: string; time: string | null; startAt: string | null }[]> {
   const id = String(telegramId ?? '')
-  if (!/^[1-9]\d{0,14}$/.test(id)) return []
+  // A 16-digit id can still be a safe integer; the check is the exact limit, never a digit count.
+  // 6 Nov live log: {"skipped":"unsafe_id","digits":10} for the owner. WhatsApp-only users have a negative id
+  // ("-123456789"), which the old pattern refused, so the calendar section never appeared. Negative ids are allowed
+  // (as in lib/security/card-link.ts); the magnitude must still be within the safe-integer limit.
+  if (!/^-?[1-9]\d{0,15}$/.test(id) || (id.startsWith('-') ? -BigInt(id) : BigInt(id)) > BigInt(Number.MAX_SAFE_INTEGER)) { console.log('BRIEFING_CALENDAR:', JSON.stringify({ skipped: 'unsafe_id', digits: id.replace(/^-/, '').length, negative: id.startsWith('-') })); return [] }
   try {
     const { getTodayCalendar } = await import('@/lib/dashboard/queries')
     const cal = await Promise.race([getTodayCalendar(id), new Promise<null>(r => setTimeout(() => r(null), 8000))])
-    if (!cal || !cal.ok || !cal.connected) return []
+    if (!cal || !cal.ok || !cal.connected) { console.log('BRIEFING_CALENDAR:', JSON.stringify({ skipped: !cal ? 'timeout' : !cal.ok ? 'read_failed' : 'not_connected' })); return [] }
     const seen = new Set<string>()
+    // Trace (5 Nov live): the section stayed empty with no skip logged, so record what came back and what was kept.
+    console.log('BRIEFING_CALENDAR:', JSON.stringify({ events: cal.events.length, allDay: cal.events.filter(e => e.allDay).length, untimed: cal.events.filter(e => !e.time).length, timingUnknown: cal.events.filter(e => e.timingKnown === false).length }))
     return cal.events
       .filter(e => !e.allDay && e.timingKnown !== false && e.time)
       .filter(e => { const k = `${e.title}|${e.time}`; if (seen.has(k)) return false; seen.add(k); return true })
       .map(e => ({ title: String(e.title || 'Event').slice(0, 80), time: e.time, startAt: e.startAt || null }))
       .slice(0, 6)
-  } catch { return [] }
+  } catch (err: any) { console.log('BRIEFING_CALENDAR:', JSON.stringify({ skipped: 'error', message: String(err?.message || err).slice(0, 120) })); return [] }
 }
 
 function buildPriorityLine(ctx: BriefingContext) {
