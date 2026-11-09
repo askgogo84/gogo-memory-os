@@ -1908,8 +1908,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         if (!hasContact) reply = `I don't have ${cap0(share.name)}'s number yet. Do a friend reminder once (remind ${share.name} to ...) so I save it, then share.`
         else if (!rid) reply = `${cap0(share.name)} isn't on AskGogo yet — ask them to message the bot first, then share.`
         else {
-          await grantShare(resolvedUser.telegramId, rid, share.topic)
-          reply = `Shared your *${share.topic}* bucket with ${cap0(share.name)}. They can now ask me about it.`
+          try {
+            await grantShare(resolvedUser.telegramId, rid, share.topic)
+            reply = `Shared your *${share.topic}* bucket with ${cap0(share.name)}. They can now ask me about it.`
+          } catch { reply = `I couldn't confirm the share of your *${share.topic}* bucket, so nothing was shared. Please try again in a bit.` }
         }
       }
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)

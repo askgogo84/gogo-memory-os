@@ -81,13 +81,20 @@ export async function resolveRecipientTelegramId(
 }
 
 export async function grantShare(owner: number, recipient: number, topic: string): Promise<void> {
-  await supabaseAdmin
+  if (!Number.isSafeInteger(owner) || owner === 0 || !Number.isSafeInteger(recipient) || recipient === 0) {
+    throw new Error('shared_memory_owner_invalid')
+  }
+  const { error } = await supabaseAdmin
     .from('memory_shares')
     .upsert(
       { owner_telegram_id: owner, recipient_telegram_id: recipient, topic },
       { onConflict: 'owner_telegram_id,recipient_telegram_id,topic' }
     )
+  // #1336 follow-up: an unsuccessful or unknown write is never reported as a successful share.
+  if (error) throw new Error('shared_memory_grant_unconfirmed')
 }
+
+export const SHARE_NOT_CONFIRMED = (topic: string) => `I couldn't confirm the share of your *${topic}* bucket, so nothing was shared. Please try again in a bit.`
 
 /** Read path: memories shared TO this user, semantically matched to a query. */
 export async function getSharedMemories(
@@ -140,7 +147,7 @@ export async function handleBucketCommand(telegramId: number, text: string): Pro
     const { telegramId: rid, hasContact } = await resolveRecipientTelegramId(telegramId, share.name)
     if (!hasContact) return `I don't have ${capName(share.name)}'s number yet. Do a friend reminder once (remind ${share.name} to ...) so I save it, then share.`
     if (!rid) return `I couldn't verify one exact AskGogo account for ${capName(share.name)}. Check their saved full international number before sharing.`
-    await grantShare(telegramId, rid, share.topic)
+    try { await grantShare(telegramId, rid, share.topic) } catch { return SHARE_NOT_CONFIRMED(share.topic) }
     return `Shared your *${share.topic}* bucket with ${capName(share.name)}. They can now ask me about it.`
   }
   return null
