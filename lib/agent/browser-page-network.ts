@@ -75,10 +75,10 @@ const HUGGING_FACE_PAGE_DEPENDENCIES = ['*.awswaf.com', 'hcaptcha.com', '*.hcapt
 const GOOGLE_PHONE_LOGIN = ['www.google.com','www.gstatic.com','apis.google.com','www.recaptcha.net','identitytoolkit.googleapis.com','securetoken.googleapis.com']
 const PLAYO_PAGE_DEPENDENCIES = ['api.playo.io','playo.gumlet.io','playo-website.gumlet.io','playov2.gumlet.io','playo-activities.gumlet.io','fonts.googleapis.com','fonts.gstatic.com',...GOOGLE_PHONE_LOGIN]
 
-export const FLIGHT_BOOKING_HANDOFF_SITES=['goindigo.in','airindia.com','airindia.in','akasaair.com','spicejet.com','airasia.com','singaporeair.com',
+export const FLIGHT_BOOKING_HANDOFF_SITES=['goindigo.in','airindia.com','airindia.in','airindiaexpress.com','akasaair.com','spicejet.com','airasia.com','singaporeair.com',
   'emirates.com','qatarairways.com','etihad.com','thaiairways.com','malaysiaairlines.com','flyscoot.com','makemytrip.com','cleartrip.com','goibibo.com',
   // 26 Oct: traveller names go only to airlines and well-known agencies; ly.com, mytrip, gotogate and kiwi were dropped.
-  'easemytrip.com','yatra.com','ixigo.com','booking.com','trip.com','expedia.com','expedia.co.in',
+  'easemytrip.com','yatra.com','ixigo.com','agoda.com','agoda.net','booking.com','trip.com','expedia.com','expedia.co.in',
   // Google's click-out can pass through its ad redirectors before the airline.
   'googleadservices.com','doubleclick.net','dartsearch.net','clickserve.dartsearch.net']
 
