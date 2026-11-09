@@ -17,7 +17,15 @@ console.log('✓ day plans skip the brain and reach the calendar-aware handler')
 const b = readFileSync('app/api/briefing/route.ts', 'utf8')
 assert.match(b, /\.from\('todos'\)[\s\S]{0,400}\.order\('created_at', \{ ascending: false \}\)/, 'newest tasks first')
 assert.match(b, /Date\.now\(\) - Date\.parse\(String\(t\.created_at \|\| ''\)\) <= 7 \* 86_400_000/, 'only a task from the last week can be top priority')
-assert.ok(b.includes('BigInt(id) > BigInt(Number.MAX_SAFE_INTEGER)'), 'only a safe integer id reaches the calendar reader (exact limit, 16-digit ids allowed)')
+assert.ok(b.includes("(id.startsWith('-') ? -BigInt(id) : BigInt(id)) > BigInt(Number.MAX_SAFE_INTEGER)"), 'only a safe integer id reaches the calendar reader (exact limit, 16-digit ids allowed)')
+// 6 Nov live: negative (WhatsApp-only) ids were refused, so the owner's briefing never showed meetings.
+{
+  const pat = /^-?[1-9]\d{0,15}$/
+  const safe = (id: string) => pat.test(id) && (id.startsWith('-') ? -BigInt(id) : BigInt(id)) <= BigInt(Number.MAX_SAFE_INTEGER)
+  assert.ok(b.includes('/^-?[1-9]\\d{0,15}$/.test(id)'), 'negative ids pass the pattern')
+  assert.equal(safe('-123456789'), true); assert.equal(safe('918884501501'), true); assert.equal(safe('9007199254740991'), true)
+  assert.equal(safe('9007199254740993'), false); assert.equal(safe('-9007199254740993'), false); assert.equal(safe('12a'), false); assert.equal(safe('0123'), false)
+}
 assert.ok(b.includes("skipped: !cal ? 'timeout' : !cal.ok ? 'read_failed' : 'not_connected'"), 'a missing calendar section says why in the logs')
 assert.match(b, /formatCalendar\(ctx\),\n\s+formatReminderBlock\(ctx\),/, 'calendar section before reminders')
 assert.match(b, /Next up: \$\{nextMeeting\.time/, 'next meeting can lead')
@@ -69,3 +77,11 @@ for (const t of ['what did you think of that restaurant', 'is it near the metro?
   assert.notEqual(t === 'thanks' ? false : brain.isExactCommand(t), true, `not a place search: ${t}`)
 console.log('✓ place searches skip the brain, so a repeat ask runs a fresh search')
 console.log('Day plan and briefing checks passed')
+
+// 7 Nov live: "my briefing" on the dashboard was understood as task_status and answered with the approvals queue.
+{
+  const { isExactCommand } = await import('../lib/agent/semantic-gate')
+  for (const t of ['my briefing', 'My briefing!', 'daily briefing', 'today briefing', "what's my day"]) assert.ok(isExactCommand(t), `briefing phrase skips understanding: ${t}`)
+  assert.ok(!isExactCommand('what are you working on'), 'status questions still go through understanding')
+  console.log('✓ briefing phrases are exact commands')
+}
