@@ -117,6 +117,8 @@ function extractDescription(text: string) {
     .replace(/paid\s+by\s+[a-zA-Z][\w\s]*?(?=\s+in\s+|\s+split\s+|$)/i, '')
     .replace(/\s+in\s+[a-zA-Z][\w\s-]*$/i, '')
     .replace(/split\s+(?:equally\s+)?(?:with|among|between|as|by).*/i, '')
+    // 28 Oct run: "Split 2400 dinner between me, Divya and Nithin" was saved as "dinner between me".
+    .replace(/\s+(?:between|among)\s+.*$/i, '')
     .replace(/^(add expense|expense|spent|paid|split|bill)\s*/i, '')
     .replace(/\bshares?\b/gi, '')
     .replace(/\s+/g, ' ')
