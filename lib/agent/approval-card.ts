@@ -27,9 +27,17 @@ export type PreviewRow = { label: string; value: string }
 /** The stored preview rows, cleaned. Risk is shown separately, never as a row. */
 export function previewRows(preview: unknown): PreviewRow[] {
   return (Array.isArray(preview) ? preview : [])
-    .map((r: any) => ({ label: String(r?.label || '').trim().slice(0, 40), value: String(r?.value ?? '').replace(/\s+/g, ' ').trim().slice(0, 300) }))
+    .map((r: any) => ({ label: String(r?.label || '').trim().slice(0, 40), value: humanizeIso(String(r?.value ?? '').replace(/\s+/g, ' ').trim()).slice(0, 300) }))
     .filter(r => r.label && r.value && !/^risk$/i.test(r.label))
     .slice(0, 8)
+}
+
+/** A raw ISO timestamp in a preview value ("2026-11-08T13:00:00.000Z (estimated)") reads as "Sun 8 Nov 6:30 pm (estimated)". */
+export function humanizeIso(value: string, tz = 'Asia/Kolkata'): string {
+  return value.replace(/\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})\b/g, (iso) => {
+    const ms = Date.parse(iso); if (!Number.isFinite(ms)) return iso
+    return new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true, timeZone: tz }).format(new Date(ms)).replace(/,/g, '').replace(/\s?(am|pm)$/i, (m) => m.toLowerCase())
+  })
 }
 
 /** When this card stops being approvable: the explicit expiry, else requested + 24 h. Null when unknown. */

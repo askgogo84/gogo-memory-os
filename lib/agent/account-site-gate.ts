@@ -66,9 +66,23 @@ export const APP_ONLY_ORDER_SITES: Record<string, string> = {
   zomato: 'Zomato keeps food orders only in its app: open the Zomato app, tap your profile, then Your orders.',
 }
 
+/** "Add milk to my cart on Instamart": a cart action (approval-gated browser task), not a question about the account. */
+export function isCartAction(text: string) {
+  return /\badd\b[^.!?;,]*\bto\s+(?:my\s+|the\s+)?(?:cart|basket)\b/i.test(String(text || ''))
+}
+
 export async function tryAccountSiteAnswer(actor: import('./actor').AgentActor, text: string) {
   const site = accountSiteFromText(text)
   if (!site) return null
+  // 26 Oct live: "Add Amul milk to my cart on Instamart" was answered with old Swiggy order emails. A cart action
+  // only needs the sign-in check; a connected site goes on to the cart flow, which asks before adding anything.
+  if (isCartAction(text)) {
+    const gate = await tryAccountSiteSignInGate({ telegramId: actor.legacyTelegramId, text })
+    if (!gate) return null
+    return { ...gate, text: VAULT_CONNECT_SITES[site.id]
+      ? `To add that to your ${site.name} cart I need to sign in to ${site.name} for you, once. Connect it here (about 20 seconds); your login is sealed in your Gogo vault and never goes through chat:\n${APP_URL}${connectPath(site, text)}\n\nThen ask me again and I'll show you what I'll add before adding it.`
+      : `To add that to your ${site.name} cart I need you to sign in to ${site.name} once. Open Settings, find ${site.name} and tap Sign in, then sign in yourself in the secure browser (Gogo never sees your password):\n${CONNECTIONS_URL}\n\nAfter you tap "I'm signed in", ask me again and I'll show you what I'll add before adding it.` }
+  }
   if (APP_ONLY_ORDER_SITES[site.id]) {
     const { tryOrderStatusFromEmail, isOrderStatusQuestion } = await import('./order-email-status')
     if (isOrderStatusQuestion(text)) {

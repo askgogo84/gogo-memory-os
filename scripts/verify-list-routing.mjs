@@ -248,6 +248,112 @@ eq('"add sunscreen to my notes" → list_add:notes (real bucket, not reserved)',
 // reserved SHOW mirror: "show my calendar" declines so it reaches the calendar view.
 eq('stage-1 declines "show my calendar" (reserved)', showListMatch('show my calendar'), null)
 
+
+// ── DASHBOARD LIST OWNER PRECISION (actual transpiled route handlers) ──────────
+// The dashboard routes cross the JS number / PostgreSQL signed64 identity boundary.
+// Execute their actual TS handler bodies in an inert VM with mocked imports: no
+// database, Next.js server, account/session, HTTP, external service or mutation.
+console.log('\n14. DASHBOARD LIST OWNER PRECISION — unauthorized session values never write')
+{
+  const [{ readFileSync }, { runInNewContext }, tsModule] = await Promise.all([
+    import('node:fs'),
+    import('node:vm'),
+    import('typescript'),
+  ])
+  const ts = tsModule.default || tsModule
+  const state = { session: null, writes: [] }
+
+  function loadActualRoute(relativePath) {
+    const source = readFileSync(new URL('../' + relativePath, import.meta.url), 'utf8')
+    // transpileModule returns { outputText, diagnostics }, not source text. Passing the object to the VM
+    // stringified it to "[object Object]" (CI job 121329064174). Run the emitted JS and fail on any
+    // syntax diagnostic so the owner-precision cases below always execute the real route.
+    const transpiled = ts.transpileModule(source, {
+      fileName: relativePath,
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+      reportDiagnostics: true,
+    })
+    const errors = (transpiled.diagnostics || []).filter((d) => d.category === ts.DiagnosticCategory.Error)
+    if (errors.length) {
+      throw new Error(relativePath + ': ' + errors.map((d) => ts.flattenDiagnosticMessageText(d.messageText, '\n')).join('; '))
+    }
+    const js = transpiled.outputText
+    if (typeof js !== 'string' || !js.includes('exports')) throw new Error(relativePath + ': transpile produced no CommonJS module')
+    const actualModule = { exports: {} }
+    const mockModules = {
+      'next/server': {
+        NextResponse: {
+          json: (body, options) => ({ status: options?.status ?? 200, body }),
+        },
+      },
+      '@/lib/dashboard/session': { getSession: async () => state.session },
+      '@/lib/dashboard/guard': { verifySameOrigin: () => null },
+      '@/lib/data/lists': {
+        createList: async (owner, name) => {
+          state.writes.push({ kind: 'create', owner, name })
+          return { ok: true, list: { id: 1, name, items: [] } }
+        },
+        setListItemDone: async (owner, listName, text, addedAt, done) => {
+          state.writes.push({ kind: 'patch', owner, listName, text, addedAt, done })
+          return { ok: true }
+        },
+      },
+    }
+    runInNewContext(js, {
+      module: actualModule,
+      exports: actualModule.exports,
+      require: (id) => {
+        if (!Object.hasOwn(mockModules, id)) throw new Error('unexpected route import: ' + id)
+        return mockModules[id]
+      },
+      console,
+    }, { filename: relativePath })
+    return actualModule.exports
+  }
+
+  const cases = [
+    ['POST', loadActualRoute('app/api/dashboard/lists/route.ts').POST, { name: 'grocery' }],
+    ['PATCH', loadActualRoute('app/api/dashboard/lists/items/route.ts').PATCH,
+      { listName: 'grocery', text: 'milk', addedAt: 'a', done: true }],
+  ]
+  eq('signed64 neighbors would round to same JS number',
+    Number('9007199254740992') === Number('9007199254740993'), true)
+  const invalid = [
+    null, 123, '', '0', '-0', '000123', '01', ' 123', '123 ', '+123',
+    '123other', '1e3', '12.0', '0x10', '--123', '-123suffix',
+    '9007199254740992', '9007199254740993', '-9007199254740992',
+    '-9007199254740993', 'Infinity', 'NaN',
+  ]
+  for (const [verb, handler, payload] of cases) {
+    const req = { json: async () => payload }
+    state.writes = []
+    state.session = null
+    eq(verb + ' unauthenticated denied', (await handler(req)).status, 401)
+    eq(verb + ' unauthenticated never writes', state.writes.length, 0)
+    for (const owner of invalid) {
+      state.session = { telegramId: owner }
+      state.writes = []
+      const response = await handler(req)
+      eq(verb + ' invalid ' + JSON.stringify(owner) + ' denied', response.status, 401)
+      eq(verb + ' invalid ' + JSON.stringify(owner) + ' no writes', state.writes.length, 0)
+    }
+    for (const [owner, expected] of [
+      ['123', 123], ['-456', -456],
+      [String(Number.MAX_SAFE_INTEGER), Number.MAX_SAFE_INTEGER],
+      [String(-Number.MAX_SAFE_INTEGER), -Number.MAX_SAFE_INTEGER],
+    ]) {
+      state.session = { telegramId: owner }
+      state.writes = []
+      const response = await handler(req)
+      eq(verb + ' canonical ' + owner + ' accepted', response.status, 200)
+      eq(verb + ' canonical ' + owner + ' exactly one write', state.writes.length, 1)
+      eq(verb + ' canonical ' + owner + ' exact numeric owner', state.writes[0]?.owner, expected)
+    }
+  }
+  state.session = null
+  state.writes = []
+}
+
 console.log('\n' + '-'.repeat(80))
 console.log(fails === 0 ? 'ALL LIST-ROUTING CHECKS PASS ✓' : `${fails} CHECK(S) FAILED ✗`)
 process.exit(fails === 0 ? 0 : 1)
