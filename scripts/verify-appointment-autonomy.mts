@@ -54,7 +54,7 @@ assert.match(research, /I haven't checked live slots/)
 assert.match(research, /bookableScore/)
 assert.match(research, /bookableRanked/)
 assert.match(research, /I put direct booking pages first/i)
-assert.match(research, /Booking\/provider page: \$\{o\.url\}/, 'the follow-up binds an option number to this exact line')
+assert.match(research, /Booking\/provider page: \$\{bookLink\(o\.url, o\.title, location\)\}/, 'the follow-up binds an option number to this exact line (the link is tidied, the label is kept)')
 
 assert.match(recovery, /appointment_selection/)
 assert.match(recovery, /resolveBookableTarget/)
@@ -130,6 +130,7 @@ const dependencies:any={
   './browser-command':{tryRunBrowserCommand:async()=>{browserCalls++;return {status:'completed',text:'Fixture provider page'}},browserApprovalBinding:()=>({}),createApprovalBrowserRun:async()=>({runId:'booking-run',stepId:'booking-step'})},
   './provider-booking':await import('../lib/agent/provider-booking.ts'),
   './life-event-engine':{},
+  '@/lib/security/outbound-identifiers':await import('../lib/security/outbound-identifiers.ts'),
 }
 runInNewContext(ts.transpileModule(followup,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports:exportsFixture,require:(name:string)=>name==='./sentinel'?sentinel:dependencies[name],console,Date,Intl,URL})
 const actor={legacyTelegramId:42} as any

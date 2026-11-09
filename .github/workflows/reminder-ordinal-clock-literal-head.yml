@@ -1,0 +1,56 @@
+name: Reminder ordinal clock boundary - literal PR head
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - scripts/verify-use-case-run-oct28.mts
+      - .github/workflows/reminder-ordinal-clock-literal-head.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-literal-head:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+    steps:
+      - name: Checkout exact PR branch HEAD (not GitHub synthetic merge)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Verify immutable checkout provenance
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$EXPECTED_SHA" = "$ACTUAL_SHA"
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Focused deterministic IST ordinal boundaries
+        run: npx --yes tsx scripts/verify-use-case-run-oct28.mts
+
+      - name: Full registered regression suite
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Production build with fixture credentials (not a deploy)
+        run: npm run build

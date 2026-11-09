@@ -48,3 +48,37 @@ console.log('BOOKING_ROW_PICK_OK')
   assert.ok(/export const maxDuration = 800/.test(route), 'route budget covers the booking budget plus start-up')
   console.log('BOOKING_FEWER_WAVES_OK')
 }
+{
+  // 27 Oct 12:09: goindigo.in showed "No flights found" (its flight API failed in the cloud browser); go back to Google.
+  const { airlineShowsNoFlights } = await import('../lib/agent/secure-computer.ts')
+  assert.equal(airlineShowsNoFlights({ url: 'https://www.goindigo.in/book/flight-select.html/', text: 'Select Flight From Bengaluru to Chennai ... No flights found for the selected date' }), true)
+  assert.equal(airlineShowsNoFlights({ url: 'https://www.goindigo.in/book/flight-select.html/', text: '6E 6031 7:10 AM 8:15 AM ₹3,843 Select' }), false)
+  assert.equal(airlineShowsNoFlights({ url: 'https://www.goindigo.in/about-us.html', text: 'no flights found' }), false, 'only on a flight-select page')
+  const src = (await import('node:fs')).readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
+  assert.ok(src.includes('(edgeBlockedPage(page)||airlineShowsNoFlights(page))&&edgeBlockedHosts.length<2'), 'same bounded fallback as an edge block')
+  assert.ok(src.includes("console.warn('BROWSER_FAILED_WHY:'"), 'failure reasons are logged (hostnames + error codes)')
+  console.log('AIRLINE_NO_FLIGHTS_OK')
+}
+{
+  // 27 Oct 13:13: after the airline fallback, Gogo presses the next Indian agency itself (planner re-picked IndiGo).
+  const { googleAgencyContinueControl } = await import('../lib/agent/secure-computer.ts')
+  const opts = [{ selector: '#6e', label: 'Continue to book with IndiGo airline for 3892 Indian rupees' }, { selector: '#gi', label: 'Continue to book with Goibibo for 3900 Indian rupees' }, { selector: '#ct', label: 'Continue to book with Cleartrip for 3910 Indian rupees' }, { selector: '#bk', label: 'Continue to book with Booking.com for 4600 Indian rupees' }]
+  assert.deepEqual(googleAgencyContinueControl(opts), { selector: '#ct', name: 'cleartrip' }, 'preference order: MakeMyTrip, Cleartrip, Goibibo…')
+  assert.deepEqual(googleAgencyContinueControl(opts, ['cleartrip']), { selector: '#gi', name: 'goibibo' })
+  assert.equal(googleAgencyContinueControl(opts, ['cleartrip', 'goibibo']), null, 'never the airline again or an unlisted agency')
+  console.log('AGENCY_FALLBACK_OK')
+}
+{
+  const src = (await import('node:fs')).readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
+  assert.ok(src.includes("(providerBooking||(params.mode==='read'&&params.recoverFlightSearch===true))&&onGoogle&&!bookingStartReloaded"), '27 Oct 15:50: a fare read reloads a blank Google form once')
+  console.log('READ_BLANK_RELOAD_OK')
+}
+{
+  // 27 Oct 17:15: back on Google after the fallback, "Getting prices" — wait, then reload the booking page once.
+  const { googleBookingStillPricing } = await import('../lib/agent/secure-computer.ts')
+  assert.equal(googleBookingStillPricing({ text: 'Itinerary summary Bengaluru Chennai One way Getting prices Language', controls: [{ label: 'Sign in' }] }), true)
+  assert.equal(googleBookingStillPricing({ text: 'Getting prices', controls: [{ label: 'Continue to book with Cleartrip for 3900 Indian rupees' }] }), false)
+  const src = (await import('node:fs')).readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
+  assert.ok(src.includes('googlePriceWaits<5&&googleBookingStillPricing(page)') && src.includes('googlePriceWaits===3&&!googleBookingReloaded&&googleBookingUrl'), 'bounded waits and one reload')
+  console.log('GOOGLE_PRICING_WAIT_OK')
+}

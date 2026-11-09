@@ -9,7 +9,10 @@ export function sanitizeWhatsAppReply(text:string){
   if(/^\s*something\s+went\s+wrong\s*(?:[—-]\s*try\s+once\s+more\??)?\s*$/i.test(raw)){
     return `I couldn't finish that request just now because one of my services was temporarily unavailable. Your request wasn't saved as the wrong thing — send it once more and I'll continue.`
   }
+  // 7 Nov live: "Got it, boss." and "…so far, boss." from the brain paths that skip stripUnrequestedAddress.
   return raw
+    .replace(/,[ \t]*boss(?=[ \t]*(?:[.!?…:]|$))/gim, '')
+    .replace(/^([ \t]*(?:got it|okay|ok|sure|done|noted|alright|right|hey|hi|hello))[,]?[ \t]+boss\b/gim, '$1')
 }
 
 export function parseCalendarApproval(text: string): { title: string; when: string; duration: string; account?: string; conflict?: string } | null {

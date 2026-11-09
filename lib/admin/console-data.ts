@@ -62,6 +62,25 @@ export async function messageCounts(since: Date): Promise<Map<string, { n: numbe
 export const meterFailures = async (since: Date) => (await rpc<any>('admin_meter_failures', { p_since: since.toISOString() })).map(r => ({ vendor: r.vendor as string, category: r.category as string, failures: Number(r.failures || 0), calls: Number(r.calls || 0), last: r.last_failure as string | null }))
 export const runCounts = async (since: Date) => (await rpc<any>('admin_run_counts', { p_since: since.toISOString() })).map(r => ({ telegram_id: String(r.telegram_id), type: r.type as string, status: r.status as string, runs: Number(r.runs || 0) }))
 
+/** Cheaper brain (4 Nov): saved side-by-side decisions, Haiku 5.5 against the main model. */
+export type ShadowStats = { turns: number; exact: number; sameAction: number; mainUsd: number; shadowUsd: number }
+export function summarizeShadows(rows: { metadata_json?: any }[]): ShadowStats {
+  const out: ShadowStats = { turns: 0, exact: 0, sameAction: 0, mainUsd: 0, shadowUsd: 0 }
+  for (const r of rows) {
+    const m = r.metadata_json || {}
+    if (!m.agreement) continue
+    out.turns++
+    if (m.agreement === 'exact') out.exact++
+    if (m.agreement === 'exact' || m.agreement === 'same_kind') out.sameAction++
+    out.mainUsd += Number(m.main?.usd || 0); out.shadowUsd += Number(m.shadow?.usd || 0)
+  }
+  return out
+}
+export async function brainShadowStats(since: Date): Promise<ShadowStats> {
+  const { data } = await supabaseAdmin.from('agent_activity').select('metadata_json').eq('event_type', 'brain_shadow').gte('created_at', since.toISOString()).limit(5000)
+  return summarizeShadows((data || []) as any[])
+}
+
 export type RunRow = { id: string; telegram_id: string; type: string; capability: string; status: string; title: string; summary: string; started_at: string; updated_at: string; completed_at: string | null; error: string | null }
 export async function runRows(since: Date, telegramId?: string, limit = 200): Promise<RunRow[]> {
   let q = supabaseAdmin.from('agent_runs').select('id, telegram_id, type, capability, status, title, summary, started_at, updated_at, completed_at, error').gte('started_at', since.toISOString()).order('started_at', { ascending: false }).limit(Math.min(limit, 1000))

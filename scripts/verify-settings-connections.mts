@@ -85,6 +85,7 @@ console.log('verify-settings-connections: ok')
     '@/lib/dashboard/connection-catalogue': catalogue,
     '@/lib/dashboard/approx-location': { LOCATION_STORAGE_KEY: 'synthetic', parseLocationPreference: forbidden },
     '@/lib/product-urls': { waLink: forbidden },
+    '@/components/dashboard/listen-button': { VoiceSourceSetting: forbidden },
   }
   const js = ts.transpileModule(view + '\nexports.ConnectionsForTest = Connections', {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX },

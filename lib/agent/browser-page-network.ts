@@ -48,7 +48,7 @@ const GOOGLE_FLIGHTS_PAGE_DEPENDENCIES = ['www.gstatic.com','fonts.googleapis.co
 const AKASA_BOOKING_DEPENDENCIES = ['api.storyblok.com','app.storyblok.com']
 // 27 Oct 10:08 live booking a58a0e36: IndiGo's flight-select-redirection page stayed on "Loading..." while its cookie-consent
 // manager (Securiti, observed loading on goindigo.in in a normal browser) was blocked. Script hosts only.
-const AIRLINE_CONSENT_DEPENDENCIES = ['cdn-app6.securiti.ai','app.securiti.ai']
+const AIRLINE_CONSENT_DEPENDENCIES = ['cdn-app6.securiti.ai','app.securiti.ai','app6.securiti.ai']
 const AIR_INDIA_BOOKING_DEPENDENCIES = ['delivery-p104052-e1069093.adobeaemcloud.com','airindia.scene7.com','assets.adobedtm.com','cdn.cookielaw.org','geolocation.onetrust.com','cdnjs.cloudflare.com','cdn.jsdelivr.net']
 // 9 Oct Hugging Face takeover: the sign-up page answered 202 with the provider's AWS WAF
 // interstitial, and its token script host was blocked by the sandbox, so the visible human
@@ -75,10 +75,10 @@ const HUGGING_FACE_PAGE_DEPENDENCIES = ['*.awswaf.com', 'hcaptcha.com', '*.hcapt
 const GOOGLE_PHONE_LOGIN = ['www.google.com','www.gstatic.com','apis.google.com','www.recaptcha.net','identitytoolkit.googleapis.com','securetoken.googleapis.com']
 const PLAYO_PAGE_DEPENDENCIES = ['api.playo.io','playo.gumlet.io','playo-website.gumlet.io','playov2.gumlet.io','playo-activities.gumlet.io','fonts.googleapis.com','fonts.gstatic.com',...GOOGLE_PHONE_LOGIN]
 
-export const FLIGHT_BOOKING_HANDOFF_SITES=['goindigo.in','airindia.com','airindia.in','akasaair.com','spicejet.com','airasia.com','singaporeair.com',
+export const FLIGHT_BOOKING_HANDOFF_SITES=['goindigo.in','airindia.com','airindia.in','airindiaexpress.com','akasaair.com','spicejet.com','airasia.com','singaporeair.com',
   'emirates.com','qatarairways.com','etihad.com','thaiairways.com','malaysiaairlines.com','flyscoot.com','makemytrip.com','cleartrip.com','goibibo.com',
   // 26 Oct: traveller names go only to airlines and well-known agencies; ly.com, mytrip, gotogate and kiwi were dropped.
-  'easemytrip.com','yatra.com','ixigo.com','booking.com','trip.com','expedia.com','expedia.co.in',
+  'easemytrip.com','yatra.com','ixigo.com','agoda.com','agoda.net','booking.com','trip.com','expedia.com','expedia.co.in',
   // Google's click-out can pass through its ad redirectors before the airline.
   'googleadservices.com','doubleclick.net','dartsearch.net','clickserve.dartsearch.net']
 
