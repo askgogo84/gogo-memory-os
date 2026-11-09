@@ -13,3 +13,10 @@ const snap = readFileSync('app/api/agent/snapshot/route.ts', 'utf8')
 assert.match(snap, /approvals: \(approvals\.data \|\| \[\]\)\.filter\(\(a: any\) => \{ const x = approvalExpiresAt\(a\); return !x \|\| !Number\.isFinite\(Date\.parse\(x\)\) \|\| Date\.parse\(x\) > Date\.now\(\) \}\)\.map/)
 ok('snapshot: expired approvals are not returned, so Needs you does not count them')
 console.log(`verify-expired-approval-card-nov9: ${n} passed`)
+{
+  const { humanizeIso, previewRows } = await import('../lib/agent/approval-card')
+  assert.equal(humanizeIso('2026-11-08T13:00:00.000Z (estimated)'), 'Sun 8 Nov 6:30 pm (estimated)')
+  assert.deepEqual(previewRows([{ label: 'Ends', value: '2026-11-08T13:00:00.000Z (estimated)' }]), [{ label: 'Ends', value: 'Sun 8 Nov 6:30 pm (estimated)' }])
+  assert.equal(humanizeIso('PVR: Orion Mall'), 'PVR: Orion Mall')
+  console.log('PASS preview rows: raw ISO timestamps read as IST day and time')
+}
