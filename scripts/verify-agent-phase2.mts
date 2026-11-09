@@ -53,3 +53,6 @@ assert.deepEqual(
 console.log('✓ approved calendar mutation can proceed')
 
 console.log('✅ Phase 2 agent routing and safety checks passed')
+
+// Registered test runs the actual isolated Same Brain learning module before any release.
+await import('./verify-decision-owner-precision.mts')
