@@ -1,0 +1,50 @@
+name: Meeting prep constraints - immutable PR head
+on:
+  pull_request:
+    paths:
+      - 'lib/agent/meeting-prep-ask.ts'
+      - 'scripts/verify-meeting-prep-constraints.mts'
+      - '.github/workflows/meeting-prep-constraints-literal-head.yml'
+permissions:
+  contents: read
+jobs:
+  meeting-prep-literal:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }} 
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+      CRON_SECRET: ci-placeholder-cron-secret
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert immutable literal feature HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Locked dependency install
+        run: npm ci
+      - name: Original-module meeting prep constraints (synthetic only)
+        run: npx tsx scripts/verify-meeting-prep-constraints.mts
+      - name: Existing Muse Wajo Duet use-case regression
+        run: npx tsx scripts/verify-usecase-batch-nov6.mts
+      - name: Full registered regression suite
+        run: npm test
+      - name: Next type generation
+        run: npx next typegen
+      - name: TypeScript checking
+        run: npm run typecheck
+      - name: Fixture production build
+        run: npm run build

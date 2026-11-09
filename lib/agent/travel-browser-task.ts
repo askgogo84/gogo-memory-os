@@ -187,6 +187,32 @@ export function airportMatches(text:string,place:BrowserFlightContext['origin'])
 export function oneWayQuery(context:BrowserFlightContext){
   return `Flights from ${context.origin!.code} to ${context.destination!.code} on ${context.startDate} one way${context.nonStop?' nonstop':''} for ${context.adults||1} adult${(context.adults||1)===1?'':'s'} in ${(context.cabin||'economy').replace(/_/g,' ')}`
 }
+// 27 Oct live: Google ignored the prose q= query for BLR to BOM, left a blank form, and the planner looped on the
+// trip-type and date controls until the deadline. The tfs parameter is how Google Flights itself encodes a
+// search (protobuf, base64): route, dates, adults, cabin and one-way/round-trip all arrive set on load.
+// Layout taken from a real Google Flights one-way URL: 1:28 2:2 3:{2:date 13:{1:1 2:from} 14:{1:1 2:to}}
+// 8:adult (repeated) 9:cabin 14:1 16:{1:-1} 19:trip (1 round, 2 one-way).
+// Plain arithmetic, no Buffer/BigInt: some strict harnesses load this module in a bare VM context.
+function pbVarint(n:number){if(n===-1)return [255,255,255,255,255,255,255,255,255,1];const out:number[]=[];let v=Math.max(0,Math.floor(n));do{let b=v%128;v=Math.floor(v/128);if(v)b+=128;out.push(b)}while(v);return out}
+const pbKey=(field:number,wire:number)=>pbVarint(field*8+wire)
+const pbInt=(field:number,n:number)=>[...pbKey(field,0),...pbVarint(n)]
+const pbBytes=(field:number,bytes:number[])=>[...pbKey(field,2),...pbVarint(bytes.length),...bytes]
+const pbStr=(field:number,text:string)=>pbBytes(field,Array.from(text,c=>c.charCodeAt(0)&255))
+const B64='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+function base64Url(bytes:number[]){let out='';for(let i=0;i<bytes.length;i+=3){const [a,b,c]=[bytes[i],bytes[i+1],bytes[i+2]];const n=(a<<16)|((b??0)<<8)|(c??0);out+=B64.charAt((n>>18)&63)+B64.charAt((n>>12)&63)+(b===undefined?'':B64.charAt((n>>6)&63))+(c===undefined?'':B64.charAt(n&63))}return out}
+const CABIN_CODE:Record<string,number>={economy:1,premium_economy:2,business:3,first:4}
+export function googleFlightsTfsUrl(context:BrowserFlightContext):string|null{
+  const from=String(context.origin?.code||'').toUpperCase(),to=String(context.destination?.code||'').toUpperCase()
+  const round=context.roundTrip===true&&Boolean(context.returnDate)
+  const dates=[context.startDate,...(round?[context.returnDate]:[])].map(d=>String(d||''))
+  if(!/^[A-Z]{3}$/.test(from)||!/^[A-Z]{3}$/.test(to)||from===to||!dates.every(d=>/^20\d{2}-\d{2}-\d{2}$/.test(d)))return null
+  const adults=Math.min(9,Math.max(1,Number(context.adults)||1))
+  const leg=(date:string,a:string,b:string)=>pbBytes(3,[...pbStr(2,date),...(context.nonStop?pbInt(5,0):[]),...pbBytes(13,[...pbInt(1,1),...pbStr(2,a)]),...pbBytes(14,[...pbInt(1,1),...pbStr(2,b)])])
+  const bytes=[...pbInt(1,28),...pbInt(2,2),...leg(dates[0],from,to),...(round?leg(dates[1],to,from):[]),
+    ...Array.from({length:adults},()=>pbInt(8,1)).flat(),...pbInt(9,CABIN_CODE[String(context.cabin||'economy')]||1),...pbInt(14,1),...pbBytes(16,pbInt(1,-1)),...pbInt(19,round?1:2)]
+  const tfs=base64Url(bytes)
+  return `https://www.google.com/travel/flights/search?tfs=${tfs}&hl=en&gl=in&curr=INR`
+}
 export function oneWaySearchLink(context:BrowserFlightContext){
   return `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(oneWayQuery(context))}`
 }
@@ -235,13 +261,14 @@ export async function runLiveFlightBrowserTask(params: {
   const query = round
     ? roundTripQuery(context)
     : oneWayQuery(context)
-  const url = `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(query)}`
+  const tfsUrl = googleFlightsTfsUrl(context)
+  const url = tfsUrl || `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(query)}`
   let result: Awaited<ReturnType<typeof runSecureBrowser>>
   try { result = await runSecureBrowser({
     userId:params.actor.userId,
     ...(params.runId ? {runId:params.runId} : {}),
     url,
-    objective:`Read actual flight rows for ${query}. Before Search, explicitly set ${context.adults||1} adult${context.adults===1?'':'s'}, ${round?'round trip with the exact departure and return dates':'one-way'} and ${(context.cabin||'economy').replace(/_/g,' ')} using the observed controls; query URL prose does not set them. User research criteria: ${params.objective}. Verify the selected route, departure date, passengers and cabin using visible search controls. For the party total, read the visible "Prices include required taxes + fees for ... adults" statement; do not multiply a per-person or unknown fare. Report airline, departure, arrival and INR fare evidence. Stay on the results list: never click a flight row, Select flight or a fare, because that moves to the return-flight page and hides the round-trip prices. Do not book, purchase, sign in or submit passenger/payment information.`,
+    objective:`Read actual flight rows for ${query}. ${tfsUrl?`The page URL already sets the route, ${round?'round trip with both dates':'one-way with the date'}, ${context.adults||1} adult${context.adults===1?'':'s'} and ${(context.cabin||'economy').replace(/_/g,' ')}: first read the visible controls and the result rows, and change a control ONLY if its visible value is wrong. Never re-click the trip type when it already shows ${round?'Round trip':'One way'}.`:`Before Search, explicitly set ${context.adults||1} adult${context.adults===1?'':'s'}, ${round?'round trip with the exact departure and return dates':'one-way'} and ${(context.cabin||'economy').replace(/_/g,' ')} using the observed controls; query URL prose does not set them.`} User research criteria: ${params.objective}. Verify the selected route, departure date, passengers and cabin using visible search controls. For the party total, read the visible "Prices include required taxes + fees for ... adults" statement; do not multiply a per-person or unknown fare. Report airline, departure, arrival and INR fare evidence. Stay on the results list: never click a flight row, Select flight or a fare, because that moves to the return-flight page and hides the round-trip prices. Do not book, purchase, sign in or submit passenger/payment information.`,
     mode:'read',recoverFlightSearch:true,
     readDeadline:Number.isFinite(params.deadline)?params.deadline!-30_000:undefined,
   }) } catch (error: any) {
