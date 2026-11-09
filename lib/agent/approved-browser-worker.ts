@@ -14,15 +14,24 @@ import { evaluateAgentExecutionPolicy } from './policy'
 
 export type ApprovedBrowserRunOutcome = 'skipped' | 'completed' | 'blocked' | 'failed'
 
-export async function actorForTelegramId(telegramId: string): Promise<AgentActor | null> {
+// Exact owner (P0.1): the owner id is looked up by its exact decimal string and the row must echo it exactly.
+// AgentActor carries the legacy id as a JS number, so an id outside the safe-integer range cannot be represented
+// and is refused rather than rounded onto another account.
+export async function actorForTelegramId(telegramId: string | number): Promise<AgentActor | null> {
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return null
+  const owner = String(telegramId ?? '').trim()
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner)) return null
+  const legacy = Number(owner)
+  if (!Number.isSafeInteger(legacy) || String(legacy) !== owner) return null
   const { data, error } = await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name')
-    .eq('telegram_id', Number(telegramId)).maybeSingle()
+    .eq('telegram_id', legacy).maybeSingle()
   if (error) { console.error('APPROVED_BROWSER_ACTOR_FAILED:', error.message); return null }
   if (!data?.id || !data?.telegram_id) return null
+  if (String(data.telegram_id) !== owner) return null
   return {
     userId: String(data.id),
-    legacyTelegramId: Number(data.telegram_id),
+    legacyTelegramId: legacy,
     whatsappId: String(data.whatsapp_id || ''),
     name: String(data.name || 'Gogo'),
   }

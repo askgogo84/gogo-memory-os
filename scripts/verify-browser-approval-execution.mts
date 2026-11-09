@@ -48,7 +48,7 @@ assert.match(worker,/authorization: `Bearer \$\{secret\}`/,'the internal route i
 assert.match(worker,/cron sweeper will run/,'a missing secret falls back to the cron sweeper')
 
 // 4. The internal route answers 202 at once, runs the work in after(), and has the 300s budget.
-assert.match(route,/export const maxDuration = 300/,'the approved-browser route has the 300s budget')
+assert.match(route,/export const maxDuration = 800/,'the approved-browser route has the 800s budget (27 Oct: 9-minute bookings)')
 assert.match(route,/authorized\(request\)/,'the approved-browser route checks the secret')
 assert.match(route,/\{ status: 202 \}/,'the approved-browser route answers before the browser runs')
 assert.match(route,/after\(async \(\) =>/,'the browser work runs after the response')

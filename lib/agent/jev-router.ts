@@ -73,8 +73,21 @@ export async function recordJevRoutingHint(params:{
 }
 
 
-export function jevClarificationReply(jev:JevShadowResult|null|undefined):string|null{
+const DOC_NOUN=/\b(?:this|the|my)\s+(business\s+plan|plan|document|doc|deck|pitch\s+deck|pdf|file|proposal|contract|report|draft|essay|cv|resume|résumé|spreadsheet|sheet)\b/i
+
+export function jevClarificationReply(jev:JevShadowResult|null|undefined,text?:string|null):string|null{
   if(!jev?.ok||!jev.contextual)return null
+  // 29 Oct live (Muse 23): "Ask Claude to review this business plan…" with nothing attached got "I'm not certain which
+  // item you mean". What is missing is the document itself: ask for it.
+  // 2 Nov live: "summarise the PDF attached to my latest email" was asked to send the PDF. A document the person
+  // places in their email, Drive or a saved file is one Gogo can fetch, so it never asks for it to be sent.
+  const sourced=/\b(?:e-?mails?|gmail|inbox|mail|drive|google\s+docs?|attached\s+to|in\s+my\s+(?:files|documents|vault))\b/i.test(String(text||''))
+  const readOnly=/\b(?:review|summari[sz]e|read|check|look\s+(?:at|over)|what\s+does|tell\s+me\s+what)\b/i.test(String(text||''))
+    &&!/\b(?:delete|remove|send|forward|reply|share|move|archive|trash)\b/i.test(String(text||''))
+  if(sourced&&readOnly&&DOC_NOUN.test(String(text||'')))return null
+  const doc=String(text||'').match(DOC_NOUN)
+  if(doc&&/\b(?:review|summari[sz]e|check|read|look\s+(?:at|over)|feedback|critique|improve|proofread|edit)\b/i.test(String(text||'')))
+    return `Send me the ${doc[1].toLowerCase()} first: paste the text here or attach the file. I'll review it and summarise the feedback.`
   // The guard exists so Gogo never acts on the wrong object. Reading or searching acts on nothing: listing
   // every match ("find my Amsterdam flight ticket" with three saved) beats asking which one first.
   const mode=String(jev.actionMode?.choice||'')
