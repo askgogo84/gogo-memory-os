@@ -51,6 +51,18 @@ export function recallableMemoryText(content:string,sourceTable?:string):string|
   return isSecretShapedMemory(content)?null:content
 }
 
+// Forget may delete a note while an embedding request is still in flight.
+// Check the original, exact owner-bound row before and after writing the index.
+// This is a best-effort application guard; DB-level transactional fencing is a
+// separate security review requirement (in particular for storage outages).
+async function ownerMemoryStillExists(telegramId: number, sourceId: string): Promise<boolean> {
+  if (!Number.isSafeInteger(telegramId) || !sourceId) throw new Error('memory_index_owner_invalid')
+  const { data, error } = await supabaseAdmin.from('memories')
+    .select('id').eq('telegram_id', telegramId).eq('id', sourceId).maybeSingle()
+  if (error) throw new Error('memory_index_source_read_failed')
+  return data?.id != null && String(data.id) === sourceId
+}
+
 /**
  * Fire-and-forget: embed a saved memory and upsert into memory_embeddings.
  * NEVER throws — an embedding failure must not affect the user-facing save.
@@ -68,11 +80,16 @@ export async function indexMemory(params: {
     // as freeform recall; a successful memory save must not export secrets.
     const content = recallableMemoryText(raw, params.sourceTable)
     if (!content) return
+    const sourceTable = params.sourceTable || 'memories'
+    // A deleted memory must not be sent for embedding or re-indexed from a stale task.
+    if (sourceTable === 'memories' && !await ownerMemoryStillExists(params.telegramId, params.sourceId)) return
     const embedding = await embedText(content)
+    // A forget may have happened during the external embedding call.
+    if (sourceTable === 'memories' && !await ownerMemoryStillExists(params.telegramId, params.sourceId)) return
     const {error} = await supabaseAdmin.from('memory_embeddings').upsert(
       {
         telegram_id: params.telegramId,
-        source_table: params.sourceTable || 'memories',
+        source_table: sourceTable,
         source_id: params.sourceId,
         content,
         topic: params.topic ?? null,
@@ -82,6 +99,23 @@ export async function indexMemory(params: {
       { onConflict: 'source_table,source_id' }
     )
     if(error)throw error
+    if (sourceTable === 'memories') {
+      // The source may disappear after our second read but before the UPSERT.
+      // Never leave its embedding live when that final read is missing/uncertain.
+      let sourceLive = false
+      try { sourceLive = await ownerMemoryStillExists(params.telegramId, params.sourceId) } catch {}
+      if (!sourceLive) {
+        const scope = () => supabaseAdmin.from('memory_embeddings')
+          .update({ deleted_at: new Date().toISOString() })
+          .eq('telegram_id', params.telegramId).eq('source_table', 'memories').eq('source_id', params.sourceId)
+        const { error: tombstoneError } = await scope()
+        if (tombstoneError) throw new Error('memory_index_forget_tombstone_failed')
+        const { data: live, error: verifyError } = await supabaseAdmin.from('memory_embeddings')
+          .select('source_id').eq('telegram_id', params.telegramId).eq('source_table', 'memories')
+          .eq('source_id', params.sourceId).is('deleted_at', null).limit(1)
+        if (verifyError || !Array.isArray(live) || live.length) throw new Error('memory_index_forget_tombstone_unverified')
+      }
+    }
   } catch (err: any) {
     console.error('[memory-index] non-fatal embedding failure:', err?.message)
   }
