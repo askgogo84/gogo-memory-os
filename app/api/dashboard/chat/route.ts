@@ -164,7 +164,12 @@ export async function GET(req?: NextRequest) {
     }))
     .filter((row: any) => row.content)
 
-  return NextResponse.json({ messages, name: user.name || 'Gogo' })
+  // v2 (9 Nov): today's saved topic brief rides along with the main thread, for the brief card with topic chips.
+  let brief: unknown = null
+  if (!threadId && (globalThis as any).process?.env?.VERCEL_ENV) {
+    try { const w = await import('@/lib/briefing/daily-brief-writer'); brief = typeof w?.readTodaysBrief === 'function' ? await w.readTodaysBrief(String(user.telegram_id)) : null } catch { brief = null }
+  }
+  return NextResponse.json({ messages, name: user.name || 'Gogo', brief })
 }
 
 async function makeDocWasLastReply(telegramId:number|string){
@@ -450,6 +455,29 @@ async function handleChatPost(req: NextRequest) {
     if(mailRules){
       await saveConversation(user.telegram_id,text,mailRules)
       return NextResponse.json({runId:'mail-alert-rules',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,text:mailRules,handledBy:'mail-alert-rules'})
+    }
+    // "Build me one page I can check every morning" (9 Nov, v2 mock): a living page (Space) from chat, Spaces accounts only.
+    const pageAskRaw:any=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/spaces/from-chat').then(m=>typeof m?.parsePageAsk==='function'?m.parsePageAsk(text):null,()=>null):null
+    const pageAsk=pageAskRaw&&typeof pageAskRaw==='object'&&typeof pageAskRaw.template==='string'?pageAskRaw as {template:'my_day'|'trip_board';title:string|null}:null
+    if(pageAsk){
+      const live=await import('@/lib/spaces/sources-live').catch(()=>null)
+      if(live&&typeof live.spacesEnabledFor==='function'&&live.spacesEnabledFor(String(user.telegram_id))===true){
+        const made=await (async()=>{
+          const st=await import('@/lib/spaces/store');const fc=await import('@/lib/spaces/from-chat');const reg=await import('@/lib/agent/skill-registry');const bi=await import('@/lib/agent/skills-builtin')
+          bi.ensureBuiltinSkills()
+          const scope={kind:'user' as const,telegramId:String(user.telegram_id)}
+          const existing=await st.getSpace(supabaseAdmin,scope,pageAsk.template).catch(()=>null)
+          if(existing)return fc.pageReply({created:false,title:existing.title,slug:existing.id,refreshMinutes:existing.refreshMinutes})
+          let space=await st.createFromTemplate(supabaseAdmin,scope,pageAsk.template,String(user.telegram_id),id=>reg.skillDefinition(id))
+          if(pageAsk.title)space=await st.applyEdit(supabaseAdmin,scope,space.id,space.version,{op:'rename',title:pageAsk.title},String(user.telegram_id),id=>reg.skillDefinition(id)).catch(()=>space)
+          console.info('SPACE_FROM_CHAT:',JSON.stringify({template:pageAsk.template,named:!!pageAsk.title}))
+          return fc.pageReply({created:true,title:space.title,slug:space.id,refreshMinutes:space.refreshMinutes})
+        })().catch((e:any)=>{console.error('SPACE_FROM_CHAT_FAILED:',String(e?.message||e).slice(0,160));return null})
+        if(made){
+          await saveConversation(user.telegram_id,text,made)
+          return NextResponse.json({runId:'space-from-chat',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:true,text:made,handledBy:'space-from-chat'})
+        }
+      }
     }
     // "export my memory" (8 Nov live): the brain answered with its own summary; the export command answers instead.
     if(/^(?:export|download|send me|give me)\s+(?:all\s+)?(?:my\s+)?(?:memory|memories|everything you (?:know|remember)(?: about me)?|my data)\s*[.!]?$/i.test(text.trim())){
