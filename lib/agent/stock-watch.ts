@@ -86,10 +86,13 @@ export async function tryCreateStockWatchFromCommand(params: { actor: AgentActor
   const rule = normalizeStockRule({ symbol: match.symbol, name: match.name, kind: parsed.kind, direction: parsed.direction, pct: parsed.pct, level: parsed.level, baseline: quote.price, baselineAt: now.toISOString(), ...(alreadyPast ? { startArmed: false } : {}) }) as StockRule | null
   if (!rule) return reply('paused', 'I could not build that share-price rule. Try e.g. "watch Infosys share price, alert if it moves 10%".')
 
+  // "every 6 hours" is honoured; otherwise the market-hours default.
+  const cadence = Math.max(STOCK_WATCH_CADENCE_MINUTES, Number((parsed as any).cadenceMinutes) || STOCK_WATCH_CADENCE_MINUTES)
+  const pace = cadence >= 60 && cadence % 60 === 0 ? `every ${cadence / 60} hour${cadence === 60 ? '' : 's'}` : `about every ${cadence} minutes`
   const title = `Share price: ${stockRuleSummary(rule)}`
   const condition = normalizeWebSearchWatcher({
     title, query: `${match.name} share price ${match.exchange}`, triggerKeywords: [], delivery: 'both',
-    cadenceMinutes: STOCK_WATCH_CADENCE_MINUTES, requestedCadenceMinutes: STOCK_WATCH_CADENCE_MINUTES,
+    cadenceMinutes: cadence, requestedCadenceMinutes: cadence,
     originalRequest: String(requestText || '').slice(0, 2000), stockRule: rule,
   })
   if (!(condition as any)?.stockRule) throw new Error('stock_watch_condition_invalid')
@@ -97,7 +100,7 @@ export async function tryCreateStockWatchFromCommand(params: { actor: AgentActor
   const startedAt = now.toISOString()
   const { data: run, error: runError } = await supabaseAdmin.from('agent_runs').insert({
     telegram_id: tg, type: 'watcher', capability: 'browser', status: 'completed', title,
-    summary: `Background Gogo reads the ${match.exchange} price of ${match.name} about every ${STOCK_WATCH_CADENCE_MINUTES} minutes during market hours and alerts only when your rule is met.`,
+    summary: `Background Gogo reads the ${match.exchange} price of ${match.name} ${pace} during market hours and alerts only when your rule is met.`,
     progress: 100, why: 'You asked Gogo to watch a share price.', source: params.surface,
     metadata_json: { input_text: String(requestText || '').slice(0, 2000), watcher_type: 'web_search', stock_rule: rule },
     started_at: startedAt, updated_at: startedAt,
@@ -140,7 +143,7 @@ export async function tryCreateStockWatchFromCommand(params: { actor: AgentActor
   await supabaseAdmin.from('agent_activity').insert({
     telegram_id: tg, run_id: String(run.id), event_type: 'watcher_created',
     message: `Background Gogo started a share-price watch: ${stockRuleSummary(saved)}`.slice(0, 900),
-    metadata_json: { watcher_id: watcher.id, type: 'web_search', stock_rule: saved, cadence_minutes: STOCK_WATCH_CADENCE_MINUTES },
+    metadata_json: { watcher_id: watcher.id, type: 'web_search', stock_rule: saved, cadence_minutes: cadence },
   })
 
   const ticker = `${saved.symbol.replace(/\.(?:NS|BO)$/, '')}, ${saved.exchange}`
@@ -153,5 +156,5 @@ export async function tryCreateStockWatchFromCommand(params: { actor: AgentActor
       : `I'll alert you if it ${saved.direction === 'down' ? 'falls' : 'rises'} ${saved.pct}%, to ${inr(quote.price * (1 + (saved.direction === 'down' ? -1 : 1) * saved.pct! / 100))}.`
   const defaulted = parsed.defaulted ? ` You didn't give a size, so I used ${saved.pct}%; send e.g. "alert at 10%" to change it.` : ''
   const news = retiredNews ? ` I stopped your older ${retiredNews === 1 ? 'news watch' : `${retiredNews} news watches`} about it, so you'll only get price alerts.` : ''
-  return reply('completed', `${'reused' in watcher ? `${reusedWatchText((watcher as ReusedWatcher).updated, `${saved.name} share price`)} ` : ''}Share-price watch set: ${saved.name} (${ticker}) is ${inr(quote.price)} (as of ${quote.asOf}, Yahoo Finance; can lag the exchange by a few minutes). ${band}${defaulted}${news} I check about every ${STOCK_WATCH_CADENCE_MINUTES} minutes during market hours and never buy or sell.`, String(run.id))
+  return reply('completed', `${'reused' in watcher ? `${reusedWatchText((watcher as ReusedWatcher).updated, `${saved.name} share price`)} ` : ''}Share-price watch set: ${saved.name} (${ticker}) is ${inr(quote.price)} (as of ${quote.asOf}, Yahoo Finance; can lag the exchange by a few minutes). ${band}${defaulted}${news} I check ${pace} during market hours and never buy or sell.`, String(run.id))
 }

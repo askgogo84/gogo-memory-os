@@ -3,6 +3,7 @@
 // Returns a reply string if handled, null to fall through to Claude
 
 import { parseSplitIntent } from '@/lib/splitwise/split-parser'
+const PAYMENT_CONFIRMATION = /\b(?:payment\s+status|merchant\s+name|transaction\s+(?:id|no|ref)|txn\s+(?:id|no|ref)|utr|upi\s+ref|reference\s+(?:no|number)|paid\s+successfully|payment\s+(?:was\s+)?successful|successfully\s+(?:paid|debited))\b/i
 import { handleNutritionText, isNutritionLogText, isNutritionCommand } from '@/lib/bot/handlers/nutrition'
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard, saveReel } from '@/lib/services/reel-saver'
 import { saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
@@ -217,7 +218,8 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
 
   // ── ASK GOGO SPLIT ──────────────────────────────────────────────────────
   // Guard: skip split parser for food-logging sentences
-  if (!isNutritionLogText(text) && parseSplitIntent(text) && may('money', 'legacy_split')) {
+  // 6 Nov live: "Payment Status: SUCCESS, Merchant Name: … Amount: ₹41,898.00, Paid By: …" became a ₹41 split.
+  if (!isNutritionLogText(text) && !PAYMENT_CONFIRMATION.test(text) && parseSplitIntent(text) && may('money', 'legacy_split')) {
     return (await post('/api/splitbill', { phone, text }))?.reply ?? null
   }
 
@@ -241,6 +243,14 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   if (isExpenseLog && may('money', 'legacy_expense_log')) {
     const expReply = (await post('/api/expenses', { phone, text, ...(extra?.telegramId ? { telegramId: extra.telegramId } : {}) }))?.reply
     if (expReply) return expReply
+  }
+
+  // 29 Oct (Muse 15): "Make my monthly spending statement for September … ask me about any cash spends".
+  if (/^(?:please\s+)?(?:make|show|give|prepare|create|send|get)\s+(?:me\s+)?(?:my\s+)?(?:monthly\s+)?(?:spending|expenses?|spends?)\s+(?:statement|report|summary|breakdown)\b/i.test(t) && may('money', 'legacy_expense_query')) {
+    const { namedMonthRange } = await import('@/lib/bot/services/expense-storage')
+    const named = namedMonthRange(t)
+    const cash = /\bcash\b/i.test(t) ? '1' : '0'
+    return (await get('/api/expenses', { phone, period: 'month', insight: '0', cash, ...(named ? { month: named.month } : {}), ...(extra?.telegramId ? { telegramId: String(extra.telegramId) } : {}) }))?.reply ?? null
   }
 
   // Query: "expenses today", "expense insight", "my spending this week"

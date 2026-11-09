@@ -12,6 +12,7 @@ const runs: Record<string, any> = {
 const activity: any[] = []
 const patches: any[] = []
 let dropNextWrite = false
+let changeMetadataBeforeNextWrite: (() => void) | null = null
 const originalFetch = globalThis.fetch
 const response = (body: any, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 globalThis.fetch = (async (input: any, init: any) => {
@@ -28,6 +29,15 @@ globalThis.fetch = (async (input: any, init: any) => {
   assert.equal(method, 'PATCH')
   assert.equal(url.searchParams.get('status'), 'eq.completed', 'only a finished run is confirmed')
   assert.equal(owner, row?.telegram_id, 'owner-scoped write')
+  // Synthetic JSONB optimistic precondition: any concurrent metadata edit must
+  // make the original confirmation UPDATE match zero rows, not erase new data.
+  const expectedMetadata = url.searchParams.get('metadata_json')
+  assert.ok(expectedMetadata, 'every owner confirmation write requires exact JSONB snapshot match')
+  if (changeMetadataBeforeNextWrite) {
+    const change = changeMetadataBeforeNextWrite; changeMetadataBeforeNextWrite = null; change()
+  }
+  const persistedMetadata = row?.metadata_json == null ? 'is.null' : `eq.${JSON.stringify(row.metadata_json)}`
+  if (expectedMetadata !== persistedMetadata) return response([])
   if (dropNextWrite) { dropNextWrite = false; return response([]) }
   patches.push(body); Object.assign(row, body)
   return response([{ id: row.id }])
@@ -70,6 +80,37 @@ try {
   assert.equal(r3.ok, true); assert.equal(activity.at(-1).event_type, 'task_owner_reopened'); assert.equal(activity.at(-1).metadata_json.previous, 'done')
   assert.deepEqual(await oc.recordOwnerDecision({ telegramId: '999', runId: id, actorId: 'x', decision: 'done' }), { ok: false, error: 'not_found' }, 'another owner cannot confirm')
   assert.deepEqual(await oc.recordOwnerDecision({ telegramId: '123', runId: 'aaaaaaaa-0000-4000-8000-000000000002', actorId: 'user-1', decision: 'done' }), { ok: false, error: 'not_finished' })
+
+  // Regression (3 Nov): an independent worker records new provider outcome
+  // AFTER the confirmation GET but BEFORE the conditional UPDATE.
+  // Stale owner confirmation may not erase delivery/verification evidence.
+  const conflictId = 'aaaaaaaa-0000-4000-8000-000000000004'
+  runs[conflictId] = {
+    id: conflictId, telegram_id: '123', title: 'Verification result',
+    status: 'completed', type: 'general_multi_tool',
+    metadata_json: { plan_type: 'general_multi_tool', outcome_status: 'pending' },
+  }
+  const auditBeforeConflict = activity.length
+  changeMetadataBeforeNextWrite = () => {
+    runs[conflictId].metadata_json = {
+      plan_type: 'general_multi_tool', outcome_status: 'completed',
+      provider_readback: { status: 'verified_success', ref: 'synthetic-readback-only' },
+    }
+  }
+  await assert.rejects(
+    oc.recordOwnerDecision({ telegramId: '123', runId: conflictId, actorId: 'user-1', decision: 'done' }),
+    /owner_confirmation_not_saved/,
+    'conflicting verification evidence must reject stale confirmation instead of clobbering it',
+  )
+  assert.equal(runs[conflictId].metadata_json.provider_readback.status, 'verified_success')
+  assert.equal(runs[conflictId].metadata_json.owner_confirmation, undefined)
+  assert.equal(activity.length, auditBeforeConflict, 'no completion audit before a confirmed write')
+
+  // Existing null metadata rows also require an atomic is.null filter.
+  const nullId = 'aaaaaaaa-0000-4000-8000-000000000005'
+  runs[nullId] = { id: nullId, telegram_id: '123', title: 'Legacy run', status: 'completed', type: 'general_multi_tool', metadata_json: null }
+  assert.equal((await oc.recordOwnerDecision({ telegramId: '123', runId: nullId, actorId: 'user-1', decision: 'done' })).ok, true)
+  assert.equal(runs[nullId].metadata_json.owner_confirmation.decision, 'done')
 
   // Watches: why and when they end; R02's 27 Sep flight watch reads as passed on 22 Oct.
   const today = new Date(now)

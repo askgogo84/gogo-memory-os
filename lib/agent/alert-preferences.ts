@@ -36,3 +36,15 @@ export async function saveAlertPreferences(telegramId: string, prefs: AlertPrefe
   }).then(({ error: e }) => { if (e) console.error('ALERT_PREFERENCES_ACTIVITY_FAILED:', e.message) })
   return { ok: true as const }
 }
+
+export async function tryAlertFrequencyCommand(p: { telegramId: number | string; text: string }): Promise<string | null> {
+  const { alertFrequencyCommand, applyAlertFrequency } = await import('./alert-preferences-shared')
+  const dir = alertFrequencyCommand(p.text)
+  if (!dir) return null
+  const next = applyAlertFrequency(await getAlertPreferences(String(p.telegramId)), dir)
+  const saved = await saveAlertPreferences(String(p.telegramId), next)
+  if (!saved.ok) return "I couldn't change your alert settings just now. Nothing was changed. You can set them in Dashboard → Settings → Alerts."
+  return dir === 'less'
+    ? `Done. I'll check for updates every 4 hours instead of hourly and stop sending suggestions. Bills, replies, travel changes and anything waiting on you still come through, and nothing between ${next.quietStart}:00 and ${next.quietEnd}:00.\n\nChange it any time in Dashboard → Settings → Alerts, or say "message me more often".`
+    : `Done. I'll check hourly again and send everything, including suggestions. Quiet hours stay ${next.quietStart}:00 to ${next.quietEnd}:00.`
+}
