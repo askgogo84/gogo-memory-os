@@ -33,9 +33,9 @@ export function UsageTrends({ a }: { a: ActivityTrends }) {
   return (
     <section className="flex flex-col gap-3" aria-label="Usage trends">
       <h2 className="mt-2 text-[18px] font-semibold text-gogo-ink">This week</h2>
-      {a.weekLimit > 0
-        ? <QuotaBar label={`AI actions since ${shortDay(a.weekStart)}`} used={a.weekUsed} limit={a.weekLimit} tone="orange" />
-        : <p className="text-[16px] text-gogo-ink-2">{a.weekUsed} AI actions since {shortDay(a.weekStart)}.</p>}
+      {a.monthLimit > 0
+        ? <QuotaBar label={`AI actions this month${a.dayLimit ? ` · up to ${a.dayLimit} a day` : ''}`} used={a.monthUsed} limit={a.monthLimit} tone="orange" />
+        : <p className="text-[16px] text-gogo-ink-2">{a.monthUsed} AI actions this month.</p>}
 
       <div className="grid grid-cols-2 gap-3">
         {a.trends.map(t => (
