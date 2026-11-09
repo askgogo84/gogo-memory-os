@@ -169,7 +169,12 @@ export async function GET(req?: NextRequest) {
   if (!threadId && (globalThis as any).process?.env?.VERCEL_ENV) {
     try { const w = await import('@/lib/briefing/daily-brief-writer'); brief = typeof w?.readTodaysBrief === 'function' ? await w.readTodaysBrief(String(user.telegram_id)) : null } catch { brief = null }
   }
-  return NextResponse.json({ messages, name: user.name || 'Gogo', brief })
+  // G8 (9 Nov): what Gogo already knows about the person's setup, for the empty-chat card. Main thread only.
+  let setup: unknown = null
+  if (!threadId && (globalThis as any).process?.env?.VERCEL_ENV) {
+    try { const sk = await import('@/lib/dashboard/setup-known'); setup = typeof sk?.loadSetupKnown === 'function' ? await sk.loadSetupKnown(String(user.telegram_id)) : null } catch { setup = null }
+  }
+  return NextResponse.json({ messages, name: user.name || 'Gogo', brief, setup })
 }
 
 async function makeDocWasLastReply(telegramId:number|string){
