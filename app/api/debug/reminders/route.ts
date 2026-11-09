@@ -1,5 +1,6 @@
 ﻿import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { isCronAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -24,10 +25,8 @@ function formatIst(iso: string | null) {
 }
 
 export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url)
-  const secret = searchParams.get('secret')
-
-  if (secret !== process.env.CRON_SECRET) {
+  // Never authorize a service-role debug read on a missing/blank server secret.
+  if (!isCronAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

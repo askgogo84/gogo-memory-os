@@ -4,6 +4,10 @@
   ],
   "crons": [
     {
+      "path": "/api/cron/tipplr-pilot",
+      "schedule": "*/5 * * * *"
+    },
+    {
       "path": "/api/cron/travel-research",
       "schedule": "* * * * *"
     },
@@ -62,6 +66,14 @@
     {
       "path": "/api/cron/booking-rehearsal",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/ops-alerts",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/reengage",
+      "schedule": "0 6 * * *"
     }
   ]
 }
