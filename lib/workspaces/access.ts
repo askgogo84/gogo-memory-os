@@ -204,7 +204,13 @@ export async function inviteMember(telegramId: string, workspaceId: string, rawN
   check(error, 'invite_lookup')
   if (!users?.length) throw new WorkspaceError('user_not_found')
   if (users.length > 1) throw new WorkspaceError('ambiguous_number')
-  const invitee = String(users[0].telegram_id)
+  // Postgres BIGINT identities must not be rounded into another account before
+  // creating a pending invitation. Preserve exact signed decimal strings.
+  const rawInvitee: unknown = users[0].telegram_id
+  if (typeof rawInvitee === 'number' && (!Number.isSafeInteger(rawInvitee) || rawInvitee === 0)) throw new WorkspaceError('invalid_owner')
+  if (typeof rawInvitee !== 'string' && typeof rawInvitee !== 'number') throw new WorkspaceError('invalid_owner')
+  const invitee = String(rawInvitee).trim()
+  if (!/^-?[1-9]\d*$/.test(invitee)) throw new WorkspaceError('invalid_owner')
   if (await memberRow(membership.workspaceId, invitee)) throw new WorkspaceError('already_member')
   const { count, error: countError } = await supabaseAdmin.from('workspace_members')
     .select('telegram_id', { count: 'exact', head: true }).eq('workspace_id', membership.workspaceId)

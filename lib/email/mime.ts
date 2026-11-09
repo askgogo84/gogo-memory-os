@@ -153,9 +153,26 @@ export function previewText(text: string, max = 500) {
   return (cut > 0 ? lines.slice(0, cut) : lines).join(' ').replace(/\s+/g, ' ').trim().slice(0, max)
 }
 
+/**
+ * A display name is not an email sender identity.
+ * Header-only checks do not establish SPF/DKIM/DMARC authentication; they only
+ * prevent a displayed Google address from impersonating the actual From mailbox.
+ */
+function singleFromMailbox(from: string): string | null {
+  const value = String(from || '').trim()
+  if (!value || /[\r\n,;]/.test(value)) return null
+  const mailbox = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i
+  if (mailbox.test(value)) return value.toLowerCase()
+  const parts = value.match(/^([^<>]*)<([^<>]+)>$/)
+  if (!parts || !mailbox.test(parts[2])) return null
+  // Reject any email-shaped display name, including a forged Google sender.
+  if (/@/.test(parts[1])) return null
+  return parts[2].toLowerCase()
+}
+
 /** Gmail's forwarding confirmation: "(#123456789) Gmail Forwarding Confirmation - Receive Mail from x@gmail.com". */
 export function gmailForwardingConfirmation(mail: Pick<ParsedMail, 'from' | 'subject' | 'text'>) {
-  if (!/forwarding-noreply@google\.com/i.test(mail.from)) return null
+  if (singleFromMailbox(mail.from) !== 'forwarding-noreply@google.com') return null
   if (!/forwarding confirmation/i.test(mail.subject)) return null
   const code = mail.subject.match(/\(#(\d{6,12})\)/)?.[1] || mail.text.match(/confirmation code:?\s*(\d{6,12})/i)?.[1] || null
   const forwarder = mail.subject.match(/receive mail from\s+([^\s]+@[^\s]+)/i)?.[1] || mail.text.match(/([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}) has requested/i)?.[1] || null

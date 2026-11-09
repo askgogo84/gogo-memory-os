@@ -65,27 +65,27 @@ export function WaitlistTable({ rows, canAct }: { rows: Row[]; canAct: boolean }
         </div>
       ) : null}
       {msg ? <div role="status" className="banner">{msg}</div> : null}
-      <div className="adm-table">
+      <div className="adm-table rt">
         <table>
           <thead><tr>
-            {canAct ? <th scope="col"><input type="checkbox" aria-label="Select all shown" checked={allShownSelected} onChange={e => { const next: Record<string, boolean> = {}; if (e.target.checked) shown.slice(0, 200).forEach(r => { next[r.id] = true }); setSel(next) }} style={{ width: 18, height: 18 }} /></th> : null}
-            <th scope="col">Phone</th><th scope="col">Name or email</th><th scope="col">Country</th><th scope="col">Source</th><th scope="col">Opt-in</th><th scope="col">Joined</th><th scope="col">Status</th>{canAct ? <th scope="col">Actions</th> : null}
+            {canAct ? <th scope="col" className="sel"><input type="checkbox" aria-label="Select all shown" checked={allShownSelected} onChange={e => { const next: Record<string, boolean> = {}; if (e.target.checked) shown.slice(0, 200).forEach(r => { next[r.id] = true }); setSel(next) }} style={{ width: 18, height: 18 }} /></th> : null}
+            <th scope="col">Phone</th><th scope="col">Name or email</th><th scope="col">Country</th><th scope="col">Source</th><th scope="col">Opt-in</th><th scope="col">Joined</th><th scope="col">Status</th>{canAct ? <th scope="col" className="act">Actions</th> : null}
           </tr></thead>
           <tbody>
             {shown.slice(0, 300).map(r => {
               const [label, tone] = STATUS[r.status] || [r.status, '']
               return (
                 <tr key={r.id}>
-                  {canAct ? <td><input type="checkbox" aria-label={`Select ${r.phone}`} checked={!!sel[r.id]} onChange={e => setSel(s => ({ ...s, [r.id]: e.target.checked }))} style={{ width: 18, height: 18 }} /></td> : null}
-                  <td>{r.phone}</td>
-                  <td style={{ color: 'var(--ink2)' }}>{r.name || r.email || '—'}</td>
-                  <td>{r.country || '—'}</td>
-                  <td style={{ color: 'var(--ink2)' }}>{r.source || '—'}</td>
-                  <td style={{ color: 'var(--ink2)' }}>{r.optin ? 'Yes' : 'No'}</td>
-                  <td style={{ color: 'var(--ink3)' }}>{fmt(r.created)}</td>
-                  <td><span className={`pill ${tone}`} title={r.invite || undefined}>{label}</span></td>
+                  {canAct ? <td className="sel"><input type="checkbox" aria-label={`Select ${r.phone}`} checked={!!sel[r.id]} onChange={e => setSel(s => ({ ...s, [r.id]: e.target.checked }))} style={{ width: 18, height: 18 }} /></td> : null}
+                  <td className="primary" data-label="Phone">{r.phone}</td>
+                  <td className="clip" data-label="Name or email" style={{ color: 'var(--ink2)' }} title={r.name || r.email || undefined}>{r.name || r.email || '—'}</td>
+                  <td data-label="Country">{r.country || '—'}</td>
+                  <td data-label="Source" style={{ color: 'var(--ink2)' }}>{r.source || '—'}</td>
+                  <td data-label="Opt-in" style={{ color: 'var(--ink2)' }}>{r.optin ? 'Yes' : 'No'}</td>
+                  <td data-label="Joined" style={{ color: 'var(--ink3)' }}>{fmt(r.created)}</td>
+                  <td data-label="Status"><span className={`pill ${tone}`} title={r.invite || undefined}>{label}</span></td>
                   {canAct ? (
-                    <td><div style={{ display: 'flex', gap: 6 }}>
+                    <td className="act"><div style={{ display: 'flex', gap: 6 }}>
                       {r.status === 'waiting' ? <button type="button" className="btn sm solid" disabled={pending} onClick={() => run('waitlist.approve', [r.id])}>Approve</button> : null}
                       {r.status === 'invited' ? <button type="button" className="btn sm" disabled={pending} onClick={() => run('waitlist.approve', [r.id])}>Resend invite</button> : null}
                       {r.status !== 'blocked' ? <button type="button" className="btn sm" disabled={pending} onClick={() => run('waitlist.block', [r.id])}>Block</button> : <button type="button" className="btn sm" disabled={pending} onClick={() => run('waitlist.unblock', [r.id])}>Unblock</button>}

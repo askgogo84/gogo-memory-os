@@ -1,0 +1,127 @@
+// Important mail, one message at a time (owner-approved mock, 6 Nov). The emails here are the ones Dots flagged in
+// the owner's screenshots: failed Browserbase payment, Runway charge to confirm, All Access renewal, HDFC autopay
+// failure, a new ₹1,32,482 mandate, a Barclays link expiring, a Google "Instinct was granted access" notice.
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'; process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
+const ma = await import('../lib/email/mail-alerts')
+const { scoreEmail } = await import('../lib/email/attention')
+
+const at = (iso: string) => ({ internalDate: Date.parse(iso), date: new Date(iso).toUTCString() })
+const mail = (id: string, from: string, subject: string, snippet: string, iso: string, extra: any = {}) => ({ id, messageId: id, threadId: 'abc123def456', from, subject, snippet, labelIds: ['INBOX'], ...at(iso), ...extra })
+const now = Date.parse('2026-11-06T10:00:00+05:30')
+const emails = [
+  mail('m1', 'Browserbase Inc <billing@browserbase.com>', '$28.93 payment to Browserbase Inc was unsuccessful again', 'Your payment of $28.93 failed again. Please update your payment method to avoid service interruption.', '2026-11-06T09:00:00+05:30'),
+  mail('m2', 'Runway AI, Inc. <no-reply@runwayml.com>', 'Reminder: Confirm your $17.70 payment to Runway AI, Inc.', 'This is the second reminder. Please confirm your $17.70 payment.', '2026-11-06T10:00:00+05:30'),
+  mail('m3', 'Shilpita Banerjee <shilpita@allaccess.example>', 'All Access Renewal - what to expect as your membership renews (November 2026)', 'Your All Access membership renews on 20 Nov 2026 for ₹35,841.29.', '2026-11-06T11:30:00+05:30'),
+  mail('m4', 'HDFC Bank InstaAlerts <alerts@hdfcbank.net>', 'AutoPay to Kotak Mahindra Prime failed', 'The AutoPay of Rs. 12,450.00 to Kotak Mahindra Prime could not be processed due to insufficient funds. Return charges will be recovered.', '2026-11-06T06:56:00+05:30'),
+  mail('m5', 'HDFC Bank InstaAlerts <alerts@hdfcbank.net>', 'New recurring payment mandate registered', 'A new recurring-payment mandate for MongoDB has been registered on your card with a maximum of Rs. 1,32,482.00.', '2026-11-05T13:54:00+05:30'),
+  mail('m6', 'Barclays Careers <careers@barclays.com>', 'Verify your account - Director, Principal Engineer - Applied AI', 'Please verify your account using the link below. The link expires on 5 Nov at 11:24 am IST.', '2026-11-04T11:24:00+05:30'),
+  mail('m7', 'Google <no-reply@accounts.google.com>', 'Security alert', 'Instinct was granted access to your Google Account goverdhan.md@gmail.com. If you did not grant access, you should check this activity.', '2026-11-06T12:32:00+05:30'),
+  mail('m8', 'Nithin K L <nithin@tipplr.in>', 'Updated catalogue sheet?', 'Could you share the updated catalogue sheet before our call today? Need it for the ONDC push.', '2026-11-06T08:30:00+05:30', { isUnread: true }),
+  mail('m9', 'Zepto <noreply@zeptonow.com>', 'Flat 40% off on fruits this weekend', 'Limited time offer, unsubscribe', '2026-11-06T09:10:00+05:30', { labelIds: ['INBOX', 'CATEGORY_PROMOTIONS'] }),
+  mail('m10', 'HDFC Bank InstaAlerts <alerts@hdfcbank.net>', 'Your card was used', 'Rs. 252.00 was debited from your card at Zepto.', '2026-11-06T09:20:00+05:30'),
+  mail('m11', 'Amazon.in <order-update@amazon.in>', 'Your order is out for delivery', 'PHILIPS WiZ Neo is out for delivery', '2026-11-06T09:30:00+05:30'),
+]
+const kinds = Object.fromEntries(emails.map(e => [e.id, ma.alertKindOf(scoreEmail(e as any, { now }))]))
+assert.deepEqual(kinds, { m1: 'payment_failed', m2: 'money_leaving', m3: 'money_leaving', m4: 'payment_failed', m5: 'money_leaving', m6: 'deadline', m7: 'security', m8: 'reply_waiting', m9: 'newsletter', m10: null, m11: null })
+console.log('✓ each Dots-flagged email gets its kind; a ₹252 debit and an order update are not mail alerts')
+// 8 Nov: a founder-signed onboarding mail is not a reply waiting; a real person's question still is; the ask is not repeated when it restates the subject.
+{
+  const coop = mail('c1', 'Cooper Schoenthaler <cooper@generalintelligencecompany.com>', 'Want some 1:1 help with Cofounder?', "Hi Goverdhan, Thanks for signing up for Cofounder. I&#39;m Cooper, and I meet with users 1:1 to help build companies using Cofounder. If you&#39;d like to meet, just sign up here.", '2026-11-06T09:00:00+05:30', { labelIds: ['INBOX', 'CATEGORY_PERSONAL'], isUnread: true })
+  assert.equal(ma.alertKindOf(scoreEmail(coop as any, { now })), null, 'onboarding drip is not a reply waiting')
+  for (const t of ['Welcome to Linear! Grab a time with me here', 'Book a call with our founder — calendly.com/x', 'Thanks for joining the waitlist'])
+    assert.equal(ma.alertKindOf(scoreEmail(mail('c2', 'Sam Lee <sam@startup.example>', 'Quick hello', t, '2026-11-06T09:00:00+05:30', { isUnread: true }) as any, { now })), null, t)
+  assert.equal(ma.alertKindOf(scoreEmail(emails.find(e => e.id === 'm8') as any, { now })), 'reply_waiting', 'Nithin still a reply')
+  const q = mail('q1', 'Divya <divya@example.com>', 'Can you confirm the Goa dates?', 'Can you confirm the Goa dates?', '2026-11-06T09:00:00+05:30', { isUnread: true })
+  const qs = scoreEmail(q as any, { now })
+  if (ma.alertKindOf(qs) === 'reply_waiting') { const body = ma.composeAlert('reply_waiting', qs, { name: 'Goverdhan', now } as any); assert.equal((body.match(/confirm the Goa dates/gi) || []).length, 1, body) }
+  const td = ma.alertThreadData('reply_waiting', scoreEmail(coop as any, { now }), 'goverdhan.md@gmail.com')
+  assert.match(td.snippet!, /^Hi Goverdhan, Thanks for signing up for Cofounder\. I'm Cooper/); assert.equal(td.receivedAt, new Date('2026-11-06T09:00:00+05:30').toISOString())
+  console.log('✓ onboarding/drip mail from a person is not "Reply waiting"; the ask never repeats the subject; thread keeps a decoded snippet')
+}
+
+// Wording: what the email states, what Gogo cannot tell, nothing invented.
+const ctx = { name: 'Goverdhan M D', timezone: 'Asia/Kolkata', now, gmailEmail: 'goverdhan.md@gmail.com',
+  today: [{ summary: 'FnB daily syncup <> Tipplr', start: '2026-11-06T11:30:00+05:30', attendees: [{ email: 'nithin@tipplr.in' }] }, { summary: 'Investor call', start: '2026-11-06T15:00:00+05:30' }],
+  trips: [{ fromCity: 'Bengaluru', toCity: 'Mumbai', departAt: '2026-11-09T09:55:00+05:30', returnAt: null }] }
+const say = (id: string) => ma.composeAlert(kinds[id]!, scoreEmail(emails.find(e => e.id === id) as any, { now }), ctx)
+assert.match(say('m1'), /^⚠️ Payment failed\nGoverdhan, Browserbase Inc says a payment of \*\$28\.93\* failed again\. ".*"\. The email says the service may be paused, so update the payment method first\./)
+assert.match(say('m4'), /Payment failed\nGoverdhan, HDFC Bank InstaAlerts says a payment of \*₹12,450\.00\* failed for insufficient funds\./)
+assert.match(say('m4'), /doesn't say whether it was paid another way, so check before paying again/)
+assert.match(say('m2'), /💳 Money leaving\nGoverdhan, Runway AI, Inc\. is asking you to confirm a \*\$17\.70\* payment\./)
+assert.match(say('m5'), /reports a new recurring-payment mandate with a \*₹1,32,482\.00\* maximum/)
+assert.match(say('m3'), /renews on 20 Nov 2026 for \*₹35,841\.29\*, from Shilpita Banerjee/)
+assert.match(say('m6'), /⏳ Deadline\nGoverdhan, Barclays Careers sent "Verify your account - Director, Principal Engineer - Applied AI"\. It expires 5 Nov at 11:24 am\. I can't tell whether you've already done it\./)
+assert.ok(!/You fly/.test(say('m6')), 'a link expiring 5 Nov has nothing to do with a 9 Nov flight (live 6 Nov: a ₹15 bill got "you fly on 8 Nov")')
+const m6b = { ...emails.find(e => e.id === 'm6')!, id: 'm6b', snippet: 'Please verify your account using the link below. The link expires on 10 Nov at 11:24 am IST.' }
+assert.match(ma.composeAlert('deadline', scoreEmail(m6b as any, { now }), ctx), /You fly to Mumbai on Mon, 9 Nov and this falls while you're away; best to settle it before then\./, 'trip context only when the date falls in the trip')
+assert.match(say('m7'), /🔐 Security\nGoverdhan, Google says \*Instinct\* was granted access to your account\. If that was you, nothing to do\./)
+assert.match(say('m7'), /The email doesn't say what data was shared\./)
+assert.match(say('m8'), /✉️ Reply waiting\nGoverdhan, Nithin K L is waiting on you: "Updated catalogue sheet\?"/)
+assert.match(say('m8'), /You meet Nithin on the 11:30 am call today, so you could answer there\./, 'calendar context on a reply')
+assert.match(say('m8'), /Say "draft a reply" and I'll show it before anything is sent\./)
+assert.ok(!/https?:\/\//.test(say('m1')), 'no URL: WhatsApp would put a preview card above the alert (live 6 Nov)')
+// Live 6 Nov, 6:45 pm: "Amazon Pay India: ₹15 due 5 Nov "Payment Reminder". Payment Reminder · ₹15 / You fly on Sun, 8 Nov". Small bills get no message at all.
+const amazon = mail('m12', 'Amazon Pay India <no-reply@amazonpay.in>', 'Payment Reminder', 'Your payment of ₹15 is due on 5 Nov. Pay now to avoid late fees.', '2026-11-04T09:00:00+05:30')
+const amazonScored = scoreEmail(amazon as any, { now })
+assert.equal(amazonScored.category, 'bill_due', `Amazon Pay reminder scores as a bill (${amazonScored.category})`)
+assert.equal(ma.alertKindOf(amazonScored), null, 'a ₹15 reminder is not money leaving')
+const big = mail('m13', 'Amazon Pay India <no-reply@amazonpay.in>', 'Payment Reminder', 'Your payment of ₹2,400 is due on 5 Nov. Pay now to avoid late fees.', '2026-11-04T09:00:00+05:30')
+const bigScored = scoreEmail(big as any, { now })
+assert.equal(ma.alertKindOf(bigScored), 'money_leaving')
+const bigSay = ma.composeAlert('money_leaving', bigScored, ctx)
+assert.match(bigSay, /^💳 Money leaving\nGoverdhan, Amazon Pay India: \*₹2,400\* was due 5 Nov, so it's overdue unless you've paid, "Payment Reminder"\.$/, `overdue said once, ask line not repeated, no flight: ${JSON.stringify(bigSay)}`)
+assert.equal(ma.dueDayOf('due on 5 Nov', now), Date.UTC(2026, 10, 5)); assert.equal(ma.dueDayOf('expires Nov 10th', now), Date.UTC(2026, 10, 10)); assert.equal(ma.dueDayOf('by 03/01/2027', now), Date.UTC(2027, 0, 3)); assert.equal(ma.dueDayOf('no date here', now), null)
+console.log('✓ small bills stay quiet; a real overdue bill says so once, without the trip line or a link')
+for (const id of ['m1', 'm2', 'm3', 'm4', 'm5', 'm6', 'm7', 'm8']) assert.ok(say(id).length < 520, `${id} short enough: ${say(id).length}`)
+console.log('✓ one short message each: the email\'s own amount and date, what Gogo cannot tell, trip or calendar context')
+
+// Selection: wanted kinds, once each, quiet hours, daily cap.
+const rules = ma.normalizeRules(undefined)
+const first = ma.selectAlerts(emails as any, { rules, state: null, ctx })
+assert.deepEqual(first.alerts.map(a => a.id), ['m1', 'm2', 'm3', 'm4', 'm5', 'm6'], 'six a day, newest-first order kept')
+assert.deepEqual(first.deferred, ['m7', 'm8'], 'the rest wait for the next check')
+assert.equal(first.state.sentToday, 6)
+const again = ma.selectAlerts(emails as any, { rules, state: first.state, ctx })
+assert.equal(again.alerts.length, 0, 'cap reached: nothing more today'); assert.deepEqual(again.deferred, ['m7', 'm8'])
+const tomorrow = ma.selectAlerts(emails as any, { rules, state: first.state, ctx: { ...ctx, now: now + 86_400_000 } })
+assert.deepEqual(tomorrow.alerts.map(a => a.id), ['m7', 'm8'], 'next day: the deferred two, never the six again')
+const night = ma.selectAlerts(emails as any, { rules, state: null, ctx: { ...ctx, now: Date.parse('2026-11-06T23:10:00+05:30') } })
+assert.equal(night.alerts.length, 0); assert.equal(night.quiet, true); assert.equal(night.deferred.length, 8, 'quiet hours defer everything')
+const off = ma.selectAlerts(emails as any, { rules: { ...rules, kinds: { ...rules.kinds, money_leaving: false } }, state: null, ctx })
+assert.ok(!off.alerts.some(a => a.kind === 'money_leaving'))
+assert.equal(ma.selectAlerts(emails as any, { rules, state: null, ctx, ownEmail: 'billing@browserbase.com' }).alerts.find(a => a.id === 'm1'), undefined, 'own mail is never an alert')
+console.log('✓ once each, quiet 10 pm to 8 am, at most 6 a day, kinds can be turned off')
+
+// Rules commands (screen 3).
+let r = rules
+let c = ma.applyRuleCommand('stop renewals', r)!; assert.equal(c.changed, 'Money leaving: off.'); r = c.rules
+c = ma.applyRuleCommand('add newsletters', r)!; assert.equal(c.rules.kinds.newsletter, true); r = c.rules
+c = ma.applyRuleCommand("don't alert me about replies", r)!; assert.equal(c.rules.kinds.reply_waiting, false)
+c = ma.applyRuleCommand('quiet 11 pm to 7 am', r)!; assert.equal(c.rules.quietStart, 23); assert.equal(c.rules.quietEnd, 7)
+c = ma.applyRuleCommand('at most 3 a day', r)!; assert.equal(c.rules.maxPerDay, 3)
+assert.equal(ma.applyRuleCommand('stop the car', r), null)
+assert.match(ma.formatRules(rules), /^One message per email, only for these\./)
+assert.match(ma.formatRules(rules), /• Payments failed or declined · on\n  card declines, failed autopay, unpaid invoices/)
+assert.match(ma.formatRules(rules), /• Newsletters and offers · off/)
+assert.match(ma.formatRules(rules), /Quiet 10 pm to 8 am, at most 6 a day\. Anything else waits for "any important emails\?"\./)
+const cmd = await import('../lib/email/mail-alert-commands')
+for (const t of ['what do you alert me about?', 'stop renewals', 'add newsletters', 'quiet 11pm to 7am', 'at most 3 a day']) assert.ok(cmd.isMailAlertCommand(t), t)
+for (const t of ['stop the car', 'add milk to my list', 'what do you think about Instinct', 'alert me when the price drops below 5000']) assert.equal(cmd.isMailAlertCommand(t), false, t)
+console.log('✓ "what do you alert me about?", "stop renewals", "add newsletters", quiet hours and daily cap')
+
+// Wiring: the watcher sends per-email alerts (digest only on request); commands before the brain on both surfaces.
+const w = readFileSync('lib/agent/watchers.ts', 'utf8')
+assert.match(w, /\(watcher\.condition_json as any\)\?\.digest!==true&&!condition\.matchTerms\?\.length\)\{\n    return processMailAlerts\(/)
+assert.match(w, /const \{alerts,deferred,state,quiet\}=ma\.selectAlerts\(emails,\{rules,attention,state:prior,ctx:\{name:actor\.name,timezone:tz,now:now\.getTime\(\),today,trips,gmailEmail/)
+assert.match(w, /deliverWatchAlert\(\{watcherId:String\(watcher\.id\),owner:telegramId,key,due:now\.toISOString\(\),message:a\.message,condition:watcher\.condition_json,topic:a\.topic,thread:\{kind:'mail_alert'/)
+assert.match(w, /const waitingIds=new Set\(deferred\)/, 'deferred emails stay fresh for the next check')
+for (const p of ['app/api/dashboard/chat/route.ts', 'lib/agent/whatsapp-bridge.ts']) assert.match(readFileSync(p, 'utf8'), /mail-alert-commands'\)\.then\(m=>m\.tryMailAlertCommand\(/, p)
+assert.match(readFileSync('lib/agent/brain.ts', 'utf8'), /never write as if that product were you or did something for the user/)
+console.log('✓ wired: per-email alerts in the inbox watch, rule commands on WhatsApp and dashboard, brain never speaks as Dots')
+const brain = await import('../lib/agent/brain')
+for (const t of ['what do you alert me about?', 'stop renewals', 'track my orders', 'any deliveries today']) assert.ok(brain.isExactCommand(t), `${t} skips the brain`)
+assert.equal(brain.isExactCommand('what do you think about Instinct?'), false)
+console.log('✓ the brain never answers the alert-rules or order questions itself (6 Nov live)')
+console.log('Mail alerts (6 Nov) checks passed')
