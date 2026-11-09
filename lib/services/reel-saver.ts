@@ -37,10 +37,13 @@ export function detectReelUrl(text: string): string | null {
 }
 
 export function detectPlatform(url: string): ContentPlatform {
-  if (/instagram\.com/i.test(url)) return 'instagram'
-  if (/youtube\.com|youtu\.be/i.test(url)) return 'youtube'
-  if (/tiktok\.com/i.test(url)) return 'tiktok'
-  if (/linkedin\.com/i.test(url)) return 'linkedin'
+  // Classify by the parsed URL host, never by a keyword buried in the path or query.
+  let host: string
+  try { host = new URL(url).hostname.toLowerCase() } catch { return 'other' }
+  if (host === 'instagram.com' || host === 'www.instagram.com') return 'instagram'
+  if (host === 'youtube.com' || host === 'www.youtube.com' || host === 'm.youtube.com' || host === 'youtu.be') return 'youtube'
+  if (host === 'tiktok.com' || host === 'www.tiktok.com' || host === 'vm.tiktok.com') return 'tiktok'
+  if (host === 'linkedin.com' || host === 'www.linkedin.com') return 'linkedin'
   return 'other'
 }
 
@@ -186,28 +189,65 @@ Always write something useful — never say you cannot write a note.
 
 // ── Fetch og:title from URL (same source WhatsApp uses for previews) ─────────
 async function fetchOgTitle(url: string): Promise<string | null> {
+  // These URLs originate in user content. Only known HTTPS Instagram paths are
+  // eligible for a *single* direct metadata read. Do not follow redirects,
+  // including a public Instagram redirect to a private destination.
+  let checked: URL
+  try { checked = new URL(url) } catch { return null }
+  if (checked.protocol !== 'https:'
+    || !['instagram.com', 'www.instagram.com'].includes(checked.hostname.toLowerCase())
+    || checked.port || checked.username || checked.password || checked.hash
+    || !/^\/(?:reel|p|tv|stories)\/[^/]+/i.test(checked.pathname)) return null
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 5000)
   try {
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), 5000)
-    const res = await fetch(url, {
+    const res = await fetch(checked.href, {
       signal: controller.signal,
-      headers: {
-        'User-Agent': 'WhatsApp/2.23.20.0',
-        'Accept': 'text/html',
-      },
-      redirect: 'follow',
+      headers: { 'User-Agent': 'WhatsApp/2.23.20.0', 'Accept': 'text/html' },
+      redirect: 'manual',
     })
-    clearTimeout(timer)
-    if (!res.ok) return null
-    const html = await res.text()
+    if (!res.ok || res.redirected || (res.status >= 300 && res.status < 400)) return null
+    // The response URL is checked even when a custom transport reports success.
+    // A mismatch is not task-relevant metadata, and must fail closed.
+    if (res.url) {
+      let finalUrl: URL
+      try { finalUrl = new URL(res.url) } catch { return null }
+      if (finalUrl.href !== checked.href) return null
+    }
+    const declaredLength = res.headers?.get?.('content-length')
+    const maxBytes = 262144
+    if (declaredLength != null && (!/^\d+$/.test(declaredLength) || Number(declaredLength) > maxBytes)) return null
+    // Browser/Node fetch provides a ReadableStream; bound decoded bytes before
+    // accumulating HTML. Inert transports used by existing VM tests may expose
+    // only text(), whose result is still size-checked.
+    let html = ''
+    if (res.body?.getReader) {
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let used = 0
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          used += value.byteLength
+          if (used > maxBytes) return null
+          html += decoder.decode(value, { stream: true })
+        }
+        html += decoder.decode()
+      } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
+    } else {
+      html = await res.text()
+      if (Buffer.byteLength(html, 'utf8') > maxBytes) return null
+    }
     const m = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/i)
       || html.match(/<meta\s+content="([^"]+)"\s+property="og:title"/i)
     if (!m) return null
-    // Decode basic HTML entities
     return m[1]
       .replace(/&quot;/g, '"').replace(/&#x27;/g, String.fromCharCode(39))
       .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
   } catch { return null }
+  finally { clearTimeout(timer) }
 }
 
 // ── Main saveReel function ────────────────────────────────────────────────────
