@@ -22,11 +22,11 @@ import { workspaceEmailAuditScope } from './google-workspace-read'
 import { mergeRegenerated } from './artifact-versions'
 
 const MAX_STEPS = 10
-const CONSEQUENTIAL = new Set<AgentCapability>(['email', 'calendar', 'browser', 'travel', 'payments'])
+const CONSEQUENTIAL = new Set<AgentCapability>(['email', 'calendar', 'browser', 'travel', 'payments', 'merchant'])
 
 const DEFAULT_LEVEL: Record<AgentCapability, AgentPermissionLevel> = {
   memory: 'ask', files: 'ask', reminders: 'auto', lists: 'auto', tasks: 'auto',
-  email: 'draft', calendar: 'ask', browser: 'draft', contacts: 'read', travel: 'draft', payments: 'ask',
+  email: 'draft', calendar: 'ask', browser: 'draft', contacts: 'read', travel: 'draft', payments: 'ask', merchant: 'ask',
 }
 
 export type GeneralPlanTool =

@@ -20,25 +20,30 @@ export function parsePlanSelection(text: string): CheckoutPlanKey | null {
   return null
 }
 
-async function hasActiveSubscription(telegramId: number, whatsappId: string | null): Promise<boolean> {
-  const digits = String(whatsappId || '').replace(/\D/g, '').slice(-10)
-  const clauses: string[] = [`telegram_id.eq.${telegramId}`]
-  if (digits.length === 10) clauses.push(`whatsapp_id.ilike.*${digits}*`)
+// A payment entitlement is bound to the resolved bot actor, never an approximate phone.
+// Two independent international accounts can share the last ten digits.
+async function hasActiveSubscription(telegramId: number): Promise<boolean> {
+  if (!Number.isSafeInteger(telegramId) || telegramId === 0) {
+    throw new Error('invalid_checkout_owner')
+  }
 
-  const { data } = await supabaseAdmin
+  const { data, error } = await supabaseAdmin
     .from('users')
     .select('tier, tier_expires_at, subscription_status')
-    .or(clauses.join(','))
-    .limit(5)
+    .eq('telegram_id', telegramId)
+    .limit(2)
 
+  // Unknown status is not proof that a new subscription is safe to create.
+  if (error || !Array.isArray(data) || data.length > 1) {
+    throw new Error('subscription_status_unverified')
+  }
   const now = Date.now()
-  return (data || []).some((u: any) =>
+  return data.some((u: any) =>
     (u.subscription_status === 'active' || u.subscription_status === 'authenticated') &&
     u.tier && u.tier !== 'free' &&
     (!u.tier_expires_at || new Date(u.tier_expires_at).getTime() > now)
   )
 }
-
 export async function buildPlanCheckoutReply(
   user: { telegramId: number; whatsappId: string | null; name: string },
   planKey: CheckoutPlanKey
@@ -46,11 +51,12 @@ export async function buildPlanCheckoutReply(
   const label = PLAN_LABELS[planKey] || PLAN_LABELS.plus
 
   try {
-    if (await hasActiveSubscription(user.telegramId, user.whatsappId)) {
+    if (await hasActiveSubscription(user.telegramId)) {
       return `You're already on an active Gogo plan. 🎉\n\nReply *usage* to see your capacity, or *cancel* if you'd like to stop.`
     }
   } catch (err) {
-    console.error('plan-checkout: active-sub check failed:', err)
+    console.error('plan-checkout: subscription status unavailable')
+    return `I couldn't verify your current subscription status, so I haven't created another checkout link. Please try again later.`
   }
 
   const phone = user.whatsappId || ''
