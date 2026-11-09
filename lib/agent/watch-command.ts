@@ -81,6 +81,66 @@ function watchCheckTime(value:unknown){
   return Number.isFinite(time)?new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(time))+' IST':null
 }
 
+const every=(m:number)=>m>=1440&&m%1440===0?'daily':m>=60&&m%60===0?`every ${m/60} h`:`every ${m} min`
+const istDay=(t:number)=>new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short'}).format(new Date(t))
+export function shortCheckTime(value:unknown,now=Date.now()){
+  const t=typeof value==='number'?value:Date.parse(String(value||''));if(!Number.isFinite(t))return null
+  const time=new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(t)).replace(/\s?([ap])\.?m\.?/i,' $1m')
+  return istDay(t)===istDay(now)?time:`${istDay(t)}, ${time}`
+}
+const priceAmount=(c:any)=>{const raw=`${c.query||''} ${c.title||''}`;const m=raw.match(/\b(?:below|under)\s+(₹?\s?[\d,]{3,})/i);return c.priceRule?.threshold??(m?parseMoneyAmount(m[1]):null)}
+const priceOffers=(c:any)=>{const raw=`${c.query||''} ${c.title||''}`;return c.priceRule?.offers||(/including bank\/card offers/i.test(raw)?'included':/excluding bank\/card offers/i.test(raw)?'excluded':null)}
+/** The thing being watched, without the rule: "iPhone 16 128GB on Croma". */
+export function watchName(row:any){
+  const c:any=row.condition_json||{}
+  // A price watch's query carries the store ("… on amazon.in"); its title often does not.
+  let t=String((priceAmount(c)?c.query||c.title:c.title||c.query)||row.type||'Watch').replace(/^watch:\s*/i,'').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi,'$1').replace(/\b([A-Za-z0-9][\w.+-]*)(?:\s+\1\b)+/gi,'$1')
+  if(row.type==='email_triage')return 'Your inbox'
+  if(priceAmount(c))t=t.replace(/\s*(?:price\s+)?(?:in\s+India\s+)?\b(?:below|under)\b.*$/i,'').replace(/\s*,?\s*(?:including|excluding|with|without)\s+(?:bank\/card\s+)?offers?\b.*$/i,'').replace(/\s+price(?:\s+in\s+India)?$/i,'').trim()
+  return clean(t,80)
+}
+/** What makes it alert, in plain words. */
+export function watchRule(row:any){
+  const c:any=row.condition_json||{},amount=priceAmount(c)
+  if(amount){const o=priceOffers(c);return `alert below ${formatRupees(Number(amount))}${o==='included'?' (with offers)':o==='excluded'?' (listed price)':''}`}
+  if(row.type==='email_triage')return 'emails that need your action'
+  if(row.type==='product_stock')return `alert when ${c.variant?clean(c.variant,40)+' is ':''}back in stock`
+  if(row.type==='web_page')return c.watch==='title'?'alert when the page title changes':'alert when the page changes'
+  return 'new results'
+}
+function undelivered(row:any){const d=row.last_state_json?.alertDelivery?.state;return d==='failed'||d==='outcome_unknown'||Boolean(row.last_state_json?.pendingAlert)}
+export function compactWatchLine(row:any){
+  const alertedAt=Date.parse(String(row.last_state_json?.lastAlertAt||''))
+  const alerted=!undelivered(row)&&Number.isFinite(alertedAt)&&Date.now()-alertedAt<7*86400_000?` · last alert ${istDay(alertedAt)}`:''
+  return {text:`${watchName(row)} — ${watchRule(row)}${undelivered(row)?' · ⚠️ last alert didn’t reach you':alerted}`,price:Boolean(priceAmount(row.condition_json||{}))}
+}
+/** "Trip airline news · IndiGo" → "IndiGo airline news". */
+export function tripWatchLabel(row:any){
+  const t=String(row.condition_json?.title||'').replace(/^trip\s+/i,'').trim()
+  if(/^email/i.test(t))return 'trip emails'
+  const [what,where]=t.split(/\s+·\s+/)
+  return clean(where?`${where} ${what}`:what||'trip update',60)
+}
+/** A watch that finished on its own in the last two weeks, said the way a person would. Stopped-by-you rows are left out. */
+export function finishedWatchLine(row:any):string|null{
+  const st:any=row.last_state_json||{},c:any=row.condition_json||{}
+  if(c.userStoppedAt||st.stoppedByUser)return null
+  if(st.triggered===true){
+    const when=Date.parse(String(st.triggeredAt||row.updated_at||''))
+    const day=Number.isFinite(when)?` on ${istDay(when)}`:''
+    const name=clean(String(c.title||c.query||'Your watch').replace(/^watch:\s*/i,''),70)
+    if(row.type==='product_stock'){
+      const variant=c.variant?` ${clean(c.variant,30)}`:''
+      const cart=st.cartVerified?' One is in your cart, not ordered.':st.handoffReason?' You can finish on the store page.':''
+      return `${name}${variant} came back in stock${day}.${cart}`
+    }
+    if(row.type==='deadline')return `${name} — reminded you${day}.`
+    return `${name} — found what you asked for${day}.`
+  }
+  return null
+}
+const TRIP_STEP_LABEL:Record<string,string>={'prepare-web-checkin':'web check-in','watch-boarding-pass-email':'your boarding pass email','travel-disruption-watch':'flight changes'}
+
 export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;text:string}) {
   const tg=String(params.actor.legacyTelegramId)
   if(!isWatcherStatusQuery(params.text)){
@@ -146,60 +206,64 @@ export async function tryGetWatcherStatusFromCommand(params:{actor:AgentActor;te
       verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
     }
   }
-  const formatWatcher=(row:any,index:number)=>{
-    const condition:any=row.condition_json||{}
-    let label=String(condition.title||row.type||'Watch').replace(/\b(\d+\s*(?:GB|TB))\s+\1\b/gi,'$1')
-    if(row.type==='web_page') label=`${label} — ${condition.watch==='title'?'page title':'page content'}`
-    else if(row.type==='web_search') label=`${label} — web search`
-    else if(row.type==='product_stock') label=`${label} — ${condition.variant||'stock'}`
-    else if(row.type==='email_triage') label=condition.title||'Inbox action watch'
-    const cadence=Math.max(1,Number(row.cadence_minutes||60))
-    const contextual=condition.contextual===true
-    const criteria=condition.query||condition.productUrl||condition.url||condition.originalRequest
-    const criteriaLine=criteria?`\n   Criteria: ${clean(criteria,1000)}`:''
-    const why=contextual&&condition.reason?`\n   Why: ${String(condition.reason)}`:''
-    const source=contextual?`\n   Source: saved ${condition.contextualKind||'context'}`:`\n   Source: your existing watch`
-    const expires=contextual&&condition.expiresAt&&Number.isFinite(Date.parse(String(condition.expiresAt)))
-      ? `\n   Expires: ${new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(condition.expiresAt))}`
-      : contextual?'':'\n   Expires: stays active until you stop it'
-    const delivery=row.last_state_json?.alertDelivery?.state
-    const notification=delivery==='outcome_unknown'?'\n   WhatsApp alert: delivery is unconfirmed; no blind resend.'
-      :delivery==='failed'?'\n   WhatsApp alert: failed after bounded attempts; result remains in the app.'
-      :row.last_state_json?.pendingAlert?'\n   WhatsApp alert: pending retry.':''
-    const checkTime=(value:unknown)=>{
-      const time=Date.parse(String(value||''))
-      return Number.isFinite(time)?new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date(time))+' IST':null
+  // 30 Oct live, side by side with another assistant: our list was 10 lines of cadences plus a 4-message "why" view of
+  // internal fields; theirs said what each watch alerts on, in plain words. Both views now read like a person.
+  const why=!/^\s*(?:please\s+)?(?:show|list|see|view)\s+(?:me\s+)?(?:all\s+)?(?:of\s+)?my\s+(?:active\s+)?(?:watch(?:es|ers|list)?|alerts|monitors|price\s+alerts)\s*[.!?]*\s*$/i.test(params.text)
+  const tripRows=data.filter((r:any)=>r.condition_json?.contextual===true)
+  const ownRows=data.filter((r:any)=>r.condition_json?.contextual!==true)
+    .sort((x:any,y:any)=>Number(Boolean(priceAmount(y.condition_json||{})))-Number(Boolean(priceAmount(x.condition_json||{}))))
+  const words=(v:string)=>new Set(v.toLowerCase().replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(w=>w.length>1&&!['price','india','on','in','the'].includes(w)))
+  const lines=ownRows.map((row:any,i:number)=>{
+    const c:any=row.condition_json||{}
+    let line=`${i+1}. ${compactWatchLine(row).text}`
+    // A general search for something that already has a price alert is a near-duplicate; say so instead of hiding it.
+    if(!priceAmount(c)){
+      const mine=words(watchName(row))
+      const twin=ownRows.findIndex((o:any)=>o!==row&&priceAmount(o.condition_json||{})&&(()=>{const theirs=words(watchName(o));return [...theirs].every(w=>mine.has(w))||(mine.size>1&&[...mine].every(w=>theirs.has(w)))})())
+      if(twin>=0)line+=` (overlaps #${twin+1})`
     }
-    const last='\n   Last checked: '+(checkTime(row.last_checked_at)||'no completed check recorded')
-    const next='\n   Next check: '+(checkTime(row.next_check_at)||'not scheduled')
-    return `${index+1}. ${label} — active, checking about every ${cadence} min${criteriaLine}${why}${source}${expires}${last}${next}${notification}`
+    if(why){
+      const reason=c.originalRequest&&!priceAmount(c)?` You asked: “${clean(c.originalRequest,90)}”.`:''
+      const last=shortCheckTime(row.last_checked_at),next=shortCheckTime(row.next_check_at)
+      line+=`\n   ${[reason.trim(),last?`Checked ${last}`:'Not checked yet',next?`next ${next} (${every(Math.max(1,Number(row.cadence_minutes||60)))})`:''].filter(Boolean).join(' · ')}`
+    }
+    return line
+  })
+  const tripEnd=tripRows.map((r:any)=>Date.parse(String(r.condition_json?.expiresAt||''))).filter(Number.isFinite).sort((x,y)=>y-x)[0]
+  const tripLabels=Array.from(new Set(tripRows.map(tripWatchLabel)))
+  const {data:steps}=await supabaseAdmin.from('life_event_actions').select('action_key,status')
+    .eq('telegram_id',tg).in('action_key',Object.keys(TRIP_STEP_LABEL))
+    .in('status',['ready','waiting_approval','blocked','running']).limit(12)
+  const stepLabels=Array.from(new Set((steps||[]).map((r:any)=>TRIP_STEP_LABEL[String(r.action_key)]).filter(Boolean)))
+  let trip=''
+  if(tripLabels.length){
+    const nextTrip=tripRows.map((r:any)=>Date.parse(String(r.next_check_at||''))).filter(Number.isFinite).sort((x,y)=>x-y)[0]
+    trip=`\n\n✈️ *For your trip*${tripEnd?` (stops ${istDay(tripEnd)})`:''}: ${tripLabels.join(', ')}.`
+    if(why)trip+=`\n   Set up from your saved itinerary so a strike, delay or weather change reaches you early.${nextTrip?` Next check ${shortCheckTime(nextTrip)}.`:''}`
+    if(stepLabels.length)trip+=`\n   Also handled with the itinerary: ${stepLabels.join(', ')}.`
   }
-  const contextualRows=data.filter((row:any)=>row.condition_json?.contextual===true)
-  const manualRows=data.filter((row:any)=>row.condition_json?.contextual!==true)
-  const contextualLines=contextualRows.map((row:any,index:number)=>formatWatcher(row,index))
-  const manualLines=manualRows.map((row:any,index:number)=>formatWatcher(row,index))
-  const contextualBlock=contextualLines.length?`🧭 *Contextual watches created from your current context*\n\n${contextualLines.join('\n')}`:''
-  const manualBlock=manualLines.length?`👤 *Your other existing watches*\n\n${manualLines.join('\n')}`:''
-  const watcherBlocks=[contextualBlock,manualBlock].filter(Boolean).join('\n\n')
-  const {data:tripSteps}=await supabaseAdmin.from('life_event_actions')
-    .select('id,title,action_key,status,due_at')
-    .eq('telegram_id',tg)
-    .in('action_key',['prepare-web-checkin','watch-boarding-pass-email','travel-disruption-watch'])
-    .in('status',['ready','waiting_approval','blocked','running'])
-    .order('due_at',{ascending:true}).limit(6)
-  const itinerary=(tripSteps||[]).map((row:any)=>`• ${row.title} — ${String(row.status).replace(/_/g,' ')} (itinerary-owned)`)
-  const itineraryBlock=itinerary.length?`\n\n✈️ *Itinerary-owned trip steps*\n${itinerary.join('\n')}\n_These are tied to the saved itinerary rather than duplicated as extra monitors._`:''
+  // Instinct parity (30 Oct): say what already finished, e.g. "Fossil polo XL came back in stock on 21 Oct. One is in your cart, not ordered."
+  const since=new Date(Date.now()-14*86400_000).toISOString()
+  const {data:ended}=await supabaseAdmin.from('agent_watchers').select('id,type,condition_json,last_state_json,updated_at')
+    .eq('telegram_id',tg).eq('active',false).gte('updated_at',since).order('updated_at',{ascending:false}).limit(20)
+  const finished=Array.from(new Set((ended||[]).map(finishedWatchLine).filter(Boolean) as string[])).slice(0,3)
+  const finishedBlock=finished.length?`\n\n✅ *Recently finished*\n${finished.map(l=>`• ${l}`).join('\n')}`:''
+  await rememberTypedObjects(params.actor.legacyTelegramId,'watchers',[...ownRows,...tripRows].map((row:any)=>({id:String(row.id),title:row.condition_json?.contextual===true?tripWatchLabel(row):watchName(row)})))
+  const example=ownRows[0]?watchName(ownRows[0]).split(/\s+/).slice(0,3).join(' '):'trip'
+  const head=why?'Here’s what I’m watching for you and why:':`👀 *Your watches* (${data.length})`
   return {
     runId:'watcher-status-active',status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-    text:`🔎 *Active background monitors*\n\n${watcherBlocks}${itineraryBlock}\n\nSelect a watcher from this list before saying *stop it*, or stop a watcher by name.`,
+    text:`${head}${lines.length?'\n\n'+lines.join(why?'\n\n':'\n'):''}${trip}${finishedBlock}\n\nWant any stopped? Tell me which, like *stop the ${example} alert*.`,
     handledBy:'watcher-status',
-      verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
+    verification:{verified:true,source:'canonical_watchers',kind:'read',objectKind:'watcher_collection',objectRef:(data||[]).map((w:any)=>String(w.id)).join(',')||'empty'},
   }
 }
 
 function stopWatcherIntent(text:string) {
   const raw=clean(text,400).toLowerCase()
   if(/^(?:stop|cancel|remove|disable)\s+.+?\s+(?:watcher|watch|monitor)\b/.test(raw))return 'named'
+  // 29 Oct live: "Stop the Tata Motors alert" and "Cancel the 2BHK search" were not read as stopping a watch.
+  if(!/\b(?:reminders?|alarms?|meeting|event|order|booking|subscription)\b/.test(raw)&&/^(?:stop|cancel|remove|disable|turn\s+off)\s+(?:the\s+|my\s+)?.+?\s+(?:alerts?|search|tracker|tracking|price\s+alert)\s*[.!]*$/.test(raw))return 'named'
   // "stop watching Sony WH-1000XM5": the thing named after the verb is the watch to stop. Only a bare verb or
   // "that / it / this / all" falls through to the latest/all rules below.
   if(/^(?:stop|cancel|remove|disable)\s+(?:monitoring|watching|tracking)\s+(?!(?:that|it|this|all|everything|them|these|those)\b)\S/.test(raw))return 'named'
@@ -270,10 +334,23 @@ export async function tryRestartWatcherFromCommand(params:{actor:AgentActor;text
     const score=tokens.filter(t=>labelTokens.has(t)).length
     return {row,label,score}
   }).filter((x:any)=>x.score>0).sort((a:any,b:any)=>b.score-a.score)
-  const best:any=ranked[0],second:any=ranked[1]
-  if(!best||second?.score===best.score){
+  let best:any=ranked[0];const second:any=ranked[1]
+  let tie=Boolean(best&&second?.score===best.score)
+  // "restart the iPhone 17 alert watch" after the alert and a plain search for the same phone were both stopped.
+  if(tie){
+    const tied=ranked.filter((x:any)=>x.score===best.score),said=String(params.text||'')
+    const wantsSearch=/\bsearch(?:es)?\b/i.test(said)&&!/\b(?:price\s+alert|below|under)\b/i.test(said)
+    const wantsAlert=/\b(?:price\s+)?alerts?\b|\bbelow\b|\bunder\b/i.test(said)&&!wantsSearch
+    const pick=wantsSearch?tied.filter((x:any)=>!priceAmount(x.row.condition_json||{})):wantsAlert?tied.filter((x:any)=>priceAmount(x.row.condition_json||{})):[]
+    // 30 Oct live: older stopped copies of the same alert made "restart the iPhone 17 256GB price alert watch" ask
+    // "be more specific". Rows are newest-stopped first, so the most recently stopped match is the one meant.
+    if(pick.length){best=pick[0];tie=false}
+    else if(new Set(tied.map((x:any)=>priceAmount(x.row.condition_json||{})?'price':x.row.type)).size===1){best=tied[0];tie=false}
+  }
+  if(!best||tie){
+    const options=ranked.filter((x:any)=>x.score===best?.score).slice(0,5).map((x:any,i:number)=>`${i+1}. ${compactWatchLine(x.row).text}`).join('\n')
     return {runId:'watcher-restart-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
-      text:best?'I found more than one plausible stopped watcher. Please be more specific.':'I could not find that stopped watcher in persistent watcher state.',handledBy:'watcher-restart'}
+      text:best?`More than one stopped watch matches:\n${options}\n\nSay *restart the … price alert watch* for the price alert, or *restart the … search watch* for the search.`:`I couldn't find a stopped watch called ${clean(target,80)}. Say *show my watches* to see what's running.`,handledBy:'watcher-restart'}
   }
   const chosen=best.row
   const now=new Date().toISOString()
@@ -289,7 +366,7 @@ export async function tryRestartWatcherFromCommand(params:{actor:AgentActor;text
   await supabaseAdmin.from('agent_activity').insert({telegram_id:tg,event_type:'watcher_restarted',
     message:`Gogo restarted ${best.label}.`.slice(0,900),metadata_json:{watcher_id:chosen.id,type:chosen.type}})
   return {runId:`watcher-restart-${chosen.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-    text:`Watch restarted: ${best.label} — active, checking about every ${Math.max(1,Number(chosen.cadence_minutes||60))} min. You have ${active.length} active watch${active.length===1?'':'es'}.`,handledBy:'watcher-restart'}
+    text:`Restarted: ${chosen.type==='web_search'&&!chosenCondition.goldRule?compactWatchLine(chosen).text:best.label}. You have ${active.length} active watch${active.length===1?'':'es'}.`,handledBy:'watcher-restart'}
 }
 
 // Explicit replacement criteria, not a guessed edit to an ambiguous watch.
@@ -327,7 +404,7 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
   const intent=stopWatcherIntent(params.text)
   if(!intent)return null
   const tg=String(params.actor.legacyTelegramId)
-  if(intent==='named'){    const target=clean(params.text,400).toLowerCase().replace(/^(?:stop|cancel|remove|disable)\s+/,'').replace(/^(?:monitoring|watching|tracking)\s+/,'').replace(/^(?:the|my)\s+/,'').replace(/\s+(?:watcher|watch|monitor)\b.*$/,'').trim()
+  if(intent==='named'){    const target=clean(params.text,400).toLowerCase().replace(/^(?:stop|cancel|remove|disable|turn\s+off)\s+/,'').replace(/^(?:monitoring|watching|tracking)\s+/,'').replace(/^(?:the|my)\s+/,'').replace(/\s+(?:watcher|watch|monitor|alerts?|search|tracker|tracking)\b.*$/,'').trim()
     const rows=await canonicalActiveWatchers(tg)
     const tokens=watcherIdentityTokens(target)
     const ranked=rows.map((row:any)=>{
@@ -346,9 +423,27 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
         if(!distinctive.some(t=>labelTokens.has(t)))ranked.splice(i,1)
       }
     }
-    const best:any=ranked[0],second:any=ranked[1]
+    let best:any=ranked[0];const second:any=ranked[1]
     if(best&&second?.score===best.score){
-      const tied=ranked.filter((x:any)=>x.score===best.score)
+      let tied=ranked.filter((x:any)=>x.score===best.score)
+      // 30 Oct live: "stop the iPhone 17 256GB price India search" also stopped the ₹70,000 price alert for the same
+      // phone. A price alert and a plain search are different watches: "search" picks the search, "alert" the alert,
+      // and anything still mixed is asked about rather than stopped together.
+      const kindOf=(x:any)=>priceAmount(x.row.condition_json||{})?'price':`${x.row.type}`
+      if(new Set(tied.map(kindOf)).size>1){
+        const said=String(params.text||'')
+        const wantsSearch=/\bsearch(?:es)?\b/i.test(said)&&!/\b(?:price\s+alert|below|under)\b/i.test(said)
+        const wantsAlert=/\b(?:price\s+)?alerts?\b|\bbelow\b|\bunder\b/i.test(said)&&!wantsSearch
+        const pick=wantsSearch?tied.filter((x:any)=>!priceAmount(x.row.condition_json||{})):wantsAlert?tied.filter((x:any)=>priceAmount(x.row.condition_json||{})):[]
+        if(pick.length&&new Set(pick.map(kindOf)).size===1)tied=pick
+        else{
+          const list=tied.slice(0,6).map((x:any,i:number)=>`${i+1}. ${compactWatchLine(x.row).text}`).join('\n')
+          return {runId:'watcher-stop-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+            text:`Two different watches match:\n${list}\n\nWhich one? Say *stop the ${typedWatchName(params.text)} alert* for the price alert, or *… search* for the general search.`,handledBy:'watcher-stop'}
+        }
+      }
+      if(tied.length===1){best=tied[0]}
+      else{
       // Every tied watch names the whole target ("Sony WH-1000XM5" twice): they are the same watch saved more than
       // once, so stopping all of them is what the person asked. Different watches that only share a word are listed.
       // A one-word name ("Sony") can mean different products, so that case is listed instead.
@@ -371,6 +466,7 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
       const list=tied.slice(0,6).map((x:any,i:number)=>`${i+1}. ${String(x.label)}`).join('\n')
       return {runId:'watcher-stop-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
         text:`More than one watch matches:\n${list}\n\nSay stop watching followed by the exact name.`,handledBy:'watcher-stop'}
+      }
     }
     if(!best){
       // Say what is running, so the person can pick the right name instead of guessing again.
@@ -396,7 +492,7 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
     if(remaining.some((row:any)=>String(row.id)===String(chosen.id)))throw new Error('watcher_stop_read_after_write_failed')
     await dismissIdeasForWatcherIds(tg,[String(chosen.id)])
     return {runId:`watcher-stop-${chosen.id}`,status:'completed' as const,capability:'browser' as const,risk:'low' as const,
-      text:`Stopped ${String((chosen.condition_json as any)?.title||'that monitor')}. ${remaining.length} other watch${remaining.length===1?' is':'es are'} still running.`,handledBy:'watcher-stop'}
+      text:`Stopped ${chosen.type==='web_search'&&!(chosen.condition_json as any)?.goldRule?`the ${watchName(chosen)} ${priceAmount(chosen.condition_json||{})?'price alert':chosen.condition_json?.contextual===true?'trip watch':'search'}`:String((chosen.condition_json as any)?.title||'that monitor')}. ${remaining.length} other watch${remaining.length===1?' is':'es are'} still running.`,handledBy:'watcher-stop'}
   }
   if(intent==='all'){
     const rows=await canonicalActiveWatchers(tg)
@@ -460,6 +556,9 @@ function productHasStorageEvidence(product:string){
 // Returns null when the text does not decide the basis.
 export function parseOffersBasis(text:string):'included'|'excluded'|null{
   const raw=clean(text,600).toLowerCase()
+  // Short answers to "include bank/card offers or listed price only?": "listed", "listed price", "with offers".
+  if(/^\s*(?:the\s+)?(?:listed|selling|list)(?:\s+(?:selling\s+)?price)?(?:\s+only)?\s*[.!]*\s*$/.test(raw))return 'excluded'
+  if(/^\s*(?:with\s+|include\s+|including\s+)?(?:bank\s+|card\s+|bank\/card\s+)?offers?(?:\s+included)?\s*[.!]*\s*$/.test(raw)||/^\s*(?:include|included|include\s+them)\s*[.!]*\s*$/.test(raw))return 'included'
   if(/\blisted?\s+(?:selling\s+)?price\s+only\b/.test(raw))return 'excluded'
   if(/\bselling\s+price\s+only\b/.test(raw))return 'excluded'
   if(/\b(?:exclude|excluding|without|no|not|don'?t|do\s+not|ignore|ignoring|skip)\b[^.!?]*\boffers?\b/.test(raw))return 'excluded'
@@ -625,11 +724,15 @@ async function finalizePriceWatch(params:{actor:AgentActor;surface:AgentSurface}
       handledBy:'price-watch-clarification',
     }
   }
-  const basisText=persistedOffers==='included'?'including bank/card offers':'excluding bank/card offers'
-  const storageText=persistedStorage?persistedStorage:'no storage variant (N/A)'
+  const basisText=persistedOffers==='included'?'including bank/card offers':'excluding bank/card offers, at the listed price'
+  // 30 Oct live: the confirmation was a 120-word block repeating the product, storage and offers rule twice.
+  const product=p.product.replace(/\s*,?\s*(?:including|incl\.?|with|excluding|without)\s+(?:bank\s*\/?\s*card\s+)?offers?\b.*$/i,'').trim()
+  const storageText=persistedStorage&&!product.replace(/\s+/g,'').toUpperCase().includes(persistedStorage.replace(/\s+/g,'').toUpperCase())?` ${persistedStorage}`:''
+  const cadence=String(created.text||'').match(/I[’']ll check (.+?) at first/)?.[1]||'regularly'
+  const short=product.split(/\s+/).slice(0,2).join(' ')
   return {
     ...created,
-    text:`Persistent watch created: ${p.product}, ${storageText}, India, threshold ${formatRupees(thresholdAmount)}, ${basisText}. I compare the price shown in each search result with that number: strictly below alerts, equal or above stays silent, and I never buy. ${created.text}`,
+    text:`👀 Watching *${product}${storageText}*. I'll message you when it's below ${formatRupees(thresholdAmount)} (${basisText}).\n\nI check ${cadence} and never buy. Say *show my watches* or *stop the ${short} alert*.`,
     handledBy:'price-watch-clarification',
   }
 }
@@ -666,6 +769,12 @@ export async function tryRunPriceWatchClarification(params:{actor:AgentActor;sur
   const replyNA=declaresStorageNotApplicable(params.text)
   // If the reply advances no open slot it is unrelated to this clarification — let normal
   // routing handle it rather than hijacking the message.
+  // 29 Oct live: "Yes" to "include offers or listed price only?" fell through to an old friend-reminder question.
+  // A bare yes/no/ok to an either-or question is not an answer: ask once more with the two exact replies.
+  if(!replyStorage&&!replyOffers&&!replyNA&&/^\s*(?:yes|yeah|yep|yup|ok|okay|sure|no|nope|both|either|any|haan|ha)\s*[.!]*\s*$/i.test(params.text)&&p.offers==='unspecified'){
+    return {runId:'price-watch-clarify',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+      text:`Just to be sure for the ${p.threshold} alert: reply *listed price* to use the price the store shows, or *with offers* to count bank/card offers.`,handledBy:'price-watch-clarification'}
+  }
   if(!replyStorage&&!replyOffers&&!replyNA)return null
 
   if(replyStorage){p.storage=replyStorage;p.storageNA=false}
@@ -689,12 +798,23 @@ export async function tryRunPriceWatchClarification(params:{actor:AgentActor;sur
   return await finalizePriceWatch(params,p)
 }
 
+/** 1440 → "once a day", 180 → "every 3 hours", 15 → "every 15 minutes". Pure. */
+export function cadenceWords(minutes: number): string {
+  const m = Number(minutes) || 0
+  if (m >= 1440 && m % 1440 === 0) return m === 1440 ? 'once a day' : `every ${m / 1440} days`
+  if (m >= 60 && m % 60 === 0) return m === 60 ? 'every hour' : `every ${m / 60} hours`
+  return `every ${m} minutes`
+}
+
 export function parseWebWatchCommand(text: string) {
   const raw = clean(text, 2000)
   if (!raw) return null
 
   const patterns = [
     /^(?:please\s+)?keep\s+(?:searching|looking)\s+(?:the\s+web\s+)?for\s+(.+)$/i,
+    // 29 Oct live (P01): "Find me a 2BHK to rent in Rajajinagar under ₹35,000 and keep looking every day" got one
+    // search and advice to set alerts on MagicBricks. "…and keep looking/checking" is a standing search.
+    /^(?:please\s+)?(?:find|search\s+for|look\s+for|hunt\s+for)\s+(?:me\s+)?(.+?)\s+and\s+keep\s+(?:looking|searching|checking|hunting)\b.*$/i,
     /^(?:please\s+)?(?:watch|monitor|track)\s+(?:the\s+)?(?:web|internet|online)\s+(?:for\s+)?(.+)$/i,
     /^(?:please\s+)?watch\s+(.+?)\s+(?:online|on\s+the\s+web)(?:\s+.*)?$/i,
     // Muse parity case 01 (10 Oct live run): "Watch the news on humanoid robots and Indian AI
@@ -770,7 +890,12 @@ export async function tryCreateInboxTriageWatchFromCommand(params:{
   const {data:consent,error:consentError}=await supabaseAdmin.from('user_consent_settings')
     .select('gmail_enabled').eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
   if(consentError)throw new Error('inbox_watch_consent_read_failed')
-  if(consent?.gmail_enabled===false)return {
+  if(consent?.gmail_enabled!==true&&consent?.gmail_enabled!==false)return {
+    runId:'inbox-watch-consent-missing',status:'paused' as const,capability:'email' as const,risk:'low' as const,
+    text:'I haven’t got your OK to read Gmail yet, so I haven’t started an inbox watch or read any mail. Reconnect Google once at app.askgogo.in/dashboard/settings/email and I’ll read only what you ask for.',
+    blockedReason:'workspace_email_consent_missing',handledBy:'inbox-triage-watch',
+  }
+  if(consent?.gmail_enabled!==true)return {
     runId:'inbox-watch-reading-disabled',status:'paused' as const,capability:'email' as const,risk:'low' as const,
     text:'Gmail reading is disabled in your saved privacy preference. Connecting Google does not change that preference. I haven’t started an inbox watch or read any mail.',
     blockedReason:'workspace_email_reading_disabled',handledBy:'inbox-triage-watch',
@@ -1386,7 +1511,7 @@ export async function tryCreateWebWatchFromCommand(params: {
     status: 'completed' as const,
     capability: 'browser' as const,
     risk: 'low' as const,
-    text: `${'reused' in watcher ? `${reusedWatchText((watcher as ReusedWatcher).updated, condition.query)} ` : ''}Background Gogo is now watching “${condition.query}”. Your request is saved. I’ll check about every ${condition.cadenceMinutes} minutes initially and send the first relevant result with its source link${condition.delivery !== 'app' ? ' in WhatsApp and Ideas' : ' in Ideas'}. Quiet checks may slow down within your plan. Search results are leads; prices, availability and offer terms need provider verification. Say “show my watches” for status or stop a watch by name.`,
+    text: `${'reused' in watcher ? `${reusedWatchText((watcher as ReusedWatcher).updated, condition.query)} ` : ''}Background Gogo is now watching “${condition.query}”. Your request is saved. I’ll check ${cadenceWords(condition.cadenceMinutes)} at first and send the first relevant result with its source link${condition.delivery !== 'app' ? ' in WhatsApp and Ideas' : ' in Ideas'}. Quiet checks may slow down within your plan. Search results are leads; prices, availability and offer terms need provider verification. Say “show my watches” for status or stop a watch by name.`,
     handledBy: 'background-web-watch',
   }
 }

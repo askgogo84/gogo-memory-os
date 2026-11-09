@@ -2,6 +2,8 @@
 // went to the general planner (23.6s) and answered with snippet fares (no airline, times or date-specific price).
 // WhatsApp and /api/agent/run already prefer the specialist travel engine; the dashboard now does too, before the
 // planner. Offline. Run: npx --yes tsx scripts/verify-dashboard-flight-specialist-oct26.mts
+// Also runs the share-price watch checks (registered here to keep package.json free of merge conflicts).
+import './verify-stock-watch-oct26.mts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { shouldPreferSpecialistTravel } from '../lib/agent/specialist-routing'
@@ -15,7 +17,7 @@ assert.equal(shouldPreferSpecialistTravel('Is my flight 6E 6240 on time?'), fals
 const route = readFileSync(new URL('../app/api/dashboard/chat/route.ts', import.meta.url), 'utf8')
 const specialist = route.indexOf("shouldPreferSpecialistTravel(text)) {")
 const planner = route.indexOf('await tryRunGeneralPlan({')
-const places = route.indexOf("import('@/lib/agent/places-search')")
+const places = route.indexOf("import('@/lib/agent/places-context')") // places-search behind saved home area + taste (5 Nov)
 assert.ok(specialist > 0 && planner > 0 && specialist < planner, 'specialist travel runs before the general planner')
 assert.ok(places > 0 && places < specialist, 'hotel/restaurant place asks are still answered by places search first')
 const block = route.slice(specialist, planner)

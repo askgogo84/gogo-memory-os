@@ -4,7 +4,7 @@ import { browserFailureSummary } from './browser-failure-notice'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { rememberTypedObjects } from './typed-object-context'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
-import { evaluateAgentExecutionPolicy, type AgentPermissionLevel } from './policy'
+import { capabilityPausedText, evaluateAgentExecutionPolicy, pausedBrowserCapability, type AgentPermissionLevel } from './policy'
 import { evaluateAgentSentinel } from './sentinel'
 import { runSecureBrowser, tryObscuraBrowserRead, type BrowserMode } from './secure-computer'
 import type { AgentActor } from './actor'
@@ -275,6 +275,8 @@ export function parseConnectedProviderCartAction(text:string):BrowserCommand|nul
     alias:new RegExp('\\b(?:'+(provider.aliases||[provider.key]).map(name=>name.replace(/\./g,'\\.')).join('|')+')\\b','i'),
     loginUrl:provider.loginUrl,
   })).filter(provider=>provider.alias.test(raw))
+    // "Swiggy Instamart" names one store: the Swiggy login provider is the same site, not a second candidate.
+    .filter(provider=>!shoppingSites.some(site=>new URL(site.loginUrl).host===new URL(provider.loginUrl).host))
   const candidates=[...shoppingSites,...vaultCandidates]
   if(candidates.length!==1)return null
   return {
@@ -454,6 +456,19 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   // typed into the same page when the person sends it (16 Oct). Same owner as ordinary reads: same saved cookies.
   const vaultAccountRead=params.mode==='read'&&!persistentCommerce&&(()=>{try{return Boolean(findVaultProviderForDomain(new URL(params.command.url).hostname))}catch{return false}})()
   const persistentAccountSession=accountCreation||providerBooking||vaultAccountRead
+  // Launch kill switches (GOGO_BOOKING / GOGO_LOGGED_IN_BROWSER): the one place every secure-browser run passes
+  // before a browser starts, including approved runs already queued when the switch was flipped. Nothing is opened.
+  const pausedCapability=typeof pausedBrowserCapability==='function'&&pausedBrowserCapability({mode:params.mode,flow:params.command.flow||null,approvalAction:params.command.approvalAction||null,
+    vaultCredentialId:params.command.vaultCredentialId||null,accountSite:vaultAccountRead,
+    commerceSession:Boolean(runMetadata.commerce_parent_id)&&!runMetadata.comparison_parent_id,siteSession:Boolean(runMetadata.site_session)})
+  if(pausedCapability){
+    const text=capabilityPausedText(pausedCapability,{searchLink:params.command.url})
+    const at=new Date().toISOString()
+    await supabaseAdmin.from('agent_steps').update({status:'failed',error:`capability_paused:${pausedCapability}`,completed_at:at}).eq('id',params.stepId)
+    await supabaseAdmin.from('agent_runs').update({status:'failed',error:`capability_paused:${pausedCapability}`,summary:safe(text,600),completed_at:at,updated_at:at}).eq('id',params.runId).eq('telegram_id',String(tg))
+    await activity(tg,params.runId,'capability_paused',`Not started: ${pausedCapability} is paused. Nothing was done.`,{capability:pausedCapability})
+    return {runId:params.runId,status:'paused' as const,capability:'browser' as const,risk:params.command.risk,text,handledBy:'secure-browser' as const}
+  }
   const browserOwner=persistentCommerce?linkedBrowserOwner(params.actor.userId,{...runMetadata,url:runMetadata.url||params.command.url}):accountCreation?params.actor.userId+':account:'+params.runId:providerBooking?params.actor.userId+':booking:'+params.runId:params.actor.userId
   const resumePage=(persistentCommerce||persistentAccountSession)&&Boolean(runMetadata.handoff)
   // Captured before the handoff is released below: a resumed run must never hand the page back again.
@@ -482,7 +497,9 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
   await activity(tg,params.runId,'run_started','Gogo started the isolated browser session.',{mode:params.mode})
   let pendingHandoffReservation:string|undefined
   try{
-    const bookingPhone=providerBooking?indianMobileFromWhatsApp(params.actor.whatsappId):null
+    // 27 Oct: a flight booking uses the ticket mobile the person gave and approved; other bookings use their WhatsApp number.
+    const approvedMobile=/^[6-9]\d{9}$/.test(String(runMetadata?.flight_booking?.contact_mobile||''))?String(runMetadata.flight_booking.contact_mobile):null
+    const bookingPhone=providerBooking?(approvedMobile||indianMobileFromWhatsApp(params.actor.whatsappId)):null
     // Read-only public search can use the disposable Obscura observer first.
     // Existing account/Take Control browser still owns any fallback. Only this
     // exact explicit Flipkart search shape can take the public preflight.
@@ -516,7 +533,7 @@ async function executeBrowser(params:{actor:AgentActor;runId:string;stepId:strin
     const readObjective=params.mode==='read'&&!params.command.vaultCredentialId&&typeof withDeliveryPincode==='function'
       ?withDeliveryPincode(params.command.objective,params.command.url).objective:params.command.objective
     const result=reconciledResult||publicResult||comparisonResult||await runSecureBrowser({reservePasswordHandoff:true,reserveHumanHandoff:true,userId:params.actor.userId,runId:params.runId,accountCreation,
-      ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),...(params.loginCode?{loginCode:params.loginCode}:{}),...(vaultAccountRead&&indianMobileFromWhatsApp(params.actor.whatsappId)?{phoneLogin:{number:indianMobileFromWhatsApp(params.actor.whatsappId)!,telegramId:String(tg)}}:{}),url:params.command.url,objective:readObjective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(fallbackReadDeadline?{readDeadline:fallbackReadDeadline}:{}),...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
+      ...(providerBooking?{providerBooking:true,bookingPhone,bookingOtp:params.bookingOtp||null}:{}),...(params.loginCode?{loginCode:params.loginCode}:{}),...(vaultAccountRead&&indianMobileFromWhatsApp(params.actor.whatsappId)?{phoneLogin:{number:indianMobileFromWhatsApp(params.actor.whatsappId)!,telegramId:String(tg)}}:{}),url:params.command.url,objective:readObjective,mode:params.mode,vaultCredentialId:params.command.vaultCredentialId||null,...(runMetadata.comparison_parent_id&&params.mode==='read'?{publicOnly:true}:{}),...(fallbackReadDeadline?{readDeadline:fallbackReadDeadline}:{}),...(persistentCommerce||persistentAccountSession?{keepAlive:true,keepAliveOwner:browserOwner,sessionTaskId:params.runId,resumePage}:{})})
     pendingHandoffReservation=result.handoffReservation
     // Why a run stopped, without page text, selectors or values: answers "why was it blocked?".
     try{console.log('BROWSER_RUN_RESULT:',JSON.stringify({runId:params.runId,status:result.status,blockReason:(result as any).blockReason||null,authReason:(result as any).authReason||null,host:(()=>{try{return new URL(String(result.url||'')).hostname}catch{return null}})(),title:String(result.title||'').slice(0,80),steps:(result.actions||[]).slice(0,20).map((a:any)=>`${a.kind}:${a.status}`),signupVault:(result as any).signupVault||null}))}catch{}
@@ -798,7 +815,7 @@ export async function takeControlOfCommerceRead(params:{actor:AgentActor;runId:s
 function linkedBrowserOwner(userId:string,meta:any){
   if(meta?.comparison_parent_id){
     try{const host=new URL(String(meta.url||'')).hostname.replace(/^www\./,'')
-      const store=host==='amazon.in'?'amazon':host==='flipkart.com'?'flipkart':host==='croma.com'?'croma':host==='reliancedigital.in'?'reliance':null
+      const store=host==='amazon.in'?'amazon':host==='flipkart.com'?'flipkart':host==='croma.com'?'croma':host==='reliancedigital.in'?'reliance':host==='swiggy.com'?'swiggy':host==='zomato.com'?'zomato':null
       if(store)return userId+':commerce:'+store}catch{}
   }
   return userId+':commerce'
@@ -828,6 +845,11 @@ export async function runBrowserCommand(params:{actor:AgentActor;surface:AgentSu
     return {runId:'',status:'paused' as const,capability:'browser' as const,risk:command.risk,text:`Gogo Sentinel blocked this browser request: ${sentinel.reason}`,handledBy:'secure-browser' as const}
   }
 
+  // Launch kill switches: refuse before any run or approval is created (cart actions, account flows, saved logins).
+  const pausedCapability=typeof pausedBrowserCapability==='function'&&pausedBrowserCapability({mode:command.mode,flow:command.flow||null,approvalAction:command.approvalAction||null,
+    vaultCredentialId:command.vaultCredentialId||null,accountSite:(()=>{try{return Boolean(findVaultProviderForDomain(new URL(command.url).hostname))}catch{return false}})()})
+  if(pausedCapability)return {runId:'',status:'paused' as const,capability:'browser' as const,risk:command.risk,text:capabilityPausedText(pausedCapability,{searchLink:command.url}),handledBy:'secure-browser' as const}
+
   const tg=params.actor.legacyTelegramId
   const existing=await findActiveBrowserRead(String(tg),command)
   if(existing)return {runId:existing.id,status:'running' as const,capability:'browser' as const,risk:command.risk,
@@ -839,7 +861,13 @@ export async function runBrowserCommand(params:{actor:AgentActor;surface:AgentSu
   if(!policy.allowed){
     if(command.mode==='execute' && command.approvalAction && (policy.reason==='approval_required'||policy.reason==='auto_not_allowed_for_consequential_action')){
       const approvalId=await approval({actor:params.actor,runId,stepId,command})
-      return {runId,status:'waiting_approval' as const,capability:'browser' as const,risk:'high' as const,text:'I can do this in the secure browser, but I need your approval before the final submit/booking/purchase.',approvalId,approvalRequired:true,handledBy:'secure-browser' as const}
+      // 26 Oct live: the cart approval said only "I need your approval before the final submit/booking/purchase"
+      // with no item or store. Say what Gogo will do, where, and what it will never do.
+      let site='the site';try{site=new URL(command.url).hostname.replace(/^www\./,'')}catch{}
+      const ask=String(command.objective||'').split(/(?<=[.!?])\s/)[0].replace(/\s+/g,' ').trim().slice(0,200)
+      const cart=/\b(?:cart|basket)\b/i.test(command.objective||'')
+      return {runId,status:'waiting_approval' as const,capability:'browser' as const,risk:'high' as const,
+        text:`Ready on ${site}: ${ask}\n\n${cart?'Gogo will add it to your cart in the secure browser and stop there. It never checks out or pays.':'Gogo will do this in the secure browser and stop before any payment.'}\n\nReply *APPROVE* to go ahead or *REJECT* to cancel.`,approvalId,approvalRequired:true,handledBy:'secure-browser' as const}
     }
     await supabaseAdmin.from('agent_runs').update({status:'paused',summary:`Browser blocked by Gogo Safe Mode: ${policy.reason}`,updated_at:new Date().toISOString()}).eq('id',runId).eq('telegram_id',String(tg))
     return {runId,status:'paused' as const,capability:'browser' as const,risk:command.risk,text:`Gogo Safe Mode blocked the browser action: ${policy.reason}`,handledBy:'secure-browser' as const}
