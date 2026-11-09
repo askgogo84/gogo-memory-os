@@ -63,12 +63,26 @@ check('labelled password still redacted', !redactSecretShapedText('password: hun
   const embedded: string[] = []
   const upserts: Array<{ table: string; row: any; conflict: any }> = []
   const supabaseAdmin = {
-    from: (table: string) => ({
-      upsert: async (row: any, conflict: any) => {
-        upserts.push({ table, row, conflict })
-        return { error: null }
-      },
-    }),
+    from: (table: string) => {
+      // indexMemory now confirms the owner's source memory still exists (before and after
+      // embedding). The synthetic source row exists for its own owner/id only.
+      const filters: Record<string, unknown> = {}
+      const read: any = {
+        select: () => read,
+        eq: (col: string, value: unknown) => { filters[col] = value; return read },
+        maybeSingle: async () => ({
+          data: table === 'memories' && filters.telegram_id === 42 ? { id: filters.id } : null,
+          error: null,
+        }),
+      }
+      return {
+        select: read.select,
+        upsert: async (row: any, conflict: any) => {
+          upserts.push({ table, row, conflict })
+          return { error: null }
+        },
+      }
+    },
   }
   const mocks: Record<string, any> = {
     '@/lib/supabase-admin': { supabaseAdmin },
