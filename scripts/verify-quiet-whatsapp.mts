@@ -14,14 +14,23 @@ assert.equal(pol.mayVolunteer('check_in', { GOGO_PROACTIVE: 'ALL' }), true)
 assert.equal(pol.volunteeredSendsOn({ GOGO_PROACTIVE: 'quiet' }), false)
 console.log('✓ volunteered messages are off by default; GOGO_PROACTIVE=all turns them back on')
 
-// 2. The four volunteered senders are gated before they read or send anything.
-assert.match(read('app/api/cron/daily-briefings/route.ts'), /if \(!mayVolunteer\('morning_briefing'\)\) return NextResponse\.json\(\{ ok: true, skipped: 'quiet_whatsapp' \}\)\n  return withDeliveryHeartbeat/)
+// 2. Volunteered WhatsApp briefing is gated per channel, never by skipping an opted-in
+// EMAIL briefing or its receipt reconciliation. Other volunteered senders still exit early.
+const dailyBriefRoute = read('app/api/cron/daily-briefings/route.ts')
+assert.match(dailyBriefRoute, /if \(!isCronAuthorized\(req\)\) return NextResponse\.json\(/, 'authorize cron before any work')
+assert.match(dailyBriefRoute, /return withDeliveryHeartbeat\('briefing', \(\) => runDelivery\(req\)\)/, 'delivery worker continues in quiet mode')
+assert.doesNotMatch(dailyBriefRoute, /if \(!mayVolunteer\('morning_briefing'\)\) return NextResponse\.json\(/, 'quiet mode must not short-circuit opted-in email')
+assert.match(dailyBriefRoute, /const allowVolunteeredWhatsApp = mayVolunteer\('morning_briefing'\)/)
+assert.match(dailyBriefRoute, /if \(allowVolunteeredWhatsApp && user\.briefing_enabled && phone/, 'WhatsApp eligibility remains gated')
+assert.match(dailyBriefRoute, /: allowVolunteeredWhatsApp && fresh\.briefing_enabled === true/, 'WhatsApp readiness rechecks policy and consent')
+assert.match(dailyBriefRoute, /if \(Date\.now\(\) < deadline && user\.daily_brief_email_enabled && email/, 'email remains expressly opt-in')
+assert.match(dailyBriefRoute, /await reconcileBriefingEmailReceipts\(/, 'receipt reconciliation cannot be silenced with WhatsApp')
 assert.match(read('lib/agent/autonomy-pulse.ts'), /if\(!mayVolunteer\('check_in'\)\)return \{[^}]*quiet:true\}\n  const ids=await candidateUserIds\(\)/)
 assert.match(read('lib/agent/meeting-nudge.ts'), /if \(!mayVolunteer\('meeting_nudge'\)\) return [^\n]+\n  const nowIso/)
 assert.match(read('lib/agent/goal-engine.ts'), /if\(!actor\.whatsappId\)return\n[^\n]*\n[^\n]*\n  if\(!mayVolunteer\('goal_review'\)\)return/)
 const pulse = await import('../lib/agent/autonomy-pulse')
 assert.deepEqual(await pulse.processAutonomyPulse(), { considered: 0, sent: 0, skipped: 0, failed: 0, results: [], quiet: true }, 'returns before any read')
-console.log('✓ morning briefing, check-ins, meeting nudges and goal-review pings are quiet')
+console.log('✓ volunteered WhatsApp briefings, check-ins, meeting nudges and goal-review pings are quiet; subscribed email continues')
 
 // 3. Necessary sends are untouched: reminders, follow-ups, watch alerts, flight tracking, task results, OTP, ops.
 for (const f of ['app/api/cron/reminders/route.ts', 'app/api/followups/route.ts', 'lib/agent/watch-alert-delivery.ts', 'lib/agent/flight-track.ts', 'lib/agent/run-notify.ts', 'lib/agent/run-outcome-delivery.ts', 'lib/dashboard/whatsapp-otp.ts', 'lib/ops/run.ts'])
