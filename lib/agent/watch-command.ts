@@ -447,7 +447,10 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
       // Every tied watch names the whole target ("Sony WH-1000XM5" twice): they are the same watch saved more than
       // once, so stopping all of them is what the person asked. Different watches that only share a word are listed.
       // A one-word name ("Sony") can mean different products, so that case is listed instead.
-      if(tokens.length>=2&&best.score===tokens.length){
+      // Red #1110: "Samsung Galaxy" covers S24 and S25, and "Galaxy S24" covers 128GB and 256GB. Only rows whose own
+      // names reduce to the same identity are copies; distinct product, storage or colour variants are listed.
+      const sameIdentity=new Set(tied.map((x:any)=>[...new Set(watcherIdentityTokens(String(x.label)))].sort().join(' '))).size===1
+      if(tokens.length>=2&&best.score===tokens.length&&sameIdentity){
         const now=new Date().toISOString()
         const ids=tied.map((x:any)=>String(x.row.id))
         for(const x of tied){
