@@ -3,6 +3,7 @@
 // Returns a reply string if handled, null to fall through to Claude
 
 import { parseSplitIntent } from '@/lib/splitwise/split-parser'
+const PAYMENT_CONFIRMATION = /\b(?:payment\s+status|merchant\s+name|transaction\s+(?:id|no|ref)|txn\s+(?:id|no|ref)|utr|upi\s+ref|reference\s+(?:no|number)|paid\s+successfully|payment\s+(?:was\s+)?successful|successfully\s+(?:paid|debited))\b/i
 import { handleNutritionText, isNutritionLogText, isNutritionCommand } from '@/lib/bot/handlers/nutrition'
 import { detectReelUrl, detectInstagramPreviewCard, detectLinkedInPreviewCard, saveReel } from '@/lib/services/reel-saver'
 import { saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
@@ -217,7 +218,8 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
 
   // ── ASK GOGO SPLIT ──────────────────────────────────────────────────────
   // Guard: skip split parser for food-logging sentences
-  if (!isNutritionLogText(text) && parseSplitIntent(text) && may('money', 'legacy_split')) {
+  // 6 Nov live: "Payment Status: SUCCESS, Merchant Name: … Amount: ₹41,898.00, Paid By: …" became a ₹41 split.
+  if (!isNutritionLogText(text) && !PAYMENT_CONFIRMATION.test(text) && parseSplitIntent(text) && may('money', 'legacy_split')) {
     return (await post('/api/splitbill', { phone, text }))?.reply ?? null
   }
 
@@ -243,6 +245,14 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
     if (expReply) return expReply
   }
 
+  // 29 Oct (Muse 15): "Make my monthly spending statement for September … ask me about any cash spends".
+  if (/^(?:please\s+)?(?:make|show|give|prepare|create|send|get)\s+(?:me\s+)?(?:my\s+)?(?:monthly\s+)?(?:spending|expenses?|spends?)\s+(?:statement|report|summary|breakdown)\b/i.test(t) && may('money', 'legacy_expense_query')) {
+    const { namedMonthRange } = await import('@/lib/bot/services/expense-storage')
+    const named = namedMonthRange(t)
+    const cash = /\bcash\b/i.test(t) ? '1' : '0'
+    return (await get('/api/expenses', { phone, period: 'month', insight: '0', cash, ...(named ? { month: named.month } : {}), ...(extra?.telegramId ? { telegramId: String(extra.telegramId) } : {}) }))?.reply ?? null
+  }
+
   // Query: "expenses today", "expense insight", "my spending this week"
   if (/^(my expenses?|expenses? today|spending today|expense (report|insight|summary)|how much.*(spend|spent)|analy[sz]e.*spend|what did i spend|where did my money go|my spending)/i.test(t) && may('money', 'legacy_expense_query')) {
     const insight = /insight|analys|ai/i.test(t) ? '1' : '0'
@@ -258,7 +268,15 @@ export async function routeFeatureIntent(phone: string, text: string, extra?: { 
   if (/^(tasks?|my tasks?|show tasks?|to-?do list?)$/i.test(t)) {
     return (await post('/api/todos', { phone, action: 'list' }))?.reply ?? null
   }
-  const doneMatch = t.match(/^(done|completed?|finished?|did)\s+(.+)/)
+  // 27 Oct live: "Did it land?" became "Marked done: it land?". A question is never a completion: "did <task>" only
+  // marks done when it is a statement and not about "it/you/he/she/they/we".
+  const doneQuestion = /\?\s*$/.test(t) || /^did\s+(?:it|you|he|she|they|we|i|this|that|the|my|your|his|her|their|our)\b/.test(t)
+  // "Did it land?" / "has the flight taken off?" right after tracking a flight: answer from that flight's watch.
+  if (extra?.telegramId && t.length <= 80 && /^(?:so\s+|and\s+|ok\s+|hey\s+)?(?:did|has|have|is|was|will|when|where|what)\s/.test(t)) {
+    const flight = await import('@/lib/agent/flight-track').then(m => m.pronounFlightReply(extra.telegramId!, text)).catch(() => null)
+    if (flight) return flight
+  }
+  const doneMatch = doneQuestion ? null : t.match(/^(done|completed?|finished?|did)\s+(.+)/)
   if (doneMatch && may('list', 'legacy_done')) {
     const arg = doneMatch[2].trim()
     // "done <number>" (done 1) stays EXACTLY as before → reminders/todos. Only a
