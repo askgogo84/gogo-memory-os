@@ -15,7 +15,8 @@ export default async function DashboardShell({ children }: { children: React.Rea
   const session=await getSession()
   if(!session)redirect('/dashboard')
   const base=await getShellData(session.telegramId).catch(()=>({name:'',plan:null,meters:[],setup:[]}))
-  const shell={...base,spaces:(await import('@/lib/spaces/sources-live')).spacesEnabledFor(String(session.telegramId))}
+  const live=await import('@/lib/spaces/sources-live')
+  const shell={...base,spaces:live.spacesEnabledFor(String(session.telegramId)),navV2:live.navV2EnabledFor(String(session.telegramId))}
 
   return (
     <GogoLiveProvider>
