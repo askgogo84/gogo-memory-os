@@ -6,8 +6,10 @@
 
 const clean = (v: unknown, max = 120) => String(v ?? '').replace(/[*_~`]/g, '').replace(/\s+/g, ' ').trim().slice(0, max)
 
-const PRODUCT_NOUN = /\b(shirts?|t-?shirts?|tees?|polos?|kurtas?|kurtis?|sarees?|sari|lehengas?|dress(?:es)?|tops?|blouses?|jeans|trousers?|pants|chinos|shorts|joggers|track ?pants|jackets?|blazers?|hoodies?|sweaters?|sweatshirts?|coats?|suits?|nehru jackets?|shoes|sneakers|loafers|sandals|slippers|heels|boots|flip ?flops|socks|belts?|wallets?|bags?|backpacks?|handbags?|totes?|luggage|suitcases?|trolley ?bags?|watch(?:es)?|smart ?watch(?:es)?|sunglasses|spectacles|caps?|hats?|scarf|scarves|earrings|necklaces?|rings?|bracelets?|perfumes?|deodorants?|headphones|earbuds|earphones|speakers?|power ?banks?|chargers?|mouse|keyboards?|monitors?|water ?bottles?|bottles?|mugs?|pillows?|bedsheets?|curtains?|towels?|lamps?|chairs?|desks?|mattress(?:es)?|cookware|pans?|kettles?|mixers?|toys?|books?)\b/i
-const ASK = /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:find|show|suggest|recommend|get|search(?: for)?|look(?:ing)? for|i (?:want|need)(?: to buy)?|buy|shop for|any good)\b/i
+const PRODUCT_NOUN = /\b(shirts?|t-?shirts?|tees?|polos?|kurtas?|kurtis?|sarees?|sari|lehengas?|dress(?:es)?|tops?|blouses?|jeans|trousers?|pants|chinos|shorts|joggers|track ?pants|jackets?|blazers?|hoodies?|sweaters?|sweatshirts?|coats?|suits?|nehru jackets?|shoes|sneakers|loafers|sandals|slippers|heels|boots|flip ?flops|socks|belts?|wallets?|bags?|backpacks?|handbags?|totes?|luggage|suitcases?|trolley ?bags?|watch(?:es)?|smart ?watch(?:es)?|sunglasses|spectacles|caps?|hats?|scarf|scarves|earrings|necklaces?|rings?|bracelets?|perfumes?|deodorants?|headphones|earbuds|earphones|speakers?|power ?banks?|chargers?|mouse|keyboards?|monitors?|water ?bottles?|bottles?|mugs?|pillows?|bedsheets?|curtains?|towels?|lamps?|chairs?|desks?|mattress(?:es)?|cookware|pans?|kettles?|mixers?|toys?|books?|laptops?|notebooks?|tvs?|televisions?|phones?|smartphones?|mobiles?|earbuds|earphones?|headphones?|headsets?|monitors?|printers?|tablets?|ipads?|smart ?watch(?:es)?|fitness bands?|speakers?|soundbars?|cameras?|mixers?|grinders?|fridges?|refrigerators?|washing machines?|microwaves?|ovens?|air fryers?|air purifiers?|acs?|air conditioners?|coolers?|geysers?|water heaters?|mattress(?:es)?|pillows?|chairs?|office chairs?|sofas?|bookshelves|routers?|power ?banks?|chargers?|keyboards?|mice|mouse|trimmers?|hair dryers?|shavers?|strollers?|car seats?|helmets?|cycles?|bicycles?|treadmills?|dumbbells?)\b/i
+// 7 Nov live: "best standing desk under 15000" had no verb, went to a web answer, and came back with US desks in
+// dollars. A superlative plus a product noun is a product ask too.
+const ASK = /^(?:please\s+)?(?:can you\s+|could you\s+)?(?:find|show|suggest|recommend|get|search(?: for)?|look(?:ing)? for|i (?:want|need)(?: to buy)?|buy|shop for|any good|(?:what(?:'s| is| are)\s+(?:a|the|some)\s+)?(?:best|good|top(?:\s+\d{1,2})?|cheapest|most affordable|value for money|decent)\b(?!\s+(?:way|time|place|restaurant|cafe|area|route))|which)\b/i
 const NOT_DISCOVERY = /\b(compare|comparison|price of|track|watch|alert|order status|my order|delivered|return|refund|recipe|restaurant|swiggy|zomato|instamart|blinkit|zepto|grocer(?:y|ies)|flight|hotel|train|ticket|movie)\b/i
 
 export type ProductAsk = { query: string; maxPrice: number | null; minPrice: number | null; rated?: boolean }
@@ -37,10 +39,10 @@ export function parseProductAsk(text: string): ProductAsk | null {
     .replace(ASK, '')
     .replace(/\b(?:between|from)\s*(?:rs\.?|inr|₹)?\s*[\d,.]+\s*k?\s*(?:and|to|-)\s*(?:rs\.?|inr|₹)?\s*[\d,.]+\s*k?/i, '')
     .replace(/\b(?:under|below|less than|within|upto|up to|max(?:imum)?|budget(?: of)?|not more than|above|over|more than)\s*(?:rs\.?|inr|₹)?\s*[\d,.]+\s*k?\b(?:\s*(?:rs|rupees|inr))?/gi, '')
-    .replace(/^\s*(?:me|us)\b/i, '').replace(/^\s*(?:a|an|some|the|good|nice|best)\b\s*/gi, '').replace(/\b(?:online|for me|please|in india)\b/gi, '')
+    .replace(/^\s*(?:me|us)\b/i, '').replace(/^\s*(?:a|an|some|the|good|nice|best|top|cheapest|decent|most affordable|value for money)\b\s*/gi, '').replace(/^\s*(?:is|are)\s+(?:a|the|some)\s+/i, '').replace(/\b(?:online|for me|please|in india)\b/gi, '')
     .replace(/\s+/g, ' ').trim()
   if (!query || !PRODUCT_NOUN.test(query)) return null
-  return { query: clean(query.replace(/\s+(?:and|with)\s*$/i, ''), 80), maxPrice, minPrice, ...(rated ? { rated: true } : {}) }
+  return { query: clean(query.replace(/\s+(?:and|with|has|have|that|which|is|are)\s*$/i, ''), 80), maxPrice, minPrice, ...(rated ? { rated: true } : {}) }
 }
 
 export type ShoppingItem = { title: string; source: string; link: string; price: number | null; priceText: string; rating?: number; ratingCount?: number }
