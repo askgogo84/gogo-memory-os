@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 const sc = readFileSync(new URL('../lib/agent/secure-computer.ts', import.meta.url), 'utf8')
 const block = sc.slice(sc.indexOf('Google Flights opened its blank search form'), sc.indexOf('One bounded recovery for the actual travel adapter'))
-assert.match(block, /if\(providerBooking&&onGoogle&&!bookingStartReloaded&&wave<3\)/, 'bookings on Google only, once, early')
+assert.ok(block.includes("if((providerBooking||(params.mode==='read'&&params.recoverFlightSearch===true))&&onGoogle&&!bookingStartReloaded&&wave<3)"), 'bookings and flight reads (27 Oct) on Google only, once, early')
 assert.ok(block.includes("/^Where to\\?/i.test(String(c?.label||'').trim())&&!String(c?.value||'').trim()"), 'only when the destination box is empty')
 assert.match(block, /actions\.splice\(0,actions\.length,\{kind:'goto',url:String\(params\.url\)\}/, 'reloads exactly the approved URL')
 assert.match(sc, /let flightSearchRecoveryUsed=false,bookingStartReloaded=false/)

@@ -138,12 +138,31 @@ export async function trackerCrossCheck(p: { flightNo: string; departAt: string;
 
 export type LiveLookupOptions = { telegramId?: string; crossCheck?: boolean; search?: WebSearchFn }
 
-export async function lookupLiveFlight(code: string, now = new Date(), tz = 'Asia/Kolkata', fetcher: FlightFetcher = fetchAeroDataBox, opts: LiveLookupOptions = {}): Promise<LiveFlight | null> {
+// 4 Nov live: one "did it land?" looked the flight up twice (brain + status handler) — six feed calls and two
+// Parallel shadow calls. The same live-feed lookup within a minute reuses the first answer. Only for the real feed.
+const LIVE_CACHE = new Map<string, { at: number; p: Promise<LiveFlight | null> }>()
+const LIVE_TTL_MS = 60_000
+export function lookupLiveFlight(code: string, now = new Date(), tz = 'Asia/Kolkata', fetcher: FlightFetcher = fetchAeroDataBox, opts: LiveLookupOptions = {}): Promise<LiveFlight | null> {
+  if (fetcher !== fetchAeroDataBox || opts.search || opts.crossCheck === false) return lookupLiveFlightUncached(code, now, tz, fetcher, opts)
+  const key = `${normalizeFlightNo(code)}|${tz}`
+  const t = Date.now()
+  for (const [k, v] of LIVE_CACHE) if (t - v.at > LIVE_TTL_MS) LIVE_CACHE.delete(k)
+  const hit = LIVE_CACHE.get(key)
+  if (hit) return hit.p
+  const p = lookupLiveFlightUncached(code, now, tz, fetcher, opts)
+  LIVE_CACHE.set(key, { at: t, p })
+  p.catch(() => LIVE_CACHE.delete(key))
+  return p
+}
+
+async function lookupLiveFlightUncached(code: string, now: Date, tz: string, fetcher: FlightFetcher, opts: LiveLookupOptions): Promise<LiveFlight | null> {
   const ymd = (ms: number) => new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date(ms))
   const days = [...new Set([ymd(now.getTime() - 86_400_000), ymd(now.getTime()), ymd(now.getTime() + 86_400_000)])]
   const list = (await Promise.all(days.map(d => fetcher(code, d).catch(() => [])))).flat()
   const o = pickLiveOccurrence(list, now.getTime())
-  if (!o) return null
+  // 3 Nov live: the feed was over quota (429) and the shadow never ran. Ask Parallel on a miss too (Gogo had no
+  // answer), so the trial measures coverage as well as agreement. Background, never shown.
+  if (!o) { if (fetcher === fetchAeroDataBox) void shadowLookup(normalizeFlightNo(code), now.toISOString(), '', '', 'unknown', now); return null }
   const depUtc = new Date(utcOf(o.departure?.scheduledTime)).toISOString()
   const arrMs = utcOf(o.arrival?.scheduledTime)
   let status = parseFlightData([o], depUtc)
@@ -158,6 +177,8 @@ export async function lookupLiveFlight(code: string, now = new Date(), tz = 'Asi
     if (web) { status = { ...status, state: web.state, url: web.url, ...(web.state === 'landed' ? { landedBy: now.toISOString() } : {}) }; if (web.state === 'landed' && !(o.arrival?.runwayTime?.local || o.arrival?.actualTime?.local)) arrRevisedLocal = undefined }
   }
   const ap = (a: any) => ({ iata: String(a?.iata || a?.icao || '').slice(0, 4), name: String(a?.municipalityName || a?.shortName || a?.name || a?.iata || '').slice(0, 60) })
+  // 3 Nov: "did it land?" — Parallel shadow in the background (live feed only; never awaited, never shown).
+  if (fetcher === fetchAeroDataBox) void shadowLookup(normalizeFlightNo(String(o.number || code)), depUtc, ap(o.departure?.airport).iata, ap(o.arrival?.airport).iata, status.state, now)
   return {
     flightNo: normalizeFlightNo(String(o.number || code)), airline: o.airline?.name ? String(o.airline.name).slice(0, 60) : undefined,
     from: ap(o.departure?.airport), to: ap(o.arrival?.airport),
@@ -229,6 +250,43 @@ export async function processDueFlightTracks(limit = 10, now = new Date()) {
 }
 
 /** Watcher pass for an ad-hoc tracked flight: feed status → new events only → owner's alert settings → next check. */
+/** 29 Oct (connected memory): when a tracked flight lands, add the stay and cab saved for that trip. Env-gated so
+ * strict harnesses never load the memory module; any failure adds nothing. */
+async function landedTripNote(tg: string, arrivalCity: string, now: Date): Promise<string> {
+  const env = (globalThis as any).process?.env
+  if (!arrivalCity || !env || env.GOGO_MEMORY === 'off' || !(env.GOGO_BRAIN_USERS || env.VERCEL_ENV === 'production')) return ''
+  try {
+    const g = await import('../memory/life-graph')
+    const trips = g.applyTripNotes(await g.loadTrips(tg, now))
+    const trip = g.tripFor(trips, arrivalCity, now.toISOString())
+    if (!trip) return ''
+    // Meetings later today in the city, so the landing alert says how much time there is.
+    const events = await Promise.race([g.loadTripCalendar(tg, [trip], now.getTime()), new Promise<any[]>(r => setTimeout(() => r([]), 2500))]).catch(() => [])
+    g.linkCalendar([trip], events)
+    const endOfDay = now.getTime() + 14 * 36e5
+    const extras = g.orderItems(trip.items).filter(i => i.kind === 'stay' || i.kind === 'cab' || i.kind === 'note' || (i.kind === 'event' && Date.parse(String(i.startAt)) >= now.getTime() && Date.parse(String(i.startAt)) <= endOfDay)).map(i => g.itemLine(i, 'Asia/Kolkata'))
+    return extras.length ? `\n\nFor your ${trip.city} trip:\n${extras.join('\n')}` : ''
+  } catch { return '' }
+}
+
+function shadowLookup(flightNo: string, departAt: string, fromIata: string, toIata: string, state: string, now: Date): Promise<unknown> {
+  const env = (globalThis as any).process?.env
+  if (!env?.PARALLEL_API_KEY || String(env.PARALLEL_SHADOW || '').toLowerCase() === 'off') return Promise.resolve()
+  return import('./parallel-decisions').then(p => p.shadowFlightStatus({ flightNo, departAt, fromIata, toIata, gogoState: state, now })).catch(() => {})
+}
+
+/** Shadow call at most once per state change, plus every 10 minutes near landing. Env-gated; dynamic import so strict
+ * harnesses never load it. Returns a promise that always resolves. */
+function parallelShadow(c: any, state: string | undefined, prev: TrackingState & { parallelAt?: string }, tracking: TrackingState & { parallelAt?: string }, now: Date, nearLand: boolean): Promise<unknown> {
+  const env = (globalThis as any).process?.env
+  if (!env?.PARALLEL_API_KEY || String(env.PARALLEL_SHADOW || '').toLowerCase() === 'off') return Promise.resolve()
+  const last = Date.parse(String(prev.parallelAt || ''))
+  const changed = (state || 'unknown') !== (prev.state || 'unknown')
+  if (!changed && !(nearLand && (!Number.isFinite(last) || now.getTime() - last >= 10 * MIN))) return Promise.resolve()
+  tracking.parallelAt = now.toISOString()
+  return import('./parallel-decisions').then(p => p.shadowFlightStatus({ flightNo: String(c.flightNo), departAt: String(c.departAt), fromIata: c.from, toIata: c.to, gogoState: state, now })).catch(() => {})
+}
+
 export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher: FlightFetcher = fetchAeroDataBox, search?: WebSearchFn) {
   const c = watcher.condition_json?.adHocFlight || {}
   const tg = String(watcher.telegram_id)
@@ -265,6 +323,8 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
       if (status?.state === 'landed' && !status.actualArrival && !status.landedBy) status = { ...status, landedBy: now.toISOString() }
     }
   }
+  // 3 Nov: Parallel Decisions shadow — same public question, logged for comparison only (never changes alerts).
+  const shadow = parallelShadow(c, status?.state, prev, tracking, now, wantWeb)
   let sent = 0
   if (status) {
     const leg = { id: String(watcher.id), telegramId: tg, flightNo: String(c.flightNo), airline: c.airline, fromCity: String(c.from || ''), toCity: String(c.to || ''), departAt: String(c.departAt), arriveAt: c.arriveAt, tracking: prev }
@@ -279,7 +339,8 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
         if (e.kind === 'gate') tracking.gateNotified = status.depGate
         continue
       }
-      await deliverWatchAlert({ watcherId: String(watcher.id), owner: tg, key: `flight-track/${watcher.id}/${e.key}`, due: new Date(now.getTime() - 60_000).toISOString(), condition: watcher.condition_json, message: e.text, topic: 'travel' })
+      const message = e.kind === 'landed' ? e.text + await landedTripNote(tg, String(c.to || ''), now) : e.text
+      await deliverWatchAlert({ watcherId: String(watcher.id), owner: tg, key: `flight-track/${watcher.id}/${e.key}`, due: new Date(now.getTime() - 60_000).toISOString(), condition: watcher.condition_json, message, topic: 'travel' })
       tracking.sent = [...new Set([...(tracking.sent || []), e.key])]
       if (e.kind === 'delayed') tracking.delayNotified = status.delayMinutes || 0
       if (e.kind === 'gate') tracking.gateNotified = status.depGate
@@ -292,6 +353,7 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
     if (status.actualArrival) tracking.actualArrival = status.actualArrival
     if (status.landedBy && !tracking.landedBy) tracking.landedBy = status.landedBy
   }
+  await Promise.race([shadow, new Promise(r => setTimeout(r, 1500))]).catch(() => {})
   await save({ next_check_at: new Date(now.getTime() + nextCheckMinutes(now.getTime(), w.dep, tracking) * MIN).toISOString(), last_state_json: { ...(watcher.last_state_json || {}), tracking, source: status ? 'flight_data' : 'unavailable' } })
   return { triggered: sent > 0, failed: false }
 }
@@ -299,7 +361,7 @@ export async function processFlightTrackWatcher(watcher: any, now: Date, fetcher
 // 23 Oct live (side by side with Instinct): after "Track VS 354", the follow-up "Alert me once it lands" fell to
 // general chat, which claimed a 9:25 reminder. A follow-up about "it" landing/departing/delay binds to the flight
 // in the last few hours of this conversation and starts (or reuses) the same tracking watch — never a reminder.
-const FOLLOW_UP = /\b(?:alert|notify|tell|ping|message|update|let)\s+(?:me|us)\b[^.?!]{0,40}\b(?:when|once|after|as soon as|if)\b[^.?!]{0,30}\b(?:lands?|landed|landing|arrives?|arrival|touches down|takes? off|departs?|departure|is delayed|gets delayed|delay)\b|^\s*(?:track|keep tracking|follow|monitor|watch)\s+(?:it|that|this|that flight|this flight)\s*[.!]?\s*$/i
+const FOLLOW_UP = /\b(?:alert|notify|tell|ping|message|msg|text|whatsapp|update|let)\s+(?:me|us)\b[^.?!]{0,40}\b(?:when|once|after|as soon as|if)\b[^.?!]{0,30}\b(?:lands?|landed|landing|arrives?|arrival|touches down|takes? off|departs?|departure|is delayed|gets delayed|delay)\b|^\s*(?:track|keep tracking|follow|monitor|watch)\s+(?:it|that|this|that flight|this flight)\s*[.!]?\s*$/i
 
 export function isFlightFollowUp(text: string): boolean {
   return FOLLOW_UP.test(String(text || '')) && !trackCode(text)
@@ -399,4 +461,61 @@ export async function flightTrackStatusReply(telegramId: string, text: string, n
   if (!lines.length && !missing.length) return `I'm not tracking any flights right now. Say "Track EK 500" to start.`
   const head = active.length ? (active.length === 1 ? 'Tracking 1 flight:' : `Tracking ${active.length} flights:`) : 'No flights being tracked right now.'
   return [head, ...lines, ...missing.map(code => `${code}: I wasn't tracking it in the last 12 hours. Say "Track ${code}" to follow it.`)].join('\n')
+}
+
+// 27 Oct live: "Did it land?" after tracking QF67 was answered "Marked done: it land?" (the to-do "did <task>" rule).
+// A short question about "it" / "the flight" landing, taking off or running late, with no flight code, is about the
+// flight being tracked: answer from that watch. No tracked flight in the last 12 hours → null (normal routing).
+const PRONOUN_FLIGHT_Q = /^(?:so\s+|and\s+|ok\s+|hey\s+)?(?:did|has|have|is|was|will|when\s+(?:will|does|did|is)|where\s+is|what\s+time\s+(?:does|will|did|is))\s+(?:it|the\s+(?:flight|plane)|(?:my|her|his|their|our)\s+flight|she|he|they)\b[^?.!]{0,30}?\b(?:lands?|landed|landing|arrive[sd]?|arriving|take\s+off|taken\s+off|took\s+off|taking\s+off|depart(?:ed|s|ing)?|delayed|late|on\s+time|in\s+the\s+air|airborne|touch(?:ed)?\s+down|now)\b/i
+
+export function isPronounFlightQuestion(text: string): boolean {
+  const t = String(text || '').trim()
+  return t.length <= 80 && !trackCode(t) && PRONOUN_FLIGHT_Q.test(t)
+}
+
+export async function pronounFlightReply(telegramId: string | number, text: string, now = new Date(), tz = 'Asia/Kolkata'): Promise<string | null> {
+  if (!isPronounFlightQuestion(text)) return null
+  const { data, error } = await supabaseAdmin.from('agent_watchers').select('id,active,condition_json,last_state_json,updated_at,created_at')
+    .eq('telegram_id', String(telegramId)).not('condition_json->adHocFlight', 'is', null)
+    .or(`active.eq.true,updated_at.gte.${new Date(now.getTime() - 12 * 60 * MIN).toISOString()}`)
+    .order('updated_at', { ascending: false }).limit(10)
+  if (error || !data?.length) return null
+  const seen = new Set<string>()
+  const rows = data.filter((w: any) => {
+    const k = `${w.condition_json?.adHocFlight?.flightNo}|${w.condition_json?.adHocFlight?.departAt}`
+    if (seen.has(k)) return false
+    seen.add(k); return true
+  })
+  // Several flights: the active ones are what "it" most likely means; say which is which.
+  const active = rows.filter((w: any) => w.active)
+  const shown = active.length > 1 ? active : [rows[0]]
+  // 27 Oct live: a just-created watch had no check yet, so "Did it land?" said "checks start 3 h before take-off"
+  // right after Gogo showed QF1 in the air. An active watch answers from a fresh live lookup, as a direct answer.
+  const answers = await Promise.all(shown.map(async (w: any) => {
+    const code = String(w.condition_json?.adHocFlight?.flightNo || '')
+    const live = w.active && code ? await lookupLiveFlight(code, now, tz, fetchAeroDataBox, { telegramId: String(telegramId) }).catch(() => null) : null
+    return live ? conversationalFlightAnswer(live, tz) : describeTrackedFlight(w, now.getTime(), tz)
+  }))
+  return answers.join('\n\n')
+}
+
+/** "Did it land?" answered first with yes / not yet, then the times, from the live feed only. */
+export function conversationalFlightAnswer(f: LiveFlight, tz = 'Asia/Kolkata'): string {
+  const st = f.status
+  const local = (iso?: string | null, zone = tz) => { const ms = Date.parse(String(iso || '')); return Number.isFinite(ms) ? new Intl.DateTimeFormat('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: zone }).format(new Date(ms)) : '' }
+  const clock = (l?: string) => clockOf({ local: l }) || ''
+  const arrivalWords = () => {
+    const at = clock(f.arrRevisedLocal) || clock(f.arrLocal)
+    // 27 Oct live: "22:06 Singapore time (8:02 pm IST)" — the IST came from a stale revised-arrival field while the
+    // clock came from the local string. Convert the SAME local timestamp (it carries its UTC offset).
+    const shown = String(f.arrRevisedLocal || f.arrLocal || '').replace(' ', 'T')
+    const ist = Number.isFinite(Date.parse(shown)) && /[+-]\d{2}:?\d{2}$|Z$/.test(shown) ? local(shown) : local(st.revisedArrival || f.arrUtc)
+    return at ? `${at} ${f.to.name || f.to.iata} time${ist && tz === 'Asia/Kolkata' && f.to.iata !== 'BLR' ? ` (${ist} IST)` : ''}` : ''
+  }
+  const head = st.state === 'landed' ? `Yes, ${f.flightNo} has landed in ${f.to.name || f.to.iata}${arrivalWords() ? `, at ${arrivalWords()}` : ''}.`
+    : st.state === 'departed' ? `Not yet. ${f.flightNo} is in the air${st.delayMinutes ? `, about ${st.delayMinutes} min late` : ''}${arrivalWords() ? `, landing around ${arrivalWords()}` : ''}. I'll message you the moment it lands.`
+    : st.state === 'cancelled' ? `${f.flightNo} was cancelled.`
+    : st.state === 'diverted' ? `${f.flightNo} was diverted.`
+    : `Not yet. ${f.flightNo} hasn't taken off${st.delayMinutes ? ` (about ${st.delayMinutes} min late)` : ''}. I'll message you on take-off and landing.`
+  return `${head}\n\n${formatLiveFlight(f)}`
 }
