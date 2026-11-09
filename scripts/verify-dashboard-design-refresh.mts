@@ -39,7 +39,9 @@ console.log('✅ Final-Dark dashboard design regression passed')
 {
   // Approved 22 Oct Duet-parity mock: land on Chat, brief on top of the one thread, channels in the rail.
   const chat = readFileSync(new URL('../components/dashboard/gogo-chat.tsx', import.meta.url), 'utf8')
-  assert.match(chat, /\{brief&&!channel&&!historyOpen&&<ChatBriefCard brief=\{brief\}\/>\}/)
+  // 9 Nov: the saved topic brief (chips) takes the slot when today's exists; the summary box otherwise. Still one brief, on top.
+  assert.match(chat, /\{brief&&!topicBrief&&!channel&&!historyOpen&&<ChatBriefCard brief=\{brief\}\/>\}/)
+  assert.match(chat, /\{topicBrief&&!channel&&!historyOpen&&<BriefCard brief=\{topicBrief\}/)
   assert.match(chat, /const wanted=searchParams\.get\('channel'\)/)
   const side = readFileSync(new URL('../components/dashboard/side-rail.tsx', import.meta.url), 'utf8')
   assert.match(side, /Channels share one memory\./); assert.ok(!side.includes('UsageCard') && !side.includes('RecentList'))

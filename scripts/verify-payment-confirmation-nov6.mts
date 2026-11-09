@@ -33,8 +33,11 @@ console.log('✓ the Gmail check separates the gateway receipt from the merchant
 
 // Wiring: before the brain and the split parser on both surfaces; the Google wording for access grants.
 const wa = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8'), dash = readFileSync('app/api/dashboard/chat/route.ts', 'utf8')
-assert.ok(wa.indexOf("lib/agent/payment-confirmation") < wa.indexOf("m.takeImageOffer("), 'WhatsApp: payment hook before the image-offer yes')
-assert.match(dash, /PAYMENT_GATE\.test\(text\)\?m\.tryPaymentConfirmation\(user\.telegram_id,text\):text\.length<=24\?m\.takeReceiptCheck\(actor,text\)/)
+// Since the understand-first gate (shared-content, 6 Nov) the confirmation runs inside tryShared and the receipt "yes" inside takeSharedFollowUp.
+assert.ok(wa.indexOf("lib/agent/shared-content") < wa.indexOf("m.takeImageOffer("), 'WhatsApp: shared-content gate before the image-offer yes')
+assert.match(dash, /m\.tryShared\(user\.telegram_id,text\)\)\|\|\(text\.length<=24\?m\.takeSharedFollowUp\(actor,text\)/)
+const sc = readFileSync('lib/agent/shared-content.ts', 'utf8')
+assert.match(sc, /if \(r\.kind === 'payment'\) return tryPaymentConfirmation\(telegramId, text\)/); assert.match(sc, /\|\| takeReceiptCheck\(actor, text\)/)
 assert.match(readFileSync('lib/feature-intents-legacy.ts', 'utf8'), /!PAYMENT_CONFIRMATION\.test\(text\) && parseSplitIntent\(text\)/, 'split parser never sees a confirmation')
 const brain = await import('../lib/agent/brain')
 assert.ok(brain.isExactCommand(sms), 'the brain never chats about a forwarded confirmation')
