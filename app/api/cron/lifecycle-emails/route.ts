@@ -10,6 +10,9 @@ export const maxDuration = 60
 
 const MIN_GAP_MS = 20 * 60 * 60 * 1000
 const MAX_SENDS_PER_RUN = 50
+// Ledger marker for a send whose provider acceptance is uncertain. It blocks
+// automatic retries of that lifecycle step; it is not a provider receipt.
+const LIFECYCLE_OUTCOME_UNKNOWN = 'outcome_unknown'
 
 // Supabase BIGINT owners must never pass through a lossy JavaScript Number.
 // Keep the exact signed 64-bit decimal owner for private history, unsubscribe,
@@ -114,6 +117,25 @@ export async function GET(req: NextRequest) {
     })
 
     if (send.ok === false) {
+      if (send.outcome === 'unknown') {
+        // The provider may already have accepted this email (e.g. the response
+        // was lost after acceptance). Quarantine the step in the delivery ledger
+        // so a later cron run never issues a blind second POST once the
+        // provider's finite idempotency window has elapsed. The marker is not a
+        // provider receipt and is never counted as a successful send.
+        const { error: quarantineError } = await supabaseAdmin.from('lifecycle_email_log').insert({
+          telegram_id: telegramId,
+          email_key: next.key,
+          email: recipient,
+          subject: rendered.subject,
+          provider_message_id: LIFECYCLE_OUTCOME_UNKNOWN,
+        })
+        const quarantineNote = quarantineError && quarantineError.code !== '23505'
+          ? `; quarantine insert failed: ${quarantineError.message}`
+          : ''
+        failures.push({ telegramId, key: next.key, error: `outcome_unknown: ${send.error}${quarantineNote}` })
+        continue
+      }
       failures.push({ telegramId, key: next.key, error: send.error })
       continue
     }

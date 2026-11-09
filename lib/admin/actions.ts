@@ -6,7 +6,7 @@ import { audit, canDo, e164, hashPassword, setPasswordHash, type AdminIdentity, 
 
 export const INVITE_TEXT = buildAccessGrantedText('Divya')
 
-type Result = { ok: true; message?: string; detail?: any } | { ok: false; error: string }
+type Result = { ok: true; message?: string; detail?: any } | { ok: false; error: string; message?: string; detail?: any }
 const ROLE_FOR: Record<string, AdminRole> = {
   'waitlist.approve': 'operator', 'waitlist.block': 'operator', 'waitlist.unblock': 'operator', 'waitlist.note': 'operator',
   'user.block': 'operator', 'user.unblock': 'operator', 'user.plan': 'operator',
@@ -49,20 +49,38 @@ export async function runAdminAction(admin: AdminIdentity, action: string, body:
   switch (action) {
     case 'waitlist.approve': {
       if (!ids.length) return { ok: false, error: 'nothing_selected' }
-      const { data: list } = await supabaseAdmin.from('waitlist').select('id, phone_e164, status, profile_name').in('id', ids)
+      // 30 Oct review: the "you're in" WhatsApp and the Approved receipt follow durable proof only. A row is approved
+      // when its waitlist write and its user unblock both returned no error; only then is the welcome sent, and only
+      // approved rows are audited and counted. A requested id with no row is not approved.
+      const { data: list, error: readError } = await supabaseAdmin.from('waitlist').select('id, phone_e164, status, profile_name, approved_at, approved_by, invited_at, blocked_at').in('id', ids)
+      if (readError) return { ok: false, error: 'lookup_failed' }
       const results: Record<string, string> = {}
+      const notApproved: string[] = []
       for (const row of (list || []) as any[]) {
+        const { error: waitError } = await supabaseAdmin.from('waitlist').update({ status: row.status === 'joined' ? 'joined' : 'invited', approved_at: now, approved_by: admin.phone, invited_at: now, blocked_at: null }).eq('id', row.id)
+        if (waitError) { notApproved.push(String(row.id)); continue }
+        // A number blocked earlier as a user is unblocked by approval.
+        const { error: userError } = await supabaseAdmin.from('users').update({ access_status: 'active', access_changed_at: now, access_changed_by: admin.phone }).in('whatsapp_id', [row.phone_e164, `whatsapp:${row.phone_e164}`])
+        if (userError) {
+          // Put the waitlist row back so a half-approved number is not shown as invited.
+          await supabaseAdmin.from('waitlist').update({ status: row.status, approved_at: row.approved_at ?? null, approved_by: row.approved_by ?? null, invited_at: row.invited_at ?? null, blocked_at: row.blocked_at ?? null }).eq('id', row.id)
+          notApproved.push(String(row.id)); continue
+        }
         const invite = await sendInvite(row.phone_e164, row.profile_name)
         results[row.phone_e164] = invite
-        await supabaseAdmin.from('waitlist').update({ status: row.status === 'joined' ? 'joined' : 'invited', approved_at: now, approved_by: admin.phone, invited_at: now, invite_status: invite, blocked_at: null }).eq('id', row.id)
-        // A number blocked earlier as a user is unblocked by approval.
-        await supabaseAdmin.from('users').update({ access_status: 'active', access_changed_at: now, access_changed_by: admin.phone }).in('whatsapp_id', [row.phone_e164, `whatsapp:${row.phone_e164}`])
+        const { error: statusError } = await supabaseAdmin.from('waitlist').update({ invite_status: invite }).eq('id', row.id)
+        if (statusError) console.error('WAITLIST_INVITE_STATUS_FAILED:', statusError.message)
       }
-      await audit(admin, 'Approved', `${ids.length} waitlist`, { results })
+      const found = new Set(((list || []) as any[]).map(r => String(r.id)))
+      for (const id of ids) if (!found.has(id)) notApproved.push(id)
+      const approved = Object.keys(results).length
+      if (approved) await audit(admin, 'Approved', `${approved} waitlist`, { results, notApproved })
       const vals = Object.values(results)
       const failed = vals.filter(v => v.startsWith('not sent')).length
       const asText = vals.filter(v => v.startsWith('sent as text')).length
-      return { ok: true, message: `Approved ${ids.length}.` + (failed ? ` ${failed} message(s) could not be sent.` : '') + (asText ? ` The welcome went as text because the WhatsApp template is still waiting for Meta's approval; WhatsApp delivers that only to numbers that messaged us in the last 24 hours. They get in the moment they message AskGogo either way.` : failed ? '' : ' They have been sent the welcome on WhatsApp.'), detail: results }
+      const message = `Approved ${approved}.` + (notApproved.length ? ` ${notApproved.length} could not be approved; nothing was sent to them.` : '') + (failed ? ` ${failed} message(s) could not be sent.` : '') + (asText ? ` The welcome went as text because the WhatsApp template is still waiting for Meta's approval; WhatsApp delivers that only to numbers that messaged us in the last 24 hours. They get in the moment they message AskGogo either way.` : failed || !approved ? '' : ' They have been sent the welcome on WhatsApp.')
+      if (notApproved.length) return { ok: false, error: approved ? 'partially_approved' : 'approve_failed', message, detail: { results, notApproved } }
+      return { ok: true, message, detail: results }
     }
     case 'waitlist.block':
     case 'waitlist.unblock': {

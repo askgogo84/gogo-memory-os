@@ -6,6 +6,7 @@
  * This does not pin DNS/IPs; independent review and benign Twilio compatibility
  * proof are mandatory before deployment.
  */
+import { isTwilioMediaCdnUrl, logRejectedTwilioRedirect } from './twilio-cdn'
 export const TWILIO_FACE_MAX_BYTES = 12 * 1024 * 1024
 
 const accountPattern = /^AC[0-9a-fA-F]{32}$/
@@ -28,7 +29,8 @@ function checkedCdnUrl(location: string | null): URL {
   if (!location || location.length > 8192) throw new Error('Unsafe Twilio media redirect')
   let url: URL
   try { url = new URL(location) } catch { throw new Error('Unsafe Twilio media redirect') }
-  if (url.origin !== 'https://mms.twiliocdn.com' || url.username || url.password || url.hash || !url.pathname.startsWith('/')) {
+  if (!isTwilioMediaCdnUrl(url)) {
+    logRejectedTwilioRedirect('face-media', location)
     throw new Error('Twilio media redirect left authorized CDN origin')
   }
   return url

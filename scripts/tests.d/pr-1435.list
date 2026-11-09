@@ -1,0 +1,2 @@
+# tests added by PR #1435
+npx tsx scripts/verify-approval-name-brand-boundary-testonly.mts
