@@ -1,6 +1,21 @@
-import { isSecretShapedMemory, redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { buildJevShadowQuestions, JEV_SHADOW_MODEL, JEV_SHADOW_VERSION } from './questions'
 import type { GuardedRoutingDecision } from '@/lib/agent/decision-learning'
+
+const KEYWORD_SECRET = /\b(?:pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|cvv|cvc|card\s*number|account\s*number|api[\s_-]?key|secret\s*key|security\s*code)\b/i
+
+/** A turn that is itself a secret: an OTP, password, PIN, card or account number. Pure. */
+export function keywordSecretTurn(text: string): boolean {
+  const t = String(text || '')
+  return KEYWORD_SECRET.test(t) || /\b(?:\d[ -]?){12,19}\b/.test(t) || /^\s*\d{4,8}\s*$/.test(t)
+}
+
+/** Labelled secrets redacted, then every long digit run and email masked, so the rest of the sentence still goes. Pure. */
+export function scrubForTypeSafe(text: string): string {
+  return redactSecretShapedText(String(text || ''))
+    .replace(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/g, '[email]')
+    .replace(/\+?\d[\d\s-]{6,}\d/g, '[number]')
+}
 
 export type JevShadowChoice = {
   choice: string | null
@@ -53,9 +68,9 @@ export function buildJevShadowRequest(params: {
   // The recent conversation always goes with the sentence: whether a message needs context is not a
   // judgement a keyword list can make ("track divya flight" has no pronoun and still depends on who Divya is).
   const rawRecent = String(params.recentContext || '').slice(0, 700)
-  const safeText = isSecretShapedMemory(rawText) ? '[sensitive turn withheld from TypeSafe]' : redactSecretShapedText(rawText)
-  const safeSummary = isSecretShapedMemory(rawSummary) ? '[sensitive context withheld from TypeSafe]' : redactSecretShapedText(rawSummary)
-  const safeRecent = isSecretShapedMemory(rawRecent) ? '[sensitive recent context withheld from TypeSafe]' : redactSecretShapedText(rawRecent)
+  const safeText = scrubForTypeSafe(rawText)
+  const safeSummary = scrubForTypeSafe(rawSummary)
+  const safeRecent = scrubForTypeSafe(rawRecent)
   // Only approved evidence crosses the model boundary. A rejected preference
   // must never be included, even with a label asking the model to ignore it.
   const learned = params.learnedRouting
@@ -144,7 +159,10 @@ export async function runJevShadow(params: {
   const apiKey = String(process.env.TYPESAFE_API_KEY || '').trim()
   if (!apiKey) return null
 
-  if (isSecretShapedMemory(String(params.text || '')) || isSecretShapedMemory(String(params.focusSummary || '')) || isSecretShapedMemory(String(params.recentContext || ''))) {
+  // 29 Oct live: 9 of 15 turns skipped JEV because the recent chat held a phone number or the word "passport".
+  // Only a message that is itself a secret (OTP, password, card or account number) is withheld; anything else
+  // goes with its numbers and emails masked.
+  if (keywordSecretTurn(String(params.text || ''))) {
     return {
       ok: false,
       attempted: false,

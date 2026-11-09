@@ -20,6 +20,7 @@ import { storeDocument, getDocumentSignedUrl } from '@/lib/services/document-sto
 import { createDocumentShortLink, shortLinkUrl } from '@/lib/services/document-links'
 import { embedText } from '@/lib/services/embeddings'
 import { indexMemory } from '@/lib/services/memory-index'
+import { labelNameMismatch } from '@/lib/memory/names'
 import { downloadTwilioMediaAsDataUrl } from '@/lib/services/image-note-reader'
 import {
   saveFollowupState,
@@ -27,6 +28,7 @@ import {
   isStrictlyFreshFollowupState,
   clearFollowupState,
 } from '@/lib/bot/handlers/followup-state'
+import { SONNET_MODEL } from '@/lib/services/model-ids'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
@@ -183,6 +185,7 @@ Per-type fields:
 - receipt: { "merchant": , "amount": , "date": , "reference_number": , "summary": }
 - order_estimate: { "vendor": , "customer": , "amount": , "date": , "reference_number": , "summary": }
 - passport: { "name": , "passport_number": , "dob": , "issue_date": , "expiry_date": , "nationality": }
+  For a passport "name", read Given Name(s) then Surname exactly as printed and cross-check the two machine-readable lines at the bottom (P<IND SURNAME<<GIVEN<NAMES). If the printed name is unclear, use the MRZ spelling. Never guess letters.
 - id_document: { "name": , "document_kind": , "id_number": , "dob": , "expiry_date": }
 - invoice: { "vendor": , "amount": , "date": , "reference_number": , "summary": }
 - business_card: { "name": , "designation": , "company": , "phones": "<all phone/mobile numbers, comma-separated, as printed>", "emails": "<comma-separated>", "address": , "website": }
@@ -298,7 +301,7 @@ export async function classifyAndExtractAsset(params: {
     }
 
     const result = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: SONNET_MODEL,
       max_tokens: 1000,
       system: CLASSIFY_SYSTEM,
       messages: [{
@@ -328,7 +331,18 @@ function shortSafeSummary(value: string | undefined, max = 220): string {
   return stripLongDigits(fmt(value)).replace(/\s+/g, ' ').slice(0, max)
 }
 
-function buildConfirmation(ex: AssetExtraction): string {
+/** True when a printed expiry date (DD/MM/YYYY, DD-MM-YYYY, YYYY-MM-DD or "21 Jan 2023") is in the past. Pure. */
+export function documentExpired(raw: string | null | undefined, now = Date.now()): boolean {
+  const t = String(raw || '').trim()
+  let d: number = NaN
+  let m = t.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})$/)
+  if (m) d = Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1]))
+  else if ((m = t.match(/^(\d{4})-(\d{2})-(\d{2})/))) d = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
+  else if (/\d{4}/.test(t)) d = Date.parse(t)
+  return Number.isFinite(d) && d + 86_400_000 < now
+}
+
+function buildConfirmation(ex: AssetExtraction, userLabel: string | null = null): string {
   const f = ex.fields
 
   if (ex.assetType === 'payment_proof') {
@@ -354,7 +368,11 @@ function buildConfirmation(ex: AssetExtraction): string {
       expiry ? `- "When does ${fmt(f.name) || who} ${isPassport ? 'passport' : 'ID'} expire?"` : null,
       `- "Send me the original ${isPassport ? 'passport' : 'ID'} file"`,
     ].filter(Boolean).join('\n')
-    return `✅ Saved — ${label}${line2 ? `\n${line2}` : ''}\n\nI've securely saved the original file and the details.\n\nYou can ask later:\n${asks}`
+    // 29 Oct live: a passport that expired in 2023 was saved with no warning before the owner's hotel check-in.
+    const expired = documentExpired(fmt(f.expiry_date) || expiry)
+    // 29 Oct live: a file saved as "Aman passport" was read as "RUDITA CHANEDJA". Say so instead of filing it silently.
+    const mismatch = userLabel && fmt(f.name) && labelNameMismatch(userLabel, fmt(f.name)) ? `\n\n⚠️ You called this "${userLabel}", but I read the name as ${fmt(f.name)}. If I misread it, reply with the correct name.` : ''
+    return `✅ Saved — ${label}${line2 ? `\n${line2}` : ''}${mismatch}${expired ? `\n\n⚠️ This ${isPassport ? 'passport' : 'ID'} has expired. A hotel or airline may not accept it.` : ''}\n\nI've securely saved the original file and the details.\n\nYou can ask later:\n${asks}`
   }
 
   if (ex.assetType === 'business_card') return `${businessCardLines(f, `📇 Saved ${fmt(f.name) ? `${fmt(f.name)}'s card` : 'business card'}`)}\n\nI've kept the original too. Ask anytime, e.g. "${fmt(f.name) || 'their'}${fmt(f.name) ? "'s" : ''} number" or "show me ${fmt(f.name) || 'that'} card".`
@@ -546,7 +564,7 @@ export async function saveAssetMemory(params: {
       })
     }
 
-    return { reply: buildConfirmation(ex) }
+    return { reply: buildConfirmation(ex, userLabel) }
   } catch (err: any) {
     console.error('[asset-memory] save failed (non-fatal):', err?.message || err)
     return null
@@ -693,6 +711,9 @@ export function isTicketRetrievalAsk(text: string): boolean {
   if (isBookingRecallAsk(t)) return true
   if (!TICKET_NOUN.test(t)) return false
   if (/\b(?:book|buy|purchase|reserve|cancel|refund|price|cost|how much|available|availability|get\s+tickets?\s+for)\b/.test(t)) return false
+  // 6 Nov live: "Watch for Coldplay concert tickets in Mumbai and alert me when they open" showed an old flight
+  // ticket ("open" read as "open my ticket"). Watching for tickets to go on sale is not retrieving a saved one.
+  if (/\b(?:watch|alert|notify|monitor|track|keep an eye|let me know|tell me when|when (?:they|it|tickets?|bookings?|sales?) (?:open|go|are|is|drop|release|start)|on sale|go live|goes live)\b/.test(t)) return false
   const words = t.split(/\s+/).filter(Boolean).length
   const verb = /\b(show|send|share|give|find|get|pull up|open|where'?s|where is|need|my)\b/.test(t)
   return words <= 6 || verb

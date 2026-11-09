@@ -22,7 +22,7 @@ function verhoeffValid(digits: string): boolean {
 }
 
 export function maskOutboundIdentifiers(text: string): string {
-  let out = String(text ?? '')
+  let out = tidyLinks(String(text ?? ''))
   // Card: 13–19 digits, optionally grouped by spaces or dashes.
   out = out.replace(/(?<![\d])(?:\d[ -]?){12,18}\d(?![\d])/g, m => {
     const digits = m.replace(/\D/g, '')
@@ -36,5 +36,53 @@ export function maskOutboundIdentifiers(text: string): string {
   })
   // PAN: AAAAA9999A, 4th letter is the holder type.
   out = out.replace(/\b[A-Z]{3}[ABCFGHLJPT][A-Z]\d{4}[A-Z]\b/g, m => `PAN ending ${m.slice(-4)}`)
-  return out
+  return brandSafe(out)
+}
+
+// 29 Oct live: "Please send a specific future date and time for Claude first" (an old test reminder named the
+// model). The assistant is Gogo; the underlying model or vendor is never named to a user. Links and email addresses
+// (claude.ai, anthropic.com) are left alone. Pure.
+// Text between U+2063 markers is quoted from someone else (a shared post's title) and is sent as written; the markers
+// are removed here, the last step before WhatsApp.
+export function brandSafe(text: string): string {
+  return String(text ?? '').split(/(\u2063[\s\S]*?\u2063)/).map(part => part.length > 1 && part.startsWith('\u2063') && part.endsWith('\u2063') ? part : brandSafeOutside(part)).join('').replace(/\u2063/g, '')
+}
+// 6 Nov live: a competitor summary listed "Muse, Hermes, Claude, ChatGPT…" and came out as "…Gogo…". When Claude is
+// named beside other AI products, or as a product (Claude Duet, Claude Cowork, Claude Design), it is a product name.
+const OTHER_AI = /\b(?:ChatGPT|OpenAI|Gemini|Perplexity|Copilot|Manus|Muse|Instinct|Wajo|Hermes|Grok|Mistral|Llama|DeepSeek|Dots)\b/i
+const CLAUDE_PRODUCT = /\bClaude\s+(?:Duet|Cowork|Design|Desktop|Chrome|Max|Pro|Team|Enterprise)\b/
+function brandSafeOutside(text: string): string {
+  if (CLAUDE_PRODUCT.test(text) || (OTHER_AI.test(text) && /\bClaude\b/.test(text))) return text.replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, m => m)
+  return String(text ?? '')
+    .replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g, m => /['’]s$/.test(m) ? 'Gogo’s' : 'Gogo')
+    .replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g, 'our AI provider')
+}
+
+
+// 31 Oct live: salon results came as 300-character google.com/goto?url=… redirects. A link is sent as the page it
+// points to, without tracking parameters, so it reads as an address. Pure.
+const TRACKING = /^(?:utm_[a-z]+|gclid|fbclid|srsltid|ved|usg|sa|ei|igshid|igsh|si|ref|ref_src|ref_url|mc_cid|mc_eid|_hsenc|_hsmi|opi|sca_esv|rlz|oq|gs_lcrp|sourceid|ie)$/i
+export function tidyUrl(raw: string): string {
+  let url = raw
+  for (let i = 0; i < 2; i++) {
+    const m = url.match(/^https?:\/\/(?:www\.)?google\.[a-z.]+\/(?:goto|url)\?(.*)$/i)
+    if (!m) break
+    const params = new URLSearchParams(m[1])
+    const target = [...params.getAll('url'), ...params.getAll('q'), ...params.getAll('u')].find(v => /^https?:\/\//i.test(v))
+    if (!target || !/^https?:\/\//i.test(target)) break
+    url = target
+  }
+  try {
+    const u = new URL(url)
+    for (const key of Array.from(u.searchParams.keys())) if (TRACKING.test(key)) u.searchParams.delete(key)
+    let out = u.toString()
+    if (!u.search) out = out.replace(/\?$/, '')
+    return out.replace(/\/$/, '') === `${u.origin}` ? u.origin : out
+  } catch { return url }
+}
+export function tidyLinks(text: string): string {
+  return String(text ?? '').replace(/https?:\/\/[^\s<>)\]]+/g, m => {
+    const trail = m.match(/[.,;!?]+$/)?.[0] || ''
+    return tidyUrl(trail ? m.slice(0, -trail.length) : m) + trail
+  })
 }
