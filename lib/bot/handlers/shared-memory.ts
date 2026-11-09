@@ -23,27 +23,61 @@ export async function hasTopic(telegramId: number, topic: string): Promise<boole
   return (count || 0) > 0
 }
 
-/** Resolve a contact name -> recipient telegram_id (must be an existing AskGogo user). */
+/**
+ * Sharing a topic grants *read access* to private memories. Authorization may
+ * never be inferred from a domestic last-ten-digit suffix or an uncertain
+ * lookup. Only a complete stored international phone identity can match.
+ */
+export function canonicalShareRecipientPhone(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const raw = value.trim().replace(/^whatsapp:\s*/i, '').trim()
+  if (!/^\+?[1-9][0-9\s()\-]*$/.test(raw)) return null
+  const digits = raw.replace(/\D/g, '')
+  return digits.length >= 11 && digits.length <= 15 ? digits : null
+}
+
+/** Match only supported, exactly saved phone variants; no ILIKE or suffix. */
+export function shareRecipientPhoneCandidates(full: string): string[] {
+  return [`whatsapp:+${full}`, `+${full}`, full, `whatsapp:${full}`]
+}
+
+/** Reject imprecise BIGINTs instead of granting another owner's memory access. */
+export function exactShareRecipientOwnerId(value: unknown): number | null {
+  if (typeof value !== 'string' && (typeof value !== 'number' || !Number.isSafeInteger(value))) return null
+  const raw = String(value)
+  if (!/^-?[1-9]\d*$/.test(raw)) return null
+  const numeric = Number(raw)
+  return Number.isSafeInteger(numeric) && String(numeric) === raw ? numeric : null
+}
+
+/** Resolve saved contact -> ONE verified AskGogo account, or refuse sharing. */
 export async function resolveRecipientTelegramId(
   ownerTelegramId: number,
   name: string
 ): Promise<{ telegramId: number | null; hasContact: boolean }> {
-  const { data: c } = await supabaseAdmin
+  if (exactShareRecipientOwnerId(ownerTelegramId) === null) return { telegramId: null, hasContact: false }
+  const { data: contact, error: contactError } = await supabaseAdmin
     .from('friend_contacts')
     .select('whatsapp_id')
     .eq('owner_telegram_id', ownerTelegramId)
     .eq('name', name)
     .maybeSingle()
-  if (!c?.whatsapp_id) return { telegramId: null, hasContact: false }
-  const last10 = String(c.whatsapp_id).replace(/\D/g, '').slice(-10)
-  const { data: u } = await supabaseAdmin
+  if (contactError || !contact?.whatsapp_id) return { telegramId: null, hasContact: false }
+
+  const fullPhone = canonicalShareRecipientPhone(contact.whatsapp_id)
+  if (!fullPhone) return { telegramId: null, hasContact: true }
+  const { data: rows, error: recipientError } = await supabaseAdmin
     .from('users')
     .select('telegram_id, whatsapp_id')
-    .ilike('whatsapp_id', `%${last10}%`)
+    .in('whatsapp_id', shareRecipientPhoneCandidates(fullPhone))
     .not('telegram_id', 'is', null)
-    .order('telegram_id', { ascending: true })
-    .limit(1)
-  return { telegramId: u?.[0]?.telegram_id ?? null, hasContact: true }
+    .limit(2)
+  // A second linked users row is not automatically the intended recipient.
+  // Fail closed until the exact target account is independently disambiguated.
+  if (recipientError || !Array.isArray(rows) || rows.length !== 1) return { telegramId: null, hasContact: true }
+  const target = rows[0]
+  if (canonicalShareRecipientPhone(target.whatsapp_id) !== fullPhone) return { telegramId: null, hasContact: true }
+  return { telegramId: exactShareRecipientOwnerId(target.telegram_id), hasContact: true }
 }
 
 export async function grantShare(owner: number, recipient: number, topic: string): Promise<void> {
@@ -105,7 +139,7 @@ export async function handleBucketCommand(telegramId: number, text: string): Pro
     }
     const { telegramId: rid, hasContact } = await resolveRecipientTelegramId(telegramId, share.name)
     if (!hasContact) return `I don't have ${capName(share.name)}'s number yet. Do a friend reminder once (remind ${share.name} to ...) so I save it, then share.`
-    if (!rid) return `${capName(share.name)} isn't on AskGogo yet — ask them to message the bot first, then share.`
+    if (!rid) return `I couldn't verify one exact AskGogo account for ${capName(share.name)}. Check their saved full international number before sharing.`
     await grantShare(telegramId, rid, share.topic)
     return `Shared your *${share.topic}* bucket with ${capName(share.name)}. They can now ask me about it.`
   }

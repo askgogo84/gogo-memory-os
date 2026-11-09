@@ -73,6 +73,7 @@ class OpenAIFixture {chat = {completions: {create: async (payload: any) => {
 const model = load('lib/services/claude.ts', {
   '@anthropic-ai/sdk': {default: AnthropicFixture}, openai: {default: OpenAIFixture},
   '@/lib/bot/memory-redaction': {redactSecretShapedText: (s: string) => s}, '@/lib/agent/content-workflows': workflows,
+  '@/lib/services/model-ids': {SONNET_MODEL: 'claude-sonnet-4-5', HAIKU_MODEL: 'claude-haiku-4-5'},
 }, {OPENAI_API_KEY: 'fixture-not-a-real-key'})
 
 const history: any[] = [], writes: string[] = []
