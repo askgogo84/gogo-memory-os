@@ -81,6 +81,13 @@ console.log('PASS refresh: owner-bound, one row, redacted, others untouched')
 const few = fakeDb(newestFirst.slice(0, 23).map(r => ({ ...r, telegram_id: 42 })), [])
 assert.equal(await cs.refreshConversationSummary(42, { db: few, ask: (async () => { throw new Error('must not call') }) as any }), 'not_needed')
 assert.equal(await cs.refreshConversationSummary(42, { db: fakeDb(conv, []), ask: (async () => null) as any }), 'failed')
+// 8 Nov live: Mercury spent its whole budget reasoning and returned nothing; a second model now writes the summary.
+{ let used = false
+  const mem2: any[] = []
+  const r2 = await cs.refreshConversationSummary(42, { db: fakeDb(conv, mem2), ask: (async () => null) as any, fallback: async (pr: string) => { used = true; const src = JSON.parse(pr.split('AVAILABLE_CHAT_SOURCES\n')[1].split('\nEND_CHAT_SOURCES')[0]); return { text: JSON.stringify({ keep: [src.find((x: any) => x.text.includes('Jailer 2')).sourceId] }) } } })
+  assert.equal(used, true); assert.equal(r2, 'updated'); assert.match(mem2[0].content, /Jailer 2/)
+  assert.equal(await cs.refreshConversationSummary(42, { db: fakeDb(conv, []), ask: (async () => null) as any, fallback: async () => null }), 'failed')
+  console.log('PASS refresh: empty Mercury → fallback writes the summary; both empty → failed') }
 delete process.env.INCEPTION_API_KEY
 assert.equal(await cs.refreshConversationSummary(42, { db: fakeDb(conv, []) }), 'disabled')
 console.log('PASS batching, Mercury failure and disabled paths')

@@ -28,11 +28,16 @@ function cleanSubject(raw: string): string | null {
 }
 
 export function parseInstamartOrderRequest(text: string): string | null {
+  // 26 Oct live: "Add Amul Taaza toned milk 500 ml to my cart on Swiggy Instamart. Do not order or pay." went to the
+  // generic browser instead of this flow. A trailing "do not order / pay / check out" note only restates the rule here.
   const value = String(text || '').trim()
+    .replace(/(?:[.!,;]\s*|\s+)(?:(?:and\s+)?(?:please\s+)?(?:do\s+not|don'?t|never)\s+(?:order|pay|check\s*out|checkout|buy|purchase|place\s+(?:the\s+|an?\s+)?order)(?:\s+(?:or|and|,)?\s*(?:order|pay|check\s*out|checkout|buy|purchase|place\s+(?:the\s+|an?\s+)?order))*(?:\s+(?:anything|it))?\s*[.!]*\s*)+$/i, '')
+    .trim()
   if (value.length > 200) return null
   const order = value.match(/^(?:(?:hey\s+)?gogo[,\s]+)?(?:please\s+|pls\s+)?(?:(?:can|could|will)\s+you\s+)?(?:please\s+)?(?:order|buy|get)\s+(.{1,140}?)\s+(?:on|from|via|through|using)\s+(?:swiggy(?:'s)?\s+)?instamart(?:\s+(?:please|pls))?\s*[.!?]*$/i)
   const add = value.match(/^(?:please\s+)?add\s+(.{1,140}?)\s+(?:to|in|into)\s+(?:my\s+|the\s+)?(?:swiggy\s+)?instamart\s+(?:cart|basket)(?:\s+(?:please|pls))?\s*[.!?]*$/i)
-  const raw = order?.[1] || add?.[1]
+  const addOn = value.match(/^(?:please\s+)?add\s+(.{1,140}?)\s+(?:to|in|into)\s+(?:my\s+|the\s+)?(?:cart|basket)\s+(?:on|in|at|from)\s+(?:swiggy(?:'s)?\s+)?instamart(?:\s+(?:please|pls))?\s*[.!?]*$/i)
+  const raw = order?.[1] || add?.[1] || addOn?.[1]
   return raw ? cleanSubject(raw) : null
 }
 

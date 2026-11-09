@@ -1,0 +1,254 @@
+// Job hunting (31 Oct, from Muse users: "scan for new jobs once per day and report the ones I'd be qualified for",
+// "it remembers my preferences like salary range", "tracks the status of all jobs we applied for from my email",
+// "has 3 resumes and applies the correct one, writes a custom cover letter"). Gogo prepares; the person submits.
+import { supabaseAdmin } from '@/lib/supabase-admin'
+
+const PREFS = 'JOB_PREFS:'
+const clean = (v: unknown, max = 500) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
+
+export type JobPrefs = { raw: string; roles: string[]; locations: string[]; minSalaryLpa: number | null; remote: boolean }
+
+// ---------------------------------------------------------------- preferences
+export function parseJobPrefsCommand(text: string): string | null {
+  const t = clean(text, 600)
+  const m = t.match(/^(?:please\s+)?(?:save\s+|remember\s+|set\s+|update\s+)?(?:my\s+)?job\s+(?:preferences?|prefs|criteria|search\s+criteria)\s*(?:are|is|:|-|=|to)?\s*(.{8,})$/i)
+    || t.match(/^(?:remember\s+(?:that\s+)?)?i(?:'m| am)\s+looking\s+for\s+(?:a\s+|an\s+)?(.{6,}?\b(?:roles?|jobs?|positions?|openings?)\b.*)$/i)
+  return m ? clean(m[1], 400).replace(/[.!]+$/, '') : null
+}
+
+export function jobPrefsFrom(raw: string): JobPrefs {
+  const r = clean(raw, 400)
+  const lpa = r.match(/(\d{1,3}(?:\.\d+)?)\s*(?:lpa|l\b|lakhs?(?:\s+per\s+(?:annum|year))?)/i)
+  const cr = r.match(/(\d{1,2}(?:\.\d+)?)\s*(?:cr|crores?)\b/i)
+  const minSalaryLpa = lpa ? Number(lpa[1]) : cr ? Number(cr[1]) * 100 : null
+  const locations = Array.from(new Set((r.match(/\b(?:bengaluru|bangalore|mumbai|delhi|ncr|gurgaon|gurugram|noida|pune|hyderabad|chennai|dubai|uae|singapore|london|remote)\b/gi) || []).map(x => x.toLowerCase().replace('bangalore', 'bengaluru'))))
+  const roles = r.split(/\s*(?:,|;|\bor\b|\/)\s*/i).map(x => x.replace(/\b(?:roles?|jobs?|positions?|in|at|based|above|over|salary|minimum|min|remote|hybrid|\d+(?:\.\d+)?\s*(?:lpa|l|lakhs?|cr|crores?)|bengaluru|bangalore|mumbai|delhi|pune|hyderabad|chennai|dubai|uae|singapore|london)\b/gi, ' ').replace(/\s+/g, ' ').trim())
+    .filter(x => x.length >= 3 && /[a-z]/i.test(x)).slice(0, 4)
+  return { raw: r, roles, locations, minSalaryLpa, remote: /\bremote\b/i.test(r) }
+}
+
+/** False (nothing written) when the owner id is not exact; throws on a database error. */
+export async function saveJobPrefs(telegramId: number | string, raw: string): Promise<boolean> {
+  // Exact owner (P0.1): only a safe canonical id reads or writes private job data (functions run standalone, so inline).
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return false
+  const owner = String(telegramId ?? '').trim(), legacy = Number(owner)
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner) || !Number.isSafeInteger(legacy) || String(legacy) !== owner) return false
+  const { error } = await supabaseAdmin.from('memories').insert({ telegram_id: legacy, content: `${PREFS}${clean(raw, 400)}` })
+  if (error) throw new Error(`job_prefs_save_failed:${error.message}`)
+  return true
+}
+export async function savedJobPrefs(telegramId: number | string): Promise<JobPrefs | null> {
+  // Exact owner (P0.1): only a safe canonical id reads or writes private job data (functions run standalone, so inline).
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return null
+  const owner = String(telegramId ?? '').trim(), legacy = Number(owner)
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner) || !Number.isSafeInteger(legacy) || String(legacy) !== owner) return null
+  const { data } = await supabaseAdmin.from('memories').select('content').eq('telegram_id', legacy).like('content', `${PREFS}%`).order('id', { ascending: false }).limit(1)
+  const raw = String(data?.[0]?.content || '').slice(PREFS.length).trim()
+  return raw ? jobPrefsFrom(raw) : null
+}
+export function jobPrefsReply(p: JobPrefs) {
+  const bits = [p.roles.length ? `roles: ${p.roles.join(', ')}` : '', p.locations.length ? `where: ${p.locations.join(', ')}` : '', p.minSalaryLpa ? `at least ₹${p.minSalaryLpa} LPA` : ''].filter(Boolean)
+  return `💼 Saved your job preferences${bits.length ? ` (${bits.join(' · ')})` : ''}.\n\nSay *scan for jobs every day* and I'll check daily and send only new openings that match.`
+}
+
+// ---------------------------------------------------------------- daily radar
+export function isJobRadarRequest(text: string) {
+  const t = clean(text, 400)
+  return /\b(?:find|scan|look|search|check|hunt)\b[^.?!]{0,30}\b(?:new\s+)?(?:jobs?|openings?|roles?|positions?)\b[^.?!]{0,60}\b(?:every\s*day|daily|each\s+day|every\s+morning|once\s+a\s+day)\b/i.test(t)
+    || /^(?:start|set\s+up|turn\s+on)\s+(?:a\s+|my\s+)?job\s+(?:radar|alerts?|scan)\b/i.test(t)
+    || /\b(?:send|tell|show)\s+me\s+new\s+(?:jobs?|openings?)\s+(?:daily|every\s*day|each\s+day)\b/i.test(t)
+}
+// 4 Nov (retest #10): "scan for jobs now" fell to a general web answer and 2 of 3 openings had no link. A one-off
+// scan searches job boards directly, so every opening listed is a real result with its own link.
+export const JOB_BOARD_DOMAINS = ['linkedin.com', 'naukri.com', 'indeed.com', 'instahyre.com', 'iimjobs.com', 'wellfound.com', 'cutshort.io', 'hirist.tech', 'greenhouse.io', 'lever.co', 'ashbyhq.com', 'glassdoor.co.in']
+export function isJobScanNow(text: string) {
+  const t = clean(text, 200).toLowerCase().replace(/[?.!]+$/, '')
+  return /^(?:please\s+)?(?:scan|search|find|look|check|hunt)\s+(?:for\s+)?(?:new\s+)?(?:jobs?|openings?|job\s+openings?)(?:\s+(?:now|today|for\s+me|right\s+now|again))*$/.test(t)
+    || /^(?:find|show)\s+me\s+(?:new\s+)?(?:jobs?|openings?)(?:\s+(?:now|today))?$/.test(t)
+    || /^(?:any\s+)?new\s+(?:jobs?|openings?)(?:\s+(?:today|for\s+me))?$/.test(t)
+}
+// 5 Nov live: "scan jobs for product manager in Bangalore" names its own role and city, so it needs no saved
+// preferences; it fell to a general web answer with board listing counts. Returns "<role> jobs in <city>" or null.
+export function jobScanQuery(text: string): string | null {
+  const t = clean(text, 200).replace(/[?.!]+$/, '').trim()
+  const m = t.match(/^(?:please\s+)?(?:scan|search|find|look|hunt|check)\s+(?:for\s+)?(?:new\s+)?(?:jobs?|openings?|roles?)\s+(?:for|as)\s+(?:an?\s+)?(.{2,60}?)(?:\s+(?:in|at|near|around)\s+(.{2,40}?))?(?:\s+(?:now|today|for\s+me))?$/i)
+    || t.match(/^(?:please\s+)?(?:scan|search|find|look|hunt|check)\s+(?:for\s+)?(?:new\s+)?(.{2,60}?)\s+(?:jobs?|openings?|roles?)(?:\s+(?:in|at|near|around)\s+(.{2,40}?))?(?:\s+(?:now|today|for\s+me))?$/i)
+  if (!m) return null
+  const role = clean(m[1], 60).replace(/^(?:me|some|any|the)\s+/i, '')
+  if (!role || /^(?:me|some|any|new|the|a|an|for)$/i.test(role) || /^(?:my|our|your|his|her|their)\b/i.test(role) || role.split(' ').length > 6) return null
+  const city = clean(m[2] || '', 40)
+  return `${role} jobs${city ? ` in ${city}` : ''}`
+}
+/** Board search/listing pages (many openings) as opposed to one posting. */
+export function isJobListingUrl(url: string) {
+  try {
+    const u = new URL(url), h = u.hostname.replace(/^(?:www|in|uk)\./, ''), p = u.pathname
+    if (h.endsWith('indeed.com')) return !/^\/(?:viewjob|rc\/clk|pagead\/clk|cmp\/[^/]+\/jobs\/)/.test(p)
+    if (h.endsWith('linkedin.com')) return !/^\/jobs\/view\//.test(p)
+    if (h.endsWith('naukri.com')) return !/^\/job-listings-/.test(p)
+    if (h.endsWith('glassdoor.co.in')) return !/^\/job-listing\//.test(p)
+    if (h.endsWith('wellfound.com')) return !/^\/jobs\/\d/.test(p)
+    if (h.endsWith('instahyre.com')) return !/^\/job-\d/.test(p)
+    if (h.endsWith('iimjobs.com') || h.endsWith('hirist.tech')) return !/^\/j\//.test(p)
+    if (h.endsWith('cutshort.io')) return !/^\/job\//.test(p)
+    if (h.endsWith('lever.co')) return p.split('/').filter(Boolean).length < 2
+    if (h.endsWith('greenhouse.io')) return !/\/jobs\/\d/.test(p)
+    if (h.endsWith('ashbyhq.com')) return p.split('/').filter(Boolean).length < 2
+    return false
+  } catch { return true }
+}
+type JobHit = { title?: string; url?: string; snippet?: string }
+/** Job-board results as a numbered list; each line carries its own link. Listing pages and duplicates dropped. */
+export function formatJobScan(results: JobHit[], query: string) {
+  const seen = new Set<string>()
+  const rows: string[] = []
+  for (const r of results) {
+    let host = ''
+    try { const u = new URL(String(r.url || '')); if (u.protocol !== 'https:') continue; host = u.hostname.replace(/^www\./, '').replace(/^in\./, '') } catch { continue }
+    if (!JOB_BOARD_DOMAINS.some(d => host === d || host.endsWith('.' + d))) continue
+    const title = clean(r.title, 110).replace(/\s*[|·-]\s*(?:LinkedIn|Naukri(?:\.com)?|Indeed(?:\.com)?|Glassdoor|Instahyre|Wellfound|Cutshort)\s*$/i, '')
+    if (!title || /^\d[\d,]*\+?\s+.*\bjobs\b/i.test(title) || /\bjobs\s+in\b.*\(\d/i.test(title)) continue // "1,200 AI jobs in Bengaluru" listing pages
+    // 4 Nov live: Indeed search pages ("Forward Deployed Engineer jobs", /q-…-jobs.html) came through. A title ending in
+    // "jobs" or a board's search/listing URL is a list of openings, not one opening.
+    if (/\bjobs?(?:\s+in\s+[\w\s,]+)?\s*$/i.test(title) || isJobListingUrl(String(r.url))) continue
+    const key = title.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+    if (seen.has(key)) continue
+    seen.add(key)
+    rows.push(`${rows.length + 1}. *${title}* · ${host}\n${r.url}`)
+    if (rows.length >= 6) break
+  }
+  if (!rows.length) return `💼 I searched the job boards for ${query} and found no individual openings just now. Say *scan for jobs every day* and I'll message you when new ones appear.`
+  return `💼 *Openings for ${query}*\n\n${rows.join('\n\n')}\n\nWhen one looks right, say *prepare application for <role at company or link>*. Say *scan for jobs every day* to get new ones daily. I never apply for you.`
+}
+
+/** The search a daily job watch runs: the request's own role words, else the saved preferences. */
+export function jobRadarQuery(text: string, prefs: JobPrefs | null) {
+  const own = clean(text, 300).replace(/\b(?:please|can\s+you|find|scan|look|search|check|hunt|for|me|new|every\s*day|daily|each\s+day|every\s+morning|once\s+a\s+day|and|report|send|tell|show|the\s+ones?|i(?:'d| would)\s+be\s+qualified\s+for|start|set\s+up|turn\s+on|a|my|job\s+radar|job\s+alerts?)\b/gi, ' ').replace(/\b(?:jobs?|openings?|positions?)\b/gi, ' ').replace(/\s+/g, ' ').trim()
+  const roles = own.length >= 4 ? own : prefs?.roles.join(' OR ') || ''
+  const where = prefs?.locations.length ? prefs.locations.join(' OR ') : ''
+  const pay = prefs?.minSalaryLpa ? `${prefs.minSalaryLpa}+ LPA` : ''
+  return clean([roles, 'jobs', where, pay].filter(Boolean).join(' '), 200)
+}
+
+// ---------------------------------------------------------------- application tracker
+export type AppStatus = 'applied' | 'viewed' | 'assessment' | 'interview' | 'rejected' | 'offer'
+export type Application = { company: string; role: string; status: AppStatus; at: number }
+const STATUS_RULES: [AppStatus, RegExp][] = [
+  ['offer', /\b(?:offer\s+letter|pleased\s+to\s+offer|job\s+offer|extend(?:ing)?\s+an?\s+offer)\b/i],
+  ['rejected', /\b(?:unfortunately|regret\s+to|not\s+(?:to\s+)?(?:move|moving|proceed|be\s+moving)\s+forward|decided\s+to\s+(?:pursue|move\s+forward\s+with)\s+other|position\s+has\s+been\s+filled|not\s+selected|will\s+not\s+be\s+progressing)\b/i],
+  ['interview', /\b(?:interview|schedule\s+(?:a\s+)?(?:call|chat|time)|next\s+round|speak\s+with\s+you|meet\s+the\s+team)\b/i],
+  ['assessment', /\b(?:assessment|assignment|coding\s+(?:test|challenge)|take-?home|hackerrank|codility|test\s+link|next\s+steps?\b[^.]{0,30}\bapplication|quick\s+action\s+required)\b/i],
+  ['viewed', /\b(?:viewed\s+your\s+application|application\s+was\s+viewed|recruiter\s+viewed)\b/i],
+  ['applied', /\b(?:thank(?:s|\s+you)\s+for\s+(?:applying|your\s+(?:application|interest))|application\s+(?:received|submitted|has\s+been\s+received|was\s+sent)|we(?:'ve|\s+have)\s+received\s+your\s+application|you\s+applied|your\s+application\s+(?:for|to))\b/i],
+]
+// 2 Nov live: an "Elementary School" email showed as a job offer; schools, classes and parents are never applications.
+const NOT_APPLICATION = /\b(?:loan|credit\s+card|mutual\s+fund|insurance|visa\s+application|passport|admission|scholarship|app\s+store|newsletter|webinar|grant|fellowship|funding|accelerator|incubator|investors?|pull\s+request|PR\s+#\d+|(?:elementary|primary|high|public|international)\s+school|school\s+(?:fees?|bus|trip|calendar|holiday)|parents?|PTA|class\s+teacher|report\s+card|tuition)\b/i
+
+export function classifyApplicationEmail(e: { from: string; subject: string; snippet?: string; at?: number }): Application | null {
+  const text = `${e.subject} ${e.snippet || ''}`
+  if (NOT_APPLICATION.test(text)) return null
+  const status = STATUS_RULES.find(([, re]) => re.test(text))?.[0]
+  if (!status) return null
+  if (status !== 'applied' && !/\b(?:application|applied|role|position|candidacy|interview|opening|job|search|opportunity|your\s+interest|profile)\b/i.test(text)) return null
+  // 31 Oct, run against a real inbox: senders are often bare addresses (no-reply@openai.com) on hiring platforms
+  // (workablemail, zohorecruit); the company is in the subject ("Thanks for applying to Ajaib").
+  const ROLE_WORD = /\b(?:engineer(?:ing)?|director|head|manager|lead|developer|scientist|designer|analyst|vp|vice\s+president|officer|architect|product|intern|consultant|specialist|cto|principal|staff)\b/i
+  const rawFrom = String(e.from || '')
+  const fromName = /@/.test(rawFrom.replace(/<[^>]+>/, '')) ? '' : clean(rawFrom.replace(/<[^>]+>/, '').replace(/"/g, ''), 60)
+  const address = (rawFrom.match(/([a-z0-9._+-]+)@([a-z0-9.-]+)/i) || [])
+  const domain = String(address[2] || '').toLowerCase()
+  const platform = /linkedin|naukri|indeed|instahyre|iimjobs|workday|greenhouse|lever|ashby|smartrecruiters|myworkday|hirist|wellfound|cutshort|workable|zohorecruit|recruitee|airtable|gmail|outlook|freshteam|keka|darwinbox/.test(domain)
+  const STOP = /^(?:You|Your|We|Our|The|This|Thanks?|Hi|Hello|Dear|Unfortunately|Regards|Quick|Action)$/
+  const pickName = (raw?: string) => {
+    const words = raw ? raw.split(/\s+/) : []
+    const cut = words.findIndex(w => STOP.test(w))
+    const name = (cut < 0 ? words : words.slice(0, cut)).join(' ').replace(/[!.,:]+$/, '')
+    return name && !ROLE_WORD.test(name) ? name : undefined
+  }
+  // 2 Nov live: "Ajaib Ajaib" and "Blue Machines AI Blue" — the name ran from the subject into the snippet's first
+  // word. Read the subject on its own first, then the snippet, and never let a name repeat its own first word.
+  const companyIn = (s: string) => pickName(s.match(/\bat\s+([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})(?=[\s,.!:]|$)/)?.[1])
+    || pickName(s.match(/\b(?:applying|applied|application)\s+(?:to|with)\s+([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})(?=[\s,.!:]|$)/)?.[1])
+    || pickName(s.match(/\b(?:with|from|to)\s+([A-Z][A-Za-z0-9&.\-]+(?:\s+[A-Z][A-Za-z0-9&.\-]+){0,3})(?=[\s,.!:]|$)/)?.[1])
+  const noEcho = (name?: string) => {
+    if (!name) return name
+    const w = name.split(/\s+/)
+    const again = w.findIndex((x, i) => i > 0 && x.toLowerCase() === w[0].toLowerCase())
+    return again > 0 ? w.slice(0, again).join(' ') : name
+  }
+  const companyFromText = noEcho(companyIn(String(e.subject || '')) || companyIn(String(e.snippet || '')))
+  const fromCompany = fromName.replace(/\b(?:careers?|recruiting|recruitment|talent(?:\s+acquisition)?|hiring\s+team|jobs|team|hr|no-?reply|support|notifications?)\b/gi, '').replace(/\s+/g, ' ').trim()
+  const local = String(address[1] || '').toLowerCase().replace(/[._+-]/g, '').replace(/^(?:support|noreply|careers?|jobs|hr|talent|hiring|recruit(?:ing|ment|er)?|info|hello|team|mail)+/, '').replace(/(?:support|careers?|jobs|hr|talent|hiring|recruit(?:ing|ment)?|team)+$/, '')
+  const domainRoot = platform ? '' : domain.replace(/^(?:mail|email|em|careers|jobs|notifications?)\./, '').split('.')[0]
+  const title = (v: string) => v.charAt(0).toUpperCase() + v.slice(1)
+  const company = clean(companyFromText || fromCompany || (domainRoot ? title(domainRoot) : '') || (local.length >= 3 ? title(local) : '') || 'Unknown company', 50)
+  const forAs = text.match(/\b(?:for|as)\s+(?:the\s+|a\s+|an\s+)?([A-Z][\w/&+\-]*(?:\s+(?:of|and|for|&|-|[A-Z][\w/&+\-]*)){0,6}?)(?:\s+(?:role|position|at|with)\b|[,.!:]|$)/)?.[1]
+  const roleMatch = (forAs && !/application/i.test(forAs) ? forAs : undefined)
+    || text.match(/\b(?:application|applying|applied)\s*(?:to|for|:)\s*(?:the\s+)?(.{3,80}?)(?=\s+at\s+[A-Z]|\s+[–—]\s|[!?]|$)/i)?.[1]
+  const role = clean(roleMatch && ROLE_WORD.test(roleMatch) ? roleMatch.replace(/^(?:your\s+)?(?:job\s+)?application\s*:?\s*/i, '') : '', 60)
+  return { company, role, status, at: Number(e.at || 0) }
+}
+
+const RANK: Record<AppStatus, number> = { applied: 1, viewed: 2, assessment: 3, interview: 4, rejected: 5, offer: 6 }
+/** One row per company + role; the newest email decides the status (a rejection after an interview is a rejection). */
+export function mergeApplications(rows: Application[]) {
+  // A company's email without a role ("Next steps for your application") belongs to its one known role.
+  const roles = new Map<string, Set<string>>()
+  for (const r of rows) if (r.role) roles.set(r.company.toLowerCase(), (roles.get(r.company.toLowerCase()) || new Set()).add(r.role))
+  rows = rows.map(r => !r.role && roles.get(r.company.toLowerCase())?.size === 1 ? { ...r, role: [...roles.get(r.company.toLowerCase())!][0] } : r)
+  const by = new Map<string, Application>()
+  for (const r of rows.sort((a, b) => a.at - b.at)) {
+    const key = `${r.company.toLowerCase()}|${r.role.toLowerCase() || '-'}`
+    const prev = by.get(key)
+    if (!prev || r.at >= prev.at || RANK[r.status] > RANK[prev.status]) by.set(key, r)
+  }
+  return [...by.values()].sort((a, b) => b.at - a.at)
+}
+const LABEL: Record<AppStatus, string> = { applied: '📨 Applied', viewed: '👀 Viewed', assessment: '📝 Next step', interview: '🗓️ Interview', rejected: '✖️ Not moving forward', offer: '🎉 Offer' }
+export function formatApplications(apps: Application[], now = Date.now()) {
+  if (!apps.length) return "📂 I couldn't find job application emails in the last 60 days. When you apply, the confirmation email is enough: ask *show my job applications* again and I'll track it."
+  const ago = (t: number) => { const d = Math.floor((now - t) / 86400_000); return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${d} days ago` }
+  const active = apps.filter(a => a.status !== 'rejected').length
+  return `📂 *Your job applications* (${apps.length}, ${active} still open)\n\n${apps.slice(0, 15).map((a, i) => `${i + 1}. ${a.company}${a.role ? ` — ${a.role}` : ''}\n   ${LABEL[a.status]} · ${ago(a.at)}`).join('\n')}\n\nRead from your Gmail. Say *remind me to follow up with <company> on Monday* to nudge one.`
+}
+export function isJobApplicationsQuery(text: string) {
+  const t = clean(text, 200).toLowerCase().replace(/[?.!]+$/, '')
+  return /^(?:show|list|track|check|what(?:'s| is)|where)\b[^.?]{0,25}\b(?:job\s+)?applications?\b/.test(t) && /\b(?:job|applications?|applied)\b/.test(t) && !/\b(?:visa|loan|passport|app\s+store)\b/.test(t)
+    || /^(?:which|what)\s+jobs?\s+(?:have|did)\s+i\s+appl(?:y|ied)\s+(?:for|to)/.test(t)
+    || /^status\s+of\s+my\s+(?:job\s+)?applications?/.test(t)
+}
+
+// ---------------------------------------------------------------- prepare an application
+export function parsePrepareApplication(text: string): { job: string } | null {
+  const t = clean(text, 600)
+  const m = t.match(/^(?:please\s+)?(?:prepare|prep|get\s+ready)\s+(?:an?\s+|my\s+)?(?:job\s+)?application\s+(?:for|to)\s+(.{4,})$/i)
+    || t.match(/^(?:please\s+)?(?:write|draft)\s+(?:a\s+|my\s+)?cover\s+letter\s+(?:for|to)\s+(.{4,})$/i)
+    || t.match(/^(?:please\s+)?apply\s+(?:for|to)\s+(.{4,})$/i)
+  return m ? { job: clean(m[1], 400) } : null
+}
+/** The person's resumes among saved documents, newest first. */
+export async function savedResumes(telegramId: number | string) {
+  // Exact owner (P0.1): only a safe canonical id reads or writes private job data (functions run standalone, so inline).
+  if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return []
+  const owner = String(telegramId ?? '').trim(), legacy = Number(owner)
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner) || !Number.isSafeInteger(legacy) || String(legacy) !== owner) return []
+  const { data } = await supabaseAdmin.from('documents').select('id,title,doc_type,summary,created_at').eq('telegram_id', legacy).order('created_at', { ascending: false }).limit(200)
+  // A row that carries an owner id must carry this one (defence in depth on top of the owner filter).
+  return (data || []).filter((d: any) => (d.telegram_id === undefined || String(d.telegram_id) === owner) && /\b(?:resume|résumé|cv|curriculum\s+vitae)\b/i.test(`${d.title} ${d.doc_type} ${String(d.summary || '').slice(0, 200)}`))
+}
+/** The resume whose title or summary shares the most words with the job. */
+export function pickResume(resumes: { title: string; summary?: string | null }[], job: string) {
+  const words = new Set(job.toLowerCase().match(/[a-z]{3,}/g) || [])
+  let best: any = null, score = -1
+  for (const r of resumes) {
+    const hay = `${r.title} ${String(r.summary || '').slice(0, 600)}`.toLowerCase()
+    const s = [...words].filter(w => hay.includes(w)).length
+    if (s > score) { best = r; score = s }
+  }
+  return best
+}
+
+/** Any job command, for routing guards (the brain leaves these to the handler). */
+export function isJobCommand(text: string) {
+  return Boolean(parseJobPrefsCommand(text) || isJobRadarRequest(text) || isJobApplicationsQuery(text) || parsePrepareApplication(text))
+}

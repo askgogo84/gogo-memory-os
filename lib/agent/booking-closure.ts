@@ -1,3 +1,4 @@
+import { reconcileShowTime } from './show-time'
 import Anthropic from '@anthropic-ai/sdk'
 import { randomUUID } from 'crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -83,7 +84,9 @@ async function extractDetails(input:{originalText:string;provider:string;pageTit
     const raw=r.content[0]?.type==='text'?parseJsonLoose(r.content[0].text):null
     // 20 Oct live: "Sat, 19 Oct" was saved as 19 Oct 2024. A year the evidence never states is re-anchored.
     const evidence=[input.originalText,input.pageTitle,input.pageText,input.gmailText].join('\n')
-    const start=raw?.startAt&&Number.isFinite(Date.parse(raw.startAt))?anchorYearlessInstant(String(raw.startAt),evidence):null
+    const anchored=raw?.startAt&&Number.isFinite(Date.parse(raw.startAt))?anchorYearlessInstant(String(raw.startAt),evidence):null
+    // 8 Nov live: the printed show clock wins over an instant that is one zone offset away from it.
+    const start=reconcileShowTime(anchored,evidence,input.timezone||'Asia/Kolkata').startAt
     const end=raw?.endAt&&Number.isFinite(Date.parse(raw.endAt))?anchorYearlessInstant(String(raw.endAt),evidence):null
     return {title:safe(raw?.title||titleFrom(input.originalText),200)||'Event booking',provider:safe(raw?.provider||input.provider,120)||input.provider,startAt:start,endAt:end,timezone:safe(raw?.timezone||input.timezone,80)||input.timezone,location:raw?.location?safe(raw.location,300):null,city:raw?.city?safe(raw.city,120):null,screen:raw?.screen?safe(raw.screen,120):null,seats:Array.isArray(raw?.seats)?raw.seats.map((x:any)=>safe(x,50)).filter(Boolean).slice(0,12):[],bookingRef:raw?.bookingRef?safe(raw.bookingRef,120):null,durationMinutes:Number.isFinite(Number(raw?.durationMinutes))?Math.max(1,Math.min(600,Number(raw.durationMinutes))):null,status:['confirmed','unknown','cancelled','rescheduled'].includes(raw?.status)?raw.status:'unknown'}
   }catch{return {title:titleFrom(input.originalText),provider:input.provider,startAt:null,endAt:null,timezone:input.timezone,location:null,city:null,screen:null,seats:[],bookingRef:null,durationMinutes:null,status:'unknown'}}
@@ -147,3 +150,49 @@ export async function retrieveEventCredential(telegramId:number,requestText:stri
   // The request names something ("Amsterdam", "Coldplay") and no saved ticket mentions it: say nothing rather than send a different ticket.
   if(tokens.length&&scored[0].score<5)return null;const c=event.metadata_json.credential,url=await getDocumentSignedUrl(String(c.storagePath||''),600);if(!url)return null;const caption=[`🎟️ *${safe(event.title,180)}*`,event.start_at?`*Time:* ${event.start_at}`:'',event.location?`*Venue:* ${safe(event.location,240)}`:'','','Here is the provider-issued ticket/QR Gogo saved for you.'].filter(Boolean).join('\n');return{mediaUrl:url,mimeType:String(c.mimeType||'image/png'),caption,lifeEventId:String(event.id),title:safe(event.title,180)}}
 
+
+/** Pure: pick the event a "show me my ticket/QR" means when no QR image is saved — the next one (or one that started
+ * under 3 h ago), matched by name when the request names one. Past events are never offered as "your ticket". */
+export function pickUpcomingEvent<T extends { title?: string | null; subtype?: string | null; start_at?: string | null; provider?: string | null }>(rows: T[], requestText: string, now = Date.now()): T | null {
+  const wantsMovie = /\b(movie|cinema|theatre|theater|film)\b/i.test(requestText)
+  const tokens = queryTokens(requestText)
+  const live = rows.filter(r => { const t = Date.parse(String(r.start_at || '')); return Number.isFinite(t) && t >= now - 3 * 3_600_000 })
+  let pool = wantsMovie ? live.filter(r => r.subtype === 'movie_booking' || /bookmyshow|pvr|inox|cinepolis/i.test(`${r.provider || ''} ${r.title || ''}`)) : live
+  if (!pool.length) pool = live
+  const named = tokens.length ? pool.filter(r => tokens.some(t => `${r.title || ''} ${r.provider || ''}`.toLowerCase().includes(t))) : []
+  if (tokens.length && named.length) pool = named
+  return [...pool].sort((a, b) => Date.parse(String(a.start_at)) - Date.parse(String(b.start_at)))[0] || null
+}
+
+/** 8 Nov live: "show me my movie qr code" sent a September ticket because tonight's booking had no QR image saved.
+ * Now: the upcoming booking's details and its provider link, and an honest line that the QR image isn't saved. */
+export async function upcomingEventDetails(telegramId: number | string, requestText: string, tz = 'Asia/Kolkata'): Promise<string | null> {
+  const { data } = await supabaseAdmin.from('life_events').select('id,title,subtype,start_at,location,provider,metadata_json').eq('telegram_id', String(telegramId)).eq('event_type', 'event').gte('start_at', new Date(Date.now() - 3 * 3_600_000).toISOString()).order('start_at', { ascending: true }).limit(20)
+  const ev: any = pickUpcomingEvent((data || []) as any[], requestText)
+  if (!ev) return upcomingTicketReminder(telegramId, requestText, tz)
+  const d = ev.metadata_json?.bookingDetails || {}
+  const when = ev.start_at ? new Date(ev.start_at).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: tz }) : null
+  const seats = Array.isArray(d.seats) && d.seats.length ? d.seats.join(', ') : null
+  const link = ev.metadata_json?.resolvedUrl || ev.metadata_json?.bookingUrl || null
+  return [
+    `🎟️ *${safe(ev.title, 180)}*`,
+    when ? `*Time:* ${when}` : '',
+    ev.location ? `*Venue:* ${safe(ev.location, 240)}` : '',
+    d.screen ? `*Screen:* ${safe(d.screen, 60)}` : '',
+    seats ? `*Seats:* ${safe(seats, 120)}` : '',
+    d.bookingRef ? `*Booking ID:* ${safe(d.bookingRef, 60)}` : '',
+    '',
+    `I don't have the QR image saved for this one.${link ? ` Open it in ${ev.provider || 'the provider'}: ${link}` : ` Open ${ev.provider || 'the provider'} app → Your Orders.`}`,
+  ].filter((l, i, a) => l || (i > 0 && a[i - 1])).join('\n')
+}
+
+/** No Life Event either: a ticket the owner saved only as a reminder (an emailed booking). Its own text, never a guess. */
+async function upcomingTicketReminder(telegramId: number | string, requestText: string, tz: string): Promise<string | null> {
+  const { isTicketReminder } = await import('@/lib/bot/completion-claim-guard')
+  const { data } = await supabaseAdmin.from('reminders').select('message,remind_at').eq('telegram_id', String(telegramId)).gte('remind_at', new Date(Date.now() - 3 * 3_600_000).toISOString()).lte('remind_at', new Date(Date.now() + 14 * 86_400_000).toISOString()).order('remind_at', { ascending: true }).limit(40)
+  const tokens = queryTokens(requestText)
+  const rows = ((data || []) as any[]).filter(r => isTicketReminder(String(r.message || '')))
+  const pick = (tokens.length ? rows.find(r => tokens.some(t => String(r.message).toLowerCase().includes(t))) : null) || rows[0]
+  if (!pick) return null
+  return [`🎟️ ${safe(pick.message, 300)}`, '', `I don't have the QR image saved for this one. Open your ticket in the provider's app (BookMyShow → Your Orders), or send me a screenshot of it and I'll keep it.`].join('\n')
+}

@@ -117,6 +117,13 @@ export default function AgentDashboardPage(){
     finally{setBusy('')}
   }
 
+  async function pauseWatcher(id:string,action:'pause'|'resume'){
+    setBusy(`watcher:${id}`);setError('')
+    try{await api(`/api/agent/watchers/${encodeURIComponent(id)}`,{method:'PATCH',body:JSON.stringify({action})});await load(true)}
+    catch(e:any){setError(/migration_required/.test(String(e?.message||''))?'Pause is not switched on yet for this account.':(e?.message||`Could not ${action} this watch.`))}
+    finally{setBusy('')}
+  }
+
   async function stopWatcher(id:string){
     setBusy(`watcher:${id}`)
     try{await api(`/api/agent/watchers/${encodeURIComponent(id)}`,{method:'DELETE'});await load(true)}
@@ -185,7 +192,7 @@ export default function AgentDashboardPage(){
         {snapshot?.approvals?.map((a:any)=><ApprovalCard key={a.id} approval={a} busy={busy===`approval:${a.id}`} onDecide={d=>resolveApproval(a,d)}/>)}
         {handoffGroups.map(([latest,...earlier])=><Card key={latest.id}><b>{latest.title}</b><p>{latest.summary}</p><Link href={`/dashboard/activity/${latest.id}/browser`} className="btn-primary mt-3 inline-flex">Take control</Link>{earlier.length>0&&<details className="mt-3"><summary className="cursor-pointer text-[14px]">{earlier.length} earlier stop{earlier.length===1?'':'s'} on this site</summary>{earlier.map(h=><div key={h.id} className="mt-2 border-t border-[#262626] pt-2"><p>{h.summary}</p><Link href={`/dashboard/activity/${h.id}/browser`} className="text-[14px] underline">Open</Link></div>)}</details>}</Card>)}
       </Panel>}
-      {(!section||section==='background')&&<Panel title="Background Gogo" eyebrow="Keeps watching" badge={String(snapshot?.watchers?.length||0)}>{!snapshot?.watchers?.length?<Empty text="No active watches. Ask Gogo to watch a price, deadline or change."/>:snapshot.watchers.map((w:any)=><Card key={w.id}><b>{w.title}</b><p>{w.type.replaceAll('_',' ')} · every {w.cadenceMinutes} min</p><p>Next: {w.nextCheckAt?new Date(w.nextCheckAt).toLocaleString():'—'}</p><button onClick={()=>stopWatcher(w.id)} className="mt-3 btn-secondary">Stop</button></Card>)}</Panel>}
+      {(!section||section==='background')&&<Panel title="Background Gogo" eyebrow="Keeps watching" badge={String(snapshot?.watchers?.length||0)}>{!snapshot?.watchers?.length?<Empty text="No active watches. Ask Gogo to watch a price, deadline or change."/>:snapshot.watchers.map((w:any)=><Card key={w.id}><b>{w.title}</b><p>{w.type.replaceAll('_',' ')} · every {w.cadenceMinutes} min</p><p>{w.state==='paused'?`Paused ${w.pausedAt?new Date(w.pausedAt).toLocaleString():''}`:`Next: ${w.nextCheckAt?new Date(w.nextCheckAt).toLocaleString():'—'}`}</p><div className="mt-3 flex gap-2"><button onClick={()=>pauseWatcher(w.id,w.state==='paused'?'resume':'pause')} disabled={busy===`watcher:${w.id}`} className="btn-secondary">{w.state==='paused'?'Resume':'Pause'}</button><button onClick={()=>stopWatcher(w.id)} disabled={busy===`watcher:${w.id}`} className="btn-secondary">Stop</button></div></Card>)}</Panel>}
       {(!section||section==='goals')&&<Panel title="Goals" eyebrow="Longer outcomes" badge={String(snapshot?.goals?.length||0)}>
         <p className="mb-3 text-[14px] leading-5 text-gogo-ink-3">A Goal is an outcome Gogo should keep moving over time — for example, “Prepare my New York trip and keep checking anything that needs my attention.” Gogo can research and monitor automatically, but it still stops for approval before consequential actions.</p>
         <div className="mb-2 flex gap-2">

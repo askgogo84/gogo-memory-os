@@ -2,6 +2,7 @@
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/dashboard/session'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -15,13 +16,15 @@ const TYPES: Record<string, string> = {
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   const session = await getSession()
   if (!session) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const owner = exactSessionOwnerId(session.telegramId)
+  if (!owner) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { id } = await context.params
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   const format = new URL(request.url).searchParams.get('format') || ''
   if (!TYPES[format]) return NextResponse.json({ error: 'bad_format' }, { status: 400 })
-  const ids = await (await import('@/lib/dashboard/owner-ids')).linkedTelegramIds(session.telegramId)
-  const { data: row } = await supabaseAdmin.from('agent_artifacts').select('telegram_id,content_json').eq('id', id).maybeSingle()
-  const data = row && ids.includes(String((row as any).telegram_id ?? '').trim()) ? row : null
+  const { data: row, error } = await supabaseAdmin.from('agent_artifacts').select('telegram_id,content_json').eq('id', id).eq('telegram_id', owner).maybeSingle()
+  if (error) return NextResponse.json({ error: 'temporarily_unavailable' }, { status: 503 })
+  const data = row && exactSessionOwnerId(row.telegram_id) === owner ? row : null
   const doc: any = (data?.content_json as any)?.doc
   if (!doc) return NextResponse.json({ error: 'not_found' }, { status: 404 })
   const ex = await import('@/lib/make/export')
