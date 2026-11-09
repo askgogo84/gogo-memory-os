@@ -122,8 +122,11 @@ async function main() {
   // Execute the real handler against real SQL RPCs, with provider calls blocked.
   let sends=0, outcome='ok', consent=false, cancelDuringConsent=false, failFinish=false
   const adapter={from(table){
-    const q={select:()=>q,eq:()=>q,in:()=>q,lte:()=>q,or:()=>q,order:()=>q,limit:()=>q,maybeSingle:()=>q,
-      then(resolve,reject){return (table==='users'?Promise.resolve({data:{whatsapp_id:'+15555550100',timezone:'Asia/Kolkata'}}):
+    // Echo the exact fictional owner returned by this mocked private users read.
+    // Production now fail-closes if an identity-less row is accidentally reused.
+    let exactUserOwner=null
+    const q={select:()=>q,eq:(column,value)=>{if(table==='users'&&column==='telegram_id')exactUserOwner=value;return q},in:()=>q,lte:()=>q,or:()=>q,order:()=>q,limit:()=>q,maybeSingle:()=>q,
+      then(resolve,reject){return (table==='users'?Promise.resolve({data:{telegram_id:exactUserOwner,whatsapp_id:'+15555550100',timezone:'Asia/Kolkata'}}):
         query("select * from reminders where not sent and delivery_state in ('pending','claimed') and remind_at<=now()").then(data=>({data}))).then(resolve,reject)}}
     return q
   }}
