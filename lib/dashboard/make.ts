@@ -5,6 +5,8 @@ import { exactSessionOwnerId } from './owner-identity'
 
 export const MAKE_KINDS = [
   { key: 'all', label: 'All', types: [] as string[] },
+  // v2 (9 Nov mock): Pages are the owner's Spaces (living pages that refresh on their own), listed first.
+  { key: 'pages', label: 'Pages', types: ['space'] },
   { key: 'briefs', label: 'Briefs', types: ['research_brief', 'meeting_brief', 'daily_brief', 'decision_summary'] },
   { key: 'comparisons', label: 'Comparisons', types: ['comparison'] },
   { key: 'plans', label: 'Plans', types: ['trip', 'goal_plan'] },
@@ -19,7 +21,7 @@ const TYPE_LABEL: Record<string, string> = {
   research_brief: 'Brief', meeting_brief: 'Meeting brief', comparison: 'Comparison', trip: 'Trip plan',
   goal_plan: 'Goal plan', application_tracker: 'Tracker', reward_summary: 'Rewards',
   // Make v2: registered kinds. No writer saves daily_brief yet (the morning brief is sent, not saved); see verify-make-artifacts-v2.
-  daily_brief: 'Daily brief', decision_summary: 'Decision summary',
+  daily_brief: 'Daily brief', decision_summary: 'Decision summary', space: 'Page',
   slide_deck: 'Slides', spreadsheet: 'Sheet',
 }
 export function makeKind(raw: unknown): MakeKind {
@@ -51,11 +53,24 @@ export async function getMadeForYou(telegramId: string, kind: MakeKind = 'all'):
     else seen.set(key, r)
   }
   const rows: any[] = [...seen.values()]
+  // Spaces as Pages (only for accounts with Spaces on; nothing is read otherwise).
+  try {
+    const live = await import('@/lib/spaces/sources-live')
+    if (live.spacesEnabledFor(tg)) {
+      const st = await import('@/lib/spaces/store')
+      const mine = await st.listSpaces(supabaseAdmin, { kind: 'user', telegramId: tg }).catch(() => [])
+      const pilot = live.tipplrPilotWorkspace()
+      const team = pilot && await (await import('@/lib/workspaces/access')).getMembership(tg, pilot).catch(() => null)
+        ? await st.listSpaces(supabaseAdmin, { kind: 'workspace', workspaceId: pilot }).catch(() => []) : []
+      const pages = [...mine.map(s => ({ ...s, __ws: null as string | null })), ...team.map(s => ({ ...s, __ws: pilot }))]
+      rows.unshift(...pages.map(s => ({ id: `space:${s.slug}${s.__ws ? `:${s.__ws}` : ''}`, type: 'space', title: s.title, subtitle: s.__ws ? 'Team page · shared with the workspace · read-only' : `Refreshes every ${s.refreshMinutes} min · version ${s.version}`, updated_at: s.updatedAt, __href: `/dashboard/spaces/${s.slug}${s.__ws ? `?workspace=${s.__ws}` : ''}` })))
+    }
+  } catch (e: any) { console.error('MAKE_PAGES_FAILED:', String(e?.message || e).slice(0, 120)) }
   for (const k of MAKE_KINDS) counts[k.key] = k.key === 'all' ? rows.length : rows.filter(r => (k.types as readonly string[]).includes(String(r.type))).length
   const types = MAKE_KINDS.find(k => k.key === kind)!.types as readonly string[]
   const items = rows.filter(r => !types.length || types.includes(String(r.type))).slice(0, 60).map(r => ({
     id: String(r.id), type: String(r.type), label: typeLabel(String(r.type)), title: String(r.title || 'Saved result'),
-    subtitle: [String(r.subtitle || ''), r.__copies > 1 ? `${r.__copies} saved versions` : ''].filter(Boolean).join(' · '), updatedAt: r.updated_at || null, href: `/dashboard/reports/${encodeURIComponent(String(r.id))}`,
+    subtitle: [String(r.subtitle || ''), r.__copies > 1 ? `${r.__copies} saved versions` : ''].filter(Boolean).join(' · '), updatedAt: r.updated_at || null, href: r.__href || `/dashboard/reports/${encodeURIComponent(String(r.id))}`,
   }))
   return { ok: true, items, counts }
 }
