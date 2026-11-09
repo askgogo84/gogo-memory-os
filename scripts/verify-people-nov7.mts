@@ -24,6 +24,37 @@ assert.deepEqual([nithin.names.sort(), nithin.phones, nithin.notes, nithin.sourc
 const divyas = people.filter(p => p.names.some(n => /^divya/i.test(n)))
 assert.equal(divyas.length, 3, 'Divya S, Divya Rao and a phone-only Divya stay apart until something links them')
 assert.deepEqual(divyas.map(p => p.notes.length), divyas.map(p => p.phones.length ? 1 : 0), 'the bare-name note goes to the contact saved as exactly "Divya", not to Divya S or Divya Rao')
+// Privacy regression: collection order may vary because provider reads finish concurrently.
+// Neither of two different surnames can inherit the bare first-name contact or its notes.
+const phoneOnly = { name: 'Divya', phone: '9900011111', source: 'contacts' as const }
+const guestS = { name: 'Divya S', email: 'divya.s@gmail.com', source: 'calendar' as const }
+const guestRao = { name: 'Divya Rao', email: 'divya.rao@flipkart.com', source: 'calendar' as const }
+const memoryOnly = { name: 'Divya', source: 'memory' as const, note: 'Divya likes filter coffee' }
+for (const order of [
+  [phoneOnly, guestS, guestRao],
+  [guestS, phoneOnly, guestRao],
+  [guestRao, guestS, phoneOnly],
+  [guestRao, phoneOnly, guestS],
+]) {
+  const merged = pp.mergePeople([...order, memoryOnly])
+  assert.equal(merged.length, 3, 'three unrelated Divya identities stay distinct regardless of provider completion order')
+  const contact = merged.find(p => p.phones.includes('9900011111'))!
+  assert.deepEqual(contact.notes, ['Divya likes filter coffee'])
+  assert.deepEqual(contact.emails, [])
+  for (const email of ['divya.s@gmail.com', 'divya.rao@flipkart.com']) {
+    const guest = merged.find(p => p.emails.includes(email))!
+    assert.deepEqual(guest.phones, [], `no phone leak to ${email}`)
+    assert.deepEqual(guest.notes, [], `no bare-name memory leak to ${email}`)
+  }
+}
+const onlyS = pp.mergePeople([{ name: 'Divya S', email: 'divya.s@gmail.com', source: 'calendar' }])
+assert.equal(pp.resolvePerson('Divya Rao', onlyS).person, null, 'mismatched explicit surname must never reveal another person')
+assert.equal(pp.resolvePerson('Divya Rao', onlyS).candidates.length, 0, 'no wrong-surname candidate presented')
+const bareOnly = pp.mergePeople([phoneOnly])
+assert.equal(pp.resolvePerson('Divya Rao', bareOnly).person, null, 'a first-name-only saved contact does not prove a full-name identity')
+assert.equal(pp.resolvePerson('Divya S', onlyS).person?.emails[0], 'divya.s@gmail.com', 'exact full-name lookup remains available')
+console.log('✓ privacy: concurrent collection order, ambiguous first names and mismatched full surnames fail closed')
+
 const rishi = people.find(p => p.emails.includes('rishi@ondc.org'))!
 assert.deepEqual(rishi.notes, ['Rishi keeps the Phase 1 tracker sheet'])
 console.log('✓ merge: Nithin is one person across four sources; Divyas with different surnames stay apart; notes never guessed onto the wrong one')

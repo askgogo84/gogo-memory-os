@@ -10,6 +10,8 @@ const { scoreEmail } = await import('../lib/email/attention')
 // 1. Intents from short replies, in order; unrelated text is not a thread reply.
 const I = (t: string) => ot.threadIntents(t)
 assert.deepEqual(I('It was paid'), ['paid']); assert.deepEqual(I('If was.paid..'), []); assert.deepEqual(I('already paid'), ['paid']); assert.deepEqual(I('I paid it yesterday'), ['paid'])
+// A negated payment reply is a correction, NEVER evidence to close the thread as paid.
+for (const t of ['I have not paid it', 'It was not settled', 'it is not yet paid', 'No, it has not been paid', 'it was never paid', 'I haven’t paid it', 'it has not cleared']) assert.deepEqual(I(t), [], `negated payment must not be accepted: ${t}`)
 assert.deepEqual(I('Check the mail again and track the order..'), ['check', 'track'])
 assert.deepEqual(I('open it'), ['open']); assert.deepEqual(I('send me the link'), ['open']); assert.deepEqual(I('send it to me'), ['open'])
 // A new instruction while a thread is open is NOT a reply to it: it must reach the brain untouched.
