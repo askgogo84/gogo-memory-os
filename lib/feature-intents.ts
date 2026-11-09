@@ -8,7 +8,7 @@ import { tryFoodComparison } from '@/lib/agent/food-comparison'
 import { isFoodComparisonRequest } from '@/lib/agent/food-comparison-intent'
 import { tryRunWhatsAppAgent } from '@/lib/agent/whatsapp-bridge'
 import { dispatchThroughSameBrain } from '@/lib/agent/same-brain'
-import { isEventCredentialRetrieval, retrieveEventCredential } from '@/lib/agent/booking-closure'
+import { isEventCredentialRetrieval, retrieveEventCredential, upcomingEventDetails } from '@/lib/agent/booking-closure'
 import { queueBookingClosure } from '@/lib/agent/booking-queue'
 import { buildGmailConnectUrl } from '@/lib/google-gmail'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -364,6 +364,10 @@ export async function routeFeatureIntent(
       await sendWhatsAppMediaMessage(phone, ticket.caption, ticket.mediaUrl).catch((err:any) => console.error('EVENT_TICKET_MEDIA_SEND_FAILED:', err?.message || err))
       return `Sent the provider-issued ticket/QR for *${ticket.title}*. It stays attached to the same Life Event.`
     }
+    // No saved QR: the upcoming booking's details, never an older ticket from the photo library.
+    const upcoming = await upcomingEventDetails(extra.telegramId, text).catch(() => null)
+    __trace.mark('ticket-upcoming')
+    if (upcoming) return upcoming
   }
 
   if (extra?.telegramId && isBookingOrEventLinkText(text)) {

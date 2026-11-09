@@ -33,3 +33,13 @@ console.log('Overnight (7 Nov) replays passed')
   assert.match(dash, /noBoss = text\.replace/, 'dashboard outbound strips it too')
   console.log('✓ no unrequested "boss" on either surface')
 }
+
+// 4. Live 7 Nov 09:58: the plan pasted the whole flight-research paragraph, and the flight read bailed because Goa had no airport code.
+{
+  const { firstSentences } = await import('../lib/agent/trip-plan')
+  assert.equal(firstSentences('Searching Bengaluru to Goa, 12 Dec 2026 and back 15 Dec 2026: 1 adult, economy, round trip. I search the round trip as one booking for both dates, so the price is the round-trip total. I\'m checking the flight sites for exactly these dates and will send the cheapest options here when it finishes. To change travellers or cabin, send it again.'),
+    "Searching Bengaluru to Goa, 12 Dec 2026 and back 15 Dec 2026: 1 adult, economy, round trip. I'll send the cheapest options here when the search finishes.")
+  const tr = readFileSync('lib/agent/travel-research.ts', 'utf8')
+  assert.match(tr, /goa: \{ label: 'Goa', code: 'GOI'/, 'Goa resolves to an airport code so the browser read runs')
+  console.log('✓ trip plan: one flights sentence; Goa has a code')
+}

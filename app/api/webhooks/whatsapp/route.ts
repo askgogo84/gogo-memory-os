@@ -1023,7 +1023,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // Meeting prep (Duet benchmark, 6 Nov): "prep me for my next meeting" reads the calendar and recent emails.
     // Trip plan (7 Nov): "plan a Goa trip 12 to 15 Dec with Divya and Nithin" gets a plan skeleton, not a question.
     // "What do I know about Nithin?" (7 Nov): one person across memory, contacts, calendar guests and Gmail.
-    if ((globalThis as any).process?.env?.VERCEL_ENV && (/\b(?:prep|prepare|brief)\b[\s\S]{0,40}\b(?:meeting|call|appointment)\b|\bnext\s+(?:meeting|call)\s+about\b|^\s*meeting\s+prep\b/i.test(text) || /^\s*(?:please\s+)?(?:can you\s+|could you\s+|help me\s+)?(?:plan|organi[sz]e|put together|arrange)\b/i.test(text) || /^(?:what|who|tell me about|catch me up on|brief me on|remind me who|when)\b/i.test(text))) {
+    if ((globalThis as any).process?.env?.VERCEL_ENV && (/\b(?:prep|prepare|brief)\b[\s\S]{0,40}\b(?:meeting|call|appointment)\b|\bnext\s+(?:meeting|call)\s+about\b|^\s*meeting\s+prep\b/i.test(text) || /^\s*(?:please\s+)?(?:can you\s+|could you\s+|help me\s+)?(?:plan|organi[sz]e|put together|arrange)\b/i.test(text) || /^(?:what|who|tell me about|catch me up on|brief me on|remind me who|when)\b/i.test(text) || text.trim().length <= 60)) {
       const prepActor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' })
       const prep = (await import('@/lib/agent/meeting-prep-ask').then(m => m.tryMeetingPrep(prepActor, text), () => null))
         || (await import('@/lib/agent/trip-plan').then(m => m.tryTripPlan(prepActor, 'whatsapp', text), () => null))
@@ -1059,6 +1059,15 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // delivery, booking, bill or security notice is read as what it is, with one offer; "yes" within 30 min does
     // that one thing (log the expense, set the reminder, save the ticket, check the order, find the receipt). Read-only otherwise.
     if ((globalThis as any).process?.env?.VERCEL_ENV) {
+      // 7 Nov: a short reply to Gogo's own proactive message ("it was paid", "check the mail again and track the order",
+      // "open it") is read against that message first (lib/agent/open-thread), never as a new question to the brain.
+      const threaded = text.length <= 160 ? await import('@/lib/agent/open-thread').then(async m => m.tryThreadReply(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), text), () => null) : null
+      if (threaded) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', threaded)
+        await sendWhatsAppMessage(from, threaded)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
       const pay = await import('@/lib/agent/shared-content').then(async m => (await m.tryShared(String(resolvedUser.telegramId), text))
         || (text.length <= 24 ? m.takeSharedFollowUp(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), text) : null), () => null)
       if (pay) {

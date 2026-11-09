@@ -31,8 +31,10 @@ export function localPartHasName(email: string, name: string): boolean {
 
 /** Merge observations into people. Same email or same phone is the same person; a bare first name joins an existing
  *  person only when exactly one person carries that first name or an address with it in the local part. Pure. */
-export function mergePeople(observations: Observation[]): Person[] {
-  const people: Person[] = []
+export type Directory = Person[] & { loose?: Map<string, string[]> }
+export function mergePeople(observations: Observation[]): Directory {
+  const people: Directory = []
+  const loose = new Map<string, string[]>()
   const byEmail = new Map<string, Person>(), byPhone = new Map<string, Person>()
   const add = (p: Person, o: Observation) => {
     const n = String(o.name || '').replace(/\s+/g, ' ').trim(), e = normEmail(o.email || ''), ph = normPhone(o.phone || '')
@@ -82,9 +84,17 @@ export function mergePeople(observations: Observation[]): Person[] {
     const byFirst = full.length ? full : people.filter(p => (p.names.some(x => firstName(x) === first) || p.emails.some(e => localPartHasName(e, n))) && !p.names.some(x => surnameConflict(x, n)))
     if (byFirst.length === 1) { add(byFirst[0], o); continue }
     if (byFirst.length === 0) { const p: Person = { key: `name:${normName(n)}`, names: [], emails: [], phones: [], sources: [], notes: [], lastSeen: null }; people.push(p); add(p, o) }
-    // ≥2: ambiguous; the note stays unattached rather than guessed onto the wrong person.
+    // ≥2: ambiguous; the note stays unattached rather than guessed onto the wrong person (looseNotes() still shows it in a brief).
+    else if (o.note) loose.set(firstName(n), [...(loose.get(firstName(n)) || []), o.note])
   }
+  people.loose = loose
   return people
+}
+/** Bare-name notes that could not be pinned to one person ("Nithin is vegetarian" with two Nithins). Pure. */
+export const looseNotes = (dir: Directory, name: string) => {
+  const first = firstName(name)
+  const nameOnly = dir.filter(p => !p.emails.length && !p.phones.length && p.names.some(x => firstName(x) === first)).flatMap(p => p.notes)
+  return [...(dir.loose?.get(first) || []), ...nameOnly].filter((n, i, a) => a.indexOf(n) === i)
 }
 
 export type Resolution = { person: Person | null; candidates: Person[]; query: string }
@@ -112,13 +122,14 @@ export function personMailQuery(p: Person, days = 90): string | null {
 }
 
 /** The display name to use: the longest saved name, else the address's local part. Pure. */
-export const displayName = (p: Person) => [...p.names].sort((a, b) => b.length - a.length)[0] || (p.emails[0] ? p.emails[0].split('@')[0] : p.phones[0] ? `+91 ${p.phones[0]}` : 'them')
+export const displayName = (p: Person) => [...p.names].sort((a, b) => b.length - a.length)[0]
+  || (p.emails[0] ? p.emails[0].split('@')[0].split(/[._-]+/).filter(Boolean).map(w => w.replace(/^\w/, c => c.toUpperCase())).join(' ') : p.phones[0] ? `+91 ${p.phones[0]}` : 'them')
 
 // ── gathering from the connected sources (each best-effort; a failing source never loses the others) ────────────
 const nameFromHeader = (h: string) => { const m = String(h || '').match(/^\s*"?([^"<]+?)"?\s*<([^>]+)>/); return m ? { name: m[1].trim(), email: m[2].trim() } : { name: null, email: String(h || '').trim() } }
 const splitAddrs = (h: string) => String(h || '').split(/,(?![^<]*>)/).map(s => s.trim()).filter(Boolean).map(nameFromHeader)
 
-export async function peopleDirectory(actor: AgentActor, hint?: string): Promise<Person[]> {
+export async function peopleDirectory(actor: AgentActor, hint?: string): Promise<Directory> {
   const tg = actor.legacyTelegramId
   const obs: Observation[] = []
   const tasks: PromiseLike<void>[] = []
@@ -174,29 +185,86 @@ export function personAsk(text: string): string | null {
 }
 
 /** The brief: identities, what memory says, next meeting, latest emails. Pure. */
-export function formatPersonBrief(p: Person, extra: { nextEvent?: { summary: string; when: string } | null; emails?: { subject: string; from: string; date?: string }[] | null; openLoops?: string[] }): string {
+export function formatPersonBrief(p: Person, extra: { nextEvent?: { summary: string; when: string } | null; emails?: { subject: string; from: string; date?: string }[] | null; openLoops?: string[]; looseNotes?: boolean }): string {
   const name = displayName(p)
   const ids = [...p.emails.filter(isPersonEmail), ...p.phones.map(x => `+91 ${x}`)]
   const lines = [`*${name}*${ids.length ? ` · ${ids.slice(0, 3).join(' · ')}` : ''}`]
-  if (p.notes.length) lines.push('', ...p.notes.slice(0, 4).map(n => `• ${n}`))
+  if (p.notes.length) lines.push('', ...(extra.looseNotes ? [`*Your notes on ${name.split(' ')[0]}*`] : []), ...p.notes.slice(0, 4).map(n => `• ${n}`))
   if (extra.nextEvent) lines.push('', `Next with ${name.split(' ')[0]}: ${extra.nextEvent.summary}, ${extra.nextEvent.when}.`)
   if (extra.emails === null) lines.push('', 'Connect Gmail and I can add your latest emails with them.')
   else if (extra.emails?.length) lines.push('', '*Latest emails*', ...extra.emails.slice(0, 3).map(m => `• ${m.subject}${m.date ? ` · ${m.date}` : ''}`))
+  else if (extra.emails && p.emails.some(isPersonEmail)) lines.push('', `No emails with ${name.split(' ')[0]} in the last 90 days in the inboxes I can read.`)
   if (extra.openLoops?.length) lines.push('', '*Open with them*', ...extra.openLoops.slice(0, 3).map(l => `• ${l}`))
   if (lines.length === 1) lines.push('', `That's all I have on ${name}: no notes, no meetings in the next month, no recent emails.`)
   return lines.join('\n')
 }
 
+export const PERSON_CHOICE_EVENT = 'person_ask_choice'
+const SOURCE_WORDS: Record<PersonSource, string> = { contacts: 'saved contact', google_contacts: 'Google contact', calendar: 'on your calendar', gmail: 'emails you', memory: 'your notes' }
+/** "1. nithin@tipplr.in — Tipplr; on your calendar, emails you". Pure. */
+export function candidateLine(c: Person, i: number): string {
+  const id = c.emails.filter(isPersonEmail)[0] || (c.phones[0] ? `+91 ${c.phones[0]}` : displayName(c))
+  const org = c.emails[0] && !/gmail|yahoo|outlook|hotmail|icloud|proton/i.test(c.emails[0]) ? c.emails[0].split('@')[1].split('.')[0].replace(/^\w/, ch => ch.toUpperCase()) : null
+  const named = c.names.find(n => normName(n).split(' ').length > 1)
+  const how = c.sources.filter(x => x !== 'memory').map(x => SOURCE_WORDS[x]).join(', ')
+  return `${i + 1}. ${named ? `${named} · ` : ''}${id}${org ? ` — ${org}` : ''}${how ? `; ${how}` : ''}`
+}
+/** The person's answer to "which one?": a number, an address, a domain or org word, "work"/"personal"/"gmail", or a fuller name. Pure. */
+export function pickCandidate(reply: string, cands: Person[], who = ''): Person | null {
+  const r = String(reply || '').trim().toLowerCase().replace(/^(?:the\s+)?/, '').replace(/\s+(?:one|person|guy)\.?$/, '')
+  if (who && normName(r) === firstName(who)) return null
+  const n = r.match(/^(\d)(?:st|nd|rd|th)?$|^(?:number\s+|no\.?\s*|#)(\d)$|^(first|second|third)$/)
+  if (n) { const idx = n[3] ? ['first', 'second', 'third'].indexOf(n[3]) : Number(n[1] || n[2]) - 1; return cands[idx] || null }
+  if (r.includes('@')) return cands.find(c => c.emails.includes(r)) || null
+  if (/^(?:work|office|company)$/.test(r)) { const w = cands.filter(c => c.emails.some(e => !/gmail|yahoo|outlook|hotmail|icloud|proton/i.test(e))); return w.length === 1 ? w[0] : null }
+  if (/^(?:personal|gmail|private|home)$/.test(r)) { const w = cands.filter(c => c.emails.some(e => /gmail|yahoo|outlook|hotmail|icloud|proton/i.test(e))); return w.length === 1 ? w[0] : null }
+  const byDomain = cands.filter(c => c.emails.some(e => e.split('@')[1]?.split('.')[0] === r.replace(/\s+/g, '')))
+  if (byDomain.length === 1) return byDomain[0]
+  const byName = cands.filter(c => c.names.some(x => normName(x) === normName(r)) || c.emails.some(e => e.split('@')[0].replace(/[^a-z]/g, '') === r.replace(/[^a-z]/g, '')))
+  return byName.length === 1 ? byName[0] : null
+}
+
 export async function tryPersonAsk(actor: AgentActor, text: string): Promise<string | null> {
   const who = personAsk(text)
-  if (!who) return null
+  if (!who) return takePersonChoice(actor, text)
   const people = await peopleDirectory(actor, who)
   const res = resolvePerson(who, people)
   if (!res.person) {
-    if (res.candidates.length > 1) return `I know ${res.candidates.length} people called ${who.split(' ')[0]}: ${res.candidates.map(c => `${displayName(c)}${c.emails[0] ? ` (${c.emails[0]})` : ''}`).join(', ')}. Which one?`
+    if (res.candidates.length > 1) {
+      const cands = res.candidates.slice(0, 4)
+      await supabaseAdmin.from('agent_activity').insert({ telegram_id: String(actor.legacyTelegramId), event_type: PERSON_CHOICE_EVENT, message: who, metadata_json: { who, candidates: cands, open: true } }).then(({ error }: any) => { if (error) console.error('PERSON_CHOICE_SAVE_FAILED:', error.message) }, () => {})
+      return `I know ${cands.length} people called ${who.split(' ')[0]}:\n${cands.map(candidateLine).join('\n')}\nWhich one? Reply with the number.`
+    }
     return `I don't have anything on ${who} yet: no saved note, no calendar guest, no recent email with that name. Tell me something about them ("${who} is …") and I'll remember it.`
   }
-  const p = res.person
+  return personBriefFor(actor, res.person, who, people)
+}
+
+/** A short reply after "Which one?" (within 10 minutes) picks the candidate and gives the brief. */
+export async function takePersonChoice(actor: AgentActor, text: string): Promise<string | null> {
+  const t = String(text || '').trim()
+  if (!t || t.length > 60) return null
+  const since = new Date(Date.now() - 10 * 60_000).toISOString()
+  const { data } = await supabaseAdmin.from('agent_activity').select('id,metadata_json').eq('telegram_id', String(actor.legacyTelegramId)).eq('event_type', PERSON_CHOICE_EVENT).gte('created_at', since).order('created_at', { ascending: false }).limit(1)
+  const row: any = data?.[0]
+  if (!row?.metadata_json?.open) return null
+  const cands = (row.metadata_json.candidates || []) as Person[]
+  const pick = pickCandidate(t, cands, String(row.metadata_json.who || ''))
+  if (!pick) {
+    // The same first name again is not an answer; anything unrelated closes the question and falls through.
+    if (normName(t) === normName(String(row.metadata_json.who || '')) || /^\d$/.test(t)) return `Reply with the number:\n${cands.map(candidateLine).join('\n')}`
+    await supabaseAdmin.from('agent_activity').update({ metadata_json: { ...row.metadata_json, open: false } }).eq('id', row.id).then(() => {}, () => {})
+    return null
+  }
+  await supabaseAdmin.from('agent_activity').update({ metadata_json: { ...row.metadata_json, open: false, picked: pick.key } }).eq('id', row.id).then(() => {}, () => {})
+  // Rebuild from the live directory so notes and dates are current; fall back to the saved candidate.
+  const people = await peopleDirectory(actor, String(row.metadata_json.who || '')).catch(() => [] as Directory)
+  const live = people.find(x => x.key === pick.key || (pick.emails[0] && x.emails.includes(pick.emails[0]))) || pick
+  return personBriefFor(actor, live, String(row.metadata_json.who || displayName(live)), people)
+}
+
+async function personBriefFor(actor: AgentActor, person: Person, who: string, dir: Directory): Promise<string> {
+  const p = person.notes.length ? person : { ...person, notes: looseNotes(dir, who) }
   const tz = actor.timezone || 'Asia/Kolkata'
   let nextEvent: { summary: string; when: string } | null = null, emails: any[] | null = []
   try {
@@ -213,7 +281,7 @@ export async function tryPersonAsk(actor: AgentActor, text: string): Promise<str
     if (q) { const { searchWorkspaceEmailsByQuery } = await import('./google-workspace-read'); emails = await searchWorkspaceEmailsByQuery(actor, q, 3) }
   } catch (err: any) { emails = /connect|token|auth|401|403|not_connected/i.test(String(err?.message || '')) ? null : [] }
   console.log('PERSON_ASK:', JSON.stringify({ who, emails: p.emails.length, phones: p.phones.length, notes: p.notes.length, sources: p.sources }))
-  return formatPersonBrief(p, { nextEvent, emails })
+  return formatPersonBrief(p, { nextEvent, emails, looseNotes: !person.notes.length && p.notes.length > 0 })
 }
 
 /** For meeting prep: what memory says about each guest, resolved through the directory. */

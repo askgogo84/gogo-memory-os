@@ -2066,7 +2066,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const completion = await guardCompletionClaims(finalReply, resolvedUser.telegramId)
     __trace.mark('completion')
     if (completion.blocked) {
-      console.warn('CHAT_COMPLETION_CLAIM_BLOCKED:', JSON.stringify({ telegramId: resolvedUser.telegramId, kind: completion.claim?.kind || null, parsedType: parsed.type || null }))
+      console.warn('CHAT_COMPLETION_CLAIM_BLOCKED:', JSON.stringify({ telegramId: resolvedUser.telegramId, kind: completion.claim?.kind || null, parsedType: parsed.type || null, sentence: String(completion.claim?.sentence || '').slice(0, 160) }))
       finalReply = completion.text
     }
   }
