@@ -34,6 +34,12 @@ function fixture(row: FixtureRow) {
       if (id === '@anthropic-ai/sdk') return class FakeAnthropic {}
       if (id === '@/lib/supabase-admin') return { supabaseAdmin: db }
       if (id === '@/lib/google-gmail') return { refreshGmailAccessToken: async () => { refreshes++; return null } }
+      // Main (#1255) added an affirmative-consent gate via a dynamic import of
+      // ./gmail-consent after the owner checks; consent is granted for the exact owner.
+      if (id === './gmail-consent') return { gmailConsentState: async (owner: unknown) => {
+        assert.ok(Number.isSafeInteger(owner) && owner !== 0, 'consent read uses the validated owner')
+        return 'on'
+      } }
       if (id === '@/lib/security/google-token-crypto') return {
         decryptGoogleToken: (value: unknown) => { decrypts++; return String(value || '') },
         encryptGoogleToken: (value: unknown) => String(value || ''),
