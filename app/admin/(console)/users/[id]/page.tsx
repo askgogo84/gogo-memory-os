@@ -23,8 +23,11 @@ async function countOf(table: string, telegramId: string): Promise<number | null
 export default async function UserDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const tid = decodeURIComponent(id)
-  const { data: user } = await supabaseAdmin.from('users').select('*').eq('telegram_id', Number(tid)).maybeSingle()
-  if (!user) notFound()
+  // Exact owner (P0.1): a malformed id is not looked up; an id above 2^53 is matched as its exact decimal string
+  // (never through Number, which would select a neighbouring account); the row read back must be this owner.
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(tid)) notFound()
+  const { data: user } = await supabaseAdmin.from('users').select('*').eq('telegram_id', (Number.isSafeInteger(Number(tid)) && String(Number(tid)) === tid ? Number(tid) : tid)).maybeSingle()
+  if (!user || String((user as any).telegram_id) !== tid) notFound()
   const u: any = user
   const gate = await requireAdminConsole('viewer')
   const canAct = gate.ok && gate.admin.role !== 'viewer'

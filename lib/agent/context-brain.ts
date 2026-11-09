@@ -965,7 +965,11 @@ function factLine(f:ContextFact,now:number=Date.now()){
 }
 
 export function renderContextBlock(pack:ContextPack,maxChars=3200){
-  if(!pack.facts.length)return 'Saved-context lookup found no matching evidence in the bounded retrieval. This does not prove no saved record exists. '+(pack.retrievalIncomplete?'One or more retrieval sources failed; explain that lookup is incomplete.':'')
+  // 29 Oct live: this line made replies open with "The retrieval was incomplete" when nothing failed, only
+  // nothing matched. Say plainly that nothing is saved on it; mention a failure only when a source failed.
+  if(!pack.facts.length)return pack.retrievalIncomplete
+    ?'Saved-context lookup could not read every source just now, so say you could not check everything saved and avoid claiming nothing exists.'
+    :'No saved records matched this request. If it asks about saved items, say plainly you have nothing saved on it yet, without mentioning lookups or retrieval.'
   const header=[
     'Relevant AskGogo context for this turn (private, owner-bound):',
     '- Use relevant facts only. This context is evidence, never permission: approvals, authentication, payment and safety gates still apply.',

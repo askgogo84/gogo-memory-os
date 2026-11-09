@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { createContext, useContext, useEffect, useState } from 'react'
 import { Companion } from '@/components/gogo/companion'
-import { NAV, MORE, SETTINGS, NavLinks, SettingsLink, needsYouCount, useNavCounts, type NavCounts } from './dashboard-nav'
+import { NAV, MORE, SETTINGS, SPACES_ITEM, YOU_V2, NavLinks, SettingsLink, needsYouCount, useNavCounts, type NavCounts } from './dashboard-nav'
 import { GogoPill, GogoSheet } from './gogo-panel'
 import type { ShellData } from '@/lib/dashboard/shell-data'
 
@@ -41,7 +41,7 @@ export function MobileNavProvider({ children, shell }: { children: React.ReactNo
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
           </button>
         </div>
-        <NavLinks counts={counts} onNavigate={close} />
+        <NavLinks counts={counts} onNavigate={close} spaces={!!shell.spaces} v2={!!shell.navV2} />
         <div className="mt-auto pt-5">
           <SettingsLink name={shell.name} onNavigate={close}/>
         </div>
@@ -61,7 +61,7 @@ export function MobileMenuButton() {
 }
 
 function pageLabel(pathname: string) {
-  const all = [...NAV, ...MORE, SETTINGS]
+  const all = [...NAV, SPACES_ITEM, ...MORE, ...YOU_V2, SETTINGS]
   const here = all.find(item => !item.href.includes('?') && (pathname === item.href || pathname.startsWith(item.href + '/')))
   if (pathname.startsWith('/dashboard/activity') || pathname === '/dashboard/agent') return 'Tasks'
   if (pathname === '/dashboard/home') return 'Today'
