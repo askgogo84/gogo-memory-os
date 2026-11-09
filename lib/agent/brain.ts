@@ -14,6 +14,7 @@ import { ORDER_LIST_RE } from './order-tracking'
 import { PAYMENT_GATE } from './payment-confirmation'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { OWNER_CANARY } from '@/lib/memory/canary'
 import { inventedApprovalGuard } from '@/lib/services/claude'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { isJobScanNow, jobScanQuery } from './jobs'
@@ -61,7 +62,6 @@ export const cleanReply = (v: unknown, max = 1500) => String(v ?? '').replace(/\
 const digits = (v: unknown) => { const d = String(v ?? '').replace(/\D/g, ''); return d.length === 10 ? `91${d}` : d }
 
 /** Canary: on for GOGO_BRAIN_USERS (default: the owner's two test numbers); GOGO_BRAIN=off turns it off for everyone. */
-const OWNER_CANARY = '8884501501,8310441698'
 export function brainEnabledFor(phone: string, env: Record<string, string | undefined> = process.env): boolean {
   if (String(env.GOGO_BRAIN || '').toLowerCase() === 'off') return false
   // The owner default applies on production only, so tests and previews stay on today's pipeline unless set.
@@ -180,8 +180,11 @@ export function decisionFromToolUse(original: string, name: string, input: any):
     // 29 Oct live: "When do I check out and is there a reminder for it?" was answered from context ("a check-out
     // reminder is set for 7:30 am") and that factual answer was treated as an action claim. An answer to a question
     // about saved state stays a reply unless it opens by announcing an action ("Done", "Updated", "I've set").
-    const asked = /\?\s*$/.test(original.trim()) || /^(?:when|what|where|which|who|whose|how|is|are|do|does|did|can|could|have|has|will)\b/i.test(original.trim())
-    const announces = /^\W*(?:done|updated|saved|set|booked|added|noted|scheduled|cancelled|canceled|deleted|i(?:'ve| have| just))\b/i.test(raw)
+    // Red #1091: "Could you set a reminder…?" is a polite request for a NEW side effect, not a status question, and
+    // a reply opening "Sure, I've set…" / "Absolutely, I've added…" announces an action as much as "Done" does.
+    const requestsAction = /^\W*(?:please\s+)?(?:can|could|would|will)\s+(?:you|u)\s+(?:please\s+|kindly\s+|just\s+|also\s+)*(?:set|add|create|make|send|email|text|message|book|reserve|schedule|remind|update|change|edit|move|reschedule|cancel|delete|remove|save|log|note|record|put|mark|track)\b/i.test(original)
+    const asked = !requestsAction && (/\?\s*$/.test(original.trim()) || /^(?:when|what|where|which|who|whose|how|is|are|do|does|did|can|could|have|has|will)\b/i.test(original.trim()))
+    const announces = /^\W*(?:(?:sure|absolutely|of course|certainly|ok(?:ay)?|yes|yep|alright|all right|no problem|got it)\b[\s,.!:-]*)?(?:done|updated|saved|set|booked|added|noted|scheduled|cancelled|canceled|deleted|i(?:'ve| have| just))\b/i.test(raw)
     if (name === 'reply' && COMPLETION_CLAIM.test(raw) && (!asked || announces)) return { kind: 'handle', instruction: original, rewritten: false }
     // 30 Oct live: "**Preferences**" showed literally on WhatsApp. WhatsApp bold is *one* asterisk.
     return { kind: name, text: inventedApprovalGuard(whatsAppMarkdown(raw)) }

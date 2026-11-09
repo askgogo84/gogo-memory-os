@@ -145,14 +145,22 @@ function reminderMessage(step:MissionStep,missionText:string,hours?:number){
   if(hours)return `${destination} trip departure in ${hours} hours — confirm packing and check-in status.`
   // Only a generic step title ("Set purchase reminder") is replaced; a plan with several named reminders keeps them.
   const generic=/^(?:set|create|add|schedule)\b[^.]{0,40}\breminder\b/i.test(step.title)
-  return safe((generic&&reminderTaskFromRequest(missionText))||step.title,500)
+  // Red #1132: a plan with two reminders ("remind me to call Alice … and remind me to buy milk …") gives each step its
+  // own instruction; that step's own words win over the first reminder in the whole mission text.
+  return safe((generic&&(reminderTaskFromRequest(step.instruction)||reminderTaskFromRequest(missionText)))||step.title,500)
 }
+
+const REMINDER_DAY=String.raw`(?:(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)(?:day)?|weekend|week|month|morning|afternoon|evening|night|noon|midnight|end\s+of)\b`
+const REMINDER_WHEN=String.raw`(?:(?:at|by|before|after|around|from|until|till)\s+(?:\d|noon|midnight|tomorrow|today|tonight|${REMINDER_DAY}|the\s+(?:\d|${REMINDER_DAY}))|on\s+(?:\d|the\s+\d|${REMINDER_DAY}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b)|tomorrow|today|tonight|(?:this|next)\s+(?:${REMINDER_DAY})|every\b|in\s+(?:\d|an?\s+(?:hour|minute|day|week))|and\s+(?:also\s+)?remind\b)`
+const REMINDER_TASK_RE=new RegExp(String.raw`\bremind\s+me\s+(?:to\s+|about\s+)?(.+?)(?=\s+${REMINDER_WHEN}|[.!?;]|$)`,'i')
 
 // 30 Oct live: "Make a grocery list with milk, eggs and bread and remind me to buy them at 6 pm today" saved the
 // reminder as the plan's step title, "Set purchase reminder". The person's own words are the reminder.
 export function reminderTaskFromRequest(text:string){
   const raw=String(text||'').replace(/\s+/g,' ').trim()
-  const m=raw.match(/\bremind\s+me\s+(?:to\s+|about\s+)?(.+?)(?=\s+(?:at|on|by|before|after|around|tomorrow|today|tonight|this|next|every|in\s+\d)\b|[.!?;]|$)/i)
+  // Red #1132: "turn on the oven", "follow up on the invoice", "send the update by email" — a preposition ends the task
+  // only when a time or date follows it, never on its own.
+  const m=raw.match(REMINDER_TASK_RE)
   if(!m)return null
   let task=m[1].trim()
   if(/\b(?:them|it|these|those)\b/i.test(task)){

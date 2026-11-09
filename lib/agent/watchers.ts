@@ -654,16 +654,19 @@ async function watcherActor(telegramId:string|number):Promise<AgentActor|null> {
   // Exact owner (P0.1): exact decimal lookup, row must echo the id, unsafe ids refused (never rounded).
   if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return null
   const owner = String(telegramId ?? '').trim()
-  const legacy = Number(owner)
-  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner) || !Number.isSafeInteger(legacy) || String(legacy) !== owner) return null
+  if (!/^-?(?:0|[1-9]\d{0,18})$/.test(owner)) return null
 
+  // Look up by the exact decimal string, never a JS Number (an id above 2^53 would round onto a neighbour).
   const {data,error}=await supabaseAdmin.from('users')
     .select('id,telegram_id,whatsapp_id,name,gmail_email,timezone')
-    .eq('telegram_id', legacy)
+    .eq('telegram_id', owner)
     .maybeSingle()
   if(error)throw new Error(`email_triage_user_read_failed:${error.message}`)
   if(!data?.id||!data?.whatsapp_id)return null
   if (String(data.telegram_id) !== owner) return null
+  // AgentActor.legacyTelegramId is a JS number: an owner it cannot represent exactly never becomes an actor.
+  const legacy = Number(owner)
+  if (!Number.isSafeInteger(legacy) || String(legacy) !== owner) return null
   return {
     userId:String(data.id),
     legacyTelegramId: legacy,

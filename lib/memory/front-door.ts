@@ -175,7 +175,7 @@ export async function tryLifeGraphTurn(p: { telegramId: number; whatsappTo?: str
         const { error } = await supabaseAdmin.from('life_events').upsert({
           telegram_id: String(p.telegramId), event_type: 'other', subtype: 'trip_note', source: 'forwarded_message',
           title: text.slice(0, 200), start_at: trip.startAt, location: trip.city, lifecycle_state: 'captured',
-          metadata_json: { city: trip.city, text: text.slice(0, 600), from: 'a forwarded message', tripKey: trip.key },
+          metadata_json: { city: trip.city, text: text.slice(0, 600), from: 'a forwarded message', tripKey: trip.key, savedAt: now.toISOString() },
           source_refs: [{ kind: 'forwarded_message', at: now.toISOString() }], dedupe_key: key, updated_at: now.toISOString(),
         }, { onConflict: 'telegram_id,dedupe_key' })
         if (!error) return { text: `📌 Noted for your ${trip.city} trip:\n"${text.replace(/\s+/g, ' ').slice(0, 300)}"`, handledBy: 'life-graph-note' }

@@ -15,6 +15,7 @@ import { completeReminderOccurrence } from '@/lib/bot/handlers/reminder-completi
 import { detectReadOnlyScheduleRequest, readTomorrowSchedule } from '@/lib/agent/read-only-schedule'
 import { recordDecisionLearning } from '@/lib/agent/decision-learning'
 import { trySameBrainIntrospection } from '@/lib/agent/brain-introspection'
+import { memoryEnabledFor } from '@/lib/memory/canary'
 import { isConnectionCapabilityQuery } from '@/lib/agent/autonomy-status'
 import { NextRequest, NextResponse } from 'next/server'
 import { processIncomingMessage } from '@/lib/bot/process-message'
@@ -345,10 +346,12 @@ async function handleWhatsAppPost(req: NextRequest) {
       }
     }
 
-    // A bare one-time code is never written to the logs (it may be a booking OTP).
-    const loggedBody = otpReply(String(formData.get('Body') || '')) ? '[code withheld]' : String(formData.get('Body') || '')
-    console.log('RAW_TWILIO:', { ...Object.fromEntries([...formData.entries()]), Body: loggedBody })
-    console.log('WhatsApp inbound:', { fromRaw, from, profileName, numMedia, messageSid: inboundMessageSid, body: loggedBody, mediaType: String(formData.get('MediaContentType0') || ''), allKeys: [...formData.keys()].join(',') })
+    // Runtime logs never carry message text, sender number, profile name, media
+    // URLs or arbitrary form values: only shape (length, counts, keys, type) and
+    // the MessageSid for operational tracing. A one-time code is marked as such.
+    const loggedBody = otpReply(String(formData.get('Body') || '')) ? '[code withheld]' : `[${String(formData.get('Body') || '').length} chars withheld]`
+    console.log('RAW_TWILIO:', { MessageSid: String(formData.get('MessageSid') || ''), NumMedia: String(formData.get('NumMedia') || ''), MediaContentType0: String(formData.get('MediaContentType0') || ''), Body: loggedBody, keys: [...formData.keys()].join(',') })
+    console.log('WhatsApp inbound:', { fromTail: from ? `***${String(from).slice(-4)}` : '', hasProfileName: Boolean(profileName), numMedia, messageSid: inboundMessageSid, body: loggedBody, mediaType: String(formData.get('MediaContentType0') || ''), allKeys: [...formData.keys()].join(',') })
     if (!from) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
 
     // ── Consent gate: STOP / UNSUBSCRIBE ────────────────────────────────────────
@@ -565,7 +568,7 @@ async function handleWhatsAppPost(req: NextRequest) {
       if (!result) {
         // 29 Oct: a hotel booking screenshot becomes a saved stay linked to its trip (lib/memory/stay.ts), not a loose note.
         const env = (globalThis as any).process?.env
-        if (env?.GOGO_MEMORY === 'off' || !(env?.GOGO_BRAIN_USERS || env?.VERCEL_ENV === 'production')) return false
+        if (env?.GOGO_MEMORY === 'off' || !(env?.GOGO_BRAIN_USERS || env?.VERCEL_ENV === 'production') || !memoryEnabledFor(from)) return false
         const stayMod: any = await import('@/lib/memory/stay').catch(() => null)
         const stayText = stayMod?.looksLikeHotelBooking?.(`${bodyText || ''}\n${readerText}`) ? await stayMod.ingestStayFromText({ telegramId: resolvedUser.telegramId, whatsappTo: from, userName: resolvedUser.name || profileName, userNames: [resolvedUser.name, profileName].filter(Boolean), text: `${bodyText || ''}\n${readerText}`, source: 'image' }).catch(() => null) : null
         if (!stayText) return false
@@ -1002,7 +1005,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     const forwardedMessage = String(formData.get('Forwarded') || '').toLowerCase() === 'true'
     // Connected memory front door (lib/memory/front-door.ts): a forwarded hotel booking, a date answer to Gogo's stay
     // question, or cab details during a trip are saved and linked to the trip before the brain runs.
-    if (!preserveFriendFlow && (globalThis as any).process?.env?.GOGO_MEMORY !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production')) {
+    if (!preserveFriendFlow && (globalThis as any).process?.env?.GOGO_MEMORY !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production') && memoryEnabledFor(from)) {
       const door: any = await import('@/lib/memory/front-door').catch(() => null)
       const memoryTurn = (forwardedMessage || door?.frontDoorCandidate?.(text)) && door?.tryLifeGraphTurn ? await door.tryLifeGraphTurn({ telegramId: resolvedUser.telegramId, whatsappTo: from, userName: resolvedUser.name || profileName, userNames: [resolvedUser.name, profileName].filter(Boolean), text, surface: 'whatsapp', forwarded: forwardedMessage }).catch(() => null) : null
       if (memoryTurn) {

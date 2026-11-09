@@ -1,0 +1,2 @@
+# tests added by PR #1410
+npx tsx scripts/verify-brain-action-claim-testonly.mts

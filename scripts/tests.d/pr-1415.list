@@ -1,0 +1,2 @@
+# tests added by PR #1415
+node scripts/verify-whatsapp-inbound-log-privacy-testonly.mjs

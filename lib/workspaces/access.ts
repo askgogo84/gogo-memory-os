@@ -95,6 +95,11 @@ export async function audit(workspaceId: string, actor: string, action: string, 
   check(error, 'audit')
 }
 
+/** Records that a just-audited write did not happen. The audit log is append-only, so the earlier line stays. */
+async function auditBestEffort(workspaceId: string, actor: string, action: string, target: string | null) {
+  try { await audit(workspaceId, actor, action, target, {}) } catch { console.error('WORKSPACE_AUDIT_FOLLOWUP_FAILED:', action) }
+}
+
 /** No Number() on workspace owner identities: Postgres BIGINT has 64-bit precision. */
 function exactWorkspaceNameOwner(value: unknown): string | null {
   if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
@@ -180,6 +185,8 @@ export async function getWorkspaceDetail(telegramId: string, workspaceId: string
   }
   const memberRows = ((members.data || []) as { telegram_id: unknown; role: unknown }[])
     .filter((m): m is { telegram_id: unknown; role: WorkspaceRole } => isWorkspaceRole(m.role))
+  // A share whose sharer is no longer a member is never listed (see getSharedArtifact).
+  const currentMembers = new Set(memberRows.map(m => String(m.telegram_id)))
   const names = await displayNames([...memberRows.map(m => String(m.telegram_id)), ...shareRows.map(s => s.shared_by)])
   const me = membership.telegramId
   const admin = canRole(membership.role, 'remove_member')
@@ -190,7 +197,7 @@ export async function getWorkspaceDetail(telegramId: string, workspaceId: string
     members: memberRows.map(m => ({ telegramId: String(m.telegram_id), name: names.get(String(m.telegram_id)) || 'AskGogo user', role: m.role, isYou: String(m.telegram_id) === me })),
     artifacts: shareRows.flatMap(s => {
       const art = titles.get(s.artifact_id)
-      if (!art || art.owner !== s.shared_by) return []
+      if (!art || art.owner !== s.shared_by || !currentMembers.has(s.shared_by)) return []
       return [{ artifactId: s.artifact_id, title: art.title, sharedBy: s.shared_by, sharedByName: names.get(s.shared_by) || 'AskGogo user', sharedByYou: s.shared_by === me, sharedAt: s.created_at ?? null }]
     }),
   }
@@ -279,23 +286,37 @@ export async function respondToInvite(telegramId: string, inviteId: unknown, dec
   const { data: invite, error } = await supabaseAdmin.from('workspace_invites').select('id,workspace_id,role,status,expires_at,telegram_id')
     .eq('id', id).eq('telegram_id', me).maybeSingle()
   check(error, 'invite_lookup_own')
-  if (!invite || invite.status !== 'pending') throw new WorkspaceError('invite_not_found')
+  if (!invite) throw new WorkspaceError('invite_not_found')
+  // Retry after a committed admission (e.g. the audit write failed): acknowledge it idempotently. Only
+  // while the membership still exists, so a removed member can never rejoin by replaying an old invite.
+  if (invite.status === 'accepted' && decision === 'accept' && (await memberRow(invite.workspace_id, me))) {
+    try { await audit(invite.workspace_id, me, 'member.accept', me, { inviteId: id, role: invite.role, replay: true }) }
+    catch { console.error('WORKSPACE_ACCEPT_REPLAY_AUDIT_FAILED') }
+    return { ok: true as const, joined: true, workspaceId: String(invite.workspace_id) }
+  }
+  if (invite.status !== 'pending') throw new WorkspaceError('invite_not_found')
   const now = new Date().toISOString()
   if (Date.parse(String(invite.expires_at)) <= Date.now()) {
     await supabaseAdmin.from('workspace_invites').update({ status: 'expired', responded_at: now }).eq('id', id).eq('telegram_id', me).eq('status', 'pending')
     throw new WorkspaceError('invite_expired')
   }
-  // Claim the invitation first (pending → answered) so a double tap or a concurrent revoke cannot both win.
-  const { data: claimed, error: claimError } = await supabaseAdmin.from('workspace_invites')
-    .update({ status: decision === 'accept' ? 'accepted' : 'declined', responded_at: now })
-    .eq('id', id).eq('telegram_id', me).eq('status', 'pending').select('id')
-  check(claimError, 'invite_claim')
-  if (!claimed?.length) throw new WorkspaceError('invite_not_found')
+  // Claim pending → answered, so a double tap or a concurrent revoke cannot both win. A decline claims
+  // straight away. An accept claims only AFTER membership exists, so a full workspace, an invalid stored
+  // role or a failed insert leaves the invitation pending and retryable instead of stranded as accepted.
+  const claimInvite = async () => {
+    const { data: claimed, error: claimError } = await supabaseAdmin.from('workspace_invites')
+      .update({ status: decision === 'accept' ? 'accepted' : 'declined', responded_at: now })
+      .eq('id', id).eq('telegram_id', me).eq('status', 'pending').select('id')
+    check(claimError, 'invite_claim')
+    return !!claimed?.length
+  }
   if (decision === 'decline') {
+    if (!(await claimInvite())) throw new WorkspaceError('invite_not_found')
     await audit(invite.workspace_id, me, 'member.decline', me, { inviteId: id })
     return { ok: true as const, joined: false }
   }
   if (!isWorkspaceRole(invite.role) || invite.role === 'owner') throw new WorkspaceError('invalid_role')
+  let insertedByThisCall = false
   if (!(await memberRow(invite.workspace_id, me))) {
     const { count, error: countError } = await supabaseAdmin.from('workspace_members')
       .select('telegram_id', { count: 'exact', head: true }).eq('workspace_id', invite.workspace_id)
@@ -304,6 +325,20 @@ export async function respondToInvite(telegramId: string, inviteId: unknown, dec
     const { error: insertError } = await supabaseAdmin.from('workspace_members')
       .insert({ workspace_id: invite.workspace_id, telegram_id: me, role: invite.role, invited_by: null })
     if (!(insertError && /23505|duplicate/i.test(`${insertError.code} ${insertError.message}`))) check(insertError, 'accept_insert')
+    insertedByThisCall = !insertError
+  }
+  if (!(await claimInvite())) {
+    // Lost the claim. If a concurrent tap of ours accepted it, the admission stands.
+    const { data: after, error: afterError } = await supabaseAdmin.from('workspace_invites').select('status')
+      .eq('id', id).eq('telegram_id', me).maybeSingle()
+    check(afterError, 'invite_claim_recheck')
+    if (after?.status === 'accepted') return { ok: true as const, joined: true, workspaceId: String(invite.workspace_id) }
+    if (!insertedByThisCall) throw new WorkspaceError('invite_not_found')
+    // The invitation was revoked/expired in the instant between admission and claim. The membership row
+    // already exists; record the race in the audit trail so an admin sees it and can remove the member.
+    // Closing this window fully needs a single-transaction accept RPC.
+    await audit(invite.workspace_id, me, 'member.accept', me, { inviteId: id, role: invite.role, raceStatus: String(after?.status ?? 'missing') })
+    return { ok: true as const, joined: true, workspaceId: String(invite.workspace_id) }
   }
   await audit(invite.workspace_id, me, 'member.accept', me, { inviteId: id, role: invite.role })
   return { ok: true as const, joined: true, workspaceId: String(invite.workspace_id) }
@@ -344,6 +379,12 @@ export async function getSharedArtifact(telegramId: string, workspaceId: string,
     .eq('workspace_id', membership.workspaceId).eq('artifact_id', id).maybeSingle()
   check(error, 'shared_lookup')
   if (!share) throw new WorkspaceError('artifact_not_found')
+  // Only while the sharer is still a member: a share left behind by a removed member (failed or racing
+  // revocation) must never stay readable.
+  const { data: sharer, error: sharerError } = await supabaseAdmin.from('workspace_members').select('role')
+    .eq('workspace_id', membership.workspaceId).eq('telegram_id', String(share.shared_by)).maybeSingle()
+  check(sharerError, 'shared_sharer')
+  if (!sharer) throw new WorkspaceError('artifact_not_found')
   // Only while the sharer still owns it.
   const { data: art, error: artError } = await supabaseAdmin.from('agent_artifacts').select('id,title,content_json,telegram_id')
     .eq('id', id).eq('telegram_id', String(share.shared_by)).maybeSingle()
@@ -392,10 +433,9 @@ export async function changeMemberRole(telegramId: string, workspaceId: string, 
 
 export async function removeMember(telegramId: string, workspaceId: string, targetTelegramId: string) {
   const { membership, target, targetRole } = await applyMemberChange(telegramId, workspaceId, targetTelegramId, { kind: 'remove' })
-  // Shares made by the departing member leave with them.
-  const { error: shareError } = await supabaseAdmin.from('workspace_artifacts').delete()
-    .eq('workspace_id', membership.workspaceId).eq('shared_by', target)
-  check(shareError, 'remove_shares')
+  // One statement: the composite FK workspace_artifacts(workspace_id, shared_by) -> workspace_members
+  // ON DELETE CASCADE (migration 20261109200000, applied) removes the departing member's shares in the same
+  // transaction, so a failed removal keeps them and a share added concurrently cannot outlive the membership.
   const { error } = await supabaseAdmin.from('workspace_members').delete()
     .eq('workspace_id', membership.workspaceId).eq('telegram_id', target)
   check(error, 'remove')
@@ -412,10 +452,12 @@ export async function shareArtifact(telegramId: string, workspaceId: string, art
     .select('id,telegram_id,title').eq('id', id).eq('telegram_id', membership.telegramId).maybeSingle()
   check(error, 'share_lookup')
   if (!artifact || String(artifact.telegram_id) !== membership.telegramId) throw new WorkspaceError('artifact_not_found')
+  // Durable audit evidence first: if it cannot be written, the personal report is never exposed.
+  await audit(membership.workspaceId, membership.telegramId, 'artifact.share', id, {})
   const { error: shareError } = await supabaseAdmin.from('workspace_artifacts')
     .upsert({ workspace_id: membership.workspaceId, artifact_id: id, shared_by: membership.telegramId }, { onConflict: 'workspace_id,artifact_id', ignoreDuplicates: true })
+  if (shareError) await auditBestEffort(membership.workspaceId, membership.telegramId, 'artifact.share_failed', id)
   check(shareError, 'share')
-  await audit(membership.workspaceId, membership.telegramId, 'artifact.share', id, {})
   return { ok: true as const }
 }
 
@@ -429,9 +471,11 @@ export async function unshareArtifact(telegramId: string, workspaceId: string, a
   check(error, 'unshare_lookup')
   if (!share) throw new WorkspaceError('artifact_not_found')
   if (share.shared_by !== membership.telegramId && !canRole(membership.role, 'remove_member')) throw new WorkspaceError('workspace_forbidden')
+  // Audit first: an access change that cannot be evidenced is not made (the share stays as it was).
+  await audit(membership.workspaceId, membership.telegramId, 'artifact.unshare', id, { sharedBy: share.shared_by })
   const { error: deleteError } = await supabaseAdmin.from('workspace_artifacts').delete()
     .eq('workspace_id', membership.workspaceId).eq('artifact_id', id)
+  if (deleteError) await auditBestEffort(membership.workspaceId, membership.telegramId, 'artifact.unshare_failed', id)
   check(deleteError, 'unshare')
-  await audit(membership.workspaceId, membership.telegramId, 'artifact.unshare', id, { sharedBy: share.shared_by })
   return { ok: true as const }
 }

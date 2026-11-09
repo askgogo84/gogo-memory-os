@@ -1,35 +1,14 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createMobileLinkRequest } from '@/lib/mobile-auth/link'
-import { supabaseAdmin } from '@/lib/supabase-admin'
+import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
-export async function POST(request: NextRequest) {
-  const body = await request.json().catch(() => null) as any
-  const platform = body?.platform === 'ios' || body?.platform === 'android' ? body.platform : null
-  if (!platform) return NextResponse.json({ error: 'invalid_platform' }, { status: 400 })
-
-  const deviceId = String(body?.deviceId || '').trim().slice(0, 160)
-  const deviceName = String(body?.deviceName || '').trim().slice(0, 160)
-
-  // Basic abuse guard. The pairing code can only be approved from a real
-  // AskGogo WhatsApp identity, but avoid unlimited request creation per device.
-  if (deviceId) {
-    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString()
-    const { count, error } = await supabaseAdmin
-      .from('mobile_link_requests')
-      .select('id', { count: 'exact', head: true })
-      .eq('device_id', deviceId)
-      .gte('created_at', since)
-    if (error) return NextResponse.json({ error: 'link_service_unavailable' }, { status: 503 })
-    if ((count || 0) >= 8) return NextResponse.json({ error: 'too_many_link_requests' }, { status: 429 })
-  }
-
-  try {
-    const result = await createMobileLinkRequest({ platform, deviceId, deviceName })
-    return NextResponse.json(result)
-  } catch (error: any) {
-    console.error('MOBILE_LINK_START_FAILED:', error?.message || error)
-    return NextResponse.json({ error: 'link_start_failed' }, { status: 500 })
-  }
+// Retired (red #1171). The "LINK ABCD-1234" WhatsApp device-code pairing never had a WhatsApp handler, and its
+// parser read ordinary text such as "connect calendar" as a device code. Mobile sign-in is the WhatsApp OTP flow
+// (/api/mobile/link/otp/start + /verify, then /api/mobile/link/status and /api/mobile/session/exchange).
+// This route does no database work and creates no pairing request.
+export function POST() {
+  return NextResponse.json(
+    { error: 'mobile_link_retired', message: 'Device-code linking is no longer available. Sign in with the WhatsApp verification code.' },
+    { status: 410 },
+  )
 }

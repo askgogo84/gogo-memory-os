@@ -1,0 +1,2 @@
+# tests added by PR #1405
+npx tsx scripts/verify-stay-isolation-testonly.mts

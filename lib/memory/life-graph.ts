@@ -233,6 +233,13 @@ export function applyTripNotes(trips: Trip[]): Trip[] {
       if (name) {
         const meta = { ...(stay.meta || {}) }
         const prev = String(meta.bookedBy || meta.stay?.bookedBy || '')
+        // A booking name set after this note was saved is a later correction: an older note never undoes it. The one
+        // exception is a booking name that is only the forwarder (arranged-by) re-read from the email.
+        const correctedAt = Date.parse(String(meta.bookedByUpdatedAt || meta.stay?.bookedByUpdatedAt || ''))
+        const noteAt = Date.parse(String(n.meta?.savedAt || n.startAt || ''))
+        const arranged = String(meta.arrangedBy || meta.stay?.arrangedBy || '')
+        const forwarderOnly = !!prev && !!arranged && prev.toLowerCase() === arranged.toLowerCase()
+        if (prev && !forwarderOnly && Number.isFinite(correctedAt) && !(noteAt >= correctedAt)) continue
         if (prev && prev.toLowerCase() !== name.toLowerCase() && !meta.arrangedBy) meta.arrangedBy = prev
         meta.bookedBy = name
         stay.meta = meta
@@ -331,8 +338,9 @@ export async function loadTravelDocs(telegramId: number | string, now = Date.now
       .eq('telegram_id', id.key).in('doc_type', ['passport', 'id_document']).order('created_at', { ascending: false }).limit(8)
     return ((data || []) as any[]).filter(r => ownRow(r, id.owner)).map(r => {
       const f = r.extracted?.fields || {}
+      // The expiry shown is the expiry judged: a fallback-only date (no normalised expires_on) can still be EXPIRED.
       const expiry = r.expires_on || r.extracted?.expiryHuman || f.expiry_date || null
-      return { kind: r.doc_type, label: r.extracted?.userLabel || null, holder: f.name || null, expiry: expiry ? String(expiry).slice(0, 20) : null, expired: expiredIso(r.expires_on, now), title: String(r.title || '') } as TravelDoc
+      return { kind: r.doc_type, label: r.extracted?.userLabel || null, holder: f.name || null, expiry: expiry ? String(expiry).slice(0, 20) : null, expired: expiredIso(expiry, now), title: String(r.title || '') } as TravelDoc
     })
   } catch { return [] }
 }
@@ -345,10 +353,16 @@ export async function loadTripCalendar(telegramId: number | string, trips: Trip[
     const { getAllCalendarAccountAccess, fetchMergedCalendarEventsPage } = await import('@/lib/services/google-calendar-accounts')
     const accounts = await getAllCalendarAccountAccess(telegramId)
     if (!accounts.length) return []
-    const from = new Date(Math.max(now - 12 * 36e5, Math.min(...live.map(t => ms(t.startAt))))).toISOString()
-    const until = new Date(Math.max(...live.map(t => (Number.isFinite(ms(t.endAt)) ? ms(t.endAt) : ms(t.startAt)) + DAY))).toISOString()
-    const page = await fetchMergedCalendarEventsPage(accounts, from, until, 'LIFE_GRAPH_CALENDAR_READ_FAILED', 30)
-    return (page.events || []).map(itemFromCalendarEvent).filter((x: GraphItem | null): x is GraphItem => !!x)
+    // One bounded read per trip (nearest four), not one 30-event read across every trip's span: busy days before a
+    // later trip must not push that trip's meetings off the page.
+    const pages = await Promise.all(live.sort((a, b) => ms(a.startAt) - ms(b.startAt)).slice(0, 4).map(t => {
+      const from = new Date(Math.max(now - 12 * 36e5, ms(t.startAt))).toISOString()
+      const until = new Date((Number.isFinite(ms(t.endAt)) ? ms(t.endAt) : ms(t.startAt)) + DAY).toISOString()
+      return fetchMergedCalendarEventsPage(accounts, from, until, 'LIFE_GRAPH_CALENDAR_READ_FAILED', 30).catch(() => ({ events: [] as any[] }))
+    }))
+    const seen = new Set<string>()
+    return pages.flatMap(p => p.events || []).map(itemFromCalendarEvent)
+      .filter((x: GraphItem | null): x is GraphItem => !!x && !seen.has(x.id) && !!seen.add(x.id))
   } catch { return [] }
 }
 

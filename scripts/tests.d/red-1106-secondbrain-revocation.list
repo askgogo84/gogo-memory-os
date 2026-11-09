@@ -1,0 +1,2 @@
+# red #1106 test, harness adapted to the applied workspace share FK cascade
+npx tsx scripts/verify-secondbrain-revocation-atomicity-testonly.mts

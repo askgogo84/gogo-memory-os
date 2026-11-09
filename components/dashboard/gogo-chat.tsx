@@ -78,7 +78,8 @@ function connectCard(text:string){
 type Chip={title:string;description?:string}
 
 // Same rule as lib/security/outbound-identifiers brandSafe (kept local: the chat harness loads this file alone).
-const brandSafe=(t:string)=>String(t??'').split(/(\u2063[\s\S]*?\u2063)/).map(part=>part.length>1&&part.startsWith('\u2063')&&part.endsWith('\u2063')?part:part.replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g,m=>/['’]s$/.test(m)?'Gogo’s':'Gogo').replace(/(?<![\w./@-])Anthropic(?![\w@/-]|\.com\b)/g,'our AI provider')).join('').replace(/\u2063/g,'')
+// Same rule as lib/security/outbound-identifiers brandSafe (approval prompts, quotes, factual Anthropic kept).
+const brandSafe=(t:string)=>{const rw=((s:string)=>/\bReply\s+\*?YES\b|\bPlease confirm\b|^\s*Approve\b/im.test(s)||/\bClaude\s+(?:Duet|Cowork|Design|Desktop|Chrome|Max|Pro|Team|Enterprise)\b/.test(s)||(/\b(?:ChatGPT|GPT|OpenAI|Gemini|Perplexity|Copilot|Manus|Muse|Instinct|Wajo|Hermes|Grok|Mistral|Llama|DeepSeek|Dots)\b/i.test(s)&&/\bClaude\b/.test(s))?s:s.split(/("[^"\n]*"|“[^”\n]*”)/).map((q:string,i:number)=>i%2?q:q.replace(/(?<![\w./@-])(?:Anthropic['’]s\s+)?Claude(?:\s+(?:AI|Code|Opus|Sonnet|Haiku|Fable|Mythos)(?:\s+\d+(?:\.\d+)?)?)?(?:['’]s)?(?![\w@/-]|\.(?:ai|com)\b)/g,(m:string)=>/['’]s$/.test(m)?'Gogo’s':'Gogo').replace(/\b(made|built|created|developed|trained|powered)\s+by\s+Anthropic(?![\w@/-]|\.com\b)/gi,'$1 by our AI provider')).join(''));return String(t??'').split(/(\u2063[\s\S]*?\u2063)/).map(part=>part.length>1&&part.startsWith('\u2063')&&part.endsWith('\u2063')?part:rw(part)).join('').replace(/\u2063/g,'')}
 
 function Message({message:incoming,chips,onPick}:{message:ChatMessage;chips?:Chip[];onPick?:(title:string)=>void}){
   let message=incoming

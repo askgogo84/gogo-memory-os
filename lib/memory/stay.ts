@@ -98,9 +98,20 @@ export function inferGuestRole(text: string, userNames: string[]): boolean {
 }
 
 /** "Booking is in the name of Aman Chamedia" / "booked under Aman" → "Aman Chamedia". Pure. */
+// Words that start the next instruction or clause, never part of a name ("... Aman Chamedia please show your ID").
+const NOT_NAME = /^(?:for|and|at|in|on|so|to|with|by|from|is|was|will|has|have|please|pls|plz|kindly|remember|carry|bring|show|note|check|do|don't|dont|make|keep|thanks|thank|the|your|you|ok|okay)$/i
 export function bookingNameFrom(text: string): string | null {
   const m = String(text || '').match(/\b(?:booking|booked|reservation|reserved|room)\b[^.]{0,30}?\b(?:in\s+the\s+name\s+of|under\s+the\s+name(?:\s+of)?|under)\s+([a-z][a-z.'-]+(?:\s+(?!for\b|and\b|at\b|in\b|on\b|so\b)[a-z][a-z.'-]+){0,3})/i)
-  return m ? m[1].trim().replace(/\b\w/g, c => c.toUpperCase()) : null
+  if (!m) return null
+  // A name ends at the first instruction word; when the writer capitalised the name, also at the first lowercase word.
+  const words = m[1].trim().split(/\s+/)
+  const capitalised = /^[A-Z]/.test(words[0])
+  const name: string[] = []
+  for (const w of words) {
+    if (NOT_NAME.test(w) || (capitalised && !/^[A-Z]/.test(w))) break
+    name.push(w)
+  }
+  return name.length ? name.join(' ').replace(/\b\w/g, c => c.toUpperCase()) : null
 }
 
 /** "Have added you as the 2nd guest" (said to the user). Pure. */
@@ -110,9 +121,12 @@ export function addedAsGuest(text: string): boolean {
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)
 
-/** Same hotel and city is one stay unless both carry different check-in dates. Pure. */
+/** Same hotel and city is one stay unless both carry different check-in dates. Pure.
+ *  An undated read keys on hotel + city; a dated one adds its check-in day so two reservations at the same hotel
+ *  on different dates never share (and overwrite) one row. saveStay still folds a dated read into an undated row. */
 export function stayDedupeKey(s: Stay): string {
-  return `stay:${slug(s.hotel)}:${slug(normCity(s.city) || 'city')}`
+  const base = `stay:${slug(s.hotel)}:${slug(normCity(s.city) || 'city')}`
+  return s.checkIn ? `${base}:${s.checkIn}` : base
 }
 
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase()
@@ -132,7 +146,8 @@ export function mergeStay(prev: Partial<Stay> | null | undefined, next: Stay): S
     arrangedBy: next.arrangedBy || p.arrangedBy || (next.bookedBy && p.bookedBy && !same(next.bookedBy, p.bookedBy) ? p.bookedBy : null),
     guests: [...new Set([...(p.guests || []), ...next.guests])].slice(0, 8),
     userRole: next.userRole !== 'unknown' ? next.userRole : (p.userRole || 'unknown'),
-    isRequest: next.isRequest && !!p.isRequest,
+    // A first read that is a request stays a request; once saved, a hotel confirmation clears it for good.
+    isRequest: prev ? next.isRequest && !!p.isRequest : next.isRequest,
     address: next.address || p.address || null,
   }
 }
@@ -146,16 +161,28 @@ function dayStartIso(day: string | null, hour = 14) {
 /** Save (or merge into) the stay. Returns the merged stay and whether it was new. */
 export async function saveStay(telegramId: number | string, stay: Stay, source: { kind: string; text?: string }): Promise<{ stay: Stay; created: boolean } | null> {
   const tg = String(telegramId)
-  const key = stayDedupeKey(stay)
-  const { data: existing } = await supabaseAdmin.from('life_events').select('id,metadata_json').eq('telegram_id', tg).eq('dedupe_key', key).maybeSingle()
+  let key = stayDedupeKey(stay)
+  let { data: existing } = await supabaseAdmin.from('life_events').select('id,metadata_json').eq('telegram_id', tg).eq('dedupe_key', key).maybeSingle()
+  if (!existing && stay.checkIn) {
+    // An earlier undated read (or a legacy hotel+city row) of this same stay: fold into it, but only when it carries
+    // no check-in or this same one, so a different dated reservation never overwrites it.
+    const baseKey = stayDedupeKey({ ...stay, checkIn: null })
+    const { data: base } = await supabaseAdmin.from('life_events').select('id,metadata_json').eq('telegram_id', tg).eq('dedupe_key', baseKey).maybeSingle()
+    const baseIn = base?.metadata_json?.stay?.checkIn || null
+    if (base && (!baseIn || baseIn === stay.checkIn)) { existing = base; key = baseKey }
+  }
   const merged = mergeStay(existing?.metadata_json?.stay, stay)
+  // When the booking name last changed: a trip note saved before it cannot undo it at read time (applyTripNotes).
+  const prevBookedBy = existing?.metadata_json?.stay?.bookedBy || null
+  const bookedByUpdatedAt = merged.bookedBy && (!prevBookedBy || prevBookedBy.toLowerCase() !== merged.bookedBy.toLowerCase())
+    ? new Date().toISOString() : (existing?.metadata_json?.bookedByUpdatedAt || null)
   const row = {
     telegram_id: tg, event_type: 'reservation', subtype: 'hotel_stay', source: source.kind,
     title: `${merged.hotel}${merged.city ? `, ${merged.city}` : ''}`.slice(0, 240), provider: merged.hotel,
     start_at: dayStartIso(merged.checkIn, 14), end_at: dayStartIso(merged.checkOut, 11), timezone: 'Asia/Kolkata',
     location: merged.city, confirmation_ref: merged.bookingRef,
     lifecycle_state: 'planned', participants: merged.guests,
-    metadata_json: { stay: merged, city: merged.city, hotel: merged.hotel, checkIn: merged.checkIn, checkOut: merged.checkOut, bookedBy: merged.bookedBy, arrangedBy: merged.arrangedBy || null, userRole: merged.userRole },
+    metadata_json: { stay: merged, city: merged.city, hotel: merged.hotel, checkIn: merged.checkIn, checkOut: merged.checkOut, bookedBy: merged.bookedBy, arrangedBy: merged.arrangedBy || null, userRole: merged.userRole, bookedByUpdatedAt },
     source_refs: [{ kind: source.kind, at: new Date().toISOString(), excerpt: String(source.text || '').slice(0, 300) }],
     dedupe_key: key, updated_at: new Date().toISOString(),
   }
@@ -229,6 +256,13 @@ export async function ingestStayFromText(p: { telegramId: number; whatsappTo?: s
       .eq('subtype', 'trip_note').gte('updated_at', since).order('updated_at', { ascending: true }).limit(20).then(r => r, () => ({ data: [] as any[] }))
     for (const n of (notes || []) as any[]) {
       if (normCity(n.metadata_json?.city) !== normCity(city)) continue
+      // A same-city note belongs to the trip it was saved on (tripKey ends with that trip's start day). It may only
+      // change a dated stay on that same trip: within a week of the trip's start, never a later or earlier visit.
+      if (stay.checkIn) {
+        const tripDay = String(n.metadata_json?.tripKey || '').match(/\d{4}-\d{2}-\d{2}/)?.[0]
+        const apart = tripDay ? Math.abs(Date.parse(stay.checkIn + 'T00:00:00Z') - Date.parse(tripDay + 'T00:00:00Z')) : NaN
+        if (!(apart <= 7 * 86_400_000)) continue
+      }
       const t = String(n.metadata_json?.text || '')
       if (addedAsGuest(t)) stay.userRole = 'guest'
       const name = bookingNameFrom(t)

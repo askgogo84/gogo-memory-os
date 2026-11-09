@@ -1,0 +1,2 @@
+# tests added by PR #1423
+node scripts/verify-friend-reminder-disabled-truth-testonly.mjs

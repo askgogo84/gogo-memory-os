@@ -1,0 +1,3 @@
+# red #1136 and #1184 tests (one sandbox entry each, no assertion changes)
+npx tsx scripts/verify-reel-metadata-egress-testonly.mts
+node scripts/verify-telegram-webhook-auth-testonly.mjs

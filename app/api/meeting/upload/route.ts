@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { buildMeetingNotesReply } from '@/lib/bot/handlers/meeting-notes'
 import { sendWhatsAppMessage } from '@/lib/channels/whatsapp'
 import { resolveUser } from '@/lib/bot/resolve-user'
+import { meetingUploadE164, verifyMeetingUploadToken } from '@/lib/security/meeting-upload-token'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300 // Max allowed on Pro plan. Whisper + GPT-4o can take 60-90s for long recordings.
@@ -19,10 +20,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'audio and phone required' }, { status: 400 })
     }
 
-    const digits = phone.replace(/\D/g, '')
-    const e164 = digits.startsWith('91') ? '+' + digits
-      : digits.length === 10 ? '+91' + digits
-      : '+' + digits
+    const e164 = meetingUploadE164(phone)
+    // The phone in this body is only a target. Before any message, transcription,
+    // owner lookup or note write, require the signed recorder-link token minted
+    // for exactly this number (see lib/security/meeting-upload-token.ts).
+    const token = (form.get('t') as string || '').trim()
+    if (!e164 || !verifyMeetingUploadToken(token, e164, Date.now(), process.env)) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+    }
 
     const mins = Math.floor(duration / 60), secs = duration % 60
     const durStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`

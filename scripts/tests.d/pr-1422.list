@@ -1,0 +1,2 @@
+# tests added by PR #1422
+npx tsx scripts/verify-stay-booking-facts-boundary-testonly.mts

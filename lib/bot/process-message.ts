@@ -571,6 +571,21 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     await saveConversation(resolvedUser.telegramId,'assistant',alertFrequency)
     return {text:formatOutgoingText(params.channel,alertFrequency),handledBy:'alert-preferences',resolvedUser}
   }
+  // Same Brain 3.0 procedures from WhatsApp: "follow up with Nithin on the Harbor deck" starts email.follow_up for
+  // owners in GOGO_PROCEDURES_OWNERS. The run stops at a dashboard approval card bound to the exact draft; nothing is
+  // sent from WhatsApp. Pure pre-filter first, env gate second, so the vm route harnesses never load the module.
+  const procedureReply=params.channel==='whatsapp'&&!params.internalStep&&(globalThis as any).process?.env?.VERCEL_ENV&&/^\s*(?:please\s+)?(?:send\s+(?:a\s+)?)?follow[\s-]?up\b/i.test(incomingText)
+    ?await import('@/lib/procedures/entry').then(async m=>{
+        if(!m.parseFollowUpAsk(incomingText))return null
+        const {resolveAgentActor}=await import('@/lib/agent/actor')
+        const actor=await resolveAgentActor({telegramId:String(resolvedUser.telegramId),whatsappId:resolvedUser.whatsappId||params.externalUserId,surface:'whatsapp'})
+        return m.tryProcedureAsk(actor,incomingText,'whatsapp')
+      }).catch(e=>{console.error('PROCEDURE_WHATSAPP_ENTRY_FAILED:',String(e?.message||e).slice(0,120));return null}):null
+  if(procedureReply){
+    await saveConversation(resolvedUser.telegramId,'user',incomingText)
+    await saveConversation(resolvedUser.telegramId,'assistant',procedureReply)
+    return {text:formatOutgoingText(params.channel,procedureReply),handledBy:'procedure-follow-up',resolvedUser}
+  }
   // Remember and suggest, Phase 1: food taste the person states, lists or forgets (null = not a taste message).
   const taste=(globalThis as any).process?.env?.VERCEL_ENV&&TASTE_PREFILTER.test(incomingText)
     ?await import('@/lib/agent/taste').then(m=>m.tryTasteCommand({telegramId:String(resolvedUser.telegramId),text:incomingText}),()=>null):null
@@ -908,8 +923,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
           reply = 'That reminder time has passed. Nothing has been saved; please send a new future time.'
         }
         else {
-          const {whenHuman} = await createFriendReminder({ownerTelegramId: resolvedUser.telegramId, senderName: resolvedUser.name, recipientWhatsapp: pending.number, rest: pending.rest, whenIso: pending.whenIso, task: pending.task})
-          reply = `Done — I'll remind ${cap0(pending.name)} ${whenHuman}.`
+          try {
+            const {whenHuman} = await createFriendReminder({ownerTelegramId: resolvedUser.telegramId, senderName: resolvedUser.name, recipientWhatsapp: pending.number, rest: pending.rest, whenIso: pending.whenIso, task: pending.task})
+            reply = `Done — I'll remind ${cap0(pending.name)} ${whenHuman}.`
+          } catch (e) {
+            if (!(e instanceof Error) || e.message !== 'friend_reminder_delivery_disabled') throw e
+            await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(pending.name, pending.rest, 'done'))
+            reply = `Reminders to friends aren't switched on yet, so I couldn't schedule this for ${cap0(pending.name)}. Nothing has been saved.`
+          }
         }
         if (/^(?:no|cancel)/i.test(answer) || /^Done/.test(reply))
           await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(pending.name, pending.rest, 'done'))
@@ -1893,8 +1914,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         if (!hasContact) reply = `I don't have ${cap0(share.name)}'s number yet. Do a friend reminder once (remind ${share.name} to ...) so I save it, then share.`
         else if (!rid) reply = `${cap0(share.name)} isn't on AskGogo yet — ask them to message the bot first, then share.`
         else {
-          await grantShare(resolvedUser.telegramId, rid, share.topic)
-          reply = `Shared your *${share.topic}* bucket with ${cap0(share.name)}. They can now ask me about it.`
+          try {
+            await grantShare(resolvedUser.telegramId, rid, share.topic)
+            reply = `Shared your *${share.topic}* bucket with ${cap0(share.name)}. They can now ask me about it.`
+          } catch { reply = `I couldn't confirm the share of your *${share.topic}* bucket, so nothing was shared. Please try again in a bit.` }
         }
       }
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)

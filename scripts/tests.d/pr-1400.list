@@ -1,0 +1,3 @@
+# tests added by PR #1400
+node scripts/verify-checkout-phone-binding-nov9.cjs
+npx tsx scripts/verify-share-grant-honest-nov9.mts

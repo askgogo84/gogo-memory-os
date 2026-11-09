@@ -1,0 +1,2 @@
+# tests added by PR #1402
+npx tsx scripts/verify-sonnet-default-nov9.mts

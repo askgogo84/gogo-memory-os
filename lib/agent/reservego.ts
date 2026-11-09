@@ -10,7 +10,7 @@ const WIDGET_LINK_RE = /https?:\/\/widget\.reservego\.co(?:m)?\/reserveOutlets\/
 export function reservegoOutletId(url: string): string | null {
   try {
     const u = new URL(url)
-    if (u.protocol !== 'https:' || u.username || u.password) return null
+    if (u.protocol !== 'https:' || u.username || u.password || u.port) return null
     if (!/(?:^|\.)reservego\.co(?:m)?$/i.test(u.hostname)) return null
     return u.pathname.match(OUTLET_RE)?.[1]?.toLowerCase() || null
   } catch { return null }
@@ -19,6 +19,19 @@ export function reservegoOutletId(url: string): string | null {
 export function reservegoWidgetLinkFromHtml(html: string): string | null {
   const hit = String(html || '').replace(/&amp;/g, '&').match(WIDGET_LINK_RE)
   return hit ? hit[0] : null
+}
+
+/**
+ * Reject literal IPs (URL parsing already normalizes decimal/hex IPv4 such as
+ * 2130706433 or 0x7f000001 to dotted form), IPv6 literals, single-label and
+ * local names before even an explicitly injected fetch. Fails closed: a public
+ * IP literal is also refused, since a restaurant page is never served that way.
+ */
+function blockedRestaurantPageHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '')
+  return !host || !host.includes('.') || host.includes(':') || /^[0-9.]+$/.test(host)
+    || /(?:^|\.)(?:localhost|local|internal|lan|localdomain)$/.test(host)
+    || host.endsWith('.home.arpa')
 }
 
 /** Recognize verified ReserveGo widget links without reading any provider site. */
@@ -32,8 +45,8 @@ export async function findReservegoWidget(url: string, fetcher?: typeof fetch): 
   if (!fetcher) return null
   try {
     const u = new URL(url)
-    if (u.protocol !== 'https:' || u.username || u.password) return null
-    const res = await fetcher(url, {cache: 'no-store', redirect: 'manual', signal: AbortSignal.timeout(6_000), headers: {'User-Agent': 'Mozilla/5.0 (compatible; AskGogo/1.0)'}})
+    if (u.protocol !== 'https:' || u.username || u.password || u.port || blockedRestaurantPageHost(u.hostname)) return null
+    const res = await fetcher(u.href, {cache: 'no-store', redirect: 'manual', signal: AbortSignal.timeout(6_000), headers: {'User-Agent': 'Mozilla/5.0 (compatible; AskGogo/1.0)'}})
     if (!res.ok) return null
     const link = reservegoWidgetLinkFromHtml((await res.text()).slice(0, 2_000_000))
     const outletId = link ? reservegoOutletId(link) : null
