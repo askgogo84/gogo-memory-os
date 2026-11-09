@@ -33,4 +33,18 @@ const mb = readFileSync('lib/bot/handlers/morning-briefing.ts', 'utf8')
 assert.ok(mb.indexOf('loadIntelligence(telegramId)') < mb.indexOf("blocks.push(`🌤️ *Weather*"), 'intelligence leads the brief')
 // agent_watchers has no title column (23 Oct live: selecting it emptied Home's 'Gogo is handling').
 assert.doesNotMatch(src, /from\('agent_watchers'\)\.select\('[^']*\btitle\b/)
+// 2 Nov live brief: quick questions' raw wording showed as finished work.
+{
+  const { isMeaningfulDoneTitle } = await import('../lib/bot/handlers/briefing-intelligence')
+  for (const bad of ["the what's the weather in bangalore the", 'what is article was launched blank', 'what is ask google launched blank', 'your google', 'Is it raining?', 'ok'])
+    assert.equal(isMeaningfulDoneTitle(bad), false, bad)
+  for (const good of ['Weekly expense report', 'Flipkart price comparison', 'Reminder: pay rent', 'Browser · www.flipkart.com', 'Table at Toit for 4'])
+    assert.equal(isMeaningfulDoneTitle(good), true, good)
+  const brief = composeIntelligence({ approvals: [], loops: [], running: [], watchers: [], done: [
+    { title: "the what's the weather in bangalore the" }, { title: 'what is ask google launched blank' }, { title: 'your google' },
+    { title: 'Browser · www.flipkart.com' }, { title: 'Weekly expense report' } ] }).join('\n')
+  assert.match(brief, /✅ \*Done since yesterday\*\n• Flipkart browser check\n• Weekly expense report$/)
+  assert.equal(composeIntelligence({ approvals: [], loops: [], running: [], watchers: [], done: [{ title: 'your google' }] }).length, 0, 'only fragments → no Done section')
+  console.log('✓ Done since yesterday lists real work only, with friendly names')
+}
 console.log('Morning intelligence: needs you, meeting prep, handling, done, can wait — saved state only, no empty claims')

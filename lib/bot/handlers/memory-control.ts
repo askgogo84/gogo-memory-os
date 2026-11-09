@@ -75,7 +75,8 @@ export function isMemoryControlCommand(text: string) {
     lower.startsWith('delete memory') ||
     lower.startsWith('remove memory') ||
     lower === 'clear my memory' ||
-    lower === 'forget everything'
+    lower === 'forget everything' ||
+    /^(?:export|download|send me|give me)\s+(?:all\s+)?(?:my\s+)?(?:memory|memories|everything you (?:know|remember)(?: about me)?|my data)\s*[.!]?$/i.test(lower)
   )
 }
 
@@ -360,6 +361,15 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
     return buildMemorySearchReply(telegramId, text)
   }
 
+  if (/^(?:export|download|send me|give me)\s+(?:all\s+)?(?:my\s+)?(?:memory|memories|everything you (?:know|remember)(?: about me)?|my data)\s*[.!]?$/i.test(lower)) {
+    // Export: the file comes from the dashboard (signed in as this owner), never as a WhatsApp attachment.
+    const { exportMemory } = await import('@/lib/agent/memory-export')
+    const x = await exportMemory(String(telegramId))
+    const base = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
+    const parts = Object.entries(x.counts).map(([k, n]) => `${n} ${k.replace('user_', '').replace(/_/g, ' ')}`).join(', ')
+    return `🧠 *Your memory export*\n\n${x.facts.length} items${parts ? ` (${parts})` : ''}.\n\nDownload (sign in as you):\n${base}/api/dashboard/memory/export?format=md\n\nJSON with provenance: ${base}/api/dashboard/memory/export\n\nSay "forget <what it says>" to remove one item.`
+  }
+
   if (lower === 'memory off' || lower === 'turn memory off') {
     const ok = await setMemoryEnabled(telegramId, false)
     return ok
@@ -390,6 +400,9 @@ export async function buildMemoryControlReply(telegramId: number, text: string) 
         .update({ common_times: [], frequent_contacts: [], frequent_tasks: [], preferences: {}, last_updated: new Date().toISOString() })
         .eq('telegram_id', telegramId),
     ])
+
+    // Same Brain 3.0: the semantic graph forgets too (retracted, not deleted); flag-gated, never blocks the clear.
+    try { const sem = await import('@/lib/semantic/repo'); const repo = typeof sem?.semanticRepoFor === 'function' ? await sem.semanticRepoFor({ legacyTelegramId: Number(telegramId) }) : null; if (repo) await repo.forgetEverything() } catch (e: any) { console.error('SEMANTIC_FORGET_FAILED:', String(e?.message || e).slice(0, 120)) }
 
     return `🧠 *Memory cleared*\n\nI deleted saved personal memories and reset your Memory Twin patterns. Usage/system logs were not touched.`
   }
