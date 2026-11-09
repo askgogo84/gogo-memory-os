@@ -109,7 +109,7 @@ export function parseGmailReplyCommand(text:string){
   return {target,body,draftOnly:draftOnly||stop}
 }
 
-async function gmailAccess(actor:AgentActor,{requireSend=false}:{requireSend?:boolean}={}){
+export async function gmailAccess(actor:AgentActor,{requireSend=false}:{requireSend?:boolean}={}){
   const {data:user,error}=await supabaseAdmin.from('users')
     .select('gmail_connected,gmail_send_connected,gmail_email,gmail_access_token,gmail_refresh_token')
     .eq('telegram_id',actor.legacyTelegramId).maybeSingle()
@@ -126,7 +126,7 @@ async function gmailAccess(actor:AgentActor,{requireSend=false}:{requireSend?:bo
   return {ok:true as const,reason:null,user,accessToken}
 }
 
-async function resolveThread(actor:AgentActor,target:string){
+export async function resolveThread(actor:AgentActor,target:string){
   const access=await gmailAccess(actor)
   if(!access.ok)return {access,match:null as any,ambiguous:false}
   // 28 Oct run: "Draft a reply to my latest email saying …" searched Gmail for the words "my latest".

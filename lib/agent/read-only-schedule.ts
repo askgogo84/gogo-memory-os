@@ -78,7 +78,11 @@ export async function readTomorrowSchedule(params: { actor: AgentActor; scope?: 
   if(held)return {text:held,calendarEvents:[],reminders:[],timeZone:'',tomorrowKey:'',calendarReadVerified:false}
   const clarification=calendarReadClarificationReply(params.text||'')
   if(clarification)return {text:clarification,calendarEvents:[],reminders:[],timeZone:'',tomorrowKey:'',calendarReadVerified:false}
-  const telegramId = Number(params.actor.legacyTelegramId)
+  // This exported read entry point can be called outside resolveAgentActor.
+  // AgentActor carries a JS number: reject rounded BIGINT/malformed runtime IDs
+  // before the privileged user lookup, reminder read or Calendar work.
+  const telegramId = params.actor.legacyTelegramId
+  if (!Number.isSafeInteger(telegramId) || telegramId === 0) throw new Error('read_only_schedule_owner_unsafe')
   const { data: user, error: userError } = await supabaseAdmin.from('users')
     .select('timezone')
     .eq('telegram_id', telegramId)

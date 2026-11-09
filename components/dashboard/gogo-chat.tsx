@@ -161,6 +161,8 @@ export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initial
   const [channels,setChannels]=useState<ChatChannel[]>([])
   // v2 (9 Nov): the saved topic brief (chips) replaces the server summary box when today's exists.
   const [topicBrief,setTopicBrief]=useState<BriefView|null>(null)
+  // G8: what Gogo already knows about the setup (connected calendar, mail, sites). Shown once, in the empty thread.
+  const [setup,setSetup]=useState<{known:{id:string;label:string;detail?:string}[];missing:{id:string;label:string;detail?:string;href?:string}[];line:string}|null>(null)
   const [channel,setChannel]=useState('')
   const channelRef=useRef('')
   const refreshRef=useRef<((initial?:boolean)=>Promise<void>)|null>(null)
@@ -275,6 +277,7 @@ export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initial
         const next=Array.isArray(chat.messages)?chat.messages:[]
         setMessages(current=>JSON.stringify(current)===JSON.stringify(next)?current:next)
         setTopicBrief(chat.brief&&Array.isArray(chat.brief.items)?chat.brief:null)
+        setSetup(chat.setup&&Array.isArray(chat.setup.known)?chat.setup:null)
         setError(current=>current===HISTORY_LOAD_ERROR?'':current)
       }catch{if(initial&&live&&!sendingRef.current&&version===conversationVersion.current)setError(HISTORY_LOAD_ERROR)}
       finally{refreshing=false;if(live)setLoading(false)}
@@ -437,6 +440,12 @@ export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initial
           <div className="mx-auto w-fit"><Avatar state={gogoState} size={104}/></div>
           <h2 className="mt-5 text-[28px] font-bold leading-tight text-[#f2efea] lg:text-[34px]" suppressHydrationWarning>{greetingFor(new Date().getHours())}{userName?`, ${userName}`:''}.</h2>
           <p className="mx-auto mt-2 max-w-xl text-[16px] leading-relaxed text-[#b4b4b0]">Ask here or on WhatsApp. The same context, tasks, approvals and background work carry across both.</p>
+          {setup&&!channel&&<div className="mx-auto mt-6 max-w-xl rounded-[18px] border border-[#2a2a2a] bg-[#151515] p-4 text-left" data-setup-known>
+            <div className="text-[13px] font-semibold uppercase tracking-[.06em] text-[#a8a8a4]">Gogo already knows your setup</div>
+            {setup.known.length>0&&<ul className="mt-2 flex flex-wrap gap-2">{setup.known.map(k=><li key={k.id} className="rounded-full border border-[#2f4a45] bg-[#101f1d] px-3 py-1 text-[14px] text-[#d8d8d3]">{k.label}{k.detail?<span className="text-[#a8a8a4]"> · {k.detail}</span>:null}</li>)}</ul>}
+            {setup.known.length===0&&<p className="mt-2 text-[15px] text-[#c4c4c0]">Nothing connected yet.</p>}
+            {setup.missing.length>0&&<p className="mt-3 text-[14px] text-[#a8a8a4]">Not yet: {setup.missing.map((m,i)=><span key={m.id}>{i>0?', ':''}{m.href?<Link href={m.href} className="underline decoration-[#4cd0bd] underline-offset-4 text-[#d8d8d3]">{m.label}</Link>:m.label}{m.detail?` (${m.detail})`:''}</span>)}</p>}
+          </div>}
           {loc.status==='ask'&&<div className="mx-auto mt-6 max-w-xl rounded-[18px] border border-[#2a2a2a] bg-[#151515] p-4 text-left">
             <div className="text-[17px] font-bold text-[#f2efea]">Get more useful local help</div>
             <p className="mt-1 text-[15px] leading-[1.5] text-[#c4c4c0]">Weather for where you are now, and more local help soon. Your approximate area (about 1 km) stays in this browser and goes out only with a message. You can turn it off any time.</p>

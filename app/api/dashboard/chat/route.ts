@@ -169,7 +169,12 @@ export async function GET(req?: NextRequest) {
   if (!threadId && (globalThis as any).process?.env?.VERCEL_ENV) {
     try { const w = await import('@/lib/briefing/daily-brief-writer'); brief = typeof w?.readTodaysBrief === 'function' ? await w.readTodaysBrief(String(user.telegram_id)) : null } catch { brief = null }
   }
-  return NextResponse.json({ messages, name: user.name || 'Gogo', brief })
+  // G8 (9 Nov): what Gogo already knows about the person's setup, for the empty-chat card. Main thread only.
+  let setup: unknown = null
+  if (!threadId && (globalThis as any).process?.env?.VERCEL_ENV) {
+    try { const sk = await import('@/lib/dashboard/setup-known'); setup = typeof sk?.loadSetupKnown === 'function' ? await sk.loadSetupKnown(String(user.telegram_id)) : null } catch { setup = null }
+  }
+  return NextResponse.json({ messages, name: user.name || 'Gogo', brief, setup })
 }
 
 async function makeDocWasLastReply(telegramId:number|string){
@@ -295,6 +300,12 @@ async function handleChatPost(req: NextRequest) {
       const prep=(await import('@/lib/agent/meeting-prep-ask').then(m=>m.isMeetingPrepAsk(text)?m.tryMeetingPrep(actor,text):null,()=>null))
         ||(await import('@/lib/agent/trip-plan').then(m=>m.tryTripPlan(actor,'web',text),()=>null))
         ||(await import('@/lib/agent/people').then(m=>m.tryPersonAsk(actor,text),()=>null))
+      // Same Brain 3.0: "follow up with X on Y" as a durable, approval-gated procedure (flagged owners only).
+      const procedureReply=!prep&&(globalThis as any).process?.env?.VERCEL_ENV?(await import('@/lib/procedures/entry').then(m=>m.tryProcedureAsk(actor,text),()=>null)):null
+      if(procedureReply){
+        await saveConversation(user.telegram_id,text,procedureReply)
+        return NextResponse.json({text:procedureReply,handledBy:'procedure',status:'waiting_approval',readOnly:false,mutated:false})
+      }
       if(prep){
         await saveConversation(user.telegram_id,text,prep)
         return NextResponse.json({text:prep,handledBy:'meeting-prep',status:'completed',readOnly:true,mutated:false})

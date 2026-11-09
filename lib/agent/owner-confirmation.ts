@@ -74,8 +74,16 @@ export async function recordOwnerDecision(params: { telegramId: string; runId: s
     ...(params.note ? { note: params.note } : {}),
   }
   const metadata = { ...(run.metadata_json || {}), owner_confirmation: confirmation }
-  const { data: written, error: updateError } = await supabaseAdmin.from('agent_runs').update({ metadata_json: metadata, updated_at: confirmation.at })
-    .eq('id', params.runId).eq('telegram_id', params.telegramId).eq('status', 'completed').select('id')
+  // Do not overwrite provider verification, approval evidence or another owner's
+  // concurrent decision with a stale read-modify-write metadata snapshot.
+  // PostgREST compares the persisted JSONB value atomically inside this UPDATE.
+  const metadataSnapshot = run.metadata_json ?? null
+  let write = supabaseAdmin.from('agent_runs').update({ metadata_json: metadata, updated_at: confirmation.at })
+    .eq('id', params.runId).eq('telegram_id', params.telegramId).eq('status', 'completed')
+  write = metadataSnapshot === null
+    ? write.is('metadata_json', null)
+    : write.eq('metadata_json', JSON.stringify(metadataSnapshot))
+  const { data: written, error: updateError } = await write.select('id')
   if (updateError) throw new Error(`owner_confirmation_write_failed:${updateError.message}`)
   // Never report a decision that did not land (22 Oct live: a card appeared to revert after Mark complete).
   if (!Array.isArray(written) || !written.length) throw new Error('owner_confirmation_not_saved')

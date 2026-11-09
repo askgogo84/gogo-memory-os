@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 
 const NOISY_CONTACTS = new Set([
   'about','team','someone','them','him','her','me','myself','appointment','meeting',
@@ -83,7 +84,7 @@ function usualTimeReason(value: string) {
   return `You have chosen ${value} repeatedly. Gogo can suggest it first when you ask for a ${daypart} reminder without giving an exact time.`
 }
 
-async function upsertInsight(telegramId:number, item:InsightCandidate) {
+async function upsertInsight(telegramId:string, item:InsightCandidate) {
   const { data: existing } = await supabaseAdmin
     .from('user_insights')
     .select('id,user_confirmed')
@@ -103,7 +104,7 @@ async function upsertInsight(telegramId:number, item:InsightCandidate) {
   }
 
   if (existing?.id) {
-    const { error } = await supabaseAdmin.from('user_insights').update(patch).eq('id',existing.id)
+    const { error } = await supabaseAdmin.from('user_insights').update(patch).eq('id',existing.id).eq('telegram_id',telegramId)
     if (error) console.error('[memory-twin] insight update failed:', error.message)
     return existing.id as string
   }
@@ -123,7 +124,7 @@ async function upsertInsight(telegramId:number, item:InsightCandidate) {
   return data?.id || null
 }
 
-async function maybeCreateAgentIdea(telegramId:number, insightId:string|null, item:InsightCandidate) {
+async function maybeCreateAgentIdea(telegramId:string, insightId:string|null, item:InsightCandidate) {
   if (!item.actionable || item.confidence < 0.72 || item.evidence_count < 5) return false
 
   const since = new Date(Date.now()-14*86400_000).toISOString()
@@ -160,10 +161,14 @@ async function maybeCreateAgentIdea(telegramId:number, insightId:string|null, it
   return true
 }
 
-export async function generateUserInsights(telegramId: number) {
+export async function generateUserInsights(telegramId: string | number) {
+  // A rounded number cannot establish ownership for a persisted BIGINT ID.
+  // Keep an exact canonical decimal owner throughout private reads and writes.
+  const ownerId = exactSessionOwnerId(telegramId)
+  if (!ownerId) return []
   const [{data:profile},{data:consent}] = await Promise.all([
-    supabaseAdmin.from('user_memory_profile').select('*').eq('telegram_id',telegramId).maybeSingle(),
-    supabaseAdmin.from('user_consent_settings').select('memory_enabled,proactive_suggestions_enabled').eq('telegram_id',telegramId).maybeSingle(),
+    supabaseAdmin.from('user_memory_profile').select('*').eq('telegram_id',ownerId).maybeSingle(),
+    supabaseAdmin.from('user_consent_settings').select('memory_enabled,proactive_suggestions_enabled').eq('telegram_id',ownerId).maybeSingle(),
   ])
 
   if (!profile || consent?.memory_enabled === false) return []
@@ -234,10 +239,10 @@ export async function generateUserInsights(telegramId: number) {
 
   const results:any[]=[]
   for (const item of candidates) {
-    const insightId=await upsertInsight(telegramId,item)
+    const insightId=await upsertInsight(ownerId,item)
     const ideaCreated = consent?.proactive_suggestions_enabled === false
       ? false
-      : await maybeCreateAgentIdea(telegramId,insightId,item)
+      : await maybeCreateAgentIdea(ownerId,insightId,item)
     results.push({...item,insightId,ideaCreated})
   }
   return results

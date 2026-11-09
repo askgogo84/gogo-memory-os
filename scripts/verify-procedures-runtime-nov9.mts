@@ -86,4 +86,31 @@ const ctxFor = (runId: string, stepKey: string, extra: Partial<any> = {}) => ({ 
   assert.equal(m.state.status, 'completed'); assert.deepEqual(m.state.context.missing, ['documents', 'email threads']); assert.equal(m.traces[0].status, 'completed')
   ok('rejected approval skips the write and the run still completes; meeting prep completes read-only with missing items disclosed')
 }
+{ // email.follow_up production wiring: same consent/access as chat, exact read-back, unknown outcomes never retried
+  const { readFileSync } = await import('node:fs')
+  const { gmailSendFailureKnown } = await import('../lib/procedures/io')
+  for (const r of ['gmail_send_failed_400', 'gmail_send_failed_403', 'gmail_send_scope_required']) assert.equal(gmailSendFailureKnown(r), true, r)
+  for (const r of ['gmail_send_failed_500', 'socket hang up', 'ETIMEDOUT', '']) assert.equal(gmailSendFailureKnown(r), false, r)
+  const io = readFileSync('lib/procedures/io.ts', 'utf8')
+  assert.match(io, /case 'email\.follow_up:read_thread'[\s\S]*resolveThread\(actor,/, 'thread resolved with the chat path (consent + access checks)')
+  assert.match(io, /gmailAccess\(actor, \{ requireSend: true \}\)/, 'send needs the Gmail Send connection')
+  assert.match(io, /verifyGmailSentMessage\(access\.accessToken, objectRef, threadId\)[\s\S]*source: 'gmail', kind: 'provider_readback'/, 'verified only by SENT label + thread read-back')
+  assert.match(io, /execute_not_wired:\$\{def\.id\}:\$\{node\.id\}`, true\)/, 'other writes (cab booking) still fail closed')
+  assert.ok(!/claude|anthropic|completeWithFallback/i.test(io.slice(io.indexOf("'email.follow_up:draft'"), io.indexOf("'email.follow_up:draft'") + 600)), 'draft is deterministic, not model-written')
+  ok('email follow-up wiring: chat-path consent/access, Send connection required, read-back evidence, 4xx = not sent, anything else = unknown (never retried)')
+}
+{ // chat entry + approval release wiring
+  const { readFileSync } = await import('node:fs')
+  const { parseFollowUpAsk } = await import('../lib/procedures/entry')
+  assert.deepEqual(parseFollowUpAsk('follow up with Nithin on the Harbor deck'), { target: 'Nithin on the Harbor deck' })
+  assert.deepEqual(parseFollowUpAsk('Send a follow-up email to Divya.'), { target: 'Divya' })
+  assert.equal(parseFollowUpAsk('what did Nithin say about the deck'), null); assert.equal(parseFollowUpAsk('follow up'), null)
+  const entry = readFileSync('lib/procedures/entry.ts', 'utf8'); assert.match(entry, /proceduresEnabledFor\(String\(actor\.legacyTelegramId\)\)\) return null/)
+  const route = readFileSync('app/api/agent/approvals/[id]/route.ts', 'utf8')
+  assert.match(route, /decision === 'approve' && data\.run_id && payload\?\.plan_type === 'procedure'/, 'release only for procedure approvals, only on a yes')
+  assert.match(route, /releaseApprovedAutonomousStep\(\{ actor, runId: String\(data\.run_id\), stepKey: String\(payload\.step_key\) \}\)[\s\S]*resumeProcedureRun/, 'runtime re-checks the binding on release, then the run resumes')
+  assert.ok(route.indexOf('guardApprovalFreshness') < route.indexOf('releaseApprovedAutonomousStep'), 'expired approvals are closed before any release')
+  const chat = readFileSync('app/api/dashboard/chat/route.ts', 'utf8'); assert.match(chat, /tryProcedureAsk\(actor,text\)/)
+  ok('chat "follow up with …" starts email.follow_up for flagged owners; a yes releases the bound approval onto its step and resumes the run')
+}
 console.log(`verify-procedures-runtime-nov9: ${n} passed`)
