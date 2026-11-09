@@ -72,6 +72,12 @@ const DEADLINE = /\b(?:expires?|expiring|expiry|valid\s+(?:till|until|for)|last\
 const DEADLINE_SUBJECT = /\b(?:interview|assessment|assignment|offer|verification|verify|application|visa|appointment|renewal\s+due|kyc|re-?kyc|nomination|e-?sign|signature)\b/i
 const SECURITY = /\b(?:granted\s+access|allowed\s+\S+\s+access|was\s+given\s+access|has\s+access\s+to\s+your|third[- ]party\s+access|connected\s+app|new\s+(?:sign[- ]?in|login|device)|signed\s+in\s+(?:from|on)\s+a\s+new|unusual\s+(?:sign[- ]?in|activity)|password\s+(?:was\s+)?(?:changed|reset)|recovery\s+(?:phone|email)\s+(?:was\s+)?(?:changed|added)|2[- ]?step\s+verification\s+(?:turned|was)|security\s+alert)\b/i
 const AMOUNT = /(?:₹|\brs\.?|\binr)\s?([\d,]+(?:\.\d{1,2})?)|(?:\busd\s?|\$)([\d,]+(?:\.\d{1,2})?)/i
+// Large bank transactions are not necessarily spending: the attention classifier puts
+// BOTH credited and debited bank messages in "transaction_alert". Require explicit
+// outgoing evidence for the large-amount fallback; ambiguous mixed-direction mail
+// must not be presented as "Money leaving". Mandate notices retain their own rule.
+const OUTGOING_TRANSACTION = /\b(?:debited|debit(?:ed)?\s+(?:from|of|to)|charged|withdrawn|withdrawal|spent|transferred\s+from|paid\s+to)\b/i
+const INCOMING_TRANSACTION = /\b(?:credited|credit\s+to|refund(?:ed)?|cashback|salary|deposited|deposit(?:\s+received)?|payment\s+received|received\s+(?:a\s+)?(?:payment|transfer))\b/i
 /** Bills under this (in rupees) never get their own message. */
 export const SMALL_BILL = 500
 
@@ -104,7 +110,8 @@ export function alertKindOf(s: ScoredEmail): AlertKind | null {
   }
   if (c === 'transaction_alert') {
     const amt = amountOf(text)
-    return MANDATE.test(text) || (amt && amt.value >= 10_000) ? 'money_leaving' : null
+    const outgoing = OUTGOING_TRANSACTION.test(text) && !INCOMING_TRANSACTION.test(text)
+    return MANDATE.test(text) || (amt && amt.value >= 10_000 && outgoing) ? 'money_leaving' : null
   }
   if (c === 'receipt' || c === 'update') {
     if (CONFIRM_CHARGE.test(text) || MANDATE.test(text)) return 'money_leaving'
