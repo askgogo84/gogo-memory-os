@@ -140,7 +140,7 @@ body{font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--t
 <div class="footer">AskGogo.in · Private &amp; Secure</div>
 <script>
 const Q=new URLSearchParams(location.search);
-const PHONE=Q.get('phone')||'';const TITLE=Q.get('title')||'Team Meeting';const NAMES=Q.get('attendees')||'';const WA=Q.get('wa')||'17605483659';
+const PHONE=Q.get('phone')||'';const UPLOAD_TOKEN=Q.get('t')||'';const TITLE=Q.get('title')||'Team Meeting';const NAMES=Q.get('attendees')||'';const WA=Q.get('wa')||'17605483659';
 document.getElementById('idleTitle').textContent=TITLE||'Ready to Record';
 if(NAMES)document.getElementById('idleSub').textContent='Attendees: '+NAMES+'\nTap to start.';
 document.getElementById('recTitle').textContent=TITLE;
@@ -198,7 +198,7 @@ async function onDone(){
   document.getElementById('progLabel').textContent='Uploading audio to server…';
   try{
     if(blob.size<1000)throw new Error('Recording too short or empty ('+blob.size+' bytes)');
-    const fd=new FormData();fd.append('audio',blob,fname);fd.append('phone',PHONE);fd.append('title',TITLE);fd.append('attendees',NAMES);fd.append('duration',String(secs));
+    const fd=new FormData();fd.append('audio',blob,fname);fd.append('phone',PHONE);fd.append('t',UPLOAD_TOKEN);fd.append('title',TITLE);fd.append('attendees',NAMES);fd.append('duration',String(secs));
     const ctrl=new AbortController();const to=setTimeout(()=>ctrl.abort(),90000);
     const r=await fetch('/api/meeting/upload',{method:'POST',body:fd,signal:ctrl.signal});
     clearTimeout(to);
