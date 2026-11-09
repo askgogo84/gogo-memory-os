@@ -53,11 +53,41 @@ assert.ok(r.UNDERSTAND_SYSTEM.includes('NO question at the end') && r.UNDERSTAND
 // A "yes" turns into the saved instruction only while the offer is Gogo's latest message.
 const { supabaseAdmin } = await import('../lib/supabase-admin')
 const act: any[] = [], conv: any[] = []
-const tq = (rows: any[]) => { const f: any[] = []; let ins: any = null; const b: any = {
-  select() { return b }, insert(x: any) { ins = x; return b }, eq(k: string, v: any) { assert.equal(typeof v, 'string'); f.push((x: any) => String(x[k]) === v); return b },
-  in(k: string, vs: any[]) { f.push((x: any) => vs.includes(x[k])); return b }, gte(k: string, v: any) { f.push((x: any) => x[k] >= v); return b }, order() { return b }, limit() { return b },
-  then(res: any, rej: any) { if (ins) { rows.push({ ...ins, created_at: new Date(Date.now() + rows.length).toISOString() }); return Promise.resolve({ error: null }).then(res, rej) }
-    return Promise.resolve({ data: rows.filter(x => f.every(fn => fn(x))).sort((a, b2) => b2.created_at.localeCompare(a.created_at)), error: null }).then(res, rej) } }; return b }
+// Inert PostgREST fixture: conditional event update models the single-row compare-and-set.
+const tq = (rows: any[]) => {
+  const filters: ((x: any) => boolean)[] = []
+  let insertRow: any = null, patch: any = null
+  const q: any = {
+    select() { return q },
+    insert(x: any) { insertRow = x; return q },
+    update(x: any) { patch = x; return q },
+    eq(k: string, v: any) { assert.equal(typeof v, 'string'); filters.push((x: any) => String(x[k]) === v); return q },
+    in(k: string, vs: any[]) { filters.push((x: any) => vs.includes(x[k])); return q },
+    gte(k: string, v: any) { filters.push((x: any) => x[k] >= v); return q },
+    order() { return q }, limit() { return q },
+    async maybeSingle() {
+      const matching = rows.filter(x => filters.every(fn => fn(x)))
+      if (patch) {
+        if (matching.length !== 1) return { data: null, error: null }
+        Object.assign(matching[0], patch)
+        return { data: { id: matching[0].id }, error: null }
+      }
+      return { data: matching[0] || null, error: null }
+    },
+    then(resolve: any, reject: any) {
+      if (insertRow) {
+        const id = `00000000-0000-4000-8000-${String(rows.length + 1).padStart(12, '0')}`
+        rows.push({ ...insertRow, id, created_at: new Date(Date.now() + rows.length).toISOString() })
+        return Promise.resolve({ error: null }).then(resolve, reject)
+      }
+      return Promise.resolve({
+        data: rows.filter(x => filters.every(fn => fn(x))).sort((x, y) => y.created_at.localeCompare(x.created_at)),
+        error: null,
+      }).then(resolve, reject)
+    },
+  }
+  return q
+}
 ;(supabaseAdmin as any).from = (t: string) => t === 'agent_activity' ? tq(act) : t === 'conversations' ? tq(conv) : tq([])
 const io = await import('../lib/agent/image-offer')
 const TG = '918884501501'
