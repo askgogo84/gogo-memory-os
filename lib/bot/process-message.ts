@@ -908,8 +908,14 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
           reply = 'That reminder time has passed. Nothing has been saved; please send a new future time.'
         }
         else {
-          const {whenHuman} = await createFriendReminder({ownerTelegramId: resolvedUser.telegramId, senderName: resolvedUser.name, recipientWhatsapp: pending.number, rest: pending.rest, whenIso: pending.whenIso, task: pending.task})
-          reply = `Done — I'll remind ${cap0(pending.name)} ${whenHuman}.`
+          try {
+            const {whenHuman} = await createFriendReminder({ownerTelegramId: resolvedUser.telegramId, senderName: resolvedUser.name, recipientWhatsapp: pending.number, rest: pending.rest, whenIso: pending.whenIso, task: pending.task})
+            reply = `Done — I'll remind ${cap0(pending.name)} ${whenHuman}.`
+          } catch (e) {
+            if (!(e instanceof Error) || e.message !== 'friend_reminder_delivery_disabled') throw e
+            await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(pending.name, pending.rest, 'done'))
+            reply = `Reminders to friends aren't switched on yet, so I couldn't schedule this for ${cap0(pending.name)}. Nothing has been saved.`
+          }
         }
         if (/^(?:no|cancel)/i.test(answer) || /^Done/.test(reply))
           await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(pending.name, pending.rest, 'done'))
