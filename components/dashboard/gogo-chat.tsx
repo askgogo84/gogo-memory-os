@@ -20,6 +20,7 @@ import { MobileMenuButton } from '@/components/dashboard/mobile-nav'
 import { RunStepsLine } from '@/components/dashboard/run-steps'
 import { OpenUIComparisonInline } from '@/components/dashboard/openui-comparison-inline'
 import { ListenButton } from '@/components/dashboard/listen-button'
+import { InlineApprovals, WorkCards } from '@/components/dashboard/chat-cards'
 import { LOCATION_STORAGE_KEY, locationIsStale, locationTag, parseApproxLocation, parseLocationPreference, type LocationPreference } from '@/lib/dashboard/approx-location'
 
 type ChatMessage={
@@ -101,6 +102,7 @@ function Message({message:incoming,chips,onPick}:{message:ChatMessage;chips?:Chi
         {message.mediaUrl&&<img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 rounded-xl border border-[#2a2a2a]"/>}
       </div>}
       {connectCard(message.content)}
+      <WorkCards text={message.content} createdAt={message.createdAt}/>
       <OpenUIComparisonInline text={message.content}/>
       {!attentionCard&&<ListenButton text={message.content}/>}
       {chips&&chips.length>0&&onPick&&<div className="mt-4 flex flex-wrap gap-2.5" role="group" aria-label="Quick answers">
@@ -455,6 +457,8 @@ export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initial
         </div>}
         <div className="mx-auto flex max-w-[980px] flex-col gap-6">
           {visible.map((message,index)=><Message key={`${index}-${message.createdAt||''}`} message={message} chips={index===visible.length-1?lastChips:undefined} onPick={v=>void submit(v)}/>)}
+          {/* v2 (9 Nov): approvals appear in the conversation where you asked; the same cards as Tasks. */}
+          {!sending&&snapshot.approvals.length>0&&<InlineApprovals approvals={snapshot.approvals} onChanged={note=>{setMessages(m=>[...m,{role:'assistant',content:note}]);setSnapshot(c=>({...c,approvals:[]}));void loadSnapshot()}}/>}
           {/* While the reply is pending, the live line follows the task Gogo just started (real steps only). */}
           {sending&&<RunStepsLine since={sentAt} fallback="Gogo is working"/>}
           <div ref={endRef}/>
