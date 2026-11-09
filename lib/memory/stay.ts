@@ -98,9 +98,20 @@ export function inferGuestRole(text: string, userNames: string[]): boolean {
 }
 
 /** "Booking is in the name of Aman Chamedia" / "booked under Aman" → "Aman Chamedia". Pure. */
+// Words that start the next instruction or clause, never part of a name ("... Aman Chamedia please show your ID").
+const NOT_NAME = /^(?:for|and|at|in|on|so|to|with|by|from|is|was|will|has|have|please|pls|plz|kindly|remember|carry|bring|show|note|check|do|don't|dont|make|keep|thanks|thank|the|your|you|ok|okay)$/i
 export function bookingNameFrom(text: string): string | null {
   const m = String(text || '').match(/\b(?:booking|booked|reservation|reserved|room)\b[^.]{0,30}?\b(?:in\s+the\s+name\s+of|under\s+the\s+name(?:\s+of)?|under)\s+([a-z][a-z.'-]+(?:\s+(?!for\b|and\b|at\b|in\b|on\b|so\b)[a-z][a-z.'-]+){0,3})/i)
-  return m ? m[1].trim().replace(/\b\w/g, c => c.toUpperCase()) : null
+  if (!m) return null
+  // A name ends at the first instruction word; when the writer capitalised the name, also at the first lowercase word.
+  const words = m[1].trim().split(/\s+/)
+  const capitalised = /^[A-Z]/.test(words[0])
+  const name: string[] = []
+  for (const w of words) {
+    if (NOT_NAME.test(w) || (capitalised && !/^[A-Z]/.test(w))) break
+    name.push(w)
+  }
+  return name.length ? name.join(' ').replace(/\b\w/g, c => c.toUpperCase()) : null
 }
 
 /** "Have added you as the 2nd guest" (said to the user). Pure. */
@@ -229,6 +240,13 @@ export async function ingestStayFromText(p: { telegramId: number; whatsappTo?: s
       .eq('subtype', 'trip_note').gte('updated_at', since).order('updated_at', { ascending: true }).limit(20).then(r => r, () => ({ data: [] as any[] }))
     for (const n of (notes || []) as any[]) {
       if (normCity(n.metadata_json?.city) !== normCity(city)) continue
+      // A same-city note belongs to the trip it was saved on (tripKey ends with that trip's start day). It may only
+      // change a dated stay on that same trip: within a week of the trip's start, never a later or earlier visit.
+      if (stay.checkIn) {
+        const tripDay = String(n.metadata_json?.tripKey || '').match(/\d{4}-\d{2}-\d{2}/)?.[0]
+        const apart = tripDay ? Math.abs(Date.parse(stay.checkIn + 'T00:00:00Z') - Date.parse(tripDay + 'T00:00:00Z')) : NaN
+        if (!(apart <= 7 * 86_400_000)) continue
+      }
       const t = String(n.metadata_json?.text || '')
       if (addedAsGuest(t)) stay.userRole = 'guest'
       const name = bookingNameFrom(t)
