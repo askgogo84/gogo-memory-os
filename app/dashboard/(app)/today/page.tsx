@@ -2,6 +2,7 @@ import { Suspense } from 'react'
 import { getTodayFeed } from '@/lib/dashboard/today-feed'
 import { TodayFeed } from '@/components/dashboard/today-feed'
 import { getSession } from '@/lib/dashboard/session'
+import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import {
   getTodayReminders,
@@ -95,20 +96,23 @@ async function CalendarRestRow({ telegramId }: { telegramId: string }) {
 
 export default async function TodayPage() {
   const session = await getSession()
+  // Keep owner identity as an exact decimal string at every private Today read boundary.
+  // Normal dashboard sessions are already validated upstream; this page also fails closed.
+  const ownerId = exactSessionOwnerId(session?.telegramId)
   const [{ data: user }, today, lists, usage, memory, profile, friends, feed] = await Promise.all([
-    session
+    ownerId
       ? supabaseAdmin
           .from('users')
           .select('whatsapp_id, name, timezone')
-          .eq('telegram_id', parseInt(session.telegramId, 10))
+          .eq('telegram_id', ownerId)
           .maybeSingle()
       : Promise.resolve({ data: null }),
-    session ? getTodayReminders(session.telegramId) : Promise.resolve({ ok: true as const, reminders: [] }),
-    session ? getLists(session.telegramId) : Promise.resolve({ ok: true as const, lists: [] }),
-    session ? getUsageSummary(session.telegramId) : Promise.resolve({ ok: false } as const),
-    session ? getDashboardMemory(session.telegramId) : Promise.resolve({ ok: true as const, items: [] }),
-    session ? getProfile(session.telegramId) : Promise.resolve({ ok: false } as const),
-    session ? getFriendContacts(session.telegramId) : Promise.resolve({ ok: true as const, contacts: [], count: 0 }),
+    ownerId ? getTodayReminders(ownerId) : Promise.resolve({ ok: true as const, reminders: [] }),
+    ownerId ? getLists(ownerId) : Promise.resolve({ ok: true as const, lists: [] }),
+    ownerId ? getUsageSummary(ownerId) : Promise.resolve({ ok: false } as const),
+    ownerId ? getDashboardMemory(ownerId) : Promise.resolve({ ok: true as const, items: [] }),
+    ownerId ? getProfile(ownerId) : Promise.resolve({ ok: false } as const),
+    ownerId ? getFriendContacts(ownerId) : Promise.resolve({ ok: true as const, contacts: [], count: 0 }),
     // Today feed (5 Nov): what Gogo noticed while WhatsApp stayed quiet. Never fails the page.
     session ? getTodayFeed(session.telegramId).catch(() => null) : Promise.resolve(null),
   ])
@@ -216,9 +220,9 @@ export default async function TodayPage() {
             {restRows.map((row) => (
               <RestRow key={row.key} title={row.title} fact={row.fact} tone={row.tone} Icon={row.Icon} chip={row.chip} />
             ))}
-            {session && (
+            {ownerId && (
               <Suspense fallback={null}>
-                <CalendarRestRow telegramId={session.telegramId} />
+                <CalendarRestRow telegramId={ownerId} />
               </Suspense>
             )}
           </section>
@@ -238,7 +242,7 @@ export default async function TodayPage() {
           memory={memory}
           profile={profile}
           friends={friends}
-          telegramId={session?.telegramId || null}
+          telegramId={ownerId}
           tz={tz}
         />
       </div>
