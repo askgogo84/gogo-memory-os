@@ -8,7 +8,15 @@ const LEASE_MINUTES = 10
 const RECHECK_HOURS = 6
 function safe(v: unknown,max=800){return String(v??'').replace(/\s+/g,' ').trim().slice(0,max)}
 function parseJson(text:string){const s=String(text||'').replace(/```json|```/g,'').trim();try{return JSON.parse(s)}catch{const m=s.match(/\{[\s\S]*\}/);if(!m)return null;try{return JSON.parse(m[0])}catch{return null}}}
-async function actorUserId(telegramId:string){const{data}=await supabaseAdmin.from('users').select('id').eq('telegram_id',Number(telegramId)).maybeSingle();return data?.id?String(data.id):null}
+// Exact owner (P0.1): only a safe canonical id is looked up, and the row must echo it; otherwise no credential owner.
+async function actorUserId(telegramId:string|number){
+  if(typeof telegramId==='number'&&!Number.isSafeInteger(telegramId))return null
+  const owner=String(telegramId??'').trim(),legacy=Number(owner)
+  if(!/^-?(?:0|[1-9]\d{0,18})$/.test(owner)||!Number.isSafeInteger(legacy)||String(legacy)!==owner)return null
+  const{data}=await supabaseAdmin.from('users').select('id,telegram_id').eq('telegram_id',legacy).maybeSingle()
+  if(!data?.id||String(data.telegram_id)!==owner)return null
+  return String(data.id)
+}
 async function compare(snapshot:any,pageText:string){const prompt=`Compare the saved booking snapshot to the current provider page. Return JSON only. Material changes are cancellation, event date/time change, venue change, or event title change. Ignore marketing/layout/availability chatter. Never infer a change unless the current page clearly states it. Saved snapshot:${JSON.stringify(snapshot).slice(0,4000)} Current page:${pageText.slice(0,10000)} Return {"changed":false,"reason":"","newStartAt":null,"newLocation":null,"newTitle":null,"cancelled":false}`;try{const r=await anthropic.messages.create({model:'claude-haiku-4-5',max_tokens:500,temperature:0,messages:[{role:'user',content:prompt}]});return r.content[0]?.type==='text'?parseJson(r.content[0].text):null}catch{return null}}
 async function defer(id:string,payload:any,hours=RECHECK_HOURS){const due=new Date(Date.now()+hours*3600_000).toISOString();await supabaseAdmin.from('life_event_actions').update({status:'ready',due_at:due,updated_at:new Date().toISOString(),payload_json:{...(payload||{}),lastCheckedAt:new Date().toISOString(),nextCheckAt:due}}).eq('id',id).eq('status','running')}
 async function complete(id:string,payload:any){await supabaseAdmin.from('life_event_actions').update({status:'completed',updated_at:new Date().toISOString(),payload_json:{...(payload||{}),completedAt:new Date().toISOString()}}).eq('id',id).eq('status','running')}
@@ -31,8 +39,22 @@ export async function processBookingChangeWatches(limit=8){
       const{error:updateError}=await supabaseAdmin.from('life_events').update({lifecycle_state:cancelled?'cancelled':'watching',metadata_json:nextMeta,updated_at:at}).eq('id',event.id).eq('telegram_id',String(row.telegram_id));if(updateError)throw new Error(`booking_watch_event_update_failed:${updateError.message}`)
       const { error: activityError } = await supabaseAdmin.from('agent_activity').insert({telegram_id:String(row.telegram_id),event_type:'booking_change_detected',message:`Booking change detected: ${safe(delta.reason||'provider changed the event',600)}`,metadata_json:{life_event_id:event.id,delta}})
       if(activityError) console.error('BOOKING_CHANGE_ACTIVITY_FAILED:',activityError.message)
-      await sendAgentPush(String(row.telegram_id),{title:cancelled?'Booking cancelled':'Booking changed',body:safe(delta.reason||`${event.title} changed on the provider page.`,260),path:'/dashboard/today',data:{lifeEventId:String(event.id)}}).catch(()=>{})
-      if(cancelled)await complete(row.id,{...(row.payload_json||{}),snapshot:nextSnapshot,lastChangeAt:at,cancellationNotified:true});else{await defer(row.id,{...(row.payload_json||{}),snapshot:nextSnapshot,lastChangeAt:at});deferred++}
+      // Expo ticket acceptance is not evidence a device displayed this notice.
+      // Keep the provider-confirmed change in life_events even if push cannot be accepted.
+      // A thrown send may have reached Expo: complete cancelled watches without blind replay.
+      let pushReceipt: 'provider_accepted' | 'not_accepted' | 'partial' | 'outcome_unknown' = 'outcome_unknown'
+      try {
+        const push = await sendAgentPush(String(row.telegram_id),{title:cancelled?'Booking cancelled':'Booking changed',body:safe(delta.reason||`${event.title} changed on the provider page.`,260),path:'/dashboard/today',data:{lifeEventId:String(event.id)}})
+        const sent = push?.sent, rejected = push?.failed
+        if (Number.isSafeInteger(sent) && Number.isSafeInteger(rejected) && sent >= 0 && rejected >= 0) {
+          pushReceipt = sent > 0 ? (rejected === 0 ? 'provider_accepted' : 'partial') : 'not_accepted'
+        }
+      } catch {
+        // Unknown outcome is not a definite rejection. Never retry just because the call threw.
+      }
+      if(cancelled)await complete(row.id,{...(row.payload_json||{}),snapshot:nextSnapshot,lastChangeAt:at,
+        cancellationNotified:pushReceipt==='provider_accepted',cancellationPushState:pushReceipt})
+      else{await defer(row.id,{...(row.payload_json||{}),snapshot:nextSnapshot,lastChangeAt:at});deferred++}
     }catch(err:any){failed++;console.error('BOOKING_CHANGE_WATCH_FAILED:',err?.message||err);try{await defer(row.id,{...(row.payload_json||{}),lastError:safe(err?.message||'booking_watch_failed',300)},12)}catch(deferErr:any){console.error('BOOKING_CHANGE_DEFER_FAILED:',deferErr?.message||deferErr)}}
   }
   return{checked,changed,deferred,failed}

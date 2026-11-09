@@ -1,4 +1,5 @@
 import { worldTimeReply } from './world-time'
+import { signCardToken } from '@/lib/security/card-link'
 import { tryGetConnectionCapabilities } from '@/lib/agent/autonomy-status'
 import { executeReadOnlyCalendarStep } from '@/lib/agent/calendar-read'
 import { createImage, imageRequest, imageRequestRefusal } from '@/lib/services/image-reply'
@@ -7,7 +8,7 @@ import { unsupportedCapability } from './unsupported-capabilities'
 import { guardChatActionClaims } from './action-claim-guard'
 import { guardCompletionClaims } from './completion-claim-guard'
 import { tryPriceComparison } from '@/lib/commerce/price-comparison'
-import {selectContentWorkflow, contentWorkflowInputQuestion} from '@/lib/agent/content-workflows'
+import {selectContentWorkflow, contentWorkflowInputQuestion, unsupportedClaims, claimRewriteRequest} from '@/lib/agent/content-workflows'
 import {researchRedditDiscussions} from '@/lib/agent/content-workflow-research'
 import { namesRetailerPriceRead } from '@/lib/commerce/comparison-model'
 import { tryTypedTimeRouting } from '@/lib/agent/typed-time-routing'
@@ -54,7 +55,7 @@ import { gateDetectedIntent } from '@/lib/agent/semantic-gate'
 import { isCalendarMutation, isCalendarMutationConfirm, buildCalendarMutationReply, confirmCalendarMutation } from './handlers/calendar-mutations'
 import { isCalendarConflictMoveCommand, moveCalendarConflictEvent } from './handlers/calendar-conflict-followup'
 import { buildPlanMyDayReply, createDayPlanReminders, isPlanMyDayIntent } from './handlers/plan-my-day'
-import { buildGmailConnectReply, buildGmailReadReply, parseGmailReadFilter } from './handlers/gmail-read'
+import { buildGmailConnectReply, buildGmailReadReply, parseGmailReadFilter, BULK_DRAFT_RE, buildDraftRepliesReply } from './handlers/gmail-read'
 import { handleNutritionText, isNutritionLogText } from './handlers/nutrition'
 import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPlatformFromText } from '@/lib/services/media-memory'
 import { recallQuery } from '@/lib/agent/recall-query'
@@ -193,6 +194,8 @@ async function recordWebSearch(
 
 export type ProcessIncomingParams = {
   internalStep?: boolean
+  /** Set on the halves of a split "remind me … and also what's …?" so they are not split again. */
+  splitPart?: boolean
   channel: Channel
   externalUserId: string
   text: string
@@ -435,11 +438,14 @@ function extractListNameFromText(text: string): string {
 
 // Item text for a bare "check/uncheck/tick/mark X" command: drop the leading verb and a
 // trailing "done"/"off" so "mark milk done" and "uncheck milk" both yield "milk".
-function extractCheckItemText(text: string): string {
+export function extractCheckItemText(text: string): string {
   return text
     .replace(/^\s*un(check|tick|mark|done)\s+/i, '')
     .replace(/^\s*(check|tick|mark|done)\s+/i, '')
-    .replace(/\s+(done|off)\s*$/i, '')
+    // 28 Oct run: "Tick off eggs from my grocery list" looked for an item called "off eggs from my grocery list".
+    .replace(/^\s*off\s+/i, '')
+    .replace(/\s+(?:from|on|in)\s+(?:my|the)\s+[\w' -]{1,30}?\s*list\s*[.!]?\s*$/i, '')
+    .replace(/\s+(?:as\s+)?(done|off|complete|completed|bought)\s*[.!]?\s*$/i, '')
     .trim()
 }
 
@@ -475,9 +481,51 @@ export function isUsageCommand(text: string) {
   // it could not see usage. Plain questions about usage or what is left answer from the meter.
   return /\b(?:how\s+(?:much|many)|what(?:'s|\s+is)|show|check)\b[^?]{0,40}\b(?:my\s+)?(?:plan|usage|limits?|quota|allowance|credits?)\b[^?]{0,40}\b(?:used|left|remaining|usage|limit|this\s+month)\b/.test(lower)
     || /^(?:what(?:'s|\s+is)\s+)?my\s+(?:usage|quota|allowance)(?:\s+this\s+month)?\??$/.test(lower)
+    // 31 Oct (Muse users' usage dashboards): "show my usage", "usage stats", "how many tasks have you done for me".
+    || /^(?:show|check|see|view)\s+(?:me\s+)?(?:my\s+)?(?:usage|usage\s+(?:dashboard|stats|trends)|stats)(?:\s+this\s+(?:week|month))?[.!?]*$/.test(lower)
+    || /^usage\s+(?:stats|trends|dashboard|this\s+week)[.!?]*$/.test(lower)
+    || /^how\s+much\s+(?:have\s+i|did\s+i)\s+used?(?:\s+(?:you|gogo|askgogo))?(?:\s+this\s+(?:week|month))?\??$/.test(lower)
+    || /^how\s+many\s+(?:tasks|things)\s+(?:have\s+you|did\s+you)\s+(?:done|do|finished)\s+for\s+me(?:\s+this\s+(?:week|month))?\??$/.test(lower)
 }
 
+/** True when Gogo's most recent reply names `name` or a friend reminder. Fails open (true) if the read fails. */
+async function lastAssistantMentions(telegramId: number, name: string): Promise<boolean> {
+  try {
+    const { data, error } = await supabaseAdmin.from('conversations').select('content').eq('telegram_id', telegramId).eq('role', 'assistant').order('created_at', { ascending: false }).limit(1)
+    if (error || !data?.length) return true
+    const last = String(data[0].content || '').toLowerCase()
+    return last.includes(String(name || '').toLowerCase()) || /\bfriend\b|\bwhatsapp number\b|\bremind (?:him|her|them)\b/.test(last)
+  } catch { return true }
+}
+
+/** A message handing Gogo a secret to keep: a card number, an OTP, a password, PIN or CVV. Pure. */
+export function secretDeclaration(text: string): 'card' | 'otp' | 'password' | null {
+  const t = String(text || '')
+  if (/\b(?:\d[ -]?){13,19}\b/.test(t) && (/\b(?:card|visa|master\s*card|amex|rupay|debit|credit)\b/i.test(t) || /\b\d{4}[ -]\d{4}[ -]\d{4}[ -]\d{1,7}\b/.test(t))) return 'card'
+  if (/\b(?:otp|one[- ]time\s+(?:password|code)|verification\s+code)\b[^\d]{0,20}\d{4,8}\b/i.test(t)) return 'otp'
+  if (/\b(?:password|passcode|pin|cvv|cvc)\b\s*(?:is|:|=|-)\s*\S{3,}/i.test(t)) return 'password'
+  return null
+}
+
+/** "Remind me to pay rent on the 1st and also what's the weather tomorrow?" → the reminder and the question. Pure. */
+export function splitReminderAndQuestion(text: string): { reminder: string; question: string } | null {
+  const t = String(text || '').trim()
+  if (!/^(?:please\s+)?(?:remind|set\s+(?:a\s+)?reminder)\b/i.test(t)) return null
+  const m = t.match(/^(.*?\S)[,;]?\s+(?:and\s+also|also|plus|and)\s+((?:what|what's|whats|how|how's|when|where|who|why|is|are|will|can|could|tell\s+me)\b[\s\S]*\?)\s*$/i)
+  if (!m || m[1].length < 12 || m[2].length < 8) return null
+  return { reminder: m[1].trim(), question: m[2].trim() }
+}
+
+// Cheap gate before the taste module loads: only messages that could be a taste statement, list or forget.
+const TASTE_PREFILTER=/^\s*(?:(?:please\s+)?(?:remember|note|save|forget|avoid|keep|make|show)\b|i\b|i'm|we\b|we're|my\b|no\b|never\b|what\s+do\s+you\s+(?:know|remember)\s+about\s+my\b)/i
 export async function processIncomingMessage(params: ProcessIncomingParams): Promise<ProcessIncomingResult> {
+  // 29 Oct live (CV4): the reminder was set and the weather question was silently dropped. Two asks, two answers.
+  const split = params.splitPart || params.internalStep ? null : splitReminderAndQuestion(params.text)
+  if (split) {
+    const first = await processIncomingMessage({ ...params, text: split.reminder, splitPart: true })
+    const second = await processIncomingMessage({ ...params, text: split.question, splitPart: true, messageId: params.messageId ? `${params.messageId}:q` : params.messageId, pendingQuestionChecked: false } as any)
+    return { ...first, text: `${first.text}\n\n—\n\n${second.text}` }
+  }
   const __trace = startTrace('pim')
   // Generated plan instructions are not user-authored conversation evidence.
   const saveConversation = async (telegramId:number,role:'user'|'assistant',content:string) => {
@@ -499,9 +547,53 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       return {text,handledBy:'human-auth-required',resolvedUser}
     }
   }
+  // 29 Oct live (SEC1/SEC2): "Save my card number 4111 1111 1111 1111" and "My OTP is 482913" were answered
+  // "Saved, boss." by the chat model. Card numbers, OTPs, CVVs, PINs and passwords are never stored or repeated.
+  const secretKind=secretDeclaration(codeText)
+  if(secretKind&&!params.internalStep){
+    const reply=secretKind==='card'
+      ?"I don't save full card numbers, so nothing was stored. To track a card's rewards or bills, tell me the card's name and last 4 digits instead."
+      :secretKind==='otp'
+        ?"I don't keep OTPs or one-time codes, so nothing was stored. If a website asked for it, enter it there directly."
+        :"I don't save passwords, PINs or CVVs in chat, so nothing was stored. Use the Vault in your dashboard for logins."
+    await saveConversation(resolvedUser.telegramId,'user','[sensitive detail withheld]')
+    await saveConversation(resolvedUser.telegramId,'assistant',reply)
+    return {text:reply,handledBy:'secret-guard',resolvedUser}
+  }
   console.log('PIM:start', { channel: params.channel, externalUserId: params.externalUserId, text: params.text })
 
   const incomingText = (params.text || '').trim()
+  // Cheap pre-filter + env gate: the vm route harnesses never load the module.
+  const alertFrequency=(globalThis as any).process?.env?.VERCEL_ENV&&/\b(?:less|fewer|more\s+often|only\s+(?:the\s+)?(?:important|urgent|critical)|too\s+many)\b/i.test(incomingText)
+    ?await import('@/lib/agent/alert-preferences').then(m=>m.tryAlertFrequencyCommand({telegramId:resolvedUser.telegramId,text:incomingText}),()=>null):null
+  if(alertFrequency){
+    await saveConversation(resolvedUser.telegramId,'user',incomingText)
+    await saveConversation(resolvedUser.telegramId,'assistant',alertFrequency)
+    return {text:formatOutgoingText(params.channel,alertFrequency),handledBy:'alert-preferences',resolvedUser}
+  }
+  // Remember and suggest, Phase 1: food taste the person states, lists or forgets (null = not a taste message).
+  const taste=(globalThis as any).process?.env?.VERCEL_ENV&&TASTE_PREFILTER.test(incomingText)
+    ?await import('@/lib/agent/taste').then(m=>m.tryTasteCommand({telegramId:String(resolvedUser.telegramId),text:incomingText}),()=>null):null
+  if(taste){
+    await saveConversation(resolvedUser.telegramId,'user',incomingText)
+    await saveConversation(resolvedUser.telegramId,'assistant',taste)
+    return {text:formatOutgoingText(params.channel,taste),handledBy:'taste',resolvedUser}
+  }
+  // "If Nithin doesn't reply to my last email by Friday, remind me": a follow-up check on that day, not a plain reminder.
+  if(/^\s*(?:please\s+)?if\s+\S+.*\b(?:reply|respond|get\s+back)\b.*\bremind\s+me\b/i.test(incomingText)){
+    const rw=await import('@/lib/agent/reply-watch').then(m=>m.parseReplyWatch(incomingText),()=>null)
+    if(rw){
+      const { supabaseAdmin } = await import('@/lib/supabase-admin')
+      const {error}=await supabaseAdmin.from('reminders').insert({telegram_id:resolvedUser.telegramId,chat_id:resolvedUser.telegramId,whatsapp_to:resolvedUser.whatsappId||null,timezone:'Asia/Kolkata',message:rw.message,remind_at:rw.atIso,sent:false,created_at:new Date().toISOString()})
+      const when=new Intl.DateTimeFormat('en-IN',{weekday:'long',day:'numeric',month:'short',hour:'numeric',minute:'2-digit',hour12:true,timeZone:'Asia/Kolkata'}).format(new Date(rw.atIso))
+      const reply=error
+        ?"I couldn't set that follow-up check just now. Nothing was saved; please try again."
+        :`✅ *Follow-up check set* for ${when}.\nI'll look in your Gmail for a reply from ${rw.name}. If one has come in, I'll just tell you; if not, I'll remind you to follow up.`
+      await saveConversation(resolvedUser.telegramId,'user',incomingText)
+      await saveConversation(resolvedUser.telegramId,'assistant',reply)
+      return {text:formatOutgoingText(params.channel,reply),handledBy:'reply-watch',resolvedUser}
+    }
+  }
   const connectionCapabilities=await tryGetConnectionCapabilities({actor:{legacyTelegramId:resolvedUser.telegramId},text:incomingText})
   __trace.mark('connectionCapabilities')
   if(connectionCapabilities){
@@ -588,9 +680,18 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       __trace.mark('savedContext')
       evidence=[evidence,savedContext].filter(Boolean).join('\n\n')
     }
-    const draft = await askClaude(incomingText, history, memories, resolvedUser.name, preferences, evidence)
+    let draft = await askClaude(incomingText, history, memories, resolvedUser.name, preferences, evidence)
     __trace.mark('draft')
     if (!draft.trim()) throw new Error('content_workflow_empty_response')
+    if (contentWorkflow.id === 'linkedin-post' && typeof unsupportedClaims === 'function' && typeof claimRewriteRequest === 'function') {
+      const sources = [incomingText, JSON.stringify(memories || []), String(preferences || ''), evidence].join('\n')
+      const claims = unsupportedClaims(draft, sources)
+      if (claims.length) {
+        console.warn('CONTENT_UNSUPPORTED_CLAIMS:', JSON.stringify(claims))
+        const second = await askClaude(claimRewriteRequest(incomingText, draft, claims), history, memories, resolvedUser.name, preferences, evidence).catch(() => '')
+        if (second.trim() && unsupportedClaims(second, sources).length < claims.length) draft = second
+      }
+    }
     const reply = formatOutgoingText(params.channel, draft + footer)
     // A draft is returned as text even if it contains a control-line example.
     // It never passes through parseClaudeResponse's mutation dispatcher.
@@ -625,6 +726,19 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       await saveConversation(resolvedUser.telegramId,'user',incomingText)
       await saveConversation(resolvedUser.telegramId,'assistant',goldWatch.text)
       return {handledBy:goldWatch.handledBy,text:formatOutgoingText(params.channel,goldWatch.text),resolvedUser}
+    }
+  }
+  // Share-price watch (26 Oct): only messages phrased as a share/stock price watch load the module.
+  // A bare ticker reply ("Watch TMCV") may answer Gogo's "which listing?" question; the module checks for that question.
+  const stockTickerReply=/^\s*(?:watch|track|monitor)\s+[A-Z][A-Z0-9&-]{1,15}\s*$/.test(incomingText)
+  if(((/\b(?:share|shares|stock)\b/i.test(incomingText)&&/\b(?:watch|track|monitor|alert|notify|tell me|let me know|keep an eye)\b/i.test(incomingText)&&(await import('@/lib/agent/stock-rule')).isStockWatchPhrasing(incomingText))||stockTickerReply)&&resolvedUser.id&&resolvedUser.whatsappId){
+    const {tryCreateStockWatchFromCommand}=await import('@/lib/agent/stock-watch')
+    const stockWatch=await tryCreateStockWatchFromCommand({actor:{userId:String(resolvedUser.id),legacyTelegramId:resolvedUser.telegramId,whatsappId:String(resolvedUser.whatsappId),name:resolvedUser.name||'Gogo'},surface:params.channel==='whatsapp'?'whatsapp':'web',text:incomingText})
+    __trace.mark('stockWatch')
+    if(stockWatch){
+      await saveConversation(resolvedUser.telegramId,'user',incomingText)
+      await saveConversation(resolvedUser.telegramId,'assistant',stockWatch.text)
+      return {handledBy:stockWatch.handledBy,text:formatOutgoingText(params.channel,stockWatch.text),resolvedUser}
     }
   }
   // Route to the commerce browser read on an explicit "compare" OR a single named-retailer
@@ -662,7 +776,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   console.log('PIM:intent', intent, 'semantic:', params.semantic?.intent?.choice ?? null, params.semantic?.intent?.confidence ?? null)
   // 23 Oct live: "Alert me once it lands" after a flight question binds to that flight and starts tracking
   // (Instinct parity); it never becomes a guessed-time reminder. Cheap regex gate before any lookup.
-  if (/\b(?:alert|notify|tell|ping|message|update|let)\s+(?:me|us)\b[^.?!]{0,40}\b(?:when|once|after|as soon as|if)\b[^.?!]{0,30}\b(?:lands?|landed|landing|arrives?|arrival|touches down|takes? off|departs?|departure|is delayed|gets delayed|delay)\b|^\s*(?:track|keep tracking|follow|monitor|watch)\s+(?:it|that|this|that flight|this flight)\s*[.!]?\s*$/i.test(incomingText)) {
+  if (/\b(?:alert|notify|tell|ping|message|msg|text|whatsapp|update|let)\s+(?:me|us)\b[^.?!]{0,40}\b(?:when|once|after|as soon as|if)\b[^.?!]{0,30}\b(?:lands?|landed|landing|arrives?|arrival|touches down|takes? off|departs?|departure|is delayed|gets delayed|delay)\b|^\s*(?:track|keep tracking|follow|monitor|watch)\s+(?:it|that|this|that flight|this flight)\s*[.!]?\s*$/i.test(incomingText)) {
     const followUp = await import('@/lib/agent/flight-track')
       .then(async m => m.isFlightFollowUp(incomingText) ? m.handleFlightFollowUp({ telegramId: resolvedUser.telegramId, text: incomingText, timezone: await resolveReminderTimezone(resolvedUser.telegramId).catch(() => undefined) }) : null)
       .catch((err: any) => { console.error('FLIGHT_FOLLOW_UP_FAILED:', String(err?.message || err).slice(0, 160)); return null })
@@ -748,7 +862,10 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // ── Friend reminders (1C) — establish time, recipient and owner approval first ──
   {
     const mayContinueFriend = isFriendReminderFollowupCandidate(incomingText)
-    const pending = mayContinueFriend ? await getPendingFriend(resolvedUser.telegramId) : null
+    const pendingRaw = mayContinueFriend ? await getPendingFriend(resolvedUser.telegramId) : null
+    // 29 Oct live: "Yes" to a price-watch question was taken as an answer to a friend-reminder question from five
+    // hours earlier. A reply belongs to the friend reminder only when Gogo's latest message was about it.
+    const pending = pendingRaw && await lastAssistantMentions(resolvedUser.telegramId, pendingRaw.name) ? pendingRaw : null
     if (pending && !detectFriendReminder(incomingText)) {
       const maybeNumber = normalizePhoneNumber(incomingText)
       const answer = incomingText.trim()
@@ -822,7 +939,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         await saveConversation(resolvedUser.telegramId, 'user', pendingFriendMarker(friend.name, friendTaskWithoutTime(friend.rest), 'time'))
         const reply = reminderTimingProblem(friend.rest)
           ? `That time has already passed. What future date and time should I remind ${cap0(friend.name)}? Nothing has been saved.`
-          : `What exact date and time should I remind ${cap0(friend.name)}? I won't guess from “when they wake up.” Nothing has been saved.`
+          : `What exact date and time should I remind ${cap0(friend.name)}? I won't guess the time. Nothing has been saved.`
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         return { text: formatOutgoingText(params.channel, reply), resolvedUser }
       }
@@ -932,8 +1049,27 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     return { text: formatOutgoingText(params.channel, reply), resolvedUser }
   }
 
+  // 31 Oct (Muse users' job hunting): preferences, a daily job radar, the application tracker, prepare-to-apply.
+  if (/\b(?:jobs?|applications?|applied|apply|cover\s+letter|openings?|roles?|positions?)\b/i.test(incomingText) && (globalThis as any).process?.env?.VERCEL_ENV) {
+    const jc: any = await import('@/lib/agent/jobs-command').catch(() => null)
+    const jobReply = jc?.tryJobCommand ? await Promise.resolve().then(() => jc.tryJobCommand({ actor: { userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId, whatsappId: String(resolvedUser.whatsappId || ''), name: resolvedUser.name || 'Gogo' }, surface: params.channel === 'whatsapp' ? 'whatsapp' : 'web', text: incomingText })).catch((err: any) => { console.error('JOB_COMMAND_FAILED:', String(err?.message || err).slice(0, 160)); return null }) : null
+    if (jobReply?.text) {
+      await saveConversation(resolvedUser.telegramId, 'user', incomingText)
+      await saveConversation(resolvedUser.telegramId, 'assistant', jobReply.text)
+      return { text: formatOutgoingText(params.channel, jobReply.text), resolvedUser, handledBy: jobReply.handledBy }
+    }
+  }
   if (isUsageCommand(incomingText)) {
-    const reply = await getUsageStatusReply(resolvedUser.telegramId)
+    let reply = await getUsageStatusReply(resolvedUser.telegramId)
+    // Trends over 7/30/60/90 days and this week against the weekly allowance. Lazy and env-gated (strict harnesses).
+    if ((globalThis as any).process?.env?.VERCEL_ENV) {
+      const act: any = await import('@/lib/dashboard/activity').catch(() => null)
+      const q: any = await import('@/lib/dashboard/queries').catch(() => null)
+      const summary = q?.getUsageSummary ? await q.getUsageSummary(String(resolvedUser.telegramId)).catch(() => null) : null
+      const monthlyAllowance = (await import('@/lib/data/limits').catch(() => null))?.monthlyAllowanceFor(summary?.ok ? summary.planCode : 'free').monthly || 0
+      const trends = act?.getActivityTrends ? await Promise.resolve().then(() => act.getActivityTrends(resolvedUser.telegramId, summary?.ok ? summary.limits.aiPerDay : 0, Date.now(), monthlyAllowance)).catch((err: any) => { console.error('USAGE_TRENDS_FAILED:', String(err?.message || err).slice(0, 160)); return null }) : null
+      if (trends) reply = `${reply}\n\n${act.formatActivityTrends(trends, '').replace(/^📊 \*Your usage\*\s*\n\n/, '')}`
+    }
     __trace.mark('reply')
     await saveConversation(resolvedUser.telegramId, 'user', incomingText)
     await saveConversation(resolvedUser.telegramId, 'assistant', reply)
@@ -1362,6 +1498,12 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       reply = `Got it \u2014 *${about}* on the ${dayNum}th of every month.\n\nWhat time should I remind you?\n_e.g. \"10 AM\" or \"9:30 AM\"_`
     } else if (hasDate && about) {
       reply = `Got it \u2014 *${about}*.\n\nWhat time should I remind you?\n_e.g. \"10 AM\" or \"6 PM\"_`
+    } else if (about && /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i.test(about)) {
+      // 28 Oct run: "I have training at 6am" answered "Got it \u2014 I have training 6am. What time and when?"
+      // although the time was given. Name the event and its time; ask only which day and how early.
+      const clock = about.match(/\b(\d{1,2}(?::\d{2})?)\s*(am|pm)\b/i)!
+      const event = about.replace(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi, '').replace(/^\s*(?:i\s+have|i've\s+got|i\s+got|there\s+is|there's)\s+/i, '').replace(/\s+/g, ' ').trim() || 'that'
+      reply = `Got it \u2014 *${event}* at ${clock[1]} ${clock[2].toLowerCase()}.\n\nWhich day, and how early should I remind you?\n_e.g. \"tomorrow 5:30 am\" or \"every weekday 5:30 am\"_`
     } else if (about) {
       reply = `Got it \u2014 *${about}*.\n\nWhat time and when?\n_e.g. \"9 AM daily\", \"every Monday 10 AM\", \"in 2 hours\"_`
     } else {
@@ -1414,6 +1556,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const mode=/\bunread\b/i.test(incomingText)?'unread':'latest'
     let reply=''
     try{
+      if(BULK_DRAFT_RE.test(incomingText)){
+        reply=await buildDraftRepliesReply(resolvedUser.telegramId)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+      }
       reply=await buildGmailReadReply(resolvedUser.telegramId,mode,5,parseGmailReadFilter(incomingText),/\bsummar(?:y|ise|ize|ies)\b|\boverview\b|\bwhat(?:'s| is) in my inbox\b/i.test(incomingText),/^(?:what|which|anything|any)\b[\s\S]*\b(?:attention|actionable|urgent|important)\b/i.test(incomingText))
       if(/\bdraft\b/i.test(incomingText))reply+=`\n\nI can draft one reply at a time for you to approve. Say *draft a reply to <sender>*. Nothing was drafted or sent yet.`
     }catch(err:any){
@@ -1426,7 +1573,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
 
   if (intent.type === 'connect_gmail') {
     let reply=''
-    try{reply=await buildGmailConnectReply(resolvedUser.telegramId)}
+    try{reply=await buildGmailConnectReply(resolvedUser.telegramId, incomingText)}
     catch(err:any){
       console.error('GMAIL_CONNECT_HANDLER_FAILED:',err?.message||err)
       reply='Google Workspace connection is temporarily unavailable.'
@@ -1500,10 +1647,20 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const listsMod: any = await import('@/lib/lists').catch(() => null)
     if (typeof listsMod?.removeItemByText === 'function') {
       const listName = normalizeListName(listRemove[2])
-      const r = await listsMod.removeItemByText(resolvedUser.telegramId, listName, listRemove[1])
-      const reply = r.status === 'removed' ? `🗑️ Removed *${r.matched}* from your ${listName} list.`
-        : r.status === 'ambiguous' ? `More than one item matches "${listRemove[1]}" on your ${listName} list: ${r.options.slice(0, 5).join(', ')}. Which one should I remove?`
-        : `I could not find "${listRemove[1]}" on your ${listName} list.`
+      // 7 Nov live: "remove milk and eggs from my grocery list" looked for one item called "milk and eggs".
+      // The whole phrase first (an item can be called "milk and eggs"); only when nothing matches is it split.
+      const whole = await listsMod.removeItemByText(resolvedUser.telegramId, listName, listRemove[1])
+      const wanted = whole.status === 'removed' || whole.status === 'ambiguous' ? [] : listRemove[1].split(/\s*(?:,|\band\b|&)\s*/i).map(x => x.trim()).filter(Boolean).slice(0, 8)
+      const results = wanted.length > 1 ? [] as { item: string; r: any }[] : [{ item: listRemove[1], r: whole }]
+      if (wanted.length > 1) for (const item of wanted) results.push({ item, r: await listsMod.removeItemByText(resolvedUser.telegramId, listName, item) })
+      const removed = results.filter(x => x.r.status === 'removed').map(x => x.r.matched)
+      const ambiguous = results.filter(x => x.r.status === 'ambiguous')
+      const missing = results.filter(x => x.r.status !== 'removed' && x.r.status !== 'ambiguous').map(x => x.item)
+      const parts = [] as string[]
+      if (removed.length) parts.push(`🗑️ Removed *${removed.join('*, *')}* from your ${listName} list.`)
+      for (const a of ambiguous) parts.push(`More than one item matches "${a.item}" on your ${listName} list: ${a.r.options.slice(0, 5).join(', ')}. Which one should I remove?`)
+      if (missing.length) parts.push(`I could not find ${missing.map(m => `"${m}"`).join(' or ')} on your ${listName} list.`)
+      const reply = parts.join('\n')
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser, handledBy: 'list-remove' }
     }
@@ -1574,13 +1731,15 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const APP_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://app.askgogo.in'
     if (nutritionReply.startsWith('__SEND_DAILY_CARD__')) {
       const tid = nutritionReply.replace('__SEND_DAILY_CARD__', '')
-      const cardUrl = `${APP_URL}/api/nutrition/daily-card/${tid}`
-      return { text: '📊 Your daily nutrition card 👆', mediaUrl: cardUrl, mediaType: 'image/png', resolvedUser }
+      const t = await signCardToken('nutrition-daily', tid)
+      if (t) return { text: '📊 Your daily nutrition card 👆', mediaUrl: `${APP_URL}/api/nutrition/daily-card/${tid}?t=${encodeURIComponent(t)}`, mediaType: 'image/png', resolvedUser }
+      return { text: 'Your daily nutrition card is temporarily unavailable. Ask me "what did I eat today" for the summary.', resolvedUser }
     }
     if (nutritionReply.startsWith('__SEND_WEEKLY_CARD__')) {
       const tid = nutritionReply.replace('__SEND_WEEKLY_CARD__', '')
-      const cardUrl = `${APP_URL}/api/nutrition/weekly-card/${tid}`
-      return { text: '📊 Your weekly nutrition card 👆', mediaUrl: cardUrl, mediaType: 'image/png', resolvedUser }
+      const t = await signCardToken('nutrition-weekly', tid)
+      if (t) return { text: '📊 Your weekly nutrition card 👆', mediaUrl: `${APP_URL}/api/nutrition/weekly-card/${tid}?t=${encodeURIComponent(t)}`, mediaType: 'image/png', resolvedUser }
+      return { text: 'Your weekly nutrition card is temporarily unavailable. Ask me "what did I eat today" for the summary.', resolvedUser }
     }
 
     await saveConversation(resolvedUser.telegramId, 'assistant', nutritionReply)
@@ -1907,7 +2066,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     const completion = await guardCompletionClaims(finalReply, resolvedUser.telegramId)
     __trace.mark('completion')
     if (completion.blocked) {
-      console.warn('CHAT_COMPLETION_CLAIM_BLOCKED:', JSON.stringify({ telegramId: resolvedUser.telegramId, kind: completion.claim?.kind || null, parsedType: parsed.type || null }))
+      console.warn('CHAT_COMPLETION_CLAIM_BLOCKED:', JSON.stringify({ telegramId: resolvedUser.telegramId, kind: completion.claim?.kind || null, parsedType: parsed.type || null, sentence: String(completion.claim?.sentence || '').slice(0, 160) }))
       finalReply = completion.text
     }
   }
@@ -1939,7 +2098,7 @@ async function goalsReplyFor(telegramId: number, listName: string): Promise<stri
     .eq('telegram_id', String(telegramId)).in('status', ['active', 'blocked', 'waiting']).order('updated_at', { ascending: false }).limit(10)
   if (error) return null
   if (!data?.length) return 'You have no active goals. Start one like “set a goal to walk 8000 steps daily”.'
-  return `🎯 *Your goals*\n\n${data.map((g: any, i: number) => `${i + 1}. ${g.title}${g.status === 'active' ? '' : ` (${g.status})`}`).join('\n')}\n\nProgress is in *Dashboard → Goals*.`
+  return `🎯 *Your goals*\n\n${data.map((g: any, i: number) => `${i + 1}. ${g.title}${g.status === 'active' ? '' : g.status === 'blocked' ? ' (needs your input)' : ` (${g.status})`}`).join('\n')}\n\nProgress is in *Dashboard → Goals*.`
 }
 
 // 18 Oct live: "remember that my gym locker number is 42" was echoed as "I'll remember that my gym locker…".
@@ -1958,7 +2117,13 @@ async function selectedSavedContextBlock(user: Pick<ResolvedUser,'id'|'telegramI
     text:recallQuery(text,history),
     options:{includeSemantic:true,maxFacts:12,horizonDays:60},
   }).catch(()=>null)
-  return contextPack?renderContextBlock(contextPack,3200):'Saved-context lookup failed. Tell the user retrieval is unavailable; do not claim no saved record exists.'
+  // 29 Oct: connected memory. The user's trips with their linked flights, stays and cabs.
+  // Env-gated so strict vm harnesses (no process) never load the module.
+  const memEnv=(globalThis as any).process?.env
+  const trips:string[]=memEnv&&memEnv.GOGO_MEMORY!=='off'&&(memEnv.GOGO_BRAIN_USERS||memEnv.VERCEL_ENV==='production')
+    ?await import('@/lib/memory/life-graph').then(m=>m.tripContextLines(user.telegramId)).catch(()=>[] as string[]):[]
+  const tripBlock=trips.length?`\n\nTrips (linked bookings, owner-bound):\n${trips.map(l=>`- ${l}`).join('\n')}`:''
+  return contextPack?renderContextBlock(contextPack,3200)+tripBlock:'Saved-context lookup failed. Tell the user retrieval is unavailable; do not claim no saved record exists.'+tripBlock
 }
 
 export function planningCalendarInstruction(text: string): string | null {

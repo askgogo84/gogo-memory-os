@@ -57,30 +57,56 @@ async function getLatestGroup(phone: string): Promise<Group | null> {
 }
 
 async function findGroup(phone: string, groupName?: string): Promise<Group | null> {
-  const memberGroupIds = await groupIdsForPhone(phone)
+  // Unnamed Split commands still use the latest accessible group.
   if (!groupName) return getLatestGroup(phone)
 
-  // If multiple trips have the same name, prefer the newest exact-created group.
-  // This avoids old trips being reused just because they had a recent update.
-  const exact = await supabaseAdmin
+  // User-supplied names are literal text, NEVER a PostgREST ILIKE pattern.
+  // Selecting the first of several matches could record a settlement/expense
+  // in the wrong ledger or show the wrong group balance/invite.
+  const normalize = (value: string) => value.trim().replace(/\s+/g, ' ').toLowerCase()
+  const wanted = normalize(groupName)
+  if (!wanted) return null
+
+  // Avoid treating a failed/truncated membership read as proof that a group
+  // is absent; queries run as the service role and must fail closed.
+  const { data: memberRows, error: memberError } = await supabaseAdmin
+    .from('split_group_members')
+    .select('group_id')
+    .eq('phone', phone)
+    .limit(101)
+  if (memberError || !Array.isArray(memberRows) || memberRows.length >= 101) {
+    throw new Error('split_group_lookup_unavailable')
+  }
+  const memberIds = new Set(memberRows.map(row => String(row.group_id || '')).filter(Boolean))
+  const memberGroupIds = memberIds.size
+    ? [...memberIds].join(',')
+    : '00000000-0000-0000-0000-000000000000'
+
+  // Read a bounded, complete set of groups this exact owner/member can access,
+  // then compare literal names in memory. 101 rows means unknown uniqueness.
+  const { data, error } = await supabaseAdmin
     .from('split_groups')
     .select('id,name,owner_phone,currency')
     .or(`owner_phone.eq.${phone},id.in.(${memberGroupIds})`)
-    .ilike('name', groupName)
     .order('created_at', { ascending: false })
-    .limit(1)
+    .limit(101)
+  if (error || !Array.isArray(data) || data.length >= 101) {
+    throw new Error('split_group_lookup_unavailable')
+  }
+  if (data.some(row => !row || typeof row.id !== 'string' || typeof row.name !== 'string')) {
+    throw new Error('split_group_lookup_unavailable')
+  }
 
-  if (exact.data?.[0]) return exact.data[0] as Group
+  // Defense in depth: the service-role result must still match the original
+  // exact owner or verified membership constraint, even with a faulty query.
+  const visible = (data as Group[]).filter(row => row.owner_phone === phone || memberIds.has(row.id))
+  const exact = visible.filter(row => normalize(row.name) === wanted)
+  if (exact.length > 1) throw new Error('split_group_ambiguous')
+  if (exact.length === 1) return exact[0]
 
-  const fuzzy = await supabaseAdmin
-    .from('split_groups')
-    .select('id,name,owner_phone,currency')
-    .or(`owner_phone.eq.${phone},id.in.(${memberGroupIds})`)
-    .ilike('name', `%${groupName}%`)
-    .order('created_at', { ascending: false })
-    .limit(1)
-
-  return (fuzzy.data?.[0] as Group) || null
+  const partial = visible.filter(row => normalize(row.name).includes(wanted))
+  if (partial.length > 1) throw new Error('split_group_ambiguous')
+  return partial[0] || null
 }
 
 async function nextFreshGroupName(phone: string, requestedName: string) {
@@ -122,6 +148,29 @@ async function upsertMembers(groupId: string, phone: string, members: string[] =
     normalized.map((name) => ({ group_id: groupId, name, phone: name === 'Me' ? phone : null })),
     { onConflict: 'group_id,name' }
   )
+}
+
+// 25 Oct live: "Add expense 500 dinner paid by me split with Nithin" went into the latest group, an old
+// "Split 18 Oct 12:01 am" with Person 2/3/4, so Nithin's ₹250 was mixed into strangers' balances. With no group
+// named, the latest group is used only when it already has everyone named; otherwise the expense goes to a group
+// named for those people ("With Nithin"), reused the next time the same people are named.
+export function namedPeopleGroupName(members: string[] = []): string | null {
+  const others = Array.from(new Set(members.map(normalizeMemberName).filter((m) => m && m.toLowerCase() !== 'me')))
+  if (!others.length || others.some((m) => /^person \d+$/i.test(m))) return null
+  return `With ${others.join(' & ')}`.slice(0, 80)
+}
+
+async function groupNameForNamedPeople(phone: string, groupName: string | undefined, members: string[] = []) {
+  if (groupName) return groupName
+  const named = namedPeopleGroupName(members)
+  if (!named) return undefined
+  const latest = await getLatestGroup(phone)
+  if (latest) {
+    const have = new Set((await getMembers(latest.id)).map((m) => normalizeMemberName(m.name).toLowerCase()))
+    const others = members.map(normalizeMemberName).filter((m) => m && m.toLowerCase() !== 'me')
+    if (others.every((m) => have.has(m.toLowerCase()))) return undefined
+  }
+  return named
 }
 
 async function ensureGroup(phone: string, groupName?: string, members: string[] = []) {
@@ -282,7 +331,7 @@ _Add expense 2400 hotel paid by me split equally_`
   }
 
   if (intent.type === 'add_equal_expense') {
-    const group = await ensureGroup(phone, intent.groupName, intent.members)
+    const group = await ensureGroup(phone, await groupNameForNamedPeople(phone, intent.groupName, intent.members), intent.members)
     const existingMembers = (await getMembers(group.id)).map((m) => m.name)
     const shareRows = computeShares({ amount: intent.amount, paidBy: intent.paidBy, members: intent.members.length ? intent.members : existingMembers, allocations: intent.allocations, splitMode: intent.splitMode })
     const members = shareRows.map((row) => row.member)

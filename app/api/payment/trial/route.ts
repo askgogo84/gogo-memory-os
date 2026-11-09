@@ -1,54 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { supabaseAdmin } from '@/lib/supabase-admin'
+import { NextResponse } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 
-export async function POST(req: NextRequest) {
-  // Paid-plan trials are now created through the Razorpay subscription flow.
-  // Keep this legacy helper available only on preview/dev so it cannot grant
-  // arbitrary production users a Pro entitlement without payment authorization.
-  if (process.env.VERCEL_ENV === 'production') {
-    return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 })
-  }
-
-  try {
-    const { telegramId, whatsappId } = await req.json()
-    if (!telegramId && !whatsappId) {
-      return NextResponse.json({ error: 'User ID required' }, { status: 400 })
-    }
-
-    const trialEnds = new Date()
-    trialEnds.setDate(trialEnds.getDate() + 7)
-
-    const updateData = {
-      tier: 'pro',
-      is_trial: true,
-      trial_started_at: new Date().toISOString(),
-      trial_ends_at: trialEnds.toISOString(),
-      tier_expires_at: trialEnds.toISOString(),
-    }
-
-    if (telegramId) {
-      const { data: user } = await supabaseAdmin
-        .from('users').select('trial_started_at')
-        .eq('telegram_id', telegramId).single()
-      if (user?.trial_started_at) {
-        return NextResponse.json({ error: 'Trial already used' }, { status: 400 })
-      }
-      await supabaseAdmin.from('users').update(updateData).eq('telegram_id', telegramId)
-    } else if (whatsappId) {
-      const { data: user } = await supabaseAdmin
-        .from('users').select('trial_started_at')
-        .eq('whatsapp_id', whatsappId).single()
-      if (user?.trial_started_at) {
-        return NextResponse.json({ error: 'Trial already used' }, { status: 400 })
-      }
-      await supabaseAdmin.from('users').update(updateData).eq('whatsapp_id', whatsappId)
-    }
-
-    return NextResponse.json({ success: true, trial_ends: trialEnds.toISOString() })
-  } catch (error) {
-    console.error('Trial error:', error)
-    return NextResponse.json({ error: 'Internal error' }, { status: 500 })
-  }
+// Retired in every environment: the legacy handler accepted arbitrary caller-supplied
+// account IDs and could grant Pro access using the service-role database client.
+// A preview or development deployment may point at shared user data; environment
+// name is not an authorization boundary. New subscriptions use the separately
+// authorized Razorpay flow, never this endpoint.
+export async function POST() {
+  return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 })
 }

@@ -3,6 +3,7 @@ import { askMercury, mercuryWebAnswersEnabled } from './mercury'
 import OpenAI from 'openai'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import {selectContentWorkflow, contentWorkflowPrompt} from '@/lib/agent/content-workflows'
+import { SONNET_MODEL } from '@/lib/services/model-ids'
 
 export interface Message {
   role: 'user' | 'assistant'
@@ -140,6 +141,8 @@ RULES:
    - For Twitter/X: under 280 chars, punchy
    - For email: clear subject line + body
 
+5b. PLANS FROM SAVED NOTES: When asked to plan or prep something "from my notes" and nothing relevant is in the context, say so in one line, then still give a complete, sensible general plan (with timings if a duration was given), and invite details to tailor it. Never invent what the notes say.
+
 6. EVERYTHING ELSE: Reply naturally, 2-3 sentences max. Do not call the user "boss", "sir" or another nickname unless a standing preference above asks for it.
 
 6a. ASKGOGO PRODUCT FEATURES — NEVER FABRICATE LINKS OR FLOWS: You do NOT know the URLs, paths, or setup steps for AskGogo's own features (connecting Google Calendar or Gmail, the web dashboard, upgrading/pricing, magic-link login, meeting recording, referrals, etc.). NEVER invent or guess a URL such as askgogo.in/... or app.askgogo.in/... — those links are generated only by the app's own deterministic handlers, not by you. NEVER write out step-by-step instructions for connecting an account or using any product capability. If the user seems to want a product feature, say you'll help and ask them to rephrase or use the exact command (e.g. "type *connect calendar*") — do NOT produce a link or an invented flow. A wrong or made-up link is worse than no link.
@@ -173,7 +176,7 @@ ${workflow ? contentWorkflowPrompt(workflow) : ''}`
 
   try{
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: SONNET_MODEL,
       max_tokens: maxTokens,
       system: systemPrompt,
       messages,
@@ -212,7 +215,7 @@ FORMATTING: Delivered over WhatsApp (no markdown). Never emit [text](url); write
 
   try {
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: SONNET_MODEL,
       max_tokens: 900,
       messages: [{ role: 'user', content: prompt }],
     })
@@ -318,7 +321,21 @@ export function stripGogoSignoff(reply: string): string {
 export function finishChatReply(userMessage: string, reply: string, preferenceBlock = ''): string {
   const text = stripGogoSignoff(stripUnrequestedAddress(reply, preferenceBlock))
   if (/^\s*(?:REMINDER|MEMORY|LIST_[A-Z]+|SEARCH):/m.test(text)) return text
-  return groundTransportTimes(userMessage, text, '')
+  return groundTransportTimes(userMessage, inventedApprovalGuard(text), '')
+}
+
+/**
+ * 28 Oct live: the chat model answered traveller details with "Got it. Booking Air India Express IX 355 … Reply
+ * confirm to open the payment page" (an invented flight number and an approval step that does not exist), then
+ * "I cannot complete bookings" when the person replied Confirm. A chat reply may never start a booking or ask for a
+ * confirm/approve reply: only Gogo's booking and approval flows do that.
+ */
+export function inventedApprovalGuard(text: string): string {
+  const t = String(text || '')
+  const asksApproval = /\b(?:reply|say|send|type)\s+\*?(?:confirm|approve|yes)\*?\s+(?:to|and)\s+(?:open|book|proceed|pay|continue|confirm)/i.test(t)
+  const startsBooking = /^\s*(?:got it[.!]?\s*)?(?:i(?:'m| am) |i(?:'ll| will) )?(?:booking|reserving|book)\s+(?:your\s+|the\s+)?[^\n.]{0,40}\b(?:flight|express|airlines?|indigo|air india|spicejet|akasa|vistara|hotel|table|tickets?)\b/i.test(t)
+  if (!asksApproval && !startsBooking) return t
+  return `I can't start or confirm a booking from this chat, and nothing has been booked. To book a flight from your search, say "book" and the option number from the list (for example "book 3"), and I'll take you through the booking steps.`
 }
 
 /** Shared post-processor for every web-answer provider (Mercury, Claude, OpenAI fallback). */
@@ -366,7 +383,7 @@ FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF
   }
   try{
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: SONNET_MODEL,
       max_tokens: 1500,
       messages:[{role:'user',content:prompt}],
     })
