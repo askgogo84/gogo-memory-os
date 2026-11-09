@@ -89,6 +89,27 @@ export class SemanticRepo {
     return rows.map(a => ({ assertion: a, subject: ent, object: a.object_entity_id ? objects.find(o => o.id === a.object_entity_id) || null : null, source: sources.find(s => s.id === a.source_id)!, temporal: temporalStatus(a, now) })).filter(f => f.source)
   }
 
+  /** One-hop neighbourhood: the subject's facts plus the facts about each object they point to (bounded). Depth is 1 by design. */
+  async neighbourhood(subject: EntityInput, now = Date.now(), limits = { objects: 15, perObject: 10 }): Promise<CurrentFact[]> {
+    const first = await this.factsFor(subject, now)
+    const seen = new Set(first.map(f => f.assertion.id))
+    const objects = [...new Map(first.filter(f => f.object).map(f => [f.object!.id, f.object!])).values()].slice(0, limits.objects)
+    const out = [...first]
+    for (const o of objects) {
+      const rows = (await this.store.assertionsAbout(this.scope, o.id, limits.perObject)).filter(a => !seen.has(a.id))
+      if (!rows.length) continue
+      const ids = [...new Set(rows.flatMap(a => [a.subject_entity_id, a.object_entity_id].filter((x): x is string => !!x)))]
+      const [ents, sources] = await Promise.all([this.store.entitiesById(this.scope, ids), this.store.sourcesById(this.scope, rows.map(a => a.source_id))])
+      for (const a of rows) {
+        const subj = ents.find(e => e.id === a.subject_entity_id); const src = sources.find(x => x.id === a.source_id)
+        if (!subj || !src) continue
+        seen.add(a.id)
+        out.push({ assertion: a, subject: subj, object: a.object_entity_id ? ents.find(e => e.id === a.object_entity_id) || null : null, source: src, temporal: temporalStatus(a, now) })
+      }
+    }
+    return out
+  }
+
   /** Everything the owner asked to forget: retract current assertions and retire entities. Nothing is deleted. */
   async forgetEverything(now = new Date().toISOString()) { return this.store.retireScope(this.scope, now) }
 }

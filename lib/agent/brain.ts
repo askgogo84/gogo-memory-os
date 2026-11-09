@@ -244,6 +244,21 @@ export async function loadBrainContext(p: { telegramId: number; text: string; na
   if (earlier.length) sections['Earlier conversation summary'] = earlier
   const other = otherContextLines(otherFacts)
   if (other.length) sections['Other context'] = other
+  // Same Brain 3.0 Phase 2: the decision context pack. 'shadow' only logs; 'on' adds one bounded section. Off by default,
+  // never blocks the turn (its own timeout), and never changes routing, approvals or STOP handling.
+  if ((globalThis as any).process?.env?.VERCEL_ENV) {
+    try {
+      const cg = await import('./context-graph/build')
+      const mode = typeof cg?.contextGraphMode === 'function' ? cg.contextGraphMode(String(p.telegramId)) : 'off'
+      if (mode !== 'off') {
+        const pack = await withTimeout(cg.buildDecisionContext({ actor: { legacyTelegramId: p.telegramId, timezone, name: p.name, userId: p.userId, whatsappId: p.whatsappId }, objective: p.text, understanding: ctx, facts: otherFacts as any, now }), 2500)
+        if (pack) {
+          console.log('CONTEXT_GRAPH_SHADOW:', JSON.stringify({ mode, decisionId: pack.decisionId, kind: pack.objective.kind, domain: pack.objective.domain, live: pack.objective.liveDataRequired, conflicts: pack.conflicts.length, missing: pack.missing.length, size: pack.size, warnings: pack.warnings }))
+          if (mode === 'on') { const lines = cg.renderDecisionContext(pack); if (lines.length) sections['Decision context'] = lines }
+        }
+      }
+    } catch (e: any) { console.error('CONTEXT_GRAPH_HOOK_FAILED:', String(e?.message || e).slice(0, 120)) }
+  }
   const trackedFlights = [...new Set((flights as any[]).map(w => {
     const f = w.condition_json?.adHocFlight || {}
     return f.flightNo ? `${f.flightNo}${f.from && f.to ? ` (${f.from} → ${f.to})` : ''}${w.active ? '' : ' [tracking ended]'}` : ''
