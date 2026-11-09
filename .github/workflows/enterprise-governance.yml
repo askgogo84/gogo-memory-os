@@ -1,0 +1,29 @@
+name: Enterprise Governance Preflight
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/enterprise/governance/**'
+      - 'scripts/verify-enterprise-governance-nov7.mts'
+      - '.github/workflows/enterprise-governance.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'lib/enterprise/governance/**'
+      - 'scripts/verify-enterprise-governance-nov7.mts'
+      - '.github/workflows/enterprise-governance.yml'
+
+jobs:
+  policy-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Enterprise tenant, approvals and replay regression
+        run: node --experimental-strip-types scripts/verify-enterprise-governance-nov7.mts

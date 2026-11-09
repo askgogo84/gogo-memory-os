@@ -368,11 +368,11 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
 
 /** A venue's yes on the call becomes a booking in My bookings plus a 2-hour reminder (approved mock). */
 async function recordPhoneBooking(telegramId: string | number, executionId: string, plan: CallPlan, outcome: CallOutcome): Promise<{ saved: boolean; reminderScheduled: boolean }> {
-  // Exact owner (P0.1): only a positive canonical owner id is written. A rounded number, zero, a negative, fractional
+  // Exact owner (P0.1): only a canonical non-zero owner id is written (WhatsApp owners are negative by design). A rounded number, zero, fractional
   // or malformed id writes nothing; an id above 2^53 is written as its exact decimal string, never through Number.
   if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) return { saved: false, reminderScheduled: false }
   const owner = String(telegramId ?? '').trim(), legacy = Number(owner)
-  if (!/^[1-9]\d{0,18}$/.test(owner)) return { saved: false, reminderScheduled: false }
+  if (!/^-?[1-9]\d{0,18}$/.test(owner)) return { saved: false, reminderScheduled: false }
   const ownerKey: number | string = Number.isSafeInteger(legacy) && String(legacy) === owner ? legacy : owner
   const startAt = bookedStartAt(plan, outcome)
   if (!startAt) return { saved: false, reminderScheduled: false }
@@ -408,7 +408,7 @@ export async function processVoiceCalls(deps: { send: (to: string, text: string)
     // Exact owner (P0.1): a run whose owner id is rounded, non-positive, fractional or malformed is never finalized,
     // notified or written to a conversation; it is parked for reconciliation by its unique run id.
     const owner = typeof run.telegram_id === 'number' && !Number.isSafeInteger(run.telegram_id) ? '' : String(run.telegram_id ?? '').trim()
-    if (!/^[1-9]\d{0,18}$/.test(owner)) {
+    if (!/^-?[1-9]\d{0,18}$/.test(owner)) {
       console.error('VOICE_CALL_OWNER_INVALID:', run.id)
       await supabaseAdmin.from('agent_runs').update({ status: 'outcome_unknown', summary: 'The call owner could not be verified, so no result was sent. Check the provider outcome before repeating it.', metadata_json: { ...meta, outcome_state: 'unknown', reconciliation_required: true, owner_invalid: true }, updated_at: new Date().toISOString() }).eq('id', run.id).eq('status', 'running')
       continue

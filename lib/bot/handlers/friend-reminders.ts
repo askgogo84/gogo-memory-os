@@ -72,7 +72,24 @@ export function parseFriendTime(rest: string, now = new Date()): { remindAtIso: 
   if (reminderTimingProblem(normalized)) return null
   const parsed = parseReminderIntent(`remind me to ${normalized}`)
   if (!parsed || Date.parse(parsed.remindAtIso) <= now.getTime()) return null
-  return {remindAtIso: parsed.remindAtIso, task: (parsed.message || rest).replace(/\bUrgent[.!]?\s*$/i, '').trim()}
+  // The general parser strips every time it finds, so "attend the 9am meeting at Starbucks … tomorrow at 8am" came back
+  // as "attend the meeting Starbucks …" (8 Nov, live). Only the trailing scheduling phrase is removed here; a time that
+  // is part of the task stays in it.
+  const task = friendTaskFromRest(rest) || parsed.message || rest
+  return {remindAtIso: parsed.remindAtIso, task: task.replace(/\bUrgent[.!]?\s*$/i, '').trim()}
+}
+
+const CLOCK = String.raw`\d{1,2}(?::\d{2})?\s*(?:am|pm)|noon|midnight`
+const DAYWORD = String.raw`today|tonight|tomorrow|day\s+after\s+tomorrow|(?:on\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)day`
+const TRAILING_WHEN = new RegExp(String.raw`[\s,]*(?:(?:(?:${DAYWORD})\s+)?(?:at|by)?\s*(?:${CLOCK})(?:\s+(?:${DAYWORD}))?|in\s+\d+\s+(?:minutes?|mins?|hours?|hrs?|days?))\s*[.!]?\s*$`, 'i')
+
+/** The task with only the trailing "when" removed: "attend the 9am meeting at Starbucks tomorrow at 8am" → "attend the
+ *  9am meeting at Starbucks". Null when the text does not end in a time (the caller falls back to the parser). Pure. */
+export function friendTaskFromRest(rest: string): string | null {
+  const m = rest.match(TRAILING_WHEN)
+  if (!m || m.index === undefined) return null
+  const task = rest.slice(0, m.index).replace(/[\s,]+$/, '').trim()
+  return task.length >= 2 ? task : null
 }
 
 export function friendTaskWithoutTime(rest: string): string {
