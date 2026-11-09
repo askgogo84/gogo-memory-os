@@ -1,0 +1,37 @@
+name: Mobile OTP E164 literal-head synthetic acceptance (test only)
+on:
+  pull_request:
+    paths:
+      - "scripts/verify-mobile-otp-e164-testonly.mjs"
+      - ".github/workflows/mobile-otp-e164-literal-head.yml"
+permissions:
+  contents: read
+jobs:
+  literal-head-otp:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout literal PR feature HEAD, never synthetic merge
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Require exact, immutable PR feature HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - name: Install Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies without lifecycle hooks
+        run: npm ci --ignore-scripts
+      - name: Execute real-module inert fictional identity/OTP delivery regressions
+        run: node scripts/verify-mobile-otp-e164-testonly.mjs
