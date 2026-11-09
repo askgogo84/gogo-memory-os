@@ -7,6 +7,7 @@
  * Benign provider-format compatibility and independent SSRF review remain
  * prerequisites for release. No DNS pinning is claimed.
  */
+import { isTwilioMediaCdnUrl, logRejectedTwilioRedirect } from './twilio-cdn'
 export const MEDIA_MEMORY_THUMBNAIL_MAX_BYTES = 12 * 1024 * 1024
 
 export type ThumbnailImageMime = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
@@ -33,8 +34,9 @@ function verifiedCdnLocation(raw: string | null): URL | null {
   try {
     // Absolute HTTPS CDN locations only; relative URLs could re-authenticate.
     const u = new URL(raw)
-    return u.origin === 'https://mms.twiliocdn.com'
-      && !u.username && !u.password && !u.hash && u.pathname !== '/' ? u : null
+    if (isTwilioMediaCdnUrl(u)) return u
+    logRejectedTwilioRedirect('media-memory-thumbnail', raw)
+    return null
   } catch {
     return null
   }
