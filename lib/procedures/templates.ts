@@ -14,7 +14,7 @@ export const TRAVEL_DAY = T({
     { id: 'read_live', type: 'PARALLEL_READ', title: 'Live flight status and traffic', capability: 'travel', requires: ['leg'], produces: ['flightStatus', 'eta'], retry: { max: 3, backoffMinutes: [2, 5, 10] }, timeoutMs: 8000 },
     { id: 'reason', type: 'REASON', title: 'Decide what the day needs', requires: ['leg', 'flightStatus'], produces: ['plan', 'needsCab'] },
     { id: 'cab_needed', type: 'CONDITION', title: 'Cab needed?' },
-    { id: 'approve_cab', type: 'APPROVAL', title: 'Book the cab?', approval: { actionType: 'travel.book_cab', title: 'Book the airport cab' } },
+    { id: 'approve_cab', type: 'APPROVAL', title: 'Book the cab?', approval: { actionType: 'travel.book_cab', title: 'Book the airport cab', bind: ['leg', 'plan', 'eta'] } },
     { id: 'book_cab', type: 'EXECUTE', title: 'Book the cab', capability: 'travel', requires: ['approval:approve_cab'], produces: ['cabBooking'] },
     { id: 'verify_cab', type: 'VERIFY', title: 'Confirm the booking', capability: 'travel', verify: { source: 'travel' }, retry: { max: 2, backoffMinutes: [1, 3] } },
     { id: 'wait_landing', type: 'WAIT_EVENT', title: 'Wait for landing', event: 'flight.landed' },
@@ -37,13 +37,13 @@ export const TRAVEL_DAY = T({
 
 /** Email follow-up: read the thread, draft, approve, send, verify the sent message by read-back. */
 export const EMAIL_FOLLOW_UP = T({
-  id: 'email.follow_up', title: 'Email follow-up', domain: 'email', inputs: ['threadId'], consequential: true,
+  id: 'email.follow_up', title: 'Email follow-up', domain: 'email', inputs: ['target'], consequential: true,
   nodes: [
     { id: 'start', type: 'START', title: 'Start' },
-    { id: 'read_thread', type: 'READ', title: 'Read the thread', capability: 'email', requires: ['threadId'], produces: ['thread'], retry: { max: 2, backoffMinutes: [1, 5] } },
+    { id: 'read_thread', type: 'READ', title: 'Read the thread', capability: 'email', requires: ['target'], produces: ['thread'], retry: { max: 2, backoffMinutes: [1, 5] } },
     { id: 'replied', type: 'CONDITION', title: 'Already replied?' },
     { id: 'draft', type: 'REASON', title: 'Draft the follow-up', requires: ['thread'], produces: ['draft'] },
-    { id: 'approve', type: 'APPROVAL', title: 'Send this follow-up?', approval: { actionType: 'email.send', title: 'Send the follow-up' } },
+    { id: 'approve', type: 'APPROVAL', title: 'Send this follow-up?', approval: { actionType: 'email.send', title: 'Send the follow-up', bind: ['thread', 'draft'] } },
     { id: 'send', type: 'EXECUTE', title: 'Send', capability: 'email', requires: ['approval:approve', 'draft'], produces: ['messageId'] },
     { id: 'verify', type: 'VERIFY', title: 'Confirm it was sent', capability: 'email', verify: { source: 'gmail' }, retry: { max: 2, backoffMinutes: [1, 3] } },
     { id: 'escalate', type: 'ESCALATE', title: 'Could not confirm the send' },

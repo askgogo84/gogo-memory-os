@@ -255,7 +255,7 @@ export async function loadBrainContext(p: { telegramId: number; text: string; na
       if (mode !== 'off') {
         const pack = await withTimeout(cg.buildDecisionContext({ actor: { legacyTelegramId: p.telegramId, timezone, name: p.name, userId: p.userId, whatsappId: p.whatsappId }, objective: p.text, understanding: ctx, facts: otherFacts as any, now }), 2500)
         if (pack) {
-          console.log('CONTEXT_GRAPH_SHADOW:', JSON.stringify({ mode, decisionId: pack.decisionId, kind: pack.objective.kind, domain: pack.objective.domain, live: pack.objective.liveDataRequired, conflicts: pack.conflicts.length, missing: pack.missing.length, size: pack.size, warnings: pack.warnings }))
+          console.log('CONTEXT_GRAPH_SHADOW:', JSON.stringify({ mode, decisionId: pack.decisionId, kind: pack.objective.kind, domain: pack.objective.domain, live: pack.objective.liveDataRequired, conflicts: pack.conflicts.length, missing: pack.missing.length, size: pack.size, warnings: pack.warnings, recall: { mode: pack.recall.mode, items: pack.recall.items.length, hypotheses: pack.recall.hypotheses.length, sensitiveInItems: pack.recall.items.filter(i => i.sensitive).length, dropped: pack.recall.dropped, probes: pack.recall.probes.length } }))
           if (mode === 'on') {
             const lines = cg.renderDecisionContext(pack); if (lines.length) sections['Decision context'] = lines
             // Phase 4: link this turn's decision id to the pack it was made from. Outcome is 'waiting' here (decided and

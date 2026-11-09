@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
+import { downloadTwilioMemoryThumbnail, MEDIA_MEMORY_THUMBNAIL_MAX_BYTES } from '../lib/services/twilio-media-memory-thumbnail'
 import {
   buildTravelPresenceFacts,
   factsAt,
@@ -145,3 +146,106 @@ console.log('Contextual Long Memory goal recall verification passed')
 
 assert.match(association,/\['semantic_memory','memory_insight','open_loop','goal','typed_context','life_event'\]/,'relevant persistent goals must participate in saved-item associations')
 console.log('Contextual association includes relevance-gated persistent goals')
+
+
+// P1: media-memory thumbnails must NEVER send Twilio Basic credentials to an
+// untrusted MediaUrl0 origin or auto-redirect, and must bound image byte count.
+// These fixtures make no live provider or credential requests.
+const thumbSid='AC'+'a'.repeat(32)
+const thumbMessage='MM'+'b'.repeat(32)
+const thumbMedia='ME'+'c'.repeat(32)
+const thumbUrl=`https://api.twilio.com/2010-04-01/Accounts/${thumbSid}/Messages/${thumbMessage}/Media/${thumbMedia}`
+const thumbAuth='Basic '+Buffer.from(thumbSid+':inert-test-token').toString('base64')
+const calls: Array<{url:string; headers?:any; redirect?:string}>=[]
+const okImage = () => new Response('inert-image-bytes',{status:200,headers:{'content-type':'image/jpeg'}})
+const accepted = await downloadTwilioMemoryThumbnail({
+  mediaUrl:thumbUrl,accountSid:thumbSid,authToken:'inert-test-token',
+  fetchImpl:(async(u:any,options:any)=>{calls.push({url:String(u),headers:options?.headers,redirect:options?.redirect});return okImage()}) as typeof fetch,
+})
+assert.deepEqual(accepted,{base64:Buffer.from('inert-image-bytes').toString('base64'),mediaType:'image/jpeg'})
+assert.equal(calls.length,1)
+assert.equal(calls[0].url,thumbUrl)
+assert.equal(calls[0].redirect,'manual','never follow arbitrary redirect')
+assert.equal(calls[0].headers?.Authorization,thumbAuth,'only exact Twilio origin receives Basic')
+
+let rejectedFetches=0
+const forbidRequest=(async()=>{rejectedFetches++;return okImage()}) as typeof fetch
+for(const invalid of [
+  'http://169.254.169.254/latest/meta-data/',
+  'https://127.0.0.1/private',
+  'https://api.twilio.com.attacker.invalid'+new URL(thumbUrl).pathname,
+  'https://api.twilio.com@attacker.invalid/'+new URL(thumbUrl).pathname,
+  thumbUrl.replace('https:','http:'),
+  thumbUrl.replace('api.twilio.com','api.twilio.com:444'),
+  thumbUrl.replace(thumbSid,'AC'+'d'.repeat(32)),
+  thumbUrl.replace(thumbMedia,'ME'+'d'.repeat(32)+'/../../private'),
+  thumbUrl+'?return=http://localhost',
+  thumbUrl+'#fragment',
+]) {
+  assert.equal(await downloadTwilioMemoryThumbnail({
+    mediaUrl:invalid,accountSid:thumbSid,authToken:'inert-test-token',fetchImpl:forbidRequest,
+  }),null,'unsafe origin, route, or account must fail closed')
+}
+assert.equal(await downloadTwilioMemoryThumbnail({
+  mediaUrl:thumbUrl,accountSid:'AC'+'d'.repeat(32),authToken:'inert-test-token',fetchImpl:forbidRequest,
+}),null)
+assert.equal(await downloadTwilioMemoryThumbnail({
+  mediaUrl:thumbUrl,accountSid:thumbSid,authToken:'',fetchImpl:forbidRequest,
+}),null)
+assert.equal(rejectedFetches,0,'no hostile URL or missing credential reached network')
+
+const cdnCalls: Array<{url:string; headers?:any; redirect?:string}>=[]
+const cdnAccepted=await downloadTwilioMemoryThumbnail({
+  mediaUrl:thumbUrl,accountSid:thumbSid,authToken:'inert-test-token',
+  fetchImpl:(async (u:any,opts:any)=>{
+    cdnCalls.push({url:String(u),headers:opts?.headers,redirect:opts?.redirect})
+    return cdnCalls.length===1
+      ? new Response(null,{status:302,headers:{location:'https://mms.twiliocdn.com/test-image.jpg?sig=inert'}})
+      : new Response('png bytes',{status:200,headers:{'content-type':'image/png'}})
+  }) as typeof fetch,
+})
+assert.equal(cdnAccepted?.mediaType,'image/png','image MIME must follow actual response')
+assert.equal(cdnCalls.length,2)
+assert.equal(cdnCalls[1].url,'https://mms.twiliocdn.com/test-image.jpg?sig=inert')
+assert.equal(cdnCalls[0].headers?.Authorization,thumbAuth)
+assert.equal(cdnCalls[1].headers?.Authorization,undefined,'CDN must NEVER see Basic credentials')
+assert.equal(cdnCalls[1].redirect,'manual')
+
+for(const redirectTo of ['http://mms.twiliocdn.com/image','https://evil.invalid/secret',
+  'https://mms.twiliocdn.com.attacker.invalid/x','https://mms.twiliocdn.com@evil.invalid/x',
+  'https://127.0.0.1/private']) {
+  let requests=0
+  const result=await downloadTwilioMemoryThumbnail({
+    mediaUrl:thumbUrl,accountSid:thumbSid,authToken:'inert-test-token',
+    fetchImpl:(async()=>{requests++;return new Response(null,{status:302,headers:{location:redirectTo}})}) as typeof fetch,
+  })
+  assert.equal(result,null)
+  assert.equal(requests,1,'untrusted redirects must never receive network calls')
+}
+let doubleHops=0
+assert.equal(await downloadTwilioMemoryThumbnail({
+  mediaUrl:thumbUrl,accountSid:thumbSid,authToken:'inert-test-token',
+  fetchImpl:(async()=>{doubleHops++;return new Response(null,{status:302,headers:{location:'https://mms.twiliocdn.com/image.jpg'}})}) as typeof fetch,
+}),null)
+assert.equal(doubleHops,2,'a second redirect must not be followed')
+
+for(const response of [
+  new Response('not-image',{status:200,headers:{'content-type':'text/html'}}),
+  new Response('small',{status:200,headers:{'content-type':'image/jpeg','content-length':String(MEDIA_MEMORY_THUMBNAIL_MAX_BYTES+1)}}),
+  new Response(new ReadableStream({start(c){
+    c.enqueue(new Uint8Array(MEDIA_MEMORY_THUMBNAIL_MAX_BYTES))
+    c.enqueue(new Uint8Array(1))
+    c.close()
+  }}) as any,{status:200,headers:{'content-type':'image/jpeg'}}),
+]) {
+  assert.equal(await downloadTwilioMemoryThumbnail({
+    mediaUrl:thumbUrl,accountSid:thumbSid,authToken:'inert-test-token',
+    fetchImpl:(async()=>response) as typeof fetch,
+  }),null,'MIME and declared/streamed maximums must fail closed')
+}
+assert.doesNotMatch(mediaMemory,/fetch\(params\.mediaUrl/,'no raw credentialed media URL fetch remains')
+assert.match(mediaMemory,/transcript && params\.mediaUrl && configuredSid && configuredToken/,'no unused thumbnail fetch on ordinary caption saves')
+assert.match(mediaMemory,/params\.accountSid === configuredSid && params\.authToken === configuredToken/,'require configured rather than caller-supplied Twilio credentials')
+assert.match(mediaMemory,/downloadTwilioMemoryThumbnail\(\{/,'use scoped bounded image downloader')
+assert.match(mediaMemory,/thumbnailMediaType = thumbnail\.mediaType/,'forward real MIME to vision')
+console.log('✅ Media-memory Twilio P1: account-bound HTTPS, credential-safe redirect, bounded image, caption-only fallback')

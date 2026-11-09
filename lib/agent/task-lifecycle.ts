@@ -17,6 +17,10 @@ export function pastEventCalendarRun(run: any, now: number = Date.now()): boolea
 }
 
 export function retiredRunReason(run: any, now: number = Date.now()): string | null {
+  // Unverified provider outcomes outrank stale browser/cancel/duplicate metadata.
+  // Never hide an outcome_unknown run as closed before independent verification;
+  // downstream attention, snapshot and task-status readers all share this helper.
+  if (String(run?.status || '') === 'outcome_unknown') return null
   const meta = run?.metadata_json || run?.metadata || {}
   if (pastEventCalendarRun(run, now)) return PAST_EVENT_CALENDAR_REASON
   if(meta.plan_type==='food_comparison'&&meta.state==='closed')return meta.closure_reason==='user_cancelled'?'Cancelled by you':'Replaced comparison'

@@ -5,6 +5,9 @@ import type { AgentActor } from '@/lib/agent/actor'
 import type { ExecutionEvidence } from '@/lib/agent/execution-evidence'
 import { ProcedureExecuteError, type ProcedureIO } from './runtime'
 
+/** Only a definitive Gmail rejection means "not sent". Anything else may have reached Gmail: treat as outcome unknown. */
+export function gmailSendFailureKnown(reason: string): boolean { return /^gmail_send_(?:scope_required|failed_(?:400|401|403|404|422))$/.test(String(reason || '')) }
+
 const clip = (s: unknown, n: number) => String(s ?? '').replace(/\s+/g, ' ').trim().slice(0, n)
 
 async function readCalendarEvent(actor: AgentActor, eventId: string) {
@@ -57,6 +60,20 @@ export const productionIO: ProcedureIO = {
         const live = await lookupLiveFlight(String(leg.flightNo), new Date(), actor.timezone || 'Asia/Kolkata')
         if (!live) throw new Error('live_status_unavailable')
         return { flightStatus: live.status?.state || 'unknown', eta: live.arrRevisedLocal || live.arrLocal || null, liveText: formatLiveFlight(live) }
+      }
+      case 'email.follow_up:read_thread': {
+        // Same consent + access checks as the chat reply path (gmail-send.ts); the thread is resolved from the owner's words.
+        const { resolveThread } = await import('@/lib/agent/gmail-send')
+        const r = await resolveThread(actor, String(context.target || '').slice(0, 200))
+        if (!r.access.ok) throw new Error(String(r.access.reason || 'gmail_unavailable'))
+        if (r.ambiguous) throw new Error('thread_ambiguous')
+        if (!r.match) throw new Error('thread_not_found')
+        const own = String(r.access.user?.gmail_email || '').toLowerCase()
+        const msgs: any[] = r.match.thread.messages || []
+        const last = msgs[msgs.length - 1]
+        const fromOf = (h: string) => (String(h || '').match(/<([^>]+)>/)?.[1] || String(h || '')).trim().toLowerCase()
+        const incoming = r.match.incoming
+        return { thread: { id: String(r.match.thread.id), subject: clip(r.match.thread.subject, 200), to: fromOf(incoming?.from), toName: clip(String(incoming?.from || '').replace(/<[^>]+>/, '').replace(/"/g, ''), 60), lastFromMe: !!last && fromOf(last.from) === own, lastDate: last?.date || null } }
       }
       case 'enterprise.cancellation_incident:read_order': {
         // Internal pilot records only (merchant_orders, scoped by the outlet's workspace). Never a merchant endpoint.
@@ -117,22 +134,56 @@ export const productionIO: ProcedureIO = {
       const cause = reason === 'out_of_stock' ? 'out_of_stock' : reason === 'no_response' ? 'no_response' : reason === 'rider_unavailable' ? 'rider_unavailable' : reason === 'customer' ? 'customer' : 'unknown'
       return { cause, severity: recent.length >= 3 ? 'high' : recent.length >= 1 ? 'medium' : 'low' }
     }
-    if (key === 'email.follow_up:draft') return { draft: '' } // no model draft without the owner's words; the approval step will show an empty draft and the owner edits via Change
+    if (key === 'email.follow_up:draft') {
+      // Deterministic, short and factual: no model-written claims in the owner's name. The owner sees it in full on the
+      // approval card and can change it before anything is sent.
+      const t = context.thread as any
+      const first = String(t?.toName || '').trim().split(/\s+/)[0] || 'there'
+      const subject = String(t?.subject || 'my last email')
+      return { draft: `Hi ${first},\n\nJust following up on "${subject.replace(/^re:\s*/i, '')}". Any update when you get a moment?\n\nThanks` }
+    }
     throw new Error(`reason_not_wired:${key}`)
   },
 
   preview({ def, node, context }) {
     if (def.id === 'travel.day') return [{ label: 'Action', value: node.approval?.title || 'Book the cab' }, { label: 'Flight', value: clip((context.leg as any)?.flightNo || (context.leg as any)?.title, 60) }, { label: 'Status', value: clip(context.flightStatus, 40) }, { label: 'ETA', value: clip(context.eta || 'unknown', 40) }]
-    if (def.id === 'email.follow_up') return [{ label: 'Thread', value: clip((context.thread as any)?.subject || context.threadId, 120) }, { label: 'Draft', value: clip(context.draft || '(empty)', 300) }]
+    if (def.id === 'email.follow_up') return [{ label: 'To', value: clip((context.thread as any)?.to, 120) }, { label: 'Subject', value: clip(`Re: ${String((context.thread as any)?.subject || '').replace(/^re:\s*/i, '')}`, 160) }, { label: 'Message', value: clip(context.draft || '(empty)', 300) }, { label: 'What happens', value: 'One reply in this Gmail thread, exactly as shown. Nothing else is sent.' }]
     return [{ label: 'Action', value: node.approval?.title || node.title }]
   },
 
-  async execute({ def, node }) {
-    // Writes are wired one at a time, each with its own verified executor. Until then: fail closed, nothing attempted.
+  async execute({ actor, def, node, context }) {
+    if (`${def.id}:${node.id}` === 'email.follow_up:send') {
+      const { gmailAccess } = await import('@/lib/agent/gmail-send')
+      const access = await gmailAccess(actor, { requireSend: true })
+      if (!access.ok) throw new ProcedureExecuteError(String(access.reason || 'gmail_send_unavailable'), true) // nothing attempted
+      const t = context.thread as any; const body = String(context.draft || '').trim()
+      if (!t?.id || !t?.to || !body) throw new ProcedureExecuteError('gmail_send_draft_missing', true)
+      const { sendGmailReply } = await import('@/lib/services/google-gmail')
+      try {
+        const sent: any = await sendGmailReply(access.accessToken, { threadId: String(t.id), to: String(t.to), subject: String(t.subject || ''), body })
+        return { objectRef: String(sent.id), output: { 'send.threadId': String(sent.threadId || t.id) } }
+      } catch (e: any) {
+        const reason = String(e?.message || e).slice(0, 200)
+        // Only a definitive provider rejection is "known: not sent". Anything else may have reached Gmail.
+        throw new ProcedureExecuteError(reason, gmailSendFailureKnown(reason))
+      }
+    }
+    // Other writes (travel.day cab booking) have no verified executor with provider read-back: fail closed.
     throw new ProcedureExecuteError(`execute_not_wired:${def.id}:${node.id}`, true)
   },
 
-  async verify(): Promise<ExecutionEvidence | null> { return null },
+  async verify({ actor, def, node, context, objectRef }): Promise<ExecutionEvidence | null> {
+    if (`${def.id}:${node.id}` === 'email.follow_up:verify') {
+      const { gmailAccess } = await import('@/lib/agent/gmail-send')
+      const access = await gmailAccess(actor)
+      if (!access.ok) return null
+      const { verifyGmailSentMessage } = await import('@/lib/services/google-gmail')
+      const threadId = String(context['send.threadId'] || (context.thread as any)?.id || '')
+      const v = await verifyGmailSentMessage(access.accessToken, objectRef, threadId)
+      return v.verified ? { source: 'gmail', kind: 'provider_readback', objectRef, providerRef: threadId, verified: true } : null
+    }
+    return null
+  },
 
   async waitEvent({ actor, def, node, context }) {
     if (def.id === 'travel.day' && node.event === 'flight.landed') {

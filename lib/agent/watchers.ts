@@ -35,13 +35,23 @@ import { appendGoldRun, decideGoldAlert, evaluateGoldRule, goldAlertText, goldSe
 
 export type WatcherDelivery = 'app' | 'whatsapp' | 'both'
 
+// Background watcher identities may be persisted BIGINT decimal strings. Never round
+// them through JavaScript Number before a service-role owner lookup or outbound send.
+function exactWatcherOwner(value:string|number|null|undefined):string|null{
+  if(typeof value==='number'&&!Number.isSafeInteger(value))return null
+  const owner=String(value??'').trim()
+  return /^-?[1-9]\d*$/.test(owner)?owner:null
+}
+
 export async function sourceBoundTravelExpiry(watcher:{telegram_id:string|number;condition_json?:ContextualWatcherMeta}):Promise<string|null>{
   const condition=watcher.condition_json||{}
   const current=validDate(condition.expiresAt)
   if(condition.contextual!==true||condition.contextualKind!=='travel')return current
   const ids=(condition.sourceRefs||[]).filter(ref=>ref?.type==='travel_ticket'&&/^[a-f0-9-]{36}$/i.test(String(ref.id))).map(ref=>String(ref.id))
   if(!ids.length)return current
-  const {data,error}=await supabaseAdmin.from('travel_tickets').select('id,depart_at,arrive_at').eq('telegram_id',Number(watcher.telegram_id)).in('id',ids)
+  const owner=exactWatcherOwner(watcher.telegram_id)
+  if(!owner)throw new Error('context_travel_expiry_owner_invalid')
+  const {data,error}=await supabaseAdmin.from('travel_tickets').select('id,depart_at,arrive_at').eq('telegram_id',owner).in('id',ids)
   if(error)throw new Error('context_travel_expiry_source_unavailable')
   const times=(data||[]).map(row=>Date.parse(String(row.arrive_at||row.depart_at||''))).filter(Number.isFinite)
   if(!times.length)throw new Error('context_travel_expiry_source_missing')
@@ -446,23 +456,30 @@ async function createWebIdea(telegramId: string, condition: WebSearchWatcherCond
   if (error) throw new Error('watch_alert_idea_write_failed')
 }
 
-async function sendWhatsAppIfWanted(telegramId: string, delivery: WatcherDelivery, message: string) {
+async function sendWhatsAppIfWanted(telegramId: string|number, delivery: WatcherDelivery, message: string) {
   if (delivery !== 'whatsapp' && delivery !== 'both') return
   // Watcher owner IDs are PostgreSQL BIGINTs. Number(owner) rounds distinct owners
   // above 2^53 and could send a private alert to another account's WhatsApp.
-  if (typeof telegramId !== 'string' || !/^(?:0|[1-9]\d{0,18}|-[1-9]\d{0,18})$/.test(telegramId)) return
-  const owner = BigInt(telegramId)
-  if (owner < BigInt('-9223372036854775808') || owner > BigInt('9223372036854775807')) return
+  // Kept self-contained (no helper) so the literal-function regressions exercise it whole.
+  const exactOwner = (value: unknown): string | null => {
+    if (typeof value === 'number' && !Number.isSafeInteger(value)) return null
+    if (typeof value !== 'string' && typeof value !== 'number') return null
+    const id = String(value).trim()
+    return /^-?[1-9]\d*$/.test(id) ? id : null
+  }
+  const owner = exactOwner(telegramId)
+  if (!owner) return
+  if (BigInt(owner) < BigInt('-9223372036854775808') || BigInt(owner) > BigInt('9223372036854775807')) return
   const { data, error } = await supabaseAdmin.from('users')
-    .select('telegram_id, whatsapp_id').eq('telegram_id', telegramId).maybeSingle()
+    .select('telegram_id, whatsapp_id').eq('telegram_id', owner).maybeSingle()
   if (error) throw new Error('watch_alert_owner_lookup_failed')
   // The service-role result must echo the requested exact owner before egress.
   // An imprecise or absent owner echo is not permission to deliver anything.
-  if (String(data?.telegram_id ?? '') !== telegramId) return
+  if (exactOwner(data?.telegram_id) !== owner) return
   const phone = String(data?.whatsapp_id || '').trim()
   if (!phone) return
   await sendWhatsAppMessage(phone, message)
-  await recordCostEvent({ telegramId, category:'whatsapp_outbound', metadata:{ source:'background_gogo' } })
+  await recordCostEvent({ telegramId:owner, category:'whatsapp_outbound', metadata:{ source:'background_gogo' } })
 }
 
 function searchFingerprint(results: WebSearchResult[]) {
@@ -493,7 +510,7 @@ async function processDeadlineWatcher(watcher:any, now:Date) {
 
   if (due && !alreadyTriggered) {
     await createDeadlineIdea(String(watcher.telegram_id), condition, String(watcher.id))
-    await sendWhatsAppIfWanted(String(watcher.telegram_id), condition.delivery, `⏳ Gogo noticed a deadline coming up\n\n${condition.title}\n\nI’ve also added this to your Gogo Activity/Ideas in the app.`).catch(err => console.error('AGENT_WATCHER_WHATSAPP_FAILED:', err?.message || err))
+    await sendWhatsAppIfWanted(watcher.telegram_id, condition.delivery, `⏳ Gogo noticed a deadline coming up\n\n${condition.title}\n\nI’ve also added this to your Gogo Activity/Ideas in the app.`).catch(err => console.error('AGENT_WATCHER_WHATSAPP_FAILED:', err?.message || err))
     await writeActivity(String(watcher.telegram_id), `Background Gogo surfaced: ${condition.title}`, { watcher_id: watcher.id, type:'deadline', delivery:condition.delivery })
     await supabaseAdmin.from('agent_watchers').update({
       active:false,
@@ -753,7 +770,7 @@ async function processInboxTriageWatcher(watcher:any,now:Date) {
     const alreadyNotified=watcher.last_state_json?.workspaceErrorNotified===true
     if(!alreadyNotified) {
       await sendWhatsAppIfWanted(
-        telegramId,condition.delivery,
+        watcher.telegram_id,condition.delivery,
         reason.includes('workspace_email_consent_missing')
           ? 'Your inbox watch is paused: I haven’t got your OK to read Gmail yet. Reconnect Google once at app.askgogo.in/dashboard/settings/email to start it. I did not read any mail.'
           : reason.includes('workspace_email_reading_disabled')
@@ -959,7 +976,7 @@ async function processProductStockWatcher(watcher:any, now:Date) {
           : `I’m still watching ${condition.title}, but the store needs you to sign in. Use AskGogo’s browser Take Control flow; don’t send passwords or one-time codes in chat.`
       }
       await sendWhatsAppIfWanted(
-        telegramId,
+        watcher.telegram_id,
         condition.delivery,
         message,
       ).catch(err => console.error('AGENT_PRODUCT_WATCH_WHATSAPP_FAILED:', err?.message || err))
@@ -1058,7 +1075,7 @@ async function processProductStockWatcher(watcher:any, now:Date) {
         : 'It is available, but I could not verify that the cart step completed.'
 
   await sendWhatsAppIfWanted(
-    telegramId,
+    watcher.telegram_id,
     condition.delivery,
     `✅ ${condition.variant} is available\n\n${condition.title}\n${actionText}\n\n${condition.productUrl}\n\nI will not checkout or make a payment without your approval.`,
   ).catch(err => console.error('AGENT_PRODUCT_WATCH_WHATSAPP_FAILED:', err?.message || err))
@@ -1188,7 +1205,7 @@ async function processWebPageWatcher(watcher:any,now:Date){
       expected_value:`${condition.url}\n${what}`.slice(0,900),value_score:0.9,
       action_label:'Review page',source_refs:[{type:'watcher',id:String(watcher.id)},{type:'url',url:condition.url}],status:'new',
     }).then(({error})=>{if(error)console.error('AGENT_PAGE_WATCH_IDEA_FAILED:',error.message)})
-    await sendWhatsAppIfWanted(telegramId,condition.delivery,`🌐 *Gogo noticed a page change*\n\n${condition.title}\n${what}\n\n${condition.url}`)
+    await sendWhatsAppIfWanted(watcher.telegram_id,condition.delivery,`🌐 *Gogo noticed a page change*\n\n${condition.title}\n${what}\n\n${condition.url}`)
       .catch(err=>console.error('AGENT_PAGE_WATCH_WHATSAPP_FAILED:',err?.message||err))
     await writeActivity(telegramId,`Background Gogo detected a page change: ${condition.title}`,{watcher_id:watcher.id,type:'web_page',url:condition.url,watch:condition.watch,title:currentTitle})
   }

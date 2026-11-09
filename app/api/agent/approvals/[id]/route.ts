@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { after, NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isAgentSession, requireAgentMutationOrigin, requireAgentSession } from '@/lib/agent/session'
 import { guardApprovalCapability, guardApprovalFreshness } from '@/lib/agent/approval-guard'
@@ -99,6 +99,23 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     metadata_json: { approval_id: data.id, action_type: data.action_type, risk_level: data.risk_level, surface: session.surface },
   })
   if (activityError) console.error('AGENT_APPROVAL_ACTIVITY_FAILED:', activityError)
+
+  // Same Brain 3.0 procedures: a procedure step waits on its own approval row. On a yes, release that approval onto
+  // the step (the runtime re-checks the binding) and resume the run after the response. Flag-gated inside
+  // resumeProcedureRun; any failure leaves the run queued for the autonomous-runs cron. Nothing else changes here.
+  const payload = (pending as any)?.execution_payload || {}
+  if (decision === 'approve' && data.run_id && payload?.plan_type === 'procedure' && typeof payload?.step_key === 'string' && (globalThis as any).process?.env?.VERCEL_ENV) {
+    after(async () => {
+      try {
+        const { resolveAgentActor } = await import('@/lib/agent/actor')
+        const actor = await resolveAgentActor(session)
+        const { releaseApprovedAutonomousStep } = await import('@/lib/agent/autonomous-runtime')
+        await releaseApprovedAutonomousStep({ actor, runId: String(data.run_id), stepKey: String(payload.step_key) })
+        const { resumeProcedureRun } = await import('@/lib/procedures/runtime')
+        await resumeProcedureRun({ actor, runId: String(data.run_id), maxWaves: 4 })
+      } catch (e: any) { console.error('PROCEDURE_APPROVAL_RELEASE_FAILED:', String(e?.message || e).slice(0, 160)) }
+    })
+  }
 
   return NextResponse.json({ approval: {
     id: data.id,

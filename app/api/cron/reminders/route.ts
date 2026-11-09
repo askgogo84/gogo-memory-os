@@ -266,6 +266,9 @@ async function runDelivery(req: Request) {
           // The answer is free text; outside WhatsApp's 24-hour window it is refused, so fall back to the template.
           try { message = await sendWhatsApp(whatsappTo, text, null, token) }
           catch (jobErr) {
+            // A timeout may follow provider acceptance. Never make a second send
+            // without definite rejection: let the outer fence record outcome_unknown.
+            if (!isDefiniteProviderRejection(jobErr)) throw jobErr
             if (!process.env.TWILIO_REMINDER_CONTENT_SID && !process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID) throw jobErr
             console.error('REMINDER_JOB_TEXT_REFUSED:', reminder.id, jobErr instanceof Error ? jobErr.message.slice(0, 120) : 'unknown')
             message = process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID

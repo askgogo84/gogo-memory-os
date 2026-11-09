@@ -147,3 +147,56 @@ console.log('✅ Dashboard day + read-only schedule routing checks passed')
   }
   console.log('✓ plan keeps meetings whose start is missing or not today')
 }
+
+
+// Security regression (issue #274): an exported read-only agenda entry point
+// must reject already-rounded/malformed owner IDs *before* any privileged read.
+// Compile and execute the real source with an inert dependency map: no production
+// database, Google Calendar, network, accounts or messages are contacted.
+{
+  const ts = await import('typescript')
+  const source = readFileSync('lib/agent/read-only-schedule.ts', 'utf8')
+  const compiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true },
+  }).outputText
+  const module = { exports: {} as Record<string, unknown> }
+  let fromCalls = 0
+  const db = { from(_table: string) { fromCalls++; throw Error('INERT_PRIVILEGED_DB_HALT') } }
+  const dependencies: Record<string, unknown> = {
+    '@/lib/supabase-admin': { supabaseAdmin: db },
+    './calendar-read': { calendarReadHoldReply: () => null, calendarReadClarificationReply: () => null },
+    '@/lib/timezone': {},
+    './typed-object-context': {},
+  }
+  const requireInert = (name: string) => {
+    if (!(name in dependencies)) throw Error('unexpected dependency in inert agenda fixture: ' + name)
+    return dependencies[name]
+  }
+  new Function('module', 'exports', 'require', compiled)(module, module.exports, requireInert)
+  const readTomorrowSchedule = module.exports.readTomorrowSchedule as (p: {
+    actor: { legacyTelegramId: unknown }; scope: 'calendar' | 'agenda'; text: string
+  }) => Promise<unknown>
+  assert.equal(typeof readTomorrowSchedule, 'function', 'exercise the actual compiled read-only schedule entry point')
+
+  for (const owner of [Number('9007199254740993'), '9007199254740993', '42junk', '1e3', 0, NaN, Infinity, 17.5]) {
+    for (const scope of ['calendar', 'agenda'] as const) {
+      fromCalls = 0
+      await assert.rejects(
+        readTomorrowSchedule({ actor: { legacyTelegramId: owner }, scope, text: 'Show my schedule tomorrow' }),
+        /read_only_schedule_owner_unsafe/,
+        'imprecise owner ' + String(owner) + ' must fail closed instead of choosing a private tenant',
+      )
+      assert.equal(fromCalls, 0, 'unsafe ' + String(owner) + ' reached privileged DB')
+    }
+  }
+  // Positive controls prove we preserve the real lookup for safe signed actor IDs.
+  for (const owner of [42, -42]) {
+    fromCalls = 0
+    await assert.rejects(
+      readTomorrowSchedule({ actor: { legacyTelegramId: owner }, scope: 'agenda', text: 'Show my schedule tomorrow' }),
+      /INERT_PRIVILEGED_DB_HALT/,
+    )
+    assert.equal(fromCalls, 1, 'safe owner must reach its original exact-ID lookup')
+  }
+  console.log('✓ read-only agenda refuses ambiguous actor identities before private DB/Calendar work')
+}
