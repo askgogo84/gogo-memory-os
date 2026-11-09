@@ -16,8 +16,10 @@ const SECRET_KEYWORDS =
 // conservative: it is only a prompt-boundary redactor, not a parser for the source data.
 // Explicit credential/account labels always outrank the international-phone exemption,
 // including values beginning with +, '+ 91', or a parenthesized +country code.
+// 29 Oct review: a password may start or end with punctuation ("password: @Example42!"); those characters belong to
+// the value, so a punctuation-led credential is withheld too instead of passing through untouched.
 const LABELED_SECRET_VALUE_RE =
-  /\b(pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|passport(?:\s*(?:number|no))?|aadhaar|aadhar|ssn|cvv|cvc|(?:credit\s*|debit\s*)?card\s*number|(?:credit\s*|debit\s*)card|account\s*(?:number|no\.?)|api[\s_-]?key|secret\s*key|security\s*code|routing\s*number|ifsc)\b\s*(?:is|:|=|-)?\s*(\(?\+?\s*[A-Z0-9][A-Z0-9\s._\-/()]{2,})/gi
+  /\b(pass(?:word|wd|code)|pin|otp|one[\s-]?time[\s-]?password|passport(?:\s*(?:number|no))?|aadhaar|aadhar|ssn|cvv|cvc|(?:credit\s*|debit\s*)?card\s*number|(?:credit\s*|debit\s*)card|account\s*(?:number|no\.?)|api[\s_-]?key|secret\s*key|security\s*code|routing\s*number|ifsc)\b\s*(?:is|:|=|-)?\s*(\(?\+?\s*[A-Z0-9!@#$%^&*~?=][A-Z0-9\s._\-/()!@#$%^&*~?=+]{2,})/gi
 
 // 3 Nov (Gogo): "all phone numbers to be seen, so that we can make the calls easily". Business numbers in search
 // results ("Tel No : 080 2310 3567", "+91 98450 12345") were withheld as long digit runs, and calling a salon needs
