@@ -31,6 +31,9 @@ export function flightBookingRequest(text: string): FlightPick | null {
   const m = raw.match(/^(?:(?:ok(?:ay)?|yes|yeah|sure|please)[,.! ]+)?(?:(?:go ahead|can you|could you|please|now)\s+(?:and\s+)?)*(?:book|reserve|buy|get me)(?:\s+(?:me\s+)?(?:the\s+|that\s+|this\s+)?(.*?))?[.!?\s]*$/i)
   if (!m) return null
   const rest = (m[1] || '').toLowerCase()
+  // 6 Nov live: "Book a dentist for Thursday afternoon" was read as "book the afternoon flight". A pick refers to the
+  // list Gogo showed ("the evening one", "#2"); "a/an <something>" or "… for <when>" is a new booking request.
+  if (/^(?:a|an|some|my)\b/.test(rest) || /\bfor\b/.test(rest) || rest.split(/\s+/).filter(Boolean).length > 5) return null
   if (/\bnon[- ]?stop\b|\bdirect\b/.test(rest)) return { kind: 'nonstop' }
   const num = rest.match(/(?:#|option\s*|number\s*|no\.?\s*)(\d)\b/) || rest.match(/^(\d)$/)
   if (num) return { kind: 'number', n: Number(num[1]) }

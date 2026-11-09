@@ -50,7 +50,7 @@ export function placeAnswer(text: string): SavedPlace | null {
   return pincode || area ? { kind: 'home', area, pincode } : null
 }
 
-async function savedPlaces(telegramId: string) {
+export async function savedPlaces(telegramId: string) {
   const { data, error } = await supabaseAdmin.from('memories').select('content').eq('telegram_id', telegramId)
     .or('content.ilike.Home area:%,content.ilike.Office area:%,content.ilike.%live in%,content.ilike.%live at%,content.ilike.%stay in%,content.ilike.%based in%,content.ilike.%home is%')
     .order('created_at', { ascending: false }).limit(30)
