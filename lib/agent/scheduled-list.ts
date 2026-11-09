@@ -2,10 +2,18 @@
 // repeating reminders, one-time reminders in the next 7 days, active watches, goals, the morning briefing and
 // Gogo's own check-ins — with the next run and the command that stops it. Read-only: saved state, exact owner,
 // no writes, sends or provider calls. A source that fails to read is said, never reported as "nothing scheduled".
+import { watchName, watchRule } from './watch-command'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { describeCadence } from '@/lib/services/reminder-series'
 import type { AgentActor } from './actor'
 
+/** Cut at a word boundary with an ellipsis, never mid-word. */
+function shortTitle(v: string, max: number) {
+  const t = clean(v, 400)
+  if (t.length <= max) return t
+  const cut = t.slice(0, max - 1).replace(/\s+\S*$/, '').replace(/[\s,;:·—-]+$/, '')
+  return `${cut || t.slice(0, max - 1)}…`
+}
 const clean = (v: unknown, max = 80) => String(v ?? '').replace(/[*_~`]/g, '').replace(/\s+/g, ' ').trim().slice(0, max)
 
 /** "what's scheduled", "show my scheduled tasks", "what have you scheduled for me". Never "my schedule today" (calendar). */
@@ -64,7 +72,10 @@ export function composeScheduledList(i: ScheduledInput, opts: { timezone?: strin
     const watches = i.watchers.filter(w => String(w.type || '') !== 'goal_review')
     if (watches.length) sections.push(['*Watches*', ...watches.map(w => {
       const c = w.condition_json || {}
-      const title = clean(c.title || c.query || c.product || w.type || 'Watch', 70)
+      // 4 Nov (retest #1): titles read "…below" and "256GB 256GB". Same name and rule as "show my watches".
+      const name = shortTitle(watchName(w), 70)
+      const rule = watchRule(w)
+      const title = rule ? `${name} · ${rule}` : name
       const cadence = Number(w.cadence_minutes || c.cadenceMinutes || 0)
       return line(`${title}${cadence ? ` · checks ${every(cadence)}` : ''}${when(w.next_check_at, tz) ? ` · next ${when(w.next_check_at, tz)}` : ''}`)
     })].join('\n'))
@@ -90,7 +101,7 @@ const ownerKey = (tg: string): number | string => { const n = Number(tg); return
 export async function loadScheduledList(telegramId: string | number, now = Date.now()) {
   if (typeof telegramId === 'number' && !Number.isSafeInteger(telegramId)) throw new Error('scheduled_owner_invalid')
   const tg = String(telegramId ?? '').trim()
-  if (!/^[1-9]\d{0,18}$/.test(tg)) throw new Error('scheduled_owner_invalid')
+  if (!/^-?[1-9]\d{0,18}$/.test(tg)) throw new Error('scheduled_owner_invalid')
   const key = ownerKey(tg)
   const since = new Date(now - 3600_000).toISOString()
   const [rem, wat, goals, user] = await Promise.all([
