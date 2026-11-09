@@ -75,7 +75,8 @@ for (const owner of [17, -17]) {
   assert.match(summary, /Gogo capacity/)
   assert.ok(queries.length >= 6, 'safe controls exercise fake read/write paths')
   assert.ok(queries.every(query => query.equals.some(([column, value]) =>
-    column === 'telegram_id' && value === owner) ||
+    // main binds usage_events with String(owner); same exact identity, text-typed for BIGINT safety.
+    column === 'telegram_id' && (value === owner || value === String(owner))) ||
     (query.table === 'memories' && query.operation === 'insert')),
     'all private read/update queries bind safe owner exactly')
 }
