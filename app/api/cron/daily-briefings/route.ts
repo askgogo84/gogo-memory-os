@@ -133,7 +133,16 @@ async function runDelivery(req: NextRequest) {
     if (receiptFailures) failures.push({ channel: 'email_receipt', status: 'reconciliation_failed' })
     const { data: saved, error: cursorError } = await supabaseAdmin.from('delivery_scan_cursors').select('cursor_value').eq('source', 'briefing').maybeSingle()
     if (cursorError) throw new Error('briefing_cursor_read_failed')
-    let cursor = Number(saved?.cursor_value ?? Number.MIN_SAFE_INTEGER)
+    // Service-role scan cursors may be BIGINT strings. Never round one through Number:
+    // a rounded cursor can skip a distinct tenant or revisit another tenant's work.
+    const storedCursor = saved?.cursor_value
+    const cursorText = storedCursor == null ? String(Number.MIN_SAFE_INTEGER) : String(storedCursor)
+    if ((storedCursor != null && typeof storedCursor !== 'string' && (typeof storedCursor !== 'number' || !Number.isSafeInteger(storedCursor))) ||
+        !/^(?:0|-?[1-9]\d*)$/.test(cursorText) ||
+        BigInt(cursorText) < BigInt('-9223372036854775808') || BigInt(cursorText) > BigInt('9223372036854775807')) {
+      throw new Error('briefing_cursor_identity_invalid')
+    }
+    let cursor = cursorText
     let exhausted = false
     while (Date.now() < deadline && checked < 500) {
       const { data: users, error } = await supabaseAdmin.from('users')
@@ -144,7 +153,20 @@ async function runDelivery(req: NextRequest) {
       if (!users?.length) { exhausted = true; break }
       for (const user of users) {
         if (Date.now() >= deadline) break
-        const owner = Number(user.telegram_id)
+        // A persisted signed BIGINT owner must be exact BEFORE any private summary,
+        // consent check, idempotency key, unsubscribe token, or notification job.
+        const persistedOwner = user.telegram_id
+        const ownerExact = typeof persistedOwner === 'string' || typeof persistedOwner === 'number' ? String(persistedOwner) : ''
+        if ((typeof persistedOwner !== 'string' && (typeof persistedOwner !== 'number' || !Number.isSafeInteger(persistedOwner))) ||
+            !/^-?[1-9]\d*$/.test(ownerExact) ||
+            BigInt(ownerExact) < BigInt('-9223372036854775808') || BigInt(ownerExact) > BigInt('9223372036854775807')) {
+          throw new Error('briefing_owner_identity_invalid')
+        }
+        const owner = Number(ownerExact)
+        // Downstream briefing, suppression and notification APIs currently accept
+        // JS number owners. Don't alias a valid >2^53 BIGINT to another account.
+        // Advance the scan using its original lossless string, but do not deliver.
+        if (!Number.isSafeInteger(owner)) { cursor = ownerExact; checked++; continue }
         let fullBriefing: string | null = null
         const prepare = async () => {
           if (fullBriefing !== null) return
@@ -158,9 +180,15 @@ async function runDelivery(req: NextRequest) {
         }
         const ready = async (channel: 'email' | 'whatsapp', target: string) => {
           const { data: fresh, error } = await supabaseAdmin.from('users')
-            .select('whatsapp_id, email, briefing_enabled, briefing_time, daily_brief_email_enabled').eq('telegram_id', owner).maybeSingle()
+            .select('telegram_id, whatsapp_id, email, briefing_enabled, briefing_time, daily_brief_email_enabled').eq('telegram_id', owner).maybeSingle()
           if (error) throw new Error('briefing_consent_read_failed')
-          if (!fresh || nowIstParts().date !== now.date || !shouldRunForTime(fresh.briefing_time, nowMinutes)) return false
+          // A query predicate alone is insufficient authorization under a
+          // service-role adapter: verify the returned row's exact owner too.
+          const returnedOwner = fresh?.telegram_id
+          if (!fresh || (typeof returnedOwner !== 'string' && typeof returnedOwner !== 'number') ||
+              (typeof returnedOwner === 'number' && !Number.isSafeInteger(returnedOwner)) ||
+              String(returnedOwner) !== ownerExact || nowIstParts().date !== now.date ||
+              !shouldRunForTime(fresh.briefing_time, nowMinutes)) return false
           return channel === 'email' ? fresh.daily_brief_email_enabled === true && String(fresh.email || '').trim().toLowerCase() === target
             : fresh.briefing_enabled === true && normalizePhone(fresh.whatsapp_id) === target && !await isSuppressed(owner, target)
         }
@@ -176,6 +204,13 @@ async function runDelivery(req: NextRequest) {
                 accepted: () => markWhatsappSentToday(owner, now.date) })
               if (status === 'provider_accepted') sentWhatsapp++
               if (['failed','outcome_unknown','persistence_failed'].includes(status)) failures.push({ owner, channel: 'whatsapp', status })
+            }
+            // v2 (9 Nov): the same morning, a topic brief is saved under Make for the dashboard chat (Spaces accounts only).
+            if (Date.now() < deadline) {
+              try {
+                const live = await import('@/lib/spaces/sources-live')
+                if (live.spacesEnabledFor(String(owner))) await (await import('@/lib/briefing/daily-brief-writer')).writeDailyBrief(String(owner))
+              } catch (e: any) { console.error('DAILY_BRIEF_TOPIC_FAILED:', String(e?.message || e).slice(0, 160)) }
             }
             if (Date.now() < deadline && user.daily_brief_email_enabled && email && !await alreadyEmailSentToday(owner, now.date)) {
               let rendered: ReturnType<typeof renderDailyBriefEmail>
@@ -203,7 +238,7 @@ async function runDelivery(req: NextRequest) {
             }
           }
         } catch { failures.push({ owner, channel: 'prepare', status: 'failed' }) }
-        cursor = owner; checked++
+        cursor = ownerExact; checked++
       }
     }
     const { error: saveError } = await supabaseAdmin.from('delivery_scan_cursors').upsert({ source: 'briefing', cursor_value: exhausted ? Number.MIN_SAFE_INTEGER : cursor })
