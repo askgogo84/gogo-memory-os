@@ -345,10 +345,12 @@ async function handleWhatsAppPost(req: NextRequest) {
       }
     }
 
-    // A bare one-time code is never written to the logs (it may be a booking OTP).
-    const loggedBody = otpReply(String(formData.get('Body') || '')) ? '[code withheld]' : String(formData.get('Body') || '')
-    console.log('RAW_TWILIO:', { ...Object.fromEntries([...formData.entries()]), Body: loggedBody })
-    console.log('WhatsApp inbound:', { fromRaw, from, profileName, numMedia, messageSid: inboundMessageSid, body: loggedBody, mediaType: String(formData.get('MediaContentType0') || ''), allKeys: [...formData.keys()].join(',') })
+    // Runtime logs never carry message text, sender number, profile name, media
+    // URLs or arbitrary form values: only shape (length, counts, keys, type) and
+    // the MessageSid for operational tracing. A one-time code is marked as such.
+    const loggedBody = otpReply(String(formData.get('Body') || '')) ? '[code withheld]' : `[${String(formData.get('Body') || '').length} chars withheld]`
+    console.log('RAW_TWILIO:', { MessageSid: String(formData.get('MessageSid') || ''), NumMedia: String(formData.get('NumMedia') || ''), MediaContentType0: String(formData.get('MediaContentType0') || ''), Body: loggedBody, keys: [...formData.keys()].join(',') })
+    console.log('WhatsApp inbound:', { fromTail: from ? `***${String(from).slice(-4)}` : '', hasProfileName: Boolean(profileName), numMedia, messageSid: inboundMessageSid, body: loggedBody, mediaType: String(formData.get('MediaContentType0') || ''), allKeys: [...formData.keys()].join(',') })
     if (!from) return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
 
     // ── Consent gate: STOP / UNSUBSCRIBE ────────────────────────────────────────
