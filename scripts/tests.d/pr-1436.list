@@ -1,0 +1,2 @@
+# tests added by PR #1436
+npx tsx scripts/verify-booking-queue-idempotency-testonly.mts
