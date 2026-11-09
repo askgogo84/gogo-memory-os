@@ -76,8 +76,10 @@ export async function indexMemory(params: {
 }): Promise<void> {
   try {
     const raw = (params.content || '').slice(0, 2000).trim()
-    const content = sanitizeSensitiveDocumentIndex(raw, params.sourceTable)
-    if (!isIndexable(content)) return
+    // The final outbound embedding boundary must enforce the same secret gate
+    // as freeform recall; a successful memory save must not export secrets.
+    const content = recallableMemoryText(raw, params.sourceTable)
+    if (!content) return
     const sourceTable = params.sourceTable || 'memories'
     // A deleted memory must not be sent for embedding or re-indexed from a stale task.
     if (sourceTable === 'memories' && !await ownerMemoryStillExists(params.telegramId, params.sourceId)) return
