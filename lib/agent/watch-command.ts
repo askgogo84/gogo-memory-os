@@ -89,6 +89,16 @@ export function shortCheckTime(value:unknown,now=Date.now()){
   return istDay(t)===istDay(now)?time:`${istDay(t)}, ${time}`
 }
 const priceAmount=(c:any)=>{const raw=`${c.query||''} ${c.title||''}`;const m=raw.match(/\b(?:below|under)\s+(₹?\s?[\d,]{3,})/i);return c.priceRule?.threshold??(m?parseMoneyAmount(m[1]):null)}
+// Red #1126: "search watch" and "price alert" name a KIND of watch. When several watches share the product name, an
+// explicit kind filters strictly; if no watch of that kind matches, Gogo asks instead of changing a stock or price
+// alert the person did not name. A bare "alert" keeps its older, non-strict preference for the price alert.
+const watchKind=(row:any)=>priceAmount(row?.condition_json||{})?'price':row?.type==='web_search'?'search':String(row?.type||'')
+function requestedWatchKind(said:string):'search'|'price'|null{
+  if(/\bsearch(?:es)?\b/i.test(said)&&!/\b(?:price\s+alert|below|under)\b/i.test(said))return 'search'
+  if(/\bprice\s+alerts?\b|\bbelow\b|\bunder\b/i.test(said))return 'price'
+  return null
+}
+const KIND_WORD={search:'search watch',price:'price alert'} as const
 const priceOffers=(c:any)=>{const raw=`${c.query||''} ${c.title||''}`;return c.priceRule?.offers||(/including bank\/card offers/i.test(raw)?'included':/excluding bank\/card offers/i.test(raw)?'excluded':null)}
 /** The thing being watched, without the rule: "iPhone 16 128GB on Croma". */
 export function watchName(row:any){
@@ -339,9 +349,14 @@ export async function tryRestartWatcherFromCommand(params:{actor:AgentActor;text
   // "restart the iPhone 17 alert watch" after the alert and a plain search for the same phone were both stopped.
   if(tie){
     const tied=ranked.filter((x:any)=>x.score===best.score),said=String(params.text||'')
-    const wantsSearch=/\bsearch(?:es)?\b/i.test(said)&&!/\b(?:price\s+alert|below|under)\b/i.test(said)
-    const wantsAlert=/\b(?:price\s+)?alerts?\b|\bbelow\b|\bunder\b/i.test(said)&&!wantsSearch
-    const pick=wantsSearch?tied.filter((x:any)=>!priceAmount(x.row.condition_json||{})):wantsAlert?tied.filter((x:any)=>priceAmount(x.row.condition_json||{})):[]
+    const want=requestedWatchKind(said)
+    const wantsAlert=!want&&/\balerts?\b/i.test(said)
+    if(want&&!tied.some((x:any)=>watchKind(x.row)===want)){
+      const options=tied.slice(0,5).map((x:any,i:number)=>`${i+1}. ${compactWatchLine(x.row).text}`).join('\n')
+      return {runId:'watcher-restart-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+        text:`I couldn't find a stopped ${KIND_WORD[want]} for ${clean(target,80)}. These stopped watches match the name:\n${options}\n\nWhich one should I restart? Nothing was changed.`,handledBy:'watcher-restart'}
+    }
+    const pick=want?tied.filter((x:any)=>watchKind(x.row)===want):wantsAlert?tied.filter((x:any)=>priceAmount(x.row.condition_json||{})):[]
     // 30 Oct live: older stopped copies of the same alert made "restart the iPhone 17 256GB price alert watch" ask
     // "be more specific". Rows are newest-stopped first, so the most recently stopped match is the one meant.
     if(pick.length){best=pick[0];tie=false}
@@ -429,12 +444,21 @@ export async function tryStopWatcherFromCommand(params:{actor:AgentActor;text:st
       // 30 Oct live: "stop the iPhone 17 256GB price India search" also stopped the ₹70,000 price alert for the same
       // phone. A price alert and a plain search are different watches: "search" picks the search, "alert" the alert,
       // and anything still mixed is asked about rather than stopped together.
-      const kindOf=(x:any)=>priceAmount(x.row.condition_json||{})?'price':`${x.row.type}`
+      const kindOf=(x:any)=>watchKind(x.row)
+      const said=String(params.text||'')
+      const want=requestedWatchKind(said)
+      if(want){
+        const exact=tied.filter((x:any)=>kindOf(x)===want)
+        if(!exact.length){
+          const list=tied.slice(0,6).map((x:any,i:number)=>`${i+1}. ${compactWatchLine(x.row).text}`).join('\n')
+          return {runId:'watcher-stop-ambiguous',status:'paused' as const,capability:'browser' as const,risk:'low' as const,
+            text:`I couldn't find a ${KIND_WORD[want]} for ${typedWatchName(params.text)}. These watches match the name:\n${list}\n\nWhich one should I stop? Nothing was changed.`,handledBy:'watcher-stop'}
+        }
+        tied=exact
+      }
       if(new Set(tied.map(kindOf)).size>1){
-        const said=String(params.text||'')
-        const wantsSearch=/\bsearch(?:es)?\b/i.test(said)&&!/\b(?:price\s+alert|below|under)\b/i.test(said)
-        const wantsAlert=/\b(?:price\s+)?alerts?\b|\bbelow\b|\bunder\b/i.test(said)&&!wantsSearch
-        const pick=wantsSearch?tied.filter((x:any)=>!priceAmount(x.row.condition_json||{})):wantsAlert?tied.filter((x:any)=>priceAmount(x.row.condition_json||{})):[]
+        const wantsAlert=!want&&/\balerts?\b/i.test(said)
+        const pick=wantsAlert?tied.filter((x:any)=>priceAmount(x.row.condition_json||{})):[]
         if(pick.length&&new Set(pick.map(kindOf)).size===1)tied=pick
         else{
           const list=tied.slice(0,6).map((x:any,i:number)=>`${i+1}. ${compactWatchLine(x.row).text}`).join('\n')
