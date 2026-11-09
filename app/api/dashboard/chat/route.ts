@@ -456,6 +456,17 @@ async function handleChatPost(req: NextRequest) {
       await saveConversation(user.telegram_id,text,mailRules)
       return NextResponse.json({runId:'mail-alert-rules',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,text:mailRules,handledBy:'mail-alert-rules'})
     }
+    // "morning brief" / "brief me" (9 Nov): write today's topic brief now and answer with it; the card appears on top of the thread.
+    if(/^(?:(?:my|the|today'?s)\s+)?(?:morning\s+)?brief(?:ing)?(?:\s+me)?(?:\s+now)?\s*[.!?]?$|^brief\s+me\s*[.!?]?$/i.test(text.trim())&&(globalThis as any).process?.env?.VERCEL_ENV){
+      const live=await import('@/lib/spaces/sources-live').catch(()=>null)
+      if(live&&typeof live.spacesEnabledFor==='function'&&live.spacesEnabledFor(String(user.telegram_id))===true){
+        const made=await import('@/lib/briefing/daily-brief-writer').then(async w=>{const b=await w.writeDailyBrief(String(user.telegram_id));if(!b)return null;const t=await import('@/lib/briefing/topic-brief');return `☀️ *Your brief*\n${t.formatTopicBrief(b)}\n\nTap a topic above to open it. Saved under Make → Briefs.`},()=>null).catch(()=>null)
+        if(made){
+          await saveConversation(user.telegram_id,text,made)
+          return NextResponse.json({runId:'topic-brief',status:'completed',capability:'orchestrator',risk:'low',readOnly:true,mutated:false,text:made,handledBy:'topic-brief'})
+        }
+      }
+    }
     // "Build me one page I can check every morning" (9 Nov, v2 mock): a living page (Space) from chat, Spaces accounts only.
     const pageAskRaw:any=(globalThis as any).process?.env?.VERCEL_ENV?await import('@/lib/spaces/from-chat').then(m=>typeof m?.parsePageAsk==='function'?m.parsePageAsk(text):null,()=>null):null
     const pageAsk=pageAskRaw&&typeof pageAskRaw==='object'&&typeof pageAskRaw.template==='string'?pageAskRaw as {template:'my_day'|'trip_board';title:string|null}:null
