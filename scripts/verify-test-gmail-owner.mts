@@ -61,6 +61,8 @@ const mocks: Record<string, any> = {
     },
   },
   '@/lib/security/cron-auth': { isInternalServiceAuthorized: (req: any) => req.authorized === true },
+  // Main's affirmative-consent gate (#1255) runs after the owner checks; grant it so they are exercised.
+  '@/lib/agent/gmail-consent': { gmailConsentState: async () => 'on' },
   '@/lib/security/google-token-crypto': {
     decryptGoogleToken: (token: string) => { decrypts.push(token); return token },
     encryptGoogleToken: (token: string) => 'encrypted:' + token,

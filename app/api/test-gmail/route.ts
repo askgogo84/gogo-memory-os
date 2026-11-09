@@ -14,7 +14,7 @@ function exactOwnerDecimal(value: unknown): string | null {
   if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
   try {
     const n = BigInt(value)
-    if (n < -(1n << 63n) || n > (1n << 63n) - 1n) return null
+    if (n < BigInt('-9223372036854775808') || n > BigInt('9223372036854775807')) return null
     return value
   } catch { return null }
 }
