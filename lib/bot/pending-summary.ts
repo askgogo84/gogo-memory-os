@@ -27,7 +27,11 @@ export async function buildPendingSummary(telegramId: string, tz = 'Asia/Kolkata
     if (more > 0) lines.push(`• …and ${more} more`)
     lines.push('')
   }
-  section('Needs your yes', feed.need.slice(0, 5).map(i => `${i.title}${i.tag ? ` — ${i.tag.toLowerCase()}` : ''}`), feed.need.length - 5)
+  // 5 Nov live: finished runs ("Gogo thinks it's done") filled "Needs your yes" as if they were decisions. Only real
+  // decisions sit there; finished runs become one line pointing to where they are checked off.
+  const decisions = feed.need.filter(i => i.state !== 'done')
+  const finished = feed.need.filter(i => i.state === 'done')
+  section('Needs your yes', decisions.slice(0, 5).map(i => `${i.title}${i.tag ? ` — ${i.tag.toLowerCase()}` : ''}`), decisions.length - 5)
   const working = feed.radar.filter(i => i.tag === 'Working now')
   const watches = feed.radar.filter(i => i.tag !== 'Working now')
   section('Gogo is working on', working.slice(0, 4).map(i => i.title), working.length - 4)
@@ -35,6 +39,7 @@ export async function buildPendingSummary(telegramId: string, tz = 'Asia/Kolkata
   section('Reminders still due today', dueToday.slice(0, 5).map((r: any) => `${clock(r.remind_at, tz)} · ${r.message || 'Reminder'}`), dueToday.length - 5)
   const open = (todos as any).ok ? (todos as any).open : []
   section('Open to-dos', open.slice(0, 5).map((t: any) => t.label), open.length - 5)
+  if (finished.length) lines.push(`✔️ ${finished.length} finished task${finished.length === 1 ? '' : 's'} to check off on the dashboard${finished[0] ? ` (e.g. ${finished[0].title})` : ''}.`, '')
   const watchTotal = Math.max(0, (feed.radarCount ?? feed.radar.length) - working.length)
   if (watchTotal) lines.push(`👀 ${watchTotal} background watch${watchTotal === 1 ? '' : 'es'} running${watches[0] ? ` (e.g. ${watches[0].title})` : ''}.`, '')
 

@@ -10,6 +10,8 @@ export type AgentCapability =
   | 'contacts'
   | 'travel'
   | 'payments'
+  // AskGogo Enterprise (Tipplr pilot, 7 Nov): accept/reject an order, item availability. Consequential: one tap each.
+  | 'merchant'
 
 export type AgentPermissionLevel = 'off' | 'read' | 'draft' | 'ask' | 'auto'
 export type AgentActionMode = 'read' | 'draft' | 'execute'
@@ -28,7 +30,7 @@ export type AgentExecutionPolicyResult =
   | { allowed: true; reason: 'read_allowed' | 'draft_allowed' | 'safe_auto_execute' | 'approved_execute' }
   | { allowed: false; reason: 'permission_off' | 'permission_insufficient' | 'approval_required' | 'approval_not_valid' | 'auto_not_allowed_for_consequential_action' }
 
-const CONSEQUENTIAL_CAPABILITIES = new Set<AgentCapability>(['email', 'calendar', 'browser', 'travel', 'payments'])
+const CONSEQUENTIAL_CAPABILITIES = new Set<AgentCapability>(['email', 'calendar', 'browser', 'travel', 'payments', 'merchant'])
 
 function rank(level: AgentPermissionLevel): number {
   switch (level) {
