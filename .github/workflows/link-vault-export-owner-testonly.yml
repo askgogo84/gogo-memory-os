@@ -1,0 +1,34 @@
+name: Link Vault export owner isolation (TEST ONLY, expected security RED)
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/verify-link-vault-export-owner-testonly.mjs'
+      - '.github/workflows/link-vault-export-owner-testonly.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert checkout equals literal PR head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run original-source synthetic private Link Vault owner tests (EXPECTED RED)
+        run: node scripts/verify-link-vault-export-owner-testonly.mjs
