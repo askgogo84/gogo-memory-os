@@ -177,6 +177,13 @@ async function runDelivery(req: NextRequest) {
               if (status === 'provider_accepted') sentWhatsapp++
               if (['failed','outcome_unknown','persistence_failed'].includes(status)) failures.push({ owner, channel: 'whatsapp', status })
             }
+            // v2 (9 Nov): the same morning, a topic brief is saved under Make for the dashboard chat (Spaces accounts only).
+            if (Date.now() < deadline) {
+              try {
+                const live = await import('@/lib/spaces/sources-live')
+                if (live.spacesEnabledFor(String(owner))) await (await import('@/lib/briefing/daily-brief-writer')).writeDailyBrief(String(owner))
+              } catch (e: any) { console.error('DAILY_BRIEF_TOPIC_FAILED:', String(e?.message || e).slice(0, 160)) }
+            }
             if (Date.now() < deadline && user.daily_brief_email_enabled && email && !await alreadyEmailSentToday(owner, now.date)) {
               let rendered: ReturnType<typeof renderDailyBriefEmail>
               let unsubscribeUrl: string
