@@ -104,7 +104,19 @@ export function summaryPrompt(previous: string, rows: ConversationRow[]): string
   return groundedSummaryPrompt(summarySources(0, rows))
 }
 
-export async function refreshConversationSummary(telegramId: number, deps: { db?: any; ask?: typeof askMercury } = {}): Promise<'disabled' | 'not_needed' | 'updated' | 'failed'> {
+/** Second try when Mercury returns nothing (8 Nov: 2,956 of 3,000 tokens spent reasoning, chars 0). */
+async function askHaikuSummary(prompt: string): Promise<{ text: string } | null> {
+  const key = String(process.env.ANTHROPIC_API_KEY || '').trim(); if (!key) return null
+  try {
+    const { default: Anthropic } = await import('@anthropic-ai/sdk'); const { HAIKU_MODEL } = await import('@/lib/services/model-ids')
+    const res: any = await new Anthropic({ apiKey: key }).messages.create({ model: HAIKU_MODEL, max_tokens: 1200, temperature: 0.2, messages: [{ role: 'user', content: prompt }] }, { timeout: 20_000 })
+    const text = (res?.content || []).map((b: any) => b?.type === 'text' ? b.text : '').join('').trim()
+    console.log('CHAT_SUMMARY_FALLBACK:', JSON.stringify({ model: HAIKU_MODEL, chars: text.length }))
+    return text ? { text } : null
+  } catch (e: any) { console.error('CHAT_SUMMARY_FALLBACK_FAILED:', String(e?.message || e).slice(0, 160)); return null }
+}
+
+export async function refreshConversationSummary(telegramId: number, deps: { db?: any; ask?: typeof askMercury; fallback?: (prompt: string) => Promise<{ text: string } | null> } = {}): Promise<'disabled' | 'not_needed' | 'updated' | 'failed'> {
   if (!chatSummaryEnabled()) return 'disabled'
   const db = deps.db || supabaseAdmin
   try {
@@ -119,7 +131,12 @@ export async function refreshConversationSummary(telegramId: number, deps: { db?
     if (newSources.length && fold.length < MIN_NEW_MESSAGES && rows.length < MAX_OLDER) return 'not_needed'
     let evidence: SummaryEvidence, resultText: string | undefined
     if (newSources.length) {
-      const result = await (deps.ask || askMercury)(groundedSummaryPrompt(sources), { maxTokens: 600, label: 'chat_summary' })
+      // 29 Oct live: mercury-3 spent all 600 tokens reasoning and returned an empty summary (chars 0), so long-term
+      // conversation memory silently stopped updating. Reasoning needs headroom before the answer is written.
+      const prompt = groundedSummaryPrompt(sources)
+      let result: { text: string } | null = await (deps.ask || askMercury)(prompt, { maxTokens: 3000, timeoutMs: 25_000, label: 'chat_summary' })
+      const fallback = deps.fallback || (deps.ask ? null : askHaikuSummary)
+      if (!result?.text?.trim() && fallback) result = await fallback(prompt)
       if (!result?.text?.trim()) return 'failed'
       resultText = result.text
     } else {

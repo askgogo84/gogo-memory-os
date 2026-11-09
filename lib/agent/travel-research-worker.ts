@@ -126,6 +126,11 @@ export async function processTravelResearchQueue(deadline: number) {
             if(markError) throw new Error('travel_delivery_marker_failed')
             const {error:historyError} = await supabaseAdmin.from('conversations').insert({telegram_id:actor.legacyTelegramId,role:'assistant',content:text})
             if(historyError) throw new Error('travel_delivery_history_failed')
+            // Questions asked while this search ran (lib/agent/brain.ts) are answered now, from the fresh results.
+            try{
+              const brain:any=await import('./brain')
+              if(typeof brain?.answerFollowups==='function')await brain.answerFollowups({runId:run.id,telegramId:Number(actor.legacyTelegramId),send:(t:string)=>sendWhatsApp(actor.whatsappId,t)})
+            }catch(error){console.warn('TRAVEL_FOLLOWUPS_FAILED:',error instanceof Error?error.message.slice(0,80):'unknown')}
           },
         })
         if(status === 'provider_accepted') published++
