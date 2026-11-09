@@ -228,7 +228,10 @@ async function runDelivery(req: Request) {
         const rw = await import('@/lib/agent/reply-watch').catch(() => null)
         const name = rw?.replyCheckName(raw)
         const gm = name ? await import('@/lib/bot/handlers/gmail-read').catch(() => null) : null
-        const got = gm && name ? await gm.latestEmailFrom(Number(reminder.telegram_id), name, String(reminder.created_at || reminder.remind_at)).catch(() => undefined) : undefined
+        // Exact owner first; the Gmail helper takes a number, so only an id that round-trips exactly is passed.
+        const gmailOwner = exactReminderOwner(reminder.telegram_id)
+        const gmailOwnerId = gmailOwner !== null && String(Number(gmailOwner)) === gmailOwner && Number.isSafeInteger(Number(gmailOwner)) ? Number(gmailOwner) : null
+        const got = gm && name && gmailOwnerId !== null ? await gm.latestEmailFrom(gmailOwnerId, name, String(reminder.created_at || reminder.remind_at)).catch(() => undefined) : undefined
         if (name && got) { text = `✅ ${name} replied (${new Date(got.at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', timeZone: 'Asia/Kolkata' })}: "${got.subject}"). No follow-up needed.`; jobDone = true }
         // A null read is inconclusive, never proof of no reply: only the latest 30 INBOX emails are checked (older,
         // archived or filtered replies are missed) and null also covers Gmail being unconnected or without consent.
