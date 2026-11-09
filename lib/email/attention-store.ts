@@ -98,7 +98,15 @@ async function gmailToken(telegramId: number) {
 async function readGmail(telegramId: number) {
   const access = await gmailToken(telegramId)
   if (!access) return null
-  const threads = await fetchGmailAttentionThreads(access.token, 20)
+  // 6 Nov (owner): the extra Google accounts are read alongside the primary; one failing never drops the rest.
+  const extras = await import('@/lib/agent/gmail-accounts').then(m => typeof m?.listExtraGmailAccounts === 'function' ? m.listExtraGmailAccounts(telegramId) : []).catch(() => [] as import('@/lib/agent/gmail-accounts').ExtraGmailAccount[])
+  const extraThreads = await Promise.all(extras.map(async a => {
+    try {
+      const token = (a.refreshToken && await refreshGmailAccessToken(a.refreshToken)) || a.accessToken
+      return token ? await fetchGmailAttentionThreads(String(token), 12) : []
+    } catch (err: any) { console.error('ATTENTION_EXTRA_ACCOUNT_FAILED:', JSON.stringify({ email: a.email, error: String(err?.message || err).slice(0, 100) })); return [] }
+  }))
+  const threads = [...await fetchGmailAttentionThreads(access.token, 20), ...extraThreads.flat()]
   const own = access.email
   const replied = new Set<string>()
   const emails: AttentionEmail[] = []
