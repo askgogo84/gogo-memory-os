@@ -1,4 +1,6 @@
 import { Suspense } from 'react'
+import { getTodayFeed } from '@/lib/dashboard/today-feed'
+import { TodayFeed } from '@/components/dashboard/today-feed'
 import { getSession } from '@/lib/dashboard/session'
 import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { supabaseAdmin } from '@/lib/supabase-admin'
@@ -97,7 +99,7 @@ export default async function TodayPage() {
   // Keep owner identity as an exact decimal string at every private Today read boundary.
   // Normal dashboard sessions are already validated upstream; this page also fails closed.
   const ownerId = exactSessionOwnerId(session?.telegramId)
-  const [{ data: user }, today, lists, usage, memory, profile, friends] = await Promise.all([
+  const [{ data: user }, today, lists, usage, memory, profile, friends, feed] = await Promise.all([
     ownerId
       ? supabaseAdmin
           .from('users')
@@ -111,6 +113,8 @@ export default async function TodayPage() {
     ownerId ? getDashboardMemory(ownerId) : Promise.resolve({ ok: true as const, items: [] }),
     ownerId ? getProfile(ownerId) : Promise.resolve({ ok: false } as const),
     ownerId ? getFriendContacts(ownerId) : Promise.resolve({ ok: true as const, contacts: [], count: 0 }),
+    // Today feed (5 Nov): what Gogo noticed while WhatsApp stayed quiet. Never fails the page.
+    ownerId ? getTodayFeed(ownerId).catch(() => null) : Promise.resolve(null),
   ])
 
   const tz = user?.timezone || 'Asia/Kolkata'
@@ -198,6 +202,8 @@ export default async function TodayPage() {
           )}
         </header>
 
+        {feed ? <TodayFeed needs={feed.needs} noticed={feed.noticed} done={feed.done} tz={tz} /> : null}
+
         {!today.ok ? (
           <CardError message="Couldn’t load your reminders right now." />
         ) : today.reminders.length === 0 ? (
@@ -223,6 +229,7 @@ export default async function TodayPage() {
         )}
       </div>
 
+      {feed ? <div className="mb-6 hidden max-w-[720px] lg:block"><TodayFeed needs={feed.needs} noticed={feed.noticed} done={feed.done} tz={tz} /></div> : null}
       <div className="hidden lg:block [&>div]:mx-0 [&>div]:max-w-none">
         <TodayDesktop
           greeting={greeting}

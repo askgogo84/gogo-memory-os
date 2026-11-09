@@ -92,11 +92,18 @@ export async function checkWhatsAppAccess(phone: string, profileName?: string, t
       const invite = await redeemInvite(inviteCode, p, profileName)
       if (invite.ok) {
         const joined = { status: 'joined', joined_at: now, approved_at: now, approved_by: `invite:${invite.code}`, last_notified_at: now }
+        // An invite redemption is not authorization by itself. Require one
+        // durable owner-phone waitlist write before admitting this message.
+        // Errors, duplicate conflicts and no-row writes are UNKNOWN: fail closed,
+        // never retry the redemption automatically.
         const write = row
-          ? await supabaseAdmin.from('waitlist').update(joined).eq('id', row.id)
+          ? await supabaseAdmin.from('waitlist').update(joined).eq('id', row.id).select('id')
           : await supabaseAdmin.from('waitlist').insert({ phone_e164: p, source: 'whatsapp', country: countryOf(p), whatsapp_opt_in: true,
-              profile_name: profileName ? String(profileName).slice(0, 80) : null, admin_note: `Joined with invite ${invite.code}`, ...joined })
-        if (write.error && write.error.code !== '23505') console.error('ACCESS_GATE_INVITE_WAITLIST_WRITE_FAILED', write.error.code)
+              profile_name: profileName ? String(profileName).slice(0, 80) : null, admin_note: `Joined with invite ${invite.code}`, ...joined }).select('id')
+        if (write.error || !Array.isArray(write.data) || write.data.length !== 1 || !write.data[0]?.id) {
+          console.error('ACCESS_GATE_INVITE_WAITLIST_WRITE_FAILED', write.error?.code || 'unconfirmed_write')
+          return unavailableAccess()
+        }
         return { allow: true, reason: 'invited', invite }
       }
       if (invite.reason === 'used_up') inviteReply = INVITE_USED_UP_REPLY

@@ -100,9 +100,13 @@ export function parseGmailReplyCommand(text:string){
     || raw.match(/^(?:draft\s+(?:a\s+)?reply|reply|respond)\s+to\s+(?:the\s+)?(.+?)\s+(?:email|mail|message)\s+(?:saying|with|:)\s*(.+)$/i)
   if(!m)return null
   const target=clean(m[1],180)
-  const body=String(m[2]||'').trim().slice(0,6000)
+  // 29 Oct live: "… saying I'll get back by Friday. Don't send." put "Don't send." into the email itself.
+  // A trailing instruction to Gogo is not part of the message, and it makes the request draft-only.
+  const tail=/[\s.,;!-]*\b(?:(?:please\s+)?(?:don'?t|do\s+not|dont)\s+send(?:\s+(?:it|this|yet|anything))*|just\s+(?:draft|show)(?:\s+(?:it|me))*|draft\s+only|show\s+me\s+(?:first|before\s+sending))[\s.!]*$/i
+  const stop=tail.test(String(m[2]||''))
+  const body=String(m[2]||'').replace(tail,'').trim().replace(/\s*[,;]$/,'').slice(0,6000)
   if(!target||!body)return null
-  return {target,body,draftOnly}
+  return {target,body,draftOnly:draftOnly||stop}
 }
 
 async function gmailAccess(actor:AgentActor,{requireSend=false}:{requireSend?:boolean}={}){
@@ -111,6 +115,8 @@ async function gmailAccess(actor:AgentActor,{requireSend=false}:{requireSend?:bo
     .eq('telegram_id',actor.legacyTelegramId).maybeSingle()
   if(error)throw new Error(`gmail_send_user_read_failed:${error.message}`)
   if(!user?.gmail_connected)return {ok:false as const,reason:'gmail_not_connected',user:null,accessToken:''}
+  // 4 Nov: reading threads to reply needs the affirmative Gmail yes too.
+  if(await import('./gmail-consent').then(m=>m.gmailConsentState(actor.legacyTelegramId))!=='on')return {ok:false as const,reason:'gmail_consent_missing',user:null,accessToken:''}
   if(requireSend&&!user?.gmail_send_connected)return {ok:false as const,reason:'gmail_send_not_connected',user,accessToken:''}
   let accessToken=''
   const refresh=decryptGoogleToken(user.gmail_refresh_token)

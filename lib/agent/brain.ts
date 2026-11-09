@@ -7,10 +7,18 @@
 // Safety: the brain never approves, pays, books, sends or changes accounts. It only chooses what to say or how
 // to phrase the request for the existing handlers, which keep every approval and Sentinel check. Short replies
 // that answer an approval or a numbered pick bypass it entirely, and any failure falls back to today's pipeline.
+import { isMailAlertCommand } from '@/lib/email/mail-alert-commands'
+import { tripAsk } from '@/lib/agent/trip-plan'
+import { personAsk } from '@/lib/agent/people'
+import { ORDER_LIST_RE } from './order-tracking'
+import { PAYMENT_GATE } from './payment-confirmation'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { inventedApprovalGuard } from '@/lib/services/claude'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
+import { isJobScanNow, jobScanQuery } from './jobs'
+import { nearbyRewrite, placeAsk } from './places-search'
+import { SONNET_MODEL } from '@/lib/services/model-ids'
 
 export type BrainDecision =
   | { kind: 'reply'; text: string }
@@ -29,12 +37,26 @@ export type BrainContext = {
   timezone: string
 }
 
-const MODEL = () => process.env.GOGO_BRAIN_MODEL || 'claude-sonnet-4-5'
-const TIMEOUT_MS = 8_000
+const MODEL = () => process.env.GOGO_BRAIN_MODEL || SONNET_MODEL
+// 4 Nov (owner approved): a cheaper first pass. With GOGO_BRAIN_FAST=on, Haiku 5.5 decides first. Its routing decisions
+// (hand to a handler, flight, later) are used as they are; when it would write the reply itself, or fails, the main
+// model (Sonnet) decides instead, so replies keep today's quality. Off by default until the admin console shows
+// enough agreement (Costs › Cheaper brain): flip the env var, no code change.
+export const FAST_MODEL = 'claude-haiku-5-5'
+export function brainFastOn(env: Record<string, string | undefined> = (globalThis as any).process?.env || {}) {
+  return String(env.GOGO_BRAIN_FAST || '').trim().toLowerCase() === 'on'
+}
+/** Haiku's decision stands unless it writes the reply itself or failed: then the main model decides. */
+export function needsMainModel(d: BrainDecision) {
+  return d.kind === 'reply' || d.kind === 'ask' || (d.kind === 'skip' && /^error:/.test(d.reason))
+}
+// 29 Oct live: one WhatsApp turn hit 8 s and fell to the older path, which took 31 s. Typical is 2-4 s.
+const TIMEOUT_MS = 12_000
 // 27 Oct live: one decision took 16.9 s because the SDK silently retried after a slow first attempt. No retries:
 // a slow brain falls back to today's pipeline instead of making the person wait.
 const MAX_RETRIES = 0
 const clean = (v: unknown, max = 400) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
+export const cleanReply = (v: unknown, max = 1500) => String(v ?? '').replace(/\r\n?/g, '\n').replace(/[ \t\f\v]+/g, ' ').replace(/ *\n */g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, max)
 // 28 Oct review: match the whole number, not its last ten digits (a 10-digit list entry means +91).
 const digits = (v: unknown) => { const d = String(v ?? '').replace(/\D/g, ''); return d.length === 10 ? `91${d}` : d }
 
@@ -50,9 +72,25 @@ export function brainEnabledFor(phone: string, env: Record<string, string | unde
 
 // Exact commands keep their deterministic handlers: approvals, yes/no, numbered picks, STOP, OTPs, buttons.
 const EXACT = /^\s*(?:yes|y|yeah|yep|yup|no|n|nope|ok|okay|sure|approve[d]?|reject|deny|decline|confirm|cancel|stop|start|unsubscribe|help|done|snooze(?:\s+\d+\s*m(?:in(?:utes?)?)?)?|book|book\s+(?:it|1|2|3|this|that)|haan|ha|nahi|mr|mrs|ms|miss|master)\s*[.!]*\s*$|^\s*#?\d{1,6}\s*$|^\s*(?:option\s*)?[1-9](?:st|nd|rd|th)?\s*$/i
+export function whatsAppMarkdown(text: string) {
+  return String(text || '').replace(/\*\*([^*\n]+)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '').replace(/__([^_\n]+)__/g, '_$1_')
+}
+const DAY_PLAN = /^(?:please\s+)?(?:can you\s+)?(?:help me\s+)?(?:plan|schedule|organi[sz]e|block out)\s+(?:out\s+)?(?:my\s+)?(?:day|today|tomorrow|morning|evening|schedule)(?:\s+(?:today|tomorrow))?(?:\s+for me)?[?.!]*$|^(?:day plan|make my day plan|plan today)[?.!]*$/i
 export function isExactCommand(text: string): boolean {
   const t = String(text || '').trim()
-  return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t)
+  // 30 Oct live: a re-forwarded bare link was answered by the brain ("Already saved: gjKPc2zn") instead of Link Vault.
+  // 5 Nov live: "plan my day" was answered from context ("nothing else scheduled") while three meetings were on
+  // the calendar. Day plans have a handler that reads the calendar and reminders; it must get the message.
+  // Same for a job scan (5 Nov live: answered with board listing counts instead of single postings), and a place
+  // search (5 Nov live: "Same picks as earlier" was repeated from chat history, so the veg search never ran).
+  return !t || EXACT.test(t) || /^(?:admin|\/)\S*/i.test(t) || /^https?:\/\/\S+$/i.test(t) || DAY_PLAN.test(t) || isJobScanNow(t) || !!jobScanQuery(t) || !!placeAsk(t) || !!nearbyRewrite(t, 'x')
+    // 6 Nov live: "what do you alert me about?" was answered from the brain's own idea of its features; the
+    // mail-alert rules handler owns that question and the "stop renewals" family.
+    || isMailAlertCommand(t) || ORDER_LIST_RE.test(t) || personAsk(t) !== null
+    // 6 Nov live: a forwarded bank confirmation is a payment record, never something to chat about.
+    || PAYMENT_GATE.test(t)
+    // 7 Nov live: a trip with a place and dates has a plan handler; the brain asked what it should include.
+    || !!tripAsk(t)
 }
 
 // 28 Oct review (G5): the static rules come first and are cached together with the tool list; the user's name,
@@ -64,10 +102,14 @@ Read the WHOLE conversation and the user's context before deciding. The latest m
 
 Choose exactly one tool:
 - flight: the message is about a flight's status, landing, delay or take-off (including "did it land?" about a flight being tracked or just discussed), or asks to track one. Give the flight number. Set track true only when the user asks to track, monitor, be alerted, notified or messaged about it.
-- reply: you can fully answer from the conversation and context alone (chat, thanks, a question about something already said, advice). Be warm, brief, WhatsApp-style. Never claim you did, saved, booked, set or sent anything. Never use reply for anything live (a flight's status, prices, weather, news, availability): earlier messages may be stale, so use flight or handle.
-- ask: the request is genuinely ambiguous even with context. One short question.
+- reply: you can fully answer from the conversation and context alone (chat, thanks, a question about something already said, advice). Be warm, brief, WhatsApp-style. Never claim you did, saved, booked, set or sent anything. A search, booking or call that is queued, running or waiting for approval is not done: say "looking for a table at Toit", never list it as booked or as a plan. Format for WhatsApp: *single asterisks* for bold, never **double**, no # headings. Never use reply for anything live (a flight's status, prices, weather, news, availability): earlier messages may be stale, so use flight or handle.
+- ask: the request is genuinely ambiguous even with context. One short question. Missing saved notes or details are not ambiguity: for a plan, outline or prep ("prep a 30-minute plan for Sunday's coaching from my notes"), reply with a useful general plan, saying in one line that nothing specific is saved and inviting details to tailor it. Never invent saved notes.
 - later: the user asks about the results of a search Gogo is still running (an open travel or flight search in Open tasks, results not yet shown). Gogo will answer it the moment the results arrive, so do not ask them anything.
 - handle: anything that needs Gogo's tools (reminders, lists, expenses, email, calendar, documents, web answers, prices, shopping, restaurants, travel search and booking, watches, memory). Write the instruction the way the user would say it if they had been fully explicit: resolve "it/that/this" to the named thing (flight number, date, product, person), keep every detail the user gave (including every "not", "don't", "never" and "without"), add nothing they did not ask for. If the message is already explicit, or it answers a question Gogo just asked (a name, a choice, details for a booking), set keep_original true. To book or pick an option from a numbered list Gogo already showed (flights, hotels, products), the instruction is exactly "book <number>" (or "pick <number>") using that list's number: never restate the route, date or airline, because that starts a new search.
+
+You are Gogo and only Gogo. When the user names another assistant (Dots, Instinct, Wajo, Fo, Muse, Duet, ChatGPT) they are describing a style to match or asking a question about that product; never write as if that product were you or did something for the user ("Dots checks your mail" is wrong; say what you do).
+
+Trips: the Trips section links each trip's flights, hotel stay and cab. Questions like "where am I staying?", "what's the booking under?", "when do I check out?" or "my cab details" are answered with reply from that section; if a detail is not there, say it is not saved yet and ask for it. When asked about a trip, give every linked line: flights, cab, stay, 📅 meetings in that city (with the gap after landing), 📌 notes (e.g. the card for incidentals) and 🛂 travel documents. "Booking name" is the name the hotel holds the room under, the one to give at check-in; "arranged by" is who made the booking. Never combine them as one name. If a document line says the name may be misread, say so and ask the user to confirm the name.
 
 Hard rules: never approve, confirm, pay or accept anything on the user's behalf; never add words like yes, approve, confirm or pay to an instruction; never invent facts, prices or statuses.
 
@@ -110,7 +152,11 @@ const CONSENT = /\b(?:approve[ds]?|confirm(?:ed|s)?|pay|payment|accept|authori[s
 const NEGATION = /\b(?:don['’]?t|do not|never|no longer|stop|cancel|without|not)\b/i
 const TRACK_ASK = /\b(?:track(?:ing)?|monitor(?:ing)?|alerts?|notify|notifications?|message me|msg me|text me|ping me|keep me (?:posted|updated)|keep posted|let me know when|tell me when)\b/i
 const TRACK_REFUSED = /\b(?:don['’]?t|do not|never|no need to|stop|without|not)\s+(?:\w+\s+)?(?:track|monitor|alert|notify|message|msg|text|ping)|\bno\s+(?:need\s+(?:for|to)\s+)?(?:tracking|alerts?|updates?|notifications?|messages?)\b|\b(?:just|only)\s+(?:the\s+)?(?:status|check)\b/i
-const COMPLETION_CLAIM = /\b(?:i(?:'ve| have)|done|saved|booked|set|sent|scheduled|added|reminded)\b.*\b(?:reminder|booking|flight|email|message|calendar|list|ticket)\b/i
+// 29 Oct live: "✅ Updated your Mumbai trip hotel stay" was a reply that saved nothing. Any completion claim about a
+// saved thing goes to the handlers instead.
+// cleanReply preserves newlines, so action-claim checks must recognize claims split over lines.
+// Never trust a multi-line "Done!" statement as proof of a saved reminder or other action.
+const COMPLETION_CLAIM = /\b(?:i(?:'ve| have)|done|saved|booked|set|sent|scheduled|added|reminded|updated|changed|noted|recorded|moved|cancelled|canceled|deleted|removed|logged|stored)\b.*\b(?:reminder|booking|flight|email|message|calendar|list|ticket|stay|hotel|trip|event|expense|note|cab|dates?|check-?(?:in|out))\b/is
 /** The user asked to track/monitor/be messaged about it, in their own words, and did not refuse it. Pure. */
 export function userAskedToTrack(original: string): boolean {
   const t = String(original || '')
@@ -126,11 +172,19 @@ export function decisionFromToolUse(original: string, name: string, input: any):
     return { kind: 'flight', flightNo: code, track: input?.track === true && userAskedToTrack(original) }
   }
   if (name === 'reply' || name === 'ask') {
-    const raw = clean(name === 'reply' ? input?.text : input?.question, 1500)
+    // 5 Nov live: clean() squashed newlines, so every list the brain wrote ("show my reminders") arrived as one
+    // paragraph on WhatsApp. Replies keep their line breaks; only runs of spaces and extra blank lines are tidied.
+    const raw = cleanReply(name === 'reply' ? input?.text : input?.question, 1500)
     if (!raw) return { kind: 'skip', reason: 'empty_text' }
     // A chat reply that claims an action was done hands the message to the real handlers instead.
-    if (name === 'reply' && COMPLETION_CLAIM.test(raw)) return { kind: 'handle', instruction: original, rewritten: false }
-    return { kind: name, text: inventedApprovalGuard(raw) }
+    // 29 Oct live: "When do I check out and is there a reminder for it?" was answered from context ("a check-out
+    // reminder is set for 7:30 am") and that factual answer was treated as an action claim. An answer to a question
+    // about saved state stays a reply unless it opens by announcing an action ("Done", "Updated", "I've set").
+    const asked = /\?\s*$/.test(original.trim()) || /^(?:when|what|where|which|who|whose|how|is|are|do|does|did|can|could|have|has|will)\b/i.test(original.trim())
+    const announces = /^\W*(?:done|updated|saved|set|booked|added|noted|scheduled|cancelled|canceled|deleted|i(?:'ve| have| just))\b/i.test(raw)
+    if (name === 'reply' && COMPLETION_CLAIM.test(raw) && (!asked || announces)) return { kind: 'handle', instruction: original, rewritten: false }
+    // 30 Oct live: "**Preferences**" showed literally on WhatsApp. WhatsApp bold is *one* asterisk.
+    return { kind: name, text: inventedApprovalGuard(whatsAppMarkdown(raw)) }
   }
   if (name === 'handle') {
     const instruction = clean(input?.instruction, 600)
@@ -164,7 +218,7 @@ export async function loadBrainContext(p: { telegramId: number; text: string; na
       return contextPackSources(pack.facts || [])
     },
   }
-  const [convo, flights, ctx, summary] = await Promise.all([
+  const [convo, flights, ctx, summary, trips] = await Promise.all([
     supabaseAdmin.from('conversations').select('role,content,created_at').eq('telegram_id', p.telegramId)
       .order('created_at', { ascending: false }).order('role', { ascending: true }).limit(20).then(r => r.data || [], () => []),
     supabaseAdmin.from('agent_watchers').select('condition_json,active,updated_at').eq('telegram_id', String(p.telegramId)).not('condition_json->adHocFlight', 'is', null)
@@ -176,6 +230,8 @@ export async function loadBrainContext(p: { telegramId: number; text: string; na
       const evidence = s.evidence ? await import('./conversation-summary-evidence').then(e => e.summaryEvidenceText(s.evidence!), () => '') : ''
       return summaryLines(s, evidence)
     }), 900),
+    // 29 Oct: connected memory. Flights, stays and cabs that share a city and dates are one trip.
+    withTimeout(import('../memory/life-graph').then(m => m.tripContextLines(p.telegramId, now, timezone)), 2000),
   ])
   const turns = (convo as any[]).filter(r => r.role === 'user' || r.role === 'assistant').reverse()
     .map(r => ({ role: r.role, content: clean(r.content, 900), createdAt: r.created_at || null })) as BrainTurn[]
@@ -185,10 +241,31 @@ export async function loadBrainContext(p: { telegramId: number; text: string; na
     'Upcoming reminders': ctx.upcomingReminders.map(line), 'Travel': ctx.travelLegs.map(line), 'Calendar (today/tomorrow)': ctx.calendarEvents.map(line),
     'Saved documents and tickets': ctx.savedAssetsIndex.map(line), 'Standing preferences': ctx.preferences.map(x => clean(x, 160)), 'Relevant memories': ctx.memoryFacts.map(line),
   } : {}
+  if ((trips as string[] | null)?.length) sections['Trips (linked bookings: flights, hotel stays, cabs, meetings in the city, notes, travel documents)'] = trips as string[]
   const earlier = summary || []
   if (earlier.length) sections['Earlier conversation summary'] = earlier
   const other = otherContextLines(otherFacts)
   if (other.length) sections['Other context'] = other
+  // Same Brain 3.0 Phase 2: the decision context pack. 'shadow' only logs; 'on' adds one bounded section. Off by default,
+  // never blocks the turn (its own timeout), and never changes routing, approvals or STOP handling.
+  if ((globalThis as any).process?.env?.VERCEL_ENV) {
+    try {
+      const cg = await import('./context-graph/build')
+      const mode = typeof cg?.contextGraphMode === 'function' ? cg.contextGraphMode(String(p.telegramId)) : 'off'
+      if (mode !== 'off') {
+        const pack = await withTimeout(cg.buildDecisionContext({ actor: { legacyTelegramId: p.telegramId, timezone, name: p.name, userId: p.userId, whatsappId: p.whatsappId }, objective: p.text, understanding: ctx, facts: otherFacts as any, now }), 2500)
+        if (pack) {
+          console.log('CONTEXT_GRAPH_SHADOW:', JSON.stringify({ mode, decisionId: pack.decisionId, kind: pack.objective.kind, domain: pack.objective.domain, live: pack.objective.liveDataRequired, conflicts: pack.conflicts.length, missing: pack.missing.length, size: pack.size, warnings: pack.warnings }))
+          if (mode === 'on') {
+            const lines = cg.renderDecisionContext(pack); if (lines.length) sections['Decision context'] = lines
+            // Phase 4: link this turn's decision id to the pack it was made from. Outcome is 'waiting' here (decided and
+            // learned by the existing v2 path); the row is the join key, it teaches nothing by itself.
+            void import('./decision-trace').then(dt => dt.recordDecisionTrace({ legacyTelegramId: p.telegramId }, dt.buildDecisionTrace({ decisionId: pack.decisionId, contextPackRef: `pack:${pack.decisionId}`, objectiveKind: pack.objective.kind, status: 'running', trace: pack.assertions.slice(0, 20).map(a => ({ at: pack.generatedAt, node: a.predicate, type: 'READ' as const, outcome: a.status, evidenceClass: a.evidenceClass })) }))).catch((e: any) => console.error('DECISION_TRACE_WRITE_FAILED:', String(e?.message || e).slice(0, 120)))
+          }
+        }
+      }
+    } catch (e: any) { console.error('CONTEXT_GRAPH_HOOK_FAILED:', String(e?.message || e).slice(0, 120)) }
+  }
   const trackedFlights = [...new Set((flights as any[]).map(w => {
     const f = w.condition_json?.adHocFlight || {}
     return f.flightNo ? `${f.flightNo}${f.from && f.to ? ` (${f.from} → ${f.to})` : ''}${w.active ? '' : ' [tracking ended]'}` : ''
@@ -320,21 +397,52 @@ export function answersGogosQuestion(turns: BrainTurn[], text: string, now = Dat
   return t.includes('\n') || t.split(/\s+/).length <= 4
 }
 
-export async function runBrain(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; surface: 'whatsapp' | 'web' }): Promise<{ reply?: string; text?: string } | null> {
+export const FORWARDED_NOTE = 'The latest message was FORWARDED by the user from someone else (a host, colleague or friend). It is information shared with Gogo, not the user speaking to Gogo and not a request. "You" in it means the user, never Gogo. Never reply as its recipient (never "you\'ve added me"); acknowledge what it means for the user in one short line, or handle it if it contains a clear task for Gogo.'
+
+export async function runBrain(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; surface: 'whatsapp' | 'web'; forwarded?: boolean }): Promise<{ reply?: string; text?: string } | null> {
   if (!brainEnabledFor(p.phone) || isExactCommand(p.text)) return null
+  // Saved-state answers the brain cannot see (connected apps) go to their handler, never a guess.
+  if (await import('./autonomy-status').then(m => m.isConnectionCapabilityQuery(p.text), () => false)) return null
+  if (await import('./alert-preferences-shared').then(m => !!m.alertFrequencyCommand(p.text), () => false)) return null
+  // 30 Oct live: "what are you watching and why" was answered from chat history and left out two active watches.
+  if (await import('./watch-command').then(m => m.isWatcherStatusQuery(p.text), () => false)) return null
+  // 2 Nov (Dots parity): "what's scheduled" reads saved schedules, never chat history.
+  if (await import('./scheduled-list').then(m => m.isScheduledListQuery(p.text), () => false)) return null
+  // 2 Nov live: open product asks go to Google Shopping results, not a chat-history answer.
+  if (await import('./product-discovery').then(m => !!m.parseProductAsk(p.text), () => false)) return null
+  if (await import('@/lib/dashboard/activity').then(m => m.isUsageQuery(p.text), () => false)) return null
+  if (await import('./jobs').then(m => m.isJobCommand(p.text), () => false)) return null
   const ctx = await loadBrainContext(p).catch(() => null)
   if (!ctx) return null
+  // 29 Oct live: forwarded lines from the hotel booker ("Have added you as the 2nd guest") were answered "you've added
+  // me". WhatsApp marks forwards; the brain is told the latest message is someone else's words shared with Gogo.
+  if (p.forwarded) ctx.sections['About the latest message'] = [FORWARDED_NOTE]
   if (answersGogosQuestion(ctx.turns, p.text)) { console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: 'skip', reason: 'answers_question' })); return null }
   // Shadow models answer the same turn in parallel and are only logged (BRAIN_SHADOW), never acted on: the
   // 28 Oct cost question ("which model is cheapest without losing understanding") answered on real turns.
-  const shadows = shadowModels().filter(m => m !== MODEL()).map(m => decide({ text: p.text, ctx, telegramId: p.telegramId, model: m, source: 'brain_shadow' }).then(r => ({ m, r })))
-  const d = await decide({ text: p.text, ctx, telegramId: p.telegramId })
+  const fast = brainFastOn()
+  const shadows = fast ? [] : shadowModels().filter(m => m !== MODEL()).map(m => decide({ text: p.text, ctx, telegramId: p.telegramId, model: m, source: 'brain_shadow' }).then(r => ({ m, r })))
+  let d = await decide({ text: p.text, ctx, telegramId: p.telegramId, ...(fast ? { model: FAST_MODEL } : {}) })
+  let usedModel = fast ? FAST_MODEL : MODEL()
+  if (fast && needsMainModel(d)) {
+    const first = d.kind
+    d = await decide({ text: p.text, ctx, telegramId: p.telegramId })
+    usedModel = MODEL()
+    console.log('BRAIN_FALLBACK:', JSON.stringify({ from: FAST_MODEL, to: usedModel, firstKind: first, kind: d.kind }))
+  }
   if (shadows.length) {
     // 28 Oct review: the reply never waits for a shadow model. The log is written after the response (Next after()).
-    const logShadows = async () => { for (const s of await Promise.allSettled(shadows)) if (s.status === 'fulfilled') console.log('BRAIN_SHADOW:', JSON.stringify(shadowReport(MODEL(), d, s.value.m, s.value.r))) }
+    // 4 Nov: each comparison is also saved (agent_activity 'brain_shadow') so the admin console can show agreement.
+    const logShadows = async () => {
+      for (const s of await Promise.allSettled(shadows)) if (s.status === 'fulfilled') {
+        const report = shadowReport(MODEL(), d, s.value.m, s.value.r)
+        console.log('BRAIN_SHADOW:', JSON.stringify(report))
+        await recordShadow(p.telegramId, report).catch(() => {})
+      }
+    }
     await import('next/server').then(m => m.after(logShadows)).catch(() => { void logShadows() })
   }
-  console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: d.kind, ms: d.ms, model: MODEL(), turns: ctx.turns.length, flights: ctx.trackedFlights.length,
+  console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: d.kind, ms: d.ms, model: usedModel, turns: ctx.turns.length, flights: ctx.trackedFlights.length,
     input_tokens: d.usage.input, output_tokens: d.usage.output, cache_read_input_tokens: d.usage.cacheRead, cache_creation_input_tokens: d.usage.cacheCreation,
     ...(d.kind === 'handle' ? { rewritten: d.rewritten, instruction: d.rewritten ? redactSecretShapedText(d.instruction).slice(0, 120) : undefined } : {}), ...(d.kind === 'flight' ? { flightNo: d.flightNo, track: d.track } : {}), ...(d.kind === 'skip' ? { reason: d.reason } : {}) }))
   if (d.kind === 'reply' || d.kind === 'ask') return { reply: d.text }
@@ -398,8 +506,21 @@ export async function answerFollowups(p: { runId: string; telegramId: number; se
       }
       const text = inventedApprovalGuard(clean((res?.content || []).find((b: any) => b.type === 'tool_use')?.input?.text, 1200))
       if (!text) continue
-      await p.send(text)
-      await supabaseAdmin.from('conversations').insert({ telegram_id: p.telegramId, role: 'assistant', content: text })
+      const receipt = await p.send(text)
+      // A fulfilled send promise is not evidence of provider acceptance: preserve
+      // unknown-outcome no-retry, but do not fabricate an answered conversation.
+      const sid = receipt && typeof receipt === 'object' && 'sid' in receipt
+        ? String((receipt as { sid?: unknown }).sid || '').trim()
+        : ''
+      if (!sid) {
+        console.warn('BRAIN_FOLLOWUP_ACCEPTANCE_UNKNOWN:', JSON.stringify({ runId: p.runId, stepId: step.id }))
+        continue
+      }
+      const { error: historyError } = await supabaseAdmin.from('conversations').insert({ telegram_id: p.telegramId, role: 'assistant', content: text })
+      if (historyError) {
+        console.error('BRAIN_FOLLOWUP_HISTORY_FAILED:', JSON.stringify({ runId: p.runId, stepId: step.id }))
+        continue
+      }
       answered++
     } catch (err: any) { console.error('BRAIN_FOLLOWUP_FAILED:', clean(err?.message || err, 120)) }
   }
@@ -445,6 +566,13 @@ export function agreement(a: BrainDecision, b: BrainDecision): Agreement {
   return a.kind === 'skip' ? 'same_kind' : 'exact'
 }
 export const decisionsAgree = (a: BrainDecision, b: BrainDecision) => agreement(a, b) === 'exact'
+
+/** One saved comparison per shadowed turn: kinds, agreement and cost only — never the message text. */
+async function recordShadow(telegramId: number, report: ReturnType<typeof shadowReport>) {
+  if (!Number.isSafeInteger(telegramId)) return
+  await supabaseAdmin.from('agent_activity').insert({ telegram_id: String(telegramId), event_type: 'brain_shadow', message: `${report.shadow.model} vs ${report.main.model}: ${report.agreement}`,
+    metadata_json: { agreement: report.agreement, main: { model: report.main.model, kind: report.main.kind, usd: report.main.usd, ms: report.main.ms }, shadow: { model: report.shadow.model, kind: report.shadow.kind, usd: report.shadow.usd, ms: report.shadow.ms } } })
+}
 
 export function shadowReport(mainModel: string, main: BrainDecision & { ms: number; usage: BrainUsage }, model: string, shadow: BrainDecision & { ms: number; usage: BrainUsage }) {
   return {
