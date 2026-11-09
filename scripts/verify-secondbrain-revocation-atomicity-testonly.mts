@@ -23,6 +23,10 @@ type Scenario = {
   shareDeleteFails?: boolean
   shareInsertedDuringRemoval?: boolean
   extraWorkspaceShare?: boolean
+  // ADAPTED: models the applied FK workspace_artifacts(workspace_id, shared_by) -> workspace_members
+  // ON DELETE CASCADE (migration 20261109200000). false = the pre-migration schema, kept to prove the
+  // read-side guard from #1413 still fails closed on a stale share.
+  cascade?: boolean
 }
 
 function compiledFunction(name: string, deps: Record<string, unknown>): (...args: any[]) => Promise<any> {
@@ -46,7 +50,11 @@ function synthetic(scenario: Scenario = {}) {
   const shares: Share[] = [
     { workspace_id: WS, artifact_id: FIRST, shared_by: 'departing' },
   ]
-  if (scenario.extraWorkspaceShare) shares.push({ workspace_id: WS_OTHER, artifact_id: FIRST, shared_by: 'departing' })
+  if (scenario.extraWorkspaceShare) {
+    // ADAPTED: under the applied FK a share needs its sharer's membership in that workspace.
+    members.push({ workspace_id: WS_OTHER, telegram_id: 'departing', role: 'member' })
+    shares.push({ workspace_id: WS_OTHER, artifact_id: FIRST, shared_by: 'departing' })
+  }
   const artifacts: Artifact[] = [
     { id: FIRST, telegram_id: 'departing', title: 'Private fixture document', content_json: { sections: [{ tool: 'artifact', result: { text: 'INERT_OWNER_SHARED_REPORT_A' } }] } },
     { id: RACING, telegram_id: 'departing', title: 'Private fixture document B', content_json: { sections: [{ tool: 'artifact', result: { text: 'INERT_OWNER_SHARED_REPORT_B' } }] } },
@@ -67,7 +75,7 @@ function synthetic(scenario: Scenario = {}) {
           }
           // Deterministic concurrent actor: inserts a share while the member is still present,
           // between the two app-level DB calls. No external tasks or concurrency needed.
-          if (scenario.shareInsertedDuringRemoval) {
+          if (scenario.shareInsertedDuringRemoval && !log.includes('concurrent_share')) {
             assert.ok(members.some(m => m.workspace_id === WS && m.telegram_id === 'departing'))
             shares.push({ workspace_id: WS, artifact_id: RACING, shared_by: 'departing' })
             log.push('concurrent_share')
@@ -76,9 +84,25 @@ function synthetic(scenario: Scenario = {}) {
         }
         if (table === 'workspace_members' && action === 'delete') {
           log.push('delete_member')
+          // ADAPTED: the deterministic concurrent share now lands just before the (single) membership delete,
+          // while the member is still present, i.e. it is a valid insert under the FK.
+          if (scenario.shareInsertedDuringRemoval && !log.includes('concurrent_share')) {
+            assert.ok(members.some(m => m.workspace_id === WS && m.telegram_id === 'departing'))
+            shares.push({ workspace_id: WS, artifact_id: RACING, shared_by: 'departing' })
+            log.push('concurrent_share')
+          }
           if (scenario.memberDeleteFails) return { error: { code: 'FIXTURE', message: 'member deletion denied' } }
+          const cascade = scenario.cascade !== false
+          // ADAPTED: a failing cascade fails the whole statement (one transaction): nothing changes.
+          if (cascade && scenario.shareDeleteFails) return { error: { code: 'FIXTURE', message: 'share delete failed' } }
           for (let i = members.length - 1; i >= 0; i--) {
             if (matches(members[i] as unknown as Record<string, unknown>)) members.splice(i, 1)
+          }
+          if (cascade) {
+            for (let i = shares.length - 1; i >= 0; i--) {
+              const s = shares[i]
+              if (!members.some(m => m.workspace_id === s.workspace_id && m.telegram_id === s.shared_by)) shares.splice(i, 1)
+            }
           }
           return { error: null }
         }
@@ -192,7 +216,7 @@ await test('safety', 'concurrent share cannot survive successful member removal'
   assert.ok(!x.shares.some(s => s.workspace_id === WS && s.shared_by === 'departing'), 'Member revocation must also revoke concurrently added shares')
 })
 await test('safety', 'workspace viewer must not receive a former contributor displayable report after revocation', async () => {
-  const x = synthetic({ shareInsertedDuringRemoval: true })
+  const x = synthetic({ shareInsertedDuringRemoval: true, cascade: false })
   await x.removeMember('owner', WS, 'departing')
   assert.ok(x.shares.some(s => s.artifact_id === RACING), 'Fixture reproduces a post-revocation stale share')
   const readOutcome = await x.getSharedArtifact('viewer', WS, RACING).then(
