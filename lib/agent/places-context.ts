@@ -38,7 +38,10 @@ export function placeAnswer(text: string): SavedPlace | null {
   const t = String(text || '').trim().replace(/[.!]+$/, '')
   if (!t || t.length > 60 || NOT_AREA.test(t)) return null
   // A command is never an area, even right after the question.
-  if (/^(?:call|remind|set|show|find|what|when|where|who|why|how|tell|send|add|book|order|buy|search|check|cancel|stop|play|open|get|make|create|delete|forget|list|track|watch|scan)\b/i.test(t)) return null
+  if (/^(?:call|remind|set|show|find|what|when|where|who|why|how|tell|send|add|book|order|buy|search|check|cancel|stop|play|open|get|make|create|delete|forget|list|track|watch|scan|plan|compare|my|the|a|an|i|is|are|do|can|please|any|weather|gold|price|usage|briefing|help)\b/i.test(t)) return null
+  // 5 Nov live: "my briefing", sent right after the office question, was saved as the office. An answer is an area
+  // name (or pincode), so app words anywhere in it rule it out.
+  if (/\b(?:briefing|reminders?|usage|calendar|emails?|jobs?|prices?|weather|pending|today|tomorrow|tonight|plan|notes?|expenses?|spend|spent|food|taste|order|status)\b/i.test(t)) return null
   const stated = detectPlaceStatement(t)
   if (stated) return stated
   const pincode = t.match(PIN)?.[1] || null
@@ -47,7 +50,7 @@ export function placeAnswer(text: string): SavedPlace | null {
   return pincode || area ? { kind: 'home', area, pincode } : null
 }
 
-async function savedPlaces(telegramId: string) {
+export async function savedPlaces(telegramId: string) {
   const { data, error } = await supabaseAdmin.from('memories').select('content').eq('telegram_id', telegramId)
     .or('content.ilike.Home area:%,content.ilike.Office area:%,content.ilike.%live in%,content.ilike.%live at%,content.ilike.%stay in%,content.ilike.%based in%,content.ilike.%home is%')
     .order('created_at', { ascending: false }).limit(30)
@@ -146,6 +149,18 @@ export async function tryPlaceCommand(p: { telegramId: string | number; text: st
 
 const NEAR_OFFICE = /\b(?:near|around|close\s+to)\s+(?:my\s+|the\s+)?(?:office|work(?:place)?)\b/i
 
+const weekdayIst = (now = new Date()) => new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Kolkata', weekday: 'long' }).format(now)
+/** "restaurants in Indiranagar" → "pure veg restaurants in Indiranagar" when the person said they're veg (today). Pure.
+ *  An explicit dish or cuisine in the ask ("seafood", "biryani", "non-veg") is left alone. */
+export function withStatedDiet(text: string, facts: { kind: string; value: string; context?: string | null }[], weekday: string) {
+  if (/\b(?:veg|vegetarian|vegan|jain|non[\s-]?veg|chicken|mutton|fish|seafood|prawns?|egg|biryani|kebab|meat|steak|bbq|barbecue|sushi)\b/i.test(text)) return text
+  const diet = facts.find(f => f.kind === 'diet_stated' && (!f.context || weekday.toLowerCase().startsWith(String(f.context).toLowerCase().replace(/s$/, ''))))
+  if (!diet) return text
+  const word = /^vegan/i.test(diet.value) ? 'vegan' : /^jain/i.test(diet.value) ? 'jain' : /^(?:veg|eggetarian)/i.test(diet.value) ? 'pure veg' : null
+  if (!word) return text
+  return text.replace(/\b(restaurants?|places? to eat|caf(?:e|é)s?|dhabas?|lunch|dinner|breakfast|food)\b/i, m => `${word} ${m}`)
+}
+
 export function tasteNote(values: string[]) {
   const keep = values.filter(v => !/^Likes:/i.test(v)).slice(0, 4)
   return keep.length ? `\n\nKept in mind: ${keep.join(' · ')}. Check the menu before ordering.` : ''
@@ -166,8 +181,11 @@ export async function answerPlacesWithContext(p: { text: string; telegramId: str
     }
     text = rewritten.text
   }
+  const food = FOOD.test(text)
+  const facts = food ? await listTaste(tg).catch(() => null) : null
+  // 5 Nov live: "Kept in mind: Veg" sat under a seafood restaurant. A stated diet steers the search itself.
+  text = withStatedDiet(text, facts || [], weekdayIst())
   const out = await answerPlaces(text, fetchImpl)
-  if (!out || !FOOD.test(text) || !out.startsWith('📍')) return out
-  const facts = await listTaste(tg).catch(() => null)
+  if (!out || !food || !out.startsWith('📍')) return out
   return facts?.length ? out.replace(/(\n\nAsk "which of these is open late\?"[^\n]*)?$/, m => tasteNote(facts.map(f => f.value)) + m) : out
 }
