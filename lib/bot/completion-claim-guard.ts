@@ -145,10 +145,13 @@ const CALENDAR_PLANS = new Set(['calendar_update', 'booking_event_calendar', 'me
 export async function loadCompletionEvidence(telegramId: number | string, now: Date = new Date()): Promise<{ records: CompletionRecord[]; pending: PendingApprovalHint[] }> {
   const owner = String(telegramId)
   const since = new Date(now.getTime() - 60 * 86400_000).toISOString()
-  const [runs, events, approvals] = await Promise.all([
+  const [runs, events, approvals, reminders] = await Promise.all([
     supabaseAdmin.from('agent_runs').select('title,status,metadata_json,completed_at,updated_at').eq('telegram_id', owner).eq('status', 'completed').gte('updated_at', since).order('updated_at', { ascending: false }).limit(60),
     supabaseAdmin.from('life_events').select('event_type,title,provider,location,lifecycle_state,metadata_json,updated_at').eq('telegram_id', owner).gte('updated_at', since).order('updated_at', { ascending: false }).limit(80),
     supabaseAdmin.from('agent_approvals').select('title,action_type,status,requested_at,execution_payload').eq('telegram_id', owner).eq('status', 'pending').order('requested_at', { ascending: false }).limit(10),
+    // A reminder saved from the owner's own ticket ("🎟️ Ramayana … AUDI 05, seats L16") is evidence the booking exists,
+    // even when no Life Event was created for it (8 Nov live: "Ramayana movie" got "Nothing has been booked yet.").
+    Promise.resolve(supabaseAdmin.from('reminders').select('*').eq('telegram_id', owner).gte('remind_at', since).order('remind_at', { ascending: false }).limit(80)).catch(() => ({ data: [] })),
   ])
   const records: CompletionRecord[] = []
   for (const run of ((runs as any)?.data || []) as any[]) {
@@ -169,6 +172,10 @@ export async function loadCompletionEvidence(telegramId: number | string, now: D
     if (type === 'purchase' || type === 'delivery') records.push({ kind: 'order', label, at: ev.updated_at })
     if (meta?.calendar?.eventId) records.push({ kind: 'calendar', label, at: meta.calendar.createdAt || ev.updated_at })
   }
+  for (const r of ((reminders as any)?.data || []) as any[]) {
+    const msg = String(r?.message || '')
+    if (isTicketReminder(msg)) records.push({ kind: 'booking', label: msg, at: r.created_at || r.remind_at || null })
+  }
   const pending: PendingApprovalHint[] = (((approvals as any)?.data || []) as any[])
     .filter((row) => !isApprovalExpired(row, now))
     .map((row) => {
@@ -176,6 +183,13 @@ export async function loadCompletionEvidence(telegramId: number | string, now: D
       return { title, subject: (title.split('·').pop() || title).trim(), actionType: row.action_type || null }
     })
   return { records, pending }
+}
+
+/** A reminder that carries a ticket's own details — seats, screen, booking id, a QR — not a plan to book. Pure. */
+export function isTicketReminder(message: string): boolean {
+  const m = String(message || '')
+  if (/\b(?:book|reserve|buy|get)\s+(?:the\s+|a\s+|some\s+)?(?:tickets?|seats?|table)\b/i.test(m)) return false
+  return /🎟|\b(?:audi|screen)\s*\d+\b|\bseats?\s+[A-Z]{1,2}\d{1,3}\b|\bbooking\s+(?:id|ref)\b|\bticket\/qr\b|\bPNR\b/i.test(m)
 }
 
 /** Checks a model-written reply; reads the owner's records only when the reply claims a completion. */
