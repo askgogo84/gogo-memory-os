@@ -144,6 +144,7 @@ async function runDelivery(req: NextRequest) {
     }
     let cursor = cursorText
     let exhausted = false
+    let stopScan = false
     while (Date.now() < deadline && checked < 500) {
       const { data: users, error } = await supabaseAdmin.from('users')
         .select('telegram_id, name, whatsapp_id, email, briefing_enabled, briefing_time, weekly_brief, daily_brief_email_enabled')
@@ -160,7 +161,15 @@ async function runDelivery(req: NextRequest) {
         if ((typeof persistedOwner !== 'string' && (typeof persistedOwner !== 'number' || !Number.isSafeInteger(persistedOwner))) ||
             !/^-?[1-9]\d*$/.test(ownerExact) ||
             BigInt(ownerExact) < BigInt('-9223372036854775808') || BigInt(ownerExact) > BigInt('9223372036854775807')) {
-          throw new Error('briefing_owner_identity_invalid')
+          // 9 Nov: skip and count instead of throwing. A throw lost the cursor, so every later run stopped at the same
+          // row and everyone after it got nothing. Nothing private is read or sent for this row either way.
+          failures.push({ channel: 'owner_identity', status: 'invalid' })
+          const integral = /^(?:0|-?[1-9]\d*)$/.test(ownerExact) && typeof persistedOwner === 'string'
+            && BigInt(ownerExact) >= BigInt('-9223372036854775808') && BigInt(ownerExact) <= BigInt('9223372036854775807')
+          if (integral) { cursor = ownerExact; checked++; continue }
+          // Not even an exact integer (rounded number, exponent): the scan cannot advance past it safely this run.
+          stopScan = true
+          break
         }
         const owner = Number(ownerExact)
         // Downstream briefing, suppression and notification APIs currently accept
@@ -240,6 +249,7 @@ async function runDelivery(req: NextRequest) {
         } catch { failures.push({ owner, channel: 'prepare', status: 'failed' }) }
         cursor = ownerExact; checked++
       }
+      if (stopScan) break
     }
     const { error: saveError } = await supabaseAdmin.from('delivery_scan_cursors').upsert({ source: 'briefing', cursor_value: exhausted ? Number.MIN_SAFE_INTEGER : cursor })
     if (saveError) throw new Error('briefing_cursor_write_failed')
