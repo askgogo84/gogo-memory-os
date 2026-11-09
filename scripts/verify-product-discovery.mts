@@ -74,3 +74,11 @@ const items = [
   console.log('✓ product links survive the privacy filter: store links kept, Google viewer links become id-free searches')
 }
 console.log('Product discovery checks passed')
+
+// 7 Nov live: "best standing desk under 15000" had no verb, so it went to a web answer and came back with US desks in dollars.
+assert.deepEqual(parseProductAsk('best standing desk under 15000'), { query: 'standing desk', maxPrice: 15000, minPrice: null })
+assert.deepEqual(parseProductAsk('which laptop under 60000 has good reviews'), { query: 'laptop', maxPrice: 60000, minPrice: null, rated: true })
+assert.deepEqual(parseProductAsk('top 5 running shoes under 4000'), { query: 'running shoes', maxPrice: 4000, minPrice: null })
+assert.deepEqual(parseProductAsk('cheapest 55 inch tv'), { query: '55 inch tv', maxPrice: null, minPrice: null })
+for (const t of ['best way to go to goa', 'best restaurant in indiranagar', 'best time to visit goa', 'which day is good for a haircut']) assert.equal(parseProductAsk(t), null, t)
+console.log('✓ superlative product asks (best/top/cheapest/which + product noun) are discovery; places, times and routes are not')
