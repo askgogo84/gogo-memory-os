@@ -57,6 +57,13 @@ export function tripAsk(text: string, now = new Date()): TripAsk | null {
   return { destination, start, end, nights, companions, from: 'Bengaluru' }
 }
 
+/** The research reply is a paragraph of instructions; the plan keeps its first sentence and the promise to send results. */
+export function firstSentences(text: string): string {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  const first = flat.match(/^[^.!?]*[.!?]/)?.[0] || flat.slice(0, 160)
+  const promise = /will send the cheapest options here when it finishes/i.test(flat) ? " I'll send the cheapest options here when the search finishes." : ''
+  return `${first}${promise}`.trim()
+}
 const fmt = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
 const list = (xs: string[]) => xs.length <= 1 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`
 const flightDay = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' })
@@ -81,7 +88,7 @@ export async function tryTripPlan(actor: AgentActor, surface: 'whatsapp' | 'web'
   if (!ask) return null
   const flightText = tripFlightQuery(ask)
   const [flights, stays] = await Promise.all([
-    import('./travel-research').then(m => m.tryRunTravelResearch({ actor, surface: surface as any, text: flightText })).then((r: any) => r?.text ? String(r.text).split('\n').filter(Boolean).slice(0, 2).join(' ') : null, () => null),
+    import('./travel-research').then(m => m.tryRunTravelResearch({ actor, surface: surface as any, text: flightText })).then((r: any) => r?.text ? firstSentences(String(r.text)) : null, () => null),
     import('./places-search').then(m => m.answerPlaces(`hotels in ${ask.destination}`)).then(s => s && !/couldn't verify/i.test(s) ? s.split('\n').slice(0, 9).join('\n') : null, () => null),
   ])
   console.log('TRIP_PLAN:', JSON.stringify({ destination: ask.destination, nights: ask.nights, companions: ask.companions.length, flights: !!flights, stays: !!stays }))

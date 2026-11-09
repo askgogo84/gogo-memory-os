@@ -28,6 +28,7 @@ import {
   isStrictlyFreshFollowupState,
   clearFollowupState,
 } from '@/lib/bot/handlers/followup-state'
+import { SONNET_MODEL } from '@/lib/services/model-ids'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
@@ -300,7 +301,7 @@ export async function classifyAndExtractAsset(params: {
     }
 
     const result = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: SONNET_MODEL,
       max_tokens: 1000,
       system: CLASSIFY_SYSTEM,
       messages: [{

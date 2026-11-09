@@ -26,6 +26,20 @@ const emails = [
 const kinds = Object.fromEntries(emails.map(e => [e.id, ma.alertKindOf(scoreEmail(e as any, { now }))]))
 assert.deepEqual(kinds, { m1: 'payment_failed', m2: 'money_leaving', m3: 'money_leaving', m4: 'payment_failed', m5: 'money_leaving', m6: 'deadline', m7: 'security', m8: 'reply_waiting', m9: 'newsletter', m10: null, m11: null })
 console.log('✓ each Dots-flagged email gets its kind; a ₹252 debit and an order update are not mail alerts')
+// 8 Nov: a founder-signed onboarding mail is not a reply waiting; a real person's question still is; the ask is not repeated when it restates the subject.
+{
+  const coop = mail('c1', 'Cooper Schoenthaler <cooper@generalintelligencecompany.com>', 'Want some 1:1 help with Cofounder?', "Hi Goverdhan, Thanks for signing up for Cofounder. I&#39;m Cooper, and I meet with users 1:1 to help build companies using Cofounder. If you&#39;d like to meet, just sign up here.", '2026-11-06T09:00:00+05:30', { labelIds: ['INBOX', 'CATEGORY_PERSONAL'], isUnread: true })
+  assert.equal(ma.alertKindOf(scoreEmail(coop as any, { now })), null, 'onboarding drip is not a reply waiting')
+  for (const t of ['Welcome to Linear! Grab a time with me here', 'Book a call with our founder — calendly.com/x', 'Thanks for joining the waitlist'])
+    assert.equal(ma.alertKindOf(scoreEmail(mail('c2', 'Sam Lee <sam@startup.example>', 'Quick hello', t, '2026-11-06T09:00:00+05:30', { isUnread: true }) as any, { now })), null, t)
+  assert.equal(ma.alertKindOf(scoreEmail(emails.find(e => e.id === 'm8') as any, { now })), 'reply_waiting', 'Nithin still a reply')
+  const q = mail('q1', 'Divya <divya@example.com>', 'Can you confirm the Goa dates?', 'Can you confirm the Goa dates?', '2026-11-06T09:00:00+05:30', { isUnread: true })
+  const qs = scoreEmail(q as any, { now })
+  if (ma.alertKindOf(qs) === 'reply_waiting') { const body = ma.composeAlert('reply_waiting', qs, { name: 'Goverdhan', now } as any); assert.equal((body.match(/confirm the Goa dates/gi) || []).length, 1, body) }
+  const td = ma.alertThreadData('reply_waiting', scoreEmail(coop as any, { now }), 'goverdhan.md@gmail.com')
+  assert.match(td.snippet!, /^Hi Goverdhan, Thanks for signing up for Cofounder\. I'm Cooper/); assert.equal(td.receivedAt, new Date('2026-11-06T09:00:00+05:30').toISOString())
+  console.log('✓ onboarding/drip mail from a person is not "Reply waiting"; the ask never repeats the subject; thread keeps a decoded snippet')
+}
 
 // Wording: what the email states, what Gogo cannot tell, nothing invented.
 const ctx = { name: 'Goverdhan M D', timezone: 'Asia/Kolkata', now, gmailEmail: 'goverdhan.md@gmail.com',
@@ -101,7 +115,7 @@ console.log('✓ "what do you alert me about?", "stop renewals", "add newsletter
 const w = readFileSync('lib/agent/watchers.ts', 'utf8')
 assert.match(w, /\(watcher\.condition_json as any\)\?\.digest!==true&&!condition\.matchTerms\?\.length\)\{\n    return processMailAlerts\(/)
 assert.match(w, /const \{alerts,deferred,state,quiet\}=ma\.selectAlerts\(emails,\{rules,attention,state:prior,ctx:\{name:actor\.name,timezone:tz,now:now\.getTime\(\),today,trips,gmailEmail/)
-assert.match(w, /deliverWatchAlert\(\{watcherId:String\(watcher\.id\),owner:telegramId,key,due:now\.toISOString\(\),message:a\.message,condition:watcher\.condition_json,topic:a\.topic\}\)/)
+assert.match(w, /deliverWatchAlert\(\{watcherId:String\(watcher\.id\),owner:telegramId,key,due:now\.toISOString\(\),message:a\.message,condition:watcher\.condition_json,topic:a\.topic,thread:\{kind:'mail_alert'/)
 assert.match(w, /const waitingIds=new Set\(deferred\)/, 'deferred emails stay fresh for the next check')
 for (const p of ['app/api/dashboard/chat/route.ts', 'lib/agent/whatsapp-bridge.ts']) assert.match(readFileSync(p, 'utf8'), /mail-alert-commands'\)\.then\(m=>m\.tryMailAlertCommand\(/, p)
 assert.match(readFileSync('lib/agent/brain.ts', 'utf8'), /never write as if that product were you or did something for the user/)
