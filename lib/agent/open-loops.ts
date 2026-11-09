@@ -704,10 +704,30 @@ async function syncGmailAttention(telegramId:string,current:Set<string>,gmailRea
   return 'ok' as const
 }
 
-async function syncMeetingActionMemories(telegramId:string){
+async function syncMeetingActionMemories(telegramId:string|number){
+  // Service-role private-memory reads require lossless, canonical owner identity.
+  // Already-rounded JS numbers, nondecimal forms and zero cannot authorize reads.
+  if(typeof telegramId!=='string'&&typeof telegramId!=='number')return 0
+  if(typeof telegramId==='number'&&(!Number.isSafeInteger(telegramId)||telegramId===0))return 0
+  const owner=String(telegramId)
+  if(!/^-?[1-9][0-9]*$/.test(owner))return 0
+  let exactOwner:bigint
+  try{exactOwner=BigInt(owner)}catch{return 0}
+  if(exactOwner<BigInt('-9223372036854775808')||exactOwner>BigInt('9223372036854775807'))return 0
+  telegramId=owner // exact decimal string from here on; every lookup below binds to it
+
+  // Owner decision 9 Nov: memory is on unless the owner turned it off. Disabled, unreadable (thrown below) or
+  // different-account consent stops the scan; a missing row is the default (on). Persisted owner verified when echoed.
+  const {data:consent,error:consentError}=await supabaseAdmin.from('user_consent_settings')
+    .select('telegram_id,memory_enabled').eq('telegram_id',owner).maybeSingle()
+  if(consentError)throw new Error(`open_loop_meeting_consent_read_failed:${consentError.message}`)
+  if(consent&&(consent.memory_enabled===false
+      ||(consent.telegram_id!=null&&String(consent.telegram_id)!==owner)
+      ||(typeof consent.telegram_id==='number'&&!Number.isSafeInteger(consent.telegram_id))))return 0
+
   const since=new Date(Date.now()-30*86400_000).toISOString()
   const {data,error}=await supabaseAdmin.from('memories')
-    .select('id,content,created_at')
+    .select('id,telegram_id,content,created_at')
     .eq('telegram_id',telegramId)
     .gte('created_at',since)
     .order('created_at',{ascending:false})
@@ -715,6 +735,10 @@ async function syncMeetingActionMemories(telegramId:string){
   if(error)throw new Error(`open_loop_meeting_memory_read_failed:${error.message}`)
   let captured=0
   for(const row of data||[]){
+    // A database adapter may return BIGINT as an unsafe rounded Number or a
+    // mismatched owner despite a filtered query. Neither can be trusted.
+    if((row.telegram_id!=null&&String(row.telegram_id)!==owner)
+      ||(typeof row.telegram_id==='number'&&!Number.isSafeInteger(row.telegram_id)))continue
     let parsed:any=null
     try{parsed=JSON.parse(String(row.content||''))}catch{continue}
     if(parsed?.type!=='followup_state'||parsed?.kind!=='meeting_action_items')continue
@@ -725,7 +749,7 @@ async function syncMeetingActionMemories(telegramId:string){
       if(!message)continue
       const due=String(item?.remindAtIso||'').trim()
       await upsertOpenLoop({
-        telegramId,kind:'meeting_action',
+        telegramId:owner,kind:'meeting_action',
         title:message,
         summary:`Meeting action item: ${message}`,
         priority:0.87,
@@ -743,22 +767,40 @@ async function syncMeetingActionMemories(telegramId:string){
   return captured
 }
 
-async function syncConversationSignals(telegramId:string){
-  const {data:consent}=await supabaseAdmin.from('user_consent_settings')
-    .select('memory_enabled').eq('telegram_id',telegramId).maybeSingle()
-  if(consent?.memory_enabled===false)return 0
+async function syncConversationSignals(telegramId:string|number){
+  // Postgres signed BIGINT owners must never transit through JS Number: adjacent
+  // private account identifiers above 2^53 can otherwise alias before consent.
+  // Reject already-rounded numeric input and malformed/noncanonical owner strings.
+  if(typeof telegramId==='number'&&(!Number.isSafeInteger(telegramId)||telegramId===0))return 0
+  if(typeof telegramId!=='string'&&typeof telegramId!=='number')return 0
+  const owner=String(telegramId)
+  if(!/^-?[1-9]\d*$/.test(owner))return 0
+  let ownerBig:bigint
+  try{ownerBig=BigInt(owner)}catch{return 0}
+  if(ownerBig<BigInt('-9223372036854775808')||ownerBig>BigInt('9223372036854775807'))return 0
+  telegramId=owner // exact decimal string from here on; every lookup below binds to it
+
+  const {data:consent,error:consentError}=await supabaseAdmin.from('user_consent_settings')
+    .select('telegram_id,memory_enabled').eq('telegram_id',telegramId).maybeSingle()
+  if(consentError)throw new Error('open_loop_consent_read_failed:'+consentError.message)
+  // Owner decision 9 Nov: memory is on unless the owner turned it off. A row for a different account, an explicit
+  // false, or an unreadable consent table (thrown above) stops the scan; a missing row is the default (on).
+  if(consent&&((consent.telegram_id!=null&&String(consent.telegram_id)!==owner)||consent.memory_enabled===false))return 0
   const since=new Date(Date.now()-7*86400_000).toISOString()
   const {data,error}=await supabaseAdmin.from('conversations')
-    .select('id,content,created_at')
+    .select('id,telegram_id,content,created_at')
     .eq('telegram_id',telegramId).eq('role','user')
     .gte('created_at',since).order('created_at',{ascending:false}).limit(80)
-  if(error)throw new Error(`open_loop_conversation_read_failed:${error.message}`)
+  if(error)throw new Error('open_loop_conversation_read_failed:'+error.message)
   let captured=0
   for(const row of (data||[]).slice().reverse()){
+    // An unsafe numeric echo or another owner's persisted row must not be
+    // synthesized into this owner's open loops even if the query was scoped.
+    if(row.telegram_id!=null&&String(row.telegram_id)!==owner)continue
     const parsed=parseExplicitOpenLoop(String(row.content||''))
     if(!parsed)continue
     await upsertOpenLoop({
-      telegramId,kind:parsed.kind,title:parsed.title,summary:parsed.summary,priority:parsed.priority,
+      telegramId:owner,kind:parsed.kind,title:parsed.title,summary:parsed.summary,priority:parsed.priority,
       nextCheckAt:parsed.kind==='followup'||parsed.kind==='waiting_on'
         ? isoPlusHoursFrom(row.created_at,24)
         : isoPlusHoursFrom(row.created_at,12),
@@ -838,6 +880,8 @@ export async function syncOpenLoopsForUser(telegramId:string|number){
   if(typeof telegramId==='number'&&!Number.isSafeInteger(telegramId))throw new Error('open_loop_owner_invalid:unsafe_number')
   const tg=String(telegramId??'').trim()
   if(!/^-?(?:0|[1-9]\d{0,18})$/.test(tg))throw new Error('open_loop_owner_invalid:format')
+  // 19 digits can still exceed signed BIGINT (from #1210): reject before any lookup.
+  if(BigInt(tg)<BigInt('-9223372036854775808')||BigInt(tg)>BigInt('9223372036854775807'))throw new Error('open_loop_owner_invalid:range')
   const current=new Set<string>()
   const sourceTypes=['followup','approval','agent_run','life_event_action','calendar_conflict'] as const
   // One Gmail read per sync, shared by email attention and meeting prep.

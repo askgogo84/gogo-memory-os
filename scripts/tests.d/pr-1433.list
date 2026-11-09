@@ -1,0 +1,3 @@
+# tests added by PR #1433
+package.json
+npx tsx scripts/verify-watch-stop-variant-testonly.mts
