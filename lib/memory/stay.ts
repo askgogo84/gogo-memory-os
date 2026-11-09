@@ -149,13 +149,17 @@ export async function saveStay(telegramId: number | string, stay: Stay, source: 
   const key = stayDedupeKey(stay)
   const { data: existing } = await supabaseAdmin.from('life_events').select('id,metadata_json').eq('telegram_id', tg).eq('dedupe_key', key).maybeSingle()
   const merged = mergeStay(existing?.metadata_json?.stay, stay)
+  // When the booking name last changed: a trip note saved before it cannot undo it at read time (applyTripNotes).
+  const prevBookedBy = existing?.metadata_json?.stay?.bookedBy || null
+  const bookedByUpdatedAt = merged.bookedBy && (!prevBookedBy || prevBookedBy.toLowerCase() !== merged.bookedBy.toLowerCase())
+    ? new Date().toISOString() : (existing?.metadata_json?.bookedByUpdatedAt || null)
   const row = {
     telegram_id: tg, event_type: 'reservation', subtype: 'hotel_stay', source: source.kind,
     title: `${merged.hotel}${merged.city ? `, ${merged.city}` : ''}`.slice(0, 240), provider: merged.hotel,
     start_at: dayStartIso(merged.checkIn, 14), end_at: dayStartIso(merged.checkOut, 11), timezone: 'Asia/Kolkata',
     location: merged.city, confirmation_ref: merged.bookingRef,
     lifecycle_state: 'planned', participants: merged.guests,
-    metadata_json: { stay: merged, city: merged.city, hotel: merged.hotel, checkIn: merged.checkIn, checkOut: merged.checkOut, bookedBy: merged.bookedBy, arrangedBy: merged.arrangedBy || null, userRole: merged.userRole },
+    metadata_json: { stay: merged, city: merged.city, hotel: merged.hotel, checkIn: merged.checkIn, checkOut: merged.checkOut, bookedBy: merged.bookedBy, arrangedBy: merged.arrangedBy || null, userRole: merged.userRole, bookedByUpdatedAt },
     source_refs: [{ kind: source.kind, at: new Date().toISOString(), excerpt: String(source.text || '').slice(0, 300) }],
     dedupe_key: key, updated_at: new Date().toISOString(),
   }
