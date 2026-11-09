@@ -25,6 +25,7 @@ import { findVaultProviderForDomain, phoneLoginProviderForDomain } from '@/lib/v
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { BROWSER_PORTS, BROWSER_PROFILE_DIR, BROWSER_SETUP_NETWORK, SANDBOX_GENERATION, SANDBOX_IMAGE, SANDBOX_WORKDIR, browserSandboxNameFor, ensureBrowserRuntime } from './secure-browser-bootstrap'
 import { canAuthorizeConsequentialAction, type TrustClass } from './trust'
+import { capabilityPaused } from './policy'
 
 // A sign-up can span pages (for example email and password, then Next, then username and terms).
 // One approved account creation may fill up to this many pages (a homepage step plus up to three
@@ -149,11 +150,15 @@ function safeText(value:unknown,max=1200){
 
 const userSandboxName=browserSandboxNameFor
 
-async function canonicalBrowserOwnerId(value:string){
-  const raw=String(value||'').trim()
+// Exact owner (P0.1): a legacy numeric id is looked up by its exact decimal string, never through Number(), so
+// distinct 64-bit ids cannot alias one sandbox; a rounded number or non-canonical digits are refused.
+async function canonicalBrowserOwnerId(value:string|number){
+  if(typeof value==='number'&&!Number.isSafeInteger(value))throw new Error('browser_owner_identity_unsafe')
+  const raw=String(value??'').trim()
   if(!raw)throw new Error('browser_owner_missing')
   if(!/^-?\d+$/.test(raw))return raw
-  const {data,error}=await supabaseAdmin.from('users').select('id').eq('telegram_id',Number(raw)).maybeSingle()
+  if(!/^-?(?:0|[1-9]\d{0,18})$/.test(raw))throw new Error('browser_owner_identity_invalid')
+  const {data,error}=await supabaseAdmin.from('users').select('id').eq('telegram_id',raw).maybeSingle()
   if(error)throw new Error(`browser_owner_lookup_failed:${error.message}`)
   return data?.id?String(data.id):raw
 }
@@ -256,11 +261,10 @@ async function model(page){
   let usernameFilled=false,passwordFilled=false,submitted=false,openerClicked=false,openerLabel='',openerClicks=0;
   const ambiguous=[];
   try{
-    await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000}).catch(async e=>{
-      if(!/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_CONNECTION_RESET/.test(String(e&&e.message||e)))throw e;
-      await page.waitForTimeout(1500);
-      return page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});
-    });
+    for(let attempt=0;;attempt++){try{await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000});break}catch(e){
+      if(attempt>=3||!/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_CONNECTION_RESET|ERR_TIMED_OUT/.test(String(e&&e.message||e)))throw e;
+      await page.waitForTimeout([1500,4000,8000][attempt]);
+    }}
     await page.waitForTimeout(800);
     const USER_FIELDS='input[autocomplete~="username"], input[type="email"], input[name*="user" i], input[name*="email" i], input[name*="login" i], input[type="tel"], input[name*="mobile" i], input[name*="phone" i], input[placeholder*="phone" i], input[placeholder*="mobile" i], input[placeholder*="username" i], input[placeholder*="email" i]';
     // Sites like Swiggy and Zomato keep the login in a panel opened from the header.
@@ -369,7 +373,12 @@ export function googleAirlineContinueControl(controls:{selector?:string;label?:s
   return hit?.selector||null
 }
 
-const AGENCY_ORDER=['makemytrip','cleartrip','goibibo','ixigo','easemytrip','yatra']
+// 28 Oct (owner): "why go to the airline's site, why not MakeMyTrip, Goibibo…". Airline sites keep refusing the cloud
+// browser (Air India Akamai, IndiGo's flight API, Air India Express not loading), so Indian agencies are tried first.
+// GOGO_BOOKING_PREFER=airline restores airline-first. Order: guest-checkout-friendly sites first (to be measured).
+// 28 Oct (owner, phone screenshots): Agoda's page took contact details as a guest; Agoda added and tried first.
+const AGENCY_ORDER=['agoda','cleartrip','goibibo','makemytrip','ixigo','easemytrip','yatra']
+export const bookingPrefersAgency=(env:Record<string,string|undefined>=(globalThis as any).process?.env||{})=>String(env.GOGO_BOOKING_PREFER||'agency').toLowerCase()!=='airline'
 /** The first Indian agency on Google's booking options ("Continue to book with Cleartrip for …") not yet tried. */
 export function googleAgencyContinueControl(controls:{selector?:string;label?:string}[],tried:string[]=[]):{selector:string;name:string}|null{
   for(const name of AGENCY_ORDER){
@@ -386,6 +395,11 @@ export function cookieDeclineControl(controls:{selector?:string;label?:string}[]
   return hit?.selector||null
 }
 
+/** Google's booking page still fetching its booking options ("Getting prices"), with no Continue buttons yet. */
+export function googleBookingStillPricing(page:{text?:unknown;controls?:any[]}){
+  const text=String(page?.text||'').replace(/\s+/g,' ')
+  return /\bGetting prices\b/i.test(text)&&!(page?.controls||[]).some((c:any)=>/^Continue to book with\b/i.test(String(c?.label||'').trim()))
+}
 /** A page that is visibly still loading: a "Loading…" placeholder or a redirect page with no form yet. */
 export function pageStillLoading(page:{url?:unknown;text?:unknown;controls?:any[]}){
   const text=String(page?.text||'').replace(/\s+/g,' ')
@@ -1010,6 +1024,12 @@ async function watchGoogleBookingHandoff(page,payload,selector){
   if(!payload.bookingFlow||!isGoogleBooking(page))return null;
   const named=await page.locator(selector).first().evaluate(el=>/^Continue to book with\b/i.test((el.getAttribute('aria-label')||el.textContent||'').trim())).catch(()=>false);
   if(!named)return null;
+  // 28 Oct live bookings 926c1b59 and b98b2a57: the new tab Google opens for "Continue to book with Air India
+  // Express" and "…with Cleartrip" both landed straight on Chrome's error page (chromewebdata) and never reached
+  // google.com or the site. The hand-off is kept in THIS tab instead: the button's form or link targets the current
+  // tab and a scripted window.open navigates here. The new-tab follow below stays as the fallback.
+  await page.locator(selector).first().evaluate(el=>{const f=el.closest('form');if(f)f.setAttribute('target','_self');const a=el.closest('a');if(a)a.setAttribute('target','_self');}).catch(()=>{});
+  await page.evaluate(()=>{try{window.open=function(u){if(u){location.assign(String(u))}return window}}catch(e){}}).catch(()=>{});
   const ctx=page.context();let tab=null;const on=(p)=>{tab=p};
   try{ctx.on('page',on);}catch{}
   return async()=>{
@@ -1144,11 +1164,12 @@ async function instagramPublicRead(page,url,navTimeout){
       if(!reuse)fs.writeFileSync('${SANDBOX_WORKDIR}/commerce-active-task',payload.taskId||'');
     }
     // 16 Oct live: one ERR_TUNNEL_CONNECTION_FAILED from the India proxy failed a whole Swiggy read; retry it once.
-    if(!reuse)await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout}).catch(async e=>{
-      if(!/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_CONNECTION_RESET/.test(String(e&&e.message||e)))throw e;
-      await page.waitForTimeout(1500);
-      return page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});
-    });
+    // 28 Oct live booking 345b27ba: the one retry also hit ERR_TUNNEL_CONNECTION_FAILED. The first page load (nothing
+    // done yet, no side effect) is retried up to 3 times with growing waits.
+    if(!reuse){for(let attempt=0;;attempt++){try{await page.goto(payload.url,{waitUntil:'domcontentloaded',timeout:navTimeout});break}catch(e){
+      if(attempt>=3||!/ERR_TUNNEL_CONNECTION_FAILED|ERR_PROXY_CONNECTION_FAILED|ERR_CONNECTION_RESET|ERR_TIMED_OUT/.test(String(e&&e.message||e)))throw e;
+      await page.waitForTimeout([1500,4000,8000][attempt]);
+    }}}
     await page.waitForTimeout(900);
     // 22 Oct live: instagram.com showed a blank splash, or bounced to /accounts/login, in the cloud browser, so a
     // read of a PUBLIC profile paused for sign-in. For reads only: let it render, close the sign-up popup, and retry
@@ -2263,6 +2284,16 @@ export async function tryObscuraBrowserRead(
 
 export async function runSecureBrowser(params:{userId:string;runId?:string;accountCreation?:boolean;providerBooking?:boolean;rehearsal?:boolean;slotCheck?:boolean;bookingPhone?:string|null;bookingOtp?:string|null;loginCode?:string|null;phoneLogin?:{number:string;telegramId:string}|null;url:string;objective:string;mode:BrowserMode;vaultCredentialId?:string|null;objectiveTrust?:TrustClass;reserveHumanHandoff?:boolean;reservePasswordHandoff?:boolean;keepAlive?:boolean;keepAliveOwner?:string;sessionTaskId?:string;resumePage?:boolean;recoverFlightSearch?:boolean;readDeadline?:number;publicOnly?:boolean}):Promise<SecureBrowserResult>{
   if(params.loginCode!=null||params.bookingOtp!=null)throw new Error('human_auth_takeover_required')
+  // Launch kill switches, last line of defence for every caller (bookings, sign-ups, saved Vault logins). Thrown
+  // before any sandbox, browser or provider request, so nothing was done. A read under GOGO_LOGGED_IN_BROWSER=off
+  // still runs, but public-only: no saved login is filled and no phone sign-in is attempted.
+  if(typeof capabilityPaused==='function'){
+    if(params.providerBooking===true&&capabilityPaused('booking'))throw new Error('capability_paused:booking')
+    if(capabilityPaused('logged_in_browser')){
+      if(params.providerBooking===true||params.accountCreation===true||(params.mode!=='read'&&String(params.vaultCredentialId||'').trim()))throw new Error('capability_paused:logged_in_browser')
+      if(params.mode==='read'&&!params.publicOnly)params={...params,publicOnly:true,vaultCredentialId:null,phoneLogin:null}
+    }
+  }
   assertBrowserAuthorityFits(params.objective,params.mode)
   let publicFlightRead=false
   try{const target=new URL(params.url);publicFlightRead=params.recoverFlightSearch===true&&target.protocol==='https:'&&['google.com','www.google.com'].includes(target.hostname)&&/^\/travel\/flights(?:\/|$)/.test(target.pathname)}catch{}
@@ -2331,6 +2362,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
     let googleBookingUrl='';const edgeBlockedHosts:string[]=[]
     let flightRowPicks=0,handoffLoadingWaits=0,airlineContinuePressed=false,consentDeclines=0
     const agenciesTried:string[]=[]
+    let googlePriceWaits=0,googleBookingReloaded=false
     const avoidNote=()=>edgeBlockedHosts.length?` ${edgeBlockedHosts.join(' and ')} refused this browser (Access Denied), so on the booking options pick a different listed site (MakeMyTrip, Cleartrip, Goibibo, ixigo, EaseMyTrip or Yatra), never ${edgeBlockedHosts.join(' or ')}.`:''
     const readSnapshot=(p:any)=>JSON.stringify([p.url,p.text,p.controls,p.forms])
 
@@ -2654,7 +2686,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // times (the row never opened). The approved flight's own row link is clicked directly instead, up to 3 times.
       if(!edgeBack&&providerBooking&&onGoogle&&flightRowPicks<3){
         let path='';try{path=new URL(String(page.url||'')).pathname}catch{}
-        const row=/^\/travel\/flights\/?$/.test(path)?googleFlightRowControl(page.controls||[],params.objective):null
+        const row=/^\/travel\/flights(?:\/search)?\/?$/.test(path)?googleFlightRowControl(page.controls||[],params.objective):null
         if(row){flightRowPicks++;edgeBack=[{kind:'click',selector:row} as any];console.log('BROWSER_BOOKING_ROW_PICK:',JSON.stringify({runId:params.sessionTaskId||null,wave,try:flightRowPicks}))}
       }
       // 27 Oct: on Google's booking options the planner spent a wave waiting before pressing "Continue to book with IndiGo".
@@ -2662,7 +2694,7 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // 27 Oct 13:13 live booking 39ada00f: after goindigo.in showed no flights, the run went back to Google and the planner
       // chose "Continue to book with IndiGo" again (the avoid note named goindigo.in, the button says IndiGo). After a
       // fallback, Gogo presses the next listed Indian agency itself.
-      if(!edgeBack&&providerBooking&&onGoogle&&edgeBlockedHosts.length){
+      if(!edgeBack&&providerBooking&&onGoogle&&(edgeBlockedHosts.length||bookingPrefersAgency())){
         const agency=googleAgencyContinueControl(page.controls||[],agenciesTried)
         if(agency){agenciesTried.push(agency.name);edgeBack=[{kind:'click',selector:agency.selector} as any];console.log('BROWSER_BOOKING_AGENCY_CONTINUE:',JSON.stringify({runId:params.sessionTaskId||null,wave,agency:agency.name}))}
       }
@@ -2710,9 +2742,11 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       // approved search link once instead; it is the same URL the approval was bound to.
       // The way back is the Google booking page this run already opened, not a link the blocked page offers.
       if(edgeBack)actions.splice(0,actions.length,...edgeBack)
-      if(providerBooking&&onGoogle&&!bookingStartReloaded&&wave<3){
+      // 27 Oct 15:50 live search 6a0aaef4: the same blank form appeared on a fare read, and 20+ waves re-typed the search
+      // until the read deadline. A flight read reloads its search link once too.
+      if((providerBooking||(params.mode==='read'&&params.recoverFlightSearch===true))&&onGoogle&&!bookingStartReloaded&&wave<3){
         let path='';try{path=new URL(String(page.url||'')).pathname}catch{}
-        const blank=/^\/travel\/flights\/?$/.test(path)&&(page.controls||[]).some((c:any)=>/^Where to\?/i.test(String(c?.label||'').trim())&&!String(c?.value||'').trim())
+        const blank=/^\/travel\/flights(?:\/search)?\/?$/.test(path)&&(page.controls||[]).some((c:any)=>/^Where to\?/i.test(String(c?.label||'').trim())&&!String(c?.value||'').trim())
         if(blank){bookingStartReloaded=true;actions.splice(0,actions.length,{kind:'goto',url:String(params.url)} as any);console.log('BROWSER_BOOKING_START_RELOAD:',JSON.stringify({runId:params.sessionTaskId||null,wave}))}
       }
       // One bounded recovery for the actual travel adapter: use only an
@@ -2788,7 +2822,12 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
         const repeat=actions.findIndex(a=>{const k=advanceKey(a);return Boolean(k)&&bookingAdvancePressed.has(k)})
         if(repeat>=0){
           console.log('BROWSER_BOOKING_REPEAT:',JSON.stringify({runId:params.sessionTaskId||null,control:advanceKey(actions[repeat]).slice(0,40)}))
+          // 28 Oct live booking b98b2a57: Cleartrip's hand-off failed and the planner pressed Cleartrip again, so the run
+          // stopped with Agoda, Goibibo and others still listed. A repeated "Continue to book with …" moves on to the
+          // next listed booking site instead (each tried once).
+          const next=onGoogle&&/^continue to book with/i.test(advanceKey(actions[repeat]))?googleAgencyContinueControl(page.controls||[],agenciesTried):null
           actions.splice(repeat)
+          if(next){agenciesTried.push(next.name);actions.push({kind:'click',selector:next.selector} as any);console.log('BROWSER_BOOKING_AGENCY_CONTINUE:',JSON.stringify({runId:params.sessionTaskId||null,wave,agency:next.name,after:'repeat'}))}
           if(!actions.length)break
         }
       }
@@ -2815,6 +2854,14 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       }
       // 27 Oct live booking a58a0e36: IndiGo's flight-select-redirection page said "Loading..." and the run gave up after
       // two idle looks (about 15 s). A page that is still loading after a hand-off gets a few short waits first.
+      // 27 Oct 17:15 live booking 0f4a95c4: back on Google after the IndiGo fallback, the booking page sat on "Getting prices"
+      // and the run gave up after two idle looks. Wait for it (a few times), then reload that page once.
+      if(!actions.length&&providerBooking&&onGoogle&&edgeBlockedHosts.length&&googlePriceWaits<5&&googleBookingStillPricing(page)){
+        googlePriceWaits++
+        if(googlePriceWaits===3&&!googleBookingReloaded&&googleBookingUrl){googleBookingReloaded=true;actions.push({kind:'goto',url:googleBookingUrl} as any)}
+        else actions.push({kind:'wait',ms:3000} as any)
+        console.log('BROWSER_BOOKING_GOOGLE_PRICING_WAIT:',JSON.stringify({runId:params.sessionTaskId||null,wave,try:googlePriceWaits,reload:googleBookingReloaded}))
+      }
       if(!actions.length&&providerBooking&&!onGoogle&&handoffLoadingWaits<4&&pageStillLoading(page)){
         handoffLoadingWaits++;actions.push({kind:'wait',ms:3000} as any)
         console.log('BROWSER_BOOKING_LOADING_WAIT:',JSON.stringify({runId:params.sessionTaskId||null,wave,try:handoffLoadingWaits}))
@@ -2871,6 +2918,11 @@ export async function runSecureBrowser(params:{userId:string;runId?:string;accou
       if(!lines.length)throw new Error('secure_browser_action_empty_output')
       const previousPage=page
       page=JSON.parse(lines[lines.length-1]);actionLog.push(...(page.actions||[]));mergeBlocked(page);if(page?.handoff)console.log('BOOKING_GOOGLE_HANDOFF:',JSON.stringify({runId:params.sessionTaskId||null,...page.handoff}))
+      // 28 Oct live booking 926c1b59: "Continue to book with Air India Express" opened a tab that ended on Chrome's own
+      // error page (chromewebdata: the airline site did not load), then the planner pressed the same button again and
+      // the run stopped. A hand-off that lands on an error page counts as that airline refusing this browser, so the
+      // next wave on Google picks a listed Indian agency instead.
+      if(providerBooking&&page?.handoff&&(/chromewebdata/i.test(String(page.handoff.finalHost||''))||(Array.isArray(page.handoff.failed)&&page.handoff.failed.length))&&!edgeBlockedHosts.includes('the airline site')&&edgeBlockedHosts.length<2){edgeBlockedHosts.push('the airline site');console.log('BROWSER_BOOKING_HANDOFF_FAILED:',JSON.stringify({runId:params.sessionTaskId||null,finalHost:page.handoff.finalHost||null}))}
       if(providerBooking&&/^https:\/\/(?:www\.)?google\.com\/travel\/flights\/booking/i.test(String(page.url||'')))googleBookingUrl=String(page.url)
       // The screenshot is kept only for the next vision step; it never reaches logs or results.
       lastShot=typeof page.shot==='string'?page.shot:null;lastViewport=page.viewport||null;delete page.shot;delete page.viewport

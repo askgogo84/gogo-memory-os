@@ -8,6 +8,8 @@ import { getAlertPreferences, type AlertTopic } from './alert-preferences'
 // its stable key is distinct from reminder/briefing jobs. Acceptance is NOT delivery.
 export async function deliverWatchAlert(params: {
   watcherId: string; owner: string; key: string; due: string; message: string; condition: unknown; topic?: AlertTopic | AlertTopic[]
+  /** What the message is about, so a short reply can be read against it (lib/agent/open-thread). */
+  thread?: { kind: 'mail_alert' | 'order_alert' | 'watch_alert'; data: Record<string, unknown> }
 }) {
   const owner = Number(params.owner)
   // Private watch producers carry the exact persisted decimal owner. JavaScript
@@ -53,5 +55,8 @@ export async function deliverWatchAlert(params: {
     .eq('delivery_key', params.key).eq('owner_id', owner).maybeSingle()
   if (error) throw new Error('watch_alert_receipt_read_failed')
   const state = String(data?.state || status)
-  return { state, accepted: ['provider_accepted', 'delivered', 'read'].includes(state), providerId: data?.provider_id || null }
+  const accepted = ['provider_accepted', 'delivered', 'read'].includes(state)
+  // 7 Nov: a proactive message is a turn in the conversation and opens a thread for the replies to it.
+  if (accepted && !data?.provider_id?.startsWith?.('dup')) await import('./open-thread').then(m => typeof m?.openThread === 'function' ? m.openThread(params.owner, { kind: params.thread?.kind || 'watch_alert', message: params.message, data: (params.thread?.data as any) || {} }) : undefined).catch(() => {})
+  return { state, accepted, providerId: data?.provider_id || null }
 }
