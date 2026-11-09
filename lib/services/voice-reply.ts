@@ -3,6 +3,7 @@
 // 11 Oct live test: "reply as a voice note" got a text block titled "Voice Note Transcript" and no
 // audio. Gogo now synthesises speech with OpenAI text-to-speech, stores the MP3 in the private
 // user-documents bucket, and sends WhatsApp a short-lived signed link to it.
+import { speechText } from '@/lib/voice/speech-text'
 import { randomUUID } from 'node:crypto'
 import OpenAI from 'openai'
 import Anthropic from '@anthropic-ai/sdk'
@@ -10,7 +11,6 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { SONNET_MODEL } from '@/lib/services/model-ids'
 
 const BUCKET = 'user-documents'
-const MAX_SPEECH_CHARS = 3500
 
 /** The person asked for the answer as audio ("reply as a voice note", "send it as audio"). */
 export function wantsVoiceReply(text: string): boolean {
@@ -29,19 +29,7 @@ export function podcastRequest(text: string): { topic: string; minutes: number }
   return { topic: topic.slice(0, 200), minutes }
 }
 
-/** Text as it should be spoken: no links, markdown, bullets or emoji clutter. */
-export function speechText(text: string): string {
-  return String(text || '')
-    .replace(/https?:\/\/\S+/g, '')
-    .replace(/[*_~`#>]+/g, '')
-    .replace(/^\s*[-•]\s+/gm, '')
-    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
-    .replace(/\(\s*\)/g, '')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-    .slice(0, MAX_SPEECH_CHARS)
-}
+export { speechText }
 
 async function speak(openai: OpenAI, input: string, voice: string): Promise<Buffer> {
   const models = [process.env.GOGO_TTS_MODEL || 'gpt-4o-mini-tts', 'tts-1']
@@ -62,6 +50,14 @@ async function storeAudio(telegramId: number | string, audio: Buffer): Promise<s
   const { data, error: signError } = await supabaseAdmin.storage.from(BUCKET).createSignedUrl(path, 3600)
   if (signError || !data?.signedUrl) throw new Error(`voice_sign_failed:${signError?.message || 'unknown'}`)
   return data.signedUrl
+}
+
+/** MP3 bytes for `text`, for the dashboard Listen button (nothing is stored). Null when TTS is off or fails. */
+export async function synthesizeSpeech(text: string, maxChars = 1500): Promise<Buffer | null> {
+  const input = speechText(text).slice(0, maxChars)
+  if (!input || !process.env.OPENAI_API_KEY) return null
+  try { return await speak(new OpenAI({ apiKey: process.env.OPENAI_API_KEY }), input, 'alloy') }
+  catch (error: any) { console.error('LISTEN_TTS_FAILED:', String(error?.message || error).slice(0, 160)); return null }
 }
 
 /** Synthesise a voice note of `text`; returns a signed MP3 link, or null if it could not be made. */
