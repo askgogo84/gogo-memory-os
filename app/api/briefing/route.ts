@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { sendWhatsApp } from '@/lib/whatsapp'
-import { isInternalServiceAuthorized } from '@/lib/security/cron-auth'
+import { isCronAuthorized, isInternalServiceAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,8 +33,10 @@ type BriefingContext = {
 }
 
 export async function GET(req: NextRequest) {
-  const secret = req.nextUrl.searchParams.get('secret')
-  if (secret !== process.env.CRON_SECRET) {
+  // Fail closed when CRON_SECRET is absent or empty; a blank ?secret= must
+  // never authorize service-role fanout to all opted-in briefing recipients.
+  // Preserve the existing legacy ?secret= cron contract and support Bearer.
+  if (!isCronAuthorized(req)) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 

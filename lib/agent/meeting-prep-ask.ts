@@ -13,10 +13,50 @@ export type PrepEvent = { summary: string; start: string; label: string; meetLin
 export type GuestNotes = Map<string, string[]>
 export type PrepEmail = { subject: string; from: string; date: string; snippet: string }
 
-/** The next meeting that has not started yet; all-day items and ones already over are skipped. Pure. */
-export function nextMeeting(events: PrepEvent[], now = Date.now()): PrepEvent | null {
-  return events.filter(e => /T\d{2}:\d{2}/.test(e.start) && Date.parse(e.start) > now - 5 * 60_000)
-    .sort((a, b) => Date.parse(a.start) - Date.parse(b.start))[0] || null
+export type RequestedMeetingClock = { hour: number; minute: number }
+
+/** Extract an explicit 12-hour meeting time; never silently turn it into a generic "next" request. */
+export function requestedMeetingClock(text: string): RequestedMeetingClock | null {
+  const match = String(text || '').match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i)
+  if (!match) return null
+  const hour12 = Number(match[1])
+  const minute = Number(match[2] || 0)
+  if (hour12 < 1 || hour12 > 12 || minute > 59) return null
+  return { hour: (hour12 % 12) + (match[3].toLowerCase() === 'pm' ? 12 : 0), minute }
+}
+
+function clockInTimezone(iso: string, timezone: string): RequestedMeetingClock | null {
+  const at = new Date(iso)
+  if (!Number.isFinite(at.getTime())) return null
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    }).formatToParts(at)
+    const hour = Number(parts.find(p => p.type === 'hour')?.value)
+    const minute = Number(parts.find(p => p.type === 'minute')?.value)
+    return Number.isInteger(hour) && hour >= 0 && hour <= 23 && Number.isInteger(minute) && minute >= 0 && minute <= 59
+      ? { hour, minute } : null
+  } catch { return null } // Invalid timezone must never select a different meeting.
+}
+
+/** Upcoming timed, non-declined meetings. Explicit clock MUST match in the actor's timezone. Pure. */
+export function nextMeeting(
+  events: PrepEvent[], now = Date.now(), requestedClock: RequestedMeetingClock | null = null, timezone = 'Asia/Kolkata',
+): PrepEvent | null {
+  const matches = events.filter(e => {
+    if (!/T\d{2}:\d{2}/.test(e.start)) return false // all-day
+    const start = Date.parse(e.start)
+    if (!Number.isFinite(start) || start <= now - 5 * 60_000) return false
+    if ((e.attendees || []).some(a => a.self && a.responseStatus?.toLowerCase() === 'declined')) return false
+    if (requestedClock) {
+      const local = clockInTimezone(e.start, timezone)
+      if (!local || local.hour !== requestedClock.hour || local.minute !== requestedClock.minute) return false
+    }
+    return true
+  }).sort((a, b) => Date.parse(a.start) - Date.parse(b.start))
+  // Two same-time matches are ambiguous: do not claim either one as the intended event.
+  if (requestedClock && matches.length > 1 && Date.parse(matches[0].start) === Date.parse(matches[1].start)) return null
+  return matches[0] || null
 }
 
 const who = (a: { email: string; displayName?: string }) => a.displayName || a.email.split('@')[0]
@@ -59,8 +99,13 @@ export async function tryMeetingPrep(actor: AgentActor, text: string): Promise<s
     }
     return "I couldn't read your calendar just now. Try again in a minute."
   }
-  const next = nextMeeting(events)
-  if (!next) return 'Nothing timed on your calendar for the rest of this week, so there is no meeting to prepare for.'
+  const requestedClock = requestedMeetingClock(text)
+  if (/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i.test(text) && !requestedClock) {
+    return "I couldn't understand the meeting time. Please ask again with a time like 3pm."
+  }
+  const next = nextMeeting(events, Date.now(), requestedClock, actor.timezone || 'Asia/Kolkata')
+  if (!next && requestedClock) return "I couldn't identify one upcoming meeting at that exact time this week. I haven't selected another meeting or read any guest emails."
+  if (!next) return 'Nothing timed and not declined on your calendar for the rest of this week, so there is no meeting to prepare for.'
   const guests = (next.attendees || []).filter(a => !a.self && !a.resource && a.email).slice(0, 6)
   let emails: PrepEmail[] | null = []
   if (guests.length) {

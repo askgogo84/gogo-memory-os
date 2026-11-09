@@ -154,7 +154,9 @@ const TRACK_ASK = /\b(?:track(?:ing)?|monitor(?:ing)?|alerts?|notify|notificatio
 const TRACK_REFUSED = /\b(?:don['’]?t|do not|never|no need to|stop|without|not)\s+(?:\w+\s+)?(?:track|monitor|alert|notify|message|msg|text|ping)|\bno\s+(?:need\s+(?:for|to)\s+)?(?:tracking|alerts?|updates?|notifications?|messages?)\b|\b(?:just|only)\s+(?:the\s+)?(?:status|check)\b/i
 // 29 Oct live: "✅ Updated your Mumbai trip hotel stay" was a reply that saved nothing. Any completion claim about a
 // saved thing goes to the handlers instead.
-const COMPLETION_CLAIM = /\b(?:i(?:'ve| have)|done|saved|booked|set|sent|scheduled|added|reminded|updated|changed|noted|recorded|moved|cancelled|canceled|deleted|removed|logged|stored)\b.*\b(?:reminder|booking|flight|email|message|calendar|list|ticket|stay|hotel|trip|event|expense|note|cab|dates?|check-?(?:in|out))\b/i
+// cleanReply preserves newlines, so action-claim checks must recognize claims split over lines.
+// Never trust a multi-line "Done!" statement as proof of a saved reminder or other action.
+const COMPLETION_CLAIM = /\b(?:i(?:'ve| have)|done|saved|booked|set|sent|scheduled|added|reminded|updated|changed|noted|recorded|moved|cancelled|canceled|deleted|removed|logged|stored)\b.*\b(?:reminder|booking|flight|email|message|calendar|list|ticket|stay|hotel|trip|event|expense|note|cab|dates?|check-?(?:in|out))\b/is
 /** The user asked to track/monitor/be messaged about it, in their own words, and did not refuse it. Pure. */
 export function userAskedToTrack(original: string): boolean {
   const t = String(original || '')
@@ -499,8 +501,21 @@ export async function answerFollowups(p: { runId: string; telegramId: number; se
       }
       const text = inventedApprovalGuard(clean((res?.content || []).find((b: any) => b.type === 'tool_use')?.input?.text, 1200))
       if (!text) continue
-      await p.send(text)
-      await supabaseAdmin.from('conversations').insert({ telegram_id: p.telegramId, role: 'assistant', content: text })
+      const receipt = await p.send(text)
+      // A fulfilled send promise is not evidence of provider acceptance: preserve
+      // unknown-outcome no-retry, but do not fabricate an answered conversation.
+      const sid = receipt && typeof receipt === 'object' && 'sid' in receipt
+        ? String((receipt as { sid?: unknown }).sid || '').trim()
+        : ''
+      if (!sid) {
+        console.warn('BRAIN_FOLLOWUP_ACCEPTANCE_UNKNOWN:', JSON.stringify({ runId: p.runId, stepId: step.id }))
+        continue
+      }
+      const { error: historyError } = await supabaseAdmin.from('conversations').insert({ telegram_id: p.telegramId, role: 'assistant', content: text })
+      if (historyError) {
+        console.error('BRAIN_FOLLOWUP_HISTORY_FAILED:', JSON.stringify({ runId: p.runId, stepId: step.id }))
+        continue
+      }
       answered++
     } catch (err: any) { console.error('BRAIN_FOLLOWUP_FAILED:', clean(err?.message || err, 120)) }
   }
