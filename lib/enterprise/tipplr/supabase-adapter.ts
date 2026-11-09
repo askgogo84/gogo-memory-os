@@ -43,3 +43,29 @@ export function worldToRows(world: { outlets: Outlet[]; items: MenuItem[]; order
     merchant_orders: world.orders.map(o => ({ id: o.id, outlet_id: o.outletId, source: o.source, items: o.items.map(l => ({ ...l, outOfStock: o.outOfStockItemId === l.itemId || undefined })), amount_paise: o.amountPaise, customer_first_name: o.customerFirstName, area: o.area, prepaid: o.prepaid, pickup_by: o.pickupBy, state: o.state, prep_minutes: o.prepMinutes, cancel_reason: o.cancelReason, created_at: o.createdAt, updated_at: o.updatedAt })),
   }
 }
+
+/** First run: when the workspace has no outlets, seed the synthetic world (phone-only owner: no script to run). Idempotent. */
+export async function seedIfEmpty(db: Db, workspaceId: string, now = Date.now()): Promise<{ seeded: boolean; rows?: Record<string, number> }> {
+  const { data, error } = await db.from('merchant_outlets').select('id').eq('workspace_id', workspaceId).limit(1)
+  if (error) { if (missing(error)) throw new Error('pilot_not_enabled'); throw new Error('pilot_db_failed') }
+  if (data?.length) {
+    // Outlets exist: the seed is complete only if their orders landed too (a run that died between tables resumes here).
+    const { data: ord, error: oe } = await db.from('merchant_orders').select('id').eq('outlet_id', data[0].id).limit(1)
+    if (oe) { if (missing(oe)) throw new Error('pilot_not_enabled'); throw new Error('pilot_db_failed') }
+    if (ord?.length) return { seeded: false }
+    console.warn('TIPPLR_PILOT_SEED_RESUME: outlets present, orders missing')
+  }
+  const { buildWorld } = await import('./synthetic')
+  const rows = worldToRows(buildWorld(workspaceId, now))
+  const counts: Record<string, number> = {}
+  for (const [table, list] of Object.entries(rows)) {
+    for (let i = 0; i < list.length; i += 500) {
+      // Deterministic ids, so a resumed seed skips rows already there instead of failing on the primary key.
+      const { error: e } = await db.from(table).upsert(list.slice(i, i + 500), { onConflict: 'id', ignoreDuplicates: true })
+      if (e) { console.error('TIPPLR_PILOT_SEED_FAILED:', table, String(e.message || '').slice(0, 160)); throw new Error('pilot_seed_failed') }
+    }
+    counts[table] = list.length
+  }
+  console.log('TIPPLR_PILOT_SEEDED:', JSON.stringify(counts))
+  return { seeded: true, rows: counts }
+}

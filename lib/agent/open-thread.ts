@@ -14,7 +14,7 @@ export type OpenThread = {
   /** The text the person saw. */
   message: string
   /** What the message was about, as far as the sender knew. All optional; the reply handler uses what is there. */
-  data: { subject?: string | null; sender?: string | null; senderEmail?: string | null; merchant?: string | null; amount?: string | null; threadId?: string | null; emailId?: string | null; alertKind?: string | null; gmailEmail?: string | null; orderShop?: string | null }
+  data: { subject?: string | null; sender?: string | null; senderEmail?: string | null; merchant?: string | null; amount?: string | null; threadId?: string | null; emailId?: string | null; alertKind?: string | null; gmailEmail?: string | null; orderShop?: string | null; snippet?: string | null; receivedAt?: string | null }
   at: string
 }
 
@@ -53,10 +53,25 @@ const RE: Record<ThreadIntent, RegExp> = {
   what: /^\s*(?:what(?:'s| is| was)?\s+(?:this|that|it)(?:\s+about)?|which\s+(?:payment|order|email|one)|huh|\?+)\s*\??\s*$/i,
   thanks: /^\s*(?:thanks|thank you|ok(?:ay)?|got it|noted|fine|cool|great|👍|🙏)\s*[.!]*\s*$/i,
 }
+const COMMAND_NOT_REPLY = new RegExp([
+  // send/write/draft/forward/reply … (an) email|mail|message|note|whatsapp|text … to|for <someone>
+  String.raw`\b(?:send|write|draft|compose|forward|reply|shoot|ping|mail|email|message|text|whatsapp)\b[^.?!]{0,40}\b(?:to|for)\s+(?!me\b|myself\b)(?:my\s+|the\s+)?[a-z@][\w.@'-]*`,
+  // send|write|draft an email / a message / a note (no pronoun object)
+  String.raw`\b(?:send|write|draft|compose)\s+(?:an?|the|my)\s+(?:email|mail|message|msg|note|reply|whatsapp|text)\b`,
+  // email|message|text <Name> …  ("email Divya the summary", "message Nithin")
+  String.raw`^\s*(?:please\s+)?(?:email|message|text|whatsapp|ping)\s+(?!me\b|it\b|this\b|that\b|them\b)[a-z]`,
+  // mail/email/messages from|with|about <someone/something> ("check mail from Nithin", "any email from Divya")
+  String.raw`\b(?:mail|email|emails|message|messages)\s+(?:from|with|about|regarding)\s+[a-z@]`,
+].join('|'), 'i')
+
 /** The intents in a reply, in the order they appear ("check the mail again and track the order" → check, track). Pure. */
 export function threadIntents(text: string): ThreadIntent[] {
   const t = String(text || '').trim()
   if (!t || t.length > 160) return []
+  // A new instruction is never a thread reply: composing or forwarding something to someone ("send an email to Divya
+  // about the invoice", "message Nithin the link", "forward this to Divya"), or reading mail from/for a named person
+  // ("check mail from Nithin"). These go to the brain even while an alert thread is open.
+  if (COMMAND_NOT_REPLY.test(t)) return []
   if (RE.what.test(t)) return ['what']
   if (RE.thanks.test(t)) return ['thanks']
   // A negative payment-status report must never close an alert as paid.
@@ -82,6 +97,25 @@ const minutesFromLater = (t: string, now: number, tz: string): number | null => 
 }
 
 const short = (s: string) => s.replace(/\s+/g, ' ').trim()
+
+/** "open it": the email itself in WhatsApp, a line to paste into the Gmail app's search, and the computer link last. Pure. */
+export function openReply(th: OpenThread, tz = 'Asia/Kolkata'): string {
+  const d = th.data || {}
+  const subject = short(String(d.subject || ''))
+  const from = d.sender ? `${d.sender}${d.senderEmail ? ` <${d.senderEmail}>` : ''}` : d.senderEmail || ''
+  const when = d.receivedAt ? new Date(d.receivedAt).toLocaleString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', timeZone: tz }) : ''
+  const lines: string[] = []
+  if (from) lines.push(`*From:* ${from}`)
+  if (subject) lines.push(`*Subject:* ${subject}`)
+  if (when) lines.push(`*Received:* ${when}`)
+  if (d.snippet) lines.push('', `"${short(String(d.snippet))}${String(d.snippet).length >= 300 ? '…' : ''}"`)
+  // Gmail search treats ':' and quotes as operators, so only plain words go in ("1:1" and "?" are dropped).
+  const words = subject.split(/\s+/).map(w => w.replace(/[^\p{L}\p{N}'-]/gu, '')).filter(w => w.length > 2).slice(0, 6).join(' ')
+  const search = [d.senderEmail ? `from:${d.senderEmail}` : '', words ? `subject:(${words})` : ''].filter(Boolean).join(' ')
+  if (search) lines.push('', 'To open it in the Gmail app, paste this into its search bar:', search)
+  if (d.threadId && d.gmailEmail && /^[a-f0-9]{6,64}$/i.test(d.threadId)) lines.push('', `On a computer: https://mail.google.com/mail/u/?authuser=${encodeURIComponent(d.gmailEmail)}#all/${d.threadId}`)
+  return lines.length ? lines.join('\n') : `I don't have the details for that one; search your mail for "${short(String(d.subject || about(th))).slice(0, 60)}".`
+}
 const about = (th: OpenThread) => th.data.merchant || th.data.sender || th.data.subject || 'this'
 
 /** A short reply against the open thread → the reply, or null when there is no thread or the text isn't about it. */
@@ -138,8 +172,9 @@ export async function tryThreadReply(actor: AgentActor, text: string, now = Date
       continue
     }
     if (intent === 'open') {
-      const link = th.data.threadId && th.data.gmailEmail && /^[a-f0-9]{6,64}$/i.test(th.data.threadId) ? `https://mail.google.com/mail/u/?authuser=${encodeURIComponent(th.data.gmailEmail)}#all/${th.data.threadId}` : null
-      parts.push(link ? `Here it is:\n${link}` : `I don't have a link for that one; search your mail for "${short(th.data.subject || about(th)).slice(0, 60)}".`)
+      // 8 Nov: a Gmail web link opens the right email only on a computer; on a phone it lands on the inbox and the Gmail
+      // app does not take web links to one email. So the email comes to WhatsApp, with a search line for the app.
+      parts.push(openReply(th, tz))
       continue
     }
     if (intent === 'later') {
