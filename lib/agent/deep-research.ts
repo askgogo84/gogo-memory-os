@@ -5,12 +5,24 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { hotelResearchEvidence, isHotelDiscoveryResearch } from './hotel-research-evidence'
+import { SONNET_MODEL } from '@/lib/services/model-ids'
 
-const PERSONAL = /\b(?:my|our)\s+(?:e-?mails?|inbox|calendar|meetings?|vault|documents?|files?|drive|expenses?|bills?|account|reminders?|contacts?)\b/i
+// Public web-research queries are sent to external search and inference services.
+// Even if their private records have not been fetched yet, a personal research
+// request must stay in the owner-bound Same Brain route instead of public search.
+const PERSONAL = /\b(?:my|our)\s+(?:e-?mails?|inbox|calendar|meetings?|vault|documents?|files?|drive|expenses?|bills?|account|reminders?|contacts?|messages?|chats?|photos?)\b/i
+const PERSONAL_RECORD = /\b(?:my|our)\s+(?:(?:personal|private|own)\s+)?(?:(?:medical|health|hospital|lab|blood|mri|ct|scan)\s+(?:(?:test|scan|lab|medical|blood)\s+)?(?:reports?|records?|results?|history|documents?|files?)|(?:bank|credit\s+card|debit\s+card|salary|payroll|income\s+tax|tax|insurance)\s+(?:statements?|returns?|records?|reports?|details?|claims?|slips?)|aadh?aar|aadhar|passport|pan\s+card|prescriptions?|diagnos(?:is|es))\b/i
+const PRIVATE_ACTIVITY = /\b(?:my|our)\s+(?:(?:personal|private|own)\s+)?(?:(?:bank|credit\s+card|debit\s+card|upi|income\s+tax|tax|salary|payroll|insurance)\s+(?:transactions?|payments?|refunds?|activity|payslips?|history|filings?|polic(?:y|ies))|(?:payslips?|mri\s+scans?|ct\s+scans?|lab\s+tests?|blood\s+tests?|medical\s+(?:scans?|tests?)|pan\s+(?:number|details)))\b/i
+const EXPLICIT_EMAIL = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i
+
+export function researchContainsPrivateData(text: string): boolean {
+  const t = String(text || '')
+  return PERSONAL.test(t) || PERSONAL_RECORD.test(t) || PRIVATE_ACTIVITY.test(t) || EXPLICIT_EMAIL.test(t)
+}
 
 export function isDeepResearchRequest(text: string) {
   const t = String(text || '').trim()
-  if (!t || t.length > 600 || PERSONAL.test(t)) return false
+  if (!t || t.length > 600 || researchContainsPrivateData(t)) return false
   if (/^(?:please\s+)?(?:do\s+(?:a\s+)?|run\s+(?:a\s+)?)?(?:deep\s+)?research\b/i.test(t)) return true
   if (/^(?:please\s+)?(?:investigate|find out (?:everything|all|in detail))\b/i.test(t)) return true
   return /\bwith (?:sources|citations|references|links)\b/i.test(t) && /\b(?:best|compare|comparison|top|which|options|vs\.?|versus|review|research|pros and cons)\b/i.test(t)
@@ -97,6 +109,15 @@ export async function gatherSources(queries: string[], deps: { search?: typeof s
 }
 
 export async function runDeepResearch(question: string, deps: { model?: Model; search?: typeof searchWebResults; fetchImpl?: typeof fetch; format?: 'guide' } = {}) {
+  // Defense in depth: this function is also called outside the chat intent gate.
+  // Never send a private question to even the query-planning model or search API.
+  if (researchContainsPrivateData(question)) {
+    return {
+      text: 'This looks like a request about private information. I will not send it to public web research. Please use your connected private records or ask about the general topic without personal details.',
+      sources: [] as ResearchSource[],
+      queries: [] as string[],
+    }
+  }
   const model = deps.model || defaultModel
   const queries = await planQueries(question, model)
   const sources = await gatherSources(queries, deps)
@@ -116,7 +137,7 @@ Request: ${question}
 Sources:
 ${corpus.slice(0, 24_000)}`
   let body = ''
-  try { body = (await model(prompt, 900, 'claude-sonnet-4-5')).trim() } catch {}
+  try { body = (await model(prompt, 900, SONNET_MODEL)).trim() } catch {}
   if (!body) body = sources.slice(0, 5).map(s => `• ${s.title} [${s.n}]`).join('\n')
   // Some models write markdown bold (**x**); WhatsApp bold is *x*.
   body = body.replace(/\*\*([^*\n]+)\*\*/g, '*$1*').replace(/^#{1,6}\s+/gm, '')

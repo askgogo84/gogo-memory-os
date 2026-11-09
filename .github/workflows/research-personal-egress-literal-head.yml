@@ -1,0 +1,50 @@
+name: Personal research egress containment - literal PR head
+on:
+  pull_request:
+    paths:
+      - 'lib/agent/deep-research.ts'
+      - 'scripts/verify-research-personal-egress-literal.mts'
+      - '.github/workflows/research-personal-egress-literal-head.yml'
+permissions:
+  contents: read
+jobs:
+  verify-research-personal-egress:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+      CRON_SECRET: ci-placeholder-cron-secret
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Assert literal immutable feature HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Locked dependency install
+        run: npm ci
+      - name: Inert original-function personal research egress regression
+        run: npx tsx scripts/verify-research-personal-egress-literal.mts
+      - name: Existing research privacy and citation regression
+        run: npx tsx scripts/verify-duet-round6.mts
+      - name: Full registered regression suite
+        run: npm test
+      - name: Next type generation
+        run: npx next typegen
+      - name: TypeScript checking
+        run: npm run typecheck
+      - name: Fixture production build
+        run: npm run build
