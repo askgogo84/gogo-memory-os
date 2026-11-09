@@ -60,11 +60,13 @@ Tests: `verify-procedures-runtime-nov9.mts` (3 groups: approval staged → relea
 - `verify`: `verifyGmailSentMessage` (SENT label + same thread) → `provider_readback` evidence; otherwise retry, then
   escalate. Only then does the run complete.
 
+- WhatsApp entry (#1404): "follow up with <person> on <topic>" on WhatsApp starts the same run. The approval is
+  never taken on WhatsApp: the reply links the dashboard Needs-you page, where the card is bound to the exact draft.
+
 ## Still not done
 
 - `travel.day` cab booking: no verified booking executor with provider read-back exists, so the EXECUTE fails closed
   (`execute_not_wired`, outcome known, nothing attempted). Wiring it needs a real provider integration first.
-- WhatsApp entry for procedures (dashboard only for now).
 
 ## Enable order (owner)
 
