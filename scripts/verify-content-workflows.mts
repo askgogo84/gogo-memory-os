@@ -74,6 +74,7 @@ class OpenAIFixture {chat = {completions: {create: async (payload: any) => {
 const model = load('lib/services/claude.ts', {
   '@anthropic-ai/sdk': {default: AnthropicFixture}, openai: {default: OpenAIFixture},
   '@/lib/bot/memory-redaction': {redactSecretShapedText: (s: string) => s}, '@/lib/agent/content-workflows': workflows,
+  '@/lib/services/model-ids': {SONNET_MODEL: 'claude-sonnet-4-5', HAIKU_MODEL: 'claude-haiku-4-5'},
 }, {OPENAI_API_KEY: 'fixture-not-a-real-key'})
 
 const history: any[] = [], writes: string[] = []
@@ -133,6 +134,7 @@ const common = {'@/lib/agent/autonomy-status':{isConnectionCapabilityQuery:()=>f
   '@/lib/bot/pending-question-resolver':{tryResolvePendingQuestion:async()=>null},
   // The real run-cancel handler: a writing request is not a cancel, so it returns null without any read.
   '@/lib/agent/run-cancel':{tryCancelRunFromChat},
+  '@/lib/agent/product-discovery':{tryProductDiscovery:async()=>null},'@/lib/agent/scheduled-list':{tryGetScheduledList:async()=>null},
   // The real ticket matcher: a writing request is not a ticket/QR ask, so no ticket lookup ever runs.
   '@/lib/services/asset-memory':{isTicketRetrievalAsk,buildTicketRetrievalReply:async()=>{throw new Error('ticket retrieval must not claim a content workflow')}},
   // Inert gold-rate watch: a writing request is never a gold alert, so it must return null with no I/O.
