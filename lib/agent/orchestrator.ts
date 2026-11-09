@@ -35,10 +35,10 @@ const DEFAULT_LEVEL: Record<AgentCapability, AgentPermissionLevel> = {
   browser: 'draft',
   contacts: 'read',
   travel: 'draft',
-  payments: 'ask',
+  payments: 'ask', merchant: 'ask',
 }
 
-const CONSEQUENTAL = new Set<AgentCapability>(['email', 'calendar', 'browser', 'travel', 'payments'])
+const CONSEQUENTAL = new Set<AgentCapability>(['email', 'calendar', 'browser', 'travel', 'payments', 'merchant'])
 
 function safeInput(value: unknown, max = 2000) {
   return redactSecretShapedText(String(value ?? '').trim().slice(0, max))

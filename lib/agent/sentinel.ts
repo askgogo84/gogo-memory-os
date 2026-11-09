@@ -54,7 +54,7 @@ export function evaluateAgentSentinel(input:SentinelInput):SentinelResult {
   }
 
   const consequential = input.irreversible || input.risk === 'high' || (
-    input.mode === 'execute' && ['email','calendar','browser','travel','payments'].includes(input.capability)
+    input.mode === 'execute' && ['email','calendar','browser','travel','payments','merchant'].includes(input.capability)
   )
   if (consequential && !input.approved) return { allowed:false, reason:'approval_missing' }
   return { allowed:true, reason:'sentinel_clear' }
