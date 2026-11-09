@@ -249,7 +249,23 @@ function nearestRetainedTrip(rows:TravelRow[],now:number){
     || rows.slice().sort((a,b)=>Date.parse(String(b.arrive_at||b.depart_at))-Date.parse(String(a.arrive_at||a.depart_at)))
       .find(row=>Date.parse(String(row.arrive_at||row.depart_at))>=now-72*3600_000)
 }
+/** All service-role travel lookups require the exact persisted PostgreSQL BIGINT owner.
+ * Never round an owner or accept an ambiguous numeric value as an authorization identity.
+ */
+export function exactTravelOwnerId(input: unknown): string | null {
+  if (typeof input === 'number' && !Number.isSafeInteger(input)) return null
+  if (typeof input !== 'string' && typeof input !== 'number') return null
+  const id = String(input).trim()
+  if (!/^-?[1-9]\d*$/.test(id)) return null
+  const n = BigInt(id)
+  return n >= BigInt('-9223372036854775808') && n <= BigInt('9223372036854775807') ? id : null
+}
+
 async function compileForUser(telegramId:string,rows:TravelRow[]){
+  const owner = exactTravelOwnerId(telegramId)
+  if (!owner || rows.some(row => exactTravelOwnerId(row.telegram_id) !== owner)) {
+    throw new Error('context_travel_owner_invalid')
+  }
   const now=Date.now()
   const sorted=rows.slice().sort((a,b)=>Date.parse(a.depart_at)-Date.parse(b.depart_at))
   const first=nearestRetainedTrip(sorted,now)
@@ -291,11 +307,13 @@ async function compileForUser(telegramId:string,rows:TravelRow[]){
     .map((row:any)=>String(row.condition_json?.contextKey||'')))
   let slots=Math.max(0,Number(budget.activeWebWatchersMax||0)-manualCount)
   let created=0,reused=0,stopped=0,skipped=0
-  const {data:homeMemories,error:homeError}=await supabaseAdmin.from('memories').select('id,content').eq('telegram_id',Number(telegramId))
+  const {data:homeMemories,error:homeError}=await supabaseAdmin.from('memories').select('id,telegram_id,content').eq('telegram_id',owner)
     .or('content.ilike.my home city%,content.ilike.home city:%,content.ilike.I live in%,content.ilike.I am based in%').order('created_at',{ascending:false}).limit(10)
   if(homeError)throw new Error('context_home_lookup_failed')
-  const {data:user,error:userError}=await supabaseAdmin.from('users').select('name,gmail_connected').eq('telegram_id',Number(telegramId)).maybeSingle()
-  if(userError)throw new Error('context_owner_profile_lookup_failed')
+  if((homeMemories||[]).some((row:any)=>exactTravelOwnerId(row.telegram_id)!==owner))throw new Error('context_home_owner_mismatch')
+  const {data:user,error:userError}=await supabaseAdmin.from('users').select('telegram_id,name,gmail_connected').eq('telegram_id',owner).maybeSingle()
+  if(userError||!user)throw new Error('context_owner_profile_lookup_failed')
+  if(exactTravelOwnerId(user.telegram_id)!==owner)throw new Error('context_profile_owner_mismatch')
   const names=group.flatMap(row=>[...(Array.isArray(row.passengers)?row.passengers:[]),...Object.values(row.raw?.travellerAliases||{})])
   const normalizeName=(name:unknown)=>String(name||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim()
   const anotherTraveller=names.some(name=>!user?.name||normalizeName(name)!==normalizeName(user.name))
@@ -355,11 +373,14 @@ export async function compileUpcomingTravelWatchers(limit=200){
     .order('depart_at',{ascending:true}).limit(Math.max(1,Math.min(500,limit)))
   if(error)throw new Error(`context_travel_read_failed:${error.message}`)
   const byUser=new Map<string,TravelRow[]>()
+  let unsafeOwnerRows=0
   for(const row of data||[]){
-    const key=String((row as any).telegram_id)
+    const key=exactTravelOwnerId((row as any).telegram_id)
+    if(!key){unsafeOwnerRows++;continue}
     const bucket=byUser.get(key)||[];bucket.push(row as TravelRow);byUser.set(key,bucket)
   }
-  let users=0,created=0,reused=0,stopped=0,skipped=0,failed=0
+  // A row already rounded by a database client must never create another person's monitor.
+  let users=0,created=0,reused=0,stopped=0,skipped=0,failed=unsafeOwnerRows
   for(const [telegramId,rows] of byUser){
     users++
     try{
@@ -374,22 +395,24 @@ export async function compileUpcomingTravelWatchers(limit=200){
 
 /** Same as the cron pass, for one user, right after a ticket is saved so tracking starts now. */
 export async function compileTravelWatchersForUser(telegramId:string|number){
+  const owner=exactTravelOwnerId(telegramId)
+  if(!owner)throw new Error('context_travel_owner_invalid')
   const now=Date.now()
   const {data,error}=await supabaseAdmin.from('travel_tickets')
     .select('id,telegram_id,booking_group,leg_index,from_city,to_city,depart_at,arrive_at,airline,flight_no,passengers,raw')
-    .eq('telegram_id',telegramId).eq('type','flight')
+    .eq('telegram_id',owner).eq('type','flight')
     .or(`depart_at.gte.${new Date(now-72*3600_000).toISOString()},arrive_at.gte.${new Date(now-72*3600_000).toISOString()}`).lt('depart_at',new Date(now+14*86400_000).toISOString())
     .order('depart_at',{ascending:true}).limit(20)
   if(error)throw new Error(`context_travel_read_failed:${error.message}`)
   if(!data?.length)return {created:0,reused:0,stopped:0,skipped:0,tracking:false,flights:[] as string[]}
-  const r=await compileForUser(String(telegramId),data as TravelRow[])
+  const r=await compileForUser(owner,data as TravelRow[])
   const sorted=(data as TravelRow[]).slice().sort((a,b)=>Date.parse(a.depart_at)-Date.parse(b.depart_at))
   const first=nearestRetainedTrip(sorted,now)
   if(!first)return {...r,tracking:false,flights:[] as string[]}
   const group=first.booking_group?sorted.filter(row=>String(row.booking_group||'')===String(first.booking_group)):[first]
   // Report tracking only when the flight-status monitor is actually active (plan limits can skip it).
   const {data:active}=await supabaseAdmin.from('agent_watchers').select('id')
-    .eq('telegram_id',telegramId).eq('active',true)
+    .eq('telegram_id',owner).eq('active',true)
     .eq('condition_json->>contextualKind','travel').eq('condition_json->>contextClass','flight_status').limit(1)
   return {...r,tracking:Boolean(active?.length),flights:group.map(row=>normalizeFlightNo(clean(row.flight_no,20))).filter(Boolean)}
 }

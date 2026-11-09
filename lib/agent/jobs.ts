@@ -67,6 +67,18 @@ export function isJobScanNow(text: string) {
     || /^(?:find|show)\s+me\s+(?:new\s+)?(?:jobs?|openings?)(?:\s+(?:now|today))?$/.test(t)
     || /^(?:any\s+)?new\s+(?:jobs?|openings?)(?:\s+(?:today|for\s+me))?$/.test(t)
 }
+// 5 Nov live: "scan jobs for product manager in Bangalore" names its own role and city, so it needs no saved
+// preferences; it fell to a general web answer with board listing counts. Returns "<role> jobs in <city>" or null.
+export function jobScanQuery(text: string): string | null {
+  const t = clean(text, 200).replace(/[?.!]+$/, '').trim()
+  const m = t.match(/^(?:please\s+)?(?:scan|search|find|look|hunt|check)\s+(?:for\s+)?(?:new\s+)?(?:jobs?|openings?|roles?)\s+(?:for|as)\s+(?:an?\s+)?(.{2,60}?)(?:\s+(?:in|at|near|around)\s+(.{2,40}?))?(?:\s+(?:now|today|for\s+me))?$/i)
+    || t.match(/^(?:please\s+)?(?:scan|search|find|look|hunt|check)\s+(?:for\s+)?(?:new\s+)?(.{2,60}?)\s+(?:jobs?|openings?|roles?)(?:\s+(?:in|at|near|around)\s+(.{2,40}?))?(?:\s+(?:now|today|for\s+me))?$/i)
+  if (!m) return null
+  const role = clean(m[1], 60).replace(/^(?:me|some|any|the)\s+/i, '')
+  if (!role || /^(?:me|some|any|new|the|a|an|for)$/i.test(role) || /^(?:my|our|your|his|her|their)\b/i.test(role) || role.split(' ').length > 6) return null
+  const city = clean(m[2] || '', 40)
+  return `${role} jobs${city ? ` in ${city}` : ''}`
+}
 /** Board search/listing pages (many openings) as opposed to one posting. */
 export function isJobListingUrl(url: string) {
   try {
