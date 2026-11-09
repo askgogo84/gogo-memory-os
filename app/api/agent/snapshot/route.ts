@@ -134,7 +134,8 @@ export async function GET(request: Request) {
       actionLabel: i.action_label, sourceRefs: i.source_refs, status: i.status,
       createdAt: i.created_at, snoozedUntil: i.snoozed_until,
     })),
-    approvals: (approvals.data || []).map((a: any) => ({
+    // An approval past its expiry cannot be acted on (the decision route refuses it), so it is not "needs you".
+    approvals: (approvals.data || []).filter((a: any) => { const x = approvalExpiresAt(a); return !x || !Number.isFinite(Date.parse(x)) || Date.parse(x) > Date.now() }).map((a: any) => ({
       id: a.id, runId: a.run_id, actionType: a.action_type, title: a.title,
       description: a.description, preview: Array.isArray(a.payload_preview) ? a.payload_preview : [], risk: a.risk_level,
       status: a.status, requestedAt: a.requested_at, resolvedAt: a.resolved_at,
