@@ -149,6 +149,14 @@ export async function logUsage(telegramId:number, kind:UsageKind, meta?:Record<s
   if(kind==='ai_action') await supabaseAdmin.from('memories').insert({ telegram_id:telegramId, content:usageMemoryPrefix(kind,dayKey)+JSON.stringify({kind,monthKey,dayKey,meta:meta||{},created_at:new Date().toISOString()}) })
 }
 
+/** Web searches this IST month from usage_events (5 Nov: the card showed "0 / 120" beside 201 web lookups, because
+ * searches are recorded there and no longer in the old memories tally). Null when the read fails. */
+async function monthlyWebSearches(telegramId:number|string):Promise<number|null> {
+  const ist=new Date(Date.now()+330*60_000)
+  const start=new Date(Date.UTC(ist.getUTCFullYear(),ist.getUTCMonth(),1)-330*60_000).toISOString()
+  const { count, error }=await supabaseAdmin.from('usage_events').select('id',{count:'exact',head:true}).eq('telegram_id',String(telegramId)).eq('counter','ai_action').eq('action','web_search').gte('created_at',start)
+  return error?null:Number(count||0)
+}
 /** AI actions this IST month, from the same usage_events the dashboard and trends count (4 Nov: the chat showed
  * "1 / 750" from users.daily_count while trends showed 206 in 30 days). Null when the read fails. */
 async function monthlyAiUsed(telegramId:number|string):Promise<number|null> {
@@ -205,7 +213,7 @@ export async function getUsageStatusReply(telegramId:number) {
   const monthlyActionsUsed=(await monthlyAiUsed(telegramId).catch(()=>null))??(user?.daily_count||0)
   const activeReminders=await getActiveReminderCount(telegramId)
   const voiceUsed=await countUsageFromMemories(telegramId,'voice_note',monthKey)
-  const webUsed=await countUsageFromMemories(telegramId,'web_search',monthKey)
+  const webUsed=Math.max(await countUsageFromMemories(telegramId,'web_search',monthKey),(await monthlyWebSearches(telegramId).catch(()=>null))??0)
   const calendarUsed=await countUsageFromMemories(telegramId,'calendar_event',monthKey)
   const resetLabel=nextResetLabel()
   return (

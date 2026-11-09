@@ -51,7 +51,11 @@ export type RuntimeStepMetadata = {
   approvalAction?: RuntimeApprovalAction | null
   verifiedAt?: string | null
   lastError?: string | null
+  /** Active Focus: the step reached a point only the person can pass (sign-in, OTP, captcha, a page handed back, a payment). */
+  waitingUser?: WaitingUser | null
 }
+export type WaitingUserReason = 'sign_in' | 'otp' | 'captcha' | 'handback' | 'payment'
+export type WaitingUser = { reason: WaitingUserReason; resumeUrl: string | null; since: string; note: string | null }
 
 export type RuntimeStepRow = {
   id: string
@@ -71,6 +75,8 @@ export type AutonomousToolResult =
   | { status: 'waiting_approval'; approvalId: string; output?: Record<string, unknown> }
   | { status: 'retryable_failure'; error: string; output?: Record<string, unknown> }
   | { status: 'blocked'; error: string; output?: Record<string, unknown> }
+  /** The step cannot continue until the person does something (sign in, enter a code, finish a page). Not a failure: no retry budget spent, no outcome_unknown, resumes exactly where it stopped. */
+  | { status: 'waiting_user'; reason: WaitingUserReason; resumeUrl?: string | null; note?: string | null; output?: Record<string, unknown> }
 
 export type AutonomousToolContext = {
   actor: AgentActor
@@ -111,6 +117,7 @@ function runtimeMeta(row: RuntimeStepRow): RuntimeStepMetadata {
     approvalAction: runtime.approvalAction || null,
     verifiedAt: runtime.verifiedAt || null,
     lastError: runtime.lastError || null,
+    waitingUser: runtime.waitingUser && typeof runtime.waitingUser === 'object' ? { reason: safe(runtime.waitingUser.reason, 20) as WaitingUserReason, resumeUrl: runtime.waitingUser.resumeUrl ? safe(runtime.waitingUser.resumeUrl, 500) : null, since: safe(runtime.waitingUser.since, 40), note: runtime.waitingUser.note ? safe(runtime.waitingUser.note, 300) : null } : null,
   }
 }
 
@@ -272,6 +279,7 @@ export function readyAutonomousSteps(rows: RuntimeStepRow[], now = new Date()) {
       const meta = runtimeMeta(row)
       if (meta.retryAt && Date.parse(meta.retryAt) > now.getTime()) return false
       if (meta.approvalId || (meta.requiresApproval && !meta.approvalGrantedId)) return false
+      if (meta.waitingUser) return false
       if (runningLanes.has(meta.lane)) return false
       return meta.dependsOn.every((dep) => byKey.get(dep)?.status === 'completed')
     })
@@ -328,6 +336,16 @@ async function markWaitingApproval(row: RuntimeStepRow, telegramId: string, meta
     output_json: mergeRuntimeOutput(row, nextMeta, output),
   }).eq('id', row.id).eq('telegram_id', telegramId).eq('status', 'running').eq('output_json->runtime->>attempt', meta.attempt).select('id')
   if (error) throw new Error(`autonomous_step_approval_wait_failed:${error.message}`)
+  return rowsUpdated(data)
+}
+
+/** Waiting on the person is not an attempt spent: the attempt counter is given back, the lease released, and the step
+ *  stays queued but unready until resumeWaitingUserStep clears waitingUser. Fenced on attempt like every other write. */
+async function markWaitingUser(row: RuntimeStepRow, telegramId: string, meta: RuntimeStepMetadata, waiting: WaitingUser, output: Record<string, unknown> = {}) {
+  const nextMeta: RuntimeStepMetadata = { ...meta, attempt: Math.max(0, meta.attempt - 1), leaseUntil: null, retryAt: null, lastError: null, waitingUser: waiting }
+  const { data, error } = await supabaseAdmin.from('agent_steps').update({ status: 'queued', error: null, output_json: mergeRuntimeOutput(row, nextMeta, output) })
+    .eq('id', row.id).eq('telegram_id', telegramId).eq('status', 'running').eq('output_json->runtime->>attempt', meta.attempt).select('id')
+  if (error) throw new Error(`autonomous_step_waiting_user_failed:${error.message}`)
   return rowsUpdated(data)
 }
 
@@ -404,6 +422,17 @@ async function reconcileRun(runId: string, telegramId: string, opts: { notifyOut
     if (opts.notifyOutcome) await notifyRunOutcome({ ...run, id: runId, telegram_id: telegramId, type: 'autonomous', status: 'failed', error: safe(failed[0].error, 500), metadata_json: { ...((run.metadata_json as any) || {}), state: 'failed' } })
     return 'failed' as const
   }
+  const waitingUser = steps.find((step) => step.status === 'queued' && runtimeMeta(step).waitingUser)
+  if (waitingUser && !waitingApproval) {
+    const meta = runtimeMeta(waitingUser)
+    const already = String((run.metadata_json as any)?.state) === 'waiting_user' && (run.metadata_json as any)?.waiting_user?.stepKey === meta.stepKey
+    const metadata = { ...((run.metadata_json as any) || {}), state: 'waiting_user', waiting_user: { stepKey: meta.stepKey, reason: meta.waitingUser!.reason, resumeUrl: meta.waitingUser!.resumeUrl, since: meta.waitingUser!.since, note: meta.waitingUser!.note } }
+    const { data: paused, error: pauseError } = await supabaseAdmin.from('agent_runs').update({ status: 'paused', progress, updated_at: now, metadata_json: metadata }).eq('id', runId).eq('telegram_id', telegramId).in('status', [...RECONCILABLE_RUN_STATUSES]).select('id')
+    if (pauseError) throw new Error(`autonomous_run_waiting_user_failed:${pauseError.message}`)
+    if (!rowsUpdated(paused)) return 'superseded'
+    if (!already) await activity(telegramId, runId, 'autonomous_run_waiting_user', `Gogo is waiting for you: ${WAITING_USER_TEXT[meta.waitingUser!.reason]}`, { step_key: meta.stepKey, reason: meta.waitingUser!.reason, resume_url: meta.waitingUser!.resumeUrl })
+    return 'waiting_user'
+  }
   const status = waitingApproval ? 'waiting_approval' : 'running'
   const { data: updated, error } = await supabaseAdmin.from('agent_runs').update({ status, progress, updated_at: now, metadata_json: { ...((run.metadata_json as any) || {}), state: waitingApproval ? 'waiting_approval' : 'executing' } }).eq('id', runId).eq('telegram_id', telegramId).in('status', [...RECONCILABLE_RUN_STATUSES]).select('id')
   if (error) throw new Error(`autonomous_run_reconcile_failed:${error.message}`)
@@ -468,6 +497,12 @@ export async function executeAutonomousRun(params: {
         await activity(telegramId, params.runId, 'autonomous_step_waiting_approval', row.title, { step_id: row.id, step_key: claimed.stepKey, approval_id: result.approvalId })
         return { stepId: row.id, claimed: true, status: result.status }
       }
+      if (result.status === 'waiting_user') {
+        const waiting: WaitingUser = { reason: result.reason, resumeUrl: result.resumeUrl || null, since: new Date().toISOString(), note: result.note || null }
+        if (!await markWaitingUser(row, telegramId, claimed, waiting, result.output || {})) return { stepId: row.id, claimed: true, status: 'superseded' }
+        await activity(telegramId, params.runId, 'autonomous_step_waiting_user', row.title, { step_id: row.id, step_key: claimed.stepKey, reason: result.reason, resume_url: result.resumeUrl || null })
+        return { stepId: row.id, claimed: true, status: result.status }
+      }
       if (result.status === 'blocked') {
         const blocked = await markFailure(row, telegramId, claimed, result.error, false, result.output || {})
         if (blocked.superseded) return { stepId: row.id, claimed: true, status: 'superseded' }
@@ -500,6 +535,36 @@ export async function executeAutonomousRun(params: {
 
   const status = await reconcileRun(params.runId, telegramId, { notifyOutcome: params.notifyOutcome })
   return { runId: params.runId, status, executed: executions.filter((item) => item.claimed).length, executions }
+}
+
+export const WAITING_USER_TEXT: Record<WaitingUserReason, string> = {
+  sign_in: 'sign in on the page I opened, then tap Resume',
+  otp: 'enter the one-time code yourself on that page (never in chat), then tap Resume',
+  captcha: 'pass the site\'s human check yourself, then tap Resume',
+  handback: 'finish the page I handed back to you, then tap Resume',
+  payment: 'complete the payment yourself on that page, then tap Resume',
+}
+
+/** The person did their part: clear the wait so the same step (same idempotency key, no attempt spent) runs on the next wave. */
+export async function resumeWaitingUserStep(params: { actor: AgentActor; runId: string; stepKey: string }) {
+  const telegramId = String(params.actor.legacyTelegramId)
+  const { run, steps } = await loadAutonomousRun(params.runId, telegramId)
+  if (!isReconcilable(run)) return { resumed: false, reason: 'run_not_active' as const }
+  const row = steps.find((step) => runtimeMeta(step).stepKey === params.stepKey)
+  if (!row) return { resumed: false, reason: 'step_not_found' as const }
+  const meta = runtimeMeta(row)
+  if (!meta.waitingUser || row.status !== 'queued') return { resumed: false, reason: 'not_waiting' as const }
+  const nextMeta: RuntimeStepMetadata = { ...meta, waitingUser: null, retryAt: null }
+  const { data, error } = await supabaseAdmin.from('agent_steps').update({ output_json: mergeRuntimeOutput(row, nextMeta, { waiting_user_resumed_at: new Date().toISOString() }) })
+    .eq('id', row.id).eq('telegram_id', telegramId).eq('status', 'queued').eq('output_json->runtime->>attempt', meta.attempt).select('id')
+  if (error) throw new Error(`autonomous_step_resume_failed:${error.message}`)
+  if (!rowsUpdated(data)) return { resumed: false, reason: 'superseded' as const }
+  const now = new Date().toISOString()
+  const { metadata_json: metaJson } = run as any
+  const { waiting_user: _dropped, ...rest } = (metaJson || {}) as Record<string, unknown>
+  await supabaseAdmin.from('agent_runs').update({ status: 'running', updated_at: now, metadata_json: { ...rest, state: 'executing' } }).eq('id', params.runId).eq('telegram_id', telegramId).in('status', [...RECONCILABLE_RUN_STATUSES])
+  await activity(telegramId, params.runId, 'autonomous_run_resumed', 'Gogo is continuing where it stopped.', { step_key: params.stepKey, after: meta.waitingUser.reason })
+  return { resumed: true as const }
 }
 
 export async function releaseApprovedAutonomousStep(params: { actor: AgentActor; runId: string; stepKey: string }) {
