@@ -256,7 +256,12 @@ export async function loadBrainContext(p: { telegramId: number; text: string; na
         const pack = await withTimeout(cg.buildDecisionContext({ actor: { legacyTelegramId: p.telegramId, timezone, name: p.name, userId: p.userId, whatsappId: p.whatsappId }, objective: p.text, understanding: ctx, facts: otherFacts as any, now }), 2500)
         if (pack) {
           console.log('CONTEXT_GRAPH_SHADOW:', JSON.stringify({ mode, decisionId: pack.decisionId, kind: pack.objective.kind, domain: pack.objective.domain, live: pack.objective.liveDataRequired, conflicts: pack.conflicts.length, missing: pack.missing.length, size: pack.size, warnings: pack.warnings, recall: { mode: pack.recall.mode, items: pack.recall.items.length, hypotheses: pack.recall.hypotheses.length, sensitiveInItems: pack.recall.items.filter(i => i.sensitive).length, dropped: pack.recall.dropped, probes: pack.recall.probes.length } }))
-          if (mode === 'on') { const lines = cg.renderDecisionContext(pack); if (lines.length) sections['Decision context'] = lines }
+          if (mode === 'on') {
+            const lines = cg.renderDecisionContext(pack); if (lines.length) sections['Decision context'] = lines
+            // Phase 4: link this turn's decision id to the pack it was made from. Outcome is 'waiting' here (decided and
+            // learned by the existing v2 path); the row is the join key, it teaches nothing by itself.
+            void import('./decision-trace').then(dt => dt.recordDecisionTrace({ legacyTelegramId: p.telegramId }, dt.buildDecisionTrace({ decisionId: pack.decisionId, contextPackRef: `pack:${pack.decisionId}`, objectiveKind: pack.objective.kind, status: 'running', trace: pack.assertions.slice(0, 20).map(a => ({ at: pack.generatedAt, node: a.predicate, type: 'READ' as const, outcome: a.status, evidenceClass: a.evidenceClass })) }))).catch((e: any) => console.error('DECISION_TRACE_WRITE_FAILED:', String(e?.message || e).slice(0, 120)))
+          }
         }
       }
     } catch (e: any) { console.error('CONTEXT_GRAPH_HOOK_FAILED:', String(e?.message || e).slice(0, 120)) }

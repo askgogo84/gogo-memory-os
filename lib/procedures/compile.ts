@@ -1,8 +1,11 @@
 // Durable adapter: a procedure graph becomes an AutonomousPlan for the existing runtime (agent_runs / agent_steps,
 // leases, retries, approvals, verification, outcome_unknown). No second orchestrator. Mapping:
 //   READ / PARALLEL_READ / REASON / DECIDE / CONDITION / WAIT_EVENT → one step each, tool `procedure.<type>`
-//   APPROVAL + EXECUTE + VERIFY → one mutation step with requiresApproval, approvalAction and verificationRequired,
-//     which is exactly how the runtime already binds an approval to a step and refuses completion without evidence
+//   APPROVAL + EXECUTE → one mutation step (single attempt) carrying approvalAction: on first dispatch the handler stages
+//     the bound approval row and returns waiting_approval; the runtime re-dispatches it only after the owner's yes is
+//     released onto the step (approvalGrantedId), re-asserting the binding and TTL itself
+//   VERIFY → its own retryable, non-mutation step with verificationRequired, so a missing read-back retries without
+//     ever re-running the write
 //   ESCALATE → a step the runtime marks waiting_user(handback); COMPLETE/FAIL are the run's own terminal statuses
 // Branch structure is kept in the step metadata (`procedure.edges`) so the step handlers, which call engine.ts, know
 // which successors to release; the runtime's DAG dependsOn carries the happy path.
@@ -21,7 +24,6 @@ export function compileToPlan(def: ProcedureDefinition, inputs: Record<string, u
   for (const n of def.nodes) {
     if (n.type !== 'EXECUTE') continue
     for (const p of preds(n.id)) if (byId.get(p)?.type === 'APPROVAL') { folded.add(p); execFor.set(p, n) }
-    for (const e of def.edges.filter(e => e.from === n.id)) if (byId.get(e.to)?.type === 'VERIFY') { folded.add(e.to); execFor.set(e.to, n) }
   }
   const stepKeyFor = (id: string): string | null => {
     const n = byId.get(id); if (!n) return null
@@ -40,11 +42,11 @@ export function compileToPlan(def: ProcedureDefinition, inputs: Record<string, u
     const base: AutonomousPlanStep = { key: n.id, title: n.title, toolName: `procedure.${n.type.toLowerCase()}`, dependsOn: depsFor(n.id), lane: n.type === 'PARALLEL_READ' ? `read:${n.id}` : 'default', maxAttempts: Math.max(1, (n.retry?.max ?? 0) + 1) }
     if (n.type === 'EXECUTE') {
       const approval = def.nodes.find(a => a.type === 'APPROVAL' && execFor.get(a.id)?.id === n.id)
-      const verify = def.nodes.find(v => v.type === 'VERIFY' && execFor.get(v.id)?.id === n.id)
-      steps.push({ ...base, toolName: 'procedure.execute', mutation: true, maxAttempts: 1, requiresApproval: true, verificationRequired: !!verify,
+      steps.push({ ...base, toolName: 'procedure.execute', mutation: true, maxAttempts: 1, requiresApproval: false, verificationRequired: false,
         approvalAction: { capability: n.capability || 'browser', actionType: approval?.approval?.actionType || `${def.id}.${n.id}`, target: String(inputs[def.inputs[0]] ?? n.id), payload: { procedure: def.id, version: def.version, node: n.id, inputs }, objectRef: null } })
       continue
     }
+    if (n.type === 'VERIFY') { steps.push({ ...base, verificationRequired: true, maxAttempts: Math.max(2, (n.retry?.max ?? 0) + 1) }); continue }
     steps.push(base)
   }
   return {
