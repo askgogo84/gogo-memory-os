@@ -122,8 +122,11 @@ async function main() {
   // Execute the real handler against real SQL RPCs, with provider calls blocked.
   let sends=0, outcome='ok', consent=false, cancelDuringConsent=false, failFinish=false
   const adapter={from(table){
-    const q={select:()=>q,eq:()=>q,in:()=>q,lte:()=>q,or:()=>q,order:()=>q,limit:()=>q,maybeSingle:()=>q,
-      then(resolve,reject){return (table==='users'?Promise.resolve({data:{whatsapp_id:'+15555550100',timezone:'Asia/Kolkata'}}):
+    // Echo the exact fictional owner returned by this mocked private users read.
+    // Production now fail-closes if an identity-less row is accidentally reused.
+    let exactUserOwner=null
+    const q={select:()=>q,eq:(column,value)=>{if(table==='users'&&column==='telegram_id')exactUserOwner=value;return q},in:()=>q,lte:()=>q,or:()=>q,order:()=>q,limit:()=>q,maybeSingle:()=>q,
+      then(resolve,reject){return (table==='users'?Promise.resolve({data:{telegram_id:exactUserOwner,whatsapp_id:'+15555550100',timezone:'Asia/Kolkata'}}):
         query("select * from reminders where not sent and delivery_state in ('pending','claimed') and remind_at<=now()").then(data=>({data}))).then(resolve,reject)}}
     return q
   }}
@@ -281,7 +284,7 @@ async function main() {
   // Actual briefing route paginates beyond the old 150-user cap, including negative
   // legacy IDs, catches up later today, and propagates final preferences into ready.
   let scanCursor=null,seen=[],disabled=false
-  const users=Array.from({length:161},(_,i)=>({telegram_id:i-80,name:'Fixture',whatsapp_id:'+15555550100',briefing_enabled:true,briefing_time:'00:00'}))
+  const users=Array.from({length:161},(_,i)=>({telegram_id:i<80?i-80:i-79,name:'Fixture',whatsapp_id:'+15555550100',briefing_enabled:true,briefing_time:'00:00'}))
   const briefingDb={from(table){let after=-Infinity,id=null,payload,write=false;const q={
     select:()=>q,or:()=>q,order:()=>q,limit:()=>q,gt:(k,v)=>{after=v;return q},eq:(k,v)=>{if(k==='telegram_id')id=v;return q},maybeSingle:()=>q,
     upsert:p=>{write=true;payload=p;return q},then(resolve,reject){
