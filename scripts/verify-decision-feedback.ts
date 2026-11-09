@@ -27,6 +27,40 @@ async function main(){
   return chain
  }
  try {
+  // Test-first: the exported correction reader must reject imprecise owner identities
+  // before ANY service-role read of private decision observations or conversations.
+  // All dependencies below are synthetic and captured by the in-process fake DB.
+  const invalidOwners: Array<[string, unknown]> = [
+    ['rounded signed64 A', Number('9007199254740992')],
+    ['rounded signed64 B', Number('9007199254740993')],
+    ['negative rounded signed64', Number('-9007199254740993')],
+    ['unsafe signed64 decimal string', '9007199254740993'],
+    ['noncanonical padded string', '00123'],
+    ['scientific notation string', '1e3'],
+    ['zero string', '0'],
+    ['zero number', 0],
+    ['negative zero', -0],
+    ['fraction', 123.25],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['negative Infinity', Number.NEGATIVE_INFINITY],
+    ['null owner', null],
+    ['object owner', { toString() { throw Error('owner must never be coerced') } }],
+  ]
+  for (const [label, invalid] of invalidOwners) {
+    const before = filters.length
+    const result = await captureExplicitRoutingCorrection({legacyTelegramId:invalid} as any, feedback.text)
+    assert.equal(result, null, label + ': invalid owner must never select a correction')
+    assert.equal(filters.length, before, label + ': no private DB reads before precise owner validation')
+  }
+  for (const valid of [123, -42, Number.MAX_SAFE_INTEGER, '123', '-42']) {
+    const before = filters.length
+    const result = await captureExplicitRoutingCorrection({legacyTelegramId:valid} as any, feedback.text)
+    assert.equal(result?.decisionId, 'event-1', 'safe owner must preserve existing correction binding')
+    const ownerPredicates = filters.slice(before).filter(f => f[1] === 'eq' && f[2] === 'telegram_id')
+    assert.equal(ownerPredicates.length, 2, 'both private reads must stay owner scoped')
+    assert.deepEqual(ownerPredicates.map(f => String(f[3])), [String(valid), String(valid)], 'both lookups must use identical exact safe owner')
+  }
   const target=await captureExplicitRoutingCorrection({legacyTelegramId:123} as any,feedback.text)
   assert.equal(target?.decisionId,'event-1')
   assert.equal(inserts.length,0,'answer-quality feedback alone must not suppress the route')
@@ -48,6 +82,26 @@ async function main(){
   }
   await recordShadowRouterOutcome({telegramId:123,surface:'system',eventId:'clarify',actualHandler:'jev-clarification-guard',status:'paused'})
   assert.equal(inserts.at(-1).metadata_json.outcome,'clarified')
+  // Two distinct persisted signed64 owners MUST NEVER share Same Brain user text.
+  // An unsafe caller previously read the exact high owner observation, rounded
+  // its AgentActor to the neighboring low owner, then wrote decision_learning.
+  assert.equal(Number('9007199254740992'),Number('9007199254740993'))
+  const originalWrites=inserts.length,originalReads=filters.length
+  const rejectedOwners:any[]=[
+   '9007199254740992','9007199254740993',Number('9007199254740993'),
+   0,-0,NaN,Infinity,-Infinity,1.25,'00123','12x','',null,undefined,
+  ]
+  for(const telegramId of rejectedOwners){
+   await recordShadowRouterOutcome({telegramId,surface:'system',eventId:'synthetic-private-observation',actualHandler:'calendar-named-read',status:'outcome_unknown'})
+   assert.equal(inserts.length,originalWrites,'ambiguous owner must not write telemetry/learning: '+String(telegramId))
+   assert.equal(filters.length,originalReads,'ambiguous owner must not read private observation: '+String(telegramId))
+  }
+  for(const telegramId of ['123','-123',9007199254740991]){
+   const start=inserts.length
+   await recordShadowRouterOutcome({telegramId,surface:'system',eventId:'safe-owner-control',actualHandler:'calendar-named-read',status:'outcome_unknown'})
+   assert.equal(inserts[start].telegram_id,String(telegramId),'safe owner outcome retains exact identity')
+   assert.equal(inserts.at(-1).telegram_id,String(telegramId),'safe owner decision learning stays isolated')
+  }
   assert.ok(filters.some(f=>f[1]==='eq'&&f[2]==='telegram_id'&&f[3]==='123'))
   assert.ok(filters.some(f=>f[1]==='eq'&&f[2]==='metadata_json->>event_id'&&f[3]==='correction-turn'))
  } finally {supabaseAdmin.from=original}

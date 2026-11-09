@@ -43,10 +43,28 @@ Untouched and pinned by `scripts/verify-decision-trace-nov9.mts`: `schema:'same-
 
 Tests: `verify-procedures-runtime-nov9.mts` (3 groups: approval staged → released → unwired write fails closed; uncertain write escalates and is never replayed; rejected approval skips, read-only prep completes with missing disclosed).
 
+## Email follow-up, end to end (PR after #1393)
+
+- Chat: "follow up with Nithin on the Harbor deck" → `email.follow_up` (dashboard chat, `GOGO_PROCEDURES_OWNERS` only).
+- `read_thread`: `resolveThread` from the chat reply path (Gmail consent + access checks unchanged); ambiguous or
+  missing threads fail the read rather than guess.
+- `replied`: if you wrote last, the run completes with nothing sent.
+- `draft`: a short, deterministic follow-up ("Just following up on …") — no model-written claims in your name.
+- `approve`: card shows To, Subject, the full message and "one reply in this thread, nothing else". The approval binds
+  `thread` + `draft` (`approval.bind`); a changed draft or recipient after the yes is refused (`approval_binding_mismatch`).
+  Consequential procedures without `bind` no longer validate.
+- A yes on the dashboard releases that approval onto its step (`releaseApprovedAutonomousStep`, which re-checks the
+  binding — this release was not called anywhere before) and resumes the run.
+- `send`: `gmailAccess(requireSend)` + `sendGmailReply`. A 400/401/403/404/422 or missing scope is "not sent"; any other
+  failure is outcome-unknown → escalate, never retried.
+- `verify`: `verifyGmailSentMessage` (SENT label + same thread) → `provider_readback` evidence; otherwise retry, then
+  escalate. Only then does the run complete.
+
 ## Still not done
 
-- Wiring `execute`/`verify` for cab booking and email follow-up to their executors with provider read-back.
-- `email.follow_up:draft` returns an empty draft (no model drafting without the owner's words yet).
+- `travel.day` cab booking: no verified booking executor with provider read-back exists, so the EXECUTE fails closed
+  (`execute_not_wired`, outcome known, nothing attempted). Wiring it needs a real provider integration first.
+- WhatsApp entry for procedures (dashboard only for now).
 
 ## Enable order (owner)
 

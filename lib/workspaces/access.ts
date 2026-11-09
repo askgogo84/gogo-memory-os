@@ -32,6 +32,11 @@ function check(error: PgError, context: string) {
 }
 
 function tg(value: unknown): string {
+  // A rounded JS number must never become another tenant's owner id.
+  // Exact BIGINT decimal strings remain valid; signed WhatsApp ids may be negative.
+  if (typeof value === 'number' && (!Number.isSafeInteger(value) || value === 0)) {
+    throw new WorkspaceError('invalid_session')
+  }
   const id = String(value ?? '').trim()
   if (!id) throw new WorkspaceError('invalid_session')
   return id
@@ -90,12 +95,27 @@ export async function audit(workspaceId: string, actor: string, action: string, 
   check(error, 'audit')
 }
 
+/** No Number() on workspace owner identities: Postgres BIGINT has 64-bit precision. */
+function exactWorkspaceNameOwner(value: unknown): string | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value !== 0 ? String(value) : null
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) return null
+  return value
+}
+
 async function displayNames(telegramIds: string[]): Promise<Map<string, string>> {
-  const numeric = [...new Set(telegramIds)].map(Number).filter(Number.isFinite)
-  if (!numeric.length) return new Map()
-  const { data, error } = await supabaseAdmin.from('users').select('telegram_id,name').in('telegram_id', numeric)
+  // Use exact decimal strings in the service-role filter. An unsafe numeric
+  // response is ambiguous, even if its rounded value matches a requested ID.
+  const ids = [...new Set(telegramIds.map(exactWorkspaceNameOwner).filter((id): id is string => id !== null))]
+  if (!ids.length) return new Map()
+  const requested = new Set(ids)
+  const { data, error } = await supabaseAdmin.from('users').select('telegram_id,name').in('telegram_id', ids)
   if (error) { console.error('WORKSPACE_NAMES_FAILED:', String(error.code || '')); return new Map() }
-  return new Map(((data || []) as { telegram_id: unknown; name: unknown }[]).map(u => [String(u.telegram_id), String(u.name || '').trim() || 'AskGogo user']))
+  const names = new Map<string, string>()
+  for (const user of (data || []) as { telegram_id: unknown; name: unknown }[]) {
+    const id = exactWorkspaceNameOwner(user.telegram_id)
+    if (id && requested.has(id)) names.set(id, String(user.name || '').trim() || 'AskGogo user')
+  }
+  return names
 }
 
 export async function createWorkspace(telegramId: string, rawName: unknown): Promise<MyWorkspace> {

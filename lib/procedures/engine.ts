@@ -10,6 +10,7 @@
 //   - Only READ / PARALLEL_READ / VERIFY retry, within the node's retry budget; loops honour their maxIterations.
 //   - The model's role is confined to REASON/DECIDE outputs; it cannot name the next node of a CONDITION, that is
 //     evaluated from context by the procedure's own predicate table.
+import { createHash } from 'node:crypto'
 import { hasExecutionEvidence, type ExecutionEvidence } from '@/lib/agent/execution-evidence'
 import type { ProcedureDefinition, ProcedureNode } from './schema'
 
@@ -94,9 +95,12 @@ function fail(def: ProcedureDefinition, run: ProcedureRun, error: string, now: C
 const withTrace = (run: ProcedureRun, e: TraceEntry): ProcedureRun => ({ ...run, trace: [...run.trace, e] })
 const RETRYABLE = new Set(['READ', 'PARALLEL_READ', 'VERIFY'])
 
+const stable = (v: unknown): string => v === null || typeof v !== 'object' ? JSON.stringify(v ?? null) : Array.isArray(v) ? `[${v.map(stable).join(',')}]` : `{${Object.keys(v as object).sort().map(k => `${JSON.stringify(k)}:${stable((v as any)[k])}`).join(',')}}`
+/** Binds the approval to this procedure version, action and the exact values listed in approval.bind. */
 export function approvalFingerprint(def: ProcedureDefinition, n: ProcedureNode, ctx: Record<string, unknown>): string {
-  const target = n.produces?.[0] || n.id
-  return `${def.id}@${def.version}:${n.approval?.actionType || n.id}:${target}:${JSON.stringify(ctx[`${n.id}.binding`] ?? null)}`
+  const bound = (n.approval?.bind || []).map(k => [k, ctx[k] ?? null])
+  const digest = createHash('sha256').update(stable(bound)).digest('hex').slice(0, 32)
+  return `${def.id}@${def.version}:${n.approval?.actionType || n.id}:${n.id}:${digest}`
 }
 
 /** Which node ids the interpreter expects the adapter to act on next, and how. */
@@ -233,6 +237,9 @@ export function executeGuard(def: ProcedureDefinition, run: ProcedureRun, nowIso
     if (a.status !== 'approved') return { ok: false, reason: `approval_${a.status}` }
     if (Date.parse(a.expiresAt) <= Date.parse(nowIso)) return { ok: false, reason: 'approval_expired' }
     if (!a.fingerprint.startsWith(`${def.id}@${def.version}:`)) return { ok: false, reason: 'approval_binding_mismatch' }
+    // What is about to run must be exactly what was approved: recompute from the current context.
+    const approvalNode = def.nodes.find(x => x.type === 'APPROVAL' && run.approvals[x.id]?.id === a.id)
+    if (!approvalNode || approvalFingerprint(def, approvalNode, run.context) !== a.fingerprint) return { ok: false, reason: 'approval_binding_mismatch' }
   }
   return { ok: true, approval: a }
 }

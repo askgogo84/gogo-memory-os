@@ -3,19 +3,37 @@ import { deliveryRpc } from './reminder-delivery'
 import { isDefiniteProviderRejection } from './delivery-state'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 
+// Owner IDs are PostgreSQL BIGINTs. Never pass a rounded JS number into the
+// receipt ledger or the owner-scoped recipient lookup. Strings retain exact digits.
+export function exactNotificationOwnerId(value: string | number): string {
+  if (typeof value === 'number') {
+    if (!Number.isSafeInteger(value) || value === 0) throw new Error('notification_owner_invalid')
+    value = String(value)
+  }
+  if (typeof value !== 'string' || !/^-?[1-9]\d*$/.test(value)) throw new Error('notification_owner_invalid')
+  try {
+    const owner = BigInt(value)
+    if (owner < BigInt('-9223372036854775808') || owner > BigInt('9223372036854775807')) throw new Error('notification_owner_invalid')
+  } catch {
+    throw new Error('notification_owner_invalid')
+  }
+  return value
+}
+
 export async function deliverNotification(p: {
-  key: string; source: 'briefing' | 'followup' | 'price_comparison' | 'travel_research' | 'watch_alert' | 'run_outcome'; owner: number; channel: 'whatsapp' | 'email'; due: string
+  key: string; source: 'briefing' | 'followup' | 'price_comparison' | 'travel_research' | 'watch_alert' | 'run_outcome'; owner: number | string; channel: 'whatsapp' | 'email'; due: string
   prepare: (token: string) => Promise<void>; ready: () => Promise<boolean>; send: (token: string) => Promise<string>
   accepted?: (id: string) => Promise<void>; deadline: number
   /** Trusted producer hooks still use the same receipt ledger; no model receives these. */
   claim?: (token: string) => Promise<boolean>; begin?: (token: string) => Promise<boolean>
   deferUntil?: () => Promise<string | null>
 }): Promise<string> {
+  const exactOwner = exactNotificationOwnerId(p.owner)
   const token = randomUUID()
   let claimed = false, started = false, returned = false
   try {
     if (Date.now() >= p.deadline) return 'deferred'
-    claimed = p.claim ? await p.claim(token) : await deliveryRpc('claim_notification_delivery', { p_key: p.key, p_source: p.source, p_owner: p.owner,
+    claimed = p.claim ? await p.claim(token) : await deliveryRpc('claim_notification_delivery', { p_key: p.key, p_source: p.source, p_owner: typeof p.owner === 'number' ? p.owner : exactOwner,
       p_channel: p.channel, p_due: p.due, p_token: token })
     if (!claimed) return 'skipped'
     await p.prepare(token)

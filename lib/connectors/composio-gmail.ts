@@ -136,10 +136,28 @@ export async function createDriveConnectLink(telegramId: number) {
   return url
 }
 
-/** Active Drive account for any of the person's ids (dashboard row and WhatsApp chat id). */
+// An owner ID is a persisted signed BIGINT identity. Decimal strings above 2^53
+// must NEVER transit Number(): adjacent owners then alias into the same account.
+const COMPOSIO_MIN_OWNER = BigInt('-9223372036854775808')
+const COMPOSIO_MAX_OWNER = BigInt('9223372036854775807')
+function exactComposioOwnerId(value: string | number): string | null {
+  if (typeof value === 'number' && (!Number.isSafeInteger(value) || value === 0)) return null
+  const id = typeof value === 'number' ? String(value) : value
+  if (typeof id !== 'string' || id.length > 20 || !/^-?[1-9]\d*$/.test(id)) return null
+  const exact = BigInt(id)
+  return exact < COMPOSIO_MIN_OWNER || exact > COMPOSIO_MAX_OWNER ? null : id
+}
+
+/** Active Drive account only for exact, authorized caller-supplied owners. Caller
+ * must still prove that every owner belongs to the actor; this guard cannot
+ * turn a raw phone number into a verified account association. */
 export async function activeDriveAccount(telegramIds: Array<string | number>): Promise<string | null> {
   if (!composioConfigured() || !telegramIds.length) return null
-  const users = [...new Set(telegramIds.map(id => composioUserId(Number(id))))]
+  const ids = telegramIds.map(exactComposioOwnerId)
+  // Fail the entire candidate set closed: never silently use one valid owner
+  // after another candidate was rounded, malformed, or out of BIGINT range.
+  if (ids.some(id => id === null)) return null
+  const users = [...new Set(ids.map(id => `askgogo-${id}`))]
   const out = await composio('/connected_accounts', { query: { user_ids: users, toolkit_slugs: 'googledrive', statuses: 'ACTIVE', limit: '10' } })
   const item = (out?.items || []).find((a: any) => a?.status === 'ACTIVE' && !a?.is_disabled && users.includes(a?.user_id))
   return item?.id ? String(item.id) : null

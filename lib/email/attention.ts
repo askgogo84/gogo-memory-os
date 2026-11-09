@@ -18,6 +18,8 @@ export type AttentionEmail = {
   precedence?: string | null
   autoSubmitted?: string | null
   source?: 'gmail' | 'forwarded' | 'composio'
+  // The verified connected mailbox which supplied this message. Not inferred from its From header.
+  gmailAccount?: string | null
 }
 
 export type AttentionRule = {
@@ -256,7 +258,10 @@ export function pickAttention(emails: AttentionEmail[], ctx: ScoreContext = {}, 
   // One entry per thread (latest message wins) so a long back-and-forth is one item.
   const byThread = new Map<string, AttentionEmail>()
   for (const e of emails) {
-    const key = String(e.threadId || e.messageId || e.id)
+    // Gmail's thread IDs are mailbox-local, not globally unique across connected accounts.
+    const key = e.source === 'gmail' && e.gmailAccount
+      ? `gmail:${e.gmailAccount.toLowerCase()}:${String(e.threadId || e.messageId || e.id)}`
+      : String(e.threadId || e.messageId || e.id)
     const prev = byThread.get(key)
     if (!prev || (Number(e.internalDate) || 0) >= (Number(prev.internalDate) || 0)) byThread.set(key, e)
   }

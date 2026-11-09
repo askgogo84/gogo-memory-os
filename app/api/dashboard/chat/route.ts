@@ -295,6 +295,12 @@ async function handleChatPost(req: NextRequest) {
       const prep=(await import('@/lib/agent/meeting-prep-ask').then(m=>m.isMeetingPrepAsk(text)?m.tryMeetingPrep(actor,text):null,()=>null))
         ||(await import('@/lib/agent/trip-plan').then(m=>m.tryTripPlan(actor,'web',text),()=>null))
         ||(await import('@/lib/agent/people').then(m=>m.tryPersonAsk(actor,text),()=>null))
+      // Same Brain 3.0: "follow up with X on Y" as a durable, approval-gated procedure (flagged owners only).
+      const procedureReply=!prep&&(globalThis as any).process?.env?.VERCEL_ENV?(await import('@/lib/procedures/entry').then(m=>m.tryProcedureAsk(actor,text),()=>null)):null
+      if(procedureReply){
+        await saveConversation(user.telegram_id,text,procedureReply)
+        return NextResponse.json({text:procedureReply,handledBy:'procedure',status:'waiting_approval',readOnly:false,mutated:false})
+      }
       if(prep){
         await saveConversation(user.telegram_id,text,prep)
         return NextResponse.json({text:prep,handledBy:'meeting-prep',status:'completed',readOnly:true,mutated:false})

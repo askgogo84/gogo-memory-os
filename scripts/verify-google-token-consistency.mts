@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
+// Actual Gmail-ticket booking actor fixture; synthetic DB, no provider calls.
+import './verify-booking-closure-actor-owner.mts'
+
 process.env.GOOGLE_TOKEN_ENCRYPTION_KEY = Buffer.alloc(32, 9).toString('base64')
 
 const crypto = await import('../lib/security/google-token-crypto.ts')
@@ -56,3 +59,6 @@ const drive=readFileSync('lib/agent/google-workspace-drive-binary.ts','utf8')
 assert.doesNotMatch(drive,/update\(\{gmail_access_token:token\}\)/)
 
 console.log('Google token consistency regression passed')
+
+// Registered test-Gmail preview owner and credential boundary regression.
+await import('./verify-test-gmail-owner.mts')
