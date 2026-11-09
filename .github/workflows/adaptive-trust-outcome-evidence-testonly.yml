@@ -1,0 +1,36 @@
+name: Adaptive Trust verified outcome (TEST ONLY - safety RED)
+
+on:
+  pull_request:
+    paths:
+      - scripts/verify-adaptive-trust-outcome-evidence-testonly.mjs
+      - .github/workflows/adaptive-trust-outcome-evidence-testonly.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-original-source-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout literal PR HEAD
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify literal checkout provenance
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Execute unchanged Adaptive Trust selector with inert owner-bound approval history
+        run: node scripts/verify-adaptive-trust-outcome-evidence-testonly.mjs
