@@ -84,6 +84,10 @@ export function formatPrep(e: PrepEvent, emails: PrepEmail[] | null, now = Date.
 
 export async function tryMeetingPrep(actor: AgentActor, text: string): Promise<string | null> {
   if (!isMeetingPrepAsk(text)) return null
+  // Same Brain 3.0 (flagged owners): the same prep runs as the `meetings.prepare` procedure, a durable, traced run.
+  // Read-only, no approval nodes. Any failure falls back to the direct path below so the person still gets an answer.
+  const viaProcedure = await tryMeetingPrepProcedure(actor, text)
+  if (viaProcedure) return viaProcedure
   const { executeReadOnlyCalendarStep } = await import('./calendar-read')
   let events: PrepEvent[] = []
   try {
@@ -121,4 +125,23 @@ export async function tryMeetingPrep(actor: AgentActor, text: string): Promise<s
   const notes = await import('./people').then(m => m.guestNotes(actor, guests), () => new Map<string, string[]>())
   console.log('MEETING_PREP:', JSON.stringify({ guests: guests.length, emails: emails === null ? 'no_gmail' : emails.length, notes: notes.size }))
   return formatPrep(next, emails, Date.now(), notes)
+}
+
+async function tryMeetingPrepProcedure(actor: AgentActor, text: string): Promise<string | null> {
+  try {
+    const { proceduresEnabledFor } = await import('@/lib/procedures/registry')
+    if (!proceduresEnabledFor(String(actor.legacyTelegramId))) return null
+    const { startProcedureRun } = await import('@/lib/procedures/runtime')
+    const started = await startProcedureRun({ actor, procedureId: 'meetings.prepare', inputs: { eventId: 'next' }, objective: text.slice(0, 200), source: 'meeting-prep' })
+    if (!started) return null
+    const { supabaseAdmin } = await import('@/lib/supabase-admin')
+    const { data } = await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id', started.runId).eq('telegram_id', String(actor.legacyTelegramId)).maybeSingle()
+    const state = (data?.metadata_json as any)?.procedure?.state
+    console.log('MEETING_PREP_PROCEDURE:', JSON.stringify({ runId: started.runId, status: state?.status || started.status }))
+    if (state?.status !== 'completed' || typeof state?.context?.brief !== 'string' || !state.context.brief) return null
+    return String(state.context.brief)
+  } catch (err: any) {
+    console.error('MEETING_PREP_PROCEDURE_FAILED:', String(err?.message || err).slice(0, 160))
+    return null
+  }
 }
