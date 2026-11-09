@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { downloadTwilioSocialPreviewImage } from './twilio-social-preview-image'
 
 export type ContentPlatform = 'instagram' | 'youtube' | 'tiktok' | 'linkedin' | 'other'
 
@@ -284,17 +285,9 @@ export async function analyseInstagramThumbnail(params: {
 
   if (sid && tok) {
     try {
-      const res = await fetch(params.mediaUrl, {
-        headers: { Authorization: `Basic ${btoa(`${sid}:${tok}`)}` }
-      })
-      if (res.ok) {
-        const buf = await res.arrayBuffer()
-        const bytes = new Uint8Array(buf)
-        let b = ''
-        bytes.forEach(x => b += String.fromCharCode(x))
-        imageDataUrl = `data:image/jpeg;base64,${btoa(b)}`
-      }
-    } catch { /* fall through */ }
+      const { buffer, contentType } = await downloadTwilioSocialPreviewImage(params.mediaUrl, sid, tok)
+      imageDataUrl = `data:${contentType};base64,${buffer.toString('base64')}`
+    } catch { /* Fail closed on unsafe/download-failed images; keep caption-only summary. */ }
   }
 
   const parsed = parseWhatsAppBodyContext(params.captionText)
