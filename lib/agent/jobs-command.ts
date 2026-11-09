@@ -2,7 +2,7 @@
 // Gogo never submits an application: it prepares the resume choice and cover letter, and the person applies.
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
-import { formatJobScan, isJobScanNow, JOB_BOARD_DOMAINS, isJobApplicationsQuery, isJobRadarRequest, jobPrefsFrom, jobPrefsReply, jobRadarQuery, parseJobPrefsCommand, parsePrepareApplication, pickResume, saveJobPrefs, savedJobPrefs, savedResumes } from './jobs'
+import { formatJobScan, isJobScanNow, jobScanQuery, JOB_BOARD_DOMAINS, isJobApplicationsQuery, isJobRadarRequest, jobPrefsFrom, jobPrefsReply, jobRadarQuery, parseJobPrefsCommand, parsePrepareApplication, pickResume, saveJobPrefs, savedJobPrefs, savedResumes } from './jobs'
 
 const clean = (v: unknown, max = 500) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
 const done = (text: string, handledBy: string) => ({ runId: handledBy, status: 'completed' as const, capability: 'memory' as const, risk: 'low' as const, text, handledBy })
@@ -25,10 +25,11 @@ export async function tryJobCommand(params: { actor: AgentActor; surface: AgentS
     if (created.status !== 'completed') return { ...created, handledBy: 'job-radar' }
     return done(`💼 *Job radar on.* Every day I'll search for: ${query}.\n\nI'll message you only when new openings appear, with the link. When one looks right, say *prepare application for <role at company or link>* and I'll pick your resume and draft the cover letter. I never apply for you.\n\nSay *show my job applications* any time to see where each one stands.`, 'job-radar')
   }
-  if (isJobScanNow(params.text)) {
-    const prefs = await savedJobPrefs(tg).catch(() => null)
-    const query = jobRadarQuery('', prefs)
-    if (!prefs || !/\S\s+jobs\b/i.test(query)) return done("💼 Which roles should I look for? Tell me once, like *my job preferences: Head of AI or VP Engineering in Bengaluru or remote, above 80 LPA*, then say *scan for jobs now*.", 'job-scan')
+  const named = isJobScanNow(params.text) ? null : jobScanQuery(params.text)
+  if (named || isJobScanNow(params.text)) {
+    const prefs = named ? null : await savedJobPrefs(tg).catch(() => null)
+    const query = named || jobRadarQuery('', prefs)
+    if (!named && (!prefs || !/\S\s+jobs\b/i.test(query))) return done("💼 Which roles should I look for? Tell me once, like *my job preferences: Head of AI or VP Engineering in Bengaluru or remote, above 80 LPA*, then say *scan for jobs now*.", 'job-scan')
     const cg: any = await import('@/lib/services/cost-guard')
     const allowance = await cg.checkCostAllowance(tg, cg.COST_ESTIMATES_PAISE.web_search_basic).catch(() => ({ allowed: false }))
     if (!allowance.allowed) return done("💼 You've reached this month's search allowance, so I didn't run the job scan. It resets next month.", 'job-scan')
