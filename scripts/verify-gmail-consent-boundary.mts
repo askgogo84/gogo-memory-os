@@ -46,11 +46,11 @@ consentError=true
 await assert.rejects(()=>reads.listRecentWorkspaceInbox(actor),/workspace_email_consent_unavailable/)
 assert.equal(fetches,0)
 consentError=false
-for(const value of [true,null]){
-  enabled=value
-  await reads.listRecentWorkspaceInbox(actor)
-}
-assert.equal(fetches,2,'enabled and legacy absent preference retain allowed access')
+enabled=true
+await reads.listRecentWorkspaceInbox(actor)
+enabled=null
+await assert.rejects(()=>reads.listRecentWorkspaceInbox(actor),/workspace_email_consent_missing/)
+assert.equal(fetches,1,'only affirmative Gmail opt-in permits provider reads; missing consent is not authorization')
 
 enabled=false
 const watches=load('lib/agent/watch-command.ts')
@@ -58,6 +58,12 @@ const refused=await watches.tryCreateInboxTriageWatchFromCommand({actor,surface:
 assert.equal(refused.status,'paused')
 assert.equal(refused.blockedReason,'workspace_email_reading_disabled')
 assert.equal(writes,0)
+enabled=null
+const missingConsentWatch=await watches.tryCreateInboxTriageWatchFromCommand({actor,surface:'web',text:'Monitor my inbox for important emails'})
+assert.equal(missingConsentWatch.status,'paused','missing consent must not activate or reuse a mail watcher')
+assert.equal(missingConsentWatch.blockedReason,'workspace_email_consent_missing')
+assert.equal(writes,0)
+enabled=false
 const status=load('lib/agent/autonomy-status.ts')
 assert.match((await status.tryGetConnectionStatus({actor,text:'Show my connected accounts'})).text,/Gmail reading: off/i)
 const page=load('app/dashboard/(app)/connections/page.tsx')

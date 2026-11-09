@@ -54,12 +54,15 @@ const tr = act.buildActivityTrends({
   reminders: [{ remind_at: iso(2) }, { remind_at: iso(40) }],
   runs: [{ created_at: iso(3), status: 'completed', title: 'Grocery list and reminder' }, { created_at: iso(3), status: 'failed', title: 'Browser · x' }],
   alerts: [{ created_at: iso(1) }],
-}, t0, 40)
+}, t0, 40, 220)
 assert.deepEqual(tr.trends.map(x => [x.days, x.ai, x.tasks, x.reminders, x.alerts]), [[7, 2, 1, 1, 1], [30, 3, 1, 1, 1], [60, 4, 1, 2, 1], [90, 5, 1, 2, 1]])
 assert.equal(tr.weekLimit, 280); assert.equal(tr.weekStart, '2026-10-25T18:30:00.000Z', 'the week starts Monday 00:00 IST')
 assert.equal(tr.weekUsed, 2); assert.equal(tr.weeks.length, 12); assert.equal(tr.weeks[11].ai, 2)
 assert.equal(tr.topActions[0].action, 'Questions answered')
-assert.match(act.formatActivityTrends(tr, 'Free'), /This week:\* 2 of 280 AI actions \(1%\) · resets Monday/)
+// 4 Nov: one allowance everywhere — the plan's monthly number, with the daily cap beside it.
+assert.equal(tr.monthUsed, 3); assert.equal(tr.monthLimit, 220); assert.equal(tr.monthStart, '2026-09-30T18:30:00.000Z', 'the month starts on the 1st, 00:00 IST')
+assert.match(act.formatActivityTrends(tr, 'Free'), /This month:\* 3 of 220 AI actions \(1%\) · up to 40 a day · resets 1 Nov/)
+assert.doesNotMatch(act.formatActivityTrends(tr, 'Free'), /This week/)
 assert.equal(act.isUsageQuery('show my usage'), true); assert.equal(act.isUsageQuery('how many tasks have you done for me this week'), true); assert.equal(act.isUsageQuery('show my expenses'), false)
 const pm = await import('../lib/bot/process-message')
 assert.equal(pm.isUsageCommand('show my usage'), true); assert.equal(pm.isUsageCommand('How many tasks have you done for me?'), true)
