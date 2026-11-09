@@ -125,15 +125,16 @@ const step = (def: ProcedureDefinition, r: ProcedureRun, ev: Parameters<typeof a
 { // durable adapter: approval + verification folded onto the mutation step of the existing runtime plan
   const plan = compileToPlan(TRAVEL_DAY, { legId: 'leg-6E204' }, 'Travel day for 6E204')
   const keys = plan.steps.map(s => s.key)
-  assert.ok(!keys.includes('approve_cab') && !keys.includes('verify_cab') && !keys.includes('start') && !keys.includes('done'))
+  assert.ok(!keys.includes('approve_cab') && keys.includes('verify_cab') && !keys.includes('start') && !keys.includes('done'))
   const book = plan.steps.find(s => s.key === 'book_cab')!
-  assert.equal(book.toolName, 'procedure.execute'); assert.equal(book.mutation, true); assert.equal(book.requiresApproval, true); assert.equal(book.verificationRequired, true); assert.equal(book.maxAttempts, 1)
+  assert.equal(book.toolName, 'procedure.execute'); assert.equal(book.mutation, true); assert.equal(book.requiresApproval, false, 'the handler stages the bound approval on first dispatch'); assert.equal(book.maxAttempts, 1)
+  const verify = plan.steps.find(s => s.key === 'verify_cab')!; assert.equal(verify.verificationRequired, true); assert.equal(verify.mutation, undefined); assert.deepEqual(verify.dependsOn, ['book_cab']); assert.ok(verify.maxAttempts >= 2)
   assert.equal(book.approvalAction?.actionType, 'travel.book_cab'); assert.equal(book.approvalAction?.capability, 'travel')
   assert.deepEqual(book.dependsOn, ['cab_needed'])
   assert.deepEqual(plan.steps.find(s => s.key === 'read_live')!.dependsOn, ['read_leg']); assert.equal(plan.steps.find(s => s.key === 'read_live')!.maxAttempts, 4)
-  assert.ok(plan.steps.find(s => s.key === 'wait_landing')!.dependsOn.includes('book_cab'))
+  assert.ok(plan.steps.find(s => s.key === 'wait_landing')!.dependsOn.includes('verify_cab'))
   assert.equal((plan.metadata as any).plan_kind, 'procedure-plan-v1')
   const mp = compileToPlan(MEETING_PREP, { eventId: 'e' }, 'prep'); assert.ok(mp.steps.every(s => !s.mutation && !s.requiresApproval))
-  ok('compile: EXECUTE becomes a single-attempt mutation step with approval + verification; reads keep retry budgets; no mutation in read-only procedures')
+  ok('compile: EXECUTE is a single-attempt mutation step with a bound approvalAction; VERIFY is its own retryable step; reads keep retry budgets; no mutation in read-only procedures')
 }
 console.log(`verify-procedures-nov9: ${n} passed`)
