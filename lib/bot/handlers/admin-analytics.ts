@@ -135,23 +135,43 @@ function parsePaymentIntent(row: any) {
   }
 }
 
-async function findUserByPhone(phone: string) {
-  const digits = normalizePhone(phone)
-  if (!digits) return null
+/**
+ * Admin target names can be a full international E.164 number, or a local
+ * ten-digit Indian mobile explicitly interpreted as +91. No generic suffix
+ * match is proof of who should receive a privileged tier change.
+ */
+function exactAdminTargetPhone(raw: string | null | undefined): string | null {
+  const text = String(raw || '').trim().replace(/^whatsapp:/i, '').trim()
+  if (/^[6-9]\d{9}$/.test(text)) return `+91${text}`
+  return canonicalAdminPhone(text)
+}
 
-  const { data } = await supabaseAdmin
+function exactAdminTargetPhoneCandidates(full: string): string[] {
+  const digits = full.slice(1)
+  return [full, `whatsapp:${full}`, digits, `whatsapp:${digits}`]
+}
+
+async function findUserByPhone(phone: string) {
+  const full = exactAdminTargetPhone(phone)
+  if (!full) return null
+
+  // A complete country-coded owner identity only; two +1 / +91 accounts
+  // sharing the last ten digits must NEVER be interchangeable.
+  const { data, error } = await supabaseAdmin
     .from('users')
     .select('*')
-    .ilike('whatsapp_id', `%${digits}%`)
+    .in('whatsapp_id', exactAdminTargetPhoneCandidates(full))
     .not('telegram_id', 'is', null)
-    .order('telegram_id', { ascending: true })
-    .limit(1)
-
-  return data?.[0] || null
+    .limit(2)
+  if (error || !Array.isArray(data)) throw new Error('admin_target_owner_lookup_unavailable')
+  if (data.length > 1) throw new Error('admin_target_owner_ambiguous')
+  const user = data[0] || null
+  if (user && exactAdminTargetPhone(user.whatsapp_id) !== full) throw new Error('admin_target_owner_mismatch')
+  return user
 }
 
 function formatUserCard(user: any) {
-  const phone = user?.whatsapp_id ? normalizePhone(user.whatsapp_id) : '-'
+  const phone = user?.whatsapp_id ? exactAdminTargetPhone(user.whatsapp_id) || '-' : '-'
   const tier = String(user?.tier || 'free')
   const plan = normalizePlan(tier) || 'free'
 
@@ -176,10 +196,12 @@ function formatUserCard(user: any) {
 async function buildAdminFindReply(text: string) {
   const match = text.match(/^admin\s+find\s+(.+)$/i)
   const phone = match?.[1]?.trim() || ''
-  const user = await findUserByPhone(phone)
+  let user: any
+  try { user = await findUserByPhone(phone) }
+  catch { return 'I couldn’t verify that account right now. No user details were disclosed.' }
 
   if (!user) {
-    return `I couldn’t find a user with phone *${normalizePhone(phone) || phone}*.\n\nTry: *admin users*`
+    return `I couldn’t find a user with phone *${exactAdminTargetPhone(phone) || phone}*.\n\nTry: *admin users*`
   }
 
   return formatUserCard(user)
@@ -207,8 +229,11 @@ async function buildAdminPlanChangeReply(text: string) {
     return `Invalid plan. Use *free*, *starter*, *pro*, or *founder_pro*.`
   }
 
-  const user = await findUserByPhone(phone)
-  if (!user) return `I couldn’t find a user with phone *${normalizePhone(phone) || phone}*.`
+  let user: any
+  try { user = await findUserByPhone(phone) }
+  catch { return 'I couldn’t verify the target account. No plan was changed.' }
+  if (!user) return `I couldn’t find a user with phone *${exactAdminTargetPhone(phone) || phone}*.`
+  if (!user.id || !user.telegram_id) return 'I couldn’t verify the target account. No plan was changed.'
 
   const { error } = await supabaseAdmin
     .from('users')
@@ -220,7 +245,7 @@ async function buildAdminPlanChangeReply(text: string) {
   await supabaseAdmin.from('memories').insert({
     telegram_id: user.telegram_id,
     content: `ASKGOGO_ADMIN_PLAN_CHANGE:${plan}:` + JSON.stringify({
-      phone: normalizePhone(phone),
+      phone: exactAdminTargetPhone(phone),
       oldPlan: user.tier || 'free',
       newPlan: plan,
       changed_at: new Date().toISOString(),
@@ -230,7 +255,7 @@ async function buildAdminPlanChangeReply(text: string) {
   return (
     `✅ *User plan updated*\n\n` +
     `Name: *${user.name || 'Friend'}*\n` +
-    `Phone: *${normalizePhone(user.whatsapp_id || phone)}*\n` +
+    `Phone: *${exactAdminTargetPhone(user.whatsapp_id || phone) || '-'}*\n` +
     `Old plan: ${PLAN_LABELS[normalizePlan(user.tier) || 'free']}\n` +
     `New plan: *${PLAN_LABELS[plan]}*\n` +
     `Limit: ${PLAN_LIMITS[plan]}\n\n` +
