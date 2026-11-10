@@ -237,9 +237,11 @@ export async function tryRunGmailContextCommand(params:{actor:AgentActor;text:st
   return null
 }
 
-// The person's own email switch (Settings › Trust, or "set email autonomy to off"). When it is off, no draft is made
-// and no send is staged from a chat message, on any surface: the same stop the email-reading path already has. Checked
-// only once the message is known to be an email draft or send, so other messages are not answered with this.
+// The person's own email switch (Settings › Trust, or "set email autonomy to off"). When it is off, this command makes
+// no draft and stages no send, and an already approved send is not carried out: the same stop the email-reading path
+// already has. Checked only once the message is known to be an email draft or send, so other messages are not answered
+// with this. Drafts written elsewhere (an event's venue enquiry, a procedure follow-up) are not covered here; with the
+// switch off they cannot be staged or sent through this file.
 const EMAIL_OFF_TEXT='Email is currently off in your Gogo autonomy settings, so I have not drafted or sent anything. Say *set email autonomy to draft* to turn it back on.'
 async function emailSwitchedOff(actor:AgentActor){
   const {capabilityIsOff}=await import('./adaptive-autonomy')
@@ -388,6 +390,10 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
     target:approvalTarget(draft),
     payload:{threadId:draft.threadId,to:draft.to,subject:draft.subject,body:draft.body},
   },approval)
+
+  // Switched off after the approval card was made: the approval does not outlive the switch. Nothing is claimed or
+  // sent; the run stays as it was.
+  if(await emailSwitchedOff(params.actor))return {runId:params.runId,status:'paused' as const,capability:'email' as const,risk:'high' as const,text:'Email is currently off in your Gogo autonomy settings, so I have not sent this email. Say *set email autonomy to draft* to turn it back on.',handledBy:'adaptive-autonomy'}
 
   const access=await gmailAccess(params.actor,{requireSend:true})
   if(!access.ok)throw new Error(access.reason||'gmail_send_unavailable')
