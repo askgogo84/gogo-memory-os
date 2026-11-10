@@ -3,6 +3,8 @@ import { maskOutboundIdentifiers } from '@/lib/security/outbound-identifiers'
 import twilio from 'twilio'
 import { recordMeterEvent } from '@/lib/metering/record'
 import { deliveryCallbackUrl, persistAcceptedChunk } from '@/lib/services/delivery-callback'
+import { isMetaMessageId, waProviderFor } from '@/lib/channels/whatsapp-provider/provider'
+import { META_CAPTION_MAX, metaButtonsPayload, metaListPayload, metaMediaPayload, metaSend, metaTemplatePayload, metaTextPayload, metaTypingPayload } from '@/lib/channels/whatsapp-provider/meta'
 
 const accountSid = process.env.TWILIO_ACCOUNT_SID
 const authToken = process.env.TWILIO_AUTH_TOKEN
@@ -17,6 +19,17 @@ async function meteredCreate(payload: any) {
   void recordMeterEvent({ vendor: 'twilio', category: 'whatsapp.outbound', metadata: { template: !!payload?.contentSid } })
   return message
 }
+
+// ---- Meta Cloud API path (off unless configured and selected; see lib/channels/whatsapp-provider/provider.ts) ----
+// Returns the same shape callers read from a Twilio message: { sid, status }.
+async function meteredMetaSend(payload: Record<string, unknown>, template = false) {
+  const message = await metaSend(payload)
+  void recordMeterEvent({ vendor: 'meta', category: 'whatsapp.outbound', metadata: { template } })
+  return message
+}
+const metaTemplateName = (envKey: string, fallback: string) => (process.env[envKey] || '').trim() || fallback
+const metaTemplateLanguage = () => (process.env.GOGO_META_TPL_LANG || '').trim() || 'en'
+const choiceId = (title: string) => title.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
 
 function normalizeWhatsAppAddress(value: string): string {
   const clean = (value || '').trim()
@@ -95,13 +108,38 @@ function splitIntoChunks(text: string): string[] {
 const statusCallbackUrl = (process.env.TWILIO_STATUS_CALLBACK_URL || '').trim()
 
 export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: string | null, deliveryToken?: string) {
-  const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
   const to = normalizeWhatsAppAddress(toNumber)
 
   // Never send a full card, Aadhaar or PAN number (outbound leak filter).
   const chunks = splitIntoChunks(sanitizeMarkdownForWhatsApp(maskOutboundIdentifiers(text || '')))
   qaTraceReply(chunks.join('\n\n'))
   let lastMessage: any = null
+
+  if (waProviderFor(to) === 'meta') {
+    const media = (mediaUrl || '').trim()
+    for (let i = 0; i < chunks.length; i++) {
+      let message
+      try {
+        if (i === 0 && media) {
+          // A caption holds 1,024 characters; a longer first chunk goes as its own text after the media.
+          const fits = chunks[0].length <= META_CAPTION_MAX
+          message = await meteredMetaSend(metaMediaPayload(to, media, fits ? chunks[0] : null))
+          if (!fits && chunks[0]) message = await meteredMetaSend(metaTextPayload(to, chunks[0]))
+        } else {
+          message = await meteredMetaSend(metaTextPayload(to, chunks[i]))
+        }
+      } catch (error) {
+        if (i > 0 && error && typeof error === 'object') Object.assign(error, { partialSend: true })
+        throw error
+      }
+      lastMessage = message
+      await persistAcceptedChunk(message.sid, deliveryToken, i + 1, chunks.length)
+      console.log('WHATSAPP_SENT:', { sid: message.sid, provider: 'meta', to, status: message.status, chunk: chunks.length > 1 ? `${i + 1}/${chunks.length}` : undefined, hasMedia: i === 0 && Boolean(media) })
+      if (i < chunks.length - 1) await new Promise(r => setTimeout(r, 300))
+    }
+    return lastMessage
+  }
+  const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
 
   for (let i = 0; i < chunks.length; i++) {
     const payload: any = { body: chunks[i], from, to }
@@ -138,8 +176,10 @@ export async function sendWhatsApp(toNumber: string, text: string, mediaUrl?: st
  * text that follows it; media is fetched by Twilio first, so an immediate text overtakes it. Returns the last status.
  */
 export async function waitForWhatsAppSent(sid: string, maxMs = 8000, deps: { fetchStatus?: (sid: string) => Promise<string>; sleep?: (ms: number) => Promise<void> } = {}) {
-  const fetchStatus = deps.fetchStatus || (async (id: string) => String((await client.messages(id).fetch())?.status || ''))
   const sleep = deps.sleep || ((ms: number) => new Promise<void>(r => setTimeout(r, ms)))
+  // Meta has no status lookup (statuses arrive only on the webhook), so give the media a short head start.
+  if (isMetaMessageId(sid) && !deps.fetchStatus) { await sleep(Math.min(maxMs, 2000)); return 'accepted' }
+  const fetchStatus = deps.fetchStatus || (async (id: string) => String((await client.messages(id).fetch())?.status || ''))
   let status = ''
   for (let waited = 0; waited <= maxMs; waited += 1000) {
     try { status = await fetchStatus(sid) } catch { return status || 'unknown' }
@@ -156,6 +196,12 @@ function reminderTemplateLabel(label:string):string {
 }
 
 export async function sendWhatsAppReminderTemplate(toNumber: string, label: string, deliveryToken?: string) {
+  if (waProviderFor(toNumber) === 'meta') {
+    const message = await meteredMetaSend(metaTemplatePayload(toNumber, metaTemplateName('GOGO_META_TPL_REMINDER', 'gogo_reminder_v1'), { language: metaTemplateLanguage(), bodyParams: [reminderTemplateLabel(label)] }), true)
+    await persistAcceptedChunk(message.sid, deliveryToken, 1, 1)
+    console.log('WHATSAPP_TEMPLATE_SENT:', { sid: message.sid, provider: 'meta', status: message.status })
+    return message
+  }
   const contentSid = process.env.TWILIO_REMINDER_CONTENT_SID
   if (!contentSid) throw new Error('Missing TWILIO_REMINDER_CONTENT_SID')
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
@@ -174,6 +220,13 @@ export async function sendWhatsAppReminderTemplate(toNumber: string, label: stri
 }
 
 export async function sendWhatsAppReminderButtons(toNumber: string, label: string, deliveryToken?: string) {
+  if (waProviderFor(toNumber) === 'meta') {
+    // Same three taps the inbound handler already understands: done, snooze_10, move_8pm.
+    const message = await meteredMetaSend(metaTemplatePayload(toNumber, metaTemplateName('GOGO_META_TPL_REMINDER_BUTTONS', 'gogo_reminder_buttons_v1'), { language: metaTemplateLanguage(), bodyParams: [reminderTemplateLabel(label)], quickReplyPayloads: ['done', 'snooze_10', 'move_8pm'] }), true)
+    await persistAcceptedChunk(message.sid, deliveryToken, 1, 1)
+    console.log('WHATSAPP_BUTTONS_TEMPLATE_SENT:', { sid: message.sid, provider: 'meta', status: message.status })
+    return message
+  }
   const contentSid = process.env.TWILIO_REMINDER_BUTTONS_CONTENT_SID
   if (!contentSid) throw new Error('Missing TWILIO_REMINDER_BUTTONS_CONTENT_SID')
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
@@ -197,6 +250,14 @@ export async function sendWhatsAppCalendarApprovalButtons(
   when: string,
   duration: string = '30 mins'
 ) {
+  if (waProviderFor(toNumber) === 'meta') {
+    // Sent inside the conversation window, so ordinary reply buttons need no template. The inbound handler resolves
+    // "Approve" and "Reject" against the pending approval.
+    const body = ['Ready to add. Approval required.', String(title || 'Meeting').slice(0, 400), String(when || '').slice(0, 200), `Duration: ${String(duration || '30 mins').slice(0, 100)}`].filter(Boolean).join('\n')
+    const message = await meteredMetaSend(metaButtonsPayload(toNumber, body, [{ id: 'approve', title: 'Approve' }, { id: 'reject', title: 'Reject' }]))
+    console.log('WHATSAPP_CALENDAR_APPROVAL_SENT:', { sid: message.sid, provider: 'meta', status: message.status })
+    return message
+  }
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
   const to = normalizeWhatsAppAddress(toNumber)
   const payload: any = {
@@ -237,6 +298,16 @@ async function ensureChoiceContent(kind: string, options: { title: string; descr
 }
 
 export async function sendWhatsAppChoice(toNumber: string, kind: string, body: string, options: { title: string; description?: string }[]) {
+  if (waProviderFor(toNumber) === 'meta') {
+    const question = String(body || '').replace(/\s+/g, ' ').trim().slice(0, 900)
+    const asList = options.some(o => o.description) || options.length > 3
+    const payload = asList
+      ? metaListPayload(toNumber, question, 'Choose', options.map(o => ({ id: choiceId(o.title), title: o.title, description: o.description })))
+      : metaButtonsPayload(toNumber, question, options.map(o => ({ id: choiceId(o.title), title: o.title })))
+    const message = await meteredMetaSend(payload)
+    console.log('WHATSAPP_CHOICE_SENT:', { sid: message.sid, provider: 'meta', kind, status: message.status })
+    return message
+  }
   const contentSid = await ensureChoiceContent(kind, options)
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
   const to = normalizeWhatsAppAddress(toNumber)
@@ -251,9 +322,14 @@ export async function sendWhatsAppChoice(toNumber: string, kind: string, body: s
 // The OTP is generated and verified by AskGogo; Twilio only delivers it. The
 // content template should use {{1}} for the six-digit code / copy-code button.
 export async function sendWhatsAppAuthOtp(toNumber: string, otp: string) {
+  if (!/^\d{6}$/.test(otp)) throw new Error('Invalid dashboard OTP')
+  if (waProviderFor(toNumber) === 'meta') {
+    const message = await meteredMetaSend(metaTemplatePayload(toNumber, metaTemplateName('GOGO_META_TPL_AUTH_OTP', 'gogo_login_code_v1'), { language: metaTemplateLanguage(), bodyParams: [otp], otpCode: otp }), true)
+    console.log('WHATSAPP_AUTH_OTP_SENT:', { sid: message.sid, provider: 'meta', status: message.status })
+    return message
+  }
   const contentSid = (process.env.TWILIO_AUTH_OTP_CONTENT_SID || '').trim()
   if (!contentSid) throw new Error('Missing TWILIO_AUTH_OTP_CONTENT_SID')
-  if (!/^\d{6}$/.test(otp)) throw new Error('Invalid dashboard OTP')
 
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
   const to = normalizeWhatsAppAddress(toNumber)
@@ -273,6 +349,10 @@ export async function sendWhatsAppAuthOtp(toNumber: string, otp: string) {
 export async function sendWhatsAppTypingIndicator(messageSid?: string | null) {
   const sid = (messageSid || '').trim()
 
+  if (isMetaMessageId(sid)) {
+    try { await metaSend(metaTypingPayload(sid)); console.log('WHATSAPP_TYPING_INDICATOR_SENT:', { provider: 'meta' }); return true }
+    catch (error: any) { console.error('WHATSAPP_TYPING_INDICATOR_FAILED:', { provider: 'meta', status: error?.status || 0 }); return false }
+  }
   if (!sid || !accountSid || !authToken) return false
 
   const params = new URLSearchParams()
@@ -332,6 +412,21 @@ export async function accessTemplateStatus(body: string): Promise<{ sid: string 
 
 /** Tell an approved person they can start. Returns what happened, in plain words, for the admin console. */
 export async function sendWhatsAppAccessGranted(toNumber: string, firstName: string, fullText: string, templateBody: string): Promise<string> {
+  if (waProviderFor(toNumber) === 'meta') {
+    // The approved person has usually not written yet, so this goes as the approved template; the full welcome
+    // follows as text only if Meta accepts it (inside the conversation window).
+    try {
+      const message = await meteredMetaSend(metaTemplatePayload(toNumber, metaTemplateName('GOGO_META_TPL_ACCESS_GRANTED', ACCESS_TEMPLATE_NAME), { language: metaTemplateLanguage(), bodyParams: [firstName || 'there'] }), true)
+      console.log('WHATSAPP_ACCESS_GRANTED_SENT:', { sid: message.sid, provider: 'meta', via: 'template' })
+      return 'sent (WhatsApp template)'
+    } catch (err: any) {
+      try {
+        const message = await meteredMetaSend(metaTextPayload(toNumber, sanitizeMarkdownForWhatsApp(fullText)))
+        console.log('WHATSAPP_ACCESS_GRANTED_SENT:', { sid: message.sid, provider: 'meta', via: 'text' })
+        return 'sent as text; template not ready'
+      } catch (inner: any) { return `not sent: ${String(inner?.message || err?.message || 'error').slice(0, 80)}` }
+    }
+  }
   const from = normalizeWhatsAppAddress(rawWhatsappFrom!)
   const to = normalizeWhatsAppAddress(toNumber)
   const template = await accessTemplateStatus(templateBody)

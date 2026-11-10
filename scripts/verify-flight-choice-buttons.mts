@@ -56,6 +56,9 @@ const wlib = load('lib/whatsapp.ts', {
   twilio: { default: () => twilioClient },
   '@/lib/services/delivery-callback': { deliveryCallbackUrl: () => '', persistAcceptedChunk: async () => {} },
   '@/lib/metering/record': { recordMeterEvent: async () => {} },
+  // Twilio is the provider under test here; the Meta path has its own test.
+  '@/lib/channels/whatsapp-provider/provider': { waProviderFor: () => 'twilio', isMetaMessageId: () => false },
+  '@/lib/channels/whatsapp-provider/meta': {},
 }, { TWILIO_ACCOUNT_SID: 'ACtest', TWILIO_AUTH_TOKEN: 'test', TWILIO_WHATSAPP_NUMBER: '+15555550100' })
 await wlib.sendWhatsAppChoice('+15555550101', 'cabin', 'Bengaluru to Singapore on 27 Oct 2026. Which cabin?', choices.FLIGHT_CHOICES.cabin.options)
 await wlib.sendWhatsAppChoice('+15555550101', 'cabin', 'second send', choices.FLIGHT_CHOICES.cabin.options)
