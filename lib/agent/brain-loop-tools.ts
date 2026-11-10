@@ -15,16 +15,30 @@ export type LoopToolDeps = {
   /** The email draft the person has waiting for "send it", if any (fresh within 30 minutes). */
   pendingDraft?: (actor: AgentActor) => Promise<Record<string, unknown> | null>
   saveDraft?: (actor: AgentActor, draft: Record<string, unknown>) => Promise<void>
-  /** The person's own recent words (their messages only). A venue may be looked up only if they named it, or it is
-   *  the venue of one of their own events. Without this, any venue is allowed (shadow planning only). */
+  /** The person's own current message. A venue may be looked up only if they named it there, or it is the venue of
+   *  one of their own events. Without this, any venue is allowed (shadow planning only). */
   userText?: string
 }
-const HAS_LINK = /https?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|in|net|org|io|co|app|me|ly|link|site|xyz|info|biz)\b(?!\s*@)/i
-/** True when every distinctive word of the venue is in the allowed text (the person's own words or their events). */
+/** The same text with look-alike forms folded (full-width, ligatures) and invisible characters removed. */
+export const plain = (v: unknown) => String(v ?? '').normalize('NFKC').replace(/[\u200b-\u200f\u2060-\u2064\ufeff\u00ad\u034f\u061c\u180e]/g, '')
+/** What a draft written by the model may not contain. A draft is the person's own plain words to a venue: no web or
+ *  email addresses in any spelling, no phone or account numbers, nothing about approvals, codes or money transfers, and
+ *  only ordinary letters (a look-alike alphabet is refused). The reason is returned, or null when the text is fine. */
+export function draftTextProblem(text: string): string | null {
+  const t = plain(text)
+  if (/[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(t)) return 'unusual letters'
+  if (/@|https?|hxxp|www|:\/\/|\[\.\]|\(\.\)|\bdot\b/i.test(t)) return 'a web or email address'
+  if (/\p{L}\s?\.\s?\p{L}{2,}/u.test(t.replace(/\b(?:a\.m|p\.m|e\.g|i\.e)\b\.?/gi, ' ').replace(/\.\s+(?=\p{Lu})/gu, ' '))) return 'a web address'
+  if (/\d[\d\s().+-]{5,}\d/.test(t)) return 'a phone or account number'
+  if (/\b(?:approv\w*|otp|one[- ]time|passcode|password|cvv|pin|upi|gpay|google pay|phonepe|paytm|bank|transfer|deposit\s+to|wallet|verification code|\d-digit code|whatsapp\s+(?:this|me|us)|click|tap|press)\b/i.test(t)) return 'words about approvals, codes or payments'
+  return null
+}
+/** True when the venue, as a whole phrase, is in the allowed text (the person's own current message or the venue of
+ *  one of their own events). A phrase, not loose words, so a locality alone never unlocks another venue there. */
 export function venueNamedByPerson(venue: string, allowed: string): boolean {
-  const words = venue.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 3 && !/^(?:the|and|bar|cafe|pub|restaurant|hotel)$/.test(w))
-  const hay = ` ${allowed.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ')} `
-  return words.length > 0 && words.every(w => hay.includes(` ${w} `))
+  const norm = (v: string) => ` ${plain(v).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()} `
+  const want = norm(venue)
+  return want.trim().length >= 3 && want.trim().split(' ').some(w => w.length >= 3) && allowed.split('\n').some(line => norm(line).includes(want))
 }
 const oneLine = (v: unknown, n: number) => String(v ?? '').replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
 const bodyText = (v: unknown, n: number) => String(v ?? '').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, n)
@@ -33,11 +47,11 @@ const bodyText = (v: unknown, n: number) => String(v ?? '').replace(/\r\n?/g, '\
  *  verifying tool returned in this same pass; it never replaces a draft that is already waiting; it sends nothing. The
  *  existing email path sends it only after the person says "send it" and approves the card. */
 async function saveEmailDraft(actor: AgentActor, input: Record<string, unknown>, state: LoopState, deps: LoopToolDeps): Promise<string> {
-  const to = oneLine(input.to, 120).toLowerCase(), subject = oneLine(input.subject, 150), body = bodyText(input.body, 1500)
+  const to = oneLine(input.to, 120).toLowerCase(), subject = oneLine(plain(input.subject), 120), body = bodyText(plain(input.body), 900)
   if (!state.verified.has(to)) return 'Refused. That address did not come from a verifying tool in this turn. Never write an address yourself: look it up with venue_contact, or ask the person for it.'
   if (subject.length < 3 || body.length < 20) return 'Refused. The draft needs a subject and a message.'
-  // No links: a draft is the person's own words to a venue, and a link is the usual way injected text does harm.
-  if (HAS_LINK.test(subject) || HAS_LINK.test(body)) return 'Refused. The draft must not contain links or web addresses. Write it again in plain words.'
+  const problem = draftTextProblem(subject) || draftTextProblem(body)
+  if (problem) return `Refused. The draft contains ${problem}. Write it again as a short, plain enquiry in the person's own voice: who, when, how many, and what you would like to know.`
   if (state.prepared.length) return 'Refused. One draft per message. Finish and tell the person about the draft that is ready.'
   const fs = deps.pendingDraft && deps.saveDraft ? null : await import('@/lib/bot/handlers/followup-state')
   const pending = deps.pendingDraft ? await deps.pendingDraft(actor) : await (async () => {
@@ -46,12 +60,17 @@ async function saveEmailDraft(actor: AgentActor, input: Record<string, unknown>,
   })()
   if (pending) return 'Not saved. The person already has an email draft waiting to be sent, and it must not be replaced. Tell them that, and that you can draft this one once that is sent or dropped.'
   const draft = { newMessage: true, threadId: '', sourceMessageId: '', inReplyTo: null, to, subject, body, loopDraft: true }
-  if (deps.saveDraft) await deps.saveDraft(actor, draft)
-  else {
-    await fs!.saveFollowupState(actor.legacyTelegramId, 'gmail_reply_draft', { draft, created_at: new Date().toISOString() })
-    await import('@/lib/agent/typed-object-context').then(m => m.rememberTypedObjects(actor.legacyTelegramId, 'email', [{ id: `draft:${to}`, title: `Draft to ${to}: ${subject}` }])).catch(() => {})
-  }
-  state.prepared.push({ kind: 'email_draft', to, subject, body })
+  // Recorded before the save starts: if the save is slow and this tool is cut off, the pass still knows a draft may
+  // exist, so the person is shown it (a draft is never left unseen). A save that fails takes it back out.
+  const mine = { kind: 'email_draft' as const, to, subject, body }
+  state.prepared.push(mine)
+  try {
+    if (deps.saveDraft) await deps.saveDraft(actor, draft)
+    else {
+      await fs!.saveFollowupState(actor.legacyTelegramId, 'gmail_reply_draft', { draft, created_at: new Date().toISOString() })
+      await import('@/lib/agent/typed-object-context').then(m => m.rememberTypedObjects(actor.legacyTelegramId, 'email', [{ id: `draft:${to}`, title: `Draft to ${to}: ${subject}` }])).catch(() => {})
+    }
+  } catch (e) { const k = state.prepared.indexOf(mine); if (k >= 0) state.prepared.splice(k, 1); throw e }
   return 'Saved as a draft. It has NOT been sent. The person will be shown the full draft, so do not repeat its text: tell them in one line what it is for. They send it by saying "send it" and approving the card.'
 }
 
@@ -77,7 +96,7 @@ export function firstSliceTools(deps: LoopToolDeps = {}): LoopTool[] {
         if (deps.userText !== undefined) {
           const owner = String(actor.legacyTelegramId)
           const mine = await (deps.listEvents ? deps.listEvents(owner) : import('@/lib/events/core').then(async c => (c.eventsEnabledFor(owner) ? (await import('@/lib/events/store')).listEvents(owner) : []))).catch(() => [] as any[])
-          const allowed = `${deps.userText} ${mine.filter((e: any) => e.status !== 'cancelled').map((e: any) => String(e.venue_name || '')).join(' ')}`
+          const allowed = [deps.userText, ...mine.filter((e: any) => e.status !== 'cancelled').map((e: any) => String(e.venue_name || ''))].join('\n')
           if (!venueNamedByPerson(venue, allowed)) return 'Refused. Look up only a venue the person named in their own messages or one of their own events.'
         }
         const c = await (await import('@/lib/events/venue-enquiry')).findVenueContact(venue, search, 6000)

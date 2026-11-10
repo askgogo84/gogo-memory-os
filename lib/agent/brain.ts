@@ -416,8 +416,8 @@ export const FORWARDED_NOTE = 'The latest message was FORWARDED by the user from
  *  Shadow (GOGO_BRAIN_LOOP_USERS): it plans with look-up tools; the plan is logged and saved for comparison; it never
  *  replies or changes anything.
  *  Live (GOGO_BRAIN_LOOP_LIVE_USERS, WhatsApp only): it is told what Gogo already replied and looks for ONE further
- *  step. It may look things up and save an email draft (to a verified address only). If it has something concrete,
- *  one follow-up message is sent to the person who wrote, with any draft shown in full by code. It cannot send an
+ *  step. It may look things up and save an email draft (to a verified address only). If a draft was saved, one
+ *  follow-up message is sent to the person who wrote: fixed words plus the draft in full, never a model-written line. It cannot send an
  *  email, publish, book or pay: those stay with "send it" and the approval cards.
  *  Off unless the variables are set. Every model call is recorded in the cost ledger as ours (nothing is charged to
  *  the person), and there is a daily limit on passes (40 a day unless GOGO_BRAIN_LOOP_DAILY says otherwise). */
@@ -426,25 +426,21 @@ export function brainLoopLiveFor(phone: string, env: Record<string, string | und
   const me = digits(phone)
   return !!me && String(env.GOGO_BRAIN_LOOP_LIVE_USERS || '').split(',').map(digits).filter(Boolean).includes(me)
 }
-/** Words a follow-up line must never carry: links, and anything that reads as a prompt to approve, confirm or pick.
- *  Those belong to Gogo's own cards and lists; a line written by the model (and so, possibly, steered by a web page)
- *  must not be able to imitate one. */
-const FOLLOW_UP_UNSAFE = /https?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|in|net|org|io|co|app|me|ly|link|site|xyz|info|biz)\b|\b(?:approve[ds]?|approval|reject|confirm(?:ed|ation)?|authori[sz]e|pay(?:ment)?|otp|password|call plan|tap|click)\b|\breply\s+\*?\w+\*?\s+to\b|\b(?:say|reply|send|type)\s+\*?(?:yes|ok|okay|send it|\d)\b|^\s*\d+[.)]\s/im
-/** The model's line if it is safe to send, else an empty string. */
-export function safeFollowUpHead(modelText: string): string {
-  const head = cleanReply(inventedApprovalGuard(String(modelText || '')), 700)
-  return head && !FOLLOW_UP_UNSAFE.test(head) ? head : ''
+/** The follow-up as sent. Every word outside the draft is fixed text written here: in this slice no line written by
+ *  the model is ever sent to the person, so nothing a web page says can reach them as Gogo's own words. The draft is
+ *  shown exactly as saved, under its own heading, and the whole message stays short enough to arrive as ONE message
+ *  (a long one would be split, and a later part would lose the heading). Empty means "send nothing". */
+export const FOLLOW_UP_MAX = 1400
+export function loopFollowUpText(prepared: { kind: string; to: string; subject: string; body: string }[]): string {
+  const d = prepared.find(x => x.kind === 'email_draft')
+  if (!d) return ''
+  const text = ['One more step: I drafted the enquiry below for you.', `Draft email (not sent)\nTo: ${d.to}\nSubject: ${d.subject}\n\n${d.body}`, 'Nothing has been sent. Check the address, then say *send it* and I\'ll ask for your approval before it goes.'].join('\n\n')
+  return text.length <= FOLLOW_UP_MAX ? text : ''
 }
-/** The follow-up as sent: the model's line (only if safe), then anything prepared exactly as saved, then the fixed
- *  closing line. With a draft there is always a message, so a saved draft is never silent. Empty means "send nothing". */
-export function loopFollowUpText(modelText: string, prepared: { kind: string; to: string; subject: string; body: string }[]): string {
-  const drafts = prepared.filter(d => d.kind === 'email_draft').map(d => `Draft email (not sent)\nTo: ${d.to}\nSubject: ${d.subject}\n\n${d.body}`)
-  const head = safeFollowUpHead(modelText) || (drafts.length ? 'One more step: I drafted the enquiry below for you.' : '')
-  return [head, ...drafts, drafts.length ? 'Nothing has been sent. Check the address, then say *send it* and I\'ll ask for your approval before it goes.' : ''].filter(Boolean).join('\n\n')
-}
-/** Gogo's own reply leaves something open for the person to answer or pick: a question, an approval card, a numbered
- *  list, a call plan. Nothing may be added after it, or the person's next "yes" or "2" would land on the wrong thing. */
-export const replyAwaitsAnswer = (reply: string) => /\?\s*$/.test(reply.trim()) || /\b(?:approve|approval|reject|confirm|call plan|which one|pick one|choose)\b|\breply\s+\*|^\s*(?:\d+[.)]|[①-⑩])\s/im.test(reply)
+/** Gogo's own reply leaves something open for the person to answer or pick: any question, an approval card, a list to
+ *  pick from, a call plan, a "reply/tap/say/type …" prompt, a deck or mail card. Nothing may be added after it, or the
+ *  person's next "yes" or "2" would land on the wrong thing. */
+export const replyAwaitsAnswer = (reply: string) => /\?|？/.test(reply) || /\b(?:approve|approval|reject|confirm|call plan|which one|pick|choose|select|undo|reply|tap|press|respond|type it)\b|\b(?:say|type|send)\s+[*"“'‘]|^\s*(?:\d+[.)]|[①-⑩]|\d\ufe0f?\u20e3|📊|📬)/imu.test(reply)
 type LoopShadowDeps = { run?: (a: any) => Promise<any>; countToday?: (telegramId: number) => Promise<number>; save?: (row: Record<string, unknown>) => Promise<void>; loadContext?: typeof loadBrainContext; defer?: (job: () => Promise<void>) => Promise<void>; env?: Record<string, string | undefined>
   send?: (phone: string, text: string) => Promise<unknown>; remember?: (telegramId: number, text: string) => Promise<unknown>; tools?: any[]
   pendingApprovals?: (telegramId: number) => Promise<number>; clearLoopDraft?: (telegramId: number) => Promise<void> }
@@ -476,38 +472,40 @@ export async function scheduleLoopShadow(p: { phone: string; telegramId: number;
       const goLive = live && !!already && waiting === 0
       const actor = { userId: String(p.userId || ''), legacyTelegramId: p.telegramId, whatsappId: String(p.whatsappId || p.phone), name: String(p.name || ''), timezone: c.timezone }
       const onModelCall = (e: { model: string; ms: number; ok: boolean; usage: BrainUsage }) => meterBrainCall({ telegramId: p.telegramId, source: 'brain_shadow', ...e })
-      // In live mode a venue may be looked up only if the person named it in their own recent messages (or it is one of
-      // their events): the words of web pages, emails and earlier replies never choose it.
-      const userText = [...c.turns.filter(t => t.role === 'user').slice(-6).map(t => t.content), p.text].join(' \n ')
+      // In live mode a venue may be looked up only if the person named it in this message, which they typed themselves
+      // (forwarded messages never go live), or it is the venue of one of their own events. Earlier turns are not used:
+      // they can hold forwarded or pasted text. The words of web pages, emails and replies never choose it.
+      const userText = p.text
       const tools = deps.tools || firstSliceTools(goLive ? { userText } : {})
       const r = await (deps.run || loop.runBrainLoop)({ actor, text: p.text, ctx: c, tools, onModelCall, mode: goLive ? 'live' : 'shadow', ...(goLive ? { alreadyReplied: already } : {}) })
       const report = { ...loop.loopShadowReport(pipelineKind, r), mode: goLive ? 'live' : 'shadow', prepared: (r.prepared || []).length }
-      // One follow-up at most, to the person who wrote, as plain text (never rendered as a card or buttons).
-      //  - A draft was saved: there is ALWAYS a message showing it, however the pass ended, so a draft is never silent.
-      //    If that message cannot be sent, the draft is withdrawn.
-      //  - No draft: only when the pass did real work, finished with a reply, and the line is safe to send.
-      const worked = (r.steps || []).some((s: any) => s.executed && s.ok)
+      // One follow-up at most, to the person who wrote, as plain text (never rendered as a card or buttons), and only
+      // when a draft was saved. It always shows that draft, however the pass ended, so a draft is never left unseen.
+      // If it cannot be shown (too long, or the send fails), the draft is withdrawn.
       const hasDraft = goLive && (r.prepared || []).length > 0
       let sent = false
-      if (goLive && (hasDraft || (r.final?.kind === 'reply' && worked))) {
-        const text = loopFollowUpText(r.final?.kind === 'reply' ? r.final.text : '', r.prepared || [])
-        if (text) {
-          try {
-            await (deps.send || (async (to: string, t: string) => (await import('@/lib/whatsapp')).sendWhatsApp(to, t)))(p.phone, text)
-            sent = true
-          } catch {
-            console.error('BRAIN_LOOP_SHADOW_FAILED:', JSON.stringify({ code: 'send' }))
-            if (hasDraft) await (deps.clearLoopDraft || clearOwnLoopDraft)(p.telegramId).catch(() => {})
-          }
-          // Saved to the conversation the same way the webhook saves a reply, so the next turn knows it was said.
-          if (sent) await Promise.resolve((deps.remember || (async (id: number, t: string) => supabaseAdmin.from('conversations').insert({ telegram_id: id, role: 'assistant', content: t })))(p.telegramId, text)).catch(() => {})
+      if (hasDraft) {
+        const text = loopFollowUpText(r.prepared || [])
+        try {
+          if (!text) throw new Error('unshowable')
+          await (deps.send || (async (to: string, t: string) => (await import('@/lib/whatsapp')).sendWhatsApp(to, t)))(p.phone, text)
+          sent = true
+        } catch {
+          console.error('BRAIN_LOOP_SHADOW_FAILED:', JSON.stringify({ code: text ? 'send' : 'unshowable' }))
+          await (deps.clearLoopDraft || clearOwnLoopDraft)(p.telegramId).catch(() => {})
         }
+        // Saved to the conversation the same way the webhook saves a reply, so the next turn knows it was said.
+        if (sent) await Promise.resolve((deps.remember || (async (id: number, t: string) => supabaseAdmin.from('conversations').insert({ telegram_id: id, role: 'assistant', content: t })))(p.telegramId, text)).catch(() => {})
       }
       console.log(goLive ? 'BRAIN_LOOP_LIVE:' : 'BRAIN_LOOP_SHADOW:', JSON.stringify({ ...report, sent }))
       const row = { telegram_id: String(p.telegramId), event_type: 'brain_loop_shadow', message: `loop ${report.mode} ${report.final} after ${report.tools.length} tool calls; pipeline ${report.pipeline}${sent ? '; follow-up sent' : ''}`, metadata_json: { ...report, sent, proposed: loop.loopShadowPreview(r) } }
       // The daily limit counts these rows, so a row that could not be saved is reported.
       if (deps.save) await deps.save(row); else { const res: any = await supabaseAdmin.from('agent_activity').insert(row); if (res?.error) console.error('BRAIN_LOOP_SHADOW_FAILED:', JSON.stringify({ code: 'save' })) }
-    } catch { console.error('BRAIN_LOOP_SHADOW_FAILED') }
+    } catch {
+      console.error('BRAIN_LOOP_SHADOW_FAILED')
+      // Whatever went wrong, a draft this pass may have saved is not left behind unseen.
+      if (live) await (deps.clearLoopDraft || clearOwnLoopDraft)(p.telegramId).catch(() => {})
+    }
   }
   if (deps.defer) return deps.defer(pass)
   // Outside a request (no after()): shadow may run at once; live does not, because Gogo's reply is not saved yet.
