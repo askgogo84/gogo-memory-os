@@ -1098,6 +1098,26 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // 29 Oct: phone-call commands ("test call me", "call <venue> and book…", "yes call") go to the call flow; the brain
     // had answered "Call … and book" with "I can't make calls".
     const callCommand = /^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
+    // AskGogo Events (Addendum 4), for owners in GOGO_EVENTS_OWNERS. 10 Nov live: "Plan Divya's birthday on 22 November at
+    // 5 pm for 20 people" was answered by understand-first's planner, because the Events hook sat in
+    // processIncomingMessage, after the brain and understand-first. It runs here, before them: a message about the
+    // person's own event (or a reply to the event being planned, or a yes to Events' own question, which must be the
+    // very next message) is handled; anything else returns null and routing continues unchanged. Nothing is sent to any
+    // guest from here.
+    let eventsCheckedFor: string | null = null
+    if (!preserveFriendFlow && !callCommand && process.env.VERCEL_ENV && (process.env.GOGO_EVENTS === '1' || process.env.GOGO_EVENTS_OWNERS)) {
+      eventsCheckedFor = text
+      const eventReply = await import('@/lib/events/entry').then(async m => {
+        const eventActor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), whatsappId: resolvedUser.whatsappId || from, surface: 'whatsapp' })
+        return m.tryEventAsk(eventActor, text, 'whatsapp')
+      }).catch((e: any) => { console.error('EVENT_WHATSAPP_ENTRY_FAILED:', String(e?.code || e?.name || 'error').slice(0, 60)); return null })
+      if (eventReply) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', eventReply)
+        await sendWhatsAppMessage(from, eventReply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
     if (!preserveFriendFlow && !callCommand && (globalThis as any).process?.env?.GOGO_BRAIN !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production')) {
       const brain = await import('@/lib/agent/brain').then(m => m.runBrain({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), surface: 'whatsapp', forwarded: forwardedMessage })).catch((err: any) => { console.error('BRAIN_FAILED:', String(err?.message || err).slice(0, 160)); return null })
       if (brain?.reply) {
@@ -2281,7 +2301,7 @@ _Reminder cancelled._`
     }
 
     await sendThinkingIfNeeded(from, text)
-    const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text', messageId: inboundMessageSid || null, pendingQuestionChecked: pendingQuestionCheckedFor === text, semantic: brainObservation?.jev })
+    const result = await processIncomingMessage({ channel: 'whatsapp', externalUserId: from, text, userName: profileName, messageType: incoming.wasVoice ? 'voice' : 'text', messageId: inboundMessageSid || null, pendingQuestionChecked: pendingQuestionCheckedFor === text, eventsChecked: eventsCheckedFor === text, semantic: brainObservation?.jev })
     await recordShadowRouterOutcome({
       telegramId:resolvedUser.telegramId,
       surface:'whatsapp',

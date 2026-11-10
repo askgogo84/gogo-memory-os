@@ -211,6 +211,8 @@ export type ProcessIncomingParams = {
    * exact text this turn; skip it here so its reads run once per turn.
    */
   pendingQuestionChecked?: boolean
+  /** The WhatsApp webhook already offered this exact text to AskGogo Events (it runs there before understand-first). */
+  eventsChecked?: boolean
   /**
    * Set only by understand-first (lib/agent/understand-first.ts) after it read the whole message with its
    * context and chose a safe action with confidence >= 0.82. It replaces the keyword intent for this turn:
@@ -590,7 +592,7 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
   // Env gate first so nothing loads when the feature is off. The module decides with a typed action; a message that
   // is not about their own event returns null and continues below unchanged. Nothing is sent to any guest from here.
   const eventsEnv=(globalThis as any).process?.env||{}
-  const eventReply=params.channel==='whatsapp'&&!params.internalStep&&eventsEnv.VERCEL_ENV&&(eventsEnv.GOGO_EVENTS==='1'||eventsEnv.GOGO_EVENTS_OWNERS)
+  const eventReply=params.channel==='whatsapp'&&!params.internalStep&&!params.eventsChecked&&eventsEnv.VERCEL_ENV&&(eventsEnv.GOGO_EVENTS==='1'||eventsEnv.GOGO_EVENTS_OWNERS)
     ?await import('@/lib/events/entry').then(async m=>{
         const {resolveAgentActor}=await import('@/lib/agent/actor')
         const actor=await resolveAgentActor({telegramId:String(resolvedUser.telegramId),whatsappId:resolvedUser.whatsappId||params.externalUserId,surface:'whatsapp'})
