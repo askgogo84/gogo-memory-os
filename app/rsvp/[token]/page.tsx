@@ -1,7 +1,9 @@
 // app.askgogo.in/rsvp/<private link>: the invitation a guest opens. No account. The server resolves the link and
 // passes down only what this guest may see; the page is never indexed and sends no referrer (the link is the key).
 import type { Metadata } from 'next'
-import { invitationFor, isEventToken } from '@/lib/events/store'
+import { headers } from 'next/headers'
+import { rateBucket } from '@/lib/events/rate'
+import { invitationFor, isEventToken, rateOk } from '@/lib/events/store'
 import RsvpClient from './rsvp-client'
 
 export const dynamic = 'force-dynamic'
@@ -24,7 +26,12 @@ export default async function RsvpPage({ params }: Props) {
   const { token } = await params
   let found: Awaited<ReturnType<typeof invitationFor>> = null
   let failed = false
-  if (isEventToken(token)) { try { found = await invitationFor(token) } catch { failed = true } }
+  let limited = false
+  if (isEventToken(token)) {
+    // The same read limit as the endpoint, so guessing links through the page is no cheaper than through the API.
+    try { if (!(await rateOk(rateBucket(await headers(), 'get'), 240, 600))) limited = true; else found = await invitationFor(token) } catch { failed = true }
+  }
+  if (limited) return <Message title="Too many tries" body="Please wait a few minutes and open the invitation again." />
   if (failed) return <Message title="Invitations are not available right now" body="Please try again in a little while." />
   if (!found) return <Message title="This invitation link is not valid" body="Please ask the host to send it again." />
   if (found.mode === 'revoked' || !found.view) return <Message title="This invitation is no longer active" body="Please ask the host for a new link." />
