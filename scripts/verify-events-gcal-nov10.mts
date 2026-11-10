@@ -68,6 +68,13 @@ eq([r.result, fx.calls.map(c => c.method), fx.db.size], ['updated', ['GET', 'LIS
 fx = fakeGoogle({ entries: [{ id: cid, status: 'cancelled', summary: 'x' }] })
 r = await g.addEventToGoogleCalendar(OWNER, ID, 3, deps(fx))
 eq([r.result, fx.db.get(cid).status], ['updated', 'confirmed'], 'an entry deleted in Google is restored in place')
+{ // An id Google still holds (409) but that now has guests added in Google: not restored.
+  const fk = fakeGoogle(); fk.db.set(cid, { id: cid, status: 'confirmed', attendees: [{ email: 'nithin@example.com' }] })
+  const orig = fk.impl; let first = true
+  fk.impl = (async (u: string, i: any = {}) => { if (first && !i.method) { first = false; return { ok: false, status: 404, json: async () => ({}) } } return orig(u, i) }) as any
+  const x: any = await g.addEventToGoogleCalendar(OWNER, ID, 3, deps(fk))
+  eq([x.result, fk.calls.some(c => c.method === 'PATCH')], ['has_guests', false], 'a held id with guests added in Google is not restored')
+}
 // 7. Refusals: nothing written.
 for (const [name, over, rev, want] of [
   ['the event changed since the page loaded', {}, 2, 'changed_meanwhile'], ['the event is cancelled', { event: { status: 'cancelled' } }, 3, 'cancelled'],

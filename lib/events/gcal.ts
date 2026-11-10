@@ -119,7 +119,12 @@ export async function addEventToGoogleCalendar(owner: string, id: string, revisi
       const body = { ...writable(f), id: targetId, guestsCanInviteOthers: false, guestsCanSeeOtherGuests: false, source: { title: 'AskGogo', url: 'https://askgogo.in/dashboard/events' } }
       let w = await c.f(`${API}?sendUpdates=none`, { method: 'POST', headers: c.headers, body: JSON.stringify(body), cache: 'no-store' })
       // 409: Google still holds this id (the entry was deleted and sits in Google's bin). Restore it in place.
-      if (w.status === 409) w = await c.f(`${API}/${encodeURIComponent(targetId)}?sendUpdates=none`, { method: 'PATCH', headers: c.headers, body: JSON.stringify(writable(f)), cache: 'no-store' })
+      if (w.status === 409) {
+        // Same rule as for a found entry: one with guests added in Google is left alone.
+        const held = await readBack(c, targetId)
+        if (hasGuests(held.body)) return { ok: false, result: 'has_guests' }
+        w = await c.f(`${API}/${encodeURIComponent(targetId)}?sendUpdates=none`, { method: 'PATCH', headers: c.headers, body: JSON.stringify(writable(f)), cache: 'no-store' })
+      }
       else created = w.ok
       if (!w.ok) { log('write', w.status); return { ok: false, result: w.status >= 500 ? 'unknown' : denied(w.status) ? 'not_connected' : 'failed' } }
     }

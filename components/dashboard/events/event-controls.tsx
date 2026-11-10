@@ -81,7 +81,7 @@ export function GoogleCalendarButton({ id, revision, when, remove = false }: { i
     {ask && <div className="text-[14px]">
       <p>{remove
         ? 'Gogo will delete this event’s entry from your own Google Calendar. No one gets a message.'
-        : `Gogo will put this event, ${when}, in your own Google Calendar. Nobody is invited and no one gets a message. If it is already there, its title, time, place and notes are updated; reminders and colours you set in Google stay.`}</p>
+        : `Gogo will put this event, ${when}, in your own Google Calendar. Nobody is invited and no one gets a message. If it is already there, its title, time, place and notes are updated (a place or notes left empty in Gogo are not cleared); reminders and colours you set in Google stay.`}</p>
       <div className="mt-2 flex gap-2"><button type="button" disabled={busy} onClick={run} className="min-h-[40px] rounded-[12px] bg-[#ef7a27] px-4 text-[13px] font-bold text-[#1a0d04]">{busy ? 'Working…' : remove ? 'Remove it' : 'Add it'}</button>
         <button type="button" disabled={busy} onClick={() => setAsk(false)} className="min-h-[40px] rounded-[12px] border border-[#2e3a36] px-4 text-[13px] font-semibold">Not now</button></div>
     </div>}
