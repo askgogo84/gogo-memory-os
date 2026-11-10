@@ -412,6 +412,46 @@ export function answersGogosQuestion(turns: BrainTurn[], text: string, now = Dat
 
 export const FORWARDED_NOTE = 'The latest message was FORWARDED by the user from someone else (a host, colleague or friend). It is information shared with Gogo, not the user speaking to Gogo and not a request. "You" in it means the user, never Gogo. Never reply as its recipient (never "you\'ve added me"); acknowledge what it means for the user in one short line, or handle it if it contains a clear task for Gogo.'
 
+/** Addendum 5, shadow only: for owners in GOGO_BRAIN_LOOP_USERS the looping brain plans the same message with look-up
+ *  tools, after the reply has gone out. It is logged and saved for comparison; it never replies or changes anything.
+ *  Off unless the variable is set. `ctx` null means "the turn was answered before the brain ran" (for example by
+ *  Events): the context is loaded then, without the turn that was just saved. Every model call is recorded in the
+ *  cost ledger as ours (nothing is charged to the person), and there is a daily limit on passes (40 a day unless GOGO_BRAIN_LOOP_DAILY says otherwise). */
+export const LOOP_SHADOW_DAILY = (env: Record<string, string | undefined> = process.env) => { const raw = String(env.GOGO_BRAIN_LOOP_DAILY ?? '').trim(), n = Number(raw); return raw && Number.isInteger(n) && n >= 0 && n <= 2000 ? n : 40 }
+type LoopShadowDeps = { run?: (a: any) => Promise<any>; countToday?: (telegramId: number) => Promise<number>; save?: (row: Record<string, unknown>) => Promise<void>; loadContext?: typeof loadBrainContext; defer?: (job: () => Promise<void>) => Promise<void>; env?: Record<string, string | undefined> }
+export async function scheduleLoopShadow(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; forwarded?: boolean }, ctx: BrainContext | null, pipelineKind: string, deps: LoopShadowDeps = {}): Promise<void> {
+  const env = deps.env || process.env
+  if (!(await import('./brain-loop').then(m => m.brainLoopShadowFor(p.phone, env), () => false))) return
+  // The id is used for look-ups: only an exact, positive integer is accepted.
+  if (!Number.isSafeInteger(p.telegramId) || p.telegramId <= 0) return
+  const shadowLoop = async () => {
+    try {
+      const loop = await import('./brain-loop'), { firstSliceTools } = await import('./brain-loop-tools')
+      const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0)
+      const today = deps.countToday ? await deps.countToday(p.telegramId) : await supabaseAdmin.from('agent_activity').select('id', { count: 'exact', head: true }).eq('telegram_id', String(p.telegramId)).eq('event_type', 'brain_loop_shadow').gte('created_at', dayStart.toISOString()).then((r: any) => (r.error ? Number.POSITIVE_INFINITY : Number(r.count || 0)))
+      if (!(today < LOOP_SHADOW_DAILY(env))) { console.log('BRAIN_LOOP_SHADOW:', JSON.stringify({ skipped: 'daily_limit' })); return }
+      let c = ctx
+      if (!c) {
+        c = await (deps.loadContext || loadBrainContext)(p)
+        // Stored turns are cleaned and cut the same way, so compare like with like.
+        const n = c.turns.length, same = (a: string, b: string) => clean(a, 900) === clean(b, 900)
+        if (n >= 2 && c.turns[n - 1].role === 'assistant' && c.turns[n - 2].role === 'user' && same(c.turns[n - 2].content, p.text)) c = { ...c, turns: c.turns.slice(0, n - 2) }
+        if (p.forwarded) c = { ...c, sections: { ...c.sections, 'About the latest message': [FORWARDED_NOTE] } }
+      }
+      const actor = { userId: String(p.userId || ''), legacyTelegramId: p.telegramId, whatsappId: String(p.whatsappId || p.phone), name: String(p.name || ''), timezone: c.timezone }
+      const r = await (deps.run || loop.runBrainLoopShadow)({ actor, text: p.text, ctx: c, tools: firstSliceTools(),
+        onModelCall: (e: { model: string; ms: number; ok: boolean; usage: BrainUsage }) => meterBrainCall({ telegramId: p.telegramId, source: 'brain_shadow', ...e }) })
+      const report = loop.loopShadowReport(pipelineKind, r)
+      console.log('BRAIN_LOOP_SHADOW:', JSON.stringify(report))
+      const row = { telegram_id: String(p.telegramId), event_type: 'brain_loop_shadow', message: `loop ${report.final} after ${report.tools.length} tool calls; pipeline ${report.pipeline}`, metadata_json: { ...report, proposed: loop.loopShadowPreview(r) } }
+      // The daily limit counts these rows, so a row that could not be saved is reported.
+      if (deps.save) await deps.save(row); else { const res: any = await supabaseAdmin.from('agent_activity').insert(row); if (res?.error) console.error('BRAIN_LOOP_SHADOW_FAILED:', JSON.stringify({ code: 'save' })) }
+    } catch { console.error('BRAIN_LOOP_SHADOW_FAILED') }
+  }
+  if (deps.defer) return deps.defer(shadowLoop)
+  await import('next/server').then(m => m.after(shadowLoop)).catch(() => { void shadowLoop() })
+}
+
 export async function runBrain(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; surface: 'whatsapp' | 'web'; forwarded?: boolean }): Promise<{ reply?: string; text?: string } | null> {
   if (!brainEnabledFor(p.phone) || isExactCommand(p.text)) return null
   // Saved-state answers the brain cannot see (connected apps) go to their handler, never a guess.
@@ -458,6 +498,7 @@ export async function runBrain(p: { phone: string; telegramId: number; text: str
   console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: d.kind, ms: d.ms, model: usedModel, turns: ctx.turns.length, flights: ctx.trackedFlights.length,
     input_tokens: d.usage.input, output_tokens: d.usage.output, cache_read_input_tokens: d.usage.cacheRead, cache_creation_input_tokens: d.usage.cacheCreation,
     ...(d.kind === 'handle' ? { rewritten: d.rewritten, instruction: d.rewritten ? redactSecretShapedText(d.instruction).slice(0, 120) : undefined } : {}), ...(d.kind === 'flight' ? { flightNo: d.flightNo, track: d.track } : {}), ...(d.kind === 'skip' ? { reason: d.reason } : {}) }))
+  await scheduleLoopShadow(p, ctx, d.kind)
   if (d.kind === 'reply' || d.kind === 'ask') return { reply: d.text }
   // 28 Oct review: a failed brain call must not hand a context-dependent message ("book the evening one", "did it
   // land?") back to the context-blind keyword pipeline, which caused the original failures. Ask instead.
