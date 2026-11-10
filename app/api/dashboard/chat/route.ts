@@ -307,6 +307,12 @@ async function handleChatPost(req: NextRequest) {
         await saveConversation(user.telegram_id,text,procedureReply)
         return NextResponse.json({text:procedureReply,handledBy:'procedure',status:'waiting_approval',readOnly:false,mutated:false})
       }
+      // AskGogo Events (Addendum 4): same conversation as on WhatsApp, flagged owners only; null falls through.
+      const eventReply=!prep&&!procedureReply&&(process.env.GOGO_EVENTS==='1'||process.env.GOGO_EVENTS_OWNERS)?(await import('@/lib/events/entry').then(m=>m.tryEventAsk(actor,text,'dashboard'),()=>null)):null
+      if(eventReply){
+        await saveConversation(user.telegram_id,text,eventReply)
+        return NextResponse.json({text:eventReply,handledBy:'events',status:'completed',readOnly:false,mutated:true})
+      }
       if(prep){
         await saveConversation(user.telegram_id,text,prep)
         return NextResponse.json({text:prep,handledBy:'meeting-prep',status:'completed',readOnly:true,mutated:false})
