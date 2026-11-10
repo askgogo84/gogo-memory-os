@@ -8,12 +8,13 @@ const cols = (s: string) => (s.trim() === '*' ? '*' : s.split(',').map(c => iden
 export function pgliteSupabase(db: PGlite) {
   const run = async (sql: string, params: unknown[]) => { try { return { rows: (await db.query(sql, params)).rows as any[], error: null as any } } catch (e: any) { return { rows: [] as any[], error: { message: String(e?.message || e), code: e?.code } } } }
   function builder(table: string) {
-    let op: 'select' | 'insert' | 'update' = 'select', selected = '*', returning: string | null = null, values: any = null, single: 'one' | 'maybe' | null = null
+    let op: 'select' | 'insert' | 'update' | 'delete' = 'select', selected = '*', returning: string | null = null, values: any = null, single: 'one' | 'maybe' | null = null
     const where: [string, unknown][] = []; let order = '', limit = ''
     const q: any = {
       select(c = '*') { if (op === 'select') selected = c; else returning = c; return q },
       insert(v: any) { op = 'insert'; values = v; return q },
       update(v: any) { op = 'update'; values = v; return q },
+      delete() { op = 'delete'; return q },
       eq(c: string, v: unknown) { where.push([c, v]); return q },
       order(c: string, o: { ascending?: boolean } = {}) { order = ` order by ${ident(c)} ${o.ascending === false ? 'desc' : 'asc'}`; return q },
       limit(n: number) { limit = ` limit ${Math.floor(n)}`; return q },
@@ -30,7 +31,8 @@ export function pgliteSupabase(db: PGlite) {
         sql = `insert into ${ident(table)} (${keys.map(ident).join(', ')}) values ${rows.map(r => `(${keys.map(k => p(r[k])).join(', ')})`).join(', ')}`
       } else if (op === 'update') {
         sql = `update ${ident(table)} set ${Object.keys(values).map(k => `${ident(k)} = ${p(values[k])}`).join(', ')}`
-      } else sql = `select ${cols(selected)} from ${ident(table)}`
+      } else if (op === 'delete') { if (!where.length) return { data: null, error: { message: 'delete without a filter' } }; sql = `delete from ${ident(table)}` }
+      else sql = `select ${cols(selected)} from ${ident(table)}`
       if (op !== 'insert' && where.length) sql += ' where ' + where.map(([c, v]) => `${ident(c)} = ${p(v)}`).join(' and ')
       if (op === 'select') sql += order + limit
       else if (returning) sql += ` returning ${cols(returning)}`

@@ -586,6 +586,21 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     await saveConversation(resolvedUser.telegramId,'assistant',procedureReply)
     return {text:formatOutgoingText(params.channel,procedureReply),handledBy:'procedure-follow-up',resolvedUser}
   }
+  // AskGogo Events (Addendum 4): planning and managing an event the person hosts, for owners in GOGO_EVENTS_OWNERS.
+  // Env gate first so nothing loads when the feature is off. The module decides with a typed action; a message that
+  // is not about their own event returns null and continues below unchanged. Nothing is sent to any guest from here.
+  const eventsEnv=(globalThis as any).process?.env||{}
+  const eventReply=params.channel==='whatsapp'&&!params.internalStep&&eventsEnv.VERCEL_ENV&&(eventsEnv.GOGO_EVENTS==='1'||eventsEnv.GOGO_EVENTS_OWNERS)
+    ?await import('@/lib/events/entry').then(async m=>{
+        const {resolveAgentActor}=await import('@/lib/agent/actor')
+        const actor=await resolveAgentActor({telegramId:String(resolvedUser.telegramId),whatsappId:resolvedUser.whatsappId||params.externalUserId,surface:'whatsapp'})
+        return m.tryEventAsk(actor,incomingText,'whatsapp')
+      }).catch(e=>{console.error('EVENT_WHATSAPP_ENTRY_FAILED:',String(e?.code||e?.name||'error').slice(0,60));return null}):null
+  if(eventReply){
+    await saveConversation(resolvedUser.telegramId,'user',incomingText)
+    await saveConversation(resolvedUser.telegramId,'assistant',eventReply)
+    return {text:formatOutgoingText(params.channel,eventReply),handledBy:'events',resolvedUser}
+  }
   // Remember and suggest, Phase 1: food taste the person states, lists or forgets (null = not a taste message).
   const taste=(globalThis as any).process?.env?.VERCEL_ENV&&TASTE_PREFILTER.test(incomingText)
     ?await import('@/lib/agent/taste').then(m=>m.tryTasteCommand({telegramId:String(resolvedUser.telegramId),text:incomingText}),()=>null):null

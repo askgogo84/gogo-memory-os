@@ -17,7 +17,10 @@ export class EventsError extends Error { code: string; constructor(code: string)
 const fail = (code: string): never => { throw new EventsError(code) }
 const owned = (owner: string) => (OWNER_RE.test(String(owner)) ? String(owner) : fail('invalid_owner'))
 const uuid = (id: string) => (UUID_RE.test(String(id)) ? String(id) : fail('not_found'))
-const missingTable = (error: any) => /gogo_event|does not exist|schema cache|PGRST205|42P01/i.test(String(error?.message || error?.code || ''))
+// Only "the table or function is not there" means the migration has not been applied. Any other database error
+// (a constraint, a timeout) is a real failure and must not be reported as "not enabled".
+const missingTable = (error: any) => ['42P01', '42883', 'PGRST205', 'PGRST202'].includes(String(error?.code || ''))
+  || /relation "?(?:public\.)?gogo_event\w*"? does not exist|function (?:public\.)?gogo_event\w*\(.*\) does not exist|Could not find the (?:table|function) '?public\.gogo_event/i.test(String(error?.message || ''))
 function check<T>(res: { data: T; error: any }): T {
   if (res.error) fail(missingTable(res.error) ? 'events_not_enabled' : 'events_store_failed')
   return res.data
@@ -119,6 +122,11 @@ export async function cancelEvent(owner: string, id: string, db: Db = supabaseAd
   const current = await getEvent(owner, id, db)
   if (current.status === 'cancelled') return current
   const now = new Date().toISOString()
+  // A draft that never had a date was never an invitation anyone could open: it is discarded, not kept as cancelled.
+  if (current.status === 'draft' && !current.starts_at) {
+    check(await db.from('gogo_events').delete().eq('owner_telegram_id', owned(owner)).eq('id', current.id).select('id'))
+    return { ...current, status: 'cancelled' }
+  }
   const e = check<EventRow>(await db.from('gogo_events').update({ status: 'cancelled', cancelled_at: now, updated_at: now, revision: current.revision + 1 })
     .eq('owner_telegram_id', owned(owner)).eq('id', current.id).select('*').single())
   await audit(db, current.id, 'owner', 'event.cancelled')
