@@ -92,6 +92,12 @@ async function audit(db: Db, eventId: string, actor: string, action: string, det
   } catch { console.error('EVENTS_AUDIT_FAILED:', JSON.stringify({ action })) }
 }
 
+/** An audit line for an organizer action done outside this module (e.g. the calendar write). Owner-checked first. */
+export async function recordOwnerAudit(owner: string, id: string, action: 'event.calendar_synced', detail: Record<string, unknown> = {}, db: Db = theDb()): Promise<void> {
+  const e = await getEvent(owner, id, db)
+  await audit(db, e.id, 'owner', action, detail)
+}
+
 // ---- organizer ------------------------------------------------------------------------------------------------------
 export async function createEvent(owner: string, draft: EventDraft, db: Db = theDb()): Promise<EventRow> {
   const row = rowFromDraft(draft)

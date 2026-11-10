@@ -3,6 +3,7 @@ import { getSession } from '@/lib/dashboard/session'
 import { verifySameOrigin } from '@/lib/dashboard/guard'
 import { createHash } from 'node:crypto'
 import { eventsEnabledFor, invitationIcs, publicInvitation } from '@/lib/events/core'
+import { addEventToGoogleCalendar, removeEventFromGoogleCalendar, type GcalResult } from '@/lib/events/gcal'
 import { disableShareLink, EventsError, getEvent, revokeGuest, rotateShareLink } from '@/lib/events/store'
 
 export const dynamic = 'force-dynamic'
@@ -36,10 +37,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const owner = String(session.telegramId)
   if (!eventsEnabledFor(owner)) return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 })
   const { id } = await params
-  const body = await request.json().catch(() => null) as { action?: unknown; guestId?: unknown } | null
+  const body = await request.json().catch(() => null) as { action?: unknown; guestId?: unknown; revision?: unknown } | null
   try {
     if (body?.action === 'new_link') return NextResponse.json({ ok: true, link: await rotateShareLink(owner, id) })
     if (body?.action === 'link_off') { await disableShareLink(owner, id); return NextResponse.json({ ok: true }) }
+    // The organizer's own Google Calendar, after the on-page confirm. The revision is the one the organizer saw.
+    if (body?.action === 'add_gcal' && typeof body.revision === 'number') return gcalResponse(await addEventToGoogleCalendar(owner, id, body.revision))
+    if (body?.action === 'remove_gcal') return gcalResponse(await removeEventFromGoogleCalendar(owner, id))
     if (body?.action === 'remove_guest' && typeof body.guestId === 'string') { await revokeGuest(owner, id, body.guestId); return NextResponse.json({ ok: true }) }
     return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 })
   } catch (e) {
@@ -47,3 +51,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return NextResponse.json({ ok: false, error: code }, { status: code === 'not_found' ? 404 : code === 'changed_meanwhile' ? 409 : 500 })
   }
 }
+
+const GCAL_STATUS: Record<string, number> = { changed_meanwhile: 409, has_guests: 409, not_connected: 409, not_there: 404, no_date: 422, cancelled: 422, not_cancelled: 422, unknown: 502, failed: 502 }
+function gcalResponse(r: GcalResult) { return NextResponse.json(r, { status: r.ok ? 200 : GCAL_STATUS[r.result] || 502 }) }
