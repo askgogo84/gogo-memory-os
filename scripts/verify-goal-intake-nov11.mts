@@ -278,4 +278,19 @@ ok(/requiresApproval: false, verificationRequired: true/.test(pgp.slice(pgp.inde
   const res = await gi.startGoals(actor, two, { now: NOW, capabilityOff: async (_a: any, c: string) => c === 'email', email: async () => { drafts++; return 'Nothing has been sent.' }, startRun: async ({ goal }: any) => { ran.push(goal.id); return { runId: goal.id, drive: async () => ({ status: 'completed', text: 'ok' }) } } } as any)
   eq([drafts, res.plan.goals.map(x => x.note || x.state), ran], [0, ['email_off', 'email_off', 'started'], ['g3']], 'email off: both email goals are held for that reason and the rest still start')
   ok(/set email autonomy to draft/.test(gi.startedText(res.plan, new Map())), 'and the reply says how to switch it back on') }
+// Dashboard: the same intake from the web chat; runs and the event draft are recorded against the web surface.
+{ const g = (o: any) => ({ id: 'g1', title: 'T', words: 'plan a dinner', slots: {}, asked: [], state: 'open', ownership: 'gogo_handles', ...o })
+  const seen: any[] = []
+  const p = gi.newPlan('x', [g({ kind: 'todo', title: 'Call the bank', ownership: 'your_turn' }), g({ id: 'g2', kind: 'event', title: 'Dinner', ownership: 'together', slots: { date: '2037-11-20' } })], NOW)
+  const mk = (surface?: any) => ({ now: NOW, surface, capabilityOff: async () => false, eventsOn: () => true, event: async (_a: any, _t: string, s: any) => { seen.push(['event', s]); return 'Draft event ready.' }, startRun: async ({ goal, surface: s }: any) => { seen.push(['run', s]); return { runId: goal.id, drive: async () => ({ status: 'completed', text: 'ok' }) } } })
+  await gi.startGoals(actor, p, mk('web') as any)
+  await gi.startGoals(actor, gi.newPlan('x', p.goals.map(x => ({ ...x, state: 'open' as const })), NOW), mk() as any)
+  eq(seen, [['run', 'web'], ['event', 'web'], ['run', undefined], ['event', undefined]], 'the surface the list came from is passed to each goal; WhatsApp stays the default')
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(new URL('../lib/agent/goal-intake.ts', import.meta.url), 'utf8'), chat = readFileSync(new URL('../app/api/dashboard/chat/route.ts', import.meta.url), 'utf8')
+  ok(/surface: surface === 'web' \? 'web' : 'whatsapp'/.test(src) && /surface === 'web' \? 'dashboard' : 'whatsapp'/.test(src), 'only "web" selects the web surface; anything else is WhatsApp')
+  const at = chat.indexOf("m.tryGoalIntake(actor,text,{surface:'web'")
+  ok(at > 0 && chat.lastIndexOf('process.env.GOGO_GOAL_INTAKE', at) > 0 && chat.lastIndexOf("m.goalIntakeEnabledFor(String(user.telegram_id))", at) > 0 && chat.lastIndexOf('approvalIntent(text))return null', at) > 0, 'dashboard chat: flag, exact owner and no typed approvals before intake')
+  ok(at < chat.indexOf("m.tryProcedureAsk(actor,text)") && at < chat.indexOf("m.tryEventAsk(actor,text,'dashboard')"), 'a list is offered before the single-goal hooks, as on WhatsApp')
+  ok(!/sendWhatsAppMessage/.test(chat.slice(chat.lastIndexOf('// Goal-to-Done (Addendum 5)', at), chat.indexOf('// Meeting prep, same as WhatsApp', at))), 'nothing is pushed to WhatsApp from the dashboard hook') }
 console.log(`GOAL_INTAKE_OK ${checks} checks`)

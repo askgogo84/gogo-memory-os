@@ -296,6 +296,23 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json({text:out,handledBy:'occasion-invite',status:'completed',...(inv.mediaUrl?{imageUrl:inv.mediaUrl}:{})})
       }
     }
+    // Goal-to-Done (Addendum 5): a message with several goals becomes one plan of who does what, as on WhatsApp, and
+    // the same open plan is continued from either place. Owners in GOGO_GOAL_INTAKE only; null means routing continues
+    // unchanged. Every goal it starts goes through its own tool's approvals. Results that take longer than the reply
+    // are saved to this conversation and shown on Tasks › Overview; nothing is pushed to WhatsApp from here.
+    if((globalThis as any).process?.env?.VERCEL_ENV&&process.env.GOGO_GOAL_INTAKE){
+      const goalReply=await import('@/lib/agent/goal-intake').then(async m=>{
+        if(!m.goalIntakeEnabledFor(String(user.telegram_id)))return null
+        // A typed approval or decline belongs to the approval it answers, never to the plan (as on WhatsApp).
+        if((await import('@/lib/agent/whatsapp-bridge')).approvalIntent(text))return null
+        const {after}=await import('next/server')
+        return m.tryGoalIntake(actor,text,{surface:'web',background:work=>after(work),send:async t=>{const {error}=await supabaseAdmin.from('conversations').insert([{telegram_id:user.telegram_id,role:'assistant',content:t}]);if(error)console.error('DASHBOARD_GOAL_RESULT_SAVE_FAILED:',String(error.code||'error').slice(0,20))}})
+      }).catch((e:any)=>{console.error('GOAL_INTAKE_ENTRY_FAILED:',String(e?.code||e?.name||'error').slice(0,60));return null})
+      if(goalReply){
+        await saveConversation(user.telegram_id,text,goalReply)
+        return NextResponse.json({text:goalReply,handledBy:'goal-intake',status:'completed',readOnly:false,mutated:true})
+      }
+    }
     // Meeting prep, same as WhatsApp (Duet benchmark, 6 Nov).
     if((globalThis as any).process?.env?.VERCEL_ENV){
       const prep=(await import('@/lib/agent/meeting-prep-ask').then(m=>m.isMeetingPrepAsk(text)?m.tryMeetingPrep(actor,text):null,()=>null))
