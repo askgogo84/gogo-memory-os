@@ -1,0 +1,475 @@
+// Same Brain 3.0, Addendum 5 (Goal-to-Done), P0 bulk delegation: "Gogo, here are ten things I need to finish this week."
+//
+// One message with several goals becomes a plan the person can read: the goals, each with who does it (Gogo handles /
+// We do together / Your turn), and only the details that are missing, asked once. Nothing starts until they say
+// "get it done" (or go ahead, start). Then everything that has what it needs starts, each goal as its own durable run
+// through the tools it would have used anyway, with every approval it would have needed anyway:
+// - reminders, flight prices, research and to-dos: one persistent run each (persistent-general-plan.ts), which
+//   checks its own result, survives the worker dying (cron resume) and shows on Tasks.
+// - an event: the Events flow (lib/events), which drafts; nothing is sent to anyone from there.
+// - an email: the Gmail compose flow, which only drafts; "send it" raises an approval card. One draft at a time.
+// - anything else: listed as the person's, never guessed at.
+//
+// The model reads the message and fills facts (kind, the person's words, dates, names). It never writes replies,
+// never decides who does what, never decides what may start. Code does all three. Off unless GOGO_GOAL_INTAKE is "on"
+// or lists the owner.
+import Anthropic from '@anthropic-ai/sdk'
+import { createHash } from 'node:crypto'
+import type { AgentActor } from './actor'
+import type { TaskOwnership } from './task-ownership'
+
+type Env = Record<string, string | undefined>
+const envOf = () => ((globalThis as any).process?.env || {}) as Env
+
+export function goalIntakeEnabledFor(owner: string, env: Env = envOf()): boolean {
+  const v = String(env.GOGO_GOAL_INTAKE || '').trim()
+  if (v === 'off' || !owner) return false
+  if (v === 'on') return true
+  // Exact owner ids, as GOGO_EVENTS_OWNERS lists them.
+  return v.split(',').map(s => s.trim()).includes(owner)
+}
+
+export const KINDS = ['reminder', 'flight_prices', 'research', 'email', 'event', 'todo', 'other'] as const
+export type GoalKind = typeof KINDS[number]
+export const SLOTS = ['from', 'to', 'date', 'time', 'recipient', 'topic', 'people'] as const
+export type Slot = typeof SLOTS[number]
+export type Slots = Partial<Record<Slot, string>>
+
+/** What each kind needs before it can start. Never guessed: a missing one is asked for, once. */
+export const REQUIRED: Record<GoalKind, readonly Slot[]> = {
+  reminder: ['date', 'time'], flight_prices: ['from', 'to', 'date'], research: [], email: ['recipient', 'topic'], event: ['date'], todo: [], other: [],
+}
+/** Who does it. Responsibility only: every tool still asks for every approval it needs (task-ownership.ts). */
+export const OWNER_OF: Record<GoalKind, TaskOwnership> = {
+  reminder: 'gogo_handles', flight_prices: 'gogo_handles', research: 'gogo_handles', email: 'together', event: 'together', todo: 'your_turn', other: 'your_turn',
+}
+const QUESTION: Record<Slot, string> = {
+  from: 'flying from where?', to: 'to where?', date: 'which date?', time: 'what time?', recipient: 'who is it to?', topic: 'what should it say?', people: 'for how many people?',
+}
+const REMINDER_Q: Partial<Record<Slot, string>> = { date: 'which day?', time: 'what time should I remind you?' }
+
+export type IntakeGoal = {
+  id: string; kind: GoalKind; title: string; words: string; slots: Slots; ownership: TaskOwnership
+  asked: Slot[]; state: 'open' | 'started' | 'held' | 'dropped'; runId?: string; note?: string; reply?: string
+}
+export type IntakePlan = { v: 1; id: string; at: string; text: string; goals: IntakeGoal[]; started?: string; strays?: number }
+export const MAX_GOALS = 10
+const PLAN_MINUTES = 120
+
+/** Like clip, keeping line breaks (answers with bullets and source lists) and never cutting inside a line. */
+const block = (v: unknown, n: number) => { const t = String(v ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]+/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim(); if (t.length <= n) return t; const cut = t.slice(0, n); return cut.slice(0, Math.max(cut.lastIndexOf('\n'), n - 400)).trimEnd() + '\n…' }
+const clip = (v: unknown, n: number) => String(v ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
+const norm = (v: string) => v.toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, ' ').replace(/\b(?:the|a|an|my|for|to|of|me|about|please)\b/g, ' ').replace(/\s+/g, ' ').trim()
+
+/** Cheap gate before any model call: a numbered or bulleted list of three or more lines, "here are N things", or one
+ *  sentence asking for three or more separate things. A false positive costs one model call; it never acts. */
+export function looksLikeGoalList(text: string): boolean {
+  const t = String(text || '').trim()
+  if (t.length < 30 || t.length > 3000) return false
+  const lines = t.split(/\n+/).filter(l => /^\s*(?:[-*•]|\d{1,2}[.)])\s+\S/.test(l))
+  if (lines.length >= 3) return true
+  if (/\b(?:here(?:'s| is| are)|i have|i've got|i need to (?:do|finish|get done))\b[^.?!]{0,40}\b(?:\d{1,2}|two|three|four|five|six|seven|eight|nine|ten|few|several|bunch of|list of)\s+(?:things|tasks|items|stuff|errands)\b/i.test(t)) return true
+  const parts = t.split(/,|;|\band then\b|\balso\b|\band\b/i).map(s => s.trim()).filter(s => s.split(/\s+/).length >= 2)
+  const verbs = parts.filter(s => /^(?:(?:i\s+)?(?:need|want|have)\s+to\s+|please\s+|gogo,?\s+(?:i\s+need\s+to\s+)?)?(?:organi[sz]e|plan|check|compare|find|prepare|draft|write|send|email|remind|book|research|look\s+up|get|buy|call|schedule|set\s+up|pay|renew|order|track|sort)\b/i.test(s))
+  return verbs.length >= 3
+}
+
+// ---- The model's part: facts only, through forced tool calls. ----
+
+export const LIST_TOOL: Anthropic.Tool = {
+  name: 'goal_list',
+  description: 'The separate goals in one message from a person to their assistant.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      is_list: { type: 'boolean', description: 'true only if the message asks the assistant to take on two or more separate goals.' },
+      goals: {
+        type: 'array', maxItems: MAX_GOALS,
+        items: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: [...KINDS], description: 'reminder = remind them of something. flight_prices = look up or compare flight fares. research = find, look up, compare or shortlist information (investors, venues, products). email = write an email. event = organise a party, birthday, dinner, outing or get-together they host. todo = something only they can do (call someone, go somewhere, pay, sign). other = anything else.' },
+            title: { type: 'string', description: 'A short name for the goal in the person\'s own words, 60 characters at most.' },
+            words: { type: 'string', description: 'What they asked for this goal, close to their own words, 200 characters at most.' },
+            from: { type: 'string', description: 'flight_prices: departure city, only if stated.' },
+            to: { type: 'string', description: 'flight_prices: arrival city, only if stated.' },
+            date: { type: 'string', description: 'YYYY-MM-DD, only if a specific day was stated or a relative day ("tomorrow") was. Not for a month or a range.' },
+            time: { type: 'string', description: 'HH:MM 24-hour, only if a time was stated.' },
+            recipient: { type: 'string', description: 'email: who it is to (a name or an email address), only if stated.' },
+            topic: { type: 'string', description: 'email: what it should say, only if stated.' },
+            people: { type: 'integer', description: 'event: number of people, only if stated.' },
+          },
+          required: ['kind', 'title', 'words'],
+        },
+      },
+    },
+    required: ['is_list', 'goals'],
+  },
+}
+export const ANSWER_TOOL: Anthropic.Tool = {
+  name: 'goal_answers',
+  description: 'How a person\'s reply relates to the plan of goals their assistant just showed them.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      about_plan: { type: 'boolean', description: 'true if the reply answers questions about these goals, changes or drops one, or tells the assistant to start. false if it is about something else.' },
+      start: { type: 'boolean', description: 'true only if they told the assistant to go ahead (get it done, go ahead, start, do it, yes do them).' },
+      fills: { type: 'array', items: { type: 'object', properties: { goal: { type: 'string' }, slot: { type: 'string', enum: [...SLOTS] }, value: { type: 'string' } }, required: ['goal', 'slot', 'value'] }, description: 'Details they gave, each for one goal id. Dates as YYYY-MM-DD, times as HH:MM 24-hour, people as a number.' },
+      drop: { type: 'array', items: { type: 'string' }, description: 'Goal ids they said to drop or not do.' },
+    },
+    required: ['about_plan', 'start'],
+  },
+}
+export type ListExtraction = { is_list: boolean; goals: any[] }
+export type AnswerExtraction = { about_plan: boolean; start: boolean; fills?: { goal: string; slot: string; value: string }[]; drop?: string[] }
+export type Model = { list: (p: { text: string; today: string; timezone: string }) => Promise<ListExtraction | null>; answers: (p: { text: string; today: string; timezone: string; goals: { id: string; kind: string; title: string; missing: Slot[] }[] }) => Promise<AnswerExtraction | null> }
+
+const realModel: Model = {
+  async list(p) {
+    return callTool(LIST_TOOL, [`You read one message a person sent their assistant and list the separate goals in it. Today is ${p.today} (${p.timezone}).`,
+      'Fill a field only if the person stated it. Never invent a date, time, place, name or number. Two requests for the same thing are one goal.',
+      'A greeting, a question or a single request is not a list: is_list false.'].join('\n'), p.text, 'goal_list') as Promise<ListExtraction | null>
+  },
+  async answers(p) {
+    return callTool(ANSWER_TOOL, [`A person's assistant showed them these goals and asked for missing details. Today is ${p.today} (${p.timezone}).`,
+      ...p.goals.map(g => `- ${g.id}: ${g.kind}, "${g.title}"${g.missing.length ? `, missing: ${g.missing.join(', ')}` : ''}`),
+      'Read their reply. Fill only details they stated, each for the goal it belongs to. Never invent one.'].join('\n'), p.text, 'goal_answers') as Promise<AnswerExtraction | null>
+  },
+}
+async function callTool(tool: Anthropic.Tool, system: string, text: string, source: string): Promise<unknown> {
+  const [{ FAST_MODEL }, { forModel }, { recordMeterEvent }] = await Promise.all([import('./brain'), import('@/lib/services/model-ids'), import('@/lib/metering/record')])
+  const t0 = Date.now()
+  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
+  const res: any = await client.messages.create(forModel({ model: FAST_MODEL, max_tokens: 1200, system, tools: [tool], tool_choice: { type: 'tool' as const, name: tool.name },
+    messages: [{ role: 'user' as const, content: String(text).slice(0, 3000) }] }), { timeout: 15_000 })
+  void recordMeterEvent({ vendor: 'anthropic', category: 'llm', model: FAST_MODEL, inputTokens: res?.usage?.input_tokens ?? null, outputTokens: res?.usage?.output_tokens ?? null, ok: true, metadata: { source: `goal_intake_${source}`, ms: Date.now() - t0 } } as any)
+  const use = Array.isArray(res?.content) ? res.content.find((b: any) => b?.type === 'tool_use' && b.name === tool.name) : null
+  return use?.input ?? null
+}
+
+// ---- Code's part: checking what the model said, deciding, and wording. ----
+
+const DATE = /^20\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])$/, TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/
+/** One slot value from the model, checked; anything that does not check out is treated as not stated. */
+export function slotValue(slot: Slot, raw: unknown, today: string): string | null {
+  const v = clip(raw, 120)
+  if (!v) return null
+  if (slot === 'date') { const d = new Date(`${v}T00:00:00Z`); return DATE.test(v) && v >= today && Number.isFinite(d.getTime()) && d.toISOString().slice(0, 10) === v ? v : null }
+  if (slot === 'time') return TIME.test(v) ? v : null
+  if (slot === 'people') { const n = /^\d{1,4}$/.test(v) ? Number(v) : NaN; return n >= 1 && n <= 5000 ? String(n) : null }
+  if (slot === 'from' || slot === 'to') return /^[\p{L} .'-]{2,40}$/u.test(v) ? v : null
+  // A name or one email address: no separators that could start a second recipient or a header.
+  if (slot === 'recipient') return /^[\p{L}\p{N} .'@_+-]{2,80}$/u.test(v) ? v : null
+  return v
+}
+export const missingOf = (g: Pick<IntakeGoal, 'kind' | 'slots'>) => REQUIRED[g.kind].filter(s => !g.slots[s])
+
+/** Turns the model's list into checked goals: known kinds only, own words clipped, slots checked, repeats merged. */
+export function goalsFrom(extraction: ListExtraction | null, today: string): IntakeGoal[] {
+  if (!extraction || extraction.is_list !== true || !Array.isArray(extraction.goals)) return []
+  const out: IntakeGoal[] = []
+  for (const raw of extraction.goals.slice(0, MAX_GOALS)) {
+    if (!raw || typeof raw !== 'object') continue
+    const kind: GoalKind = (KINDS as readonly string[]).includes(raw.kind) ? raw.kind : 'other'
+    const title = clip(raw.title, 60), words = clip(raw.words || raw.title, 200)
+    if (!title) continue
+    const slots: Slots = {}
+    for (const s of SLOTS) { const v = slotValue(s, raw[s], today); if (v) slots[s] = v }
+    const dup = out.find(g => g.kind === kind && (norm(g.title) === norm(title) || norm(g.words) === norm(words)))
+    if (dup) { for (const s of SLOTS) if (!dup.slots[s] && slots[s]) dup.slots[s] = slots[s]; continue }
+    out.push({ id: `g${out.length + 1}`, kind, title, words, slots, ownership: OWNER_OF[kind], asked: [], state: 'open' })
+  }
+  return out.length >= 2 ? out : []
+}
+
+/** Applies a reply: checked fills for open goals only, drops, and whether to start. */
+export function applyAnswers(plan: IntakePlan, ans: AnswerExtraction | null, today: string): { plan: IntakePlan; start: boolean; about: boolean } {
+  if (!ans || ans.about_plan !== true) return { plan, start: false, about: false }
+  const goals = plan.goals.map(g => ({ ...g, slots: { ...g.slots } }))
+  for (const f of Array.isArray(ans.fills) ? ans.fills.slice(0, 40) : []) {
+    const g = goals.find(x => x.id === f?.goal && x.state === 'open')
+    if (!g || !(SLOTS as readonly string[]).includes(f.slot)) continue
+    const v = slotValue(f.slot as Slot, f.value, today)
+    if (v) g.slots[f.slot as Slot] = v
+  }
+  for (const id of Array.isArray(ans.drop) ? ans.drop : []) { const g = goals.find(x => x.id === id && x.state === 'open'); if (g) g.state = 'dropped' }
+  return { plan: { ...plan, goals }, start: ans.start === true, about: true }
+}
+
+const LABEL: Record<TaskOwnership, string> = { gogo_handles: 'Gogo handles', together: 'We do together', your_turn: 'Your turn' }
+const LINE: Partial<Record<GoalKind, string>> = {
+  email: 'I’ll draft it; nothing is sent until you approve it.', event: 'I’ll start a draft event; nothing goes to any guest from here.',
+  todo: 'Only you can do this. I’ll put it on your to-do list.', other: 'Tell me more if you want me to take any of it on.',
+}
+/** The questions still to ask for a goal: each detail only once. */
+export function toAsk(g: IntakeGoal): Slot[] { return missingOf(g).filter(s => !g.asked.includes(s)) }
+function question(g: IntakeGoal, s: Slot) { return (g.kind === 'reminder' && REMINDER_Q[s]) || QUESTION[s] }
+
+/** The plan as a WhatsApp message. Marks the questions it asks as asked. */
+export function planText(plan: IntakePlan): { text: string; plan: IntakePlan } {
+  const goals = plan.goals.map(g => ({ ...g, asked: [...g.asked] }))
+  const live = goals.filter(g => g.state === 'open')
+  const lines: string[] = [`I count ${live.length} thing${live.length === 1 ? '' : 's'}. Here’s who does what:`]
+  let n = 0, asking = false
+  for (const o of ['gogo_handles', 'together', 'your_turn'] as TaskOwnership[]) {
+    const group = live.filter(g => g.ownership === o)
+    if (!group.length) continue
+    lines.push('', `*${LABEL[o]}*`)
+    for (const g of group) {
+      const qs = toAsk(g)
+      if (qs.length) asking = true
+      g.asked.push(...qs)
+      const extra = [LINE[g.kind], qs.length ? qs.map(s => question(g, s)).join(' ').replace(/^./, c => c.toUpperCase()) : ''].filter(Boolean).join(' ')
+      lines.push(`${++n}. ${g.title}${extra ? `: ${extra}` : ''}`)
+    }
+  }
+  lines.push('', asking ? 'Answer what you can in one message, then say *get it done*. I’ll start everything that has what it needs.' : 'Say *get it done* and I’ll start them. Anything that needs your yes will still ask first.')
+  return { text: lines.join('\n'), plan: { ...plan, goals } }
+}
+
+/** The instruction each kind of goal becomes, written by code from checked details (never the model's prose alone). */
+export function stepFor(g: IntakeGoal): { tool: 'reminders' | 'travel' | 'web_search' | 'tasks'; title: string; instruction: string; reminder?: { date: string; time: string; message: string } } | null {
+  const s = g.slots
+  const clock = (t: string) => { const [h, m] = t.split(':').map(Number); return `${((h + 11) % 12) + 1}:${String(m).padStart(2, '0')} ${h < 12 ? 'am' : 'pm'}` }
+  // The reminder's own words: what they asked to be reminded of, without the "remind me" and the day. The day, time
+  // and words go to the reminder tool as checked values (`reminder`), never as a sentence for it to re-read; the
+  // instruction is only what the task shows.
+  if (g.kind === 'reminder' && s.date && s.time) {
+    const about = (g.words.replace(/^(?:please\s+)?remind\s+me\s+(?:to\s+|about\s+|of\s+)?/i, '').replace(/[\s,]*\b(?:day after tomorrow|tomorrow|today|tonight)\b[\s.!]*$/i, '').trim() || g.title).replace(/^./, c => c.toUpperCase())
+    return { tool: 'reminders', title: 'Set reminder', instruction: `Set a reminder on ${s.date} at ${clock(s.time)}`, reminder: { date: s.date, time: s.time, message: about } }
+  }
+  if (g.kind === 'flight_prices' && s.from && s.to && s.date) return { tool: 'travel', title: g.title, instruction: `Compare flights from ${s.from} to ${s.to} on ${s.date}` }
+  if (g.kind === 'research') return { tool: 'web_search', title: g.title, instruction: g.words }
+  // The tasks tool takes the quoted words as the to-do; it skips texts that start like one of a planner's own steps
+  // ("check…", "verify…"), so those are phrased as a note to self.
+  if (g.kind === 'todo') { const t = g.title.replace(/["“”]/g, '').trim(); return t ? { tool: 'tasks', title: g.title, instruction: `Add a task: ${/^(?:retrieve|look up|check|verify|ensure)\b/i.test(t) ? `Remember to ${t.replace(/^./, c => c.toLowerCase())}` : t}` } : null }
+  return null
+}
+
+export type StartDeps = {
+  startRun?: (p: { actor: AgentActor; goal: IntakeGoal; step: NonNullable<ReturnType<typeof stepFor>>; plan: IntakePlan }) => Promise<{ runId: string; drive: () => Promise<{ status: string; text: string }> }>
+  event?: (actor: AgentActor, text: string) => Promise<string | null>
+  email?: (actor: AgentActor, text: string) => Promise<string | null>
+  eventsOn?: (owner: string) => boolean
+  capabilityOff?: (actor: AgentActor, capability: 'reminders' | 'browser') => Promise<boolean>
+  now?: Date
+}
+/** "2026-11-11T09:30" in the person's own zone, for comparing with a reminder's day and time. */
+function localNow(zone: string, now: Date = new Date()): string {
+  const f = (z: string) => { const p: Record<string, string> = {}; for (const x of new Intl.DateTimeFormat('en-GB', { timeZone: z, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now)) p[x.type] = x.value; return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}` }
+  try { return f(zone) } catch { return f('Asia/Kolkata') }
+}
+export const MAX_PARALLEL = 3
+const FLIGHT_EXTRAS = /\b(?:return|round[- ]?trip|two[- ]way|both ways|kids?|child(?:ren)?|infants?|bab(?:y|ies)|adults?|people|persons?|passengers?|family|of us|budget|under|below|less than|cheaper than|max(?:imum)?|business|first class|premium|non[- ]?stop|direct|morning|afternoon|evening|night|red[- ]?eye|before|after|baggage|luggage|refundable)\b|₹|\brs\.?\s?\d|\b\d+\s?k\b/i
+export type Started = { goal: IntakeGoal; running?: Promise<{ status: string; text: string }>; reply?: string | null }
+
+/** Starts every open goal that has what it needs. Returns what started (to be driven by the caller) and the plan. */
+export async function startGoals(actor: AgentActor, plan: IntakePlan, deps: StartDeps = {}): Promise<{ plan: IntakePlan; started: Started[] }> {
+  const owner = String(actor.legacyTelegramId)
+  const goals = plan.goals.map(g => ({ ...g }))
+  const started: Started[] = []
+  let emailTaken = false
+  // At most three runs work at once; each is set going the moment it exists (so the background sweeper, which only
+  // picks up runs left idle, never reports one this request is still working on).
+  let active = 0; const waiting: (() => void)[] = []
+  const slot = async <T>(work: () => Promise<T>): Promise<T> => {
+    while (active >= MAX_PARALLEL) await new Promise<void>(r => waiting.push(r))
+    active++
+    try { return await work() } finally { active--; waiting.shift()?.() }
+  }
+  const FAILED = { status: 'failed', text: 'I couldn’t finish this one. It is on your Tasks page.' }
+  for (const g of goals) {
+    if (g.state !== 'open' || missingOf(g).length) continue
+    try {
+      const step = stepFor(g)
+      if (step) {
+        // The owner's own off switch for this kind of work is honoured before anything is created.
+        const needs = step.tool === 'reminders' ? 'reminders' as const : step.tool === 'web_search' ? 'browser' as const : null
+        if (needs && await (deps.capabilityOff || realCapabilityOff)(actor, needs)) { g.state = 'held'; g.note = needs === 'reminders' ? 'capability_off' : 'browser_off'; continue }
+        // A flight ask with conditions the simple fare search does not carry (a return leg, children, several
+        // travellers, a budget, a cabin, a time of day) is not searched as something simpler than what was asked.
+        if (g.kind === 'flight_prices' && FLIGHT_EXTRAS.test(g.words)) { g.state = 'held'; g.note = 'flight_details'; continue }
+        // A reminder for a time that has already gone by is asked about, not attempted.
+        if (step.reminder && `${step.reminder.date}T${step.reminder.time}` <= localNow(actor.timezone || 'Asia/Kolkata', deps.now)) { g.state = 'held'; g.note = 'time_passed'; continue }
+        const run = await (deps.startRun || realStartRun)({ actor, goal: g, step, plan })
+        g.state = 'started'; g.runId = run.runId
+        started.push({ goal: g, running: slot(() => run.drive()).catch(() => FAILED) })
+      } else if (g.kind === 'event') {
+        const on = (deps.eventsOn || realEventsOn)(owner)
+        if (!on) { g.state = 'held'; g.note = 'events_off'; continue }
+        const reply = await (deps.event || realEvent)(actor, `${g.words}${g.slots.date ? ` on ${g.slots.date}` : ''}${g.slots.time ? ` at ${g.slots.time}` : ''}${g.slots.people ? ` for ${g.slots.people} people` : ''}`)
+        // Started only when a draft really exists.
+        const made = Boolean(reply && /^Draft started\./.test(reply))
+        g.state = made ? 'started' : 'held'; if (!made) g.note = 'event_not_started'
+        if (made) started.push({ goal: g, reply })
+      } else if (g.kind === 'email') {
+        // Gogo keeps one email draft at a time; the next waits until this one is sent or dropped.
+        if (emailTaken) { g.state = 'held'; g.note = 'one_draft_at_a_time'; continue }
+        emailTaken = true
+        const reply = await (deps.email || realEmail)(actor, `email ${g.slots.recipient} saying ${g.slots.topic}`)
+        // Started only when a draft really exists ("Connect Gmail first" or "which address?" is not a draft).
+        const drafted = Boolean(reply && /Nothing has been sent/.test(reply))
+        g.state = drafted ? 'started' : 'held'; if (!drafted) { g.note = 'email_not_started'; g.reply = reply ? clip(reply, 300) : undefined; emailTaken = false }
+        if (drafted) started.push({ goal: g, reply })
+      }
+    } catch (err: any) {
+      console.error('GOAL_INTAKE_START_FAILED:', JSON.stringify({ kind: g.kind, code: String(err?.message || 'error').replace(/[^a-z0-9_:]/gi, '').slice(0, 60) }))
+      g.state = 'held'; g.note = 'start_failed'
+    }
+  }
+  return { plan: { ...plan, goals, started: new Date().toISOString() }, started }
+}
+
+const realStartRun: NonNullable<StartDeps['startRun']> = async ({ actor, goal, step, plan }) => {
+  const { startPersistentGoalRun } = await import('./persistent-general-plan')
+  // The mission text is the instruction code wrote, not the person's first wording ("next month"), which the flight
+  // reader would read as contradicting the exact date they then gave.
+  return startPersistentGoalRun({ actor, surface: 'whatsapp', step: { tool: step.tool, title: step.title, instruction: step.instruction } as any, missionText: step.instruction, metadata: { goal_batch_id: plan.id, goal_id: goal.id, goal_kind: goal.kind, goal_title: goal.title, ownership: goal.ownership, ...(step.reminder ? { goal_reminder: step.reminder } : {}) } })
+}
+const realEventsOn = (owner: string) => { const env = envOf(); return env.GOGO_EVENTS === '1' || String(env.GOGO_EVENTS_OWNERS || '').split(',').map(s => s.trim()).includes(owner) }
+const realCapabilityOff = async (actor: AgentActor, capability: 'reminders' | 'browser') => (await import('./adaptive-autonomy')).capabilityIsOff(actor.legacyTelegramId, capability)
+// Create only: from a list, the Events flow may start a new draft and nothing else. Publishing, changing or
+// cancelling an event, or touching its guests, is never done on the strength of one line in a list.
+const realEvent = async (actor: AgentActor, text: string) => {
+  const [entry, { extractEventAction }] = await Promise.all([import('@/lib/events/entry'), import('@/lib/events/extract')])
+  return entry.tryEventAsk(actor, text, 'whatsapp', { extract: async input => { const a = await extractEventAction(input); return a && a.action === 'create' ? a : ({ action: 'none' } as any) } })
+}
+const realEmail = async (actor: AgentActor, text: string) => {
+  const r: any = await (await import('./gmail-send')).tryRunGmailSendCommand({ actor, text })
+  return r?.text ? String(r.text) : null
+}
+
+const ICON: Record<string, string> = { completed: '✅', waiting_approval: '📝', failed: '⚠️', outcome_unknown: '❓' }
+/** What to say right after "get it done": what started, what is waiting and why. Results follow as they finish. */
+export function startedText(plan: IntakePlan, quick: Map<string, { status: string; text: string }>): string {
+  const live = plan.goals.filter(g => g.state !== 'dropped')
+  const go = live.filter(g => g.state === 'started')
+  const lines = [`Started ${go.length} of ${live.length}.`, '']
+  for (const g of live) {
+    const q = g.runId ? quick.get(g.runId) : undefined
+    if (g.state === 'started') lines.push(q ? `${ICON[q.status] || '⏳'} ${g.title}: ${q.text.length > 300 ? 'done, details below.' : clip(q.text, 300)}` : `⏳ ${g.title}: working on it.`)
+    else if (g.state === 'open') lines.push(`⏸ ${g.title}: not started. I still need ${missingOf(g).map(s => QUESTION[s].replace(/\?$/, '')).join(', ')}. Ask me for this one on its own when you have it.`)
+    else if (g.note === 'one_draft_at_a_time') lines.push(`⏸ ${g.title}: not started. I keep one email draft at a time; ask me for this one after the first is sent or dropped.`)
+    else if (g.note === 'browser_off') lines.push(`⏸ ${g.title}: web research is switched off in your settings, so I did not start it.`)
+    else if (g.note === 'flight_details') lines.push(`⏸ ${g.title}: not started. This one has conditions (travellers, return, budget or timing) I’d rather get right; ask me for this flight search on its own.`)
+    else if (g.note === 'time_passed') lines.push(`⏸ ${g.title}: that time has already passed. Tell me a new time and I’ll set it.`)
+    else if (g.note === 'email_not_started') lines.push(`⏸ ${g.title}: no draft yet. ${g.reply || 'Ask me for this email on its own.'}`)
+    else if (g.note === 'events_off') lines.push(`⏸ ${g.title}: event planning isn’t switched on for you yet.`)
+    else if (g.note === 'capability_off') lines.push(`⏸ ${g.title}: reminders are switched off in your settings, so I did not set it.`)
+    else if (g.note === 'event_not_started') lines.push(`⏸ ${g.title}: I need a bit more to start this event. Tell me about it on its own (whose, when, how many).`)
+    else lines.push(`⏸ ${g.title}: I couldn’t start this one. Ask me about it on its own.`)
+  }
+  lines.push('', 'You can close WhatsApp; I’ll keep going and message you as each one finishes. Everything is on your Tasks page too.')
+  return lines.join('\n')
+}
+
+export function newPlan(text: string, goals: IntakeGoal[], now: Date): IntakePlan {
+  return { v: 1, id: createHash('sha256').update(`${now.toISOString()}:${text}`).digest('hex').slice(0, 24), at: now.toISOString(), text: clip(text, 2000), goals }
+}
+/** A stored plan, checked from scratch; too old or malformed is no plan. */
+export function readPlan(raw: unknown, now: Date): IntakePlan | null {
+  const p = raw as any
+  if (!p || p.v !== 1 || typeof p.id !== 'string' || !/^[0-9a-f]{24}$/.test(p.id) || !Array.isArray(p.goals) || !p.goals.length || p.goals.length > MAX_GOALS) return null
+  const at = Date.parse(String(p.at || ''))
+  if (!Number.isFinite(at) || at > now.getTime() + 60_000 || now.getTime() - at > PLAN_MINUTES * 60_000 || p.started) return null
+  const goals: IntakeGoal[] = []
+  for (const g of p.goals) {
+    if (!g || typeof g.id !== 'string' || !/^g\d{1,2}$/.test(g.id) || !(KINDS as readonly string[]).includes(g.kind)) return null
+    const slots: Slots = {}
+    // Re-checked like a fresh answer (dates may be any day from the plan's own day on).
+    for (const s of SLOTS) { const v = typeof g.slots?.[s] === 'string' ? slotValue(s, g.slots[s], String(p.at).slice(0, 10)) : null; if (v) slots[s] = v }
+    goals.push({ id: g.id, kind: g.kind, title: clip(g.title, 60), words: clip(g.words, 200), slots, ownership: OWNER_OF[g.kind as GoalKind],
+      asked: (Array.isArray(g.asked) ? g.asked : []).filter((s: any) => (SLOTS as readonly string[]).includes(s)), state: ['open', 'started', 'held', 'dropped'].includes(g.state) ? g.state : 'open', runId: typeof g.runId === 'string' ? g.runId : undefined, note: typeof g.note === 'string' ? g.note : undefined })
+  }
+  return { v: 1, id: p.id, at: p.at, text: clip(p.text, 2000), goals, strays: Number.isInteger(p.strays) && p.strays >= 0 ? Math.min(p.strays, 9) : 0 }
+}
+
+const STATE_KEY = 'goal_intake_plan'
+export type Store = { load: (tg: number) => Promise<unknown>; save: (tg: number, plan: IntakePlan) => Promise<void>; clear: (tg: number) => Promise<void> }
+const realStore: Store = {
+  load: async tg => { const fs = await import('@/lib/bot/handlers/followup-state'); return (await fs.getLatestFollowupState(tg, STATE_KEY))?.payload?.plan ?? null },
+  save: async (tg, plan) => { const fs = await import('@/lib/bot/handlers/followup-state'); await fs.clearFollowupState(tg, STATE_KEY); await fs.saveFollowupState(tg, STATE_KEY, { plan, created_at: new Date().toISOString() }) },
+  clear: async tg => { const fs = await import('@/lib/bot/handlers/followup-state'); await fs.clearFollowupState(tg, STATE_KEY) },
+}
+// The one way a plan starts: these exact phrases, alone or at the end of the reply that gives the missing details.
+// Bare "yes", "go ahead", "do it" and "start" belong to other flows (an approval, an Events confirmation) and never
+// start a plan; the model's opinion of whether the person meant "start" is not used.
+const START_CLAUSE = /^(?:(?:ok(?:ay)?|yes|yep|alright|great|cool|perfect|sure|go\s+ahead|now|please|pls|plz)[\s,.!]+)*(?:(?:please|pls|plz|just)\s+)?(?:get\s+(?:it|them|these|this|everything|all\s+of\s+them)\s+(?:all\s+)?done|start\s+(?:them|these)(?:\s+all)?|do\s+(?:them|these)(?:\s+all)?)(?:[\s,]+(?:please|pls|plz|now|thanks|thank\s+you|na|yaar))*[\s.!*\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\uFE0F]*$/iu
+// Anything that could turn the phrase into "not yet", "I will" or a question: then it is not a start.
+const NOT_A_START = /\b(?:don'?t|do\s+not|not|never|no|nope|wait|hold|stop|cancel|i'?ll|i\s+will|i\s+can|let\s+me|should|shall|could|would|can\s+you|will\s+you|later|yet|before|after|unless|until|if|when|how|why)\b|\?/i
+/** True only when the message is the start phrase, or ends with it as its own clause after the details, and nothing
+ *  in the message negates, defers or questions it. */
+export function wantsStartPhrase(text: string): boolean {
+  const t = String(text || '').replace(/[‘’]/g, "'").replace(/\*/g, '').trim()
+  if (!t || t.length > 600 || NOT_A_START.test(t)) return false
+  if (START_CLAUSE.test(t)) return true
+  const last = t.split(/[,.;!\n]+/).map(s => s.trim()).filter(Boolean).pop() || ''
+  return last !== t && START_CLAUSE.test(last)
+}
+/** A bare confirmation meant for whatever asked last (an approval card, Events' "are you sure?"): never the plan's. */
+const BARE_CONFIRM = /^\s*(?:yes|yes please|yeah|yep|ok|okay|sure|confirm|confirmed|go ahead|do it|start|no|nope|cancel)\b[\s,.!]*(?:(?:cancel|move)(?: it)?)?[\s.!]*$/i
+
+export type IntakeDeps = { model?: Model; store?: Store; start?: StartDeps; now?: Date; timezone?: string; background?: (work: () => Promise<void>) => void; send?: (text: string) => Promise<void>; /** How long the first reply waits for quick results (default 8 s). */ quickMs?: number }
+
+/** The WhatsApp entry. Returns the reply, or null when the message is not a list and not a reply to a pending plan
+ *  (routing then continues exactly as before). Never throws. */
+export async function tryGoalIntake(actor: AgentActor, text: string, deps: IntakeDeps = {}): Promise<string | null> {
+  const tg = actor.legacyTelegramId, owner = String(tg)
+  if (!goalIntakeEnabledFor(owner)) return null
+  const now = deps.now || new Date()
+  let tz = deps.timezone || actor.timezone || 'Asia/Kolkata'
+  const day = (zone: string) => new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(now)
+  let today: string
+  try { today = day(tz) } catch { tz = 'Asia/Kolkata'; today = day(tz) }
+  const model = deps.model || realModel, store = deps.store || realStore
+  try {
+    const pending = readPlan(await store.load(tg).catch(() => null), now)
+    if (pending) {
+      if (BARE_CONFIRM.test(text)) return null
+      const wantsStart = wantsStartPhrase(text), onlyStart = wantsStart && START_CLAUSE.test(text.replace(/\*/g, '').trim())
+      const ans = onlyStart ? { about_plan: true, start: true } : await model.answers({ text, today, timezone: tz, goals: pending.goals.filter(g => g.state === 'open').map(g => ({ id: g.id, kind: g.kind, title: g.title, missing: missingOf(g) })) })
+      const applied = applyAnswers(pending, wantsStart && ans ? { ...ans, about_plan: true } : ans, today)
+      // Details given together with the start phrase: the phrase decides, whatever the model made of the rest.
+      // The phrase alone starts the plan. The phrase after other words starts it only when those words gave at least
+      // one detail (or dropped a goal) for this plan: "nahi, get it done" or "send Divya the docs, get it done" gave
+      // none, so the plan is shown again instead.
+      const changed = JSON.stringify(applied.plan.goals.map(g => [g.slots, g.state])) !== JSON.stringify(pending.goals.map(g => [g.slots, g.state]))
+      const plan = applied.plan, about = applied.about || wantsStart, start = onlyStart || (wantsStart && changed)
+      if (about) {
+        if (!start) { const out = planText(plan); await store.save(tg, out.plan); console.log('GOAL_INTAKE:', JSON.stringify({ step: 'answers', goals: plan.goals.length })); return out.text }
+        // Marked started before anything starts: a stored plan marked started is never read again (readPlan), so a
+        // repeated "get it done", a retry or a failed clean-up cannot start it twice. Not saved: nothing starts.
+        try { await store.save(tg, { ...plan, started: now.toISOString() }) } catch { return 'I couldn’t start these just now. Say *get it done* again in a moment.' }
+        const res = await startGoals(actor, plan, { ...(deps.start || {}), now })
+        await store.clear(tg).catch(() => {})
+        const quick = new Map<string, { status: string; text: string }>()
+        // A few seconds for the quick ones (a reminder is written and read back at once); the rest go on in the
+        // background and each sends its own message when it finishes. Each run was already set going as it was created.
+        const driven = res.started.filter(s => s.running).map(s => ({ s, p: s.running! }))
+        await Promise.race([Promise.allSettled(driven.map(async d => { const r = await d.p; quick.set(d.s.goal.runId!, r) })), new Promise(r => setTimeout(r, deps.quickMs ?? 8000))])
+        const later = driven.filter(d => !quick.has(d.s.goal.runId!))
+        if (later.length && deps.background && deps.send) deps.background(async () => { await Promise.allSettled(later.map(async d => { const r = await d.p; await deps.send!(`*${d.s.goal.title}*\n${block(r.text, 3000)}`) })) })
+        const replies = [
+          ...res.started.filter(s => s.reply).map(s => `*${s.goal.title}*\n${block(s.reply, 1500)}`),
+          // A result that arrived in time but is too long for its line in the summary is given whole.
+          ...res.started.filter(s => s.goal.runId && (quick.get(s.goal.runId)?.text.length || 0) > 300).map(s => `*${s.goal.title}*\n${block(quick.get(s.goal.runId!)!.text, 3000)}`),
+        ]
+        console.log('GOAL_INTAKE:', JSON.stringify({ step: 'start', goals: plan.goals.length, started: res.started.length }))
+        return [startedText(res.plan, quick), ...replies].join('\n\n')
+      }
+      // Not about the plan: it stays open for one more message, then is dropped, so a later "go ahead" meant for
+      // something else cannot start it.
+      if ((pending.strays || 0) >= 1) await store.clear(tg); else await store.save(tg, { ...pending, strays: 1 })
+    }
+    if (!looksLikeGoalList(text)) return null
+    const goals = goalsFrom(await model.list({ text, today, timezone: tz }), today)
+    if (!goals.length) return null
+    const out = planText(newPlan(text, goals, now))
+    await store.save(tg, out.plan)
+    console.log('GOAL_INTAKE:', JSON.stringify({ step: 'plan', goals: goals.length, kinds: goals.map(g => g.kind) }))
+    return out.text
+  } catch (err: any) {
+    console.error('GOAL_INTAKE_FAILED:', JSON.stringify({ code: String(err?.message || 'error').replace(/[^a-z0-9_:]/gi, '').slice(0, 60) }))
+    return null
+  }
+}

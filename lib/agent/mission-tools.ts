@@ -268,6 +268,21 @@ async function dailyMissionReminders(params:{actor:AgentActor;step:MissionStep;m
     output:{reminderDates:created,clock,timezone,verifiedStore:'reminders',daily:true}}
 }
 
+/** Addendum 5 (goal intake): a reminder whose day, time and words were each checked by code, given as values rather
+ *  than as a sentence to re-read (a message like "check the report on 12 Dec at 5 pm" would otherwise be read as a
+ *  second date, time and instruction). The same writer, duplicate check and read-back as every mission reminder. */
+export async function executeExactMissionReminder(params:{actor:AgentActor;date:string;time:string;message:string}){
+  if(!/^20\d{2}-\d{2}-\d{2}$/.test(params.date)||!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(params.time))throw new Error('mission_reminder_exact_time_invalid')
+  const message=safe(params.message,300)
+  if(!message)throw new Error('mission_reminder_intent_unverified')
+  const result=await persistMissionReminder({actor:params.actor,date:params.date,time:params.time,timezone:await actorTimezone(params.actor),message})
+  const out:any=result.output||{}
+  // Read back from the store: the row must exist for this owner, unsent, at that instant.
+  const {data,error}=await supabaseAdmin.from('reminders').select('id,remind_at,sent').eq('id',String(out.reminderId||'')).eq('telegram_id',params.actor.legacyTelegramId).maybeSingle()
+  if(error||!data?.id||data.sent===true||new Date(String(data.remind_at)).getTime()!==new Date(String(out.remindAt)).getTime())throw new Error('mission_reminder_write_unverified')
+  return {text:result.text,output:{...out,verifiedStore:'reminders',readBack:true}}
+}
+
 export async function executeVerifiedMissionReminder(params:{actor:AgentActor;step:MissionStep;missionText:string;messageId?:string|number|null}){
   const {actor,step,missionText}=params
   const stepIntent=reminderStepIntent(step)

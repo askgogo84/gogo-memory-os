@@ -165,6 +165,8 @@ export async function GET(request:Request){
       const meta:any=run.metadata_json||{}
       const isProcedure=meta.plan_kind==='procedure-plan-v1'&&meta.procedure?.id
       if(!meta.persistent_general_plan&&!isProcedure){skipped++;continue}
+      // A goal run the creating request is still driving (goal intake): left alone until that request must be over.
+      if(typeof meta.goal_live_until==='string'&&Date.parse(meta.goal_live_until)>Date.now()){skipped++;continue}
       const actor=await actorFor(String(run.telegram_id))
       if(!actor){skipped++;continue}
       try{

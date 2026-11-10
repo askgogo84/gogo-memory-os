@@ -1102,6 +1102,26 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // 29 Oct: phone-call commands ("test call me", "call <venue> and book…", "yes call") go to the call flow; the brain
     // had answered "Call … and book" with "I can't make calls".
     const callCommand = /^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
+    // Goal-to-Done (Addendum 5): a message with several goals ("organize a birthday, check flight prices, prepare three
+    // emails…") becomes one plan of who does what, before any single-goal hook (Events included) takes one piece of it.
+    // Also its replies (missing details, "get it done") while that plan is open. Owners in GOGO_GOAL_INTAKE only; null
+    // means routing continues unchanged. Every goal it starts goes through its own tool's approvals.
+    if (!preserveFriendFlow && !callCommand && !forwardedMessage && !approvalIntent(text) && process.env.VERCEL_ENV && process.env.GOGO_GOAL_INTAKE) {
+      const intake = await import('@/lib/agent/goal-intake')
+      if (intake.goalIntakeEnabledFor(String(resolvedUser.telegramId))) {
+        const goalReply = await (async () => {
+          const goalActor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), whatsappId: resolvedUser.whatsappId || from, surface: 'whatsapp' })
+          const { after } = await import('next/server')
+          return intake.tryGoalIntake(goalActor, text, { timezone: (resolvedUser as any).timezone || undefined, background: work => after(work), send: async t => { await sendWhatsAppMessage(from, t); await saveConversation(resolvedUser.telegramId, 'assistant', t).catch(() => {}) } })
+        })().catch((e: any) => { console.error('GOAL_INTAKE_ENTRY_FAILED:', String(e?.code || e?.name || 'error').slice(0, 60)); return null })
+        if (goalReply) {
+          await saveConversation(resolvedUser.telegramId, 'user', text)
+          await saveConversation(resolvedUser.telegramId, 'assistant', goalReply)
+          await sendWhatsAppMessage(from, goalReply)
+          return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+        }
+      }
+    }
     // AskGogo Events (Addendum 4), for owners in GOGO_EVENTS_OWNERS. 10 Nov live: "Plan Divya's birthday on 22 November at
     // 5 pm for 20 people" was answered by understand-first's planner, because the Events hook sat in
     // processIncomingMessage, after the brain and understand-first. A message that is itself about an event is offered

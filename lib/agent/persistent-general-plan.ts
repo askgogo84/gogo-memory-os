@@ -10,6 +10,7 @@ import {
   executeVerifiedMissionList,
   executeVerifiedMissionMemory,
   executeVerifiedMissionReminder,
+  executeExactMissionReminder,
   executeVerifiedMissionWebSearch,
 } from './mission-tools'
 import { executeExactNamedPersistentList, hasExplicitNamedListIntent } from './persistent-list-verifier'
@@ -124,7 +125,21 @@ async function verifiedTaskStep(context: AutonomousToolContext, step: GeneralPla
   const verified = output.verifiedStore === 'todos' && (intent === 'read'
     ? output.readOnly === true && Array.isArray(output.tasks)
     : typeof output.todoId === 'string' && output.todoId.length > 0)
+  if (verified && intent === 'write') await recordGoalVerification(context, 'todo_readback', { todoId: String(output.todoId || '') })
   return { status:'completed' as const, verified, output:{...output, text:safe(result.text,3500)} }
+}
+
+/** Addendum 5, independent verification: records on a goal's run that code read its result back from where it was
+ *  saved (the named check), so Tasks can show "Done, checked". Only for runs started from a goal list, only with a
+ *  check named in task-ownership.ts, never on a model's say-so. Best effort: a failed write leaves "not checked". */
+async function recordGoalVerification(context: AutonomousToolContext, check: 'reminder_readback' | 'todo_readback', evidence: Record<string, unknown>) {
+  try {
+    const run = await runMetadata(context.runId, context.actor)
+    const meta: any = run?.metadata_json || {}
+    if (!meta.goal_batch_id) return
+    await supabaseAdmin.from('agent_runs').update({ metadata_json: { ...meta, verification: { state: 'verified_completed', check, at: new Date().toISOString(), evidence } } })
+      .eq('id', context.runId).eq('telegram_id', String(context.actor.legacyTelegramId))
+  } catch { /* stays "done, not checked" */ }
 }
 
 function registryFor(missionText: string): AutonomousToolRegistry {
@@ -145,10 +160,33 @@ function registryFor(missionText: string): AutonomousToolRegistry {
       return { status:'completed' as const, verified, output:{ ...result.output, text:safe(result.text,3500) } }
     }
     if (step.tool === 'reminders') {
+      // Goal intake gives the day, time and words as checked values (startPersistentGoalRun), never as a sentence.
+      const exact = (await runMetadata(context.runId, context.actor))?.metadata_json?.goal_reminder
+      if (exact && typeof exact === 'object') {
+        // The same off switch the chat path honours (whatsapp-bridge.ts), checked here so a resumed run obeys it too.
+        const { capabilityIsOff } = await import('./adaptive-autonomy')
+        if (await capabilityIsOff(context.actor.legacyTelegramId, 'reminders')) return { status:'blocked' as const, error:'persistent_reminder_permission_off' }
+        const result = await executeExactMissionReminder({ actor: context.actor, date: String(exact.date || ''), time: String(exact.time || ''), message: String(exact.message || '') })
+        if ((result.output as any)?.readBack === true) await recordGoalVerification(context, 'reminder_readback', { reminderId: String((result.output as any).reminderId || ''), remindAt: String((result.output as any).remindAt || '') })
+        return { status:'completed' as const, verified:(result.output as any)?.readBack === true, output:{ ...result.output, text:safe(result.text,3500) } }
+      }
       const result = await executeVerifiedMissionReminder({ actor: context.actor, step, missionText, messageId: `persistent-${context.idempotencyKey.slice(0,24)}` })
       return { status:'completed' as const, verified:true, output:{ ...result.output, text:safe(result.text,3500) } }
     }
     if (step.tool === 'web_search') {
+      // A research goal from a list (goal-intake.ts): several searches and an answer that cites what they returned.
+      // Done only when sources were found; an empty result is not a finished task. It is shown as "done, not
+      // checked": finding sources is not a check that the answer drawn from them is right.
+      if ((await runMetadata(context.runId, context.actor))?.metadata_json?.goal_kind === 'research') {
+        // The same switch the planner honours for web search (general-planner.ts).
+        const { capabilityIsOff } = await import('./adaptive-autonomy')
+        if (await capabilityIsOff(context.actor.legacyTelegramId, 'browser')) return { status:'blocked' as const, error:'persistent_browser_permission_off' }
+        const { runDeepResearch } = await import('./deep-research')
+        const out = await runDeepResearch(step.instruction)
+        const sources = (out.sources || []).slice(0, 8).map(s => ({ title: safe(s.title, 160), url: safe(s.url, 400) })).filter(s => /^https?:\/\//.test(s.url))
+        if (!sources.length) return { status:'blocked' as const, error:'goal_research_no_sources', output:{ text:safe(out.text,1200) } }
+        return { status:'completed' as const, verified:true, output:{ text:String(out.text || '').replace(/[ \t]+/g,' ').trim().slice(0,3500), sources, verifiedStore:'web_sources' } }
+      }
       const result = await executeVerifiedMissionWebSearch(step)
       return { status:'completed' as const, verified:true, output:{ ...result.output, text:safe(result.text,3500) } }
     }
@@ -197,6 +235,47 @@ export async function resumePersistentGeneralPlan(params:{actor:AgentActor;runId
   if (TERMINAL_RUN_STATES.has(String(run.status))) return { runId:params.runId,status:String(run.status),executed:0 }
   const missionText = safe(meta.input_text || meta.objective || '', 2000)
   return { runId:params.runId, ...(await drivePersistentRun(params.actor, params.runId, missionText, params.maxWaves || 10, true)) }
+}
+
+/** Addendum 5 (goal intake): one goal from a list, as its own durable run of one safe step. The same tools, checks,
+ *  stale-step recovery and cron resume as any persistent plan; `metadata` carries the goal's ownership and its list.
+ *  Creates the run and returns at once; `drive` then runs it (the caller decides when, so several start together). */
+export async function startPersistentGoalRun(params: { actor: AgentActor; surface: AgentSurface; step: GeneralPlanStep; missionText: string; metadata: Record<string, unknown> }) {
+  if (!PERSISTENT_SAFE_TOOLS.has(params.step.tool)) throw new Error('persistent_goal_unsupported_tool')
+  const step = params.step
+  const runtimePlan: AutonomousPlan = {
+    objective: safe(params.metadata.goal_title || step.title, 160),
+    steps: [{ key: stepKey(0, step), title: step.title, toolName: toolName(step), dependsOn: [], lane: step.tool === 'web_search' || step.tool === 'travel' ? 'research' : step.tool,
+      maxAttempts: 4, requiresApproval: false, verificationRequired: true, mutation: ['reminders','lists'].includes(step.tool) || (step.tool === 'tasks' && taskStepIntent(step) !== 'read') }],
+    // goal_live_until: the request that created the run is still driving it; the background sweeper leaves it alone
+    // until then (a request lives at most 120 s), so one result is not reported twice or replaced by a generic notice.
+    metadata: { ...params.metadata, goal_live_until: new Date(Date.now() + 150_000).toISOString(), input_text: safe(params.missionText, 2000), mission_fingerprint: missionFingerprint(`${params.metadata.goal_batch_id || ''}:${step.instruction}`), planner: 'goal-intake', persistent_general_plan: true, persistent_plan_steps: [step] },
+  }
+  const created = await createAutonomousRun({ actor: params.actor, source: params.surface, plan: runtimePlan })
+  return {
+    runId: created.runId,
+    /** Runs it now (as the live request does: the caller replies itself) and returns the reply for it. */
+    drive: async (maxWaves = 4) => {
+      await drivePersistentRun(params.actor, created.runId, params.missionText, maxWaves)
+      const run = await runMetadata(created.runId, params.actor)
+      const status = String(run.status || 'running')
+      // What the step itself produced (the reminder as saved, the research answer and its sources), not the run's
+      // fixed "Completed and verified." line.
+      let text = ''
+      if (status === 'completed' && step.tool !== 'travel') {
+        const { data } = await supabaseAdmin.from('agent_steps').select('output_json').eq('run_id', created.runId).eq('telegram_id', String(params.actor.legacyTelegramId)).order('ordinal', { ascending: true }).limit(1).maybeSingle()
+        const out: any = data?.output_json || {}
+        const body = String(out.text || '').replace(/[ \t]+/g, ' ').trim().slice(0, 2600)
+        // The research answer already ends with its own source list; one is added only when it does not.
+        const sources = Array.isArray(out.sources) && !/\bSources?:/i.test(body) ? out.sources.slice(0, 5).map((s: any, i: number) => `[${i + 1}] ${safe(s?.title, 80)} ${safe(s?.url, 300)}`).join('\n') : ''
+        text = [body, sources].filter(Boolean).join('\n\nSources:\n')
+      }
+      if (status === 'failed' && String(run.error || '').includes('persistent_reminder_permission_off')) text = 'Reminders are switched off in your settings, so I did not set this one.'
+      if (status === 'failed' && String(run.error || '').includes('persistent_browser_permission_off')) text = 'Web research is switched off in your settings, so I did not do this one.'
+      if (status === 'failed' && String(run.error || '').includes('goal_research_no_sources')) text = 'I could not find reliable sources for this, so I have not called it done.'
+      return { status, text: text || await persistentResultReply(params.actor, created.runId, run, 'Started.') }
+    },
+  }
 }
 
 export async function tryRunPersistentGeneralPlan(params: {
