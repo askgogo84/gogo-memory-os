@@ -33,6 +33,8 @@ async function main() {
       payloads.push(payload);return {sid:'SMfixture'+payloads.length,status:'queued'}
     }}})},
     '@/lib/services/delivery-callback':{deliveryCallbackUrl:()=> 'https://fixture.invalid/callback',persistAcceptedChunk:async(...args)=>accepted.push(args)},
+    // Twilio is the provider under test here; the Meta path has its own test.
+    '@/lib/channels/whatsapp-provider/provider':{waProviderFor:()=>'twilio',isMetaMessageId:()=>false},'@/lib/channels/whatsapp-provider/meta':{},
     '@/lib/metering/record':{recordMeterEvent:async()=>{}},
   },{TWILIO_WHATSAPP_NUMBER:'+15555550100',TWILIO_REMINDER_CONTENT_SID:'HXfixture',TWILIO_REMINDER_BUTTONS_CONTENT_SID:'HXbuttons'})
   const multiline='Meeting — 4:35 pm\r\nhttps://meet.google.com/ghm-npbd-uar\t     Join'
