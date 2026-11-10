@@ -1107,7 +1107,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     let eventsCheckedFor: string | null = null
     if (!preserveFriendFlow && !callCommand && process.env.VERCEL_ENV && (process.env.GOGO_EVENTS === '1' || process.env.GOGO_EVENTS_OWNERS)) {
       const entry = await import('@/lib/events/entry')
-      if (entry.offerEventsEarly({ owner: String(resolvedUser.telegramId), text, forwarded: Boolean(forwardedMessage), approval: Boolean(approvalIntent(text)) })) {
+      if (entry.offerEventsEarly({ owner: String(resolvedUser.telegramId), text, forwarded: Boolean(forwardedMessage), approval: Boolean(approvalIntent(text)), reservation: isRestaurantReservationRequest(text) || isSportsVenueRequest(text) })) {
         eventsCheckedFor = text
         const eventReply = await (async () => {
           const eventActor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), whatsappId: resolvedUser.whatsappId || from, surface: 'whatsapp' })
