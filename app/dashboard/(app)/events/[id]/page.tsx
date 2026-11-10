@@ -4,7 +4,7 @@ import { getSession } from '@/lib/dashboard/session'
 import { eventsEnabledFor } from '@/lib/events/core'
 import { EventsError, getEvent, guestLink, headcount, listGuests, shareLink } from '@/lib/events/store'
 import { whenText } from '@/lib/events/entry'
-import { EventControls, GuestRemove, CopyLink } from '@/components/dashboard/events/event-controls'
+import { EventControls, GuestRemove, CopyLink, GoogleCalendarButton } from '@/components/dashboard/events/event-controls'
 
 export const dynamic = 'force-dynamic'
 
@@ -67,7 +67,8 @@ export default async function EventPage({ params }: { params: Promise<{ id: stri
         })}
       </div>
     </section>
-    {e.starts_at && e.status !== 'cancelled' && <a href={`/api/dashboard/events/${e.id}?format=ics`} className="final-dark-card mt-5 flex min-h-[48px] items-center justify-center px-4 text-[15px] font-semibold">Add to my calendar</a>}
-    <p className="mt-5 text-[13px] text-[#8a8a86]">To move or cancel the event, tell Gogo in chat. It asks you to confirm first. After a change, tap Add to my calendar again and your calendar app updates the same entry.</p>
+    {e.starts_at && <GoogleCalendarButton id={e.id} revision={e.revision} when={whenText(e.starts_at, e.timezone)} remove={e.status === 'cancelled'}/>}
+    {e.starts_at && e.status !== 'cancelled' && <a href={`/api/dashboard/events/${e.id}?format=ics`} className="mt-2 flex min-h-[44px] items-center justify-center px-4 text-[14px] font-semibold text-[#a8a8a4] underline">Or download a calendar file (Apple, Outlook)</a>}
+    <p className="mt-5 text-[13px] text-[#8a8a86]">To move or cancel the event, tell Gogo in chat. It asks you to confirm first. After a change, tap Add to my Google Calendar again and the same entry is updated. If you cancel, you can remove it from your calendar here.</p>
   </div>
 }
