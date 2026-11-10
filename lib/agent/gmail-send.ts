@@ -237,6 +237,16 @@ export async function tryRunGmailContextCommand(params:{actor:AgentActor;text:st
   return null
 }
 
+// The person's own email switch (Settings › Trust, or "set email autonomy to off"). When it is off, no draft is made
+// and no send is staged from a chat message, on any surface: the same stop the email-reading path already has. Checked
+// only once the message is known to be an email draft or send, so other messages are not answered with this.
+const EMAIL_OFF_TEXT='Email is currently off in your Gogo autonomy settings, so I have not drafted or sent anything. Say *set email autonomy to draft* to turn it back on.'
+async function emailSwitchedOff(actor:AgentActor){
+  const {capabilityIsOff}=await import('./adaptive-autonomy')
+  return (await capabilityIsOff(actor.legacyTelegramId,'email'))===true
+}
+const emailOffResult=()=>({runId:'gmail-email-off',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:EMAIL_OFF_TEXT,handledBy:'adaptive-autonomy'})
+
 export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:string}){
   const raw=clean(params.text,2200)
   if(isGmailVerificationQuery(raw))return readGmailSendVerification(params,async(messageId,threadId)=>{
@@ -264,6 +274,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
     const state=await getLatestFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
     if(!state||!isStrictlyFreshFollowupState(state,30)||!state.payload?.draft)return null
     if(await newerForeignSelection(params.actor,state))return gmailReferentClarification()
+    if(await emailSwitchedOff(params.actor))return emailOffResult()
     // A venue enquiry Gogo drafted for an event (lib/events): sendable only while the event still has the venue, time
     // and number it was written for. The event is read again here, so a change by any route withdraws it.
     if(typeof state.payload.draft.eventEnquiryFor==='string'){
@@ -288,6 +299,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
 
   const compose=parseGmailComposeCommand(raw)
   if(compose){
+    if(await emailSwitchedOff(params.actor))return emailOffResult()
     const access=await gmailAccess(params.actor)
     if(!access.ok)return {runId:'gmail-compose-needs-google',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:'Connect Gmail first so I can find the recipient and prepare the draft. Nothing was sent.',handledBy:'gmail-send'}
     const threads=emailFromHeader(compose.target)?[]:await searchGmailThreads(access.accessToken,compose.target,20)
@@ -310,6 +322,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
 
   const parsed=parseGmailReplyCommand(raw)
   if(!parsed)return null
+  if(await emailSwitchedOff(params.actor))return emailOffResult()
   // Natural reply commands include nouns after the referent ("that exact email").
   // Treat the full phrase as selected-object context; never fuzzy-search it again.
   const contextual=/^(?:that|this|it)(?:\s+exact)?(?:\s+(?:email|mail|message|one))?$/i.test(parsed.target.trim())
