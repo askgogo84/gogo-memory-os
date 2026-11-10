@@ -342,6 +342,10 @@ async function handleWhatsAppPost(req: NextRequest) {
       inboundClaimOwned = !inboundClaim.duplicate
       if (inboundClaim.duplicate) {
         console.log('WHATSAPP_INBOUND_DUPLICATE:', { messageSid: inboundMessageSid, status: inboundClaim.status })
+        // The Meta inbox retries a hand-over that timed out. If the first one is still running, say so, so the inbox
+        // waits instead of marking it done and handing over the person's next message while this one is in flight.
+        // The request is already signature-checked; the header only changes this answer, for this duplicate.
+        if (inboundClaim.status === 'claimed' && req.headers.get('x-gogo-meta-inbox') === '1') return new NextResponse('InFlight', { status: 503 })
         return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }

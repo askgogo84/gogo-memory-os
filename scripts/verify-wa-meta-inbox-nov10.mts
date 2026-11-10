@@ -7,6 +7,8 @@ import { PGlite } from '@electric-sql/pglite'
 import { pgliteSupabase } from './lib/pglite-supabase.mts'
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture'
+// The resend notice goes only to people served by Meta: in this test everyone is (fake config, no network used).
+process.env.GOGO_META_WA_TOKEN = 'test'; process.env.GOGO_META_WA_PHONE_ID = '100000000000001'; process.env.GOGO_WA_PROVIDER = 'meta'
 const inbox = await import('../lib/channels/whatsapp-provider/meta-inbox.ts')
 
 let checks = 0
@@ -22,7 +24,7 @@ const base = pgliteSupabase(pg) as any
 const db = { ...base, rpc: async (fn: string, args: any) => fn === 'claim_wa_meta_inbox' ? { data: (await pg.query('select * from claim_wa_meta_inbox($1, $2)', [args.p_limit, args.p_lease_seconds])).rows, error: null }
   : fn === 'sweep_wa_meta_inbox' ? { data: (await pg.query('select * from sweep_wa_meta_inbox()')).rows, error: null } : base.rpc(fn, args),
   from: (t: string) => ({ ...base.from(t), upsert: async (rows: any[]) => {
-    try { const vals = rows.map((_, k) => `($${3 * k + 1},$${3 * k + 2},$${3 * k + 3})`).join(','); await pg.query(`insert into ${t} (message_id, sender, params) values ${vals} on conflict (message_id) do nothing`, rows.flatMap(r => [r.message_id, r.sender, JSON.stringify(r.params)])); return { error: null } } catch (e: any) { return { error: { message: e.message, code: e.code } } }
+    try { const vals = rows.map((_, k) => `($${4 * k + 1},$${4 * k + 2},$${4 * k + 3},$${4 * k + 4})`).join(','); await pg.query(`insert into ${t} (message_id, sender, params, no_notice) values ${vals} on conflict (message_id) do nothing`, rows.flatMap(r => [r.message_id, r.sender, JSON.stringify(r.params), Boolean(r.no_notice)])); return { error: null } } catch (e: any) { return { error: { message: e.message, code: e.code } } }
   } }) }
 const wamid = (n: number) => `wamid.HBgMOTE5OTAwMDAwMDAy${String(n).padStart(4, '0')}`
 const rows = async () => (await pg.query('select message_id, sender, status, attempts, params is null as cleared from wa_meta_inbox order by received_at, message_id')).rows as any[]
@@ -45,7 +47,7 @@ eq((await pg.query('select message_id, attempts from claim_wa_meta_inbox(10, 150
 const sec = await pg.query(`select relrowsecurity as rls, has_table_privilege('anon','public.wa_meta_inbox','select') as anon, has_function_privilege('authenticated','public.claim_wa_meta_inbox(integer,integer)','execute') as authed, has_function_privilege('anon','public.sweep_wa_meta_inbox()','execute') as sweep from pg_class where oid='public.wa_meta_inbox'::regclass`)
 eq(sec.rows[0], { rls: true, anon: false, authed: false, sweep: false }, 'only the service role can reach the inbox')
 const fnSrc = readFileSync(new URL('../supabase/migrations/20261110190000_wa_meta_inbox.sql', import.meta.url), 'utf8')
-ok(/picked as \([\s\S]*?where i\.status = 'pending' or \(i\.status = 'processing' and i\.lease_until <= clock_timestamp\(\)\)[\s\S]*?for update of i skip locked/.test(fnSrc), 'the status is checked again on the locked row, so two workers cannot claim the same message (a race PGlite cannot show; checked on Postgres 16 by the reviewer)')
+ok(/picked as \([\s\S]*?where \(i\.status = 'pending' and i\.next_attempt_at <= clock_timestamp\(\)\) or \(i\.status = 'processing' and i\.lease_until <= clock_timestamp\(\)\)[\s\S]*?for update of i skip locked/.test(fnSrc), 'the status is checked again on the locked row, so two workers cannot claim the same message (a race PGlite cannot run: checked by reading the SQL against Postgres row-locking rules, not by a two-session run)')
 
 // 3. Drain.
 const reset = async () => pg.query('delete from wa_meta_inbox')
@@ -53,8 +55,7 @@ await reset()
 await inbox.storeInbound([1, 2, 3].map(n => ({ id: wamid(10 + n), from: '919900000001', params: { Body: `m${n}` } })).concat([{ id: wamid(20), from: '919900000002', params: { Body: 'other' } }]), db)
 const order: string[] = []
 const okForward = async (p: any) => { order.push(p.Body); return { result: 'done' as const, status: 200 } }
-eq(await inbox.drainMetaInbox({ db, forward: okForward }), { done: 2, retried: 0, gaveUp: 0, lost: 0 }, 'one round: one message per person')
-await inbox.drainMetaInbox({ db, forward: okForward }); await inbox.drainMetaInbox({ db, forward: okForward })
+eq(await inbox.drainMetaInbox({ db, forward: okForward }), { done: 4, retried: 0, gaveUp: 0, lost: 0, rounds: 4 }, 'one call hands over quick follow-ups at once, one per person per round, not one a minute')
 eq(order.filter(b => b.startsWith('m')), ['m1', 'm2', 'm3'], "one person's messages go in the order they were sent, even though they arrived together")
 ok((await rows()).every(r => r.status === 'done' && r.cleared), 'finished rows keep no message text')
 // A failure waits and keeps the order: the next message does not overtake it.
@@ -93,6 +94,33 @@ eq([lost.lost, lost.done, (await rows())[0].status], [1, 0, 'processing'], 'a fi
 await pg.query(`update wa_meta_inbox set status='done', params=null, finished_at=now()-interval '4 days'`)
 await inbox.drainMetaInbox({ db, forward: okForward })
 eq((await rows()).length, 0, 'finished rows older than three days are deleted')
+// The notice: once a day per person, never after STOP, only inside 24 hours, only to people on the Meta number.
+await reset()
+const tell: string[] = []; const tellDrain = () => inbox.drainMetaInbox({ db, forward: okForward, notify: async s => { tell.push(s) } })
+await inbox.storeInbound([{ id: wamid(80), from: '919900000010', params: { Body: 'a' } }, { id: wamid(81), from: '919900000010', params: { Body: 'b' } }, { id: wamid(82), from: '919900000011', params: { Body: 'STOP' } }, { id: wamid(83), from: '919900000012', params: { Body: 'old' } }], db)
+await pg.query(`update wa_meta_inbox set received_at = now() - interval '7 hours' where message_id in ($1,$2)`, [wamid(80), wamid(82)])
+await pg.query(`update wa_meta_inbox set received_at = now() - interval '30 hours' where message_id = $1`, [wamid(83)])
+await pg.query(`update wa_meta_inbox set next_attempt_at = now() + interval '1 hour' where message_id = $1`, [wamid(81)])
+eq((await pg.query(`select no_notice from wa_meta_inbox where message_id=$1`, [wamid(82)])).rows[0], { no_notice: true }, 'a STOP message is marked when it is stored')
+await tellDrain()
+eq(tell, ['919900000010'], 'only the person who wrote in the last day and did not send STOP is asked to resend')
+await pg.query(`update wa_meta_inbox set received_at = now() - interval '7 hours', next_attempt_at = now() + interval '1 hour' where message_id = $1`, [wamid(81)])
+await tellDrain()
+eq(tell, ['919900000010'], 'a second give-up for the same person the same day sends no second notice')
+process.env.GOGO_WA_PROVIDER = ''
+await pg.query(`delete from wa_meta_inbox`); await inbox.storeInbound([{ id: wamid(84), from: '919900000013', params: { Body: 'x' } }], db)
+await pg.query(`update wa_meta_inbox set received_at = now() - interval '7 hours'`); await tellDrain()
+eq(tell, ['919900000010'], 'nobody moved back to Twilio is messaged from the inbox')
+process.env.GOGO_WA_PROVIDER = 'meta'
+// The time budget: no round starts with under a minute left, and hand-overs get only what is left.
+await reset()
+await inbox.storeInbound([1, 2, 3].map(n => ({ id: wamid(90 + n), from: '919900000020', params: { Body: `t${n}` } })), db)
+let clock = 0; const timeouts: number[] = []
+const slow = async (_p: any, o: any) => { timeouts.push(o.timeoutMs); clock += 30_000; return { result: 'done' as const, status: 200 } }
+const timed = await inbox.drainMetaInbox({ db, forward: slow as any, now: () => clock })
+eq([timed.rounds, timed.done, timeouts], [2, 2, [110_000, 80_000]], 'rounds stop when under a minute is left, and each hand-over is cut off before the limit')
+ok(/\(i\.status = 'pending' and i\.next_attempt_at <= clock_timestamp\(\)\)/.test(fnSrc), 'the wait before a retry is checked again on the locked row')
+
 // A NUL character does not block the batch.
 ok(await inbox.storeInbound([{ id: wamid(70), from: '919900000007', params: { Body: 'a\u0000b' } }, { id: wamid(71), from: '919900000008', params: { Body: 'fine' } }], db), 'a message with a NUL character is stored')
 eq((await pg.query(`select params->>'Body' b from wa_meta_inbox where message_id=$1`, [wamid(70)])).rows[0], { b: 'ab' }, 'with the NUL removed, and the rest of the batch with it')
@@ -111,11 +139,17 @@ ok(/if \(metaInboxEnabled\(\)\) \{[\s\S]{0,400}storeInbound\([\s\S]{0,200}status
 ok(route.indexOf('verifyMetaSignature(') < route.indexOf('storeInbound('), 'nothing is stored before the signature is checked')
 ok(/waProviderFor\(m\.from\) === 'meta'/.test(route) && route.indexOf("waProviderFor(m.from) === 'meta'") < route.indexOf('storeInbound('), 'only senders served by Meta are stored')
 const cron = readFileSync(new URL('../app/api/cron/wa-meta-inbox/route.ts', import.meta.url), 'utf8')
-ok(/CRON_SECRET/.test(cron) && /if \(!metaInboxEnabled\(\)\) return NextResponse\.json\(\{ ok: true, skipped: 'inbox_off' \}\)/.test(cron), 'the drain cron needs the cron secret and does nothing while the inbox is off')
+ok(/CRON_SECRET/.test(cron), 'the drain cron needs the cron secret')
 ok(JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')).crons.some((c: any) => c.path === '/api/cron/wa-meta-inbox' && c.schedule === '* * * * *'), 'it runs every minute')
 const mod = readFileSync(new URL('../lib/channels/whatsapp-provider/meta-inbox.ts', import.meta.url), 'utf8')
 ok(!/console\.(?:log|error)\([^\n]*(?:\bparams\b|\bBody\b|\bsender\b|\bfrom\b|\.sender|row\.params)/.test(mod), 'no message text or sender is logged')
 void createHmac
+
+const pipe = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
+ok(/inboundClaim\.status === 'claimed' && req\.headers\.get\('x-gogo-meta-inbox'\) === '1'\) return new NextResponse\('InFlight', \{ status: 503 \}\)/.test(pipe) && pipe.indexOf("'InFlight'") > pipe.indexOf('signatureAudit.reject'), 'a hand-over still running answers InFlight to the inbox, after the signature check')
+eq((await inbox.forwardToPipeline({ Body: 'x' }, { env, fetchImpl: (async () => new Response('InFlight', { status: 503 })) as any })).result, 'retry', 'InFlight makes the inbox wait and try again, not mark it done')
+eq([inbox.metaInboxDraining({ GOGO_WA_META_INBOX: 'drain' }), inbox.metaInboxEnabled({ GOGO_WA_META_INBOX: 'drain' }), inbox.metaInboxDraining({})], [true, false, false], "'drain' stops storing but keeps emptying the inbox")
+ok(/if \(!metaInboxDraining\(\)\) return NextResponse\.json\(\{ ok: true, skipped: 'inbox_off' \}\)/.test(cron), 'the cron keeps draining in drain mode')
 
 // 6. Rollback.
 await pg.exec(readFileSync(new URL('../supabase/migrations/20261110190000_wa_meta_inbox.rollback.sql', import.meta.url), 'utf8'))

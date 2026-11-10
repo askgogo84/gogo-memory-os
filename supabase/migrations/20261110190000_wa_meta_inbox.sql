@@ -24,6 +24,7 @@ create table if not exists public.wa_meta_inbox (
   params jsonb,
   status text not null default 'pending' check (status in ('pending','processing','done','failed')),
   attempts integer not null default 0,
+  no_notice boolean not null default false, -- a STOP message: never answered with a resend notice
   next_attempt_at timestamptz not null default now(),
   lease_id uuid,
   lease_until timestamptz,
@@ -52,7 +53,7 @@ language sql security invoker set search_path = '' as $$
   ), picked as (
     select i.message_id from public.wa_meta_inbox i join due using (message_id)
     -- Checked again on the locked row: a row another worker claimed after this statement's snapshot is not taken.
-    where i.status = 'pending' or (i.status = 'processing' and i.lease_until <= clock_timestamp())
+    where (i.status = 'pending' and i.next_attempt_at <= clock_timestamp()) or (i.status = 'processing' and i.lease_until <= clock_timestamp())
     order by i.received_at, i.seq limit least(greatest(coalesce(p_limit, 10), 1), 50)
     for update of i skip locked
   )
@@ -70,11 +71,17 @@ language sql security invoker set search_path = '' as $$
     update public.wa_meta_inbox w set status = 'failed', params = null, lease_id = null, lease_until = null, finished_at = clock_timestamp()
     where w.status in ('pending','processing') and w.received_at <= clock_timestamp() - interval '6 hours'
       and (w.status = 'pending' or w.lease_until <= clock_timestamp())
-    returning w.sender
+    returning w.sender, w.received_at
   ), purged as (
     delete from public.wa_meta_inbox where status in ('done','failed') and finished_at < clock_timestamp() - interval '3 days'
   )
-  select distinct sender from gave_up
+  -- Who to ask to send it again: at most once a day per person, only inside Meta's 24-hour reply window, and never
+  -- someone who sent STOP in that time. (The CTE reads the table as it was before this statement, so the rows given up
+  -- just now are not yet 'failed' there; an earlier give-up in the last day is, and suppresses a second notice.)
+  select distinct g.sender from gave_up g
+  where g.received_at > clock_timestamp() - interval '24 hours'
+    and not exists (select 1 from public.wa_meta_inbox f where f.sender = g.sender and f.status = 'failed' and f.finished_at > clock_timestamp() - interval '24 hours')
+    and not exists (select 1 from public.wa_meta_inbox x where x.sender = g.sender and x.no_notice and x.received_at > clock_timestamp() - interval '24 hours')
 $$;
 
 alter table public.wa_meta_inbox enable row level security;
