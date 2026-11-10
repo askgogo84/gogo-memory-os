@@ -5,17 +5,18 @@
 // (/api/webhooks/whatsapp) in the field names it already reads, signed with the same server-side secret that
 // pipeline already requires. The pipeline's own signature gate, idempotency, consent and routing are unchanged.
 // A non-2xx from the pipeline makes this route answer 500 so Meta redelivers; the pipeline drops duplicates by id.
+// With GOGO_WA_META_INBOX=1 (after its migration) messages are stored and answered at once, then handed over in order.
 // This route sends nothing itself and downloads nothing itself.
 //
 // Known limits, acceptable for a pilot and to be closed before GOGO_WA_PROVIDER=meta for everyone:
-//  - Forwarding is synchronous, so a slow turn makes Meta redeliver (harmless: duplicate ids are dropped) and a batch
-//    of several slow messages can exceed maxDuration. The fix is a durable inbox with an immediate 200.
+//  - Without the inbox, forwarding is synchronous: a slow turn makes Meta redeliver (harmless: duplicate ids are
+//    dropped). Turn on GOGO_WA_META_INBOX after applying 20261110190000_wa_meta_inbox.sql.
 //  - A pilot person must write only to the Meta number: replies follow the person's provider, not the inbound number.
 import { createHash } from 'node:crypto'
-import { NextRequest, NextResponse } from 'next/server'
+import { after, NextRequest, NextResponse } from 'next/server'
 import { metaHandshakeChallenge, parseMetaWebhook, pipelineParams, verifyMetaSignature } from '@/lib/channels/whatsapp-provider/meta-inbound'
 import { waProviderFor } from '@/lib/channels/whatsapp-provider/provider'
-import { computeTwilioSignature } from '@/lib/security/webhook-signature'
+import { drainMetaInbox, forwardToPipeline, metaInboxEnabled, pipelineUrl, storeInbound } from '@/lib/channels/whatsapp-provider/meta-inbox'
 import { deliveryRpc } from '@/lib/services/reminder-delivery'
 
 export const dynamic = 'force-dynamic'
@@ -25,17 +26,6 @@ const MAX_BODY_BYTES = 512 * 1024
 export async function GET(req: NextRequest) {
   const challenge = metaHandshakeChallenge(new URL(req.url).searchParams, process.env.GOGO_META_WA_VERIFY_TOKEN)
   return challenge === null ? new NextResponse('Forbidden', { status: 403 }) : new NextResponse(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
-}
-
-/** Where the pipeline lives. Only ever a configured value, never derived from the request (a Host header must not be
- *  able to choose where a signed message is sent). Must be https and exactly the pipeline path. */
-function pipelineUrl(): string | null {
-  const configured = (process.env.TWILIO_WHATSAPP_WEBHOOK_URL || process.env.GOGO_WA_PIPELINE_URL || '').trim()
-  try {
-    const url = new URL(configured)
-    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/api/webhooks/whatsapp') return null
-    return url.toString()
-  } catch { return null }
 }
 
 export async function POST(req: NextRequest) {
@@ -58,31 +48,27 @@ export async function POST(req: NextRequest) {
   }
 
   if (!parsed.messages.length) return new NextResponse('', { status: 200 })
-  const secret = process.env.TWILIO_AUTH_TOKEN || ''
-  if (!secret) return new NextResponse('Pipeline unavailable', { status: 503 })
-  const url = pipelineUrl()
-  if (!url) { console.error('WHATSAPP_META_PIPELINE_URL_MISSING'); return new NextResponse('Pipeline unavailable', { status: 503 }) }
-  for (const m of parsed.messages) {
-    // Replies leave through whichever provider serves this person. If that is not Meta (the number is not in the
-    // pilot and the switch is off), handling the message would answer from a different WhatsApp number, so it is skipped.
-    if (waProviderFor(m.from) !== 'meta') { console.log('WHATSAPP_META_SENDER_NOT_ON_META:', JSON.stringify({ tail: m.from.slice(-4) })); continue }
-    const params = pipelineParams(m)
-    let status = 0, busy = false
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Twilio-Signature': computeTwilioSignature(secret, url, params) },
-        body: new URLSearchParams(params).toString(),
-        redirect: 'error', // never re-send the message and its signature to a redirect target
-        signal: AbortSignal.timeout(110_000),
-      })
-      status = response.status
-      // The pipeline's own 503 "Busy" is final: it has already told the person to send the message again, so a
-      // redelivery here would run the same request twice. Any other failure asks Meta to redeliver.
-      busy = status === 503 && (await response.text().catch(() => '')).trim() === 'Busy'
-    } catch { status = 0 }
-    if (busy) { console.log('WHATSAPP_META_PIPELINE_BUSY'); continue }
-    if (status < 200 || status >= 300) {
+  if (!process.env.TWILIO_AUTH_TOKEN) return new NextResponse('Pipeline unavailable', { status: 503 })
+  if (!pipelineUrl()) { console.error('WHATSAPP_META_PIPELINE_URL_MISSING'); return new NextResponse('Pipeline unavailable', { status: 503 }) }
+  // Replies leave through whichever provider serves this person. If that is not Meta (the number is not in the
+  // pilot and the switch is off), handling the message would answer from a different WhatsApp number, so it is skipped.
+  const ours = parsed.messages.filter(m => {
+    if (waProviderFor(m.from) === 'meta') return true
+    console.log('WHATSAPP_META_SENDER_NOT_ON_META:', JSON.stringify({ tail: m.from.slice(-4) }))
+    return false
+  })
+  if (metaInboxEnabled()) {
+    // Durable inbox: store, answer Meta at once, hand over after the response. A store failure asks Meta to redeliver.
+    if (!(await storeInbound(ours.map(m => ({ id: m.id, from: m.from, params: pipelineParams(m) }))))) return new NextResponse('Inbox unavailable', { status: 503 })
+    if (ours.length) after(() => drainMetaInbox().then(r => console.log('WHATSAPP_META_INBOX_DRAINED:', JSON.stringify(r)), () => console.error('WHATSAPP_META_INBOX_DRAIN_FAILED')))
+    return new NextResponse('', { status: 200 })
+  }
+  for (const m of ours) {
+    const { result, status } = await forwardToPipeline(pipelineParams(m))
+    // The pipeline's own 503 "Busy" is final: it has already told the person to send the message again, so a
+    // redelivery here would run the same request twice. Any other failure asks Meta to redeliver.
+    if (result === 'busy') { console.log('WHATSAPP_META_PIPELINE_BUSY'); continue }
+    if (result !== 'done') {
       console.error('WHATSAPP_META_PIPELINE_FAILED:', JSON.stringify({ status }))
       return new NextResponse('Pipeline failed', { status: 500 })
     }
