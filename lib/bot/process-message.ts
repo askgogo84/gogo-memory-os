@@ -1903,7 +1903,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       const rules = await listPreferences(resolvedUser.telegramId)
       __trace.mark('rules')
       const reply = rules.length
-        ? `📌 *Your standing preferences*\n${rules.map((r, i) => `${i + 1}. ${r.rule_text}`).join('\n')}\n\nSay "forget rule about X" to remove one.`
+        // A stored rule that would give leave to act without a yes is not followed; the list says so.
+        ? `📌 *Your standing preferences*\n${rules.map((r, i) => `${i + 1}. ${r.rule_text}${prefKind.grantsPermission?.(String(r.rule_text || '')) === true ? ' (not applied: approvals are changed in Settings › Trust)' : ''}`).join('\n')}\n\nSay "forget rule about X" to remove one.`
         : `You haven't set any preferences yet. Try:\n• always keep my lists in capitals\n• from now on address me as boss`
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
@@ -1914,11 +1915,9 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
     // phrasings are preferences, with today's reply.
     const prefWide = prefKind.preferenceLearningEnabledFor(String(resolvedUser.telegramId)) === true
     const classified: any = prefKind.classifyPreference(incomingText, prefWide)
-    // null: not a preference. Anything that is not one of the classifier's own shapes (only possible where the
-    // module is replaced, as in older test harnesses) falls back to the original phrasings.
-    const pref: prefKind.PreferenceKind = classified === null || (classified && typeof classified.kind === 'string')
-      ? classified
-      : (rule => (rule ? { kind: 'durable' as const, rule, scope: 'general' as const, restrictive: false } : null))(detectPreferenceSave(incomingText))
+    // Anything that is not one of the classifier's own shapes (only possible where the module is replaced by a
+    // stub) is treated as not a preference, so nothing is ever saved without the permission check.
+    const pref: prefKind.PreferenceKind = classified && typeof classified.kind === 'string' ? classified : null
     if (pref && (pref.kind === 'permission' || pref.kind === 'correction')) {
       const reply = pref.kind === 'permission' ? prefKind.PERMISSION_REPLY : prefKind.CORRECTION_REPLY
       console.log('PREFERENCE:', JSON.stringify({ kind: pref.kind }))
