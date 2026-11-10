@@ -19,10 +19,13 @@ export async function GET(request: Request) {
   }
 
   try {
-    const result = await processLearningPass()
+    // 60 s limit: learning gets up to 40 s, then semantic sync runs only if at least 12 s remain.
+    const started = Date.now()
+    const result = await processLearningPass({ budgetMs: 40_000 })
+    if (result.deferred > 0) console.log('AGENT_LEARNING_DEFERRED:', JSON.stringify({ deferred: result.deferred, processed: result.processed, ms: result.ms }))
     // Same Brain 3.0 Phase 1: semantic graph sync for flagged owners only (GOGO_SEMANTIC / GOGO_SEMANTIC_OWNERS). Never fails the pass.
     let semantic: unknown = null
-    if (process.env.GOGO_SEMANTIC === '1' || process.env.GOGO_SEMANTIC_OWNERS) {
+    if ((process.env.GOGO_SEMANTIC === '1' || process.env.GOGO_SEMANTIC_OWNERS) && Date.now() - started < 60_000 - 12_000) {
       try { const { syncSemanticForEnabledOwners } = await import('@/lib/semantic/sync'); semantic = await syncSemanticForEnabledOwners() } catch (e: any) { console.error('SEMANTIC_SYNC_CRON_FAILED', e?.message || e); semantic = { error: 'semantic_sync_failed' } }
     }
     return NextResponse.json({ ok: true, ...result, semantic })
