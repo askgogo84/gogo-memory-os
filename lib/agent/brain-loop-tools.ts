@@ -2,7 +2,7 @@
 // Prepare and act tools are declared so the model can plan with them; in shadow none of them runs, and act tools have
 // no run function at all.
 import type { AgentActor } from './actor'
-import type { LoopTool } from './brain-loop'
+import type { LoopTool, LoopState } from './brain-loop'
 
 const str = (v: unknown, n: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n)
 /** A search query with email addresses and long digit runs removed. */
@@ -12,6 +12,35 @@ const obj = (properties: Record<string, unknown>, required: string[] = []) => ({
 export type LoopToolDeps = {
   search?: (q: string, o?: { timeoutMs?: number }) => Promise<{ title: string; snippet: string; url: string }[]>
   listEvents?: (owner: string) => Promise<any[]>
+  /** The email draft the person has waiting for "send it", if any (fresh within 30 minutes). */
+  pendingDraft?: (actor: AgentActor) => Promise<Record<string, unknown> | null>
+  saveDraft?: (actor: AgentActor, draft: Record<string, unknown>) => Promise<void>
+}
+const oneLine = (v: unknown, n: number) => String(v ?? '').replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
+const bodyText = (v: unknown, n: number) => String(v ?? '').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, n)
+
+/** Saves an email draft for the person to review. Runs only in live mode. It can be addressed only to a contact a
+ *  verifying tool returned in this same pass; it never replaces a draft that is already waiting; it sends nothing. The
+ *  existing email path sends it only after the person says "send it" and approves the card. */
+async function saveEmailDraft(actor: AgentActor, input: Record<string, unknown>, state: LoopState, deps: LoopToolDeps): Promise<string> {
+  const to = oneLine(input.to, 120).toLowerCase(), subject = oneLine(input.subject, 150), body = bodyText(input.body, 1500)
+  if (!state.verified.has(to)) return 'Refused. That address did not come from a verifying tool in this turn. Never write an address yourself: look it up with venue_contact, or ask the person for it.'
+  if (subject.length < 3 || body.length < 20) return 'Refused. The draft needs a subject and a message.'
+  if (state.prepared.length) return 'Refused. One draft per message. Finish and tell the person about the draft that is ready.'
+  const fs = deps.pendingDraft && deps.saveDraft ? null : await import('@/lib/bot/handlers/followup-state')
+  const pending = deps.pendingDraft ? await deps.pendingDraft(actor) : await (async () => {
+    const st = await fs!.getLatestFollowupState(actor.legacyTelegramId, 'gmail_reply_draft')
+    return st && fs!.isStrictlyFreshFollowupState(st, 30) && st.payload?.draft ? st.payload.draft as Record<string, unknown> : null
+  })()
+  if (pending) return 'Not saved. The person already has an email draft waiting to be sent, and it must not be replaced. Tell them that, and that you can draft this one once that is sent or dropped.'
+  const draft = { newMessage: true, threadId: '', sourceMessageId: '', inReplyTo: null, to, subject, body, loopDraft: true }
+  if (deps.saveDraft) await deps.saveDraft(actor, draft)
+  else {
+    await fs!.saveFollowupState(actor.legacyTelegramId, 'gmail_reply_draft', { draft, created_at: new Date().toISOString() })
+    await import('@/lib/agent/typed-object-context').then(m => m.rememberTypedObjects(actor.legacyTelegramId, 'email', [{ id: `draft:${to}`, title: `Draft to ${to}: ${subject}` }])).catch(() => {})
+  }
+  state.prepared.push({ kind: 'email_draft', to, subject, body })
+  return 'Saved as a draft. It has NOT been sent. The person will be shown the full draft, so do not repeat its text: tell them in one line what it is for. They send it by saying "send it" and approving the card.'
 }
 
 export function firstSliceTools(deps: LoopToolDeps = {}): LoopTool[] {
@@ -28,10 +57,11 @@ export function firstSliceTools(deps: LoopToolDeps = {}): LoopTool[] {
       } },
     { name: 'venue_contact', klass: 'read', description: "Find a venue's own booking or events email address, verified against the venue's own website. Returns the address with the page it came from, or says that none could be verified. The only allowed source for a venue's email address.",
       input_schema: obj({ venue: { type: 'string', description: 'Venue name with its locality, as the person said it' } }, ['venue']),
-      run: async (_actor, input) => {
+      run: async (_actor, input, state) => {
         const venue = str(input.venue, 120)
         if (venue.length < 3) return 'Give the venue name.'
         const c = await (await import('@/lib/events/venue-enquiry')).findVenueContact(venue, search, 6000)
+        if (c.kind === 'email') state.verified.add(c.email.toLowerCase())
         return c.kind === 'email' ? `Verified address: ${c.email} (found on ${c.sourceUrl}). Ask the person to check it before sending.`
           : c.kind === 'page' ? `No booking address could be verified. The venue's page: ${c.sourceUrl}. Do not write an address yourself.`
           : c.kind === 'unavailable' ? 'The look-up could not run just now. Do not write an address yourself.' : "The venue's own website was not found. Do not write an address yourself."
@@ -49,8 +79,9 @@ export function firstSliceTools(deps: LoopToolDeps = {}): LoopTool[] {
     // Planned with, never run in shadow.
     { name: 'event_draft', klass: 'prepare', description: "Create or update the person's own event draft (private until they publish): name, date, time, place, number of people.",
       input_schema: obj({ title: { type: 'string' }, date: { type: 'string', description: 'YYYY-MM-DD' }, time: { type: 'string', description: 'HH:MM, 24-hour' }, venue: { type: 'string' }, people: { type: 'integer' } }, ['title']) },
-    { name: 'email_draft', klass: 'prepare', description: 'Prepare an email draft for the person to review. It is not sent. The recipient address must come from a tool result.',
-      input_schema: obj({ to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } }, ['to', 'subject', 'body']) },
+    { name: 'email_draft', klass: 'prepare', description: 'Prepare an email draft for the person to review. It is not sent. The recipient address must be one that venue_contact returned in this turn. Write it in the person\'s own voice from what they told you; plain text, no links.',
+      input_schema: obj({ to: { type: 'string' }, subject: { type: 'string' }, body: { type: 'string' } }, ['to', 'subject', 'body']),
+      run: (actor, input, state) => saveEmailDraft(actor, input, state, deps) },
     { name: 'reminder', klass: 'prepare', description: 'Set a reminder for the person themselves.',
       input_schema: obj({ text: { type: 'string' }, when: { type: 'string', description: 'ISO date and time' } }, ['text', 'when']) },
     { name: 'request_send_email', klass: 'act', description: "Ask the person to approve sending a prepared email. Sends nothing by itself.", input_schema: obj({ to: { type: 'string' }, subject: { type: 'string' } }, ['to', 'subject']) },

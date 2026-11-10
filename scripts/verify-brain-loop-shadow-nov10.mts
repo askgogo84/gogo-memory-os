@@ -30,7 +30,7 @@ process.env.GOGO_EVENTS_OWNERS = '884501501'
 // 1. The tool list itself.
 eq(loop.validateTools(tools), [], 'the first tools are valid')
 ok(tools.filter(t => t.klass === 'act').length >= 3 && tools.filter(t => t.klass === 'act').every(t => !t.run), 'act tools have no run function at all')
-ok(tools.filter(t => t.klass === 'prepare').every(t => !t.run), 'prepare tools do not run in this slice')
+eq(tools.filter(t => t.klass === 'prepare' && t.run).map(t => t.name), ['email_draft'], 'the only prepare tool that can ever run is the email draft (live mode only; see the live test)')
 ok(loop.validateTools([{ name: 'send', klass: 'act', description: '', input_schema: { type: 'object' }, run: async () => 'x' } as any]).length === 1, 'an act tool that could run is rejected')
 ok(loop.validateTools([{ name: 'reply', klass: 'read', description: '', input_schema: { type: 'object' }, run: async () => 'x' } as any]).length === 1, 'a tool cannot take the name of reply or ask')
 
@@ -103,9 +103,9 @@ ok(!/4111 1111 1111 1111/.test(loop.loopShadowPreview(r)) && /Here is the plan/.
 // 7. Wiring: shadow only, after the reply, never sending.
 const brain = readFileSync(new URL('../lib/agent/brain.ts', import.meta.url), 'utf8')
 const src = readFileSync(new URL('../lib/agent/brain-loop.ts', import.meta.url), 'utf8') + readFileSync(new URL('../lib/agent/brain-loop-tools.ts', import.meta.url), 'utf8')
-ok(!/sendWhatsApp|sendGmail|stageApproval|agent_approvals|saveConversation|createEvent|updateEvent|publishEvent|saveFollowupState/.test(src), 'the loop and its tools cannot send, stage an approval, or change events, drafts or the conversation')
+ok(!/sendWhatsApp|sendGmail|stageApproval|agent_approvals|saveConversation|createEvent|updateEvent|publishEvent|executeApprovedGmailSend/.test(src), 'the loop and its tools cannot send, stage an approval, or change events or the conversation')
 const fn = brain.slice(brain.indexOf('export async function scheduleLoopShadow'), brain.indexOf('export async function runBrain('))
-ok(/brainLoopShadowFor\(p\.phone, env\)[\s\S]*?\) return/.test(fn) && /m\.after\(shadowLoop\)/.test(fn) && !/return \{ reply/.test(fn) && !/sendWhatsApp/.test(fn), 'the shadow pass is owner-gated, runs after the response, and has no way to reply')
+ok(/brainLoopShadowFor\(p\.phone, env\)[\s\S]*?\) return/.test(fn) && /m\.after\(pass\)/.test(fn) && !/return \{ reply/.test(fn), 'the pass is owner-gated and runs after the response')
 const rowLine = fn.split('\n').find(l => l.includes("const row = {")) || ''
 ok(/event_type: 'brain_loop_shadow'/.test(rowLine) && !/p\.text/.test(rowLine), "what is saved is the comparison, not the person's message")
 // 8. The scheduler itself.
@@ -113,11 +113,12 @@ const brainMod = await import('../lib/agent/brain.ts')
 { const E = { GOGO_BRAIN_LOOP_USERS: '8884501501' }
   const P = { phone: '+918884501501', telegramId: 884501501, text: 'Plan a   dinner\nfor 20', name: 'Gogo', userId: 'u1', whatsappId: '918884501501' }
   const mk = (over: any = {}) => { const st: any = { ran: [], saved: [], deferred: 0 }
-    const deps = { env: E, defer: async (job: any) => { st.deferred++; await job() }, countToday: async () => 0, save: async (row: any) => { st.saved.push(row) },
+    const deps = { env: E, defer: async (job: any) => { st.deferred++; await job() }, countToday: async () => 0, save: async (row: any) => { st.saved.push(row) }, send: async (...a: any[]) => { st.sent = (st.sent || 0) + 1 }, remember: async () => {},
       loadContext: async () => ({ ...ctx, turns: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }, { role: 'user', content: 'Plan a dinner for 20' }, { role: 'assistant', content: 'Draft started.' }] }) as any,
-      run: async (a: any) => { st.ran.push(a); await a.onModelCall?.({ model: 'm', ms: 1, ok: true, usage: {} }); return { final: { kind: 'reply', text: 'card 4111 1111 1111 1111 plan' }, steps: [{ tool: 'events_list', klass: 'read', executed: true, ok: true, ms: 1 }], turns: 2, ms: 5, usd: 0.01, usage: {}, stop: 'final', model: 'm' } }, ...over }
+      run: async (a: any) => { st.ran.push(a); await a.onModelCall?.({ model: 'm', ms: 1, ok: true, usage: {} }); return { prepared: [], final: { kind: 'reply', text: 'card 4111 1111 1111 1111 plan' }, steps: [{ tool: 'events_list', klass: 'read', executed: true, ok: true, ms: 1 }], turns: 2, ms: 5, usd: 0.01, usage: {}, stop: 'final', model: 'm' } }, ...over }
     return { st, deps } }
   let x = mk(); await brainMod.scheduleLoopShadow(P, null, 'events', x.deps)
+  eq([x.st.ran[0].mode, x.st.sent || 0, 'alreadyReplied' in x.st.ran[0]], ['shadow', 0, false], 'with only the shadow switch set, the pass is shadow: nothing is sent to anyone')
   eq([x.st.deferred, x.st.ran.length, x.st.ran[0].ctx.turns.length, x.st.ran[0].actor.legacyTelegramId], [1, 1, 2, 884501501], 'it runs after the response, for the session\'s own person, without the turn that was just answered (compared after the same cleaning)')
   eq([x.st.saved[0].event_type, x.st.saved[0].telegram_id, /4111 1111/.test(JSON.stringify(x.st.saved[0])), /Plan a/.test(JSON.stringify(x.st.saved[0])), x.st.saved[0].metadata_json.pipeline], ['brain_loop_shadow', '884501501', false, false, 'events'], "one comparison row is saved, scrubbed, without the person's message")
   x = mk(); await brainMod.scheduleLoopShadow({ ...P, forwarded: true }, null, 'events', x.deps)
