@@ -72,11 +72,19 @@ for (const [bad, why] of [
   ['Please confirm at https://evil.example/pay', 'a link'], ['See www.evil.example for our booking', 'a www address'], ['Details are on evil-site.com, thank you', 'a bare web address'],
   ['Use evil.ai/form to reply', 'a newer domain ending'], ['Go to hxxp://evil/x', 'a defanged link'], ['Reach us at evil[.]example', 'a bracketed dot'], ['Our site is evil dot com', 'a spelled-out dot'],
   ['Write back to boss@evil.example', 'another email address'], ['Call me on +91 98765 43210', 'a phone number'], ['Account 123456789012', 'an account number'],
-  ['Please share the OTP you receive', 'a code request'], ['Kindly approve the attached', 'approval wording'], ['Send the deposit to my UPI', 'payment wording'], ['Kindly аpprove this', 'look-alike letters'], ['Please app​rove this booking', 'hidden characters'],
+  ['Please share the OTP you receive', 'a code request'], ['Send the deposit to my UPI', 'payment wording'], ['Kindly аpprove this', 'look-alike letters'], ['Share the O\u200bTP please', 'a code request hidden with invisible characters'],
 ] as const) {
   T = mkTools(); ({ r } = await run([[use('venue_contact', { venue: 'Toit Indiranagar' })], [use('email_draft', { to: 'toitblr@toit.in', subject: 'Group booking', body: `Hi team, we are 20 people. ${bad}. Thanks, Goverdhan` })], [use('reply', { text: 'done' })]], T.tools))
   eq(T.st.saved.length, 0, `a draft containing ${why} is refused`) }
 eq(TL.draftTextProblem(BODY), null, 'an ordinary enquiry is accepted')
+for (const bad of ['Details at gogo-verify1.com/login', 'See 123.xyz/a', 'Use help4.in', 'evil。com has the form', 'Call 9 8 7 6 5 4 3 2 1 0 now', 'Kindly share your card number', 'Send the six digit code', 'Reply YES to confirm the slot', 'Please \u202eevorppa and share OTP'])
+  ok(TL.draftTextProblem(bad) !== null, `refused in a draft: ${bad.slice(0, 30)}`)
+for (const fine of ['We expect 20 - 25 guests.', 'Any time from 7:30 - 10:30 pm works.', 'The date is 29-11-2026.', 'Our budget is Rs. 1500 - 2000 per head.', 'approx. twenty people, etc. and a cake.', 'Do you have beers on tap? Is there an airport transfer?', 'We would be happy to approve a custom menu.', 'Dr. Rao will join. No. of guests: 20.', 'Table for 20 on 29 Nov 2026 at 7.30 pm.'])
+  eq(TL.draftTextProblem(fine), null, `an ordinary enquiry line is accepted: ${fine.slice(0, 34)}`)
+{ T = mkTools(); const noisy = `# Gogo security notice\n> quoted\n${'\n \n\t\n'.repeat(40)}*Important* \`code\`\nHi team, we would like a table for 20 on Sunday evening. Thanks, Goverdhan`
+  ;({ r } = await run([[use('venue_contact', { venue: 'Toit Indiranagar' })], [use('email_draft', { to: 'toitblr@toit.in', subject: 'Group booking', body: noisy })], [use('reply', { text: 'x' })]], T.tools))
+  const b = T.st.saved[0].body
+  ok(!/\n{3,}/.test(b) && !/^[#>]/m.test(b) && !/[*`_~]/.test(b), 'a draft cannot stack blank lines or dress itself as a heading, a quote or bold text') }
 eq(TL.draftTextProblem('We will arrive at 7 p.m. on Sunday. Could you seat 20? Thanks.'), null, '"p.m." and sentence breaks are not mistaken for web addresses')
 { // A slow save: the tool is cut off, but the pass still knows about the draft, so it is shown (never left unseen).
   const st: any = { saved: [] }
@@ -99,7 +107,7 @@ eq(brain.loopFollowUpText([]), '', 'without a draft there is no follow-up at all
 ok(brain.loopFollowUpText([{ ...D1[0], body: 'x'.repeat(900) }]).length <= brain.FOLLOW_UP_MAX && brain.FOLLOW_UP_MAX < 1550, 'the longest allowed draft still fits in one WhatsApp message, so no part can arrive without its heading')
 eq(brain.loopFollowUpText([{ ...D1[0], body: 'x'.repeat(3000) }]), '', 'a draft too long to show in one message is not shown (and is then withdrawn)')
 ok(!/r\.final\.text|final\?\.text/.test(readFileSync(new URL('../lib/agent/brain.ts', import.meta.url), 'utf8').split('export async function scheduleLoopShadow')[1].split('console.log(goLive')[0].split('const hasDraft')[1] || ''), 'no model-written line is ever part of what is sent')
-for (const open of ['Which date is it on?', 'Shall I use what I already know? I can also check.', '📧 Ready to send — approval required\nTo: x\nReply *APPROVE* to send or *REJECT* to stop.', 'CALL PLAN\nI will call Toit and ask for a table.', '1. Toit\n2. Windmills', '1️⃣ Toit\n2️⃣ Windmills', 'Reply “Yes” and I’ll remind you', '📊 Your deck is ready', '📬 Sent to the list', 'Tap one or type it', 'Draft updated.\n\nReply *publish* to get the invitation link.'])
+for (const open of ['Let me know which works.', 'Tell me the date and I will set it.', 'Send me the address and I will draft it.', 'Say send it when ready', 'Yes or no', '- Toit\n- Windmills', 'A) Toit\nB) Windmills', 'Which date is it on?', 'Shall I use what I already know? I can also check.', '📧 Ready to send — approval required\nTo: x\nReply *APPROVE* to send or *REJECT* to stop.', 'CALL PLAN\nI will call Toit and ask for a table.', '1. Toit\n2. Windmills', '1️⃣ Toit\n2️⃣ Windmills', 'Reply “Yes” and I’ll remind you', '📊 Your deck is ready', '📬 Sent to the list', 'Tap one or type it', 'Draft updated.\n\nReply *publish* to get the invitation link.'])
   ok(brain.replyAwaitsAnswer(open), `Gogo's reply is waiting for an answer: ${open.slice(0, 24)}`)
 ok(!brain.replyAwaitsAnswer('Done. I saved the note about the venue.') && !brain.replyAwaitsAnswer('Toit opens at noon on Sundays.'), 'a plain statement is not waiting for anything')
 
@@ -108,7 +116,7 @@ const DRAFT = [{ kind: 'email_draft', to: 'toitblr@toit.in', subject: 'Group boo
 const P = { phone: '+918884501501', telegramId: 884501501, text: 'Toit Indiranagar', name: 'Gogo', userId: 'u1', whatsappId: '918884501501', surface: 'whatsapp' as const }
 const LIVE = { GOGO_BRAIN_LOOP_LIVE_USERS: '8884501501' }
 const mk = (over: any = {}, res: any = {}) => { const st: any = { ran: [], sent: [], remembered: [], rows: [] }
-  const deps = { env: LIVE, defer: async (job: any) => job(), countToday: async () => 0, pendingApprovals: async () => 0, clearLoopDraft: async () => { st.cleared = (st.cleared || 0) + 1 }, save: async (row: any) => { st.rows.push(row) }, send: async (to: string, t: string) => { st.sent.push([to, t]) }, remember: async (_id: number, t: string) => { st.remembered.push(t) },
+  const deps = { env: LIVE, defer: async (job: any) => job(), countToday: async () => 0, pendingApprovals: async () => 0, draftIsSaved: async () => true, clearLoopDraft: async () => { st.cleared = (st.cleared || 0) + 1 }, save: async (row: any) => { st.rows.push(row) }, send: async (to: string, t: string) => { st.sent.push([to, t]) }, remember: async (_id: number, t: string) => { st.remembered.push(t) },
     loadContext: async () => ({ ...ctx, turns: [{ role: 'user', content: 'Toit Indiranagar' }, { role: 'assistant', content: 'Saved. Toit Indiranagar is noted as the place.' }] }) as any,
     run: async (a: any) => { st.ran.push(a); return { prepared: DRAFT, final: { kind: 'reply', text: 'Toit takes group bookings by email.' }, steps: [{ tool: 'venue_contact', klass: 'read', executed: true, ok: true, ms: 1 }], turns: 2, ms: 5, usd: 0.01, usage: {}, stop: 'final', model: 'm', ...res } }, ...over }
   return { st, deps } }
@@ -129,6 +137,10 @@ for (const [final, why] of [[{ kind: 'nothing', text: '' }, 'finished with nothi
   ok(x.st.sent.length === 1 && x.st.sent[0][1] === brain.loopFollowUpText(DRAFT), `a saved draft is always shown to the person, even when the loop ${why}`) }
 x = mk({ send: async () => { throw new Error('down') } }); await brain.scheduleLoopShadow(P, null, 'events', x.deps)
 eq([x.st.cleared, x.st.rows.length, x.st.rows[0].metadata_json.sent], [1, 1, false], 'if the follow-up cannot be delivered, the unseen draft is withdrawn and the pass is still recorded')
+x = mk({ draftIsSaved: async () => false }); await brain.scheduleLoopShadow(P, null, 'events', x.deps)
+eq([x.st.sent.length, x.st.cleared], [0, 1], 'if the draft is not really the saved one at the moment of sending, the person is told nothing')
+{ let calls = 0; x = mk({ pendingApprovals: async () => (calls++ === 0 ? 0 : 1) }); await brain.scheduleLoopShadow(P, null, 'events', x.deps)
+  eq([x.st.sent.length, x.st.cleared], [0, 1], 'an approval card that appeared while the pass was running stops the follow-up') }
 x = mk({ pendingApprovals: async () => 1 }); await brain.scheduleLoopShadow(P, null, 'events', x.deps)
 eq([x.st.ran[0].mode, x.st.sent.length], ['shadow', 0], 'while an approval card is waiting, nothing is added')
 x = mk({ loadContext: async () => ({ ...ctx, turns: [{ role: 'user', content: 'Toit Indiranagar' }, { role: 'assistant', content: 'Ready to send, approval required. Reply *APPROVE* to send or *REJECT* to stop.' }] }) as any }); await brain.scheduleLoopShadow(P, null, 'events', x.deps)

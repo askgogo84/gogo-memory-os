@@ -20,17 +20,24 @@ export type LoopToolDeps = {
   userText?: string
 }
 /** The same text with look-alike forms folded (full-width, ligatures) and invisible characters removed. */
-export const plain = (v: unknown) => String(v ?? '').normalize('NFKC').replace(/[\u200b-\u200f\u2060-\u2064\ufeff\u00ad\u034f\u061c\u180e]/g, '')
+export const plain = (v: unknown) => String(v ?? '').normalize('NFKC').replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\u00ad\u034f\u061c\u180e\ufe00-\ufe0f]|[\u{e0000}-\u{e007f}]/gu, '')
 /** What a draft written by the model may not contain. A draft is the person's own plain words to a venue: no web or
  *  email addresses in any spelling, no phone or account numbers, nothing about approvals, codes or money transfers, and
  *  only ordinary letters (a look-alike alphabet is refused). The reason is returned, or null when the text is fine. */
 export function draftTextProblem(text: string): string | null {
-  const t = plain(text)
-  if (/[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(t)) return 'unusual letters'
+  const t = plain(text).replace(/[。．｡․‧∙·]/g, '.') // other full stops read as a dot in a web address
+  // Latin letters only for now: a look-alike alphabet is the usual disguise. (An enquiry in another script is refused
+  // too; that is a known limit of this slice.)
+  if (/[^\p{Script=Latin}\p{Script=Common}\p{Script=Inherited}]/u.test(t)) return 'letters outside the Latin alphabet'
   if (/@|https?|hxxp|www|:\/\/|\[\.\]|\(\.\)|\bdot\b/i.test(t)) return 'a web or email address'
-  if (/\p{L}\s?\.\s?\p{L}{2,}/u.test(t.replace(/\b(?:a\.m|p\.m|e\.g|i\.e)\b\.?/gi, ' ').replace(/\.\s+(?=\p{Lu})/gu, ' '))) return 'a web address'
-  if (/\d[\d\s().+-]{5,}\d/.test(t)) return 'a phone or account number'
-  if (/\b(?:approv\w*|otp|one[- ]time|passcode|password|cvv|pin|upi|gpay|google pay|phonepe|paytm|bank|transfer|deposit\s+to|wallet|verification code|\d-digit code|whatsapp\s+(?:this|me|us)|click|tap|press)\b/i.test(t)) return 'words about approvals, codes or payments'
+  // A dot with a letter or digit before it and two or more letters straight after it reads as a web address
+  // ("verify1.com", "evil.ai"). A full stop followed by a space starts a new sentence and is fine; so are a.m., p.m.,
+  // e.g., i.e., approx., etc., and titles.
+  if (/[\p{L}\p{N}]\.\p{L}{2,}/u.test(t.replace(/\b(?:a\.m|p\.m|e\.g|i\.e|approx|etc|no|nos|st|rd|dr|mr|mrs|ms|rs|inr)\.(?=\s|\p{Lu}|\d|$)/giu, ' '))) return 'a web address'
+  // Eight or more digits in a row (spaces, dots and dashes ignored) is a phone or account number. Dates, times, ranges
+  // and prices are shorter and are fine.
+  if (/(?:\d[\s().+-]{0,2}){8,}/.test(t.replace(/\b\d{1,4}[-/.]\d{1,2}[-/.]\d{1,4}\b/g, ' ').replace(/\b\d{1,2}[:.]\d{2}\b/g, ' ').replace(/\b\d{1,5}\s?[-–]\s?\d{1,5}\b/g, ' '))) return 'a phone or account number'
+  if (/\b(?:otp|one[- ]time (?:code|password|passcode)|passcode|password|cvv|upi|gpay|google pay|phone ?pe|paytm|net ?banking|bank(?:ing)? details|account number|card number|ifsc|aadhaar|\bpan (?:card|number)|security code|verification code|(?:\d|six|four)[- ]digit code|scan the qr|install (?:this|the) app|whatsapp\s+(?:this|me|us)|click (?:here|this|the)|tap (?:here|this|the)|reply (?:yes|approve)|say send it|respond with)\b/i.test(t)) return 'words about codes, passwords or payments'
   return null
 }
 /** True when the venue, as a whole phrase, is in the allowed text (the person's own current message or the venue of
@@ -41,7 +48,9 @@ export function venueNamedByPerson(venue: string, allowed: string): boolean {
   return want.trim().length >= 3 && want.trim().split(' ').some(w => w.length >= 3) && allowed.split('\n').some(line => norm(line).includes(want))
 }
 const oneLine = (v: unknown, n: number) => String(v ?? '').replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
-const bodyText = (v: unknown, n: number) => String(v ?? '').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, n)
+// Plain paragraphs only: blank-looking lines are collapsed (at most one empty line in a row), and marks that WhatsApp
+// would turn into a heading, a quote, bold or code are removed, so a draft cannot dress itself up as a notice.
+const bodyText = (v: unknown, n: number) => String(v ?? '').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/[*_~`]/g, '').replace(/^[ \t]*[#>]+[ \t]*/gm, '').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim().slice(0, n)
 
 /** Saves an email draft for the person to review. Runs only in live mode. It can be addressed only to a contact a
  *  verifying tool returned in this same pass; it never replaces a draft that is already waiting; it sends nothing. The

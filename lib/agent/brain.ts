@@ -440,10 +440,10 @@ export function loopFollowUpText(prepared: { kind: string; to: string; subject: 
 /** Gogo's own reply leaves something open for the person to answer or pick: any question, an approval card, a list to
  *  pick from, a call plan, a "reply/tap/say/type …" prompt, a deck or mail card. Nothing may be added after it, or the
  *  person's next "yes" or "2" would land on the wrong thing. */
-export const replyAwaitsAnswer = (reply: string) => /\?|？/.test(reply) || /\b(?:approve|approval|reject|confirm|call plan|which one|pick|choose|select|undo|reply|tap|press|respond|type it)\b|\b(?:say|type|send)\s+[*"“'‘]|^\s*(?:\d+[.)]|[①-⑩]|\d\ufe0f?\u20e3|📊|📬)/imu.test(reply)
+export const replyAwaitsAnswer = (reply: string) => /\?|？/.test(reply) || /\b(?:approve|approval|reject|confirm|call plan|which one|pick|choose|select|undo|reply|tap|press|respond|type it|let me know|tell me|send me|share|yes or no|send it)\b|^\s*(?:[-•]|[A-Da-d]\))\s|\b(?:say|type|send)\s+[*"“'‘]|^\s*(?:\d+[.)]|[①-⑩]|\d\ufe0f?\u20e3|📊|📬)/imu.test(reply)
 type LoopShadowDeps = { run?: (a: any) => Promise<any>; countToday?: (telegramId: number) => Promise<number>; save?: (row: Record<string, unknown>) => Promise<void>; loadContext?: typeof loadBrainContext; defer?: (job: () => Promise<void>) => Promise<void>; env?: Record<string, string | undefined>
   send?: (phone: string, text: string) => Promise<unknown>; remember?: (telegramId: number, text: string) => Promise<unknown>; tools?: any[]
-  pendingApprovals?: (telegramId: number) => Promise<number>; clearLoopDraft?: (telegramId: number) => Promise<void> }
+  pendingApprovals?: (telegramId: number) => Promise<number>; clearLoopDraft?: (telegramId: number) => Promise<void>; draftIsSaved?: (telegramId: number, d: { to: string; subject: string }) => Promise<boolean> }
 export async function scheduleLoopShadow(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; forwarded?: boolean; surface?: 'whatsapp' | 'web' }, ctx: BrainContext | null, pipelineKind: string, deps: LoopShadowDeps = {}): Promise<void> {
   const env = deps.env || process.env
   const live = p.surface === 'whatsapp' && !p.forwarded && brainLoopLiveFor(p.phone, env)
@@ -451,6 +451,9 @@ export async function scheduleLoopShadow(p: { phone: string; telegramId: number;
   // The id is used for look-ups: only an exact, positive integer is accepted.
   if (!Number.isSafeInteger(p.telegramId) || p.telegramId <= 0) return
   const pass = async () => {
+    const startedAt = Date.now()
+    // Withdraws only a draft the loop itself saved during THIS pass: never an earlier one the person was already shown.
+    const withdraw = () => (deps.clearLoopDraft ? deps.clearLoopDraft(p.telegramId) : clearOwnLoopDraft(p.telegramId, startedAt)).catch(() => {})
     try {
       const loop = await import('./brain-loop'), { firstSliceTools } = await import('./brain-loop-tools')
       const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0)
@@ -467,7 +470,7 @@ export async function scheduleLoopShadow(p: { phone: string; telegramId: number;
       // Live only when Gogo's own reply to this message is known, leaves nothing open for the person to answer, and
       // no approval card is waiting (the follow-up must never sit between a card and the person's answer to it).
       const waiting = live && already && !replyAwaitsAnswer(already)
-        ? await Promise.resolve(deps.pendingApprovals ? deps.pendingApprovals(p.telegramId) : supabaseAdmin.from('agent_approvals').select('id', { count: 'exact', head: true }).eq('telegram_id', String(p.telegramId)).eq('status', 'pending').then((r: any) => (r.error ? 1 : Number(r.count || 0)))).catch(() => 1)
+        ? await Promise.resolve(deps.pendingApprovals ? deps.pendingApprovals(p.telegramId) : pendingApprovalCount(p.telegramId)).catch(() => 1)
         : 1
       const goLive = live && !!already && waiting === 0
       const actor = { userId: String(p.userId || ''), legacyTelegramId: p.telegramId, whatsappId: String(p.whatsappId || p.phone), name: String(p.name || ''), timezone: c.timezone }
@@ -486,13 +489,19 @@ export async function scheduleLoopShadow(p: { phone: string; telegramId: number;
       let sent = false
       if (hasDraft) {
         const text = loopFollowUpText(r.prepared || [])
+        let why = text ? '' : 'unshowable'
         try {
-          if (!text) throw new Error('unshowable')
+          // Checked again now, at the moment of sending: the draft really is saved as the latest one (a save can fail
+          // or be overtaken), and no approval card has appeared while the pass was running.
+          const d = r.prepared[0]
+          if (!why && !(await (deps.draftIsSaved ? deps.draftIsSaved(p.telegramId, d) : loopDraftIsSaved(p.telegramId, d)))) why = 'not_saved'
+          if (!why && (await Promise.resolve(deps.pendingApprovals ? deps.pendingApprovals(p.telegramId) : pendingApprovalCount(p.telegramId)).catch(() => 1)) !== 0) why = 'approval_waiting'
+          if (why) throw new Error(why)
           await (deps.send || (async (to: string, t: string) => (await import('@/lib/whatsapp')).sendWhatsApp(to, t)))(p.phone, text)
           sent = true
         } catch {
-          console.error('BRAIN_LOOP_SHADOW_FAILED:', JSON.stringify({ code: text ? 'send' : 'unshowable' }))
-          await (deps.clearLoopDraft || clearOwnLoopDraft)(p.telegramId).catch(() => {})
+          console.error('BRAIN_LOOP_SHADOW_FAILED:', JSON.stringify({ code: why || 'send' }))
+          await withdraw()
         }
         // Saved to the conversation the same way the webhook saves a reply, so the next turn knows it was said.
         if (sent) await Promise.resolve((deps.remember || (async (id: number, t: string) => supabaseAdmin.from('conversations').insert({ telegram_id: id, role: 'assistant', content: t })))(p.telegramId, text)).catch(() => {})
@@ -504,18 +513,32 @@ export async function scheduleLoopShadow(p: { phone: string; telegramId: number;
     } catch {
       console.error('BRAIN_LOOP_SHADOW_FAILED')
       // Whatever went wrong, a draft this pass may have saved is not left behind unseen.
-      if (live) await (deps.clearLoopDraft || clearOwnLoopDraft)(p.telegramId).catch(() => {})
+      if (live) await withdraw()
     }
   }
   if (deps.defer) return deps.defer(pass)
   // Outside a request (no after()): shadow may run at once; live does not, because Gogo's reply is not saved yet.
   await import('next/server').then(m => m.after(pass)).catch(() => { if (!live) void pass() })
 }
-/** Withdraws the loop's own unsent draft (and only that): used when its follow-up could not be delivered. */
-async function clearOwnLoopDraft(telegramId: number): Promise<void> {
+/** How many approval cards are waiting for this person. Any error counts as "one is waiting". */
+async function pendingApprovalCount(telegramId: number): Promise<number> {
+  const r: any = await supabaseAdmin.from('agent_approvals').select('id', { count: 'exact', head: true }).eq('telegram_id', String(telegramId)).eq('status', 'pending')
+  return r?.error ? 1 : Number(r?.count || 0)
+}
+/** True when the latest waiting email draft is the loop's own, to this address with this subject. */
+async function loopDraftIsSaved(telegramId: number, d: { to: string; subject: string }): Promise<boolean> {
   const fs = await import('@/lib/bot/handlers/followup-state')
   const st = await fs.getLatestFollowupState(telegramId, 'gmail_reply_draft')
-  if (st?.payload?.draft?.loopDraft === true) await fs.clearFollowupState(telegramId, 'gmail_reply_draft')
+  const x = st?.payload?.draft
+  return Boolean(x && x.loopDraft === true && x.to === d.to && x.subject === d.subject)
+}
+/** Withdraws the loop's own unsent draft, and only one saved since `since` (this pass): used when its follow-up could
+ *  not be delivered. A draft from an earlier message, which the person has already been shown, is left alone. */
+async function clearOwnLoopDraft(telegramId: number, since: number): Promise<void> {
+  const fs = await import('@/lib/bot/handlers/followup-state')
+  const st = await fs.getLatestFollowupState(telegramId, 'gmail_reply_draft')
+  const at = Date.parse(String(st?.payload?.created_at || st?.created_at || ''))
+  if (st?.payload?.draft?.loopDraft === true && Number.isFinite(at) && at >= since - 1000) await fs.clearFollowupState(telegramId, 'gmail_reply_draft')
 }
 
 export async function runBrain(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; surface: 'whatsapp' | 'web'; forwarded?: boolean }): Promise<{ reply?: string; text?: string } | null> {
