@@ -73,10 +73,14 @@ const runs = [
   run({ id: 'bg6', type: 'restaurant_reservation_slot', status: 'completed', title: 'Reserve Toit', metadata_json: { outcome_status: 'waiting_approval', child_run_id: 'c1' } }),
   run({ id: 'bg7', type: 'general_plan', status: 'completed', error: 'restaurant_slot_superseded', title: 'Superseded' }),
   run({ id: 'bg8', type: 'command', title: 'A plain question', metadata_json: { mode: 'read' } }),
+  run({ id: 'bg9', type: 'restaurant_reservation_research', status: 'completed', title: 'Research reservation · Toit', metadata_json: { outcome_status: 'paused', child_run_id: null } }),
+  run({ id: 'bg10', type: 'secure_browser', status: 'paused', title: 'Old sign-in', updated_at: at(24 * 10), metadata_json: { handoff: { takeoverUrl: 'x' } } }),
+  run({ id: 'bg11', type: 'command', status: 'paused', title: 'Old paused command', updated_at: at(24 * 83), metadata_json: { mode: 'execute' } }),
   run({ id: 'r13', status: 'completed', metadata_json: { mode: 'draft' }, title: 'Old draft', updated_at: at(24 * 9) }),
 ]
 const b = g.buildGoalBoard({ runs, approvals: [{ id: 'a1', run_id: 'r2', title: 'dup' }, { id: 'a2', run_id: null, title: 'Book table at Toit', created_at: at(1) }], todos: [{ createdAt: at(5) }, { createdAt: at(24 * 60) }], now: NOW })
 eq(b.groups.gogo_handles.map(i => i.id).sort(), ['r1', 'r12'], 'Gogo handles: what it is doing now, and a queued run waiting for its time')
+ok(!/bg9|bg10|bg11/.test(JSON.stringify(b)), 'a research wrapper that ended in a question, a sign-in stop older than 72 hours and a paused row older than a week are not shown as needing you')
 eq(b.groups.together.map(i => i.id).sort(), ['ap-a2', 'r2', 'r7'].sort(), 'together: the draft, the unknown outcome, the approval with no run shown; an approval for a shown run is not repeated')
 eq(b.groups.your_turn.map(i => i.id), ['r3'], 'your turn: the sign-in')
 eq(b.done.map(i => i.id), ['r4', 'r5', 'r6'], 'finished in 30 days: checked, then not checked, then could not finish; the old run and the cancel are not listed')

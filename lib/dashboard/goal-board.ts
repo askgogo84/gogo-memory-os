@@ -5,7 +5,7 @@
 // The numbers (last 30 days):
 // - Done and checked: finished runs with evidence from someone other than the agent (task-ownership.ts doneEvidenceOf).
 // - Need you: open drafts (a week at most), approvals, blocked runs, runs whose outcome is unknown, and service notices.
-// Only OUTCOME_RUN_TYPES are counted or listed; a run stuck as running for hours is left out (as the sweeper does).
+// Only board tasks (isBoardTask: outcome kinds, open browser tasks, chat commands that acted) are counted or listed; a run stuck as running for hours is left out (as the sweeper does).
 // - Time saved, estimated: for each finished run (checked or not; never a draft, a failure or an unknown), the minutes
 //   in TIME_SAVED_MINUTES for its kind, summed. A fixed table, shown as an estimate with this method linked; it is not
 //   measured and never includes work that only produced a draft.
@@ -18,6 +18,7 @@ import { readableRunSummary } from '@/lib/dashboard/readable-summary'
 import { friendlyTaskTitle } from '@/lib/agent/task-title'
 import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
 import { CONFIRMABLE_RUN_TYPES } from '@/lib/agent/owner-confirmation'
+import { HANDOFF_MAX_AGE_HOURS } from '@/lib/dashboard/human-handoffs'
 import { ATTENTION_STATES, DONE_STATE_LABEL, OPEN_STATES, OWNERSHIP_ORDER, doneStateOf, ownershipOf, type DoneState, type TaskOwnership } from '@/lib/agent/task-ownership'
 
 type Env = Record<string, string | undefined>
@@ -69,10 +70,19 @@ const childRun = (r: any) => { const m = r?.metadata_json || {}; return Boolean(
  *  - a browser run counts only while it is open (a request Gogo is working on or one stopped for the owner's
  *    sign-in), never a saved-login session; finished browser reads stay out, as on the Recent tab;
  *  - a fall-through chat command counts only when it did something (mode "execute"), not for a plain question;
- *  - a step that handed over to another run (child_run_id) or was superseded is not a task of its own. */
-export function isBoardTask(r: any): boolean {
+ *  - a step that handed over to another run (child_run_id), was superseded, or is the reservation research wrapper
+ *    that ended by asking a question (the question lives in chat; the booking is its own run) is not a task;
+ *  - a paused or queued row nobody touched for a while is no longer something to do: a browser stop after 72 hours
+ *    (its session is gone; the Needs you tab drops it then too), anything else after a week. */
+export const STALE_OPEN_DAYS = 7
+export function isBoardTask(r: any, now: number = Date.now()): boolean {
   const type = String(r?.type || ''), m = r?.metadata_json || {}, status = String(r?.status || '')
   if (childRun(r) || m.child_run_id || String(r?.error || '') === 'restaurant_slot_superseded') return false
+  if (type === 'restaurant_reservation_research' && status === 'completed' && m.outcome_status && m.outcome_status !== 'completed') return false
+  if (status === 'paused' || status === 'queued') {
+    const age = now - Date.parse(String(r?.updated_at || r?.started_at || ''))
+    if (!Number.isFinite(age) || age > (type === 'secure_browser' ? HANDOFF_MAX_AGE_HOURS * 3600_000 : STALE_OPEN_DAYS * 86_400_000)) return false
+  }
   if (type === 'secure_browser') return !m.site_session && ['queued', 'running', 'waiting_approval', 'paused', 'outcome_unknown'].includes(status)
   if (type === 'command') return m.mode === 'execute'
   return OUTCOME_RUN_TYPES.has(type)
@@ -84,7 +94,7 @@ export function buildGoalBoard(input: { runs: any[]; approvals?: any[]; todos?: 
   const inWindow = (at: unknown) => { const t = Date.parse(String(at || '')); return Number.isFinite(t) && t >= since }
   const board: GoalBoard = JSON.parse(JSON.stringify(EMPTY_BOARD))
   const seen = new Set<string>()
-  const runs = (input.runs || []).filter(r => r && r.id && isBoardTask(r) && !retiredRunReason(r, now.getTime()))
+  const runs = (input.runs || []).filter(r => r && r.id && isBoardTask(r, now.getTime()) && !retiredRunReason(r, now.getTime()))
     // A run stuck in "running" for hours lost its worker: the sweeper retires it (stale_run_recovered, which
     // retiredRunReason leaves out), so it is left out here too, before and after the sweep alike. Queued runs may be
     // waiting for their time and are kept.
