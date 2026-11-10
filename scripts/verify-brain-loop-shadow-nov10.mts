@@ -122,11 +122,11 @@ const brainMod = await import('../lib/agent/brain.ts')
   eq([x.st.saved[0].event_type, x.st.saved[0].telegram_id, /4111 1111/.test(JSON.stringify(x.st.saved[0])), /Plan a/.test(JSON.stringify(x.st.saved[0])), x.st.saved[0].metadata_json.pipeline], ['brain_loop_shadow', '884501501', false, false, 'events'], "one comparison row is saved, scrubbed, without the person's message")
   x = mk(); await brainMod.scheduleLoopShadow({ ...P, forwarded: true }, null, 'events', x.deps)
   ok(/FORWARDED/.test(JSON.stringify(x.st.ran[0].ctx.sections)), 'a forwarded message is marked as someone else\'s words')
-  x = mk({ countToday: async () => 150 }); await brainMod.scheduleLoopShadow(P, null, 'events', x.deps)
+  x = mk({ countToday: async () => 40 }); await brainMod.scheduleLoopShadow(P, null, 'events', x.deps)
   eq([x.st.ran.length, x.st.saved.length], [0, 0], 'the daily limit stops further passes')
   x = mk({ env: {} }); await brainMod.scheduleLoopShadow(P, null, 'events', x.deps)
   eq([x.st.deferred, x.st.ran.length], [0, 0], 'nothing is scheduled when the switch is unset')
   for (const bad of [0, -5, 2 ** 53, 1.5, NaN]) { x = mk(); await brainMod.scheduleLoopShadow({ ...P, telegramId: bad as number }, null, 'events', x.deps); eq(x.st.deferred, 0, `an id that is not an exact positive integer is refused (${bad})`) }
-  eq([brainMod.LOOP_SHADOW_DAILY({}), brainMod.LOOP_SHADOW_DAILY({ GOGO_BRAIN_LOOP_DAILY: '20' }), brainMod.LOOP_SHADOW_DAILY({ GOGO_BRAIN_LOOP_DAILY: 'lots' })], [150, 20, 150], 'the daily limit is 150 unless set')
+  eq([brainMod.LOOP_SHADOW_DAILY({}), brainMod.LOOP_SHADOW_DAILY({ GOGO_BRAIN_LOOP_DAILY: '20' }), brainMod.LOOP_SHADOW_DAILY({ GOGO_BRAIN_LOOP_DAILY: 'lots' }), brainMod.LOOP_SHADOW_DAILY({ GOGO_BRAIN_LOOP_DAILY: '' }), brainMod.LOOP_SHADOW_DAILY({ GOGO_BRAIN_LOOP_DAILY: '0' })], [40, 20, 40, 40, 0], 'the daily limit is 40 unless set; empty means unset; 0 switches it off')
   ok(/source: 'brain_shadow'/.test(fn) && /costPaise[\s\S]{0,80}brain_shadow'\) return 0/.test(brain), 'model calls are recorded in the cost ledger as ours: nothing is charged to the person') }
 console.log(`BRAIN_LOOP_SHADOW_OK ${checks} checks`)

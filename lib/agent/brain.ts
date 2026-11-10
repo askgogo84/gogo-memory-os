@@ -416,8 +416,8 @@ export const FORWARDED_NOTE = 'The latest message was FORWARDED by the user from
  *  tools, after the reply has gone out. It is logged and saved for comparison; it never replies or changes anything.
  *  Off unless the variable is set. `ctx` null means "the turn was answered before the brain ran" (for example by
  *  Events): the context is loaded then, without the turn that was just saved. Every model call is recorded in the
- *  cost ledger as ours (nothing is charged to the person), and there is a daily limit on passes. */
-export const LOOP_SHADOW_DAILY = (env: Record<string, string | undefined> = process.env) => { const n = Number(env.GOGO_BRAIN_LOOP_DAILY); return Number.isInteger(n) && n >= 0 && n <= 2000 ? n : 150 }
+ *  cost ledger as ours (nothing is charged to the person), and there is a daily limit on passes (40 a day unless GOGO_BRAIN_LOOP_DAILY says otherwise). */
+export const LOOP_SHADOW_DAILY = (env: Record<string, string | undefined> = process.env) => { const raw = String(env.GOGO_BRAIN_LOOP_DAILY ?? '').trim(), n = Number(raw); return raw && Number.isInteger(n) && n >= 0 && n <= 2000 ? n : 40 }
 type LoopShadowDeps = { run?: (a: any) => Promise<any>; countToday?: (telegramId: number) => Promise<number>; save?: (row: Record<string, unknown>) => Promise<void>; loadContext?: typeof loadBrainContext; defer?: (job: () => Promise<void>) => Promise<void>; env?: Record<string, string | undefined> }
 export async function scheduleLoopShadow(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; forwarded?: boolean }, ctx: BrainContext | null, pipelineKind: string, deps: LoopShadowDeps = {}): Promise<void> {
   const env = deps.env || process.env
@@ -444,7 +444,8 @@ export async function scheduleLoopShadow(p: { phone: string; telegramId: number;
       const report = loop.loopShadowReport(pipelineKind, r)
       console.log('BRAIN_LOOP_SHADOW:', JSON.stringify(report))
       const row = { telegram_id: String(p.telegramId), event_type: 'brain_loop_shadow', message: `loop ${report.final} after ${report.tools.length} tool calls; pipeline ${report.pipeline}`, metadata_json: { ...report, proposed: loop.loopShadowPreview(r) } }
-      if (deps.save) await deps.save(row); else await supabaseAdmin.from('agent_activity').insert(row)
+      // The daily limit counts these rows, so a row that could not be saved is reported.
+      if (deps.save) await deps.save(row); else { const res: any = await supabaseAdmin.from('agent_activity').insert(row); if (res?.error) console.error('BRAIN_LOOP_SHADOW_FAILED:', JSON.stringify({ code: 'save' })) }
     } catch { console.error('BRAIN_LOOP_SHADOW_FAILED') }
   }
   if (deps.defer) return deps.defer(shadowLoop)
