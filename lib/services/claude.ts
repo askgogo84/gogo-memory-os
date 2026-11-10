@@ -3,7 +3,7 @@ import { askMercury, mercuryWebAnswersEnabled } from './mercury'
 import OpenAI from 'openai'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import {selectContentWorkflow, contentWorkflowPrompt} from '@/lib/agent/content-workflows'
-import { SONNET_MODEL } from '@/lib/services/model-ids'
+import { SONNET_MODEL, forModel, textOf } from '@/lib/services/model-ids'
 
 export interface Message {
   role: 'user' | 'assistant'
@@ -175,13 +175,13 @@ ${workflow ? contentWorkflowPrompt(workflow) : ''}`
   const messages:Message[]=[...historyForTurn,{ role: 'user', content: userMessage }]
 
   try{
-    const response = await client.messages.create({
+    const response = await client.messages.create(forModel({
       model: SONNET_MODEL,
       max_tokens: maxTokens,
       system: systemPrompt,
       messages,
-    })
-    return finishChatReply(userMessage, response.content[0].type === 'text' ? response.content[0].text : '', preferenceBlock)
+    }))
+    return finishChatReply(userMessage, textOf(response.content), preferenceBlock)
   }catch(error:any){
     console.error('ANTHROPIC_FREEFORM_FAILED_FALLING_BACK:',providerErrorSummary(error))
     return finishChatReply(userMessage, await askOpenAiFallback({system:systemPrompt,messages,maxTokens}), preferenceBlock)
@@ -214,12 +214,12 @@ RULES — follow every one:
 FORMATTING: Delivered over WhatsApp (no markdown). Never emit [text](url); write any URL bare. Keep it concise (2-5 sentences).`
 
   try {
-    const response = await client.messages.create({
+    const response = await client.messages.create(forModel({
       model: SONNET_MODEL,
       max_tokens: 900,
       messages: [{ role: 'user', content: prompt }],
-    })
-    return response.content[0].type === 'text' ? response.content[0].text : ''
+    }))
+    return textOf(response.content)
   } catch (error: any) {
     console.error('ANTHROPIC_FLIGHT_STATUS_FAILED_FALLING_BACK:', providerErrorSummary(error))
     return await askOpenAiFallback({ messages: [{ role: 'user', content: prompt }], maxTokens: 900 })
@@ -382,12 +382,12 @@ FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF
     if (fast?.text) return finishWebAnswer(userMessage, fast.text, context)
   }
   try{
-    const response = await client.messages.create({
+    const response = await client.messages.create(forModel({
       model: SONNET_MODEL,
       max_tokens: 1500,
       messages:[{role:'user',content:prompt}],
-    })
-    return finishWebAnswer(userMessage, response.content[0].type === 'text' ? response.content[0].text : '', context)
+    }))
+    return finishWebAnswer(userMessage, textOf(response.content), context)
   }catch(error:any){
     console.error('ANTHROPIC_CONTEXT_FAILED_FALLING_BACK:',providerErrorSummary(error))
     return finishWebAnswer(userMessage, await askOpenAiFallback({messages:[{role:'user',content:prompt}],maxTokens:1500}), context)
