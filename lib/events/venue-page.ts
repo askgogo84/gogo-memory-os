@@ -152,12 +152,12 @@ export async function readVenuePage(raw: string, sameSite: (host: string) => boo
       let timer: ReturnType<typeof setTimeout> | undefined
       const res = await Promise.race([(deps.get || realGet)(u, addrs[0], { ...limits, ms: left }), new Promise<never>((_r, rej) => { timer = setTimeout(() => rej(new Error('deadline')), left + 100) })]).finally(() => { if (timer) clearTimeout(timer) })
       if (res.status >= 300 && res.status < 400) { u = res.location ? readableUrl(new URL(res.location, u).toString()) : null; continue }
-      if (res.status !== 200 || !res.body) { deps.note?.({ read: 'not_ok', status: res.status, type: res.type.slice(0, 24) }); return null }
+      if (res.status !== 200 || !res.body) { deps.note?.({ read: 'not_ok', status: res.status, type: res.type.split(';')[0].replace(/[^a-z0-9/+.-]/g, '').slice(0, 24) }); return null }
       const { title, text } = pageText(res.body)
       deps.note?.({ read: 'ok', bytes: res.body.length, text: text.length, at_signs: (text.match(/@/g) || []).length, protected: (res.body.match(/data-cfemail|email-protection#/g) || []).length })
       return { url: u.toString(), title, text }
     }
     deps.note?.({ read: 'redirects' })
     return null
-  } catch (e: any) { deps.note?.({ read: 'failed', why: String(e?.code || e?.message || 'error').replace(/[^A-Za-z0-9_]/g, '').slice(0, 24) }); return null }
+  } catch (e: any) { deps.note?.({ read: 'failed', why: typeof e?.code === 'string' && /^[A-Z0-9_]{2,24}$/.test(e.code) ? e.code : ['deadline', 'timeout'].includes(e?.message) ? e.message : 'error' }); return null }
 }
