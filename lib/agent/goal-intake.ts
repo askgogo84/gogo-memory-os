@@ -207,11 +207,14 @@ function question(g: IntakeGoal, s: Slot) { return (g.kind === 'reminder' && REM
 
 /** The details Gogo has for a goal, said back so a wrong one is seen before anything starts. Only what was given. */
 export function detailOf(g: IntakeGoal): string {
-  const s = g.slots, on = [s.date, s.time].filter(Boolean).join(' at ')
-  if (g.kind === 'reminder') return on ? `for ${on}` : ''
+  // Shown as plain text: WhatsApp formatting marks and quote marks in a detail are dropped for display only.
+  const show = (v: unknown, n: number) => { const t = clip(v, 200).replace(/[*_~`“”"]/g, '').trim(); return t.length > n ? `${t.slice(0, n).trim()}…` : t }
+  const s = { from: show(g.slots.from, 40), to: show(g.slots.to, 40), date: show(g.slots.date, 20), time: show(g.slots.time, 10), recipient: show(g.slots.recipient, 60), topic: show(g.slots.topic, 80), people: show(g.slots.people, 10) }
+  const on = s.date ? [s.date, s.time].filter(Boolean).join(' at ') : s.time ? `at ${s.time}` : ''
+  if (g.kind === 'reminder') return on ? (s.date ? `for ${on}` : on) : ''
   if (g.kind === 'flight_prices') return [s.from && s.to ? `${s.from} to ${s.to}` : s.from ? `from ${s.from}` : s.to ? `to ${s.to}` : '', s.date ? `on ${s.date}` : ''].filter(Boolean).join(' ')
-  if (g.kind === 'email') return [s.recipient ? `to ${s.recipient}` : '', s.topic ? `about “${clip(s.topic, 80)}”` : ''].filter(Boolean).join(', ')
-  if (g.kind === 'event') return [on ? `on ${on}` : '', s.people ? `for ${s.people}` : ''].filter(Boolean).join(', ')
+  if (g.kind === 'email') return [s.recipient ? `to ${s.recipient}` : '', s.topic ? `about “${s.topic}”` : ''].filter(Boolean).join(', ')
+  if (g.kind === 'event') return [on ? (s.date ? `on ${on}` : on) : '', s.people ? `for ${s.people} ${s.people === '1' ? 'person' : 'people'}` : ''].filter(Boolean).join(', ')
   return ''
 }
 
@@ -363,7 +366,7 @@ export function startedText(plan: IntakePlan, quick: Map<string, { status: strin
     if (g.state === 'started') lines.push(q ? `${ICON[q.status] || '⏳'} ${g.title}: ${q.text.length > 300 ? 'done, details below.' : clip(q.text, 300)}` : `⏳ ${g.title}: working on it.`)
     else if (g.state === 'open') lines.push(`⏸ ${g.title}: not started. I still need ${missingOf(g).map(s => QUESTION[s].replace(/\?$/, '')).join(', ')}. Ask me for this one on its own when you have it.`)
     else if (g.note === 'one_draft_at_a_time') lines.push(`⏸ ${g.title}: not started. I keep one email draft at a time; ask me for this one after the first is sent or dropped.`)
-    else if (g.note === 'email_off') lines.push(`⏸ ${g.title}: email is switched off in your settings, so I did not draft it.`)
+    else if (g.note === 'email_off') lines.push(`⏸ ${g.title}: email is switched off in your settings, so I did not draft it. To change that, say: set email autonomy to draft.`)
     else if (g.note === 'browser_off') lines.push(`⏸ ${g.title}: web research is switched off in your settings, so I did not start it.`)
     else if (g.note === 'flight_details') lines.push(`⏸ ${g.title}: not started. This one has conditions (travellers, return, budget or timing) I’d rather get right; ask me for this flight search on its own.`)
     else if (g.note === 'time_passed') lines.push(`⏸ ${g.title}: that time has already passed. Tell me a new time and I’ll set it.`)

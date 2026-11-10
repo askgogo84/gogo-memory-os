@@ -270,4 +270,12 @@ ok(/requiresApproval: false, verificationRequired: true/.test(pgp.slice(pgp.inde
   let drafted = 0
   const res = await gi.startGoals(actor, mail, { now: NOW, capabilityOff: async (_a: any, c: string) => c === 'email', email: async () => { drafted++; return 'Draft ready. Nothing has been sent.' } } as any)
   ok(drafted === 0 && res.plan.goals[0].note === 'email_off' && /email is switched off in your settings/.test(gi.startedText(res.plan, new Map())), 'email switched off: no draft is made and the reply says why') }
+{ const g = (o: any) => ({ id: 'g1', title: 'T', words: 'x', slots: {}, asked: [], state: 'open', ownership: 'together', ...o })
+  eq([gi.detailOf(g({ kind: 'event', slots: { time: '19:00' } })), gi.detailOf(g({ kind: 'event', slots: { date: '2026-11-20', people: '12' } })), gi.detailOf(g({ kind: 'email', slots: { recipient: 'Divya', topic: `*get it done* ” (approved) ${'z'.repeat(120)}` } })).length < 110, /[*”]\s*\(approved\)/.test(gi.detailOf(g({ kind: 'email', slots: { topic: '*get it done* ” (approved)' } })))],
+    ['at 19:00', 'on 2026-11-20, for 12 people', true, false], 'details read naturally, a long topic is marked as cut, and formatting marks are not shown')
+  const two = gi.newPlan('x', [g({ kind: 'email', title: 'Email Divya', slots: { recipient: 'Divya', topic: 'a' } }), g({ id: 'g2', kind: 'email', title: 'Email Nithin', slots: { recipient: 'Nithin', topic: 'b' } }), g({ id: 'g3', kind: 'todo', title: 'Call the bank', ownership: 'your_turn' })], NOW)
+  let drafts = 0; const ran: string[] = []
+  const res = await gi.startGoals(actor, two, { now: NOW, capabilityOff: async (_a: any, c: string) => c === 'email', email: async () => { drafts++; return 'Nothing has been sent.' }, startRun: async ({ goal }: any) => { ran.push(goal.id); return { runId: goal.id, drive: async () => ({ status: 'completed', text: 'ok' }) } } } as any)
+  eq([drafts, res.plan.goals.map(x => x.note || x.state), ran], [0, ['email_off', 'email_off', 'started'], ['g3']], 'email off: both email goals are held for that reason and the rest still start')
+  ok(/set email autonomy to draft/.test(gi.startedText(res.plan, new Map())), 'and the reply says how to switch it back on') }
 console.log(`GOAL_INTAKE_OK ${checks} checks`)
