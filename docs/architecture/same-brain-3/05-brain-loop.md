@@ -46,6 +46,32 @@ Rules that hold whatever the model says:
 - Learning calibration (20 samples, 0.82) and "learning never authorizes itself" are untouched: the loop does not change which actions need approval.
 - Inferences stay hypotheses: the loop may use an inferred detail to ask or to draft, never to act.
 
+## Self-learning memory
+
+Owner, 10 Nov: "it should be self learning memory." The loop is where learning becomes useful: what Gogo learned changes the next plan, not only the next sentence.
+
+What it learns, and from what:
+
+| Learned | From | Stored as | Used for |
+|---|---|---|---|
+| Facts the person states ("Nithin is vegetarian", "we usually go to Toit") | their own words | a verified fact, with the message it came from | every later plan |
+| Preferences shown by choices (picks the evening slot, edits the draft's tone, always asks for a reserved section) | approvals, edits and rejections of what Gogo prepared | a hypothesis with a count and a confidence, never a fact | ordering options, pre-filling drafts, what to ask |
+| What worked (the venue replied to this address; this plan was approved unchanged) | verified outcomes only (provider evidence, a reply received) | an outcome record linked to the plan | choosing the same route next time |
+| What did not work (draft rewritten, plan rejected, step failed) | the same signals | a correction linked to the plan | not repeating it |
+| How this person likes a kind of job done (their usual steps for a dinner, a trip, a meeting) | repeated approved plans of the same kind | a proposed procedure (`lib/procedures`), inactive until the person accepts it | running the whole job the way they do it |
+
+Rules:
+
+- An inference never becomes a fact by repetition. It becomes a fact only when the person says it or confirms it. Until then the loop may use it to order choices, to draft and to ask ("Vegetarian options for Nithin, as before?"), never to act.
+- Learning never widens what Gogo may do. The class of a tool (read, prepare, act) and the need for an approval card are fixed in code and are not inputs to learning. The existing calibration stays as it is: at least 20 samples and 0.82 before a learned route is used live, and only for handlers already on the safe list.
+- Sensitive attributes (health, finances and the other protected categories) are never inferred into durable memory.
+- Every learned item shows where it came from and can be seen, corrected and deleted by the person ("what do you know about how I plan dinners?", "forget that").
+- A proposed procedure is generated as data, validated by the existing schema, and cannot execute or grant itself authority. The person turns it on; each run still stops at approval cards.
+- Learning runs after the reply, in the existing learning pass (`/api/cron/agent-learning`, bounded in PR #1469), not in the message path.
+- One person's learning is never used for another person. Enterprise tenants do not see consumer memory.
+
+How it is measured: for the owner's own messages, how often a prepared plan or draft is approved unchanged, week over week; how often Gogo asks for something it had already been told (should fall to zero); and how many learned items the owner corrects or deletes.
+
 ## Bounds
 
 - At most 6 tool calls and 25 seconds per message on WhatsApp; a longer job becomes a background run that reports when done (existing durable worker).
@@ -62,7 +88,7 @@ Rules that hold whatever the model says:
 
 ## First slice
 
-Tools: `web_search` (page text only), `venue_contact`, `events_list`, `event_draft_create`, `event_draft_update`, `email_draft` (saves the existing draft state; sending stays "send it" plus the approval card), `calendar_read`, `memory_recall`, `reply`, `ask`.
+Tools: `web_search` (page text only), `memory_recall` with provenance (fact or hypothesis, and its source), `venue_contact`, `events_list`, `event_draft_create`, `event_draft_update`, `email_draft` (saves the existing draft state; sending stays "send it" plus the approval card), `calendar_read`, `memory_recall`, `reply`, `ask`.
 
 Acceptance for the slice, on the owner's number:
 
@@ -70,6 +96,7 @@ Acceptance for the slice, on the owner's number:
 - "Plan a 3-day Goa trip with Divya in December" produces a plan that uses saved preferences and the calendar, and proposes holds without creating them.
 - A forwarded invitation is summarised and offered as a calendar entry; nothing is created without a yes.
 - No Act tool executes without an approved card in any transcript.
+- Told once that Nithin is vegetarian, the next dinner plan carries it without being asked; a detail Gogo only inferred appears as a question, not as a fact.
 
 ## What this does not do
 
