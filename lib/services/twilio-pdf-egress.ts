@@ -82,9 +82,10 @@ export async function fetchTwilioBoundDocumentMedia(
   authToken: string,
   options: { fetchImpl?: typeof fetch } = {},
 ): Promise<Buffer> {
-  // A Meta Cloud API media reference: fetched from Meta with the same size and type bounds (see meta-media.ts).
+  // A Meta Cloud API media reference: fetched from Meta with the same size bound (see meta-media.ts). Images are
+  // allowed because ticket photos are read through this helper too.
   if (isMetaMediaRef(mediaUrl)) {
-    const media = await fetchMetaMedia(mediaUrl, { maxBytes: TWILIO_DOCUMENT_MAX_BYTES, allowedTypes: META_DOCUMENT_TYPES }, { fetchImpl: options.fetchImpl })
+    const media = await fetchMetaMedia(mediaUrl, { maxBytes: TWILIO_DOCUMENT_MAX_BYTES, allowedTypes: [...META_DOCUMENT_TYPES, 'image/jpeg', 'image/png', 'image/webp'] }, { fetchImpl: options.fetchImpl })
     if (!media) throw new Error('Meta media download failed')
     return Buffer.from(media.arrayBuffer)
   }

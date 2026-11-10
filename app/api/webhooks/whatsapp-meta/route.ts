@@ -39,6 +39,8 @@ function pipelineUrl(): string | null {
 }
 
 export async function POST(req: NextRequest) {
+  const declared = req.headers.get('content-length')
+  if (declared !== null && (!/^\d+$/.test(declared.trim()) || Number(declared) > MAX_BODY_BYTES)) return new NextResponse('Payload Too Large', { status: 413 })
   const raw = await req.text().catch(() => '')
   // Always strict, and first: an unsigned or wrongly signed body (or no configured secret) is a 403 and nothing else.
   if (!verifyMetaSignature(raw, req.headers.get('x-hub-signature-256'), process.env.GOGO_META_WA_APP_SECRET)) return new NextResponse('Forbidden', { status: 403 })
@@ -65,7 +67,7 @@ export async function POST(req: NextRequest) {
     // pilot and the switch is off), handling the message would answer from a different WhatsApp number, so it is skipped.
     if (waProviderFor(m.from) !== 'meta') { console.log('WHATSAPP_META_SENDER_NOT_ON_META:', JSON.stringify({ tail: m.from.slice(-4) })); continue }
     const params = pipelineParams(m)
-    let status = 0
+    let status = 0, busy = false
     try {
       const response = await fetch(url, {
         method: 'POST',
@@ -75,7 +77,11 @@ export async function POST(req: NextRequest) {
         signal: AbortSignal.timeout(110_000),
       })
       status = response.status
+      // The pipeline's own 503 "Busy" is final: it has already told the person to send the message again, so a
+      // redelivery here would run the same request twice. Any other failure asks Meta to redeliver.
+      busy = status === 503 && (await response.text().catch(() => '')).trim() === 'Busy'
     } catch { status = 0 }
+    if (busy) { console.log('WHATSAPP_META_PIPELINE_BUSY'); continue }
     if (status < 200 || status >= 300) {
       console.error('WHATSAPP_META_PIPELINE_FAILED:', JSON.stringify({ status }))
       return new NextResponse('Pipeline failed', { status: 500 })

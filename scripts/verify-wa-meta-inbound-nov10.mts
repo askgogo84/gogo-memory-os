@@ -110,8 +110,8 @@ const SAVED = { ...process.env }, realFetch = globalThis.fetch
 const setEnv = (o: Record<string, string | undefined>) => { for (const k of Object.keys(process.env)) if (/^(?:GOGO_|TWILIO_)/.test(k)) delete process.env[k]; for (const [k, v] of Object.entries(o)) if (v !== undefined) process.env[k] = v }
 const deliver = (body: string, secret: string | null, reqUrl = 'https://app.askgogo.in/api/webhooks/whatsapp-meta') => handler.POST(new NextRequest(reqUrl, { method: 'POST', body, headers: secret === null ? {} : { 'x-hub-signature-256': sign(body, secret) } }))
 const net: { url: string; body: string; signature: string; redirect: string }[] = []
-let pipelineStatus = 200
-globalThis.fetch = (async (u: any, init: any) => { net.push({ url: String(u), body: String(init?.body || ''), signature: String(init?.headers?.['X-Twilio-Signature'] || ''), redirect: String(init?.redirect || '') }); return new Response('<Response></Response>', { status: pipelineStatus }) }) as typeof fetch
+let pipelineStatus = 200, pipelineBody = '<Response></Response>'
+globalThis.fetch = (async (u: any, init: any) => { net.push({ url: String(u), body: String(init?.body || ''), signature: String(init?.headers?.['X-Twilio-Signature'] || ''), redirect: String(init?.redirect || '') }); return new Response(pipelineBody, { status: pipelineStatus }) }) as typeof fetch
 const PIPE = 'https://app.askgogo.in/api/webhooks/whatsapp'
 const LIVE = { GOGO_META_WA_APP_SECRET: 'app-secret', GOGO_META_WA_PHONE_ID: PHONE_ID, GOGO_META_WA_TOKEN: 'fixture-token', GOGO_WA_META_NUMBERS: '+919900000002', TWILIO_AUTH_TOKEN: 'pipeline-secret', TWILIO_WHATSAPP_WEBHOOK_URL: PIPE }
 try {
@@ -150,6 +150,9 @@ try {
 
   net.length = 0; pipelineStatus = 503
   eq((await deliver(raw, 'app-secret')).status, 500, 'a pipeline failure is a 500 so Meta redelivers'); pipelineStatus = 200
+  net.length = 0; pipelineBody = 'Busy'; pipelineStatus = 503
+  eq((await deliver(raw, 'app-secret')).status, 200, "the pipeline's own Busy answer is final: no redelivery, so the request cannot run twice"); pipelineStatus = 200; pipelineBody = '<Response></Response>'
+  eq((await handler.POST(new NextRequest('https://app.askgogo.in/api/webhooks/whatsapp-meta', { method: 'POST', body: raw, headers: { 'content-length': '99999999', 'x-hub-signature-256': sign(raw, 'app-secret') } }))).status, 413, 'an oversized declared body is refused before it is read')
 
   net.length = 0; setEnv({ ...LIVE, GOGO_WA_META_NUMBERS: '+919900000099' })
   eq([(await deliver(raw, 'app-secret')).status, net.length], [200, 0], 'a sender who is not served by Meta is not forwarded')

@@ -10,7 +10,7 @@ import { fetchTwilioImageNote } from '../lib/services/twilio-image-note-egress.t
 let checks = 0
 const ok = (cond: unknown, msg: string) => { assert.ok(cond, msg); checks++ }
 const eq = (a: unknown, b: unknown, msg: string) => { assert.deepEqual(a, b, msg); checks++ }
-const env = { GOGO_META_WA_TOKEN: 'fixture-token', GOGO_META_WA_PHONE_ID: '123456789012345' }
+const env = { GOGO_META_WA_TOKEN: 'fixture-token', GOGO_META_WA_PHONE_ID: '123456789012345', NODE_ENV: 'production' }
 const REF = metaMediaRef('1234567890123')
 const GOOD = 'https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=1&ext=2&hash=abc'
 
@@ -43,6 +43,7 @@ const opts = { maxBytes: 1000, allowedTypes: ['audio/ogg', 'image/jpeg'] }
   const media = await fetchMetaMedia(REF, opts, { env, fetchImpl: f.fetchImpl })
   eq([media?.arrayBuffer.byteLength, media?.contentType], [500, 'audio/ogg'], 'a voice note downloads')
   eq(f.calls.map(c => new URL(c.url).hostname), ['graph.facebook.com', 'lookaside.fbsbx.com'], 'exactly two requests, to Meta only')
+  eq(new URL(f.calls[0].url).search, '?phone_number_id=123456789012345', 'the lookup is scoped to our phone number id')
   ok(f.calls.every(c => c.auth === 'Bearer fixture-token' && c.redirect === 'manual'), 'bearer token on both, redirects never followed')
   ok(f.calls.every(c => !c.url.includes('fixture-token')), 'the token is never in a URL')
 }
@@ -65,6 +66,9 @@ await refuse('an empty body is refused', { [G]: lookup({ url: GOOD, mime_type: '
 await refuse('no token means no request at all', { [G]: lookup({ url: GOOD, mime_type: 'audio/ogg' }) }, 0, opts, {})
 await refuse('a value that is not a reference makes no request', { [G]: lookup({ url: GOOD, mime_type: 'audio/ogg' }) }, 0, opts, env, 'https://graph.facebook.com/v21.0/1234567890123')
 await refuse('an empty allowlist makes no request', {}, 0, { maxBytes: 1000, allowedTypes: [] })
+await refuse('nothing is fetched unless the pipeline signature gate is strict (explicit opt-out)', { [G]: lookup({ url: GOOD, mime_type: 'audio/ogg' }) }, 0, opts, { ...env, WEBHOOK_SIGNATURE_ENFORCE: 'log-only' })
+await refuse('nothing is fetched outside production strict mode', { [G]: lookup({ url: GOOD, mime_type: 'audio/ogg' }) }, 0, opts, { ...env, NODE_ENV: 'development' })
+await refuse('nothing is fetched without our phone number id', { [G]: lookup({ url: GOOD, mime_type: 'audio/ogg' }) }, 0, opts, { ...env, GOGO_META_WA_PHONE_ID: '' })
 {
   const f = fake({ [G]: lookup({ url: GOOD, mime_type: 'image/jpeg' }), [L]: bytes(10, 'application/octet-stream') })
   eq((await fetchMetaMedia(REF, opts, { env, fetchImpl: f.fetchImpl }))?.contentType, 'image/jpeg', 'a generic served type falls back to the declared, allowed type')
@@ -82,6 +86,8 @@ try {
   eq(await downloadTwilioWhatsappInboundMedia({ mediaUrl: REF, accountSid: 'AC' + 'a'.repeat(32), authToken: 'twilio-secret', kind: 'image', fetchImpl: f.fetchImpl }), null, 'an audio file is refused where an image is expected')
   f = fake(routes('application/pdf'))
   eq((await fetchTwilioBoundDocumentMedia(REF, 'AC' + 'a'.repeat(32), 'twilio-secret', { fetchImpl: f.fetchImpl })).byteLength, 64, 'document helper accepts a Meta reference')
+  f = fake(routes('image/jpeg'))
+  eq((await fetchTwilioBoundDocumentMedia(REF, 'AC' + 'a'.repeat(32), 'twilio-secret', { fetchImpl: f.fetchImpl })).byteLength, 64, 'a ticket photo is readable through the document helper, as on Twilio')
   f = fake(routes('text/html'))
   await assert.rejects(fetchTwilioImageNote(REF, 'AC' + 'a'.repeat(32), 'twilio-secret', { fetchImpl: f.fetchImpl }), /meta_image_unavailable/); checks++
   // The Twilio path is unchanged: a non-Twilio https URL is still refused before any request.

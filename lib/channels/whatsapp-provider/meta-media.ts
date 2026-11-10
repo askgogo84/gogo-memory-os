@@ -3,6 +3,7 @@
 // the token is sent only to graph.facebook.com and to Meta's media host, redirects are never followed, the size is
 // bounded while streaming, and the content type must be on the caller's allowlist. Returns null on any doubt.
 import { metaGraphBase } from './meta'
+import { signatureEnforcementMode } from '@/lib/security/webhook-signature'
 
 const REF_PREFIX = 'meta-media://'
 /** The value carried in the pipeline's media URL field for a Meta media id. Not a fetchable URL on purpose. */
@@ -58,13 +59,17 @@ async function readBounded(res: Response, limit: number): Promise<ArrayBuffer | 
 export async function fetchMetaMedia(ref: string, options: { maxBytes: number; allowedTypes: Iterable<string> }, deps: Deps = {}): Promise<MetaMedia | null> {
   const id = metaMediaIdFromRef(ref)
   const env = deps.env || (((globalThis as any).process?.env || {}) as Env)
-  const token = (env.GOGO_META_WA_TOKEN || '').trim()
+  const token = (env.GOGO_META_WA_TOKEN || '').trim(), phoneId = (env.GOGO_META_WA_PHONE_ID || '').trim()
+  // A media id is not a per-sender secret: the only thing tying it to a sender is that the reference was built from
+  // a Meta-signed message and carried through the pipeline's signature gate. So nothing is fetched unless that gate
+  // is strict, and the lookup is scoped to our own phone number id.
+  if (signatureEnforcementMode(env) !== 'strict' || !/^\d{5,20}$/.test(phoneId)) return null
   const allowed = new Set([...options.allowedTypes].map(mimeOf))
   if (!id || !token || !Number.isSafeInteger(options.maxBytes) || options.maxBytes <= 0 || !allowed.size) return null
   const doFetch = deps.fetchImpl || fetch
   const headers = { Authorization: `Bearer ${token}` }
   try {
-    const meta = await doFetch(`${metaGraphBase(env)}/${id}`, { headers, redirect: 'manual', signal: AbortSignal.timeout(15_000) })
+    const meta = await doFetch(`${metaGraphBase(env)}/${id}?phone_number_id=${phoneId}`, { headers, redirect: 'manual', signal: AbortSignal.timeout(15_000) })
     if (meta.status !== 200) { console.error('META_MEDIA_LOOKUP_FAILED:', JSON.stringify({ status: meta.status })); return null }
     const info: any = await meta.json().catch(() => null)
     const declared = mimeOf(info?.mime_type)
