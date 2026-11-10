@@ -17,15 +17,19 @@ export type VenueContact =
 const FREE_MAIL = /@(?:gmail|googlemail|yahoo|ymail|rediffmail|hotmail|outlook|live|icloud|proton(?:mail)?|aol|zoho)\./i
 const AGGREGATOR = /(?:^|\.)(?:zomato|swiggy|dineout|eazydiner|tripadvisor|justdial|magicpin|facebook|instagram|linkedin|x|twitter|google|youtube|wikipedia|sulekha|venuelook|weddingwire|wedmegood|quora|reddit|yelp|opentable|sevenrooms|bookmyshow|district)\.[a-z.]+$/i
 // A home, a call, or a place named after a person ("Nithin's farmhouse"): never looked up, so no person's name goes to search.
-const HOME_LIKE = /\b(?:home|house|my place|our place|flat|apartment|terrace|office|online|zoom|google meet|teams|tbd|not decided|farm\s?house|villa|residence|club\s?house|bungalow)\b|\p{L}['’]s\b/iu
+const HOME_LIKE = /\b(?:home|house|my place|our place|flat|apartment|terrace|office|online|zoom|google meet|teams|tbd|not decided|farm\s?house|villa|residence|club\s?house|bungalow)\b|\p{L}['’ʼ`´]s\b/iu
 // Words that are not a venue's name by themselves: a domain made of one of these proves nothing.
-const GENERIC = new Set(['the', 'and', 'social', 'table', 'cafe', 'coffee', 'bar', 'pub', 'hotel', 'kitchen', 'house', 'club', 'bistro', 'restaurant', 'restaurants', 'lounge', 'grill', 'garden', 'gardens', 'brewery', 'brewing', 'brewpub', 'diner', 'dining', 'food', 'foods', 'eat', 'eats', 'events', 'event', 'party', 'banquet', 'banquets', 'hall', 'resort', 'resorts', 'palace', 'grand', 'royal', 'park', 'plaza', 'cinema', 'studio', 'room', 'rooms', 'terrace', 'rooftop', 'india', 'bangalore', 'bengaluru', 'mumbai', 'delhi', 'chennai', 'hyderabad', 'pune', 'goa', 'city', 'central', 'express', 'world', 'place', 'spot', 'point', 'corner', 'street', 'road', 'new', 'old', 'big', 'little', 'blue', 'green', 'red', 'black', 'white', 'golden', 'one', 'first'])
+const GENERIC = new Set(['the', 'and', 'com', 'net', 'org', 'www', 'company', 'brewing', 'beach', 'deli', 'smoke', 'bakery', 'bakehouse', 'tavern', 'taproom', 'craft', 'craftworks', 'works', 'collective', 'project', 'co', 'pvt', 'ltd', 'llp', 'inc', 'group', 'hospitality', 'foods', 'pizzeria', 'pizza', 'burger', 'tea', 'wine', 'beer', 'spice', 'village', 'farm', 'farms', 'yard', 'deck', 'sky', 'sun', 'moon', 'star', 'social', 'table', 'cafe', 'coffee', 'bar', 'pub', 'hotel', 'kitchen', 'house', 'club', 'bistro', 'restaurant', 'restaurants', 'lounge', 'grill', 'garden', 'gardens', 'brewery', 'brewing', 'brewpub', 'diner', 'dining', 'food', 'foods', 'eat', 'eats', 'events', 'event', 'party', 'banquet', 'banquets', 'hall', 'resort', 'resorts', 'palace', 'grand', 'royal', 'park', 'plaza', 'cinema', 'studio', 'room', 'rooms', 'terrace', 'rooftop', 'india', 'bangalore', 'bengaluru', 'mumbai', 'delhi', 'chennai', 'hyderabad', 'pune', 'goa', 'city', 'central', 'express', 'world', 'place', 'spot', 'point', 'corner', 'street', 'road', 'new', 'old', 'big', 'little', 'blue', 'green', 'red', 'black', 'white', 'golden', 'one', 'first'])
 const letters = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
 const hostOf = (url: string) => { try { const u = new URL(url); return u.protocol === 'https:' || u.protocol === 'http:' ? u.hostname.toLowerCase().replace(/^www\./, '') : '' } catch { return '' } }
+const TWO_LEVEL = /^(?:co|com|net|org|gov|ac|edu)\.(?:in|uk|ae|au|nz|sg|za|jp|id|th|my|lk|np|bd|pk|ph|hk|kr|br|mx|tr|il|ke|ng|sa|qa|om|bh|kw)$/
+/** The registrable domain of a host: toit.in for www.toit.in, theblackrabbit.co.in for events.theblackrabbit.co.in.
+ *  Only real two-level endings count as one (co.in), so toit.com.xyz is com.xyz and toit.co.com is co.com: not Toit's. */
+export function registrable(host: string): string { const p = host.split('.'); return p.slice(-(p.length >= 3 && TWO_LEVEL.test(p.slice(-2).join('.')) ? 3 : 2)).join('.') }
 /** The name part of a host: "toit" for toit.in, "theblackrabbit" for theblackrabbit.co.in. */
-const brandOf = (host: string) => { const p = host.split('.'); const tld2 = p.length >= 3 && /^(?:co|com|net|org)$/.test(p[p.length - 2]); return p[p.length - (tld2 ? 3 : 2)] || '' }
-const sameSite = (a: string, b: string) => a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`)
-
+const brandOf = (host: string) => registrable(host).split('.')[0] || ''
+/** The address is on the site's own registrable domain, or a subdomain of it. */
+const sameSite = (emailDomain: string, host: string) => { const reg = registrable(host); return emailDomain === reg || emailDomain.endsWith(`.${reg}`) }
 const wordsOf = (venue: string) => venue.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
 /** How a domain's name relates to the venue's name. 'full': the name written together from its first word on
  *  (theblackrabbit for "The Black Rabbit", toit for "Toit"). 'word': one distinctive word of a longer name (toit for
@@ -50,8 +54,11 @@ export function needsVenueEnquiry(e: EventRow, now = Date.now()): boolean {
 /** https, host and a plain path only: what is safe to show. No query string; an unusual path is dropped, so a link can
  *  never carry words written as an instruction. */
 export function shownUrl(url: string): string {
-  try { const u = new URL(url); return u.protocol === 'https:' ? `https://${u.hostname}${/^[A-Za-z0-9/._~-]{1,80}$/.test(u.pathname) ? u.pathname : '/'}` : '' } catch { return '' }
+  try { const u = new URL(url); return u.protocol === 'https:' ? `https://${u.hostname}${/^\/[a-z0-9/-]{0,30}$/i.test(u.pathname) ? u.pathname : '/'}` : '' } catch { return '' }
 }
+const HOSPITALITY = /\b(?:restaurants?|brewpub|brewery|microbrewery|taproom|bar|pub|cafe|café|bistro|kitchen|dining|diner|menu|lounge|hotel|resort|banquets?|eatery|grill|cuisine|cocktails?|reservations?|table bookings?)\b/i
+const PLACE = /\b(?:bengaluru|bangalore|mumbai|delhi|gurgaon|gurugram|noida|chennai|hyderabad|kolkata|pune|kochi|ahmedabad|jaipur|lucknow|chandigarh|goa|mysuru|mysore|mangaluru|coimbatore|indore|india|dubai|abu dhabi|sharjah|uae|indiranagar|koramangala|whitefield|jayanagar|rajajinagar|malleshwaram|hsr layout|jp nagar|mg road|bandra|andheri|powai|connaught place|hauz khas|cyber hub|jubilee hills|banjara hills)\b/i
+const OTHER_PURPOSE = /\b(?:franchis\w*|press|media|careers?|jobs|investors?|vendors?|suppliers?|wholesale|distribut\w*)\b/i
 const BOOKING_WORDS = /\b(?:private|group|event|events|party|parties|corporate|booking|bookings|reserv\w*|enquir\w*|inquir\w*)\b/i
 const NOT_BOOKING = /^(?:noreply|no-reply|donotreply|careers?|jobs|hr|press|media|privacy|legal|abuse|accounts?|billing|finance|franchise|marketing|vendors?|suppliers?|investors?|webmaster|admin|support)@/
 
@@ -63,13 +70,15 @@ export function pickVenueContact(hits: SearchHit[], venue: string): VenueContact
   const others = wordsOf(venue).filter(w => w.length >= 4 && !GENERIC.has(w))
   const byHost = new Map<string, SearchHit[]>()
   for (const h of hits) { const host = hostOf(h.url); if (host && h.url.startsWith('https://') && domainMatch(host, venue)) byHost.set(host, [...(byHost.get(host) || []), h]) }
+  // A matching name is not enough (olive.com is not Olive Beach; windmills.com may be anyone). The pages themselves
+  // must read like a place that serves food or drink, and must also carry either another distinctive word of the
+  // venue's name or a city, so a same-named business elsewhere in the world, or in another trade, is not taken.
   const sites = [...byHost.entries()].filter(([host, list]) => {
-    if (domainMatch(host, venue) === 'full') return true
     const brand = brandOf(host).replace(/-/g, ''), text = list.map(h => `${h.title} ${h.snippet}`).join(' ').toLowerCase()
-    return others.some(w => w !== brand && new RegExp(`\\b${w}\\b`).test(text))
+    return HOSPITALITY.test(text) && (PLACE.test(text) || others.some(w => w !== brand && new RegExp(`\\b${w}\\b`).test(text)))
   })
   if (!sites.length) return { kind: 'none' }
-  const brands = new Set(sites.map(([host]) => { const p = host.split('.'); return p.slice(-(/^(?:co|com|net|org)$/.test(p[p.length - 2] || '') && p.length >= 3 ? 3 : 2)).join('.') }))
+  const brands = new Set(sites.map(([host]) => registrable(host)))
   const page = shownUrl(sites[0][1][0].url)
   // Two different sites both look like the venue's (toit.in and toit.com): not certain which is theirs.
   if (brands.size > 1) return page ? { kind: 'page', sourceUrl: page } : { kind: 'none' }
@@ -81,6 +90,7 @@ export function pickVenueContact(hits: SearchHit[], venue: string): VenueContact
       if (FREE_MAIL.test(email) || !sameSite(domain, host) || NOT_BOOKING.test(email)) continue
       const near = text.slice(Math.max(0, (m.index || 0) - 160), (m.index || 0) + 160)
       if (/\b(?:do\s?n[o']t|no longer|not in use|old|former|discontinued|instead of)\b/i.test(near)) continue
+      if (OTHER_PURPOSE.test(near)) continue
       const score = (BOOKING_WORDS.test(near) ? 2 : 0) + (/^(?:events?|bookings?|reservations?|parties|enquir\w*|hello|info|contact)\b/.test(email) ? 1 : 0)
       if (score >= 1) found.push({ email, sourceUrl: shownUrl(h.url), score })
     }

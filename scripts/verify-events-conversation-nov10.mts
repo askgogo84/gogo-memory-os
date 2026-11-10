@@ -228,7 +228,7 @@ const src = readFileSync(new URL('../lib/events/extract.ts', import.meta.url), '
 ok(/tool_choice: \{ type: 'tool' as const, name: EVENT_TOOL\.name \}/.test(src) && /forModel\(/.test(src), 'the model is forced to answer with the typed action')
 ok(!/sendWhatsApp|sendGmail|createCalendarEvent|resend\./.test(src), 'nothing in the conversation path can message a guest or touch a calendar')
 const logLines = [...src.matchAll(/console\.(?:log|error|warn)\(([^\n]*?\)\))/g)].map(m => m[1])
-ok(logLines.length >= 3 && logLines.every(l => !/message|\btext\b|actor|guest|phone|input\b/.test(l)), 'the log lines carry an action, an outcome or an error code only: no message text, names or phone numbers')
+ok(logLines.length === 7 && logLines.every(l => !/message|\btext\b|actor|guest|phone|input\b/.test(l)), 'the log lines carry an action, an outcome or an error code only: no message text, names or phone numbers')
 
 store.setEventsClockForTests(null)
 await pg.close()

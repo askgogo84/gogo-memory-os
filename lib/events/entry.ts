@@ -307,7 +307,7 @@ async function afterDraftChange(owner: string, id: string, problems: string[], d
 
 export type EventDeps = { extract?: Extractor; db?: Db; now?: number; search?: import('./venue-enquiry').Search; saveDraft?: (draft: Record<string, unknown>) => Promise<void>
   /** The email draft the person has waiting right now (to be sent with "send it"), if any. */
-  pendingDraft?: () => Promise<Record<string, unknown> | null> }
+  pendingDraft?: () => Promise<Record<string, unknown> | null>; clearDraft?: () => Promise<void> }
 
 /** After a create or an edit: when the event now has a date, a named venue and a group size, look up how that venue
  *  takes group bookings and draft the enquiry (lib/events/venue-enquiry.ts). Once per event and venue. Bounded to a
@@ -318,29 +318,39 @@ async function venueNextStep(actor: AgentActor, owner: string, eventId: string, 
   if (env.GOGO_EVENTS_VENUE_HELP === 'off' || (!deps.search && !env.VERCEL_ENV)) return null
   const v = await import('./venue-enquiry')
   const e = await store.getEvent(owner, eventId, deps.db)
-  if (!v.needsVenueEnquiry(e, now)) return null
-  // One enquiry per venue, date and headcount: a later change to any of them drafts it again, so a waiting draft never
-  // carries an old date or number.
+  const fs = deps.pendingDraft && deps.saveDraft && deps.clearDraft ? null : await import('@/lib/bot/handlers/followup-state')
+  const pending = deps.pendingDraft ? await deps.pendingDraft() : await (async () => {
+    const state = await fs!.getLatestFollowupState(actor.legacyTelegramId, 'gmail_reply_draft')
+    return state && fs!.isStrictlyFreshFollowupState(state, 30) && state.payload?.draft ? state.payload.draft as Record<string, unknown> : null
+  })()
+  const mine = pending && pending.eventEnquiryFor === e.id ? pending : null
+  // An enquiry Gogo drafted for this event that no longer matches it is withdrawn, so "send it" can never send an old
+  // date, number or venue. A draft to anyone else is never touched.
+  const withdraw = async () => {
+    if (!mine) return
+    await (deps.clearDraft ? deps.clearDraft() : fs!.clearFollowupState(actor.legacyTelegramId, 'gmail_reply_draft'))
+    await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key: 'withdrawn' }, deps.db).catch(() => {})
+  }
+  if (!v.needsVenueEnquiry(e, now)) { await withdraw(); return null }
+  // One enquiry per venue, date and headcount; an edit that changes none of them does not offer it again.
   const key = [String(e.venue_name).toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 120), e.starts_at, e.capacity].join('|')
-  if ((await store.ownerAuditDetails(owner, e.id, 'event.venue_enquiry_drafted', deps.db)).some(d => d.key === key)) return null
+  // Compared with the latest record only: going back to an earlier number, or coming back after a withdrawal, drafts again.
+  const seen = (await store.ownerAuditDetails(owner, e.id, 'event.venue_enquiry_drafted', deps.db))[0]?.key === key
+  if (mine && mine.enquiryKey === key) return null
+  if (seen && !mine) return null
   const started = Date.now()
   // Page text only: an address must be read off the page itself, never out of a model-written summary.
   const search: import('./venue-enquiry').Search = deps.search || (async (q, o) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: o?.timeoutMs, pageTextOnly: true }))
   const contact = await Promise.race([v.findVenueContact(String(e.venue_name), search, 6000), new Promise<null>(r => setTimeout(() => r(null), 7000))])
-  if (!contact) { console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: 'timeout', ms: Date.now() - started })); return null }
+  if (!contact) { await withdraw(); console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: 'timeout', ms: Date.now() - started })); return null }
   const step = v.venueStepText(e, contact, actor.name || '')
   if (step.draft) {
-    const fs = deps.saveDraft && deps.pendingDraft ? null : await import('@/lib/bot/handlers/followup-state')
-    const pending = deps.pendingDraft ? await deps.pendingDraft() : await (async () => {
-      const state = await fs!.getLatestFollowupState(actor.legacyTelegramId, 'gmail_reply_draft')
-      return state && fs!.isStrictlyFreshFollowupState(state, 30) && state.payload?.draft ? state.payload.draft as Record<string, unknown> : null
-    })()
     // Another email draft is waiting for "send it": it is not replaced, and this one is not queued or recorded.
-    if (pending && pending.eventEnquiryFor !== e.id) {
+    if (pending && !mine) {
       console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: 'held', ms: Date.now() - started }))
       return `Next step: booking ${String(e.venue_name).replace(/[\r\n]+/g, ' ').slice(0, 120)}. I found their enquiries address, but you have another email draft waiting, so I have not prepared this one. Send or drop that draft first. I'll offer this again the next time you change this event.`
     }
-    const draft = { ...step.draft, eventEnquiryFor: e.id }
+    const draft = { ...step.draft, eventEnquiryFor: e.id, enquiryKey: key }
     // Hand the draft to the existing Gmail path: "send it" stages an approval card; only an approved card sends.
     const save = deps.saveDraft || (async (d: Record<string, unknown>) => {
       await fs!.clearFollowupState(actor.legacyTelegramId, 'gmail_reply_draft')
@@ -348,12 +358,13 @@ async function venueNextStep(actor: AgentActor, owner: string, eventId: string, 
       await import('@/lib/agent/typed-object-context').then(m => m.rememberTypedObjects(actor.legacyTelegramId, 'email', [{ id: `draft:${d.to}`, title: `Draft to ${d.to}: ${d.subject}` }])).catch(() => {})
     })
     await save(draft)
-  }
+  } else await withdraw()
   // A lookup that could not run is not recorded, so the next change tries again. A failed record never hides a draft
   // that was saved: the text is still shown.
   if (step.found !== 'unavailable') await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key, found: step.found }, deps.db).catch(() => { console.error('EVENT_VENUE_STEP_FAILED:', JSON.stringify({ code: 'audit' })) })
   console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: step.found, ms: Date.now() - started }))
-  return step.text
+  // When an older draft was withdrawn and nothing replaces it, say so.
+  return mine && !step.draft ? `${step.text}\nThe earlier enquiry draft no longer matches the event, so I have withdrawn it.` : step.text
 }
 
 /** Entry point for both surfaces. Null means "not an events message": carry on as usual. */

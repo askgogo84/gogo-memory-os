@@ -253,12 +253,14 @@ export async function searchWebResults(query: string, opts: WebSearchOptions = {
   // plan limit and its failing call cost ~3.5s on every fresh server before Serper ran).
   // SEARCH_PROVIDER_ORDER=tavily,serper restores the old order. A provider that reported quota/auth
   // exhaustion is skipped for 30 minutes; an empty answer moves on to the next one.
+  let answered = false
   for (const provider of searchProviderOrder()) {
     const key = provider === 'parallel' ? process.env.PARALLEL_API_KEY : provider === 'tavily' ? process.env.TAVILY_API_KEY : process.env.SERPER_API_KEY
     if (!key || providerQuotaBlocked(provider)) continue
     const started = Date.now()
     try {
       const results = provider === 'parallel' ? await searchWithParallel(cleanQuery, opts) : provider === 'tavily' ? await searchWithTavily(cleanQuery, opts) : await searchWithSerper(cleanQuery, opts)
+      answered = true
       console.log('SEARCH:', JSON.stringify({ provider, ms: Date.now() - started, results: results.length }))
       if (results.length) return results
     } catch (err: any) {
@@ -268,7 +270,9 @@ export async function searchWebResults(query: string, opts: WebSearchOptions = {
   }
   // 18 Oct live: Tavily hit its plan limit (432) and every web answer — petrol, gold, news — came back
   // empty. Anthropic's web search is the last resort so live questions still get sources.
-  if (opts.pageTextOnly) return []
+  // Page text only: no provider answering at all is "could not search", which the caller must be able to tell apart
+  // from "searched and found nothing".
+  if (opts.pageTextOnly) { if (!answered) throw new Error('search_unavailable'); return [] }
   return await searchWithAnthropic(cleanQuery, opts).catch((fallbackErr: any) => {
     console.error('WEB_SEARCH_FALLBACK_FAILED:', fallbackErr?.message || fallbackErr)
     return []
