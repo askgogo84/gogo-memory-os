@@ -54,6 +54,30 @@ eq(list.map(x => x.title), ['Team outing'], 'a dismissed suggestion stays away')
 await store.updateEvent(OWNER, e1.id, { venueName: 'Toit' } as any, db)
 list = await ns.getEventSuggestions(OWNER, { db, now: NOW, env })
 eq(list.map(x => x.title), ['Nithin’s birthday', 'Team outing'], 'when the event itself changes, it is looked at afresh')
+// Review, 11 Nov: dismissing twice records once; a failed write is reported; wording follows the calendar.
+{ const k2 = list[0].key
+  const count = async () => (await store.ownerAuditDetails(OWNER, e1.id, 'event.suggestion_dismissed', db)).length
+  const n0 = await count()
+  for (let i = 0; i < 5; i++) eq(await ns.dismissSuggestion(OWNER, e1.id, k2, db), true, `dismiss ${i + 1} succeeds`)
+  eq(await count(), n0 + 1, 'five dismissals of the same suggestion leave one audit line')
+  await store.updateEvent(OWNER, e1.id, { venueName: 'Home' } as any, db)
+  const failing = { from: (t: string) => t === 'gogo_event_audit' ? { ...db.from(t), insert: async () => ({ error: { code: 'XX000' } }) } : db.from(t) } as any
+  const fresh = (await ns.getEventSuggestions(OWNER, { db, now: NOW, env })).find(x => x.eventId === e1.id)!
+  const logged = console.error; console.error = () => {}
+  eq(await ns.dismissSuggestion(OWNER, e1.id, fresh.key, failing).catch(() => false), false, 'a dismissal that could not be recorded is not reported as done')
+  console.error = logged
+  const base: any = { id: '00000000-0000-4000-8000-000000000001', title: 'Dinner', status: 'draft', revision: 1, timezone: 'Asia/Kolkata' }
+  const at = Date.parse('2026-11-11T04:30:00Z') // 10:00 in Bengaluru
+  const why = (ms: number) => ns.suggestionFor({ ...base, starts_at: new Date(at + ms).toISOString() }, [], at)!.why
+  ok(/^It is today /.test(why(3 * 3600_000)), 'three hours away on the same day reads "today"')
+  ok(/^It is tomorrow /.test(why(25 * 3600_000)), '25 hours away, the next calendar day, reads "tomorrow"')
+  ok(/^It is tomorrow /.test(why(15 * 3600_000)), '1 am the next day reads "tomorrow"')
+  ok(/^It is in 3 days /.test(why(3 * day)), 'three days away reads "in 3 days"')
+  const pub: any = { ...base, status: 'published', starts_at: new Date(at + 2 * day).toISOString() }
+  const g = [{ name: 'Divya', rsvp: 'none', revoked: false, optedOut: false }]
+  eq(ns.suggestionFor(pub, g, at)?.kind, 'no_replies', 'replies still open: guests who have not replied are pointed out')
+  eq(ns.suggestionFor({ ...pub, rsvp_closes_at: new Date(at - 3600_000).toISOString() }, g, at), null, 'replies closed: no nudge suggestion')
+  ok(!/is on the event page/.test(ns.suggestionFor(pub, [], at)!.why), 'the no-guests wording does not claim a link exists') }
 // Nothing was sent, and no guest row or event was changed by reading.
 const before = JSON.stringify([await store.listEvents(OWNER, db), await store.listGuests(OWNER, e2.id, db)])
 await ns.getEventSuggestions(OWNER, { db, now: NOW, env })

@@ -88,14 +88,15 @@ async function audit(db: Db, eventId: string, actor: string, action: string, det
   // Best effort: the action itself already happened. A failure is logged so a gap in the trail is visible.
   try {
     const res = await db.from('gogo_event_audit').insert({ event_id: eventId, actor: actor.slice(0, 40), action, detail })
-    if (res?.error) console.error('EVENTS_AUDIT_FAILED:', JSON.stringify({ action, code: String(res.error?.code || '').slice(0, 12) }))
-  } catch { console.error('EVENTS_AUDIT_FAILED:', JSON.stringify({ action })) }
+    if (res?.error) { console.error('EVENTS_AUDIT_FAILED:', JSON.stringify({ action, code: String(res.error?.code || '').slice(0, 12) })); return false }
+    return true
+  } catch { console.error('EVENTS_AUDIT_FAILED:', JSON.stringify({ action })); return false }
 }
 
 /** An audit line for an organizer action done outside this module (e.g. the calendar write). Owner-checked first. */
-export async function recordOwnerAudit(owner: string, id: string, action: 'event.calendar_synced' | 'event.venue_enquiry_drafted' | 'event.suggestion_dismissed', detail: Record<string, unknown> = {}, db: Db = theDb()): Promise<void> {
+export async function recordOwnerAudit(owner: string, id: string, action: 'event.calendar_synced' | 'event.venue_enquiry_drafted' | 'event.suggestion_dismissed', detail: Record<string, unknown> = {}, db: Db = theDb()): Promise<boolean> {
   const e = await getEvent(owner, id, db)
-  await audit(db, e.id, 'owner', action, detail)
+  return audit(db, e.id, 'owner', action, detail)
 }
 
 /** The details of earlier audit lines of one kind for the owner's event, newest first (e.g. which venue an enquiry was

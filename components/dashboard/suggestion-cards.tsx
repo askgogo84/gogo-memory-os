@@ -28,9 +28,9 @@ export function SuggestionCards({ items }: { items: Suggestion[] }) {
       return <div key={id} className="flex flex-col gap-1.5 rounded-[14px] border border-[#222] bg-[#121212] px-3.5 py-3">
         <span className="text-[15px] font-medium leading-snug text-[#f2efea]">{s.title}</span>
         <span className="text-[13px] leading-[1.45] text-[#9a9a96]">{s.why}</span>
-        {failed === id && <span className="text-[13px] text-[#f0c26b]">Couldn’t dismiss this just now. Try again.</span>}
+        {failed === id && <span role="status" className="text-[13px] text-[#f0c26b]">Couldn’t dismiss this just now. Try again.</span>}
         <span className="flex items-center justify-end gap-2">
-          <button type="button" onClick={() => dismiss(s)} disabled={busy === id} className="min-h-11 rounded-[10px] px-3 text-[13px] font-semibold text-[#a8a8a4] disabled:opacity-60">{busy === id ? 'Dismissing…' : 'Dismiss'}</button>
+          <button type="button" aria-label={`Dismiss: ${s.title}`} onClick={() => dismiss(s)} disabled={busy === id} className="min-h-11 rounded-[10px] px-3 text-[13px] font-semibold text-[#a8a8a4] disabled:opacity-60">{busy === id ? 'Dismissing…' : 'Dismiss'}</button>
           <Link href={s.href} className="flex min-h-11 items-center rounded-[10px] px-3 text-[13px] font-semibold text-[#77d2c4]">{s.action} →</Link>
         </span>
       </div>
