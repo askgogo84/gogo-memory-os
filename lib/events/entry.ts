@@ -27,6 +27,17 @@ export const EVENT_GATE = /\b(?:events?|part(?:y|ies)|birthday|b'?day|anniversar
  *  The window never applies to a published event: anything that changes what guests see must name the subject. */
 const ACTIVE_WINDOW_MS = 30 * 60_000
 /** The organizer's explicit yes to a parked cancel or time change. Decided here, not by the model. */
+/** Whether the WhatsApp webhook offers a message to Events early, before the brain and understand-first. Only a message
+ *  that is itself about an event (the gate), from an owner with Events on, typed by them (not forwarded), and not an
+ *  approval reply or a bare number. A reply to the draft being planned ("Toit Indiranagar") and a yes to Events' own
+ *  question stay with the later hook in processIncomingMessage, after approvals and the pending-question registry, so
+ *  "5 pm" or "2" meant for another question is never read as an event change. */
+export function offerEventsEarly(p: { owner: string; text: string; forwarded: boolean; approval: boolean }): boolean {
+  const t = String(p.text || '').trim()
+  if (!t || p.forwarded || p.approval || /^\s*#?\d{1,3}[.)]?\s*$/.test(t) || CONFIRM_RE.test(t)) return false
+  return eventsEnabledFor(String(p.owner)) && EVENT_GATE.test(t)
+}
+
 export const CONFIRM_RE = /^\s*(?:yes|yes please|confirm|confirmed|go ahead|do it)\b[\s,.!]*(?:(cancel|move)(?: it)?)?[\s.!]*$/i
 /** The verb a confirmation names, if any ("yes, cancel it" -> cancel). A yes that names the other action is refused. */
 export const confirmVerb = (text: string): 'cancel' | 'move' | null => { const m = CONFIRM_RE.exec(text); return m && m[1] ? (m[1].toLowerCase() as 'cancel' | 'move') : null }
