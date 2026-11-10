@@ -22,6 +22,8 @@ async function check(label:string,fn:()=>unknown){try{await fn();console.log('PA
 const noop=new Proxy({}, {get:(_target,key)=>/^(?:record|observe|capture)/.test(String(key))?async()=>null:()=>null})
 // The real model-ids module (pure helpers): a noop stub would turn every model request and reply into null.
 const modelIds=await import(pathToFileURL(path.join(repo,'lib/services/model-ids.ts')).href)
+// Addendum 5: the preference classifier is pure; the real one is used.
+const preferenceKind=await import('../lib/bot/handlers/preference-kind')
 function load(file:string,deps:Record<string,unknown>){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(path.join(repo,file),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText,{exports,require:(name:string)=>deps[name]||(name==='@/lib/services/model-ids'?modelIds:noop),process:{env:{ANTHROPIC_API_KEY:'fixture-only'}},Date:FixedDate,Intl,console:{log(){},error(){},warn(){}},URL,URLSearchParams,Request,Response,Buffer,AbortSignal,setTimeout,clearTimeout});return exports}
 try{
  const {detectIntent}=await import(pathToFileURL(path.join(repo,'lib/bot/detect-intent.ts')).href)
@@ -49,6 +51,7 @@ try{
   {id:'semantic-old-flight',source:'semantic_memory',summary:old,score:.95,confidence:.95,inferred:false,startAt:'2026-10-18T00:00:00Z'},
  ],provenance:{lifeEvents:1,travelTickets:1,openLoops:0,semanticMemories:0,insights:0,typedContext:0}})
  const pm=load('lib/bot/process-message.ts',{
+  '@/lib/bot/handlers/preference-kind':preferenceKind,
   './resolve-user':{resolveUser:async()=>({id:'synthetic-owner',telegramId:123,whatsappId:'fixture-owner',name:'Synthetic Owner'})},'./detect-intent':{detectIntent},'@/lib/agent/semantic-gate':{gateDetectedIntent:(intent:unknown)=>intent},
   './format-response':{formatOutgoingText:(_channel:string,text:string)=>text},'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/limits':{checkAndIncrementLimit:async()=>({allowed:true})},
   '@/lib/services/memory-index':{isIndexable:()=>true},'@/lib/bot/memory-redaction':redaction,

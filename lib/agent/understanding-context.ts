@@ -98,7 +98,9 @@ export const defaultSourceLoaders: Required<SourceLoaders> = {
   },
   async preferences({ actor }) {
     const data = rows(await supabaseAdmin.from('user_preferences').select('rule_text').eq('telegram_id', actor.legacyTelegramId).order('created_at', { ascending: true }).limit(8))
-    return data.map(r => clean(r.rule_text, 160)).filter(Boolean)
+    // Addendum 5: a stored rule that would grant permission to act without approval is not shown to the brain.
+    const { grantsPermission } = await import('@/lib/bot/handlers/preference-permission')
+    return data.filter(r => !grantsPermission(String(r.rule_text || ''))).map(r => clean(r.rule_text, 160)).filter(Boolean)
   },
   async profile({ actor }) {
     return { name: actor.name || null, timezone: actor.timezone || null, city: null, pincode: null }
