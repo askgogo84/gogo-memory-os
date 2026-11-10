@@ -416,7 +416,8 @@ export const FORWARDED_NOTE = 'The latest message was FORWARDED by the user from
  *  Shadow (GOGO_BRAIN_LOOP_USERS): it plans with look-up tools; the plan is logged and saved for comparison; it never
  *  replies or changes anything.
  *  Live (GOGO_BRAIN_LOOP_LIVE_USERS, WhatsApp only): it is told what Gogo already replied and looks for ONE further
- *  step. It may look things up and save an email draft (to a verified address only). If a draft was saved, one
+ *  step. It may look things up and save one venue enquiry draft: to a verified address only, with every word of the
+ *  email written by code from facts (the model writes none of it). If a draft was saved, one
  *  follow-up message is sent to the person who wrote: fixed words plus the draft in full, never a model-written line. It cannot send an
  *  email, publish, book or pay: those stay with "send it" and the approval cards.
  *  Off unless the variables are set. Every model call is recorded in the cost ledger as ours (nothing is charged to
@@ -443,7 +444,7 @@ export function loopFollowUpText(prepared: { kind: string; to: string; subject: 
 export const replyAwaitsAnswer = (reply: string) => /\?|？/.test(reply) || /\b(?:approve|approval|reject|confirm|call plan|which one|pick|choose|select|undo|reply|tap|press|respond|type it|let me know|tell me|send me|share|yes or no|send it)\b|^\s*(?:[-•]|[A-Da-d]\))\s|\b(?:say|type|send)\s+[*"“'‘]|^\s*(?:\d+[.)]|[①-⑩]|\d\ufe0f?\u20e3|📊|📬)/imu.test(reply)
 type LoopShadowDeps = { run?: (a: any) => Promise<any>; countToday?: (telegramId: number) => Promise<number>; save?: (row: Record<string, unknown>) => Promise<void>; loadContext?: typeof loadBrainContext; defer?: (job: () => Promise<void>) => Promise<void>; env?: Record<string, string | undefined>
   send?: (phone: string, text: string) => Promise<unknown>; remember?: (telegramId: number, text: string) => Promise<unknown>; tools?: any[]
-  pendingApprovals?: (telegramId: number) => Promise<number>; clearLoopDraft?: (telegramId: number) => Promise<void>; draftIsSaved?: (telegramId: number, d: { to: string; subject: string }) => Promise<boolean> }
+  pendingApprovals?: (telegramId: number) => Promise<number>; clearLoopDraft?: (telegramId: number) => Promise<void>; draftIsSaved?: (telegramId: number, d: { to: string; subject: string; body?: string }) => Promise<boolean> }
 export async function scheduleLoopShadow(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; forwarded?: boolean; surface?: 'whatsapp' | 'web' }, ctx: BrainContext | null, pipelineKind: string, deps: LoopShadowDeps = {}): Promise<void> {
   const env = deps.env || process.env
   const live = p.surface === 'whatsapp' && !p.forwarded && brainLoopLiveFor(p.phone, env)
@@ -525,12 +526,13 @@ async function pendingApprovalCount(telegramId: number): Promise<number> {
   const r: any = await supabaseAdmin.from('agent_approvals').select('id', { count: 'exact', head: true }).eq('telegram_id', String(telegramId)).eq('status', 'pending')
   return r?.error ? 1 : Number(r?.count || 0)
 }
-/** True when the latest waiting email draft is the loop's own, to this address with this subject. */
-async function loopDraftIsSaved(telegramId: number, d: { to: string; subject: string }): Promise<boolean> {
+/** True when the latest waiting email draft is exactly the one this pass wrote. */
+async function loopDraftIsSaved(telegramId: number, d: { to: string; subject: string; body?: string }): Promise<boolean> {
   const fs = await import('@/lib/bot/handlers/followup-state')
   const st = await fs.getLatestFollowupState(telegramId, 'gmail_reply_draft')
   const x = st?.payload?.draft
-  return Boolean(x && x.loopDraft === true && x.to === d.to && x.subject === d.subject)
+  // The very draft this pass wrote: same recipient, subject and words, and fresh enough for "send it" to pick it up.
+  return Boolean(x && x.loopDraft === true && x.to === d.to && x.subject === d.subject && x.body === d.body && fs.isStrictlyFreshFollowupState(st, 30))
 }
 /** Withdraws the loop's own unsent draft, and only one saved since `since` (this pass): used when its follow-up could
  *  not be delivered. A draft from an earlier message, which the person has already been shown, is left alone. */

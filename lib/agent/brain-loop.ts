@@ -31,6 +31,8 @@ export type LoopTool = {
 export type LoopState = {
   /** Contact details a verifying tool returned in this pass: the only ones a draft may be addressed to. */
   verified: Set<string>
+  /** The venue whose address was verified in this pass, as the person named it. */
+  venue?: { name: string; email: string }
   /** What was actually prepared, exactly as saved: shown to the person by code, not retold by the model. */
   prepared: { kind: 'email_draft'; to: string; subject: string; body: string }[]
 }

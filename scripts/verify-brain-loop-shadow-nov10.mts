@@ -30,19 +30,19 @@ process.env.GOGO_EVENTS_OWNERS = '884501501'
 // 1. The tool list itself.
 eq(loop.validateTools(tools), [], 'the first tools are valid')
 ok(tools.filter(t => t.klass === 'act').length >= 3 && tools.filter(t => t.klass === 'act').every(t => !t.run), 'act tools have no run function at all')
-eq(tools.filter(t => t.klass === 'prepare' && t.run).map(t => t.name), ['email_draft'], 'the only prepare tool that can ever run is the email draft (live mode only; see the live test)')
+eq(tools.filter(t => t.klass === 'prepare' && t.run).map(t => t.name), ['venue_enquiry_draft'], 'the only prepare tool that can ever run is the venue enquiry draft (live mode only; see the live test)')
 ok(loop.validateTools([{ name: 'send', klass: 'act', description: '', input_schema: { type: 'object' }, run: async () => 'x' } as any]).length === 1, 'an act tool that could run is rejected')
 ok(loop.validateTools([{ name: 'reply', klass: 'read', description: '', input_schema: { type: 'object' }, run: async () => 'x' } as any]).length === 1, 'a tool cannot take the name of reply or ask')
 
 // 2. The anniversary: look up the event and the venue, plan a draft and a send request, finish with a reply.
 let f = fake([
   [use('events_list', {}), use('venue_contact', { venue: 'Toit Indiranagar' })],
-  [use('email_draft', { to: 'toitblr@toit.in', subject: 'Group booking enquiry', body: 'Hi team' }), use('request_send_email', { to: 'toitblr@toit.in', subject: 'Group booking enquiry' })],
+  [use('venue_enquiry_draft', { occasion: 'anniversary', date: '2037-11-22', time: '17:00', people: 20 }), use('request_send_email', { to: 'toitblr@toit.in', subject: 'Group booking enquiry' })],
   [use('reply', { text: 'I found Toit\'s events address and drafted the enquiry. Shall I send it?' })],
 ])
 let r = await loop.runBrainLoopShadow({ actor, text: 'Toit Indiranagar', ctx, tools, client: f.client, model: 'claude-haiku-5-5' })
 eq([r.stop, r.final.kind, r.turns], ['final', 'reply', 3], 'the loop reads, plans and finishes with a reply')
-eq(r.steps.map(s => `${s.tool}:${s.klass}:${s.executed}`), ['events_list:read:true', 'venue_contact:read:true', 'email_draft:prepare:false', 'request_send_email:act:false'], 'only look-ups ran; the draft and the send request were planned, not done')
+eq(r.steps.map(s => `${s.tool}:${s.klass}:${s.executed}`), ['events_list:read:true', 'venue_contact:read:true', 'venue_enquiry_draft:prepare:false', 'request_send_email:act:false'], 'only look-ups ran; the draft and the send request were planned, not done')
 ok(ran.includes('events:884501501') && ran.some(x => x.startsWith('search:Toit Indiranagar')), "the look-ups used the session's own person, and only the venue name went to search")
 const second = f.calls[1].messages.at(-1).content
 ok(second.every((b: any) => b.type === 'tool_result' && /^<<<TOOL_RESULT\n[\s\S]*\nTOOL_RESULT>>>$/.test(b.content)), 'every tool result goes back inside data markers')
