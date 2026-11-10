@@ -355,9 +355,11 @@ async function venueNextStep(actor: AgentActor, owner: string, eventId: string, 
   const search: import('./venue-enquiry').Search = deps.search || (async (q, o) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: o?.timeoutMs, pageTextOnly: true }))
   // When search finds the venue's own site but no address in its excerpt, that site's own page is read
   // (lib/events/venue-page.ts: https, public addresses only, same site, size and time limits).
-  const readPage: import('./venue-enquiry').PageReader = deps.readPage || (async (url, sameSite) => (await import('./venue-page')).readVenuePage(url, sameSite))
+  // What each page read came to, for the log: codes and counts only, never page text or an address.
+  const reads: Record<string, string | number>[] = []
+  const readPage: import('./venue-enquiry').PageReader = deps.readPage || (async (url, sameSite) => (await import('./venue-page')).readVenuePage(url, sameSite, { note: n => { if (reads.length < 4) reads.push(n) } }))
   const contact = await Promise.race([v.findVenueContact(String(e.venue_name), search, 5000, readPage), new Promise<null>(r => setTimeout(() => r(null), 9500))])
-  if (!contact) { await withdraw(); console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: 'timeout', ms: Date.now() - started })); return mine ? WITHDRAWN : null }
+  if (!contact) { await withdraw(); console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: 'timeout', ms: Date.now() - started, ...(reads.length ? { reads } : {}) })); return mine ? WITHDRAWN : null }
   const step = v.venueStepText(e, contact, actor.name || '')
   if (step.draft) {
     // Another email draft is waiting for "send it": it is not replaced, and this one is not queued or recorded.
@@ -377,7 +379,7 @@ async function venueNextStep(actor: AgentActor, owner: string, eventId: string, 
   // A lookup that could not run is not recorded, so the next change tries again. A failed record never hides a draft
   // that was saved: the text is still shown.
   if (step.found !== 'unavailable') await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key, found: step.found }, deps.db).catch(() => { console.error('EVENT_VENUE_STEP_FAILED:', JSON.stringify({ code: 'audit' })) })
-  console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: step.found, ms: Date.now() - started }))
+  console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: step.found, ms: Date.now() - started, ...(reads.length ? { reads } : {}) }))
   // When an older draft was withdrawn and nothing replaces it, say so.
   return mine && !step.draft ? `${step.text}\n${WITHDRAWN}` : step.text
 }

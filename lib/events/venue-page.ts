@@ -106,6 +106,17 @@ const realGet: Getter = (u, pinned, limits) => new Promise((done, fail) => {
 
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#64': '@', '#x40': '@', '#46': '.', '#x2e': '.' }
 /** Visible text of a page, plus the addresses in its mailto links. No scripts, styles or markup. */
+/** Cloudflare's email protection writes an address into the page as hex (the first byte is a key, each later byte is a
+ *  character XOR that key) and a script in the browser turns it back. This does the same, so an address that a person
+ *  sees on the page is seen here too. Null unless the result is shaped like an email address. */
+export function decodeCfEmail(hex: string): string | null {
+  if (!/^[0-9a-f]{8,512}$/i.test(hex) || hex.length % 2) return null
+  const key = parseInt(hex.slice(0, 2), 16)
+  let out = ''
+  for (let i = 2; i < hex.length; i += 2) out += String.fromCharCode(parseInt(hex.slice(i, i + 2), 16) ^ key)
+  return /^[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63}){1,4}$/i.test(out) ? out : null
+}
+
 export function pageText(html: string): { title: string; text: string } {
   const src = String(html || '').slice(0, PAGE_LIMITS.bytes)
   // Every pattern here is linear on hostile input (no nested or open-ended repeats over "<").
@@ -114,31 +125,39 @@ export function pageText(html: string): { title: string; text: string } {
   const shown = src.replace(/<!--[\s\S]*?(?:-->|$)/g, ' ').replace(/<(script|style|noscript|template|svg)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, ' ')
   const title = (/<title\b[^<>]{0,200}>([^<]{0,200})/i.exec(shown)?.[1] || '').replace(/\s+/g, ' ').trim()
   // An email link's address is put where the link sits, so the words around the link are the words around the address.
-  const body = shown.replace(/<head\b[\s\S]*?(?:<\/head\s*>|$)/i, ' ').replace(/<a\b[^<>]{0,600}?href\s*=\s*["']mailto:([^"'?\s<>]{3,120})[^<>]{0,600}>/gi, ' $1 ').replace(/<[^<>]{0,2000}>/g, ' ')
+  // Protected addresses are put back where they sit: the element carrying data-cfemail (its "[email protected]" text is
+  // dropped) and links to /cdn-cgi/l/email-protection#<hex>.
+  const unprotected = shown
+    .replace(/<(a|span)\b[^<>]{0,600}?data-cfemail\s*=\s*["']([0-9a-f]{8,512})["'][^<>]{0,600}>[^<]{0,60}<\/\1\s*>/gi, (_m, _t, hex) => ` ${decodeCfEmail(hex) || ''} `)
+    .replace(/<a\b[^<>]{0,600}?href\s*=\s*["'][^"'<>]{0,200}\/cdn-cgi\/l\/email-protection#([0-9a-f]{8,512})["'][^<>]{0,600}>/gi, (_m, hex) => ` ${decodeCfEmail(hex) || ''} `)
+    .replace(/\[email(?:&#160;|&nbsp;|\s)protected\]/gi, ' ')
+  const body = unprotected.replace(/<head\b[\s\S]*?(?:<\/head\s*>|$)/i, ' ').replace(/<a\b[^<>]{0,600}?href\s*=\s*["']mailto:([^"'?\s<>]{3,120})[^<>]{0,600}>/gi, ' $1 ').replace(/<[^<>]{0,2000}>/g, ' ')
     .replace(/&(#x?[0-9a-f]{1,6}|[a-z]{2,8});/gi, (_m, e) => ENTITIES[String(e).toLowerCase()] ?? ' ')
   return { title, text: body.replace(/\s+/g, ' ').trim() }
 }
 
 /** Reads one page. Null for anything refused, failed, too slow or not text. Never throws. `sameSite` says whether a
  *  redirect target still belongs to the site the caller approved. */
-export async function readVenuePage(raw: string, sameSite: (host: string) => boolean, deps: { resolve?: Resolver; get?: Getter; limits?: Partial<typeof PAGE_LIMITS> } = {}): Promise<PageRead | null> {
+export async function readVenuePage(raw: string, sameSite: (host: string) => boolean, deps: { resolve?: Resolver; get?: Getter; limits?: Partial<typeof PAGE_LIMITS>; /** Why a read gave nothing, or what it got: codes and counts only. */ note?: (n: Record<string, string | number>) => void } = {}): Promise<PageRead | null> {
   const limits = { ...PAGE_LIMITS, ...(deps.limits || {}) }, deadline = Date.now() + limits.ms
   try {
     let u = readableUrl(raw)
     for (let hop = 0; u && hop <= limits.redirects; hop++) {
-      if (!sameSite(u.hostname.toLowerCase())) return null
+      if (!sameSite(u.hostname.toLowerCase())) { deps.note?.({ read: 'other_site' }); return null }
       const addrs = await (deps.resolve || realResolve)(u.hostname)
       // Every address the name has must be public: one private address is enough to refuse.
-      if (!addrs.length || !addrs.every(a => isPublicAddress(a.address))) return null
+      if (!addrs.length || !addrs.every(a => isPublicAddress(a.address))) { deps.note?.({ read: 'address_refused' }); return null }
       const left = deadline - Date.now()
       if (left < 300) return null
       let timer: ReturnType<typeof setTimeout> | undefined
       const res = await Promise.race([(deps.get || realGet)(u, addrs[0], { ...limits, ms: left }), new Promise<never>((_r, rej) => { timer = setTimeout(() => rej(new Error('deadline')), left + 100) })]).finally(() => { if (timer) clearTimeout(timer) })
       if (res.status >= 300 && res.status < 400) { u = res.location ? readableUrl(new URL(res.location, u).toString()) : null; continue }
-      if (res.status !== 200 || !res.body) return null
+      if (res.status !== 200 || !res.body) { deps.note?.({ read: 'not_ok', status: res.status, type: res.type.split(';')[0].replace(/[^a-z0-9/+.-]/g, '').slice(0, 24) }); return null }
       const { title, text } = pageText(res.body)
+      deps.note?.({ read: 'ok', bytes: res.body.length, text: text.length, at_signs: (text.match(/@/g) || []).length, protected: (res.body.match(/data-cfemail|email-protection#/g) || []).length })
       return { url: u.toString(), title, text }
     }
+    deps.note?.({ read: 'redirects' })
     return null
-  } catch { return null }
+  } catch (e: any) { deps.note?.({ read: 'failed', why: typeof e?.code === 'string' && /^[A-Z0-9_]{2,24}$/.test(e.code) ? e.code : ['deadline', 'timeout'].includes(e?.message) ? e.message : 'error' }); return null }
 }
