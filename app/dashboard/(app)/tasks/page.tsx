@@ -9,6 +9,8 @@ import { CardError } from '@/components/dashboard/card-error'
 import { TaskManager } from '@/components/dashboard/task-manager'
 import { goalBoardEnabledFor, getGoalBoard, EMPTY_BOARD } from '@/lib/dashboard/goal-board'
 import { GoalBoardView } from '@/components/dashboard/goal-board'
+import { getEventSuggestions } from '@/lib/events/next-steps'
+import { SuggestionCards } from '@/components/dashboard/suggestion-cards'
 
 export const dynamic = 'force-dynamic'
 
@@ -33,6 +35,8 @@ export default async function TasksPage({ searchParams }: { searchParams?: Promi
   const needCount = feed.need.length + notices.total
   const todoCount = todos.ok ? todos.open.length : 0
   const board = overview && tab === 'overview' ? await getGoalBoard(tg, todos.ok ? [...todos.open, ...todos.completed] : [], undefined, undefined, notices.total) : EMPTY_BOARD
+  // Addendum 5 (P1): suggestions from the owner's own events. Read-only; shown on Overview only, when Events is on for them.
+  const suggestions = overview && tab === 'overview' ? await getEventSuggestions(String(tg)) : []
 
   return (
     <div className="mx-auto w-full max-w-[820px] pb-10">
@@ -43,7 +47,7 @@ export default async function TasksPage({ searchParams }: { searchParams?: Promi
       </header>
       <div className="flex flex-col gap-3">
         <FeedTabs base="/dashboard/tasks" tab={tab} feed={feed} needCount={needCount} extra={{ key: 'todos', label: 'To-dos', count: todoCount }} lead={overview ? { key: 'overview', label: 'Overview' } : undefined}/>
-        {tab === 'overview' && <GoalBoardView board={board} notices={(notices.total > 0 || notices.unavailable) ? <div className="final-dark-panel px-4"><ServiceNoticeCards notices={notices.items} unavailable={notices.unavailable}/></div> : null}/>}
+        {tab === 'overview' && <GoalBoardView board={board} suggested={suggestions.length ? <SuggestionCards items={suggestions}/> : null} notices={(notices.total > 0 || notices.unavailable) ? <div className="final-dark-panel px-4"><ServiceNoticeCards notices={notices.items} unavailable={notices.unavailable}/></div> : null}/>}
         {tab === 'need' && <div className="flex flex-col gap-2">
           <FeedItems items={feed.need} size={72} empty={notices.total || notices.unavailable ? '' : 'Nothing is waiting for you.'}/>
           {(notices.total > 0 || notices.unavailable) && <div className="final-dark-panel px-4"><ServiceNoticeCards notices={notices.items} unavailable={notices.unavailable}/></div>}
