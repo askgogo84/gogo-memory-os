@@ -380,7 +380,7 @@ await check('LOW-MED: resolver runs once per turn, filters in SQL, and costs zer
   assert.match(pim, /if \(!params\.pendingQuestionChecked && resolvedUser\.id && resolvedUser\.whatsappId\) \{\s*const pendingAnswer = await tryResolvePendingQuestion/)
   const hook = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
   assert.match(hook, /pendingQuestionCheckedFor = text\s*const pendingAnswer = await tryResolvePendingQuestion/)
-  assert.match(hook, /pendingQuestionChecked: pendingQuestionCheckedFor === text, semantic: brainObservation\?\.jev \}\)/)
+  assert.match(hook, /pendingQuestionChecked: pendingQuestionCheckedFor === text, (?:eventsChecked: eventsCheckedFor === text, )?semantic: brainObservation\?\.jev \}\)/)
   const dash = readFileSync(new URL('../app/api/dashboard/chat/route.ts', import.meta.url), 'utf8')
   assert.equal((dash.match(/pendingQuestionChecked\}\)|pendingQuestionChecked,\s*\}\)|,pendingQuestionChecked\}\)/g) || []).length, 3, 'all three full-text dashboard calls pass the flag')
   assert.ok(dash.indexOf('const pendingQuestionChecked = true') < dash.indexOf('tryResolvePendingQuestion({'))
