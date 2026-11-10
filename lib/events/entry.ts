@@ -305,6 +305,18 @@ async function afterDraftChange(owner: string, id: string, problems: string[], d
   return [head, draftSummary(e), next].filter(Boolean).join('\n\n')
 }
 
+const WITHDRAWN = 'The venue enquiry I drafted earlier no longer matches the event, so I have withdrawn it.'
+
+/** For the email path, at "send it": is this draft a venue enquiry Gogo wrote, and does it still match its event?
+ *  'not_enquiry' for any other draft. Changes made by any route (a confirmed move, a cancel, a discard, the dashboard)
+ *  are caught here, because the event itself is read again. */
+export async function venueEnquiryState(owner: string, draft: Record<string, unknown> | null | undefined, deps: { db?: Db; now?: number } = {}): Promise<'not_enquiry' | 'current' | 'stale'> {
+  if (!draft || typeof draft.eventEnquiryFor !== 'string') return 'not_enquiry'
+  const v = await import('./venue-enquiry')
+  const e = await store.getEvent(owner, draft.eventEnquiryFor, deps.db).catch(() => null)
+  return v.enquiryDraftCurrent(draft, e, deps.now ?? Date.now()) ? 'current' : 'stale'
+}
+
 export type EventDeps = { extract?: Extractor; db?: Db; now?: number; search?: import('./venue-enquiry').Search; saveDraft?: (draft: Record<string, unknown>) => Promise<void>
   /** The email draft the person has waiting right now (to be sent with "send it"), if any. */
   pendingDraft?: () => Promise<Record<string, unknown> | null>; clearDraft?: () => Promise<void> }
@@ -331,9 +343,9 @@ async function venueNextStep(actor: AgentActor, owner: string, eventId: string, 
     await (deps.clearDraft ? deps.clearDraft() : fs!.clearFollowupState(actor.legacyTelegramId, 'gmail_reply_draft'))
     await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key: 'withdrawn' }, deps.db).catch(() => {})
   }
-  if (!v.needsVenueEnquiry(e, now)) { await withdraw(); return null }
+  if (!v.needsVenueEnquiry(e, now)) { await withdraw(); return mine ? WITHDRAWN : null }
   // One enquiry per venue, date and headcount; an edit that changes none of them does not offer it again.
-  const key = [String(e.venue_name).toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 120), e.starts_at, e.capacity].join('|')
+  const key = v.enquiryKey(e)
   // Compared with the latest record only: going back to an earlier number, or coming back after a withdrawal, drafts again.
   const seen = (await store.ownerAuditDetails(owner, e.id, 'event.venue_enquiry_drafted', deps.db))[0]?.key === key
   if (mine && mine.enquiryKey === key) return null
@@ -342,7 +354,7 @@ async function venueNextStep(actor: AgentActor, owner: string, eventId: string, 
   // Page text only: an address must be read off the page itself, never out of a model-written summary.
   const search: import('./venue-enquiry').Search = deps.search || (async (q, o) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: o?.timeoutMs, pageTextOnly: true }))
   const contact = await Promise.race([v.findVenueContact(String(e.venue_name), search, 6000), new Promise<null>(r => setTimeout(() => r(null), 7000))])
-  if (!contact) { await withdraw(); console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: 'timeout', ms: Date.now() - started })); return null }
+  if (!contact) { await withdraw(); console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: 'timeout', ms: Date.now() - started })); return mine ? WITHDRAWN : null }
   const step = v.venueStepText(e, contact, actor.name || '')
   if (step.draft) {
     // Another email draft is waiting for "send it": it is not replaced, and this one is not queued or recorded.
@@ -364,7 +376,7 @@ async function venueNextStep(actor: AgentActor, owner: string, eventId: string, 
   if (step.found !== 'unavailable') await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key, found: step.found }, deps.db).catch(() => { console.error('EVENT_VENUE_STEP_FAILED:', JSON.stringify({ code: 'audit' })) })
   console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: step.found, ms: Date.now() - started }))
   // When an older draft was withdrawn and nothing replaces it, say so.
-  return mine && !step.draft ? `${step.text}\nThe earlier enquiry draft no longer matches the event, so I have withdrawn it.` : step.text
+  return mine && !step.draft ? `${step.text}\n${WITHDRAWN}` : step.text
 }
 
 /** Entry point for both surfaces. Null means "not an events message": carry on as usual. */

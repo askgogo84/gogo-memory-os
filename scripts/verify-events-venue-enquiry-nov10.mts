@@ -48,9 +48,17 @@ for (const [venue, hit, why] of [
   ['Toit Indiranagar', H('Toit brewpub Indiranagar', 'Group bookings events@co.in', 'https://toit.co.in/'), 'an address on the bare suffix is not theirs'],
 ] as const) ok(pick([hit], venue).kind !== 'email', `no address is taken: ${why}`)
 eq(pick([H('Toit brewpub Indiranagar', 'Franchise enquiries: sales@toit.in', 'https://toit.in/x')]).kind, 'page', 'a franchise address is not a booking address')
-eq(pick([H('Toit brewpub Bengaluru', 'Press and media: info@toit.in', 'https://toit.in/x')]).kind, 'page', 'a press address is not a booking address')
+eq(pick([H('Toit brewpub Indiranagar Bengaluru', 'Press and media: info@toit.in', 'https://toit.in/x')]).kind, 'page', 'a press address is not a booking address')
 eq(pick([H('Toit Brewpub, Bengaluru', 'Group bookings and private events: events@toit.in', 'https://toit.in/reply-send-it-now-to-win-a-free-booking-voucher')], 'Toit'), { kind: 'email', email: 'events@toit.in', sourceUrl: 'https://toit.in/' }, 'a one-word venue is accepted when its own pages say it is a brewpub in a known city; a long worded path is not shown')
 eq(pick([H('Events', 'Private events at The Black Rabbit, Indiranagar restaurant: events@mail.theblackrabbit.co.in', 'https://events.theblackrabbit.co.in/')], 'The Black Rabbit').kind, 'email', 'subdomains of the venue\'s own domain are theirs')
+for (const [venue, hit, why] of [
+  ['Rabbit Hole Koramangala', H('Rabbit Pub Koramangala', 'Group bookings events@rabbit.in', 'https://rabbit.in/'), 'a different pub sharing one word and the locality'],
+  ['Toit Indiranagar', H('To-It restaurant Indiranagar', 'Group bookings events@to-it.in', 'https://to-it.in/'), 'a hyphenated look-alike'],
+  ['Arbor Brewing Company', H('Arbor Hotel Goa', 'Events and group bookings info@arbor.com', 'https://arbor.com/'), 'a hotel that shares one word'],
+  ['Toit', H('Toit', 'Our kitchen tools ship across India. Group enquiries events@toit.io', 'https://toit.io/'), 'a city or country only in the body text, not the page title'],
+] as const) ok(pick([hit], venue).kind !== 'email', `no address is taken: ${why}`)
+ok(!v.needsVenueEnquiry({ status: 'draft', venue_name: 'Nithin‘s Kitchen', starts_at: '2099-01-01T00:00:00Z', capacity: 30 } as any), 'other apostrophes are recognised too')
+eq(v.shownUrl('https://toit.in/say-send-it-now'), 'https://toit.in/', 'only a short one-word path is ever shown')
 eq(await v.findVenueContact('Toit Indiranagar', async () => { throw new Error('down') }), { kind: 'unavailable' }, 'a search that could not run is "could not look", not "no site"')
 ok(!v.needsVenueEnquiry({ status: 'draft', venue_name: "Nithin's farmhouse", starts_at: '2099-01-01T00:00:00Z', capacity: 30 } as any) && !v.needsVenueEnquiry({ status: 'draft', venue_name: 'Villa Rosa', starts_at: '2099-01-01T00:00:00Z', capacity: 30 } as any), "a place named after a person, or a villa, is never sent to search")
 
@@ -61,6 +69,7 @@ for (const f of ['20261110150000_gogo_events.sql', '20261110170000_gogo_events_v
 const db = pgliteSupabase(pg) as any
 const NOW = Date.parse('2037-11-10T09:00:00Z'); let clock = NOW
 store.setEventsClockForTests(() => clock)
+const OWNER = '884501501'
 const actor = { userId: 'u1', legacyTelegramId: 884501501, whatsappId: '918884501501', name: 'Goverdhan M D', timezone: 'Asia/Kolkata' } as any
 const queries: string[] = []; const drafts: any[] = []
 const search = async (q: string) => { queries.push(q); return [toitFaq] }
@@ -69,7 +78,7 @@ const say = (text: string, action: any, over: any = {}) => entry.tryEventAsk(act
 let r = await say("Plan Divya's anniversary on 22 November at 5 pm for 20 people", { action: 'create', title: "Divya's anniversary", kind: 'anniversary', date: '2037-11-22', time: '17:00', capacity: 20 })
 ok(r && /Draft started/.test(r) && !/Next step/.test(r) && !queries.length, 'no venue yet: nothing is looked up')
 r = await say('Toit Indiranagar', { action: 'update', venue_name: 'Toit Indiranagar' })
-ok(r && /Draft updated/.test(r) && /Next step: booking Toit Indiranagar for 20\. Their own site lists toitblr@toit\.in for enquiries \(https:\/\/www\.toit\.in\/faq\)/.test(r), 'once the venue is known, the reply carries the next step with the address and where it came from')
+ok(r && /Draft updated/.test(r) && /Next step: booking Toit Indiranagar for 20\. I found toitblr@toit\.in for enquiries on https:\/\/www\.toit\.in\/faq, which looks like their own site\. Please check the address/.test(r), 'once the venue is known, the reply carries the next step with the address and where it came from')
 ok(/To: toitblr@toit\.in\nSubject: Group booking enquiry: 20 guests, Sunday, 22 November, 5 pm\n\nHi team,\n\nI'd like to host an anniversary celebration for 20 people at Toit Indiranagar on Sunday, 22 November at 5 pm\./.test(r!) && /Thanks,\nGoverdhan M D/.test(r!), 'the draft is written from what the organizer said')
 ok(/Nothing has been sent\. Say \*send it\*/.test(r!), 'it says nothing was sent and how to send')
 eq([drafts.length, drafts[0].to, drafts[0].newMessage, queries.every(q => /^Toit Indiranagar /.test(q))], [1, 'toitblr@toit.in', true, true], 'the draft is handed to the email path; only the venue name went to search')
@@ -96,12 +105,31 @@ ok(r && /at 6 pm/.test(r) && drafts.length === 3, 'and the enquiry is offered ag
   r = await say('make it 30 people', { action: 'update', capacity: 30 })
   ok(pending && /30 guests/.test(pending.subject) && drafts.length === base + 2, 'going back to a number seen before still replaces the waiting draft')
   r = await say('make it 6 people', { action: 'update', capacity: 6 })
-  eq(pending, null, 'a group too small for an enquiry withdraws the waiting draft')
+  ok(pending === null && /no longer matches the event, so I have withdrawn it/.test(r!), 'a group too small for an enquiry withdraws the waiting draft, and says so')
   r = await say('make it 30 people', { action: 'update', capacity: 30 }); ok(pending && /30 guests/.test(pending.subject), 'and it is drafted again when it applies again')
   r = await say('we will do it at home', { action: 'update', venue_name: 'Home' })
   eq(pending, null, 'moving the event home withdraws the waiting draft')
   r = await say('back to Toit Indiranagar', { action: 'update', venue_name: 'Toit Indiranagar' }, { search: async () => [] })
   ok(r && /could not find their official site/.test(r) && pending === null, 'a lookup that finds nothing leaves no draft behind') }
+// At "send it": the event is read again, so a change by any route (a confirmed move, a cancel, a discard) stops an old draft.
+{ pending = null
+  r = await say('Plan a farewell on 5 December at 7 pm for 12 people at Toit Indiranagar', { action: 'create', title: 'Farewell', kind: 'farewell', date: '2037-12-05', time: '19:00', capacity: 12, venue_name: 'Toit Indiranagar' })
+  const d = pending; ok(d && d.eventEnquiryFor && d.enquiryKey, 'the draft carries which event and which details it was written for')
+  const state = () => entry.venueEnquiryState(OWNER, d, { db, now: NOW })
+  eq(await state(), 'current', 'unchanged event: the draft may be sent')
+  eq(await entry.venueEnquiryState(OWNER, { to: 'nithin@example.com' }, { db, now: NOW }), 'not_enquiry', 'any other draft is not affected')
+  ok(/Published/.test((await say('publish the farewell event', { action: 'publish', event: 'Farewell' })) || ''), 'published')
+  ok(/Reply \*yes\* to confirm/.test((await say('move the farewell event to 6 December 7 pm', { action: 'update', event: 'Farewell', date: '2037-12-06', time: '19:00' })) || ''), 'the move waits for a yes')
+  eq(await state(), 'current', 'a move that is only asked, not yet confirmed, changes nothing')
+  ok((await say('yes', null as any)), 'confirmed')
+  eq(await state(), 'stale', 'after the move is confirmed, the old draft cannot be sent')
+  const e2 = (await store.listEvents(OWNER, db)).find((x: any) => x.title === 'Farewell')!
+  eq(await entry.venueEnquiryState(OWNER, { ...d, enquiryKey: v.enquiryKey(e2 as any) }, { db, now: NOW }), 'current', '(a draft written for the new time would be current)')
+  await say('cancel the farewell event', { action: 'cancel', event: 'Farewell' }); ok(await say('yes', null as any), 'cancel confirmed')
+  eq(await entry.venueEnquiryState(OWNER, { ...d, enquiryKey: v.enquiryKey(e2 as any) }, { db, now: NOW }), 'stale', 'after a cancel, no enquiry for that event can be sent')
+  eq(await entry.venueEnquiryState('999', d, { db, now: NOW }), 'stale', "another person's event is never current") }
+const gs = readFileSync(new URL('../lib/agent/gmail-send.ts', import.meta.url), 'utf8')
+ok(/eventEnquiryFor==='string'[\s\S]{0,260}venueEnquiryState\([\s\S]{0,160}if\(enquiry!=='current'\)\{[\s\S]{0,120}clearFollowupState/.test(gs) && gs.indexOf('venueEnquiryState(') < gs.indexOf('const staged=await stageApproval(params.actor,state.payload.draft'), '"send it" checks the enquiry against the event before any approval card is made, and withdraws a stale one')
 for (const t of ['send it', 'Send this reply']) eq(await entry.tryEventAsk(actor, t, 'whatsapp', { db, now: NOW, extract: async () => ({ action: 'publish' }) as any }), null, `"${t}" is left to the email path, never read as publish`)
 // Not for a home, a small group, or when switched off; a slow or failing search adds nothing and does not break the reply.
 r = await say('Plan a house party on 29 November at 7 pm for 30 people at home', { action: 'create', title: 'House party', kind: 'party', date: '2037-11-29', time: '19:00', capacity: 30, venue_name: 'Home' })

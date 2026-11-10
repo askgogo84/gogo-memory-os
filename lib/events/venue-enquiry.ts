@@ -17,7 +17,7 @@ export type VenueContact =
 const FREE_MAIL = /@(?:gmail|googlemail|yahoo|ymail|rediffmail|hotmail|outlook|live|icloud|proton(?:mail)?|aol|zoho)\./i
 const AGGREGATOR = /(?:^|\.)(?:zomato|swiggy|dineout|eazydiner|tripadvisor|justdial|magicpin|facebook|instagram|linkedin|x|twitter|google|youtube|wikipedia|sulekha|venuelook|weddingwire|wedmegood|quora|reddit|yelp|opentable|sevenrooms|bookmyshow|district)\.[a-z.]+$/i
 // A home, a call, or a place named after a person ("Nithin's farmhouse"): never looked up, so no person's name goes to search.
-const HOME_LIKE = /\b(?:home|house|my place|our place|flat|apartment|terrace|office|online|zoom|google meet|teams|tbd|not decided|farm\s?house|villa|residence|club\s?house|bungalow)\b|\p{L}['’ʼ`´]s\b/iu
+const HOME_LIKE = /\b(?:home|house|my place|our place|flat|apartment|terrace|office|online|zoom|google meet|teams|tbd|not decided|farm\s?house|villa|residence|club\s?house|bungalow)\b|\p{L}['’‘ʼ′`´]s\b/iu
 // Words that are not a venue's name by themselves: a domain made of one of these proves nothing.
 const GENERIC = new Set(['the', 'and', 'com', 'net', 'org', 'www', 'company', 'brewing', 'beach', 'deli', 'smoke', 'bakery', 'bakehouse', 'tavern', 'taproom', 'craft', 'craftworks', 'works', 'collective', 'project', 'co', 'pvt', 'ltd', 'llp', 'inc', 'group', 'hospitality', 'foods', 'pizzeria', 'pizza', 'burger', 'tea', 'wine', 'beer', 'spice', 'village', 'farm', 'farms', 'yard', 'deck', 'sky', 'sun', 'moon', 'star', 'social', 'table', 'cafe', 'coffee', 'bar', 'pub', 'hotel', 'kitchen', 'house', 'club', 'bistro', 'restaurant', 'restaurants', 'lounge', 'grill', 'garden', 'gardens', 'brewery', 'brewing', 'brewpub', 'diner', 'dining', 'food', 'foods', 'eat', 'eats', 'events', 'event', 'party', 'banquet', 'banquets', 'hall', 'resort', 'resorts', 'palace', 'grand', 'royal', 'park', 'plaza', 'cinema', 'studio', 'room', 'rooms', 'terrace', 'rooftop', 'india', 'bangalore', 'bengaluru', 'mumbai', 'delhi', 'chennai', 'hyderabad', 'pune', 'goa', 'city', 'central', 'express', 'world', 'place', 'spot', 'point', 'corner', 'street', 'road', 'new', 'old', 'big', 'little', 'blue', 'green', 'red', 'black', 'white', 'golden', 'one', 'first'])
 const letters = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -37,13 +37,21 @@ const wordsOf = (venue: string) => venue.toLowerCase().split(/[^a-z0-9]+/).filte
  *  Generic words (social, table, cafe…), listing sites and non-ASCII hosts never count. */
 export function domainMatch(host: string, venue: string): 'full' | 'word' | null {
   if (!/^[a-z0-9.-]+$/.test(host) || host.includes('xn--') || AGGREGATOR.test(host)) return null
-  const brand = brandOf(host).replace(/-/g, '')
+  const brand = brandOf(host) // hyphens are kept: to-it.in is not toit
   if (brand.length < 3 || GENERIC.has(brand)) return null
   const words = wordsOf(venue), lead = words[0] === 'the' ? words.slice(1) : words
   for (const list of [words, lead]) for (let k = list.length; k >= 1; k--) if (list.slice(0, k).join('') === brand) return k === list.length ? 'full' : k >= 2 ? 'full' : 'word'
   return words.includes(brand) ? 'word' : null
 }
 export const domainIsVenue = (host: string, venue: string) => domainMatch(host, venue) !== null
+
+/** What an enquiry was written for: the venue, the time and the number. A draft is good only while this is unchanged. */
+export const enquiryKey = (e: EventRow) => [String(e.venue_name || '').toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 120), e.starts_at, e.capacity].join('|')
+/** Whether a waiting enquiry draft still matches its event, checked at the moment of "send it": the event must still
+ *  need an enquiry and have the same venue, time and number the draft was written for. */
+export function enquiryDraftCurrent(draft: { enquiryKey?: unknown } | null | undefined, e: EventRow | null, now = Date.now()): boolean {
+  return Boolean(draft && e && needsVenueEnquiry(e, now) && draft.enquiryKey === enquiryKey(e))
+}
 
 /** Whether this event is worth a venue enquiry: a named venue (not a home or a call), a future date and a group. */
 export function needsVenueEnquiry(e: EventRow, now = Date.now()): boolean {
@@ -54,7 +62,7 @@ export function needsVenueEnquiry(e: EventRow, now = Date.now()): boolean {
 /** https, host and a plain path only: what is safe to show. No query string; an unusual path is dropped, so a link can
  *  never carry words written as an instruction. */
 export function shownUrl(url: string): string {
-  try { const u = new URL(url); return u.protocol === 'https:' ? `https://${u.hostname}${/^\/[a-z0-9/-]{0,30}$/i.test(u.pathname) ? u.pathname : '/'}` : '' } catch { return '' }
+  try { const u = new URL(url); return u.protocol === 'https:' ? `https://${u.hostname}${/^\/[a-z0-9]{1,16}\/?$/i.test(u.pathname) ? u.pathname : '/'}` : '' } catch { return '' }
 }
 const HOSPITALITY = /\b(?:restaurants?|brewpub|brewery|microbrewery|taproom|bar|pub|cafe|café|bistro|kitchen|dining|diner|menu|lounge|hotel|resort|banquets?|eatery|grill|cuisine|cocktails?|reservations?|table bookings?)\b/i
 const PLACE = /\b(?:bengaluru|bangalore|mumbai|delhi|gurgaon|gurugram|noida|chennai|hyderabad|kolkata|pune|kochi|ahmedabad|jaipur|lucknow|chandigarh|goa|mysuru|mysore|mangaluru|coimbatore|indore|india|dubai|abu dhabi|sharjah|uae|indiranagar|koramangala|whitefield|jayanagar|rajajinagar|malleshwaram|hsr layout|jp nagar|mg road|bandra|andheri|powai|connaught place|hauz khas|cyber hub|jubilee hills|banjara hills)\b/i
@@ -66,7 +74,11 @@ const NOT_BOOKING = /^(?:noreply|no-reply|donotreply|careers?|jobs|hr|press|medi
  *  name is the venue's (and, for a one-word match, whose results also mention another word of the venue's name); only
  *  one such site turned up; the address is on that site's own domain; the words around it, or its own name, are about
  *  bookings or events; and no other address is as likely. Anything less: the official page, and no draft. */
-export function pickVenueContact(hits: SearchHit[], venue: string): VenueContact {
+export function pickVenueContact(hits: SearchHit[], fullName: string): VenueContact {
+  // The name without its locality ("Toit" for "Toit Indiranagar"): a locality is where the venue is, not what it is
+  // called, so it neither makes a one-word name longer nor counts as a second word of the name.
+  const core = wordsOf(fullName).filter(w => !PLACE.test(w))
+  const venue = core.length ? core.join(' ') : fullName
   const others = wordsOf(venue).filter(w => w.length >= 4 && !GENERIC.has(w))
   const byHost = new Map<string, SearchHit[]>()
   for (const h of hits) { const host = hostOf(h.url); if (host && h.url.startsWith('https://') && domainMatch(host, venue)) byHost.set(host, [...(byHost.get(host) || []), h]) }
@@ -74,8 +86,12 @@ export function pickVenueContact(hits: SearchHit[], venue: string): VenueContact
   // must read like a place that serves food or drink, and must also carry either another distinctive word of the
   // venue's name or a city, so a same-named business elsewhere in the world, or in another trade, is not taken.
   const sites = [...byHost.entries()].filter(([host, list]) => {
-    const brand = brandOf(host).replace(/-/g, ''), text = list.map(h => `${h.title} ${h.snippet}`).join(' ').toLowerCase()
-    return HOSPITALITY.test(text) && (PLACE.test(text) || others.some(w => w !== brand && new RegExp(`\\b${w}\\b`).test(text)))
+    const brand = brandOf(host), text = list.map(h => `${h.title} ${h.snippet}`).join(' ').toLowerCase(), titles = list.map(h => h.title).join(' ')
+    if (!HOSPITALITY.test(text)) return false
+    const nameWord = others.some(w => w !== brand && new RegExp(`\\b${w}\\b`).test(text))
+    // One word of a longer name (toit for "Toit Indiranagar") needs another word of that name on the page. The whole
+    // name (toit for "Toit") needs that, or a known city in the page's own title.
+    return domainMatch(host, venue) === 'word' ? nameWord : nameWord || PLACE.test(titles)
   })
   if (!sites.length) return { kind: 'none' }
   const brands = new Set(sites.map(([host]) => registrable(host)))
@@ -136,7 +152,7 @@ export function venueStepText(e: EventRow, contact: VenueContact, organizer: str
   const venue = oneLine(e.venue_name, 120)
   if (contact.kind === 'email') {
     const draft = enquiryDraft(e, contact.email, organizer)
-    return { found: 'email', draft, text: [`Next step: booking ${venue} for ${e.capacity}. Their own site lists ${contact.email} for enquiries (${contact.sourceUrl}). Here is a draft:`,
+    return { found: 'email', draft, text: [`Next step: booking ${venue} for ${e.capacity}. I found ${contact.email} for enquiries on ${contact.sourceUrl}, which looks like their own site. Please check the address before you send. Here is a draft:`,
       `To: ${draft.to}\nSubject: ${draft.subject}\n\n${draft.body}`,
       `Nothing has been sent. Say *send it* and I'll show it once more for your approval before it goes, or tell me what to change.`].join('\n\n') }
   }
