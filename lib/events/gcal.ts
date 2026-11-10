@@ -2,7 +2,7 @@
 // organizer tapped the button and confirmed it on the page. Only the organizer's primary calendar is touched. Gogo never
 // adds attendees and tells Google to notify nobody. If the organizer added guests to the entry in Google, Gogo does not
 // touch it (changing it silently would leave those guests with a stale copy) and says so.
-// One stable id per event, plus the same iCalUID as the calendar file, so a second tap, or a tap after importing the
+// One stable id per event, and a lookup by the calendar file's UID, so a second tap, or a tap after importing the
 // file, updates the same entry instead of adding another. Only Gogo's fields (title, time, place, notes) are written to
 // an existing entry; reminders, colour or a Meet link set in Google stay. Every result is read back from Google before it
 // is reported; anything less is "not sure", never success.
@@ -42,12 +42,15 @@ export function calendarFields(e: EventRow) {
 }
 type Fields = ReturnType<typeof calendarFields>
 
+/** What is sent: an empty place or notes is left out, so one the organizer typed in Google stays. (The iCalUID is not
+ *  sent: Google sets it only through events.import. An entry imported from the calendar file is found by its UID.) */
+const writable = (f: Fields) => { const { location, description, ...rest } = f; return { ...rest, ...(location ? { location } : {}), ...(description ? { description } : {}) } }
 const hasGuests = (x: any) => Array.isArray(x?.attendees) && x.attendees.some((a: any) => !a?.self)
 /** True only when Google holds exactly Gogo's fields on that entry, with no guests. */
 export function matchesCalendar(actual: any, id: string, f: Fields): boolean {
   return actual?.id === id && actual?.status === 'confirmed' && actual?.summary === f.summary
     && Date.parse(actual?.start?.dateTime) === Date.parse(f.start.dateTime) && Date.parse(actual?.end?.dateTime) === Date.parse(f.end.dateTime)
-    && (actual?.location || '') === f.location && (actual?.description || '') === f.description && !hasGuests(actual)
+    && (!f.location || actual?.location === f.location) && (!f.description || actual?.description === f.description) && !hasGuests(actual)
 }
 
 async function primaryRefreshToken(owner: string): Promise<string | null> {
@@ -59,7 +62,8 @@ async function primaryRefreshToken(owner: string): Promise<string | null> {
 
 export type GcalDeps = { getEventImpl?: typeof getEvent; refreshToken?: (owner: string) => Promise<string | null>; accessToken?: (refresh: string) => Promise<string | null>; fetchImpl?: Fetch; audit?: typeof recordOwnerAudit }
 const log = (code: string, status: number) => console.error('EVENTS_GCAL_FAILED:', JSON.stringify({ code, status }))
-const denied = (s: number) => s === 401 || s === 403
+// Only 401 means the sign-in is gone; a 403 on one entry is a refusal of that entry, not a reason to reconnect.
+const denied = (s: number) => s === 401
 
 type Ctx = { f: Fetch; headers: Record<string, string> }
 async function session(owner: string, deps: GcalDeps): Promise<Ctx | null> {
@@ -108,14 +112,14 @@ export async function addEventToGoogleCalendar(owner: string, id: string, revisi
     if (found.entry) {
       targetId = String(found.entry.id)
       // Only Gogo's fields: reminders, colour, conferencing or attachments set in Google are left as they are.
-      const w = await c.f(`${API}/${encodeURIComponent(targetId)}?sendUpdates=none`, { method: 'PATCH', headers: c.headers, body: JSON.stringify(f), cache: 'no-store' })
+      const w = await c.f(`${API}/${encodeURIComponent(targetId)}?sendUpdates=none`, { method: 'PATCH', headers: c.headers, body: JSON.stringify(writable(f)), cache: 'no-store' })
       if (!w.ok) { log('patch', w.status); return { ok: false, result: w.status >= 500 ? 'unknown' : denied(w.status) ? 'not_connected' : 'failed' } }
     } else {
       targetId = organizerCalendarId(e.id)
-      const body = { ...f, id: targetId, iCalUID: organizerIcalUid(e.id), guestsCanInviteOthers: false, guestsCanSeeOtherGuests: false, source: { title: 'AskGogo', url: 'https://askgogo.in/dashboard/events' } }
+      const body = { ...writable(f), id: targetId, guestsCanInviteOthers: false, guestsCanSeeOtherGuests: false, source: { title: 'AskGogo', url: 'https://askgogo.in/dashboard/events' } }
       let w = await c.f(`${API}?sendUpdates=none`, { method: 'POST', headers: c.headers, body: JSON.stringify(body), cache: 'no-store' })
       // 409: Google still holds this id (the entry was deleted and sits in Google's bin). Restore it in place.
-      if (w.status === 409) w = await c.f(`${API}/${encodeURIComponent(targetId)}?sendUpdates=none`, { method: 'PATCH', headers: c.headers, body: JSON.stringify(f), cache: 'no-store' })
+      if (w.status === 409) w = await c.f(`${API}/${encodeURIComponent(targetId)}?sendUpdates=none`, { method: 'PATCH', headers: c.headers, body: JSON.stringify(writable(f)), cache: 'no-store' })
       else created = w.ok
       if (!w.ok) { log('write', w.status); return { ok: false, result: w.status >= 500 ? 'unknown' : denied(w.status) ? 'not_connected' : 'failed' } }
     }

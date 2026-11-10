@@ -47,7 +47,7 @@ let fx = fakeGoogle()
 let r: any = await g.addEventToGoogleCalendar(OWNER, ID, 3, deps(fx))
 eq([r.ok, r.result, r.link], [true, 'created', 'https://www.google.com/calendar/event?eid=abc'], 'the first tap creates the entry and reports it only after reading it back')
 const post = fx.calls.find(c => c.method === 'POST')!
-eq([post.body.attendees, post.body.iCalUID], [undefined, g.organizerIcalUid(ID)], 'the new entry has no attendees and the calendar file UID')
+eq([post.body.attendees, post.body.iCalUID], [undefined, undefined], 'the new entry has no attendees, and no iCalUID (Google sets that only on import)')
 ok(fx.calls.filter(c => !['GET', 'LIST'].includes(c.method)).every(c => /[?&]sendUpdates=none/.test(c.url)), 'Google is told to notify nobody')
 ok(fx.calls.every(c => c.url.startsWith('https://www.googleapis.com/calendar/v3/calendars/primary/events')), "only the organizer's primary calendar is touched")
 eq(audits.at(-1)?.slice(2), ['event.calendar_synced', { result: 'created', revision: 3 }], 'the write is in the audit trail')
@@ -79,6 +79,11 @@ for (const [name, over, rev, want] of [
 }
 fx = fakeGoogle({ failOn: { GET: 401 } }); r = await g.addEventToGoogleCalendar(OWNER, ID, 3, deps(fx))
 eq([r.result, fx.calls.length], ['not_connected', 1], 'Google refusing the sign-in is "not connected", with nothing written')
+fx = fakeGoogle({ failOn: { GET: 403 } }); r = await g.addEventToGoogleCalendar(OWNER, ID, 3, deps(fx))
+eq(r.result, 'failed', 'a 403 on the entry is a failure, not a reason to reconnect')
+fx = fakeGoogle({ entries: [{ id: cid, status: 'confirmed', summary: 'x', location: 'Typed in Google', description: 'my notes' }] })
+r = await g.addEventToGoogleCalendar(OWNER, ID, 3, deps(fx, { event: { venue_name: null, venue_address: null, description: null } }))
+eq([r.result, fx.db.get(cid).location, fx.db.get(cid).description], ['updated', 'Typed in Google', 'my notes'], 'an empty place or notes in Gogo does not wipe what was typed in Google')
 // 8. Not sure: never success.
 r = await g.addEventToGoogleCalendar(OWNER, ID, 3, deps(fakeGoogle({ entries: [{ id: cid, status: 'confirmed' }], failOn: { PATCH: 503 } })))
 eq(r.result, 'unknown', 'a server error is reported as not sure')

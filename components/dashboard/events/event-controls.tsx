@@ -58,7 +58,8 @@ const GCAL_TEXT: Record<string, string> = {
   changed_meanwhile: 'The event changed since this page loaded, so nothing was changed. The page has been refreshed: check it and try again.',
   has_guests: 'This entry in your Google Calendar has guests you added there, so Gogo left it alone. Change it in Google Calendar, so they are told.',
   not_there: 'It is not in your Google Calendar.', no_date: 'The event has no date yet, so it cannot go in your calendar.', cancelled: 'This event is cancelled.',
-  unknown: 'Google did not confirm it, so I cannot be sure it worked. Check your calendar; tapping again is safe and will not make a second entry.',
+  unknown: 'Google did not confirm it, so I cannot be sure it was added. Check your calendar; tapping again is safe and will not make a second entry.',
+  unknown_remove: 'Google did not confirm it, so I cannot be sure it was removed. Check your calendar; tapping again is safe.',
 }
 const GCAL_DONE: Record<string, string> = { created: 'Added to your Google Calendar.', updated: 'Updated in your Google Calendar.', removed: 'Removed from your Google Calendar.' }
 
@@ -71,8 +72,8 @@ export function GoogleCalendarButton({ id, revision, when, remove = false }: { i
     setBusy(true); setMsg(null)
     const j = await act(id, remove ? { action: 'remove_gcal' } : { action: 'add_gcal', revision }).catch(() => ({ ok: false, error: 'network' })) as any
     setBusy(false); setAsk(false)
-    if (j.ok) { setMsg({ ok: true, text: `${GCAL_DONE[j.result] || 'Done.'}${j.changedSince ? ' The event changed while this ran: tap again to bring your calendar up to date.' : ''}`, link: j.link }); return }
-    setMsg({ ok: false, text: GCAL_TEXT[j.result] || 'That did not work, so nothing was changed. Please try again.' })
+    if (j.ok) { setMsg({ ok: true, text: `${GCAL_DONE[j.result] || 'Done.'}${j.changedSince ? ' The event changed while this ran: reload the page and tap again to bring your calendar up to date.' : ''}`, link: j.link }); if (j.changedSince) router.refresh(); return }
+    setMsg({ ok: false, text: GCAL_TEXT[remove && j.result === 'unknown' ? 'unknown_remove' : j.result] || 'That did not work, so nothing was changed. Please try again.' })
     if (j.result === 'changed_meanwhile') router.refresh()
   }
   return <div className="final-dark-card mt-5 p-4">
