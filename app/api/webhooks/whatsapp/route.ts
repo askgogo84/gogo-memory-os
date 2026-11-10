@@ -1119,7 +1119,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         })().catch((e: any) => { console.error('EVENT_WHATSAPP_ENTRY_FAILED:', String(e?.code || e?.name || 'error').slice(0, 60)); return null })
         if (eventReply) {
           // Shadow comparison for the looping brain (owner only, off unless GOGO_BRAIN_LOOP_USERS is set; never replies).
-          if (process.env.GOGO_BRAIN_LOOP_USERS) await import('@/lib/agent/brain').then(m => m.scheduleLoopShadow({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), forwarded: Boolean(forwardedMessage) }, null, 'events')).catch(() => {})
+          if (process.env.GOGO_BRAIN_LOOP_USERS || process.env.GOGO_BRAIN_LOOP_LIVE_USERS) await import('@/lib/agent/brain').then(m => m.scheduleLoopShadow({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), forwarded: Boolean(forwardedMessage), surface: 'whatsapp' }, null, 'events')).catch(() => {})
           await saveConversation(resolvedUser.telegramId, 'user', text)
           await saveConversation(resolvedUser.telegramId, 'assistant', eventReply)
           await sendWhatsAppMessage(from, eventReply)
