@@ -118,7 +118,7 @@ await inbox.storeInbound([1, 2, 3].map(n => ({ id: wamid(90 + n), from: '9199000
 let clock = 0; const timeouts: number[] = []
 const slow = async (_p: any, o: any) => { timeouts.push(o.timeoutMs); clock += 30_000; return { result: 'done' as const, status: 200 } }
 const timed = await inbox.drainMetaInbox({ db, forward: slow as any, now: () => clock })
-eq([timed.rounds, timed.done, timeouts], [2, 2, [110_000, 80_000]], 'rounds stop when under a minute is left, and each hand-over is cut off before the limit')
+eq([timed.rounds, timed.done, timeouts], [2, 2, [95_000, 65_000]], 'rounds stop when under a minute is left, and each hand-over is cut off before the limit')
 ok(/\(i\.status = 'pending' and i\.next_attempt_at <= clock_timestamp\(\)\)/.test(fnSrc), 'the wait before a retry is checked again on the locked row')
 
 // A NUL character does not block the batch.
@@ -147,7 +147,12 @@ void createHmac
 
 const pipe = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
 ok(/inboundClaim\.status === 'claimed' && req\.headers\.get\('x-gogo-meta-inbox'\) === '1'\) return new NextResponse\('InFlight', \{ status: 503 \}\)/.test(pipe) && pipe.indexOf("'InFlight'") > pipe.indexOf('signatureAudit.reject'), 'a hand-over still running answers InFlight to the inbox, after the signature check')
-eq((await inbox.forwardToPipeline({ Body: 'x' }, { env, fetchImpl: (async () => new Response('InFlight', { status: 503 })) as any })).result, 'retry', 'InFlight makes the inbox wait and try again, not mark it done')
+eq((await inbox.forwardToPipeline({ Body: 'x' }, { env, fromInbox: true, fetchImpl: (async () => new Response('InFlight', { status: 503 })) as any })).result, 'retry', 'InFlight makes the inbox wait and try again, not mark it done')
+const hdrs: (string | null)[] = []
+const grab = (async (_u: string, i: any) => { hdrs.push(new Headers(i.headers).get('x-gogo-meta-inbox')); return new Response('', { status: 200 }) }) as any
+await inbox.forwardToPipeline({ Body: 'x' }, { env, fetchImpl: grab }); await inbox.forwardToPipeline({ Body: 'x' }, { env, fetchImpl: grab, fromInbox: true })
+eq(hdrs, [null, '1'], 'only the inbox asks for InFlight: the webhook without the inbox gets the same answers as before')
+ok(/forward\(row\.params \|\| \{\}, \{ timeoutMs, fromInbox: true \}\)/.test(mod), 'the drain marks its hand-overs as coming from the inbox')
 eq([inbox.metaInboxDraining({ GOGO_WA_META_INBOX: 'drain' }), inbox.metaInboxEnabled({ GOGO_WA_META_INBOX: 'drain' }), inbox.metaInboxDraining({})], [true, false, false], "'drain' stops storing but keeps emptying the inbox")
 ok(/if \(!metaInboxDraining\(\)\) return NextResponse\.json\(\{ ok: true, skipped: 'inbox_off' \}\)/.test(cron), 'the cron keeps draining in drain mode')
 

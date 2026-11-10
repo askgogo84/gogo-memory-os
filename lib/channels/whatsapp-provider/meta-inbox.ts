@@ -26,7 +26,7 @@ export function pipelineUrl(env: Env = envOf()): string | null {
 export type ForwardResult = 'done' | 'busy' | 'retry'
 /** Hands one message to the pipeline, signed with the secret its gate already requires. 'busy' is final: the
  *  pipeline has already told the person to send it again. */
-export async function forwardToPipeline(params: Record<string, string>, opts: { fetchImpl?: typeof fetch; env?: Env; timeoutMs?: number } = {}): Promise<{ result: ForwardResult; status: number }> {
+export async function forwardToPipeline(params: Record<string, string>, opts: { fetchImpl?: typeof fetch; env?: Env; timeoutMs?: number; fromInbox?: boolean } = {}): Promise<{ result: ForwardResult; status: number }> {
   const env = opts.env || envOf()
   const url = pipelineUrl(env), secret = env.TWILIO_AUTH_TOKEN || ''
   if (!url || !secret) return { result: 'retry', status: 0 }
@@ -34,7 +34,7 @@ export async function forwardToPipeline(params: Record<string, string>, opts: { 
   try {
     const response = await (opts.fetchImpl || fetch)(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Twilio-Signature': computeTwilioSignature(secret, url, params), 'X-Gogo-Meta-Inbox': '1' },
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Twilio-Signature': computeTwilioSignature(secret, url, params), ...(opts.fromInbox ? { 'X-Gogo-Meta-Inbox': '1' } : {}) },
       body: new URLSearchParams(params).toString(),
       redirect: 'error', // never re-send the message and its signature to a redirect target
       signal: AbortSignal.timeout(Math.max(5_000, Math.min(opts.timeoutMs ?? 110_000, 110_000))),
@@ -82,10 +82,11 @@ export async function drainMetaInbox(opts: { db?: Db; forward?: typeof forwardTo
     if (claimed?.error) { console.error('WHATSAPP_META_INBOX_CLAIM_FAILED:', JSON.stringify({ code: String(claimed.error.code || '').slice(0, 12) })); break }
     const rows: any[] = Array.isArray(claimed?.data) ? claimed.data : []
     if (!rows.length) break
-    const timeoutMs = limit - (now() - started) - 5_000
+    // Leaves 20 s after the hand-overs for the finishing writes and the resend notices.
+    const timeoutMs = limit - (now() - started) - 20_000
     let finished = 0
     await Promise.all(rows.map(async row => {
-      const { result, status } = await forward(row.params || {}, { timeoutMs })
+      const { result, status } = await forward(row.params || {}, { timeoutMs, fromInbox: true })
       const at = Date.now()
       const patch = result === 'retry'
         ? { status: 'pending', lease_id: null, lease_until: null, last_status: status, next_attempt_at: new Date(at + retryDelayMs(row.attempts)).toISOString() }
@@ -108,7 +109,7 @@ export async function drainMetaInbox(opts: { db?: Db; forward?: typeof forwardTo
     console.error('WHATSAPP_META_INBOX_GAVE_UP:', JSON.stringify({ senders: givenUp.length }))
     const { waProviderFor } = await import('./provider')
     // Only people still served by the Meta number: anyone moved back to Twilio is not messaged from here.
-    await Promise.all(givenUp.slice(0, 50).filter(s => waProviderFor(s) === 'meta').map(s => (opts.notify || askToResend)(s).catch(() => {})))
+    await Promise.all(givenUp.slice(0, 50).filter(s => waProviderFor(s) === 'meta').map(s => Promise.race([(opts.notify || askToResend)(s), new Promise(r => setTimeout(r, 10_000))]).catch(() => {})))
   }
   return out
 }
