@@ -28,15 +28,18 @@ export function goalBoardEnabledFor(owner: string, env: Env = process.env): bool
   return Boolean(owner) && v.split(',').map(s => s.trim()).includes(owner)
 }
 
-/** Run kinds that are pieces of work someone asked for (the ones Tasks asks the owner to confirm, plus comparisons).
- *  Background checks, watcher setup, page reads and context fetches are not counted, listed or credited with time. */
-export const OUTCOME_RUN_TYPES: ReadonlySet<string> = new Set([...CONFIRMABLE_RUN_TYPES, 'food_comparison', 'grocery_comparison', 'creditiq_hotel_research'])
+/** Run kinds that are pieces of work someone asked for: the agent_runs.type values the request paths write (the main
+ *  agent command, the planners, research, comparisons, reservations, email, calendar, calls, meeting prep), plus the
+ *  kinds Tasks asks the owner to confirm. Background checks, watcher setup, page reads and context fetches are not
+ *  counted, listed or credited with time. A pending approval is always shown, whatever kind of run it belongs to. */
+export const OUTCOME_RUN_TYPES: ReadonlySet<string> = new Set([...CONFIRMABLE_RUN_TYPES,
+  'command', 'general_plan', 'price_comparison', 'food_comparison', 'grocery_comparison', 'restaurant_reservation', 'restaurant_reservation_slot', 'workspace_meeting_prep'])
 
 /** Minutes a person would typically spend doing this kind of task by hand. Conservative, fixed, documented in
  *  docs/architecture/same-brain-3/06-goal-to-done.md. Unknown kinds count 5. */
 export const TIME_SAVED_MINUTES: Record<string, number> = {
   reminder: 2, list: 2, memory: 1, calendar: 4, web_search: 10, research: 15, travel: 20, flight: 20,
-  comparison: 15, price: 10, booking: 10, reservation: 10, watcher: 5, artifact: 20, document: 20, events: 10,
+  comparison: 15, price: 10, booking: 10, reservation: 10, meeting_prep: 10, artifact: 20, document: 20, events: 10,
 }
 export const TIME_SAVED_DEFAULT = 5
 export function minutesSavedFor(run: any): number {

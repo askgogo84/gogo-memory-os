@@ -52,6 +52,8 @@ function blockText(run: any) {
   const m = metaOf(run)
   return [run?.error, m.blockReason, m.block_reason, m.blocked_reason, m.blockedReason, m.browser?.blockReason, m.handoff?.reason].filter(Boolean).map(String).join(' ')
 }
+// Wider than task-state.ts's "blocked" on purpose: any stop that only the owner's hands can clear (a sign-in, a code,
+// taking over a browser) is theirs to do here, where the other tabs say "Needs you". Same run, same tab count.
 const needsOwnerHand = (run: any) => {
   const m = metaOf(run)
   return m.provider_blocked === true || Boolean(m.handoff) || m.human_handoff === true || PROVIDER_BLOCK.test(blockText(run))

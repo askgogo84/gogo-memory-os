@@ -85,6 +85,16 @@ eq([b.metrics.worked, b.metrics.failed, b.metrics.unknown], [2, 1, 1], 'two work
 eq(b.metrics.minutesSaved, g.TIME_SAVED_MINUTES.reminder + g.TIME_SAVED_MINUTES.research, 'time saved: the fixed minutes for each finished run, never a draft or a background check')
 { const busy = g.buildGoalBoard({ runs: Array.from({ length: 30 }, (_, i) => run({ id: `w${i}`, type: 'background_goal_review' })), now: NOW })
   eq([busy.metrics.minutesSaved, busy.metrics.worked, busy.metrics.handedToGogo, busy.done.length], [0, 0, 0, 0], 'thirty scheduled goal reviews save no time and are not tasks') }
+{ const kinds = ['command', 'general_plan', 'price_comparison', 'restaurant_reservation', 'restaurant_reservation_slot', 'workspace_meeting_prep', 'travel_research', 'autonomous', 'compound', 'gmail_send', 'voice_call', 'grocery_comparison']
+  const real = g.buildGoalBoard({ runs: kinds.map((type, i) => run({ id: `k${i}`, type })), now: NOW })
+  eq(real.metrics.worked, kinds.length, 'every kind of run a request path writes is counted')
+  const fs = await import('node:fs'), path = await import('node:path')
+  const walk = (d: string): string[] => fs.readdirSync(d, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(d, e.name)) : e.name.endsWith('.ts') ? [path.join(d, e.name)] : [])
+  const written = new Set<string>()
+  for (const f of walk(new URL('../lib', import.meta.url).pathname)) for (const m of fs.readFileSync(f, 'utf8').matchAll(/from\('agent_runs'\)\s*\.insert\(\{[^}]{0,400}?type:\s*'([a-z_]+)'/g)) written.add(m[1])
+  const NOT_TASKS = new Set(['secure_browser', 'watcher', 'background_goal_review', 'workspace_drive_context', 'email_triage', 'event_ticket', 'goal', 'product_stock', 'web_page', 'travel_ticket'])
+  const unknown = [...written].filter(t => !g.OUTCOME_RUN_TYPES.has(t) && !NOT_TASKS.has(t))
+  eq(unknown, [], `every run type written in lib/ is either a task kind or a named background kind (${[...written].length} found)`) }
 eq(g.buildGoalBoard({ runs: [], notices: 2, now: NOW }).metrics.needYou, 2, 'service notices count as needing you, as on the Needs you tab')
 eq(b.metrics.needYou, 4, 'needs you: draft, sign-in, unknown, the approval with no run')
 ok(b.metrics.handedToGogo === 8, `tasks Gogo took on in 30 days, outcome kinds only (${b.metrics.handedToGogo})`)

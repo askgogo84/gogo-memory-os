@@ -27,7 +27,7 @@ Reference: the Daybook task-delegation video. AskGogo does not clone it. This no
 
 - Done and checked: finished runs with outside evidence.
 - Need you: drafts, approvals, blocked runs, unknown outcomes.
-- Time saved, estimated: for each finished run (never a draft, failure or unknown outcome), a fixed number of minutes for its kind, summed. The table is `TIME_SAVED_MINUTES` in `goal-board.ts`: reminder 2, list 2, memory 1, calendar 4, web search 10, research 15, travel or flight 20, comparison 15, price 10, booking or reservation 10, watcher 5, artifact or document 20, events 10; anything else 5. It is an estimate and is labelled as one.
+- Time saved, estimated: for each finished run (never a draft, failure or unknown outcome), a fixed number of minutes for its kind, summed. The table is `TIME_SAVED_MINUTES` in `goal-board.ts`: reminder 2, list 2, memory 1, calendar 4, web search 10, research 15, travel or flight 20, comparison 15, price 10, booking or reservation 10, meeting prep 10, artifact or document 20, events 10; anything else 5. It is an estimate and is labelled as one.
 - Runs that worked: finished ÷ (finished + failed); unknown outcomes are counted on their own.
 - Handed to Gogo: tasks Gogo took on ÷ (those + the owner's own to-dos).
 
