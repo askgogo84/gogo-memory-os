@@ -242,7 +242,7 @@ export function stepFor(g: IntakeGoal): { tool: 'reminders' | 'travel' | 'web_se
   if (g.kind === 'research') return { tool: 'web_search', title: g.title, instruction: g.words }
   // The tasks tool takes the quoted words as the to-do; it skips texts that start like one of a planner's own steps
   // ("check…", "verify…"), so those are phrased as a note to self.
-  if (g.kind === 'todo') { const t = g.title.replace(/["“”'‘’]/g, '').trim(); return { tool: 'tasks', title: g.title, instruction: `Add a task: "${/^(?:retrieve|look up|check|verify|ensure)\b/i.test(t) ? `Remember to ${t.replace(/^./, c => c.toLowerCase())}` : t}"` } }
+  if (g.kind === 'todo') { const t = g.title.replace(/["“”]/g, '').trim(); return t ? { tool: 'tasks', title: g.title, instruction: `Add a task: ${/^(?:retrieve|look up|check|verify|ensure)\b/i.test(t) ? `Remember to ${t.replace(/^./, c => c.toLowerCase())}` : t}` } : null }
   return null
 }
 
@@ -256,10 +256,11 @@ export type StartDeps = {
 }
 /** "2026-11-11T09:30" in the person's own zone, for comparing with a reminder's day and time. */
 function localNow(zone: string, now: Date = new Date()): string {
-  const f = (z: string) => new Intl.DateTimeFormat('sv-SE', { timeZone: z, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(now).replace(' ', 'T')
+  const f = (z: string) => { const p: Record<string, string> = {}; for (const x of new Intl.DateTimeFormat('en-GB', { timeZone: z, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now)) p[x.type] = x.value; return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}` }
   try { return f(zone) } catch { return f('Asia/Kolkata') }
 }
 export const MAX_PARALLEL = 3
+const FLIGHT_EXTRAS = /\b(?:return|round[- ]?trip|two[- ]way|both ways|kids?|child(?:ren)?|infants?|bab(?:y|ies)|adults?|people|persons?|passengers?|family|of us|budget|under|below|less than|cheaper than|max(?:imum)?|business|first class|premium|non[- ]?stop|direct|morning|afternoon|evening|night|red[- ]?eye|before|after|baggage|luggage|refundable)\b|₹|\brs\.?\s?\d|\b\d+\s?k\b/i
 export type Started = { goal: IntakeGoal; running?: Promise<{ status: string; text: string }>; reply?: string | null }
 
 /** Starts every open goal that has what it needs. Returns what started (to be driven by the caller) and the plan. */
@@ -285,6 +286,9 @@ export async function startGoals(actor: AgentActor, plan: IntakePlan, deps: Star
         // The owner's own off switch for this kind of work is honoured before anything is created.
         const needs = step.tool === 'reminders' ? 'reminders' as const : step.tool === 'web_search' ? 'browser' as const : null
         if (needs && await (deps.capabilityOff || realCapabilityOff)(actor, needs)) { g.state = 'held'; g.note = needs === 'reminders' ? 'capability_off' : 'browser_off'; continue }
+        // A flight ask with conditions the simple fare search does not carry (a return leg, children, several
+        // travellers, a budget, a cabin, a time of day) is not searched as something simpler than what was asked.
+        if (g.kind === 'flight_prices' && FLIGHT_EXTRAS.test(g.words)) { g.state = 'held'; g.note = 'flight_details'; continue }
         // A reminder for a time that has already gone by is asked about, not attempted.
         if (step.reminder && `${step.reminder.date}T${step.reminder.time}` <= localNow(actor.timezone || 'Asia/Kolkata', deps.now)) { g.state = 'held'; g.note = 'time_passed'; continue }
         const run = await (deps.startRun || realStartRun)({ actor, goal: g, step, plan })
@@ -347,6 +351,7 @@ export function startedText(plan: IntakePlan, quick: Map<string, { status: strin
     else if (g.state === 'open') lines.push(`⏸ ${g.title}: not started. I still need ${missingOf(g).map(s => QUESTION[s].replace(/\?$/, '')).join(', ')}. Ask me for this one on its own when you have it.`)
     else if (g.note === 'one_draft_at_a_time') lines.push(`⏸ ${g.title}: not started. I keep one email draft at a time; ask me for this one after the first is sent or dropped.`)
     else if (g.note === 'browser_off') lines.push(`⏸ ${g.title}: web research is switched off in your settings, so I did not start it.`)
+    else if (g.note === 'flight_details') lines.push(`⏸ ${g.title}: not started. This one has conditions (travellers, return, budget or timing) I’d rather get right; ask me for this flight search on its own.`)
     else if (g.note === 'time_passed') lines.push(`⏸ ${g.title}: that time has already passed. Tell me a new time and I’ll set it.`)
     else if (g.note === 'email_not_started') lines.push(`⏸ ${g.title}: no draft yet. ${g.reply || 'Ask me for this email on its own.'}`)
     else if (g.note === 'events_off') lines.push(`⏸ ${g.title}: event planning isn’t switched on for you yet.`)
@@ -389,7 +394,7 @@ const realStore: Store = {
 // The one way a plan starts: these exact phrases, alone or at the end of the reply that gives the missing details.
 // Bare "yes", "go ahead", "do it" and "start" belong to other flows (an approval, an Events confirmation) and never
 // start a plan; the model's opinion of whether the person meant "start" is not used.
-const START_CLAUSE = /^(?:(?:ok(?:ay)?|yes|yep|alright|great|cool|perfect|now|please)[\s,.!]+)*(?:please\s+)?(?:get\s+(?:it|them|these|this|everything|all\s+of\s+them)\s+(?:all\s+)?done|start\s+(?:them|these)(?:\s+all)?|do\s+(?:them|these)(?:\s+all)?)(?:[\s,]+(?:please|now|thanks|thank\s+you))*[\s.!*]*$/i
+const START_CLAUSE = /^(?:(?:ok(?:ay)?|yes|yep|alright|great|cool|perfect|sure|go\s+ahead|now|please|pls|plz)[\s,.!]+)*(?:(?:please|pls|plz|just)\s+)?(?:get\s+(?:it|them|these|this|everything|all\s+of\s+them)\s+(?:all\s+)?done|start\s+(?:them|these)(?:\s+all)?|do\s+(?:them|these)(?:\s+all)?)(?:[\s,]+(?:please|pls|plz|now|thanks|thank\s+you|na|yaar))*[\s.!*\p{Extended_Pictographic}\u{1F3FB}-\u{1F3FF}\uFE0F]*$/iu
 // Anything that could turn the phrase into "not yet", "I will" or a question: then it is not a start.
 const NOT_A_START = /\b(?:don'?t|do\s+not|not|never|no|nope|wait|hold|stop|cancel|i'?ll|i\s+will|i\s+can|let\s+me|should|shall|could|would|can\s+you|will\s+you|later|yet|before|after|unless|until|if|when|how|why)\b|\?/i
 /** True only when the message is the start phrase, or ends with it as its own clause after the details, and nothing
@@ -425,7 +430,11 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
       const ans = onlyStart ? { about_plan: true, start: true } : await model.answers({ text, today, timezone: tz, goals: pending.goals.filter(g => g.state === 'open').map(g => ({ id: g.id, kind: g.kind, title: g.title, missing: missingOf(g) })) })
       const applied = applyAnswers(pending, wantsStart && ans ? { ...ans, about_plan: true } : ans, today)
       // Details given together with the start phrase: the phrase decides, whatever the model made of the rest.
-      const plan = applied.plan, about = applied.about || wantsStart, start = wantsStart
+      // The phrase alone starts the plan. The phrase after other words starts it only when those words gave at least
+      // one detail (or dropped a goal) for this plan: "nahi, get it done" or "send Divya the docs, get it done" gave
+      // none, so the plan is shown again instead.
+      const changed = JSON.stringify(applied.plan.goals.map(g => [g.slots, g.state])) !== JSON.stringify(pending.goals.map(g => [g.slots, g.state]))
+      const plan = applied.plan, about = applied.about || wantsStart, start = onlyStart || (wantsStart && changed)
       if (about) {
         if (!start) { const out = planText(plan); await store.save(tg, out.plan); console.log('GOAL_INTAKE:', JSON.stringify({ step: 'answers', goals: plan.goals.length })); return out.text }
         // Marked started before anything starts: a stored plan marked started is never read again (readPlan), so a

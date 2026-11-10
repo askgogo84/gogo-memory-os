@@ -113,7 +113,7 @@ eq([emails.length, startedRuns.length], [0, 0], 'and nothing started')
 r = await gi.tryGoalIntake(actor, 'do them all', deps as any)
 eq(emails, ['email Divya saying the offsite is moved to Friday'], 'only the first email is drafted, through the compose flow (draft only)')
 ok(/⏸ Email Nithin: not started\. I keep one email draft at a time; ask me for this one after the first is sent or dropped\./.test(r!), 'the second email is not started while the first draft waits')
-eq(startedRuns.map(s => [s.kind, s.ownership, s.step.instruction]), [['todo', 'your_turn', 'Add a task: "Call the bank"']], 'only the person can call the bank: it goes on their to-do list')
+eq(startedRuns.map(s => [s.kind, s.ownership, s.step.instruction]), [['todo', 'your_turn', 'Add a task: Call the bank']], 'only the person can call the bank: it goes on their to-do list')
 
 // 4b. Starting: only the exact phrase; switches and limits honoured.
 { stored = null; startedRuns.length = 0; events.length = 0
@@ -182,7 +182,7 @@ for (const t of ['do not start them', 'don’t start them', "don't do them", 'ho
   const made: any[] = []
   const res = await gi.startGoals(actor, plan, { now: NOW, capabilityOff: async (_a: any, c: string) => c === 'browser', email: async () => 'Connect Google Workspace first so I can find the email thread.', startRun: async ({ goal, step }: any) => { made.push(step); return { runId: goal.id, drive: async () => ({ status: 'completed', text: 'ok' }) } } } as any)
   eq(res.plan.goals.map(g => [g.state, g.note || '']), [['held', 'browser_off'], ['held', 'time_passed'], ['held', 'email_not_started'], ['started', '']], 'web research switched off, a reminder time already gone, and an email with no draft are each held with their own reason')
-  eq(made.map(s => s.instruction), ['Add a task: "Remember to check passport expiry"'], 'a to-do that begins like a planner step is phrased so the tasks tool keeps it')
+  eq(made.map(s => s.instruction), ['Add a task: Remember to check passport expiry'], 'a to-do that begins like a planner step is phrased so the tasks tool keeps it')
   const txt = gi.startedText(res.plan, new Map())
   ok(/web research is switched off in your settings/.test(txt) && /that time has already passed\. Tell me a new time/.test(txt) && /Email Divya: no draft yet\. Connect Google Workspace first/.test(txt) && /^Started 1 of 4\./.test(txt), 'and the reply says each reason, counting only what really started') }
 { const pg3 = readFileSync(new URL('../lib/agent/persistent-general-plan.ts', import.meta.url), 'utf8'), cron = readFileSync(new URL('../app/api/cron/autonomous-runs/route.ts', import.meta.url), 'utf8')
@@ -190,6 +190,27 @@ for (const t of ['do not start them', 'don’t start them', "don't do them", 'ho
   ok(/goal_live_until: new Date\(Date\.now\(\) \+ 150_000\)\.toISOString\(\)/.test(pg3) && /typeof meta\.goal_live_until==='string'&&Date\.parse\(meta\.goal_live_until\)>Date\.now\(\)\)\{skipped\+\+;continue\}/.test(cron), 'the sweeper leaves a goal run alone while the request that created it is still driving it')
   ok(/includes\('persistent_reminder_permission_off'\)\) text = 'Reminders are switched off/.test(pg3), 'the "reminders are off" line is only for the reminder switch')
   ok(/missionText: step\.instruction,/.test(readFileSync(new URL('../lib/agent/goal-intake.ts', import.meta.url), 'utf8')), 'a goal run’s mission text is the checked instruction, not the first wording') }
+
+// 4d. The phrase after other words starts the plan only when those words gave a detail for it.
+for (const t of ['get it done 👍', 'get it done pls', 'just get it done', 'ok go ahead, get it done', 'sure, do them all']) ok(gi.wantsStartPhrase(t), `starts: ${t}`)
+{ for (const t of ['nahi, get it done', 'mat karo, do them', 'ruko, start them', 'nevermind, do them', 'you said, get it done', 'maybe, get it done', 'Send Divya the docs, get it done', 'tomorrow, get it done']) {
+    stored = null; startedRuns.length = 0; events.length = 0
+    await gi.tryGoalIntake(actor, SENTENCE, deps as any)
+    answers = { about_plan: true, start: true, fills: [] }
+    r = await gi.tryGoalIntake(actor, t, deps as any)
+    ok(startedRuns.length === 0 && events.length === 0 && /^I count/.test(r || ''), `words that gave no detail do not start the plan, which is shown again: ${t}`) }
+  stored = null; startedRuns.length = 0
+  await gi.tryGoalIntake(actor, SENTENCE, deps as any)
+  answers = { about_plan: true, start: false, drop: ['g3'] }
+  r = await gi.tryGoalIntake(actor, 'skip the emails, get it done', deps as any)
+  ok(/^Started /.test(r!), 'dropping a goal and saying the phrase starts the rest')
+  eq(gi.stepFor({ id: 'g1', kind: 'todo', title: 'Call Divya’s mom', words: 'x', slots: {}, ownership: 'your_turn', asked: [], state: 'open' })!.instruction, 'Add a task: Call Divya’s mom', 'a to-do keeps its apostrophe')
+  const fl = gi.newPlan('x', [{ id: 'g1', kind: 'flight_prices', title: 'Goa flights', words: 'check return flights Bangalore to Goa for 2 adults and 2 kids under ₹30k', slots: { from: 'Bangalore', to: 'Goa', date: '2026-12-20' }, ownership: 'gogo_handles', asked: [], state: 'open' },
+    { id: 'g2', kind: 'flight_prices', title: 'Delhi flights', words: 'check flight prices to Delhi', slots: { from: 'Bengaluru', to: 'Delhi', date: '2026-12-12' }, ownership: 'gogo_handles', asked: [], state: 'open' }], NOW)
+  const made2: any[] = []
+  const fr = await gi.startGoals(actor, fl, { now: NOW, capabilityOff: async () => false, startRun: async ({ goal, step }: any) => { made2.push(step.instruction); return { runId: goal.id, drive: async () => ({ status: 'completed', text: 'ok' }) } } } as any)
+  eq([fr.plan.goals.map(g => g.note || g.state), made2], [['flight_details', 'started'], ['Compare flights from Bengaluru to Delhi on 2026-12-12']], 'a flight ask with travellers, a return or a budget is not searched as something simpler; a plain one is')
+  ok(/ask me for this flight search on its own/.test(gi.startedText(fr.plan, new Map())), 'and the reply says why') }
 
 // 5. Not about the plan; stale plans; a stored plan is re-checked.
 stored = null
