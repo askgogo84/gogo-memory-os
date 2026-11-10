@@ -96,4 +96,65 @@ eq(exportsFound, ['GET', 'POST', 'dynamic', 'maxDuration'], 'only route exports'
 const pipeline = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
 ok(/auditInboundTwilioSignature\(\{/.test(pipeline) && !/whatsapp-meta|GOGO_META/.test(pipeline), 'the existing pipeline and its signature gate are untouched')
 
+// 6. Sender identity is validated, not normalised (independent review, finding 3).
+const fromCase = (from: unknown) => parseMetaWebhook(envelope({ messages: [{ from, id: wamid(30), type: 'text', text: { body: 'x' } }] }), PHONE_ID).messages.length
+eq(fromCase('919900000002'), 1, 'a plain digit string is a sender')
+for (const bad of ['+91 99000-00002', 'IN.919900000002', 'abc9199x0000y0002', 919900000002, ['91990', '0000002'], { toString: () => '919900000002' }, '1234567', '1234567890123456', null])
+  eq(fromCase(bad), 0, `not a sender id: ${JSON.stringify(bad)}`)
+eq(parseMetaWebhook(envelope({ messages: [{ from: '919900000002', id: wamid(31), type: 'text', text: { body: 'x' } }] }, 123456789012345 as any), PHONE_ID).messages.length, 0, 'a numeric phone number id never matches the configured string')
+
+// 7. The handler itself, run with a stubbed network (independent review, findings 1, 2, 7 and 10).
+const { NextRequest } = await import('next/server')
+const handler = await import('../app/api/webhooks/whatsapp-meta/route.ts')
+const SAVED = { ...process.env }, realFetch = globalThis.fetch
+const setEnv = (o: Record<string, string | undefined>) => { for (const k of Object.keys(process.env)) if (/^(?:GOGO_|TWILIO_)/.test(k)) delete process.env[k]; for (const [k, v] of Object.entries(o)) if (v !== undefined) process.env[k] = v }
+const deliver = (body: string, secret: string | null, reqUrl = 'https://app.askgogo.in/api/webhooks/whatsapp-meta') => handler.POST(new NextRequest(reqUrl, { method: 'POST', body, headers: secret === null ? {} : { 'x-hub-signature-256': sign(body, secret) } }))
+const net: { url: string; body: string; signature: string; redirect: string }[] = []
+let pipelineStatus = 200
+globalThis.fetch = (async (u: any, init: any) => { net.push({ url: String(u), body: String(init?.body || ''), signature: String(init?.headers?.['X-Twilio-Signature'] || ''), redirect: String(init?.redirect || '') }); return new Response('<Response></Response>', { status: pipelineStatus }) }) as typeof fetch
+const PIPE = 'https://app.askgogo.in/api/webhooks/whatsapp'
+const LIVE = { GOGO_META_WA_APP_SECRET: 'app-secret', GOGO_META_WA_PHONE_ID: PHONE_ID, GOGO_META_WA_TOKEN: 'fixture-token', GOGO_WA_META_NUMBERS: '+919900000002', TWILIO_AUTH_TOKEN: 'pipeline-secret', TWILIO_WHATSAPP_WEBHOOK_URL: PIPE }
+try {
+  setEnv({})
+  eq((await deliver(raw, 'app-secret')).status, 403, 'off: a signed-looking POST is 403')
+  eq((await deliver('', null)).status, 403, 'off: an empty POST is 403')
+  eq((await handler.GET(new NextRequest('https://app.askgogo.in/api/webhooks/whatsapp-meta?hub.mode=subscribe&hub.verify_token=&hub.challenge=1'))).status, 403, 'off: the handshake is 403')
+  eq(net.length, 0, 'off: nothing leaves the route')
+
+  setEnv(LIVE)
+  eq((await deliver(raw, 'wrong-secret')).status, 403, 'a wrong signature is 403'); eq(net.length, 0, 'and nothing is forwarded')
+  eq((await deliver(raw, 'app-secret')).status, 200, 'a signed text message is accepted')
+  eq(net.length, 1, 'one forward to the pipeline')
+  eq([net[0].url, net[0].redirect], [PIPE, 'error'], 'to the configured pipeline URL, redirects refused')
+  const forwarded = Object.fromEntries(new URLSearchParams(net[0].body))
+  eq([forwarded.From, forwarded.Body, forwarded.MessageSid], ['whatsapp:+919900000002', 'remind me to call Nithin at 5', wamid(1)], 'the pipeline receives the sender, text and message id')
+  eq(net[0].signature, computeTwilioSignature('pipeline-secret', PIPE, forwarded), 'signed for exactly that URL and those fields')
+
+  net.length = 0
+  eq((await deliver(raw, 'app-secret', 'https://evil.example/api/webhooks/whatsapp-meta')).status, 200, 'a request carrying another Host is still handled')
+  eq(net.map(c => c.url), [PIPE], 'but the message only ever goes to the configured pipeline URL')
+
+  for (const bad of [undefined, 'http://app.askgogo.in/api/webhooks/whatsapp', 'https://app.askgogo.in/api/other', 'https://app.askgogo.in/api/webhooks/whatsapp?x=1', 'not a url']) {
+    net.length = 0; setEnv({ ...LIVE, TWILIO_WHATSAPP_WEBHOOK_URL: bad })
+    eq([(await deliver(raw, 'app-secret')).status, net.length], [503, 0], `no usable pipeline URL (${String(bad)}): 503 and nothing sent`)
+  }
+  net.length = 0; setEnv({ ...LIVE, TWILIO_WHATSAPP_WEBHOOK_URL: undefined, GOGO_WA_PIPELINE_URL: PIPE })
+  eq([(await deliver(raw, 'app-secret')).status, net.map(c => c.url)], [200, [PIPE]], 'GOGO_WA_PIPELINE_URL also configures the pipeline')
+
+  // A media message is forwarded like any other (the pipeline applies its own gates and drops duplicates); the route sends nothing itself.
+  setEnv(LIVE); net.length = 0
+  const photo = JSON.stringify(envelope({ contacts: contact, messages: [{ from: '919900000002', id: wamid(40), type: 'image', image: { id: '5550001112223', mime_type: 'image/jpeg' } }] }))
+  for (let i = 0; i < 3; i++) eq((await deliver(photo, 'app-secret')).status, 200, `photo delivery ${i + 1} accepted`)
+  eq(net.filter(c => /graph\.facebook\.com/.test(c.url)).length, 0, 'three deliveries of one photo cause no Meta send from the route')
+  ok(net.length === 3 && net.every(c => c.url === PIPE && new URLSearchParams(c.body).get('MediaUrl0') === 'meta-media://5550001112223'), 'each is handed to the pipeline, which drops duplicates by message id')
+
+  net.length = 0; pipelineStatus = 503
+  eq((await deliver(raw, 'app-secret')).status, 500, 'a pipeline failure is a 500 so Meta redelivers'); pipelineStatus = 200
+
+  net.length = 0; setEnv({ ...LIVE, GOGO_WA_META_NUMBERS: '+919900000099' })
+  eq([(await deliver(raw, 'app-secret')).status, net.length], [200, 0], 'a sender who is not served by Meta is not forwarded')
+  net.length = 0; setEnv({ ...LIVE, TWILIO_AUTH_TOKEN: undefined })
+  eq([(await deliver(raw, 'app-secret')).status, net.length], [503, 0], 'no pipeline secret: 503 and nothing sent')
+} finally { globalThis.fetch = realFetch; for (const k of Object.keys(process.env)) delete process.env[k]; Object.assign(process.env, SAVED) }
+
 console.log(`WA_META_INBOUND_OK ${checks} checks`)

@@ -5,6 +5,12 @@
 // (/api/webhooks/whatsapp) in the field names it already reads, signed with the same server-side secret that
 // pipeline already requires. The pipeline's own signature gate, idempotency, consent and routing are unchanged.
 // A non-2xx from the pipeline makes this route answer 500 so Meta redelivers; the pipeline drops duplicates by id.
+// This route sends nothing itself and downloads nothing itself.
+//
+// Known limits, acceptable for a pilot and to be closed before GOGO_WA_PROVIDER=meta for everyone:
+//  - Forwarding is synchronous, so a slow turn makes Meta redeliver (harmless: duplicate ids are dropped) and a batch
+//    of several slow messages can exceed maxDuration. The fix is a durable inbox with an immediate 200.
+//  - A pilot person must write only to the Meta number: replies follow the person's provider, not the inbound number.
 import { createHash } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { metaHandshakeChallenge, parseMetaWebhook, pipelineParams, verifyMetaSignature } from '@/lib/channels/whatsapp-provider/meta-inbound'
@@ -21,16 +27,22 @@ export async function GET(req: NextRequest) {
   return challenge === null ? new NextResponse('Forbidden', { status: 403 }) : new NextResponse(challenge, { status: 200, headers: { 'Content-Type': 'text/plain' } })
 }
 
-function pipelineUrl(req: NextRequest): string {
-  const configured = (process.env.TWILIO_WHATSAPP_WEBHOOK_URL || '').trim()
-  return configured || `${new URL(req.url).origin}/api/webhooks/whatsapp`
+/** Where the pipeline lives. Only ever a configured value, never derived from the request (a Host header must not be
+ *  able to choose where a signed message is sent). Must be https and exactly the pipeline path. */
+function pipelineUrl(): string | null {
+  const configured = (process.env.TWILIO_WHATSAPP_WEBHOOK_URL || process.env.GOGO_WA_PIPELINE_URL || '').trim()
+  try {
+    const url = new URL(configured)
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/api/webhooks/whatsapp') return null
+    return url.toString()
+  } catch { return null }
 }
 
 export async function POST(req: NextRequest) {
   const raw = await req.text().catch(() => '')
-  if (!raw || Buffer.byteLength(raw, 'utf8') > MAX_BODY_BYTES) return new NextResponse('Bad Request', { status: 400 })
-  // Always strict: an unsigned or wrongly signed body is never parsed.
+  // Always strict, and first: an unsigned or wrongly signed body (or no configured secret) is a 403 and nothing else.
   if (!verifyMetaSignature(raw, req.headers.get('x-hub-signature-256'), process.env.GOGO_META_WA_APP_SECRET)) return new NextResponse('Forbidden', { status: 403 })
+  if (Buffer.byteLength(raw, 'utf8') > MAX_BODY_BYTES) return new NextResponse('Payload Too Large', { status: 413 })
   let body: unknown
   try { body = JSON.parse(raw) } catch { return new NextResponse('Bad Request', { status: 400 }) }
   const parsed = parseMetaWebhook(body, process.env.GOGO_META_WA_PHONE_ID)
@@ -46,7 +58,8 @@ export async function POST(req: NextRequest) {
   if (!parsed.messages.length) return new NextResponse('', { status: 200 })
   const secret = process.env.TWILIO_AUTH_TOKEN || ''
   if (!secret) return new NextResponse('Pipeline unavailable', { status: 503 })
-  const url = pipelineUrl(req)
+  const url = pipelineUrl()
+  if (!url) { console.error('WHATSAPP_META_PIPELINE_URL_MISSING'); return new NextResponse('Pipeline unavailable', { status: 503 }) }
   for (const m of parsed.messages) {
     // Replies leave through whichever provider serves this person. If that is not Meta (the number is not in the
     // pilot and the switch is off), handling the message would answer from a different WhatsApp number, so it is skipped.
@@ -58,6 +71,7 @@ export async function POST(req: NextRequest) {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Twilio-Signature': computeTwilioSignature(secret, url, params) },
         body: new URLSearchParams(params).toString(),
+        redirect: 'error', // never re-send the message and its signature to a redirect target
         signal: AbortSignal.timeout(110_000),
       })
       status = response.status

@@ -32,6 +32,9 @@ export type MetaWebhook = { messages: MetaInboundMessage[]; statuses: MetaStatus
 
 const REMINDER_PAYLOADS = new Set(['done', 'snooze_10', 'move_8pm'])
 const digitsOf = (v: unknown) => String(v ?? '').replace(/\D/g, '')
+/** A WhatsApp sender id exactly as Meta sends it: a string of 8 to 15 digits. Anything else is not a phone identity
+ *  and is ignored rather than normalised, so no other identifier format can be mapped onto a person's number. */
+const strictWaId = (v: unknown): string => (typeof v === 'string' && /^\d{8,15}$/.test(v) ? v : '')
 
 /** Messages and delivery statuses addressed to OUR phone number id; everything else is counted and ignored. */
 export function parseMetaWebhook(body: any, phoneNumberId: string | undefined): MetaWebhook {
@@ -40,13 +43,13 @@ export function parseMetaWebhook(body: any, phoneNumberId: string | undefined): 
   if (!ours || body?.object !== 'whatsapp_business_account') return out
   for (const entry of Array.isArray(body?.entry) ? body.entry : []) for (const change of Array.isArray(entry?.changes) ? entry.changes : []) {
     const value = change?.value
-    if (change?.field !== 'messages' || String(value?.metadata?.phone_number_id || '') !== ours) { out.ignored++; continue }
+    if (change?.field !== 'messages' || typeof value?.metadata?.phone_number_id !== 'string' || value.metadata.phone_number_id !== ours) { out.ignored++; continue }
     const to = digitsOf(value?.metadata?.display_phone_number)
     const names = new Map<string, string>()
-    for (const c of Array.isArray(value?.contacts) ? value.contacts : []) names.set(digitsOf(c?.wa_id), String(c?.profile?.name || '').slice(0, 120))
+    for (const c of Array.isArray(value?.contacts) ? value.contacts : []) { const id = strictWaId(c?.wa_id); if (id) names.set(id, String(c?.profile?.name || '').slice(0, 120)) }
     for (const m of Array.isArray(value?.messages) ? value.messages : []) {
-      const id = String(m?.id || ''), from = digitsOf(m?.from)
-      if (!isMetaMessageId(id) || from.length < 8 || from.length > 15) { out.ignored++; continue }
+      const id = typeof m?.id === 'string' ? m.id : '', from = strictWaId(m?.from)
+      if (!isMetaMessageId(id) || !from) { out.ignored++; continue }
       const baseMsg = { id, from, to, profileName: names.get(from) || '', text: '', buttonPayload: '', buttonText: '', listId: '', mediaType: '', mediaId: '', mediaMime: '',
         repliedToId: isMetaMessageId(m?.context?.id) ? String(m.context.id) : '' }
       if (m.type === 'text' && typeof m.text?.body === 'string') out.messages.push({ ...baseMsg, kind: 'text', text: m.text.body.slice(0, 4096) })
