@@ -57,7 +57,7 @@ eq(o.ownershipOf(run({ status: 'running', metadata_json: { ownership: 'admin' } 
 const runs = [
   run({ id: 'r1', status: 'running', title: 'Flight prices BLR to DEL', updated_at: at(0.1) }),
   run({ id: 'r2', status: 'waiting_approval', title: 'Email to Divya', metadata_json: { mode: 'draft' } }),
-  run({ id: 'r3', status: 'paused', title: 'Sign in to Swiggy', metadata_json: { handoff: { takeoverUrl: 'x' } } }),
+  run({ id: 'r3', type: 'secure_browser', status: 'paused', title: 'Sign in to Swiggy', metadata_json: { handoff: { takeoverUrl: 'x' } } }),
   run({ id: 'r4', title: 'Reminder', type: 'autonomous', capability: 'reminders', metadata_json: { verification: { state: 'verified_completed', check: 'reminder_readback', at: at(1) } } }),
   run({ id: 'r5', title: 'Research investors', type: 'appointment_research' }),
   run({ id: 'r6', status: 'failed', error: 'timeout', title: 'Train search' }),
@@ -68,7 +68,11 @@ const runs = [
   run({ id: 'r11', status: 'running', type: 'secure_browser', title: 'Store page', metadata_json: { comparison_parent_id: 'p' } }),
   run({ id: 'r1', status: 'running', title: 'duplicate row of r1' }),
   run({ id: 'r12', status: 'queued', title: 'Scheduled for later', updated_at: at(20) }),
-  ...Array.from({ length: 5 }, (_, i) => run({ id: `bg${i}`, type: ['background_goal_review', 'watcher', 'workspace_drive_context', 'secure_browser', 'email_triage'][i], title: 'Background' })),
+  ...Array.from({ length: 5 }, (_, i) => run({ id: `bg${i}`, type: ['background_goal_review', 'watcher', 'workspace_drive_context', 'secure_browser', 'restaurant_reservation_slot'][i], title: 'Background' })),
+  run({ id: 'bg5', type: 'secure_browser', status: 'paused', title: 'Saved login', metadata_json: { site_session: true, handoff: { takeoverUrl: 'x' } } }),
+  run({ id: 'bg6', type: 'restaurant_reservation_slot', status: 'completed', title: 'Reserve Toit', metadata_json: { outcome_status: 'waiting_approval', child_run_id: 'c1' } }),
+  run({ id: 'bg7', type: 'general_plan', status: 'completed', error: 'restaurant_slot_superseded', title: 'Superseded' }),
+  run({ id: 'bg8', type: 'command', title: 'A plain question', metadata_json: { mode: 'read' } }),
   run({ id: 'r13', status: 'completed', metadata_json: { mode: 'draft' }, title: 'Old draft', updated_at: at(24 * 9) }),
 ]
 const b = g.buildGoalBoard({ runs, approvals: [{ id: 'a1', run_id: 'r2', title: 'dup' }, { id: 'a2', run_id: null, title: 'Book table at Toit', created_at: at(1) }], todos: [{ createdAt: at(5) }, { createdAt: at(24 * 60) }], now: NOW })
@@ -85,14 +89,18 @@ eq([b.metrics.worked, b.metrics.failed, b.metrics.unknown], [2, 1, 1], 'two work
 eq(b.metrics.minutesSaved, g.TIME_SAVED_MINUTES.reminder + g.TIME_SAVED_MINUTES.research, 'time saved: the fixed minutes for each finished run, never a draft or a background check')
 { const busy = g.buildGoalBoard({ runs: Array.from({ length: 30 }, (_, i) => run({ id: `w${i}`, type: 'background_goal_review' })), now: NOW })
   eq([busy.metrics.minutesSaved, busy.metrics.worked, busy.metrics.handedToGogo, busy.done.length], [0, 0, 0, 0], 'thirty scheduled goal reviews save no time and are not tasks') }
-{ const kinds = ['command', 'general_plan', 'price_comparison', 'restaurant_reservation', 'restaurant_reservation_slot', 'workspace_meeting_prep', 'travel_research', 'autonomous', 'compound', 'gmail_send', 'voice_call', 'grocery_comparison']
+{ const kinds = ['general_plan', 'price_comparison', 'restaurant_reservation', 'workspace_meeting_prep', 'travel_research', 'autonomous', 'compound', 'gmail_send', 'voice_call', 'grocery_comparison']
   const real = g.buildGoalBoard({ runs: kinds.map((type, i) => run({ id: `k${i}`, type })), now: NOW })
   eq(real.metrics.worked, kinds.length, 'every kind of run a request path writes is counted')
+  eq([g.isBoardTask(run({ type: 'command', metadata_json: { mode: 'execute' } })), g.isBoardTask(run({ type: 'command' })), g.isBoardTask(run({ type: 'secure_browser', status: 'running' })), g.isBoardTask(run({ type: 'secure_browser', status: 'completed' }))], [true, false, true, false], 'a chat command counts only when it did something; a browser run only while it is open')
   const fs = await import('node:fs'), path = await import('node:path')
   const walk = (d: string): string[] => fs.readdirSync(d, { withFileTypes: true }).flatMap(e => e.isDirectory() ? walk(path.join(d, e.name)) : e.name.endsWith('.ts') ? [path.join(d, e.name)] : [])
   const written = new Set<string>()
   for (const f of walk(new URL('../lib', import.meta.url).pathname)) for (const m of fs.readFileSync(f, 'utf8').matchAll(/from\('agent_runs'\)\s*\.insert\(\{[^}]{0,400}?type:\s*'([a-z_]+)'/g)) written.add(m[1])
-  const NOT_TASKS = new Set(['secure_browser', 'watcher', 'background_goal_review', 'workspace_drive_context', 'email_triage', 'event_ticket', 'goal', 'product_stock', 'web_page', 'travel_ticket'])
+  for (const f of walk(new URL('../lib', import.meta.url).pathname)) { const src = fs.readFileSync(f, 'utf8'); if (/from\('agent_runs'\)\s*\.insert\(/.test(src)) for (const m of src.matchAll(/const TYPE\s*=\s*'([a-z_]+)'/g)) written.add(m[1]) }
+  ok(written.size >= 18, `the scan really finds the inserts (${written.size} types)`)
+  // secure_browser is handled by isBoardTask (open runs only); the rest are background or hand-over steps.
+  const NOT_TASKS = new Set(['secure_browser', 'watcher', 'background_goal_review', 'workspace_drive_context', 'restaurant_reservation_slot'])
   const unknown = [...written].filter(t => !g.OUTCOME_RUN_TYPES.has(t) && !NOT_TASKS.has(t))
   eq(unknown, [], `every run type written in lib/ is either a task kind or a named background kind (${[...written].length} found)`) }
 eq(g.buildGoalBoard({ runs: [], notices: 2, now: NOW }).metrics.needYou, 2, 'service notices count as needing you, as on the Needs you tab')

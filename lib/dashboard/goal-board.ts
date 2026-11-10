@@ -33,7 +33,7 @@ export function goalBoardEnabledFor(owner: string, env: Env = process.env): bool
  *  kinds Tasks asks the owner to confirm. Background checks, watcher setup, page reads and context fetches are not
  *  counted, listed or credited with time. A pending approval is always shown, whatever kind of run it belongs to. */
 export const OUTCOME_RUN_TYPES: ReadonlySet<string> = new Set([...CONFIRMABLE_RUN_TYPES,
-  'command', 'general_plan', 'price_comparison', 'food_comparison', 'grocery_comparison', 'restaurant_reservation', 'restaurant_reservation_slot', 'workspace_meeting_prep'])
+  'command', 'general_plan', 'price_comparison', 'food_comparison', 'grocery_comparison', 'restaurant_reservation', 'workspace_meeting_prep'])
 
 /** Minutes a person would typically spend doing this kind of task by hand. Conservative, fixed, documented in
  *  docs/architecture/same-brain-3/06-goal-to-done.md. Unknown kinds count 5. */
@@ -65,6 +65,18 @@ const WINDOW_DAYS = 30
 // Background reads that belong to another task (a price comparison's store page, a venue lookup) are not tasks of
 // their own; their parent is.
 const childRun = (r: any) => { const m = r?.metadata_json || {}; return Boolean(m.comparison_parent_id || m.commerce_parent_id || m.venue_browse) }
+/** Is this row a task to show and count? Outcome kinds, with three refinements:
+ *  - a browser run counts only while it is open (a request Gogo is working on or one stopped for the owner's
+ *    sign-in), never a saved-login session; finished browser reads stay out, as on the Recent tab;
+ *  - a fall-through chat command counts only when it did something (mode "execute"), not for a plain question;
+ *  - a step that handed over to another run (child_run_id) or was superseded is not a task of its own. */
+export function isBoardTask(r: any): boolean {
+  const type = String(r?.type || ''), m = r?.metadata_json || {}, status = String(r?.status || '')
+  if (childRun(r) || m.child_run_id || String(r?.error || '') === 'restaurant_slot_superseded') return false
+  if (type === 'secure_browser') return !m.site_session && ['queued', 'running', 'waiting_approval', 'paused', 'outcome_unknown'].includes(status)
+  if (type === 'command') return m.mode === 'execute'
+  return OUTCOME_RUN_TYPES.has(type)
+}
 
 /** Pure: builds the board from rows already read. `approvals` are pending approvals; `todos` the owner's own to-dos. */
 export function buildGoalBoard(input: { runs: any[]; approvals?: any[]; todos?: { createdAt: string | null }[]; notices?: number; now?: Date }): GoalBoard {
@@ -72,7 +84,7 @@ export function buildGoalBoard(input: { runs: any[]; approvals?: any[]; todos?: 
   const inWindow = (at: unknown) => { const t = Date.parse(String(at || '')); return Number.isFinite(t) && t >= since }
   const board: GoalBoard = JSON.parse(JSON.stringify(EMPTY_BOARD))
   const seen = new Set<string>()
-  const runs = (input.runs || []).filter(r => r && r.id && OUTCOME_RUN_TYPES.has(String(r.type || '')) && !childRun(r) && !retiredRunReason(r, now.getTime()))
+  const runs = (input.runs || []).filter(r => r && r.id && isBoardTask(r) && !retiredRunReason(r, now.getTime()))
     // A run stuck in "running" for hours lost its worker: the sweeper retires it (stale_run_recovered, which
     // retiredRunReason leaves out), so it is left out here too, before and after the sweep alike. Queued runs may be
     // waiting for their time and are kept.
