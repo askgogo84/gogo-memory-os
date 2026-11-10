@@ -35,6 +35,12 @@ ok(/^Group booking enquiry: 20 guests, \w+day, \d{1,2} \w+, 7 pm$/.test(W.subjec
 ok(W.body.startsWith("Hi team,\n\nI'd like to host an anniversary celebration for 20 people at Toit Indiranagar on ") && W.body.includes('Can you accommodate us, ideally in a reserved section? Could you share your group menu or package prices?') && W.body.endsWith('Thanks,\nGoverdhan M D'), 'the body is fixed sentences around the facts, signed with the person\'s name')
 for (const [bad, why] of [[{ occasion: 'a party at https://evil.example' }, 'an occasion not on the list'], [{ date: '29 Nov' }, 'a date not in the fixed shape'], [{ date: '2037-02-31' }, 'a date that does not exist'], [{ date: '2019-01-01' }, 'a date in the past'], [{ time: '7 pm' }, 'a time not in the fixed shape'], [{ time: '25:00' }, 'an impossible time'], [{ people: 1 }, 'one person'], [{ people: 5000 }, 'an absurd number'], [{ people: '20; call +91 98765 43210' }, 'a number that is not a number']] as const)
   eq(TL.enquiryFromFacts({ venue: 'Toit Indiranagar', ...FACTS, ...(bad as any), organizer: 'G' }), null, `no email is written for ${why}`)
+for (const key of ['constructor', '__proto__', 'toString', 'valueOf', 'hasOwnProperty']) {
+  eq(TL.enquiryFromFacts({ venue: 'Toit Indiranagar', ...FACTS, occasion: key, organizer: 'G' }), null, `"${key}" is not an occasion`)
+  const w = TL.enquiryFromFacts({ venue: 'Toit Indiranagar', ...FACTS, asks: [key, 'cake'], organizer: 'G' })!
+  ok(!/function|\[object|native code/.test(w.body) && w.body.includes('Can we bring a cake?'), `"${key}" is not a question`) }
+eq(TL.enquiryFromFacts({ venue: 'Toit Indiranagar', ...FACTS, occasion: ['anniversary'] as any, organizer: 'G' }), null, 'an occasion that is not plain text is refused')
+ok(TL.enquiryFromFacts({ venue: 'टोइट कैफ़े', ...FACTS, organizer: 'दिव्या' })!.body.includes('टोइट कैफ़े'), 'names in other scripts are kept whole')
 const odd = TL.enquiryFromFacts({ venue: 'Toit <b>https://evil.example</b> 98765-43210', ...FACTS, asks: ['cake', 'visit evil.com', 'cake', 'parking'], organizer: 'Gogo https://evil.example\n+91 98765 43210 <script>' })!
 ok(!/https?|www|evil\.|[<>]|\/|\d{5}|\+91|@/.test(odd.body + odd.subject) && odd.body.includes('Can we bring a cake? Is parking available for guests?') && !/visit/.test(odd.body), 'only listed questions are used, and no web word, dot-name, slash, bracket, long number or dialling sign from any field reaches the email')
 ok(!/\./.test(odd.body.replace(/Hi team,|Tuesday|people\.|pm\.|\?/g, '').split('\n\n').slice(-1)[0]), 'the signature has no dot at all')
@@ -112,6 +118,7 @@ st = await go({ send: async () => { throw new Error('down') } }); eq([st.cleared
 st = await go({}, { prepared: [{ ...DRAFT[0], body: 'x'.repeat(3000) }] }); eq([st.sent.length, st.cleared], [0, 1], 'a draft that cannot be shown in one message is withdrawn')
 st = await go({ draftIsSaved: async () => false }); eq([st.sent.length, st.cleared], [0, 1], 'if the draft is not really the saved one at the moment of sending, the person is told nothing')
 { let calls = 0; st = await go({ pendingApprovals: async () => (calls++ === 0 ? 0 : 1) }); eq([st.sent.length, st.cleared], [0, 1], 'an approval card that appeared while the pass was running stops the follow-up') }
+st = await go({ save: async () => { throw new Error('row') } }); eq([st.sent.length, st.cleared], [1, 0], 'a failure after the draft was shown never withdraws it')
 st = await go({ run: async () => { throw new Error('boom') } }); eq(st.cleared, 1, 'if the pass itself fails, any draft it saved in this pass is withdrawn')
 st = await go({ pendingApprovals: async () => 1 }); eq([st.ran[0].mode, st.sent.length], ['shadow', 0], 'while an approval card is waiting, nothing is added')
 const withReply = (content: string) => ({ loadContext: async () => ({ ...ctx, turns: [{ role: 'user', content: 'Toit Indiranagar' }, { role: 'assistant', content }] }) as any })

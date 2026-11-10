@@ -453,6 +453,7 @@ export async function scheduleLoopShadow(p: { phone: string; telegramId: number;
   if (!Number.isSafeInteger(p.telegramId) || p.telegramId <= 0) return
   const pass = async () => {
     const startedAt = Date.now()
+    let shown = false // true once the follow-up showing the draft has gone out
     // Withdraws only a draft the loop itself saved during THIS pass: never an earlier one the person was already shown.
     const withdraw = () => (deps.clearLoopDraft ? deps.clearLoopDraft(p.telegramId) : clearOwnLoopDraft(p.telegramId, startedAt)).catch(() => {})
     try {
@@ -502,9 +503,11 @@ export async function scheduleLoopShadow(p: { phone: string; telegramId: number;
           sent = true
         } catch {
           console.error('BRAIN_LOOP_SHADOW_FAILED:', JSON.stringify({ code: why || 'send' }))
-          await withdraw()
+          // Never withdraw a draft the person has just been shown.
+          if (!sent) await withdraw()
         }
         // Saved to the conversation the same way the webhook saves a reply, so the next turn knows it was said.
+        shown = sent
         if (sent) await Promise.resolve((deps.remember || (async (id: number, t: string) => supabaseAdmin.from('conversations').insert({ telegram_id: id, role: 'assistant', content: t })))(p.telegramId, text)).catch(() => {})
       }
       console.log(goLive ? 'BRAIN_LOOP_LIVE:' : 'BRAIN_LOOP_SHADOW:', JSON.stringify({ ...report, sent }))
@@ -514,7 +517,7 @@ export async function scheduleLoopShadow(p: { phone: string; telegramId: number;
     } catch {
       console.error('BRAIN_LOOP_SHADOW_FAILED')
       // Whatever went wrong, a draft this pass may have saved is not left behind unseen.
-      if (live) await withdraw()
+      if (live && !shown) await withdraw()
     }
   }
   if (deps.defer) return deps.defer(pass)

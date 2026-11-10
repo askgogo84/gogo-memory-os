@@ -40,22 +40,23 @@ export const ASKS: Record<string, string> = {
   vegetarian: 'Do you have good vegetarian options for a group?', parking: 'Is parking available for guests?', kids: 'Is the space suitable for children?',
 }
 // Letters, spaces, apostrophes and hyphens only: no dot, digit or sign can come through a name.
-const personName = (v: unknown) => plain(v).replace(/[^\p{L} '-]/gu, ' ').replace(/\b(?:https?|www|hxxp)\b/gi, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
+const personName = (v: unknown) => plain(v).replace(/[^\p{L}\p{M} '-]/gu, ' ').replace(/\b(?:https?|www|hxxp)\b/gi, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
 /** The subject and body, from facts only. Null when a fact is missing or out of range. */
 export function enquiryFromFacts(f: { venue: string; occasion: unknown; date: unknown; time: unknown; people: unknown; asks: unknown; organizer: string; timezone?: string }, now = Date.now()): { subject: string; body: string } | null {
-  const what = OCCASIONS[String(f.occasion)]
+  // Own keys only: a name such as "constructor" or "__proto__" is not an occasion.
+  const what = typeof f.occasion === 'string' && Object.hasOwn(OCCASIONS, f.occasion) ? OCCASIONS[f.occasion] : ''
   const people = Number.isInteger(f.people) && (f.people as number) >= 2 && (f.people as number) <= 500 ? (f.people as number) : null
   const date = /^\d{4}-\d{2}-\d{2}$/.test(String(f.date)) ? String(f.date) : '', time = /^([01]\d|2[0-3]):[0-5]\d$/.test(String(f.time)) ? String(f.time) : ''
   if (!what || !people || !date || !time) return null
   const day = new Date(`${date}T12:00:00Z`)
-  if (Number.isNaN(day.getTime()) || day.toISOString().slice(0, 10) !== date || day.getTime() < now - 36 * 3600_000 || day.getTime() > now + 400 * 86400_000) return null
+  if (Number.isNaN(day.getTime()) || day.toISOString().slice(0, 10) !== date || day.getTime() < now - 12 * 3600_000 || day.getTime() > now + 400 * 86400_000) return null
   const dayText = new Intl.DateTimeFormat('en-IN', { timeZone: 'UTC', weekday: 'long', day: 'numeric', month: 'long' }).format(day)
   const [h, m] = time.split(':').map(Number), timeText = `${h % 12 || 12}${m ? `:${String(m).padStart(2, '0')}` : ''} ${h < 12 ? 'am' : 'pm'}`
-  const asks = [...new Set((Array.isArray(f.asks) ? f.asks : []).map(String).filter(a => a in ASKS))].slice(0, 5)
+  const asks = [...new Set((Array.isArray(f.asks) ? f.asks : []).filter((a): a is string => typeof a === 'string' && Object.hasOwn(ASKS, a)))].slice(0, 5)
   const questions = (asks.length ? asks : ['reserved_section', 'group_menu', 'deposit_terms']).map(a => ASKS[a]).join(' ')
   // The venue's name as the person wrote it: letters, short numbers ("1522", "13th Floor"), spaces, & ' and -. No dot
   // or slash, no long number, no web words.
-  const venue = plain(f.venue).replace(/[^\p{L}\p{N} &'-]/gu, ' ').replace(/\d[\d -]{4,}\d/g, ' ').replace(/\b(?:https?|www|hxxp)\b/gi, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)
+  const venue = plain(f.venue).replace(/[^\p{L}\p{M}\p{N} &'-]/gu, ' ').replace(/\p{Nd}[\p{Nd} -]{4,}\p{Nd}/gu, ' ').replace(/\b(?:https?|www|hxxp)\b/gi, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)
   if (venue.length < 2) return null
   return {
     subject: `Group booking enquiry: ${people} guests, ${dayText}, ${timeText}`,
