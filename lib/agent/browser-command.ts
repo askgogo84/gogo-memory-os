@@ -950,6 +950,9 @@ export async function resumePausedBrowserRun(params:{actor:AgentActor;runId:stri
   if(!['paused','failed','waiting_approval'].includes(String(run.status)))throw new Error('browser_resume_not_paused')
 
   const meta:any=run.metadata_json||{}
+  // An Events venue lookup (lib/events/venue-browse.ts) has its own runner. It is never run as a general read: that
+  // would use the person's main browser and return the browser's written answer.
+  if(meta.venue_browse===true||meta.venue_enquiry!==undefined)throw new Error('browser_resume_venue_lookup')
   const mode=String(meta.mode||'read') as BrowserMode
 
   if(meta.comparison_parent_id){

@@ -145,6 +145,9 @@ export async function runBackgroundBrowserRead(runId: string): Promise<ApprovedB
       return 'failed'
     }
   }
+  // Events: the deeper look at a venue's own site (lib/events/venue-browse.ts). Its own runner, never the general read:
+  // the general read would send the browser's written answer, and an address is only ever taken from the page by code.
+  if (meta.venue_browse === true || meta.venue_enquiry !== undefined) return runVenueBrowseForRun({ id: String(claimed.id), telegram_id: String(claimed.telegram_id), metadata_json: meta }, actor)
   try {
     const result = await resumePausedBrowserRun({ actor, runId })
     const body = result?.status === 'completed' || result?.status === 'paused' ? String(result.text || '') : `I couldn't finish that on ${host} from here. Nothing was bought, booked or submitted.`
@@ -158,6 +161,27 @@ export async function runBackgroundBrowserRead(runId: string): Promise<ApprovedB
     if (actor.whatsappId) await sendWhatsApp(actor.whatsappId, [`I couldn't open ${host} from here just now.${meta.url ? ` You can look at it directly: ${meta.url}` : ''}`, suffix].filter(Boolean).join('\n\n')).catch(() => {})
     return 'failed'
   }
+}
+
+/** Finishes a claimed venue lookup run: one public browser read, the run closed, and one WhatsApp message (or none
+ *  when the plan changed meanwhile). Shared by the internal route and the cron fallback. Never throws. */
+export async function runVenueBrowseForRun(run: { id: string; telegram_id: string; metadata_json: any }, actor: AgentActor, budgetMs?: number): Promise<ApprovedBrowserRunOutcome> {
+  const started = Date.now()
+  let outcome: { found: string; text: string | null } = { found: 'unread', text: null }
+  try {
+    const { runVenueBrowse } = await import('@/lib/events/venue-browse')
+    outcome = await runVenueBrowse(actor, run.metadata_json?.venue_enquiry, budgetMs ? { budgetMs } : {})
+  } catch (err: any) { console.error('VENUE_BROWSE_RUN_FAILED:', run.id, String(err?.message || '').replace(/[^a-z0-9_: ]/gi, '').slice(0, 80)) }
+  const at = new Date().toISOString(), drafted = outcome.found === 'email', failed = outcome.found === 'unread' || outcome.found === 'invalid'
+  const { error } = await supabaseAdmin.from('agent_runs').update({
+    status: failed ? 'failed' : 'completed', error: drafted ? null : `venue_browse_${outcome.found}`,
+    summary: drafted ? 'Gogo found the venue’s booking address on its own site and drafted the enquiry. Nothing was sent.' : failed ? 'Gogo could not open the venue’s site.' : 'Gogo looked at the venue’s site and drafted nothing.',
+    completed_at: at, updated_at: at,
+  }).eq('id', run.id).eq('telegram_id', String(run.telegram_id)).eq('status', 'paused')
+  if (error) console.error('VENUE_BROWSE_RUN_CLOSE_FAILED:', run.id, error.message)
+  console.log('VENUE_BROWSE:', JSON.stringify({ found: outcome.found, ms: Date.now() - started }))
+  if (outcome.text && actor.whatsappId) await sendWhatsApp(actor.whatsappId, outcome.text).catch(() => {})
+  return drafted ? 'completed' : failed ? 'failed' : 'blocked'
 }
 
 // Compatibility exports reject legacy queued code-bearing jobs without I/O.

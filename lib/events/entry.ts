@@ -319,13 +319,15 @@ export async function venueEnquiryState(owner: string, draft: Record<string, unk
 
 export type EventDeps = { extract?: Extractor; db?: Db; now?: number; search?: import('./venue-enquiry').Search; saveDraft?: (draft: Record<string, unknown>) => Promise<void>
   /** The email draft the person has waiting right now (to be sent with "send it"), if any. */
-  pendingDraft?: () => Promise<Record<string, unknown> | null>; clearDraft?: () => Promise<void>; readPage?: import('./venue-enquiry').PageReader }
+  pendingDraft?: () => Promise<Record<string, unknown> | null>; clearDraft?: () => Promise<void>; readPage?: import('./venue-enquiry').PageReader
+  /** Starts the deeper, background read of the venue's own site in the cloud browser. True when it was started. */
+  queueBrowse?: (p: { event: EventRow; key: string; detail: import('./venue-enquiry').VenueLookupDetail }) => Promise<boolean> }
 
 /** After a create or an edit: when the event now has a date, a named venue and a group size, look up how that venue
  *  takes group bookings and draft the enquiry (lib/events/venue-enquiry.ts). Once per event and venue. Bounded to a
  *  few seconds; any failure adds nothing. Nothing is sent: the draft goes to the Gmail path, which needs "send it" and
  *  then an approved card. Switch off with GOGO_EVENTS_VENUE_HELP=off. */
-async function venueNextStep(actor: AgentActor, owner: string, eventId: string, now: number, deps: EventDeps): Promise<string | null> {
+async function venueNextStep(actor: AgentActor, owner: string, eventId: string, now: number, deps: EventDeps, surface: EventSurface = 'dashboard'): Promise<string | null> {
   const env = ((globalThis as any).process?.env || {}) as Record<string, string | undefined>
   if (env.GOGO_EVENTS_VENUE_HELP === 'off' || (!deps.search && !env.VERCEL_ENV)) return null
   const v = await import('./venue-enquiry')
@@ -358,7 +360,8 @@ async function venueNextStep(actor: AgentActor, owner: string, eventId: string, 
   // What each page read came to, for the log: codes and counts only, never page text or an address.
   const reads: Record<string, string | number>[] = []
   const readPage: import('./venue-enquiry').PageReader = deps.readPage || (async (url, sameSite) => (await import('./venue-page')).readVenuePage(url, sameSite, { note: n => { if (reads.length < 4) reads.push(n) } }))
-  const contact = await Promise.race([v.findVenueContact(String(e.venue_name), search, 5000, readPage), new Promise<null>(r => setTimeout(() => r(null), 9500))])
+  const detail: import('./venue-enquiry').VenueLookupDetail = {}
+  const contact = await Promise.race([v.findVenueContact(String(e.venue_name), search, 5000, readPage, detail), new Promise<null>(r => setTimeout(() => r(null), 9500))])
   if (!contact) { await withdraw(); console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: 'timeout', ms: Date.now() - started, ...(reads.length ? { reads } : {}) })); return mine ? WITHDRAWN : null }
   const step = v.venueStepText(e, contact, actor.name || '')
   if (step.draft) {
@@ -379,9 +382,18 @@ async function venueNextStep(actor: AgentActor, owner: string, eventId: string, 
   // A lookup that could not run is not recorded, so the next change tries again. A failed record never hides a draft
   // that was saved: the text is still shown.
   if (step.found !== 'unavailable') await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key, found: step.found }, deps.db).catch(() => { console.error('EVENT_VENUE_STEP_FAILED:', JSON.stringify({ code: 'audit' })) })
-  console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: step.found, ms: Date.now() - started, ...(reads.length ? { reads } : {}) }))
+  // Their own site was found but shows no booking address to a plain read: open it in the cloud browser, in the
+  // background (lib/events/venue-browse.ts). Public and read-only; the result arrives as a later WhatsApp message, so
+  // this is offered on WhatsApp only. Off unless GOGO_EVENTS_VENUE_BROWSER=on.
+  let browsing = false
+  if (step.found === 'page' && surface === 'whatsapp' && detail.site) {
+    const queue = deps.queueBrowse || (async p => (await import('./venue-browse')).queueVenueBrowse({ actor, owner, ...p }))
+    browsing = await queue({ event: e, key, detail }).catch(() => false)
+  }
+  console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: step.found, ms: Date.now() - started, ...(reads.length ? { reads } : {}), ...(browsing ? { browsing } : {}) }))
+  const text = browsing ? v.venueBrowsingText(e) : step.text
   // When an older draft was withdrawn and nothing replaces it, say so.
-  return mine && !step.draft ? `${step.text}\n${WITHDRAWN}` : step.text
+  return mine && !step.draft ? `${text}\n${WITHDRAWN}` : text
 }
 
 /** Entry point for both surfaces. Null means "not an events message": carry on as usual. */
@@ -422,7 +434,7 @@ export async function tryEventAsk(actor: AgentActor, text: string, surface: Even
     const result = await runEventAction(owner, action, { timezone: tz, events, hostName: actor.name || null, now, onlyEventId: gated ? null : draft!.id }, deps.db)
     if (!result) return null
     console.log('EVENT_ASK:', JSON.stringify({ action: result.action, surface }))
-    const next = result.eventId ? await venueNextStep(actor, owner, result.eventId, now, deps).catch(() => null) : null
+    const next = result.eventId ? await venueNextStep(actor, owner, result.eventId, now, deps, surface).catch(() => null) : null
     return next ? `${result.text}\n\n${next}` : result.text
   } catch (error: any) {
     console.error('EVENT_ASK_FAILED:', String(error?.code || error?.name || 'error').slice(0, 60))

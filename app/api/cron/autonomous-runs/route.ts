@@ -225,10 +225,13 @@ export async function GET(request:Request){
       .order('updated_at',{ascending:true})
       .limit(3)
     if(browserReadError)console.error('BROWSER_BACKGROUND_QUEUE_READ_FAILED:',browserReadError.message)
+    // One Events venue lookup per tick (each may take 100 s of this function's 300 s); the rest wait for the next one.
+    let venueLookupRan=false
     for(const run of pausedBrowsers||[]){
       const meta:any=run.metadata_json||{}
       const mode=String(meta.mode||'read')
       if(mode==='execute'){browserPaused++;continue}
+      if(meta.venue_browse===true||meta.venue_enquiry!==undefined){if(venueLookupRan)continue;venueLookupRan=true}
       const claimTag=`background_resume_claimed:${new Date().toISOString()}`
       const {data:claimed,error:claimError}=await supabaseAdmin.from('agent_runs')
         .update({error:claimTag,updated_at:new Date().toISOString()})
@@ -250,6 +253,16 @@ export async function GET(request:Request){
           summary:'Gogo could not resume this browser task because the user identity is unavailable.',
           completed_at:at,updated_at:at,
         }).eq('id',run.id).eq('telegram_id',String(run.telegram_id)).eq('status','paused')
+        continue
+      }
+      // Events venue lookup (lib/events/venue-browse.ts): its own runner, never the general read below, which would
+      // send the browser's written answer.
+      if(meta.venue_browse===true||meta.venue_enquiry!==undefined){
+        const {runVenueBrowseForRun}=await import('@/lib/agent/approved-browser-worker')
+        // This function has 300 s for everything it does, so the read is given 100 s here; past that the person is told.
+        const outcome=await runVenueBrowseForRun({id:String(run.id),telegram_id:String(run.telegram_id),metadata_json:meta},actor,100_000)
+        if(outcome==='failed')browserFailed++;else browserDone++
+        results.push({runId:String(run.id),status:outcome,browser:true})
         continue
       }
       try{
