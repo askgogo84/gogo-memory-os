@@ -165,12 +165,12 @@ export async function runBackgroundBrowserRead(runId: string): Promise<ApprovedB
 
 /** Finishes a claimed venue lookup run: one public browser read, the run closed, and one WhatsApp message (or none
  *  when the plan changed meanwhile). Shared by the internal route and the cron fallback. Never throws. */
-export async function runVenueBrowseForRun(run: { id: string; telegram_id: string; metadata_json: any }, actor: AgentActor): Promise<ApprovedBrowserRunOutcome> {
+export async function runVenueBrowseForRun(run: { id: string; telegram_id: string; metadata_json: any }, actor: AgentActor, budgetMs?: number): Promise<ApprovedBrowserRunOutcome> {
   const started = Date.now()
   let outcome: { found: string; text: string | null } = { found: 'unread', text: null }
   try {
     const { runVenueBrowse } = await import('@/lib/events/venue-browse')
-    outcome = await runVenueBrowse(actor, run.metadata_json?.venue_enquiry)
+    outcome = await runVenueBrowse(actor, run.metadata_json?.venue_enquiry, budgetMs ? { budgetMs } : {})
   } catch (err: any) { console.error('VENUE_BROWSE_RUN_FAILED:', run.id, String(err?.message || '').replace(/[^a-z0-9_: ]/gi, '').slice(0, 80)) }
   const at = new Date().toISOString(), drafted = outcome.found === 'email', failed = outcome.found === 'unread' || outcome.found === 'invalid'
   const { error } = await supabaseAdmin.from('agent_runs').update({

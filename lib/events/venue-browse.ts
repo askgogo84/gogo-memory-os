@@ -27,7 +27,7 @@ export function venueBrowseEnabledFor(owner: string, env: Env = envOf()): boolea
 }
 
 const hostSite = (host: string) => registrable(host.toLowerCase().replace(/^www\./, ''))
-/** https, host and a plain path: no query, no fragment, nothing that could carry words or a token. */
+/** https, host and a plain path (letters, digits, hyphens, dots and slashes, 120 at most): no query, no fragment. */
 const plainUrl = (u: URL) => `https://${u.hostname.toLowerCase()}${/^\/[A-Za-z0-9\-_/.]{0,120}$/.test(u.pathname) && !u.pathname.includes('..') && !u.pathname.includes('//') ? u.pathname : '/'}`
 
 /** The page to open: the first of the site's own pages that search returned, as https, host and path only. */
@@ -99,14 +99,18 @@ export async function queueVenueBrowse(p: { actor: AgentActor; owner: string; ev
 export type BrowsedPage = { status: string; url: string; title: string; pageText: string }
 export type VenueBrowseOutcome = { found: 'email' | 'page' | 'unread' | 'held' | 'stale' | 'off' | 'invalid'; text: string | null }
 
-const realBrowse = async (actor: AgentActor, url: string): Promise<BrowsedPage> => {
+const realBrowse = async (actor: AgentActor, url: string, budgetMs: number): Promise<BrowsedPage> => {
   const [{ evaluateAgentSentinel }, { evaluateAgentExecutionPolicy }, { runSecureBrowser }] = await Promise.all([import('@/lib/agent/sentinel'), import('@/lib/agent/policy'), import('@/lib/agent/secure-computer')])
   const objective = browseObjective(url)
   // The same gates as any other read in the cloud browser.
   if (!evaluateAgentSentinel({ capability: 'browser', mode: 'read', risk: 'low', irreversible: false, approved: false, instruction: objective, url, actionCount: 12 }).allowed) throw new Error('venue_browse_sentinel_blocked')
-  if (!evaluateAgentExecutionPolicy({ capability: 'browser', permissionLevel: 'ask', mode: 'read', risk: 'low', irreversible: false, approvalStatus: null }).allowed) throw new Error('venue_browse_policy_blocked')
+  // The organizer's browser permission as it is now, not as it was when this was queued. Unreadable: nothing is opened.
+  const { supabaseAdmin } = await import('@/lib/supabase-admin')
+  const { data: perm, error: permError } = await supabaseAdmin.from('agent_permissions').select('level').eq('telegram_id', String(actor.legacyTelegramId)).eq('capability', 'browser').maybeSingle()
+  if (permError) throw new Error('venue_browse_permission_unreadable')
+  if (!evaluateAgentExecutionPolicy({ capability: 'browser', permissionLevel: (perm?.level as any) || 'ask', mode: 'read', risk: 'low', irreversible: false, approvalStatus: null }).allowed) throw new Error('venue_browse_policy_blocked')
   // Its own browser, apart from any task the organizer has open. Public only: no saved login, no sign-in, no handoff.
-  return runSecureBrowser({ userId: `${actor.userId}:venue`, url, objective, mode: 'read', publicOnly: true, vaultCredentialId: null, reserveHumanHandoff: false, reservePasswordHandoff: false, readDeadline: Date.now() + 170_000 })
+  return runSecureBrowser({ userId: `${actor.userId}:venue`, url, objective, mode: 'read', publicOnly: true, vaultCredentialId: null, reserveHumanHandoff: false, reservePasswordHandoff: false, readDeadline: Date.now() + Math.max(30_000, Math.min(170_000, budgetMs - 30_000)) })
 }
 const realPending = async (tg: number) => {
   const fs = await import('@/lib/bot/handlers/followup-state')
@@ -123,6 +127,7 @@ const realSave = async (tg: number, d: Record<string, unknown>) => {
 
 /** Runs one queued lookup and returns what to tell the organizer (null: say nothing). Never throws, never sends. */
 export async function runVenueBrowse(actor: AgentActor, rawMeta: unknown, deps: { env?: Env; db?: Db; now?: number; browse?: (url: string) => Promise<BrowsedPage>
+  /** How long the whole browser read may take before it is given up on and the organizer is told (default 230 s). */ budgetMs?: number
   pendingDraft?: () => Promise<Record<string, unknown> | null>; saveDraft?: (d: Record<string, unknown>) => Promise<void> } = {}): Promise<VenueBrowseOutcome> {
   const meta = readBrowseMeta(rawMeta)
   if (!meta) return { found: 'invalid', text: null }
@@ -134,25 +139,37 @@ export async function runVenueBrowse(actor: AgentActor, rawMeta: unknown, deps: 
     const e = await store.getEvent(owner, meta.eventId, deps.db).catch(() => null)
     return e && needsVenueEnquiry(e, now()) && enquiryKey(e) === meta.key ? e : null
   }
+  // Nothing came of this try: the record is marked so the next change to the event looks again (the quick lookup
+  // skips an event whose latest record already has the same venue, time and number).
+  const again = () => store.recordOwnerAudit(owner, meta.eventId, 'event.venue_enquiry_drafted', { key: 'retry', via: 'browser' }, deps.db).catch(() => {})
+  const AGAIN = `I'll look again the next time you change this event.`
   try {
-    if (!await current()) return { found: 'stale', text: null }
-    const unread: VenueBrowseOutcome = { found: 'unread', text: `I could not open ${meta.site} in a browser just now, so I have not drafted anything. Send me their booking email address and I'll draft the enquiry.` }
-    const page = await (deps.browse || (url => realBrowse(actor, url)))(meta.url).catch((err: any) => { console.error('VENUE_BROWSE_READ_FAILED:', JSON.stringify({ code: String(err?.message || 'error').replace(/[^a-z0-9_:]/gi, '').slice(0, 60) })); return null })
-    if (!page || page.status !== 'completed') return unread
+    const first = await current()
+    if (!first) return { found: 'stale', text: null }
+    // The venue's name comes from the event itself, cut the way the quick lookup cuts it; the stored copy is not used.
+    const venue = String(first.venue_name || '').replace(/[^\p{L}\p{N} &'.-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)
+    const unread = async (): Promise<VenueBrowseOutcome> => { await again(); return { found: 'unread', text: `I could not read ${meta.site} in a browser just now, so I have not drafted anything. Send me their booking email address and I'll draft the enquiry. ${AGAIN}` } }
+    const budget = Number.isFinite(deps.budgetMs) ? Math.max(1, deps.budgetMs as number) : 230_000
+    let timer: ReturnType<typeof setTimeout> | undefined
+    // Bounded as a whole (starting the browser included), so the organizer always hears back.
+    const page = await Promise.race([(deps.browse || (url => realBrowse(actor, url, budget)))(meta.url), new Promise<never>((_r, rej) => { timer = setTimeout(() => rej(new Error('venue_browse_deadline')), budget) })])
+      .catch((err: any) => { console.error('VENUE_BROWSE_READ_FAILED:', JSON.stringify({ code: String(err?.message || 'error').replace(/[^a-z0-9_:]/gi, '').slice(0, 60) })); return null }).finally(() => { if (timer) clearTimeout(timer) })
+    if (!page || page.status !== 'completed') return unread()
     // Where the browser ended up must still be the venue's own site.
     const at = readableUrl(String(page.url || ''))
-    if (!at || hostSite(at.hostname) !== meta.site) return unread
-    const text = String(page.pageText || '').slice(0, 12_000)
+    if (!at || hostSite(at.hostname) !== meta.site) return unread()
+    // The browser hands back the first 9,000 characters of the page; an address further down a long page is not seen.
+    const text = String(page.pageText || '').slice(0, 9000)
     const pageHits = hitsFromPage({ url: plainUrl(at), title: String(page.title || '').replace(/\s+/g, ' ').slice(0, 200), text })
     // The same rules as the quick lookup, over what search said about this site plus what the page itself shows.
-    const contact = pickVenueContact([...meta.hits, ...pageHits], meta.venue)
+    const contact = pickVenueContact([...meta.hits, ...pageHits], venue)
     console.log('VENUE_BROWSE_READ:', JSON.stringify({ text: text.length, at_signs: (text.match(/@/g) || []).length, found: contact.kind }))
     if (contact.kind !== 'email') return { found: 'page', text: `I opened ${meta.site} in a browser and still could not confirm a booking email on it, so I have not drafted anything. Send me the right address and I'll draft the enquiry.` }
     // The read took a while: the plan is checked again before anything is saved.
     const e = await current()
     if (!e) return { found: 'stale', text: null }
     const pending = await (deps.pendingDraft ? deps.pendingDraft() : realPending(actor.legacyTelegramId))
-    if (pending && pending.eventEnquiryFor !== e.id) return { found: 'held', text: `I opened ${meta.site} in a browser and found their enquiries address, but you have another email draft waiting, so I have not prepared this one. Send or drop that draft first. I'll offer this again the next time you change this event.` }
+    if (pending && pending.eventEnquiryFor !== e.id) { await again(); return { found: 'held', text: `I opened ${meta.site} in a browser and found their enquiries address, but you have another email draft waiting, so I have not prepared this one. Send or drop that draft first. ${AGAIN}` } }
     const step = venueStepText(e, contact, actor.name || '')
     if (!step.draft) return { found: 'page', text: null }
     await (deps.saveDraft ? deps.saveDraft : (d: Record<string, unknown>) => realSave(actor.legacyTelegramId, d))({ ...step.draft, eventEnquiryFor: e.id, enquiryKey: meta.key })
@@ -160,6 +177,7 @@ export async function runVenueBrowse(actor: AgentActor, rawMeta: unknown, deps: 
     return { found: 'email', text: `I opened ${meta.site} in a browser. ${step.text}` }
   } catch (err: any) {
     console.error('VENUE_BROWSE_FAILED:', JSON.stringify({ code: String(err?.message || 'error').replace(/[^a-z0-9_:]/gi, '').slice(0, 60) }))
-    return { found: 'unread', text: `I could not finish looking at ${meta.site} in a browser just now, so I have not drafted anything. Send me their booking email address and I'll draft the enquiry.` }
+    await again()
+    return { found: 'unread', text: `I could not finish looking at ${meta.site} in a browser just now, so I have not drafted anything. Send me their booking email address and I'll draft the enquiry. ${AGAIN}` }
   }
 }

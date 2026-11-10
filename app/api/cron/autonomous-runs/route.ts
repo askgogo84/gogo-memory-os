@@ -256,7 +256,8 @@ export async function GET(request:Request){
       // send the browser's written answer.
       if(meta.venue_browse===true||meta.venue_enquiry!==undefined){
         const {runVenueBrowseForRun}=await import('@/lib/agent/approved-browser-worker')
-        const outcome=await runVenueBrowseForRun({id:String(run.id),telegram_id:String(run.telegram_id),metadata_json:meta},actor)
+        // This function has 300 s for everything it does, so the read is given 100 s here; past that the person is told.
+        const outcome=await runVenueBrowseForRun({id:String(run.id),telegram_id:String(run.telegram_id),metadata_json:meta},actor,100_000)
         if(outcome==='failed')browserFailed++;else browserDone++
         results.push({runId:String(run.id),status:outcome,browser:true})
         continue
