@@ -61,6 +61,7 @@ import { isMediaMemoryCommand, buildMediaMemoryReply, saveMediaMemory, detectPla
 import { recallQuery } from '@/lib/agent/recall-query'
 import { indexMemory, isIndexable } from '@/lib/services/memory-index'
 import { memorySlotOf } from '@/lib/bot/memory-slots'
+import * as prefKind from '@/lib/bot/handlers/preference-kind'
 import { detectPreferenceSave, isPreferenceList, detectPreferenceForget, savePreference, listPreferences, forgetPreference, getPreferenceBlock, MAX_RULES } from '@/lib/bot/handlers/preferences'
 import { detectFriendReminder, isFriendReminderFollowupCandidate, normalizePhoneNumber, resolveFriendContact, saveFriendContact, countTodayFriendReminders, createFriendReminder, getPendingFriend, pendingFriendMarker, parseFriendTime, friendTaskWithoutTime, friendTimeLabel, cap0 } from '@/lib/bot/handlers/friend-reminders'
 import { handleCreditIqLink } from '@/lib/bot/handlers/creditiq-link'
@@ -1907,13 +1908,32 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }
-    const prefRule = detectPreferenceSave(incomingText)
-    if (prefRule) {
+    // Addendum 5 (P1): the kind of instruction decides what happens (lib/bot/handlers/preference-kind.ts). A rule
+    // that would give Gogo leave to act without the person's yes is never stored, for anyone. The wider phrasings,
+    // one-time instructions and bare corrections are for owners in GOGO_PREFERENCE_LEARNING; without it only today's
+    // phrasings are preferences, with today's reply.
+    const prefWide = prefKind.preferenceLearningEnabledFor(String(resolvedUser.telegramId)) === true
+    const classified: any = prefKind.classifyPreference(incomingText, prefWide)
+    // null: not a preference. Anything that is not one of the classifier's own shapes (only possible where the
+    // module is replaced, as in older test harnesses) falls back to the original phrasings.
+    const pref: prefKind.PreferenceKind = classified === null || (classified && typeof classified.kind === 'string')
+      ? classified
+      : (rule => (rule ? { kind: 'durable' as const, rule, scope: 'general' as const, restrictive: false } : null))(detectPreferenceSave(incomingText))
+    if (pref && (pref.kind === 'permission' || pref.kind === 'correction')) {
+      const reply = pref.kind === 'permission' ? prefKind.PERMISSION_REPLY : prefKind.CORRECTION_REPLY
+      console.log('PREFERENCE:', JSON.stringify({ kind: pref.kind }))
+      await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+      return { text: formatOutgoingText(params.channel, reply), resolvedUser }
+    }
+    // An instruction for this one task is not a rule: nothing is stored and the message goes on to be handled.
+    const prefRule = pref && pref.kind === 'durable' ? pref.rule : null
+    if (prefRule && pref && pref.kind === 'durable') {
       const res = await savePreference(resolvedUser.telegramId, prefRule)
       __trace.mark('res')
       const reply = res.capped
         ? `You've hit the ${MAX_RULES}-preference limit. Remove one first ("forget rule about ...").`
-        : `Got it — I'll always keep this in mind: "${prefRule}".`
+        : prefWide ? prefKind.savedReply(pref) : `Got it — I'll always keep this in mind: "${prefRule}".`
+      if (prefWide) console.log('PREFERENCE:', JSON.stringify({ kind: 'durable', scope: pref.scope, restrictive: pref.restrictive, saved: !res.capped }))
       await saveConversation(resolvedUser.telegramId, 'assistant', reply)
       return { text: formatOutgoingText(params.channel, reply), resolvedUser }
     }

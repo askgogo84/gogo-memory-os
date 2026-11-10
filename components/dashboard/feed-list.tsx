@@ -8,9 +8,8 @@ import type { FeedItem, FeedTab, TaskFeed } from '@/lib/dashboard/task-feed'
 const TAG_TONE: Record<FeedTab, string> = { need: 'bg-[#3a2a10] text-[#f0c26b]', radar: 'bg-[#13253a] text-[#8cc2ff]', recent: 'bg-[#132a27] text-[#5fd3c3]' }
 const LABEL: Record<FeedTab, string> = { need: 'Needs you', radar: 'On radar', recent: 'Recent' }
 
-export function FeedTabs({ base, tab, feed, needCount, extra, lead }: { base: string; tab: string; feed: TaskFeed; needCount: number; extra?: { key: string; label: string; count: number }; lead?: { key: string; label: string; count?: number | string } }) {
+export function FeedTabs({ base, tab, feed, needCount, extra }: { base: string; tab: string; feed: TaskFeed; needCount: number; extra?: { key: string; label: string; count: number } }) {
   const tabs: { key: string; label: string; count: number | string }[] = [
-    ...(lead ? [{ ...lead, count: lead.count ?? '' }] : []),
     { key: 'need', label: LABEL.need, count: needCount },
     { key: 'radar', label: LABEL.radar, count: feed.radarCount ?? feed.radar.length },
     { key: 'recent', label: LABEL.recent, count: feed.recent.length },

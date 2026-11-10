@@ -399,10 +399,13 @@ async function loadReservationIntent(actor:AgentActor,now:number,upper:string){
   }
   const preferenceRows=preferences.status==='fulfilled'&&Array.isArray(preferences.value.data)?preferences.value.data:[]
   const rules:ReservationPreferenceInventory['rules']=[],seen=new Set<string>()
+  // Addendum 5: a stored rule that would grant permission to act without approval never reaches a planner.
+  const {grantsPermission}=await import('@/lib/bot/handlers/preference-permission')
   let preferenceIncomplete=preferences.status==='rejected'||Boolean(preferences.status==='fulfilled'&&(preferences.value.error||!Array.isArray(preferences.value.data)))||preferenceRows.length>20
   for(const value of preferenceRows.slice(0,20)){
     const row=value as unknown as Record<string,unknown>,id=safe(row.id,160),raw=String(row.rule_text||'').replace(/\s+/g,' ').trim()
     if(!id||!raw||raw.length>700||seen.has(id)||isSecretShapedMemory(raw)){preferenceIncomplete=true;continue}
+    if(grantsPermission(raw))continue
     const text=safe(raw,700)
     if(text!==raw){preferenceIncomplete=true;continue}
     seen.add(id);rules.push({id,text})

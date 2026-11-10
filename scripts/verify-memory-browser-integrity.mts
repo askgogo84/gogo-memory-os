@@ -80,7 +80,8 @@ const database={rpc:async()=>({data:[],error:null}),from:(table:string)=>{
   return q
 }}
 const exports:any={}
-const mocks:any={'node:crypto':crypto,'@/lib/supabase-admin':{supabaseAdmin:database},'@/lib/services/embeddings':{embedText:async()=>{if(embeddingFails)throw new Error('fixture embedding outage');return []}},'@/lib/bot/memory-redaction':redaction,'@/lib/services/memory-index':memoryIndex,'@/lib/services/travel-time':travelTime,'./typed-object-context':{latestTypedContext:async()=>null}}
+const preferencePermission=await import('../lib/bot/handlers/preference-permission')
+const mocks:any={'@/lib/bot/handlers/preference-permission':preferencePermission,'node:crypto':crypto,'@/lib/supabase-admin':{supabaseAdmin:database},'@/lib/services/embeddings':{embedText:async()=>{if(embeddingFails)throw new Error('fixture embedding outage');return []}},'@/lib/bot/memory-redaction':redaction,'@/lib/services/memory-index':memoryIndex,'@/lib/services/travel-time':travelTime,'./typed-object-context':{latestTypedContext:async()=>null}}
 runInNewContext(ts.transpileModule(readFileSync('lib/agent/context-brain.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:(name:string)=>mocks[name],console,Date,Intl})
 const actor={legacyTelegramId:17,userId:'fixture-owner'}
 // P1: two distinct BIGINT users can round to the same JS number. Never query
