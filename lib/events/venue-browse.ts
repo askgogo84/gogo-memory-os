@@ -181,9 +181,10 @@ export async function runVenueBrowse(actor: AgentActor, rawMeta: unknown, deps: 
     const text = String(page.pageText || '').slice(0, 9000)
     const pageHits = hitsFromPage({ url: plainUrl(at), title: String(page.title || '').replace(/\s+/g, ' ').slice(0, 200), text })
     // The same rules as the quick lookup, over what search said about this site plus what the page itself shows.
-    // What search said is there only to show the site is the venue's; the address itself must be in the page's text.
+    // What search said is there only to show the site is the venue's; the address itself must be in the page's text,
+    // whole (an excerpt that starts mid-address can show only its tail).
     const picked = pickVenueContact([...meta.hits, ...pageHits], venue)
-    const contact = picked.kind === 'email' && pageHits.some(h => h.snippet.toLowerCase().split(/[^a-z0-9._%+@-]+/).some(w => w.replace(/[.,;:]+$/, '') === picked.email)) ? picked : { kind: 'page' as const, sourceUrl: plainUrl(at) }
+    const contact = picked.kind === 'email' && text.toLowerCase().split(/[^a-z0-9._%+@-]+/).some(w => w.replace(/[.,;:]+$/, '') === picked.email) ? picked : { kind: 'page' as const, sourceUrl: plainUrl(at) }
     console.log('VENUE_BROWSE_READ:', JSON.stringify({ text: text.length, at_signs: (text.match(/@/g) || []).length, found: contact.kind }))
     // Something else has been found or drafted for this plan since this lookup started: it says and saves nothing.
     if (!await latestIsMine()) return { found: 'stale', text: null }

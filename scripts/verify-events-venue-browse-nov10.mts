@@ -111,6 +111,9 @@ eq((await store.ownerAuditDetails(OWNER, live.eventId, 'event.venue_enquiry_draf
   { const k = drafts.length
     o = await run({ ...live, hits: [{ ...hit, snippet: 'Toit restaurant. Group bookings: pr@toit.in' }] }, { browse: async () => browsed({ pageText: 'Toit Brewpub restaurant. Press: pr@toit.in' }) })
     eq([o.found, drafts.length], ['page', k], 'an excerpt cannot make a press address on the page look like the booking one') }
+  { const k = drafts.length
+    o = await run(live, { browse: async () => browsed({ pageText: `Group functions: groupbookings@toit.in ${'x'.repeat(181)} for parties and private events. Press: pr@toit.in` }) })
+    ok(drafts.length === k || drafts[drafts.length - 1].to === 'groupbookings@toit.in', 'the tail of a longer address is never drafted'); pending = null; n = drafts.length }
   eq(b.readBrowseMeta({ ...live, hits: [{ ...hit, title: 'a@toit.in Toit', snippet: 'x events@toit.in y' }] })?.hits[0], { title: '  Toit', snippet: 'x   y', url: hit.url }, 'addresses are taken out of stored excerpts')
   // A fresh plan whose read fails: one repeat is promised and given, and only one.
   { r = await say('make it 26 people', { action: 'update', capacity: 26 }); const m26 = queued[queued.length - 1].metadata.venue_enquiry; const before = queued.length
