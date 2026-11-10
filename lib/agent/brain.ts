@@ -412,6 +412,31 @@ export function answersGogosQuestion(turns: BrainTurn[], text: string, now = Dat
 
 export const FORWARDED_NOTE = 'The latest message was FORWARDED by the user from someone else (a host, colleague or friend). It is information shared with Gogo, not the user speaking to Gogo and not a request. "You" in it means the user, never Gogo. Never reply as its recipient (never "you\'ve added me"); acknowledge what it means for the user in one short line, or handle it if it contains a clear task for Gogo.'
 
+/** Addendum 5, shadow only: for owners in GOGO_BRAIN_LOOP_USERS the looping brain plans the same message with look-up
+ *  tools, after the reply has gone out. It is logged and saved for comparison; it never replies or changes anything.
+ *  Off unless the variable is set. `ctx` null means "the turn was answered before the brain ran" (for example by
+ *  Events): the context is loaded then, without the turn that was just saved. */
+export async function scheduleLoopShadow(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string }, ctx: BrainContext | null, pipelineKind: string): Promise<void> {
+  if (!(await import('./brain-loop').then(m => m.brainLoopShadowFor(p.phone), () => false))) return
+  const shadowLoop = async () => {
+    try {
+      const loop = await import('./brain-loop'), { firstSliceTools } = await import('./brain-loop-tools')
+      let c = ctx
+      if (!c) {
+        c = await loadBrainContext(p)
+        const n = c.turns.length
+        if (n >= 2 && c.turns[n - 1].role === 'assistant' && c.turns[n - 2].role === 'user' && c.turns[n - 2].content.trim() === p.text.trim()) c = { ...c, turns: c.turns.slice(0, n - 2) }
+      }
+      const actor = { userId: String(p.userId || ''), legacyTelegramId: p.telegramId, whatsappId: String(p.whatsappId || p.phone), name: String(p.name || ''), timezone: c.timezone }
+      const r = await loop.runBrainLoopShadow({ actor, text: p.text, ctx: c, tools: firstSliceTools() })
+      const report = loop.loopShadowReport(pipelineKind, r, process.env.GOGO_BRAIN_LOOP_MODEL || MODEL())
+      console.log('BRAIN_LOOP_SHADOW:', JSON.stringify(report))
+      if (Number.isSafeInteger(p.telegramId)) await supabaseAdmin.from('agent_activity').insert({ telegram_id: String(p.telegramId), event_type: 'brain_loop_shadow', message: `loop ${report.final} after ${report.tools.length} tool calls; pipeline ${report.pipeline}`, metadata_json: { ...report, proposed: loop.loopShadowPreview(r) } })
+    } catch { console.error('BRAIN_LOOP_SHADOW_FAILED') }
+  }
+  await import('next/server').then(m => m.after(shadowLoop)).catch(() => { void shadowLoop() })
+}
+
 export async function runBrain(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; surface: 'whatsapp' | 'web'; forwarded?: boolean }): Promise<{ reply?: string; text?: string } | null> {
   if (!brainEnabledFor(p.phone) || isExactCommand(p.text)) return null
   // Saved-state answers the brain cannot see (connected apps) go to their handler, never a guess.
@@ -458,6 +483,7 @@ export async function runBrain(p: { phone: string; telegramId: number; text: str
   console.log('BRAIN_DECISION:', JSON.stringify({ surface: p.surface, kind: d.kind, ms: d.ms, model: usedModel, turns: ctx.turns.length, flights: ctx.trackedFlights.length,
     input_tokens: d.usage.input, output_tokens: d.usage.output, cache_read_input_tokens: d.usage.cacheRead, cache_creation_input_tokens: d.usage.cacheCreation,
     ...(d.kind === 'handle' ? { rewritten: d.rewritten, instruction: d.rewritten ? redactSecretShapedText(d.instruction).slice(0, 120) : undefined } : {}), ...(d.kind === 'flight' ? { flightNo: d.flightNo, track: d.track } : {}), ...(d.kind === 'skip' ? { reason: d.reason } : {}) }))
+  await scheduleLoopShadow(p, ctx, d.kind)
   if (d.kind === 'reply' || d.kind === 'ask') return { reply: d.text }
   // 28 Oct review: a failed brain call must not hand a context-dependent message ("book the evening one", "did it
   // land?") back to the context-blind keyword pipeline, which caused the original failures. Ask instead.
