@@ -145,6 +145,28 @@ ok(!v.needsVenueEnquiry({ status: 'draft', venue_name: "Nithin's farmhouse", sta
   for (const h of ['toit.vercel.app', 'toit.wixsite.com', 'toit.business.site', 'toit.github.io']) eq(v.domainMatch(h, 'Toit'), null, `a name on shared hosting is never the venue's own site: ${h}`)
   ok(/lookup: \(_h: string, o: any, cb: any\)/.test(srcPageEarly) && !/cookie|authorization/i.test(srcPageEarly.replace(/no cookies, no credentials/, '')) && !/console\./.test(srcPageEarly), 'the connection is pinned to the checked address, sends no cookies or credentials, and logs nothing') }
 
+// 1c. 10 Nov live, second attempt: the page was read (5 s) and still no address. Sites behind Cloudflare write an
+// address into the page as hex, and a script in the browser turns it back; a plain reader sees "[email protected]".
+{ const page = await import('../lib/events/venue-page.ts')
+  const enc = (email: string, key = 0x5a) => key.toString(16).padStart(2, '0') + [...email].map(c => (c.charCodeAt(0) ^ key).toString(16).padStart(2, '0')).join('')
+  eq(page.decodeCfEmail(enc('toitblr@toit.in')), 'toitblr@toit.in', 'a protected address is decoded the way the browser does it')
+  for (const bad of ['', 'zz', '5a', enc('not an email'), enc('<script>@x.in'), enc('a@b'), 'f'.repeat(513), enc('x@toit.in').slice(0, -1)]) eq(page.decodeCfEmail(bad), null, `not an address: ${bad.slice(0, 16) || '(empty)'}`)
+  const span = `<body><h2>Private events</h2><p>For private events and group bookings write to <a href="/cdn-cgi/l/email-protection#${enc('toitblr@toit.in')}"><span class="__cf_email__" data-cfemail="${enc('toitblr@toit.in')}">[email&#160;protected]</span></a>.</p><p>Careers: <span class="__cf_email__" data-cfemail="${enc('careers@toit.in', 0x11)}">[email&#160;protected]</span></p><script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script></body>`
+  const t = page.pageText(span).text
+  ok(/group bookings write to\s+toitblr@toit\.in/.test(t) && !/email.{0,8}protected/i.test(t), 'on a page, the protected address is read where it sits, and the placeholder is dropped')
+  const home = { title: 'Toit Brewpub: Bengaluru', snippet: 'Craft beer and food at our brewpub in Indiranagar.', url: 'https://toit.in/' }
+  const excerpt = { title: 'FAQ | Toit', snippet: 'Toit Brewpub, Indiranagar. Frequently asked questions.', url: 'https://toit.in/faq/' }
+  eq(await v.findVenueContact('Toit Indiranagar', async () => [excerpt, home], 5000, async url => ({ url, ...page.pageText(span) })), { kind: 'email', email: 'toitblr@toit.in', sourceUrl: 'https://toit.in/faq/' }, 'the enquiry address behind email protection is found, and the careers one beside it is not taken')
+  ok(page.pageText(`<a href="/cdn-cgi/l/email-protection#${enc('<b>x@evil')}">x</a>`).text.indexOf('evil') < 0, 'hex that does not decode to an address adds nothing')
+  { const t0 = Date.now(); page.pageText(`<span data-cfemail="${'a'.repeat(500)}">`.repeat(700)); page.pageText('<a href="/cdn-cgi/l/email-protection#'.repeat(10_000)); ok(Date.now() - t0 < 1500, 'hostile protected-address markup parses quickly') }
+  const notes: any[] = []
+  const pub = async () => [{ address: '13.234.10.20', family: 4 }]
+  await page.readVenuePage('https://toit.in/faq/', h => h === 'toit.in', { resolve: pub, get: async () => ({ status: 200, location: null, type: 'text/html', body: span }), note: n => notes.push(n) })
+  await page.readVenuePage('https://toit.in/faq/', h => h === 'toit.in', { resolve: pub, get: async () => ({ status: 403, location: null, type: 'text/html', body: '' }), note: n => notes.push(n) })
+  await page.readVenuePage('https://toit.in/faq/', h => h === 'toit.in', { resolve: pub, get: async () => { throw Object.assign(new Error('x'), { code: 'ECONNRESET' }) }, note: n => notes.push(n) })
+  eq([notes[0].read, notes[0].at_signs, notes[0].protected > 0, notes[1], notes[2]], ['ok', 3, true, { read: 'not_ok', status: 403, type: 'text/html' }, { read: 'failed', why: 'ECONNRESET' }], 'each read reports what it came to, in codes and counts only')
+  ok(!/toitblr|Private events/.test(JSON.stringify(notes)), 'no page text or address is in the report') }
+
 // 2. In the conversation: the event reply, then the next step, once.
 const pg = new PGlite()
 await pg.exec('create role anon; create role authenticated; create role service_role;')
