@@ -15,6 +15,16 @@ export type LoopToolDeps = {
   /** The email draft the person has waiting for "send it", if any (fresh within 30 minutes). */
   pendingDraft?: (actor: AgentActor) => Promise<Record<string, unknown> | null>
   saveDraft?: (actor: AgentActor, draft: Record<string, unknown>) => Promise<void>
+  /** The person's own recent words (their messages only). A venue may be looked up only if they named it, or it is
+   *  the venue of one of their own events. Without this, any venue is allowed (shadow planning only). */
+  userText?: string
+}
+const HAS_LINK = /https?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|in|net|org|io|co|app|me|ly|link|site|xyz|info|biz)\b(?!\s*@)/i
+/** True when every distinctive word of the venue is in the allowed text (the person's own words or their events). */
+export function venueNamedByPerson(venue: string, allowed: string): boolean {
+  const words = venue.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 3 && !/^(?:the|and|bar|cafe|pub|restaurant|hotel)$/.test(w))
+  const hay = ` ${allowed.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ')} `
+  return words.length > 0 && words.every(w => hay.includes(` ${w} `))
 }
 const oneLine = (v: unknown, n: number) => String(v ?? '').replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
 const bodyText = (v: unknown, n: number) => String(v ?? '').replace(/\r\n?/g, '\n').replace(/[\u0000-\u0008\u000b-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim().slice(0, n)
@@ -26,6 +36,8 @@ async function saveEmailDraft(actor: AgentActor, input: Record<string, unknown>,
   const to = oneLine(input.to, 120).toLowerCase(), subject = oneLine(input.subject, 150), body = bodyText(input.body, 1500)
   if (!state.verified.has(to)) return 'Refused. That address did not come from a verifying tool in this turn. Never write an address yourself: look it up with venue_contact, or ask the person for it.'
   if (subject.length < 3 || body.length < 20) return 'Refused. The draft needs a subject and a message.'
+  // No links: a draft is the person's own words to a venue, and a link is the usual way injected text does harm.
+  if (HAS_LINK.test(subject) || HAS_LINK.test(body)) return 'Refused. The draft must not contain links or web addresses. Write it again in plain words.'
   if (state.prepared.length) return 'Refused. One draft per message. Finish and tell the person about the draft that is ready.'
   const fs = deps.pendingDraft && deps.saveDraft ? null : await import('@/lib/bot/handlers/followup-state')
   const pending = deps.pendingDraft ? await deps.pendingDraft(actor) : await (async () => {
@@ -57,9 +69,17 @@ export function firstSliceTools(deps: LoopToolDeps = {}): LoopTool[] {
       } },
     { name: 'venue_contact', klass: 'read', description: "Find a venue's own booking or events email address, verified against the venue's own website. Returns the address with the page it came from, or says that none could be verified. The only allowed source for a venue's email address.",
       input_schema: obj({ venue: { type: 'string', description: 'Venue name with its locality, as the person said it' } }, ['venue']),
-      run: async (_actor, input, state) => {
+      run: async (actor, input, state) => {
         const venue = str(input.venue, 120)
         if (venue.length < 3) return 'Give the venue name.'
+        // Only a venue the person named themselves, or the venue of one of their own events: text from a web page, an
+        // email or an earlier reply can never choose whose address is looked up.
+        if (deps.userText !== undefined) {
+          const owner = String(actor.legacyTelegramId)
+          const mine = await (deps.listEvents ? deps.listEvents(owner) : import('@/lib/events/core').then(async c => (c.eventsEnabledFor(owner) ? (await import('@/lib/events/store')).listEvents(owner) : []))).catch(() => [] as any[])
+          const allowed = `${deps.userText} ${mine.filter((e: any) => e.status !== 'cancelled').map((e: any) => String(e.venue_name || '')).join(' ')}`
+          if (!venueNamedByPerson(venue, allowed)) return 'Refused. Look up only a venue the person named in their own messages or one of their own events.'
+        }
         const c = await (await import('@/lib/events/venue-enquiry')).findVenueContact(venue, search, 6000)
         if (c.kind === 'email') state.verified.add(c.email.toLowerCase())
         return c.kind === 'email' ? `Verified address: ${c.email} (found on ${c.sourceUrl}). Ask the person to check it before sending.`

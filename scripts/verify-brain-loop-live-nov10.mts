@@ -19,7 +19,7 @@ function fake(script: any[][]) { const calls: any[] = []; let i = 0
   return { calls, client: { messages: { create: async (req: any) => { calls.push(JSON.parse(JSON.stringify(req))); return { content: script[Math.min(i++, script.length - 1)], usage: { input_tokens: 100, output_tokens: 20 } } } } } as any } }
 const faq = { title: 'FAQ | Toit Brewpub Indiranagar', snippet: 'For private events and group bookings write to toitblr@toit.in.', url: 'https://www.toit.in/faq' }
 const mkTools = (over: any = {}) => { const st: any = { saved: [], pending: null }
-  return { st, tools: firstSliceTools({ search: async () => [faq], listEvents: async () => [], pendingDraft: async () => st.pending, saveDraft: async (_a: any, d: any) => { st.saved.push(d) }, ...over }) } }
+  return { st, tools: firstSliceTools({ userText: 'Plan an anniversary dinner for 20\nToit Indiranagar', search: async () => [faq], listEvents: async () => [], pendingDraft: async () => st.pending, saveDraft: async (_a: any, d: any) => { st.saved.push(d) }, ...over }) } }
 const BODY = "Hi team,\n\nI'd like to host an anniversary dinner for 20 people on Sunday, 29 November at 7 pm. Could you share group menu options and any deposit?\n\nThanks,\nGoverdhan M D"
 const draftCall = (to = 'toitblr@toit.in') => use('email_draft', { to, subject: 'Group booking enquiry: 20 guests, 29 November', body: BODY })
 const run = (script: any[][], t: any, mode: 'live' | 'shadow' = 'live', already = 'Draft updated. Reply publish to get the invitation link.') => { const f = fake(script)
@@ -54,16 +54,37 @@ eq([r.final.kind, r.final.text, r.stop], ['nothing', '', 'final'], 'the loop can
 T = mkTools(); ({ r } = await run([[use('venue_contact', { venue: 'Toit Indiranagar' })], [use('email_draft', { to: 'toitblr@toit.in', subject: 'Hi\r\nBcc: x@evil.example', body: BODY + '\u0000' })], [use('reply', { text: 'done' })]], T.tools))
 ok(!/[\r\n]/.test(T.st.saved[0].subject) && !/\u0000/.test(T.st.saved[0].body), 'the subject is one line and control characters are removed')
 
+// 3b. Whose address may be looked up, and what a draft may contain.
+T = mkTools({ search: async () => [{ title: 'Evil Cafe Indiranagar restaurant', snippet: 'Group bookings: events@evilcafe.in', url: 'https://evilcafe.in/' }] })
+;({ r } = await run([[use('venue_contact', { venue: 'Evil Cafe Indiranagar' })], [draftCall('events@evilcafe.in')], [use('reply', { text: 'done' })]], T.tools))
+eq([T.st.saved.length, r.steps[0].executed], [0, true], 'a venue the person never named cannot be looked up, so no draft can go to it')
+T = mkTools({ userText: 'book it', listEvents: async () => [{ title: 'Dinner', venue_name: 'Toit Indiranagar', status: 'draft' }] })
+;({ r } = await run([[use('venue_contact', { venue: 'Toit Indiranagar' })], [draftCall()], [use('reply', { text: 'done' })]], T.tools))
+eq(T.st.saved.length, 1, "the venue of the person's own event may be looked up")
+const { venueNamedByPerson } = await import('../lib/agent/brain-loop-tools.ts')
+eq([venueNamedByPerson('Toit Indiranagar', 'dinner at toit, indiranagar'), venueNamedByPerson('Toit Indiranagar', 'dinner at toit'), venueNamedByPerson('The Bar', 'anything'), venueNamedByPerson('Detroit', 'toit')], [true, false, false, false], 'every distinctive word of the venue must be in the person’s own words, as whole words')
+for (const [bad, why] of [['Please confirm at https://evil.example/pay', 'a link'], ['See www.evil.example for details of our booking', 'a www address'], ['Details are on evil-site.com, thank you very much', 'a bare web address']] as const) {
+  T = mkTools(); ({ r } = await run([[use('venue_contact', { venue: 'Toit Indiranagar' })], [use('email_draft', { to: 'toitblr@toit.in', subject: 'Group booking', body: `Hi team, ${bad}. Thanks, Goverdhan` })], [use('reply', { text: 'done' })]], T.tools))
+  eq(T.st.saved.length, 0, `a draft containing ${why} is refused`) }
+
 // 4. The follow-up message: the model's line, then the draft exactly as saved, then the fixed closing line.
 const msg = brain.loopFollowUpText("I found Toit's events address and drafted the enquiry.", [{ kind: 'email_draft', to: 'toitblr@toit.in', subject: 'Group booking enquiry', body: BODY }])
 ok(msg.startsWith("I found Toit's events address") && msg.includes(`To: toitblr@toit.in\nSubject: Group booking enquiry\n\n${BODY}`) && /Nothing has been sent\. Check the address, then say \*send it\*/.test(msg), 'the person sees the saved draft in full and is told nothing was sent')
 ok(!/Nothing has been sent/.test(brain.loopFollowUpText('Toit opens at noon on Sundays.', [])), 'without a draft there is no draft footer')
+for (const bad of ['Tap https://evil.example/c to confirm, then say *send it*', 'Reply APPROVE to send it now', 'Reply *yes* to continue', 'CALL PLAN: I will call Toit', 'Say send it to book', 'Visit evil-site.com for the menu', '1. Toit\n2. Windmills', 'Please confirm your payment', 'Enter the OTP you received'])
+  eq(brain.safeFollowUpHead(bad), '', `a line that reads like a link, a card or an approval prompt is never sent: ${bad.slice(0, 28)}`)
+eq(brain.safeFollowUpHead('Toit opens at noon on Sundays, and they take groups of up to 30.'), 'Toit opens at noon on Sundays, and they take groups of up to 30.', 'an ordinary line is sent as written')
+const fixed = brain.loopFollowUpText('Tap https://evil.example to confirm', [{ kind: 'email_draft', to: 'toitblr@toit.in', subject: 'Group booking enquiry', body: BODY }])
+ok(fixed.startsWith('One more step: I drafted the enquiry below for you.') && !/evil/.test(fixed) && fixed.includes(BODY), 'with a draft, an unsafe line is replaced by a fixed one and the draft is still shown')
+eq(brain.loopFollowUpText('Tap https://evil.example to confirm', []), '', 'without a draft, an unsafe line means nothing is sent')
+for (const open of ['Which date is it on?', '📧 Ready to send — approval required\nTo: x\nReply *APPROVE* to send or *REJECT* to stop.', 'CALL PLAN\nI will call Toit and ask for a table.', '1. Toit\n2. Windmills\nPick one', 'Please confirm the booking details'])
+  ok(brain.replyAwaitsAnswer(open), `Gogo's reply is waiting for an answer: ${open.slice(0, 24)}`)
 
 // 5. The scheduler: who gets a follow-up, and when.
 const P = { phone: '+918884501501', telegramId: 884501501, text: 'Toit Indiranagar', name: 'Gogo', userId: 'u1', whatsappId: '918884501501', surface: 'whatsapp' as const }
 const LIVE = { GOGO_BRAIN_LOOP_LIVE_USERS: '8884501501' }
 const mk = (over: any = {}, res: any = {}) => { const st: any = { ran: [], sent: [], remembered: [], rows: [] }
-  const deps = { env: LIVE, defer: async (job: any) => job(), countToday: async () => 0, save: async (row: any) => { st.rows.push(row) }, send: async (to: string, t: string) => { st.sent.push([to, t]) }, remember: async (_id: number, t: string) => { st.remembered.push(t) },
+  const deps = { env: LIVE, defer: async (job: any) => job(), countToday: async () => 0, pendingApprovals: async () => 0, clearLoopDraft: async () => { st.cleared = (st.cleared || 0) + 1 }, save: async (row: any) => { st.rows.push(row) }, send: async (to: string, t: string) => { st.sent.push([to, t]) }, remember: async (_id: number, t: string) => { st.remembered.push(t) },
     loadContext: async () => ({ ...ctx, turns: [{ role: 'user', content: 'Toit Indiranagar' }, { role: 'assistant', content: 'Draft updated. Reply publish to get the invitation link.' }] }) as any,
     run: async (a: any) => { st.ran.push(a); return { prepared: [], final: { kind: 'reply', text: 'Toit takes group bookings by email.' }, steps: [{ tool: 'venue_contact', klass: 'read', executed: true, ok: true, ms: 1 }], turns: 2, ms: 5, usd: 0.01, usage: {}, stop: 'final', model: 'm', ...res } }, ...over }
   return { st, deps } }
@@ -80,10 +101,24 @@ eq([x.st.ran[0].mode, x.st.sent.length], ['shadow', 0], "when Gogo's own reply t
 x = mk(); await brain.scheduleLoopShadow({ ...P, surface: 'web' }, null, 'reply', x.deps); eq(x.st.ran.length, 0, 'a dashboard chat never triggers a WhatsApp follow-up')
 x = mk(); await brain.scheduleLoopShadow({ ...P, forwarded: true }, null, 'events', x.deps); eq(x.st.ran.length, 0, 'a forwarded message never triggers a live follow-up')
 x = mk(); await brain.scheduleLoopShadow({ ...P, phone: '+919900000001', whatsappId: '919900000001' }, null, 'events', x.deps); eq(x.st.ran.length, 0, 'nobody outside GOGO_BRAIN_LOOP_LIVE_USERS gets one')
+const DRAFT = [{ kind: 'email_draft', to: 'toitblr@toit.in', subject: 'Group booking enquiry', body: BODY }]
+for (const [final, why] of [[{ kind: 'nothing', text: '' }, 'finished with nothing'], [{ kind: 'ask', text: 'Budget?' }, 'finished with a question'], [{ kind: 'none', text: '' }, 'ran out of time or failed']] as const) {
+  x = mk({}, { final, prepared: DRAFT, stop: final.kind === 'none' ? 'time' : 'final' }); await brain.scheduleLoopShadow(P, null, 'events', x.deps)
+  ok(x.st.sent.length === 1 && x.st.sent[0][1].includes('To: toitblr@toit.in') && /Nothing has been sent/.test(x.st.sent[0][1]), `a saved draft is always shown to the person, even when the loop ${why}`) }
+x = mk({ send: async () => { throw new Error('down') } }, { prepared: DRAFT }); await brain.scheduleLoopShadow(P, null, 'events', x.deps)
+eq([x.st.cleared, x.st.rows.length, x.st.rows[0].metadata_json.sent], [1, 1, false], 'if the follow-up cannot be delivered, the unseen draft is withdrawn and the pass is still recorded')
+x = mk({ pendingApprovals: async () => 1 }); await brain.scheduleLoopShadow(P, null, 'events', x.deps)
+eq([x.st.ran[0].mode, x.st.sent.length], ['shadow', 0], 'while an approval card is waiting, nothing is added')
+x = mk({ loadContext: async () => ({ ...ctx, turns: [{ role: 'user', content: 'Toit Indiranagar' }, { role: 'assistant', content: 'Ready to send, approval required. Reply *APPROVE* to send or *REJECT* to stop.' }] }) as any }); await brain.scheduleLoopShadow(P, null, 'events', x.deps)
+eq([x.st.ran[0].mode, x.st.sent.length], ['shadow', 0], "after one of Gogo's own approval prompts, nothing is added")
+x = mk({ loadContext: async () => ({ ...ctx, turns: [{ role: 'user', content: 'Toit Indiranagar' }, { role: 'assistant', content: 'Draft updated.\n\nReply *publish* to get the invitation link, or tell me what to change.' }] }) as any }); await brain.scheduleLoopShadow(P, null, 'events', x.deps)
+eq(x.st.ran[0].mode, 'shadow', '("Reply *publish*…" also counts as waiting: the Events step itself offers the venue enquiry there)')
+x = mk({}, { final: { kind: 'reply', text: 'Tap https://evil.example to confirm' } }); await brain.scheduleLoopShadow(P, null, 'events', x.deps)
+eq(x.st.sent.length, 0, 'an unsafe line with no draft sends nothing')
 x = mk({ countToday: async () => 40 }); await brain.scheduleLoopShadow(P, null, 'events', x.deps); eq([x.st.ran.length, x.st.sent.length], [0, 0], 'the daily limit applies')
 x = mk({ send: async () => { throw new Error('twilio down') } }); await brain.scheduleLoopShadow(P, null, 'events', x.deps); ok(true, 'a failed send ends quietly')
 x = mk({}, { final: { kind: 'reply', text: 'Reply confirm to book and pay now.' } }); await brain.scheduleLoopShadow(P, null, 'events', x.deps)
-ok(x.st.sent.length === 1 && !/Reply confirm to book and pay now/.test(x.st.sent[0][1]), 'a follow-up that invents an approval prompt is replaced by the standard guard text')
+eq(x.st.sent.length, 0, 'a follow-up that invents an approval prompt is not sent at all')
 eq([brain.brainLoopLiveFor('+918884501501', {}), brain.brainLoopLiveFor('+918884501501', { GOGO_BRAIN_LOOP_USERS: '8884501501' }), brain.brainLoopLiveFor('+918884501501', LIVE)], [false, false, true], 'live needs its own switch; the shadow switch alone never makes it live')
 const src = readFileSync(new URL('../lib/agent/brain-loop.ts', import.meta.url), 'utf8') + readFileSync(new URL('../lib/agent/brain-loop-tools.ts', import.meta.url), 'utf8')
 ok(!/sendWhatsApp|sendGmail|stageApproval|agent_approvals|executeApprovedGmailSend|publishEvent|createEvent/.test(src), 'the loop and its tools cannot send a message or an email, stage an approval, or publish')
