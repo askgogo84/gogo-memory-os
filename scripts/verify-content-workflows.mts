@@ -5,6 +5,7 @@ import {runInNewContext} from 'node:vm'
 import {randomUUID} from 'node:crypto'
 import ts from 'typescript'
 import * as workflows from '../lib/agent/content-workflows'
+import * as modelIds from '../lib/services/model-ids'
 import {formatOutgoingText} from '../lib/bot/format-response'
 import {handleInboxReplyRead} from '../lib/agent/open-loops'
 import {tryCancelRunFromChat} from '../lib/agent/run-cancel'
@@ -74,7 +75,8 @@ class OpenAIFixture {chat = {completions: {create: async (payload: any) => {
 const model = load('lib/services/claude.ts', {
   '@anthropic-ai/sdk': {default: AnthropicFixture}, openai: {default: OpenAIFixture},
   '@/lib/bot/memory-redaction': {redactSecretShapedText: (s: string) => s}, '@/lib/agent/content-workflows': workflows,
-  '@/lib/services/model-ids': {SONNET_MODEL: 'claude-sonnet-4-5', HAIKU_MODEL: 'claude-haiku-4-5'},
+  // the real module (pure, no I/O) with fixed ids, so new helpers never need a stub here
+  '@/lib/services/model-ids': {...modelIds, SONNET_MODEL: 'claude-sonnet-4-5', HAIKU_MODEL: 'claude-haiku-4-5'},
 }, {OPENAI_API_KEY: 'fixture-not-a-real-key'})
 
 const history: any[] = [], writes: string[] = []

@@ -20,7 +20,9 @@ globalThis.fetch=async()=>{externalCalls++;throw Error('Real provider/model tran
 const failures:string[]=[]
 async function check(label:string,fn:()=>unknown){try{await fn();console.log('PASS '+label)}catch(error){failures.push(label+': '+(error instanceof Error?error.message:String(error)))}}
 const noop=new Proxy({}, {get:(_target,key)=>/^(?:record|observe|capture)/.test(String(key))?async()=>null:()=>null})
-function load(file:string,deps:Record<string,unknown>){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(path.join(repo,file),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText,{exports,require:(name:string)=>deps[name]||noop,process:{env:{ANTHROPIC_API_KEY:'fixture-only'}},Date:FixedDate,Intl,console:{log(){},error(){},warn(){}},URL,URLSearchParams,Request,Response,Buffer,AbortSignal,setTimeout,clearTimeout});return exports}
+// The real model-ids module (pure helpers): a noop stub would turn every model request and reply into null.
+const modelIds=await import(pathToFileURL(path.join(repo,'lib/services/model-ids.ts')).href)
+function load(file:string,deps:Record<string,unknown>){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(path.join(repo,file),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText,{exports,require:(name:string)=>deps[name]||(name==='@/lib/services/model-ids'?modelIds:noop),process:{env:{ANTHROPIC_API_KEY:'fixture-only'}},Date:FixedDate,Intl,console:{log(){},error(){},warn(){}},URL,URLSearchParams,Request,Response,Buffer,AbortSignal,setTimeout,clearTimeout});return exports}
 try{
  const {detectIntent}=await import(pathToFileURL(path.join(repo,'lib/bot/detect-intent.ts')).href)
  const context=await import(pathToFileURL(path.join(repo,'lib/agent/context-brain.ts')).href)

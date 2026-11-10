@@ -19,7 +19,7 @@ import { inventedApprovalGuard } from '@/lib/services/claude'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { isJobScanNow, jobScanQuery } from './jobs'
 import { nearbyRewrite, placeAsk } from './places-search'
-import { SONNET_MODEL } from '@/lib/services/model-ids'
+import { SONNET_MODEL, forModel, isAdaptiveOnlyModel, textOf, TOOL_REQUIRED_NOTE } from '@/lib/services/model-ids'
 
 export type BrainDecision =
   | { kind: 'reply'; text: string }
@@ -43,6 +43,12 @@ const MODEL = () => process.env.GOGO_BRAIN_MODEL || SONNET_MODEL
 // (hand to a handler, flight, later) are used as they are; when it would write the reply itself, or fails, the main
 // model (Sonnet) decides instead, so replies keep today's quality. Off by default until the admin console shows
 // enough agreement (Costs › Cheaper brain): flip the env var, no code change.
+/** For models that cannot be forced to call a tool, add one final system block saying a tool call is required. */
+export function toolRequiredSystem<T>(model: string, system: T): T {
+  if (!isAdaptiveOnlyModel(model)) return system
+  const note = { type: 'text' as const, text: TOOL_REQUIRED_NOTE }
+  return (Array.isArray(system) ? [...system, note] : [{ type: 'text' as const, text: String(system || '') }, note]) as unknown as T
+}
 export const FAST_MODEL = 'claude-haiku-5-5'
 export function brainFastOn(env: Record<string, string | undefined> = (globalThis as any).process?.env || {}) {
   return String(env.GOGO_BRAIN_FAST || '').trim().toLowerCase() === 'on'
@@ -351,14 +357,18 @@ export async function decide(p: { text: string; ctx: BrainContext; now?: Date; c
   try {
     const client = p.client || new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
     // Order matters for caching: tools, then the cached static block, then the dynamic block and the turns.
-    const res: any = await client.messages.create({
-      model, max_tokens: 700, system: brainSystemBlocks(p.ctx, p.now || new Date()),
+    // Sonnet 5.5 cannot be forced to call a tool: forModel() turns 'any' into 'auto', and the note below (a final,
+    // uncached system block) tells it a tool call is required. A plain-text answer is still handled as 'no_tool_use'.
+    const res: any = await client.messages.create(forModel({
+      model, max_tokens: 700, system: toolRequiredSystem(model, brainSystemBlocks(p.ctx, p.now || new Date())),
       tools: BRAIN_TOOLS, tool_choice: { type: 'any' }, messages: brainMessages(p.ctx.turns, p.text),
-    }, { timeout: TIMEOUT_MS, maxRetries: MAX_RETRIES })
+    }), { timeout: TIMEOUT_MS, maxRetries: MAX_RETRIES })
     usage = brainUsage(res)
     ok = true
     const use = (res?.content || []).find((b: any) => b.type === 'tool_use')
-    const d = use ? decisionFromToolUse(p.text, use.name, use.input) : { kind: 'skip' as const, reason: 'no_tool_use' }
+    // Sonnet 5.5 with tool_choice 'auto' can answer in text; that is the same as calling reply with that text.
+    const plain = !use && isAdaptiveOnlyModel(model) ? textOf(res?.content).trim() : ''
+    const d = use ? decisionFromToolUse(p.text, use.name, use.input) : plain ? decisionFromToolUse(p.text, 'reply', { text: plain }) : { kind: 'skip' as const, reason: 'no_tool_use' }
     return { ...d, ms: Date.now() - t0, usage }
   } catch (err: any) {
     return { kind: 'skip', reason: `error:${clean(err?.message || err, 120)}`, ms: Date.now() - t0, usage }
@@ -500,14 +510,15 @@ export async function answerFollowups(p: { runId: string; telegramId: number; se
       const t0 = Date.now()
       let res: any = null
       try {
-        res = await client.messages.create({
-          model, max_tokens: 500, system: brainSystemBlocks(ctx, new Date(), `The search results were just sent (latest assistant message). Answer the user's earlier question from those results only. Be brief, name the option number, airline, time and fare.`),
+        res = await client.messages.create(forModel({
+          model, max_tokens: 500, system: toolRequiredSystem(model, brainSystemBlocks(ctx, new Date(), `The search results were just sent (latest assistant message). Answer the user's earlier question from those results only. Be brief, name the option number, airline, time and fare.`)),
           tools: BRAIN_TOOLS.filter(t => t.name === 'reply'), tool_choice: { type: 'tool', name: 'reply' }, messages: brainMessages(ctx.turns, `(Earlier, while you were searching, I asked:) ${question}`),
-        }, { timeout: TIMEOUT_MS * 2, maxRetries: 1 })
+        }), { timeout: TIMEOUT_MS * 2, maxRetries: 1 })
       } finally {
         try { (p.meter || meterBrainCall)({ telegramId: p.telegramId, source: 'brain_followup', model, ms: Date.now() - t0, ok: !!res, usage: brainUsage(res) }) } catch { /* never */ }
       }
-      const text = inventedApprovalGuard(clean((res?.content || []).find((b: any) => b.type === 'tool_use')?.input?.text, 1200))
+      // With tool_choice 'auto' (Sonnet 5.5) the model may answer in text instead of calling reply: that text is the answer.
+      const text = inventedApprovalGuard(clean((res?.content || []).find((b: any) => b.type === 'tool_use')?.input?.text || (isAdaptiveOnlyModel(model) ? textOf(res?.content) : ''), 1200))
       if (!text) continue
       const receipt = await p.send(text)
       // A fulfilled send promise is not evidence of provider acceptance: preserve

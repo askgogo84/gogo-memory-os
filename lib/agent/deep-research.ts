@@ -5,7 +5,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { searchWebResults, type WebSearchResult } from '@/lib/web-search'
 import { hotelResearchEvidence, isHotelDiscoveryResearch } from './hotel-research-evidence'
-import { SONNET_MODEL } from '@/lib/services/model-ids'
+import { SONNET_MODEL, forModel, textOf } from '@/lib/services/model-ids'
 
 // Public web-research queries are sent to external search and inference services.
 // Even if their private records have not been fetched yet, a personal research
@@ -38,8 +38,8 @@ const defaultModel: Model = async (prompt, maxTokens, model) => {
   const key = process.env.ANTHROPIC_API_KEY
   if (!key) throw new Error('no_model')
   const client = new Anthropic({ apiKey: key })
-  const res = await client.messages.create({ model, max_tokens: maxTokens, temperature: 0.2, messages: [{ role: 'user', content: prompt }] }, { timeout: 30_000 })
-  return (res.content.find((b: any) => b.type === 'text') as any)?.text || ''
+  const res = await client.messages.create(forModel({ model, max_tokens: maxTokens, temperature: 0.2, messages: [{ role: 'user' as const, content: prompt }] }), { timeout: 30_000 })
+  return textOf(res.content)
 }
 
 // 31 Oct, side by side with another assistant: "yes" to a how-to post brought back a profile of its author; theirs
