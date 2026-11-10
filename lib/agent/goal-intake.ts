@@ -50,12 +50,14 @@ const REMINDER_Q: Partial<Record<Slot, string>> = { date: 'which day?', time: 'w
 
 export type IntakeGoal = {
   id: string; kind: GoalKind; title: string; words: string; slots: Slots; ownership: TaskOwnership
-  asked: Slot[]; state: 'open' | 'started' | 'held' | 'dropped'; runId?: string; note?: string
+  asked: Slot[]; state: 'open' | 'started' | 'held' | 'dropped'; runId?: string; note?: string; reply?: string
 }
 export type IntakePlan = { v: 1; id: string; at: string; text: string; goals: IntakeGoal[]; started?: string; strays?: number }
 export const MAX_GOALS = 10
 const PLAN_MINUTES = 120
 
+/** Like clip, keeping line breaks (answers with bullets and source lists) and never cutting inside a line. */
+const block = (v: unknown, n: number) => { const t = String(v ?? '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]+/g, ' ').replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim(); if (t.length <= n) return t; const cut = t.slice(0, n); return cut.slice(0, Math.max(cut.lastIndexOf('\n'), n - 400)).trimEnd() + '\n…' }
 const clip = (v: unknown, n: number) => String(v ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
 const norm = (v: string) => v.toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, ' ').replace(/\b(?:the|a|an|my|for|to|of|me|about|please)\b/g, ' ').replace(/\s+/g, ' ').trim()
 
@@ -238,7 +240,9 @@ export function stepFor(g: IntakeGoal): { tool: 'reminders' | 'travel' | 'web_se
   }
   if (g.kind === 'flight_prices' && s.from && s.to && s.date) return { tool: 'travel', title: g.title, instruction: `Compare flights from ${s.from} to ${s.to} on ${s.date}` }
   if (g.kind === 'research') return { tool: 'web_search', title: g.title, instruction: g.words }
-  if (g.kind === 'todo') return { tool: 'tasks', title: g.title, instruction: `Add a to-do: ${g.title}` }
+  // The tasks tool takes the quoted words as the to-do; it skips texts that start like one of a planner's own steps
+  // ("check…", "verify…"), so those are phrased as a note to self.
+  if (g.kind === 'todo') { const t = g.title.replace(/["“”'‘’]/g, '').trim(); return { tool: 'tasks', title: g.title, instruction: `Add a task: "${/^(?:retrieve|look up|check|verify|ensure)\b/i.test(t) ? `Remember to ${t.replace(/^./, c => c.toLowerCase())}` : t}"` } }
   return null
 }
 
@@ -247,7 +251,13 @@ export type StartDeps = {
   event?: (actor: AgentActor, text: string) => Promise<string | null>
   email?: (actor: AgentActor, text: string) => Promise<string | null>
   eventsOn?: (owner: string) => boolean
-  capabilityOff?: (actor: AgentActor, capability: 'reminders') => Promise<boolean>
+  capabilityOff?: (actor: AgentActor, capability: 'reminders' | 'browser') => Promise<boolean>
+  now?: Date
+}
+/** "2026-11-11T09:30" in the person's own zone, for comparing with a reminder's day and time. */
+function localNow(zone: string, now: Date = new Date()): string {
+  const f = (z: string) => new Intl.DateTimeFormat('sv-SE', { timeZone: z, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(now).replace(' ', 'T')
+  try { return f(zone) } catch { return f('Asia/Kolkata') }
 }
 export const MAX_PARALLEL = 3
 export type Started = { goal: IntakeGoal; running?: Promise<{ status: string; text: string }>; reply?: string | null }
@@ -262,7 +272,7 @@ export async function startGoals(actor: AgentActor, plan: IntakePlan, deps: Star
   // picks up runs left idle, never reports one this request is still working on).
   let active = 0; const waiting: (() => void)[] = []
   const slot = async <T>(work: () => Promise<T>): Promise<T> => {
-    if (active >= MAX_PARALLEL) await new Promise<void>(r => waiting.push(r))
+    while (active >= MAX_PARALLEL) await new Promise<void>(r => waiting.push(r))
     active++
     try { return await work() } finally { active--; waiting.shift()?.() }
   }
@@ -273,7 +283,10 @@ export async function startGoals(actor: AgentActor, plan: IntakePlan, deps: Star
       const step = stepFor(g)
       if (step) {
         // The owner's own off switch for this kind of work is honoured before anything is created.
-        if (step.tool === 'reminders' && await (deps.capabilityOff || realCapabilityOff)(actor, 'reminders')) { g.state = 'held'; g.note = 'capability_off'; continue }
+        const needs = step.tool === 'reminders' ? 'reminders' as const : step.tool === 'web_search' ? 'browser' as const : null
+        if (needs && await (deps.capabilityOff || realCapabilityOff)(actor, needs)) { g.state = 'held'; g.note = needs === 'reminders' ? 'capability_off' : 'browser_off'; continue }
+        // A reminder for a time that has already gone by is asked about, not attempted.
+        if (step.reminder && `${step.reminder.date}T${step.reminder.time}` <= localNow(actor.timezone || 'Asia/Kolkata', deps.now)) { g.state = 'held'; g.note = 'time_passed'; continue }
         const run = await (deps.startRun || realStartRun)({ actor, goal: g, step, plan })
         g.state = 'started'; g.runId = run.runId
         started.push({ goal: g, running: slot(() => run.drive()).catch(() => FAILED) })
@@ -290,8 +303,10 @@ export async function startGoals(actor: AgentActor, plan: IntakePlan, deps: Star
         if (emailTaken) { g.state = 'held'; g.note = 'one_draft_at_a_time'; continue }
         emailTaken = true
         const reply = await (deps.email || realEmail)(actor, `email ${g.slots.recipient} saying ${g.slots.topic}`)
-        g.state = reply ? 'started' : 'held'; if (!reply) g.note = 'email_not_started'
-        started.push({ goal: g, reply })
+        // Started only when a draft really exists ("Connect Gmail first" or "which address?" is not a draft).
+        const drafted = Boolean(reply && /Nothing has been sent/.test(reply))
+        g.state = drafted ? 'started' : 'held'; if (!drafted) { g.note = 'email_not_started'; g.reply = reply ? clip(reply, 300) : undefined; emailTaken = false }
+        if (drafted) started.push({ goal: g, reply })
       }
     } catch (err: any) {
       console.error('GOAL_INTAKE_START_FAILED:', JSON.stringify({ kind: g.kind, code: String(err?.message || 'error').replace(/[^a-z0-9_:]/gi, '').slice(0, 60) }))
@@ -303,10 +318,12 @@ export async function startGoals(actor: AgentActor, plan: IntakePlan, deps: Star
 
 const realStartRun: NonNullable<StartDeps['startRun']> = async ({ actor, goal, step, plan }) => {
   const { startPersistentGoalRun } = await import('./persistent-general-plan')
-  return startPersistentGoalRun({ actor, surface: 'whatsapp', step: { tool: step.tool, title: step.title, instruction: step.instruction } as any, missionText: goal.words, metadata: { goal_batch_id: plan.id, goal_id: goal.id, goal_kind: goal.kind, goal_title: goal.title, ownership: goal.ownership, ...(step.reminder ? { goal_reminder: step.reminder } : {}) } })
+  // The mission text is the instruction code wrote, not the person's first wording ("next month"), which the flight
+  // reader would read as contradicting the exact date they then gave.
+  return startPersistentGoalRun({ actor, surface: 'whatsapp', step: { tool: step.tool, title: step.title, instruction: step.instruction } as any, missionText: step.instruction, metadata: { goal_batch_id: plan.id, goal_id: goal.id, goal_kind: goal.kind, goal_title: goal.title, ownership: goal.ownership, ...(step.reminder ? { goal_reminder: step.reminder } : {}) } })
 }
 const realEventsOn = (owner: string) => { const env = envOf(); return env.GOGO_EVENTS === '1' || String(env.GOGO_EVENTS_OWNERS || '').split(',').map(s => s.trim()).includes(owner) }
-const realCapabilityOff = async (actor: AgentActor, capability: 'reminders') => (await import('./adaptive-autonomy')).capabilityIsOff(actor.legacyTelegramId, capability)
+const realCapabilityOff = async (actor: AgentActor, capability: 'reminders' | 'browser') => (await import('./adaptive-autonomy')).capabilityIsOff(actor.legacyTelegramId, capability)
 // Create only: from a list, the Events flow may start a new draft and nothing else. Publishing, changing or
 // cancelling an event, or touching its guests, is never done on the strength of one line in a list.
 const realEvent = async (actor: AgentActor, text: string) => {
@@ -326,9 +343,12 @@ export function startedText(plan: IntakePlan, quick: Map<string, { status: strin
   const lines = [`Started ${go.length} of ${live.length}.`, '']
   for (const g of live) {
     const q = g.runId ? quick.get(g.runId) : undefined
-    if (g.state === 'started') lines.push(q ? `${ICON[q.status] || '⏳'} ${g.title}: ${clip(q.text, 300)}` : `⏳ ${g.title}: working on it.`)
-    else if (g.state === 'open') lines.push(`⏸ ${g.title}: waiting for ${missingOf(g).map(s => QUESTION[s].replace(/\?$/, '')).join(', ')}.`)
-    else if (g.note === 'one_draft_at_a_time') lines.push(`⏸ ${g.title}: next, once you send or drop the first email draft.`)
+    if (g.state === 'started') lines.push(q ? `${ICON[q.status] || '⏳'} ${g.title}: ${q.text.length > 300 ? 'done, details below.' : clip(q.text, 300)}` : `⏳ ${g.title}: working on it.`)
+    else if (g.state === 'open') lines.push(`⏸ ${g.title}: not started. I still need ${missingOf(g).map(s => QUESTION[s].replace(/\?$/, '')).join(', ')}. Ask me for this one on its own when you have it.`)
+    else if (g.note === 'one_draft_at_a_time') lines.push(`⏸ ${g.title}: not started. I keep one email draft at a time; ask me for this one after the first is sent or dropped.`)
+    else if (g.note === 'browser_off') lines.push(`⏸ ${g.title}: web research is switched off in your settings, so I did not start it.`)
+    else if (g.note === 'time_passed') lines.push(`⏸ ${g.title}: that time has already passed. Tell me a new time and I’ll set it.`)
+    else if (g.note === 'email_not_started') lines.push(`⏸ ${g.title}: no draft yet. ${g.reply || 'Ask me for this email on its own.'}`)
     else if (g.note === 'events_off') lines.push(`⏸ ${g.title}: event planning isn’t switched on for you yet.`)
     else if (g.note === 'capability_off') lines.push(`⏸ ${g.title}: reminders are switched off in your settings, so I did not set it.`)
     else if (g.note === 'event_not_started') lines.push(`⏸ ${g.title}: I need a bit more to start this event. Tell me about it on its own (whose, when, how many).`)
@@ -369,7 +389,18 @@ const realStore: Store = {
 // The one way a plan starts: these exact phrases, alone or at the end of the reply that gives the missing details.
 // Bare "yes", "go ahead", "do it" and "start" belong to other flows (an approval, an Events confirmation) and never
 // start a plan; the model's opinion of whether the person meant "start" is not used.
-export const START_WORDS = /(?:^|[\s,.!;])(?:get\s+(?:it|them|these|this|everything)\s+(?:all\s+)?done|start\s+(?:them|these)(?:\s+all)?|do\s+(?:them|these)(?:\s+all)?)[.!\s]*$/i
+const START_CLAUSE = /^(?:(?:ok(?:ay)?|yes|yep|alright|great|cool|perfect|now|please)[\s,.!]+)*(?:please\s+)?(?:get\s+(?:it|them|these|this|everything|all\s+of\s+them)\s+(?:all\s+)?done|start\s+(?:them|these)(?:\s+all)?|do\s+(?:them|these)(?:\s+all)?)(?:[\s,]+(?:please|now|thanks|thank\s+you))*[\s.!*]*$/i
+// Anything that could turn the phrase into "not yet", "I will" or a question: then it is not a start.
+const NOT_A_START = /\b(?:don'?t|do\s+not|not|never|no|nope|wait|hold|stop|cancel|i'?ll|i\s+will|i\s+can|let\s+me|should|shall|could|would|can\s+you|will\s+you|later|yet|before|after|unless|until|if|when|how|why)\b|\?/i
+/** True only when the message is the start phrase, or ends with it as its own clause after the details, and nothing
+ *  in the message negates, defers or questions it. */
+export function wantsStartPhrase(text: string): boolean {
+  const t = String(text || '').replace(/[‘’]/g, "'").replace(/\*/g, '').trim()
+  if (!t || t.length > 600 || NOT_A_START.test(t)) return false
+  if (START_CLAUSE.test(t)) return true
+  const last = t.split(/[,.;!\n]+/).map(s => s.trim()).filter(Boolean).pop() || ''
+  return last !== t && START_CLAUSE.test(last)
+}
 /** A bare confirmation meant for whatever asked last (an approval card, Events' "are you sure?"): never the plan's. */
 const BARE_CONFIRM = /^\s*(?:yes|yes please|yeah|yep|ok|okay|sure|confirm|confirmed|go ahead|do it|start|no|nope|cancel)\b[\s,.!]*(?:(?:cancel|move)(?: it)?)?[\s.!]*$/i
 
@@ -390,7 +421,7 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
     const pending = readPlan(await store.load(tg).catch(() => null), now)
     if (pending) {
       if (BARE_CONFIRM.test(text)) return null
-      const wantsStart = START_WORDS.test(text), onlyStart = wantsStart && text.trim().split(/\s+/).length <= 5
+      const wantsStart = wantsStartPhrase(text), onlyStart = wantsStart && START_CLAUSE.test(text.replace(/\*/g, '').trim())
       const ans = onlyStart ? { about_plan: true, start: true } : await model.answers({ text, today, timezone: tz, goals: pending.goals.filter(g => g.state === 'open').map(g => ({ id: g.id, kind: g.kind, title: g.title, missing: missingOf(g) })) })
       const applied = applyAnswers(pending, wantsStart && ans ? { ...ans, about_plan: true } : ans, today)
       // Details given together with the start phrase: the phrase decides, whatever the model made of the rest.
@@ -400,7 +431,7 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
         // Marked started before anything starts: a stored plan marked started is never read again (readPlan), so a
         // repeated "get it done", a retry or a failed clean-up cannot start it twice. Not saved: nothing starts.
         try { await store.save(tg, { ...plan, started: now.toISOString() }) } catch { return 'I couldn’t start these just now. Say *get it done* again in a moment.' }
-        const res = await startGoals(actor, plan, deps.start)
+        const res = await startGoals(actor, plan, { ...(deps.start || {}), now })
         await store.clear(tg).catch(() => {})
         const quick = new Map<string, { status: string; text: string }>()
         // A few seconds for the quick ones (a reminder is written and read back at once); the rest go on in the
@@ -408,8 +439,12 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
         const driven = res.started.filter(s => s.running).map(s => ({ s, p: s.running! }))
         await Promise.race([Promise.allSettled(driven.map(async d => { const r = await d.p; quick.set(d.s.goal.runId!, r) })), new Promise(r => setTimeout(r, deps.quickMs ?? 8000))])
         const later = driven.filter(d => !quick.has(d.s.goal.runId!))
-        if (later.length && deps.background && deps.send) deps.background(async () => { await Promise.allSettled(later.map(async d => { const r = await d.p; await deps.send!(`${d.s.goal.title}: ${clip(r.text, 1400)}`) })) })
-        const replies = res.started.filter(s => s.reply).map(s => `*${s.goal.title}*\n${clip(s.reply, 1500)}`)
+        if (later.length && deps.background && deps.send) deps.background(async () => { await Promise.allSettled(later.map(async d => { const r = await d.p; await deps.send!(`*${d.s.goal.title}*\n${block(r.text, 3000)}`) })) })
+        const replies = [
+          ...res.started.filter(s => s.reply).map(s => `*${s.goal.title}*\n${block(s.reply, 1500)}`),
+          // A result that arrived in time but is too long for its line in the summary is given whole.
+          ...res.started.filter(s => s.goal.runId && (quick.get(s.goal.runId)?.text.length || 0) > 300).map(s => `*${s.goal.title}*\n${block(quick.get(s.goal.runId!)!.text, 3000)}`),
+        ]
         console.log('GOAL_INTAKE:', JSON.stringify({ step: 'start', goals: plan.goals.length, started: res.started.length }))
         return [startedText(res.plan, quick), ...replies].join('\n\n')
       }

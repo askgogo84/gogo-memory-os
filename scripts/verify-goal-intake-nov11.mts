@@ -89,8 +89,8 @@ eq(startedRuns.find(s => s.kind === 'reminder').step.reminder, { date: '2026-11-
 eq(startedRuns.find(s => s.kind === 'research').step.instruction, 'find five suitable investors for AskGogo', 'research uses the person’s own words')
 ok(/✅ Meeting tomorrow: ⏰ I’ll remind you/.test(r!), 'a quick result is in the first reply')
 ok(/⏳ Five investors for AskGogo: working on it\./.test(r!), 'a slow one says it is working')
-ok(/⏸ Flight prices for next month: waiting for which date\./.test(r!), 'a goal still missing a detail says what it waits for, without asking again')
-ok(/⏸ Three business emails: waiting for who is it to, what should it say\./.test(r!), 'the emails wait for their details')
+ok(/⏸ Flight prices for next month: not started\. I still need which date\. Ask me for this one on its own when you have it\./.test(r!), 'a goal still missing a detail says it was not started and what it needs, and promises nothing it cannot keep')
+ok(/⏸ Three business emails: not started\. I still need who is it to, what should it say\./.test(r!), 'the emails were not started without their details')
 eq(events, ['organize a birthday on 2026-12-06 for 20 people'], 'the event goes to the Events flow with the details given')
 ok(/\*Organize a birthday\*\nDraft started\./.test(r!), 'and its own reply is included')
 eq(emails, [], 'no email was drafted without a recipient and a topic')
@@ -98,7 +98,7 @@ ok(/You can close WhatsApp/.test(r!), 'it says the work continues')
 eq(stored, null, 'the plan is closed once started')
 eq(later.length, 1, 'the slow ones finish in the background')
 await later[0]()
-eq(sent, ['Five investors for AskGogo: Found 5 results.'], 'and each sends its own message when done')
+eq(sent, ['*Five investors for AskGogo*\nFound 5 results.'], 'and each sends its own message when done')
 
 // 4. Emails: one draft at a time; nothing sent.
 stored = null; startedRuns.length = 0; emails.length = 0
@@ -112,8 +112,8 @@ eq(await gi.tryGoalIntake(actor, 'go ahead', deps as any), null, '"go ahead" bel
 eq([emails.length, startedRuns.length], [0, 0], 'and nothing started')
 r = await gi.tryGoalIntake(actor, 'do them all', deps as any)
 eq(emails, ['email Divya saying the offsite is moved to Friday'], 'only the first email is drafted, through the compose flow (draft only)')
-ok(/⏸ Email Nithin: next, once you send or drop the first email draft\./.test(r!), 'the second waits for the first')
-eq(startedRuns.map(s => [s.kind, s.ownership, s.step.instruction]), [['todo', 'your_turn', 'Add a to-do: Call the bank']], 'only the person can call the bank: it goes on their to-do list')
+ok(/⏸ Email Nithin: not started\. I keep one email draft at a time; ask me for this one after the first is sent or dropped\./.test(r!), 'the second email is not started while the first draft waits')
+eq(startedRuns.map(s => [s.kind, s.ownership, s.step.instruction]), [['todo', 'your_turn', 'Add a task: "Call the bank"']], 'only the person can call the bank: it goes on their to-do list')
 
 // 4b. Starting: only the exact phrase; switches and limits honoured.
 { stored = null; startedRuns.length = 0; events.length = 0
@@ -143,7 +143,7 @@ eq(startedRuns.map(s => [s.kind, s.ownership, s.step.instruction]), [['todo', 'y
   // Only three runs work at once.
   let live = 0, peak = 0
   const many = gi.newPlan('x', Array.from({ length: 8 }, (_, i) => ({ id: `g${i + 1}`, kind: 'research' as const, title: `R${i}`, words: `find ${i}`, slots: {}, ownership: 'gogo_handles' as const, asked: [], state: 'open' as const })), NOW)
-  const res = await gi.startGoals(actor, many, { startRun: async ({ goal }: any) => ({ runId: goal.id, drive: async () => { live++; peak = Math.max(peak, live); await new Promise(r => setTimeout(r, 15)); live--; return { status: 'completed', text: 'ok' } } }) } as any)
+  const res = await gi.startGoals(actor, many, { capabilityOff: async () => false, startRun: async ({ goal }: any) => ({ runId: goal.id, drive: async () => { live++; peak = Math.max(peak, live); await new Promise(r => setTimeout(r, 15)); live--; return { status: 'completed', text: 'ok' } } }) } as any)
   await Promise.all(res.started.map(s => s.running))
   eq([res.started.length, peak <= gi.MAX_PARALLEL, peak], [8, true, 3], 'eight goals start, never more than three at work at once')
   // An event line that is not a new event (or that Events answers with a question) is not "started".
@@ -160,6 +160,36 @@ eq(startedRuns.map(s => [s.kind, s.ownership, s.step.instruction]), [['todo', 'y
   eq(gi.readPlan({ ...JSON.parse(JSON.stringify(gi.newPlan('x', goals, NOW))), at: new Date(NOW.getTime() + 3600_000).toISOString() }, NOW), null, 'a plan dated in the future is no plan')
   eq(await gi.tryGoalIntake({ ...actor, timezone: 'Mars/Phobos' }, SENTENCE, { ...deps, timezone: undefined } as any) !== null, true, 'an invalid stored timezone falls back instead of silently doing nothing')
   stored = null }
+
+// 4c. The start phrase: exact, never negated, deferred or questioned.
+for (const t of ['get it done', 'Get it done.', 'ok get it done', 'okay, get it done please', 'get it done now', 'Get it done, thanks', '*get it done*', 'please get them all done', 'do them all', 'start them', 'yes, do these', 'Blr to Delhi, meeting at 11, get it done', 'meeting is at 10:30. Get it done'])
+  ok(gi.wantsStartPhrase(t), `starts: ${t}`)
+for (const t of ['do not start them', 'don’t start them', "don't do them", 'hold on don’t do these', 'please don’t get it done', 'do not get it done', 'wait, never get it done', 'No, I’ll do them', 'I’ll do these', 'let me do them', 'I will get it done', 'not yet, I’ll tell you when to start them', 'should I say get it done', 'how do these', 'don’t get it done yet', 'can you get it done by Friday?', 'can you get it done?', 'get it done later', 'get it done after lunch', 'if the price is ok, get it done', 'yes', 'go ahead', 'start', 'do it', 'get the report done', 'done'])
+  ok(!gi.wantsStartPhrase(t), `does not start: ${t}`)
+{ stored = null; startedRuns.length = 0
+  await gi.tryGoalIntake(actor, SENTENCE, deps as any)
+  answers = { about_plan: true, start: true, fills: [] }
+  for (const t of ['do not start them', 'No, I’ll do them', 'let me do them']) { await gi.tryGoalIntake(actor, t, deps as any) }
+  eq(startedRuns.length, 0, 'a negated or "I will" reply starts nothing, even when the model says start')
+  stored = null
+  // Switches and time.
+  const plan = gi.newPlan('x', [
+    { id: 'g1', kind: 'research', title: 'Investors', words: 'find investors', slots: {}, ownership: 'gogo_handles', asked: [], state: 'open' },
+    { id: 'g2', kind: 'reminder', title: 'Call', words: 'remind me to call Divya', slots: { date: '2026-11-10', time: '17:00' }, ownership: 'gogo_handles', asked: [], state: 'open' },
+    { id: 'g3', kind: 'email', title: 'Email Divya', words: 'email Divya', slots: { recipient: 'Divya', topic: 'hello' }, ownership: 'together', asked: [], state: 'open' },
+    { id: 'g4', kind: 'todo', title: 'Check passport expiry', words: 'check passport expiry', slots: {}, ownership: 'your_turn', asked: [], state: 'open' },
+  ], NOW)
+  const made: any[] = []
+  const res = await gi.startGoals(actor, plan, { now: NOW, capabilityOff: async (_a: any, c: string) => c === 'browser', email: async () => 'Connect Google Workspace first so I can find the email thread.', startRun: async ({ goal, step }: any) => { made.push(step); return { runId: goal.id, drive: async () => ({ status: 'completed', text: 'ok' }) } } } as any)
+  eq(res.plan.goals.map(g => [g.state, g.note || '']), [['held', 'browser_off'], ['held', 'time_passed'], ['held', 'email_not_started'], ['started', '']], 'web research switched off, a reminder time already gone, and an email with no draft are each held with their own reason')
+  eq(made.map(s => s.instruction), ['Add a task: "Remember to check passport expiry"'], 'a to-do that begins like a planner step is phrased so the tasks tool keeps it')
+  const txt = gi.startedText(res.plan, new Map())
+  ok(/web research is switched off in your settings/.test(txt) && /that time has already passed\. Tell me a new time/.test(txt) && /Email Divya: no draft yet\. Connect Google Workspace first/.test(txt) && /^Started 1 of 4\./.test(txt), 'and the reply says each reason, counting only what really started') }
+{ const pg3 = readFileSync(new URL('../lib/agent/persistent-general-plan.ts', import.meta.url), 'utf8'), cron = readFileSync(new URL('../app/api/cron/autonomous-runs/route.ts', import.meta.url), 'utf8')
+  ok(/capabilityIsOff\(context\.actor\.legacyTelegramId, 'browser'\)\) return \{ status:'blocked' as const, error:'persistent_browser_permission_off' \}/.test(pg3), 'the web research switch is also checked when the run executes')
+  ok(/goal_live_until: new Date\(Date\.now\(\) \+ 150_000\)\.toISOString\(\)/.test(pg3) && /typeof meta\.goal_live_until==='string'&&Date\.parse\(meta\.goal_live_until\)>Date\.now\(\)\)\{skipped\+\+;continue\}/.test(cron), 'the sweeper leaves a goal run alone while the request that created it is still driving it')
+  ok(/includes\('persistent_reminder_permission_off'\)\) text = 'Reminders are switched off/.test(pg3), 'the "reminders are off" line is only for the reminder switch')
+  ok(/missionText: step\.instruction,/.test(readFileSync(new URL('../lib/agent/goal-intake.ts', import.meta.url), 'utf8')), 'a goal run’s mission text is the checked instruction, not the first wording') }
 
 // 5. Not about the plan; stale plans; a stored plan is re-checked.
 stored = null
@@ -196,10 +226,10 @@ ok(!/sendGmail|gmail\.users\.messages\.send|executeApproved|approve\(|agent_appr
 ok(!/policy|sentinel|adaptive-trust|permission_level|permissionLevel|agent_permissions/i.test(src.replace(/^\s*\/\/.*$/gm, '')), 'intake grants no permissions and reads none except the owner’s own off switch (through capabilityIsOff)')
 { const pg2 = readFileSync(new URL('../lib/agent/persistent-general-plan.ts', import.meta.url), 'utf8')
   ok(/capabilityIsOff\(context\.actor\.legacyTelegramId, 'reminders'\)\) return \{ status:'blocked' as const, error:'persistent_reminder_permission_off' \}/.test(pg2), 'the reminder off switch is also checked when the run executes (so a resumed run obeys it)')
-  ok(/goal_kind === 'research'[\s\S]{0,500}if \(!sources\.length\) return \{ status:'blocked' as const, error:'goal_research_no_sources'/.test(pg2), 'research with no sources is not a finished task')
+  ok(/goal_kind === 'research'[\s\S]{0,1200}if \(!sources\.length\) return \{ status:'blocked' as const, error:'goal_research_no_sources'/.test(pg2), 'research with no sources is not a finished task')
   const own = await import('../lib/agent/task-ownership')
   const checks = [...pg2.matchAll(/recordGoalVerification\(context, '([a-z_]+)'/g)].map(m => m[1])
-  eq([checks.sort(), checks.every(c => own.VERIFICATION_CHECKS.has(c))], [['reminder_readback', 'research_sources_readback', 'todo_readback'], true], 'goal runs record which code check read the result back, and each is one Tasks accepts as "checked"')
+  eq([checks.sort(), checks.every(c => own.VERIFICATION_CHECKS.has(c))], [['reminder_readback', 'todo_readback'], true], 'reminder and to-do runs record which code check read the result back; research records none (finding sources is not a check of the answer)')
   ok(/if \(!meta\.goal_batch_id\) return/.test(pg2) && /readBack === true\) await recordGoalVerification/.test(pg2), 'only for goal runs, and for a reminder only after the row was read back')
   eq(own.doneStateOf({ status: 'completed', metadata_json: { verification: { state: 'verified_completed', check: 'reminder_readback', at: new Date().toISOString() } } }), 'verified', 'which Tasks then shows as Done, checked')
   ok(/from\('agent_steps'\)\.select\('output_json'\)\.eq\('run_id', created\.runId\)\.eq\('telegram_id', String\(params\.actor\.legacyTelegramId\)\)/.test(pg2), 'the reply for a goal is read from what its own step produced, for this owner') }
