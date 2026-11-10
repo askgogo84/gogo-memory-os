@@ -8,6 +8,7 @@
  * credentials. Origin checks are not DNS/IP pinning.
  */
 import { isTwilioMediaCdnUrl, logRejectedTwilioRedirect } from '@/lib/services/twilio-cdn'
+import { fetchMetaMedia, isMetaMediaRef } from '@/lib/channels/whatsapp-provider/meta-media'
 export const NUTRITION_IMAGE_MAX_BYTES = 12 * 1024 * 1024
 
 const accountSidPattern = /^AC[0-9a-fA-F]{32}$/
@@ -82,6 +83,12 @@ export async function downloadTwilioNutritionImage(
   authToken: string,
   options: { fetchImpl?: typeof fetch } = {},
 ): Promise<{ data: Buffer; contentType: string }> {
+  // A Meta Cloud API media reference: fetched from Meta with the same size and type bounds (see meta-media.ts).
+  if (isMetaMediaRef(mediaUrl)) {
+    const media = await fetchMetaMedia(mediaUrl, { maxBytes: NUTRITION_IMAGE_MAX_BYTES, allowedTypes: imageTypes }, { fetchImpl: options.fetchImpl })
+    if (!media) throw new Error('Meta nutrition image unavailable')
+    return { data: Buffer.from(media.arrayBuffer), contentType: media.contentType }
+  }
   const api = exactTwilioMediaUrl(mediaUrl, accountSid)
   if (!authToken) throw new Error('Twilio nutrition credentials unavailable')
   const fetchImpl = options.fetchImpl || fetch

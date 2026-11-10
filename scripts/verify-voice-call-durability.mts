@@ -200,6 +200,8 @@ function voiceMediaHarness(transport: (url: string, options?: any) => Promise<Re
     exports,
     require: (name: string) => {
       if (name === 'openai') return { __esModule: true, default: FakeOpenAI }
+      // Twilio media is under test here; the Meta media path has its own test (verify-wa-meta-media-nov10).
+      if (name === '@/lib/channels/whatsapp-provider/meta-media') return { isMetaMediaRef: () => false, fetchMetaMedia: async () => null }
       throw Error('Unexpected voice media dependency ' + name)
     },
     process: { env: { OPENAI_API_KEY: 'fixture-only', TWILIO_ACCOUNT_SID: VOICE_MEDIA_SID, TWILIO_AUTH_TOKEN: 'fixture-token' } },

@@ -8,6 +8,7 @@
  * prerequisites for release. No DNS pinning is claimed.
  */
 import { isTwilioMediaCdnUrl, logRejectedTwilioRedirect } from './twilio-cdn'
+import { fetchMetaMedia, isMetaMediaRef } from '@/lib/channels/whatsapp-provider/meta-media'
 export const MEDIA_MEMORY_THUMBNAIL_MAX_BYTES = 12 * 1024 * 1024
 
 export type ThumbnailImageMime = 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp'
@@ -88,6 +89,11 @@ export async function downloadTwilioMemoryThumbnail(args: {
   authToken: string
   fetchImpl?: typeof fetch
 }): Promise<{ base64: string; mediaType: ThumbnailImageMime } | null> {
+  // A Meta Cloud API media reference: fetched from Meta with the same size and type bounds (see meta-media.ts).
+  if (isMetaMediaRef(args.mediaUrl)) {
+    const media = await fetchMetaMedia(args.mediaUrl, { maxBytes: MEDIA_MEMORY_THUMBNAIL_MAX_BYTES, allowedTypes: acceptedMimes }, { fetchImpl: args.fetchImpl })
+    return media ? { base64: Buffer.from(media.arrayBuffer).toString('base64'), mediaType: media.contentType as ThumbnailImageMime } : null
+  }
   const apiUrl = verifiedTwilioMediaUrl(args.mediaUrl, args.accountSid)
   if (!apiUrl || !args.authToken) return null
   const fetchImpl = args.fetchImpl || fetch

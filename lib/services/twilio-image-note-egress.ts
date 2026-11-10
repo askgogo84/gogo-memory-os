@@ -7,6 +7,7 @@
  * Origin checks are not DNS/IP pinning.
  */
 import { isTwilioMediaCdnUrl, logRejectedTwilioRedirect } from './twilio-cdn'
+import { fetchMetaMedia, isMetaMediaRef } from '@/lib/channels/whatsapp-provider/meta-media'
 export const TWILIO_IMAGE_NOTE_MAX_BYTES = 18 * 1024 * 1024
 
 const accountSidPattern = /^AC[0-9a-fA-F]{32}$/
@@ -81,6 +82,12 @@ export async function fetchTwilioImageNote(
   authToken: string,
   options: { fetchImpl?: typeof fetch } = {},
 ): Promise<{ bytes: Buffer; contentType: string }> {
+  // A Meta Cloud API media reference: fetched from Meta with the same size and type bounds (see meta-media.ts).
+  if (isMetaMediaRef(mediaUrl)) {
+    const media = await fetchMetaMedia(mediaUrl, { maxBytes: TWILIO_IMAGE_NOTE_MAX_BYTES, allowedTypes: imageTypes }, { fetchImpl: options.fetchImpl })
+    if (!media) throw new Error('meta_image_unavailable')
+    return { bytes: Buffer.from(media.arrayBuffer), contentType: media.contentType }
+  }
   const api = exactTwilioMediaUrl(mediaUrl, accountSid)
   if (!authToken) throw new Error('twilio_image_credentials_missing')
   const fetchImpl = options.fetchImpl || fetch

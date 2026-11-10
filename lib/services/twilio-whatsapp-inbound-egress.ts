@@ -8,6 +8,7 @@
  * deliberately not needed by the injected synthetic regression tests.
  */
 import { isTwilioMediaCdnUrl, logRejectedTwilioRedirect } from './twilio-cdn'
+import { fetchMetaMedia, isMetaMediaRef } from '@/lib/channels/whatsapp-provider/meta-media'
 export const TWILIO_WHATSAPP_IMAGE_MAX_BYTES = 12 * 1024 * 1024
 export const TWILIO_WHATSAPP_AUDIO_MAX_BYTES = 20 * 1024 * 1024
 
@@ -101,6 +102,11 @@ export async function downloadTwilioWhatsappInboundMedia(args: {
   kind: InboundTwilioMediaKind
   fetchImpl?: typeof fetch
 }): Promise<InboundTwilioMedia | null> {
+  // A Meta Cloud API media reference: fetched from Meta with the same size and type bounds (see meta-media.ts).
+  if (isMetaMediaRef(args.mediaUrl)) {
+    if (args.kind !== 'image' && args.kind !== 'audio') return null
+    return fetchMetaMedia(args.mediaUrl, { maxBytes: args.kind === 'image' ? TWILIO_WHATSAPP_IMAGE_MAX_BYTES : TWILIO_WHATSAPP_AUDIO_MAX_BYTES, allowedTypes: args.kind === 'image' ? imageTypes : audioTypes }, { fetchImpl: args.fetchImpl })
+  }
   const accountSid = args.accountSid || ''
   const token = args.authToken || ''
   const first = validApiMediaUrl(args.mediaUrl, accountSid)
