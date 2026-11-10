@@ -238,6 +238,12 @@ const open2Link = tokenOf((await store.publishEvent(ME, open2.id, db)).shareUrl!
 let accepted = 0
 for (let i = 0; i < 60; i++) if ((await store.submitRsvp(open2Link, { status: 'going', plusOnes: 5, name: `F ${i}`, clientKey: key(1000 + i) }, db)).ok) accepted++
 eq([accepted, (await store.headcount(ME, open2.id, db)).attendees], [50, 300], 'an event with no capacity takes at most 300 people through the shared link')
+const open3 = await store.createEvent(ME, { title: 'No capacity 2', startsAt: future(48), venueName: 'Park', maxPlusOnes: 10 }, db)
+const open3Link = tokenOf((await store.publishEvent(ME, open3.id, db)).shareUrl!)
+const maybes: string[] = []
+for (let i = 0; i < 40; i++) { const r = await store.submitRsvp(open3Link, { status: 'maybe', name: `M ${i}`, clientKey: key(2000 + i) }, db); if (r.personalToken) maybes.push(r.personalToken) }
+for (const t of maybes) await store.submitRsvp(t, { status: 'going', plusOnes: 10 }, db)
+ok((await store.headcount(ME, open3.id, db)).attendees <= 300, 'joining as maybe and then switching to going cannot get round the 300-people bound')
 // ICS folding keeps whole characters.
 const longView = { ...(await store.invitationFor(p3.data.personalToken, db))!.view!, title: 'a'.repeat(62) + '\u{1F600}\u{1F600}\u{1F600}', description: 'one\rtwo' }
 const folded = core.invitationIcs(longView, 'abc')!

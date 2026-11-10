@@ -1,6 +1,6 @@
 // AskGogo Events: the public RSVP endpoint. No account: the private link in the path is the only credential, so the
 // handler does nothing unless that token resolves, and it returns only what that one guest may see.
-// GET ?format=ics returns a calendar file. POST records an answer. Requests are bounded per address and per link.
+// GET ?format=ics returns a calendar file. POST records an answer. Requests are bounded per address and method.
 import { createHash } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { invitationIcs, rsvpErrorText } from '@/lib/events/core'

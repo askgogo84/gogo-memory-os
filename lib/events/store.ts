@@ -39,6 +39,14 @@ export function setEventsDbForTests(db: Db | null) {
   defaultDb = db
 }
 const theDb = (db?: Db): Db => db || defaultDb || (supabaseAdmin as any)
+let clockFn: (() => number) | null = null
+/** Tests only: a fixed clock for "now" (publish checks, timestamps the app writes). Refused in production. */
+export function setEventsClockForTests(fn: (() => number) | null) {
+  if (envOf().NODE_ENV === 'production' || envOf().VERCEL_ENV) fail('not_allowed')
+  clockFn = fn
+}
+const nowMs = () => (clockFn ? clockFn() : Date.now())
+const nowIso = () => new Date(nowMs()).toISOString()
 
 /** Links must be shown again later (copy link, resend), but only hashes are stored. So a token is derived from a
  *  server-side key and the row's id: reproducible by the server, unguessable by anyone else. */
@@ -88,7 +96,8 @@ async function audit(db: Db, eventId: string, actor: string, action: string, det
 export async function createEvent(owner: string, draft: EventDraft, db: Db = theDb()): Promise<EventRow> {
   const row = rowFromDraft(draft)
   if (!row.title) fail('title_required')
-  const e = check<EventRow>(await db.from('gogo_events').insert({ ...row, owner_telegram_id: owned(owner), status: 'draft' }).select('*').single())
+  const at = nowIso()
+  const e = check<EventRow>(await db.from('gogo_events').insert({ ...row, owner_telegram_id: owned(owner), status: 'draft', created_at: at, updated_at: at }).select('*').single())
   await audit(db, e.id, 'owner', 'event.created')
   return e
 }
@@ -110,9 +119,9 @@ export async function updateEvent(owner: string, id: string, patch: EventDraft, 
   if ('title' in row && !row.title) fail('title_required')
   if (current.status === 'published') {
     const next = { ...draftFromRow(current), ...patch }
-    if (missingForPublish(next).length) fail('would_unpublish')
+    if (missingForPublish(next, nowMs()).length) fail('would_unpublish')
   }
-  const e = check<EventRow | null>(await db.from('gogo_events').update({ ...row, revision: current.revision + 1, updated_at: new Date().toISOString() })
+  const e = check<EventRow | null>(await db.from('gogo_events').update({ ...row, revision: current.revision + 1, updated_at: nowIso() })
     .eq('owner_telegram_id', owned(owner)).eq('id', current.id).eq('revision', current.revision).select('*').maybeSingle())
   if (!e) fail('changed_meanwhile')
   await audit(db, current.id, 'owner', 'event.updated', { fields: Object.keys(row) })
@@ -123,11 +132,11 @@ export async function updateEvent(owner: string, id: string, patch: EventDraft, 
 export async function publishEvent(owner: string, id: string, db: Db = theDb()): Promise<{ event: EventRow | null; missing: string[]; shareUrl: string | null }> {
   const current = await getEvent(owner, id, db)
   if (current.status === 'cancelled' || current.status === 'completed') fail('event_closed')
-  const missing = missingForPublish(draftFromRow(current))
+  const missing = missingForPublish(draftFromRow(current), nowMs())
   if (missing.length) return { event: null, missing, shareUrl: null }
   const token = derivedToken('share', current.id, shareNonce(current))
   // Guarded by the revision read above: a cancel or an edit that landed in between wins, and this publish is retried.
-  const e = check<EventRow | null>(await db.from('gogo_events').update({ status: 'published', share_token_hash: eventTokenHash(token), revision: current.revision + 1, updated_at: new Date().toISOString() })
+  const e = check<EventRow | null>(await db.from('gogo_events').update({ status: 'published', share_token_hash: eventTokenHash(token), revision: current.revision + 1, updated_at: nowIso() })
     .eq('owner_telegram_id', owned(owner)).eq('id', current.id).eq('revision', current.revision).select('*').maybeSingle())
   if (!e) fail('changed_meanwhile')
   await audit(db, current.id, 'owner', 'event.published')
@@ -164,7 +173,7 @@ export async function rotateShareLink(owner: string, id: string, db: Db = theDb(
 export async function cancelEvent(owner: string, id: string, db: Db = theDb()): Promise<EventRow> {
   const current = await getEvent(owner, id, db)
   if (current.status === 'cancelled') return current
-  const now = new Date().toISOString()
+  const now = nowIso()
   // A draft that never had a date was never an invitation anyone could open: it is discarded, not kept as cancelled.
   if (current.status === 'draft' && !current.starts_at) {
     check(await db.from('gogo_events').delete().eq('owner_telegram_id', owned(owner)).eq('id', current.id).select('id'))
@@ -202,7 +211,7 @@ export async function listGuests(owner: string, id: string, db: Db = theDb()): P
 
 export async function revokeGuest(owner: string, id: string, guestId: string, db: Db = theDb()): Promise<void> {
   const e = await getEvent(owner, id, db)
-  const rows = check<any[]>(await db.from('gogo_event_guests').update({ token_revoked_at: new Date().toISOString() }).eq('event_id', e.id).eq('id', uuid(guestId)).select('id')) || []
+  const rows = check<any[]>(await db.from('gogo_event_guests').update({ token_revoked_at: nowIso() }).eq('event_id', e.id).eq('id', uuid(guestId)).select('id')) || []
   if (!rows.length) fail('not_found')
   await audit(db, e.id, 'owner', 'guest.revoked', { guest: uuid(guestId) })
 }
@@ -219,7 +228,7 @@ export async function guestLink(owner: string, id: string, guestId: string, db: 
 
 /** A cancel or time change on a published event is parked here until the organizer says yes. */
 export type PendingAction = { type: 'cancel' } | { type: 'move'; startsAt: string }
-export async function setPendingAction(owner: string, id: string, action: PendingAction | null, db: Db = theDb(), now = Date.now()): Promise<void> {
+export async function setPendingAction(owner: string, id: string, action: PendingAction | null, db: Db = theDb(), now = nowMs()): Promise<void> {
   const e = await getEvent(owner, id, db)
   check(await db.from('gogo_events').update({ pending_action: action ? { ...action, at: new Date(now).toISOString() } : null }).eq('owner_telegram_id', owned(owner)).eq('id', e.id).select('id'))
 }

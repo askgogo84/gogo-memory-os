@@ -27,7 +27,9 @@ export const EVENT_GATE = /\b(?:events?|part(?:y|ies)|birthday|b'?day|anniversar
  *  The window never applies to a published event: anything that changes what guests see must name the subject. */
 const ACTIVE_WINDOW_MS = 30 * 60_000
 /** The organizer's explicit yes to a parked cancel or time change. Decided here, not by the model. */
-export const CONFIRM_RE = /^\s*(?:yes|yes please|confirm|confirmed|go ahead|do it)\b[\s,.!]*(?:cancel(?: it)?|move(?: it)?)?[\s.!]*$/i
+export const CONFIRM_RE = /^\s*(?:yes|yes please|confirm|confirmed|go ahead|do it)\b[\s,.!]*(?:(cancel|move)(?: it)?)?[\s.!]*$/i
+/** The verb a confirmation names, if any ("yes, cancel it" -> cancel). A yes that names the other action is refused. */
+export const confirmVerb = (text: string): 'cancel' | 'move' | null => { const m = CONFIRM_RE.exec(text); return m && m[1] ? (m[1].toLowerCase() as 'cancel' | 'move') : null }
 
 const pad = (n: number) => String(n).padStart(2, '0')
 /** A local calendar date and clock time in the organizer's timezone, as a UTC instant. Null unless both are well formed. */
@@ -93,35 +95,46 @@ const errorText = (code: string) => ({
 } as Record<string, string>)[code] || 'That did not work, so nothing was changed. Please try again.'
 
 const KNOWN_ACTIONS: string[] = ['none', 'create', 'update', 'publish', 'cancel', 'add_guests', 'remove_guest', 'headcount', 'pending', 'link', 'new_link', 'link_off', 'list']
-const openEvents = (events: EventRow[]) => events.filter(e => e.status === 'draft' || e.status === 'published').sort((a: any, b: any) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
+/** Drafts and published events that have not happened yet (a published event more than a day in the past no longer
+ *  takes part in choosing which event a message is about). Most recently touched first. */
+const openEvents = (events: EventRow[], now = Date.now()) => events
+  .filter(e => e.status === 'draft' || (e.status === 'published' && !(e.starts_at && Date.parse(e.starts_at) < now - 24 * 3600_000)))
+  .sort((a: any, b: any) => Date.parse(b.updated_at) - Date.parse(a.updated_at))
 /** The draft a short follow-up refers to: the organizer's only draft touched in the last half hour, if any. */
 export function activeDraft(events: EventRow[], now = Date.now()): EventRow | null {
-  const recent = openEvents(events).filter(e => e.status === 'draft' && now - Date.parse((e as any).updated_at) < ACTIVE_WINDOW_MS)
+  const recent = openEvents(events, now).filter(e => e.status === 'draft' && now - Date.parse((e as any).updated_at) < ACTIVE_WINDOW_MS)
   return recent.length === 1 ? recent[0] : null
 }
-const norm = (v: unknown) => String(v ?? '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
-/** Which event an action is about. One open event: that one. Several: the one the person named (exact name, or the
- *  only one containing it), else the draft being planned right now, else nobody: the caller asks. Never a guess. */
-export function targetEvent(events: EventRow[], named: unknown, now = Date.now()): { event: EventRow | null; ask: EventRow[] } {
-  const open = openEvents(events)
-  if (open.length <= 1) return { event: open[0] || null, ask: [] }
+/** Letters, combining marks and digits in any script (Kannada, Hindi and so on), lower-cased, single-spaced. */
+export const norm = (v: unknown) => String(v ?? '').normalize('NFKC').toLocaleLowerCase('en').replace(/[^\p{L}\p{M}\p{N}]+/gu, ' ').trim()
+/** Which event an action is about. A name, when given, must match: exactly, or as the only event whose name contains
+ *  it (at least 3 characters). A name that matches nothing is asked about, even with one open event. With no name:
+ *  the only open event, else the draft being planned right now, else nobody: the caller asks. Never a guess. */
+export function targetEvent(events: EventRow[], named: unknown, now = Date.now()): { event: EventRow | null; ask: EventRow[]; unknownName?: boolean } {
+  const open = openEvents(events, now)
   const want = norm(named)
   if (want) {
     const exact = open.filter(e => norm(e.title) === want)
     if (exact.length === 1) return { event: exact[0], ask: [] }
-    const partial = open.filter(e => norm(e.title).includes(want) || want.includes(norm(e.title)))
+    const partial = want.length >= 3 ? open.filter(e => { const t = norm(e.title); return t.length > 0 && t.includes(want) }) : []
     if (!exact.length && partial.length === 1) return { event: partial[0], ask: [] }
-    return { event: null, ask: (exact.length ? exact : partial.length ? partial : open).slice(0, 6) }
+    return { event: null, ask: (exact.length ? exact : partial.length ? partial : open).slice(0, 6), unknownName: !exact.length && !partial.length }
   }
+  if (open.length <= 1) return { event: open[0] || null, ask: [] }
   const draft = activeDraft(events, now)
   return draft ? { event: draft, ask: [] } : { event: null, ask: open.slice(0, 6) }
+}
+/** A guest-supplied name as it appears in the organizer's chat: no WhatsApp formatting characters, no links, quoted. */
+export function shownName(v: unknown): string {
+  const plain = String(v ?? '').replace(/https?:\/\/\S+|www\.\S+|\b[a-z0-9-]+\.(?:com|in|net|org|io|app|link|ly|me|co)\b\S*/gi, '[link]').replace(/[*_~`>]/g, '').replace(/\s+/g, ' ').trim().slice(0, 60)
+  return `"${plain || 'Guest'}"`
 }
 
 export type EventReply = { text: string; action: EventAction['action'] | 'confirm' }
 const CHANGES_FOR_GUESTS = 'Guests see this on their invitation link. I have not messaged anyone.'
 
 /** Carries out one typed action. Returns null for "none" so the message goes on to the ordinary assistant. */
-export async function runEventAction(owner: string, a: EventAction, ctx: { timezone: string; events: EventRow[]; hostName?: string | null; now?: number }, db?: Db): Promise<EventReply | null> {
+export async function runEventAction(owner: string, a: EventAction, ctx: { timezone: string; events: EventRow[]; hostName?: string | null; now?: number; onlyEventId?: string | null }, db?: Db): Promise<EventReply | null> {
   const tz = normalizeTimezone(ctx.timezone), now = ctx.now ?? Date.now()
   const reply = (text: string): EventReply => ({ text, action: a.action })
   try {
@@ -137,10 +150,14 @@ export async function runEventAction(owner: string, a: EventAction, ctx: { timez
       const created = await store.createEvent(owner, { ...patch, timezone: tz, hostName: patch.hostName || ctx.hostName || null, maxPlusOnes: patch.maxPlusOnes ?? 0 }, db)
       return reply(await afterDraftChange(owner, created.id, problems, db, true))
     }
-    const { event: current, ask } = targetEvent(ctx.events, a.event, now)
+    const { event: current, ask, unknownName } = targetEvent(ctx.events, a.event, now)
     if (!current) {
-      return reply(ask.length ? `Which event do you mean?\n${ask.map(e => `• ${e.title} (${whenText(e.starts_at, e.timezone)})`).join('\n')}` : 'You have no open event. Tell me what you are planning, for example "plan a birthday on 22 November at 5 pm".')
+      const list = ask.map(e => `• ${e.title} (${whenText(e.starts_at, e.timezone)})`).join('\n')
+      return reply(unknownName ? (ask.length ? `I could not find an event with that name. Your open events:\n${list}` : 'You have no open event. Tell me what you are planning, for example "plan a birthday on 22 November at 5 pm".')
+        : ask.length ? `Which event do you mean?\n${list}` : 'You have no open event. Tell me what you are planning, for example "plan a birthday on 22 November at 5 pm".')
     }
+    // A bare follow-up (no event words) may only touch the draft being planned right now.
+    if (ctx.onlyEventId && current.id !== ctx.onlyEventId) return null
     const live = current.status === 'published'
     if (a.action === 'update') {
       const { patch, problems } = patchFromAction(a, tz, current)
@@ -150,9 +167,17 @@ export async function runEventAction(owner: string, a: EventAction, ctx: { timez
         // What guests have been told is not changed on one reading of one message: it waits for an explicit yes.
         const { startsAt, ...rest } = patch
         if (Date.parse(startsAt as string) <= now) return reply('That time is in the past, so I have not changed anything.')
-        if (Object.keys(rest).length) await store.updateEvent(owner, current.id, rest, db)
+        // Park the move first: if that fails, nothing at all has changed and the reply says so truthfully.
+        await clearOtherPending(owner, ctx.events, current.id, now, db)
         await store.setPendingAction(owner, current.id, { type: 'move', startsAt: startsAt as string }, db, now)
-        return reply(`Move *${current.title}* from ${whenText(current.starts_at, current.timezone)} to ${whenText(startsAt as string, current.timezone)}? Guests will see the new time on their invitation link. Reply *yes* to confirm.`)
+        const ask = `Move *${current.title}* from ${whenText(current.starts_at, current.timezone)} to ${whenText(startsAt as string, current.timezone)}? Guests will see the new time on their invitation link. Reply *yes* to confirm.`
+        if (!Object.keys(rest).length) return reply(ask)
+        try {
+          await store.updateEvent(owner, current.id, rest, db)
+          return reply(`Updated now: ${changedLabel(rest)}. ${CHANGES_FOR_GUESTS}\n\n${ask}`)
+        } catch (error: any) {
+          return reply(`${ask}\n\nThe other change (${changedLabel(rest)}) did not go through: ${errorText(error instanceof store.EventsError ? error.code : '')}`)
+        }
       }
       await store.updateEvent(owner, current.id, patch, db)
       const text = await afterDraftChange(owner, current.id, problems, db, false)
@@ -165,6 +190,7 @@ export async function runEventAction(owner: string, a: EventAction, ctx: { timez
     }
     if (a.action === 'cancel') {
       if (!live) { await store.cancelEvent(owner, current.id, db); return reply(`The draft *${current.title}* is discarded. It was never published, so no guest saw it.`) }
+      await clearOtherPending(owner, ctx.events, current.id, now, db)
       await store.setPendingAction(owner, current.id, { type: 'cancel' }, db, now)
       return reply(`Cancel *${current.title}* (${whenText(current.starts_at, current.timezone)})? Guests who open their invitation link will see it is cancelled, and this cannot be undone. Reply *yes* to confirm.`)
     }
@@ -173,30 +199,42 @@ export async function runEventAction(owner: string, a: EventAction, ctx: { timez
       if (!input.length) return reply('Who should I add? Give me their names.')
       const r = await store.addGuests(owner, current.id, input, db)
       const shown = r.added.slice(0, 20)
-      const lines = [r.added.length ? `Added ${r.added.length} to *${current.title}*: ${r.added.map(g => g.name).join(', ')}.` : 'Nobody new was added.',
-        r.duplicates.length ? `Already on the list: ${r.duplicates.join(', ')}.` : '', r.invalid.length ? `I could not read: ${r.invalid.join(', ')}.` : '',
+      const few = (names: string[]) => names.slice(0, 20).join(', ') + (names.length > 20 ? ` and ${names.length - 20} more` : '')
+      const lines = [r.added.length ? `Added ${r.added.length} to *${current.title}*: ${few(r.added.map(g => g.name))}.` : 'Nobody new was added.',
+        r.duplicates.length ? `Already on the list: ${few(r.duplicates)}.` : '', r.invalid.length ? `I could not read: ${few(r.invalid)}.` : '',
         shown.length ? `Personal links (each is for one person):\n${shown.map(g => `${g.name}: ${g.link}`).join('\n')}` : '',
         r.added.length > shown.length ? `For the other ${r.added.length - shown.length}, ask me "link for" and the name.` : '',
         'I have not messaged anyone.']
       return reply(lines.filter(Boolean).join('\n'))
     }
     if (a.action === 'remove_guest' || (a.action === 'link' && a.guests?.[0]?.name)) {
-      const want = norm(a.guests?.[0]?.name)
-      if (!want) return reply('Who do you mean? Give me the name as it is on the guest list.')
+      const raw = norm(a.guests?.[0]?.name)
+      if (!raw) return reply('Who do you mean? Give me the name as it is on the guest list.')
       const guests = (await store.listGuests(owner, current.id, db)).filter(g => !g.revoked)
-      const exact = guests.filter(g => norm(g.name) === want), match = exact.length ? exact : guests.filter(g => norm(g.name).includes(want))
-      if (match.length !== 1) return reply(match.length ? `More than one guest matches: ${match.slice(0, 8).map(g => g.name).join(', ')}. Which one?` : `I could not find that name on the guest list for *${current.title}*.`)
-      if (a.action === 'link') {
-        const link = await store.guestLink(owner, current.id, match[0].id, db)
-        return reply(link ? `Personal link for ${match[0].name}:\n${link}` : `${match[0].name} joined through the shared link and holds their own personal link. I cannot issue it again.`)
+      // "Rahul 2" picks the second of several guests called Rahul, in the order shown in the list below.
+      const numbered = /^(.*\S)\s+(\d{1,2})$/.exec(raw)
+      const sameName = (n: string) => guests.filter(g => norm(g.name) === n)
+      let pick = sameName(raw)
+      if (!pick.length && numbered && sameName(numbered[1]).length > 1) { const all = sameName(numbered[1]); const k = Number(numbered[2]); pick = k >= 1 && k <= all.length ? [all[k - 1]] : [] }
+      const describe = (g: store.OrganizerGuest, i?: number) => `${shownName(g.name)}${i ? ` ${i}` : ''} (${g.source === 'share_link' ? 'joined through the link' : 'added by you'}${g.rsvp !== 'none' ? `, replied ${g.rsvp}` : ''})`
+      if (pick.length > 1) return reply(`More than one guest is called ${shownName(pick[0].name)}:\n${pick.slice(0, 9).map((g, i) => `• ${describe(g, i + 1)}`).join('\n')}\nSay the name with its number, for example "${a.action === 'link' ? 'link for' : 'remove'} ${norm(pick[0].name)} 2".`)
+      if (!pick.length) {
+        const close = raw.length >= 3 ? guests.filter(g => norm(g.name).includes(raw)) : []
+        // A partial name is only a suggestion: nobody is removed without their exact name.
+        return reply(close.length ? `I could not find exactly that name. Did you mean ${close.slice(0, 5).map(g => shownName(g.name)).join(', ')}? Say the full name.` : `I could not find that name on the guest list for *${current.title}*.`)
       }
-      await store.revokeGuest(owner, current.id, match[0].id, db)
-      return reply(`${match[0].name} is removed from *${current.title}* and their link no longer works.${match[0].source === 'share_link' ? ' They joined through the shared link, so they could join again with it. Say "new invitation link" to replace the shared link.' : ''}`)
+      const guest = pick[0]
+      if (a.action === 'link') {
+        const link = await store.guestLink(owner, current.id, guest.id, db)
+        return reply(link ? `Personal link for ${shownName(guest.name)}:\n${link}` : `${shownName(guest.name)} joined through the shared link and holds their own personal link. I cannot issue it again.`)
+      }
+      await store.revokeGuest(owner, current.id, guest.id, db)
+      return reply(`${shownName(guest.name)} is removed from *${current.title}* and their link no longer works.${guest.source === 'share_link' ? ' They joined through the shared link, so they could join again with it. Say "new invitation link" to replace the shared link.' : ''}`)
     }
     if (a.action === 'headcount') return reply(`${current.title}: ${headcountLine(await store.headcount(owner, current.id, db))}`)
     if (a.action === 'pending') {
       const waiting = (await store.listGuests(owner, current.id, db)).filter(g => g.rsvp === 'none' && !g.revoked)
-      return reply(waiting.length ? `Not replied yet for ${current.title} (${waiting.length}): ${waiting.slice(0, 30).map(g => g.name).join(', ')}${waiting.length > 30 ? ' and more' : ''}.` : `Everyone on the list for ${current.title} has replied.`)
+      return reply(waiting.length ? `Not replied yet for ${current.title} (${waiting.length}): ${waiting.slice(0, 30).map(g => shownName(g.name)).join(', ')}${waiting.length > 30 ? ' and more' : ''}.` : `Everyone on the list for ${current.title} has replied.`)
     }
     if (a.action === 'link') {
       const link = await store.shareLink(owner, current.id, db)
@@ -217,11 +255,22 @@ export async function runEventAction(owner: string, a: EventAction, ctx: { timez
   }
 }
 
-/** The organizer's "yes" to a parked cancel or time change. Only for one event with a fresh pending action. */
-export async function confirmPending(owner: string, events: EventRow[], now: number, db?: Db): Promise<EventReply | null> {
-  const waiting = openEvents(events).map(e => ({ e, p: store.pendingActionOf(e, now) })).filter(x => x.p && x.e.status === 'published')
-  if (waiting.length !== 1) return null
+const LABELS: Record<string, string> = { title: 'name', venueName: 'place', venueAddress: 'address', onlineUrl: 'online link', hostName: 'host', dressCode: 'dress code', description: 'description', capacity: 'number of people', maxPlusOnes: 'plus-ones', kind: 'type', endsAt: 'end time', timezone: 'timezone', rsvpClosesAt: 'reply deadline' }
+const changedLabel = (patch: EventDraft) => Object.keys(patch).map(k => LABELS[k] || k).join(', ')
+async function clearOtherPending(owner: string, events: EventRow[], keepId: string, now: number, db?: Db) {
+  for (const e of events) if (e.id !== keepId && store.pendingActionOf(e, now)) await store.setPendingAction(owner, e.id, null, db)
+}
+const parked = (events: EventRow[], now: number) => openEvents(events, now).map(e => ({ e, p: store.pendingActionOf(e, now) })).filter(x => x.p && x.e.status === 'published')
+
+/** The organizer's "yes" to a parked cancel or time change. It must be the very next message, name the same action
+ *  if it names one, and there must be exactly one event waiting. */
+export async function confirmPending(owner: string, events: EventRow[], now: number, db?: Db, text = 'yes'): Promise<EventReply | null> {
+  const waiting = parked(events, now)
+  if (!waiting.length) return null
+  if (waiting.length > 1) return { action: 'confirm', text: `Two changes are waiting for a yes (${waiting.map(w => w.e.title).join(' and ')}), so I have not done either. Please ask again for the one you want.` }
   const { e, p } = waiting[0]
+  const verb = confirmVerb(text)
+  if (verb && verb !== p!.type) { await store.setPendingAction(owner, e.id, null, db); return { action: 'confirm', text: `That does not match what I asked (${p!.type === 'cancel' ? 'cancelling' : 'moving'} *${e.title}*), so I have done nothing. Ask again if you want it.` } }
   try {
     await store.setPendingAction(owner, e.id, null, db)
     if (p!.type === 'cancel') {
@@ -255,10 +304,13 @@ export async function tryEventAsk(actor: AgentActor, text: string, surface: Even
     const now = deps.now ?? Date.now()
     const tz = normalizeTimezone(actor.timezone)
     const events = await store.listEvents(owner, deps.db)
-    // An explicit yes to a question this module asked. Deterministic; the model is not consulted.
+    // An explicit yes to a question this module asked. Deterministic; the model is not consulted. Any other message
+    // withdraws the question, so a "yes" meant for something else later can never cancel or move an event.
     if (CONFIRM_RE.test(message)) {
-      const confirmed = await confirmPending(owner, events, now, deps.db)
+      const confirmed = await confirmPending(owner, events, now, deps.db, message)
       if (confirmed) { console.log('EVENT_ASK:', JSON.stringify({ action: confirmed.action, surface })); return confirmed.text }
+    } else {
+      for (const w of parked(events, now)) await store.setPendingAction(owner, w.e.id, null, deps.db)
     }
     const draft = activeDraft(events, now)
     if (!EVENT_GATE.test(message) && !draft) return null
@@ -267,13 +319,14 @@ export async function tryEventAsk(actor: AgentActor, text: string, surface: Even
     const weekday = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'long' }).format(new Date(now))
     const extract = deps.extract || (await import('./extract')).extractEventAction
     // Only the organizer's own event names and times go to the model. Guest-supplied text never does.
-    const open = openEvents(events).slice(0, 6)
+    const open = openEvents(events, now).slice(0, 6)
     const active = open.length ? open.map(e => `"${e.title}" (${e.status === 'published' ? 'published' : 'draft'}; ${whenText(e.starts_at, e.timezone)}; ${e.venue_name || 'no place yet'})`).join(' | ') : null
     const action = await extract({ text: message, today, weekday, timezone: tz, active })
     if (!action || action.action === 'none') return null
     // Outside a gate match, the only thing a bare follow-up may do is fill in or publish the draft being planned.
-    if (!EVENT_GATE.test(message) && !(['update', 'publish', 'add_guests'].includes(action.action) && draft)) return null
-    const result = await runEventAction(owner, action, { timezone: tz, events, hostName: actor.name || null, now }, deps.db)
+    const gated = EVENT_GATE.test(message)
+    if (!gated && !(['update', 'publish', 'add_guests'].includes(action.action) && draft)) return null
+    const result = await runEventAction(owner, action, { timezone: tz, events, hostName: actor.name || null, now, onlyEventId: gated ? null : draft!.id }, deps.db)
     if (!result) return null
     console.log('EVENT_ASK:', JSON.stringify({ action: result.action, surface }))
     return result.text

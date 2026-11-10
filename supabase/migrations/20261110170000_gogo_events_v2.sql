@@ -90,6 +90,13 @@ begin
       return jsonb_build_object('ok', false, 'error', 'full', 'places_left', greatest(e.capacity - taken, 0));
     end if;
   end if;
+  -- With no capacity, people who came through the share link are bounded on every path to "going", not only on the
+  -- first answer (joining as maybe and then switching must not get round it).
+  if p_status = 'going' and e.capacity is null and g.source = 'share_link' then
+    select coalesce(count(*) + sum(o.plus_ones), 0) into taken from public.gogo_event_guests o
+      where o.event_id = e.id and o.id <> g.id and o.source = 'share_link' and o.rsvp_status = 'going' and o.token_revoked_at is null;
+    if taken + 1 + plus > 300 then return jsonb_build_object('ok', false, 'error', 'guest_limit'); end if;
+  end if;
   update public.gogo_event_guests set rsvp_status = p_status, plus_ones = plus, dietary = d, comment = c,
     rsvp_at = clock_timestamp(), rsvp_changes = rsvp_changes + 1 where id = g.id;
   insert into public.gogo_event_rsvp_history (event_id, guest_id, rsvp_status, plus_ones) values (e.id, g.id, p_status, plus);
