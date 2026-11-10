@@ -205,6 +205,16 @@ const LINE: Partial<Record<GoalKind, string>> = {
 export function toAsk(g: IntakeGoal): Slot[] { return missingOf(g).filter(s => !g.asked.includes(s)) }
 function question(g: IntakeGoal, s: Slot) { return (g.kind === 'reminder' && REMINDER_Q[s]) || QUESTION[s] }
 
+/** The details Gogo has for a goal, said back so a wrong one is seen before anything starts. Only what was given. */
+export function detailOf(g: IntakeGoal): string {
+  const s = g.slots, on = [s.date, s.time].filter(Boolean).join(' at ')
+  if (g.kind === 'reminder') return on ? `for ${on}` : ''
+  if (g.kind === 'flight_prices') return [s.from && s.to ? `${s.from} to ${s.to}` : s.from ? `from ${s.from}` : s.to ? `to ${s.to}` : '', s.date ? `on ${s.date}` : ''].filter(Boolean).join(' ')
+  if (g.kind === 'email') return [s.recipient ? `to ${s.recipient}` : '', s.topic ? `about “${clip(s.topic, 80)}”` : ''].filter(Boolean).join(', ')
+  if (g.kind === 'event') return [on ? `on ${on}` : '', s.people ? `for ${s.people}` : ''].filter(Boolean).join(', ')
+  return ''
+}
+
 /** The plan as a WhatsApp message. Marks the questions it asks as asked. */
 export function planText(plan: IntakePlan): { text: string; plan: IntakePlan } {
   const goals = plan.goals.map(g => ({ ...g, asked: [...g.asked] }))
@@ -220,7 +230,8 @@ export function planText(plan: IntakePlan): { text: string; plan: IntakePlan } {
       if (qs.length) asking = true
       g.asked.push(...qs)
       const extra = [LINE[g.kind], qs.length ? qs.map(s => question(g, s)).join(' ').replace(/^./, c => c.toUpperCase()) : ''].filter(Boolean).join(' ')
-      lines.push(`${++n}. ${g.title}${extra ? `: ${extra}` : ''}`)
+      const have = detailOf(g)
+      lines.push(`${++n}. ${g.title}${have ? ` (${have})` : ''}${extra ? `: ${extra}` : ''}`)
     }
   }
   lines.push('', asking ? 'Answer what you can in one message, then say *get it done*. I’ll start everything that has what it needs.' : 'Say *get it done* and I’ll start them. Anything that needs your yes will still ask first.')
@@ -251,7 +262,7 @@ export type StartDeps = {
   event?: (actor: AgentActor, text: string) => Promise<string | null>
   email?: (actor: AgentActor, text: string) => Promise<string | null>
   eventsOn?: (owner: string) => boolean
-  capabilityOff?: (actor: AgentActor, capability: 'reminders' | 'browser') => Promise<boolean>
+  capabilityOff?: (actor: AgentActor, capability: 'reminders' | 'browser' | 'email') => Promise<boolean>
   now?: Date
 }
 /** "2026-11-11T09:30" in the person's own zone, for comparing with a reminder's day and time. */
@@ -305,6 +316,8 @@ export async function startGoals(actor: AgentActor, plan: IntakePlan, deps: Star
       } else if (g.kind === 'email') {
         // Gogo keeps one email draft at a time; the next waits until this one is sent or dropped.
         if (emailTaken) { g.state = 'held'; g.note = 'one_draft_at_a_time'; continue }
+        // Email switched off in the person's settings: not drafted, and said so.
+        if (await (deps.capabilityOff || realCapabilityOff)(actor, 'email')) { g.state = 'held'; g.note = 'email_off'; continue }
         emailTaken = true
         const reply = await (deps.email || realEmail)(actor, `email ${g.slots.recipient} saying ${g.slots.topic}`)
         // Started only when a draft really exists ("Connect Gmail first" or "which address?" is not a draft).
@@ -327,7 +340,7 @@ const realStartRun: NonNullable<StartDeps['startRun']> = async ({ actor, goal, s
   return startPersistentGoalRun({ actor, surface: 'whatsapp', step: { tool: step.tool, title: step.title, instruction: step.instruction } as any, missionText: step.instruction, metadata: { goal_batch_id: plan.id, goal_id: goal.id, goal_kind: goal.kind, goal_title: goal.title, ownership: goal.ownership, ...(step.reminder ? { goal_reminder: step.reminder } : {}) } })
 }
 const realEventsOn = (owner: string) => { const env = envOf(); return env.GOGO_EVENTS === '1' || String(env.GOGO_EVENTS_OWNERS || '').split(',').map(s => s.trim()).includes(owner) }
-const realCapabilityOff = async (actor: AgentActor, capability: 'reminders' | 'browser') => (await import('./adaptive-autonomy')).capabilityIsOff(actor.legacyTelegramId, capability)
+const realCapabilityOff = async (actor: AgentActor, capability: 'reminders' | 'browser' | 'email') => (await import('./adaptive-autonomy')).capabilityIsOff(actor.legacyTelegramId, capability)
 // Create only: from a list, the Events flow may start a new draft and nothing else. Publishing, changing or
 // cancelling an event, or touching its guests, is never done on the strength of one line in a list.
 const realEvent = async (actor: AgentActor, text: string) => {
@@ -350,6 +363,7 @@ export function startedText(plan: IntakePlan, quick: Map<string, { status: strin
     if (g.state === 'started') lines.push(q ? `${ICON[q.status] || '⏳'} ${g.title}: ${q.text.length > 300 ? 'done, details below.' : clip(q.text, 300)}` : `⏳ ${g.title}: working on it.`)
     else if (g.state === 'open') lines.push(`⏸ ${g.title}: not started. I still need ${missingOf(g).map(s => QUESTION[s].replace(/\?$/, '')).join(', ')}. Ask me for this one on its own when you have it.`)
     else if (g.note === 'one_draft_at_a_time') lines.push(`⏸ ${g.title}: not started. I keep one email draft at a time; ask me for this one after the first is sent or dropped.`)
+    else if (g.note === 'email_off') lines.push(`⏸ ${g.title}: email is switched off in your settings, so I did not draft it.`)
     else if (g.note === 'browser_off') lines.push(`⏸ ${g.title}: web research is switched off in your settings, so I did not start it.`)
     else if (g.note === 'flight_details') lines.push(`⏸ ${g.title}: not started. This one has conditions (travellers, return, budget or timing) I’d rather get right; ask me for this flight search on its own.`)
     else if (g.note === 'time_passed') lines.push(`⏸ ${g.title}: that time has already passed. Tell me a new time and I’ll set it.`)

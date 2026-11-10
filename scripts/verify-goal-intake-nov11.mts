@@ -58,7 +58,7 @@ const deps = { model, store, start, now: NOW, timezone: 'Asia/Kolkata', quickMs:
 let r = await gi.tryGoalIntake(actor, SENTENCE, deps as any)
 ok(r && /^I count 6 things\. Here’s who does what:/.test(r), 'the plan counts the goals')
 ok(/\*Gogo handles\*[\s\S]*\*We do together\*[\s\S]*\*Your turn\*/.test(r!), 'grouped by who does it')
-ok(/Meeting tomorrow: What time should I remind you\?/.test(r!) && /Flight prices for next month: Flying from where\? to where\? which date\?/.test(r!), 'only the missing details are asked')
+ok(/Meeting tomorrow \(for \d{4}-\d\d-\d\d\): What time should I remind you\?/.test(r!) && /Flight prices for next month: Flying from where\? to where\? which date\?/.test(r!), 'only the missing details are asked')
 ok(/Three business emails: I’ll draft it; nothing is sent until you approve it\. Who is it to\? what should it say\?/.test(r!), 'emails: drafts only, approval before sending')
 ok(/Say \*get it done\*|then say \*get it done\*/.test(r!) && startedRuns.length === 0, 'nothing starts before "get it done"')
 eq(stored.goals.find((g: any) => g.kind === 'reminder').asked, ['time'], 'what was asked is remembered')
@@ -260,4 +260,14 @@ ok(/!preserveFriendFlow && !callCommand && !forwardedMessage && !approvalIntent\
 const pgp = readFileSync(new URL('../lib/agent/persistent-general-plan.ts', import.meta.url), 'utf8')
 ok(/export async function startPersistentGoalRun[\s\S]{0,400}if \(!PERSISTENT_SAFE_TOOLS\.has\(params\.step\.tool\)\) throw/.test(pgp), 'a goal run only uses the persistent planner’s safe tools')
 ok(/requiresApproval: false, verificationRequired: true/.test(pgp.slice(pgp.indexOf('export async function startPersistentGoalRun'))), 'each goal run must verify its own result')
+// Follow-ups to the #1483 review: the plan says back the details it holds; the email switch is respected.
+{ const g = (o: any) => ({ id: 'g1', title: 'T', words: 'x', slots: {}, asked: [], state: 'open', ownership: 'gogo_handles', ...o })
+  eq([gi.detailOf(g({ kind: 'reminder', slots: { date: '2026-11-12', time: '10:30' } })), gi.detailOf(g({ kind: 'flight_prices', slots: { from: 'Bengaluru', to: 'Goa', date: '2026-12-20' } })), gi.detailOf(g({ kind: 'email', slots: { recipient: 'Divya', topic: 'the launch plan' } })), gi.detailOf(g({ kind: 'flight_prices', slots: { to: 'Goa' } })), gi.detailOf(g({ kind: 'research' })), gi.detailOf(g({ kind: 'reminder' }))],
+    ['for 2026-11-12 at 10:30', 'Bengaluru to Goa on 2026-12-20', 'to Divya, about “the launch plan”', 'to Goa', '', ''], 'each goal says back only the details it was given')
+  const shown = gi.planText(gi.newPlan('x', [g({ kind: 'flight_prices', title: 'Goa flights', slots: { from: 'Bengaluru', to: 'Goa', date: '2026-12-20' } }), g({ id: 'g2', kind: 'reminder', title: 'Meeting reminder' })], NOW)).text
+  ok(/1\. Goa flights \(Bengaluru to Goa on 2026-12-20\)/.test(shown) && /2\. Meeting reminder: /.test(shown), 'the plan shows held details before anything starts, and nothing invented for a goal with none')
+  const mail = gi.newPlan('x', [g({ kind: 'email', title: 'Email Divya', ownership: 'together', slots: { recipient: 'Divya', topic: 'the launch plan' } })], NOW)
+  let drafted = 0
+  const res = await gi.startGoals(actor, mail, { now: NOW, capabilityOff: async (_a: any, c: string) => c === 'email', email: async () => { drafted++; return 'Draft ready. Nothing has been sent.' } } as any)
+  ok(drafted === 0 && res.plan.goals[0].note === 'email_off' && /email is switched off in your settings/.test(gi.startedText(res.plan, new Map())), 'email switched off: no draft is made and the reply says why') }
 console.log(`GOAL_INTAKE_OK ${checks} checks`)
