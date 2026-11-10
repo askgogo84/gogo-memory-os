@@ -41,7 +41,7 @@ export function MobileNavProvider({ children, shell }: { children: React.ReactNo
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
           </button>
         </div>
-        <NavLinks counts={counts} onNavigate={close} spaces={!!shell.spaces} v2={!!shell.navV2} />
+        <NavLinks counts={counts} onNavigate={close} spaces={!!shell.spaces} v2={!!shell.navV2} events={!!shell.events} />
         <div className="mt-auto pt-5">
           <SettingsLink name={shell.name} onNavigate={close}/>
         </div>

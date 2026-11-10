@@ -38,7 +38,7 @@ export function SideRail({ shell }: { shell: ShellData }) {
         </button>
       </div>
       <div className="mt-4 min-h-0 flex-1 overflow-y-auto">
-        <NavLinks collapsed={collapsed} counts={counts} spaces={!!shell?.spaces} v2={!!shell?.navV2} />
+        <NavLinks collapsed={collapsed} counts={counts} spaces={!!shell?.spaces} v2={!!shell?.navV2} events={!!shell?.events} />
         {!collapsed && <RailChannels/>}
       </div>
 
