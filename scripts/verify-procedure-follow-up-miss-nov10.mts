@@ -1,7 +1,7 @@
 // 10 Nov live test: "follow up with Nithin on the Harbor deck" with no such Gmail thread replied
 // "I couldn't prepare that follow-up (running)" — the read kept retrying a failure that cannot change.
 import assert from 'node:assert/strict'
-import { followUpReply, PROCEDURE_APPROVAL_URL } from '../lib/procedures/entry.ts'
+import { followUpReply, parseFollowUpAsk, PROCEDURE_APPROVAL_URL } from '../lib/procedures/entry.ts'
 import { readFailureIsFinal } from '../lib/procedures/runtime.ts'
 import { createRun, advance } from '../lib/procedures/engine.ts'
 import { EMAIL_FOLLOW_UP } from '../lib/procedures/templates.ts'
@@ -31,4 +31,9 @@ ok(/more than one/.test(followUpReply('failed', 'whatsapp', 'thread_ambiguous', 
 ok(/Connect Gmail/.test(followUpReply('failed', 'whatsapp', 'gmail_not_connected')), 'not-connected reply')
 ok(/still reading/.test(followUpReply('running', 'whatsapp')) && /Nothing has been sent/.test(followUpReply('running', 'whatsapp')), 'running reply is honest')
 ok(followUpReply('waiting_approval', 'whatsapp').includes(PROCEDURE_APPROVAL_URL), 'approval reply unchanged')
+// 4. Live phrasing: the word 'email' is not part of the target.
+ok(parseFollowUpAsk('Follow up with Varun Sharma email on ET awards')?.target === 'Varun Sharma on ET awards', 'email word dropped')
+ok(parseFollowUpAsk("follow up with Varun's mail about the awards")?.target === 'Varun about the awards', 'possessive mail dropped')
+ok(parseFollowUpAsk('follow up with Nithin on the Harbor deck')?.target === 'Nithin on the Harbor deck', 'plain phrasing unchanged')
+ok(parseFollowUpAsk('follow up with Email Marketing team on Q4')?.target === 'Email Marketing team on Q4', 'a name that starts with Email is kept')
 console.log(`PROCEDURE_FOLLOW_UP_MISS_OK ${n} checks`)

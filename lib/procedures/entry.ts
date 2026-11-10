@@ -7,7 +7,10 @@ export function parseFollowUpAsk(text: string): { target: string } | null {
   const t = String(text || '').trim().replace(/[.!?]+$/, '')
   const m = t.match(/^(?:please\s+)?(?:send\s+(?:a\s+)?)?follow[\s-]?up\s+(?:email\s+)?(?:with|to|on)\s+(.{2,120})$/i)
   if (!m) return null
-  const target = m[1].replace(/^(?:my\s+)?(?:last\s+|latest\s+)?(?:email|mail)\s+(?:from|with|to)\s+/i, '').trim()
+  // "Varun Sharma email on ET awards" / "Varun's mail about the awards" → "Varun Sharma on ET awards": the words
+  // email/mail only say what kind of thread it is, they are not part of the name or the subject.
+  const target = m[1].replace(/^(?:my\s+)?(?:last\s+|latest\s+)?(?:email|mail)\s+(?:from|with|to)\s+/i, '')
+    .replace(/(?:'s)?\s+(?:e-?mail|mail)\s+(?=(?:on|about|re|regarding)\b)/i, ' ').replace(/\s{2,}/g, ' ').trim()
   return target.length >= 2 ? { target } : null
 }
 
@@ -22,7 +25,7 @@ export function followUpReply(status: string, surface: ProcedureSurface = 'dashb
     : `I've drafted a follow-up in that thread. Review it in the card below; nothing is sent until you approve it.`
   if (status === 'completed') return `You were the last to write in that thread, so there's nothing to follow up yet.`
   const e = String(error || '')
-  if (/^thread_not_found/.test(e)) return `I couldn't find an email thread with ${who} in your Gmail. Nothing was sent. Tell me the sender's name or the subject as it appears in Gmail, for example: follow up with Nithin on Harbor deck review.`
+  if (/^thread_not_found/.test(e)) return `I couldn't find an email thread with ${who} in the Gmail you connected to AskGogo. Nothing was sent. If that mail went to another address, it isn't connected (ask me: which email am I connected to?). Otherwise tell me the sender's name or a word from the subject as it appears in Gmail.`
   if (/^thread_ambiguous/.test(e)) return `I found more than one email thread matching ${who}. Nothing was sent. Tell me the subject so I pick the right one.`
   if (/^gmail_(?:not_connected|consent_missing)/.test(e)) return `I can't read your Gmail for this yet, so nothing was sent. Connect Gmail and allow reading on your dashboard: https://app.askgogo.in/dashboard`
   if (status === 'running') return `I'm still reading that thread; Gmail didn't answer in time. Nothing has been sent. If a draft is ready it will wait for your approval at ${PROCEDURE_APPROVAL_URL}.`
