@@ -225,10 +225,13 @@ export async function GET(request:Request){
       .order('updated_at',{ascending:true})
       .limit(3)
     if(browserReadError)console.error('BROWSER_BACKGROUND_QUEUE_READ_FAILED:',browserReadError.message)
+    // One Events venue lookup per tick (each may take 100 s of this function's 300 s); the rest wait for the next one.
+    let venueLookupRan=false
     for(const run of pausedBrowsers||[]){
       const meta:any=run.metadata_json||{}
       const mode=String(meta.mode||'read')
       if(mode==='execute'){browserPaused++;continue}
+      if(meta.venue_browse===true||meta.venue_enquiry!==undefined){if(venueLookupRan)continue;venueLookupRan=true}
       const claimTag=`background_resume_claimed:${new Date().toISOString()}`
       const {data:claimed,error:claimError}=await supabaseAdmin.from('agent_runs')
         .update({error:claimTag,updated_at:new Date().toISOString()})

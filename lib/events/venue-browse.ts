@@ -141,14 +141,28 @@ export async function runVenueBrowse(actor: AgentActor, rawMeta: unknown, deps: 
   }
   // Nothing came of this try: the record is marked so the next change to the event looks again (the quick lookup
   // skips an event whose latest record already has the same venue, time and number).
-  const again = () => store.recordOwnerAudit(owner, meta.eventId, 'event.venue_enquiry_drafted', { key: 'retry', via: 'browser' }, deps.db).catch(() => {})
-  const AGAIN = `I'll look again the next time you change this event.`
+  // Once per venue, time and number, and only while this lookup is still the latest word on the event: a plan that
+  // changed meanwhile has its own lookup, and its record is left alone. False: nothing was recorded.
+  const again = async (): Promise<boolean> => {
+    try {
+      const log = await store.ownerAuditDetails(owner, meta.eventId, 'event.venue_enquiry_drafted', deps.db)
+      if (log[0]?.key !== meta.key || log[0]?.found !== 'page' || log.some(d => d.key === 'retry' && d.for === meta.key)) return false
+      await store.recordOwnerAudit(owner, meta.eventId, 'event.venue_enquiry_drafted', { key: 'retry', for: meta.key, via: 'browser' }, deps.db)
+      return true
+    } catch { return false }
+  }
+  const AGAIN = ` I'll look again the next time you change this event.`
+  // Nothing came of the read. Said only when the plan is still the one this lookup was for.
+  const failed = async (found: 'unread' | 'held', say: string): Promise<VenueBrowseOutcome> => {
+    if (!await current().catch(() => null)) return { found: 'stale', text: null }
+    return { found, text: `${say}${await again() ? AGAIN : ''}` }
+  }
   try {
     const first = await current()
     if (!first) return { found: 'stale', text: null }
     // The venue's name comes from the event itself, cut the way the quick lookup cuts it; the stored copy is not used.
     const venue = String(first.venue_name || '').replace(/[^\p{L}\p{N} &'.-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)
-    const unread = async (): Promise<VenueBrowseOutcome> => { await again(); return { found: 'unread', text: `I could not read ${meta.site} in a browser just now, so I have not drafted anything. Send me their booking email address and I'll draft the enquiry. ${AGAIN}` } }
+    const unread = () => failed('unread', `I could not read ${meta.site} in a browser just now, so I have not drafted anything. Send me their booking email address and I'll draft the enquiry.`)
     const budget = Number.isFinite(deps.budgetMs) ? Math.max(1, deps.budgetMs as number) : 230_000
     let timer: ReturnType<typeof setTimeout> | undefined
     // Bounded as a whole (starting the browser included), so the organizer always hears back.
@@ -162,14 +176,16 @@ export async function runVenueBrowse(actor: AgentActor, rawMeta: unknown, deps: 
     const text = String(page.pageText || '').slice(0, 9000)
     const pageHits = hitsFromPage({ url: plainUrl(at), title: String(page.title || '').replace(/\s+/g, ' ').slice(0, 200), text })
     // The same rules as the quick lookup, over what search said about this site plus what the page itself shows.
-    const contact = pickVenueContact([...meta.hits, ...pageHits], venue)
+    // What search said is there only to show the site is the venue's; the address itself must be in the page's text.
+    const picked = pickVenueContact([...meta.hits, ...pageHits], venue)
+    const contact = picked.kind === 'email' && pageHits.some(h => h.snippet.toLowerCase().includes(picked.email)) ? picked : { kind: 'page' as const, sourceUrl: plainUrl(at) }
     console.log('VENUE_BROWSE_READ:', JSON.stringify({ text: text.length, at_signs: (text.match(/@/g) || []).length, found: contact.kind }))
     if (contact.kind !== 'email') return { found: 'page', text: `I opened ${meta.site} in a browser and still could not confirm a booking email on it, so I have not drafted anything. Send me the right address and I'll draft the enquiry.` }
     // The read took a while: the plan is checked again before anything is saved.
     const e = await current()
     if (!e) return { found: 'stale', text: null }
     const pending = await (deps.pendingDraft ? deps.pendingDraft() : realPending(actor.legacyTelegramId))
-    if (pending && pending.eventEnquiryFor !== e.id) { await again(); return { found: 'held', text: `I opened ${meta.site} in a browser and found their enquiries address, but you have another email draft waiting, so I have not prepared this one. Send or drop that draft first. ${AGAIN}` } }
+    if (pending && pending.eventEnquiryFor !== e.id) return failed('held', `I opened ${meta.site} in a browser and found their enquiries address, but you have another email draft waiting, so I have not prepared this one. Send or drop that draft first.`)
     const step = venueStepText(e, contact, actor.name || '')
     if (!step.draft) return { found: 'page', text: null }
     await (deps.saveDraft ? deps.saveDraft : (d: Record<string, unknown>) => realSave(actor.legacyTelegramId, d))({ ...step.draft, eventEnquiryFor: e.id, enquiryKey: meta.key })
@@ -177,7 +193,6 @@ export async function runVenueBrowse(actor: AgentActor, rawMeta: unknown, deps: 
     return { found: 'email', text: `I opened ${meta.site} in a browser. ${step.text}` }
   } catch (err: any) {
     console.error('VENUE_BROWSE_FAILED:', JSON.stringify({ code: String(err?.message || 'error').replace(/[^a-z0-9_:]/gi, '').slice(0, 60) }))
-    await again()
-    return { found: 'unread', text: `I could not finish looking at ${meta.site} in a browser just now, so I have not drafted anything. Send me their booking email address and I'll draft the enquiry. ${AGAIN}` }
+    return failed('unread', `I could not finish looking at ${meta.site} in a browser just now, so I have not drafted anything. Send me their booking email address and I'll draft the enquiry.`).catch(() => ({ found: 'unread' as const, text: null }))
   }
 }
