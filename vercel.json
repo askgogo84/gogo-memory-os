@@ -74,6 +74,10 @@
     {
       "path": "/api/cron/reengage",
       "schedule": "0 6 * * *"
+    },
+    {
+      "path": "/api/cron/wa-meta-inbox",
+      "schedule": "* * * * *"
     }
   ]
 }
