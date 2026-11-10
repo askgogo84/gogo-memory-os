@@ -5,15 +5,15 @@ import { TIME_SAVED_DEFAULT, TIME_SAVED_MINUTES, minutesLabel, type BoardItem, t
 
 const TONE: Partial<Record<DoneState, string>> = {
   verified: 'bg-[#132a27] text-[#5fd3c3]',
-  done_unverified: 'bg-[#1f1f1f] text-[#d6d3cd]',
+  done_unverified: 'bg-[#1f1f1f] text-[#d8d8d3]',
   draft: 'bg-[#3a2a10] text-[#f0c26b]',
   waiting_approval: 'bg-[#3a2a10] text-[#f0c26b]',
-  blocked: 'bg-[#3a1a16] text-[#ff9a8a]',
-  failed: 'bg-[#3a1a16] text-[#ff9a8a]',
-  unknown: 'bg-[#3a1a16] text-[#ff9a8a]',
+  blocked: 'bg-[#35221d] text-[#e4b6a6]',
+  failed: 'bg-[#35221d] text-[#e4b6a6]',
+  unknown: 'bg-[#35221d] text-[#e4b6a6]',
   running: 'bg-[#13253a] text-[#8cc2ff]',
   queued: 'bg-[#13253a] text-[#8cc2ff]',
-  waiting_external: 'bg-[#1f1f1f] text-[#d6d3cd]',
+  waiting_external: 'bg-[#1f1f1f] text-[#d8d8d3]',
   needs_you: 'bg-[#3a2a10] text-[#f0c26b]',
 }
 const ACTION: Partial<Record<DoneState, string>> = { draft: 'Review', waiting_approval: 'Review', blocked: 'Open', unknown: 'Check', running: 'Watch', queued: 'Watch', needs_you: 'Open', failed: 'Details' }
@@ -70,11 +70,11 @@ export function GoalBoardView({ board, notices }: { board: GoalBoard; notices?: 
     </section>}
     <section id="how-we-count" aria-labelledby="own-how" className="flex flex-col gap-2">
       <h2 id="own-how" className="text-[17px] font-semibold text-[#f2efea]">What “done” means here</h2>
-      <div className="flex flex-col gap-2 rounded-[14px] border border-[#1f1f1f] bg-[#111111] px-3.5 py-3 text-[13px] leading-[1.5] text-[#c9c6c0]">
+      <div className="flex flex-col gap-2 rounded-[14px] border border-[#1f1f1f] bg-[#111111] px-3.5 py-3 text-[13px] leading-[1.5] text-[#c9c9c4]">
         <span><strong className="text-[#5fd3c3]">Done, checked</strong>: you marked it complete, or Gogo read the result back from the app it used.</span>
-        <span><strong className="text-[#d6d3cd]">Done, not checked</strong>: finished, but nothing has read it back yet. Worth a look.</span>
+        <span><strong className="text-[#d8d8d3]">Done, not checked</strong>: finished, but nothing has read it back yet. Worth a look.</span>
         <span><strong className="text-[#f0c26b]">Draft ready</strong>: prepared, not sent. Never counted as done or as time saved.</span>
-        <span><strong className="text-[#ff9a8a]">Not sure it happened</strong>: Gogo won’t retry until it can check.</span>
+        <span><strong className="text-[#e4b6a6]">Not sure it happened</strong>: Gogo won’t retry until it can check.</span>
         <span>Time saved is an estimate: a fixed number of minutes for each finished task by kind ({Object.entries(TIME_SAVED_MINUTES).filter(([k]) => ['reminder', 'calendar', 'research', 'travel'].includes(k)).map(([k, v]) => `${k} ${v} min`).join(', ')}, anything else {TIME_SAVED_DEFAULT} min), over the last 30 days.</span>
       </div>
     </section>
