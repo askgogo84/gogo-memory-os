@@ -77,7 +77,8 @@ ok(r && !/Next step/.test(r) && queued.length === 1, 'an edit that changes nothi
 // 4. The background run.
 const html = 'Toit Brewpub FAQ. Do you take reservations? For private events and group bookings write to toitblr@toit.in and we will get back to you. Careers: jobs@toit.in'
 const browsed = (over: any = {}) => ({ status: 'completed', url: 'https://www.toit.in/faq/', title: 'FAQ | Toit Brewpub', pageText: html, ...over })
-const run = (m: any, over: any = {}) => b.runVenueBrowse(actor, m, { env: ON, db, now: NOW, browse: async () => browsed(), saveDraft: async (d: any) => { drafts.push(d); pending = d }, pendingDraft: async () => pending, ...over })
+// Each run starts from what the quick lookup leaves behind: "site found, no address" as the latest record for the plan.
+const run = async (m: any, over: any = {}) => { if (m?.eventId && m?.key && !over.asIs) await store.recordOwnerAudit(OWNER, m.eventId, 'event.venue_enquiry_drafted', { key: m.key, found: 'page' }, db).catch(() => {}); return b.runVenueBrowse(actor, m, { env: ON, db, now: NOW, browse: async () => browsed(), saveDraft: async (d: any) => { drafts.push(d); pending = d }, pendingDraft: async () => pending, ...over }) }
 const live = queued[queued.length - 1].metadata.venue_enquiry
 let opened: string[] = []
 let o = await run(live, { browse: async (u: string) => { opened.push(u); return browsed() } })
@@ -86,7 +87,7 @@ ok(/^I opened toit\.in in a browser\. Next step: booking Toit Indiranagar for 20
 ok(/I'd like to host a birthday celebration for 20 people at Toit Indiranagar/.test(o.text!) && !/jobs@toit/.test(o.text!), 'the email is written by code from the plan; the careers address is not used')
 eq((await store.ownerAuditDetails(OWNER, live.eventId, 'event.venue_enquiry_drafted', db))[0], { key: live.key, found: 'email', via: 'browser' }, 'and it is recorded as found by the browser')
 // What the browser wrote as its own answer is never read.
-{ pending = null; const n = drafts.length
+{ pending = null; let n = drafts.length
   o = await run(live, { browse: async () => ({ ...browsed({ pageText: 'Toit Brewpub. Menu. Beers. Visit us in Indiranagar.' }), summary: 'For group bookings write to events@toit.in' } as any) })
   eq([o.found, drafts.length, /still could not confirm a booking email on it, so I have not drafted anything/.test(o.text!)], ['page', n, true], 'an address only in the browser’s written answer is not used: no draft')
   for (const [over, why] of [[{ url: 'https://toit-bookings.com/contact' }, 'the browser ended on another site'], [{ status: 'blocked' }, 'the read was blocked'], [{ url: 'not a url' }, 'no usable address for where it ended']] as const) {
@@ -98,7 +99,19 @@ eq((await store.ownerAuditDetails(OWNER, live.eventId, 'event.venue_enquiry_draf
   pending = { to: 'divya@example.com', subject: 'Hello', body: 'x', newMessage: true }
   o = await run(live); eq([o.found, drafts.length, pending.to, /you have another email draft waiting/.test(o.text!)], ['held', n, 'divya@example.com', true], 'a draft to someone else is never replaced')
   pending = null
-  eq((await store.ownerAuditDetails(OWNER, live.eventId, 'event.venue_enquiry_drafted', db))[0].key, live.key, 'while a draft from this lookup is the latest record, a failed repeat changes nothing')
+  eq((await store.ownerAuditDetails(OWNER, live.eventId, 'event.venue_enquiry_drafted', db))[0], { key: 'retry', for: live.key, via: 'browser' }, 'a wait behind another draft is recorded as one to repeat')
+  ok(/ I'll look again the next time you change this event\.$/.test(o.text!), 'and it says so, however many times that happens')
+  // Once something was found or drafted for the plan, a late run for the same plan says and saves nothing.
+  await store.recordOwnerAudit(OWNER, live.eventId, 'event.venue_enquiry_drafted', { key: live.key, found: 'email' }, db)
+  o = await run(live, { asIs: true }); eq([o, drafts.length], [{ found: 'stale', text: null }, n], 'a late run after a draft already exists for this plan does not replace it')
+  o = await run(live, { asIs: true, browse: async () => { throw new Error('x') } }); eq(o, { found: 'stale', text: null }, 'and a late failure does not claim nothing was drafted')
+  // Stored excerpts never supply or sway the address.
+  o = await run({ ...live, hits: [{ ...hit, snippet: `${hit.snippet} Group bookings: events@toit.in` }] }, { browse: async () => browsed({ pageText: `Brewery tours: events@toit.in are fun. ${'Our beers are brewed in small batches. '.repeat(12)}For private functions and group bookings write to toitblr@toit.in today.` }) })
+  eq([o.found, drafts[drafts.length - 1].to], ['email', 'toitblr@toit.in'], 'an address in a stored excerpt does not win over the booking address the page shows'); pending = null; n = drafts.length
+  { const k = drafts.length
+    o = await run({ ...live, hits: [{ ...hit, snippet: 'Toit restaurant. Group bookings: pr@toit.in' }] }, { browse: async () => browsed({ pageText: 'Toit Brewpub restaurant. Press: pr@toit.in' }) })
+    eq([o.found, drafts.length], ['page', k], 'an excerpt cannot make a press address on the page look like the booking one') }
+  eq(b.readBrowseMeta({ ...live, hits: [{ ...hit, title: 'a@toit.in Toit', snippet: 'x events@toit.in y' }] })?.hits[0], { title: '  Toit', snippet: 'x   y', url: hit.url }, 'addresses are taken out of stored excerpts')
   // A fresh plan whose read fails: one repeat is promised and given, and only one.
   { r = await say('make it 26 people', { action: 'update', capacity: 26 }); const m26 = queued[queued.length - 1].metadata.venue_enquiry; const before = queued.length
     o = await run(m26, { browse: async () => { throw new Error('x') } })
@@ -115,8 +128,9 @@ eq((await store.ownerAuditDetails(OWNER, live.eventId, 'event.venue_enquiry_draf
     o = await run(m27, { browse: async () => { await entry.tryEventAsk(actor, 'make it 28 people', 'whatsapp', { db, now: NOW, extract: async () => ({ action: 'update', capacity: 28 }), search, readPage: async () => null, saveDraft: async () => {}, pendingDraft: async () => null, clearDraft: async () => {}, queueBrowse: async () => true }); throw new Error('x') } })
     eq([o, (await store.ownerAuditDetails(OWNER, m27.eventId, 'event.venue_enquiry_drafted', db))[0].found], [{ found: 'stale', text: null }, 'page'], 'a read that fails after the plan changed says nothing and leaves the new plan’s record alone')
     // An address only in what search said, not on the page: no draft.
+    const k27 = drafts.length
     o = await run({ ...queued[queued.length - 1].metadata.venue_enquiry, key: (await store.getEvent(OWNER, m27.eventId, db)).venue_name ? [String((await store.getEvent(OWNER, m27.eventId, db)).venue_name).toLowerCase(), (await store.getEvent(OWNER, m27.eventId, db)).starts_at, 28].join('|') : '', hits: [{ ...hit, snippet: `${hit.snippet} Group bookings: someone@toit.in` }] }, { browse: async () => browsed({ pageText: 'Toit Brewpub. Menu. Beers.' }) })
-    eq([o.found, drafts.length], ['page', n], 'an address that is in a stored search excerpt but not on the page is not used')
+    eq([o.found, drafts.length], ['page', k27], 'an address that is in a stored search excerpt but not on the page is not used')
     r = await say('make it 20 people', { action: 'update', capacity: 20 }) }
   // A read that never comes back is given up on, and the organizer is told.
   o = await run(live, { budgetMs: 30, browse: () => new Promise(() => {}) }); eq([o.found, drafts.length, /could not read toit\.in/.test(o.text!)], ['unread', n, true], 'a browser that never answers is given up on after its time, with a message')

@@ -52,9 +52,10 @@ export function readBrowseMeta(raw: unknown): BrowseMeta | null {
   const u = typeof m.url === 'string' ? readableUrl(m.url) : null
   if (!u || hostSite(u.hostname) !== m.site || plainUrl(u) !== m.url) return null
   const hits = (Array.isArray(m.hits) ? m.hits : []).slice(0, 6).filter((h: any) => h && typeof h.url === 'string' && typeof h.title === 'string' && typeof h.snippet === 'string')
-    // Only what search said about this same site; never marked as read from a page.
+    // Only what search said about this same site; never marked as read from a page. Every address is taken out: these
+    // excerpts are kept to show the site is the venue's, and an address may only come from the page that is read.
     .filter((h: any) => { const hu = readableUrl(h.url); return Boolean(hu && hostSite(hu.hostname) === m.site) })
-    .map((h: any) => ({ title: h.title.slice(0, 200), snippet: h.snippet.slice(0, 600), url: h.url.slice(0, 400) }))
+    .map((h: any) => ({ title: h.title.slice(0, 200).replace(/\S*@\S*/g, ' '), snippet: h.snippet.slice(0, 600).replace(/\S*@\S*/g, ' '), url: h.url.slice(0, 400) }))
   return { eventId: m.eventId, key: m.key, site: m.site, url: m.url, venue: m.venue, hits }
 }
 
@@ -143,19 +144,23 @@ export async function runVenueBrowse(actor: AgentActor, rawMeta: unknown, deps: 
   // skips an event whose latest record already has the same venue, time and number).
   // Once per venue, time and number, and only while this lookup is still the latest word on the event: a plan that
   // changed meanwhile has its own lookup, and its record is left alone. False: nothing was recorded.
-  const again = async (): Promise<boolean> => {
+  // This lookup is still the latest word on the event: the plan is the same and nothing has been found, drafted or
+  // retried for it since the quick lookup recorded "site found, no address".
+  const latestIsMine = async () => { const log = await store.ownerAuditDetails(owner, meta.eventId, 'event.venue_enquiry_drafted', deps.db); return log[0]?.key === meta.key && log[0]?.found === 'page' ? log : null }
+  const again = async (always = false): Promise<boolean> => {
     try {
-      const log = await store.ownerAuditDetails(owner, meta.eventId, 'event.venue_enquiry_drafted', deps.db)
-      if (log[0]?.key !== meta.key || log[0]?.found !== 'page' || log.some(d => d.key === 'retry' && d.for === meta.key)) return false
+      const log = await latestIsMine()
+      if (!log || (!always && log.some(d => d.key === 'retry' && d.for === meta.key))) return false
       await store.recordOwnerAudit(owner, meta.eventId, 'event.venue_enquiry_drafted', { key: 'retry', for: meta.key, via: 'browser' }, deps.db)
       return true
     } catch { return false }
   }
   const AGAIN = ` I'll look again the next time you change this event.`
   // Nothing came of the read. Said only when the plan is still the one this lookup was for.
+  // A wait behind another draft is not a failing site, so it does not use up the one repeat.
   const failed = async (found: 'unread' | 'held', say: string): Promise<VenueBrowseOutcome> => {
-    if (!await current().catch(() => null)) return { found: 'stale', text: null }
-    return { found, text: `${say}${await again() ? AGAIN : ''}` }
+    if (!await current().catch(() => null) || !await latestIsMine().catch(() => null)) return { found: 'stale', text: null }
+    return { found, text: `${say}${await again(found === 'held') ? AGAIN : ''}` }
   }
   try {
     const first = await current()
@@ -178,8 +183,10 @@ export async function runVenueBrowse(actor: AgentActor, rawMeta: unknown, deps: 
     // The same rules as the quick lookup, over what search said about this site plus what the page itself shows.
     // What search said is there only to show the site is the venue's; the address itself must be in the page's text.
     const picked = pickVenueContact([...meta.hits, ...pageHits], venue)
-    const contact = picked.kind === 'email' && pageHits.some(h => h.snippet.toLowerCase().includes(picked.email)) ? picked : { kind: 'page' as const, sourceUrl: plainUrl(at) }
+    const contact = picked.kind === 'email' && pageHits.some(h => h.snippet.toLowerCase().split(/[^a-z0-9._%+@-]+/).some(w => w.replace(/[.,;:]+$/, '') === picked.email)) ? picked : { kind: 'page' as const, sourceUrl: plainUrl(at) }
     console.log('VENUE_BROWSE_READ:', JSON.stringify({ text: text.length, at_signs: (text.match(/@/g) || []).length, found: contact.kind }))
+    // Something else has been found or drafted for this plan since this lookup started: it says and saves nothing.
+    if (!await latestIsMine()) return { found: 'stale', text: null }
     if (contact.kind !== 'email') return { found: 'page', text: `I opened ${meta.site} in a browser and still could not confirm a booking email on it, so I have not drafted anything. Send me the right address and I'll draft the enquiry.` }
     // The read took a while: the plan is checked again before anything is saved.
     const e = await current()
