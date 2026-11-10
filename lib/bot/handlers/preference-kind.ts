@@ -44,11 +44,15 @@ const WIDE_PREFIX = ['', 'never ', "don't ", '', '', '']
 // it holds from here on, or the kind of thing Gogo writes or shows.
 const DURABLE = /\b(?:always|ever|from now on|in (?:the )?future|going forward|every ?time|each time|whenever|by default|any ?more|again|as a rule|in general|generally|usually)\b|\b(?:in|for) (?:all )?(?:my |your )?(?:e-?mails?|reports?|replies|messages|briefs?|summaries|reminders|lists|answers|responses)\b|\b(?:my|your) (?:e-?mails|reports|replies|messages|briefs|summaries|lists|answers|responses)\b|\bwhen (?:you|writing|replying|drafting|talking|messaging)\b|\b(?:call|address) me\b|\b(?:dashboard|home ?screen|replies|answers|responses|tone|format|formatting|style|language|bullet points?|bullets|emojis?|24[- ]hour|12[- ]hour)\b/i
 const ERRAND = /\b(?:book|order|buy|send|call|pay|remind|schedule|cancel|delete|add|include)\s+(?:it|this|that|them)\b|\b(?:right now|today|tomorrow|tonight|yet)\b/i
-const CHAT_NEVER = /^(?:mind|been|heard|seen|had|was|were|did|thought|knew|again|ever|say|gonna|going)\b/i
-const CHAT_DONT = /^(?:forget|worry|bother|be|you|have|know|think|like|want|care|mind|understand|get it)\b/i
+const CHAT_NEVER = /^(?:mind|been|heard|seen|had|have|has|was|were|did|do i|thought|knew|again|ever|say|gonna|going|got|gotten|received|tried|would|could|should|will|can|give up|gave|went|saw|felt|liked|wanted|trust)\b/i
+const CHAT_DONT = /^(?:forget|worry|bother|be|you|have|know|think|like|want|care|mind|understand|get it|change$|ever change$)/i
 const DEICTIC = /^\w+\s+(?:that|this|it|them|those|these)\b/i
 const KEEP_NOUN = /^(?:e-?mails?|reports?|replies|messages|briefs?|summaries|reminders|lists|answers|responses|dashboard)\s+\S+/i
-const SCOPED_LEAD = /^(?:always|never|don'?t|do not|use|keep|be|write|make (?:them|it)|avoid|prefer|sign|start|end|open|close|address)\b/i
+const SCOPED_LEAD = /^(?:always|never|don'?t|do not|use|be|avoid|prefer|sign (?:off|as)|start with|end with|address)\b/i
+// "I want you to …" is a request unless it says it holds from here on.
+const WANT = /^(?:please\s+)?i\s+(?:want|would\s+like|'d\s+like)\b/i
+const NOT_KEPT = /\b(?:coming|ready|open|default|safe|handy|there|posted)\s*$/i
+const JUST_NOW = /\b(?:now|yesterday|link|for this|this one|that one)\b/i
 const LEAD_IN = /^(?:(?:ok(?:ay)?|hey|hi|please|pls|gogo)[\s,]+)+/i
 
 export function scopeOf(rule: string): PreferenceScope {
@@ -92,10 +96,11 @@ export function classifyPreference(text: string, wide: boolean): PreferenceKind 
       // A choice, an errand for right now or small talk is not a way of working: "I prefer the window seat",
       // "don't book it yet", "never heard of it", "keep my booking", "in my reminders, add milk".
       const body = String(m[i === 5 ? 2 : 1] || '').trim()
-      const plain = i === 0 ? DURABLE.test(t) && !ERRAND.test(body)
+      const plain = i === 0 ? (WANT.test(t) ? STANDING.test(t) : DURABLE.test(t) && !JUST_NOW.test(body)) && !ERRAND.test(body)
         : i === 1 ? !CHAT_NEVER.test(body) && !DEICTIC.test(body) && !ERRAND.test(body)
         : i === 2 ? (DURABLE.test(t) || isRestrictive(t)) && !CHAT_DONT.test(body) && !DEICTIC.test(body) && !ERRAND.test(body)
-        : i === 4 ? KEEP_NOUN.test(body)
+        : i === 3 ? !/\b(?:the|this|that)\b/i.test(String(m[3] || '')) && !ERRAND.test(String(m[3] || ''))
+        : i === 4 ? KEEP_NOUN.test(body) && !NOT_KEPT.test(body)
         : i === 5 ? SCOPED_LEAD.test(body) : true
       // A grant is refused out loud even when it would not have been kept as a rule.
       if (!plain && !(grantsPermission(t) || grantsPermission(rule))) return null

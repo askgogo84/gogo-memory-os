@@ -16,8 +16,8 @@ const STRONG = '(?:send(?:ing)?|e-?mail(?:ing)?|forward(?:ing)?|pay(?:ing)?|purc
 // Not "book-end", "pay attention", or something sent to the person themselves.
 const NOT_SELF = '(?![-\\w])(?!\\s+(?:me|myself|my name|attention|reminders?|(?:the|my|a|an) (?:daily |morning |evening )?(?:brief|briefing|summary|digest|reminders?))\\b)(?![^.!?]{0,40}\\bto me\\b)'
 const APPROVAL = '(?:approvals?|permission|confirmations?|consent|go[- ]ahead|say[- ]so|ok|okay|yes|sign[- ]?off)'
-const ASKING = `(?:ask(?:ing)?(?: me| first)?|approv(?:al|e|ing)|confirm(?:ation|ing)?|permission|consent|check(?:ing)?(?: with me)?|my (?:ok|okay|yes|go[- ]ahead|say[- ]so|review)|review|showing me|telling me|waiting(?: for me)?|a (?:yes|go[- ]ahead))`
-const WITHOUT = "(?:without|with out|witout|w/o|with no|skip(?:ping)?|bypass(?:ing)?|no need (?:for|to)|needn'?t|don'?t need(?: to)?|do not need(?: to)?)"
+const ASKING = `(?:ask(?:ing)?(?: me| first)?|approv(?:al|e|ing)|confirm(?:ation|ing)?|permission|consent|check(?:ing)? with me|check(?:ing)?(?: first)?(?=\\s*(?:$|[.,;!?]|and\\b|but\\b))|my (?:ok|okay|yes|go[- ]ahead|say[- ]so|review)|review|showing me|telling me|waiting(?: for me)?|a (?:yes|go[- ]ahead))`
+const WITHOUT = "(?:without|with out|witout|w/o|sans|with no|skip(?:ping)?|bypass(?:ing)?|no need (?:for|to)|needn'?t|don'?t need(?: to)?|do not need(?: to)?)"
 const STOP = "(?:don'?t|do not|never|stop|quit|no need to|needn'?t|you don'?t (?:have|need) to|you needn'?t)"
 const AUTO = '(?:on your own|by yourself|yourself|automatically|autonomously|automatic|right away|immediately|straight ?away|instantly|directly|the moment|as soon as|when (?:they|it) arrives?)'
 const THINGS = '(?:purchases?|payments?|orders?|bookings?|reservations?|transfers?|e-?mails?|messages?)'
@@ -51,23 +51,40 @@ const GRANTS: RegExp[] = [
   // "reply to Divya on my behalf", "respond to my emails for me", "act on my behalf without checking"
   /\b(?:reply|respond|answer|send|e-?mail|message|text|whatsapp)\b[^.!?]{0,40}\b(?:on my behalf|for me)\b(?![^.!?]*\b(?:to (?:review|approve|check|see)|drafts?)\b)|\bon my behalf\b[^.!?]{0,40}\bwithout\b/i,
   /\b(?:do|take) whatever (?:it takes|you want|is needed)\b|\b(?:you have|take|give you|giving you|grant(?:ing)? you|with) full (?:access|control|autonomy|authority)\b/i,
+  // "my approval is implied", "approval not needed", "confirmation is optional", "zero approvals", "drafts are approved by default"
+  /\b(?:approvals?|confirmations?|consent|permission)\s+(?:is\s+|are\s+)?(?:implied|implicit|assumed|not needed|unnecessary|optional|by default)\b|\bzero approvals?\b|\bi (?:need not|needn'?t|don'?t need to|do not need to) (?:approve|confirm|see|review)\b|\bdrafts?\b[^.!?]{0,20}\b(?:approved|final)\b/i,
+  // "take silence as a yes", "my answer is always yes", "presume consent", "if I don't reply in 5 minutes, send it"
+  /\b(?:silence|no reply|no response)\b[^.!?]{0,20}\b(?:as|is|means?)\s+(?:a\s+|my\s+)?(?:yes|approval|consent|ok)\b|\bmy answer is always yes\b|\bpresume\s+(?:my\s+)?(?:consent|approval|i agree|i approve)\b|\bif i (?:don'?t|do not) (?:reply|respond|answer)\b[^.!?]{0,30}\b(?:send|pay|book|order|go ahead|proceed)\b/i,
+  // "don't stop for approval", "never pause before sending", "leave me out of approvals", "send emails w/o me"
+  /\b(?:don'?t|do not|never)\s+(?:stop|pause|hold|wait)\b[^.!?]{0,20}\b(?:for (?:my |an? )?(?:approval|confirmation|permission)|before (?:sending|paying|booking|ordering))\b|\b(?:leave|keep|take) me out of\b[^.!?]{0,15}\bapprovals?\b|\bremove me from the approval\b|\b(?:send|pay|book|order)\b[^.!?]{0,40}\b(?:w\/o|without|sans) me\b/i,
+  // "you are authorised to pay", "I authorise all payments under 1000", "I trust you to send emails"
+  new RegExp(`\\byou are authori[sz]ed to\\b|\\bi authori[sz]e\\b|\\bi trust you to\\s+${STRONG}\\b`, 'i'),
+  // "book first and tell me later", "pay first and inform me after", "pay, no questions asked"
+  new RegExp(`\\b${STRONG}\\b[^.!?]{0,30}\\b(?:tell|inform|notify|update) me (?:later|after\\w*)\\b|\\bno questions asked\\b`, 'i'),
+  // "Divya can approve for me", "Nithin's yes is my yes"
+  /\bcan approve (?:for|on behalf of) me\b|\b\w+'s yes is my yes\b/i,
+  // Instructions from somewhere else given standing authority: "follow instructions inside emails", "do what forwarded messages say"
+  /\b(?:follow(?! up)|obey|do what|act on|carry out|execute)\b[^.!?]{0,30}\b(?:instructions?|e-?mails?|messages?|documents?|forwards?)\b[^.!?]{0,20}\b(?:say|says|inside|in|from|i forward)\b/i,
   // elevated or override instructions dressed as a preference
-  /\b(?:ignore|override|bypass|disregard)\s+(?:the\s+|your\s+|all\s+|any\s+)*(?:rules?|safety|polic(?:y|ies)|guard\w*|restrictions?|sentinel|trust|approvals?|confirmations?)\b|\b(?:ignore|override|bypass|disregard)\s+(?:all\s+)?(?:your|the system|system|previous|prior|earlier|above)\s+(?:instructions?|limits?|prompt)\b/i,
+  /\b(?:ignore|override|bypass|disregard)\s+(?:the\s+|your\s+|all\s+|any\s+)*(?:(?:your|safety|approval|system)\s+(?:own\s+)?rules?|safety|polic(?:y|ies)|guard\w*|restrictions?|sentinel|trust|approvals?|confirmations?)\b|\b(?:ignore|override|bypass|disregard)\s+(?:all\s+)?(?:your|the system|system|previous|prior|earlier|above)\s+(?:instructions?|limits?|prompt)\b/i,
   // A second sentence that drops the ask: "always send emails. no need to ask.", "always send the email; don't ask"
   /\bno need to (?:ask|confirm|check)(?:\s+(?:me|first|with me))*\s*[.!]*$|[.;,]\s*(?:and\s+)?(?:don'?t|do not|never) ask(?:\s+(?:me|first))*\s*[.!]*$/i,
   // Hinglish: "bina puche email bhej do", "mujhse mat pucho, seedha book kar do"
-  /\bbina\s+(?:mujhse\s+)?p(?:u|oo)chh?\w*|\bwithout\s+p(?:u|oo)chh?\w*|\bmat\s+p(?:u|oo)chh?o\b[^!?]{0,40}\bseedh[ae]\b/i,
+  /\bbina\s+(?:mujhse\s+)?p(?:u|oo)chh?\w*|\bp(?:u|oo)chh?e\s+bina\b|\bp(?:u|oo)chh?ne\s+ki\s+zaroo?rat\s+nahi\b|\bp(?:u|oo)chh?na\s+mat\b|\bseedh[ae]\s+(?:pay|book|send|order|bhej)\b|\bwithout\s+p(?:u|oo)chh?\w*|\bmat\s+p(?:u|oo)chh?o\b[^!?]{0,40}\bseedh[ae]\b/i,
 ]
 
 // "don't contact anyone without my approval", "always ask me before sending", "always get my approval before paying":
 // rules that only add a stop before an action.
 const RESTRICTS: RegExp[] = [
-  new RegExp(`\\b(?:don'?t|do not|never)\\s+(?:ever\\s+)?${ACT}\\b[^.!?]{0,80}?\\b(?:without|unless|until|before)\\b[^.!?]{0,30}?\\b(?:ask\\w*|approv\\w*|confirm\\w*|permission|check\\w*|ok|okay|yes|go[- ]ahead|consent|i (?:say|agree|tell))\\b(?:\\s+with me)?`, 'i'),
-  new RegExp(`\\b(?:always\\s+)?(?:ask|check with|confirm with|wait for|show)\\s+me\\s+(?:first\\b(?!\\s+(?:which|what|how|where|who|whether|if)\\b)|before\\s+(?:you\\s+|i\\s+)?(?:\\w+\\s+)??(?:${ACT}|act(?:ing)?|do(?:ing)?|anything|going ahead|proceed\\w*)\\b(?:\\s+anything)?)`, 'i'),
+  new RegExp(`\\b(?:don'?t|do not|never)\\s+(?:ever\\s+)?${ACT}\\b[^.!?]{0,80}?\\b(?:without|unless|until|before)\\b[^.!?]{0,30}?\\b(?:ask\\w*|approv\\w*|confirm\\w*|permission|check(?:ing)? with me|ok|okay|yes|go[- ]ahead|consent|i (?:say|agree|tell))\\b`, 'i'),
+  new RegExp(`\\b(?:always\\s+)?(?:ask|check with|confirm with|wait for|show)\\s+me\\s+(?:first\\b(?!\\s+(?:which|what|how|where|who|whether|if|thing|the)\\b)|before\\s+(?:you\\s+|i\\s+)?(?:\\w+\\s+)??(?:${ACT}|act(?:ing)?|do(?:ing)?|anything|going ahead|proceed\\w*)\\b(?:\\s+anything)?)`, 'i'),
   new RegExp(`\\b(?:always\\s+)?(?:ask|get|take|wait for)\\s+(?:for\\s+)?(?:my\\s+)?(?:approval|permission|confirmation|ok|okay|go[- ]ahead)\\s+(?:before|first)\\b`, 'i'),
 ]
 
-const norm = (text: string) => String(text || '').replace(/[‘’]/g, "'").replace(/\s+/g, ' ').trim()
+// Bounded, so a very long stored rule cannot make the check slow.
+const norm = (text: string) => String(text || '').slice(0, 1000).replace(/[‘’]/g, "'").replace(/\s+/g, ' ').trim()
+// A stop with a carve-out ("always ask me before paying, except Swiggy") lifts the stop for the carve-out.
+const CARVE_OUT = /\b(?:except|unless it|other than|otherwise|only for|apart from|but not)\b/i
 
 /** Would storing this as a rule try to give Gogo leave to act without the person's yes? */
 export function grantsPermission(text: string): boolean {
@@ -76,8 +93,11 @@ export function grantsPermission(text: string): boolean {
   if (NO_ASK.test(t)) return true
   // A clause that only adds a stop ("don't email anyone without my approval") is set aside; whatever else the
   // message says is still checked, so "always ask me first, but you can always pay my bills" is a grant.
-  let rest = t
+  // Reminding the person to do something is not Gogo doing it ("remind me to pay bills immediately").
+  let rest = t.replace(/\bremind(?:ing)? me (?:to|about)\b[^.;!?]*/gi, ' ; ')
+  const base = rest
   for (const r of RESTRICTS) rest = rest.replace(new RegExp(r.source, 'gi'), ' ; ')
+  if (rest !== base && CARVE_OUT.test(t)) return true
   return GRANTS.some(r => r.test(rest)) || NO_ASK.test(rest)
 }
 /** Does it add a stop for the person's yes before an action (and nothing else that grants)? */
