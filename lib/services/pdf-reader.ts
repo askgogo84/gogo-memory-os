@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { fetchTwilioBoundDocumentMedia } from './twilio-pdf-egress'
 import { extractServerlessPdfText } from './pdf-js-serverless'
-import { SONNET_MODEL } from '@/lib/services/model-ids'
+import { SONNET_MODEL, forModel, textOf } from '@/lib/services/model-ids'
 export { ensurePdfJsServerlessGlobals } from './pdf-js-serverless'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
@@ -199,7 +199,7 @@ export async function parsePdfTicket(
   }
 
   const base64Pdf=pdfBuffer.toString('base64')
-  const result = await anthropic.messages.create({
+  const result = await anthropic.messages.create(forModel({
     model: SONNET_MODEL,
     max_tokens: 1024,
     messages: [
@@ -221,9 +221,9 @@ export async function parsePdfTicket(
         ],
       },
     ],
-  })
+  }))
 
-  const text=result.content[0]?.type==='text'?result.content[0].text.trim():''
+  const text=textOf(result.content).trim()
   return parseTicketJson(text)
 }
 
@@ -262,7 +262,7 @@ export async function classifyPdfDocument(
     return localClass
   }
   const base64Pdf=pdfBuffer.toString('base64')
-  const result = await anthropic.messages.create({
+  const result = await anthropic.messages.create(forModel({
     model: 'claude-haiku-4-5',
     max_tokens: 20,
     messages: [
@@ -285,8 +285,8 @@ export async function classifyPdfDocument(
         ],
       },
     ],
-  })
-  const ans = (result.content[0]?.type === 'text' ? result.content[0].text : '').trim().toUpperCase()
+  }))
+  const ans = textOf(result.content).trim().toUpperCase()
   console.log('[pdf-reader] first-page class:', ans.slice(0, 20))
   if (ans.includes('TICKET')) return 'TICKET'
   if (ans.includes('OTHER')) return 'OTHER'
@@ -310,7 +310,7 @@ export async function readAndSummarizePdfDocument(params: {
   userCaption?: string
 }): Promise<string> {
   const base64Pdf = await fetchTwilioPdfBase64(params.mediaUrl, params.accountSid, params.authToken)
-  const result = await anthropic.messages.create({
+  const result = await anthropic.messages.create(forModel({
     model: SONNET_MODEL,
     max_tokens: 1200,
     system: PDF_SUMMARY_SYSTEM,
@@ -353,8 +353,8 @@ export async function readAndSummarizePdfDocument(params: {
         ],
       },
     ],
-  })
-  const text = result.content[0]?.type === 'text' ? result.content[0].text.trim() : ''
+  }))
+  const text = textOf(result.content).trim()
   if (!text) throw new Error('Could not read document')
   return text
 }
@@ -378,7 +378,7 @@ export async function parseImageTicket(
   const cleanMediaType = mediaType.includes('png') ? 'image/png' : 'image/jpeg'
 
   // Small forwarded screenshots are hard to read; prefer the newer model, fall back if unavailable.
-  const ask = (model: string) => anthropic.messages.create({
+  const ask = (model: string) => anthropic.messages.create(forModel({
     model,
     max_tokens: 1024,
     messages: [
@@ -400,13 +400,13 @@ export async function parseImageTicket(
         ],
       },
     ],
-  })
+  }))
   const result = await ask('claude-sonnet-5-5').catch((err: any) => {
     console.error('[ticket-reader] newer model unavailable, falling back:', String(err?.message || err).slice(0, 120))
     return ask(SONNET_MODEL)
   })
 
-  const text = result.content[0]?.type === 'text' ? result.content[0].text.trim() : ''
+  const text = textOf(result.content).trim()
   return parseTicketJson(text)
 }
 

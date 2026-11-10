@@ -29,7 +29,8 @@ const stubs = {
   '@/lib/agent/people': { personAsk: () => null },
   './order-tracking': { ORDER_LIST_RE: /(?!)/ },
   './payment-confirmation': { PAYMENT_GATE: /(?!)/ },
-  '@/lib/services/model-ids': { SONNET_MODEL: 'fixture-model' },
+  '@/lib/services/model-ids': { SONNET_MODEL: 'fixture-model', forModel: x => x, isAdaptiveOnlyModel: () => false, textOf: c => (Array.isArray(c) ? c : []).filter(b => b && b.type === 'text').map(b => b.text).join(''), TOOL_REQUIRED_NOTE: '' },
+  '@/lib/memory/canary': { OWNER_CANARY: [], memoryEnabledFor: () => false },
 }
 const brainExports = {}
 vm.runInNewContext(js, {

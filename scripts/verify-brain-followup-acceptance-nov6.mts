@@ -3,6 +3,9 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
+// Real, pure model helpers: the function under test shapes its request and reads its reply through them.
+import { forModel, isAdaptiveOnlyModel, textOf } from '../lib/services/model-ids.ts'
+import { toolRequiredSystem } from '../lib/agent/brain.ts'
 
 const full = readFileSync('lib/agent/brain.ts', 'utf8')
 const start = full.indexOf('export async function answerFollowups(')
@@ -56,6 +59,7 @@ function harness(send: () => Promise<unknown>, failHistory = false) {
     MODEL: () => 'fixture-model', TIMEOUT_MS: 1000,
     brainSystemBlocks: () => [], brainMessages: () => [], BRAIN_TOOLS: [{ name: 'reply' }],
     brainUsage: () => ({}), meterBrainCall: () => {},
+    forModel, isAdaptiveOnlyModel, textOf, toolRequiredSystem,
     inventedApprovalGuard: (v: any) => String(v ?? '').trim(),
     console: { log() {}, warn() {}, error(...args: any[]) { state.errors.push(args.map(String).join(' ')) } },
     process: { env: {} }, Date, Promise, JSON, Number, String,

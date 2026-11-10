@@ -30,7 +30,7 @@ import {
   isStrictlyFreshFollowupState,
   clearFollowupState,
 } from '@/lib/bot/handlers/followup-state'
-import { SONNET_MODEL } from '@/lib/services/model-ids'
+import { SONNET_MODEL, forModel, textOf } from '@/lib/services/model-ids'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
@@ -308,7 +308,7 @@ export async function classifyAndExtractAsset(params: {
       contentBlock = { type: 'image', source: { type: 'base64', media_type: m[1], data: m[2] } }
     }
 
-    const result = await anthropic.messages.create({
+    const result = await anthropic.messages.create(forModel({
       model: SONNET_MODEL,
       max_tokens: 1000,
       system: CLASSIFY_SYSTEM,
@@ -319,8 +319,8 @@ export async function classifyAndExtractAsset(params: {
           { type: 'text', text: `User label/caption (may be inaccurate): ${params.caption || 'none'}\n\n${CLASSIFY_INSTRUCTION}` },
         ],
       }],
-    })
-    const text = result.content[0]?.type === 'text' ? result.content[0].text : ''
+    }))
+    const text = textOf(result.content)
     console.log('[asset-memory] classify raw:', text.slice(0, 300))
     return normalizeExtraction(parseJsonLoose(text))
   } catch (err: any) {
