@@ -80,8 +80,9 @@ const realGet: Getter = (u, pinned, limits) => new Promise((done, fail) => {
   let settled = false
   const resolve = (v: Awaited<ReturnType<Getter>>) => { if (!settled) { settled = true; clearTimeout(deadline); done(v) } }
   const reject = (e: unknown) => { if (!settled) { settled = true; clearTimeout(deadline); fail(e) } }
-  const deadline = setTimeout(() => { req.destroy(new Error('deadline')); reject(new Error('deadline')) }, limits.ms)
-  const req = request({
+  let req: ReturnType<typeof request> | undefined
+  const deadline = setTimeout(() => { req?.destroy(new Error('deadline')); reject(new Error('deadline')) }, limits.ms)
+  req = request({
     // A fresh connection every time: a kept-alive socket would skip the address check below.
     agent: false,
     host: u.hostname, servername: u.hostname, port: 443, path: `${u.pathname}${u.search}`, method: 'GET', timeout: limits.ms,
@@ -103,21 +104,19 @@ const realGet: Getter = (u, pinned, limits) => new Promise((done, fail) => {
   req.end()
 })
 
-/** Separates pieces of page text that must not be read as each other's context. */
-export const PAGE_BREAK = '\u2063\u2063'
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#64': '@', '#x40': '@', '#46': '.', '#x2e': '.' }
 /** Visible text of a page, plus the addresses in its mailto links. No scripts, styles or markup. */
 export function pageText(html: string): { title: string; text: string } {
   const src = String(html || '').slice(0, PAGE_LIMITS.bytes)
-  const title = (/<title[^>]*>([^<]{0,200})/i.exec(src)?.[1] || '').replace(/\s+/g, ' ').trim()
+  // Every pattern here is linear on hostile input (no nested or open-ended repeats over "<").
   // Scripts, styles and comments are removed first (an unclosed one removes everything after it), so nothing hidden
-  // in them is read, including email links.
-  const visible = src.replace(/<!--[\s\S]*?(?:-->|$)/g, ' ').replace(/<(script|style|noscript|template|svg|head)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, ' ')
-  const mailto = [...visible.matchAll(/href\s*=\s*["']mailto:([^"'?\s>]{3,120})/gi)].map(m => m[1])
-  const body = visible.replace(/<[^>]{0,2000}>/g, ' ')
-    .replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (m, e) => ENTITIES[String(e).toLowerCase()] ?? ' ')
-  // Each email link stands alone (PAGE_BREAK), so one link's address is never read as the context of another.
-  return { title, text: `${body}${mailto.map(m => ` ${PAGE_BREAK} (email link: ${m})`).join('')}`.replace(/\s+/g, ' ').trim() }
+  // in them is read: not text, not a title, not an email link.
+  const shown = src.replace(/<!--[\s\S]*?(?:-->|$)/g, ' ').replace(/<(script|style|noscript|template|svg)\b[\s\S]*?(?:<\/\1\s*>|$)/gi, ' ')
+  const title = (/<title\b[^<>]{0,200}>([^<]{0,200})/i.exec(shown)?.[1] || '').replace(/\s+/g, ' ').trim()
+  // An email link's address is put where the link sits, so the words around the link are the words around the address.
+  const body = shown.replace(/<head\b[\s\S]*?(?:<\/head\s*>|$)/i, ' ').replace(/<a\b[^<>]{0,600}?href\s*=\s*["']mailto:([^"'?\s<>]{3,120})[^<>]{0,600}>/gi, ' $1 ').replace(/<[^<>]{0,2000}>/g, ' ')
+    .replace(/&(#x?[0-9a-f]{1,6}|[a-z]{2,8});/gi, (_m, e) => ENTITIES[String(e).toLowerCase()] ?? ' ')
+  return { title, text: body.replace(/\s+/g, ' ').trim() }
 }
 
 /** Reads one page. Null for anything refused, failed, too slow or not text. Never throws. `sameSite` says whether a

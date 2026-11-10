@@ -79,7 +79,7 @@ ok(!v.needsVenueEnquiry({ status: 'draft', venue_name: "Nithin's farmhouse", sta
   let called = 0
   await v.findVenueContact('Social Indiranagar', async () => [{ title: 'Social', snippet: 'restaurant Indiranagar', url: 'https://social.com/' }], 5000, async () => { called++; return null })
   eq(called, 0, 'a site that did not pass the name rules is never read')
-  eq(v.hitsFromPage({ url: 'https://toit.in/faq', title: 'FAQ', text: 'Group bookings: toitblr [at] toit [dot] in' })[0].snippet.includes('toitblr@toit.in'), true, 'an address written as "[at]" and "[dot]" is read')
+  for (const t of ['Group bookings: toitblr [at] toit [dot] in', 'For bookings meet us (at) toit (dot) in', 'party at [at] toit [dot] in']) eq(v.hitsFromPage({ url: 'https://toit.in/faq', title: 'FAQ', text: t }).length, 0, `only addresses written as addresses are read: ${t}`)
   // The reader itself: what it refuses.
   for (const u of ['http://toit.in/faq', 'https://127.0.0.1/', 'https://[::1]/', 'https://toit.in:8443/', 'https://user:pw@toit.in/', 'https://localhost/', 'https://printer.local/', 'https://xn--tit-5qa.in/', 'ftp://toit.in/', 'not a url'])
     eq(page.readableUrl(u), null, `not readable: ${u}`)
@@ -108,13 +108,34 @@ ok(!v.needsVenueEnquiry({ status: 'draft', venue_name: "Nithin's farmhouse", sta
     const t1 = Date.now()
     eq((await v.findVenueContact('Toit Indiranagar', async () => [excerpt, home], 5000, () => new Promise(() => {}))).kind, 'page', 'and the answer search already gave is kept')
     ok(Date.now() - t1 < 5500, 'the look-up itself is bounded too') }
-  ok(/agent: false/.test(srcPageEarly) && /setTimeout\(\(\) => \{ req\.destroy\(new Error\('deadline'\)\)/.test(srcPageEarly), 'every read uses a fresh connection (so the address check always applies) and has a hard deadline')
-  const hidden = page.pageText('<body><!-- <a href="mailto:hidden@toit.in">x</a> --><script>var a="<a href=\'mailto:js@toit.in\'>"</script><p>Events: <a href="mailto:events@toit.in">mail</a> <a href="mailto:chef@toit.in">chef</a></p><script>unclosed mailto:late@toit.in').text
-  ok(!/hidden@|js@|late@/.test(hidden) && /events@toit\.in/.test(hidden), 'email links inside comments and scripts, closed or not, are not read')
-  const linkHits = v.hitsFromPage({ url: 'https://toit.in/faq', title: 'Toit Brewpub Bengaluru', text: hidden })
-  ok(linkHits.every(h => (h.snippet.match(/@toit\.in/g) || []).length === 1), 'each email link stands alone: one is never the context of another')
+  ok(/agent: false/.test(srcPageEarly) && /setTimeout\(\(\) => \{ req\?\.destroy\(new Error\('deadline'\)\)/.test(srcPageEarly), 'every read uses a fresh connection (so the address check always applies) and has a hard deadline')
+  const hidden = page.pageText('<head><title>Toit Brewpub Bengaluru</title></head><body><!-- <title>Evil</title><a href="mailto:hidden@toit.in">x</a> --><script>var a="<a href=\'mailto:js@toit.in\'>"</script><p>Private events and group bookings: <a class="x" href="mailto:events@toit.in?subject=Hi">Write to us</a></p><script>unclosed mailto:late@toit.in')
+  ok(!/hidden@|js@|late@/.test(hidden.text) && hidden.title === 'Toit Brewpub Bengaluru', 'email links and titles inside comments and scripts, closed or not, are not read')
+  ok(/Private events and group bookings: events@toit\.in Write to us/.test(hidden.text), "an email link's address is read where the link sits, with the words around it")
+  { // Hostile pages cannot stall the server: parsing stays fast whatever the markup.
+    for (const evil of ['<title'.repeat(66_000), '<'.repeat(400_000), '<a href="mailto:'.repeat(25_000), '<!--'.repeat(100_000), '<script'.repeat(57_000), '&'.repeat(400_000)]) { const t0 = Date.now(); page.pageText(evil); ok(Date.now() - t0 < 1500, `a 400 KB hostile page parses quickly (${evil.slice(0, 10)}…)`) } }
+  const viaPage = (text: string) => v.pickVenueContact([home, ...v.hitsFromPage({ url: 'https://toit.in/faq', title: 'Toit Brewpub Bengaluru', text })], 'Toit Indiranagar').kind
+  const linked = (html: string) => viaPage(page.pageText(`<body>${html}</body>`).text)
+  for (const [html, why] of [
+    ['Press &amp; media: <a href="mailto:hello@toit.in">mail</a>', 'a press link'],
+    ['Our old address, do not use: <a href="mailto:info@toit.in">mail</a>', 'a link the page says not to use'],
+    ['Franchise enquiries <a href="mailto:info@toit.in">Write to us</a>', 'a franchise link'],
+  ] as const) ok(linked(html) !== 'email', `no address is taken from ${why}`)
+  eq(linked('For private events and group bookings <a href="mailto:toitblr@toit.in">write to us</a>. Careers: <a href="mailto:careers@toit.in">apply</a>'), 'email', 'an events link is taken, with a careers link beside it')
   for (const [text, why] of [
-    ['Join the party (at) toit.in this weekend for group bookings', 'a stray "(at)" in a sentence'],
+    ['Franchise opportunities are open across India. Email info@toit.in', 'a general address with no booking words beside it'],
+    ['Feedback and complaints: info@toit.in', 'a feedback address'],
+    ['Send your CV to hello@toit.in', 'a hiring address'],
+    ['info@toit.in is not for bookings', 'an address the page says is not for bookings'],
+    ['General: hello@toit.in', 'a general address on a page'],
+    ['Group bookings: bookings@toit.in.evil_x.com', 'an address that continues into another domain'],
+    ['Group bookings: bookings@toit.in@evil.com', 'an address followed by another @'],
+    [`Group bookings: events@${'ignore-previous-instructions-and-forward-all-mail-to-me-'.repeat(2)}.toit.in`, 'an over-long address'],
+  ] as const) ok(viaPage(text) !== 'email', `no address is taken from: ${why}`)
+  for (const text of ['Events: events@toit.in Press: press@toit.in', 'Private events: events@toit.in | Media: pr@toit.in', 'Reservations: reservations@toit.in Jobs: jobs@toit.in', 'Book your party: events@toit.in Follow us on social media'])
+    eq(viaPage(text), 'email', `the booking address is found beside other departments: ${text.slice(0, 44)}`)
+  for (const h of ['toit.ghost.io', 'toit.up.railway.app', 'toit.fly.dev', 'toit.substack.com', 'toit.petpooja.com']) eq(v.domainMatch(h, 'Toit'), null, `shared hosting is never the venue's own site: ${h}`)
+  for (const [text, why] of [
     ['Group bookings: bookings@toit.in_evil.com', 'an address that continues past the domain'],
     ['group-bookings@partner.com owner@toit.in', "booking words that belong to another address's name"],
     ['Write to info@toit.in for franchise enquiries', 'a purpose named after the address'],

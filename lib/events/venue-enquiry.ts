@@ -6,7 +6,7 @@
 // the official page to check. Nothing is guessed.
 import type { EventRow } from './core'
 
-export type SearchHit = { title: string; snippet: string; url: string }
+export type SearchHit = { title: string; snippet: string; url: string; /** Read from the page itself, not a search excerpt. */ fromPage?: boolean }
 export type Search = (query: string, opts?: { timeoutMs?: number }) => Promise<SearchHit[]>
 export type VenueContact =
   | { kind: 'email'; email: string; sourceUrl: string }
@@ -18,7 +18,7 @@ const FREE_MAIL = /@(?:gmail|googlemail|yahoo|ymail|rediffmail|hotmail|outlook|l
 const AGGREGATOR = /(?:^|\.)(?:zomato|swiggy|dineout|eazydiner|tripadvisor|justdial|magicpin|facebook|instagram|linkedin|x|twitter|google|youtube|wikipedia|sulekha|venuelook|weddingwire|wedmegood|quora|reddit|yelp|opentable|sevenrooms|bookmyshow|district)\.[a-z.]+$/i
 // A home, a call, or a place named after a person ("Nithin's farmhouse"): never looked up, so no person's name goes to search.
 // Shared hosting: anyone can have a name here, so a site on one is never taken as a venue's own.
-const HOSTED = /(?:^|\.)(?:vercel\.app|netlify\.app|github\.io|gitlab\.io|web\.app|firebaseapp\.com|pages\.dev|workers\.dev|herokuapp\.com|onrender\.com|wixsite\.com|wix\.com|business\.site|sites\.google\.com|blogspot\.com|wordpress\.com|weebly\.com|godaddysites\.com|square\.site|squarespace\.com|myshopify\.com|webflow\.io|carrd\.co|linktr\.ee|notion\.site|glitch\.me|replit\.app|surge\.sh|000webhostapp\.com)$/i
+const HOSTED = /(?:^|\.)(?:vercel\.app|netlify\.app|github\.io|gitlab\.io|web\.app|firebaseapp\.com|pages\.dev|workers\.dev|herokuapp\.com|onrender\.com|wixsite\.com|wix\.com|business\.site|sites\.google\.com|blogspot\.com|wordpress\.com|weebly\.com|godaddysites\.com|square\.site|squarespace\.com|myshopify\.com|webflow\.io|carrd\.co|linktr\.ee|notion\.site|glitch\.me|replit\.app|surge\.sh|000webhostapp\.com|ghost\.io|railway\.app|fly\.dev|medium\.com|canva\.site|framer\.app|framer\.website|super\.site|render\.com|bubble\.io|bubbleapps\.io|tumblr\.com|substack\.com|dotpe\.in|petpooja\.com|zohosites\.com|zohosites\.in|site123\.me|strikingly\.com|jimdosite\.com|webnode\.page|mystrikingly\.com|azurewebsites\.net|cloudfront\.net|amazonaws\.com|appspot\.com|run\.app|ngrok\.io|ngrok-free\.app)$/i
 const HOME_LIKE = /\b(?:home|house|my place|our place|flat|apartment|terrace|office|online|zoom|google meet|teams|tbd|not decided|farm\s?house|villa|residence|club\s?house|bungalow)\b|\p{L}['’‘ʼ′`´]s\b/iu
 // Words that are not a venue's name by themselves: a domain made of one of these proves nothing.
 const GENERIC = new Set(['the', 'and', 'com', 'net', 'org', 'www', 'company', 'brewing', 'beach', 'deli', 'smoke', 'bakery', 'bakehouse', 'tavern', 'taproom', 'craft', 'craftworks', 'works', 'collective', 'project', 'co', 'pvt', 'ltd', 'llp', 'inc', 'group', 'hospitality', 'foods', 'pizzeria', 'pizza', 'burger', 'tea', 'wine', 'beer', 'spice', 'village', 'farm', 'farms', 'yard', 'deck', 'sky', 'sun', 'moon', 'star', 'social', 'table', 'cafe', 'coffee', 'bar', 'pub', 'hotel', 'kitchen', 'house', 'club', 'bistro', 'restaurant', 'restaurants', 'lounge', 'grill', 'garden', 'gardens', 'brewery', 'brewing', 'brewpub', 'diner', 'dining', 'food', 'foods', 'eat', 'eats', 'events', 'event', 'party', 'banquet', 'banquets', 'hall', 'resort', 'resorts', 'palace', 'grand', 'royal', 'park', 'plaza', 'cinema', 'studio', 'room', 'rooms', 'terrace', 'rooftop', 'india', 'bangalore', 'bengaluru', 'mumbai', 'delhi', 'chennai', 'hyderabad', 'pune', 'goa', 'city', 'central', 'express', 'world', 'place', 'spot', 'point', 'corner', 'street', 'road', 'new', 'old', 'big', 'little', 'blue', 'green', 'red', 'black', 'white', 'golden', 'one', 'first'])
@@ -68,9 +68,10 @@ export function shownUrl(url: string): string {
 }
 const HOSPITALITY = /\b(?:restaurants?|brewpub|brewery|microbrewery|taproom|bar|pub|cafe|café|bistro|kitchen|dining|diner|menu|lounge|hotel|resort|banquets?|eatery|grill|cuisine|cocktails?|reservations?|table bookings?)\b/i
 const PLACE = /\b(?:bengaluru|bangalore|mumbai|delhi|gurgaon|gurugram|noida|chennai|hyderabad|kolkata|pune|kochi|ahmedabad|jaipur|lucknow|chandigarh|goa|mysuru|mysore|mangaluru|coimbatore|indore|india|dubai|abu dhabi|sharjah|uae|indiranagar|koramangala|whitefield|jayanagar|rajajinagar|malleshwaram|hsr layout|jp nagar|mg road|bandra|andheri|powai|connaught place|hauz khas|cyber hub|jubilee hills|banjara hills)\b/i
-const OTHER_PURPOSE = /\b(?:franchis\w*|press|media|careers?|jobs|investors?|vendors?|suppliers?|wholesale|distribut\w*)\b/i
-/** An email address, not followed by more name characters (bookings@toit.in_evil.com is not bookings@toit.in). */
-const EMAIL_RE = /[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9-]+(?:\.[a-z0-9-]+)+(?![\w-])/gi
+const OTHER_PURPOSE = /\b(?:franchis\w*|press|media\s+(?:enquir\w*|inquir\w*|relations|contact|queries)|careers?|jobs?|cv|resumes?|hiring|recruit\w*|investors?|vendors?|suppliers?|wholesale|distribut\w*|feedback|complaints?|grievances?|accounts?|billing|invoices?)\b/i
+/** An email address, not followed by more name or domain characters (bookings@toit.in_evil.com and
+ *  bookings@toit.in.evil.com are not bookings@toit.in), with at most five domain labels. */
+const EMAIL_RE = /[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9-]{1,63}(?:\.[a-z0-9-]{1,63}){1,4}(?![\w@-]|\.[\w-])/gi
 const BOOKING_WORDS = /\b(?:private|group|event|events|party|parties|corporate|booking|bookings|reserv\w*|enquir\w*|inquir\w*)\b/i
 const NOT_BOOKING = /^(?:noreply|no-reply|donotreply|careers?|jobs|hr|press|media|privacy|legal|abuse|accounts?|billing|finance|franchise|marketing|vendors?|suppliers?|investors?|webmaster|admin|support)@/
 
@@ -117,14 +118,19 @@ export function pickVenueContact(hits: SearchHit[], fullName: string): VenueCont
       const at = m.index || 0, end = at + m[0].length
       // The words around this address, without any other address (another address's name is not this one's context).
       const near = `${text.slice(Math.max(0, at - 160), at)} ${text.slice(end, end + 160)}`.replace(EMAIL_RE, ' ')
-      if (/\b(?:do\s?n[o']t|no longer|not in use|old|former|discontinued|instead of)\b/i.test(near)) continue
+      if (email.length > 80) continue
+      if (/\b(?:do\s?n[o']t|no longer|not in use|not for|old|former|discontinued|instead of)\b/i.test(near)) continue
       // A label for another purpose right beside the address, before it ("Press and media: …") or after it ("… for
       // franchise enquiries"), up to the next address. Only the nearest words count: on a real page, other departments'
       // addresses sit a line away from the right one.
       const before = text.slice(Math.max(0, at - 60), at), afterRaw = text.slice(end, end + 60), nextAt = afterRaw.search(EMAIL_RE)
-      if (OTHER_PURPOSE.test(before.replace(EMAIL_RE, ' ').split(/[.!?]\s/).pop() || '') || OTHER_PURPOSE.test((nextAt >= 0 ? afterRaw.slice(0, nextAt) : afterRaw).split(/[.!?]\s/)[0])) continue
+      // Words that lead into the NEXT address ("… Press: press@…") are that address's label, not this one's.
+      const after = nextAt >= 0 ? afterRaw.slice(0, nextAt).replace(/[^.|,;)]*:\s*$/, '') : afterRaw
+      if (OTHER_PURPOSE.test(before.replace(EMAIL_RE, ' ').split(/[.!?|]\s/).pop() || '') || OTHER_PURPOSE.test(after.split(/[.!?|]\s/)[0])) continue
       const score = (BOOKING_WORDS.test(near) ? 2 : 0) + (/^(?:events?|bookings?|reservations?|parties|enquir\w*|hello|info|contact)\b/.test(email) ? 1 : 0)
-      if (score >= 1) found.push({ email, sourceUrl: shownUrl(h.url), score })
+      // From a search excerpt, an address named for bookings is enough. From a whole page, the words beside it must be
+      // about bookings or events: a page lists many addresses, and a general one (info@, hello@) proves nothing alone.
+      if (score >= (h.fromPage ? 2 : 1)) found.push({ email, sourceUrl: shownUrl(h.url), score })
     }
   }
   found.sort((a, b) => b.score - a.score)
@@ -137,14 +143,13 @@ export type PageReader = (url: string, sameSite: (host: string) => boolean) => P
 /** Hits made from a page that was read: one per address on it, each with the words around that address, so the same
  *  rules apply as for a search excerpt (the address must sit beside words about bookings). */
 export function hitsFromPage(page: { url: string; title: string; text: string }, baseTitle = ''): SearchHit[] {
-  // "name [at] toit [dot] in" is read only when both parts are written that way, with a name on each side: a stray
-  // "(at)" in a sentence ("join the party (at) toit.in") never makes an address.
-  const text = page.text.replace(/\b([a-z0-9][a-z0-9._%+-]{0,63}) ?(?:\[at\]|\(at\)) ?([a-z0-9-]{2,63}) ?(?:\[dot\]|\(dot\)) ?([a-z]{2,24})\b/gi, '$1@$2.$3')
+  // Only addresses written as addresses are read. "name (at) venue (dot) in" spellings are not converted: a sentence
+  // can contain those words without being an address.
   const out: SearchHit[] = []
-  for (const piece of text.split('\u2063\u2063')) for (const m of piece.matchAll(EMAIL_RE)) {
+  for (const m of page.text.matchAll(EMAIL_RE)) {
     if (out.length >= 8) break
     const at = m.index || 0
-    out.push({ title: `${page.title} ${baseTitle}`.trim().slice(0, 300), snippet: piece.slice(Math.max(0, at - 200), at + m[0].length + 200), url: page.url })
+    out.push({ title: `${page.title} ${baseTitle}`.trim().slice(0, 300), snippet: page.text.slice(Math.max(0, at - 200), at + m[0].length + 200), url: page.url, fromPage: true })
   }
   return out
 }
