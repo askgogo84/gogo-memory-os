@@ -60,7 +60,7 @@ export async function POST(req: NextRequest) {
   if (metaInboxEnabled()) {
     // Durable inbox: store, answer Meta at once, hand over after the response. A store failure asks Meta to redeliver.
     if (!(await storeInbound(ours.map(m => ({ id: m.id, from: m.from, params: pipelineParams(m) }))))) return new NextResponse('Inbox unavailable', { status: 503 })
-    if (ours.length) after(() => drainMetaInbox({ budgetMs: 100_000 }).then(r => console.log('WHATSAPP_META_INBOX_DRAINED:', JSON.stringify(r)), () => console.error('WHATSAPP_META_INBOX_DRAIN_FAILED')))
+    if (ours.length) after(() => drainMetaInbox().then(r => console.log('WHATSAPP_META_INBOX_DRAINED:', JSON.stringify(r)), () => console.error('WHATSAPP_META_INBOX_DRAIN_FAILED')))
     return new NextResponse('', { status: 200 })
   }
   for (const m of ours) {

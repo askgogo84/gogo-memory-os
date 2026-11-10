@@ -16,6 +16,6 @@ export async function GET(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const { drainMetaInbox, metaInboxEnabled } = await import('@/lib/channels/whatsapp-provider/meta-inbox')
   if (!metaInboxEnabled()) return NextResponse.json({ ok: true, skipped: 'inbox_off' })
-  try { return NextResponse.json({ ok: true, ...(await drainMetaInbox({ budgetMs: 100_000 })) }) }
+  try { return NextResponse.json({ ok: true, ...(await drainMetaInbox()) }) }
   catch { console.error('WHATSAPP_META_INBOX_CRON_FAILED'); return NextResponse.json({ ok: false }, { status: 500 }) }
 }

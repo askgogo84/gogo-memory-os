@@ -17,10 +17,13 @@ await pg.exec('create role anon; create role authenticated; create role service_
 const UP = readFileSync(new URL('../supabase/migrations/20261110190000_wa_meta_inbox.sql', import.meta.url), 'utf8')
 await pg.exec(UP); await pg.exec(UP)
 const base = pgliteSupabase(pg) as any
-// The test adapter has no upsert; give it the one call the inbox makes.
-const db = { ...base, rpc: async (fn: string, args: any) => fn === 'claim_wa_meta_inbox' ? { data: (await pg.query('select * from claim_wa_meta_inbox($1, $2)', [args.p_limit, args.p_lease_seconds])).rows, error: null } : base.rpc(fn, args), from: (t: string) => ({ ...base.from(t), upsert: async (rows: any[], o: any) => {
-  try { for (const r of rows) await pg.query(`insert into ${t} (message_id, sender, params) values ($1,$2,$3) on conflict (message_id) do nothing`, [r.message_id, r.sender, JSON.stringify(r.params)]); return { error: null } } catch (e: any) { return { error: { message: e.message, code: e.code } } }
-} }) }
+// The test adapter has no upsert; give it the one call the inbox makes, as ONE statement like PostgREST (so rows
+// stored together share the same now(), and only seq keeps their order).
+const db = { ...base, rpc: async (fn: string, args: any) => fn === 'claim_wa_meta_inbox' ? { data: (await pg.query('select * from claim_wa_meta_inbox($1, $2)', [args.p_limit, args.p_lease_seconds])).rows, error: null }
+  : fn === 'sweep_wa_meta_inbox' ? { data: (await pg.query('select * from sweep_wa_meta_inbox()')).rows, error: null } : base.rpc(fn, args),
+  from: (t: string) => ({ ...base.from(t), upsert: async (rows: any[]) => {
+    try { const vals = rows.map((_, k) => `($${3 * k + 1},$${3 * k + 2},$${3 * k + 3})`).join(','); await pg.query(`insert into ${t} (message_id, sender, params) values ${vals} on conflict (message_id) do nothing`, rows.flatMap(r => [r.message_id, r.sender, JSON.stringify(r.params)])); return { error: null } } catch (e: any) { return { error: { message: e.message, code: e.code } } }
+  } }) }
 const wamid = (n: number) => `wamid.HBgMOTE5OTAwMDAwMDAy${String(n).padStart(4, '0')}`
 const rows = async () => (await pg.query('select message_id, sender, status, attempts, params is null as cleared from wa_meta_inbox order by received_at, message_id')).rows as any[]
 
@@ -33,28 +36,66 @@ eq(await inbox.storeInbound([{ id: 'SMnot-a-wamid', from: '919900000001', params
 // 2. Claim: at most one message per person, oldest first, never while that person's earlier one is in hand.
 const c1 = (await pg.query('select message_id from claim_wa_meta_inbox(10, 150)')).rows.map((r: any) => r.message_id).sort()
 eq(c1, [wamid(1), wamid(3)], "the first claim takes each person's oldest message")
-eq((await pg.query('select message_id from claim_wa_meta_inbox(10, 150)')).rows, [], "a second claim takes nothing while those are being handled")
+eq((await pg.query(`select count(distinct received_at)::int n from wa_meta_inbox`)).rows[0], { n: 1 }, 'messages stored together share one arrival time (one statement)')
+eq((await pg.query('select message_id from claim_wa_meta_inbox(10, 150)')).rows, [], 'a second claim takes nothing while those are being handled')
 await pg.query(`update wa_meta_inbox set status='done', params=null where message_id=$1`, [wamid(1)])
-eq((await pg.query('select message_id from claim_wa_meta_inbox(10, 150)')).rows.map((r: any) => r.message_id), [wamid(2)], "the person's next message comes only after the first is done")
+eq((await pg.query('select message_id from claim_wa_meta_inbox(10, 150)')).rows.map((r: any) => r.message_id), [wamid(2)], "the person's next message comes only after the first is done, in the order sent")
 await pg.query(`update wa_meta_inbox set lease_until = now() - interval '1 second' where message_id=$1`, [wamid(3)])
 eq((await pg.query('select message_id, attempts from claim_wa_meta_inbox(10, 150)')).rows, [{ message_id: wamid(3), attempts: 2 }], "a crashed worker's message is picked up again when its lease runs out")
-const sec = await pg.query(`select relrowsecurity as rls, has_table_privilege('anon','public.wa_meta_inbox','select') as anon, has_function_privilege('authenticated','public.claim_wa_meta_inbox(integer,integer)','execute') as authed from pg_class where oid='public.wa_meta_inbox'::regclass`)
-eq(sec.rows[0], { rls: true, anon: false, authed: false }, 'only the service role can reach the inbox')
+const sec = await pg.query(`select relrowsecurity as rls, has_table_privilege('anon','public.wa_meta_inbox','select') as anon, has_function_privilege('authenticated','public.claim_wa_meta_inbox(integer,integer)','execute') as authed, has_function_privilege('anon','public.sweep_wa_meta_inbox()','execute') as sweep from pg_class where oid='public.wa_meta_inbox'::regclass`)
+eq(sec.rows[0], { rls: true, anon: false, authed: false, sweep: false }, 'only the service role can reach the inbox')
+const fnSrc = readFileSync(new URL('../supabase/migrations/20261110190000_wa_meta_inbox.sql', import.meta.url), 'utf8')
+ok(/picked as \([\s\S]*?where i\.status = 'pending' or \(i\.status = 'processing' and i\.lease_until <= clock_timestamp\(\)\)[\s\S]*?for update of i skip locked/.test(fnSrc), 'the status is checked again on the locked row, so two workers cannot claim the same message (a race PGlite cannot show; checked on Postgres 16 by the reviewer)')
 
-// 3. Drain: hands over in order, clears the text of finished rows, retries a failure, gives up after five tries.
-await pg.query('delete from wa_meta_inbox')
+// 3. Drain.
+const reset = async () => pg.query('delete from wa_meta_inbox')
+await reset()
 await inbox.storeInbound([1, 2, 3].map(n => ({ id: wamid(10 + n), from: '919900000001', params: { Body: `m${n}` } })).concat([{ id: wamid(20), from: '919900000002', params: { Body: 'other' } }]), db)
 const order: string[] = []
-const r1 = await inbox.drainMetaInbox({ db, forward: async p => { order.push(p.Body); return { result: 'done', status: 200 } } })
-eq(r1, { done: 4, retried: 0, failed: 0 }, 'everything is handed over')
-eq(order.filter(b => b.startsWith('m')), ['m1', 'm2', 'm3'], "one person's messages go in the order they were sent")
+const okForward = async (p: any) => { order.push(p.Body); return { result: 'done' as const, status: 200 } }
+eq(await inbox.drainMetaInbox({ db, forward: okForward }), { done: 2, retried: 0, gaveUp: 0, lost: 0 }, 'one round: one message per person')
+await inbox.drainMetaInbox({ db, forward: okForward }); await inbox.drainMetaInbox({ db, forward: okForward })
+eq(order.filter(b => b.startsWith('m')), ['m1', 'm2', 'm3'], "one person's messages go in the order they were sent, even though they arrived together")
 ok((await rows()).every(r => r.status === 'done' && r.cleared), 'finished rows keep no message text')
-await inbox.storeInbound([{ id: wamid(30), from: '919900000003', params: { Body: 'x' } }], db)
-let tries = 0
-for (let i = 0; i < 7; i++) await inbox.drainMetaInbox({ db, forward: async () => { tries++; return { result: 'retry', status: 502 } } })
-eq([tries, (await rows()).find(r => r.message_id === wamid(30))!.status], [5, 'failed'], 'a message the pipeline keeps refusing is tried five times, then marked failed')
-await inbox.storeInbound([{ id: wamid(31), from: '919900000004', params: { Body: 'y' } }], db)
-eq(await inbox.drainMetaInbox({ db, forward: async () => ({ result: 'busy', status: 503 }) }), { done: 1, retried: 0, failed: 0 }, "the pipeline's Busy is final: the person was already asked to resend")
+// A failure waits and keeps the order: the next message does not overtake it.
+await reset()
+await inbox.storeInbound([{ id: wamid(40), from: '919900000003', params: { Body: 'first' } }, { id: wamid(41), from: '919900000003', params: { Body: 'second' } }], db)
+let fail = true; const sent: string[] = []
+const flaky = async (p: any) => { if (fail) return { result: 'retry' as const, status: 502 }; sent.push(p.Body); return { result: 'done' as const, status: 200 } }
+for (let i = 0; i < 6; i++) await inbox.drainMetaInbox({ db, forward: flaky })
+const after1 = (await pg.query(`select attempts, status, next_attempt_at > now() + interval '20 seconds' as waits from wa_meta_inbox where message_id=$1`, [wamid(40)])).rows[0]
+eq(after1, { attempts: 1, status: 'pending', waits: true }, 'six quick drains during an outage use one try, then the message waits')
+eq(sent, [], 'and the second message does not overtake the first')
+fail = false
+await pg.query(`update wa_meta_inbox set next_attempt_at = now() - interval '1 second'`)
+for (let i = 0; i < 3; i++) await inbox.drainMetaInbox({ db, forward: flaky })
+eq(sent, ['first', 'second'], 'when the pipeline is back, both are delivered in order')
+eq([inbox.retryDelayMs(1), inbox.retryDelayMs(2), inbox.retryDelayMs(5), inbox.retryDelayMs(30)], [30_000, 60_000, 480_000, 1_800_000], 'the wait grows from 30 seconds to at most 30 minutes')
+// Given up only after six hours, with the text cleared and the person told.
+await reset()
+await inbox.storeInbound([{ id: wamid(50), from: '919900000004', params: { Body: 'old' } }], db)
+await pg.query(`update wa_meta_inbox set received_at = now() - interval '7 hours'`)
+const told: string[] = []
+eq((await inbox.drainMetaInbox({ db, forward: okForward, notify: async s => { told.push(s) } })).gaveUp, 1, 'a message older than six hours is given up')
+eq([told, (await rows())[0].status, (await rows())[0].cleared], [['919900000004'], 'failed', true], 'its text is cleared and the person is asked to send it again')
+// A row stuck in processing on its last chance is also given up after the window, not kept for ever.
+await reset()
+await inbox.storeInbound([{ id: wamid(51), from: '919900000005', params: { Body: 'stuck' } }], db)
+await pg.query(`update wa_meta_inbox set status='processing', attempts=9, lease_until=now()-interval '1 minute', received_at=now()-interval '7 hours'`)
+await inbox.drainMetaInbox({ db, forward: okForward, notify: async () => {} })
+eq([(await rows())[0].status, (await rows())[0].cleared], ['failed', true], 'a stuck row is given up and cleared')
+// A stale worker cannot overwrite a newer claim.
+await reset()
+await inbox.storeInbound([{ id: wamid(60), from: '919900000006', params: { Body: 'x' } }], db)
+const lost = await inbox.drainMetaInbox({ db, forward: async () => { await pg.query(`update wa_meta_inbox set lease_id = gen_random_uuid()`); return { result: 'done', status: 200 } } })
+eq([lost.lost, lost.done, (await rows())[0].status], [1, 0, 'processing'], 'a finish written by a worker whose claim was taken over changes nothing')
+// Finished rows are deleted after three days.
+await pg.query(`update wa_meta_inbox set status='done', params=null, finished_at=now()-interval '4 days'`)
+await inbox.drainMetaInbox({ db, forward: okForward })
+eq((await rows()).length, 0, 'finished rows older than three days are deleted')
+// A NUL character does not block the batch.
+ok(await inbox.storeInbound([{ id: wamid(70), from: '919900000007', params: { Body: 'a\u0000b' } }, { id: wamid(71), from: '919900000008', params: { Body: 'fine' } }], db), 'a message with a NUL character is stored')
+eq((await pg.query(`select params->>'Body' b from wa_meta_inbox where message_id=$1`, [wamid(70)])).rows[0], { b: 'ab' }, 'with the NUL removed, and the rest of the batch with it')
 
 // 4. Forwarding: signed for the configured URL only, no redirects, nothing without a secret.
 const env = { TWILIO_AUTH_TOKEN: 'pipeline-secret', TWILIO_WHATSAPP_WEBHOOK_URL: 'https://app.askgogo.in/api/webhooks/whatsapp' }
@@ -66,14 +107,14 @@ eq((await inbox.forwardToPipeline({ Body: 'x' }, { env: { TWILIO_WHATSAPP_WEBHOO
 
 // 5. The webhook with the inbox on: stores and answers at once; with it off, unchanged.
 const route = readFileSync(new URL('../app/api/webhooks/whatsapp-meta/route.ts', import.meta.url), 'utf8')
-ok(/if \(metaInboxEnabled\(\)\) \{[\s\S]{0,400}storeInbound\([\s\S]{0,200}status: 503[\s\S]{0,300}after\(\(\) => drainMetaInbox/.test(route), 'with the inbox on, the webhook stores the messages (503 if it cannot), hands over after the response and answers at once')
+ok(/if \(metaInboxEnabled\(\)\) \{[\s\S]{0,400}storeInbound\([\s\S]{0,200}status: 503[\s\S]{0,300}after\(\(\) => drainMetaInbox\(\)/.test(route), 'with the inbox on, the webhook stores the messages (503 if it cannot), hands over after the response and answers at once')
 ok(route.indexOf('verifyMetaSignature(') < route.indexOf('storeInbound('), 'nothing is stored before the signature is checked')
 ok(/waProviderFor\(m\.from\) === 'meta'/.test(route) && route.indexOf("waProviderFor(m.from) === 'meta'") < route.indexOf('storeInbound('), 'only senders served by Meta are stored')
 const cron = readFileSync(new URL('../app/api/cron/wa-meta-inbox/route.ts', import.meta.url), 'utf8')
 ok(/CRON_SECRET/.test(cron) && /if \(!metaInboxEnabled\(\)\) return NextResponse\.json\(\{ ok: true, skipped: 'inbox_off' \}\)/.test(cron), 'the drain cron needs the cron secret and does nothing while the inbox is off')
 ok(JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')).crons.some((c: any) => c.path === '/api/cron/wa-meta-inbox' && c.schedule === '* * * * *'), 'it runs every minute')
 const mod = readFileSync(new URL('../lib/channels/whatsapp-provider/meta-inbox.ts', import.meta.url), 'utf8')
-ok(!/console\.(?:log|error)\([^\n]*(?:params|Body|sender|from\b)/.test(mod), 'no message text or sender is logged')
+ok(!/console\.(?:log|error)\([^\n]*(?:\bparams\b|\bBody\b|\bsender\b|\bfrom\b|\.sender|row\.params)/.test(mod), 'no message text or sender is logged')
 void createHmac
 
 // 6. Rollback.
