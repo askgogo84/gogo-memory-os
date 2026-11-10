@@ -2,6 +2,7 @@
 // the exact field names the existing WhatsApp pipeline already reads (the ones Twilio posts). Pure; no I/O.
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { isMetaMessageId } from './provider'
+import { metaMediaRef } from './meta-media'
 
 /** X-Hub-Signature-256 = "sha256=" + HMAC-SHA256(app secret, raw body). Fails closed on any missing piece. */
 export function verifyMetaSignature(rawBody: string, header: string | null | undefined, appSecret: string | undefined): boolean {
@@ -24,7 +25,7 @@ export function metaHandshakeChallenge(params: URLSearchParams, verifyToken: str
 export type MetaInboundMessage = {
   id: string; from: string; to: string; profileName: string
   kind: 'text' | 'button' | 'list' | 'media'
-  text: string; buttonPayload: string; buttonText: string; listId: string; repliedToId: string; mediaType: string
+  text: string; buttonPayload: string; buttonText: string; listId: string; repliedToId: string; mediaType: string; mediaId: string; mediaMime: string
 }
 export type MetaStatus = { id: string; status: 'sent' | 'delivered' | 'read' | 'failed'; errorCode: string }
 export type MetaWebhook = { messages: MetaInboundMessage[]; statuses: MetaStatus[]; ignored: number }
@@ -46,7 +47,7 @@ export function parseMetaWebhook(body: any, phoneNumberId: string | undefined): 
     for (const m of Array.isArray(value?.messages) ? value.messages : []) {
       const id = String(m?.id || ''), from = digitsOf(m?.from)
       if (!isMetaMessageId(id) || from.length < 8 || from.length > 15) { out.ignored++; continue }
-      const baseMsg = { id, from, to, profileName: names.get(from) || '', text: '', buttonPayload: '', buttonText: '', listId: '', mediaType: '',
+      const baseMsg = { id, from, to, profileName: names.get(from) || '', text: '', buttonPayload: '', buttonText: '', listId: '', mediaType: '', mediaId: '', mediaMime: '',
         repliedToId: isMetaMessageId(m?.context?.id) ? String(m.context.id) : '' }
       if (m.type === 'text' && typeof m.text?.body === 'string') out.messages.push({ ...baseMsg, kind: 'text', text: m.text.body.slice(0, 4096) })
       else if (m.type === 'interactive' && m.interactive?.type === 'button_reply') {
@@ -59,8 +60,11 @@ export function parseMetaWebhook(body: any, phoneNumberId: string | undefined): 
       } else if (m.type === 'interactive' && m.interactive?.type === 'list_reply') {
         const title = String(m.interactive.list_reply?.title || '').slice(0, 60)
         out.messages.push({ ...baseMsg, kind: 'list', text: title, listId: String(m.interactive.list_reply?.id || '').slice(0, 200) })
-      } else if (['image', 'audio', 'document', 'video', 'sticker'].includes(String(m.type))) {
-        out.messages.push({ ...baseMsg, kind: 'media', mediaType: String(m.type) })
+      } else if (['image', 'audio', 'document', 'video'].includes(String(m.type))) {
+        const item = m[m.type] || {}
+        const mediaId = String(item.id || ''), mediaMime = String(item.mime_type || '').split(';', 1)[0].trim().toLowerCase()
+        if (!/^\d{5,32}$/.test(mediaId) || !/^[a-z]+\/[a-z0-9.+-]+$/.test(mediaMime)) { out.ignored++; continue }
+        out.messages.push({ ...baseMsg, kind: 'media', mediaType: String(m.type), mediaId, mediaMime, text: typeof item.caption === 'string' ? item.caption.slice(0, 4096) : '' })
       } else out.ignored++
     }
     for (const s of Array.isArray(value?.statuses) ? value.statuses : []) {
@@ -72,9 +76,9 @@ export function parseMetaWebhook(body: any, phoneNumberId: string | undefined): 
   return out
 }
 
-/** The form fields the existing pipeline reads, for one text, button or list message. */
+/** The form fields the existing pipeline reads. Media travels as a reference (not a URL) that only the media
+ *  helpers understand; each of them fetches it from Meta with its own size and type bounds. */
 export function pipelineParams(m: MetaInboundMessage): Record<string, string> {
-  if (m.kind === 'media') throw new Error('media_not_bridged')
   const params: Record<string, string> = {
     From: `whatsapp:+${m.from}`, To: `whatsapp:+${m.to}`, WaId: m.from, MessageSid: m.id, SmsMessageSid: m.id,
     ProfileName: m.profileName || 'Friend', NumMedia: '0', Body: m.text,
@@ -83,5 +87,6 @@ export function pipelineParams(m: MetaInboundMessage): Record<string, string> {
   if (m.buttonPayload) params.ButtonPayload = m.buttonPayload
   if (m.kind === 'list') { params.ListId = m.listId; params.ListTitle = m.text }
   if (m.repliedToId) params.OriginalRepliedMessageSid = m.repliedToId
+  if (m.kind === 'media') { params.NumMedia = '1'; params.MediaUrl0 = metaMediaRef(m.mediaId); params.MediaContentType0 = m.mediaMime }
   return params
 }

@@ -7,6 +7,7 @@
  * proof are mandatory before deployment.
  */
 import { isTwilioMediaCdnUrl, logRejectedTwilioRedirect } from './twilio-cdn'
+import { fetchMetaMedia, isMetaMediaRef } from '@/lib/channels/whatsapp-provider/meta-media'
 export const TWILIO_FACE_MAX_BYTES = 12 * 1024 * 1024
 
 const accountPattern = /^AC[0-9a-fA-F]{32}$/
@@ -74,6 +75,12 @@ export async function downloadTwilioFaceMedia(
   authToken: string,
   options: { fetchImpl?: typeof fetch } = {},
 ): Promise<{ buffer: Buffer; contentType: string }> {
+  // A Meta Cloud API media reference: fetched from Meta with the same size and type bounds (see meta-media.ts).
+  if (isMetaMediaRef(mediaUrl)) {
+    const media = await fetchMetaMedia(mediaUrl, { maxBytes: TWILIO_FACE_MAX_BYTES, allowedTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/heif', 'image/bmp', 'image/tiff'] }, { fetchImpl: options.fetchImpl })
+    if (!media) throw new Error('Meta media download failed')
+    return { buffer: Buffer.from(media.arrayBuffer), contentType: media.contentType }
+  }
   const api = checkedApiUrl(mediaUrl, accountSid) // Before creating Basic credentials.
   if (!authToken) throw new Error('Twilio media authentication missing')
   const fetchImpl = options.fetchImpl || fetch

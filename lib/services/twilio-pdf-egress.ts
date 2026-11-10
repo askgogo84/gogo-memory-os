@@ -9,6 +9,7 @@
  * credentials. Origin checks are not DNS/IP pinning.
  */
 import { isTwilioMediaCdnUrl, logRejectedTwilioRedirect } from './twilio-cdn'
+import { META_DOCUMENT_TYPES, fetchMetaMedia, isMetaMediaRef } from '@/lib/channels/whatsapp-provider/meta-media'
 export const TWILIO_DOCUMENT_MAX_BYTES = 20 * 1024 * 1024
 
 const accountSidPattern = /^AC[0-9a-fA-F]{32}$/
@@ -81,6 +82,12 @@ export async function fetchTwilioBoundDocumentMedia(
   authToken: string,
   options: { fetchImpl?: typeof fetch } = {},
 ): Promise<Buffer> {
+  // A Meta Cloud API media reference: fetched from Meta with the same size and type bounds (see meta-media.ts).
+  if (isMetaMediaRef(mediaUrl)) {
+    const media = await fetchMetaMedia(mediaUrl, { maxBytes: TWILIO_DOCUMENT_MAX_BYTES, allowedTypes: META_DOCUMENT_TYPES }, { fetchImpl: options.fetchImpl })
+    if (!media) throw new Error('Meta media download failed')
+    return Buffer.from(media.arrayBuffer)
+  }
   const api = exactTwilioMediaUrl(mediaUrl, accountSid)
   if (!authToken) throw new Error('Twilio media credentials missing')
   const fetchImpl = options.fetchImpl || fetch

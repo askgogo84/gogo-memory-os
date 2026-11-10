@@ -43,7 +43,7 @@ const many = parseMetaWebhook(envelope({ contacts: contact, messages: [
   { from: '919900000002', id: wamid(2), type: 'interactive', interactive: { type: 'button_reply', button_reply: { id: 'approve', title: 'Approve' } }, context: { id: wamid(1) } },
   { from: '919900000002', id: wamid(3), type: 'button', button: { text: 'Done', payload: 'done' } },
   { from: '919900000002', id: wamid(4), type: 'interactive', interactive: { type: 'list_reply', list_reply: { id: 'morning', title: 'Morning' } } },
-  { from: '919900000002', id: wamid(5), type: 'audio', audio: { id: 'MEDIA1', mime_type: 'audio/ogg' } },
+  { from: '919900000002', id: wamid(5), type: 'audio', audio: { id: '1234567890123', mime_type: 'audio/ogg; codecs=opus' } },
   { from: '919900000002', id: wamid(6), type: 'reaction', reaction: { emoji: '👍' } },
   { from: '919900000002', id: 'SM-not-a-wamid', type: 'text', text: { body: 'x' } },
   { from: '12', id: wamid(7), type: 'text', text: { body: 'x' } },
@@ -57,7 +57,17 @@ eq(pipelineParams(many.messages[1]).ButtonPayload, 'done', 'a reminder tap keeps
 eq(pipelineParams(many.messages[4]).ButtonPayload, undefined, 'an unknown button id never becomes a payload')
 const listParams = pipelineParams(many.messages[2])
 eq([listParams.Body, listParams.ListId, listParams.ListTitle], ['Morning', 'morning', 'Morning'], 'list reply fields')
-assert.throws(() => pipelineParams(many.messages[3]), /media_not_bridged/); checks++
+const voice = pipelineParams(many.messages[3])
+eq([voice.NumMedia, voice.MediaUrl0, voice.MediaContentType0, voice.Body], ['1', 'meta-media://1234567890123', 'audio/ogg', ''], 'a voice note travels as a media reference with its bare content type')
+const mediaCases = parseMetaWebhook(envelope({ contacts: contact, messages: [
+  { from: '919900000002', id: wamid(20), type: 'image', image: { id: '5550001112223', mime_type: 'image/jpeg', caption: 'save this bill' } },
+  { from: '919900000002', id: wamid(21), type: 'document', document: { id: '5550001112224', mime_type: 'application/pdf', filename: 'ticket.pdf' } },
+  { from: '919900000002', id: wamid(22), type: 'image', image: { id: 'https://evil.example/x', mime_type: 'image/jpeg' } },
+  { from: '919900000002', id: wamid(23), type: 'image', image: { id: '5550001112225', mime_type: 'image/jpeg\r\nX: y' } },
+  { from: '919900000002', id: wamid(24), type: 'sticker', sticker: { id: '5550001112226', mime_type: 'image/webp' } },
+] }), PHONE_ID)
+eq(mediaCases.messages.map(m => [m.mediaType, m.mediaId, m.text]), [['image', '5550001112223', 'save this bill'], ['document', '5550001112224', '']], 'photo with caption and PDF are carried; a non-numeric media id, a malformed type and a sticker are dropped')
+ok(Object.values(pipelineParams(mediaCases.messages[0])).every(v => !/https?:/.test(v)), 'no URL from the webhook body is ever passed on as a media location')
 const statuses = parseMetaWebhook(envelope({ statuses: [{ id: wamid(9), status: 'delivered' }, { id: wamid(9), status: 'failed', errors: [{ code: 131047 }] }, { id: wamid(9), status: 'deleted' }, { id: 'SMx', status: 'read' }] }), PHONE_ID)
 eq(statuses.statuses, [{ id: wamid(9), status: 'delivered', errorCode: '' }, { id: wamid(9), status: 'failed', errorCode: '131047' }], 'known statuses only, with the error code as text')
 ok(parsed.messages.every(m => typeof m.from === 'string') && /^\d+$/.test(parsed.messages[0].from), 'sender ids stay strings')
@@ -80,7 +90,7 @@ ok(/parseMetaWebhook\(body, process\.env\.GOGO_META_WA_PHONE_ID\)/.test(post), '
 ok(/waProviderFor\(m\.from\) !== 'meta'[\s\S]{0,160}continue/.test(post), 'a sender whose replies would leave through Twilio is not handled here')
 ok(/status < 200 \|\| status >= 300[\s\S]{0,200}status: 500/.test(post), 'a pipeline failure asks Meta to redeliver')
 ok(!/console\.(?:log|error)\([^\n]*(?:m\.text|params\b|m\.profileName|raw\b)/.test(route), 'no message text, name or raw body is logged')
-ok(!/supabaseAdmin|processIncomingMessage|sendWhatsAppMessage/.test(route), 'the route does not run the assistant itself; the existing pipeline does')
+ok(!/supabaseAdmin|processIncomingMessage|sendWhatsAppMessage|metaSend|fetchMetaMedia/.test(route), 'the route does not run the assistant, send, or download media itself; the existing pipeline does')
 const exportsFound = [...route.matchAll(/^export (?:async function|const) (\w+)/gm)].map(m => m[1]).sort()
 eq(exportsFound, ['GET', 'POST', 'dynamic', 'maxDuration'], 'only route exports')
 const pipeline = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')

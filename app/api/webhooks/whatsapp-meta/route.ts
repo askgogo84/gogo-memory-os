@@ -8,7 +8,6 @@
 import { createHash } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { metaHandshakeChallenge, parseMetaWebhook, pipelineParams, verifyMetaSignature } from '@/lib/channels/whatsapp-provider/meta-inbound'
-import { metaSend, metaTextPayload } from '@/lib/channels/whatsapp-provider/meta'
 import { waProviderFor } from '@/lib/channels/whatsapp-provider/provider'
 import { computeTwilioSignature } from '@/lib/security/webhook-signature'
 import { deliveryRpc } from '@/lib/services/reminder-delivery'
@@ -16,7 +15,6 @@ import { deliveryRpc } from '@/lib/services/reminder-delivery'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
 const MAX_BODY_BYTES = 512 * 1024
-const MEDIA_NOT_YET = "I can't open photos, voice notes or files on this number yet. Please type it for now."
 
 export async function GET(req: NextRequest) {
   const challenge = metaHandshakeChallenge(new URL(req.url).searchParams, process.env.GOGO_META_WA_VERIFY_TOKEN)
@@ -53,11 +51,6 @@ export async function POST(req: NextRequest) {
     // Replies leave through whichever provider serves this person. If that is not Meta (the number is not in the
     // pilot and the switch is off), handling the message would answer from a different WhatsApp number, so it is skipped.
     if (waProviderFor(m.from) !== 'meta') { console.log('WHATSAPP_META_SENDER_NOT_ON_META:', JSON.stringify({ tail: m.from.slice(-4) })); continue }
-    if (m.kind === 'media') {
-      console.log('WHATSAPP_META_MEDIA_NOT_BRIDGED:', JSON.stringify({ type: m.mediaType }))
-      try { await metaSend(metaTextPayload(m.from, MEDIA_NOT_YET, m.id)) } catch (error: any) { console.error('WHATSAPP_META_NOTICE_FAILED:', JSON.stringify({ status: error?.status || 0 })) }
-      continue
-    }
     const params = pipelineParams(m)
     let status = 0
     try {

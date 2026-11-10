@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import { fetchMetaMedia, isMetaMediaRef } from '@/lib/channels/whatsapp-provider/meta-media'
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -95,6 +96,12 @@ async function boundedVoiceAudio(response: Response): Promise<ArrayBuffer> {
 }
 
 async function downloadTrustedTwilioVoiceNote(mediaUrl: string): Promise<ArrayBuffer> {
+  // A Meta Cloud API media reference: fetched from Meta with the same size bound (see meta-media.ts).
+  if (isMetaMediaRef(mediaUrl)) {
+    const media = await fetchMetaMedia(mediaUrl, { maxBytes: MAX_VOICE_NOTE_BYTES, allowedTypes: ['audio/ogg', 'audio/opus', 'audio/mpeg', 'audio/mp4', 'audio/aac', 'audio/amr', 'audio/wav', 'audio/x-wav', 'audio/webm', 'audio/x-m4a'] })
+    if (!media) throw new Error('Meta voice media download failed')
+    return media.arrayBuffer
+  }
   const sid = process.env.TWILIO_ACCOUNT_SID || ''
   const token = process.env.TWILIO_AUTH_TOKEN || ''
   if (!sid || !token) throw new Error('Missing Twilio credentials for media download')
