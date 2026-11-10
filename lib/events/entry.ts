@@ -141,7 +141,7 @@ export function shownName(v: unknown): string {
   return `"${plain || 'Guest'}"`
 }
 
-export type EventReply = { text: string; action: EventAction['action'] | 'confirm' }
+export type EventReply = { text: string; action: EventAction['action'] | 'confirm'; eventId?: string }
 const CHANGES_FOR_GUESTS = 'Guests see this on their invitation link. I have not messaged anyone.'
 
 /** Carries out one typed action. Returns null for "none" so the message goes on to the ordinary assistant. */
@@ -159,7 +159,7 @@ export async function runEventAction(owner: string, a: EventAction, ctx: { timez
       if (!patch.title) return reply('What should I call the event?')
       // A complete draft is never published by itself: the organizer says "publish".
       const created = await store.createEvent(owner, { ...patch, timezone: tz, hostName: patch.hostName || ctx.hostName || null, maxPlusOnes: patch.maxPlusOnes ?? 0 }, db)
-      return reply(await afterDraftChange(owner, created.id, problems, db, true))
+      return { ...reply(await afterDraftChange(owner, created.id, problems, db, true)), eventId: created.id }
     }
     const { event: current, ask, unknownName } = targetEvent(ctx.events, a.event, now)
     if (!current) {
@@ -192,12 +192,12 @@ export async function runEventAction(owner: string, a: EventAction, ctx: { timez
       }
       await store.updateEvent(owner, current.id, patch, db)
       const text = await afterDraftChange(owner, current.id, problems, db, false)
-      return reply(live ? `${text}\n\n${CHANGES_FOR_GUESTS}` : text)
+      return { ...reply(live ? `${text}\n\n${CHANGES_FOR_GUESTS}` : text), eventId: current.id }
     }
     if (a.action === 'publish') {
       const r = await store.publishEvent(owner, current.id, db)
       if (!r.event) return reply(`Before I can publish *${current.title}*: ${ASK[r.missing[0]] || 'a few details are missing.'}`)
-      return reply(`Published *${current.title}*. Forward this link to your guests:\n${r.shareUrl}\n\nI have not messaged anyone. Ask me "how many are coming?" any time.`)
+      return reply(`Published *${current.title}*. Forward this link to your guests:\n${r.shareUrl}\n\nI have not messaged anyone. Ask me "how many are coming?" any time.${r.event.max_plus_ones ? '' : '\n\nEach guest replies for themselves. To let them bring someone, say "allow one plus-one".'}`)
     }
     if (a.action === 'cancel') {
       if (!live) { await store.cancelEvent(owner, current.id, db); return reply(`The draft *${current.title}* is discarded. It was never published, so no guest saw it.`) }
@@ -305,12 +305,89 @@ async function afterDraftChange(owner: string, id: string, problems: string[], d
   return [head, draftSummary(e), next].filter(Boolean).join('\n\n')
 }
 
+const WITHDRAWN = 'The venue enquiry I drafted earlier no longer matches the event, so I have withdrawn it.'
+
+/** For the email path, at "send it": is this draft a venue enquiry Gogo wrote, and does it still match its event?
+ *  'not_enquiry' for any other draft. Changes made by any route (a confirmed move, a cancel, a discard, the dashboard)
+ *  are caught here, because the event itself is read again. */
+export async function venueEnquiryState(owner: string, draft: Record<string, unknown> | null | undefined, deps: { db?: Db; now?: number } = {}): Promise<'not_enquiry' | 'current' | 'stale'> {
+  if (!draft || typeof draft.eventEnquiryFor !== 'string') return 'not_enquiry'
+  const v = await import('./venue-enquiry')
+  const e = await store.getEvent(owner, draft.eventEnquiryFor, deps.db).catch(() => null)
+  return v.enquiryDraftCurrent(draft, e, deps.now ?? Date.now()) ? 'current' : 'stale'
+}
+
+export type EventDeps = { extract?: Extractor; db?: Db; now?: number; search?: import('./venue-enquiry').Search; saveDraft?: (draft: Record<string, unknown>) => Promise<void>
+  /** The email draft the person has waiting right now (to be sent with "send it"), if any. */
+  pendingDraft?: () => Promise<Record<string, unknown> | null>; clearDraft?: () => Promise<void> }
+
+/** After a create or an edit: when the event now has a date, a named venue and a group size, look up how that venue
+ *  takes group bookings and draft the enquiry (lib/events/venue-enquiry.ts). Once per event and venue. Bounded to a
+ *  few seconds; any failure adds nothing. Nothing is sent: the draft goes to the Gmail path, which needs "send it" and
+ *  then an approved card. Switch off with GOGO_EVENTS_VENUE_HELP=off. */
+async function venueNextStep(actor: AgentActor, owner: string, eventId: string, now: number, deps: EventDeps): Promise<string | null> {
+  const env = ((globalThis as any).process?.env || {}) as Record<string, string | undefined>
+  if (env.GOGO_EVENTS_VENUE_HELP === 'off' || (!deps.search && !env.VERCEL_ENV)) return null
+  const v = await import('./venue-enquiry')
+  const e = await store.getEvent(owner, eventId, deps.db)
+  const fs = deps.pendingDraft && deps.saveDraft && deps.clearDraft ? null : await import('@/lib/bot/handlers/followup-state')
+  const pending = deps.pendingDraft ? await deps.pendingDraft() : await (async () => {
+    const state = await fs!.getLatestFollowupState(actor.legacyTelegramId, 'gmail_reply_draft')
+    return state && fs!.isStrictlyFreshFollowupState(state, 30) && state.payload?.draft ? state.payload.draft as Record<string, unknown> : null
+  })()
+  const mine = pending && pending.eventEnquiryFor === e.id ? pending : null
+  // An enquiry Gogo drafted for this event that no longer matches it is withdrawn, so "send it" can never send an old
+  // date, number or venue. A draft to anyone else is never touched.
+  const withdraw = async () => {
+    if (!mine) return
+    await (deps.clearDraft ? deps.clearDraft() : fs!.clearFollowupState(actor.legacyTelegramId, 'gmail_reply_draft'))
+    await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key: 'withdrawn' }, deps.db).catch(() => {})
+  }
+  if (!v.needsVenueEnquiry(e, now)) { await withdraw(); return mine ? WITHDRAWN : null }
+  // One enquiry per venue, date and headcount; an edit that changes none of them does not offer it again.
+  const key = v.enquiryKey(e)
+  // Compared with the latest record only: going back to an earlier number, or coming back after a withdrawal, drafts again.
+  const seen = (await store.ownerAuditDetails(owner, e.id, 'event.venue_enquiry_drafted', deps.db))[0]?.key === key
+  if (mine && mine.enquiryKey === key) return null
+  if (seen && !mine) return null
+  const started = Date.now()
+  // Page text only: an address must be read off the page itself, never out of a model-written summary.
+  const search: import('./venue-enquiry').Search = deps.search || (async (q, o) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: o?.timeoutMs, pageTextOnly: true }))
+  const contact = await Promise.race([v.findVenueContact(String(e.venue_name), search, 6000), new Promise<null>(r => setTimeout(() => r(null), 7000))])
+  if (!contact) { await withdraw(); console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: 'timeout', ms: Date.now() - started })); return mine ? WITHDRAWN : null }
+  const step = v.venueStepText(e, contact, actor.name || '')
+  if (step.draft) {
+    // Another email draft is waiting for "send it": it is not replaced, and this one is not queued or recorded.
+    if (pending && !mine) {
+      console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: 'held', ms: Date.now() - started }))
+      return `Next step: booking ${String(e.venue_name).replace(/[\r\n]+/g, ' ').slice(0, 120)}. I found their enquiries address, but you have another email draft waiting, so I have not prepared this one. Send or drop that draft first. I'll offer this again the next time you change this event.`
+    }
+    const draft = { ...step.draft, eventEnquiryFor: e.id, enquiryKey: key }
+    // Hand the draft to the existing Gmail path: "send it" stages an approval card; only an approved card sends.
+    const save = deps.saveDraft || (async (d: Record<string, unknown>) => {
+      await fs!.clearFollowupState(actor.legacyTelegramId, 'gmail_reply_draft')
+      await fs!.saveFollowupState(actor.legacyTelegramId, 'gmail_reply_draft', { draft: d, created_at: new Date().toISOString() })
+      await import('@/lib/agent/typed-object-context').then(m => m.rememberTypedObjects(actor.legacyTelegramId, 'email', [{ id: `draft:${d.to}`, title: `Draft to ${d.to}: ${d.subject}` }])).catch(() => {})
+    })
+    await save(draft)
+  } else await withdraw()
+  // A lookup that could not run is not recorded, so the next change tries again. A failed record never hides a draft
+  // that was saved: the text is still shown.
+  if (step.found !== 'unavailable') await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key, found: step.found }, deps.db).catch(() => { console.error('EVENT_VENUE_STEP_FAILED:', JSON.stringify({ code: 'audit' })) })
+  console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: step.found, ms: Date.now() - started }))
+  // When an older draft was withdrawn and nothing replaces it, say so.
+  return mine && !step.draft ? `${step.text}\n${WITHDRAWN}` : step.text
+}
+
 /** Entry point for both surfaces. Null means "not an events message": carry on as usual. */
-export async function tryEventAsk(actor: AgentActor, text: string, surface: EventSurface, deps: { extract?: Extractor; db?: Db; now?: number } = {}): Promise<string | null> {
+export async function tryEventAsk(actor: AgentActor, text: string, surface: EventSurface, deps: EventDeps = {}): Promise<string | null> {
   const owner = String(actor.legacyTelegramId)
   if (!eventsEnabledFor(owner)) return null
   const message = String(text || '').trim()
   if (!message || message.length > 1200) return null
+  // "send it" belongs to the email draft (including the venue enquiry Gogo drafted), never to the event being planned.
+  // Same words as the email path accepts (lib/agent/gmail-send.ts).
+  if (/^(?:send\s+it|send\s+this\s+reply)$/i.test(message)) return null
   try {
     const now = deps.now ?? Date.now()
     const tz = normalizeTimezone(actor.timezone)
@@ -340,7 +417,8 @@ export async function tryEventAsk(actor: AgentActor, text: string, surface: Even
     const result = await runEventAction(owner, action, { timezone: tz, events, hostName: actor.name || null, now, onlyEventId: gated ? null : draft!.id }, deps.db)
     if (!result) return null
     console.log('EVENT_ASK:', JSON.stringify({ action: result.action, surface }))
-    return result.text
+    const next = result.eventId ? await venueNextStep(actor, owner, result.eventId, now, deps).catch(() => null) : null
+    return next ? `${result.text}\n\n${next}` : result.text
   } catch (error: any) {
     console.error('EVENT_ASK_FAILED:', String(error?.code || error?.name || 'error').slice(0, 60))
     return null

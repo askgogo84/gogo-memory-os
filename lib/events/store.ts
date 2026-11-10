@@ -93,9 +93,17 @@ async function audit(db: Db, eventId: string, actor: string, action: string, det
 }
 
 /** An audit line for an organizer action done outside this module (e.g. the calendar write). Owner-checked first. */
-export async function recordOwnerAudit(owner: string, id: string, action: 'event.calendar_synced', detail: Record<string, unknown> = {}, db: Db = theDb()): Promise<void> {
+export async function recordOwnerAudit(owner: string, id: string, action: 'event.calendar_synced' | 'event.venue_enquiry_drafted', detail: Record<string, unknown> = {}, db: Db = theDb()): Promise<void> {
   const e = await getEvent(owner, id, db)
   await audit(db, e.id, 'owner', action, detail)
+}
+
+/** The details of earlier audit lines of one kind for the owner's event, newest first (e.g. which venue an enquiry was
+ *  already drafted for, so it is offered once and not on every edit). */
+export async function ownerAuditDetails(owner: string, id: string, action: 'event.venue_enquiry_drafted', db: Db = theDb()): Promise<Record<string, unknown>[]> {
+  const e = await getEvent(owner, id, db)
+  const rows = check(await db.from('gogo_event_audit').select('detail').eq('event_id', e.id).eq('action', action).order('id', { ascending: false }).limit(20)) as any[]
+  return (rows || []).map(r => (r?.detail && typeof r.detail === 'object' ? r.detail : {}))
 }
 
 // ---- organizer ------------------------------------------------------------------------------------------------------

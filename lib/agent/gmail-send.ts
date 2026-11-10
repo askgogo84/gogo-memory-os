@@ -264,6 +264,15 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
     const state=await getLatestFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
     if(!state||!isStrictlyFreshFollowupState(state,30)||!state.payload?.draft)return null
     if(await newerForeignSelection(params.actor,state))return gmailReferentClarification()
+    // A venue enquiry Gogo drafted for an event (lib/events): sendable only while the event still has the venue, time
+    // and number it was written for. The event is read again here, so a change by any route withdraws it.
+    if(typeof state.payload.draft.eventEnquiryFor==='string'){
+      const enquiry=await import('@/lib/events/entry').then(m=>m.venueEnquiryState(String(params.actor.legacyTelegramId),state.payload.draft)).catch(()=>'stale' as const)
+      if(enquiry!=='current'){
+        await clearFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
+        return {runId:'gmail-enquiry-stale',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:'The event has changed since I drafted that enquiry, so I have not sent it and have withdrawn the draft. Tell me any change to the event and I will draft it again.',handledBy:'gmail-send'}
+      }
+    }
     const sendAccess=await gmailAccess(params.actor,{requireSend:true})
     if(!sendAccess.ok){
       if(sendAccess.reason==='gmail_send_not_connected'){
