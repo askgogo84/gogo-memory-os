@@ -7,6 +7,8 @@ import { getTaskFeed, EMPTY_FEED } from '@/lib/dashboard/task-feed'
 import { FeedItems, FeedTabs } from '@/components/dashboard/feed-list'
 import { CardError } from '@/components/dashboard/card-error'
 import { TaskManager } from '@/components/dashboard/task-manager'
+import { goalBoardEnabledFor, getGoalBoard, EMPTY_BOARD } from '@/lib/dashboard/goal-board'
+import { GoalBoardView } from '@/components/dashboard/goal-board'
 
 export const dynamic = 'force-dynamic'
 
@@ -17,7 +19,10 @@ export default async function TasksPage({ searchParams }: { searchParams?: Promi
   const tg = session?.telegramId || ''
   const tgNum = parseInt(tg, 10)
   const raw = String((await searchParams)?.tab || '')
-  const tab = raw === 'radar' || raw === 'recent' || raw === 'todos' ? raw : 'need'
+  // Addendum 5 (Goal-to-Done): an Overview tab, first and the default, for owners it is switched on for.
+  const overview = Boolean(session) && goalBoardEnabledFor(String(tg))
+  const tabs = overview ? ['overview', 'need', 'radar', 'recent', 'todos'] : ['need', 'radar', 'recent', 'todos']
+  const tab = tabs.includes(raw) ? raw : tabs[0]
   const [{ data: user }, todos, feed, notices] = await Promise.all([
     Number.isFinite(tgNum) ? supabaseAdmin.from('users').select('timezone').eq('telegram_id', tgNum).maybeSingle() : Promise.resolve({ data: null as any }),
     session ? getDashboardTasks(session.telegramId) : Promise.resolve({ ok: true as const, open: [], completed: [] }),
@@ -27,16 +32,18 @@ export default async function TasksPage({ searchParams }: { searchParams?: Promi
   const tz = user?.timezone || 'Asia/Kolkata'
   const needCount = feed.need.length + notices.total
   const todoCount = todos.ok ? todos.open.length : 0
+  const board = overview && tab === 'overview' ? await getGoalBoard(tg, todos.ok ? [...todos.open, ...todos.completed] : []) : EMPTY_BOARD
 
   return (
     <div className="mx-auto w-full max-w-[820px] pb-10">
       <header className="pb-4 lg:pt-4">
         <div className="final-dark-eyebrow">Gogo’s work</div>
         <h1 className="final-dark-title mt-1.5 text-[28px] sm:text-[32px]">Tasks</h1>
-        <p className="mt-1.5 text-[15px] text-[#a8a8a4]">Everything Gogo is doing, waiting on, or has done for you.</p>
+        <p className="mt-1.5 text-[15px] text-[#a8a8a4]">{overview ? 'What Gogo has done, what it is doing, what needs your yes, and what only you can do.' : 'Everything Gogo is doing, waiting on, or has done for you.'}</p>
       </header>
       <div className="flex flex-col gap-3">
-        <FeedTabs base="/dashboard/tasks" tab={tab} feed={feed} needCount={needCount} extra={{ key: 'todos', label: 'To-dos', count: todoCount }}/>
+        <FeedTabs base="/dashboard/tasks" tab={tab} feed={feed} needCount={needCount} extra={{ key: 'todos', label: 'To-dos', count: todoCount }} lead={overview ? { key: 'overview', label: 'Overview' } : undefined}/>
+        {tab === 'overview' && <GoalBoardView board={board}/>}
         {tab === 'need' && <div className="flex flex-col gap-2">
           <FeedItems items={feed.need} size={72} empty={notices.total || notices.unavailable ? '' : 'Nothing is waiting for you.'}/>
           {(notices.total > 0 || notices.unavailable) && <div className="final-dark-panel px-4"><ServiceNoticeCards notices={notices.items} unavailable={notices.unavailable}/></div>}
