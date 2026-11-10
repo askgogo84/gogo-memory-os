@@ -37,6 +37,9 @@ function isolated(opts:{finalUrl?:string}={}) {
       if(name==='openai')return {default:class FakeOpenAI {
         constructor(){throw Error('BLOCKED OpenAI initialization')}
       }}
+      // The preview-image downloader is a separate, separately tested egress boundary. Loading it is allowed;
+      // using it in these metadata fixtures is not.
+      if(name==='./twilio-social-preview-image')return {async downloadTwilioSocialPreviewImage(){throw Error('BLOCKED preview image download')}}
       throw Error('BLOCKED non-test import '+name)
     },
   }
