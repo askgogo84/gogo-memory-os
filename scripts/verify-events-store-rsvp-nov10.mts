@@ -256,6 +256,12 @@ const page = readFileSync(new URL('../app/rsvp/[token]/page.tsx', import.meta.ur
 const client = readFileSync(new URL('../app/rsvp/[token]/rsvp-client.tsx', import.meta.url), 'utf8')
 ok(!/supabaseAdmin|owner_telegram_id|listGuests|headcount\(/.test(route + page + client), 'the public surface never touches organizer data')
 ok(!/console\.(?:log|error|warn)/.test(route + page + client), 'the link and replies are never logged by the public surface')
+ok(/rateOk\(rateBucket\(await headers\(\), 'get'\), 240, 600\)/.test(page) && page.indexOf('rateOk(') < page.indexOf('invitationFor(token)'), 'the page render counts against the same read limit as the endpoint, before the link is looked up')
+ok(/rateBucket\(request\.headers, kind\)/.test(route), 'the endpoint uses the same bucket')
+{ const rate = await import('../lib/events/rate.ts')
+  const H = (o: Record<string, string>) => ({ get: (k: string) => o[k] ?? null })
+  eq([rate.callerAddress(H({ 'x-vercel-forwarded-for': '198.51.100.31', 'x-forwarded-for': '1.1.1.1' })), rate.callerAddress(H({ 'x-forwarded-for': '9.9.9.9, 198.51.100.9' }))], ['198.51.100.31', '198.51.100.9'], "the platform's address is used; otherwise only the last forwarded hop")
+  ok(/^ipg:[0-9a-f]{40}$/.test(rate.rateBucket(H({ 'x-real-ip': '198.51.100.1' }), 'get')), 'the page bucket is a hash, not the address') ; checks += 0 }
 ok(/robots: \{ index: false, follow: false \}/.test(page) && /referrer: 'no-referrer'/.test(page), 'the page is not indexed and sends no referrer')
 ok(/prefers-reduced-motion:no-preference/.test(client) && !/font-style:\s*italic/.test(client), 'animations respect reduced motion; no italics')
 ok(!/replaceState|location\.replace/.test(client), 'the shared link stays in the address bar; the personal link is never put there')
