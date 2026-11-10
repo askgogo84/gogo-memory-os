@@ -40,11 +40,11 @@ function Metric({ value, label, tone, children }: { value: string; label: string
   </div>
 }
 
-export function GoalBoardView({ board, notices }: { board: GoalBoard; notices?: React.ReactNode }) {
+export function GoalBoardView({ board, notices, suggested }: { board: GoalBoard; notices?: React.ReactNode; suggested?: React.ReactNode }) {
   const m = board.metrics
   const total = m.worked + m.failed
   const handed = m.handedToGogo + m.ownTodos
-  const empty = OWNERSHIP_ORDER.every(o => !board.groups[o].length) && !board.done.length
+  const empty = OWNERSHIP_ORDER.every(o => !board.groups[o].length) && !board.done.length && !suggested
   return <div className="flex flex-col gap-4">
     {board.unavailable && <p className="text-[14px] text-[#f0c26b]">Some of your tasks could not be loaded just now, so this may be incomplete.</p>}
     {notices}
@@ -64,6 +64,7 @@ export function GoalBoardView({ board, notices }: { board: GoalBoard; notices?: 
       <p className="text-[13px] text-[#9a9a96]">{OWNERSHIP_HINT[o]}</p>
       {board.groups[o].map(item => <Card key={item.id} item={item}/>)}
     </section> : null)}
+    {suggested}
     {board.done.length > 0 && <section aria-labelledby="own-done" className="flex flex-col gap-2">
       <div className="flex items-baseline justify-between"><h2 id="own-done" className="text-[17px] font-semibold text-[#f2efea]">Finished</h2><span className="text-[13px] text-[#8a8a86]">{board.counts.verified} checked</span></div>
       {board.done.map(item => <Card key={item.id} item={item}/>)}

@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto'
 import { eventsEnabledFor, invitationIcs, publicInvitation } from '@/lib/events/core'
 import { addEventToGoogleCalendar, removeEventFromGoogleCalendar, type GcalResult } from '@/lib/events/gcal'
 import { disableShareLink, EventsError, getEvent, revokeGuest, rotateShareLink } from '@/lib/events/store'
+import { dismissSuggestion } from '@/lib/events/next-steps'
 
 export const dynamic = 'force-dynamic'
 
@@ -37,13 +38,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const owner = String(session.telegramId)
   if (!eventsEnabledFor(owner)) return NextResponse.json({ ok: false, error: 'not_found' }, { status: 404 })
   const { id } = await params
-  const body = await request.json().catch(() => null) as { action?: unknown; guestId?: unknown; revision?: unknown } | null
+  const body = await request.json().catch(() => null) as { action?: unknown; guestId?: unknown; revision?: unknown; key?: unknown } | null
   try {
     if (body?.action === 'new_link') return NextResponse.json({ ok: true, link: await rotateShareLink(owner, id) })
     if (body?.action === 'link_off') { await disableShareLink(owner, id); return NextResponse.json({ ok: true }) }
     // The organizer's own Google Calendar, after the on-page confirm. The revision is the one the organizer saw.
     if (body?.action === 'add_gcal' && typeof body.revision === 'number') return gcalResponse(await addEventToGoogleCalendar(owner, id, body.revision))
     if (body?.action === 'remove_gcal') return gcalResponse(await removeEventFromGoogleCalendar(owner, id))
+    // Tasks › Overview: the organizer dismissed a suggestion about this event. Recorded on its audit trail; nothing else changes.
+    if (body?.action === 'dismiss_suggestion') return (await dismissSuggestion(owner, id, body.key)) ? NextResponse.json({ ok: true }) : NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 })
     if (body?.action === 'remove_guest' && typeof body.guestId === 'string') { await revokeGuest(owner, id, body.guestId); return NextResponse.json({ ok: true }) }
     return NextResponse.json({ ok: false, error: 'invalid_request' }, { status: 400 })
   } catch (e) {
