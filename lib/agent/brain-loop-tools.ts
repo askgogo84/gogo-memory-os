@@ -5,6 +5,8 @@ import type { AgentActor } from './actor'
 import type { LoopTool } from './brain-loop'
 
 const str = (v: unknown, n: number) => String(v ?? '').replace(/\s+/g, ' ').trim().slice(0, n)
+/** A search query with email addresses and long digit runs removed. */
+export const searchable = (v: unknown) => str(v, 200).replace(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi, ' ').replace(/\+?\d[\d\s-]{6,}\d/g, ' ').replace(/\s+/g, ' ').trim()
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object' as const, properties, required })
 
 export type LoopToolDeps = {
@@ -18,8 +20,9 @@ export function firstSliceTools(deps: LoopToolDeps = {}): LoopTool[] {
     { name: 'web_search', klass: 'read', description: 'Search the web. Returns page titles, links and text from the pages. Use for facts about places, businesses, prices, opening times and how something is done.',
       input_schema: obj({ query: { type: 'string', description: 'What to search for' } }, ['query']),
       run: async (_actor, input) => {
-        const q = str(input.query, 200)
-        if (q.length < 3) return 'Give a search query.'
+        // What leaves for the search service: no email addresses and no long numbers (phones, accounts), whatever the model wrote.
+        const q = searchable(input.query)
+        if (q.length < 3) return 'Give a search query for a place, a business or a public fact.'
         const hits = (await search(q, { timeoutMs: 6000 })).slice(0, 5)
         return hits.length ? hits.map((h, i) => `${i + 1}. ${str(h.title, 120)}\n${str(h.url, 200)}\n${str(h.snippet, 500)}`).join('\n\n') : 'No results.'
       } },

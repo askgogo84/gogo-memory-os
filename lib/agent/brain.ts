@@ -415,25 +415,39 @@ export const FORWARDED_NOTE = 'The latest message was FORWARDED by the user from
 /** Addendum 5, shadow only: for owners in GOGO_BRAIN_LOOP_USERS the looping brain plans the same message with look-up
  *  tools, after the reply has gone out. It is logged and saved for comparison; it never replies or changes anything.
  *  Off unless the variable is set. `ctx` null means "the turn was answered before the brain ran" (for example by
- *  Events): the context is loaded then, without the turn that was just saved. */
-export async function scheduleLoopShadow(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string }, ctx: BrainContext | null, pipelineKind: string): Promise<void> {
-  if (!(await import('./brain-loop').then(m => m.brainLoopShadowFor(p.phone), () => false))) return
+ *  Events): the context is loaded then, without the turn that was just saved. Every model call is recorded in the
+ *  cost ledger as ours (nothing is charged to the person), and there is a daily limit on passes. */
+export const LOOP_SHADOW_DAILY = (env: Record<string, string | undefined> = process.env) => { const n = Number(env.GOGO_BRAIN_LOOP_DAILY); return Number.isInteger(n) && n >= 0 && n <= 2000 ? n : 150 }
+type LoopShadowDeps = { run?: (a: any) => Promise<any>; countToday?: (telegramId: number) => Promise<number>; save?: (row: Record<string, unknown>) => Promise<void>; loadContext?: typeof loadBrainContext; defer?: (job: () => Promise<void>) => Promise<void>; env?: Record<string, string | undefined> }
+export async function scheduleLoopShadow(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; forwarded?: boolean }, ctx: BrainContext | null, pipelineKind: string, deps: LoopShadowDeps = {}): Promise<void> {
+  const env = deps.env || process.env
+  if (!(await import('./brain-loop').then(m => m.brainLoopShadowFor(p.phone, env), () => false))) return
+  // The id is used for look-ups: only an exact, positive integer is accepted.
+  if (!Number.isSafeInteger(p.telegramId) || p.telegramId <= 0) return
   const shadowLoop = async () => {
     try {
       const loop = await import('./brain-loop'), { firstSliceTools } = await import('./brain-loop-tools')
+      const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0)
+      const today = deps.countToday ? await deps.countToday(p.telegramId) : await supabaseAdmin.from('agent_activity').select('id', { count: 'exact', head: true }).eq('telegram_id', String(p.telegramId)).eq('event_type', 'brain_loop_shadow').gte('created_at', dayStart.toISOString()).then((r: any) => (r.error ? Number.POSITIVE_INFINITY : Number(r.count || 0)))
+      if (!(today < LOOP_SHADOW_DAILY(env))) { console.log('BRAIN_LOOP_SHADOW:', JSON.stringify({ skipped: 'daily_limit' })); return }
       let c = ctx
       if (!c) {
-        c = await loadBrainContext(p)
-        const n = c.turns.length
-        if (n >= 2 && c.turns[n - 1].role === 'assistant' && c.turns[n - 2].role === 'user' && c.turns[n - 2].content.trim() === p.text.trim()) c = { ...c, turns: c.turns.slice(0, n - 2) }
+        c = await (deps.loadContext || loadBrainContext)(p)
+        // Stored turns are cleaned and cut the same way, so compare like with like.
+        const n = c.turns.length, same = (a: string, b: string) => clean(a, 900) === clean(b, 900)
+        if (n >= 2 && c.turns[n - 1].role === 'assistant' && c.turns[n - 2].role === 'user' && same(c.turns[n - 2].content, p.text)) c = { ...c, turns: c.turns.slice(0, n - 2) }
+        if (p.forwarded) c = { ...c, sections: { ...c.sections, 'About the latest message': [FORWARDED_NOTE] } }
       }
       const actor = { userId: String(p.userId || ''), legacyTelegramId: p.telegramId, whatsappId: String(p.whatsappId || p.phone), name: String(p.name || ''), timezone: c.timezone }
-      const r = await loop.runBrainLoopShadow({ actor, text: p.text, ctx: c, tools: firstSliceTools() })
-      const report = loop.loopShadowReport(pipelineKind, r, process.env.GOGO_BRAIN_LOOP_MODEL || MODEL())
+      const r = await (deps.run || loop.runBrainLoopShadow)({ actor, text: p.text, ctx: c, tools: firstSliceTools(),
+        onModelCall: (e: { model: string; ms: number; ok: boolean; usage: BrainUsage }) => meterBrainCall({ telegramId: p.telegramId, source: 'brain_shadow', ...e }) })
+      const report = loop.loopShadowReport(pipelineKind, r)
       console.log('BRAIN_LOOP_SHADOW:', JSON.stringify(report))
-      if (Number.isSafeInteger(p.telegramId)) await supabaseAdmin.from('agent_activity').insert({ telegram_id: String(p.telegramId), event_type: 'brain_loop_shadow', message: `loop ${report.final} after ${report.tools.length} tool calls; pipeline ${report.pipeline}`, metadata_json: { ...report, proposed: loop.loopShadowPreview(r) } })
+      const row = { telegram_id: String(p.telegramId), event_type: 'brain_loop_shadow', message: `loop ${report.final} after ${report.tools.length} tool calls; pipeline ${report.pipeline}`, metadata_json: { ...report, proposed: loop.loopShadowPreview(r) } }
+      if (deps.save) await deps.save(row); else await supabaseAdmin.from('agent_activity').insert(row)
     } catch { console.error('BRAIN_LOOP_SHADOW_FAILED') }
   }
+  if (deps.defer) return deps.defer(shadowLoop)
   await import('next/server').then(m => m.after(shadowLoop)).catch(() => { void shadowLoop() })
 }
 

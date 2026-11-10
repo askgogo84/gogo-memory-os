@@ -60,9 +60,9 @@ eq([(page.match(/TOOL_RESULT>>>/g) || []).length, /IGNORE ALL RULES/.test(page)]
 // 4. Unknown tools, failing tools and slow tools.
 const slow = [...tools, { name: 'slow_lookup', klass: 'read' as const, description: 'x', input_schema: { type: 'object' as const, properties: {} }, run: () => new Promise<string>(() => {}) },
   { name: 'broken_lookup', klass: 'read' as const, description: 'x', input_schema: { type: 'object' as const, properties: {} }, run: async () => { throw new Error('secret detail 9876') } }]
-f = fake([[use('delete_everything', {}), use('broken_lookup', {}), use('slow_lookup', {})], [use('ask', { question: 'Which venue?' })]])
+f = fake([[use('Divya 9888888888', {}), use('broken_lookup', {}), use('slow_lookup', {})], [use('ask', { question: 'Which venue?' })]])
 r = await loop.runBrainLoopShadow({ actor, text: 'x', ctx, tools: slow, client: f.client, model: 'claude-haiku-5-5', limits: { toolMs: 50 } })
-eq(r.steps.map(s => `${s.tool}:${s.klass}:${s.ok}`), ['delete_everything:unknown:false', 'broken_lookup:read:false', 'slow_lookup:read:false'], 'an unknown tool is refused; a failing or slow tool is reported as failed')
+eq(r.steps.map(s => `${s.tool}:${s.klass}:${s.ok}`), ['unknown:unknown:false', 'broken_lookup:read:false', 'slow_lookup:read:false'], 'an unknown tool is refused and its made-up name is never recorded; a failing or slow tool is reported as failed')
 const errs = f.calls[1].messages.at(-1).content.map((b: any) => b.content).join(' ')
 ok(/No such tool/.test(errs) && /Do not guess its answer/.test(errs) && !/9876/.test(errs), 'failures tell the model not to guess, and carry no error detail')
 eq([r.final.kind, r.final.text], ['ask', 'Which venue?'], 'the loop can end with one question')
@@ -73,13 +73,31 @@ eq([r.stop, r.steps.filter(s => s.executed).length, r.final.kind], ['max_steps',
 let t = 0
 r = await loop.runBrainLoopShadow({ actor, text: 'x', ctx, tools, client: fake([[use('events_list', {})]]).client, model: 'claude-haiku-5-5', clock: () => (t += 10_000) })
 eq(r.stop, 'time', 'the loop stops at its time limit')
+{ // The limit bounds the whole pass: tools and model calls get only what is left.
+  const real = Date.now(); const hang = [...tools, { name: 'hang', klass: 'read' as const, description: 'x', input_schema: { type: 'object' as const, properties: {} }, run: () => new Promise<string>(() => {}) }]
+  const timeouts: number[] = []
+  const cl = { messages: { create: async (_r: any, o: any) => { timeouts.push(o.timeout); return { content: [use('hang', {}), use('hang', {}), use('hang', {})], usage: {} } } } } as any
+  r = await loop.runBrainLoopShadow({ actor, text: 'x', ctx, tools: hang, client: cl, model: 'claude-haiku-5-5', limits: { maxMs: 2200, toolMs: 8000 } })
+  ok(Date.now() - real < 3200 && r.stop === 'time' && timeouts.every(t => t <= 2200), 'three hanging tools cannot run the pass past its limit') }
+{ const seenCalls: any[] = []
+  f = fake([[use('events_list', {})], [use('reply', { text: 'ok' })]])
+  r = await loop.runBrainLoopShadow({ actor, text: 'x', ctx, tools, client: f.client, model: 'claude-haiku-5-5', onModelCall: e => seenCalls.push(e) })
+  eq([seenCalls.length, seenCalls.every(e => e.ok && e.model === 'claude-haiku-5-5' && e.usage.input === 100), r.model], [2, true, 'claude-haiku-5-5'], 'every model call is reported for the cost ledger, and the result names the model that ran') }
+{ // The 5.5 path: tool choice becomes auto, thinking blocks go back unchanged, plain text ends the pass.
+  const think = { type: 'thinking', thinking: 'plan', signature: 'sig' }
+  f = fake([[think, use('events_list', {}, 'e1')], [{ type: 'text', text: 'All set.' }]])
+  r = await loop.runBrainLoopShadow({ actor, text: 'x', ctx, tools, client: f.client, model: 'claude-sonnet-5-5' })
+  eq([f.calls[0].tool_choice?.type, 'temperature' in f.calls[0], f.calls[1].messages.at(-2).content[0], r.final], ['auto', false, think, { kind: 'reply', text: 'All set.' }], 'on Sonnet 5.5 the tool choice is auto, thinking is passed back as received, and a text answer finishes') }
+const { searchable } = await import('../lib/agent/brain-loop-tools.ts')
+eq(searchable('Toit Indiranagar private events nithin@example.com +91 98450 12345 acct 4111 1111 1111 1111'), 'Toit Indiranagar private events acct', 'email addresses and long numbers never leave in a search query')
+ok(/never put the person's saved details, other people's names, email addresses or phone numbers into a search/.test(loop.LOOP_STATIC), 'and the model is told not to search for personal details')
 r = await loop.runBrainLoopShadow({ actor, text: 'x', ctx, tools, client: { messages: { create: async () => { throw new Error('down') } } } as any, model: 'claude-haiku-5-5' })
 eq([r.stop, r.final.kind], ['error', 'none'], 'a model failure ends quietly')
 // 6. Who it runs for, and what is recorded.
 eq([loop.brainLoopShadowFor('+918884501501', { GOGO_BRAIN_LOOP_USERS: '8884501501' }), loop.brainLoopShadowFor('+918884501501', {}), loop.brainLoopShadowFor('+919900000001', { GOGO_BRAIN_LOOP_USERS: '8884501501' })], [true, false, false], 'only for numbers in GOGO_BRAIN_LOOP_USERS; off when unset')
 f = fake([[use('events_list', {})], [use('reply', { text: 'Here is the plan. Pay with card 4111 1111 1111 1111' })]])
 r = await loop.runBrainLoopShadow({ actor, text: 'my secret message text', ctx, tools, client: f.client, model: 'claude-haiku-5-5' })
-const report = loop.loopShadowReport('handle', r, 'claude-haiku-5-5')
+const report = loop.loopShadowReport('handle', r)
 ok(!/secret message/.test(JSON.stringify(report)) && report.tools[0] === 'events_list:read' && report.pipeline === 'handle' && typeof report.ms === 'number', "the log line has the tools, timings and cost, not the person's message")
 ok(!/4111 1111 1111 1111/.test(loop.loopShadowPreview(r)) && /Here is the plan/.test(loop.loopShadowPreview(r)), 'the saved preview is scrubbed of card- and account-shaped numbers')
 // 7. Wiring: shadow only, after the reply, never sending.
@@ -87,7 +105,28 @@ const brain = readFileSync(new URL('../lib/agent/brain.ts', import.meta.url), 'u
 const src = readFileSync(new URL('../lib/agent/brain-loop.ts', import.meta.url), 'utf8') + readFileSync(new URL('../lib/agent/brain-loop-tools.ts', import.meta.url), 'utf8')
 ok(!/sendWhatsApp|sendGmail|stageApproval|agent_approvals|saveConversation|createEvent|updateEvent|publishEvent|saveFollowupState/.test(src), 'the loop and its tools cannot send, stage an approval, or change events, drafts or the conversation')
 const fn = brain.slice(brain.indexOf('export async function scheduleLoopShadow'), brain.indexOf('export async function runBrain('))
-ok(/brainLoopShadowFor\(p\.phone\)[\s\S]*?\) return/.test(fn) && /m\.after\(shadowLoop\)/.test(fn) && !/return \{ reply/.test(fn) && !/sendWhatsApp/.test(fn), 'the shadow pass is owner-gated, runs after the response, and has no way to reply')
-const saved = fn.slice(fn.indexOf(".insert("), fn.indexOf("} catch"))
-ok(/event_type: 'brain_loop_shadow'/.test(saved) && !/p\.text/.test(saved), "what is saved is the comparison, not the person's message")
+ok(/brainLoopShadowFor\(p\.phone, env\)[\s\S]*?\) return/.test(fn) && /m\.after\(shadowLoop\)/.test(fn) && !/return \{ reply/.test(fn) && !/sendWhatsApp/.test(fn), 'the shadow pass is owner-gated, runs after the response, and has no way to reply')
+const rowLine = fn.split('\n').find(l => l.includes("const row = {")) || ''
+ok(/event_type: 'brain_loop_shadow'/.test(rowLine) && !/p\.text/.test(rowLine), "what is saved is the comparison, not the person's message")
+// 8. The scheduler itself.
+const brainMod = await import('../lib/agent/brain.ts')
+{ const E = { GOGO_BRAIN_LOOP_USERS: '8884501501' }
+  const P = { phone: '+918884501501', telegramId: 884501501, text: 'Plan a   dinner\nfor 20', name: 'Gogo', userId: 'u1', whatsappId: '918884501501' }
+  const mk = (over: any = {}) => { const st: any = { ran: [], saved: [], deferred: 0 }
+    const deps = { env: E, defer: async (job: any) => { st.deferred++; await job() }, countToday: async () => 0, save: async (row: any) => { st.saved.push(row) },
+      loadContext: async () => ({ ...ctx, turns: [{ role: 'user', content: 'hi' }, { role: 'assistant', content: 'hello' }, { role: 'user', content: 'Plan a dinner for 20' }, { role: 'assistant', content: 'Draft started.' }] }) as any,
+      run: async (a: any) => { st.ran.push(a); await a.onModelCall?.({ model: 'm', ms: 1, ok: true, usage: {} }); return { final: { kind: 'reply', text: 'card 4111 1111 1111 1111 plan' }, steps: [{ tool: 'events_list', klass: 'read', executed: true, ok: true, ms: 1 }], turns: 2, ms: 5, usd: 0.01, usage: {}, stop: 'final', model: 'm' } }, ...over }
+    return { st, deps } }
+  let x = mk(); await brainMod.scheduleLoopShadow(P, null, 'events', x.deps)
+  eq([x.st.deferred, x.st.ran.length, x.st.ran[0].ctx.turns.length, x.st.ran[0].actor.legacyTelegramId], [1, 1, 2, 884501501], 'it runs after the response, for the session\'s own person, without the turn that was just answered (compared after the same cleaning)')
+  eq([x.st.saved[0].event_type, x.st.saved[0].telegram_id, /4111 1111/.test(JSON.stringify(x.st.saved[0])), /Plan a/.test(JSON.stringify(x.st.saved[0])), x.st.saved[0].metadata_json.pipeline], ['brain_loop_shadow', '884501501', false, false, 'events'], "one comparison row is saved, scrubbed, without the person's message")
+  x = mk(); await brainMod.scheduleLoopShadow({ ...P, forwarded: true }, null, 'events', x.deps)
+  ok(/FORWARDED/.test(JSON.stringify(x.st.ran[0].ctx.sections)), 'a forwarded message is marked as someone else\'s words')
+  x = mk({ countToday: async () => 150 }); await brainMod.scheduleLoopShadow(P, null, 'events', x.deps)
+  eq([x.st.ran.length, x.st.saved.length], [0, 0], 'the daily limit stops further passes')
+  x = mk({ env: {} }); await brainMod.scheduleLoopShadow(P, null, 'events', x.deps)
+  eq([x.st.deferred, x.st.ran.length], [0, 0], 'nothing is scheduled when the switch is unset')
+  for (const bad of [0, -5, 2 ** 53, 1.5, NaN]) { x = mk(); await brainMod.scheduleLoopShadow({ ...P, telegramId: bad as number }, null, 'events', x.deps); eq(x.st.deferred, 0, `an id that is not an exact positive integer is refused (${bad})`) }
+  eq([brainMod.LOOP_SHADOW_DAILY({}), brainMod.LOOP_SHADOW_DAILY({ GOGO_BRAIN_LOOP_DAILY: '20' }), brainMod.LOOP_SHADOW_DAILY({ GOGO_BRAIN_LOOP_DAILY: 'lots' })], [150, 20, 150], 'the daily limit is 150 unless set')
+  ok(/source: 'brain_shadow'/.test(fn) && /costPaise[\s\S]{0,80}brain_shadow'\) return 0/.test(brain), 'model calls are recorded in the cost ledger as ours: nothing is charged to the person') }
 console.log(`BRAIN_LOOP_SHADOW_OK ${checks} checks`)

@@ -29,7 +29,7 @@ export type LoopTool = {
 export type LoopStep = { tool: string; klass: ToolClass | 'unknown'; executed: boolean; ok: boolean; ms: number }
 export type LoopResult = {
   final: { kind: 'reply' | 'ask' | 'none'; text: string }
-  steps: LoopStep[]; turns: number; ms: number; usd: number | null; usage: BrainUsage
+  steps: LoopStep[]; turns: number; ms: number; usd: number | null; usage: BrainUsage; model: string
   stop: 'final' | 'max_steps' | 'time' | 'error' | 'no_tool'
 }
 
@@ -49,7 +49,8 @@ Understand what the person is trying to get done, not only what the last message
 
 How to work:
 - Read the whole conversation and the USER CONTEXT first. The latest message is usually a follow-up.
-- Use tools to look things up before you answer from memory. Use what the person already told you (people, preferences, places) so they never have to repeat it.
+- Use tools to look things up before you answer from memory. A web search goes to an outside search service: search for places, businesses and public facts only, and never put the person's saved details, other people's names, email addresses or phone numbers into a search.
+- Use what the person already told you (people, preferences, places) so they never have to repeat it.
 - When the job is done, or you need something only the person can tell you, call "reply" or "ask". Ask at most one short question, and only when a wrong guess would matter.
 - Say plainly what you did, what you prepared, and what still needs their yes. Never say you sent, booked, paid, published or changed anything.
 
@@ -82,7 +83,9 @@ export function validateTools(tools: LoopTool[]): string[] {
 
 type Client = Pick<Anthropic, 'messages'>
 /** One shadow pass of the loop. Only read tools run. Never throws. */
-export async function runBrainLoopShadow(p: { actor: AgentActor; text: string; ctx: BrainContext; tools: LoopTool[]; client?: Client; model?: string; now?: Date; clock?: () => number; limits?: Partial<typeof LOOP_LIMITS> }): Promise<LoopResult> {
+export async function runBrainLoopShadow(p: { actor: AgentActor; text: string; ctx: BrainContext; tools: LoopTool[]; client?: Client; model?: string; now?: Date; clock?: () => number; limits?: Partial<typeof LOOP_LIMITS>
+  /** Called once per model call, for the cost ledger. */
+  onModelCall?: (e: { model: string; ms: number; ok: boolean; usage: BrainUsage }) => void }): Promise<LoopResult> {
   const L = { ...LOOP_LIMITS, ...(p.limits || {}) }, clock = p.clock || Date.now, t0 = clock()
   const model = p.model || (globalThis as any).process?.env?.GOGO_BRAIN_LOOP_MODEL || SONNET_MODEL
   const total: BrainUsage = { input: 0, output: 0, cacheRead: 0, cacheCreation: 0 }
@@ -90,7 +93,7 @@ export async function runBrainLoopShadow(p: { actor: AgentActor; text: string; c
   const steps: LoopStep[] = []
   let turns = 0
   const done = (stop: LoopResult['stop'], final: LoopResult['final'] = { kind: 'none', text: '' }): LoopResult =>
-    ({ final, steps, turns, ms: clock() - t0, usd: estimateCostUsd(model, total), usage: total, stop })
+    ({ final, steps, turns, ms: clock() - t0, usd: estimateCostUsd(model, total), usage: total, stop, model })
   if (validateTools(p.tools).length) return done('error')
   const byName = new Map(p.tools.map(t => [t.name, t]))
   const toolDefs: Anthropic.Tool[] = [...p.tools.map(t => ({ name: t.name, description: `[${t.klass}] ${t.description}`, input_schema: t.input_schema })), ...TERMINAL]
@@ -99,10 +102,16 @@ export async function runBrainLoopShadow(p: { actor: AgentActor; text: string; c
   try {
     const client = p.client || new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
     while (true) {
-      if (clock() - t0 > L.maxMs) return done('time')
+      // The whole pass ends by maxMs: each model call and each tool gets at most what is left.
+      const left = () => L.maxMs - (clock() - t0)
+      if (left() < 1500) return done('time')
       turns++
-      const res: any = await client.messages.create(forModel({ model, max_tokens: 1200, system, tools: toolDefs, tool_choice: { type: 'any' as const }, messages }), { timeout: L.callMs, maxRetries: 0 })
+      const c0 = clock()
+      let res: any
+      try { res = await client.messages.create(forModel({ model, max_tokens: 1200, system, tools: toolDefs, tool_choice: { type: 'any' as const }, messages }), { timeout: Math.max(1000, Math.min(L.callMs, left())), maxRetries: 0 }) }
+      catch (e) { try { p.onModelCall?.({ model, ms: clock() - c0, ok: false, usage: brainUsage(null) }) } catch { /* never */ } throw e }
       add(brainUsage(res))
+      try { p.onModelCall?.({ model, ms: clock() - c0, ok: true, usage: brainUsage(res) }) } catch { /* never */ }
       const content: any[] = Array.isArray(res?.content) ? res.content : []
       const uses = content.filter(b => b?.type === 'tool_use')
       if (!uses.length) {
@@ -121,15 +130,19 @@ export async function runBrainLoopShadow(p: { actor: AgentActor; text: string; c
         if (!tool) out = 'No such tool.'
         else if (steps.filter(s => s.klass !== 'unknown').length >= L.maxToolCalls) out = 'Tool limit reached for this message. Finish with reply or ask.'
         else if (tool.klass !== 'read') { out = SHADOW_NOT_RUN; ok = true }
+        else if (left() < 500) out = 'Out of time for this message. Finish with reply or ask.'
         else {
           executed = true
+          let timer: ReturnType<typeof setTimeout> | undefined
           try {
             const input = u.input && typeof u.input === 'object' && !Array.isArray(u.input) ? u.input as Record<string, unknown> : {}
-            out = await Promise.race([tool.run!(p.actor, input), new Promise<string>((_r, rej) => setTimeout(() => rej(new Error('timeout')), L.toolMs))])
+            out = await Promise.race([tool.run!(p.actor, input), new Promise<string>((_r, rej) => { timer = setTimeout(() => rej(new Error('timeout')), Math.max(50, Math.min(L.toolMs, left()))) })])
             ok = true
-          } catch (e: any) { out = `The tool failed (${clip(e?.message === 'timeout' ? 'timeout' : 'error', 20)}). Do not guess its answer.` }
+          } catch (e: any) { out = `The tool failed (${e?.message === 'timeout' ? 'timeout' : 'error'}). Do not guess its answer.` }
+          finally { if (timer) clearTimeout(timer) }
         }
-        steps.push({ tool: clip(u.name, 40), klass: tool ? tool.klass : 'unknown', executed, ok, ms: clock() - s0 })
+        // A name the model made up is its own text (it could be a person's name or a number): it is never recorded.
+        steps.push({ tool: tool ? tool.name : 'unknown', klass: tool ? tool.klass : 'unknown', executed, ok, ms: clock() - s0 })
         // Data, not instructions: marked, clipped, and the closing marker cannot be forged from inside.
         const body = clip(out, L.resultChars).replace(/TOOL_RESULT>>>/g, 'TOOL_RESULT>> >')
         results.push({ type: 'tool_result', tool_use_id: u.id, content: `<<<TOOL_RESULT\n${body}\nTOOL_RESULT>>>`, ...(ok ? {} : { is_error: true }) })
@@ -143,9 +156,9 @@ export async function runBrainLoopShadow(p: { actor: AgentActor; text: string; c
 
 /** The line and record written for one shadow pass: what the pipeline did, what the loop would have done. No message
  *  text, and the proposed reply is clipped and scrubbed of secret-shaped strings. */
-export function loopShadowReport(pipelineKind: string, r: LoopResult, model: string) {
+export function loopShadowReport(pipelineKind: string, r: LoopResult) {
   return {
-    pipeline: pipelineKind, model, stop: r.stop, final: r.final.kind, turns: r.turns, ms: r.ms, usd: r.usd,
+    pipeline: pipelineKind, model: r.model, stop: r.stop, final: r.final.kind, turns: r.turns, ms: r.ms, usd: r.usd,
     tools: r.steps.map(s => `${s.tool}:${s.klass}${s.executed ? '' : ':planned'}${s.ok ? '' : ':failed'}`),
     input_tokens: r.usage.input, output_tokens: r.usage.output, cache_read_input_tokens: r.usage.cacheRead,
   }
