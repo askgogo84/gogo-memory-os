@@ -40,7 +40,8 @@ export type TraceEntry = { at: string; node: string; type: ProcedureNode['type']
 export type RunEvent =
   | { kind: 'start' }
   | { kind: 'read_ok'; node: string; output: Record<string, unknown> }
-  | { kind: 'read_failed'; node: string; error: string }
+  /** final: the failure cannot change on retry (no such thread, consent missing), so it skips the retry budget. */
+  | { kind: 'read_failed'; node: string; error: string; final?: boolean }
   | { kind: 'reasoned'; node: string; output: Record<string, unknown> }
   | { kind: 'approval_created'; node: string; approval: ApprovalRecord }
   | { kind: 'approval_decided'; approvalId: string; status: 'approved' | 'rejected' | 'expired'; fingerprint: string }
@@ -171,7 +172,7 @@ export function advance(def: ProcedureDefinition, run: ProcedureRun, ev: RunEven
         if (missing.length) return retryOrFail(def, run, n, `read_incomplete:${missing.join(',')}`, now)
         return next(def, withTrace({ ...run, context: { ...run.context, ...ev.output } }, { at, node: n.id, type: n.type, outcome: 'ok', evidenceClass: 'verified' }), 'ok')
       }
-      if (ev.kind === 'read_failed') return retryOrFail(def, run, n, ev.error, now)
+      if (ev.kind === 'read_failed') return retryOrFail(def, run, n, ev.error, now, ev.final === true)
       return run
     }
     case 'REASON': case 'DECIDE': {
@@ -257,9 +258,9 @@ export function evaluateCondition(def: ProcedureDefinition, run: ProcedureRun, c
   return next(def, withTrace(run, { at: now(), node: n.id, type: n.type, outcome: label }), label)
 }
 
-function retryOrFail(def: ProcedureDefinition, run: ProcedureRun, n: ProcedureNode, error: string, now: Clock): ProcedureRun {
+function retryOrFail(def: ProcedureDefinition, run: ProcedureRun, n: ProcedureNode, error: string, now: Clock, final = false): ProcedureRun {
   const tries = (run.attempts[n.id] || 0) + 1
-  const budget = RETRYABLE.has(n.type) ? (n.retry?.max ?? 2) : 0
+  const budget = !final && RETRYABLE.has(n.type) ? (n.retry?.max ?? 2) : 0
   const r = withTrace({ ...run, attempts: { ...run.attempts, [n.id]: tries } }, { at: now(), node: n.id, type: n.type, outcome: tries <= budget ? 'retry' : 'failed', detail: error })
   if (tries <= budget) return r
   const hasFailEdge = def.edges.some(e => e.from === n.id && e.when === 'fail')

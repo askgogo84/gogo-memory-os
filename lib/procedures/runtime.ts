@@ -76,7 +76,8 @@ export function procedureRegistryFor(def: ProcedureDefinition, io: ProcedureIO, 
           if (s.current === cur.id && s.status === 'running') return { status: 'retryable_failure', error: 'read_incomplete' }
           return { status: 'completed', verified: true, output: { produced: Object.keys(out).slice(0, 20) } }
         } catch (e: any) {
-          const s = apply({ kind: 'read_failed', node: cur.id, error: String(e?.message || e).slice(0, 200) })
+          const msg = String(e?.message || e).slice(0, 200)
+          const s = apply({ kind: 'read_failed', node: cur.id, error: msg, final: readFailureIsFinal(msg) })
           await persist(s)
           if (s.current === cur.id && s.status === 'running') return { status: 'retryable_failure', error: String(e?.message || e).slice(0, 300) }
           // the graph has a fail edge for this read: the step itself is done, the procedure moved on
@@ -154,6 +155,12 @@ export function procedureRegistryFor(def: ProcedureDefinition, io: ProcedureIO, 
 }
 
 /** Production store over agent_runs / agent_approvals / agent_activity. */
+/** A read failure that a retry cannot change: no such thread, several matches, Gmail not connected or not consented.
+ *  Retrying these only hides the answer from the owner for minutes. Network and provider errors still retry. */
+export function readFailureIsFinal(error: string): boolean {
+  return /^(?:thread_not_found|thread_ambiguous|gmail_not_connected|gmail_consent_missing|gmail_owner_invalid)\b/.test(String(error || ''))
+}
+
 export async function supabaseProcedureStore(): Promise<ProcedureStore> {
   const { supabaseAdmin } = await import('@/lib/supabase-admin')
   const { buildApprovalBinding } = await import('@/lib/agent/approval-binding')
@@ -220,7 +227,8 @@ export async function startProcedureRun(params: { actor: AgentActor; procedureId
     last = await executeAutonomousRun({ actor: params.actor, runId, registry: reg, maxParallel: 2, notifyOutcome: false })
     if (!last.executed || ['waiting_approval', 'paused', 'completed', 'failed', 'outcome_unknown'].includes(String(last.status))) break
   }
-  return { runId, status: last?.status || 'running', procedure: def.id }
+  const final = await store.loadState(runId, String(params.actor.legacyTelegramId)).catch(() => null)
+  return { runId, status: last?.status || 'running', procedure: def.id, error: final?.state?.error ? String(final.state.error).slice(0, 120) : null }
 }
 
 /** Cron resume: continue a procedure run (approval released, retry due, event poll). Only for flagged owners. */
