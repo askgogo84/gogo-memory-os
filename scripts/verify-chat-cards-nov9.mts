@@ -13,7 +13,7 @@ const html = renderToStaticMarkup(React.createElement(WorkCards, { text: `*Tippl
 assert.match(html, new RegExp(`href="/dashboard/reports/${id}"`)); assert.match(html, /Tipplr weekly/); assert.match(html, /Made 7:12 am/)
 assert.equal(renderToStaticMarkup(React.createElement(WorkCards, { text: 'no links here' })), '')
 const approvals = [
-  { id: 'a1', runId: 'r1', actionType: 'booking', title: 'Book Savaari cab ₹1,650', description: 'Goa trip', preview: [{ label: 'Passenger', value: 'Goverdhan' }], risk: 'medium', expiresAt: '2026-11-10T01:00:00Z', deferredUntil: null },
+  { id: 'a1', runId: 'r1', actionType: 'booking', title: 'Book Savaari cab ₹1,650', description: 'Goa trip', preview: [{ label: 'Passenger', value: 'Goverdhan' }], risk: 'medium', expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString() /* was a fixed 10 Nov 01:00 UTC: expired at that time and the card lost its Later button */, deferredUntil: null },
   { id: 'a2', runId: 'r2', actionType: 'email', title: 'Send reply to Nithin', deferredUntil: '2026-11-09T09:00:00Z' },
 ]
 const h2 = renderToStaticMarkup(React.createElement(InlineApprovals, { approvals }))
