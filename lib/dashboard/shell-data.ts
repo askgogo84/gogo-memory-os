@@ -11,6 +11,8 @@ export type ShellData = {
   spaces?: boolean
   /** v2 three-tab layout (GOGO_NAV_V2, pending mock approval). */
   navV2?: boolean
+  /** AskGogo Events for owners in GOGO_EVENTS_OWNERS. */
+  events?: boolean
   name: string
   plan: string | null
   meters: UsageMeter[]
