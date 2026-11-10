@@ -103,7 +103,8 @@ export default function RsvpClient({ token, mode, initial }: { token: string; mo
     fetch(`/api/rsvp/${mine}`, { referrerPolicy: 'no-referrer' }).then(async res => {
       const data = await res.json().catch(() => null)
       if (cancelled) return
-      if (!res.ok || !data?.invitation) { write(slot, null); return } // revoked or gone: back to the shared invitation
+      if (res.status === 404) { write(slot, null); write(`${slot}:key`, null); return } // revoked or gone: this device starts again from the shared invitation
+      if (!res.ok || !data?.invitation) return // busy or offline: keep the stored link and show the shared invitation for now
       setActiveToken(mine); setInv(data.invitation)
       const g = data.invitation.guest
       if (g) { setName(g.name || ''); setPlus(g.plusOnes || 0); setDietary(g.dietary || ''); setComment(g.comment || ''); if (['going', 'maybe', 'declined'].includes(g.rsvp)) setReply(g.rsvp) }
@@ -123,7 +124,7 @@ export default function RsvpClient({ token, mode, initial }: { token: string; mo
         body: JSON.stringify({ status: reply, plusOnes: reply === 'going' ? plus : 0, dietary: reply === 'going' ? dietary : '', comment, name, clientKey }) })
       const data = await res.json().catch(() => null)
       if (data?.personalToken) { setActiveToken(data.personalToken); write(slot, data.personalToken) }
-      if (data?.gone && mode === 'share') { write(slot, null); setActiveToken(token) }
+      if (data?.gone && mode === 'share') { write(slot, null); write(`${slot}:key`, null); window.location.reload(); return }
       if (data?.invitation) setInv(data.invitation)
       if (!res.ok || !data?.ok) { setError(data?.error || 'That did not work. Please try again.'); return }
       setSaved(reply)

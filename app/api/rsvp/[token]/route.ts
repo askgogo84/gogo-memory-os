@@ -15,11 +15,19 @@ const unavailable = () => json({ ok: false, error: 'Invitations are not availabl
 const slowDown = () => json({ ok: false, error: 'Too many tries. Please wait a few minutes and try again.' }, 429)
 const sha = (v: string) => createHash('sha256').update(v, 'utf8').digest('hex')
 
-/** Buckets are hashes: neither the address nor the link is stored in the counter table. */
-function buckets(request: Request, token: string) {
-  const address = (request.headers.get('x-forwarded-for') || '').split(',')[0].trim().slice(0, 64) || 'unknown'
-  return { byAddress: `ip:${sha(address).slice(0, 40)}`, byLink: `tk:${sha(token).slice(0, 40)}` }
+/** The caller's address as the platform reports it. On Vercel x-vercel-forwarded-for and x-real-ip are set by the
+ *  platform; the first hop of x-forwarded-for is whatever the client sent, so only its last hop is used as a fallback. */
+function callerAddress(request: Request): string {
+  const h = (name: string) => (request.headers.get(name) || '').trim()
+  const direct = h('x-vercel-forwarded-for').split(',')[0].trim() || h('x-real-ip')
+  if (direct) return direct.slice(0, 64)
+  const hops = h('x-forwarded-for').split(',').map(x => x.trim()).filter(Boolean)
+  return (hops[hops.length - 1] || 'unknown').slice(0, 64)
 }
+/** One counter per address and method. There is deliberately no per-link counter: a shared link is used by many
+ *  honest guests at once, and a per-link cap would let one person shut everyone else out. The database bounds how
+ *  many guests a link can create and how often one reply can change. Buckets are hashes, never the address itself. */
+const bucket = (request: Request, kind: 'get' | 'post') => `ip${kind === 'get' ? 'g' : 'p'}:${sha(callerAddress(request)).slice(0, 40)}`
 
 /** Reads at most MAX_BODY_BYTES, whatever Content-Length says (or does not say). Null when larger. */
 async function boundedBody(request: Request): Promise<string | null> {
@@ -44,7 +52,7 @@ export async function GET(request: Request, context: { params: Promise<{ token: 
   const { token } = await context.params
   if (!isEventToken(token)) return notFound()
   try {
-    if (!(await rateOk(buckets(request, token).byAddress, 120, 600))) return slowDown()
+    if (!(await rateOk(bucket(request, 'get'), 240, 600))) return slowDown()
     const found = await invitationFor(token)
     if (!found || !found.view) return notFound()
     if (new URL(request.url).searchParams.get('format') === 'ics') {
@@ -66,8 +74,7 @@ export async function POST(request: Request, context: { params: Promise<{ token:
     let body: any = null
     try { body = JSON.parse(raw) } catch { body = null }
     if (!body || typeof body !== 'object' || Array.isArray(body)) return json({ ok: false, error: rsvpErrorText('invalid_status') }, 400)
-    const b = buckets(request, token)
-    if (!(await rateOk(b.byAddress, 30, 600)) || !(await rateOk(b.byLink, 120, 600))) return slowDown()
+    if (!(await rateOk(bucket(request, 'post'), 60, 600))) return slowDown()
     const text = (v: unknown) => (typeof v === 'string' ? v.slice(0, 600) : null)
     const result = await submitRsvp(token, { status: String(body.status || ''), plusOnes: Number.isInteger(body.plusOnes) ? body.plusOnes : 0, dietary: text(body.dietary), comment: text(body.comment), name: text(body.name), clientKey: text(body.clientKey) })
     if (!result.ok) {

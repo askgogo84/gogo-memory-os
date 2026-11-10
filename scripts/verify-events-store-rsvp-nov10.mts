@@ -201,12 +201,43 @@ ok(!(await call('GET', p3.data.personalToken, undefined, { query: '?format=ics' 
 const divyaRow = (await store.listGuests(ME, party.id, db)).find(g => g.name === 'Divya')!
 await store.revokeGuest(ME, party.id, divyaRow.id, db)
 eq([(await call('GET', named)).status, (await call('POST', named, { status: 'declined' })).data.gone], [404, true], 'a revoked link is 404 to read and tells the page to forget it')
-// Rate limits: per address, and it does not depend on the link being valid.
+// Rate limits: one counter per address and method; no per-link counter that one person could use to shut others out.
 let limited = 0
-for (let i = 0; i < 40; i++) if ((await call('POST', p3.data.personalToken, { status: 'maybe' }, { ip: '198.51.100.9' })).status === 429) limited++
-eq(limited, 10, 'the thirty-first answer from one address in ten minutes is asked to slow down')
+for (let i = 0; i < 70; i++) if ((await call('POST', p3.data.personalToken, { status: 'maybe' }, { ip: '198.51.100.9' })).status === 429) limited++
+eq(limited, 10, 'the sixty-first answer from one address in ten minutes is asked to slow down')
 eq((await call('POST', p3.data.personalToken, { status: 'maybe' }, { ip: '198.51.100.10' })).status, 200, 'another address is not affected')
-ok(((await pg.query('select bucket from gogo_event_rate')).rows as any[]).every(r => /^(?:ip|tk):[0-9a-f]{40}$/.test(r.bucket)), 'the counters hold hashes, not addresses or links')
+eq((await call('GET', p3.data.personalToken, undefined, { ip: '198.51.100.9' })).status, 200, 'reading is counted separately from answering')
+for (let i = 0; i < 40; i++) await call('GET', partyLink, undefined, { ip: '198.51.100.11' })
+eq((await call('POST', p3.data.personalToken, { status: 'maybe' }, { ip: '198.51.100.11' })).status, 200, 'forty page loads from one address do not use up its answers')
+let forged = 0
+for (let i = 0; i < 70; i++) if ((await call('POST', p3.data.personalToken, { status: 'maybe' }, { headers: { 'x-forwarded-for': `10.0.0.${i}, 198.51.100.12` } })).status === 429) forged++
+eq(forged, 10, 'a forged first hop in x-forwarded-for does not evade the limit')
+for (const ip of ['198.51.100.21', '198.51.100.22', '198.51.100.23', '198.51.100.24']) for (let i = 0; i < 60; i++) await call('POST', partyLink, { status: 'junk' }, { ip })
+eq((await call('POST', partyLink, { status: 'maybe', name: 'Real guest', clientKey: key(40) }, { ip: '198.51.100.30' })).status, 200, 'junk from four addresses on the shared link does not lock a real guest out')
+eq((await call('POST', p3.data.personalToken, { status: 'maybe' }, { headers: { 'x-vercel-forwarded-for': '198.51.100.31', 'x-forwarded-for': '198.51.100.9' } })).status, 200, "the platform's own address header is preferred")
+ok(((await pg.query('select bucket from gogo_event_rate')).rows as any[]).every(r => /^ip[gp]:[0-9a-f]{40}$/.test(r.bucket)), 'the counters hold hashes, not addresses or links')
+// Past the change bound, declining works once and cannot be used to keep writing.
+const stuck = await store.submitRsvp(tokenOf(bigPub.shareUrl!), { status: 'going', name: 'Changer', comment: 'first', clientKey: key(50) }, db)
+for (let i = 0; i < 25; i++) await store.submitRsvp(stuck.personalToken!, { status: i % 2 ? 'going' : 'maybe', comment: 'first' }, db)
+const before = (await pg.query('select count(*)::int n from gogo_event_rsvp_history h join gogo_event_guests g on g.id = h.guest_id where g.token_hash = $1', [core.eventTokenHash(stuck.personalToken!)])).rows[0] as any
+eq((await store.submitRsvp(stuck.personalToken!, { status: 'declined', comment: 'attacker text 1' }, db)).ok, true, 'past the bound, declining is still allowed once')
+for (let i = 0; i < 50; i++) await store.submitRsvp(stuck.personalToken!, { status: 'declined', comment: `attacker text ${i}` }, db)
+const after = (await pg.query('select count(*)::int n, max(g.comment) c from gogo_event_rsvp_history h join gogo_event_guests g on g.id = h.guest_id where g.token_hash = $1', [core.eventTokenHash(stuck.personalToken!)])).rows[0] as any
+eq([after.n - before.n, after.c], [1, 'first'], 'fifty more declines write nothing more, and the stored note is not replaced')
+// Share links: disabling and rotating move the revision on, so a publish that read the old state cannot bring a link back.
+const rv = await store.createEvent(ME, { title: 'Revision check', startsAt: future(48), venueName: 'Home' }, db)
+const rvPub = await store.publishEvent(ME, rv.id, db)
+const staleRevision = (await store.getEvent(ME, rv.id, db)).revision
+await store.disableShareLink(ME, rv.id, db)
+eq((await store.getEvent(ME, rv.id, db)).revision, staleRevision + 1, 'disabling the link bumps the revision')
+const stale = await (db.from('gogo_events').update({ share_token_hash: core.eventTokenHash(tokenOf(rvPub.shareUrl!)) }).eq('id', rv.id).eq('revision', staleRevision).select('id'))
+eq([stale.data.length, await store.invitationFor(tokenOf(rvPub.shareUrl!), db)], [0, null], 'a write guarded by the old revision changes nothing: the disabled link stays dead')
+// With no capacity, people arriving through the shared link are still bounded.
+const open2 = await store.createEvent(ME, { title: 'No capacity', startsAt: future(48), venueName: 'Park', maxPlusOnes: 5 }, db)
+const open2Link = tokenOf((await store.publishEvent(ME, open2.id, db)).shareUrl!)
+let accepted = 0
+for (let i = 0; i < 60; i++) if ((await store.submitRsvp(open2Link, { status: 'going', plusOnes: 5, name: `F ${i}`, clientKey: key(1000 + i) }, db)).ok) accepted++
+eq([accepted, (await store.headcount(ME, open2.id, db)).attendees], [50, 300], 'an event with no capacity takes at most 300 people through the shared link')
 // ICS folding keeps whole characters.
 const longView = { ...(await store.invitationFor(p3.data.personalToken, db))!.view!, title: 'a'.repeat(62) + '\u{1F600}\u{1F600}\u{1F600}', description: 'one\rtwo' }
 const folded = core.invitationIcs(longView, 'abc')!

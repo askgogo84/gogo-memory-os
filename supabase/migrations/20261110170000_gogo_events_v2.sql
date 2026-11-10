@@ -13,10 +13,13 @@
 --  * share_nonce: the share link can be rotated (the old link stops working for good).
 --  * A revoked guest no longer blocks adding the same phone number again.
 --  * gogo_event_rate_hit: a small fixed-window counter the public endpoint uses to bound requests.
+--  * pending_action: a cancel or time change on a published event waits for the organizer's explicit yes.
 begin;
 set local lock_timeout = '5s';
 
 alter table public.gogo_events add column if not exists share_nonce integer not null default 0 check (share_nonce >= 0);
+-- A cancel or a time change on a published event waits here for the organizer's explicit yes.
+alter table public.gogo_events add column if not exists pending_action jsonb;
 
 drop index if exists public.gogo_event_guests_phone_once;
 create unique index if not exists gogo_event_guests_phone_once on public.gogo_event_guests (event_id, phone) where phone is not null and token_revoked_at is null;
@@ -29,20 +32,23 @@ create table if not exists public.gogo_event_rate (
 alter table public.gogo_event_rate enable row level security;
 revoke all on public.gogo_event_rate from anon, authenticated;
 grant select, insert, update, delete on public.gogo_event_rate to service_role;
+create index if not exists gogo_event_rate_window_idx on public.gogo_event_rate (window_start);
 
 -- True while the caller is within p_limit hits per p_window_seconds for this bucket.
 create or replace function public.gogo_event_rate_hit(p_bucket text, p_limit integer, p_window_seconds integer) returns boolean
 language plpgsql security invoker set search_path = '' as $$
 declare n integer;
 begin
-  if p_bucket is null or char_length(p_bucket) < 8 or p_limit < 1 or p_window_seconds < 1 then return false; end if;
+  if p_bucket is null or char_length(p_bucket) < 8 or p_limit is null or p_limit < 1 or p_window_seconds is null or p_window_seconds < 1 then return false; end if;
   insert into public.gogo_event_rate as r (bucket, window_start, hits) values (left(p_bucket, 100), clock_timestamp(), 1)
   on conflict (bucket) do update set
     hits = case when r.window_start < clock_timestamp() - make_interval(secs => p_window_seconds) then 1 else r.hits + 1 end,
     window_start = case when r.window_start < clock_timestamp() - make_interval(secs => p_window_seconds) then clock_timestamp() else r.window_start end
   returning hits into n;
   -- Opportunistic cleanup so the table stays small.
-  if random() < 0.02 then delete from public.gogo_event_rate where window_start < clock_timestamp() - interval '1 day'; end if;
+  if random() < 0.02 then
+    delete from public.gogo_event_rate where bucket in (select bucket from public.gogo_event_rate where window_start < clock_timestamp() - interval '1 day' limit 200 for update skip locked);
+  end if;
   return n <= p_limit;
 end $$;
 
@@ -71,8 +77,12 @@ begin
   if g.rsvp_status = p_status and g.plus_ones = plus and g.dietary is not distinct from d and g.comment is not distinct from c then
     return jsonb_build_object('ok', true, 'status', p_status, 'plus_ones', plus, 'changed', false);
   end if;
-  -- Declining frees a place, so it is always allowed; other changes are bounded per link.
-  if g.rsvp_changes >= 20 and p_status <> 'declined' then return jsonb_build_object('ok', false, 'error', 'too_many_changes'); end if;
+  -- Changes are bounded per link. Past the bound one thing is still allowed: moving to declined, which frees a
+  -- place. It keeps the stored note and food preference, so it cannot be used to keep writing.
+  if g.rsvp_changes >= 20 then
+    if p_status <> 'declined' or g.rsvp_status = 'declined' then return jsonb_build_object('ok', false, 'error', 'too_many_changes'); end if;
+    d := g.dietary; c := g.comment;
+  end if;
   if p_status = 'going' and e.capacity is not null then
     select coalesce(count(*) + sum(o.plus_ones), 0) into taken from public.gogo_event_guests o
       where o.event_id = e.id and o.id <> g.id and o.rsvp_status = 'going' and o.token_revoked_at is null;
@@ -110,6 +120,13 @@ begin
   limit_n := least(greatest(coalesce(e.capacity, 100) * 3, 50), 1000);
   select count(*) into n from public.gogo_event_guests where event_id = e.id and source = 'share_link' and token_revoked_at is null;
   if n >= limit_n then return jsonb_build_object('ok', false, 'error', 'guest_limit'); end if;
+  -- With no capacity set, people arriving through the share link are still bounded, so a leaked link cannot run
+  -- the headcount up without limit.
+  if e.capacity is null and p_status = 'going' then
+    select coalesce(count(*) + sum(o.plus_ones), 0) into n from public.gogo_event_guests o
+      where o.event_id = e.id and o.source = 'share_link' and o.rsvp_status = 'going' and o.token_revoked_at is null;
+    if n + 1 + least(greatest(coalesce(p_plus_ones, 0), 0), e.max_plus_ones) > 300 then return jsonb_build_object('ok', false, 'error', 'guest_limit'); end if;
+  end if;
   begin
     insert into public.gogo_event_guests (event_id, name, source, token_hash) values (e.id, clean, 'share_link', p_guest_token_hash);
     r := public.gogo_event_rsvp(p_guest_token_hash, p_status, p_plus_ones, p_dietary, p_comment);

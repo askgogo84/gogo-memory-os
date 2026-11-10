@@ -6,15 +6,16 @@ import { forModel } from '@/lib/services/model-ids'
 import { recordMeterEvent } from '@/lib/metering/record'
 import type { EventAction, Extractor } from './entry'
 
-const ACTIONS = ['none', 'create', 'update', 'publish', 'cancel', 'add_guests', 'headcount', 'pending', 'link', 'list'] as const
+const ACTIONS = ['none', 'create', 'update', 'publish', 'cancel', 'add_guests', 'remove_guest', 'headcount', 'pending', 'link', 'new_link', 'link_off', 'list'] as const
 export const EVENT_TOOL: Anthropic.Tool = {
   name: 'event_action',
   description: 'The single action the organizer is asking for about an event they are hosting.',
   input_schema: {
     type: 'object',
     properties: {
-      action: { type: 'string', enum: [...ACTIONS], description: 'none = not about hosting or managing their own event (booking a table, a reminder, a question, anything else). create = start a new event. update = change the open event (date, time, place, name, size, or move it). publish = make the invitation live / get the link. cancel = cancel the open event. add_guests = add named people. headcount = how many are coming. pending = who has not replied. link = show the invitation link again. list = list their events.' },
-      title: { type: 'string', description: 'Short event name in the person\'s words, e.g. "Divya\'s birthday". Only if stated or obvious from the occasion.' },
+      action: { type: 'string', enum: [...ACTIONS], description: 'none = not about hosting or managing their own event (booking a table, a reminder, a question, anything else). create = start a new event. update = change the open event (date, time, place, name, size, or move it). publish = make the invitation live / get the link. cancel = cancel the open event. add_guests = add named people. remove_guest = take one named person off the list (name in guests). headcount = how many are coming. pending = who has not replied. link = show the invitation link again (or one guest\'s personal link: put the name in guests). new_link = replace the shared invitation link with a new one. link_off = switch the shared link off. list = list their events.' },
+      event: { type: 'string', description: 'Which of their existing events this is about, copied from their words (e.g. "Divya\'s birthday"), when they named one. Never a new name.' },
+      title: { type: 'string', description: 'create: the new event\'s short name in the person\'s words. update: ONLY when they ask to rename the event; the new name.' },
       kind: { type: 'string', enum: ['birthday', 'anniversary', 'dinner', 'outing', 'meeting', 'other'] },
       date: { type: 'string', description: 'YYYY-MM-DD in the organizer\'s timezone. Only if a date or a relative day was stated. Resolve relative days from today.' },
       time: { type: 'string', description: 'HH:MM, 24-hour, organizer\'s timezone. Only if a time was stated.' },
@@ -33,11 +34,12 @@ export function extractionSystem(input: { today: string; weekday: string; timezo
   return [
     'You read one message from a person who uses an assistant to host events (parties, dinners, outings, get-togethers) and return exactly one event_action.',
     `Today is ${input.weekday}, ${input.today} in ${input.timezone}.`,
-    input.active ? `Their open event: ${input.active}. A short message with no other subject (a place, a time, "publish", "move it to Sunday") is about this event.` : 'They have no open event.',
+    input.active ? `Their open events: ${input.active}. A short message with no other subject (a place, a time, "publish") is about the draft they are planning. If they name one of these events, put that name in "event".` : 'They have no open event.',
     'Rules:',
     '- Fill a field only if the person stated it. Never invent a date, time, place, name or number.',
     '- "next Sunday" means the first Sunday after today that is at least 2 days away; "this Saturday" means the coming Saturday.',
     '- Booking a restaurant table, ordering, a personal reminder, a calendar meeting with one person, or any question that is not about an event they are hosting: action "none".',
+    '- "cancel it", "move it" or "delete it" with no mention of an event, party or invitation: action "none" (it may be about a reminder or a booking).',
     '- If unsure whether it is about hosting an event: action "none".',
   ].join('\n')
 }

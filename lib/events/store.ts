@@ -144,7 +144,10 @@ export async function shareLink(owner: string, id: string, db: Db = theDb()): Pr
  *  Personal links keep working. */
 export async function disableShareLink(owner: string, id: string, db: Db = theDb()): Promise<void> {
   const e = await getEvent(owner, id, db)
-  check(await db.from('gogo_events').update({ share_token_hash: null, share_nonce: shareNonce(e) + 1 }).eq('owner_telegram_id', owned(owner)).eq('id', e.id).select('id'))
+  // Same revision guard as publish, and it bumps the revision, so a publish that read the old state cannot write
+  // the old link back afterwards.
+  const rows = check<any[]>(await db.from('gogo_events').update({ share_token_hash: null, share_nonce: shareNonce(e) + 1, revision: e.revision + 1 }).eq('owner_telegram_id', owned(owner)).eq('id', e.id).eq('revision', e.revision).select('id')) || []
+  if (!rows.length) fail('changed_meanwhile')
   await audit(db, e.id, 'owner', 'share_link.disabled')
 }
 /** A fresh share link; the previous one stops working. Null if the event is not published. */
@@ -152,7 +155,8 @@ export async function rotateShareLink(owner: string, id: string, db: Db = theDb(
   const e = await getEvent(owner, id, db)
   if (e.status !== 'published') return null
   const nonce = shareNonce(e) + 1, token = derivedToken('share', e.id, nonce)
-  check(await db.from('gogo_events').update({ share_token_hash: eventTokenHash(token), share_nonce: nonce }).eq('owner_telegram_id', owned(owner)).eq('id', e.id).select('id'))
+  const rows = check<any[]>(await db.from('gogo_events').update({ share_token_hash: eventTokenHash(token), share_nonce: nonce, revision: e.revision + 1 }).eq('owner_telegram_id', owned(owner)).eq('id', e.id).eq('revision', e.revision).select('id')) || []
+  if (!rows.length) fail('changed_meanwhile')
   await audit(db, e.id, 'owner', 'share_link.rotated')
   return rsvpUrl(token)
 }
@@ -201,6 +205,30 @@ export async function revokeGuest(owner: string, id: string, guestId: string, db
   const rows = check<any[]>(await db.from('gogo_event_guests').update({ token_revoked_at: new Date().toISOString() }).eq('event_id', e.id).eq('id', uuid(guestId)).select('id')) || []
   if (!rows.length) fail('not_found')
   await audit(db, e.id, 'owner', 'guest.revoked', { guest: uuid(guestId) })
+}
+
+/** The personal link of a guest the organizer added (their link is derived from the guest row, so it can be shown
+ *  again). Guests who joined through the share link hold their own link; it cannot be re-issued here. */
+export async function guestLink(owner: string, id: string, guestId: string, db: Db = theDb()): Promise<string | null> {
+  const e = await getEvent(owner, id, db)
+  const g = check<any>(await db.from('gogo_event_guests').select('id, source, token_hash, token_revoked_at').eq('event_id', e.id).eq('id', uuid(guestId)).maybeSingle())
+  if (!g || g.token_revoked_at || g.source !== 'organizer') return null
+  const token = derivedToken('guest', g.id)
+  return g.token_hash === eventTokenHash(token) ? rsvpUrl(token) : null
+}
+
+/** A cancel or time change on a published event is parked here until the organizer says yes. */
+export type PendingAction = { type: 'cancel' } | { type: 'move'; startsAt: string }
+export async function setPendingAction(owner: string, id: string, action: PendingAction | null, db: Db = theDb(), now = Date.now()): Promise<void> {
+  const e = await getEvent(owner, id, db)
+  check(await db.from('gogo_events').update({ pending_action: action ? { ...action, at: new Date(now).toISOString() } : null }).eq('owner_telegram_id', owned(owner)).eq('id', e.id).select('id'))
+}
+export function pendingActionOf(e: any, now = Date.now(), maxAgeMs = 10 * 60_000): PendingAction | null {
+  const p = e?.pending_action
+  if (!p || typeof p !== 'object' || !Number.isFinite(Date.parse(p.at)) || now - Date.parse(p.at) > maxAgeMs || now < Date.parse(p.at) - 60_000) return null
+  if (p.type === 'cancel') return { type: 'cancel' }
+  if (p.type === 'move' && typeof p.startsAt === 'string' && Number.isFinite(Date.parse(p.startsAt))) return { type: 'move', startsAt: p.startsAt }
+  return null
 }
 
 /** Counted by the database, in people. */
