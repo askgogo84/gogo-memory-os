@@ -13,6 +13,9 @@ assert.equal(isAutonomyStatus('What meetings do I have tomorrow?'),false)
 assert.equal(isConnectionStatus('Which email am I connected to?'),true)
 assert.equal(isConnectionStatus('What Google account am I connected to?'),true)
 assert.equal(isConnectionStatus('Connect my calendar'),false)
+// 10 Nov live phrasing and close variants answer from the stored connection, not the model.
+for (const q of ['Which email ID I am connected to', 'which email id am i connected to?', 'Which email address is connected', "what's my connected email", 'which gmail account am I using', 'What email is connected to AskGogo?']) assert.equal(isConnectionStatus(q), true, q)
+for (const q of ['which email should I send to Nithin', 'connect my email', 'which email did Divya send', 'email Nithin the deck']) assert.equal(isConnectionStatus(q), false, q)
 
 const pulse=readFileSync('lib/agent/autonomy-pulse.ts','utf8')
 const vercel=readFileSync('vercel.json','utf8')

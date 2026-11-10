@@ -68,6 +68,9 @@ export function isConnectionStatus(text:string){
     || /^(?:which|what)\s+gmail\s+account\s+is\s+(?:currently\s+)?connected\s+to\s+(?:askgogo|gogo|me)\??$/.test(t)
     || /^(?:which|what)\s+(?:email|calendar)\s+(?:am\s+i|is)\s+connected\s+(?:to|with)\??$/.test(t)
     || /^show\s+(?:my\s+)?connected\s+(?:google\s+)?accounts?\??$/.test(t)
+    // 10 Nov live: "Which email ID I am connected to" fell through to the model, which said it had no access.
+    || /^(?:which|what)\s+(?:google\s+|gmail\s+)?(?:account|e-?mail|mail|gmail|calendar)(?:\s+(?:id|address|account))?\s+(?:am\s+i|i\s+am|i'?m|is|are\s+you)\s+(?:currently\s+)?(?:connected|linked|using)(?:\s+(?:to|with|on))?(?:\s+(?:askgogo|gogo|me|you|here))?\s*\??$/.test(t)
+    || /^(?:what(?:'s|\s+is)|show)\s+my\s+connected\s+(?:e-?mail|gmail|google\s+account|mail)(?:\s+(?:id|address))?\s*\??$/.test(t)
 }
 
 export async function tryGetConnectionStatus(params:{actor:AgentActor;text:string}){
