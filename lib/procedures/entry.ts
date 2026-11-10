@@ -28,6 +28,7 @@ export function followUpReply(status: string, surface: ProcedureSurface = 'dashb
   if (/^thread_not_found/.test(e)) return `I couldn't find an email thread with ${who} in the Gmail you connected to AskGogo. Nothing was sent. If that mail went to another address, it isn't connected (ask me: which email am I connected to?). Otherwise tell me the sender's name or a word from the subject as it appears in Gmail.`
   if (/^thread_ambiguous/.test(e)) return `I found more than one email thread matching ${who}. Nothing was sent. Tell me the subject so I pick the right one.`
   if (/^gmail_(?:not_connected|consent_missing)/.test(e)) return `I can't read your Gmail for this yet, so nothing was sent. Connect Gmail and allow reading on your dashboard: https://app.askgogo.in/dashboard`
+  if (status === 'outcome_unknown') return `I couldn't confirm what happened with that follow-up. Please check your Sent folder before asking again.`
   if (status === 'running') return `I'm still reading that thread; Gmail didn't answer in time. Nothing has been sent. If a draft is ready it will wait for your approval at ${PROCEDURE_APPROVAL_URL}.`
   return `I couldn't prepare that follow-up. Nothing was sent.`
 }

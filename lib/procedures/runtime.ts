@@ -105,7 +105,11 @@ export function procedureRegistryFor(def: ProcedureDefinition, io: ProcedureIO, 
         if (!existing) {
           const fingerprint = approvalFingerprint(def, cur, state.context)
           const expiresAt = new Date(Date.now() + PROCEDURE_APPROVAL_TTL_MS).toISOString()
-          const row = await store.stageApproval({ telegramId, runId: ctx.runId, step: ctx.step, node: cur, def, preview: io.preview({ def, node: cur, context: state.context }), expiresAt, fingerprint })
+          // Staging the card happens before anything is executed: a failure here is a known "nothing ran", so it
+          // must not surface as an uncertain outcome.
+          let row: { id: string }
+          try { row = await store.stageApproval({ telegramId, runId: ctx.runId, step: ctx.step, node: cur, def, preview: io.preview({ def, node: cur, context: state.context }), expiresAt, fingerprint }) }
+          catch (e: any) { console.error('PROCEDURE_APPROVAL_STAGE_FAILED:', JSON.stringify({ procedure: def.id, node: cur.id, error: String(e?.message || e).slice(0, 200) })); return { status: 'blocked', error: `approval_stage_failed:${String(e?.message || e).slice(0, 200)}` } }
           const s = apply({ kind: 'approval_created', node: cur.id, approval: { id: row.id, actionType: cur.approval!.actionType, fingerprint, status: 'pending', expiresAt } })
           await persist(s)
           if (s.status === 'failed') return { status: 'blocked', error: s.error || 'approval_binding_failed' }
@@ -161,6 +165,16 @@ export function readFailureIsFinal(error: string): boolean {
   return /^(?:thread_not_found|thread_ambiguous|gmail_not_connected|gmail_consent_missing|gmail_owner_invalid)\b/.test(String(error || ''))
 }
 
+/** agent_approvals.action_type has a CHECK list (send_email, submit_form, calendar_change, booking, purchase, share,
+ *  reminder_change). Live 10 Nov: 'email.send' violated it, so no card was created. The procedure's own action name
+ *  stays in execution_payload.action; an action with no approved category is refused, never coerced. */
+const APPROVAL_DB_ACTION: Record<string, string> = { 'email.send': 'send_email', 'travel.book_cab': 'booking' }
+export function approvalDbActionType(actionType: string): string {
+  const mapped = APPROVAL_DB_ACTION[String(actionType)]
+  if (!mapped) throw new Error(`procedure_approval_action_unmapped:${String(actionType).slice(0, 60)}`)
+  return mapped
+}
+
 export async function supabaseProcedureStore(): Promise<ProcedureStore> {
   const { supabaseAdmin } = await import('@/lib/supabase-admin')
   const { buildApprovalBinding } = await import('@/lib/agent/approval-binding')
@@ -185,9 +199,9 @@ export async function supabaseProcedureStore(): Promise<ProcedureStore> {
       const input = autonomousStepApprovalInput(run as any, step as any, telegramId)
       const binding = buildApprovalBinding({ ...input, policyVersion: 'runtime-step-v1' })
       const { data, error } = await supabaseAdmin.from('agent_approvals').insert({
-        telegram_id: telegramId, run_id: runId, action_type: node.approval!.actionType, title: node.approval!.title.slice(0, 160),
+        telegram_id: telegramId, run_id: runId, action_type: approvalDbActionType(node.approval!.actionType), title: node.approval!.title.slice(0, 160),
         description: `Procedure ${def.title} (${def.id} v${def.version}). Nothing runs without this yes; it expires ${new Date(expiresAt).toUTCString()}.`.slice(0, 500),
-        payload_preview: preview.slice(0, 8), execution_payload: { plan_type: 'procedure', procedure: def.id, version: def.version, node: node.id, step_key: node.id, fingerprint, expires_at: expiresAt },
+        payload_preview: preview.slice(0, 8), execution_payload: { plan_type: 'procedure', procedure: def.id, version: def.version, node: node.id, step_key: node.id, action: node.approval!.actionType, fingerprint, expires_at: expiresAt },
         risk_level: def.domain === 'payments' ? 'high' : 'medium', status: 'pending', ...binding,
       }).select('id').single()
       if (error || !data?.id) throw new Error(`procedure_approval_create_failed:${error?.message || 'unknown'}`)
