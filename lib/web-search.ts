@@ -11,7 +11,10 @@ function cleanText(input: string) {
   return (input || '').replace(/\s+/g, ' ').trim()
 }
 
-export type WebSearchOptions = { includeDomains?: string[]; timeoutMs?: number; startDate?: string; endDate?: string; filterByPublishedDate?: boolean }
+export type WebSearchOptions = { includeDomains?: string[]; timeoutMs?: number; startDate?: string; endDate?: string; filterByPublishedDate?: boolean
+  /** Only results whose snippet is text from the page itself: skips the model-written last resort. For callers that
+   *  must find an exact string (an email address) on a page. */
+  pageTextOnly?: boolean }
 
 async function searchWithTavily(query: string, opts: WebSearchOptions = {}): Promise<WebSearchResult[]> {
   const apiKey = process.env.TAVILY_API_KEY
@@ -265,6 +268,7 @@ export async function searchWebResults(query: string, opts: WebSearchOptions = {
   }
   // 18 Oct live: Tavily hit its plan limit (432) and every web answer — petrol, gold, news — came back
   // empty. Anthropic's web search is the last resort so live questions still get sources.
+  if (opts.pageTextOnly) return []
   return await searchWithAnthropic(cleanQuery, opts).catch((fallbackErr: any) => {
     console.error('WEB_SEARCH_FALLBACK_FAILED:', fallbackErr?.message || fallbackErr)
     return []

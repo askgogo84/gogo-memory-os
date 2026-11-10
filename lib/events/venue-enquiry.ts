@@ -12,25 +12,34 @@ export type VenueContact =
   | { kind: 'email'; email: string; sourceUrl: string }
   | { kind: 'page'; sourceUrl: string }
   | { kind: 'none' }
+  | { kind: 'unavailable' }
 
 const FREE_MAIL = /@(?:gmail|googlemail|yahoo|ymail|rediffmail|hotmail|outlook|live|icloud|proton(?:mail)?|aol|zoho)\./i
 const AGGREGATOR = /(?:^|\.)(?:zomato|swiggy|dineout|eazydiner|tripadvisor|justdial|magicpin|facebook|instagram|linkedin|x|twitter|google|youtube|wikipedia|sulekha|venuelook|weddingwire|wedmegood|quora|reddit|yelp|opentable|sevenrooms|bookmyshow|district)\.[a-z.]+$/i
-const HOME_LIKE = /\b(?:home|house|my place|our place|flat|apartment|terrace|office|online|zoom|google meet|teams|tbd|not decided)\b/i
+// A home, a call, or a place named after a person ("Nithin's farmhouse"): never looked up, so no person's name goes to search.
+const HOME_LIKE = /\b(?:home|house|my place|our place|flat|apartment|terrace|office|online|zoom|google meet|teams|tbd|not decided|farm\s?house|villa|residence|club\s?house|bungalow)\b|\p{L}['’]s\b/iu
+// Words that are not a venue's name by themselves: a domain made of one of these proves nothing.
+const GENERIC = new Set(['the', 'and', 'social', 'table', 'cafe', 'coffee', 'bar', 'pub', 'hotel', 'kitchen', 'house', 'club', 'bistro', 'restaurant', 'restaurants', 'lounge', 'grill', 'garden', 'gardens', 'brewery', 'brewing', 'brewpub', 'diner', 'dining', 'food', 'foods', 'eat', 'eats', 'events', 'event', 'party', 'banquet', 'banquets', 'hall', 'resort', 'resorts', 'palace', 'grand', 'royal', 'park', 'plaza', 'cinema', 'studio', 'room', 'rooms', 'terrace', 'rooftop', 'india', 'bangalore', 'bengaluru', 'mumbai', 'delhi', 'chennai', 'hyderabad', 'pune', 'goa', 'city', 'central', 'express', 'world', 'place', 'spot', 'point', 'corner', 'street', 'road', 'new', 'old', 'big', 'little', 'blue', 'green', 'red', 'black', 'white', 'golden', 'one', 'first'])
 const letters = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
 const hostOf = (url: string) => { try { const u = new URL(url); return u.protocol === 'https:' || u.protocol === 'http:' ? u.hostname.toLowerCase().replace(/^www\./, '') : '' } catch { return '' } }
 /** The name part of a host: "toit" for toit.in, "theblackrabbit" for theblackrabbit.co.in. */
 const brandOf = (host: string) => { const p = host.split('.'); const tld2 = p.length >= 3 && /^(?:co|com|net|org)$/.test(p[p.length - 2]); return p[p.length - (tld2 ? 3 : 2)] || '' }
 const sameSite = (a: string, b: string) => a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`)
 
-/** True when the brand of a domain is the venue's own name ("toit" in "Toit Indiranagar"). Short brands must be a whole
- *  word of the venue name; longer ones may be the name written together. */
-export function domainIsVenue(host: string, venue: string): boolean {
-  const brand = letters(brandOf(host))
-  if (brand.length < 3 || AGGREGATOR.test(host)) return false
-  const words = venue.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
-  if (words.includes(brand)) return true
-  return brand.length >= 6 && letters(venue).startsWith(brand)
+const wordsOf = (venue: string) => venue.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+/** How a domain's name relates to the venue's name. 'full': the name written together from its first word on
+ *  (theblackrabbit for "The Black Rabbit", toit for "Toit"). 'word': one distinctive word of a longer name (toit for
+ *  "Toit Indiranagar"), which needs the page itself to mention another word of the name before it counts.
+ *  Generic words (social, table, cafe…), listing sites and non-ASCII hosts never count. */
+export function domainMatch(host: string, venue: string): 'full' | 'word' | null {
+  if (!/^[a-z0-9.-]+$/.test(host) || host.includes('xn--') || AGGREGATOR.test(host)) return null
+  const brand = brandOf(host).replace(/-/g, '')
+  if (brand.length < 3 || GENERIC.has(brand)) return null
+  const words = wordsOf(venue), lead = words[0] === 'the' ? words.slice(1) : words
+  for (const list of [words, lead]) for (let k = list.length; k >= 1; k--) if (list.slice(0, k).join('') === brand) return k === list.length ? 'full' : k >= 2 ? 'full' : 'word'
+  return words.includes(brand) ? 'word' : null
 }
+export const domainIsVenue = (host: string, venue: string) => domainMatch(host, venue) !== null
 
 /** Whether this event is worth a venue enquiry: a named venue (not a home or a call), a future date and a group. */
 export function needsVenueEnquiry(e: EventRow, now = Date.now()): boolean {
@@ -38,32 +47,56 @@ export function needsVenueEnquiry(e: EventRow, now = Date.now()): boolean {
     && Number.isInteger(e.capacity) && (e.capacity as number) >= 8
 }
 
-/** Picks the venue's own contact out of search results. Pure. */
+/** https, host and a plain path only: what is safe to show. No query string; an unusual path is dropped, so a link can
+ *  never carry words written as an instruction. */
+export function shownUrl(url: string): string {
+  try { const u = new URL(url); return u.protocol === 'https:' ? `https://${u.hostname}${/^[A-Za-z0-9/._~-]{1,80}$/.test(u.pathname) ? u.pathname : '/'}` : '' } catch { return '' }
+}
+const BOOKING_WORDS = /\b(?:private|group|event|events|party|parties|corporate|booking|bookings|reserv\w*|enquir\w*|inquir\w*)\b/i
+const NOT_BOOKING = /^(?:noreply|no-reply|donotreply|careers?|jobs|hr|press|media|privacy|legal|abuse|accounts?|billing|finance|franchise|marketing|vendors?|suppliers?|investors?|webmaster|admin|support)@/
+
+/** Picks the venue's own contact out of search results. Pure. An address is used only when: it is on a site whose
+ *  name is the venue's (and, for a one-word match, whose results also mention another word of the venue's name); only
+ *  one such site turned up; the address is on that site's own domain; the words around it, or its own name, are about
+ *  bookings or events; and no other address is as likely. Anything less: the official page, and no draft. */
 export function pickVenueContact(hits: SearchHit[], venue: string): VenueContact {
-  const own = hits.filter(h => domainIsVenue(hostOf(h.url), venue))
+  const others = wordsOf(venue).filter(w => w.length >= 4 && !GENERIC.has(w))
+  const byHost = new Map<string, SearchHit[]>()
+  for (const h of hits) { const host = hostOf(h.url); if (host && h.url.startsWith('https://') && domainMatch(host, venue)) byHost.set(host, [...(byHost.get(host) || []), h]) }
+  const sites = [...byHost.entries()].filter(([host, list]) => {
+    if (domainMatch(host, venue) === 'full') return true
+    const brand = brandOf(host).replace(/-/g, ''), text = list.map(h => `${h.title} ${h.snippet}`).join(' ').toLowerCase()
+    return others.some(w => w !== brand && new RegExp(`\\b${w}\\b`).test(text))
+  })
+  if (!sites.length) return { kind: 'none' }
+  const brands = new Set(sites.map(([host]) => { const p = host.split('.'); return p.slice(-(/^(?:co|com|net|org)$/.test(p[p.length - 2] || '') && p.length >= 3 ? 3 : 2)).join('.') }))
+  const page = shownUrl(sites[0][1][0].url)
+  // Two different sites both look like the venue's (toit.in and toit.com): not certain which is theirs.
+  if (brands.size > 1) return page ? { kind: 'page', sourceUrl: page } : { kind: 'none' }
   const found: { email: string; sourceUrl: string; score: number }[] = []
-  for (const h of own) {
-    const host = hostOf(h.url), text = `${h.title} ${h.snippet}`
+  for (const [host, list] of sites) for (const h of list) {
+    const text = `${h.title} ${h.snippet}`
     for (const m of text.matchAll(/[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9-]+(?:\.[a-z0-9-]+)+/gi)) {
       const email = m[0].toLowerCase().replace(/[.,;:]+$/, ''), domain = email.split('@')[1]
-      if (FREE_MAIL.test(email) || !sameSite(domain, host) || /^(?:noreply|no-reply|donotreply|careers|jobs|hr|press|privacy|legal|abuse)@/.test(email)) continue
+      if (FREE_MAIL.test(email) || !sameSite(domain, host) || NOT_BOOKING.test(email)) continue
       const near = text.slice(Math.max(0, (m.index || 0) - 160), (m.index || 0) + 160)
-      found.push({ email, sourceUrl: h.url, score: (/\b(?:private|group|event|events|party|parties|corporate|booking|bookings|reserv\w*|enquir\w*|inquir\w*)\b/i.test(near) ? 2 : 0) + (/^(?:events?|bookings?|reservations?|parties|enquir\w*|hello|info|contact)\b/.test(email) ? 1 : 0) })
+      if (/\b(?:do\s?n[o']t|no longer|not in use|old|former|discontinued|instead of)\b/i.test(near)) continue
+      const score = (BOOKING_WORDS.test(near) ? 2 : 0) + (/^(?:events?|bookings?|reservations?|parties|enquir\w*|hello|info|contact)\b/.test(email) ? 1 : 0)
+      if (score >= 1) found.push({ email, sourceUrl: shownUrl(h.url), score })
     }
   }
-  if (found.length) {
-    found.sort((a, b) => b.score - a.score)
-    // Two different addresses that look equally right: not certain which one takes bookings, so no draft.
-    if (found[1] && found[1].email !== found[0].email && found[1].score === found[0].score) return { kind: 'page', sourceUrl: found[0].sourceUrl }
-    return { kind: 'email', email: found[0].email, sourceUrl: found[0].sourceUrl }
-  }
-  return own.length ? { kind: 'page', sourceUrl: own[0].url } : { kind: 'none' }
+  found.sort((a, b) => b.score - a.score)
+  const best = found[0]
+  if (!best || !best.sourceUrl || found.some(f => f.email !== best.email && f.score === best.score)) return page ? { kind: 'page', sourceUrl: page } : { kind: 'none' }
+  return { kind: 'email', email: best.email, sourceUrl: best.sourceUrl }
 }
 
 export async function findVenueContact(venue: string, search: Search, timeoutMs = 6000): Promise<VenueContact> {
   const name = venue.replace(/[^\p{L}\p{N} &'.-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)
   if (name.length < 3) return { kind: 'none' }
   const runs = await Promise.allSettled([`${name} private events group booking enquiry email`, `${name} official website contact email`].map(q => search(q, { timeoutMs })))
+  // Every search failed: that is "could not look", not "they have no site".
+  if (runs.every(r => r.status === 'rejected')) return { kind: 'unavailable' }
   const hits = runs.flatMap(r => r.status === 'fulfilled' && Array.isArray(r.value) ? r.value : []).filter(h => h && typeof h.url === 'string').slice(0, 30)
     .map(h => ({ title: String(h.title || '').slice(0, 300), snippet: String(h.snippet || '').slice(0, 1500), url: h.url }))
   return pickVenueContact(hits, name)
@@ -98,5 +131,6 @@ export function venueStepText(e: EventRow, contact: VenueContact, organizer: str
       `Nothing has been sent. Say *send it* and I'll show it once more for your approval before it goes, or tell me what to change.`].join('\n\n') }
   }
   if (contact.kind === 'page') return { found: 'page', draft: null, text: `Next step: booking ${venue} for ${e.capacity}. I could not confirm a booking email from their own site, so I have not drafted anything. Their page: ${contact.sourceUrl}\nSend me the right address and I'll draft the enquiry.` }
+  if (contact.kind === 'unavailable') return { found: 'unavailable', draft: null, text: `Next step: booking ${venue} for ${e.capacity}. I could not look up how they take group bookings just now, so I have not drafted anything. Send me their email address and I'll draft the enquiry.` }
   return { found: 'none', draft: null, text: `Next step: booking ${venue} for ${e.capacity}. I could not find their official site, so I have not drafted anything. Send me their email address and I'll draft the enquiry.` }
 }

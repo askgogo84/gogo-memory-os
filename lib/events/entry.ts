@@ -305,7 +305,9 @@ async function afterDraftChange(owner: string, id: string, problems: string[], d
   return [head, draftSummary(e), next].filter(Boolean).join('\n\n')
 }
 
-export type EventDeps = { extract?: Extractor; db?: Db; now?: number; search?: import('./venue-enquiry').Search; saveDraft?: (draft: Record<string, unknown>) => Promise<void> }
+export type EventDeps = { extract?: Extractor; db?: Db; now?: number; search?: import('./venue-enquiry').Search; saveDraft?: (draft: Record<string, unknown>) => Promise<void>
+  /** The email draft the person has waiting right now (to be sent with "send it"), if any. */
+  pendingDraft?: () => Promise<Record<string, unknown> | null> }
 
 /** After a create or an edit: when the event now has a date, a named venue and a group size, look up how that venue
  *  takes group bookings and draft the enquiry (lib/events/venue-enquiry.ts). Once per event and venue. Bounded to a
@@ -317,24 +319,39 @@ async function venueNextStep(actor: AgentActor, owner: string, eventId: string, 
   const v = await import('./venue-enquiry')
   const e = await store.getEvent(owner, eventId, deps.db)
   if (!v.needsVenueEnquiry(e, now)) return null
-  const key = String(e.venue_name).toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 120)
-  if ((await store.ownerAuditDetails(owner, e.id, 'event.venue_enquiry_drafted', deps.db)).some(d => d.venue === key)) return null
+  // One enquiry per venue, date and headcount: a later change to any of them drafts it again, so a waiting draft never
+  // carries an old date or number.
+  const key = [String(e.venue_name).toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 120), e.starts_at, e.capacity].join('|')
+  if ((await store.ownerAuditDetails(owner, e.id, 'event.venue_enquiry_drafted', deps.db)).some(d => d.key === key)) return null
   const started = Date.now()
-  const search: import('./venue-enquiry').Search = deps.search || (async (q, o) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: o?.timeoutMs }))
+  // Page text only: an address must be read off the page itself, never out of a model-written summary.
+  const search: import('./venue-enquiry').Search = deps.search || (async (q, o) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: o?.timeoutMs, pageTextOnly: true }))
   const contact = await Promise.race([v.findVenueContact(String(e.venue_name), search, 6000), new Promise<null>(r => setTimeout(() => r(null), 7000))])
   if (!contact) { console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: 'timeout', ms: Date.now() - started })); return null }
   const step = v.venueStepText(e, contact, actor.name || '')
   if (step.draft) {
+    const fs = deps.saveDraft && deps.pendingDraft ? null : await import('@/lib/bot/handlers/followup-state')
+    const pending = deps.pendingDraft ? await deps.pendingDraft() : await (async () => {
+      const state = await fs!.getLatestFollowupState(actor.legacyTelegramId, 'gmail_reply_draft')
+      return state && fs!.isStrictlyFreshFollowupState(state, 30) && state.payload?.draft ? state.payload.draft as Record<string, unknown> : null
+    })()
+    // Another email draft is waiting for "send it": it is not replaced, and this one is not queued or recorded.
+    if (pending && pending.eventEnquiryFor !== e.id) {
+      console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: 'held', ms: Date.now() - started }))
+      return `Next step: booking ${String(e.venue_name).replace(/[\r\n]+/g, ' ').slice(0, 120)}. I found their enquiries address, but you have another email draft waiting, so I have not prepared this one. Send or drop that draft first. I'll offer this again the next time you change this event.`
+    }
+    const draft = { ...step.draft, eventEnquiryFor: e.id }
     // Hand the draft to the existing Gmail path: "send it" stages an approval card; only an approved card sends.
-    const save = deps.saveDraft || (async (draft: Record<string, unknown>) => {
-      const fs = await import('@/lib/bot/handlers/followup-state')
-      await fs.clearFollowupState(actor.legacyTelegramId, 'gmail_reply_draft')
-      await fs.saveFollowupState(actor.legacyTelegramId, 'gmail_reply_draft', { draft, created_at: new Date().toISOString() })
-      await import('@/lib/agent/typed-object-context').then(m => m.rememberTypedObjects(actor.legacyTelegramId, 'email', [{ id: `draft:${draft.to}`, title: `Draft to ${draft.to}: ${draft.subject}` }])).catch(() => {})
+    const save = deps.saveDraft || (async (d: Record<string, unknown>) => {
+      await fs!.clearFollowupState(actor.legacyTelegramId, 'gmail_reply_draft')
+      await fs!.saveFollowupState(actor.legacyTelegramId, 'gmail_reply_draft', { draft: d, created_at: new Date().toISOString() })
+      await import('@/lib/agent/typed-object-context').then(m => m.rememberTypedObjects(actor.legacyTelegramId, 'email', [{ id: `draft:${d.to}`, title: `Draft to ${d.to}: ${d.subject}` }])).catch(() => {})
     })
-    await save(step.draft)
+    await save(draft)
   }
-  await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { venue: key, found: step.found }, deps.db)
+  // A lookup that could not run is not recorded, so the next change tries again. A failed record never hides a draft
+  // that was saved: the text is still shown.
+  if (step.found !== 'unavailable') await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key, found: step.found }, deps.db).catch(() => { console.error('EVENT_VENUE_STEP_FAILED:', JSON.stringify({ code: 'audit' })) })
   console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: step.found, ms: Date.now() - started }))
   return step.text
 }
@@ -346,7 +363,8 @@ export async function tryEventAsk(actor: AgentActor, text: string, surface: Even
   const message = String(text || '').trim()
   if (!message || message.length > 1200) return null
   // "send it" belongs to the email draft (including the venue enquiry Gogo drafted), never to the event being planned.
-  if (/^\s*send\s+(?:it|this(?:\s+(?:reply|email|mail))?|the\s+(?:email|mail|enquiry))\s*[.!]?\s*$/i.test(message)) return null
+  // Same words as the email path accepts (lib/agent/gmail-send.ts).
+  if (/^(?:send\s+it|send\s+this\s+reply)$/i.test(message)) return null
   try {
     const now = deps.now ?? Date.now()
     const tz = normalizeTimezone(actor.timezone)
