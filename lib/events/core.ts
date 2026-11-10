@@ -58,7 +58,13 @@ export function draftProblems(d: EventDraft): string[] {
 }
 
 // ---- guests -------------------------------------------------------------------------------------------------------
-export const guestName = (v: unknown): string => clean(v, 80)
+/** Guest-supplied text: control characters and direction overrides removed, whitespace collapsed, cut by code point
+ *  (never through the middle of a character). Still untrusted data wherever it is shown or given to a model. */
+export function cleanGuestText(v: unknown, max: number): string {
+  if (typeof v !== 'string') return ''
+  return [...v.replace(/[\p{Cc}\p{Cf}]/gu, ' ').replace(/\s+/g, ' ').trim()].slice(0, max).join('')
+}
+export const guestName = (v: unknown): string => cleanGuestText(v, 80)
 /** A phone number as an exact digit string (8 to 15 digits), or null. A bare 10-digit Indian mobile gets 91. Never a number. */
 export function guestPhone(v: unknown): string | null {
   if (typeof v !== 'string') return null
@@ -134,17 +140,18 @@ export const RSVP_ERRORS: Record<string, string> = {
 export const rsvpErrorText = (code: unknown) => RSVP_ERRORS[String(code)] || 'That did not work. Please try again.'
 
 // ---- add to calendar ------------------------------------------------------------------------------------------------
-const icsEscape = (v: string) => v.replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/([,;])/g, '\\$1')
+const icsEscape = (v: string) => v.replace(/\\/g, '\\\\').replace(/\r\n?|\n/g, '\\n').replace(/([,;])/g, '\\$1')
 const icsTime = (iso: string) => new Date(iso).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}Z$/, 'Z')
 function fold(line: string): string {
+  // Fold at 73 bytes, by whole characters, so a multi-byte character or an emoji is never split.
   const out: string[] = []
-  let rest = line
-  while (Buffer.byteLength(rest, 'utf8') > 73) {
-    let cut = 73
-    while (Buffer.byteLength(rest.slice(0, cut), 'utf8') > 73) cut--
-    out.push(rest.slice(0, cut)); rest = ' ' + rest.slice(cut)
+  let current = '', bytes = 0
+  for (const ch of line) {
+    const size = Buffer.byteLength(ch, 'utf8')
+    if (bytes + size > 73) { out.push(current); current = ' '; bytes = 1 }
+    current += ch; bytes += size
   }
-  out.push(rest)
+  out.push(current)
   return out.join('\r\n')
 }
 /** An .ics file for the guest's own calendar. Holds only what that guest is allowed to see. */

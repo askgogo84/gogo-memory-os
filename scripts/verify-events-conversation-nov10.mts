@@ -9,6 +9,7 @@ import { pgliteSupabase } from './lib/pglite-supabase.mts'
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture-service-role-key-0123456789'
 process.env.ANTHROPIC_API_KEY ||= 'test'
+process.env.GOGO_EVENTS_TOKEN_SECRET = 'fixture-events-token-secret-0123456789abcdef'
 const entry = await import('../lib/events/entry.ts')
 const extract = await import('../lib/events/extract.ts')
 const store = await import('../lib/events/store.ts')
@@ -19,6 +20,7 @@ const eq = (a: unknown, b: unknown, msg: string) => { assert.deepEqual(a, b, msg
 const pg = new PGlite()
 await pg.exec('create role anon; create role authenticated; create role service_role;')
 await pg.exec(readFileSync(new URL('../supabase/migrations/20261110150000_gogo_events.sql', import.meta.url), 'utf8'))
+await pg.exec(readFileSync(new URL('../supabase/migrations/20261110170000_gogo_events_v2.sql', import.meta.url), 'utf8'))
 const db = pgliteSupabase(pg) as any
 const NOW = Date.parse('2026-11-10T09:00:00Z') // Tuesday 10 Nov 2026, 2:30 pm IST
 const actor = { userId: 'u1', legacyTelegramId: 884501501, whatsappId: '918884501501', name: 'Gogo', timezone: 'Asia/Kolkata' } as any
@@ -71,7 +73,7 @@ ok(/^Published\./.test(r3!) && link && /I have not messaged anyone/.test(r3!), '
 const shareToken = link!.split('/rsvp/')[1]
 
 // Guests answer through the real guest path.
-const g = async (name: string, status: string, plusOnes = 0) => store.submitRsvp(shareToken, { status, plusOnes, name }, db)
+const g = async (name: string, status: string, plusOnes = 0) => store.submitRsvp(shareToken, { status, plusOnes, name, clientKey: `client-key-for-${name.toLowerCase()}-0001` }, db)
 await store.updateEvent(OWNER, ev1.id, { maxPlusOnes: 2 }, db)
 await g('Nithin', 'going', 2); await g('Aparna', 'going'); await g('Chethan', 'maybe'); await g('Srini', 'declined')
 await store.addGuests(OWNER, ev1.id, [{ name: 'Mathew' }], db)

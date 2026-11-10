@@ -75,15 +75,41 @@ export default function RsvpClient({ token, mode, initial }: { token: string; mo
   const [saved, setSaved] = useState<Reply | null>(null)
   const [celebrate, setCelebrate] = useState(false)
   const needsName = mode === 'share' && activeToken === token
+  // The shared link stays in the address bar (so forwarding the page forwards the invitation, not this person's own
+  // reply). This browser remembers the person's personal link and a random key that makes a retried first answer
+  // land on the same guest. Storage is keyed by a short hash-like slice of the link, never the whole link.
+  const slot = `gogo-rsvp:${token.slice(0, 12)}`
+  const read = (k: string) => { try { return window.localStorage.getItem(k) } catch { return null } }
+  const write = (k: string, v: string | null) => { try { if (v === null) window.localStorage.removeItem(k); else window.localStorage.setItem(k, v) } catch { /* no storage: the page still works */ } }
+  const clientKey = useMemo(() => {
+    const fresh = () => Array.from(crypto.getRandomValues(new Uint8Array(24)), b => 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'[b % 64]).join('')
+    if (typeof window === 'undefined') return ''
+    const kept = read(`${slot}:key`)
+    if (kept && /^[A-Za-z0-9_-]{16,64}$/.test(kept)) return kept
+    const k = fresh(); write(`${slot}:key`, k); return k
+  }, [slot]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Someone who already answered through the shared link continues on their own personal link.
+  function forget() {
+    write(slot, null); write(`${slot}:key`, null)
+    window.location.reload()
+  }
+
+  // Someone who already answered through the shared link sees their own reply again on this device.
   useEffect(() => {
     if (mode !== 'share') return
-    try {
-      const mine = window.localStorage.getItem(`gogo-rsvp:${token.slice(0, 12)}`)
-      if (mine && /^[A-Za-z0-9_-]{43}$/.test(mine) && mine !== token) window.location.replace(`/rsvp/${mine}`)
-    } catch { /* no storage: the page still works */ }
-  }, [mode, token])
+    const mine = read(slot)
+    if (!mine || !/^[A-Za-z0-9_-]{43}$/.test(mine) || mine === token) return
+    let cancelled = false
+    fetch(`/api/rsvp/${mine}`, { referrerPolicy: 'no-referrer' }).then(async res => {
+      const data = await res.json().catch(() => null)
+      if (cancelled) return
+      if (!res.ok || !data?.invitation) { write(slot, null); return } // revoked or gone: back to the shared invitation
+      setActiveToken(mine); setInv(data.invitation)
+      const g = data.invitation.guest
+      if (g) { setName(g.name || ''); setPlus(g.plusOnes || 0); setDietary(g.dietary || ''); setComment(g.comment || ''); if (['going', 'maybe', 'declined'].includes(g.rsvp)) setReply(g.rsvp) }
+    }).catch(() => { /* offline: the shared invitation is still shown */ })
+    return () => { cancelled = true }
+  }, [mode, token]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const open = inv.status === 'open'
   const answered = inv.guest && inv.guest.rsvp !== 'none'
@@ -94,13 +120,10 @@ export default function RsvpClient({ token, mode, initial }: { token: string; mo
     setBusy(true); setError('')
     try {
       const res = await fetch(`/api/rsvp/${activeToken}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, referrerPolicy: 'no-referrer',
-        body: JSON.stringify({ status: reply, plusOnes: reply === 'going' ? plus : 0, dietary: reply === 'going' ? dietary : '', comment, name }) })
+        body: JSON.stringify({ status: reply, plusOnes: reply === 'going' ? plus : 0, dietary: reply === 'going' ? dietary : '', comment, name, clientKey }) })
       const data = await res.json().catch(() => null)
-      if (data?.personalToken) {
-        setActiveToken(data.personalToken)
-        try { window.localStorage.setItem(`gogo-rsvp:${token.slice(0, 12)}`, data.personalToken) } catch { /* fine */ }
-        try { window.history.replaceState(null, '', `/rsvp/${data.personalToken}`) } catch { /* fine */ }
-      }
+      if (data?.personalToken) { setActiveToken(data.personalToken); write(slot, data.personalToken) }
+      if (data?.gone && mode === 'share') { write(slot, null); setActiveToken(token) }
       if (data?.invitation) setInv(data.invitation)
       if (!res.ok || !data?.ok) { setError(data?.error || 'That did not work. Please try again.'); return }
       setSaved(reply)
@@ -125,7 +148,7 @@ export default function RsvpClient({ token, mode, initial }: { token: string; mo
         </section>
 
         <dl className="rsvp-facts">
-          <dt>When</dt><dd>{whenLabel(inv.startsAt, inv.timezone)}</dd>
+          <dt>When</dt><dd suppressHydrationWarning>{whenLabel(inv.startsAt, inv.timezone)}</dd>
           {place || inv.placeHidden ? <><dt>Where</dt><dd>{place || 'Shared after you say Going'}{inv.placeHidden && place ? <span className="rsvp-muted"> · full address after you say Going</span> : null}</dd></> : null}
           {inv.onlineUrl ? <><dt>Online</dt><dd><a href={inv.onlineUrl} rel="noreferrer noopener" target="_blank">Join link</a></dd></> : null}
           {inv.dressCode ? <><dt>Dress</dt><dd>{inv.dressCode}</dd></> : null}
@@ -138,7 +161,7 @@ export default function RsvpClient({ token, mode, initial }: { token: string; mo
         {open ? (
           <>
             {needsName ? <label className="rsvp-field" htmlFor="rsvp-name">Your name<input id="rsvp-name" type="text" value={name} maxLength={80} autoComplete="name" onChange={e => setName(e.target.value)} /></label>
-              : inv.guest?.name ? <p className="rsvp-muted">Invitation for <b>{inv.guest.name}</b></p> : null}
+              : inv.guest?.name ? <p className="rsvp-muted">Invitation for <b>{inv.guest.name}</b>{mode === 'share' ? <> · <button type="button" className="rsvp-link" onClick={forget}>Not you? Answer as someone else</button></> : null}</p> : null}
             <div className="rsvp-seg" role="group" aria-label="Your reply">
               {(['going', 'maybe', 'declined'] as Reply[]).map(r => <button key={r} type="button" aria-pressed={reply === r} onClick={() => { setReply(r); setSaved(null); setError(''); if (r !== 'going') setPlus(0) }}>{LABEL[r]}</button>)}
             </div>
@@ -176,6 +199,7 @@ const CSS = `
 .rsvp-facts a{color:var(--rsvp-accent-deep);font-weight:700}
 .rsvp-desc{margin:0;color:var(--rsvp-ink-2);white-space:pre-line;overflow-wrap:anywhere}
 .rsvp-muted{color:var(--rsvp-ink-3);font-size:14px;font-weight:400;margin:0}
+.rsvp-link{font:inherit;background:none;border:0;padding:8px 0;color:var(--rsvp-accent-deep);font-weight:600;text-decoration:underline;cursor:pointer}
 .rsvp-seg{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .rsvp-seg button,.rsvp-btn,.rsvp-ghost,.rsvp-ctl button{font:inherit;cursor:pointer;border-radius:14px;min-height:50px}
 .rsvp-seg button{background:var(--rsvp-surface);border:1.5px solid var(--rsvp-line);color:var(--rsvp-ink);font-weight:700}

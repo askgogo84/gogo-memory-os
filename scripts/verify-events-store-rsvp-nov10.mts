@@ -7,6 +7,7 @@ import { pgliteSupabase } from './lib/pglite-supabase.mts'
 
 process.env.NEXT_PUBLIC_SUPABASE_URL ||= 'https://fixture.supabase.co'
 process.env.SUPABASE_SERVICE_ROLE_KEY ||= 'fixture-service-role-key-0123456789'
+process.env.GOGO_EVENTS_TOKEN_SECRET = 'fixture-events-token-secret-0123456789abcdef'
 const store = await import('../lib/events/store.ts')
 const core = await import('../lib/events/core.ts')
 
@@ -18,6 +19,8 @@ const fails = async (p: Promise<unknown>, code: string, msg: string) => { await 
 const pg = new PGlite()
 await pg.exec('create role anon; create role authenticated; create role service_role;')
 await pg.exec(readFileSync(new URL('../supabase/migrations/20261110150000_gogo_events.sql', import.meta.url), 'utf8'))
+await pg.exec(readFileSync(new URL('../supabase/migrations/20261110170000_gogo_events_v2.sql', import.meta.url), 'utf8'))
+const key = (n: number) => `client-key-${String(n).padStart(8, '0')}`
 const db = pgliteSupabase(pg) as any
 const ME = '9007199254740993', OTHER = '-884501501'
 const future = (h: number) => new Date(Date.now() + h * 3600_000).toISOString()
@@ -30,13 +33,13 @@ eq(await store.publishEvent(ME, draft.id, db), { event: null, missing: ['date_ti
 await fails(store.createEvent(ME, { title: '   ' }, db), 'title_required', 'a title is required')
 await fails(store.createEvent(ME, { title: 'X', capacity: 0 }, db), 'invalid_event_fields', 'invalid fields are refused')
 await fails(store.createEvent('12abc', { title: 'X' }, db), 'invalid_owner', 'an owner id that is not a decimal string is refused')
-eq(await store.invitationFor(store.derivedToken('share', draft.id), db), null, 'a draft has no public invitation')
+eq(await store.invitationFor(store.derivedToken('share', draft.id, 0), db), null, 'a draft has no public invitation')
 
 // 2. Edit, then publish (tests 5, 6).
 const edited = await store.updateEvent(ME, draft.id, { startsAt: future(96), venueName: 'Toit', venueAddress: '298, 100 Feet Road, Indiranagar', dressCode: 'Something colourful' }, db)
 eq([edited.revision, edited.venue_name], [2, 'Toit'], 'an edit bumps the revision')
 const pub = await store.publishEvent(ME, draft.id, db)
-ok(pub.event?.status === 'published' && core.TOKEN_RE.test(tokenOf(pub.shareUrl!)), 'publishing returns a share link with a 256-bit token')
+ok(pub.event?.status === 'published' && pub.event.revision === 3 && core.TOKEN_RE.test(tokenOf(pub.shareUrl!)), 'publishing returns a share link with a 256-bit token and bumps the revision')
 eq(await store.shareLink(ME, draft.id, db), pub.shareUrl, 'the organizer can get the same link again later')
 const stored = (await pg.query('select share_token_hash from gogo_events where id=$1', [draft.id])).rows[0] as any
 ok(stored.share_token_hash === core.eventTokenHash(tokenOf(pub.shareUrl!)) && !JSON.stringify(stored).includes(tokenOf(pub.shareUrl!)), 'only the hash of the link is stored')
@@ -80,21 +83,42 @@ eq(await store.submitRsvp('../../etc/passwd', { status: 'going' }, db), { ok: fa
 // 6. A guest with the share link.
 const shareTok = tokenOf(pub.shareUrl!)
 eq((await store.invitationFor(shareTok, db))?.mode, 'share', 'the share link shows the invitation with no guest')
-eq((await store.submitRsvp(shareTok, { status: 'going' }, db)).error, 'name_required', 'a name is needed to answer through the share link')
-const joined = await store.submitRsvp(shareTok, { status: 'going', plusOnes: 1, name: ' Srini ' }, db)
+eq((await store.submitRsvp(shareTok, { status: 'going', clientKey: key(1) }, db)).error, 'name_required', 'a name is needed to answer through the share link')
+eq((await store.submitRsvp(shareTok, { status: 'going', name: 'Srini' }, db)).error, 'invalid_client_key', 'and the browser key that makes retries safe')
+eq((await store.listGuests(ME, draft.id, db)).length, 2, 'neither refused attempt created a guest')
+const joined = await store.submitRsvp(shareTok, { status: 'going', plusOnes: 1, name: ' Sri\u202Eni\u0007 ', clientKey: key(1) }, db)
+const again = await store.submitRsvp(shareTok, { status: 'going', plusOnes: 1, name: 'Srini', clientKey: key(1) }, db)
+eq([again.ok, again.personalToken], [true, joined.personalToken], 'the same first answer sent twice (a retry) lands on the same guest')
+eq((await store.listGuests(ME, draft.id, db)).filter(g => g.source === 'share_link').length, 1, 'and creates one guest, not two')
+eq((await store.headcount(ME, draft.id, db)).attendees, 2, 'so the headcount is not doubled')
 ok(joined.ok && core.TOKEN_RE.test(joined.personalToken!) && joined.personalToken !== shareTok, 'answering through the share link returns a personal link')
-eq((await store.invitationFor(joined.personalToken!, db))?.view?.guest, { name: 'Srini', rsvp: 'going', plusOnes: 1, dietary: null, comment: null }, 'which shows and edits that guest')
+eq((await store.invitationFor(joined.personalToken!, db))?.view?.guest, { name: 'Sri ni', rsvp: 'going', plusOnes: 1, dietary: null, comment: null }, 'which shows that guest, with control and direction-override characters removed from the name')
 eq((await store.submitRsvp(joined.personalToken!, { status: 'maybe' }, db)).ok, true, 'editing through the personal link changes the same guest')
-eq((await store.listGuests(ME, draft.id, db)).filter(g => g.name === 'Srini').map(g => [g.source, g.rsvp, g.plusOnes]), [['share_link', 'maybe', 0]], 'one guest row, not two')
+eq((await store.listGuests(ME, draft.id, db)).filter(g => g.source === 'share_link').map(g => [g.rsvp, g.plusOnes]), [['maybe', 0]], 'one guest row, not two')
 
 // 7. Capacity through the store.
 const small = await store.createEvent(ME, { title: 'Small dinner', startsAt: future(48), venueName: 'Home', capacity: 2, maxPlusOnes: 3 }, db)
 const smallPub = await store.publishEvent(ME, small.id, db)
-const first = await store.submitRsvp(tokenOf(smallPub.shareUrl!), { status: 'going', plusOnes: 1, name: 'One' }, db)
-const second = await store.submitRsvp(tokenOf(smallPub.shareUrl!), { status: 'going', name: 'Two' }, db)
-eq([first.ok, second.ok, second.error, second.placesLeft], [true, false, 'full', 0], 'a full event refuses the next guest')
-ok(core.TOKEN_RE.test(second.personalToken!), 'the refused guest still gets a personal link to answer differently')
-eq((await store.submitRsvp(second.personalToken!, { status: 'maybe' }, db)).ok, true, 'for example as a maybe')
+const first = await store.submitRsvp(tokenOf(smallPub.shareUrl!), { status: 'going', plusOnes: 1, name: 'One', clientKey: key(10) }, db)
+const second = await store.submitRsvp(tokenOf(smallPub.shareUrl!), { status: 'going', name: 'Two', clientKey: key(11) }, db)
+eq([first.ok, second.ok, second.error, second.placesLeft, second.personalToken], [true, false, 'full', 0, undefined], 'a full event refuses the next guest')
+eq((await store.listGuests(ME, small.id, db)).length, 1, 'and the refused answer leaves no guest behind')
+for (let i = 0; i < 60; i++) await store.submitRsvp(tokenOf(smallPub.shareUrl!), { status: 'going', name: `Bot ${i}`, clientKey: key(100 + i) }, db)
+eq((await store.listGuests(ME, small.id, db)).length, 1, 'sixty refused attempts still leave one guest: the link cannot be filled with junk')
+eq((await store.submitRsvp(tokenOf(smallPub.shareUrl!), { status: 'maybe', name: 'Two', clientKey: key(11) }, db)).ok, true, 'the refused guest can answer maybe instead')
+// The organizer's own list never switches the share link off.
+const big = await store.createEvent(ME, { title: 'Big list', startsAt: future(48), venueName: 'Hall', capacity: 10 }, db)
+await store.addGuests(ME, big.id, Array.from({ length: 60 }, (_, i) => ({ name: `Named ${i}` })), db)
+const bigPub = await store.publishEvent(ME, big.id, db)
+eq((await store.submitRsvp(tokenOf(bigPub.shareUrl!), { status: 'maybe', name: 'Walk-in', clientKey: key(20) }, db)).ok, true, 'sixty named guests do not block a share-link guest')
+await assert.rejects(store.addGuests(ME, big.id, Array.from({ length: 201 }, (_, i) => ({ name: `X ${i}` })), db), (e: any) => e.code === 'too_many_at_once'); checks++
+// Repeats and the change bound.
+const rep1 = await store.submitRsvp(tokenOf(bigPub.shareUrl!), { status: 'going', name: 'Repeater', clientKey: key(21) }, db)
+for (let i = 0; i < 30; i++) await store.submitRsvp(rep1.personalToken!, { status: 'going' }, db)
+eq(((await pg.query('select rsvp_changes, (select count(*)::int from gogo_event_rsvp_history h where h.guest_id = g.id) as history from gogo_event_guests g where token_hash = $1', [core.eventTokenHash(rep1.personalToken!)])).rows[0]), { rsvp_changes: 1, history: 1 }, 'thirty identical repeats are not counted and write no history')
+for (let i = 0; i < 25; i++) await store.submitRsvp(rep1.personalToken!, { status: i % 2 ? 'going' : 'maybe' }, db)
+eq((await store.submitRsvp(rep1.personalToken!, { status: 'maybe', comment: 'x' }, db)).error, 'too_many_changes', 'real changes are bounded per link')
+eq((await store.submitRsvp(rep1.personalToken!, { status: 'declined' }, db)).ok, true, 'but declining is always allowed, so nobody is stuck holding a place')
 
 // 8. Revoke, disable the share link (test 12).
 const nithin = (await store.listGuests(ME, draft.id, db)).find(g => g.name === 'Nithin')!
@@ -102,8 +126,14 @@ await store.revokeGuest(ME, draft.id, nithin.id, db)
 eq((await store.invitationFor(nithinToken, db))?.mode, 'revoked', 'a revoked link shows as no longer active')
 eq((await store.submitRsvp(nithinToken, { status: 'going' }, db)).error, 'revoked', 'and cannot answer')
 await fails(store.revokeGuest(ME, mine2.id, nithin.id, db), 'not_found', "a guest cannot be revoked through a different event")
+const readded = await store.addGuests(ME, draft.id, [{ name: 'Nithin', phone: '9900000001' }], db)
+ok(readded.added.length === 1 && tokenOf(readded.added[0].link) !== nithinToken, 'a revoked guest can be added again and gets a new link')
 await store.disableShareLink(ME, draft.id, db)
 eq([await store.shareLink(ME, draft.id, db), await store.invitationFor(shareTok, db)], [null, null], 'a disabled share link stops working')
+const republished = await store.publishEvent(ME, draft.id, db)
+ok(republished.shareUrl && republished.shareUrl !== pub.shareUrl && (await store.invitationFor(shareTok, db)) === null, 'publishing again gives a new link; the disabled one never comes back')
+const rotated = await store.rotateShareLink(ME, draft.id, db)
+ok(rotated && rotated !== republished.shareUrl && (await store.invitationFor(tokenOf(republished.shareUrl!), db)) === null && (await store.invitationFor(tokenOf(rotated!), db))?.mode === 'share', 'rotating replaces the link')
 ok((await store.invitationFor(joined.personalToken!, db))?.view, 'personal links keep working after the share link is disabled')
 
 // 9. Cancel (test 28, data side) and closed events.
@@ -116,28 +146,86 @@ await fails(store.addGuests(ME, draft.id, [{ name: 'Late' }], db), 'event_closed
 
 // 10. Audit trail and missing tables.
 eq(((await pg.query('select action from gogo_event_audit where event_id=$1 order by id', [draft.id])).rows as any[]).map(r => r.action),
-  ['event.created', 'event.updated', 'event.published', 'guests.added', 'guest.revoked', 'share_link.disabled', 'event.cancelled'], 'organizer actions are recorded in order')
+  ['event.created', 'event.updated', 'event.published', 'guests.added', 'guest.revoked', 'guests.added', 'share_link.disabled', 'event.published', 'share_link.rotated', 'event.cancelled'], 'organizer actions are recorded in order')
 const empty = new PGlite()
 await fails(store.listEvents(ME, pgliteSupabase(empty) as any), 'events_not_enabled', 'before the migration is applied the store says events are not enabled')
 await empty.close()
 
 // 11. Tokens are derived, stable and keyed.
 eq(store.derivedToken('guest', nithin.id), store.derivedToken('guest', nithin.id), 'a derived token is stable')
-ok(store.derivedToken('guest', nithin.id) !== store.derivedToken('share', nithin.id) && store.derivedToken('guest', nithin.id, { SUPABASE_SERVICE_ROLE_KEY: 'another-secret-value-000000' }) !== store.derivedToken('guest', nithin.id), 'it depends on its kind and on the server key')
-assert.throws(() => store.derivedToken('guest', nithin.id, { SUPABASE_SERVICE_ROLE_KEY: 'short' }), (e: any) => e.code === 'events_token_key_missing'); checks++
+ok(store.derivedToken('guest', nithin.id) !== store.derivedToken('share', nithin.id, 0) && store.derivedToken('share', nithin.id, 0) !== store.derivedToken('share', nithin.id, 1) && store.derivedToken('guest', nithin.id, '', { GOGO_EVENTS_TOKEN_SECRET: 'another-events-token-secret-0123456789ab' }) !== store.derivedToken('guest', nithin.id), 'it depends on its kind, its rotation number and the events key')
+assert.throws(() => store.derivedToken('guest', nithin.id, '', { SUPABASE_SERVICE_ROLE_KEY: 'a-long-service-role-key-that-must-not-be-used-0000' }), (e: any) => e.code === 'events_token_key_missing'); checks++ // no fallback to another credential
+assert.throws(() => store.derivedToken('join', nithin.id, 'short'), (e: any) => e.code === 'invalid_client_key'); checks++
+// A real database error is not reported as "events are not enabled".
+await assert.rejects(pg.query(`insert into gogo_events (owner_telegram_id, title, capacity) values ('1','x',0)`)); checks++
+const broken = { from: () => ({ select: () => ({ eq: () => ({ order: () => ({ limit: async () => ({ data: null, error: { code: '23514', message: 'new row for relation "gogo_events" violates check constraint' } }) }) }) }) }), rpc: async () => ({ data: null, error: null }) }
+const realConsoleError = console.error; const logged: string[] = []; console.error = (...a: any[]) => { logged.push(a.join(' ')) }
+await fails(store.listEvents(ME, broken as any), 'events_store_failed', 'a constraint error is a store failure, not "not enabled"')
+console.error = realConsoleError
+ok(logged.some(l => /EVENTS_STORE_FAILED/.test(l) && /23514/.test(l)), 'and it is logged with the database code so it can be diagnosed')
 
-// 12. The public route and page: what they must and must not do.
+// 12. The public route, executed. A fresh published event, the real handlers, the real store, PGlite underneath.
+store.setEventsDbForTests(db)
+const routeMod = await import('../app/api/rsvp/[token]/route.ts')
+const call = async (method: 'GET' | 'POST', token: string, body?: unknown, o: { query?: string; ip?: string; raw?: BodyInit; headers?: Record<string, string> } = {}) => {
+  const req = new Request(`https://app.askgogo.in/api/rsvp/${token}${o.query || ''}`, { method, headers: { 'x-forwarded-for': o.ip || '203.0.113.7', ...(o.headers || {}) }, body: method === 'POST' ? (o.raw ?? JSON.stringify(body)) : undefined, ...(method === 'POST' ? { duplex: 'half' } : {}) } as any)
+  const res = await (routeMod as any)[method](req, { params: Promise.resolve({ token }) })
+  const text = await res.text()
+  let data: any = null; try { data = JSON.parse(text) } catch { /* ics */ }
+  return { status: res.status, data, text, headers: res.headers }
+}
+const party = await store.createEvent(ME, { title: 'Route party', startsAt: future(72), venueName: 'Toit', venueAddress: '298, 100 Feet Road', capacity: 3, maxPlusOnes: 2, hostName: 'Gogo' }, db)
+const partyLink = tokenOf((await store.publishEvent(ME, party.id, db)).shareUrl!)
+const named = tokenOf((await store.addGuests(ME, party.id, [{ name: 'Divya', phone: '9900000002' }], db)).added[0].link)
+const leaks = (r: { text: string }) => /owner_telegram_id|9007199254740993|919900000002|share_token|token_hash|"capacity"|"id"|event_id/.test(r.text) || r.text.includes(party.id)
+const g1 = await call('GET', partyLink)
+eq([g1.status, g1.data.mode, g1.data.invitation.venueName, g1.data.invitation.venueAddress, g1.data.invitation.placeHidden], [200, 'share', 'Toit', null, true], 'GET on the share link shows the invitation without the address')
+eq([g1.headers.get('cache-control'), g1.headers.get('referrer-policy'), g1.headers.get('x-robots-tag')], ['no-store', 'no-referrer', 'noindex, nofollow'], 'private, no referrer, not indexed')
+ok(!leaks(g1), 'no owner, ids, capacity, phone or hashes in the response')
+eq([(await call('GET', core.newEventToken())).status, (await call('GET', 'short')).status, (await call('POST', 'short', { status: 'going' })).status], [404, 404, 404], 'unknown and malformed links are 404')
+const p1 = await call('POST', named, { status: 'going', plusOnes: 2 })
+eq([p1.status, p1.data.ok, p1.data.invitation.guest.name, p1.data.invitation.venueAddress, p1.data.personalToken], [200, true, 'Divya', '298, 100 Feet Road', null], 'a named guest goes with two more and now sees the address')
+const p2 = await call('POST', partyLink, { status: 'going', name: 'Late', clientKey: key(30) })
+eq([p2.status, p2.data.ok, p2.data.error, 'invitation' in p2.data], [409, false, 'This event is full.', false], 'a full event answers 409 and returns no invitation data')
+ok(!leaks(p2) && !p2.text.includes('100 Feet Road'), 'the refusal leaks neither the address nor anything internal')
+eq([(await call('POST', partyLink, { status: 'going', name: 'Late' })).status, (await call('POST', partyLink, { status: 'perhaps', name: 'L', clientKey: key(31) })).status, (await call('POST', named, [1, 2])).status, (await call('POST', named, undefined, { raw: 'not json' })).status], [400, 400, 400, 400], 'bad requests are 400')
+const p3 = await call('POST', partyLink, { status: 'maybe', name: 'Aparna', clientKey: key(32) })
+ok(p3.status === 200 && core.TOKEN_RE.test(p3.data.personalToken) && p3.data.invitation.guest.name === 'Aparna' && p3.data.invitation.venueAddress === null, 'a share-link maybe gets a personal link and still no address')
+eq((await call('POST', named, undefined, { raw: JSON.stringify({ status: 'going', comment: 'x'.repeat(5000) }) })).status, 413, 'an oversized body is refused')
+const chunked = new ReadableStream({ start(c) { for (let i = 0; i < 40; i++) c.enqueue(new TextEncoder().encode('x'.repeat(1000))); c.close() } })
+eq((await call('POST', named, undefined, { raw: chunked })).status, 413, 'an oversized body with no declared length is refused while it is being read')
+const ics = await call('GET', named, undefined, { query: '?format=ics' })
+ok(ics.status === 200 && /text\/calendar/.test(ics.headers.get('content-type') || '') && ics.text.includes('SUMMARY:Route party') && ics.text.includes('100 Feet Road'), 'a going guest gets a calendar file with the address')
+ok(!ics.text.includes(named.slice(0, 8)) && /UID:[0-9a-f]{32}@askgogo\.in/.test(ics.text), 'the calendar id is a hash: no part of the link is exported')
+ok(!(await call('GET', p3.data.personalToken, undefined, { query: '?format=ics' })).text.includes('100 Feet Road'), "a maybe guest's calendar file has no address")
+const divyaRow = (await store.listGuests(ME, party.id, db)).find(g => g.name === 'Divya')!
+await store.revokeGuest(ME, party.id, divyaRow.id, db)
+eq([(await call('GET', named)).status, (await call('POST', named, { status: 'declined' })).data.gone], [404, true], 'a revoked link is 404 to read and tells the page to forget it')
+// Rate limits: per address, and it does not depend on the link being valid.
+let limited = 0
+for (let i = 0; i < 40; i++) if ((await call('POST', p3.data.personalToken, { status: 'maybe' }, { ip: '198.51.100.9' })).status === 429) limited++
+eq(limited, 10, 'the thirty-first answer from one address in ten minutes is asked to slow down')
+eq((await call('POST', p3.data.personalToken, { status: 'maybe' }, { ip: '198.51.100.10' })).status, 200, 'another address is not affected')
+ok(((await pg.query('select bucket from gogo_event_rate')).rows as any[]).every(r => /^(?:ip|tk):[0-9a-f]{40}$/.test(r.bucket)), 'the counters hold hashes, not addresses or links')
+// ICS folding keeps whole characters.
+const longView = { ...(await store.invitationFor(p3.data.personalToken, db))!.view!, title: 'a'.repeat(62) + '\u{1F600}\u{1F600}\u{1F600}', description: 'one\rtwo' }
+const folded = core.invitationIcs(longView, 'abc')!
+ok(!/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(folded) && folded.split('\r\n').every(l => Buffer.byteLength(l, 'utf8') <= 75) && !/one\rtwo/.test(folded), 'folding never splits a character and a bare carriage return is escaped')
+store.setEventsDbForTests(null)
+
+// 13. Source checks for what cannot be executed here.
 const route = readFileSync(new URL('../app/api/rsvp/[token]/route.ts', import.meta.url), 'utf8')
 const page = readFileSync(new URL('../app/rsvp/[token]/page.tsx', import.meta.url), 'utf8')
 const client = readFileSync(new URL('../app/rsvp/[token]/rsvp-client.tsx', import.meta.url), 'utf8')
-ok(/isEventToken\(token\)\) return notFound\(\)/.test(route) && (route.match(/isEventToken\(token\)/g) || []).length === 2, 'both handlers check the token shape first')
-ok(/'Cache-Control': 'no-store'/.test(route) && /'Referrer-Policy': 'no-referrer'/.test(route) && /noindex/.test(route), 'responses are private, send no referrer and are not indexed')
 ok(!/supabaseAdmin|owner_telegram_id|listGuests|headcount\(/.test(route + page + client), 'the public surface never touches organizer data')
-ok(!/console\.(?:log|error|warn)/.test(route + page), 'the token and replies are never logged')
+ok(!/console\.(?:log|error|warn)/.test(route + page + client), 'the link and replies are never logged by the public surface')
 ok(/robots: \{ index: false, follow: false \}/.test(page) && /referrer: 'no-referrer'/.test(page), 'the page is not indexed and sends no referrer')
 ok(/prefers-reduced-motion:no-preference/.test(client) && !/font-style:\s*italic/.test(client), 'animations respect reduced motion; no italics')
-ok(/4096/.test(route), 'the request body is bounded')
+ok(!/replaceState|location\.replace/.test(client), 'the shared link stays in the address bar; the personal link is never put there')
+ok(/Not you\? Answer as someone else/.test(client), 'a shared phone can answer for a second person')
 eq([...route.matchAll(/^export (?:async function|const) (\w+)/gm)].map(m => m[1]).sort(), ['GET', 'POST', 'dynamic'], 'only route exports')
+const envBefore = process.env.NODE_ENV; (process.env as any).NODE_ENV = 'production'
+assert.throws(() => store.setEventsDbForTests(db), (e: any) => e.code === 'not_allowed'); checks++; (process.env as any).NODE_ENV = envBefore
 
 await pg.close()
 console.log(`EVENTS_STORE_RSVP_OK ${checks} checks`)

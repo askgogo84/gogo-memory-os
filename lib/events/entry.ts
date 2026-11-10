@@ -80,7 +80,7 @@ export function draftSummary(e: EventRow): string {
   return [`*${e.title}*`, `${whenText(e.starts_at, e.timezone)} · ${place}`, extras].filter(Boolean).join('\n')
 }
 const errorText = (code: string) => ({
-  events_not_enabled: 'Events are not set up yet.', event_closed: 'That event is already cancelled or over, so it cannot be changed.',
+  events_not_enabled: 'Events are not set up yet.', events_token_key_missing: 'Events are not fully set up yet: the invitation link key is missing.', duplicate: 'That guest is already on the list.', too_many_at_once: 'Please add at most 200 guests at a time.', event_closed: 'That event is already cancelled or over, so it cannot be changed.',
   would_unpublish: 'That change would leave the invitation without a future date or a place, so I have not made it.',
   changed_meanwhile: 'The event changed while I was updating it. Please say that again.', title_required: 'The event needs a name.',
   invalid_event_fields: 'One of those details is not valid, so nothing was changed.', guest_limit: 'That is more guests than one event can hold.',
