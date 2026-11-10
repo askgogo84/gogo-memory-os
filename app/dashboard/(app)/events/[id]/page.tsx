@@ -67,6 +67,7 @@ export default async function EventPage({ params }: { params: Promise<{ id: stri
         })}
       </div>
     </section>
-    <p className="mt-5 text-[13px] text-[#8a8a86]">To move or cancel the event, tell Gogo in chat. It asks you to confirm first.</p>
+    {e.starts_at && e.status !== 'cancelled' && <a href={`/api/dashboard/events/${e.id}?format=ics`} className="final-dark-card mt-5 flex min-h-[48px] items-center justify-center px-4 text-[15px] font-semibold">Add to my calendar</a>}
+    <p className="mt-5 text-[13px] text-[#8a8a86]">To move or cancel the event, tell Gogo in chat. It asks you to confirm first. After a change, tap Add to my calendar again and your calendar app updates the same entry.</p>
   </div>
 }

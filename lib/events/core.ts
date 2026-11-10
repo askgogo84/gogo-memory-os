@@ -155,12 +155,12 @@ function fold(line: string): string {
   return out.join('\r\n')
 }
 /** An .ics file for the guest's own calendar. Holds only what that guest is allowed to see. */
-export function invitationIcs(view: ReturnType<typeof publicInvitation>, uid: string, now = new Date()): string | null {
+export function invitationIcs(view: ReturnType<typeof publicInvitation>, uid: string, now = new Date(), sequence = 0): string | null {
   if (!view.startsAt || view.status === 'cancelled') return null
   const end = view.endsAt || new Date(Date.parse(view.startsAt) + 2 * 3600_000).toISOString()
   const place = [view.venueName, view.venueAddress].filter(Boolean).join(', ') || view.onlineUrl || ''
   const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//AskGogo//Events//EN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH', 'BEGIN:VEVENT',
-    `UID:${icsEscape(uid)}@askgogo.in`, `DTSTAMP:${icsTime(now.toISOString())}`, `DTSTART:${icsTime(view.startsAt)}`, `DTEND:${icsTime(end)}`,
+    `UID:${icsEscape(uid)}@askgogo.in`, `SEQUENCE:${Number.isInteger(sequence) && sequence >= 0 ? sequence : 0}`, `DTSTAMP:${icsTime(now.toISOString())}`, `DTSTART:${icsTime(view.startsAt)}`, `DTEND:${icsTime(end)}`,
     `SUMMARY:${icsEscape(view.title)}`, place ? `LOCATION:${icsEscape(place)}` : '', view.description ? `DESCRIPTION:${icsEscape(view.description)}` : '', 'END:VEVENT', 'END:VCALENDAR']
   return lines.filter(Boolean).map(fold).join('\r\n') + '\r\n'
 }
