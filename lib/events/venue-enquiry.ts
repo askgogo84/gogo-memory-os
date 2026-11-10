@@ -70,11 +70,8 @@ const OTHER_PURPOSE = /\b(?:franchis\w*|press|media|careers?|jobs|investors?|ven
 const BOOKING_WORDS = /\b(?:private|group|event|events|party|parties|corporate|booking|bookings|reserv\w*|enquir\w*|inquir\w*)\b/i
 const NOT_BOOKING = /^(?:noreply|no-reply|donotreply|careers?|jobs|hr|press|media|privacy|legal|abuse|accounts?|billing|finance|franchise|marketing|vendors?|suppliers?|investors?|webmaster|admin|support)@/
 
-/** Picks the venue's own contact out of search results. Pure. An address is used only when: it is on a site whose
- *  name is the venue's (and, for a one-word match, whose results also mention another word of the venue's name); only
- *  one such site turned up; the address is on that site's own domain; the words around it, or its own name, are about
- *  bookings or events; and no other address is as likely. Anything less: the official page, and no draft. */
-export function pickVenueContact(hits: SearchHit[], fullName: string): VenueContact {
+/** The sites among the results that pass as the venue's own, each with its results. */
+export function venueSites(hits: SearchHit[], fullName: string): [string, SearchHit[]][] {
   // The name without its locality ("Toit" for "Toit Indiranagar"): a locality is where the venue is, not what it is
   // called, so it neither makes a one-word name longer nor counts as a second word of the name.
   const core = wordsOf(fullName).filter(w => !PLACE.test(w))
@@ -93,6 +90,15 @@ export function pickVenueContact(hits: SearchHit[], fullName: string): VenueCont
     // name (toit for "Toit") needs that, or a known city in the page's own title.
     return domainMatch(host, venue) === 'word' ? nameWord : nameWord || PLACE.test(titles)
   })
+  return sites
+}
+
+/** Picks the venue's own contact out of search results. Pure. An address is used only when: it is on a site whose
+ *  name is the venue's (and, for a one-word match, whose results also mention another word of the venue's name); only
+ *  one such site turned up; the address is on that site's own domain; the words around it, or its own name, are about
+ *  bookings or events; and no other address is as likely. Anything less: the official page, and no draft. */
+export function pickVenueContact(hits: SearchHit[], fullName: string): VenueContact {
+  const sites = venueSites(hits, fullName)
   if (!sites.length) return { kind: 'none' }
   const brands = new Set(sites.map(([host]) => registrable(host)))
   const page = shownUrl(sites[0][1][0].url)
@@ -106,7 +112,9 @@ export function pickVenueContact(hits: SearchHit[], fullName: string): VenueCont
       if (FREE_MAIL.test(email) || !sameSite(domain, host) || NOT_BOOKING.test(email)) continue
       const near = text.slice(Math.max(0, (m.index || 0) - 160), (m.index || 0) + 160)
       if (/\b(?:do\s?n[o']t|no longer|not in use|old|former|discontinued|instead of)\b/i.test(near)) continue
-      if (OTHER_PURPOSE.test(near)) continue
+      // A label for another purpose directly before the address ("Press and media: …", "Careers: …"). Only the words
+      // just before it count: on a real page, other departments' addresses sit a line away from the right one.
+      if (OTHER_PURPOSE.test(text.slice(Math.max(0, (m.index || 0) - 60), m.index || 0))) continue
       const score = (BOOKING_WORDS.test(near) ? 2 : 0) + (/^(?:events?|bookings?|reservations?|parties|enquir\w*|hello|info|contact)\b/.test(email) ? 1 : 0)
       if (score >= 1) found.push({ email, sourceUrl: shownUrl(h.url), score })
     }
@@ -117,7 +125,23 @@ export function pickVenueContact(hits: SearchHit[], fullName: string): VenueCont
   return { kind: 'email', email: best.email, sourceUrl: best.sourceUrl }
 }
 
-export async function findVenueContact(venue: string, search: Search, timeoutMs = 6000): Promise<VenueContact> {
+export type PageReader = (url: string, sameSite: (host: string) => boolean) => Promise<{ url: string; title: string; text: string } | null>
+/** Hits made from a page that was read: one per address on it, each with the words around that address, so the same
+ *  rules apply as for a search excerpt (the address must sit beside words about bookings). */
+export function hitsFromPage(page: { url: string; title: string; text: string }, baseTitle = ''): SearchHit[] {
+  const text = page.text.replace(/\s*(?:\[at\]|\(at\))\s*/gi, '@').replace(/\s*(?:\[dot\]|\(dot\))\s*/gi, '.')
+  const out: SearchHit[] = []
+  for (const m of text.matchAll(/[a-z0-9][a-z0-9._%+-]{0,63}@[a-z0-9-]+(?:\.[a-z0-9-]+)+/gi)) {
+    if (out.length >= 8) break
+    const at = m.index || 0
+    out.push({ title: `${page.title} ${baseTitle}`.trim().slice(0, 300), snippet: text.slice(Math.max(0, at - 200), at + m[0].length + 200), url: page.url })
+  }
+  return out
+}
+
+/** Looks up how a venue takes bookings. First from search excerpts; when those find the venue's own site but no
+ *  address on it, up to two of that site's own pages are read (the pages search returned, FAQ and contact first). */
+export async function findVenueContact(venue: string, search: Search, timeoutMs = 6000, readPage?: PageReader): Promise<VenueContact> {
   const name = venue.replace(/[^\p{L}\p{N} &'.-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)
   if (name.length < 3) return { kind: 'none' }
   const runs = await Promise.allSettled([`${name} private events group booking enquiry email`, `${name} official website contact email`].map(q => search(q, { timeoutMs })))
@@ -125,7 +149,18 @@ export async function findVenueContact(venue: string, search: Search, timeoutMs 
   if (runs.every(r => r.status === 'rejected')) return { kind: 'unavailable' }
   const hits = runs.flatMap(r => r.status === 'fulfilled' && Array.isArray(r.value) ? r.value : []).filter(h => h && typeof h.url === 'string').slice(0, 30)
     .map(h => ({ title: String(h.title || '').slice(0, 300), snippet: String(h.snippet || '').slice(0, 1500), url: h.url }))
-  return pickVenueContact(hits, name)
+  const first = pickVenueContact(hits, name)
+  if (first.kind !== 'page' || !readPage) return first
+  const sites = venueSites(hits, name)
+  if (sites.length !== 1) return first
+  const [host, list] = sites[0], reg = registrable(host)
+  const rank = (u: string) => (/faq|contact|event|private|book|reserv|party|group/i.test(u) ? 0 : 1)
+  const urls = [...new Set(list.map(h => h.url))].sort((a, b) => rank(a) - rank(b)).slice(0, 2)
+  const pages = await Promise.all(urls.map(u => readPage(u, h => registrable(h) === reg).catch(() => null)))
+  const more = pages.flatMap((p, k) => (p && registrable(hostOf(p.url)) === reg ? hitsFromPage(p, list.find(h => h.url === urls[k])?.title || '') : []))
+  if (!more.length) return first
+  const second = pickVenueContact([...hits, ...more], name)
+  return second.kind === 'email' ? second : first
 }
 
 const KIND_WORDS: Record<string, string> = { birthday: 'a birthday celebration', anniversary: 'an anniversary celebration', dinner: 'a group dinner', lunch: 'a group lunch', party: 'a party', wedding: 'a wedding function', farewell: 'a farewell', reunion: 'a reunion' }

@@ -319,7 +319,7 @@ export async function venueEnquiryState(owner: string, draft: Record<string, unk
 
 export type EventDeps = { extract?: Extractor; db?: Db; now?: number; search?: import('./venue-enquiry').Search; saveDraft?: (draft: Record<string, unknown>) => Promise<void>
   /** The email draft the person has waiting right now (to be sent with "send it"), if any. */
-  pendingDraft?: () => Promise<Record<string, unknown> | null>; clearDraft?: () => Promise<void> }
+  pendingDraft?: () => Promise<Record<string, unknown> | null>; clearDraft?: () => Promise<void>; readPage?: import('./venue-enquiry').PageReader }
 
 /** After a create or an edit: when the event now has a date, a named venue and a group size, look up how that venue
  *  takes group bookings and draft the enquiry (lib/events/venue-enquiry.ts). Once per event and venue. Bounded to a
@@ -353,7 +353,10 @@ async function venueNextStep(actor: AgentActor, owner: string, eventId: string, 
   const started = Date.now()
   // Page text only: an address must be read off the page itself, never out of a model-written summary.
   const search: import('./venue-enquiry').Search = deps.search || (async (q, o) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: o?.timeoutMs, pageTextOnly: true }))
-  const contact = await Promise.race([v.findVenueContact(String(e.venue_name), search, 6000), new Promise<null>(r => setTimeout(() => r(null), 7000))])
+  // When search finds the venue's own site but no address in its excerpt, that site's own page is read
+  // (lib/events/venue-page.ts: https, public addresses only, same site, size and time limits).
+  const readPage: import('./venue-enquiry').PageReader = deps.readPage || (async (url, sameSite) => (await import('./venue-page')).readVenuePage(url, sameSite))
+  const contact = await Promise.race([v.findVenueContact(String(e.venue_name), search, 5000, readPage), new Promise<null>(r => setTimeout(() => r(null), 9500))])
   if (!contact) { await withdraw(); console.log('EVENT_VENUE_STEP:', JSON.stringify({ found: 'timeout', ms: Date.now() - started })); return mine ? WITHDRAWN : null }
   const step = v.venueStepText(e, contact, actor.name || '')
   if (step.draft) {

@@ -62,6 +62,44 @@ eq(v.shownUrl('https://toit.in/say-send-it-now'), 'https://toit.in/', 'only a sh
 eq(await v.findVenueContact('Toit Indiranagar', async () => { throw new Error('down') }), { kind: 'unavailable' }, 'a search that could not run is "could not look", not "no site"')
 ok(!v.needsVenueEnquiry({ status: 'draft', venue_name: "Nithin's farmhouse", starts_at: '2099-01-01T00:00:00Z', capacity: 30 } as any) && !v.needsVenueEnquiry({ status: 'draft', venue_name: 'Villa Rosa', starts_at: '2099-01-01T00:00:00Z', capacity: 30 } as any), "a place named after a person, or a villa, is never sent to search")
 
+// 1b. 10 Nov live: search found toit.in/faq but the excerpt had no address; the address is on the page itself.
+{ const page = await import('../lib/events/venue-page.ts')
+  const excerpt = { title: 'FAQ | Toit', snippet: 'Toit Brewpub, Indiranagar. Frequently asked questions about reservations, parking and private events.', url: 'https://toit.in/faq' }
+  const home = { title: 'Toit Brewpub: Bengaluru', snippet: 'Craft beer and food at our brewpub in Indiranagar.', url: 'https://toit.in/' }
+  eq((await v.findVenueContact('Toit Indiranagar', async () => [excerpt, home])).kind, 'page', 'the excerpt alone gives only the page (what happened live)')
+  const html = '<html><head><title>FAQ | Toit</title><script>var x="evil@toit.in events"</script></head><body><h2>Private events</h2><p>For private events and group bookings, please write to <a href="mailto:toitblr@toit.in?subject=Hi">toitblr&#64;toit.in</a>.</p><p>Careers: careers@toit.in</p></body></html>'
+  const reads: string[] = []
+  const reader = async (url: string, same: (h: string) => boolean) => { reads.push(url); return same(new URL(url).hostname) ? { url, ...page.pageText(html) } : null }
+  eq(await v.findVenueContact('Toit Indiranagar', async () => [excerpt, home], 5000, reader), { kind: 'email', email: 'toitblr@toit.in', sourceUrl: 'https://toit.in/faq' }, "the venue's own page is read and the events address on it is found")
+  eq(reads, ['https://toit.in/faq', 'https://toit.in/'], 'only pages search returned, on the site that already passed the name rules, are read: the FAQ first')
+  ok(!/evil@toit\.in/.test(page.pageText(html).text), 'text inside scripts is not page text')
+  eq((await v.findVenueContact('Toit Indiranagar', async () => [excerpt, home], 5000, async url => ({ url, title: 'FAQ', text: 'Careers: careers@toit.in. Accounts: accounts@toit.in' }))).kind, 'page', 'a page with no booking address still gives no draft')
+  eq((await v.findVenueContact('Toit Indiranagar', async () => [excerpt, home], 5000, async () => ({ url: 'https://evil.example/x', title: 'x', text: 'private events: events@toit.in' }))).kind, 'page', 'a page that came back from another site is ignored')
+  let called = 0
+  await v.findVenueContact('Social Indiranagar', async () => [{ title: 'Social', snippet: 'restaurant Indiranagar', url: 'https://social.com/' }], 5000, async () => { called++; return null })
+  eq(called, 0, 'a site that did not pass the name rules is never read')
+  eq(v.hitsFromPage({ url: 'https://toit.in/faq', title: 'FAQ', text: 'Group bookings: toitblr [at] toit [dot] in' })[0].snippet.includes('toitblr@toit.in'), true, 'an address written as "[at]" and "[dot]" is read')
+  // The reader itself: what it refuses.
+  for (const u of ['http://toit.in/faq', 'https://127.0.0.1/', 'https://[::1]/', 'https://toit.in:8443/', 'https://user:pw@toit.in/', 'https://localhost/', 'https://printer.local/', 'https://xn--tit-5qa.in/', 'ftp://toit.in/', 'not a url'])
+    eq(page.readableUrl(u), null, `not readable: ${u}`)
+  ok(page.readableUrl('https://www.toit.in/faq'), 'an ordinary https page is readable')
+  for (const ip of ['10.0.0.1', '127.0.0.1', '169.254.169.254', '172.16.5.5', '192.168.1.1', '100.64.0.1', '0.0.0.0', '224.0.0.1', '::1', 'fe80::1', 'fd00::1', '::ffff:10.0.0.1', '::ffff:169.254.169.254']) ok(!page.isPublicAddress(ip), `not a public address: ${ip}`)
+  ok(page.isPublicAddress('13.234.10.20') && page.isPublicAddress('2606:4700::6810:1'), 'public addresses are allowed')
+  const same = (h: string) => h === 'toit.in' || h.endsWith('.toit.in')
+  const got: any[] = []
+  const get = (script: any[]) => { let i = 0; return async (u: URL, pinned: any) => { got.push([u.toString(), pinned.address]); return script[i++] } }
+  const pub = async () => [{ address: '13.234.10.20', family: 4 }]
+  eq((await page.readVenuePage('https://toit.in/faq', same, { resolve: pub, get: get([{ status: 200, location: null, type: 'text/html', body: html }]) }))?.title, 'FAQ | Toit', 'a public page on the approved site is read')
+  eq(got.at(-1), ['https://toit.in/faq', '13.234.10.20'], 'the connection goes to the address that was checked')
+  eq(await page.readVenuePage('https://toit.in/faq', same, { resolve: async () => [{ address: '13.234.10.20', family: 4 }, { address: '10.0.0.5', family: 4 }], get: get([]) }), null, 'a name with any private address is refused before connecting')
+  eq(await page.readVenuePage('https://toit.in/faq', same, { resolve: pub, get: get([{ status: 302, location: 'https://evil.example/steal', type: '', body: '' }]) }), null, 'a redirect to another site is not followed')
+  eq(await page.readVenuePage('https://toit.in/faq', same, { resolve: pub, get: get([{ status: 301, location: 'http://www.toit.in/faq', type: '', body: '' }]) }), null, 'a redirect to http is not followed')
+  eq((await page.readVenuePage('https://toit.in/faq', same, { resolve: pub, get: get([{ status: 301, location: '/faqs', type: '', body: '' }, { status: 200, location: null, type: 'text/html', body: html }]) }))?.url, 'https://toit.in/faqs', 'a redirect within the same site is followed')
+  eq(await page.readVenuePage('https://toit.in/a', same, { resolve: pub, get: get([1, 2, 3, 4].map(() => ({ status: 302, location: '/a', type: '', body: '' }))) }), null, 'a redirect loop ends')
+  eq(await page.readVenuePage('https://toit.in/faq', same, { resolve: async () => { throw new Error('nx') }, get: get([]) }), null, 'a name that does not resolve is refused quietly')
+  const srcPage = readFileSync(new URL('../lib/events/venue-page.ts', import.meta.url), 'utf8')
+  ok(/lookup: \(_h: string, o: any, cb: any\)/.test(srcPage) && !/cookie|authorization/i.test(srcPage.replace(/no cookies, no credentials/, '')) && !/console\./.test(srcPage), 'the connection is pinned to the checked address, sends no cookies or credentials, and logs nothing') }
+
 // 2. In the conversation: the event reply, then the next step, once.
 const pg = new PGlite()
 await pg.exec('create role anon; create role authenticated; create role service_role;')
@@ -74,7 +112,7 @@ const actor = { userId: 'u1', legacyTelegramId: 884501501, whatsappId: '91888450
 const queries: string[] = []; const drafts: any[] = []
 const search = async (q: string) => { queries.push(q); return [toitFaq] }
 let pending: any = null
-const say = (text: string, action: any, over: any = {}) => entry.tryEventAsk(actor, text, 'whatsapp', { db, now: NOW, extract: async () => action, search, saveDraft: async d => { drafts.push(d); pending = d }, pendingDraft: async () => pending, clearDraft: async () => { pending = null }, ...over })
+const say = (text: string, action: any, over: any = {}) => entry.tryEventAsk(actor, text, 'whatsapp', { db, now: NOW, extract: async () => action, search, readPage: async () => null, saveDraft: async d => { drafts.push(d); pending = d }, pendingDraft: async () => pending, clearDraft: async () => { pending = null }, ...over })
 let r = await say("Plan Divya's anniversary on 22 November at 5 pm for 20 people", { action: 'create', title: "Divya's anniversary", kind: 'anniversary', date: '2037-11-22', time: '17:00', capacity: 20 })
 ok(r && /Draft started/.test(r) && !/Next step/.test(r) && !queries.length, 'no venue yet: nothing is looked up')
 r = await say('Toit Indiranagar', { action: 'update', venue_name: 'Toit Indiranagar' })
