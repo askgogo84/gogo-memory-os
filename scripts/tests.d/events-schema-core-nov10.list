@@ -1,0 +1,1 @@
+npx tsx scripts/verify-events-schema-core-nov10.mts
