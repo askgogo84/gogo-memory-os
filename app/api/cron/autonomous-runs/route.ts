@@ -252,6 +252,15 @@ export async function GET(request:Request){
         }).eq('id',run.id).eq('telegram_id',String(run.telegram_id)).eq('status','paused')
         continue
       }
+      // Events venue lookup (lib/events/venue-browse.ts): its own runner, never the general read below, which would
+      // send the browser's written answer.
+      if(meta.venue_browse===true||meta.venue_enquiry!==undefined){
+        const {runVenueBrowseForRun}=await import('@/lib/agent/approved-browser-worker')
+        const outcome=await runVenueBrowseForRun({id:String(run.id),telegram_id:String(run.telegram_id),metadata_json:meta},actor)
+        if(outcome==='failed')browserFailed++;else browserDone++
+        results.push({runId:String(run.id),status:outcome,browser:true})
+        continue
+      }
       try{
         const result=await resumePausedBrowserRun({actor,runId:String(run.id)})
         if(result.status==='completed')browserDone++;else browserPaused++

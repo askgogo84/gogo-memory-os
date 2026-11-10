@@ -143,7 +143,8 @@ export async function readVenuePage(raw: string, sameSite: (host: string) => boo
   try {
     let u = readableUrl(raw)
     for (let hop = 0; u && hop <= limits.redirects; hop++) {
-      if (!sameSite(u.hostname.toLowerCase())) { deps.note?.({ read: 'other_site' }); return null }
+      // Which hop left the site and for where (a public host name), so a venue whose address moved can be told apart.
+      if (!sameSite(u.hostname.toLowerCase())) { deps.note?.({ read: 'other_site', hop, to: u.hostname.toLowerCase().slice(0, 80) }); return null }
       const addrs = await (deps.resolve || realResolve)(u.hostname)
       // Every address the name has must be public: one private address is enough to refuse.
       if (!addrs.length || !addrs.every(a => isPublicAddress(a.address))) { deps.note?.({ read: 'address_refused' }); return null }

@@ -156,7 +156,10 @@ export function hitsFromPage(page: { url: string; title: string; text: string },
 
 /** Looks up how a venue takes bookings. First from search excerpts; when those find the venue's own site but no
  *  address on it, up to two of that site's own pages are read (the pages search returned, FAQ and contact first). */
-export async function findVenueContact(venue: string, search: Search, timeoutMs = 6000, readPage?: PageReader): Promise<VenueContact> {
+/** What the lookup learned about the venue's own site when it found the site but no address on it: the site, its
+ *  pages that search returned (contact, events and FAQ first) and what search said about them. For a deeper read. */
+export type VenueLookupDetail = { site?: string; urls?: string[]; hits?: SearchHit[] }
+export async function findVenueContact(venue: string, search: Search, timeoutMs = 6000, readPage?: PageReader, detail?: VenueLookupDetail): Promise<VenueContact> {
   const name = venue.replace(/[^\p{L}\p{N} &'.-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 80)
   if (name.length < 3) return { kind: 'none' }
   const runs = await Promise.allSettled([`${name} private events group booking enquiry email`, `${name} official website contact email`].map(q => search(q, { timeoutMs })))
@@ -165,19 +168,22 @@ export async function findVenueContact(venue: string, search: Search, timeoutMs 
   const hits = runs.flatMap(r => r.status === 'fulfilled' && Array.isArray(r.value) ? r.value : []).filter(h => h && typeof h.url === 'string').slice(0, 30)
     .map(h => ({ title: String(h.title || '').slice(0, 300), snippet: String(h.snippet || '').slice(0, 1500), url: h.url }))
   const first = pickVenueContact(hits, name)
-  if (first.kind !== 'page' || !readPage) return first
+  if (first.kind !== 'page') return first
   const sites = venueSites(hits, name)
   if (sites.length !== 1) return first
   const [host, list] = sites[0], reg = registrable(host)
   const rank = (u: string) => (/faq|contact|event|private|book|reserv|party|group/i.test(u) ? 0 : 1)
   const urls = [...new Set(list.map(h => h.url))].sort((a, b) => rank(a) - rank(b)).slice(0, 2)
+  const describe = () => { if (detail) { detail.site = reg; detail.urls = urls; detail.hits = list.filter((h, k) => list.findIndex(o => o.url === h.url && o.snippet === h.snippet) === k).slice(0, 6).map(h => ({ title: h.title.slice(0, 200), snippet: h.snippet.slice(0, 600), url: h.url })) } }
+  if (!readPage) { describe(); return first }
   // Bounded here as well: a page that will not finish must not lose the answer search already gave.
   const bounded = (u: string) => { let t: ReturnType<typeof setTimeout> | undefined; return Promise.race([readPage(u, h => registrable(h) === reg).catch(() => null), new Promise<null>(r => { t = setTimeout(() => r(null), 4000) })]).finally(() => { if (t) clearTimeout(t) }) }
   const pages = await Promise.all(urls.map(bounded))
   const more = pages.flatMap((p, k) => (p && registrable(hostOf(p.url)) === reg ? hitsFromPage(p, list.find(h => h.url === urls[k])?.title || '') : []))
-  if (!more.length) return first
-  const second = pickVenueContact([...hits, ...more], name)
-  return second.kind === 'email' ? second : first
+  const second = more.length ? pickVenueContact([...hits, ...more], name) : first
+  if (second.kind === 'email') return second
+  describe()
+  return first
 }
 
 const KIND_WORDS: Record<string, string> = { birthday: 'a birthday celebration', anniversary: 'an anniversary celebration', dinner: 'a group dinner', lunch: 'a group lunch', party: 'a party', wedding: 'a wedding function', farewell: 'a farewell', reunion: 'a reunion' }
@@ -211,4 +217,9 @@ export function venueStepText(e: EventRow, contact: VenueContact, organizer: str
   if (contact.kind === 'page') return { found: 'page', draft: null, text: `Next step: booking ${venue} for ${e.capacity}. I could not confirm a booking email from their own site, so I have not drafted anything. Their page: ${contact.sourceUrl}\nSend me the right address and I'll draft the enquiry.` }
   if (contact.kind === 'unavailable') return { found: 'unavailable', draft: null, text: `Next step: booking ${venue} for ${e.capacity}. I could not look up how they take group bookings just now, so I have not drafted anything. Send me their email address and I'll draft the enquiry.` }
   return { found: 'none', draft: null, text: `Next step: booking ${venue} for ${e.capacity}. I could not find their official site, so I have not drafted anything. Send me their email address and I'll draft the enquiry.` }
+}
+
+/** Said in place of "could not confirm" when the venue's own site is being opened in the cloud browser. */
+export function venueBrowsingText(e: EventRow): string {
+  return `Next step: booking ${oneLine(e.venue_name, 120)} for ${e.capacity}. Their site does not show a booking email to a quick read, so I'm opening it in a browser now. I'll send what I find here in a minute or two. Nothing will be sent to them.`
 }
