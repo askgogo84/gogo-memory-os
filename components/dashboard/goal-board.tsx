@@ -14,8 +14,9 @@ const TONE: Partial<Record<DoneState, string>> = {
   running: 'bg-[#13253a] text-[#8cc2ff]',
   queued: 'bg-[#13253a] text-[#8cc2ff]',
   waiting_external: 'bg-[#1f1f1f] text-[#d6d3cd]',
+  needs_you: 'bg-[#3a2a10] text-[#f0c26b]',
 }
-const ACTION: Partial<Record<DoneState, string>> = { draft: 'Review', waiting_approval: 'Review', blocked: 'Open', unknown: 'Check', running: 'Watch', queued: 'Watch' }
+const ACTION: Partial<Record<DoneState, string>> = { draft: 'Review', waiting_approval: 'Review', blocked: 'Open', unknown: 'Check', running: 'Watch', queued: 'Watch', needs_you: 'Open', failed: 'Details' }
 
 /** The prompt "Give Gogo a list" opens chat with. */
 export const LIST_PROMPT = 'Gogo, here are the things I need to get done this week: '
@@ -39,17 +40,19 @@ function Metric({ value, label, tone, children }: { value: string; label: string
   </div>
 }
 
-export function GoalBoardView({ board }: { board: GoalBoard }) {
+export function GoalBoardView({ board, notices }: { board: GoalBoard; notices?: React.ReactNode }) {
   const m = board.metrics
   const total = m.worked + m.failed
   const handed = m.handedToGogo + m.ownTodos
   const empty = OWNERSHIP_ORDER.every(o => !board.groups[o].length) && !board.done.length
   return <div className="flex flex-col gap-4">
     {board.unavailable && <p className="text-[14px] text-[#f0c26b]">Some of your tasks could not be loaded just now, so this may be incomplete.</p>}
-    <section aria-label="Last 30 days" className="grid grid-cols-2 gap-2">
+    {notices}
+    <h2 className="text-[13px] font-medium text-[#8a8a86]">Last 30 days</h2>
+    <section aria-label="Last 30 days" className="-mt-2 grid grid-cols-2 gap-2">
       <Metric value={String(m.doneChecked)} label="Done and checked"/>
       <Metric value={String(m.needYou)} label="Need you" tone={m.needYou ? 'text-[#f0c26b]' : undefined}/>
-      <Metric value={minutesLabel(m.minutesSaved)} label="Time saved, estimated"><a href="#how-we-count" className="text-[12px] font-medium text-[#77d2c4]">How we count</a></Metric>
+      <Metric value={minutesLabel(m.minutesSaved)} label="Time saved, estimated"><a href="#how-we-count" className="-my-2 flex min-h-11 items-center text-[13px] font-medium text-[#77d2c4]">How we count</a></Metric>
       <Metric value={total ? `${m.worked} of ${total}` : '—'} label="Runs that worked">
         <span className="text-[12px] text-[#8a8a86]">{m.failed} failed{m.unknown ? ` · ${m.unknown} not sure` : ''}{handed ? ` · ${m.handedToGogo} of ${handed} handed to Gogo` : ''}</span>
       </Metric>

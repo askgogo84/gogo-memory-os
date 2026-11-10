@@ -32,7 +32,7 @@ export default async function TasksPage({ searchParams }: { searchParams?: Promi
   const tz = user?.timezone || 'Asia/Kolkata'
   const needCount = feed.need.length + notices.total
   const todoCount = todos.ok ? todos.open.length : 0
-  const board = overview && tab === 'overview' ? await getGoalBoard(tg, todos.ok ? [...todos.open, ...todos.completed] : []) : EMPTY_BOARD
+  const board = overview && tab === 'overview' ? await getGoalBoard(tg, todos.ok ? [...todos.open, ...todos.completed] : [], undefined, undefined, notices.total) : EMPTY_BOARD
 
   return (
     <div className="mx-auto w-full max-w-[820px] pb-10">
@@ -43,7 +43,7 @@ export default async function TasksPage({ searchParams }: { searchParams?: Promi
       </header>
       <div className="flex flex-col gap-3">
         <FeedTabs base="/dashboard/tasks" tab={tab} feed={feed} needCount={needCount} extra={{ key: 'todos', label: 'To-dos', count: todoCount }} lead={overview ? { key: 'overview', label: 'Overview' } : undefined}/>
-        {tab === 'overview' && <GoalBoardView board={board}/>}
+        {tab === 'overview' && <GoalBoardView board={board} notices={(notices.total > 0 || notices.unavailable) ? <div className="final-dark-panel px-4"><ServiceNoticeCards notices={notices.items} unavailable={notices.unavailable}/></div> : null}/>}
         {tab === 'need' && <div className="flex flex-col gap-2">
           <FeedItems items={feed.need} size={72} empty={notices.total || notices.unavailable ? '' : 'Nothing is waiting for you.'}/>
           {(notices.total > 0 || notices.unavailable) && <div className="final-dark-panel px-4"><ServiceNoticeCards notices={notices.items} unavailable={notices.unavailable}/></div>}

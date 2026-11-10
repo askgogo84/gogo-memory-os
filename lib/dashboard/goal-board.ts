@@ -4,7 +4,8 @@
 //
 // The numbers (last 30 days):
 // - Done and checked: finished runs with evidence from someone other than the agent (task-ownership.ts doneEvidenceOf).
-// - Need you: open drafts, approvals, blocked runs and runs whose outcome is unknown.
+// - Need you: open drafts (a week at most), approvals, blocked runs, runs whose outcome is unknown, and service notices.
+// Only OUTCOME_RUN_TYPES are counted or listed; a run stuck as running for hours is left out (as the sweeper does).
 // - Time saved, estimated: for each finished run (checked or not; never a draft, a failure or an unknown), the minutes
 //   in TIME_SAVED_MINUTES for its kind, summed. A fixed table, shown as an estimate with this method linked; it is not
 //   measured and never includes work that only produced a draft.
@@ -16,14 +17,20 @@ import { isStaleRunning } from '@/lib/agent/stale-runs'
 import { readableRunSummary } from '@/lib/dashboard/readable-summary'
 import { friendlyTaskTitle } from '@/lib/agent/task-title'
 import { exactSessionOwnerId } from '@/lib/dashboard/owner-identity'
+import { CONFIRMABLE_RUN_TYPES } from '@/lib/agent/owner-confirmation'
 import { ATTENTION_STATES, DONE_STATE_LABEL, OPEN_STATES, OWNERSHIP_ORDER, doneStateOf, ownershipOf, type DoneState, type TaskOwnership } from '@/lib/agent/task-ownership'
 
 type Env = Record<string, string | undefined>
+/** "on" for everyone, or a comma list of exact owner ids (the dashboard session's id, as GOGO_EVENTS_OWNERS lists them). */
 export function goalBoardEnabledFor(owner: string, env: Env = process.env): boolean {
   const v = String(env.GOGO_TASKS_OWNERSHIP || '').trim()
   if (v === 'on') return true
-  return Boolean(owner) && v.split(',').map(s => s.trim().replace(/^\+/, '')).filter(Boolean).some(s => s === owner || s === owner.replace(/^91/, '') || `91${s}` === owner)
+  return Boolean(owner) && v.split(',').map(s => s.trim()).includes(owner)
 }
+
+/** Run kinds that are pieces of work someone asked for (the ones Tasks asks the owner to confirm, plus comparisons).
+ *  Background checks, watcher setup, page reads and context fetches are not counted, listed or credited with time. */
+export const OUTCOME_RUN_TYPES: ReadonlySet<string> = new Set([...CONFIRMABLE_RUN_TYPES, 'food_comparison', 'grocery_comparison', 'creditiq_hotel_research'])
 
 /** Minutes a person would typically spend doing this kind of task by hand. Conservative, fixed, documented in
  *  docs/architecture/same-brain-3/06-goal-to-done.md. Unknown kinds count 5. */
@@ -39,6 +46,7 @@ export function minutesSavedFor(run: any): number {
   return best || TIME_SAVED_DEFAULT
 }
 
+const DRAFT_DAYS = 7
 export type BoardItem = { id: string; title: string; sub: string; state: DoneState; label: string; ownership: TaskOwnership; href: string; at: string | null }
 export type BoardMetrics = { doneChecked: number; needYou: number; minutesSaved: number; worked: number; failed: number; unknown: number; handedToGogo: number; ownTodos: number }
 export type GoalBoard = {
@@ -53,27 +61,31 @@ export const EMPTY_BOARD: GoalBoard = { groups: { gogo_handles: [], together: []
 const WINDOW_DAYS = 30
 // Background reads that belong to another task (a price comparison's store page, a venue lookup) are not tasks of
 // their own; their parent is.
-const childRun = (r: any) => { const m = r?.metadata_json || {}; return Boolean(m.comparison_parent_id || m.commerce_parent_id || m.venue_browse || m.parent_goal_child_of_run) }
+const childRun = (r: any) => { const m = r?.metadata_json || {}; return Boolean(m.comparison_parent_id || m.commerce_parent_id || m.venue_browse) }
 
 /** Pure: builds the board from rows already read. `approvals` are pending approvals; `todos` the owner's own to-dos. */
-export function buildGoalBoard(input: { runs: any[]; approvals?: any[]; todos?: { createdAt: string | null }[]; now?: Date }): GoalBoard {
+export function buildGoalBoard(input: { runs: any[]; approvals?: any[]; todos?: { createdAt: string | null }[]; notices?: number; now?: Date }): GoalBoard {
   const now = input.now || new Date(), since = now.getTime() - WINDOW_DAYS * 86_400_000
   const inWindow = (at: unknown) => { const t = Date.parse(String(at || '')); return Number.isFinite(t) && t >= since }
   const board: GoalBoard = JSON.parse(JSON.stringify(EMPTY_BOARD))
   const seen = new Set<string>()
-  const runs = (input.runs || []).filter(r => r && r.id && !childRun(r) && !retiredRunReason(r, now.getTime()))
-    // A run stuck in "running" for hours lost its worker: it is not live work.
-    .map(r => (isStaleRunning(r, now) ? { ...r, status: 'failed', error: r.error || 'stale_run_recovered' } : r))
+  const runs = (input.runs || []).filter(r => r && r.id && OUTCOME_RUN_TYPES.has(String(r.type || '')) && !childRun(r) && !retiredRunReason(r, now.getTime()))
+    // A run stuck in "running" for hours lost its worker: the sweeper retires it (stale_run_recovered, which
+    // retiredRunReason leaves out), so it is left out here too, before and after the sweep alike. Queued runs may be
+    // waiting for their time and are kept.
+    .filter(r => !(String(r.status) === 'running' && isStaleRunning(r, now)))
   for (const r of runs) {
     const id = String(r.id)
     if (seen.has(id)) continue
     seen.add(id)
     const state = doneStateOf(r)
     if (state === 'cancelled') continue
+    // A draft nobody touched for a week has probably been dealt with elsewhere.
+    if (state === 'draft' && now.getTime() - Date.parse(String(r.updated_at || r.started_at || 0)) > DRAFT_DAYS * 86_400_000) continue
     const item: BoardItem = { id, title: friendlyTaskTitle(r.title || 'Gogo task'), sub: readableRunSummary(r.summary) || '', state, label: DONE_STATE_LABEL[state],
       ownership: ownershipOf(r, state), href: `/dashboard/activity/${encodeURIComponent(id)}`, at: r.updated_at || r.started_at || null }
     if (OPEN_STATES.has(state)) board.groups[item.ownership].push(item)
-    else if (inWindow(item.at) && (state === 'verified' || state === 'done_unverified')) board.done.push(item)
+    else if (inWindow(item.at) && (state === 'verified' || state === 'done_unverified' || state === 'failed')) board.done.push(item)
     if (state === 'running' || state === 'queued') board.counts.running++
     if (state === 'waiting_external') board.counts.waiting++
     if (inWindow(item.at)) {
@@ -83,7 +95,7 @@ export function buildGoalBoard(input: { runs: any[]; approvals?: any[]; todos?: 
       if (state === 'unknown') board.metrics.unknown++
     }
     if (ATTENTION_STATES.has(state)) board.metrics.needYou++
-    if (inWindow(r.started_at || r.created_at || r.updated_at)) board.metrics.handedToGogo++
+    if (inWindow(r.started_at || r.updated_at)) board.metrics.handedToGogo++
   }
   // A pending approval whose run is not shown (a run outside the rows read, or no run) is still the owner's to see.
   for (const a of input.approvals || []) {
@@ -94,16 +106,19 @@ export function buildGoalBoard(input: { runs: any[]; approvals?: any[]; todos?: 
     board.metrics.needYou++
   }
   board.metrics.ownTodos = (input.todos || []).filter(t => inWindow(t?.createdAt)).length
+  board.metrics.needYou += Math.max(0, Number(input.notices) || 0)
   const newest = (a: BoardItem, b: BoardItem) => Date.parse(String(b.at || 0)) - Date.parse(String(a.at || 0))
   // Within a group: what needs the owner first, then what is moving, newest first.
   const rank = (s: DoneState) => (ATTENTION_STATES.has(s) ? 0 : s === 'running' || s === 'queued' ? 1 : 2)
   for (const o of OWNERSHIP_ORDER) board.groups[o].sort((a, b) => rank(a.state) - rank(b.state) || newest(a, b)).splice(12)
-  board.done.sort((a, b) => Number(b.state === 'verified') - Number(a.state === 'verified') || newest(a, b)).splice(8)
+  // Finished: checked first, then not checked, then what could not finish; newest first within each.
+  const doneRank = (s: DoneState) => (s === 'verified' ? 0 : s === 'done_unverified' ? 1 : 2)
+  board.done.sort((a, b) => doneRank(a.state) - doneRank(b.state) || newest(a, b)).splice(10)
   return board
 }
 
 /** Reads the owner's rows and builds the board. Never throws; an unreadable source shows as unavailable. */
-export async function getGoalBoard(telegramId: string, todos: { createdAt: string | null }[] = [], now = new Date(), db: any = supabaseAdmin): Promise<GoalBoard> {
+export async function getGoalBoard(telegramId: string, todos: { createdAt: string | null }[] = [], now = new Date(), db: any = supabaseAdmin, notices = 0): Promise<GoalBoard> {
   const owner = exactSessionOwnerId(telegramId)
   if (owner === null) return EMPTY_BOARD
   const since = new Date(now.getTime() - WINDOW_DAYS * 86_400_000).toISOString()
@@ -116,7 +131,7 @@ export async function getGoalBoard(telegramId: string, todos: { createdAt: strin
       db.from('agent_approvals').select('id,run_id,title,description,created_at').eq('telegram_id', String(owner)).eq('status', 'pending').order('created_at', { ascending: false }).limit(20),
     ])
     const failed = [open, recent, approvals].some((r: any) => r?.error)
-    const board = buildGoalBoard({ runs: [...(open?.data || []), ...(recent?.data || [])], approvals: approvals?.data || [], todos, now })
+    const board = buildGoalBoard({ runs: [...(open?.data || []), ...(recent?.data || [])], approvals: approvals?.data || [], todos, notices, now })
     return { ...board, unavailable: failed }
   } catch (err: any) {
     console.error('GOAL_BOARD_FAILED:', String(err?.message || 'error').slice(0, 120))

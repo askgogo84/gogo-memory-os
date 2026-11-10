@@ -16,7 +16,7 @@ eq(o.doneStateOf(run({})), 'done_unverified', 'a finished run with no outside ev
   eq([o.doneStateOf(conf('not_done')), o.ownershipOf(conf('not_done'))], ['blocked', 'your_turn'], 'sent back by the owner: their turn') }
 const checked = (v: any) => run({ metadata_json: { verification: v } })
 eq(o.doneStateOf(checked({ state: 'verified_completed', check: 'reminder_readback', at: at(0.5) })), 'verified', 'a code check that read the result back counts')
-for (const [v, why] of [[{ state: 'verified_completed', check: 'claude_judge', at: at(0.5) }, 'a model as the checker'], [{ state: 'verified_completed', check: 'LLM review', at: at(0.5) }, 'an LLM as the checker'],
+for (const [v, why] of [[{ state: 'verified_completed', check: 'claude_judge', at: at(0.5) }, 'a model as the checker'], [{ state: 'verified_completed', check: 'answer_judge', at: at(0.5) }, 'a check that is not one of the named code checks'],
   [{ state: 'verified_completed', at: at(0.5) }, 'no named check'], [{ state: 'verified_completed', check: 'x', at: 'soon' }, 'no time'], [{ state: 'still_unknown', check: 'x', at: at(0.5) }, 'a check that did not confirm'], ['yes', 'a bare string']] as const)
   eq(o.doneStateOf(checked(v)), 'done_unverified', `not checked: ${why}`)
 eq(o.doneStateOf(run({ metadata_json: { mode: 'draft' } })), 'draft', 'a draft is never done')
@@ -32,6 +32,13 @@ eq(o.doneStateOf(run({ status: 'paused', metadata_json: { handoff: { takeoverUrl
 eq(o.doneStateOf(run({ status: 'failed', error: 'provider_access_limited' })), 'blocked', 'a site refused')
 eq(o.doneStateOf(run({ status: 'failed', error: 'timeout' })), 'failed', 'a plain failure')
 eq(o.doneStateOf(run({ status: 'failed', error: 'user_cancelled' })), 'cancelled', 'cancelled by the owner')
+eq([o.doneStateOf(run({ status: 'paused', error: 'workspace_reconnect' })), o.ownershipOf(run({ status: 'paused', error: 'workspace_reconnect' }))], ['needs_you', 'together'], 'paused with nothing to approve: needs you, not "needs your yes"')
+eq(o.doneStateOf(run({ metadata_json: { outcome_status: 'paused', provider_blocked: true } })), 'blocked', 'a finished wrapper over a blocked step is blocked, as on Tasks')
+eq(o.doneStateOf(run({ metadata_json: { outcome_status: 'failed', owner_confirmation: { decision: 'done', at: at(0.5), by: 'u', surface: 'dashboard' } } })), 'verified', 'the owner’s "done" is the last word, as on Tasks')
+{ const { taskStateOf } = await import('../lib/dashboard/task-state')
+  const cases = [run({}), run({ status: 'paused', error: 'x' }), run({ status: 'waiting_approval' }), run({ status: 'outcome_unknown' }), run({ metadata_json: { outcome_status: 'paused', provider_blocked: true } }), run({ status: 'failed', error: 'timeout' }), run({ status: 'running' })]
+  const map: Record<string, string[]> = { done_unverified: ['gogo_thinks_done'], needs_you: ['needs_you'], waiting_approval: ['needs_you'], unknown: ['unknown'], blocked: ['blocked'], failed: ['could_not_finish'], running: ['running'] }
+  ok(cases.every(c => map[o.doneStateOf(c)]?.includes(taskStateOf(c))), 'the same run reads the same on Overview and on the other Tasks tabs') }
 
 // 2. Ownership: responsibility only, and the most hands-on of plan and state.
 eq(o.ownershipOf(run({ status: 'running' })), 'gogo_handles', 'Gogo is doing it')
@@ -51,8 +58,8 @@ const runs = [
   run({ id: 'r1', status: 'running', title: 'Flight prices BLR to DEL', updated_at: at(0.1) }),
   run({ id: 'r2', status: 'waiting_approval', title: 'Email to Divya', metadata_json: { mode: 'draft' } }),
   run({ id: 'r3', status: 'paused', title: 'Sign in to Swiggy', metadata_json: { handoff: { takeoverUrl: 'x' } } }),
-  run({ id: 'r4', title: 'Reminder', type: 'reminder', metadata_json: { verification: { state: 'verified_completed', check: 'reminder_readback', at: at(1) } } }),
-  run({ id: 'r5', title: 'Research investors', type: 'research' }),
+  run({ id: 'r4', title: 'Reminder', type: 'autonomous', capability: 'reminders', metadata_json: { verification: { state: 'verified_completed', check: 'reminder_readback', at: at(1) } } }),
+  run({ id: 'r5', title: 'Research investors', type: 'appointment_research' }),
   run({ id: 'r6', status: 'failed', error: 'timeout', title: 'Train search' }),
   run({ id: 'r7', status: 'outcome_unknown', title: 'Calendar block' }),
   run({ id: 'r8', status: 'failed', error: 'user_cancelled', title: 'Cancelled thing' }),
@@ -60,26 +67,34 @@ const runs = [
   run({ id: 'r10', status: 'running', title: 'Lost worker', updated_at: at(20) }),
   run({ id: 'r11', status: 'running', type: 'secure_browser', title: 'Store page', metadata_json: { comparison_parent_id: 'p' } }),
   run({ id: 'r1', status: 'running', title: 'duplicate row of r1' }),
+  run({ id: 'r12', status: 'queued', title: 'Scheduled for later', updated_at: at(20) }),
+  ...Array.from({ length: 5 }, (_, i) => run({ id: `bg${i}`, type: ['background_goal_review', 'watcher', 'workspace_drive_context', 'secure_browser', 'email_triage'][i], title: 'Background' })),
+  run({ id: 'r13', status: 'completed', metadata_json: { mode: 'draft' }, title: 'Old draft', updated_at: at(24 * 9) }),
 ]
 const b = g.buildGoalBoard({ runs, approvals: [{ id: 'a1', run_id: 'r2', title: 'dup' }, { id: 'a2', run_id: null, title: 'Book table at Toit', created_at: at(1) }], todos: [{ createdAt: at(5) }, { createdAt: at(24 * 60) }], now: NOW })
-eq(b.groups.gogo_handles.map(i => i.id), ['r1'], 'Gogo handles: what it is doing now')
+eq(b.groups.gogo_handles.map(i => i.id).sort(), ['r1', 'r12'], 'Gogo handles: what it is doing now, and a queued run waiting for its time')
 eq(b.groups.together.map(i => i.id).sort(), ['ap-a2', 'r2', 'r7'].sort(), 'together: the draft, the unknown outcome, the approval with no run shown; an approval for a shown run is not repeated')
 eq(b.groups.your_turn.map(i => i.id), ['r3'], 'your turn: the sign-in')
-eq(b.done.map(i => i.id), ['r4', 'r5'], 'finished in 30 days, checked first; the failure, the old run and the cancel are not listed')
+eq(b.done.map(i => i.id), ['r4', 'r5', 'r6'], 'finished in 30 days: checked, then not checked, then could not finish; the old run and the cancel are not listed')
+ok(!JSON.stringify(b).includes('"bg'), 'background checks, watcher setup, context reads and page reads are not tasks here')
+ok(!JSON.stringify(b).includes('r13'), 'a draft untouched for over a week is no longer shown as needing you')
 ok(!JSON.stringify(b).includes('r11') && !JSON.stringify(b).includes('duplicate row'), 'a child read and a repeated row are not tasks of their own')
-ok(!b.groups.gogo_handles.some(i => i.id === 'r10'), 'a run stuck for hours is not shown as working')
+ok(!JSON.stringify(b).includes('r10'), 'a run stuck for hours is left out, as the sweeper retires it')
 eq(b.metrics.doneChecked, 1, 'done and checked counts only outside evidence')
-eq([b.metrics.worked, b.metrics.failed, b.metrics.unknown], [2, 2, 1], 'two worked, two failed (one lost its worker), one unknown left out of both')
-eq(b.metrics.minutesSaved, g.TIME_SAVED_MINUTES.reminder + g.TIME_SAVED_MINUTES.research, 'time saved: the fixed minutes for each finished run, never the draft')
+eq([b.metrics.worked, b.metrics.failed, b.metrics.unknown], [2, 1, 1], 'two worked, one failed, one unknown left out of both')
+eq(b.metrics.minutesSaved, g.TIME_SAVED_MINUTES.reminder + g.TIME_SAVED_MINUTES.research, 'time saved: the fixed minutes for each finished run, never a draft or a background check')
+{ const busy = g.buildGoalBoard({ runs: Array.from({ length: 30 }, (_, i) => run({ id: `w${i}`, type: 'background_goal_review' })), now: NOW })
+  eq([busy.metrics.minutesSaved, busy.metrics.worked, busy.metrics.handedToGogo, busy.done.length], [0, 0, 0, 0], 'thirty scheduled goal reviews save no time and are not tasks') }
+eq(g.buildGoalBoard({ runs: [], notices: 2, now: NOW }).metrics.needYou, 2, 'service notices count as needing you, as on the Needs you tab')
 eq(b.metrics.needYou, 4, 'needs you: draft, sign-in, unknown, the approval with no run')
+ok(b.metrics.handedToGogo === 8, `tasks Gogo took on in 30 days, outcome kinds only (${b.metrics.handedToGogo})`)
 eq(b.metrics.ownTodos, 1, 'own to-dos in the last 30 days')
-ok(b.metrics.handedToGogo >= 7, 'tasks Gogo took on')
 eq(g.minutesLabel(0), 'none yet', 'no savings shown as none'); eq(g.minutesLabel(17), 'about 15 min', 'minutes'); eq(g.minutesLabel(185), 'about 3 h', 'hours')
 eq(g.minutesSavedFor({ type: 'travel_research' }), 20, 'kind picked from the run type'); eq(g.minutesSavedFor({ type: 'zzz' }), g.TIME_SAVED_DEFAULT, 'unknown kind: default')
 
 // 4. The flag and the loader.
-eq([g.goalBoardEnabledFor('918884501501', {}), g.goalBoardEnabledFor('918884501501', { GOGO_TASKS_OWNERSHIP: 'on' }), g.goalBoardEnabledFor('918884501501', { GOGO_TASKS_OWNERSHIP: '8884501501' }),
-  g.goalBoardEnabledFor('918884501501', { GOGO_TASKS_OWNERSHIP: '8310441698' }), g.goalBoardEnabledFor('', { GOGO_TASKS_OWNERSHIP: '' })], [false, true, true, false, false], 'off by default; on for everyone or for listed owners')
+eq([g.goalBoardEnabledFor('-884501501', {}), g.goalBoardEnabledFor('-884501501', { GOGO_TASKS_OWNERSHIP: 'on' }), g.goalBoardEnabledFor('-884501501', { GOGO_TASKS_OWNERSHIP: '-884501501, 5' }),
+  g.goalBoardEnabledFor('9123', { GOGO_TASKS_OWNERSHIP: '23' }), g.goalBoardEnabledFor('', { GOGO_TASKS_OWNERSHIP: '' })], [false, true, true, false, false], 'off by default; on for everyone or for exactly listed owner ids')
 const calls: any[] = []
 const fake = (rows: Record<string, any>) => ({ from: (t: string) => { const q: any = { f: [] as any[] }; const chain = new Proxy(q, { get: (_x, k: string) => k === 'then' ? (res: any) => res(rows[t + ':' + (q.f.find((f: any) => f[0] === 'in')?.[2]?.[0] || '')] || rows[t] || { data: [] }) : (...a: any[]) => { q.f.push([k, ...a]); calls.push([t, k, ...a]); return chain } }); return chain } })
 const lb = await g.getGoalBoard('918884501501', [], NOW, fake({ 'agent_runs:queued': { data: [run({ id: 'x1', status: 'running' })] }, 'agent_runs:completed': { data: [run({ id: 'x2' })] }, agent_approvals: { data: [] } }))

@@ -23,7 +23,7 @@ export const OWNERSHIP_HINT: Record<TaskOwnership, string> = {
 /** The eight states of Addendum 5, plus running, queued and cancelled, which the runtime already has. */
 export type DoneState =
   | 'verified' | 'done_unverified' | 'draft' | 'waiting_approval' | 'waiting_external'
-  | 'blocked' | 'failed' | 'unknown' | 'running' | 'queued' | 'cancelled'
+  | 'blocked' | 'failed' | 'unknown' | 'running' | 'queued' | 'cancelled' | 'needs_you'
 export const DONE_STATE_LABEL: Record<DoneState, string> = {
   verified: 'Done, checked',
   done_unverified: 'Done, not checked',
@@ -36,11 +36,12 @@ export const DONE_STATE_LABEL: Record<DoneState, string> = {
   running: 'Working now',
   queued: 'Starting',
   cancelled: 'Cancelled',
+  needs_you: 'Needs you',
 }
 /** States that still need something to happen (shown in the three ownership groups, not under "done"). */
-export const OPEN_STATES: ReadonlySet<DoneState> = new Set(['draft', 'waiting_approval', 'waiting_external', 'blocked', 'unknown', 'running', 'queued'])
+export const OPEN_STATES: ReadonlySet<DoneState> = new Set(['draft', 'waiting_approval', 'waiting_external', 'blocked', 'unknown', 'running', 'queued', 'needs_you'])
 /** States where the owner has something to do or check. */
-export const ATTENTION_STATES: ReadonlySet<DoneState> = new Set(['draft', 'waiting_approval', 'blocked', 'unknown'])
+export const ATTENTION_STATES: ReadonlySet<DoneState> = new Set(['draft', 'waiting_approval', 'blocked', 'unknown', 'needs_you'])
 
 const metaOf = (run: any) => (run?.metadata_json || run?.metadata || {}) as Record<string, any>
 const text = (v: unknown) => String(v ?? '')
@@ -70,6 +71,10 @@ export function isDraftRun(run: any): boolean {
   return m.mode === 'draft' || m.draft === true || m.draft_only === true || m.result_kind === 'draft' || /(?:^|_)draft$/.test(type)
 }
 
+/** The code checks that may mark a run "done, checked" (Addendum 5, P0 independent verification). Each reads the
+ *  result back from the store or provider it was written to. A model is never one of them. */
+export const VERIFICATION_CHECKS: ReadonlySet<string> = new Set(['reminder_readback', 'todo_readback', 'list_readback', 'calendar_readback', 'flight_results_readback', 'research_sources_readback', 'event_readback'])
+
 /** Evidence that a finished run is done, from someone other than the agent that did it. */
 export type DoneEvidence = { by: 'owner' | 'provider_check'; at: string; detail?: string }
 export function doneEvidenceOf(run: any): DoneEvidence | null {
@@ -77,9 +82,10 @@ export function doneEvidenceOf(run: any): DoneEvidence | null {
   if (owner?.decision === 'done') return { by: 'owner', at: owner.at }
   // Written by a code check that read the result back from the provider (Addendum 5, P0 independent verification).
   // A model's own claim is never recorded here; `by` names the check, and anything claiming a model is refused.
+  // Only checks named in VERIFICATION_CHECKS count: each is code that reads the result back from where it was saved.
   const v = metaOf(run).verification
-  if (v && typeof v === 'object' && v.state === 'verified_completed' && typeof v.check === 'string' && v.check && !/model|llm|gpt|claude|sonnet|haiku|opus/i.test(v.check)
-    && typeof v.at === 'string' && Number.isFinite(Date.parse(v.at))) return { by: 'provider_check', at: v.at, detail: v.check.slice(0, 60) }
+  if (v && typeof v === 'object' && v.state === 'verified_completed' && typeof v.check === 'string' && VERIFICATION_CHECKS.has(v.check)
+    && typeof v.at === 'string' && Number.isFinite(Date.parse(v.at))) return { by: 'provider_check', at: v.at, detail: v.check }
   return null
 }
 
@@ -95,11 +101,17 @@ export function doneStateOf(run: any): DoneState {
     case 'queued': return 'queued'
     case 'watching': case 'scheduled': return 'waiting_external'
     case 'waiting_approval': return isDraftRun(run) ? 'draft' : 'waiting_approval'
-    case 'paused': return needsOwnerHand(run) || missingInput(run) ? 'blocked' : 'waiting_approval'
+    // Paused with nothing to approve and no sign-in to do (a reconnect, a question): it needs the owner, in plain words.
+    case 'paused': return needsOwnerHand(run) || missingInput(run) ? 'blocked' : 'needs_you'
     case 'failed': return needsOwnerHand(run) || missingInput(run) ? 'blocked' : 'failed'
     case 'completed': {
+      // The owner marking it complete is the last word, as on every other Tasks surface (task-state.ts).
+      if (ownerConfirmationOf(run)?.decision === 'done') return 'verified'
       const o = text(metaOf(run).outcome_status)
-      if (o && o !== 'completed') return o === 'failed' ? 'failed' : o === 'running' ? 'running' : o === 'queued' ? 'queued' : o === 'paused' || o === 'waiting_approval' ? 'waiting_approval' : 'unknown'
+      if (o && o !== 'completed') {
+        if (o === 'paused' || o === 'waiting_approval') return needsOwnerHand(run) || missingInput(run) ? 'blocked' : o === 'paused' ? 'needs_you' : 'waiting_approval'
+        return o === 'failed' ? 'failed' : o === 'running' ? 'running' : o === 'queued' ? 'queued' : 'unknown'
+      }
       if (isDraftRun(run)) return 'draft'
       return doneEvidenceOf(run) ? 'verified' : 'done_unverified'
     }
@@ -114,6 +126,6 @@ export function ownershipOf(run: any, state: DoneState = doneStateOf(run)): Task
   const planned: TaskOwnership = OWNERSHIP_ORDER.includes(m.ownership) ? m.ownership : 'gogo_handles'
   let now: TaskOwnership = 'gogo_handles'
   if (state === 'blocked' && (needsOwnerHand(run) || missingInput(run) || ownerConfirmationOf(run)?.decision === 'not_done')) now = 'your_turn'
-  else if (state === 'draft' || state === 'waiting_approval' || state === 'unknown') now = 'together'
+  else if (state === 'draft' || state === 'waiting_approval' || state === 'unknown' || state === 'needs_you') now = 'together'
   return OWNERSHIP_ORDER[Math.max(OWNERSHIP_ORDER.indexOf(planned), OWNERSHIP_ORDER.indexOf(now))]
 }
