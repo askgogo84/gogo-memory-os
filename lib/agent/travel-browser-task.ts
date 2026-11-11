@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { runSecureBrowser } from './secure-computer'
 import { sanitizeBrowserReadDiagnostics } from './browser-read-diagnostics'
 import type { AgentActor } from './actor'
+import { chooseFlightPick, oneWayDisplayOrder, roundTripDisplayOrder } from './flight-pick'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
@@ -50,29 +51,19 @@ export function formatBrowserFlightResult(context:BrowserFlightContext,options:B
   const money=(n:number)=>`₹${n.toLocaleString('en-IN')}`
   const stops=(f:BrowserFlightOption)=>f.stops===null?'stops not verified':f.stops===0?'non-stop':`${f.stops} stop${f.stops===1?'':'s'}${f.layover?` (${f.layover})`:''}`
   const basis=(f:BrowserFlightOption)=>f.fareBasis==='party_total'&&f.farePassengers===passengers?(passengers>1?` total for ${passengers} adults`:''):passengers>1?' (party total not verified)':''
-  const rows=sorted.map((f,i)=>`${i+1}. ${f.fareInr?money(f.fareInr):'fare not verified'}${f.fareInr?basis(f):''} · ${f.airline}\n   ${f.departure} → ${f.arrival} · ${stops(f)}`)
-  // 18 Oct: Google listed 52 non-stops from ₹18,327 below five cheaper 1-stop fares; the cheapest non-stop
-  // is always named and listed, even when it is not in the cheapest five.
-  const best=sorted.find(f=>f.fareInr), nonstop=[...options].filter(f=>f.stops===0&&f.fareInr).sort((a,b)=>a.fareInr!-b.fareInr!)[0]
-
-  const verdict=best?[`Cheapest: ${money(best.fareInr!)} on ${best.airline}, ${best.stops===0?'non-stop':`${best.stops} stop${best.stops===1?'':'s'}`}.`,
-    ...(nonstop&&nonstop!==best?[`Cheapest non-stop: ${money(nonstop.fareInr!)} on ${nonstop.airline}.`]:[])]:[]
-  return [`*${context.routeLabel}* · ${context.whenLabel}`,`${passengers} adult${passengers===1?'':'s'} · ${(context.cabin||'economy').replace(/_/g,' ')} · one-way`,'',...verdict,'',...rows,'',
-    'Fares from Google Flights, read just now; they move, so open the link to confirm. Baggage and optional charges are extra. Say “book the cheapest” to book.',
-    context.origin?.code&&context.destination?.code&&context.startDate?oneWaySearchLink(context):sourceUrl].join('\n')
+  const line=(f:BrowserFlightOption,n:number)=>`${n}. ${f.fareInr?money(f.fareInr):'fare not verified'}${f.fareInr?basis(f):''} · ${f.airline} · ${f.departure} → ${f.arrival} · ${stops(f)}`
+  // 11 Nov (owner): one pick and a short question, like Instinct. The pick is chosen by a fixed rule in code
+  // (flight-pick.ts) and named by its number in this same list, so "book N" books exactly the recommended flight.
+  const pick=chooseFlightPick(sorted),p=pick?sorted[pick.n-1]:null
+  const pickLine=p&&pick?[`My pick: #${pick.n}, ${money(p.fareInr!)}${basis(p)} on ${p.airline}, ${p.departure} → ${p.arrival}, ${stops(p)}. ${pick.reason}${pick.nonstopN?` Cheapest non-stop: #${pick.nonstopN} at ${money(sorted[pick.nonstopN-1].fareInr!)}.`:''}`,'']:[]
+  return [`*${context.routeLabel}* · ${context.whenLabel} · ${passengers} adult${passengers===1?'':'s'}, ${(context.cabin||'economy').replace(/_/g,' ')}, one-way`,'',...pickLine,
+    ...sorted.map((f,i)=>line(f,i+1)),'',
+    `Fares from Google Flights just now; they move and bags are extra. Live search: ${context.origin?.code&&context.destination?.code&&context.startDate?oneWaySearchLink(context):sourceUrl}`,'',
+    p&&pick?`Reply *book ${pick.n}* to book it, or *book* and another number.`:'Say *book* and a number to book one.'].join('\n')
 }
 
-/** The order the person sees for a one-way result: cheapest first, top five. "Book #2" refers to this list. */
-export function oneWayDisplayOrder(options:BrowserFlightOption[]){
-  return withCheapestNonstop([...options].sort((a,b)=>(a.fareInr??Infinity)-(b.fareInr??Infinity)),5)
-}
-
-/** Cheapest five, plus the cheapest non-stop as a sixth row when none of the five is non-stop. */
-function withCheapestNonstop(sorted:BrowserFlightOption[],n:number){
-  const top=sorted.slice(0,n)
-  const nonstop=sorted.find(f=>f.stops===0&&f.fareInr)
-  return nonstop&&!top.includes(nonstop)?[...top,nonstop]:top
-}
+// 11 Nov: the display order lives in flight-pick.ts so the text, the card and booking share one definition.
+export { oneWayDisplayOrder, roundTripDisplayOrder } from './flight-pick'
 
 export function browserFlightContextVisible(pageText: string, context: BrowserFlightContext) {
   const text = String(pageText || '').replace(/\s+/g, ' ').toLowerCase()
@@ -328,10 +319,6 @@ export function googleRoundTripOptionsFromEvidence(result:any,context:BrowserFli
   })
 }
 
-/** The order the person sees: cheapest first, top five. "Book #2" refers to this list. */
-export function roundTripDisplayOrder(options:BrowserFlightOption[]){
-  return withCheapestNonstop([...options].filter(o=>o.fareInr).sort((a,b)=>a.fareInr!-b.fareInr!),5)
-}
 
 /** Cheapest first, one plain verdict. Prices are Google's round-trip totals and move between reads. */
 export function formatRoundTripResult(context:BrowserFlightContext,options:BrowserFlightOption[],sourceUrl:string){
@@ -342,13 +329,16 @@ export function formatRoundTripResult(context:BrowserFlightContext,options:Brows
   const money=(n:number)=>`₹${n.toLocaleString('en-IN')}`
   const basis=(o:BrowserFlightOption)=>o.fareBasis==='party_total'&&o.farePassengers===passengers?(passengers>1?` total for ${passengers} adults`:''):' (party total not verified)'
   const stops=(o:BrowserFlightOption)=>o.stops===null?'stops not verified':o.stops===0?'non-stop':`${o.stops} stop${o.stops===1?'':'s'}${o.layover?` (${o.layover})`:''}`
-  const rows=sorted.map((o,i)=>`${i+1}. ${money(o.fareInr!)}${basis(o)} · ${o.airline}\n   Out ${o.departure} → ${o.arrival} · ${stops(o)}`)
-  const best=sorted[0], nonstop=sorted.find(o=>o.stops===0)
-  const verdict=best?[`Cheapest round trip: ${money(best.fareInr!)} on ${best.airline}, ${best.stops===0?'non-stop':`${best.stops} stop${best.stops===1?'':'s'}`}.`,
-    ...(nonstop&&nonstop!==best?[`Cheapest non-stop: ${money(nonstop.fareInr!)} on ${nonstop.airline}.`]:[])]:[]
+  const line=(o:BrowserFlightOption,n:number)=>`${n}. ${money(o.fareInr!)}${basis(o)} · ${o.airline} · out ${o.departure} → ${o.arrival} · ${stops(o)}`
   const dayLabel=(iso:string)=>new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(`${iso}T00:00:00Z`))
-  return [`*${context.routeLabel}* · ${dayLabel(context.startDate!)} → back ${dayLabel(context.returnDate!)}`,
-    `${passengers} adult${passengers===1?'':'s'} · ${(context.cabin||'economy').replace(/_/g,' ')} · round trip`,'',...verdict,'',...rows,'',
-    'Round-trip totals from Google Flights, read just now; fares move, so open the link to confirm before you book. You pick the return flight on the next page. Baggage and optional charges are extra. Say “book the cheapest” to book.',
-    roundTripSearchLink(context)].join('\n')
+  // 11 Nov (owner): one pick and a short question (see formatBrowserFlightResult).
+  const pick=chooseFlightPick(sorted),p=pick?sorted[pick.n-1]:null
+  // Stops are read from the outbound label only (the return is chosen on the next page), so "non-stop" is said as "non-stop out".
+  const outReason=(r:string)=>r.replace(/\bnon-stop\b/gi,m=>`${m} out`)
+  const pickBasis=(o:BrowserFlightOption)=>passengers>1?basis(o):''
+  const pickLine=p&&pick?[`My pick: #${pick.n}, ${money(p.fareInr!)}${pickBasis(p)} round trip on ${p.airline}, out ${p.departure} → ${p.arrival}, ${stops(p)}. ${outReason(pick.reason)}${pick.nonstopN?` Cheapest non-stop out: #${pick.nonstopN} at ${money(sorted[pick.nonstopN-1].fareInr!)}.`:''}`,'']:[]
+  return [`*${context.routeLabel}* · ${dayLabel(context.startDate!)} → back ${dayLabel(context.returnDate!)} · ${passengers} adult${passengers===1?'':'s'}, ${(context.cabin||'economy').replace(/_/g,' ')}, round trip`,'',...pickLine,
+    ...sorted.map((o,i)=>line(o,i+1)),'',
+    `Round-trip totals from Google Flights just now; they move and bags are extra. You pick the return flight on the next page. Live search: ${roundTripSearchLink(context)}`,'',
+    p&&pick?`Reply *book ${pick.n}* to book it, or *book* and another number.`:'Say *book* and a number to book one.'].join('\n')
 }

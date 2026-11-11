@@ -30,7 +30,7 @@ assert.equal(await b.loadSavedBookingProfile(actor, 2), null, 'a different trave
 rows = [{ metadata_json: { flight_booking: { ...fb, contact_mobile: null } } }]
 assert.equal(await b.loadSavedBookingProfile(actor, 1), null)
 ;(supabaseAdmin as any).from = originalFrom
-assert.deepEqual(b.flightBookingRequest('Book'), { kind: 'cheapest' }, 'bare "book" = Gogo\'s pick (#1)')
+assert.deepEqual(b.flightBookingRequest('Book'), { kind: 'pick' }, 'bare "book" = Gogo\'s pick')
 assert.deepEqual(b.flightBookingRequest('book 2'), { kind: 'number', n: 2 })
 assert.equal(b.flightBookingRequest('book a table for 2'), null)
 assert.ok(src.includes("profile: { travellers, email: contact.email, seat }") && src.includes("profile: null, pii_purged: true"), 'profile saved with the booking and purged with it')

@@ -1,0 +1,1 @@
+npx tsx scripts/verify-flight-pick-nov11.mts

@@ -2,6 +2,8 @@
 // worker and the tests share one shape. Every value comes from rows Gogo already verified on Google Flights
 // (agent_steps.output_json with inventoryType 'browser-verified'); nothing here is produced by a model.
 
+import { chooseFlightPick, oneWayDisplayOrder } from './flight-pick'
+
 export type FlightCardRow = {
   n: number
   airline: string
@@ -56,9 +58,18 @@ export function flightCardModel(output: any): FlightCardModel | null {
     return [{ airline, departure: String(f.departure), arrival: String(f.arrival), stops: f.stops as number, fareInr: f.fareInr as number }]
   })
   if (!clean.length) return null
-  const rows = displayOrder(clean).map((f, i) => ({
+  const ordered = displayOrder(clean)
+  // 11 Nov: the pick is chosen on the same list the text and booking use (all stored rows, oneWayDisplayOrder), not on
+  // the card's cleaned rows, then shown on the card row for that same flight. If that flight is not on the card, the
+  // card highlights nothing rather than a different flight.
+  const textOrder = oneWayDisplayOrder((output.flights as any[]).map(f => ({ ...f, fareInr: Number.isSafeInteger(f?.fareInr) && f.fareInr > 0 ? f.fareInr : null, stops: Number.isInteger(f?.stops) ? f.stops : null })))
+  const textPick = chooseFlightPick(textOrder)
+  const picked = textPick ? textOrder[textPick.n - 1] : null
+  const same = (f: Clean) => !!picked && picked.airline?.trim() === f.airline && picked.departure === f.departure && picked.arrival === f.arrival && picked.fareInr === f.fareInr
+  const pickAt = ordered.findIndex(same) // first match only: identical stored rows never give two picks
+  const rows = ordered.map((f, i) => ({
     n: i + 1, airline: f.airline, ...brand(f.airline), departure: f.departure, arrival: f.arrival,
-    stops: f.stops === 0 ? 'Nonstop' : `${f.stops} stop${f.stops === 1 ? '' : 's'}`, fareInr: f.fareInr, pick: i === 0,
+    stops: f.stops === 0 ? 'Nonstop' : `${f.stops} stop${f.stops === 1 ? '' : 's'}`, fareInr: f.fareInr, pick: i === pickAt,
   }))
   const date = new Date(`${ctx.startDate}T00:00:00Z`)
   const when = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(date).replace(',', '')
@@ -71,8 +82,11 @@ export const formatInr = (n: number, rupee = true) => `${rupee ? '₹' : 'Rs '}$
 
 /** One line under the card naming the pick, from the same rows (no model). */
 export function flightCardCaption(model: FlightCardModel) {
-  const [a, b] = model.rows
-  const reason = a.stops === 'Nonstop' ? 'cheapest and nonstop' : 'cheapest'
-  const alt = b && b.departure !== a.departure ? ` #2 is ${b.fareInr === a.fareInr ? 'the same price' : `${formatInr(b.fareInr - a.fareInr)} more`} at ${b.departure}.` : ''
-  return `${model.route} · ${model.when}: I'd pick #1, ${a.airline} at ${a.departure}, ${reason}.${alt} Say "book 1" to book.`
+  const p = model.rows.find(r => r.pick)
+  // No pick on the card (the recommended flight is not among its rows): no recommendation here; the text has it.
+  if (!p) return `${model.route} · ${model.when}: the fares I found. My pick is in the message below.`
+  const cheapest = Math.min(...model.rows.map(r => r.fareInr))
+  const reason = p.stops === 'Nonstop' ? (p.fareInr === cheapest ? 'cheapest, and non-stop' : 'non-stop for a little more') : 'cheapest'
+  // No "book N" here and no row numbers in the reason: the card's numbering can differ from the text's.
+  return `${model.route} · ${model.when}: I'd pick ${p.airline} at ${p.departure}, ${reason}. Details below.`
 }

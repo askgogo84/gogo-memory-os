@@ -70,9 +70,11 @@ const rejectedActions = [{phase:'plan',reason:'unsupported_field',proposed:3,acc
   {phase:'execution',reason:'control_unavailable',target:'passengers',matches:0,rendered:0,token:'fixture-private-token',selector:'#private'},
   {phase:'execution',reason:'consequential_control',target:'passengers',guardContext:503,guardNameShape:'bare_passenger',observedNameShape:'full_passenger',label:'fixture-private-token',selector:'#private'},
   {phase:'plan',reason:'not_allowlisted',proposed:3},{phase:'plan',reason:'plan_empty',accepted:0}]
+const flightPick = await import('../lib/agent/flight-pick.ts')
 const browser = load('lib/agent/travel-browser-task.ts',{
   '@anthropic-ai/sdk':{default:class {messages={create:async()=>({content:[]})}}},
   './browser-read-diagnostics':diagnostics,
+  './flight-pick':flightPick,
   './secure-computer':{runSecureBrowser:async(params:any)=>{browserAttempts++;browserDeadline=params.readDeadline;throw Object.assign(new Error('browser_objective_unverified'),{browserReadDiagnostics:rejectedActions})}},
 })
 let queue:any
@@ -82,6 +84,7 @@ const travel = load('lib/agent/travel-research.ts',{'./flight-timing':{formatFli
   '@/lib/integrations/creditiq-travel':{searchCreditIQLiveFlights:async()=>null},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(text:string)=>text},'./travel-browser-task':browser,
   './browser-read-diagnostics':diagnostics,
+  './flight-pick':flightPick,
   './travel-research-queue':{enqueueTravelResearch:(params:any)=>queue.enqueueTravelResearch(params)},
   // 26 Oct: travel-research re-exports the shared specialist-travel rule for the dashboard route.
   './specialist-routing':load('lib/agent/specialist-routing.ts',{}),
@@ -194,8 +197,8 @@ assert.equal(browser.googleFlightOptionsFromEvidence({...observedGoogle,flightEv
 assert.equal(browser.browserFlightContextVisible([selected[1],selected[0],...selected.slice(2)].join('\n'),context),false,'unstructured prose keeps its direction boundary')
 assert.equal(exactRows[0].departure,'3:45 AM');assert.equal(exactRows[0].evidence,googleLabel)
 const formattedFlight=browser.formatBrowserFlightResult(context,exactRows,observedGoogle.url)
-assert.match(formattedFlight,/Cheapest: ₹4,423 on IndiGo, non-stop\./);assert.match(formattedFlight,/https:\/\/www\.google\.com\/travel\/flights\?hl=en&gl=in&curr=INR&q=Flights%20from%20BLR%20to%20BOM/)
-assert.match(formattedFlight,/Baggage and optional charges/)
+assert.match(formattedFlight,/My pick: #1, ₹4,423 on IndiGo, .+, non-stop\. Cheapest, and non-stop\./);assert.match(formattedFlight,/https:\/\/www\.google\.com\/travel\/flights\?hl=en&gl=in&curr=INR&q=Flights%20from%20BLR%20to%20BOM/)
+assert.match(formattedFlight,/they move and bags are extra/)
 const partyContext={...context,adults:2}
 const partyGoogle={...observedGoogle,pageText:'Prices include required taxes + fees for 2 adults.',flightEvidence:{searchControls:selected.map(label=>label.replace('1 passenger','2 passengers')),resultLabels:[googleLabel.replace('4423','8846')]}}
 const partyOptions=browser.googleFlightOptionsFromEvidence(partyGoogle,partyContext)
@@ -219,6 +222,7 @@ assert.equal(browser.googleFlightOptionsFromEvidence({...observedGoogle,flightEv
 const realObservedBrowser=load('lib/agent/travel-browser-task.ts',{
   '@anthropic-ai/sdk':{default:class {messages={create:async()=>{throw Error('observed rows must not require generated extraction')}}}},
   './browser-read-diagnostics':diagnostics,
+  './flight-pick':flightPick,
   './secure-computer':{runSecureBrowser:async()=>({...observedGoogle,status:'completed',pageText:'ordinary page prose without control values'})},
 })
 assert.equal((await realObservedBrowser.runLiveFlightBrowserTask({actor,context,objective:text})).options[0].fareInr,4423,'the real task uses observed labels before a model-based prose extraction')
