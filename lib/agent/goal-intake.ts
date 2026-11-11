@@ -209,7 +209,10 @@ function question(g: IntakeGoal, s: Slot) { return (g.kind === 'reminder' && REM
 export function detailOf(g: IntakeGoal): string {
   // Shown as plain text: WhatsApp formatting marks and quote marks in a detail are dropped for display only.
   const show = (v: unknown, n: number) => { const t = clip(v, 200).replace(/[*_~`“”"]/g, '').trim(); return t.length > n ? `${t.slice(0, n).trim()}…` : t }
-  const s = { from: show(g.slots.from, 40), to: show(g.slots.to, 40), date: show(g.slots.date, 20), time: show(g.slots.time, 10), recipient: show(g.slots.recipient, 60), topic: show(g.slots.topic, 80), people: show(g.slots.people, 10) }
+  // "2026-11-12" is said as "Thu 12 Nov" and "14:30" as "2:30 pm"; anything else is shown as given.
+  const day = (v: string) => { const m = v.match(/^(\d{4})-(\d\d)-(\d\d)$/); if (!m) return v; const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))); return Number.isFinite(d.getTime()) ? new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(d).replace(',', '') : v }
+  const clock = (v: string) => { const m = v.match(/^([01]?\d|2[0-3]):([0-5]\d)$/); if (!m) return v; const h = Number(m[1]); return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'am' : 'pm'}` }
+  const s = { from: show(g.slots.from, 40), to: show(g.slots.to, 40), date: day(show(g.slots.date, 20)), time: clock(show(g.slots.time, 10)), recipient: show(g.slots.recipient, 60), topic: show(g.slots.topic, 80), people: show(g.slots.people, 10) }
   const on = s.date ? [s.date, s.time].filter(Boolean).join(' at ') : s.time ? `at ${s.time}` : ''
   if (g.kind === 'reminder') return on ? (s.date ? `for ${on}` : on) : ''
   if (g.kind === 'flight_prices') return [s.from && s.to ? `${s.from} to ${s.to}` : s.from ? `from ${s.from}` : s.to ? `to ${s.to}` : '', s.date ? `on ${s.date}` : ''].filter(Boolean).join(' ')
@@ -430,6 +433,17 @@ export type IntakeDeps = { model?: Model; store?: Store; start?: StartDeps; now?
 
 /** The WhatsApp entry. Returns the reply, or null when the message is not a list and not a reply to a pending plan
  *  (routing then continues exactly as before). Never throws. */
+/** Is a plan from this person still waiting for details or for "get it done"? While one is, their next message is
+ *  offered to the plan before a reply to an older alert is read into it ("Skip the emails. Get it done" is about the
+ *  plan, not an instruction to drop the last alert). Never throws; false when intake is off for them. */
+export async function hasOpenGoalPlan(actor: AgentActor, deps: { store?: Store; now?: Date } = {}): Promise<boolean> {
+  try {
+    if (!goalIntakeEnabledFor(String(actor.legacyTelegramId))) return false
+    const plan = readPlan(await (deps.store || realStore).load(actor.legacyTelegramId), deps.now || new Date())
+    return Boolean(plan)
+  } catch { return false }
+}
+
 export async function tryGoalIntake(actor: AgentActor, text: string, deps: IntakeDeps = {}): Promise<string | null> {
   const tg = actor.legacyTelegramId, owner = String(tg)
   if (!goalIntakeEnabledFor(owner)) return null
