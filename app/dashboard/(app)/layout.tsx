@@ -6,6 +6,9 @@ import { MobileNavProvider, MobileTopBar } from '@/components/dashboard/mobile-n
 import { GogoLiveProvider } from '@/components/dashboard/gogo-live'
 import { DesktopTopBar, GogoPanel } from '@/components/dashboard/gogo-panel'
 import { BottomTabs } from '@/components/dashboard/bottom-tabs'
+import { CompanionProvider } from '@/components/gogo/companion'
+import { crewEnabledFor } from '@/lib/gogo/crew'
+import { loadCompanionChoice } from '@/lib/dashboard/companion-choice'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,7 +21,12 @@ export default async function DashboardShell({ children }: { children: React.Rea
   const live=await import('@/lib/spaces/sources-live')
   const shell={...base,spaces:live.spacesEnabledFor(String(session.telegramId)),navV2:live.navV2EnabledFor(String(session.telegramId)),events:(await import('@/lib/events/core')).eventsEnabledFor(String(session.telegramId))}
 
+  // 12 Nov: the Gogo crew (characters whose eyes follow the pointer), owner-only behind GOGO_CREW.
+  const crew=crewEnabledFor(String(session.telegramId))
+  const companion=crew?await loadCompanionChoice(session.telegramId).catch(()=>null):null
+
   return (
+    <CompanionProvider choice={companion} crew={crew}>
     <GogoLiveProvider>
       <MobileNavProvider shell={shell}>
         <div className="dashboard-shell flex min-h-screen w-full flex-1 overflow-hidden bg-[#0b0b0b] text-[#ecebe8]">
@@ -33,5 +41,6 @@ export default async function DashboardShell({ children }: { children: React.Rea
         </div>
       </MobileNavProvider>
     </GogoLiveProvider>
+    </CompanionProvider>
   )
 }

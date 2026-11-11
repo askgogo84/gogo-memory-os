@@ -4,7 +4,7 @@
 // the person picked. Status words (the live line) stay the same whatever the character looks like.
 import { GOGO_AGENT_STATES, type GogoAgentState } from './agent-states'
 
-export type CompanionId = 'gogo'
+export type CompanionId = 'gogo' | 'mishti' | 'chai' | 'tara' | 'bolt' | 'momo'
 export type CompanionInfo = {
   id: CompanionId
   name: string
@@ -14,6 +14,12 @@ export type CompanionInfo = {
 
 export const COMPANIONS: Record<CompanionId, CompanionInfo> = {
   gogo: { id: 'gogo', name: 'Gogo', states: GOGO_AGENT_STATES },
+  // The crew (12 Nov 2026): each draws every state through components/gogo/crewmate.tsx (state → mood).
+  mishti: { id: 'mishti', name: 'Mishti', states: GOGO_AGENT_STATES },
+  chai: { id: 'chai', name: 'Chai', states: GOGO_AGENT_STATES },
+  tara: { id: 'tara', name: 'Tara', states: GOGO_AGENT_STATES },
+  bolt: { id: 'bolt', name: 'Bolt', states: GOGO_AGENT_STATES },
+  momo: { id: 'momo', name: 'Momo', states: GOGO_AGENT_STATES },
 }
 
 export const DEFAULT_COMPANION: CompanionId = 'gogo'

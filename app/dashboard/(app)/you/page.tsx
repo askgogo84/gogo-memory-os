@@ -7,6 +7,10 @@ import { SignOutButton } from '@/components/dashboard/sign-out-button'
 import { EmailPreferences } from '@/components/dashboard/email-preferences'
 import { DailyBriefEmail } from '@/components/dashboard/daily-brief-email'
 import { GogoCharacter } from '@/components/gogo/gogo-character'
+import { Companion } from '@/components/gogo/companion'
+import { CompanionPicker } from '@/components/dashboard/companion-picker'
+import { crewEnabledFor } from '@/lib/gogo/crew'
+import { loadCompanionChoice } from '@/lib/dashboard/companion-choice'
 
 export const dynamic='force-dynamic'
 
@@ -41,10 +45,12 @@ export default async function YouPage(){
     ['CreditIQ',profile.connections.creditiq],
   ] as const
 
+  const crew=session?crewEnabledFor(String(session.telegramId)):false
+  const companion=crew&&session?await loadCompanionChoice(session.telegramId).catch(()=>null):null
   return <div className="mx-auto w-full max-w-[1100px] pb-10">
     <header className="flex items-end justify-between gap-5 border-b border-[#1f1f1f] pb-5">
       <div className="flex items-center gap-4">
-        <div className="grid h-14 w-14 place-items-center rounded-full bg-[#f2efea]"><GogoCharacter state="calm" size={52} showStatus={false}/></div>
+        <div className="grid h-14 w-14 place-items-center rounded-full bg-[#f2efea]">{crew?<Companion state="idle" size={52} label=""/>:<GogoCharacter state="calm" size={52} showStatus={false}/>}</div>
         <div>
           <div className="final-dark-eyebrow">Account</div>
           <h1 className="final-dark-title mt-1 text-[32px]">{profile.name||'You'}</h1>
@@ -54,6 +60,7 @@ export default async function YouPage(){
       <Link href="/dashboard/connections" className="hidden rounded-[8px] border border-[#2a2a2a] px-3 py-2 text-[13px] text-[#c9c9c4] hover:border-[#2fb8a6] hover:text-[#2fb8a6] sm:inline-flex">Connections</Link>
     </header>
 
+    {crew&&<CompanionPicker initial={companion}/>}
     <section className="mt-5 final-dark-panel overflow-hidden px-4">
       <Setting title="Safe mode" detail="Gogo asks before anything that sends, spends, books or submits."><span className="inline-flex items-center gap-2 text-[14px] text-[#7fb069]"><span className="h-2 w-2 rounded-full bg-[#7fb069]"/>On</span></Setting>
       <Setting title="Appearance" detail="Dark is the default. Light uses the cream askgogo.in colours. Saved in this browser."><ThemeToggle/></Setting>

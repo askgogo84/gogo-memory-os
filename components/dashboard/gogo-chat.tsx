@@ -8,7 +8,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { ChannelPill, ChatChannels, type ChatChannel } from './chat-channels'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
-import { GogoCharacter } from '@/components/gogo/gogo-character'
+import { PoseCompanion } from '@/components/gogo/companion'
 import { selectActiveRun, summarizeActiveRunState } from '@/lib/dashboard/run-state'
 import { CHAT_STATE_LABEL, CHAT_STATE_SHORT, chatGogoState, type ChatGogoState } from '@/lib/dashboard/gogo-chat-state'
 import { flightChoiceFromText } from '@/lib/agent/flight-choices'
@@ -59,7 +59,7 @@ function richText(text:string){
 // Gogo's character sits on a cream disc so every pose reads on the dark page. The pose is the canonical
 // GogoCharacter state (calm, listening, thinking, acting, watching, approval, done).
 function Avatar({state='calm',size=40,showStatus=false}:{state?:ChatGogoState;size?:number;showStatus?:boolean}){
-  return <div className="grid shrink-0 place-items-center overflow-hidden rounded-full bg-[#efe6d7]" style={{width:size,height:size}}><GogoCharacter state={state} size={Math.round(size*.94)} showStatus={showStatus}/></div>
+  return <div className="grid shrink-0 place-items-center overflow-hidden rounded-full bg-[#efe6d7]" style={{width:size,height:size}}><PoseCompanion state={state} size={Math.round(size*.94)} showStatus={showStatus}/></div>
 }
 
 // A reply asking to connect a site ("…/dashboard/connect/amazon?ask=…") shows a Connect button, as in the approved mock.
