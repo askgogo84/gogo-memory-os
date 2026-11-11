@@ -19,7 +19,7 @@ assert.equal(t.googleFlightOptionsFromEvidence({...result, flightEvidence: {...r
 const text = t.formatBrowserFlightResult(context, options, result.url)
 assert.match(text, /My pick: #1, ₹7,215 on IndiGo, .+, non-stop\. Cheapest, and non-stop\./); assert.match(text, /Reply \*book 1\* to book it/)
 assert.match(text, /1\. ₹7,215 · IndiGo/)
-assert.match(text, /q=Flights%20from%20BLR%20to%20DEL/)
+assert.match(text, /q=Flights\+from\+BLR\+to\+DEL/)
 // 18 Oct live: five cheaper 1-stop fares hid every non-stop (cheapest non-stop ₹18,327). It is always listed.
 const many: any[] = [14448, 15237, 15463, 16114, 16246, 16525].map((f, i) => ({airline: 'Air India Express', departure: `${i + 6}:00 AM`, arrival: '2:00 PM', stops: 1, fareInr: f}))
 many.push({airline: 'Akasa Air', departure: '7:00 AM', arrival: '9:50 AM', stops: 0, fareInr: 18327})

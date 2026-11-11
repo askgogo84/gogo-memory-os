@@ -42,4 +42,4 @@ import { readFileSync } from 'node:fs'
 assert.match(readFileSync('lib/agent/travel-browser-task.ts', 'utf8'), /travel\/flights\?hl=en&gl=in&curr=INR/)
 assert.match(readFileSync('lib/agent/travel-research.ts', 'utf8'), /travel\/flights\?hl=en&gl=in&curr=INR/)
 // The reply links to the exact search (both dates, India pricing), not the bare Google Flights home.
-assert.match(text, /https:\/\/www\.google\.com\/travel\/flights\?hl=en&gl=in&curr=INR&q=Round%20trip%20flights%20from%20BLR%20to%20SIN%20departing%202026-10-28%20returning%202026-11-02/)
+assert.match(text, /https:\/\/www\.google\.com\/travel\/flights\?hl=en&gl=in&curr=INR&q=Round\+trip\+flights\+from\+BLR\+to\+SIN\+departing\+2026-10-28\+returning\+2026-11-02/)
