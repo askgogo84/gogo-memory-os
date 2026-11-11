@@ -51,6 +51,14 @@ export async function POST(req: NextRequest) {
   if (tg === null) return NextResponse.json({ error: 'invalid_session' }, { status: 400 })
 
   const body = await req.json().catch(() => null) as any
+  // 12 Nov: choosing a companion character is saved on its own (no personality or drink needed).
+  if (body && typeof body === 'object' && 'companion' in body && !('personality' in body)) {
+    const { isCrewId } = await import('@/lib/gogo/crew')
+    if (!isCrewId(body.companion)) return NextResponse.json({ error: 'invalid_preference' }, { status: 400 })
+    const { saveCompanionChoice } = await import('@/lib/dashboard/companion-choice')
+    const ok = await saveCompanionChoice(session.telegramId, body.companion)
+    return ok ? NextResponse.json({ ok: true, companion: body.companion }) : NextResponse.json({ error: 'save_failed' }, { status: 500 })
+  }
   const personality = String(body?.personality || '')
   const comfortDrink = String(body?.comfortDrink || '')
   if (!PERSONALITIES.has(personality) || !DRINKS.has(comfortDrink)) {

@@ -14,9 +14,11 @@ for (const state of ['calm','listening','thinking','remembering','acting','watch
   assert.ok(character.includes(state), `Gogo state missing: ${state}`)
 }
 for (const token of ['#F3E7D3','#EF7A27','#2C1A13','#2FAE6A']) assert.ok(character.includes(token), `character palette missing ${token}`)
-assert.match(empty, /GogoCharacter state="calm"/)
+assert.match(empty, /(?:GogoCharacter|PoseCompanion) state="calm"/)
 assert.doesNotMatch(empty, /gogo-figure\.png/)
-assert.match(loader, /GogoCharacter state="thinking"/)
+assert.match(loader, /(?:GogoCharacter|PoseCompanion) state="thinking"/)
+// 12 Nov: PoseCompanion draws the canonical GogoCharacter unless the crew is switched on for this person.
+assert.match(read('components/gogo/companion.tsx'), /return <GogoCharacter state=\{state\} size=\{size\}/)
 assert.doesNotMatch(loader, /gogo-(?:float|figure)\.(?:gif|png)/)
 for (const asset of [icon, mark, logo]) {
   assert.match(asset, /#2C1A13/)
@@ -51,7 +53,7 @@ for (const required of [
   'app/dashboard/(app)/agent/page.tsx',
   'components/dashboard/mobile-gogo-chat-button.tsx',
 ]) {
-  assert.match(read(required), /GogoCharacter/, `Canonical Gogo missing from ${required}`)
+  assert.match(read(required), /GogoCharacter|PoseCompanion/, `Canonical Gogo missing from ${required}`)
 }
 
 // Keep the dashboard checkout owner-isolation security fixture inside npm test

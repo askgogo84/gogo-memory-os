@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import {ServiceNoticeCards} from '@/components/dashboard/service-notice-cards'
 import type {ServiceNotice} from '@/lib/dashboard/service-notices'
-import { GogoCharacter } from '@/components/gogo/gogo-character'
+import { PoseCompanion } from '@/components/gogo/companion'
 
 const LEVELS = ['off','read','draft','ask','auto'] as const
 
@@ -157,7 +157,7 @@ export default function AgentDashboardPage(){
     <header className="border-b border-[#1f1f1f] pb-5 pt-1">
       <div className="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
         <div className="flex items-center gap-5">
-          <div className="hidden h-14 w-14 shrink-0 place-items-center rounded-full bg-[#f2efea] lg:grid"><GogoCharacter state={agentState} size={52} showStatus={false} /></div>
+          <div className="hidden h-14 w-14 shrink-0 place-items-center rounded-full bg-[#f2efea] lg:grid"><PoseCompanion state={agentState} size={52} showStatus={false} /></div>
           <div>
             <div className="final-dark-eyebrow">{section==='background'?'Background Gogo':section==='approvals'?'Control boundary':section==='goals'?'Longer outcomes':'Gogo Agent · live'}</div>
             <h1 className="final-dark-title mt-2 text-[34px] leading-none lg:text-[40px]">{sectionTitle}</h1>
