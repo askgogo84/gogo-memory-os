@@ -1005,6 +1005,20 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
       return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
     }
 
+    // 11 Nov: "forget my travel details" deletes the saved booking details (lib/agent/traveller-profile.ts). Checked
+    // before memory and taste so no other handler claims it. The raw id is passed; exactOwner rejects unsafe ids.
+    if (/^\s*(?:please\s+)?(?:forget|delete|remove|clear)\s+my\b/i.test(text)) {
+      const tp = await import('@/lib/agent/traveller-profile')
+      if (tp.FORGET_TRAVEL_DETAILS.test(text.trim())) {
+        const ok = await tp.forgetTravellerProfile({ userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId as any, whatsappId: String(resolvedUser.whatsappId || from) } as any).catch(() => false)
+        const reply = ok ? 'Done. I’ve deleted your saved travel details (name, email, mobile and seat). I’ll ask for them next time you book.' : 'I couldn’t delete your saved travel details just now. Please send it again in a minute.'
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', reply)
+        await sendWhatsAppMessage(from, reply)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
+
     // WhatsApp marks forwarded messages; they are someone else's words shared with Gogo (29 Oct live).
     const forwardedMessage = String(formData.get('Forwarded') || '').toLowerCase() === 'true'
     // Connected memory front door (lib/memory/front-door.ts): a forwarded hotel booking, a date answer to Gogo's stay

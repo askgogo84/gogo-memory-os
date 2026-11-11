@@ -103,6 +103,13 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
         const owned=/^send/i.test(text)?await tryRunGmailSendCommand({actor:p.actor,text:text.replace(/[.!?]+$/,'')}):await tryRunGmailContextCommand({actor:p.actor,text})
         return owned||await clarify('Please select the Gmail message or draft again. This reference could not be bound to a current email object.')
       }
+      // 11 Nov live: "book it" after flight results got "Book what exactly?". After a flight result, a booking reply
+      // belongs to the flight-booking handler, which binds it to that result (and asks for approval before anything).
+      if(action==='book'&&context?.domain==='travel'){
+        const {tryFlightBooking}=await import('./flight-booking')
+        const booking=await tryFlightBooking({actor:p.actor,surface:p.surface as any,text:original})
+        if(booking)return booking as any
+      }
       if(!context||!selected)return clarify("I'm not sure which one you mean. Tell me its name or pick it from the list again. Nothing has changed.")
       if(/^(?:open|show|show me|read|select)$/.test(action)){
         await rememberTypedObjects(p.actor.legacyTelegramId,context.domain,context.items,selected.id)

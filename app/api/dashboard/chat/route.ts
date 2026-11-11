@@ -278,6 +278,16 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json({ text: reply, handledBy: 'invite-links', status: 'completed' })
       }
     }
+    // 11 Nov: "forget my travel details" deletes the saved booking details, same as WhatsApp.
+    if(/^\s*(?:please\s+)?(?:forget|delete|remove|clear)\s+my\b/i.test(text)){
+      const tp=await import('@/lib/agent/traveller-profile')
+      if(tp.FORGET_TRAVEL_DETAILS.test(text.trim())){
+        const ok=await tp.forgetTravellerProfile(actor).catch(()=>false)
+        const reply=ok?'Done. I’ve deleted your saved travel details (name, email, mobile and seat). I’ll ask for them next time you book.':'I couldn’t delete your saved travel details just now. Please send it again in a minute.'
+        await saveConversation(user.telegram_id,text,reply)
+        return NextResponse.json({text:reply,handledBy:'traveller-profile',status:ok?'completed':'failed'})
+      }
+    }
     // Connected memory front door, same as WhatsApp (lib/memory/front-door.ts).
     if((globalThis as any).process?.env?.GOGO_MEMORY!=='off'&&((globalThis as any).process?.env?.GOGO_BRAIN_USERS||(globalThis as any).process?.env?.VERCEL_ENV==='production')&&memoryEnabledFor(user.whatsapp_id)){
       const door:any=await import('@/lib/memory/front-door').catch(()=>null)
