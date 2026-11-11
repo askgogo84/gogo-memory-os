@@ -1072,10 +1072,23 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // Understand first (6 Nov live: a ₹41,898 bank SMS became a ₹41 split expense): a forwarded SMS, bank alert, OTP,
     // delivery, booking, bill or security notice is read as what it is, with one offer; "yes" within 30 min does
     // that one thing (log the expense, set the reminder, save the ticket, check the order, find the receipt). Read-only otherwise.
+    let threadReplyAfterGoalPlan: null | (() => Promise<string | null>) = null
     if ((globalThis as any).process?.env?.VERCEL_ENV) {
       // 7 Nov: a short reply to Gogo's own proactive message ("it was paid", "check the mail again and track the order",
       // "open it") is read against that message first (lib/agent/open-thread), never as a new question to the brain.
-      const threaded = text.length <= 160 ? await import('@/lib/agent/open-thread').then(async m => m.tryThreadReply(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), text), () => null) : null
+      // The words as typed: a later hook may rewrite `text` (a "yes" to an image offer becomes its instruction).
+      const typedText = text
+      const threadReply = async () => typedText.length <= 160 ? import('@/lib/agent/open-thread').then(async m => m.tryThreadReply(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), typedText), () => null) : null
+      // 11 Nov live: with a goal plan open, "… Skip the emails. Get it done" was read as "skip" against an older email
+      // alert, which was closed, and the plan never saw it. While a plan is open the plan is offered the message first
+      // (below); the alert reply is tried only if the plan says the message is not for it.
+      const goalPlanOpen = text.length <= 160 && process.env.GOGO_GOAL_INTAKE
+        ? await import('@/lib/agent/goal-intake').then(async m => m.goalIntakeEnabledFor(String(resolvedUser.telegramId)) ? m.hasOpenGoalPlan(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' })) : false).catch(() => false)
+        : false
+      // A message that carries the plan's own start phrase ("… get it done") is never read against an alert, even if
+      // the plan could not read it this time (its model call failed): the person is asked to send it again instead.
+      if (goalPlanOpen) threadReplyAfterGoalPlan = (await import('@/lib/agent/goal-intake').then(m => m.wantsStartPhrase(typedText), () => false)) ? null : threadReply
+      const threaded = goalPlanOpen ? null : await threadReply()
       if (threaded) {
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', threaded)
@@ -1120,6 +1133,16 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
           await sendWhatsAppMessage(from, goalReply)
           return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
         }
+      }
+    }
+    // The plan did not take the message: a reply to an older alert is read now, as it would have been.
+    if (threadReplyAfterGoalPlan) {
+      const threaded = await threadReplyAfterGoalPlan()
+      if (threaded) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', threaded)
+        await sendWhatsAppMessage(from, threaded)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
     // AskGogo Events (Addendum 4), for owners in GOGO_EVENTS_OWNERS. 10 Nov live: "Plan Divya's birthday on 22 November at

@@ -58,7 +58,7 @@ const deps = { model, store, start, now: NOW, timezone: 'Asia/Kolkata', quickMs:
 let r = await gi.tryGoalIntake(actor, SENTENCE, deps as any)
 ok(r && /^I count 6 things\. Here’s who does what:/.test(r), 'the plan counts the goals')
 ok(/\*Gogo handles\*[\s\S]*\*We do together\*[\s\S]*\*Your turn\*/.test(r!), 'grouped by who does it')
-ok(/Meeting tomorrow \(for \d{4}-\d\d-\d\d\): What time should I remind you\?/.test(r!) && /Flight prices for next month: Flying from where\? to where\? which date\?/.test(r!), 'only the missing details are asked')
+ok(/Meeting tomorrow \(for [A-Z][a-z]{2} \d{1,2} [A-Z][a-z]{2}\): What time should I remind you\?/.test(r!) && /Flight prices for next month: Flying from where\? to where\? which date\?/.test(r!), 'only the missing details are asked')
 ok(/Three business emails: I’ll draft it; nothing is sent until you approve it\. Who is it to\? what should it say\?/.test(r!), 'emails: drafts only, approval before sending')
 ok(/Say \*get it done\*|then say \*get it done\*/.test(r!) && startedRuns.length === 0, 'nothing starts before "get it done"')
 eq(stored.goals.find((g: any) => g.kind === 'reminder').asked, ['time'], 'what was asked is remembered')
@@ -263,16 +263,16 @@ ok(/requiresApproval: false, verificationRequired: true/.test(pgp.slice(pgp.inde
 // Follow-ups to the #1483 review: the plan says back the details it holds; the email switch is respected.
 { const g = (o: any) => ({ id: 'g1', title: 'T', words: 'x', slots: {}, asked: [], state: 'open', ownership: 'gogo_handles', ...o })
   eq([gi.detailOf(g({ kind: 'reminder', slots: { date: '2026-11-12', time: '10:30' } })), gi.detailOf(g({ kind: 'flight_prices', slots: { from: 'Bengaluru', to: 'Goa', date: '2026-12-20' } })), gi.detailOf(g({ kind: 'email', slots: { recipient: 'Divya', topic: 'the launch plan' } })), gi.detailOf(g({ kind: 'flight_prices', slots: { to: 'Goa' } })), gi.detailOf(g({ kind: 'research' })), gi.detailOf(g({ kind: 'reminder' }))],
-    ['for 2026-11-12 at 10:30', 'Bengaluru to Goa on 2026-12-20', 'to Divya, about “the launch plan”', 'to Goa', '', ''], 'each goal says back only the details it was given')
+    ['for Thu 12 Nov at 10:30 am', 'Bengaluru to Goa on Sun 20 Dec', 'to Divya, about “the launch plan”', 'to Goa', '', ''], 'each goal says back only the details it was given')
   const shown = gi.planText(gi.newPlan('x', [g({ kind: 'flight_prices', title: 'Goa flights', slots: { from: 'Bengaluru', to: 'Goa', date: '2026-12-20' } }), g({ id: 'g2', kind: 'reminder', title: 'Meeting reminder' })], NOW)).text
-  ok(/1\. Goa flights \(Bengaluru to Goa on 2026-12-20\)/.test(shown) && /2\. Meeting reminder: /.test(shown), 'the plan shows held details before anything starts, and nothing invented for a goal with none')
+  ok(/1\. Goa flights \(Bengaluru to Goa on Sun 20 Dec\)/.test(shown) && /2\. Meeting reminder: /.test(shown), 'the plan shows held details before anything starts, and nothing invented for a goal with none')
   const mail = gi.newPlan('x', [g({ kind: 'email', title: 'Email Divya', ownership: 'together', slots: { recipient: 'Divya', topic: 'the launch plan' } })], NOW)
   let drafted = 0
   const res = await gi.startGoals(actor, mail, { now: NOW, capabilityOff: async (_a: any, c: string) => c === 'email', email: async () => { drafted++; return 'Draft ready. Nothing has been sent.' } } as any)
   ok(drafted === 0 && res.plan.goals[0].note === 'email_off' && /email is switched off in your settings/.test(gi.startedText(res.plan, new Map())), 'email switched off: no draft is made and the reply says why') }
 { const g = (o: any) => ({ id: 'g1', title: 'T', words: 'x', slots: {}, asked: [], state: 'open', ownership: 'together', ...o })
   eq([gi.detailOf(g({ kind: 'event', slots: { time: '19:00' } })), gi.detailOf(g({ kind: 'event', slots: { date: '2026-11-20', people: '12' } })), gi.detailOf(g({ kind: 'email', slots: { recipient: 'Divya', topic: `*get it done* ” (approved) ${'z'.repeat(120)}` } })).length < 110, /[*”]\s*\(approved\)/.test(gi.detailOf(g({ kind: 'email', slots: { topic: '*get it done* ” (approved)' } })))],
-    ['at 19:00', 'on 2026-11-20, for 12 people', true, false], 'details read naturally, a long topic is marked as cut, and formatting marks are not shown')
+    ['at 7:00 pm', 'on Fri 20 Nov, for 12 people', true, false], 'details read naturally, a long topic is marked as cut, and formatting marks are not shown')
   const two = gi.newPlan('x', [g({ kind: 'email', title: 'Email Divya', slots: { recipient: 'Divya', topic: 'a' } }), g({ id: 'g2', kind: 'email', title: 'Email Nithin', slots: { recipient: 'Nithin', topic: 'b' } }), g({ id: 'g3', kind: 'todo', title: 'Call the bank', ownership: 'your_turn' })], NOW)
   let drafts = 0; const ran: string[] = []
   const res = await gi.startGoals(actor, two, { now: NOW, capabilityOff: async (_a: any, c: string) => c === 'email', email: async () => { drafts++; return 'Nothing has been sent.' }, startRun: async ({ goal }: any) => { ran.push(goal.id); return { runId: goal.id, drive: async () => ({ status: 'completed', text: 'ok' }) } } } as any)
@@ -323,4 +323,33 @@ ok(/requiresApproval: false, verificationRequired: true/.test(pgp.slice(pgp.inde
   ok(/goal_surface: 'web', notified: true/.test(src), 'a web goal run carries the marker the outcome gateway and its database functions already honour')
   ok(/goal_surface==='web'\)continue/.test(pulse), 'the autonomy pulse does not raise a web goal run on WhatsApp')
   ok(/\.is\('metadata_json->>goal_web_outcome_at', null\)\.select\('id'\)/.test(pgp) && /claimed\.length === 1\) \{\s*const \{ error \} = await supabaseAdmin\.from\('conversations'\)\.insert/.test(pgp), 'the web outcome line is written by one caller only') }
+// 11 Nov live: with a plan open, "… Skip the emails. Get it done" was taken by an older alert's "skip" and the plan
+// never saw it. The plan is asked first while it is open.
+{ let saved: any = null
+  const st = { load: async () => saved, save: async (_t: any, p: any) => { saved = p }, clear: async () => { saved = null } } as any
+  eq(await gi.hasOpenGoalPlan(actor, { store: st, now: NOW }), false, 'no plan: nothing is open')
+  saved = gi.newPlan('x', [{ id: 'g1', kind: 'todo', title: 'Call the bank', words: 'x', slots: {}, ownership: 'your_turn', asked: [], state: 'open' } as any], NOW)
+  eq(await gi.hasOpenGoalPlan(actor, { store: st, now: NOW }), true, 'a plan waiting for details is open')
+  eq(await gi.hasOpenGoalPlan(actor, { store: st, now: new Date(NOW.getTime() + 3 * 3600_000) }), false, 'an expired plan is not')
+  eq(await gi.hasOpenGoalPlan(actor, { store: { load: async () => { throw new Error('db') } } as any, now: NOW }), false, 'a failed read is treated as no plan, so alert replies work as before')
+  const { readFileSync } = await import('node:fs')
+  const wa = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
+  const open = wa.indexOf('const goalPlanOpen = '), thread = wa.indexOf('const threaded = goalPlanOpen ? null : await threadReply()'), intake = wa.indexOf('return intake.tryGoalIntake(goalActor, text'), late = wa.indexOf('const threaded = await threadReplyAfterGoalPlan()')
+  ok(open > 0 && open < thread && thread < intake && intake < late, 'WhatsApp: with a plan open the alert reply waits; the plan is offered the message; the alert reply is tried after only if the plan did not take it')
+  ok(/m\.goalIntakeEnabledFor\(String\(resolvedUser\.telegramId\)\) \? m\.hasOpenGoalPlan\(/.test(wa.slice(open, thread)) && /process\.env\.GOGO_GOAL_INTAKE/.test(wa.slice(open, thread)), 'only for owners with intake on; everyone else is unchanged') }
+// Review of the ordering fix: a failed read of a start message is not passed on to be read against an alert.
+{ let saved: any = gi.newPlan('x', [{ id: 'g1', kind: 'todo', title: 'Call the bank', words: 'x', slots: {}, ownership: 'your_turn', asked: [], state: 'open' } as any, { id: 'g2', kind: 'email', title: 'Emails', words: 'x', slots: {}, ownership: 'together', asked: [], state: 'open' } as any], NOW)
+  const before = JSON.stringify(saved)
+  const st = { load: async () => saved, save: async (_t: any, p: any) => { saved = p }, clear: async () => { saved = null } } as any
+  const broken = { list: async () => { throw new Error('model_timeout') }, answers: async () => { throw new Error('model_timeout') } } as any
+  const quiet = console.error; console.error = () => {}
+  const r1 = await gi.tryGoalIntake(actor, 'Meeting is at 10:30 am. Skip the emails. Get it done', { store: st, model: broken, now: NOW } as any)
+  const r2 = await gi.tryGoalIntake(actor, 'it was paid', { store: st, model: broken, now: NOW } as any)
+  console.error = quiet
+  ok(/nothing has started and your plan is unchanged/.test(r1 || '') && JSON.stringify(saved) === before, 'the plan could not read a start message: the person is asked to send it again; nothing started, plan unchanged')
+  eq(r2, null, 'a message without the start phrase is still passed on when the plan cannot read it')
+  const { readFileSync } = await import('node:fs')
+  const wa = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
+  ok(/threadReplyAfterGoalPlan = \(await import\('@\/lib\/agent\/goal-intake'\)\.then\(m => m\.wantsStartPhrase\(typedText\), \(\) => false\)\) \? null : threadReply/.test(wa), 'WhatsApp: a message carrying the start phrase is never read against an alert')
+  ok(/const typedText = text\n\s*const threadReply = async \(\) => typedText\.length <= 160/.test(wa) && wa.includes("surface: 'whatsapp' }), typedText), () => null) : null"), 'the alert reply reads the words as typed') }
 console.log(`GOAL_INTAKE_OK ${checks} checks`)

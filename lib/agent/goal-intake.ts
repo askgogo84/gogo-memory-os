@@ -216,7 +216,10 @@ function question(g: IntakeGoal, s: Slot) { return (g.kind === 'reminder' && REM
 export function detailOf(g: IntakeGoal): string {
   // Shown as plain text: WhatsApp formatting marks and quote marks in a detail are dropped for display only.
   const show = (v: unknown, n: number) => { const t = clip(v, 200).replace(/[*_~`“”"]/g, '').trim(); return t.length > n ? `${t.slice(0, n).trim()}…` : t }
-  const s = { from: show(g.slots.from, 40), to: show(g.slots.to, 40), date: show(g.slots.date, 20), time: show(g.slots.time, 10), recipient: show(g.slots.recipient, 60), topic: show(g.slots.topic, 80), people: show(g.slots.people, 10) }
+  // "2026-11-12" is said as "Thu 12 Nov" and "14:30" as "2:30 pm"; anything else is shown as given.
+  const day = (v: string) => { const m = v.match(/^(\d{4})-(\d\d)-(\d\d)$/); if (!m) return v; const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]))); return Number.isFinite(d.getTime()) ? new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(d).replace(',', '') : v }
+  const clock = (v: string) => { const m = v.match(/^([01]?\d|2[0-3]):([0-5]\d)$/); if (!m) return v; const h = Number(m[1]); return `${h % 12 || 12}:${m[2]} ${h < 12 ? 'am' : 'pm'}` }
+  const s = { from: show(g.slots.from, 40), to: show(g.slots.to, 40), date: day(show(g.slots.date, 20)), time: clock(show(g.slots.time, 10)), recipient: show(g.slots.recipient, 60), topic: show(g.slots.topic, 80), people: show(g.slots.people, 10) }
   const on = s.date ? [s.date, s.time].filter(Boolean).join(' at ') : s.time ? `at ${s.time}` : ''
   if (g.kind === 'reminder') return on ? (s.date ? `for ${on}` : on) : ''
   if (g.kind === 'flight_prices') return [s.from && s.to ? `${s.from} to ${s.to}` : s.from ? `from ${s.from}` : s.to ? `to ${s.to}` : '', s.date ? `on ${s.date}` : ''].filter(Boolean).join(' ')
@@ -444,7 +447,19 @@ export type IntakeDeps = { model?: Model; store?: Store; start?: StartDeps; now?
 
 /** The WhatsApp entry. Returns the reply, or null when the message is not a list and not a reply to a pending plan
  *  (routing then continues exactly as before). Never throws. */
+/** Is a plan from this person still waiting for details or for "get it done"? While one is, their next message is
+ *  offered to the plan before a reply to an older alert is read into it ("Skip the emails. Get it done" is about the
+ *  plan, not an instruction to drop the last alert). Never throws; false when intake is off for them. */
+export async function hasOpenGoalPlan(actor: AgentActor, deps: { store?: Store; now?: Date } = {}): Promise<boolean> {
+  try {
+    if (!goalIntakeEnabledFor(String(actor.legacyTelegramId))) return false
+    const plan = readPlan(await (deps.store || realStore).load(actor.legacyTelegramId), deps.now || new Date())
+    return Boolean(plan)
+  } catch { return false }
+}
+
 export async function tryGoalIntake(actor: AgentActor, text: string, deps: IntakeDeps = {}): Promise<string | null> {
+  let planWasOpen = false
   const tg = actor.legacyTelegramId, owner = String(tg)
   if (!goalIntakeEnabledFor(owner)) return null
   const now = deps.now || new Date()
@@ -457,6 +472,7 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
     const pending = readPlan(await store.load(tg).catch(() => null), now)
     if (pending) {
       if (BARE_CONFIRM.test(text)) return null
+      planWasOpen = true
       const wantsStart = wantsStartPhrase(text), onlyStart = wantsStart && START_CLAUSE.test(text.replace(/\*/g, '').trim())
       const ans = onlyStart ? { about_plan: true, start: true } : await model.answers({ text, today, timezone: tz, goals: pending.goals.filter(g => g.state === 'open').map(g => ({ id: g.id, kind: g.kind, title: g.title, missing: missingOf(g) })) })
       const applied = applyAnswers(pending, wantsStart && ans ? { ...ans, about_plan: true } : ans, today)
@@ -501,6 +517,9 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
     return out.text
   } catch (err: any) {
     console.error('GOAL_INTAKE_FAILED:', JSON.stringify({ code: String(err?.message || 'error').replace(/[^a-z0-9_:]/gi, '').slice(0, 60) }))
+    // With a plan open, a message that asks to start it is not passed on to be read as something else; nothing was
+    // started or changed, and the plan is still there.
+    if (planWasOpen && wantsStartPhrase(text)) return 'I couldn’t read that just now, so nothing has started and your plan is unchanged. Please send it once more.'
     return null
   }
 }
