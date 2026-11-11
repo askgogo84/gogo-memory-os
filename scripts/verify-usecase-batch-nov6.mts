@@ -97,7 +97,7 @@ assert.equal(route('Alert me when Bengaluru to Delhi flight fares on 20 Dec drop
 assert.equal(route('flight from Delhi to Bengaluru tomorrow'), 'DEL-BLR 2026-11-07')
 const started = tr.flightSearchStartedText(tr.parseFlightBriefText('Alert me when Bengaluru to Delhi flight fares on 20 Dec drop below ₹5,000', at))
 assert.match(started, /^Searching Bengaluru to Delhi, 20 Dec 2026: 1 adult, economy, one-way\./)
-assert.match(started, /I can't keep watching flight fares on my own yet, so this is today's price/, 'honest about the missing fare watch')
+assert.match(started, /I can't watch fares on my own yet, so this is today's price/, 'honest about the missing fare watch')
 assert.doesNotMatch(tr.flightSearchStartedText(tr.parseFlightBriefText('flights BLR to DEL 20 Dec', at)), /keep watching/)
 console.log('✓ flight routes ignore "flight", "book a" and watch wording; a fare-watch ask is told plainly it is a one-time check')
 console.log('Use-case batch (6 Nov) checks passed')

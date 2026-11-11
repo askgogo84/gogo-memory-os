@@ -45,3 +45,29 @@ console.log('Overnight (7 Nov) replays passed')
   assert.match(tr, /goa: \{ label: 'Goa', code: 'GOI'/, 'Goa resolves to an airport code so the browser read runs')
   console.log('✓ trip plan: one flights sentence; Goa has a code')
 }
+
+// 11 Nov: the shorter acknowledgement still carries its promise into the trip plan.
+{
+  const { firstSentences: fs2 } = await import('../lib/agent/trip-plan')
+  const { flightSearchStartedText } = await import('../lib/agent/travel-research')
+  const one = flightSearchStartedText({ originLabel: 'Bengaluru', originCode: 'BLR', destinationLabel: 'Goa', destinationCode: 'GOI', departDate: '2026-12-20', tripType: 'one_way' } as any)
+  assert.ok(one.length < 320, `short: ${one.length}`)
+  assert.match(one, /one-way\./); assert.match(one, /back <date>/); assert.match(one, /exactly these dates/)
+  assert.match(fs2(one), /I'll send the cheapest options here when the search finishes\./)
+  console.log('PASS short flight acknowledgement')
+}
+
+// 11 Nov review: round-trip results say how to book (the start message no longer does); the fallback uses the
+// round-trip search link for round trips and a hotel wording for hotels.
+{
+  const { formatRoundTripResult, roundTripSearchLink } = await import('../lib/agent/travel-browser-task')
+  const ctx = { origin: { code: 'BLR', label: 'Bengaluru' }, destination: { code: 'GOI', label: 'Goa' }, startDate: '2026-12-20', returnDate: '2026-12-22', roundTrip: true, routeLabel: 'BLR → GOI', whenLabel: '20 Dec 2026', adults: 1 }
+  const out = formatRoundTripResult(ctx, [{ airline: 'Air India', departure: '7:00 pm', arrival: '11:20 pm', stops: 1, fareInr: 9000, fareBasis: 'party_total', farePassengers: 1, route: 'BLR-GOI', evidence: 'x' }], roundTripSearchLink(ctx))
+  assert.match(out, /book the cheapest/)
+  const src = readFileSync('lib/agent/travel-research.ts', 'utf8')
+  assert.match(src, /context\.roundTrip&&context\.returnDate&&context\.origin\?\.code&&context\.destination\?\.code\?roundTripSearchLink\(context\):googleFlightsSearchUrl\(context\)/)
+  assert.match(src, /context\.kind==='hotel'[\s\S]{0,80}live hotel rates/)
+  // Hotel fallback has no numbered rows, so the flight sanitizer leaves it alone.
+  assert.doesNotMatch(src.slice(src.indexOf("context.kind==='hotel'"), src.indexOf("context.kind==='hotel'") + 400), /curated\.map/)
+  console.log('PASS round-trip booking hint and fallback links')
+}

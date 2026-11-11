@@ -95,6 +95,10 @@ const titleFare=sanitizer.sanitizeTravelResearchText('Task could not obtain veri
  'Compare flights from Bengaluru to Mumbai on 20 October 2026 for 1 adult in economy.',new Date('2026-10-07T12:00:00Z'))
 assert.doesNotMatch(titleFare,/4269|4,269|₹/,'a matching date in a search title does not verify its fare')
 assert.match(titleFare,/https:\/\/example.com\/flights/)
+// 11 Nov: the plain fallback (no snippet rows) passes through whole, live search link included.
+{const plain="I couldn't read live fares for BLR → BOM, 20 Oct 2026 just now.\n\nYou can see live prices here (nothing is booked):\nhttps://www.google.com/travel/flights?q=x\n\nSend the same message again in a few minutes and I'll try again."
+assert.equal(sanitizer.sanitizeTravelResearchText(plain,'Compare flights from BLR to BOM on 20 October 2026',new Date('2026-10-07T12:00:00Z')),plain)
+const src=readFileSync('lib/agent/travel-research.ts','utf8');assert.doesNotMatch(src,/Task could not obtain verified live rows/);assert.doesNotMatch(src,/These are fallback sources only/)}
 queue = load('lib/agent/travel-research-queue.ts',{
   '@/lib/supabase-admin':{supabaseAdmin:db},'./travel-research':travel,'./travel-research-sanitize':sanitizer,
   './brain-runtime-guard':{acquireBrainUserLease:async()=>({ownerToken:'fixture'}),releaseBrainUserLease:async()=>{}},
@@ -300,7 +304,7 @@ turn=await say('27th October to 2nd October back')
 assert.match(turn.text,/Did you mean 2 Nov 2026\? Reply yes/)
 turn=await say('yes')
 // 17 Oct: travellers, cabin and time are not asked; the search starts with 1 adult, economy, any time and says so.
-assert.equal(turn.handledBy,'travel-research-queued');assert.match(turn.text,/1 adult, economy, round trip/);assert.match(turn.text,/exactly these dates/);assert.match(turn.text,/book the cheapest/)
+assert.equal(turn.handledBy,'travel-research-queued');assert.match(turn.text,/1 adult, economy, round trip/);assert.match(turn.text,/exactly these dates/)
 assert.doesNotMatch(turn.text,/CreditIQ|reward/i)
 assert.equal(tables.agent_runs.length,1,'a round trip is one saved search for both exact dates')
 assert.equal(tables.agent_runs[0].metadata_json.input_text,'Compare round trip flights from BLR to SIN departing 2026-10-27 returning 2026-11-02 for 1 adult in economy. Research only; do not book or pay.')
@@ -334,7 +338,7 @@ assert.equal(tables.agent_runs[0].metadata_json.context.destination.code,'BOM')
 tables.agent_runs.length=0;tables.conversations.length=0
 const response=await web.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text})}))
 assert.equal(response.status,200);const reply=await response.json()
-assert.equal(reply.handledBy,'travel-research-queued');assert.match(reply.text,/flight sites/)
+assert.equal(reply.handledBy,'travel-research-queued');assert.match(reply.text,/cheapest fares for exactly these dates/)
 assert.equal(browserAttempts,0,'the incoming request must not launch the slow browser')
 assert.equal(searches,0,'the incoming request must not perform fallback network searches')
 const duplicate=await queue.enqueueTravelResearch({actor,surface:'web',text})
@@ -353,7 +357,7 @@ assert.equal(browserAttempts,3,'17 Oct: an unreadable flight page is retried up 
 assert.equal(browserDeadline,Clock.now()+240000,'real worker → queue → research → adapter retains 30s for completion')
 assert.equal(tables.agent_runs[0].metadata_json.notified,undefined,'failed publication stays eligible')
 assert.doesNotMatch(tables.agent_runs[0].metadata_json.result_text,/₹4,999/,'undated fallback fare is withheld')
-assert.match(tables.agent_runs[0].metadata_json.result_text,/could not|not completed live|could not find/i)
+assert.match(tables.agent_runs[0].metadata_json.result_text,/could not|couldn't read live fares|not completed live|could not find/i)
 const failedBrowserStep=tables.agent_steps.find(step=>step.run_id===reply.runId)
 assert.equal(JSON.stringify(failedBrowserStep.output_json.browserReadDiagnostics),JSON.stringify([
   {phase:'plan',reason:'unsupported_field',proposed:3,accepted:0},
@@ -367,7 +371,7 @@ assert.equal(JSON.stringify(tables.agent_activity.find(row=>row.run_id===reply.r
 failPublish=false
 await worker.processTravelResearchQueue(Clock.now()+270000)
 await worker.processTravelResearchQueue(Clock.now()+270000)
-assert.equal(tables.conversations.filter(r=>r.role==='assistant'&&!/background|flight sites/.test(r.content)).length,1,'web publishes once after recovery')
+assert.equal(tables.conversations.filter(r=>r.role==='assistant'&&!/background|cheapest fares for exactly these dates/.test(r.content)).length,1,'web publishes once after recovery')
 assert.equal(sent,0,'web completion never sends to WhatsApp')
 
 // Final phone result uses the receipt outbox; a rejection cannot mark notified.

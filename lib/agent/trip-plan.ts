@@ -61,7 +61,7 @@ export function tripAsk(text: string, now = new Date()): TripAsk | null {
 export function firstSentences(text: string): string {
   const flat = text.replace(/\s+/g, ' ').trim()
   const first = flat.match(/^[^.!?]*[.!?]/)?.[0] || flat.slice(0, 160)
-  const promise = /will send the cheapest options here when it finishes/i.test(flat) ? " I'll send the cheapest options here when the search finishes." : ''
+  const promise = /send the cheapest (?:options|fares)\b[^.]*\bhere when it(?: finishes|’s done|'s done)/i.test(flat) ? " I'll send the cheapest options here when the search finishes." : ''
   return `${first}${promise}`.trim()
 }
 const fmt = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' })
