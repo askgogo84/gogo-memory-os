@@ -21,6 +21,13 @@ import type { TaskOwnership } from './task-ownership'
 type Env = Record<string, string | undefined>
 const envOf = () => ((globalThis as any).process?.env || {}) as Env
 
+/** The dashboard chat has its own switch on top of the main one, so the web path can be verified, or turned off,
+ *  without touching WhatsApp. Same values: "on" or exact owner ids. */
+export function goalIntakeWebEnabledFor(owner: string, env: Env = envOf()): boolean {
+  const v = String(env.GOGO_GOAL_INTAKE_WEB || '').trim()
+  if (!owner || !goalIntakeEnabledFor(owner, env)) return false
+  return v === 'on' || v.split(',').map(s => s.trim()).includes(owner)
+}
 export function goalIntakeEnabledFor(owner: string, env: Env = envOf()): boolean {
   const v = String(env.GOGO_GOAL_INTAKE || '').trim()
   if (v === 'off' || !owner) return false
@@ -267,8 +274,10 @@ export function stepFor(g: IntakeGoal): { tool: 'reminders' | 'travel' | 'web_se
 }
 
 export type StartDeps = {
-  startRun?: (p: { actor: AgentActor; goal: IntakeGoal; step: NonNullable<ReturnType<typeof stepFor>>; plan: IntakePlan }) => Promise<{ runId: string; drive: () => Promise<{ status: string; text: string }> }>
-  event?: (actor: AgentActor, text: string) => Promise<string | null>
+  /** Where the list was given: runs and the event draft are recorded against that surface. Default WhatsApp. */
+  surface?: 'whatsapp' | 'web'
+  startRun?: (p: { actor: AgentActor; goal: IntakeGoal; step: NonNullable<ReturnType<typeof stepFor>>; plan: IntakePlan; surface?: 'whatsapp' | 'web' }) => Promise<{ runId: string; drive: () => Promise<{ status: string; text: string }> }>
+  event?: (actor: AgentActor, text: string, surface?: 'whatsapp' | 'web') => Promise<string | null>
   email?: (actor: AgentActor, text: string) => Promise<string | null>
   eventsOn?: (owner: string) => boolean
   capabilityOff?: (actor: AgentActor, capability: 'reminders' | 'browser' | 'email') => Promise<boolean>
@@ -311,13 +320,13 @@ export async function startGoals(actor: AgentActor, plan: IntakePlan, deps: Star
         if (g.kind === 'flight_prices' && FLIGHT_EXTRAS.test(g.words)) { g.state = 'held'; g.note = 'flight_details'; continue }
         // A reminder for a time that has already gone by is asked about, not attempted.
         if (step.reminder && `${step.reminder.date}T${step.reminder.time}` <= localNow(actor.timezone || 'Asia/Kolkata', deps.now)) { g.state = 'held'; g.note = 'time_passed'; continue }
-        const run = await (deps.startRun || realStartRun)({ actor, goal: g, step, plan })
+        const run = await (deps.startRun || realStartRun)({ actor, goal: g, step, plan, surface: deps.surface })
         g.state = 'started'; g.runId = run.runId
         started.push({ goal: g, running: slot(() => run.drive()).catch(() => FAILED) })
       } else if (g.kind === 'event') {
         const on = (deps.eventsOn || realEventsOn)(owner)
         if (!on) { g.state = 'held'; g.note = 'events_off'; continue }
-        const reply = await (deps.event || realEvent)(actor, `Plan ${clip(g.slots.topic, 80) || g.words}${g.slots.date ? ` on ${g.slots.date}` : ''}${g.slots.time ? ` at ${g.slots.time}` : ''}${g.slots.people ? ` for ${g.slots.people} people` : ''}`)
+        const reply = await (deps.event || realEvent)(actor, `Plan ${clip(g.slots.topic, 80) || g.words}${g.slots.date ? ` on ${g.slots.date}` : ''}${g.slots.time ? ` at ${g.slots.time}` : ''}${g.slots.people ? ` for ${g.slots.people} people` : ''}`, deps.surface)
         // Started only when a draft really exists.
         const made = Boolean(reply && /^Draft started\./.test(reply))
         g.state = made ? 'started' : 'held'; if (!made) g.note = 'event_not_started'
@@ -342,19 +351,24 @@ export async function startGoals(actor: AgentActor, plan: IntakePlan, deps: Star
   return { plan: { ...plan, goals, started: new Date().toISOString() }, started }
 }
 
-const realStartRun: NonNullable<StartDeps['startRun']> = async ({ actor, goal, step, plan }) => {
+// A dashboard request can live longer than a WhatsApp one; the background sweeper leaves a web goal run alone for this
+// long so the request that created it and the sweeper never drive the same run.
+const WEB_LIVE_MS = 330_000
+const realStartRun: NonNullable<StartDeps['startRun']> = async ({ actor, goal, step, plan, surface }) => {
   const { startPersistentGoalRun } = await import('./persistent-general-plan')
   // The mission text is the instruction code wrote, not the person's first wording ("next month"), which the flight
   // reader would read as contradicting the exact date they then gave.
-  return startPersistentGoalRun({ actor, surface: 'whatsapp', step: { tool: step.tool, title: step.title, instruction: step.instruction } as any, missionText: step.instruction, metadata: { goal_batch_id: plan.id, goal_id: goal.id, goal_kind: goal.kind, goal_title: goal.title, ownership: goal.ownership, ...(step.reminder ? { goal_reminder: step.reminder } : {}) } })
+  return startPersistentGoalRun({ actor, surface: surface === 'web' ? 'web' : 'whatsapp', step: { tool: step.tool, title: step.title, instruction: step.instruction } as any, missionText: step.instruction, metadata: { goal_batch_id: plan.id, goal_id: goal.id, goal_kind: goal.kind, goal_title: goal.title, ownership: goal.ownership, ...(step.reminder ? { goal_reminder: step.reminder } : {}), // notified:true is the marker the outcome gateway (app and database) already honours for a run that reports its own
+    // result: a web goal is never announced on WhatsApp, whichever path closes it.
+    ...(surface === 'web' ? { goal_surface: 'web', notified: true } : {}) }, liveMs: surface === 'web' ? WEB_LIVE_MS : undefined })
 }
 const realEventsOn = (owner: string) => { const env = envOf(); return env.GOGO_EVENTS === '1' || String(env.GOGO_EVENTS_OWNERS || '').split(',').map(s => s.trim()).includes(owner) }
 const realCapabilityOff = async (actor: AgentActor, capability: 'reminders' | 'browser' | 'email') => (await import('./adaptive-autonomy')).capabilityIsOff(actor.legacyTelegramId, capability)
 // Create only: from a list, the Events flow may start a new draft and nothing else. Publishing, changing or
 // cancelling an event, or touching its guests, is never done on the strength of one line in a list.
-const realEvent = async (actor: AgentActor, text: string) => {
+const realEvent = async (actor: AgentActor, text: string, surface?: 'whatsapp' | 'web') => {
   const [entry, { extractEventAction }] = await Promise.all([import('@/lib/events/entry'), import('@/lib/events/extract')])
-  return entry.tryEventAsk(actor, text, 'whatsapp', { extract: async input => { const a = await extractEventAction(input); return a && a.action === 'create' ? a : ({ action: 'none' } as any) } })
+  return entry.tryEventAsk(actor, text, surface === 'web' ? 'dashboard' : 'whatsapp', { extract: async input => { const a = await extractEventAction(input); return a && a.action === 'create' ? a : ({ action: 'none' } as any) } })
 }
 const realEmail = async (actor: AgentActor, text: string) => {
   const r: any = await (await import('./gmail-send')).tryRunGmailSendCommand({ actor, text })
@@ -363,7 +377,7 @@ const realEmail = async (actor: AgentActor, text: string) => {
 
 const ICON: Record<string, string> = { completed: '✅', waiting_approval: '📝', failed: '⚠️', outcome_unknown: '❓' }
 /** What to say right after "get it done": what started, what is waiting and why. Results follow as they finish. */
-export function startedText(plan: IntakePlan, quick: Map<string, { status: string; text: string }>): string {
+export function startedText(plan: IntakePlan, quick: Map<string, { status: string; text: string }>, surface?: 'whatsapp' | 'web'): string {
   const live = plan.goals.filter(g => g.state !== 'dropped')
   const go = live.filter(g => g.state === 'started')
   const lines = [`Started ${go.length} of ${live.length}.`, '']
@@ -382,7 +396,7 @@ export function startedText(plan: IntakePlan, quick: Map<string, { status: strin
     else if (g.note === 'event_not_started') lines.push(`⏸ ${g.title}: I could not start this one from the list. Send it on its own, like: *plan ${clip(g.slots.topic, 60) || 'the dinner'} on ${g.slots.date || '22 November'} at 5 pm*.`)
     else lines.push(`⏸ ${g.title}: I couldn’t start this one. Ask me about it on its own.`)
   }
-  lines.push('', 'You can close WhatsApp; I’ll keep going and message you as each one finishes. Everything is on your Tasks page too.')
+  lines.push('', surface === 'web' ? 'You can leave this page; I’ll keep going. Each result appears here in the chat and on your Tasks page. I won’t send a WhatsApp message for each result.' : 'You can close WhatsApp; I’ll keep going and message you as each one finishes. Everything is on your Tasks page too.')
   return lines.join('\n')
 }
 
@@ -432,7 +446,7 @@ export function wantsStartPhrase(text: string): boolean {
 /** A bare confirmation meant for whatever asked last (an approval card, Events' "are you sure?"): never the plan's. */
 const BARE_CONFIRM = /^\s*(?:yes|yes please|yeah|yep|ok|okay|sure|confirm|confirmed|go ahead|do it|start|no|nope|cancel)\b[\s,.!]*(?:(?:cancel|move)(?: it)?)?[\s.!]*$/i
 
-export type IntakeDeps = { model?: Model; store?: Store; start?: StartDeps; now?: Date; timezone?: string; background?: (work: () => Promise<void>) => void; send?: (text: string) => Promise<void>; /** How long the first reply waits for quick results (default 8 s). */ quickMs?: number }
+export type IntakeDeps = { model?: Model; store?: Store; start?: StartDeps; now?: Date; timezone?: string; surface?: 'whatsapp' | 'web'; background?: (work: () => Promise<void>) => void; send?: (text: string) => Promise<void>; /** How long the first reply waits for quick results (default 8 s). */ quickMs?: number }
 
 /** The WhatsApp entry. Returns the reply, or null when the message is not a list and not a reply to a pending plan
  *  (routing then continues exactly as before). Never throws. */
@@ -476,7 +490,7 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
         // Marked started before anything starts: a stored plan marked started is never read again (readPlan), so a
         // repeated "get it done", a retry or a failed clean-up cannot start it twice. Not saved: nothing starts.
         try { await store.save(tg, { ...plan, started: now.toISOString() }) } catch { return 'I couldn’t start these just now. Say *get it done* again in a moment.' }
-        const res = await startGoals(actor, plan, { ...(deps.start || {}), now })
+        const res = await startGoals(actor, plan, { ...(deps.start || {}), surface: deps.start?.surface || deps.surface, now })
         await store.clear(tg).catch(() => {})
         const quick = new Map<string, { status: string; text: string }>()
         // A few seconds for the quick ones (a reminder is written and read back at once); the rest go on in the
@@ -491,7 +505,7 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
           ...res.started.filter(s => s.goal.runId && (quick.get(s.goal.runId)?.text.length || 0) > 300).map(s => `*${s.goal.title}*\n${block(quick.get(s.goal.runId!)!.text, 3000)}`),
         ]
         console.log('GOAL_INTAKE:', JSON.stringify({ step: 'start', goals: plan.goals.length, started: res.started.length }))
-        return [startedText(res.plan, quick), ...replies].join('\n\n')
+        return [startedText(res.plan, quick, deps.surface), ...replies].join('\n\n')
       }
       // Not about the plan: it stays open for one more message, then is dropped, so a later "go ahead" meant for
       // something else cannot start it.

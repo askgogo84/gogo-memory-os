@@ -157,6 +157,8 @@ export async function notifyRunOutcome(run: RunOutcomeLike, deps: RunNotifyDeps 
     if (SELF_NOTIFYING_TYPES.has(clean(run.type, 60)) || SELF_NOTIFYING_TYPES.has(clean(meta.plan_type, 60))) {
       return { status: 'skipped', reason: 'self_notifying_run' }
     }
+    // A goal given in the dashboard chat reports in the web conversation and on the Tasks page, never on WhatsApp.
+    if (meta.goal_surface === 'web') return { status: 'skipped', reason: 'web_goal_run' }
     if (meta.outcome_notified_at) return { status: 'skipped', reason: 'already_notified' }
     // Travel research / web comparison mark notified:true after sending their own result.
     if (meta.notified === true) return { status: 'skipped', reason: 'worker_already_notified' }
@@ -167,6 +169,7 @@ export async function notifyRunOutcome(run: RunOutcomeLike, deps: RunNotifyDeps 
     if (!first.ok) return { status: 'failed', reason: 'run_read_failed' }
     if (!first.found) return { status: 'skipped', reason: 'run_not_found' }
     const latestMeta = first.meta
+    if (latestMeta.goal_surface === 'web') return { status: 'skipped', reason: 'web_goal_run' }
     // Newly requested background notices use the receipt ledger. Legacy uncertain
     // JSON intents remain on the conservative compatibility path below.
     if (latestMeta.outcome_notice_requested === true) return deliverRunOutcomeNotice(runId, telegramId, completionNotice, deps)
