@@ -2,6 +2,8 @@
 // worker and the tests share one shape. Every value comes from rows Gogo already verified on Google Flights
 // (agent_steps.output_json with inventoryType 'browser-verified'); nothing here is produced by a model.
 
+import { chooseFlightPick } from './flight-pick'
+
 export type FlightCardRow = {
   n: number
   airline: string
@@ -56,9 +58,12 @@ export function flightCardModel(output: any): FlightCardModel | null {
     return [{ airline, departure: String(f.departure), arrival: String(f.arrival), stops: f.stops as number, fareInr: f.fareInr as number }]
   })
   if (!clean.length) return null
-  const rows = displayOrder(clean).map((f, i) => ({
+  const ordered = displayOrder(clean)
+  // 11 Nov: the same pick as the text result (flight-pick.ts), so the card and the text recommend the same number.
+  const pickN = chooseFlightPick(ordered)?.n ?? 1
+  const rows = ordered.map((f, i) => ({
     n: i + 1, airline: f.airline, ...brand(f.airline), departure: f.departure, arrival: f.arrival,
-    stops: f.stops === 0 ? 'Nonstop' : `${f.stops} stop${f.stops === 1 ? '' : 's'}`, fareInr: f.fareInr, pick: i === 0,
+    stops: f.stops === 0 ? 'Nonstop' : `${f.stops} stop${f.stops === 1 ? '' : 's'}`, fareInr: f.fareInr, pick: i + 1 === pickN,
   }))
   const date = new Date(`${ctx.startDate}T00:00:00Z`)
   const when = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(date).replace(',', '')
@@ -71,8 +76,10 @@ export const formatInr = (n: number, rupee = true) => `${rupee ? '₹' : 'Rs '}$
 
 /** One line under the card naming the pick, from the same rows (no model). */
 export function flightCardCaption(model: FlightCardModel) {
-  const [a, b] = model.rows
-  const reason = a.stops === 'Nonstop' ? 'cheapest and nonstop' : 'cheapest'
-  const alt = b && b.departure !== a.departure ? ` #2 is ${b.fareInr === a.fareInr ? 'the same price' : `${formatInr(b.fareInr - a.fareInr)} more`} at ${b.departure}.` : ''
-  return `${model.route} · ${model.when}: I'd pick #1, ${a.airline} at ${a.departure}, ${reason}.${alt} Say "book 1" to book.`
+  const p = model.rows.find(r => r.pick) || model.rows[0]
+  const choice = chooseFlightPick(model.rows.map(r => ({ fareInr: r.fareInr, stops: r.stops === 'Nonstop' ? 0 : Number.parseInt(r.stops, 10) })))
+  const reason = (choice?.reason || 'Cheapest.').replace(/\.$/, '').replace(/^./, c => c.toLowerCase())
+  // No "book N" here: the card can drop a row the text list keeps, so only the text message (same order as booking) names
+  // the number to book.
+  return `${model.route} · ${model.when}: I'd pick ${p.airline} at ${p.departure}, ${reason}. Details below.`
 }

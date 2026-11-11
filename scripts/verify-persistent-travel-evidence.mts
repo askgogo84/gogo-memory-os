@@ -8,6 +8,7 @@ import * as policy from '../lib/agent/policy'
 import * as binding from '../lib/agent/approval-binding'
 import * as ttl from '../lib/agent/approval-ttl'
 import { redactSecretShapedText } from '../lib/bot/memory-redaction'
+import * as flightPickModule from '../lib/agent/flight-pick.ts'
 // Keep date validation, duplicate windows, leases and flight weekdays reproducible.
 const RealDate=globalThis.Date
 const fixtureNow=RealDate.parse('2026-10-22T00:00:00Z')
@@ -81,7 +82,7 @@ function harness(instruction = request) {
   './specialist-registry':{selectSpecialistRoute:()=>({primary:'tasks',supporting:[]})},
   './run-notify':{notifyRunOutcome:async()=>{}},
  })
- const browser=load('lib/agent/travel-browser-task.ts',{'./browser-read-diagnostics':{sanitizeBrowserReadDiagnostics:()=>[]}})
+ const browser=load('lib/agent/travel-browser-task.ts',{'./browser-read-diagnostics':{sanitizeBrowserReadDiagnostics:()=>[]},'./flight-pick':flightPickModule})
  const research=load('lib/agent/travel-research.ts',{'./travel-browser-task':browser})
  const travelRead=existsSync('lib/agent/persistent-travel-read.ts')?load('lib/agent/persistent-travel-read.ts',{'./travel-research':research,'./travel-browser-task':browser}):{}
  const driveRead=load('lib/agent/persistent-drive-read.ts')

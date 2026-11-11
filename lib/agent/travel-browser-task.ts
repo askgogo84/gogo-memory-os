@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk'
 import { runSecureBrowser } from './secure-computer'
 import { sanitizeBrowserReadDiagnostics } from './browser-read-diagnostics'
 import type { AgentActor } from './actor'
+import { chooseFlightPick, rowsToShow } from './flight-pick'
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
@@ -50,16 +51,15 @@ export function formatBrowserFlightResult(context:BrowserFlightContext,options:B
   const money=(n:number)=>`₹${n.toLocaleString('en-IN')}`
   const stops=(f:BrowserFlightOption)=>f.stops===null?'stops not verified':f.stops===0?'non-stop':`${f.stops} stop${f.stops===1?'':'s'}${f.layover?` (${f.layover})`:''}`
   const basis=(f:BrowserFlightOption)=>f.fareBasis==='party_total'&&f.farePassengers===passengers?(passengers>1?` total for ${passengers} adults`:''):passengers>1?' (party total not verified)':''
-  const rows=sorted.map((f,i)=>`${i+1}. ${f.fareInr?money(f.fareInr):'fare not verified'}${f.fareInr?basis(f):''} · ${f.airline}\n   ${f.departure} → ${f.arrival} · ${stops(f)}`)
-  // 18 Oct: Google listed 52 non-stops from ₹18,327 below five cheaper 1-stop fares; the cheapest non-stop
-  // is always named and listed, even when it is not in the cheapest five.
-  const best=sorted.find(f=>f.fareInr), nonstop=[...options].filter(f=>f.stops===0&&f.fareInr).sort((a,b)=>a.fareInr!-b.fareInr!)[0]
-
-  const verdict=best?[`Cheapest: ${money(best.fareInr!)} on ${best.airline}, ${best.stops===0?'non-stop':`${best.stops} stop${best.stops===1?'':'s'}`}.`,
-    ...(nonstop&&nonstop!==best?[`Cheapest non-stop: ${money(nonstop.fareInr!)} on ${nonstop.airline}.`]:[])]:[]
-  return [`*${context.routeLabel}* · ${context.whenLabel}`,`${passengers} adult${passengers===1?'':'s'} · ${(context.cabin||'economy').replace(/_/g,' ')} · one-way`,'',...verdict,'',...rows,'',
-    'Fares from Google Flights, read just now; they move, so open the link to confirm. Baggage and optional charges are extra. Say “book the cheapest” to book.',
-    context.origin?.code&&context.destination?.code&&context.startDate?oneWaySearchLink(context):sourceUrl].join('\n')
+  const line=(f:BrowserFlightOption,n:number)=>`${n}. ${f.fareInr?money(f.fareInr):'fare not verified'}${f.fareInr?basis(f):''} · ${f.airline}\n   ${f.departure} → ${f.arrival} · ${stops(f)}`
+  // 11 Nov (owner): one pick and a short question, like Instinct. The pick is chosen by a fixed rule in code
+  // (flight-pick.ts) and named by its number in this same list, so "book N" books exactly the recommended flight.
+  const pick=chooseFlightPick(sorted),p=pick?sorted[pick.n-1]:null
+  const pickLine=p&&pick?[`My pick: #${pick.n}, ${money(p.fareInr!)}${basis(p)} on ${p.airline}, ${p.departure} → ${p.arrival}, ${stops(p)}. ${pick.reason}${pick.nonstopN?` Cheapest non-stop: #${pick.nonstopN} at ${money(sorted[pick.nonstopN-1].fareInr!)}.`:''}`,'']:[]
+  return [`*${context.routeLabel}* · ${context.whenLabel} · ${passengers} adult${passengers===1?'':'s'}, ${(context.cabin||'economy').replace(/_/g,' ')}, one-way`,'',...pickLine,
+    ...rowsToShow(sorted.length,pick).map(n=>line(sorted[n-1],n)),'',
+    `Fares from Google Flights just now; they move and bags are extra. Live search: ${context.origin?.code&&context.destination?.code&&context.startDate?oneWaySearchLink(context):sourceUrl}`,'',
+    p&&pick?`Reply *book ${pick.n}* to book it, or *book* and another number.`:'Say *book* and a number to book one.'].join('\n')
 }
 
 /** The order the person sees for a one-way result: cheapest first, top five. "Book #2" refers to this list. */
@@ -342,13 +342,13 @@ export function formatRoundTripResult(context:BrowserFlightContext,options:Brows
   const money=(n:number)=>`₹${n.toLocaleString('en-IN')}`
   const basis=(o:BrowserFlightOption)=>o.fareBasis==='party_total'&&o.farePassengers===passengers?(passengers>1?` total for ${passengers} adults`:''):' (party total not verified)'
   const stops=(o:BrowserFlightOption)=>o.stops===null?'stops not verified':o.stops===0?'non-stop':`${o.stops} stop${o.stops===1?'':'s'}${o.layover?` (${o.layover})`:''}`
-  const rows=sorted.map((o,i)=>`${i+1}. ${money(o.fareInr!)}${basis(o)} · ${o.airline}\n   Out ${o.departure} → ${o.arrival} · ${stops(o)}`)
-  const best=sorted[0], nonstop=sorted.find(o=>o.stops===0)
-  const verdict=best?[`Cheapest round trip: ${money(best.fareInr!)} on ${best.airline}, ${best.stops===0?'non-stop':`${best.stops} stop${best.stops===1?'':'s'}`}.`,
-    ...(nonstop&&nonstop!==best?[`Cheapest non-stop: ${money(nonstop.fareInr!)} on ${nonstop.airline}.`]:[])]:[]
+  const line=(o:BrowserFlightOption,n:number)=>`${n}. ${money(o.fareInr!)}${basis(o)} · ${o.airline}\n   Out ${o.departure} → ${o.arrival} · ${stops(o)}`
   const dayLabel=(iso:string)=>new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(`${iso}T00:00:00Z`))
-  return [`*${context.routeLabel}* · ${dayLabel(context.startDate!)} → back ${dayLabel(context.returnDate!)}`,
-    `${passengers} adult${passengers===1?'':'s'} · ${(context.cabin||'economy').replace(/_/g,' ')} · round trip`,'',...verdict,'',...rows,'',
-    'Round-trip totals from Google Flights, read just now; fares move, so open the link to confirm before you book. You pick the return flight on the next page. Baggage and optional charges are extra. Say “book the cheapest” to book.',
-    roundTripSearchLink(context)].join('\n')
+  // 11 Nov (owner): one pick and a short question (see formatBrowserFlightResult).
+  const pick=chooseFlightPick(sorted),p=pick?sorted[pick.n-1]:null
+  const pickLine=p&&pick?[`My pick: #${pick.n}, ${money(p.fareInr!)}${basis(p)} round trip on ${p.airline}, out ${p.departure} → ${p.arrival}, ${stops(p)}. ${pick.reason}${pick.nonstopN?` Cheapest non-stop: #${pick.nonstopN} at ${money(sorted[pick.nonstopN-1].fareInr!)}.`:''}`,'']:[]
+  return [`*${context.routeLabel}* · ${dayLabel(context.startDate!)} → back ${dayLabel(context.returnDate!)} · ${passengers} adult${passengers===1?'':'s'}, ${(context.cabin||'economy').replace(/_/g,' ')}, round trip`,'',...pickLine,
+    ...rowsToShow(sorted.length,pick).map(n=>line(sorted[n-1],n)),'',
+    `Round-trip totals from Google Flights just now; they move and bags are extra. You pick the return flight on the next page. Live search: ${roundTripSearchLink(context)}`,'',
+    p&&pick?`Reply *book ${pick.n}* to book it, or *book* and another number.`:'Say *book* and a number to book one.'].join('\n')
 }

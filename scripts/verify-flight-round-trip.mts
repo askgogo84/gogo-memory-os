@@ -28,10 +28,10 @@ assert.equal(t.googleRoundTripOptionsFromEvidence(result, {...context, nonStop: 
 // 2-adult party total needs Google's explicit statement.
 assert.equal(t.googleRoundTripOptionsFromEvidence({...result, pageText: 'Prices include required taxes + fees for 2 adults.'}, context)[0].fareBasis, 'unverified')
 const text = t.formatRoundTripResult(context, options, result.url)
-assert.match(text, /Cheapest round trip: ₹28,443 on Air India, 1 stop/)
-assert.match(text, /Cheapest non-stop: ₹39,203 on IndiGo/)
+assert.match(text, /My pick: #1, ₹28,443 round trip on Air India, .+1 stop/)
+assert.match(text, /Cheapest non-stop: #2 at ₹39,203\./); assert.match(text, /2\. ₹39,203 · IndiGo/)
 assert.match(text, /28 Oct → back 2 Nov/)
-assert.match(text, /fares move/)
+assert.match(text, /they move and bags are extra/)
 assert.ok(text.indexOf('₹28,443') < text.indexOf('₹39,203'), 'cheapest first')
 assert.doesNotMatch(text, /CreditIQ|reward|points/i)
 assert.throws(() => t.formatRoundTripResult(context, options, 'https://www.google.com.evil.example/travel/flights'))

@@ -63,7 +63,7 @@ console.log('Overnight (7 Nov) replays passed')
   const { formatRoundTripResult, roundTripSearchLink } = await import('../lib/agent/travel-browser-task')
   const ctx = { origin: { code: 'BLR', label: 'Bengaluru' }, destination: { code: 'GOI', label: 'Goa' }, startDate: '2026-12-20', returnDate: '2026-12-22', roundTrip: true, routeLabel: 'BLR → GOI', whenLabel: '20 Dec 2026', adults: 1 }
   const out = formatRoundTripResult(ctx, [{ airline: 'Air India', departure: '7:00 pm', arrival: '11:20 pm', stops: 1, fareInr: 9000, fareBasis: 'party_total', farePassengers: 1, route: 'BLR-GOI', evidence: 'x' }], roundTripSearchLink(ctx))
-  assert.match(out, /book the cheapest/)
+  assert.match(out, /Reply \*book 1\* to book it/)
   const src = readFileSync('lib/agent/travel-research.ts', 'utf8')
   assert.match(src, /context\.roundTrip&&context\.returnDate&&context\.origin\?\.code&&context\.destination\?\.code\?roundTripSearchLink\(context\):googleFlightsSearchUrl\(context\)/)
   assert.match(src, /context\.kind==='hotel'[\s\S]{0,80}live hotel rates/)

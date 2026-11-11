@@ -12,7 +12,7 @@ const m = flightCardModel(output)!
 assert.equal(m.route, 'BLR → DEL'); assert.equal(m.when, 'Thu 12 Nov'); assert.equal(m.party, '1 adult · economy')
 assert.deepEqual(m.rows.map(r => [r.n, r.airline, r.departure, r.fareInr, r.pick]).slice(0, 2), [[1, 'Akasa Air', '5:00 AM', 9744, true], [2, 'IndiGo', '6:45 AM', 9759, false]])
 assert.equal(m.rows.length, 5, 'top five like the text list'); assert.equal(m.rows[0].code, 'QP'); assert.equal(m.rows[1].code, '6E')
-assert.equal(flightCardCaption(m), 'BLR → DEL · Thu 12 Nov: I\'d pick #1, Akasa Air at 5:00 AM, cheapest and nonstop. #2 is ₹15 more at 6:45 AM. Say "book 1" to book.')
+assert.equal(flightCardCaption(m), 'BLR → DEL · Thu 12 Nov: I\'d pick Akasa Air at 5:00 AM, cheapest, and non-stop. Details below.')
 assert.equal(formatInr(9744, false), 'Rs 9,744')
 // Refusals: round trips, unverified party totals, model-shaped junk.
 assert.equal(flightCardModel({ ...output, context: { ...ctx, roundTrip: true, returnDate: '2026-11-15' } }), null)
