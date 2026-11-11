@@ -352,7 +352,9 @@ const realStartRun: NonNullable<StartDeps['startRun']> = async ({ actor, goal, s
   const { startPersistentGoalRun } = await import('./persistent-general-plan')
   // The mission text is the instruction code wrote, not the person's first wording ("next month"), which the flight
   // reader would read as contradicting the exact date they then gave.
-  return startPersistentGoalRun({ actor, surface: surface === 'web' ? 'web' : 'whatsapp', step: { tool: step.tool, title: step.title, instruction: step.instruction } as any, missionText: step.instruction, metadata: { goal_batch_id: plan.id, goal_id: goal.id, goal_kind: goal.kind, goal_title: goal.title, ownership: goal.ownership, ...(step.reminder ? { goal_reminder: step.reminder } : {}), ...(surface === 'web' ? { goal_surface: 'web' } : {}) }, liveMs: surface === 'web' ? WEB_LIVE_MS : undefined })
+  return startPersistentGoalRun({ actor, surface: surface === 'web' ? 'web' : 'whatsapp', step: { tool: step.tool, title: step.title, instruction: step.instruction } as any, missionText: step.instruction, metadata: { goal_batch_id: plan.id, goal_id: goal.id, goal_kind: goal.kind, goal_title: goal.title, ownership: goal.ownership, ...(step.reminder ? { goal_reminder: step.reminder } : {}), // notified:true is the marker the outcome gateway (app and database) already honours for a run that reports its own
+    // result: a web goal is never announced on WhatsApp, whichever path closes it.
+    ...(surface === 'web' ? { goal_surface: 'web', notified: true } : {}) }, liveMs: surface === 'web' ? WEB_LIVE_MS : undefined })
 }
 const realEventsOn = (owner: string) => { const env = envOf(); return env.GOGO_EVENTS === '1' || String(env.GOGO_EVENTS_OWNERS || '').split(',').map(s => s.trim()).includes(owner) }
 const realCapabilityOff = async (actor: AgentActor, capability: 'reminders' | 'browser' | 'email') => (await import('./adaptive-autonomy')).capabilityIsOff(actor.legacyTelegramId, capability)

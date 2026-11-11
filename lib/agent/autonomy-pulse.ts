@@ -224,6 +224,8 @@ async function buildPulse(telegramId:string,timezone:string,prefs:AlertPreferenc
     if(retiredRunReason(r))continue
     // The owner already got this run's one outcome message (run-notify); don't announce it again.
     if((r.metadata_json as any)?.outcome_notified_at)continue
+    // A goal given in the dashboard chat reports there and on the Tasks page; it is not raised on WhatsApp.
+    if((r.metadata_json as any)?.goal_surface==='web')continue
     if(String(r.status)==='waiting_approval')continue
     const errorCode=clean(r.error,160)
     if(suppressedRunErrors.has(errorCode))continue

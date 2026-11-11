@@ -306,4 +306,21 @@ ok(/requiresApproval: false, verificationRequired: true/.test(pgp.slice(pgp.inde
 
   ok(at < chat.indexOf("m.tryProcedureAsk(actor,text)") && at < chat.indexOf("m.tryEventAsk(actor,text,'dashboard')"), 'a list is offered before the single-goal hooks, as on WhatsApp')
   ok(!/sendWhatsAppMessage/.test(chat.slice(chat.lastIndexOf('// Goal-to-Done (Addendum 5)', at), chat.indexOf('// Meeting prep, same as WhatsApp', at))), 'nothing is pushed to WhatsApp from the dashboard hook') }
+// Second review of the dashboard path: no route to WhatsApp for a web goal run, by behaviour and not only by source.
+{ const rn = await import('../lib/agent/run-notify')
+  const untouched = new Proxy({}, { get: () => { throw new Error('the database must not be touched for a web goal run') } }) as any
+  const sent: string[] = []
+  const deps = { db: untouched, send: async (_p: string, t: string) => { sent.push(t); return { ok: true } } } as any
+  for (const meta of [{ goal_surface: 'web' }, { goal_surface: 'web', outcome_notice_requested: true }, { goal_surface: 'web', notified: true, outcome_notice_requested: true }])
+    eq(await rn.notifyRunOutcome({ id: 'run-1', telegram_id: '-884501501', type: 'general_plan', status: 'failed', error: 'stale_run_recovered', title: 'Research', metadata_json: meta } as any, deps), { status: 'skipped', reason: 'web_goal_run' }, `a web goal run is never announced, even when a notice was requested for it: ${JSON.stringify(meta)}`)
+  eq(sent, [], 'nothing was sent')
+  // The stored marker is re-read too: a caller passing stale metadata still does not send.
+  const db2 = { from: () => { const q: any = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: { metadata_json: { goal_surface: 'web', outcome_notice_requested: true } }, error: null }) }; return q }, rpc: async () => { throw new Error('no delivery may be claimed') } } as any
+  const r2 = await rn.notifyRunOutcome({ id: 'run-1', telegram_id: '-884501501', type: 'general_plan', status: 'failed', title: 'Research', metadata_json: {} } as any, { db: db2 } as any)
+  eq(r2, { status: 'skipped', reason: 'web_goal_run' }, 'the marker on the stored run stops the notice when the caller’s copy lacks it')
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(new URL('../lib/agent/goal-intake.ts', import.meta.url), 'utf8'), pulse = readFileSync(new URL('../lib/agent/autonomy-pulse.ts', import.meta.url), 'utf8'), pgp = readFileSync(new URL('../lib/agent/persistent-general-plan.ts', import.meta.url), 'utf8')
+  ok(/goal_surface: 'web', notified: true/.test(src), 'a web goal run carries the marker the outcome gateway and its database functions already honour')
+  ok(/goal_surface==='web'\)continue/.test(pulse), 'the autonomy pulse does not raise a web goal run on WhatsApp')
+  ok(/\.is\('metadata_json->>goal_web_outcome_at', null\)\.select\('id'\)/.test(pgp) && /claimed\.length === 1\) \{\s*const \{ error \} = await supabaseAdmin\.from\('conversations'\)\.insert/.test(pgp), 'the web outcome line is written by one caller only') }
 console.log(`GOAL_INTAKE_OK ${checks} checks`)
