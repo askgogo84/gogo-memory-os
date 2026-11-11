@@ -309,8 +309,7 @@ async function handleChatPost(req: NextRequest) {
         // A typed approval or decline belongs to the approval it answers, never to the plan (as on WhatsApp).
         if((await import('@/lib/agent/whatsapp-bridge')).approvalIntent(text))return null
         const {after}=await import('next/server')
-        const voice=process.env.GOGO_VOICE?await import('@/lib/agent/voice').then(v=>(t:string,kind:string)=>v.inGogosVoice({owner:String(user.telegram_id),name:user.name,userText:text,reply:t,kind}),()=>undefined):undefined
-        return m.tryGoalIntake(actor,text,{voice,surface:'web',background:work=>after(work),send:async t=>{const {error}=await supabaseAdmin.from('conversations').insert([{telegram_id:user.telegram_id,role:'assistant',content:t}]);if(error)console.error('DASHBOARD_GOAL_RESULT_SAVE_FAILED:',String(error.code||'error').slice(0,20))}})
+        return m.tryGoalIntake(actor,text,{surface:'web',background:work=>after(work),send:async t=>{const {error}=await supabaseAdmin.from('conversations').insert([{telegram_id:user.telegram_id,role:'assistant',content:t}]);if(error)console.error('DASHBOARD_GOAL_RESULT_SAVE_FAILED:',String(error.code||'error').slice(0,20))}})
       }).catch((e:any)=>{console.error('GOAL_INTAKE_ENTRY_FAILED:',String(e?.code||e?.name||'error').slice(0,60));return null})
       if(goalReply){
         await saveConversation(user.telegram_id,text,goalReply)
@@ -331,7 +330,7 @@ async function handleChatPost(req: NextRequest) {
       // AskGogo Events (Addendum 4): same conversation as on WhatsApp, flagged owners only; null falls through.
       const eventReply=!prep&&!procedureReply&&(process.env.GOGO_EVENTS==='1'||process.env.GOGO_EVENTS_OWNERS)?(await import('@/lib/events/entry').then(m=>m.tryEventAsk(actor,text,'dashboard'),()=>null)):null
       if(eventReply){
-        const eventSaid=process.env.GOGO_VOICE?await import('@/lib/agent/voice').then(v=>v.inGogosVoice({owner:String(user.telegram_id),name:user.name,userText:text,reply:eventReply,kind:'events'}),()=>eventReply):eventReply
+        const eventSaid=process.env.GOGO_VOICE?await import('@/lib/agent/voice').then(v=>v.inGogosVoice({owner:String(user.telegram_id),reply:eventReply,kind:'events'}),()=>eventReply):eventReply
         await saveConversation(user.telegram_id,text,eventSaid)
         return NextResponse.json({text:eventSaid,handledBy:'events',status:'completed',readOnly:false,mutated:true})
       }

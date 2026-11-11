@@ -600,8 +600,8 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         return m.tryEventAsk(actor,incomingText,'whatsapp')
       }).catch(e=>{console.error('EVENT_WHATSAPP_ENTRY_FAILED:',String(e?.code||e?.name||'error').slice(0,60));return null}):null
   if(eventReply){
-    // Gogo's voice (lib/agent/voice.ts, off unless GOGO_VOICE lists the owner): the words only; the event is already saved.
-    const eventSaid=eventsEnv.GOGO_VOICE?await import('@/lib/agent/voice').then(m=>m.inGogosVoice({owner:String(resolvedUser.telegramId),name:resolvedUser.name,userText:incomingText,reply:eventReply,kind:'events'}),()=>eventReply):eventReply
+    // Plain words for the draft status header (lib/agent/voice.ts: by rule, no model; off unless GOGO_VOICE lists the owner).
+    const eventSaid=eventsEnv.GOGO_VOICE?await import('@/lib/agent/voice').then(m=>m.inGogosVoice({owner:String(resolvedUser.telegramId),reply:eventReply,kind:'events'}),()=>eventReply):eventReply
     await saveConversation(resolvedUser.telegramId,'user',incomingText)
     await saveConversation(resolvedUser.telegramId,'assistant',eventSaid)
     return {text:formatOutgoingText(params.channel,eventSaid),handledBy:'events',resolvedUser}

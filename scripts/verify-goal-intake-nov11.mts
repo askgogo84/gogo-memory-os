@@ -289,7 +289,7 @@ ok(/requiresApproval: false, verificationRequired: true/.test(pgp.slice(pgp.inde
   const { readFileSync } = await import('node:fs')
   const src = readFileSync(new URL('../lib/agent/goal-intake.ts', import.meta.url), 'utf8'), chat = readFileSync(new URL('../app/api/dashboard/chat/route.ts', import.meta.url), 'utf8')
   ok(/surface: surface === 'web' \? 'web' : 'whatsapp'/.test(src) && /surface === 'web' \? 'dashboard' : 'whatsapp'/.test(src), 'only "web" selects the web surface; anything else is WhatsApp')
-  const at = chat.indexOf("m.tryGoalIntake(actor,text,{voice,surface:'web'")
+  const at = chat.indexOf("m.tryGoalIntake(actor,text,{surface:'web'")
   ok(at > 0 && chat.lastIndexOf('process.env.GOGO_GOAL_INTAKE&&process.env.GOGO_GOAL_INTAKE_WEB', at) > 0 && chat.lastIndexOf("m.goalIntakeWebEnabledFor(String(user.telegram_id))", at) > 0 && chat.lastIndexOf('approvalIntent(text))return null', at) > 0, 'dashboard chat: both flags, exact owner and no typed approvals before intake')
   const hook = chat.slice(chat.lastIndexOf('if(!callCommand&&', at), at)
   ok(/detectFriendReminder\(text\)\|\|\(isFriendReminderFollowupCandidate\(text\)&&await getPendingFriend\(actor\.legacyTelegramId\)\)\)return null/.test(hook) && chat.indexOf('const callCommand=/') < at, 'a call command or a friend reminder keeps its own flow, as on WhatsApp')

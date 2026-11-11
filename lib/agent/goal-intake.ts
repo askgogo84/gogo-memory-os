@@ -447,10 +447,7 @@ export function wantsStartPhrase(text: string): boolean {
 /** A bare confirmation meant for whatever asked last (an approval card, Events' "are you sure?"): never the plan's. */
 const BARE_CONFIRM = /^\s*(?:yes|yes please|yeah|yep|ok|okay|sure|confirm|confirmed|go ahead|do it|start|no|nope|cancel)\b[\s,.!]*(?:(?:cancel|move)(?: it)?)?[\s.!]*$/i
 
-export type IntakeDeps = { model?: Model; store?: Store; start?: StartDeps; now?: Date; timezone?: string; surface?: 'whatsapp' | 'web';
-  /** Words only: the plan and the started summary may be re-worded by lib/agent/voice (which checks the rewrite and
-   *  falls back to the text given). Results of the goals themselves are never passed through it. */
-  voice?: (text: string, kind: string) => Promise<string>; background?: (work: () => Promise<void>) => void; send?: (text: string) => Promise<void>; /** How long the first reply waits for quick results (default 8 s). */ quickMs?: number }
+export type IntakeDeps = { model?: Model; store?: Store; start?: StartDeps; now?: Date; timezone?: string; surface?: 'whatsapp' | 'web'; background?: (work: () => Promise<void>) => void; send?: (text: string) => Promise<void>; /** How long the first reply waits for quick results (default 8 s). */ quickMs?: number }
 
 /** The WhatsApp entry. Returns the reply, or null when the message is not a list and not a reply to a pending plan
  *  (routing then continues exactly as before). Never throws. */
@@ -475,7 +472,6 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
   let today: string
   try { today = day(tz) } catch { tz = 'Asia/Kolkata'; today = day(tz) }
   const model = deps.model || realModel, store = deps.store || realStore
-  const say = async (t: string, kind: string) => { try { return deps.voice ? (await deps.voice(t, kind)) || t : t } catch { return t } }
   try {
     const pending = readPlan(await store.load(tg).catch(() => null), now)
     if (pending) {
@@ -491,7 +487,7 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
       const changed = JSON.stringify(applied.plan.goals.map(g => [g.slots, g.state])) !== JSON.stringify(pending.goals.map(g => [g.slots, g.state]))
       const plan = applied.plan, about = applied.about || wantsStart, start = onlyStart || (wantsStart && changed)
       if (about) {
-        if (!start) { const out = planText(plan); await store.save(tg, out.plan); console.log('GOAL_INTAKE:', JSON.stringify({ step: 'answers', goals: plan.goals.length })); return say(out.text, 'goal_plan') }
+        if (!start) { const out = planText(plan); await store.save(tg, out.plan); console.log('GOAL_INTAKE:', JSON.stringify({ step: 'answers', goals: plan.goals.length })); return out.text }
         // Marked started before anything starts: a stored plan marked started is never read again (readPlan), so a
         // repeated "get it done", a retry or a failed clean-up cannot start it twice. Not saved: nothing starts.
         try { await store.save(tg, { ...plan, started: now.toISOString() }) } catch { return 'I couldn’t start these just now. Say *get it done* again in a moment.' }
@@ -510,7 +506,7 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
           ...res.started.filter(s => s.goal.runId && (quick.get(s.goal.runId)?.text.length || 0) > 300).map(s => `*${s.goal.title}*\n${block(quick.get(s.goal.runId!)!.text, 3000)}`),
         ]
         console.log('GOAL_INTAKE:', JSON.stringify({ step: 'start', goals: plan.goals.length, started: res.started.length }))
-        return [await say(startedText(res.plan, quick, deps.surface), 'goal_started'), ...replies].join('\n\n')
+        return [startedText(res.plan, quick, deps.surface), ...replies].join('\n\n')
       }
       // Not about the plan: it stays open for one more message, then is dropped, so a later "go ahead" meant for
       // something else cannot start it.
@@ -522,7 +518,7 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
     const out = planText(newPlan(text, goals, now))
     await store.save(tg, out.plan)
     console.log('GOAL_INTAKE:', JSON.stringify({ step: 'plan', goals: goals.length, kinds: goals.map(g => g.kind) }))
-    return say(out.text, 'goal_plan')
+    return out.text
   } catch (err: any) {
     console.error('GOAL_INTAKE_FAILED:', JSON.stringify({ code: String(err?.message || 'error').replace(/[^a-z0-9_:]/gi, '').slice(0, 60) }))
     // With a plan open, a message that asks to start it is not passed on to be read as something else; nothing was

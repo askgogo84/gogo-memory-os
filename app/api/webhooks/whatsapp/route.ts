@@ -1125,8 +1125,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         const goalReply = await (async () => {
           const goalActor = await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), whatsappId: resolvedUser.whatsappId || from, surface: 'whatsapp' })
           const { after } = await import('next/server')
-          const voice = process.env.GOGO_VOICE ? await import('@/lib/agent/voice').then(m => (t: string, kind: string) => m.inGogosVoice({ owner: String(resolvedUser.telegramId), name: resolvedUser.name || profileName, userText: text, reply: t, kind }), () => undefined) : undefined
-          return intake.tryGoalIntake(goalActor, text, { voice, timezone: (resolvedUser as any).timezone || undefined, background: work => after(work), send: async t => { await sendWhatsAppMessage(from, t); await saveConversation(resolvedUser.telegramId, 'assistant', t).catch(() => {}) } })
+          return intake.tryGoalIntake(goalActor, text, { timezone: (resolvedUser as any).timezone || undefined, background: work => after(work), send: async t => { await sendWhatsAppMessage(from, t); await saveConversation(resolvedUser.telegramId, 'assistant', t).catch(() => {}) } })
         })().catch((e: any) => { console.error('GOAL_INTAKE_ENTRY_FAILED:', String(e?.code || e?.name || 'error').slice(0, 60)); return null })
         if (goalReply) {
           await saveConversation(resolvedUser.telegramId, 'user', text)
@@ -1164,8 +1163,8 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         if (eventReply) {
           // Shadow comparison for the looping brain (owner only, off unless GOGO_BRAIN_LOOP_USERS is set; never replies).
           if (process.env.GOGO_BRAIN_LOOP_USERS || process.env.GOGO_BRAIN_LOOP_LIVE_USERS) await import('@/lib/agent/brain').then(m => m.scheduleLoopShadow({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), forwarded: Boolean(forwardedMessage), surface: 'whatsapp' }, null, 'events')).catch(() => {})
-          // Gogo's voice (lib/agent/voice.ts, off unless GOGO_VOICE lists the owner): the words only.
-          const eventSaid = process.env.GOGO_VOICE ? await import('@/lib/agent/voice').then(m => m.inGogosVoice({ owner: String(resolvedUser.telegramId), name: resolvedUser.name || profileName, userText: text, reply: eventReply, kind: 'events' }), () => eventReply) : eventReply
+          // Plain words for the draft status header (lib/agent/voice.ts: by rule, no model; off unless GOGO_VOICE lists the owner).
+          const eventSaid = process.env.GOGO_VOICE ? await import('@/lib/agent/voice').then(m => m.inGogosVoice({ owner: String(resolvedUser.telegramId), reply: eventReply, kind: 'events' }), () => eventReply) : eventReply
           await saveConversation(resolvedUser.telegramId, 'user', text)
           await saveConversation(resolvedUser.telegramId, 'assistant', eventSaid)
           await sendWhatsAppMessage(from, eventSaid)
