@@ -50,10 +50,11 @@ export async function saveTravellerProfile(actor: AgentActor, p: TravellerProfil
   return !error
 }
 
-export const FORGET_TRAVEL_DETAILS = /^(?:please\s+)?(?:forget|delete|remove|clear)\s+my\s+(?:saved\s+)?(?:(?:travel(?:ler)?|booking|ticket|flight)\s+)?details(?:\s+please)?[.!]*$/i
+export const FORGET_TRAVEL_DETAILS = /^(?:please\s+)?(?:forget|delete|remove|clear)\s+my\s+(?:saved\s+)?(?:travel(?:ler)?|booking|ticket|flight)\s+details(?:\s+please)?[.!]*$/i
 export async function forgetTravellerProfile(actor: AgentActor): Promise<boolean> {
   const tg = exactOwner(actor)
   if (tg === null) return false
   const { error } = await supabaseAdmin.from('gogo_traveller_profiles').delete().eq('telegram_id', tg)
-  return !error
+  // No table yet (migration not run) means nothing was ever saved: nothing to delete.
+  return !error || /PGRST205|42P01|does not exist|could not find the table/i.test(`${(error as any).code || ''} ${(error as any).message || ''}`)
 }

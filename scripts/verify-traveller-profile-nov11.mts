@@ -37,8 +37,9 @@ assert.equal(await T.saveTravellerProfile(owner, p), true)
 assert.deepEqual(JSON.parse(JSON.stringify(await T.loadTravellerProfile(owner))), p)
 assert.equal(await T.loadTravellerProfile(other), null)
 assert.equal(await T.loadTravellerProfile({ userId: 'someone-else', legacyTelegramId: -884501501 }), null, 'row bound to its user id')
-for (const say of ['forget my travel details', 'Delete my booking details', 'please remove my saved traveller details.', 'forget my travel details please', 'forget my details']) assert.ok(T.FORGET_TRAVEL_DETAILS.test(say), say)
+for (const say of ['forget my travel details', 'Delete my booking details', 'please remove my saved traveller details.', 'forget my travel details please']) assert.ok(T.FORGET_TRAVEL_DETAILS.test(say), say)
 assert.equal(T.FORGET_TRAVEL_DETAILS.test('forget my dentist appointment'), false)
+assert.equal(T.FORGET_TRAVEL_DETAILS.test('forget my details'), false, 'bare "my details" stays with the memory handler')
 assert.equal(await T.forgetTravellerProfile(owner), true); assert.equal(await T.loadTravellerProfile(owner), null)
 
 // Wiring: booking reads it first for one traveller, saves after details, and says so only when saved.
@@ -46,7 +47,8 @@ const fb = readFileSync('lib/agent/flight-booking.ts', 'utf8')
 assert.match(fb, /if \(count === 1 && opts\.domestic === true\) \{\n    const durable = await loadTravellerProfile\(actor\)/, 'domestic only: no date of birth is saved')
 assert.match(fb, /gender: genderOf\(durable\.title\)/)
 assert.match(fb, /const remembered = travellers\.length === 1 && isDomesticIndiaTrip\(last\.context\) && travellerProfileEnabled\(actor\)/)
-assert.match(fb, /export async function forgetBookingDetails[\s\S]{0,1600}profile: null, pii_purged: true/, 'forget also clears the recent booking copy')
+assert.match(fb, /export async function forgetBookingDetails[\s\S]{0,2400}profile: null, pii_purged: true/, 'forget also clears the recent booking copy')
+assert.match(fb, /\['waiting_approval', 'running', 'queued', 'pending'\]\.includes/, 'a booking waiting for APPROVE is not altered')
 assert.match(fb, /remembered \? 'I’ve saved your name, email, mobile and seat choice for next time; say \*forget my travel details\* to remove them\.' : 'Your details are deleted after 24 hours\.'/)
 // Using saved details still needs YES (reuse path) and the booking still needs APPROVE.
 assert.match(fb, /Use the same details as your last booking\?/)
@@ -60,4 +62,13 @@ for (const route of ['app/api/webhooks/whatsapp/route.ts', 'app/api/dashboard/ch
 const sql = readFileSync('supabase/migrations/20261111120000_gogo_traveller_profiles.sql', 'utf8')
 assert.match(sql, /enable row level security/); assert.match(sql, /revoke all on table public\.gogo_traveller_profiles from public, anon, authenticated/)
 assert.match(readFileSync('supabase/migrations/20261111120000_gogo_traveller_profiles.rollback.sql', 'utf8'), /drop table if exists public\.gogo_traveller_profiles/)
+// Missing table (migration not run) = nothing saved: forget succeeds.
+{
+  const ex: any = {}
+  runInNewContext(src, { exports: ex, process: { env }, String, Number, Set, Date, require: () => ({ supabaseAdmin: { from: () => ({ delete: () => ({ eq: async () => ({ error: { code: 'PGRST205', message: "Could not find the table 'public.gogo_traveller_profiles'" } }) }) }) } }) })
+  assert.equal(await ex.forgetTravellerProfile(owner), true)
+  const ex2: any = {}
+  runInNewContext(src, { exports: ex2, process: { env }, String, Number, Set, Date, require: () => ({ supabaseAdmin: { from: () => ({ delete: () => ({ eq: async () => ({ error: { code: '500', message: 'timeout' } }) }) }) } }) })
+  assert.equal(await ex2.forgetTravellerProfile(owner), false, 'a real failure is reported')
+}
 console.log('PASS traveller profile: opt-in, exact owner, validated, forgettable, wired')

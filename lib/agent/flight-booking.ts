@@ -559,20 +559,24 @@ export async function purgeFlightBookingPii(options: { runId?: string; keepProfi
 }
 
 /** "forget my travel details": deletes the saved details and the copy kept with any recent booking (24-hour reuse). */
-export async function forgetBookingDetails(actor: AgentActor): Promise<boolean> {
+export async function forgetBookingDetails(actor: AgentActor): Promise<{ ok: boolean; pending: number }> {
   const tg = exactOwner(actor)
-  if (tg === null) return false
+  if (tg === null) return { ok: false, pending: 0 }
   const removed = await forgetTravellerProfile(actor).catch(() => false)
-  const { data, error } = await supabaseAdmin.from('agent_runs').select('id,telegram_id,metadata_json').eq('telegram_id', String(tg))
-    .eq('metadata_json->>plan_type', 'secure_browser').not('metadata_json->flight_booking', 'is', null).gte('created_at', new Date(Date.now() - 48 * 3600_000).toISOString()).limit(20)
-  if (error) return false
-  let ok = removed
+  const { data, error } = await supabaseAdmin.from('agent_runs').select('id,telegram_id,status,metadata_json').eq('telegram_id', String(tg))
+    .eq('metadata_json->>plan_type', 'secure_browser').not('metadata_json->flight_booking', 'is', null).gte('created_at', new Date(Date.now() - 48 * 3600_000).toISOString())
+    .order('created_at', { ascending: false }).limit(50)
+  if (error) return { ok: false, pending: 0 }
+  let ok = removed, pending = 0
   for (const run of data || []) {
     if (String((run as any).telegram_id) !== String(tg)) continue
     const meta: any = (run as any).metadata_json || {}
     if (meta.flight_booking?.pii_purged) continue
+    // A booking waiting for APPROVE or still running keeps its details (changing them would void its approval);
+    // its normal 24-hour purge still applies. The reply says so.
+    if (['waiting_approval', 'running', 'queued', 'pending'].includes(String((run as any).status || ''))) { pending++; continue }
     const { error: ue } = await supabaseAdmin.from('agent_runs').update({ metadata_json: { ...meta, objective: '[traveller details removed]', flight_booking: { ...meta.flight_booking, contact_mobile: null, profile: null, pii_purged: true } } }).eq('id', (run as any).id).eq('telegram_id', String(tg))
     if (ue) ok = false
   }
-  return ok
+  return { ok, pending }
 }
