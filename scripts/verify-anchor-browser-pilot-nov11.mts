@@ -132,4 +132,21 @@ eq(await mb.managedLiveViewUrl('anchor:sess-000123', { BROWSERBASE_API_KEY: 'x' 
   for (const bad of ['wss://anchorbrowser.io/x', 'wss://connect.anchorbrowser.io:8443/x', 'wss://anchorbrowser.io.evil.com/x']) { state = null; cdp = () => bad; await assert.rejects(() => run('https://www.swiggy.com'), /anchor_connection_invalid/).then(() => checks++) }
   cdp = (i: string) => `wss://connect.anchorbrowser.io?sessionId=${i}`
   ok(mb.anchorEnabledForSandbox(mine, { ...env, GOGO_BROWSER_ANCHOR_USERS: USER.toUpperCase() }), 'an id pasted in capitals still matches') }
+// Second review: a refused connection whose session could not be ended stays on record; old-format state is handled.
+{ state = null; sessions = {}
+  cdp = (id: string) => `wss://connect.anchorbrowser.io?apiKey=${KEY}&sessionId=${id}`
+  const noDelete: typeof fetch = async (u, i: any) => (i?.method === 'DELETE' ? new Response('{}', { status: 503 }) : fetcher(u, i))
+  await assert.rejects(() => mb.resolveAnchorSession(mine, 'https://www.swiggy.com', store as any, env, noDelete), /anchor_connection_embeds_api_key/); checks++
+  const left = Object.keys(sessions)[0]
+  ok(state.anchor.session?.id === left, 'the session that could not be ended is kept on record')
+  cdp = (id: string) => `wss://connect.anchorbrowser.io?sessionId=${id}`
+  const posts = calls.filter(c => c.method === 'POST').length
+  await assert.rejects(() => mb.resolveAnchorSession(mine, 'https://www.swiggy.com', store as any, env, noDelete), /anchor_previous_session_closing/); checks++
+  eq(calls.filter(c => c.method === 'POST').length, posts, 'so the next run does not start a second writer')
+  state = { owner: state.owner, contexts: {}, anchor: { profiles: { 'swiggy.com': 'gogo-aaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb' } } }
+  await run('https://www.swiggy.com')
+  ok(/^gogo-[0-9a-f]{32}$/.test(calls.at(-1)!.body.browser.profile.name), 'an old-format stored name is replaced, not trusted')
+  state.anchor = { profiles: {}, pending: 'session' }
+  await assert.rejects(() => run('https://www.swiggy.com'), /anchor_setup_outcome_unknown/); checks++
+  ok(Number.isFinite(state.anchor.pendingAt), 'a marker without a time is stamped, so it clears in 25 minutes') }
 console.log(`ANCHOR_PILOT_OK ${checks} checks`)

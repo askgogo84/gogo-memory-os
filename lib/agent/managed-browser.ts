@@ -220,13 +220,16 @@ export async function resolveAnchorSession(owner:string,url:string,store:Store,e
   // A session request whose outcome is unknown blocks new ones (two writers on one profile). Any session it may have
   // created ends at its own cap (20 minutes), so the block lifts by itself after 25 minutes.
   if(a.pending){
-    if(Number.isFinite(a.pendingAt)&&Date.now()-Number(a.pendingAt)>25*60_000){delete a.pending;delete a.pendingAt;await save()}
+    // A marker without a time (written by an earlier version) is stamped now, so it too clears in 25 minutes.
+    if(!Number.isFinite(a.pendingAt)){a.pendingAt=Date.now();await save();throw Error('anchor_setup_outcome_unknown')}
+    if(Date.now()-Number(a.pendingAt)>25*60_000){delete a.pending;delete a.pendingAt;await save()}
     else throw Error('anchor_setup_outcome_unknown')
   }
   // A random name, stored on first use: a lost state file or another deployment sharing the key can never attach to
   // this owner's signed-in profile by guessing its name (it starts a fresh profile instead).
-  const profile=a.profiles[scope]||`gogo-${randomBytes(16).toString('hex')}`
-  if(!/^gogo-[0-9a-f]{32}$/.test(profile))throw Error('anchor_profile_invalid')
+  // A stored name in any other form is replaced by a fresh one (a new sign-in), never trusted.
+  const stored=a.profiles[scope]
+  const profile=stored&&/^gogo-[0-9a-f]{32}$/.test(stored)?stored:`gogo-${randomBytes(16).toString('hex')}`
   const fingerprint=createHash('sha256').update(JSON.stringify({provider:'anchor',scope,policy:browserPageAllowlist(url),domains:managedAllowedDomains(url),version:1,persistent})).digest('hex')
   if(a.session){
     const id=a.session.id
@@ -263,7 +266,13 @@ export async function resolveAnchorSession(owner:string,url:string,store:Store,e
   const id=String(data.id||'')
   if(!/^[A-Za-z0-9-]{8,80}$/.test(id))throw Error('anchor_session_invalid')
   let conn:{endpoint:string;host:string}
-  try{conn=anchorConnection(data,key)}catch(error){await api(`sessions/${id}`,'DELETE').catch(()=>{});delete a.pending;delete a.pendingAt;await save();throw error}
+  try{conn=anchorConnection(data,key)}catch(error){
+    // Refused connection: the session is ended. If that cannot be confirmed it stays on record, so the next run goes
+    // through the confirm-ended path instead of starting a second writer on the profile.
+    const ended=await api(`sessions/${id}`,'DELETE').then(()=>true,(e:any)=>/_http_404$/.test(String(e?.message||'')))
+    if(!ended)a.session={id,scope,fingerprint:'',startedAt:Date.now(),minutes:persistent?20:5}
+    delete a.pending;delete a.pendingAt;await save();throw error
+  }
   a.session={id,scope,fingerprint,startedAt:Date.now(),minutes:persistent?20:5};delete a.pending;delete a.pendingAt;await save()
   return {...conn,id:`${ANCHOR_SESSION_PREFIX}${id}`,newSession:true,scope,provider:'anchor' as const,release:async()=>{await api(`sessions/${id}`,'DELETE')}}
 }
