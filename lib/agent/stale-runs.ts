@@ -38,6 +38,8 @@ export async function sweepStaleRunningRuns() {
   // The owner hears once that the task was closed. notifyRunOutcome never throws and skips browser runs,
   // which their own worker announces.
   for (const row of (data || []) as any[]) {
+    // A goal given in the dashboard chat is not announced on WhatsApp; it shows as closed on the Tasks page.
+    if (row?.metadata_json?.goal_surface === 'web') continue
     await notifyRunOutcome({ ...row, status: 'failed', error: STALE_RUN_ERROR, summary: STALE_RUN_SUMMARY })
   }
   return ids.length

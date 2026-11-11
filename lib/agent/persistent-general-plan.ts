@@ -234,13 +234,33 @@ export async function resumePersistentGeneralPlan(params:{actor:AgentActor;runId
   if (!meta.persistent_general_plan) throw new Error('not_persistent_general_plan')
   if (TERMINAL_RUN_STATES.has(String(run.status))) return { runId:params.runId,status:String(run.status),executed:0 }
   const missionText = safe(meta.input_text || meta.objective || '', 2000)
+  // A goal given in the dashboard chat is never announced on WhatsApp: its outcome is written to the web conversation
+  // (once: a finished run returns above) and shown on Tasks › Overview.
+  if (meta.goal_surface === 'web') {
+    const result = await drivePersistentRun(params.actor, params.runId, missionText, params.maxWaves || 10, false)
+    const title = safe(meta.goal_title || meta.objective || 'Your task', 120)
+    const line = result.status === 'completed' ? `✅ ${title}: finished. The result is on your Tasks page.`
+      : ['failed', 'blocked', 'outcome_unknown', 'cancelled'].includes(String(result.status)) ? `⚠️ ${title}: I could not finish this. The details are on your Tasks page.` : ''
+    // Written once: only the caller that sets the marker on the run writes the line.
+    // The run has already finished: a failure to write this line is logged and never fails the run or the sweep.
+    const latest = line ? await runMetadata(params.runId, params.actor).catch(() => null) : null
+    const { data: claimed, error: claimError } = latest && !(latest.metadata_json as any)?.goal_web_outcome_at
+      ? await supabaseAdmin.from('agent_runs').update({ metadata_json: { ...((latest.metadata_json as any) || {}), goal_web_outcome_at: new Date().toISOString() } }).eq('id', params.runId).eq('telegram_id', String(params.actor.legacyTelegramId)).is('metadata_json->>goal_web_outcome_at', null).select('id')
+      : { data: null, error: null }
+    if (claimError) console.error('GOAL_WEB_OUTCOME_CLAIM_FAILED:', String(claimError.code || 'error').slice(0, 20))
+    if (line && Array.isArray(claimed) && claimed.length === 1) {
+      const { error } = await supabaseAdmin.from('conversations').insert([{ telegram_id: String(params.actor.legacyTelegramId), role: 'assistant', content: line }])
+      if (error) console.error('GOAL_WEB_OUTCOME_SAVE_FAILED:', String(error.code || 'error').slice(0, 20))
+    }
+    return { runId:params.runId, ...result }
+  }
   return { runId:params.runId, ...(await drivePersistentRun(params.actor, params.runId, missionText, params.maxWaves || 10, true)) }
 }
 
 /** Addendum 5 (goal intake): one goal from a list, as its own durable run of one safe step. The same tools, checks,
  *  stale-step recovery and cron resume as any persistent plan; `metadata` carries the goal's ownership and its list.
  *  Creates the run and returns at once; `drive` then runs it (the caller decides when, so several start together). */
-export async function startPersistentGoalRun(params: { actor: AgentActor; surface: AgentSurface; step: GeneralPlanStep; missionText: string; metadata: Record<string, unknown> }) {
+export async function startPersistentGoalRun(params: { actor: AgentActor; surface: AgentSurface; step: GeneralPlanStep; missionText: string; metadata: Record<string, unknown>; /** How long the creating request may still be driving the run (default 150 s). */ liveMs?: number }) {
   if (!PERSISTENT_SAFE_TOOLS.has(params.step.tool)) throw new Error('persistent_goal_unsupported_tool')
   const step = params.step
   const runtimePlan: AutonomousPlan = {
@@ -249,7 +269,7 @@ export async function startPersistentGoalRun(params: { actor: AgentActor; surfac
       maxAttempts: 4, requiresApproval: false, verificationRequired: true, mutation: ['reminders','lists'].includes(step.tool) || (step.tool === 'tasks' && taskStepIntent(step) !== 'read') }],
     // goal_live_until: the request that created the run is still driving it; the background sweeper leaves it alone
     // until then (a request lives at most 120 s), so one result is not reported twice or replaced by a generic notice.
-    metadata: { ...params.metadata, goal_live_until: new Date(Date.now() + 150_000).toISOString(), input_text: safe(params.missionText, 2000), mission_fingerprint: missionFingerprint(`${params.metadata.goal_batch_id || ''}:${step.instruction}`), planner: 'goal-intake', persistent_general_plan: true, persistent_plan_steps: [step] },
+    metadata: { ...params.metadata, goal_live_until: new Date(Date.now() + Math.min(600_000, Math.max(150_000, Number(params.liveMs) || 150_000))).toISOString(), input_text: safe(params.missionText, 2000), mission_fingerprint: missionFingerprint(`${params.metadata.goal_batch_id || ''}:${step.instruction}`), planner: 'goal-intake', persistent_general_plan: true, persistent_plan_steps: [step] },
   }
   const created = await createAutonomousRun({ actor: params.actor, source: params.surface, plan: runtimePlan })
   return {
