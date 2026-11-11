@@ -65,6 +65,15 @@ final class GogoMarketsTicker {
             Log.w(TAG, "Markets enabled but no HTTPS endpoint configured");
             return;
         }
+        // Send an owner-device bearer only to the exact AskGogo backend endpoint.
+        // Never allow arbitrary URLs to receive this device credential.
+        final String bearer = config.optString("gogo_markets_device_token", "").trim();
+        final boolean trustedHost =
+                "https://app.askgogo.in/api/gogo-tv/markets".equals(endpoint);
+        if (!trustedHost || !bearer.matches("[A-Za-z0-9_-]{32,128}")) {
+            Log.w(TAG, "Markets are not securely paired to AskGogo");
+            return;
+        }
 
         TextView label = new TextView(activity);
         label.setTextColor(Color.WHITE);
@@ -89,7 +98,7 @@ final class GogoMarketsTicker {
         placement.rightMargin = dp(activity, 55);
         root.addView(label, placement);
 
-        Ticker ticker = new Ticker(activity, label, endpoint);
+        Ticker ticker = new Ticker(activity, label, endpoint, bearer);
         label.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override public void onViewAttachedToWindow(View v) { ticker.start(); }
             @Override public void onViewDetachedFromWindow(View v) { ticker.stop(); }
@@ -110,6 +119,7 @@ final class GogoMarketsTicker {
         private final Activity activity;
         private final TextView label;
         private final String endpoint;
+        private final String bearer;
         private final Handler main = new Handler(Looper.getMainLooper());
         private final ArrayList<Quote> quotes = new ArrayList<>();
         private int nextIndex;
@@ -138,8 +148,8 @@ final class GogoMarketsTicker {
             }
         };
 
-        Ticker(Activity activity, TextView label, String endpoint) {
-            this.activity=activity; this.label=label; this.endpoint=endpoint;
+        Ticker(Activity activity, TextView label, String endpoint, String bearer) {
+            this.activity=activity; this.label=label; this.endpoint=endpoint; this.bearer=bearer;
         }
         void start() {
             if (started) return;
@@ -154,7 +164,7 @@ final class GogoMarketsTicker {
             inFlight=true;
             lastFetch=System.currentTimeMillis();
             Thread worker = new Thread(() -> {
-                ArrayList<Quote> fresh = read(endpoint);
+                ArrayList<Quote> fresh = read(endpoint, bearer);
                 main.post(() -> {
                     inFlight=false;
                     if (!started || !label.isAttachedToWindow()) return;
@@ -177,7 +187,7 @@ final class GogoMarketsTicker {
         }
     }
 
-    static ArrayList<Quote> read(String endpoint) {
+    static ArrayList<Quote> read(String endpoint, String bearer) {
         if (!GogoTvSettings.isSafeFeedUrl(endpoint)) return null;
         HttpURLConnection conn=null;
         try {
@@ -185,6 +195,8 @@ final class GogoMarketsTicker {
             conn.setConnectTimeout(4000);
             conn.setReadTimeout(5000);
             conn.setInstanceFollowRedirects(false);
+            conn.setRequestProperty("Authorization", "Bearer " + bearer);
+            conn.setRequestProperty("Accept", "application/json");
             if (conn.getResponseCode() != 200) {
                 Log.w(TAG, "Markets feed HTTP " + conn.getResponseCode());
                 return null;
