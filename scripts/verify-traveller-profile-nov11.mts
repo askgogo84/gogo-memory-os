@@ -71,4 +71,5 @@ assert.match(readFileSync('supabase/migrations/20261111120000_gogo_traveller_pro
   runInNewContext(src, { exports: ex2, process: { env }, String, Number, Set, Date, require: () => ({ supabaseAdmin: { from: () => ({ delete: () => ({ eq: async () => ({ error: { code: '500', message: 'timeout' } }) }) }) } }) })
   assert.equal(await ex2.forgetTravellerProfile(owner), false, 'a real failure is reported')
 }
+assert.match(readFileSync('lib/agent/flight-booking.ts', 'utf8'), /\^\(\?:cancel\|stop\|never \?mind\|no\|nope\|reject\|skip/, 'REJECT while details are asked cancels')
 console.log('PASS traveller profile: opt-in, exact owner, validated, forgettable, wired')

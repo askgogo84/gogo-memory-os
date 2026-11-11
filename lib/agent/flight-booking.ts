@@ -404,7 +404,8 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
   const paused = bookingPaused()
   const pending = await loadPending(actor, text)
   if (pending) {
-    if (/^(?:cancel|stop|never ?mind|no|don'?t book|forget it)\b/i.test(text)) return waiting('Okay, I won’t book it. The search link is in the results above if you want to book it yourself.')
+    // 11 Nov live: "REJECT" while details were being asked was read as the traveller's name.
+    if (/^(?:cancel|stop|never ?mind|no|nope|reject|skip|don'?t book|do not book|forget it)\b/i.test(text)) return waiting('Okay, I won’t book it. The search link is in the results above if you want to book it yourself.')
     if (paused) return bookingPausedReply(await loadLastFlightResult(actor).catch(() => null))
     const last = await loadLastFlightResult(actor)
     if (!last || last.runId !== pending.runId) return null
@@ -562,11 +563,11 @@ export async function purgeFlightBookingPii(options: { runId?: string; keepProfi
 export async function forgetBookingDetails(actor: AgentActor): Promise<{ ok: boolean; pending: number }> {
   const tg = exactOwner(actor)
   if (tg === null) return { ok: false, pending: 0 }
-  const removed = await forgetTravellerProfile(actor).catch(() => false)
+  const removed = await forgetTravellerProfile(actor).catch((e: any) => { console.warn('TRAVELLER_FORGET_FAILED:', JSON.stringify({ step: 'profile_throw', error: String(e?.message || e).slice(0, 160) })); return false })
   const { data, error } = await supabaseAdmin.from('agent_runs').select('id,telegram_id,status,metadata_json').eq('telegram_id', String(tg))
     .eq('metadata_json->>plan_type', 'secure_browser').not('metadata_json->flight_booking', 'is', null).gte('created_at', new Date(Date.now() - 48 * 3600_000).toISOString())
     .order('created_at', { ascending: false }).limit(50)
-  if (error) return { ok: false, pending: 0 }
+  if (error) { console.warn('TRAVELLER_FORGET_FAILED:', JSON.stringify({ step: 'runs_read', code: (error as any).code || null, error: String((error as any).message || '').slice(0, 160) })); return { ok: false, pending: 0 } }
   let ok = removed, pending = 0
   for (const run of data || []) {
     if (String((run as any).telegram_id) !== String(tg)) continue
@@ -576,7 +577,7 @@ export async function forgetBookingDetails(actor: AgentActor): Promise<{ ok: boo
     // its normal 24-hour purge still applies. The reply says so.
     if (['waiting_approval', 'running', 'queued', 'pending'].includes(String((run as any).status || ''))) { pending++; continue }
     const { error: ue } = await supabaseAdmin.from('agent_runs').update({ metadata_json: { ...meta, objective: '[traveller details removed]', flight_booking: { ...meta.flight_booking, contact_mobile: null, profile: null, pii_purged: true } } }).eq('id', (run as any).id).eq('telegram_id', String(tg))
-    if (ue) ok = false
+    if (ue) { ok = false; console.warn('TRAVELLER_FORGET_FAILED:', JSON.stringify({ step: 'run_update', code: (ue as any).code || null, error: String((ue as any).message || '').slice(0, 160) })) }
   }
   return { ok, pending }
 }

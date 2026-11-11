@@ -47,6 +47,7 @@ export async function saveTravellerProfile(actor: AgentActor, p: TravellerProfil
   if (!travellerProfileEnabled(actor) || !validProfile({ ...p, full_name: p.name })) return false
   const tg = exactOwner(actor)!
   const { error } = await supabaseAdmin.from('gogo_traveller_profiles').upsert({ telegram_id: tg, user_id: actor.userId || null, title: p.title, full_name: p.name.replace(/\s+/g, ' ').trim(), email: p.email.trim(), mobile: p.mobile, seat: p.seat, updated_at: new Date().toISOString() }, { onConflict: 'telegram_id' })
+  if (error) console.warn('TRAVELLER_PROFILE_SAVE_FAILED:', JSON.stringify({ code: (error as any).code || null, error: String((error as any).message || '').slice(0, 160) }))
   return !error
 }
 
@@ -55,6 +56,7 @@ export async function forgetTravellerProfile(actor: AgentActor): Promise<boolean
   const tg = exactOwner(actor)
   if (tg === null) return false
   const { error } = await supabaseAdmin.from('gogo_traveller_profiles').delete().eq('telegram_id', tg)
+  if (error) console.warn('TRAVELLER_FORGET_FAILED:', JSON.stringify({ step: 'profile_delete', code: (error as any).code || null, error: String((error as any).message || '').slice(0, 160) }))
   // No table yet (migration not run) means nothing was ever saved: nothing to delete.
   return !error || /PGRST205|42P01|does not exist|could not find the table/i.test(`${(error as any).code || ''} ${(error as any).message || ''}`)
 }
