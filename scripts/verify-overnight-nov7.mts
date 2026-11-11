@@ -56,3 +56,16 @@ console.log('Overnight (7 Nov) replays passed')
   assert.match(fs2(one), /I'll send the cheapest options here when the search finishes\./)
   console.log('PASS short flight acknowledgement')
 }
+
+// 11 Nov review: round-trip results say how to book (the start message no longer does); the fallback uses the
+// round-trip search link for round trips and a hotel wording for hotels.
+{
+  const { formatRoundTripResult, roundTripSearchLink } = await import('../lib/agent/travel-browser-task')
+  const ctx = { origin: { code: 'BLR', label: 'Bengaluru' }, destination: { code: 'GOI', label: 'Goa' }, startDate: '2026-12-20', returnDate: '2026-12-22', roundTrip: true, routeLabel: 'BLR → GOI', whenLabel: '20 Dec 2026', adults: 1 }
+  const out = formatRoundTripResult(ctx, [{ airline: 'Air India', departure: '7:00 pm', arrival: '11:20 pm', stops: 1, fareInr: 9000, fareBasis: 'party_total', farePassengers: 1, route: 'BLR-GOI', evidence: 'x' }], roundTripSearchLink(ctx))
+  assert.match(out, /book the cheapest/)
+  const src = readFileSync('lib/agent/travel-research.ts', 'utf8')
+  assert.match(src, /context\.roundTrip&&context\.returnDate\?roundTripSearchLink\(context\):googleFlightsSearchUrl\(context\)/)
+  assert.match(src, /context\.kind==='hotel'[\s\S]{0,80}live hotel rates/)
+  console.log('PASS round-trip booking hint and fallback links')
+}

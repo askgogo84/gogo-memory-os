@@ -349,6 +349,6 @@ export function formatRoundTripResult(context:BrowserFlightContext,options:Brows
   const dayLabel=(iso:string)=>new Intl.DateTimeFormat('en-IN',{day:'numeric',month:'short',timeZone:'UTC'}).format(new Date(`${iso}T00:00:00Z`))
   return [`*${context.routeLabel}* · ${dayLabel(context.startDate!)} → back ${dayLabel(context.returnDate!)}`,
     `${passengers} adult${passengers===1?'':'s'} · ${(context.cabin||'economy').replace(/_/g,' ')} · round trip`,'',...verdict,'',...rows,'',
-    'Round-trip totals from Google Flights, read just now; fares move, so open the link to confirm before you book. You pick the return flight on the next page. Baggage and optional charges are extra.',
+    'Round-trip totals from Google Flights, read just now; fares move, so open the link to confirm before you book. You pick the return flight on the next page. Baggage and optional charges are extra. Say “book the cheapest” to book.',
     roundTripSearchLink(context)].join('\n')
 }
