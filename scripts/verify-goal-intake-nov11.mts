@@ -64,7 +64,7 @@ ok(/Say \*get it done\*|then say \*get it done\*/.test(r!) && startedRuns.length
 eq(stored.goals.find((g: any) => g.kind === 'reminder').asked, ['time'], 'what was asked is remembered')
 
 // Answers, without starting.
-answers = { about_plan: true, start: false, fills: [{ goal: 'g5', slot: 'time', value: '10:30' }, { goal: 'g2', slot: 'from', value: 'Bengaluru' }, { goal: 'g2', slot: 'to', value: 'Delhi' }, { goal: 'g1', slot: 'date', value: '2026-12-06' }, { goal: 'g1', slot: 'people', value: '20' }, { goal: 'g9', slot: 'time', value: '09:00' }], drop: ['g6'] }
+answers = { about_plan: true, start: false, fills: [{ goal: 'g5', slot: 'time', value: '10:30' }, { goal: 'g2', slot: 'from', value: 'Bengaluru' }, { goal: 'g2', slot: 'to', value: 'Delhi' }, { goal: 'g1', slot: 'date', value: '2026-12-06' }, { goal: 'g1', slot: 'topic', value: 'Nithin’s birthday' }, { goal: 'g1', slot: 'time', value: '20:00' }, { goal: 'g1', slot: 'people', value: '20' }, { goal: 'g9', slot: 'time', value: '09:00' }], drop: ['g6'] }
 r = await gi.tryGoalIntake(actor, 'Blr to Delhi, meeting at 10:30. Birthday is Nithin’s on 6 Dec for 20 people. Skip the last one', deps as any)
 ok(r && /^I count 5 things/.test(r), 'dropped goal gone')
 ok(!/What time should I remind you|Flying from where\?/.test(r!), 'answered details are not asked again')
@@ -91,7 +91,7 @@ ok(/✅ Meeting tomorrow: ⏰ I’ll remind you/.test(r!), 'a quick result is in
 ok(/⏳ Five investors for AskGogo: working on it\./.test(r!), 'a slow one says it is working')
 ok(/⏸ Flight prices for next month: not started\. I still need which date\. Ask me for this one on its own when you have it\./.test(r!), 'a goal still missing a detail says it was not started and what it needs, and promises nothing it cannot keep')
 ok(/⏸ Three business emails: not started\. I still need who is it to, what should it say\./.test(r!), 'the emails were not started without their details')
-eq(events, ['organize a birthday on 2026-12-06 for 20 people'], 'the event goes to the Events flow with the details given')
+eq(events, ['Plan an event: Nithin’s birthday on 2026-12-06 at 20:00 for 20 people'], 'the event goes to the Events flow named, with the details given')
 ok(/\*Organize a birthday\*\nDraft started\./.test(r!), 'and its own reply is included')
 eq(emails, [], 'no email was drafted without a recipient and a topic')
 ok(/You can close WhatsApp/.test(r!), 'it says the work continues')
@@ -147,7 +147,7 @@ eq(startedRuns.map(s => [s.kind, s.ownership, s.step.instruction]), [['todo', 'y
   await Promise.all(res.started.map(s => s.running))
   eq([res.started.length, peak <= gi.MAX_PARALLEL, peak], [8, true, 3], 'eight goals start, never more than three at work at once')
   // An event line that is not a new event (or that Events answers with a question) is not "started".
-  const ev = gi.newPlan('x', [{ id: 'g1', kind: 'event', title: 'Publish party', words: 'publish Nithin’s party', slots: { date: '2026-12-06' }, ownership: 'together', asked: [], state: 'open' }, { id: 'g2', kind: 'todo', title: 'Call bank', words: 'call bank', slots: {}, ownership: 'your_turn', asked: [], state: 'open' }], NOW)
+  const ev = gi.newPlan('x', [{ id: 'g1', kind: 'event', title: 'Publish party', words: 'publish Nithin’s party', slots: { date: '2026-12-06', time: '19:00', topic: 'Nithin’s party' }, ownership: 'together', asked: [], state: 'open' }, { id: 'g2', kind: 'todo', title: 'Call bank', words: 'call bank', slots: {}, ownership: 'your_turn', asked: [], state: 'open' }], NOW)
   const evRes = await gi.startGoals(actor, ev, { ...start, event: async () => 'What should I call the event?' } as any)
   eq([evRes.plan.goals[0].state, evRes.plan.goals[0].note, evRes.started.some(s => s.goal.id === 'g1')], ['held', 'event_not_started', false], 'an event goal counts as started only when a draft was really created')
   const src2 = readFileSync(new URL('../lib/agent/goal-intake.ts', import.meta.url), 'utf8')
@@ -281,7 +281,7 @@ ok(/requiresApproval: false, verificationRequired: true/.test(pgp.slice(pgp.inde
 // Dashboard: the same intake from the web chat; runs and the event draft are recorded against the web surface.
 { const g = (o: any) => ({ id: 'g1', title: 'T', words: 'plan a dinner', slots: {}, asked: [], state: 'open', ownership: 'gogo_handles', ...o })
   const seen: any[] = []
-  const p = gi.newPlan('x', [g({ kind: 'todo', title: 'Call the bank', ownership: 'your_turn' }), g({ id: 'g2', kind: 'event', title: 'Dinner', ownership: 'together', slots: { date: '2037-11-20' } })], NOW)
+  const p = gi.newPlan('x', [g({ kind: 'todo', title: 'Call the bank', ownership: 'your_turn' }), g({ id: 'g2', kind: 'event', title: 'Dinner', ownership: 'together', slots: { date: '2037-11-20', time: '19:30', topic: 'Team dinner' } })], NOW)
   const mk = (surface?: any) => ({ now: NOW, surface, capabilityOff: async () => false, eventsOn: () => true, event: async (_a: any, _t: string, s: any) => { seen.push(['event', s]); return 'Draft event ready.' }, startRun: async ({ goal, surface: s }: any) => { seen.push(['run', s]); return { runId: goal.id, drive: async () => ({ status: 'completed', text: 'ok' }) } } })
   await gi.startGoals(actor, p, mk('web') as any)
   await gi.startGoals(actor, gi.newPlan('x', p.goals.map(x => ({ ...x, state: 'open' as const })), NOW), mk() as any)
@@ -352,4 +352,20 @@ ok(/requiresApproval: false, verificationRequired: true/.test(pgp.slice(pgp.inde
   const wa = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
   ok(/threadReplyAfterGoalPlan = \(await import\('@\/lib\/agent\/goal-intake'\)\.then\(m => m\.wantsStartPhrase\(typedText\), \(\) => false\)\) \? null : threadReply/.test(wa), 'WhatsApp: a message carrying the start phrase is never read against an alert')
   ok(/const typedText = text\n\s*const threadReply = async \(\) => typedText\.length <= 160/.test(wa) && wa.includes("surface: 'whatsapp' }), typedText), () => null) : null"), 'the alert reply reads the words as typed') }
+// 11 Nov live: "organize a birthday" + "The birthday is Divya's, on 22 November" reached Events as "organize a birthday
+// on 2026-11-22", Events asked what to call it, and the goal was held. An event goal now needs to know what and whose.
+{ const g = (o: any) => ({ id: 'g1', kind: 'event', title: 'Organize a birthday', words: 'organize a birthday', slots: {}, asked: [], state: 'open', ownership: 'together', ...o })
+  eq([gi.missingOf(g({})), gi.missingOf(g({ slots: { date: '2037-11-22' } })), gi.missingOf(g({ slots: { date: '2037-11-22', topic: 'Divya’s birthday' } })), gi.missingOf(g({ slots: { date: '2037-11-22', time: '17:00', topic: 'Divya’s birthday' } }))], [['topic', 'date', 'time'], ['topic', 'time'], ['time'], []], 'an event needs what it is and whose, a date and a start time')
+  const shown = gi.planText(gi.newPlan('x', [g({})], NOW)).text
+  ok(/Organize a birthday: .*what is the occasion \(and whose\)\? which date\? what time does it start\?/i.test(shown), 'the plan asks what it is, which date and what time, in event words')
+  eq(gi.detailOf(g({ slots: { date: '2037-11-22', topic: 'Divya’s birthday' } })), 'Divya’s birthday, on Sun 22 Nov', 'and says both back')
+  const texts: string[] = []
+  const res = await gi.startGoals(actor, gi.newPlan('x', [g({ slots: { date: '2037-11-22', time: '17:00', topic: 'Divya’s birthday' } })], NOW), { now: NOW, eventsOn: () => true, event: async (_a: any, t: string) => { texts.push(t); return 'Draft started.\n*Divya’s birthday*' } } as any)
+  eq([texts, res.plan.goals[0].state], [['Plan an event: Divya’s birthday on 2037-11-22 at 17:00'], 'started'], 'Events is asked to plan it by name, with its date and time')
+  // The sentence must get through Events' own gate whatever the occasion is called, and its date and time must both
+  // land on the draft (Events keeps a date only together with a time).
+  const entry = await import('../lib/events/entry')
+  for (const topic of ['Divya’s birthday', 'team offsite', 'Diwali at home', 'Nithin’s promotion', 'baby naming', 'graduation for Divya']) ok(entry.EVENT_GATE.test(`Plan an event: ${topic} on 2037-12-06 at 19:00 for 20 people`), `Events looks at the sentence for: ${topic}`)
+  const held = await gi.startGoals(actor, gi.newPlan('x', [g({ slots: { date: '2037-11-22', time: '19:00', topic: 'Divya’s *birthday*' } })], NOW), { now: NOW, eventsOn: () => true, event: async () => 'What should I call the event?' } as any)
+  ok(/Send it on its own, like: \*plan an event: Divya’s birthday on 2037-11-22 at 19:00\*/.test(gi.startedText(held.plan, new Map())), 'if Events still cannot start it, the reply gives the exact sentence to send') }
 console.log(`GOAL_INTAKE_OK ${checks} checks`)

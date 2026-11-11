@@ -44,7 +44,10 @@ export type Slots = Partial<Record<Slot, string>>
 
 /** What each kind needs before it can start. Never guessed: a missing one is asked for, once. */
 export const REQUIRED: Record<GoalKind, readonly Slot[]> = {
-  reminder: ['date', 'time'], flight_prices: ['from', 'to', 'date'], research: [], email: ['recipient', 'topic'], event: ['date'], todo: [], other: [],
+  // An event needs to know what it is and whose ("Divya's birthday"): 11 Nov live, "organize a birthday" with only a
+  // date reached Events with no name, was asked "What should I call the event?", and no draft was made. It needs a
+  // start time too: Events keeps a date only together with a time, so a date alone would be dropped from the draft.
+  reminder: ['date', 'time'], flight_prices: ['from', 'to', 'date'], research: [], email: ['recipient', 'topic'], event: ['topic', 'date', 'time'], todo: [], other: [],
 }
 /** Who does it. Responsibility only: every tool still asks for every approval it needs (task-ownership.ts). */
 export const OWNER_OF: Record<GoalKind, TaskOwnership> = {
@@ -103,7 +106,7 @@ export const LIST_TOOL: Anthropic.Tool = {
             date: { type: 'string', description: 'YYYY-MM-DD, only if a specific day was stated or a relative day ("tomorrow") was. Not for a month or a range.' },
             time: { type: 'string', description: 'HH:MM 24-hour, only if a time was stated.' },
             recipient: { type: 'string', description: 'email: who it is to (a name or an email address), only if stated.' },
-            topic: { type: 'string', description: 'email: what it should say, only if stated.' },
+            topic: { type: 'string', description: 'email: what it should say. event: what the occasion is and whose, in their words ("Divya\'s birthday", "team offsite"); a bare "a birthday" with no person is not enough. Only if stated.' },
             people: { type: 'integer', description: 'event: number of people, only if stated.' },
           },
           required: ['kind', 'title', 'words'],
@@ -121,7 +124,7 @@ export const ANSWER_TOOL: Anthropic.Tool = {
     properties: {
       about_plan: { type: 'boolean', description: 'true if the reply answers questions about these goals, changes or drops one, or tells the assistant to start. false if it is about something else.' },
       start: { type: 'boolean', description: 'true only if they told the assistant to go ahead (get it done, go ahead, start, do it, yes do them).' },
-      fills: { type: 'array', items: { type: 'object', properties: { goal: { type: 'string' }, slot: { type: 'string', enum: [...SLOTS] }, value: { type: 'string' } }, required: ['goal', 'slot', 'value'] }, description: 'Details they gave, each for one goal id. Dates as YYYY-MM-DD, times as HH:MM 24-hour, people as a number.' },
+      fills: { type: 'array', items: { type: 'object', properties: { goal: { type: 'string' }, slot: { type: 'string', enum: [...SLOTS] }, value: { type: 'string' } }, required: ['goal', 'slot', 'value'] }, description: 'Details they gave, each for one goal id. Dates as YYYY-MM-DD, times as HH:MM 24-hour, people as a number. For an event, slot "topic" is what the occasion is and whose ("Divya\'s birthday").' },
       drop: { type: 'array', items: { type: 'string' }, description: 'Goal ids they said to drop or not do.' },
     },
     required: ['about_plan', 'start'],
@@ -210,7 +213,8 @@ const LINE: Partial<Record<GoalKind, string>> = {
 }
 /** The questions still to ask for a goal: each detail only once. */
 export function toAsk(g: IntakeGoal): Slot[] { return missingOf(g).filter(s => !g.asked.includes(s)) }
-function question(g: IntakeGoal, s: Slot) { return (g.kind === 'reminder' && REMINDER_Q[s]) || QUESTION[s] }
+const EVENT_Q: Partial<Record<Slot, string>> = { topic: 'what is the occasion (and whose)?', time: 'what time does it start?' }
+function question(g: Pick<IntakeGoal, 'kind'>, s: Slot) { return (g.kind === 'reminder' && REMINDER_Q[s]) || (g.kind === 'event' && EVENT_Q[s]) || QUESTION[s] }
 
 /** The details Gogo has for a goal, said back so a wrong one is seen before anything starts. Only what was given. */
 export function detailOf(g: IntakeGoal): string {
@@ -224,7 +228,7 @@ export function detailOf(g: IntakeGoal): string {
   if (g.kind === 'reminder') return on ? (s.date ? `for ${on}` : on) : ''
   if (g.kind === 'flight_prices') return [s.from && s.to ? `${s.from} to ${s.to}` : s.from ? `from ${s.from}` : s.to ? `to ${s.to}` : '', s.date ? `on ${s.date}` : ''].filter(Boolean).join(' ')
   if (g.kind === 'email') return [s.recipient ? `to ${s.recipient}` : '', s.topic ? `about “${s.topic}”` : ''].filter(Boolean).join(', ')
-  if (g.kind === 'event') return [on ? (s.date ? `on ${on}` : on) : '', s.people ? `for ${s.people} ${s.people === '1' ? 'person' : 'people'}` : ''].filter(Boolean).join(', ')
+  if (g.kind === 'event') return [s.topic, on ? (s.date ? `on ${on}` : on) : '', s.people ? `for ${s.people} ${s.people === '1' ? 'person' : 'people'}` : ''].filter(Boolean).join(', ')
   return ''
 }
 
@@ -323,7 +327,7 @@ export async function startGoals(actor: AgentActor, plan: IntakePlan, deps: Star
       } else if (g.kind === 'event') {
         const on = (deps.eventsOn || realEventsOn)(owner)
         if (!on) { g.state = 'held'; g.note = 'events_off'; continue }
-        const reply = await (deps.event || realEvent)(actor, `${g.words}${g.slots.date ? ` on ${g.slots.date}` : ''}${g.slots.time ? ` at ${g.slots.time}` : ''}${g.slots.people ? ` for ${g.slots.people} people` : ''}`, deps.surface)
+        const reply = await (deps.event || realEvent)(actor, `Plan an event: ${clip(g.slots.topic, 80) || g.words}${g.slots.date ? ` on ${g.slots.date}` : ''}${g.slots.time ? ` at ${g.slots.time}` : ''}${g.slots.people ? ` for ${g.slots.people} people` : ''}`, deps.surface)
         // Started only when a draft really exists.
         const made = Boolean(reply && /^Draft started\./.test(reply))
         g.state = made ? 'started' : 'held'; if (!made) g.note = 'event_not_started'
@@ -381,7 +385,7 @@ export function startedText(plan: IntakePlan, quick: Map<string, { status: strin
   for (const g of live) {
     const q = g.runId ? quick.get(g.runId) : undefined
     if (g.state === 'started') lines.push(q ? `${ICON[q.status] || '⏳'} ${g.title}: ${q.text.length > 300 ? 'done, details below.' : clip(q.text, 300)}` : `⏳ ${g.title}: working on it.`)
-    else if (g.state === 'open') lines.push(`⏸ ${g.title}: not started. I still need ${missingOf(g).map(s => QUESTION[s].replace(/\?$/, '')).join(', ')}. Ask me for this one on its own when you have it.`)
+    else if (g.state === 'open') lines.push(`⏸ ${g.title}: not started. I still need ${missingOf(g).map(s => question(g, s).replace(/\?$/, '')).join(', ')}. Ask me for this one on its own when you have it.`)
     else if (g.note === 'one_draft_at_a_time') lines.push(`⏸ ${g.title}: not started. I keep one email draft at a time; ask me for this one after the first is sent or dropped.`)
     else if (g.note === 'email_off') lines.push(`⏸ ${g.title}: email is switched off in your settings, so I did not draft it. To change that, say: set email autonomy to draft.`)
     else if (g.note === 'browser_off') lines.push(`⏸ ${g.title}: web research is switched off in your settings, so I did not start it.`)
@@ -390,7 +394,7 @@ export function startedText(plan: IntakePlan, quick: Map<string, { status: strin
     else if (g.note === 'email_not_started') lines.push(`⏸ ${g.title}: no draft yet. ${g.reply || 'Ask me for this email on its own.'}`)
     else if (g.note === 'events_off') lines.push(`⏸ ${g.title}: event planning isn’t switched on for you yet.`)
     else if (g.note === 'capability_off') lines.push(`⏸ ${g.title}: reminders are switched off in your settings, so I did not set it.`)
-    else if (g.note === 'event_not_started') lines.push(`⏸ ${g.title}: I need a bit more to start this event. Tell me about it on its own (whose, when, how many).`)
+    else if (g.note === 'event_not_started') lines.push(`⏸ ${g.title}: I could not start this one from the list. Send it on its own, like: *plan an event: ${clip(g.slots.topic, 60).replace(/[*_~`]/g, '')} on ${g.slots.date}${g.slots.time ? ` at ${g.slots.time}` : ''}*.`)
     else lines.push(`⏸ ${g.title}: I couldn’t start this one. Ask me about it on its own.`)
   }
   lines.push('', surface === 'web' ? 'You can leave this page; I’ll keep going. Each result appears here in the chat and on your Tasks page. I won’t send a WhatsApp message for each result.' : 'You can close WhatsApp; I’ll keep going and message you as each one finishes. Everything is on your Tasks page too.')
