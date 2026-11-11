@@ -42,6 +42,7 @@ for (const say of ['book it', 'yes book it', 'book that', 'Book', 'book the best
 }
 assert.equal(pickFlight(order, flightBookingRequest('book the cheapest')!)?.airline, 'IndiGo')
 assert.equal(flightBookingRequest('book my dentist'), null)
+assert.deepEqual(flightBookingRequest('book the best price'), { kind: 'cheapest' })
 // The card highlights the text's pick, or nothing; never a different flight.
 const cardOut = (flights: any[]) => flightCardModel({ inventoryType: 'browser-verified', context: { origin: { code: 'BLR' }, destination: { code: 'GOI' }, startDate: '2026-12-20', adults: 1 }, flights })
 const m1 = cardOut(opts)!
@@ -54,4 +55,5 @@ assert.match(tt, /My pick: #1, ₹5,000 on IndiGo/)
 const m2 = cardOut(tricky)!
 assert.equal(m2.rows.some(r => r.pick), false, 'the card does not recommend a different flight')
 assert.match(flightCardCaption(m2), /My pick is in the message below\./)
+assert.equal(cardOut([...opts, { ...opts[2] }])!.rows.filter(r => r.pick).length, 1, 'one pick even with a duplicate row')
 console.log('PASS flight pick rule, numbering and booking binding')

@@ -66,9 +66,10 @@ export function flightCardModel(output: any): FlightCardModel | null {
   const textPick = chooseFlightPick(textOrder)
   const picked = textPick ? textOrder[textPick.n - 1] : null
   const same = (f: Clean) => !!picked && picked.airline?.trim() === f.airline && picked.departure === f.departure && picked.arrival === f.arrival && picked.fareInr === f.fareInr
+  const pickAt = ordered.findIndex(same) // first match only: identical stored rows never give two picks
   const rows = ordered.map((f, i) => ({
     n: i + 1, airline: f.airline, ...brand(f.airline), departure: f.departure, arrival: f.arrival,
-    stops: f.stops === 0 ? 'Nonstop' : `${f.stops} stop${f.stops === 1 ? '' : 's'}`, fareInr: f.fareInr, pick: same(f),
+    stops: f.stops === 0 ? 'Nonstop' : `${f.stops} stop${f.stops === 1 ? '' : 's'}`, fareInr: f.fareInr, pick: i === pickAt,
   }))
   const date = new Date(`${ctx.startDate}T00:00:00Z`)
   const when = new Intl.DateTimeFormat('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(date).replace(',', '')

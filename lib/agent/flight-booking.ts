@@ -45,7 +45,7 @@ export function flightBookingRequest(text: string): FlightPick | null {
   // 28 Oct live: "Book the evening one" — a time-of-day pick from the list Gogo showed.
   const tod = rest.match(/\b(morning|afternoon|evening|night|earliest|latest|early|late)\b/)
   if (tod) return { kind: 'time', window: (tod[1] === 'early' ? 'earliest' : tod[1] === 'late' ? 'latest' : tod[1]) as any }
-  if (/\b(?:cheapest|lowest|cheap)\b/.test(rest)) return { kind: 'cheapest' }
+  if (/\b(?:cheapest|lowest|cheap)\b|\bbest (?:price|fare|deal|rate)\b/.test(rest)) return { kind: 'cheapest' }
   if (/\bbest\b/.test(rest)) return { kind: 'pick' }
   // "book it", "book that flight", "book this", "book the flight", "book the ticket"
   if (/^(?:it|that|this|that flight|this flight|the flight|flight|the ticket|ticket|that one|this one|the option|option)$/.test(rest) || rest === '') return { kind: 'pick' }
