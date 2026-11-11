@@ -1008,10 +1008,10 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // 11 Nov: "forget my travel details" deletes the saved booking details (lib/agent/traveller-profile.ts). Checked
     // before memory and taste so no other handler claims it. The raw id is passed; exactOwner rejects unsafe ids.
     if (/^\s*(?:please\s+)?(?:forget|delete|remove|clear)\s+my\b/i.test(text)) {
-      const tp = await import('@/lib/agent/traveller-profile')
+      const tp = await import('@/lib/agent/traveller-profile'), fbk = await import('@/lib/agent/flight-booking')
       if (tp.FORGET_TRAVEL_DETAILS.test(text.trim())) {
-        const ok = await tp.forgetTravellerProfile({ userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId as any, whatsappId: String(resolvedUser.whatsappId || from) } as any).catch(() => false)
-        const reply = ok ? 'Done. I’ve deleted your saved travel details (name, email, mobile and seat). I’ll ask for them next time you book.' : 'I couldn’t delete your saved travel details just now. Please send it again in a minute.'
+        const ok = await fbk.forgetBookingDetails({ userId: String(resolvedUser.id), legacyTelegramId: resolvedUser.telegramId as any, whatsappId: String(resolvedUser.whatsappId || from) } as any).catch(() => false)
+        const reply = ok ? 'Done. I’ve deleted your saved travel details (name, email, mobile and seat), including the copy kept with any recent booking. I’ll ask for them next time you book.' : 'I couldn’t delete your saved travel details just now. Please send it again in a minute.'
         await saveConversation(resolvedUser.telegramId, 'user', text)
         await saveConversation(resolvedUser.telegramId, 'assistant', reply)
         await sendWhatsAppMessage(from, reply)

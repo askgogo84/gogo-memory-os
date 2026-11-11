@@ -15,6 +15,7 @@ function load(file: string, mocks: Record<string, any>) {
 let context: any = null
 const calls: any[] = []
 const inert = new Proxy({}, { get: () => async () => null })
+let lastRun: string | null = 'run1'
 const mocks = (booking: any) => ({
   './gmail-send': inert, './watch-command': inert, 'node:crypto': { randomUUID: () => 'id' },
   '@/lib/supabase-admin': { supabaseAdmin: inert }, '@/lib/google-calendar': inert, '@/lib/timezone': { normalizeTimezone: (z: any) => z, parseLocalDateTime: () => null },
@@ -23,7 +24,7 @@ const mocks = (booking: any) => ({
   './reminder-update': inert, './approval-guard': inert,
   './typed-object-context': { latestTypedContext: async () => context, rememberTypedObjects: async () => {}, normalizedObjectTitle: (t: string) => t,
     selectedTypedObject: (c: any) => c?.items?.[0] || null, typedOrdinal: () => null, typedMutationOwner: () => null },
-  './flight-booking': { tryFlightBooking: async (p: any) => { calls.push(p); return booking } },
+  './flight-booking': { tryFlightBooking: async (p: any) => { calls.push(p); return booking }, loadLastFlightResult: async () => lastRun ? { runId: lastRun } : null },
 })
 const actor = { userId: 'u', legacyTelegramId: -884501501, whatsappId: '918884501501' }
 
@@ -38,6 +39,14 @@ assert.doesNotMatch(String(out?.text), /what exactly/)
 r = load('lib/agent/typed-time-routing.ts', mocks(null))
 out = await r.tryTypedTimeRouting({ actor, text: 'book it', surface: 'whatsapp' })
 assert.match(String(out?.text), /^Book what exactly\?/)
+
+// A travel context that is not the latest flight result (e.g. a hotel search) is not sent to flight booking.
+calls.length = 0; lastRun = 'other-run'
+context = { domain: 'travel', items: [{ id: 'hotel1', title: 'Goa hotels' }], selectedId: 'hotel1', at: new Date().toISOString() }
+r = load('lib/agent/typed-time-routing.ts', mocks({ text: 'should not happen' }))
+out = await r.tryTypedTimeRouting({ actor, text: 'book it', surface: 'whatsapp' })
+assert.equal(calls.length, 0); assert.match(String(out?.text), /^Book what exactly\?/)
+lastRun = 'run1'
 
 // After a reminder, "book it" is never sent to flight booking.
 calls.length = 0

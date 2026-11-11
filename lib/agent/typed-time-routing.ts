@@ -106,9 +106,13 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
       // 11 Nov live: "book it" after flight results got "Book what exactly?". After a flight result, a booking reply
       // belongs to the flight-booking handler, which binds it to that result (and asks for approval before anything).
       if(action==='book'&&context?.domain==='travel'){
-        const {tryFlightBooking}=await import('./flight-booking')
-        const booking=await tryFlightBooking({actor:p.actor,surface:p.surface as any,text:original})
-        if(booking)return booking as any
+        // Only when the travel item in context is the latest flight result (not a hotel search or another run).
+        const fb=await import('./flight-booking')
+        const last=await fb.loadLastFlightResult(p.actor).catch(()=>null)
+        if(last&&context.items.some(i=>String(i.id)===String(last.runId))){
+          const booking=await fb.tryFlightBooking({actor:p.actor,surface:p.surface as any,text:original})
+          if(booking)return booking as any
+        }
       }
       if(!context||!selected)return clarify("I'm not sure which one you mean. Tell me its name or pick it from the list again. Nothing has changed.")
       if(/^(?:open|show|show me|read|select)$/.test(action)){

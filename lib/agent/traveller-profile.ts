@@ -1,7 +1,7 @@
 // A person's own one-traveller booking details, kept so Gogo does not ask for them every time (owner, 11 Nov 2026:
 // "it should remember everything about me, should not ask every time").
 //
-// Rules: off unless GOGO_TRAVELLER_PROFILE is "on" or lists the owner's telegram id. Exact owner only (a rounded,
+// Rules: off unless GOGO_TRAVELLER_PROFILE lists the owner's telegram id. Exact owner only (a rounded,
 // padded or malformed id never reads or writes). Only details the person typed for a booking are saved; using them
 // still needs their YES and the booking still needs APPROVE. A missing table (migration not run) behaves as "nothing
 // saved". "forget my travel details" deletes the row.
@@ -21,7 +21,8 @@ export function exactOwner(actor: AgentActor): number | null {
 
 export function travellerProfileEnabled(actor: AgentActor, env: Env = process.env): boolean {
   const v = String(env.GOGO_TRAVELLER_PROFILE || '').trim(), tg = exactOwner(actor)
-  return tg !== null && (v === 'on' || v.split(',').map(s => s.trim()).includes(String(tg)))
+  // Explicit owner ids only (no "on"): saving is consent-based, one person at a time.
+  return tg !== null && v.split(',').map(s => s.trim()).includes(String(tg))
 }
 
 const TITLES = new Set(['Mr', 'Ms', 'Mrs', 'Miss', 'Master'])
@@ -49,7 +50,7 @@ export async function saveTravellerProfile(actor: AgentActor, p: TravellerProfil
   return !error
 }
 
-export const FORGET_TRAVEL_DETAILS = /^(?:please\s+)?(?:forget|delete|remove|clear)\s+my\s+(?:saved\s+)?(?:travel(?:ler)?|booking|ticket|flight)\s+details[.!]*$/i
+export const FORGET_TRAVEL_DETAILS = /^(?:please\s+)?(?:forget|delete|remove|clear)\s+my\s+(?:saved\s+)?(?:(?:travel(?:ler)?|booking|ticket|flight)\s+)?details(?:\s+please)?[.!]*$/i
 export async function forgetTravellerProfile(actor: AgentActor): Promise<boolean> {
   const tg = exactOwner(actor)
   if (tg === null) return false

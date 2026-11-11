@@ -27,6 +27,7 @@ const p = { title: 'Mr', name: 'Goverdhan M D', email: 'goverdhan.md@gmail.com',
 assert.equal(T.exactOwner({ legacyTelegramId: 2 ** 60 }), null, 'unsafe ids never read or write')
 assert.equal(T.exactOwner({ legacyTelegramId: '0123' }), null)
 assert.equal(T.travellerProfileEnabled(owner, env), true); assert.equal(T.travellerProfileEnabled(other, env), false)
+assert.equal(T.travellerProfileEnabled(owner, { GOGO_TRAVELLER_PROFILE: 'on' }), false, 'no blanket switch')
 assert.equal(T.validProfile({ ...p, full_name: p.name })?.name, 'Goverdhan M D')
 assert.equal(T.validProfile({ ...p, full_name: p.name, mobile: '12345' }), null)
 assert.equal(T.validProfile({ ...p, full_name: p.name, title: 'Dr' }), null)
@@ -36,18 +37,22 @@ assert.equal(await T.saveTravellerProfile(owner, p), true)
 assert.deepEqual(JSON.parse(JSON.stringify(await T.loadTravellerProfile(owner))), p)
 assert.equal(await T.loadTravellerProfile(other), null)
 assert.equal(await T.loadTravellerProfile({ userId: 'someone-else', legacyTelegramId: -884501501 }), null, 'row bound to its user id')
-for (const say of ['forget my travel details', 'Delete my booking details', 'please remove my saved traveller details.']) assert.ok(T.FORGET_TRAVEL_DETAILS.test(say), say)
+for (const say of ['forget my travel details', 'Delete my booking details', 'please remove my saved traveller details.', 'forget my travel details please', 'forget my details']) assert.ok(T.FORGET_TRAVEL_DETAILS.test(say), say)
 assert.equal(T.FORGET_TRAVEL_DETAILS.test('forget my dentist appointment'), false)
 assert.equal(await T.forgetTravellerProfile(owner), true); assert.equal(await T.loadTravellerProfile(owner), null)
 
 // Wiring: booking reads it first for one traveller, saves after details, and says so only when saved.
 const fb = readFileSync('lib/agent/flight-booking.ts', 'utf8')
-assert.match(fb, /if \(count === 1\) \{\n    const durable = await loadTravellerProfile\(actor\)/)
+assert.match(fb, /if \(count === 1 && opts\.domestic === true\) \{\n    const durable = await loadTravellerProfile\(actor\)/, 'domestic only: no date of birth is saved')
+assert.match(fb, /gender: genderOf\(durable\.title\)/)
+assert.match(fb, /const remembered = travellers\.length === 1 && isDomesticIndiaTrip\(last\.context\) && travellerProfileEnabled\(actor\)/)
+assert.match(fb, /export async function forgetBookingDetails[\s\S]{0,1600}profile: null, pii_purged: true/, 'forget also clears the recent booking copy')
 assert.match(fb, /remembered \? 'I’ve saved your name, email, mobile and seat choice for next time; say \*forget my travel details\* to remove them\.' : 'Your details are deleted after 24 hours\.'/)
 // Using saved details still needs YES (reuse path) and the booking still needs APPROVE.
 assert.match(fb, /Use the same details as your last booking\?/)
 for (const route of ['app/api/webhooks/whatsapp/route.ts', 'app/api/dashboard/chat/route.ts']) {
   const r = readFileSync(route, 'utf8')
+  assert.match(r, /forgetBookingDetails\(/)
   const forget = r.indexOf('FORGET_TRAVEL_DETAILS'), memory = r.indexOf('memoryTurn')
   assert.ok(forget > 0 && forget < memory, `${route}: forget is checked before the memory handler`)
 }
