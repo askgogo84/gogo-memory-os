@@ -600,9 +600,11 @@ export async function processIncomingMessage(params: ProcessIncomingParams): Pro
         return m.tryEventAsk(actor,incomingText,'whatsapp')
       }).catch(e=>{console.error('EVENT_WHATSAPP_ENTRY_FAILED:',String(e?.code||e?.name||'error').slice(0,60));return null}):null
   if(eventReply){
+    // Gogo's voice (lib/agent/voice.ts, off unless GOGO_VOICE lists the owner): the words only; the event is already saved.
+    const eventSaid=eventsEnv.GOGO_VOICE?await import('@/lib/agent/voice').then(m=>m.inGogosVoice({owner:String(resolvedUser.telegramId),name:resolvedUser.name,userText:incomingText,reply:eventReply,kind:'events'}),()=>eventReply):eventReply
     await saveConversation(resolvedUser.telegramId,'user',incomingText)
-    await saveConversation(resolvedUser.telegramId,'assistant',eventReply)
-    return {text:formatOutgoingText(params.channel,eventReply),handledBy:'events',resolvedUser}
+    await saveConversation(resolvedUser.telegramId,'assistant',eventSaid)
+    return {text:formatOutgoingText(params.channel,eventSaid),handledBy:'events',resolvedUser}
   }
   // Remember and suggest, Phase 1: food taste the person states, lists or forgets (null = not a taste message).
   const taste=(globalThis as any).process?.env?.VERCEL_ENV&&TASTE_PREFILTER.test(incomingText)
