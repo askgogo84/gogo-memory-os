@@ -19,6 +19,7 @@ function harness(initial){
     if(id==='next/navigation')return{useSearchParams:()=>({get:()=>null})};
     if(id==='next/link')return{default:'a'};
     if(id==='@/components/gogo/gogo-character')return{GogoCharacter:()=>null};
+    if(id==='@/components/gogo/companion')return{PoseCompanion:()=>null,Companion:()=>null};
     if(id==='@/components/dashboard/mobile-nav')return{MobileMenuButton:()=>null};
     if(id==='./chat-channels')return{ChatChannels:()=>null,ChannelPill:()=>null};
     if(id==='@/components/dashboard/run-steps')return{RunStepsLine:()=>null};
