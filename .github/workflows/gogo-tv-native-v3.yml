@@ -42,11 +42,12 @@ jobs:
         run: |
           set -euxo pipefail
           ROOT="$GITHUB_WORKSPACE"
-          python3 -m py_compile gogo/experimental/gogo-native-glass/patch_native_glass.py gogo/experimental/gogo-native-glass/patch_native_glass_v2.py gogo/experimental/gogo-native-glass/patch_gogo_tv_v3.py
+          python3 -m py_compile gogo/experimental/gogo-native-glass/patch_native_glass.py gogo/experimental/gogo-native-glass/patch_native_glass_v2.py gogo/experimental/gogo-native-glass/patch_gogo_tv_v3.py gogo/experimental/gogo-native-glass/patch_gogo_free_markets.py
           python3 gogo/experimental/gogo-native-glass/patch_native_glass.py --project upstream --backup /tmp/gogo-v1 --glass-source gogo/experimental/gogo-native-glass/GogoGlassClock.java
           python3 gogo/experimental/gogo-native-glass/patch_native_glass_v2.py --project upstream --backup /tmp/gogo-v2 --glass-source gogo/experimental/gogo-native-glass/GogoGlassClock.java
           python3 gogo/experimental/gogo-native-glass/patch_gogo_tv_v3.py --project upstream --backup /tmp/gogo-v3 --sources gogo/experimental/gogo-native-glass
           python3 gogo/experimental/gogo-native-glass/patch_gogo_tv_v3.py --project upstream --backup /tmp/gogo-v3 --sources gogo/experimental/gogo-native-glass
+          python3 gogo/experimental/gogo-native-glass/patch_gogo_free_markets.py --project upstream --backup /tmp/gogo-free --sources gogo/experimental/gogo-native-glass
           grep -q 'GogoMarketsTicker.attach(this, root)' upstream/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
           grep -q 'android.permission.INTERNET' upstream/launcher/app/src/main/AndroidManifest.xml
           python3 -c 'import xml.etree.ElementTree as e; e.parse("upstream/launcher/app/src/main/res/layout/activity_launcher_settings.xml")'
