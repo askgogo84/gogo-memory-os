@@ -38,7 +38,7 @@ final class GogoGlassClock {
     static boolean attach(Activity activity, FrameLayout root) {
         JSONObject config = configuration(activity);
         if (!config.optBoolean("gogo_native_clock", false)) return false;
-        if (!config.optBoolean("gogo_weather_enabled", false)) return true;
+        if (!weatherEnabled(activity)) return true;
 
         View header = root.findViewById(R.id.leftBlock);
         if (!(header instanceof LinearLayout)) return true;
@@ -57,10 +57,15 @@ final class GogoGlassClock {
         column.addView(weather, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        String city = config.optString("gogo_weather_city", "Bengaluru").trim();
+        SharedPreferences choices =
+                activity.getSharedPreferences(Config.SETTINGS_NAME, Context.MODE_PRIVATE);
+        String city = choices.getString("gogo_weather_city",
+                config.optString("gogo_weather_city", "Bengaluru")).trim();
         if (city.isEmpty() || city.length() > 60) city = "Bengaluru";
-        double lat = config.optDouble("gogo_weather_lat", 12.9716);
-        double lon = config.optDouble("gogo_weather_lon", 77.5946);
+        double lat = coordinate(choices, "gogo_weather_lat",
+                config.optDouble("gogo_weather_lat", 12.9716));
+        double lon = coordinate(choices, "gogo_weather_lon",
+                config.optDouble("gogo_weather_lon", 77.5946));
         if (!Double.isFinite(lat) || !Double.isFinite(lon)
                 || Math.abs(lat) > 90 || Math.abs(lon) > 180) return true;
 
@@ -107,6 +112,35 @@ final class GogoGlassClock {
         });
         if (weather.isAttachedToWindow()) main.post(refresh);
         return true;
+    }
+
+    static boolean weatherEnabled(Activity activity) {
+        JSONObject config = configuration(activity);
+        return activity.getSharedPreferences(Config.SETTINGS_NAME, Context.MODE_PRIVATE)
+                .getBoolean("gogo_weather_enabled",
+                        config.optBoolean("gogo_weather_enabled", false));
+    }
+
+    static String weatherCity(Activity activity) {
+        JSONObject config = configuration(activity);
+        return activity.getSharedPreferences(Config.SETTINGS_NAME, Context.MODE_PRIVATE)
+                .getString("gogo_weather_city", config.optString("gogo_weather_city", "Bengaluru"));
+    }
+
+    static void setWeatherLocation(Activity activity, String city, double lat, double lon) {
+        if (city == null || city.isEmpty() || Math.abs(lat) > 90 || Math.abs(lon) > 180) return;
+        activity.getSharedPreferences(Config.SETTINGS_NAME, Context.MODE_PRIVATE)
+                .edit().putString("gogo_weather_city", city)
+                .putString("gogo_weather_lat", Double.toString(lat))
+                .putString("gogo_weather_lon", Double.toString(lon)).apply();
+    }
+
+    private static double coordinate(SharedPreferences prefs, String key, double defaultValue) {
+        try {
+            return Double.parseDouble(prefs.getString(key, Double.toString(defaultValue)));
+        } catch (NumberFormatException ignored) {
+            return defaultValue;
+        }
     }
 
     private static JSONObject configuration(Activity activity) {
