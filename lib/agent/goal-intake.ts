@@ -71,6 +71,19 @@ const block = (v: unknown, n: number) => { const t = String(v ?? '').replace(/[\
 const clip = (v: unknown, n: number) => String(v ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
 const norm = (v: string) => v.toLowerCase().replace(/[^\p{L}\p{N} ]+/gu, ' ').replace(/\b(?:the|a|an|my|for|to|of|me|about|please)\b/g, ' ').replace(/\s+/g, ' ').trim()
 
+/** Start in the first reply (owner-approved mock, 11 Nov): Gogo looks at the calendar before asking what time a
+ *  meeting is, and sets going at once the goals that need no answer and reach nobody else (research, a fare search, a
+ *  reminder, a to-do). Events and emails still wait for "get it done". Off unless GOGO_GOAL_EARLY_START is "on" or lists
+ *  the owner. */
+export function goalEarlyStartEnabledFor(owner: string, env: Env = envOf()): boolean {
+  const v = String(env.GOGO_GOAL_EARLY_START || '').trim()
+  return goalIntakeEnabledFor(owner, env) && (v === 'on' || v.split(',').map(s => s.trim()).includes(owner))
+}
+const EARLY_KINDS: readonly GoalKind[] = ['research', 'flight_prices', 'reminder', 'todo']
+// "my meeting tomorrow", "the investor call": something that sits on a calendar. "Call the bank" is a thing to do, not one.
+const MEETING_WORDS = /\b(?:meetings?|appointments?|stand[- ]?ups?|syncs?|interviews?|calendar)\b|\b(?:my|the|our|an?)\s+(?:[\w’'-]+\s+){0,2}calls?\b/i
+export type CalendarDay = { ok: boolean; events: { title: string; time: string }[] }
+
 /** Cheap gate before any model call: a numbered or bulleted list of three or more lines, "here are N things", or one
  *  sentence asking for three or more separate things. A false positive costs one model call; it never acts. */
 export function looksLikeGoalList(text: string): boolean {
@@ -214,7 +227,7 @@ const LINE: Partial<Record<GoalKind, string>> = {
 /** The questions still to ask for a goal: each detail only once. */
 export function toAsk(g: IntakeGoal): Slot[] { return missingOf(g).filter(s => !g.asked.includes(s)) }
 const EVENT_Q: Partial<Record<Slot, string>> = { topic: 'what is the occasion (and whose)?', time: 'what time does it start?' }
-function question(g: Pick<IntakeGoal, 'kind'>, s: Slot) { return (g.kind === 'reminder' && REMINDER_Q[s]) || (g.kind === 'event' && EVENT_Q[s]) || QUESTION[s] }
+function question(g: Pick<IntakeGoal, 'kind'> & { note?: string }, s: Slot) { return (g.kind === 'reminder' && s === 'time' && g.note === 'calendar_empty' && 'I don’t see a timed meeting on your calendar that day. What time should I remind you?') || (g.kind === 'reminder' && REMINDER_Q[s]) || (g.kind === 'event' && EVENT_Q[s]) || QUESTION[s] }
 
 /** The details Gogo has for a goal, said back so a wrong one is seen before anything starts. Only what was given. */
 export function detailOf(g: IntakeGoal): string {
@@ -277,6 +290,8 @@ export function stepFor(g: IntakeGoal): { tool: 'reminders' | 'travel' | 'web_se
 export type StartDeps = {
   /** Where the list was given: runs and the event draft are recorded against that surface. Default WhatsApp. */
   surface?: 'whatsapp' | 'web'
+  /** Start only these goals (the early start); the rest are left exactly as they are. */
+  only?: (g: IntakeGoal) => boolean
   startRun?: (p: { actor: AgentActor; goal: IntakeGoal; step: NonNullable<ReturnType<typeof stepFor>>; plan: IntakePlan; surface?: 'whatsapp' | 'web' }) => Promise<{ runId: string; drive: () => Promise<{ status: string; text: string }> }>
   event?: (actor: AgentActor, text: string, surface?: 'whatsapp' | 'web') => Promise<string | null>
   email?: (actor: AgentActor, text: string) => Promise<string | null>
@@ -309,7 +324,7 @@ export async function startGoals(actor: AgentActor, plan: IntakePlan, deps: Star
   }
   const FAILED = { status: 'failed', text: 'I couldn’t finish this one. It is on your Tasks page.' }
   for (const g of goals) {
-    if (g.state !== 'open' || missingOf(g).length) continue
+    if (g.state !== 'open' || missingOf(g).length || (deps.only && !deps.only(g))) continue
     try {
       const step = stepFor(g)
       if (step) {
@@ -384,7 +399,8 @@ export function startedText(plan: IntakePlan, quick: Map<string, { status: strin
   const lines = [`Started ${go.length} of ${live.length}.`, '']
   for (const g of live) {
     const q = g.runId ? quick.get(g.runId) : undefined
-    if (g.state === 'started') lines.push(q ? `${ICON[q.status] || '⏳'} ${g.title}: ${q.text.length > 300 ? 'done, details below.' : clip(q.text, 300)}` : `⏳ ${g.title}: working on it.`)
+    if (g.state === 'started' && g.note === 'early') lines.push(`▶️ ${g.title}: already under way from before.`)
+    else if (g.state === 'started') lines.push(q ? `${ICON[q.status] || '⏳'} ${g.title}: ${q.text.length > 300 ? 'done, details below.' : clip(q.text, 300)}` : `⏳ ${g.title}: working on it.`)
     else if (g.state === 'open') lines.push(`⏸ ${g.title}: not started. I still need ${missingOf(g).map(s => question(g, s).replace(/\?$/, '')).join(', ')}. Ask me for this one on its own when you have it.`)
     else if (g.note === 'one_draft_at_a_time') lines.push(`⏸ ${g.title}: not started. I keep one email draft at a time; ask me for this one after the first is sent or dropped.`)
     else if (g.note === 'email_off') lines.push(`⏸ ${g.title}: email is switched off in your settings, so I did not draft it. To change that, say: set email autonomy to draft.`)
@@ -447,10 +463,127 @@ export function wantsStartPhrase(text: string): boolean {
 /** A bare confirmation meant for whatever asked last (an approval card, Events' "are you sure?"): never the plan's. */
 const BARE_CONFIRM = /^\s*(?:yes|yes please|yeah|yep|ok|okay|sure|confirm|confirmed|go ahead|do it|start|no|nope|cancel)\b[\s,.!]*(?:(?:cancel|move)(?: it)?)?[\s.!]*$/i
 
-export type IntakeDeps = { model?: Model; store?: Store; start?: StartDeps; now?: Date; timezone?: string; surface?: 'whatsapp' | 'web'; background?: (work: () => Promise<void>) => void; send?: (text: string) => Promise<void>; /** How long the first reply waits for quick results (default 8 s). */ quickMs?: number }
+export type IntakeDeps = { model?: Model; store?: Store; start?: StartDeps; now?: Date; timezone?: string; surface?: 'whatsapp' | 'web';
+  /** Start in the first reply. Default: goalEarlyStartEnabledFor(owner). */
+  early?: boolean; calendar?: (actor: AgentActor, date: string) => Promise<CalendarDay>; background?: (work: () => Promise<void>) => void; send?: (text: string) => Promise<void>; /** How long the first reply waits for quick results (default 8 s). */ quickMs?: number }
 
 /** The WhatsApp entry. Returns the reply, or null when the message is not a list and not a reply to a pending plan
  *  (routing then continues exactly as before). Never throws. */
+/** The calendar for one day, as "HH:MM" local times. All-day entries and anything that is not on that day are left
+ *  out. `ok` false means the calendar could not be read (not connected, incomplete): then nothing is assumed. */
+const realCalendar = async (actor: AgentActor, date: string): Promise<CalendarDay> => {
+  const { readTomorrowSchedule } = await import('./read-only-schedule')
+  const r: any = await readTomorrowSchedule({ actor, scope: 'calendar', text: `Show my calendar on ${date}` })
+  if (!r?.calendarReadVerified) return { ok: false, events: [] }
+  const tz = String(r.timeZone || actor.timezone || 'Asia/Kolkata'), events: CalendarDay['events'] = []
+  for (const e of Array.isArray(r.calendarEvents) ? r.calendarEvents : []) {
+    const start = String(e?.start || '')
+    if (/^\d{4}-\d{2}-\d{2}$/.test(start)) continue
+    const at = Date.parse(start)
+    if (!Number.isFinite(at)) continue
+    const p: Record<string, string> = {}
+    for (const x of new Intl.DateTimeFormat('en-GB', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new Date(at))) p[x.type] = x.value
+    if (`${p.year}-${p.month}-${p.day}` !== date) continue
+    events.push({ title: clip(e?.title, 80) || 'Untitled', time: `${p.hour}:${p.minute}` })
+  }
+  return { ok: true, events }
+}
+const clock12 = (t: string) => { const [h, m] = t.split(':').map(Number); return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'am' : 'pm'}` }
+const minus = (t: string, mins: number) => { const [h, m] = t.split(':').map(Number); const x = h * 60 + m - mins; return x < 0 ? null : `${String(Math.floor(x / 60)).padStart(2, '0')}:${String(x % 60).padStart(2, '0')}` }
+export const REMIND_BEFORE_MINUTES = 10, MAX_CALENDAR_REMINDERS = 5
+
+/** "Remind me about my meeting tomorrow": the day's meetings are read from the calendar and a reminder is set 10 minutes
+ *  before each (one per start time). Nothing is guessed: with no calendar, or none readable, the goal is left to be
+ *  asked about. Returns the line for the reply, or null when the goal is unchanged. */
+async function remindFromCalendar(actor: AgentActor, g: IntakeGoal, plan: IntakePlan, deps: IntakeDeps, now: Date): Promise<string | null> {
+  if (g.kind !== 'reminder' || g.state !== 'open' || !g.slots.date || g.slots.time || !MEETING_WORDS.test(`${g.title} ${g.words}`)) return null
+  const sd = deps.start || {}
+  if (await (sd.capabilityOff || realCapabilityOff)(actor, 'reminders')) return null
+  const day = await (deps.calendar || realCalendar)(actor, g.slots.date).catch(() => ({ ok: false, events: [] } as CalendarDay))
+  if (!day.ok) return null
+  const nowLocal = localNow(actor.timezone || 'Asia/Kolkata', now)
+  // One reminder per start time, soonest first; a start time whose reminder would already be in the past is skipped.
+  const byTime = new Map<string, string[]>()
+  for (const e of [...day.events].filter(e => TIME.test(e.time)).sort((a, b) => a.time.localeCompare(b.time))) byTime.set(e.time, [...(byTime.get(e.time) || []), clip(e.title, 80)])
+  const slots = [...byTime.entries()].map(([time, titles]) => ({ time, titles, at: minus(time, REMIND_BEFORE_MINUTES) })).filter(x => x.at && `${g.slots.date}T${x.at}` > nowLocal).slice(0, MAX_CALENDAR_REMINDERS)
+  const when = detailOf({ ...g, slots: { date: g.slots.date } }).replace(/^for /, '')
+  if (!slots.length) { g.note = 'calendar_empty'; return null }
+  const set: string[] = [], failed: string[] = []
+  const date = g.slots.date
+  // Set together; each is written and read back by the reminder tool, and counts as set only when that completed.
+  const done = await Promise.all(slots.map(async x => {
+    const message = clip(`${x.titles.join(' and ')} at ${clock12(x.time)}`, 200)
+    try {
+      const run = await (sd.startRun || realStartRun)({ actor, goal: g, plan, surface: sd.surface || deps.surface,
+        step: { tool: 'reminders', title: 'Set reminder', instruction: `Remind me on ${date} at ${clock12(x.at!)}: ${message}`, reminder: { date, time: x.at!, message } } })
+      g.runId = g.runId || run.runId
+      const r = await Promise.race([run.drive(), new Promise<{ status: string; text: string }>(res => setTimeout(() => res({ status: 'running', text: '' }), deps.quickMs ?? 8000))]).catch(() => ({ status: 'failed', text: '' }))
+      return r.status === 'completed'
+    } catch { return false }
+  }))
+  slots.forEach((x, i) => (done[i] ? set : failed).push(clock12(x.at!)))
+  g.state = 'started'; g.note = 'early'
+  const list = slots.map(x => `${x.titles.join(' and ')} at ${clock12(x.time)}`).join('; ')
+  return `${when}: you have ${list}. ${set.length ? `Reminders set for ${set.join(' and ')}, ${REMIND_BEFORE_MINUTES} minutes before.` : ''}${failed.length ? ` I could not confirm the reminder for ${failed.join(' and ')}; it is on your Tasks page.` : ''} Tell me if you want different times.`.replace(/\s+/g, ' ')
+}
+
+/** After goals start: a few seconds for the quick ones; the rest report in the background. */
+async function collectStarted(res: { started: Started[] }, deps: IntakeDeps): Promise<{ quick: Map<string, { status: string; text: string }>; replies: string[] }> {
+  const quick = new Map<string, { status: string; text: string }>()
+  // A few seconds for the quick ones (a reminder is written and read back at once); the rest go on in the
+  // background and each sends its own message when it finishes. Each run was already set going as it was created.
+  const driven = res.started.filter(s => s.running).map(s => ({ s, p: s.running! }))
+  await Promise.race([Promise.allSettled(driven.map(async d => { const r = await d.p; quick.set(d.s.goal.runId!, r) })), new Promise(r => setTimeout(r, deps.quickMs ?? 8000))])
+  const later = driven.filter(d => !quick.has(d.s.goal.runId!))
+  if (later.length && deps.background && deps.send) deps.background(async () => { await Promise.allSettled(later.map(async d => { const r = await d.p; await deps.send!(`*${d.s.goal.title}*\n${block(r.text, 3000)}`) })) })
+  const replies = [
+    ...res.started.filter(s => s.reply).map(s => `*${s.goal.title}*\n${block(s.reply, 1500)}`),
+    // A result that arrived in time but is too long for its line in the summary is given whole.
+    ...res.started.filter(s => s.goal.runId && (quick.get(s.goal.runId)?.text.length || 0) > 300).map(s => `*${s.goal.title}*\n${block(quick.get(s.goal.runId!)!.text, 3000)}`),
+  ]
+  return { quick, replies }
+}
+
+/** The first reply when some goals could start at once: what is already moving, then what still needs a word. */
+export function earlyText(plan: IntakePlan, moving: { goal: IntakeGoal; line: string }[], rest: string): string {
+  const total = plan.goals.filter(g => g.state !== 'dropped').length, open = plan.goals.filter(g => g.state === 'open').length
+  const lines = [`On it, all ${total}. ${moving.length === 1 ? 'One is' : `${moving.length} are`} already moving:`, ...moving.map(m => `• ${m.goal.title}: ${m.line}`)]
+  if (open) lines.push('', `${open === 1 ? 'One is' : `${open} are`} waiting on you:`, ...rest.split('\n').slice(2))
+  else lines.push('', 'Nothing else needs you. Anything that needs your yes will still ask first.')
+  return lines.join('\n')
+}
+
+/** Looks before asking, and starts what needs no answer. Returns the reply, or null when nothing could start (the
+ *  caller then shows the plan as before). The plan is saved, with the goals marked started, before anything starts. */
+async function earlyStart(actor: AgentActor, plan: IntakePlan, deps: IntakeDeps, store: Store, now: Date): Promise<{ text?: string; replies: string[]; plan: IntakePlan } | null> {
+  const tg = actor.legacyTelegramId
+  const goals = plan.goals.map(g => ({ ...g, slots: { ...g.slots }, asked: [...g.asked] }))
+  const work: IntakePlan = { ...plan, goals }
+  const calendarGoals = goals.filter(g => g.kind === 'reminder' && g.state === 'open' && g.slots.date && !g.slots.time && MEETING_WORDS.test(`${g.title} ${g.words}`))
+  const ready = goals.filter(g => g.state === 'open' && !missingOf(g).length && EARLY_KINDS.includes(g.kind))
+  if (!calendarGoals.length && !ready.length) return null
+  // Marked before anything starts, so a repeated message or a retry cannot start the same goals twice.
+  const readyIds = new Set(ready.map(g => g.id)), marked = new Set([...ready, ...calendarGoals].map(g => g.id))
+  try { await store.save(tg, { ...work, goals: goals.map(g => marked.has(g.id) ? { ...g, state: 'started' as const, note: 'early' } : g) }) } catch { return null }
+  const moving: { goal: IntakeGoal; line: string }[] = []
+  for (const g of calendarGoals) { const line = await remindFromCalendar(actor, g, work, deps, now).catch(() => null); if (line) moving.push({ goal: g, line }) }
+  const res = ready.length ? await startGoals(actor, work, { ...(deps.start || {}), surface: deps.start?.surface || deps.surface, now, only: g => readyIds.has(g.id) }) : { plan: work, started: [] as Started[] }
+  const { quick, replies } = await collectStarted(res, deps)
+  const after = res.plan.goals
+  for (const g of after) {
+    if (!readyIds.has(g.id)) continue
+    if (g.state === 'started') { g.note = 'early'; const q = g.runId ? quick.get(g.runId) : undefined; moving.push({ goal: g, line: q ? (q.text.length > 300 ? 'done, details below.' : clip(q.text, 300)) : 'working on it; I’ll message you when it’s ready.' }) }
+  }
+  const next: IntakePlan = { ...work, goals: after }
+  // A goal that could not start (switched off, time passed) is asked about in the plan as usual: back to open.
+  for (const g of next.goals) if (readyIds.has(g.id) && g.state === 'held') g.state = 'open'
+  if (!moving.length) return { replies: [], plan: next }
+  const rest = planText(next)
+  if (rest.plan.goals.some(g => g.state === 'open')) await store.save(tg, rest.plan).catch(() => {}); else await store.clear(tg).catch(() => {})
+  console.log('GOAL_INTAKE:', JSON.stringify({ step: 'early', goals: next.goals.length, moving: moving.length }))
+  return { text: earlyText(rest.plan, moving, rest.text), replies, plan: rest.plan }
+}
+
 /** Is a plan from this person still waiting for details or for "get it done"? While one is, their next message is
  *  offered to the plan before a reply to an older alert is read into it ("Skip the emails. Get it done" is about the
  *  plan, not an instruction to drop the last alert). Never throws; false when intake is off for them. */
@@ -472,6 +605,7 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
   let today: string
   try { today = day(tz) } catch { tz = 'Asia/Kolkata'; today = day(tz) }
   const model = deps.model || realModel, store = deps.store || realStore
+  const earlyOn = deps.early ?? goalEarlyStartEnabledFor(owner)
   try {
     const pending = readPlan(await store.load(tg).catch(() => null), now)
     if (pending) {
@@ -487,24 +621,17 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
       const changed = JSON.stringify(applied.plan.goals.map(g => [g.slots, g.state])) !== JSON.stringify(pending.goals.map(g => [g.slots, g.state]))
       const plan = applied.plan, about = applied.about || wantsStart, start = onlyStart || (wantsStart && changed)
       if (about) {
-        if (!start) { const out = planText(plan); await store.save(tg, out.plan); console.log('GOAL_INTAKE:', JSON.stringify({ step: 'answers', goals: plan.goals.length })); return out.text }
+        if (!start) {
+          const early = earlyOn ? await earlyStart(actor, plan, deps, store, now) : null
+          if (early?.text) return [early.text, ...early.replies].join('\n\n')
+          const out = planText(early?.plan || plan); await store.save(tg, out.plan); console.log('GOAL_INTAKE:', JSON.stringify({ step: 'answers', goals: plan.goals.length })); return out.text
+        }
         // Marked started before anything starts: a stored plan marked started is never read again (readPlan), so a
         // repeated "get it done", a retry or a failed clean-up cannot start it twice. Not saved: nothing starts.
         try { await store.save(tg, { ...plan, started: now.toISOString() }) } catch { return 'I couldn’t start these just now. Say *get it done* again in a moment.' }
         const res = await startGoals(actor, plan, { ...(deps.start || {}), surface: deps.start?.surface || deps.surface, now })
         await store.clear(tg).catch(() => {})
-        const quick = new Map<string, { status: string; text: string }>()
-        // A few seconds for the quick ones (a reminder is written and read back at once); the rest go on in the
-        // background and each sends its own message when it finishes. Each run was already set going as it was created.
-        const driven = res.started.filter(s => s.running).map(s => ({ s, p: s.running! }))
-        await Promise.race([Promise.allSettled(driven.map(async d => { const r = await d.p; quick.set(d.s.goal.runId!, r) })), new Promise(r => setTimeout(r, deps.quickMs ?? 8000))])
-        const later = driven.filter(d => !quick.has(d.s.goal.runId!))
-        if (later.length && deps.background && deps.send) deps.background(async () => { await Promise.allSettled(later.map(async d => { const r = await d.p; await deps.send!(`*${d.s.goal.title}*\n${block(r.text, 3000)}`) })) })
-        const replies = [
-          ...res.started.filter(s => s.reply).map(s => `*${s.goal.title}*\n${block(s.reply, 1500)}`),
-          // A result that arrived in time but is too long for its line in the summary is given whole.
-          ...res.started.filter(s => s.goal.runId && (quick.get(s.goal.runId)?.text.length || 0) > 300).map(s => `*${s.goal.title}*\n${block(quick.get(s.goal.runId!)!.text, 3000)}`),
-        ]
+        const { quick, replies } = await collectStarted(res, deps)
         console.log('GOAL_INTAKE:', JSON.stringify({ step: 'start', goals: plan.goals.length, started: res.started.length }))
         return [startedText(res.plan, quick, deps.surface), ...replies].join('\n\n')
       }
@@ -515,7 +642,9 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
     if (!looksLikeGoalList(text)) return null
     const goals = goalsFrom(await model.list({ text, today, timezone: tz }), today)
     if (!goals.length) return null
-    const out = planText(newPlan(text, goals, now))
+    const early = earlyOn ? await earlyStart(actor, newPlan(text, goals, now), deps, store, now) : null
+    if (early?.text) return [early.text, ...early.replies].join('\n\n')
+    const out = planText(early?.plan || newPlan(text, goals, now))
     await store.save(tg, out.plan)
     console.log('GOAL_INTAKE:', JSON.stringify({ step: 'plan', goals: goals.length, kinds: goals.map(g => g.kind) }))
     return out.text
