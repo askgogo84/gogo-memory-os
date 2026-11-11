@@ -1,7 +1,7 @@
 import {createHash} from 'node:crypto'
 import {isIP} from 'node:net'
 import {browserPageAllowlist,FLIGHT_BOOKING_HANDOFF_SITES} from './browser-page-network'
-import {SANDBOX_WORKDIR} from './secure-browser-bootstrap'
+import {SANDBOX_WORKDIR,browserSandboxNameFor} from './secure-browser-bootstrap'
 
 // Browserbase is infrastructure, never an authority source. Existing action,
 // owner-lock, authentication and outcome checks remain in the browser executor.
@@ -9,7 +9,10 @@ export const managedBrowserEnabled=()=>process.env.GOGO_BROWSER_RUNTIME==='brows
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const metadataPath=`${SANDBOX_WORKDIR}/managed-browser.json`
 type Session={id:string;scope:string;fingerprint:string}
-export type ManagedState={owner:string;contexts:Record<string,string>;session?:Session;pending?:string}
+// Anchor Browser (Addendum 6 pilot): its own records beside Browserbase's, so switching a user between providers never
+// mixes a Browserbase Context with an Anchor profile, and turning the pilot off leaves the Browserbase login untouched.
+type AnchorState={profiles:Record<string,string>;session?:Session;pending?:string}
+export type ManagedState={owner:string;contexts:Record<string,string>;session?:Session;pending?:string;anchor?:AnchorState}
 type Store={load:()=>Promise<ManagedState|null>;save:(state:ManagedState)=>Promise<void>}
 type Env=Record<string,string|undefined>
 
@@ -144,10 +147,116 @@ export async function resolveManagedSession(owner:string,url:string,store:Store,
   return {...await connect(created),id:created.id,newSession:true,scope,release:async()=>{await api(`sessions/${created.id}`,{status:'REQUEST_RELEASE'})}}
 }
 
+// ---- Anchor Browser pilot (Same Brain 3.0 Addendum 6) ----
+// An optional second provider behind the same resolver. It is used only for users listed in GOGO_BROWSER_ANCHOR_USERS
+// (their exact users.id; "on" is not accepted), only while managed mode is on, and only with ANCHOR_API_KEY set on the
+// server. It is never chosen automatically after a failure: a site that refuses one provider is not retried on another.
+// Everything the existing executor enforces (owner lock, action guards, allowlist broker, approvals) stays in force.
+export const ANCHOR_API='https://api.anchorbrowser.io/v1'
+export function anchorEnabledForSandbox(sandboxName:string,env:Env=process.env,nameFor:(userId:string)=>string=defaultSandboxName){
+  if(!env.ANCHOR_API_KEY)return false
+  const ids=String(env.GOGO_BROWSER_ANCHOR_USERS||'').split(',').map(x=>x.trim()).filter(x=>uuid.test(x))
+  // Commerce has its own owner namespace (userId:commerce): the listed user covers both.
+  return ids.some(id=>nameFor(id)===sandboxName||nameFor(`${id}:commerce`)===sandboxName)
+}
+const defaultSandboxName=(userId:string)=>browserSandboxNameFor(userId)
+export const ANCHOR_SESSION_PREFIX='anchor:'
+/** Pure: the session request. Recording off, CAPTCHA solving off, no extra stealth, India egress, the same top-level
+ *  domains Browserbase allows, a persistent profile per owner and site, and a hard duration cap. */
+export function anchorSessionConfig(profile:string,ownerDigest:string,scope:string,persistent:boolean,envTag:string,allowedDomains:string[],webBotAuth:boolean){
+  return {
+    session:{
+      tags:['askgogo',`env-${envTag||'unknown'}`,`owner-${ownerDigest.slice(0,24)}`],
+      recording:{active:false},
+      proxy:{active:true,type:'anchor_proxy',country_code:'in'},
+      // Minutes. Normal runs 5 (as Browserbase's 300 s), takeover and persistent commerce 20 (the owner-lock window).
+      timeout:{max_duration:persistent?20:5,idle_timeout:2},
+      live_view:{read_only:false,one_time_url:true},
+      domain_allowlist:allowedDomains.slice(0,100),
+    },
+    browser:{
+      profile:{name:profile,persist:true},
+      captcha_solver:{active:false},
+      extra_stealth:{active:false},
+      // Cloudflare Web Bot Auth signs requests as Anchor Browser. It identifies the agent honestly; it is not
+      // permission to act. Off unless GOGO_ANCHOR_WEB_BOT_AUTH=1 (and the plan includes it).
+      web_bot_auth:{active:webBotAuth},
+      headless:{active:false},
+      viewport:{width:1280,height:900},
+      sensitive_data_mask:{active:true},
+    },
+  }
+}
+function anchorConnection(data:any,apiKey:string){
+  let u:URL
+  try{u=new URL(String(data?.cdp_url||''))}catch{throw Error('anchor_connection_missing')}
+  if(u.protocol!=='wss:'||u.username||u.password||!(u.hostname==='anchorbrowser.io'||u.hostname.endsWith('.anchorbrowser.io')))throw Error('anchor_connection_invalid')
+  // The connection URL goes into the sandbox where web pages run. It must never carry the account API key.
+  if(apiKey&&(u.toString().includes(apiKey)||u.toString().includes(encodeURIComponent(apiKey))))throw Error('anchor_connection_embeds_api_key')
+  return {endpoint:u.toString(),host:u.hostname}
+}
+export async function resolveAnchorSession(owner:string,url:string,store:Store,env:Env=process.env,fetcher:typeof fetch=fetch,opts:{keepAlive?:boolean}={}){
+  const key=String(env.ANCHOR_API_KEY||'')
+  if(!key)throw Error('anchor_configuration_missing')
+  const scope=managedScope(url)
+  const persistent=opts.keepAlive===true
+  const digest=createHash('sha256').update(owner).digest('hex')
+  const state=await store.load()||{owner:digest,contexts:{}}
+  if(state.owner!==digest)throw Error('managed_browser_owner_mismatch')
+  const a:AnchorState=state.anchor||(state.anchor={profiles:{}})
+  const save=()=>store.save(state)
+  const api=async(path:string,method:'GET'|'POST'|'DELETE'='GET',body?:unknown)=>{
+    let response:Response
+    try{response=await fetcher(`${ANCHOR_API}/${path}`,{method,headers:{'anchor-api-key':key,'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{}),redirect:'error',signal:AbortSignal.timeout(60000)})}
+    catch{throw Error('anchor_provider_unavailable')}
+    if(!response.ok)throw Error(`anchor_provider_http_${response.status}`)
+    try{return await response.json()}catch{throw Error('anchor_invalid_response')}
+  }
+  // A session request whose outcome is unknown blocks new ones (two writers on one profile), as for Browserbase.
+  if(a.pending)throw Error('anchor_setup_outcome_unknown')
+  const profile=a.profiles[scope]||`gogo-${digest.slice(0,24)}-${createHash('sha256').update(scope).digest('hex').slice(0,16)}`
+  if(!/^gogo-[0-9a-f]{24}-[0-9a-f]{16}$/.test(profile))throw Error('anchor_profile_invalid')
+  const fingerprint=createHash('sha256').update(JSON.stringify({provider:'anchor',scope,policy:browserPageAllowlist(url),domains:managedAllowedDomains(url),version:1,persistent})).digest('hex')
+  if(a.session){
+    const id=a.session.id
+    if(!/^[A-Za-z0-9-]{8,80}$/.test(id))throw Error('anchor_session_invalid')
+    const current:any=await api(`sessions/${id}`).catch((error:any)=>/_http_404$/.test(String(error?.message||''))?null:Promise.reject(error))
+    const live=current?.data||current
+    const status=String(live?.status||'').toLowerCase()
+    if(live&&['running','active','idle'].includes(status)&&a.session.scope===scope&&a.session.fingerprint===fingerprint&&live?.cdp_url){
+      return {...anchorConnection(live,key),id:`${ANCHOR_SESSION_PREFIX}${id}`,newSession:false,scope,provider:'anchor' as const,release:async()=>{await api(`sessions/${id}`,'DELETE')}}
+    }
+    // Never two writers on one profile: end the old session first and wait for the profile to be written back.
+    if(live&&!['ended','completed','terminated','failed','closed'].includes(status))await api(`sessions/${id}`,'DELETE').catch(()=>{})
+    await new Promise(resolve=>setTimeout(resolve,Number(env.GOGO_ANCHOR_PROFILE_SETTLE_MS||5000)))
+    delete a.session;await save()
+  }
+  a.profiles[scope]=profile
+  a.pending='session';await save()
+  const created:any=await api('sessions','POST',anchorSessionConfig(profile,digest,scope,persistent,String(env.VERCEL_ENV||''),managedAllowedDomains(url),String(env.GOGO_ANCHOR_WEB_BOT_AUTH||'')==='1')).catch(async(error:any)=>{
+    // A 4xx answer means nothing was created, so the request is not "outcome unknown".
+    if(/^anchor_provider_http_4\d\d$/.test(String(error?.message||''))){delete a.pending;await save()}
+    throw error
+  })
+  const data=created?.data||{}
+  const id=String(data.id||'')
+  if(!/^[A-Za-z0-9-]{8,80}$/.test(id))throw Error('anchor_session_invalid')
+  let conn:{endpoint:string;host:string}
+  try{conn=anchorConnection(data,key)}catch(error){await api(`sessions/${id}`,'DELETE').catch(()=>{});delete a.pending;await save();throw error}
+  a.session={id,scope,fingerprint};delete a.pending;await save()
+  return {...conn,id:`${ANCHOR_SESSION_PREFIX}${id}`,newSession:true,scope,provider:'anchor' as const,release:async()=>{await api(`sessions/${id}`,'DELETE')}}
+}
+async function releaseAnchorSession(id:string,env:Env,fetcher:typeof fetch){
+  const key=String(env.ANCHOR_API_KEY||'')
+  if(!key||!/^[A-Za-z0-9-]{8,80}$/.test(id))return false
+  try{const r=await fetcher(`${ANCHOR_API}/sessions/${id}`,{method:'DELETE',headers:{'anchor-api-key':key},redirect:'error',signal:AbortSignal.timeout(15000)});return r.ok||r.status===404}catch{return false}
+}
+
 // Idempotent REQUEST_RELEASE by session id, usable by handoff teardown and the orphan
 // sweep without the original release closure. Releasing an already-ended session is a
 // no-op; configuration/transport failures are swallowed so teardown never throws.
 export async function releaseManagedSessionById(sessionId:string,env:Env=process.env,fetcher:typeof fetch=fetch):Promise<boolean>{
+  if(String(sessionId||'').startsWith(ANCHOR_SESSION_PREFIX))return releaseAnchorSession(String(sessionId).slice(ANCHOR_SESSION_PREFIX.length),env,fetcher)
   const key=env.BROWSERBASE_API_KEY,project=env.BROWSERBASE_PROJECT_ID
   if(!key||!project||!uuid.test(String(sessionId||'')))return false
   try{
@@ -218,7 +327,9 @@ export async function ensureManagedBrowser(sandbox:any,owner:string,url:string,k
     },
     save:async state=>{await sandbox.writeFiles([{path:metadataPath,content:Buffer.from(JSON.stringify(state))}])},
   }
-  const session=await resolveManagedSession(owner,url,store,process.env,fetch,{keepAlive})
+  // Anchor only for the users listed for the pilot; everyone else stays on Browserbase exactly as before.
+  const session=anchorEnabledForSandbox(owner)?await resolveAnchorSession(owner,url,store,process.env,fetch,{keepAlive}):await resolveManagedSession(owner,url,store,process.env,fetch,{keepAlive})
+  console.log('MANAGED_BROWSER_PROVIDER:',JSON.stringify({provider:(session as any).provider==='anchor'?'anchor':'browserbase',newSession:session.newSession}))
   // Guaranteed release: once the provider session exists, ANY failure wiring up the
   // sandbox (network policy, broker launch, readiness) must REQUEST_RELEASE it rather
   // than leave it running until timeout. REQUEST_RELEASE is idempotent.
