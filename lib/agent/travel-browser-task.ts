@@ -3,7 +3,7 @@ import { runSecureBrowser } from './secure-computer'
 import { sanitizeBrowserReadDiagnostics } from './browser-read-diagnostics'
 import type { AgentActor } from './actor'
 import { chooseFlightPick, oneWayDisplayOrder, roundTripDisplayOrder } from './flight-pick'
-/** A query value for a link the person opens. // %20 next to a date ("%202026-12-20") reads as a long number and is withheld by the redaction on saved replies; '+' is a space in a query too. */
+/** A query value for a link the person opens. %20 next to a date ("%202026-12-20") reads as a long number and is withheld by the redaction on saved replies; '+' is a space in a query too. */
 const searchQuery=(q:string)=>encodeURIComponent(q).replace(/%20/g,'+')
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
@@ -255,7 +255,7 @@ export async function runLiveFlightBrowserTask(params: {
     ? roundTripQuery(context)
     : oneWayQuery(context)
   const tfsUrl = googleFlightsTfsUrl(context)
-  const url = tfsUrl || `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(query)}`
+  const url = tfsUrl || `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${searchQuery(query)}`
   let result: Awaited<ReturnType<typeof runSecureBrowser>>
   try { result = await runSecureBrowser({
     userId:params.actor.userId,

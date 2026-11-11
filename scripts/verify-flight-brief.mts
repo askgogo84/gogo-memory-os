@@ -124,7 +124,7 @@ const none = t.applyTimeOfDay([{ departure: '1:15 PM' }], r => r.departure, 'mor
 assert.equal(none.rows.length, 1); assert.match(none.note, /No morning departures were found/)
 const link = t.googleFlightsSearchUrl({ origin: { code: 'BLR', label: 'Bengaluru' }, destination: { code: 'SIN', label: 'Singapore' }, startDate: '2026-10-27', adults: 2, cabin: 'business' } as any)
 assert.match(link, /^https:\/\/www\.google\.com\/travel\/flights\?/)
-assert.match(decodeURIComponent(link), /BLR to SIN on 2026-10-27 for 2 adults in business/)
+assert.match(new URL(link).searchParams.get('q')!, /BLR to SIN on 2026-10-27 for 2 adults in business/)
 
 // Missing essentials keep the existing wording.
 const noDate = t.parseFlightBriefText('flights from Bangalore to Singapore', now, tz)

@@ -1,7 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
-/** A query value for a link the person opens. // %20 next to a date ("%202026-12-20") reads as a long number and is withheld by the redaction on saved replies; '+' is a space in a query too. */
+/** A query value for a link the person opens. %20 next to a date ("%202026-12-20") reads as a long number and is withheld by the redaction on saved replies; '+' is a space in a query too. */
 const searchQuery=(q:string)=>encodeURIComponent(q).replace(/%20/g,'+')
 
 type Data = Record<string, unknown>
