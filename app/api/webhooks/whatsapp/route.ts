@@ -1076,14 +1076,18 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     if ((globalThis as any).process?.env?.VERCEL_ENV) {
       // 7 Nov: a short reply to Gogo's own proactive message ("it was paid", "check the mail again and track the order",
       // "open it") is read against that message first (lib/agent/open-thread), never as a new question to the brain.
-      const threadReply = async () => text.length <= 160 ? import('@/lib/agent/open-thread').then(async m => m.tryThreadReply(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), text), () => null) : null
+      // The words as typed: a later hook may rewrite `text` (a "yes" to an image offer becomes its instruction).
+      const typedText = text
+      const threadReply = async () => typedText.length <= 160 ? import('@/lib/agent/open-thread').then(async m => m.tryThreadReply(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' }), typedText), () => null) : null
       // 11 Nov live: with a goal plan open, "… Skip the emails. Get it done" was read as "skip" against an older email
       // alert, which was closed, and the plan never saw it. While a plan is open the plan is offered the message first
       // (below); the alert reply is tried only if the plan says the message is not for it.
       const goalPlanOpen = text.length <= 160 && process.env.GOGO_GOAL_INTAKE
-        ? await import('@/lib/agent/goal-intake').then(async m => m.goalIntakeEnabledFor(String(resolvedUser.telegramId)) ? m.hasOpenGoalPlan(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' })) : false, () => false)
+        ? await import('@/lib/agent/goal-intake').then(async m => m.goalIntakeEnabledFor(String(resolvedUser.telegramId)) ? m.hasOpenGoalPlan(await resolveAgentActor({ telegramId: String(resolvedUser.telegramId), surface: 'whatsapp' })) : false).catch(() => false)
         : false
-      if (goalPlanOpen) threadReplyAfterGoalPlan = threadReply
+      // A message that carries the plan's own start phrase ("… get it done") is never read against an alert, even if
+      // the plan could not read it this time (its model call failed): the person is asked to send it again instead.
+      if (goalPlanOpen) threadReplyAfterGoalPlan = (await import('@/lib/agent/goal-intake').then(m => m.wantsStartPhrase(typedText), () => false)) ? null : threadReply
       const threaded = goalPlanOpen ? null : await threadReply()
       if (threaded) {
         await saveConversation(resolvedUser.telegramId, 'user', text)

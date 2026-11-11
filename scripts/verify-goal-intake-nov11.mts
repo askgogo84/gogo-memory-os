@@ -292,4 +292,19 @@ ok(/requiresApproval: false, verificationRequired: true/.test(pgp.slice(pgp.inde
   const open = wa.indexOf('const goalPlanOpen = '), thread = wa.indexOf('const threaded = goalPlanOpen ? null : await threadReply()'), intake = wa.indexOf('return intake.tryGoalIntake(goalActor, text'), late = wa.indexOf('const threaded = await threadReplyAfterGoalPlan()')
   ok(open > 0 && open < thread && thread < intake && intake < late, 'WhatsApp: with a plan open the alert reply waits; the plan is offered the message; the alert reply is tried after only if the plan did not take it')
   ok(/m\.goalIntakeEnabledFor\(String\(resolvedUser\.telegramId\)\) \? m\.hasOpenGoalPlan\(/.test(wa.slice(open, thread)) && /process\.env\.GOGO_GOAL_INTAKE/.test(wa.slice(open, thread)), 'only for owners with intake on; everyone else is unchanged') }
+// Review of the ordering fix: a failed read of a start message is not passed on to be read against an alert.
+{ let saved: any = gi.newPlan('x', [{ id: 'g1', kind: 'todo', title: 'Call the bank', words: 'x', slots: {}, ownership: 'your_turn', asked: [], state: 'open' } as any, { id: 'g2', kind: 'email', title: 'Emails', words: 'x', slots: {}, ownership: 'together', asked: [], state: 'open' } as any], NOW)
+  const before = JSON.stringify(saved)
+  const st = { load: async () => saved, save: async (_t: any, p: any) => { saved = p }, clear: async () => { saved = null } } as any
+  const broken = { list: async () => { throw new Error('model_timeout') }, answers: async () => { throw new Error('model_timeout') } } as any
+  const quiet = console.error; console.error = () => {}
+  const r1 = await gi.tryGoalIntake(actor, 'Meeting is at 10:30 am. Skip the emails. Get it done', { store: st, model: broken, now: NOW } as any)
+  const r2 = await gi.tryGoalIntake(actor, 'it was paid', { store: st, model: broken, now: NOW } as any)
+  console.error = quiet
+  ok(/nothing has started and your plan is unchanged/.test(r1 || '') && JSON.stringify(saved) === before, 'the plan could not read a start message: the person is asked to send it again; nothing started, plan unchanged')
+  eq(r2, null, 'a message without the start phrase is still passed on when the plan cannot read it')
+  const { readFileSync } = await import('node:fs')
+  const wa = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', import.meta.url), 'utf8')
+  ok(/threadReplyAfterGoalPlan = \(await import\('@\/lib\/agent\/goal-intake'\)\.then\(m => m\.wantsStartPhrase\(typedText\), \(\) => false\)\) \? null : threadReply/.test(wa), 'WhatsApp: a message carrying the start phrase is never read against an alert')
+  ok(/const typedText = text\n\s*const threadReply = async \(\) => typedText\.length <= 160/.test(wa) && wa.includes("surface: 'whatsapp' }), typedText), () => null) : null"), 'the alert reply reads the words as typed') }
 console.log(`GOAL_INTAKE_OK ${checks} checks`)

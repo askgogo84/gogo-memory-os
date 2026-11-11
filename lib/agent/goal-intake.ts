@@ -445,6 +445,7 @@ export async function hasOpenGoalPlan(actor: AgentActor, deps: { store?: Store; 
 }
 
 export async function tryGoalIntake(actor: AgentActor, text: string, deps: IntakeDeps = {}): Promise<string | null> {
+  let planWasOpen = false
   const tg = actor.legacyTelegramId, owner = String(tg)
   if (!goalIntakeEnabledFor(owner)) return null
   const now = deps.now || new Date()
@@ -457,6 +458,7 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
     const pending = readPlan(await store.load(tg).catch(() => null), now)
     if (pending) {
       if (BARE_CONFIRM.test(text)) return null
+      planWasOpen = true
       const wantsStart = wantsStartPhrase(text), onlyStart = wantsStart && START_CLAUSE.test(text.replace(/\*/g, '').trim())
       const ans = onlyStart ? { about_plan: true, start: true } : await model.answers({ text, today, timezone: tz, goals: pending.goals.filter(g => g.state === 'open').map(g => ({ id: g.id, kind: g.kind, title: g.title, missing: missingOf(g) })) })
       const applied = applyAnswers(pending, wantsStart && ans ? { ...ans, about_plan: true } : ans, today)
@@ -501,6 +503,9 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
     return out.text
   } catch (err: any) {
     console.error('GOAL_INTAKE_FAILED:', JSON.stringify({ code: String(err?.message || 'error').replace(/[^a-z0-9_:]/gi, '').slice(0, 60) }))
+    // With a plan open, a message that asks to start it is not passed on to be read as something else; nothing was
+    // started or changed, and the plan is still there.
+    if (planWasOpen && wantsStartPhrase(text)) return 'I couldn’t read that just now, so nothing has started and your plan is unchanged. Please send it once more.'
     return null
   }
 }
