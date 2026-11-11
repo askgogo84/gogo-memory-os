@@ -184,4 +184,23 @@ for (const t of ['remind me about my meeting tomorrow', 'remind me about my meet
   const { readFileSync } = await import('node:fs')
   const src = readFileSync(new URL('../lib/agent/goal-intake.ts', import.meta.url), 'utf8')
   ok(/executeReadOnlyCalendarStep\(\{ actor, instruction: `Show my calendar on \$\{date\}`, missionText: `Show my calendar on \$\{date\}`, rememberSelection: false \}\)/.test(src) && !/readTomorrowSchedule/.test(src), 'the calendar is read without remembering a selection') }
+// Second review: answering "which one" sets the reminder before that meeting; a passed time is asked again.
+{ const one = { ...LIST, goals: [...LIST.goals.slice(0, 4), { kind: 'reminder', title: 'Meeting tomorrow', words: 'remind me about my meeting tomorrow', date: '2026-11-12' }] }
+  for (const [reply, fills, want] of [['the 11:30 one', [], '11:20'], ['the ONDC one', [], '19:20'], ['the 7:30 one', [{ goal: 'g5', slot: 'time', value: '19:30' }], '19:20'], ['remind me at 7 pm for the ONDC one', [{ goal: 'g5', slot: 'time', value: '19:00' }], '19:00']] as const) {
+    const w = world({ calendar: THREE }); w.deps.model.list = async () => one
+    await gi.tryGoalIntake(actor, SENTENCE, w.deps)
+    ;(world as any).answers = { about_plan: true, start: false, fills }
+    await gi.tryGoalIntake(actor, reply, w.deps)
+    eq(w.runs.filter(x => x.kind === 'reminder').map(x => x.reminder.time), [want], `"${reply}" sets the reminder for ${want}`) } }
+{ const past = { is_list: true, goals: [{ kind: 'reminder', title: 'Pay rent', words: 'remind me to pay rent today at 7 am', date: '2026-11-11', time: '07:00' }, { kind: 'research', title: 'Best CRM', words: 'find the best CRM' }, { kind: 'todo', title: 'Renew passport', words: 'renew passport' }] }
+  const w = world({}); w.deps.model.list = async () => past
+  const r = (await gi.tryGoalIntake(actor, 'I need to renew my passport, find the best CRM, and remind me to pay rent today at 7 am', w.deps))!
+  ok(/Pay rent \(for Wed 11 Nov\): What time should I remind you\?/.test(r) && !/already passed/.test(r), 'a reminder whose time has passed is asked for a new time, so the answer reaches it')
+  ;(world as any).answers = { about_plan: true, start: false, fills: [{ goal: 'g1', slot: 'time', value: '18:00' }] }
+  await gi.tryGoalIntake(actor, '6 pm', w.deps)
+  eq(w.runs.filter(x => x.kind === 'reminder').map(x => x.reminder.time), ['18:00'], 'and the new time is set') }
+{ const day = gi.calendarDayFrom({ mode: 'read', complete: true, timezone: 'Asia/Kolkata', entryCount: 4, events: [
+    { summary: 'Lunch with investor', start: '2026-11-12T13:00:00+05:30' }, { summary: 'Lunch', start: '2026-11-12T13:30:00+05:30' },
+    { summary: 'Ends at midnight', start: '2026-11-10T10:00:00+05:30', end: '2026-11-12T00:00:00+05:30' }, { summary: '*Board* review', start: '2026-11-12T16:00:00+05:30' }] }, '2026-11-12', 'Asia/Kolkata')
+  eq(day.events, [{ title: 'Lunch with investor', time: '13:00' }, { title: 'Board review', time: '16:00' }], 'a title that only starts with "Lunch" is a meeting; an entry over at midnight is not; formatting marks are dropped') }
 console.log(`GOAL_EARLY_START_OK ${checks} checks`)

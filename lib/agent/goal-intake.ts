@@ -88,7 +88,7 @@ const MEETING_WORDS = new RegExp(`\\bremind\\s+me\\s+(?:about|of|for|before|ahea
 const PLURAL_MEETINGS = new RegExp(`\\b(?:all\\s+)?(?:my|the|our|these|those)\\s+(?:[\\p{L}'’-]+\\s+){0,3}?(?:meetings|appointments|stand[- ]?ups|calls|interviews|syncs|reviews)\\b`, 'iu')
 export const meetingReminderWords = (words: string) => MEETING_WORDS.test(words) && !/\bremind\s+me\s+to\b/i.test(words)
 // Blocks that are not meetings to attend.
-const NOT_A_MEETING = /^(?:busy|lunch|break|focus(?:\s+time)?|ooo|out of (?:the )?office|holiday|leave|vacation|birthday|commute|travel|block(?:ed)?|do not book|dnd|gym|workout)\b/i
+const NOT_A_MEETING = /^(?:busy|lunch|break|focus(?:\s+time)?|ooo|out of (?:the )?office|holiday|leave|vacation|birthday|commute|travel|trip|offsite|conference|block(?:ed)?|do not book|dnd|gym|workout)\s*[.!]?\s*$/i
 export type CalendarDay = { ok: boolean; events: { title: string; time: string }[]; skipped?: number }
 
 /** Cheap gate before any model call: a numbered or bulleted list of three or more lines, "here are N things", or one
@@ -422,6 +422,7 @@ export function startedText(plan: IntakePlan, quick: Map<string, { status: strin
     const q = g.runId ? quick.get(g.runId) : undefined
     if (g.state === 'started' && g.note === 'early') lines.push(`▶️ ${g.title}: already under way from before.`)
     else if (g.state === 'started') lines.push(q ? `${ICON[q.status] || '⏳'} ${g.title}: ${q.text.length > 300 ? 'done, details below.' : clip(q.text, 300)}` : `⏳ ${g.title}: working on it.`)
+    else if (g.state === 'open' && g.note?.startsWith('calendar_pick:')) lines.push(`⏸ ${g.title}: not started. Tell me which meeting and when to remind you, and I’ll set it.`)
     else if (g.state === 'open') lines.push(`⏸ ${g.title}: not started. I still need ${missingOf(g).map(s => question(g, s).replace(/\?$/, '')).join(', ')}. Ask me for this one on its own when you have it.`)
     else lines.push(heldLine(g))
   }
@@ -493,7 +494,7 @@ export function calendarDayFrom(output: any, date: string, fallbackTz: string): 
   const events: CalendarDay['events'] = []
   let skipped = 0
   for (const e of o.events) {
-    const start = String(e?.start || ''), title = clip(e?.summary, 80)
+    const start = String(e?.start || ''), title = clip(e?.summary, 80).replace(/[*_~`;]/g, ' ').replace(/\s+/g, ' ').trim()
     if (!/T/.test(start)) continue // all day
     const at = Date.parse(start), end = Date.parse(String(e?.end || ''))
     if (!Number.isFinite(at)) continue
@@ -504,7 +505,7 @@ export function calendarDayFrom(output: any, date: string, fallbackTz: string): 
     let day = `${p.year}-${p.month}-${p.day}`
     // A series entered as one entry spanning weeks (seen on the owner's calendar, 20 and 27 Oct): it happens daily at
     // its start time, so it counts on this day at that time.
-    if (day < date && Number.isFinite(end) && end - at > 36 * 3600_000) { const q = parts(end); if (`${q.year}-${q.month}-${q.day}` >= date) day = date }
+    if (day < date && Number.isFinite(end) && end - at > 36 * 3600_000) { const q = parts(end), endDay = `${q.year}-${q.month}-${q.day}`; if (endDay > date || (endDay === date && `${q.hour}:${q.minute}` > `${p.hour}:${p.minute}`)) day = date }
     if (day !== date) continue
     events.push({ title, time: `${p.hour}:${p.minute}` })
   }
@@ -564,7 +565,7 @@ async function remindFromCalendar(actor: AgentActor, g: IntakeGoal, plan: Intake
     else if (r.status === 'running') {
       pending.push(clock12(x.at!))
       // Still being written when the reply goes: confirmed (or not) in its own message.
-      if (deps.background && deps.send) deps.background(async () => { const f = await driving; await deps.send!(f.status === 'completed' ? `⏰ Reminder set for ${clock12(x.at!)}: ${message}.` : `⚠️ I could not set the ${clock12(x.at!)} reminder for ${message}. Tell me the time and I'll try again.`) })
+      if (deps.background && deps.send) deps.background(async () => { const f = await driving; if (f.status !== 'completed' && f.status !== 'failed') return; await deps.send!(f.status === 'completed' ? `⏰ Reminder set for ${clock12(x.at!)}: ${message}.` : `⚠️ I could not set the ${clock12(x.at!)} reminder for ${message}. Tell me the time and I'll try again.`) })
     } else failed.push(clock12(x.at!))
   }))
   // Nothing was created at all: the goal goes back to being asked about.
@@ -629,14 +630,41 @@ async function earlyStart(actor: AgentActor, plan: IntakePlan, deps: IntakeDeps,
     if (g.state === 'started') { g.note = 'early'; const q = g.runId ? quick.get(g.runId) : undefined; moving.push({ goal: g, line: q ? `${q.status === 'completed' ? '' : `${ICON[q.status] || '⚠️'} `}${q.text.length > 300 ? 'done, details below.' : clip(q.text, 300)}` : 'working on it; I’ll message you when it’s ready.' }) }
   }
   const next: IntakePlan = { ...work, goals: after }
-  // A goal that could not start (switched off, time passed) stays held with its reason, said in the reply; it is not
-  // retried on every later message.
+  // A goal that could not start (switched off) stays held with its reason, said in the reply; it is not retried on
+  // every later message. A reminder whose time has passed is asked for a new time instead, so the answer reaches it.
+  for (const g of next.goals) if (readyIds.has(g.id) && g.state === 'held' && g.note === 'time_passed') { g.state = 'open'; delete g.slots.time; g.note = undefined; g.asked = g.asked.filter(x => x !== 'time') }
   if (!moving.length) return { replies: [], plan: next }
   const rest = planText(next)
   const kept = rest.plan.goals.some(g => g.state === 'open')
   await (kept ? store.save(tg, rest.plan) : store.clear(tg)).catch((e: any) => console.error('GOAL_INTAKE_FAILED:', JSON.stringify({ code: `early_save_${String(e?.message || 'error').replace(/[^a-z0-9_]/gi, '').slice(0, 30)}` })))
   console.log('GOAL_INTAKE:', JSON.stringify({ step: 'early', goals: next.goals.length, moving: moving.length }))
   return { text: earlyText(rest.plan, moving, rest.text), replies, plan: rest.plan }
+}
+
+/** Answers to "which meeting?": the reply is matched against the meetings listed, by time ("the 11:30 one") or by
+ *  name ("the investor sync"), and the reminder is set 10 minutes before it. A time the answers model took from the
+ *  reply that is one of those meeting times is read the same way, unless the reply says "remind me at …". */
+export function applyPicks(applied: { plan: IntakePlan; start: boolean; about: boolean }, before: IntakePlan, reply: string): { plan: IntakePlan; start: boolean; about: boolean } {
+  const text = String(reply || '').toLowerCase()
+  let touched = false
+  const goals = applied.plan.goals.map(g => {
+    const was = before.goals.find(x => x.id === g.id)
+    if (g.kind !== 'reminder' || g.state !== 'open' || !was?.note?.startsWith('calendar_pick:')) return g
+    const picks = [...was.note.slice(14).matchAll(/([^;]+?) at (\d{1,2}):(\d{2}) ([ap]m)/g)].map(m => { let h = Number(m[2]) % 12; if (m[4] === 'pm') h += 12; return { titles: m[1].trim().toLowerCase(), time: `${String(h).padStart(2, '0')}:${m[3]}`, said: [`${Number(m[2])}:${m[3]}`, `${Number(m[2])}.${m[3]}`, `${String(h).padStart(2, '0')}:${m[3]}`] } })
+    const explicit = /\bremind\s+me\s+(?:at|by)\b/.test(text)
+    let hit = g.slots.time && !explicit ? picks.find(p => p.time === g.slots.time) : undefined
+    if (!hit && !g.slots.time) {
+      hit = picks.find(p => p.said.some(t => text.includes(t)))
+      // By name: a word of four or more letters from exactly one listed meeting ("the ONDC one").
+      if (!hit) { const said = new Set(text.split(/[^\p{L}\p{N}]+/u)); const named = picks.filter(p => p.titles.split(/[^\p{L}\p{N}]+/u).some(w => w.length >= 4 && said.has(w) && !['meeting', 'call', 'daily', 'with'].includes(w))); if (named.length === 1) hit = named[0] }
+    }
+    if (!hit) return g
+    const at = minus(hit.time, REMIND_BEFORE_MINUTES)
+    if (!at) return g
+    touched = true
+    return { ...g, slots: { ...g.slots, time: at }, note: undefined }
+  })
+  return touched ? { ...applied, plan: { ...applied.plan, goals }, about: true } : applied
 }
 
 /** Is a plan from this person still waiting for details or for "get it done"? While one is, their next message is
@@ -668,7 +696,7 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
       planWasOpen = true
       const wantsStart = wantsStartPhrase(text), onlyStart = wantsStart && START_CLAUSE.test(text.replace(/\*/g, '').trim())
       const ans = onlyStart ? { about_plan: true, start: true } : await model.answers({ text, today, timezone: tz, goals: pending.goals.filter(g => g.state === 'open').map(g => ({ id: g.id, kind: g.kind, title: g.title, missing: missingOf(g) })) })
-      const applied = applyAnswers(pending, wantsStart && ans ? { ...ans, about_plan: true } : ans, today)
+      const applied = applyPicks(applyAnswers(pending, wantsStart && ans ? { ...ans, about_plan: true } : ans, today), pending, text)
       // Details given together with the start phrase: the phrase decides, whatever the model made of the rest.
       // The phrase alone starts the plan. The phrase after other words starts it only when those words gave at least
       // one detail (or dropped a goal) for this plan: "nahi, get it done" or "send Divya the docs, get it done" gave
