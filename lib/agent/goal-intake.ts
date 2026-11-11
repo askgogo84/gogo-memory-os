@@ -45,8 +45,9 @@ export type Slots = Partial<Record<Slot, string>>
 /** What each kind needs before it can start. Never guessed: a missing one is asked for, once. */
 export const REQUIRED: Record<GoalKind, readonly Slot[]> = {
   // An event needs to know what it is and whose ("Divya's birthday"): 11 Nov live, "organize a birthday" with only a
-  // date reached Events with no name, was asked "What should I call the event?", and no draft was made.
-  reminder: ['date', 'time'], flight_prices: ['from', 'to', 'date'], research: [], email: ['recipient', 'topic'], event: ['topic', 'date'], todo: [], other: [],
+  // date reached Events with no name, was asked "What should I call the event?", and no draft was made. It needs a
+  // start time too: Events keeps a date only together with a time, so a date alone would be dropped from the draft.
+  reminder: ['date', 'time'], flight_prices: ['from', 'to', 'date'], research: [], email: ['recipient', 'topic'], event: ['topic', 'date', 'time'], todo: [], other: [],
 }
 /** Who does it. Responsibility only: every tool still asks for every approval it needs (task-ownership.ts). */
 export const OWNER_OF: Record<GoalKind, TaskOwnership> = {
@@ -212,7 +213,7 @@ const LINE: Partial<Record<GoalKind, string>> = {
 }
 /** The questions still to ask for a goal: each detail only once. */
 export function toAsk(g: IntakeGoal): Slot[] { return missingOf(g).filter(s => !g.asked.includes(s)) }
-const EVENT_Q: Partial<Record<Slot, string>> = { topic: 'whose is it, or what is the occasion?' }
+const EVENT_Q: Partial<Record<Slot, string>> = { topic: 'what is the occasion (and whose)?', time: 'what time does it start?' }
 function question(g: Pick<IntakeGoal, 'kind'>, s: Slot) { return (g.kind === 'reminder' && REMINDER_Q[s]) || (g.kind === 'event' && EVENT_Q[s]) || QUESTION[s] }
 
 /** The details Gogo has for a goal, said back so a wrong one is seen before anything starts. Only what was given. */
@@ -326,7 +327,7 @@ export async function startGoals(actor: AgentActor, plan: IntakePlan, deps: Star
       } else if (g.kind === 'event') {
         const on = (deps.eventsOn || realEventsOn)(owner)
         if (!on) { g.state = 'held'; g.note = 'events_off'; continue }
-        const reply = await (deps.event || realEvent)(actor, `Plan ${clip(g.slots.topic, 80) || g.words}${g.slots.date ? ` on ${g.slots.date}` : ''}${g.slots.time ? ` at ${g.slots.time}` : ''}${g.slots.people ? ` for ${g.slots.people} people` : ''}`, deps.surface)
+        const reply = await (deps.event || realEvent)(actor, `Plan an event: ${clip(g.slots.topic, 80) || g.words}${g.slots.date ? ` on ${g.slots.date}` : ''}${g.slots.time ? ` at ${g.slots.time}` : ''}${g.slots.people ? ` for ${g.slots.people} people` : ''}`, deps.surface)
         // Started only when a draft really exists.
         const made = Boolean(reply && /^Draft started\./.test(reply))
         g.state = made ? 'started' : 'held'; if (!made) g.note = 'event_not_started'
@@ -393,7 +394,7 @@ export function startedText(plan: IntakePlan, quick: Map<string, { status: strin
     else if (g.note === 'email_not_started') lines.push(`⏸ ${g.title}: no draft yet. ${g.reply || 'Ask me for this email on its own.'}`)
     else if (g.note === 'events_off') lines.push(`⏸ ${g.title}: event planning isn’t switched on for you yet.`)
     else if (g.note === 'capability_off') lines.push(`⏸ ${g.title}: reminders are switched off in your settings, so I did not set it.`)
-    else if (g.note === 'event_not_started') lines.push(`⏸ ${g.title}: I could not start this one from the list. Send it on its own, like: *plan ${clip(g.slots.topic, 60) || 'the dinner'} on ${g.slots.date || '22 November'} at 5 pm*.`)
+    else if (g.note === 'event_not_started') lines.push(`⏸ ${g.title}: I could not start this one from the list. Send it on its own, like: *plan an event: ${clip(g.slots.topic, 60).replace(/[*_~`]/g, '')} on ${g.slots.date}${g.slots.time ? ` at ${g.slots.time}` : ''}*.`)
     else lines.push(`⏸ ${g.title}: I couldn’t start this one. Ask me about it on its own.`)
   }
   lines.push('', surface === 'web' ? 'You can leave this page; I’ll keep going. Each result appears here in the chat and on your Tasks page. I won’t send a WhatsApp message for each result.' : 'You can close WhatsApp; I’ll keep going and message you as each one finishes. Everything is on your Tasks page too.')
