@@ -16,11 +16,15 @@ def main():
     main = source / "MainActivity.java"
     clock = source / "GogoGlassClock.java"
     manifest = args.project / "launcher/app/src/main/AndroidManifest.xml"
-    for f in (main, clock, manifest, args.glass_source):
+    settings = source / "LauncherSettingsActivity.java"
+    layout = args.project / "launcher/app/src/main/res/layout/activity_launcher_settings.xml"
+    for f in (main, clock, manifest, settings, layout, args.glass_source):
         if not f.is_file():
             raise ValueError(f"Required file not found: {f}")
     original_main = main.read_text(encoding="utf-8")
     original_manifest = manifest.read_text(encoding="utf-8")
+    original_settings = settings.read_text(encoding="utf-8")
+    original_layout = layout.read_text(encoding="utf-8")
     old_clock = clock.read_text(encoding="utf-8")
     new_clock = args.glass_source.read_text(encoding="utf-8")
     if "GogoGlassClock.attach(this, root)" not in original_main:
@@ -39,15 +43,71 @@ def main():
         new_manifest = original_manifest.replace(ANCHOR, PERM + "\n" + ANCHOR, 1)
     else:
         new_manifest = original_manifest
+    settings_anchor = "        followThemeChoice = findViewById(R.id.followThemeChoice);"
+    settings_extra = """        TextView gogoWeatherChoice = findViewById(R.id.gogoWeatherChoice);
+        TextView gogoWeatherPlaceChoice = findViewById(R.id.gogoWeatherPlaceChoice);
+        gogoWeatherChoice.setText("Weather: " + (GogoGlassClock.weatherEnabled(this) ? "On" : "Off"));
+        gogoWeatherPlaceChoice.setText("Weather location: " + GogoGlassClock.weatherCity(this));
+        gogoWeatherChoice.setOnClickListener(v -> {
+            boolean enabled = !GogoGlassClock.weatherEnabled(this);
+            choices.edit().putBoolean("gogo_weather_enabled", enabled).apply();
+            gogoWeatherChoice.setText("Weather: " + (enabled ? "On" : "Off"));
+            changed();
+        });
+        gogoWeatherPlaceChoice.setOnClickListener(v -> {
+            final String[] cities = {"Bengaluru", "Hubballi", "Mysuru", "Mumbai", "Delhi", "Chennai"};
+            final double[] latitudes = {12.9716, 15.3647, 12.2958, 19.0760, 28.6139, 13.0827};
+            final double[] longitudes = {77.5946, 75.1240, 76.6394, 72.8777, 77.2090, 80.2707};
+            new AlertDialog.Builder(this).setTitle("Weather location")
+                    .setItems(cities, (dialog, which) -> {
+                        GogoGlassClock.setWeatherLocation(this,
+                                cities[which], latitudes[which], longitudes[which]);
+                        gogoWeatherPlaceChoice.setText("Weather location: " + cities[which]);
+                        changed();
+                    }).setNegativeButton(android.R.string.cancel, null).show();
+        });
+"""
+    if "gogoWeatherChoice" in original_settings:
+        new_settings = original_settings
+    elif original_settings.count(settings_anchor) == 1:
+        new_settings = original_settings.replace(settings_anchor,
+                settings_extra + settings_anchor, 1)
+    else:
+        raise ValueError("Launcher settings insertion point missing; no source changes.")
+
+    layout_anchor = '        <TextView\\n            android:id="@+id/followThemeChoice"'
+    layout_extra = '''        <TextView
+            android:id="@+id/gogoWeatherChoice"
+            style="@style/SettingsRow"
+            android:layout_marginTop="28dp"
+            android:text="Weather: On" />
+        <TextView
+            android:id="@+id/gogoWeatherPlaceChoice"
+            style="@style/SettingsRow"
+            android:layout_marginTop="10dp"
+            android:text="Weather location: Bengaluru" />
+
+'''
+    if 'android:id="@+id/gogoWeatherChoice"' in original_layout:
+        new_layout = original_layout
+    elif original_layout.count(layout_anchor) == 1:
+        new_layout = original_layout.replace(layout_anchor,
+                layout_extra + layout_anchor, 1)
+    else:
+        raise ValueError("Launcher settings layout anchor missing; no source changes.")
     args.backup.mkdir(parents=True, exist_ok=True)
     for file, name in ((main,"MainActivity.before-v2.java"), (clock,"GogoGlassClock.before-v2.java"),
-                       (manifest,"AndroidManifest.before-v2.xml")):
+                       (manifest,"AndroidManifest.before-v2.xml"),
+                       (settings,"LauncherSettingsActivity.before-v2.java"),
+                       (layout,"activity_launcher_settings.before-v2.xml")):
         backup = args.backup / name
         if not backup.exists():
             shutil.copy2(file, backup)
     if original_main != new_main: main.write_text(new_main, encoding="utf-8")
     if original_manifest != new_manifest: manifest.write_text(new_manifest, encoding="utf-8")
     if old_clock != new_clock: clock.write_text(new_clock, encoding="utf-8")
+    if original_settings != new_settings: settings.write_text(new_settings, encoding="utf-8")
+    if original_layout != new_layout: layout.write_text(new_layout, encoding="utf-8")
     print("Gogo Native Glass v2 source patched. Left clock preserved, optional weather added.")
 if __name__ == "__main__":
     main()
