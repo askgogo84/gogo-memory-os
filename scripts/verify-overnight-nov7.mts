@@ -45,3 +45,14 @@ console.log('Overnight (7 Nov) replays passed')
   assert.match(tr, /goa: \{ label: 'Goa', code: 'GOI'/, 'Goa resolves to an airport code so the browser read runs')
   console.log('✓ trip plan: one flights sentence; Goa has a code')
 }
+
+// 11 Nov: the shorter acknowledgement still carries its promise into the trip plan.
+{
+  const { firstSentences: fs2 } = await import('../lib/agent/trip-plan')
+  const { flightSearchStartedText } = await import('../lib/agent/travel-research')
+  const one = flightSearchStartedText({ originLabel: 'Bengaluru', originCode: 'BLR', destinationLabel: 'Goa', destinationCode: 'GOI', departDate: '2026-12-20', tripType: 'one_way' } as any)
+  assert.ok(one.length < 320, `short: ${one.length}`)
+  assert.match(one, /one-way\./); assert.match(one, /back <date>/); assert.match(one, /exactly these dates/)
+  assert.match(fs2(one), /I'll send the cheapest options here when the search finishes\./)
+  console.log('PASS short flight acknowledgement')
+}

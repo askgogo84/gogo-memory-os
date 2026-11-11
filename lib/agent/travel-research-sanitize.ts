@@ -36,6 +36,8 @@ export function sanitizeTravelResearchText(raw: string, requestText: string, now
   if (!context.startDate || !context.endDate) return raw
 
   const blocks = String(raw || '').split(/\n\n+/)
+  // Nothing numbered means no search-snippet rows to clean (11 Nov: the plain "couldn't read live fares" reply).
+  if (!blocks.some(b => /^\d+\./.test(b.trim()))) return raw
   const intro = blocks.filter(b => !/^\d+\./.test(b.trim()) && !/^These are public-web/.test(b.trim()))[0] || ''
   const disclaimer = blocks.find(b => /^These are (?:public-web|fallback sources)/.test(b.trim())) || ''
   const defaultYear = Number(context.startDate.slice(0,4))
