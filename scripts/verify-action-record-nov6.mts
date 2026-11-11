@@ -43,6 +43,13 @@ assert.match(ar.receiptLine(human, 'the payment'), /needs you to do it; I'm not 
 console.log('✓ receipt lines: Done / couldn\'t confirm / didn\'t go through / Ready / prepare / needs you')
 
 // 4. First consumers: the shared-content "yes" for an expense and a bill reminder, against an in-memory DB.
+// The fixture bill is due on 12 Nov 2026 and the reminder is for 11 Nov at 9:00 am. The clock is pinned to 7 Nov 2026
+// (and still ticks), so this section tests the same thing on any day: from 11 Nov 9:00 am IST the real clock makes the
+// reminder time "already passed" and the correct refusal failed this assertion in CI (11 Nov).
+{ const RealDate = Date, started = RealDate.now(), PINNED = RealDate.parse('2026-11-07T06:00:00.000Z')
+  const nowPinned = () => PINNED + (RealDate.now() - started)
+  class PinnedDate extends RealDate { constructor(...a: any[]) { if (a.length === 0) super(nowPinned()); else super(...(a as [any])) } static now() { return nowPinned() } }
+  ;(globalThis as any).Date = PinnedDate }
 const rows: Record<string, any[]> = { agent_activity: [], conversations: [], expenses: [], reminders: [] }
 let nextId = 100
 function table(name: string) {
