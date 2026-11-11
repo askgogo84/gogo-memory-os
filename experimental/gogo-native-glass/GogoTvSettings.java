@@ -49,8 +49,10 @@ final class GogoTvSettings {
     static boolean marketFeedConfigured(Activity activity) {
         JSONObject json=readConfig(activity);
         SharedPreferences prefs=activity.getSharedPreferences(Config.SETTINGS_NAME,Context.MODE_PRIVATE);
-        return isSafeFeedUrl(prefs.getString("gogo_markets_url",
-                json.optString("gogo_markets_url","")));
+        String feed = prefs.getString("gogo_markets_url", json.optString("gogo_markets_url",""));
+        String token = json.optString("gogo_markets_device_token", "");
+        return "https://app.askgogo.in/api/gogo-tv/markets".equals(feed)
+                && token.matches("[A-Za-z0-9_-]{32,128}");
     }
 
     static boolean isSafeFeedUrl(String raw) {
