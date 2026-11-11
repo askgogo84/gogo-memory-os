@@ -296,13 +296,16 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json({text:out,handledBy:'occasion-invite',status:'completed',...(inv.mediaUrl?{imageUrl:inv.mediaUrl}:{})})
       }
     }
+    const callCommand=/^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
     // Goal-to-Done (Addendum 5): a message with several goals becomes one plan of who does what, as on WhatsApp, and
-    // the same open plan is continued from either place. Owners in GOGO_GOAL_INTAKE only; null means routing continues
+    // the same open plan is continued from either place. Owners in both GOGO_GOAL_INTAKE and GOGO_GOAL_INTAKE_WEB; null means routing continues
     // unchanged. Every goal it starts goes through its own tool's approvals. Results that take longer than the reply
     // are saved to this conversation and shown on Tasks › Overview; nothing is pushed to WhatsApp from here.
-    if((globalThis as any).process?.env?.VERCEL_ENV&&process.env.GOGO_GOAL_INTAKE){
+    if(!callCommand&&(globalThis as any).process?.env?.VERCEL_ENV&&process.env.GOGO_GOAL_INTAKE&&process.env.GOGO_GOAL_INTAKE_WEB){
       const goalReply=await import('@/lib/agent/goal-intake').then(async m=>{
-        if(!m.goalIntakeEnabledFor(String(user.telegram_id)))return null
+        if(!m.goalIntakeWebEnabledFor(String(user.telegram_id)))return null
+        // A reminder for a friend, or a reply to one being set up, keeps its own flow (as on WhatsApp).
+        if(detectFriendReminder(text)||(isFriendReminderFollowupCandidate(text)&&await getPendingFriend(actor.legacyTelegramId)))return null
         // A typed approval or decline belongs to the approval it answers, never to the plan (as on WhatsApp).
         if((await import('@/lib/agent/whatsapp-bridge')).approvalIntent(text))return null
         const {after}=await import('next/server')
@@ -353,7 +356,6 @@ async function handleChatPost(req: NextRequest) {
     }
     // Context-first brain (lib/agent/brain.ts), same as WhatsApp: context before keyword rules. Canary users only.
     // Cheap env gate first: strict route harnesses (and previews) never load the module.
-    const callCommand=/^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
     if(!callCommand&&(globalThis as any).process?.env?.GOGO_BRAIN!=='off'&&((globalThis as any).process?.env?.GOGO_BRAIN_USERS||(globalThis as any).process?.env?.VERCEL_ENV==='production')){
       const brain:any=await import('@/lib/agent/brain').then(m=>m.runBrain({phone:String(user.whatsapp_id||''),telegramId:Number(user.telegram_id),text,name:user.name||null,timezone:(user as any).timezone||null,userId:String(actor.userId||''),whatsappId:String(user.whatsapp_id||''),surface:'web'})).catch((err:any)=>{console.error('BRAIN_FAILED:',String(err?.message||err).slice(0,160));return null})
       if(brain?.reply){

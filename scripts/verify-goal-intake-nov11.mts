@@ -187,7 +187,7 @@ for (const t of ['do not start them', 'don’t start them', "don't do them", 'ho
   ok(/web research is switched off in your settings/.test(txt) && /that time has already passed\. Tell me a new time/.test(txt) && /Email Divya: no draft yet\. Connect Google Workspace first/.test(txt) && /^Started 1 of 4\./.test(txt), 'and the reply says each reason, counting only what really started') }
 { const pg3 = readFileSync(new URL('../lib/agent/persistent-general-plan.ts', import.meta.url), 'utf8'), cron = readFileSync(new URL('../app/api/cron/autonomous-runs/route.ts', import.meta.url), 'utf8')
   ok(/capabilityIsOff\(context\.actor\.legacyTelegramId, 'browser'\)\) return \{ status:'blocked' as const, error:'persistent_browser_permission_off' \}/.test(pg3), 'the web research switch is also checked when the run executes')
-  ok(/goal_live_until: new Date\(Date\.now\(\) \+ 150_000\)\.toISOString\(\)/.test(pg3) && /typeof meta\.goal_live_until==='string'&&Date\.parse\(meta\.goal_live_until\)>Date\.now\(\)\)\{skipped\+\+;continue\}/.test(cron), 'the sweeper leaves a goal run alone while the request that created it is still driving it')
+  ok(/goal_live_until: new Date\(Date\.now\(\) \+ Math\.min\(600_000, Math\.max\(150_000, Number\(params\.liveMs\) \|\| 150_000\)\)\)\.toISOString\(\)/.test(pg3) && /typeof meta\.goal_live_until==='string'&&Date\.parse\(meta\.goal_live_until\)>Date\.now\(\)\)\{skipped\+\+;continue\}/.test(cron), 'the sweeper leaves a goal run alone while the request that created it is still driving it')
   ok(/includes\('persistent_reminder_permission_off'\)\) text = 'Reminders are switched off/.test(pg3), 'the "reminders are off" line is only for the reminder switch')
   ok(/missionText: step\.instruction,/.test(readFileSync(new URL('../lib/agent/goal-intake.ts', import.meta.url), 'utf8')), 'a goal run’s mission text is the checked instruction, not the first wording') }
 
@@ -290,7 +290,20 @@ ok(/requiresApproval: false, verificationRequired: true/.test(pgp.slice(pgp.inde
   const src = readFileSync(new URL('../lib/agent/goal-intake.ts', import.meta.url), 'utf8'), chat = readFileSync(new URL('../app/api/dashboard/chat/route.ts', import.meta.url), 'utf8')
   ok(/surface: surface === 'web' \? 'web' : 'whatsapp'/.test(src) && /surface === 'web' \? 'dashboard' : 'whatsapp'/.test(src), 'only "web" selects the web surface; anything else is WhatsApp')
   const at = chat.indexOf("m.tryGoalIntake(actor,text,{surface:'web'")
-  ok(at > 0 && chat.lastIndexOf('process.env.GOGO_GOAL_INTAKE', at) > 0 && chat.lastIndexOf("m.goalIntakeEnabledFor(String(user.telegram_id))", at) > 0 && chat.lastIndexOf('approvalIntent(text))return null', at) > 0, 'dashboard chat: flag, exact owner and no typed approvals before intake')
+  ok(at > 0 && chat.lastIndexOf('process.env.GOGO_GOAL_INTAKE&&process.env.GOGO_GOAL_INTAKE_WEB', at) > 0 && chat.lastIndexOf("m.goalIntakeWebEnabledFor(String(user.telegram_id))", at) > 0 && chat.lastIndexOf('approvalIntent(text))return null', at) > 0, 'dashboard chat: both flags, exact owner and no typed approvals before intake')
+  const hook = chat.slice(chat.lastIndexOf('if(!callCommand&&', at), at)
+  ok(/detectFriendReminder\(text\)\|\|\(isFriendReminderFollowupCandidate\(text\)&&await getPendingFriend\(actor\.legacyTelegramId\)\)\)return null/.test(hook) && chat.indexOf('const callCommand=/') < at, 'a call command or a friend reminder keeps its own flow, as on WhatsApp')
+  const E = (o: any) => o
+  eq([gi.goalIntakeWebEnabledFor('-884501501', E({})), gi.goalIntakeWebEnabledFor('-884501501', E({ GOGO_GOAL_INTAKE: '-884501501' })), gi.goalIntakeWebEnabledFor('-884501501', E({ GOGO_GOAL_INTAKE_WEB: 'on' })), gi.goalIntakeWebEnabledFor('-884501501', E({ GOGO_GOAL_INTAKE: '-884501501', GOGO_GOAL_INTAKE_WEB: '-884501501' })), gi.goalIntakeWebEnabledFor('884501501', E({ GOGO_GOAL_INTAKE: 'on', GOGO_GOAL_INTAKE_WEB: '-884501501' })), gi.goalIntakeWebEnabledFor('-884501501', E({ GOGO_GOAL_INTAKE: 'on', GOGO_GOAL_INTAKE_WEB: 'on' }))],
+    [false, false, false, true, false, true], 'the web path needs its own switch as well as the main one; exact owner ids')
+  const done = gi.newPlan('x', [g({ kind: 'todo', title: 'Call the bank', ownership: 'your_turn', state: 'started' })], NOW)
+  ok(/I won’t message you on WhatsApp about these/.test(gi.startedText(done, new Map(), 'web')) && !/close WhatsApp/.test(gi.startedText(done, new Map(), 'web')) && /You can close WhatsApp/.test(gi.startedText(done, new Map())), 'the started message says where results will appear for the surface it was sent on')
+  const pgp = readFileSync(new URL('../lib/agent/persistent-general-plan.ts', import.meta.url), 'utf8'), stale = readFileSync(new URL('../lib/agent/stale-runs.ts', import.meta.url), 'utf8')
+  const resume = pgp.slice(pgp.indexOf('export async function resumePersistentGeneralPlan'), pgp.indexOf('export async function startPersistentGoalRun'))
+  ok(/if \(meta\.goal_surface === 'web'\) \{\s*const result = await drivePersistentRun\(params\.actor, params\.runId, missionText, params\.maxWaves \|\| 10, false\)/.test(resume) && /from\('conversations'\)\.insert/.test(resume), 'a web goal resumed in the background is not announced on WhatsApp; its outcome is written to the web conversation')
+  ok(/if \(row\?\.metadata_json\?\.goal_surface === 'web'\) continue\s*await notifyRunOutcome/.test(stale), 'nor is a web goal closed by the stale sweep')
+  ok(/goal_surface: 'web'/.test(src) && /liveMs: surface === 'web' \? WEB_LIVE_MS : undefined/.test(src) && /Math\.min\(600_000, Math\.max\(150_000/.test(pgp), 'a web goal run is marked as such and left to its request for longer, within bounds')
+
   ok(at < chat.indexOf("m.tryProcedureAsk(actor,text)") && at < chat.indexOf("m.tryEventAsk(actor,text,'dashboard')"), 'a list is offered before the single-goal hooks, as on WhatsApp')
   ok(!/sendWhatsAppMessage/.test(chat.slice(chat.lastIndexOf('// Goal-to-Done (Addendum 5)', at), chat.indexOf('// Meeting prep, same as WhatsApp', at))), 'nothing is pushed to WhatsApp from the dashboard hook') }
 console.log(`GOAL_INTAKE_OK ${checks} checks`)

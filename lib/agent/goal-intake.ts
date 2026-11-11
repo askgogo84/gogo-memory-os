@@ -21,6 +21,13 @@ import type { TaskOwnership } from './task-ownership'
 type Env = Record<string, string | undefined>
 const envOf = () => ((globalThis as any).process?.env || {}) as Env
 
+/** The dashboard chat has its own switch on top of the main one, so the web path can be verified, or turned off,
+ *  without touching WhatsApp. Same values: "on" or exact owner ids. */
+export function goalIntakeWebEnabledFor(owner: string, env: Env = envOf()): boolean {
+  const v = String(env.GOGO_GOAL_INTAKE_WEB || '').trim()
+  if (!owner || !goalIntakeEnabledFor(owner, env)) return false
+  return v === 'on' || v.split(',').map(s => s.trim()).includes(owner)
+}
 export function goalIntakeEnabledFor(owner: string, env: Env = envOf()): boolean {
   const v = String(env.GOGO_GOAL_INTAKE || '').trim()
   if (v === 'off' || !owner) return false
@@ -338,11 +345,14 @@ export async function startGoals(actor: AgentActor, plan: IntakePlan, deps: Star
   return { plan: { ...plan, goals, started: new Date().toISOString() }, started }
 }
 
+// A dashboard request can live longer than a WhatsApp one; the background sweeper leaves a web goal run alone for this
+// long so the request that created it and the sweeper never drive the same run.
+const WEB_LIVE_MS = 330_000
 const realStartRun: NonNullable<StartDeps['startRun']> = async ({ actor, goal, step, plan, surface }) => {
   const { startPersistentGoalRun } = await import('./persistent-general-plan')
   // The mission text is the instruction code wrote, not the person's first wording ("next month"), which the flight
   // reader would read as contradicting the exact date they then gave.
-  return startPersistentGoalRun({ actor, surface: surface === 'web' ? 'web' : 'whatsapp', step: { tool: step.tool, title: step.title, instruction: step.instruction } as any, missionText: step.instruction, metadata: { goal_batch_id: plan.id, goal_id: goal.id, goal_kind: goal.kind, goal_title: goal.title, ownership: goal.ownership, ...(step.reminder ? { goal_reminder: step.reminder } : {}) } })
+  return startPersistentGoalRun({ actor, surface: surface === 'web' ? 'web' : 'whatsapp', step: { tool: step.tool, title: step.title, instruction: step.instruction } as any, missionText: step.instruction, metadata: { goal_batch_id: plan.id, goal_id: goal.id, goal_kind: goal.kind, goal_title: goal.title, ownership: goal.ownership, ...(step.reminder ? { goal_reminder: step.reminder } : {}), ...(surface === 'web' ? { goal_surface: 'web' } : {}) }, liveMs: surface === 'web' ? WEB_LIVE_MS : undefined })
 }
 const realEventsOn = (owner: string) => { const env = envOf(); return env.GOGO_EVENTS === '1' || String(env.GOGO_EVENTS_OWNERS || '').split(',').map(s => s.trim()).includes(owner) }
 const realCapabilityOff = async (actor: AgentActor, capability: 'reminders' | 'browser' | 'email') => (await import('./adaptive-autonomy')).capabilityIsOff(actor.legacyTelegramId, capability)
@@ -359,7 +369,7 @@ const realEmail = async (actor: AgentActor, text: string) => {
 
 const ICON: Record<string, string> = { completed: '✅', waiting_approval: '📝', failed: '⚠️', outcome_unknown: '❓' }
 /** What to say right after "get it done": what started, what is waiting and why. Results follow as they finish. */
-export function startedText(plan: IntakePlan, quick: Map<string, { status: string; text: string }>): string {
+export function startedText(plan: IntakePlan, quick: Map<string, { status: string; text: string }>, surface?: 'whatsapp' | 'web'): string {
   const live = plan.goals.filter(g => g.state !== 'dropped')
   const go = live.filter(g => g.state === 'started')
   const lines = [`Started ${go.length} of ${live.length}.`, '']
@@ -378,7 +388,7 @@ export function startedText(plan: IntakePlan, quick: Map<string, { status: strin
     else if (g.note === 'event_not_started') lines.push(`⏸ ${g.title}: I need a bit more to start this event. Tell me about it on its own (whose, when, how many).`)
     else lines.push(`⏸ ${g.title}: I couldn’t start this one. Ask me about it on its own.`)
   }
-  lines.push('', 'You can close WhatsApp; I’ll keep going and message you as each one finishes. Everything is on your Tasks page too.')
+  lines.push('', surface === 'web' ? 'You can leave this page; I’ll keep going. Each result appears here in the chat and on your Tasks page. I won’t message you on WhatsApp about these.' : 'You can close WhatsApp; I’ll keep going and message you as each one finishes. Everything is on your Tasks page too.')
   return lines.join('\n')
 }
 
@@ -474,7 +484,7 @@ export async function tryGoalIntake(actor: AgentActor, text: string, deps: Intak
           ...res.started.filter(s => s.goal.runId && (quick.get(s.goal.runId)?.text.length || 0) > 300).map(s => `*${s.goal.title}*\n${block(quick.get(s.goal.runId!)!.text, 3000)}`),
         ]
         console.log('GOAL_INTAKE:', JSON.stringify({ step: 'start', goals: plan.goals.length, started: res.started.length }))
-        return [startedText(res.plan, quick), ...replies].join('\n\n')
+        return [startedText(res.plan, quick, deps.surface), ...replies].join('\n\n')
       }
       // Not about the plan: it stays open for one more message, then is dropped, so a later "go ahead" meant for
       // something else cannot start it.
