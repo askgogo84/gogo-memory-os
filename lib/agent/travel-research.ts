@@ -12,6 +12,8 @@ import {enqueueTravelResearch} from './travel-research-queue'
 import type { CreditIQFlightResult } from '@/lib/integrations/creditiq-travel'
 import type { AgentActor } from './actor'
 import type { AgentSurface } from './orchestrator'
+/** A query value for a link the person opens. // %20 next to a date ("%202026-12-20") reads as a long number and is withheld by the redaction on saved replies; '+' is a space in a query too. */
+const searchQuery=(q:string)=>encodeURIComponent(q).replace(/%20/g,'+')
 
 function safe(value: unknown, max = 1600) {
   return redactSecretShapedText(String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max))
@@ -266,7 +268,7 @@ export function googleFlightsSearchUrl(context: TravelContext, date?: string): s
   const cabin = (context.cabin || 'economy').replace(/_/g, ' ')
   const adults = context.adults || 1
   const q = `One-way ${context.nonStop ? 'non-stop ' : ''}flights from ${origin} to ${destination} on ${when} for ${adults} adult${adults === 1 ? '' : 's'} in ${cabin}`
-  return `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(q)}`
+  return `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${searchQuery(q)}`
 }
 
 export function verifiedProviderFlights(rows: CreditIQFlightResult[], context: TravelContext) {

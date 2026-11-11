@@ -1,0 +1,1 @@
+npx tsx scripts/verify-flight-link-redaction-nov11.mts

@@ -1,6 +1,8 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import type { AgentActor } from './actor'
+/** A query value for a link the person opens. // %20 next to a date ("%202026-12-20") reads as a long number and is withheld by the redaction on saved replies; '+' is a space in a query too. */
+const searchQuery=(q:string)=>encodeURIComponent(q).replace(/%20/g,'+')
 
 type Data = Record<string, unknown>
 const object = (value: unknown): Data => value && typeof value === 'object' && !Array.isArray(value) ? value as Data : {}
@@ -46,7 +48,7 @@ function flightResult(row: Data, actor: AgentActor, runId: string): string | nul
   }
   catch { observed=new Date(String(output.observedAt)).toISOString() }
   const query=`Flights from ${from} to ${to} on ${date} one way for ${adults} adult${adults === 1 ? '' : 's'} in ${cabin.replace(/_/g,' ')}${context.nonStop === true ? ' non-stop' : ''}`
-  const link=`https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(query)}`
+  const link=`https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${searchQuery(query)}`
   return [`Flight options · ${from} → ${to} · ${date}`,`${adults} adult${adults === 1 ? '' : 's'} · ${cabin.replace(/_/g,' ')} · one-way`,...rows,
     `Observed ${observed}; fares may change. Baggage and optional charges are extra. No flight was booked.`,link].join('\n')
 }

@@ -85,7 +85,7 @@ function Message({message:incoming,chips,onPick}:{message:ChatMessage;chips?:Chi
   let message=incoming
   if(message.role==='user'){
     return <div className="flex justify-end">
-      <div className="max-w-[86%] whitespace-pre-wrap break-words rounded-[20px] bg-[#1c1c1c] px-5 py-3.5 text-[16px] leading-[1.65] text-[#f2efea] sm:max-w-[72%] sm:text-[17px]">
+      <div className="max-w-[86%] whitespace-pre-wrap break-words rounded-[20px] bg-[#1c1c1c] px-4 py-3 text-[15px] leading-[1.55] text-[#f2efea] sm:max-w-[72%]">
         {linkify(message.content)}
         {message.mediaUrl&&<img src={message.mediaUrl} alt="Gogo result" className="mt-3 max-h-72 rounded-xl border border-[#2a2a2a]"/>}
       </div>
@@ -96,7 +96,7 @@ function Message({message:incoming,chips,onPick}:{message:ChatMessage;chips?:Chi
   const attentionCard=parseAttentionCard(message.content)
   return <div className="flex items-start gap-3 sm:gap-3.5">
     <Avatar size={40}/>
-    <div className="min-w-0 max-w-[90%] pt-1 text-[16px] leading-[1.65] text-[#dcdad5] sm:max-w-[84%] sm:text-[17px]">
+    <div className="min-w-0 max-w-[90%] pt-1 text-[15px] leading-[1.55] text-[#dcdad5] sm:max-w-[84%]">
       {message.runId&&<div className="mb-1"><RunStepsLine runId={message.runId}/></div>}
       {attentionCard?<EmailAttentionCard card={attentionCard} onAction={onPick}/>:<div className="whitespace-pre-wrap break-words">
         {richText(message.content)}
@@ -107,7 +107,7 @@ function Message({message:incoming,chips,onPick}:{message:ChatMessage;chips?:Chi
       <OpenUIComparisonInline text={message.content}/>
       {!attentionCard&&<ListenButton text={message.content}/>}
       {chips&&chips.length>0&&onPick&&<div className="mt-4 flex flex-wrap gap-2.5" role="group" aria-label="Quick answers">
-        {chips.map(c=><button key={c.title} type="button" onClick={()=>onPick(c.title)} className="min-h-12 rounded-full border border-[#2f2f2f] bg-[#161616] px-5 text-left text-[16px] font-semibold text-[#f2efea] transition hover:border-[#4cd0bd] hover:bg-[#123d38] hover:text-[#8be6d8] sm:text-[17px]">
+        {chips.map(c=><button key={c.title} type="button" onClick={()=>onPick(c.title)} className="min-h-11 rounded-full border border-[#2f2f2f] bg-[#161616] px-4 text-left text-[15px] font-semibold text-[#f2efea] transition hover:border-[#4cd0bd] hover:bg-[#123d38] hover:text-[#8be6d8] sm:text-[17px]">
           {c.title}{c.description&&<span className="ml-2 text-[14px] font-normal text-[#a8a8a4]">{c.description}</span>}
         </button>)}
       </div>}
@@ -120,8 +120,8 @@ function RailRow({title,meta,tone='muted',href}:{title:string;meta:string;tone?:
   const body=<div className="flex items-start gap-3 border-t border-[#1f1f1f] py-3 first:border-t-0">
     <span className={`mt-2 h-2 w-2 shrink-0 rounded-full ${dot}`}/>
     <div className="min-w-0 flex-1">
-      <div className="line-clamp-2 text-[16px] font-semibold leading-snug text-[#f2efea]">{title}</div>
-      <div className="mt-1 line-clamp-2 text-[14px] leading-[1.45] text-[#a8a8a4]">{meta}</div>
+      <div className="line-clamp-2 text-[15px] font-semibold leading-snug text-[#f2efea]">{title}</div>
+      <div className="mt-1 line-clamp-2 text-[13px] leading-[1.45] text-[#a8a8a4]">{meta}</div>
     </div>
   </div>
   return href?<Link href={href} className="block rounded-lg hover:bg-[#151515]">{body}</Link>:body
@@ -425,8 +425,8 @@ export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initial
             <MobileMenuButton/>
             <div className="lg:hidden"><Avatar state={gogoState} size={36} showStatus/></div>
             <div className="min-w-0">
-              <h1 className="truncate text-[22px] font-bold leading-tight tracking-[-.02em] text-[#f2efea] lg:text-[34px]">Gogo<span className="ml-2 text-[14px] font-normal tracking-normal text-[#b4b4b0] lg:hidden">{CHAT_STATE_SHORT[gogoState]}</span></h1>
-              <p className="mt-0.5 hidden text-[16px] text-[#b4b4b0] lg:block">One conversation, across here and WhatsApp.</p>
+              <h1 className="truncate text-[20px] font-bold leading-tight tracking-[-.02em] text-[#f2efea] lg:text-[26px]">Gogo<span className="ml-2 text-[14px] font-normal tracking-normal text-[#b4b4b0] lg:hidden">{CHAT_STATE_SHORT[gogoState]}</span></h1>
+              <p className="mt-0.5 hidden text-[14px] text-[#b4b4b0] lg:block">One conversation, across here and WhatsApp.</p>
             </div>
           </div>
           {archived.length>0&&<button type="button" onClick={()=>setHistoryOpen(v=>!v)} className="min-h-10 shrink-0 rounded-full border border-[#2f2f2f] px-4 text-[14px] text-[#d8d8d3] hover:text-[#f2efea] lg:min-h-11 lg:px-5 lg:text-[16px]">{historyOpen?'Current':'History'}</button>}
@@ -496,7 +496,7 @@ export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initial
             {loc.status!=='ask'&&<button type="button" onClick={loc.status==='on'?disableLocation:()=>void enableLocation()} disabled={locBusy} className="min-h-11 shrink-0 rounded-full border border-dashed border-[#2f2f2f] px-5 text-[15px] text-[#a8a8a4] hover:text-[#f2efea] disabled:opacity-60 lg:text-[16px]">{loc.status==='on'?`Location on${loc.label?` · ${loc.label}`:''} · turn off`:locBusy?'Checking…':'Use my location'}</button>}
           </div>}
           <form onSubmit={onSubmit} className="flex items-end gap-3 rounded-[28px] border border-[#2f2f2f] bg-[#131313] py-2 pl-5 pr-2 focus-within:border-[#4cd0bd]">
-            <textarea ref={inputRef} value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void submit()}}} rows={1} maxLength={2000} placeholder="Message Gogo" className="max-h-32 min-h-12 flex-1 resize-none bg-transparent py-3 text-[17px] leading-6 text-[#f2efea] outline-none placeholder:text-[#a8a8a4] lg:text-[18px]"/>
+            <textarea ref={inputRef} value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();void submit()}}} rows={1} maxLength={2000} placeholder="Message Gogo" className="max-h-32 min-h-12 flex-1 resize-none bg-transparent py-3 text-[16px] leading-6 text-[#f2efea] outline-none placeholder:text-[#a8a8a4] lg:text-[15px]"/>
             {canDictate&&<button type="button" onClick={toggleDictation} aria-pressed={dictating} aria-label={dictating?'Stop dictation':'Dictate a message'} className={`grid h-12 w-12 shrink-0 place-items-center rounded-full border ${dictating?'border-[#4cd0bd] bg-[#123d38] text-[#8be6d8]':'border-[#2f2f2f] text-[#d8d8d3]'}`}>
               <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>
             </button>}
@@ -513,12 +513,12 @@ export function GogoChat({initialDrink='coffee',userName='',brief=null}:{initial
       <div className="flex items-center gap-4 border-b border-[#1f1f1f] pb-5">
         <Avatar state={gogoState} size={88} showStatus/>
         <div className="min-w-0">
-          <div className="text-[20px] font-bold text-[#f2efea]">Gogo</div>
-          <div className="mt-1 flex items-center gap-2 text-[16px] text-[#c4c4c0]"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${runStateDot}`}/>{CHAT_STATE_LABEL[gogoState]}</div>
+          <div className="text-[18px] font-bold text-[#f2efea]">Gogo</div>
+          <div className="mt-1 flex items-center gap-2 text-[14px] text-[#c4c4c0]"><span className={`h-2.5 w-2.5 shrink-0 rounded-full ${runStateDot}`}/>{CHAT_STATE_LABEL[gogoState]}</div>
         </div>
       </div>
 
-      <div className="py-5 text-[16px] leading-[1.55] text-[#b4b4b0]">{activeRun?.summary||'Gogo is ready. Nothing consequential happens without your approval.'}</div>
+      <div className="py-4 text-[14px] leading-[1.5] text-[#b4b4b0]">{activeRun?.summary||'Gogo is ready. Nothing consequential happens without your approval.'}</div>
 
       <section className="mt-1">
         <div className="flex items-center justify-between text-[13px] font-bold uppercase tracking-[.1em] text-[#a8a8a4]"><span>Needs you</span><Link href="/dashboard/agent?section=approvals" className="text-[#e2b04a]">{snapshot.unavailable?'—':waitingCount}</Link></div>

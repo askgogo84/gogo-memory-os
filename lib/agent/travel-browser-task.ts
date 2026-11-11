@@ -3,6 +3,8 @@ import { runSecureBrowser } from './secure-computer'
 import { sanitizeBrowserReadDiagnostics } from './browser-read-diagnostics'
 import type { AgentActor } from './actor'
 import { chooseFlightPick, oneWayDisplayOrder, roundTripDisplayOrder } from './flight-pick'
+/** A query value for a link the person opens. // %20 next to a date ("%202026-12-20") reads as a long number and is withheld by the redaction on saved replies; '+' is a space in a query too. */
+const searchQuery=(q:string)=>encodeURIComponent(q).replace(/%20/g,'+')
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! })
 
@@ -39,7 +41,7 @@ export function roundTripQuery(context:BrowserFlightContext){
   return `Round trip ${context.nonStop ? 'non-stop ' : ''}flights from ${context.origin?.code} to ${context.destination?.code} departing ${context.startDate} returning ${context.returnDate} for ${context.adults || 1} adult${context.adults === 1 ? '' : 's'} in ${(context.cabin || 'economy').replace(/_/g, ' ')}`
 }
 export function roundTripSearchLink(context:BrowserFlightContext){
-  return `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(roundTripQuery(context))}`
+  return `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${searchQuery(roundTripQuery(context))}`
 }
 
 export function formatBrowserFlightResult(context:BrowserFlightContext,options:BrowserFlightOption[],sourceUrl:string){
@@ -205,7 +207,7 @@ export function googleFlightsTfsUrl(context:BrowserFlightContext):string|null{
   return `https://www.google.com/travel/flights/search?tfs=${tfs}&hl=en&gl=in&curr=INR`
 }
 export function oneWaySearchLink(context:BrowserFlightContext){
-  return `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${encodeURIComponent(oneWayQuery(context))}`
+  return `https://www.google.com/travel/flights?hl=en&gl=in&curr=INR&q=${searchQuery(oneWayQuery(context))}`
 }
 
 export function googleFlightOptionsFromEvidence(result:any,context:BrowserFlightContext):BrowserFlightOption[]{
