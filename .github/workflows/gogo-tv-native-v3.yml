@@ -31,10 +31,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-      - name: Install Android API 34
-        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+      - name: Install Android API 34 using runner SDK
+        run: |
+          test -n "$ANDROID_HOME"
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0"
       - name: Validate and apply native patches
         run: |
           set -euxo pipefail
