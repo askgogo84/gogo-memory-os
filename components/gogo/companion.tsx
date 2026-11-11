@@ -6,7 +6,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import { GogoAgent } from './gogo-agent'
 import { companionFor } from '@/lib/gogo/characters'
-import type { GogoAgentState } from '@/lib/gogo/agent-states'
+import { GOGO_STATE_NAME, type GogoAgentState } from '@/lib/gogo/agent-states'
 import { Crewmate } from './crewmate'
 import { isCrewId, moodForPose, moodForState } from '@/lib/gogo/crew'
 import { GogoCharacter, type GogoState } from './gogo-character'
@@ -40,7 +40,7 @@ export function Companion({ character, state = 'idle', size = 120, theme, label,
   const ctx = useContext(CompanionChoice)
   const who = companionFor(character ?? ctx.choice)
   // The crew (with eyes that follow the pointer) is shown only where it is switched on for this person.
-  if (ctx.crew && isCrewId(who.id)) return <Crewmate kind={who.id} mood={moodForState(state)} size={size} label={label === '' ? '' : label ?? who.name} className={className}/>
+  if (ctx.crew && isCrewId(who.id)) return <Crewmate kind={who.id} mood={moodForState(state)} size={size} label={label === '' ? '' : label ?? `${who.name}, ${GOGO_STATE_NAME[state]}`} className={className} animate={animate !== false}/>
   return <GogoAgent state={state} size={size} theme={theme || current} label={label} className={className} animate={animate}/>
 }
 
@@ -48,6 +48,6 @@ export function Companion({ character, state = 'idle', size = 120, theme, label,
 export function PoseCompanion({ state = 'calm', size = 72, showStatus, hands, className }: { state?: GogoState; size?: number; showStatus?: boolean; hands?: boolean; className?: string }) {
   const ctx = useContext(CompanionChoice)
   const who = companionFor(ctx.choice)
-  if (ctx.crew && isCrewId(who.id)) return <Crewmate kind={who.id} mood={moodForPose(state)} size={size} label="" className={className}/>
+  if (ctx.crew && isCrewId(who.id)) return <Crewmate kind={who.id} mood={moodForPose(state)} size={size} label={`${who.name}, ${state}`} className={className}/>
   return <GogoCharacter state={state} size={size} showStatus={showStatus} hands={hands} className={className}/>
 }

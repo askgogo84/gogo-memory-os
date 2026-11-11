@@ -62,7 +62,8 @@ function useGaze(track: boolean) {
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
     const s: Sub = { el: ref.current, cur: { x: 0, y: 0 }, target: { x: 0, y: 0 }, blinkAt: performance.now() + 1500 + Math.random() * 6000, blinkStart: -1, set: setGaze, last: { x: 0, y: 0, blink: 0 } }
     join(s)
-    return () => leave(s)
+    // Leaving (mood change, unmount) resets the eyes, so a later subscriber never starts mid-blink or off-centre.
+    return () => { leave(s); setGaze({ x: 0, y: 0, blink: 0 }) }
   }, [track])
   return { ref, gaze }
 }
@@ -75,11 +76,11 @@ const MOOD: Record<CrewMood, { open: number; happy: number; closed: number; brow
   sleep:    { open: 0, happy: 0, closed: 1, brows: 0, smile: 1, grin: 0, oh: 0, dots: 0, zz: 1, check: 0, lookUp: false },
 }
 
-export function Crewmate({ kind = 'gogo', mood = 'idle', size = 120, label, className = '' }: { kind?: CrewId; mood?: CrewMood; size?: number; label?: string; className?: string }) {
+export function Crewmate({ kind = 'gogo', mood = 'idle', size = 120, label, className = '', animate = true }: { kind?: CrewId; mood?: CrewMood; size?: number; label?: string; className?: string; animate?: boolean }) {
   const c = CREW_LOOKS[kind] || CREW_LOOKS.gogo
   const m = MOOD[mood] || MOOD.idle
   const uid = useId().replace(/:/g, '')
-  const { ref, gaze } = useGaze(m.open === 1)
+  const { ref, gaze } = useGaze(m.open === 1 && animate)
   const gx = gaze.x, gy = m.lookUp ? -0.9 : gaze.y
   const rest = mood === 'needs' ? 2.5 : 5.2
   const lidH = rest + (19 - rest) * gaze.blink
@@ -118,6 +119,9 @@ export function Crewmate({ kind = 'gogo', mood = 'idle', size = 120, label, clas
           {c.hair === 'beanie' && <g><path d="M22 60 C22 30 42 20 60 20 C78 20 98 30 98 60 Z" fill={`url(#${id('hair')})`}/><rect x="19" y="54" width="82" height="11" rx="5.5" fill={c.h1} stroke="rgba(0,0,0,.12)"/><circle cx="60" cy="16" r="8" fill="#FBF6EF" stroke="rgba(62,35,18,.12)"/></g>}
           <circle cx="60" cy="93" r="23" fill={`url(#${id('core')})`} style={{ animation: 'gogoGlow 4s ease-in-out infinite' }}/>
           <ellipse cx="41" cy="77" rx="5" ry="3.4" fill={c.core} fillOpacity=".22"/><ellipse cx="79" cy="77" rx="5" ry="3.4" fill={c.core} fillOpacity=".22"/>
+        </g>
+        {/* The face sits outside the fur filter, so a moving eye never re-runs the filter (review, 12 Nov). */}
+        <g>
           {m.open === 1 && <g>
             <ellipse cx="46" cy="64" rx="9" ry="9.6" fill={`url(#${id('white')})`}/><ellipse cx="74" cy="64" rx="9" ry="9.6" fill={`url(#${id('white')})`}/>
             {eye(46, 3.6)}{eye(74, 3.3)}

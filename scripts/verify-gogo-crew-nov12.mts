@@ -38,13 +38,13 @@ assert.match(renderToStaticMarkup(React.createElement(Crewmate, { kind: 'chai', 
 assert.doesNotMatch(renderToStaticMarkup(React.createElement(Crewmate, { kind: 'chai', size: 40 })), /feTurbulence/, 'no fur filter on tiny avatars')
 
 // Off = the original drawings, unchanged; on = the chosen crewmate.
-const off = renderToStaticMarkup(React.createElement(CompanionProvider, { choice: 'tara', crew: false }, React.createElement(Companion, { state: 'idle', size: 48 })))
+const off = renderToStaticMarkup(React.createElement(CompanionProvider as any, { choice: 'tara', crew: false }, React.createElement(Companion, { state: 'idle', size: 48 })))
 assert.match(off, /Gogo — /); assert.doesNotMatch(off, /Tara/)
-const on = renderToStaticMarkup(React.createElement(CompanionProvider, { choice: 'tara', crew: true }, React.createElement(Companion, { state: 'approval', size: 48 })))
-assert.match(on, /aria-label="Tara"/)
-const poseOn = renderToStaticMarkup(React.createElement(CompanionProvider, { choice: 'momo', crew: true }, React.createElement(PoseCompanion, { state: 'done', size: 40 })))
-assert.match(poseOn, /M93\.5 100 l4 4/, 'done mood shows the tick')
-const poseOff = renderToStaticMarkup(React.createElement(CompanionProvider, { choice: 'momo', crew: false }, React.createElement(PoseCompanion, { state: 'calm', size: 40 })))
+const on = renderToStaticMarkup(React.createElement(CompanionProvider as any, { choice: 'tara', crew: true }, React.createElement(Companion, { state: 'approval', size: 48 })))
+assert.match(on, /aria-label="Tara, Waiting for approval"/, 'name and state are both announced')
+const poseOn = renderToStaticMarkup(React.createElement(CompanionProvider as any, { choice: 'momo', crew: true }, React.createElement(PoseCompanion, { state: 'done', size: 40 })))
+assert.match(poseOn, /M93\.5 100 l4 4/, 'done mood shows the tick'); assert.match(poseOn, /aria-label="Momo, done"/)
+const poseOff = renderToStaticMarkup(React.createElement(CompanionProvider as any, { choice: 'momo', crew: false }, React.createElement(PoseCompanion, { state: 'calm', size: 40 })))
 assert.match(poseOff, /Gogo — calm/)
 
 // Wiring and storage.
@@ -61,4 +61,10 @@ assert.match(readFileSync('supabase/migrations/20261112090000_user_experience_co
 const cm = readFileSync('components/gogo/crewmate.tsx', 'utf8')
 assert.match(cm, /e\.pointerType !== 'touch'/); assert.match(cm, /prefers-reduced-motion: reduce/); assert.match(cm, /dead = 0\.022 \* vw, full = 0\.162 \* vw/)
 assert.equal((cm.match(/addEventListener\('pointermove'/g) || []).length, 1)
+// Review fixes: the face is outside the fur filter; a companion save writes only its own columns; leaving resets the eyes.
+assert.ok(cm.indexOf('{m.open === 1 && <g>') > cm.indexOf('The face sits outside the fur filter'), 'eyes are not inside the filtered group')
+const saver = readFileSync('lib/dashboard/companion-choice.ts', 'utf8')
+assert.match(saver, /\.upsert\(\{ telegram_id: tg, companion, updated_at: new Date\(\)\.toISOString\(\) \}/); assert.doesNotMatch(saver, /calm_companion|comfort_drink: /, 'never overwrites personality or drink')
+assert.match(cm, /return \(\) => \{ leave\(s\); setGaze\(\{ x: 0, y: 0, blink: 0 \}\) \}/)
+assert.doesNotMatch(renderToStaticMarkup(React.createElement(Crewmate, { kind: 'gogo', size: 120 })), /<g filter="url\(#fur-[^"]+\)">(?:(?!<\/g>)[\s\S])*clip-path/, 'no eye clip inside the fur group')
 console.log('PASS gogo crew: characters, moods, switch, storage, motion rules')
