@@ -75,7 +75,7 @@ def main():
     else:
         raise ValueError("Launcher settings insertion point missing; no source changes.")
 
-    layout_anchor = '        <TextView\\n            android:id="@+id/followThemeChoice"'
+    layout_anchor = '        <TextView\n            android:id="@+id/followThemeChoice"'
     layout_extra = '''        <TextView
             android:id="@+id/gogoWeatherChoice"
             style="@style/SettingsRow"
