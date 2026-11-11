@@ -72,6 +72,9 @@ final class GogoGlassClock {
         final String location = city;
         final double latitude = lat;
         final double longitude = lon;
+        // A visible status makes failed network requests diagnosable on the TV.
+        weather.setText(location + "  ·  Weather loading…");
+        weather.setVisibility(View.VISIBLE);
         final SharedPreferences prefs =
                 activity.getSharedPreferences("gogo_weather_cache", Context.MODE_PRIVATE);
         final String cacheKey = latitude + "," + longitude + ":" + city;
@@ -83,27 +86,39 @@ final class GogoGlassClock {
         }
         final Handler main = new Handler(Looper.getMainLooper());
         final Runnable refresh = new Runnable() {
+            private boolean inFlight;
+            private int failures;
             @Override public void run() {
-                if (!weather.isAttachedToWindow()) return;
-                // A paused TV launcher must not poll in the background.
-                if (activity.hasWindowFocus()) {
-                    Thread t = new Thread(() -> {
-                        String summary = requestWeather(location, latitude, longitude);
+                if (!weather.isAttachedToWindow() || inFlight) return;
+                // The first attach occurs BEFORE the Activity receives window focus
+                // on many Android TVs. Do not gate initial weather on hasWindowFocus().
+                inFlight = true;
+                Thread t = new Thread(() -> {
+                    final String summary = requestWeather(location, latitude, longitude);
+                    if (summary != null) {
+                        prefs.edit().putString(cacheKey + ":text", summary)
+                                .putLong(cacheKey + ":time", System.currentTimeMillis()).apply();
+                    }
+                    main.post(() -> {
+                        inFlight = false;
+                        if (!weather.isAttachedToWindow()) return;
                         if (summary != null) {
-                            prefs.edit().putString(cacheKey + ":text", summary)
-                                    .putLong(cacheKey + ":time", System.currentTimeMillis()).apply();
-                            main.post(() -> {
-                                if (weather.isAttachedToWindow()) {
-                                    weather.setText(summary);
-                                    weather.setVisibility(View.VISIBLE);
-                                }
-                            });
+                            failures = 0;
+                            weather.setText(summary);
+                            weather.setVisibility(View.VISIBLE);
+                            main.postDelayed(this, UPDATE_MS);
+                        } else {
+                            failures++;
+                            android.util.Log.w("GogoWeather", "Weather fetch failed; retry " + failures);
+                            if (saved.isEmpty()) weather.setText(location + "  ·  Weather unavailable");
+                            weather.setVisibility(View.VISIBLE);
+                            // Retry briefly a few times after network startup; then every 30 min.
+                            main.postDelayed(this, failures < 4 ? 20_000L : UPDATE_MS);
                         }
-                    }, "gogo-weather");
-                    t.setDaemon(true);
-                    t.start();
-                }
-                main.postDelayed(this, UPDATE_MS);
+                    });
+                }, "gogo-weather");
+                t.setDaemon(true);
+                t.start();
             }
         };
         weather.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
@@ -171,7 +186,10 @@ final class GogoGlassClock {
             connection = (HttpURLConnection) new URL(uri).openConnection();
             connection.setConnectTimeout(4000);
             connection.setReadTimeout(4000);
-            if (connection.getResponseCode() != 200) return null;
+            if (connection.getResponseCode() != 200) {
+                android.util.Log.w("GogoWeather", "HTTP " + connection.getResponseCode());
+                return null;
+            }
             try (InputStream input = connection.getInputStream();
                  ByteArrayOutputStream bytes = new ByteArrayOutputStream()) {
                 byte[] buffer = new byte[1024];
@@ -188,7 +206,8 @@ final class GogoGlassClock {
                 int code = current.optInt("weather_code", -1);
                 return city + "  ·  " + Math.round(temp) + "°C  ·  " + weatherName(code);
             }
-        } catch (Exception ignored) {
+        } catch (Exception e) {
+            android.util.Log.w("GogoWeather", "Weather request failed", e);
             return null;
         } finally {
             if (connection != null) connection.disconnect();
