@@ -65,7 +65,9 @@ console.log('Overnight (7 Nov) replays passed')
   const out = formatRoundTripResult(ctx, [{ airline: 'Air India', departure: '7:00 pm', arrival: '11:20 pm', stops: 1, fareInr: 9000, fareBasis: 'party_total', farePassengers: 1, route: 'BLR-GOI', evidence: 'x' }], roundTripSearchLink(ctx))
   assert.match(out, /book the cheapest/)
   const src = readFileSync('lib/agent/travel-research.ts', 'utf8')
-  assert.match(src, /context\.roundTrip&&context\.returnDate\?roundTripSearchLink\(context\):googleFlightsSearchUrl\(context\)/)
+  assert.match(src, /context\.roundTrip&&context\.returnDate&&context\.origin\?\.code&&context\.destination\?\.code\?roundTripSearchLink\(context\):googleFlightsSearchUrl\(context\)/)
   assert.match(src, /context\.kind==='hotel'[\s\S]{0,80}live hotel rates/)
+  // Hotel fallback has no numbered rows, so the flight sanitizer leaves it alone.
+  assert.doesNotMatch(src.slice(src.indexOf("context.kind==='hotel'"), src.indexOf("context.kind==='hotel'") + 400), /curated\.map/)
   console.log('PASS round-trip booking hint and fallback links')
 }
