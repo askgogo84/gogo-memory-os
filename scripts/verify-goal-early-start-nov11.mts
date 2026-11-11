@@ -13,7 +13,7 @@ const LIST = { is_list: true, goals: [
   { kind: 'flight_prices', title: 'Flight prices for next month', words: 'check flight prices for next month' },
   { kind: 'email', title: 'Three business emails', words: 'prepare three business emails' },
   { kind: 'research', title: 'Five investors for AskGogo', words: 'find five suitable investors for AskGogo' },
-  { kind: 'reminder', title: 'Meeting tomorrow', words: 'remind me about my meeting tomorrow', date: '2026-11-12' },
+  { kind: 'reminder', title: 'Meetings tomorrow', words: 'remind me about my meetings tomorrow', date: '2026-11-12' },
 ] }
 
 // The flag: needs intake on, and its own switch.
@@ -43,8 +43,8 @@ const THREE = { ok: true, events: [{ title: 'FnB daily syncup', time: '11:30' },
 // 1. The acceptance sentence with a readable calendar: research and the reminders start in the first reply.
 { const w = world({ calendar: THREE })
   const r = (await gi.tryGoalIntake(actor, SENTENCE, w.deps))!
-  ok(/^On it, all 5\. 2 are already moving:/.test(r), `the first reply says what is already moving (${r.split('\n')[0]})`)
-  ok(/• Meeting tomorrow: Thu 12 Nov: you have FnB daily syncup and Daily Connect-Standup at 11:30 am; ONDC Food Readiness at 7:30 pm\. Reminders set for 11:20 am and 7:20 pm, 10 minutes before\. Tell me if you want different times\./.test(r), 'the meetings come from the calendar, and one reminder is set 10 minutes before each start time')
+  ok(/^On it\. 2 of 5 are already moving:/.test(r), `the first reply says what is already moving (${r.split('\n')[0]})`)
+  ok(/• Meetings tomorrow: Thu 12 Nov: you have FnB daily syncup and Daily Connect-Standup at 11:30 am; ONDC Food Readiness at 7:30 pm\. Reminders set for 11:20 am and 7:20 pm, 10 minutes before\. Say \*my reminders\* to see or change them\./.test(r), 'the meetings come from the calendar, and one reminder is set 10 minutes before each start time')
   ok(/• Five investors for AskGogo: working on it; I’ll message you when it’s ready\./.test(r), 'research is under way and will report back')
   ok(/3 are waiting on you:/.test(r) && /Organize a birthday/.test(r) && /Flight prices for next month: Flying from where\? to where\? which date\?/i.test(r) && /Three business emails/.test(r), 'the three that need details are asked about')
   ok(!/What time should I remind you/.test(r), 'the meeting time is not asked for')
@@ -61,18 +61,18 @@ const THREE = { ok: true, events: [{ title: 'FnB daily syncup', time: '11:30' },
   const before = w.runs.length
   const r2 = (await gi.tryGoalIntake(actor, 'Bengaluru to Goa on 20 December. Skip the emails. Get it done', w.deps))!
   eq(w.runs.slice(before).map(x => x.kind), ['flight_prices'], '"get it done" starts only what had not started')
-  ok(/▶️ Meeting tomorrow: already under way from before\./.test(r2) && /▶️ Five investors for AskGogo: already under way from before\./.test(r2), 'and says the earlier ones are already under way') }
+  ok(/▶️ Meetings tomorrow: already under way from before\./.test(r2) && /▶️ Five investors for AskGogo: already under way from before\./.test(r2), 'and says the earlier ones are already under way') }
 
 // 2. Calendar read but no timed meeting that day: nothing is guessed; the question says why it is asking.
 { const w = world({ calendar: { ok: true, events: [] } })
   const r = (await gi.tryGoalIntake(actor, SENTENCE, w.deps))!
-  ok(/Meeting tomorrow \(for Thu 12 Nov\): I don’t see a timed meeting on your calendar that day\. What time should I remind you\?/.test(r), 'no meeting found: asks the time and says the calendar had none')
+  ok(/Meetings tomorrow \(for Thu 12 Nov\): I don’t see a timed meeting on your calendar that day\. What time should I remind you\?/.test(r), 'no meeting found: asks the time and says the calendar had none')
   eq(w.runs.map(x => x.kind), ['research'], 'no reminder is created') }
 
 // 3. Calendar not connected or unreadable: asked exactly as before.
 { const w = world({ calendar: { ok: false, events: [] } })
   const r = (await gi.tryGoalIntake(actor, SENTENCE, w.deps))!
-  ok(/Meeting tomorrow \(for Thu 12 Nov\): What time should I remind you\?/.test(r) && !/I don’t see/.test(r), 'no calendar: the plain question')
+  ok(/Meetings tomorrow \(for Thu 12 Nov\): What time should I remind you\?/.test(r) && !/I don’t see/.test(r), 'no calendar: the plain question')
   const w2 = world({ calendar: () => { throw new Error('gcal_down') } })
   const r2 = (await gi.tryGoalIntake(actor, SENTENCE, w2.deps))!
   ok(/What time should I remind you\?/.test(r2) && w2.runs.every(x => x.kind !== 'reminder'), 'a failing calendar read is treated the same way') }
@@ -86,7 +86,7 @@ const THREE = { ok: true, events: [{ title: 'FnB daily syncup', time: '11:30' },
 // 5. A reminder that could not be confirmed is not reported as set.
 { const w = world({ calendar: { ok: true, events: [{ title: 'Investor call', time: '15:00' }] }, reminderOk: false })
   const r = (await gi.tryGoalIntake(actor, SENTENCE, w.deps))!
-  ok(/you have Investor call at 3:00 pm\. I could not confirm the reminder for 2:50 pm; it is on your Tasks page\./.test(r) && !/Reminders set for/.test(r), 'an unconfirmed reminder is said to be unconfirmed') }
+  ok(/you have Investor call at 3:00 pm\. I could not set the reminder for 2:50 pm\./.test(r) && !/Reminders set for/.test(r), 'a reminder that did not complete is said not to be set') }
 
 // 6. Meetings already past (or whose reminder time has passed) today are skipped; at most five are set.
 { const today = { ...LIST, goals: [...LIST.goals.slice(0, 4), { kind: 'reminder', title: 'Meetings today', words: 'remind me about my meetings today', date: '2026-11-11' }] }
@@ -98,6 +98,38 @@ const THREE = { ok: true, events: [{ title: 'FnB daily syncup', time: '11:30' },
   const many = world({ calendar: { ok: true, events: Array.from({ length: 9 }, (_, i) => ({ title: `M${i}`, time: `${String(11 + i).padStart(2, '0')}:00` })) } })
   await gi.tryGoalIntake(actor, SENTENCE, many.deps)
   eq(many.runs.filter(x => x.kind === 'reminder').length, gi.MAX_CALENDAR_REMINDERS, 'never more than five reminders from one day') }
+{ const many = world({ calendar: { ok: true, events: Array.from({ length: 9 }, (_, i) => ({ title: `M${i}`, time: `${String(11 + i).padStart(2, '0')}:00` })) } })
+  const r = (await gi.tryGoalIntake(actor, SENTENCE, many.deps))!
+  ok(/4 later meetings that day have no reminder; ask me if you want one\./.test(r), 'the meetings left out by the cap are said') }
+
+// Review, 11 Nov: one meeting asked about and several found: asked which, nothing set.
+{ const one = { ...LIST, goals: [...LIST.goals.slice(0, 4), { kind: 'reminder', title: 'Meeting tomorrow', words: 'remind me about my meeting tomorrow', date: '2026-11-12' }] }
+  const w = world({ calendar: THREE }); w.deps.model.list = async () => one
+  const r = (await gi.tryGoalIntake(actor, SENTENCE, w.deps))!
+  ok(/Meeting tomorrow \(for Thu 12 Nov\): That day you have FnB daily syncup and Daily Connect-Standup at 11:30 am; ONDC Food Readiness at 7:30 pm\. Which one, and what time should I remind you\?/.test(r), '"my meeting" with three on the calendar: asks which, listing them')
+  eq(w.runs.filter(x => x.kind === 'reminder').length, 0, 'and sets none')
+  // A named one is picked without asking.
+  const named = { ...LIST, goals: [...LIST.goals.slice(0, 4), { kind: 'reminder', title: 'ONDC meeting', words: 'remind me about the ONDC Food Readiness meeting tomorrow', date: '2026-11-12' }] }
+  const w2 = world({ calendar: THREE }); w2.deps.model.list = async () => named
+  await gi.tryGoalIntake(actor, SENTENCE, w2.deps)
+  eq(w2.runs.filter(x => x.kind === 'reminder').map(x => x.reminder.time), ['19:20'], 'a meeting named in the words is the one reminded about')
+  // The calendar is looked at once per plan, not again on every answer.
+  let reads = 0
+  const w3 = world({ calendar: () => { reads++; return { ok: true, events: [] } } }); w3.deps.model.list = async () => one
+  await gi.tryGoalIntake(actor, SENTENCE, w3.deps)
+  ;(world as any).answers = { about_plan: true, start: false, fills: [{ goal: 'g1', slot: 'topic', value: 'Divya’s birthday' }] }
+  await gi.tryGoalIntake(actor, 'It is Divya’s birthday', w3.deps)
+  eq(reads, 1, 'one calendar read per plan')
+  // Nothing created at all: the goal goes back to being asked about, not reported as under way.
+  const w4 = world({ calendar: THREE }); w4.deps.start.startRun = async ({ step, goal }: any) => { if (step.tool === 'reminders') throw new Error('db'); return { runId: goal.id, drive: async () => ({ status: 'completed', text: 'ok' }) } }
+  const r4 = (await gi.tryGoalIntake(actor, SENTENCE, w4.deps))!
+  ok(!/Reminders set|Tasks page/.test(r4.split('waiting on you')[0]) && /Meetings tomorrow \(for Thu 12 Nov\): What time should I remind you\?/.test(r4), 'no reminder could be created: asked about, nothing claimed') }
+
+// Review, 11 Nov: things to do that mention a meeting or a call are not meeting reminders.
+for (const t of ['remind me to cancel the meeting tomorrow', 'remind me to book an appointment with the dentist tomorrow', 'remind me to give Divya a call tomorrow', 'remind me to make the call tomorrow', 'remind me to prepare for the interview', 'sync my contacts tomorrow', 'send the calendar invite to Divya', 'call the bank tomorrow'])
+  ok(!gi.meetingReminderWords(t), `not a meeting reminder: ${t}`)
+for (const t of ['remind me about my meeting tomorrow', 'remind me about my meetings tomorrow', 'remind me before the investor call tomorrow', 'remind me of tomorrow’s standup', 'remind me about all my meetings today', 'remind me about the call with Nithin'])
+  ok(gi.meetingReminderWords(t), `a meeting reminder: ${t}`)
 
 // 7. A reminder that is not about a meeting is never taken from the calendar.
 { const other = { is_list: true, goals: [{ kind: 'reminder', title: 'Call the bank', words: 'remind me to call the bank tomorrow', date: '2026-11-12' }, { kind: 'todo', title: 'Renew passport', words: 'renew passport' }, { kind: 'research', title: 'Best CRM', words: 'find the best CRM' }] }
@@ -133,4 +165,23 @@ const THREE = { ok: true, events: [{ title: 'FnB daily syncup', time: '11:30' },
   eq([w.events, w.emails, w.runs.map(x => x.kind)], [[], [], ['research']], 'only the research starts; the event and the email wait')
   ok(/2 are waiting on you:/.test(r) && /Say \*get it done\* and I’ll start them/.test(r), 'and the reply says how to start them') }
 
+// The real calendar read: full reads only; declined, free, all-day and non-meeting blocks skipped; a series entered as
+// one long entry counts on the day at its start time; nothing is remembered as the person's selection.
+{ const out = (events: any[], o: any = {}) => ({ mode: 'read', complete: true, timezone: 'Asia/Kolkata', entryCount: events.length, events, ...o })
+  const ev = (summary: string, start: string, end = '', x: any = {}) => ({ summary, start, end, ...x })
+  const day = gi.calendarDayFrom(out([
+    ev('FnB daily syncup', '2026-11-12T11:30:00+05:30', '2026-11-12T12:00:00+05:30'),
+    ev('Daily Connect-Standup Call', '2026-10-20T11:30:00+05:30', '2026-11-30T11:45:00+05:30'),
+    ev('Declined review', '2026-11-12T15:00:00+05:30', '', { attendees: [{ self: true, responseStatus: 'declined' }] }),
+    ev('Hold', '2026-11-12T16:00:00+05:30', '', { transparency: 'transparent' }),
+    ev('Lunch', '2026-11-12T13:00:00+05:30'), ev('Focus time', '2026-11-12T14:00:00+05:30'),
+    ev('Holiday', '2026-11-12'), ev('Yesterday thing', '2026-11-11T18:00:00+05:30', '2026-11-11T19:00:00+05:30'),
+    ev('ONDC Food Readiness', '2026-11-12T14:00:00Z'),
+  ]), '2026-11-12', 'Asia/Kolkata')
+  eq(day, { ok: true, skipped: 4, events: [{ title: 'FnB daily syncup', time: '11:30' }, { title: 'Daily Connect-Standup Call', time: '11:30' }, { title: 'ONDC Food Readiness', time: '19:30' }] }, 'declined, free and non-meeting blocks skipped; the long series counts at its time; other days left out')
+  for (const bad of [out([], { complete: false }), out([ev('x', '2026-11-12T10:00:00+05:30')], { entryCount: 13 }), { mode: 'held', events: [] }, null])
+    eq(gi.calendarDayFrom(bad, '2026-11-12', 'Asia/Kolkata').ok, false, 'a partial, truncated or held read is not used')
+  const { readFileSync } = await import('node:fs')
+  const src = readFileSync(new URL('../lib/agent/goal-intake.ts', import.meta.url), 'utf8')
+  ok(/executeReadOnlyCalendarStep\(\{ actor, instruction: `Show my calendar on \$\{date\}`, missionText: `Show my calendar on \$\{date\}`, rememberSelection: false \}\)/.test(src) && !/readTomorrowSchedule/.test(src), 'the calendar is read without remembering a selection') }
 console.log(`GOAL_EARLY_START_OK ${checks} checks`)
