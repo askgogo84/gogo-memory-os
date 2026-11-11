@@ -47,6 +47,9 @@ const untouched = [
 ]
 for (const t of untouched) eq(v.eventDraftInPlainWords(t), t, `unchanged: ${t.slice(0, 44) || '(empty)'}`)
 
+// Review: a partly failed update is not "Noted."; an online event is "online".
+eq(v.eventDraftInPlainWords('Draft updated.\n\n*X*\nSun, 22 Nov, 5:00 pm · Toit\n\nI could not read that date and time.'), 'Saved the rest. *X*: Sun, 22 Nov, 5:00 pm at Toit.\n\nI could not read that date and time.', 'a part that could not be used is not acknowledged as done')
+eq(v.eventDraftInPlainWords(`Draft started.\n\n*Team call*\nFri, 4 Dec, 8:00 pm · Online\n\n${NEXT_P}`), `I’ve started planning *Team call*: Fri, 4 Dec, 8:00 pm online.\n\n${NEXT_P}`, 'an online event reads "online"')
 // The switch and the kind.
 const env = { GOGO_VOICE: '-884501501' }, D = cases[1][0]
 eq(v.inGogosVoice({ owner: '-884501501', reply: D, kind: 'events' }, { env }), cases[1][1], 'on for the owner: the plain version')

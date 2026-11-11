@@ -38,15 +38,19 @@ export function eventDraftInPlainWords(reply: string): string {
   const when = whenRaw.trim(), where = whereRaw.trim()
   const hasWhen = when !== NO_DATE, hasWhere = where !== NO_PLACE
   const started = head === 'Draft started'
+  // "Online" is how draftSummary marks an online event: said as "online", not "at Online".
+  const at = where === 'Online' ? ' online' : ` at ${where}`
+  // An update where part of the message could not be used: not "Noted.", which would read as if all of it was.
+  const ack = /\bcould not\b|\bnothing to\b/i.test(next.split('\n')[0]) ? 'Saved the rest.' : 'Noted.'
   const lead = started
-    ? (hasWhen && hasWhere ? `I’ve started planning ${name}: ${when} at ${where}.`
+    ? (hasWhen && hasWhere ? `I’ve started planning ${name}: ${when}${at}.`
       : hasWhen ? `I’ve started planning ${name} for ${when}.`
-      : hasWhere ? `I’ve started planning ${name} at ${where}.`
+      : hasWhere ? `I’ve started planning ${name}${at}.`
       : `I’ve started planning ${name}.`)
-    : (hasWhen && hasWhere ? `Noted. ${name}: ${when} at ${where}.`
-      : hasWhen ? `Noted. ${name}: ${when}. The place is still open.`
-      : hasWhere ? `Noted. ${name} at ${where}. The date is still open.`
-      : `Noted. ${name}: the date and place are still open.`)
+    : (hasWhen && hasWhere ? `${ack} ${name}: ${when}${at}.`
+      : hasWhen ? `${ack} ${name}: ${when}. The place is still open.`
+      : hasWhere ? `${ack} ${name}${at}. The date is still open.`
+      : `${ack} ${name}: the date and place are still open.`)
   return `${lead}${extras}\n\n${next}`
 }
 
