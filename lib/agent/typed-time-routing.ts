@@ -103,6 +103,17 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
         const owned=/^send/i.test(text)?await tryRunGmailSendCommand({actor:p.actor,text:text.replace(/[.!?]+$/,'')}):await tryRunGmailContextCommand({actor:p.actor,text})
         return owned||await clarify('Please select the Gmail message or draft again. This reference could not be bound to a current email object.')
       }
+      // 11 Nov live: "book it" after flight results got "Book what exactly?". After a flight result, a booking reply
+      // belongs to the flight-booking handler, which binds it to that result (and asks for approval before anything).
+      if(action==='book'&&context?.domain==='travel'){
+        // Only when the travel item in context is the latest flight result (not a hotel search or another run).
+        const fb=await import('./flight-booking')
+        const last=await fb.loadLastFlightResult(p.actor).catch(()=>null)
+        if(last&&context.items.some(i=>String(i.id)===String(last.runId))){
+          const booking=await fb.tryFlightBooking({actor:p.actor,surface:p.surface as any,text:original})
+          if(booking)return booking as any
+        }
+      }
       if(!context||!selected)return clarify("I'm not sure which one you mean. Tell me its name or pick it from the list again. Nothing has changed.")
       if(/^(?:open|show|show me|read|select)$/.test(action)){
         await rememberTypedObjects(p.actor.legacyTelegramId,context.domain,context.items,selected.id)

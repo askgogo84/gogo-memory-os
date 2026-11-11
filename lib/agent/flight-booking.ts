@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { browserApprovalBinding, createApprovalBrowserRun } from './browser-command'
 import { chooseFlightPick } from './flight-pick'
+import { exactOwner, forgetTravellerProfile, loadTravellerProfile, saveTravellerProfile, travellerProfileEnabled } from './traveller-profile'
 import { googleFlightsTfsUrl, oneWayDisplayOrder, oneWaySearchLink, roundTripDisplayOrder, roundTripSearchLink } from './travel-browser-task'
 import type { BrowserFlightOption } from './travel-browser-task'
 import { capabilityPaused, capabilityPausedText } from './policy'
@@ -279,7 +280,14 @@ export type SavedBookingProfile = { travellers: Traveller[]; contact: BookingCon
  * 27 Oct (owner): "why does it keep asking the same details again and again". The details from the person's last
  * approved flight booking (kept only until that booking's 24-hour purge) are offered again with one YES.
  */
-export async function loadSavedBookingProfile(actor: AgentActor, count: number): Promise<SavedBookingProfile | null> {
+export async function loadSavedBookingProfile(actor: AgentActor, count: number, opts: { domestic?: boolean } = {}): Promise<SavedBookingProfile | null> {
+  // 11 Nov (owner): "it should remember everything about me". A one-traveller booking first uses the person's saved
+  // travel details (traveller-profile.ts, opt-in by GOGO_TRAVELLER_PROFILE); using them still takes their YES.
+  // Domestic only: the saved details have no date of birth, which an international booking needs.
+  if (count === 1 && opts.domestic === true) {
+    const durable = await loadTravellerProfile(actor).catch(() => null)
+    if (durable) return { travellers: [{ title: durable.title, name: durable.name, gender: genderOf(durable.title) }], contact: { email: durable.email, mobile: durable.mobile }, seat: durable.seat }
+  }
   const since = new Date(Date.now() - 24 * 3600_000).toISOString()
   const { data, error } = await supabaseAdmin.from('agent_runs').select('metadata_json,created_at').eq('telegram_id', String(actor.legacyTelegramId))
     .eq('metadata_json->>plan_type', 'secure_browser').not('metadata_json->flight_booking', 'is', null).gte('created_at', since).order('created_at', { ascending: false }).limit(5)
@@ -405,7 +413,7 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
     const count = Math.max(1, Number(last.context.adults) || 1)
     const domestic = isDomesticIndiaTrip(last.context)
     if (pending.reuse && /^(?:yes|y|yeah|yep|ok(?:ay)?|sure|same|same details|use (?:the )?same|use them|yes(?:,)? (?:same|use them|please))[.! ]*$/i.test(text)) {
-      const saved = await loadSavedBookingProfile(actor, count)
+      const saved = await loadSavedBookingProfile(actor, count, { domestic })
       if (saved) return await createBookingApproval({ actor, surface, last, option, travellers: saved.travellers, contact: saved.contact, seat: saved.seat })
     }
     // Only a flag is stored with the pending question; the details are read again from the profile, never copied.
@@ -465,7 +473,7 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
   const count = Math.max(1, Number(last.context.adults) || 1)
   const fare = option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')}` : 'the listed fare'
   const head = `Booking: ${last.context.origin?.code} → ${last.context.destination?.code}, ${isRound(last.context) ? `${last.context.startDate} and back ${last.context.returnDate}` : `${last.context.startDate}, one-way`}.\n${describeFlight(option)}\nAbout ${fare} ${fareKind(last.context)} for ${count} adult${count === 1 ? '' : 's'}; fares move, so I will stop if the price on the booking page is more than 10% higher.`
-  const saved = await loadSavedBookingProfile(actor, count).catch(() => null)
+  const saved = await loadSavedBookingProfile(actor, count, { domestic: isDomesticIndiaTrip(last.context) }).catch(() => null)
   const known = !saved && count === 1 && isDomesticIndiaTrip(last.context) ? await loadKnownDetails(actor).catch(() => null) : null
   const reply = saved
     ? `${head}\n\nUse the same details as your last booking?\n${profileLines(saved)}\n\nReply *YES* to use them, or send new details (title and name, email, mobile, seat; one per line).`
@@ -492,6 +500,11 @@ async function createBookingApproval(p: { actor: AgentActor; surface: AgentSurfa
       airline: option.airline, fare_inr: option.fareInr, travellers: travellers.length, seat, contact_mobile: contact.mobile,
       profile: { travellers, email: contact.email, seat }, pii_purge_at: purgeAt } }
   const booking = await createApprovalBrowserRun({ actor, surface, command, metadata })
+  // The person's own details for a one-traveller booking are kept for next time when they have opted in. A failed
+  // save only changes the wording below; it never blocks the booking.
+  const remembered = travellers.length === 1 && isDomesticIndiaTrip(last.context) && travellerProfileEnabled(actor)
+    ? await saveTravellerProfile(actor, { title: String(travellers[0].title || ''), name: travellers[0].name, email: contact.email, mobile: contact.mobile, seat: seat as any }).catch(() => false)
+    : false
   const { data: approval, error } = await supabaseAdmin.from('agent_approvals').insert({
     telegram_id: tg, run_id: booking.runId, action_type: 'booking',
     title: `Approve flight booking up to payment · ${last.context.origin?.code}→${last.context.destination?.code}`,
@@ -516,7 +529,7 @@ async function createBookingApproval(p: { actor: AgentActor; surface: AgentSurfa
   const fare = option.fareInr ? `₹${option.fareInr.toLocaleString('en-IN')}` : 'the listed fare'
   return {
     runId: booking.runId, status: 'waiting_approval' as const, capability: 'browser' as const, risk: 'high' as const,
-    text: `Ready to book:\n${describeFlight(option)}\n${datesLabel(last.context)} · ${fare} ${fareKind(last.context)}\nTravellers: ${travellers.map(t => `${t.title || ''} ${t.name}`.trim()).join(', ')}\nTicket contact: ${contact.email} · ${maskMobile(contact.mobile)}\nSeat: ${seatLabel(seat)}${seat !== 'free' ? ' (its price is added to what you pay)' : ''}\n\nAfter you approve, I fill the booking on the airline or booking site and stop at payment. I never enter card or UPI details and never press Pay; I send you a link to pay yourself. Your details are deleted after 24 hours.\n\nReply *APPROVE* to continue or *REJECT* to stop.`,
+    text: `Ready to book:\n${describeFlight(option)}\n${datesLabel(last.context)} · ${fare} ${fareKind(last.context)}\nTravellers: ${travellers.map(t => `${t.title || ''} ${t.name}`.trim()).join(', ')}\nTicket contact: ${contact.email} · ${maskMobile(contact.mobile)}\nSeat: ${seatLabel(seat)}${seat !== 'free' ? ' (its price is added to what you pay)' : ''}\n\nAfter you approve, I fill the booking on the airline or booking site and stop at payment. I never enter card or UPI details and never press Pay; I send you a link to pay yourself. ${remembered ? 'I’ve saved your name, email, mobile and seat choice for next time; say *forget my travel details* to remove them.' : 'Your details are deleted after 24 hours.'}\n\nReply *APPROVE* to continue or *REJECT* to stop.`,
     approvalId: String(approval.id), approvalRequired: true, handledBy: 'flight-booking' as const,
   }
 }
@@ -543,4 +556,27 @@ export async function purgeFlightBookingPii(options: { runId?: string; keepProfi
     if (!ue) purged++
   }
   return purged
+}
+
+/** "forget my travel details": deletes the saved details and the copy kept with any recent booking (24-hour reuse). */
+export async function forgetBookingDetails(actor: AgentActor): Promise<{ ok: boolean; pending: number }> {
+  const tg = exactOwner(actor)
+  if (tg === null) return { ok: false, pending: 0 }
+  const removed = await forgetTravellerProfile(actor).catch(() => false)
+  const { data, error } = await supabaseAdmin.from('agent_runs').select('id,telegram_id,status,metadata_json').eq('telegram_id', String(tg))
+    .eq('metadata_json->>plan_type', 'secure_browser').not('metadata_json->flight_booking', 'is', null).gte('created_at', new Date(Date.now() - 48 * 3600_000).toISOString())
+    .order('created_at', { ascending: false }).limit(50)
+  if (error) return { ok: false, pending: 0 }
+  let ok = removed, pending = 0
+  for (const run of data || []) {
+    if (String((run as any).telegram_id) !== String(tg)) continue
+    const meta: any = (run as any).metadata_json || {}
+    if (meta.flight_booking?.pii_purged) continue
+    // A booking waiting for APPROVE or still running keeps its details (changing them would void its approval);
+    // its normal 24-hour purge still applies. The reply says so.
+    if (['waiting_approval', 'running', 'queued', 'pending'].includes(String((run as any).status || ''))) { pending++; continue }
+    const { error: ue } = await supabaseAdmin.from('agent_runs').update({ metadata_json: { ...meta, objective: '[traveller details removed]', flight_booking: { ...meta.flight_booking, contact_mobile: null, profile: null, pii_purged: true } } }).eq('id', (run as any).id).eq('telegram_id', String(tg))
+    if (ue) ok = false
+  }
+  return { ok, pending }
 }
