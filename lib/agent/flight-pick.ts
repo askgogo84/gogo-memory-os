@@ -37,10 +37,19 @@ export function chooseFlightPick(rows: PickRow[]): FlightPickChoice | null {
   return { n: cheapestIdx + 1, reason: 'Cheapest.', nonstopN: nonstopIdx >= 0 ? nonstopIdx + 1 : null }
 }
 
-/** Which display numbers to list: the first three, plus the pick and the cheapest non-stop if they are further down. */
-export function rowsToShow(total: number, pick: FlightPickChoice | null): number[] {
-  const show = new Set<number>()
-  for (let n = 1; n <= Math.min(3, total); n++) show.add(n)
-  if (pick) { show.add(pick.n); if (pick.nonstopN) show.add(pick.nonstopN) }
-  return [...show].filter(n => n >= 1 && n <= total).sort((a, b) => a - b)
+
+type Ordered = { fareInr: number | null; stops: number | null }
+/** Cheapest five, plus the cheapest non-stop as a sixth row when none of the five is non-stop. */
+function withCheapestNonstop<T extends Ordered>(sorted: T[], n: number): T[] {
+  const top = sorted.slice(0, n)
+  const nonstop = sorted.find(f => f.stops === 0 && f.fareInr)
+  return nonstop && !top.includes(nonstop) ? [...top, nonstop] : top
+}
+/** The order the person sees for a one-way result: cheapest first, top five. "Book #2" refers to this list. */
+export function oneWayDisplayOrder<T extends Ordered>(options: T[]): T[] {
+  return withCheapestNonstop([...options].sort((a, b) => (a.fareInr ?? Infinity) - (b.fareInr ?? Infinity)), 5)
+}
+/** The order the person sees for a round trip: priced rows, cheapest first, top five. "Book #2" refers to this list. */
+export function roundTripDisplayOrder<T extends Ordered>(options: T[]): T[] {
+  return withCheapestNonstop([...options].filter(o => o.fareInr).sort((a, b) => a.fareInr! - b.fareInr!), 5)
 }

@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { browserApprovalBinding, createApprovalBrowserRun } from './browser-command'
+import { chooseFlightPick } from './flight-pick'
 import { googleFlightsTfsUrl, oneWayDisplayOrder, oneWaySearchLink, roundTripDisplayOrder, roundTripSearchLink } from './travel-browser-task'
 import type { BrowserFlightOption } from './travel-browser-task'
 import { capabilityPaused, capabilityPausedText } from './policy'
@@ -22,7 +23,7 @@ function safe(value: unknown, max = 400) {
   return redactSecretShapedText(String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max))
 }
 
-export type FlightPick = { kind: 'cheapest' } | { kind: 'nonstop' } | { kind: 'number'; n: number } | { kind: 'time'; window: 'morning' | 'afternoon' | 'evening' | 'night' | 'earliest' | 'latest' }
+export type FlightPick = { kind: 'cheapest' } | { kind: 'pick' } | { kind: 'nonstop' } | { kind: 'number'; n: number } | { kind: 'time'; window: 'morning' | 'afternoon' | 'evening' | 'night' | 'earliest' | 'latest' }
 
 /** "Go ahead and book the cheapest option", "book #2", "book the non-stop". Null when it is not a booking request. */
 export function flightBookingRequest(text: string): FlightPick | null {
@@ -33,6 +34,8 @@ export function flightBookingRequest(text: string): FlightPick | null {
   const rest = (m[1] || '').toLowerCase()
   // 6 Nov live: "Book a dentist for Thursday afternoon" was read as "book the afternoon flight". A pick refers to the
   // list Gogo showed ("the evening one", "#2"); "a/an <something>" or "… for <when>" is a new booking request.
+  // 11 Nov: results now name one recommendation; "book my pick" / "your pick" / "the recommended one" mean it.
+  if (/^(?:(?:my|your|gogo'?s)\s+pick|(?:the\s+)?(?:recommended|suggested|picked)(?:\s+(?:one|flight|option))?|(?:the\s+)?one you (?:picked|recommended|suggested))$/.test(rest)) return { kind: 'pick' }
   if (/^(?:a|an|some|my)\b/.test(rest) || /\bfor\b/.test(rest) || rest.split(/\s+/).filter(Boolean).length > 5) return null
   if (/\bnon[- ]?stop\b|\bdirect\b/.test(rest)) return { kind: 'nonstop' }
   const num = rest.match(/(?:#|option\s*|number\s*|no\.?\s*)(\d)\b/) || rest.match(/^(\d)$/)
@@ -42,9 +45,10 @@ export function flightBookingRequest(text: string): FlightPick | null {
   // 28 Oct live: "Book the evening one" — a time-of-day pick from the list Gogo showed.
   const tod = rest.match(/\b(morning|afternoon|evening|night|earliest|latest|early|late)\b/)
   if (tod) return { kind: 'time', window: (tod[1] === 'early' ? 'earliest' : tod[1] === 'late' ? 'latest' : tod[1]) as any }
-  if (/\b(?:cheapest|lowest|best|cheap)\b/.test(rest)) return { kind: 'cheapest' }
+  if (/\b(?:cheapest|lowest|cheap)\b/.test(rest)) return { kind: 'cheapest' }
+  if (/\bbest\b/.test(rest)) return { kind: 'pick' }
   // "book it", "book that flight", "book this", "book the flight", "book the ticket"
-  if (/^(?:it|that|this|that flight|this flight|the flight|flight|the ticket|ticket|that one|this one|the option|option)$/.test(rest) || rest === '') return { kind: 'cheapest' }
+  if (/^(?:it|that|this|that flight|this flight|the flight|flight|the ticket|ticket|that one|this one|the option|option)$/.test(rest) || rest === '') return { kind: 'pick' }
   return null
 }
 
@@ -93,6 +97,8 @@ export async function loadLastFlightResult(actor: AgentActor): Promise<LastFligh
 
 export function pickFlight(options: BrowserFlightOption[], pick: FlightPick): BrowserFlightOption | null {
   if (pick.kind === 'cheapest') return options[0] || null
+  // The flight the result recommended, by the same rule and the same list order (flight-pick.ts).
+  if (pick.kind === 'pick') { const c = chooseFlightPick(options); return (c ? options[c.n - 1] : options[0]) || null }
   if (pick.kind === 'nonstop') return options.find(o => o.stops === 0) || null
   if (pick.kind === 'time') {
     const mins = (o: BrowserFlightOption) => { const m = String(o.departure || '').match(/(\d{1,2}):(\d{2})\s*([AP]M)/i); return m ? (Number(m[1]) % 12 + (/p/i.test(m[3]) ? 12 : 0)) * 60 + Number(m[2]) : NaN }
@@ -451,7 +457,7 @@ async function runFlightBooking(params: { actor: AgentActor; surface: AgentSurfa
   const last = await loadLastFlightResult(actor)
   const newer = older && last?.context?.startDate === older[1] ? null : await newerFlightSearchPending(actor, last?.startedAt || null).catch(() => null)
   if (newer?.failed) return waiting(`Your latest search${newer.route ? ` (${newer.route}` : ''}${newer.date ? `${newer.route ? ', ' : ' ('}${newer.date})` : newer.route ? ')' : ''} didn't get live fares, so there's nothing from it to book. Send the search again${last ? `, or say "book from the ${last.context.startDate} results"` : ''}.`)
-  if (newer) return waiting(`I'm still searching${newer.route ? ` ${newer.route}` : ''}${newer.date ? ` for ${newer.date}` : ''}. I'll send the options here in a minute or two; then say "book 1" (or "book the cheapest") and I'll book from those results, not the earlier search.`)
+  if (newer) return waiting(`I'm still searching${newer.route ? ` ${newer.route}` : ''}${newer.date ? ` for ${newer.date}` : ''}. I'll send the options here in a minute or two; then say "book" and a number and I'll book from those results, not the earlier search.`)
   if (!last) return null
   const option = pickFlight(last.options, pick)
   if (!option) return waiting(pick.kind === 'nonstop' ? 'None of the options I showed is non-stop. Tell me which number to book, for example “book #1”.' : pick.kind === 'time' ? `None of the options I showed leaves in the ${pick.window}. Tell me which number to book, for example “book #1”.` : 'Which one should I book? Tell me the number from the list, for example “book #1”.')
