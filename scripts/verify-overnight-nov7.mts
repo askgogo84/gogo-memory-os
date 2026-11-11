@@ -71,3 +71,14 @@ console.log('Overnight (7 Nov) replays passed')
   assert.doesNotMatch(src.slice(src.indexOf("context.kind==='hotel'"), src.indexOf("context.kind==='hotel'") + 400), /curated\.map/)
   console.log('PASS round-trip booking hint and fallback links')
 }
+
+// 11 Nov (owner: "concise like Instinct"): start message and failure message stay short.
+{
+  const { flightSearchStartedText } = await import('../lib/agent/travel-research')
+  const rt = flightSearchStartedText({ originLabel: 'Bengaluru', originCode: 'BLR', destinationLabel: 'Goa', destinationCode: 'GOI', departDate: '2026-12-20', returnDate: '2026-12-22', tripType: 'round_trip' } as any)
+  assert.ok(rt.length < 200, `round-trip start is short: ${rt.length}`)
+  assert.match(rt, /round trip\.\n\nBest round-trip fares for exactly these dates coming shortly\.$/)
+  const src = readFileSync('lib/agent/travel-research.ts', 'utf8')
+  assert.match(src, /Couldn't get live fares for \$\{context\.routeLabel\} just now\.\\n\\nLive prices \(nothing is booked\): \$\{liveLink\}\\n\\nSend it again in a few minutes to retry\./)
+  console.log('PASS concise flight replies')
+}

@@ -338,7 +338,7 @@ assert.equal(tables.agent_runs[0].metadata_json.context.destination.code,'BOM')
 tables.agent_runs.length=0;tables.conversations.length=0
 const response=await web.POST(new NextRequest('https://fixture.invalid/api/dashboard/chat',{method:'POST',headers:{origin:'https://fixture.invalid','content-type':'application/json'},body:JSON.stringify({text})}))
 assert.equal(response.status,200);const reply=await response.json()
-assert.equal(reply.handledBy,'travel-research-queued');assert.match(reply.text,/cheapest fares for exactly these dates/)
+assert.equal(reply.handledBy,'travel-research-queued');assert.match(reply.text,/fares for exactly these dates coming shortly/)
 assert.equal(browserAttempts,0,'the incoming request must not launch the slow browser')
 assert.equal(searches,0,'the incoming request must not perform fallback network searches')
 const duplicate=await queue.enqueueTravelResearch({actor,surface:'web',text})
@@ -357,7 +357,7 @@ assert.equal(browserAttempts,3,'17 Oct: an unreadable flight page is retried up 
 assert.equal(browserDeadline,Clock.now()+240000,'real worker → queue → research → adapter retains 30s for completion')
 assert.equal(tables.agent_runs[0].metadata_json.notified,undefined,'failed publication stays eligible')
 assert.doesNotMatch(tables.agent_runs[0].metadata_json.result_text,/₹4,999/,'undated fallback fare is withheld')
-assert.match(tables.agent_runs[0].metadata_json.result_text,/could not|couldn't read live fares|not completed live|could not find/i)
+assert.match(tables.agent_runs[0].metadata_json.result_text,/could not|couldn't get live fares|not completed live|could not find/i)
 const failedBrowserStep=tables.agent_steps.find(step=>step.run_id===reply.runId)
 assert.equal(JSON.stringify(failedBrowserStep.output_json.browserReadDiagnostics),JSON.stringify([
   {phase:'plan',reason:'unsupported_field',proposed:3,accepted:0},
@@ -371,7 +371,7 @@ assert.equal(JSON.stringify(tables.agent_activity.find(row=>row.run_id===reply.r
 failPublish=false
 await worker.processTravelResearchQueue(Clock.now()+270000)
 await worker.processTravelResearchQueue(Clock.now()+270000)
-assert.equal(tables.conversations.filter(r=>r.role==='assistant'&&!/background|cheapest fares for exactly these dates/.test(r.content)).length,1,'web publishes once after recovery')
+assert.equal(tables.conversations.filter(r=>r.role==='assistant'&&!/background|fares for exactly these dates coming shortly/.test(r.content)).length,1,'web publishes once after recovery')
 assert.equal(sent,0,'web completion never sends to WhatsApp')
 
 // Final phone result uses the receipt outbox; a rejection cannot mark notified.
