@@ -1163,9 +1163,11 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         if (eventReply) {
           // Shadow comparison for the looping brain (owner only, off unless GOGO_BRAIN_LOOP_USERS is set; never replies).
           if (process.env.GOGO_BRAIN_LOOP_USERS || process.env.GOGO_BRAIN_LOOP_LIVE_USERS) await import('@/lib/agent/brain').then(m => m.scheduleLoopShadow({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), forwarded: Boolean(forwardedMessage), surface: 'whatsapp' }, null, 'events')).catch(() => {})
+          // Plain words for the draft status header (lib/agent/voice.ts: by rule, no model; off unless GOGO_VOICE lists the owner).
+          const eventSaid = process.env.GOGO_VOICE ? await import('@/lib/agent/voice').then(m => m.inGogosVoice({ owner: String(resolvedUser.telegramId), reply: eventReply, kind: 'events' }), () => eventReply) : eventReply
           await saveConversation(resolvedUser.telegramId, 'user', text)
-          await saveConversation(resolvedUser.telegramId, 'assistant', eventReply)
-          await sendWhatsAppMessage(from, eventReply)
+          await saveConversation(resolvedUser.telegramId, 'assistant', eventSaid)
+          await sendWhatsAppMessage(from, eventSaid)
           return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
         }
       }

@@ -17,7 +17,7 @@ ok(ev > at('isStopMessage(') && ev > at('checkWhatsAppAccess('), 'after STOP and
 const block = route.slice(route.lastIndexOf('let eventsCheckedFor', ev), ev + 1800)
 ok(/entry\.offerEventsEarly\(\{ owner: String\(resolvedUser\.telegramId\), text, forwarded: Boolean\(forwardedMessage\), approval: Boolean\(approvalIntent\(text\)\), reservation: isRestaurantReservationRequest\(text\) \|\| isSportsVenueRequest\(text\) \}\)/.test(block) && block.indexOf('offerEventsEarly(') < block.indexOf('resolveAgentActor('), 'the early offer is decided before any database read, from owner, forwarding and approval')
 ok(/!preserveFriendFlow && !callCommand && process\.env\.VERCEL_ENV && \(process\.env\.GOGO_EVENTS === '1' \|\| process\.env\.GOGO_EVENTS_OWNERS\)/.test(block), 'flag-gated, and friend flows and call commands are left alone')
-ok(/if \(eventReply\) \{[\s\S]{0,1200}sendWhatsAppMessage\(from, eventReply\)[\s\S]{0,200}return new NextResponse/.test(block), 'an Events reply goes only to the organizer who wrote, and stops routing')
+ok(/if \(eventReply\) \{[\s\S]{0,1800}sendWhatsAppMessage\(from, eventSaid\)[\s\S]{0,200}return new NextResponse/.test(block) && /const eventSaid = process\.env\.GOGO_VOICE \? [^\n]+ : eventReply\n/.test(block), 'an Events reply goes only to the organizer who wrote, and stops routing')
 ok(!/sendWhatsAppMessage\((?!from)/.test(block), 'nobody else is messaged from here')
 ok(/eventsChecked: eventsCheckedFor === text/.test(route), 'the shared handler is told when this exact text was already offered to Events')
 ok(/!params\.eventsChecked&&eventsEnv\.VERCEL_ENV/.test(pm), 'so it does not ask Events (and its model) a second time')
