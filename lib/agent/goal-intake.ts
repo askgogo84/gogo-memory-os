@@ -390,7 +390,7 @@ export function startedText(plan: IntakePlan, quick: Map<string, { status: strin
     else if (g.note === 'event_not_started') lines.push(`⏸ ${g.title}: I need a bit more to start this event. Tell me about it on its own (whose, when, how many).`)
     else lines.push(`⏸ ${g.title}: I couldn’t start this one. Ask me about it on its own.`)
   }
-  lines.push('', surface === 'web' ? 'You can leave this page; I’ll keep going. Each result appears here in the chat and on your Tasks page. I won’t message you on WhatsApp about these.' : 'You can close WhatsApp; I’ll keep going and message you as each one finishes. Everything is on your Tasks page too.')
+  lines.push('', surface === 'web' ? 'You can leave this page; I’ll keep going. Each result appears here in the chat and on your Tasks page. I won’t send a WhatsApp message for each result.' : 'You can close WhatsApp; I’ll keep going and message you as each one finishes. Everything is on your Tasks page too.')
   return lines.join('\n')
 }
 

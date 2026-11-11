@@ -242,10 +242,12 @@ export async function resumePersistentGeneralPlan(params:{actor:AgentActor;runId
     const line = result.status === 'completed' ? `✅ ${title}: finished. The result is on your Tasks page.`
       : ['failed', 'blocked', 'outcome_unknown', 'cancelled'].includes(String(result.status)) ? `⚠️ ${title}: I could not finish this. The details are on your Tasks page.` : ''
     // Written once: only the caller that sets the marker on the run writes the line.
-    const latest = line ? await runMetadata(params.runId, params.actor) : null
-    const { data: claimed } = latest && !(latest.metadata_json as any)?.goal_web_outcome_at
+    // The run has already finished: a failure to write this line is logged and never fails the run or the sweep.
+    const latest = line ? await runMetadata(params.runId, params.actor).catch(() => null) : null
+    const { data: claimed, error: claimError } = latest && !(latest.metadata_json as any)?.goal_web_outcome_at
       ? await supabaseAdmin.from('agent_runs').update({ metadata_json: { ...((latest.metadata_json as any) || {}), goal_web_outcome_at: new Date().toISOString() } }).eq('id', params.runId).eq('telegram_id', String(params.actor.legacyTelegramId)).is('metadata_json->>goal_web_outcome_at', null).select('id')
-      : { data: null }
+      : { data: null, error: null }
+    if (claimError) console.error('GOAL_WEB_OUTCOME_CLAIM_FAILED:', String(claimError.code || 'error').slice(0, 20))
     if (line && Array.isArray(claimed) && claimed.length === 1) {
       const { error } = await supabaseAdmin.from('conversations').insert([{ telegram_id: String(params.actor.legacyTelegramId), role: 'assistant', content: line }])
       if (error) console.error('GOAL_WEB_OUTCOME_SAVE_FAILED:', String(error.code || 'error').slice(0, 20))
