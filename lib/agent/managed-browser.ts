@@ -1,4 +1,4 @@
-import {createHash} from 'node:crypto'
+import {createHash,randomBytes} from 'node:crypto'
 import {isIP} from 'node:net'
 import {browserPageAllowlist,FLIGHT_BOOKING_HANDOFF_SITES} from './browser-page-network'
 import {SANDBOX_WORKDIR,browserSandboxNameFor} from './secure-browser-bootstrap'
@@ -11,7 +11,7 @@ const metadataPath=`${SANDBOX_WORKDIR}/managed-browser.json`
 type Session={id:string;scope:string;fingerprint:string}
 // Anchor Browser (Addendum 6 pilot): its own records beside Browserbase's, so switching a user between providers never
 // mixes a Browserbase Context with an Anchor profile, and turning the pilot off leaves the Browserbase login untouched.
-type AnchorState={profiles:Record<string,string>;session?:Session;pending?:string}
+type AnchorState={profiles:Record<string,string>;session?:Session&{startedAt?:number;minutes?:number};pending?:string;pendingAt?:number}
 export type ManagedState={owner:string;contexts:Record<string,string>;session?:Session;pending?:string;anchor?:AnchorState}
 type Store={load:()=>Promise<ManagedState|null>;save:(state:ManagedState)=>Promise<void>}
 type Env=Record<string,string|undefined>
@@ -155,8 +155,9 @@ export async function resolveManagedSession(owner:string,url:string,store:Store,
 export const ANCHOR_API='https://api.anchorbrowser.io/v1'
 export function anchorEnabledForSandbox(sandboxName:string,env:Env=process.env,nameFor:(userId:string)=>string=defaultSandboxName){
   if(!env.ANCHOR_API_KEY)return false
-  const ids=String(env.GOGO_BROWSER_ANCHOR_USERS||'').split(',').map(x=>x.trim()).filter(x=>uuid.test(x))
-  // Commerce has its own owner namespace (userId:commerce): the listed user covers both.
+  const ids=String(env.GOGO_BROWSER_ANCHOR_USERS||'').split(',').map(x=>x.trim().toLowerCase()).filter(x=>uuid.test(x))
+  // The general and commerce namespaces (userId, userId:commerce). Per-store comparison sandboxes
+  // (userId:commerce:<store>) stay on Browserbase in this pilot.
   return ids.some(id=>nameFor(id)===sandboxName||nameFor(`${id}:commerce`)===sandboxName)
 }
 const defaultSandboxName=(userId:string)=>browserSandboxNameFor(userId)
@@ -183,18 +184,22 @@ export function anchorSessionConfig(profile:string,ownerDigest:string,scope:stri
       web_bot_auth:{active:webBotAuth},
       headless:{active:false},
       viewport:{width:1280,height:900},
-      sensitive_data_mask:{active:true},
+      // Off: masking may blank fields the executor reads; AskGogo's own redaction (secure-browser-redaction) applies.
+      sensitive_data_mask:{active:false},
     },
   }
 }
 function anchorConnection(data:any,apiKey:string){
   let u:URL
   try{u=new URL(String(data?.cdp_url||''))}catch{throw Error('anchor_connection_missing')}
-  if(u.protocol!=='wss:'||u.username||u.password||!(u.hostname==='anchorbrowser.io'||u.hostname.endsWith('.anchorbrowser.io')))throw Error('anchor_connection_invalid')
+  if(u.protocol!=='wss:'||u.username||u.password||u.port||!/^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.anchorbrowser\.io$/.test(u.hostname))throw Error('anchor_connection_invalid')
   // The connection URL goes into the sandbox where web pages run. It must never carry the account API key.
   if(apiKey&&(u.toString().includes(apiKey)||u.toString().includes(encodeURIComponent(apiKey))))throw Error('anchor_connection_embeds_api_key')
-  return {endpoint:u.toString(),host:u.hostname}
+  // The sandbox may reach any Anchor connect host (a redirect between them must not break the run); nothing else.
+  return {endpoint:u.toString(),host:'*.anchorbrowser.io'}
 }
+export const ANCHOR_ENDED=['ended','completed','terminated','failed','closed','stopped','expired']
+const ANCHOR_LIVE=['running','active','idle']
 export async function resolveAnchorSession(owner:string,url:string,store:Store,env:Env=process.env,fetcher:typeof fetch=fetch,opts:{keepAlive?:boolean}={}){
   const key=String(env.ANCHOR_API_KEY||'')
   if(!key)throw Error('anchor_configuration_missing')
@@ -212,38 +217,54 @@ export async function resolveAnchorSession(owner:string,url:string,store:Store,e
     if(!response.ok)throw Error(`anchor_provider_http_${response.status}`)
     try{return await response.json()}catch{throw Error('anchor_invalid_response')}
   }
-  // A session request whose outcome is unknown blocks new ones (two writers on one profile), as for Browserbase.
-  if(a.pending)throw Error('anchor_setup_outcome_unknown')
-  const profile=a.profiles[scope]||`gogo-${digest.slice(0,24)}-${createHash('sha256').update(scope).digest('hex').slice(0,16)}`
-  if(!/^gogo-[0-9a-f]{24}-[0-9a-f]{16}$/.test(profile))throw Error('anchor_profile_invalid')
+  // A session request whose outcome is unknown blocks new ones (two writers on one profile). Any session it may have
+  // created ends at its own cap (20 minutes), so the block lifts by itself after 25 minutes.
+  if(a.pending){
+    if(Number.isFinite(a.pendingAt)&&Date.now()-Number(a.pendingAt)>25*60_000){delete a.pending;delete a.pendingAt;await save()}
+    else throw Error('anchor_setup_outcome_unknown')
+  }
+  // A random name, stored on first use: a lost state file or another deployment sharing the key can never attach to
+  // this owner's signed-in profile by guessing its name (it starts a fresh profile instead).
+  const profile=a.profiles[scope]||`gogo-${randomBytes(16).toString('hex')}`
+  if(!/^gogo-[0-9a-f]{32}$/.test(profile))throw Error('anchor_profile_invalid')
   const fingerprint=createHash('sha256').update(JSON.stringify({provider:'anchor',scope,policy:browserPageAllowlist(url),domains:managedAllowedDomains(url),version:1,persistent})).digest('hex')
   if(a.session){
     const id=a.session.id
     if(!/^[A-Za-z0-9-]{8,80}$/.test(id))throw Error('anchor_session_invalid')
-    const current:any=await api(`sessions/${id}`).catch((error:any)=>/_http_404$/.test(String(error?.message||''))?null:Promise.reject(error))
-    const live=current?.data||current
-    const status=String(live?.status||'').toLowerCase()
-    if(live&&['running','active','idle'].includes(status)&&a.session.scope===scope&&a.session.fingerprint===fingerprint&&live?.cdp_url){
-      return {...anchorConnection(live,key),id:`${ANCHOR_SESSION_PREFIX}${id}`,newSession:false,scope,provider:'anchor' as const,release:async()=>{await api(`sessions/${id}`,'DELETE')}}
+    const read=async()=>{
+      const r:any=await api(`sessions/${id}`).catch((error:any)=>/_http_404$/.test(String(error?.message||''))?null:Promise.reject(error))
+      const d=r?.data||r
+      return d?{status:String(d.status||'').toLowerCase(),cdp:d.cdp_url}:null
     }
-    // Never two writers on one profile: end the old session first and wait for the profile to be written back.
-    if(live&&!['ended','completed','terminated','failed','closed'].includes(status))await api(`sessions/${id}`,'DELETE').catch(()=>{})
-    await new Promise(resolve=>setTimeout(resolve,Number(env.GOGO_ANCHOR_PROFILE_SETTLE_MS||5000)))
+    const current=await read()
+    const minutes=Number(a.session.minutes)||5, started=Number(a.session.startedAt)||0
+    const timeLeft=started+minutes*60_000-Date.now()
+    if(current&&ANCHOR_LIVE.includes(current.status)&&current.cdp&&a.session.scope===scope&&a.session.fingerprint===fingerprint&&timeLeft>60_000){
+      return {...anchorConnection({cdp_url:current.cdp},key),id:`${ANCHOR_SESSION_PREFIX}${id}`,newSession:false,scope,provider:'anchor' as const,release:async()=>{await api(`sessions/${id}`,'DELETE')}}
+    }
+    // Never two writers on one profile: a new session starts only once the old one is confirmed gone.
+    if(current&&!ANCHOR_ENDED.includes(current.status)){
+      await api(`sessions/${id}`,'DELETE').catch((error:any)=>/_http_404$/.test(String(error?.message||''))?null:Promise.reject(Error('anchor_previous_session_closing')))
+      const after=await read().catch(()=>({status:'unknown',cdp:null}))
+      if(after&&!ANCHOR_ENDED.includes(after.status))throw Error('anchor_previous_session_closing')
+    }
+    const settle=Number(env.GOGO_ANCHOR_PROFILE_SETTLE_MS??5000)
+    await new Promise(resolve=>setTimeout(resolve,Number.isInteger(settle)&&settle>=0&&settle<=30000?settle:5000))
     delete a.session;await save()
   }
   a.profiles[scope]=profile
-  a.pending='session';await save()
+  a.pending='session';a.pendingAt=Date.now();await save()
   const created:any=await api('sessions','POST',anchorSessionConfig(profile,digest,scope,persistent,String(env.VERCEL_ENV||''),managedAllowedDomains(url),String(env.GOGO_ANCHOR_WEB_BOT_AUTH||'')==='1')).catch(async(error:any)=>{
     // A 4xx answer means nothing was created, so the request is not "outcome unknown".
-    if(/^anchor_provider_http_4\d\d$/.test(String(error?.message||''))){delete a.pending;await save()}
+    if(/^anchor_provider_http_4\d\d$/.test(String(error?.message||''))){delete a.pending;delete a.pendingAt;await save()}
     throw error
   })
   const data=created?.data||{}
   const id=String(data.id||'')
   if(!/^[A-Za-z0-9-]{8,80}$/.test(id))throw Error('anchor_session_invalid')
   let conn:{endpoint:string;host:string}
-  try{conn=anchorConnection(data,key)}catch(error){await api(`sessions/${id}`,'DELETE').catch(()=>{});delete a.pending;await save();throw error}
-  a.session={id,scope,fingerprint};delete a.pending;await save()
+  try{conn=anchorConnection(data,key)}catch(error){await api(`sessions/${id}`,'DELETE').catch(()=>{});delete a.pending;delete a.pendingAt;await save();throw error}
+  a.session={id,scope,fingerprint,startedAt:Date.now(),minutes:persistent?20:5};delete a.pending;delete a.pendingAt;await save()
   return {...conn,id:`${ANCHOR_SESSION_PREFIX}${id}`,newSession:true,scope,provider:'anchor' as const,release:async()=>{await api(`sessions/${id}`,'DELETE')}}
 }
 async function releaseAnchorSession(id:string,env:Env,fetcher:typeof fetch){

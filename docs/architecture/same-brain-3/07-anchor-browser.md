@@ -21,7 +21,7 @@ Confirmed missing: no second managed provider; no hosted "connect your account" 
 
 ## 2. Anchor against Browserbase
 
-Sources: Anchor's own documentation, read 11 Nov. Nothing here is measured yet.
+Sources: Anchor's own documentation and pricing page as read on 11 Nov 2026; not independently verified. Nothing here is measured yet.
 
 | Capability | Browserbase (in use) | Anchor (documented) | Note |
 |---|---|---|---|
@@ -43,12 +43,12 @@ Two corrections to the brief we were given: Web Bot Auth is listed under Growth 
 
 Inside the existing resolver, not a new browser system:
 
-- `resolveAnchorSession`: same contract as `resolveManagedSession` (endpoint, host, id, newSession, release). Profile per owner and site (`gogo-<owner hash>-<site hash>`), stored beside the Browserbase Context ids; neither touches the other.
-- Session request: recording off, CAPTCHA solving off, extra stealth off, India proxy, the same top-level domains as Browserbase, 5-minute cap (20 for takeover and commerce), idle 2 minutes, one-time live view, sensitive-data masking on, Web Bot Auth only with `GOGO_ANCHOR_WEB_BOT_AUTH=1`.
-- One writer per profile: an existing session is reused if it is live and for the same site and policy; otherwise it is ended before a new one starts. An unknown create outcome blocks new sessions, as for Browserbase.
-- The connection URL must be `wss://*.anchorbrowser.io` and must not contain the account API key (it is handed to the sandbox where pages run). If it does, the session is ended and the run fails with `anchor_connection_embeds_api_key`.
-- Release by id: ids are marked `anchor:` so teardown and sweeps call Anchor's `DELETE /v1/sessions/{id}`, and the Browserbase live-view lookup is never sent an Anchor id.
-- Who gets it: only users listed by exact `users.id` in `GOGO_BROWSER_ANCHOR_USERS`, only while `GOGO_BROWSER_RUNTIME=browserbase`, only with `ANCHOR_API_KEY`. Never chosen automatically after a failure.
+- `resolveAnchorSession`: same contract as `resolveManagedSession` (endpoint, host, id, newSession, release). One profile per owner and site, with a random name stored on first use beside the Browserbase Context ids; neither touches the other. A lost state file starts a fresh profile (a new sign-in) rather than attaching to a live one.
+- Session request: recording off, CAPTCHA solving off, extra stealth off, India proxy, the same top-level domains as Browserbase, 5-minute cap (20 for takeover and commerce), idle 2 minutes, one-time live view, Anchor's data masking off (it may blank fields the executor reads; AskGogo's own redaction applies), Web Bot Auth only with `GOGO_ANCHOR_WEB_BOT_AUTH=1`.
+- One writer per profile: an existing session is reused only if it reports live, is for the same site and policy, and has more than a minute left. Otherwise a new session starts only after the old one is confirmed ended; if that cannot be confirmed the run fails (`anchor_previous_session_closing`) and nothing new is started. An unknown create outcome blocks new sessions for 25 minutes (longer than any session can live).
+- The connection URL must be `wss://<sub>.anchorbrowser.io` with no port, and must not contain the account API key (it is handed to the sandbox where pages run). If it does, the session is ended and the run fails with `anchor_connection_embeds_api_key`.
+- Release by id: ids are marked `anchor:` so teardown calls Anchor's `DELETE /v1/sessions/{id}`, and the Browserbase live-view lookup is never sent an Anchor id. The orphan sweep lists Browserbase only; an Anchor session left behind ends at its own 5- or 20-minute cap.
+- Who gets it: only users listed by exact `users.id` in `GOGO_BROWSER_ANCHOR_USERS`, only while `GOGO_BROWSER_RUNTIME=browserbase`, only with `ANCHOR_API_KEY`. Never chosen automatically after a failure. Covers the user's general and commerce browsers; per-store comparison browsers stay on Browserbase in this pilot, so measurements compare like with like only for the general and commerce flows.
 - Log line `MANAGED_BROWSER_PROVIDER` records which provider served each run (no URLs, ids or content).
 
 Not built: Anchor identities/hosted connect, Web Bot Auth trials, Action Index, any checkout. Each waits on the measurements below.

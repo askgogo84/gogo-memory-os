@@ -17,9 +17,9 @@ eq([mb.anchorEnabledForSandbox(mine, env), mb.anchorEnabledForSandbox(mineCommer
 
 // 2. The session request.
 const cfg = mb.anchorSessionConfig('gogo-aaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb', 'f'.repeat(64), 'swiggy.com', false, 'production', ['swiggy.com'], false)
-eq([cfg.session.recording.active, cfg.session.proxy, cfg.session.timeout, cfg.session.domain_allowlist, cfg.browser.profile, cfg.browser.captcha_solver.active, cfg.browser.extra_stealth.active, cfg.browser.web_bot_auth.active, cfg.session.live_view.one_time_url, cfg.browser.sensitive_data_mask.active],
-  [false, { active: true, type: 'anchor_proxy', country_code: 'in' }, { max_duration: 5, idle_timeout: 2 }, ['swiggy.com'], { name: 'gogo-aaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb', persist: true }, false, false, false, true, true],
-  'no recording, India egress, 5-minute cap, the same top-level domains, a persistent named profile, no CAPTCHA solving, no stealth, Web Bot Auth off, one-time live view, data masking on')
+eq([cfg.session.recording.active, cfg.session.proxy, cfg.session.timeout, cfg.session.domain_allowlist, cfg.browser.profile, cfg.browser.captcha_solver.active, cfg.browser.extra_stealth.active, cfg.browser.web_bot_auth.active, cfg.session.live_view.one_time_url],
+  [false, { active: true, type: 'anchor_proxy', country_code: 'in' }, { max_duration: 5, idle_timeout: 2 }, ['swiggy.com'], { name: 'gogo-aaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb', persist: true }, false, false, false, true],
+  'no recording, India egress, 5-minute cap, the same top-level domains, a persistent named profile, no CAPTCHA solving, no stealth, Web Bot Auth off, one-time live view')
 eq(mb.anchorSessionConfig('p', 'f'.repeat(64), 's', true, 'production', [], false).session.timeout.max_duration, 20, 'takeover and persistent commerce: the 20-minute owner-lock window')
 ok(!JSON.stringify(cfg).includes(KEY), 'the API key is never in the request body')
 
@@ -39,7 +39,7 @@ const fetcher: typeof fetch = async (url, init: any) => {
 const run = (url: string, owner = mine, keepAlive = false) => mb.resolveAnchorSession(owner, url, store as any, env, fetcher, { keepAlive })
 
 const a = await run('https://www.swiggy.com/instamart')
-eq([a.provider, a.newSession, a.id.startsWith('anchor:'), a.host, a.scope], ['anchor', true, true, 'connect.anchorbrowser.io', 'swiggy.com'], 'a new Anchor session, its id marked as Anchor')
+eq([a.provider, a.newSession, a.id.startsWith('anchor:'), a.host, a.scope], ['anchor', true, true, '*.anchorbrowser.io', 'swiggy.com'], 'a new Anchor session, its id marked as Anchor')
 ok(calls.every(c => c.headers['anchor-api-key'] === KEY && !String(c.path).includes(KEY)), 'the key goes only in the header')
 ok(!JSON.stringify(state).includes(KEY) && !JSON.stringify(state).includes('wss://'), 'stored state holds identifiers only: no key, no connection URL')
 const profile = calls[0].body.browser.profile.name
@@ -98,4 +98,38 @@ const { readFileSync } = await import('node:fs')
 const src = readFileSync(new URL('../lib/agent/managed-browser.ts', import.meta.url), 'utf8')
 ok(/const session=anchorEnabledForSandbox\(owner\)\?await resolveAnchorSession\(owner,url,store,process\.env,fetch,\{keepAlive\}\):await resolveManagedSession\(owner,url,store,process\.env,fetch,\{keepAlive\}\)/.test(src), 'Anchor only for listed users; everyone else on Browserbase as before')
 eq(await mb.managedLiveViewUrl('anchor:sess-000123', { BROWSERBASE_API_KEY: 'x' } as any, async () => { throw new Error('must not be called') }), null, 'no Browserbase live-view call for an Anchor session (the takeover falls back to the screenshot relay)')
+// Review, 11 Nov: one writer per profile is enforced, not hoped for.
+{ const fresh = async () => { state = null; sessions = {}; calls = []; return run('https://www.swiggy.com') }
+  await fresh()
+  ok(/^gogo-[0-9a-f]{32}$/.test(calls.at(-1)!.body.browser.profile.name), 'the profile name is random and stored, not derived from the owner')
+  const p1 = calls.at(-1)!.body.browser.profile.name
+  state = null; await run('https://www.swiggy.com')
+  ok(calls.at(-1)!.body.browser.profile.name !== p1, 'a lost state file starts a fresh profile instead of attaching to the live one')
+  // An unexpected status and a DELETE that fails: no second session.
+  await fresh()
+  const id = Object.keys(sessions)[0]
+  sessions[id].status = 'starting'
+  const failingDelete: typeof fetch = async (u, i: any) => (i?.method === 'DELETE' ? new Response('{}', { status: 503 }) : fetcher(u, i))
+  const posts = calls.filter(c => c.method === 'POST').length
+  await assert.rejects(() => mb.resolveAnchorSession(mine, 'https://www.makemytrip.com', store as any, env, failingDelete), /anchor_previous_session_closing/); checks++
+  eq(calls.filter(c => c.method === 'POST').length, posts, 'no new session while the old one may still be writing')
+  ok(state.anchor.session?.id === id, 'and the old session is still on record')
+  // DELETE accepted but the session still reports running: still refused.
+  const stuck: typeof fetch = async (u, i: any) => (i?.method === 'DELETE' ? new Response('{}') : fetcher(u, i))
+  sessions[id].status = 'running'
+  await assert.rejects(() => mb.resolveAnchorSession(mine, 'https://www.makemytrip.com', store as any, env, stuck), /anchor_previous_session_closing/); checks++
+  // A session near its cap is not reused.
+  await fresh(); state.anchor.session.startedAt = Date.now() - 4.5 * 60_000
+  const before = calls.filter(c => c.method === 'POST').length
+  await run('https://www.swiggy.com')
+  eq(calls.filter(c => c.method === 'POST').length, before + 1, 'a session with under a minute left is replaced, not reused')
+  // An unknown outcome lifts by itself after the longest possible session.
+  state.anchor.pending = 'session'; state.anchor.pendingAt = Date.now() - 26 * 60_000; delete state.anchor.session
+  await run('https://www.swiggy.com'); ok(!state.anchor.pending, 'a stale unknown-outcome marker is cleared after 25 minutes')
+  state.anchor.pending = 'session'; state.anchor.pendingAt = Date.now() - 60_000; delete state.anchor.session
+  await assert.rejects(() => run('https://www.swiggy.com'), /anchor_setup_outcome_unknown/); checks++
+  // Connection host rules; upper-case ids in the setting still match.
+  for (const bad of ['wss://anchorbrowser.io/x', 'wss://connect.anchorbrowser.io:8443/x', 'wss://anchorbrowser.io.evil.com/x']) { state = null; cdp = () => bad; await assert.rejects(() => run('https://www.swiggy.com'), /anchor_connection_invalid/).then(() => checks++) }
+  cdp = (i: string) => `wss://connect.anchorbrowser.io?sessionId=${i}`
+  ok(mb.anchorEnabledForSandbox(mine, { ...env, GOGO_BROWSER_ANCHOR_USERS: USER.toUpperCase() }), 'an id pasted in capitals still matches') }
 console.log(`ANCHOR_PILOT_OK ${checks} checks`)
