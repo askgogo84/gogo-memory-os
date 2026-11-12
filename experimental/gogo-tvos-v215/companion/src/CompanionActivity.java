@@ -35,7 +35,7 @@ import java.util.concurrent.Executors;
 import org.json.JSONObject;
 
 public final class CompanionActivity extends GogoHubActivity {
-    private enum Page { HOME, PROFILES, ASK, PAIR, SETTINGS, CONTROLS }
+    private enum Page { HOME, PROFILES, ASK, PAIR, SETTINGS, VOICE_SETTINGS, CONTROLS }
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final ExecutorService microphone = Executors.newSingleThreadExecutor();
@@ -531,6 +531,15 @@ public final class CompanionActivity extends GogoHubActivity {
         }
         if (!answer.isEmpty() && profiles.enabled(slot, "playback", false))
             addAction(column, "Read answer aloud", "Uses an installed offline voice", this::speak);
+        addAction(column, "Voice settings", "Microphone and offline reply playback", () -> {
+            if (busy) return;
+            rememberDraft();
+            wakeArmed = false;
+            stopWake();
+            stopPlayback();
+            status = "";
+            showVoiceSettings();
+        });
         focus(column, first);
     }
 
@@ -786,6 +795,15 @@ public final class CompanionActivity extends GogoHubActivity {
         }
     }
 
+    private void showVoiceSettings() {
+        LinearLayout column = screen(Page.VOICE_SETTINGS, "Voice settings  ·  " + profileName(slot));
+        int first = column.getChildCount();
+        toggle(column, "Microphone", "voice", false);
+        toggle(column, "Offline reply playback", "playback", false);
+        addAction(column, "Back to AskGogo", "Return to your question", this::showAsk);
+        focus(column, first);
+    }
+
     private void showSettings() {
         LinearLayout column = screen(Page.SETTINGS, "Settings  ·  " + profileName(slot));
         int first = column.getChildCount();
@@ -803,6 +821,8 @@ public final class CompanionActivity extends GogoHubActivity {
                 new AlertDialog.Builder(this).setTitle("Unpair this profile?")
                     .setNegativeButton("Cancel", null)
                     .setPositiveButton("Unpair", (dialog, which) -> unpair()).show());
+        } else {
+            addAction(column, "Connect AskGogo", "Open a personal profile to use voice settings", this::openAssistant);
         }
         focus(column, first);
     }
@@ -811,7 +831,7 @@ public final class CompanionActivity extends GogoHubActivity {
         int index = column.getChildCount();
         addAction(column, label, profiles.enabled(slot, key, initial) ? "On" : "Off", () -> {
             profiles.toggle(slot, key, initial);
-            showSettings();
+            redraw();
             View replacement = ((ScrollView) root.getChildAt(0)).getChildAt(0);
             focus((LinearLayout) replacement, index);
         });
@@ -880,11 +900,16 @@ public final class CompanionActivity extends GogoHubActivity {
         if (page == Page.PAIR) showPair();
         else if (page == Page.ASK) showAsk();
         else if (page == Page.SETTINGS) showSettings();
+        else if (page == Page.VOICE_SETTINGS) showVoiceSettings();
         else if (page == Page.PROFILES) showProfiles();
         else showHub();
     }
 
     @Override public void onBackPressed() {
+        if (page == Page.VOICE_SETTINGS) {
+            showAsk();
+            return;
+        }
         if (page == Page.HOME && !marketsOpen()) {
             super.onBackPressed();
             return;
