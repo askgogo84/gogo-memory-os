@@ -38,6 +38,8 @@ export default function PairTv() {
   const [signedIn, setSignedIn] = useState<boolean | null>(null)
   const [pairingEnabled, setPairingEnabled] = useState(false)
   const [message, setMessage] = useState('Checking your account…')
+  const [approvedId, setApprovedId] = useState<string | null>(null)
+  const waitingId = approvedId ?? devices.find(device => !device.approved_at)?.id ?? null
 
   async function load() {
     const response = await fetch('/api/tv/account', { cache: 'no-store' })
@@ -80,8 +82,10 @@ export default function PairTv() {
       } else {
         setReview(null)
         if (body.action !== 'revoke') setPairing({ code: '' })
+        if (body.action === 'approve') setApprovedId(body.id)
+        if (body.action === 'revoke' && body.id === approvedId) setApprovedId(null)
         await load()
-        setMessage(body.action === 'approve' ? 'TV approved. AskGogo will open on your TV automatically.'
+        setMessage(body.action === 'approve' ? 'TV approved. Waiting for AskGogo to open on your TV.'
           : body.action === 'deny' ? 'Pairing declined.' : 'TV access revoked.')
       }
     } catch {
@@ -111,6 +115,54 @@ export default function PairTv() {
     if (review) heading.current?.focus()
   }, [review])
 
+  useEffect(() => {
+    if (!waitingId || busy) return
+    const controller = new AbortController()
+    const deadline = Date.now() + 300_000
+    let timer: ReturnType<typeof setTimeout>
+
+    async function refreshConnection() {
+      try {
+        const response = await fetch('/api/tv/account', { cache: 'no-store', signal: controller.signal })
+        if (controller.signal.aborted) return
+        if (response.status === 401) {
+          setSignedIn(false)
+          setDevices([])
+          setApprovedId(null)
+          setMessage('Sign in to AskGogo to check your TV.')
+          return
+        }
+        if (response.ok) {
+          const { devices: next }: { devices: Device[] } = await response.json()
+          if (controller.signal.aborted) return
+          setDevices(next)
+          const current = next.find(device => device.id === waitingId)
+          if (!current || current.approved_at) {
+            setApprovedId(null)
+            setMessage(current ? 'TV connected. AskGogo is ready on your TV.'
+              : 'This pairing ended. Open AskGogo on your TV for a fresh code.')
+            return
+          }
+        }
+      } catch {
+        if (controller.signal.aborted) return
+      }
+      if (Date.now() < deadline) {
+        timer = setTimeout(refreshConnection, 3000)
+      } else {
+        setDevices(previous => previous.filter(device => device.id !== waitingId))
+        setApprovedId(null)
+        setMessage('The TV connection could not be confirmed. Check the TV for a current code.')
+      }
+    }
+
+    timer = setTimeout(refreshConnection, 2500)
+    return () => {
+      controller.abort()
+      clearTimeout(timer)
+    }
+  }, [waitingId, busy])
+
   function rememberForSignIn() {
     if (!pairing.code) return
     try {
@@ -136,7 +188,7 @@ export default function PairTv() {
               onClick={() => void update({ action: 'approve', id: review.id, ...pairing })}>Approve this TV</button>
           </div>
         </section>
-      ) : (
+      ) : !waitingId && (
         <form className="grid gap-3" onSubmit={event => {
           event.preventDefault()
           if (!busy) void update({ action: 'review', ...pairing })
@@ -148,7 +200,7 @@ export default function PairTv() {
         </form>
       ))}
       {devices.length > 0 && <section className="grid gap-3">
-        <h2 className="text-xl font-semibold">Connected TVs</h2>
+        <h2 className="text-xl font-semibold">TV access</h2>
         {devices.map(device => <div key={device.id} className="rounded-xl border p-4">
           <p className="font-medium">{device.device_name ?? 'Android TV'} · {device.id.slice(0, 8)}</p>
           <p>{device.expires_at ? `Expires ${new Date(device.expires_at).toLocaleString()}` : 'Waiting for the TV to connect'}</p>
