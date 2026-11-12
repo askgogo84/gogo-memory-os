@@ -341,7 +341,7 @@ public final class GogoBrainActivity extends Activity
             showAssistant();
         });
         action(c,"Disconnect this TV session",this::logout);
-        c.addView(label("Voice is push-to-talk; passive Hey Gogo wake word is not "
+        c.addView(label("Voice is push-to-talk; try exact commands: open YouTube, open Netflix, volume up or go home. Passive Hey Gogo wake word is not "
                 + "enabled. All commands are submitted only after explicit confirmation.",
                 13,0xFF9FB8CA));
         prompt.requestFocus();
@@ -352,6 +352,24 @@ public final class GogoBrainActivity extends Activity
         String text=prompt.getText().toString().trim();
         if(text.isEmpty()) {state("Type or dictate a request first.");return;}
         if(text.length()>2000) {state("Request is too long.");return;}
+        // Tiny local TV-control allowlist. Never interpret arbitrary instructions
+        // as Android commands. All commands require an explicit confirmation.
+        String tvDescription = GogoTvControls.description(text);
+        if (tvDescription != null) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Control this TV?")
+                    .setMessage(tvDescription)
+                    .setNegativeButton("Cancel",null)
+                    .setPositiveButton("Do it",(dialog,which)->{
+                        try {
+                            boolean ok=GogoTvControls.execute(this,text);
+                            state(ok ? "TV command requested." : "That TV app/control is unavailable.");
+                        } catch (SecurityException e) {
+                            state("This TV firmware does not permit that control.");
+                        }
+                    }).show();
+            return;
+        }
         // Confirmation prevents inadvertent actions triggered by microphone playback.
         new AlertDialog.Builder(this)
                 .setTitle("Send to AskGogo?")
