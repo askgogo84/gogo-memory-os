@@ -4,6 +4,7 @@ $ProgressPreference="SilentlyContinue"
 $base="https://raw.githubusercontent.com/askgogo84/gogo-memory-os/feature/gogo-tvos-v215-hub-20261112/experimental/gogo-tvos-v215"
 $src=Join-Path $OutputDir "src\in\askgogo\tvhub"
 $res=Join-Path $OutputDir "res\values"
+$drawableDir=Join-Path $OutputDir "res\drawable"
 $gen=Join-Path $OutputDir "gen"
 $classes=Join-Path $OutputDir "classes"
 $dex=Join-Path $OutputDir "dex"
@@ -14,7 +15,7 @@ if($rootPath.Length -lt 14 -or $rootPath -eq [System.IO.Path]::GetPathRoot($root
 foreach($folder in @($gen,$classes,$dex,$build)){
   if(Test-Path -LiteralPath $folder){Remove-Item -LiteralPath $folder -Recurse -Force}
 }
-foreach($folder in @($OutputDir,$src,$res,$gen,$classes,$dex,$build)){New-Item -ItemType Directory -Force -Path $folder|Out-Null}
+foreach($folder in @($OutputDir,$src,$res,$drawableDir,$gen,$classes,$dex,$build)){New-Item -ItemType Directory -Force -Path $folder|Out-Null}
 $manifest=Join-Path $OutputDir "AndroidManifest.xml"
 $hubFile=Join-Path $src "GogoHubActivity.java"
 $brainFile=Join-Path $src "GogoBrainActivity.java"
@@ -24,6 +25,7 @@ Invoke-WebRequest -UseBasicParsing -Uri "$base/GogoHubActivity.java" -OutFile $h
 Invoke-WebRequest -UseBasicParsing -Uri "$base/companion/GogoBrainActivity.java" -OutFile $brainFile
 Invoke-WebRequest -UseBasicParsing -Uri "$base/companion/AndroidManifest.xml" -OutFile $manifest
 Invoke-WebRequest -UseBasicParsing -Uri "$base/companion/res/values/strings.xml" -OutFile $stringsFile
+Invoke-WebRequest -UseBasicParsing -Uri "$base/companion/res/drawable/gogo_tv_icon.xml" -OutFile (Join-Path $drawableDir "gogo_tv_icon.xml")
 $hub=[System.IO.File]::ReadAllText($hubOrigin)
 $brain=[System.IO.File]::ReadAllText($brainFile)
 $xml=[System.IO.File]::ReadAllText($manifest)
