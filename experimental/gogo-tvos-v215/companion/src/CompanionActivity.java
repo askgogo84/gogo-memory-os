@@ -44,6 +44,10 @@ public final class CompanionActivity extends GogoHubActivity {
     private int slot;
     private volatile int generation;
     private boolean foreground;
+    private boolean leavingByChoice;
+    private boolean microphonePermissionPending;
+    private long stoppedSessionDeadline;
+    private final Runnable expireStoppedSession = this::lockStoppedSession;
     private boolean busy;
     private String token;
     private String pending;
@@ -76,6 +80,13 @@ public final class CompanionActivity extends GogoHubActivity {
     @Override protected void onResume() {
         super.onResume();
         foreground = true;
+        leavingByChoice = false;
+        handler.removeCallbacks(expireStoppedSession);
+        if (stoppedSessionDeadline != 0 && SystemClock.elapsedRealtime() >= stoppedSessionDeadline) {
+            lockStoppedSession();
+        }
+        stoppedSessionDeadline = 0;
+        root.setVisibility(View.VISIBLE);
         schedulePoll(0);
     }
 
@@ -95,14 +106,31 @@ public final class CompanionActivity extends GogoHubActivity {
         super.onPause();
     }
 
+    @Override protected void onUserLeaveHint() {
+        leavingByChoice = true;
+        super.onUserLeaveHint();
+    }
+
     @Override protected void onStop() {
-        lock();
-        showHub();
+        if (token != null && !isFinishing() && (microphonePermissionPending || !leavingByChoice)) {
+            long grace = microphonePermissionPending ? 60_000 : 15_000;
+            stoppedSessionDeadline = SystemClock.elapsedRealtime() + grace;
+            root.setVisibility(View.INVISIBLE);
+            handler.postDelayed(expireStoppedSession, grace);
+        } else {
+            lockStoppedSession();
+        }
         super.onStop();
     }
 
+    private void lockStoppedSession() {
+        stoppedSessionDeadline = 0;
+        lock();
+        showHub();
+    }
+
     @Override protected void onDestroy() {
-        generation++;
+        lock();
         handler.removeCallbacksAndMessages(null);
         worker.shutdown();
         microphone.shutdownNow();
@@ -113,6 +141,7 @@ public final class CompanionActivity extends GogoHubActivity {
     private void lock() {
         generation++;
         busy = false;
+        microphonePermissionPending = false;
         revokeQuietly(sessionCandidate);
         if (temporarySession) revokeQuietly(token);
         resetPairing();
@@ -606,6 +635,7 @@ public final class CompanionActivity extends GogoHubActivity {
             return;
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            microphonePermissionPending = true;
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 7);
             return;
         }
@@ -633,7 +663,9 @@ public final class CompanionActivity extends GogoHubActivity {
 
     @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] grants) {
         super.onRequestPermissionsResult(request, permissions, grants);
-        if (request == 7 && page == Page.ASK && token != null) {
+        if (request != 7) return;
+        microphonePermissionPending = false;
+        if (page == Page.ASK && token != null) {
             status = grants.length > 0 && grants[0] == PackageManager.PERMISSION_GRANTED ?
                     "Microphone enabled. Select Record when ready." : "Microphone permission was declined.";
             showAsk();
@@ -669,6 +701,7 @@ public final class CompanionActivity extends GogoHubActivity {
         if (!canRecord()) return;
         rememberDraft();
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            microphonePermissionPending = true;
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 7);
             return;
         }
@@ -918,11 +951,7 @@ public final class CompanionActivity extends GogoHubActivity {
             cancelPairing();
             return;
         }
-        if (busy) {
-            lock();
-        } else if (page == Page.PAIR || page == Page.PROFILES) {
-            lock();
-        }
+        if (busy) return;
         status = "";
         showHub();
     }
