@@ -1,0 +1,74 @@
+name: Gogo tvOS v2.1.5 Native Extension
+on:
+  push:
+    branches: [feature/gogo-tvos-v215-hub-20261112]
+    paths:
+      - 'experimental/gogo-tvos-v215/**'
+      - '.github/workflows/gogo-tvos-v215.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: gogo
+      - uses: actions/checkout@v4
+        with:
+          repository: techgenius1/tvOS-Launcher
+          ref: v2.1.5
+          path: upstream
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install API 34 SDK tools
+        run: |
+          set -euxo pipefail
+          test -n "$ANDROID_HOME"
+          SDKMANAGER="$(find "$ANDROID_HOME" -type f -name sdkmanager | head -n 1)"
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0"
+      - name: Safely inject Gogo TV module
+        run: |
+          set -euxo pipefail
+          python3 -m py_compile gogo/experimental/gogo-tvos-v215/patch_tvos_v215.py
+          python3 gogo/experimental/gogo-tvos-v215/patch_tvos_v215.py \
+            --upstream upstream \
+            --sources gogo/experimental/gogo-tvos-v215 \
+            --backup /tmp/tvos-original
+          grep -q "GogoWidgets.makeCard(host)" upstream/src/com/techgenius/tvoslauncher/HomeDashboard.java
+          grep -q "GogoHubActivity" upstream/AndroidManifest.xml
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          root=ET.parse("upstream/AndroidManifest.xml").getroot()
+          ns="{http://schemas.android.com/apk/res/android}"
+          filt=root.findall(".//intent-filter")
+          assert any(c.attrib.get(ns+"name")=="android.intent.category.HOME"
+                     for i in filt for c in i.findall("category"))
+          assert not any(a.attrib.get(ns+"name")==".GogoHubActivity" and
+                         a.find("intent-filter") is not None
+                         for a in root.findall(".//activity"))
+          print("TVOS_HOME_UNCHANGED_AND_GOGO_HUB_NOT_EXPORTED_OK")
+          PY
+      - name: Build native Java APK
+        run: |
+          set -euxo pipefail
+          cd upstream
+          chmod +x build.sh
+          ./build.sh
+      - name: Verify test package
+        run: |
+          set -e
+          test -s upstream/build/tvos-home.apk
+          sha256sum upstream/build/tvos-home.apk
+          ls -lh upstream/build/tvos-home.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gogo-tvos-v215-UNSIGNED-FOR-PRODUCTION-test-only
+          path: upstream/build/tvos-home.apk
+          retention-days: 3
