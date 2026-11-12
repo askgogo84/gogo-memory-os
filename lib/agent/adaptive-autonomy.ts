@@ -81,6 +81,14 @@ export async function capabilityPermissionLevel(telegramId:string|number,capabil
   return (data?.level as AgentPermissionLevel|undefined)||DEFAULT_LEVEL[capability]
 }
 
+/** Email at 'off' or 'read' means no drafts and no sends anywhere (Gmail commands, Events enquiries, the brain loop).
+ *  Null when drafting is allowed. A read failure throws. Sends treat that as blocked (fail closed); staging a draft
+ *  (Events, brain loop) may carry on, because nothing is sent without a send-time check that fails closed. */
+export async function emailDraftBlock(telegramId:string|number):Promise<'off'|'read'|null>{
+  const level=await capabilityPermissionLevel(telegramId,'email')
+  return level==='off'||level==='read'?level:null
+}
+
 export async function capabilityIsOff(telegramId:string|number,capability:AgentCapability){
   return (await capabilityPermissionLevel(telegramId,capability))==='off'
 }

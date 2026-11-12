@@ -242,12 +242,17 @@ export async function tryRunGmailContextCommand(params:{actor:AgentActor;text:st
 // already has. Checked only once the message is known to be an email draft or send, so other messages are not answered
 // with this. Drafts written elsewhere (an event's venue enquiry, a procedure follow-up) are not covered here; with the
 // switch off they cannot be staged or sent through this file.
-const EMAIL_OFF_TEXT='Email is currently off in your Gogo autonomy settings, so I have not drafted or sent anything. Say *set email autonomy to draft* to turn it back on.'
-async function emailSwitchedOff(actor:AgentActor){
-  const {capabilityIsOff}=await import('./adaptive-autonomy')
-  return (await capabilityIsOff(actor.legacyTelegramId,'email'))===true
+// 12 Nov: 'read' (read-only) blocks drafts and sends too, not only 'off'. A settings read failure blocks (fail closed).
+async function emailBlock(actor:AgentActor):Promise<'off'|'read'|'error'|null>{
+  const {emailDraftBlock}=await import('./adaptive-autonomy')
+  return emailDraftBlock(actor.legacyTelegramId).catch(()=>'error' as const)
 }
-const emailOffResult=()=>({runId:'gmail-email-off',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:EMAIL_OFF_TEXT,handledBy:'adaptive-autonomy'})
+const EMAIL_BLOCK_TEXT={
+  off:'Email is currently off in your Gogo autonomy settings, so I have not drafted or sent anything. Say *set email autonomy to draft* to turn it back on.',
+  read:'Email is set to read-only in your Gogo autonomy settings, so I have not drafted or sent anything. Say *set email autonomy to draft* to allow drafts.',
+  error:'I couldn’t check your email setting just now, so I have not drafted or sent anything. Please try again in a minute.',
+} as const
+const emailBlockedResult=(block:'off'|'read'|'error')=>({runId:'gmail-email-off',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:EMAIL_BLOCK_TEXT[block],handledBy:'adaptive-autonomy'})
 
 export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:string}){
   const raw=clean(params.text,2200)
@@ -276,7 +281,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
     const state=await getLatestFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft')
     if(!state||!isStrictlyFreshFollowupState(state,30)||!state.payload?.draft)return null
     if(await newerForeignSelection(params.actor,state))return gmailReferentClarification()
-    if(await emailSwitchedOff(params.actor))return emailOffResult()
+    {const block=await emailBlock(params.actor);if(block)return emailBlockedResult(block)}
     // A venue enquiry Gogo drafted for an event (lib/events): sendable only while the event still has the venue, time
     // and number it was written for. The event is read again here, so a change by any route withdraws it.
     if(typeof state.payload.draft.eventEnquiryFor==='string'){
@@ -301,7 +306,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
 
   const compose=parseGmailComposeCommand(raw)
   if(compose){
-    if(await emailSwitchedOff(params.actor))return emailOffResult()
+    {const block=await emailBlock(params.actor);if(block)return emailBlockedResult(block)}
     const access=await gmailAccess(params.actor)
     if(!access.ok)return {runId:'gmail-compose-needs-google',status:'paused' as const,capability:'email' as const,risk:'low' as const,text:'Connect Gmail first so I can find the recipient and prepare the draft. Nothing was sent.',handledBy:'gmail-send'}
     const threads=emailFromHeader(compose.target)?[]:await searchGmailThreads(access.accessToken,compose.target,20)
@@ -324,7 +329,7 @@ export async function tryRunGmailSendCommand(params:{actor:AgentActor;text:strin
 
   const parsed=parseGmailReplyCommand(raw)
   if(!parsed)return null
-  if(await emailSwitchedOff(params.actor))return emailOffResult()
+  {const block=await emailBlock(params.actor);if(block)return emailBlockedResult(block)}
   // Natural reply commands include nouns after the referent ("that exact email").
   // Treat the full phrase as selected-object context; never fuzzy-search it again.
   const contextual=/^(?:that|this|it)(?:\s+exact)?(?:\s+(?:email|mail|message|one))?$/i.test(parsed.target.trim())
@@ -393,7 +398,10 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
 
   // Switched off after the approval card was made: the approval does not outlive the switch. Nothing is claimed or
   // sent; the run stays as it was.
-  if(await emailSwitchedOff(params.actor))return {runId:params.runId,status:'paused' as const,capability:'email' as const,risk:'high' as const,text:'Email is currently off in your Gogo autonomy settings, so I have not sent this email. Say *set email autonomy to draft* to turn it back on.',handledBy:'adaptive-autonomy'}
+  // A read failure cannot be retried from the UI (only pending approvals are shown), so the run is closed as failed
+  // with a known outcome (nothing claimed or sent) rather than left queued with an approval nobody can reach.
+  {const block=await emailBlock(params.actor);if(block==='error'){const now=new Date().toISOString();const {error:closeError}=await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Email setting could not be read; nothing was sent.',progress:100,error:'email_setting_unreadable',completed_at:now,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg).in('status',['queued','waiting_approval']);if(closeError)console.error('GMAIL_SEND_SETTING_CLOSE_FAILED',JSON.stringify({step:'run',code:closeError.code||null}));else{const {error:apprError}=await supabaseAdmin.from('agent_approvals').update({status:'failed',resolved_at:now}).eq('id',approval.id).eq('telegram_id',tg);if(apprError)console.error('GMAIL_SEND_SETTING_CLOSE_FAILED',JSON.stringify({step:'approval',code:apprError.code||null}))}}
+  if(block)return {runId:params.runId,status:block==='error'?'failed' as const:'paused' as const,capability:'email' as const,risk:'high' as const,text:block==='error'?'I couldn’t check your email setting just now, so I have not sent this email. Nothing went out. Ask me for that email again in a minute and I’ll prepare it for approval.':block==='read'?'Email is set to read-only in your Gogo autonomy settings, so I have not sent this email. Say *set email autonomy to draft* to allow it.':'Email is currently off in your Gogo autonomy settings, so I have not sent this email. Say *set email autonomy to draft* to turn it back on.',handledBy:'adaptive-autonomy'}}
 
   const access=await gmailAccess(params.actor,{requireSend:true})
   if(!access.ok)throw new Error(access.reason||'gmail_send_unavailable')

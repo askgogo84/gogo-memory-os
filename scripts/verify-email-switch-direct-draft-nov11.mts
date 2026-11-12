@@ -43,6 +43,10 @@ ok(r && r.runId !== 'gmail-email-off' && reads.includes('agent_permissions'), 's
 level = 'draft'
 r = await run('draft an email to divya@example.com saying the launch moved to Friday')
 ok(r && r.runId !== 'gmail-email-off', 'switch on draft: carries on')
+// 12 Nov: read-only blocks drafting too, with its own wording.
+level = 'read'
+r = await run('draft an email to divya@example.com saying the launch moved to Friday')
+ok(r?.runId === 'gmail-email-off' && /read-only/.test(r.text) && /set email autonomy to draft/.test(r.text), 'email read-only: stopped, with the way back')
 // Messages that are not an email draft or send are not answered with the switch, and it is not even read.
 level = 'off'
 for (const t of ['remind me to call Divya at 5', 'what is on my calendar tomorrow', 'send it']) {
@@ -52,19 +56,28 @@ for (const t of ['remind me to call Divya at 5', 'what is on my calendar tomorro
 // Wiring: each of the three places that draft or stage a send checks first.
 const { readFileSync } = await import('node:fs')
 const src = readFileSync(new URL('../lib/agent/gmail-send.ts', import.meta.url), 'utf8')
-eq((src.match(/if\(await emailSwitchedOff\(params\.actor\)\)return emailOffResult\(\)/g) || []).length, 3, 'send-it, new email and reply each stop when email is off')
+eq((src.match(/\{const block=await emailBlock\(params\.actor\);if\(block\)return emailBlockedResult\(block\)\}/g) || []).length, 3, 'send-it, new email and reply each stop when email is off')
 const sendIt = src.indexOf("if(/^(?:send\\s+it|send\\s+this\\s+reply)$/i.test(raw)){")
-ok(sendIt > 0 && src.indexOf('emailSwitchedOff(params.actor)', sendIt) < src.indexOf('stageApproval(params.actor,state.payload.draft', sendIt), '"send it" is stopped before an approval is staged')
+ok(sendIt > 0 && src.indexOf('emailBlock(params.actor)', sendIt) < src.indexOf('stageApproval(params.actor,state.payload.draft', sendIt), '"send it" is stopped before an approval is staged')
 const compose = src.indexOf('const compose=parseGmailComposeCommand(raw)')
-ok(src.indexOf('emailSwitchedOff(params.actor)', compose) < src.indexOf("saveFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft'", compose), 'a new email is stopped before a draft is stored')
+ok(src.indexOf('emailBlock(params.actor)', compose) < src.indexOf("saveFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft'", compose), 'a new email is stopped before a draft is stored')
 // The reply phrasing is exercised for real, and an approved send is not carried out once email is off.
 level = 'off'
 r = await run('reply to Nithin email saying ok')
 eq(r?.runId, 'gmail-email-off', 'a reply is stopped')
 const exec = src.indexOf('export async function executeApprovedGmailSend')
-const gate = src.indexOf('if(await emailSwitchedOff(params.actor))return {runId:params.runId', exec)
+const gate = src.indexOf('{const block=await emailBlock(params.actor);if(block===', exec)
 ok(exec > 0 && gate > src.indexOf('assertApprovalBinding({', exec) && gate < src.indexOf("gmailAccess(params.actor,{requireSend:true})", exec) && gate < src.indexOf("update({status:'running',summary:'Sending approved Gmail reply.'", exec), 'an approved send checks the switch after the approval is verified and before Gmail is read or the run is claimed')
 ok(/so I have not sent this email/.test(src), 'and says it was not sent')
+// Review 12 Nov: a settings read failure closes the run as failed (nothing sent) instead of promising a dashboard retry that does not exist.
+{ const body = src.slice(gate, src.indexOf("gmailAccess(params.actor,{requireSend:true})", exec)); ok(/block==='error'\)\{[\s\S]*?agent_runs'\)\.update\(\{status:'failed',[^}]*error:'email_setting_unreadable'/.test(body) && /\.in\('status',\['queued','waiting_approval'\]\)/.test(body), 'a read failure at send time closes the queued run as failed, outcome known'); ok(!/dashboard tasks to try again/.test(src) && /Nothing went out/.test(body), 'and does not promise a retry the dashboard cannot do'); ok(/GMAIL_SEND_SETTING_CLOSE_FAILED/.test(body) && /agent_approvals'\)\.update\(\{status:'failed',resolved_at:now\}\)/.test(body), 'the close is logged on failure and the approval is closed with the run'); ok(!/reply to that email again/.test(body), 'the wording fits a reply, a new email and a venue enquiry') }
 // The way back is not intercepted: an autonomy command is not an email draft.
 for (const t of ['set email autonomy to draft', 'set email autonomy to off']) { r = await run(t); ok(r === null && !reads.includes('agent_permissions'), `the recovery command passes through: ${t}`) }
+// Review 12 Nov: the procedure follow-up is gated before a run starts and again at send time (fail closed there).
+{ const pe = readFileSync(new URL('../lib/procedures/entry.ts', import.meta.url), 'utf8')
+  ok(pe.indexOf('emailDraftBlock(actor.legacyTelegramId)') > 0 && pe.indexOf('emailDraftBlock(actor.legacyTelegramId)') < pe.indexOf('startProcedureRun({'), 'a follow-up is not started while email is off or read-only')
+  const pio = readFileSync(new URL('../lib/procedures/io.ts', import.meta.url), 'utf8')
+  const at = pio.indexOf("=== 'email.follow_up:send'")
+  ok(at > 0 && pio.indexOf('emailDraftBlock', at) < pio.indexOf('gmailAccess(actor', at) && /catch\(\(\) => 'error' as const\)\n      if \(block\) throw/.test(pio), 'an approved follow-up checks again before Gmail and fails closed')
+  ok(/error:'I couldn’t check your email setting just now/.test(src), 'a settings read failure says so, not "email is off"') }
 console.log(`EMAIL_SWITCH_OK ${checks} checks`)

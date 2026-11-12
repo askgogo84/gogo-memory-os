@@ -153,6 +153,9 @@ export const productionIO: ProcedureIO = {
 
   async execute({ actor, def, node, context }) {
     if (`${def.id}:${node.id}` === 'email.follow_up:send') {
+      // 12 Nov: the email setting is checked again at send time; 'off', 'read' or an unreadable setting sends nothing.
+      const block = await import('@/lib/agent/adaptive-autonomy').then(m => m.emailDraftBlock(actor.legacyTelegramId)).catch(() => 'error' as const)
+      if (block) throw new ProcedureExecuteError(block === 'error' ? 'email_setting_unreadable' : `email_autonomy_${block}`, true) // nothing attempted
       const { gmailAccess } = await import('@/lib/agent/gmail-send')
       const access = await gmailAccess(actor, { requireSend: true })
       if (!access.ok) throw new ProcedureExecuteError(String(access.reason || 'gmail_send_unavailable'), true) // nothing attempted

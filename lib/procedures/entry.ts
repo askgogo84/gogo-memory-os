@@ -38,6 +38,11 @@ export async function tryProcedureAsk(actor: AgentActor, text: string, surface: 
   if (!ask) return null
   const { proceduresEnabledFor } = await import('./registry')
   if (!proceduresEnabledFor(String(actor.legacyTelegramId))) return null
+  // 12 Nov: email at 'off' or 'read' means no follow-up draft or send (review: this path was not covered).
+  const block = await import('@/lib/agent/adaptive-autonomy').then(m => m.emailDraftBlock(actor.legacyTelegramId)).catch(() => 'error' as const)
+  if (block === 'off') return 'Email is currently off in your Gogo autonomy settings, so I have not drafted or sent anything. Say *set email autonomy to draft* to turn it back on.'
+  if (block === 'read') return 'Email is set to read-only in your Gogo autonomy settings, so I have not drafted or sent anything. Say *set email autonomy to draft* to allow drafts.'
+  if (block === 'error') return 'I couldn’t check your email setting just now, so I have not drafted or sent anything. Please try again in a minute.'
   try {
     const { startProcedureRun } = await import('./runtime')
     const r = await startProcedureRun({ actor, procedureId: 'email.follow_up', inputs: { target: ask.target }, objective: text.slice(0, 200), source: surface === 'whatsapp' ? 'whatsapp-follow-up' : 'chat-follow-up' })
