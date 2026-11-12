@@ -256,7 +256,7 @@ export default function Dashboard() {
                   className="mt-4 w-full rounded-2xl border border-[#ddd6cc] bg-white px-4 py-3.5 text-center text-2xl tracking-[0.32em] outline-none focus:border-[#25D366]"
                 />
                 <button type="submit" disabled={otpBusy || otp.length !== 6} className="mt-3 w-full rounded-2xl bg-[#3e2312] px-5 py-3.5 font-semibold text-white disabled:opacity-40">
-                  {otpBusy ? 'Checking…' : 'Verify & open dashboard'}
+                  {otpBusy ? 'Checking…' : postAuthTarget() === '/tv/pair' ? 'Verify and return to TV pairing' : 'Verify & open dashboard'}
                 </button>
                 <button type="button" disabled={resendIn > 0 || otpBusy} onClick={resendOtp} className="mt-3 w-full text-[14px] font-semibold text-[#714c77] disabled:text-[#b8a797]">
                   {resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}

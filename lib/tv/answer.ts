@@ -2,7 +2,6 @@ import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import { resolveAgentActor } from '@/lib/agent/actor'
 import { detectReadOnlyScheduleRequest } from '@/lib/agent/read-only-schedule'
 import { executeReadOnlyCalendarStep } from '@/lib/agent/calendar-read'
-import { askClaude } from '@/lib/services/claude'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { recallableMemoryText } from '@/lib/services/memory-index'
 import { sensitiveCategory } from '@/lib/agent/context-graph/recall'
@@ -27,6 +26,7 @@ export async function answerTvQuestion(owner: string, name: string | null, quest
   }
 
   // Same AskGogo conversational model, with no command executor, tools, saved history or vault access.
+  const { askClaude } = await import('@/lib/services/claude')
   const result = await askClaude(text, [], [], name || 'Gogo', '',
     'This is the shared TV surface. Answer briefly. For account actions or private saved information, direct the user to their phone.')
   if (/^\s*(?:\*{1,2})?(?:REMINDER|MEMORY|LIST_[A-Z]+|SEARCH)\b/im.test(result)) {
