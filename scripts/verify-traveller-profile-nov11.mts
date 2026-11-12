@@ -72,4 +72,7 @@ assert.match(readFileSync('supabase/migrations/20261111120000_gogo_traveller_pro
   assert.equal(await ex2.forgetTravellerProfile(owner), false, 'a real failure is reported')
 }
 assert.match(readFileSync('lib/agent/flight-booking.ts', 'utf8'), /\^\(\?:cancel\|stop\|never \?mind\|no\|nope\|reject\|skip/, 'REJECT while details are asked cancels')
+// 12 Nov live: agent_runs has no created_at (42703). Every agent_runs query in flight-booking uses started_at.
+{ const runQueries = fb.split("from('agent_runs')").slice(1).map(x => x.slice(0, 600))
+  for (const q of runQueries) assert.doesNotMatch(q.split('\n\n')[0].split(';')[0], /created_at/, 'agent_runs has no created_at') }
 console.log('PASS traveller profile: opt-in, exact owner, validated, forgettable, wired')
