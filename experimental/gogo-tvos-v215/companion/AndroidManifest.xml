@@ -5,8 +5,12 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <queries>
         <package android:name="dev.couchtv.ontv" />
+        <package android:name="com.google.android.youtube.tv" />
+        <package android:name="com.netflix.ninja" />
+        <package android:name="com.amazon.amazonvideo.livingroom" />
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
