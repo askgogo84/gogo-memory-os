@@ -321,7 +321,9 @@ export type EventDeps = { extract?: Extractor; db?: Db; now?: number; search?: i
   /** The email draft the person has waiting right now (to be sent with "send it"), if any. */
   pendingDraft?: () => Promise<Record<string, unknown> | null>; clearDraft?: () => Promise<void>; readPage?: import('./venue-enquiry').PageReader
   /** Starts the deeper, background read of the venue's own site in the cloud browser. True when it was started. */
-  queueBrowse?: (p: { event: EventRow; key: string; detail: import('./venue-enquiry').VenueLookupDetail }) => Promise<boolean> }
+  queueBrowse?: (p: { event: EventRow; key: string; detail: import('./venue-enquiry').VenueLookupDetail }) => Promise<boolean>
+  /** Email autonomy block for drafts ('off' / 'read'), null when drafting is allowed. */
+  emailBlock?: () => Promise<'off' | 'read' | null> }
 
 /** After a create or an edit: when the event now has a date, a named venue and a group size, look up how that venue
  *  takes group bookings and draft the enquiry (lib/events/venue-enquiry.ts). Once per event and venue. Bounded to a
@@ -346,6 +348,17 @@ async function venueNextStep(actor: AgentActor, owner: string, eventId: string, 
     await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key: 'withdrawn' }, deps.db).catch(() => {})
   }
   if (!v.needsVenueEnquiry(e, now)) { await withdraw(); return mine ? WITHDRAWN : null }
+  // 12 Nov: email at 'off' or 'read' means no enquiry draft (and no lookup to draft from). Said once per
+  // venue/date/headcount, like the enquiry itself. If the setting cannot be read the draft is still prepared: nothing
+  // is sent without "send it" and an approved card, and the send path checks the setting again and fails closed.
+  const block = deps.emailBlock ? await deps.emailBlock() : await import('@/lib/agent/adaptive-autonomy').then(m => m.emailDraftBlock(actor.legacyTelegramId)).catch(() => null)
+  if (block) {
+    const k0 = v.enquiryKey(e)
+    if ((await store.ownerAuditDetails(owner, e.id, 'event.venue_enquiry_drafted', deps.db))[0]?.key === `blocked:${k0}`) return null
+    await withdraw()
+    await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key: `blocked:${k0}`, found: 'email_' + block }, deps.db).catch(() => {})
+    return `Next step: booking ${String(e.venue_name).replace(/[\r\n]+/g, ' ').slice(0, 120)}. ${block === 'read' ? 'Email is set to read-only' : 'Email is off'} in your Gogo autonomy settings, so I have not drafted an enquiry. Say *set email autonomy to draft* if you want me to.`
+  }
   // One enquiry per venue, date and headcount; an edit that changes none of them does not offer it again.
   const key = v.enquiryKey(e)
   // Compared with the latest record only: going back to an earlier number, or coming back after a withdrawal, drafts again.

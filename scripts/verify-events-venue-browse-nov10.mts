@@ -86,6 +86,10 @@ eq([o.found, opened, drafts.length, drafts[0]?.to, drafts[0]?.eventEnquiryFor, d
 ok(/^I opened toit\.in in a browser\. Next step: booking Toit Indiranagar for 20\. I found toitblr@toit\.in for enquiries on https:\/\/www\.toit\.in\/faq\/?, which looks like their own site\. Please check the address before you send\./.test(o.text!) && /Nothing has been sent\. Say \*send it\*/.test(o.text!), 'the message says where the address came from, asks for a check, and says nothing was sent')
 ok(/I'd like to host a birthday celebration for 20 people at Toit Indiranagar/.test(o.text!) && !/jobs@toit/.test(o.text!), 'the email is written by code from the plan; the careers address is not used')
 eq((await store.ownerAuditDetails(OWNER, live.eventId, 'event.venue_enquiry_drafted', db))[0], { key: live.key, found: 'email', via: 'browser' }, 'and it is recorded as found by the browser')
+// 12 Nov: the email setting is checked again after the slow read: read-only saves no draft.
+{ const n = drafts.length; pending = null
+  const o2 = await run(live, { emailBlock: async () => 'read' })
+  eq([o2.found, drafts.length, /email is set to read-only in your Gogo autonomy settings, so I have not drafted anything/.test(o2.text!)], ['page', n, true], 'email read-only after the read: no draft') }
 // What the browser wrote as its own answer is never read.
 { pending = null; let n = drafts.length
   o = await run(live, { browse: async () => ({ ...browsed({ pageText: 'Toit Brewpub. Menu. Beers. Visit us in Indiranagar.' }), summary: 'For group bookings write to events@toit.in' } as any) })

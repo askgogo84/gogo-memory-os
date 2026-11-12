@@ -10,6 +10,8 @@ export const searchable = (v: unknown) => str(v, 200).replace(/[a-z0-9._%+-]+@[a
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: 'object' as const, properties, required })
 
 export type LoopToolDeps = {
+  /** Email autonomy block for drafts (off / read); null when drafting is allowed. */
+  emailBlock?: (actor: AgentActor) => Promise<'off' | 'read' | null>
   search?: (q: string, o?: { timeoutMs?: number }) => Promise<{ title: string; snippet: string; url: string }[]>
   listEvents?: (owner: string) => Promise<any[]>
   /** The email draft the person has waiting for "send it", if any (fresh within 30 minutes). */
@@ -71,6 +73,9 @@ async function saveEnquiryDraft(actor: AgentActor, input: Record<string, unknown
   const v = state.venue
   if (!v || !state.verified.has(v.email)) return 'Refused. Look up the venue with venue_contact first. A draft can only go to an address that tool verified in this turn.'
   if (state.prepared.length) return 'Refused. One draft per message. Finish.'
+  // 12 Nov: email at 'off' or 'read' means no draft.
+  const block = deps.emailBlock ? await deps.emailBlock(actor) : await import('./adaptive-autonomy').then(m => m.emailDraftBlock(actor.legacyTelegramId)).catch(() => null)
+  if (block) return `Not saved. The person's email setting is ${block === 'read' ? 'read-only' : 'off'}, so no draft may be made. Tell them that and finish.`
   const written = enquiryFromFacts({ venue: v.name, occasion: input.occasion, date: input.date, time: input.time, people: input.people, asks: input.asks, organizer: actor.name, timezone: actor.timezone })
   if (!written) return 'Refused. Give the occasion (one of the listed values), the date as YYYY-MM-DD, the time as HH:MM (24-hour) and the number of people, exactly as the person stated them. If the person has not stated one of these, do not guess: finish without a draft.'
   const fs = deps.pendingDraft && deps.saveDraft ? null : await import('@/lib/bot/handlers/followup-state')

@@ -246,6 +246,14 @@ ok(r && /Draft started/.test(r) && /could not look up how they take group bookin
 let tried = 0
 r = await say('make the outing 16 people', { action: 'update', event: 'Team outing', capacity: 16 }, { search: async () => { tried++; return [] } })
 ok(tried > 0, 'and it is tried again on the next change, not recorded as done')
+// 12 Nov: email at 'off' or 'read' means no enquiry is drafted, and it says so once.
+{ const before = drafts.length; let looked = 0
+  r = await say('Plan a farewell on 3 December at 7 pm for 12 people at Toit Indiranagar', { action: 'create', title: 'Farewell', kind: 'party', date: '2037-12-03', time: '19:00', capacity: 12, venue_name: 'Toit Indiranagar' }, { emailBlock: async () => 'read', search: async () => { looked++; return [] } })
+  ok(r && /Next step: booking Toit Indiranagar\. Email is set to read-only in your Gogo autonomy settings, so I have not drafted an enquiry\./.test(r) && drafts.length === before && looked === 0, 'email read-only: no lookup, no draft, and it says why')
+  r = await say('add a note: cake', { action: 'update', event: 'Farewell', description: 'Cake' }, { emailBlock: async () => 'read' })
+  ok(!r || !/Next step/.test(r), 'said once, not on every edit')
+  r = await say('make the farewell party 14 people', { action: 'update', event: 'Farewell', capacity: 14 }, { emailBlock: async () => 'off' })
+  ok(r && /Email is off in your Gogo autonomy settings, so I have not drafted an enquiry/.test(r) && drafts.length === before, 'email off: the same') }
 process.env.GOGO_EVENTS_VENUE_HELP = 'off'
 r = await say('Plan a reunion on 2 December at 6 pm for 15 people at Byg Brewski', { action: 'create', title: 'Reunion', kind: 'reunion', date: '2037-12-02', time: '18:00', capacity: 15, venue_name: 'Byg Brewski' })
 ok(r && !/Next step/.test(r), 'GOGO_EVENTS_VENUE_HELP=off switches it off')

@@ -43,6 +43,10 @@ ok(r && r.runId !== 'gmail-email-off' && reads.includes('agent_permissions'), 's
 level = 'draft'
 r = await run('draft an email to divya@example.com saying the launch moved to Friday')
 ok(r && r.runId !== 'gmail-email-off', 'switch on draft: carries on')
+// 12 Nov: read-only blocks drafting too, with its own wording.
+level = 'read'
+r = await run('draft an email to divya@example.com saying the launch moved to Friday')
+ok(r?.runId === 'gmail-email-off' && /read-only/.test(r.text) && /set email autonomy to draft/.test(r.text), 'email read-only: stopped, with the way back')
 // Messages that are not an email draft or send are not answered with the switch, and it is not even read.
 level = 'off'
 for (const t of ['remind me to call Divya at 5', 'what is on my calendar tomorrow', 'send it']) {
@@ -52,17 +56,17 @@ for (const t of ['remind me to call Divya at 5', 'what is on my calendar tomorro
 // Wiring: each of the three places that draft or stage a send checks first.
 const { readFileSync } = await import('node:fs')
 const src = readFileSync(new URL('../lib/agent/gmail-send.ts', import.meta.url), 'utf8')
-eq((src.match(/if\(await emailSwitchedOff\(params\.actor\)\)return emailOffResult\(\)/g) || []).length, 3, 'send-it, new email and reply each stop when email is off')
+eq((src.match(/\{const block=await emailBlock\(params\.actor\);if\(block\)return emailBlockedResult\(block\)\}/g) || []).length, 3, 'send-it, new email and reply each stop when email is off')
 const sendIt = src.indexOf("if(/^(?:send\\s+it|send\\s+this\\s+reply)$/i.test(raw)){")
-ok(sendIt > 0 && src.indexOf('emailSwitchedOff(params.actor)', sendIt) < src.indexOf('stageApproval(params.actor,state.payload.draft', sendIt), '"send it" is stopped before an approval is staged')
+ok(sendIt > 0 && src.indexOf('emailBlock(params.actor)', sendIt) < src.indexOf('stageApproval(params.actor,state.payload.draft', sendIt), '"send it" is stopped before an approval is staged')
 const compose = src.indexOf('const compose=parseGmailComposeCommand(raw)')
-ok(src.indexOf('emailSwitchedOff(params.actor)', compose) < src.indexOf("saveFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft'", compose), 'a new email is stopped before a draft is stored')
+ok(src.indexOf('emailBlock(params.actor)', compose) < src.indexOf("saveFollowupState(params.actor.legacyTelegramId,'gmail_reply_draft'", compose), 'a new email is stopped before a draft is stored')
 // The reply phrasing is exercised for real, and an approved send is not carried out once email is off.
 level = 'off'
 r = await run('reply to Nithin email saying ok')
 eq(r?.runId, 'gmail-email-off', 'a reply is stopped')
 const exec = src.indexOf('export async function executeApprovedGmailSend')
-const gate = src.indexOf('if(await emailSwitchedOff(params.actor))return {runId:params.runId', exec)
+const gate = src.indexOf('{const block=await emailBlock(params.actor);if(block)return {runId:params.runId', exec)
 ok(exec > 0 && gate > src.indexOf('assertApprovalBinding({', exec) && gate < src.indexOf("gmailAccess(params.actor,{requireSend:true})", exec) && gate < src.indexOf("update({status:'running',summary:'Sending approved Gmail reply.'", exec), 'an approved send checks the switch after the approval is verified and before Gmail is read or the run is claimed')
 ok(/so I have not sent this email/.test(src), 'and says it was not sent')
 // The way back is not intercepted: an autonomy command is not an email draft.
