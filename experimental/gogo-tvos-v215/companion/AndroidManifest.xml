@@ -20,7 +20,7 @@
     </queries>
     <application
         android:label="Gogo TV"
-        android:icon="@android:drawable/ic_menu_compass"
+        android:icon="@drawable/gogo_tv_icon"
         android:banner="@android:drawable/sym_def_app_icon"
         android:allowBackup="false"
         android:usesCleartextTraffic="false"
