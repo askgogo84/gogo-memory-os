@@ -32,14 +32,12 @@ MANIFEST_ADD = '''        <!-- Optional Gogo hub, never a HOME or LAUNCHER inten
         <activity android:name=".GogoHubActivity"
             android:exported="false"
             android:screenOrientation="landscape" />
-        <activity android:name=".GogoBrainActivity"
-            android:exported="false"
-            android:screenOrientation="landscape" />
 
 '''
 MANIFEST_QUERY = '    </queries>'
 MANIFEST_QUERY_ADD = '''        <!-- Existing local remote-control companion; optional. -->
         <package android:name="dev.couchtv.ontv" />
+        <package android:name="in.askgogo.tvhub" />
 '''
 
 def replace_once(text, old, new, label, already):
@@ -63,11 +61,7 @@ def main():
     manifest=root/"AndroidManifest.xml"
     widgets=pkg/"GogoWidgets.java"
     hub=pkg/"GogoHubActivity.java"
-    brain=pkg/"GogoBrainActivity.java"
-    controls=pkg/"GogoTvControls.java"
-    controls_source=args.sources/"companion/GogoTvControls.java"
-    brain_source=args.sources/"companion/GogoBrainActivity.java"
-    files=[hd,settings,manifest,args.sources/"GogoWidgets.java",args.sources/"GogoHubActivity.java",brain_source,controls_source]
+    files=[hd,settings,manifest,args.sources/"GogoWidgets.java",args.sources/"GogoHubActivity.java"]
     for f in files:
         if not f.is_file(): raise ValueError(f"Missing prerequisite: {f}")
 
@@ -87,7 +81,7 @@ def main():
         MANIFEST_ADD + MANIFEST_ACT, "manifest Activity", 'android:name=".GogoHubActivity"')
     xml = replace_once(xml, MANIFEST_QUERY,
         MANIFEST_QUERY_ADD + MANIFEST_QUERY,
-        "manifest package query", '<package android:name="dev.couchtv.ontv" />')
+        "manifest package query", '<package android:name="in.askgogo.tvhub" />')
 
     for target,source in [(widgets,args.sources/"GogoWidgets.java"),
                           (hub,args.sources/"GogoHubActivity.java")]:
@@ -96,18 +90,6 @@ def main():
             raise ValueError(f"Bad Java package: {source}")
         if target.exists() and target.read_text(encoding="utf-8") != body:
             raise ValueError(f"Existing file differs, not replacing: {target}")
-    brain_body=brain_source.read_text(encoding="utf-8")
-    if not brain_body.startswith("package in.askgogo.tvhub;"):
-        raise ValueError("Unexpected companion Brain package")
-    converted=brain_body.replace("package in.askgogo.tvhub;", "package com.techgenius.tvoslauncher;", 1)
-    if brain.exists() and brain.read_text(encoding="utf-8") != converted:
-        raise ValueError("Existing Brain differs; refusing overwrite")
-    controls_body=controls_source.read_text(encoding="utf-8")
-    if not controls_body.startswith("package in.askgogo.tvhub;"):
-        raise ValueError("Unexpected TV controls package")
-    controls_converted=controls_body.replace("package in.askgogo.tvhub;", "package com.techgenius.tvoslauncher;", 1)
-    if controls.exists() and controls.read_text(encoding="utf-8") != controls_converted:
-        raise ValueError("Existing TV controls differ; refusing overwrite")
     # Back up only files that would change; never overwrite the original backup.
     args.backup.mkdir(parents=True,exist_ok=True)
     for path,old,new in [(hd,oldHd,h),(settings,oldSettings,sett),(manifest,oldManifest,xml)]:
@@ -120,8 +102,6 @@ def main():
     for target,source in [(widgets,args.sources/"GogoWidgets.java"),
                           (hub,args.sources/"GogoHubActivity.java")]:
         if not target.exists(): shutil.copy2(source,target)
-    if not brain.exists(): brain.write_text(converted,encoding="utf-8")
-    if not controls.exists(): controls.write_text(controls_converted,encoding="utf-8")
 
     # Verify the existing launcher Home/Power code was not edited by this patch.
     assert 'android:name=".MainActivity"' in xml

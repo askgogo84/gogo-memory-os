@@ -24,14 +24,18 @@ final class GogoWidgets {
     private static final String ENABLE = "gogo_hub_widget_enabled";
     private GogoWidgets() {}
 
+    private static String profileKey(Context context) {
+        return ENABLE + ":" + Profiles.current(context).id;
+    }
+
     static boolean enabled(Context context) {
         return context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-                .getBoolean(ENABLE, false);
+                .getBoolean(profileKey(context), false);
     }
 
     static void setEnabled(Context context, boolean value) {
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-                .edit().putBoolean(ENABLE, value).apply();
+                .edit().putBoolean(profileKey(context), value).apply();
     }
 
     static View makeCard(final MainActivity activity) {

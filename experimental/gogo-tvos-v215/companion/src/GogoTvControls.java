@@ -1,6 +1,7 @@
 package in.askgogo.tvhub;
 
 import android.app.Activity;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.AudioManager;
@@ -28,9 +29,6 @@ final class GogoTvControls {
             case "open prime video":
             case "open amazon prime":
             case "launch prime video": return "Open Prime Video on this TV";
-            case "go home":
-            case "go to home":
-            case "open home": return "Return to TV Home";
             case "volume up":
             case "increase volume": return "Increase TV media volume";
             case "volume down":
@@ -65,19 +63,16 @@ final class GogoTvControls {
                         Toast.LENGTH_LONG).show();
                 return false;
             }
-            activity.startActivity(i);
-            return true;
-        }
-        if (input.equals("go home") || input.equals("go to home") || input.equals("open home")) {
-            Intent i = new Intent(Intent.ACTION_MAIN);
-            i.addCategory(Intent.CATEGORY_HOME);
-            i.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            activity.startActivity(i);
-            return true;
+            try {
+                activity.startActivity(i);
+                return true;
+            } catch (ActivityNotFoundException | SecurityException unavailable) {
+                return false;
+            }
         }
 
         AudioManager audio = (AudioManager) activity.getSystemService(Context.AUDIO_SERVICE);
-        if (audio == null) return false;
+        if (audio == null || audio.isVolumeFixed()) return false;
         int flags = AudioManager.FLAG_SHOW_UI;
         switch (input) {
             case "volume up":

@@ -1,35 +1,55 @@
-# Gogo TV on tvOS Launcher v2.1.5 — 12 Nov 2026
+# Gogo TV companion for Android TV
 
-## Verified upstream
-Upstream: https://github.com/techgenius1/tvOS-Launcher
-Latest published release: v2.1.5 (9 Nov 2026); source licensed Apache 2.0.
-Features already present: native fast liquid-glass dock, two Home looks, four dashboard widgets, three user profiles, per-profile app layouts, native weather, clock alignment, unlimited wallpapers/folder shuffle, button mapping, Secure ADB and settings backup/restore.
+Gogo TV installs as `in.askgogo.tvhub`. Open it from the existing launcher’s Apps row or pin it using the launcher’s normal dock settings. The companion has no Android Home role, accessibility service, or secure-settings permission. Its three PIN-protected profiles and Guest profile are independent of launcher profiles and wallpapers.
 
-## This experimental work
-- GogoWidgets.java adds one optional, default-OFF native dashboard tile with no network polling.
-- GogoHubActivity.java is a separate screen with AskGogo website shortcut, an on-demand official TradingView branded ticker, and existing Couch TV remote shortcut.
-- patch_tvos_v215.py inserts the widget, Settings toggle, and activity in the upstream v2.1.5 source. Original MainActivity and Home intent remain unchanged.
-- companion/AndroidManifest.xml + companion/build.sh package the same Hub as an independent, launchable app with package in.askgogo.tvhub.
+The [official techgenius1 v2.1.5 release](https://github.com/techgenius1/tvOS-Launcher/releases/tag/v2.1.5) and upstream default branch resolved to `463fa6c2a9b7322c4407f1d00db935ef09d20f4f` on 12 November 2026. The optional source patch builds an off-by-default dashboard tile scoped to the launcher’s current profile. Its activity can open the installed companion. CI compiles the patched launcher for source compatibility. Install only the independent companion on the TCL.
 
-## Recommended installation
-Use the independent Gogo TV companion first. It is a DIFFERENT Android package from the current tvOS Launcher and has no HOME intent, so it will not take over the Home button. It appears as an app that can be pinned to the tvOS dock.
-Build the companion with Android SDK API34 / build-tools34 and JDK17: from companion directory run build.sh (Linux/macOS), or use the CI artifact. Save your local dev.keystore securely if you want reliable updates. Do not upload keystore or API keys.
-The GitHub Actions artifact is an ephemeral-key test build, suitable for one-time side-load testing; subsequent update builds need the same signature.
-ADB must show device (not unauthorized) before installation. Last observed TLC BeyondTV2 ADB state was unauthorized at 192.168.29.122:5555. Do not revoke ADB authorizations or disable Google's original launcher.
+The TCL’s 12 November baseline confirmed Android 11 and Gadgetcue 2.0.5 (`com.sid.tvos`). Gadgetcue’s enabled accessibility service handles the Home key, while Android’s system Home resolves to the Google launcher. Couch TV v0.11 is already installed. These are device observations. The pinned techgenius1 source is a separate compatibility build.
 
-## Why NOT install the patched upstream launcher over the current app
-tvOS Launcher upstream official APK is release-signed. A newly compiled debug-signed fork cannot upgrade it in place without its release signing key, and uninstalling the official launcher risks losing its preferences and Home accessibility setup. Keep the tvOS fork build experimental; do not install over user's current launcher.
+## Companion features
 
-## Functional limitations
-- Markets uses TradingView official branded widget. Specific instruments may be unavailable or delayed. No Twelve Data Basic prices are displayed.
-- AskGogo website link will need a browser; the user's TCL previously had no browser handler. The hub reports the missing-browser state rather than claiming integration.
-- This version does not include secure TV pairing, hands-free Hey Gogo wake word, microphone/echo cancellation, voice access to memory, or personal account permissions.
-- Do not mistake the Couch TV remote opening for AskGogo assistant authentication.
+- Markets loads [TradingView’s official ticker tape](https://www.tradingview.com/widget-docs/widgets/tickers/ticker-tape/) only when selected. Verify the provider’s attribution, symbol coverage, and delay indicators on the TV WebView.
+- AskGogo uses the existing AskGogo model, owner-scoped calendar reader, and saved facts. The TV credential has the server-assigned `ask:read` scope. General answers receive the question and display name. Calendar reads use the paired account’s calendar connection. Ask “What do you remember about …?” to retrieve matching recent saved facts through the existing recall filters. Account actions, conversation history, vault access, and approval execution are outside the TV API.
+- In a personal profile, enable **Microphone** in Settings. **Record a question** starts a clip of up to 20 seconds. **Listen for Hey Gogo** arms the bundled offline detector for up to two minutes on the AskGogo screen. Wait for **Recording…** before speaking after wake. Use **Transcribe recording** to send the clip for transcription, then review the text before sending it as a question. The mic stops when the app leaves the foreground. Reply playback is opt-in, uses an installed offline voice, and pauses wake or recording around playback. Audio capture uses platform echo cancellation where available.
+- TV controls use local media volume and hand off to the existing Couch TV app (`dev.couchtv.ontv`). The latest published [Couch TV release](https://github.com/Seagey/couch-tv/releases/tag/v0.12) was v0.12 when checked. Continue using the installed version’s paired phone remote and device-side ADB setup. If controls fail, open Couch TV’s own connection screen and check its authorization independently. The companion starts no ADB listener and carries no Couch TV token.
+- In an unlocked profile, exact phrases such as “open YouTube” and “volume up” can run as local commands after on-screen confirmation. Settings has a per-profile switch for these commands. Use the physical remote’s Home key to invoke Gadgetcue’s remapping.
 
-## Tests
-1. In tvOS Settings -> System/About, back up launcher preferences.
-2. Verify actual installed launcher version and package once ADB authorizes.
-3. Test Gogo companion APK separately, and confirm it does not replace Home.
-4. Launch Markets and verify TradingView attribution/price timestamps and Back navigation.
-5. Verify original tvOS weather, profiles, wallpaper rotation, focus speed, and power/reboot behavior.
-6. Continue to device pairing only after identity, revocation, and consent review.
+## Pair against an isolated preview
+
+1. Use a preview tied to a disposable test database and test accounts. Apply `supabase/migrations/20261112100000_tv_pairing.sql` there and set `GOGO_TV_PAIRING=1` and `GOGO_TV_RATE_KEY` to a random secret of at least 32 characters in the preview environment. Use the existing preview dashboard sign-in and test-only WhatsApp, model, and calendar configuration. The public pairing start uses Vercel’s trusted client-IP header for throttling. `GOGO_TV_LOCAL_TEST=1` is a single rate bucket for local test setups without that header.
+2. Build the APK with `GOGO_TV_ORIGIN` set to the preview’s reachable HTTPS origin. The TV API blocks redirects. The CI APK uses `https://tv-preview.invalid` for guest/offline smoke tests.
+3. In **Profiles**, choose a personal slot and select **Get a TV pairing code**. On the phone, visit the exact HTTPS address shown by the TV. If signed out, sign in through the existing AskGogo WhatsApp OTP flow, then return to the pairing page. Enter the TV’s code, select **Approve TV**, select **Check pairing** on the TV, and set a private PIN.
+4. The TV code is single-use and expires in ten minutes. Active device credentials expire after 30 days. Revoke an individual credential from the phone’s pairing page or the unlocked TV profile’s Settings. The app locks and clears the on-screen question, answer, and audio when it leaves the foreground long enough to stop. Private settings and encrypted credentials are local to the selected profile.
+5. If a profile PIN is lost, revoke that TV entry on the phone before clearing the companion’s Android app data. Clearing its app data resets all of its local profiles and toggles.
+
+## Build and signing
+
+Use JDK 17, Python 3.11+, Android SDK platform 34 and build-tools 36.0.0. The source compatibility build also uses upstream’s build-tools 34.0.0. From `experimental/gogo-tvos-v215/companion`, run `./build.sh` on Linux, macOS, or Git Bash with `ANDROID_HOME` pointing to the SDK. On Windows, `Build-GogoTVCompanion-Windows.ps1` runs the same build. The build verifies the offline model and native dependencies against pinned SHA-256 digests.
+
+The default artifact is `build/gogo-tv-companion-test.apk`, signed with a local test key in `build/dev.keystore`. CI keys are disposable. Android requires the same signer for an in-place update. For a stable build, set `GOGO_TV_SIGNING_KEYSTORE`, `GOGO_TV_SIGNING_ALIAS`, `GOGO_TV_STORE_PASS`, and `GOGO_TV_KEY_PASS` in the build environment and increase `GOGO_TV_VERSION_CODE` for updates. The release artifact is `build/gogo-tv-companion-release.apk`. Keep signing material in the chosen secure store and record the APK SHA-256 and signer SHA-256 with each release.
+
+## TCL acceptance
+
+1. Use the physical remote to note the active launcher, selected profile, dock, wallpaper, and Home-key behavior. Use the launcher’s normal backup UI if available.
+2. Run `adb devices -l`. If the TV is unauthorized, leave the TV awake, reconnect only the TCL endpoint and accept the computer’s debugging prompt on the TV. Keep existing debugging authorizations in place. On a TV exposing the Wireless debugging pairing screen, pair the computer from that screen using its displayed port and code, then connect to the separate debugging port.
+3. Once the target shows `device`, record a baseline and install with the verified APK checksum and companion signer. Replace the placeholders with the observed target, launcher, APK, and SDK paths.
+
+   ```text
+   python tv_acceptance.py --adb <adb> --serial <target> probe
+   python tv_acceptance.py --adb <adb> --serial <target> --launcher <existing.package> snapshot --out tv-before.json
+   python tv_acceptance.py --adb <adb> --serial <target> --launcher <existing.package> install --baseline tv-before.json --apk <companion.apk> --sha256 <apk-sha256> --signer <cert-sha256> --aapt2 <aapt2> --apksigner <apksigner.jar>
+   python tv_acceptance.py --adb <adb> --serial <target> launch
+   ```
+
+4. Verify D-pad navigation and Back, Markets attribution and live loading, volume/mute, and the existing phone remote’s D-pad/playback using Couch TV. Verify Home from both Markets and AskGogo. Revisit all launcher profiles and wallpapers and repeat after a reboot. Compare the launcher, resolved Home, accessibility, and Couch TV against the baseline using the script’s `verify --baseline tv-before.json`.
+5. On a preview build, verify WhatsApp sign-in, one-time pairing, two different accounts in two slots, a locked profile after Home, and guest isolation. Ask each account for its calendar and verify the other account’s events are absent. Revoke one credential from the phone and verify the next TV request is rejected while the other profile still works.
+6. Test the physical microphone and remote. Verify permission denial, recording stop/discard, offline wake without traffic during listening, recording with the TV playing media, absence of wake on spoken replies, mic shutdown after Home, and voice feature toggles per profile. Measure false wakes and memory/load time on the TCL.
+
+## Rollback
+
+- To hide the companion while preserving its data, use `tv_acceptance.py --adb <adb> --serial <target> disable`. Use `enable` to restore it. Run the baseline comparison again. Keep the original launcher and Couch TV packages installed.
+- To suspend AskGogo TV access, switch the preview’s pairing flag off. Revoke credentials from the pairing page as needed. The owner/device revocation routes remain available while the flag is off. For complete backend rollback, retire the TV routes and apply the companion rollback migration to the preview database. This deletes the pairing records.
+
+## Automated verification
+
+The PR workflow compiles upstream with the optional patch, verifies the standalone APK and supported offline speech ABIs, checks the permission and launcher boundaries, runs the database/protocol regression suite, and type-checks the app. Its results are separate from preview account tests and TCL hardware acceptance.
