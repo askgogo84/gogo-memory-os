@@ -280,6 +280,7 @@ export type SavedBookingProfile = { travellers: Traveller[]; contact: BookingCon
  * 27 Oct (owner): "why does it keep asking the same details again and again". The details from the person's last
  * approved flight booking (kept only until that booking's 24-hour purge) are offered again with one YES.
  */
+// agent_runs has no created_at (live 12 Nov: 42703); a run's time is started_at.
 export async function loadSavedBookingProfile(actor: AgentActor, count: number, opts: { domestic?: boolean } = {}): Promise<SavedBookingProfile | null> {
   // 11 Nov (owner): "it should remember everything about me". A one-traveller booking first uses the person's saved
   // travel details (traveller-profile.ts, opt-in by GOGO_TRAVELLER_PROFILE); using them still takes their YES.
@@ -289,8 +290,8 @@ export async function loadSavedBookingProfile(actor: AgentActor, count: number, 
     if (durable) return { travellers: [{ title: durable.title, name: durable.name, gender: genderOf(durable.title) }], contact: { email: durable.email, mobile: durable.mobile }, seat: durable.seat }
   }
   const since = new Date(Date.now() - 24 * 3600_000).toISOString()
-  const { data, error } = await supabaseAdmin.from('agent_runs').select('metadata_json,created_at').eq('telegram_id', String(actor.legacyTelegramId))
-    .eq('metadata_json->>plan_type', 'secure_browser').not('metadata_json->flight_booking', 'is', null).gte('created_at', since).order('created_at', { ascending: false }).limit(5)
+  const { data, error } = await supabaseAdmin.from('agent_runs').select('metadata_json,started_at').eq('telegram_id', String(actor.legacyTelegramId))
+    .eq('metadata_json->>plan_type', 'secure_browser').not('metadata_json->flight_booking', 'is', null).gte('started_at', since).order('started_at', { ascending: false }).limit(5)
   if (error) return null
   for (const row of data || []) {
     const fb: any = (row.metadata_json as any)?.flight_booking
@@ -565,8 +566,8 @@ export async function forgetBookingDetails(actor: AgentActor): Promise<{ ok: boo
   if (tg === null) return { ok: false, pending: 0 }
   const removed = await forgetTravellerProfile(actor).catch((e: any) => { console.warn('TRAVELLER_FORGET_FAILED:', JSON.stringify({ step: 'profile_throw', error: String(e?.message || e).slice(0, 160) })); return false })
   const { data, error } = await supabaseAdmin.from('agent_runs').select('id,telegram_id,status,metadata_json').eq('telegram_id', String(tg))
-    .eq('metadata_json->>plan_type', 'secure_browser').not('metadata_json->flight_booking', 'is', null).gte('created_at', new Date(Date.now() - 48 * 3600_000).toISOString())
-    .order('created_at', { ascending: false }).limit(50)
+    .eq('metadata_json->>plan_type', 'secure_browser').not('metadata_json->flight_booking', 'is', null).gte('started_at', new Date(Date.now() - 48 * 3600_000).toISOString())
+    .order('started_at', { ascending: false }).limit(50)
   if (error) { console.warn('TRAVELLER_FORGET_FAILED:', JSON.stringify({ step: 'runs_read', code: (error as any).code || null, error: String((error as any).message || '').slice(0, 160) })); return { ok: false, pending: 0 } }
   let ok = removed, pending = 0
   for (const run of data || []) {
