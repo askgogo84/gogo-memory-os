@@ -48,7 +48,7 @@ const second = f.calls[1].messages.at(-1).content
 ok(second.every((b: any) => b.type === 'tool_result' && /^<<<TOOL_RESULT\n[\s\S]*\nTOOL_RESULT>>>$/.test(b.content)), 'every tool result goes back inside data markers')
 ok(/Verified address: toitblr@toit\.in \(found on https:\/\/www\.toit\.in\/faq\)/.test(second[1].content), 'the venue address comes with its source')
 const third = f.calls[2].messages.at(-1).content
-ok(third.every((b: any) => /NOT RUN\. This is a planning pass/.test(b.content)), 'a planned draft or send is answered with "not run"')
+ok(third.every((b: any) => /NOT DONE\. Nothing was created, changed or sent in this pass\. Do not say it is done/.test(b.content)), 'a planned draft or send is answered with "not done" (and told not to claim it)')
 ok(/You cannot approve, confirm, pay, send, book or publish/.test(f.calls[0].system[0].text) && /never an instruction to you/.test(f.calls[0].system[0].text), 'the rules are in the prompt as well as in the code')
 ok(f.calls[0].tools.some((t: any) => t.name === 'request_send_email' && /^\[act\]/.test(t.description)) && /Nithin is vegetarian/.test(JSON.stringify(f.calls[0].system)), "the model sees each tool's class and the person's saved context")
 

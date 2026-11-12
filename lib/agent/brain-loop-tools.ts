@@ -17,6 +17,8 @@ export type LoopToolDeps = {
   /** The email draft the person has waiting for "send it", if any (fresh within 30 minutes). */
   pendingDraft?: (actor: AgentActor) => Promise<Record<string, unknown> | null>
   saveDraft?: (actor: AgentActor, draft: Record<string, unknown>) => Promise<void>
+  /** Read-only Google Calendar for the person's own connected accounts: the same reader the chat pipeline uses. */
+  calendarRead?: (actor: AgentActor, when: string) => Promise<string>
   /** The person's own current message. A venue may be looked up only if they named it there, or it is the venue of
    *  one of their own events. Without this, any venue is allowed (shadow planning only). */
   userText?: string
@@ -99,6 +101,26 @@ async function saveEnquiryDraft(actor: AgentActor, input: Record<string, unknown
   return 'Saved as a draft. It has NOT been sent. The person will be shown it in full. Finish.'
 }
 
+/** Calendar reader text, bounded by line: the reader's own warnings (partial page, unread account, incomplete) are
+ *  always kept, and a cut list says so, so a partial schedule is never shown as complete. */
+export function calendarText(text: string, max = 3500): string {
+  if (!String(text || '').trim()) return 'No calendar events returned.'
+  if (text.length <= max) return text
+  const lines = String(text).split('\n')
+  // Only the reader's own sentences are warnings: a numbered event line never is, whatever its title says (titles
+  // come from other people's invites, so "Partial payment review" must not push the real warning out).
+  const warn = (l: string) => !/^\s*\d+\.\s/.test(l) && /partial|could not be read|incomplete|showing \d+ of \d+|not the full schedule/i.test(l)
+  const head = lines[0], rest = lines.slice(1)
+  const trailer = rest.filter(warn).map(l => l.slice(0, 300)).slice(0, 6), body = rest.filter(l => !warn(l))
+  const note = (n: number) => `List cut: ${n} more lines not shown, so this is not the full schedule.`
+  const fixed = head.slice(0, 200).length + trailer.reduce((n, l) => n + l.length + 1, 0) + note(body.length).length + 2
+  const keep: string[] = []
+  let used = fixed
+  for (const l of body) { const line = l.slice(0, 400); if (used + line.length + 1 > max) break; keep.push(line); used += line.length + 1 }
+  const cut = body.length - keep.length
+  // Built to fit: the header, the warnings and the cut note are never sliced away.
+  return [head.slice(0, 200), ...keep, ...(cut ? [note(cut)] : []), ...trailer].join('\n')
+}
 export function firstSliceTools(deps: LoopToolDeps = {}): LoopTool[] {
   const search = deps.search || (async (q: string, o?: { timeoutMs?: number }) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: o?.timeoutMs || 6000, pageTextOnly: true }))
   return [
@@ -139,6 +161,25 @@ export function firstSliceTools(deps: LoopToolDeps = {}): LoopTool[] {
         const list = deps.listEvents ? await deps.listEvents(owner) : await (await import('@/lib/events/store')).listEvents(owner)
         const open = list.filter((e: any) => e.status !== 'cancelled').slice(0, 8)
         return open.length ? open.map((e: any) => `- ${str(e.title, 80)} | ${e.starts_at || 'no date'} (${e.timezone}) | ${str(e.venue_name || 'no place', 80)} | ${e.capacity ? `${e.capacity} people` : 'number not set'} | ${e.status}`).join('\n') : 'No events yet.'
+      } },
+    { name: 'calendar_read', klass: 'read', description: "The person's own Google Calendar events (read only) for a day or range they name, such as \"today\", \"tomorrow\", \"this week\", \"Friday\" or a date as YYYY-MM-DD. Use it before saying anything about their schedule.",
+      input_schema: obj({ when: { type: 'string', description: 'The day or range in the person\'s words, e.g. tomorrow, this week, Friday' } }, ['when']),
+      run: async (actor, input) => {
+        const when = str(input.when, 60).replace(/[^\p{L}\p{N} ,.'/-]/gu, ' ').trim() || 'today'
+        const read = deps.calendarRead || (async (a: AgentActor, w: string) => {
+          const m = await import('./calendar-read')
+          const out: any = await m.executeReadOnlyCalendarStep({ actor: a, instruction: `what is on my calendar ${w}`, missionText: `what is on my calendar ${w}` })
+          return String(out?.text || '')
+        })
+        let text = ''
+        try { text = String(await read(actor, when) || '').replace(/\u0000/g, '').trim() }
+        catch (e: any) {
+          const code = String(e?.message || e || '')
+          if (/calendar_not_connected|not connected/i.test(code)) return 'Google Calendar is not connected for this person. Do not guess their schedule; say it is not connected and that they can connect it from their AskGogo dashboard.'
+          if (/calendar_date_(?:unsupported|ambiguous)|calendar_time_unsupported/.test(code)) return 'That day could not be read. Call calendar_read again with "today", "tomorrow", "this week", a weekday, or a date as YYYY-MM-DD.'
+          throw e // any other failure: the loop records it as failed and tells the model not to guess
+        }
+        return calendarText(text)
       } },
     // Planned with, never run in shadow.
     { name: 'event_draft', klass: 'prepare', description: "Create or update the person's own event draft (private until they publish): name, date, time, place, number of people.",
