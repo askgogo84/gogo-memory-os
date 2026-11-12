@@ -44,6 +44,6 @@ for pkg in ("com.google.android.youtube.tv", "com.netflix.ninja", "com.amazon.am
     assert pkg in controls
 for forbidden in ("Runtime.getRuntime()", "ProcessBuilder", "exec(", "sendevent", "pm disable"):
     assert forbidden not in controls, "Privileged shell/injection forbidden: "+forbidden
-assert "AudioManager.adjustStreamVolume" in controls
+assert "audio.adjustStreamVolume" in controls
 assert "recordAudio" not in brain and "MicrophoneService" not in brain
 print("GOGO_COMPANION_V02_SECURITY_GATE_OK")
