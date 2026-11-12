@@ -78,6 +78,15 @@ for (const [why, turns, reason] of [
   ['repeated earlier message', [{ role: 'user', content: P.text, createdAt: iso(-90_000) }, { role: 'assistant', content: 'old answer', createdAt: iso(-89_000) }], 'no_user_turn'],
   ['no times', [{ role: 'user', content: P.text }, { role: 'assistant', content: PIPE }], 'no_times'],
 ] as const) { const h = harness({ turns }); await h.go(); eq(h.st.runs.length, 0, `${why}: the loop does not run`); eq(h.st.finished[0]?.row.metadata_json.reason, reason, `${why}: logged as ${reason}`) }
+// Review round 2: a slow previous reply stays in history; a second message in the window is not comparable.
+{ const h = harness({ turns: [...BEFORE, { role: 'user', content: 'earlier question', createdAt: iso(-3000) }, { role: 'assistant', content: 'slow earlier answer', createdAt: iso(1200) }, { role: 'user', content: P.text, createdAt: iso(1500) }, { role: 'assistant', content: PIPE, createdAt: iso(2500) }] }); await h.go()
+  eq(h.st.finished[0].row.metadata_json.pipeline_reply, PIPE, 'a slow reply to the previous message is not counted as this one')
+  eq(h.st.runs[0].ctx.turns.map((x: any) => x.content).slice(-2), ['earlier question', 'slow earlier answer'], 'it stays in history') }
+{ const h = harness({ turns: [...NORMAL, { role: 'user', content: 'and also book a cab', createdAt: iso(2000) }, { role: 'assistant', content: 'Cab noted', createdAt: iso(2600) }] }); await h.go()
+  eq(h.st.runs.length, 0, 'a second message in the window: the loop does not run'); eq(h.st.finished[0].row.metadata_json.reason, 'second_message', 'logged as second_message') }
+{ const r = brain.frontDoorPair([{ role: 'user', content: 'x', createdAt: iso(100) }, { role: 'assistant', content: 'y' }] as any, AT); eq(r, null, 'a turn without a time: no pair') }
+for (const t of ['482913 is the code', 'code 4829', 'pin 4321', 'cvv 123', 'login: divya pass Nithin#99']) { const h = harness(); await h.go({ ...P, text: t }); eq(h.st.started.length, 0, `code-word message skipped: ${t}`) }
+{ const h = harness(); await h.go({ ...P, text: 'Can you find a good place for the team dinner and send me the booking code for the venue once Divya confirms which date works for everyone' }); eq(h.st.started.length, 1, 'a long ordinary sentence with a code word and no number is still compared') }
 // Forwarded messages carry the forwarded note.
 { const h = harness(); await h.go({ ...P, forwarded: true }); ok(Object.values(h.st.runs[0].ctx.sections).flat().some((x: any) => /FORWARDED/.test(String(x))), 'forwarded note added') }
 // Daily cap; a count error counts as over the cap; no started row means no run.

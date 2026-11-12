@@ -541,15 +541,22 @@ export const FRONT_DOOR_FIXED = /^\s*(?:approve|reject|yes|y|no|n|ok|okay|stop|s
 export const FRONT_DOOR_SECRETISH = /^\s*[\d\s-]{4,}\s*$|(?:\d[ -]?){12,}/
 export const FRONT_DOOR_SEARCH_STUB = 'Not run in this comparison. Answer from what you already know, or say what you would look up.'
 const FRONT_DOOR_STUBBED = new Set(['web_search', 'venue_contact'])
-/** The pair this message produced, by time: turns saved at or after the message arrived belong to it. */
-export function frontDoorPair(turns: BrainTurn[], messageAt: number): { history: BrainTurn[]; replies: string[]; userSaved: boolean } | null {
+/** The pair this message produced, by time. The anchor is the first user turn saved at or after the message arrived;
+ *  assistant turns before it belong to the previous message (a slow reply) and stay in history. A second user turn
+ *  after the anchor (back-to-back messages) makes the pair not comparable, since its replies cannot be told apart. */
+export function frontDoorPair(turns: BrainTurn[], messageAt: number): { history: BrainTurn[]; replies: string[]; userSaved: boolean; second: boolean } | null {
   const at = (t: BrainTurn) => Date.parse(String((t as any).createdAt || ''))
   const cut = messageAt - 1500
   if (turns.some(t => !Number.isFinite(at(t)))) return null
-  const history = turns.filter(t => at(t) < cut), after = turns.filter(t => at(t) >= cut)
-  const replies = after.filter(t => t.role === 'assistant').map(t => t.content)
-  return { history, replies, userSaved: after.some(t => t.role === 'user') }
+  const sorted = [...turns].sort((x, y) => at(x) - at(y))
+  const anchor = sorted.findIndex(t => at(t) >= cut && t.role === 'user')
+  if (anchor < 0) return { history: sorted, replies: [], userSaved: false, second: false }
+  const rest = sorted.slice(anchor + 1), next = rest.findIndex(t => t.role === 'user')
+  const mine = next < 0 ? rest : rest.slice(0, next)
+  return { history: sorted.slice(0, anchor), replies: mine.filter(t => t.role === 'assistant').map(t => t.content), userSaved: true, second: next >= 0 }
 }
+/** A short message with a code-shaped number next to a code, PIN or password word may carry a secret: not compared. */
+export const FRONT_DOOR_CODE_WORDS = /\b(?:code|otp|pin|cvv|cvc|pass(?:word|code)?|login|passwd)\b/i
 type FrontDoorDeps = { run?: (a: any) => Promise<any>; countToday?: (telegramId: number) => Promise<number>; start?: (row: Record<string, unknown>) => Promise<string | null>; finish?: (id: string, row: Record<string, unknown>) => Promise<void>; loadContext?: typeof loadBrainContext; defer?: (job: () => Promise<void>) => Promise<void>; env?: Record<string, string | undefined>; tools?: any[]; now?: () => number; settle?: () => Promise<void>; secret?: (text: string) => Promise<boolean> }
 export async function scheduleFrontDoorShadow(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; forwarded?: boolean }, deps: FrontDoorDeps = {}): Promise<void> {
   const env = deps.env || process.env
@@ -558,6 +565,7 @@ export async function scheduleFrontDoorShadow(p: { phone: string; telegramId: nu
   if (!Number.isSafeInteger(p.telegramId) || p.telegramId <= 0) return
   const text = String(p.text || '')
   if (!text.trim() || FRONT_DOOR_FIXED.test(text) || FRONT_DOOR_SECRETISH.test(text)) return
+  if (FRONT_DOOR_CODE_WORDS.test(text) && (/\d{3,8}/.test(text) || text.length <= 80)) return
   if (await (deps.secret || (async (t: string) => import('@/lib/bot/process-message').then(m => !!m.secretDeclaration(t), () => true)))(text)) return
   if (brainLoopLiveFor(p.phone, env) || (await import('./brain-loop').then(m => m.brainLoopShadowFor(p.phone, env), () => true))) return
   const pass = async () => {
@@ -578,7 +586,7 @@ export async function scheduleFrontDoorShadow(p: { phone: string; telegramId: nu
       // The pair is found by time, not by matching text: the pipeline may rewrite the text, save a placeholder or send
       // more than one message. Only a complete pair (the person's turn and at least one reply) is compared.
       const pair = frontDoorPair(c.turns, messageAt)
-      if (!pair || !pair.userSaved || !pair.replies.length) { await finish({ message: 'front door shadow not comparable', metadata_json: { ...startRow.metadata_json, status: 'not_comparable', reason: !pair ? 'no_times' : !pair.userSaved ? 'no_user_turn' : 'no_reply' } }); return }
+      if (!pair || !pair.userSaved || pair.second || !pair.replies.length) { await finish({ message: 'front door shadow not comparable', metadata_json: { ...startRow.metadata_json, status: 'not_comparable', reason: !pair ? 'no_times' : !pair.userSaved ? 'no_user_turn' : pair.second ? 'second_message' : 'no_reply' } }); return }
       c = { ...c, turns: pair.history }
       if (p.forwarded) c = { ...c, sections: { ...c.sections, 'About the latest message': [FORWARDED_NOTE] } }
       const loop = await import('./brain-loop'), { firstSliceTools } = await import('./brain-loop-tools')
