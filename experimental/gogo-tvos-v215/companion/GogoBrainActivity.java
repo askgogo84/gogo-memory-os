@@ -235,7 +235,7 @@ public final class GogoBrainActivity extends Activity
 
     private void showPairing() {
         LinearLayout c=page("Connect AskGogo",
-                "WhatsApp verification · Personal session is held in memory only");
+                "WhatsApp verification · Sign-in is cleared whenever you leave this screen");
         c.addView(label("Connect the same WhatsApp number you use with AskGogo.",
                 16,0xFFE3F2FA));
         phone=field(c,"WhatsApp number with country code, e.g. +91…",false);
@@ -316,7 +316,7 @@ public final class GogoBrainActivity extends Activity
     private void showAssistant() {
         if(accessToken==null) {showPairing();return;}
         LinearLayout c=page("AskGogo · Same Brain",
-                "Shared TV • Only ask while you're present. Press Send to submit.");
+                "Shared TV • Auto-sign-out when leaving. Review and Send each request.");
         result=label("Connected. Try: What's on my calendar tomorrow?",20,Color.WHITE);
         result.setPadding(dp(14),dp(12),dp(14),dp(12));
         result.setBackground(panel());
@@ -453,6 +453,21 @@ public final class GogoBrainActivity extends Activity
                     .setNegativeButton("Stay",null)
                     .show();
         } else super.onBackPressed();
+    }
+
+    @Override protected void onStop() {
+        super.onStop();
+        // A shared-screen security boundary: leaving the Assistant to Home or
+        // another app removes access to the account immediately. The external
+        // speech dialog is the only permitted interruption.
+        if (!listening) {
+            accessToken = null;
+            pollToken = null;
+            if (tts != null) tts.stop();
+            speaking = false;
+            lastSpoken = "";
+            if (!isFinishing()) showPairing();
+        }
     }
 
     @Override protected void onDestroy() {
