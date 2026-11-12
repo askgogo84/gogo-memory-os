@@ -32,6 +32,9 @@ MANIFEST_ADD = '''        <!-- Optional Gogo hub, never a HOME or LAUNCHER inten
         <activity android:name=".GogoHubActivity"
             android:exported="false"
             android:screenOrientation="landscape" />
+        <activity android:name=".GogoBrainActivity"
+            android:exported="false"
+            android:screenOrientation="landscape" />
 
 '''
 MANIFEST_QUERY = '    </queries>'
@@ -60,7 +63,9 @@ def main():
     manifest=root/"AndroidManifest.xml"
     widgets=pkg/"GogoWidgets.java"
     hub=pkg/"GogoHubActivity.java"
-    files=[hd,settings,manifest,args.sources/"GogoWidgets.java",args.sources/"GogoHubActivity.java"]
+    brain=pkg/"GogoBrainActivity.java"
+    brain_source=args.sources/"companion/GogoBrainActivity.java"
+    files=[hd,settings,manifest,args.sources/"GogoWidgets.java",args.sources/"GogoHubActivity.java",brain_source]
     for f in files:
         if not f.is_file(): raise ValueError(f"Missing prerequisite: {f}")
 
@@ -89,6 +94,12 @@ def main():
             raise ValueError(f"Bad Java package: {source}")
         if target.exists() and target.read_text(encoding="utf-8") != body:
             raise ValueError(f"Existing file differs, not replacing: {target}")
+    brain_body=brain_source.read_text(encoding="utf-8")
+    if not brain_body.startswith("package in.askgogo.tvhub;"):
+        raise ValueError("Unexpected companion Brain package")
+    converted=brain_body.replace("package in.askgogo.tvhub;", "package com.techgenius.tvoslauncher;", 1)
+    if brain.exists() and brain.read_text(encoding="utf-8") != converted:
+        raise ValueError("Existing Brain differs; refusing overwrite")
     # Back up only files that would change; never overwrite the original backup.
     args.backup.mkdir(parents=True,exist_ok=True)
     for path,old,new in [(hd,oldHd,h),(settings,oldSettings,sett),(manifest,oldManifest,xml)]:
@@ -101,6 +112,7 @@ def main():
     for target,source in [(widgets,args.sources/"GogoWidgets.java"),
                           (hub,args.sources/"GogoHubActivity.java")]:
         if not target.exists(): shutil.copy2(source,target)
+    if not brain.exists(): brain.write_text(converted,encoding="utf-8")
 
     # Verify the existing launcher Home/Power code was not edited by this patch.
     assert 'android:name=".MainActivity"' in xml
