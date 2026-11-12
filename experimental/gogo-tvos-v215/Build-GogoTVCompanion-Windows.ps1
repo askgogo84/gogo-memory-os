@@ -8,6 +8,12 @@ $gen=Join-Path $OutputDir "gen"
 $classes=Join-Path $OutputDir "classes"
 $dex=Join-Path $OutputDir "dex"
 $build=Join-Path $OutputDir "build"
+# Clear only compiler intermediates inside the selected build folder.
+$rootPath=[System.IO.Path]::GetFullPath($OutputDir)
+if($rootPath.Length -lt 14 -or $rootPath -eq [System.IO.Path]::GetPathRoot($rootPath)){throw "Unsafe OutputDir"}
+foreach($folder in @($gen,$classes,$dex,$build)){
+  if(Test-Path -LiteralPath $folder){Remove-Item -LiteralPath $folder -Recurse -Force}
+}
 foreach($folder in @($OutputDir,$src,$res,$gen,$classes,$dex,$build)){New-Item -ItemType Directory -Force -Path $folder|Out-Null}
 $manifest=Join-Path $OutputDir "AndroidManifest.xml"
 $hubFile=Join-Path $src "GogoHubActivity.java"
