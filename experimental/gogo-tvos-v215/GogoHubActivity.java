@@ -99,6 +99,7 @@ public class GogoHubActivity extends Activity {
         button.setOrientation(LinearLayout.VERTICAL);
         button.setPadding(dp(18), dp(10), dp(18), dp(10));
         button.setFocusable(true);
+        button.setFocusableInTouchMode(true);
         button.setClickable(true);
         button.setBackground(surface(false));
         button.setOnFocusChangeListener((v, focus) -> v.setBackground(surface(focus)));

@@ -121,6 +121,7 @@ public final class CompanionActivity extends GogoHubActivity {
         root.removeAllViews();
         ScrollView scroll = new ScrollView(this);
         scroll.setFillViewport(true);
+        scroll.setDescendantFocusability(ScrollView.FOCUS_AFTER_DESCENDANTS);
         root.addView(scroll, new android.widget.FrameLayout.LayoutParams(-1, -1));
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
