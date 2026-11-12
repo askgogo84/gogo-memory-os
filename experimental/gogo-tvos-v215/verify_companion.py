@@ -10,6 +10,7 @@ root=Path(__file__).resolve().parent
 manifest=root/"companion/AndroidManifest.xml"
 brain=(root/"companion/GogoBrainActivity.java").read_text(encoding="utf-8")
 hub=(root/"GogoHubActivity.java").read_text(encoding="utf-8")
+controls=(root/"companion/GogoTvControls.java").read_text(encoding="utf-8")
 xml=ET.parse(manifest).getroot()
 ns="{http://schemas.android.com/apk/res/android}"
 package=xml.attrib.get("package")
@@ -37,5 +38,12 @@ assert "submit(" not in voice, "Dictation must not submit autonomously"
 assert "onStop()" in brain and "accessToken = null;" in brain
 assert 'putString("accessToken"' not in brain and 'putString("pollToken"' not in brain
 assert "UtteranceProgressListener" in brain and "tts.stop()" in brain
+assert "GogoTvControls.description(text)" in brain and "Control this TV?" in brain
+assert "GogoTvControls.execute(this,text)" in brain
+for pkg in ("com.google.android.youtube.tv", "com.netflix.ninja", "com.amazon.amazonvideo.livingroom"):
+    assert pkg in controls
+for forbidden in ("Runtime.getRuntime()", "ProcessBuilder", "exec(", "sendevent", "pm disable"):
+    assert forbidden not in controls, "Privileged shell/injection forbidden: "+forbidden
+assert "AudioManager.adjustStreamVolume" in controls
 assert "recordAudio" not in brain and "MicrophoneService" not in brain
 print("GOGO_COMPANION_V02_SECURITY_GATE_OK")
