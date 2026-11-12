@@ -14,10 +14,16 @@ export async function answerTvQuestion(owner: string, name: string | null, quest
   const schedule = detectReadOnlyScheduleRequest(text)
   if (schedule) {
     const actor = await resolveAgentActor({ telegramId: owner, surface: 'web' })
-    const result = await executeReadOnlyCalendarStep({
-      actor, instruction: text, missionText: text, rememberSelection: false,
-    })
-    return redactSecretShapedText(result.text).slice(0, 2400)
+    try {
+      const result = await executeReadOnlyCalendarStep({
+        actor, instruction: text, missionText: '', rememberSelection: false,
+      })
+      return redactSecretShapedText(result.text).slice(0, 2400)
+    } catch (error) {
+      if (error instanceof Error && error.message === 'calendar_not_connected')
+        return 'Connect Google Calendar in AskGogo on your phone, then try again.'
+      throw error
+    }
   }
 
   // Same AskGogo conversational model, with no command executor, tools, saved history or vault access.

@@ -2,6 +2,14 @@ package in.askgogo.tvhub;
 
 import android.Manifest;
 import android.app.AlertDialog;
+import android.graphics.Bitmap;
+import android.os.Build;
+import android.util.Base64;
+import android.view.Gravity;
+import android.view.inputmethod.InputMethodManager;
+import android.widget.ImageView;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
 import android.content.pm.PackageManager;
 import android.media.AudioManager;
 import android.os.Bundle;
@@ -12,6 +20,8 @@ import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.text.InputType;
 import android.view.View;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.widget.Button;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
@@ -38,6 +48,13 @@ public final class CompanionActivity extends GogoHubActivity {
     private String token;
     private String pending;
     private String pairingCode;
+    private String pairingQr;
+    private String sessionCandidate;
+    private long pairingDeadline;
+    private boolean polling;
+    private boolean temporarySession;
+    private TextView pairingStatus;
+    private final Runnable poll = this::pollPairing;
     private String draft = "";
     private String answer = "";
     private String status = "";
@@ -59,10 +76,12 @@ public final class CompanionActivity extends GogoHubActivity {
     @Override protected void onResume() {
         super.onResume();
         foreground = true;
+        schedulePoll(0);
     }
 
     @Override protected void onPause() {
         foreground = false;
+        handler.removeCallbacks(poll);
         if (wakeArmed || capture != null || audio != null) status = "";
         wakeArmed = false;
         stopWake();
@@ -85,7 +104,7 @@ public final class CompanionActivity extends GogoHubActivity {
     @Override protected void onDestroy() {
         generation++;
         handler.removeCallbacksAndMessages(null);
-        worker.shutdownNow();
+        worker.shutdown();
         microphone.shutdownNow();
         if (speaker != null) speaker.shutdown();
         super.onDestroy();
@@ -94,10 +113,12 @@ public final class CompanionActivity extends GogoHubActivity {
     private void lock() {
         generation++;
         busy = false;
+        revokeQuietly(sessionCandidate);
+        if (temporarySession) revokeQuietly(token);
+        resetPairing();
         slot = 0;
         token = null;
-        pending = null;
-        pairingCode = null;
+        temporarySession = false;
         draft = "";
         answer = "";
         status = "";
@@ -152,13 +173,8 @@ public final class CompanionActivity extends GogoHubActivity {
         LinearLayout primary = tileColumn(row);
         LinearLayout secondary = tileColumn(row);
         if (profiles.enabled(slot, "ask", true)) {
-            addAction(primary, "AskGogo", token == null ? "Choose a personal profile to pair" : "Ask by typing or voice",
-                    () -> {
-                        status = "";
-                        if (slot == 0) showProfiles();
-                        else if (token == null) showPair();
-                        else showAsk();
-                    });
+            addAction(primary, "AskGogo", token == null ? "Pair with your phone" : "Ask by typing or voice",
+                    this::openAssistant);
         }
         if (profiles.enabled(slot, "markets", true))
             addAction(primary, "Markets", "TradingView market overview", this::openMarkets);
@@ -167,6 +183,34 @@ public final class CompanionActivity extends GogoHubActivity {
         addAction(secondary, "Settings", "Choose which features appear", this::showSettings);
         if (primary.getChildCount() > 0) focus(primary, 0); else focus(secondary, 0);
     }
+
+    private void openAssistant() {
+        status = "";
+        if (slot == 0) {
+            if (profiles.paired(1) || profiles.paired(2) || profiles.paired(3)) {
+                showProfiles();
+                return;
+            }
+            slot = 1;
+        }
+        if (token == null) startPairing(); else showAsk();
+    }
+
+    @Override protected void addAction(LinearLayout column, String heading, String description, Runnable action) {
+        super.addAction(column, heading, description, action);
+        LinearLayout button = (LinearLayout) column.getChildAt(column.getChildCount() - 1);
+        for (int index = 0; index < button.getChildCount(); index++)
+            button.getChildAt(index).setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        button.setContentDescription(heading + ". " + description);
+        button.setAccessibilityDelegate(new View.AccessibilityDelegate() {
+            @Override public void onInitializeAccessibilityNodeInfo(View host, AccessibilityNodeInfo info) {
+                super.onInitializeAccessibilityNodeInfo(host, info);
+                info.setClassName(Button.class.getName());
+            }
+        });
+    }
+
+    @Override protected boolean showMarketStatus() { return true; }
 
     private LinearLayout tileColumn(LinearLayout row) {
         LinearLayout column = new LinearLayout(this);
@@ -196,7 +240,7 @@ public final class CompanionActivity extends GogoHubActivity {
         lock();
         slot = profile;
         if (!profiles.paired(slot)) {
-            showPair();
+            startPairing();
             return;
         }
         long wait = profiles.secondsUntilUnlock(slot);
@@ -224,38 +268,54 @@ public final class CompanionActivity extends GogoHubActivity {
                 .setView(fields).setNegativeButton("Cancel", (d, w) -> { if (!create) { lock(); showProfiles(); } })
                 .setPositiveButton(create ? "Save" : "Unlock", null).create();
         dialog.setOnCancelListener(d -> { if (!create) { lock(); showProfiles(); } });
-        dialog.setOnShowListener(d -> dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(view -> {
-            if (busy || current != generation) return;
-            String pin = input.getText().toString();
-            if (!pin.matches("[0-9]{6,12}")) { input.setError("Use 6–12 digits."); return; }
-            if (create && !pin.contentEquals(confirmation.getText())) { confirmation.setError("PINs differ."); return; }
-            String candidate = pending;
-            input.setText("");
-            confirmation.setText("");
-            dialog.dismiss();
-            run(() -> {
-                JSONObject result = new JSONObject();
-                if (create) {
-                    profiles.save(selected, pin, candidate);
-                    result.put("token", candidate);
-                } else {
-                    result.put("token", profiles.unlock(selected, pin));
-                }
-                return result;
-            }, result -> {
-                token = result.optString("token", null);
-                if (token == null) {
-                    lock();
-                    status = "PIN did not match.";
-                    showProfiles();
-                } else {
-                    pending = null;
-                    pairingCode = null;
-                    status = "";
-                    showHub();
-                }
+        dialog.setOnShowListener(d -> {
+            View positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            positive.setId(View.generateViewId());
+            confirmation.setId(View.generateViewId());
+            input.setNextFocusDownId(create ? confirmation.getId() : positive.getId());
+            confirmation.setNextFocusDownId(positive.getId());
+            input.setOnEditorActionListener((field, action, event) -> {
+                if (action != EditorInfo.IME_ACTION_DONE) return false;
+                if (create) confirmation.requestFocus(); else positive.performClick();
+                return true;
             });
-        }));
+            confirmation.setOnEditorActionListener((field, action, event) -> {
+                if (action != EditorInfo.IME_ACTION_DONE) return false;
+                positive.performClick();
+                return true;
+            });
+            positive.setOnClickListener(view -> {
+                if (busy || current != generation) return;
+                String pin = input.getText().toString();
+                if (!pin.matches("[0-9]{6,12}")) { input.setError("Use 6–12 digits."); return; }
+                if (create && !pin.contentEquals(confirmation.getText())) { confirmation.setError("PINs differ."); return; }
+                String candidate = token;
+                input.setText("");
+                confirmation.setText("");
+                dialog.dismiss();
+                run(() -> {
+                    JSONObject result = new JSONObject();
+                    if (create) {
+                        profiles.save(selected, pin, candidate);
+                        result.put("token", candidate);
+                    } else {
+                        result.put("token", profiles.unlock(selected, pin));
+                    }
+                    return result;
+                }, result -> {
+                    token = result.optString("token", null);
+                    if (token == null) {
+                        lock();
+                        status = "PIN did not match.";
+                        showProfiles();
+                    } else {
+                        temporarySession = false;
+                        status = create ? "Profile saved until this TV session expires." : "";
+                        showHub();
+                    }
+                });
+            });
+        });
         dialog.show();
     }
 
@@ -266,37 +326,152 @@ public final class CompanionActivity extends GogoHubActivity {
         field.setHint(hint);
         field.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(12)});
         field.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
-        field.setImeOptions(EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
+        field.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
         return field;
+    }
+
+    private void startPairing() {
+        if (busy) return;
+        status = "Creating your pairing code…";
+        showPair();
+        run(() -> {
+            byte[] secret = new byte[32];
+            new SecureRandom().nextBytes(secret);
+            String candidate = "gtv_" + Base64.encodeToString(secret, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
+            Arrays.fill(secret, (byte) 0);
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(candidate.getBytes(StandardCharsets.US_ASCII));
+            StringBuilder hex = new StringBuilder(64);
+            for (byte value : digest) hex.append(Character.forDigit((value & 255) >>> 4, 16))
+                    .append(Character.forDigit(value & 15, 16));
+            JSONObject body = new JSONObject().put("sessionHash", hex.toString()).put("deviceName", Build.MODEL);
+            JSONObject result = TvApi.request("device", "POST", null, "application/json",
+                    body.toString().getBytes(StandardCharsets.UTF_8));
+            return result.put("localCandidate", candidate);
+        }, result -> {
+            pending = result.getString("proof");
+            sessionCandidate = result.getString("localCandidate");
+            pairingCode = result.getString("code");
+            pairingQr = result.getString("qr");
+            pairingDeadline = SystemClock.elapsedRealtime() + 1000L * result.getInt("pairSeconds");
+            status = "Waiting for approval on your phone…";
+            showPair();
+            schedulePoll(1000L * result.getInt("interval"));
+        });
     }
 
     private void showPair() {
         LinearLayout column = screen(Page.PAIR, "Pair " + profileName(slot));
+        pairingStatus = status.isEmpty() ? null : (TextView) column.getChildAt(1);
         int first = column.getChildCount();
-        if (pending == null) {
-            addAction(column, "Get a TV pairing code", "Sign in with your WhatsApp code on your phone.", () ->
-                run(() -> TvApi.request("device", "POST", null, null, null), result -> {
-                    pending = result.getString("token");
-                    pairingCode = result.getString("code").replaceAll("(.{4})(?=.)", "$1-");
-                    showPair();
-                }));
-        } else {
-            column.addView(title(pairingCode, 34, 0xFFFFFFFF));
-            column.addView(title(BuildConfig.ORIGIN + "/tv/pair", 19, 0xFFC4DEEB));
-            first += 2;
-            addAction(column, "Check pairing", "Approve this code on your phone within 10 minutes.", () -> {
-                String proof = pending;
-                run(() -> TvApi.request("device", "GET", proof, null, null), result -> {
-                    if ("paired".equals(result.getString("state"))) pinDialog(true);
-                    else { status = "Waiting for approval on your phone."; showPair(); }
-                });
-            });
-            addAction(column, "Cancel pairing", "Revoke this code", () -> {
-                String proof = pending;
-                run(() -> TvApi.request("device", "DELETE", proof, null, null), result -> { lock(); showProfiles(); });
-            });
+        if (pending != null) {
+            LinearLayout row = new LinearLayout(this);
+            row.setGravity(Gravity.CENTER_VERTICAL);
+            column.addView(row);
+            first++;
+            int size = dp(224);
+            Bitmap bitmap = PairingQr.create(BuildConfig.ORIGIN + "/tv/pair#" + pairingQr + "." + pairingCode, size);
+            if (bitmap != null) {
+                ImageView image = new ImageView(this);
+                image.setImageBitmap(bitmap);
+                image.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+                row.addView(image, new LinearLayout.LayoutParams(size, size));
+            }
+            LinearLayout instructions = new LinearLayout(this);
+            instructions.setOrientation(LinearLayout.VERTICAL);
+            instructions.setPadding(dp(20), 0, 0, 0);
+            row.addView(instructions);
+            if (bitmap != null) instructions.addView(title("Scan with your phone camera", 24, 0xFFFFFFFF));
+            instructions.addView(title("Or open " + BuildConfig.ORIGIN + "/tv/pair", 17, 0xFFC4DEEB));
+            TextView code = title(pairingCode.substring(0, 4) + "-" + pairingCode.substring(4), 32, 0xFFFFFFFF);
+            code.setContentDescription("Pairing code " + pairingCode.replaceAll("(.)", "$1 ").trim());
+            code.setFocusable(true);
+            code.setOnFocusChangeListener((view, focused) ->
+                    view.setBackgroundColor(focused ? 0xFF205772 : 0x00000000));
+            instructions.addView(code);
+        } else if (!"Creating your pairing code…".equals(status)) {
+            addAction(column, "Get a new code", "Create a QR code for your phone", this::startPairing);
         }
+        addAction(column, "Cancel pairing", "Return to profiles", this::cancelPairing);
         focus(column, first);
+    }
+
+    private void schedulePoll(long delay) {
+        handler.removeCallbacks(poll);
+        if (foreground && page == Page.PAIR && pending != null) handler.postDelayed(poll, delay);
+    }
+
+    private void pollPairing() {
+        if (!foreground || page != Page.PAIR || pending == null || polling) return;
+        if (SystemClock.elapsedRealtime() >= pairingDeadline) {
+            endPairing("This code expired. Get a new code.", true);
+            return;
+        }
+        final int current = generation;
+        final String proof = pending;
+        polling = true;
+        worker.execute(() -> {
+            String state;
+            try { state = TvApi.request("device", "PUT", proof, null, null).getString("state"); }
+            catch (TvApi.Failure failure) {
+                state = failure.status == 401 ? "expired" : failure.status == 404 ? "disabled"
+                        : failure.status == 429 ? "slow_down" : "offline";
+            } catch (Exception failure) { state = "offline"; }
+            final String result = state;
+            handler.post(() -> {
+                if (generation != current || !proof.equals(pending) || isFinishing()) return;
+                polling = false;
+                if (!foreground) return;
+                switch (result) {
+                    case "paired":
+                        token = sessionCandidate;
+                        temporarySession = true;
+                        resetPairing();
+                        status = "Connected to AskGogo.";
+                        showAsk();
+                        break;
+                    case "denied": endPairing("Pairing was declined on your phone.", false); break;
+                    case "cancelled": endPairing("Pairing was cancelled.", false); break;
+                    case "expired": endPairing("This code expired. Get a new code.", true); break;
+                    case "disabled": endPairing("AskGogo TV pairing is unavailable on this server.", true); break;
+                    default:
+                        String nextStatus = result.equals("offline") ? "Connection interrupted. Retrying…"
+                                : "Waiting for approval on your phone…";
+                        if (pairingStatus != null && !nextStatus.equals(status)) pairingStatus.setText(nextStatus);
+                        status = nextStatus;
+                        schedulePoll(result.equals("pending") ? 4000 : 8000);
+                }
+            });
+        });
+    }
+
+    private void endPairing(String message, boolean revoke) {
+        if (revoke) revokeQuietly(sessionCandidate);
+        resetPairing();
+        status = message;
+        showPair();
+    }
+
+    private void cancelPairing() {
+        lock();
+        showProfiles();
+    }
+
+    private void resetPairing() {
+        handler.removeCallbacks(poll);
+        polling = false;
+        pending = null;
+        sessionCandidate = null;
+        pairingCode = null;
+        pairingQr = null;
+        pairingStatus = null;
+    }
+
+    private void revokeQuietly(String proof) {
+        if (proof == null) return;
+        worker.execute(() -> {
+            try { TvApi.request("device", "DELETE", proof, null, null); }
+            catch (Exception ignored) { /* The server expiry still applies. */ }
+        });
     }
 
     private void showAsk() {
@@ -314,11 +489,18 @@ public final class CompanionActivity extends GogoHubActivity {
             return;
         }
         question = new EditText(this);
-        question.setSingleLine(false);
-        question.setMaxLines(3);
+        question.setSingleLine();
         question.setSaveEnabled(false);
         question.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(1000)});
-        question.setImeOptions(EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
+        question.setImeOptions(EditorInfo.IME_ACTION_DONE | EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING);
+        question.setId(View.generateViewId());
+        question.setOnEditorActionListener((field, action, event) -> {
+            if (action != EditorInfo.IME_ACTION_DONE) return false;
+            InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+            if (keyboard != null) keyboard.hideSoftInputFromWindow(field.getWindowToken(), 0);
+            ask();
+            return true;
+        });
         question.setHint("Ask a question");
         question.setText(draft);
         column.addView(question, new LinearLayout.LayoutParams(-1, -2));
@@ -326,10 +508,13 @@ public final class CompanionActivity extends GogoHubActivity {
         if (!answer.isEmpty()) column.addView(title(answer, 20, 0xFFE5F1FA));
         if (!answer.isEmpty()) first++;
         addAction(column, "Today’s calendar", "AskGogo reads the paired account’s calendar", () -> {
-            draft = "Show my calendar today";
-            showAsk();
+            if (question != null) question.setText("Show my calendar today");
+            ask();
         });
         addAction(column, "Send to AskGogo", "Read-only questions", this::ask);
+        View send = column.getChildAt(column.getChildCount() - 1);
+        send.setId(View.generateViewId());
+        question.setNextFocusDownId(send.getId());
         if (profiles.enabled(slot, "voice", false)) {
             addAction(column, "Record a question", "Select or hold the center button here to start",
                     this::startRecording);
@@ -374,6 +559,8 @@ public final class CompanionActivity extends GogoHubActivity {
                 return;
             }
         }
+        status = "Asking AskGogo…";
+        showAsk();
         run(() -> TvApi.request("ask", "POST", proof, "application/json",
                 new JSONObject().put("text", text).toString().getBytes(StandardCharsets.UTF_8)), result -> {
             answer = result.getString("text");
@@ -399,7 +586,11 @@ public final class CompanionActivity extends GogoHubActivity {
             showAsk();
             return;
         }
-        if (SystemClock.elapsedRealtime() < silentUntil) return;
+        if (SystemClock.elapsedRealtime() < silentUntil) {
+            status = "Playback just ended. Select Record again in a moment.";
+            showAsk();
+            return;
+        }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 7);
             return;
@@ -440,6 +631,8 @@ public final class CompanionActivity extends GogoHubActivity {
         byte[] clip = audio;
         audio = null;
         String proof = token;
+        status = "Transcribing…";
+        showAsk();
         run(() -> {
             try { return TvApi.request("ask", "POST", proof, "audio/wav", clip); }
             finally { Arrays.fill(clip, (byte) 0); }
@@ -447,7 +640,7 @@ public final class CompanionActivity extends GogoHubActivity {
             draft = result.getString("transcript");
             status = draft.isEmpty() ? "No speech detected." : "Review the transcript before sending.";
             showAsk();
-            if (question != null) question.requestFocus();
+            if (question != null) findViewById(question.getNextFocusDownId()).requestFocus();
         });
     }
 
@@ -598,6 +791,9 @@ public final class CompanionActivity extends GogoHubActivity {
             toggle(column, "Local TV commands", "localCommands", true);
             toggle(column, "Microphone", "voice", false);
             toggle(column, "Offline reply playback", "playback", false);
+            if (temporarySession)
+                addAction(column, "Save this profile", "Use a private PIN to reopen this TV session until it expires.",
+                        () -> pinDialog(true));
             addAction(column, "Unpair AskGogo", "Revoke this profile’s device credential", () ->
                 new AlertDialog.Builder(this).setTitle("Unpair this profile?")
                     .setNegativeButton("Cancel", null)
@@ -653,8 +849,8 @@ public final class CompanionActivity extends GogoHubActivity {
                 busy = false;
                 if (code == 401) {
                     if (token != null) profiles.forget(slot);
-                    pending = null;
-                    pairingCode = null;
+                    resetPairing();
+                    temporarySession = false;
                     token = null;
                     draft = "";
                     answer = "";
@@ -663,7 +859,8 @@ public final class CompanionActivity extends GogoHubActivity {
                     return;
                 }
                 if (code != 0) {
-                    status = code == 429 ? "Wait a moment and try again." : code == 404 ?
+                    status = code == 429 ? "Wait a moment and try again." : code == 426 ?
+                            "Update the Gogo TV companion to pair." : code == 404 ?
                             "AskGogo TV pairing is disabled on this server." : "AskGogo is temporarily unavailable. Try again.";
                     redraw();
                     return;
@@ -685,6 +882,10 @@ public final class CompanionActivity extends GogoHubActivity {
     @Override public void onBackPressed() {
         if (page == Page.HOME && !marketsOpen()) {
             super.onBackPressed();
+            return;
+        }
+        if (page == Page.PAIR) {
+            cancelPairing();
             return;
         }
         if (busy) {

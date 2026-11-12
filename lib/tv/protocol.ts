@@ -6,16 +6,28 @@ export const enabled = () => process.env.GOGO_TV_PAIRING === '1'
 
 export const hash = (value: string) => createHash('sha256').update(value).digest('hex')
 export const newToken = () => 'gtv_' + randomBytes(32).toString('base64url')
-export const newCode = () => Array.from(randomBytes(16), byte => alphabet[byte & 31]).join('')
-export function pairingCode(value: unknown) {
+export const newCode = (length = 16) => Array.from(randomBytes(length), byte => alphabet[byte & 31]).join('')
+export const newQrCode = () => randomBytes(16).toString('base64url')
+export const newPollProof = () => 'gtp_' + randomBytes(32).toString('base64url')
+export function pairingCode(value: unknown, length = 16) {
   if (typeof value !== 'string' || value.length > 32) return null
   const code = value.toUpperCase().replace(/[ -]/g, '')
-  return /^[0-9A-HJKMNP-TV-Z]{16}$/.test(code) ? code : null
+  return code.length === length && /^[0-9A-HJKMNP-TV-Z]+$/.test(code) ? code : null
 }
 
 export function tokenHash(request: Request) {
   const token = /^Bearer (gtv_[A-Za-z0-9_-]{43})$/.exec(request.headers.get('authorization') ?? '')?.[1]
   return token ? hash(token) : null
+}
+
+export function pollHash(request: Request) {
+  const proof = /^Bearer (gtp_[A-Za-z0-9_-]{43})$/.exec(request.headers.get('authorization') ?? '')?.[1]
+  return proof ? hash(proof) : null
+}
+
+export function shortCodeHash(code: string) {
+  const key = process.env.GOGO_TV_RATE_KEY
+  return key && key.length >= 32 ? createHmac('sha256', key).update('tv-code:' + code).digest('hex') : null
 }
 
 export function sourceHash(request: Request) {

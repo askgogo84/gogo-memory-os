@@ -20,9 +20,9 @@ final class TvApi {
             connection.setInstanceFollowRedirects(false);
             connection.setUseCaches(false);
             connection.setConnectTimeout(6000);
-            connection.setReadTimeout(45000);
+            connection.setReadTimeout(path.equals("device") ? 8000 : 45000);
             connection.setRequestProperty("Accept", "application/json");
-            connection.setRequestProperty("X-Gogo-TV", "1");
+            connection.setRequestProperty("X-Gogo-TV", "2");
             if (token != null) connection.setRequestProperty("Authorization", "Bearer " + token);
             if (body != null) {
                 connection.setDoOutput(true);

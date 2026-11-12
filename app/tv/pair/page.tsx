@@ -1,77 +1,159 @@
+
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
-type Device = { id: string; approved_at: string; expires_at: string }
+type Device = { id: string; device_name: string | null; approved_at: string | null; expires_at: string | null }
+type Review = { id: string; device_name: string; scope: 'ask:read' }
+type Pairing = { code: string; qr?: string }
+
+const handoffKey = 'askgogo.tvPairing'
+const signIn = '/dashboard?next=%2Ftv%2Fpair'
+
+function readPairing(): Pairing | null {
+  const match = /^#([A-Za-z0-9_-]{22})\.([0-9A-HJKMNP-TV-Z]{8})$/.exec(window.location.hash)
+  let pairing: Pairing | null = match ? { code: match[2], qr: match[1] } : null
+  try {
+    const saved = sessionStorage.getItem(handoffKey)
+    sessionStorage.removeItem(handoffKey)
+    if (!pairing && saved) {
+      const { expires, value } = JSON.parse(saved)
+      if (Date.now() < expires) pairing = value
+    }
+  } catch { /* The manual code remains available when browser storage is blocked. */ }
+  if (match) history.replaceState(history.state, '', window.location.pathname)
+  return pairing
+}
+
+const formattedCode = (code: string) => code.toUpperCase().replace(/[ -]/g, '').replace(/^(.{4})(.+)$/, '$1-$2')
+const action = 'rounded-lg border px-4 py-3 font-medium focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50'
 
 export default function PairTv() {
+  const started = useRef(false)
+  const heading = useRef<HTMLHeadingElement>(null)
   const [devices, setDevices] = useState<Device[]>([])
-  const [code, setCode] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [signedIn, setSignedIn] = useState(false)
+  const [pairing, setPairing] = useState<Pairing>({ code: '' })
+  const [review, setReview] = useState<Review | null>(null)
+  const [busy, setBusy] = useState(true)
+  const [signedIn, setSignedIn] = useState<boolean | null>(null)
   const [pairingEnabled, setPairingEnabled] = useState(false)
   const [message, setMessage] = useState('Checking your account…')
 
   async function load() {
     const response = await fetch('/api/tv/account', { cache: 'no-store' })
-    setSignedIn(response.ok)
     if (response.status === 401) {
-      setMessage('Sign in on your phone with your AskGogo WhatsApp code, then return to this page.')
-      return
+      setSignedIn(false)
+      setDevices([])
+      setMessage('Sign in to AskGogo to approve your TV.')
+      return false
     }
     if (!response.ok) throw Error()
     const body = await response.json()
+    setSignedIn(true)
     setDevices(body.devices)
     setPairingEnabled(body.pairingEnabled)
     setMessage(body.pairingEnabled ? '' : 'New TV pairing is disabled.')
+    return body.pairingEnabled === true
   }
-
-  useEffect(() => {
-    void load().catch(() => setMessage('TV pairing is temporarily unavailable.'))
-  }, [])
 
   async function update(body: Record<string, string>) {
     setBusy(true)
+    setMessage(body.action === 'review' ? 'Looking up your TV…' : 'Saving your choice…')
     try {
       const response = await fetch('/api/tv/account', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
       })
-      if (!response.ok) {
-        setMessage(response.status === 409 ? 'Check the TV code, its expiry, and your active TV pairings.' : 'The request could not be completed.')
-        return
+      if (response.status === 401) {
+        setSignedIn(false)
+        setDevices([])
+        setReview(null)
+        setMessage('Sign in to AskGogo to continue.')
+      } else if (response.status === 400 || response.status === 409) {
+        setReview(null)
+        setMessage('This code could not be used. Check the TV screen for a current code, or try again in a few minutes.')
+      } else if (!response.ok) {
+        setMessage('TV pairing is temporarily unavailable. Try again.')
+      } else if (body.action === 'review') {
+        const result = await response.json()
+        setReview(result.pairing)
+        setMessage('')
+      } else {
+        setReview(null)
+        if (body.action !== 'revoke') setPairing({ code: '' })
+        await load()
+        setMessage(body.action === 'approve' ? 'TV approved. AskGogo will open on your TV automatically.'
+          : body.action === 'deny' ? 'Pairing declined.' : 'TV access revoked.')
       }
-      setCode('')
-      await load()
-      setMessage(body.action === 'approve' ? 'TV approved. Select Check pairing on the TV.' : 'TV access revoked.')
     } catch {
-      setMessage('The request could not be completed. Refresh to check its status.')
+      setMessage('Could not confirm the request. Refresh to check your connected TVs.')
     } finally {
       setBusy(false)
     }
   }
 
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    const initial = readPairing()
+    if (initial) setPairing(initial)
+    void (async () => {
+      try {
+        if (await load() && initial) await update({ action: 'review', ...initial })
+      } catch {
+        setMessage('TV pairing is temporarily unavailable. Refresh to try again.')
+      } finally {
+        setBusy(false)
+      }
+    })()
+  }, [])
+
+  useEffect(() => {
+    if (review) heading.current?.focus()
+  }, [review])
+
+  function rememberForSignIn() {
+    if (!pairing.code) return
+    try {
+      sessionStorage.setItem(handoffKey, JSON.stringify({ value: pairing, expires: Date.now() + 300_000 }))
+    } catch { /* Users can rescan after signing in. */ }
+  }
+
   return (
-    <main className="mx-auto max-w-xl p-6">
-      <h1 className="text-3xl font-semibold">Gogo TV</h1>
-      <p className="my-4">Pair a TV you can see and control. An unlocked TV profile can show your calendar and matching saved facts.</p>
-      {!signedIn && <a href="/dashboard" className="underline">Open AskGogo sign-in</a>}
-      {signedIn && pairingEnabled && <form className="my-6 grid gap-3" onSubmit={event => {
-        event.preventDefault()
-        if (!busy) void update({ action: 'approve', code })
-      }}>
-        <label htmlFor="tv-code">Pairing code on your TV</label>
-        <input id="tv-code" value={code} onChange={event => setCode(event.target.value)} autoComplete="off"
-          autoCapitalize="characters" maxLength={32} required className="rounded border p-2" />
-        <button type="submit" disabled={busy} className="rounded border p-2">Approve TV</button>
-      </form>}
-      <p aria-live="polite" className="my-4">{message}</p>
+    <main className="mx-auto grid max-w-lg gap-6 px-5 py-8">
+      <h1 className="text-3xl font-semibold">Pair Gogo TV</h1>
+      <p aria-live="polite" role="status">{message}</p>
+      {signedIn === false && <a href={signIn} onClick={rememberForSignIn} className={action}>Sign in to AskGogo</a>}
+      {signedIn && pairingEnabled && (review ? (
+        <section className="grid gap-4 rounded-xl border p-5" aria-labelledby="tv-review">
+          <h2 id="tv-review" ref={heading} tabIndex={-1} className="text-xl font-semibold">{review.device_name}</h2>
+          <p>Only approve if you can see the TV and its screen shows <strong>{formattedCode(pairing.code)}</strong>.</p>
+          <p>This TV can ask questions, read your calendar and matching saved facts, and transcribe recordings you choose to send.</p>
+          <p>Account access is read-only. You can revoke it here at any time.</p>
+          <div className="grid grid-cols-2 gap-3">
+            <button className={action} disabled={busy}
+              onClick={() => void update({ action: 'deny', id: review.id, ...pairing })}>Decline</button>
+            <button className={action} disabled={busy}
+              onClick={() => void update({ action: 'approve', id: review.id, ...pairing })}>Approve this TV</button>
+          </div>
+        </section>
+      ) : (
+        <form className="grid gap-3" onSubmit={event => {
+          event.preventDefault()
+          if (!busy) void update({ action: 'review', ...pairing })
+        }}>
+          <label htmlFor="tv-code">Code shown on your TV</label>
+          <input id="tv-code" value={pairing.code} onChange={event => setPairing({ code: event.target.value })}
+            autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={12} required className="rounded-lg border px-4 py-3" />
+          <button type="submit" disabled={busy} className={action}>Review TV access</button>
+        </form>
+      ))}
       {devices.length > 0 && <section className="grid gap-3">
-        <h2 className="text-xl">Active TV pairings</h2>
-        {devices.map(device => <div key={device.id} className="rounded border p-3">
-          <p>TV {device.id.slice(0, 8)} · paired {new Date(device.approved_at).toLocaleString()}</p>
-          <p>Expires {new Date(device.expires_at).toLocaleString()}</p>
-          <button disabled={busy} className="underline" onClick={() => void update({ action: 'revoke', id: device.id })}>
-            Revoke TV access
+        <h2 className="text-xl font-semibold">Connected TVs</h2>
+        {devices.map(device => <div key={device.id} className="rounded-xl border p-4">
+          <p className="font-medium">{device.device_name ?? 'Android TV'} · {device.id.slice(0, 8)}</p>
+          <p>{device.expires_at ? `Expires ${new Date(device.expires_at).toLocaleString()}` : 'Waiting for the TV to connect'}</p>
+          <button disabled={busy} className="mt-2 underline" onClick={() => void update({ action: 'revoke', id: device.id })}>
+            Revoke access
           </button>
         </div>)}
       </section>}

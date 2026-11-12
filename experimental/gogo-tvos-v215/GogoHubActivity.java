@@ -13,7 +13,9 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
+import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
@@ -211,9 +213,14 @@ public class GogoHubActivity extends Activity {
         }
     }
 
+    protected boolean showMarketStatus() { return false; }
+
     protected void openMarkets() {
         closeMarkets();
         markets = new WebView(this);
+        final boolean showStatus = showMarketStatus();
+        final TextView feedStatus = showStatus ? title("Loading TradingView…", 16, 0xFFC4DEEB) : null;
+        if (showStatus) feedStatus.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         markets.setBackgroundColor(0xFF091622);
         markets.getSettings().setJavaScriptEnabled(true);
         markets.getSettings().setDomStorageEnabled(true);
@@ -225,6 +232,25 @@ public class GogoHubActivity extends Activity {
         markets.getSettings().setMediaPlaybackRequiresUserGesture(true);
         markets.setWebChromeClient(new WebChromeClient());
         markets.setWebViewClient(new WebViewClient() {
+            private void feedUnavailable(WebView view, WebResourceRequest request) {
+                if (!showStatus || view != markets) return;
+                Uri url = request.getUrl();
+                String path = url.getPath();
+                String host = url.getHost();
+                if (request.isForMainFrame() || (path != null && host != null &&
+                        (path.endsWith("/embed-widget-ticker-tape.js") || host.equals("www.tradingview-widget.com")))) {
+                    feedStatus.setText("Market data is unavailable. Open TradingView or retry.");
+                }
+            }
+
+            @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                feedUnavailable(view, request);
+            }
+
+            @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse error) {
+                feedUnavailable(view, request);
+            }
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 return request.isForMainFrame();
@@ -254,10 +280,35 @@ public class GogoHubActivity extends Activity {
                 android.widget.Toast.makeText(this, "Open tradingview.com/markets on your phone", android.widget.Toast.LENGTH_LONG).show();
             }
         });
+        if (showStatus) {
+            addAction(bar, "Retry", "Reload market data", this::openMarkets);
+            addAction(bar, "Back", "Return to Gogo TV", this::showHub);
+            for (int index = 0; index < bar.getChildCount(); index++) {
+                View action = bar.getChildAt(index);
+                LinearLayout.LayoutParams layout = (LinearLayout.LayoutParams) action.getLayoutParams();
+                layout.width = 0;
+                layout.weight = 1;
+                layout.rightMargin = dp(8);
+                action.setLayoutParams(layout);
+            }
+            marketPage.addView(feedStatus);
+        }
         bar.getChildAt(0).requestFocus();
         marketPage.addView(markets, new LinearLayout.LayoutParams(-1, 0, 1));
         markets.loadDataWithBaseURL("https://tvhub.invalid/",
                 MARKETS_PAGE, "text/html", "UTF-8", null);
+        if (showStatus) {
+            final WebView current = markets;
+            current.postDelayed(() -> {
+                if (markets != current || !"Loading TradingView…".contentEquals(feedStatus.getText())) return;
+                current.evaluateJavascript("Boolean(document.querySelector('.tradingview-widget-container iframe'))", present -> {
+                    if (markets != current || !"Loading TradingView…".contentEquals(feedStatus.getText())) return;
+                    feedStatus.setText("true".equals(present)
+                            ? "Quotes depend on provider availability and may be delayed."
+                            : "Market data is unavailable. Open TradingView or retry.");
+                });
+            }, 9000);
+        }
     }
 
     @Override

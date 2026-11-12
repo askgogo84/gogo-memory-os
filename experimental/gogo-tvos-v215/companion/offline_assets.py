@@ -8,6 +8,10 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 ASSETS = {
+    "zxing-core.jar": (
+        "https://repo.maven.apache.org/maven2/com/google/zxing/core/3.5.3/core-3.5.3.jar",
+        "8d8064c1636fdaef7189dd9055c7d59950a8940a12f2293956446ec3c109fd82",
+    ),
     "vosk.aar": (
         "https://repo.maven.apache.org/maven2/com/alphacephei/vosk-android/0.3.75/vosk-android-0.3.75.aar",
         "ab2f8b91ac8051561aa325546b35fed9a68b36b8121bac5c6fb927525c4adfad",
@@ -45,6 +49,10 @@ def prepare(build, cache):
     cache.mkdir(exist_ok=True, parents=True)
     native = set()
     with ZipFile(build / "offline.jar", "w", ZIP_DEFLATED) as jar:
+        with ZipFile(verified(cache, "zxing-core.jar")) as zxing:
+            for entry in zxing.namelist():
+                if entry.endswith(".class") and not entry.startswith("META-INF/"):
+                    jar.writestr(entry, zxing.read(entry))
         for library in ("vosk.aar", "jna.aar"):
             with ZipFile(verified(cache, library)) as aar:
                 with ZipFile(io.BytesIO(aar.read("classes.jar"))) as classes:

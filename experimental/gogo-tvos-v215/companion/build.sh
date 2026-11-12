@@ -28,7 +28,7 @@ grep -q '^package in.askgogo.tvhub;' "$BUILD/src/GogoHubActivity.java"
 printf 'package in.askgogo.tvhub; final class BuildConfig { static final String ORIGIN = "%s"; }\n' "$ORIGIN" > "$BUILD/src/BuildConfig.java"
 "$BT/aapt2$EXE" compile --dir res -o "$BUILD/res.zip"
 "$BT/aapt2$EXE" link -o "$BUILD/unsigned.apk" -I "$JAR" --manifest AndroidManifest.xml \
-  --min-sdk-version 26 --target-sdk-version 34 --version-code "${GOGO_TV_VERSION_CODE:-3}" --version-name "${GOGO_TV_VERSION_NAME:-0.3.0}" "$BUILD/res.zip"
+  --min-sdk-version 26 --target-sdk-version 34 --version-code "${GOGO_TV_VERSION_CODE:-4}" --version-name "${GOGO_TV_VERSION_NAME:-0.4.0}" "$BUILD/res.zip"
 "$PY" offline_assets.py prepare "$BUILD" "$VENDOR"
 OFFLINE_JAR="$BUILD/offline.jar"
 if [ -n "$EXE" ]; then OFFLINE_JAR="$(cygpath -m "$OFFLINE_JAR")"; fi
