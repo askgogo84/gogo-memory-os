@@ -67,6 +67,19 @@ jobs:
           test -s upstream/build/tvos-home.apk
           sha256sum upstream/build/tvos-home.apk
           ls -lh upstream/build/tvos-home.apk
+      - name: Build independent Gogo TV companion
+        run: |
+          set -euxo pipefail
+          cd gogo/experimental/gogo-tvos-v215/companion
+          chmod +x build.sh
+          ./build.sh
+          test -s build/gogo-tv-companion.apk
+          sha256sum build/gogo-tv-companion.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gogo-tv-companion-v0_1-test-apk
+          path: gogo/experimental/gogo-tvos-v215/companion/build/gogo-tv-companion.apk
+          retention-days: 3
       - uses: actions/upload-artifact@v4
         with:
           name: gogo-tvos-v215-UNSIGNED-FOR-PRODUCTION-test-only
