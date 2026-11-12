@@ -336,7 +336,9 @@ export function costPaise(e: BrainMeterEvent): number | null {
   return usd == null ? null : Math.max(0, Math.round(usd * USD_TO_PAISE))
 }
 export function meterBrainCall(e: BrainMeterEvent): void {
-  if (!Number.isSafeInteger(e.telegramId) || e.telegramId <= 0) return
+  // A negative legacy id (the owner's) is metered for shadow calls, which are charged 0 paise (ours, never the
+  // person's budget). Charged calls keep the positive-only rule here, so this change cannot move anyone's budget.
+  if (!Number.isSafeInteger(e.telegramId) || e.telegramId === 0 || (e.telegramId < 0 && e.source !== 'brain_shadow')) return
   try {
     import('@/lib/services/cost-guard').then(m => m.recordCostEvent({
       telegramId: e.telegramId, category: /haiku/i.test(e.model) ? 'llm_haiku' : 'llm_sonnet',

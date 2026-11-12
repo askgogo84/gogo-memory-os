@@ -128,4 +128,7 @@ const hook = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', impor
 const hi = hook.indexOf('scheduleFrontDoorShadow('), fw = hook.indexOf("const forwardedMessage = String(formData.get('Forwarded')")
 ok(fw > 0 && hi > fw && hi < hook.indexOf('lib/memory/front-door', fw), 'the webhook schedules it right after forwarded is known, before any handler can return')
 ok(/process\.env\.GOGO_BRAIN_FRONT_DOOR_SHADOW\) await import/.test(hook) && hook.split('scheduleFrontDoorShadow(').length === 2, 'only when the setting exists, and once')
+// Round 4: shadow calls for a negative legacy id are metered (0 paise); charged calls keep the positive-only rule.
+ok(/e\.telegramId === 0 \|\| \(e\.telegramId < 0 && e\.source !== 'brain_shadow'\)\) return/.test(src), 'meterBrainCall: negative ids are metered for shadow only')
+eq(brain.costPaise({ telegramId: -9000000001, source: 'brain_shadow', model: 'claude-sonnet-5-5', ms: 1, ok: true, usage: { input: 1000, output: 100, cacheRead: 0, cacheCreation: 0 } }), 0, 'and shadow calls cost the person nothing')
 console.log(`FRONT_DOOR_SHADOW_OK ${checks} checks`)
