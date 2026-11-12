@@ -524,6 +524,54 @@ export async function scheduleLoopShadow(p: { phone: string; telegramId: number;
   // Outside a request (no after()): shadow may run at once; live does not, because Gogo's reply is not saved yet.
   await import('next/server').then(m => m.after(pass)).catch(() => { if (!live) void pass() })
 }
+/** Front door, step 1 (owner-approved plan "Gogo front door: one smart reply", 12 Nov): SHADOW COMPARISON ONLY.
+ *  For owners in GOGO_BRAIN_FRONT_DOOR_SHADOW, after the pipeline has replied, the loop writes the first reply it would
+ *  have sent, and both are logged side by side. It never sends, never prepares, never stages an approval: the pass
+ *  runs the loop in 'shadow' mode (read tools only) and has no send path at all. Off unless the setting is set. */
+export function frontDoorShadowFor(phone: string, env: Record<string, string | undefined> = process.env): boolean {
+  const me = digits(phone)
+  return !!me && String(env.GOGO_BRAIN_FRONT_DOOR_SHADOW || '').split(',').map(digits).filter(Boolean).includes(me)
+}
+export const FRONT_DOOR_DAILY = (env: Record<string, string | undefined> = process.env) => { const raw = String(env.GOGO_BRAIN_FRONT_DOOR_DAILY ?? '').trim(), n = Number(raw); return raw && Number.isInteger(n) && n >= 0 && n <= 500 ? n : 60 }
+/** Fixed commands keep going straight to their handler in the plan, so they are not compared. */
+export const FRONT_DOOR_FIXED = /^\s*(?:approve|reject|yes|y|no|n|ok|okay|stop|start|cancel|skip|nope|send it|book it|undo|help|\d{1,2}|forget my (?:travel|booking|ticket|flight) details|set (?:email|calendar|\w+) autonomy to \w+)[\s.!]*$/i
+type FrontDoorDeps = { run?: (a: any) => Promise<any>; countToday?: (telegramId: number) => Promise<number>; save?: (row: Record<string, unknown>) => Promise<void>; loadContext?: typeof loadBrainContext; defer?: (job: () => Promise<void>) => Promise<void>; env?: Record<string, string | undefined>; tools?: any[] }
+export async function scheduleFrontDoorShadow(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; forwarded?: boolean }, deps: FrontDoorDeps = {}): Promise<void> {
+  const env = deps.env || process.env
+  if (!frontDoorShadowFor(p.phone, env)) return
+  if (!Number.isSafeInteger(p.telegramId) || p.telegramId <= 0) return
+  const text = String(p.text || '')
+  if (!text.trim() || FRONT_DOOR_FIXED.test(text)) return
+  const pass = async () => {
+    try {
+      const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0)
+      const today = deps.countToday ? await deps.countToday(p.telegramId) : await supabaseAdmin.from('agent_activity').select('id', { count: 'exact', head: true }).eq('telegram_id', String(p.telegramId)).eq('event_type', 'brain_front_door_shadow').gte('created_at', dayStart.toISOString()).then((r: any) => (r.error ? Number.POSITIVE_INFINITY : Number(r.count || 0)))
+      if (!(today < FRONT_DOOR_DAILY(env))) { console.log('BRAIN_FRONT_DOOR_SHADOW:', JSON.stringify({ skipped: 'daily_limit' })); return }
+      // Runs after the response, when the pipeline's reply has been saved. The answered pair is taken out of the
+      // history (the loop must answer as if first), and the pipeline's reply is kept only for the log.
+      let c = await (deps.loadContext || loadBrainContext)(p)
+      let pipelineReply = ''
+      const n = c.turns.length, same = (a: string, b: string) => clean(a, 900) === clean(b, 900)
+      if (n >= 2 && c.turns[n - 1].role === 'assistant' && c.turns[n - 2].role === 'user' && same(c.turns[n - 2].content, text)) { pipelineReply = c.turns[n - 1].content; c = { ...c, turns: c.turns.slice(0, n - 2) } }
+      else if (n >= 1 && c.turns[n - 1].role === 'user' && same(c.turns[n - 1].content, text)) c = { ...c, turns: c.turns.slice(0, n - 1) }
+      if (p.forwarded) c = { ...c, sections: { ...c.sections, 'About the latest message': [FORWARDED_NOTE] } }
+      const loop = await import('./brain-loop'), { firstSliceTools } = await import('./brain-loop-tools')
+      const actor = { userId: String(p.userId || ''), legacyTelegramId: p.telegramId, whatsappId: String(p.whatsappId || p.phone), name: String(p.name || ''), timezone: c.timezone }
+      const onModelCall = (e: { model: string; ms: number; ok: boolean; usage: BrainUsage }) => meterBrainCall({ telegramId: p.telegramId, source: 'brain_shadow', ...e })
+      // Shadow mode: only read tools execute; prepare and act calls are recorded as "would do".
+      const r = await (deps.run || loop.runBrainLoop)({ actor, text, ctx: c, tools: deps.tools || firstSliceTools({}), onModelCall, mode: 'shadow' })
+      const report = { ...loop.loopShadowReport('pipeline', r), mode: 'front_door_shadow' }
+      const safe = (v: unknown, max: number) => redactSecretShapedText(String(v ?? '').replace(/\u0000/g, '').slice(0, max))
+      const row = { telegram_id: String(p.telegramId), event_type: 'brain_front_door_shadow', message: `front door shadow ${report.final} after ${report.tools.length} tool calls`,
+        metadata_json: { ...report, message: safe(text, 300), loop_reply: loop.loopShadowPreview(r), pipeline_reply: safe(pipelineReply, 700), pipeline_reply_found: Boolean(pipelineReply), would_prepare: r.steps.filter((x: any) => x.klass !== 'read').map((x: any) => x.tool) } }
+      console.log('BRAIN_FRONT_DOOR_SHADOW:', JSON.stringify({ ...report, found: Boolean(pipelineReply) }))
+      if (deps.save) await deps.save(row); else { const res: any = await supabaseAdmin.from('agent_activity').insert(row); if (res?.error) console.error('BRAIN_FRONT_DOOR_SHADOW_FAILED:', JSON.stringify({ code: 'save' })) }
+    } catch { console.error('BRAIN_FRONT_DOOR_SHADOW_FAILED') }
+  }
+  if (deps.defer) return deps.defer(pass)
+  // Only ever after the response: the pipeline's reply must be saved first. Without after(), nothing runs.
+  await import('next/server').then(m => m.after(pass)).catch(() => {})
+}
 /** How many approval cards are waiting for this person. Any error counts as "one is waiting". */
 async function pendingApprovalCount(telegramId: number): Promise<number> {
   const r: any = await supabaseAdmin.from('agent_approvals').select('id', { count: 'exact', head: true }).eq('telegram_id', String(telegramId)).eq('status', 'pending')

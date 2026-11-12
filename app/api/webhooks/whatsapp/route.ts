@@ -1166,6 +1166,9 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // here, before them (offerEventsEarly: typed by an owner, not forwarded, not an approval or a bare number). Replies to
     // the draft and yes to Events' own question still go to the later hook, after approvals and the registry. Null means
     // routing continues unchanged. Nothing is sent to any guest from here.
+    // Front door step 1 (owner-approved, 12 Nov): shadow comparison only. Off unless GOGO_BRAIN_FRONT_DOOR_SHADOW lists
+    // the owner. Scheduled with after(), so it runs once the reply below has been saved; it never sends anything.
+    if (!preserveFriendFlow && process.env.GOGO_BRAIN_FRONT_DOOR_SHADOW) await import('@/lib/agent/brain').then(m => m.scheduleFrontDoorShadow({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), forwarded: Boolean(forwardedMessage) })).catch(() => {})
     let eventsCheckedFor: string | null = null
     if (!preserveFriendFlow && !callCommand && process.env.VERCEL_ENV && (process.env.GOGO_EVENTS === '1' || process.env.GOGO_EVENTS_OWNERS)) {
       const entry = await import('@/lib/events/entry')
