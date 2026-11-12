@@ -196,7 +196,10 @@ export async function runVenueBrowse(actor: AgentActor, rawMeta: unknown, deps: 
     if (pending && pending.eventEnquiryFor !== e.id) return failed('held', `I opened ${meta.site} in a browser and found their enquiries address, but you have another email draft waiting, so I have not prepared this one. Send or drop that draft first.`)
     // 12 Nov: email at 'off' or 'read' saves no draft (the setting may have changed while the page was read).
     const block = deps.emailBlock ? await deps.emailBlock() : await import('@/lib/agent/adaptive-autonomy').then(m => m.emailDraftBlock(actor.legacyTelegramId)).catch(() => null)
-    if (block) return { found: 'page', text: `I opened ${meta.site} in a browser and found their enquiries address, but ${block === 'read' ? 'email is set to read-only' : 'email is off'} in your Gogo autonomy settings, so I have not drafted anything.` }
+    if (block) {
+      await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key: `blocked:${meta.key}`, found: 'email_' + block, via: 'browser' }, deps.db).catch(() => {})
+      return { found: 'page', text: `I opened ${meta.site} in a browser and found their enquiries address, but ${block === 'read' ? 'email is set to read-only' : 'email is off'} in your Gogo autonomy settings, so I have not drafted anything. If you turn drafts back on (say *set email autonomy to draft*), I'll prepare it the next time you change the plan.` }
+    }
     const step = venueStepText(e, contact, actor.name || '')
     if (!step.draft) return { found: 'page', text: null }
     await (deps.saveDraft ? deps.saveDraft : (d: Record<string, unknown>) => realSave(actor.legacyTelegramId, d))({ ...step.draft, eventEnquiryFor: e.id, enquiryKey: meta.key })

@@ -254,6 +254,15 @@ ok(tried > 0, 'and it is tried again on the next change, not recorded as done')
   ok(!r || !/Next step/.test(r), 'said once, not on every edit')
   r = await say('make the farewell party 14 people', { action: 'update', event: 'Farewell', capacity: 14 }, { emailBlock: async () => 'off' })
   ok(r && /Email is off in your Gogo autonomy settings, so I have not drafted an enquiry/.test(r) && drafts.length === before, 'email off: the same') }
+// Review: an enquiry already drafted for this venue, date and number is never re-announced as blocked, and turning
+// drafts back on does not draft it a second time.
+{ pending = null; const n0 = drafts.length
+  r = await say('Plan a launch party on 4 December at 8 pm for 18 people at Toit Indiranagar', { action: 'create', title: 'Launch party', kind: 'party', date: '2037-12-04', time: '20:00', capacity: 18, venue_name: 'Toit Indiranagar' })
+  ok(drafts.length === n0 + 1, 'drafted while email allows it'); pending = null
+  r = await say('add a note: launch party dress code smart', { action: 'update', event: 'Launch party', description: 'Smart' }, { emailBlock: async () => 'read' })
+  ok(!r || !/I have not drafted an enquiry/.test(r), 'already drafted: not re-announced as blocked')
+  r = await say('add a note: launch party bring badges', { action: 'update', event: 'Launch party', description: 'Badges' })
+  ok(drafts.length === n0 + 1, 'email back on: the same enquiry is not drafted twice') }
 process.env.GOGO_EVENTS_VENUE_HELP = 'off'
 r = await say('Plan a reunion on 2 December at 6 pm for 15 people at Byg Brewski', { action: 'create', title: 'Reunion', kind: 'reunion', date: '2037-12-02', time: '18:00', capacity: 15, venue_name: 'Byg Brewski' })
 ok(r && !/Next step/.test(r), 'GOGO_EVENTS_VENUE_HELP=off switches it off')

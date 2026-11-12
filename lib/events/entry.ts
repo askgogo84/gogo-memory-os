@@ -348,23 +348,24 @@ async function venueNextStep(actor: AgentActor, owner: string, eventId: string, 
     await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key: 'withdrawn' }, deps.db).catch(() => {})
   }
   if (!v.needsVenueEnquiry(e, now)) { await withdraw(); return mine ? WITHDRAWN : null }
-  // 12 Nov: email at 'off' or 'read' means no enquiry draft (and no lookup to draft from). Said once per
-  // venue/date/headcount, like the enquiry itself. If the setting cannot be read the draft is still prepared: nothing
-  // is sent without "send it" and an approved card, and the send path checks the setting again and fails closed.
-  const block = deps.emailBlock ? await deps.emailBlock() : await import('@/lib/agent/adaptive-autonomy').then(m => m.emailDraftBlock(actor.legacyTelegramId)).catch(() => null)
-  if (block) {
-    const k0 = v.enquiryKey(e)
-    if ((await store.ownerAuditDetails(owner, e.id, 'event.venue_enquiry_drafted', deps.db))[0]?.key === `blocked:${k0}`) return null
-    await withdraw()
-    await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key: `blocked:${k0}`, found: 'email_' + block }, deps.db).catch(() => {})
-    return `Next step: booking ${String(e.venue_name).replace(/[\r\n]+/g, ' ').slice(0, 120)}. ${block === 'read' ? 'Email is set to read-only' : 'Email is off'} in your Gogo autonomy settings, so I have not drafted an enquiry. Say *set email autonomy to draft* if you want me to.`
-  }
   // One enquiry per venue, date and headcount; an edit that changes none of them does not offer it again.
   const key = v.enquiryKey(e)
   // Compared with the latest record only: going back to an earlier number, or coming back after a withdrawal, drafts again.
   const seen = (await store.ownerAuditDetails(owner, e.id, 'event.venue_enquiry_drafted', deps.db))[0]?.key === key
   if (mine && mine.enquiryKey === key) return null
   if (seen && !mine) return null
+  // 12 Nov: email at 'off' or 'read' means no enquiry draft (and no lookup to draft from). Said once per
+  // venue/date/headcount, like the enquiry itself. If the setting cannot be read the draft is still prepared: nothing
+  // is sent without "send it" and an approved card, and the send path checks the setting again and fails closed.
+  const block = deps.emailBlock ? await deps.emailBlock() : await import('@/lib/agent/adaptive-autonomy').then(m => m.emailDraftBlock(actor.legacyTelegramId)).catch(() => null)
+  if (block) {
+    // Checked after "already drafted for this venue, date and number": a sent or waiting enquiry is never re-announced.
+    const latest = (await store.ownerAuditDetails(owner, e.id, 'event.venue_enquiry_drafted', deps.db))[0]?.key
+    if (latest === `blocked:${key}`) return null
+    await withdraw()
+    await store.recordOwnerAudit(owner, e.id, 'event.venue_enquiry_drafted', { key: `blocked:${key}`, found: 'email_' + block }, deps.db).catch(() => {})
+    return `Next step: booking ${String(e.venue_name).replace(/[\r\n]+/g, ' ').slice(0, 120)}. ${block === 'read' ? 'Email is set to read-only' : 'Email is off'} in your Gogo autonomy settings, so I have not drafted an enquiry. If you turn drafts back on (say *set email autonomy to draft*), I'll prepare it the next time you change the plan.`
+  }
   const started = Date.now()
   // Page text only: an address must be read off the page itself, never out of a model-written summary.
   const search: import('./venue-enquiry').Search = deps.search || (async (q, o) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: o?.timeoutMs, pageTextOnly: true }))

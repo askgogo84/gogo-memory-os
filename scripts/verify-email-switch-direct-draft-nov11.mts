@@ -71,4 +71,11 @@ ok(exec > 0 && gate > src.indexOf('assertApprovalBinding({', exec) && gate < src
 ok(/so I have not sent this email/.test(src), 'and says it was not sent')
 // The way back is not intercepted: an autonomy command is not an email draft.
 for (const t of ['set email autonomy to draft', 'set email autonomy to off']) { r = await run(t); ok(r === null && !reads.includes('agent_permissions'), `the recovery command passes through: ${t}`) }
+// Review 12 Nov: the procedure follow-up is gated before a run starts and again at send time (fail closed there).
+{ const pe = readFileSync(new URL('../lib/procedures/entry.ts', import.meta.url), 'utf8')
+  ok(pe.indexOf('emailDraftBlock(actor.legacyTelegramId)') > 0 && pe.indexOf('emailDraftBlock(actor.legacyTelegramId)') < pe.indexOf('startProcedureRun({'), 'a follow-up is not started while email is off or read-only')
+  const pio = readFileSync(new URL('../lib/procedures/io.ts', import.meta.url), 'utf8')
+  const at = pio.indexOf("=== 'email.follow_up:send'")
+  ok(at > 0 && pio.indexOf('emailDraftBlock', at) < pio.indexOf('gmailAccess(actor', at) && /catch\(\(\) => 'error' as const\)\n      if \(block\) throw/.test(pio), 'an approved follow-up checks again before Gmail and fails closed')
+  ok(/error:'I couldn’t check your email setting just now/.test(src), 'a settings read failure says so, not "email is off"') }
 console.log(`EMAIL_SWITCH_OK ${checks} checks`)
