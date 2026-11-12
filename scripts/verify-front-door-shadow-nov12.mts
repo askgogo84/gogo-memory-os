@@ -45,7 +45,9 @@ for (const t of ['482913', '4829 13', '4111 1111 1111 1111', 'my account 1234567
 { const h = harness({ deps: { secret: async (t: string) => /otp/i.test(t) } }); await h.go({ ...P, text: 'my otp is 4829' }); eq(h.st.started.length, 0, 'the secret guard is honoured') }
 { const pm = await import('../lib/bot/process-message.ts'); ok(pm.secretDeclaration('my otp is 482913') === 'otp' && pm.secretDeclaration('password: hunter22') === 'password', 'the default guard is the existing secretDeclaration') }
 // Unsafe ids never run.
-for (const id of [0, -9000000001, 2 ** 60, 1.5]) { const h = harness(); await h.go({ ...P, telegramId: id }); eq(h.st.started.length, 0, `unsafe id ${id}`) }
+for (const id of [0, 2 ** 60, -(2 ** 60), 1.5, Number.NaN]) { const h = harness(); await h.go({ ...P, telegramId: id }); eq(h.st.started.length, 0, `unsafe id ${id}`) }
+// 12 Nov live: the owner's legacy id is negative. It must run, and be logged and filtered as the same exact string.
+{ const h = harness(); await h.go({ ...P, telegramId: -9000000001 }); eq(h.st.runs.length, 1, 'a negative legacy id runs'); eq(h.st.started[0].telegram_id, '-9000000001', 'and is stored as its exact string'); eq(h.st.runs[0].actor.legacyTelegramId, -9000000001, 'the actor keeps the same id') }
 
 // The real pass: the loop answers as if first, in SHADOW mode, and both replies are logged.
 { const h = harness(); await h.go()

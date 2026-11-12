@@ -562,7 +562,8 @@ export async function scheduleFrontDoorShadow(p: { phone: string; telegramId: nu
   const env = deps.env || process.env
   const messageAt = (deps.now || Date.now)()
   if (!frontDoorShadowFor(p.phone, env)) return
-  if (!Number.isSafeInteger(p.telegramId) || p.telegramId <= 0) return
+  // Legacy owner ids can be negative (group-style ids): any exact, non-zero safe integer is accepted.
+  if (!Number.isSafeInteger(p.telegramId) || p.telegramId === 0) return
   const text = String(p.text || '')
   if (!text.trim() || FRONT_DOOR_FIXED.test(text) || FRONT_DOOR_SECRETISH.test(text)) return
   if (FRONT_DOOR_CODE_WORDS.test(text) && (/\d{3,8}/.test(text) || text.length <= 80)) return
