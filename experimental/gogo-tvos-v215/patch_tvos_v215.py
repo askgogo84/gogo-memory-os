@@ -11,7 +11,7 @@ import argparse
 import shutil
 
 HOME_METHOD = "        return isEnabled(c) && (isWidgetPrayerEnabled(c)\n"
-LAST_WIDGET = "                 || isWidgetWeatherEnabled(c));"
+LAST_WIDGET = "                || isWidgetWeatherEnabled(c));"
 ADD_CARD = """        if (GogoWidgets.enabled(host)) {
             cards.add(GogoWidgets.makeCard(host));
         }
@@ -68,7 +68,7 @@ def main():
     oldSettings=settings.read_text(encoding="utf-8")
     oldManifest=manifest.read_text(encoding="utf-8")
     h = replace_once(oldHd, LAST_WIDGET,
-        "                 || isWidgetWeatherEnabled(c)\n"
+        "                || isWidgetWeatherEnabled(c)\n"
         "                 || GogoWidgets.enabled(c));",
         "dashboard enabled", "|| GogoWidgets.enabled(c));")
     h = replace_once(h, CARD_ANCHOR, ADD_CARD + CARD_ANCHOR,
