@@ -398,7 +398,10 @@ export async function executeApprovedGmailSend(params:{actor:AgentActor;runId:st
 
   // Switched off after the approval card was made: the approval does not outlive the switch. Nothing is claimed or
   // sent; the run stays as it was.
-  {const block=await emailBlock(params.actor);if(block)return {runId:params.runId,status:'paused' as const,capability:'email' as const,risk:'high' as const,text:block==='error'?'I couldn’t check your email setting just now, so I have not sent this email. It is still approved: open it from your dashboard tasks to try again.':block==='read'?'Email is set to read-only in your Gogo autonomy settings, so I have not sent this email. Say *set email autonomy to draft* to allow it.':'Email is currently off in your Gogo autonomy settings, so I have not sent this email. Say *set email autonomy to draft* to turn it back on.',handledBy:'adaptive-autonomy'}}
+  // A read failure cannot be retried from the UI (only pending approvals are shown), so the run is closed as failed
+  // with a known outcome (nothing claimed or sent) rather than left queued with an approval nobody can reach.
+  {const block=await emailBlock(params.actor);if(block==='error'){const now=new Date().toISOString();await supabaseAdmin.from('agent_runs').update({status:'failed',summary:'Email setting could not be read; nothing was sent.',progress:100,error:'email_setting_unreadable',completed_at:now,updated_at:now}).eq('id',params.runId).eq('telegram_id',tg).in('status',['queued','waiting_approval'])}
+  if(block)return {runId:params.runId,status:block==='error'?'failed' as const:'paused' as const,capability:'email' as const,risk:'high' as const,text:block==='error'?'I couldn’t check your email setting just now, so I have not sent this email. Nothing went out. Ask me to reply to that email again in a minute and I’ll prepare it for approval.':block==='read'?'Email is set to read-only in your Gogo autonomy settings, so I have not sent this email. Say *set email autonomy to draft* to allow it.':'Email is currently off in your Gogo autonomy settings, so I have not sent this email. Say *set email autonomy to draft* to turn it back on.',handledBy:'adaptive-autonomy'}}
 
   const access=await gmailAccess(params.actor,{requireSend:true})
   if(!access.ok)throw new Error(access.reason||'gmail_send_unavailable')

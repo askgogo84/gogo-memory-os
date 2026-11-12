@@ -66,9 +66,11 @@ level = 'off'
 r = await run('reply to Nithin email saying ok')
 eq(r?.runId, 'gmail-email-off', 'a reply is stopped')
 const exec = src.indexOf('export async function executeApprovedGmailSend')
-const gate = src.indexOf('{const block=await emailBlock(params.actor);if(block)return {runId:params.runId', exec)
+const gate = src.indexOf('{const block=await emailBlock(params.actor);if(block===', exec)
 ok(exec > 0 && gate > src.indexOf('assertApprovalBinding({', exec) && gate < src.indexOf("gmailAccess(params.actor,{requireSend:true})", exec) && gate < src.indexOf("update({status:'running',summary:'Sending approved Gmail reply.'", exec), 'an approved send checks the switch after the approval is verified and before Gmail is read or the run is claimed')
 ok(/so I have not sent this email/.test(src), 'and says it was not sent')
+// Review 12 Nov: a settings read failure closes the run as failed (nothing sent) instead of promising a dashboard retry that does not exist.
+{ const body = src.slice(gate, src.indexOf("gmailAccess(params.actor,{requireSend:true})", exec)); ok(/block==='error'\)\{[^}]*status:'failed'[^}]*error:'email_setting_unreadable'/.test(body) && /\.in\('status',\['queued','waiting_approval'\]\)/.test(body), 'a read failure at send time closes the queued run as failed, outcome known'); ok(!/dashboard tasks to try again/.test(src) && /Nothing went out/.test(body), 'and does not promise a retry the dashboard cannot do') }
 // The way back is not intercepted: an autonomy command is not an email draft.
 for (const t of ['set email autonomy to draft', 'set email autonomy to off']) { r = await run(t); ok(r === null && !reads.includes('agent_permissions'), `the recovery command passes through: ${t}`) }
 // Review 12 Nov: the procedure follow-up is gated before a run starts and again at send time (fail closed there).
