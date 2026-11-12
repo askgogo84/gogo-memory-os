@@ -19,10 +19,12 @@ foreach($folder in @($OutputDir,$src,$res,$drawableDir,$gen,$classes,$dex,$build
 $manifest=Join-Path $OutputDir "AndroidManifest.xml"
 $hubFile=Join-Path $src "GogoHubActivity.java"
 $brainFile=Join-Path $src "GogoBrainActivity.java"
+$controlsFile=Join-Path $src "GogoTvControls.java"
 $stringsFile=Join-Path $res "strings.xml"
 $hubOrigin=Join-Path $OutputDir "GogoHubActivity.upstream.java"
 Invoke-WebRequest -UseBasicParsing -Uri "$base/GogoHubActivity.java" -OutFile $hubOrigin
 Invoke-WebRequest -UseBasicParsing -Uri "$base/companion/GogoBrainActivity.java" -OutFile $brainFile
+Invoke-WebRequest -UseBasicParsing -Uri "$base/companion/GogoTvControls.java" -OutFile $controlsFile
 Invoke-WebRequest -UseBasicParsing -Uri "$base/companion/AndroidManifest.xml" -OutFile $manifest
 Invoke-WebRequest -UseBasicParsing -Uri "$base/companion/res/values/strings.xml" -OutFile $stringsFile
 Invoke-WebRequest -UseBasicParsing -Uri "$base/companion/res/drawable/gogo_tv_icon.xml" -OutFile (Join-Path $drawableDir "gogo_tv_icon.xml")
@@ -49,7 +51,7 @@ $classesJar=Join-Path $build "classes.jar"
 if($LASTEXITCODE -ne 0){throw "aapt2 compile failed"}
 & "$bt\aapt2.exe" link -o $unsigned -I $jar --manifest $manifest --java $gen --min-sdk-version 24 --target-sdk-version 34 --version-code 2 --version-name "0.2.0" $resZip
 if($LASTEXITCODE -ne 0){throw "aapt2 link failed"}
-$sources=@($hubFile,$brainFile)
+$sources=@($hubFile,$brainFile,$controlsFile)
 $sources+=@(Get-ChildItem -Recurse -Path $gen -Filter "*.java"|Select-Object -ExpandProperty FullName)
 & javac -encoding UTF-8 --release 11 -classpath $jar -d $classes @sources
 if($LASTEXITCODE -ne 0){throw "Java compilation failed"}
