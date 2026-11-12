@@ -494,14 +494,45 @@ public final class GogoBrainActivity extends Activity
         } else super.onBackPressed();
     }
 
+    private void revokeInBackground(String token) {
+        // Best effort: credentials never survive in the TV process. A failed
+        // network revocation doesn't preserve local access.
+        Thread task = new Thread(() -> {
+            HttpURLConnection conn = null;
+            try {
+                conn = (HttpURLConnection)
+                        new URL(HOST + "/api/mobile/session/logout").openConnection();
+                conn.setRequestMethod("POST");
+                conn.setConnectTimeout(4000);
+                conn.setReadTimeout(4000);
+                conn.setInstanceFollowRedirects(false);
+                conn.setDoOutput(true);
+                conn.setRequestProperty("Authorization", "Bearer " + token);
+                conn.setRequestProperty("Content-Type", "application/json");
+                try (OutputStream stream = conn.getOutputStream()) {
+                    stream.write("{}".getBytes(StandardCharsets.UTF_8));
+                }
+                conn.getResponseCode();
+            } catch (Exception ignored) {
+                // Never expose credentials in logs, and never restore them.
+            } finally {
+                if (conn != null) conn.disconnect();
+            }
+        }, "gogo-tv-revoke");
+        task.setDaemon(true);
+        task.start();
+    }
+
     @Override protected void onStop() {
         super.onStop();
         // A shared-screen security boundary: leaving the Assistant to Home or
         // another app removes access to the account immediately. The external
         // speech dialog is the only permitted interruption.
         if (!listening) {
+            String toRevoke = accessToken;
             accessToken = null;
             pollToken = null;
+            if (toRevoke != null) revokeInBackground(toRevoke);
             if (tts != null) tts.stop();
             speaking = false;
             lastSpoken = "";
