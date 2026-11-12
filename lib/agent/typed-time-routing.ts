@@ -109,7 +109,10 @@ export async function tryTypedTimeRouting(p:{actor:AgentActor;text:string;surfac
         // Only when the travel item in context is the latest flight result (not a hotel search or another run).
         const fb=await import('./flight-booking')
         const last=await fb.loadLastFlightResult(p.actor).catch(()=>null)
-        if(last&&context.items.some(i=>String(i.id)===String(last.runId))){
+        // Also when a newer flight search is still running or just failed: the booking handler then says so
+        // ("still searching…" / "didn't get live fares") instead of "Book what exactly?". It never books an older one.
+        const newer=last&&context.items.some(i=>String(i.id)===String(last.runId))?null:await fb.newerFlightSearchPending(p.actor,last?.startedAt||null).catch(()=>null)
+        if((last&&context.items.some(i=>String(i.id)===String(last.runId)))||newer){
           const booking=await fb.tryFlightBooking({actor:p.actor,surface:p.surface as any,text:original})
           if(booking)return booking as any
         }
