@@ -336,7 +336,9 @@ export function costPaise(e: BrainMeterEvent): number | null {
   return usd == null ? null : Math.max(0, Math.round(usd * USD_TO_PAISE))
 }
 export function meterBrainCall(e: BrainMeterEvent): void {
-  if (!Number.isSafeInteger(e.telegramId) || e.telegramId <= 0) return
+  // A negative legacy id (the owner's) is metered for shadow calls, which are charged 0 paise (ours, never the
+  // person's budget). Charged calls keep the positive-only rule here, so this change cannot move anyone's budget.
+  if (!Number.isSafeInteger(e.telegramId) || e.telegramId === 0 || (e.telegramId < 0 && e.source !== 'brain_shadow')) return
   try {
     import('@/lib/services/cost-guard').then(m => m.recordCostEvent({
       telegramId: e.telegramId, category: /haiku/i.test(e.model) ? 'llm_haiku' : 'llm_sonnet',
@@ -562,7 +564,8 @@ export async function scheduleFrontDoorShadow(p: { phone: string; telegramId: nu
   const env = deps.env || process.env
   const messageAt = (deps.now || Date.now)()
   if (!frontDoorShadowFor(p.phone, env)) return
-  if (!Number.isSafeInteger(p.telegramId) || p.telegramId <= 0) return
+  // Legacy owner ids can be negative (group-style ids): any exact, non-zero safe integer is accepted.
+  if (!Number.isSafeInteger(p.telegramId) || p.telegramId === 0) return
   const text = String(p.text || '')
   if (!text.trim() || FRONT_DOOR_FIXED.test(text) || FRONT_DOOR_SECRETISH.test(text)) return
   if (FRONT_DOOR_CODE_WORDS.test(text) && (/\d{3,8}/.test(text) || text.length <= 80)) return

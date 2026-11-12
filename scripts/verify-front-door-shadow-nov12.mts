@@ -45,7 +45,9 @@ for (const t of ['482913', '4829 13', '4111 1111 1111 1111', 'my account 1234567
 { const h = harness({ deps: { secret: async (t: string) => /otp/i.test(t) } }); await h.go({ ...P, text: 'my otp is 4829' }); eq(h.st.started.length, 0, 'the secret guard is honoured') }
 { const pm = await import('../lib/bot/process-message.ts'); ok(pm.secretDeclaration('my otp is 482913') === 'otp' && pm.secretDeclaration('password: hunter22') === 'password', 'the default guard is the existing secretDeclaration') }
 // Unsafe ids never run.
-for (const id of [0, -9000000001, 2 ** 60, 1.5]) { const h = harness(); await h.go({ ...P, telegramId: id }); eq(h.st.started.length, 0, `unsafe id ${id}`) }
+for (const id of [0, 2 ** 60, -(2 ** 60), 1.5, Number.NaN]) { const h = harness(); await h.go({ ...P, telegramId: id }); eq(h.st.started.length, 0, `unsafe id ${id}`) }
+// 12 Nov live: the owner's legacy id is negative. It must run, and be logged and filtered as the same exact string.
+{ const h = harness(); await h.go({ ...P, telegramId: -9000000001 }); eq(h.st.runs.length, 1, 'a negative legacy id runs'); eq(h.st.started[0].telegram_id, '-9000000001', 'and is stored as its exact string'); eq(h.st.runs[0].actor.legacyTelegramId, -9000000001, 'the actor keeps the same id') }
 
 // The real pass: the loop answers as if first, in SHADOW mode, and both replies are logged.
 { const h = harness(); await h.go()
@@ -126,4 +128,7 @@ const hook = readFileSync(new URL('../app/api/webhooks/whatsapp/route.ts', impor
 const hi = hook.indexOf('scheduleFrontDoorShadow('), fw = hook.indexOf("const forwardedMessage = String(formData.get('Forwarded')")
 ok(fw > 0 && hi > fw && hi < hook.indexOf('lib/memory/front-door', fw), 'the webhook schedules it right after forwarded is known, before any handler can return')
 ok(/process\.env\.GOGO_BRAIN_FRONT_DOOR_SHADOW\) await import/.test(hook) && hook.split('scheduleFrontDoorShadow(').length === 2, 'only when the setting exists, and once')
+// Round 4: shadow calls for a negative legacy id are metered (0 paise); charged calls keep the positive-only rule.
+ok(/e\.telegramId === 0 \|\| \(e\.telegramId < 0 && e\.source !== 'brain_shadow'\)\) return/.test(src), 'meterBrainCall: negative ids are metered for shadow only')
+eq(brain.costPaise({ telegramId: -9000000001, source: 'brain_shadow', model: 'claude-sonnet-5-5', ms: 1, ok: true, usage: { input: 1000, output: 100, cacheRead: 0, cacheCreation: 0 } }), 0, 'and shadow calls cost the person nothing')
 console.log(`FRONT_DOOR_SHADOW_OK ${checks} checks`)
