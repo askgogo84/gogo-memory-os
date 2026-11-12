@@ -235,7 +235,10 @@ export function understandingLooksRight(out: string) {
   return t.length >= 20 && t.length <= 900 && !/\b(?:Extracted text|Next actions)\b/i.test(t) && !/^#/.test(t)
 }
 
-export type ImageOffer = { question: string; instruction: string }
+export type ImageOffer = { question: string; instruction: string
+  /** For a reminder offer: the exact time (UTC ISO) the "yes" must save. The instruction is parsed with the real reminder
+   *  parser before it is offered, and an offer whose parse differs is dropped. */
+  at?: string }
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 const ymd = (d: Date) => d.toISOString().slice(0, 10)
 const dayMonth = (iso: string) => { const [y, m, d] = iso.split('-').map(Number); return { short: `${d} ${MONTHS[m - 1].slice(0, 3)}`, long: `${d} ${MONTHS[m - 1]} ${y}` } }
@@ -248,11 +251,17 @@ const clock = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); co
 export function offerWhatIsPlain(what: string): boolean {
   const w = String(what || '')
   if (!w || w.length > 140) return false
-  if (/\d{1,2}\s*[.:]\s*\d{2}|\b\d{1,2}\s*(?:am|pm)\b|\b(?:noon|midnight|tonight|yesterday|every|each|daily|weekly|hourly|monthly|yearly|annually)\b|\b\d+\s*(?:min(?:ute)?s?|hours?|hrs?)\s+(?:before|earlier|after|later)\b/i.test(w)) return false
-  if (/[;|@<>{}\[\]\\]|https?:|www\.|\n/i.test(w)) return false
-  if (/\b(?:then|also|and|plus|after that)\s+(?:send|email|mail|message|text|whatsapp|call|delete|remove|cancel|pay|transfer|book|order|share|forward|post|publish|approve|reply)\b/i.test(w)) return false
+  // A second instruction, an address, a link or a separator that could start one.
+  if (/[;|@<>{}\[\]\\&\/+—–]|https?:|www\.|\n/i.test(w)) return false
+  const act = '(?:send|email|mail|message|text|whatsapp|call|delete|remove|cancel|transfer|forward|post|publish|approve|reply)'
+  if (new RegExp(`\\b(?:then|also|and|plus|after that)\\s+${act}\\b|[,:]\\s*${act}\\b`, 'i').test(w)) return false
+  // A weekday that may not match the offered date makes the "yes" fail on the parser's weekday check.
+  if (/\b(?:mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?|sun)(?:day)?s?\b/i.test(w)) return false
   return true
 }
+/** Same-day words only: anything the reminder parser could read as a time or a schedule. The parse check below is the
+ *  real guard; this keeps obvious cases out cheaply. */
+const SAME_DAY_TIMEISH = /\d\s*[.:h]\s*\d{2}|\d\s*(?:a\.?m|p\.?m)\b|\b(?:noon|midday|midnight|tonight|yesterday|every|daily|weekly|hourly|monthly|o'?clock|half past|quarter (?:past|to))\b|\b\d+\s*(?:min(?:ute)?s?|hours?|hrs?)\b/i
 export function buildImageOffer(offer: any, todayIso: string, nowMinutes?: number): ImageOffer | null {
   const what = String(offer?.what || '').replace(/\s+/g, ' ').trim().replace(/[.?!]+$/, '')
   const date = String(offer?.date || '')
@@ -266,8 +275,10 @@ export function buildImageOffer(offer: any, todayIso: string, nowMinutes?: numbe
     // A "yes" is accepted for OFFER_MINUTES, so the reminder must be at least that far off: a late yes never lands after it.
     if (h > 23 || m > 59 || at < (nowMinutes as number) + OFFER_MINUTES) return null
     const hhmm = `${String(Math.floor(at / 60)).padStart(2, '0')}:${String(at % 60).padStart(2, '0')}`
+    if (SAME_DAY_TIMEISH.test(what)) return null
     const verb = what.charAt(0).toLowerCase() + what.slice(1)
-    return { question: `Want me to remind you at ${clock(hhmm)}, 15 minutes before?`, instruction: `remind me today at ${clock(hhmm).replace(' ', '')} to go to ${verb}` }
+    const atUtc = new Date(Date.parse(`${todayIso}T${hhmm}:00+05:30`)).toISOString()
+    return { question: `Want me to remind you at ${clock(hhmm)}, 15 minutes before?`, instruction: `remind me today at ${clock(hhmm).replace(' ', '')} to go to ${verb}`, at: atUtc }
   }
   if (date <= todayIso) return null
   if (offer?.kind === 'reminder') {
@@ -278,7 +289,7 @@ export function buildImageOffer(offer: any, todayIso: string, nowMinutes?: numbe
     if (ymd(at) <= todayIso) return null
     const d = dayMonth(ymd(at))
     const verb = what.charAt(0).toLowerCase() + what.slice(1)
-    return { question: `Want me to remind you on ${d.short} at 10 am to ${verb}?`, instruction: `remind me on ${d.long} at 10am to ${verb}` }
+    return { question: `Want me to remind you on ${d.short} at 10 am to ${verb}?`, instruction: `remind me on ${d.long} at 10am to ${verb}`, at: new Date(Date.parse(`${ymd(at)}T10:00:00+05:30`)).toISOString() }
   }
   if (offer?.kind === 'calendar') {
     const time = /^\d{2}:\d{2}$/.test(String(offer?.time || '')) ? String(offer.time) : null
@@ -306,12 +317,23 @@ export async function explainReaderNoteWithOffer(params: { readerText: string; c
     const parsed = JSON.parse(raw)
     const reply = tidyUnderstanding(String(parsed?.reply || '').trim().replace(/\n+[^\n]*\?\s*$/, ''))
     if (!understandingLooksRight(reply)) return null
-    const offer = buildImageOffer(parsed?.offer, today, nowMinutes)
+    let offer = buildImageOffer(parsed?.offer, today, nowMinutes)
+    // A reminder offer is offered only if the real parser saves exactly the offered time, once (review 12 Nov: words in
+    // the offer such as "630pm" or "midday" could move it). Any parse error drops the offer, never the reply.
+    if (offer?.at && !(await reminderOfferParses(offer))) offer = null
     return { text: offer ? `${reply}\n\n${offer.question}` : reply, offer }
   } catch (err: any) {
     console.error('IMAGE_UNDERSTAND_FAILED:', String(err?.message || err).slice(0, 120))
     return null
   }
+}
+
+export async function reminderOfferParses(offer: ImageOffer): Promise<boolean> {
+  try {
+    const { parseReminderIntent } = await import('@/lib/bot/handlers/reminders')
+    const p: any = parseReminderIntent(offer.instruction)
+    return p?.kind === 'one_time' && p.remindAtIso === offer.at
+  } catch { return false }
 }
 
 /** Text-only form (older callers and tests). */
