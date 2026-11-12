@@ -104,16 +104,22 @@ async function saveEnquiryDraft(actor: AgentActor, input: Record<string, unknown
 /** Calendar reader text, bounded by line: the reader's own warnings (partial page, unread account, incomplete) are
  *  always kept, and a cut list says so, so a partial schedule is never shown as complete. */
 export function calendarText(text: string, max = 3500): string {
-  const lines = String(text || '').split('\n')
-  if (!text.trim()) return 'No calendar events returned.'
+  if (!String(text || '').trim()) return 'No calendar events returned.'
   if (text.length <= max) return text
-  const warn = /partial|could not be read|incomplete|showing \d+ of \d+|not the full schedule/i
-  const head = lines[0], trailer = lines.slice(1).filter(l => warn.test(l)), body = lines.slice(1).filter(l => !warn.test(l))
+  const lines = String(text).split('\n')
+  // Only the reader's own sentences are warnings: a numbered event line never is, whatever its title says (titles
+  // come from other people's invites, so "Partial payment review" must not push the real warning out).
+  const warn = (l: string) => !/^\s*\d+\.\s/.test(l) && /partial|could not be read|incomplete|showing \d+ of \d+|not the full schedule/i.test(l)
+  const head = lines[0], rest = lines.slice(1)
+  const trailer = rest.filter(warn).map(l => l.slice(0, 300)).slice(0, 6), body = rest.filter(l => !warn(l))
+  const note = (n: number) => `List cut: ${n} more lines not shown, so this is not the full schedule.`
+  const fixed = head.slice(0, 200).length + trailer.reduce((n, l) => n + l.length + 1, 0) + note(body.length).length + 2
   const keep: string[] = []
-  let used = head.length + trailer.reduce((n, l) => n + l.length + 1, 0) + 80
-  for (const l of body) { if (used + l.length + 1 > max) break; keep.push(l); used += l.length + 1 }
+  let used = fixed
+  for (const l of body) { const line = l.slice(0, 400); if (used + line.length + 1 > max) break; keep.push(line); used += line.length + 1 }
   const cut = body.length - keep.length
-  return [head, ...keep, ...(cut ? [`List cut: ${cut} more lines not shown, so this is not the full schedule.`] : []), ...trailer].join('\n').slice(0, max)
+  // Built to fit: the header, the warnings and the cut note are never sliced away.
+  return [head.slice(0, 200), ...keep, ...(cut ? [note(cut)] : []), ...trailer].join('\n')
 }
 export function firstSliceTools(deps: LoopToolDeps = {}): LoopTool[] {
   const search = deps.search || (async (q: string, o?: { timeoutMs?: number }) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: o?.timeoutMs || 6000, pageTextOnly: true }))
