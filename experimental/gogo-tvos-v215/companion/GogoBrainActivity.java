@@ -325,6 +325,14 @@ public final class GogoBrainActivity extends Activity
         replyLP.bottomMargin=dp(10);
         c.addView(result,replyLP);
         prompt=field(c,"Type or dictate a request…",false);
+        action(c,"My day briefing", () -> {
+            prompt.setText("Give me my schedule, open loops, and important reminders for today.");
+            state("Review the draft and press Send.");
+        });
+        action(c,"What am I working on?", () -> {
+            prompt.setText("What are my current priorities and what is still pending?");
+            state("Review the draft and press Send.");
+        });
         action(c,"Dictate with TV microphone",this::listen);
         action(c,"Send to AskGogo",this::sendPrompt);
         action(c,"Voice replies: " + (soundEnabled ? "ON" : "OFF"),()->{
