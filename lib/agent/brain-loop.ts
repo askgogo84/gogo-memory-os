@@ -87,7 +87,12 @@ const TERMINAL: Anthropic.Tool[] = [
 ]
 const NOTHING_TOOL: Anthropic.Tool = { name: 'nothing', description: 'Finish without a message: Gogo already said and did what was useful, and there is no further step worth the person\'s attention.', input_schema: { type: 'object', properties: {} } }
 const ACT_NOT_DONE = 'NOT DONE, and it cannot be done from here. Only the person can approve this. Finish by telling them plainly what is ready and what they need to say or tap.'
-const SHADOW_NOT_RUN = 'NOT DONE. Nothing was created, changed or sent. Do not say it is done, set or saved. Tell the person what you will do once they confirm (or ask what is missing).'
+// Shadow: the step is not run in this comparison pass; in real use a private step (a reminder, a draft) would be prepared
+// now, so the reply says what is being prepared, in the future tense, and never claims it is done.
+const SHADOW_NOT_RUN = 'NOT DONE. Nothing was created, changed or sent in this pass. Do not say it is done, set or saved. Write the reply as if it is being prepared now ("I\'ll set…", "I\'ll draft…"), or ask if something is missing.'
+// Live: a prepare tool with no run function. Unchanged from before the 12 Nov fixes (review: do not alter the live
+// venue-enquiry follow-up), so the pass keeps going to the next useful step.
+const LIVE_PREPARE_NOT_RUN = 'NOT RUN. This is a planning pass: nothing was created, changed or sent. Carry on planning as if it would be prepared for the person to approve.'
 
 /** Checks a tool list once: unique names, no clash with reply/ask/nothing, read tools have a run function, act tools never do. */
 export function validateTools(tools: LoopTool[]): string[] {
@@ -150,7 +155,8 @@ export async function runBrainLoop(p: LoopParams & { mode: 'shadow' | 'live'; al
       const uses = content.filter(b => b?.type === 'tool_use')
       if (!uses.length) {
         const plain = isAdaptiveOnlyModel(model) ? textOf(content).trim() : ''
-        return plain ? done('final', { kind: 'reply', text: clip(plain, 3000) }) : done('no_tool')
+        const tidy = plain ? stripUnrequestedAddress(clip(plain, 3000), (p.ctx.sections?.['Standing preferences'] || []).join('\n')).trim() : ''
+        return tidy ? done('final', { kind: 'reply', text: tidy }) : done('no_tool')
       }
       if (uses.some(u => u.name === 'nothing')) return done('final', { kind: 'nothing', text: '' })
       const fin = uses.find(u => u.name === 'reply' || u.name === 'ask')
@@ -167,7 +173,7 @@ export async function runBrainLoop(p: LoopParams & { mode: 'shadow' | 'live'; al
         if (!tool) out = 'No such tool.'
         else if (steps.filter(s => s.klass !== 'unknown').length >= L.maxToolCalls) out = 'Tool limit reached for this message. Finish with reply or ask.'
         else if (tool.klass === 'act') { out = p.mode === 'live' ? ACT_NOT_DONE : SHADOW_NOT_RUN; ok = true }
-        else if (tool.klass === 'prepare' && (p.mode !== 'live' || !tool.run)) { out = SHADOW_NOT_RUN; ok = true }
+        else if (tool.klass === 'prepare' && (p.mode !== 'live' || !tool.run)) { out = p.mode === 'live' ? LIVE_PREPARE_NOT_RUN : SHADOW_NOT_RUN; ok = true }
         else if (left() < 500) out = 'Out of time for this message. Finish with reply or ask.'
         else {
           executed = true
@@ -203,8 +209,11 @@ export function loopShadowReport(pipelineKind: string, r: LoopResult) {
   }
 }
 /** The reply says something was done, set or sent, but no prepare tool ran in this pass. Measured, never shown. */
-export const DONE_CLAIM = /\b(?:done|all set|i(?:'|’)ve (?:set|added|booked|sent|saved|created|scheduled|drafted)|i have (?:set|added|booked|sent|saved|created|scheduled|drafted)|(?:is|are|has been|have been) (?:set|added|booked|sent|saved|created|scheduled))\b/i
-export function claimsDoneUnrun(r: Pick<LoopResult, 'final' | 'steps'>): boolean {
-  return DONE_CLAIM.test(r.final.text || '') && !r.steps.some(s => s.klass === 'prepare' && s.executed && s.ok)
+export const DONE_CLAIM = /\b(?:i(?:'|’)ve|i have)\s+(?:gone ahead and\s+)?(?:set|added|booked|sent|saved|created|scheduled|drafted|put)\b|\b(?:reminder|it|that|this|event|draft|enquiry|email)\s+(?:is\s+|has been\s+)?(?:all\s+)?(?:set|created|added|saved|booked|scheduled|sent)\b(?![^.?!]*\?)|^\s*(?:done|all set|booked|sent|saved)\b[.!,]/im
+const NOT_A_CLAIM = /\b(?:not|nothing|isn't|hasn't|haven't|won't|will not)\b[^.?!]{0,20}\b(?:done|set|added|booked|sent|saved|created|scheduled)\b/i
+/** The reply says something was done, set or sent, but nothing was prepared in this pass. Measured, never shown. */
+export function claimsDoneUnrun(r: Pick<LoopResult, 'final' | 'steps'> & { prepared?: LoopState['prepared'] }): boolean {
+  const t = String(r.final.text || '')
+  return DONE_CLAIM.test(t) && !NOT_A_CLAIM.test(t) && !(r.prepared || []).length
 }
 export const loopShadowPreview = (r: LoopResult) => redactSecretShapedText(clip(r.final.text, 700))

@@ -101,6 +101,20 @@ async function saveEnquiryDraft(actor: AgentActor, input: Record<string, unknown
   return 'Saved as a draft. It has NOT been sent. The person will be shown it in full. Finish.'
 }
 
+/** Calendar reader text, bounded by line: the reader's own warnings (partial page, unread account, incomplete) are
+ *  always kept, and a cut list says so, so a partial schedule is never shown as complete. */
+export function calendarText(text: string, max = 3500): string {
+  const lines = String(text || '').split('\n')
+  if (!text.trim()) return 'No calendar events returned.'
+  if (text.length <= max) return text
+  const warn = /partial|could not be read|incomplete|showing \d+ of \d+|not the full schedule/i
+  const head = lines[0], trailer = lines.slice(1).filter(l => warn.test(l)), body = lines.slice(1).filter(l => !warn.test(l))
+  const keep: string[] = []
+  let used = head.length + trailer.reduce((n, l) => n + l.length + 1, 0) + 80
+  for (const l of body) { if (used + l.length + 1 > max) break; keep.push(l); used += l.length + 1 }
+  const cut = body.length - keep.length
+  return [head, ...keep, ...(cut ? [`List cut: ${cut} more lines not shown, so this is not the full schedule.`] : []), ...trailer].join('\n').slice(0, max)
+}
 export function firstSliceTools(deps: LoopToolDeps = {}): LoopTool[] {
   const search = deps.search || (async (q: string, o?: { timeoutMs?: number }) => (await import('@/lib/web-search')).searchWebResults(q, { timeoutMs: o?.timeoutMs || 6000, pageTextOnly: true }))
   return [
@@ -142,7 +156,7 @@ export function firstSliceTools(deps: LoopToolDeps = {}): LoopTool[] {
         const open = list.filter((e: any) => e.status !== 'cancelled').slice(0, 8)
         return open.length ? open.map((e: any) => `- ${str(e.title, 80)} | ${e.starts_at || 'no date'} (${e.timezone}) | ${str(e.venue_name || 'no place', 80)} | ${e.capacity ? `${e.capacity} people` : 'number not set'} | ${e.status}`).join('\n') : 'No events yet.'
       } },
-    { name: 'calendar_read', klass: 'read', description: "The person's own Google Calendar events (read only) for a day or range they name, such as \"tomorrow\", \"this week\" or \"21 Nov\". Use it before saying anything about their schedule.",
+    { name: 'calendar_read', klass: 'read', description: "The person's own Google Calendar events (read only) for a day or range they name, such as \"today\", \"tomorrow\", \"this week\", \"Friday\" or a date as YYYY-MM-DD. Use it before saying anything about their schedule.",
       input_schema: obj({ when: { type: 'string', description: 'The day or range in the person\'s words, e.g. tomorrow, this week, Friday' } }, ['when']),
       run: async (actor, input) => {
         const when = str(input.when, 60).replace(/[^\p{L}\p{N} ,.'/-]/gu, ' ').trim() || 'today'
@@ -151,7 +165,15 @@ export function firstSliceTools(deps: LoopToolDeps = {}): LoopTool[] {
           const out: any = await m.executeReadOnlyCalendarStep({ actor: a, instruction: `what is on my calendar ${w}`, missionText: `what is on my calendar ${w}` })
           return String(out?.text || '')
         })
-        try { return String(await read(actor, when) || '').replace(/\u0000/g, '').slice(0, 3500).trim() || 'No calendar events returned.' } catch { return 'Calendar could not be read just now. Do not guess the schedule; say it could not be checked.' }
+        let text = ''
+        try { text = String(await read(actor, when) || '').replace(/\u0000/g, '').trim() }
+        catch (e: any) {
+          const code = String(e?.message || e || '')
+          if (/calendar_not_connected|not connected/i.test(code)) return 'Google Calendar is not connected for this person. Do not guess their schedule; say it is not connected and that they can connect it from their AskGogo dashboard.'
+          if (/calendar_date_(?:unsupported|ambiguous)|calendar_time_unsupported/.test(code)) return 'That day could not be read. Call calendar_read again with "today", "tomorrow", "this week", a weekday, or a date as YYYY-MM-DD.'
+          throw e // any other failure: the loop records it as failed and tells the model not to guess
+        }
+        return calendarText(text)
       } },
     // Planned with, never run in shadow.
     { name: 'event_draft', klass: 'prepare', description: "Create or update the person's own event draft (private until they publish): name, date, time, place, number of people.",
