@@ -19,6 +19,8 @@ controls = (root / "src/GogoTvControls.java").read_text(encoding="utf-8")
 assert "FLAG_SECURE" in app and "onStop()" in app and "stopWake()" in app
 assert "Transcribe recording" in app and "Review the transcript before sending" in app
 assert "UtteranceProgressListener" in app
+assert '"device", "PUT", proof, "application/json",' in app and '"{}".getBytes(StandardCharsets.US_ASCII)' in app
+assert "FLAG_KEEP_SCREEN_ON" in app
 assert '"/api/tv/"' in api and "setInstanceFollowRedirects(false)" in api
 assert "/api/mobile/" not in app + api and "/api/agent/" not in app + api
 assert "GogoTvControls.description(text)" in app and "Control this TV?" in app

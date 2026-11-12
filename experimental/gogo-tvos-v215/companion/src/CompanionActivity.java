@@ -137,6 +137,8 @@ public final class CompanionActivity extends GogoHubActivity {
 
     private LinearLayout screen(Page next, String heading) {
         page = next;
+        if (next == Page.PAIR) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         question = null;
         closeMarkets();
         root.removeAllViews();
@@ -411,7 +413,10 @@ public final class CompanionActivity extends GogoHubActivity {
         polling = true;
         worker.execute(() -> {
             String state;
-            try { state = TvApi.request("device", "PUT", proof, null, null).getString("state"); }
+            try {
+                state = TvApi.request("device", "PUT", proof, "application/json",
+                        "{}".getBytes(StandardCharsets.US_ASCII)).getString("state");
+            }
             catch (TvApi.Failure failure) {
                 state = failure.status == 401 ? "expired" : failure.status == 404 ? "disabled"
                         : failure.status == 429 ? "slow_down" : "offline";
