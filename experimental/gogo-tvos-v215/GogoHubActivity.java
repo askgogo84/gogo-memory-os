@@ -143,7 +143,7 @@ public final class GogoHubActivity extends Activity {
                 this::openMarkets);
 
         addAction(column, "AskGogo",
-                "Open the existing assistant. Secure TV voice pairing is not yet enabled.",
+                "Same Brain via WhatsApp OTP, private session and push-to-talk.",
                 this::openAskGogo);
 
         addAction(column, "Phone remote",
@@ -157,17 +157,8 @@ public final class GogoHubActivity extends Activity {
     }
 
     private void openAskGogo() {
-        try {
-            startActivity(new Intent(Intent.ACTION_VIEW,
-                    Uri.parse("https://app.askgogo.in")));
-        } catch (ActivityNotFoundException | SecurityException e) {
-            new android.app.AlertDialog.Builder(this)
-                    .setTitle("AskGogo")
-                    .setMessage("There is no TV browser installed. For now, open "
-                            + "https://app.askgogo.in on your phone. "
-                            + "Secure TV pairing and hands-free voice are separate upcoming modules.")
-                    .setPositiveButton(android.R.string.ok, null).show();
-        }
+        // Local, first-party TV screen: no browser app required.
+        startActivity(new Intent(this, GogoBrainActivity.class));
     }
 
     private void openCouchRemote() {
