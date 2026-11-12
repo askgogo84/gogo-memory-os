@@ -1,0 +1,42 @@
+name: Gogo TV v0.2 Windows Companion Build
+on:
+  push:
+    branches: [feature/gogo-tvos-v215-hub-20261112]
+    paths:
+      - 'experimental/gogo-tvos-v215/**'
+      - '.github/workflows/gogo-tv-windows-companion.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows-companion:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+      - name: JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Ensure Android SDK API34
+        shell: pwsh
+        run: |
+          if (-not $env:ANDROID_HOME) { throw "Runner ANDROID_HOME missing" }
+          $sdkman = Get-ChildItem $env:ANDROID_HOME -Recurse -Filter sdkmanager.bat -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $sdkman) { throw "sdkmanager.bat not found" }
+          & $sdkman.FullName "platforms;android-34" "build-tools;34.0.0"
+          if ($LASTEXITCODE -ne 0) { throw "Android SDK installation failed" }
+      - name: Build Windows standalone companion (no ADB)
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File experimental/gogo-tvos-v215/Build-GogoTVCompanion-Windows.ps1 -OutputDir "$env:RUNNER_TEMP\GogoTV-Companion-v02"
+          if ($LASTEXITCODE -ne 0) { throw "Windows Gogo TV build failed" }
+          if (-not (Test-Path "$env:RUNNER_TEMP\GogoTV-Companion-v02\build\gogo-tv-companion.apk")) { throw "Windows APK missing" }
+      - name: Validate Windows APK
+        shell: pwsh
+        run: |
+          $apk = "$env:RUNNER_TEMP\GogoTV-Companion-v02\build\gogo-tv-companion.apk"
+          Get-FileHash $apk -Algorithm SHA256 | Select-Object Hash
+          if ((Get-Item $apk).Length -lt 20000) { throw "APK abnormally small" }
