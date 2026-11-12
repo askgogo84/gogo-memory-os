@@ -255,12 +255,16 @@ export function offerWhatIsPlain(what: string): boolean {
   if (/[;|@<>{}\[\]\\&\/+—–]|https?:|www\.|\n/i.test(w)) return false
   const act = '(?:send|email|mail|message|text|whatsapp|call|delete|remove|cancel|transfer|forward|post|publish|approve|reply)'
   if (new RegExp(`\\b(?:then|also|and|plus|after that)\\s+${act}\\b|[,:]\\s*${act}\\b`, 'i').test(w)) return false
+  // A sentence break, a spaced dash or "please" can start a second instruction ("Dentist. Send an email to…").
+  const noAbbrev = w.replace(/\b(?:dr|mr|mrs|ms|st|no|pvt|ltd|jr|sr|co|inc|vs|approx)\.\s/gi, m => m.replace('.', ''))
+  if (/[.!?]\s+\S|\s-\s|\bplease\b/i.test(noAbbrev)) return false
   // A weekday that may not match the offered date makes the "yes" fail on the parser's weekday check.
   if (/\b(?:mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?|sun)(?:day)?s?\b/i.test(w)) return false
   return true
 }
 /** Same-day words only: anything the reminder parser could read as a time or a schedule. The parse check below is the
  *  real guard; this keeps obvious cases out cheaply. */
+const CALENDAR_EXTRA_VERBS = /\b(?:and|then|also|plus)\s+(?:pay|book|order|share|buy|send)\b/i
 const SAME_DAY_TIMEISH = /\d\s*[.:h]\s*\d{2}|\d\s*(?:a\.?m|p\.?m)\b|\b(?:noon|midday|midnight|tonight|yesterday|every|daily|weekly|hourly|monthly|o'?clock|half past|quarter (?:past|to))\b|\b\d+\s*(?:min(?:ute)?s?|hours?|hrs?)\b/i
 export function buildImageOffer(offer: any, todayIso: string, nowMinutes?: number): ImageOffer | null {
   const what = String(offer?.what || '').replace(/\s+/g, ' ').trim().replace(/[.?!]+$/, '')
@@ -275,7 +279,7 @@ export function buildImageOffer(offer: any, todayIso: string, nowMinutes?: numbe
     // A "yes" is accepted for OFFER_MINUTES, so the reminder must be at least that far off: a late yes never lands after it.
     if (h > 23 || m > 59 || at < (nowMinutes as number) + OFFER_MINUTES) return null
     const hhmm = `${String(Math.floor(at / 60)).padStart(2, '0')}:${String(at % 60).padStart(2, '0')}`
-    if (SAME_DAY_TIMEISH.test(what)) return null
+    if (SAME_DAY_TIMEISH.test(what) || CALENDAR_EXTRA_VERBS.test(what)) return null
     const verb = what.charAt(0).toLowerCase() + what.slice(1)
     const atUtc = new Date(Date.parse(`${todayIso}T${hhmm}:00+05:30`)).toISOString()
     return { question: `Want me to remind you at ${clock(hhmm)}, 15 minutes before?`, instruction: `remind me today at ${clock(hhmm).replace(' ', '')} to go to ${verb}`, at: atUtc }
@@ -292,6 +296,8 @@ export function buildImageOffer(offer: any, todayIso: string, nowMinutes?: numbe
     return { question: `Want me to remind you on ${d.short} at 10 am to ${verb}?`, instruction: `remind me on ${d.long} at 10am to ${verb}`, at: new Date(Date.parse(`${ymd(at)}T10:00:00+05:30`)).toISOString() }
   }
   if (offer?.kind === 'calendar') {
+    // Calendar offers have no parse check, so commerce verbs are refused here too ("Dentist and book a cab").
+    if (CALENDAR_EXTRA_VERBS.test(what)) return null
     const time = /^\d{2}:\d{2}$/.test(String(offer?.time || '')) ? String(offer.time) : null
     if (!time) return null
     const d = dayMonth(date)
