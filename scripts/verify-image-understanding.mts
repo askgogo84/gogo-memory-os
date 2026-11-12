@@ -125,3 +125,25 @@ assert.equal(brain.cleanReply('Your upcoming reminders:\n1. Stretch · Fri 7 am\
 assert.match(readFileSync('lib/agent/brain.ts', 'utf8'), /const raw = cleanReply\(name === 'reply' \? input\?\.text : input\?\.question, 1500\)/)
 console.log('✓ image details and brain lists keep their line breaks')
 console.log('Image understanding checks passed')
+
+// 12 Nov live (owner, beside Instinct): a chat screenshot with a forwarded Rox funding article, a Bullforce map pin and
+// "4.45pm" was told as one story ("This meeting… is likely to discuss their AI sales agent. Make sure to attend").
+{
+  const sys = r.UNDERSTAND_SYSTEM
+  assert.ok(/Treat each on its own\. Never connect two items, and never say what a meeting or event is about, unless the image itself says so/.test(sys), 'separate items are never joined')
+  assert.ok(/A place \(a map pin, a location card, an address\) shown together with a time is most likely where the person needs to be/.test(sys), 'a place with a time leads the reply')
+  assert.ok(/Never tell the person what they should do/.test(sys) && /one or two short lines/.test(sys), 'short, no instructions to the person')
+  // Same-day appointment: a reminder 15 minutes before, only while there is time for it.
+  const todayIso = '2026-11-12', at = (h: number, m: number) => h * 60 + m
+  const later = r.buildImageOffer({ kind: 'calendar', date: todayIso, time: '18:30', what: 'The meeting at Bullforce Private Limited' }, todayIso, at(16, 35))
+  assert.deepEqual(later, { question: 'Want me to remind you at 6:15 pm, 15 minutes before?', instruction: 'remind me today at 6:15pm to go to the meeting at Bullforce Private Limited' }, 'later today: remind 15 minutes before')
+  assert.equal(r.buildImageOffer({ kind: 'calendar', date: todayIso, time: '16:45', what: 'x' }, todayIso, at(16, 35)), null, 'in 10 minutes: too close for a reminder offer')
+  assert.equal(r.buildImageOffer({ kind: 'calendar', date: todayIso, time: '09:00', what: 'x' }, todayIso, at(16, 35)), null, 'earlier today: none')
+  assert.equal(r.buildImageOffer({ kind: 'calendar', date: todayIso, time: '18:30', what: 'x' }, todayIso), null, 'without the current time: none (unchanged)')
+  assert.equal(r.buildImageOffer({ kind: 'reminder', date: todayIso, what: 'x' }, todayIso, at(9, 0)), null, 'a same-day reminder kind is unchanged: none')
+  assert.equal(r.buildImageOffer({ kind: 'calendar', date: todayIso, time: '25:00', what: 'x' }, todayIso, at(9, 0)), null, 'a bad time: none')
+  // The model is told the current time.
+  const src = (await import('node:fs')).readFileSync(new URL('../lib/services/image-note-reader.ts', import.meta.url), 'utf8')
+  assert.ok(/Now \(India\): \$\{nowHHMM\}/.test(src) && /buildImageOffer\(parsed\?\.offer, today, nowMinutes\)/.test(src), 'the current time reaches the prompt and the offer')
+  console.log('✓ 12 Nov: chat screenshots are read item by item; a place and a time lead; same-day reminder offer')
+}
