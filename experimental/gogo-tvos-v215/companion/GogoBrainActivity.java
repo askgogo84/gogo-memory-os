@@ -10,6 +10,7 @@ import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.speech.RecognizerIntent;
 import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
@@ -415,7 +416,20 @@ public final class GogoBrainActivity extends Activity
     }
 
     @Override public void onInit(int code) {
-        if(code==TextToSpeech.SUCCESS && tts!=null) tts.setLanguage(Locale.forLanguageTag("en-IN"));
+        if (code == TextToSpeech.SUCCESS && tts != null) {
+            tts.setLanguage(Locale.forLanguageTag("en-IN"));
+            tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                @Override public void onStart(String id) {
+                    main.post(() -> speaking = true);
+                }
+                @Override public void onDone(String id) {
+                    main.post(() -> speaking = false);
+                }
+                @Override public void onError(String id) {
+                    main.post(() -> speaking = false);
+                }
+            });
+        }
     }
 
     private void speak(String text) {
@@ -425,7 +439,6 @@ public final class GogoBrainActivity extends Activity
         // Stop any previous response before speaking a new one.
         tts.stop();
         tts.speak(spoken,TextToSpeech.QUEUE_FLUSH,null,"gogo-tv-response");
-        main.postDelayed(()->speaking=false, 15_000L);
     }
 
     private void logout() {
