@@ -1022,6 +1022,9 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
 
     // WhatsApp marks forwarded messages; they are someone else's words shared with Gogo (29 Oct live).
     const forwardedMessage = String(formData.get('Forwarded') || '').toLowerCase() === 'true'
+    // Front door step 1 (owner-approved, 12 Nov): shadow comparison only, scheduled before any handler can return, on the
+    // text as typed. Off unless GOGO_BRAIN_FRONT_DOOR_SHADOW lists the owner. Runs in after(); it never sends anything.
+    if (!preserveFriendFlow && process.env.GOGO_BRAIN_FRONT_DOOR_SHADOW) await import('@/lib/agent/front-door-shadow').then(m => m.scheduleFrontDoorShadow({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), forwarded: forwardedMessage })).catch(() => {})
     // Connected memory front door (lib/memory/front-door.ts): a forwarded hotel booking, a date answer to Gogo's stay
     // question, or cab details during a trip are saved and linked to the trip before the brain runs.
     if (!preserveFriendFlow && (globalThis as any).process?.env?.GOGO_MEMORY !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production') && memoryEnabledFor(from)) {

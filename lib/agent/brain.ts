@@ -269,7 +269,7 @@ export async function loadBrainContext(p: { telegramId: number; text: string; na
             const lines = cg.renderDecisionContext(pack); if (lines.length) sections['Decision context'] = lines
             // Phase 4: link this turn's decision id to the pack it was made from. Outcome is 'waiting' here (decided and
             // learned by the existing v2 path); the row is the join key, it teaches nothing by itself.
-            void import('./decision-trace').then(dt => dt.recordDecisionTrace({ legacyTelegramId: p.telegramId }, dt.buildDecisionTrace({ decisionId: pack.decisionId, contextPackRef: `pack:${pack.decisionId}`, objectiveKind: pack.objective.kind, status: 'running', trace: pack.assertions.slice(0, 20).map(a => ({ at: pack.generatedAt, node: a.predicate, type: 'READ' as const, outcome: a.status, evidenceClass: a.evidenceClass })) }))).catch((e: any) => console.error('DECISION_TRACE_WRITE_FAILED:', String(e?.message || e).slice(0, 120)))
+            if ((p as any).decisionTrace !== false) void import('./decision-trace').then(dt => dt.recordDecisionTrace({ legacyTelegramId: p.telegramId }, dt.buildDecisionTrace({ decisionId: pack.decisionId, contextPackRef: `pack:${pack.decisionId}`, objectiveKind: pack.objective.kind, status: 'running', trace: pack.assertions.slice(0, 20).map(a => ({ at: pack.generatedAt, node: a.predicate, type: 'READ' as const, outcome: a.status, evidenceClass: a.evidenceClass })) }))).catch((e: any) => console.error('DECISION_TRACE_WRITE_FAILED:', String(e?.message || e).slice(0, 120)))
           }
         }
       }
@@ -523,6 +523,87 @@ export async function scheduleLoopShadow(p: { phone: string; telegramId: number;
   if (deps.defer) return deps.defer(pass)
   // Outside a request (no after()): shadow may run at once; live does not, because Gogo's reply is not saved yet.
   await import('next/server').then(m => m.after(pass)).catch(() => { if (!live) void pass() })
+}
+/** Front door, step 1 (owner-approved plan "Gogo front door: one smart reply", 12 Nov): SHADOW COMPARISON ONLY.
+ *  For owners in GOGO_BRAIN_FRONT_DOOR_SHADOW, after the pipeline has replied, the loop writes the first reply it would
+ *  have sent, and both are logged side by side. It never sends, never prepares, never stages an approval: the loop runs
+ *  in 'shadow' mode and has no send path at all. Web searches are not run either (a stub answers), so shadow traffic
+ *  never spends search quota, trips a provider backoff for real users, or lets quoted text choose an outbound query.
+ *  Off unless the setting is set; never for an owner also in a brain-loop list (one comparison per message). */
+export function frontDoorShadowFor(phone: string, env: Record<string, string | undefined> = process.env): boolean {
+  const me = digits(phone)
+  return !!me && String(env.GOGO_BRAIN_FRONT_DOOR_SHADOW || '').split(',').map(digits).filter(Boolean).includes(me)
+}
+export const FRONT_DOOR_DAILY = (env: Record<string, string | undefined> = process.env) => { const raw = String(env.GOGO_BRAIN_FRONT_DOOR_DAILY ?? '').trim(), n = Number(raw); return raw && Number.isInteger(n) && n >= 0 && n <= 500 ? n : 60 }
+/** Fixed commands keep going straight to their handler in the plan, so they are not compared. */
+export const FRONT_DOOR_FIXED = /^\s*(?:approve|reject|yes|y|no|n|ok|okay|stop|start|cancel|skip|nope|send it|book it|undo|help|\d{1,2}|forget my (?:travel|booking|ticket|flight) details|set (?:email|calendar|\w+) autonomy to \w+)[\s.!]*$/i
+/** Messages that may carry a secret are never compared: a bare code, a long digit run, or what the secret guard catches. */
+export const FRONT_DOOR_SECRETISH = /^\s*[\d\s-]{4,}\s*$|(?:\d[ -]?){12,}/
+export const FRONT_DOOR_SEARCH_STUB = 'Not run in this comparison. Answer from what you already know, or say what you would look up.'
+const FRONT_DOOR_STUBBED = new Set(['web_search', 'venue_contact'])
+/** The pair this message produced, by time. The anchor is the first user turn saved at or after the message arrived;
+ *  assistant turns before it belong to the previous message (a slow reply) and stay in history. A second user turn
+ *  after the anchor (back-to-back messages) makes the pair not comparable, since its replies cannot be told apart. */
+export function frontDoorPair(turns: BrainTurn[], messageAt: number): { history: BrainTurn[]; replies: string[]; userSaved: boolean; second: boolean } | null {
+  const at = (t: BrainTurn) => Date.parse(String((t as any).createdAt || ''))
+  const cut = messageAt - 1500
+  if (turns.some(t => !Number.isFinite(at(t)))) return null
+  const sorted = [...turns].sort((x, y) => at(x) - at(y))
+  const anchor = sorted.findIndex(t => at(t) >= cut && t.role === 'user')
+  if (anchor < 0) return { history: sorted, replies: [], userSaved: false, second: false }
+  const rest = sorted.slice(anchor + 1), next = rest.findIndex(t => t.role === 'user')
+  const mine = next < 0 ? rest : rest.slice(0, next)
+  return { history: sorted.slice(0, anchor), replies: mine.filter(t => t.role === 'assistant').map(t => t.content), userSaved: true, second: next >= 0 }
+}
+/** A short message with a code-shaped number next to a code, PIN or password word may carry a secret: not compared. */
+export const FRONT_DOOR_CODE_WORDS = /\b(?:code|otp|pin|cvv|cvc|pass(?:word|code)?|login|passwd)\b/i
+type FrontDoorDeps = { run?: (a: any) => Promise<any>; countToday?: (telegramId: number) => Promise<number>; start?: (row: Record<string, unknown>) => Promise<string | null>; finish?: (id: string, row: Record<string, unknown>) => Promise<void>; loadContext?: typeof loadBrainContext; defer?: (job: () => Promise<void>) => Promise<void>; env?: Record<string, string | undefined>; tools?: any[]; now?: () => number; settle?: () => Promise<void>; secret?: (text: string) => Promise<boolean> }
+export async function scheduleFrontDoorShadow(p: { phone: string; telegramId: number; text: string; name?: string | null; timezone?: string | null; userId?: string; whatsappId?: string; forwarded?: boolean }, deps: FrontDoorDeps = {}): Promise<void> {
+  const env = deps.env || process.env
+  const messageAt = (deps.now || Date.now)()
+  if (!frontDoorShadowFor(p.phone, env)) return
+  if (!Number.isSafeInteger(p.telegramId) || p.telegramId <= 0) return
+  const text = String(p.text || '')
+  if (!text.trim() || FRONT_DOOR_FIXED.test(text) || FRONT_DOOR_SECRETISH.test(text)) return
+  if (FRONT_DOOR_CODE_WORDS.test(text) && (/\d{3,8}/.test(text) || text.length <= 80)) return
+  if (await (deps.secret || (async (t: string) => import('@/lib/bot/process-message').then(m => !!m.secretDeclaration(t), () => true)))(text)) return
+  if (brainLoopLiveFor(p.phone, env) || (await import('./brain-loop').then(m => m.brainLoopShadowFor(p.phone, env), () => true))) return
+  const pass = async () => {
+    try {
+      const dayStart = new Date(); dayStart.setUTCHours(0, 0, 0, 0)
+      const today = deps.countToday ? await deps.countToday(p.telegramId) : await supabaseAdmin.from('agent_activity').select('id', { count: 'exact', head: true }).eq('telegram_id', String(p.telegramId)).eq('event_type', 'brain_front_door_shadow').gte('created_at', dayStart.toISOString()).then((r: any) => (r.error ? Number.POSITIVE_INFINITY : Number(r.count || 0)))
+      if (!(today < FRONT_DOOR_DAILY(env))) { console.log('BRAIN_FRONT_DOOR_SHADOW:', JSON.stringify({ skipped: 'daily_limit' })); return }
+      // The cap counts this row from the start, so a burst, a killed callback or a failed result write still counts.
+      // No row, no pass (fails closed). The message text itself is never stored: it is in the conversation already.
+      const base = { telegram_id: String(p.telegramId), event_type: 'brain_front_door_shadow' }
+      const startRow = { ...base, message: 'front door shadow started', metadata_json: { mode: 'front_door_shadow', status: 'started', message_at: new Date(messageAt).toISOString(), message_chars: text.length } }
+      const id = deps.start ? await deps.start(startRow) : await supabaseAdmin.from('agent_activity').insert(startRow).select('id').maybeSingle().then((r: any) => (r?.error || !r?.data?.id ? null : String(r.data.id)), () => null)
+      if (!id) { console.error('BRAIN_FRONT_DOOR_SHADOW_FAILED:', JSON.stringify({ code: 'start' })); return }
+      const finish = (row: Record<string, unknown>) => (deps.finish ? deps.finish(id, row) : supabaseAdmin.from('agent_activity').update(row).eq('id', id).eq('telegram_id', String(p.telegramId)).then((r: any) => { if (r?.error) console.error('BRAIN_FRONT_DOOR_SHADOW_FAILED:', JSON.stringify({ code: 'finish' })) }))
+      // Replies sent from other after() callbacks get a moment to be saved before the pair is read.
+      await (deps.settle || (() => new Promise<void>(r => setTimeout(r, 4000))))()
+      let c = await (deps.loadContext || loadBrainContext)({ ...p, decisionTrace: false } as any)
+      // The pair is found by time, not by matching text: the pipeline may rewrite the text, save a placeholder or send
+      // more than one message. Only a complete pair (the person's turn and at least one reply) is compared.
+      const pair = frontDoorPair(c.turns, messageAt)
+      if (!pair || !pair.userSaved || pair.second || !pair.replies.length) { await finish({ message: 'front door shadow not comparable', metadata_json: { ...startRow.metadata_json, status: 'not_comparable', reason: !pair ? 'no_times' : !pair.userSaved ? 'no_user_turn' : pair.second ? 'second_message' : 'no_reply' } }); return }
+      c = { ...c, turns: pair.history }
+      if (p.forwarded) c = { ...c, sections: { ...c.sections, 'About the latest message': [FORWARDED_NOTE] } }
+      const loop = await import('./brain-loop'), { firstSliceTools } = await import('./brain-loop-tools')
+      const tools = (deps.tools || firstSliceTools({})).map((t: any) => (FRONT_DOOR_STUBBED.has(t.name) ? { ...t, run: async () => FRONT_DOOR_SEARCH_STUB } : t))
+      const actor = { userId: String(p.userId || ''), legacyTelegramId: p.telegramId, whatsappId: String(p.whatsappId || p.phone), name: String(p.name || ''), timezone: c.timezone }
+      const onModelCall = (e: { model: string; ms: number; ok: boolean; usage: BrainUsage }) => meterBrainCall({ telegramId: p.telegramId, source: 'brain_shadow', ...e })
+      // Shadow mode: read tools run (searches answer from the stub); prepare and act calls are recorded as "would do".
+      const r = await (deps.run || loop.runBrainLoop)({ actor, text, ctx: c, tools, onModelCall, mode: 'shadow' })
+      const report = { ...loop.loopShadowReport('pipeline', r), mode: 'front_door_shadow' }
+      const safe = (v: unknown, max: number) => redactSecretShapedText(String(v ?? '').replace(/\u0000/g, '').slice(0, max))
+      console.log('BRAIN_FRONT_DOOR_SHADOW:', JSON.stringify(report))
+      await finish({ message: `front door shadow ${report.final} after ${report.tools.length} tool calls`, metadata_json: { ...startRow.metadata_json, ...report, status: 'compared', loop_reply: loop.loopShadowPreview(r), pipeline_reply: safe(pair.replies.join('\n\n'), 1200), pipeline_messages: pair.replies.length, would_do: r.steps.filter((x: any) => x.klass !== 'read' || FRONT_DOOR_STUBBED.has(x.tool)).map((x: any) => x.tool) } })
+    } catch { console.error('BRAIN_FRONT_DOOR_SHADOW_FAILED') }
+  }
+  if (deps.defer) return deps.defer(pass)
+  // Only ever after the response: the pipeline's reply must be saved first. Without after(), nothing runs.
+  await import('next/server').then(m => m.after(pass)).catch(() => {})
 }
 /** How many approval cards are waiting for this person. Any error counts as "one is waiting". */
 async function pendingApprovalCount(telegramId: number): Promise<number> {
