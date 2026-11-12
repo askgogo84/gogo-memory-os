@@ -64,8 +64,10 @@ def main():
     widgets=pkg/"GogoWidgets.java"
     hub=pkg/"GogoHubActivity.java"
     brain=pkg/"GogoBrainActivity.java"
+    controls=pkg/"GogoTvControls.java"
+    controls_source=args.sources/"companion/GogoTvControls.java"
     brain_source=args.sources/"companion/GogoBrainActivity.java"
-    files=[hd,settings,manifest,args.sources/"GogoWidgets.java",args.sources/"GogoHubActivity.java",brain_source]
+    files=[hd,settings,manifest,args.sources/"GogoWidgets.java",args.sources/"GogoHubActivity.java",brain_source,controls_source]
     for f in files:
         if not f.is_file(): raise ValueError(f"Missing prerequisite: {f}")
 
@@ -100,6 +102,12 @@ def main():
     converted=brain_body.replace("package in.askgogo.tvhub;", "package com.techgenius.tvoslauncher;", 1)
     if brain.exists() and brain.read_text(encoding="utf-8") != converted:
         raise ValueError("Existing Brain differs; refusing overwrite")
+    controls_body=controls_source.read_text(encoding="utf-8")
+    if not controls_body.startswith("package in.askgogo.tvhub;"):
+        raise ValueError("Unexpected TV controls package")
+    controls_converted=controls_body.replace("package in.askgogo.tvhub;", "package com.techgenius.tvoslauncher;", 1)
+    if controls.exists() and controls.read_text(encoding="utf-8") != controls_converted:
+        raise ValueError("Existing TV controls differ; refusing overwrite")
     # Back up only files that would change; never overwrite the original backup.
     args.backup.mkdir(parents=True,exist_ok=True)
     for path,old,new in [(hd,oldHd,h),(settings,oldSettings,sett),(manifest,oldManifest,xml)]:
@@ -113,6 +121,7 @@ def main():
                           (hub,args.sources/"GogoHubActivity.java")]:
         if not target.exists(): shutil.copy2(source,target)
     if not brain.exists(): brain.write_text(converted,encoding="utf-8")
+    if not controls.exists(): controls.write_text(controls_converted,encoding="utf-8")
 
     # Verify the existing launcher Home/Power code was not edited by this patch.
     assert 'android:name=".MainActivity"' in xml
