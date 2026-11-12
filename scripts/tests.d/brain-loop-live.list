@@ -1,2 +1,3 @@
 npx tsx scripts/verify-brain-loop-live-nov10.mts
 npx tsx scripts/verify-front-door-shadow-nov12.mts
+npx tsx scripts/verify-front-door-loop-fixes-nov12.mts

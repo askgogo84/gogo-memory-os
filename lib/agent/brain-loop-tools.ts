@@ -17,6 +17,8 @@ export type LoopToolDeps = {
   /** The email draft the person has waiting for "send it", if any (fresh within 30 minutes). */
   pendingDraft?: (actor: AgentActor) => Promise<Record<string, unknown> | null>
   saveDraft?: (actor: AgentActor, draft: Record<string, unknown>) => Promise<void>
+  /** Read-only Google Calendar for the person's own connected accounts: the same reader the chat pipeline uses. */
+  calendarRead?: (actor: AgentActor, when: string) => Promise<string>
   /** The person's own current message. A venue may be looked up only if they named it there, or it is the venue of
    *  one of their own events. Without this, any venue is allowed (shadow planning only). */
   userText?: string
@@ -139,6 +141,17 @@ export function firstSliceTools(deps: LoopToolDeps = {}): LoopTool[] {
         const list = deps.listEvents ? await deps.listEvents(owner) : await (await import('@/lib/events/store')).listEvents(owner)
         const open = list.filter((e: any) => e.status !== 'cancelled').slice(0, 8)
         return open.length ? open.map((e: any) => `- ${str(e.title, 80)} | ${e.starts_at || 'no date'} (${e.timezone}) | ${str(e.venue_name || 'no place', 80)} | ${e.capacity ? `${e.capacity} people` : 'number not set'} | ${e.status}`).join('\n') : 'No events yet.'
+      } },
+    { name: 'calendar_read', klass: 'read', description: "The person's own Google Calendar events (read only) for a day or range they name, such as \"tomorrow\", \"this week\" or \"21 Nov\". Use it before saying anything about their schedule.",
+      input_schema: obj({ when: { type: 'string', description: 'The day or range in the person\'s words, e.g. tomorrow, this week, Friday' } }, ['when']),
+      run: async (actor, input) => {
+        const when = str(input.when, 60).replace(/[^\p{L}\p{N} ,.'/-]/gu, ' ').trim() || 'today'
+        const read = deps.calendarRead || (async (a: AgentActor, w: string) => {
+          const m = await import('./calendar-read')
+          const out: any = await m.executeReadOnlyCalendarStep({ actor: a, instruction: `what is on my calendar ${w}`, missionText: `what is on my calendar ${w}` })
+          return String(out?.text || '')
+        })
+        try { return String(await read(actor, when) || '').replace(/\u0000/g, '').slice(0, 3500).trim() || 'No calendar events returned.' } catch { return 'Calendar could not be read just now. Do not guess the schedule; say it could not be checked.' }
       } },
     // Planned with, never run in shadow.
     { name: 'event_draft', klass: 'prepare', description: "Create or update the person's own event draft (private until they publish): name, date, time, place, number of people.",
