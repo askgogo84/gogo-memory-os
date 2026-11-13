@@ -43,3 +43,21 @@ export function productIdentityMatches(subject:string,evidence:string):boolean{
   }
   return true
 }
+
+/** 13 Nov live: Zepto titles a product "Amul Salted Butter" and states the pack ("Net Qty: 500 g") just below.
+ *  When the asked pack size is missing from the heading, the page text right after the heading may supply it —
+ *  only if exactly ONE pack size appears there and it equals the asked one (a variant list never qualifies).
+ *  Returns the observed pack text (as written on the page) or null. Never invents a size. */
+export function packFromPage(subject:string,heading:string,pageText:string):string|null{
+  const sizes=(v:string)=>[...new Set((packageIdentity(v).text.match(/\b\d+(?:g|ml)\b/gi)||[]).map(s=>s.toLowerCase()))]
+  const asked=sizes(productIdentityText(subject,true))
+  if(asked.length!==1||sizes(heading).length)return null
+  const text=String(pageText||'').replace(/\s+/g,' ')
+  const at=text.indexOf(heading.replace(/\s+/g,' '))
+  if(at<0)return null
+  const near=text.slice(at+heading.length,at+heading.length+240)
+  const found=[...near.matchAll(/(?:(?:net\s*(?:qty|quantity|wt|weight)|pack\s*size|quantity|weight)\s*:?\s*)?\b\d+(?:\.\d+)?\s*(?:kg|g|gm|gms|grams?|l|ltr|litres?|liters?|ml)\b/gi)]
+  const observed=[...new Set(found.map(m=>sizes(m[0].replace(/\b(gm|gms|grams?)\b/i,'g').replace(/\b(ltr|litres?|liters?)\b/i,'l'))[0]).filter(Boolean))]
+  if(observed.length!==1||observed[0]!==asked[0])return null
+  return found[0][0].trim()
+}

@@ -322,7 +322,10 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     if (food) {
       // The restaurant's own menu page on this app (the outlet in the person's city first), else Swiggy's search.
       const pin = pincodeInText(task.metadata_json.request)
-      const area = await nearestOutletArea(food.restaurant, pin)
+      // 13 Nov live: the map search for "Meghana Foods near 560086" returned the famous Residency Road outlet, not the
+      // person's own area. When the pincode is the one they saved for home, their home area names the outlet to look for.
+      const home = await import('@/lib/agent/places-context').then(m => m.savedPlaces(owner)).then(p => p.home, () => null).catch(() => null)
+      const area = (home?.pincode && home.pincode === pin && home.area ? String(home.area) : null) || await nearestOutletArea(food.restaurant, pin)
       const {searchWebResults} = await import('@/lib/web-search')
       const leads = await searchWebResults(`${food.restaurant} ${area ? area + ' ' : ''}${/^56/.test(pin || '') ? 'Bangalore ' : ''}order online ${COMPARISON_PROVIDERS[next.provider].label}`,
         {includeDomains: [COMPARISON_PROVIDERS[next.provider].domain], timeoutMs: 10_000}).catch(() => [] as any[])
