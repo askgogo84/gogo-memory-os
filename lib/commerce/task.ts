@@ -1,6 +1,7 @@
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {commerceOrigin, type CommerceProvider} from './providers'
 import type {CommerceAddress} from './addresses'
+import {withheldComparisonProviders} from './swiggy-policy'
 
 const STATES = ['provider_connection_required', 'waiting_address', 'waiting_verified_quote', 'waiting_restaurant_selection', 'waiting_item_selection', 'cart_outcome_unknown', 'cart_contents_verified', 'browser_research']
 export type CommerceBrowserRead = {provider:string; runId:string; status:string; summary:string; checkedAt:string; taskUrl:string}
@@ -38,7 +39,9 @@ export async function readCommerceTask(owner: string, runId: string): Promise<Co
 export function commerceTaskView(task: CommerceTask) {
   return {runId: task.id, service: commerceTaskService(task), state: task.metadata_json.state, summary: task.summary,
     subject: task.metadata_json.subject, provider: task.metadata_json.commerce?.provider,
-    addressLabel: task.metadata_json.commerce?.address?.label || null, catalogue: task.metadata_json.commerce?.catalogue || null, browserReads:task.browserReads||[]}
+    addressLabel: task.metadata_json.commerce?.address?.label || null, catalogue: task.metadata_json.commerce?.catalogue || null, browserReads:task.browserReads||[],
+    // Swiggy agreement (13 Nov): browser checks of Swiggy/Instamart are withheld until Swiggy approves in writing.
+    withheldBrowserProviders: withheldComparisonProviders(['swiggy', 'instamart'])}
 }
 
 async function saveTask(owner: string, task: CommerceTask, metadata: Record<string, any>, summary: string) {

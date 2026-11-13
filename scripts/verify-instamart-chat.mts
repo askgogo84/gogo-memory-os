@@ -107,7 +107,7 @@ function load(file: string, deps: Record<string, any>) {
   runInNewContext(out, {exports, process, Date, URL, console, Promise, JSON, Error, Number, String, Array, Object, Set, Map, require(name: string) { if (name in deps) return deps[name]; throw Error('Unexpected dependency ' + name) }})
   return exports
 }
-const tasks = load('lib/commerce/task.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, './providers': providers})
+const tasks = load('lib/commerce/task.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, './providers': providers, './swiggy-policy': await import('../lib/commerce/swiggy-policy.ts')})
 const executor = load('lib/commerce/instamart-cart.ts', {'node:crypto': crypto, '@/lib/supabase-admin': {supabaseAdmin: db}, './swiggy-read': reads, './addresses': addresses})
 const chat = load('lib/commerce/instamart-chat.ts', {
   '@/lib/supabase-admin': {supabaseAdmin: db},

@@ -55,7 +55,7 @@ const row:any={id:'run-a',telegram_id:'owner-a',type:'food_comparison',status:'p
 let owner='owner-a',failSave=false,tokenAvailable=true
 const db={from(table:string){assert.equal(table,'agent_runs');const filters:Array<(r:any)=>boolean>=[];let patch:any=null;const q:any={select(){return q},eq(k:string,v:any){filters.push(r=>r[k]===v);return q},update(p:any){patch=p;return q},async maybeSingle(){if(!filters.every(f=>f(row)))return {data:null,error:null};if(patch&&failSave)return {data:null,error:{message:'fixture failure'}};if(patch)Object.assign(row,patch);return {data:structuredClone(row),error:null}}};return q}}
 function moduleWith(file:string,deps:Record<string,any>){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,process,Date,URL,console,require(name:string){if(name in deps)return deps[name];throw Error(name)}});return exports}
-const tasks=moduleWith('lib/commerce/task.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./providers':providers})
+const tasks=moduleWith('lib/commerce/task.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./providers':providers,'./swiggy-policy':await import('../lib/commerce/swiggy-policy.ts')})
 class Client {async readTool(name:string,args:any){return reader.readTool(name,args)}}
 class McpError extends Error {reason='fixture'}
 const route=moduleWith('app/api/commerce/tasks/[runId]/catalogue/route.ts',{

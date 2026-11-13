@@ -4,6 +4,7 @@ import {resolveAgentActor} from '@/lib/agent/actor'
 import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-runtime-guard'
 import {readCommerceTask, commerceTaskView} from '@/lib/commerce/task'
 import {COMMERCE_BROWSER_PROVIDERS, runCommerceBrowserRead, type CommerceBrowserProvider} from '@/lib/commerce/browser'
+import {withheldComparisonProviders} from '@/lib/commerce/swiggy-policy'
 
 export const dynamic='force-dynamic'
 export const maxDuration=300
@@ -16,6 +17,8 @@ export async function POST(request:Request,context:{params:Promise<{runId:string
   try{input=await request.json()}catch{return NextResponse.json({error:'invalid_provider'},{status:400})}
   if(!input||typeof input.provider!=='string'||!Object.hasOwn(COMMERCE_BROWSER_PROVIDERS,input.provider))return NextResponse.json({error:'invalid_provider'},{status:400})
   if(input.action!==undefined&&!['read','take_control'].includes(input.action))return NextResponse.json({error:'invalid_action'},{status:400})
+  // Swiggy agreement (13 Nov): a comparison task never opens swiggy.com / Instamart until Swiggy approves in writing.
+  if(withheldComparisonProviders([input.provider]).length)return NextResponse.json({error:'provider_withheld'},{status:403})
   const runId=(await context.params).runId
   const key='commerce-browser:'+session.telegramId
   let lease:{ownerToken:string}|null=null

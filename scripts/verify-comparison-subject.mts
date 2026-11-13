@@ -1,3 +1,5 @@
+// Legacy expectations run in the Swiggy-approved mode; the default (withheld) mode is covered by verify-swiggy-comparison-policy-nov13.mts.
+process.env.COMMERCE_SWIGGY_COMPARISON_APPROVED='true'
 import assert from 'node:assert/strict'
 import './verify-food-compare-menu-oct26.mts'
 import { readFileSync } from 'node:fs'

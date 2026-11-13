@@ -1,4 +1,5 @@
 import {productIdentityText,productIdentityMatches} from './product-identity'
+import {SWIGGY_COMPARISON_NOTE, withheldComparisonProviders} from './swiggy-policy'
 export const COMPARISON_PROVIDERS = {
   amazon: {label: 'Amazon India', url: 'https://www.amazon.in/', domain: 'amazon.in'},
   flipkart: {label: 'Flipkart', url: 'https://www.flipkart.com/', domain: 'flipkart.com'},
@@ -214,7 +215,7 @@ export function parsePriceComparison(text: string) {
     // "compare chicken biryani at Meghana Foods": a dish at a restaurant is a food comparison on Swiggy and Zomato.
     const dishAtRestaurant = parseFoodSubject(core.replace(/^\s*compare\s+(?:the\s+)?(?:prices?\s+(?:of|for)\s+)?/i, ''))
       && /\b(?:biryani|pizza|burger|dosa|idli|thali|meals?|paneer|chicken|mutton|kebab|kabab|shawarma|momos?|noodles|fried rice|pulao|curry|masala|tikka|naan|roti|parotta|sandwich|wrap|rolls?|cake|ice cream|coffee|tea|juice|shake|combo)\b/i.test(core)
-    if (dishAtRestaurant) { providers.push('swiggy', 'zomato'); return {subject: subjectOf(text), request: text.slice(0, 2000), providers} }
+    if (dishAtRestaurant) { providers.push('swiggy', 'zomato'); return withoutWithheld({subject: subjectOf(text), request: text.slice(0, 2000), providers}) }
     const grocery = /\b(?:butter|milk|ghee|curd|paneer|atta|rice|dal|oil|sugar|eggs?|bread|biscuits?|chips|maggi|noodles|tea|coffee|detergent|shampoo|soap|toothpaste|fruits?|vegetables?|onions?|tomato(?:es)?|potato(?:es)?|grocer(?:y|ies)|amul|nestle|britannia|aashirvaad|tata salt|surf excel|colgate)\b/i.test(text)
     providers.push(...(grocery ? ['zepto', 'blinkit', 'instamart'] : ['amazon', 'flipkart', 'croma', 'reliance']) as ComparisonProvider[])
   }
@@ -222,7 +223,14 @@ export function parsePriceComparison(text: string) {
   // Preserve all original criteria separately. This is a display label, never a
   // model-extracted product specification or a substitute for the full request.
   const subject = subjectOf(text)
-  return {subject: subject || 'Price comparison', request: text.slice(0, 2000), providers}
+  return withoutWithheld({subject: subject || 'Price comparison', request: text.slice(0, 2000), providers})
+}
+
+/** Swiggy agreement (13 Nov): Swiggy/Instamart are dropped from comparisons until Swiggy approves in writing. The
+ *  request is still recognised, so the person is told what was left out; `providers` may then be empty. */
+function withoutWithheld(parsed: {subject: string; request: string; providers: ComparisonProvider[]}) {
+  const withheld = withheldComparisonProviders(parsed.providers)
+  return {...parsed, providers: parsed.providers.filter(p => !withheld.includes(p)), withheld}
 }
 
 function subjectOf(text: string) {
@@ -522,7 +530,8 @@ export function comparisonWhatsAppSummary(task: PriceComparison, origin = 'https
     ...(matchedOnCode ? ['I matched this on the model code only. If it’s not the product you meant, send the full name.'] : []),
     ...(isFoodComparison(task.metadata_json.providers)
       ? ['Menu prices only; delivery fee, packaging, surge and coupons are added at checkout and aren’t included.',
-        'Want another dish? Send it like “compare paneer butter masala at Empire on Swiggy and Zomato for 560086”.']
+        withheldComparisonProviders(['swiggy']).length && !task.metadata_json.providers.some(row => row.provider === 'swiggy' && row.status === 'observed') ? 'Want another dish? Send it like “compare paneer butter masala at Empire on Zomato for 560086”.\n' + SWIGGY_COMPARISON_NOTE
+          : 'Want another dish? Send it like “compare paneer butter masala at Empire on Swiggy and Zomato for 560086”.']
       : ['Listed prices only; delivery and bank offers not included.',
         'Want another model or size? Send it in full, like “compare iPhone 17 Pro 256GB”.']),
   ].join('\n')

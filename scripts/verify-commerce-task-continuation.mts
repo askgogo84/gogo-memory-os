@@ -31,7 +31,7 @@ function moduleWith(file:string, deps:Record<string,any>){
     {exports,console,process,URL,URLSearchParams,Date,Buffer,require(name:string){if(name in deps)return deps[name];throw Error('Unexpected '+name)}})
   return exports
 }
-const tasks=moduleWith('lib/commerce/task.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./providers':providers})
+const tasks=moduleWith('lib/commerce/task.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./providers':providers,'./swiggy-policy':await import('../lib/commerce/swiggy-policy.ts')})
 assert.equal(await tasks.readCommerceTask('owner-b','run-original'),null)
 assert.equal(await tasks.resumeCommerceTaskAfterAuth('owner-b','run-original','swiggy'),null)
 const resumed=await tasks.resumeCommerceTaskAfterAuth('owner-a','run-original','swiggy')

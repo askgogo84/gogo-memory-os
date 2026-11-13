@@ -1,3 +1,5 @@
+// Legacy expectations run in the Swiggy-approved mode; the default (withheld) mode is covered by verify-swiggy-comparison-policy-nov13.mts.
+process.env.COMMERCE_SWIGGY_COMPARISON_APPROVED='true'
 import './verify-price-comparison-delivery-owner.mts'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
@@ -5,6 +7,7 @@ import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 import * as model from '../lib/commerce/comparison-model'
 import {indiaShoppingSearch} from '../lib/web-search'
+import * as swiggyPolicyDep from '../lib/commerce/swiggy-policy.ts'
 
 // Reproduces 4 Oct: two retailers previously bypassed browser execution and a
 // model invented M185 prices, sellers and free delivery. Fixtures are NOT live.
@@ -178,7 +181,7 @@ function load(file: string, deps: Record<string, any>) {
   return exports
 }
 const service = load('lib/commerce/price-comparison.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/brain-runtime-guard': lease,
-  './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, '@/lib/agent/browser-command': browser,
+  './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, './swiggy-policy': swiggyPolicyDep, '@/lib/agent/browser-command': browser,
   '@/lib/agent/browser-handoff-health': {browserHandoffIsLive: async (url:string) => liveHandoff && url.includes('sb-active')},
   '@/lib/web-search': {indiaShoppingSearch, searchWebResults: async (query: string, opts: any) => {
     if (opts?.includeDomains?.[0] === 'croma.com') {
@@ -217,7 +220,7 @@ assert.equal(partial.metadata_json.providers[0].evidence, undefined)
 assert.equal(calls, 1)
 // New module instance simulates loss of all worker-local state between providers.
 const restarted = load('lib/commerce/price-comparison.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/brain-runtime-guard': lease,
-  './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, '@/lib/agent/browser-command': browser,
+  './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, './swiggy-policy': swiggyPolicyDep, '@/lib/agent/browser-command': browser,
   '@/lib/agent/browser-handoff-health': {browserHandoffIsLive: async () => liveHandoff},
   '@/lib/web-search': {indiaShoppingSearch, searchWebResults: async () => [{url: 'https://www.flipkart.com/fixture-m185/p/fixture', snippet: '₹1 free delivery'}]}})
 partial = await restarted.advancePriceComparison(actor, start.runId)
@@ -399,7 +402,7 @@ assert.ok(!(dormantQueue || []).some((r: any) => r.id === dormantParent), 'the c
 // clean product page carrying only identity params; trackers never reach the browser.
 const flipkartLead = 'https://www.flipkart.com/sony-wh-1000xm5/p/itm5f3b?pid=ACCGFKZH&lid=LSTACC9&marketplace=FLIPKART&otracker=search&fm=organic'
 const discover = load('lib/commerce/price-comparison.ts', {'@/lib/supabase-admin': {supabaseAdmin: db}, '@/lib/agent/brain-runtime-guard': lease,
-  './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, '@/lib/agent/browser-command': browser,
+  './providers': {commerceOrigin: () => 'https://app.askgogo.in'}, './comparison-model': model, './swiggy-policy': swiggyPolicyDep, '@/lib/agent/browser-command': browser,
   '@/lib/agent/browser-handoff-health': {browserHandoffIsLive: async () => liveHandoff},
   '@/lib/web-search': {indiaShoppingSearch, searchWebResults: async () => [
     {url: wrongLead, title: 'Riticoll screen guard Samsung Galaxy A35 256GB', snippet: '₹1'},
@@ -515,7 +518,7 @@ const delivery = load('lib/commerce/comparison-delivery.ts', {
     acceptedSends++
     return {sid: 'SMfixture'}
   }},
-  './comparison-model': model,
+  './comparison-model': model, './swiggy-policy': swiggyPolicyDep,
   './price-comparison': {comparisonLink: service.comparisonLink, comparisonWebFallback: async () => '', readPriceComparison: async () => deliveryTask},
 })
 const beforeDeliveryHistory = tables.conversations.length
@@ -539,7 +542,7 @@ const webDelivery=load('lib/commerce/comparison-delivery.ts',{
   }}},
   '@/lib/services/notification-delivery':{deliverNotification:async()=>{throw new Error('web must not create a WhatsApp delivery')}},
   '@/lib/whatsapp':{sendWhatsApp:async()=>{throw new Error('web must not send WhatsApp')}},
-  './comparison-model':model,
+  './comparison-model':model,'./swiggy-policy':swiggyPolicyDep,
   './price-comparison':{comparisonLink:service.comparisonLink,comparisonWebFallback:async()=>'',readPriceComparison:async()=>webDeliveryTask},
 })
 await assert.rejects(()=>webDelivery.deliverCompletedComparison(webDeliveryTask,actor,Date.now()+30000),/comparison_web_delivery_failed/)

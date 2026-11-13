@@ -1,3 +1,6 @@
+// Legacy expectations run in the Swiggy-approved mode; the default (withheld) mode is covered by verify-swiggy-comparison-policy-nov13.mts.
+process.env.COMMERCE_SWIGGY_COMPARISON_APPROVED='true'
+import * as swiggyPolicy from '../lib/commerce/swiggy-policy.ts'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
@@ -47,6 +50,7 @@ const exports:any={}
 runInNewContext(compiled,{exports,Date,URL,console,require(name:string){
   if(name==='@/lib/supabase-admin')return {supabaseAdmin:db}
   if(name==='./food-comparison-intent')return intent
+  if(name==='@/lib/commerce/swiggy-policy')return swiggyPolicy
   if(name==='@/lib/commerce/task')return {commerceTaskLink:(id:string)=>'https://app.askgogo.in/dashboard/commerce?run='+id}
   if(name==='@/lib/web-search')return {searchWebResults:async(query:string)=>{
     searches.push(query)

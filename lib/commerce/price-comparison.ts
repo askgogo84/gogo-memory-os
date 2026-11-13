@@ -2,6 +2,7 @@ import {supabaseAdmin} from '@/lib/supabase-admin'
 import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-runtime-guard'
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
+import {SWIGGY_COMPARISON_NOTE, SWIGGY_ONLY_NOTE, withheldComparisonProviders} from './swiggy-policy'
 import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, outletAreaFromAddress, isFoodComparison, parseFoodSubject, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
@@ -189,6 +190,9 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
       if (current) return reply(current)
     }
     if (!parsed) return null
+    // Swiggy agreement: nothing left to check once Swiggy/Instamart are withheld. Say so; start no browser run.
+    if (!parsed.providers.length) return {runId: '', status: 'paused' as const, capability: 'browser' as const, risk: 'low' as const,
+      handledBy: 'price-comparison', text: SWIGGY_ONLY_NOTE}
     const now = new Date().toISOString()
     const remembered = await ownerWatchStorage(owner, parsed.subject).catch(() => null)
     if (remembered) parsed.subject = `${parsed.subject} ${remembered}`
@@ -205,7 +209,7 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
     const current = await readPriceComparison(owner, String(data.id))
     if (!current) throw new Error('comparison_missing_after_create')
     return reply(current, current.metadata_json.providers.some(row => row.waitingForRunId)
-      ? undefined : startedText(parsed.subject, parsed.providers, looks, remembered, parsed.request))
+      ? undefined : startedText(parsed.subject, parsed.providers, looks, remembered, parsed.request) + (parsed.withheld.length ? '\n\n' + SWIGGY_COMPARISON_NOTE : ''))
   } finally { await releaseBrainUserLease(key, lease.ownerToken) }
 }
 
@@ -269,9 +273,16 @@ export function storeRetryLimit(row: {navTimeout?: boolean}): number {
   return row?.navTimeout ? NAV_TIMEOUT_ATTEMPTS : MAX_STORE_ATTEMPTS
 }
 
+/** Swiggy agreement (13 Nov): a pending or failed Swiggy/Instamart row (from a run saved before the gate) is closed as
+ *  blocked with the note, so no worker opens it and no retry re-queues it. Rows already checked keep their result. */
+export function withholdRows<T extends StoreRow>(rows: T[]): T[] {
+  return rows.map(row => ['pending', 'failed'].includes(String(row.status)) && withheldComparisonProviders([row.provider]).length
+    ? {...row, status: 'blocked' as const, reason: SWIGGY_COMPARISON_NOTE, waitingForRunId: undefined} as T : row)
+}
+
 /** Failed stores go back in the queue until their budget is spent; observed, blocked and needs-input stores never do. */
 export function retryFailedStores<T extends StoreRow>(rows: T[]): T[] {
-  return rows.map(row => row.status === 'failed' && (row.attempts || 1) < storeRetryLimit(row)
+  return rows.map(row => row.status === 'failed' && !withheldComparisonProviders([row.provider]).length && (row.attempts || 1) < storeRetryLimit(row)
     ? {provider: row.provider, status: 'pending' as const, attempts: (row.attempts || 1) + 1, ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})} as T : row)
 }
 // 26 Oct: Swiggy and Zomato are separate sites with public menus, so each gets its own browser too; sharing one
@@ -298,6 +309,8 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
   const claimed = await withComparisonState(id, async () => {
     const task = await readPriceComparison(owner, id)
     if (!task) return null
+    // Swiggy agreement (13 Nov): runs saved before the gate never open swiggy.com / Instamart either.
+    task.metadata_json.providers = withholdRows(task.metadata_json.providers)
     const sharedBusy = task.metadata_json.providers.some(row => row.status === 'checking' && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider))
     const next = task.metadata_json.providers.find(row => row.status === 'pending' && (PARALLEL_COMPARISON_PROVIDERS.has(row.provider) || !sharedBusy) && !row.waitingForRunId)
     if (!next) { await saveProgress(owner, task); return {task, next: null as null} }
@@ -384,7 +397,9 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
 export function withStoreFallback(meta: any) {
   const rows = Array.isArray(meta?.providers) ? meta.providers : []
   const only = rows.length === 1 ? rows[0] : null
-  if (!only || meta.storeFallback || only.status !== 'blocked' || only.needsInput || !PARALLEL_COMPARISON_PROVIDERS.has(only.provider)) return rows
+  // The fallback is for electronics stores only: a Zomato-only food run (Swiggy withheld) must not turn into a
+  // search of Amazon/Flipkart for a dish.
+  if (!only || meta.storeFallback || only.status !== 'blocked' || only.needsInput || !['amazon', 'flipkart', 'croma', 'reliance'].includes(only.provider)) return rows
   meta.storeFallback = only.provider
   const others = ['flipkart', 'croma', 'reliance', 'amazon'].filter(p => p !== only.provider)
   return [...rows, ...others.map(provider => ({provider, status: 'pending', attempts: 1}))]
@@ -416,7 +431,7 @@ export async function advancePriceComparisonAll(actor: AgentActor, id: string) {
       const settled = await withComparisonState(id, async () => {
         const fresh = await readPriceComparison(owner, id)
         if (!fresh) return null
-        fresh.metadata_json.providers = fresh.metadata_json.providers.map(row => row.status === 'failed' && !row.evidence && (row.attempts || 1) < MAX_STORE_ATTEMPTS
+        fresh.metadata_json.providers = fresh.metadata_json.providers.map(row => row.status === 'failed' && !row.evidence && !withheldComparisonProviders([row.provider]).length && (row.attempts || 1) < MAX_STORE_ATTEMPTS
           && /interrupted|lost/.test(String(row.reason || '')) ? {provider: row.provider, status: 'pending' as const, attempts: (row.attempts || 1) + 1, ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})} : row)
         await saveProgress(owner, fresh)
         return fresh

@@ -1,3 +1,5 @@
+// Legacy expectations run in the Swiggy-approved mode; the default (withheld) mode is covered by verify-swiggy-comparison-policy-nov13.mts.
+process.env.COMMERCE_SWIGGY_COMPARISON_APPROVED='true'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import {runInNewContext} from 'node:vm'
@@ -25,9 +27,9 @@ const db={from(table:string){
   return q
 }}
 function load(file:string,deps:Record<string,any>){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,process,Date,URL,console,require(name:string){if(name in deps)return deps[name];throw Error(name)}});return exports}
-const tasks=load('lib/commerce/task.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./providers':providers})
-const grocery=load('lib/agent/grocery-comparison.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/commerce/task':tasks})
-const entry=load('lib/agent/food-comparison.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/commerce/task':tasks,'./grocery-comparison':grocery,'./food-comparison-intent':intent,'@/lib/web-search':{searchWebResults:()=>{throw Error('no public search expected')}}})
+const tasks=load('lib/commerce/task.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./providers':providers,'./swiggy-policy':await import('../lib/commerce/swiggy-policy.ts')})
+const grocery=load('lib/agent/grocery-comparison.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/commerce/task':tasks,'@/lib/commerce/swiggy-policy':await import('../lib/commerce/swiggy-policy.ts')})
+const entry=load('lib/agent/food-comparison.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/commerce/task':tasks,'@/lib/commerce/swiggy-policy':await import('../lib/commerce/swiggy-policy.ts'),'./grocery-comparison':grocery,'./food-comparison-intent':intent,'@/lib/web-search':{searchWebResults:()=>{throw Error('no public search expected')}}})
 const run=(text:string,owner=42,surface='whatsapp')=>entry.tryFoodComparison({telegramId:owner,text,surface})
 const initial=await run('Compare grocery prices for Amul Taaza toned milk, 1 litre')
 assert.equal(initial.handledBy,'grocery-comparison')
@@ -58,7 +60,7 @@ class McpError extends Error {reason='fixture'}
 const deps={
   'next/server':{NextResponse:{json:(body:any,options:any)=>({body,status:options?.status||200})}},
   '@/lib/agent/session':{requireAgentMutationOrigin:()=>blocked?{status:403}:null,requireAgentSession:async()=>({telegramId:owner}),isAgentSession:()=>true},
-  '@/lib/commerce/providers':providers,'@/lib/commerce/task':tasks,'@/lib/commerce/addresses':addresses,'@/lib/commerce/swiggy-read':reads,
+  '@/lib/commerce/providers':providers,'@/lib/commerce/task':tasks,'@/lib/commerce/swiggy-policy':await import('../lib/commerce/swiggy-policy.ts'),'@/lib/commerce/addresses':addresses,'@/lib/commerce/swiggy-read':reads,
   '@/lib/commerce/connection-store':{readCommerceConnection:async()=>token?{accessToken:'fixture'}:null},
   '@/lib/commerce/mcp':{CommerceMcpClient:Client,CommerceMcpError:McpError},
 }
