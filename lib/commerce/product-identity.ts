@@ -43,3 +43,31 @@ export function productIdentityMatches(subject:string,evidence:string):boolean{
   }
   return true
 }
+
+/** 13 Nov live: Zepto titles a product "Amul Salted Butter" and states the pack ("Net Qty: 500 g") just below.
+ *  When the asked pack size is missing from the heading, the page text right after the heading may supply it —
+ *  only if exactly ONE pack size appears there and it equals the asked one (a variant list never qualifies).
+ *  Returns the observed pack text (as written on the page) or null. Never invents a size. */
+export function packFromPage(subject:string,heading:string,pageText:string):string|null{
+  // gm/gms/grams and ltr/litre are normalised first, so a heading that already says "100gm" is never overridden.
+  const unit=(v:string)=>String(v||'').replace(/(\d)\s*(?:gms?|grams?)\b/gi,'$1 g').replace(/(\d)\s*(?:ltrs?|litres?|liters?)\b/gi,'$1 l')
+  const sizes=(v:string)=>[...new Set((packageIdentity(unit(v)).text.match(/(?<![\d.])\d+(?:\.\d+)?(?:g|ml)\b/gi)||[]).map(s=>s.toLowerCase()))]
+  const asked=sizes(productIdentityText(subject,true))
+  if(asked.length!==1||sizes(heading).length)return null
+  const text=String(pageText||'').replace(/\s+/g,' ')
+  const at=text.indexOf(heading.replace(/\s+/g,' '))
+  if(at<0)return null
+  const near=text.slice(at+heading.length,at+heading.length+240)
+  // Review (PR #1518): a multipack or combo ("2 x 500 g", "Pack of 2", "2 pcs", "Combo") anywhere here is not the asked
+  // single pack; and the size must come BEFORE the first price, so a recommended tile's size is never borrowed.
+  // Only this product's own block counts: everything up to where another tile starts ("Similar", "You may also like",
+  // the heading again…), so a count printed after the MRP ("₹650 MRP ₹700 Pack of 2") is still seen. A count of 1 is fine.
+  const tile=near.search(new RegExp('\\b(?:similar|you may also like|related|customers also|frequently bought|more from)\\b|'+heading.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'))
+  const own=tile>=0?near.slice(0,tile):near
+  if(packageIdentity(unit(own)).counts.some(n=>n!==1))return null
+  const beforePrice=near.split(/₹|\bRs\.?\s*\d|\bINR\b/i)[0]
+  const found=[...beforePrice.matchAll(/(?:(?:net\s*(?:qty|quantity|wt|weight)|pack\s*size|quantity|weight)\s*:?\s*)?(?<![\d.])\d+(?:\.\d+)?\s*(?:kg|g|gm|gms|grams?|l|ltrs?|litres?|liters?|ml)\b/gi)]
+  const observed=[...new Set(found.map(m=>sizes(m[0])[0]).filter(Boolean))]
+  if(observed.length!==1||observed[0]!==asked[0])return null
+  return unit(found[0][0].trim())
+}

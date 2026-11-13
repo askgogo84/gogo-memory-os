@@ -1,4 +1,4 @@
-import {productIdentityText,productIdentityMatches} from './product-identity'
+import {productIdentityText,productIdentityMatches,packFromPage} from './product-identity'
 import {SWIGGY_COMPARISON_NOTE, withheldComparisonProviders} from './swiggy-policy'
 export const COMPARISON_PROVIDERS = {
   amazon: {label: 'Amazon India', url: 'https://www.amazon.in/', domain: 'amazon.in'},
@@ -90,7 +90,9 @@ export function outletAreaFromAddress(address: string): string | null {
   const parts = String(address || '').split(',').map(p => p.replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean)
   const city = parts.findIndex(p => /^(?:bengaluru|bangalore)\b/i.test(p))
   const candidates = (city > 0 ? parts.slice(0, city) : parts).reverse()
-  const area = candidates.find(p => p.length >= 4 && !/\b(?:block|cross|main|floor|stage|phase|sector|road|rd|street|st|near|opp|opposite|building|complex|no)\b\.?$/i.test(p) && !/^(?:karnataka|india)$/i.test(p))
+  // 13 Nov live: "…, next to Old Galaxy Theatre, Residency Rd, …" gave "next to Old Galaxy Theatre": a landmark is not an area.
+  const area = candidates.find(p => p.length >= 4 && !/\b(?:block|cross|main|floor|stage|phase|sector|road|rd|street|st|near|opp|opposite|building|complex|no)\b\.?$/i.test(p)
+    && !/^(?:next to|near|opp\.?|opposite|behind|beside|above|below|adjacent to|in front of|off)\b/i.test(p) && !/^(?:karnataka|india)$/i.test(p))
   return area ? area.slice(0, 40) : null
 }
 export function foodRestaurantLead(provider: ComparisonProvider, restaurant: string, leads: Array<{url: string; title?: string}>, pincode?: string | null, area?: string | null) {
@@ -386,14 +388,18 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
   const compact = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, '')
   const requested = productIdentityText(subject,true).match(/[a-z0-9]+/gi) || []
   let cursor = 0
-  const identity = compact(productIdentityText(heading))
+  // The asked pack size may sit on its own evidence line under a heading that omits it (Zepto, 13 Nov live).
+  const packLine = evidence.split('\n')[1]?.trim() || ''
+  const pack = packLine && !/₹|\bRs\.?\s*\d|\bINR\b/i.test(packLine) ? packFromPage(subject, heading, heading + ' ' + packLine) : null
+  const named = pack ? heading + ' ' + pack : heading
+  const identity = compact(productIdentityText(named))
   for (const token of requested) {
     const position = identity.indexOf(compact(token), cursor)
     if (position < 0) return null
     cursor = position + compact(token).length
   }
   if (!namesProduct(requested) || heading.length > 220) return null
-  if (!productIdentityMatches(subject,heading)) return null
+  if (!productIdentityMatches(subject,named)) return null
   // One model code must appear as written: "xm5" is in "WH-1000XM5" but not in the camera "X-M5".
   if (requested.length === 1 && !heading.toLowerCase().includes(requested[0].toLowerCase())) return null
   // A different phone tier is not the requested variant, even if all base words match.

@@ -1,4 +1,4 @@
-import {productIdentityMatches} from '../commerce/product-identity'
+import {productIdentityMatches, packFromPage} from '../commerce/product-identity'
 import { sanitizeBrowserReadDiagnostics, type BrowserReadDiagnostic, type BrowserReadReason } from './browser-read-diagnostics'
 import { draftObjectiveCovered } from './draft-coverage'
 import {ensureManagedBrowser,managedBrowserEnabled} from './managed-browser'
@@ -457,10 +457,13 @@ export function productPagePriceEvidence(objective:string,title:string,pageText:
     const flat=String(pageText||'').replace(/\s+/g,' ')
     if(flat.includes(pName)&&flat.includes(pPrice))return [pName,pPrice]
   }
-  const heading=String(title||'').replace(/^Buy\s+/i,'').replace(/\s*(?:\s:\s*Amazon\.in\b.*|\sOnline\b.*|\s-\s*Croma\b.*|\s\|.*)$/i,'').trim()
+  // 13 Nov live: Zepto titles read "Amul Salted Butter - Buy at ₹325 Online | …"; the "- Buy at ₹…" tail is not the name.
+  const heading=String(title||'').replace(/^Buy\s+/i,'').replace(/\s*(?:\s:\s*Amazon\.in\b.*|\s-\s*Buy at\b.*|\sOnline\b.*|\s-\s*Croma\b.*|\s\|.*)$/i,'').trim()
   if(heading.length<12)return skip('short_heading',heading)
   // Match the complete requested identity while retaining the exact observed heading.
-  if(!productIdentityMatches(ask[1],heading))return skip('identity_mismatch')
+  // The asked pack size may be stated just under a heading that omits it (Zepto); it is kept as its own evidence line.
+  const pack=productIdentityMatches(ask[1],heading)?null:packFromPage(ask[1],heading,String(pageText||''))
+  if(!productIdentityMatches(ask[1],pack?heading+' '+pack:heading))return skip('identity_mismatch')
   const text=String(pageText||'').replace(/\s+/g,' ')
   const at=text.indexOf(heading)
   // 16 Oct 9:18 pm live: no price was found on Croma's product page. Log where things are (public page text only).
@@ -474,10 +477,12 @@ export function productPagePriceEvidence(objective:string,title:string,pageText:
   // 16 Oct live: Reliance prints "MRP ₹89,900.00 (Inclusive of all taxes)"; the MRP is not the selling price.
   const notMrp=(x:{before:string})=>!/\b(?:MRP|M\.R\.P|was|save|saving|EMI|off|cashback|discount)\b[^₹]*$/i.test(x.before)
   const listed=spans.find(x=>notMrp(x)&&/^₹\s?\d[\d,]*(?:\.\d{1,2})?\s*\(?\s*Incl/i.test(x.span))
-    ||spans.find(x=>!/\b(?:MRP|save|saving|EMI|off|from|starting|cashback|discount)\b[^₹]*$/i.test(x.before)&&!/^₹\s?\d[\d,]*(?:\.\d{1,2})?\s*(?:\/\s*m(?:o|onth)?\b|per month|off\b|EMI\b|or\b|x\s?\d)/i.test(x.span))
+    // Review (PR #1518): a fee, delivery/handling charge, unit price ("₹65/100 g") or member-only price is not the item price.
+    ||spans.find(x=>!/\b(?:MRP|M\.R\.P|save|saving|EMI|off|from|starting|cashback|discount)\b[^₹]*$/i.test(x.before)&&!/(?:\b(?:delivery|handling|platform|convenience|packaging|surge|small cart)\s*)?\b(?:fee|charges?)\s*:?\s*$|\btip\s*:?\s*$/i.test(x.before)&&!/^₹\s?\d[\d,]*(?:\.\d{1,2})?\s*(?:\/\s*m(?:o|onth)?\b|per month|off\b|EMI\b|or\b|x\s?\d|\/\s*\d|per\s*\d|(?:delivery|handling|platform)?\s*(?:fee|charges?)\b|with\s+\w+\s+(?:pass|one|plus|membership))/i.test(x.span))
   if(!listed)return miss('no_price_after_heading')
   const span=listed.span.replace(/\s+(?:MRP|M\.R\.P)\b.*$/i,'').trim()
-  return span.length>=6&&text.includes(span)?[heading,span]:miss('span_not_in_text')
+  // 13 Nov live: a grocery price like "₹325" is 4 characters; the old length>=6 floor dropped every price under ₹1,000.
+  return /^₹\s?\d/.test(span)&&text.includes(span)?(pack?[heading,pack,span]:[heading,span]):miss('span_not_in_text')
 }
 
 const VAULT_CODE_SCRIPT=String.raw`
