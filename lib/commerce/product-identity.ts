@@ -71,3 +71,13 @@ export function packFromPage(subject:string,heading:string,pageText:string):stri
   if(observed.length!==1||observed[0]!==asked[0])return null
   return unit(found[0][0].trim())
 }
+
+/** True when the text right before a ₹ amount marks that amount as an offer, not the price: "Flat off ₹500",
+ *  "10% off up to ₹1,500", "Instant 10% off: ₹2,000", "orders above ₹499". "Extra ₹3000 off ₹26,990" and
+ *  "Up to 20% off ₹26,990" are NOT: that offer already stated its own amount, so the next ₹ is the selling price. */
+export function offerAmountBefore(before:string):boolean{
+  const b=String(before||'')
+  if(/\b(?:up\s*to|upto|max(?:imum)?|above|over|min(?:imum)?(?:\s+order)?|orders?\s+(?:above|over|of))\s*:?\s*$/i.test(b))return true
+  if(/\boff\s*:\s*$/i.test(b))return true
+  return /\boff\s*$/i.test(b)&&!/(?:₹\s?\d[\d,]*(?:\.\d{1,2})?|\d+(?:\.\d+)?\s*%)\s*off\s*$/i.test(b)
+}
