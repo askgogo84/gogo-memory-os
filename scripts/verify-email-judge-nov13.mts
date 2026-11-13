@@ -48,6 +48,11 @@ ok(J.messageGrounded('WeWork says keycards stop around 3pm tomorrow unless ₹35
 ok(!J.messageGrounded('WeWork says pay ₹50,000 now.', WEWORK), 'an amount not in the email is refused')
 ok(!J.messageGrounded('Call +91 98765 43210 to keep access.', WEWORK), 'a phone number is refused')
 ok(!J.messageGrounded('Pay at wework-pay.xyz today.', WEWORK) && !J.messageGrounded('Reply with your OTP to confirm.', WEWORK), 'links and secret words are refused')
+// Review round 2 bypasses: all refused.
+{ const SCAM = { subject: 'Call 9876543210 now', snippet: '₹35,841.29 due' }
+  for (const bad of ['Call 9876543210?', 'call nine eight seven six five four', 'call ９８７６５４３２１０', 'call ९८७६५४३२१०', 'chat at t.me/helpdesk', 'see bit.ly/xyz', 'pay at pay-now dot com', 'share the verification code', 'approve the UPI collect request', '₹358 is due', 'Reply YES to unlock'])
+    ok(!J.messageGrounded(bad, SCAM), `refused: ${bad}`) }
+ok(J.messageGrounded('Your 4:45 pm meeting is in 10 minutes.', { subject: 'Meeting 4:45 pm', snippet: 'starts in 10 minutes' }), 'ordinary times and counts from the email still pass')
 { const create = async () => ({ content: [{ type: 'text', text: JSON.stringify({ verdicts: [{ id: 'e1', important: true, kind: 'cutoff', phishing: false, why: 'Keycards stop', message: 'Pay ₹99,999 at pay-now.xyz' }] }) }] })
   const v = await J.judgeEmails([WEWORK], { model: 'm', create })
   ok(v[0].important && v[0].message === '' && /not grounded/.test(v[0].why), 'an ungrounded line is withheld; the verdict stays') }

@@ -82,11 +82,20 @@ export function parseVerdicts(raw: string, asked: string[]): JudgeVerdict[] {
 /** A would-send line may only repeat numbers, amounts and times that are in that email's own subject or text, and
  *  never carries a link, an email address or a phone number (review: one email could steer another's message). Pure. */
 export function messageGrounded(message: string, email: Pick<JudgeEmail, 'subject' | 'snippet'>): boolean {
-  const m = String(message || '')
+  const m = String(message || '').normalize('NFKC')
   if (!m) return true
-  if (/https?:\/\/|www\.|\b[a-z0-9-]+\.(?:com|in|co|net|org|xyz|top|io|ai|app|info)\b|@[a-z0-9-]+\.|\+?\d[\d\s-]{9,}\d|\b(?:otp|password|pin|cvv)\b/i.test(m)) return false
-  const src = `${email.subject} ${email.snippet}`.replace(/[,\s]/g, '')
-  return (m.match(/\d[\d,.:]*\d|\d/g) || []).every(n => src.includes(n.replace(/,/g, '')))
+  // Review round 2: no links of any kind, no addresses, no phone-length digit runs, no non-ASCII or spelled-out digit
+  // sequences, no credential or payment-approval words. (Before any real send, the line is built from a template.)
+  if (/https?:\/\/|www\.|\b[a-z0-9-]+\.[a-z]{2,}(?:\/|\b)|\bdot\s+(?:com|in|net|org|me|ly)\b|@/i.test(m)) return false
+  if (/\d[\d\s-]{5,}\d/.test(m) || /\d{7,}/.test(m.replace(/[\s-]/g, ''))) return false
+  if (/[^\x00-\x7F]/.test(m.replace(/[₹’‘“”–—…]/g, '')) && /\p{Nd}/u.test(m.replace(/[0-9]/g, ''))) return false
+  if (/\b(?:zero|one|two|three|four|five|six|seven|eight|nine)(?:[\s-]+(?:zero|one|two|three|four|five|six|seven|eight|nine)){2,}\b/i.test(m)) return false
+  if (/\b(?:otp|password|passcode|pin|cvv|verification\s+code|code|upi|collect\s+request|kyc|verify|reply\s+(?:yes|stop))\b/i.test(m)) return false
+  // Every number must be a whole number in the email (₹358 is not ₹35,841.29).
+  const norm = (x: string) => x.replace(/,/g, '')
+  const tokens = (x: string): string[] => (x.normalize('NFKC').match(/\d[\d,.:]*\d|\d/g) || []).map(norm)
+  const src = new Set<string>(tokens(`${email.subject} ${email.snippet}`))
+  return tokens(m).every((n: string) => src.has(n))
 }
 
 /** Runs the judge once. `create` is the model call (tests inject a fake). Never throws; failures give []. */
