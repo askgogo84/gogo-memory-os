@@ -52,6 +52,8 @@ export async function releaseRunAuthHandoff(telegramId:string,runId:string){
   const {data:run,error}=await supabaseAdmin.from('agent_runs').select('metadata_json').eq('id',runId).eq('telegram_id',telegramId).maybeSingle()
   if(error||!run)throw new Error('auth_handoff_run_missing')
   const meta:any=run.metadata_json||{}
+  // Already released (nothing held): no provider call and no write.
+  if(!meta.handoff&&!meta.secondary_auth&&!meta.browser_waiting)return
   if(meta.handoff?.releaseUrl)await releaseBrowserHandoff(String(meta.handoff.releaseUrl),{allowExpired:true})
   // Closing the takeover (/release) only drops the CDP connection; the keepAlive
   // Browserbase session must be explicitly released or it lingers until timeout.

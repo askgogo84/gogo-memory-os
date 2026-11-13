@@ -311,9 +311,16 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     if (!task) return null
     // Swiggy agreement (13 Nov): runs saved before the gate never open swiggy.com / Instamart either.
     task.metadata_json.providers = withholdRows(task.metadata_json.providers)
+    // 13 Nov 6 pm live: Zepto stopped at a CAPTCHA and its paused browser task kept the shared grocery browser reserved,
+    // so Blinkit was never opened ("my browser was busy"). This comparison has already reported that store as blocked
+    // and does not wait for it, so before the next shared-browser store starts, the blocked sibling's hold is released.
+    // Collected here; released after this short state lease, before the next shared-browser store runs (review).
+    const release = task.metadata_json.providers.some(row => row.status === 'pending' && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider))
+      ? task.metadata_json.providers.filter(row => row.status === 'blocked' && row.runId && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider)).map(row => String(row.runId))
+      : []
     const sharedBusy = task.metadata_json.providers.some(row => row.status === 'checking' && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider))
     const next = task.metadata_json.providers.find(row => row.status === 'pending' && (PARALLEL_COMPARISON_PROVIDERS.has(row.provider) || !sharedBusy) && !row.waitingForRunId)
-    if (!next) { await saveProgress(owner, task); return {task, next: null as null} }
+    if (!next) { await saveProgress(owner, task); return {task, next: null as null, release} }
     const parallel = PARALLEL_COMPARISON_PROVIDERS.has(next.provider)
     const {prepareLinkedBrowserRead} = await import('@/lib/agent/browser-command')
     const startedAt = new Date().toISOString()
@@ -374,11 +381,15 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     task.metadata_json.providers = task.metadata_json.providers.map(row => row === next
       ? {...row, runId: childId, status: 'checking', startedAt, startUrl} : row)
     await saveProgress(owner, task)
-    return {task, next: {provider: next.provider, childId, parallel}}
+    return {task, next: {provider: next.provider, childId, parallel}, release}
   })
   if (!claimed) return null
   if (!claimed.next) return claimed.task
   const {childId, parallel, provider} = claimed.next
+  if (!parallel && claimed.release?.length) {
+    const {releaseRunAuthHandoff} = await import('@/lib/agent/secondary-auth-handoff')
+    await Promise.all(claimed.release.map(runId => releaseRunAuthHandoff(owner, runId).catch(() => {})))
+  }
   // The shared grocery browser takes one store at a time; each electronics store has its own browser lane.
   const laneKey = 'commerce-browser:' + owner + (parallel ? ':' + provider : '')
   const lane = await acquireBrainUserLease(laneKey, 600)

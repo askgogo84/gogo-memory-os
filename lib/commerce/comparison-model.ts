@@ -359,6 +359,10 @@ export function providerObservation(provider: ComparisonProvider, child: any, st
   if (reason === 'browser_handoff_in_use') return {...base, status: 'blocked', needsInput: false,
     reason: 'my browser was busy with another task, so I didn’t check this store. This check has finished; ask for a new comparison when the browser is free.'}
   const needsInput = ['human_auth_required', 'delivery_location_required'].includes(reason)
+  // 13 Nov 6 pm live: Zepto showed a CAPTCHA, reported as "needs your delivery location or sign-in". A robot check is
+  // never solved or worked around by Gogo; say what it was.
+  if (child.status === 'paused' && step?.output_json?.authReason === 'captcha') return {...base, status: 'blocked', needsInput: false,
+    reason: 'the store showed a robot check (CAPTCHA), which I don’t try to get past. Open the store app to see the price.'}
   if (child.status === 'paused') return {...base, status: 'blocked', needsInput,
     reason: needsInput ? 'it needs your delivery location or sign-in before it shows prices.' : 'the store blocked my browser, so I couldn’t read a price.'}
   if (child.status === 'running') return {...base, status: 'checking'}
