@@ -414,7 +414,7 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
     const adjacentCapacity = compact(before.match(/\b\d+\s*(?:GB|TB)\s*$/i)?.[0] || '')
     return Number(match[1].replace(/,/g,'')) > 0
       && !(headingCapacity && adjacentCapacity && headingCapacity !== adjacentCapacity)
-      && !/\b(?:MRP|M\.R\.P\.?|list price|was|save|savings|discount|cashback|off|EMI|from|starting at|buy at|offer price|with offers)\s*:?\s*$/i.test(before)
+      && !/\b(?:MRP|M\.R\.P\.?|list price|was|save|savings|discount|cashback|EMI|from|starting at|buy at|offer price|with offers)\s*:?\s*$/i.test(before)
       && !/\+\s*$/.test(before)
       && !/\bor\s*$/i.test(before)
       && !/\bAD\s*$/i.test(before)
