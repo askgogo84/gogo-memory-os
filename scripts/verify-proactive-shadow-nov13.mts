@@ -79,7 +79,7 @@ const em = pulse.slice(pulse.indexOf('export async function runEmailShadow'), pu
 ok(em.length > 1000 && !/sendWhatsApp|sendPulse\(|sendProactiveEmailCard\(|deliverNotification|recordCostEvent|claim_autonomy_email_card|finish_autonomy_email_card|email_attention_events|from\('conversations'\)|\.update\(|\.rpc\(/.test(em), 'email and cleanup shadow: no send (direct or indirect), claim, shown record, conversation or update')
 ok(/if\(!user\.whatsapp_id\)return \{logged:false,reason:'no_whatsapp'\}/.test(em) && /if\(isQuietHour\(prefs,localHour\(timezone\)\)\)return \{logged:false,reason:'quiet_hours'\}/.test(em) && /dueForCheck\(prefs,lastPick\)/.test(em), 'the shadow follows the real gates: recipient, quiet hours, frequency')
 ok(/cleanupCandidates\(stale\|\|\[\]\)/.test(em), 'cleanup uses the filtered candidates')
-ok(/withShadowBudget\(\(\)=>runEmailShadow\(owner\)\)/.test(pulse) && /withShadowBudget\(\(\)=>runCleanupShadow\(owner\)\)/.test(pulse), 'both pulse shadows are time-bounded')
+ok(/timed\('email',\(\)=>runEmailShadow\(owner\),15_000\)/.test(pulse) && /timed\('cleanup',\(\)=>runCleanupShadow\(owner\),15_000\)/.test(pulse) && /withShadowBudget\(job,Math\.min\(ms,left\)\)/.test(pulse), 'both pulse shadows are time-bounded (13 Nov: under one loop deadline)')
 const proc = pulse.slice(pulse.indexOf('export async function processAutonomyPulse'))
 ok(proc.indexOf('proactiveShadowOwners()') < proc.indexOf("mayVolunteer('check_in')"), 'the email shadow runs before the quiet return')
 const nudge = readFileSync(new URL('../lib/agent/meeting-nudge.ts', import.meta.url), 'utf8')
