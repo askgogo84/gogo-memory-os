@@ -9,6 +9,9 @@ export function publicResearchUrl(value:unknown):string {
     const url=new URL(value)
     if(!/^https?:$/.test(url.protocol)||url.username||url.password||url.hash)return ''
     if([...url.searchParams.keys()].some(key=>/token|key|auth|session|secret|signature|password|credential|^sig$|^code$/i.test(key)))return ''
+    // Personal identifiers in a query are not public citations either: they must go through redaction.
+    if([...url.searchParams.keys()].some(key=>/passport|aadha+r|phone|mobile|msisdn|e-?mail|ssn|account|acct|iban|card|cvv|otp|^(?:pan|pin|tel|dob|upi)$/i.test(key)))return ''
+    if([...url.searchParams.values()].some(v=>v.includes('@')))return ''
     return value
   }catch{return ''}
 }
