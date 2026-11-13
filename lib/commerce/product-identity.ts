@@ -49,15 +49,21 @@ export function productIdentityMatches(subject:string,evidence:string):boolean{
  *  only if exactly ONE pack size appears there and it equals the asked one (a variant list never qualifies).
  *  Returns the observed pack text (as written on the page) or null. Never invents a size. */
 export function packFromPage(subject:string,heading:string,pageText:string):string|null{
-  const sizes=(v:string)=>[...new Set((packageIdentity(v).text.match(/\b\d+(?:g|ml)\b/gi)||[]).map(s=>s.toLowerCase()))]
+  // gm/gms/grams and ltr/litre are normalised first, so a heading that already says "100gm" is never overridden.
+  const unit=(v:string)=>String(v||'').replace(/(\d)\s*(?:gms?|grams?)\b/gi,'$1 g').replace(/(\d)\s*(?:ltrs?|litres?|liters?)\b/gi,'$1 l')
+  const sizes=(v:string)=>[...new Set((packageIdentity(unit(v)).text.match(/(?<![\d.])\d+(?:\.\d+)?(?:g|ml)\b/gi)||[]).map(s=>s.toLowerCase()))]
   const asked=sizes(productIdentityText(subject,true))
   if(asked.length!==1||sizes(heading).length)return null
   const text=String(pageText||'').replace(/\s+/g,' ')
   const at=text.indexOf(heading.replace(/\s+/g,' '))
   if(at<0)return null
   const near=text.slice(at+heading.length,at+heading.length+240)
-  const found=[...near.matchAll(/(?:(?:net\s*(?:qty|quantity|wt|weight)|pack\s*size|quantity|weight)\s*:?\s*)?\b\d+(?:\.\d+)?\s*(?:kg|g|gm|gms|grams?|l|ltr|litres?|liters?|ml)\b/gi)]
-  const observed=[...new Set(found.map(m=>sizes(m[0].replace(/\b(gm|gms|grams?)\b/i,'g').replace(/\b(ltr|litres?|liters?)\b/i,'l'))[0]).filter(Boolean))]
+  // Review (PR #1518): a multipack or combo ("2 x 500 g", "Pack of 2", "2 pcs", "Combo") anywhere here is not the asked
+  // single pack; and the size must come BEFORE the first price, so a recommended tile's size is never borrowed.
+  if(packageIdentity(unit(near)).counts.length)return null
+  const beforePrice=near.split(/₹|\bRs\.?\s*\d|\bINR\b/i)[0]
+  const found=[...beforePrice.matchAll(/(?:(?:net\s*(?:qty|quantity|wt|weight)|pack\s*size|quantity|weight)\s*:?\s*)?(?<![\d.])\d+(?:\.\d+)?\s*(?:kg|g|gm|gms|grams?|l|ltrs?|litres?|liters?|ml)\b/gi)]
+  const observed=[...new Set(found.map(m=>sizes(m[0])[0]).filter(Boolean))]
   if(observed.length!==1||observed[0]!==asked[0])return null
   return found[0][0].trim()
 }

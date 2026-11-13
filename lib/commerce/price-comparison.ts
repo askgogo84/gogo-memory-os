@@ -324,12 +324,23 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
       const pin = pincodeInText(task.metadata_json.request)
       // 13 Nov live: the map search for "Meghana Foods near 560086" returned the famous Residency Road outlet, not the
       // person's own area. When the pincode is the one they saved for home, their home area names the outlet to look for.
-      const home = await import('@/lib/agent/places-context').then(m => m.savedPlaces(owner)).then(p => p.home, () => null).catch(() => null)
-      const area = (home?.pincode && home.pincode === pin && home.area ? String(home.area) : null) || await nearestOutletArea(food.restaurant, pin)
+      // Review: if the restaurant has no outlet in the home area, fall back to the map search's nearest outlet.
+      const home = pin ? await import('@/lib/agent/places-context').then(m => m.savedPlaces(owner)).then(p => p.home, () => null).catch(() => null) : null
+      const homeArea = home?.pincode && home.pincode === pin && home.area ? String(home.area) : null
       const {searchWebResults} = await import('@/lib/web-search')
-      const leads = await searchWebResults(`${food.restaurant} ${area ? area + ' ' : ''}${/^56/.test(pin || '') ? 'Bangalore ' : ''}order online ${COMPARISON_PROVIDERS[next.provider].label}`,
-        {includeDomains: [COMPARISON_PROVIDERS[next.provider].domain], timeoutMs: 10_000}).catch(() => [] as any[])
-      startUrl = foodRestaurantLead(next.provider, food.restaurant, leads || [], pin, area) || comparisonSearchUrl(next.provider, task.metadata_json.subject) || startUrl
+      const look = async (where: string | null) => {
+        const found = await searchWebResults(`${food.restaurant} ${where ? where + ' ' : ''}${/^56/.test(pin || '') ? 'Bangalore ' : ''}order online ${COMPARISON_PROVIDERS[next.provider].label}`,
+          {includeDomains: [COMPARISON_PROVIDERS[next.provider].domain], timeoutMs: 10_000}).catch(() => [] as any[])
+        return {leads: found || [], url: foodRestaurantLead(next.provider, food.restaurant, found || [], pin, where)}
+      }
+      let area: string | null = homeArea
+      let found = homeArea ? await look(homeArea) : null
+      if (!found?.url || !outletInArea(found.url, homeArea)) {
+        area = await nearestOutletArea(food.restaurant, pin)
+        found = await look(area)
+      }
+      const leads = found.leads
+      startUrl = found.url || comparisonSearchUrl(next.provider, task.metadata_json.subject) || startUrl
       // Which outlet was chosen and why (area from the map search, how many restaurant pages the search returned).
       console.log('FOOD_OUTLET:', JSON.stringify({provider: next.provider, area: area || null, leads: (leads || []).length,
         paths: (leads || []).slice(0, 6).map((l: any) => { try { return new URL(String(l?.url || '')).pathname.slice(0, 80) } catch { return null } }), start: (() => { try { return new URL(startUrl).pathname.slice(0, 80) } catch { return null } })()}))
@@ -393,6 +404,14 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     await saveProgress(owner, task)
     return task
   })
+}
+
+/** The chosen restaurant page's slug names every word of the area ("rajajinagar" in ".../meghana-foods-rajajinagar-..."). */
+export function outletInArea(url: string, area: string | null): boolean {
+  const words = (String(area || '').toLowerCase().replace(/rajaji nagar/g, 'rajajinagar').match(/[a-z]{4,}/g) || []).filter(w => !['road', 'layout', 'nagar', 'block', 'main', 'cross', 'stage', 'phase'].includes(w))
+  let slug = ''
+  try { slug = new URL(url).pathname.toLowerCase() } catch { return false }
+  return words.length > 0 && words.every(w => slug.includes(w))
 }
 
 /** 23 Oct (owner): "If Amazon is not accessible, try the others." A single-store read whose store blocked the

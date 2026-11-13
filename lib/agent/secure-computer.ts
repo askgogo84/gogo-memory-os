@@ -477,7 +477,8 @@ export function productPagePriceEvidence(objective:string,title:string,pageText:
   // 16 Oct live: Reliance prints "MRP ₹89,900.00 (Inclusive of all taxes)"; the MRP is not the selling price.
   const notMrp=(x:{before:string})=>!/\b(?:MRP|M\.R\.P|was|save|saving|EMI|off|cashback|discount)\b[^₹]*$/i.test(x.before)
   const listed=spans.find(x=>notMrp(x)&&/^₹\s?\d[\d,]*(?:\.\d{1,2})?\s*\(?\s*Incl/i.test(x.span))
-    ||spans.find(x=>!/\b(?:MRP|save|saving|EMI|off|from|starting|cashback|discount)\b[^₹]*$/i.test(x.before)&&!/^₹\s?\d[\d,]*(?:\.\d{1,2})?\s*(?:\/\s*m(?:o|onth)?\b|per month|off\b|EMI\b|or\b|x\s?\d)/i.test(x.span))
+    // Review (PR #1518): a fee, delivery/handling charge, unit price ("₹65/100 g") or member-only price is not the item price.
+    ||spans.find(x=>!/\b(?:MRP|save|saving|EMI|off|from|starting|cashback|discount|fee|delivery|handling|charges?|platform|convenience|packaging|tip|surge)\b[^₹]*$/i.test(x.before)&&!/^₹\s?\d[\d,]*(?:\.\d{1,2})?\s*(?:\/\s*m(?:o|onth)?\b|per month|off\b|EMI\b|or\b|x\s?\d|\/\s*\d|per\s*\d|(?:delivery|handling|platform)?\s*(?:fee|charges?)\b|with\s+\w+\s+(?:pass|one|plus|membership))/i.test(x.span))
   if(!listed)return miss('no_price_after_heading')
   const span=listed.span.replace(/\s+(?:MRP|M\.R\.P)\b.*$/i,'').trim()
   // 13 Nov live: a grocery price like "₹325" is 4 characters; the old length>=6 floor dropped every price under ₹1,000.
