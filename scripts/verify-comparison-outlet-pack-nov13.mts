@@ -66,4 +66,16 @@ eq(outletInArea('https://www.zomato.com/x', null), false, 'no area: fallback')
 ok(/if \(!found\?\.url \|\| !outletInArea\(found\.url, homeArea\)\) \{\s*area = await nearestOutletArea/.test(pc), 'no home-area outlet: nearest-outlet map search is used')
 ok(/const home = pin \?/.test(pc), 'no pincode: no saved-home read')
 
+// Re-review: a plain "delivery" word never skips the real price; genuine single packs pass.
+const amz = productPagePriceEvidence('Find the listed price of this product on Amazon India: "Sony WH-1000XM5". Only Amazon.', 'Sony WH-1000XM5 Wireless Headphones : Amazon.in: Electronics', 'Sony WH-1000XM5 Wireless Headphones FREE delivery Tomorrow ₹26,990 M.R.P.: ₹34,990')
+ok(amz && /^₹26,990\b/.test(amz[amz.length - 1]), 'Amazon: "FREE delivery Tomorrow" does not skip the price; never the M.R.P.')
+for (const body of ['Net Qty: 500 g Delivery in 10 mins ₹325 MRP ₹330 Similar Amul Butter 100 g ₹60', 'Net Qty: 500 g Free delivery ₹325 ₹330']) {
+  const e = productPagePriceEvidence(objective, zt('₹325'), 'Amul Salted Butter ' + body)
+  ok(e && /^₹325\b/.test(e[2]), `delivery wording kept the price: ${body}`)
+}
+for (const body of ['Net Qty: 1 pc (500 g) ₹325', '500 g 1 unit ₹325', 'Net Qty: 500 g ₹325 MRP ₹330 Similar Amul Cheese Slices Pack of 2 ₹290', '500 gms ₹325']) {
+  const e = productPagePriceEvidence(objective, zt('₹325'), 'Amul Salted Butter ' + body)
+  ok(e && /^₹325\b/.test(e[2]), `genuine single pack accepted: ${body}`)
+}
+
 console.log(`PASS verify-comparison-outlet-pack-nov13: ${checks} checks`)

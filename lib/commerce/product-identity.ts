@@ -60,10 +60,13 @@ export function packFromPage(subject:string,heading:string,pageText:string):stri
   const near=text.slice(at+heading.length,at+heading.length+240)
   // Review (PR #1518): a multipack or combo ("2 x 500 g", "Pack of 2", "2 pcs", "Combo") anywhere here is not the asked
   // single pack; and the size must come BEFORE the first price, so a recommended tile's size is never borrowed.
-  if(packageIdentity(unit(near)).counts.length)return null
+  // Only this product's own block counts: up to its second price ("₹325 MRP ₹330"), not a later tile. A count of 1 is a single pack.
+  const prices=[...near.matchAll(/₹|\bRs\.?\s*\d|\bINR\b/gi)]
+  const own=prices.length>1?near.slice(0,prices[1].index):near
+  if(packageIdentity(unit(own)).counts.some(n=>n!==1))return null
   const beforePrice=near.split(/₹|\bRs\.?\s*\d|\bINR\b/i)[0]
   const found=[...beforePrice.matchAll(/(?:(?:net\s*(?:qty|quantity|wt|weight)|pack\s*size|quantity|weight)\s*:?\s*)?(?<![\d.])\d+(?:\.\d+)?\s*(?:kg|g|gm|gms|grams?|l|ltrs?|litres?|liters?|ml)\b/gi)]
   const observed=[...new Set(found.map(m=>sizes(m[0])[0]).filter(Boolean))]
   if(observed.length!==1||observed[0]!==asked[0])return null
-  return found[0][0].trim()
+  return unit(found[0][0].trim())
 }
