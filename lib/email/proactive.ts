@@ -72,11 +72,22 @@ export function emailFromLoop(loop: EmailLoop): AttentionEmail | null {
   }
 }
 
+export type ProactiveDecision = {
+  loopId: string
+  threadKey: string
+  decision: 'pick' | 'skip'
+  reason: 'picked' | 'over_daily_cap' | 'not_email' | 'waiting_on_reply' | 'already_surfaced' | 'no_sender' | 'own_product_mail' | 'too_old' | 'future_dated' | 'below_threshold' | 'deadline_passed' | 'person_not_urgent' | 'weaker_in_thread'
+  item?: ProactiveEmail
+  email?: AttentionEmail
+  score?: number
+  category?: string
+}
+
 /**
- * Which emails may interrupt the person now. Only incoming mail (never "waiting for a reply" on their own sent mail),
- * never AskGogo's own mail, never one already pushed, at most `cap - sentToday`, best first.
+ * Every email loop with the decision the proactive pass makes about it and why (13 Nov: the shadow comparison logs
+ * this next to Instinct). selectProactiveEmails is exactly the picks of this, so the two can never drift. Pure.
  */
-export function selectProactiveEmails(loops: EmailLoop[], opts: {
+export function explainProactiveEmails(loops: EmailLoop[], opts: {
   rules?: AttentionRule[]
   ownEmail?: string | null
   alreadySurfaced?: Set<string>
@@ -84,36 +95,54 @@ export function selectProactiveEmails(loops: EmailLoop[], opts: {
   now?: number
   cap?: number
   threshold?: number
-} = {}): ProactiveEmail[] {
+} = {}): ProactiveDecision[] {
   const now = opts.now ?? Date.now()
   const room = Math.max(0, (opts.cap ?? PROACTIVE_EMAILS_PER_DAY) - (opts.sentToday ?? 0))
-  if (!room) return []
   const seen = opts.alreadySurfaced || new Set<string>()
   const threshold = opts.threshold ?? PROACTIVE_EMAIL_THRESHOLD
-  const byThread = new Map<string, ProactiveEmail>()
+  const out: ProactiveDecision[] = []
+  const byThread = new Map<string, ProactiveDecision>()
   for (const loop of loops) {
-    if (!isEmailLoop(loop)) continue
-    if (String(loop.kind || '') === 'waiting_on') continue
     const threadKey = String(loop.source_id || loop.id)
-    if (seen.has(`email:${threadKey}`) || seen.has(`open_loop:${loop.id}`)) continue
+    const base = { loopId: String(loop.id), threadKey }
+    const skip = (reason: ProactiveDecision['reason'], extra: Partial<ProactiveDecision> = {}) => { out.push({ ...base, decision: 'skip', reason, ...extra }) }
+    if (!isEmailLoop(loop)) { skip('not_email'); continue }
+    if (String(loop.kind || '') === 'waiting_on') { skip('waiting_on_reply'); continue }
+    if (seen.has(`email:${threadKey}`) || seen.has(`open_loop:${loop.id}`)) { skip('already_surfaced'); continue }
     const email = emailFromLoop(loop)
-    if (!email || isOwnProductMail(email)) continue
+    if (!email) { skip('no_sender'); continue }
+    if (isOwnProductMail(email)) { skip('own_product_mail', { email }); continue }
     const at = Number(email.internalDate) || 0
-    if (!at || now - at > PROACTIVE_EMAIL_MAX_AGE_HOURS * 3600_000 || at > now + 3600_000) continue
+    if (!at || now - at > PROACTIVE_EMAIL_MAX_AGE_HOURS * 3600_000) { skip('too_old', { email }); continue }
+    if (at > now + 3600_000) { skip('future_dated', { email }); continue }
     const scored = scoreEmail(email, { rules: opts.rules || [], ownEmail: opts.ownEmail || null, now })
-    if (scored.score < threshold) continue
+    const facts = { email, score: scored.score, category: scored.category }
+    if (scored.score < threshold) { skip('below_threshold', facts); continue }
     const always = scored.ruleApplied?.kind === 'always'
-    if (!always && scored.category !== 'service_risk' && scored.category !== 'security' && mentionsPassedDeadline(`${email.subject} ${email.snippet}`, now)) continue
+    if (!always && scored.category !== 'service_risk' && scored.category !== 'security' && mentionsPassedDeadline(`${email.subject} ${email.snippet}`, now)) { skip('deadline_passed', facts); continue }
     if (!always && scored.category === 'person') {
       // A person only interrupts when they need a decision or something is due today or tomorrow.
       const urgent = scored.due === 'urgent' || scored.due === 'due today' || scored.due === 'due tomorrow'
-      if (COMPANY_DESK.test(scored.senderName) || !(urgent || /Asks you to decide/.test(scored.why))) continue
+      if (COMPANY_DESK.test(scored.senderName) || !(urgent || /Asks you to decide/.test(scored.why))) { skip('person_not_urgent', facts); continue }
     }
     const item: ProactiveEmail = { ...scored, loopId: String(loop.id), threadId: email.threadId || null }
+    const decided: ProactiveDecision = { ...base, decision: 'pick', reason: 'picked', item, ...facts }
     const prev = byThread.get(threadKey)
-    if (!prev || item.score > prev.score) byThread.set(threadKey, item)
+    if (!prev) byThread.set(threadKey, decided)
+    else if (item.score > (prev.item?.score ?? -1)) { out.push({ ...prev, decision: 'skip', reason: 'weaker_in_thread' }); byThread.set(threadKey, decided) }
+    else out.push({ ...decided, decision: 'skip', reason: 'weaker_in_thread' })
   }
-  return [...byThread.values()].sort((a, b) => b.score - a.score).slice(0, room)
+  const ranked = [...byThread.values()].sort((a, b) => (b.item!.score) - (a.item!.score))
+  ranked.forEach((d, i) => out.push(i < room ? d : { ...d, decision: 'skip', reason: 'over_daily_cap' }))
+  return out
+}
+
+/**
+ * Which emails may interrupt the person now. Only incoming mail (never "waiting for a reply" on their own sent mail),
+ * never AskGogo's own mail, never one already pushed, at most `cap - sentToday`, best first.
+ */
+export function selectProactiveEmails(loops: EmailLoop[], opts: Parameters<typeof explainProactiveEmails>[1] = {}): ProactiveEmail[] {
+  return explainProactiveEmails(loops, opts).filter(d => d.decision === 'pick').map(d => d.item!).sort((a, b) => b.score - a.score)
 }
 
 /** The same layout as the "emails that need me" card, so "draft 1" / "not important 1" bind to it on both surfaces. */

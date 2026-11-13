@@ -80,6 +80,8 @@ function loadPulseModule(file:string,extra=''):any{
       if(name==='@/lib/supabase-admin')return {supabaseAdmin:db}
       if(name==='@/lib/whatsapp')return {sendWhatsApp:async(_to:string,text:string)=>{deliveries.push(text);return {sid:'fixture'}},sendWhatsAppReminderTemplate:async()=>{throw new Error('unexpected template')}}
       if(name==='@/lib/email/proactive')return proactiveEmail
+      // 13 Nov proactive comparison: no shadow owners in these fixtures (env is empty), so the shadow pass is a no-op.
+      if(name==='./proactive-shadow')return {proactiveShadowOwners:()=>[],shadowText:(v:any)=>String(v),logProactiveShadow:async()=>{throw new Error('unexpected shadow write')},recentShadowRows:async()=>{throw new Error('unexpected shadow read')}}
       if(name==='./task-lifecycle')return {retiredRunReason:()=>null,isRelevantOpenLoop:()=>true}
       if(name==='./google-workspace-read')return {decodeHtmlEntities:(v:string)=>String(v).replace(/&#39;/g,"'").replace(/&amp;/g,'&')}
       if(name==='./browser-failure-notice')return loadPulseModule('browser-failure-notice')

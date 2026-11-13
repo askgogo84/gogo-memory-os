@@ -5,7 +5,8 @@ import { supabaseAdmin } from '@/lib/supabase-admin'
 import { sendWhatsApp, sendWhatsAppReminderTemplate } from '@/lib/whatsapp'
 import { retiredRunReason, isRelevantOpenLoop } from './task-lifecycle'
 import { decodeHtmlEntities } from './google-workspace-read'
-import { isEmailLoop, selectProactiveEmails, formatProactiveEmailCard, type EmailLoop } from '@/lib/email/proactive'
+import { isEmailLoop, selectProactiveEmails, explainProactiveEmails, formatProactiveEmailCard, type EmailLoop } from '@/lib/email/proactive'
+import { proactiveShadowOwners, shadowText, logProactiveShadow, recentShadowRows } from './proactive-shadow'
 
 const PULSE_COOLDOWN_MINUTES=180
 const MAX_USERS_PER_PASS=80
@@ -436,7 +437,75 @@ async function sendProactiveEmailCard(telegramId:string,user:any,timezone:string
   return {sent:true,count:picked.length}
 }
 
+/**
+ * 13 Nov proactive comparison, shadow only: what the email pulse WOULD send this owner now, with every considered email
+ * and why it was kept or dropped. Same reads and the same selection as sendProactiveEmailCard; no claim, no send, no
+ * backoff, no "shown" record. Earlier shadow picks count as surfaced and toward the 2-a-day cap, as real sends would.
+ */
+export async function runEmailShadow(telegramId:string){
+  const {data:user,error}=await supabaseAdmin.from('users').select('telegram_id,timezone,gmail_email').eq('telegram_id',ownerKey(telegramId)).maybeSingle()
+  if(error||!user||String(user.telegram_id)!==telegramId)return {logged:false,reason:'user_unavailable'}
+  const timezone=String(user.timezone||'Asia/Kolkata')
+  const prefs=await getAlertPreferences(telegramId)
+  const quiet=isQuietHour(prefs,localHour(timezone))
+  const {data:loops,error:loopError}=await supabaseAdmin.from('agent_open_loops')
+    .select('id,kind,title,summary,source_type,source_id,evidence_json,created_at')
+    .eq('telegram_id',telegramId).eq('status','active').in('source_type',['gmail_thread','gmail_service_notice'])
+    .order('updated_at',{ascending:false}).limit(40)
+  if(loopError)return {logged:false,reason:'email_read_failed'}
+  const all=(loops||[]) as EmailLoop[]
+  const allowed=all.filter(loop=>allowedByTopic(prefs,topicForPulse('open_loop',loop)))
+  const [history,shadow]=await Promise.all([recentSurfacedKeys(telegramId,30*24),recentShadowRows(telegramId,'email',30*24)])
+  if(!shadow)return {logged:false,reason:'shadow_history_unavailable'}
+  const shadowKeys=shadow.flatMap(r=>Array.isArray(r.meta.item_keys)?r.meta.item_keys.map(String):[])
+  const alreadySurfaced=new Set([...history.flatMap(r=>r.keys),...shadowKeys])
+  const today=localDay(Date.now(),timezone)
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(today))return {logged:false,reason:'local_day_invalid'}
+  const sentToday=history.filter(r=>r.type==='autonomy_email_sent'&&localDay(r.at,timezone)===today).reduce((n,r)=>n+r.keys.length,0)
+    +shadow.filter(r=>localDay(r.at,timezone)===today).reduce((n,r)=>n+(Array.isArray(r.meta.item_keys)?r.meta.item_keys.length:0),0)
+  const {data:ruleRows,error:ruleError}=await supabaseAdmin.from('email_attention_rules').select('kind,match_type,match_value,category,label,source').eq('telegram_id',ownerKey(telegramId)).eq('active',true).limit(300)
+  if(ruleError)return {logged:false,reason:'email_rules_unavailable'}
+  const rules=(ruleRows||[]).map((r:any)=>({kind:r.kind,matchType:r.match_type,matchValue:String(r.match_value||''),category:r.category,label:String(r.label||''),source:r.source}))
+  const decisions=explainProactiveEmails(allowed,{rules,ownEmail:String(user.gmail_email||'').toLowerCase()||null,alreadySurfaced,sentToday})
+  const picks=decisions.filter(d=>d.decision==='pick').map(d=>d.item!)
+  const summaryToday=shadow.some(r=>localDay(r.at,timezone)===today&&r.meta.daily_summary===true)
+  // A row when something would be sent, plus one summary a day so near-misses (the WeWork-type email) are visible.
+  if(!picks.length&&summaryToday)return {logged:false,reason:'nothing_new'}
+  const candidates=decisions.filter(d=>d.email&&d.reason!=='already_surfaced').sort((a,b)=>(b.score??-1)-(a.score??-1)).slice(0,12).map(d=>({
+    sender:shadowText(d.item?.senderName||d.email!.from,80),subject:shadowText(d.email!.subject,100),category:d.category||null,
+    score:typeof d.score==='number'?Math.round(d.score*100)/100:null,decision:d.decision,reason:d.reason,
+  }))
+  const logged=await logProactiveShadow(telegramId,'email',{
+    would_send:picks.length?shadowText(decodeHtmlEntities(formatProactiveEmailCard(picks,{timezone})),1500):null,
+    would_hold:picks.length&&quiet?'quiet_hours':null,item_keys:picks.map(p=>`email:${p.threadId||p.loopId}`),
+    daily_summary:!picks.length,candidates,email_loops:all.length,muted_by_topic:all.length-allowed.length,cap_used_today:sentToday,
+  })
+  return {logged,picks:picks.length}
+}
+
+/** Once a day: open loops with no update for 14+ days, the "cleaning up my list" message Instinct sends. Shadow only. */
+export async function runCleanupShadow(telegramId:string){
+  const {data:user}=await supabaseAdmin.from('users').select('telegram_id,timezone').eq('telegram_id',ownerKey(telegramId)).maybeSingle()
+  if(!user||String(user.telegram_id)!==telegramId)return {logged:false,reason:'user_unavailable'}
+  const timezone=String(user.timezone||'Asia/Kolkata'),today=localDay(Date.now(),timezone)
+  const prior=await recentShadowRows(telegramId,'cleanup',30)
+  if(!prior||prior.some(r=>localDay(r.at,timezone)===today))return {logged:false,reason:'already_today'}
+  const {data:stale,error}=await supabaseAdmin.from('agent_open_loops').select('id,kind,title,source_type,updated_at')
+    .eq('telegram_id',telegramId).eq('status','active').lt('updated_at',new Date(Date.now()-14*86400_000).toISOString())
+    .order('updated_at',{ascending:true}).limit(15)
+  if(error)return {logged:false,reason:'loops_read_failed'}
+  const items=(stale||[]).map((l:any)=>({title:shadowText(l.title,120),kind:String(l.kind||''),source:String(l.source_type||''),days_quiet:Math.floor((Date.now()-Date.parse(String(l.updated_at)))/86400_000)}))
+  if(items.length<3)return {logged:false,reason:'fewer_than_3'}
+  const text=['Cleaning up my list - a few old things with no update:','',...items.slice(0,8).map((x,i)=>`${i+1}. ${x.title} - still needed?`),'','Reply with the numbers to keep; the rest I\'ll let go.'].join('\n')
+  return {logged:await logProactiveShadow(telegramId,'cleanup',{would_send:text,items})}
+}
+
 export async function processAutonomyPulse(){
+  // 13 Nov proactive comparison: shadow owners are evaluated even while volunteered sends are off. Never sends.
+  for(const owner of proactiveShadowOwners()){
+    await runEmailShadow(owner).catch(()=>console.error('PROACTIVE_SHADOW_FAILED:',JSON.stringify({kind:'email'})))
+    await runCleanupShadow(owner).catch(()=>console.error('PROACTIVE_SHADOW_FAILED:',JSON.stringify({kind:'cleanup'})))
+  }
   // 4 Nov quiet WhatsApp: no volunteered 4-hourly check-ins.
   const { mayVolunteer }=await import('@/lib/channels/proactive-policy')
   if(!mayVolunteer('check_in'))return {considered:0,sent:0,skipped:0,failed:0,results:[],quiet:true}
