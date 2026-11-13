@@ -1,3 +1,5 @@
+// Legacy expectations run in the Swiggy-approved mode; the default (withheld) mode is covered by verify-swiggy-comparison-policy-nov13.mts.
+process.env.COMMERCE_SWIGGY_COMPARISON_APPROVED='true'
 import { sanitizeBrowserReadDiagnostics } from '../lib/agent/browser-read-diagnostics'
 import assert from 'node:assert/strict'
 import { browserFailureSummary } from '../lib/agent/browser-failure-notice'
@@ -34,19 +36,19 @@ const command=load('lib/agent/browser-command.ts',{
   'node:crypto':{},'@/lib/supabase-admin':{supabaseAdmin:db},'./typed-object-context':{rememberTypedObjects:async()=>{}},
   '@/lib/bot/memory-redaction':{redactSecretShapedText:(s:string)=>s},'./policy':{evaluateAgentExecutionPolicy:()=>({allowed:permissionAllowed,reason:'disabled'})},
   './sentinel':{evaluateAgentSentinel:()=>({allowed:true})},'./secure-computer':{runSecureBrowser:async(p:any)=>{assert.equal(p.mode,'read');assert.equal(p.keepAlive,true);assert.equal(p.userId,'user-42');assert.ok(p.sessionTaskId);browserParams.push(p);assert.match(p.objective,/Do not add, remove or change cart/);browserCalls++;return structuredClone(browserResult)}},
-  '@/lib/vault/connect-link':{},'./signup-handback':{buildSignupHandback:()=>'handback'},'./provider-booking':await import('../lib/agent/provider-booking.ts'),'@/lib/vault/providers':{},'./approval-binding':{},'@/lib/services/reporting-directive':{},'@/lib/commerce/task':tasks,
+  '@/lib/vault/connect-link':{},'./signup-handback':{buildSignupHandback:()=>'handback'},'./provider-booking':await import('../lib/agent/provider-booking.ts'),'@/lib/vault/providers':{},'./approval-binding':{},'@/lib/services/reporting-directive':{},'@/lib/commerce/task':tasks,'@/lib/commerce/swiggy-policy':await import('../lib/commerce/swiggy-policy.ts'),
   './provider-browser-handoff':{startProviderBrowserHandoff:async()=>({takeoverUrl:'https://private.example/?token=secret',releaseUrl:'https://private.example/release?token=secret'}),cancelBrowserHandoffReservation:async()=>{}},
   './browser-handoff':{releaseBrowserHandoff:async()=>{releaseCalls++}},
   './browser-handoff-health':{browserHandoffIsLive:async()=>false},
 })
 const browser=load('lib/commerce/browser.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/agent/browser-command':command,'./task':tasks})
-const grocery=load('lib/agent/grocery-comparison.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/commerce/task':tasks})
+const grocery=load('lib/agent/grocery-comparison.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/commerce/task':tasks,'@/lib/commerce/swiggy-policy':await import('../lib/commerce/swiggy-policy.ts')})
 const route=load('app/api/commerce/tasks/[runId]/browser/route.ts',{
   'next/server':{NextResponse:{json:(body:any,opts:any)=>({body,status:opts?.status||200})}},
   '@/lib/agent/session':{requireAgentMutationOrigin:()=>blocked?{status:403}:null,requireAgentSession:async()=>authenticated?{telegramId:owner,surface:'web'}:{status:401},isAgentSession:(s:any)=>!!s.telegramId},
   '@/lib/agent/actor':{resolveAgentActor:async()=>({userId:'user-'+owner,legacyTelegramId:Number(owner),whatsappId:'fixture',name:'Fixture'})},
   '@/lib/agent/brain-runtime-guard':{acquireBrainUserLease:async()=>locked?null:{ownerToken:'fixture'},releaseBrainUserLease:async()=>true},
-  '@/lib/commerce/task':tasks,'@/lib/commerce/browser':browser,
+  '@/lib/commerce/task':tasks,'@/lib/commerce/swiggy-policy':await import('../lib/commerce/swiggy-policy.ts'),'@/lib/commerce/browser':browser,
 })
 const start=await grocery.tryGroceryComparison({telegramId:42,text:'Compare grocery prices for Amul Taaza toned milk, 1 litre'})
 const id=start.runId

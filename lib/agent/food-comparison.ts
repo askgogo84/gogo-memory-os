@@ -3,6 +3,7 @@ import {searchWebResults, type WebSearchResult} from '@/lib/web-search'
 import {foodAreaLocation,foodLocationReply,foodSearchSubject,isFoodComparisonRequest,isExplicitFoodBrowserRequest} from './food-comparison-intent'
 
 import {commerceTaskLink, readCommerceTask} from '@/lib/commerce/task'
+import {SWIGGY_COMPARISON_NOTE, withheldComparisonProviders} from '@/lib/commerce/swiggy-policy'
 
 const TYPE='food_comparison'
 const QUESTION='For this food comparison, what is your delivery PIN code in India?'
@@ -100,7 +101,10 @@ export async function tryFoodComparison(params:{telegramId:number;text:string;su
     return reply(`${QUESTION} I’ll keep your ${meta.subject} request and use that area to find provider pages. A street address is not needed for this first lookup.`)
   }
   const pin=meta.location.pin
-  const groups=await Promise.all(PROVIDERS.map(async provider=>{
+  // Swiggy agreement (13 Nov): Swiggy is left out of comparisons until Swiggy approves in writing.
+  const withheld=withheldComparisonProviders(PROVIDERS.map(p=>p.name.toLowerCase()))
+  const providers=PROVIDERS.filter(p=>!withheld.includes(p.name.toLowerCase()))
+  const groups=await Promise.all(providers.map(async provider=>{
     const results=await searchWebResults(`${meta.subject} delivery menu PIN ${pin} India site:${provider.domain}`,{includeDomains:[provider.domain]})
     const links=results.filter(r=>new RegExp(`\\b${pin}\\b`).test(`${r.title} ${r.snippet} ${r.url}`))
       .map(r=>({title:r.title.replace(/[\r\n]/g,' ').slice(0,180),url:foodProviderLink(r,provider.domain)}))
@@ -110,5 +114,5 @@ export async function tryFoodComparison(params:{telegramId:number;text:string;su
   meta.state='provider_connection_required'
   meta.discovery={checked_at:now,groups,evidence_kind:'search_results_only',cart_verified:false}
   await save('Provider pages searched; live prices, delivery totals and cart connection remain unverified.')
-  return reply(renderFoodDiscovery(meta.subject,pin,groups,now,meta.location.area)+'\n\nContinue this comparison: '+commerceTaskLink(runId!))
+  return reply(renderFoodDiscovery(meta.subject,pin,groups,now,meta.location.area)+(withheld.length?'\n\n'+SWIGGY_COMPARISON_NOTE:'')+'\n\nContinue this comparison: '+commerceTaskLink(runId!))
 }

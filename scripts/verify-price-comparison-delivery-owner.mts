@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
 import ts from 'typescript'
+import * as swiggyPolicyDep from '../lib/commerce/swiggy-policy.ts'
 
 type Fixture = {
   ledgerCalls: number
@@ -71,6 +72,7 @@ function fixture(options: {
     '@/lib/whatsapp': { sendWhatsApp: async (to: string, message: string) => {
       events.sends.push({to,message}); return { sid: 'synthetic-provider-id' }
     } },
+    './swiggy-policy': swiggyPolicyDep,
     './comparison-model': { comparisonState: () => 'paused', comparisonWhatsAppSummary: () => 'PRIVATE SYNTHETIC COMPARISON' },
     './price-comparison': {
       comparisonWebFallback: async () => null,

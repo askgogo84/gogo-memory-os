@@ -2,6 +2,7 @@ import {supabaseAdmin} from '@/lib/supabase-admin'
 import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-runtime-guard'
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
+import {SWIGGY_COMPARISON_NOTE} from './swiggy-policy'
 import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, outletAreaFromAddress, isFoodComparison, parseFoodSubject, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
@@ -189,6 +190,9 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
       if (current) return reply(current)
     }
     if (!parsed) return null
+    // Swiggy agreement: nothing left to check once Swiggy/Instamart are withheld. Say so; start no browser run.
+    if (!parsed.providers.length) return {runId: '', status: 'paused' as const, capability: 'browser' as const, risk: 'low' as const,
+      handledBy: 'price-comparison', text: SWIGGY_COMPARISON_NOTE}
     const now = new Date().toISOString()
     const remembered = await ownerWatchStorage(owner, parsed.subject).catch(() => null)
     if (remembered) parsed.subject = `${parsed.subject} ${remembered}`
@@ -205,7 +209,7 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
     const current = await readPriceComparison(owner, String(data.id))
     if (!current) throw new Error('comparison_missing_after_create')
     return reply(current, current.metadata_json.providers.some(row => row.waitingForRunId)
-      ? undefined : startedText(parsed.subject, parsed.providers, looks, remembered, parsed.request))
+      ? undefined : startedText(parsed.subject, parsed.providers, looks, remembered, parsed.request) + (parsed.withheld.length ? '\n\n' + SWIGGY_COMPARISON_NOTE : ''))
   } finally { await releaseBrainUserLease(key, lease.ownerToken) }
 }
 
