@@ -39,8 +39,10 @@ async function ownerMailboxes(telegramId: string): Promise<Mailbox[]> {
   if (!out.length) return out
   const { listExtraGmailAccounts } = await import('./gmail-accounts')
   for (const a of await listExtraGmailAccounts(telegramId).catch(() => [])) {
+    if (a.email === out[0].email) continue
     const token = a.refreshToken ? String(await refreshGmailAccessToken(a.refreshToken).catch(() => '') || '') : a.accessToken
-    if (token && a.email !== out[0].email) out.push({ email: a.email, accessToken: token })
+    // A failed refresh is reported as an unread mailbox, never silently dropped (and never the stale stored token).
+    out.push({ email: a.email, accessToken: token })
   }
   return out
 }
@@ -51,11 +53,13 @@ export function judgeCandidates(threadsByMailbox: { mailbox: string; threads: an
   const seen = new Set<string>(), out: JudgeEmail[] = []
   for (const { mailbox, threads } of threadsByMailbox) for (const t of threads || []) {
     const last = (t?.messages || []).at(-1)
-    if (!last?.id || seen.has(String(last.id))) continue
+    // The same mail in two mailboxes has two Gmail ids but one Message-ID header (review: it was judged twice).
+    const key = String(last?.messageId || '').trim().toLowerCase() || `${addr(last?.from)}|${String(last?.subject || '').trim().toLowerCase()}|${Math.round((Number(last?.internalDate) || 0) / 60_000)}`
+    if (!last?.id || seen.has(String(last.id)) || seen.has(key)) continue
     const at = Number(last.internalDate) || 0
     if (!at || now - at > MAX_AGE_MS || at > now + 3600_000 || mine.has(addr(last.from))) continue
-    seen.add(String(last.id))
-    out.push({ id: String(last.id), from: String(last.from || ''), subject: String(last.subject || t.subject || ''), snippet: String(last.snippet || ''), internalDate: at, mailbox, labels: Array.isArray(last.labelIds) ? last.labelIds : [], listUnsubscribe: Boolean(last.listUnsubscribe) })
+    seen.add(String(last.id)); seen.add(key)
+    out.push({ id: String(last.id), messageId: String(last.messageId || ''), from: String(last.from || ''), subject: String(last.subject || t.subject || ''), snippet: String(last.snippet || ''), internalDate: at, mailbox, labels: Array.isArray(last.labelIds) ? last.labelIds : [], listUnsubscribe: Boolean(last.listUnsubscribe) })
   }
   return out.sort((a, b) => b.internalDate - a.internalDate)
 }
@@ -73,12 +77,12 @@ export async function runEmailJudgeShadow(telegramId: string, deps: Deps = {}) {
   const history = await (deps.history || (id => recentShadowRows(id, 'email_judge', 72)))(telegramId)
   if (!history) return { logged: false, reason: 'history_unavailable' }
   const judged = new Set(history.flatMap(r => r.meta.judged_ids || []))
-  const read = await Promise.all(boxes.map(async b => ({ mailbox: b.email, threads: await (deps.search || (tok => searchGmailThreads(tok, INBOX_QUERY, 25, { raw: true })))(b.accessToken).catch(() => null) })))
+  const read = await Promise.all(boxes.map(async b => ({ mailbox: b.email, threads: b.accessToken ? await (deps.search || (tok => searchGmailThreads(tok, INBOX_QUERY, 25, { raw: true })))(b.accessToken).catch(() => null) : null })))
   const unread = read.filter(r => r.threads === null).map(r => r.mailbox)
   const fresh = judgeCandidates(read.filter(r => r.threads) as any, boxes.map(b => b.email), now).filter(e => !judged.has(e.id)).slice(0, JUDGE_MAX_EMAILS)
   if (!fresh.length) return { logged: false, reason: unread.length ? 'mailbox_read_failed' : 'nothing_new' }
   const owner = Number(telegramId)
-  const create = deps.create || ((req: any) => new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).messages.create(req, { timeout: 25_000 }))
+  const create = deps.create || ((req: any) => new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }).messages.create(req, { timeout: 20_000, maxRetries: 0 }))
   let usage = { input: 0, output: 0, ok: false, ms: 0 }
   const verdicts = await judgeEmails(fresh, { now, model: HAIKU_MODEL, create, onUsage: u => { usage = u } })
   if (Number.isSafeInteger(owner)) {
