@@ -91,6 +91,7 @@ const route = readFileSync('app/api/commerce/tasks/[runId]/browser/route.ts', 'u
 const gate = route.indexOf("withheldComparisonProviders([input.provider]).length"), runCall = route.indexOf('runCommerceBrowserRead(actor')
 ok(gate > 0 && gate < runCall && /provider_withheld'\},\{status:403\}/.test(route), 'browser route refuses Swiggy/Instamart before any browser run')
 const page = readFileSync('app/dashboard/(app)/commerce/page.tsx', 'utf8')
+ok(page.includes("{!(task.withheldBrowserProviders||[]).includes(read.provider)&&<a href={read.taskUrl}"), 'old withheld browser reads lose their task link')
 ok(/\.filter\(\(\[key\]\)=>!\(task\.withheldBrowserProviders\|\|\[\]\)\.includes\(key\)\)/.test(page), 'task page hides withheld browser buttons')
 ok(readFileSync('lib/commerce/task.ts', 'utf8').includes("withheldBrowserProviders: withheldComparisonProviders(['swiggy', 'instamart'])"), 'task view carries the server-side decision')
 const pcMod = await import('../lib/commerce/price-comparison.ts')
@@ -103,6 +104,6 @@ const zomatoOnly: any = {providers: [{provider: 'zomato', status: 'blocked'}]}
 eq(pcMod.withStoreFallback(zomatoOnly).length, 1, 'a blocked Zomato-only food run never falls back to electronics stores')
 eq(pcMod.withStoreFallback({providers: [{provider: 'amazon', status: 'blocked'}]}).map((r: any) => r.provider), ['amazon', 'flipkart', 'croma', 'reliance'], 'electronics fallback unchanged')
 const model = readFileSync('lib/commerce/comparison-model.ts', 'utf8')
-ok(/withheldComparisonProviders\(\['swiggy'\]\)\.length \? 'Want another dish\? Send it like “compare paneer butter masala at Empire on Zomato for 560086”/.test(model), 'finished food summary no longer suggests Swiggy')
+ok(/withheldComparisonProviders\(\['swiggy'\]\)\.length && !task\.metadata_json\.providers\.some\(row => row\.provider === 'swiggy' && row\.status === 'observed'\) \? 'Want another dish\? Send it like “compare paneer butter masala at Empire on Zomato for 560086”/.test(model), 'finished food summary no longer suggests Swiggy')
 
 console.log(`PASS verify-swiggy-comparison-policy-nov13: ${checks} checks`)

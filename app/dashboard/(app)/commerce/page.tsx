@@ -137,7 +137,7 @@ export default function CommerceConnectionsPage() {
         })}</div>
         {task.browserReads?.map(read=><div key={read.runId} className="border-t border-[#292929] pt-3">
           <p>{read.provider} · {read.status}</p>
-          <a href={read.taskUrl} className="text-[#2fb8a6]">Open browser task / take control</a>
+          {!(task.withheldBrowserProviders||[]).includes(read.provider)&&<a href={read.taskUrl} className="text-[#2fb8a6]">Open browser task / take control</a>}
           {!(task.withheldBrowserProviders||[]).includes(read.provider)&&<button disabled={busy!==null||['running','queued'].includes(read.status)} onClick={()=>useBrowser(read.provider,'take_control')} className="block mt-2 rounded-lg border border-[#292929] px-4 py-2 disabled:opacity-50">Choose account or delivery location in browser</button>}
         </div>)}
         <p className="text-[16px] text-[#a0a0a0]">These checks do not change your cart or place orders. A completed browser read does not mean delivered totals or a phone cart are verified.</p>
