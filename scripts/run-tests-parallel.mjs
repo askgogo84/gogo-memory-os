@@ -59,11 +59,13 @@ function runOne(item) {
   return new Promise(resolve => {
     const [bin, args] = argv(item.cmd)
     const t0 = Date.now()
-    const child = spawn(bin, args, {cwd: root, env: process.env, stdio: ['ignore', 'pipe', 'pipe']})
+    // Own process group, so a timeout kills npx/tsx AND the node process they start (review: killing only the direct
+    // child left the grandchild holding the pipes open, so 'close' never fired and the timeout did nothing).
+    const child = spawn(bin, args, {cwd: root, env: process.env, stdio: ['ignore', 'pipe', 'pipe'], detached: process.platform !== 'win32'})
     let out = ''
     const keep = chunk => { out += chunk; if (out.length > 200_000) out = out.slice(-200_000) }
     child.stdout.on('data', keep); child.stderr.on('data', keep)
-    const timer = setTimeout(() => { out += `\n[run-tests-parallel] timed out after ${perTestMs / 1000}s\n`; child.kill('SIGKILL') }, perTestMs)
+    const timer = setTimeout(() => { out += `\n[run-tests-parallel] timed out after ${perTestMs / 1000}s\n`; try { process.kill(-child.pid, 'SIGKILL') } catch { child.kill('SIGKILL') } }, perTestMs)
     child.on('close', (code, signal) => { clearTimeout(timer); resolve({...item, code: code ?? 1, signal, ms: Date.now() - t0, out}) })
     child.on('error', err => { clearTimeout(timer); resolve({...item, code: 1, ms: Date.now() - t0, out: out + String(err)}) })
   })
@@ -81,7 +83,7 @@ async function worker() {
 }
 
 if (!localTsx) await new Promise(r => spawn('npx', ['--yes', 'tsx', '--version'], {stdio: 'ignore'}).on('close', r))
-console.log(`run-tests-parallel: ${commands.length} commands (${chain.length - 1} from package.json, rest from ${listFiles.length} list files), concurrency ${concurrency}`)
+console.log(`run-tests-parallel: ${commands.length} commands (${commands.filter(c => c.from === 'package.json').length} from package.json, ${commands.filter(c => c.from !== 'package.json').length} from ${listFiles.length} list files), concurrency ${concurrency}`)
 await Promise.all(Array.from({length: Math.min(concurrency, commands.length)}, worker))
 const failed = results.filter(r => r.code !== 0)
 const slow = [...results].sort((a, b) => b.ms - a.ms).slice(0, 10)
