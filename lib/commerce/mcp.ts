@@ -7,10 +7,14 @@ export class CommerceMcpError extends Error {
 
 // Read tools stay separate from the explicit, durable Instamart cart executor.
 // No order, payment or general-purpose write method is exposed.
-const READ_TOOLS: Record<CommerceProvider, Partial<Record<'food' | 'grocery', readonly string[]>>> = {
+export type CommerceServer = 'food' | 'grocery' | 'dineout'
+const READ_TOOLS: Record<CommerceProvider, Partial<Record<CommerceServer, readonly string[]>>> = {
   swiggy: {
     food: ['get_addresses', 'search_restaurants', 'search_menu', 'get_restaurant_menu', 'get_food_cart'],
     grocery: ['get_addresses', 'search_products', 'get_cart'],
+    // Dineout reads only. book_table, create_cart and payment tools are deliberately absent: a booking needs its own
+    // durable, explicitly approved executor (like instamart-cart) before any write exists.
+    dineout: ['search_restaurants_dineout', 'get_restaurant_details', 'get_available_slots', 'get_booking_status'],
   },
   zepto: {}, // Populate only after the authenticated provider catalogue/schema is verified.
 }
@@ -54,8 +58,8 @@ export class CommerceMcpClient {
   private version = PROTOCOL
   private initialized = false
   private endpoint: string
-  constructor(private provider: CommerceProvider, private server: 'food' | 'grocery', private accessToken: string, private request: typeof fetch = fetch) {
-    this.endpoint = (COMMERCE_PROVIDERS[provider].servers as Partial<Record<'food' | 'grocery', string>>)[server] || ''
+  constructor(private provider: CommerceProvider, private server: CommerceServer, private accessToken: string, private request: typeof fetch = fetch) {
+    this.endpoint = (COMMERCE_PROVIDERS[provider].servers as Partial<Record<CommerceServer, string>>)[server] || ''
     if (!this.endpoint || !accessToken) throw new CommerceMcpError('provider_unavailable')
   }
   private async rpc(method: string, params: Record<string, unknown>, notification = false): Promise<any> {

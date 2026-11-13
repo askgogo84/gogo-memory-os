@@ -5,7 +5,9 @@ export type CommerceAuthFlow = {
   provider: CommerceProvider; owner: string; state: string; verifier: string;
   clientId: string; redirectUri: string; createdAt: number; runId?: string;
 }
-export type CommerceToken = {accessToken: string; expiresAt: number; scope: string}
+// refreshToken/clientId are kept so a connection survives the provider's short access-token life (Swiggy: access token
+// 5 days, rotating refresh token 30 days). Both stay inside the encrypted vault record; never logged, never sent to a model.
+export type CommerceToken = {accessToken: string; expiresAt: number; scope: string; refreshToken?: string; clientId?: string}
 
 export function newCommerceFlow(provider: CommerceProvider, owner: string, clientId: string, now = Date.now()): CommerceAuthFlow {
   if (!owner || !clientId) throw new Error('commerce_auth_identity_missing')
@@ -59,5 +61,30 @@ export async function exchangeCommerceCode(flow: CommerceAuthFlow, code: string,
   const seconds = Number(data.expires_in)
   if (typeof data.access_token !== 'string' || !data.access_token || String(data.token_type).toLowerCase() !== 'bearer'
       || !Number.isFinite(seconds) || seconds <= 0 || seconds > 366 * 86400) throw new Error('commerce_token_response_invalid')
-  return {accessToken: data.access_token, expiresAt: Date.now() + seconds * 1000, scope: String(data.scope || '')}
+  return {accessToken: data.access_token, expiresAt: Date.now() + seconds * 1000, scope: String(data.scope || ''),
+    ...refreshFields(data.refresh_token, flow.clientId)}
+}
+
+function refreshFields(refreshToken: unknown, clientId: string | undefined) {
+  return typeof refreshToken === 'string' && refreshToken && refreshToken.length <= 8192 ? {refreshToken, ...(clientId ? {clientId} : {})} : {}
+}
+
+/** Swiggy's documented refresh: JSON body, grant_type=refresh_token, no Authorization header. The refresh token
+ *  ROTATES: the caller must save the returned token before using it, and must never retry with the old one. */
+export async function refreshCommerceToken(provider: CommerceProvider, token: CommerceToken, request: typeof fetch = fetch): Promise<CommerceToken> {
+  if (!token.refreshToken) throw new Error('commerce_refresh_unavailable')
+  const config = COMMERCE_PROVIDERS[provider]
+  // client_id is not listed in Swiggy's refresh table; OAuth 2.1 public clients normally send it. Sent when known.
+  const fields: Record<string, string> = {grant_type: 'refresh_token', refresh_token: token.refreshToken, ...(token.clientId ? {client_id: token.clientId} : {})}
+  const response = await request(config.token, {method: 'POST', redirect: 'error', signal: AbortSignal.timeout(15_000),
+    headers: {'Content-Type': config.tokenFormat === 'json' ? 'application/json' : 'application/x-www-form-urlencoded'},
+    body: config.tokenFormat === 'json' ? JSON.stringify(fields) : new URLSearchParams(fields).toString()})
+  if (!response.ok) throw new Error('commerce_token_refresh_failed')
+  const data = await response.json()
+  const seconds = Number(data.expires_in)
+  if (typeof data.access_token !== 'string' || !data.access_token || String(data.token_type || 'bearer').toLowerCase() !== 'bearer'
+      || !Number.isFinite(seconds) || seconds <= 0 || seconds > 366 * 86400) throw new Error('commerce_token_response_invalid')
+  // A provider that does not rotate keeps the old refresh token valid; one that rotates returns a new one.
+  return {accessToken: data.access_token, expiresAt: Date.now() + seconds * 1000, scope: String(data.scope || token.scope || ''),
+    ...refreshFields(typeof data.refresh_token === 'string' && data.refresh_token ? data.refresh_token : token.refreshToken, token.clientId)}
 }

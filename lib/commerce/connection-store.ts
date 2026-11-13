@@ -1,7 +1,8 @@
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {encryptVaultValue, decryptVaultValue} from '@/lib/security/vault-crypto'
 import {COMMERCE_PROVIDERS, type CommerceProvider} from './providers'
-import type {CommerceToken} from './oauth'
+import {refreshCommerceToken, type CommerceToken} from './oauth'
+import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-runtime-guard'
 
 const label = 'Commerce OAuth'
 const key = (provider: CommerceProvider) => `commerce_oauth:${provider}`
@@ -15,14 +16,39 @@ export async function saveCommerceConnection(owner: string, provider: CommercePr
   if (error) throw new Error('commerce_connection_save_failed')
 }
 
-export async function readCommerceConnection(owner: string, provider: CommerceProvider): Promise<CommerceToken | null> {
+async function storedToken(owner: string, provider: CommerceProvider): Promise<CommerceToken | null> {
   const {data, error} = await supabaseAdmin.from('vault_credentials').select('secret_ciphertext,status')
     .eq('telegram_id', owner).eq('provider', key(provider)).eq('account_label', label).maybeSingle()
   if (error) throw new Error('commerce_connection_read_failed')
   if (!data || data.status !== 'active') return null
   const token = JSON.parse(decryptVaultValue(data.secret_ciphertext)) as CommerceToken
-  if (!token.accessToken || !Number.isFinite(token.expiresAt) || token.expiresAt <= Date.now() + 60_000) return null
-  return token
+  return token?.accessToken && Number.isFinite(token.expiresAt) ? token : null
+}
+
+const usable = (token: CommerceToken | null, now = Date.now()) => !!token && token.expiresAt > now + 60_000
+// Refresh well before expiry: Swiggy says an expired access token cannot be refreshed.
+export const COMMERCE_REFRESH_WINDOW_MS = 24 * 60 * 60_000
+
+export async function readCommerceConnection(owner: string, provider: CommerceProvider, request?: typeof fetch): Promise<CommerceToken | null> {
+  const token = await storedToken(owner, provider)
+  if (!token) return null
+  if (token.expiresAt > Date.now() + COMMERCE_REFRESH_WINDOW_MS || !token.refreshToken) return usable(token) ? token : null
+  // Rotating refresh tokens: two concurrent refreshes would burn the old token and disconnect the person, so only
+  // one runs per owner+provider; anyone else uses the current token while it is still valid.
+  const lease = await acquireBrainUserLease(`commerce-refresh:${provider}:${owner}`, 30).catch(() => null)
+  if (!lease) return usable(token) ? token : null
+  try {
+    const latest = await storedToken(owner, provider)
+    if (!latest) return null
+    if (latest.refreshToken !== token.refreshToken) return usable(latest) ? latest : null // another call refreshed it
+    let fresh: CommerceToken
+    try { fresh = await refreshCommerceToken(provider, latest, request) } catch { return usable(latest) ? latest : null }
+    // Save before use: a refresh token that is not stored is lost, and the old one no longer works.
+    try { await saveCommerceConnection(owner, provider, fresh) } catch { return null }
+    return fresh
+  } finally {
+    await releaseBrainUserLease(`commerce-refresh:${provider}:${owner}`, lease.ownerToken).catch(() => false)
+  }
 }
 
 export async function deleteCommerceConnection(owner: string, provider: CommerceProvider) {

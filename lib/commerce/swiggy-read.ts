@@ -84,3 +84,39 @@ export async function readInstamartQuote(client: Reader, scope: QuoteScope & {ad
   if (!verifiedCartMatches(quote, scope, expected)) throw new Error('commerce_cart_basket_mismatch')
   return quote
 }
+
+// Dineout (reads only). Display values (rating, cost for two, times) are shown exactly as Swiggy returns them
+// (agreement 4(v)); ids are used exactly as returned. A paid deal is never offered as a free booking.
+export type DineoutChoice = {id: string; name: string; locality: string; costForTwo: string | null; rating: string | null; distance: string | null}
+export type DineoutSlot = {slotId: number; displayTime: string; reservationTime: number; free: boolean; paidFrom: string | null}
+
+export async function readDineoutRestaurants(client: Reader, query: string, latitude: number, longitude: number) {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) throw new Error('commerce_location_invalid')
+  const data = await client.readTool('search_restaurants_dineout', {query: String(query).slice(0, 120), latitude, longitude, limit: 10})
+  if (!Array.isArray(data?.restaurants)) throw new Error('commerce_catalogue_invalid')
+  const choices: DineoutChoice[] = []
+  for (const row of data.restaurants.slice(0, 30)) {
+    const id = identity(row?.id), name = text(row?.name)
+    if (!id || !name || choices.some(choice => choice.id === id)) continue
+    choices.push({id, name, locality: text(row.locality) || '', costForTwo: text(row.costForTwo, 60),
+      rating: text(row?.rating?.value, 8), distance: text(row.distance, 20)})
+  }
+  return choices.slice(0, 5)
+}
+
+export async function readDineoutSlots(client: Reader, restaurantId: string, dateIso: string, latitude: number, longitude: number) {
+  if (!identity(restaurantId) || !/^\d{4}-\d{2}-\d{2}$/.test(dateIso)) throw new Error('commerce_slot_request_invalid')
+  const data = await client.readTool('get_available_slots', {restaurantId, date: dateIso, latitude, longitude})
+  if (data?.restaurantId !== restaurantId || !Array.isArray(data?.slots)) throw new Error('commerce_slots_invalid')
+  const slots: DineoutSlot[] = []
+  for (const row of data.slots.slice(0, 60)) {
+    const displayTime = text(row?.displayTime, 20)
+    if (!Number.isSafeInteger(row?.slotId) || !displayTime || !Number.isSafeInteger(row?.reservationTime)
+        || !(Number.isSafeInteger(row?.availableInventory) && row.availableInventory > 0)) continue
+    const deals = Array.isArray(row.deals) ? row.deals.filter((d: any) => d && d.soldOut !== true) : []
+    const paid = deals.filter((d: any) => d.isFree === false).map((d: any) => text(d.displayFee, 20)).filter(Boolean) as string[]
+    // Free only when Swiggy says so for the slot; anything unclear is treated as not free.
+    slots.push({slotId: row.slotId, displayTime, reservationTime: row.reservationTime, free: row.isFree === true, paidFrom: paid[0] || null})
+  }
+  return slots
+}

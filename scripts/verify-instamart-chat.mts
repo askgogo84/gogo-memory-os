@@ -115,7 +115,7 @@ const chat = load('lib/commerce/instamart-chat.ts', {
   './providers': {...providers, commerceEnabled: () => enabled},
   './connection-store': {readCommerceConnection: async (owner: string) => { assert.equal(owner, '42'); return connected ? {accessToken: 'fixture-token', expiresAt: Date.now() + 3600_000} : null }},
   './mcp': {CommerceMcpClient, CommerceMcpError},
-  './addresses': addresses, './swiggy-read': reads, './evidence': evidence, './task': tasks, './instamart-cart': executor,
+  './addresses': addresses, './swiggy-read': reads, './evidence': evidence, './task': tasks, './instamart-cart': executor, './swiggy-attribution': await import('../lib/commerce/swiggy-attribution.ts'),
 })
 
 const say = async (text: string) => {
@@ -160,6 +160,7 @@ enabled = true
 reply = await say('Order milk on Swiggy Instamart')
 assert.ok(reply && !/can't place orders/i.test(reply.text))
 assert.equal(reply.text, 'Instamart options for "milk" delivering to Home:\n'
+  + 'Powered by Instamart\n' // Swiggy agreement 3.4 / brand guidelines: attribution with every result
   + '1. Amul Taaza Toned Milk — 1 litre — ₹54\n'
   + '2. Nandini Toned Milk — 500 ml — price shown in the Swiggy app\n'
   + '3. Akshayakalpa Organic Milk — 1 litre — ₹92.50\n\n'
@@ -193,6 +194,7 @@ assert.match(reply.text, /^Instamart cart contents verified: Nandini Toned Milk 
 assert.match(reply.text, /Provider payable total for the whole cart: ₹239\.00/)
 assert.match(reply.text, /No order was placed/)
 assert.match(reply.text, /Review and pay in the Swiggy app: https:\/\/www\.swiggy\.com\/instamart/)
+assert.match(reply.text, /^Powered by Instamart$/m, 'cart confirmation carries the attribution')
 assert.ok(leases.includes('commerce:swiggy:42'), 'same per-owner cart lease as the dashboard cart route')
 task = tables.agent_runs.at(-1)!
 assert.equal(task.metadata_json.state, 'cart_contents_verified')
@@ -207,6 +209,7 @@ reply = await say('1')
 assert.equal(writes.length, 2, 'exactly one more write attempt')
 assert.equal(reply.status, 'outcome_unknown')
 assert.match(reply.text, /could not confirm your cart afterwards\. I will not try again automatically\./)
+assert.match(reply.text, /^Powered by Instamart$/m, 'uncertain-outcome message carries the attribution')
 assert.match(reply.text, /https:\/\/app\.askgogo\.in\/dashboard\/commerce\?run=/)
 assert.equal(tables.agent_runs.at(-1)!.status, 'outcome_unknown')
 assert.equal(await say('1'), null, 'the unknown task is not waiting for a pick')
