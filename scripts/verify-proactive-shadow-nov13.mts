@@ -47,6 +47,27 @@ eq(S.proactiveShadowOwners({}), [], 'off unless set')
 ok(!/123456789012/.test(S.shadowText('Pay from account 123456789012 now')), 'a labelled account number is withheld')
 ok(!/123456789012/.test(S.shadowText('ref 123456789012 attached')) && !/123456789012/.test(S.shadowText('Order 123456789012 shipped')), 'other long digit runs never appear in full')
 ok(S.shadowText('x'.repeat(500), 50).length === 50, 'bounded')
+// Review round 1: unlabelled codes, PAN-shaped ids and link tokens are not logged; line breaks are kept.
+ok(!/482913/.test(S.shadowText('482913 is your verification code')) && !/4829/.test(S.shadowText('Your OTP 4829 expires')), 'a code next to a code word is masked')
+ok(!/ABCDE1234F/.test(S.shadowText('PAN ABCDE1234F linked')), 'a PAN-shaped id is masked')
+eq(S.shadowText('reset https://x.example/reset?token=abc123secret now'), 'reset https://x.example/reset now', 'a link keeps only its path')
+eq(S.shadowText('📬 1 email needs you\n\n1. *WeWork*'), '📬 1 email needs you\n\n1. *WeWork*', 'line breaks kept')
+ok(/₹35,841\.29/.test(S.shadowText('dues of ₹35,841.29 by 3pm')), 'amounts are kept')
+// The cleanup list never includes a loop that must stay open, a task-inventory question, a backed-off or duplicate one.
+{ const now = Date.parse('2026-11-13T04:00:00Z')
+  const L = [
+    { id: '1', kind: 'followup', title: 'EGL deposit refund', source_type: 'gmail_thread', source_id: 'g1', evidence_json: {} },
+    { id: '2', kind: 'followup', title: 'EGL deposit refund again', source_type: 'gmail_thread', source_id: 'g1', evidence_json: {} },
+    { id: '3', kind: 'approval', title: 'Approve the booking', source_type: 'agent_run', source_id: 'r1', evidence_json: {} },
+    { id: '4', kind: 'mission', title: 'Booking', source_type: 'agent_run', source_id: 'r2', evidence_json: { status: 'outcome_unknown' } },
+    { id: '5', kind: 'other', title: 'which tasks are still pending', summary: 'which tasks are still pending', source_type: 'conversation', source_id: 'c1', evidence_json: {} },
+    { id: '6', kind: 'followup', title: 'Backed off', source_type: 'gmail_thread', source_id: 'g2', evidence_json: {}, proactive_backoff_until: '2026-12-01T00:00:00Z' },
+    { id: '7', kind: 'commitment', title: 'Send the pitch deck to Nithin', source_type: 'conversation', source_id: 'c2', evidence_json: {} },
+  ]
+  eq(S.cleanupCandidates(L, now).map((l: any) => l.id), ['1', '7'], 'only recognisable loops that may be let go, once per source') }
+// The shadow never holds up the real cron.
+{ const t0 = Date.now(); const r = await S.withShadowBudget(() => new Promise(res => setTimeout(() => res('late'), 2000)), 50); eq(r, 'timeout', 'a slow shadow is cut off'); ok(Date.now() - t0 < 1000, 'quickly')
+  eq(await S.withShadowBudget(async () => 'ok', 50), 'ok', 'a fast one returns its result') }
 { const rows: any[] = []
   ok(await S.logProactiveShadow('-9000000001', 'email', { would_send: 'x' }, { insert: async r => { rows.push(r); return {} } }), 'a row is written')
   eq(rows[0].event_type, 'proactive_shadow', 'its own event type'); eq(rows[0].telegram_id, '-9000000001', 'for the exact owner'); eq(rows[0].metadata_json.mode, 'shadow_only_nothing_sent', 'marked shadow only')
@@ -55,15 +76,21 @@ ok(S.shadowText('x'.repeat(500), 50).length === 50, 'bounded')
 // Code shape: the shadow passes never send, claim, back off, mark shown or write a conversation; they run first.
 const pulse = readFileSync(new URL('../lib/agent/autonomy-pulse.ts', import.meta.url), 'utf8')
 const em = pulse.slice(pulse.indexOf('export async function runEmailShadow'), pulse.indexOf('export async function processAutonomyPulse'))
-ok(em.length > 1000 && !/sendWhatsApp|claim_autonomy_email_card|finish_autonomy_email_card|proactive_backoff_until|email_attention_events|from\('conversations'\)|\.update\(|\.rpc\(/.test(em), 'email and cleanup shadow: no send, claim, backoff, shown record, conversation or update')
+ok(em.length > 1000 && !/sendWhatsApp|sendPulse\(|sendProactiveEmailCard\(|deliverNotification|recordCostEvent|claim_autonomy_email_card|finish_autonomy_email_card|email_attention_events|from\('conversations'\)|\.update\(|\.rpc\(/.test(em), 'email and cleanup shadow: no send (direct or indirect), claim, shown record, conversation or update')
+ok(/if\(!user\.whatsapp_id\)return \{logged:false,reason:'no_whatsapp'\}/.test(em) && /if\(isQuietHour\(prefs,localHour\(timezone\)\)\)return \{logged:false,reason:'quiet_hours'\}/.test(em) && /dueForCheck\(prefs,lastPick\)/.test(em), 'the shadow follows the real gates: recipient, quiet hours, frequency')
+ok(/cleanupCandidates\(stale\|\|\[\]\)/.test(em), 'cleanup uses the filtered candidates')
+ok(/withShadowBudget\(\(\)=>runEmailShadow\(owner\)\)/.test(pulse) && /withShadowBudget\(\(\)=>runCleanupShadow\(owner\)\)/.test(pulse), 'both pulse shadows are time-bounded')
 const proc = pulse.slice(pulse.indexOf('export async function processAutonomyPulse'))
 ok(proc.indexOf('proactiveShadowOwners()') < proc.indexOf("mayVolunteer('check_in')"), 'the email shadow runs before the quiet return')
 const nudge = readFileSync(new URL('../lib/agent/meeting-nudge.ts', import.meta.url), 'utf8')
 const ms = nudge.slice(nudge.indexOf('export async function runMeetingNudgeShadow'), nudge.indexOf('export async function processMeetingNudges'))
 ok(ms.length > 800 && !/sendWhatsApp|deliverNotification|recordCostEvent|\.update\(/.test(ms), 'meeting shadow: no send, delivery or cost record')
 ok(/\.in\('telegram_id', owners\)/.test(ms) && /owners\.includes\(identity\.id\)/.test(ms), 'meeting shadow reads only the listed owners')
+ok(/priorByOwner/.test(ms) && (ms.match(/recentShadowRows\(/g) || []).length === 1, 'one shadow-history read per owner per run')
+ok(/withShadowBudget\(\(\) => runMeetingNudgeShadow/.test(nudge), 'the meeting shadow is time-bounded')
 const pn = nudge.slice(nudge.indexOf('export async function processMeetingNudges'))
 ok(pn.indexOf('runMeetingNudgeShadow') < pn.indexOf("mayVolunteer('meeting_nudge')"), 'the meeting shadow runs before the quiet return')
 const helpers = readFileSync(new URL('../lib/agent/proactive-shadow.ts', import.meta.url), 'utf8')
 ok(!/sendWhatsApp|deliverNotification/.test(helpers), 'the helpers module has no send path')
+ok(/\.eq\('metadata_json->>kind', kind\)/.test(helpers) && /key:metadata_json->>key/.test(helpers), 'history is filtered by kind on the server and reads only small fields')
 console.log(`PROACTIVE_SHADOW_OK ${checks} checks`)

@@ -51,12 +51,16 @@ export async function runMeetingNudgeShadow(now = new Date(), owners: string[] =
     .eq('source_type', 'meeting_prep').eq('status', 'active').in('telegram_id', owners).gt('due_at', nowIso).lte('due_at', soon).order('due_at', { ascending: true }).limit(20)
   if (error || !data?.length) return { logged: 0 }
   let logged = 0
+  const priorByOwner = new Map<string, Set<string> | null>()
   for (const loop of data as any[]) {
     const identity = canonicalMeetingOwner(loop.telegram_id)
-    if (!identity || !owners.includes(identity.id)) continue
+    if (!identity || !owners.includes(identity.id) || !loop.source_id) continue
     const key = `meeting-nudge/${loop.source_id}`
-    const prior = await recentShadowRows(identity.id, 'meeting', 48)
-    if (!prior || prior.some(r => r.meta.key === key)) continue
+    // One read per owner per run, not per meeting per minute.
+    if (!priorByOwner.has(identity.id)) { const rows = await recentShadowRows(identity.id, 'meeting', 48); priorByOwner.set(identity.id, rows ? new Set(rows.map(r => String(r.meta.key))) : null) }
+    const prior = priorByOwner.get(identity.id)
+    if (!prior || prior.has(key)) continue
+    prior.add(key)
     const [prefs, user] = await Promise.all([getAlertPreferences(identity.id).catch(() => null), verifiedMeetingRecipient(identity.id)])
     const tz = user?.timezone || 'Asia/Kolkata'
     let hour = NaN
@@ -72,8 +76,8 @@ export async function runMeetingNudgeShadow(now = new Date(), owners: string[] =
 
 export async function processMeetingNudges(now = new Date(), limit = 30) {
   // 13 Nov proactive comparison: shadow owners are evaluated even while volunteered nudges are off. Never sends.
-  const { proactiveShadowOwners } = await import('./proactive-shadow')
-  await runMeetingNudgeShadow(now, proactiveShadowOwners()).catch(() => console.error('PROACTIVE_SHADOW_FAILED:', JSON.stringify({ kind: 'meeting' })))
+  const { proactiveShadowOwners, withShadowBudget } = await import('./proactive-shadow')
+  await withShadowBudget(() => runMeetingNudgeShadow(now, proactiveShadowOwners()), 10_000).catch(() => console.error('PROACTIVE_SHADOW_FAILED:', JSON.stringify({ kind: 'meeting' })))
   // 4 Nov quiet WhatsApp: no volunteered meeting nudges (the meeting stays in the calendar and on the dashboard).
   const { mayVolunteer } = await import('@/lib/channels/proactive-policy')
   if (!mayVolunteer('meeting_nudge')) return { sent: 0, skipped: 0, quiet: true } as any
