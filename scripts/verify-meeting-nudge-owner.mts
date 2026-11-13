@@ -84,6 +84,8 @@ function actualModuleScenario(s: Scenario = {}) {
     '@/lib/services/cost-guard': { recordCostEvent: async () => {} },
     // Main's quiet-WhatsApp gate (#1259) runs first; enable volunteered sends so the owner checks are exercised.
     '@/lib/channels/proactive-policy': { mayVolunteer: () => true },
+    // 13 Nov proactive comparison: no shadow owners here, so the shadow pass reads nothing and sends nothing.
+    './proactive-shadow': { proactiveShadowOwners: () => [], withShadowBudget: (job: () => Promise<any>) => job() },
     './alert-preferences': {
       getAlertPreferences: async () => {
         preferencesReads++
