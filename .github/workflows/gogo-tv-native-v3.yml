@@ -1,0 +1,68 @@
+name: Gogo TV Native v3 Build
+on:
+  push:
+    branches:
+      - feature/gogo-native-glass-20261111
+    paths:
+      - 'experimental/gogo-native-glass/**'
+      - '.github/workflows/gogo-tv-native-v3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout Gogo TV patch sources
+        uses: actions/checkout@v4
+        with:
+          path: gogo
+      - name: Checkout native CleanYourTV upstream
+        uses: actions/checkout@v4
+        with:
+          repository: Gathin23/cleanyourtv
+          ref: main
+          path: upstream
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android API 34 using runner SDK
+        run: |
+          test -n "$ANDROID_HOME"
+          SDKMANAGER="$(find "$ANDROID_HOME" -type f -name sdkmanager | head -n 1)"
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0"
+      - name: Validate and apply native patches
+        run: |
+          set -euxo pipefail
+          ROOT="$GITHUB_WORKSPACE"
+          python3 -m py_compile gogo/experimental/gogo-native-glass/patch_native_glass.py gogo/experimental/gogo-native-glass/patch_native_glass_v2.py gogo/experimental/gogo-native-glass/patch_gogo_tv_v3.py gogo/experimental/gogo-native-glass/patch_gogo_free_markets.py
+          python3 gogo/experimental/gogo-native-glass/patch_native_glass.py --project upstream --backup /tmp/gogo-v1 --glass-source gogo/experimental/gogo-native-glass/GogoGlassClock.java
+          python3 gogo/experimental/gogo-native-glass/patch_native_glass_v2.py --project upstream --backup /tmp/gogo-v2 --glass-source gogo/experimental/gogo-native-glass/GogoGlassClock.java
+          python3 gogo/experimental/gogo-native-glass/patch_gogo_tv_v3.py --project upstream --backup /tmp/gogo-v3 --sources gogo/experimental/gogo-native-glass
+          python3 gogo/experimental/gogo-native-glass/patch_gogo_tv_v3.py --project upstream --backup /tmp/gogo-v3 --sources gogo/experimental/gogo-native-glass
+          python3 gogo/experimental/gogo-native-glass/patch_gogo_free_markets.py --project upstream --backup /tmp/gogo-free --sources gogo/experimental/gogo-native-glass
+          grep -q 'GogoMarketsTicker.attach(this, root)' upstream/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
+          grep -q 'android.permission.INTERNET' upstream/launcher/app/src/main/AndroidManifest.xml
+          python3 -c 'import xml.etree.ElementTree as e; e.parse("upstream/launcher/app/src/main/res/layout/activity_launcher_settings.xml")'
+      - name: Build Android TV APK
+        run: |
+          cd upstream/launcher
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --no-daemon --console=plain
+      - name: Verify output
+        run: |
+          test -s upstream/launcher/app/build/outputs/apk/release/app-release.apk
+          sha256sum upstream/launcher/app/build/outputs/apk/release/app-release.apk
+      - name: Upload test APK for manual device testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: gogo-tv-native-v3-test-apk
+          path: upstream/launcher/app/build/outputs/apk/release/app-release.apk
+          retention-days: 3
