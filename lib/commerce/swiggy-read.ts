@@ -84,3 +84,51 @@ export async function readInstamartQuote(client: Reader, scope: QuoteScope & {ad
   if (!verifiedCartMatches(quote, scope, expected)) throw new Error('commerce_cart_basket_mismatch')
   return quote
 }
+
+// Dineout (reads only). Display values (rating, cost for two, times) are shown exactly as Swiggy returns them
+// (agreement 4(v)); ids are used exactly as returned. A paid deal is never offered as a free booking.
+export type DineoutChoice = {id: string; name: string; locality: string; costForTwo: string | null; rating: string | null; distance: string | null}
+export type DineoutSlot = {slotId: number; date: string; displayTime: string; reservationTime: number; free: boolean; paidFee: string | null}
+
+export async function readDineoutRestaurants(client: Reader, query: string, latitude: number, longitude: number) {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) throw new Error('commerce_location_invalid')
+  const data = await client.readTool('search_restaurants_dineout', {query: String(query).slice(0, 120), latitude, longitude, limit: 10})
+  if (!Array.isArray(data?.restaurants)) throw new Error('commerce_catalogue_invalid')
+  const choices: DineoutChoice[] = []
+  for (const row of data.restaurants.slice(0, 30)) {
+    const id = identity(row?.id), name = text(row?.name)
+    if (!id || !name || choices.some(choice => choice.id === id)) continue
+    choices.push({id, name, locality: text(row.locality) || '', costForTwo: text(row.costForTwo, 60),
+      rating: text(row?.rating?.value, 8), distance: text(row.distance, 20)})
+  }
+  return choices.slice(0, 5)
+}
+
+function indiaDay(ms: number) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit'}).formatToParts(new Date(ms)).map(p => [p.type, p.value]))
+  return `${parts.year}-${parts.month}-${parts.day}`
+}
+
+export async function readDineoutSlots(client: Reader, restaurantId: string, dateIso: string, latitude: number, longitude: number) {
+  if (!identity(restaurantId) || !/^\d{4}-\d{2}-\d{2}$/.test(dateIso)) throw new Error('commerce_slot_request_invalid')
+  const data = await client.readTool('get_available_slots', {restaurantId, date: dateIso, latitude, longitude})
+  if (data?.restaurantId !== restaurantId || !Array.isArray(data?.slots)) throw new Error('commerce_slots_invalid')
+  const slots: DineoutSlot[] = []
+  for (const row of data.slots.slice(0, 200)) {
+    const displayTime = text(row?.displayTime, 20)
+    // Swiggy returns up to 7 days from `date`: keep only the day asked for, judged by the slot's own time in India.
+    // The docs say "epoch" without a unit: values above 1e12 are milliseconds.
+    const ms = Number.isSafeInteger(row?.reservationTime) && row.reservationTime > 0 ? (row.reservationTime > 1e12 ? row.reservationTime : row.reservationTime * 1000) : NaN
+    const day = Number.isFinite(ms) ? indiaDay(ms) : ''
+    if (day !== dateIso) continue
+    if (!Number.isSafeInteger(row?.slotId) || !displayTime || !Number.isSafeInteger(row?.reservationTime)
+        || !(Number.isSafeInteger(row?.availableInventory) && row.availableInventory > 0)) continue
+    const deals = Array.isArray(row.deals) ? row.deals.filter((d: any) => d && d.soldOut !== true) : []
+    // The cheapest paid deal's fee, shown exactly as Swiggy formats it.
+    const paid = deals.filter((d: any) => d.isFree === false && text(d.displayFee, 20))
+      .sort((a: any, b: any) => (Number.isFinite(a.bookingPrice) ? a.bookingPrice : Infinity) - (Number.isFinite(b.bookingPrice) ? b.bookingPrice : Infinity))
+    // Free only when Swiggy says so for the slot; anything unclear is treated as not free.
+    slots.push({slotId: row.slotId, date: day, displayTime, reservationTime: row.reservationTime, free: row.isFree === true, paidFee: paid.length ? text(paid[0].displayFee, 20) : null})
+  }
+  return slots
+}

@@ -92,7 +92,8 @@ function moduleWith(file:string, dependencies:Record<string,any>) {
     {exports,console,process,URL,URLSearchParams,Date,Buffer,require(name:string){if(name in dependencies)return dependencies[name];throw new Error(`Unexpected dependency ${name}`)}})
   return exports
 }
-const store = moduleWith('lib/commerce/connection-store.ts', {'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/security/vault-crypto':vaultCrypto,'./providers':providers})
+const store = moduleWith('lib/commerce/connection-store.ts', {'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/security/vault-crypto':vaultCrypto,'./providers':providers,
+  './oauth':await import('../lib/commerce/oauth.ts'),'@/lib/agent/brain-runtime-guard':{acquireBrainUserLease:async()=>({ownerToken:'t'}),releaseBrainUserLease:async()=>true}})
 await store.saveCommerceConnection('owner-a','swiggy',token)
 assert(!rows[0].secret_ciphertext.includes('fixture-secret'))
 assert(!JSON.stringify(rows[0].metadata_json).includes('fixture-secret'))
