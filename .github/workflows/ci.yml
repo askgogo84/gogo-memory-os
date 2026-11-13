@@ -28,8 +28,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # Same commands as `npm test` (package.json chain + scripts/tests.d), several at a time: the sequential chain
+      # took ~18.5 of the 20 minutes and runs were cut off at the typecheck (13 Nov, owner: parallelize the runner).
       - name: Full regression suite
-        run: npm test
+        run: node scripts/run-tests-parallel.mjs
 
       - name: Typecheck
         run: npm run typecheck

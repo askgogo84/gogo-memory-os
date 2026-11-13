@@ -11,7 +11,17 @@ const matrix = fs.readFileSync('docs/autonomous-brain-test-matrix.md', 'utf8')
 // Keeping npm test out of prebuild restores fast preview deployments while
 // still blocking merges through AskGogo CI.
 assert.notEqual(prebuild, 'npm test', 'Vercel prebuild must not run the entire regression suite')
-assert.match(ci, /run:\s*npm test/, 'AskGogo CI must run the full autonomous regression suite')
+// 13 Nov: CI runs the same suite in parallel (scripts/run-tests-parallel.mjs). It must still be the WHOLE suite:
+// the runner reads the package.json test chain and every scripts/tests.d list, and checks every command ran.
+const parallel = /run:\s*node scripts\/run-tests-parallel\.mjs/.test(ci)
+assert.ok(/run:\s*npm test/.test(ci) || parallel, 'AskGogo CI must run the full autonomous regression suite')
+if (parallel) {
+  const runner = fs.readFileSync('scripts/run-tests-parallel.mjs', 'utf8')
+  assert.match(runner, /scripts\.test/, 'parallel runner must read the package.json test chain')
+  assert.match(runner, /tests\.d/, 'parallel runner must read every scripts/tests.d list')
+  assert.match(runner, /results\.length !== commands\.length/, 'parallel runner must fail if any command did not run')
+  assert.match(runner, /unsupported command in package\.json test chain/, 'parallel runner must refuse commands it cannot run')
+}
 assert.match(ci, /run:\s*npm run typecheck/, 'AskGogo CI must run typecheck after regressions')
 
 const requiredGates = [
