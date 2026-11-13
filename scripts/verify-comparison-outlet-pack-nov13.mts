@@ -83,4 +83,5 @@ for (const body of ['Net Qty: 500 g ₹650 MRP ₹700 Pack of 2', 'Net Qty: 500 
 const later = productPagePriceEvidence(objective, zt('₹325'), 'Amul Salted Butter Net Qty: 500 g ₹325 MRP ₹330 Similar Amul Cheese Slices Pack of 2 ₹290')
 ok(later && /^₹325\b/.test(later[2]), 'a later "Similar" tile with Pack of 2 does not refuse the real single pack')
 
+eq(productPagePriceEvidence(objective, zt('₹650'), 'Amul Salted Butter Net Qty: 500 g ₹650 ₹700 Add to Cart Pack of 2 x 500 g'), null, 'a count after the product\'s own Add to Cart button is still seen')
 console.log(`PASS verify-comparison-outlet-pack-nov13: ${checks} checks`)

@@ -62,7 +62,7 @@ export function packFromPage(subject:string,heading:string,pageText:string):stri
   // single pack; and the size must come BEFORE the first price, so a recommended tile's size is never borrowed.
   // Only this product's own block counts: everything up to where another tile starts ("Similar", "You may also like",
   // the heading again…), so a count printed after the MRP ("₹650 MRP ₹700 Pack of 2") is still seen. A count of 1 is fine.
-  const tile=near.search(new RegExp('\\b(?:similar|you may also like|related|customers also|frequently bought|add to cart|more from)\\b|'+heading.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'))
+  const tile=near.search(new RegExp('\\b(?:similar|you may also like|related|customers also|frequently bought|more from)\\b|'+heading.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'))
   const own=tile>=0?near.slice(0,tile):near
   if(packageIdentity(unit(own)).counts.some(n=>n!==1))return null
   const beforePrice=near.split(/₹|\bRs\.?\s*\d|\bINR\b/i)[0]
