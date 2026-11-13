@@ -104,6 +104,11 @@ export async function readDineoutRestaurants(client: Reader, query: string, lati
   return choices.slice(0, 5)
 }
 
+function indiaDay(ms: number) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit', day: '2-digit'}).formatToParts(new Date(ms)).map(p => [p.type, p.value]))
+  return `${parts.year}-${parts.month}-${parts.day}`
+}
+
 export async function readDineoutSlots(client: Reader, restaurantId: string, dateIso: string, latitude: number, longitude: number) {
   if (!identity(restaurantId) || !/^\d{4}-\d{2}-\d{2}$/.test(dateIso)) throw new Error('commerce_slot_request_invalid')
   const data = await client.readTool('get_available_slots', {restaurantId, date: dateIso, latitude, longitude})
@@ -112,7 +117,9 @@ export async function readDineoutSlots(client: Reader, restaurantId: string, dat
   for (const row of data.slots.slice(0, 200)) {
     const displayTime = text(row?.displayTime, 20)
     // Swiggy returns up to 7 days from `date`: keep only the day asked for, judged by the slot's own time in India.
-    const day = Number.isSafeInteger(row?.reservationTime) ? new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Kolkata'}).format(new Date(row.reservationTime * 1000)) : ''
+    // The docs say "epoch" without a unit: values above 1e12 are milliseconds.
+    const ms = Number.isSafeInteger(row?.reservationTime) && row.reservationTime > 0 ? (row.reservationTime > 1e12 ? row.reservationTime : row.reservationTime * 1000) : NaN
+    const day = Number.isFinite(ms) ? indiaDay(ms) : ''
     if (day !== dateIso) continue
     if (!Number.isSafeInteger(row?.slotId) || !displayTime || !Number.isSafeInteger(row?.reservationTime)
         || !(Number.isSafeInteger(row?.availableInventory) && row.availableInventory > 0)) continue

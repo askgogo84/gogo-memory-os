@@ -97,7 +97,7 @@ eq(rows.length, 0, 'disconnected during refresh: row not resurrected')
 onRefresh = null
 // A new sign-in during a refresh wins over the old refresh chain.
 await put({accessToken: 'at-near', expiresAt: Date.now() + 2 * 3600_000, scope: '', refreshToken: 'rt-a'})
-onRefresh = () => { rows[0].secret_ciphertext = crypto.encryptVaultValue(JSON.stringify({accessToken: 'at-signin', expiresAt: Date.now() + 5 * day, scope: '', refreshToken: 'rt-signin'})) }
+onRefresh = () => { rows[0].secret_ciphertext = crypto.encryptVaultValue(JSON.stringify({accessToken: 'at-signin', expiresAt: Date.now() + 5 * day, scope: '', refreshToken: 'rt-signin'})); rows[0].updated_at = '2099-01-01T00:00:00.000Z' }
 eq(await exports.readCommerceConnection('o', 'swiggy'), null, 'new sign-in during refresh: refreshed token dropped')
 eq(JSON.parse(crypto.decryptVaultValue(rows[0].secret_ciphertext)).refreshToken, 'rt-signin', 'new sign-in kept')
 onRefresh = null
@@ -109,6 +109,7 @@ eq(refreshCalls, 0, 'expired: no refresh call')
 eq((await exports.readStoredCommerceConnection('o', 'swiggy')).accessToken, 'at-exp', 'disconnect path reads the stored token as-is')
 eq(refreshCalls, 0, 'disconnect path never refreshes')
 const disc = readFileSync('app/api/commerce/[provider]/disconnect/route.ts', 'utf8')
+ok(readFileSync('lib/commerce/connection-store.ts', 'utf8').includes(".eq('updated_at', from.updatedAt)"), 'CAS keys on updated_at, not the ciphertext')
 ok(disc.includes('readStoredCommerceConnection(session.telegramId, provider)') && !/\breadCommerceConnection\(/.test(disc), 'disconnect revokes the stored token without rotating it')
 await put({accessToken: 'at-old', expiresAt: Date.now() + 2 * 3600_000, scope: ''})
 eq((await exports.readCommerceConnection('o', 'swiggy')).accessToken, 'at-old', 'legacy token without refresh still works until expiry')
@@ -126,11 +127,12 @@ const reader = {readTool: async (name: string, args: any) => { calls.push([name,
       {slotId: 2, displayTime: '8:30 PM', reservationTime: 1794582000, availableInventory: 2, deals: [{isFree: false, displayFee: '₹900', bookingPrice: 900}, {isFree: false, displayFee: '₹500', bookingPrice: 500}]},
       {slotId: 3, displayTime: '9:00 PM', reservationTime: 1794583800, availableInventory: 0, isFree: true},
       {slotId: 4.5, displayTime: 'x', reservationTime: 1, availableInventory: 1},
-      {slotId: 5, displayTime: '8:00 PM', reservationTime: 1794580200 + 86400, availableInventory: 4, isFree: true}]} }}
+      {slotId: 5, displayTime: '8:00 PM', reservationTime: 1794580200 + 86400, availableInventory: 4, isFree: true},
+      {slotId: 6, displayTime: '9:30 PM', reservationTime: 1794585600000, availableInventory: 1, isFree: true}]} }}
 const rs = await readDineoutRestaurants(reader as any, 'Toit', 12.97, 77.64)
 eq(rs, [{id: 'r1', name: 'Toit', locality: 'Indiranagar', costForTwo: '₹1,500 for two', rating: '4.5', distance: '2.1 km'}], 'restaurants: as given, deduped, invalid dropped')
 const slots = await readDineoutSlots(reader as any, 'r1', '2026-11-13', 12.97, 77.64)
-eq(slots.map(s => [s.slotId, s.date, s.free, s.paidFee]), [[1, '2026-11-13', true, null], [2, '2026-11-13', false, '₹500']], 'only the asked day; sold-out/malformed dropped; paid deal not free; cheapest fee')
+eq(slots.map(s => [s.slotId, s.date, s.free, s.paidFee]), [[1, '2026-11-13', true, null], [2, '2026-11-13', false, '₹500'], [6, '2026-11-13', true, null]], 'only the asked day (seconds or ms); sold-out/malformed dropped; paid deal not free; cheapest fee')
 await assert.rejects(readDineoutSlots(reader as any, 'r1', '13/11/2026', 12.97, 77.64), /commerce_slot_request_invalid/); checks++
 await assert.rejects(readDineoutRestaurants(reader as any, 'x', 999, 0), /commerce_location_invalid/); checks++
 const wrong = {readTool: async () => ({restaurantId: 'other', slots: []})}

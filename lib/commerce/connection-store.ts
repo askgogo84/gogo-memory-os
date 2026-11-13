@@ -16,15 +16,15 @@ export async function saveCommerceConnection(owner: string, provider: CommercePr
   if (error) throw new Error('commerce_connection_save_failed')
 }
 
-type Stored = {token: CommerceToken; cipher: string; metadata: Record<string, any>}
+type Stored = {token: CommerceToken; cipher: string; updatedAt: string; metadata: Record<string, any>}
 
 async function storedRow(owner: string, provider: CommerceProvider): Promise<Stored | null> {
-  const {data, error} = await supabaseAdmin.from('vault_credentials').select('secret_ciphertext,status,metadata_json')
+  const {data, error} = await supabaseAdmin.from('vault_credentials').select('secret_ciphertext,status,metadata_json,updated_at')
     .eq('telegram_id', owner).eq('provider', key(provider)).eq('account_label', label).maybeSingle()
   if (error) throw new Error('commerce_connection_read_failed')
   if (!data || data.status !== 'active') return null
   const token = JSON.parse(decryptVaultValue(data.secret_ciphertext)) as CommerceToken
-  return token?.accessToken && Number.isFinite(token.expiresAt) ? {token, cipher: data.secret_ciphertext, metadata: data.metadata_json || {}} : null
+  return token?.accessToken && Number.isFinite(token.expiresAt) ? {token, cipher: data.secret_ciphertext, updatedAt: String(data.updated_at || ''), metadata: data.metadata_json || {}} : null
 }
 
 /** The stored token exactly as saved, even if expired, and never refreshed. For disconnect/revoke only. */
@@ -36,12 +36,13 @@ const usable = (token: CommerceToken | null, now = Date.now()) => !!token && tok
 // Refresh well before expiry: Swiggy says an expired access token cannot be refreshed.
 export const COMMERCE_REFRESH_WINDOW_MS = 24 * 60 * 60_000
 
-/** Compare-and-swap: the refreshed token replaces exactly the row it was refreshed from. A disconnect or a new
+/** Compare-and-swap on updated_at (every save sets it; short, unlike the ciphertext, so the filter URL stays small):
+ *  the refreshed token replaces exactly the row it was refreshed from. A disconnect or a new
  *  sign-in in the meantime (row gone or changed) wins; the refreshed token is then dropped, never resurrected. */
 async function saveRefreshed(owner: string, provider: CommerceProvider, from: Stored, fresh: CommerceToken): Promise<boolean> {
   const {data, error} = await supabaseAdmin.from('vault_credentials').update({secret_ciphertext: encryptVaultValue(JSON.stringify(fresh)),
     metadata_json: {...from.metadata, expires_at: fresh.expiresAt, refreshed_at: new Date().toISOString()}, updated_at: new Date().toISOString()})
-    .eq('telegram_id', owner).eq('provider', key(provider)).eq('account_label', label).eq('status', 'active').eq('secret_ciphertext', from.cipher)
+    .eq('telegram_id', owner).eq('provider', key(provider)).eq('account_label', label).eq('status', 'active').eq('updated_at', from.updatedAt)
     .select('telegram_id').maybeSingle()
   return !error && !!data
 }
@@ -51,7 +52,7 @@ export async function readCommerceConnection(owner: string, provider: CommercePr
   if (!row) return null
   const now = Date.now()
   // Far from expiry, no refresh token, or already expired (cannot be refreshed): no refresh call.
-  if (row.token.expiresAt > now + COMMERCE_REFRESH_WINDOW_MS || !row.token.refreshToken || row.token.expiresAt <= now) return usable(row.token) ? row.token : null
+  if (row.token.expiresAt > now + COMMERCE_REFRESH_WINDOW_MS || !row.token.refreshToken || !row.updatedAt || row.token.expiresAt <= now) return usable(row.token) ? row.token : null
   // Rotating refresh tokens: two concurrent refreshes would burn the old token and disconnect the person, so only
   // one runs per owner+provider; anyone else uses the current token while it is still valid.
   const leaseKey = `commerce-refresh:${provider}:${owner}`
