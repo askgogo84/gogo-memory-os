@@ -1,5 +1,5 @@
 import {productIdentityText,productIdentityMatches} from './product-identity'
-import {withheldComparisonProviders} from './swiggy-policy'
+import {SWIGGY_COMPARISON_NOTE, withheldComparisonProviders} from './swiggy-policy'
 export const COMPARISON_PROVIDERS = {
   amazon: {label: 'Amazon India', url: 'https://www.amazon.in/', domain: 'amazon.in'},
   flipkart: {label: 'Flipkart', url: 'https://www.flipkart.com/', domain: 'flipkart.com'},
@@ -530,7 +530,8 @@ export function comparisonWhatsAppSummary(task: PriceComparison, origin = 'https
     ...(matchedOnCode ? ['I matched this on the model code only. If it’s not the product you meant, send the full name.'] : []),
     ...(isFoodComparison(task.metadata_json.providers)
       ? ['Menu prices only; delivery fee, packaging, surge and coupons are added at checkout and aren’t included.',
-        'Want another dish? Send it like “compare paneer butter masala at Empire on Swiggy and Zomato for 560086”.']
+        withheldComparisonProviders(['swiggy']).length ? 'Want another dish? Send it like “compare paneer butter masala at Empire on Zomato for 560086”.\n' + SWIGGY_COMPARISON_NOTE
+          : 'Want another dish? Send it like “compare paneer butter masala at Empire on Swiggy and Zomato for 560086”.']
       : ['Listed prices only; delivery and bank offers not included.',
         'Want another model or size? Send it in full, like “compare iPhone 17 Pro 256GB”.']),
   ].join('\n')

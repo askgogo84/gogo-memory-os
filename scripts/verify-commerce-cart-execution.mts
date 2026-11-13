@@ -22,7 +22,7 @@ const db={from(table:string){assert.equal(table,'agent_runs');const filters:Arra
   return {data:structuredClone(row),error:null}
 }};return q}}
 function load(file:string,deps:Record<string,any>){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,process,Date,URL,console,require(name:string){if(name in deps)return deps[name];throw Error(name)}});return exports}
-const tasks=load('lib/commerce/task.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./providers':providers})
+const tasks=load('lib/commerce/task.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./providers':providers,'./swiggy-policy':await import('../lib/commerce/swiggy-policy.ts')})
 const executor=load('lib/commerce/instamart-cart.ts',{'node:crypto':crypto,'@/lib/supabase-admin':{supabaseAdmin:db},'./swiggy-read':reads,'./addresses':addresses})
 class Client {
   async readTool(name:string,_args:any){providerCalls++

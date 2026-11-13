@@ -27,7 +27,7 @@ const grocery = parsePriceComparison('Compare grocery prices for Amul Taaza 1 li
 eq(grocery.providers, ['zepto', 'blinkit'], 'Instamart dropped from a grocery comparison')
 eq(grocery.withheld, ['instamart'], 'withheld Instamart is reported')
 const dish = parsePriceComparison('compare chicken biryani at Meghana Foods')
-if (dish) { eq(dish.providers.includes('swiggy' as any), false, 'dish-at-restaurant default drops Swiggy'); checks++ }
+if (dish) eq(dish.providers.includes('swiggy' as any), false, 'dish-at-restaurant default drops Swiggy')
 const shop = parsePriceComparison('compare iPhone 17 on Amazon and Flipkart')!
 eq(shop.providers, ['amazon', 'flipkart'], 'electronics unaffected')
 eq(shop.withheld, [], 'nothing withheld for electronics')
@@ -43,7 +43,8 @@ delete process.env.COMMERCE_SWIGGY_COMPARISON_APPROVED
 const pc = readFileSync('lib/commerce/price-comparison.ts', 'utf8')
 const empty = pc.indexOf('if (!parsed.providers.length)'), insert = pc.indexOf("supabaseAdmin.from('agent_runs').insert(")
 ok(empty > 0 && insert > empty, 'empty-provider reply comes before any run is created')
-ok(/if \(!parsed\.providers\.length\) return \{[^}]*text: SWIGGY_COMPARISON_NOTE\}/.test(pc), 'empty-provider reply is the note')
+ok(/if \(!parsed\.providers\.length\) return \{[^}]*text: SWIGGY_ONLY_NOTE\}/.test(pc), 'empty-provider reply is the note with alternatives')
+ok(policy.SWIGGY_ONLY_NOTE.startsWith(policy.SWIGGY_COMPARISON_NOTE) && /Zepto and Blinkit/.test(policy.SWIGGY_ONLY_NOTE), 'all-withheld reply offers a next step')
 ok(pc.includes("(parsed.withheld.length ? '\\n\\n' + SWIGGY_COMPARISON_NOTE : '')"), 'partial comparisons carry the note')
 
 // Food discovery (web search): default mode never searches swiggy.com and tells the person.
@@ -84,5 +85,24 @@ ok(res.text.includes(policy.SWIGGY_COMPARISON_NOTE), 'reply says Swiggy was left
 // Grocery comparison task summary.
 const g = readFileSync('lib/agent/grocery-comparison.ts', 'utf8')
 ok(/swiggyComparisonApproved\(\)\s*\?/.test(g) && /on Zepto or Blinkit\. ' \+ SWIGGY_COMPARISON_NOTE/.test(g), 'grocery summary leaves Instamart out by default')
+
+// Review fixes (PR #1515): browser route, task page, old runs, store fallback, finished summary.
+const route = readFileSync('app/api/commerce/tasks/[runId]/browser/route.ts', 'utf8')
+const gate = route.indexOf("withheldComparisonProviders([input.provider]).length"), runCall = route.indexOf('runCommerceBrowserRead(actor')
+ok(gate > 0 && gate < runCall && /provider_withheld'\},\{status:403\}/.test(route), 'browser route refuses Swiggy/Instamart before any browser run')
+const page = readFileSync('app/dashboard/(app)/commerce/page.tsx', 'utf8')
+ok(/\.filter\(\(\[key\]\)=>!\(task\.withheldBrowserProviders\|\|\[\]\)\.includes\(key\)\)/.test(page), 'task page hides withheld browser buttons')
+ok(readFileSync('lib/commerce/task.ts', 'utf8').includes("withheldBrowserProviders: withheldComparisonProviders(['swiggy', 'instamart'])"), 'task view carries the server-side decision')
+const pcMod = await import('../lib/commerce/price-comparison.ts')
+const old = pcMod.withholdRows([{provider: 'swiggy', status: 'pending'}, {provider: 'zomato', status: 'pending'}, {provider: 'instamart', status: 'failed', attempts: 1}, {provider: 'swiggy', status: 'observed', evidence: 'x'}] as any)
+eq(old.map((r: any) => r.status), ['blocked', 'pending', 'blocked', 'observed'], 'old runs: pending/failed Swiggy rows closed, checked rows kept')
+eq(old[0].reason, policy.SWIGGY_COMPARISON_NOTE, 'closed row says why')
+eq(pcMod.retryFailedStores([{provider: 'instamart', status: 'failed', attempts: 1}] as any)[0].status, 'failed', 'withheld failed row is not re-queued')
+eq(pcMod.retryFailedStores([{provider: 'zepto', status: 'failed', attempts: 1}] as any)[0].status, 'pending', 'other stores still retry')
+const zomatoOnly: any = {providers: [{provider: 'zomato', status: 'blocked'}]}
+eq(pcMod.withStoreFallback(zomatoOnly).length, 1, 'a blocked Zomato-only food run never falls back to electronics stores')
+eq(pcMod.withStoreFallback({providers: [{provider: 'amazon', status: 'blocked'}]}).map((r: any) => r.provider), ['amazon', 'flipkart', 'croma', 'reliance'], 'electronics fallback unchanged')
+const model = readFileSync('lib/commerce/comparison-model.ts', 'utf8')
+ok(/withheldComparisonProviders\(\['swiggy'\]\)\.length \? 'Want another dish\? Send it like “compare paneer butter masala at Empire on Zomato for 560086”/.test(model), 'finished food summary no longer suggests Swiggy')
 
 console.log(`PASS verify-swiggy-comparison-policy-nov13: ${checks} checks`)

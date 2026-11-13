@@ -27,7 +27,7 @@ const db={from(table:string){
   return q
 }}
 function load(file:string,deps:Record<string,any>){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,process,Date,URL,console,require(name:string){if(name in deps)return deps[name];throw Error(name)}});return exports}
-const tasks=load('lib/commerce/task.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./providers':providers})
+const tasks=load('lib/commerce/task.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'./providers':providers,'./swiggy-policy':await import('../lib/commerce/swiggy-policy.ts')})
 const grocery=load('lib/agent/grocery-comparison.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/commerce/task':tasks,'@/lib/commerce/swiggy-policy':await import('../lib/commerce/swiggy-policy.ts')})
 const entry=load('lib/agent/food-comparison.ts',{'@/lib/supabase-admin':{supabaseAdmin:db},'@/lib/commerce/task':tasks,'@/lib/commerce/swiggy-policy':await import('../lib/commerce/swiggy-policy.ts'),'./grocery-comparison':grocery,'./food-comparison-intent':intent,'@/lib/web-search':{searchWebResults:()=>{throw Error('no public search expected')}}})
 const run=(text:string,owner=42,surface='whatsapp')=>entry.tryFoodComparison({telegramId:owner,text,surface})
