@@ -66,7 +66,10 @@ export async function exchangeCommerceCode(flow: CommerceAuthFlow, code: string,
 }
 
 function refreshFields(refreshToken: unknown, clientId: string | undefined) {
-  return typeof refreshToken === 'string' && refreshToken && refreshToken.length <= 8192 ? {refreshToken, ...(clientId ? {clientId} : {})} : {}
+  if (typeof refreshToken !== 'string' || !refreshToken) return {}
+  // After rotation the old token is dead, so an unusable new one must fail loudly, not vanish.
+  if (refreshToken.length > 8192) throw new Error('commerce_token_response_invalid')
+  return {refreshToken, ...(clientId ? {clientId} : {})}
 }
 
 /** Swiggy's documented refresh: JSON body, grant_type=refresh_token, no Authorization header. The refresh token

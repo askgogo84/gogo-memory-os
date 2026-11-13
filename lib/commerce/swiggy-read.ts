@@ -88,7 +88,7 @@ export async function readInstamartQuote(client: Reader, scope: QuoteScope & {ad
 // Dineout (reads only). Display values (rating, cost for two, times) are shown exactly as Swiggy returns them
 // (agreement 4(v)); ids are used exactly as returned. A paid deal is never offered as a free booking.
 export type DineoutChoice = {id: string; name: string; locality: string; costForTwo: string | null; rating: string | null; distance: string | null}
-export type DineoutSlot = {slotId: number; displayTime: string; reservationTime: number; free: boolean; paidFrom: string | null}
+export type DineoutSlot = {slotId: number; date: string; displayTime: string; reservationTime: number; free: boolean; paidFee: string | null}
 
 export async function readDineoutRestaurants(client: Reader, query: string, latitude: number, longitude: number) {
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude) || Math.abs(latitude) > 90 || Math.abs(longitude) > 180) throw new Error('commerce_location_invalid')
@@ -109,14 +109,19 @@ export async function readDineoutSlots(client: Reader, restaurantId: string, dat
   const data = await client.readTool('get_available_slots', {restaurantId, date: dateIso, latitude, longitude})
   if (data?.restaurantId !== restaurantId || !Array.isArray(data?.slots)) throw new Error('commerce_slots_invalid')
   const slots: DineoutSlot[] = []
-  for (const row of data.slots.slice(0, 60)) {
+  for (const row of data.slots.slice(0, 200)) {
     const displayTime = text(row?.displayTime, 20)
+    // Swiggy returns up to 7 days from `date`: keep only the day asked for, judged by the slot's own time in India.
+    const day = Number.isSafeInteger(row?.reservationTime) ? new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Kolkata'}).format(new Date(row.reservationTime * 1000)) : ''
+    if (day !== dateIso) continue
     if (!Number.isSafeInteger(row?.slotId) || !displayTime || !Number.isSafeInteger(row?.reservationTime)
         || !(Number.isSafeInteger(row?.availableInventory) && row.availableInventory > 0)) continue
     const deals = Array.isArray(row.deals) ? row.deals.filter((d: any) => d && d.soldOut !== true) : []
-    const paid = deals.filter((d: any) => d.isFree === false).map((d: any) => text(d.displayFee, 20)).filter(Boolean) as string[]
+    // The cheapest paid deal's fee, shown exactly as Swiggy formats it.
+    const paid = deals.filter((d: any) => d.isFree === false && text(d.displayFee, 20))
+      .sort((a: any, b: any) => (Number.isFinite(a.bookingPrice) ? a.bookingPrice : Infinity) - (Number.isFinite(b.bookingPrice) ? b.bookingPrice : Infinity))
     // Free only when Swiggy says so for the slot; anything unclear is treated as not free.
-    slots.push({slotId: row.slotId, displayTime, reservationTime: row.reservationTime, free: row.isFree === true, paidFrom: paid[0] || null})
+    slots.push({slotId: row.slotId, date: day, displayTime, reservationTime: row.reservationTime, free: row.isFree === true, paidFee: paid.length ? text(paid[0].displayFee, 20) : null})
   }
   return slots
 }
