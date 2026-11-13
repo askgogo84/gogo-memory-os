@@ -4,9 +4,7 @@ import {runInNewContext} from 'node:vm'
 import ts from 'typescript'
 const noop=new Proxy({}, {get:()=>()=>null})
 function load(file:string,deps:any,extra:any={}){const exports:any={};runInNewContext(ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,require:(name:string)=>deps[name]||noop,Date,Intl,console,URL,URLSearchParams,process,Buffer,Response,setTimeout,clearTimeout,...extra});return exports}
-// 13 Nov: the notice rules live in a pure module both the scorer and the capture use.
-const noticeRules=load('lib/email/notice-rules.ts',{})
-const loops=load('lib/agent/open-loops.ts',{'@/lib/email/notice-rules':noticeRules})
+const loops=load('lib/agent/open-loops.ts',{})
 const rows=[
  {id:'19abc00000000001',threadId:'19abc00000000002',from:'Vercel <noreply@example.invalid>',subject:'Payment failed and shutdown coming soon',snippet:'Action required: service suspension follows failed payment.'},
  {id:'19abc00000000003',threadId:'19abc00000000004',from:'Offers <offers@example.invalid>',subject:'Urgent offer: payment failed and shutdown',snippet:'Coupon sale',labelIds:['CATEGORY_PROMOTIONS'],listUnsubscribe:'<https://example.invalid/unsubscribe>'},
