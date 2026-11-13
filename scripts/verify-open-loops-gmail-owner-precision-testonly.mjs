@@ -11,7 +11,10 @@ const source = readFileSync(sourceFile, 'utf8')
 const ast = ts.createSourceFile(sourceFile, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
 const fn = ast.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === 'readGmailAttention')
 assert.ok(fn?.body, 'the original Gmail attention function is missing; fail rather than skip')
-const compiled = ts.transpileModule(fn.getText(ast), {
+// 13 Nov: the owner/consent/token checks moved into gmailAccessForOwner (shared with the email judge); both run here.
+const access = ast.statements.find(n => ts.isFunctionDeclaration(n) && n.name?.text === 'gmailAccessForOwner')
+assert.ok(access?.body, 'the Gmail access helper is missing; fail rather than skip')
+const compiled = ts.transpileModule(access.getText(ast).replace(/^export\s+/, '') + '\n' + fn.getText(ast), {
   fileName: sourceFile,
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText

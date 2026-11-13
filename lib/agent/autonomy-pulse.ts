@@ -511,6 +511,8 @@ export async function processAutonomyPulse(){
   for(const owner of proactiveShadowOwners()){
     await withShadowBudget(()=>runEmailShadow(owner)).catch(()=>console.error('PROACTIVE_SHADOW_FAILED:',JSON.stringify({kind:'email'})))
     await withShadowBudget(()=>runCleanupShadow(owner)).catch(()=>console.error('PROACTIVE_SHADOW_FAILED:',JSON.stringify({kind:'cleanup'})))
+    // 13 Nov: the model email judge (shadow only), after the rule-based pass so both can be compared.
+    await withShadowBudget(async()=>(await import('./email-judge-shadow')).runEmailJudgeShadow(owner),45_000).catch(()=>console.error('PROACTIVE_SHADOW_FAILED:',JSON.stringify({kind:'email_judge'})))
   }
   // 4 Nov quiet WhatsApp: no volunteered 4-hourly check-ins.
   const { mayVolunteer }=await import('@/lib/channels/proactive-policy')
