@@ -79,5 +79,6 @@ export function offerAmountBefore(before:string):boolean{
   const b=String(before||'')
   if(/\b(?:up\s*to|upto|max(?:imum)?|above|over|min(?:imum)?(?:\s+order)?|orders?\s+(?:above|over|of))\s*:?\s*$/i.test(b))return true
   if(/\boff\s*:\s*$/i.test(b))return true
-  return /\boff\s*$/i.test(b)&&!/(?:₹\s?\d[\d,]*(?:\.\d{1,2})?|\d+(?:\.\d+)?\s*%)\s*off\s*$/i.test(b)
+  // "off" anywhere since the last amount ("extra off on HDFC ₹1,000"), unless the offer stated its own amount first.
+  return /\boff\b[^₹\d%]*$/i.test(b)&&!/(?:₹\s?\d[\d,]*(?:\.\d{1,2})?|\d+(?:\.\d+)?\s*%)\s*off\b[^₹\d%]*$/i.test(b)
 }

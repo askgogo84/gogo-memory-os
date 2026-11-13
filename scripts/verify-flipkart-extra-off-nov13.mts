@@ -16,7 +16,7 @@ const row: any = {provider: 'flipkart', status: 'observed', sourceUrl: 'https://
 const q = comparisonQuote('Sony WH-1000XM5', row)
 ok(!q || q.price === '₹26,990', `summary quote is the selling price or refused, never the MRP (got ${q?.price})`)
 // Re-review: offer amounts are never the price (these were skipped on main and must stay skipped).
-for (const body of ['Bank Offer 10% off up to ₹1,500 on HDFC cards ₹26,990', 'Get 10% off upto ₹1,250 ₹26,990', 'Instant 10% off: ₹2,000 ₹26,990', 'Get extra off ₹1,000 with bank ₹26,990', 'Flat off ₹500 ₹26,990', 'Up to 20% off ₹26,990 ₹34,990', '₹500 off on HDFC ₹26,990', 'Flat ₹500 off ₹26,990', 'with 22% off ₹26,990 M.R.P.: ₹34,990'])
+for (const body of ['Bank Offer 10% off up to ₹1,500 on HDFC cards ₹26,990', 'Get 10% off upto ₹1,250 ₹26,990', 'Instant 10% off: ₹2,000 ₹26,990', 'Get extra off ₹1,000 with bank ₹26,990', 'Flat off ₹500 ₹26,990', 'Up to 20% off ₹26,990 ₹34,990', '₹500 off on HDFC ₹26,990', 'Flat ₹500 off ₹26,990', 'with 22% off ₹26,990 M.R.P.: ₹34,990', 'Get extra off on HDFC ₹1,000 ₹26,990', 'Extra off on bank cards ₹750 ₹26,990', 'Flat ₹500 off on HDFC ₹26,990', 'Extra 10% off on SBI ₹26,990', 'Over 1k bought ₹26,990'])
   ok(/^₹26,990\b/.test(String(pick(body))), `selling price picked: ${body} (got ${pick(body)})`)
 for (const body of ['Get extra off ₹1,000 ₹26,990', 'Flat off ₹500 ₹26,990']) {
   const qq = comparisonQuote('Sony WH-1000XM5', {...row, evidence: 'Sony WH-1000XM5 Wireless Headphones\n' + body})
