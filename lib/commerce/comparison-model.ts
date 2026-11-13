@@ -1,4 +1,4 @@
-import {productIdentityText,productIdentityMatches,packFromPage} from './product-identity'
+import {productIdentityText,productIdentityMatches,packFromPage,offerAmountBefore} from './product-identity'
 import {SWIGGY_COMPARISON_NOTE, withheldComparisonProviders} from './swiggy-policy'
 export const COMPARISON_PROVIDERS = {
   amazon: {label: 'Amazon India', url: 'https://www.amazon.in/', domain: 'amazon.in'},
@@ -414,7 +414,7 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
     const adjacentCapacity = compact(before.match(/\b\d+\s*(?:GB|TB)\s*$/i)?.[0] || '')
     return Number(match[1].replace(/,/g,'')) > 0
       && !(headingCapacity && adjacentCapacity && headingCapacity !== adjacentCapacity)
-      && !/\b(?:MRP|M\.R\.P\.?|list price|was|save|savings|discount|cashback|off|EMI|from|starting at|buy at|offer price|with offers)\s*:?\s*$/i.test(before)
+      && !/\b(?:MRP|M\.R\.P\.?|list price|was|save|savings|discount|cashback|EMI|from|starting at|buy at|offer price|with offers)\s*:?\s*$/i.test(before) && !offerAmountBefore(before)
       && !/\+\s*$/.test(before)
       && !/\bor\s*$/i.test(before)
       && !/\bAD\s*$/i.test(before)
