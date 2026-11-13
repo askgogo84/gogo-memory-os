@@ -82,6 +82,8 @@ function harness(users:Map<string,User>,consent:Map<string,Consent>){
     },
     './google-workspace-read':{formatEmailSnippet:(x:unknown)=>String(x)},
     '@/lib/email/attention':{scoreEmail:()=>({score:0,picked:false})},
+    // 13 Nov: pure notice rules shared with the scorer; stubbed off here (these fixtures test owner isolation only).
+    '@/lib/email/notice-rules':{isServiceCutoffText:()=>false,isSecurityNoticeText:()=>false},
     './task-lifecycle':{
       retiredRunReason:()=>null,
       isTaskInventoryQuestion:()=>false,

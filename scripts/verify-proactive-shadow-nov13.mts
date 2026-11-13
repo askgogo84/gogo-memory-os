@@ -64,7 +64,7 @@ ok(/₹35,841\.29/.test(S.shadowText('dues of ₹35,841.29 by 3pm')), 'amounts a
     { id: '6', kind: 'followup', title: 'Backed off', source_type: 'gmail_thread', source_id: 'g2', evidence_json: {}, proactive_backoff_until: '2026-12-01T00:00:00Z' },
     { id: '7', kind: 'commitment', title: 'Send the pitch deck to Nithin', source_type: 'conversation', source_id: 'c2', evidence_json: {} },
   ]
-  eq(S.cleanupCandidates(L, now).map((l: any) => l.id), ['1', '7'], 'only recognisable loops that may be let go, once per source') }
+  eq(S.cleanupCandidates(L, now).map((l: any) => l.id), ['7'], 'only recognisable loops that may be let go, once per source (inbound "reply to" mail excluded, 13 Nov)') }
 // The shadow never holds up the real cron.
 { const t0 = Date.now(); const r = await S.withShadowBudget(() => new Promise(res => setTimeout(() => res('late'), 2000)), 50); eq(r, 'timeout', 'a slow shadow is cut off'); ok(Date.now() - t0 < 1000, 'quickly')
   eq(await S.withShadowBudget(async () => 'ok', 50), 'ok', 'a fast one returns its result') }
