@@ -60,9 +60,10 @@ export function packFromPage(subject:string,heading:string,pageText:string):stri
   const near=text.slice(at+heading.length,at+heading.length+240)
   // Review (PR #1518): a multipack or combo ("2 x 500 g", "Pack of 2", "2 pcs", "Combo") anywhere here is not the asked
   // single pack; and the size must come BEFORE the first price, so a recommended tile's size is never borrowed.
-  // Only this product's own block counts: up to its second price ("₹325 MRP ₹330"), not a later tile. A count of 1 is a single pack.
-  const prices=[...near.matchAll(/₹|\bRs\.?\s*\d|\bINR\b/gi)]
-  const own=prices.length>1?near.slice(0,prices[1].index):near
+  // Only this product's own block counts: everything up to where another tile starts ("Similar", "You may also like",
+  // the heading again…), so a count printed after the MRP ("₹650 MRP ₹700 Pack of 2") is still seen. A count of 1 is fine.
+  const tile=near.search(new RegExp('\\b(?:similar|you may also like|related|customers also|frequently bought|add to cart|more from)\\b|'+heading.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'i'))
+  const own=tile>=0?near.slice(0,tile):near
   if(packageIdentity(unit(own)).counts.some(n=>n!==1))return null
   const beforePrice=near.split(/₹|\bRs\.?\s*\d|\bINR\b/i)[0]
   const found=[...beforePrice.matchAll(/(?:(?:net\s*(?:qty|quantity|wt|weight)|pack\s*size|quantity|weight)\s*:?\s*)?(?<![\d.])\d+(?:\.\d+)?\s*(?:kg|g|gm|gms|grams?|l|ltrs?|litres?|liters?|ml)\b/gi)]

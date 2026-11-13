@@ -78,4 +78,9 @@ for (const body of ['Net Qty: 1 pc (500 g) ₹325', '500 g 1 unit ₹325', 'Net 
   ok(e && /^₹325\b/.test(e[2]), `genuine single pack accepted: ${body}`)
 }
 
+for (const body of ['Net Qty: 500 g ₹650 MRP ₹700 Pack of 2', 'Net Qty: 500 g ₹650 ₹700 (Pack of 2)', 'Net Qty: 500 g ₹650 ₹700 2 x 500 g'])
+  eq(productPagePriceEvidence(objective, zt('₹650'), 'Amul Salted Butter ' + body), null, `count after the MRP still refused: ${body}`)
+const later = productPagePriceEvidence(objective, zt('₹325'), 'Amul Salted Butter Net Qty: 500 g ₹325 MRP ₹330 Similar Amul Cheese Slices Pack of 2 ₹290')
+ok(later && /^₹325\b/.test(later[2]), 'a later "Similar" tile with Pack of 2 does not refuse the real single pack')
+
 console.log(`PASS verify-comparison-outlet-pack-nov13: ${checks} checks`)
