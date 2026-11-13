@@ -31,7 +31,7 @@ export function cleanupCandidates(loops: any[], now = Date.now()): any[] {
     if (l.proactive_backoff_until && Date.parse(String(l.proactive_backoff_until)) > now) continue
     // 13 Nov comparison: the list was all "Reply to <bill / newsletter / receipt>" items made from inbound mail. Only
     // what the person said or is waiting on belongs here, not inbound mail Gogo guessed needed a reply.
-    if (l.source_type === 'gmail_thread' && l.kind !== 'waiting_on') continue
+    if ((l.source_type === 'gmail_thread' && l.kind !== 'waiting_on') || l.source_type === 'gmail_service_notice') continue
     const key = `${l.source_type || ''}|${l.source_id || l.id}`
     if (seen.has(key)) continue
     seen.add(key); out.push(l)

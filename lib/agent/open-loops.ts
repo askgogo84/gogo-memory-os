@@ -6,7 +6,7 @@ import { decryptGoogleToken } from '@/lib/security/google-token-crypto'
 import { fetchGmailAttentionThreads, refreshGmailAccessToken } from '@/lib/services/google-gmail'
 import { formatEmailSnippet } from './google-workspace-read'
 import { scoreEmail as scoreAttentionEmail } from '@/lib/email/attention'
-import { isServiceCutoffText, isSecurityNoticeText } from '@/lib/email/notice-rules'
+import { isServiceCutoffText, isSecurityBreachText, noticeDisplayText } from '@/lib/email/notice-rules'
 import { retiredRunReason, isTaskInventoryQuestion, isRelevantOpenLoop, openLoopStatus } from './task-lifecycle'
 
 export type OpenLoopKind='followup'|'waiting_on'|'commitment'|'approval'|'mission'|'life_event'|'meeting_action'|'other'
@@ -455,7 +455,7 @@ export function isServiceRiskNotice(message:any):boolean{
   if(message?.listId||message?.listUnsubscribe||(message?.labelIds||[]).includes('CATEGORY_PROMOTIONS'))return false
   if(/\b(?:otp|one[- ]time password|promo\s+code|coupon)\b/i.test(text))return false
   // 13 Nov: the same cut-off and security rules as the attention scorer (WeWork dues deactivation, Apify breach).
-  return isServiceCutoffText(text)||isSecurityNoticeText(text)
+  return isServiceCutoffText(text)||isSecurityBreachText(text)
 }
 
 export async function captureGmailServiceNotices(telegramId:string|number,messages:any[]){
@@ -464,9 +464,11 @@ export async function captureGmailServiceNotices(telegramId:string|number,messag
     if(!message?.id||!message?.threadId||!isServiceRiskNotice(message))continue
     const date=Number(message.internalDate)||Date.parse(String(message.date||''))
     const observedAt=Number.isFinite(date)&&date>0?new Date(date).toISOString():undefined
-    const security=isSecurityNoticeText(clean(`${message.subject||''} ${message.snippet||''}`,1200))&&!isServiceCutoffText(clean(`${message.subject||''} ${message.snippet||''}`,1200))
-    await upsertOpenLoop({telegramId,kind:'commitment',title:`${security?'Review security notice':'Review service billing notice'} — ${clean(message.subject,180)}`,
-      summary:formatEmailSnippet(message.snippet||'Check this service billing warning directly with the provider. No payment or account change is authorized.',700),
+    const both=clean(`${message.subject||''} ${message.snippet||''}`,1200)
+    const security=!isServiceCutoffText(both)&&isSecurityBreachText(both)
+    // Links and domains never shown: the person opens the notice from their own mailbox (review: phishing-shaped mail).
+    await upsertOpenLoop({telegramId,kind:'commitment',title:`${security?'Review security notice':'Review service billing notice'} — ${noticeDisplayText(clean(message.subject,180))}`,
+      summary:formatEmailSnippet(noticeDisplayText(message.snippet||'')||(security?'Check this security notice directly with the provider from your own mailbox or app. No account change is authorized.':'Check this service billing warning directly with the provider. No payment or account change is authorized.'),700),
       priority:0.98,sourceType:'gmail_service_notice',sourceId:String(message.threadId),
       sourceRefs:[{type:'gmail_thread',id:String(message.threadId)},{type:'gmail_message',id:String(message.id)}],
       evidence:{last_message_id:String(message.id),thread_id:String(message.threadId),sender:headerEmail(message.from),direction:'inbound_service_action',approvalRequired:true},

@@ -110,7 +110,7 @@ export function isOwnProductMail(email: AttentionEmail) {
 }
 
 export { isServiceCutoffText, isSecurityNoticeText } from './notice-rules'
-import { isServiceCutoffText, isSecurityNoticeText } from './notice-rules'
+import { isServiceCutoffText, isAccountAlertText, isSecurityBreachText } from './notice-rules'
 
 export function classifyEmail(email: AttentionEmail): AttentionCategory {
   const text = clean(`${email.subject} ${email.snippet}`, 1200)
@@ -120,7 +120,9 @@ export function classifyEmail(email: AttentionEmail): AttentionCategory {
   if (isOwnProductMail(email)) return 'update'
   if (/\bone[- ]time password\b|\bOTP\b|\bverification code\b|\bsign[- ]?in code\b|\blogin code\b/i.test(text)) return 'otp'
   if (isServiceCutoffText(text)) return 'service_risk'
-  if (isSecurityNoticeText(text)) return 'security'
+  if (isAccountAlertText(text)) return 'security'
+  // A breach notice from a promotions tab or a mailing list is marketing, not a notice about this account.
+  if (isSecurityBreachText(text) && !labels.includes('CATEGORY_PROMOTIONS') && !email.listId && !email.listUnsubscribe) return 'security'
   if (/\b(?:bill|statement|payment|emi|premium|dues?|invoice)\b.{0,60}\b(?:due|overdue|pay by|last date)\b|\bdue (?:date|on|by|tomorrow|today)\b.{0,60}\b(?:bill|payment|amount|card|emi|premium|invoice)\b|\b(?:minimum|total) amount due\b/i.test(text)
     && !/\b(?:paid|received your payment|payment received|thank you for (?:your )?payment|successful)\b/i.test(text)) return 'bill_due'
   if (/\b(?:debited|credited)\b.{0,80}\b(?:a\/c|account|card|upi)\b|\b(?:a\/c|account|card)\b.{0,80}\b(?:debited|credited)\b/i.test(text)) return 'transaction_alert'
