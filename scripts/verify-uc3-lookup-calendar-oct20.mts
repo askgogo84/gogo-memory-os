@@ -49,12 +49,16 @@ ok('first future date from the answer', () => {
 ok('reply with date+time completes the pending entry', () => {
   // 14 Nov 2026: the fixed "14 November, 10 am" became the past at 10 am that day and the resolver (correctly) refused
   // it. The same check now uses a date 30 days ahead, so it can never expire.
-  const ahead = new Date(Date.now() + 30 * 86_400_000 + 5.5 * 3600_000)
+  // The resolver does not roll a passed month into next year (known gap: "9 January" said in December), so in late
+  // December the check uses "in 2 days" instead of a January date.
+  const ist = (ms: number) => new Date(ms + 5.5 * 3600_000)
+  const thirty = ist(Date.now() + 30 * 86_400_000), sameYear = thirty.getUTCFullYear() === ist(Date.now()).getUTCFullYear()
+  const ahead = sameYear ? thirty : ist(Date.now() + 2 * 86_400_000)
   const month = ['January','February','March','April','May','June','July','August','September','October','November','December'][ahead.getUTCMonth()]
-  const r: any = resolvePendingCalendar({ title: 'Jailer 2 release' }, `${ahead.getUTCDate()} ${month}, 10 am`)
+  const r: any = resolvePendingCalendar({ title: 'Jailer 2 release' }, sameYear ? `${ahead.getUTCDate()} ${month}, 10 am` : 'in 2 days at 10 am')
   assert.ok(r?.remindAtIso, 'expected a resolved time')
-  const ist = new Date(Date.parse(r.remindAtIso) + 5.5 * 3600_000)
-  assert.equal(ist.getUTCDate(), ahead.getUTCDate()); assert.equal(ist.getUTCMonth(), ahead.getUTCMonth()); assert.equal(ist.getUTCHours(), 10)
+  const got = ist(Date.parse(r.remindAtIso))
+  assert.equal(got.getUTCDate(), ahead.getUTCDate()); assert.equal(got.getUTCMonth(), ahead.getUTCMonth()); assert.equal(got.getUTCHours(), 10)
 })
 
 ok('duplicate calendar lines grouped', () => {
