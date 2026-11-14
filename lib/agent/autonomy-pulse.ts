@@ -512,6 +512,8 @@ export async function processAutonomyPulse(){
     await withShadowBudget(()=>runEmailShadow(owner)).catch(()=>console.error('PROACTIVE_SHADOW_FAILED:',JSON.stringify({kind:'email'})))
     await withShadowBudget(()=>runCleanupShadow(owner)).catch(()=>console.error('PROACTIVE_SHADOW_FAILED:',JSON.stringify({kind:'cleanup'})))
   }
+  // 14 Nov follow-ups: shadow for GOGO_PROACTIVE_SHADOW owners, live only for GOGO_FOLLOWUPS_LIVE owners (capped).
+  await withShadowBudget(()=>import('./follow-ups').then(m=>m.processFollowUps()),40_000).catch(()=>console.error('FOLLOWUPS_FAILED'))
   // 4 Nov quiet WhatsApp: no volunteered 4-hourly check-ins.
   const { mayVolunteer }=await import('@/lib/channels/proactive-policy')
   if(!mayVolunteer('check_in'))return {considered:0,sent:0,skipped:0,failed:0,results:[],quiet:true}

@@ -1014,7 +1014,9 @@ export function parseOpenLoopResolution(text:string,{allowGeneric=false}:{allowG
 }
 
 async function recentOpenLoopListSnapshot(telegramId:string|number){
-  const cutoff=new Date(Date.now()-10*60_000).toISOString()
+  // A list Gogo showed in chat binds numbers for 10 minutes; a follow-up digest ("still want these moving?", which
+  // may be read hours later) binds them for 24 hours, until a newer list replaces it.
+  const cutoff=new Date(Date.now()-24*3600_000).toISOString()
   const {data,error}=await supabaseAdmin.from('agent_activity')
     .select('metadata_json,created_at')
     .eq('telegram_id',String(telegramId))
@@ -1024,6 +1026,7 @@ async function recentOpenLoopListSnapshot(telegramId:string|number){
     .limit(1)
     .maybeSingle()
   if(error)throw new Error(`open_loop_recent_list_read_failed:${error.message}`)
+  if(data&&(data as any).metadata_json?.source!=='followup'&&Date.now()-Date.parse(String((data as any).created_at||''))>10*60_000)return null
   const ids=Array.isArray((data as any)?.metadata_json?.open_loop_ids)
     ? (data as any).metadata_json.open_loop_ids.map((id:any)=>String(id||'')).filter(Boolean).slice(0,20)
     : []
