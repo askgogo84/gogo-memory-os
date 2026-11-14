@@ -4,7 +4,7 @@
 //   deadline — the day after the email judge flagged a mail as time-sensitive, if no newer mail came from that sender
 //              (a re-check, not the due date itself: the judge's flag is an inference and is worded as one);
 //   event    — an upcoming event of theirs that needs a step (draft unpublished, nobody invited, guests silent);
-//   digest   — stale things the person asked for (2+ days untouched), listed once, answerable with "dismiss 2".
+//   digest   — stale things the person asked for (2+ days untouched), listed once (no numbers; see buildDigest).
 // Every line is built from checked fields (sender, subject, dates, titles); no model text is ever sent.
 // SHADOW for every GOGO_PROACTIVE_SHADOW owner (logged as proactive_shadow 'followup', nothing sent).
 // LIVE only for owners in GOGO_FOLLOWUPS_LIVE: at most 2 a day, an item never twice in 7 days, 8 am to 10 pm local,
@@ -20,7 +20,7 @@ export const DIGEST_MAX = 4
 const DAY = 86_400_000
 
 export type FollowUpKind = 'deadline' | 'event' | 'digest'
-export type FollowUp = { kind: FollowUpKind; keys: string[]; text: string; label: string; snapshot?: string[] }
+export type FollowUp = { kind: FollowUpKind; keys: string[]; text: string; label: string }
 export type DeadlineItem = { key: string; sender: string; subject: string; judgedAt: number; newerMail: boolean | null; mailbox?: string }
 export type EventItem = { key: string; title: string; why: string; href: string }
 
@@ -103,8 +103,10 @@ export function buildDigest(loops: any[], recent: Set<string>, now: number): Fol
   }).sort((a: any, b: any) => Number(b.priority || 0) - Number(a.priority || 0)).slice(0, DIGEST_MAX)
   if (!stale.length) return null
   const titles = stale.map((l: any) => clean(l.title, 120))
-  const text = `Still want these moving?\n${titles.map((t: string, i: number) => `${i + 1}. ${t}`).join('\n')}\n\nReply *dismiss 2* to drop one or *mark 2 done* if it is done (within 10 minutes). Later, ask *what needs my attention?* to see them again.`
-  return { kind: 'digest', keys: stale.map((l: any) => `open_loop:${l.id}`), text, label: `Still want these moving? ${titles.map((t: string, i: number) => `${i + 1}. ${t}`).join(' · ')}`.slice(0, 400), snapshot: stale.map((l: any) => String(l.id)) }
+  // No numbers (review): a late "mark 2 done" with no live list would fall to the reminder handlers and tick a
+  // reminder instead. Dropping or finishing goes through the numbered list the person asks for.
+  const text = `Still want these moving?\n${titles.map((t: string) => `• ${t}`).join('\n')}\n\nAsk *what needs my attention?* to drop or finish any of them.`
+  return { kind: 'digest', keys: stale.map((l: any) => `open_loop:${l.id}`), text, label: `Still want these moving? ${titles.join(' · ')}`.slice(0, 400) }
 }
 
 /** Deadline first (time-bound), then an event step, then the digest (once a day). */
@@ -245,12 +247,6 @@ export async function runFollowUps(owner: string, deps: Deps = {}) {
   // The person's own alert quiet hours win over the 8 am-10 pm default (review).
   const quiet = await (deps.quiet || defaultQuiet)(owner, tz, now).catch(() => true)
   if (quiet) return { ok: true, reason: 'quiet_hours' }
-  // A numbered list shown in chat in the last 10 minutes owns "dismiss 2"; a digest now would steal its numbers.
-  if (pick.snapshot?.length) {
-    const { data: shown, error: shownError } = await db.from('agent_activity').select('created_at').eq('telegram_id', owner).eq('event_type', 'open_loops_list_shown')
-      .gte('created_at', new Date(now - 10 * 60_000).toISOString()).limit(1)
-    if (shownError || shown?.length) return { ok: true, reason: 'list_recently_shown' }
-  }
   // At most two a day. The slot is the next free one by this read; if another pass took it (23505), this pass stops
   // instead of trying the next slot, so two overlapping passes can never send the same item twice (review).
   const sentToday = sent.filter(s => localDay(s.at, tz) === today).length
@@ -264,11 +260,6 @@ export async function runFollowUps(owner: string, deps: Deps = {}) {
     const session = await (deps.session || defaultSession)(owner).catch(() => false)
     const res = await (deps.send || defaultSend)(String(user.whatsapp_id), pick.text, pick.label, session)
     if (!res?.sid) { console.error('FOLLOWUP_SEND_UNCONFIRMED:', JSON.stringify({ kind: pick.kind })); return { ok: false, reason: 'outcome_unknown' } }
-    // Numbers bind only to a digest that was actually accepted for delivery, and only for the normal 10 minutes.
-    if (pick.snapshot?.length && session) {
-      await db.from('agent_activity').insert({ telegram_id: owner, event_type: 'open_loops_list_shown', message: 'Gogo listed stale open loops in a follow-up.',
-        metadata_json: { open_loop_ids: pick.snapshot, source: 'followup' } })
-    }
     console.log('FOLLOWUP_SENT:', JSON.stringify({ kind: pick.kind, keys: pick.keys.length, session }))
     return { ok: true, mode: 'live', kind: pick.kind }
   } catch {

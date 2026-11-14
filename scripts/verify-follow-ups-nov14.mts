@@ -39,11 +39,12 @@ eq(fu.buildEvent([{ key: 'k', title: 'X', why: 'y', href: 'https://evil.example/
 // Digest: what the person asked for, stale 2+ days, not asked in 7 days.
 const loop = (id: string, o: any = {}) => ({ id, kind: 'commitment', title: `Task ${id}`, summary: '', priority: 0.7, source_type: 'conversation', source_id: id, evidence_json: {}, last_seen_at: new Date(now - 3 * DAY).toISOString(), ...o })
 const dg = fu.buildDigest([loop('a', { priority: 0.9, title: "Nithin's farewell: headcount and budget" }), loop('b', { title: 'Goa flights: refresh the cheapest option' }), loop('c', { last_seen_at: new Date(now - DAY).toISOString() }), loop('d', { source_type: 'gmail_thread' }), loop('e', { kind: 'approval' }), loop('f', { title: 'pending' })], new Set(['open_loop:x']), now)!
-eq(dg.snapshot, ['a', 'b'], 'only stale, own, non-approval, named items; priority order')
-eq(dg.text, "Still want these moving?\n1. Nithin's farewell: headcount and budget\n2. Goa flights: refresh the cheapest option\n\nReply *dismiss 2* to drop one or *mark 2 done* if it is done (within 10 minutes). Later, ask *what needs my attention?* to see them again.", 'digest uses the existing commands, inside the normal 10-minute binding')
+eq(dg.keys, ['open_loop:a', 'open_loop:b'], 'only stale, own, non-approval, named items; priority order')
+eq(dg.text, "Still want these moving?\n• Nithin's farewell: headcount and budget\n• Goa flights: refresh the cheapest option\n\nAsk *what needs my attention?* to drop or finish any of them.", 'digest has no numbers, so a late "mark 2 done" can never tick the wrong thing')
+ok(!/\b(?:dismiss|mark)\s+\d/i.test(dg.text + dg.label), 'no numbered commands in the digest or its template label')
 eq(fu.buildDigest([loop('j', { evidence_json: { jev_attention_state: 'needs_followup' } })], new Set(), now), null, 'a loop Gogo inferred from chat is never presented as something the person asked for')
 eq(fu.buildDigest([loop('a')], new Set(['open_loop:a']), now), null, 'an item asked about in the last 7 days is not repeated')
-ok(fu.buildDigest(Array.from({ length: 9 }, (_, i) => loop(String(i))), new Set(), now)!.snapshot!.length === fu.DIGEST_MAX, 'at most 4 items')
+ok(fu.buildDigest(Array.from({ length: 9 }, (_, i) => loop(String(i))), new Set(), now)!.keys.length === fu.DIGEST_MAX, 'at most 4 items')
 ok(fu.buildDigest([loop('a')], new Set(), now)!.label.length <= 400, 'template label fits')
 
 // Priority: deadline > event > digest (digest once a day).
@@ -104,12 +105,12 @@ const night = { ...base(), now: Date.parse('2026-11-13T17:30:00Z') }
 eq((await fu.runFollowUps('-884501501', deps(night, { GOGO_FOLLOWUPS_LIVE: '-884501501' }) as any)).reason, 'outside_hours', 'no follow-up at night')
 eq(sends.length, 0, 'nothing sent at night')
 
-// Live pass for the allowlisted owner: digest sent once, recorded first, snapshot bound; second pass sends nothing.
+// Live pass for the allowlisted owner: digest sent once, recorded first; second pass sends nothing.
 const day = base()
 const live = { GOGO_FOLLOWUPS_LIVE: '-884501501', GOGO_PROACTIVE_SHADOW: '-884501501' }
 const r1: any = await fu.runFollowUps('-884501501', deps(day, live) as any)
 eq([r1.mode, r1.kind, sends.length, sends[0]?.to], ['live', 'digest', 1, '918884501501'], 'live owner gets the digest on WhatsApp')
-ok(day.agent_activity.some((r: any) => r.event_type === 'followup_sent' && r.metadata_json.slot === 1) && day.agent_activity.some((r: any) => r.event_type === 'open_loops_list_shown' && r.metadata_json.source === 'followup'), 'claim recorded; snapshot written after a confirmed send')
+ok(day.agent_activity.some((r: any) => r.event_type === 'followup_sent' && r.metadata_json.slot === 1) && !day.agent_activity.some((r: any) => r.event_type === 'open_loops_list_shown'), 'claim recorded; no number binding written')
 const r2: any = await fu.runFollowUps('-884501501', deps(day, live) as any)
 eq([r2.reason, sends.length], ['nothing_due', 1], 'same day: the digest is not repeated')
 // Cap: two already sent today → nothing, even with a deadline due.
@@ -148,14 +149,11 @@ function pulse_ok() { const p = readFileSync('lib/agent/autonomy-pulse.ts', 'utf
 // Review fixes: quiet hours, recent chat list, overlapping passes, unconfirmed send, other mailbox, wording.
 const qs = base()
 eq((await fu.runFollowUps('-884501501', { ...deps(qs, live), quiet: async () => true } as any) as any).reason, 'quiet_hours', 'the person’s own quiet hours win')
-const ls = base(); ls.agent_activity.push({ telegram_id: '-884501501', event_type: 'open_loops_list_shown', created_at: new Date(now - 3 * 60_000).toISOString(), metadata_json: { open_loop_ids: ['z'] } })
-eq((await fu.runFollowUps('-884501501', deps(ls, live) as any) as any).reason, 'list_recently_shown', 'a digest never steals the numbers of a list shown in the last 10 minutes')
 const ov = base(); ov.agent_activity.push({ id: fu.followupClaimId('-884501501', '2026-11-14', 1), telegram_id: '-884501501', event_type: 'other', created_at: new Date(now).toISOString(), metadata_json: {} })
 const ovBefore = sends.length
 eq([(await fu.runFollowUps('-884501501', deps(ov, live) as any) as any).reason, sends.length - ovBefore], ['claimed_elsewhere', 0], 'slot taken by an overlapping pass: stop, never try the next slot with the same item')
 const un = base()
 eq((await fu.runFollowUps('-884501501', { ...deps(un, live), send: async () => ({}) } as any) as any).reason, 'outcome_unknown', 'no sid: outcome unknown')
-ok(!un.agent_activity.some((r: any) => r.event_type === 'open_loops_list_shown'), 'no number binding for a list the person may never have seen')
 const fuSrc = readFileSync('lib/agent/follow-ups.ts', 'utf8')
 ok(/if \(!mailbox \|\| String\(access\.ownEmail \|\| ''\)\.toLowerCase\(\) !== mailbox\.toLowerCase\(\)\) return null/.test(fuSrc), 'a mail judged in another mailbox is never re-checked against the primary inbox')
 ok(/if \(out\.length >= 3\) break\n    \}\n    if \(out\.length >= 3\) break/.test(fuSrc), 'at most 3 deadline items (both loops)')
