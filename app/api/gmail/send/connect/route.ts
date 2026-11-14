@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getGmailSendAuthUrl, verifyGmailSendConnectToken } from '@/lib/google-gmail'
+import { setOauthBindingCookie } from '@/lib/security/oauth-browser-binding'
 
 export const dynamic='force-dynamic'
 
@@ -14,5 +15,10 @@ export async function GET(req:NextRequest){
   if(!authUrl){
     return NextResponse.json({ok:false,error:'Gmail Send upgrade is temporarily unavailable'},{status:503})
   }
-  return NextResponse.redirect(authUrl)
+  // Bind the OAuth state to the browser that opened this link (OAuth CSRF fix).
+  const res=NextResponse.redirect(authUrl)
+  if(!setOauthBindingCookie(res,'gmail',authUrl)){
+    return NextResponse.json({ok:false,error:'Gmail Send upgrade is temporarily unavailable'},{status:503})
+  }
+  return res
 }

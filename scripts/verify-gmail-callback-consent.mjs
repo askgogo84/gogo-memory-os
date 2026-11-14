@@ -11,10 +11,11 @@ const compiled = ts.transpileModule(original, {
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 }).outputText
 
-async function callGet({ outcome = 'saved', state = 'on', saveError = false, consentError = null, stateError = false, sendUpgrade = false } = {}) {
+async function callGet({ outcome = 'saved', state = 'on', saveError = false, consentError = null, stateError = false, sendUpgrade = false, bindCookie = 'match' } = {}) {
   let consentSaveCalls = 0
   let consentReadCalls = 0
   let tokenSaves = 0
+  let codeExchanges = 0
   const logs = []
 
   class FakeResponse {
@@ -33,7 +34,7 @@ async function callGet({ outcome = 'saved', state = 'on', saveError = false, con
     '@/lib/google-gmail': {
       consumeGmailSendOauthState: s => s === 'send' ? '101' : null,
       consumeGmailOauthState: s => s === 'read' ? '101' : null,
-      exchangeGmailCode: async () => ({
+      exchangeGmailCode: async () => (codeExchanges++, {
         access_token: 'synthetic-access',
         refresh_token: 'synthetic-refresh',
         scope: 'https://www.googleapis.com/auth/gmail.send',
@@ -69,6 +70,12 @@ async function callGet({ outcome = 'saved', state = 'on', saveError = false, con
         },
       },
     },
+    // OAuth browser binding (#850 port): the callback only proceeds for the browser holding the cookie for THIS state.
+    '@/lib/security/oauth-browser-binding': {
+      readOauthBindingCookie: (req, flow) => { assert.equal(flow, 'gmail'); return req.cookies?.get?.('gogo_oauth_bind_gmail')?.value },
+      oauthBindingMatches: (flow, st, cookie) => flow === 'gmail' && typeof cookie === 'string' && cookie === 'bound:' + st,
+      clearOauthBindingCookie: res => res,
+    },
     '@/lib/security/google-token-crypto': {
       encryptGoogleToken: x => 'encrypted:' + x,
       hasGoogleTokenEncryptionKey: () => true,
@@ -100,10 +107,13 @@ async function callGet({ outcome = 'saved', state = 'on', saveError = false, con
   sandbox.module.exports = sandbox.exports
   vm.runInNewContext(compiled, sandbox, { filename: 'app/api/gmail/callback/route.ts', timeout: 1000 })
   assert.equal(typeof sandbox.exports.GET, 'function', 'original exported OAuth GET is invoked')
+  const st = sendUpgrade ? 'send' : 'read'
+  const cookieValue = bindCookie === 'match' ? 'bound:' + st : bindCookie === 'wrong' ? 'bound:other' : undefined
   const response = await sandbox.exports.GET({
-    url: 'https://app.askgogo.in/api/gmail/callback?state=' + (sendUpgrade ? 'send' : 'read') + '&code=synthetic',
+    url: 'https://app.askgogo.in/api/gmail/callback?state=' + st + '&code=synthetic',
+    cookies: { get: name => (name === 'gogo_oauth_bind_gmail' && cookieValue !== undefined ? { value: cookieValue } : undefined) },
   })
-  return { response, consentSaveCalls, consentReadCalls, tokenSaves, logs }
+  return { response, consentSaveCalls, consentReadCalls, tokenSaves, codeExchanges, logs }
 }
 
 const green = await callGet()
@@ -150,4 +160,13 @@ const failedTokens = await callGet({ saveError: true })
 assert.equal(failedTokens.response.status, 500)
 assert.equal(failedTokens.consentSaveCalls, 0, 'no consent can be recorded before token save')
 assert.doesNotMatch(failedTokens.response.body, /Google Workspace is ready\./)
+for (const bindCookie of ['none', 'wrong']) {
+  for (const sendUpgrade of [false, true]) {
+    const x = await callGet({ bindCookie, sendUpgrade })
+    assert.equal(x.response.status, 400, bindCookie + ' binding cookie must be refused')
+    assert.equal(x.codeExchanges, 0, 'no code exchange for an unbound browser')
+    assert.equal(x.tokenSaves, 0, 'no token save for an unbound browser')
+    assert.equal(x.consentSaveCalls, 0, 'no consent write for an unbound browser')
+  }
+}
 console.log('PASS: original Gmail callback GET cannot claim mailbox readiness on refused/missing/raced/failed consent; affirmative read/send still approval-bound')
