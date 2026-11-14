@@ -1,0 +1,130 @@
+name: Gogo TV companion and launcher compatibility
+on:
+  pull_request:
+    paths:
+      - 'experimental/gogo-tvos-v215/**'
+      - '.github/workflows/gogo-tvos-v215.yml'
+      - 'app/api/tv/**'
+      - 'app/tv/**'
+      - 'lib/tv/**'
+      - 'lib/services/voice-transcription.ts'
+      - 'scripts/verify-tv-*.mjs'
+      - 'supabase/migrations/*_tv_pairing*.sql'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pairing-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: node scripts/verify-tv-pairing.mjs
+      - run: node scripts/verify-tv-routes.mjs
+      - run: npm run typecheck
+  native-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: gogo
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          repository: techgenius1/tvOS-Launcher
+          ref: 463fa6c2a9b7322c4407f1d00db935ef09d20f4f
+          path: upstream
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install Android SDK tools
+        run: |
+          set -euxo pipefail
+          test -n "$ANDROID_HOME"
+          SDKMANAGER="$(find "$ANDROID_HOME" -type f -name sdkmanager | head -n 1)"
+          test -n "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0" "build-tools;36.0.0"
+      - name: Safely inject Gogo TV module
+        run: |
+          set -euxo pipefail
+          python3 -m py_compile gogo/experimental/gogo-tvos-v215/{patch_tvos_v215,tv_acceptance}.py
+          python3 gogo/experimental/gogo-tvos-v215/patch_tvos_v215.py \
+            --upstream upstream \
+            --sources gogo/experimental/gogo-tvos-v215 \
+            --backup /tmp/tvos-original
+          grep -q "GogoWidgets.makeCard(host)" upstream/src/com/techgenius/tvoslauncher/HomeDashboard.java
+          grep -q "GogoHubActivity" upstream/AndroidManifest.xml
+          python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          root=ET.parse("upstream/AndroidManifest.xml").getroot()
+          ns="{http://schemas.android.com/apk/res/android}"
+          filt=root.findall(".//intent-filter")
+          assert any(c.attrib.get(ns+"name")=="android.intent.category.HOME"
+                     for i in filt for c in i.findall("category"))
+          assert not any(a.attrib.get(ns+"name")==".GogoHubActivity" and
+                         a.find("intent-filter") is not None
+                         for a in root.findall(".//activity"))
+          print("TVOS_HOME_UNCHANGED_AND_GOGO_HUB_NOT_EXPORTED_OK")
+          PY
+      - name: Build native Java APK
+        run: |
+          set -euxo pipefail
+          cd upstream
+          chmod +x build.sh
+          ./build.sh
+      - name: Verify patched upstream compiles
+        run: |
+          set -e
+          test -s upstream/build/tvos-home.apk
+          sha256sum upstream/build/tvos-home.apk
+          ls -lh upstream/build/tvos-home.apk
+      - name: Build independent Gogo TV companion
+        env:
+          GOGO_TV_ORIGIN: https://tv-preview.invalid
+        run: |
+          set -euxo pipefail
+          cd gogo/experimental/gogo-tvos-v215/companion
+          chmod +x build.sh
+          ./build.sh
+          cd build
+          APK=gogo-tv-companion-test.apk
+          AAPT="$ANDROID_HOME/build-tools/36.0.0/aapt2"
+          "$AAPT" dump badging "$APK" > companion-badging.txt
+          "$AAPT" dump xmltree --file AndroidManifest.xml "$APK" > companion-manifest.txt
+          grep -q "^package: name='in.askgogo.tvhub'" companion-badging.txt
+          grep -q 'android.intent.category.LEANBACK_LAUNCHER' companion-manifest.txt
+          grep -q 'android.permission.RECORD_AUDIO' companion-manifest.txt
+          if grep -E 'android.intent.category.HOME|BIND_ACCESSIBILITY_SERVICE|WRITE_SECURE_SETTINGS' companion-manifest.txt; then
+            exit 1
+          fi
+          python3 - "$APK" <<'PY'
+          import sys, zipfile
+          with zipfile.ZipFile(sys.argv[1]) as apk:
+              names = set(apk.namelist())
+              assert 'assets/vosk-model-small-en-us-0.15.zip' in names
+              for abi in ('armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'):
+                  assert {f'lib/{abi}/libvosk.so', f'lib/{abi}/libjnidispatch.so'} <= names
+          PY
+          sha256sum "$APK" > SHA256SUMS
+          java -jar "$ANDROID_HOME/build-tools/36.0.0/lib/apksigner.jar" \
+            verify --print-certs "$APK" > companion-signer.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gogo-tv-companion-test-apk
+          path: |
+            gogo/experimental/gogo-tvos-v215/companion/build/gogo-tv-companion-test.apk
+            gogo/experimental/gogo-tvos-v215/companion/build/SHA256SUMS
+            gogo/experimental/gogo-tvos-v215/companion/build/companion-signer.txt
+          if-no-files-found: error
+          retention-days: 7

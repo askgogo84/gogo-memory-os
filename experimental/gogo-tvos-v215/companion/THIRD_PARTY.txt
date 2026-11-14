@@ -1,0 +1,7 @@
+Offline wake-word recognition includes Vosk Android 0.3.75 and the small US English 0.15 model.
+Vosk API and model: Alpha Cephei Inc., Apache License 2.0.
+Sources: https://github.com/alphacep/vosk-api and https://alphacephei.com/vosk/models
+JNA 5.18.1: JNA contributors, Apache License 2.0 distribution option.
+Source: https://github.com/java-native-access/jna
+ZXing Core 3.5.3: ZXing contributors, Apache License 2.0.
+Source: https://github.com/zxing/zxing

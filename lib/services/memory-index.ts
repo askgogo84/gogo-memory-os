@@ -1,6 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { isSecretShapedMemory } from '@/lib/bot/memory-redaction'
-import { embedText } from '@/lib/services/embeddings'
 
 // Content that should never be embedded/searched (system rows, JSON state, etc.)
 // Mirrors the isInternalMemory filter in memory-control.ts.
@@ -83,6 +82,7 @@ export async function indexMemory(params: {
     const sourceTable = params.sourceTable || 'memories'
     // A deleted memory must not be sent for embedding or re-indexed from a stale task.
     if (sourceTable === 'memories' && !await ownerMemoryStillExists(params.telegramId, params.sourceId)) return
+    const { embedText } = await import('@/lib/services/embeddings')
     const embedding = await embedText(content)
     // A forget may have happened during the external embedding call.
     if (sourceTable === 'memories' && !await ownerMemoryStillExists(params.telegramId, params.sourceId)) return
