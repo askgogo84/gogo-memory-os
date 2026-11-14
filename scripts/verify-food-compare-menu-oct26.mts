@@ -1,3 +1,5 @@
+// Legacy expectations run in the Swiggy-approved mode; the default (withheld) mode is covered by verify-swiggy-comparison-policy-nov13.mts.
+process.env.COMMERCE_SWIGGY_COMPARISON_APPROVED='true'
 // 26 Oct live: "Compare chicken biryani at Meghana Foods on Swiggy and Zomato for 560086" ran as a product
 import './verify-food-menu-direct-oct26.mts'
 import './verify-comparison-no-login-oct26.mts'

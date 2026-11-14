@@ -1,3 +1,6 @@
+// Legacy expectations run in the Swiggy-approved mode; the default (withheld) mode is covered by verify-swiggy-comparison-policy-nov13.mts.
+process.env.COMMERCE_SWIGGY_COMPARISON_APPROVED='true'
+import * as swiggyPolicy from '../lib/commerce/swiggy-policy.ts'
 // R25d (22 Oct live): a food comparison "near Rajajinagar" paused and asked for a PIN code although an
 // area was named. A known locality must resolve to its PIN and the comparison must proceed without asking.
 import assert from 'node:assert/strict'
@@ -48,6 +51,7 @@ const exports:any={}
 runInNewContext(ts.transpileModule(readFileSync('lib/agent/food-comparison.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText,{exports,Date,URL,console,require(name:string){
   if(name==='@/lib/supabase-admin')return {supabaseAdmin:db}
   if(name==='./food-comparison-intent')return intent
+  if(name==='@/lib/commerce/swiggy-policy')return swiggyPolicy
   if(name==='@/lib/commerce/task')return {commerceTaskLink:(id:string)=>'https://app.askgogo.in/dashboard/commerce?run='+id}
   if(name==='@/lib/web-search')return {searchWebResults:async(query:string)=>{searches.push(query);return [{title:'Biryani delivery',snippet:'Rajajinagar 560010',url:'https://www.swiggy.com/city/bangalore/biryani-rajajinagar'}]}}
   throw new Error(`Unexpected dependency ${name}`)

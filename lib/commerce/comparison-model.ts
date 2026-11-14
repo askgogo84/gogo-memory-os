@@ -1,4 +1,5 @@
-import {productIdentityText,productIdentityMatches} from './product-identity'
+import {productIdentityText,productIdentityMatches,packFromPage,offerAmountBefore} from './product-identity'
+import {SWIGGY_COMPARISON_NOTE, withheldComparisonProviders} from './swiggy-policy'
 export const COMPARISON_PROVIDERS = {
   amazon: {label: 'Amazon India', url: 'https://www.amazon.in/', domain: 'amazon.in'},
   flipkart: {label: 'Flipkart', url: 'https://www.flipkart.com/', domain: 'flipkart.com'},
@@ -89,7 +90,9 @@ export function outletAreaFromAddress(address: string): string | null {
   const parts = String(address || '').split(',').map(p => p.replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean)
   const city = parts.findIndex(p => /^(?:bengaluru|bangalore)\b/i.test(p))
   const candidates = (city > 0 ? parts.slice(0, city) : parts).reverse()
-  const area = candidates.find(p => p.length >= 4 && !/\b(?:block|cross|main|floor|stage|phase|sector|road|rd|street|st|near|opp|opposite|building|complex|no)\b\.?$/i.test(p) && !/^(?:karnataka|india)$/i.test(p))
+  // 13 Nov live: "…, next to Old Galaxy Theatre, Residency Rd, …" gave "next to Old Galaxy Theatre": a landmark is not an area.
+  const area = candidates.find(p => p.length >= 4 && !/\b(?:block|cross|main|floor|stage|phase|sector|road|rd|street|st|near|opp|opposite|building|complex|no)\b\.?$/i.test(p)
+    && !/^(?:next to|near|opp\.?|opposite|behind|beside|above|below|adjacent to|in front of|off)\b/i.test(p) && !/^(?:karnataka|india)$/i.test(p))
   return area ? area.slice(0, 40) : null
 }
 export function foodRestaurantLead(provider: ComparisonProvider, restaurant: string, leads: Array<{url: string; title?: string}>, pincode?: string | null, area?: string | null) {
@@ -214,7 +217,7 @@ export function parsePriceComparison(text: string) {
     // "compare chicken biryani at Meghana Foods": a dish at a restaurant is a food comparison on Swiggy and Zomato.
     const dishAtRestaurant = parseFoodSubject(core.replace(/^\s*compare\s+(?:the\s+)?(?:prices?\s+(?:of|for)\s+)?/i, ''))
       && /\b(?:biryani|pizza|burger|dosa|idli|thali|meals?|paneer|chicken|mutton|kebab|kabab|shawarma|momos?|noodles|fried rice|pulao|curry|masala|tikka|naan|roti|parotta|sandwich|wrap|rolls?|cake|ice cream|coffee|tea|juice|shake|combo)\b/i.test(core)
-    if (dishAtRestaurant) { providers.push('swiggy', 'zomato'); return {subject: subjectOf(text), request: text.slice(0, 2000), providers} }
+    if (dishAtRestaurant) { providers.push('swiggy', 'zomato'); return withoutWithheld({subject: subjectOf(text), request: text.slice(0, 2000), providers}) }
     const grocery = /\b(?:butter|milk|ghee|curd|paneer|atta|rice|dal|oil|sugar|eggs?|bread|biscuits?|chips|maggi|noodles|tea|coffee|detergent|shampoo|soap|toothpaste|fruits?|vegetables?|onions?|tomato(?:es)?|potato(?:es)?|grocer(?:y|ies)|amul|nestle|britannia|aashirvaad|tata salt|surf excel|colgate)\b/i.test(text)
     providers.push(...(grocery ? ['zepto', 'blinkit', 'instamart'] : ['amazon', 'flipkart', 'croma', 'reliance']) as ComparisonProvider[])
   }
@@ -222,7 +225,14 @@ export function parsePriceComparison(text: string) {
   // Preserve all original criteria separately. This is a display label, never a
   // model-extracted product specification or a substitute for the full request.
   const subject = subjectOf(text)
-  return {subject: subject || 'Price comparison', request: text.slice(0, 2000), providers}
+  return withoutWithheld({subject: subject || 'Price comparison', request: text.slice(0, 2000), providers})
+}
+
+/** Swiggy agreement (13 Nov): Swiggy/Instamart are dropped from comparisons until Swiggy approves in writing. The
+ *  request is still recognised, so the person is told what was left out; `providers` may then be empty. */
+function withoutWithheld(parsed: {subject: string; request: string; providers: ComparisonProvider[]}) {
+  const withheld = withheldComparisonProviders(parsed.providers)
+  return {...parsed, providers: parsed.providers.filter(p => !withheld.includes(p)), withheld}
 }
 
 function subjectOf(text: string) {
@@ -349,6 +359,10 @@ export function providerObservation(provider: ComparisonProvider, child: any, st
   if (reason === 'browser_handoff_in_use') return {...base, status: 'blocked', needsInput: false,
     reason: 'my browser was busy with another task, so I didn’t check this store. This check has finished; ask for a new comparison when the browser is free.'}
   const needsInput = ['human_auth_required', 'delivery_location_required'].includes(reason)
+  // 13 Nov 6 pm live: Zepto showed a CAPTCHA, reported as "needs your delivery location or sign-in". A robot check is
+  // never solved or worked around by Gogo; say what it was.
+  if (child.status === 'paused' && step?.output_json?.authReason === 'captcha') return {...base, status: 'blocked', needsInput: false,
+    reason: 'the store showed a robot check (CAPTCHA), which I don’t try to get past. Open the store app to see the price.'}
   if (child.status === 'paused') return {...base, status: 'blocked', needsInput,
     reason: needsInput ? 'it needs your delivery location or sign-in before it shows prices.' : 'the store blocked my browser, so I couldn’t read a price.'}
   if (child.status === 'running') return {...base, status: 'checking'}
@@ -378,14 +392,18 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
   const compact = (text: string) => text.toLowerCase().replace(/[^a-z0-9]/g, '')
   const requested = productIdentityText(subject,true).match(/[a-z0-9]+/gi) || []
   let cursor = 0
-  const identity = compact(productIdentityText(heading))
+  // The asked pack size may sit on its own evidence line under a heading that omits it (Zepto, 13 Nov live).
+  const packLine = evidence.split('\n')[1]?.trim() || ''
+  const pack = packLine && !/₹|\bRs\.?\s*\d|\bINR\b/i.test(packLine) ? packFromPage(subject, heading, heading + ' ' + packLine) : null
+  const named = pack ? heading + ' ' + pack : heading
+  const identity = compact(productIdentityText(named))
   for (const token of requested) {
     const position = identity.indexOf(compact(token), cursor)
     if (position < 0) return null
     cursor = position + compact(token).length
   }
   if (!namesProduct(requested) || heading.length > 220) return null
-  if (!productIdentityMatches(subject,heading)) return null
+  if (!productIdentityMatches(subject,named)) return null
   // One model code must appear as written: "xm5" is in "WH-1000XM5" but not in the camera "X-M5".
   if (requested.length === 1 && !heading.toLowerCase().includes(requested[0].toLowerCase())) return null
   // A different phone tier is not the requested variant, even if all base words match.
@@ -400,7 +418,7 @@ export function comparisonQuote(subject: string, row: ProviderObservation): {pri
     const adjacentCapacity = compact(before.match(/\b\d+\s*(?:GB|TB)\s*$/i)?.[0] || '')
     return Number(match[1].replace(/,/g,'')) > 0
       && !(headingCapacity && adjacentCapacity && headingCapacity !== adjacentCapacity)
-      && !/\b(?:MRP|M\.R\.P\.?|list price|was|save|savings|discount|cashback|off|EMI|from|starting at|buy at|offer price|with offers)\s*:?\s*$/i.test(before)
+      && !/\b(?:MRP|M\.R\.P\.?|list price|was|save|savings|discount|cashback|EMI|from|starting at|buy at|offer price|with offers)\s*:?\s*$/i.test(before) && !offerAmountBefore(before)
       && !/\+\s*$/.test(before)
       && !/\bor\s*$/i.test(before)
       && !/\bAD\s*$/i.test(before)
@@ -522,7 +540,8 @@ export function comparisonWhatsAppSummary(task: PriceComparison, origin = 'https
     ...(matchedOnCode ? ['I matched this on the model code only. If it’s not the product you meant, send the full name.'] : []),
     ...(isFoodComparison(task.metadata_json.providers)
       ? ['Menu prices only; delivery fee, packaging, surge and coupons are added at checkout and aren’t included.',
-        'Want another dish? Send it like “compare paneer butter masala at Empire on Swiggy and Zomato for 560086”.']
+        withheldComparisonProviders(['swiggy']).length && !task.metadata_json.providers.some(row => row.provider === 'swiggy' && row.status === 'observed') ? 'Want another dish? Send it like “compare paneer butter masala at Empire on Zomato for 560086”.\n' + SWIGGY_COMPARISON_NOTE
+          : 'Want another dish? Send it like “compare paneer butter masala at Empire on Swiggy and Zomato for 560086”.']
       : ['Listed prices only; delivery and bank offers not included.',
         'Want another model or size? Send it in full, like “compare iPhone 17 Pro 256GB”.']),
   ].join('\n')

@@ -2,6 +2,7 @@ import {supabaseAdmin} from '@/lib/supabase-admin'
 import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-runtime-guard'
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
+import {SWIGGY_COMPARISON_NOTE, SWIGGY_ONLY_NOTE, withheldComparisonProviders} from './swiggy-policy'
 import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, outletAreaFromAddress, isFoodComparison, parseFoodSubject, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
@@ -189,6 +190,9 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
       if (current) return reply(current)
     }
     if (!parsed) return null
+    // Swiggy agreement: nothing left to check once Swiggy/Instamart are withheld. Say so; start no browser run.
+    if (!parsed.providers.length) return {runId: '', status: 'paused' as const, capability: 'browser' as const, risk: 'low' as const,
+      handledBy: 'price-comparison', text: SWIGGY_ONLY_NOTE}
     const now = new Date().toISOString()
     const remembered = await ownerWatchStorage(owner, parsed.subject).catch(() => null)
     if (remembered) parsed.subject = `${parsed.subject} ${remembered}`
@@ -205,7 +209,7 @@ export async function tryPriceComparison(params: {telegramId: number; text: stri
     const current = await readPriceComparison(owner, String(data.id))
     if (!current) throw new Error('comparison_missing_after_create')
     return reply(current, current.metadata_json.providers.some(row => row.waitingForRunId)
-      ? undefined : startedText(parsed.subject, parsed.providers, looks, remembered, parsed.request))
+      ? undefined : startedText(parsed.subject, parsed.providers, looks, remembered, parsed.request) + (parsed.withheld.length ? '\n\n' + SWIGGY_COMPARISON_NOTE : ''))
   } finally { await releaseBrainUserLease(key, lease.ownerToken) }
 }
 
@@ -269,9 +273,16 @@ export function storeRetryLimit(row: {navTimeout?: boolean}): number {
   return row?.navTimeout ? NAV_TIMEOUT_ATTEMPTS : MAX_STORE_ATTEMPTS
 }
 
+/** Swiggy agreement (13 Nov): a pending or failed Swiggy/Instamart row (from a run saved before the gate) is closed as
+ *  blocked with the note, so no worker opens it and no retry re-queues it. Rows already checked keep their result. */
+export function withholdRows<T extends StoreRow>(rows: T[]): T[] {
+  return rows.map(row => ['pending', 'failed'].includes(String(row.status)) && withheldComparisonProviders([row.provider]).length
+    ? {...row, status: 'blocked' as const, reason: SWIGGY_COMPARISON_NOTE, waitingForRunId: undefined} as T : row)
+}
+
 /** Failed stores go back in the queue until their budget is spent; observed, blocked and needs-input stores never do. */
 export function retryFailedStores<T extends StoreRow>(rows: T[]): T[] {
-  return rows.map(row => row.status === 'failed' && (row.attempts || 1) < storeRetryLimit(row)
+  return rows.map(row => row.status === 'failed' && !withheldComparisonProviders([row.provider]).length && (row.attempts || 1) < storeRetryLimit(row)
     ? {provider: row.provider, status: 'pending' as const, attempts: (row.attempts || 1) + 1, ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})} as T : row)
 }
 // 26 Oct: Swiggy and Zomato are separate sites with public menus, so each gets its own browser too; sharing one
@@ -298,9 +309,18 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
   const claimed = await withComparisonState(id, async () => {
     const task = await readPriceComparison(owner, id)
     if (!task) return null
+    // Swiggy agreement (13 Nov): runs saved before the gate never open swiggy.com / Instamart either.
+    task.metadata_json.providers = withholdRows(task.metadata_json.providers)
+    // 13 Nov 6 pm live: Zepto stopped at a CAPTCHA and its paused browser task kept the shared grocery browser reserved,
+    // so Blinkit was never opened ("my browser was busy"). This comparison has already reported that store as blocked
+    // and does not wait for it, so before the next shared-browser store starts, the blocked sibling's hold is released.
+    // Collected here; released after this short state lease, before the next shared-browser store runs (review).
+    const release = task.metadata_json.providers.some(row => row.status === 'pending' && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider))
+      ? task.metadata_json.providers.filter(row => row.status === 'blocked' && row.runId && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider)).map(row => String(row.runId))
+      : []
     const sharedBusy = task.metadata_json.providers.some(row => row.status === 'checking' && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider))
     const next = task.metadata_json.providers.find(row => row.status === 'pending' && (PARALLEL_COMPARISON_PROVIDERS.has(row.provider) || !sharedBusy) && !row.waitingForRunId)
-    if (!next) { await saveProgress(owner, task); return {task, next: null as null} }
+    if (!next) { await saveProgress(owner, task); return {task, next: null as null, release} }
     const parallel = PARALLEL_COMPARISON_PROVIDERS.has(next.provider)
     const {prepareLinkedBrowserRead} = await import('@/lib/agent/browser-command')
     const startedAt = new Date().toISOString()
@@ -309,11 +329,25 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     if (food) {
       // The restaurant's own menu page on this app (the outlet in the person's city first), else Swiggy's search.
       const pin = pincodeInText(task.metadata_json.request)
-      const area = await nearestOutletArea(food.restaurant, pin)
+      // 13 Nov live: the map search for "Meghana Foods near 560086" returned the famous Residency Road outlet, not the
+      // person's own area. When the pincode is the one they saved for home, their home area names the outlet to look for.
+      // Review: if the restaurant has no outlet in the home area, fall back to the map search's nearest outlet.
+      const home = pin ? await import('@/lib/agent/places-context').then(m => m.savedPlaces(owner)).then(p => p.home, () => null).catch(() => null) : null
+      const homeArea = home?.pincode && home.pincode === pin && home.area ? String(home.area) : null
       const {searchWebResults} = await import('@/lib/web-search')
-      const leads = await searchWebResults(`${food.restaurant} ${area ? area + ' ' : ''}${/^56/.test(pin || '') ? 'Bangalore ' : ''}order online ${COMPARISON_PROVIDERS[next.provider].label}`,
-        {includeDomains: [COMPARISON_PROVIDERS[next.provider].domain], timeoutMs: 10_000}).catch(() => [] as any[])
-      startUrl = foodRestaurantLead(next.provider, food.restaurant, leads || [], pin, area) || comparisonSearchUrl(next.provider, task.metadata_json.subject) || startUrl
+      const look = async (where: string | null) => {
+        const found = await searchWebResults(`${food.restaurant} ${where ? where + ' ' : ''}${/^56/.test(pin || '') ? 'Bangalore ' : ''}order online ${COMPARISON_PROVIDERS[next.provider].label}`,
+          {includeDomains: [COMPARISON_PROVIDERS[next.provider].domain], timeoutMs: 10_000}).catch(() => [] as any[])
+        return {leads: found || [], url: foodRestaurantLead(next.provider, food.restaurant, found || [], pin, where)}
+      }
+      let area: string | null = homeArea
+      let found = homeArea ? await look(homeArea) : null
+      if (!found?.url || !outletInArea(found.url, homeArea)) {
+        area = await nearestOutletArea(food.restaurant, pin)
+        found = await look(area)
+      }
+      const leads = found.leads
+      startUrl = found.url || comparisonSearchUrl(next.provider, task.metadata_json.subject) || startUrl
       // Which outlet was chosen and why (area from the map search, how many restaurant pages the search returned).
       console.log('FOOD_OUTLET:', JSON.stringify({provider: next.provider, area: area || null, leads: (leads || []).length,
         paths: (leads || []).slice(0, 6).map((l: any) => { try { return new URL(String(l?.url || '')).pathname.slice(0, 80) } catch { return null } }), start: (() => { try { return new URL(startUrl).pathname.slice(0, 80) } catch { return null } })()}))
@@ -347,11 +381,15 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     task.metadata_json.providers = task.metadata_json.providers.map(row => row === next
       ? {...row, runId: childId, status: 'checking', startedAt, startUrl} : row)
     await saveProgress(owner, task)
-    return {task, next: {provider: next.provider, childId, parallel}}
+    return {task, next: {provider: next.provider, childId, parallel}, release}
   })
   if (!claimed) return null
   if (!claimed.next) return claimed.task
   const {childId, parallel, provider} = claimed.next
+  if (!parallel && claimed.release?.length) {
+    const {releaseRunAuthHandoff} = await import('@/lib/agent/secondary-auth-handoff')
+    await Promise.all(claimed.release.map(runId => releaseRunAuthHandoff(owner, runId).catch(() => {})))
+  }
   // The shared grocery browser takes one store at a time; each electronics store has its own browser lane.
   const laneKey = 'commerce-browser:' + owner + (parallel ? ':' + provider : '')
   const lane = await acquireBrainUserLease(laneKey, 600)
@@ -379,12 +417,22 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
   })
 }
 
+/** The chosen restaurant page's slug names every word of the area ("rajajinagar" in ".../meghana-foods-rajajinagar-..."). */
+export function outletInArea(url: string, area: string | null): boolean {
+  const words = (String(area || '').toLowerCase().replace(/rajaji nagar/g, 'rajajinagar').match(/[a-z]{4,}/g) || []).filter(w => !['road', 'layout', 'nagar', 'block', 'main', 'cross', 'stage', 'phase'].includes(w))
+  let slug = ''
+  try { slug = new URL(url).pathname.toLowerCase() } catch { return false }
+  return words.length > 0 && words.every(w => slug.includes(w))
+}
+
 /** 23 Oct (owner): "If Amazon is not accessible, try the others." A single-store read whose store blocked the
  *  browser (not a sign-in or location ask) also checks the other electronics stores, once. */
 export function withStoreFallback(meta: any) {
   const rows = Array.isArray(meta?.providers) ? meta.providers : []
   const only = rows.length === 1 ? rows[0] : null
-  if (!only || meta.storeFallback || only.status !== 'blocked' || only.needsInput || !PARALLEL_COMPARISON_PROVIDERS.has(only.provider)) return rows
+  // The fallback is for electronics stores only: a Zomato-only food run (Swiggy withheld) must not turn into a
+  // search of Amazon/Flipkart for a dish.
+  if (!only || meta.storeFallback || only.status !== 'blocked' || only.needsInput || !['amazon', 'flipkart', 'croma', 'reliance'].includes(only.provider)) return rows
   meta.storeFallback = only.provider
   const others = ['flipkart', 'croma', 'reliance', 'amazon'].filter(p => p !== only.provider)
   return [...rows, ...others.map(provider => ({provider, status: 'pending', attempts: 1}))]
@@ -416,7 +464,7 @@ export async function advancePriceComparisonAll(actor: AgentActor, id: string) {
       const settled = await withComparisonState(id, async () => {
         const fresh = await readPriceComparison(owner, id)
         if (!fresh) return null
-        fresh.metadata_json.providers = fresh.metadata_json.providers.map(row => row.status === 'failed' && !row.evidence && (row.attempts || 1) < MAX_STORE_ATTEMPTS
+        fresh.metadata_json.providers = fresh.metadata_json.providers.map(row => row.status === 'failed' && !row.evidence && !withheldComparisonProviders([row.provider]).length && (row.attempts || 1) < MAX_STORE_ATTEMPTS
           && /interrupted|lost/.test(String(row.reason || '')) ? {provider: row.provider, status: 'pending' as const, attempts: (row.attempts || 1) + 1, ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})} : row)
         await saveProgress(owner, fresh)
         return fresh

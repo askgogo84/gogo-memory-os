@@ -8,6 +8,7 @@ import {readInstamartProducts, type GroceryChoice} from './swiggy-read'
 import {commerceHandoffUrl} from './evidence'
 import {readCommerceTask, selectCommerceTaskAddress, saveCommerceCatalogue, saveCommerceReadBlocker, commerceTaskLink, type CommerceTask} from './task'
 import {prepareInstamartCart} from './instamart-cart'
+import {withSwiggyAttribution} from './swiggy-attribution'
 
 // Chat entry point for Swiggy Instamart through the user's own official Swiggy MCP connection.
 // "order milk on Instamart" -> read-only search -> three options. Only a 1/2/3 reply that answers
@@ -103,9 +104,9 @@ async function startInstamartOrder(owner: string, subject: string, requestText: 
     const offeredAt = new Date().toISOString()
     task = await saveCommerceCatalogue(owner, task, {observedAt: offeredAt, products},
       options.length ? {chat_pick: {offeredAt, surface, options: options.map(option => ({spinId: option.id, skuId: option.skuId}))}} : {})
-    if (!options.length) return result('Instamart has no in-stock match for "' + subject + '" at ' + address.label + ' right now. Try a more specific name, like "Amul Taaza toned milk 1 litre". Nothing was added or ordered.', 'completed', task.id)
+    if (!options.length) return result(withSwiggyAttribution('Instamart has no in-stock match for "' + subject + '" at ' + address.label + ' right now. Try a more specific name, like "Amul Taaza toned milk 1 litre". Nothing was added or ordered.', 'instamart'), 'completed', task.id)
     const lines = options.map((option, index) => (index + 1) + '. ' + option.name + ' — ' + option.variant + ' — ' + rupees(option.pricePaise))
-    return result('Instamart options for "' + subject + '" delivering to ' + address.label + ':\n' + lines.join('\n') + '\n\n' + (options.length < 3 ? 'Reply ' + options.map((_, index) => index + 1).join(' or ') + ' to add it to your Instamart cart. Nothing is ordered; you pay in the Swiggy app.' : INSTAMART_PICK_PROMPT), 'paused', task.id)
+    return result(withSwiggyAttribution('Instamart options for "' + subject + '" delivering to ' + address.label + ':\n' + lines.join('\n') + '\n\n' + (options.length < 3 ? 'Reply ' + options.map((_, index) => index + 1).join(' or ') + ' to add it to your Instamart cart. Nothing is ordered; you pay in the Swiggy app.' : INSTAMART_PICK_PROMPT), 'instamart'), 'paused', task.id)
   } catch (error) {
     const reauth = error instanceof CommerceMcpError && error.reason === 'reauth_required'
     if (task) await saveCommerceReadBlocker(owner, task, reauth ? 'reauth_required' : 'provider_unverified').catch(() => null)
@@ -166,14 +167,14 @@ async function bindInstamartPick(owner: string, pick: 1 | 2 | 3): Promise<Instam
       const reason = error instanceof Error ? error.message : ''
       // Before the durable claim nothing was written; after it the executor returns instead of throwing.
       const current = await readCommerceTask(owner, task.id).catch(() => null)
-      if (current?.status === 'outcome_unknown') return result('I asked Instamart to add it but could not confirm your cart afterwards. I will not try again automatically. Check the cart here (reading only): ' + commerceTaskLink(task.id) + '\nNo order was placed.', 'outcome_unknown', task.id, true)
+      if (current?.status === 'outcome_unknown') return result(withSwiggyAttribution('I asked Instamart to add it but could not confirm your cart afterwards. I will not try again automatically. Check the cart here (reading only): ' + commerceTaskLink(task.id) + '\nNo order was placed.', 'instamart'), 'outcome_unknown', task.id, true)
       return result(PICK_FAILURES[reason] || 'Swiggy Instamart did not return a result I could verify, so I did not add anything. Try again in a minute.', 'blocked', task.id)
     }
     if (saved.metadata_json.state === 'cart_contents_verified') {
       const url = commerceHandoffUrl('swiggy', CHECKOUT_URL)
-      return result(saved.summary + '\n\nReview and pay in the Swiggy app' + (url ? ': ' + url : '.') + '\nYou pay in the Swiggy app; Gogo does not place orders.', 'completed', saved.id, true)
+      return result(withSwiggyAttribution(saved.summary + '\n\nReview and pay in the Swiggy app' + (url ? ': ' + url : '.') + '\nYou pay in the Swiggy app; Gogo does not place orders.', 'instamart'), 'completed', saved.id, true)
     }
-    return result('I asked Instamart to add it but could not confirm your cart afterwards. I will not try again automatically. Check the cart here (reading only): ' + commerceTaskLink(saved.id) + '\nNo order was placed.', 'outcome_unknown', saved.id, true)
+    return result(withSwiggyAttribution('I asked Instamart to add it but could not confirm your cart afterwards. I will not try again automatically. Check the cart here (reading only): ' + commerceTaskLink(saved.id) + '\nNo order was placed.', 'instamart'), 'outcome_unknown', saved.id, true)
   } finally {
     await releaseBrainUserLease(leaseKey, lease.ownerToken).catch(() => false)
   }

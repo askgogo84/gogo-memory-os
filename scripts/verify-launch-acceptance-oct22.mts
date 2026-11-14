@@ -1,3 +1,5 @@
+// Legacy expectations run in the Swiggy-approved mode; the default (withheld) mode is covered by verify-swiggy-comparison-policy-nov13.mts.
+process.env.COMMERCE_SWIGGY_COMPARISON_APPROVED='true'
 // 22 Oct launch acceptance run on production 0b6c3e7: the routing/parsing defects found live, pinned here.
 // Run: npx tsx scripts/verify-launch-acceptance-oct22.mts
 import assert from 'node:assert/strict'

@@ -7,7 +7,7 @@ export const COMMERCE_PROVIDERS = {
     authorize: 'https://mcp.swiggy.com/auth/authorize', token: 'https://mcp.swiggy.com/auth/token',
     register: 'https://mcp.swiggy.com/auth/register', revoke: 'https://mcp.swiggy.com/auth/logout',
     resource: 'https://mcp.swiggy.com', scope: 'mcp:tools', tokenFormat: 'json',
-    servers: { food: 'https://mcp.swiggy.com/food', grocery: 'https://mcp.swiggy.com/im' },
+    servers: { food: 'https://mcp.swiggy.com/food', grocery: 'https://mcp.swiggy.com/im', dineout: 'https://mcp.swiggy.com/dineout' },
   },
   zepto: {
     label: 'Zepto', issuer: 'https://auth.zepto.co.in',

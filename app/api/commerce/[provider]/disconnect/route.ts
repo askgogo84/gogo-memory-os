@@ -1,7 +1,7 @@
 import {NextResponse} from 'next/server'
 import {isAgentSession, requireAgentMutationOrigin, requireAgentSession} from '@/lib/agent/session'
 import {COMMERCE_PROVIDERS, commerceProvider} from '@/lib/commerce/providers'
-import {readCommerceConnection, deleteCommerceConnection} from '@/lib/commerce/connection-store'
+import {readStoredCommerceConnection, deleteCommerceConnection} from '@/lib/commerce/connection-store'
 
 export const dynamic = 'force-dynamic'
 export async function POST(request: Request, context: {params: Promise<{provider: string}>}) {
@@ -12,7 +12,8 @@ export async function POST(request: Request, context: {params: Promise<{provider
   const provider = commerceProvider((await context.params).provider)
   if (!provider) return NextResponse.json({error: 'unknown_provider'}, {status: 404})
   try {
-    const token = await readCommerceConnection(session.telegramId, provider)
+    // Revoke what is stored; never refresh (rotate) a token just to revoke it.
+    const token = await readStoredCommerceConnection(session.telegramId, provider)
     let providerRevocationVerified = false
     if (token) {
       try {
