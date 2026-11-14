@@ -128,6 +128,20 @@ const rb: any = await fu.runFollowUps('-884501501', { ...deps(boom, live), send:
 eq(rb.reason, 'outcome_unknown', 'a failed send is outcome unknown')
 eq((await fu.runFollowUps('-884501501', { ...deps(boom, live), send: async () => { throw new Error('x') } } as any) as any).reason, 'nothing_due', 'and is never sent again')
 
+// Deadline from a real judge row shape (id, from_addr from lib/agent/email-judge-shadow.ts).
+const dlState = base()
+dlState.agent_activity.push({ telegram_id: '-884501501', event_type: 'proactive_shadow', created_at: new Date(now - 20 * 3600_000).toISOString(), metadata_json: { kind: 'email_judge', verdicts: [
+  { id: 'm-wework', from_addr: 'billing@wework.co.in', sender: 'WeWork India <billing@wework.co.in>', subject: 'Keycards deactivate tomorrow unless dues are paid', important: true, kind: 'cutoff', phishing: false },
+  { id: 'm-scam', from_addr: 'kyc@bank-update.co', sender: 'Bank', subject: 'KYC', important: false, kind: 'none', phishing: true } ] } })
+const seenSenders: string[] = []
+const rd: any = await fu.runFollowUps('-884501501', { ...deps(dlState, live), newerMail: async (_o: string, s: string) => { seenSenders.push(s); return false } } as any)
+eq([rd.kind, seenSenders], ['deadline', ['billing@wework.co.in']], 'judge row → next-day deadline re-check, only for the important cutoff mail')
+ok(/^WeWork India: yesterday’s mail “Keycards deactivate tomorrow unless dues are paid” had a deadline\./.test(sends.at(-1).text), 'deadline line sent from checked fields')
+const judgeSrc = readFileSync('lib/agent/email-judge-shadow.ts', 'utf8')
+ok(/return \{ id: e\.id, from_addr:/.test(judgeSrc), 'the judge records the message id and sender address the re-check needs')
+ok(pulse_ok(), 'follow-ups run before the shadow-only passes')
+function pulse_ok() { const p = readFileSync('lib/agent/autonomy-pulse.ts', 'utf8'); return p.indexOf('m.processFollowUps()') > 0 && p.indexOf('m.processFollowUps()') < p.indexOf('for(const owner of proactiveShadowOwners())') }
+
 // Wiring.
 const bridge = readFileSync('lib/agent/whatsapp-bridge.ts', 'utf8')
 ok(bridge.indexOf("m.handleFollowUpCommand(String(actor.legacyTelegramId),params.text)") > 0 && bridge.indexOf("m.handleFollowUpCommand(String(actor.legacyTelegramId),params.text)") < bridge.indexOf('shouldHandleOpenLoopAction({actor'), 'stop/start command is routed before open-loop actions')

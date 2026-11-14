@@ -530,7 +530,8 @@ async function resolveOtherGmailLoopsForThread(telegramId:string,threadId:string
 
 // Exact owner (P0.1): a rounded number is refused before any read; a safe id is queried as its exact number and an
 // id above 2^53 as its exact decimal string, never through Number. A returned row must belong to this owner.
-async function readGmailAttention(telegramId:string|number){
+/** The owner's own connected Gmail (consent and owner checked), or why not. Read access only. */
+export async function gmailAccessForOwner(telegramId:string|number):Promise<{reason:'disabled'|'disconnected'}|{accessToken:string;ownEmail:string}>{
   if(typeof telegramId==='number'&&!Number.isSafeInteger(telegramId))throw new Error('open_loop_gmail_owner_invalid')
   const owner=String(telegramId??'').trim(),legacy=Number(owner)
   if(!/^-?(?:0|[1-9]\d{0,18})$/.test(owner))throw new Error('open_loop_gmail_owner_invalid')
@@ -560,9 +561,14 @@ async function readGmailAttention(telegramId:string|number){
   }
   if(!accessToken)accessToken=decryptGoogleToken(user.gmail_access_token)
   if(!accessToken)throw new Error('open_loop_gmail_token_unavailable')
+  return {accessToken,ownEmail}
+}
 
-  const threads=await fetchGmailAttentionThreads(accessToken,12)
-  return {threads,ownEmail}
+async function readGmailAttention(telegramId:string|number){
+  const access=await gmailAccessForOwner(telegramId)
+  if('reason' in access)return {reason:access.reason}
+  const threads=await fetchGmailAttentionThreads(access.accessToken,12)
+  return {threads,ownEmail:access.ownEmail}
 }
 
 export function isInboxReplyReadQuery(text:string){

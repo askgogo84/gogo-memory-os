@@ -507,13 +507,24 @@ export async function runCleanupShadow(telegramId:string){
 }
 
 export async function processAutonomyPulse(){
-  // 13 Nov proactive comparison: shadow owners are evaluated even while volunteered sends are off. Never sends.
-  for(const owner of proactiveShadowOwners()){
-    await withShadowBudget(()=>runEmailShadow(owner)).catch(()=>console.error('PROACTIVE_SHADOW_FAILED:',JSON.stringify({kind:'email'})))
-    await withShadowBudget(()=>runCleanupShadow(owner)).catch(()=>console.error('PROACTIVE_SHADOW_FAILED:',JSON.stringify({kind:'cleanup'})))
-  }
   // 14 Nov follow-ups: shadow for GOGO_PROACTIVE_SHADOW owners, live only for GOGO_FOLLOWUPS_LIVE owners (capped).
+  // First, so a live follow-up never waits behind the shadow-only passes below.
   await withShadowBudget(()=>import('./follow-ups').then(m=>m.processFollowUps()),40_000).catch(()=>console.error('FOLLOWUPS_FAILED'))
+  // 13 Nov proactive comparison: shadow owners are evaluated even while volunteered sends are off. Never sends.
+  // The whole shadow loop has one deadline so the real pulse always keeps its time (review: two owners = 150s).
+  const shadowStart=Date.now(),shadowDeadline=60_000
+  const timed=async(kind:string,job:()=>Promise<any>,ms:number)=>{
+    const left=shadowDeadline-(Date.now()-shadowStart)
+    if(left<5_000){console.error('PROACTIVE_SHADOW_FAILED:',JSON.stringify({kind,step:'deadline'}));return}
+    const r=await withShadowBudget(job,Math.min(ms,left)).catch(()=>{console.error('PROACTIVE_SHADOW_FAILED:',JSON.stringify({kind}));return null})
+    if(r==='timeout')console.error('PROACTIVE_SHADOW_FAILED:',JSON.stringify({kind,step:'timeout'}))
+  }
+  for(const owner of proactiveShadowOwners()){
+    await timed('email',()=>runEmailShadow(owner),15_000)
+    await timed('cleanup',()=>runCleanupShadow(owner),15_000)
+    // 13 Nov: the model email judge (shadow only), after the rule-based pass so both can be compared.
+    await timed('email_judge',async()=>(await import('./email-judge-shadow')).runEmailJudgeShadow(owner),45_000)
+  }
   // 4 Nov quiet WhatsApp: no volunteered 4-hourly check-ins.
   const { mayVolunteer }=await import('@/lib/channels/proactive-policy')
   if(!mayVolunteer('check_in'))return {considered:0,sent:0,skipped:0,failed:0,results:[],quiet:true}

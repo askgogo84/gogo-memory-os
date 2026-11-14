@@ -39,7 +39,7 @@ export function cleanupCandidates(loops: any[], now = Date.now()): any[] {
   return out
 }
 
-export type ShadowKind = 'email' | 'meeting' | 'cleanup' | 'followup'
+export type ShadowKind = 'email' | 'meeting' | 'cleanup' | 'email_judge' | 'followup'
 export async function logProactiveShadow(telegramId: string, kind: ShadowKind, metadata: Record<string, unknown>, deps: { insert?: (row: any) => Promise<{ error?: any }> } = {}): Promise<boolean> {
   const row = { telegram_id: telegramId, event_type: 'proactive_shadow', message: `proactive shadow: ${kind}`, metadata_json: { kind, mode: 'shadow_only_nothing_sent', ...metadata } }
   try {
@@ -53,11 +53,11 @@ export async function logProactiveShadow(telegramId: string, kind: ShadowKind, m
 export async function recentShadowRows(telegramId: string, kind: ShadowKind, hours: number): Promise<{ at: string; meta: any }[] | null> {
   // Filtered by kind on the server and only the small fields read (review: full rows every minute were heavy).
   const { data, error } = await supabaseAdmin.from('agent_activity')
-    .select('created_at,key:metadata_json->>key,item_keys:metadata_json->item_keys,daily_summary:metadata_json->daily_summary')
+    .select('created_at,key:metadata_json->>key,item_keys:metadata_json->item_keys,daily_summary:metadata_json->daily_summary,judged_ids:metadata_json->judged_ids')
     .eq('telegram_id', telegramId).eq('event_type', 'proactive_shadow').eq('metadata_json->>kind', kind)
     .gte('created_at', new Date(Date.now() - hours * 3600_000).toISOString()).order('created_at', { ascending: false }).limit(300)
   if (error) return null
-  return (data || []).map((r: any) => ({ at: String(r.created_at || ''), meta: { key: r.key ?? null, item_keys: Array.isArray(r.item_keys) ? r.item_keys : [], daily_summary: r.daily_summary === true } }))
+  return (data || []).map((r: any) => ({ at: String(r.created_at || ''), meta: { key: r.key ?? null, item_keys: Array.isArray(r.item_keys) ? r.item_keys : [], daily_summary: r.daily_summary === true, judged_ids: Array.isArray(r.judged_ids) ? r.judged_ids.map(String) : [] } }))
 }
 
 /** A shadow pass never holds up the real cron: it gets a bounded time, then the real path carries on. */
