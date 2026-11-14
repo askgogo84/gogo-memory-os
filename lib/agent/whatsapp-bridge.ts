@@ -530,6 +530,12 @@ export async function tryRunWhatsAppAttentionCommand(params:{
   const runCancel=await tryCancelRunFromChat({telegramId:actor.legacyTelegramId},params.text,{surface:'whatsapp'})
   if(runCancel)return runCancel
 
+  // "stop follow-ups" / "start follow-ups" (14 Nov follow-ups): recorded as the person's latest choice.
+  // The module is loaded only for these exact phrasings (route harnesses stub this file's deps).
+  const followUpCmd=/^\s*(?:stop|pause|turn off|no more|start|resume|turn on)\s+follow[\s-]?ups?[.!]*\s*$/i.test(String(params.text||''))
+    ?await import('./follow-ups').then(m=>m.handleFollowUpCommand(String(actor.legacyTelegramId),params.text),()=>null):null
+  if(followUpCmd)return {runId:'follow-ups',status:'completed',capability:'orchestrator',risk:'low',text:followUpCmd,handledBy:'follow-ups'} as any
+
   if(await shouldHandleOpenLoopAction({actor,text:params.text})){
     const action=await handleOpenLoopAction({actor,text:params.text})
     if(action)return {...action,handledBy:String(action.handledBy||'open-loops')}

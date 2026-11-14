@@ -1488,7 +1488,8 @@ _"${originalText}"_
     // Open-loop / Attention commands are deterministic state reads/writes.
     // Give them first refusal before semantic feature routing so "what am I waiting on?"
     // cannot be mistaken for a generic question or reminder query.
-    if (isOpenLoopQuery(text) || isOpenLoopResolutionCandidate(text) || isOpenLoopActionCandidate(text) || parseRunCancel(text)) {
+    // 14 Nov follow-ups: "stop follow-ups" / "start follow-ups" also get first refusal (handled in the bridge).
+    if (isOpenLoopQuery(text) || isOpenLoopResolutionCandidate(text) || isOpenLoopActionCandidate(text) || parseRunCancel(text) || /^\s*(?:stop|pause|turn off|no more|start|resume|turn on)\s+follow[\s-]?ups?[.!]*\s*$/i.test(String(text || ''))) {
       const attentionAgent = await tryRunWhatsAppAttentionCommand({
         user:resolvedUser,
         text,

@@ -507,6 +507,9 @@ export async function runCleanupShadow(telegramId:string){
 }
 
 export async function processAutonomyPulse(){
+  // 14 Nov follow-ups: shadow for GOGO_PROACTIVE_SHADOW owners, live only for GOGO_FOLLOWUPS_LIVE owners (capped).
+  // First, so a live follow-up never waits behind the shadow-only passes below.
+  await withShadowBudget(()=>import('./follow-ups').then(m=>m.processFollowUps()),40_000).catch(()=>console.error('FOLLOWUPS_FAILED'))
   // 13 Nov proactive comparison: shadow owners are evaluated even while volunteered sends are off. Never sends.
   // The whole shadow loop has one deadline so the real pulse always keeps its time (review: two owners = 150s).
   const shadowStart=Date.now(),shadowDeadline=60_000
@@ -520,6 +523,11 @@ export async function processAutonomyPulse(){
     await timed('email',()=>runEmailShadow(owner),15_000)
     await timed('cleanup',()=>runCleanupShadow(owner),15_000)
     // 13 Nov: the model email judge (shadow only), after the rule-based pass so both can be compared.
+    await timed('email_judge',async()=>(await import('./email-judge-shadow')).runEmailJudgeShadow(owner),45_000)
+  }
+  // Live follow-up owners need judge rows for the next-day re-check even when they are not on the shadow list.
+  const shadowSet=new Set(proactiveShadowOwners())
+  for(const owner of (await import('./follow-ups')).followupsLiveOwners().filter(o=>!shadowSet.has(o))){
     await timed('email_judge',async()=>(await import('./email-judge-shadow')).runEmailJudgeShadow(owner),45_000)
   }
   // 4 Nov quiet WhatsApp: no volunteered 4-hourly check-ins.

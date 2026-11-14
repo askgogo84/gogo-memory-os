@@ -39,7 +39,7 @@ export function cleanupCandidates(loops: any[], now = Date.now()): any[] {
   return out
 }
 
-export type ShadowKind = 'email' | 'meeting' | 'cleanup' | 'email_judge'
+export type ShadowKind = 'email' | 'meeting' | 'cleanup' | 'email_judge' | 'followup'
 export async function logProactiveShadow(telegramId: string, kind: ShadowKind, metadata: Record<string, unknown>, deps: { insert?: (row: any) => Promise<{ error?: any }> } = {}): Promise<boolean> {
   const row = { telegram_id: telegramId, event_type: 'proactive_shadow', message: `proactive shadow: ${kind}`, metadata_json: { kind, mode: 'shadow_only_nothing_sent', ...metadata } }
   try {

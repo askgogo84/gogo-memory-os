@@ -96,7 +96,8 @@ export async function runEmailJudgeShadow(telegramId: string, deps: Deps = {}) {
   const byId = new Map(fresh.map(e => [e.id, e]))
   const important = verdicts.filter(v => v.important)
   const picks = important.slice(0, Math.max(0, JUDGE_PER_DAY - usedToday))
-  const row = (v: JudgeVerdict) => { const e = byId.get(v.id)!; return { sender: shadowText(e.from, 80), subject: shadowText(e.subject, 100), mailbox: e.mailbox, important: v.important, kind: v.kind, phishing: v.phishing, why: shadowText(v.why, 120) } }
+  // id and from_addr let the follow-up pass (lib/agent/follow-ups.ts) re-check that sender's mail on the next day.
+  const row = (v: JudgeVerdict) => { const e = byId.get(v.id)!; return { id: e.id, from_addr: (String(e.from).match(/[^\s<>@"]+@[^\s<>@"]+\.[a-z]{2,}/i)?.[0] || '').toLowerCase().slice(0, 120), sender: shadowText(e.from, 80), subject: shadowText(e.subject, 100), mailbox: e.mailbox, important: v.important, kind: v.kind, phishing: v.phishing, why: shadowText(v.why, 120) } }
   const logged = await (deps.log || ((id, meta) => logProactiveShadow(id, 'email_judge', meta)))(telegramId, {
     would_send: picks.length ? shadowText(picks.map(v => v.message).filter(Boolean).join('\n\n'), 1200) : null,
     item_keys: picks.map(v => `judge:${v.id}`),
