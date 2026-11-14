@@ -1,7 +1,8 @@
 // Instinct-style follow-ups (14 Nov, owner: "build follow-ups in shadow" + "build follow-ups live for me only").
 // Instinct came back on the WeWork deadline day, asked once "still want these moving?" about stale asks, and nudged
 // an unsent anniversary inquiry eight days out. Gogo computes the same three kinds of follow-up:
-//   deadline — the day after the email judge flagged a cutoff/deadline mail, if no newer mail came from that sender;
+//   deadline — the day after the email judge flagged a mail as time-sensitive, if no newer mail came from that sender
+//              (a re-check, not the due date itself: the judge's flag is an inference and is worded as one);
 //   event    — an upcoming event of theirs that needs a step (draft unpublished, nobody invited, guests silent);
 //   digest   — stale things the person asked for (2+ days untouched), listed once, answerable with "dismiss 2".
 // Every line is built from checked fields (sender, subject, dates, titles); no model text is ever sent.
@@ -20,7 +21,7 @@ const DAY = 86_400_000
 
 export type FollowUpKind = 'deadline' | 'event' | 'digest'
 export type FollowUp = { kind: FollowUpKind; keys: string[]; text: string; label: string; snapshot?: string[] }
-export type DeadlineItem = { key: string; sender: string; subject: string; judgedAt: number; newerMail: boolean | null }
+export type DeadlineItem = { key: string; sender: string; subject: string; judgedAt: number; newerMail: boolean | null; mailbox?: string }
 export type EventItem = { key: string; title: string; why: string; href: string }
 
 const clean = (v: unknown, n: number) => String(v ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
@@ -54,8 +55,10 @@ export function senderName(from: string): string {
   const raw = clean(from, 160)
   const named = raw.replace(/<[^>]*>/g, '').replace(/^["']|["']$/g, '').trim()
   if (named && !/@/.test(named)) return clean(named, 60)
-  const domain = (raw.match(/@([a-z0-9.-]+)/i)?.[1] || '').split('.').slice(-2, -1)[0] || ''
-  return domain ? domain.charAt(0).toUpperCase() + domain.slice(1) : 'A sender'
+  // "team@mail.wework.co.in" → "Wework": the last label that is not a country/generic suffix or a mail subdomain.
+  const labels = (raw.match(/@([a-z0-9.-]+)/i)?.[1] || '').toLowerCase().split('.').filter(Boolean)
+  const name = labels.filter(l => !/^(?:com|co|in|org|net|gov|ac|edu|io|ai|app|me|uk|us|biz|info|mail|email|mailer|e|m|em|news|notify|alerts?|noreply|no-reply|info)$/.test(l)).pop() || ''
+  return name ? name.charAt(0).toUpperCase() + name.slice(1) : 'A sender'
 }
 
 const dayWords = (at: number, now: number, tz: string) => {
@@ -71,7 +74,7 @@ export function buildDeadline(items: DeadlineItem[], recent: Set<string>, now: n
   const it = items.find(i => !recent.has(i.key) && i.newerMail === false && localDay(i.judgedAt, tz) !== localDay(now, tz) && now - i.judgedAt < 3 * DAY)
   if (!it) return null
   const who = senderName(it.sender), subject = clean(it.subject, 90)
-  const text = `${who}: ${dayWords(it.judgedAt, now, tz)} mail “${subject}” had a deadline. I see no newer mail from them since. Has it been handled?`
+  const text = `${who}: I flagged ${dayWords(it.judgedAt, now, tz)} mail “${subject}” as time-sensitive. I see no newer mail from them since. Has it been handled?`
   return { kind: 'deadline', keys: [it.key], text, label: text }
 }
 
@@ -89,6 +92,8 @@ export function buildDigest(loops: any[], recent: Set<string>, now: number): Fol
   const stale = cleanupCandidates(loops, now).filter((l: any) => {
     if (l.source_type !== 'conversation') return false
     if (!['followup', 'commitment', 'meeting_action', 'waiting_on', 'other'].includes(String(l.kind))) return false
+    // Only what the person said, never a loop Gogo inferred from a chat turn (review: jev_attention_state is a model guess).
+    if (l.evidence_json?.jev_attention_state) return false
     if (l.next_check_at && Date.parse(String(l.next_check_at)) > now) return false
     const seen = Date.parse(String(l.last_seen_at || l.updated_at || ''))
     if (!Number.isFinite(seen) || now - seen < DIGEST_STALE_DAYS * DAY) return false
@@ -98,7 +103,7 @@ export function buildDigest(loops: any[], recent: Set<string>, now: number): Fol
   }).sort((a: any, b: any) => Number(b.priority || 0) - Number(a.priority || 0)).slice(0, DIGEST_MAX)
   if (!stale.length) return null
   const titles = stale.map((l: any) => clean(l.title, 120))
-  const text = `Still want these moving?\n${titles.map((t: string, i: number) => `${i + 1}. ${t}`).join('\n')}\n\nSay *dismiss 2* to drop one, or *mark 2 done* if it is done.`
+  const text = `Still want these moving?\n${titles.map((t: string, i: number) => `${i + 1}. ${t}`).join('\n')}\n\nReply *dismiss 2* to drop one or *mark 2 done* if it is done (within 10 minutes). Later, ask *what needs my attention?* to see them again.`
   return { kind: 'digest', keys: stale.map((l: any) => `open_loop:${l.id}`), text, label: `Still want these moving? ${titles.map((t: string, i: number) => `${i + 1}. ${t}`).join(' · ')}`.slice(0, 400), snapshot: stale.map((l: any) => String(l.id)) }
 }
 
@@ -113,7 +118,8 @@ type Deps = {
   now?: () => number
   env?: Record<string, string | undefined>
   db?: any
-  newerMail?: (owner: string, sender: string, sinceMs: number) => Promise<boolean | null>
+  newerMail?: (owner: string, sender: string, sinceMs: number, mailbox?: string) => Promise<boolean | null>
+  quiet?: (owner: string, tz: string, now: number) => Promise<boolean>
   events?: (owner: string) => Promise<EventItem[]>
   send?: (to: string, text: string, label: string, session: boolean) => Promise<{ sid?: string } | null>
   session?: (owner: string) => Promise<boolean>
@@ -150,24 +156,27 @@ async function deadlineItems(owner: string, db: any, now: number, newerMail: Non
       if (!v?.important || !['cutoff', 'deadline'].includes(String(v.kind)) || v.phishing || !v.id || !v.from_addr) continue
       const key = `deadline:${String(v.id).slice(0, 80)}`
       if (out.some(o => o.key === key)) continue
-      out.push({ key, sender: String(v.sender || v.from_addr), subject: String(v.subject || ''), judgedAt: at, newerMail: null })
+      out.push({ key, sender: String(v.sender || v.from_addr), subject: String(v.subject || ''), judgedAt: at, newerMail: null, mailbox: String(v.mailbox || '') })
       if (out.length >= 3) break
     }
+    if (out.length >= 3) break
   }
   for (const it of out) {
     const v = (data || []).flatMap((r: any) => r.metadata_json?.verdicts || []).find((x: any) => `deadline:${String(x.id).slice(0, 80)}` === it.key)
-    it.newerMail = await newerMail(owner, String(v?.from_addr || ''), it.judgedAt).catch(() => null)
+    it.newerMail = await newerMail(owner, String(v?.from_addr || ''), it.judgedAt, it.mailbox).catch(() => null)
   }
   return out
 }
 
-async function defaultNewerMail(owner: string, sender: string, sinceMs: number): Promise<boolean | null> {
+async function defaultNewerMail(owner: string, sender: string, sinceMs: number, mailbox?: string): Promise<boolean | null> {
   const addr = (sender.match(/[^\s<>@]+@[^\s<>@]+\.[a-z]{2,}/i)?.[0] || '').toLowerCase()
   if (!addr) return null
   const { gmailAccessForOwner } = await import('./open-loops') as any
   if (typeof gmailAccessForOwner !== 'function') return null
   const access = await gmailAccessForOwner(owner)
   if (!access?.accessToken) return null
+  // Only the primary inbox is searched here; a mail judged in another mailbox is unknown, so no follow-up (review).
+  if (!mailbox || String(access.ownEmail || '').toLowerCase() !== mailbox.toLowerCase()) return null
   const { searchGmailThreads } = await import('@/lib/services/google-gmail')
   const after = Math.floor(sinceMs / 1000)
   const threads = await searchGmailThreads(access.accessToken, `from:${addr} after:${after}`, 5, { raw: true }).catch(() => null)
@@ -179,6 +188,12 @@ async function defaultNewerMail(owner: string, sender: string, sinceMs: number):
 async function defaultEvents(owner: string): Promise<EventItem[]> {
   const { getEventSuggestions } = await import('@/lib/events/next-steps')
   return (await getEventSuggestions(owner)).map(s => ({ key: `event:${s.eventId}:${s.key}`, title: s.title, why: s.why, href: s.href }))
+}
+
+async function defaultQuiet(owner: string, tz: string, now: number): Promise<boolean> {
+  const { getAlertPreferences } = await import('./alert-preferences')
+  const { isQuietHour } = await import('./alert-preferences-shared')
+  return isQuietHour(await getAlertPreferences(owner), localHour(now, tz))
 }
 
 async function defaultSession(owner: string): Promise<boolean> {
@@ -227,26 +242,33 @@ export async function runFollowUps(owner: string, deps: Deps = {}) {
     return { ok: logged, mode: 'shadow', kind: pick.kind }
   }
   if (await followupsStopped(owner, db)) return { ok: true, reason: 'stopped' }
-  // At most two a day: claim slot 1, else slot 2; a taken slot (23505) means another pass already used it.
+  // The person's own alert quiet hours win over the 8 am-10 pm default (review).
+  const quiet = await (deps.quiet || defaultQuiet)(owner, tz, now).catch(() => true)
+  if (quiet) return { ok: true, reason: 'quiet_hours' }
+  // A numbered list shown in chat in the last 10 minutes owns "dismiss 2"; a digest now would steal its numbers.
+  if (pick.snapshot?.length) {
+    const { data: shown, error: shownError } = await db.from('agent_activity').select('created_at').eq('telegram_id', owner).eq('event_type', 'open_loops_list_shown')
+      .gte('created_at', new Date(now - 10 * 60_000).toISOString()).limit(1)
+    if (shownError || shown?.length) return { ok: true, reason: 'list_recently_shown' }
+  }
+  // At most two a day. The slot is the next free one by this read; if another pass took it (23505), this pass stops
+  // instead of trying the next slot, so two overlapping passes can never send the same item twice (review).
   const sentToday = sent.filter(s => localDay(s.at, tz) === today).length
   if (sentToday >= FOLLOWUP_DAILY_CAP) return { ok: true, reason: 'daily_cap' }
-  let claimed = false
-  for (let slot = sentToday + 1; slot <= FOLLOWUP_DAILY_CAP && !claimed; slot++) {
-    const { error } = await db.from('agent_activity').insert({ id: followupClaimId(owner, today, slot), telegram_id: owner, event_type: 'followup_sent',
-      message: shadowText(pick.text, 600), metadata_json: { kind: pick.kind, keys: pick.keys, slot, day: today } })
-    if (!error) claimed = true
-    else if (error.code !== '23505') return { ok: false, reason: 'claim_failed' }
-  }
-  if (!claimed) return { ok: true, reason: 'daily_cap' }
+  const slot = sentToday + 1
+  const { error: claimError } = await db.from('agent_activity').insert({ id: followupClaimId(owner, today, slot), telegram_id: owner, event_type: 'followup_sent',
+    message: shadowText(pick.text, 600), metadata_json: { kind: pick.kind, keys: pick.keys, slot, day: today } })
+  if (claimError) return { ok: claimError.code === '23505', reason: claimError.code === '23505' ? 'claimed_elsewhere' : 'claim_failed' }
   // Record first, then send: a crash between the two can only skip a follow-up, never send two.
-  if (pick.snapshot?.length) {
-    await db.from('agent_activity').insert({ telegram_id: owner, event_type: 'open_loops_list_shown', message: 'Gogo listed stale open loops in a follow-up.',
-      metadata_json: { open_loop_ids: pick.snapshot, source: 'followup' } })
-  }
   try {
     const session = await (deps.session || defaultSession)(owner).catch(() => false)
     const res = await (deps.send || defaultSend)(String(user.whatsapp_id), pick.text, pick.label, session)
     if (!res?.sid) { console.error('FOLLOWUP_SEND_UNCONFIRMED:', JSON.stringify({ kind: pick.kind })); return { ok: false, reason: 'outcome_unknown' } }
+    // Numbers bind only to a digest that was actually accepted for delivery, and only for the normal 10 minutes.
+    if (pick.snapshot?.length && session) {
+      await db.from('agent_activity').insert({ telegram_id: owner, event_type: 'open_loops_list_shown', message: 'Gogo listed stale open loops in a follow-up.',
+        metadata_json: { open_loop_ids: pick.snapshot, source: 'followup' } })
+    }
     console.log('FOLLOWUP_SENT:', JSON.stringify({ kind: pick.kind, keys: pick.keys.length, session }))
     return { ok: true, mode: 'live', kind: pick.kind }
   } catch {

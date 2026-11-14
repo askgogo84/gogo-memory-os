@@ -525,6 +525,11 @@ export async function processAutonomyPulse(){
     // 13 Nov: the model email judge (shadow only), after the rule-based pass so both can be compared.
     await timed('email_judge',async()=>(await import('./email-judge-shadow')).runEmailJudgeShadow(owner),45_000)
   }
+  // Live follow-up owners need judge rows for the next-day re-check even when they are not on the shadow list.
+  const shadowSet=new Set(proactiveShadowOwners())
+  for(const owner of (await import('./follow-ups')).followupsLiveOwners().filter(o=>!shadowSet.has(o))){
+    await timed('email_judge',async()=>(await import('./email-judge-shadow')).runEmailJudgeShadow(owner),45_000)
+  }
   // 4 Nov quiet WhatsApp: no volunteered 4-hourly check-ins.
   const { mayVolunteer }=await import('@/lib/channels/proactive-policy')
   if(!mayVolunteer('check_in'))return {considered:0,sent:0,skipped:0,failed:0,results:[],quiet:true}

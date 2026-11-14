@@ -19,9 +19,11 @@ ok(fu.followupClaimId('-1', '2026-11-14', 1) !== fu.followupClaimId('-1', '2026-
 // Deadline: earlier day, no newer mail, built from checked fields.
 eq(fu.senderName('WeWork India <billing@wework.co.in>'), 'WeWork India', 'sender display name')
 eq(fu.senderName('billing@wework.com'), 'Wework', 'bare address → domain name')
+eq(fu.senderName('team@mail.wework.co.in'), 'Wework', 'multi-part domain → the brand label')
+eq(fu.senderName('<a@b.com>'), 'B', 'angle-only address → its domain')
 const dl = (o: Partial<fu.DeadlineItem>): fu.DeadlineItem => ({ key: 'deadline:m1', sender: 'WeWork India <billing@wework.co.in>', subject: 'Dues pending: keycards deactivate tomorrow', judgedAt: now - DAY, newerMail: false, ...o })
 const d = fu.buildDeadline([dl({})], new Set(), now, tz)!
-eq(d.text, 'WeWork India: yesterday’s mail “Dues pending: keycards deactivate tomorrow” had a deadline. I see no newer mail from them since. Has it been handled?', 'deadline line is a template of sender + subject')
+eq(d.text, 'WeWork India: I flagged yesterday’s mail “Dues pending: keycards deactivate tomorrow” as time-sensitive. I see no newer mail from them since. Has it been handled?', 'deadline line: sender + subject; the flag is worded as Gogo’s, not as a fact')
 eq(fu.buildDeadline([dl({ newerMail: true })], new Set(), now, tz), null, 'newer mail from them: no follow-up')
 eq(fu.buildDeadline([dl({ newerMail: null })], new Set(), now, tz), null, 'unknown inbox state: no follow-up')
 eq(fu.buildDeadline([dl({ judgedAt: now - 3600_000 })], new Set(), now, tz), null, 'flagged today: the judge already covers today')
@@ -38,7 +40,8 @@ eq(fu.buildEvent([{ key: 'k', title: 'X', why: 'y', href: 'https://evil.example/
 const loop = (id: string, o: any = {}) => ({ id, kind: 'commitment', title: `Task ${id}`, summary: '', priority: 0.7, source_type: 'conversation', source_id: id, evidence_json: {}, last_seen_at: new Date(now - 3 * DAY).toISOString(), ...o })
 const dg = fu.buildDigest([loop('a', { priority: 0.9, title: "Nithin's farewell: headcount and budget" }), loop('b', { title: 'Goa flights: refresh the cheapest option' }), loop('c', { last_seen_at: new Date(now - DAY).toISOString() }), loop('d', { source_type: 'gmail_thread' }), loop('e', { kind: 'approval' }), loop('f', { title: 'pending' })], new Set(['open_loop:x']), now)!
 eq(dg.snapshot, ['a', 'b'], 'only stale, own, non-approval, named items; priority order')
-eq(dg.text, "Still want these moving?\n1. Nithin's farewell: headcount and budget\n2. Goa flights: refresh the cheapest option\n\nSay *dismiss 2* to drop one, or *mark 2 done* if it is done.", 'digest text binds to the existing dismiss / mark done commands')
+eq(dg.text, "Still want these moving?\n1. Nithin's farewell: headcount and budget\n2. Goa flights: refresh the cheapest option\n\nReply *dismiss 2* to drop one or *mark 2 done* if it is done (within 10 minutes). Later, ask *what needs my attention?* to see them again.", 'digest uses the existing commands, inside the normal 10-minute binding')
+eq(fu.buildDigest([loop('j', { evidence_json: { jev_attention_state: 'needs_followup' } })], new Set(), now), null, 'a loop Gogo inferred from chat is never presented as something the person asked for')
 eq(fu.buildDigest([loop('a')], new Set(['open_loop:a']), now), null, 'an item asked about in the last 7 days is not repeated')
 ok(fu.buildDigest(Array.from({ length: 9 }, (_, i) => loop(String(i))), new Set(), now)!.snapshot!.length === fu.DIGEST_MAX, 'at most 4 items')
 ok(fu.buildDigest([loop('a')], new Set(), now)!.label.length <= 400, 'template label fits')
@@ -79,7 +82,7 @@ function fakeDb(state: any) {
 const base = () => ({ now, users: [{ telegram_id: -884501501, whatsapp_id: '918884501501', timezone: tz, access_status: 'active' }], agent_open_loops: [loop('a', { telegram_id: '-884501501', status: 'active' })], agent_activity: [] as any[] })
 const sends: any[] = []
 const logs: any[] = []
-const deps = (state: any, env: any) => ({ now: () => state.now, env, db: fakeDb(state), events: async () => [], newerMail: async () => false, session: async () => true, shadowHistory: async () => [], log: async (_o: string, m: any) => { logs.push(m); return true }, send: async (to: string, text: string) => { sends.push({ to, text }); return { sid: 'SM' + sends.length } } })
+const deps = (state: any, env: any) => ({ now: () => state.now, env, db: fakeDb(state), events: async () => [], newerMail: async () => false, quiet: async () => false, session: async () => true, shadowHistory: async () => [], log: async (_o: string, m: any) => { logs.push(m); return true }, send: async (to: string, text: string) => { sends.push({ to, text }); return { sid: 'SM' + sends.length } } })
 
 const src = readFileSync('lib/agent/follow-ups.ts', 'utf8')
 ok(/if \(!live\) \{\s*const logged = await \(deps\.log \|\| \(\(id, meta\) => logProactiveShadow\(id, 'followup', meta\)\)\)/.test(src), 'shadow owners only log; nothing is sent')
@@ -106,7 +109,7 @@ const day = base()
 const live = { GOGO_FOLLOWUPS_LIVE: '-884501501', GOGO_PROACTIVE_SHADOW: '-884501501' }
 const r1: any = await fu.runFollowUps('-884501501', deps(day, live) as any)
 eq([r1.mode, r1.kind, sends.length, sends[0]?.to], ['live', 'digest', 1, '918884501501'], 'live owner gets the digest on WhatsApp')
-ok(day.agent_activity.some((r: any) => r.event_type === 'followup_sent' && r.metadata_json.slot === 1) && day.agent_activity.some((r: any) => r.event_type === 'open_loops_list_shown' && r.metadata_json.source === 'followup'), 'claim and 24 h snapshot recorded')
+ok(day.agent_activity.some((r: any) => r.event_type === 'followup_sent' && r.metadata_json.slot === 1) && day.agent_activity.some((r: any) => r.event_type === 'open_loops_list_shown' && r.metadata_json.source === 'followup'), 'claim recorded; snapshot written after a confirmed send')
 const r2: any = await fu.runFollowUps('-884501501', deps(day, live) as any)
 eq([r2.reason, sends.length], ['nothing_due', 1], 'same day: the digest is not repeated')
 // Cap: two already sent today → nothing, even with a deadline due.
@@ -136,11 +139,30 @@ dlState.agent_activity.push({ telegram_id: '-884501501', event_type: 'proactive_
 const seenSenders: string[] = []
 const rd: any = await fu.runFollowUps('-884501501', { ...deps(dlState, live), newerMail: async (_o: string, s: string) => { seenSenders.push(s); return false } } as any)
 eq([rd.kind, seenSenders], ['deadline', ['billing@wework.co.in']], 'judge row → next-day deadline re-check, only for the important cutoff mail')
-ok(/^WeWork India: yesterday’s mail “Keycards deactivate tomorrow unless dues are paid” had a deadline\./.test(sends.at(-1).text), 'deadline line sent from checked fields')
+ok(/^WeWork India: I flagged yesterday’s mail “Keycards deactivate tomorrow unless dues are paid” as time-sensitive\./.test(sends.at(-1).text), 'deadline line sent from checked fields')
 const judgeSrc = readFileSync('lib/agent/email-judge-shadow.ts', 'utf8')
 ok(/return \{ id: e\.id, from_addr:/.test(judgeSrc), 'the judge records the message id and sender address the re-check needs')
 ok(pulse_ok(), 'follow-ups run before the shadow-only passes')
 function pulse_ok() { const p = readFileSync('lib/agent/autonomy-pulse.ts', 'utf8'); return p.indexOf('m.processFollowUps()') > 0 && p.indexOf('m.processFollowUps()') < p.indexOf('for(const owner of proactiveShadowOwners())') }
+
+// Review fixes: quiet hours, recent chat list, overlapping passes, unconfirmed send, other mailbox, wording.
+const qs = base()
+eq((await fu.runFollowUps('-884501501', { ...deps(qs, live), quiet: async () => true } as any) as any).reason, 'quiet_hours', 'the person’s own quiet hours win')
+const ls = base(); ls.agent_activity.push({ telegram_id: '-884501501', event_type: 'open_loops_list_shown', created_at: new Date(now - 3 * 60_000).toISOString(), metadata_json: { open_loop_ids: ['z'] } })
+eq((await fu.runFollowUps('-884501501', deps(ls, live) as any) as any).reason, 'list_recently_shown', 'a digest never steals the numbers of a list shown in the last 10 minutes')
+const ov = base(); ov.agent_activity.push({ id: fu.followupClaimId('-884501501', '2026-11-14', 1), telegram_id: '-884501501', event_type: 'other', created_at: new Date(now).toISOString(), metadata_json: {} })
+const ovBefore = sends.length
+eq([(await fu.runFollowUps('-884501501', deps(ov, live) as any) as any).reason, sends.length - ovBefore], ['claimed_elsewhere', 0], 'slot taken by an overlapping pass: stop, never try the next slot with the same item')
+const un = base()
+eq((await fu.runFollowUps('-884501501', { ...deps(un, live), send: async () => ({}) } as any) as any).reason, 'outcome_unknown', 'no sid: outcome unknown')
+ok(!un.agent_activity.some((r: any) => r.event_type === 'open_loops_list_shown'), 'no number binding for a list the person may never have seen')
+const fuSrc = readFileSync('lib/agent/follow-ups.ts', 'utf8')
+ok(/if \(!mailbox \|\| String\(access\.ownEmail \|\| ''\)\.toLowerCase\(\) !== mailbox\.toLowerCase\(\)\) return null/.test(fuSrc), 'a mail judged in another mailbox is never re-checked against the primary inbox')
+ok(/if \(out\.length >= 3\) break\n    \}\n    if \(out\.length >= 3\) break/.test(fuSrc), 'at most 3 deadline items (both loops)')
+const route = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')
+ok(/parseRunCancel\(text\) \|\| \/\^\\s\*\(\?:stop\|pause\|turn off\|no more\|start\|resume\|turn on\)\\s\+follow\[\\s-\]\?ups\?\[\.!\]\*\\s\*\$\/i\.test\(String\(text \|\| ''\)\)\) \{/.test(route), 'the webhook gives "stop follow-ups" first refusal, so it reaches the bridge handler')
+ok(/followupsLiveOwners\(\)\.filter\(o=>!shadowSet\.has\(o\)\)/.test(pulse_src()), 'live owners also get judge rows for the re-check')
+function pulse_src() { return readFileSync('lib/agent/autonomy-pulse.ts', 'utf8') }
 
 // Wiring.
 const bridge = readFileSync('lib/agent/whatsapp-bridge.ts', 'utf8')
@@ -150,6 +172,6 @@ ok(bridge.indexOf("m.handleFollowUpCommand(String(actor.legacyTelegramId),params
 const pulse = readFileSync('lib/agent/autonomy-pulse.ts', 'utf8')
 ok(pulse.indexOf("m.processFollowUps()") > 0 && pulse.indexOf("m.processFollowUps()") < pulse.indexOf("mayVolunteer('check_in')"), 'follow-ups run before the quiet-rule return (live only for allowlisted owners)')
 const loops = readFileSync('lib/agent/open-loops.ts', 'utf8')
-ok(/metadata_json\?\.source!=='followup'&&Date\.now\(\)-Date\.parse\(String\(\(data as any\)\.created_at\|\|''\)\)>10\*60_000\)return null/.test(loops), 'a digest binds "dismiss 2" for 24 h; an ordinary list still for 10 min')
+ok(/const cutoff=new Date\(Date\.now\(\)-10\*60_000\)\.toISOString\(\)/.test(loops) && !/24\*3600_000/.test(loops.slice(loops.indexOf('async function recentOpenLoopListSnapshot'), loops.indexOf('async function recentOpenLoopListSnapshot') + 900)), 'numbers bind for the normal 10 minutes only (no 24 h digest binding)')
 
 console.log(`PASS verify-follow-ups-nov14: ${checks} checks`)
