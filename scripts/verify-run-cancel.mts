@@ -340,7 +340,8 @@ const cancelCall = bridge.indexOf('tryCancelRunFromChat({telegramId:actor.legacy
 const openLoop = bridge.indexOf('shouldHandleOpenLoopAction({actor', attention)
 assert.ok(attention > 0 && cancelCall > attention && openLoop > cancelCall, 'run cancel runs inside the attention command, before open-loop handlers')
 const wa = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')
-assert.match(wa, /isOpenLoopActionCandidate\(text\) \|\| parseRunCancel\(text\)\) \{\s*const attentionAgent = await tryRunWhatsAppAttentionCommand/, 'WhatsApp route sends run cancels to the attention command')
+// 14 Nov: the same gate also admits "stop/start follow-ups" (a further || term); run cancels still go to the attention command.
+assert.match(wa, /isOpenLoopActionCandidate\(text\) \|\| parseRunCancel\(text\)(?: \|\| [^\n]+)?\) \{\s*const attentionAgent = await tryRunWhatsAppAttentionCommand/, 'WhatsApp route sends run cancels to the attention command')
 const dash = readFileSync('app/api/dashboard/chat/route.ts', 'utf8')
 const dashCancel = dash.indexOf("tryCancelRunFromChat({telegramId:actor.legacyTelegramId},text,{surface:'web'})"), planner = dash.indexOf('tryRunGeneralPlan({')
 assert.ok(dashCancel > 0 && planner > dashCancel, 'dashboard chat cancels before the general planner')
