@@ -8,6 +8,7 @@ on:
       - 'app/api/commerce/purchases/**'
       - 'app/dashboard/(app)/commerce/**'
       - 'scripts/verify-commerce-purchase-handoff.mts'
+      - 'scripts/verify-commerce-purchase-store.cjs'
       - 'supabase/migrations/20261115090000_commerce_purchase_intents.sql'
       - '.github/workflows/commerce-purchase-handoff.yml'
   workflow_dispatch:
@@ -41,6 +42,8 @@ jobs:
       - run: npm ci
       - name: Purchase boundary regression
         run: npx --no-install tsx scripts/verify-commerce-purchase-handoff.mts
+      - name: Purchase ledger and approval regression
+        run: node scripts/verify-commerce-purchase-store.cjs
       - name: Next typecheck
         run: npm run typecheck
       - name: Fixture production build
