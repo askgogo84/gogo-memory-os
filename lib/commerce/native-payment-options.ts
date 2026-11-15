@@ -41,12 +41,19 @@ export async function readNativeInstamartPaymentOptions(owner:string,purchaseId:
   const cartTotal=explicitInrPaise(cart.cartTotalAmount)
   if(payable===null || cartTotal!==payable || payable!==purchase.amount_paise)
     throw new PurchaseBoundaryError('delivered_total_unverified_or_limit')
+  const details=cart.selectedAddressDetails
+  const safe=(v:unknown)=>typeof v==='string'?v.trim().replace(/[\\r\\n]+/g,' ').slice(0,300):''
+  const deliveryAddress=[details?.flatNo,details?.address,details?.area,details?.city].map(safe)
+    .filter(Boolean).join(', ')
+  if(!safe(details?.address)||!deliveryAddress||deliveryAddress.length>1024)
+    throw new PurchaseBoundaryError('delivery_address_unverified')
   const options=verifiedInstamartPaymentChoices(await client.readTool('get_payment_options',{}))
   return {
     provider:'swiggy' as const,
     snapshotSha256:purchase.snapshot_sha256 as string,
     totalPaise:purchase.amount_paise as number,
     checkedAt:new Date().toISOString(),
+    deliveryAddress,
     ...options,
     checkoutEnabled:false,
     notice:'Read-only payment choices returned by Swiggy. Selecting a method or making a payment is not enabled. Verify your merchant cart before paying.',

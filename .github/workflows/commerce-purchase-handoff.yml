@@ -11,6 +11,7 @@ on:
       - 'lib/commerce/enterprise-purchase-approval*.ts'
       - 'lib/commerce/purchase-outcome*.ts'
       - 'lib/commerce/native-payment*.ts'
+      - 'lib/commerce/native-checkout*.ts'
       - 'lib/commerce/mcp.ts'
       - 'app/api/commerce/purchases/**'
       - 'app/dashboard/(app)/commerce/**'
@@ -22,6 +23,8 @@ on:
       - 'supabase/migrations/20261115150000_commerce_enterprise_spend_approvals.sql'
       - 'scripts/verify-commerce-outcome.mts'
       - 'scripts/verify-commerce-native-payment-options.mts'
+      - 'scripts/verify-commerce-native-checkout.mts'
+      - 'supabase/migrations/20261115180000_commerce_native_checkout_one_attempt.sql'
       - 'supabase/migrations/20261115120000_commerce_outcome_readbacks.sql'
       - 'supabase/migrations/20261115090000_commerce_purchase_intents.sql'
       - '.github/workflows/commerce-purchase-handoff.yml'
@@ -68,6 +71,8 @@ jobs:
         run: npx --no-install tsx scripts/verify-commerce-enterprise-approval.mts
       - name: CreditIQ signed issuer-offer advisory bridge
         run: npx --no-install tsx scripts/verify-commerce-creditiq-bridge.mts
+      - name: Native checkout single-use financial mutation contract
+        run: npx --no-install tsx scripts/verify-commerce-native-checkout.mts
       - name: Next typecheck
         run: npm run typecheck
       - name: Fixture production build
