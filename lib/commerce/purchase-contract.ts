@@ -89,10 +89,15 @@ export function purchaseState(snapshot: PurchaseSnapshot): 'awaiting_provider_ha
 }
 
 export function sameSnapshot(row: Record<string, any>, snapshot: PurchaseSnapshot): boolean {
-  return row.owner_telegram_id === snapshot.owner && row.source_run_id === snapshot.runId &&
-    row.snapshot_sha256 === snapshot.sha256 && row.provider === snapshot.provider &&
-    row.cart_id === snapshot.cartId && row.address_id === snapshot.addressId &&
-    row.currency === 'INR' && row.amount_paise === snapshot.amountPaise
+  try {
+    return row.owner_telegram_id === snapshot.owner && row.source_run_id === snapshot.runId &&
+      row.snapshot_sha256 === snapshot.sha256 && row.provider === snapshot.provider &&
+      row.cart_id === snapshot.cartId && row.address_id === snapshot.addressId &&
+      row.currency === 'INR' && row.amount_paise === snapshot.amountPaise &&
+      row.checkout_url === snapshot.checkoutUrl && row.phone_cart_verified === snapshot.phoneCartVerified &&
+      Date.parse(row.expires_at) === Date.parse(snapshot.expiresAt) &&
+      JSON.stringify(canonicalItems(row.items_snapshot)) === JSON.stringify(snapshot.items)
+  } catch { return false }
 }
 
 export function purchaseView(row: Record<string, any>, now = Date.now()) {
