@@ -6,6 +6,7 @@ on:
     paths:
       - 'lib/commerce/purchase-*.ts'
       - 'lib/commerce/creditiq-rewards.ts'
+      - 'lib/commerce/creditiq-commerce-adapter.ts'
       - 'lib/commerce/enterprise-spending-policy.ts'
       - 'lib/commerce/enterprise-purchase-approval*.ts'
       - 'lib/commerce/purchase-outcome*.ts'
@@ -16,6 +17,7 @@ on:
       - 'scripts/verify-commerce-purchase-handoff.mts'
       - 'scripts/verify-commerce-purchase-store.cjs'
       - 'scripts/verify-commerce-advisory.mts'
+      - 'scripts/verify-commerce-creditiq-bridge.mts'
       - 'scripts/verify-commerce-enterprise-approval.mts'
       - 'supabase/migrations/20261115150000_commerce_enterprise_spend_approvals.sql'
       - 'scripts/verify-commerce-outcome.mts'
@@ -64,6 +66,8 @@ jobs:
         run: npx --no-install tsx scripts/verify-commerce-advisory.mts
       - name: Tenant-scoped enterprise approval and audit regression
         run: npx --no-install tsx scripts/verify-commerce-enterprise-approval.mts
+      - name: CreditIQ signed issuer-offer advisory bridge
+        run: npx --no-install tsx scripts/verify-commerce-creditiq-bridge.mts
       - name: Next typecheck
         run: npm run typecheck
       - name: Fixture production build
