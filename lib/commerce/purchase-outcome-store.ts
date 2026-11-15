@@ -1,6 +1,6 @@
 import {supabaseAdmin} from '@/lib/supabase-admin'
 import {getPurchase, assertPurchaseFeatureEnabled} from './purchase-handoff'
-import {MerchantOrderReadback, validateMerchantOrderReadback, merchantOutcomeView} from './purchase-outcome'
+import {type MerchantOrderReadback, type PurchaseForReconciliation, validateMerchantOrderReadback, merchantOutcomeView} from './purchase-outcome'
 import {PurchaseBoundaryError} from './purchase-contract'
 
 const TABLE = 'commerce_purchase_outcome_readbacks'
@@ -16,7 +16,7 @@ export async function persistAuthenticatedMerchantOutcome(
   assertPurchaseFeatureEnabled()
   const purchase = await getPurchase(owner, purchaseId)
   if (!purchase) throw new PurchaseBoundaryError('purchase_not_found')
-  const proof = validateMerchantOrderReadback(purchase, merchantReadback)
+  const proof = validateMerchantOrderReadback(purchase as PurchaseForReconciliation, merchantReadback)
   const row = {
     purchase_id: purchase.id,
     owner_telegram_id: owner,
