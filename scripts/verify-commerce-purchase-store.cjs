@@ -103,7 +103,7 @@ async function code(fn,expected){
   assert.equal((await service.approvePurchase('owner-a',id,payload)).state,'approved')
   await code(()=>service.approvePurchase('owner-a',id,payload),'purchase_not_ready')
   await code(()=>service.openPurchaseHandoff('owner-a',id,'bad-sha'),'approval_snapshot_mismatch')
-  assert.equal((await service.openPurchaseHandoff('owner-a',id,ready.snapshotSha256)).state,'handoff_opened')
+  assert.equal((await service.openPurchaseHandoff('owner-a',id,ready.snapshotSha256)).state,'handoff_released')
   assert.equal((await service.openPurchaseHandoff('owner-a',id,ready.snapshotSha256)).checkoutUrl,cart.providerUrl)
   await code(()=>service.cancelPurchase('owner-a',id),'purchase_handoff_may_be_active')
   assert.equal((await service.readPurchaseView('owner-a',id)).paymentVerified,false)
