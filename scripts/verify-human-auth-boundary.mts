@@ -29,7 +29,7 @@ function load(path:string,deps:any,extra:any={}){const exports:any={};runInNewCo
 const json={json:(body:any,options:any={})=>new Response(JSON.stringify(body),{status:options.status||200})}
 let work=0
 process.env.CRON_SECRET='fixture-cron'
-const internal=load('app/api/agent/approved-browser/route.ts',{'next/server':{NextResponse:json,after:()=>{work++}},'@/lib/agent/approved-browser-worker':new Proxy({}, {get:()=>()=>{work++;throw Error('code reached worker')}})})
+const internal=load('app/api/agent/approved-browser/route.ts',{'@/lib/security/cron-auth':await import('../lib/security/cron-auth'),'next/server':{NextResponse:json,after:()=>{work++}},'@/lib/agent/approved-browser-worker':new Proxy({}, {get:()=>()=>{work++;throw Error('code reached worker')}})})
 for(const payload of [{loginCode:'482913'},{otp:'482913'},{bookingOtp:'482913'},{read:true,loginCode:'482913'},{comparison:true,otp:'482913'}]){
  const r=await internal.POST(new Request('https://fixture.invalid/api/agent/approved-browser',{method:'POST',headers:{authorization:'Bearer fixture-cron','content-type':'application/json'},body:JSON.stringify({runId:'fixture-run-id',...payload})}))
  assert.equal(r.status,400);assert.equal((await r.json()).error,'human_auth_takeover_required')

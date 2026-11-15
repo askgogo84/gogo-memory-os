@@ -18,7 +18,7 @@ assert.match(engine,/classified\.risk==='low'/)
 assert.match(engine,/createGoalArtifact/)
 assert.match(engine,/type:'goal_review'/)
 assert.match(route,/initializeBackgroundGoal/)
-assert.match(cron,/CRON_SECRET/)
+assert.match(cron,/isCron(?:Bearer)?Authorized\(request\)/) // 15 Nov: shared constant-time CRON_SECRET check (lib/security/cron-auth)
 assert.doesNotMatch(cron,/searchParams\.get\('secret'\)/)
 assert.match(vercel,/\/api\/cron\/agent-goals/)
 

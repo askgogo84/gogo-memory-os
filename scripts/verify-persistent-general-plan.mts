@@ -25,7 +25,7 @@ assert.match(route,/tryRunPersistentGeneralPlan/)
 assert.ok(route.indexOf('tryRunPersistentGeneralPlan') < route.indexOf('tryRunGeneralPlan({'),'persistent runtime must be attempted before legacy general planner')
 assert.match(route,/persistentPlan/)
 
-assert.match(cron,/CRON_SECRET/)
+assert.match(cron,/isCron(?:Bearer)?Authorized\(request\)/) // 15 Nov: shared constant-time CRON_SECRET check (lib/security/cron-auth)
 assert.match(cron,/resumePersistentGeneralPlan/)
 assert.match(cron,/\.eq\('type','autonomous'\)/)
 assert.match(cron,/\.in\('status',\['running','queued'\]\)/)

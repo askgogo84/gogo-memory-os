@@ -11,6 +11,7 @@
 // one message per pass, "stop follow-ups" turns it off. The 4 Nov quiet rule still holds for everyone else.
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
+import { parseFollowUpCommand } from './follow-up-command'
 import { proactiveShadowOwners, shadowText, cleanupCandidates, logProactiveShadow, recentShadowRows } from './proactive-shadow'
 
 export const FOLLOWUP_DAILY_CAP = 2
@@ -277,12 +278,7 @@ export async function processFollowUps(deps: Deps = {}) {
 }
 
 /** "stop follow-ups" / "start follow-ups". Recorded as the latest command; stop wins on any read error. */
-export function parseFollowUpCommand(text: string): 'stop' | 'start' | null {
-  const t = clean(text, 80).toLowerCase().replace(/[.!]+$/, '')
-  if (/^(?:stop|pause|turn off|no more)\s+follow[\s-]?ups?$/.test(t)) return 'stop'
-  if (/^(?:start|resume|turn on)\s+follow[\s-]?ups?$/.test(t)) return 'start'
-  return null
-}
+export { parseFollowUpCommand }
 export async function handleFollowUpCommand(owner: string, text: string, db: any = supabaseAdmin) {
   const cmd = parseFollowUpCommand(text)
   if (!cmd) return null

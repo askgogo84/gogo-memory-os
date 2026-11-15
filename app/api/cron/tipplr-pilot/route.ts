@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { saveActionRecord } from '@/lib/agent/action-record'
+import { isCronAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -8,13 +9,8 @@ export const maxDuration = 120
 // Tipplr ops pilot (phase 2, 7 Nov): runs due cut-off schedules and, at 11:20 IST, prepares proposals. Messages are
 // returned to the caller until the WhatsApp channel lands (phase 3); nothing is sent from here. 503 until the
 // pilot migration has been run and the workspace seeded.
-function authorized(request: Request) {
-  const expected = process.env.CRON_SECRET
-  if (!expected) return false
-  const url = new URL(request.url)
-  const bearer = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim()
-  return url.searchParams.get('secret') === expected || bearer === expected
-}
+// 15 Nov audit: the shared, constant-time check (was a local copy with a plain ===).
+const authorized = (request: Request) => isCronAuthorized(request)
 
 export async function GET(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })

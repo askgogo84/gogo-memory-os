@@ -139,7 +139,7 @@ ok(/if \(metaInboxEnabled\(\)\) \{[\s\S]{0,400}storeInbound\([\s\S]{0,200}status
 ok(route.indexOf('verifyMetaSignature(') < route.indexOf('storeInbound('), 'nothing is stored before the signature is checked')
 ok(/waProviderFor\(m\.from\) === 'meta'/.test(route) && route.indexOf("waProviderFor(m.from) === 'meta'") < route.indexOf('storeInbound('), 'only senders served by Meta are stored')
 const cron = readFileSync(new URL('../app/api/cron/wa-meta-inbox/route.ts', import.meta.url), 'utf8')
-ok(/CRON_SECRET/.test(cron), 'the drain cron needs the cron secret')
+ok(/isCron(?:Bearer)?Authorized\(request\)/.test(cron), 'the drain cron needs the cron secret')
 ok(JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')).crons.some((c: any) => c.path === '/api/cron/wa-meta-inbox' && c.schedule === '* * * * *'), 'it runs every minute')
 const mod = readFileSync(new URL('../lib/channels/whatsapp-provider/meta-inbox.ts', import.meta.url), 'utf8')
 ok(!/console\.(?:log|error)\([^\n]*(?:\bparams\b|\bBody\b|\bsender\b|\bfrom\b|\.sender|row\.params)/.test(mod), 'no message text or sender is logged')

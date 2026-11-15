@@ -18,6 +18,15 @@ export function isCronAuthorized(request:Request, env:Record<string,string|undef
   return safeEqual(auth,expected)||safeEqual(query,expected)
 }
 
+/** Bearer-only cron check for routes that never accepted `?secret=` (15 Nov audit: seven routes carried their own
+ *  copy of this with a plain `===`). Same acceptance as those copies — the Authorization value with an optional
+ *  "Bearer " prefix must equal CRON_SECRET, fail closed when unset — but compared in constant time. */
+export function isCronBearerAuthorized(request:Request, env:Record<string,string|undefined>=process.env){
+  const expected=String(env.CRON_SECRET||'')
+  if(!expected)return false
+  return safeEqual((request.headers.get('authorization')||'').replace(/^Bearer\s+/i,'').trim(),expected)
+}
+
 // ── Internal service-to-service auth ──────────────────────────────────────────
 // A few legacy HTTP routes (todos, contacts, expenses, news,
 // briefing, reminders/create, referral) are called SERVER-TO-SERVER by our own

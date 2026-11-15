@@ -158,15 +158,15 @@ const fuSrc = readFileSync('lib/agent/follow-ups.ts', 'utf8')
 ok(/if \(!mailbox \|\| String\(access\.ownEmail \|\| ''\)\.toLowerCase\(\) !== mailbox\.toLowerCase\(\)\) return null/.test(fuSrc), 'a mail judged in another mailbox is never re-checked against the primary inbox')
 ok(/if \(out\.length >= 3\) break\n    \}\n    if \(out\.length >= 3\) break/.test(fuSrc), 'at most 3 deadline items (both loops)')
 const route = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')
-ok(/parseRunCancel\(text\) \|\| \/\^\\s\*\(\?:stop\|pause\|turn off\|no more\|start\|resume\|turn on\)\\s\+follow\[\\s-\]\?ups\?\[\.!\]\*\\s\*\$\/i\.test\(String\(text \|\| ''\)\)\) \{/.test(route), 'the webhook gives "stop follow-ups" first refusal, so it reaches the bridge handler')
+ok(/parseRunCancel\(text\) \|\| isFollowUpCommand\(text\)\) \{/.test(route), 'the webhook gives "stop follow-ups" first refusal, so it reaches the bridge handler')
 ok(/followupsLiveOwners\(\)\.filter\(o=>!shadowSet\.has\(o\)\)/.test(pulse_src()), 'live owners also get judge rows for the re-check')
 function pulse_src() { return readFileSync('lib/agent/autonomy-pulse.ts', 'utf8') }
 
 // Wiring.
 const bridge = readFileSync('lib/agent/whatsapp-bridge.ts', 'utf8')
 ok(bridge.indexOf("m.handleFollowUpCommand(String(actor.legacyTelegramId),params.text)") > 0 && bridge.indexOf("m.handleFollowUpCommand(String(actor.legacyTelegramId),params.text)") < bridge.indexOf('shouldHandleOpenLoopAction({actor'), 'stop/start command is routed before open-loop actions')
-{ const gate = new RegExp(String(bridge.match(/const followUpCmd=\/(.+?)\/i\.test/)?.[1] || 'x^'), 'i')
-  ok(['stop follow-ups', 'Resume follow ups!', 'turn off followups'].every(t => gate.test(t)) && !['follow up with Divya', 'stop the follow up reminder'].some(t => gate.test(t)), 'bridge gate matches the parser’s phrasings only') }
+{ const { isFollowUpCommand } = await import('../lib/agent/follow-up-command.ts')
+  ok(/const followUpCmd=isFollowUpCommand\(params\.text\)/.test(bridge) && ['stop follow-ups', 'Resume follow ups!', 'turn off followups'].every(t => isFollowUpCommand(t)) && !['follow up with Divya', 'stop the follow up reminder'].some(t => isFollowUpCommand(t)), 'bridge, webhook and parser share one definition of the command') }
 const pulse = readFileSync('lib/agent/autonomy-pulse.ts', 'utf8')
 ok(pulse.indexOf("m.processFollowUps()") > 0 && pulse.indexOf("m.processFollowUps()") < pulse.indexOf("mayVolunteer('check_in')"), 'follow-ups run before the quiet-rule return (live only for allowlisted owners)')
 const loops = readFileSync('lib/agent/open-loops.ts', 'utf8')

@@ -9,7 +9,7 @@ import { isSuppressed } from '@/lib/bot/handlers/reminder-optout'
 // getNextOccurrence now lives in the shared reminder-series module so skip-occurrence
 // advances a series exactly the way this cron does — one implementation, no drift.
 import { describeCadence } from '@/lib/services/reminder-series'
-import { internalServiceAuthHeaders } from '@/lib/security/cron-auth'
+import { internalServiceAuthHeaders, isCronAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -26,15 +26,8 @@ const F2F_REMINDERS_ENABLED =
 // Keywords that mean "send the actual morning briefing" not a dumb notification
 const BRIEFING_KEYWORDS = /^(morning briefing|good morning|daily briefing|morning brief|briefing|my briefing)$/i
 
-function isAuthorized(req: Request) {
-  const { searchParams } = new URL(req.url)
-  const querySecret = searchParams.get('secret')
-  const authHeader = req.headers.get('authorization') || ''
-  const bearerSecret = authHeader.replace(/^Bearer\s+/i, '').trim()
-  const expected = process.env.CRON_SECRET
-  if (!expected) return false
-  return querySecret === expected || bearerSecret === expected
-}
+// 15 Nov audit: the shared, constant-time check (was a local copy with a plain ===).
+const isAuthorized = (req: Request) => isCronAuthorized(req)
 
 // Context emoji for a reminder label. First keyword match wins; order matters
 // (health/celebration before generic). Prefixes the label so the icon rides

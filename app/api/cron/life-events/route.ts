@@ -3,18 +3,13 @@ import { processDueLifeEventActions } from '@/lib/agent/life-event-worker'
 import { processDueLifeEventEmailWatches } from '@/lib/agent/life-event-email-worker'
 import { processDueLifeEventIntegrations } from '@/lib/agent/life-event-integration-worker'
 import { syncUpcomingFlightTicketsToLifeEvents } from '@/lib/agent/travel-ticket-life-event-bridge'
+import { isCronAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-function authorized(request: Request) {
-  const expected = process.env.CRON_SECRET
-  if (!expected) return false
-  const url = new URL(request.url)
-  const query = url.searchParams.get('secret')
-  const bearer = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim()
-  return query === expected || bearer === expected
-}
+// 15 Nov audit: the shared, constant-time check (was a local copy with a plain ===).
+const authorized = (request: Request) => isCronAuthorized(request)
 
 export async function GET(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })

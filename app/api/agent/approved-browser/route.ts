@@ -1,5 +1,6 @@
 import { after, NextResponse } from 'next/server'
 import { runApprovedBrowserRun, runBackgroundBrowserRead } from '@/lib/agent/approved-browser-worker'
+import { isCronBearerAuthorized } from '@/lib/security/cron-auth'
 
 // Internal trigger, called by the WhatsApp webhook right after the user approves a browser
 // action. It answers 202 immediately and runs the approved browser work in `after()`, so the
@@ -8,12 +9,8 @@ export const dynamic = 'force-dynamic'
 // 27 Oct: bookings need ~9 minutes of browser time after a ~90 s start (see BOOKING_BUDGET_MS).
 export const maxDuration = 800
 
-function authorized(request: Request) {
-  const expected = process.env.CRON_SECRET
-  if (!expected) return false
-  const bearer = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim()
-  return bearer === expected
-}
+// 15 Nov audit: the shared, constant-time check (was a local copy with a plain ===).
+const authorized = (request: Request) => isCronBearerAuthorized(request)
 
 export async function POST(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })

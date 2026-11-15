@@ -187,7 +187,7 @@ assert.match(cron, /syncUpcomingFlightTicketsToLifeEvents/)
 assert.ok(cron.indexOf('syncUpcomingFlightTicketsToLifeEvents()') < cron.indexOf('processDueLifeEventEmailWatches()'), 'saved flights must be adopted before lifecycle workers run')
 assert.match(cron, /processDueLifeEventIntegrations/)
 assert.ok(cron.indexOf('processDueLifeEventIntegrations()') < cron.indexOf('processDueLifeEventActions()'), 'concrete integrations must run before the legacy fallback worker')
-assert.match(cron, /CRON_SECRET/)
+assert.match(cron, /isCron(?:Bearer)?Authorized\(request\)/) // 15 Nov: shared constant-time CRON_SECRET check (lib/security/cron-auth)
 
 assert.match(bookingCalendar, /lifeEventActionId\?:string/)
 assert.match(bookingCalendar, /life_event_action_id/)
