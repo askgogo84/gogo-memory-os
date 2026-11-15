@@ -20,7 +20,8 @@ export function isCronAuthorized(request:Request, env:Record<string,string|undef
 
 /** Bearer-only cron check for routes that never accepted `?secret=` (15 Nov audit: seven routes carried their own
  *  copy of this with a plain `===`). Same acceptance as those copies — the Authorization value with an optional
- *  "Bearer " prefix must equal CRON_SECRET, fail closed when unset — but compared in constant time. */
+ *  "Bearer " prefix must equal CRON_SECRET, fail closed when unset — but compared in constant time. Unlike
+ *  isCronAuthorized it does not trim the stored secret, because the copies it replaced did not. */
 export function isCronBearerAuthorized(request:Request, env:Record<string,string|undefined>=process.env){
   const expected=String(env.CRON_SECRET||'')
   if(!expected)return false
