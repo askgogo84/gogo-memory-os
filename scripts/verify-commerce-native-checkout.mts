@@ -18,6 +18,8 @@ const review={id:'review-1',review_sha256:reviewSha256,snapshot_sha256:scope.car
 const consent={reviewId:'review-1',reviewSha256,snapshotSha256:scope.cartSha256,
  totalPaise:50000,methodId:'Cash',mode:'cash_on_delivery',acknowledge:true,addressAccepted:true}
 assert.equal(authorizeNativeCheckoutAttempt(review,consent,now).methodId,'Cash')
+assert.throws(()=>authorizeNativeCheckoutAttempt(review,{...consent,methodId:'gpay://upi/',mode:'upi_intent'},now),
+ e=>e instanceof PurchaseBoundaryError&&e.code==='native_upi_handoff_not_ready')
 for(const patch of [
  {reviewId:'wrong'},{reviewSha256:'b'.repeat(64)},{snapshotSha256:'b'.repeat(64)},
  {totalPaise:49999},{methodId:'other'},{mode:'upi_qr'},{acknowledge:false},{addressAccepted:false},

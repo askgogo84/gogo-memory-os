@@ -58,6 +58,7 @@ export default function NativeCheckoutReview({purchaseId}:{purchaseId:string}){
      className="rounded-lg border border-[#2fb8a6] px-3 py-2 disabled:opacity-50">
      {busy?'Verifying live cart…':'Prepare full address and payment review'}</button>}
    {review?.canCheckout&&<>
+     <p className="text-xs text-[#a0a0a0]">For this pilot, UPI intent and QR remain read-only until the complete device payment continuation is validated.</p>
      <p className="text-xl font-medium">₹{((review.totalPaise||0)/100).toFixed(2)} total</p>
      <p className="text-sm">Delivery address: {review.deliveryAddress}</p>
      <p className="text-sm">Review expires {new Date(review.expiresAt||'').toLocaleString('en-IN')}</p>
@@ -65,7 +66,7 @@ export default function NativeCheckoutReview({purchaseId}:{purchaseId:string}){
        <select value={choice} onChange={event=>setChoice(event.target.value)}
          className="mt-2 block w-full rounded-lg bg-[#222] p-2">
          <option value="">Choose one</option>
-         {(review.choices||[]).map(method=><option key={method.mode+':'+method.methodId}
+         {(review.choices||[]).filter(method=>method.mode==='cash_on_delivery'||method.mode==='swiggy_money').map(method=><option key={method.mode+':'+method.methodId}
            value={method.mode+':'+method.methodId}>{method.label} ({method.mode.replaceAll('_',' ')})</option>)}
        </select>
      </label>

@@ -50,6 +50,9 @@ export function authorizeNativeCheckoutAttempt(
   const chosen=review.choices_snapshot.find(x=>
     x.methodId===consent.methodId&&x.mode===consent.mode)
   if(!chosen) return fail('native_checkout_method_changed')
+  // UPI intent/QR requires a separate device-authenticated pending-payment
+  // continuation. Until completed, avoid creating unpayable pending orders.
+  if(chosen.mode==='upi_intent'||chosen.mode==='upi_qr')return fail('native_upi_handoff_not_ready')
   // Only the exact previously returned merchant method can be selected.
   return chosen
 }

@@ -73,3 +73,5 @@ Native checkout review creation is POST-only with session/CSRF origin checks, no
 ## Native merchant order history re-read
 
 Authenticated `get_orders` is allowlisted for read only. An owner-scoped API matches only exact order IDs returned by the single native checkout attempt and the saved merchant delivery address ID. Missing/partial/multi-store outcomes remain partial or unknown, and merchant order history alone never implies captured payment or refund. Any attempt with no returned IDs is deliberately unreconciled rather than guessed by matching cart totals or timestamps. Live acceptance requires provider account and real orders; no merchant calls were made while adding this code.
+
+Native direct checkout is explicitly limited to the returned COD or Swiggy Money choices; UPI intent and QR are shown only in read-only payment discovery until a device-safe payment continuation and payment confirmation worker are implemented. Attempting UPI via the native POST fails closed.
