@@ -112,11 +112,11 @@ test('GET never advertises a successful payment or order',()=>{
   const base={id:'purchase-1',source_run_id:runId,provider:'swiggy',amount_paise:18790,currency:'INR',
     phone_cart_verified:false,checkout_url:'https://www.swiggy.com/cart',expires_at:new Date(now+10000).toISOString(),
     snapshot_sha256:'a'.repeat(64),items_snapshot:items}
-  for(const status of ['awaiting_provider_handoff','pending_approval','approved','handoff_opened']){
+  for(const status of ['awaiting_provider_handoff','pending_approval','approved','handoff_released']){
     const v=purchaseView({...base,status},now)
     assert.equal(v.paymentVerified,false)
     assert.equal(v.orderPlaced,false)
-    assert.equal(v.checkoutUrl,status==='handoff_opened'?base.checkout_url:null)
+    assert.equal(v.checkoutUrl,status==='handoff_released'?base.checkout_url:null)
   }
   assert.equal(purchaseView({...base,status:'approved'},now+11000).state,'expired')
 })
