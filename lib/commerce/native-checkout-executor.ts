@@ -34,11 +34,12 @@ export async function prepareNativeCheckout(owner:string,purchaseId:string){
   if(!purchase||purchase.provider!=='swiggy'||purchase.status!=='awaiting_provider_handoff')
     throw new PurchaseBoundaryError('native_checkout_purchase_unavailable')
   const quote=await readNativeInstamartPaymentOptions(owner,purchaseId)
+  if(quote.agenticEligible!==true)throw new PurchaseBoundaryError('native_agentic_payment_not_allowed')
   const scope={
     owner,purchaseId,cartSha256:purchase.snapshot_sha256 as string,
     addressId:purchase.address_id as string,deliveryAddress:quote.deliveryAddress,
     cartId:purchase.cart_id as string,totalPaise:purchase.amount_paise as number,
-    choices:quote.choices,
+    choices:quote.choices,items:quote.cartItems,
   }
   const reviewSha256=nativeReviewHash(scope)
   const expiresAt=new Date(Math.min(Date.parse(purchase.expires_at),
@@ -54,7 +55,7 @@ export async function prepareNativeCheckout(owner:string,purchaseId:string){
     state:'review_ready',reviewId:data.id as string,reviewSha256,
     snapshotSha256:scope.cartSha256,
     totalPaise:scope.totalPaise,deliveryAddress:scope.deliveryAddress,
-    choices:scope.choices,expiresAt,canCheckout:true,
+    choices:scope.choices,items:scope.items,expiresAt,canCheckout:true,
     notice:'Checkout will create an order or charge the selected method. This action needs your explicit final confirmation.',
   }
 }
@@ -87,10 +88,12 @@ export async function executeApprovedNativeCheckout(owner:string,purchaseId:stri
   // Fetch live cart AND available methods again; abort on ANY price, address,
   // basket or method list change. No order mutation has happened yet.
   const latest=await readNativeInstamartPaymentOptions(owner,purchaseId)
+  if(latest.agenticEligible!==true)throw new PurchaseBoundaryError('native_agentic_payment_not_allowed')
   const exactHash=nativeReviewHash({
     owner,purchaseId,cartSha256:purchase.snapshot_sha256,
     addressId:purchase.address_id,deliveryAddress:latest.deliveryAddress,
     cartId:purchase.cart_id,totalPaise:purchase.amount_paise,choices:latest.choices,
+    items:latest.cartItems,
   })
   if(exactHash!==review.review_sha256)
     throw new PurchaseBoundaryError('native_checkout_review_changed')

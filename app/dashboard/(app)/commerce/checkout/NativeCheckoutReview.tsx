@@ -3,7 +3,8 @@ import {useEffect,useState} from 'react'
 import NativeOrderStatus from './NativeOrderStatus'
 type Choice={mode:string;methodId:string;label:string}
 type Review={state:string;reviewId?:string;reviewSha256?:string;snapshotSha256?:string;
-totalPaise?:number;deliveryAddress?:string;choices?:Choice[];expiresAt?:string;canCheckout:boolean;notice:string}
+totalPaise?:number;deliveryAddress?:string;choices?:Choice[];
+items?:Array<{name:string;variant:string;quantity:number}>;expiresAt?:string;canCheckout:boolean;notice:string}
 export default function NativeCheckoutReview({purchaseId}:{purchaseId:string}){
  const [enabled,setEnabled]=useState(false),[busy,setBusy]=useState(false)
  const [review,setReview]=useState<Review|null>(null),[choice,setChoice]=useState('')
@@ -61,6 +62,9 @@ export default function NativeCheckoutReview({purchaseId}:{purchaseId:string}){
      <p className="text-xs text-[#a0a0a0]">For this pilot, UPI intent and QR remain read-only until the complete device payment continuation is validated.</p>
      <p className="text-xl font-medium">₹{((review.totalPaise||0)/100).toFixed(2)} total</p>
      <p className="text-sm">Delivery address: {review.deliveryAddress}</p>
+     <ul className="list-disc pl-5 text-sm">
+       {(review.items||[]).map((item,i)=><li key={i}>{item.name}{item.variant?' — '+item.variant:''} × {item.quantity}</li>)}
+     </ul>
      <p className="text-sm">Review expires {new Date(review.expiresAt||'').toLocaleString('en-IN')}</p>
      <label className="block text-sm">Select verified Swiggy payment method
        <select value={choice} onChange={event=>setChoice(event.target.value)}

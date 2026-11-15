@@ -9,11 +9,16 @@ export type NativeReviewScope={
   owner:string;purchaseId:string;cartSha256:string
   addressId:string;deliveryAddress:string;cartId:string
   totalPaise:number;choices:NativePaymentChoice[]
+  items:Array<{name:string;variant:string;quantity:number}>
 }
 export function nativeReviewHash(scope:NativeReviewScope) {
   if(!id(scope.owner)||!id(scope.purchaseId)||!sha(scope.cartSha256)||
     !id(scope.addressId)||!id(scope.cartId)||
-    !id(scope.deliveryAddress)||!Array.isArray(scope.choices)||scope.choices.length>40||
+    typeof scope.deliveryAddress!=='string'||!scope.deliveryAddress.trim()||scope.deliveryAddress.length>1024||
+    !Array.isArray(scope.items)||scope.items.length<1||scope.items.length>100||
+    scope.items.some(i=>!id(i.name)||typeof i.variant!=='string'||i.variant.length>200||
+      !Number.isSafeInteger(i.quantity)||i.quantity<1||i.quantity>999)||
+    !Array.isArray(scope.choices)||scope.choices.length>40||
     !Number.isSafeInteger(scope.totalPaise)||scope.totalPaise<=0||
     scope.totalPaise>5000000) return fail('native_checkout_review_invalid')
   const choices=scope.choices.map(x=>({
@@ -27,6 +32,7 @@ export function nativeReviewHash(scope:NativeReviewScope) {
     owner:scope.owner,purchaseId:scope.purchaseId,cartSha256:scope.cartSha256,
     addressId:scope.addressId,deliveryAddress:scope.deliveryAddress,
     cartId:scope.cartId,totalPaise:scope.totalPaise,choices,
+    items:scope.items.map(x=>({name:x.name,variant:x.variant,quantity:x.quantity})),
   })).digest('hex')
 }
 export type NativeCheckoutConsent={

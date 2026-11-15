@@ -5,12 +5,13 @@ import {PurchaseBoundaryError} from '../lib/commerce/purchase-contract'
 const now=Date.parse('2026-11-15T13:00:00Z')
 const scope={owner:'owner-a',purchaseId:'purchase-1',cartSha256:'a'.repeat(64),
  addressId:'addr-1',deliveryAddress:'12 Main St, Bengaluru',cartId:'cart-1',
- totalPaise:50000,choices:[{mode:'cash_on_delivery' as const,methodId:'Cash',label:'Cash on delivery'},
+ totalPaise:50000,items:[{name:'Milk',variant:'500 ml',quantity:2}],choices:[{mode:'cash_on_delivery' as const,methodId:'Cash',label:'Cash on delivery'},
  {mode:'upi_intent' as const,methodId:'gpay://upi/',label:'GPay'}]}
 const reviewSha256=nativeReviewHash(scope)
 assert.match(reviewSha256,/^[0-9a-f]{64}$/)
 assert.notEqual(reviewSha256,nativeReviewHash({...scope,totalPaise:50001}))
 assert.notEqual(reviewSha256,nativeReviewHash({...scope,addressId:'other'}))
+assert.notEqual(reviewSha256,nativeReviewHash({...scope,items:[{name:'Milk',variant:'500 ml',quantity:3}]}))
 assert.notEqual(reviewSha256,nativeReviewHash({...scope,deliveryAddress:'another address'}))
 assert.notEqual(reviewSha256,nativeReviewHash({...scope,cartSha256:'b'.repeat(64)}))
 const review={id:'review-1',review_sha256:reviewSha256,snapshot_sha256:scope.cartSha256,
@@ -45,6 +46,8 @@ assert.match(svc,/\.insert\(\{/)
 assert.match(svc,/priorAttempt\(owner,purchaseId\)/)
 assert.match(svc,/nativeReviewHash\(/)
 assert.match(svc,/native_checkout_review_changed/)
+assert.match(svc,/native_agentic_payment_not_allowed/)
+assert.match(svc,/items:latest.cartItems/)
 assert.match(svc,/enterprise_checkout_requires_separate_execution/)
 assert.match(svc,/client\.placeInstamartCheckout/)
 assert.match(svc,/status:'outcome_unknown'/)
