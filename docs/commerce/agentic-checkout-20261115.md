@@ -39,9 +39,9 @@ New API endpoints: POST /api/commerce/purchases; GET and POST /api/commerce/purc
 
 ## Deferred, not falsely labeled as implemented
 
-CreditIQ card optimization: a separate read-only, merchant-exact verified-offer service is needed; point balances alone cannot prove a card reward, and a card recommendation is not a payment credential.
+CreditIQ card optimization: lib/commerce/creditiq-rewards.ts now provides a strictly verified-offer advisory ranking engine, with negative tests. No authenticated production CreditIQ merchant-offer adapter exists. Point balances alone cannot prove a card reward, and a card recommendation is not a payment credential.
 
-Enterprise commerce: tenant-bound company policies, approvals, spending limits, finance exports, refunds and audit/retention require distinct security tests. No company funds may be spent by learned routing.
+Enterprise commerce: lib/commerce/enterprise-spending-policy.ts now evaluates tenant, merchant, category, freshness, budgets and independent approvers in a pure fail-closed preflight. It cannot execute. Tenant-scoped policy storage, verified employee identity, approval ledger, finance exports, refunds and audit/retention still require integration and security tests. No company funds may be spent by learned routing.
 
 Tokenized cards: network/PSP integration, issuer and cardholder authentication, compliant credential storage, revocation and dispute handling. The OpenAI ChatGPT Wallet announcement is not a general external-wallet API.
 
