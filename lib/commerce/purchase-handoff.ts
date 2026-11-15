@@ -96,14 +96,14 @@ export async function approvePurchase(owner: string, id: string, input: Record<s
   return purchaseView(data)
 }
 
-/** Explicit user action, never called from an agent background loop. Records handoff,
+/** Explicit user action, never called from an agent background loop. Records release of the checkout URL (not proof that the user opened it),
  * NOT payment, order placement or merchant acceptance. */
 export async function openPurchaseHandoff(owner: string, id: string, sha256: unknown) {
   assertPurchaseFeatureEnabled()
   const row = await getPurchase(owner, id)
   if (!row) throw new PurchaseBoundaryError('purchase_not_found')
   if (sha256 !== row.snapshot_sha256) throw new PurchaseBoundaryError('approval_snapshot_mismatch')
-  if (!['approved', 'handoff_opened'].includes(row.status) || !row.checkout_url || !row.phone_cart_verified) {
+  if (!['approved', 'handoff_released'].includes(row.status) || !row.checkout_url || !row.phone_cart_verified) {
     throw new PurchaseBoundaryError('purchase_not_approved')
   }
   if (Date.parse(row.expires_at) <= Date.now()) throw new PurchaseBoundaryError('purchase_expired')
@@ -113,9 +113,9 @@ export async function openPurchaseHandoff(owner: string, id: string, sha256: unk
   if (!sameSnapshot(row, latest) || latest.checkoutUrl !== row.checkout_url || latest.phoneCartVerified !== true) {
     throw new PurchaseBoundaryError('purchase_snapshot_changed_new_task_required')
   }
-  if (row.status === 'handoff_opened') return {checkoutUrl: row.checkout_url, ...purchaseView(row)}
+  if (row.status === 'handoff_released') return {checkoutUrl: row.checkout_url, ...purchaseView(row)}
   const {data, error} = await supabaseAdmin.from(TABLE)
-    .update({status: 'handoff_opened', handoff_opened_at: new Date().toISOString(), updated_at: new Date().toISOString()})
+    .update({status: 'handoff_released', handoff_released_at: new Date().toISOString(), updated_at: new Date().toISOString()})
     .eq('owner_telegram_id', owner).eq('id', id).eq('status', 'approved')
     .eq('snapshot_sha256', latest.sha256).gt('expires_at', new Date().toISOString())
     .select('*').maybeSingle()
