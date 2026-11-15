@@ -1,5 +1,6 @@
 'use client'
 import {useEffect,useState} from 'react'
+import NativeOrderStatus from './NativeOrderStatus'
 type Choice={mode:string;methodId:string;label:string}
 type Review={state:string;reviewId?:string;reviewSha256?:string;snapshotSha256?:string;
 totalPaise?:number;deliveryAddress?:string;choices?:Choice[];expiresAt?:string;canCheckout:boolean;notice:string}
@@ -77,6 +78,7 @@ export default function NativeCheckoutReview({purchaseId}:{purchaseId:string}){
        {busy?'Submitting one attempt…':'Confirm and place ONE order'}</button>
    </>}
    {notice&&<p role="alert" className="rounded-lg border border-[#605035] p-3 text-sm">{notice}</p>}
+   {attempted&&<NativeOrderStatus purchaseId={purchaseId}/>}
    <p className="text-xs text-[#a0a0a0]">No automatic payment or order retry. A missing response is not proof the merchant rejected checkout.</p>
  </section>
 }

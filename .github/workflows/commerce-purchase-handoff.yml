@@ -12,6 +12,7 @@ on:
       - 'lib/commerce/purchase-outcome*.ts'
       - 'lib/commerce/native-payment*.ts'
       - 'lib/commerce/native-checkout*.ts'
+      - 'lib/commerce/native-order-reconciliation*.ts'
       - 'lib/commerce/mcp.ts'
       - 'app/api/commerce/purchases/**'
       - 'app/dashboard/(app)/commerce/**'
@@ -24,6 +25,7 @@ on:
       - 'scripts/verify-commerce-outcome.mts'
       - 'scripts/verify-commerce-native-payment-options.mts'
       - 'scripts/verify-commerce-native-checkout.mts'
+      - 'scripts/verify-commerce-native-orders.mts'
       - 'supabase/migrations/20261115180000_commerce_native_checkout_one_attempt.sql'
       - 'supabase/migrations/20261115120000_commerce_outcome_readbacks.sql'
       - 'supabase/migrations/20261115090000_commerce_purchase_intents.sql'
@@ -73,6 +75,8 @@ jobs:
         run: npx --no-install tsx scripts/verify-commerce-creditiq-bridge.mts
       - name: Native checkout single-use financial mutation contract
         run: npx --no-install tsx scripts/verify-commerce-native-checkout.mts
+      - name: Authenticated merchant order history reconciliation
+        run: npx --no-install tsx scripts/verify-commerce-native-orders.mts
       - name: Next typecheck
         run: npm run typecheck
       - name: Fixture production build

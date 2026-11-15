@@ -11,7 +11,7 @@ export type CommerceServer = 'food' | 'grocery' | 'dineout'
 const READ_TOOLS: Record<CommerceProvider, Partial<Record<CommerceServer, readonly string[]>>> = {
   swiggy: {
     food: ['get_addresses', 'search_restaurants', 'search_menu', 'get_restaurant_menu', 'get_food_cart'],
-    grocery: ['get_addresses', 'search_products', 'get_cart', 'get_payment_options'],
+    grocery: ['get_addresses', 'search_products', 'get_cart', 'get_payment_options', 'get_orders'],
     // Dineout reads only. book_table, create_cart and payment tools are deliberately absent: a booking needs its own
     // durable, explicitly approved executor (like instamart-cart) before any write exists.
     dineout: ['search_restaurants_dineout', 'get_restaurant_details', 'get_available_slots', 'get_booking_status'],
