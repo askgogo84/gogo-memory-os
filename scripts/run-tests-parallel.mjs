@@ -37,7 +37,7 @@ for (const f of listFiles) {
 }
 
 // `npx tsx …` resolves to the local tsx binary (same package npm ci installed); `node …` to this node.
-// tsx is not a declared dependency (CI fetches it through npx), so use a local binary when present, else npx itself.
+// tsx is a devDependency, so CI uses the local binary; a checkout without it installed falls back to npx.
 const tsxBin = join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx')
 const localTsx = existsSync(tsxBin)
 function argv(cmd) {

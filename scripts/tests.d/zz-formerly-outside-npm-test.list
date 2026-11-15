@@ -1,5 +1,6 @@
-# 15 Nov audit: these checks existed but were not in `npm test`; 89 ran only in single-file-triggered workflows and
-# 72 ran nowhere. All pass on main. They now run on every PR.
+# 15 Nov audit: these checks existed but were not in `npm test`; 87 ran only in workflows triggered by a few named
+# files and the rest ran nowhere. All pass on main. They now run on every PR.
+# Not listed: verify-browser-widgets.mts needs a local Playwright (PW_NODE_MODULES) and only prints SKIP in CI.
 npx tsx scripts/verify-admin-phone-isolation.mts
 npx tsx scripts/verify-admin-tier-owner-binding.mts
 node scripts/verify-admin-whatsapp-target-owner-literal.cjs
@@ -28,7 +29,6 @@ npx tsx scripts/verify-brain-oct27.mts
 npx tsx scripts/verify-brand-safe-oct29.mts
 node scripts/verify-briefing-get-auth-literal.cjs
 node scripts/verify-browser-handoff-health-egress.mjs
-npx tsx scripts/verify-browser-widgets.mts
 npx tsx scripts/verify-calendar-day-order-oct27.mts
 node scripts/verify-calendar-oauth-owner-literal.cjs
 npx tsx scripts/verify-capability-kill-switches-oct28.mts
