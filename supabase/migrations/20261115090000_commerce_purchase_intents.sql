@@ -18,10 +18,10 @@ create table if not exists public.commerce_purchase_intents (
   checkout_url text,
   phone_cart_verified boolean not null default false,
   status text not null default 'awaiting_provider_handoff'
-    check (status in ('awaiting_provider_handoff','pending_approval','approved','handoff_opened','cancelled','expired','verification_pending')),
+    check (status in ('awaiting_provider_handoff','pending_approval','approved','handoff_released','cancelled','expired','verification_pending')),
   expires_at timestamptz not null,
   approved_at timestamptz,
-  handoff_opened_at timestamptz,
+  handoff_released_at timestamptz,
   cancelled_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
