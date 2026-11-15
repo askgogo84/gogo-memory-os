@@ -17,8 +17,8 @@ function task() {
       commerce:{
         provider:'swiggy',
         address:{id:'addr-1',source:'provider_saved_address'},
-        cartOperation:{addressId:'addr-1',verifiedAt:checkedAt,expected:items},
-        cartReceipt:{cartId:'cart-1',addressId:'addr-1',items:[...items],payablePaise:18790,checkedAt,providerUrl:null,phoneVerified:false}
+        cartOperation:{addressId:'addr-1',verifiedAt:checkedAt,expected:items.map(item=>({...item}))},
+        cartReceipt:{cartId:'cart-1',addressId:'addr-1',items:items.map(item=>({...item})),payablePaise:18790,checkedAt,providerUrl:null,phoneVerified:false}
       },
     },
   } as any
