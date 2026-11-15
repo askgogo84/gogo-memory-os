@@ -131,7 +131,7 @@ console.log('✓ Supabase adapter and store: compare-and-set accepts, 409 on rep
 
 // 8. Cron route gates and seed script shape.
 const cron = readFileSync('app/api/cron/tipplr-pilot/route.ts', 'utf8')
-assert.match(cron, /CRON_SECRET/); assert.match(cron, /TIPPLR_PILOT_WORKSPACE_ID/); assert.match(cron, /pilot_not_enabled.*503/s); assert.match(cron, /runDueSchedules\(adapter, store, persist, now\)/); assert.ok(!/sendWhatsApp|twilio|graph\.facebook/i.test(cron), 'phase 2 sends nothing')
+assert.match(cron, /isCron(?:Bearer)?Authorized\(request\)/); assert.match(cron, /TIPPLR_PILOT_WORKSPACE_ID/); assert.match(cron, /pilot_not_enabled.*503/s); assert.match(cron, /runDueSchedules\(adapter, store, persist, now\)/); assert.ok(!/sendWhatsApp|twilio|graph\.facebook/i.test(cron), 'phase 2 sends nothing')
 const seed = readFileSync('scripts/seed-tipplr-pilot.mts', 'utf8')
 assert.match(seed, /from\('workspaces'\)\.select\('id,name'\)\.eq\('id', ws\)/); assert.ok(!/from\('(?:memories|reminders|users|conversations|expenses)'\)/.test(seed))
 console.log('✓ cron: secret + workspace gates, 503 until enabled, sends nothing; seed touches only pilot tables')

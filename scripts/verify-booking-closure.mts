@@ -99,7 +99,7 @@ assert.match(watcher,/Number\.isSafeInteger\(rejected\)/)
 assert.doesNotMatch(watcher,/cancellationNotified:true/)
 assert.match(watcher,/await complete\(row\.id/)
 assert.match(watcher,/sendAgentPush/)
-assert.match(cron,/CRON_SECRET/)
+assert.match(cron,/isCron(?:Bearer)?Authorized\(request\)/) // 15 Nov: shared constant-time CRON_SECRET check (lib/security/cron-auth)
 assert.match(cron,/processBookingChangeWatches/)
 
 console.log('✅ Booking closure regression passed: mobile provider ticket + Cloudflare device handoff + verified Gmail + calendar + reminder + retrieval + change watch')

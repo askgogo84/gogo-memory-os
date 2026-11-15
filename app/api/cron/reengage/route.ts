@@ -1,14 +1,12 @@
 import { NextResponse } from 'next/server'
 import { runReengagePass } from '@/lib/agent/reengage'
+import { isCronBearerAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-function authorized(request: Request) {
-  const expected = process.env.CRON_SECRET
-  if (!expected) return false
-  return (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim() === expected
-}
+// 15 Nov audit: the shared, constant-time check (was a local copy with a plain ===).
+const authorized = (request: Request) => isCronBearerAuthorized(request)
 
 export async function GET(request: Request) {
   if (!authorized(request)) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })

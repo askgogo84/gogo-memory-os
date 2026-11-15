@@ -10,18 +10,13 @@ import { runApprovedBrowserRun } from '@/lib/agent/approved-browser-worker'
 import { sendWhatsApp } from '@/lib/whatsapp'
 import { runQueuedRestaurantReservationResearch } from '@/lib/agent/restaurant-reservation'
 import { sweepStaleRunningRuns, sweepAbandonedSignIns } from '@/lib/agent/stale-runs'
+import { isCronAuthorized } from '@/lib/security/cron-auth'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
-function authorized(request: Request) {
-  const expected = process.env.CRON_SECRET
-  if (!expected) return false
-  const url = new URL(request.url)
-  const query = url.searchParams.get('secret')
-  const bearer = (request.headers.get('authorization') || '').replace(/^Bearer\s+/i, '').trim()
-  return query === expected || bearer === expected
-}
+// 15 Nov audit: the shared, constant-time check (was a local copy with a plain ===).
+const authorized = (request: Request) => isCronAuthorized(request)
 
 async function actorFor(telegramId:string|number):Promise<AgentActor|null> {
   // Exact owner (P0.1): exact decimal lookup, row must echo the id, unsafe ids refused (never rounded).

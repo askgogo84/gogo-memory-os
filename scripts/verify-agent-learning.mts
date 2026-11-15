@@ -11,7 +11,7 @@ const insights = read('lib/bot/memory-twin/insight-generator.ts')
 const vercel = JSON.parse(read('vercel.json'))
 
 assert.match(route, /processLearningPass/)
-assert.match(route, /CRON_SECRET/)
+assert.match(route, /isCron(?:Bearer)?Authorized\(request\)/) // 15 Nov: shared constant-time CRON_SECRET check (lib/security/cron-auth)
 assert.match(route, /status:\s*401/)
 assert.match(route, /AGENT_LEARNING_CRON_FAILED/)
 

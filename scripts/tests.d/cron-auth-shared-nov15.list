@@ -1,0 +1,1 @@
+npx tsx scripts/verify-cron-auth-shared-nov15.mts

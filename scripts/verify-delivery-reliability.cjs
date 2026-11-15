@@ -141,7 +141,9 @@ async function main() {
     '@/lib/services/reminder-series':series,
     '@/lib/whatsapp':{sendWhatsApp:send,sendWhatsAppReminderTemplate:send,sendWhatsAppReminderButtons:send},
     '@/lib/bot/handlers/reminder-optout':{isSuppressed:async()=>{if(cancelDuringConsent)await query('update reminders set sent=true where not sent');return consent}},
-    '@/lib/security/cron-auth':{internalServiceAuthHeaders:()=>({Authorization:'Bearer fixture'})}
+    '@/lib/security/cron-auth':{internalServiceAuthHeaders:()=>({Authorization:'Bearer fixture'}),
+      // The real shared check, against this fixture's CRON_SECRET (15 Nov: the route no longer carries its own copy).
+      isCronAuthorized:request=>(request.headers.get('authorization')||'').replace(/^Bearer\s+/i,'').trim()==='fixture'||new URL(request.url).searchParams.get('secret')==='fixture'}
   },{CRON_SECRET:'fixture',TWILIO_REMINDER_CONTENT_SID:'fixture'})
   const req=()=>new Request('https://fixture.invalid/api/cron/reminders',{headers:{authorization:'Bearer fixture'}})
   await query('delete from reminders');r=await add()
