@@ -32,6 +32,10 @@ export async function POST(request:Request,context:Ctx){
      'action','reviewId','reviewSha256','snapshotSha256','totalPaise',
      'methodId','mode','acknowledge','addressAccepted',
    ].includes(key)))throw new PurchaseBoundaryError('invalid_request')
-   return NextResponse.json(await executeApprovedNativeCheckout(session.telegramId,purchaseId,body),{headers})
+   return NextResponse.json(await executeApprovedNativeCheckout(session.telegramId,purchaseId,{
+     reviewId:body.reviewId,reviewSha256:body.reviewSha256,snapshotSha256:body.snapshotSha256,
+     totalPaise:body.totalPaise,methodId:body.methodId,mode:body.mode,
+     acknowledge:body.acknowledge,addressAccepted:body.addressAccepted,
+   }),{headers})
  }catch(error){return failure(error)}
 }
