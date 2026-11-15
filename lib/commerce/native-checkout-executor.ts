@@ -113,6 +113,21 @@ export async function executeApprovedNativeCheckout(owner:string,purchaseId:stri
     throw new PurchaseBoundaryError('purchase_store_unavailable')
   }
   if(!attempt)throw new PurchaseBoundaryError('purchase_store_unavailable')
+  // Atomic status claim against cancellation: if cancellation wins the race
+  // no merchant order is sent. If this claim wins, proposal cancellation is
+  // disabled and cannot misrepresent a real checkout as "cancelled".
+  const {data:claimed,error:claimError}=await supabaseAdmin
+    .from('commerce_purchase_intents')
+    .update({status:'native_checkout_started',updated_at:nowIso()})
+    .eq('id',purchaseId).eq('owner_telegram_id',owner)
+    .eq('status','awaiting_provider_handoff')
+    .eq('snapshot_sha256',review.snapshot_sha256)
+    .gt('expires_at',nowIso()).select('id').maybeSingle()
+  if(claimError||!claimed)return {
+    attemptId:attempt.id,status:'outcome_unknown',orderVerified:false,
+    paymentVerified:false,
+    notice:'The purchase proposal changed before checkout. No merchant checkout call was initiated by this request. This one-time claim cannot be reused.',
+  }
   try{
     // This is the ONLY outbound order mutation in the system and never retries.
     const provider=await client.placeInstamartCheckout(purchase.address_id,method)

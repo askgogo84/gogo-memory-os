@@ -2,6 +2,21 @@
 -- No production activation by applying schema; COMMERCE_NATIVE_CHECKOUT_ENABLED defaults OFF.
 begin;
 set local lock_timeout='5s';
+-- Native checkout status must atomically exclude the prior cancellation path.
+alter table public.commerce_purchase_intents
+  drop constraint if exists commerce_purchase_intents_status_check;
+alter table public.commerce_purchase_intents
+  add constraint commerce_purchase_intents_status_check check(status in (
+    'awaiting_provider_handoff','pending_approval','approved','handoff_released',
+    'cancelled','expired','verification_pending','native_checkout_started'
+  ));
+alter table public.commerce_purchase_intents
+  drop constraint if exists commerce_purchase_handoff_ready_check;
+alter table public.commerce_purchase_intents
+  add constraint commerce_purchase_handoff_ready_check check (
+    status in ('awaiting_provider_handoff','native_checkout_started','cancelled','expired')
+    or (checkout_url is not null and phone_cart_verified = true)
+  );
 create table if not exists public.commerce_native_checkout_reviews (
   id uuid primary key default gen_random_uuid(),
   purchase_id uuid not null references public.commerce_purchase_intents(id) on delete restrict,

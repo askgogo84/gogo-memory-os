@@ -122,7 +122,8 @@ export function purchaseView(row: Record<string, any>, now = Date.now()) {
     checkoutUrl: status === 'handoff_released' ? row.checkout_url : null,
     paymentVerified: false,
     orderPlaced: false,
-    notice: status === 'awaiting_provider_handoff'
+    notice: status === 'native_checkout_started' ? 'A native merchant checkout attempt may have created an order or charge. Confirm its actual outcome in Swiggy before doing anything else. Cancelling the AskGogo proposal does not cancel a merchant order.'
+      : status === 'awaiting_provider_handoff'
       ? 'Cart contents were read back, but a provider checkout link or correct phone cart was not verified. Nothing was ordered or charged.'
       : status === 'expired' ? 'The quote expired. Refresh the provider cart and start a new comparison. Nothing was ordered by AskGogo.'
       : status === 'handoff_expired' ? 'The merchant checkout link has expired. An order or payment may have happened; verify in the merchant account before starting again.'
