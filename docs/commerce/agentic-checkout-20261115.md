@@ -12,7 +12,7 @@ This branch creates a customer checkout proposal from an existing authenticated,
 - It accepts no customer-supplied prices, checkout URLs, card details or payment tokens.
 - A proposal is unique per owner and source task. Changed amounts, delivery address or items require a new task. Source evidence expires five minutes after provider readback.
 - Checkout approval requires exact amount, merchant, fingerprint and affirmative consent. It uses an owner-scoped status compare-and-swap. Only a fresh approved proposal can reveal a provider checkout link upon a distinct customer action.
-- Opening that URL is not proof of payment, order placement or refund. No retry of an uncertain provider financial write occurs.
+- Releasing that URL is not proof that it was opened, nor proof of payment, order placement or refund. The ledger records handoff_released, not an unverified browser opening. No retry of an uncertain provider financial write occurs.
 - The new service-role-only table has RLS enabled and holds no card PAN, CVV, OTP, UPI PIN or OAuth tokens. AskGogo Razorpay subscription billing is untouched.
 - The dashboard review screen shows missing verification; it never initiates payment automatically. The INR 50,000 cap is a deliberate pilot constraint.
 
