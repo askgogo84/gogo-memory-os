@@ -7,11 +7,14 @@ on:
       - 'lib/commerce/purchase-*.ts'
       - 'lib/commerce/creditiq-rewards.ts'
       - 'lib/commerce/enterprise-spending-policy.ts'
+      - 'lib/commerce/purchase-outcome*.ts'
       - 'app/api/commerce/purchases/**'
       - 'app/dashboard/(app)/commerce/**'
       - 'scripts/verify-commerce-purchase-handoff.mts'
       - 'scripts/verify-commerce-purchase-store.cjs'
       - 'scripts/verify-commerce-advisory.mts'
+      - 'scripts/verify-commerce-outcome.mts'
+      - 'supabase/migrations/20261115120000_commerce_outcome_readbacks.sql'
       - 'supabase/migrations/20261115090000_commerce_purchase_intents.sql'
       - '.github/workflows/commerce-purchase-handoff.yml'
   workflow_dispatch:
@@ -47,6 +50,8 @@ jobs:
         run: npx --no-install tsx scripts/verify-commerce-purchase-handoff.mts
       - name: Purchase ledger and approval regression
         run: node scripts/verify-commerce-purchase-store.cjs
+      - name: Merchant order/payment outcome verification regressions
+        run: npx --no-install tsx scripts/verify-commerce-outcome.mts
       - name: CreditIQ and enterprise advisory regressions
         run: npx --no-install tsx scripts/verify-commerce-advisory.mts
       - name: Next typecheck
