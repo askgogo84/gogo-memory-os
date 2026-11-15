@@ -5,6 +5,7 @@ import Link from 'next/link'
 import VerifiedMerchantOutcome from './VerifiedMerchantOutcome'
 import NativePaymentOptions from './NativePaymentOptions'
 import VerifiedCreditIQRewards from './VerifiedCreditIQRewards'
+import NativeCheckoutReview from './NativeCheckoutReview'
 
 type Purchase = {
   purchaseId: string; sourceRunId: string; provider: string; state: string
@@ -85,7 +86,7 @@ export default function CommerceCheckoutPage() {
   return <div className="mx-auto max-w-2xl space-y-5 pb-10">
     <Link href="/dashboard/commerce" className="text-[#2fb8a6]">← Food and groceries</Link>
     <h1 className="text-3xl font-medium">Review merchant checkout</h1>
-    <p className="text-[#a0a0a0]">AskGogo does not hold your card or UPI PIN. Final order placement, payment and authentication happen at the merchant. This pilot never makes a purchase for you.</p>
+    <p className="text-[#a0a0a0]">AskGogo does not hold your card or UPI PIN. Final order placement, payment and authentication happen at the merchant. The link-handoff pilot never makes a purchase. A separately enabled native checkout pilot can create an order only after explicit final approval.</p>
     {message && <p role="alert" className="rounded-lg border border-[#605035] p-3">{message}</p>}
     {ready && !purchase && <section className="rounded-xl border border-[#292929] p-5 space-y-3">
       <p>A verified cart is required before a purchase proposal can be prepared.</p>
@@ -101,7 +102,7 @@ export default function CommerceCheckoutPage() {
       <p className="text-sm text-[#a0a0a0]">{purchase.items.length} cart line(s). Verify quantities again inside the provider checkout before paying.</p>
       <p className="text-sm text-[#a0a0a0]">Expires: {new Date(purchase.expiresAt).toLocaleString('en-IN')}</p>
       <p className="text-[#a0a0a0]">{purchase.notice}</p>
-      {purchase.state === 'awaiting_provider_handoff' && <p className="rounded-lg border border-[#605035] p-3">Checkout is blocked: a real provider checkout link and correct phone-cart verification are still required. Do not use an invented or guessed payment link.</p>}
+      {purchase.state === 'awaiting_provider_handoff' && <p className="rounded-lg border border-[#605035] p-3">Merchant-link checkout is blocked: a provider checkout link and correct phone-cart verification are required. Native checkout is a separately gated flow. Do not use an invented or guessed payment link.</p>}
       {purchase.state === 'pending_approval' && <>
         <label className="flex gap-3">
           <input type="checkbox" checked={ack} onChange={event => setAck(event.target.checked)}/>
@@ -114,6 +115,7 @@ export default function CommerceCheckoutPage() {
       {link && <a href={link} rel="noopener noreferrer" target="_blank" className="block w-fit rounded-lg bg-[#2fb8a6] px-4 py-2 text-black">Continue at the merchant ↗</a>}
       {['pending_approval','awaiting_provider_handoff','approved'].includes(purchase.state) && <button disabled={busy} onClick={() => act('cancel')} className="block rounded-lg border border-[#292929] px-4 py-2 disabled:opacity-50">Cancel this proposal</button>}
       {['awaiting_provider_handoff','pending_approval'].includes(purchase.state) && <NativePaymentOptions purchaseId={purchase.purchaseId}/>}
+      {purchase.state === 'awaiting_provider_handoff' && <NativeCheckoutReview purchaseId={purchase.purchaseId}/>}
       <VerifiedCreditIQRewards purchaseId={purchase.purchaseId}/>
       <VerifiedMerchantOutcome purchaseId={purchase.purchaseId}/>
       <p className="text-sm text-[#a0a0a0]">A checkout link is not payment proof. AskGogo will not display “paid”, “ordered” or “refunded” without independently verified merchant evidence.</p>
