@@ -1,4 +1,5 @@
 import {NextResponse} from 'next/server'
+import {PURCHASES_ENABLED} from '@/lib/commerce/purchase-contract'
 import {isAgentSession, requireAgentSession} from '@/lib/agent/session'
 import {COMMERCE_PROVIDERS, commerceEnabled, type CommerceProvider} from '@/lib/commerce/providers'
 import {readCommerceConnection} from '@/lib/commerce/connection-store'
@@ -13,7 +14,7 @@ export async function GET(request: Request) {
       const token = await readCommerceConnection(session.telegramId, provider)
       return {provider, label: COMMERCE_PROVIDERS[provider].label, state: token ? 'authorized' : 'not_connected'}
     }))
-    return NextResponse.json({providers}, {headers: {'Cache-Control': 'no-store'}})
+    return NextResponse.json({providers, purchaseHandoffEnabled: PURCHASES_ENABLED()}, {headers: {'Cache-Control': 'no-store'}})
   } catch {
     return NextResponse.json({error: 'connection_status_unavailable'}, {status: 503})
   }
