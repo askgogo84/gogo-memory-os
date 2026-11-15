@@ -66,7 +66,7 @@ test('verified link and phone cart can form a reviewable proposal',()=>{
   t.metadata_json.commerce.cartReceipt.phoneVerified=true
   const s=snapshotFromVerifiedCart('owner-a',t,now)
   assert.equal(purchaseState(s),'pending_approval')
-  const row={owner_telegram_id:'owner-a',source_run_id:runId,snapshot_sha256:s.sha256,provider:'swiggy',cart_id:'cart-1',address_id:'addr-1',amount_paise:18790,currency:'INR'}
+  const row={owner_telegram_id:'owner-a',source_run_id:runId,snapshot_sha256:s.sha256,provider:'swiggy',cart_id:'cart-1',address_id:'addr-1',amount_paise:18790,currency:'INR',checkout_url:s.checkoutUrl,phone_cart_verified:s.phoneCartVerified,expires_at:s.expiresAt,items_snapshot:s.items}
   assert.equal(sameSnapshot(row,s),true)
   assert.equal(sameSnapshot({...row, owner_telegram_id:'owner-b'},s),false)
   assert.equal(sameSnapshot({...row, amount_paise:1},s),false)
