@@ -54,8 +54,12 @@ const requiredGates = [
   'verify-product-readiness.mjs',
 ]
 
+// 15 Nov audit: `npm test` is the list runner; the gates must be registered in a scripts/tests.d list it runs.
+assert.equal(testCommand, 'node scripts/run-test-list.mjs', 'npm test must be the list runner')
+const registered = fs.readdirSync('scripts/tests.d').filter(f => f.endsWith('.list'))
+  .flatMap(f => fs.readFileSync(`scripts/tests.d/${f}`, 'utf8').split('\n')).filter(l => l.trim() && !l.trim().startsWith('#')).join('\n')
 for (const gate of requiredGates) {
-  assert.ok(testCommand.includes(gate), `missing autonomous regression gate from npm test: ${gate}`)
+  assert.ok(registered.includes(`scripts/${gate}`), `missing autonomous regression gate from npm test: ${gate}`)
 }
 
 const requiredSequences = [
