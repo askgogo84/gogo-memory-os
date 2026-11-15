@@ -1,0 +1,47 @@
+name: Commerce Purchase Handoff Exact Head
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'lib/commerce/purchase-*.ts'
+      - 'app/api/commerce/purchases/**'
+      - 'app/dashboard/(app)/commerce/**'
+      - 'scripts/verify-commerce-purchase-handoff.mts'
+      - 'supabase/migrations/20261115090000_commerce_purchase_intents.sql'
+      - '.github/workflows/commerce-purchase-handoff.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+    steps:
+      - name: Checkout immutable PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Assert head SHA
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+      - name: Node 24 with locked dependencies
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Purchase boundary regression
+        run: npx --no-install tsx scripts/verify-commerce-purchase-handoff.mts
+      - name: Next typecheck
+        run: npm run typecheck
+      - name: Fixture production build
+        run: npm run build
