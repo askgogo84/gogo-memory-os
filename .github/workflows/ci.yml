@@ -5,6 +5,10 @@ on:
     branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   verify:
@@ -28,8 +32,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Same commands as `npm test` (package.json chain + scripts/tests.d), several at a time: the sequential chain
-      # took ~18.5 of the 20 minutes and runs were cut off at the typecheck (13 Nov, owner: parallelize the runner).
+      # Same commands as `npm test` (every scripts/tests.d list), several at a time. 15 Nov audit: this one job replaced
+      # 90 single-purpose workflows that each ran only when a few named files changed; their checks are all in the
+      # lists now and run on every PR.
       - name: Full regression suite
         run: node scripts/run-tests-parallel.mjs
 

@@ -1,0 +1,163 @@
+# 15 Nov audit: these checks existed but were not in `npm test`; 87 ran only in workflows triggered by a few named
+# files and the rest ran nowhere. All pass on main. They now run on every PR.
+# Not listed: verify-browser-widgets.mts needs a local Playwright (PW_NODE_MODULES) and only prints SKIP in CI.
+npx tsx scripts/verify-admin-phone-isolation.mts
+npx tsx scripts/verify-admin-tier-owner-binding.mts
+node scripts/verify-admin-whatsapp-target-owner-literal.cjs
+npx tsx scripts/verify-approved-thread-outcome-oct27.mts
+npx tsx scripts/verify-asset-url-guard-oct26.mts
+npx tsx scripts/verify-attention-account-provenance-nov6.mts
+node scripts/verify-autonomy-email-durable-claim.mjs
+npx tsx scripts/verify-awaiting-replies-oct30.mts
+npx tsx scripts/verify-billing-owner-isolation-nov7.mts
+node scripts/verify-boarding-pass-outbox-zero-accepted-fix.mjs
+npx tsx scripts/verify-book-latest-search-oct27.mts
+node scripts/verify-booking-change-push-receipt-fix.mjs
+npx tsx scripts/verify-booking-closure-actor-owner.mts
+npx tsx scripts/verify-booking-details-oct27.mts
+npx tsx scripts/verify-booking-edge-blocked-oct27.mts
+npx tsx scripts/verify-booking-known-details-oct28.mts
+npx tsx scripts/verify-booking-late-details-oct28.mts
+npx tsx scripts/verify-booking-offer-ssrf-nov7.mts
+npx tsx scripts/verify-booking-row-pick-oct27.mts
+npx tsx scripts/verify-booking-screenshot-owner.mts
+npx tsx scripts/verify-booking-start-reload-oct27.mts
+node scripts/verify-bot-gmail-positive-consent-fix.mjs
+npx tsx scripts/verify-brain-followup-acceptance-nov6.mts
+node scripts/verify-brain-multiline-completion.cjs
+npx tsx scripts/verify-brain-oct27.mts
+npx tsx scripts/verify-brand-safe-oct29.mts
+node scripts/verify-briefing-get-auth-literal.cjs
+node scripts/verify-browser-handoff-health-egress.mjs
+npx tsx scripts/verify-calendar-day-order-oct27.mts
+node scripts/verify-calendar-oauth-owner-literal.cjs
+npx tsx scripts/verify-capability-kill-switches-oct28.mts
+npx tsx scripts/verify-cart-store-oct26.mts
+npx tsx scripts/verify-chat-page-exact-owner.mts
+npx tsx scripts/verify-comparison-no-login-oct26.mts
+npx tsx scripts/verify-comparison-timeout-recovery.mts
+npx tsx scripts/verify-connected-memory-oct29b.mts
+node scripts/verify-contact-name-literal-owner.cjs
+npx tsx scripts/verify-contextual-travel-owner-exact-nov6.mts
+node scripts/verify-daily-briefing-exact-owner-fix.mjs
+npx tsx scripts/verify-dashboard-day-owner-boundary.mts
+npx tsx scripts/verify-dashboard-email-owner-precision.mts
+node scripts/verify-dashboard-experience-owner-precision.cjs
+node scripts/verify-dashboard-memory-owner-precision.cjs
+node scripts/verify-dashboard-query-owner-precision.cjs
+node scripts/verify-dashboard-shell-owner-precision.cjs
+node scripts/verify-dashboard-tasks-owner-precision.cjs
+node scripts/verify-debug-reminders-auth-literal.cjs
+npx tsx scripts/verify-decision-owner-precision.mts
+npx tsx scripts/verify-demo-polish-oct30.mts
+npx tsx scripts/verify-device-auth-handoff.mts
+npx tsx scripts/verify-did-it-land-oct27.mts
+npx tsx scripts/verify-document-shortlink-expiry.mts
+npx tsx scripts/verify-document-storage-patch-ack.mts
+npx tsx scripts/verify-email-attention-owner.mts
+npx tsx scripts/verify-email-settings-owner-boundary.mts
+npx tsx scripts/verify-email-unsubscribe-owner.mts
+npx tsx scripts/verify-enterprise-governance-nov7.mts
+npx tsx scripts/verify-extra-gmail-refresh-consent-nov6.mts
+node scripts/verify-feature-gmail-reply-actor-uuid.mjs
+npx tsx scripts/verify-flight-followup-owner.mts
+npx tsx scripts/verify-flight-handoff-domains-oct26.mts
+node scripts/verify-flight-leg-exact-owner-fix.mjs
+npx tsx scripts/verify-flight-result-card-oct27.mts
+npx tsx scripts/verify-flight-rows-direct-oct27.mts
+npx tsx scripts/verify-flight-tfs-oct27.mts
+node scripts/verify-followup-freshness-security.cjs
+npx tsx scripts/verify-food-compare-menu-oct26.mts
+npx tsx scripts/verify-food-menu-direct-oct26.mts
+npx tsx scripts/verify-forwarding-confirmation-from-owner.mts
+node scripts/verify-gmail-callback-consent.mjs
+node scripts/verify-gmail-oauth-owner-precision.mjs
+npx tsx scripts/verify-gmail-ticket-credential-owner.mts
+node scripts/verify-goal-downstream-owner-fix.mjs
+npx tsx scripts/verify-goal-permission-failclosed-nov6.mts
+npx tsx scripts/verify-google-disconnect-calendar.mts
+npx tsx scripts/verify-home-unknown.mts
+npx tsx scripts/verify-image-offer-atomic.mts
+npx tsx scripts/verify-inbound-notify-receipt.mts
+npx tsx scripts/verify-inbox-order-alert-continuation-nov6.mts
+node scripts/verify-invite-rpc-exact-owner-fix.mjs
+node scripts/verify-job-scan-budget.mjs
+npx tsx scripts/verify-learn-page-exact-owner.mts
+npx tsx scripts/verify-learning-progress-exact-owner.mts
+npx tsx scripts/verify-legacy-trial-retired-nov7.mts
+npx tsx scripts/verify-library-owner-isolation.mts
+npx tsx scripts/verify-life-graph-oct29.mts
+node scripts/verify-lifecycle-email-cron-owner-fix.mjs
+npx tsx scripts/verify-lifecycle-preview-owner.mts
+npx tsx scripts/verify-link-share-brief-oct29.mts
+npx tsx scripts/verify-link-vault-owner-isolation.mts
+npx tsx scripts/verify-live-retest-oct29d.mts
+npx tsx scripts/verify-lookup-reminders-oct29.mts
+npx tsx scripts/verify-mail-alert-bill-accuracy-nov7.mts
+npx tsx scripts/verify-mail-transaction-direction-nov6.mts
+npx tsx scripts/verify-meeting-nudge-owner.mts
+npx tsx scripts/verify-meeting-prep-constraints.mts
+node scripts/verify-memory-forget-retention.mjs
+node scripts/verify-memory-index-forget-race.mjs
+npx tsx scripts/verify-memory-jev-oct29.mts
+npx tsx scripts/verify-mission-reminder-owner.mts
+npx tsx scripts/verify-muse-jobs-usage-oct31.mts
+npx tsx scripts/verify-obscura-pilot.mts
+node scripts/verify-open-loop-exact-owner-reads.mjs
+node scripts/verify-openloop-conversation-owner-fix.mjs
+node scripts/verify-openloop-meeting-memory-owner-fix.mjs
+npx tsx scripts/verify-openrouter-gateway-synthetic.mts
+npx tsx scripts/verify-openui-activities.mts
+npx tsx scripts/verify-openui-activity-revalidation.mts
+npx tsx scripts/verify-openui-comparison-revalidation.mts
+npx tsx scripts/verify-openui-dining-revalidation.mts
+npx tsx scripts/verify-openui-dining.mts
+node scripts/verify-ops-digest-partial-claim.mjs
+npx tsx scripts/verify-outcome-unknown-checkin.mts
+npx tsx scripts/verify-payment-receipt-negative-status-nov6.mts
+npx tsx scripts/verify-personalize-page-exact-owner.mts
+npx tsx scripts/verify-pincode-continue-oct26.mts
+node scripts/verify-places-retention.mjs
+node scripts/verify-plan-checkout-owner-isolation-literal.cjs
+npx tsx scripts/verify-price-comparison-delivery-owner.mts
+node scripts/verify-push-transport-state-fix.mjs
+npx tsx scripts/verify-reel-metadata-egress-fix.mts
+node scripts/verify-reengagement-atomic-claim.mjs
+npx tsx scripts/verify-referral-owner-isolation.mts
+npx tsx scripts/verify-reminder-job-unknown-fallback-fix.mts
+npx tsx scripts/verify-reminder-optout-precision.mts
+node scripts/verify-reminder-recipient-owner-fix.mjs
+npx tsx scripts/verify-research-personal-egress-literal.mts
+npx tsx scripts/verify-resend-raw-fetch-boundary.mts
+npx tsx scripts/verify-reservego-ssrf-default.mts
+npx tsx scripts/verify-run-outcome-final-owner.mts
+npx tsx scripts/verify-secondary-gmail-disconnect-routing-nov6.mts
+node scripts/verify-secondbrain-exact-owner-names.mjs
+node scripts/verify-secondbrain-generated-sharing-privacy-fix.mjs
+node scripts/verify-secondbrain-invite-exact-owner.mjs
+npx tsx scripts/verify-shared-memory-recipient-owner.mts
+npx tsx scripts/verify-shortlink-sensitive-reclassification.mts
+node scripts/verify-split-command-group-literal.cjs
+node scripts/verify-split-receipt-group-literal.cjs
+npx tsx scripts/verify-stock-watch-oct26.mts
+node scripts/verify-telegram-webhook-origin-auth-fix.mjs
+npx tsx scripts/verify-test-gmail-owner.mts
+node scripts/verify-throwback-forget-owner.mjs
+npx tsx scripts/verify-tipplr-enterprise-triage.mts
+npx tsx scripts/verify-today-exact-owner.mts
+node scripts/verify-todo-done-single-owner-literal.cjs
+npx tsx scripts/verify-trip-date-fidelity-nov7.mts
+npx tsx scripts/verify-universal-search-oct27.mts
+npx tsx scripts/verify-unknown-task-status-retention.mts
+node scripts/verify-upgrade-owner-binding.mjs
+npx tsx scripts/verify-usage-owner-isolation.mts
+npx tsx scripts/verify-use-case-run-oct28.mts
+npx tsx scripts/verify-usecases-oct29c.mts
+npx tsx scripts/verify-wa-price-yes-oct29.mts
+node scripts/verify-watch-alert-exact-owner-fix.mjs
+npx tsx scripts/verify-watch-list-compact-oct30.mts
+npx tsx scripts/verify-watcher-cadence-schema.mts
+npx tsx scripts/verify-watcher-dedup.mts
+node scripts/verify-watcher-owner-egress.mjs
+npx tsx scripts/verify-watcher-whatsapp-owner.mts
+npx tsx scripts/verify-who-promised-oct27.mts

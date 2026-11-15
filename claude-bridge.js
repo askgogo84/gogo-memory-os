@@ -1,4 +1,4 @@
-const fetch = require('node-fetch');
+// Node's built-in fetch (the node-fetch package was removed, 15 Nov audit).
 
 async function run() {
   const input = process.argv.slice(2).join(" ") || "No input";

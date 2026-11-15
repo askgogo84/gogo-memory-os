@@ -1,9 +1,7 @@
 #!/usr/bin/env node
-// Runs EXACTLY the commands `npm test` runs — the package.json `test` chain plus every scripts/tests.d/*.list line
-// (via run-test-list.mjs) — but several at a time, so CI finishes inside its time limit (13 Nov: the sequential
-// chain took ~18.5 of CI's 20 minutes and runs were cut off at the typecheck). Nothing is skipped: every command must
-// pass, a command that matches neither safe shape fails the run, and the count run is printed and checked.
-// `npm test` (sequential) is unchanged for local use.
+// Runs EXACTLY the commands `npm test` runs — every scripts/tests.d/*.list line (npm test is run-test-list.mjs) —
+// but several at a time, so CI finishes inside its time limit. Nothing is skipped: every command must pass, a line
+// that matches no safe shape fails the run, and the count run is printed and checked.
 import { readFileSync, readdirSync, existsSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
@@ -14,7 +12,7 @@ const chain = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).scrip
   .split(' && ').map(s => s.trim()).filter(Boolean)
 
 const LIST_RUNNER = 'node scripts/run-test-list.mjs'
-const SAFE_LIST = /^(npx tsx|node) scripts\/[A-Za-z0-9._\/-]+\.(?:mts|ts|mjs|cjs|js)$/
+const SAFE_LIST = /^(?:(?:npx tsx|node) scripts\/[A-Za-z0-9._\/-]+\.(?:mts|ts|mjs|cjs|js)|npx tsx --test lib\/[A-Za-z0-9._\/-]+\.test\.mjs)$/
 const SAFE_CHAIN = /^(?:npx (?:--yes )?tsx(?: --test)?|node) (?:scripts|lib)\/[A-Za-z0-9._\/-]+\.(?:mts|ts|mjs|cjs|js)$/
 
 const commands = []
@@ -39,7 +37,7 @@ for (const f of listFiles) {
 }
 
 // `npx tsx …` resolves to the local tsx binary (same package npm ci installed); `node …` to this node.
-// tsx is not a declared dependency (CI fetches it through npx), so use a local binary when present, else npx itself.
+// tsx is a devDependency, so CI uses the local binary; a checkout without it installed falls back to npx.
 const tsxBin = join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx')
 const localTsx = existsSync(tsxBin)
 function argv(cmd) {
