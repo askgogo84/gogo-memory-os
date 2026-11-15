@@ -119,6 +119,9 @@ test('GET never advertises a successful payment or order',()=>{
     assert.equal(v.checkoutUrl,status==='handoff_released'?base.checkout_url:null)
   }
   assert.equal(purchaseView({...base,status:'approved'},now+11000).state,'expired')
+  const released=purchaseView({...base,status:'handoff_released'},now+11000)
+  assert.equal(released.state,'handoff_expired')
+  assert.equal(released.checkoutUrl,null)
 })
 test('service and endpoints require immutable owner and approval evidence',()=>{
   const svc=readFileSync('lib/commerce/purchase-handoff.ts','utf8')

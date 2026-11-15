@@ -3,6 +3,7 @@
 import {useEffect, useState} from 'react'
 import Link from 'next/link'
 import VerifiedMerchantOutcome from './VerifiedMerchantOutcome'
+import NativePaymentOptions from './NativePaymentOptions'
 
 type Purchase = {
   purchaseId: string; sourceRunId: string; provider: string; state: string
@@ -111,6 +112,7 @@ export default function CommerceCheckoutPage() {
       {purchase.state === 'handoff_released' && <button disabled={busy} onClick={() => act('open')} className="rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">Reopen verified provider link</button>}
       {link && <a href={link} rel="noopener noreferrer" target="_blank" className="block w-fit rounded-lg bg-[#2fb8a6] px-4 py-2 text-black">Continue at the merchant ↗</a>}
       {['pending_approval','awaiting_provider_handoff','approved'].includes(purchase.state) && <button disabled={busy} onClick={() => act('cancel')} className="block rounded-lg border border-[#292929] px-4 py-2 disabled:opacity-50">Cancel this proposal</button>}
+      {['awaiting_provider_handoff','pending_approval'].includes(purchase.state) && <NativePaymentOptions purchaseId={purchase.purchaseId}/>}
       <VerifiedMerchantOutcome purchaseId={purchase.purchaseId}/>
       <p className="text-sm text-[#a0a0a0]">A checkout link is not payment proof. AskGogo will not display “paid”, “ordered” or “refunded” without independently verified merchant evidence.</p>
     </section>}

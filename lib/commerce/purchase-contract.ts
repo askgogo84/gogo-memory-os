@@ -103,7 +103,8 @@ export function sameSnapshot(row: Record<string, any>, snapshot: PurchaseSnapsho
 export function purchaseView(row: Record<string, any>, now = Date.now()) {
   const stale = Number.isFinite(Date.parse(row.expires_at)) && Date.parse(row.expires_at) <= now
   const rawStatus = String(row.status)
-  const status = stale && ['pending_approval', 'approved', 'awaiting_provider_handoff'].includes(rawStatus) ? 'expired' : rawStatus
+  const status = stale && ['pending_approval', 'approved', 'awaiting_provider_handoff'].includes(rawStatus) ? 'expired'
+    : stale && rawStatus === 'handoff_released' ? 'handoff_expired' : rawStatus
   return {
     purchaseId: row.id,
     sourceRunId: row.source_run_id,
@@ -124,6 +125,7 @@ export function purchaseView(row: Record<string, any>, now = Date.now()) {
     notice: status === 'awaiting_provider_handoff'
       ? 'Cart contents were read back, but a provider checkout link or correct phone cart was not verified. Nothing was ordered or charged.'
       : status === 'expired' ? 'The quote expired. Refresh the provider cart and start a new comparison. Nothing was ordered by AskGogo.'
+      : status === 'handoff_expired' ? 'The merchant checkout link has expired. An order or payment may have happened; verify in the merchant account before starting again.'
       : status === 'handoff_released' ? 'The merchant checkout link was released for you to open. AskGogo cannot determine whether it was opened or whether you paid or ordered. Verify in the merchant account.'
       : 'No order was placed or charged by AskGogo. Final payment authentication happens only at the merchant.',
   }
