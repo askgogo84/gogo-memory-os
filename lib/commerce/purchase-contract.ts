@@ -118,13 +118,13 @@ export function purchaseView(row: Record<string, any>, now = Date.now()) {
     snapshotSha256: row.snapshot_sha256,
     items: row.items_snapshot,
     // No checkout link before exact explicit approval; no payment credentials ever.
-    checkoutUrl: status === 'handoff_opened' ? row.checkout_url : null,
+    checkoutUrl: status === 'handoff_released' ? row.checkout_url : null,
     paymentVerified: false,
     orderPlaced: false,
     notice: status === 'awaiting_provider_handoff'
       ? 'Cart contents were read back, but a provider checkout link or correct phone cart was not verified. Nothing was ordered or charged.'
       : status === 'expired' ? 'The quote expired. Refresh the provider cart and start a new comparison. Nothing was ordered by AskGogo.'
-      : status === 'handoff_opened' ? 'Merchant checkout was opened. AskGogo does not know whether you paid or ordered. Verify in the merchant account.'
+      : status === 'handoff_released' ? 'The merchant checkout link was released for you to open. AskGogo cannot determine whether it was opened or whether you paid or ordered. Verify in the merchant account.'
       : 'No order was placed or charged by AskGogo. Final payment authentication happens only at the merchant.',
   }
 }
