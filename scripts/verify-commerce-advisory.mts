@@ -52,7 +52,7 @@ for(const [change, reason] of [
   [{departmentRemainingPaise:1},'budget_limit_exceeded'],
   [{requiredApprovers:['emp-a']},'approval_policy_invalid'],
   [{requiredApprovers:[]},'approver_required'],
-]){
+] as Array<[Partial<typeof policy>, string]>){
   const v=evaluateEnterprisePurchasePolicy(request,{...policy,...change})
   assert.equal(v.status,'blocked')
   assert.equal((v as any).reason,reason)
