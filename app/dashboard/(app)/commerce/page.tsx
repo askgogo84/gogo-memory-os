@@ -123,6 +123,7 @@ export default function CommerceConnectionsPage() {
       <p className="whitespace-pre-line">{task.summary}</p>
       <button disabled={busy!==null} onClick={refreshTask} className="rounded-lg border border-[#292929] px-4 py-2 disabled:opacity-50">Refresh saved progress</button>
       {task.state === 'cart_outcome_unknown' && <button disabled={busy !== null} onClick={() => cart('check')} className="rounded-lg border border-[#2fb8a6] px-4 py-2 disabled:opacity-50">Check cart outcome — no new addition</button>}
+      {task.state === 'cart_contents_verified' && <Link href={'/dashboard/commerce/checkout?run=' + encodeURIComponent(task.runId)} className="block w-fit rounded-lg border border-[#2fb8a6] px-4 py-2 text-[#2fb8a6]">Review merchant checkout (pilot)</Link>}
       {task.addressLabel && <p>Selected address: {task.addressLabel}</p>}
       <Link href="/dashboard/chat" className="text-[#2fb8a6]">Back to Gogo</Link>
     </section>}
