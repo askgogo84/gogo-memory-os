@@ -1,0 +1,44 @@
+name: Contextual travel exact-owner / Gmail-consent — literal PR HEAD (test-only)
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-context-travel-owner-consent-testonly.mjs'
+      - '.github/workflows/context-travel-owner-consent-literal-head.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  context-travel-owner-consent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      SUPABASE_SERVICE_ROLE_KEY: ci-placeholder-service-role-key
+      OPENAI_API_KEY: ci-placeholder-openai-key
+      ANTHROPIC_API_KEY: ci-placeholder-anthropic-key
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert exact feature HEAD, never synthetic PR merge
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Full registered regressions on literal feature HEAD
+        run: npm test
+      - name: Typecheck on literal feature HEAD
+        run: npm run typecheck
+      - name: Production fixture build on literal feature HEAD
+        run: npm run build
+      - name: Execute unchanged travel compiler against fictional exact-owner and consent fixtures
+        run: node scripts/verify-context-travel-owner-consent-testonly.mjs
