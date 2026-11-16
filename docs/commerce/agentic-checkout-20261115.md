@@ -85,3 +85,7 @@ Added a separately authenticated, origin-validated customer POST path to query S
 
 ## Durable one-shot confirm_order (inactive)
 One-time native `confirm_order` service/POST and customer review are added. The server checks the **latest** authenticated immutable payment-status evidence for the original stored PaaS ID and order ID, requires terminal successful payment and not already auto-confirmed, and checks authenticated order history for prior placement. It atomically writes `confirmation_claimed_at` BEFORE calling the irreversible tool. On timeout its outcome remains unknown and no retry is allowed. Only a subsequent merchant order-history readback can establish fulfillment. Requires explicit `COMMERCE_NATIVE_CONFIRMATION_ENABLED=true` on top of existing commerce gates; default OFF. UPI initiation and handset payment remain disabled and no production migration/flag change has occurred.
+
+## Provider fixture acceptance
+
+Added deterministic in-memory MCP JSON-RPC tests exercising actual `CommerceMcpClient` calls under injected fake responses, verifying default-off flags, exact merchant payment-method arguments, PaaS payment-status readback, explicit confirmation args and no automatic retry on provider 503. This raises confidence in the client transport contract but does not substitute for a Swiggy-approved authenticated staging session or a real Android checkout/device test.

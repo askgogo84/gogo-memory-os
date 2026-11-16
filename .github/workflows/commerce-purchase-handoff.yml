@@ -14,6 +14,7 @@ on:
       - 'supabase/migrations/20261116080000_commerce_native_payment_readbacks.sql'
       - 'scripts/verify-commerce-native-payment-status.mts'
       - 'scripts/verify-commerce-native-confirmation.mts'
+      - 'scripts/verify-commerce-provider-fixture.mts'
       - 'supabase/migrations/20261116103000_commerce_native_confirmation_once.sql'
       - 'lib/commerce/native-order-confirmation.ts'
       - 'lib/commerce/native-checkout*.ts'
@@ -86,6 +87,8 @@ jobs:
         run: npx --no-install tsx scripts/verify-commerce-native-payment-status.mts
       - name: Native one-shot confirmed payment finalization guard
         run: npx --no-install tsx scripts/verify-commerce-native-confirmation.mts
+      - name: Provider fixture exact-args and no-retry regression
+        run: npx --no-install tsx scripts/verify-commerce-provider-fixture.mts
       - name: Next typecheck
         run: npm run typecheck
       - name: Fixture production build
