@@ -26,7 +26,8 @@ export async function syncSemanticForActor(actor: Pick<AgentActor, 'legacyTelegr
  * Cron entry: sync every owner the flag names (GOGO_SEMANTIC_OWNERS), or, with GOGO_SEMANTIC=1, owners with memories
  * written in the last day (bounded to 50). Returns per-owner reports; never throws, never touches a disabled owner.
  */
-export async function syncSemanticForEnabledOwners(env: Record<string, string | undefined> = process.env): Promise<{ owners: number; synced: number; failed: number }> {
+/** `deadline` (epoch ms): no new owner is started after it; the rest wait for the next hourly pass (reported as `deferred`). */
+export async function syncSemanticForEnabledOwners(env: Record<string, string | undefined> = process.env, deadline = Infinity, syncOne: typeof syncSemanticForActor = syncSemanticForActor): Promise<{ owners: number; synced: number; failed: number; deferred: number }> {
   const { semanticEnabledFor } = await import('./repo')
   let ids: string[] = String(env.GOGO_SEMANTIC_OWNERS || '').split(',').map(s => s.trim()).filter(s => /^-?\d{1,20}$/.test(s))
   if (env.GOGO_SEMANTIC === '1') {
@@ -37,12 +38,15 @@ export async function syncSemanticForEnabledOwners(env: Record<string, string | 
       ids = [...new Set([...ids, ...((data || []) as { telegram_id: unknown }[]).map(r => String(r.telegram_id)).filter(s => /^-?\d{1,20}$/.test(s))])].slice(0, 50)
     } catch (e) { console.error('SEMANTIC_SYNC_OWNER_LIST_FAILED', (e as Error).message) }
   }
-  let synced = 0, failed = 0
+  // Review (PR #1531): start from a different owner each hour, so one large owner cannot defer the rest every run.
+  if (ids.length > 1) { const k = Math.floor(Date.now() / 3600_000) % ids.length; ids = [...ids.slice(k), ...ids.slice(0, k)] }
+  let synced = 0, failed = 0, deferred = 0
   for (const id of ids) {
     if (!semanticEnabledFor(id, env)) continue
+    if (Date.now() >= deadline) { deferred++; continue }
     const n = Number(id)
     if (!Number.isSafeInteger(n) || n === 0) { failed++; continue } // ids beyond 2^53 are not converted; they wait for the string-keyed actor path
-    try { const r = await syncSemanticForActor({ legacyTelegramId: n }); if (r) synced++ } catch (e) { failed++; console.error('SEMANTIC_SYNC_OWNER_FAILED', id, (e as Error).message) }
+    try { const r = await syncOne({ legacyTelegramId: n }); if (r) synced++ } catch (e) { failed++; console.error('SEMANTIC_SYNC_OWNER_FAILED', id, (e as Error).message) }
   }
-  return { owners: ids.length, synced, failed }
+  return { owners: ids.length, synced, failed, deferred }
 }
