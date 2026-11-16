@@ -21,7 +21,7 @@ export default async function DashboardShell({ children }: { children: React.Rea
   const live=await import('@/lib/spaces/sources-live')
   const shell={...base,spaces:live.spacesEnabledFor(String(session.telegramId)),navV2:live.navV2EnabledFor(String(session.telegramId)),events:(await import('@/lib/events/core')).eventsEnabledFor(String(session.telegramId))}
 
-  // 12 Nov: the Gogo crew (characters whose eyes follow the pointer), owner-only behind GOGO_CREW.
+  // The Gogo crew (characters whose eyes follow the pointer): on for everyone since 17 Nov; GOGO_CREW=off reverts.
   const crew=crewEnabledFor(String(session.telegramId))
   const companion=crew?await loadCompanionChoice(session.telegramId).catch(()=>null):null
 

@@ -78,7 +78,7 @@ function NavLink({ item, collapsed, counts, onNavigate, pathname, section }: { i
 export const SPACES_ITEM: NavItem = { href:'/dashboard/spaces', label:'Spaces', glyph:'▦' }
 export const EVENTS_ITEM: NavItem = { href:'/dashboard/events', label:'Events', glyph:'✦', match:(p)=>p==='/dashboard/events'||p.startsWith('/dashboard/events/') }
 
-// v2 (9 Nov mock, pending approval; GOGO_NAV_V2): three tabs, then one "You" group for everything about you and how
+// v2 (9 Nov mock, approved 17 Nov, on by default; GOGO_NAV_V2=off reverts): three tabs, then one "You" group for everything about you and how
 // Gogo works, instead of a closed More with eleven tabs. Old links keep working; nothing is removed, only regrouped.
 export const YOU_V2: NavItem[] = [
   { href:'/dashboard/memory', label:'Memory · what Gogo knows', glyph:'◇' },
@@ -88,12 +88,18 @@ export const YOU_V2: NavItem[] = [
   { href:'/dashboard/brain', label:'Autonomy · what Gogo may do alone', glyph:'◈' },
   { href:'/dashboard/you/vault', label:'Saved logins', glyph:'▰' },
   { href:'/dashboard/usage', label:'Plan and usage', glyph:'◔' },
+  // Review (PR #1528): the mock moves these to My Day blocks and Tasks, but My Day (Spaces) is not on for everyone
+  // yet, so they keep a menu entry. Otherwise four pages people already use would have no way in.
+  { href:'/dashboard/calendar', label:'Calendar', glyph:'▦' },
+  { href:'/dashboard/lists', label:'Lists', glyph:'≡' },
+  { href:'/dashboard/agent?section=goals', label:'Goals', glyph:'○', match:(p,s)=>p==='/dashboard/agent'&&s==='goals' },
+  { href:'/dashboard/business', label:'SecondBrain', glyph:'⬡' },
 ]
 
 export function NavLinks({ collapsed = false, counts, onNavigate, spaces = false, v2 = false, events = false }: { collapsed?: boolean; counts: NavCounts; onNavigate?: () => void; spaces?: boolean; v2?: boolean; events?: boolean }) {
   const pathname = usePathname()
   const section = useSearchParams().get('section') || ''
-  const base = v2 ? YOU_V2 : spaces ? [SPACES_ITEM, ...MORE] : MORE
+  const base = v2 ? (spaces ? [SPACES_ITEM, ...YOU_V2] : YOU_V2) : spaces ? [SPACES_ITEM, ...MORE] : MORE
   const more = events ? [EVENTS_ITEM, ...base] : base
   const inMore = more.some(item => isActive(item, pathname, section))
   const [moreOpen, setMoreOpen] = useState(inMore)

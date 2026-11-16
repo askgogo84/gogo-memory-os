@@ -22,10 +22,13 @@ for (const id of crew.CREW_IDS) { assert.equal(COMPANIONS[id].states.length, GOG
 assert.equal(companionFor('dragon').id, 'gogo'); assert.equal(companionFor(null).id, 'gogo')
 assert.equal(crew.isCrewId('tara'), true); assert.equal(crew.isCrewId('TARA'), false)
 
-// Owner-only switch.
+// On by default (owner approved, 17 Nov); off switch; a list still limits it to those people.
 assert.equal(crew.crewEnabledFor('-884501501', { GOGO_CREW: '-884501501' }), true)
 assert.equal(crew.crewEnabledFor('123', { GOGO_CREW: '-884501501' }), false)
-assert.equal(crew.crewEnabledFor('123', {}), false)
+assert.equal(crew.crewEnabledFor('123', {}), true, 'on by default')
+assert.equal(crew.crewEnabledFor('123', { GOGO_CREW: 'on' }), true)
+for (const on of ['true', 'yes', '1']) assert.equal(crew.crewEnabledFor('123', { GOGO_CREW: on }), true, on)
+for (const off of ['off', 'OFF', '0', 'false', 'no']) assert.equal(crew.crewEnabledFor('-884501501', { GOGO_CREW: off }), false, off)
 
 // Every character renders in every mood, with unique ids per instance and no crash on the server.
 for (const id of crew.CREW_IDS) for (const m of moods) {
