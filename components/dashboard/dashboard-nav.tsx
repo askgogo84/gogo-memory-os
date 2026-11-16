@@ -78,7 +78,7 @@ function NavLink({ item, collapsed, counts, onNavigate, pathname, section }: { i
 export const SPACES_ITEM: NavItem = { href:'/dashboard/spaces', label:'Spaces', glyph:'▦' }
 export const EVENTS_ITEM: NavItem = { href:'/dashboard/events', label:'Events', glyph:'✦', match:(p)=>p==='/dashboard/events'||p.startsWith('/dashboard/events/') }
 
-// v2 (9 Nov mock, pending approval; GOGO_NAV_V2): three tabs, then one "You" group for everything about you and how
+// v2 (9 Nov mock, approved 17 Nov, on by default; GOGO_NAV_V2=off reverts): three tabs, then one "You" group for everything about you and how
 // Gogo works, instead of a closed More with eleven tabs. Old links keep working; nothing is removed, only regrouped.
 export const YOU_V2: NavItem[] = [
   { href:'/dashboard/memory', label:'Memory · what Gogo knows', glyph:'◇' },

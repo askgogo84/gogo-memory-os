@@ -97,8 +97,10 @@ export function spacesEnabledFor(owner: string, env: Record<string, string | und
   return String(env.GOGO_SPACES_OWNERS || '').split(',').map(s => s.trim()).filter(Boolean).includes(String(owner))
 }
 
-/** v2 three-tab navigation (9 Nov mock). Off by default; GOGO_NAV_V2=1 for everyone or GOGO_NAV_V2_OWNERS=<ids>. */
+/** v2 three-tab navigation (9 Nov mock). Owner approved it on 17 Nov, so it is on for everyone. GOGO_NAV_V2=off (or 0)
+ *  puts everyone back on the old menu; with it off, GOGO_NAV_V2_OWNERS=<ids> still switches it on for those people. */
 export function navV2EnabledFor(owner: string, env: Record<string, string | undefined> = process.env): boolean {
-  if (env.GOGO_NAV_V2 === '1') return true
+  const v = String(env.GOGO_NAV_V2 || '').trim().toLowerCase()
+  if (v !== 'off' && v !== '0') return true
   return String(env.GOGO_NAV_V2_OWNERS || '').split(',').map(s => s.trim()).filter(Boolean).includes(String(owner))
 }

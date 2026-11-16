@@ -30,10 +30,13 @@ export function moodForState(state: GogoAgentState): CrewMood {
 export function isCrewId(v: unknown): v is CrewId { return typeof v === 'string' && (CREW_IDS as readonly string[]).includes(v) }
 
 type Env = Record<string, string | undefined>
-/** Off unless GOGO_CREW is "on" or lists the owner's telegram id (exact string). */
+/** The crew is on for everyone (owner approved it on 17 Nov). GOGO_CREW=off (or 0) switches it off for everyone; any
+ *  other value that is not "on" is treated as a list of telegram ids (exact strings) and only those people get it. */
 export function crewEnabledFor(owner: string, env: Env = process.env): boolean {
-  const v = String(env.GOGO_CREW || '').trim(), id = String(owner || '').trim()
-  return v === 'on' || (Boolean(id) && v.split(',').map(s => s.trim()).includes(id))
+  const v = String(env.GOGO_CREW || '').trim(), id = String(owner || '').trim(), low = v.toLowerCase()
+  if (!v || low === 'on' || low === '1') return true
+  if (low === 'off' || low === '0') return false
+  return Boolean(id) && v.split(',').map(s => s.trim()).includes(id)
 }
 
 /** Pure. The older GogoCharacter poses (chat avatar, empty states) mapped to crew moods. */
