@@ -307,6 +307,8 @@ function formatReminderTime(iso: string): string {
     weekday: 'long',
     day: 'numeric',
     month: 'short',
+    // A reminder in another year says so ("Saturday, 9 Jan 2027"), so a next-year date is never a surprise.
+    ...(targetDay.slice(0, 4) !== today.slice(0, 4) ? { year: 'numeric' as const } : {}),
   }).format(target)
 
   return `${dateText} at ${timeText}`
@@ -581,10 +583,22 @@ function parseAbsoluteDateReminder(text: string): ParsedReminder {
 
   const nowIst = istNowParts()
   let year = yearStr ? parseInt(yearStr, 10) : nowIst.year
-  // No year said, and the date is long gone this year ("9 January" said in November): the person means next year.
-  // A date only recently past (within 60 days) is left alone, so the caller still says it has passed rather than
-  // quietly moving it a year ahead. Same rule as context-brain and lookup-then-calendar.
-  if (!yearStr && Date.UTC(year, month - 1, day) < Date.UTC(nowIst.year, nowIst.month - 1, nowIst.day) - 60 * 86400000) year += 1
+  // No year said, and the date is long gone this year ("remind me on 9 January" said in November): the person means
+  // next year. A date only recently past (within 60 days) is left alone, so the caller still says it has passed.
+  // Review (PR #1529): only when the date is plainly WHEN to remind. Not when a year follows in another form
+  // ("9 January, 2026", "9 Jan '26"), not when the sentence has its own timing ("tomorrow", "in 2 hours"), and not
+  // when the date is the subject ("the invoice dated 3 March", "since 5 January", "the 5 June order", a date range).
+  // Those keep the old answer ("already passed") rather than a reminder months away that nobody asked for.
+  if (!yearStr && Date.UTC(year, month - 1, day) < Date.UTC(nowIst.year, nowIst.month - 1, nowIst.day) - 60 * 86400000) {
+    const at = dateMatch.index ?? 0
+    const before = text.slice(0, at).replace(/\b(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?|sun)(?:day)?,?\s*$/i, '')
+    const after = text.slice(at + dateMatch[0].length)
+    const yearFollows = /^\s*,?\s*'?(?:\d{4}|\d{2})\b(?!\s*(?:am|pm|[:.]\d))/i.test(after)
+    const ownTiming = /\b(?:today|tomorrow|tmrw|tonight|next\s+week|in\s+\d+\s+(?:min|hour|hr|day|week))/i.test(text)
+    const subjectDate = /\b(?:dated|since|expired|was|were|had|been|due|from|until|till|between)\b/i.test(text) || /\bto\s+\d{1,2}(?:st|nd|rd|th)?\s+[a-z]{3,9}\b/i.test(after)
+    const whenToRemind = /(?:^|\b(?:on|for|by)\s+|\bremind(?:er)?\s+(?:me\s+)?)$/i.test(before)
+    if (!yearFollows && !ownTiming && !subjectDate && whenToRemind) year += 1
+  }
   const calendarDay = new Date(Date.UTC(year, month - 1, day))
   if(calendarDay.getUTCMonth()!==month-1||calendarDay.getUTCDate()!==day)return null
   const weekday=text.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i)?.[1]?.toLowerCase()
