@@ -34,8 +34,8 @@ type Env = Record<string, string | undefined>
  *  other value that is not "on" is treated as a list of telegram ids (exact strings) and only those people get it. */
 export function crewEnabledFor(owner: string, env: Env = process.env): boolean {
   const v = String(env.GOGO_CREW || '').trim(), id = String(owner || '').trim(), low = v.toLowerCase()
-  if (!v || low === 'on' || low === '1') return true
-  if (low === 'off' || low === '0') return false
+  if (!v || ['on', '1', 'true', 'yes'].includes(low)) return true
+  if (['off', '0', 'false', 'no'].includes(low)) return false
   return Boolean(id) && v.split(',').map(s => s.trim()).includes(id)
 }
 

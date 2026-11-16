@@ -61,7 +61,7 @@ export function MobileMenuButton() {
 }
 
 function pageLabel(pathname: string) {
-  const all = [...NAV, SPACES_ITEM, ...MORE, ...YOU_V2, SETTINGS]
+  const all = [...NAV, SPACES_ITEM, ...YOU_V2, ...MORE, SETTINGS] // v2 names first: the top bar matches the menu
   const here = all.find(item => !item.href.includes('?') && (pathname === item.href || pathname.startsWith(item.href + '/')))
   if (pathname.startsWith('/dashboard/activity') || pathname === '/dashboard/agent') return 'Tasks'
   if (pathname === '/dashboard/home') return 'Today'

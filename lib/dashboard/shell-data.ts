@@ -9,7 +9,7 @@ export type UsageMeter = { label: string; used: number; limit: number | null; re
 export type ShellData = {
   /** Gogo Spaces is on for this account (GOGO_SPACES / GOGO_SPACES_OWNERS); shows the Spaces link. */
   spaces?: boolean
-  /** v2 three-tab layout (GOGO_NAV_V2, pending mock approval). */
+  /** v2 three-tab layout (GOGO_NAV_V2, approved 17 Nov, on by default). */
   navV2?: boolean
   /** AskGogo Events for owners in GOGO_EVENTS_OWNERS. */
   events?: boolean
