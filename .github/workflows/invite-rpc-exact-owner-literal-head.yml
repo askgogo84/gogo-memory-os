@@ -1,0 +1,32 @@
+name: Invite RPC exact-owner privacy — literal feature HEAD diagnostic
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-invite-rpc-exact-owner-testonly.mjs'
+      - '.github/workflows/invite-rpc-exact-owner-literal-head.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  invite-rpc-owner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Confirm literal HEAD checkout
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install locked inert dependencies
+        run: npm ci --ignore-scripts
+      - name: Execute unchanged invite RPC module against fictional owners (expected mandatory RED)
+        run: node scripts/verify-invite-rpc-exact-owner-testonly.mjs
