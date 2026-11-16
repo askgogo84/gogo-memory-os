@@ -580,7 +580,11 @@ function parseAbsoluteDateReminder(text: string): ParsedReminder {
   const time = (timeMatch && parseTimePart(timeMatch[0])) || { hour: 9, minute: 0 }
 
   const nowIst = istNowParts()
-  const year = yearStr ? parseInt(yearStr, 10) : nowIst.year
+  let year = yearStr ? parseInt(yearStr, 10) : nowIst.year
+  // No year said, and the date is long gone this year ("9 January" said in November): the person means next year.
+  // A date only recently past (within 60 days) is left alone, so the caller still says it has passed rather than
+  // quietly moving it a year ahead. Same rule as context-brain and lookup-then-calendar.
+  if (!yearStr && Date.UTC(year, month - 1, day) < Date.UTC(nowIst.year, nowIst.month - 1, nowIst.day) - 60 * 86400000) year += 1
   const calendarDay = new Date(Date.UTC(year, month - 1, day))
   if(calendarDay.getUTCMonth()!==month-1||calendarDay.getUTCDate()!==day)return null
   const weekday=text.match(/\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i)?.[1]?.toLowerCase()
