@@ -1,0 +1,39 @@
+name: Email triage watcher exact owner — literal head (TEST ONLY)
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-email-triage-watcher-owner-testonly.mjs'
+      - '.github/workflows/email-triage-watcher-owner-literal-head.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  exact-head-owner-isolation:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - name: Check out literal PR head (not synthetic merge)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify literal feature head
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          echo "EXPECTED_SHA=$EXPECTED_SHA"
+          echo "ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies without postinstall hooks
+        run: npm ci --ignore-scripts
+      - name: Run sealed mandatory Gmail triage owner-isolation regressions
+        run: node scripts/verify-email-triage-watcher-owner-testonly.mjs
