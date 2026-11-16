@@ -29,10 +29,9 @@ export async function GET(request: Request) {
         const cutoff = new Promise<{ timedOut: true }>(resolve => { timer = setTimeout(() => resolve({ timedOut: true }), Math.max(0, started + 55_000 - Date.now())) })
         const work = syncSemanticForEnabledOwners(process.env, started + 50_000)
         work.catch(() => {}) // a late failure after the cutoff is not an unhandled rejection
-        semantic = await Promise.race([work, cutoff])
-        if (timer) clearTimeout(timer)
+        try { semantic = await Promise.race([work, cutoff]) } finally { if (timer) clearTimeout(timer) }
         if ((semantic as any)?.timedOut || (semantic as any)?.deferred) console.log('SEMANTIC_SYNC_DEFERRED:', JSON.stringify(semantic))
-      } catch (e: any) { console.error('SEMANTIC_SYNC_CRON_FAILED', e?.message || e); semantic = { failed: true } }
+      } catch (e: any) { console.error('SEMANTIC_SYNC_CRON_FAILED', e?.message || e); semantic = { error: 'semantic_sync_failed' } }
     }
     return NextResponse.json({ ok: true, ...result, semantic })
   } catch (err: any) {

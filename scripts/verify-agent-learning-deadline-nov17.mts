@@ -16,11 +16,13 @@ assert.equal(fast.processed, 3, 'normal people are all processed')
 
 const { syncSemanticForEnabledOwners } = await import('../lib/semantic/sync.ts')
 const seen: number[] = []
-const one = async (a: any) => { seen.push(a.legacyTelegramId); await sleep(60); return {} as any }
+const one = async (a: any) => { seen.push(a.legacyTelegramId); await sleep(200); return {} as any }
 const env = { GOGO_SEMANTIC_OWNERS: '11,12,13,14' }
-const out = await syncSemanticForEnabledOwners(env, Date.now() + 90, one as any)
+const out = await syncSemanticForEnabledOwners(env, Date.now() + 300, one as any)
 assert.ok(seen.length >= 1 && seen.length < 4, `owners after the deadline are not started (started ${seen.length})`)
 assert.equal(out.synced + out.deferred, 4, 'every owner is either synced or deferred')
+const hung: any = await processLearningPass({ budgetMs: 3_000, perUserMs: 100, concurrency: 1, events, generate: async id => { if (String(id) === '1') await sleep(5_000); return [] } })
+assert.equal(hung.processed, 2, 'a hung person frees the slot after the per-person cap; the others are still processed')
 const all = await syncSemanticForEnabledOwners(env, Infinity, (async () => ({})) as any)
 assert.deepEqual([all.synced, all.deferred], [4, 0], 'no deadline: unchanged')
 const route = readFileSync('app/api/cron/agent-learning/route.ts', 'utf8')

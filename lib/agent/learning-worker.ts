@@ -7,7 +7,7 @@ const MAX_USERS_PER_PASS = 80
 /** One learning pass, bounded in time. Users are worked a few at a time and the pass stops starting new users once
  *  the time budget is spent, so the cron always finishes inside its limit. The starting point rotates every run, so
  *  users late in the list are not starved when a pass cannot reach everyone. */
-export async function processLearningPass(opts: { budgetMs?: number; graceMs?: number; concurrency?: number; now?: number; generate?: (id: string) => Promise<any[]>; events?: { telegram_id: unknown }[] } = {}) {
+export async function processLearningPass(opts: { budgetMs?: number; graceMs?: number; perUserMs?: number; concurrency?: number; now?: number; generate?: (id: string) => Promise<any[]>; events?: { telegram_id: unknown }[] } = {}) {
   const started = Date.now()
   const budgetMs = opts.budgetMs ?? 40_000
   const concurrency = Math.max(1, Math.min(opts.concurrency ?? 4, 8))
@@ -45,7 +45,7 @@ export async function processLearningPass(opts: { budgetMs?: number; graceMs?: n
       try {
         // 17 Nov: one slow person used to hold the whole pass past the 60 s function limit. Each person gets until the
         // budget plus a short grace; after that the pass moves on and that person is retried next hour.
-        const left = Math.max(1, started + budgetMs + (opts.graceMs ?? 7_000) - Date.now())
+        const left = Math.max(1, Math.min(opts.perUserMs ?? 20_000, started + budgetMs + (opts.graceMs ?? 7_000) - Date.now())) // review: 20 s per person frees the slot
         let timer: ReturnType<typeof setTimeout> | undefined
         const work = generate(telegramId)
         work.catch(() => {})

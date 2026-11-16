@@ -38,6 +38,8 @@ export async function syncSemanticForEnabledOwners(env: Record<string, string | 
       ids = [...new Set([...ids, ...((data || []) as { telegram_id: unknown }[]).map(r => String(r.telegram_id)).filter(s => /^-?\d{1,20}$/.test(s))])].slice(0, 50)
     } catch (e) { console.error('SEMANTIC_SYNC_OWNER_LIST_FAILED', (e as Error).message) }
   }
+  // Review (PR #1531): start from a different owner each hour, so one large owner cannot defer the rest every run.
+  if (ids.length > 1) { const k = Math.floor(Date.now() / 3600_000) % ids.length; ids = [...ids.slice(k), ...ids.slice(0, k)] }
   let synced = 0, failed = 0, deferred = 0
   for (const id of ids) {
     if (!semanticEnabledFor(id, env)) continue
