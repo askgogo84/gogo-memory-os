@@ -12,13 +12,17 @@ for (const job of [
   'Fill the Cult.fit cancellation form by Friday and stop before submitting',
   'Sell my old sofa on OLX this Saturday, draft the listing first',
   'Unsubscribe me from newsletters by tomorrow',
-  'Call the salon and book a haircut for Saturday 11 am',
-  'Call Truffles and reserve a table for Sunday lunch',
   'Adjust my meal plan for the trip on Thursday',
-]) { assert.notEqual(await type(job), 'set_reminder', job); assert.notEqual(await type(job), 'bare_time', job); checks++ }
+]) { assert.equal(await type(job), 'general_chat', job); checks++ } // the brain handles it; never a reminder, list or search
 // Still reminders: the everyday shorthand, and anything that asks for one.
 for (const rem of [
   'call mom on Sunday',
+  // Review (PR #1530): everyday shorthand starting with the same verbs is still a reminder.
+  'fill petrol tomorrow morning', 'fill water bottles at 6pm', 'fill the form tomorrow', 'turn off the geyser at 7am', 'turn off the gas in 10 mins',
+  'turn on motor tomorrow 6am', 'sell shares on Monday', 'sell the old phone on Saturday', 'convert dollars on Friday', 'adjust the clock tomorrow',
+  'rearrange the wardrobe on Sunday', 'reorganise the kitchen on Saturday', 'negotiate salary tomorrow at 3pm', 'rework the deck on Monday',
+  'call mom and ask about Sunday lunch tomorrow', 'call Divya and get the keys at 5pm', 'call the plumber and fix the tap on Saturday',
+  'Call the salon and book a haircut for Saturday 11 am', 'call gas agency and book cylinder tomorrow',
   'call the bank tomorrow at 11am',
   'remind me to negotiate my ACT bill on Monday',
   'Fill the form by Friday, remind me on Thursday evening',

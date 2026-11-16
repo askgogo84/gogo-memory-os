@@ -296,10 +296,11 @@ export function detectIntent(text: string): DetectedIntent {
   // coaching session" became a reminder only because it named a weekday. A request that starts
   // with another task verb is that task unless it explicitly asks for a reminder.
   // 17 Nov (Muse use-case run): "Reorganise my training this week around Tuesday travel", "Negotiate my ACT bill before
-  // Monday", "Turn this recipe into a grocery list for Saturday dinner", "Unsubscribe me from newsletters by tomorrow" and
-  // "Call the salon and book a haircut for Saturday 11 am" each became a reminder because they name a day. They hand Gogo
-  // a job; plain "call mom on Sunday" is still a reminder.
-  const otherTaskFirst = /^(?:(?:please|can you|could you)\s+)?(?:from\s+my\s+[^,]{1,40},\s*)?(?:prep|prepare|plan|make|create|write|draft|research|find|search|compare|summari[sz]e|build|show|give|tell|explain|analy[sz]e|list|suggest|recommend|book|order|buy|watch|track|monitor|check|which|what|when|where|who|how|reorgani[sz]e|rearrange|rework|adjust|negotiate|turn|convert|fill|sell|unsubscribe|call\s+[^,.]{2,40}\s+and\s+(?:book|reserve|order|ask|enquire|inquire|get|fix|schedule)|every\s+(?:mon|tues|wednes|thurs|fri|satur|sun)day,?\s+(?:draft|reply|post|write|check|send))\b/i.test(lower)
+  // Monday", "Turn this recipe into a grocery list for Saturday dinner", "Unsubscribe me from newsletters by tomorrow"
+  // each became a reminder because they name a day. They hand Gogo a job. Review (PR #1530): the patterns are narrow on
+  // purpose. Household shorthand ("fill petrol tomorrow", "turn off the geyser at 7am", "sell shares on Monday",
+  // "call mom and ask about lunch tomorrow", "call the salon and book a haircut") stays a reminder.
+  const otherTaskFirst = /^(?:(?:please|can you|could you)\s+)?(?:from\s+my\s+[^,]{1,40},\s*)?(?:prep|prepare|plan|make|create|write|draft|research|find|search|compare|summari[sz]e|build|show|give|tell|explain|analy[sz]e|list|suggest|recommend|book|order|buy|watch|track|monitor|check|which|what|when|where|who|how|reorgani[sz]e\s+my|rearrange\s+my\s+(?:week|schedule|calendar|plan|training|day)|adjust\s+my\s+(?:\w+\s+)?(?:plan|schedule|budget|training|calendar)|negotiate\s+my\s+[^,.]{0,40}\b(?:bill|plan|subscription|rate)|turn\s+(?:this|that|it|these|my\s+\w+)\s+[^.]{0,60}\binto|fill\s+(?:out\s+|in\s+)?(?:the\s+|this\s+|my\s+)?[\w. ]{0,30}\bform\b[^.]{0,60}\b(?:for me|and stop|stop before|before submitting)|sell\s+my\b[^.]{0,80}\b(?:olx|quikr|facebook|marketplace|cashify|draft)|unsubscribe\s+me|every\s+(?:mon|tues|wednes|thurs|fri|satur|sun)day,?\s+(?:draft|reply|post|write|check|send))\b/i.test(lower)
   const asksReminder = /\bremind|\breminder|\balert me\b|\bping me\b|\bnudge me\b/i.test(lower)
   // A question or request for advice that merely mentions a day or time ("my sister's birthday is on Sunday, what should I gift") is not a reminder.
   const asksForAnswer = !asksReminder && (/\?/.test(lower) || /\b(?:what should|which should|should i|can you|could you|how do i|how can i)\b/.test(lower))
