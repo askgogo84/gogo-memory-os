@@ -1,0 +1,32 @@
+name: ReserveGo untrusted egress — literal HEAD safety diagnostic
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-reservego-widget-ssrf-testonly.mts'
+      - '.github/workflows/reservego-widget-ssrf-literal-head.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reservego-untrusted-egress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Assert exact literal feature SHA
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install locked inert test dependencies
+        run: npm ci --ignore-scripts
+      - name: Run unchanged ReserveGo source with injected mock-only transport
+        run: npx --no-install tsx scripts/verify-reservego-widget-ssrf-testonly.mts
