@@ -1,0 +1,32 @@
+name: Reminder cron recipient exact-owner — literal feature HEAD privacy diagnostic
+on:
+  pull_request:
+    paths:
+      - 'scripts/verify-reminder-cron-recipient-owner-testonly.mjs'
+      - '.github/workflows/reminder-cron-recipient-owner-literal-head.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reminder-recipient-owner:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify checkout equals literal feature HEAD
+        env:
+          EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ACTUAL_SHA=$(git rev-parse HEAD)
+          echo "EXPECTED_SHA=$EXPECTED_SHA ACTUAL_SHA=$ACTUAL_SHA"
+          test "$ACTUAL_SHA" = "$EXPECTED_SHA"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install locked test dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Test unchanged reminder recipient owner helpers using fictional data only
+        run: node scripts/verify-reminder-cron-recipient-owner-testonly.mjs
