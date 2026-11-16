@@ -75,6 +75,16 @@ export function summarizeNativeCheckoutResponse(data:Record<string,unknown>){
   const pending=data.status==='PENDING_PAYMENT'
   return {
     orderRefs:refs,paymentPending:pending,
+    // Store only Swiggy-origin identifiers, never intent URLs, VPA or UPI credentials.
+    paymentReference: pending && scalar(data.paasId) && scalar(data.orderId)
+      ? {
+        paasId:scalar(data.paasId)!,
+        orderId:scalar(data.orderId)!,
+        pollingIntervalMs:typeof data.pollingIntervalInMs==='number' &&
+          Number.isSafeInteger(data.pollingIntervalInMs) &&
+          data.pollingIntervalInMs>=5000 && data.pollingIntervalInMs<=120000
+          ? data.pollingIntervalInMs : 10000,
+      } : null,
     // A checkout transport response is not independently verified order/payment evidence.
     orderVerified:false as const,paymentVerified:false as const,
     notice:pending

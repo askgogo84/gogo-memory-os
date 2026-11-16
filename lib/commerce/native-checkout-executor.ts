@@ -134,6 +134,9 @@ export async function executeApprovedNativeCheckout(owner:string,purchaseId:stri
     const response=summarizeNativeCheckoutResponse(provider)
     const {error:storeError}=await supabaseAdmin.from(ATTEMPTS)
       .update({status:'response_received',provider_order_refs:response.orderRefs,
+        payment_paas_id:response.paymentReference?.paasId??null,
+        payment_order_id:response.paymentReference?.orderId??null,
+        payment_poll_interval_ms:response.paymentReference?.pollingIntervalMs??null,
         updated_at:nowIso()}).eq('id',attempt.id).eq('owner_telegram_id',owner)
       .eq('status','outcome_unknown')
     if(storeError)throw new Error('attempt_reconciliation_write_failed')
