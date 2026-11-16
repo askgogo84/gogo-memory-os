@@ -147,6 +147,29 @@ export class CommerceMcpClient {
     return payload.data as Record<string,unknown>
   }
 
+  /**
+   * Separate financial finalization; never called from background automation.
+   * Only the authenticated user's exact stored order+PaaS transaction IDs.
+   */
+  async confirmInstamartPaidOrder(orderId:string,paasId:string){
+    if(process.env.COMMERCE_NATIVE_CONFIRMATION_ENABLED!=='true' ||
+      process.env.COMMERCE_NATIVE_CHECKOUT_ENABLED!=='true' ||
+      process.env.COMMERCE_PURCHASES_ENABLED!=='true'||
+      process.env.COMMERCE_SWIGGY_ENABLED!=='true' ||
+      this.provider!=='swiggy'||this.server!=='grocery')
+       throw new CommerceMcpError('tool_not_allowed')
+    const valid=(v:string)=>typeof v==='string' && /^[A-Za-z0-9:_-]{1,200}$/.test(v)
+    if(!valid(orderId)||!valid(paasId))throw new CommerceMcpError('invalid_response')
+    await this.initialize()
+    const result=await this.rpc('tools/call',{name:'confirm_order',
+      arguments:{orderId,paasId}})
+    if(result.isError)throw new CommerceMcpError('provider_unavailable')
+    const payload=result.structuredContent
+    if(payload?.success!==true||!payload.data||typeof payload.data!=='object')
+      throw new CommerceMcpError('invalid_response')
+    return payload.data as Record<string,unknown>
+  }
+
   async readTool(name: string, args: Record<string, unknown>) {
     if (!(READ_TOOLS[this.provider][this.server] || []).includes(name)) throw new CommerceMcpError('tool_not_allowed')
     await this.initialize()

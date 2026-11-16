@@ -13,6 +13,9 @@ on:
       - 'lib/commerce/native-payment*.ts'
       - 'supabase/migrations/20261116080000_commerce_native_payment_readbacks.sql'
       - 'scripts/verify-commerce-native-payment-status.mts'
+      - 'scripts/verify-commerce-native-confirmation.mts'
+      - 'supabase/migrations/20261116103000_commerce_native_confirmation_once.sql'
+      - 'lib/commerce/native-order-confirmation.ts'
       - 'lib/commerce/native-checkout*.ts'
       - 'lib/commerce/native-order-reconciliation*.ts'
       - 'lib/commerce/mcp.ts'
@@ -81,6 +84,8 @@ jobs:
         run: npx --no-install tsx scripts/verify-commerce-native-orders.mts
       - name: Native merchant UPI payment status evidence checks
         run: npx --no-install tsx scripts/verify-commerce-native-payment-status.mts
+      - name: Native one-shot confirmed payment finalization guard
+        run: npx --no-install tsx scripts/verify-commerce-native-confirmation.mts
       - name: Next typecheck
         run: npm run typecheck
       - name: Fixture production build

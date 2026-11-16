@@ -7,6 +7,7 @@ import NativePaymentOptions from './NativePaymentOptions'
 import VerifiedCreditIQRewards from './VerifiedCreditIQRewards'
 import NativeCheckoutReview from './NativeCheckoutReview'
 import NativeOrderStatus from './NativeOrderStatus'
+import NativePaymentStatus from './NativePaymentStatus'
 
 type Purchase = {
   purchaseId: string; sourceRunId: string; provider: string; state: string
@@ -117,6 +118,7 @@ export default function CommerceCheckoutPage() {
       {['pending_approval','awaiting_provider_handoff','approved'].includes(purchase.state) && <button disabled={busy} onClick={() => act('cancel')} className="block rounded-lg border border-[#292929] px-4 py-2 disabled:opacity-50">Cancel this proposal</button>}
       {['awaiting_provider_handoff','pending_approval'].includes(purchase.state) && <NativePaymentOptions purchaseId={purchase.purchaseId}/>}
       {purchase.state === 'awaiting_provider_handoff' && <NativeCheckoutReview purchaseId={purchase.purchaseId}/>}
+      {purchase.state === 'native_checkout_started' && <NativePaymentStatus purchaseId={purchase.purchaseId}/>}
       {purchase.state === 'native_checkout_started' && <NativeOrderStatus purchaseId={purchase.purchaseId}/>}
       <VerifiedCreditIQRewards purchaseId={purchase.purchaseId}/>
       <VerifiedMerchantOutcome purchaseId={purchase.purchaseId}/>
