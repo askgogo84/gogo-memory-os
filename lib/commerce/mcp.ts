@@ -129,7 +129,9 @@ export class CommerceMcpClient {
       method.methodId.length<1||method.methodId.length>200) throw new CommerceMcpError('tool_not_allowed')
     const args:Record<string,unknown>={addressId}
     switch(method.mode){
-      case 'cash_on_delivery': args.paymentMethod='Cash'; break
+      case 'cash_on_delivery':
+        if(method.methodId!=='Cash'&&method.methodId!=='COD') throw new CommerceMcpError('tool_not_allowed')
+        args.paymentMethod=method.methodId;break
       case 'swiggy_money':
         if(method.methodId!=='SwiggyPay') throw new CommerceMcpError('tool_not_allowed')
         args.paymentMethod='SwiggyPay';break
