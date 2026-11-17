@@ -54,7 +54,7 @@ export async function sarvamTextToSpeech(text: string, options: SpeechDeps & {
   return audio
 }
 export async function sarvamSpeechToText(audio: ArrayBuffer | Buffer, contentType = 'audio/ogg', opts: SpeechDeps & {
-  mode?: 'transcribe' | 'translate' | 'verbatim' | 'translit' | 'codemix'
+  mode?: 'transcribe' | 'translate' | 'verbatim' | 'translit' | 'codemix'; keyterms?: string[]
 } = {}): Promise<{ text: string; languageCode: string | null }> {
   const bytes = Buffer.from(audio)
   if (!bytes.length || bytes.length > MAX_STT_BYTES) throw new SarvamProviderError('stt_audio_size')
@@ -65,7 +65,11 @@ export async function sarvamSpeechToText(audio: ArrayBuffer | Buffer, contentTyp
     : /(?:mp4|m4a)/i.test(contentType) ? 'm4a' : /webm/i.test(contentType) ? 'webm' : 'ogg'
   form.append('file', new File([Uint8Array.from(bytes)], 'voice-note.' + extension, { type: contentType }))
   form.append('model', 'saaras:v4')
-  form.append('mode', opts.mode || 'transcribe')
+  form.append('mode', opts.mode || 'codemix')
+  // Saaras v4 REST requires keyterms as ONE JSON-encoded multipart field.
+  const hints = opts.keyterms || ['AskGogo', 'CreditIQ', 'Razorpay', 'ONDC', 'Bengaluru']
+  if (hints.length > 50 || hints.some(k => !k.trim() || k.length > 64)) throw new SarvamProviderError('stt_keyterms_invalid')
+  if (hints.length) form.append('keyterms', JSON.stringify([...new Set(hints)]))
   const resp = await send('/speech-to-text', form, null, opts)
   const text = typeof resp?.transcript === 'string' ? resp.transcript.trim() : ''
   if (!text) throw new SarvamProviderError('stt_empty')
