@@ -70,8 +70,17 @@ const done: any = { id: 't', status: 'completed', metadata_json: { subject: 'chi
 eq(/₹365/.test(String(m.comparisonWhatsAppSummary(done))) && String(m.comparisonWhatsAppSummary(done)).includes(row.outletNote), true, 'WhatsApp reply: the price and which outlet it is')
 eq(String(m.comparisonSummary(done)).includes(row.outletNote), true, 'dashboard summary carries the same note')
 eq(/\(the outlet in Sarjapur Road\)/.test(m.comparisonObjective({ metadata_json: { subject: 'chicken biryani at Meghana Foods in HSR', request: 'x', providers: [] } } as any, 'zomato', 'Sarjapur Road')), true, 'the browser is sent to the outlet actually chosen')
+eq(/shows no outlet of this restaurant in Sarjapur Road, stop and report that; do not read a different outlet/.test(m.comparisonObjective({ metadata_json: { subject: 'chicken biryani at Meghana Foods in HSR', request: 'x', providers: [] } } as any, 'zomato', 'Sarjapur Road')), true, 'a chosen outlet is not swapped for another')
 const task: any = { metadata_json: { subject: 'chicken biryani at Meghana Foods in HSR', request: 'compare chicken biryani at Meghana Foods in HSR', providers: [] } }
 const objective = m.comparisonObjective(task, 'zomato')
-eq(/restaurant "Meghana Foods" \(the outlet in HSR\)/.test(objective) && /shows no outlet of this restaurant in HSR, stop and report that; do not read a different outlet/.test(objective), true, 'the browser is told the area and not to substitute another outlet')
+eq(/restaurant "Meghana Foods" \(the outlet Zomato offers for delivery to HSR\)/.test(objective) && /Set the delivery location first, then open the outlet of this restaurant that Zomato offers for that location, and include that outlet's name and area/.test(objective) && /offers no outlet of this restaurant for delivery there, stop and report that/.test(objective), true, 'the browser reads the outlet the app offers for the said area and names it')
 eq(/outlet in/.test(m.comparisonObjective({ metadata_json: { subject: 'chicken biryani at Meghana Foods', request: 'compare chicken biryani at Meghana Foods for 560086', providers: [] } } as any, 'zomato')), false, 'no area said: objective unchanged')
+// 17 Nov, side by side with Instinct ("checked at 560102"): a well-known area stands in for its pincode.
+eq([m.areaPincode('HSR'), m.areaPincode('HSR Layout'), m.areaPincode('Koramangala 5th Block'), m.areaPincode('Indiranagar'), m.areaPincode('Powai'), m.areaPincode(''), m.areaPincode(null)], ['560102', '560102', '560034', '560038', null, null, null], 'known Bengaluru areas only; nothing guessed')
+eq(m.foodDeliveryPincode('compare chicken biryani at Meghana Foods in HSR', 'chicken biryani at Meghana Foods in HSR'), '560102', 'area said → its pincode')
+eq(m.foodDeliveryPincode('compare chicken biryani at Meghana Foods in HSR for 560086', 'chicken biryani at Meghana Foods in HSR'), '560086', 'a written pincode always wins')
+eq(m.foodDeliveryPincode('compare chicken biryani at Meghana Foods', 'chicken biryani at Meghana Foods'), null, 'neither said: none')
+const hsrObjective = m.comparisonObjective(task, 'zomato')
+eq(/If asked for a delivery pincode or location, enter 560102,/.test(hsrObjective) && !/pause for the user and never choose an address silently/.test(hsrObjective.split('If the page is a search')[0]), true, 'the app is given the HSR pincode instead of pausing for a location')
+eq(/const pin = foodDeliveryPincode\(task\.metadata_json\.request, task\.metadata_json\.subject\)/.test(pc), true, 'outlet selection uses the same pincode')
 console.log(`PASS verify-food-area-name-nov17: ${checks} checks`)

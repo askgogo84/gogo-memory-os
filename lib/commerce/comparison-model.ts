@@ -120,6 +120,25 @@ export function foodQuote(subject: string, evidence: string): {dish: string; pri
   return null
 }
 /** A restaurant's own page on Swiggy or Zomato (never a search, listing or other site), as the read's start. */
+// 17 Nov (owner, side by side with Instinct): asked for "Meghana Foods in HSR", Instinct checked at 560102 and named the
+// outlet each app serves HSR from. A well-known Bengaluru area said by name now stands in for its pincode, so the
+// same delivery-location path as "for 560086" runs: the app is given the pincode and shows the outlet that delivers.
+const AREA_PINCODE: Array<[RegExp, string]> = [
+  [/^hsr\b/, '560102'], [/^btm\b/, '560076'], [/^koramangala\b/, '560034'], [/^indiranagar\b/, '560038'], [/^jayanagar\b/, '560011'], [/^j\.?\s?p\.?\s+nagar\b/, '560078'],
+  [/^whitefield\b/, '560066'], [/^marathahalli\b/, '560037'], [/^rajaji\s?nagar\b/, '560010'], [/^malleshwaram\b|^malleswaram\b/, '560003'], [/^yelahanka\b/, '560064'], [/^hebbal\b/, '560024'],
+  [/^electronic\s+city\b/, '560100'], [/^bellandur\b/, '560103'], [/^sarjapur\b/, '560035'], [/^banashankari\b/, '560070'], [/^basavanagudi\b/, '560004'], [/^mg\s+road\b|^church\s+street\b|^brigade\s+road\b/, '560001'],
+  [/^kalyan\s+nagar\b|^hbr\b/, '560043'], [/^rt\s+nagar\b/, '560032'], [/^yeshwanthpur\b/, '560022'], [/^vijayanagar\b/, '560040'], [/^frazer\s+town\b/, '560005'], [/^ulsoor\b/, '560008'],
+  [/^domlur\b/, '560071'], [/^rr\s+nagar\b/, '560098'], [/^brookefield\b/, '560037'], [/^kr\s+puram\b/, '560036'], [/^kammanahalli\b/, '560084'], [/^residency\s+road\b/, '560025'],
+]
+/** Pure. The pincode that stands for a well-known Bengaluru area; null for anything else (never guessed). */
+export function areaPincode(area: string | null | undefined): string | null {
+  const a = String(area || '').trim().toLowerCase()
+  return a ? (AREA_PINCODE.find(([re]) => re.test(a))?.[1] || null) : null
+}
+/** The delivery pincode for a food request: the one written, else the one for the area said by name. */
+export function foodDeliveryPincode(request: string, subject: string): string | null {
+  return pincodeInText(request) || areaPincode(parseFoodSubject(subject)?.area)
+}
 /** Pure. Among the restaurant's own outlet pages, the one whose area appears in a map listing's address.
  *  17 Nov live: Zomato has Meghana Foods pages for Sarjapur Road, Hosur Road, Indiranagar…; the map search for
  *  "Meghana Foods near HSR" gives an address; the page whose area words are all in that address is the outlet to read.
@@ -612,14 +631,17 @@ export function comparisonObjective(task: PriceComparison, provider: ComparisonP
   const food = FOOD_PROVIDERS.has(provider) ? parseFoodSubject(task.metadata_json.subject) : null
   if (food) {
     const label = COMPARISON_PROVIDERS[provider].label
-    const pin = pincodeInText(task.metadata_json.request) || (/^\d{6}$/.test(String(process.env.COMPARISON_PINCODE || '')) ? String(process.env.COMPARISON_PINCODE) : '')
+    const pin = foodDeliveryPincode(task.metadata_json.request, task.metadata_json.subject) || (/^\d{6}$/.test(String(process.env.COMPARISON_PINCODE || '')) ? String(process.env.COMPARISON_PINCODE) : '')
     // The outlet matters: name the area, and never read another branch as if it were the one asked for (review).
     // 17 Nov live: Zomato has no Meghana Foods page for HSR. When the nearest outlet was chosen instead, the browser is
     // told that outlet's area (and the person is told which outlet was read).
-    const outletIn = String(outletArea || food.area || '').slice(0, 40)
-    const where = outletIn ? ` (the outlet in ${outletIn})` : ''
+    // A chosen outlet is named. Otherwise, with an area said, the app decides: the outlet it offers for delivery to
+    // that area is the one to read (Instinct, 17 Nov: "Zomato serves HSR from Sarjapur Road"), and its name is reported.
+    const chosen = String(outletArea || '').slice(0, 40), said = String(food.area || '').slice(0, 40)
+    const where = chosen ? ` (the outlet in ${chosen})` : said ? ` (the outlet ${label} offers for delivery to ${said})` : ''
     return `On ${label}, open the menu of the restaurant ${JSON.stringify(food.restaurant.slice(0, 80))}${where} and find the dish ${JSON.stringify(food.dish.slice(0, 80))}. ` +
-      (outletIn ? `If ${label} shows no outlet of this restaurant in ${outletIn}, stop and report that; do not read a different outlet. ` : '') +
+      (chosen ? `If ${label} shows no outlet of this restaurant in ${chosen}, stop and report that; do not read a different outlet. `
+        : said ? `Set the delivery location first, then open the outlet of this restaurant that ${label} offers for that location, and include that outlet's name and area in what you report. If ${label} offers no outlet of this restaurant for delivery there, stop and report that. ` : '') +
       `This read is only about ${label}; the other app is checked separately. ` +
       (pin ? `If asked for a delivery pincode or location, enter ${pin}, choose the first suggested location and press Continue/Apply/Confirm (this only sets the delivery location, not a purchase). ` : 'If a delivery location is required, pause for the user and never choose an address silently. ') +
       'If the page is a search, open the restaurant whose name matches exactly. Use the menu search or scroll to find the dish; a dish whose name contains every requested word counts (for example "Chicken Dum Biryani" for "chicken biryani"). ' +

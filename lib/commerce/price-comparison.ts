@@ -3,7 +3,7 @@ import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-ru
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
 import {SWIGGY_COMPARISON_NOTE, SWIGGY_ONLY_NOTE, withheldComparisonProviders} from './swiggy-policy'
-import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, outletAreaFromAddress, isFoodComparison, parseFoodSubject, slugInArea, outletLeadForAddress, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
+import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, outletAreaFromAddress, isFoodComparison, parseFoodSubject, slugInArea, outletLeadForAddress, foodDeliveryPincode, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
 const TYPE = 'price_comparison'
@@ -332,7 +332,7 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     const food = FOOD_PROVIDERS.has(next.provider) ? parseFoodSubject(task.metadata_json.subject) : null
     if (food) {
       // The restaurant's own menu page on this app (the outlet in the person's city first), else Swiggy's search.
-      const pin = pincodeInText(task.metadata_json.request)
+      const pin = foodDeliveryPincode(task.metadata_json.request, task.metadata_json.subject)
       // 13 Nov live: the map search for "Meghana Foods near 560086" returned the famous Residency Road outlet, not the
       // person's own area. When the pincode is the one they saved for home, their home area names the outlet to look for.
       // Review: if the restaurant has no outlet in the home area, fall back to the map search's nearest outlet.
@@ -359,7 +359,7 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
           // Review (PR #1537): pick among the restaurant's own outlet pages already found, using the address the map
           // search gives for "<restaurant> near <area>". The note says what was done; it does not claim "nearest".
           const leadsSoFar = found?.leads || []
-          const place = await import('@/lib/agent/places-search').then(m => m.searchPlaces(`${food.restaurant} near ${saidArea} Bengaluru`), () => [] as any[]).catch(() => [] as any[])
+          const place = await import('@/lib/agent/places-search').then(m => m.searchPlaces(`${food.restaurant} near ${pin || saidArea + ' Bengaluru'}`), () => [] as any[]).catch(() => [] as any[])
           const words: string[] = (food.restaurant.toLowerCase().match(/[a-z0-9]+/g) || [] as string[]).filter((w: string) => w.length > 2)
           const listing = (place || []).find((pl: any) => words.every(w => String(pl?.title || '').toLowerCase().includes(w)))
           const other = listing ? outletLeadForAddress(next.provider, food.restaurant, leadsSoFar, String(listing.address || '')) : null
