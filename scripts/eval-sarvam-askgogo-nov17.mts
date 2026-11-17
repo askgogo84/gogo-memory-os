@@ -5,7 +5,7 @@
  * Run: npx tsx scripts/eval-sarvam-askgogo-nov17.mts --live
  * Optional --baseline calls the configured Anthropic model for the same prompts.
  */
-import { sarvamChat, sarvamCostPaise } from '../lib/services/sarvam'
+import { sarvamChat } from '../lib/services/sarvam'
 import { BRAIN_SYSTEM, BRAIN_TOOLS, decisionFromToolUse, decide, type BrainContext } from '../lib/agent/brain'
 
 if (!process.argv.includes('--live') || !process.env.SARVAM_API_KEY) {
