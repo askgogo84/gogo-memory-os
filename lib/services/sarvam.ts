@@ -12,7 +12,7 @@ const HOST = 'https://api.sarvam.ai'
 const CHAT_MODELS: readonly SarvamChatModel[] = ['sarvam-105b', 'sarvam-105b-conversations']
 const integer = (v: unknown): number | null => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null
 export const sarvamEnabled = (flag: string, env: Record<string, string | undefined> = process.env) =>
-  env[flag] === 'on' && !!env.SARVAM_API_KEY
+  env[flag] === 'on' && !!env.SARVAM_API_KEY && (env.VERCEL_ENV !== 'production' || env.GOGO_SARVAM_PRODUCTION === 'approved')
 
 /** Planning reference uses the currently published ₹15/₹60 per million rate, not the older introductory rate. */
 export function sarvamCostPaise(input: number | null, output: number | null, model: SarvamChatModel | 'sarvam-prism' = 'sarvam-105b') {
