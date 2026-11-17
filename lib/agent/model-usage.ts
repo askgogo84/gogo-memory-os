@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/supabase-admin'
-export type ModelUsage={model:string;provider:'anthropic'|'openai';ok:boolean;inputTokens:number|null;outputTokens:number|null;latencyMs:number;estimatedCostUsd:number|null}
+export type ModelUsage={model:string;provider:'anthropic'|'openai'|'sarvam';ok:boolean;inputTokens:number|null;outputTokens:number|null;latencyMs:number;estimatedCostUsd:number|null}
 export const measuredNumber=(v:unknown):number|null=>typeof v==='number'&&Number.isFinite(v)&&v>=0?v:null
 // Rates are operator-supplied and versioned by the event. Never guess current prices.
 export function estimatedCost(model:string,input:number|null,output:number|null,ratesText=process.env.MODEL_TOKEN_RATES_JSON){
