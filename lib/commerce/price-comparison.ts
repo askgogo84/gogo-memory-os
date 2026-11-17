@@ -325,6 +325,7 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     const {prepareLinkedBrowserRead} = await import('@/lib/agent/browser-command')
     const startedAt = new Date().toISOString()
     let startUrl: string = COMPARISON_PROVIDERS[next.provider].url
+    let foodOutletArea: string | null = null
     const food = FOOD_PROVIDERS.has(next.provider) ? parseFoodSubject(task.metadata_json.subject) : null
     if (food) {
       // The restaurant's own menu page on this app (the outlet in the person's city first), else Swiggy's search.
@@ -347,9 +348,18 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
       let found: {leads: any[]; url: string | null} | null = area ? await look(area) : null
       if (saidArea) {
         // Review (PR #1535): when the area was said and no outlet page for it turns up, never open another branch and
-        // report its price under the asked area. Start from the app's own search; the browser is told the area and to
-        // say so if there is no outlet there.
-        if (!found?.url || !outletInArea(found.url, saidArea)) found = {leads: found?.leads || [], url: null}
+        // report its price under the asked area.
+        // 17 Nov live: "Meghana Foods in HSR": Zomato has pages for Sarjapur Road, Hosur Road, Indiranagar… but none for
+        // HSR, and the run ended with no price. Like the pincode path, ask the map search for the outlet nearest the
+        // said area, read that one, and say plainly which outlet it is.
+        if (!found?.url || !outletInArea(found.url, saidArea)) {
+          const near = await nearestOutletArea(food.restaurant, `${saidArea} Bengaluru`)
+          const alt = near ? await look(near) : null
+          if (near && alt?.url && outletInArea(alt.url, near)) {
+            found = alt; area = near; foodOutletArea = near
+            next.outletNote = slugInArea(new URL(alt.url).pathname, saidArea) ? undefined : `No ${food.restaurant} outlet in ${saidArea} on ${COMPARISON_PROVIDERS[next.provider].label}; this is the nearest one, ${near}.`
+          } else found = {leads: found?.leads || alt?.leads || [], url: null}
+        }
       } else if (!found?.url || !outletInArea(found.url, area)) {
         area = await nearestOutletArea(food.restaurant, pin)
         found = await look(area)
@@ -379,7 +389,7 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     let childId: string
     try {
       childId = await prepareLinkedBrowserRead({actor, surface: 'web', parentRunId: task.id, parentKind: 'comparison',
-        url: startUrl, objective: comparisonObjective(task, next.provider)})
+        url: startUrl, objective: comparisonObjective(task, next.provider, foodOutletArea)})
     } catch {
       task.metadata_json.providers = task.metadata_json.providers.map(row => row === next
         ? {...row, status: 'failed', reason: 'my browser couldn’t start for this store.'} : row)
