@@ -360,7 +360,7 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
           // search gives for "<restaurant> near <area>". The note says what was done; it does not claim "nearest".
           const leadsSoFar = found?.leads || []
           const place = await import('@/lib/agent/places-search').then(m => m.searchPlaces(`${food.restaurant} near ${saidArea} Bengaluru`), () => [] as any[]).catch(() => [] as any[])
-          const words = (food.restaurant.toLowerCase().match(/[a-z0-9]+/g) || []).filter(w => w.length > 2)
+          const words: string[] = (food.restaurant.toLowerCase().match(/[a-z0-9]+/g) || [] as string[]).filter((w: string) => w.length > 2)
           const listing = (place || []).find((pl: any) => words.every(w => String(pl?.title || '').toLowerCase().includes(w)))
           const other = listing ? outletLeadForAddress(next.provider, food.restaurant, leadsSoFar, String(listing.address || '')) : null
           if (other && !outletInArea(other.url, saidArea)) {
