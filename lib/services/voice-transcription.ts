@@ -1,4 +1,6 @@
 import OpenAI from 'openai'
+import { sarvamEnabled } from './sarvam'
+import { sarvamSpeechToText } from './sarvam-voice'
 import { fetchMetaMedia, isMetaMediaRef } from '@/lib/channels/whatsapp-provider/meta-media'
 
 const openai = new OpenAI({
@@ -135,13 +137,22 @@ export async function transcribeTwilioVoiceNote(params: {
 }) {
   const { mediaUrl, contentType } = params
 
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error('Missing OPENAI_API_KEY')
+  if (!process.env.OPENAI_API_KEY && !sarvamEnabled('GOGO_SARVAM_STT')) {
+    throw new Error('No voice transcription provider is configured')
   }
 
   if (!isAudioContentType(contentType)) throw new Error('Unsupported voice media type')
   const arrayBuffer = await downloadTrustedTwilioVoiceNote(mediaUrl)
 
+  if (sarvamEnabled('GOGO_SARVAM_STT')) {
+    try {
+      const transcript = await sarvamSpeechToText(arrayBuffer, contentType)
+      return transcript.text
+    } catch (e: any) {
+      console.error('SARVAM_STT_FALLBACK:', String(e?.code || 'provider_error').slice(0, 50))
+      if (!process.env.OPENAI_API_KEY) throw new Error('Voice transcription unavailable')
+    }
+  }
   const ext = getExtension(contentType)
   const file = new File([arrayBuffer], `whatsapp-voice.${ext}`, {
     type: contentType || 'audio/ogg',
