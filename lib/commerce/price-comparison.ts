@@ -344,8 +344,13 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
       // area for the home pincode, then the map search's nearest outlet.
       const saidArea = food.area || null
       let area: string | null = saidArea || homeArea
-      let found = area ? await look(area) : null
-      if (!found?.url || !outletInArea(found.url, area)) {
+      let found: {leads: any[]; url: string | null} | null = area ? await look(area) : null
+      if (saidArea) {
+        // Review (PR #1535): when the area was said and no outlet page for it turns up, never open another branch and
+        // report its price under the asked area. Start from the app's own search; the browser is told the area and to
+        // say so if there is no outlet there.
+        if (!found?.url || !outletInArea(found.url, saidArea)) found = {leads: found?.leads || [], url: null}
+      } else if (!found?.url || !outletInArea(found.url, area)) {
         area = await nearestOutletArea(food.restaurant, pin)
         found = await look(area)
       }
