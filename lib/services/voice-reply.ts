@@ -6,6 +6,8 @@
 import { speechText } from '@/lib/voice/speech-text'
 import { randomUUID } from 'node:crypto'
 import OpenAI from 'openai'
+import { sarvamEnabled } from './sarvam'
+import { sarvamTextToSpeech } from './sarvam-voice'
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { SONNET_MODEL, forModel, textOf } from '@/lib/services/model-ids'
@@ -46,7 +48,18 @@ export function podcastRequest(text: string): { topic: string; minutes: number }
 
 export { speechText }
 
-async function speak(openai: OpenAI, input: string, voice: string): Promise<Buffer> {
+async function speak(openai: OpenAI | null, input: string, voice: string): Promise<Buffer> {
+  if (sarvamEnabled('GOGO_SARVAM_TTS')) {
+    try {
+      // Bulbul v3 accepts simple short speaker names; v4 requires a different persona catalogue.
+      const isV4 = process.env.GOGO_SARVAM_TTS_MODEL === 'bulbul:v4-flash'
+      return await sarvamTextToSpeech(input, {
+        model: isV4 ? 'bulbul:v4-flash' : 'bulbul:v3',
+        speaker: isV4 ? undefined : voice === 'onyx' ? 'ritu' : 'shubh',
+      })
+    } catch (e: any) { console.error('SARVAM_TTS_FALLBACK:', String(e?.code || 'provider_error').slice(0, 50)) }
+  }
+  if (!openai) throw new Error('tts_provider_unavailable')
   const models = [process.env.GOGO_TTS_MODEL || 'gpt-4o-mini-tts', 'tts-1']
   let lastError: unknown
   for (const model of models) {
@@ -70,8 +83,8 @@ async function storeAudio(telegramId: string, audio: Buffer): Promise<string> {
 /** MP3 bytes for `text`, for the dashboard Listen button (nothing is stored). Null when TTS is off or fails. */
 export async function synthesizeSpeech(text: string, maxChars = 1500): Promise<Buffer | null> {
   const input = speechText(text).slice(0, maxChars)
-  if (!input || !process.env.OPENAI_API_KEY) return null
-  try { return await speak(new OpenAI({ apiKey: process.env.OPENAI_API_KEY }), input, 'alloy') }
+  if (!input || (!process.env.OPENAI_API_KEY && !sarvamEnabled('GOGO_SARVAM_TTS'))) return null
+  try { return await speak(process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null, input, 'alloy') }
   catch (error: any) { console.error('LISTEN_TTS_FAILED:', String(error?.message || error).slice(0, 160)); return null }
 }
 
@@ -80,9 +93,9 @@ export async function createVoiceNote(telegramId: number | string, text: string)
   const owner = exactAudioOwner(telegramId)
   if (!owner) return null
   const input = speechText(text)
-  if (!input || !process.env.OPENAI_API_KEY) return null
+  if (!input || (!process.env.OPENAI_API_KEY && !sarvamEnabled('GOGO_SARVAM_TTS'))) return null
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null
     const audio = await speak(openai, input, 'alloy')
     return await storeAudio(owner, audio)
   } catch (error: any) {
@@ -110,7 +123,7 @@ export function parsePodcastScript(raw: string): PodcastLine[] {
 export async function createPodcast(telegramId: number | string, topic: string, minutes: number): Promise<{ script: PodcastLine[]; url: string | null }> {
   const owner = exactAudioOwner(telegramId)
   if (!owner) return { script: [], url: null }
-  if (!process.env.ANTHROPIC_API_KEY || !process.env.OPENAI_API_KEY) return { script: [], url: null }
+  if (!process.env.ANTHROPIC_API_KEY || (!process.env.OPENAI_API_KEY && !sarvamEnabled('GOGO_SARVAM_TTS'))) return { script: [], url: null }
   const words = minutes * 150
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
   const msg = await anthropic.messages.create(forModel({
@@ -121,7 +134,7 @@ export async function createPodcast(telegramId: number | string, topic: string, 
   const script = parsePodcastScript(raw)
   if (!script.length) return { script, url: null }
   try {
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null
     const parts = await Promise.all(script.map((l) => speak(openai, l.text, l.speaker === 'A' ? 'alloy' : 'onyx')))
     // MP3 frames are self-contained, so joining whole files plays back as one episode.
     return { script, url: await storeAudio(owner, Buffer.concat(parts)) }
