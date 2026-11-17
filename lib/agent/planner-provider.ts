@@ -1,6 +1,7 @@
 import { measureModelCall, type ModelUsage } from './model-usage'
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
+import { sarvamChat, sarvamEnabled } from '@/lib/services/sarvam'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import * as asyncHooks from 'node:async_hooks'
 
@@ -68,8 +69,21 @@ async function openAiComplete(prompt:string,onUsage?: (usage:ModelUsage)=>void,s
   return result.choices?.[0]?.message?.content||''
 }
 
+async function sarvamPlannerComplete(prompt: string, onUsage?: (usage: ModelUsage) => void, system?: string) {
+  const started = Date.now()
+  const result = await sarvamChat({ model: 'sarvam-105b', maxTokens: 2200, timeoutMs: 16000,
+    messages: [...(system ? [{ role: 'system' as const, content: system }] : []), { role: 'user', content: prompt }] })
+  onUsage?.({ model: result.model, provider: 'sarvam', ok: true, inputTokens: result.usage.inputTokens,
+    outputTokens: result.usage.outputTokens, latencyMs: Date.now() - started, estimatedCostUsd: null })
+  return result.text
+}
 export async function completeAgentPlanPrompt(prompt:string,onUsage?:(usage:ModelUsage)=>void,system?:string){
-  return completePlannerPromptWithFallback(prompt,p=>anthropicComplete(p,onUsage,system),p=>openAiComplete(p,onUsage,system))
+  const existing = (p: string) => completePlannerPromptWithFallback(p,
+    x=>anthropicComplete(x,onUsage,system),x=>openAiComplete(x,onUsage,system))
+  if (sarvamEnabled('GOGO_SARVAM_PLANNER')) {
+    return completePlannerPromptWithFallback(prompt,p=>sarvamPlannerComplete(p,onUsage,system),existing)
+  }
+  return existing(prompt)
 }
 
 
