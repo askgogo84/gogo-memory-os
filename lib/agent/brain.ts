@@ -13,7 +13,12 @@ import { personAsk } from '@/lib/agent/people'
 import { ORDER_LIST_RE } from './order-tracking'
 import { PAYMENT_GATE } from './payment-confirmation'
 import Anthropic from '@anthropic-ai/sdk'
-import { sarvamChat, sarvamEnabled, sarvamCostPaise, sarvamPrismIntentShadow } from '@/lib/services/sarvam'
+// Keep the optional provider lazily loaded so existing inert security harnesses remain provider-free.
+const sarvamEnabled = (flag: string, env: Record<string, string | undefined> = process.env) =>
+  env[flag] === 'on' && !!env.SARVAM_API_KEY &&
+  (env.VERCEL_ENV !== 'production' || env.GOGO_SARVAM_PRODUCTION === 'approved')
+const sarvamCostPaise = (input: number | null, output: number | null) =>
+  input == null || output == null ? null : Math.round((input * 15 + output * 60) * 100 / 1e6)
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { OWNER_CANARY } from '@/lib/memory/canary'
 import { inventedApprovalGuard } from '@/lib/services/claude'
@@ -333,7 +338,7 @@ export type BrainMeterEvent = { telegramId: number; source: 'brain_decide' | 'br
 const USD_TO_PAISE = 95 * 100
 export function costPaise(e: BrainMeterEvent): number | null {
   if (e.source === 'brain_shadow') return 0
-  if (e.model === 'sarvam-105b' || e.model === 'sarvam-105b-conversations') return sarvamCostPaise(e.usage.input, e.usage.output, e.model)
+  if (e.model === 'sarvam-105b' || e.model === 'sarvam-105b-conversations') return sarvamCostPaise(e.usage.input, e.usage.output)
   const usd = estimateCostUsd(e.model, e.usage)
   return usd == null ? null : Math.max(0, Math.round(usd * USD_TO_PAISE))
 }
@@ -363,6 +368,7 @@ export async function decide(p: { text: string; ctx: BrainContext; now?: Date; c
     // Never reinterpret an approval: the existing decisionFromToolUse and action guards remain authoritative.
     if (!p.client && !p.model && sarvamEnabled('GOGO_SARVAM_BRAIN')) {
       try {
+        const { sarvamChat } = await import('@/lib/services/sarvam')
         const res = await sarvamChat({
           model: 'sarvam-105b', maxTokens: 1200, toolChoice: 'required', timeoutMs: TIMEOUT_MS,
           messages: [{ role: 'system', content: BRAIN_SYSTEM(p.ctx, p.now || new Date()) },
@@ -382,7 +388,8 @@ export async function decide(p: { text: string; ctx: BrainContext; now?: Date; c
     }
     // Shadow probabilities are telemetry only, NEVER authority for routing, writes or approvals.
     if (!p.client && sarvamEnabled('GOGO_SARVAM_PRISM_SHADOW')) {
-      void sarvamPrismIntentShadow(p.text, { timeoutMs: 1200 })
+      void import('@/lib/services/sarvam')
+        .then(m => m.sarvamPrismIntentShadow(redactSecretShapedText(p.text), { timeoutMs: 1200 }))
         .then(r => console.log('SARVAM_PRISM_SHADOW:', JSON.stringify({
           intent: r.intent, confidence: r.confidence, ambiguous: r.ambiguous, costPaise: r.costPaise,
         }))).catch(() => console.error('SARVAM_PRISM_SHADOW_FAILED'))
