@@ -1191,6 +1191,19 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
         }
       }
     }
+    // 17 Nov live: Gogo's own follow-up asked "Has it been handled?" and the owner's "Yes" got "I'm not sure what
+    // you're saying yes to". A short yes/no right after a follow-up answers it. This sits before the brain because
+    // the follow-up text is not in the conversation, so the brain cannot know what "Recharged" refers to. The handler
+    // returns null unless the follow-up was the last thing sent (no chat, no reminder since); then nothing changes.
+    if (!preserveFriendFlow && !callCommand && isFollowUpAnswer(text)) {
+      const followUpAnswer = await import('@/lib/agent/follow-ups').then(m => m.handleFollowUpAnswer(String(resolvedUser.telegramId), text), () => null)
+      if (followUpAnswer) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', followUpAnswer)
+        await sendWhatsAppMessage(from, followUpAnswer)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
+      }
+    }
     if (!preserveFriendFlow && !callCommand && (globalThis as any).process?.env?.GOGO_BRAIN !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production')) {
       const brain = await import('@/lib/agent/brain').then(m => m.runBrain({ phone: from, telegramId: resolvedUser.telegramId, text, name: resolvedUser.name || profileName, timezone: (resolvedUser as any).timezone || null, userId: String(resolvedUser.id), whatsappId: String(resolvedUser.whatsappId || from), surface: 'whatsapp', forwarded: forwardedMessage })).catch((err: any) => { console.error('BRAIN_FAILED:', String(err?.message || err).slice(0, 160)); return null })
       if (brain?.reply) {
@@ -1490,7 +1503,7 @@ _"${originalText}"_
     // Give them first refusal before semantic feature routing so "what am I waiting on?"
     // cannot be mistaken for a generic question or reminder query.
     // 14 Nov follow-ups: "stop follow-ups" / "start follow-ups" also get first refusal (handled in the bridge).
-    if (isOpenLoopQuery(text) || isOpenLoopResolutionCandidate(text) || isOpenLoopActionCandidate(text) || parseRunCancel(text) || isFollowUpCommand(text) || isFollowUpAnswer(text)) {
+    if (isOpenLoopQuery(text) || isOpenLoopResolutionCandidate(text) || isOpenLoopActionCandidate(text) || parseRunCancel(text) || isFollowUpCommand(text)) {
       const attentionAgent = await tryRunWhatsAppAttentionCommand({
         user:resolvedUser,
         text,

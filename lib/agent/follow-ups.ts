@@ -11,7 +11,7 @@
 // one message per pass, "stop follow-ups" turns it off. The 4 Nov quiet rule still holds for everyone else.
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { parseFollowUpCommand, parseFollowUpAnswer } from './follow-up-command'
+import { parseFollowUpCommand, parseFollowUpAnswerDetail } from './follow-up-command'
 import { proactiveShadowOwners, shadowText, cleanupCandidates, logProactiveShadow, recentShadowRows } from './proactive-shadow'
 
 export const FOLLOWUP_DAILY_CAP = 2
@@ -290,37 +290,43 @@ export async function handleFollowUpCommand(owner: string, text: string, db: any
 export const FOLLOWUP_ANSWER_WINDOW_MS = 3 * 3600_000
 /** Pure. What Gogo says back to a yes/no on its own follow-up. `subject` is the sender for a deadline follow-up. */
 export function followUpAnswerReply(kind: string, answer: 'handled' | 'not_yet', subject: string): string {
-  const about = subject ? `the ${subject} mail` : 'that'
+  const about = subject && !/^a sender$/i.test(subject) ? `the ${subject} mail` : 'that mail'
   if (kind === 'digest') return answer === 'handled' ? "Okay, I'll keep them on your list." : 'Okay. Ask *what needs my attention?* and tell me which ones to drop.'
-  if (kind === 'deadline') return answer === 'handled'
+  return answer === 'handled'
     ? `Good, that's sorted. I won't ask about ${about} again.`
     : `Okay, it's still open on your side. If you want a nudge, say for example *remind me at 5 pm about ${about}*.`
-  return answer === 'handled' ? "Good, that's sorted." : "Okay, I'll leave it with you."
 }
 
 /**
- * A short yes/no right after a follow-up answers that follow-up (17 Nov live test). It binds only when the follow-up
- * was sent in the last 3 hours, has not been answered, and nothing else has been said since (no reply from Gogo, at
- * most this one message from the person), so a "yes" meant for an approval or another question is never taken.
- * Returns null whenever it is not sure; the message then goes on to the normal handlers.
+ * A short yes/no right after a follow-up answers that follow-up (17 Nov live test). It binds only when:
+ *  - the follow-up asked a question: a deadline ("Has it been handled?") takes yes/no and done-words; the digest
+ *    ("Still want these moving?") takes only yes/no, because "done" there would mean the opposite; an event step is a
+ *    statement and takes nothing;
+ *  - it was sent in the last 3 hours and has no answer yet;
+ *  - nothing else has happened since: no conversation row at all, and no reminder delivered (a typed "done" after a
+ *    reminder belongs to that reminder; reminders do not write a conversation row) (review, PR #1532).
+ * Any read error or doubt returns null and the message goes on to the normal handlers.
  */
 export async function handleFollowUpAnswer(owner: string, text: string, db: any = supabaseAdmin, now = Date.now()): Promise<string | null> {
-  const answer = parseFollowUpAnswer(text)
-  if (!answer || !owner) return null
+  const parsed = parseFollowUpAnswerDetail(text)
+  if (!parsed || !owner) return null
   const since = new Date(now - FOLLOWUP_ANSWER_WINDOW_MS).toISOString()
   const { data, error } = await db.from('agent_activity').select('id,created_at,message,metadata_json,event_type').eq('telegram_id', owner)
     .in('event_type', ['followup_sent', 'followup_answered']).gte('created_at', since).order('created_at', { ascending: false }).limit(5)
   if (error || !data?.length) return null
   const last = data[0]
   if (last.event_type !== 'followup_sent') return null // the latest follow-up already has its answer
-  const talk = await db.from('conversations').select('role,created_at').eq('telegram_id', owner).gt('created_at', String(last.created_at)).order('created_at', { ascending: false }).limit(5)
-  if (talk.error) return null
-  const rows = (talk.data || []) as { role: string }[]
-  if (rows.some(r => r.role !== 'user') || rows.length > 1) return null
   const kind = String(last.metadata_json?.kind || '')
+  if (kind !== 'deadline' && kind !== 'digest') return null
+  if (kind === 'digest' && parsed.doneWord) return null
+  const sentAt = String(last.created_at)
+  const talk = await db.from('conversations').select('role').eq('telegram_id', owner).gt('created_at', sentAt).limit(1)
+  if (talk.error || (talk.data || []).length) return null
+  const fired = await db.from('reminders').select('id').eq('telegram_id', owner).gt('sent_at', sentAt).limit(1)
+  if (fired.error || (fired.data || []).length) return null
   const subject = kind === 'deadline' ? String(last.message || '').split(':')[0].trim().slice(0, 40) : ''
-  const saved = await db.from('agent_activity').insert({ telegram_id: owner, event_type: 'followup_answered', message: `Follow-up answered: ${answer === 'handled' ? 'handled' : 'not yet'}.`,
-    metadata_json: { ref: last.id, kind, answer, keys: Array.isArray(last.metadata_json?.keys) ? last.metadata_json.keys : [] } })
+  const saved = await db.from('agent_activity').insert({ telegram_id: owner, event_type: 'followup_answered', message: `Follow-up answered: ${parsed.answer === 'handled' ? 'handled' : 'not yet'}.`,
+    metadata_json: { ref: last.id, kind, answer: parsed.answer, keys: Array.isArray(last.metadata_json?.keys) ? last.metadata_json.keys : [] } })
   if (saved.error) return null
-  return followUpAnswerReply(kind, answer, subject)
+  return followUpAnswerReply(kind, parsed.answer, subject)
 }
