@@ -47,7 +47,7 @@ import { armApprovedRestaurantReservation, continueRestaurantReservationGuestRep
 import { isDecisionRecallQuery } from './recall-query'
 import { tryCancelRunFromChat } from './run-cancel'
 import { tryGetScheduledList } from './scheduled-list'
-import {isFollowUpCommand} from './follow-up-command'
+import {isFollowUpCommand,isFollowUpAnswer} from './follow-up-command'
 
 export type WhatsAppAgentResult = {
   text: string
@@ -536,6 +536,11 @@ export async function tryRunWhatsAppAttentionCommand(params:{
   const followUpCmd=isFollowUpCommand(params.text)
     ?await import('./follow-ups').then(m=>m.handleFollowUpCommand(String(actor.legacyTelegramId),params.text),()=>null):null
   if(followUpCmd)return {runId:'follow-ups',status:'completed',capability:'orchestrator',risk:'low',text:followUpCmd,handledBy:'follow-ups'} as any
+  // 17 Nov live: a short yes/no right after Gogo's own follow-up ("Has it been handled?" then "Yes") answers it.
+  // Returns null unless a follow-up was the last thing said, so approvals and other questions keep their "yes".
+  const followUpAnswer=isFollowUpAnswer(params.text)
+    ?await import('./follow-ups').then(m=>m.handleFollowUpAnswer(String(actor.legacyTelegramId),params.text),()=>null):null
+  if(followUpAnswer)return {runId:'follow-ups',status:'completed',capability:'orchestrator',risk:'low',text:followUpAnswer,handledBy:'follow-up-answer'} as any
 
   if(await shouldHandleOpenLoopAction({actor,text:params.text})){
     const action=await handleOpenLoopAction({actor,text:params.text})

@@ -11,7 +11,7 @@
 // one message per pass, "stop follow-ups" turns it off. The 4 Nov quiet rule still holds for everyone else.
 import { createHash } from 'node:crypto'
 import { supabaseAdmin } from '@/lib/supabase-admin'
-import { parseFollowUpCommand } from './follow-up-command'
+import { parseFollowUpCommand, parseFollowUpAnswer } from './follow-up-command'
 import { proactiveShadowOwners, shadowText, cleanupCandidates, logProactiveShadow, recentShadowRows } from './proactive-shadow'
 
 export const FOLLOWUP_DAILY_CAP = 2
@@ -285,4 +285,42 @@ export async function handleFollowUpCommand(owner: string, text: string, db: any
   const { error } = await db.from('agent_activity').insert({ telegram_id: owner, event_type: cmd === 'stop' ? 'followups_stopped' : 'followups_started', message: `Follow-ups ${cmd === 'stop' ? 'stopped' : 'started'} by the person.`, metadata_json: {} })
   if (error) return cmd === 'stop' ? 'I could not save that just now. Please send *stop follow-ups* again.' : 'I could not save that just now. Please try again.'
   return cmd === 'stop' ? 'Follow-ups are off. Your reminders and watches keep running. Say *start follow-ups* to turn them back on.' : 'Follow-ups are on: at most 2 a day, between 8 am and 10 pm. Say *stop follow-ups* any time.'
+}
+
+export const FOLLOWUP_ANSWER_WINDOW_MS = 3 * 3600_000
+/** Pure. What Gogo says back to a yes/no on its own follow-up. `subject` is the sender for a deadline follow-up. */
+export function followUpAnswerReply(kind: string, answer: 'handled' | 'not_yet', subject: string): string {
+  const about = subject ? `the ${subject} mail` : 'that'
+  if (kind === 'digest') return answer === 'handled' ? "Okay, I'll keep them on your list." : 'Okay. Ask *what needs my attention?* and tell me which ones to drop.'
+  if (kind === 'deadline') return answer === 'handled'
+    ? `Good, that's sorted. I won't ask about ${about} again.`
+    : `Okay, it's still open on your side. If you want a nudge, say for example *remind me at 5 pm about ${about}*.`
+  return answer === 'handled' ? "Good, that's sorted." : "Okay, I'll leave it with you."
+}
+
+/**
+ * A short yes/no right after a follow-up answers that follow-up (17 Nov live test). It binds only when the follow-up
+ * was sent in the last 3 hours, has not been answered, and nothing else has been said since (no reply from Gogo, at
+ * most this one message from the person), so a "yes" meant for an approval or another question is never taken.
+ * Returns null whenever it is not sure; the message then goes on to the normal handlers.
+ */
+export async function handleFollowUpAnswer(owner: string, text: string, db: any = supabaseAdmin, now = Date.now()): Promise<string | null> {
+  const answer = parseFollowUpAnswer(text)
+  if (!answer || !owner) return null
+  const since = new Date(now - FOLLOWUP_ANSWER_WINDOW_MS).toISOString()
+  const { data, error } = await db.from('agent_activity').select('id,created_at,message,metadata_json,event_type').eq('telegram_id', owner)
+    .in('event_type', ['followup_sent', 'followup_answered']).gte('created_at', since).order('created_at', { ascending: false }).limit(5)
+  if (error || !data?.length) return null
+  const last = data[0]
+  if (last.event_type !== 'followup_sent') return null // the latest follow-up already has its answer
+  const talk = await db.from('conversations').select('role,created_at').eq('telegram_id', owner).gt('created_at', String(last.created_at)).order('created_at', { ascending: false }).limit(5)
+  if (talk.error) return null
+  const rows = (talk.data || []) as { role: string }[]
+  if (rows.some(r => r.role !== 'user') || rows.length > 1) return null
+  const kind = String(last.metadata_json?.kind || '')
+  const subject = kind === 'deadline' ? String(last.message || '').split(':')[0].trim().slice(0, 40) : ''
+  const saved = await db.from('agent_activity').insert({ telegram_id: owner, event_type: 'followup_answered', message: `Follow-up answered: ${answer === 'handled' ? 'handled' : 'not yet'}.`,
+    metadata_json: { ref: last.id, kind, answer, keys: Array.isArray(last.metadata_json?.keys) ? last.metadata_json.keys : [] } })
+  if (saved.error) return null
+  return followUpAnswerReply(kind, answer, subject)
 }

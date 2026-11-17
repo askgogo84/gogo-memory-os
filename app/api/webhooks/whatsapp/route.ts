@@ -72,7 +72,7 @@ import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfi
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
 import { jevClarificationReply, promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
-import { isFollowUpCommand } from '@/lib/agent/follow-up-command'
+import { isFollowUpCommand, isFollowUpAnswer } from '@/lib/agent/follow-up-command'
 import { autoResolveOpenLoopsFromTurn, captureExplicitOpenLoopFromTurn, captureJevOpenLoopFromTurn, isOpenLoopActionCandidate, isOpenLoopQuery, isOpenLoopResolutionCandidate } from '@/lib/agent/open-loops'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { isGmailVerificationQuery } from '@/lib/agent/gmail-verification'
@@ -1490,7 +1490,7 @@ _"${originalText}"_
     // Give them first refusal before semantic feature routing so "what am I waiting on?"
     // cannot be mistaken for a generic question or reminder query.
     // 14 Nov follow-ups: "stop follow-ups" / "start follow-ups" also get first refusal (handled in the bridge).
-    if (isOpenLoopQuery(text) || isOpenLoopResolutionCandidate(text) || isOpenLoopActionCandidate(text) || parseRunCancel(text) || isFollowUpCommand(text)) {
+    if (isOpenLoopQuery(text) || isOpenLoopResolutionCandidate(text) || isOpenLoopActionCandidate(text) || parseRunCancel(text) || isFollowUpCommand(text) || isFollowUpAnswer(text)) {
       const attentionAgent = await tryRunWhatsAppAttentionCommand({
         user:resolvedUser,
         text,

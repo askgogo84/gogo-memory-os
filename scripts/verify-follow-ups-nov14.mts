@@ -158,7 +158,7 @@ const fuSrc = readFileSync('lib/agent/follow-ups.ts', 'utf8')
 ok(/if \(!mailbox \|\| String\(access\.ownEmail \|\| ''\)\.toLowerCase\(\) !== mailbox\.toLowerCase\(\)\) return null/.test(fuSrc), 'a mail judged in another mailbox is never re-checked against the primary inbox')
 ok(/if \(out\.length >= 3\) break\n    \}\n    if \(out\.length >= 3\) break/.test(fuSrc), 'at most 3 deadline items (both loops)')
 const route = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')
-ok(/parseRunCancel\(text\) \|\| isFollowUpCommand\(text\)\) \{/.test(route), 'the webhook gives "stop follow-ups" first refusal, so it reaches the bridge handler')
+ok(/parseRunCancel\(text\) \|\| isFollowUpCommand\(text\) \|\| isFollowUpAnswer\(text\)\) \{/.test(route), 'the webhook gives "stop follow-ups" first refusal, so it reaches the bridge handler')
 ok(/followupsLiveOwners\(\)\.filter\(o=>!shadowSet\.has\(o\)\)/.test(pulse_src()), 'live owners also get judge rows for the re-check')
 function pulse_src() { return readFileSync('lib/agent/autonomy-pulse.ts', 'utf8') }
 
@@ -171,5 +171,36 @@ const pulse = readFileSync('lib/agent/autonomy-pulse.ts', 'utf8')
 ok(pulse.indexOf("m.processFollowUps()") > 0 && pulse.indexOf("m.processFollowUps()") < pulse.indexOf("mayVolunteer('check_in')"), 'follow-ups run before the quiet-rule return (live only for allowlisted owners)')
 const loops = readFileSync('lib/agent/open-loops.ts', 'utf8')
 ok(/const cutoff=new Date\(Date\.now\(\)-10\*60_000\)\.toISOString\(\)/.test(loops) && !/24\*3600_000/.test(loops.slice(loops.indexOf('async function recentOpenLoopListSnapshot'), loops.indexOf('async function recentOpenLoopListSnapshot') + 900)), 'numbers bind for the normal 10 minutes only (no 24 h digest binding)')
+
+
+// 17 Nov live test: Gogo asked "Twilio: … Has it been handled?", the owner said "Yes", Gogo replied "I'm not sure
+// what you're saying yes to". A short yes/no right after a follow-up answers it; anything less certain is left alone.
+{
+  const fc = await import('../lib/agent/follow-up-command.ts')
+  eq(['Yes', 'yes.', 'Done', 'yes, done', 'handled 👍', 'Recharged', 'yes it has been'].map(fc.parseFollowUpAnswer), Array(7).fill('handled'), 'handled phrasings')
+  eq(['No', 'not yet', 'no, not yet', 'still pending'].map(fc.parseFollowUpAnswer), Array(4).fill('not_yet'), 'not-yet phrasings')
+  eq(['yes book it', 'yes please send the mail', 'no thanks cancel it', 'ok', 'yes to the Air India one', ''].map(fc.parseFollowUpAnswer), Array(6).fill(null), 'anything longer or vaguer is not an answer')
+  const sentAt = Date.parse('2026-11-17T02:40:00Z'), at = (ms: number) => new Date(ms).toISOString()
+  const mk = (activity: any[], talk: any[]) => {
+    const inserted: any[] = []
+    const q = (rows: any[], table: string) => { const o: any = { select: () => o, eq: () => o, in: () => o, gte: () => o, gt: (_: string, v: string) => { rows = rows.filter(r => r.created_at > v); return o }, order: () => o, limit: () => Promise.resolve({ data: rows, error: null }),
+      insert: (row: any) => { inserted.push({ table, row }); return Promise.resolve({ error: null }) } }; return o }
+    return { db: { from: (table: string) => q(table === 'conversations' ? talk : activity, table) }, inserted }
+  }
+  const sent = { id: 'f1', event_type: 'followup_sent', created_at: at(sentAt), message: 'Twilio: I flagged yesterday’s mail “Action Required” as time-sensitive. Has it been handled?', metadata_json: { kind: 'deadline', keys: ['mail:1'] } }
+  const live = mk([sent], [{ role: 'user', created_at: at(sentAt + 180_000) }])
+  eq(await fu.handleFollowUpAnswer('-884501501', 'Yes', live.db, sentAt + 181_000), "Good, that's sorted. I won't ask about the Twilio mail again.", 'the live case: "Yes" three minutes after the follow-up')
+  eq(live.inserted[0]?.row?.event_type, 'followup_answered', 'the answer is recorded')
+  eq(live.inserted[0]?.row?.metadata_json?.ref, 'f1', 'against that follow-up')
+  ok(/still open on your side/.test(String(await fu.handleFollowUpAnswer('-884501501', 'not yet', mk([sent], []).db, sentAt + 60_000))), 'not yet: offers a nudge')
+  eq(await fu.handleFollowUpAnswer('-884501501', 'Yes', mk([sent], [{ role: 'assistant', created_at: at(sentAt + 60_000) }, { role: 'user', created_at: at(sentAt + 90_000) }]).db, sentAt + 91_000), null, 'Gogo said something else since: the yes is not taken')
+  eq(await fu.handleFollowUpAnswer('-884501501', 'Yes', mk([sent], [{ role: 'user', created_at: at(sentAt + 60_000) }, { role: 'user', created_at: at(sentAt + 90_000) }]).db, sentAt + 91_000), null, 'the person already said something else since')
+  eq(await fu.handleFollowUpAnswer('-884501501', 'Yes', mk([{ id: 'a1', event_type: 'followup_answered', created_at: at(sentAt + 30_000), metadata_json: {} }, sent], []).db, sentAt + 60_000), null, 'already answered: not taken twice')
+  eq(await fu.handleFollowUpAnswer('-884501501', 'Yes', mk([], []).db, sentAt), null, 'no follow-up in the window: normal handling')
+  eq(await fu.handleFollowUpAnswer('-884501501', 'yes book it', live.db, sentAt + 181_000), null, 'a yes with an instruction is never taken')
+  eq(fu.followUpAnswerReply('digest', 'not_yet', ''), 'Okay. Ask *what needs my attention?* and tell me which ones to drop.', 'digest: no')
+  const bridge = readFileSync('lib/agent/whatsapp-bridge.ts', 'utf8'), hook = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')
+  ok(bridge.includes("m.handleFollowUpAnswer(String(actor.legacyTelegramId),params.text)") && hook.includes('isFollowUpCommand(text) || isFollowUpAnswer(text)'), 'wired into the bridge and the WhatsApp gate')
+}
 
 console.log(`PASS verify-follow-ups-nov14: ${checks} checks`)
