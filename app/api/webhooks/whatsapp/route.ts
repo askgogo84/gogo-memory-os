@@ -1133,7 +1133,10 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // Canary users only; exact commands (yes/approve/1/2/3) and any failure keep today's pipeline untouched.
     // 29 Oct: phone-call commands ("test call me", "call <venue> and book…", "yes call") go to the call flow; the brain
     // had answered "Call … and book" with "I can't make calls".
+    // 17 Nov: a call for any other ask (room, appointment, enquiry) also counts, decided by the call parser itself so
+    // an ordinary "call mom and ask about lunch" keeps the brain and the reminder path (review, PR #1534).
     const callCommand = /^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
+      || (/^\s*(?:please\s+)?(?:call|phone|ring)\s/i.exec(text) !== null && await import('@/lib/agent/voice-call').then(m => m.parseCallCommand(text)?.kind === 'book', () => false))
     // Goal-to-Done (Addendum 5): a message with several goals ("organize a birthday, check flight prices, prepare three
     // emails…") becomes one plan of who does what, before any single-goal hook (Events included) takes one piece of it.
     // Also its replies (missing details, "get it done") while that plan is open. Owners in GOGO_GOAL_INTAKE only; null

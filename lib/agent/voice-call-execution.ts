@@ -4,7 +4,7 @@ import { isDefiniteProviderRejection } from '@/lib/services/delivery-state'
 
 // No provider credentials or dialogue in the claim identity. All effect-bearing fields are bound.
 export function voicePlanHash(owner: string, plan: Record<string, unknown>) {
-  const fields = ['venue','to','source','guestName','partySize','date','dateLabel','timeLabel','flexWindow','seating','purpose','test','createdAt','startClock']
+  const fields = ['venue','to','source','guestName','partySize','date','dateLabel','timeLabel','flexWindow','seating','purpose','test','createdAt','startClock','kind','opening','details']
   return createHash('sha256').update(JSON.stringify([owner, ...fields.map(key => plan[key] ?? null)])).digest('hex')
 }
 export function voiceAttemptId(owner: string, plan: Record<string, unknown>, attempt = Number(plan.redials || 0)) {
