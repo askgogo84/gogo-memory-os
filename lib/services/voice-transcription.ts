@@ -3,9 +3,10 @@ import { sarvamEnabled } from './sarvam'
 import { sarvamSpeechToText } from './sarvam-voice'
 import { fetchMetaMedia, isMetaMediaRef } from '@/lib/channels/whatsapp-provider/meta-media'
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-})
+function getOpenAiVoiceClient() {
+  if (!process.env.OPENAI_API_KEY) throw new Error('Missing OPENAI_API_KEY')
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+}
 
 function getExtension(contentType: string) {
   const type = (contentType || '').toLowerCase()
@@ -158,7 +159,7 @@ export async function transcribeTwilioVoiceNote(params: {
     type: contentType || 'audio/ogg',
   })
 
-  const result = await openai.audio.transcriptions.create({
+  const result = await getOpenAiVoiceClient().audio.transcriptions.create({
     model: 'gpt-4o-mini-transcribe',
     file,
     response_format: 'json',
