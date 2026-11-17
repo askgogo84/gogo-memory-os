@@ -51,15 +51,24 @@ eq([outletInArea('https://www.zomato.com/bangalore/meghana-foods-hsr-bangalore/o
 const pc = readFileSync('lib/commerce/price-comparison.ts', 'utf8')
 eq(/const saidArea = food\.area \|\| null\s+let area: string \| null = saidArea \|\| homeArea/.test(pc), true, 'said area first, then the home area')
 // 17 Nov live (5:54 pm): Zomato has no Meghana Foods page for HSR (its pages: Sarjapur Road, Hosur Road, Indiranagar…).
-// The map search's nearest outlet to the said area is read instead, and the reply says which outlet it is.
-eq(/if \(!found\?\.url \|\| !outletInArea\(found\.url, saidArea\)\) \{\s*const near = await nearestOutletArea\(food\.restaurant, `\$\{saidArea\} Bengaluru`\)\s*const alt = near \? await look\(near\) : null\s*if \(near && alt\?\.url && outletInArea\(alt\.url, near\)\) \{/.test(pc), true, 'no page for the said area: nearest outlet by map search, and only if its own page is found')
-eq(/next\.outletNote = .*`No \$\{food\.restaurant\} outlet in \$\{saidArea\} on \$\{COMPARISON_PROVIDERS\[next\.provider\]\.label\}; this is the nearest one, \$\{near\}\.`/.test(pc) && /\} else found = \{leads: found\?\.leads \|\| alt\?\.leads \|\| \[\], url: null\}/.test(pc), true, 'the person is told which outlet was read; with no nearest outlet, no other branch is opened')
-const live = ['meghana-foods-sarjapur-road-bangalore', 'meghana-foods-hosur-road-bangalore', 'meghana-foods-indiranagar', 'meghana-foods-kanakapura-road-bangalore'].map(z)
+// The map search gives an address for "Meghana Foods near HSR"; the outlet page whose area is in that address is
+// read, and the reply says which outlet it is (review, PR #1537: chosen from real pages, never called "nearest").
+const live = ['meghana-foods-sarjapur-road-bangalore', 'meghana-foods-hosur-road-bangalore', 'meghana-foods-indiranagar', 'meghana-foods-kanakapura-road-bangalore', 'meghana-foods-1-koramangala-5th-block-bangalore'].map(z)
 eq(outletInArea(String(m.foodRestaurantLead('zomato', 'Meghana Foods', live, null, 'HSR')), 'HSR'), false, 'live lead list: no HSR page')
-eq(m.foodRestaurantLead('zomato', 'Meghana Foods', live, null, 'Sarjapur Road'), 'https://www.zomato.com/bangalore/meghana-foods-sarjapur-road-bangalore/order', 'the nearest outlet (Sarjapur Road) has its own page')
-const row: any = { provider: 'zomato', status: 'observed', sourceUrl: 'https://www.zomato.com/bangalore/meghana-foods-sarjapur-road-bangalore/order', evidence: 'Chicken Biryani ₹365\nMeghana Foods, Sarjapur Road', outletNote: 'No Meghana Foods outlet in HSR on Zomato; this is the nearest one, Sarjapur Road.' }
-const summary = m.comparisonWhatsAppSummary({ id: 't', status: 'completed', metadata_json: { subject: 'chicken biryani at Meghana Foods in HSR', request: 'compare chicken biryani at Meghana Foods in HSR', providers: [row], withheld: [] } } as any)
-eq(/₹365/.test(String(summary)) && String(summary).includes('No Meghana Foods outlet in HSR on Zomato; this is the nearest one, Sarjapur Road.'), true, 'the reply carries the price and the outlet note')
+const pick = (address: string) => m.outletLeadForAddress('zomato', 'Meghana Foods', live, address)
+eq(pick('124, Sarjapur Road, Bengaluru, Karnataka 560102'), { url: 'https://www.zomato.com/bangalore/meghana-foods-sarjapur-road-bangalore/order', area: 'Sarjapur Road' }, 'a "… Road" address finds the Sarjapur Road page')
+eq(pick('Sarjapur Main Rd, above Fab India, Bellandur, Bengaluru')?.area, 'Sarjapur Road', '"Rd" and a different locality word still match Sarjapur')
+eq(pick('1st Block Koramangala, HSR Layout 5th Sector, Bengaluru')?.area, 'Koramangala 5th Block', 'Koramangala address finds the Koramangala page')
+eq(pick('27th Main Rd, HSR Layout, Bengaluru, Karnataka 560102'), null, 'an address in the said area with no page for it: nothing is substituted')
+eq(pick('Linking Road, Bandra West, Mumbai, Maharashtra'), null, 'another city: nothing')
+eq(pick(''), null, 'no address: nothing')
+eq(/const other = listing \? outletLeadForAddress\(next\.provider, food\.restaurant, leadsSoFar, String\(listing\.address \|\| ''\)\) : null\s*if \(other && !outletInArea\(other\.url, saidArea\)\) \{/.test(pc) && /\} else found = \{leads: leadsSoFar, url: null\}/.test(pc), true, 'no page for the said area: the map address picks one of the pages found, or nothing')
+eq(/next\.outletNote = `No \$\{food\.restaurant\} outlet in \$\{saidArea\} on \$\{COMPARISON_PROVIDERS\[next\.provider\]\.label\}\. This is the \$\{other\.area\} outlet, which the map shows for \$\{saidArea\}\.`/.test(pc), true, 'the note says which outlet was read')
+eq(/\.\.\.\(row\.outletNote \? \{outletNote: row\.outletNote\} : \{\}\)\}, child\.error\)\)/.test(pc), true, 'the note survives the row rebuild when the read finishes (review defect 1)')
+const row: any = { provider: 'zomato', status: 'observed', sourceUrl: 'https://www.zomato.com/bangalore/meghana-foods-sarjapur-road-bangalore/order', evidence: 'Chicken Biryani ₹365\nMeghana Foods, Sarjapur Road', outletNote: 'No Meghana Foods outlet in HSR on Zomato. This is the Sarjapur Road outlet, which the map shows for HSR.' }
+const done: any = { id: 't', status: 'completed', metadata_json: { subject: 'chicken biryani at Meghana Foods in HSR', request: 'compare chicken biryani at Meghana Foods in HSR', providers: [row], withheld: [] } }
+eq(/₹365/.test(String(m.comparisonWhatsAppSummary(done))) && String(m.comparisonWhatsAppSummary(done)).includes(row.outletNote), true, 'WhatsApp reply: the price and which outlet it is')
+eq(String(m.comparisonSummary(done)).includes(row.outletNote), true, 'dashboard summary carries the same note')
 eq(/\(the outlet in Sarjapur Road\)/.test(m.comparisonObjective({ metadata_json: { subject: 'chicken biryani at Meghana Foods in HSR', request: 'x', providers: [] } } as any, 'zomato', 'Sarjapur Road')), true, 'the browser is sent to the outlet actually chosen')
 const task: any = { metadata_json: { subject: 'chicken biryani at Meghana Foods in HSR', request: 'compare chicken biryani at Meghana Foods in HSR', providers: [] } }
 const objective = m.comparisonObjective(task, 'zomato')

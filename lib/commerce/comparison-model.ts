@@ -120,6 +120,23 @@ export function foodQuote(subject: string, evidence: string): {dish: string; pri
   return null
 }
 /** A restaurant's own page on Swiggy or Zomato (never a search, listing or other site), as the read's start. */
+/** Pure. Among the restaurant's own outlet pages, the one whose area appears in a map listing's address.
+ *  17 Nov live: Zomato has Meghana Foods pages for Sarjapur Road, Hosur Road, Indiranagar…; the map search for
+ *  "Meghana Foods near HSR" gives an address; the page whose area words are all in that address is the outlet to read.
+ *  Returns the page and the outlet's area as the app names it ("Sarjapur Road"). No match → null. */
+export function outletLeadForAddress(provider: ComparisonProvider, restaurant: string, leads: Array<{url: string; title?: string}>, address: string): {url: string; area: string} | null {
+  const addr = ` ${String(address || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `.replace(/ rd /g, ' road ')
+  const name = new Set(foodTokens(restaurant))
+  for (const lead of leads || []) {
+    const url = foodRestaurantLead(provider, restaurant, [lead], null, null)
+    if (!url) continue
+    const parts = (new URL(url).pathname.toLowerCase().match(/[a-z0-9]+/g) || []).filter(w => !name.has(w) && !/^(?:bangalore|bengaluru|order|city|restaurants|rest\d+|\d+)$/.test(w))
+    const key = parts.filter(w => !AREA_STOP.includes(w) && w.length > 1)
+    if (!key.length || !key.every(w => addr.includes(` ${w} `))) continue
+    return {url, area: parts.map(w => /^(?:hsr|btm|jp|hbr|hrbr|rt|rr|kr|mg|hal|bel|ub)$/.test(w) ? w.toUpperCase() : /^\d/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+  }
+  return null
+}
 /** The outlet's area from a map listing's address ("12, 1st Block, Rajajinagar, Bengaluru, Karnataka 560010" → "Rajajinagar"). */
 export function outletAreaFromAddress(address: string): string | null {
   const parts = String(address || '').split(',').map(p => p.replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean)
@@ -522,7 +539,7 @@ export function comparisonSummary(task: PriceComparison) {
     const checked = row.checkedAt && Number.isFinite(Date.parse(row.checkedAt))
       ? new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true}).format(new Date(row.checkedAt)) + ' IST'
       : 'time unverified'
-    return `${line}.\nObserved page excerpt (${checked}): ${row.evidence.replace(/\s+/g, ' ').trim()}\nSource: ${row.sourceUrl}`
+    return `${line}.${row.outletNote ? `\n${row.outletNote}` : ''}\nObserved page excerpt (${checked}): ${row.evidence.replace(/\s+/g, ' ').trim()}\nSource: ${row.sourceUrl}`
   })
   return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\n${pending ? 'Remaining store checks are queued.' : 'This check has finished; blocked stores are not being retried automatically.'}\nItem observations are not a verified delivered-total ranking. Fees, location-specific prices and conditional offers remain unverified unless explicitly shown in the evidence.`
 }

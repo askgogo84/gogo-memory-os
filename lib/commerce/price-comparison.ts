@@ -3,7 +3,7 @@ import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-ru
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
 import {SWIGGY_COMPARISON_NOTE, SWIGGY_ONLY_NOTE, withheldComparisonProviders} from './swiggy-policy'
-import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, outletAreaFromAddress, isFoodComparison, parseFoodSubject, slugInArea, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
+import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, outletAreaFromAddress, isFoodComparison, parseFoodSubject, slugInArea, outletLeadForAddress, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
 const TYPE = 'price_comparison'
@@ -44,7 +44,10 @@ export async function readPriceComparison(owner: string, id: string): Promise<Pr
     const {data: step, error: stepError} = await supabaseAdmin.from('agent_steps').select('status,output_json')
       .eq('run_id', child.id).eq('telegram_id', owner).eq('tool_name', 'secure_browser').limit(1).maybeSingle()
     if (stepError) throw new Error('comparison_evidence_read_failed')
-    rows.push(withNavigationTimeout({...providerObservation(row.provider, child, step,task.metadata_json.subject), startUrl: row.startUrl, ...(row.attempts ? {attempts: row.attempts} : {}), ...(row.leadUrl ? {leadUrl: row.leadUrl} : {})}, child.error))
+    rows.push(withNavigationTimeout({...providerObservation(row.provider, child, step,task.metadata_json.subject), startUrl: row.startUrl, ...(row.attempts ? {attempts: row.attempts} : {}), ...(row.leadUrl ? {leadUrl: row.leadUrl} : {}),
+      // Review (PR #1537): the outlet note belongs to this read; without it a nearby outlet's price would go out
+      // under the area the person asked for. A retry recomputes it, so it is not carried into re-queued rows.
+      ...(row.outletNote ? {outletNote: row.outletNote} : {})}, child.error))
   }
   const blocker = rows.some(row => row.status === 'pending' && !PARALLEL_COMPARISON_PROVIDERS.has(row.provider))
     ? await sharedBrowserHandoffPending(owner) : null
@@ -353,12 +356,17 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
         // HSR, and the run ended with no price. Like the pincode path, ask the map search for the outlet nearest the
         // said area, read that one, and say plainly which outlet it is.
         if (!found?.url || !outletInArea(found.url, saidArea)) {
-          const near = await nearestOutletArea(food.restaurant, `${saidArea} Bengaluru`)
-          const alt = near ? await look(near) : null
-          if (near && alt?.url && outletInArea(alt.url, near)) {
-            found = alt; area = near; foodOutletArea = near
-            next.outletNote = slugInArea(new URL(alt.url).pathname, saidArea) ? undefined : `No ${food.restaurant} outlet in ${saidArea} on ${COMPARISON_PROVIDERS[next.provider].label}; this is the nearest one, ${near}.`
-          } else found = {leads: found?.leads || alt?.leads || [], url: null}
+          // Review (PR #1537): pick among the restaurant's own outlet pages already found, using the address the map
+          // search gives for "<restaurant> near <area>". The note says what was done; it does not claim "nearest".
+          const leadsSoFar = found?.leads || []
+          const place = await import('@/lib/agent/places-search').then(m => m.searchPlaces(`${food.restaurant} near ${saidArea} Bengaluru`), () => [] as any[]).catch(() => [] as any[])
+          const words = (food.restaurant.toLowerCase().match(/[a-z0-9]+/g) || []).filter(w => w.length > 2)
+          const listing = (place || []).find((pl: any) => words.every(w => String(pl?.title || '').toLowerCase().includes(w)))
+          const other = listing ? outletLeadForAddress(next.provider, food.restaurant, leadsSoFar, String(listing.address || '')) : null
+          if (other && !outletInArea(other.url, saidArea)) {
+            found = {leads: leadsSoFar, url: other.url}; area = other.area; foodOutletArea = other.area
+            next.outletNote = `No ${food.restaurant} outlet in ${saidArea} on ${COMPARISON_PROVIDERS[next.provider].label}. This is the ${other.area} outlet, which the map shows for ${saidArea}.`
+          } else found = {leads: leadsSoFar, url: null}
         }
       } else if (!found?.url || !outletInArea(found.url, area)) {
         area = await nearestOutletArea(food.restaurant, pin)
