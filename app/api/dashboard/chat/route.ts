@@ -307,7 +307,7 @@ async function handleChatPost(req: NextRequest) {
         return NextResponse.json({text:out,handledBy:'occasion-invite',status:'completed',...(inv.mediaUrl?{imageUrl:inv.mediaUrl}:{})})
       }
     }
-    const callCommand=/^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
+    const callCommand=/^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve|schedule|reschedule|cancel|confirm|ask|enquire|inquire|check|find\s+out|request|make|fix|get|tell|inform|let\s+them\s+know)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
     // Goal-to-Done (Addendum 5): a message with several goals becomes one plan of who does what, as on WhatsApp, and
     // the same open plan is continued from either place. Owners in both GOGO_GOAL_INTAKE and GOGO_GOAL_INTAKE_WEB; null means routing continues
     // unchanged. Every goal it starts goes through its own tool's approvals. Results that take longer than the reply

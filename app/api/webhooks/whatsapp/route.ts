@@ -1133,7 +1133,7 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
     // Canary users only; exact commands (yes/approve/1/2/3) and any failure keep today's pipeline untouched.
     // 29 Oct: phone-call commands ("test call me", "call <venue> and book…", "yes call") go to the call flow; the brain
     // had answered "Call … and book" with "I can't make calls".
-    const callCommand = /^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
+    const callCommand = /^\s*(?:(?:do\s+a\s+)?test\s+call|make\s+a\s+test\s+call|call\s+me\s+(?:to|for\s+a)\s+test|(?:please\s+)?(?:call|phone|ring)\s+(?!me\b).{2,80}?\s+(?:and|to)\s+(?:book|reserve|schedule|reschedule|cancel|confirm|ask|enquire|inquire|check|find\s+out|request|make|fix|get|tell|inform|let\s+them\s+know)\b|(?:yes[,!]?\s*)?(?:please\s+)?(?:go\s+ahead\s+and\s+)?call(?:\s+them|\s+now)?[.!]?\s*$|redial\b|(?:please\s+)?(?:call|try)\s+(?:them\s+)?again\b)/i.test(text)
     // Goal-to-Done (Addendum 5): a message with several goals ("organize a birthday, check flight prices, prepare three
     // emails…") becomes one plan of who does what, before any single-goal hook (Events included) takes one piece of it.
     // Also its replies (missing details, "get it done") while that plan is open. Owners in GOGO_GOAL_INTAKE only; null

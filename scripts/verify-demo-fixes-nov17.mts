@@ -34,7 +34,7 @@ eq(vc.stripCallBookingName('Call District 6 near Orion mall and book a table for
 eq(vc.stripCallBookingName(P + 'Saturday 8pm'), 'call Toit and book a table for 2 Saturday 8pm', 'nothing to strip')
 const src = readFileSync('lib/agent/voice-call.ts', 'utf8')
 eq(/const givenName = callBookingName\(params\.text\)/.test(src) && /const guestName = named\?\.\[1\] \|\| savedName/.test(src), true, 'the plan uses the given name before the saved or account name')
-eq(src.indexOf('await rememberBookingName(tg, named[1])') > src.indexOf('if (isRoomCallRequest(cmd.text)) return'), true, 'a name is remembered only after a plan exists (review B4)')
+eq(src.indexOf('await rememberBookingName(tg, named[1])') > src.indexOf('const brief = await compileCallAsk('), true, 'a name is remembered only after a plan exists (review B4)')
 
 // 2. A room is not a table: never a call plan, and never saved as a stay.
 const room = 'Call Novotel on 8310441698 and book a room for 2 nigths on Saturday under name Munu jain'
@@ -43,7 +43,7 @@ for (const yes of ['call Taj and book a suite for Friday', 'call ITC and reserve
   eq(vc.isRoomCallRequest(yes), true, `room request: ${yes}`)
 for (const no of ['Call Toit Indiranagar and book a table for 2 at 9pm on Saturday', 'call Rooms Cafe and book a table for 4', 'call Toit and book a private room for 10 Saturday 8pm', 'call Toit and book a table for 6 Saturday 8pm, I have guests in town for 3 nights', 'call Suite 22 Lounge and book a table for 2', 'call Toit and book a table for 2 Saturday night'])
   eq(vc.isRoomCallRequest(no), false, `a table call is unaffected: ${no}`)
-eq(/if \(isRoomCallRequest\(cmd\.text\)\) return \{ text: "I can call a restaurant to book a table, but I can't book a hotel room by phone yet\. Nothing was called\."/.test(src), true, 'the reply says so, promises nothing else and calls nothing')
+eq(src.includes('if (general && !isTableAsk(general.ask)) {'), true, 'a room request becomes a general call plan (17 Nov, later the same day), never a table call')
 eq(fd.isStayRequest(room), true, 'live: a request, not a booking that exists')
 eq(['Book me a room at Novotel for Saturday night please, 2 nights', 'Please call the hotel and book a room', 'can u book a room at Taj for 20 to 22 Nov'].map(fd.isStayRequest), [true, true, true], 'requests')
 for (const conf of ['Your booking at Novotel Bengaluru is confirmed. Check-in 18 Nov, check-out 20 Nov. Booking ID 12345', 'Booking confirmed: Taj MG Road, 2 nights from 20 Nov',
