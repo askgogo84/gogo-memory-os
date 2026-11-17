@@ -53,10 +53,20 @@ export function isDateAnswer(text: string): boolean {
   return parseReplyDates(text).length > 0 && rest.split(/\s+/).filter(Boolean).length === 0
 }
 
+/** Pure. The person is asking Gogo to call or book a stay; nothing is booked yet. A confirmation that merely opens
+ *  with a verb ("Call us on…", "Book again…") still counts as a booking (review, PR #1533). */
+export function isStayRequest(text: string): boolean {
+  const t = String(text || '')
+  if (/\b(?:confirmed|confirmation|booking\s+(?:id|ref|reference|number|no)\b|your\s+(?:booking|stay|reservation)|pnr|voucher)\b/i.test(t)) return false
+  return /^\s*(?:(?:hey|hi|hello|gogo|please|pls|plz|kindly|can\s+(?:you|u)|could\s+you|will\s+you|i\s+want\s+you\s+to)[\s,]+)*(?:call|phone|ring|book|reserve)\b/i.test(t)
+}
+
 /** Which stay field a Gogo question asked for. Pure. */
 export function askedStayField(assistantText: string): 'both' | 'checkOut' | 'checkIn' | null {
   const t = String(assistantText || '')
-  if (!/🏨 \*Saved:/.test(t)) return null
+  // 17 Nov live: after "🏨 Updated: Novotel … Which day do you check out?" the answer "20th November" replaced the
+  // check-in, because only the first "Saved:" card counted as Gogo's question. The "Updated:" card asks too.
+  if (!/🏨 \*(?:Saved|Updated):/.test(t)) return null
   if (/Which dates is the stay\?/.test(t)) return 'both'
   if (/Which day do you check out\?/.test(t)) return 'checkOut'
   if (/Which day do you check in\?/.test(t)) return 'checkIn'
@@ -102,7 +112,9 @@ export async function tryLifeGraphTurn(p: { telegramId: number; whatsappTo?: str
   if (!text) return null
   try {
     // 1. A forwarded hotel booking.
-    if (text.length >= 40 && looksLikeHotelBooking(text)) {
+    // 17 Nov live: "Call Novotel on … and book a room for 2 nights on Saturday" was saved as a stay. Asking Gogo to
+    // do something is a request, not a booking that already exists.
+    if (text.length >= 40 && !(isStayRequest(text) && !p.forwarded) && looksLikeHotelBooking(text)) {
       const reply = await ingestStayFromText({ telegramId: p.telegramId, whatsappTo: p.whatsappTo, userName: p.userName, userNames: p.userNames, text, source: `${p.surface}_text`, now })
       if (reply) return { text: reply, handledBy: 'life-graph-stay' }
     }

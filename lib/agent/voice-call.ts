@@ -274,6 +274,62 @@ async function findVenuePhone(venue: string, area: string) {
   return pickVenuePhone(batches.flat(), venue)
 }
 
+/** The booking name said in a call request. Pure.
+ *  17 Nov live (investor demo): "…at 9pm on Saturday under name Manu jain" and "…under name Divya" were both booked
+ *  under "Gogo", because only "under the name X" and "under X" (capitalised) were read.
+ *  Review (PR #1533): this name is spoken on a real call, so the reader is strict. It looks only at the request part
+ *  (after "and book"/"to reserve"), takes at most three name words, and stops at the first word that is a day, a
+ *  time word or ordinary sentence filler. Anything doubtful gives null, and the plan card shows the name used. */
+const NAME_STOP = new Set(('mon monday tue tues tuesday wed wednesday thu thur thurs thursday fri friday sat saturday sun sunday today tomorrow tmrw tonight ' +
+  'next this for at on and please pls plz thanks thank thx in near with also not or from by around after before ask a an the my our his her their your is as will be ' +
+  'given later usual decided table tables people guests pax pm am just it of name names company list tags etc morning afternoon evening night lunch dinner brunch breakfast').split(' '))
+const NAME_TRIGGER = /(?:\bunder\s+(?:the\s+)?names?(?:\s+of)?|\bin\s+the\s+name\s+of|(?<!\b(?:restaurant|venue|place|hotel|cafe|bar|pub|whose|its)(?:'s)?\s+)(?<!\bthe\s+)\b(?:booking\s+)?name\s+is|\bthe\s+(?:booking\s+)?name\s+is)[:"'“”‘’\s-]+/gi
+const TITLE = /^(?:dr|mr|mrs|ms|prof)\.?$/i
+function nameSpan(text: string): { name: string; start: number; end: number } | null {
+  const t = String(text || '')
+  const from = t.search(/\b(?:and|to)\s+(?:book|reserve)\b/i)
+  if (from < 0) return null
+  const read = (start: number, at: number, capitalOnly: boolean) => {
+    const words: string[] = []
+    let pos = at
+    const re = /\s*["'“”‘’]?([A-Za-z][A-Za-z.'’]*)["'“”‘’]?/y
+    while (words.length < 3) {
+      re.lastIndex = pos
+      const m = re.exec(t)
+      if (!m) break
+      const w = m[1]
+      if (NAME_STOP.has(w.toLowerCase().replace(/[.'’]+$/, ''))) break
+      if (capitalOnly && !/^[A-Z]/.test(w)) break
+      words.push(w); pos = re.lastIndex
+    }
+    while (words.length && !TITLE.test(words[words.length - 1]) && /[.'’]$/.test(words[words.length - 1]) && words[words.length - 1].replace(/[.'’]+$/, '').length > 1) words[words.length - 1] = words[words.length - 1].replace(/[.'’]+$/, '')
+    if (!words.length || words.every(w => TITLE.test(w) || w.replace(/\./g, '').length <= 1)) return null
+    const name = words.map(w => w.length <= 2 && w === w.toUpperCase() ? w : w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+    return { name, start, end: pos }
+  }
+  NAME_TRIGGER.lastIndex = from
+  for (let m = NAME_TRIGGER.exec(t); m; m = NAME_TRIGGER.exec(t)) { const got = read(m.index, m.index + m[0].length, false); if (got) return got }
+  const u = /\bunder\s+(?=[A-Z])/g; u.lastIndex = from
+  for (let m = u.exec(t); m; m = u.exec(t)) { const got = read(m.index, m.index + m[0].length, true); if (got) return got }
+  return null
+}
+export function callBookingName(text: string): string | null { return nameSpan(text)?.name ?? null }
+/** Pure. Removes only the "under (the) name X" words, so the day, time and venue around them are still read. */
+export function stripCallBookingName(text: string): string {
+  const s = nameSpan(text)
+  const t = String(text || '')
+  return s ? (t.slice(0, s.start).replace(/[\s,]+$/, '') + ' ' + t.slice(s.end).replace(/^[\s,.!]+/, '')).trim() : t.trim()
+}
+/** Pure. A call request to book a hotel room or a stay, which the calling agent cannot do (it books tables).
+ *  A private or party room at a restaurant is a table booking, not this. */
+export function isRoomCallRequest(text: string): boolean {
+  const t = String(text || '')
+  const req = t.slice(Math.max(0, t.search(/\b(?:and|to)\s+(?:book|reserve)\b/i)))
+  if (/\b(?:private|dining|party|function|banquet|meeting|conference|upstairs|back)\s+(?:dining\s+)?rooms?\b/i.test(req)) return false
+  if (/\b(?:book|reserve)\s+(?:me\s+|us\s+)?(?:a|an|the|one|two|three|\d+)?\s*(?:[a-z-]+\s+){0,3}(?:rooms?|suites?|villa|cottage|accommodation|stay)\b/i.test(req) && !/\btables?\b/i.test(req)) return true
+  return /\bfor\s+(?:\d+|one|two|three|four|five|six|seven)\s+nights?\b/i.test(req) && !/\btables?\b/i.test(req)
+}
+
 export async function tryVoiceCall(params: { actor: Actor; text: string; surface: 'web' | 'whatsapp' }): Promise<Reply | null> {
   const cmd = parseCallCommand(params.text)
   if (!cmd) return null
@@ -320,13 +376,12 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
   }
 
   // "…under the name Goverdhan" wins; otherwise the account name.
-  const namedRaw = params.text.match(/\bunder\s+the\s+name\s+(?:of\s+)?([a-z][a-z.'-]{1,30}(?:\s+(?!for\b|at\b|on\b|and\b|please\b)[a-z][a-z.'-]{1,30})?)/i) || params.text.match(/\bunder\s+([A-Z][A-Za-z.'-]{1,30}(?:\s+[A-Z][A-Za-z.'-]{1,30})?)/)
-  const named = namedRaw ? [namedRaw[0], namedRaw[1].replace(/\b\w/g, c => c.toUpperCase())] : null
+  const givenName = callBookingName(params.text)
+  const named = givenName ? [givenName, givenName] : null
   // 29 Oct live: both demo bookings were made "under Gogo" (the account name, which a restaurant hears as AskGogo).
   // A name the user gave once ("under the name Goverdhan") is remembered and used for later calls.
   const savedName = named?.[1] ? null : await savedBookingName(tg).catch(() => null)
   const guestName = named?.[1] || savedName || String(params.actor.name || 'my client').split(/\s+/)[0]
-  if (named?.[1]) await rememberBookingName(tg, named[1]).catch(() => {})
   const now = new Date().toISOString()
   let plan: CallPlan
   if (cmd.kind === 'test') {
@@ -337,7 +392,10 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
   } else {
     const rr = await import('@/lib/agent/restaurant-reservation')
     // "Call District 6 near Orion mall and book a table for 2 Saturday 8pm" -> "Book a table for 2 Saturday 8pm at District 6 near Orion mall"
-    const parts = cmd.text.replace(/\s+under\s+(?:the\s+name\s+(?:of\s+)?)?[A-Z][A-Za-z.' -]{1,40}$/, '').match(/^(?:please\s+)?(?:call|phone|ring)\s+(?:up\s+)?(.+?)\s+(?:and|to)\s+(?:book|reserve)\s+(.+)$/i)
+    // 17 Nov live: "Call Novotel on … and book a room for 2 nights" must never become a table call. The calling
+    // agent books tables only, so say that plainly instead of calling with the wrong request.
+    if (isRoomCallRequest(cmd.text)) return { text: "I can call a restaurant to book a table, but I can't book a hotel room by phone yet. Nothing was called.", handledBy: 'voice-call' }
+    const parts = stripCallBookingName(cmd.text).match(/^(?:please\s+)?(?:call|phone|ring)\s+(?:up\s+)?(.+?)\s+(?:and|to)\s+(?:book|reserve)\s+(.+)$/i)
     const venuePart = parts ? parts[1].replace(/\s+(?:on|at|via)\s+[+\d][\d\s-]{8,16}$/i, '').trim() : ''
     const bookingText = parts ? `Book ${parts[2].trim()} at ${venuePart}` : cmd.text
     const intent = rr.parseRestaurantReservationIntent(bookingText)
@@ -360,6 +418,8 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
       flexWindow: window, seating: /smok/i.test(cmd.text) ? (/non[\s-]?smok/i.test(cmd.text) ? 'non-smoking' : 'smoking') : 'no preference',
       purpose: `Book a table for ${intent.partySize || 2} people at ${intent.restaurant}.`, test: false, redials: 0, createdAt: now, startClock: start }
   }
+  // Review (PR #1533): a name is remembered only once a plan showing it exists, never from a request that was refused.
+  if (named?.[1]) await rememberBookingName(tg, named[1]).catch(() => {})
   await fs.saveFollowupState(tg, PLAN_STATE, { plan, approvalHash: voicePlanHash(String(tg), plan) })
   return { text: callPlanText(plan), handledBy: 'voice-call-plan' }
 }
