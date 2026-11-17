@@ -42,13 +42,34 @@ export function isFoodComparison(providers: Array<{provider: ComparisonProvider}
   const keys = providers.map(p => typeof p === 'string' ? p : p.provider)
   return keys.length > 0 && keys.every(p => FOOD_PROVIDERS.has(p))
 }
-/** "chicken biryani at Meghana Foods" → dish and restaurant; null when no restaurant is named. */
-export function parseFoodSubject(subject: string): {dish: string; restaurant: string} | null {
+// 17 Nov live (investor demo): "compare chicken biryani at Meghana Foods in HSR" found no price. The area was left
+// inside the restaurant name and never used to pick the outlet, and three-letter areas (HSR, BTM) were dropped by the
+// outlet matcher. An area the person says by name now picks the outlet, exactly as a pincode does.
+const AREA_STOP = ['road', 'layout', 'nagar', 'block', 'main', 'cross', 'stage', 'phase', 'sector', 'the', 'near', 'opp', 'bangalore', 'bengaluru']
+/** Pure. The words that identify an area in a restaurant page address ("HSR Layout" → ["hsr"]). */
+export function areaWordsOf(area: string | null | undefined): string[] {
+  return (String(area || '').toLowerCase().replace(/rajaji nagar/g, 'rajajinagar').replace(/j\.?\s*p\.?\s+nagar/g, 'jp nagar').match(/[a-z]{2,}/g) || []).filter(w => !AREA_STOP.includes(w))
+}
+/** Pure. Every area word is in the page path; a short word (hsr, btm, jp) must be a whole path segment. */
+export function slugInArea(slug: string, area: string | null | undefined): boolean {
+  const words = areaWordsOf(area), s = String(slug || '').toLowerCase()
+  return words.length > 0 && words.every(w => w.length >= 4 ? s.includes(w) : new RegExp(`(?:^|[-/_])${w}(?:[-/_]|$)`).test(s))
+}
+// Localities people add after the name with no "in" ("Meghana Foods HSR Layout"). Any area works after "in"/"near"/",".
+const KNOWN_AREA = /\s+((?:hsr|btm|hbr|hrbr)(?:\s+layout)?|koramangala|indiranagar|jayanagar|j\.?\s?p\.?\s+nagar|whitefield|marathahalli|rajaji\s?nagar|malleshwaram|malleswaram|yelahanka|hebbal|electronic\s+city|bellandur|sarjapur(?:\s+road)?|banashankari|basavanagudi|mg\s+road|residency\s+road|kalyan\s+nagar|kammanahalli|rt\s+nagar|yeshwanthpur|vijayanagar|frazer\s+town|ulsoor|domlur|bannerghatta\s+road|kanakapura\s+road|hosur\s+road|rr\s+nagar|sahakar\s+nagar|new\s+bel\s+road|brookefield|kr\s+puram|old\s+airport\s+road|church\s+street|brigade\s+road)$/i
+/** "chicken biryani at Meghana Foods in HSR" → dish, restaurant and the area said; null when no restaurant is named. */
+export function parseFoodSubject(subject: string): {dish: string; restaurant: string; area?: string} | null {
   const m = String(subject || '').replace(/\s+(?:for|near|to)\s+(?:pin\s*code\s*|pincode\s*)?\d{6}\b.*$/i, '')
     .match(/^\s*(?:the\s+)?(.{2,80}?)\s+(?:at|from)\s+(.{2,80}?)\s*$/i)
   if (!m) return null
-  const dish = m[1].replace(/\s+(?:price|prices)$/i, '').trim(), restaurant = m[2].replace(/\s+(?:restaurant|outlet)$/i, '').trim()
-  return dish && restaurant ? {dish, restaurant} : null
+  const dish = m[1].replace(/\s+(?:price|prices)$/i, '').trim()
+  let restaurant = m[2].replace(/\s+(?:restaurant|outlet)$/i, '').trim(), area = ''
+  const said = restaurant.match(/^(.{2,60})(?:\s*,\s*|\s+(?:in|near|at)\s+)([a-z][a-z .]{1,30})$/i)
+  // "Hole in the Wall", "near me": words after "in" that are not a place name stay part of the restaurant.
+  if (said && areaWordsOf(said[2]).length && !/^(?:the|a|an|my|me|our|your|town|city)\b/i.test(said[2].trim())) { restaurant = said[1].trim(); area = said[2].trim() }
+  else { const known = restaurant.match(KNOWN_AREA); if (known && restaurant.length > known[0].length + 1) { area = known[1].trim(); restaurant = restaurant.slice(0, -known[0].length).trim() } }
+  restaurant = restaurant.replace(/\s+(?:restaurant|outlet)$/i, '').trim()
+  return dish && restaurant ? (area ? {dish, restaurant, area} : {dish, restaurant}) : null
 }
 /** Any 6-digit Indian pincode written in the request ("for 560086"). */
 export function pincodeInText(text: string): string | null {
@@ -96,7 +117,7 @@ export function outletAreaFromAddress(address: string): string | null {
   return area ? area.slice(0, 40) : null
 }
 export function foodRestaurantLead(provider: ComparisonProvider, restaurant: string, leads: Array<{url: string; title?: string}>, pincode?: string | null, area?: string | null) {
-  const areaWords = (String(area || '').toLowerCase().replace(/rajaji nagar/g, 'rajajinagar').match(/[a-z]{4,}/g) || [] as string[]).filter((w: string) => !['road', 'layout', 'nagar', 'block', 'main', 'cross', 'stage', 'phase'].includes(w))
+  const areaWords = areaWordsOf(area)
   const tokens = foodTokens(restaurant)
   if (!tokens.length || !FOOD_PROVIDERS.has(provider)) return null
   const bangalore = /^56\d{4}$/.test(String(pincode || ''))
@@ -118,7 +139,7 @@ export function foodRestaurantLead(provider: ComparisonProvider, restaurant: str
     }
     if (!start) continue
     // 26 Oct live: Residency Road and Kanakapura Road were read for 560086; the nearest outlet (Rajajinagar) ranks first.
-    const nearest = areaWords.length > 0 && areaWords.every(w => slug.includes(w)) ? 5 : 0
+    const nearest = areaWords.length > 0 && slugInArea(slug, area) ? 5 : 0
     scored.push({url: start, score: nearest + (bangalore && /bangalore|bengaluru/.test(slug) ? 2 : 0) + (provider === 'zomato' && /\/order$/.test(path) ? 1 : 0)})
   }
   scored.sort((a, b) => b.score - a.score)

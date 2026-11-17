@@ -3,7 +3,7 @@ import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-ru
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
 import {SWIGGY_COMPARISON_NOTE, SWIGGY_ONLY_NOTE, withheldComparisonProviders} from './swiggy-policy'
-import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, outletAreaFromAddress, isFoodComparison, parseFoodSubject, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
+import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, outletAreaFromAddress, isFoodComparison, parseFoodSubject, slugInArea, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
 const TYPE = 'price_comparison'
@@ -340,9 +340,12 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
           {includeDomains: [COMPARISON_PROVIDERS[next.provider].domain], timeoutMs: 10_000}).catch(() => [] as any[])
         return {leads: found || [], url: foodRestaurantLead(next.provider, food.restaurant, found || [], pin, where)}
       }
-      let area: string | null = homeArea
-      let found = homeArea ? await look(homeArea) : null
-      if (!found?.url || !outletInArea(found.url, homeArea)) {
+      // 17 Nov live: an area said by name ("at Meghana Foods in HSR") picks the outlet first, then the saved home
+      // area for the home pincode, then the map search's nearest outlet.
+      const saidArea = food.area || null
+      let area: string | null = saidArea || homeArea
+      let found = area ? await look(area) : null
+      if (!found?.url || !outletInArea(found.url, area)) {
         area = await nearestOutletArea(food.restaurant, pin)
         found = await look(area)
       }
@@ -419,10 +422,9 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
 
 /** The chosen restaurant page's slug names every word of the area ("rajajinagar" in ".../meghana-foods-rajajinagar-..."). */
 export function outletInArea(url: string, area: string | null): boolean {
-  const words = (String(area || '').toLowerCase().replace(/rajaji nagar/g, 'rajajinagar').match(/[a-z]{4,}/g) || []).filter(w => !['road', 'layout', 'nagar', 'block', 'main', 'cross', 'stage', 'phase'].includes(w))
   let slug = ''
   try { slug = new URL(url).pathname.toLowerCase() } catch { return false }
-  return words.length > 0 && words.every(w => slug.includes(w))
+  return slugInArea(slug, area)
 }
 
 /** 23 Oct (owner): "If Amazon is not accessible, try the others." A single-store read whose store blocked the
