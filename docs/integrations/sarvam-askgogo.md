@@ -14,7 +14,7 @@
 | WhatsApp and Telegram voice-note transcription | `GOGO_SARVAM_STT=on` | `saaras:v4`, `/speech-to-text` | `off`; current OpenAI fallback |
 | WhatsApp voice replies and dashboard Listen | `GOGO_SARVAM_TTS=on` | `bulbul:v3` (default), `/text-to-speech` | `off`; OpenAI fallback |
 
-Required secret: `SARVAM_API_KEY` must be installed only in provider environment variables, never in Git. All Sarvam flags default OFF. Optional `GOGO_SARVAM_TTS_MODEL=bulbul:v4-flash` selects the newer TTS family, but v4 speaker personas are different from v3 and must be evaluated per language.
+Required secret: `SARVAM_API_KEY` must be installed only in provider environment variables, never in Git. All Sarvam flags default OFF. **Production has an additional gate: `GOGO_SARVAM_PRODUCTION=approved`; without it, all Sarvam routes remain disabled even if a component flag is accidentally on.** Optional `GOGO_SARVAM_TTS_MODEL=bulbul:v4-flash` selects the newer TTS family, but v4 speaker personas are different from v3 and must be evaluated per language.
 
 ## Safety and limits
 
