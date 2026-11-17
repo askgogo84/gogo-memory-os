@@ -6,8 +6,10 @@
 import { speechText } from '@/lib/voice/speech-text'
 import { randomUUID } from 'node:crypto'
 import OpenAI from 'openai'
-import { sarvamEnabled } from './sarvam'
-import { sarvamTextToSpeech } from './sarvam-voice'
+const sarvamEnabled = (flag: string, env: Record<string, string | undefined> = process.env) =>
+  env[flag] === 'on' && !!env.SARVAM_API_KEY &&
+  (env.VERCEL_ENV !== 'production' || env.GOGO_SARVAM_PRODUCTION === 'approved')
+
 import Anthropic from '@anthropic-ai/sdk'
 import { supabaseAdmin } from '@/lib/supabase-admin'
 import { SONNET_MODEL, forModel, textOf } from '@/lib/services/model-ids'
@@ -53,6 +55,7 @@ async function speak(openai: OpenAI | null, input: string, voice: string): Promi
     try {
       // Bulbul v3 accepts simple short speaker names; v4 requires a different persona catalogue.
       const isV4 = process.env.GOGO_SARVAM_TTS_MODEL === 'bulbul:v4-flash'
+      const { sarvamTextToSpeech } = await import('./sarvam-voice')
       return await sarvamTextToSpeech(input, {
         model: isV4 ? 'bulbul:v4-flash' : 'bulbul:v3',
         speaker: isV4 ? undefined : voice === 'onyx' ? 'ritu' : 'shubh',
