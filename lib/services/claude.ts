@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { askMercury, mercuryWebAnswersEnabled } from './mercury'
 import OpenAI from 'openai'
+import { sarvamChat, sarvamEnabled } from './sarvam'
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import {selectContentWorkflow, contentWorkflowPrompt} from '@/lib/agent/content-workflows'
 import { SONNET_MODEL, forModel, textOf } from '@/lib/services/model-ids'
@@ -173,6 +174,15 @@ ${workflow ? contentWorkflowPrompt(workflow) : ''}`
   // owner-bound context pack and standing preferences supply saved evidence.
   const historyForTurn = isContextSynthesisTurn(userMessage)||briefing ? [] : safeHistory.slice(-10)
   const messages:Message[]=[...historyForTurn,{ role: 'user', content: userMessage }]
+
+  // Sarvam Conversational pilot. Keep all existing postprocessors and action gates.
+  if (sarvamEnabled('GOGO_SARVAM_DIALOGUE')) {
+    try {
+      const r = await sarvamChat({ model: 'sarvam-105b-conversations', maxTokens, timeoutMs: 12000,
+        messages: [{ role: 'system', content: systemPrompt }, ...messages] })
+      return finishChatReply(userMessage, r.text, preferenceBlock)
+    } catch (e: any) { console.error('SARVAM_DIALOGUE_FALLBACK:', String(e?.code || 'provider_error').slice(0, 50)) }
+  }
 
   try{
     const response = await client.messages.create(forModel({
@@ -380,6 +390,13 @@ FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF
   if (mercuryWebAnswersEnabled()) {
     const fast = await askMercury(prompt, { maxTokens: 1200, label: 'web_answer' })
     if (fast?.text) return finishWebAnswer(userMessage, fast.text, context)
+  }
+  if (sarvamEnabled('GOGO_SARVAM_WEB_ANSWER')) {
+    try {
+      const r = await sarvamChat({ model: 'sarvam-105b', maxTokens: 1500, timeoutMs: 12000,
+        messages: [{ role: 'user', content: prompt }] })
+      return finishWebAnswer(userMessage, r.text, context)
+    } catch (e: any) { console.error('SARVAM_WEB_ANSWER_FALLBACK:', String(e?.code || 'provider_error').slice(0, 50)) }
   }
   try{
     const response = await client.messages.create(forModel({
