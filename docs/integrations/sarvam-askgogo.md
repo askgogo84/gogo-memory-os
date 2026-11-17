@@ -30,11 +30,12 @@ Required secret: `SARVAM_API_KEY` must be installed only in provider environment
 ## Verification / rollout
 
 1. `npx tsx scripts/verify-sarvam-integration-nov17.mts` checks mock chat/forced-tool response, invalid calls, Prism labels, audio boundaries, media contract and opt-in wiring. `npm test` runs it from `scripts/tests.d/950-sarvam.list`.
-2. Run `npm test && npm run typecheck && npm run build` and inspect literal branch-head CI, not only GitHub's synthetic merge SHA. Fix all failures before merging.
-3. Obtain an approved provider account/API key and verify no production user traffic is enabled. Use a mock or synthetic test for each model endpoint. Do not paste user data into public demos.
-4. Run multilingual gold-set replays: English, Hindi, Kannada, Tamil, Telugu and code-mixing; compare Claude/OpenAI baseline for exact contextual referents, negation, refusal, tool schemas, voice accuracy and p95 latency.
-5. Require zero approval bypasses and cross-tenant leakage; score task completion and hallucinations, pronunciation, timeout behavior and total COGS against baseline. Do not count synthetic acceptance as real provider-verified success.
-6. On a **separate, explicit production approval**, enable one gate at a time on a small owner canary, starting with STT/TTS then dialogue, Prism shadow, Brain and planner. Observe failures and kill-switch rollback. Do not enable customer rollout automatically.
+2. Optional key-controlled multilingual synthetic evaluation: `npx tsx scripts/eval-sarvam-askgogo-nov17.mts --live` (add `--baseline` with an Anthropic key). This evaluates model decisions without performing any proposed tool action. The benchmark never draws from private customer records.
+3. Run `npm test && npm run typecheck && npm run build` and inspect literal branch-head CI, not only GitHub's synthetic merge SHA. Fix all failures before merging.
+4. Obtain an approved provider account/API key and verify no production user traffic is enabled. Use a mock or synthetic test for each model endpoint. Do not paste user data into public demos.
+5. Run multilingual gold-set replays: English, Hindi, Kannada, Tamil, Telugu and code-mixing; compare Claude/OpenAI baseline for exact contextual referents, negation, refusal, tool schemas, voice accuracy and p95 latency.
+6. Require zero approval bypasses and cross-tenant leakage; score task completion and hallucinations, pronunciation, timeout behavior and total COGS against baseline. Do not count synthetic acceptance as real provider-verified success.
+7. On a **separate, explicit production approval**, enable one gate at a time on a small owner canary, starting with STT/TTS then dialogue, Prism shadow, Brain and planner. Observe failures and kill-switch rollback. Do not enable customer rollout automatically.
 
 Official specifications: https://docs.sarvam.ai/api/token-factory/chat-completions · https://docs.sarvam.ai/api-reference/decisions/systemone · https://docs.sarvam.ai/api-reference/text-to-speech/convert · https://docs.sarvam.ai/api/api-guides-tutorials/speech-to-text/rest-api
 
