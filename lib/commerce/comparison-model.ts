@@ -42,13 +42,48 @@ export function isFoodComparison(providers: Array<{provider: ComparisonProvider}
   const keys = providers.map(p => typeof p === 'string' ? p : p.provider)
   return keys.length > 0 && keys.every(p => FOOD_PROVIDERS.has(p))
 }
-/** "chicken biryani at Meghana Foods" → dish and restaurant; null when no restaurant is named. */
-export function parseFoodSubject(subject: string): {dish: string; restaurant: string} | null {
+// 17 Nov live (investor demo): "compare chicken biryani at Meghana Foods in HSR" found no price. The area was left
+// inside the restaurant name and never used to pick the outlet, and three-letter areas (HSR, BTM) were dropped by the
+// outlet matcher. An area the person says by name now picks the outlet, exactly as a pincode does.
+const AREA_STOP = ['road', 'layout', 'nagar', 'block', 'main', 'cross', 'stage', 'phase', 'sector', 'the', 'near', 'opp', 'bangalore', 'bengaluru', 'st', 'nd', 'rd', 'th', 'ft', 'feet']
+/** Pure. The words that identify an area in a restaurant page address ("HSR Layout" → ["hsr"]). */
+export function areaWordsOf(area: string | null | undefined): string[] {
+  // Review (PR #1535): "Jayanagar 4th Block", "Indiranagar 100 ft road": the number and its suffix are not area words.
+  return (String(area || '').toLowerCase().replace(/\d+\s*(?:st|nd|rd|th|ft|feet)?\b/g, ' ').replace(/rajaji nagar/g, 'rajajinagar').replace(/j\.?\s*p\.?\s+nagar/g, 'jp nagar').match(/[a-z]{2,}/g) || []).filter(w => !AREA_STOP.includes(w))
+}
+/** Pure. Every area word is in the page path; a short word (hsr, btm, jp) must be a whole path segment. */
+export function slugInArea(slug: string, area: string | null | undefined): boolean {
+  const words = areaWordsOf(area), s = String(slug || '').toLowerCase()
+  return words.length > 0 && words.every(w => w.length >= 4 ? s.includes(w) : new RegExp(`(?:^|[-/_])${w}(?:[-/_]|$)`).test(s))
+}
+// Localities people add after the name with no "in" ("Meghana Foods HSR Layout"). Any area works after "in"/"near"/",".
+const KNOWN_AREA_SRC = String.raw`(?:hsr|btm|hbr|hrbr)(?:\s+layout)?|koramangala|indiranagar|jayanagar|j\.?\s?p\.?\s+nagar|whitefield|marathahalli|rajaji\s?nagar|malleshwaram|malleswaram|yelahanka|hebbal|electronic\s+city|bellandur|sarjapur(?:\s+road)?|banashankari|basavanagudi|mg\s+road|residency\s+road|kalyan\s+nagar|kammanahalli|rt\s+nagar|yeshwanthpur|vijayanagar|frazer\s+town|ulsoor|domlur|bannerghatta\s+road|kanakapura\s+road|hosur\s+road|rr\s+nagar|sahakar\s+nagar|new\s+bel\s+road|brookefield|kr\s+puram|old\s+airport\s+road|church\s+street|brigade\s+road`
+const KNOWN_AREA = new RegExp(`\\s+(${KNOWN_AREA_SRC})$`, 'i')
+const IS_KNOWN_AREA = new RegExp(`^(?:${KNOWN_AREA_SRC})(?:\\s+\\d+(?:st|nd|rd|th)?\\s+(?:block|stage|phase|sector|main|cross))?$`, 'i')
+/** "chicken biryani at Meghana Foods in HSR" → dish, restaurant and the area said; null when no restaurant is named. */
+export function parseFoodSubject(subject: string): {dish: string; restaurant: string; area?: string} | null {
   const m = String(subject || '').replace(/\s+(?:for|near|to)\s+(?:pin\s*code\s*|pincode\s*)?\d{6}\b.*$/i, '')
     .match(/^\s*(?:the\s+)?(.{2,80}?)\s+(?:at|from)\s+(.{2,80}?)\s*$/i)
   if (!m) return null
-  const dish = m[1].replace(/\s+(?:price|prices)$/i, '').trim(), restaurant = m[2].replace(/\s+(?:restaurant|outlet)$/i, '').trim()
-  return dish && restaurant ? {dish, restaurant} : null
+  const dish = m[1].replace(/\s+(?:price|prices)$/i, '').trim()
+  let restaurant = m[2].replace(/\s+(?:today|tonight|now|please|pls)$/i, '').replace(/\s+(?:restaurant|outlet)$/i, '').trim(), area = ''
+  // Review (PR #1535): "Made in Punjab", "Dine at Home", "Pop in Cafe" are names, not a restaurant plus an area.
+  // After "in/near/at" the words must be a locality we know; after a comma, or after "in/near" following a name of
+  // two or more words, any place name is taken. Otherwise the name is left whole.
+  const said = restaurant.match(/^(.{2,60}?)(\s*,\s*|\s+(?:in|near|at)\s+)([a-z][a-z0-9 .]{1,40})$/i) && (() => {
+    const all = [...restaurant.matchAll(/(\s*,\s*|\s+(?:in|near|at)\s+)/gi)]
+    for (let k = all.length - 1; k >= 0; k--) {
+      const cut = all[k], name = restaurant.slice(0, cut.index).trim(), place = restaurant.slice((cut.index || 0) + cut[0].length).trim()
+      if (!name || !place || !areaWordsOf(place).length || /^(?:the|a|an|my|me|our|your|town|city|home|office|work|here)\b/i.test(place)) continue
+      const comma = cut[0].includes(','), at = /\bat\b/i.test(cut[0])
+      if (IS_KNOWN_AREA.test(place) || comma || (!at && name.split(/\s+/).length >= 2 && !/\b(?:and|or)\b/i.test(place))) return { name, place }
+    }
+    return null
+  })()
+  if (said) { restaurant = said.name; area = said.place }
+  else { const known = restaurant.match(KNOWN_AREA); if (known && restaurant.length > known[0].length + 1) { area = known[1].trim(); restaurant = restaurant.slice(0, -known[0].length).trim() } }
+  restaurant = restaurant.replace(/\s+(?:restaurant|outlet)$/i, '').trim()
+  return dish && restaurant ? (area ? {dish, restaurant, area} : {dish, restaurant}) : null
 }
 /** Any 6-digit Indian pincode written in the request ("for 560086"). */
 export function pincodeInText(text: string): string | null {
@@ -96,7 +131,7 @@ export function outletAreaFromAddress(address: string): string | null {
   return area ? area.slice(0, 40) : null
 }
 export function foodRestaurantLead(provider: ComparisonProvider, restaurant: string, leads: Array<{url: string; title?: string}>, pincode?: string | null, area?: string | null) {
-  const areaWords = (String(area || '').toLowerCase().replace(/rajaji nagar/g, 'rajajinagar').match(/[a-z]{4,}/g) || [] as string[]).filter((w: string) => !['road', 'layout', 'nagar', 'block', 'main', 'cross', 'stage', 'phase'].includes(w))
+  const areaWords = areaWordsOf(area)
   const tokens = foodTokens(restaurant)
   if (!tokens.length || !FOOD_PROVIDERS.has(provider)) return null
   const bangalore = /^56\d{4}$/.test(String(pincode || ''))
@@ -118,7 +153,7 @@ export function foodRestaurantLead(provider: ComparisonProvider, restaurant: str
     }
     if (!start) continue
     // 26 Oct live: Residency Road and Kanakapura Road were read for 560086; the nearest outlet (Rajajinagar) ranks first.
-    const nearest = areaWords.length > 0 && areaWords.every(w => slug.includes(w)) ? 5 : 0
+    const nearest = areaWords.length > 0 && slugInArea(slug, area) ? 5 : 0
     scored.push({url: start, score: nearest + (bangalore && /bangalore|bengaluru/.test(slug) ? 2 : 0) + (provider === 'zomato' && /\/order$/.test(path) ? 1 : 0)})
   }
   scored.sort((a, b) => b.score - a.score)
@@ -559,7 +594,10 @@ export function comparisonObjective(task: PriceComparison, provider: ComparisonP
   if (food) {
     const label = COMPARISON_PROVIDERS[provider].label
     const pin = pincodeInText(task.metadata_json.request) || (/^\d{6}$/.test(String(process.env.COMPARISON_PINCODE || '')) ? String(process.env.COMPARISON_PINCODE) : '')
-    return `On ${label}, open the menu of the restaurant ${JSON.stringify(food.restaurant.slice(0, 80))} and find the dish ${JSON.stringify(food.dish.slice(0, 80))}. ` +
+    // The outlet matters: name the area, and never read another branch as if it were the one asked for (review).
+    const where = food.area ? ` (the outlet in ${food.area.slice(0, 40)})` : ''
+    return `On ${label}, open the menu of the restaurant ${JSON.stringify(food.restaurant.slice(0, 80))}${where} and find the dish ${JSON.stringify(food.dish.slice(0, 80))}. ` +
+      (food.area ? `If ${label} shows no outlet of this restaurant in ${food.area.slice(0, 40)}, stop and report that; do not read a different outlet. ` : '') +
       `This read is only about ${label}; the other app is checked separately. ` +
       (pin ? `If asked for a delivery pincode or location, enter ${pin}, choose the first suggested location and press Continue/Apply/Confirm (this only sets the delivery location, not a purchase). ` : 'If a delivery location is required, pause for the user and never choose an address silently. ') +
       'If the page is a search, open the restaurant whose name matches exactly. Use the menu search or scroll to find the dish; a dish whose name contains every requested word counts (for example "Chicken Dum Biryani" for "chicken biryani"). ' +

@@ -63,7 +63,7 @@ ok(pass && /^₹325\b/.test(pass[2]), 'a member-only price is skipped')
 eq(outletInArea('https://www.swiggy.com/city/bangalore/meghana-foods-dr-rajkumar-road-rajajinagar-rest288893', 'Rajajinagar'), true, 'outlet in home area')
 eq(outletInArea('https://www.zomato.com/bangalore/meghana-foods-residency-road/order', 'Rajajinagar'), false, 'outlet not in home area → map-search fallback')
 eq(outletInArea('https://www.zomato.com/x', null), false, 'no area: fallback')
-ok(/if \(!found\?\.url \|\| !outletInArea\(found\.url, homeArea\)\) \{\s*area = await nearestOutletArea/.test(pc), 'no home-area outlet: nearest-outlet map search is used')
+ok(/if \(!found\?\.url \|\| !outletInArea\(found\.url, area\)\) \{\s*area = await nearestOutletArea/.test(pc), 'no home-area outlet: nearest-outlet map search is used')
 ok(/const home = pin \?/.test(pc), 'no pincode: no saved-home read')
 
 // Re-review: a plain "delivery" word never skips the real price; genuine single packs pass.
