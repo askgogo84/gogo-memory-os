@@ -12,7 +12,7 @@ import { capabilityPaused, capabilityPausedText } from './policy'
 const BOLNA = 'https://api.bolna.ai'
 export const CALL_AGENT_NAME = 'AskGogo booking caller v2'
 // 17 Nov: a second agent for any other ask (room, appointment, enquiry). Its instructions come from the plan itself.
-export const GENERAL_CALL_AGENT_NAME = 'AskGogo general caller v1'
+export const GENERAL_CALL_AGENT_NAME = 'AskGogo general caller v2'
 export const DEFAULT_FROM_NUMBER = '+918065539020'
 export const PLAN_STATE = 'voice_call_plan'
 export const MAX_REDIALS = 2
@@ -49,12 +49,21 @@ const CALL_ASK = new RegExp(`^(?:please\\s+)?(?:call|phone|ring)\\s+(?!me\\b)(?:
 const PERSONAL_CALLEE = /^(?:my\s+)?(?:mom|mum|mummy|mother|dad|daddy|father|amma|appa|papa|wife|husband|bro|brother|sis|sister|son|daughter|uncle|aunty|aunt|grandma|grandpa|friend|boss|him|her|them)\b/i
 const BUSINESS_CALLEE = /\b(?:hospital|clinic|hotel|resort|inn|lodge|salon|parlou?r|spa|restaurant|cafe|bar|pub|dr\.?|doctor|dentist|dental|lab|labs|diagnostics?|pharmacy|chemist|bank|showroom|service\s+cent(?:er|re)|garage|gym|school|college|office|agency|airlines?|airways|travels|courier|store|shop|mart|bakery|caterers?|studio|vet|pet\s+clinic)\b/i
 const TIMEY_CALLEE = /\b(?:today|tomorrow|tmrw|tonight|later|morning|afternoon|evening|night|monday|tuesday|wednesday|thursday|friday|saturday|sunday|at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*$|by\s+\d|\d{1,2}\s*(?:am|pm))\b/i
-/** Pure. "Novotel on 83104 41698" → the name and the number. The number is read from this part only. */
-export function calleeParts(raw: string): { name: string; phone: string | null } {
+/** Pure. "Novotel on 83104 41698" → the name and the number. The number is read from this part only.
+ *  Second review: a number that is typed but cannot be read (too short, too long, two numbers, an STD code we do not
+ *  know) sets `unreadable`, and nothing is looked up or dialled in its place. */
+export function calleeParts(raw: string): { name: string; phone: string | null; unreadable: boolean } {
   const text = String(raw || '').trim()
-  const phone = indianPhoneFrom(text)
-  const name = text.replace(/[+\d][\d\s-]{8,16}\d/g, ' ').replace(/[{}]/g, ' ').replace(/\s+/g, ' ').replace(/[\s,;:.-]+$/g, '').replace(/\s+(?:on|at|via|number|no)$/i, '').replace(/[\s,;:.-]+$/g, '').replace(/^[\s,;:.-]+/, '').trim()
-  return { name, phone }
+  const runs = text.match(/\+?\d[\d\s().-]{5,}\d/g) || []
+  let phone: string | null = null, unreadable = runs.length > 1
+  if (runs.length === 1) {
+    const digits = runs[0].replace(/\D/g, '')
+    const read = indianPhoneFrom(runs[0])
+    const whole = read && (digits.length === 10 || (digits.length === 11 && digits.startsWith('0')) || (digits.length === 12 && digits.startsWith('91')))
+    if (whole) phone = read; else unreadable = true
+  }
+  const name = text.replace(/\+?\d[\d\s().-]{5,}\d/g, ' ').replace(/[{}()]/g, ' ').replace(/\s+/g, ' ').replace(/[\s,;:.-]+$/g, '').replace(/\s+(?:on|at|via|number|no|or|and)$/i, '').replace(/[\s,;:.-]+$/g, '').replace(/^[\s,;:.-]+/, '').trim()
+  return { name, phone, unreadable }
 }
 /** Pure. "the hotel", "my doctor", "school": not enough to look up a number; the person must say which one or give the number. */
 export function genericCallee(name: string): boolean {
@@ -82,7 +91,7 @@ export function parseCallCommand(raw: string): CallCommand | null {
     const callee = calleeParts(ask[1])
     // Review (PR #1534): the number must be in the "call <who>" part (never one mentioned later in the ask); a time word
     // there means a note to self ("call the dentist tomorrow to confirm"); a family word is never a business call.
-    if (!TIMEY_CALLEE.test(ask[1]) && !PERSONAL_CALLEE.test(callee.name) && (callee.phone || (BUSINESS_CALLEE.test(callee.name) && !genericCallee(callee.name)))) return { kind: 'book', text: t }
+    if (!TIMEY_CALLEE.test(ask[1]) && !PERSONAL_CALLEE.test(callee.name) && (callee.phone || callee.unreadable || BUSINESS_CALLEE.test(callee.name))) return { kind: 'book', text: t }
   }
   return null
 }
@@ -285,12 +294,13 @@ export async function placeCall(plan: CallPlan, contactNumber: string, fetchImpl
     agent_id: agentId,
     recipient_phone_number: plan.to,
     from_phone_number: String(process.env.BOLNA_FROM_NUMBER || DEFAULT_FROM_NUMBER),
-    user_data: {
+    // A general call is given only what is on its approved card; no table fields.
+    user_data: plan.kind === 'general'
+      ? { venue: plan.venue, guest_name: plan.guestName, purpose: plan.purpose, opening: plan.opening || '', details: plan.details || 'only what is in the task', timezone: 'Asia/Kolkata' }
+      : {
       venue: plan.venue, guest_name: plan.guestName, party_size: String(plan.partySize || 2), date_label: plan.dateLabel,
       time_label: plan.timeLabel, flex_window: plan.flexWindow, seating: plan.seating,
-      // A general call never gives out the person's number (the card says so); a table booking may, if asked.
-      contact_number: plan.kind === 'general' ? 'not available to share' : contactNumber, opening: plan.opening || '',
-      purpose: plan.purpose, details: plan.details || 'only what is in the task', timezone: 'Asia/Kolkata',
+      contact_number: contactNumber, purpose: plan.purpose, timezone: 'Asia/Kolkata',
     },
   } }, fetchImpl)
   const executionId = String(res?.execution_id || '')
@@ -344,29 +354,6 @@ export function pickVenuePhone(results: Array<{ url?: string; title?: string; sn
   hits.sort((a, b) => b.score - a.score)
   const best = hits[0]
   return best ? { phone: best.phone, source: best.host ? `from ${best.host}` : 'from a web listing' } : null
-}
-
-/** Pure. For a general call the listing must NAME the callee (whole words, in the title). Returns the listing title so
- *  the card can show whose number it is. No match → null, and the person is asked for the number (review B1). */
-export function pickNamedPhone(results: Array<{ url?: string; title?: string; snippet?: string }>, venue: string) {
-  const words = (String(venue || '').toLowerCase().match(/[a-z0-9]+/g) || []).filter(w => w.length > 1 && !['the', 'and', 'of', 'in', 'at', 'near', 'pvt', 'ltd'].includes(w))
-  if (!words.length) return null
-  for (const r of results || []) {
-    const title = String(r.title || '')
-    const has = (w: string) => new RegExp(`(?:^|[^a-z0-9])${w}(?:[^a-z0-9]|$)`, 'i').test(title)
-    if (!words.every(has)) continue
-    const phone = indianPhoneFrom(`${r.title || ''} ${r.snippet || ''}`)
-    if (!phone) continue
-    let host = ''; try { host = new URL(String(r.url)).hostname.replace(/^www\./, '') } catch {}
-    return { phone, source: `listed as ${title.replace(/["{}*_]/g, '').slice(0, 60).trim()}${host ? ` on ${host}` : ''}` }
-  }
-  return null
-}
-async function findNamedPhone(venue: string, area: string) {
-  const { searchWebResults } = await import('@/lib/web-search')
-  const place = area || 'Bangalore'
-  const batches = await Promise.all([`${venue} ${place} phone number`, `${venue} ${place} contact number`].map(q => searchWebResults(q).catch(() => [] as any[])))
-  return pickNamedPhone(batches.flat(), venue)
 }
 
 async function findVenuePhone(venue: string, area: string) {
@@ -435,13 +422,13 @@ export function isRoomCallRequest(text: string): boolean {
 }
 
 /** Pure. "Call <who> [on <number>] and <ask>" → who, the number said with it, and the ask. */
-export function splitCallAsk(text: string): { venue: string; phone: string | null; ask: string } | null {
+export function splitCallAsk(text: string): { venue: string; phone: string | null; unreadable: boolean; ask: string } | null {
   const m = String(text || '').trim().match(new RegExp(`^(?:please\\s+)?(?:call|phone|ring)\\s+(?:up\\s+)?(.{2,80}?)\\s+(?:and|to)\\s+((?:${CALL_ASK_VERBS})\\b.+)$`, 'i'))
   if (!m) return null
   const callee = calleeParts(m[1])
   const ask = m[2].replace(/[{}]/g, ' ').replace(/\s+/g, ' ').replace(/[.!\s]+$/, '').trim()
-  const venue = callee.name || (callee.phone ? 'the number you gave' : '')
-  return venue && ask ? { venue, phone: callee.phone, ask } : null
+  const venue = callee.name || (callee.phone || callee.unreadable ? 'the number you gave' : '')
+  return venue && ask ? { venue, phone: callee.phone, unreadable: callee.unreadable, ask } : null
 }
 /** Pure. A restaurant table booking (the existing flow). Everything else is a general call.
  *  Review: decided by WHAT is being booked, not by any word in the sentence ("…it is my doctor friend's birthday"). */
@@ -449,28 +436,34 @@ const NON_TABLE_THING = 'rooms?|suites?|villa|cottage|accommodation|stay|appoint
 export function isTableAsk(ask: string): boolean {
   const a = String(ask || '')
   if (!/^(?:book|reserve)\b/i.test(a)) return false
-  if (/\btables?\b/i.test(a) || /^(?:book|reserve)\s+(?:a\s+|the\s+)?(?:private|dining|party)\s+(?:dining\s+)?room\b/i.test(a)) return true
-  if (new RegExp(`^(?:book|reserve)\\s+(?:me\\s+|us\\s+)?(?:a|an|the|my|our|one|two|three|\\d+)?\\s*(?:[a-z-]+\\s+){0,2}(?:${NON_TABLE_THING})\\b`, 'i').test(a)) return false
-  if (/^(?:book|reserve)\s+for\s+(?:\d+|one|two|three|four|five|six|seven)\s+nights?\b/i.test(a)) return false
-  return true
+  // Second review: the default is a general call. A table needs a table word, a meal, or a party size; a room for
+  // nights, an appointment or a test never gets the table script just because nothing else matched.
+  if (/\bfor\s+(?:\d+|one|two|three|four|five|six|seven)\s+nights?\b|\b\d+\s+nights?\b/i.test(a)) return false
+  if (new RegExp(`^(?:book|reserve)\\s+(?:me\\s+|us\\s+)?(?:a|an|the|my|our|one|two|three|\\d+)?\\s*(?:[a-z-]+\\s+){0,3}(?:${NON_TABLE_THING})\\b`, 'i').test(a) && !/^(?:book|reserve)\s+(?:a\s+|the\s+)?(?:private|dining|party)\s+(?:dining\s+)?room\b/i.test(a)) return false
+  if (/\btable\s+tennis\b/i.test(a)) return false
+  return /\btables?\b|\b(?:seats?|people|persons?|pax|guests?|dinner|lunch|brunch|breakfast)\b|\b(?:private|dining|party)\s+(?:dining\s+)?room\b|\bfor\s+(?:\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten)\b(?!\s*(?:nights?|days?|hours?|hrs?|am|pm|[:.]\d))/i.test(a)
 }
 export type CallBrief = { task: string; opening: string; details: string }
-const speakFor = (s: string) => s.replace(/\bI\s+am\b/gi, 'they are').replace(/\bI'?m\b/gi, 'they are').replace(/\bI\s+will\b/gi, 'they will').replace(/\bI'?ll\b/gi, 'they will').replace(/\bI\s+have\b/gi, 'they have')
-  .replace(/\bI\b/g, 'they').replace(/\bmy\b/gi, 'their').replace(/\bour\b/gi, 'their').replace(/\b(?:me|us)\b/gi, 'them').replace(/\bwe\b/gi, 'they')
+const speakFor = (s: string, name: string) => s.replace(/\bI\s+am\b/gi, 'they are').replace(/\bI'?m\b/gi, 'they are').replace(/\bI\s+was\b/gi, 'they were').replace(/\bI\s+will\b/gi, 'they will').replace(/\bI'?ll\b/gi, 'they will').replace(/\bI\s+have\b/gi, 'they have')
+  .replace(/\bI\b/g, 'they').replace(/\bmy\b/gi, 'their').replace(/\bour\b/gi, 'their').replace(/\b(?:me|us)\b/gi, name).replace(/\bwe\b/gi, 'they')
 /** Pure. The plan when no model is available or its answer is not trusted: the person's own words, nothing added.
- *  Spoken by the caller, so "my/our/I" become the person ("their"), and "tell them …" becomes a message. */
+ *  Spoken by the caller, so "my/our/I" become the person, and "tell them …" is passed on as a message, word for word. */
 export function fallbackCallBrief(ask: string, guestName = 'my client'): CallBrief {
   const a = String(ask || '').replace(/\s+/g, ' ').trim().replace(/[.!]+$/, '')
-  const msg = a.match(/^(?:tell|inform)\s+(?:them|him|her|[A-Z][a-z]+)\s+(?:that\s+)?(.{3,})$/) || a.match(/^let\s+(?:them|him|her|[A-Z][a-z]+)\s+know\s+(?:that\s+)?(.{3,})$/)
-  if (msg) return { task: `Pass on this message from ${guestName}: "${msg[1].trim()}".`, opening: `I have a message from ${guestName}: ${msg[1].trim()}.`, details: 'only what is in the request' }
+  const WHO = "(them|him|her|(?:Dr\\.?\\s+)?[A-Z][a-z]+(?:\\s+[A-Z][a-z]+)?)"
+  const msg = a.match(new RegExp(`^(?:tell|inform)\\s+${WHO}\\s+(?:that\\s+)?(.{3,})$`)) || a.match(new RegExp(`^let\\s+${WHO}\\s+know\\s+(?:that\\s+)?(.{3,})$`))
+  if (msg) {
+    const to = /^(?:them|him|her)$/.test(msg[1]) ? '' : ` for ${msg[1]}`
+    return { task: `Pass on this message from ${guestName}${to}: "${msg[2].trim()}".`, opening: `I have a message from ${guestName}${to}: ${msg[2].trim()}.`, details: 'only what is in the request' }
+  }
   const lower = a.charAt(0).toLowerCase() + a.slice(1)
-  return { task: `For ${guestName}: ${speakFor(lower)}.`, opening: `I'm calling for ${guestName} to ${speakFor(lower)}.`, details: 'only what is in the request' }
+  return { task: `For ${guestName}: ${speakFor(lower, guestName)}.`, opening: `I'm calling for ${guestName} to ${speakFor(lower, guestName)}.`, details: 'only what is in the request' }
 }
 const BRIEF_ALLOW = new Set(("i i'm im i'd id calling call caller to like would please for on at the a an with is if about of and in from by be can could it this that name under check whether have has do does there any available availability possible request " +
   'behalf their they them message are will regarding ask asking know confirm').split(' '))
 const stem = (w: string) => { const s = w.toLowerCase().replace(/[’']s$/, '').replace(/[^a-z0-9]/g, ''); return s.length > 4 ? s.replace(/(?:ing|ed|es|s)$/, '') : s }
 const briefWords = (s: string) => (String(s || '').toLowerCase().replace(/(\d)\s+(am|pm)\b/g, '$1$2').match(/[a-z0-9][a-z0-9’']*/g) || [])
-const CRITICAL = /^(?:\d[\da-z:.]*|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|tonight|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|not|no|cancel|reschedule)$/
+const CRITICAL = /^(?:\d[\da-z:.]*|monday|tuesday|wednesday|thursday|friday|saturday|sunday|today|tomorrow|tonight|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|not|no|never|without|with|cannot|only|before|after|from|to|by|until|cancel|reschedule|[a-z]+n[’']t|one|two|three|four|five|six|seven|eight|nine|ten|if|whether)$/
 /** Pure. A model-written brief is used only when it is a faithful restatement of the ask (review, PR #1534):
  *  every word comes from the ask, the callee or the person's name (plus a few plain connecting words); every number,
  *  time, day and "not/cancel" in the ask is still there; the task starts with the ask's own verb; the opening is in
@@ -486,9 +479,14 @@ export function acceptCallBrief(raw: string, ask: string, venue = '', guestName 
   if (!/^(?:i'm calling (?:for .{1,40} )?to|i'd like to|i have a message from)\b/i.test(opening)) return null
   const allowed = new Set([...briefWords(ask), ...briefWords(venue), ...briefWords(guestName)].map(stem))
   for (const w of briefWords(`${task} ${opening} ${details}`)) { const s = stem(w); if (s && !allowed.has(s) && !BRIEF_ALLOW.has(w) && !BRIEF_ALLOW.has(s)) return null }
-  const out = new Set(briefWords(`${task} ${opening}`))
-  for (const w of briefWords(ask)) if (CRITICAL.test(w) && !out.has(w)) return null
-  if (stem(briefWords(task)[0] || '') !== stem(briefWords(ask)[0] || '')) return null
+  // Second review: numbers, times, days, negations and "from/to/with/without/if" must appear in the same order and
+  // the same number of times in the task and in the opening as in the ask, so nothing can be swapped, doubled or
+  // flipped ("can't" → "can", "2 rooms for 3 nights" → "3 rooms for 2 nights", "from Friday to Monday" reversed).
+  const crit = (s: string) => briefWords(s).filter(w => CRITICAL.test(w)).join(' ')
+  const askWords = briefWords(ask), verb = stem(askWords[0] || '')
+  const said = (s: string) => { const w = briefWords(s); const at = w.findIndex(x => stem(x) === verb); return at < 0 ? null : w.slice(at).filter(x => CRITICAL.test(x)).join(' ') }
+  if (said(task) !== crit(ask) || said(opening) !== crit(ask)) return null
+  if (stem(briefWords(task)[0] || '') !== verb) return null
   return { task: /[.?!]$/.test(task) ? task : task + '.', opening: /[.?!]$/.test(opening) ? opening : opening + '.', details: details || 'only what is in the request' }
 }
 /** Turns the person's ask into what the caller says and may share. The model may only restate what was asked. */
@@ -571,12 +569,13 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
     // plan written from the ask itself, and the same explicit yes before any call.
     const general = splitCallAsk(stripCallBookingName(cmd.text))
     if (general && !isTableAsk(general.ask)) {
-      // Who is called: the number said with the name, else a web listing whose title names them. A vague callee
-      // ("the hotel", "my doctor") is never looked up: a stranger's number must not end up on the card.
-      const where = (general.venue.match(/\s+near\s+([a-z0-9 .'-]{2,40})$/i)?.[1] || '').trim()
-      const callee = where ? general.venue.replace(/\s+near\s+[a-z0-9 .'-]{2,40}$/i, '').trim() : general.venue
-      const hit = general.phone ? { phone: general.phone, source: 'the number you gave' } : genericCallee(callee) ? null : await findNamedPhone(callee, where)
-      if (!hit) return { text: `I couldn't find a number I can be sure belongs to ${callee}. Send it with the request, like *call ${callee} on 080 1234 5678 and ${general.ask}*. Nothing was called.`, handledBy: 'voice-call' }
+      // Who is called: only the number the person gave with the name. Two independent reviews showed a web lookup can
+      // put a different business's number (or a fake helpline) on the card, and this call may carry health or travel
+      // details. Until there is a source that can be trusted for this, no number is looked up for a general call.
+      const callee = general.venue
+      if (general.unreadable) return { text: `I couldn't read the phone number in that message, so I haven't planned a call. Send one 10-digit mobile number or a landline with its STD code, like *call ${callee} on 080 1234 5678 and ${general.ask}*.`, handledBy: 'voice-call' }
+      if (!general.phone) return { text: `To call ${callee} I need their number, so the call reaches the right place. Send it with the request, like *call ${callee} on 080 1234 5678 and ${general.ask}*. Nothing was called.`, handledBy: 'voice-call' }
+      const hit = { phone: general.phone, source: 'the number you gave' }
       const brief = await compileCallAsk(general.ask, callee, guestName)
       plan = { venue: callee, to: hit.phone, source: hit.source, guestName, partySize: null, date: null, dateLabel: '', timeLabel: '', flexWindow: '', seating: '',
         purpose: brief.task, opening: brief.opening, details: brief.details, kind: 'general', test: false, redials: 0, createdAt: now }

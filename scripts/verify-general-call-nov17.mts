@@ -22,45 +22,52 @@ for (const yes of [
   'call Divya on 9845012345 and ask if the keys are ready',
   'call 9845012345 and ask if the keys are ready',
   'call the hotel on 080 2345 6789 and confirm our booking',
+  'call the hotel and confirm our booking', 'call my doctor and ask about the reports', // no number: a call request that is answered with "I need their number"
+  'call Sagar Clinic on 0821 2345678 and ask timings', // number typed but unreadable: still a call request, so the person is told
   'Call Toit Indiranagar on 9686567626 and book a table for 2 at 9pm on Saturday under name Divya',
 ]) eq(kind(yes), 'book', `call request: ${yes.slice(0, 50)}`)
 for (const no of [
   'call mom and ask about Sunday lunch tomorrow', 'call the plumber and fix the tap on Saturday', 'call Divya and get the keys at 5pm', 'call mom on Sunday',
   'call amma and ask if she took her medicines at 9pm', 'call my wife and tell her I am late', 'call me and get me up at 6am', 'call the bank tomorrow at 11am',
   // Review B1: a vague callee with no number is never looked up; a time in the callee part is a note to self.
-  'call the hotel and confirm our booking', 'call school and inform them Divya is sick tomorrow', 'call office and tell them I am late', 'call my doctor and ask about the reports',
-  'call my gym and cancel my membership', 'Call dentist tomorrow to confirm appointment', 'call the bank tomorrow to check on the loan', 'call the office at 10am and tell Nithin I will be late',
+  'Call dentist tomorrow to confirm appointment', 'call the bank tomorrow to check on the loan', 'call the office at 10am and tell Nithin I will be late',
   // Review B2: a number later in the ask is not the number to dial.
   'call the plumber and tell him my number is 9845012345', 'call Nithin and ask him to pay 9845012345 on gpay',
 ]) eq(kind(no), null, `not a call plan (stays a reminder or chat): ${no}`)
 
 // 2. Who and what; table vs general.
 const split = (t: string) => vc.splitCallAsk(vc.stripCallBookingName(t))
-eq(split('Call Novotel on 8310441698 and book a room for 2 nights on Saturday under name Munu jain'), { venue: 'Novotel', phone: '+918310441698', ask: 'book a room for 2 nights on Saturday' }, 'live: who, number and what; the name tail removed')
-eq(split('call Manipal Hospital and book an appointment with Dr Rao on Friday 10am'), { venue: 'Manipal Hospital', phone: null, ask: 'book an appointment with Dr Rao on Friday 10am' }, 'hospital appointment')
+eq(split('Call Novotel on 8310441698 and book a room for 2 nights on Saturday under name Munu jain'), { venue: 'Novotel', phone: '+918310441698', unreadable: false, ask: 'book a room for 2 nights on Saturday' }, 'live: who, number and what; the name tail removed')
+eq(split('call Manipal Hospital and book an appointment with Dr Rao on Friday 10am'), { venue: 'Manipal Hospital', phone: null, unreadable: false, ask: 'book an appointment with Dr Rao on Friday 10am' }, 'hospital appointment')
 eq(split('call Divya 9845012345 and ask if the keys are ready')?.venue, 'Divya', 'a number right after the name is not part of the name')
-eq(split('call 9845012345 and ask if the keys are ready'), { venue: 'the number you gave', phone: '+919845012345', ask: 'ask if the keys are ready' }, 'a bare number')
+eq(split('call 9845012345 and ask if the keys are ready'), { venue: 'the number you gave', phone: '+919845012345', unreadable: false, ask: 'ask if the keys are ready' }, 'a bare number')
 eq(split('call Novotel at 080-2345-6789, and ask for late checkout')?.venue, 'Novotel', 'number with punctuation')
 eq(vc.callBookingName('call Manipal Hospital and schedule an appointment with Dr Rao under the name Divya'), 'Divya', 'the name hint on the card works for any ask (review D4)')
 eq([vc.genericCallee('the hotel'), vc.genericCallee('my doctor'), vc.genericCallee('school'), vc.genericCallee('Manipal Hospital'), vc.genericCallee('Dr Rao')], [true, true, true, false, false], 'vague vs named callee')
 for (const table of ['book a table for 2 at 9pm on Saturday', 'reserve a table for 6 tomorrow 8pm', 'book for 4 Saturday 8pm', 'book a private room for 10 Saturday 8pm',
   "book for 4 Saturday 8pm, it is my doctor friend's birthday", 'book dinner for 2 after my class at 8pm']) eq(vc.isTableAsk(table), true, `table flow: ${table}`)
-for (const other of ['book a room for 2 nights on Saturday', 'book an appointment with Dr Rao on Friday 10am', 'ask if the OPD is open on Sunday', 'reschedule my haircut to Saturday 11am', 'book a cab for 6am tomorrow',
+for (const other of ['book a deluxe double sea-facing room for 2 nights', 'book a 2pm appointment', "book Dr Rao's appointment for Friday", 'book a complete blood count test', 'book a full body health checkup', 'book a follow-up', 'book 2 nights from Saturday', 'book a private room for 2 nights', 'book a table tennis court', 'book Saturday 8pm', 'book a room for 2 nights on Saturday', 'book an appointment with Dr Rao on Friday 10am', 'ask if the OPD is open on Sunday', 'reschedule my haircut to Saturday 11am', 'book a cab for 6am tomorrow',
   'cancel my booking for Friday', 'book a deluxe suite for Friday', 'book an ambulance', 'book a spa treatment for Saturday 5pm', 'book a meeting room for 10 on Friday'])
   eq(vc.isTableAsk(other), false, `general call: ${other}`)
 
-// 3. The number must belong to the callee (review B1).
-const listing = (title: string, snippet: string, url = 'https://www.justdial.com/x') => ({ title, snippet, url })
-eq(vc.pickNamedPhone([listing('Top 10 schools in Bangalore', 'DPS East 080 2345 6789')], 'Manipal Hospital'), null, 'a listing that does not name the callee gives no number')
-eq(vc.pickNamedPhone([listing('Cloudnine Hospital Old Airport Road', 'Call 080 2345 6789')], 'Manipal Hospital'), null, 'another hospital is not a match')
-eq(vc.pickNamedPhone([listing('Dr Maharaoji Ayurveda', '090000 22222')], 'Dr Rao'), null, 'whole words only: "Maharaoji" is not "Rao"')
-eq(vc.pickNamedPhone([listing('Manipal Hospital Old Airport Road - Contact', 'Phone: 080 2502 4444')], 'Manipal Hospital'), { phone: '+918025024444', source: 'listed as Manipal Hospital Old Airport Road - Contact on justdial.com' }, 'a named listing: number and whose listing it is')
+// 3. Who gets called (both reviews): only a number the person gave, read whole or not at all. Nothing is looked up.
+const cp = (s: string) => vc.calleeParts(s)
+eq(cp('Novotel on 8310441698'), { name: 'Novotel', phone: '+918310441698', unreadable: false }, 'mobile')
+eq([cp('Novotel 080 2345 6789 Bangalore').phone, cp('Divya +91-98450 12345').phone, cp('Taj 044-2345 6789').phone], ['+918023456789', '+919845012345', '+914423456789'], 'landline with STD code, +91 form')
+for (const bad of ['Sagar Clinic on 0821 2345678', 'Novotel on 98450 1234', 'Airtel on 1800 123 4567', 'Novotel on 984501234567', 'Manipal Hospital on 9845012345 or 9845012346'])
+  eq([cp(bad).phone, cp(bad).unreadable], [null, true], `unreadable, never guessed or replaced: ${bad}`)
+eq([cp('Manipal Hospital').phone, cp('Manipal Hospital').unreadable], [null, false], 'no number typed')
+const vsrc = readFileSync('lib/agent/voice-call.ts', 'utf8')
+ok(vsrc.includes('if (general.unreadable) return { text: `I couldn\'t read the phone number in that message') && vsrc.includes('if (!general.phone) return { text: `To call ${callee} I need their number') && !/findNamedPhone|pickNamedPhone/.test(vsrc), 'a general call needs the number in the message; no web lookup exists for it')
+ok(vc.GENERAL_CALL_AGENT_NAME.endsWith('v2'), 'the general agent has a new name, so an agent made from an earlier draft is never reused')
 
 // 4. The brief: a faithful restatement or the person's own words (review B3, D2).
 const ask = 'book an appointment with Dr Rao on Friday 10am'
 eq(vc.fallbackCallBrief(ask, 'Divya'), { task: 'For Divya: book an appointment with Dr Rao on Friday 10am.', opening: "I'm calling for Divya to book an appointment with Dr Rao on Friday 10am.", details: 'only what is in the request' }, 'fallback uses the person\'s own words')
 eq(vc.fallbackCallBrief('tell them I will be late', 'Divya').opening, 'I have a message from Divya: I will be late.', 'a message is passed on as a message')
 eq(vc.fallbackCallBrief('let them know I am running late', 'Divya').opening, 'I have a message from Divya: I am running late.', 'let them know …')
+eq(vc.fallbackCallBrief('tell Dr Rao I will be late', 'Divya').opening, 'I have a message from Divya for Dr Rao: I will be late.', 'who the message is for is kept')
+eq(vc.fallbackCallBrief('ask them to call me back', 'Divya').opening, "I'm calling for Divya to ask them to call Divya back.", '"me" is the person')
 eq(vc.fallbackCallBrief('get my reports at 5pm', 'Divya').opening, "I'm calling for Divya to get their reports at 5pm.", '"my" is the person, not the caller')
 eq(vc.fallbackCallBrief('confirm our booking', 'Divya').opening, "I'm calling for Divya to confirm their booking.", '"our" too')
 const acc = (o: object) => vc.acceptCallBrief(JSON.stringify(o), ask, 'Manipal Hospital', 'Divya')
@@ -78,16 +85,24 @@ for (const [why, bad] of [
   ['not in the caller\'s voice', { ...good, opening: 'Hello there, appointment with Dr Rao on Friday 10am please' }],
 ] as [string, object][]) eq(acc(bad), null, `refused: ${why}`)
 eq(vc.acceptCallBrief(JSON.stringify({ task: 'Book 2 rooms for 2 guests for 2 nights from Saturday', opening: "I'd like to book 2 rooms for 2 guests for 2 nights from Saturday", details: ['2 adults'] }), 'book a room for 2 nights on Saturday', 'Novotel', 'Divya'), null, 'reusing a number with a new meaning (guests, adults) is refused')
+const flip = (askText: string, task: string, opening: string) => vc.acceptCallBrief(JSON.stringify({ task, opening, details: [] }), askText, 'Novotel', 'Divya')
+eq(flip("tell them I can't come on Friday", 'Tell them I can come on Friday', "I'd like to tell them I can come on Friday"), null, 'a dropped "can\'t" is refused')
+eq(flip('book a room without breakfast', 'Book a room with breakfast', "I'd like to book a room with breakfast"), null, '"without" turned into "with" is refused')
+eq(flip('book 2 rooms for 3 nights', 'Book 3 rooms for 2 nights', "I'd like to book 3 rooms for 2 nights"), null, 'swapped numbers are refused')
+eq(flip('book a room for 2 nights', 'Book 2 rooms for 2 nights', "I'd like to book 2 rooms for 2 nights"), null, 'a doubled number is refused')
+eq(flip('reschedule my booking from Friday to Monday', 'Reschedule my booking from Monday to Friday', "I'd like to reschedule my booking from Monday to Friday"), null, 'reversed days are refused')
+eq(flip('ask if a room is available on Friday', 'Ask to confirm a room on Friday', "I'd like to confirm a room on Friday"), null, 'a question upgraded to a booking is refused')
+eq(flip('book a room for 2 nights on Saturday', 'Book a room for 2 nights on Saturday', "I'd like to book a room for 2 nights on Saturday") !== null, true, 'the faithful version of the same ask is used')
 eq(vc.acceptCallBrief('sorry, I cannot', ask), null, 'no JSON: refused')
 eq(await vc.compileCallAsk(ask, 'Manipal Hospital', 'Divya', async () => JSON.stringify({ ...good, details: ['Age 42'] })), vc.fallbackCallBrief(ask, 'Divya'), 'a refused brief falls back to the person\'s words')
 eq(await vc.compileCallAsk(ask, 'Manipal Hospital', 'Divya', async () => { throw new Error('down') }), vc.fallbackCallBrief(ask, 'Divya'), 'model down: fallback')
 eq((await vc.compileCallAsk(ask, 'Manipal Hospital', 'Divya', async () => JSON.stringify(good))).details, 'Dr Rao; Friday; 10am', 'model brief used when faithful')
 
 // 5. The plan card, the approval binding, and what the caller is given.
-const plan: any = { venue: 'Manipal Hospital', to: '+918025024444', source: 'listed as Manipal Hospital Old Airport Road - Contact on justdial.com', guestName: 'Divya', partySize: null, date: null, dateLabel: '', timeLabel: '', flexWindow: '', seating: '',
+const plan: any = { venue: 'Manipal Hospital', to: '+918025024444', source: 'the number you gave', guestName: 'Divya', partySize: null, date: null, dateLabel: '', timeLabel: '', flexWindow: '', seating: '',
   purpose: 'Book an appointment with Dr Rao on Friday 10am.', opening: "I'm calling for Divya to book an appointment with Dr Rao on Friday 10am.", details: 'Dr Rao; Friday; 10am', kind: 'general', test: false, redials: 0, createdAt: '2026-11-17T11:00:00.000Z' }
 const card = vc.callPlanText(plan)
-ok(card.startsWith('*CALL PLAN · NEEDS YOUR YES*') && card.includes('To: Manipal Hospital · ') && card.includes('(listed as Manipal Hospital Old Airport Road - Contact on justdial.com)'), 'card shows who, the number and whose listing it came from')
+ok(card.startsWith('*CALL PLAN · NEEDS YOUR YES*') && card.includes('To: Manipal Hospital · ') && card.includes('(the number you gave)'), 'card shows who and the number the person gave')
 ok(card.includes('"Hi, I\'m an AI assistant from AskGogo, calling for Divya. I\'m calling for Divya to book an appointment with Dr Rao on Friday 10am."') && card.includes("What I'll do: Book an appointment with Dr Rao on Friday 10am.") && card.includes('Details I may share: Dr Rao; Friday; 10am.') && !/table for/i.test(card), 'card shows the exact opening, task and details, and no table script')
 ok(/Won't pay, share card details or OTPs/.test(card) && /I won't give your phone number either/.test(card) && card.endsWith('Reply *yes call* to place it, or *no* to skip.'), 'limits (review B4) and the explicit yes')
 ok(voicePlanHash('-1', plan) !== voicePlanHash('-1', { ...plan, opening: 'I am calling to cancel.' }) && voicePlanHash('-1', plan) !== voicePlanHash('-1', { ...plan, details: 'x' }) && voicePlanHash('-1', plan) !== voicePlanHash('-1', { ...plan, kind: 'table' }), 'the yes is bound to the opening, details and kind shown')
@@ -99,7 +114,8 @@ const fakeFetch: any = async (url: string, init: any) => { sent.push({ url, body
 process.env.BOLNA_API_KEY = 'test'; delete process.env.BOLNA_AGENT_ID; delete process.env.BOLNA_GENERAL_AGENT_ID
 eq(await vc.placeCall(plan, '+919999900000', fakeFetch), 'e1', 'general call placed through the fake provider')
 const body = sent.find(s => String(s.url).endsWith('/call'))?.body
-eq([body.agent_id, body.recipient_phone_number, body.user_data.opening, body.user_data.purpose, body.user_data.details, body.user_data.contact_number], ['G1', '+918025024444', plan.opening, plan.purpose, plan.details, 'not available to share'], 'the general agent gets the approved opening, task and details, and never the person\'s number')
+eq([body.agent_id, body.recipient_phone_number], ['G1', '+918025024444'], 'the general agent, the approved number')
+eq(body.user_data, { venue: 'Manipal Hospital', guest_name: 'Divya', purpose: plan.purpose, opening: plan.opening, details: plan.details, timezone: 'Asia/Kolkata' }, 'the caller is handed exactly what is on the card: no phone number of the person, no table fields')
 ok(/Start by saying exactly: \{opening\}/.test(vc.GENERAL_CALL_AGENT_PROMPT) && /Never guess or invent a fact/.test(vc.GENERAL_CALL_AGENT_PROMPT) && /do not agree to it/.test(vc.GENERAL_CALL_AGENT_PROMPT) && /You do not have \{guest_name\}'s phone number/.test(vc.GENERAL_CALL_AGENT_PROMPT), 'general agent rules (review D1, B4)')
 
 // 6. After the call.
@@ -111,7 +127,6 @@ ok(/Nothing was said or agreed\./.test(vc.callResultText(plan, 'busy', null)) &&
 eq(vc.parseOutcome('{"booked":true,"confirmed_time":"9:00 pm","staff_name":"A","notes":"x"}')?.confirmedTime, '9:00 pm', 'table outcome unchanged')
 const src = readFileSync('lib/agent/voice-call.ts', 'utf8')
 ok(src.includes("&& plan.kind !== 'general') saved = await recordPhoneBooking("), 'a general call is never saved as a table booking')
-ok(src.includes("genericCallee(callee) ? null : await findNamedPhone(callee, where)") && src.includes("I couldn't find a number I can be sure belongs to"), 'no sure number: ask for it, call nothing')
 ok(/a clear no or not available is still an answer/.test(src), 'an answered enquiry counts as done, so it does not invite redials')
 // The route gate uses the parser, so ordinary "call mom and ask…" keeps the brain (review B5).
 for (const route of ['app/api/webhooks/whatsapp/route.ts', 'app/api/dashboard/chat/route.ts']) {
