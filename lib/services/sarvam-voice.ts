@@ -56,7 +56,7 @@ export async function sarvamTextToSpeech(text: string, options: SpeechDeps & {
 export async function sarvamSpeechToText(audio: ArrayBuffer | Buffer, contentType = 'audio/ogg', opts: SpeechDeps & {
   mode?: 'transcribe' | 'translate' | 'verbatim' | 'translit' | 'codemix'; keyterms?: string[]; model?: 'saaras:v3' | 'saaras:v4'
 } = {}): Promise<{ text: string; languageCode: string | null }> {
-  const bytes = Buffer.from(audio)
+  const bytes = Buffer.isBuffer(audio) ? audio : Buffer.from(new Uint8Array(audio))
   if (!bytes.length || bytes.length > MAX_STT_BYTES) throw new SarvamProviderError('stt_audio_size')
   const allowed = /^(?:audio\/(?:ogg|opus|mpeg|mp3|mp4|aac|amr|wav|x-wav|webm|x-m4a)|video\/mp4)(?:;.*)?$/i
   if (!allowed.test(contentType)) throw new SarvamProviderError('stt_media_invalid')
