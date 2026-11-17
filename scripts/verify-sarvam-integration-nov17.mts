@@ -15,6 +15,8 @@ const key = { apiKey: 'test-only-key' }
 
 assert.equal(sarvamEnabled('GOGO_SARVAM_BRAIN', { GOGO_SARVAM_BRAIN: 'on' }), false)
 assert.equal(sarvamEnabled('GOGO_SARVAM_BRAIN', { GOGO_SARVAM_BRAIN: 'on', SARVAM_API_KEY: 'test-key' }), true)
+assert.equal(sarvamEnabled('GOGO_SARVAM_BRAIN', { GOGO_SARVAM_BRAIN: 'on', SARVAM_API_KEY: 'test-key', VERCEL_ENV: 'production' }), false)
+assert.equal(sarvamEnabled('GOGO_SARVAM_BRAIN', { GOGO_SARVAM_BRAIN: 'on', SARVAM_API_KEY: 'test-key', VERCEL_ENV: 'production', GOGO_SARVAM_PRODUCTION: 'approved' }), true)
 assert.equal(sarvamCostPaise(1_000_000, 1_000_000), 7500)
 assert.equal(sarvamCostPaise(1_000_000, 0, 'sarvam-prism'), 400)
 assert.equal(sarvamCostPaise(null, 10), null)
