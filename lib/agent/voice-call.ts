@@ -274,6 +274,27 @@ async function findVenuePhone(venue: string, area: string) {
   return pickVenuePhone(batches.flat(), venue)
 }
 
+/** The booking name said in a call request. Pure.
+ *  17 Nov live (investor demo): "…at 9pm on Saturday under name Manu jain" and "…under name Divya" were both booked
+ *  under "Gogo", because only "under the name X" and "under X" (capitalised) were read. */
+const NAME_TAIL = "([a-z][a-z.'-]{1,30}(?:\\s+(?!for\\b|at\\b|on\\b|and\\b|please\\b|from\\b|this\\b|today\\b|tomorrow\\b|tonight\\b)[a-z][a-z.'-]{0,30})?)"
+const NAME_PHRASE = new RegExp(`\\b(?:under|in|with|using)\\s+(?:the\\s+)?names?\\s+(?:of\\s+|as\\s+)?${NAME_TAIL}|\\bnames?\\s+(?:is|as|will\\s+be)\\s+${NAME_TAIL}`, 'i')
+export function callBookingName(text: string): string | null {
+  const t = String(text || '')
+  const m = t.match(NAME_PHRASE)
+  const raw = (m?.[1] || m?.[2] || t.match(/\bunder\s+([A-Z][A-Za-z.'-]{1,30}(?:\s+[A-Z][A-Za-z.'-]{1,30})?)/)?.[1] || '').trim()
+  if (!raw || /^(?:of|the|name|my|me|myself|a|an)$/i.test(raw)) return null
+  return raw.replace(/\b\w/g, c => c.toUpperCase())
+}
+/** Pure. Removes the "under (the) name X" tail so it is never read as part of the venue, day or time. */
+export function stripCallBookingName(text: string): string {
+  return String(text || '').replace(new RegExp(`\\s*,?\\s*(?:${NAME_PHRASE.source})\\s*[.!]?\\s*$`, 'i'), '').replace(/\s+under\s+[A-Z][A-Za-z.' -]{1,40}$/, '').trim()
+}
+/** Pure. A call request to book a room or a stay, which the calling agent cannot do (it books tables). */
+export function isRoomCallRequest(text: string): boolean {
+  return /\b(?:book|reserve)\s+(?:me\s+)?(?:a|an|one|two|\d+)?\s*(?:\w+\s+)?(?:rooms?|suite|stay)\b|\bfor\s+\d+\s+nights?\b/i.test(String(text || ''))
+}
+
 export async function tryVoiceCall(params: { actor: Actor; text: string; surface: 'web' | 'whatsapp' }): Promise<Reply | null> {
   const cmd = parseCallCommand(params.text)
   if (!cmd) return null
@@ -320,8 +341,8 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
   }
 
   // "…under the name Goverdhan" wins; otherwise the account name.
-  const namedRaw = params.text.match(/\bunder\s+the\s+name\s+(?:of\s+)?([a-z][a-z.'-]{1,30}(?:\s+(?!for\b|at\b|on\b|and\b|please\b)[a-z][a-z.'-]{1,30})?)/i) || params.text.match(/\bunder\s+([A-Z][A-Za-z.'-]{1,30}(?:\s+[A-Z][A-Za-z.'-]{1,30})?)/)
-  const named = namedRaw ? [namedRaw[0], namedRaw[1].replace(/\b\w/g, c => c.toUpperCase())] : null
+  const givenName = callBookingName(params.text)
+  const named = givenName ? [givenName, givenName] : null
   // 29 Oct live: both demo bookings were made "under Gogo" (the account name, which a restaurant hears as AskGogo).
   // A name the user gave once ("under the name Goverdhan") is remembered and used for later calls.
   const savedName = named?.[1] ? null : await savedBookingName(tg).catch(() => null)
@@ -337,7 +358,10 @@ export async function tryVoiceCall(params: { actor: Actor; text: string; surface
   } else {
     const rr = await import('@/lib/agent/restaurant-reservation')
     // "Call District 6 near Orion mall and book a table for 2 Saturday 8pm" -> "Book a table for 2 Saturday 8pm at District 6 near Orion mall"
-    const parts = cmd.text.replace(/\s+under\s+(?:the\s+name\s+(?:of\s+)?)?[A-Z][A-Za-z.' -]{1,40}$/, '').match(/^(?:please\s+)?(?:call|phone|ring)\s+(?:up\s+)?(.+?)\s+(?:and|to)\s+(?:book|reserve)\s+(.+)$/i)
+    // 17 Nov live: "Call Novotel on … and book a room for 2 nights" must never become a table call. The calling
+    // agent books tables only, so say that plainly instead of calling with the wrong request.
+    if (isRoomCallRequest(cmd.text)) return { text: "I can call a restaurant to book a table, but I can't book a hotel room by phone yet. Nothing was called.\n\nI can look up the hotel's rates and booking page instead: say *find rooms at <hotel> for <dates>*.", handledBy: 'voice-call' }
+    const parts = stripCallBookingName(cmd.text).match(/^(?:please\s+)?(?:call|phone|ring)\s+(?:up\s+)?(.+?)\s+(?:and|to)\s+(?:book|reserve)\s+(.+)$/i)
     const venuePart = parts ? parts[1].replace(/\s+(?:on|at|via)\s+[+\d][\d\s-]{8,16}$/i, '').trim() : ''
     const bookingText = parts ? `Book ${parts[2].trim()} at ${venuePart}` : cmd.text
     const intent = rr.parseRestaurantReservationIntent(bookingText)

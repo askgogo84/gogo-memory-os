@@ -90,5 +90,5 @@ console.log('✓ "Add to calendar meeting…" is titled "Meeting…", not "To me
 // 6. Call booking name.
 const vc = readFileSync('lib/agent/voice-call.ts', 'utf8')
 assert.match(vc, /savedBookingName\(tg\)/); assert.match(vc, /rememberBookingName\(tg, named\[1\]\)/)
-assert.match(vc, /under\\s\+the\\s\+name\\s\+\(\?:of\\s\+\)\?\(\[a-z\]/, 'lowercase "under the name goverdhan" is understood')
+assert.equal((await import('../lib/agent/voice-call.ts')).callBookingName('call Toit and book a table for 2 under the name goverdhan'), 'Goverdhan', 'lowercase "under the name goverdhan" is understood')
 console.log('✓ a booking name given once is remembered for later calls')
