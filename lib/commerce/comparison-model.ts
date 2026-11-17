@@ -120,6 +120,23 @@ export function foodQuote(subject: string, evidence: string): {dish: string; pri
   return null
 }
 /** A restaurant's own page on Swiggy or Zomato (never a search, listing or other site), as the read's start. */
+/** Pure. Among the restaurant's own outlet pages, the one whose area appears in a map listing's address.
+ *  17 Nov live: Zomato has Meghana Foods pages for Sarjapur Road, Hosur Road, Indiranagar…; the map search for
+ *  "Meghana Foods near HSR" gives an address; the page whose area words are all in that address is the outlet to read.
+ *  Returns the page and the outlet's area as the app names it ("Sarjapur Road"). No match → null. */
+export function outletLeadForAddress(provider: ComparisonProvider, restaurant: string, leads: Array<{url: string; title?: string}>, address: string): {url: string; area: string} | null {
+  const addr = ` ${String(address || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ')} `.replace(/ rd /g, ' road ')
+  const name = new Set(foodTokens(restaurant))
+  for (const lead of leads || []) {
+    const url = foodRestaurantLead(provider, restaurant, [lead], null, null)
+    if (!url) continue
+    const parts = (new URL(url).pathname.toLowerCase().match(/[a-z0-9]+/g) || []).filter(w => !name.has(w) && !/^(?:bangalore|bengaluru|order|city|restaurants|rest\d+|\d+)$/.test(w))
+    const key = parts.filter(w => !AREA_STOP.includes(w) && w.length > 1)
+    if (!key.length || !key.every(w => addr.includes(` ${w} `))) continue
+    return {url, area: parts.map(w => /^(?:hsr|btm|jp|hbr|hrbr|rt|rr|kr|mg|hal|bel|ub)$/.test(w) ? w.toUpperCase() : /^\d/.test(w) ? w : w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
+  }
+  return null
+}
 /** The outlet's area from a map listing's address ("12, 1st Block, Rajajinagar, Bengaluru, Karnataka 560010" → "Rajajinagar"). */
 export function outletAreaFromAddress(address: string): string | null {
   const parts = String(address || '').split(',').map(p => p.replace(/\d+/g, ' ').replace(/\s+/g, ' ').trim()).filter(Boolean)
@@ -185,6 +202,8 @@ export type ProviderObservation = {
   runId?: string; startedAt?: string; checkedAt?: string; sourceUrl?: string; startUrl?: string;
   /** From the quick web look at request time: a product page to start from, and the price its search result showed (never evidence). */
   leadUrl?: string; quickPrice?: string;
+  /** Said when the outlet read is not in the area the person named ("No outlet in HSR; this is the nearest one, Sarjapur Road"). */
+  outletNote?: string;
   /** Reads tried for this store; a failed read is retried on our side before it is reported. */
   attempts?: number;
   evidence?: string; reason?: string; needsInput?: boolean;
@@ -520,7 +539,7 @@ export function comparisonSummary(task: PriceComparison) {
     const checked = row.checkedAt && Number.isFinite(Date.parse(row.checkedAt))
       ? new Intl.DateTimeFormat('en-GB', {timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true}).format(new Date(row.checkedAt)) + ' IST'
       : 'time unverified'
-    return `${line}.\nObserved page excerpt (${checked}): ${row.evidence.replace(/\s+/g, ' ').trim()}\nSource: ${row.sourceUrl}`
+    return `${line}.${row.outletNote ? `\n${row.outletNote}` : ''}\nObserved page excerpt (${checked}): ${row.evidence.replace(/\s+/g, ' ').trim()}\nSource: ${row.sourceUrl}`
   })
   return `${task.metadata_json.subject}\n\n${lines.join('\n\n')}\n\n${pending ? 'Remaining store checks are queued.' : 'This check has finished; blocked stores are not being retried automatically.'}\nItem observations are not a verified delivered-total ranking. Fees, location-specific prices and conditional offers remain unverified unless explicitly shown in the evidence.`
 }
@@ -534,7 +553,7 @@ export function comparisonWhatsAppSummary(task: PriceComparison, origin = 'https
       const dish = foodQuote(task.metadata_json.subject, row.evidence)
       if (!dish) return `• *${label}*: I read the menu but couldn’t pick out one price for that dish.\n  ${row.sourceUrl}`
       priced.push({label, value: Number(dish.price.replace(/[^\d.]/g, '')), price: dish.price})
-      return `• *${label}*: ${dish.price}\n  ${dish.dish}${dish.outlet ? ` · ${dish.outlet}` : ''}\n  ${row.sourceUrl}`
+      return `• *${label}*: ${dish.price}\n  ${dish.dish}${dish.outlet ? ` · ${dish.outlet}` : ''}${row.outletNote ? `\n  ${row.outletNote}` : ''}\n  ${row.sourceUrl}`
     }
     if (row.status === 'observed' && row.sourceUrl && row.evidence) {
       const quote = comparisonQuote(task.metadata_json.subject, row)
@@ -589,15 +608,18 @@ function pincodeHint() {
     ? `If asked for a delivery pincode, enter ${pin} and press Continue/Apply (not a purchase), then read the price. `
     : ''
 }
-export function comparisonObjective(task: PriceComparison, provider: ComparisonProvider) {
+export function comparisonObjective(task: PriceComparison, provider: ComparisonProvider, outletArea?: string | null) {
   const food = FOOD_PROVIDERS.has(provider) ? parseFoodSubject(task.metadata_json.subject) : null
   if (food) {
     const label = COMPARISON_PROVIDERS[provider].label
     const pin = pincodeInText(task.metadata_json.request) || (/^\d{6}$/.test(String(process.env.COMPARISON_PINCODE || '')) ? String(process.env.COMPARISON_PINCODE) : '')
     // The outlet matters: name the area, and never read another branch as if it were the one asked for (review).
-    const where = food.area ? ` (the outlet in ${food.area.slice(0, 40)})` : ''
+    // 17 Nov live: Zomato has no Meghana Foods page for HSR. When the nearest outlet was chosen instead, the browser is
+    // told that outlet's area (and the person is told which outlet was read).
+    const outletIn = String(outletArea || food.area || '').slice(0, 40)
+    const where = outletIn ? ` (the outlet in ${outletIn})` : ''
     return `On ${label}, open the menu of the restaurant ${JSON.stringify(food.restaurant.slice(0, 80))}${where} and find the dish ${JSON.stringify(food.dish.slice(0, 80))}. ` +
-      (food.area ? `If ${label} shows no outlet of this restaurant in ${food.area.slice(0, 40)}, stop and report that; do not read a different outlet. ` : '') +
+      (outletIn ? `If ${label} shows no outlet of this restaurant in ${outletIn}, stop and report that; do not read a different outlet. ` : '') +
       `This read is only about ${label}; the other app is checked separately. ` +
       (pin ? `If asked for a delivery pincode or location, enter ${pin}, choose the first suggested location and press Continue/Apply/Confirm (this only sets the delivery location, not a purchase). ` : 'If a delivery location is required, pause for the user and never choose an address silently. ') +
       'If the page is a search, open the restaurant whose name matches exactly. Use the menu search or scroll to find the dish; a dish whose name contains every requested word counts (for example "Chicken Dum Biryani" for "chicken biryani"). ' +
