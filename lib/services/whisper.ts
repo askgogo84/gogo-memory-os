@@ -1,6 +1,8 @@
 import OpenAI from 'openai'
-import { sarvamEnabled } from './sarvam'
-import { sarvamSpeechToText } from './sarvam-voice'
+const sarvamEnabled = (flag: string, env: Record<string, string | undefined> = process.env) =>
+  env[flag] === 'on' && !!env.SARVAM_API_KEY &&
+  (env.VERCEL_ENV !== 'production' || env.GOGO_SARVAM_PRODUCTION === 'approved')
+
 import { toFile } from 'openai'
 
 function getOpenAIClient() {
@@ -12,6 +14,7 @@ function getOpenAIClient() {
 export async function transcribeVoice(fileBuffer: Buffer): Promise<string> {
   if (sarvamEnabled('GOGO_SARVAM_STT')) {
     try {
+      const { sarvamSpeechToText } = await import('./sarvam-voice')
       return (await sarvamSpeechToText(fileBuffer, 'audio/ogg')).text
     } catch (e: any) { console.error('SARVAM_STT_FALLBACK:', String(e?.code || 'provider_error').slice(0, 50)) }
   }
