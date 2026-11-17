@@ -1,6 +1,8 @@
 import OpenAI from 'openai'
-import { sarvamEnabled } from './sarvam'
-import { sarvamSpeechToText } from './sarvam-voice'
+const sarvamEnabled = (flag: string, env: Record<string, string | undefined> = process.env) =>
+  env[flag] === 'on' && !!env.SARVAM_API_KEY &&
+  (env.VERCEL_ENV !== 'production' || env.GOGO_SARVAM_PRODUCTION === 'approved')
+
 import { fetchMetaMedia, isMetaMediaRef } from '@/lib/channels/whatsapp-provider/meta-media'
 
 function getOpenAiVoiceClient() {
@@ -147,6 +149,7 @@ export async function transcribeTwilioVoiceNote(params: {
 
   if (sarvamEnabled('GOGO_SARVAM_STT')) {
     try {
+      const { sarvamSpeechToText } = await import('./sarvam-voice')
       const transcript = await sarvamSpeechToText(arrayBuffer, contentType)
       return transcript.text
     } catch (e: any) {
