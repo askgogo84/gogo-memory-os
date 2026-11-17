@@ -53,9 +53,12 @@ export function isDateAnswer(text: string): boolean {
   return parseReplyDates(text).length > 0 && rest.split(/\s+/).filter(Boolean).length === 0
 }
 
-/** Pure. The person is asking Gogo to call, book or find a stay; nothing is booked yet. */
+/** Pure. The person is asking Gogo to call or book a stay; nothing is booked yet. A confirmation that merely opens
+ *  with a verb ("Call us on…", "Book again…") still counts as a booking (review, PR #1533). */
 export function isStayRequest(text: string): boolean {
-  return /^\s*(?:(?:hey|hi|gogo|please|pls|can you|could you|will you)[\s,]+)*(?:call|phone|ring|book|reserve|find|search|look\s+(?:for|up)|get\s+me|i\s+(?:want|need)\s+(?:to\s+book|a\s+room))\b/i.test(String(text || ''))
+  const t = String(text || '')
+  if (/\b(?:confirmed|confirmation|booking\s+(?:id|ref|reference|number|no)\b|your\s+(?:booking|stay|reservation)|pnr|voucher)\b/i.test(t)) return false
+  return /^\s*(?:(?:hey|hi|hello|gogo|please|pls|plz|kindly|can\s+(?:you|u)|could\s+you|will\s+you|i\s+want\s+you\s+to)[\s,]+)*(?:call|phone|ring|book|reserve)\b/i.test(t)
 }
 
 /** Which stay field a Gogo question asked for. Pure. */
@@ -111,7 +114,7 @@ export async function tryLifeGraphTurn(p: { telegramId: number; whatsappTo?: str
     // 1. A forwarded hotel booking.
     // 17 Nov live: "Call Novotel on … and book a room for 2 nights on Saturday" was saved as a stay. Asking Gogo to
     // do something is a request, not a booking that already exists.
-    if (text.length >= 40 && !isStayRequest(text) && looksLikeHotelBooking(text)) {
+    if (text.length >= 40 && !(isStayRequest(text) && !p.forwarded) && looksLikeHotelBooking(text)) {
       const reply = await ingestStayFromText({ telegramId: p.telegramId, whatsappTo: p.whatsappTo, userName: p.userName, userNames: p.userNames, text, source: `${p.surface}_text`, now })
       if (reply) return { text: reply, handledBy: 'life-graph-stay' }
     }
