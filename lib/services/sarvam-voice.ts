@@ -61,7 +61,9 @@ export async function sarvamSpeechToText(audio: ArrayBuffer | Buffer, contentTyp
   const allowed = /^(?:audio\/(?:ogg|opus|mpeg|mp3|mp4|aac|amr|wav|x-wav|webm|x-m4a)|video\/mp4)(?:;.*)?$/i
   if (!allowed.test(contentType)) throw new SarvamProviderError('stt_media_invalid')
   const form = new FormData()
-  form.append('file', new File([new Uint8Array(bytes)], 'voice-note', { type: contentType }))
+  const extension = /(?:mpeg|mp3)/i.test(contentType) ? 'mp3' : /wav/i.test(contentType) ? 'wav'
+    : /(?:mp4|m4a)/i.test(contentType) ? 'm4a' : /webm/i.test(contentType) ? 'webm' : 'ogg'
+  form.append('file', new File([Uint8Array.from(bytes)], 'voice-note.' + extension, { type: contentType }))
   form.append('model', 'saaras:v4')
   form.append('mode', opts.mode || 'transcribe')
   const resp = await send('/speech-to-text', form, null, opts)
