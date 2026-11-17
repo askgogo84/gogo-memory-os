@@ -3,7 +3,7 @@ import {acquireBrainUserLease, releaseBrainUserLease} from '@/lib/agent/brain-ru
 import type {AgentActor} from '@/lib/agent/actor'
 import {commerceOrigin} from './providers'
 import {SWIGGY_COMPARISON_NOTE, SWIGGY_ONLY_NOTE, withheldComparisonProviders} from './swiggy-policy'
-import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, outletAreaFromAddress, isFoodComparison, parseFoodSubject, slugInArea, outletLeadForAddress, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
+import {COMPARISON_PROVIDERS, FOOD_PROVIDERS, foodRestaurantLead, outletAreaFromAddress, isFoodComparison, parseFoodSubject, slugInArea, outletLeadForAddress, foodDeliveryPincode, areaPincode, pincodeInText, type ComparisonProvider, comparisonSearchUrl, comparisonObjective, comparisonProductLead, comparisonSource, comparisonState, comparisonSummary, comparisonWhatsAppSummary, isPriceComparisonStatus, parsePriceComparison, providerObservation, type PriceComparison} from './comparison-model'
 import {indiaShoppingSearch, searchWebResults} from '@/lib/web-search'
 
 const TYPE = 'price_comparison'
@@ -103,7 +103,7 @@ function startedText(subject: string, providers: ComparisonProvider[], looks: Re
   const list = names.length > 1 ? names.slice(0, -1).join(', ') + ' and ' + names[names.length - 1] : names[0]
   const quick = providers.filter(p => looks[p]?.quickPrice).map(p => `• ${COMPARISON_PROVIDERS[p].label}: about ${looks[p].quickPrice}`)
   // 16 Oct: say which variant is compared (the base model when no size was named) and the pincode used, so the person can correct it.
-  const foodPin = isFoodComparison(providers) ? pincodeInText(request || subject) : null
+  const foodPin = isFoodComparison(providers) ? foodDeliveryPincode(request || subject, subject) : null
   const pin = foodPin ? ` for PIN ${foodPin}` : /^\d{6}$/.test(String(process.env.COMPARISON_PINCODE || '')) ? ` for PIN ${process.env.COMPARISON_PINCODE}` : ''
   // Default and say so: no size → 128GB; no tier word → the base model, never Pro/Pro Max/Air.
   const isPhone = /\biPhone\b/i.test(subject)
@@ -332,7 +332,7 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
     const food = FOOD_PROVIDERS.has(next.provider) ? parseFoodSubject(task.metadata_json.subject) : null
     if (food) {
       // The restaurant's own menu page on this app (the outlet in the person's city first), else Swiggy's search.
-      const pin = pincodeInText(task.metadata_json.request)
+      const pin = foodDeliveryPincode(task.metadata_json.request, task.metadata_json.subject)
       // 13 Nov live: the map search for "Meghana Foods near 560086" returned the famous Residency Road outlet, not the
       // person's own area. When the pincode is the one they saved for home, their home area names the outlet to look for.
       // Review: if the restaurant has no outlet in the home area, fall back to the map search's nearest outlet.
@@ -355,6 +355,8 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
         // 17 Nov live: "Meghana Foods in HSR": Zomato has pages for Sarjapur Road, Hosur Road, Indiranagar… but none for
         // HSR, and the run ended with no price. Like the pincode path, ask the map search for the outlet nearest the
         // said area, read that one, and say plainly which outlet it is.
+        // Review (PR #1538): an outlet page found in the said area is pinned, so the browser is not sent elsewhere.
+        if (found?.url && outletInArea(found.url, saidArea)) foodOutletArea = saidArea
         if (!found?.url || !outletInArea(found.url, saidArea)) {
           // Review (PR #1537): pick among the restaurant's own outlet pages already found, using the address the map
           // search gives for "<restaurant> near <area>". The note says what was done; it does not claim "nearest".
@@ -366,7 +368,13 @@ export async function advancePriceComparison(actor: AgentActor, id: string) {
           if (other && !outletInArea(other.url, saidArea)) {
             found = {leads: leadsSoFar, url: other.url}; area = other.area; foodOutletArea = other.area
             next.outletNote = `No ${food.restaurant} outlet in ${saidArea} on ${COMPARISON_PROVIDERS[next.provider].label}. This is the ${other.area} outlet, which the map shows for ${saidArea}.`
-          } else found = {leads: leadsSoFar, url: null}
+          } else {
+            found = {leads: leadsSoFar, url: null}
+            // No outlet page chosen: the app picks the outlet for the area's pincode. The reply must say so, because
+            // the outlet's name appears only if the page evidence happens to carry it (review, PR #1538).
+            const areaPin = areaPincode(saidArea)
+            if (areaPin && areaPin === pin) next.outletNote = `Read from the outlet ${COMPARISON_PROVIDERS[next.provider].label} offers for delivery to ${saidArea} (PIN ${areaPin}). It may be in a nearby area; the link shows which.`
+          }
         }
       } else if (!found?.url || !outletInArea(found.url, area)) {
         area = await nearestOutletArea(food.restaurant, pin)
