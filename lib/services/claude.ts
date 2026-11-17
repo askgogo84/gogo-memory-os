@@ -1,7 +1,10 @@
 import Anthropic from '@anthropic-ai/sdk'
 import { askMercury, mercuryWebAnswersEnabled } from './mercury'
 import OpenAI from 'openai'
-import { sarvamChat, sarvamEnabled } from './sarvam'
+const sarvamEnabled = (flag: string, env: Record<string, string | undefined> = process.env) =>
+  env[flag] === 'on' && !!env.SARVAM_API_KEY &&
+  (env.VERCEL_ENV !== 'production' || env.GOGO_SARVAM_PRODUCTION === 'approved')
+
 import { redactSecretShapedText } from '@/lib/bot/memory-redaction'
 import {selectContentWorkflow, contentWorkflowPrompt} from '@/lib/agent/content-workflows'
 import { SONNET_MODEL, forModel, textOf } from '@/lib/services/model-ids'
@@ -178,6 +181,7 @@ ${workflow ? contentWorkflowPrompt(workflow) : ''}`
   // Sarvam Conversational pilot. Keep all existing postprocessors and action gates.
   if (sarvamEnabled('GOGO_SARVAM_DIALOGUE')) {
     try {
+      const { sarvamChat } = await import('./sarvam')
       const r = await sarvamChat({ model: 'sarvam-105b-conversations', maxTokens, timeoutMs: 12000,
         messages: [{ role: 'system', content: systemPrompt }, ...messages] })
       return finishChatReply(userMessage, r.text, preferenceBlock)
@@ -393,6 +397,7 @@ FINANCIAL DATA: Any card point or cashback balance mentioned by the user is SELF
   }
   if (sarvamEnabled('GOGO_SARVAM_WEB_ANSWER')) {
     try {
+      const { sarvamChat } = await import('./sarvam')
       const r = await sarvamChat({ model: 'sarvam-105b', maxTokens: 1500, timeoutMs: 12000,
         messages: [{ role: 'user', content: prompt }] })
       return finishWebAnswer(userMessage, r.text, context)
