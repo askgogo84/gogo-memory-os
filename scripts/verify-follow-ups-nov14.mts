@@ -172,4 +172,56 @@ ok(pulse.indexOf("m.processFollowUps()") > 0 && pulse.indexOf("m.processFollowUp
 const loops = readFileSync('lib/agent/open-loops.ts', 'utf8')
 ok(/const cutoff=new Date\(Date\.now\(\)-10\*60_000\)\.toISOString\(\)/.test(loops) && !/24\*3600_000/.test(loops.slice(loops.indexOf('async function recentOpenLoopListSnapshot'), loops.indexOf('async function recentOpenLoopListSnapshot') + 900)), 'numbers bind for the normal 10 minutes only (no 24 h digest binding)')
 
+
+// 17 Nov live test: Gogo asked "Twilio: … Has it been handled?", the owner said "Yes", Gogo replied "I'm not sure
+// what you're saying yes to". A short yes/no right after a follow-up answers it; anything less certain is left alone.
+{
+  const fc = await import('../lib/agent/follow-up-command.ts')
+  eq(['Yes', 'yes.', 'Done', 'yes, done', 'handled 👍', 'Recharged', 'yes it has been', 'haan', 'ho gaya', 'done boss', '👍'].map(fc.parseFollowUpAnswer), Array(11).fill('handled'), 'handled phrasings')
+  eq(['No', 'not yet', 'no, not yet', 'still pending', 'nahi', 'abhi nahi'].map(fc.parseFollowUpAnswer), Array(6).fill('not_yet'), 'not-yet phrasings')
+  eq(['yes book it', 'yes please send the mail', 'no thanks cancel it', 'ok', 'yes to the Air India one', 'yes?', ''].map(fc.parseFollowUpAnswer), Array(7).fill(null), 'anything longer or vaguer is not an answer')
+  eq([fc.parseFollowUpAnswerDetail('yes')?.doneWord, fc.parseFollowUpAnswerDetail('done')?.doneWord, fc.parseFollowUpAnswerDetail('yes, paid')?.doneWord], [false, true, true], 'yes vs a done-word')
+  const sentAt = Date.parse('2026-11-17T02:40:00Z'), at = (ms: number) => new Date(ms).toISOString()
+  // A small fake that really applies gte / gt / in / order, so the window and ordering are tested.
+  const mk = (activity: any[], talk: any[] = [], reminders: any[] = [], fail: { insert?: boolean; talk?: boolean; reminders?: boolean } = {}) => {
+    const inserted: any[] = []
+    const from = (table: string) => {
+      let rows: any[] = table === 'conversations' ? talk : table === 'reminders' ? reminders : activity
+      const broken = (table === 'conversations' && fail.talk) || (table === 'reminders' && fail.reminders)
+      const o: any = { select: () => o, eq: () => o,
+        in: (k: string, vs: string[]) => { rows = rows.filter(r => vs.includes(r[k])); return o },
+        gte: (k: string, v: string) => { rows = rows.filter(r => r[k] >= v); return o },
+        gt: (k: string, v: string) => { rows = rows.filter(r => r[k] > v); return o },
+        order: (k: string) => { rows = [...rows].sort((a, b) => String(b[k]).localeCompare(String(a[k]))); return o },
+        limit: (n: number) => Promise.resolve(broken ? { data: null, error: { message: 'x' } } : { data: rows.slice(0, n), error: null }),
+        insert: (row: any) => { inserted.push({ table, row }); return Promise.resolve({ error: fail.insert ? { message: 'x' } : null }) } }
+      return o
+    }
+    return { db: { from }, inserted }
+  }
+  const sent = (kind = 'deadline') => ({ id: 'f1', event_type: 'followup_sent', created_at: at(sentAt), message: 'Twilio: I flagged yesterday’s mail “Action Required” as time-sensitive. Has it been handled?', metadata_json: { kind, keys: ['mail:1'] } })
+  const O = '-884501501', t3 = sentAt + 180_000
+  const live = mk([sent()])
+  eq(await fu.handleFollowUpAnswer(O, 'Yes', live.db, t3), "Good, that's sorted. I won't ask about the Twilio mail again.", 'the live case: "Yes" three minutes after the follow-up')
+  eq([live.inserted[0]?.row?.event_type, live.inserted[0]?.row?.metadata_json?.ref], ['followup_answered', 'f1'], 'the answer is recorded against that follow-up')
+  eq(await fu.handleFollowUpAnswer(O, 'Recharged', mk([sent()]).db, t3), "Good, that's sorted. I won't ask about the Twilio mail again.", 'a done-word answers a deadline follow-up')
+  ok(/still open on your side/.test(String(await fu.handleFollowUpAnswer(O, 'not yet', mk([sent()]).db, t3))), 'not yet: offers a nudge')
+  eq(await fu.handleFollowUpAnswer(O, 'Yes', mk([sent()], [{ role: 'assistant', created_at: at(sentAt + 60_000) }]).db, t3), null, 'Gogo said something else since: the yes is not taken')
+  eq(await fu.handleFollowUpAnswer(O, 'Yes', mk([sent()], [{ role: 'user', created_at: at(sentAt + 60_000) }]).db, t3), null, 'the person said something else since')
+  eq(await fu.handleFollowUpAnswer(O, 'done', mk([sent()], [], [{ id: 'r1', sent_at: at(sentAt + 60_000) }]).db, t3), null, 'a reminder fired since: "done" belongs to the reminder (review D1)')
+  eq(await fu.handleFollowUpAnswer(O, 'done', mk([sent()], [], [{ id: 'r0', sent_at: at(sentAt - 60_000) }]).db, t3) !== null, true, 'an earlier reminder does not block')
+  eq(await fu.handleFollowUpAnswer(O, 'Yes', mk([sent(), { id: 'a1', event_type: 'followup_answered', created_at: at(sentAt + 30_000), metadata_json: {} }]).db, t3), null, 'already answered: not taken twice (order applied)')
+  eq(await fu.handleFollowUpAnswer(O, 'Yes', mk([sent()]).db, sentAt + fu.FOLLOWUP_ANSWER_WINDOW_MS + 60_000), null, 'older than 3 hours: not taken')
+  eq(await fu.handleFollowUpAnswer(O, 'Yes', mk([]).db, t3), null, 'no follow-up: normal handling')
+  eq(await fu.handleFollowUpAnswer(O, 'yes book it', live.db, t3), null, 'a yes with an instruction is never taken')
+  eq(await fu.handleFollowUpAnswer(O, 'yes', mk([sent('digest')]).db, t3), "Okay, I'll keep them on your list.", 'digest: yes keeps them')
+  eq(await fu.handleFollowUpAnswer(O, 'done', mk([sent('digest')]).db, t3), null, 'digest: a done-word is not an answer to "still want these moving?"')
+  eq(await fu.handleFollowUpAnswer(O, 'yes', mk([sent('event')]).db, t3), null, 'event step is a statement: nothing binds')
+  for (const fail of [{ insert: true }, { talk: true }, { reminders: true }]) eq(await fu.handleFollowUpAnswer(O, 'Yes', mk([sent()], [], [], fail).db, t3), null, `a ${Object.keys(fail)[0]} error means normal handling`)
+  ok(/that mail/.test(fu.followUpAnswerReply('deadline', 'handled', 'A sender')), 'unknown sender reads naturally')
+  const hook = readFileSync('app/api/webhooks/whatsapp/route.ts', 'utf8')
+  const iAns = hook.indexOf('m.handleFollowUpAnswer(String(resolvedUser.telegramId), text)'), iBrain = hook.indexOf('m.runBrain({ phone: from')
+  ok(iAns > 0 && iBrain > iAns, 'checked before the brain, which cannot see the follow-up text (review D3)')
+}
+
 console.log(`PASS verify-follow-ups-nov14: ${checks} checks`)

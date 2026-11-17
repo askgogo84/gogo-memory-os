@@ -72,7 +72,7 @@ import { mayBeAccountRequest, mentionsExternalAccountCreation, parseAccountProfi
 import { contextualizeSavedItemReply } from '@/lib/agent/contextual-association'
 import { observeShadowBrainTurn, type ShadowBrainObservation } from '@/lib/agent/shadow-brain'
 import { jevClarificationReply, promotedJevIntent, recordJevRoutingHint } from '@/lib/agent/jev-router'
-import { isFollowUpCommand } from '@/lib/agent/follow-up-command'
+import { isFollowUpCommand, isFollowUpAnswer } from '@/lib/agent/follow-up-command'
 import { autoResolveOpenLoopsFromTurn, captureExplicitOpenLoopFromTurn, captureJevOpenLoopFromTurn, isOpenLoopActionCandidate, isOpenLoopQuery, isOpenLoopResolutionCandidate } from '@/lib/agent/open-loops'
 import { recordShadowRouterOutcome } from '@/lib/agent/shadow-router-outcome'
 import { isGmailVerificationQuery } from '@/lib/agent/gmail-verification'
@@ -1189,6 +1189,19 @@ _"Bengaluru to Varanasi flight on 2 July at 2:50pm"_`)
           await sendWhatsAppMessage(from, eventSaid)
           return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
         }
+      }
+    }
+    // 17 Nov live: Gogo's own follow-up asked "Has it been handled?" and the owner's "Yes" got "I'm not sure what
+    // you're saying yes to". A short yes/no right after a follow-up answers it. This sits before the brain because
+    // the follow-up text is not in the conversation, so the brain cannot know what "Recharged" refers to. The handler
+    // returns null unless the follow-up was the last thing sent (no chat, no reminder since); then nothing changes.
+    if (!preserveFriendFlow && !callCommand && isFollowUpAnswer(text)) {
+      const followUpAnswer = await import('@/lib/agent/follow-ups').then(m => m.handleFollowUpAnswer(String(resolvedUser.telegramId), text), () => null)
+      if (followUpAnswer) {
+        await saveConversation(resolvedUser.telegramId, 'user', text)
+        await saveConversation(resolvedUser.telegramId, 'assistant', followUpAnswer)
+        await sendWhatsAppMessage(from, followUpAnswer)
+        return new NextResponse(emptyTwiml(), { status: 200, headers: { 'Content-Type': 'text/xml' } })
       }
     }
     if (!preserveFriendFlow && !callCommand && (globalThis as any).process?.env?.GOGO_BRAIN !== 'off' && ((globalThis as any).process?.env?.GOGO_BRAIN_USERS || (globalThis as any).process?.env?.VERCEL_ENV === 'production')) {
