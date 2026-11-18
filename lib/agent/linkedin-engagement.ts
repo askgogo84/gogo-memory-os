@@ -54,7 +54,7 @@ export function selectEngagementCandidates(
  */
 export function canPublishComment(e: PublishEvidence): {allowed: boolean; reason: string} {
   if (!e.ownerId || e.ownerId !== e.connectedOwnerId) return {allowed:false,reason:'owner_mismatch'}
-  if (!e.providerAvailable || !e.scopes.includes('w_member_social')) return {allowed:false,reason:'linkedin_permission_missing'}
+  if (!e.providerAvailable || !e.scopes.includes('w_member_social_feed')) return {allowed:false,reason:'linkedin_permission_missing'}
   if (!e.providerPostUrn || !/^urn:li:(?:activity|share):\d+$/.test(e.providerPostUrn) || e.providerPostUrn !== e.approvedPostUrn) return {allowed:false,reason:'post_not_approved'}
   if (!e.draftHash || e.draftHash !== e.approvedHash) return {allowed:false,reason:'draft_changed'}
   if (!e.approvedAt || !e.approvalExpiry || e.approvedAt > e.now || e.approvalExpiry <= e.now || e.approvalExpiry-e.approvedAt > 900000) return {allowed:false,reason:'fresh_approval_required'}
