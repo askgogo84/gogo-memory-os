@@ -62,7 +62,7 @@ Use relevant style preferences, but do not insert unrelated private memories, ph
 
 export function contentWorkflowInputQuestion(text: string, workflow: ContentWorkflow): string | null {
   const raw = String(text).trim().replace(/^gogo[, :]\s*/i, '')
-  const emptyCommand = /^\/(?:linkedin-post|leadmagnet|reddit-trends|last-30-days)\s*$/i.test(raw)
+  const emptyCommand = /^\/(?:linkedin-post|linkedin-comment|leadmagnet|reddit-trends|last-30-days)\s*$/i.test(raw)
   const noMaterial = /^(?:(?:can|could) you\s+)?(?:please\s+)?(?:write|draft|create|build|prepare|find|research|check|show)\s+(?:(?:me|a|an|the|my|recent|current|latest)\s+)*(?:linkedin (?:post|article)|lead\s*magnet|reddit (?:trends|discussions|topics))[.!?]*$/i.test(raw)
   const bareComment = workflow.id === 'linkedin-comment' && /^(?:draft|write|compose|suggest|prepare)\s+(?:(?:me|a|an|the|this|thoughtful|short)\s+)*(?:linkedin\s+)?comment\s+(?:on|for|about|to)\s+(?:this\s+|a\s+|the\s+)?(?:linkedin\s+)?post[.!?]*$/i.test(raw)
   const onlyPostUrl = workflow.id === 'linkedin-comment' && /^\/linkedin-comment\s+https?:\/\/\S+\s*$/i.test(raw)
