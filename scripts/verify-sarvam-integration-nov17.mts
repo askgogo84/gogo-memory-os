@@ -20,7 +20,7 @@ assert.equal(sarvamEnabled('GOGO_SARVAM_BRAIN', { GOGO_SARVAM_BRAIN: 'on', SARVA
 assert.equal(sarvamCostPaise(1_000_000, 1_000_000), 7500)
 assert.equal(sarvamCostPaise(1_000_000, 0, 'sarvam-prism'), 400)
 assert.equal(sarvamCostPaise(null, 10), null)
-const tools = [{ name: 'handle', description: 'Delegate safely', input_schema: { type: 'object', properties: { instruction: { type: 'string' } } } }]
+const tools = [{ name: 'handle', description: 'Delegate safely', input_schema: { type: 'object', properties: { instruction: { type: 'string' } }, required: ['instruction'] } }]
 const data = { choices: [{ finish_reason: 'tool_calls', message: { content: null, tool_calls: [{ function: { name: 'handle', arguments: JSON.stringify({ instruction: 'read calendar' }) } }] } }], usage: { prompt_tokens: 100, completion_tokens: 20 } }
 const chat = await sarvamChat({ ...key, messages: [{ role: 'user', content: 'show calendar' }], tools, toolChoice: 'required', fetcher: fake(data) })
 assert.equal(chat.tool?.name, 'handle')
@@ -40,6 +40,23 @@ await assert.rejects(sarvamChat({ ...key, messages: [{ role: 'user', content: 'h
     { function: { name: 'handle', arguments: '{}' } }, { function: { name: 'handle', arguments: '{}' } },
   ] } }] }) }), /sarvam_multiple_tools/)
 await assert.rejects(sarvamChat({ ...key, messages: [{ role: 'user', content: 'hi' }], fetcher: fake({}, 429) }), /sarvam_http_429/)
+// Model tool calls are untrusted data: reject missing, extra, mistyped and unbounded fields.
+const callPayload = (args: unknown) => ({ choices: [{ finish_reason: 'tool_calls',
+  message: { tool_calls: [{ function: { name: 'handle', arguments: JSON.stringify(args) } }] } }] })
+for (const invalid of [{}, { instruction: 'hi', unapproved_action: 'pay' },
+  { instruction: 42 }, { instruction: 'a'.repeat(5000) }]) {
+  await assert.rejects(
+    sarvamChat({ ...key, messages: [{ role: 'user', content: 'hi' }], tools,
+      toolChoice: 'required', fetcher: fake(callPayload(invalid)) }),
+    /sarvam_tool_schema_invalid/,
+  )
+}
+await assert.rejects(
+  sarvamChat({ ...key, messages: [{ role: 'user', content: 'hi' }], tools,
+    toolChoice: 'none', fetcher: fake(callPayload({ instruction: 'read calendar' })) }),
+  /sarvam_tool_forbidden/,
+)
+
 const questions = { intent: { type: 'choice' as const, instructions: 'Classify', criteria: { chat: 'Chat', read: 'Read' } } }
 const decision = await sarvamPrism({ ...key, state: 'Hi', questions, fetcher: fake({
   answers: { intent: { type: 'choice', choice: 'chat', confidence: 0.8, probabilities: { chat: 0.8, read: 0.2 } } },
