@@ -11,6 +11,42 @@ export type SarvamUsage = { inputTokens: number | null; outputTokens: number | n
 const HOST = 'https://api.sarvam.ai'
 const CHAT_MODELS: readonly SarvamChatModel[] = ['sarvam-105b', 'sarvam-105b-conversations']
 const integer = (v: unknown): number | null => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0 ? v : null
+/**
+ * Validate a model-supplied tool payload against the allowed schema subset
+ * before it reaches AskGogo's deterministic action guards.
+ * Unknown fields fail closed even if JSON Schema would allow them by default.
+ * Never accept unbounded nested values or unsupported schema constructs.
+ */
+function validToolInput(value: unknown, schema: unknown, depth = 0): boolean {
+  if (depth > 6 || !schema || typeof schema !== 'object' || Array.isArray(schema)) return false
+  const rule = schema as Record<string, unknown>
+  if (rule.enum !== undefined && (!Array.isArray(rule.enum) || !rule.enum.some(v => v === value))) return false
+  if (rule.type === 'object') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+    const record = value as Record<string, unknown>
+    const props = rule.properties
+    if (!props || typeof props !== 'object' || Array.isArray(props)) return false
+    const allowed = props as Record<string, unknown>
+    const entries = Object.entries(record)
+    if (entries.length > 40) return false
+    if (rule.required !== undefined && (!Array.isArray(rule.required) ||
+        !rule.required.every(k => typeof k === 'string' && Object.hasOwn(record, k)))) return false
+    return entries.every(([key, item]) => Object.hasOwn(allowed, key) && validToolInput(item, allowed[key], depth + 1))
+  }
+  if (rule.type === 'string') return typeof value === 'string' && value.length <= 4096 &&
+    (typeof rule.minLength !== 'number' || value.length >= rule.minLength) &&
+    (typeof rule.maxLength !== 'number' || value.length <= rule.maxLength)
+  if (rule.type === 'boolean') return typeof value === 'boolean'
+  if (rule.type === 'integer') return typeof value === 'number' && Number.isSafeInteger(value)
+  if (rule.type === 'number') return typeof value === 'number' && Number.isFinite(value)
+  if (rule.type === 'array') {
+    if (!Array.isArray(value) || value.length > 50 || !rule.items) return false
+    return value.every(item => validToolInput(item, rule.items, depth + 1))
+  }
+  if (rule.type === 'null') return value === null
+  return false
+}
+
 export const sarvamEnabled = (flag: string, env: Record<string, string | undefined> = process.env) =>
   env[flag] === 'on' && !!env.SARVAM_API_KEY && (env.VERCEL_ENV !== 'production' || env.GOGO_SARVAM_PRODUCTION === 'approved')
 
@@ -64,6 +100,9 @@ export async function sarvamChat(params: {
     let parsed: unknown
     try { parsed = JSON.parse(calls[0].function.arguments) } catch { throw new SarvamProviderError('tool_json_invalid') }
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new SarvamProviderError('tool_arguments_invalid')
+    if (params.toolChoice === 'none') throw new SarvamProviderError('tool_forbidden')
+    const declared = params.tools?.find(t => t.name === name)
+    if (!validToolInput(parsed, declared?.input_schema)) throw new SarvamProviderError('tool_schema_invalid')
     tool = { name, input: parsed as Record<string, unknown> }
   }
   const text = typeof choice.message?.content === 'string' ? choice.message.content.trim() : ''
