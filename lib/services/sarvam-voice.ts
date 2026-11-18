@@ -66,9 +66,11 @@ export async function sarvamSpeechToText(audio: ArrayBuffer | Buffer, contentTyp
   form.append('file', new File([Uint8Array.from(bytes)], 'voice-note.' + extension, { type: contentType }))
   const model = opts.model || 'saaras:v4'
   form.append('model', model)
-  // Per Sarvam REST docs, explicit mode selection applies to Saaras v3.
-  // Saaras v4 handles Indian-language and code-mixed transcription by default.
+  // Saaras v4 defaults to transcribe; callers can explicitly request codemix,
+  // translit, translate or verbatim for language-sensitive workflows.
+  // Saaras v3 keeps the previous codemix default for backward compatibility.
   if (model === 'saaras:v3') form.append('mode', opts.mode || 'codemix')
+  else if (opts.mode) form.append('mode', opts.mode)
   // Keyterms are supported only by Saaras v4 and must be one JSON-encoded multipart field.
   const hints = opts.keyterms || ['AskGogo', 'CreditIQ', 'Razorpay', 'ONDC', 'Bengaluru']
   if (model === 'saaras:v4') {
