@@ -52,7 +52,7 @@ export async function buildGmailConnectReply(telegramId:number, text=''){
   if(access.disabled)return (access as any).missing?'I haven’t got your OK to read Gmail yet, so I didn’t read any mail. Reconnect Google once at app.askgogo.in/dashboard/settings/email and I’ll read only what you ask for.':'Google Workspace access is turned off in your privacy settings.'
   if(access.connected){
     const extras=await import('@/lib/agent/gmail-accounts').then(m=>m.listExtraGmailAccounts(telegramId),()=>[])
-    const also=extras.length?`\nAlso reading: ${extras.map(a=>`*${a.email}*`).join(', ')}. Say "connect another gmail" to add one or "disconnect <address>" to remove one.`:'\nSay "connect another gmail" to add a second account (work mail, say).'
+    const also=extras.length?`\nAlso reading: ${extras.map(a=>`*${a.email}*`).join(', ')}. Say "connect another gmail" to add one or "disconnect <address>" to remove one. If one has stopped working, say "reconnect <address>" and pick it again on Google's screen.`:'\nSay "connect another gmail" to add a second account (work mail, say).'
     return `✅ *Google Workspace is connected*${access.email?` as *${access.email}*`:''}.${also}\n\nGogo can use the read-only Gmail context you approved. Sending or modifying email is still a separate approval-gated action.`
   }
   const url=buildGmailConnectUrl(telegramId)

@@ -49,5 +49,5 @@ export async function disconnectExtraGmailAccount(telegramId: string | number, e
   return (data || []).length > 0
 }
 
-export const ADD_ACCOUNT_RE = /^\s*(?:(?:please\s+)?(?:connect|add|link)\s+(?:another|a\s+second|one\s+more|my\s+(?:other|work|office|second|tipplr))\s+(?:google\s+account|gmail(?:\s+account)?|email(?:\s+account)?|mailbox|inbox)|(?:connect|add|link)\s+[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\s*[.!]*$/i
+export const ADD_ACCOUNT_RE = /^\s*(?:(?:please\s+)?(?:re-?connect|connect|add|link)\s+(?:another|a\s+second|one\s+more|my\s+(?:other|work|office|second|tipplr))\s+(?:google\s+account|gmail(?:\s+account)?|e-?mail(?:\s+account)?|mail(?:\s+account)?|mailbox|inbox)|(?:re-?connect|connect|add|link)\s+[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\s*[.!]*$/i
 export const REMOVE_ACCOUNT_RE = /^\s*(?:(?:please\s+)?(?:disconnect|remove|unlink|stop\s+reading)\s+([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}))\s*[.!]*$/i
