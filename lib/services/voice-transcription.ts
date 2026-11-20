@@ -19,6 +19,14 @@ function getExtension(contentType: string) {
   return 'ogg'
 }
 
+export async function transcribeTvVoice(wav: Uint8Array) {
+  const file = new File([Uint8Array.from(wav)], 'gogo-tv.wav', { type: 'audio/wav' })
+  const result = await openai.audio.transcriptions.create({
+    model: 'gpt-4o-mini-transcribe', file, response_format: 'json',
+  }, { timeout: 20_000, maxRetries: 0 })
+  return result.text.trim()
+}
+
 export function isAudioContentType(contentType: string | null | undefined) {
   const type = (contentType || '').toLowerCase()
   return type.startsWith('audio/')
