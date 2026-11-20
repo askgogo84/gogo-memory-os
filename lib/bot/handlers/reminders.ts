@@ -480,7 +480,8 @@ function parseWeekdayRecurring(text: string): ParsedReminder {
   return {
     kind: 'recurring',
     remindAtIso: when.toISOString(),
-    message: cleanMessageText(dropDayPart(text, weekdayName)),
+    // Anchored to "every <weekday>": "every Monday to send the Monday evening report" keeps its evening.
+    message: cleanMessageText(dropDayPart(text, `every\\s+${weekdayName}`)),
     pattern: `weekly:${weekdayName}:${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}`,
   }
 }

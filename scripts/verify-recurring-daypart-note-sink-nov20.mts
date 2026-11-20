@@ -22,6 +22,10 @@ for (const [t, msg, hh] of [
 { const p = rem.parseReminderIntent('remind me every Monday evening at 7:30pm to call mom'); assert.ok(String(p.pattern).endsWith(':19:30'), p.pattern); assert.doesNotMatch(p.message, /evening/i) }
 { const p = rem.parseReminderIntent('remind me every Monday to call mom'); assert.ok(String(p.pattern).endsWith(':09:00'), p.pattern) }
 { const p = rem.parseReminderIntent('remind me every Monday to book the Friday evening court'); assert.ok(String(p.pattern).endsWith(':09:00'), p.pattern); assert.match(p.message, /evening court/i, p.message) }
+// Review: the same weekday inside the task keeps its part of day; a part of day before "every" is the time too.
+{ const p = rem.parseReminderIntent('remind me every Monday to send the Monday evening report'); assert.match(p.message, /evening report/i, p.message); assert.ok(String(p.pattern).endsWith(':09:00'), p.pattern) }
+{ const p = rem.parseReminderIntent('remind me in the evening every Monday to call mom'); assert.ok(String(p.pattern).endsWith(':18:00'), p.pattern); assert.equal(String(p.message).toLowerCase(), 'call mom', p.message) }
+{ const p = rem.parseReminderIntent('remind me every Thursday early morning to go for a run'); assert.ok(String(p.pattern).endsWith(':07:00'), p.pattern) }
 console.log('✓ "every Monday evening" repeats at 6 pm and keeps "evening" out of the text')
 
 // Every reminder saved from chat is cleaned at the one place they all pass through.
