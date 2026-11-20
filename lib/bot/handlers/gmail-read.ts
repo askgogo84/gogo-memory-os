@@ -44,7 +44,8 @@ export async function buildGmailConnectReply(telegramId:number, text=''){
     return gone ? `Done. I no longer read ${removeM[1].toLowerCase()}.` : `${removeM[1].toLowerCase()} isn't one of the extra accounts I read. Your main Google account is managed at app.askgogo.in/dashboard/settings/email.`
   }
   const access=await gmailAccess(telegramId)
-  if (access.connected && ADD_ACCOUNT_RE.test(text)) {
+  const phrases = await import('@/lib/email/connect-phrases')
+  if (access.connected && (ADD_ACCOUNT_RE.test(text) || phrases.ADD_MAIL_RE.test(text) || phrases.RECONNECT_ADDRESS_RE.test(text))) {
     const url=buildGmailConnectUrl(telegramId)
     if(!url)return 'Google Workspace connection is temporarily unavailable.'
     return `📧 *Add another Google account*\n\nOpen this link and pick the account to add (for a work account, choose it on Google's account screen). Read-only, kept beside ${access.email||'your main account'}:\n${url}\n\nSay "disconnect <address>" any time to stop reading it.`
@@ -54,7 +55,9 @@ export async function buildGmailConnectReply(telegramId:number, text=''){
     const extras=await import('@/lib/agent/gmail-accounts').then(m=>m.listExtraGmailAccounts(telegramId),()=>[])
     const also=extras.length?`\nAlso reading: ${extras.map(a=>`*${a.email}*`).join(', ')}. Say "connect another gmail" to add one or "disconnect <address>" to remove one. If one has stopped working, say "reconnect <address>" and pick it again on Google's screen.`:'\nSay "connect another gmail" to add a second account (work mail, say).'
     // 20 Nov review: "reconnect my mail" must not end at a status line with no way to act.
-    const refresh=/\bre[- ]?connect\b|\bagain\b/i.test(text)?'\nTo refresh the main account, reconnect it at app.askgogo.in/dashboard/settings/email.':''
+    // The settings page has no reconnect control once connected, so the link itself is handed out.
+    const url=/\bre[- ]?connect\b|\bagain\b/i.test(text)?buildGmailConnectUrl(telegramId):null
+    const refresh=url?`\n\nTo refresh access, open this link and pick the same account:\n${url}\nIf Gogo could send mail for you before, you may need to turn that on again afterwards.`:''
     return `✅ *Google Workspace is connected*${access.email?` as *${access.email}*`:''}.${also}${refresh}\n\nGogo can use the read-only Gmail context you approved. Sending or modifying email is still a separate approval-gated action.`
   }
   const url=buildGmailConnectUrl(telegramId)

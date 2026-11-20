@@ -42,6 +42,12 @@ console.log('✓ wired into both routers; the connected reply names the reconnec
   }
   for (const t of ['check my mail', 'mail Divya the deck', 'what is on my calendar today']) assert.equal(gate.isExactCommand(t), false, t)
   assert.equal(brain.isExactCommand('mail Divya the deck'), false)
-  assert.match(readFileSync(new URL('../lib/bot/handlers/gmail-read.ts', import.meta.url), 'utf8'), /To refresh the main account, reconnect it at app\.askgogo\.in\/dashboard\/settings\/email/)
+  const h = readFileSync(new URL('../lib/bot/handlers/gmail-read.ts', import.meta.url), 'utf8')
+  // The settings page shows no reconnect control once connected, so a reconnect ask gets the link itself.
+  assert.match(h, /re\[- \]\?connect\\b\|\\bagain\\b\/i\.test\(text\)\?buildGmailConnectUrl\(telegramId\):null/)
+  assert.doesNotMatch(h, /reconnect it at app\.askgogo\.in\/dashboard\/settings\/email/)
+  assert.match(h, /ADD_ACCOUNT_RE\.test\(text\) \|\| phrases\.ADD_MAIL_RE\.test\(text\) \|\| phrases\.RECONNECT_ADDRESS_RE\.test\(text\)/)
+  const { ADD_MAIL_RE } = await import('../lib/email/connect-phrases')
+  for (const t of ['kindly add my office inbox', 'add my second email id', 'hey gogo reconnect nithin@example.com']) assert.ok(ADD_MAIL_RE.test(t) || RECONNECT_ADDRESS_RE.test(t), t)
 }
 console.log('✓ the brain and the semantic reading both stand aside for a connect ask')
